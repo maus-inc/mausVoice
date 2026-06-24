@@ -11,30 +11,15 @@ pub struct InputDeviceDescriptor {
 }
 
 pub fn new_recorder() -> Arc<dyn Recorder> {
-    #[cfg(target_os = "linux")]
-    {
-        Arc::new(crate::platform::linux::audio::PulseRecorder::new())
-    }
-    #[cfg(not(target_os = "linux"))]
-    {
-        Arc::new(cpal_impl::RecordingManager::new())
-    }
+    Arc::new(cpal_impl::RecordingManager::new())
 }
 
 pub fn list_input_devices() -> Vec<InputDeviceDescriptor> {
-    #[cfg(target_os = "linux")]
-    {
-        crate::platform::linux::audio::list_pulse_input_devices()
-    }
-    #[cfg(not(target_os = "linux"))]
-    {
-        cpal_impl::list_input_devices()
-    }
+    cpal_impl::list_input_devices()
 }
 
 // ── CPAL backend (macOS, Windows) ──────────────────────────────────────
 
-#[cfg(not(target_os = "linux"))]
 mod cpal_impl {
     use super::InputDeviceDescriptor;
     use crate::domain::{RecordedAudio, RecordingMetrics, RecordingResult};

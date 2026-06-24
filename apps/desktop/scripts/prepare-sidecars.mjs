@@ -193,12 +193,6 @@ function mapPlatformArchToTarget(platform, arch) {
   if (platform === "darwin" && arch === "x64") {
     return "x86_64-apple-darwin";
   }
-  if (platform === "linux" && arch === "x64") {
-    return "x86_64-unknown-linux-gnu";
-  }
-  if (platform === "linux" && arch === "arm64") {
-    return "aarch64-unknown-linux-gnu";
-  }
   if (platform === "win32" && arch === "x64") {
     return "x86_64-pc-windows-msvc";
   }
@@ -217,11 +211,7 @@ function isAppleTarget(target) {
 }
 
 function supportsNativeGpuSidecar(target) {
-  return (
-    isAppleTarget(target) ||
-    target.includes("windows") ||
-    target.includes("linux")
-  );
+  return isAppleTarget(target) || target.includes("windows");
 }
 
 function resolveGpuCargoFeatures(target) {
@@ -229,7 +219,7 @@ function resolveGpuCargoFeatures(target) {
     return ["gpu", "gpu-metal"];
   }
 
-  if (target.includes("windows") || target.includes("linux")) {
+  if (target.includes("windows")) {
     return ["gpu", "gpu-vulkan"];
   }
 
@@ -254,19 +244,6 @@ function resolveGpuBuildState(target) {
     }
   }
 
-  if (target.includes("linux")) {
-    const pkgCheck = spawnSync("pkg-config", ["--exists", "vulkan"], {
-      stdio: "ignore",
-    });
-    if (pkgCheck.status !== 0) {
-      return {
-        canBuildNative: false,
-        reason:
-          "Vulkan development libraries not found (pkg-config --exists vulkan failed)",
-      };
-    }
-  }
-
   return {
     canBuildNative: true,
     reason: null,
@@ -275,21 +252,13 @@ function resolveGpuBuildState(target) {
 
 // --- Native pill overlays (platform-specific) ---
 // macOS pill is linked directly as a Rust library dependency (no sidecar needed).
-// Linux GTK pill and Windows pill are built as separate binaries.
-if (isLinuxTarget(targetTriple)) {
-  buildNativePill("rust_gtk_pill", "voquill-gtk-pill");
-}
+// Windows pill is built as a separate binary.
 if (isWindowsTarget(targetTriple)) {
   buildNativePill("rust_windows_pill", "voquill-windows-pill");
 }
 
 function buildNativePill(packageDir, binaryName) {
-  const pillManifestPath = join(
-    repoRoot,
-    "packages",
-    packageDir,
-    "Cargo.toml",
-  );
+  const pillManifestPath = join(repoRoot, "packages", packageDir, "Cargo.toml");
 
   if (!existsSync(pillManifestPath)) {
     console.warn(`[sidecar] ${binaryName} manifest not found, skipping`);
@@ -349,10 +318,6 @@ function buildNativePill(packageDir, binaryName) {
       `[sidecar] Expected pill binary not produced: ${pillSourcePath}`,
     );
   }
-}
-
-function isLinuxTarget(target) {
-  return target.includes("linux");
 }
 
 function fail(message) {

@@ -1,6 +1,6 @@
 import { platform } from "@tauri-apps/plugin-os";
 
-export type Platform = "macos" | "windows" | "linux" | "unknown";
+export type Platform = "macos" | "windows" | "unknown";
 
 let cachedPlatform: Platform | null = null;
 
@@ -16,9 +16,6 @@ export const getPlatform = (): Platform => {
       break;
     case "windows":
       cachedPlatform = "windows";
-      break;
-    case "linux":
-      cachedPlatform = "linux";
       break;
     default:
       cachedPlatform = "unknown";
@@ -54,12 +51,11 @@ export const cursorToViewportPosition = (
     const x = Math.round(cursorX - visibleX);
     const y = Math.round(visibleHeight - (cursorY - visibleY));
     return { x, y };
-  } else {
-    // Windows/Linux: coordinates are in physical pixels, convert to CSS pixels
-    const x = Math.round((cursorX - visibleX) / scaleFactor);
-    const y = Math.round((cursorY - visibleY) / scaleFactor);
-    return { x, y };
   }
+
+  const x = Math.round((cursorX - visibleX) / scaleFactor);
+  const y = Math.round((cursorY - visibleY) / scaleFactor);
+  return { x, y };
 };
 
 export const getOverlayBottomOffset = (): number => {
@@ -67,8 +63,6 @@ export const getOverlayBottomOffset = (): number => {
   switch (plt) {
     case "macos":
       return 12;
-    case "linux":
-      return 8;
     case "windows":
       return 8;
     default:

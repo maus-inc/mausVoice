@@ -13,7 +13,6 @@ otherwise.
 | `apps/docs`              | Astro and Starlight documentation site.                                                                          |
 | `enterprise/admin`       | React and Vite enterprise administration dashboard.                                                              |
 | `enterprise/gateway`     | Enterprise API gateway.                                                                                          |
-| `mobile`                 | Flutter mobile app for iOS and Android. This is outside the pnpm workspace.                                      |
 | `cli`                    | Rust command-line application.                                                                                   |
 | `packages`               | Shared TypeScript and Rust packages used by the applications.                                                    |
 | `release`                | Release notes and promotion instructions.                                                                        |
@@ -50,12 +49,8 @@ lockfile.
 - Install Rust with [rustup](https://rustup.rs/) for the desktop app, Windows
   installer, CLI, and Rust packages.
 - Install the [Tauri prerequisites](https://v2.tauri.app/start/prerequisites/)
-  for your operating system. Linux and Windows contributors can use the
-  repository scripts described in the desktop section below.
-- Install a Flutter SDK whose Dart version satisfies
-  [`mobile/pubspec.yaml`](../mobile/pubspec.yaml), plus Xcode and CocoaPods for
-  iOS or the Android SDK for Android.
-
+  for your operating system. Windows contributors can use the
+  repository script described in the desktop section below.
 ## JavaScript and TypeScript workspaces
 
 The root manifest exposes the Turborepo tasks used across pnpm workspaces:
@@ -74,20 +69,13 @@ those sections.
 
 ## Desktop app
 
-On Linux, install the native dependencies:
-
-```sh
-./apps/desktop/scripts/setup-linux.sh
-```
-
 On Windows, run the setup script from an elevated PowerShell:
 
 ```powershell
 powershell -ExecutionPolicy Bypass -File apps/desktop/scripts/setup-windows.ps1
 ```
 
-Pass `-EnableGpu` to the Windows script, or set
-`VOQUILL_ENABLE_GPU=1` before running the Linux script, to install the optional
+Pass `-EnableGpu` to the Windows script to install the optional
 Vulkan build dependencies.
 
 Start the desktop app with the platform selected automatically:
@@ -176,63 +164,3 @@ pnpm --filter @voquill/functions run build
 Rebuild `@voquill/types` or `@voquill/functions` after changing them so
 downstream workspaces see the updated output.
 
-## Mobile app
-
-The mobile app is a separate Flutter project and does not use pnpm. Prepare it
-from a fresh clone with:
-
-```sh
-cd mobile
-flutter pub get
-cp .env.example .env
-./generate.sh
-```
-
-Replace the placeholder values in `.env` before launching the app. The
-available flavors are `dev`, `emulators`, and `prod`; each has a matching entry
-point under `mobile/lib`.
-
-```sh
-flutter run --flavor dev -t lib/main_dev.dart
-flutter analyze
-flutter test
-```
-
-Build release artifacts with the helper script:
-
-```sh
-./deploy.sh ios prod
-./deploy.sh android prod
-```
-
-The script calls `flutter build ipa` for iOS and `flutter build appbundle` for
-Android. iOS packaging requires macOS, Xcode, CocoaPods, and signing configured
-for the selected flavor.
-
-## CLI
-
-The CLI is a standalone Rust crate:
-
-```sh
-cargo build --manifest-path cli/Cargo.toml
-cargo test --manifest-path cli/Cargo.toml
-```
-
-## Releases and CI
-
-Pushes to `main`, `prod`, and `enterprise` are orchestrated by
-[`.github/workflows/release.yml`](../.github/workflows/release.yml). That
-workflow owns the component filters, release channels, and reusable workflows.
-See [`release/README.md`](../release/README.md) for promotion and rollback
-instructions and [`desktop-release.md`](desktop-release.md) for desktop release
-details.
-
-## Additional documentation
-
-- [Desktop architecture](desktop-architecture.md)
-- [Desktop release guide](desktop-release.md)
-- [Local model integration](local-model-integration.md)
-- [Resources](resources.md)
-
-Unless otherwise noted, Voquill is released under the AGPLv3. See
-[`LICENCE`](../LICENCE) for the complete terms and third-party attributions.

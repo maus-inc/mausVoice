@@ -8,7 +8,6 @@ import {
   DialogContent,
   DialogTitle,
   LinearProgress,
-  Link,
   Stack,
   Typography,
 } from "@mui/material";
@@ -23,11 +22,6 @@ import {
 } from "../../actions/updater.actions";
 import { useAppStore } from "../../store";
 import { formatSize } from "../../utils/format.utils";
-import { getPlatform } from "../../utils/platform.utils";
-import { CopyableCommand } from "../common/CopyableCommand";
-
-const APT_UPDATE_COMMAND =
-  "sudo apt-get update && sudo apt-get upgrade voquill-desktop";
 
 const formatReleaseDate = (isoDate: string | null) => {
   if (!isoDate) {
@@ -68,14 +62,12 @@ export const UpdateDialog = () => {
     (state) => state.updater.requiresManualInstall,
   );
 
-  const isLinux = getPlatform() === "linux";
   const pkgInstallerOpened = requiresManualInstall && status === "installing";
   const isUpdating =
     (status === "downloading" || status === "installing") &&
     !pkgInstallerOpened;
   const showProgress = status === "downloading" || status === "installing";
   const showManualInstallerAction =
-    !isLinux &&
     status === "error" &&
     isReadOnlyFilesystemInstallError(errorMessage) &&
     Boolean(manualInstallerUrl);
@@ -197,32 +189,6 @@ export const UpdateDialog = () => {
             </Stack>
           )}
 
-          {isLinux && (
-            <Stack spacing={1.5}>
-              <Typography variant="body2" color="text.secondary">
-                <FormattedMessage
-                  defaultMessage="Visit the {link} to download the latest version, or if you installed with APT, run this command:"
-                  values={{
-                    link: (
-                      <Link
-                        component="button"
-                        variant="body2"
-                        onClick={() => openUrl("https://voquill.com/download")}
-                        sx={{ verticalAlign: "baseline" }}
-                      >
-                        <FormattedMessage defaultMessage="downloads page" />
-                      </Link>
-                    ),
-                  }}
-                />
-              </Typography>
-              <CopyableCommand command={APT_UPDATE_COMMAND} />
-              <Typography variant="caption" color="text.secondary">
-                <FormattedMessage defaultMessage="After updating, restart Voquill to use the new version." />
-              </Typography>
-            </Stack>
-          )}
-
           {showProgress && (
             <Stack spacing={1}>
               <LinearProgress
@@ -251,8 +217,7 @@ export const UpdateDialog = () => {
             </Stack>
           )}
 
-          {!isLinux &&
-            status === "installing" &&
+          {status === "installing" &&
             (requiresManualInstall ? (
               <Alert severity="success" variant="outlined">
                 <FormattedMessage defaultMessage="The installer has been opened. Follow the prompts to complete the update, then relaunch Voquill." />
@@ -263,7 +228,7 @@ export const UpdateDialog = () => {
               </Alert>
             ))}
 
-          {!isLinux && status === "error" && errorMessage && (
+          {status === "error" && errorMessage && (
             <Alert
               severity="error"
               variant="outlined"
@@ -302,7 +267,7 @@ export const UpdateDialog = () => {
               <FormattedMessage defaultMessage="Later" />
             </Button>
             <Button
-              variant={isLinux ? "text" : "contained"}
+              variant="contained"
               onClick={handleInstall}
               disabled={isUpdating}
               endIcon={

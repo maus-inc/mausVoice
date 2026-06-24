@@ -8,13 +8,10 @@ import {
   Edit,
   GraphicEqOutlined,
   KeyboardAltOutlined,
+  KeyOutlined,
   LanguageOutlined,
-  LockOutlined,
-  LogoutOutlined,
   MicOutlined,
   MoreVertOutlined,
-  PaymentOutlined,
-  PersonRemoveOutlined,
   PrivacyTipOutlined,
   RocketLaunchOutlined,
   TroubleshootOutlined,
@@ -22,9 +19,14 @@ import {
   WarningAmberOutlined,
 } from "@mui/icons-material";
 import {
+  Alert,
   Box,
   Button,
   Chip,
+  Dialog,
+  DialogActions,
+  DialogContent,
+  DialogTitle,
   IconButton,
   Link,
   MenuItem,
@@ -32,17 +34,18 @@ import {
   SelectChangeEvent,
   Stack,
   Switch,
+  TextField,
   Tooltip,
   Typography,
 } from "@mui/material";
 import { openUrl } from "@tauri-apps/plugin-opener";
 import { ChangeEvent, useState } from "react";
 import { FormattedMessage, useIntl } from "react-intl";
-import { showErrorSnackbar } from "../../actions/app.actions";
+import { showSnackbar } from "../../actions/app.actions";
+import { savePersonalGroqApiKey } from "../../actions/personal-use.actions";
 import { setAutoLaunchEnabled } from "../../actions/settings.actions";
 import { loadTones } from "../../actions/tone.actions";
 import { setPreferredLanguage } from "../../actions/user.actions";
-import { getAuthRepo, getStripeRepo } from "../../repos";
 import { produceAppState, useAppStore } from "../../store";
 import {
   getAllowsChangePostProcessing,
@@ -54,27 +57,35 @@ import {
   KEYBOARD_LAYOUT_LANGUAGE,
   WHISPER_LANGUAGES,
 } from "../../utils/language.utils";
-import { getIsPaidSubscriber } from "../../utils/member.utils";
 import {
   getDetectedSystemLocale,
   getGenerativePrefs,
-  getHasEmailProvider,
-  getIsSignedIn,
   getMyUser,
 } from "../../utils/user.utils";
+import {
+  PERSONAL_GROQ_API_KEY_ID,
+  PERSONAL_GROQ_API_KEY_NAME,
+} from "../../utils/personal-use.utils";
 import { ListTile } from "../common/ListTile";
 import { Section } from "../common/Section";
 import { DashboardEntryLayout } from "../dashboard/DashboardEntryLayout";
 
 export default function SettingsPage() {
-  const hasEmailProvider = useAppStore(getHasEmailProvider);
-  const isSubscribed = useAppStore(getIsPaidSubscriber);
   const isEnterprise = useAppStore((state) => state.isEnterprise);
   const allowChangeTranscription = useAppStore(getAllowsChangeTranscription);
   const allowChangePostProcessing = useAppStore(getAllowsChangePostProcessing);
-  const [manageSubscriptionLoading, setManageSubscriptionLoading] =
-    useState(false);
-  const isSignedIn = useAppStore(getIsSignedIn);
+  const [groqDialogOpen, setGroqDialogOpen] = useState(false);
+  const [groqApiKeyInput, setGroqApiKeyInput] = useState("");
+  const [groqSaving, setGroqSaving] = useState(false);
+  const [groqError, setGroqError] = useState<string | null>(null);
+  const personalGroqApiKey = useAppStore((state) =>
+    state.settings.apiKeys.find(
+      (apiKey) =>
+        apiKey.id === PERSONAL_GROQ_API_KEY_ID ||
+        (apiKey.provider === "groq" &&
+          apiKey.name.trim() === PERSONAL_GROQ_API_KEY_NAME),
+    ),
+  );
   const [autoLaunchEnabled, autoLaunchStatus] = useAppStore((state) => [
     state.settings.autoLaunchEnabled,
     state.settings.autoLaunchStatus,
@@ -125,12 +136,6 @@ export default function SettingsPage() {
     });
   };
 
-  const openChangePasswordDialog = () => {
-    produceAppState((state) => {
-      state.settings.changePasswordDialogOpen = true;
-    });
-  };
-
   const openTranscriptionDialog = () => {
     produceAppState((draft) => {
       draft.settings.aiTranscriptionDialogOpen = true;
@@ -153,6 +158,40 @@ export default function SettingsPage() {
     produceAppState((draft) => {
       draft.settings.agentModeDialogOpen = true;
     });
+  };
+
+  const openGroqDialog = () => {
+    setGroqApiKeyInput("");
+    setGroqError(null);
+    setGroqDialogOpen(true);
+  };
+
+  const closeGroqDialog = () => {
+    if (!groqSaving) {
+      setGroqDialogOpen(false);
+    }
+  };
+
+  const handleSaveGroqApiKey = async () => {
+    const trimmed = groqApiKeyInput.trim();
+    if (!trimmed || groqSaving) {
+      return;
+    }
+
+    setGroqSaving(true);
+    setGroqError(null);
+    try {
+      await savePersonalGroqApiKey(trimmed);
+      showSnackbar("Groq API key saved", { mode: "success" });
+      setGroqApiKeyInput("");
+      setGroqDialogOpen(false);
+    } catch (error) {
+      const message =
+        error instanceof Error ? error.message : "Failed to save Groq API key.";
+      setGroqError(message);
+    } finally {
+      setGroqSaving(false);
+    }
   };
 
   const openMicrophoneDialog = () => {
@@ -191,35 +230,9 @@ export default function SettingsPage() {
     });
   };
 
-  const openDeleteAccountDialog = () => {
-    produceAppState((state) => {
-      state.settings.deleteAccountDialog = true;
-    });
-  };
-
   const handleToggleAutoLaunch = (event: ChangeEvent<HTMLInputElement>) => {
     const enabled = event.target.checked;
     void setAutoLaunchEnabled(enabled);
-  };
-
-  const handleManageSubscription = async () => {
-    setManageSubscriptionLoading(true);
-    try {
-      const url = await getStripeRepo()?.createCustomerPortalSession();
-      if (url) {
-        openUrl(url);
-      } else {
-        showErrorSnackbar("Unable to open manage subscription page.");
-      }
-    } catch (error) {
-      showErrorSnackbar(error);
-    } finally {
-      setManageSubscriptionLoading(false);
-    }
-  };
-
-  const handleSignOut = async () => {
-    await getAuthRepo().signOut();
   };
 
   const general = (
@@ -375,6 +388,27 @@ export default function SettingsPage() {
       }
     >
       {dictationLanguageComp}
+      <ListTile
+        title={<FormattedMessage defaultMessage="Groq API key" />}
+        subtitle={
+          <FormattedMessage defaultMessage="Used for transcription and AI post processing." />
+        }
+        leading={<KeyOutlined />}
+        onClick={openGroqDialog}
+        trailing={
+          <Chip
+            size="small"
+            color={personalGroqApiKey ? "success" : "default"}
+            label={
+              personalGroqApiKey ? (
+                <FormattedMessage defaultMessage="Configured" />
+              ) : (
+                <FormattedMessage defaultMessage="Not configured" />
+              )
+            }
+          />
+        }
+      />
       {allowChangeTranscription && (
         <ListTile
           title={<FormattedMessage defaultMessage="AI transcription" />}
@@ -411,22 +445,6 @@ export default function SettingsPage() {
         <FormattedMessage defaultMessage="Manage your account preferences and settings." />
       }
     >
-      {hasEmailProvider && (
-        <ListTile
-          title={<FormattedMessage defaultMessage="Change password" />}
-          leading={<LockOutlined />}
-          onClick={openChangePasswordDialog}
-        />
-      )}
-      {isSubscribed && !isEnterprise && (
-        <ListTile
-          title={<FormattedMessage defaultMessage="Manage subscription" />}
-          leading={<PaymentOutlined />}
-          onClick={handleManageSubscription}
-          disabled={manageSubscriptionLoading}
-          trailing={<ArrowOutwardRounded />}
-        />
-      )}
       <ListTile
         title={<FormattedMessage defaultMessage="Terms & conditions" />}
         onClick={() => openUrl("https://voquill.com/terms")}
@@ -439,13 +457,6 @@ export default function SettingsPage() {
         trailing={<ArrowOutwardRounded />}
         leading={<PrivacyTipOutlined />}
       />
-      {isSignedIn && (
-        <ListTile
-          title={<FormattedMessage defaultMessage="Sign out" />}
-          leading={<LogoutOutlined />}
-          onClick={handleSignOut}
-        />
-      )}
     </Section>
   );
 
@@ -456,21 +467,11 @@ export default function SettingsPage() {
         <FormattedMessage defaultMessage="Be careful with these actions. They can have significant consequences for your account." />
       }
     >
-      {!isSignedIn && (
-        <ListTile
-          title={<FormattedMessage defaultMessage="Clear local data" />}
-          leading={<DeleteForeverOutlined />}
-          onClick={openClearLocalDataDialog}
-        />
-      )}
-      {isSignedIn && (
-        <ListTile
-          sx={{ mt: 1 }}
-          title={<FormattedMessage defaultMessage="Delete account" />}
-          leading={<PersonRemoveOutlined />}
-          onClick={openDeleteAccountDialog}
-        />
-      )}
+      <ListTile
+        title={<FormattedMessage defaultMessage="Clear local data" />}
+        leading={<DeleteForeverOutlined />}
+        onClick={openClearLocalDataDialog}
+      />
     </Section>
   );
 
@@ -485,6 +486,74 @@ export default function SettingsPage() {
         {advanced}
         {!isEnterprise && dangerZone}
       </Stack>
+      <Dialog
+        open={groqDialogOpen}
+        onClose={closeGroqDialog}
+        maxWidth="xs"
+        fullWidth
+      >
+        <DialogTitle>
+          <FormattedMessage defaultMessage="Groq API key" />
+        </DialogTitle>
+        <DialogContent dividers>
+          <Stack spacing={2}>
+            <Typography variant="body2" color="text.secondary">
+              <FormattedMessage defaultMessage="Store your Groq API key locally for transcription and AI post processing. The key is encrypted before it is saved." />
+            </Typography>
+            {personalGroqApiKey?.keySuffix && (
+              <Typography variant="body2" color="text.secondary">
+                <FormattedMessage
+                  defaultMessage="Current key ends with {suffix}."
+                  values={{ suffix: personalGroqApiKey.keySuffix }}
+                />
+              </Typography>
+            )}
+            {groqError && <Alert severity="error">{groqError}</Alert>}
+            <TextField
+              autoFocus
+              fullWidth
+              size="small"
+              type="password"
+              label={<FormattedMessage defaultMessage="API key" />}
+              placeholder={intl.formatMessage({ defaultMessage: "gsk_..." })}
+              value={groqApiKeyInput}
+              disabled={groqSaving}
+              onChange={(event) => setGroqApiKeyInput(event.target.value)}
+              autoComplete="off"
+              slotProps={{
+                inputLabel: { shrink: true },
+                htmlInput: {
+                  "data-voquill-ignore": "true",
+                },
+              }}
+            />
+            <Link
+              component="button"
+              variant="body2"
+              onClick={() => openUrl("https://console.groq.com/keys")}
+              sx={{ alignSelf: "flex-start" }}
+            >
+              <FormattedMessage defaultMessage="Open Groq API keys" />
+            </Link>
+          </Stack>
+        </DialogContent>
+        <DialogActions>
+          <Button onClick={closeGroqDialog} disabled={groqSaving}>
+            <FormattedMessage defaultMessage="Cancel" />
+          </Button>
+          <Button
+            variant="contained"
+            onClick={handleSaveGroqApiKey}
+            disabled={!groqApiKeyInput.trim() || groqSaving}
+          >
+            {groqSaving ? (
+              <FormattedMessage defaultMessage="Saving..." />
+            ) : (
+              <FormattedMessage defaultMessage="Save" />
+            )}
+          </Button>
+        </DialogActions>
+      </Dialog>
     </DashboardEntryLayout>
   );
 }

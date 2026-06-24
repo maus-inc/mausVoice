@@ -98,7 +98,7 @@ export const checkForAppUpdates = async (): Promise<boolean> => {
       }
     });
 
-    // It's hard to see the update menu icon on Linux and Windows, so show a
+    // It's hard to see the update menu icon on Windows, so show a
     // toast notification when an update is available. On macOS, the menu icon
     // is more visible and users are more accustomed to checking there for
     // updates, so we can skip the toast.

@@ -764,9 +764,6 @@ export const MultiDeviceDialog = () => {
               <MenuItem value="macos">
                 {intl.formatMessage({ defaultMessage: "macOS" })}
               </MenuItem>
-              <MenuItem value="linux">
-                {intl.formatMessage({ defaultMessage: "Linux" })}
-              </MenuItem>
             </Select>
             <TextField
               label={addressLabel}

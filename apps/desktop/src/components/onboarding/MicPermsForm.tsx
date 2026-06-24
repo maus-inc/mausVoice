@@ -10,6 +10,7 @@ import {
   isPermissionAuthorized,
   requestMicrophonePermission,
 } from "../../utils/permission.utils";
+import { isPersonalUseEnabled } from "../../utils/personal-use.utils";
 import {
   BackButton,
   DualPaneLayout,
@@ -20,6 +21,9 @@ export const MicPermsForm = () => {
   const [requesting, setRequesting] = useState(false);
   const micPermission = useAppStore((state) => state.permissions.microphone);
   const isAuthorized = isPermissionAuthorized(micPermission?.state);
+  const canContinue =
+    isAuthorized ||
+    (isPersonalUseEnabled() && micPermission?.promptShown === true);
 
   const handleAllow = useCallback(async () => {
     if (requesting || isAuthorized) {
@@ -53,7 +57,7 @@ export const MicPermsForm = () => {
           variant="contained"
           endIcon={<ArrowForward />}
           onClick={handleContinue}
-          disabled={!isAuthorized}
+          disabled={!canContinue}
         >
           <FormattedMessage defaultMessage="Continue" />
         </Button>

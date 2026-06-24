@@ -17,7 +17,6 @@ Use platform-specific commands (required for native features):
 ```bash
 npm run dev:mac          # macOS
 npm run dev:windows      # Windows
-npm run dev:linux        # Linux
 ```
 
 > **Note:** Do not use `npm run dev` directly—use the platform-specific commands above.

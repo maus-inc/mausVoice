@@ -1,13 +1,12 @@
 #!/usr/bin/env node
 
-import { spawn } from 'node:child_process';
+import { spawn } from "node:child_process";
 
 const platformOverride = process.env.VOQUILL_DESKTOP_PLATFORM?.trim();
 
 const PLATFORM_SCRIPTS = {
-  darwin: 'dev:mac',
-  win32: 'dev:windows',
-  linux: 'dev:linux'
+  darwin: "dev:mac",
+  win32: "dev:windows",
 };
 
 const resolvedPlatform = platformOverride || process.platform;
@@ -16,7 +15,7 @@ const selectedScript = PLATFORM_SCRIPTS[resolvedPlatform];
 if (!selectedScript) {
   console.error(
     `Unable to determine desktop dev script for platform "${resolvedPlatform}". ` +
-      'Set VOQUILL_DESKTOP_PLATFORM to darwin, win32, or linux to override.'
+      "Set VOQUILL_DESKTOP_PLATFORM to darwin or win32 to override.",
   );
   process.exit(1);
 }
@@ -26,17 +25,21 @@ const npmExecPath = process.env.npm_execpath;
 
 // Prefer invoking the npm CLI the same way npm itself would spawn lifecycle scripts.
 const child = npmExecPath
-  ? spawn(npmNodeExecPath, [npmExecPath, 'run', selectedScript], {
-      stdio: 'inherit',
-      env: process.env
-    })
-  : spawn(process.platform === 'win32' ? 'npm.cmd' : 'npm', ['run', selectedScript], {
-      stdio: 'inherit',
+  ? spawn(npmNodeExecPath, [npmExecPath, "run", selectedScript], {
+      stdio: "inherit",
       env: process.env,
-      shell: process.platform === 'win32'
-    });
+    })
+  : spawn(
+      process.platform === "win32" ? "npm.cmd" : "npm",
+      ["run", selectedScript],
+      {
+        stdio: "inherit",
+        env: process.env,
+        shell: process.platform === "win32",
+      },
+    );
 
-child.on('exit', (code, signal) => {
+child.on("exit", (code, signal) => {
   if (signal) {
     process.kill(process.pid, signal);
     return;
@@ -44,7 +47,7 @@ child.on('exit', (code, signal) => {
   process.exit(code ?? 0);
 });
 
-child.on('error', (error) => {
+child.on("error", (error) => {
   console.error(`Failed to start ${selectedScript}:`, error);
   process.exit(1);
 });

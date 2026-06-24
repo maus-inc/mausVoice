@@ -65,6 +65,7 @@ TypeScript → Tauri Command → Child Process → Model Inference
 **Input:** Audio samples (Float32Array) + sample rate
 **Output:** Transcript text
 **Key considerations:**
+
 - Audio segmentation for long recordings
 - GPU acceleration for speed
 - Language detection/selection
@@ -74,6 +75,7 @@ TypeScript → Tauri Command → Child Process → Model Inference
 **Input:** System prompt + user prompt
 **Output:** Generated text
 **Key considerations:**
+
 - Streaming responses for long outputs
 - Context window limits
 - JSON mode for structured output
@@ -83,6 +85,7 @@ TypeScript → Tauri Command → Child Process → Model Inference
 To add a completely different model type (e.g., image generation, embedding):
 
 1. **Define the repository interface** in `src/repos/`:
+
 ```typescript
 // src/repos/image-generation.repo.ts
 export type GenerateImageInput = {
@@ -97,11 +100,14 @@ export type GenerateImageOutput = {
 };
 
 export abstract class BaseGenerateImageRepo extends BaseRepo {
-  abstract generateImage(input: GenerateImageInput): Promise<GenerateImageOutput>;
+  abstract generateImage(
+    input: GenerateImageInput,
+  ): Promise<GenerateImageOutput>;
 }
 ```
 
 2. **Create implementations** for each backend:
+
 ```typescript
 // Local implementation (Rust-based)
 export class LocalGenerateImageRepo extends BaseGenerateImageRepo {
@@ -117,12 +123,18 @@ export class LocalGenerateImageRepo extends BaseGenerateImageRepo {
 
 // External service implementation (e.g., local Stable Diffusion)
 export class SDWebuiGenerateImageRepo extends BaseGenerateImageRepo {
-  constructor(private baseUrl: string) { super(); }
+  constructor(private baseUrl: string) {
+    super();
+  }
 
   async generateImage(input: GenerateImageInput): Promise<GenerateImageOutput> {
     const response = await fetch(`${this.baseUrl}/sdapi/v1/txt2img`, {
       method: "POST",
-      body: JSON.stringify({ prompt: input.prompt, width: input.width, height: input.height }),
+      body: JSON.stringify({
+        prompt: input.prompt,
+        width: input.width,
+        height: input.height,
+      }),
     });
     const data = await response.json();
     return { imageBase64: data.images[0] };
@@ -213,7 +225,6 @@ Models are stored in the platform-specific app data directory:
 
 - **macOS**: `~/Library/Application Support/Voquill/models/`
 - **Windows**: `C:\Users\{user}\AppData\Roaming\Voquill\models\`
-- **Linux**: `~/.config/Voquill/models/`
 
 Path helpers in `src-tauri/src/system/paths.rs`:
 
@@ -361,7 +372,9 @@ export class LocalTranscribeAudioRepo extends BaseTranscribeAudioRepo {
     return 1; // Sequential processing
   }
 
-  async transcribeSegment(input: TranscribeSegmentInput): Promise<TranscribeSegmentOutput> {
+  async transcribeSegment(
+    input: TranscribeSegmentInput,
+  ): Promise<TranscribeSegmentOutput> {
     const options = await this.resolveTranscriptionOptions();
 
     const transcript = await invoke<string>("transcribe_audio", {
@@ -458,9 +471,21 @@ export function setPreferredTranscriptionDevice(device: string) {
 ```tsx
 const MODEL_OPTIONS = [
   { value: "tiny", label: "Tiny (77 MB)", helper: "Fastest, lowest accuracy" },
-  { value: "base", label: "Base (148 MB)", helper: "Great balance of speed and accuracy" },
-  { value: "small", label: "Small (488 MB)", helper: "Recommended with GPU acceleration" },
-  { value: "medium", label: "Medium (1.53 GB)", helper: "Highest accuracy, slower on CPU" },
+  {
+    value: "base",
+    label: "Base (148 MB)",
+    helper: "Great balance of speed and accuracy",
+  },
+  {
+    value: "small",
+    label: "Small (488 MB)",
+    helper: "Recommended with GPU acceleration",
+  },
+  {
+    value: "medium",
+    label: "Medium (1.53 GB)",
+    helper: "Highest accuracy, slower on CPU",
+  },
 ];
 
 export function ModelSizeSelector() {
@@ -487,7 +512,9 @@ export function ModelSizeSelector() {
 ```tsx
 export function DeviceSelector() {
   const device = useAppStore((s) => s.settings.aiTranscription.device);
-  const gpuEnabled = useAppStore((s) => s.settings.aiTranscription.gpuEnumerationEnabled);
+  const gpuEnabled = useAppStore(
+    (s) => s.settings.aiTranscription.gpuEnumerationEnabled,
+  );
   const { gpus, loading } = useSupportedDiscreteGpus(gpuEnabled);
 
   return (
@@ -535,7 +562,7 @@ export function useSupportedDiscreteGpus(active: boolean) {
       .then((result) => {
         // Filter for discrete GPUs with Vulkan/Metal backend
         const supported = result.filter(
-          (g) => g.backend === "Vulkan" && g.deviceType === "DiscreteGpu"
+          (g) => g.backend === "Vulkan" && g.deviceType === "DiscreteGpu",
         );
         setGpus(supported);
       })
@@ -653,7 +680,8 @@ export function MyServiceModelPicker() {
     const repo = new MyLocalServiceRepo(settings.serviceUrl, settings.apiKey);
 
     setLoading(true);
-    repo.checkAvailability()
+    repo
+      .checkAvailability()
       .then((ok) => {
         setAvailable(ok);
         if (ok) return repo.getAvailableModels();
@@ -673,7 +701,9 @@ export function MyServiceModelPicker() {
       onChange={(model) => setMyServiceModel(model)}
     >
       {models.map((model) => (
-        <SelectOption key={model} value={model}>{model}</SelectOption>
+        <SelectOption key={model} value={model}>
+          {model}
+        </SelectOption>
       ))}
     </Select>
   );
@@ -692,7 +722,7 @@ export function getMyInferenceRepo(): BaseMyServiceRepo {
     return new MyLocalServiceRepo(
       settings.serviceUrl,
       settings.selectedModel,
-      settings.apiKey
+      settings.apiKey,
     );
   }
 
@@ -703,14 +733,14 @@ export function getMyInferenceRepo(): BaseMyServiceRepo {
 
 ### Key Differences from Embedded Models
 
-| Aspect | Embedded (Whisper) | External Service (Ollama) |
-|--------|-------------------|---------------------------|
-| Model storage | App manages downloads | User/service manages |
-| Startup | Model loads with app | Service runs independently |
-| Rust code | Required for inference | Not needed (HTTP only) |
-| Crash isolation | Shares process | Separate process |
-| User setup | Automatic | Manual (start service) |
-| Model selection | Hardcoded sizes | Dynamic from service |
+| Aspect          | Embedded (Whisper)     | External Service (Ollama)  |
+| --------------- | ---------------------- | -------------------------- |
+| Model storage   | App manages downloads  | User/service manages       |
+| Startup         | Model loads with app   | Service runs independently |
+| Rust code       | Required for inference | Not needed (HTTP only)     |
+| Crash isolation | Shares process         | Separate process           |
+| User setup      | Automatic              | Manual (start service)     |
+| Model selection | Hardcoded sizes        | Dynamic from service       |
 
 ### Checking Service Availability
 
@@ -816,6 +846,7 @@ pub fn run_gpu_enumerator_process() -> Result<(), String> {
 To add model inference as a child process (useful for crash isolation):
 
 1. **Add env var check in main.rs:**
+
 ```rust
 if std::env::var("VOQUILL_MODEL_INFERENCE").as_deref() == Ok("1") {
     desktop_lib::platform::whisper::run_inference_process();
@@ -824,6 +855,7 @@ if std::env::var("VOQUILL_MODEL_INFERENCE").as_deref() == Ok("1") {
 ```
 
 2. **Create the child process entry point:**
+
 ```rust
 // In platform/whisper.rs
 pub fn run_inference_process() -> Result<(), String> {
@@ -840,6 +872,7 @@ pub fn run_inference_process() -> Result<(), String> {
 ```
 
 3. **Spawn from main process:**
+
 ```rust
 fn transcribe_in_child(input: &InferenceInput) -> Result<String, String> {
     let exe = std::env::current_exe()?;
@@ -879,12 +912,14 @@ writeln!(stream, "{}", serde_json::to_string(&event)?)?;
 ### When to Use Child Processes
 
 Use this pattern when:
+
 - **Driver/library crashes** could bring down the main app (GPU enumeration)
-- **Special thread requirements** conflict with Tauri's event loop (keyboard hooks on Linux)
+- **Special thread requirements** conflict with Tauri's event loop
 - **Long-running isolated work** should not block the UI
 - **Memory isolation** is needed (large model inference)
 
 Avoid when:
+
 - The operation is fast and stable
 - You need tight integration with Tauri state
 - The overhead of process spawning is too high
@@ -972,9 +1007,9 @@ Is the model core functionality that must work offline?
 
 ### Existing Implementations to Reference
 
-| Model Type | Pattern | Files |
-|------------|---------|-------|
-| Whisper (STT) | Embedded | `whisper.rs`, `models.rs`, `LocalTranscribeAudioRepo` |
-| Ollama (LLM) | External Service | `ollama.repo.ts`, `OllamaGenerateTextRepo` |
-| GPU Enumeration | Child Process | `gpu.rs`, `main.rs` |
-| Groq/OpenAI | Cloud API | `GroqTranscribeAudioRepo`, `OpenAIGenerateTextRepo` |
+| Model Type      | Pattern          | Files                                                 |
+| --------------- | ---------------- | ----------------------------------------------------- |
+| Whisper (STT)   | Embedded         | `whisper.rs`, `models.rs`, `LocalTranscribeAudioRepo` |
+| Ollama (LLM)    | External Service | `ollama.repo.ts`, `OllamaGenerateTextRepo`            |
+| GPU Enumeration | Child Process    | `gpu.rs`, `main.rs`                                   |
+| Groq/OpenAI     | Cloud API        | `GroqTranscribeAudioRepo`, `OpenAIGenerateTextRepo`   |

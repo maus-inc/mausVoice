@@ -114,7 +114,7 @@ type RemoteFinalTextReceivedPayload = {
   createdAt: string;
 };
 
-// Timeout for Firebase Auth initialization (handles cases where IndexedDB hangs on some Linux systems)
+// Timeout for Firebase Auth initialization.
 const AUTH_READY_TIMEOUT_MS = 4_000;
 
 // 10 minutes

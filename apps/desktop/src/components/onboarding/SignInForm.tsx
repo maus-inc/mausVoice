@@ -20,6 +20,7 @@ import {
 import { useAppStore } from "../../store";
 import { trackButtonClick } from "../../utils/analytics.utils";
 import { getShouldShowEmailForm } from "../../utils/login.utils";
+import { isPersonalUseEnabled } from "../../utils/personal-use.utils";
 import { ConfirmDialog } from "../common/ConfirmDialog";
 import { LoginForm } from "../login/LoginForm";
 import { OidcProviders } from "../login/OidcProviders";
@@ -36,6 +37,7 @@ export const SignInForm = () => {
 
   const auth = useAppStore((state) => state.auth);
   const isEnterprise = useAppStore((state) => state.isEnterprise);
+  const isPersonalUse = isPersonalUseEnabled();
   const loginStatus = useAppStore((state) => state.login.status);
   const awaitingSignInNavigation = useAppStore(
     (state) => state.onboarding.awaitingSignInNavigation,
@@ -47,10 +49,10 @@ export const SignInForm = () => {
     if (isSignedIn && awaitingSignInNavigation) {
       setAwaitingSignInNavigation(false);
       setEmailDialogOpen(false);
-      setDidSignUpWithAccount(true);
-      goToOnboardingPage("userDetails");
+      setDidSignUpWithAccount(!isPersonalUse);
+      goToOnboardingPage(isPersonalUse ? "groqApiKey" : "userDetails");
     }
-  }, [isSignedIn, awaitingSignInNavigation]);
+  }, [isSignedIn, awaitingSignInNavigation, isPersonalUse]);
 
   const handleClickLocalSetup = () => {
     trackButtonClick("onboarding_local_setup");
@@ -61,7 +63,7 @@ export const SignInForm = () => {
     trackButtonClick("onboarding_confirm_local_setup");
     setConfirmLocalSetupOpen(false);
     setDidSignUpWithAccount(false);
-    goToOnboardingPage("chooseTranscription");
+    goToOnboardingPage(isPersonalUse ? "groqApiKey" : "chooseTranscription");
   };
 
   const handleCancelLocalSetup = () => {
@@ -82,8 +84,8 @@ export const SignInForm = () => {
 
   const handleContinue = () => {
     trackButtonClick("onboarding_continue_signed_in");
-    setDidSignUpWithAccount(true);
-    goToOnboardingPage("userDetails");
+    setDidSignUpWithAccount(!isPersonalUse);
+    goToOnboardingPage(isPersonalUse ? "groqApiKey" : "userDetails");
   };
 
   const handleSignOut = async () => {

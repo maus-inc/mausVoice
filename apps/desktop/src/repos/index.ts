@@ -7,6 +7,7 @@ import { getIsEnterpriseEnabled } from "../utils/enterprise.utils";
 import { getLogger } from "../utils/log.utils";
 import { OLLAMA_DEFAULT_URL } from "../utils/ollama.utils";
 import { buildOpenAICompatibleUrl } from "../utils/openai-compatible.utils";
+import { isPersonalUseEnabled } from "../utils/personal-use.utils";
 import {
   GenerativePrefs,
   getAgentModePrefs,
@@ -15,7 +16,12 @@ import {
 } from "../utils/user.utils";
 import { BaseApiKeyRepo, LocalApiKeyRepo } from "./api-key.repo";
 import { BaseAppTargetRepo, LocalAppTargetRepo } from "./app-target.repo";
-import { BaseAuthRepo, CloudAuthRepo, EnterpriseAuthRepo } from "./auth.repo";
+import {
+  BaseAuthRepo,
+  CloudAuthRepo,
+  EnterpriseAuthRepo,
+  PersonalAuthRepo,
+} from "./auth.repo";
 import { BaseChatMessageRepo, LocalChatMessageRepo } from "./chat-message.repo";
 import {
   BaseConfigRepo,
@@ -47,6 +53,7 @@ import {
   BaseMemberRepo,
   CloudMemberRepo,
   EnterpriseMemberRepo,
+  LocalMemberRepo,
 } from "./member.repo";
 import {
   AldeaModelProviderRepo,
@@ -124,17 +131,30 @@ import {
 export { BaseModelProviderRepo } from "./model-provider.repo";
 
 const isEnterprise = () => getIsEnterpriseEnabled();
+const isPersonalUse = () => isPersonalUseEnabled();
 const isLoggedIn = () => !!getAppState().auth;
 
 export const getMemberRepo = (): BaseMemberRepo => {
+  if (isPersonalUse()) {
+    return new LocalMemberRepo();
+  }
+
   return isEnterprise() ? new EnterpriseMemberRepo() : new CloudMemberRepo();
 };
 
 export const getStripeRepo = (): Nullable<BaseStripeRepo> => {
+  if (isPersonalUse()) {
+    return null;
+  }
+
   return isEnterprise() ? null : new CloudStripeRepo();
 };
 
 export const getTenantRepo = (): Nullable<BaseTenantRepo> => {
+  if (isPersonalUse()) {
+    return null;
+  }
+
   return isEnterprise() ? null : new CloudTenantRepo();
 };
 
@@ -147,10 +167,18 @@ export const getEnterpriseRepo = (): Nullable<EnterpriseRepo> => {
 };
 
 export const getAuthRepo = (): BaseAuthRepo => {
+  if (isPersonalUse()) {
+    return new PersonalAuthRepo();
+  }
+
   return isEnterprise() ? new EnterpriseAuthRepo() : new CloudAuthRepo();
 };
 
 export const getUserRepo = (): BaseUserRepo => {
+  if (isPersonalUse()) {
+    return new LocalUserRepo();
+  }
+
   if (isEnterprise()) {
     return new EnterpriseUserRepo();
   }
@@ -179,6 +207,10 @@ export const getAppTargetRepo = (): BaseAppTargetRepo => {
 };
 
 export const getTermRepo = (): BaseTermRepo => {
+  if (isPersonalUse()) {
+    return new LocalTermRepo();
+  }
+
   if (isEnterprise()) {
     return new EnterpriseTermRepo();
   }
@@ -194,6 +226,10 @@ export const getApiKeyRepo = (): BaseApiKeyRepo => {
 };
 
 export const getToneRepo = (): BaseToneRepo => {
+  if (isPersonalUse()) {
+    return new LocalToneRepo();
+  }
+
   if (isEnterprise()) {
     return new EnterpriseToneRepo();
   }

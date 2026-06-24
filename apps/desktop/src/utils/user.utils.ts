@@ -31,7 +31,10 @@ import {
   KEYBOARD_LAYOUT_LANGUAGE,
   PRIMARY_LANGUAGE_SENTINEL,
 } from "./language.utils";
-import { getEffectivePlan, getMemberExceedsLimitByState } from "./member.utils";
+import {
+  getIsVoquillCloudUser,
+  getMemberExceedsLimitByState,
+} from "./member.utils";
 
 export const LOCAL_USER_ID = "local-user-id";
 
@@ -54,8 +57,7 @@ export const getIsDictationUnlocked = (state: AppState): boolean => {
 };
 
 export const getHasCloudAccess = (state: AppState): boolean => {
-  const effectivePlan = getEffectivePlan(state);
-  return effectivePlan !== "community";
+  return getIsVoquillCloudUser(state);
 };
 
 const resolveMode = <T extends string>(

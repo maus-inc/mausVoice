@@ -13,6 +13,11 @@ import { BehaviorSubject } from "rxjs";
 import { AuthUser } from "../types/auth.types";
 import { getEffectiveAuth } from "../utils/auth.utils";
 import { invokeEnterprise } from "../utils/enterprise.utils";
+import {
+  PERSONAL_USER_DISPLAY_NAME,
+  PERSONAL_USER_EMAIL,
+  PERSONAL_USER_ID,
+} from "../utils/personal-use.utils";
 import { BaseRepo } from "./base.repo";
 
 export abstract class BaseAuthRepo extends BaseRepo {
@@ -111,6 +116,63 @@ export class CloudAuthRepo extends BaseAuthRepo {
       (firebaseUser) => callback(this.toAuthUser(firebaseUser)),
       (error) => onError(error),
     );
+  }
+}
+
+const personalAuthUser: AuthUser = {
+  uid: PERSONAL_USER_ID,
+  email: PERSONAL_USER_EMAIL,
+  displayName: PERSONAL_USER_DISPLAY_NAME,
+  providers: ["personal"],
+};
+
+export class PersonalAuthRepo extends BaseAuthRepo {
+  async signUpWithEmail(): Promise<void> {
+    // noop
+  }
+
+  async sendEmailVerificationForCurrentUser(): Promise<void> {
+    // noop
+  }
+
+  async signOut(): Promise<void> {
+    // noop
+  }
+
+  async signInWithEmail(): Promise<void> {
+    // noop
+  }
+
+  async sendPasswordResetRequest(): Promise<void> {
+    // noop
+  }
+
+  async signInWithGoogleTokens(): Promise<void> {
+    // noop
+  }
+
+  async signInWithSsoTokens(): Promise<void> {
+    // noop
+  }
+
+  getCurrentUser(): AuthUser {
+    return personalAuthUser;
+  }
+
+  async deleteMyAccount(): Promise<void> {
+    // noop
+  }
+
+  async refreshTokens(): Promise<void> {
+    // noop
+  }
+
+  onAuthStateChanged(
+    callback: (user: AuthUser | null) => void,
+    _onError: (error: Error) => void,
+  ): () => void {
+    callback(personalAuthUser);
+    return () => undefined;
   }
 }
 

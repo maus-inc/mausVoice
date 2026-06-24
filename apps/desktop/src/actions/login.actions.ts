@@ -12,6 +12,7 @@ import { getEffectiveAuth } from "../utils/auth.utils";
 import { getEnterpriseTarget } from "../utils/enterprise.utils";
 import { isEnterpriseFlavor } from "../utils/env.utils";
 import { validateEmail } from "../utils/login.utils";
+import { isPersonalUseEnabled } from "../utils/personal-use.utils";
 
 const tryInit = async () => {
   const repo = getMemberRepo();
@@ -50,6 +51,15 @@ export const submitSignInWithGoogle = async (): Promise<void> => {
     produceAppState((state) => {
       state.login.errorMessage = "";
     });
+    if (isPersonalUseEnabled()) {
+      await getAuthRepo().signInWithGoogleTokens("", "");
+      await tryInit();
+      produceAppState((state) => {
+        state.login.status = "success";
+      });
+      return;
+    }
+
     await invoke(GOOGLE_AUTH_COMMAND);
   } catch {
     // Timeout or user closed the OAuth window — no error shown, they can retry

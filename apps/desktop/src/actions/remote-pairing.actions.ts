@@ -23,6 +23,14 @@ type RemotePairingInvite = {
   pairingCode: string;
 };
 
+const getCurrentRemoteDevicePlatform = (): RemoteDevicePlatform => {
+  const platform = getPlatform();
+  if (platform === "macos" || platform === "windows") {
+    return platform;
+  }
+  throw new Error("Remote pairing is only supported on macOS and Windows.");
+};
+
 const encodeBase64Url = (value: string): string => {
   const bytes = new TextEncoder().encode(value);
   let binary = "";
@@ -59,7 +67,7 @@ export const buildRemotePairingInvite = (
         status as RemoteReceiverStatus & {
           devicePlatform?: RemoteDevicePlatform;
         }
-      ).devicePlatform ?? (getPlatform() as RemoteDevicePlatform),
+      ).devicePlatform ?? getCurrentRemoteDevicePlatform(),
     receiverAddress: `${status.listenAddress}:${status.port}`,
     pairingCode: status.pairingCode,
   };

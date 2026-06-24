@@ -14,11 +14,6 @@ static STOP_RECORDING_CLIP: &[u8] = include_bytes!(concat!(
     "/assets/audio/stop-recording.wav"
 ));
 
-static ALERT_LINUX_CLIP: &[u8] = include_bytes!(concat!(
-    env!("CARGO_MANIFEST_DIR"),
-    "/assets/audio/alert-linux.wav"
-));
-
 static ALERT_MACOS_CLIP: &[u8] = include_bytes!(concat!(
     env!("CARGO_MANIFEST_DIR"),
     "/assets/audio/alert-macos.wav"
@@ -102,10 +97,6 @@ pub fn play_start_recording_clip() {
 
 pub fn play_stop_recording_clip() {
     play_clip(STOP_RECORDING_CLIP);
-}
-
-pub fn play_alert_linux_clip() {
-    play_clip(ALERT_LINUX_CLIP);
 }
 
 pub fn play_alert_macos_clip() {

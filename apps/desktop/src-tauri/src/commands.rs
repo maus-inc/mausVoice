@@ -332,8 +332,6 @@ pub enum AudioClip {
     StartRecordingClip,
     #[serde(rename = "stop_recording_clip")]
     StopRecordingClip,
-    #[serde(rename = "alert_linux_clip")]
-    AlertLinuxClip,
     #[serde(rename = "alert_macos_clip")]
     AlertMacosClip,
     #[serde(rename = "alert_windows_10_clip")]
@@ -427,6 +425,70 @@ pub async fn user_preferences_get(
     crate::db::preferences_queries::fetch_user_preferences(database.pool(), &args.user_id)
         .await
         .map_err(|err| err.to_string())
+}
+
+fn non_empty_env_value(value: &str) -> Option<String> {
+    let trimmed = value.trim();
+    if trimmed.is_empty() {
+        None
+    } else {
+        Some(trimmed.to_string())
+    }
+}
+
+fn read_env_file_value(path: PathBuf, keys: &[&str]) -> Option<String> {
+    if !path.exists() {
+        return None;
+    }
+
+    let entries = dotenvy::from_path_iter(path).ok()?;
+    for item in entries.flatten() {
+        let (key, value) = item;
+        if keys.iter().any(|candidate| candidate == &key.as_str()) {
+            if let Some(value) = non_empty_env_value(&value) {
+                return Some(value);
+            }
+        }
+    }
+
+    None
+}
+
+fn read_personal_groq_api_key_from_env_file(keys: &[&str]) -> Option<String> {
+    let mut paths = Vec::new();
+
+    if let Ok(exe_path) = std::env::current_exe() {
+        if let Some(exe_dir) = exe_path.parent() {
+            #[cfg(target_os = "macos")]
+            paths.push(exe_dir.join("../Resources/.env.local"));
+
+            #[cfg(not(target_os = "macos"))]
+            paths.push(exe_dir.join(".env.local"));
+        }
+    }
+
+    let manifest_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    if let Some(desktop_dir) = manifest_dir.parent() {
+        paths.push(desktop_dir.join(".env.local"));
+    }
+
+    paths
+        .into_iter()
+        .find_map(|path| read_env_file_value(path, keys))
+}
+
+#[tauri::command]
+#[specta::specta]
+pub fn read_personal_groq_api_key() -> Option<String> {
+    let keys = ["VOQUILL_GROQ_API_KEY", "GROQ_API_KEY", "VITE_GROQ_API_KEY"];
+
+    keys.iter()
+        .find_map(|key| {
+            std::env::var(key)
+                .ok()
+                .and_then(|value| non_empty_env_value(&value))
+        })
+        .or_else(|| read_personal_groq_api_key_from_env_file(&keys))
 }
 
 #[tauri::command]
@@ -1273,7 +1335,6 @@ pub fn play_audio(clip: AudioClip) -> Result<(), String> {
     match clip {
         AudioClip::StartRecordingClip => crate::system::audio_feedback::play_start_recording_clip(),
         AudioClip::StopRecordingClip => crate::system::audio_feedback::play_stop_recording_clip(),
-        AudioClip::AlertLinuxClip => crate::system::audio_feedback::play_alert_linux_clip(),
         AudioClip::AlertMacosClip => crate::system::audio_feedback::play_alert_macos_clip(),
         AudioClip::AlertWindows10Clip => {
             crate::system::audio_feedback::play_alert_windows_10_clip()
@@ -1771,8 +1832,8 @@ pub fn enable_java_access_bridge() -> Result<JavaAccessBridgeStatus, String> {
     const ASSISTIVE_TECH_KEY: &str = "assistive_technologies";
     const JAB_VALUE: &str = "com.sun.java.accessibility.AccessBridge";
 
-    // Resolve the user's home dir. Windows uses USERPROFILE; macOS/Linux use
-    // HOME. The JVM reads `.accessibility.properties` from there on every OS.
+    // Resolve the user's home dir. Windows uses USERPROFILE; macOS uses HOME.
+    // The JVM reads `.accessibility.properties` from there on every OS.
     let home = std::env::var_os("USERPROFILE")
         .or_else(|| std::env::var_os("HOME"))
         .ok_or_else(|| "Cannot resolve user home directory".to_string())?;
@@ -2212,7 +2273,6 @@ pub async fn run_terminal_command(command: String) -> Result<RunTerminalCommandR
 }
 
 ///   - macOS:  ~/Library/Application Support/com.voquill.desktop/enterprise.json
-///   - Linux:  ~/.config/com.voquill.desktop/enterprise.json
 ///   - Windows: C:\Users\<User>\AppData\Roaming\com.voquill.desktop\enterprise.json
 #[tauri::command]
 #[specta::specta]

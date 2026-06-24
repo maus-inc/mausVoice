@@ -185,20 +185,6 @@ jobs:
             os: macos-14
             target: aarch64-apple-darwin
             archive_ext: tar.gz
-          - label: Linux x86_64
-            os: ubuntu-22.04
-            target: x86_64-unknown-linux-gnu
-            archive_ext: tar.gz
-            build_packages: true
-            deb_arch: amd64
-            rpm_arch: x86_64
-          - label: Linux arm64
-            os: ubuntu-22.04-arm
-            target: aarch64-unknown-linux-gnu
-            archive_ext: tar.gz
-            build_packages: true
-            deb_arch: arm64
-            rpm_arch: aarch64
           - label: Windows x86_64
             os: windows-latest
             target: x86_64-pc-windows-msvc
@@ -285,54 +271,6 @@ jobs:
           Remove-Item -Recurse -Force $staging
           Get-ChildItem dist
 
-      - name: Build .deb and .rpm packages
-        if: matrix.build_packages
-        shell: bash
-        env:
-          TARGET: ${{ matrix.target }}
-          DEB_ARCH: ${{ matrix.deb_arch }}
-          RPM_ARCH: ${{ matrix.rpm_arch }}
-        run: |
-          set -euo pipefail
-          sudo apt-get update
-          sudo apt-get install -y ruby ruby-dev rpm build-essential
-          sudo gem install --no-document fpm
-
-          desc="Voquill CLI"
-          if [[ "${BINARY_NAME}" == "voquill-dev" ]]; then
-            desc="Voquill CLI (dev build, targets dev Firebase backend)"
-          fi
-
-          fpm \
-            -s dir \
-            -t deb \
-            -n "${BINARY_NAME}" \
-            -v "${VERSION}" \
-            -a "${DEB_ARCH}" \
-            --description "${desc}" \
-            --license "MIT" \
-            --url "https://voquill.com" \
-            --maintainer "Voquill <hello@voquill.com>" \
-            --deb-no-default-config-files \
-            -p "dist/${BINARY_NAME}_${VERSION}_${DEB_ARCH}.deb" \
-            "cli/target/${TARGET}/release/${BINARY_NAME}=/usr/bin/${BINARY_NAME}"
-
-          fpm \
-            -s dir \
-            -t rpm \
-            -n "${BINARY_NAME}" \
-            -v "${VERSION}" \
-            -a "${RPM_ARCH}" \
-            --description "${desc}" \
-            --license "MIT" \
-            --url "https://voquill.com" \
-            --maintainer "Voquill <hello@voquill.com>" \
-            --rpm-summary "${desc}" \
-            -p "dist/${BINARY_NAME}-${VERSION}-1.${RPM_ARCH}.rpm" \
-            "cli/target/${TARGET}/release/${BINARY_NAME}=/usr/bin/${BINARY_NAME}"
-
-          ls -la dist
-
       - name: Upload assets to release
         shell: bash
         env:
@@ -341,169 +279,10 @@ jobs:
           set -euo pipefail
           cd dist
           shopt -s nullglob
-          for f in *.tar.gz *.zip *.deb *.rpm; do
+          for f in *.tar.gz *.zip; do
             echo "Uploading $f"
             gh release upload "$TAG_NAME" "$f" --clobber
           done
-
-  publish-apt:
-    name: Publish to APT repository
-    needs: [metadata, build]
-    runs-on: ubuntu-latest
-    env:
-      GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-      RELEASE_TAG: ${{ needs.metadata.outputs.tag_name }}
-      RELEASE_ENV: ${{ needs.metadata.outputs.release_env }}
-      BINARY_NAME: ${{ needs.metadata.outputs.binary_name }}
-    steps:
-      - name: Download .deb files from release
-        run: |
-          set -euo pipefail
-          mkdir -p debs
-          gh release download "$RELEASE_TAG" --pattern "*.deb" --dir debs --repo "$GITHUB_REPOSITORY"
-          ls -la debs
-          if [[ -z "$(ls -A debs)" ]]; then
-            echo "No .deb files found in release ${RELEASE_TAG}" >&2
-            exit 1
-          fi
-
-      - name: Clone APT repository
-        run: |
-          set -euo pipefail
-          git clone "https://x-access-token:${{ secrets.PACKAGE_REPO_TOKEN }}@github.com/voquill/apt.git" apt-repo
-
-      - name: Import GPG key
-        env:
-          PACKAGE_GPG_PRIVATE_KEY: ${{ secrets.PACKAGE_GPG_PRIVATE_KEY }}
-        run: |
-          set -euo pipefail
-          echo "${PACKAGE_GPG_PRIVATE_KEY}" | gpg --batch --import
-
-      - name: Install reprepro
-        run: sudo apt-get update && sudo apt-get install -y reprepro
-
-      - name: Add packages to repository
-        run: |
-          set -euo pipefail
-          cd apt-repo
-
-          if [[ "${RELEASE_ENV}" == "prod" ]]; then
-            codename="stable"
-          else
-            codename="dev"
-          fi
-
-          # reprepro rejects any .deb whose arch isn't declared in
-          # conf/distributions, so append arm64 to any Architectures: line
-          # that's missing it before calling includedeb.
-          dist_file="conf/distributions"
-          if [[ -f "${dist_file}" ]]; then
-            sed -i '/^Architectures:/{/\barm64\b/!s/$/ arm64/}' "${dist_file}"
-            cat "${dist_file}"
-          fi
-
-          for deb in ../debs/*.deb; do
-            # Add Section field if missing (required by reprepro)
-            mkdir -p ../repack
-            dpkg-deb -R "${deb}" ../repack/
-            if ! grep -q "^Section:" ../repack/DEBIAN/control; then
-              echo "Section: utils" >> ../repack/DEBIAN/control
-              dpkg-deb -b ../repack "${deb}"
-            fi
-            rm -rf ../repack
-
-            echo "Adding ${deb} to codename '${codename}'"
-            reprepro --basedir . includedeb "${codename}" "${deb}"
-          done
-
-      - name: Push updated repository
-        run: |
-          set -euo pipefail
-          cd apt-repo
-          git config user.name "github-actions[bot]"
-          git config user.email "github-actions[bot]@users.noreply.github.com"
-          git add -A
-          git diff --cached --quiet && { echo "No changes to commit"; exit 0; }
-          git commit -m "Update ${BINARY_NAME} packages from ${RELEASE_TAG}"
-          git push
-
-  publish-rpm:
-    name: Publish to RPM repository
-    needs: [metadata, build]
-    runs-on: ubuntu-latest
-    env:
-      GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-      RELEASE_TAG: ${{ needs.metadata.outputs.tag_name }}
-      RELEASE_ENV: ${{ needs.metadata.outputs.release_env }}
-      BINARY_NAME: ${{ needs.metadata.outputs.binary_name }}
-    steps:
-      - name: Download .rpm files from release
-        run: |
-          set -euo pipefail
-          mkdir -p rpms
-          gh release download "$RELEASE_TAG" --pattern "*.rpm" --dir rpms --repo "$GITHUB_REPOSITORY"
-          ls -la rpms
-          if [[ -z "$(ls -A rpms)" ]]; then
-            echo "No .rpm files found in release ${RELEASE_TAG}" >&2
-            exit 1
-          fi
-
-      - name: Clone RPM repository
-        run: |
-          set -euo pipefail
-          git clone "https://x-access-token:${{ secrets.PACKAGE_REPO_TOKEN }}@github.com/voquill/rpm.git" rpm-repo
-
-      - name: Import GPG key
-        env:
-          PACKAGE_GPG_PRIVATE_KEY: ${{ secrets.PACKAGE_GPG_PRIVATE_KEY }}
-        run: |
-          set -euo pipefail
-          echo "${PACKAGE_GPG_PRIVATE_KEY}" | gpg --batch --import
-
-      - name: Install createrepo and rpm tools
-        run: sudo apt-get update && sudo apt-get install -y createrepo-c rpm
-
-      - name: Add packages to repository
-        run: |
-          set -euo pipefail
-          cd rpm-repo
-
-          if [[ "${RELEASE_ENV}" == "prod" ]]; then
-            channel="stable"
-          else
-            channel="dev"
-          fi
-
-          GPG_KEY_ID="$(gpg --list-keys --with-colons 2>/dev/null | awk -F: '/^pub/{print $5}' | head -1)"
-          echo "%_gpg_name ${GPG_KEY_ID}" > ~/.rpmmacros
-          echo "%__gpg /usr/bin/gpg" >> ~/.rpmmacros
-
-          for rpm in ../rpms/*.rpm; do
-            arch="$(rpm -qp --queryformat '%{ARCH}' "${rpm}")"
-            mkdir -p "packages/${channel}/${arch}"
-            cp "${rpm}" "packages/${channel}/${arch}/"
-            dest="packages/${channel}/${arch}/$(basename "${rpm}")"
-            rpmsign --addsign "${dest}"
-          done
-
-          # Match desktop's layout: metadata only at channel root.
-          # createrepo scans subdirs recursively and picks up all packages
-          # (both CLI and desktop RPMs coexist by filename — voquill-* vs
-          # voquill-desktop-*). Re-signing repomd.xml with the same key is
-          # idempotent.
-          createrepo_c --update "packages/${channel}"
-          gpg --batch --yes --detach-sign --armor "packages/${channel}/repodata/repomd.xml"
-
-      - name: Push updated repository
-        run: |
-          set -euo pipefail
-          cd rpm-repo
-          git config user.name "github-actions[bot]"
-          git config user.email "github-actions[bot]@users.noreply.github.com"
-          git add -A
-          git diff --cached --quiet && { echo "No changes to commit"; exit 0; }
-          git commit -m "Update ${BINARY_NAME} packages from ${RELEASE_TAG}"
-          git push
 
   publish-brew:
     name: Publish to Homebrew tap
@@ -521,7 +300,6 @@ jobs:
           set -euo pipefail
           mkdir -p tars
           gh release download "$RELEASE_TAG" --pattern "${BINARY_NAME}-*-apple-darwin.tar.gz" --dir tars --repo "$GITHUB_REPOSITORY"
-          gh release download "$RELEASE_TAG" --pattern "${BINARY_NAME}-*-unknown-linux-gnu.tar.gz" --dir tars --repo "$GITHUB_REPOSITORY"
           ls -la tars
 
       - name: Compute sha256s
@@ -533,8 +311,6 @@ jobs:
           }
           echo "darwin_arm64=$(compute_sha aarch64-apple-darwin)" >> "$GITHUB_OUTPUT"
           echo "darwin_x86_64=$(compute_sha x86_64-apple-darwin)" >> "$GITHUB_OUTPUT"
-          echo "linux_arm64=$(compute_sha aarch64-unknown-linux-gnu)" >> "$GITHUB_OUTPUT"
-          echo "linux_x86_64=$(compute_sha x86_64-unknown-linux-gnu)" >> "$GITHUB_OUTPUT"
 
       - name: Clone Homebrew tap repository
         run: |
@@ -545,8 +321,6 @@ jobs:
         env:
           SHA_DARWIN_ARM64: ${{ steps.shas.outputs.darwin_arm64 }}
           SHA_DARWIN_X86_64: ${{ steps.shas.outputs.darwin_x86_64 }}
-          SHA_LINUX_ARM64: ${{ steps.shas.outputs.linux_arm64 }}
-          SHA_LINUX_X86_64: ${{ steps.shas.outputs.linux_x86_64 }}
         run: |
           set -euo pipefail
           cd brew-tap
@@ -576,16 +350,6 @@ jobs:
               else
                 url "${base_url}/${BINARY_NAME}-x86_64-apple-darwin.tar.gz"
                 sha256 "${SHA_DARWIN_X86_64}"
-              end
-            end
-
-            on_linux do
-              if Hardware::CPU.arm?
-                url "${base_url}/${BINARY_NAME}-aarch64-unknown-linux-gnu.tar.gz"
-                sha256 "${SHA_LINUX_ARM64}"
-              else
-                url "${base_url}/${BINARY_NAME}-x86_64-unknown-linux-gnu.tar.gz"
-                sha256 "${SHA_LINUX_X86_64}"
               end
             end
 

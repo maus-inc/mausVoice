@@ -35,14 +35,6 @@ jobs:
             node_platform: win32
             bundle_dir: D:\cargo\release\bundle
             require_gpu_sidecar: false
-          - label: Linux
-            os: ubuntu-22.04
-            args: "--bundles deb"
-            rust_targets: ""
-            tauri_platform: linux
-            node_platform: linux
-            bundle_dir: apps/desktop/src-tauri/target/release/bundle
-            require_gpu_sidecar: false
     steps:
       - name: Checkout source
         uses: actions/checkout@v4
@@ -85,11 +77,6 @@ jobs:
         run: |
           echo "CARGO_TARGET_DIR=D:\cargo" >> $env:GITHUB_ENV
 
-      - name: Set sidecar build environment (Linux)
-        if: matrix.os == 'ubuntu-22.04'
-        run: |
-          echo "CMAKE_TOOLCHAIN_FILE=${GITHUB_WORKSPACE}/packages/rust_transcription/cmake/linux-ci-toolchain.cmake" >> "$GITHUB_ENV"
-
       - name: Set sidecar build environment (macOS)
         if: matrix.os == 'macos-14'
         run: |
@@ -100,11 +87,6 @@ jobs:
         shell: pwsh
         run: |
           echo "CMAKE_TOOLCHAIN_FILE=$env:GITHUB_WORKSPACE\packages\rust_transcription\cmake\windows-ci-toolchain.cmake" >> $env:GITHUB_ENV
-
-      - name: Install system dependencies (Linux)
-        if: matrix.os == 'ubuntu-22.04'
-        run: |
-          ./.github/scripts/install-desktop-linux-deps.sh
 
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
@@ -122,7 +104,6 @@ jobs:
           VOQUILL_REQUIRE_GPU_SIDECAR: ${{ matrix.require_gpu_sidecar && 'true' || 'false' }}
           MACOSX_DEPLOYMENT_TARGET: "13.3"
           CMAKE_OSX_DEPLOYMENT_TARGET: "13.3"
-          APPIMAGE_EXTRACT_AND_RUN: "1"
           # Throwaway signing key for CI build validation only.
           # Real releases use secrets in _release-desktop-impl.yml.
           TAURI_SIGNING_PRIVATE_KEY: "dW50cnVzdGVkIGNvbW1lbnQ6IHJzaWduIGVuY3J5cHRlZCBzZWNyZXQga2V5ClJXUlRZMEl5OVRKZlAyVDN3dlF1Wm5mbWh1MXYwV3VjRlR2SVhUY2JqdmZUUGdtM1JOMEFBQkFBQUFBQUFBQUFBQUlBQUFBQXp4N2IwQXBxS3lTQnFWeXJuMmpaeGpKdkd5VUhTeit1cklsd3dQVTJvSnkzUktQMVlrQklPQ0duQkVZSStiMEdqTDFaSWJXZW96eTdab0VyaTZMUVNuWlpjSTZTY3NpVXA0bUZVVjh3TldRNHF1Qk1CUFBqcTduS3RMQ3FwMDFQM0VjYTlWdTZQZTQ9Cg=="
@@ -150,7 +131,5 @@ jobs:
             ${{ matrix.bundle_dir }}/**/*.msi
             ${{ matrix.bundle_dir }}/**/*.nsis.zip
             ${{ matrix.bundle_dir }}/**/*.exe
-            ${{ matrix.bundle_dir }}/**/*.deb
-            ${{ matrix.bundle_dir }}/**/*.AppImage
           if-no-files-found: warn
           retention-days: 7

@@ -1,6 +1,6 @@
 import type { Nullable } from "./common.types";
 
-export type RemoteDevicePlatform = "windows" | "macos" | "linux";
+export type RemoteDevicePlatform = "windows" | "macos";
 
 export type RemoteDeviceRole = "sender" | "receiver" | "both";
 

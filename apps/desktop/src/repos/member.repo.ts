@@ -19,6 +19,16 @@ export class CloudMemberRepo extends BaseMemberRepo {
   }
 }
 
+export class LocalMemberRepo extends BaseMemberRepo {
+  async tryInitialize(): Promise<void> {
+    // noop
+  }
+
+  async getMyMember(): Promise<Nullable<Member>> {
+    return null;
+  }
+}
+
 export class EnterpriseMemberRepo extends BaseMemberRepo {
   async tryInitialize(): Promise<void> {
     await invokeEnterprise("member/tryInitialize", {});

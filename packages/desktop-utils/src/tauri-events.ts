@@ -8,8 +8,8 @@
 export const KEYS_HELD_EVENT = "keys_held";
 
 /**
- * Emitted once when the OS compositor bridge fires a registered hotkey action
- * (Linux/Wayland path). The payload carries the action name, not a key combo.
+ * Emitted once when a native bridge fires a registered hotkey action. The
+ * payload carries the action name, not a key combo.
  */
 export const BRIDGE_HOTKEY_TRIGGER_EVENT = "bridge_hotkey_trigger";
 

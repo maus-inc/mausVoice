@@ -29,11 +29,11 @@
 </div>
 </br>
 
-Voquill is an open-source, cross-platform AI voice typing app that lets you dictate into any desktop application, clean the transcript with AI, and keep your personal glossary in sync. The repository contains the desktop and mobile apps, documentation site, enterprise services, CLI, and shared packages.
+Voquill is an open-source AI voice typing app that lets you dictate into any desktop application, clean the transcript with AI, and keep your personal glossary in sync. This fork focuses on the macOS and Windows desktop app, with the shared packages and backend pieces needed to support it.
 
 ## Highlights
 
-- Voice input everywhere: overlay, hotkeys, and system integrations work across macOS, Windows, and Linux.
+- Voice input everywhere: overlay, hotkeys, and system integrations work across macOS and Windows.
 - Choose your engine: run Whisper locally (with optional GPU acceleration) or point to a cloud provider of your choice.
 - AI text cleanup: remove filler words and false starts automatically.
 - Personal dictionary: create glossary terms and replacement rules so recurring names and phrases stay accurate.
