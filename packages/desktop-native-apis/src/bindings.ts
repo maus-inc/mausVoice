@@ -531,6 +531,21 @@ async syncCompositorHotkeys(bindings: CompositorBinding[]) : Promise<Result<null
 async resetKeyListenerState() : Promise<void> {
     await TAURI_INVOKE("reset_key_listener_state");
 },
+async getKeyListenerHealth() : Promise<string> {
+    return await TAURI_INVOKE("get_key_listener_health");
+},
+/**
+ * Manual, user-triggered retry. Rust owns automatic recovery; this just restarts the listener
+ * (interrupting any slow-retry backoff) for when the user wants to retry immediately.
+ */
+async retryKeyListener() : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("retry_key_listener") };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
 async playAudio(clip: AudioClip) : Promise<Result<null, string>> {
     try {
     return { status: "ok", data: await TAURI_INVOKE("play_audio", { clip }) };
@@ -627,7 +642,6 @@ async checkFocusedPasteTarget() : Promise<Result<PasteTargetState, string>> {
 },
 /**
  * - macOS:  ~/Library/Application Support/com.voquill.desktop/enterprise.json
- * - Linux:  ~/.config/com.voquill.desktop/enterprise.json
  * - Windows: C:\Users\<User>\AppData\Roaming\com.voquill.desktop\enterprise.json
  */
 async readEnterpriseTarget() : Promise<Result<[string, string | null], string>> {
@@ -947,7 +961,7 @@ bundleId?: string | null }
 export type AppProcessMatch = { pid: number; exePath: string | null; appName: string | null; windowTitle: string | null }
 export type AppTarget = { id: string; name: string; createdAt: string; toneId: string | null; iconPath: string | null; pasteKeybind?: string | null; insertionMethod?: string | null; typingSpeedMs?: number | null }
 export type AppTargetUpsertArgs = { id: string; name: string; toneId?: string | null; iconPath?: string | null; pasteKeybind?: string | null; insertionMethod?: string | null; typingSpeedMs?: number | null }
-export type AudioClip = "start_recording_clip" | "stop_recording_clip" | "alert_linux_clip" | "alert_macos_clip" | "alert_windows_10_clip" | "alert_windows_11_clip"
+export type AudioClip = "start_recording_clip" | "stop_recording_clip" | "alert_macos_clip" | "alert_windows_10_clip" | "alert_windows_11_clip"
 export type ChatMessage = { id: string; conversationId: string; role: string; content: string; createdAt: number; metadata: string | null }
 export type CompositorBinding = { actionName: string; keys: string[] }
 export type Conversation = { id: string; title: string; createdAt: number; updatedAt: number }

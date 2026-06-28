@@ -95,3 +95,9 @@ unexpected_cfgs = { level = "warn", check-cfg = ["cfg(feature, values(\"cargo-cl
 
 [patch.crates-io]
 block = { path = "../../../patches/block-0.1.6" }
+
+# Local fork of rdev that re-enables the macOS event tap when the OS disables it
+# (kCGEventTapDisabledByTimeout) — upstream drops that event and the tap goes dead. See
+# patches/rdev/src/macos/grab.rs.
+[patch."https://github.com/josiahsrc/rdev"]
+rdev = { path = "../../../patches/rdev" }

@@ -1,7 +1,7 @@
 use crate::platform::keyboard::{
-    debug_keys_enabled, key_raw_code, key_to_label, run_listen_loop, send_event_to_tcp,
-    setup_listener_process, update_grab_hotkey_state, GrabDecision, GrabHotkeyState,
-    KeyboardEventPayload, WireEventKind,
+    debug_keys_enabled, key_raw_code, key_to_label, run_listen_loop, send_control,
+    send_event_to_tcp, setup_listener_process, update_grab_hotkey_state, ControlState,
+    GrabDecision, GrabHotkeyState, KeyboardEventPayload, WireEventKind,
 };
 use rdev::{Event, EventType};
 use std::cell::RefCell;
@@ -126,9 +126,11 @@ pub fn run_listener_process() -> Result<(), String> {
         Ok(()) => return Ok(()),
         Err(grab_err) => {
             eprintln!("rdev::grab() failed ({grab_err:?}), falling back to rdev::listen()");
+            send_control(&ctx.writer, ControlState::GrabFailed);
         }
     }
 
+    send_control(&ctx.writer, ControlState::ListenFallback);
     run_listen_loop(ctx.writer, scan_code)
 }
 

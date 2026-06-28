@@ -10,10 +10,24 @@ export class ActivationController {
   private toggleInProgress = false;
   private onActivateRef: (() => void) | null = null;
   private onDeactivateRef: (() => void) | null = null;
+  private readonly holdToTalk: boolean;
+  // Serializes activate/deactivate side effects. The dictation callbacks are async at runtime
+  // (start/stopRecording), so a quick hold-to-talk press+release could otherwise fire
+  // stopRecording while startRecording is still initializing, clearing the session out from
+  // under the resuming start. Chaining through a promise guarantees a deactivate runs only
+  // after its preceding activate has fully settled. (The callbacks stay typed `() => void` to
+  // avoid a circular-inference chain in the consumer; `then` still awaits the thenable they
+  // return at runtime.)
+  private opChain: Promise<void> = Promise.resolve();
 
-  constructor(onActivate: () => void, onDeactivate: () => void) {
+  constructor(
+    onActivate: () => void,
+    onDeactivate: () => void,
+    holdToTalk = false,
+  ) {
     this.onActivateRef = onActivate;
     this.onDeactivateRef = onDeactivate;
+    this.holdToTalk = holdToTalk;
   }
 
   setCallbacks(onActivate: () => void, onDeactivate: () => void): void {
@@ -44,13 +58,20 @@ export class ActivationController {
     }
   }
 
+  // Run a side effect after all previously queued ones settle. Prior failures are isolated
+  // so one rejected callback cannot stall the chain.
+  private runSerialized(op: (() => void | Promise<void>) | null): void {
+    if (!op) return;
+    this.opChain = this.opChain.catch(() => {}).then(() => op());
+  }
+
   private doActivate(timestamp: number): void {
     if (this._isActive) return;
 
     this.clearPendingDeactivation();
     this._isActive = true;
     this.pressTimestamp = timestamp;
-    this.onActivateRef?.();
+    this.runSerialized(this.onActivateRef);
   }
 
   private doDeactivate(): void {
@@ -63,7 +84,7 @@ export class ActivationController {
     this.pressTimestamp = null;
 
     if (wasActive) {
-      this.onDeactivateRef?.();
+      this.runSerialized(this.onDeactivateRef);
     }
   }
 
@@ -87,6 +108,13 @@ export class ActivationController {
     this.lastReleaseTimestamp = Date.now();
 
     if (!this._isActive) return;
+
+    // Pure hold-to-talk: releasing the key always stops, regardless of how long it was held.
+    // No tap-to-lock — the key being down is the entire "recording" state.
+    if (this.holdToTalk) {
+      this.doDeactivate();
+      return;
+    }
 
     const now = Date.now();
     const pressedAt = this.pressTimestamp ?? now;

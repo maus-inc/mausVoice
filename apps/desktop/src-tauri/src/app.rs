@@ -9,6 +9,9 @@ fn handle_run_event(app_handle: &tauri::AppHandle, event: RunEvent) {
     match &event {
         RunEvent::ExitRequested { .. } => {
             let _ = app_handle.save_window_state(StateFlags::SIZE | StateFlags::POSITION);
+            if let Err(err) = crate::platform::keyboard::stop_key_listener() {
+                log::error!("Failed to stop keyboard listener on exit: {err}");
+            }
         }
         #[cfg(target_os = "macos")]
         RunEvent::Reopen { .. } => {
@@ -289,6 +292,8 @@ pub fn build() -> tauri::Builder<tauri::Wry> {
             crate::commands::sync_hotkey_combos,
             crate::commands::sync_compositor_hotkeys,
             crate::commands::reset_key_listener_state,
+            crate::commands::get_key_listener_health,
+            crate::commands::retry_key_listener,
             crate::commands::play_audio,
             crate::commands::get_text_field_info,
             crate::commands::get_screen_context,

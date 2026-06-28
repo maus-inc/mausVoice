@@ -1772,6 +1772,20 @@ pub fn reset_key_listener_state() {
 
 #[tauri::command]
 #[specta::specta]
+pub fn get_key_listener_health() -> String {
+    crate::platform::keyboard::current_listener_health()
+}
+
+/// Manual, user-triggered retry. Rust owns automatic recovery; this just restarts the listener
+/// (interrupting any slow-retry backoff) for when the user wants to retry immediately.
+#[tauri::command]
+#[specta::specta]
+pub fn retry_key_listener(app: AppHandle) -> Result<(), String> {
+    crate::platform::keyboard::start_key_listener(&app)
+}
+
+#[tauri::command]
+#[specta::specta]
 pub fn sync_compositor_hotkeys(
     app: AppHandle,
     bindings: Vec<crate::domain::CompositorBinding>,

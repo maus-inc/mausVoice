@@ -139,6 +139,8 @@ export const DictationSideEffects = () => {
       new ActivationController(
         () => startDictationRecording(),
         () => stopDictationRecording(),
+        // Hold-to-talk: dictation records while the hotkey (Fn) is held and stops on release.
+        true,
       ),
     [],
   );

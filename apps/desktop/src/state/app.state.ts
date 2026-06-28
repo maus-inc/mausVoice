@@ -55,6 +55,18 @@ export type SnackbarMode = "info" | "success" | "error";
 export type HotkeyStrategy = "listener" | "bridge";
 export type PasteKeybindSupport = "disabled" | "per-app" | "global";
 
+// Mirrors the Rust `HealthState` (platform::keyboard). Grounded in the child listener's
+// actual grab/listen outcome, not in OS permission state.
+export type KeyboardListenerHealth =
+  | "starting"
+  | "connected"
+  | "healthy_grab"
+  | "grab_failed"
+  | "fallback_starting"
+  | "degraded_listen_fallback"
+  | "failed"
+  | "stopped";
+
 export type StreamingToolCall = {
   toolCallId: string;
   toolName: string;
@@ -144,6 +156,7 @@ export type AppState = {
   overlayCursor: Nullable<Vector2>;
   hotkeyTriggers: Record<string, number>;
   hotkeyStrategy: Nullable<HotkeyStrategy>;
+  keyboardListenerHealth: KeyboardListenerHealth;
   supportsAppDetection: boolean;
   supportsPasteKeybinds: PasteKeybindSupport;
 };
@@ -195,6 +208,7 @@ export const INITIAL_APP_STATE: AppState = {
   overlayCursor: null,
   hotkeyTriggers: {},
   hotkeyStrategy: null,
+  keyboardListenerHealth: "stopped",
   supportsAppDetection: true,
   supportsPasteKeybinds: "disabled",
   pillConversationId: null,

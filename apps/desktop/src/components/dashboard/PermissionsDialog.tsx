@@ -16,6 +16,7 @@ import {
   Stack,
   Typography,
 } from "@mui/material";
+import { invoke } from "@tauri-apps/api/core";
 import { relaunch } from "@tauri-apps/plugin-process";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { FormattedMessage, useIntl } from "react-intl";
@@ -55,7 +56,28 @@ const getPurposeDescription = (
 const PermissionRow = ({ kind }: { kind: PermissionKind }) => {
   const intl = useIntl();
   const status = useAppStore((state) => state.permissions[kind]);
+  const listenerHealth = useAppStore((state) => state.keyboardListenerHealth);
   const [requesting, setRequesting] = useState(false);
+  const [retryingListener, setRetryingListener] = useState(false);
+
+  // Local-build / drifted-permission case: Accessibility reads as authorized but the listener
+  // child can't install its event tap. Offer a manual retry (Rust owns automatic recovery).
+  const showListenerRetry =
+    kind === "accessibility" &&
+    !!status &&
+    isPermissionAuthorized(status.state) &&
+    listenerHealth === "failed";
+
+  const handleRetryListener = useCallback(async () => {
+    setRetryingListener(true);
+    try {
+      await invoke("retry_key_listener");
+    } catch (error) {
+      console.error("Failed to retry keyboard listener", error);
+    } finally {
+      setRetryingListener(false);
+    }
+  }, []);
 
   const { icon, color, chipColor, chipLabel } = useMemo(() => {
     if (!status) {
@@ -133,6 +155,24 @@ const PermissionRow = ({ kind }: { kind: PermissionKind }) => {
         <Typography variant="body2" color="text.secondary">
           {getPurposeDescription(kind, intl)}
         </Typography>
+        {showListenerRetry && (
+          <Alert
+            severity="warning"
+            sx={{ mt: 1 }}
+            action={
+              <Button
+                color="inherit"
+                size="small"
+                onClick={() => void handleRetryListener()}
+                disabled={retryingListener}
+              >
+                <FormattedMessage defaultMessage="Retry" />
+              </Button>
+            }
+          >
+            <FormattedMessage defaultMessage="Accessibility is authorized but the keyboard listener isn't running. Hotkeys may not work until you retry." />
+          </Alert>
+        )}
       </Stack>
       <Button
         variant="outlined"
