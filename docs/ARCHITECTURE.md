@@ -124,7 +124,7 @@ There is a **single Zustand store** (`src/store/index.ts`) created with `persist
 Actions are the orchestration layer. They call repos, mutate the store via `produceAppState`, and trigger side effects (network, analytics, file IO). Examples:
 
 - `transcribe.actions.ts` — recording + transcription pipeline
-- `personal-use.actions.ts` — personal Groq key setup and default preferences (fork-specific)
+- `personal-use.actions.ts` — personal API key setup (Deepgram + Groq) and default preferences (fork-specific)
 - `login.actions.ts`, `onboarding.actions.ts` — auth and onboarding progression
 - `chat.actions.ts` — assistant/agent conversations
 - `tone.actions.ts`, `dictionary.actions.ts` — writing styles and glossary
@@ -173,7 +173,7 @@ In this personal build the **Local/Personal** implementations are what run; Clou
 | --- | --- |
 | `main.rs` / `lib.rs` | entry point, library exports |
 | `app.rs` | Tauri builder: plugins (sql, log, autostart, updater, single-instance), window setup, **`invoke_handler` command registration** |
-| `commands.rs` | all `#[tauri::command]` functions — the TS↔Rust API (recording, DB CRUD, API-key encryption, accessibility dumps, paste, model/GPU ops, Groq key reading) |
+| `commands.rs` | all `#[tauri::command]` functions — the TS↔Rust API (recording, DB CRUD, API-key encryption, accessibility dumps, paste, model/GPU ops) |
 | `db/mod.rs` | SQLite pool + migration runner |
 | `db/migrations/NNN_*.sql` | sequential schema migrations, run on startup; new ones are added here and registered in `db/mod.rs` |
 | `db/*_queries.rs` | per-domain SQL helpers |
@@ -191,7 +191,7 @@ In this personal build the **Local/Personal** implementations are what run; Clou
 ### Transcription
 Two paths, selected by user preferences:
 - **Local Whisper** — the `rust_transcription` sidecar runs a small REST server (CPU and GPU builds) that the desktop app drives via a transcription *session* (`src/sessions/`). Models (tiny…large, turbo) are downloaded on demand; GPU acceleration uses Metal/Vulkan/DirectX.
-- **Cloud / API providers** — Groq, OpenAI, Azure, Deepgram, ElevenLabs, AssemblyAI, etc., each with a session in `src/sessions/`. The **personal build defaults to Groq** (`whisper-large-v3-turbo`) using your key.
+- **Cloud / API providers** — Deepgram, Groq, OpenAI, Azure, ElevenLabs, AssemblyAI, etc., each with a session in `src/sessions/`. The **personal build defaults to Deepgram** (`nova-3`), which **streams audio over a websocket during recording** so the transcript is ready almost as soon as you stop (`DeepgramTranscriptionSession`). If no Deepgram key is configured it falls back to Groq (`whisper-large-v3-turbo`, batch).
 
 The personal dictionary is injected as the Whisper `initialPrompt` to bias recognition toward your terms.
 
@@ -235,12 +235,12 @@ export const isPersonalUseEnabled = (): boolean =>
 ### Local sign-in — `PersonalAuthRepo` (`src/repos/auth.repo.ts`)
 In personal mode `getAuthRepo()` returns `PersonalAuthRepo`, which signs you in as a hardcoded local user (`local-user-id` / `personal@voquill.local`) with no Firebase account. The rest of the app sees a normal "logged in" user.
 
-### Groq defaults — `src/actions/personal-use.actions.ts`
-- The Groq key is read **only from runtime sources** — env vars or a runtime `.env.local` — via the Rust command `read_personal_groq_api_key` (`commands.rs`). It is never embedded in the build (no `option_env!` fallback), so no key ships inside a distributed binary.
-- `savePersonalGroqApiKey()` (explicit user action in onboarding/Settings) upserts an encrypted `personal-groq` API key and points transcription, post-processing, and agent modes at it.
-- `configurePersonalGroqDefaults()` runs on app load. It is guarded by `isPersonalUseEnabled()` and only **fills missing/legacy** preferences — it never overrides an explicit local/cloud/other-key choice the user already made.
+### Personal API-key defaults — `src/actions/personal-use.actions.ts`
+- Keys are **entered by the user** — the onboarding "Connect your API keys" step (`PersonalCredentialsForm`) and the Settings dialogs collect a Deepgram key (transcription) and a Groq key (post-processing/agent). They are stored as encrypted `personal-deepgram` / `personal-groq` API keys. There is **no** environment/`.env.local` key reading and nothing is baked into the build, so no key ships inside a distributed binary. (At rest, keys are sealed with XChaCha20-Poly1305 in `system/crypto.rs`.)
+- `savePersonalDeepgramApiKey()` upserts the Deepgram key and points **transcription** at it; `savePersonalGroqApiKey()` upserts the Groq key and points **post-processing + agent** at it.
+- `configurePersonalDefaults()` runs on app load, guarded by `isPersonalUseEnabled()`. It reads only the already-stored keys and applies the selection via the pure `resolvePersonalTranscriptionTarget()` (prefer Deepgram, else Groq) — it never overrides an explicit local/cloud/other-key choice the user already made.
 
-Net effect: on first run with a Groq key present, the app auto-configures `whisper-large-v3-turbo` for transcription and `openai/gpt-oss-20b` for post-processing, all against your personal key — while still letting you switch to fully-local Whisper or another provider afterward.
+Net effect: after you enter your keys, transcription uses Deepgram `nova-3` (streaming) and post-processing uses Groq `openai/gpt-oss-20b` — while still letting you switch to fully-local Whisper or another provider afterward. Keys are rotatable in Settings without a rebuild.
 
 ---
 
@@ -253,12 +253,12 @@ Routing is modeled as a small directed graph of nodes (`welcome`, `onboarding`, 
 The ordered page keys (`src/state/onboarding.state.ts`):
 
 ```
-signIn → groqApiKey → chooseTranscription → chooseLlm → userDetails
+signIn → personalCredentials → chooseTranscription → chooseLlm → userDetails
 → referralSource → micPerms → a11yPerms → keybindings → micCheck
 → unlockedPro → tutorial
 ```
 
-In personal mode the sign-in step auto-advances (local user), and `didSignUpWithAccount` is **not** set, so the flow routes through the Groq-key setup and skips the cloud "Pro trial" path (`unlockedPro` → `setAllModesToCloud`) that would otherwise overwrite your local/Groq choices. In enterprise builds the same screens route to `userDetails`/`routing` instead.
+In personal mode the sign-in step auto-advances (local user) and routes to `personalCredentials` (the Deepgram + Groq key entry), then straight to `userDetails` — skipping `chooseTranscription`/`chooseLlm`. `didSignUpWithAccount` is **not** set, so the flow also skips the cloud "Pro trial" path (`unlockedPro` → `setAllModesToCloud`) that would otherwise overwrite your local/API-key choices. In enterprise builds the same screens route to `userDetails`/`routing` instead.
 
 ---
 
