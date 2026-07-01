@@ -9,7 +9,7 @@ import {
   handleEnterpriseOidcPayload,
   handleGoogleAuthPayload,
 } from "../../actions/login.actions";
-import { configurePersonalGroqDefaults } from "../../actions/personal-use.actions";
+import { configurePersonalDefaults } from "../../actions/personal-use.actions";
 import { refreshMember } from "../../actions/member.actions";
 import { syncAutoLaunchSetting } from "../../actions/settings.actions";
 import { loadTones } from "../../actions/tone.actions";
@@ -37,8 +37,8 @@ export const RootSideEffects = () => {
     getLogger().info(`Loading user data (userId=${userId ?? "none"})`);
     await Promise.allSettled([refreshMember(), refreshCurrentUser()]);
     await loadApiKeys();
-    await configurePersonalGroqDefaults().catch((error) => {
-      getLogger().error(`Failed to configure personal Groq defaults: ${error}`);
+    await configurePersonalDefaults().catch((error) => {
+      getLogger().error(`Failed to configure personal defaults: ${error}`);
     });
 
     getLogger().verbose(

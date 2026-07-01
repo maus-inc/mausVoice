@@ -4,7 +4,7 @@ import { PricingPlan } from "../utils/price.utils";
 
 export type OnboardingPageKey =
   | "signIn"
-  | "groqApiKey"
+  | "personalCredentials"
   | "chooseTranscription"
   | "chooseLlm"
   | "userDetails"

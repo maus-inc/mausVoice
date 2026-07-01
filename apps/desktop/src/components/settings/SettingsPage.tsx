@@ -42,7 +42,10 @@ import { openUrl } from "@tauri-apps/plugin-opener";
 import { ChangeEvent, useState } from "react";
 import { FormattedMessage, useIntl } from "react-intl";
 import { showSnackbar } from "../../actions/app.actions";
-import { savePersonalGroqApiKey } from "../../actions/personal-use.actions";
+import {
+  savePersonalDeepgramApiKey,
+  savePersonalGroqApiKey,
+} from "../../actions/personal-use.actions";
 import { setAutoLaunchEnabled } from "../../actions/settings.actions";
 import { loadTones } from "../../actions/tone.actions";
 import { setPreferredLanguage } from "../../actions/user.actions";
@@ -63,6 +66,8 @@ import {
   getMyUser,
 } from "../../utils/user.utils";
 import {
+  PERSONAL_DEEPGRAM_API_KEY_ID,
+  PERSONAL_DEEPGRAM_API_KEY_NAME,
   PERSONAL_GROQ_API_KEY_ID,
   PERSONAL_GROQ_API_KEY_NAME,
 } from "../../utils/personal-use.utils";
@@ -84,6 +89,18 @@ export default function SettingsPage() {
         apiKey.id === PERSONAL_GROQ_API_KEY_ID ||
         (apiKey.provider === "groq" &&
           apiKey.name.trim() === PERSONAL_GROQ_API_KEY_NAME),
+    ),
+  );
+  const [deepgramDialogOpen, setDeepgramDialogOpen] = useState(false);
+  const [deepgramApiKeyInput, setDeepgramApiKeyInput] = useState("");
+  const [deepgramSaving, setDeepgramSaving] = useState(false);
+  const [deepgramError, setDeepgramError] = useState<string | null>(null);
+  const personalDeepgramApiKey = useAppStore((state) =>
+    state.settings.apiKeys.find(
+      (apiKey) =>
+        apiKey.id === PERSONAL_DEEPGRAM_API_KEY_ID ||
+        (apiKey.provider === "deepgram" &&
+          apiKey.name.trim() === PERSONAL_DEEPGRAM_API_KEY_NAME),
     ),
   );
   const [autoLaunchEnabled, autoLaunchStatus] = useAppStore((state) => [
@@ -191,6 +208,42 @@ export default function SettingsPage() {
       setGroqError(message);
     } finally {
       setGroqSaving(false);
+    }
+  };
+
+  const openDeepgramDialog = () => {
+    setDeepgramApiKeyInput("");
+    setDeepgramError(null);
+    setDeepgramDialogOpen(true);
+  };
+
+  const closeDeepgramDialog = () => {
+    if (!deepgramSaving) {
+      setDeepgramDialogOpen(false);
+    }
+  };
+
+  const handleSaveDeepgramApiKey = async () => {
+    const trimmed = deepgramApiKeyInput.trim();
+    if (!trimmed || deepgramSaving) {
+      return;
+    }
+
+    setDeepgramSaving(true);
+    setDeepgramError(null);
+    try {
+      await savePersonalDeepgramApiKey(trimmed);
+      showSnackbar("Deepgram API key saved", { mode: "success" });
+      setDeepgramApiKeyInput("");
+      setDeepgramDialogOpen(false);
+    } catch (error) {
+      const message =
+        error instanceof Error
+          ? error.message
+          : "Failed to save Deepgram API key.";
+      setDeepgramError(message);
+    } finally {
+      setDeepgramSaving(false);
     }
   };
 
@@ -389,9 +442,30 @@ export default function SettingsPage() {
     >
       {dictationLanguageComp}
       <ListTile
+        title={<FormattedMessage defaultMessage="Deepgram API key" />}
+        subtitle={
+          <FormattedMessage defaultMessage="Used for fast streaming transcription." />
+        }
+        leading={<KeyOutlined />}
+        onClick={openDeepgramDialog}
+        trailing={
+          <Chip
+            size="small"
+            color={personalDeepgramApiKey ? "success" : "default"}
+            label={
+              personalDeepgramApiKey ? (
+                <FormattedMessage defaultMessage="Configured" />
+              ) : (
+                <FormattedMessage defaultMessage="Not configured" />
+              )
+            }
+          />
+        }
+      />
+      <ListTile
         title={<FormattedMessage defaultMessage="Groq API key" />}
         subtitle={
-          <FormattedMessage defaultMessage="Used for transcription and AI post processing." />
+          <FormattedMessage defaultMessage="Used for AI post processing." />
         }
         leading={<KeyOutlined />}
         onClick={openGroqDialog}
@@ -486,6 +560,73 @@ export default function SettingsPage() {
         {advanced}
         {!isEnterprise && dangerZone}
       </Stack>
+      <Dialog
+        open={deepgramDialogOpen}
+        onClose={closeDeepgramDialog}
+        maxWidth="xs"
+        fullWidth
+      >
+        <DialogTitle>
+          <FormattedMessage defaultMessage="Deepgram API key" />
+        </DialogTitle>
+        <DialogContent dividers>
+          <Stack spacing={2}>
+            <Typography variant="body2" color="text.secondary">
+              <FormattedMessage defaultMessage="Store your Deepgram API key locally for fast streaming transcription. The key is encrypted before it is saved." />
+            </Typography>
+            {personalDeepgramApiKey?.keySuffix && (
+              <Typography variant="body2" color="text.secondary">
+                <FormattedMessage
+                  defaultMessage="Current key ends with {suffix}."
+                  values={{ suffix: personalDeepgramApiKey.keySuffix }}
+                />
+              </Typography>
+            )}
+            {deepgramError && <Alert severity="error">{deepgramError}</Alert>}
+            <TextField
+              autoFocus
+              fullWidth
+              size="small"
+              type="password"
+              label={<FormattedMessage defaultMessage="API key" />}
+              value={deepgramApiKeyInput}
+              disabled={deepgramSaving}
+              onChange={(event) => setDeepgramApiKeyInput(event.target.value)}
+              autoComplete="off"
+              slotProps={{
+                inputLabel: { shrink: true },
+                htmlInput: {
+                  "data-voquill-ignore": "true",
+                },
+              }}
+            />
+            <Link
+              component="button"
+              variant="body2"
+              onClick={() => openUrl("https://console.deepgram.com/")}
+              sx={{ alignSelf: "flex-start" }}
+            >
+              <FormattedMessage defaultMessage="Open Deepgram API keys" />
+            </Link>
+          </Stack>
+        </DialogContent>
+        <DialogActions>
+          <Button onClick={closeDeepgramDialog} disabled={deepgramSaving}>
+            <FormattedMessage defaultMessage="Cancel" />
+          </Button>
+          <Button
+            variant="contained"
+            onClick={handleSaveDeepgramApiKey}
+            disabled={!deepgramApiKeyInput.trim() || deepgramSaving}
+          >
+            {deepgramSaving ? (
+              <FormattedMessage defaultMessage="Saving..." />
+            ) : (
+              <FormattedMessage defaultMessage="Save" />
+            )}
+          </Button>
+        </DialogActions>
+      </Dialog>
       <Dialog
         open={groqDialogOpen}
         onClose={closeGroqDialog}

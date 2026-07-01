@@ -14,7 +14,10 @@ import { useState } from "react";
 import { FormattedMessage, useIntl } from "react-intl";
 import remoteImage from "../../assets/2-remote.png";
 import { goToOnboardingPage } from "../../actions/onboarding.actions";
-import { savePersonalGroqApiKey } from "../../actions/personal-use.actions";
+import {
+  savePersonalDeepgramApiKey,
+  savePersonalGroqApiKey,
+} from "../../actions/personal-use.actions";
 import { trackButtonClick } from "../../utils/analytics.utils";
 import {
   BackButton,
@@ -22,33 +25,60 @@ import {
   OnboardingFormLayout,
 } from "./OnboardingCommon";
 
-export const GroqApiKeyForm = () => {
+const ConsoleLink = ({
+  url,
+  children,
+}: {
+  url: string;
+  children: React.ReactNode;
+}) => (
+  <Link
+    component="button"
+    variant="body2"
+    onClick={() => openUrl(url)}
+    sx={{ alignSelf: "flex-start" }}
+  >
+    <Stack direction="row" spacing={0.5} alignItems="center">
+      {children}
+      <OpenInNew fontSize="inherit" />
+    </Stack>
+  </Link>
+);
+
+export const PersonalCredentialsForm = () => {
   const intl = useIntl();
-  const [apiKey, setApiKey] = useState("");
+  const [groqKey, setGroqKey] = useState("");
+  const [deepgramKey, setDeepgramKey] = useState("");
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  const trimmedApiKey = apiKey.trim();
-  const canSave = Boolean(trimmedApiKey) && !saving;
+  const trimmedGroq = groqKey.trim();
+  const trimmedDeepgram = deepgramKey.trim();
+  const canSave = Boolean(trimmedGroq || trimmedDeepgram) && !saving;
 
   const handleSubmit = async () => {
     if (!canSave) {
       return;
     }
 
-    trackButtonClick("onboarding_groq_api_key_save");
+    trackButtonClick("onboarding_personal_credentials_save");
     setSaving(true);
     setError(null);
 
     try {
-      await savePersonalGroqApiKey(trimmedApiKey);
+      if (trimmedGroq) {
+        await savePersonalGroqApiKey(trimmedGroq);
+      }
+      if (trimmedDeepgram) {
+        await savePersonalDeepgramApiKey(trimmedDeepgram);
+      }
       goToOnboardingPage("userDetails");
     } catch (err) {
       setError(
         err instanceof Error
           ? err.message
           : intl.formatMessage({
-              defaultMessage: "Unable to save this Groq API key.",
+              defaultMessage: "Unable to save these API keys.",
             }),
       );
     } finally {
@@ -57,8 +87,8 @@ export const GroqApiKeyForm = () => {
   };
 
   const handleSkip = () => {
-    trackButtonClick("onboarding_groq_api_key_skip");
-    goToOnboardingPage("chooseTranscription");
+    trackButtonClick("onboarding_personal_credentials_skip");
+    goToOnboardingPage("userDetails");
   };
 
   const form = (
@@ -84,10 +114,10 @@ export const GroqApiKeyForm = () => {
       <Stack spacing={3}>
         <Box>
           <Typography variant="h4" fontWeight={600} pb={1}>
-            <FormattedMessage defaultMessage="Connect Groq" />
+            <FormattedMessage defaultMessage="Connect your API keys" />
           </Typography>
           <Typography variant="body1" color="text.secondary">
-            <FormattedMessage defaultMessage="Add your Groq API key to use fast cloud transcription and AI post-processing. The key is encrypted and stored locally in this app." />
+            <FormattedMessage defaultMessage="Add your Deepgram key for fast streaming transcription and your Groq key for AI post-processing. Keys are encrypted and stored locally, and you can change them any time in Settings." />
           </Typography>
         </Box>
 
@@ -98,10 +128,9 @@ export const GroqApiKeyForm = () => {
             variant="outlined"
             size="small"
             type="password"
-            label={<FormattedMessage defaultMessage="Groq API key" />}
-            placeholder={intl.formatMessage({ defaultMessage: "gsk_..." })}
-            value={apiKey}
-            onChange={(event) => setApiKey(event.target.value)}
+            label={<FormattedMessage defaultMessage="Deepgram API key" />}
+            value={deepgramKey}
+            onChange={(event) => setDeepgramKey(event.target.value)}
             autoFocus
             autoComplete="off"
             slotProps={{
@@ -111,18 +140,29 @@ export const GroqApiKeyForm = () => {
               },
             }}
           />
+          <ConsoleLink url="https://console.deepgram.com/">
+            <FormattedMessage defaultMessage="Open Deepgram API keys" />
+          </ConsoleLink>
 
-          <Link
-            component="button"
-            variant="body2"
-            onClick={() => openUrl("https://console.groq.com/keys")}
-            sx={{ alignSelf: "flex-start" }}
-          >
-            <Stack direction="row" spacing={0.5} alignItems="center">
-              <FormattedMessage defaultMessage="Open Groq API keys" />
-              <OpenInNew fontSize="inherit" />
-            </Stack>
-          </Link>
+          <TextField
+            variant="outlined"
+            size="small"
+            type="password"
+            label={<FormattedMessage defaultMessage="Groq API key" />}
+            placeholder={intl.formatMessage({ defaultMessage: "gsk_..." })}
+            value={groqKey}
+            onChange={(event) => setGroqKey(event.target.value)}
+            autoComplete="off"
+            slotProps={{
+              inputLabel: { shrink: true },
+              htmlInput: {
+                "data-voquill-ignore": "true",
+              },
+            }}
+          />
+          <ConsoleLink url="https://console.groq.com/keys">
+            <FormattedMessage defaultMessage="Open Groq API keys" />
+          </ConsoleLink>
         </Stack>
       </Stack>
     </OnboardingFormLayout>

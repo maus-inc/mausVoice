@@ -50,7 +50,7 @@ export const SignInForm = () => {
       setAwaitingSignInNavigation(false);
       setEmailDialogOpen(false);
       setDidSignUpWithAccount(!isPersonalUse);
-      goToOnboardingPage(isPersonalUse ? "groqApiKey" : "userDetails");
+      goToOnboardingPage(isPersonalUse ? "personalCredentials" : "userDetails");
     }
   }, [isSignedIn, awaitingSignInNavigation, isPersonalUse]);
 
@@ -63,7 +63,9 @@ export const SignInForm = () => {
     trackButtonClick("onboarding_confirm_local_setup");
     setConfirmLocalSetupOpen(false);
     setDidSignUpWithAccount(false);
-    goToOnboardingPage(isPersonalUse ? "groqApiKey" : "chooseTranscription");
+    goToOnboardingPage(
+      isPersonalUse ? "personalCredentials" : "chooseTranscription",
+    );
   };
 
   const handleCancelLocalSetup = () => {
@@ -85,7 +87,7 @@ export const SignInForm = () => {
   const handleContinue = () => {
     trackButtonClick("onboarding_continue_signed_in");
     setDidSignUpWithAccount(!isPersonalUse);
-    goToOnboardingPage(isPersonalUse ? "groqApiKey" : "userDetails");
+    goToOnboardingPage(isPersonalUse ? "personalCredentials" : "userDetails");
   };
 
   const handleSignOut = async () => {

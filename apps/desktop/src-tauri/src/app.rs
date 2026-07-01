@@ -221,7 +221,6 @@ pub fn build() -> tauri::Builder<tauri::Wry> {
             crate::commands::user_get_one,
             crate::commands::user_set_one,
             crate::commands::user_preferences_get,
-            crate::commands::read_personal_groq_api_key,
             crate::commands::start_google_sign_in,
             crate::commands::start_enterprise_oidc_sign_in,
             crate::commands::user_preferences_set,
