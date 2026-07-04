@@ -806,7 +806,22 @@ fn check_hover(hwnd: HWND, state: &PillState) {
         false
     };
 
-    let new_hovered = in_pill || in_panel;
+  let in_tooltip = if state.tooltip_t.get() > 0.1 && state.style_count.get() > 1 {
+       let pill_area_top = win_rect.top as f64 + oy + (dh - PILL_AREA_HEIGHT);
+       let tooltip_w = state.tooltip_width.get();
+       let y_offset = (1.0 - state.tooltip_t.get()) * 4.0;
+       let tooltip_x = win_rect.left as f64 + ox + (dw - tooltip_w) / 2.0;
+       let tooltip_y = pill_area_top - TOOLTIP_GAP - TOOLTIP_HEIGHT + y_offset;
+
+       cx >= tooltip_x
+            && cx <= tooltip_x + tooltip_w
+            && cy >= tooltip_y
+            && cy <= tooltip_y + TOOLTIP_HEIGHT
+    } else {
+        false
+    };
+
+    let new_hovered = in_pill || in_tooltip || in_panel;
     let was_hovered = state.hovered.get();
 
     if new_hovered != was_hovered {
