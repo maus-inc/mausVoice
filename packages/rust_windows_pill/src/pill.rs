@@ -992,13 +992,24 @@ fn create_edit_overlay(hinstance: HMODULE, main_hwnd: HWND) {
             None,
         ).unwrap();
 
-        // Font: Segoe UI ~14pt
+        // Font: system default UI font (matches the rest of the app), ~14pt.
+        // Falls back to Segoe UI if the stock font can't be queried.
         let mut lf = LOGFONTW::default();
+        let default_font = GetStockObject(DEFAULT_GUI_FONT);
+        let mut lf_out = LOGFONTW::default();
+        let got = GetObjectW(
+            HGDIOBJ(default_font.0),
+            std::mem::size_of::<LOGFONTW>() as i32,
+            Some(&mut lf_out as *mut _ as *mut std::ffi::c_void),
+        );
+        if got > 0 {
+            lf = lf_out;
+        } else {
+           let face: Vec<u16> = "Segoe UI".encode_utf16().collect();
+            lf.lfFaceName[..face.len()].copy_from_slice(&face);
+        }
         lf.lfHeight = -18;
-        lf.lfWeight = 400;
-        let face: Vec<u16> = "Segoe UI".encode_utf16().collect();
-        lf.lfFaceName[..face.len()].copy_from_slice(&face);
-        let font = CreateFontIndirectW(&lf);
+        lf.lfWeight = 400;        let font = CreateFontIndirectW(&lf);
         SendMessageW(edit, WM_SETFONT, Some(WPARAM(font.0 as usize)), Some(LPARAM(1)));
 
         // Set internal margins
