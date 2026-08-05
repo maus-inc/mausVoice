@@ -51,16 +51,6 @@ pub(crate) fn draw_all(gfx: &mut Gfx, state: &PillState) {
         }
 
         draw_cancel_button(gfx, state, ww, wh);
-
-        // Long-press ring indicator
-        if state.long_press_active.get() && !state.balloon_pop_active.get() {
-            draw_long_press_ring(gfx, state, ww, wh);
-        }
-
-        // Balloon pop animation
-        if state.balloon_pop_active.get() {
-            draw_balloon_pop(gfx, state, ww, wh);
-        }
     }
 
     gfx.restore();
@@ -1131,101 +1121,4 @@ fn is_mouse_over(state: &PillState, x: f64, y: f64, w: f64, h: f64) -> bool {
 
 fn lerp(a: f64, b: f64, t: f64) -> f64 {
     a + (b - a) * t
-}
-
-// ── Long-press ring indicator ─────────────────────────────────────
-
-fn draw_long_press_ring(gfx: &Gfx, state: &PillState, ww: f64, wh: f64) {
-    let elapsed = state.long_press_elapsed.get();
-    let progress = (elapsed / LONG_PRESS_DURATION).min(1.0);
-
-    let (pill_x, pill_y, pill_w, pill_h) = pill_position(state, ww, wh);
-    let cx = pill_x + pill_w / 2.0;
-    let cy = pill_y + pill_h / 2.0;
-
-    // Pulsating glow behind the ring
-    let pulse = 0.5 + 0.5 * (elapsed * 3.0).sin();
-    let glow_radius = LONG_PRESS_RING_RADIUS + 4.0 + pulse * 3.0;
-    gfx.fill_circle(cx, cy, glow_radius, [
-        LONG_PRESS_RING_COLOR.0,
-        LONG_PRESS_RING_COLOR.1,
-        LONG_PRESS_RING_COLOR.2,
-        0.15 * progress,
-    ]);
-
-    // Background track (faint full ring)
-    gfx.stroke_circle(cx, cy, LONG_PRESS_RING_RADIUS, [
-        LONG_PRESS_RING_COLOR.0,
-        LONG_PRESS_RING_COLOR.1,
-        LONG_PRESS_RING_COLOR.2,
-        0.12,
-    ], LONG_PRESS_RING_STROKE * 0.5);
-
-    // Progress arc approximation: draw small dots along the arc
-    let dot_count = 24;
-    let filled_dots = (progress * dot_count as f64) as usize;
-    for i in 0..filled_dots.min(dot_count) {
-        let angle = -std::f64::consts::FRAC_PI_2 + (i as f64 / dot_count as f64) * std::f64::consts::TAU;
-        let dx = cx + angle.cos() * LONG_PRESS_RING_RADIUS;
-        let dy = cy + angle.sin() * LONG_PRESS_RING_RADIUS;
-        gfx.fill_circle(dx, dy, LONG_PRESS_RING_STROKE * 0.6, [
-            LONG_PRESS_RING_COLOR.0,
-            LONG_PRESS_RING_COLOR.1,
-            LONG_PRESS_RING_COLOR.2,
-            0.6 + 0.4 * progress,
-        ]);
-    }
-}
-
-// ── Balloon pop animation ─────────────────────────────────────────
-
-fn draw_balloon_pop(gfx: &Gfx, state: &PillState, ww: f64, wh: f64) {
-    let elapsed = state.balloon_pop_elapsed.get();
-    let t = (elapsed / BALLOON_POP_DURATION).min(1.0);
-
-    let (pill_x, pill_y, pill_w, pill_h) = pill_position(state, ww, wh);
-    let cx = pill_x + pill_w / 2.0;
-    let cy = pill_y + pill_h / 2.0;
-
-    // Expanding shockwave ring
-    let ring_t = t.min(0.6) / 0.6;
-    let ring_radius = lerp(LONG_PRESS_RING_RADIUS, LONG_PRESS_RING_RADIUS * 3.5, ring_t);
-    let ring_alpha = (1.0 - ring_t) * 0.7;
-    if ring_alpha > 0.01 {
-        gfx.stroke_circle(cx, cy, ring_radius, [
-            BALLOON_POP_COLOR.0,
-            BALLOON_POP_COLOR.1,
-            BALLOON_POP_COLOR.2,
-            ring_alpha,
-        ], LONG_PRESS_RING_STROKE * (1.0 - ring_t * 0.5));
-    }
-
-    // Second shockwave (slightly delayed)
-    let ring2_t = ((t - 0.1).max(0.0) / 0.5).min(1.0);
-    let ring2_radius = lerp(LONG_PRESS_RING_RADIUS * 0.6, LONG_PRESS_RING_RADIUS * 2.5, ring2_t);
-    let ring2_alpha = (1.0 - ring2_t) * 0.4;
-    if ring2_alpha > 0.01 {
-        gfx.stroke_circle(cx, cy, ring2_radius, [
-            BALLOON_POP_COLOR2.0,
-            BALLOON_POP_COLOR2.1,
-            BALLOON_POP_COLOR2.2,
-            ring2_alpha,
-        ], LONG_PRESS_RING_STROKE * 0.7);
-    }
-
-    // Particles
-    let particles = state.balloon_pop_particles.borrow();
-    for p in particles.iter() {
-        let life_ratio = (p.life / p.max_life).max(0.0);
-        let alpha = life_ratio * life_ratio;
-        let size = p.size * (0.3 + 0.7 * life_ratio);
-        gfx.fill_circle(p.x, p.y, size, [p.color.0, p.color.1, p.color.2, alpha]);
-    }
-
-    // Brief flash at pop moment
-    if t < 0.15 {
-        let flash_alpha = (1.0 - t / 0.15) * 0.3;
-        let flash_radius = lerp(4.0, pill_w * 0.6, t / 0.15);
-        gfx.fill_circle(cx, cy, flash_radius, [1.0, 1.0, 1.0, flash_alpha]);
-    }
 }

@@ -109,7 +109,6 @@ pub enum OutMessage {
     PauseDictation,
     ResumeDictation,
     ToastAction { action: String },
-    PillPinned { pinned: bool },
 }
 
 pub fn send(msg: &OutMessage) {
