@@ -1026,6 +1026,8 @@ fn trigger_balloon_pop(state: &PillState) {
     let cy = pill_area_top + PILL_AREA_HEIGHT / 2.0;
 
     let mut particles = Vec::with_capacity(BALLOON_POP_PARTICLE_COUNT);
+    // Issue #10: invariant — exactly BALLOON_POP_PARTICLE_COUNT particles are spawned.
+    debug_assert!(BALLOON_POP_PARTICLE_COUNT > 0);
     for i in 0..BALLOON_POP_PARTICLE_COUNT {
         let angle = (i as f64 / BALLOON_POP_PARTICLE_COUNT as f64) * std::f64::consts::TAU;
         let speed_jitter = 0.7 + (i as f64 * 0.13).sin().abs() * 0.6;
@@ -1059,9 +1061,12 @@ fn tick_balloon_pop(state: &PillState, dt: f64) {
             p.life -= dt;
             p.x += p.vx * dt;
             p.y += p.vy * dt;
-            p.vy += 120.0 * dt;
-            p.vx *= (-2.0 * dt).exp();
-            p.vy *= (-2.0 * dt).exp();
+            // Apply gravity (downward acceleration)
+            p.vy += PARTICLE_GRAVITY * dt;
+            // Apply exponential drag decay
+            let drag = (PARTICLE_DRAG_COEFFICIENT * dt).exp();
+            p.vx *= drag;
+            p.vy *= drag;
         }
         particles.retain(|p| p.life > 0.0);
     }

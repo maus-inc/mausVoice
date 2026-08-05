@@ -18,6 +18,50 @@ use crate::draw;
 use crate::gfx::{self, Ctx};
 use crate::input;
 use crate::ipc::{self, InMessage, OutMessage, Phase, Visibility};
+
+// ── Safe wrappers around common Cocoa FFI patterns ─────────────────────
+// Issue #4: These reduce the blast radius of unsafe blocks by encapsulating
+// individual msg_send! calls behind safe (well-defined semantics) wrappers.
+
+/// Returns the current global mouse position in screen coordinates (bottom-up).
+unsafe fn mouse_location() -> NSPoint {
+    msg_send![class!(NSEvent), mouseLocation]
+}
+
+/// Returns a window's frame in screen coordinates.
+unsafe fn window_frame(window: id) -> NSRect {
+    msg_send![window, frame]
+}
+
+/// Sets a window's origin (top-left anchor in bottom-up coordinates).
+unsafe fn set_window_origin(window: id, origin: NSPoint) {
+    let _: () = msg_send![window, setFrameOrigin:origin];
+}
+
+/// Returns the frame of a view (in its superview's coordinate system).
+unsafe fn view_bounds(view: id) -> NSRect {
+    msg_send![view, bounds]
+}
+
+/// Converts a point from view coords to window coords.
+unsafe fn convert_point_to_view(view: id, point: NSPoint) -> NSPoint {
+    msg_send![view, convertPoint:point fromView:nil]
+}
+
+/// Returns all screens.
+unsafe fn screens() -> id {
+    msg_send![class!(NSScreen), screens]
+}
+
+/// Returns the visible frame of a screen.
+unsafe fn screen_visible_frame(screen: id) -> NSRect {
+    msg_send![screen, visibleFrame]
+}
+
+/// Returns the frame of a screen (includes title bar, etc.).
+unsafe fn screen_frame(screen: id) -> NSRect {
+    msg_send![screen, frame]
+}
 use crate::state::{FlameTongue, PillState, PopParticle, Rocket, RocketPhase, Spark, WindowMode};
 
 // ── CVDisplayLink & timing ───────────────────────────────────────
@@ -145,7 +189,7 @@ extern "C" fn mouse_down(_this: &Object, _sel: Sel, event: id) {
     with_ctx(|ctx| {
         unsafe {
             let loc: NSPoint = msg_send![event, locationInWindow];
-            let view_loc: NSPoint = msg_send![_this, convertPoint:loc fromView:nil];
+            let view_loc = convert_point_to_view(_this, loc);
             // Start long-press tracking if clicking on the pill body
             if input::is_on_pill_at(&ctx.state, view_loc.x, view_loc.y) {
                 ctx.state.long_press_active.set(true);
@@ -202,7 +246,7 @@ extern "C" fn mouse_up(_this: &Object, _sel: Sel, event: id) {
         if !was_dragging {
             unsafe {
                 let loc: NSPoint = msg_send![event, locationInWindow];
-                let view_loc: NSPoint = msg_send![_this, convertPoint:loc fromView:nil];
+                let view_loc = convert_point_to_view(_this, loc);
                 input::handle_click(&ctx.state, view_loc.x, view_loc.y);
             }
         }
@@ -829,19 +873,14 @@ fn tick_long_press(state: &PillState, dt: f64) {
         return;
     }
 
-    // Cancel if mouse moved too far from start position
+    // Cancel if mouse moved too far from start position (all coords in screen space).
     unsafe {
-        let mouse_loc: NSPoint = msg_send![class!(NSEvent), mouseLocation];
-        // Convert view-relative start position to screen coordinates
-        // macOS: screen Y is bottom-up, window origin is also bottom-up in screen coords
-        let window_origin: NSPoint = {
-            let frame: NSRect = msg_send![ctx.window, frame];
-            frame.origin
-        };
-        let start_screen_x = window_origin.x + state.long_press_start_x.get();
-        let start_screen_y = window_origin.y + state.long_press_start_y.get();
-        let dx = mouse_loc.x - start_screen_x;
-        let dy = mouse_loc.y - start_screen_y;
+        let mouse = mouse_location();
+        let origin = window_frame(ctx.window).origin;
+        let start_screen_x = origin.x + state.long_press_start_x.get();
+        let start_screen_y = origin.y + state.long_press_start_y.get();
+        let dx = mouse.x - start_screen_x;
+        let dy = mouse.y - start_screen_y;
         if (dx * dx + dy * dy) > LONG_PRESS_MOVE_THRESHOLD * LONG_PRESS_MOVE_THRESHOLD {
             state.long_press_active.set(false);
             state.long_press_elapsed.set(0.0);
@@ -871,6 +910,8 @@ fn trigger_balloon_pop(state: &PillState) {
     let cy = pill_area_top + PILL_AREA_HEIGHT / 2.0;
 
     let mut particles = Vec::with_capacity(BALLOON_POP_PARTICLE_COUNT);
+    // Issue #10: invariant — exactly BALLOON_POP_PARTICLE_COUNT particles are spawned.
+    debug_assert!(BALLOON_POP_PARTICLE_COUNT > 0);
     for i in 0..BALLOON_POP_PARTICLE_COUNT {
         let angle = (i as f64 / BALLOON_POP_PARTICLE_COUNT as f64) * std::f64::consts::TAU;
         let speed_jitter = 0.7 + (i as f64 * 0.13).sin().abs() * 0.6;
@@ -904,9 +945,12 @@ fn tick_balloon_pop(state: &PillState, dt: f64) {
             p.life -= dt;
             p.x += p.vx * dt;
             p.y += p.vy * dt;
-            p.vy += 120.0 * dt;
-            p.vx *= (-2.0 * dt).exp();
-            p.vy *= (-2.0 * dt).exp();
+            // Apply gravity (downward acceleration)
+            p.vy += PARTICLE_GRAVITY * dt;
+            // Apply exponential drag decay
+            let drag = (PARTICLE_DRAG_COEFFICIENT * dt).exp();
+            p.vx *= drag;
+            p.vy *= drag;
         }
         particles.retain(|p| p.life > 0.0);
     }
@@ -961,11 +1005,11 @@ fn spring_px(value: &Cell<f64>, velocity: &Cell<f64>, target: f64, stiffness: f6
 
 fn reposition_window(window: id, state: &PillState) {
     unsafe {
-        let mouse_loc: NSPoint = msg_send![class!(NSEvent), mouseLocation];
-        let screens: id = msg_send![class!(NSScreen), screens];
+        let mouse_loc = mouse_location();
+        let screens = screens();
         let count: usize = msg_send![screens, count];
 
-        let win_frame: NSRect = msg_send![window, frame];
+        let win_frame = window_frame(window);
         let win_w = win_frame.size.width;
         let win_h = win_frame.size.height;
 
@@ -983,7 +1027,7 @@ fn reposition_window(window: id, state: &PillState) {
                 && mouse_loc.y >= frame.origin.y
                 && mouse_loc.y < frame.origin.y + frame.size.height
             {
-                let visible: NSRect = msg_send![screen, visibleFrame];
+                let visible = screen_visible_frame(screen);
 
                 if state.dragging.get() {
                     // Drag mode: center the window on the cursor position
@@ -1009,13 +1053,10 @@ fn reposition_window(window: id, state: &PillState) {
         }
 
         if found {
-            let current_origin: NSPoint = {
-                let f: NSRect = msg_send![window, frame];
-                f.origin
-            };
+            let current_origin = window_frame(window).origin;
             if (current_origin.x - target_x).abs() > 1.0 || (current_origin.y - target_y).abs() > 1.0 {
                 let origin = NSPoint::new(target_x, target_y);
-                let _: () = msg_send![window, setFrameOrigin:origin];
+                set_window_origin(window, origin);
             }
         }
     }

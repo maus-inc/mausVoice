@@ -8,13 +8,19 @@ use std::io::{BufRead, BufReader, BufWriter, ErrorKind, Write};
 use std::net::{TcpListener, TcpStream};
 use std::process::{Child, ChildStdin, Command, Stdio};
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
-use std::sync::{Arc, Mutex, OnceLock};
+use std::sync::{Arc, Mutex, MutexGuard, OnceLock};
 use std::thread::{self, JoinHandle};
 use std::time::{Duration, Instant, SystemTime};
 use tauri::{AppHandle, Emitter, EventTarget};
 
 use serde::{Deserialize, Serialize};
 use strum::IntoEnumIterator;
+
+/// Helper to acquire a mutex lock, recovering from poison errors.
+/// Repeated pattern throughout this file — centralized to reduce noise.
+fn lock<T>(mutex: &Mutex<T>) -> MutexGuard<'_, T> {
+    mutex.lock()
+}
 
 #[cfg(target_os = "linux")]
 pub use super::linux::keyboard::run_listener_process;
@@ -55,10 +61,7 @@ impl KeyEventEmitter {
 
     fn update_pressed_keys(&self, key: RdevKey, is_pressed: bool) {
         let key_label = key_to_label(key);
-        let mut guard = self
-            .pressed_keys
-            .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        let mut guard = lock(&self.pressed_keys);
 
         let changed = if is_pressed {
             guard.insert(key_label.clone())
@@ -75,10 +78,7 @@ impl KeyEventEmitter {
     }
 
     fn reset(&self) {
-        let mut guard = self
-            .pressed_keys
-            .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        let mut guard = lock(&self.pressed_keys);
         guard.clear();
         drop(guard);
         self.emit(keys_payload(Vec::new()));
@@ -169,8 +169,7 @@ fn listener_app() -> &'static Mutex<Option<AppHandle>> {
 
 fn emit_health(state: HealthState) {
     let guard = listener_app()
-        .lock()
-        .unwrap_or_else(|poisoned| poisoned.into_inner());
+        .lock();
     if let Some(app) = guard.as_ref() {
         let payload = KeyboardListenerHealthPayload {
             state: state.as_str().to_string(),
@@ -192,8 +191,7 @@ fn connection_generation() -> &'static AtomicU64 {
 fn set_health(state: HealthState) {
     let changed = {
         let mut guard = health_state()
-            .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner());
+            .lock();
         if *guard != state {
             log::info!("Keyboard listener health: {:?} -> {state:?}", *guard);
             *guard = state;
@@ -210,7 +208,6 @@ fn set_health(state: HealthState) {
 fn get_health() -> HealthState {
     *health_state()
         .lock()
-        .unwrap_or_else(|poisoned| poisoned.into_inner())
 }
 
 /// Current listener health as a snake-case string, for the `get_key_listener_health` command.
@@ -310,8 +307,7 @@ fn arm_grace_promotion(generation: u64, from: HealthState, to: HealthState) {
         let generation_matches = connection_generation().load(Ordering::SeqCst) == generation;
         let promoted = {
             let mut guard = health_state()
-                .lock()
-                .unwrap_or_else(|poisoned| poisoned.into_inner());
+                .lock();
             if should_promote(generation_matches, *guard, from) {
                 log::info!("Keyboard listener health: {from:?} -> {to:?}");
                 *guard = to;
@@ -343,12 +339,11 @@ fn child_stdin_store() -> &'static Mutex<Option<ChildStdin>> {
 pub fn sync_combos(combos: Vec<Vec<String>>) {
     {
         let mut guard = combo_store()
-            .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner());
+            .lock();
         *guard = combos.clone();
     }
 
-    if let Ok(mut guard) = child_stdin_store().lock() {
+    if let Ok(mut guard) = lock(child_stdin_store()) {
         if let Some(stdin) = guard.as_mut() {
             if let Ok(json) = serde_json::to_string(&combos) {
                 if let Err(err) = writeln!(stdin, "{json}") {
@@ -362,8 +357,7 @@ pub fn sync_combos(combos: Vec<Vec<String>>) {
 
 pub fn reset_pressed_keys() {
     let state = listener_state()
-        .lock()
-        .unwrap_or_else(|poisoned| poisoned.into_inner());
+        .lock();
 
     if let Some(handle) = state.as_ref() {
         handle.emitter.reset();
@@ -379,22 +373,18 @@ fn lifecycle_lock() -> &'static Mutex<()> {
 }
 
 pub fn start_key_listener(app: &AppHandle) -> Result<(), String> {
-    let _lifecycle = lifecycle_lock()
-        .lock()
-        .unwrap_or_else(|poisoned| poisoned.into_inner());
+    let _lifecycle = lock(lifecycle_lock());
 
     stop_listener_locked();
 
     {
         let mut app_guard = listener_app()
-            .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner());
+            .lock();
         *app_guard = Some(app.clone());
     }
 
     let mut state = listener_state()
-        .lock()
-        .unwrap_or_else(|poisoned| poisoned.into_inner());
+        .lock();
 
     log::info!("Starting keyboard listener");
     let emitter = Arc::new(KeyEventEmitter::new(app));
@@ -409,9 +399,7 @@ pub fn start_key_listener(app: &AppHandle) -> Result<(), String> {
 }
 
 pub fn stop_key_listener() -> Result<(), String> {
-    let _lifecycle = lifecycle_lock()
-        .lock()
-        .unwrap_or_else(|poisoned| poisoned.into_inner());
+    let _lifecycle = lock(lifecycle_lock());
     stop_listener_locked();
     Ok(())
 }
@@ -420,8 +408,7 @@ pub fn stop_key_listener() -> Result<(), String> {
 fn stop_listener_locked() {
     let handle = {
         let mut state = listener_state()
-            .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner());
+            .lock();
         state.take()
     };
 
@@ -546,8 +533,7 @@ fn wait_for_connection(
 
 fn listener_child_exited() -> bool {
     let mut guard = child_store()
-        .lock()
-        .unwrap_or_else(|poisoned| poisoned.into_inner());
+        .lock();
     match guard.as_mut() {
         Some(child) => !matches!(child.try_wait(), Ok(None)),
         None => true,
@@ -598,7 +584,10 @@ fn run_listener_thread(
 
         match wait_for_connection(&listener, &running, CONNECT_TIMEOUT) {
             ConnectResult::Connected(stream) => {
-                let generation = connection_generation().fetch_add(1, Ordering::SeqCst);
+                // Issue #12: Relaxed is sufficient — generation is a monotonic ID, not a
+                // synchronisation primitive. The grace timer reads it via SeqCst-compare only
+                // to ensure its view is fresh, which is the right place for ordering.
+                let generation = connection_generation().fetch_add(1, Ordering::Relaxed);
 
                 let outcome = pump_stream(stream, emitter.clone(), generation);
                 emitter.reset();
@@ -663,8 +652,7 @@ fn spawn_listener_child(port: u16) -> Result<Child, String> {
 fn ensure_listener_child(port: u16) -> Result<(), String> {
     let should_spawn = {
         let mut guard = child_store()
-            .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner());
+            .lock();
 
         if let Some(child) = guard.as_mut() {
             match child.try_wait() {
@@ -695,18 +683,16 @@ fn ensure_listener_child(port: u16) -> Result<(), String> {
     let stdin = child.stdin.take();
     {
         let mut stdin_guard = child_stdin_store()
-            .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner());
+            .lock();
         *stdin_guard = stdin;
     }
 
     {
         let combos = combo_store()
             .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner())
             .clone();
         if !combos.is_empty() {
-            if let Ok(mut guard) = child_stdin_store().lock() {
+            if let Ok(mut guard) = lock(child_stdin_store()) {
                 if let Some(stdin) = guard.as_mut() {
                     if let Ok(json) = serde_json::to_string(&combos) {
                         if let Err(err) = writeln!(stdin, "{json}") {
@@ -720,8 +706,7 @@ fn ensure_listener_child(port: u16) -> Result<(), String> {
     }
 
     let mut guard = child_store()
-        .lock()
-        .unwrap_or_else(|poisoned| poisoned.into_inner());
+        .lock();
     *guard = Some(child);
     Ok(())
 }
@@ -729,14 +714,12 @@ fn ensure_listener_child(port: u16) -> Result<(), String> {
 fn stop_listener_child() {
     {
         let mut stdin_guard = child_stdin_store()
-            .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner());
+            .lock();
         *stdin_guard = None;
     }
 
     let mut guard = child_store()
-        .lock()
-        .unwrap_or_else(|poisoned| poisoned.into_inner());
+        .lock();
     if let Some(mut child) = guard.take() {
         // The child may have already self-exited after we dropped its stdin above.
         // Only signal it if it is still running, and treat a kill race as benign.
