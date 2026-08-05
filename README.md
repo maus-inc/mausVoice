@@ -72,3 +72,5 @@ pnpm run test          # tests
 ## License & attribution
 
 This fork inherits mausVoice's **AGPLv3** license. See [`LICENCE`](LICENCE) for the full terms and third-party attributions. All credit for the original application goes to the Voquill authors and contributors. This build is intended strictly for personal, non-commercial use.
+
+**Maintainer:** Owie Emmanuel &lt;owieemmanuel34@gmail.com&gt;

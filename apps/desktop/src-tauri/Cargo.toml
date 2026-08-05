@@ -2,7 +2,7 @@
 name = "mausVoice"
 version = "0.1.0"
 description = "mausVoice — AI voice dictation"
-authors = ["you"]
+authors = ["Owie Emmanuel <owieemmanuel34@gmail.com>"]
 edition = "2021"
 default-run = "mausVoice"
 
@@ -73,6 +73,14 @@ core-foundation-sys = "0.8"
 block = "0.1"
 arboard = "3"
 rust_macos_pill = { path = "../../../packages/rust_macos_pill" }
+
+[target.'cfg(target_os = "linux")'.dependencies]
+arboard = "3"
+enigo = "0.1"
+gtk = "0.18"
+libpulse-binding = "2"
+libpulse-simple-binding = "2"
+x11 = { version = "2", features = ["xlib"] }
 
 [target.'cfg(target_os = "windows")'.dependencies]
 enigo = "0.1"

@@ -19,7 +19,7 @@ use strum::IntoEnumIterator;
 /// Helper to acquire a mutex lock, recovering from poison errors.
 /// Repeated pattern throughout this file — centralized to reduce noise.
 fn lock<T>(mutex: &Mutex<T>) -> MutexGuard<'_, T> {
-    mutex.lock()
+    mutex.lock().expect("mutex poisoned")
 }
 
 #[cfg(target_os = "linux")]
