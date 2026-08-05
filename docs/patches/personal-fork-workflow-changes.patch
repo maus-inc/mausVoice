@@ -1,0 +1,823 @@
+diff --git a/.github/workflows/_release-desktop-impl.yml b/.github/workflows/_release-desktop-impl.yml
+index b685c568..77478536 100644
+--- a/.github/workflows/_release-desktop-impl.yml
++++ b/.github/workflows/_release-desktop-impl.yml
+@@ -289,15 +289,6 @@ jobs:
+             node_platform: win32
+             artifact_name: desktop-windows
+             require_gpu_sidecar: true
+-
+-          - label: Linux
+-            os: ubuntu-22.04
+-            args: ""
+-            rust_targets: ""
+-            tauri_platform: linux
+-            node_platform: linux
+-            artifact_name: desktop-linux
+-            require_gpu_sidecar: true
+     env:
+       RELEASE_VERSION: ${{ needs.metadata.outputs.version }}
+       RELEASE_ENV: ${{ needs.metadata.outputs.release_env }}
+@@ -366,34 +357,6 @@ jobs:
+         run: |
+           echo "CMAKE_TOOLCHAIN_FILE=$env:GITHUB_WORKSPACE\packages\rust_transcription\cmake\windows-ci-toolchain.cmake" >> $env:GITHUB_ENV
+ 
+-      - name: Install system dependencies (Linux)
+-        if: matrix.os == 'ubuntu-22.04'
+-        shell: bash
+-        run: |
+-          ./.github/scripts/install-desktop-linux-deps.sh
+-
+-      - name: Install Vulkan SDK (Linux)
+-        if: matrix.os == 'ubuntu-22.04'
+-        shell: bash
+-        run: |
+-          set -euo pipefail
+-          sudo apt-get install -y libvulkan1 libvulkan-dev vulkan-tools
+-
+-          # Install glslc from LunarG Vulkan SDK
+-          wget -qO - https://packages.lunarg.com/lunarg-signing-key-pub.asc | sudo apt-key add -
+-          sudo wget -qO /etc/apt/sources.list.d/lunarg-vulkan-jammy.list https://packages.lunarg.com/vulkan/lunarg-vulkan-jammy.list
+-          sudo apt-get update
+-          sudo apt-get install -y vulkan-sdk
+-
+-      - name: Set Linux sidecar build environment
+-        if: matrix.os == 'ubuntu-22.04'
+-        shell: bash
+-        run: |
+-          # Use a cmake toolchain file to disable -march=native for broad CPU compatibility.
+-          # NOTE: WHISPER_CMAKE_ARGS is NOT parsed correctly by whisper-rs-sys; individual
+-          # CMAKE_* env vars are required (the build.rs passes them as -D flags to cmake).
+-          echo "CMAKE_TOOLCHAIN_FILE=${GITHUB_WORKSPACE}/packages/rust_transcription/cmake/linux-ci-toolchain.cmake" >> "$GITHUB_ENV"
+-
+       - name: Install dependencies
+         run: pnpm install --frozen-lockfile
+ 
+@@ -579,36 +542,6 @@ jobs:
+           echo "args=${combined_args}" >> "$GITHUB_OUTPUT"
+           echo "config=${config_file}" >> "$GITHUB_OUTPUT"
+ 
+-      - name: Set Linux package and binary names
+-        if: matrix.os == 'ubuntu-22.04'
+-        shell: bash
+-        env:
+-          RELEASE_ENV: ${{ needs.metadata.outputs.release_env }}
+-        run: |
+-          set -euo pipefail
+-          case "${RELEASE_ENV}" in
+-            prod)
+-              config_file="apps/desktop/src-tauri/tauri.prod.conf.json"
+-              pkg_name="voquill-desktop"
+-              ;;
+-            enterprise)
+-              config_file="apps/desktop/src-tauri/tauri.enterprise.conf.json"
+-              pkg_name="voquill-desktop-enterprise"
+-              ;;
+-            enterprise-dev)
+-              config_file="apps/desktop/src-tauri/tauri.enterprise-dev.conf.json"
+-              pkg_name="voquill-desktop-enterprise-dev"
+-              ;;
+-            *)
+-              config_file="apps/desktop/src-tauri/tauri.dev.conf.json"
+-              pkg_name="voquill-desktop-dev"
+-              ;;
+-          esac
+-          tmp=$(mktemp)
+-          jq --arg name "$pkg_name" '.productName = $name | .mainBinaryName = $name' "$config_file" > "$tmp"
+-          mv "$tmp" "$config_file"
+-          echo "Set productName and mainBinaryName to '${pkg_name}' in ${config_file}"
+-
+       - name: Turbo build desktop workspace
+         env:
+           MACOSX_DEPLOYMENT_TARGET: "13.3"
+@@ -625,7 +558,6 @@ jobs:
+           VOQUILL_DESKTOP_PLATFORM: ${{ matrix.node_platform }}
+           MACOSX_DEPLOYMENT_TARGET: "13.3"
+           CMAKE_OSX_DEPLOYMENT_TARGET: "13.3"
+-          APPIMAGE_EXTRACT_AND_RUN: "1"
+           APPLE_TEAM_ID: ${{ env.APPLE_TEAM_ID }}
+           APPLE_SIGNING_IDENTITY: ${{ env.APPLE_SIGNING_IDENTITY }}
+           APPLE_API_KEY: ${{ env.APPLE_API_KEY_ID }}
+@@ -936,159 +868,6 @@ jobs:
+           set -euo pipefail
+           gh release upload "$CHANNEL_TAG" dist/latest.json --clobber
+ 
+-  publish-apt:
+-    name: Publish to APT repository
+-    needs: [metadata, build]
+-    runs-on: ubuntu-latest
+-    if: needs.metadata.outputs.release_env != 'enterprise' && needs.metadata.outputs.release_env != 'enterprise-dev'
+-    permissions:
+-      contents: read
+-    env:
+-      GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+-      RELEASE_TAG: ${{ needs.metadata.outputs.tag_name }}
+-      RELEASE_ENV: ${{ needs.metadata.outputs.release_env }}
+-    steps:
+-      - name: Download .deb from release
+-        run: |
+-          set -euo pipefail
+-          mkdir -p debs
+-          gh release download "$RELEASE_TAG" --pattern "*.deb" --dir debs --repo "$GITHUB_REPOSITORY"
+-          deb_file="$(ls debs/*.deb | head -n 1)"
+-          if [[ -z "${deb_file}" ]]; then
+-            echo "No .deb file found in release ${RELEASE_TAG}" >&2
+-            exit 1
+-          fi
+-          echo "Found .deb: ${deb_file}"
+-
+-          # Add Section field if missing (required by reprepro)
+-          mkdir -p repack
+-          dpkg-deb -R "${deb_file}" repack/
+-          if ! grep -q "^Section:" repack/DEBIAN/control; then
+-            echo "Section: utils" >> repack/DEBIAN/control
+-            dpkg-deb -b repack "${deb_file}"
+-          fi
+-          rm -rf repack
+-
+-          echo "DEB_FILE=${deb_file}" >> "$GITHUB_ENV"
+-
+-      - name: Clone APT repository
+-        run: |
+-          set -euo pipefail
+-          git clone "https://x-access-token:${{ secrets.PACKAGE_REPO_TOKEN }}@github.com/voquill/apt.git" apt-repo
+-
+-      - name: Import GPG key
+-        env:
+-          PACKAGE_GPG_PRIVATE_KEY: ${{ secrets.PACKAGE_GPG_PRIVATE_KEY }}
+-        run: |
+-          set -euo pipefail
+-          echo "${PACKAGE_GPG_PRIVATE_KEY}" | gpg --batch --import
+-
+-      - name: Install reprepro
+-        run: sudo apt-get update && sudo apt-get install -y reprepro
+-
+-      - name: Add package to repository
+-        run: |
+-          set -euo pipefail
+-          cd apt-repo
+-
+-          if [[ "${RELEASE_ENV}" == "prod" ]]; then
+-            codename="stable"
+-          else
+-            codename="dev"
+-          fi
+-
+-          echo "Adding ${DEB_FILE} to codename '${codename}'"
+-          reprepro --basedir . includedeb "${codename}" "../${DEB_FILE}"
+-
+-      - name: Push updated repository
+-        run: |
+-          set -euo pipefail
+-          cd apt-repo
+-          git config user.name "github-actions[bot]"
+-          git config user.email "github-actions[bot]@users.noreply.github.com"
+-          git add -A
+-          git diff --cached --quiet && { echo "No changes to commit"; exit 0; }
+-          git commit -m "Update packages from ${RELEASE_TAG}"
+-          git push
+-
+-  publish-rpm:
+-    name: Publish to RPM repository
+-    needs: [metadata, build]
+-    runs-on: ubuntu-latest
+-    if: needs.metadata.outputs.release_env != 'enterprise' && needs.metadata.outputs.release_env != 'enterprise-dev'
+-    permissions:
+-      contents: read
+-    env:
+-      GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+-      RELEASE_TAG: ${{ needs.metadata.outputs.tag_name }}
+-      RELEASE_ENV: ${{ needs.metadata.outputs.release_env }}
+-    steps:
+-      - name: Download .rpm from release
+-        run: |
+-          set -euo pipefail
+-          mkdir -p rpms
+-          gh release download "$RELEASE_TAG" --pattern "*.rpm" --dir rpms --repo "$GITHUB_REPOSITORY"
+-          rpm_file="$(ls rpms/*.rpm | head -n 1)"
+-          if [[ -z "${rpm_file}" ]]; then
+-            echo "No .rpm file found in release ${RELEASE_TAG}" >&2
+-            exit 1
+-          fi
+-          echo "Found .rpm: ${rpm_file}"
+-          echo "RPM_FILE=${rpm_file}" >> "$GITHUB_ENV"
+-
+-      - name: Clone RPM repository
+-        run: |
+-          set -euo pipefail
+-          git clone "https://x-access-token:${{ secrets.PACKAGE_REPO_TOKEN }}@github.com/voquill/rpm.git" rpm-repo
+-
+-      - name: Import GPG key
+-        env:
+-          PACKAGE_GPG_PRIVATE_KEY: ${{ secrets.PACKAGE_GPG_PRIVATE_KEY }}
+-        run: |
+-          set -euo pipefail
+-          echo "${PACKAGE_GPG_PRIVATE_KEY}" | gpg --batch --import
+-
+-      - name: Install createrepo and rpm tools
+-        run: sudo apt-get update && sudo apt-get install -y createrepo-c rpm
+-
+-      - name: Add package to repository
+-        run: |
+-          set -euo pipefail
+-          cd rpm-repo
+-
+-          if [[ "${RELEASE_ENV}" == "prod" ]]; then
+-            channel="stable"
+-          else
+-            channel="dev"
+-          fi
+-
+-          mkdir -p "packages/${channel}/x86_64"
+-          cp "../${RPM_FILE}" "packages/${channel}/x86_64/"
+-
+-          # Configure and sign the RPM
+-          RPM_COPIED="packages/${channel}/x86_64/$(basename "${RPM_FILE}")"
+-          GPG_KEY_ID="$(gpg --list-keys --with-colons 2>/dev/null | awk -F: '/^pub/{print $5}' | head -1)"
+-          echo "%_gpg_name ${GPG_KEY_ID}" > ~/.rpmmacros
+-          echo "%__gpg /usr/bin/gpg" >> ~/.rpmmacros
+-          rpmsign --addsign "${RPM_COPIED}"
+-
+-          # Generate/update repository metadata
+-          createrepo_c --update "packages/${channel}"
+-
+-          # Sign the repository metadata
+-          gpg --batch --yes --detach-sign --armor "packages/${channel}/repodata/repomd.xml"
+-
+-      - name: Push updated repository
+-        run: |
+-          set -euo pipefail
+-          cd rpm-repo
+-          git config user.name "github-actions[bot]"
+-          git config user.email "github-actions[bot]@users.noreply.github.com"
+-          git add -A
+-          git diff --cached --quiet && { echo "No changes to commit"; exit 0; }
+-          git commit -m "Update packages from ${RELEASE_TAG}"
+-          git push
+-
+   publish-brew:
+     name: Publish to Homebrew tap
+     needs: [metadata, build]
+diff --git a/.github/workflows/build-desktop.yml b/.github/workflows/build-desktop.yml
+index 5f18ffc7..aa8a877d 100644
+--- a/.github/workflows/build-desktop.yml
++++ b/.github/workflows/build-desktop.yml
+@@ -35,14 +35,6 @@ jobs:
+             node_platform: win32
+             bundle_dir: D:\cargo\release\bundle
+             require_gpu_sidecar: false
+-          - label: Linux
+-            os: ubuntu-22.04
+-            args: "--bundles deb"
+-            rust_targets: ""
+-            tauri_platform: linux
+-            node_platform: linux
+-            bundle_dir: apps/desktop/src-tauri/target/release/bundle
+-            require_gpu_sidecar: false
+     steps:
+       - name: Checkout source
+         uses: actions/checkout@v4
+@@ -85,11 +77,6 @@ jobs:
+         run: |
+           echo "CARGO_TARGET_DIR=D:\cargo" >> $env:GITHUB_ENV
+ 
+-      - name: Set sidecar build environment (Linux)
+-        if: matrix.os == 'ubuntu-22.04'
+-        run: |
+-          echo "CMAKE_TOOLCHAIN_FILE=${GITHUB_WORKSPACE}/packages/rust_transcription/cmake/linux-ci-toolchain.cmake" >> "$GITHUB_ENV"
+-
+       - name: Set sidecar build environment (macOS)
+         if: matrix.os == 'macos-14'
+         run: |
+@@ -101,11 +88,6 @@ jobs:
+         run: |
+           echo "CMAKE_TOOLCHAIN_FILE=$env:GITHUB_WORKSPACE\packages\rust_transcription\cmake\windows-ci-toolchain.cmake" >> $env:GITHUB_ENV
+ 
+-      - name: Install system dependencies (Linux)
+-        if: matrix.os == 'ubuntu-22.04'
+-        run: |
+-          ./.github/scripts/install-desktop-linux-deps.sh
+-
+       - name: Install dependencies
+         run: pnpm install --frozen-lockfile
+ 
+@@ -122,7 +104,6 @@ jobs:
+           VOQUILL_REQUIRE_GPU_SIDECAR: ${{ matrix.require_gpu_sidecar && 'true' || 'false' }}
+           MACOSX_DEPLOYMENT_TARGET: "13.3"
+           CMAKE_OSX_DEPLOYMENT_TARGET: "13.3"
+-          APPIMAGE_EXTRACT_AND_RUN: "1"
+           # Throwaway signing key for CI build validation only.
+           # Real releases use secrets in _release-desktop-impl.yml.
+           TAURI_SIGNING_PRIVATE_KEY: "dW50cnVzdGVkIGNvbW1lbnQ6IHJzaWduIGVuY3J5cHRlZCBzZWNyZXQga2V5ClJXUlRZMEl5OVRKZlAyVDN3dlF1Wm5mbWh1MXYwV3VjRlR2SVhUY2JqdmZUUGdtM1JOMEFBQkFBQUFBQUFBQUFBQUlBQUFBQXp4N2IwQXBxS3lTQnFWeXJuMmpaeGpKdkd5VUhTeit1cklsd3dQVTJvSnkzUktQMVlrQklPQ0duQkVZSStiMEdqTDFaSWJXZW96eTdab0VyaTZMUVNuWlpjSTZTY3NpVXA0bUZVVjh3TldRNHF1Qk1CUFBqcTduS3RMQ3FwMDFQM0VjYTlWdTZQZTQ9Cg=="
+@@ -150,7 +131,5 @@ jobs:
+             ${{ matrix.bundle_dir }}/**/*.msi
+             ${{ matrix.bundle_dir }}/**/*.nsis.zip
+             ${{ matrix.bundle_dir }}/**/*.exe
+-            ${{ matrix.bundle_dir }}/**/*.deb
+-            ${{ matrix.bundle_dir }}/**/*.AppImage
+           if-no-files-found: warn
+           retention-days: 7
+diff --git a/.github/workflows/lint-desktop.yml b/.github/workflows/lint-desktop.yml
+index 399a2661..e4a75cf2 100644
+--- a/.github/workflows/lint-desktop.yml
++++ b/.github/workflows/lint-desktop.yml
+@@ -20,8 +20,6 @@ jobs:
+             os: macos-14
+           - label: Windows
+             os: windows-latest
+-          - label: Linux
+-            os: ubuntu-22.04
+     steps:
+       - name: Checkout source
+         uses: actions/checkout@v4
+@@ -42,25 +40,12 @@ jobs:
+         with:
+           workspaces: |
+             apps/desktop/src-tauri -> target
+-      - name: Install system dependencies (Linux)
+-        if: matrix.os == 'ubuntu-22.04'
+-        run: |
+-          sudo apt-get update
+-          if apt-cache show libwebkit2gtk-4.1-dev >/dev/null 2>&1; then
+-            WEBKIT_PKG=libwebkit2gtk-4.1-dev
+-          else
+-            WEBKIT_PKG=libwebkit2gtk-4.0-dev
+-          fi
+-          sudo apt-get install -y \
+-            build-essential pkg-config cmake \
+-            libgtk-3-dev "$WEBKIT_PKG" \
+-            libayatana-appindicator3-dev librsvg2-dev libasound2-dev libxdo-dev
+       - name: Install dependencies
+         run: pnpm install --frozen-lockfile
+       - name: Build dependencies
+         run: pnpm exec turbo run build --filter=desktop^...
+       - name: Lint TypeScript
+-        if: matrix.os == 'ubuntu-22.04'
++        if: matrix.os == 'macos-14'
+         run: pnpm --filter desktop run lint
+       - name: Lint Rust
+         working-directory: apps/desktop/src-tauri
+diff --git a/.github/workflows/release-cli.yml b/.github/workflows/release-cli.yml
+index 5b41d931..87830182 100644
+--- a/.github/workflows/release-cli.yml
++++ b/.github/workflows/release-cli.yml
+@@ -185,20 +185,6 @@ jobs:
+             os: macos-14
+             target: aarch64-apple-darwin
+             archive_ext: tar.gz
+-          - label: Linux x86_64
+-            os: ubuntu-22.04
+-            target: x86_64-unknown-linux-gnu
+-            archive_ext: tar.gz
+-            build_packages: true
+-            deb_arch: amd64
+-            rpm_arch: x86_64
+-          - label: Linux arm64
+-            os: ubuntu-22.04-arm
+-            target: aarch64-unknown-linux-gnu
+-            archive_ext: tar.gz
+-            build_packages: true
+-            deb_arch: arm64
+-            rpm_arch: aarch64
+           - label: Windows x86_64
+             os: windows-latest
+             target: x86_64-pc-windows-msvc
+@@ -285,54 +271,6 @@ jobs:
+           Remove-Item -Recurse -Force $staging
+           Get-ChildItem dist
+ 
+-      - name: Build .deb and .rpm packages
+-        if: matrix.build_packages
+-        shell: bash
+-        env:
+-          TARGET: ${{ matrix.target }}
+-          DEB_ARCH: ${{ matrix.deb_arch }}
+-          RPM_ARCH: ${{ matrix.rpm_arch }}
+-        run: |
+-          set -euo pipefail
+-          sudo apt-get update
+-          sudo apt-get install -y ruby ruby-dev rpm build-essential
+-          sudo gem install --no-document fpm
+-
+-          desc="Voquill CLI"
+-          if [[ "${BINARY_NAME}" == "voquill-dev" ]]; then
+-            desc="Voquill CLI (dev build, targets dev Firebase backend)"
+-          fi
+-
+-          fpm \
+-            -s dir \
+-            -t deb \
+-            -n "${BINARY_NAME}" \
+-            -v "${VERSION}" \
+-            -a "${DEB_ARCH}" \
+-            --description "${desc}" \
+-            --license "MIT" \
+-            --url "https://voquill.com" \
+-            --maintainer "Voquill <hello@voquill.com>" \
+-            --deb-no-default-config-files \
+-            -p "dist/${BINARY_NAME}_${VERSION}_${DEB_ARCH}.deb" \
+-            "cli/target/${TARGET}/release/${BINARY_NAME}=/usr/bin/${BINARY_NAME}"
+-
+-          fpm \
+-            -s dir \
+-            -t rpm \
+-            -n "${BINARY_NAME}" \
+-            -v "${VERSION}" \
+-            -a "${RPM_ARCH}" \
+-            --description "${desc}" \
+-            --license "MIT" \
+-            --url "https://voquill.com" \
+-            --maintainer "Voquill <hello@voquill.com>" \
+-            --rpm-summary "${desc}" \
+-            -p "dist/${BINARY_NAME}-${VERSION}-1.${RPM_ARCH}.rpm" \
+-            "cli/target/${TARGET}/release/${BINARY_NAME}=/usr/bin/${BINARY_NAME}"
+-
+-          ls -la dist
+-
+       - name: Upload assets to release
+         shell: bash
+         env:
+@@ -341,170 +279,11 @@ jobs:
+           set -euo pipefail
+           cd dist
+           shopt -s nullglob
+-          for f in *.tar.gz *.zip *.deb *.rpm; do
++          for f in *.tar.gz *.zip; do
+             echo "Uploading $f"
+             gh release upload "$TAG_NAME" "$f" --clobber
+           done
+ 
+-  publish-apt:
+-    name: Publish to APT repository
+-    needs: [metadata, build]
+-    runs-on: ubuntu-latest
+-    env:
+-      GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+-      RELEASE_TAG: ${{ needs.metadata.outputs.tag_name }}
+-      RELEASE_ENV: ${{ needs.metadata.outputs.release_env }}
+-      BINARY_NAME: ${{ needs.metadata.outputs.binary_name }}
+-    steps:
+-      - name: Download .deb files from release
+-        run: |
+-          set -euo pipefail
+-          mkdir -p debs
+-          gh release download "$RELEASE_TAG" --pattern "*.deb" --dir debs --repo "$GITHUB_REPOSITORY"
+-          ls -la debs
+-          if [[ -z "$(ls -A debs)" ]]; then
+-            echo "No .deb files found in release ${RELEASE_TAG}" >&2
+-            exit 1
+-          fi
+-
+-      - name: Clone APT repository
+-        run: |
+-          set -euo pipefail
+-          git clone "https://x-access-token:${{ secrets.PACKAGE_REPO_TOKEN }}@github.com/voquill/apt.git" apt-repo
+-
+-      - name: Import GPG key
+-        env:
+-          PACKAGE_GPG_PRIVATE_KEY: ${{ secrets.PACKAGE_GPG_PRIVATE_KEY }}
+-        run: |
+-          set -euo pipefail
+-          echo "${PACKAGE_GPG_PRIVATE_KEY}" | gpg --batch --import
+-
+-      - name: Install reprepro
+-        run: sudo apt-get update && sudo apt-get install -y reprepro
+-
+-      - name: Add packages to repository
+-        run: |
+-          set -euo pipefail
+-          cd apt-repo
+-
+-          if [[ "${RELEASE_ENV}" == "prod" ]]; then
+-            codename="stable"
+-          else
+-            codename="dev"
+-          fi
+-
+-          # reprepro rejects any .deb whose arch isn't declared in
+-          # conf/distributions, so append arm64 to any Architectures: line
+-          # that's missing it before calling includedeb.
+-          dist_file="conf/distributions"
+-          if [[ -f "${dist_file}" ]]; then
+-            sed -i '/^Architectures:/{/\barm64\b/!s/$/ arm64/}' "${dist_file}"
+-            cat "${dist_file}"
+-          fi
+-
+-          for deb in ../debs/*.deb; do
+-            # Add Section field if missing (required by reprepro)
+-            mkdir -p ../repack
+-            dpkg-deb -R "${deb}" ../repack/
+-            if ! grep -q "^Section:" ../repack/DEBIAN/control; then
+-              echo "Section: utils" >> ../repack/DEBIAN/control
+-              dpkg-deb -b ../repack "${deb}"
+-            fi
+-            rm -rf ../repack
+-
+-            echo "Adding ${deb} to codename '${codename}'"
+-            reprepro --basedir . includedeb "${codename}" "${deb}"
+-          done
+-
+-      - name: Push updated repository
+-        run: |
+-          set -euo pipefail
+-          cd apt-repo
+-          git config user.name "github-actions[bot]"
+-          git config user.email "github-actions[bot]@users.noreply.github.com"
+-          git add -A
+-          git diff --cached --quiet && { echo "No changes to commit"; exit 0; }
+-          git commit -m "Update ${BINARY_NAME} packages from ${RELEASE_TAG}"
+-          git push
+-
+-  publish-rpm:
+-    name: Publish to RPM repository
+-    needs: [metadata, build]
+-    runs-on: ubuntu-latest
+-    env:
+-      GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+-      RELEASE_TAG: ${{ needs.metadata.outputs.tag_name }}
+-      RELEASE_ENV: ${{ needs.metadata.outputs.release_env }}
+-      BINARY_NAME: ${{ needs.metadata.outputs.binary_name }}
+-    steps:
+-      - name: Download .rpm files from release
+-        run: |
+-          set -euo pipefail
+-          mkdir -p rpms
+-          gh release download "$RELEASE_TAG" --pattern "*.rpm" --dir rpms --repo "$GITHUB_REPOSITORY"
+-          ls -la rpms
+-          if [[ -z "$(ls -A rpms)" ]]; then
+-            echo "No .rpm files found in release ${RELEASE_TAG}" >&2
+-            exit 1
+-          fi
+-
+-      - name: Clone RPM repository
+-        run: |
+-          set -euo pipefail
+-          git clone "https://x-access-token:${{ secrets.PACKAGE_REPO_TOKEN }}@github.com/voquill/rpm.git" rpm-repo
+-
+-      - name: Import GPG key
+-        env:
+-          PACKAGE_GPG_PRIVATE_KEY: ${{ secrets.PACKAGE_GPG_PRIVATE_KEY }}
+-        run: |
+-          set -euo pipefail
+-          echo "${PACKAGE_GPG_PRIVATE_KEY}" | gpg --batch --import
+-
+-      - name: Install createrepo and rpm tools
+-        run: sudo apt-get update && sudo apt-get install -y createrepo-c rpm
+-
+-      - name: Add packages to repository
+-        run: |
+-          set -euo pipefail
+-          cd rpm-repo
+-
+-          if [[ "${RELEASE_ENV}" == "prod" ]]; then
+-            channel="stable"
+-          else
+-            channel="dev"
+-          fi
+-
+-          GPG_KEY_ID="$(gpg --list-keys --with-colons 2>/dev/null | awk -F: '/^pub/{print $5}' | head -1)"
+-          echo "%_gpg_name ${GPG_KEY_ID}" > ~/.rpmmacros
+-          echo "%__gpg /usr/bin/gpg" >> ~/.rpmmacros
+-
+-          for rpm in ../rpms/*.rpm; do
+-            arch="$(rpm -qp --queryformat '%{ARCH}' "${rpm}")"
+-            mkdir -p "packages/${channel}/${arch}"
+-            cp "${rpm}" "packages/${channel}/${arch}/"
+-            dest="packages/${channel}/${arch}/$(basename "${rpm}")"
+-            rpmsign --addsign "${dest}"
+-          done
+-
+-          # Match desktop's layout: metadata only at channel root.
+-          # createrepo scans subdirs recursively and picks up all packages
+-          # (both CLI and desktop RPMs coexist by filename — voquill-* vs
+-          # voquill-desktop-*). Re-signing repomd.xml with the same key is
+-          # idempotent.
+-          createrepo_c --update "packages/${channel}"
+-          gpg --batch --yes --detach-sign --armor "packages/${channel}/repodata/repomd.xml"
+-
+-      - name: Push updated repository
+-        run: |
+-          set -euo pipefail
+-          cd rpm-repo
+-          git config user.name "github-actions[bot]"
+-          git config user.email "github-actions[bot]@users.noreply.github.com"
+-          git add -A
+-          git diff --cached --quiet && { echo "No changes to commit"; exit 0; }
+-          git commit -m "Update ${BINARY_NAME} packages from ${RELEASE_TAG}"
+-          git push
+-
+   publish-brew:
+     name: Publish to Homebrew tap
+     needs: [metadata, build]
+@@ -521,7 +300,6 @@ jobs:
+           set -euo pipefail
+           mkdir -p tars
+           gh release download "$RELEASE_TAG" --pattern "${BINARY_NAME}-*-apple-darwin.tar.gz" --dir tars --repo "$GITHUB_REPOSITORY"
+-          gh release download "$RELEASE_TAG" --pattern "${BINARY_NAME}-*-unknown-linux-gnu.tar.gz" --dir tars --repo "$GITHUB_REPOSITORY"
+           ls -la tars
+ 
+       - name: Compute sha256s
+@@ -533,8 +311,6 @@ jobs:
+           }
+           echo "darwin_arm64=$(compute_sha aarch64-apple-darwin)" >> "$GITHUB_OUTPUT"
+           echo "darwin_x86_64=$(compute_sha x86_64-apple-darwin)" >> "$GITHUB_OUTPUT"
+-          echo "linux_arm64=$(compute_sha aarch64-unknown-linux-gnu)" >> "$GITHUB_OUTPUT"
+-          echo "linux_x86_64=$(compute_sha x86_64-unknown-linux-gnu)" >> "$GITHUB_OUTPUT"
+ 
+       - name: Clone Homebrew tap repository
+         run: |
+@@ -545,8 +321,6 @@ jobs:
+         env:
+           SHA_DARWIN_ARM64: ${{ steps.shas.outputs.darwin_arm64 }}
+           SHA_DARWIN_X86_64: ${{ steps.shas.outputs.darwin_x86_64 }}
+-          SHA_LINUX_ARM64: ${{ steps.shas.outputs.linux_arm64 }}
+-          SHA_LINUX_X86_64: ${{ steps.shas.outputs.linux_x86_64 }}
+         run: |
+           set -euo pipefail
+           cd brew-tap
+@@ -579,16 +353,6 @@ jobs:
+               end
+             end
+ 
+-            on_linux do
+-              if Hardware::CPU.arm?
+-                url "${base_url}/${BINARY_NAME}-aarch64-unknown-linux-gnu.tar.gz"
+-                sha256 "${SHA_LINUX_ARM64}"
+-              else
+-                url "${base_url}/${BINARY_NAME}-x86_64-unknown-linux-gnu.tar.gz"
+-                sha256 "${SHA_LINUX_X86_64}"
+-              end
+-            end
+-
+             def install
+               bin.install "${BINARY_NAME}"
+             end
+diff --git a/.github/workflows/release-unsigned.yml b/.github/workflows/release-unsigned.yml
+new file mode 100644
+index 00000000..e8af882e
+--- /dev/null
++++ b/.github/workflows/release-unsigned.yml
+@@ -0,0 +1,163 @@
++name: Release Unsigned Desktop
++
++on:
++  workflow_dispatch:
++    inputs:
++      tag:
++        description: "Release tag (e.g. v0.1.0-unsigned.1)"
++        required: true
++        default: "unsigned-build"
++
++permissions:
++  contents: write
++
++jobs:
++  build:
++    name: Build Desktop (${{ matrix.label }})
++    runs-on: ${{ matrix.os }}
++    timeout-minutes: 35
++    strategy:
++      fail-fast: false
++      matrix:
++        include:
++          - label: macOS
++            os: macos-14
++            args: "--target universal-apple-darwin"
++            rust_targets: "aarch64-apple-darwin,x86_64-apple-darwin"
++            tauri_platform: macos
++            node_platform: darwin
++            bundle_dir: apps/desktop/src-tauri/target/universal-apple-darwin/release/bundle
++            require_gpu_sidecar: true
++          - label: Windows
++            os: windows-latest
++            args: ""
++            rust_targets: ""
++            tauri_platform: windows
++            node_platform: win32
++            bundle_dir: D:\cargo\release\bundle
++            require_gpu_sidecar: false
++    steps:
++      - name: Checkout source
++        uses: actions/checkout@v4
++
++      - name: Setup pnpm
++        uses: pnpm/action-setup@v4
++
++      - name: Setup Node
++        uses: actions/setup-node@v4
++        with:
++          node-version-file: .nvmrc
++          cache: pnpm
++          cache-dependency-path: pnpm-lock.yaml
++
++      - name: Setup Bun
++        uses: oven-sh/setup-bun@v2
++        with:
++          bun-version: "1.3.6"
++
++      - name: Install Rust toolchain
++        uses: dtolnay/rust-toolchain@stable
++        with:
++          targets: ${{ matrix.rust_targets }}
++
++      - name: Ensure universal macOS Rust targets
++        if: matrix.os == 'macos-14'
++        run: |
++          rustup target add aarch64-apple-darwin
++          rustup target add x86_64-apple-darwin
++
++      - name: Cache cargo
++        uses: Swatinem/rust-cache@v2
++        with:
++          workspaces: |
++            apps/desktop/src-tauri -> target
++
++      - name: Set Windows-only build environment
++        if: matrix.os == 'windows-latest'
++        shell: pwsh
++        run: |
++          echo "CARGO_TARGET_DIR=D:\cargo" >> $env:GITHUB_ENV
++
++      - name: Set sidecar build environment (macOS)
++        if: matrix.os == 'macos-14'
++        run: |
++          echo "CMAKE_TOOLCHAIN_FILE=${GITHUB_WORKSPACE}/packages/rust_transcription/cmake/macos-ci-toolchain.cmake" >> "$GITHUB_ENV"
++
++      - name: Set sidecar build environment (Windows)
++        if: matrix.os == 'windows-latest'
++        shell: pwsh
++        run: |
++          echo "CMAKE_TOOLCHAIN_FILE=$env:GITHUB_WORKSPACE\packages\rust_transcription\cmake\windows-ci-toolchain.cmake" >> $env:GITHUB_ENV
++
++      - name: Install dependencies
++        run: pnpm install --frozen-lockfile
++
++      - name: Build frontend and dependencies
++        env:
++          TAURI_PLATFORM: ${{ matrix.tauri_platform }}
++          VOQUILL_DESKTOP_PLATFORM: ${{ matrix.node_platform }}
++        run: pnpm exec turbo run build --filter=desktop...
++
++      - name: Build Tauri app
++        env:
++          TAURI_PLATFORM: ${{ matrix.tauri_platform }}
++          VOQUILL_DESKTOP_PLATFORM: ${{ matrix.node_platform }}
++          VOQUILL_REQUIRE_GPU_SIDECAR: ${{ matrix.require_gpu_sidecar && 'true' || 'false' }}
++          MACOSX_DEPLOYMENT_TARGET: "13.3"
++          CMAKE_OSX_DEPLOYMENT_TARGET: "13.3"
++          # Throwaway signing key, unsigned build only — same one build-desktop.yml uses for CI validation.
++          TAURI_SIGNING_PRIVATE_KEY: "dW50cnVzdGVkIGNvbW1lbnQ6IHJzaWduIGVuY3J5cHRlZCBzZWNyZXQga2V5ClJXUlRZMEl5OVRKZlAyVDN3dlF1Wm5mbWh1MXYwV3VjRlR2SVhUY2JqdmZUUGdtM1JOMEFBQkFBQUFBQUFBQUFBQUlBQUFBQXp4N2IwQXBxS3lTQnFWeXJuMmpaeGpKdkd5VUhTeit1cklsd3dQVTJvSnkzUktQMVlrQklPQ0duQkVZSStiMEdqTDFaSWJXZW96eTdab0VyaTZMUVNuWlpjSTZTY3NpVXA0bUZVVjh3TldRNHF1Qk1CUFBqcTduS3RMQ3FwMDFQM0VjYTlWdTZQZTQ9Cg=="
++          TAURI_CI_PUBKEY: "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IDQ2NTZFNDMzMzYyMjBCMzgKUldRNEN5STJNK1JXUmpWRDMzem12QUtjVkFxWERXanl0ZVRCWi9JOTd3bmRFRVFuQkp1QmpiN0EK"
++        working-directory: apps/desktop
++        run: |
++          node -e "
++            const fs = require('fs');
++            const p = 'src-tauri/tauri.conf.json';
++            const c = JSON.parse(fs.readFileSync(p, 'utf8'));
++            if (c.plugins?.updater?.pubkey === '__UPDATER_PUBLIC_KEY__') {
++              c.plugins.updater.pubkey = process.env.TAURI_CI_PUBKEY;
++            }
++            fs.writeFileSync(p, JSON.stringify(c, null, 2) + '\n');
++          "
++          pnpm run tauri build --ci ${{ matrix.args }}
++
++      - name: Upload build artifacts
++        uses: actions/upload-artifact@v4
++        with:
++          name: voquill-${{ matrix.tauri_platform }}
++          path: |
++            ${{ matrix.bundle_dir }}/**/*.dmg
++            ${{ matrix.bundle_dir }}/**/*.app.tar.gz
++            ${{ matrix.bundle_dir }}/**/*.msi
++            ${{ matrix.bundle_dir }}/**/*.nsis.zip
++            ${{ matrix.bundle_dir }}/**/*.exe
++          if-no-files-found: warn
++          retention-days: 7
++
++  publish:
++    name: Publish GitHub Release
++    needs: build
++    runs-on: ubuntu-latest
++    steps:
++      - name: Download all artifacts
++        uses: actions/download-artifact@v4
++        with:
++          path: dist
++
++      - name: Publish release
++        uses: softprops/action-gh-release@v2
++        with:
++          tag_name: ${{ github.event.inputs.tag }}
++          name: "Unsigned build ${{ github.event.inputs.tag }}"
++          body: |
++            Unsigned, self-built desktop binaries for personal use — no code signing/notarization.
++            macOS: right-click → Open (bypass "unidentified developer" warning).
++            Windows: may trigger a SmartScreen/Defender warning — click "More info" → "Run anyway".
++          draft: false
++          prerelease: true
++          files: |
++            dist/**/*.dmg
++            dist/**/*.app.tar.gz
++            dist/**/*.msi
++            dist/**/*.nsis.zip
++            dist/**/*.exe
