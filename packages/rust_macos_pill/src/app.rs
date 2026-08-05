@@ -18,7 +18,7 @@ use crate::draw;
 use crate::gfx::{self, Ctx};
 use crate::input;
 use crate::ipc::{self, InMessage, OutMessage, Phase, Visibility};
-use crate::state::{FlameTongue, PillState, Rocket, RocketPhase, Spark, WindowMode};
+use crate::state::{FlameTongue, PillState, PopParticle, Rocket, RocketPhase, Spark, WindowMode};
 
 // ── CVDisplayLink & timing ───────────────────────────────────────
 
@@ -140,8 +140,21 @@ extern "C" fn accepts_first_mouse(_this: &Object, _sel: Sel, _event: id) -> BOOL
     YES
 }
 
-extern "C" fn mouse_down(_this: &Object, _sel: Sel, _event: id) {
+extern "C" fn mouse_down(_this: &Object, _sel: Sel, event: id) {
     // Don't call super — prevents the window from stealing focus on click
+    with_ctx(|ctx| {
+        unsafe {
+            let loc: NSPoint = msg_send![event, locationInWindow];
+            let view_loc: NSPoint = msg_send![_this, convertPoint:loc fromView:nil];
+            // Start long-press tracking if clicking on the pill area
+            if input::is_on_pill_at(&ctx.state, view_loc.x, view_loc.y) {
+                ctx.state.long_press_active.set(true);
+                ctx.state.long_press_elapsed.set(0.0);
+                ctx.state.long_press_origin_x.set(view_loc.x);
+                ctx.state.long_press_origin_y.set(view_loc.y);
+            }
+        }
+    });
 }
 
 extern "C" fn draw_rect(this: &Object, _sel: Sel, _dirty: NSRect) {
@@ -169,6 +182,10 @@ extern "C" fn mouse_exited(_this: &Object, _sel: Sel, _event: id) {
 
 extern "C" fn mouse_up(_this: &Object, _sel: Sel, event: id) {
     with_ctx(|ctx| {
+        // Cancel any in-progress long press
+        ctx.state.long_press_active.set(false);
+        ctx.state.long_press_elapsed.set(0.0);
+
         unsafe {
             let loc: NSPoint = msg_send![event, locationInWindow];
             let view_loc: NSPoint = msg_send![_this, convertPoint:loc fromView:nil];
@@ -430,8 +447,10 @@ fn perform_tick() {
             }
         }
 
-        // Reposition window on active monitor
-        reposition_window(ctx.window);
+        // Reposition window on active monitor (unless pinned by balloon-pop)
+        if !ctx.state.pinned.get() {
+            reposition_window(ctx.window);
+        }
 
         // Request redraw
         unsafe {
@@ -562,6 +581,10 @@ fn tick(state: &PillState, dt: f64) {
 
     // Broadcast transcript
     tick_transcript(state, dt);
+
+    // Long-press balloon pop
+    tick_long_press(state, dt);
+    tick_balloon_pop(state, dt);
 
     // Flash message timer
     if state.flash_visible.get() {
@@ -773,6 +796,102 @@ fn tick_transcript(state: &PillState, dt: f64) {
         state.transcript_opacity.set(0.0);
         state.transcript_has_message.set(false);
         state.transcript_text.borrow_mut().clear();
+    }
+}
+
+fn tick_long_press(state: &PillState, dt: f64) {
+    if !state.long_press_active.get() {
+        return;
+    }
+
+    // Don't allow long-press while recording, loading, paused, or in assistant mode
+    let phase = state.phase.get();
+    if phase != Phase::Idle || state.assistant_active.get() {
+        state.long_press_active.set(false);
+        state.long_press_elapsed.set(0.0);
+        return;
+    }
+
+    // Don't allow if already pinned (toggle off instead — handled in mouse_up)
+    if state.balloon_pop_active.get() {
+        return;
+    }
+
+    let elapsed = state.long_press_elapsed.get() + dt;
+    state.long_press_elapsed.set(elapsed);
+
+    // Trigger the balloon pop after LONG_PRESS_DURATION
+    if elapsed >= LONG_PRESS_DURATION {
+        state.long_press_active.set(false);
+        state.long_press_elapsed.set(0.0);
+        trigger_balloon_pop(state);
+    }
+}
+
+fn trigger_balloon_pop(state: &PillState) {
+    state.balloon_pop_active.set(true);
+    state.balloon_pop_elapsed.set(0.0);
+
+    // Spawn burst particles from the pill center
+    let dw = state.draw_width.get();
+    let dh = state.draw_height.get();
+    let cx = dw / 2.0;
+    let pill_area_top = dh - PILL_AREA_HEIGHT;
+    let cy = pill_area_top + PILL_AREA_HEIGHT / 2.0;
+
+    let mut particles = Vec::with_capacity(BALLOON_POP_PARTICLE_COUNT);
+    for i in 0..BALLOON_POP_PARTICLE_COUNT {
+        let angle = (i as f64 / BALLOON_POP_PARTICLE_COUNT as f64) * std::f64::consts::TAU;
+        let speed_jitter = 0.7 + (i as f64 * 0.13).sin().abs() * 0.6;
+        let speed = BALLOON_POP_PARTICLE_SPEED * speed_jitter;
+        let color = if i % 2 == 0 { BALLOON_POP_COLOR } else { BALLOON_POP_COLOR2 };
+        particles.push(PopParticle {
+            x: cx,
+            y: cy,
+            vx: angle.cos() * speed,
+            vy: angle.sin() * speed,
+            life: BALLOON_POP_PARTICLE_LIFE,
+            max_life: BALLOON_POP_PARTICLE_LIFE,
+            size: BALLOON_POP_PARTICLE_SIZE * (0.6 + (i as f64 * 0.3).sin().abs() * 0.8),
+            color,
+        });
+    }
+    *state.balloon_pop_particles.borrow_mut() = particles;
+}
+
+fn tick_balloon_pop(state: &PillState, dt: f64) {
+    if !state.balloon_pop_active.get() {
+        return;
+    }
+
+    let elapsed = state.balloon_pop_elapsed.get() + dt;
+    state.balloon_pop_elapsed.set(elapsed);
+
+    // Update particles
+    {
+        let mut particles = state.balloon_pop_particles.borrow_mut();
+        for p in particles.iter_mut() {
+            p.life -= dt;
+            p.x += p.vx * dt;
+            p.y += p.vy * dt;
+            // Gravity + drag
+            p.vy += 120.0 * dt;
+            p.vx *= (-2.0 * dt).exp();
+            p.vy *= (-2.0 * dt).exp();
+        }
+        particles.retain(|p| p.life > 0.0);
+    }
+
+    // When the animation completes, pin the pill
+    if elapsed >= BALLOON_POP_DURATION {
+        state.balloon_pop_active.set(false);
+        state.balloon_pop_elapsed.set(0.0);
+        state.balloon_pop_particles.borrow_mut().clear();
+
+        // Toggle pin state
+        let was_pinned = state.pinned.get();
+        state.pinned.set(!was_pinned);
+        ipc::send(&OutMessage::PillPinned { pinned: !was_pinned });
     }
 }
 
@@ -989,6 +1108,14 @@ unsafe fn setup(receiver: Receiver<InMessage>, embedded: bool) {
         transcript_time_since_update: Cell::new(0.0),
         transcript_opacity: Cell::new(0.0),
         transcript_has_message: Cell::new(false),
+        long_press_active: Cell::new(false),
+        long_press_elapsed: Cell::new(0.0),
+        long_press_origin_x: Cell::new(0.0),
+        long_press_origin_y: Cell::new(0.0),
+        balloon_pop_active: Cell::new(false),
+        balloon_pop_elapsed: Cell::new(0.0),
+        balloon_pop_particles: RefCell::new(Vec::new()),
+        pinned: Cell::new(false),
     });
 
     // Store in thread-local

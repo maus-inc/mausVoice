@@ -306,6 +306,13 @@ fn start_stdout_reader(app: tauri::AppHandle, reader: std::io::BufReader<ChildSt
                                 let _ = app.emit_to("main", "toast-action", payload);
                             }
                         }
+                    } else if line.contains("\"pill_pinned\"") {
+                        if let Ok(val) = serde_json::from_str::<serde_json::Value>(&line) {
+                            let pinned = val.get("pinned").and_then(|v| v.as_bool()).unwrap_or(false);
+                            log::info!("Pill pinned state changed: {}", pinned);
+                            let payload = serde_json::json!({ "pinned": pinned });
+                            let _ = app.emit_to("main", "pill-pinned-changed", payload);
+                        }
                     }
                 }
             }

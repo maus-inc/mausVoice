@@ -159,6 +159,11 @@ fn start_out_reader(app: tauri::AppHandle, rx: mpsc::Receiver<OutMessage>) {
                     let _ = app.emit_to("main", "toast-action", payload);
                 }
                 OutMessage::Hover { .. } => {}
+                OutMessage::PillPinned { pinned } => {
+                    log::info!("Pill pinned state changed: {}", pinned);
+                    // Could emit an event to the frontend if needed
+                    let _ = app.emit_to("main", "pill-pinned-changed", serde_json::json!({ "pinned": pinned }));
+                }
             }
         }
         log::info!("Native macOS pill channel closed");
