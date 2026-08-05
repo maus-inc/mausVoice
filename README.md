@@ -1,8 +1,8 @@
 <div align="center">
 
-<img src="docs/graphic.png" alt="Voquill Logo" width="400" />
+<img src="docs/graphic.png" alt="FoniMaus Logo" width="400" />
 
-# Voquill — Personal Local Build
+# FoniMaus — Personal Local Build
 
 ### Voice typing for your own machine. Dictate into any app, clean it up with AI, no account and no subscription.
 
@@ -10,7 +10,7 @@
 
 ---
 
-This is a personal, non-commercial fork of [Voquill](https://github.com/voquill/voquill), an open-source AI voice-typing desktop app. It has been trimmed and rewired to run entirely for personal use with **your own Deepgram and Groq API keys** — no Voquill account, no paywall, and no "Pro" gating.
+**FoniMaus** (from Greek *φωνή* / *foní*, “voice”, + Maus) is a personal, non-commercial fork of [Voquill](https://github.com/voquill/voquill), an open-source AI voice-typing desktop app. It has been trimmed and rewired to run entirely for personal use with **your own Deepgram and Groq API keys** — no Voquill account, no paywall, and no "Pro" gating.
 
 > Looking for the upstream project, its hosted plans, mobile app, or marketing copy? See [`README.original.md`](README.original.md) and [voquill.com](https://voquill.com).
 

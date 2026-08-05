@@ -217,7 +217,7 @@ export const MoreSettingsDialog = () => {
           <SettingSection
             title={<FormattedMessage defaultMessage="Incognito mode" />}
             description={
-              <FormattedMessage defaultMessage="When enabled, Voquill will not save transcription history or audio snapshots." />
+              <FormattedMessage defaultMessage="When enabled, FoniMaus will not save transcription history or audio snapshots." />
             }
             action={
               <Switch
@@ -265,7 +265,7 @@ export const MoreSettingsDialog = () => {
           <SettingSection
             title={<FormattedMessage defaultMessage="Show menu bar icon" />}
             description={
-              <FormattedMessage defaultMessage="Show the Voquill icon in the menu bar." />
+              <FormattedMessage defaultMessage="Show the FoniMaus icon in the menu bar." />
             }
             action={
               <Switch

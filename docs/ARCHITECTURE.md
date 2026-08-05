@@ -1,4 +1,4 @@
-# Voquill Architecture Walkthrough
+# FoniMaus Architecture Walkthrough
 
 A practical tour of how this repo is put together: the technology stack, the monorepo layout, the desktop app's layered design, the feature subsystems, and the customizations that make this fork a personal/local build.
 

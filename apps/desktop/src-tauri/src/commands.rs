@@ -2285,7 +2285,7 @@ pub async fn download_and_open_mac_installer(url: String) -> Result<(), String> 
     let file_name = url
         .rsplit('/')
         .next()
-        .unwrap_or("VoquillUpdate.pkg")
+        .unwrap_or("FoniMausUpdate.pkg")
         .to_string();
     let dest = std::env::temp_dir().join(&file_name);
 
@@ -2412,7 +2412,7 @@ pub async fn floating_window_create(
 ) -> Result<FloatingWindowInfo, String> {
     let parsed_url = url::Url::parse(&args.url).map_err(|err| err.to_string())?;
     let label = state.next_label();
-    let title = args.title.clone().unwrap_or_else(|| "Voquill".to_string());
+    let title = args.title.clone().unwrap_or_else(|| "FoniMaus".to_string());
 
     let mut builder = tauri::WebviewWindowBuilder::new(
         &app,

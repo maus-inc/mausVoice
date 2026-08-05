@@ -77,7 +77,7 @@ pub fn setup_tray(app: &mut tauri::App) -> tauri::Result<()> {
     )?;
     let language_submenu = SubmenuBuilder::new(app, "Language").build()?;
     let _ = LANGUAGE_SUBMENU.set(language_submenu.clone());
-    let quit_item = MenuItem::with_id(app, "quit-voquill", "Quit Voquill", true, None::<&str>)?;
+    let quit_item = MenuItem::with_id(app, "quit-voquill", "Quit FoniMaus", true, None::<&str>)?;
 
     let menu = MenuBuilder::new(app)
         .item(&open_item)
@@ -94,7 +94,7 @@ pub fn setup_tray(app: &mut tauri::App) -> tauri::Result<()> {
     #[allow(unused_mut)]
     let mut tray_builder = TrayIconBuilder::with_id("main")
         .menu(&menu)
-        .tooltip("Voquill")
+        .tooltip("FoniMaus")
         .icon(tray_icon_image)
         .on_menu_event(|app, event| match event.id().as_ref() {
             "open-dashboard" => {

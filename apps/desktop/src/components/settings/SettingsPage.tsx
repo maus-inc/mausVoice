@@ -437,7 +437,7 @@ export default function SettingsPage() {
     <Section
       title={<FormattedMessage defaultMessage="Processing" />}
       description={
-        <FormattedMessage defaultMessage="How Voquill should manage your transcriptions." />
+        <FormattedMessage defaultMessage="How FoniMaus should manage your transcriptions." />
       }
     >
       {dictationLanguageComp}

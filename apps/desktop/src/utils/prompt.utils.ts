@@ -67,7 +67,7 @@ export const collectDictionaryEntries = (
   }
 
   // These should always be added to the vocabulary
-  recordSource("Voquill");
+  recordSource("FoniMaus");
   recordSource(getMyUserName(state));
 
   return {

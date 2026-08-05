@@ -40,7 +40,7 @@ export const AIPostProcessingDialog = () => {
       <DialogContent dividers>
         <Stack spacing={3} alignItems="flex-start">
           <Typography variant="body1" color="text.secondary">
-            <FormattedMessage defaultMessage="Tell Voquill how to enhance your transcripts after they are created." />
+            <FormattedMessage defaultMessage="Tell FoniMaus how to enhance your transcripts after they are created." />
           </Typography>
 
           <AIPostProcessingConfiguration />

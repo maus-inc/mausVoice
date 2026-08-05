@@ -305,7 +305,7 @@ export const AppSideEffects = () => {
           showSnackbar(
             intl.formatMessage({
               defaultMessage:
-                "Keyboard hotkeys stopped working. Retrying automatically; restart Voquill if this persists.",
+                "Keyboard hotkeys stopped working. Retrying automatically; restart FoniMaus if this persists.",
             }),
             { mode: "error", duration: 6000 },
           );

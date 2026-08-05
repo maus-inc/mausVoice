@@ -80,7 +80,7 @@ export const parseRemotePairingInvite = (
 ): RemotePairingInvite => {
   const trimmed = value.trim();
   if (!trimmed.startsWith(INVITE_PREFIX)) {
-    throw new Error("Pair code is not a valid Voquill remote invite.");
+    throw new Error("Pair code is not a valid FoniMaus remote invite.");
   }
 
   const decoded = decodeBase64Url(trimmed.slice(INVITE_PREFIX.length));

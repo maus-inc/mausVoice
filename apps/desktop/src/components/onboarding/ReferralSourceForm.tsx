@@ -106,7 +106,7 @@ export const ReferralSourceForm = () => {
             <FormattedMessage defaultMessage="How did you hear about us?" />
           </Typography>
           <Typography variant="body1" color="text.secondary">
-            <FormattedMessage defaultMessage="This is a huge help to us as we work to improve Voquill for everyone." />
+            <FormattedMessage defaultMessage="This is a huge help to us as we work to improve FoniMaus for everyone." />
           </Typography>
         </Box>
 

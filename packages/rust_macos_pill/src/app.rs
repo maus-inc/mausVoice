@@ -86,7 +86,7 @@ extern "C" fn main_thread_tick(_context: *mut c_void) {
 
 fn register_pill_view_class() -> &'static Class {
     let superclass = Class::get("NSView").unwrap();
-    let mut decl = ClassDecl::new("VoquillPillView", superclass).unwrap();
+    let mut decl = ClassDecl::new("FoniMausPillView", superclass).unwrap();
 
     unsafe {
         decl.add_method(sel!(drawRect:), draw_rect as extern "C" fn(&Object, Sel, NSRect));
@@ -109,7 +109,7 @@ fn register_pill_view_class() -> &'static Class {
 
 fn register_pill_window_class() -> &'static Class {
     let superclass = Class::get("NSPanel").unwrap();
-    let mut decl = ClassDecl::new("VoquillPillWindow", superclass).unwrap();
+    let mut decl = ClassDecl::new("FoniMausPillWindow", superclass).unwrap();
 
     unsafe {
         decl.add_method(sel!(canBecomeKeyWindow), can_become_key_window as extern "C" fn(&Object, Sel) -> BOOL);

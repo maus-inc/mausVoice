@@ -87,7 +87,7 @@ export const AppKeybindingsDialog = () => {
       </DialogTitle>
       <DialogContent>
         <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
-          <FormattedMessage defaultMessage="Choose how Voquill inserts text and which paste shortcut to use when paste insertion is selected." />
+          <FormattedMessage defaultMessage="Choose how FoniMaus inserts text and which paste shortcut to use when paste insertion is selected." />
         </Typography>
         <Stack
           direction="row"

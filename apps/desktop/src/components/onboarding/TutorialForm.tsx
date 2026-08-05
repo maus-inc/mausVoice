@@ -17,7 +17,6 @@ import {
   submitOnboarding,
 } from "../../actions/onboarding.actions";
 import { setSelectedToneId } from "../../actions/user.actions";
-import discordIcon from "../../assets/discord.svg";
 import { produceAppState, useAppStore } from "../../store";
 import { trackButtonClick } from "../../utils/analytics.utils";
 import {
@@ -35,14 +34,14 @@ import {
   OnboardingFormLayout,
 } from "./OnboardingCommon";
 
-const pulseDiscord = keyframes`
+const pulseNotes = keyframes`
   0%, 100% {
-    border-color: rgba(88, 101, 242, 0.4);
-    box-shadow: 0 0 0 0 rgba(88, 101, 242, 0.4);
+    border-color: rgba(25, 118, 210, 0.4);
+    box-shadow: 0 0 0 0 rgba(25, 118, 210, 0.4);
   }
   50% {
-    border-color: rgba(88, 101, 242, 1);
-    box-shadow: 0 0 0 4px rgba(88, 101, 242, 0.3);
+    border-color: rgba(25, 118, 210, 1);
+    box-shadow: 0 0 0 4px rgba(25, 118, 210, 0.3);
   }
 `;
 
@@ -190,7 +189,7 @@ ${userName}`;
     }
 
     if (stepIndex === 0) {
-      // Discord step
+      // Notes step
       setChatTone(POLISHED_TONE_ID);
     } else if (stepIndex === 1) {
       // Email step
@@ -242,7 +241,7 @@ ${userName}`;
             <FormattedMessage defaultMessage="Now try an email" />
           </Typography>
           <Typography variant="body1" color="text.secondary">
-            <FormattedMessage defaultMessage="Dictate a short email. Voquill works great for longer-form content like messages, notes, and documents." />
+            <FormattedMessage defaultMessage="Dictate a short email. FoniMaus works great for longer-form content like messages, notes, and documents." />
           </Typography>
           <DictationInstruction />
         </Stack>
@@ -283,14 +282,14 @@ ${userName}`;
     </>
   );
 
-  const discordContent = (
+  const notesContent = (
     <Box sx={{ position: "relative", pb: 6 }}>
       <Stack
         spacing={0}
         sx={{
-          bgcolor: "#313338",
+          bgcolor: "#ffffff",
           borderRadius: 1.33,
-          boxShadow: "0 8px 32px rgba(0, 0, 0, 0.3)",
+          boxShadow: "0 8px 32px rgba(0, 0, 0, 0.15)",
           overflow: "hidden",
           position: "relative",
         }}
@@ -302,61 +301,22 @@ ${userName}`;
             gap: 1,
             px: 2,
             py: 1.5,
-            borderBottom: "1px solid #1e1f22",
+            borderBottom: "1px solid #e0e0e0",
+            bgcolor: "#f5f5f5",
           }}
         >
-          <img
-            src={discordIcon}
-            alt="Discord"
-            width={20}
-            height={20}
-            style={{ filter: "brightness(0) invert(1)" }}
-          />
           <Typography
             variant="body2"
             fontWeight={600}
-            sx={{ color: "#f2f3f5" }}
+            sx={{ color: "#202124" }}
           >
-            Discord
+            Notes
           </Typography>
         </Box>
         <Box sx={{ p: 2 }}>
-          <Box sx={{ display: "flex", gap: 1.5, mb: 2 }}>
-            <Box
-              sx={{
-                width: 40,
-                height: 40,
-                borderRadius: "50%",
-                bgcolor: "#5865F2",
-                display: "flex",
-                alignItems: "center",
-                justifyContent: "center",
-                flexShrink: 0,
-              }}
-            >
-              <Typography sx={{ color: "#fff", fontWeight: 600 }}>J</Typography>
-            </Box>
-            <Box>
-              <Box sx={{ display: "flex", alignItems: "baseline", gap: 1 }}>
-                <Typography
-                  variant="body2"
-                  fontWeight={600}
-                  sx={{ color: "#f2f3f5" }}
-                >
-                  Jordan
-                </Typography>
-                <Typography variant="caption" sx={{ color: "#949ba4" }}>
-                  Today at 10:32 AM
-                </Typography>
-              </Box>
-              <Typography variant="body2" sx={{ color: "#dbdee1", mt: 0.5 }}>
-                What&apos;s your favorite breakfast?
-              </Typography>
-            </Box>
-          </Box>
           <TextField
             multiline
-            minRows={2}
+            minRows={4}
             fullWidth
             placeholder={step1Placeholder}
             value={dictationValue}
@@ -366,25 +326,25 @@ ${userName}`;
             onBlur={() => setIsFieldFocused(false)}
             sx={{
               "& .MuiOutlinedInput-root": {
-                bgcolor: "#383a40",
+                bgcolor: "#ffffff",
                 borderRadius: 1,
                 "& fieldset": isFieldFocused
-                  ? { borderColor: "#1e1f22" }
+                  ? { borderColor: "#e0e0e0" }
                   : {
                       borderWidth: 2,
-                      animation: `${pulseDiscord} 1.5s ease-in-out infinite`,
+                      animation: `${pulseNotes} 1.5s ease-in-out infinite`,
                     },
                 "&:hover fieldset": {
-                  borderColor: isFieldFocused ? "#1e1f22" : undefined,
+                  borderColor: isFieldFocused ? "#e0e0e0" : undefined,
                 },
                 "&.Mui-focused fieldset": {
-                  borderColor: "#5865F2",
+                  borderColor: "#1976d2",
                 },
               },
               "& .MuiInputBase-input": {
-                color: "#dbdee1",
+                color: "#202124",
                 "&::placeholder": {
-                  color: "#949ba4",
+                  color: "#5f6368",
                   opacity: 1,
                 },
               },
@@ -554,7 +514,7 @@ ${userName}`;
           animate={{ opacity: 1, y: 0 }}
           transition={{ duration: 0.4, ease: "easeOut" }}
         >
-          {stepIndex === 0 ? discordContent : emailContent}
+          {stepIndex === 0 ? notesContent : emailContent}
           {stepper}
         </motion.div>
       )}

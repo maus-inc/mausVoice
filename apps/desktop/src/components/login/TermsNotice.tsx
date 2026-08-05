@@ -17,7 +17,7 @@ export const TermsNotice = ({ align = "center" }: TermsNoticeProps) => {
         fontSize: "0.75rem",
       }}
     >
-      <FormattedMessage defaultMessage="By using Voquill, you agree to our" />{" "}
+      <FormattedMessage defaultMessage="By using FoniMaus, you agree to our" />{" "}
       <a
         href="https://voquill.com/terms"
         target="_blank"

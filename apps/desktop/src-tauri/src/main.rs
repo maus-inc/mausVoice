@@ -11,7 +11,7 @@ fn main() {
     desktop_lib::platform::init::init_x11_threads();
 
     // Initialize startup logging
-    eprintln!("=== Voquill Startup ===");
+    eprintln!("=== FoniMaus Startup ===");
     eprintln!("[startup] Version: {}", env!("CARGO_PKG_VERSION"));
     eprintln!("[startup] OS: {}", std::env::consts::OS);
     eprintln!("[startup] Arch: {}", std::env::consts::ARCH);

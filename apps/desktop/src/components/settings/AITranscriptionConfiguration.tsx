@@ -273,7 +273,7 @@ export const AITranscriptionConfiguration = ({
             [
               {
                 value: "cloud",
-                label: "Voquill",
+                label: "FoniMaus",
               },
             ],
           ),

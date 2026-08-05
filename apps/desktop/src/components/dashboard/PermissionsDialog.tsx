@@ -43,7 +43,7 @@ const getPurposeDescription = (
   const descriptions: Record<PermissionKind, string> = {
     microphone: intl.formatMessage({
       defaultMessage:
-        "Allows Voquill to capture audio from your microphone for transcription.",
+        "Allows FoniMaus to capture audio from your microphone for transcription.",
     }),
     accessibility: intl.formatMessage({
       defaultMessage:
@@ -286,7 +286,7 @@ export const PermissionsDialog = () => {
       <DialogContent>
         <Stack spacing={3}>
           <Typography variant="body1">
-            <FormattedMessage defaultMessage="Voquill is an AI dictation tool. It needs microphone and accessibility access in order to function properly." />
+            <FormattedMessage defaultMessage="FoniMaus is an AI dictation tool. It needs microphone and accessibility access in order to function properly." />
           </Typography>
           <Stack>
             {REQUIRED_PERMISSIONS.map((kind) => (

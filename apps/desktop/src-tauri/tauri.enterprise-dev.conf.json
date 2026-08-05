@@ -1,11 +1,11 @@
 {
-  "productName": "Voquill Enterprise (dev)",
+  "productName": "FoniMaus Enterprise (dev)",
   "identifier": "com.voquill.desktop.enterprise-dev",
   "mainBinaryName": "voquill-desktop-enterprise-dev",
   "app": {
     "windows": [
       {
-        "title": "Voquill Enterprise (dev)",
+        "title": "FoniMaus Enterprise (dev)",
         "width": 1280,
         "height": 860,
         "minWidth": 800,

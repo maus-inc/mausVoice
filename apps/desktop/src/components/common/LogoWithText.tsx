@@ -24,7 +24,7 @@ export const LogoWithText = ({ sx, ...rest }: LogoWithTextProps) => {
           display: { xs: "none", sm: "block" },
         }}
       >
-        Voquill
+        FoniMaus
       </Typography>
     </Stack>
   );

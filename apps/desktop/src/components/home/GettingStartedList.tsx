@@ -130,11 +130,11 @@ export function GettingStartedList() {
   const checklist: ChecklistItem[] = [
     {
       label: intl.formatMessage({
-        defaultMessage: "Use Voquill in 3 different apps",
+        defaultMessage: "Use FoniMaus in 3 different apps",
       }),
       info: intl.formatMessage({
         defaultMessage:
-          "Dictate text into 3 different applications. Voquill will detect each app automatically.",
+          "Dictate text into 3 different applications. FoniMaus will detect each app automatically.",
       }),
       done: appsComplete,
       extra: <AppIconBoxes iconPaths={iconPaths} />,

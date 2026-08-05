@@ -60,7 +60,7 @@ export function TrialExtensionCard() {
         </Typography>
         <Typography variant="body2" sx={{ opacity: 0.9 }}>
           <FormattedMessage
-            defaultMessage="For the first 7 days of your trial, each day you dictate {words}+ words you earn an extra day of Voquill Pro."
+            defaultMessage="For the first 7 days of your trial, each day you dictate {words}+ words you earn an extra day of FoniMaus Pro."
             values={{ words: wordsNeeded }}
           />
         </Typography>

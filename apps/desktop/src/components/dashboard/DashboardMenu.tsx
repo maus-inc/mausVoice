@@ -1,21 +1,18 @@
 import {
   ChatBubbleOutline,
   ClassOutlined,
-  HelpOutline,
   HistoryOutlined,
   HomeOutlined,
   PaletteOutlined,
   SettingsOutlined,
 } from "@mui/icons-material";
 import { Box, List, Stack } from "@mui/material";
-import { openUrl } from "@tauri-apps/plugin-opener";
 import { FormattedMessage } from "react-intl";
 import { useMemo } from "react";
 import { useLocation, useNavigate } from "react-router-dom";
 import { useAppStore } from "../../store";
 import { getIsAssistantModeEnabled } from "../../utils/assistant-mode.utils";
 import { ListTile } from "../common/ListTile";
-import { DiscordListTile } from "./DiscordListTile";
 import { UpdateListTile } from "./UpdateListTile";
 
 const settingsPath = "/dashboard/settings";
@@ -33,7 +30,6 @@ export type DashboardMenuProps = {
 export const DashboardMenu = ({ onChoose }: DashboardMenuProps) => {
   const location = useLocation();
   const nav = useNavigate();
-  const isEnterprise = useAppStore((state) => state.isEnterprise);
   const isUpdateAvailable = useAppStore(
     (state) => state.updater.status === "ready",
   );
@@ -103,15 +99,6 @@ export const DashboardMenu = ({ onChoose }: DashboardMenuProps) => {
       <Box sx={{ flexGrow: 1, overflowY: "auto" }}>{list}</Box>
       <Box sx={{ mt: 2, p: 2 }}>
         {isUpdateAvailable && <UpdateListTile />}
-        {isEnterprise ? (
-          <ListTile
-            onClick={() => openUrl("mailto:support@voquill.com")}
-            leading={<HelpOutline />}
-            title={<FormattedMessage defaultMessage="Support" />}
-          />
-        ) : (
-          <DiscordListTile />
-        )}
         <ListTile
           key={settingsPath}
           onClick={() => onChooseHandler(settingsPath)}

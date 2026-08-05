@@ -40,7 +40,7 @@ export const SessionSideEffects = () => {
     await refreshRemoteReceiverStatus();
     const status = getAppState().remoteReceiverStatus;
     const sessionId = status?.deviceId;
-    const sessionName = status?.deviceName ?? "Voquill Desktop";
+    const sessionName = status?.deviceName ?? "FoniMaus Desktop";
     if (!sessionId) return;
 
     const db = getDatabase();

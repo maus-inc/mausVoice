@@ -1,7 +1,7 @@
 {
-  "productName": "Voquill",
+  "productName": "FoniMaus",
   "identifier": "com.voquill.desktop",
-  "mainBinaryName": "Voquill",
+  "mainBinaryName": "FoniMaus",
   "plugins": {
     "updater": {
       "endpoints": [

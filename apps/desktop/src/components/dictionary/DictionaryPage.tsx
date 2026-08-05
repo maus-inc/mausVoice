@@ -82,7 +82,7 @@ export default function DictionaryPage() {
       <ScrollListPage
         title={<FormattedMessage defaultMessage="Dictionary" />}
         subtitle={
-          <FormattedMessage defaultMessage="Voquill may misunderstand you on occasion. If you see certain words being missed frequently, you can define a replacement rule here to fix the spelling automatically." />
+          <FormattedMessage defaultMessage="FoniMaus may misunderstand you on occasion. If you see certain words being missed frequently, you can define a replacement rule here to fix the spelling automatically." />
         }
         action={
           <Button

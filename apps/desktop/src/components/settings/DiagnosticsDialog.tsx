@@ -76,7 +76,7 @@ function buildDiagnosticsText(
   data: ReturnType<typeof useDiagnosticsData>,
 ): string {
   const lines: string[] = [
-    "=== Voquill Diagnostics ===",
+    "=== FoniMaus Diagnostics ===",
     `Generated: ${new Date().toISOString()}`,
     "",
     "--- Version ---",

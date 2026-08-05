@@ -11,7 +11,7 @@ export const VoquillCloudSetting = () => {
   return (
     <Stack spacing={1} alignItems="flex-start">
       <Typography variant="body1">
-        <FormattedMessage defaultMessage="Use Voquill Cloud" />
+        <FormattedMessage defaultMessage="Use FoniMaus Cloud" />
       </Typography>
       <Typography variant="body2" color="text.secondary">
         <FormattedMessage defaultMessage="No downloads or manual setup. Record on any device and we'll keep your data secure, synced, and ready everywhere." />

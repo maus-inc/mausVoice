@@ -27,7 +27,7 @@ import { TranscriptionTextBlock } from "./TranscriptionTextBlock";
 const formatModeLabel = (mode: string | null | undefined): React.ReactNode => {
   if (mode === "api") return <FormattedMessage defaultMessage="API" />;
   if (mode === "cloud")
-    return <FormattedMessage defaultMessage="Voquill Cloud" />;
+    return <FormattedMessage defaultMessage="FoniMaus Cloud" />;
   if (mode === "local") return <FormattedMessage defaultMessage="Local" />;
   return <FormattedMessage defaultMessage="Unknown" />;
 };
@@ -37,7 +37,7 @@ const formatPostProcessModeLabel = (
 ): React.ReactNode => {
   if (mode === "api") return <FormattedMessage defaultMessage="API" />;
   if (mode === "cloud")
-    return <FormattedMessage defaultMessage="Voquill Cloud" />;
+    return <FormattedMessage defaultMessage="FoniMaus Cloud" />;
   return <FormattedMessage defaultMessage="Disabled" />;
 };
 
@@ -172,7 +172,7 @@ export const FlagTranscriptionDialog = () => {
         {transcription ? (
           <Stack spacing={3}>
             <Typography variant="body2" color="text.secondary">
-              <FormattedMessage defaultMessage="Send this transcription to the Voquill team so we can review what went wrong. Your data is only shared with the Voquill team and never with third parties. Adding a note below helps us understand and fix the issue." />
+              <FormattedMessage defaultMessage="Send this transcription to the FoniMaus team so we can review what went wrong. Your data is only shared with the FoniMaus team and never with third parties. Adding a note below helps us understand and fix the issue." />
             </Typography>
 
             {transcription.audio && (

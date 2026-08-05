@@ -2,7 +2,7 @@
 name = "rust_macos_pill"
 version = "0.1.0"
 edition = "2021"
-description = "Voquill macOS pill overlay"
+description = "FoniMaus macOS pill overlay"
 
 [lib]
 name = "rust_macos_pill"
