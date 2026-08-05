@@ -6,6 +6,7 @@ extern crate objc;
 pub mod ipc;
 
 mod app;
+mod font;
 mod constants;
 mod draw;
 mod gfx;
@@ -20,6 +21,7 @@ use ipc::{InMessage, OutMessage};
 /// Must be called from the main thread (Cocoa requirement).
 /// Returns immediately — the pill hooks into the existing NSApplication run loop.
 pub fn start(out_sender: Sender<OutMessage>, in_receiver: Receiver<InMessage>) {
+    font::install_embedded_satoshi();
     ipc::set_out_sender(out_sender);
     app::run_embedded(in_receiver);
 }

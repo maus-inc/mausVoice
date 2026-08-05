@@ -235,7 +235,6 @@ fn draw_loading(
 
 fn draw_idle_label(cr: &cairo::Context, rx: f64, ry: f64, pill_w: f64, pill_h: f64, expand_t: f64) {
     cr.set_source_rgba(1.0, 1.0, 1.0, 0.55 * expand_t);
-    // Prefer Satoshi when available via fontconfig.
     cr.select_font_face("Satoshi", cairo::FontSlant::Normal, cairo::FontWeight::Bold);
     cr.set_font_size(12.0);
     let text = "Click to dictate";
@@ -309,7 +308,7 @@ fn draw_tooltip(cr: &cairo::Context, state: &PillState, ww: f64, pill_area_top: 
 
     // Style name text
     cr.set_source_rgba(1.0, 1.0, 1.0, 0.9 * alpha);
-    cr.select_font_face("sans-serif", cairo::FontSlant::Normal, cairo::FontWeight::Bold);
+    cr.select_font_face("Satoshi", cairo::FontSlant::Normal, cairo::FontWeight::Bold);
     cr.set_font_size(11.0);
     let text_area_left = tooltip_rx + padding_h + chevron_area;
     let text_area_right = tooltip_rx + tooltip_w - padding_h - chevron_area;
@@ -746,7 +745,7 @@ fn draw_compact_content(
     let text = "What can I help you with?";
     let text_alpha = if state.phase.get() == Phase::Recording { 0.96 } else { 0.8 };
     cr.set_source_rgba(1.0, 1.0, 1.0, text_alpha * alpha);
-    cr.select_font_face("sans-serif", cairo::FontSlant::Normal, cairo::FontWeight::Normal);
+    cr.select_font_face("Satoshi", cairo::FontSlant::Normal, cairo::FontWeight::Normal);
     cr.set_font_size(18.0);
     let extents = cr.text_extents(text).unwrap();
     let tx = panel_x + (panel_w - extents.width()) / 2.0 - extents.x_bearing();
@@ -775,7 +774,7 @@ fn draw_transcript(
     let scroll = state.scroll_offset.get();
     let mut y = area_y + top_pad - scroll;
 
-    cr.select_font_face("sans-serif", cairo::FontSlant::Normal, cairo::FontWeight::Normal);
+    cr.select_font_face("Satoshi", cairo::FontSlant::Normal, cairo::FontWeight::Normal);
     cr.set_font_size(14.0);
 
     let line_height = 20.0;
@@ -809,7 +808,7 @@ fn draw_transcript(
             };
 
             cr.set_source_rgba(1.0, 1.0, 1.0, 0.5 * alpha);
-            cr.select_font_face("sans-serif", cairo::FontSlant::Normal, cairo::FontWeight::Normal);
+            cr.select_font_face("Satoshi", cairo::FontSlant::Normal, cairo::FontWeight::Normal);
             cr.set_font_size(12.0);
 
             draw_wrench_icon(cr, area_x, y + 2.0, 12.0, 0.5 * alpha);
@@ -822,7 +821,7 @@ fn draw_transcript(
             let (r, g, b) = if msg.is_error { (1.0, 0.4, 0.4) } else { (1.0, 1.0, 1.0) };
 
             cr.set_source_rgba(r, g, b, color_alpha * alpha);
-            cr.select_font_face("sans-serif", cairo::FontSlant::Normal, cairo::FontWeight::Normal);
+            cr.select_font_face("Satoshi", cairo::FontSlant::Normal, cairo::FontWeight::Normal);
             cr.set_font_size(14.0);
 
             let lines = wrap_text(cr, content, area_w);
@@ -851,7 +850,7 @@ fn draw_streaming_activity(
     cr: &cairo::Context, streaming: &PillStreaming,
     x: f64, mut y: f64, _w: f64, alpha: f64,
 ) -> f64 {
-    cr.select_font_face("sans-serif", cairo::FontSlant::Italic, cairo::FontWeight::Normal);
+    cr.select_font_face("Satoshi", cairo::FontSlant::Italic, cairo::FontWeight::Normal);
     cr.set_font_size(12.0);
     cr.set_source_rgba(1.0, 1.0, 1.0, 0.5 * alpha);
 
@@ -880,7 +879,7 @@ fn draw_thinking_text(
     cr: &cairo::Context, x: f64, y: f64, alpha: f64, state: &PillState,
 ) -> f64 {
     let text = "Thinking";
-    cr.select_font_face("sans-serif", cairo::FontSlant::Normal, cairo::FontWeight::Normal);
+    cr.select_font_face("Satoshi", cairo::FontSlant::Normal, cairo::FontWeight::Normal);
     cr.set_font_size(14.0);
     let extents = cr.text_extents(text).unwrap();
 
@@ -921,14 +920,14 @@ fn draw_permission_card(
 
     let tool_label = perm.description.as_deref().unwrap_or(&perm.tool_name);
     cr.set_source_rgba(1.0, 1.0, 1.0, 0.82 * alpha);
-    cr.select_font_face("sans-serif", cairo::FontSlant::Normal, cairo::FontWeight::Bold);
+    cr.select_font_face("Satoshi", cairo::FontSlant::Normal, cairo::FontWeight::Bold);
     cr.set_font_size(12.0);
     cr.move_to(x + 12.0, y + 18.0);
     let _ = cr.show_text(tool_label);
 
     if let Some(ref reason) = perm.reason {
         cr.set_source_rgba(1.0, 1.0, 1.0, 0.5 * alpha);
-        cr.select_font_face("sans-serif", cairo::FontSlant::Normal, cairo::FontWeight::Normal);
+        cr.select_font_face("Satoshi", cairo::FontSlant::Normal, cairo::FontWeight::Normal);
         cr.set_font_size(11.0);
         cr.move_to(x + 12.0, y + 32.0);
         let _ = cr.show_text(reason);
@@ -952,7 +951,7 @@ fn draw_permission_card(
         let _ = cr.stroke();
 
         cr.set_source_rgba(1.0, 1.0, 1.0, text_alpha * alpha);
-        cr.select_font_face("sans-serif", cairo::FontSlant::Normal, cairo::FontWeight::Normal);
+        cr.select_font_face("Satoshi", cairo::FontSlant::Normal, cairo::FontWeight::Normal);
         cr.set_font_size(11.0);
         let ext = cr.text_extents(label).unwrap();
         cr.move_to(btn_x + (btn_w - ext.width()) / 2.0 - ext.x_bearing(), btn_y + (PERM_BUTTON_HEIGHT - ext.height()) / 2.0 - ext.y_bearing());
@@ -978,7 +977,7 @@ fn draw_user_prompt_preview(
     prompt: &str, alpha: f64,
 ) {
     cr.set_source_rgba(1.0, 1.0, 1.0, 0.5 * alpha);
-    cr.select_font_face("sans-serif", cairo::FontSlant::Normal, cairo::FontWeight::Normal);
+    cr.select_font_face("Satoshi", cairo::FontSlant::Normal, cairo::FontWeight::Normal);
     cr.set_font_size(14.0);
 
     let max_w = panel_w * 0.5;
@@ -1271,7 +1270,7 @@ fn draw_broadcast_transcript(cr: &cairo::Context, state: &PillState, ww: f64, wh
         return;
     }
 
-    cr.select_font_face("sans-serif", cairo::FontSlant::Normal, cairo::FontWeight::Normal);
+    cr.select_font_face("Satoshi", cairo::FontSlant::Normal, cairo::FontWeight::Normal);
     cr.set_font_size(TRANSCRIPT_FONT_SIZE);
     let extents = match cr.text_extents(&text) {
         Ok(e) => e,

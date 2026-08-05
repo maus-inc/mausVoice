@@ -353,7 +353,7 @@ fn draw_flash_message(ctx: &Ctx, state: &PillState, ww: f64, wh: f64) {
     let text_extents = ctx.text_extents(&message);
 
     let action_w = if let Some(ref label) = *action_label {
-        ctx.select_font_face("sans-serif", false, true);
+        ctx.select_font_face("Satoshi", false, true);
         ctx.set_font_size(11.0);
         let ext = ctx.text_extents(label);
         ext.width + FLASH_ACTION_PADDING_H * 2.0
@@ -387,7 +387,7 @@ fn draw_flash_message(ctx: &Ctx, state: &PillState, ww: f64, wh: f64) {
 
     // Message text
     ctx.set_source_rgba(1.0, 1.0, 1.0, 0.9 * alpha);
-    ctx.select_font_face("sans-serif", false, true);
+    ctx.select_font_face("Satoshi", false, true);
     ctx.set_font_size(12.0);
     let text_left = if has_action {
         full_x + FLASH_PADDING_H
@@ -409,7 +409,7 @@ fn draw_flash_message(ctx: &Ctx, state: &PillState, ww: f64, wh: f64) {
         ctx.fill();
 
         ctx.set_source_rgba(1.0, 1.0, 1.0, 0.95 * alpha);
-        ctx.select_font_face("sans-serif", false, true);
+        ctx.select_font_face("Satoshi", false, true);
         ctx.set_font_size(11.0);
         let label_ext = ctx.text_extents(label);
         let lx = btn_x + (action_w - label_ext.width) / 2.0 - label_ext.x_bearing;
@@ -477,7 +477,7 @@ fn draw_broadcast_transcript(ctx: &Ctx, state: &PillState, ww: f64, wh: f64) {
         return;
     }
 
-    ctx.select_font_face("sans-serif", false, false);
+    ctx.select_font_face("Satoshi", false, false);
     ctx.set_font_size(TRANSCRIPT_FONT_SIZE);
     let text_extents = ctx.text_extents(&text);
     let box_w = (text_extents.width + TRANSCRIPT_PADDING_H * 2.0).min(TRANSCRIPT_MAX_WIDTH);
@@ -813,7 +813,7 @@ fn draw_compact_content(
     let text = "What can I help you with?";
     let text_alpha = if state.phase.get() == Phase::Recording { 0.96 } else { 0.8 };
     ctx.set_source_rgba(1.0, 1.0, 1.0, text_alpha * alpha);
-    ctx.select_font_face("sans-serif", false, false);
+    ctx.select_font_face("Satoshi", false, false);
     ctx.set_font_size(18.0);
     let extents = ctx.text_extents(text);
     let tx = panel_x + (panel_w - extents.width) / 2.0 - extents.x_bearing;
@@ -843,7 +843,7 @@ fn draw_transcript(
     let scroll = state.scroll_offset.get();
     let mut y = area_y + top_pad - scroll;
 
-    ctx.select_font_face("sans-serif", false, false);
+    ctx.select_font_face("Satoshi", false, false);
     ctx.set_font_size(14.0);
 
     let line_height = 20.0;
@@ -877,7 +877,7 @@ fn draw_transcript(
             };
 
             ctx.set_source_rgba(1.0, 1.0, 1.0, 0.5 * alpha);
-            ctx.select_font_face("sans-serif", false, false);
+            ctx.select_font_face("Satoshi", false, false);
             ctx.set_font_size(12.0);
 
             draw_wrench_icon(ctx, area_x, y + 2.0, 12.0, 0.5 * alpha);
@@ -890,7 +890,7 @@ fn draw_transcript(
             let (r, g, b) = if msg.is_error { (1.0, 0.4, 0.4) } else { (1.0, 1.0, 1.0) };
 
             ctx.set_source_rgba(r, g, b, color_alpha * alpha);
-            ctx.select_font_face("sans-serif", false, false);
+            ctx.select_font_face("Satoshi", false, false);
             ctx.set_font_size(14.0);
 
             let lines = wrap_text(ctx, content, area_w);
@@ -919,7 +919,7 @@ fn draw_streaming_activity(
     ctx: &Ctx, streaming: &PillStreaming,
     x: f64, mut y: f64, _w: f64, alpha: f64,
 ) -> f64 {
-    ctx.select_font_face("sans-serif", true, false);
+    ctx.select_font_face("Satoshi", true, false);
     ctx.set_font_size(12.0);
     ctx.set_source_rgba(1.0, 1.0, 1.0, 0.5 * alpha);
 
@@ -948,7 +948,7 @@ fn draw_thinking_text(
     ctx: &Ctx, x: f64, y: f64, alpha: f64, state: &PillState,
 ) -> f64 {
     let text = "Thinking";
-    ctx.select_font_face("sans-serif", false, false);
+    ctx.select_font_face("Satoshi", false, false);
     ctx.set_font_size(14.0);
     let extents = ctx.text_extents(text);
     let text_y = y + 14.0;
@@ -992,14 +992,14 @@ fn draw_permission_card(
 
     let tool_label = perm.description.as_deref().unwrap_or(&perm.tool_name);
     ctx.set_source_rgba(1.0, 1.0, 1.0, 0.82 * alpha);
-    ctx.select_font_face("sans-serif", false, true);
+    ctx.select_font_face("Satoshi", false, true);
     ctx.set_font_size(12.0);
     ctx.move_to(x + 12.0, y + 18.0);
     ctx.show_text(tool_label);
 
     if let Some(ref reason) = perm.reason {
         ctx.set_source_rgba(1.0, 1.0, 1.0, 0.5 * alpha);
-        ctx.select_font_face("sans-serif", false, false);
+        ctx.select_font_face("Satoshi", false, false);
         ctx.set_font_size(11.0);
         ctx.move_to(x + 12.0, y + 32.0);
         ctx.show_text(reason);
@@ -1023,7 +1023,7 @@ fn draw_permission_card(
         ctx.stroke();
 
         ctx.set_source_rgba(1.0, 1.0, 1.0, text_alpha * alpha);
-        ctx.select_font_face("sans-serif", false, false);
+        ctx.select_font_face("Satoshi", false, false);
         ctx.set_font_size(11.0);
         let ext = ctx.text_extents(label);
         ctx.move_to(
@@ -1052,7 +1052,7 @@ fn draw_user_prompt_preview(
     prompt: &str, alpha: f64,
 ) {
     ctx.set_source_rgba(1.0, 1.0, 1.0, 0.5 * alpha);
-    ctx.select_font_face("sans-serif", false, false);
+    ctx.select_font_face("Satoshi", false, false);
     ctx.set_font_size(14.0);
 
     let max_w = panel_w * 0.5;

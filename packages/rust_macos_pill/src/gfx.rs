@@ -104,7 +104,7 @@ impl Ctx {
     pub fn new(cg: CGContextRef) -> Self {
         Self {
             cg,
-            font_name: Cell::new("HelveticaNeue"),
+            font_name: Cell::new("Satoshi-Medium"),
             font_size: Cell::new(12.0),
             font_bold: Cell::new(false),
             font_italic: Cell::new(false),
@@ -215,19 +215,11 @@ impl Ctx {
     // ── Font & text ───────────────────────────────────────────────
 
     pub fn select_font_face(&self, _name: &str, italic: bool, bold: bool) {
+        // Italic is synthesized by the system when needed; we only ship Medium.
+        let _ = italic;
         self.font_bold.set(bold);
         self.font_italic.set(italic);
-        // Prefer Satoshi when installed by the user; otherwise a clean geometric stack.
-        let name = if bold && italic {
-            "Satoshi-BoldItalic"
-        } else if bold {
-            "Satoshi-Bold"
-        } else if italic {
-            "Satoshi-Italic"
-        } else {
-            "Satoshi-Medium"
-        };
-        self.font_name.set(name);
+        self.font_name.set(if bold { "Satoshi-Bold" } else { "Satoshi-Medium" });
     }
 
     pub fn set_font_size(&self, size: f64) {
@@ -235,32 +227,7 @@ impl Ctx {
     }
 
     fn get_ns_font(&self) -> id {
-        unsafe {
-            let size = self.font_size.get();
-            let bold = self.font_bold.get();
-            let italic = self.font_italic.get();
-            let candidates: &[&str] = if bold && italic {
-                &["Satoshi-BoldItalic", "Satoshi Bold Italic", "Inter-BoldItalic", "SFProText-BoldItalic", "HelveticaNeue-BoldItalic"]
-            } else if bold {
-                &["Satoshi-Bold", "Satoshi Bold", "Inter-SemiBold", "SFProText-Semibold", "HelveticaNeue-Bold"]
-            } else if italic {
-                &["Satoshi-Italic", "Satoshi Italic", "Inter-Italic", "SFProText-RegularItalic", "HelveticaNeue-Italic"]
-            } else {
-                &["Satoshi-Medium", "Satoshi Medium", "Satoshi-Regular", "Satoshi", "Inter-Medium", "SFProText-Medium", "HelveticaNeue"]
-            };
-            for name in candidates {
-                let ns_name: id = NSString::alloc(nil).init_str(name);
-                let font: id = msg_send![class!(NSFont), fontWithName:ns_name size:size];
-                if font != nil {
-                    return font;
-                }
-            }
-            if bold {
-                msg_send![class!(NSFont), boldSystemFontOfSize:size]
-            } else {
-                msg_send![class!(NSFont), systemFontOfSize:size]
-            }
-        }
+        crate::font::satoshi_font(self.font_size.get(), self.font_bold.get())
     }
 
     fn make_text_attrs(&self) -> id {

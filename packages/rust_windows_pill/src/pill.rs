@@ -514,9 +514,12 @@ fn tick(state: &PillState, dt: f64) {
         state.loading_offset.set((state.loading_offset.get() + LOADING_SPEED * frame_scale) % 1.0);
     }
 
+    // While paused, fade/hide the style picker (polished/verbatim) but keep the
+    // main pill fully expanded via expand_target above.
     let show_tooltip = !state.assistant_active.get()
         && state.style_count.get() > 1
-        && (hovered || phase == Phase::Recording || phase == Phase::Paused)
+        && phase != Phase::Paused
+        && (hovered || phase == Phase::Recording)
         && state.expand_t.get() > 0.3;
     let tooltip_target = if show_tooltip { 1.0 } else { 0.0 };
     spring_anim(&state.tooltip_t, &state.tooltip_velocity, tooltip_target, SPRING_STIFFNESS, dt);
@@ -1000,24 +1003,13 @@ fn create_edit_overlay(hinstance: HMODULE, main_hwnd: HWND) {
             None,
         ).unwrap();
 
-        // Font: system default UI font (matches the rest of the app), ~14pt.
-        // Falls back to Segoe UI if the stock font can't be queried.
+        // Always use the embedded Satoshi face for the type-mode editor.
+        crate::font::install_embedded_satoshi();
         let mut lf = LOGFONTW::default();
-        let default_font = GetStockObject(DEFAULT_GUI_FONT);
-        let mut lf_out = LOGFONTW::default();
-        let got = GetObjectW(
-            HGDIOBJ(default_font.0),
-            std::mem::size_of::<LOGFONTW>() as i32,
-            Some(&mut lf_out as *mut _ as *mut std::ffi::c_void),
-        );
-        if got > 0 {
-            lf = lf_out;
-        } else {
-           let face: Vec<u16> = "Segoe UI".encode_utf16().collect();
-            lf.lfFaceName[..face.len()].copy_from_slice(&face);
-        }
+        let face: Vec<u16> = "Satoshi ".encode_utf16().collect();
+        lf.lfFaceName[..face.len().min(lf.lfFaceName.len())].copy_from_slice(&face[..face.len().min(lf.lfFaceName.len())]);
         lf.lfHeight = -18;
-        lf.lfWeight = 400;
+        lf.lfWeight = 500; // Medium
         let font = CreateFontIndirectW(&lf);
         SendMessageW(edit, WM_SETFONT, Some(WPARAM(font.0 as usize)), Some(LPARAM(1)));
 

@@ -523,9 +523,12 @@ fn tick(state: &PillState, dt: f64) {
     }
 
     // Tooltip animation (spring)
+    // While paused, fade/hide the style picker (polished/verbatim) but keep the
+    // main pill fully expanded via expand_target above.
     let show_tooltip = !state.assistant_active.get()
         && state.style_count.get() > 1
-        && (hovered || phase == Phase::Recording || phase == Phase::Paused)
+        && phase != Phase::Paused
+        && (hovered || phase == Phase::Recording)
         && state.expand_t.get() > 0.3;
     let tooltip_target = if show_tooltip { 1.0 } else { 0.0 };
     spring_anim(&state.tooltip_t, &state.tooltip_velocity, tooltip_target, SPRING_STIFFNESS, dt);
@@ -910,7 +913,7 @@ unsafe fn setup(receiver: Receiver<InMessage>, embedded: bool) {
     ];
     let _: () = msg_send![entry, setTextColor:white];
 
-    let font: id = msg_send![class!(NSFont), systemFontOfSize:14.0_f64];
+    let font: id = crate::font::satoshi_font(14.0, false);
     let _: () = msg_send![entry, setFont:font];
 
     let placeholder = NSString::alloc(nil).init_str("Type a message...");

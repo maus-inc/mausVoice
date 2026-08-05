@@ -1,4 +1,5 @@
 mod constants;
+mod font;
 mod draw;
 mod input;
 mod ipc;
@@ -7,6 +8,7 @@ mod state;
 mod x11;
 
 fn main() {
+    font::install_embedded_satoshi();
     gtk::init().expect("Failed to initialize GTK");
 
     // Compositors without layer-shell support (notably GNOME/Mutter) fall

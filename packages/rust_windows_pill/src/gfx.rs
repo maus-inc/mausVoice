@@ -71,6 +71,7 @@ impl Gfx {
             rt.SetAntialiasMode(D2D1_ANTIALIAS_MODE_PER_PRIMITIVE);
             rt.SetTextAntialiasMode(D2D1_TEXT_ANTIALIAS_MODE_GRAYSCALE);
 
+            crate::font::install_embedded_satoshi();
             let dw_factory: IDWriteFactory =
                 DWriteCreateFactory(DWRITE_FACTORY_TYPE_SHARED)?;
 
@@ -425,38 +426,7 @@ impl Gfx {
     }
 
     fn text_format(&self, size: f64, bold: bool, italic: bool) -> IDWriteTextFormat {
-        unsafe {
-            let weight = if bold { DWRITE_FONT_WEIGHT_BOLD } else { DWRITE_FONT_WEIGHT_NORMAL };
-            let style = if italic { DWRITE_FONT_STYLE_ITALIC } else { DWRITE_FONT_STYLE_NORMAL };
-            // Prefer Satoshi when installed; fall back through a modern geometric stack.
-            for family in [
-                w!("Satoshi"),
-                w!("Inter"),
-                w!("Segoe UI Variable"),
-                w!("Segoe UI"),
-            ] {
-                if let Ok(format) = self.dw_factory.CreateTextFormat(
-                    family,
-                    None,
-                    weight,
-                    style,
-                    DWRITE_FONT_STRETCH_NORMAL,
-                    size as f32,
-                    w!("en-us"),
-                ) {
-                    return format;
-                }
-            }
-            self.dw_factory.CreateTextFormat(
-                w!("Segoe UI"),
-                None,
-                weight,
-                style,
-                DWRITE_FONT_STRETCH_NORMAL,
-                size as f32,
-                w!("en-us"),
-            ).unwrap()
-        }
+        crate::font::create_text_format(&self.dw_factory, size as f32, bold, italic)
     }
 
     pub(crate) fn measure_text(&self, text: &str, size: f64, bold: bool) -> (f64, f64) {
