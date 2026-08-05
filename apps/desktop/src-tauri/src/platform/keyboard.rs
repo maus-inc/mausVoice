@@ -598,14 +598,15 @@ fn run_listener_thread(
 
         match wait_for_connection(&listener, &running, CONNECT_TIMEOUT) {
             ConnectResult::Connected(stream) => {
-                let generation = connection_generation().fetch_add(1, Ordering::SeqCst) + 1;
+                let generation = connection_generation().fetch_add(1, Ordering::SeqCst);
 
                 let outcome = pump_stream(stream, emitter.clone(), generation);
                 emitter.reset();
 
-                // Invalidate any grace timer still pending for this connection, then reap the
-                // now-disconnected child so the next iteration always respawns fresh.
-                connection_generation().fetch_add(1, Ordering::SeqCst);
+                // Reap the now-disconnected child so the next iteration always respawns fresh.
+                // Don't increment generation here — the grace timer needs to be able to fire
+                // successfully if no new connection has started yet. The next connection's
+                // fetch_add will invalidate any pending timers.
                 stop_listener_child();
 
                 if !running.load(Ordering::SeqCst) {

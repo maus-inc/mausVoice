@@ -262,6 +262,9 @@ unsafe extern "system" fn wndproc(hwnd: HWND, msg: u32, wparam: WPARAM, lparam: 
                     // If pop animation is in progress, cancel the drag that would follow
                     if state.balloon_pop_active.get() {
                         state.drag_cancelled.set(true);
+                        state.balloon_pop_active.set(false);
+                        state.balloon_pop_elapsed.set(0.0);
+                        state.balloon_pop_particles.borrow_mut().clear();
                     }
                     // Track whether we were dragging (to suppress click on release)
                     let was_dragging = state.dragging.get();

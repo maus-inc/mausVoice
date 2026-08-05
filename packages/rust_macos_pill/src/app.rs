@@ -186,6 +186,9 @@ extern "C" fn mouse_up(_this: &Object, _sel: Sel, event: id) {
         // If pop animation is in progress, cancel the drag that would follow
         if ctx.state.balloon_pop_active.get() {
             ctx.state.drag_cancelled.set(true);
+            ctx.state.balloon_pop_active.set(false);
+            ctx.state.balloon_pop_elapsed.set(0.0);
+            ctx.state.balloon_pop_particles.borrow_mut().clear();
         }
         // Track whether we were dragging (to suppress click on release)
         let was_dragging = ctx.state.dragging.get();
@@ -829,8 +832,16 @@ fn tick_long_press(state: &PillState, dt: f64) {
     // Cancel if mouse moved too far from start position
     unsafe {
         let mouse_loc: NSPoint = msg_send![class!(NSEvent), mouseLocation];
-        let dx = mouse_loc.x - state.long_press_start_x.get();
-        let dy = mouse_loc.y - state.long_press_start_y.get();
+        // Convert view-relative start position to screen coordinates
+        // macOS: screen Y is bottom-up, window origin is also bottom-up in screen coords
+        let window_origin: NSPoint = {
+            let frame: NSRect = msg_send![ctx.window, frame];
+            frame.origin
+        };
+        let start_screen_x = window_origin.x + state.long_press_start_x.get();
+        let start_screen_y = window_origin.y + state.long_press_start_y.get();
+        let dx = mouse_loc.x - start_screen_x;
+        let dy = mouse_loc.y - start_screen_y;
         if (dx * dx + dy * dy) > LONG_PRESS_MOVE_THRESHOLD * LONG_PRESS_MOVE_THRESHOLD {
             state.long_press_active.set(false);
             state.long_press_elapsed.set(0.0);
