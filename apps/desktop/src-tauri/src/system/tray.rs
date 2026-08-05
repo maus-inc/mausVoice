@@ -3,11 +3,15 @@ const TRAY_ICON_DEFAULT: &[u8] = include_bytes!(concat!(
     env!("CARGO_MANIFEST_DIR"),
     "/icons/tray/menu-item-macos-36.png"
 ));
-
 #[cfg(target_os = "windows")]
 const TRAY_ICON_DEFAULT: &[u8] = include_bytes!(concat!(
     env!("CARGO_MANIFEST_DIR"),
     "/icons/tray/menu-item-windows-36.png"
+));
+#[cfg(target_os = "linux")]
+const TRAY_ICON_DEFAULT: &[u8] = include_bytes!(concat!(
+    env!("CARGO_MANIFEST_DIR"),
+    "/icons/tray/menu-item-linux-36.png"
 ));
 
 #[cfg(target_os = "macos")]
@@ -15,11 +19,15 @@ const TRAY_ICON_UPDATE: &[u8] = include_bytes!(concat!(
     env!("CARGO_MANIFEST_DIR"),
     "/icons/tray/update-macos-36.png"
 ));
-
 #[cfg(target_os = "windows")]
 const TRAY_ICON_UPDATE: &[u8] = include_bytes!(concat!(
     env!("CARGO_MANIFEST_DIR"),
     "/icons/tray/update-windows-36.png"
+));
+#[cfg(target_os = "linux")]
+const TRAY_ICON_UPDATE: &[u8] = include_bytes!(concat!(
+    env!("CARGO_MANIFEST_DIR"),
+    "/icons/tray/update-linux-36.png"
 ));
 
 #[derive(Debug, Clone, serde::Deserialize, specta::Type)]
