@@ -150,6 +150,9 @@ extern "C" fn mouse_down(_this: &Object, _sel: Sel, event: id) {
             if input::is_on_pill_at(&ctx.state, view_loc.x, view_loc.y) {
                 ctx.state.long_press_active.set(true);
                 ctx.state.long_press_elapsed.set(0.0);
+                ctx.state.long_press_start_x.set(view_loc.x);
+                ctx.state.long_press_start_y.set(view_loc.y);
+                ctx.state.drag_cancelled.set(false);
             }
         }
     });
@@ -180,16 +183,25 @@ extern "C" fn mouse_exited(_this: &Object, _sel: Sel, _event: id) {
 
 extern "C" fn mouse_up(_this: &Object, _sel: Sel, event: id) {
     with_ctx(|ctx| {
+        // If pop animation is in progress, cancel the drag that would follow
+        if ctx.state.balloon_pop_active.get() {
+            ctx.state.drag_cancelled.set(true);
+        }
+        // Track whether we were dragging (to suppress click on release)
+        let was_dragging = ctx.state.dragging.get();
         // End any drag
         ctx.state.dragging.set(false);
         // Cancel any in-progress long press
         ctx.state.long_press_active.set(false);
         ctx.state.long_press_elapsed.set(0.0);
 
-        unsafe {
-            let loc: NSPoint = msg_send![event, locationInWindow];
-            let view_loc: NSPoint = msg_send![_this, convertPoint:loc fromView:nil];
-            input::handle_click(&ctx.state, view_loc.x, view_loc.y);
+        // Only fire click if the user wasn't dragging
+        if !was_dragging {
+            unsafe {
+                let loc: NSPoint = msg_send![event, locationInWindow];
+                let view_loc: NSPoint = msg_send![_this, convertPoint:loc fromView:nil];
+                input::handle_click(&ctx.state, view_loc.x, view_loc.y);
+            }
         }
     });
 }
@@ -814,6 +826,18 @@ fn tick_long_press(state: &PillState, dt: f64) {
         return;
     }
 
+    // Cancel if mouse moved too far from start position
+    unsafe {
+        let mouse_loc: NSPoint = msg_send![class!(NSEvent), mouseLocation];
+        let dx = mouse_loc.x - state.long_press_start_x.get();
+        let dy = mouse_loc.y - state.long_press_start_y.get();
+        if (dx * dx + dy * dy) > LONG_PRESS_MOVE_THRESHOLD * LONG_PRESS_MOVE_THRESHOLD {
+            state.long_press_active.set(false);
+            state.long_press_elapsed.set(0.0);
+            return;
+        }
+    }
+
     let elapsed = state.long_press_elapsed.get() + dt;
     state.long_press_elapsed.set(elapsed);
 
@@ -827,6 +851,7 @@ fn tick_long_press(state: &PillState, dt: f64) {
 fn trigger_balloon_pop(state: &PillState) {
     state.balloon_pop_active.set(true);
     state.balloon_pop_elapsed.set(0.0);
+    state.drag_cancelled.set(false);
 
     let dw = state.draw_width.get();
     let dh = state.draw_height.get();
@@ -880,8 +905,10 @@ fn tick_balloon_pop(state: &PillState, dt: f64) {
         state.balloon_pop_active.set(false);
         state.balloon_pop_elapsed.set(0.0);
         state.balloon_pop_particles.borrow_mut().clear();
-        // Enter drag mode — pill follows cursor
-        state.dragging.set(true);
+        // Enter drag mode — pill follows cursor (unless user released during pop)
+        if !state.drag_cancelled.get() {
+            state.dragging.set(true);
+        }
     }
 }
 
@@ -1132,6 +1159,7 @@ unsafe fn setup(receiver: Receiver<InMessage>, embedded: bool) {
         balloon_pop_elapsed: Cell::new(0.0),
         balloon_pop_particles: RefCell::new(Vec::new()),
         dragging: Cell::new(false),
+        drag_cancelled: Cell::new(false),
         drag_cursor_x: Cell::new(0.0),
         drag_cursor_y: Cell::new(0.0),
     });

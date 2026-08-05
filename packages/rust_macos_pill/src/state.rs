@@ -209,10 +209,13 @@ pub(crate) struct PillState {
     // Long-press balloon pop + drag
     pub(crate) long_press_active: Cell<bool>,
     pub(crate) long_press_elapsed: Cell<f64>,
+    pub(crate) long_press_start_x: Cell<f64>,
+    pub(crate) long_press_start_y: Cell<f64>,
     pub(crate) balloon_pop_active: Cell<bool>,
     pub(crate) balloon_pop_elapsed: Cell<f64>,
     pub(crate) balloon_pop_particles: RefCell<Vec<PopParticle>>,
     pub(crate) dragging: Cell<bool>,
+    pub(crate) drag_cancelled: Cell<bool>,
     pub(crate) drag_cursor_x: Cell<f64>,
     pub(crate) drag_cursor_y: Cell<f64>,
 }

@@ -144,6 +144,7 @@ pub fn run(receiver: Receiver<InMessage>) {
         balloon_pop_elapsed: Cell::new(0.0),
         balloon_pop_particles: RefCell::new(Vec::new()),
         dragging: Cell::new(false),
+        drag_cancelled: Cell::new(false),
         drag_cursor_x: Cell::new(0.0),
         drag_cursor_y: Cell::new(0.0),
         dirty: Cell::new(true),
@@ -245,6 +246,9 @@ unsafe extern "system" fn wndproc(hwnd: HWND, msg: u32, wparam: WPARAM, lparam: 
                     if input::is_on_pill_at(state, x, y) {
                         state.long_press_active.set(true);
                         state.long_press_elapsed.set(0.0);
+                        state.long_press_start_x.set(x);
+                        state.long_press_start_y.set(y);
+                        state.drag_cancelled.set(false);
                     }
                 }
             });
@@ -255,12 +259,21 @@ unsafe extern "system" fn wndproc(hwnd: HWND, msg: u32, wparam: WPARAM, lparam: 
             let y = ((lparam.0 >> 16) & 0xFFFF) as i16 as f64;
             STATE.with(|s| {
                 if let Some(ref state) = *s.borrow() {
+                    // If pop animation is in progress, cancel the drag that would follow
+                    if state.balloon_pop_active.get() {
+                        state.drag_cancelled.set(true);
+                    }
+                    // Track whether we were dragging (to suppress click on release)
+                    let was_dragging = state.dragging.get();
                     // End any drag
                     state.dragging.set(false);
                     // Cancel any in-progress long press
                     state.long_press_active.set(false);
                     state.long_press_elapsed.set(0.0);
-                    input::handle_click(state, x, y);
+                    // Only fire click if the user wasn't dragging
+                    if !was_dragging {
+                        input::handle_click(state, x, y);
+                    }
                 }
             });
             LRESULT(0)
@@ -969,6 +982,25 @@ fn tick_long_press(state: &PillState, dt: f64) {
         return;
     }
 
+    // Cancel if mouse moved too far from start position (screen coords)
+    unsafe {
+        let mut cursor = POINT::default();
+        let _ = GetCursorPos(&mut cursor);
+        // Compare in screen coords — convert start position to screen coords
+        // The start position is in window-relative coords, so get window origin
+        let mut rect = RECT::default();
+        let _ = GetWindowRect(HWND_CELL.with(|c| c.get()), &mut rect);
+        let start_screen_x = rect.left as f64 + state.long_press_start_x.get();
+        let start_screen_y = rect.top as f64 + state.long_press_start_y.get();
+        let dx = cursor.x as f64 - start_screen_x;
+        let dy = cursor.y as f64 - start_screen_y;
+        if (dx * dx + dy * dy) > LONG_PRESS_MOVE_THRESHOLD * LONG_PRESS_MOVE_THRESHOLD {
+            state.long_press_active.set(false);
+            state.long_press_elapsed.set(0.0);
+            return;
+        }
+    }
+
     let elapsed = state.long_press_elapsed.get() + dt;
     state.long_press_elapsed.set(elapsed);
 
@@ -982,6 +1014,7 @@ fn tick_long_press(state: &PillState, dt: f64) {
 fn trigger_balloon_pop(state: &PillState) {
     state.balloon_pop_active.set(true);
     state.balloon_pop_elapsed.set(0.0);
+    state.drag_cancelled.set(false);
 
     let dw = state.draw_width.get();
     let dh = state.draw_height.get();
@@ -1030,12 +1063,14 @@ fn tick_balloon_pop(state: &PillState, dt: f64) {
         particles.retain(|p| p.life > 0.0);
     }
 
-    // When animation completes, enter drag mode
+    // When animation completes, enter drag mode (unless user released)
     if elapsed >= BALLOON_POP_DURATION {
         state.balloon_pop_active.set(false);
         state.balloon_pop_elapsed.set(0.0);
         state.balloon_pop_particles.borrow_mut().clear();
-        state.dragging.set(true);
+        if !state.drag_cancelled.get() {
+            state.dragging.set(true);
+        }
     }
 }
 
@@ -1129,7 +1164,7 @@ fn create_edit_overlay(hinstance: HMODULE, main_hwnd: HWND) {
         // Always use the embedded Satoshi face for the type-mode editor.
         crate::font::install_embedded_satoshi();
         let mut lf = LOGFONTW::default();
-        let face: Vec<u16> = "Satoshi ".encode_utf16().collect();
+        let face: Vec<u16> = "Satoshi".encode_utf16().collect();
         lf.lfFaceName[..face.len().min(lf.lfFaceName.len())].copy_from_slice(&face[..face.len().min(lf.lfFaceName.len())]);
         lf.lfHeight = -18;
         lf.lfWeight = 500; // Medium
