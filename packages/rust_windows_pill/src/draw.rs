@@ -99,6 +99,10 @@ fn draw_pill(gfx: &mut Gfx, state: &PillState, ww: f64, wh: f64) {
             draw_waveform(gfx, rx, ry, pill_w, pill_h, expand_t, state);
             draw_edge_gradient(gfx, rx, ry, pill_w, pill_h, expand_t);
         }
+        Phase::Paused if expand_t > 0.1 => {
+            draw_paused(gfx, rx, ry, pill_w, pill_h, expand_t);
+            draw_edge_gradient(gfx, rx, ry, pill_w, pill_h, expand_t);
+        }
         Phase::Loading if expand_t > 0.1 => {
             draw_loading(gfx, rx, ry, pill_w, pill_h, expand_t, state);
         }
@@ -213,7 +217,7 @@ fn draw_loading(
 
 fn draw_idle_label(gfx: &Gfx, rx: f64, ry: f64, pill_w: f64, pill_h: f64, expand_t: f64) {
     gfx.draw_text_centered("Click to dictate", rx, ry, pill_w, pill_h,
-        11.0, true, [1.0, 1.0, 1.0, 0.4 * expand_t]);
+        12.0, true, [1.0, 1.0, 1.0, 0.55 * expand_t]);
 }
 
 // ── Tooltip (dictation style selector) ────────────────────────────
@@ -256,7 +260,7 @@ fn draw_tooltip(gfx: &Gfx, state: &PillState, ww: f64, pill_area_top: f64) {
     let text_area_right = tooltip_rx + tooltip_w - padding_h - chevron_area;
     let text_area_w = text_area_right - text_area_left;
     gfx.draw_text_centered(&style_name, text_area_left, tooltip_ry, text_area_w, TOOLTIP_HEIGHT,
-        12.0, true, [1.0, 1.0, 1.0, 0.9 * alpha]);
+        13.0, true, [1.0, 1.0, 1.0, 0.95 * alpha]);
 
     // Click regions
     let mid_x = tooltip_rx + tooltip_w / 2.0;
@@ -984,31 +988,79 @@ fn draw_keyboard_button(gfx: &mut Gfx, state: &PillState, ww: f64, wh: f64) {
     }
 }
 
+fn draw_paused(gfx: &Gfx, rx: f64, ry: f64, pill_w: f64, pill_h: f64, expand_t: f64) {
+    // Soft frozen waveform bars to show the session is held, not collapsed.
+    let bar_count = 5;
+    let gap = 4.0;
+    let bar_w = 3.0;
+    let total_w = bar_count as f64 * bar_w + (bar_count - 1) as f64 * gap;
+    let start_x = rx + (pill_w - total_w) / 2.0;
+    let mid_y = ry + pill_h / 2.0;
+    let heights = [0.35, 0.7, 1.0, 0.55, 0.4];
+    for (i, h_frac) in heights.iter().enumerate() {
+        let h = (pill_h - 10.0) * h_frac * expand_t;
+        let x = start_x + i as f64 * (bar_w + gap);
+        let y = mid_y - h / 2.0;
+        gfx.fill_rounded_rect(x, y, bar_w, h, 1.5, [1.0, 1.0, 1.0, 0.55 * expand_t]);
+    }
+}
+
 fn draw_cancel_button(gfx: &Gfx, state: &PillState, ww: f64, wh: f64) {
     let t = state.cancel_t.get();
     if t < 0.01 { return; }
 
     let (pill_x, pill_y, pill_w, _) = pill_position(state, ww, wh);
+    let phase = state.phase.get();
+    let scale = 0.5 + 0.5 * t;
+    let r = ((CANCEL_BUTTON_SIZE - 2.0) / 2.0) * scale;
+
+    // Pause / resume sits left of cancel.
+    let pause_x = pill_x + pill_w - CANCEL_BUTTON_SIZE * 1.5 - 6.0;
+    let pause_y = pill_y - CANCEL_BUTTON_SIZE / 2.0 - 2.0;
+    let pause_cx = pause_x + CANCEL_BUTTON_SIZE / 2.0;
+    let pause_cy = pause_y + CANCEL_BUTTON_SIZE / 2.0;
+    let pause_hovered = is_mouse_over(state, pause_x, pause_y, CANCEL_BUTTON_SIZE, CANCEL_BUTTON_SIZE);
+    let pause_brightness = if pause_hovered { 0.72 } else { 0.52 };
+    gfx.fill_circle(pause_cx, pause_cy, r, [pause_brightness, pause_brightness, pause_brightness, t]);
+
+    if phase == Phase::Paused {
+        // Resume: small play chevron via two lines
+        let s = 4.0 * scale;
+        let col = [1.0, 1.0, 1.0, t];
+        gfx.draw_line(pause_cx - s * 0.35, pause_cy - s, pause_cx + s * 0.75, pause_cy, col, 1.8);
+        gfx.draw_line(pause_cx + s * 0.75, pause_cy, pause_cx - s * 0.35, pause_cy + s, col, 1.8);
+        gfx.draw_line(pause_cx - s * 0.35, pause_cy - s, pause_cx - s * 0.35, pause_cy + s, col, 1.8);
+    } else {
+        // Pause bars
+        let bw = 1.6 * scale;
+        let bh = 7.0 * scale;
+        let gap = 2.2 * scale;
+        gfx.fill_rounded_rect(pause_cx - gap - bw, pause_cy - bh / 2.0, bw, bh, 0.8, [1.0, 1.0, 1.0, t]);
+        gfx.fill_rounded_rect(pause_cx + gap, pause_cy - bh / 2.0, bw, bh, 0.8, [1.0, 1.0, 1.0, t]);
+    }
+
+    // Cancel (X) on the right
     let btn_x = pill_x + pill_w - CANCEL_BUTTON_SIZE / 2.0 + 2.0;
     let btn_y = pill_y - CANCEL_BUTTON_SIZE / 2.0 - 2.0;
     let cx = btn_x + CANCEL_BUTTON_SIZE / 2.0;
     let cy = btn_y + CANCEL_BUTTON_SIZE / 2.0;
-    let r = (CANCEL_BUTTON_SIZE - 2.0) / 2.0;
-
-    let scale = 0.5 + 0.5 * t;
     let cancel_hovered = is_mouse_over(state, btn_x, btn_y, CANCEL_BUTTON_SIZE, CANCEL_BUTTON_SIZE);
     let cancel_brightness = if cancel_hovered { 0.6 } else { 0.46 };
-
-    // Note: Windows Gfx doesn't have save/restore with transforms the same way,
-    // so we scale the radius and position offsets directly
-    let sr = r * scale;
-    gfx.fill_circle(cx, cy, sr, [cancel_brightness, cancel_brightness, cancel_brightness, t]);
-
+    gfx.fill_circle(cx, cy, r, [cancel_brightness, cancel_brightness, cancel_brightness, t]);
     let s = 3.0 * scale;
     gfx.draw_line(cx - s, cy - s, cx + s, cy + s, [1.0, 1.0, 1.0, t], 1.8);
     gfx.draw_line(cx + s, cy - s, cx - s, cy + s, [1.0, 1.0, 1.0, t], 1.8);
 
     if t > 0.5 {
+        let pause_action = if phase == Phase::Paused {
+            ClickAction::ResumeDictation
+        } else {
+            ClickAction::PauseDictation
+        };
+        state.click_regions.borrow_mut().push(ClickRegion {
+            x: pause_x, y: pause_y, w: CANCEL_BUTTON_SIZE, h: CANCEL_BUTTON_SIZE,
+            action: pause_action,
+        });
         state.click_regions.borrow_mut().push(ClickRegion {
             x: btn_x, y: btn_y, w: CANCEL_BUTTON_SIZE, h: CANCEL_BUTTON_SIZE,
             action: ClickAction::CancelDictation,

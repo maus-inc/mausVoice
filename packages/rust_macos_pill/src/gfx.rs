@@ -217,14 +217,15 @@ impl Ctx {
     pub fn select_font_face(&self, _name: &str, italic: bool, bold: bool) {
         self.font_bold.set(bold);
         self.font_italic.set(italic);
+        // Prefer Satoshi when installed by the user; otherwise a clean geometric stack.
         let name = if bold && italic {
-            "HelveticaNeue-BoldItalic"
+            "Satoshi-BoldItalic"
         } else if bold {
-            "HelveticaNeue-Bold"
+            "Satoshi-Bold"
         } else if italic {
-            "HelveticaNeue-Italic"
+            "Satoshi-Italic"
         } else {
-            "HelveticaNeue"
+            "Satoshi-Medium"
         };
         self.font_name.set(name);
     }
@@ -235,14 +236,29 @@ impl Ctx {
 
     fn get_ns_font(&self) -> id {
         unsafe {
-            let name = self.font_name.get();
             let size = self.font_size.get();
-            let ns_name: id = NSString::alloc(nil).init_str(name);
-            let font: id = msg_send![class!(NSFont), fontWithName:ns_name size:size];
-            if font == nil {
-                msg_send![class!(NSFont), systemFontOfSize:size]
+            let bold = self.font_bold.get();
+            let italic = self.font_italic.get();
+            let candidates: &[&str] = if bold && italic {
+                &["Satoshi-BoldItalic", "Satoshi Bold Italic", "Inter-BoldItalic", "SFProText-BoldItalic", "HelveticaNeue-BoldItalic"]
+            } else if bold {
+                &["Satoshi-Bold", "Satoshi Bold", "Inter-SemiBold", "SFProText-Semibold", "HelveticaNeue-Bold"]
+            } else if italic {
+                &["Satoshi-Italic", "Satoshi Italic", "Inter-Italic", "SFProText-RegularItalic", "HelveticaNeue-Italic"]
             } else {
-                font
+                &["Satoshi-Medium", "Satoshi Medium", "Satoshi-Regular", "Satoshi", "Inter-Medium", "SFProText-Medium", "HelveticaNeue"]
+            };
+            for name in candidates {
+                let ns_name: id = NSString::alloc(nil).init_str(name);
+                let font: id = msg_send![class!(NSFont), fontWithName:ns_name size:size];
+                if font != nil {
+                    return font;
+                }
+            }
+            if bold {
+                msg_send![class!(NSFont), boldSystemFontOfSize:size]
+            } else {
+                msg_send![class!(NSFont), systemFontOfSize:size]
             }
         }
     }

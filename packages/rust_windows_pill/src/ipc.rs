@@ -17,6 +17,7 @@ pub enum Phase {
     Idle,
     Recording,
     Loading,
+    Paused,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -105,6 +106,8 @@ pub enum OutMessage {
         always_allow: bool,
     },
     CancelDictation,
+    PauseDictation,
+    ResumeDictation,
     ToastAction { action: String },
 }
 

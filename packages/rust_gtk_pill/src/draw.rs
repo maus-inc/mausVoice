@@ -107,6 +107,10 @@ fn draw_pill(cr: &cairo::Context, state: &PillState, ww: f64, wh: f64) {
             draw_waveform(cr, rx, ry, pill_w, pill_h, expand_t, state);
             draw_edge_gradient(cr, rx, ry, pill_w, pill_h, radius, expand_t);
         }
+        Phase::Paused if expand_t > 0.1 => {
+            // Keep expanded voice field with frozen bars while paused.
+            draw_edge_gradient(cr, rx, ry, pill_w, pill_h, radius, expand_t);
+        }
         Phase::Loading if expand_t > 0.1 => {
             draw_loading(cr, rx, ry, pill_w, pill_h, radius, expand_t, state);
         }
@@ -230,9 +234,10 @@ fn draw_loading(
 }
 
 fn draw_idle_label(cr: &cairo::Context, rx: f64, ry: f64, pill_w: f64, pill_h: f64, expand_t: f64) {
-    cr.set_source_rgba(1.0, 1.0, 1.0, 0.4 * expand_t);
-    cr.select_font_face("sans-serif", cairo::FontSlant::Normal, cairo::FontWeight::Bold);
-    cr.set_font_size(11.0);
+    cr.set_source_rgba(1.0, 1.0, 1.0, 0.55 * expand_t);
+    // Prefer Satoshi when available via fontconfig.
+    cr.select_font_face("Satoshi", cairo::FontSlant::Normal, cairo::FontWeight::Bold);
+    cr.set_font_size(12.0);
     let text = "Click to dictate";
     let extents = cr.text_extents(text).unwrap();
     let tx = rx + (pill_w - extents.width()) / 2.0 - extents.x_bearing();
@@ -254,8 +259,8 @@ fn draw_tooltip(cr: &cairo::Context, state: &PillState, ww: f64, pill_area_top: 
         return;
     }
 
-    cr.select_font_face("sans-serif", cairo::FontSlant::Normal, cairo::FontWeight::Bold);
-    cr.set_font_size(11.0);
+    cr.select_font_face("Satoshi", cairo::FontSlant::Normal, cairo::FontWeight::Bold);
+    cr.set_font_size(12.0);
     let text_extents = cr.text_extents(&style_name).unwrap();
     let text_w = text_extents.width().clamp(20.0, 100.0);
 

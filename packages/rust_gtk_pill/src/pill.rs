@@ -625,7 +625,7 @@ fn tick(state: &PillState) {
     state.wave_phase.set((state.wave_phase.get() + advance) % TAU);
 
     // Pill expand/collapse (spring)
-    let expand_target = if is_active || hovered || state.assistant_active.get() { 1.0 } else { 0.0 };
+    let expand_target = if is_active || hovered || state.assistant_active.get() || phase == Phase::Paused { 1.0 } else { 0.0 };
     spring_anim(&state.expand_t, &state.expand_velocity, expand_target, SPRING_STIFFNESS);
 
     // Loading offset
@@ -636,7 +636,7 @@ fn tick(state: &PillState) {
     // Tooltip animation (spring)
     let show_tooltip = !state.assistant_active.get()
         && state.style_count.get() > 1
-        && (hovered || phase == Phase::Recording)
+        && (hovered || phase == Phase::Recording || phase == Phase::Paused)
         && state.expand_t.get() > 0.3;
     let tooltip_target = if show_tooltip { 1.0 } else { 0.0 };
     spring_anim(&state.tooltip_t, &state.tooltip_velocity, tooltip_target, SPRING_STIFFNESS);
@@ -687,10 +687,13 @@ fn tick(state: &PillState) {
     spring_anim(&state.flash_t, &state.flash_velocity, flash_target, SPRING_STIFFNESS);
 
     // Cancel button
-    let cancel_target = if state.hovered.get()
-        && state.phase.get() != Phase::Idle
-        && !state.assistant_active.get()
-    { 1.0 } else { 0.0 };
+    let controls_phase = state.phase.get();
+    let show_controls = !state.assistant_active.get()
+        && (controls_phase == Phase::Recording
+            || controls_phase == Phase::Loading
+            || controls_phase == Phase::Paused)
+        && (state.hovered.get() || controls_phase == Phase::Paused);
+    let cancel_target = if show_controls { 1.0 } else { 0.0 };
     spring_anim(&state.cancel_t, &state.cancel_velocity, cancel_target, SPRING_STIFFNESS * 2.0);
 
     // Auto-scroll to bottom when new content arrives

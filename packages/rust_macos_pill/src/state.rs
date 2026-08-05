@@ -13,6 +13,8 @@ pub(crate) enum ClickAction {
     OpenInNew,
     KeyboardButton,
     CancelDictation,
+    PauseDictation,
+    ResumeDictation,
     PermissionAllow(String),
     PermissionDeny(String),
     PermissionAlwaysAllow(String),

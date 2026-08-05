@@ -103,6 +103,10 @@ fn draw_pill(ctx: &Ctx, state: &PillState, ww: f64, wh: f64) {
             draw_waveform(ctx, rx, ry, pill_w, pill_h, expand_t, state);
             draw_edge_gradient(ctx, rx, ry, pill_w, pill_h, radius, expand_t);
         }
+        Phase::Paused if expand_t > 0.1 => {
+            draw_paused(ctx, rx, ry, pill_w, pill_h, expand_t);
+            draw_edge_gradient(ctx, rx, ry, pill_w, pill_h, radius, expand_t);
+        }
         Phase::Loading if expand_t > 0.1 => {
             draw_loading(ctx, rx, ry, pill_w, pill_h, radius, expand_t, state);
         }
@@ -248,8 +252,8 @@ fn draw_loading(
 
 fn draw_idle_label(ctx: &Ctx, rx: f64, ry: f64, pill_w: f64, pill_h: f64, expand_t: f64) {
     ctx.set_source_rgba(1.0, 1.0, 1.0, 0.4 * expand_t);
-    ctx.select_font_face("sans-serif", false, true);
-    ctx.set_font_size(11.0);
+    ctx.select_font_face("Satoshi", false, true);
+    ctx.set_font_size(12.0);
     let text = "Click to dictate";
     let extents = ctx.text_extents(text);
     let tx = rx + (pill_w - extents.width) / 2.0 - extents.x_bearing;
@@ -299,8 +303,8 @@ fn draw_tooltip(ctx: &Ctx, state: &PillState, ww: f64, pill_area_top: f64) {
 
     // Style name text
     ctx.set_source_rgba(1.0, 1.0, 1.0, 0.9 * alpha);
-    ctx.select_font_face("sans-serif", false, true);
-    ctx.set_font_size(12.0);
+    ctx.select_font_face("Satoshi", false, true);
+    ctx.set_font_size(13.0);
     let text_extents = ctx.text_extents(&style_name);
     let text_area_left = tooltip_rx + padding_h + chevron_area;
     let text_area_right = tooltip_rx + tooltip_w - padding_h - chevron_area;
@@ -344,8 +348,8 @@ fn draw_flash_message(ctx: &Ctx, state: &PillState, ww: f64, wh: f64) {
     let action_label = state.flash_action_label.borrow();
     let has_action = action_label.is_some();
 
-    ctx.select_font_face("sans-serif", false, true);
-    ctx.set_font_size(12.0);
+    ctx.select_font_face("Satoshi", false, true);
+    ctx.set_font_size(13.0);
     let text_extents = ctx.text_extents(&message);
 
     let action_w = if let Some(ref label) = *action_label {
@@ -1137,6 +1141,23 @@ fn draw_keyboard_button(ctx: &Ctx, state: &PillState, ww: f64, wh: f64) {
     }
 }
 
+fn draw_paused(ctx: &Ctx, rx: f64, ry: f64, pill_w: f64, pill_h: f64, expand_t: f64) {
+    let gap = 4.0;
+    let bar_w = 3.0;
+    let heights = [0.35_f64, 0.7, 1.0, 0.55, 0.4];
+    let total_w = heights.len() as f64 * bar_w + (heights.len() - 1) as f64 * gap;
+    let start_x = rx + (pill_w - total_w) / 2.0;
+    let mid_y = ry + pill_h / 2.0;
+    for (i, h_frac) in heights.iter().enumerate() {
+        let h = (pill_h - 10.0) * *h_frac * expand_t;
+        let x = start_x + i as f64 * (bar_w + gap);
+        let y = mid_y - h / 2.0;
+        ctx.set_source_rgba(1.0, 1.0, 1.0, 0.55 * expand_t);
+        ctx.rounded_rect(x, y, bar_w, h.max(1.0), 1.5);
+        ctx.fill();
+    }
+}
+
 fn draw_cancel_button(ctx: &Ctx, state: &PillState, ww: f64, wh: f64) {
     let t = state.cancel_t.get();
     if t < 0.01 {
@@ -1144,23 +1165,50 @@ fn draw_cancel_button(ctx: &Ctx, state: &PillState, ww: f64, wh: f64) {
     }
 
     let (pill_x, pill_y, pill_w, _) = pill_position(state, ww, wh);
+    let phase = state.phase.get();
+    let scale = 0.5 + 0.5 * t;
+
+    // Pause / resume (left)
+    let pause_x = pill_x + pill_w - CANCEL_BUTTON_SIZE * 1.5 - 6.0;
+    let pause_y = pill_y - CANCEL_BUTTON_SIZE / 2.0 - 2.0;
+    let pause_cx = pause_x + CANCEL_BUTTON_SIZE / 2.0;
+    let pause_cy = pause_y + CANCEL_BUTTON_SIZE / 2.0;
+    ctx.save();
+    ctx.translate(pause_cx, pause_cy);
+    ctx.scale(scale, scale);
+    ctx.translate(-pause_cx, -pause_cy);
+    ctx.set_source_rgba(0.52, 0.52, 0.52, t);
+    let pause_symbol = if phase == Phase::Paused {
+        "play.circle.fill"
+    } else {
+        "pause.circle.fill"
+    };
+    ctx.draw_symbol(pause_symbol, pause_cx, pause_cy, CANCEL_BUTTON_SIZE - 2.0);
+    ctx.restore();
+
+    // Cancel (right)
     let btn_x = pill_x + pill_w - CANCEL_BUTTON_SIZE / 2.0 + 2.0;
     let btn_y = pill_y - CANCEL_BUTTON_SIZE / 2.0 - 2.0;
     let cx = btn_x + CANCEL_BUTTON_SIZE / 2.0;
     let cy = btn_y + CANCEL_BUTTON_SIZE / 2.0;
-
-    let scale = 0.5 + 0.5 * t;
     ctx.save();
     ctx.translate(cx, cy);
     ctx.scale(scale, scale);
     ctx.translate(-cx, -cy);
-
     ctx.set_source_rgba(0.46, 0.46, 0.46, t);
     ctx.draw_symbol("xmark.circle.fill", cx, cy, CANCEL_BUTTON_SIZE - 2.0);
-
     ctx.restore();
 
     if t > 0.5 {
+        let pause_action = if phase == Phase::Paused {
+            ClickAction::ResumeDictation
+        } else {
+            ClickAction::PauseDictation
+        };
+        state.click_regions.borrow_mut().push(ClickRegion {
+            x: pause_x, y: pause_y, w: CANCEL_BUTTON_SIZE, h: CANCEL_BUTTON_SIZE,
+            action: pause_action,
+        });
         state.click_regions.borrow_mut().push(ClickRegion {
             x: btn_x, y: btn_y, w: CANCEL_BUTTON_SIZE, h: CANCEL_BUTTON_SIZE,
             action: ClickAction::CancelDictation,

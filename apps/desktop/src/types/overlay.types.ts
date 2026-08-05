@@ -1,7 +1,7 @@
 import type { ToolPermissionResolution } from "@maus-inc/types";
 import type { AppState } from "../state/app.state";
 
-export type OverlayPhase = "idle" | "recording" | "loading";
+export type OverlayPhase = "idle" | "recording" | "loading" | "paused";
 
 export type OverlayResolvePermissionPayload = {
   permissionId: string;

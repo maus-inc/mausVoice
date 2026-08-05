@@ -1389,6 +1389,29 @@ pub async fn stop_recording(
     .map_err(|err| err.to_string())?
 }
 
+
+#[tauri::command]
+#[specta::specta]
+pub async fn pause_recording(
+    recorder: State<'_, Arc<dyn crate::platform::Recorder>>,
+) -> Result<(), String> {
+    let recorder = Arc::clone(&recorder);
+    tauri::async_runtime::spawn_blocking(move || recorder.pause().map_err(|err| err.to_string()))
+        .await
+        .map_err(|err| err.to_string())?
+}
+
+#[tauri::command]
+#[specta::specta]
+pub async fn resume_recording(
+    recorder: State<'_, Arc<dyn crate::platform::Recorder>>,
+) -> Result<(), String> {
+    let recorder = Arc::clone(&recorder);
+    tauri::async_runtime::spawn_blocking(move || recorder.resume().map_err(|err| err.to_string()))
+        .await
+        .map_err(|err| err.to_string())?
+}
+
 #[tauri::command]
 #[specta::specta]
 pub async fn store_transcription_audio(

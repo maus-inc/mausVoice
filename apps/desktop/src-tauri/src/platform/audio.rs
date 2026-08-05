@@ -349,6 +349,32 @@ mod cpal_impl {
             Err(last_err.unwrap_or(RecordingError::InputDeviceUnavailable))
         }
 
+        fn pause_recording(&self) -> Result<(), RecordingError> {
+            let guard = self
+                .inner
+                .lock()
+                .map_err(|_| RecordingError::NotRecording)?;
+            let recording = guard.as_ref().ok_or(RecordingError::NotRecording)?;
+            recording
+                ._stream
+                .pause()
+                .map_err(|err| RecordingError::StreamPlay(err.to_string()))?;
+            Ok(())
+        }
+
+        fn resume_recording(&self) -> Result<(), RecordingError> {
+            let guard = self
+                .inner
+                .lock()
+                .map_err(|_| RecordingError::NotRecording)?;
+            let recording = guard.as_ref().ok_or(RecordingError::NotRecording)?;
+            recording
+                ._stream
+                .play()
+                .map_err(|err| RecordingError::StreamPlay(err.to_string()))?;
+            Ok(())
+        }
+
         fn stop_recording(&self) -> Result<RecordingResult, RecordingError> {
             let mut guard = self
                 .inner
@@ -398,6 +424,14 @@ mod cpal_impl {
 
         fn stop(&self) -> Result<RecordingResult, Box<dyn std::error::Error>> {
             self.stop_recording().map_err(|err| Box::new(err) as _)
+        }
+
+        fn pause(&self) -> Result<(), Box<dyn std::error::Error>> {
+            self.pause_recording().map_err(|err| Box::new(err) as _)
+        }
+
+        fn resume(&self) -> Result<(), Box<dyn std::error::Error>> {
+            self.resume_recording().map_err(|err| Box::new(err) as _)
         }
 
         fn set_preferred_input_device(&self, name: Option<String>) {

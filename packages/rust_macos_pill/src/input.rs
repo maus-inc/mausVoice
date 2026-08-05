@@ -54,6 +54,12 @@ pub(crate) fn handle_click(state: &PillState, x: f64, y: f64) {
                 ClickAction::CancelDictation => {
                     ipc::send(&OutMessage::CancelDictation);
                 }
+                ClickAction::PauseDictation => {
+                    ipc::send(&OutMessage::PauseDictation);
+                }
+                ClickAction::ResumeDictation => {
+                    ipc::send(&OutMessage::ResumeDictation);
+                }
                 ClickAction::PermissionAllow(id) => {
                     ipc::send(&OutMessage::ResolvePermission {
                         permission_id: id.clone(), status: "allowed".to_string(), always_allow: false,

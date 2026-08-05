@@ -428,6 +428,25 @@ impl Gfx {
         unsafe {
             let weight = if bold { DWRITE_FONT_WEIGHT_BOLD } else { DWRITE_FONT_WEIGHT_NORMAL };
             let style = if italic { DWRITE_FONT_STYLE_ITALIC } else { DWRITE_FONT_STYLE_NORMAL };
+            // Prefer Satoshi when installed; fall back through a modern geometric stack.
+            for family in [
+                w!("Satoshi"),
+                w!("Inter"),
+                w!("Segoe UI Variable"),
+                w!("Segoe UI"),
+            ] {
+                if let Ok(format) = self.dw_factory.CreateTextFormat(
+                    family,
+                    None,
+                    weight,
+                    style,
+                    DWRITE_FONT_STRETCH_NORMAL,
+                    size as f32,
+                    w!("en-us"),
+                ) {
+                    return format;
+                }
+            }
             self.dw_factory.CreateTextFormat(
                 w!("Segoe UI"),
                 None,

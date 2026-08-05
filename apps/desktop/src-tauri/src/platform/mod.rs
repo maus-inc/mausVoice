@@ -155,6 +155,12 @@ pub trait Recorder: Send + Sync {
         chunk_callback: Option<ChunkCallback>,
     ) -> Result<(), Box<dyn std::error::Error>>;
     fn stop(&self) -> Result<crate::domain::RecordingResult, Box<dyn std::error::Error>>;
+    fn pause(&self) -> Result<(), Box<dyn std::error::Error>> {
+        Ok(())
+    }
+    fn resume(&self) -> Result<(), Box<dyn std::error::Error>> {
+        Ok(())
+    }
     fn set_preferred_input_device(&self, _name: Option<String>) {}
     fn clear_device_cache(&self) {}
     fn current_sample_rate(&self) -> Option<u32> {
