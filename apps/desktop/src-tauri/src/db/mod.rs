@@ -10,8 +10,8 @@ pub mod tone_queries;
 pub mod transcription_queries;
 pub mod user_queries;
 
-pub const DB_FILENAME: &str = "voquill.db";
-pub const DB_CONNECTION: &str = "sqlite:voquill.db";
+pub const DB_FILENAME: &str = "mausvoice.db";
+pub const DB_CONNECTION: &str = "sqlite:mausvoice.db";
 
 pub const SCHEMA_SQL: &str = include_str!("migrations/000_schema.sql");
 pub const USER_PROFILES_MIGRATION_SQL: &str = include_str!("migrations/001_user_profiles.sql");

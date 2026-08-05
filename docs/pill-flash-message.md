@@ -2,12 +2,12 @@
 
 A flash message is a temporary notification that appears above the pill in dictation mode. It replaces the language/style switcher tooltip while visible, then smoothly disappears and returns control to the tooltip.
 
-This feature was implemented for the macOS pill (`packages/rust_macos_pill`). This document specifies the behavior, layout, animation, and IPC contract so the same feature can be replicated in the GTK pill (`packages/rust_gtk_pill`) and any future platform implementations.
+This feature was implemented for the macOS pill (`packages/rust_macos_pill`). This document specifies the behavior, layout, animation, and IPC contract for supported pill implementations.
 
 ## IPC Message
 
 ```json
-{"type": "flash_message", "message": "Copied to clipboard"}
+{ "type": "flash_message", "message": "Copied to clipboard" }
 ```
 
 | Field     | Type   | Description                        |
@@ -29,13 +29,13 @@ When a new `flash_message` arrives while one is already showing, it replaces the
 
 Add the following fields to `PillState`:
 
-| Field            | Type           | Default          | Description                                           |
-| ---------------- | -------------- | ---------------- | ----------------------------------------------------- |
-| `flash_message`  | `String`       | `""` (empty)     | The current message text.                             |
-| `flash_visible`  | `bool`         | `false`          | Whether the display timer is active.                  |
-| `flash_t`        | `f64`          | `0.0`            | Spring-animated progress `0.0 → 1.0` (appear/disappear). |
-| `flash_velocity` | `f64`          | `0.0`            | Spring velocity for `flash_t`.                        |
-| `flash_timer`    | `f64` (seconds) | `0.0`           | Countdown — when it reaches 0, `flash_visible` becomes false. |
+| Field            | Type            | Default      | Description                                                   |
+| ---------------- | --------------- | ------------ | ------------------------------------------------------------- |
+| `flash_message`  | `String`        | `""` (empty) | The current message text.                                     |
+| `flash_visible`  | `bool`          | `false`      | Whether the display timer is active.                          |
+| `flash_t`        | `f64`           | `0.0`        | Spring-animated progress `0.0 → 1.0` (appear/disappear).      |
+| `flash_velocity` | `f64`           | `0.0`        | Spring velocity for `flash_t`.                                |
+| `flash_timer`    | `f64` (seconds) | `0.0`        | Countdown — when it reaches 0, `flash_visible` becomes false. |
 
 ### IPC handler
 
@@ -49,14 +49,14 @@ state.flash_timer    = FLASH_DURATION   // 2.5 seconds
 
 ## Constants
 
-| Constant          | Value  | Description                                               |
-| ----------------- | ------ | --------------------------------------------------------- |
-| `FLASH_DURATION`  | `2.5`  | Seconds the message stays visible before fading out.      |
-| `FLASH_HEIGHT`    | `32.0` | Height of the flash banner (matches tooltip height).      |
-| `FLASH_RADIUS`    | `12.0` | Corner radius (matches tooltip radius).                   |
+| Constant          | Value  | Description                                                            |
+| ----------------- | ------ | ---------------------------------------------------------------------- |
+| `FLASH_DURATION`  | `2.5`  | Seconds the message stays visible before fading out.                   |
+| `FLASH_HEIGHT`    | `32.0` | Height of the flash banner (matches tooltip height).                   |
+| `FLASH_RADIUS`    | `12.0` | Corner radius (matches tooltip radius).                                |
 | `FLASH_GAP`       | `6.0`  | Vertical gap between the pill's top edge and the banner's bottom edge. |
-| `FLASH_PADDING_H` | `16.0` | Horizontal padding on each side of the text.              |
-| `FLASH_MIN_SCALE` | `0.5`  | Initial scale factor when appearing (50%).                |
+| `FLASH_PADDING_H` | `16.0` | Horizontal padding on each side of the text.                           |
+| `FLASH_MIN_SCALE` | `0.5`  | Initial scale factor when appearing (50%).                             |
 
 ## Animation
 
@@ -89,11 +89,11 @@ This produces a smooth ease-in on appear and a smooth ease-out on disappear, wit
 
 ### Visual properties derived from `flash_t`
 
-| Property     | Formula                                     | At `flash_t=0` | At `flash_t=1` |
-| ------------ | ------------------------------------------- | --------------- | --------------- |
-| Scale        | `FLASH_MIN_SCALE + (1 - FLASH_MIN_SCALE) * flash_t` | 0.50 (50%)  | 1.00 (100%)     |
-| Opacity (bg) | `0.92 * flash_t`                            | 0.0 (invisible) | 0.92            |
-| Opacity (text)| `0.9 * flash_t`                            | 0.0 (invisible) | 0.9             |
+| Property       | Formula                                             | At `flash_t=0`  | At `flash_t=1` |
+| -------------- | --------------------------------------------------- | --------------- | -------------- |
+| Scale          | `FLASH_MIN_SCALE + (1 - FLASH_MIN_SCALE) * flash_t` | 0.50 (50%)      | 1.00 (100%)    |
+| Opacity (bg)   | `0.92 * flash_t`                                    | 0.0 (invisible) | 0.92           |
+| Opacity (text) | `0.9 * flash_t`                                     | 0.0 (invisible) | 0.9            |
 
 The scale transform is applied around the **center** of the banner (not the corner), so it grows outward symmetrically.
 
@@ -205,11 +205,11 @@ A celebratory particle effect that shoots firework rockets out from the pill, ea
 ## IPC Message
 
 ```json
-{"type": "fireworks", "message": "Congratulations!"}
+{ "type": "fireworks", "message": "Congratulations!" }
 ```
 
-| Field     | Type   | Description                                         |
-| --------- | ------ | --------------------------------------------------- |
+| Field     | Type   | Description                                               |
+| --------- | ------ | --------------------------------------------------------- |
 | `message` | string | Text for the flash message banner shown during fireworks. |
 
 Add `Fireworks { message: String }` to the `InMessage` enum (serde tag: `fireworks`).
@@ -220,12 +220,12 @@ When received, this triggers **both** the fireworks particle system **and** a fl
 
 Add the following fields to `PillState`:
 
-| Field                   | Type           | Default | Description                                 |
-| ----------------------- | -------------- | ------- | ------------------------------------------- |
-| `fireworks_active`      | `bool`         | `false` | Whether the fireworks system is running.    |
-| `fireworks_elapsed`     | `f64`          | `0.0`   | Seconds since fireworks started.            |
-| `fireworks_next_launch` | `usize`        | `0`     | Index into the launch schedule.             |
-| `fireworks_rockets`     | `Vec<Rocket>`  | `[]`    | Active rockets (rising + exploding).        |
+| Field                   | Type          | Default | Description                              |
+| ----------------------- | ------------- | ------- | ---------------------------------------- |
+| `fireworks_active`      | `bool`        | `false` | Whether the fireworks system is running. |
+| `fireworks_elapsed`     | `f64`         | `0.0`   | Seconds since fireworks started.         |
+| `fireworks_next_launch` | `usize`       | `0`     | Index into the launch schedule.          |
+| `fireworks_rockets`     | `Vec<Rocket>` | `[]`    | Active rockets (rising + exploding).     |
 
 ### Rocket struct
 
@@ -273,35 +273,35 @@ fireworks_rockets.clear()
 
 ## Constants
 
-| Constant                       | Value  | Description                                          |
-| ------------------------------ | ------ | ---------------------------------------------------- |
-| `FIREWORKS_TOTAL_DURATION`     | `7.0`  | Total duration in seconds.                           |
-| `FIREWORKS_GRAVITY`            | `40.0` | Downward acceleration (px/s²). Rockets feel this fully; sparks at 30%. |
-| `FIREWORKS_SPARK_BASE_SPEED`   | `85.0` | Base outward speed of explosion sparks (px/s).       |
-| `FIREWORKS_SPARK_LIFE`         | `1.1`  | Spark lifetime in seconds (life decrements by `dt / LIFE`). |
-| `FIREWORKS_SPARK_DRAG`         | `1.2`  | Exponential drag coefficient for sparks.             |
-| `FIREWORKS_TRAIL_MAX`          | `15`   | Max trail points stored per rocket.                  |
-| `FIREWORKS_TRAIL_FADE_RATE`    | `2.0`  | Trail alpha decay rate per second after explosion.   |
-| `FIREWORKS_ROCKET_LINE_WIDTH`  | `1.8`  | Stroke width for rocket trails.                      |
-| `FIREWORKS_SPARK_LINE_WIDTH`   | `1.2`  | Stroke width for spark lines.                        |
-| `FIREWORKS_HEAD_SIZE`          | `4.0`  | Diameter of rocket head dot (px).                    |
+| Constant                      | Value  | Description                                                            |
+| ----------------------------- | ------ | ---------------------------------------------------------------------- |
+| `FIREWORKS_TOTAL_DURATION`    | `7.0`  | Total duration in seconds.                                             |
+| `FIREWORKS_GRAVITY`           | `40.0` | Downward acceleration (px/s²). Rockets feel this fully; sparks at 30%. |
+| `FIREWORKS_SPARK_BASE_SPEED`  | `85.0` | Base outward speed of explosion sparks (px/s).                         |
+| `FIREWORKS_SPARK_LIFE`        | `1.1`  | Spark lifetime in seconds (life decrements by `dt / LIFE`).            |
+| `FIREWORKS_SPARK_DRAG`        | `1.2`  | Exponential drag coefficient for sparks.                               |
+| `FIREWORKS_TRAIL_MAX`         | `15`   | Max trail points stored per rocket.                                    |
+| `FIREWORKS_TRAIL_FADE_RATE`   | `2.0`  | Trail alpha decay rate per second after explosion.                     |
+| `FIREWORKS_ROCKET_LINE_WIDTH` | `1.8`  | Stroke width for rocket trails.                                        |
+| `FIREWORKS_SPARK_LINE_WIDTH`  | `1.2`  | Stroke width for spark lines.                                          |
+| `FIREWORKS_HEAD_SIZE`         | `4.0`  | Diameter of rocket head dot (px).                                      |
 
 ### Color palette
 
 Each rocket is assigned a color from `FIREWORK_COLORS` based on its launch index (`index % len`). The palette:
 
-| Index | Color       | RGB                 |
-| ----- | ----------- | ------------------- |
-| 0     | Coral red   | `(1.0, 0.4, 0.3)`  |
-| 1     | Sky blue    | `(0.3, 0.8, 1.0)`  |
-| 2     | Gold        | `(1.0, 0.85, 0.2)` |
-| 3     | Green       | `(0.4, 1.0, 0.5)`  |
-| 4     | Pink        | `(1.0, 0.5, 0.9)`  |
-| 5     | Lavender    | `(0.5, 0.6, 1.0)`  |
-| 6     | Orange      | `(1.0, 0.65, 0.2)` |
-| 7     | Cyan        | `(0.3, 1.0, 0.9)`  |
-| 8     | Hot pink    | `(1.0, 0.35, 0.5)` |
-| 9     | Purple      | `(0.7, 0.5, 1.0)`  |
+| Index | Color     | RGB                |
+| ----- | --------- | ------------------ |
+| 0     | Coral red | `(1.0, 0.4, 0.3)`  |
+| 1     | Sky blue  | `(0.3, 0.8, 1.0)`  |
+| 2     | Gold      | `(1.0, 0.85, 0.2)` |
+| 3     | Green     | `(0.4, 1.0, 0.5)`  |
+| 4     | Pink      | `(1.0, 0.5, 0.9)`  |
+| 5     | Lavender  | `(0.5, 0.6, 1.0)`  |
+| 6     | Orange    | `(1.0, 0.65, 0.2)` |
+| 7     | Cyan      | `(0.3, 1.0, 0.9)`  |
+| 8     | Hot pink  | `(1.0, 0.35, 0.5)` |
+| 9     | Purple    | `(0.7, 0.5, 1.0)`  |
 
 All drawing (trail, head, sparks) for a given rocket uses its assigned color. The flash message banner remains white text on black — only the firework particles are colored.
 
@@ -309,18 +309,18 @@ All drawing (trail, head, sparks) for a given rocket uses its assigned color. Th
 
 10 rockets launched at predetermined times, alternating left and right. Each entry defines the launch time, angle (degrees from vertical, negative = left), ascent speed, fuse duration, and spark count.
 
-| #  | Time | Angle | Speed | Fuse | Sparks |
-| -- | ---- | ----- | ----- | ---- | ------ |
-| 0  | 0.2s | -25   | 140   | 0.50 | 12     |
-| 1  | 0.8s | +30   | 125   | 0.55 | 10     |
-| 2  | 1.5s | -15   | 150   | 0.45 | 14     |
-| 3  | 2.2s | +40   | 115   | 0.60 | 12     |
-| 4  | 3.0s | -35   | 130   | 0.50 | 11     |
-| 5  | 3.7s | +20   | 145   | 0.50 | 13     |
-| 6  | 4.5s | -40   | 120   | 0.55 | 10     |
-| 7  | 5.2s | +15   | 150   | 0.45 | 14     |
-| 8  | 5.9s | -30   | 125   | 0.50 | 12     |
-| 9  | 6.4s | +35   | 140   | 0.55 | 11     |
+| #   | Time | Angle | Speed | Fuse | Sparks |
+| --- | ---- | ----- | ----- | ---- | ------ |
+| 0   | 0.2s | -25   | 140   | 0.50 | 12     |
+| 1   | 0.8s | +30   | 125   | 0.55 | 10     |
+| 2   | 1.5s | -15   | 150   | 0.45 | 14     |
+| 3   | 2.2s | +40   | 115   | 0.60 | 12     |
+| 4   | 3.0s | -35   | 130   | 0.50 | 11     |
+| 5   | 3.7s | +20   | 145   | 0.50 | 13     |
+| 6   | 4.5s | -40   | 120   | 0.55 | 10     |
+| 7   | 5.2s | +15   | 150   | 0.45 | 14     |
+| 8   | 5.9s | -30   | 125   | 0.50 | 12     |
+| 9   | 6.4s | +35   | 140   | 0.55 | 11     |
 
 Velocity is computed from angle and speed:
 
@@ -443,21 +443,10 @@ Runs two consecutive 7-second fireworks displays with different messages.
 
 ## Platform implementation notes
 
-### GTK pill (`rust_gtk_pill`)
-
-The GTK pill shares the same file structure (`ipc.rs`, `state.rs`, `constants.rs`, `draw.rs`, `input.rs`). To implement both features:
-
-1. **`ipc.rs`** — Add `FlashMessage { message: String }` and `Fireworks { message: String }` to `InMessage`.
-2. **`state.rs`** — Add flash state fields (5 fields), fireworks state fields (4 fields), and the `Rocket`/`Spark`/`RocketPhase` structs. Rocket includes a `color: (f64, f64, f64)` field.
-3. **`constants.rs`** — Add all flash constants (6), fireworks constants (10 including `HEAD_SIZE`), `FireworkLaunch` struct, `FIREWORK_COLORS` palette, and the `FIREWORK_LAUNCHES` schedule.
-4. **Main event handler** — Handle both `FlashMessage` and `Fireworks` IPC. Fireworks triggers flash message with the longer `FIREWORKS_TOTAL_DURATION` timer.
-5. **Tick function** — Add flash timer countdown + spring anim. Add `tick_fireworks()` with the full physics simulation (launch schedule, rocket movement, explosion sparks, cleanup). Launch origin is the center of the flash message banner (computed from `pill_position()` + `FLASH_GAP` + `FLASH_HEIGHT`). Assign color from `FIREWORK_COLORS[index % len]`.
-6. **`draw.rs`** — Restructure `draw_all` render order (tooltip → pill → cancel → fireworks → flash). Add `draw_flash_message()` and `draw_fireworks()`. The GTK pill uses Cairo which has the same `save`/`translate`/`scale`/`restore`, `move_to`/`line_to`/`stroke`, and `set_source_rgba` primitives.
-7. **`test.sh`** — Add `flash` and `fireworks` test modes.
-
 ### Windows pill (future)
 
 Follow the same spec. The critical pieces are:
+
 - The spring animation parameters (stiffness 200, critical damping).
 - The scale-from-center transform for flash message appear/disappear.
 - Anchoring the flash message to the pill's animated Y position, not a fixed coordinate.

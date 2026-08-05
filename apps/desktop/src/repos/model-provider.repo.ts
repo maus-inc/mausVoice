@@ -7,7 +7,7 @@ import {
   GEMINI_GENERATE_TEXT_MODELS,
   GEMINI_TRANSCRIPTION_MODELS,
   XAI_TRANSCRIPTION_MODELS,
-} from "@voquill/voice-ai";
+} from "@maus-inc/voice-ai";
 import { fetch } from "@tauri-apps/plugin-http";
 import { getOllamaHeaders } from "../utils/ollama.utils";
 import { BaseRepo } from "./base.repo";

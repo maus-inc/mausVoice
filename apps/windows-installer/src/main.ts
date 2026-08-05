@@ -140,7 +140,7 @@ class Installer {
             </div>
           </div>
 
-          <h1 class="title">Voquill</h1>
+          <h1 class="title">mausVoice</h1>
 
           <p class="status">${this.state === "error" ? this.errorMessage : this.message}</p>
 
@@ -150,7 +150,7 @@ class Installer {
 
           <div class="actions">
             <button class="btn btn-primary ${showLaunchButton ? "" : "hidden"}" id="launchBtn">
-              Launch Voquill
+              Launch mausVoice
             </button>
             <button class="btn btn-secondary ${showRetryButton ? "" : "hidden"}" id="retryBtn">
               Retry

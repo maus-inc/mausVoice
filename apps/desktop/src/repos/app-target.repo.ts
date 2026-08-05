@@ -1,4 +1,4 @@
-import { AppTarget } from "@voquill/types";
+import { AppTarget } from "@maus-inc/types";
 import { invoke } from "@tauri-apps/api/core";
 import { BaseRepo } from "./base.repo";
 

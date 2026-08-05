@@ -1,5 +1,5 @@
-import { invokeHandler } from "@voquill/functions";
-import { Term } from "@voquill/types";
+import { invokeHandler } from "@maus-inc/functions";
+import { Term } from "@maus-inc/types";
 import { invoke } from "@tauri-apps/api/core";
 import dayjs from "dayjs";
 import { invokeEnterprise } from "../utils/enterprise.utils";

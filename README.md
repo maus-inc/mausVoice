@@ -1,66 +1,74 @@
 <div align="center">
 
-<img src="docs/graphic.png" alt="Voquill Logo" width="400" />
+<img src="docs/graphic.png" alt="mausVoice Logo" width="400" />
 
-[![Discord](https://img.shields.io/discord/1454230702106345514?logo=discord&label=Discord&color=5865F2)](https://discord.gg/5jXkDvdVdt)
+# mausVoice — Personal Local Build
 
-# Your keyboard is holding you back.
-
-### Make voice your new keyboard. Type four times faster by using your voice.
-
-<br/>
-
-**[Visit our website →](https://voquill.com)**
-
-<br/>
-<br/>
-
-**Dictation**
-
-<img src="docs/demo.gif" alt="Voquill Demo" width="600" style="border-radius: 12px;" />
-
-<br/>
-<br/>
-
-**Assistant**
-
-<img src="docs/assistant.gif" alt="Voquill Assistant" width="600" style="border-radius: 12px;" />
+### Voice typing for your own machine. Dictate into any app, clean it up with AI, no account and no subscription.
 
 </div>
-</br>
 
-Voquill is an open-source, cross-platform AI voice typing app that lets you dictate into any desktop application, clean the transcript with AI, and keep your personal glossary in sync. The repository contains the desktop and mobile apps, documentation site, enterprise services, CLI, and shared packages.
+---
 
-## Highlights
+**mausVoice** (Maus + Voice) is a personal, non-commercial fork of [Voquill](https://github.com/voquill/voquill), an open-source AI voice-typing desktop app. It has been trimmed and rewired to run entirely for personal use with **your own Deepgram and Groq API keys** — no Voquill account, no paywall, and no "Pro" gating.
 
-- Voice input everywhere: overlay, hotkeys, and system integrations work across macOS, Windows, and Linux.
-- Choose your engine: run Whisper locally (with optional GPU acceleration) or point to a cloud provider of your choice.
-- AI text cleanup: remove filler words and false starts automatically.
-- Personal dictionary: create glossary terms and replacement rules so recurring names and phrases stay accurate.
-- Batteries included: Tauri auto-updates, enterprise services, and shared utilities and types.
-- Privacy first: You have full control over your data. Run Voquill against any backend you wish, even offline.
+> Looking for the upstream project, its hosted plans, mobile app, or marketing copy? See [`README.original.md`](README.original.md) and [voquill.com](https://voquill.com).
 
-## Screenshots
+## What this fork changes
 
-|                                                                                                                           |                                            |
-| ------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------ |
-| **Home** — Track your streaks, words per minute, and recent transcriptions at a glance.                                   | ![Home](docs/home-page.png)                |
-| **History** — Browse and replay past transcriptions with full audio playback.                                             | ![History](docs/history.png)               |
-| **Writing Styles** — Switch between tones like Polished, Verbatim, and Chat to control how your voice sounds on the page. | ![Writing Styles](docs/writing-styles.png) |
-| **Dictionary** — Add custom terms and replacement rules so Voquill always spells your words correctly.                    | ![Dictionary](docs/dictionary.png)         |
-| **Providers** — Bring your own API key and choose your preferred transcription and post-processing provider.              | ![Providers](docs/providers.png)           |
-| **Chats** — Have voice-powered conversations with an AI assistant directly inside Voquill.                                | ![Chats](docs/chats-page.png)              |
+- **No paywall / no Pro account gating.** All capabilities are available locally. The cloud account, billing, and trial flows are bypassed.
+- **Personal-use mode by default.** The app signs you in as a local user (no Firebase account) and configures sensible defaults automatically.
+- **Bring-your-own keys.** Out of the box, transcription uses **Deepgram streaming** (`nova-3`) over your Deepgram key — audio is transcribed live while you speak, so the transcript is ready almost as soon as you stop — and post-processing uses Groq `openai/gpt-oss-20b` over your Groq key. You enter both keys on first run (or in Settings); they are stored encrypted (XChaCha20-Poly1305) on your machine and are never baked into the build.
+- **Fully-local option still available.** You can also run Whisper locally (CPU or GPU) instead of the cloud APIs if you prefer zero network calls for transcription.
+- **Removed what I don't use.** The Flutter mobile app (`mobile/`), the `flutter_video_looper` package, and Linux desktop support have been removed to keep the tree focused on the macOS/Windows desktop app.
 
-## License
+Everything else — the dictation overlay, hotkeys, AI text cleanup, personal dictionary, writing styles, and the voice assistant — works as in upstream.
 
-Unless otherwise noted, Voquill is released under the AGPLv3. See `LICENCE` for the complete terms and third-party attributions.
+## How it works (short version)
 
-## Contributing
+1. You press your hotkey and speak; an overlay "pill" shows recording state.
+2. Audio is captured natively (Rust) and sent to your chosen transcription engine (local Whisper, or Deepgram streaming transcription with your key).
+3. The transcript is optionally cleaned up by an LLM (filler removal, formatting) using your selected writing style.
+4. The result is pasted into whatever app you're focused on.
 
-See [docs/getting-started.md](docs/getting-started.md) for setup instructions and architecture details.
+For the full picture — the monorepo layout, the "Rust is the API, TypeScript is the Brain" design, the repo/action/command data flow, and every feature subsystem — read **[`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md)**.
 
-We love our community! Thank you to everyone who has contributed to Voquill!
+## Requirements
 
-<a href="https://github.com/voquill/voquill/graphs/contributors">
-  <img src="https://contrib.rocks/image?repo=voquill/voquill" />
-</a>
+- macOS or Windows
+- Node.js 18+ and pnpm 10
+- Rust 1.77+ (see [Tauri prerequisites](https://v2.tauri.app/start/prerequisites/))
+- For the default cloud path: a [Deepgram API key](https://console.deepgram.com/) (streaming transcription) and a [Groq API key](https://console.groq.com/keys) (AI cleanup). For the fully-local path: a downloaded Whisper model instead.
+
+## Setup
+
+```bash
+pnpm install
+```
+
+There are no build-time keys. On first launch, the onboarding **"Connect your API keys"** step asks for your Deepgram (transcription) and Groq (AI cleanup) keys. Both are stored encrypted locally and can be changed or rotated any time in **Settings** — no rebuild required.
+
+## Run
+
+From `apps/desktop` (platform-specific commands are required for native features):
+
+```bash
+cd apps/desktop
+pnpm dev:mac          # macOS
+pnpm dev:windows      # Windows
+```
+
+> Do not use `pnpm dev` directly — use the platform-specific command above.
+
+## Build & quality (run from the repo root)
+
+```bash
+pnpm run build         # build all workspaces (turborepo)
+pnpm run lint          # lint
+pnpm run check-types   # TypeScript type checking
+pnpm run test          # tests
+```
+
+## License & attribution
+
+This fork inherits mausVoice's **AGPLv3** license. See [`LICENCE`](LICENCE) for the full terms and third-party attributions. All credit for the original application goes to the Voquill authors and contributors. This build is intended strictly for personal, non-commercial use.

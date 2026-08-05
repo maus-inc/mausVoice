@@ -1,12 +1,13 @@
-import { Member, Nullable } from "@voquill/types";
+import { Member, Nullable } from "@maus-inc/types";
 import {
   getMemberExceedsLimits,
   getRec,
   TRIAL_DURATION_DAYS,
-} from "@voquill/utilities";
+} from "@maus-inc/utilities";
 import { getIntl } from "../i18n";
 import type { AppState } from "../state/app.state";
 import { EffectivePlan } from "../types/member.types";
+import { isPersonalUseProEnabled } from "./personal-use.utils";
 
 export const getMyMember = (state: AppState): Nullable<Member> => {
   return getRec(state.memberById, state.auth?.uid) ?? null;
@@ -16,12 +17,17 @@ export const getEffectivePlan = (state: AppState): EffectivePlan => {
   if (state.isEnterprise) {
     return "enterprise";
   }
+  if (isPersonalUseProEnabled()) {
+    return "pro";
+  }
   return getMyMember(state)?.plan ?? "community";
 };
 
-export const getIsVoquillCloudUser = (state: AppState): boolean => {
-  const plan = getEffectivePlan(state);
-  return plan === "free" || plan === "pro";
+export const getIsMausVoiceCloudUser = (state: AppState): boolean => {
+  const member = getMyMember(state);
+  return (
+    state.isEnterprise || member?.plan === "free" || member?.plan === "pro"
+  );
 };
 
 export const planToDisplayName = (plan: EffectivePlan): string => {
@@ -37,6 +43,9 @@ export const planToDisplayName = (plan: EffectivePlan): string => {
 };
 
 export const getIsOnTrial = (state: AppState): boolean => {
+  if (isPersonalUseProEnabled()) {
+    return false;
+  }
   const member = getMyMember(state);
   return member?.isOnTrial === true;
 };
@@ -68,6 +77,9 @@ export const getTrialProgress = (state: AppState): number | null => {
 };
 
 export const getIsPro = (state: AppState): boolean => {
+  if (isPersonalUseProEnabled()) {
+    return true;
+  }
   const member = getMyMember(state);
   if (!member) {
     return false;
@@ -81,6 +93,9 @@ export const getIsPaidSubscriber = (state: AppState): boolean => {
 };
 
 export const getMemberExceedsLimitByState = (state: AppState): boolean => {
+  if (isPersonalUseProEnabled()) {
+    return false;
+  }
   const member = getMyMember(state);
   const config = state.config;
   if (!member || !config) {

@@ -1,6 +1,6 @@
 import { VpnKey } from "@mui/icons-material";
 import { Button } from "@mui/material";
-import type { OidcProvider } from "@voquill/types";
+import type { OidcProvider } from "@maus-inc/types";
 import { submitSignInWithSso } from "../../actions/login.actions";
 import { useAppStore } from "../../store";
 

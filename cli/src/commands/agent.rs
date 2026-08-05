@@ -19,7 +19,7 @@ type SharedWriter = Arc<Mutex<Box<dyn Write + Send>>>;
 
 pub fn run(env: Env, slug: Option<String>, command: Vec<String>) -> Result<()> {
     if command.is_empty() {
-        bail!("Missing command. Usage: voquill session <command> [args...]");
+        bail!("Missing command. Usage: mausvoice session <command> [args...]");
     }
 
     let loaded = credentials::load(env)?

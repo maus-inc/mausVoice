@@ -5,8 +5,8 @@ import type {
   HandlerOutput,
   StreamHandlerInput,
   StreamHandlerName,
-} from "@voquill/functions";
-import type { LlmStreamEvent, Nullable } from "@voquill/types";
+} from "@maus-inc/functions";
+import type { LlmStreamEvent, Nullable } from "@maus-inc/types";
 import { AppState } from "../state/app.state";
 import { readNdjsonStream } from "./stream.utils";
 

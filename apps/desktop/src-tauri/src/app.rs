@@ -3,12 +3,15 @@ use tauri::{Manager, RunEvent, WindowEvent};
 use tauri_plugin_log::{Target, TargetKind, TimezoneStrategy};
 use tauri_plugin_window_state::{AppHandleExt, StateFlags};
 
-const AUTOSTART_HIDDEN_ARG: &str = "--voquill-autostart-hidden";
+const AUTOSTART_HIDDEN_ARG: &str = "--mausvoice-autostart-hidden";
 
 fn handle_run_event(app_handle: &tauri::AppHandle, event: RunEvent) {
     match &event {
         RunEvent::ExitRequested { .. } => {
             let _ = app_handle.save_window_state(StateFlags::SIZE | StateFlags::POSITION);
+            if let Err(err) = crate::platform::keyboard::stop_key_listener() {
+                log::error!("Failed to stop keyboard listener on exit: {err}");
+            }
         }
         #[cfg(target_os = "macos")]
         RunEvent::Reopen { .. } => {
@@ -26,7 +29,7 @@ pub fn build() -> tauri::Builder<tauri::Wry> {
     tauri::Builder::default()
         .plugin({
             let file_name = chrono::Local::now()
-                .format("voquill_%Y-%m-%d_%H%M%S")
+                .format("mausvoice_%Y-%m-%d_%H%M%S")
                 .to_string();
             tauri_plugin_log::Builder::new()
                 .targets([
@@ -204,9 +207,9 @@ pub fn build() -> tauri::Builder<tauri::Wry> {
                 crate::platform::compositor::deploy_trigger_script(app.handle());
             }
 
-            // Open dev tools if VOQUILL_ENABLE_DEVTOOLS is set
-            if std::env::var("VOQUILL_ENABLE_DEVTOOLS").is_ok() {
-                log::info!("VOQUILL_ENABLE_DEVTOOLS detected, opening dev tools...");
+            // Open dev tools if MAUSVOICE_ENABLE_DEVTOOLS is set
+            if std::env::var("MAUSVOICE_ENABLE_DEVTOOLS").is_ok() {
+                log::info!("MAUSVOICE_ENABLE_DEVTOOLS detected, opening dev tools...");
                 if let Some(main_window) = app.get_webview_window("main") {
                     main_window.open_devtools();
                 }
@@ -242,6 +245,8 @@ pub fn build() -> tauri::Builder<tauri::Wry> {
             crate::commands::remote_sender_pair_with_receiver,
             crate::commands::start_recording,
             crate::commands::stop_recording,
+            crate::commands::pause_recording,
+            crate::commands::resume_recording,
             crate::commands::store_transcription_audio,
             crate::commands::storage_upload_data,
             crate::commands::storage_get_download_url,
@@ -288,6 +293,8 @@ pub fn build() -> tauri::Builder<tauri::Wry> {
             crate::commands::sync_hotkey_combos,
             crate::commands::sync_compositor_hotkeys,
             crate::commands::reset_key_listener_state,
+            crate::commands::get_key_listener_health,
+            crate::commands::retry_key_listener,
             crate::commands::play_audio,
             crate::commands::get_text_field_info,
             crate::commands::get_screen_context,

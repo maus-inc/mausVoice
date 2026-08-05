@@ -8,7 +8,7 @@ services:
     ports:
       - "11431:11434"
     networks:
-      - voquill-net
+      - mausvoice-net
 
   caddy:
     image: caddy:2.8
@@ -21,7 +21,7 @@ services:
     volumes:
       - ./ollama/Caddyfile:/etc/caddy/Caddyfile:ro
     networks:
-      - voquill-net
+      - mausvoice-net
     depends_on:
       - ollama
 
@@ -29,4 +29,4 @@ volumes:
   ollama_data:
 
 networks:
-  voquill-net:
+  mausvoice-net:

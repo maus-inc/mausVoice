@@ -164,11 +164,11 @@ fn take_required(params: &HashMap<String, String>, key: &str) -> Result<String> 
 }
 
 const SIGNIN_SUCCESS_HTML: &str = r#"<!doctype html>
-<html><head><meta charset="utf-8"><title>Voquill CLI</title>
+<html><head><meta charset="utf-8"><title>mausVoice CLI</title>
 <style>body{font-family:system-ui,-apple-system,sans-serif;background:#121212;color:#fff;display:flex;align-items:center;justify-content:center;height:100vh;margin:0}main{text-align:center;padding:32px}</style>
 </head><body><main><h1>You're signed in.</h1><p>You can close this tab and return to the CLI.</p></main></body></html>"#;
 
 const SIGNIN_FAILED_HTML: &str = r#"<!doctype html>
-<html><head><meta charset="utf-8"><title>Voquill CLI</title>
+<html><head><meta charset="utf-8"><title>mausVoice CLI</title>
 <style>body{font-family:system-ui,-apple-system,sans-serif;background:#121212;color:#fff;display:flex;align-items:center;justify-content:center;height:100vh;margin:0}main{text-align:center;padding:32px}</style>
 </head><body><main><h1>Sign-in failed.</h1><p>Please return to the CLI and try again.</p></main></body></html>"#;

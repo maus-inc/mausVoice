@@ -54,7 +54,7 @@ pub fn run(receiver: Receiver<InMessage>) {
             window.set_layer_shell_margin(gtk_layer_shell::Edge::Bottom, MARGIN_BOTTOM);
             window.set_keyboard_mode(gtk_layer_shell::KeyboardMode::None);
             window.set_exclusive_zone(0);
-            window.set_namespace("voquill-pill");
+            window.set_namespace("mausvoice-pill");
         }
         Backend::X11 => {
             window.connect_realize(move |window| x11::setup_x11_window(window));
@@ -625,7 +625,7 @@ fn tick(state: &PillState) {
     state.wave_phase.set((state.wave_phase.get() + advance) % TAU);
 
     // Pill expand/collapse (spring)
-    let expand_target = if is_active || hovered || state.assistant_active.get() { 1.0 } else { 0.0 };
+    let expand_target = if is_active || hovered || state.assistant_active.get() || phase == Phase::Paused { 1.0 } else { 0.0 };
     spring_anim(&state.expand_t, &state.expand_velocity, expand_target, SPRING_STIFFNESS);
 
     // Loading offset
@@ -634,8 +634,11 @@ fn tick(state: &PillState) {
     }
 
     // Tooltip animation (spring)
+    // While paused, fade/hide the style picker (polished/verbatim) but keep the
+    // main pill fully expanded via expand_target above.
     let show_tooltip = !state.assistant_active.get()
         && state.style_count.get() > 1
+        && phase != Phase::Paused
         && (hovered || phase == Phase::Recording)
         && state.expand_t.get() > 0.3;
     let tooltip_target = if show_tooltip { 1.0 } else { 0.0 };
@@ -687,10 +690,13 @@ fn tick(state: &PillState) {
     spring_anim(&state.flash_t, &state.flash_velocity, flash_target, SPRING_STIFFNESS);
 
     // Cancel button
-    let cancel_target = if state.hovered.get()
-        && state.phase.get() != Phase::Idle
-        && !state.assistant_active.get()
-    { 1.0 } else { 0.0 };
+    let controls_phase = state.phase.get();
+    let show_controls = !state.assistant_active.get()
+        && (controls_phase == Phase::Recording
+            || controls_phase == Phase::Loading
+            || controls_phase == Phase::Paused)
+        && (state.hovered.get() || controls_phase == Phase::Paused);
+    let cancel_target = if show_controls { 1.0 } else { 0.0 };
     spring_anim(&state.cancel_t, &state.cancel_velocity, cancel_target, SPRING_STIFFNESS * 2.0);
 
     // Auto-scroll to bottom when new content arrives

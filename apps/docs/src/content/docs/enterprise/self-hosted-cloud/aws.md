@@ -1,15 +1,15 @@
 ---
 title: AWS
-description: Deploy Voquill Enterprise on Amazon Web Services.
+description: Deploy mausVoice Enterprise on Amazon Web Services.
 ---
 
-This guide walks you through deploying Voquill Enterprise on AWS using ECS with Fargate.
+This guide walks you through deploying mausVoice Enterprise on AWS using ECS with Fargate.
 
 ## Prerequisites
 
 - An AWS account with permissions to create ECS clusters, task definitions, load balancers, and RDS instances.
 - The [AWS CLI](https://aws.amazon.com/cli/) installed and configured.
-- Your Voquill Enterprise license key.
+- Your mausVoice Enterprise license key.
 
 ## 1. Create a VPC and Networking
 
@@ -27,7 +27,7 @@ Create an RDS PostgreSQL instance within your VPC:
 
 ```bash
 aws rds create-db-instance \
-  --db-instance-identifier voquill-db \
+  --db-instance-identifier mausvoice-db \
   --db-instance-class db.t3.micro \
   --engine postgres \
   --engine-version 16 \
@@ -44,7 +44,7 @@ Note the endpoint once the instance is available. You'll use it as the `DATABASE
 ## 3. Create an ECS Cluster
 
 ```bash
-aws ecs create-cluster --cluster-name voquill
+aws ecs create-cluster --cluster-name mausvoice
 ```
 
 ## 4. Register Task Definitions
@@ -53,7 +53,7 @@ Create a task definition for the gateway service. Save this as `gateway-task.jso
 
 ```json
 {
-  "family": "voquill-gateway",
+  "family": "mausvoice-gateway",
   "networkMode": "awsvpc",
   "requiresCompatibilities": ["FARGATE"],
   "cpu": "512",
@@ -61,10 +61,10 @@ Create a task definition for the gateway service. Save this as `gateway-task.jso
   "containerDefinitions": [
     {
       "name": "gateway",
-      "image": "ghcr.io/voquill/voquill/enterprise-gateway:latest",
+      "image": "ghcr.io/mausvoice/mausvoice/enterprise-gateway:latest",
       "portMappings": [{ "containerPort": 4630 }],
       "environment": [
-        { "name": "DATABASE_URL", "value": "postgres://postgres:your-db-password@your-rds-endpoint:5432/voquill" },
+        { "name": "DATABASE_URL", "value": "postgres://postgres:your-db-password@your-rds-endpoint:5432/mausvoice" },
         { "name": "JWT_SECRET", "value": "your-jwt-secret" },
         { "name": "ENCRYPTION_SECRET", "value": "your-encryption-secret" },
         { "name": "LICENSE_KEY", "value": "your-license-key" }
@@ -74,11 +74,11 @@ Create a task definition for the gateway service. Save this as `gateway-task.jso
 }
 ```
 
-Create a similar task definition for the admin portal. The `VOQUILL_GATEWAY_URL` environment variable must be set to the public URL of your gateway service so the admin portal can communicate with it.
+Create a similar task definition for the admin portal. The `MAUSVOICE_GATEWAY_URL` environment variable must be set to the public URL of your gateway service so the admin portal can communicate with it.
 
 ```json
 {
-  "family": "voquill-admin",
+  "family": "mausvoice-admin",
   "networkMode": "awsvpc",
   "requiresCompatibilities": ["FARGATE"],
   "cpu": "256",
@@ -86,10 +86,10 @@ Create a similar task definition for the admin portal. The `VOQUILL_GATEWAY_URL`
   "containerDefinitions": [
     {
       "name": "admin",
-      "image": "ghcr.io/voquill/voquill/enterprise-admin:latest",
+      "image": "ghcr.io/mausvoice/mausvoice/enterprise-admin:latest",
       "portMappings": [{ "containerPort": 5173 }],
       "environment": [
-        { "name": "VOQUILL_GATEWAY_URL", "value": "https://your-gateway-url" }
+        { "name": "MAUSVOICE_GATEWAY_URL", "value": "https://your-gateway-url" }
       ]
     }
   ]
@@ -111,7 +111,7 @@ Create an ALB with target groups for both the gateway (port 4630) and admin port
 
 ```bash
 aws elbv2 create-load-balancer \
-  --name voquill-alb \
+  --name mausvoice-alb \
   --subnets subnet-xxx subnet-yyy \
   --security-groups sg-xxx
 ```
@@ -122,9 +122,9 @@ Create target groups and listeners for each service.
 
 ```bash
 aws ecs create-service \
-  --cluster voquill \
+  --cluster mausvoice \
   --service-name gateway \
-  --task-definition voquill-gateway \
+  --task-definition mausvoice-gateway \
   --desired-count 1 \
   --launch-type FARGATE \
   --network-configuration "awsvpcConfiguration={subnets=[subnet-xxx],securityGroups=[sg-xxx],assignPublicIp=DISABLED}" \
@@ -139,7 +139,7 @@ To deploy a new version, pull the latest image and update the ECS service to for
 
 ```bash
 aws ecs update-service \
-  --cluster voquill \
+  --cluster mausvoice \
   --service gateway \
   --force-new-deployment
 ```

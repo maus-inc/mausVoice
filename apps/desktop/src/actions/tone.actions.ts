@@ -1,4 +1,4 @@
-import { Tone } from "@voquill/types";
+import { Tone } from "@maus-inc/types";
 import { getIntl } from "../i18n/intl";
 import { getToneRepo, getUserPreferencesRepo } from "../repos";
 import { ToneEditorMode } from "../state/tone-editor.state";

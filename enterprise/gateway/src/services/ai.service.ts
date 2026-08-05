@@ -3,9 +3,9 @@ import type {
   HandlerInput,
   HandlerOutput,
   StreamHandlerInput,
-} from "@voquill/functions";
-import type { AuthContext, LlmStreamEvent, Nullable } from "@voquill/types";
-import { retry } from "@voquill/utilities";
+} from "@maus-inc/functions";
+import type { AuthContext, LlmStreamEvent, Nullable } from "@maus-inc/types";
+import { retry } from "@maus-inc/utilities";
 import { listActiveLlmProvidersWithKeys } from "../repo/llm-provider.repo";
 import { insertMetric } from "../repo/metrics.repo";
 import { listActiveSttProvidersWithKeys } from "../repo/stt-provider.repo";

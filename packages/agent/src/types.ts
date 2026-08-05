@@ -3,7 +3,7 @@ import type {
   LlmChatInput,
   LlmMessage,
   LlmStreamEvent,
-} from "@voquill/types";
+} from "@maus-inc/types";
 
 export interface AgentToolInput {
   params: Record<string, unknown>;

@@ -43,6 +43,8 @@ pub(crate) enum ClickAction {
     OpenInNew,
     KeyboardButton,
     CancelDictation,
+    PauseDictation,
+    ResumeDictation,
     PermissionAllow(String),
     PermissionDeny(String),
     PermissionAlwaysAllow(String),
@@ -101,6 +103,18 @@ pub(crate) struct FlameTongue {
     pub(crate) width: f64,
     pub(crate) phase: f64,
     pub(crate) speed: f64,
+}
+
+#[derive(Debug, Clone)]
+pub(crate) struct PopParticle {
+    pub(crate) x: f64,
+    pub(crate) y: f64,
+    pub(crate) vx: f64,
+    pub(crate) vy: f64,
+    pub(crate) life: f64,
+    pub(crate) max_life: f64,
+    pub(crate) size: f64,
+    pub(crate) color: (f64, f64, f64),
 }
 
 pub(crate) struct PillState {
@@ -186,6 +200,19 @@ pub(crate) struct PillState {
     pub(crate) transcript_opacity: Cell<f64>,
     pub(crate) transcript_has_message: Cell<bool>,
 
+    // Long-press balloon pop + drag
+    pub(crate) long_press_active: Cell<bool>,
+    pub(crate) long_press_elapsed: Cell<f64>,
+    pub(crate) long_press_start_x: Cell<f64>,
+    pub(crate) long_press_start_y: Cell<f64>,
+    pub(crate) balloon_pop_active: Cell<bool>,
+    pub(crate) balloon_pop_elapsed: Cell<f64>,
+    pub(crate) balloon_pop_particles: RefCell<Vec<PopParticle>>,
+    pub(crate) dragging: Cell<bool>,
+    pub(crate) drag_cancelled: Cell<bool>,
+    pub(crate) drag_cursor_x: Cell<f64>,
+    pub(crate) drag_cursor_y: Cell<f64>,
+
     // Dirty flag — when false, the rendered output is identical to the previous
     // frame so we can skip draw + UpdateLayeredWindow entirely.
     pub(crate) dirty: Cell<bool>,
@@ -221,6 +248,11 @@ impl PillState {
         if self.flash_blue_active.get() { return true; }
         if self.transcript_has_message.get() { return true; }
         if self.transcript_opacity.get() > 0.001 { return true; }
+
+        // Long-press balloon pop + drag
+        if self.long_press_active.get() { return true; }
+        if self.balloon_pop_active.get() { return true; }
+        if self.dragging.get() { return true; }
 
         // Assistant panel has shimmer and streaming content
         if self.assistant_active.get() { return true; }

@@ -23,7 +23,10 @@ import {
   AGENT_DICTATE_HOTKEY,
   getHotkeyCombosForAction,
 } from "../../utils/keyboard.utils";
-import { getEffectivePlan } from "../../utils/member.utils";
+import {
+  getEffectivePlan,
+  getIsMausVoiceCloudUser,
+} from "../../utils/member.utils";
 import { getIsOnboarded, getMyUser } from "../../utils/user.utils";
 import { HotkeyBadge } from "../common/HotkeyBadge";
 import { AIAgentModeConfiguration } from "../settings/AIAgentModeConfiguration";
@@ -201,6 +204,7 @@ export const FeatureReleaseDialog = () => {
   const isCommunity = useAppStore(
     (state) => getEffectivePlan(state) === "community",
   );
+  const isMausVoiceCloudUser = useAppStore(getIsMausVoiceCloudUser);
   const hasConfettiFired = useRef(false);
   const [pageIndex, setPageIndex] = useState(0);
 
@@ -219,10 +223,10 @@ export const FeatureReleaseDialog = () => {
   }, [open]);
 
   useEffect(() => {
-    if (open && !isCommunity) {
+    if (open && isMausVoiceCloudUser) {
       void setPreferredAgentMode("cloud");
     }
-  }, [open, isCommunity]);
+  }, [open, isMausVoiceCloudUser]);
 
   const handleDismiss = () => {
     markFeatureSeen(CURRENT_FEATURE_DATE);

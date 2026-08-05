@@ -2,7 +2,7 @@ import type {
   ToolPermission,
   ToolPermissionResolution,
   ToolPermissionStatus,
-} from "@voquill/types";
+} from "@maus-inc/types";
 import { getToolRepo } from "../repos";
 import { getAppState, produceAppState } from "../store";
 import { createTool } from "../tools";

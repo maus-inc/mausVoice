@@ -1,4 +1,4 @@
-import { ApiKey } from "@voquill/types";
+import { ApiKey } from "@maus-inc/types";
 import dayjs from "dayjs";
 import { getApiKeyRepo } from "../repos";
 import type {

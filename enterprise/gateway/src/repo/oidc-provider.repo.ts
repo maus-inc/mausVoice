@@ -1,4 +1,4 @@
-import type { OidcProvider } from "@voquill/types";
+import type { OidcProvider } from "@maus-inc/types";
 import type { OidcProviderRow } from "../types/oidc-provider.types";
 import { getPool } from "../utils/db.utils";
 

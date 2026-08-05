@@ -36,7 +36,7 @@ build
 dist
 .astro/
 apps/desktop/src/i18n/locales/.cache/
-apps/windows-installer/src-tauri/installer/Voquill_Setup.exe
+apps/windows-installer/src-tauri/installer/mausVoice_Setup.exe
 
 
 # Lockfiles (npm/yarn — we use pnpm)
@@ -56,3 +56,6 @@ target/
 nul
 
 *.exe
+
+# Local craft kit (not committed)
+.craft/

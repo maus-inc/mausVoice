@@ -104,7 +104,7 @@ impl Ctx {
     pub fn new(cg: CGContextRef) -> Self {
         Self {
             cg,
-            font_name: Cell::new("HelveticaNeue"),
+            font_name: Cell::new("Satoshi-Medium"),
             font_size: Cell::new(12.0),
             font_bold: Cell::new(false),
             font_italic: Cell::new(false),
@@ -215,18 +215,11 @@ impl Ctx {
     // ── Font & text ───────────────────────────────────────────────
 
     pub fn select_font_face(&self, _name: &str, italic: bool, bold: bool) {
+        // Italic is synthesized by the system when needed; we only ship Medium.
+        let _ = italic;
         self.font_bold.set(bold);
         self.font_italic.set(italic);
-        let name = if bold && italic {
-            "HelveticaNeue-BoldItalic"
-        } else if bold {
-            "HelveticaNeue-Bold"
-        } else if italic {
-            "HelveticaNeue-Italic"
-        } else {
-            "HelveticaNeue"
-        };
-        self.font_name.set(name);
+        self.font_name.set(if bold { "Satoshi-Bold" } else { "Satoshi-Medium" });
     }
 
     pub fn set_font_size(&self, size: f64) {
@@ -234,17 +227,7 @@ impl Ctx {
     }
 
     fn get_ns_font(&self) -> id {
-        unsafe {
-            let name = self.font_name.get();
-            let size = self.font_size.get();
-            let ns_name: id = NSString::alloc(nil).init_str(name);
-            let font: id = msg_send![class!(NSFont), fontWithName:ns_name size:size];
-            if font == nil {
-                msg_send![class!(NSFont), systemFontOfSize:size]
-            } else {
-                font
-            }
-        }
+        crate::font::satoshi_font(self.font_size.get(), self.font_bold.get())
     }
 
     fn make_text_attrs(&self) -> id {

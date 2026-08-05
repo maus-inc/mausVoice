@@ -1,6 +1,6 @@
-import { invokeHandler } from "@voquill/functions";
-import { Nullable } from "@voquill/types";
-import { batchAsync } from "@voquill/utilities";
+import { invokeHandler } from "@maus-inc/functions";
+import { Nullable } from "@maus-inc/types";
+import { batchAsync } from "@maus-inc/utilities";
 import {
   aldeaTranscribeAudio,
   azureTranscribeAudio,
@@ -14,7 +14,7 @@ import {
   TranscriptionModel,
   xaiTranscribeAudio,
   XaiTranscriptionModel,
-} from "@voquill/voice-ai";
+} from "@maus-inc/voice-ai";
 import { getAppState } from "../store";
 import { DEFAULT_MODEL_SIZE, TranscriptionMode } from "../types/ai.types";
 import { AudioSamples } from "../types/audio.types";

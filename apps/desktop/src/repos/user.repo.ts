@@ -1,5 +1,5 @@
-import { invokeHandler } from "@voquill/functions";
-import { Nullable, User } from "@voquill/types";
+import { invokeHandler } from "@maus-inc/functions";
+import { Nullable, User } from "@maus-inc/types";
 import { invoke } from "@tauri-apps/api/core";
 import { nowIso } from "../utils/date.utils";
 import { invokeEnterprise } from "../utils/enterprise.utils";

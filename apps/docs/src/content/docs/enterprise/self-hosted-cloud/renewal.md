@@ -1,9 +1,9 @@
 ---
 title: Updates & Renewal
-description: Keep your self-hosted Voquill Enterprise deployment up to date and renew your license.
+description: Keep your self-hosted mausVoice Enterprise deployment up to date and renew your license.
 ---
 
-For as long as your license is valid, you can use and update Voquill to the latest version. Once your license expires, services will degrade until a new license is applied.
+For as long as your license is valid, you can use and update mausVoice to the latest version. Once your license expires, services will degrade until a new license is applied.
 
 ## Server Updates
 
@@ -11,7 +11,7 @@ To update the gateway and admin portal, redeploy your services with the latest c
 
 ## Desktop Updates
 
-The desktop app is updated automatically as part of the open-source Voquill client. Updates will be available upon release and can be managed within the app.
+The desktop app is updated automatically as part of the open-source mausVoice client. Updates will be available upon release and can be managed within the app.
 
 ## License Renewal
 
@@ -19,4 +19,4 @@ You can visit the settings page on the admin portal to see when your license exp
 
 ![License expiration in admin portal settings](../on-premise/license-expiration.png)
 
-To renew, contact [enterprise@voquill.com](mailto:enterprise@voquill.com) for a new license key. Once you have it, update the `LICENSE_KEY` environment variable in your deployment and redeploy the gateway service. No other changes are needed — your data, users, and configuration are all preserved.
+To renew, contact [enterprise@mausvoice.com](mailto:enterprise@mausvoice.com) for a new license key. Once you have it, update the `LICENSE_KEY` environment variable in your deployment and redeploy the gateway service. No other changes are needed — your data, users, and configuration are all preserved.

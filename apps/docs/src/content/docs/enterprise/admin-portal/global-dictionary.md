@@ -3,7 +3,7 @@ title: Global Dictionary
 description: Define organization-wide glossary terms and replacement rules that apply to every user.
 ---
 
-The global dictionary lets you define glossary terms and replacement rules that are shared across every Voquill desktop app in your organization. Any term you add here automatically appears in every user's dictionary — no per-user configuration needed.
+The global dictionary lets you define glossary terms and replacement rules that are shared across every mausVoice desktop app in your organization. Any term you add here automatically appears in every user's dictionary — no per-user configuration needed.
 
 ## How It Works
 
@@ -23,7 +23,7 @@ Replacement rules find and replace text in the raw transcript before post-proces
 
 | Input | Output |
 | --- | --- |
-| V quill | Voquill |
+| V quill | mausVoice |
 | kube | Kubernetes |
 
 Since replacements happen before the AI post-processing step, the language model sees the corrected text and works from there.

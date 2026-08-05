@@ -1,4 +1,4 @@
-import type { Nullable, MemberPlan } from "@voquill/types";
+import type { Nullable, MemberPlan } from "@maus-inc/types";
 
 export type MemberRow = {
   id: string;

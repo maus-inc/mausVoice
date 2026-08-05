@@ -1,11 +1,11 @@
-# Voquill Enterprise License
+# mausVoice Enterprise License
 
 **Version 1.0**
 
-Copyright © 2025-present Voquill, Inc.. All rights reserved.
+Copyright © 2025-present mausVoice, Inc.. All rights reserved.
 
 This software and associated documentation files (the "Software") are the
-proprietary intellectual property of Voquill, Inc. ("Licensor").
+proprietary intellectual property of mausVoice, Inc. ("Licensor").
 
 ## 1. Definitions
 
@@ -41,12 +41,12 @@ license agreement with Licensor. Use of the Software without such agreement
 constitutes a material breach of this License and infringement of Licensor's
 intellectual property rights.
 
-For commercial licensing inquiries, contact: **enterprise@voquill.com**
+For commercial licensing inquiries, contact: **enterprise@mausvoice.com**
 
 ## 4. Enterprise Configuration Key
 
 Use of the encrypted enterprise configuration ("Embedded Config") requires a
-valid, signed configuration key obtained directly from Voquill, Inc. under an
+valid, signed configuration key obtained directly from mausVoice, Inc. under an
 active commercial license agreement. Each configuration key is issued to a
 specific organization and may only be used by that organization.
 
@@ -168,6 +168,6 @@ party.
 By using the Software, you acknowledge that you have read, understood, and
 agree to be bound by the terms and conditions of this License.
 
-For questions about this License, contact: **legal@voquill.com**
+For questions about this License, contact: **legal@mausvoice.com**
 
-For commercial licensing inquiries, contact: **enterprise@voquill.com**
+For commercial licensing inquiries, contact: **enterprise@mausvoice.com**

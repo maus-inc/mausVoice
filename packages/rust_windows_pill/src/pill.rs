@@ -15,7 +15,14 @@ use crate::gfx::Gfx;
 use crate::input;
 use crate::ipc::{self, InMessage, OutMessage, Phase, Visibility};
 use crate::state;
-use crate::state::{ClickAction, PillState, Rocket, RocketPhase, Spark, WindowMode};
+use crate::state::{ClickAction, PillState, PopParticle, Rocket, RocketPhase, Spark, WindowMode};
+
+// Issue #7: Thread-local statics are an architectural requirement, not a smell.
+// Win32 HWNDs are thread-affine — they must only be accessed on the thread that
+// created them (the pill process's main / message-loop thread). Global mutable
+// state in the pill would require either a separate lock per HWND (same cost) or
+// a single-threaded executor (what we already have). Thread-locals give us the
+// same ergonomics as globals without violating HWND affinity.
 
 const TIMER_CURSOR: usize = 2;
 
@@ -40,7 +47,7 @@ pub fn run(receiver: Receiver<InMessage>) {
         );
     }
 
-    let class_name = w!("VoquillPill");
+    let class_name = w!("MausVoicePill");
     let hinstance = unsafe { GetModuleHandleW(None).unwrap() };
 
     let wc = WNDCLASSEXW {
@@ -59,7 +66,7 @@ pub fn run(receiver: Receiver<InMessage>) {
         CreateWindowExW(
             WS_EX_LAYERED | WS_EX_TOPMOST | WS_EX_TOOLWINDOW | WS_EX_NOACTIVATE,
             class_name,
-            w!("VoquillPill"),
+            w!("MausVoicePill"),
             WS_POPUP,
             wx, wy,
             WINDOW_W_TYPING, WINDOW_H_TYPING,
@@ -138,6 +145,15 @@ pub fn run(receiver: Receiver<InMessage>) {
         transcript_time_since_update: Cell::new(0.0),
         transcript_opacity: Cell::new(0.0),
         transcript_has_message: Cell::new(false),
+        long_press_active: Cell::new(false),
+        long_press_elapsed: Cell::new(0.0),
+        balloon_pop_active: Cell::new(false),
+        balloon_pop_elapsed: Cell::new(0.0),
+        balloon_pop_particles: RefCell::new(Vec::new()),
+        dragging: Cell::new(false),
+        drag_cancelled: Cell::new(false),
+        drag_cursor_x: Cell::new(0.0),
+        drag_cursor_y: Cell::new(0.0),
         dirty: Cell::new(true),
     };
 
@@ -224,12 +240,22 @@ unsafe extern "system" fn wndproc(hwnd: HWND, msg: u32, wparam: WPARAM, lparam: 
             }
         }
         WM_LBUTTONDOWN => {
+            let x = (lparam.0 & 0xFFFF) as i16 as f64;
+            let y = ((lparam.0 >> 16) & 0xFFFF) as i16 as f64;
             STATE.with(|s| {
                 if let Some(ref state) = *s.borrow() {
                     if state.assistant_active.get()
                         && *state.assistant_input_mode.borrow() == "type"
                     {
                         focus_edit_control();
+                    }
+                    // Start long-press tracking if clicking on the pill body
+                    if input::is_on_pill_at(state, x, y) {
+                        state.long_press_active.set(true);
+                        state.long_press_elapsed.set(0.0);
+                        state.long_press_start_x.set(x);
+                        state.long_press_start_y.set(y);
+                        state.drag_cancelled.set(false);
                     }
                 }
             });
@@ -240,7 +266,24 @@ unsafe extern "system" fn wndproc(hwnd: HWND, msg: u32, wparam: WPARAM, lparam: 
             let y = ((lparam.0 >> 16) & 0xFFFF) as i16 as f64;
             STATE.with(|s| {
                 if let Some(ref state) = *s.borrow() {
-                    input::handle_click(state, x, y);
+                    // If pop animation is in progress, cancel the drag that would follow
+                    if state.balloon_pop_active.get() {
+                        state.drag_cancelled.set(true);
+                        state.balloon_pop_active.set(false);
+                        state.balloon_pop_elapsed.set(0.0);
+                        state.balloon_pop_particles.borrow_mut().clear();
+                    }
+                    // Track whether we were dragging (to suppress click on release)
+                    let was_dragging = state.dragging.get();
+                    // End any drag
+                    state.dragging.set(false);
+                    // Cancel any in-progress long press
+                    state.long_press_active.set(false);
+                    state.long_press_elapsed.set(0.0);
+                    // Only fire click if the user wasn't dragging
+                    if !was_dragging {
+                        input::handle_click(state, x, y);
+                    }
                 }
             });
             LRESULT(0)
@@ -352,7 +395,7 @@ fn on_cursor_tick(hwnd: HWND) {
     STATE.with(|s| {
         if let Some(ref state) = *s.borrow() {
             check_hover(hwnd, state);
-            reposition_to_cursor_monitor(hwnd);
+            reposition_to_cursor_monitor(hwnd, state);
         }
     });
 }
@@ -502,15 +545,23 @@ fn tick(state: &PillState, dt: f64) {
     let advance = (WAVE_BASE_PHASE_STEP + WAVE_PHASE_GAIN * effective_level) * frame_scale;
     state.wave_phase.set((state.wave_phase.get() + advance) % TAU);
 
-    let expand_target = if is_active || hovered || state.assistant_active.get() { 1.0 } else { 0.0 };
+    // Paused keeps the pill fully expanded (voice field stays open, not mini mode).
+    let expand_target = if is_active || hovered || state.assistant_active.get() || phase == Phase::Paused {
+        1.0
+    } else {
+        0.0
+    };
     spring_anim(&state.expand_t, &state.expand_velocity, expand_target, SPRING_STIFFNESS, dt);
 
     if is_loading {
         state.loading_offset.set((state.loading_offset.get() + LOADING_SPEED * frame_scale) % 1.0);
     }
 
+    // While paused, fade/hide the style picker (polished/verbatim) but keep the
+    // main pill fully expanded via expand_target above.
     let show_tooltip = !state.assistant_active.get()
         && state.style_count.get() > 1
+        && phase != Phase::Paused
         && (hovered || phase == Phase::Recording)
         && state.expand_t.get() > 0.3;
     let tooltip_target = if show_tooltip { 1.0 } else { 0.0 };
@@ -534,6 +585,8 @@ fn tick(state: &PillState, dt: f64) {
     tick_flame(state, dt);
     tick_flash_blue(state, dt);
     tick_transcript(state, dt);
+    tick_long_press(state, dt);
+    tick_balloon_pop(state, dt);
 
     if state.flash_visible.get() {
         let remaining = state.flash_timer.get() - dt;
@@ -549,11 +602,14 @@ fn tick(state: &PillState, dt: f64) {
     let flash_target = if state.flash_visible.get() { 1.0 } else { 0.0 };
     spring_anim(&state.flash_t, &state.flash_velocity, flash_target, SPRING_STIFFNESS, dt);
 
-    // Cancel button
-    let cancel_target = if state.hovered.get()
-        && state.phase.get() != Phase::Idle
-        && !state.assistant_active.get()
-    { 1.0 } else { 0.0 };
+    // Cancel + pause controls: visible while recording/loading/paused (always on when paused).
+    let controls_phase = state.phase.get();
+    let show_controls = !state.assistant_active.get()
+        && (controls_phase == Phase::Recording
+            || controls_phase == Phase::Loading
+            || controls_phase == Phase::Paused)
+        && (state.hovered.get() || controls_phase == Phase::Paused);
+    let cancel_target = if show_controls { 1.0 } else { 0.0 };
     spring_anim(&state.cancel_t, &state.cancel_velocity, cancel_target, SPRING_STIFFNESS * 2.0, dt);
 
     if state.should_stick.get() && state.assistant_active.get() && !state.assistant_compact.get() {
@@ -806,7 +862,22 @@ fn check_hover(hwnd: HWND, state: &PillState) {
         false
     };
 
-    let new_hovered = in_pill || in_panel;
+    let in_tooltip = if state.tooltip_t.get() > 0.1 && state.style_count.get() > 1 {
+        let pill_area_top = win_rect.top as f64 + oy + (dh - PILL_AREA_HEIGHT);
+        let tooltip_w = state.tooltip_width.get();
+        let y_offset = (1.0 - state.tooltip_t.get()) * 4.0;
+        let tooltip_x = win_rect.left as f64 + ox + (dw - tooltip_w) / 2.0;
+        let tooltip_y = pill_area_top - TOOLTIP_GAP - TOOLTIP_HEIGHT + y_offset;
+
+        cx >= tooltip_x
+            && cx <= tooltip_x + tooltip_w
+            && cy >= tooltip_y
+            && cy <= tooltip_y + TOOLTIP_HEIGHT
+    } else {
+        false
+    };
+
+    let new_hovered = in_pill || in_tooltip || in_panel;
     let was_hovered = state.hovered.get();
 
     if new_hovered != was_hovered {
@@ -863,7 +934,7 @@ fn initial_position() -> (i32, i32) {
     }
 }
 
-fn reposition_to_cursor_monitor(hwnd: HWND) {
+fn reposition_to_cursor_monitor(hwnd: HWND, state: &PillState) {
     unsafe {
         let mut cursor = POINT::default();
         let _ = GetCursorPos(&mut cursor);
@@ -876,8 +947,23 @@ fn reposition_to_cursor_monitor(hwnd: HWND) {
         let wa = info.rcWork;
         let wa_w = wa.right - wa.left;
         let wa_h = wa.bottom - wa.top;
-        let x = wa.left + (wa_w - WINDOW_W_TYPING) / 2;
-        let y = wa.top + wa_h - WINDOW_H_TYPING - MARGIN_BOTTOM;
+
+        let (x, y) = if state.dragging.get() {
+            // Drag mode: center the window on cursor position
+            // The pill body is in the bottom portion of the window
+            let pill_area_h = PILL_AREA_HEIGHT as i32;
+            let mut dx = cursor.x - WINDOW_W_TYPING / 2;
+            let mut dy = cursor.y - pill_area_h / 2;
+            // Clamp to work area
+            dx = dx.max(wa.left).min(wa.right - WINDOW_W_TYPING);
+            dy = dy.max(wa.top).min(wa.bottom - WINDOW_H_TYPING);
+            (dx, dy)
+        } else {
+            // Normal mode: center at bottom of monitor
+            let x = wa.left + (wa_w - WINDOW_W_TYPING) / 2;
+            let y = wa.top + wa_h - WINDOW_H_TYPING - MARGIN_BOTTOM;
+            (x, y)
+        };
 
         let mut current = RECT::default();
         let _ = GetWindowRect(hwnd, &mut current);
@@ -886,6 +972,119 @@ fn reposition_to_cursor_monitor(hwnd: HWND) {
                 hwnd, None, x, y, 0, 0,
                 SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE,
             );
+        }
+    }
+}
+
+fn tick_long_press(state: &PillState, dt: f64) {
+    if !state.long_press_active.get() {
+        return;
+    }
+
+    let phase = state.phase.get();
+    if phase != Phase::Idle || state.assistant_active.get() {
+        state.long_press_active.set(false);
+        state.long_press_elapsed.set(0.0);
+        return;
+    }
+
+    if state.balloon_pop_active.get() {
+        return;
+    }
+
+    // Cancel if mouse moved too far from start position (screen coords)
+    unsafe {
+        let mut cursor = POINT::default();
+        let _ = GetCursorPos(&mut cursor);
+        // Compare in screen coords — convert start position to screen coords
+        // The start position is in window-relative coords, so get window origin
+        let mut rect = RECT::default();
+        let _ = GetWindowRect(HWND_CELL.with(|c| c.get()), &mut rect);
+        let start_screen_x = rect.left as f64 + state.long_press_start_x.get();
+        let start_screen_y = rect.top as f64 + state.long_press_start_y.get();
+        let dx = cursor.x as f64 - start_screen_x;
+        let dy = cursor.y as f64 - start_screen_y;
+        if (dx * dx + dy * dy) > LONG_PRESS_MOVE_THRESHOLD * LONG_PRESS_MOVE_THRESHOLD {
+            state.long_press_active.set(false);
+            state.long_press_elapsed.set(0.0);
+            return;
+        }
+    }
+
+    let elapsed = state.long_press_elapsed.get() + dt;
+    state.long_press_elapsed.set(elapsed);
+
+    if elapsed >= LONG_PRESS_DURATION {
+        state.long_press_active.set(false);
+        state.long_press_elapsed.set(0.0);
+        trigger_balloon_pop(state);
+    }
+}
+
+fn trigger_balloon_pop(state: &PillState) {
+    state.balloon_pop_active.set(true);
+    state.balloon_pop_elapsed.set(0.0);
+    state.drag_cancelled.set(false);
+
+    let dw = state.draw_width.get();
+    let dh = state.draw_height.get();
+    let cx = dw / 2.0;
+    let pill_area_top = dh - PILL_AREA_HEIGHT;
+    let cy = pill_area_top + PILL_AREA_HEIGHT / 2.0;
+
+    let mut particles = Vec::with_capacity(BALLOON_POP_PARTICLE_COUNT);
+    // Issue #10: invariant — exactly BALLOON_POP_PARTICLE_COUNT particles are spawned.
+    debug_assert!(BALLOON_POP_PARTICLE_COUNT > 0);
+    for i in 0..BALLOON_POP_PARTICLE_COUNT {
+        let angle = (i as f64 / BALLOON_POP_PARTICLE_COUNT as f64) * std::f64::consts::TAU;
+        let speed_jitter = 0.7 + (i as f64 * 0.13).sin().abs() * 0.6;
+        let speed = BALLOON_POP_PARTICLE_SPEED * speed_jitter;
+        let color = if i % 2 == 0 { BALLOON_POP_COLOR } else { BALLOON_POP_COLOR2 };
+        particles.push(PopParticle {
+            x: cx,
+            y: cy,
+            vx: angle.cos() * speed,
+            vy: angle.sin() * speed,
+            life: BALLOON_POP_PARTICLE_LIFE,
+            max_life: BALLOON_POP_PARTICLE_LIFE,
+            size: BALLOON_POP_PARTICLE_SIZE * (0.6 + (i as f64 * 0.3).sin().abs() * 0.8),
+            color,
+        });
+    }
+    *state.balloon_pop_particles.borrow_mut() = particles;
+}
+
+fn tick_balloon_pop(state: &PillState, dt: f64) {
+    if !state.balloon_pop_active.get() {
+        return;
+    }
+
+    let elapsed = state.balloon_pop_elapsed.get() + dt;
+    state.balloon_pop_elapsed.set(elapsed);
+
+    {
+        let mut particles = state.balloon_pop_particles.borrow_mut();
+        for p in particles.iter_mut() {
+            p.life -= dt;
+            p.x += p.vx * dt;
+            p.y += p.vy * dt;
+            // Apply gravity (downward acceleration)
+            p.vy += PARTICLE_GRAVITY * dt;
+            // Apply exponential drag decay
+            let drag = (PARTICLE_DRAG_COEFFICIENT * dt).exp();
+            p.vx *= drag;
+            p.vy *= drag;
+        }
+        particles.retain(|p| p.life > 0.0);
+    }
+
+    // When animation completes, enter drag mode (unless user released)
+    if elapsed >= BALLOON_POP_DURATION {
+        state.balloon_pop_active.set(false);
+        state.balloon_pop_elapsed.set(0.0);
+        state.balloon_pop_particles.borrow_mut().clear();
+        if !state.drag_cancelled.get() {
+            state.dragging.set(true);
         }
     }
 }
@@ -942,7 +1141,7 @@ fn create_edit_overlay(hinstance: HMODULE, main_hwnd: HWND) {
         let brush = CreateSolidBrush(COLORREF(EDIT_COLOR_KEY));
         EDIT_BG_BRUSH.with(|b| b.set(brush));
 
-        let class_name = w!("VoquillInput");
+        let class_name = w!("MausVoiceInput");
         let wc = WNDCLASSEXW {
             cbSize: std::mem::size_of::<WNDCLASSEXW>() as u32,
             lpfnWndProc: Some(edit_container_proc),
@@ -977,12 +1176,13 @@ fn create_edit_overlay(hinstance: HMODULE, main_hwnd: HWND) {
             None,
         ).unwrap();
 
-        // Font: Segoe UI ~14pt
+        // Always use the embedded Satoshi face for the type-mode editor.
+        crate::font::install_embedded_satoshi();
         let mut lf = LOGFONTW::default();
+        let face: Vec<u16> = "Satoshi".encode_utf16().collect();
+        lf.lfFaceName[..face.len().min(lf.lfFaceName.len())].copy_from_slice(&face[..face.len().min(lf.lfFaceName.len())]);
         lf.lfHeight = -18;
-        lf.lfWeight = 400;
-        let face: Vec<u16> = "Segoe UI".encode_utf16().collect();
-        lf.lfFaceName[..face.len()].copy_from_slice(&face);
+        lf.lfWeight = 500; // Medium
         let font = CreateFontIndirectW(&lf);
         SendMessageW(edit, WM_SETFONT, Some(WPARAM(font.0 as usize)), Some(LPARAM(1)));
 

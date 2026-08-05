@@ -67,7 +67,7 @@ export const A11yPermsForm = () => {
             <FormattedMessage defaultMessage="Enable accessibility" />
           </Typography>
           <Typography variant="body1" color="text.secondary">
-            <FormattedMessage defaultMessage="Voquill needs accessibility permissions to paste transcriptions into focused text fields." />
+            <FormattedMessage defaultMessage="mausVoice needs accessibility permissions to paste transcriptions into focused text fields." />
           </Typography>
         </Box>
 

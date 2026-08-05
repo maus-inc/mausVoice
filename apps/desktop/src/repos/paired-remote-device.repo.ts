@@ -1,4 +1,4 @@
-import type { PairedRemoteDevice } from "@voquill/types";
+import type { PairedRemoteDevice } from "@maus-inc/types";
 import { invoke } from "@tauri-apps/api/core";
 import { BaseRepo } from "./base.repo";
 

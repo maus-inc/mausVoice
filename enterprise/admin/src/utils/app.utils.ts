@@ -1,4 +1,4 @@
-import type { LlmProvider, OidcProvider, SttProvider, Term, Tone, UserWithAuth } from "@voquill/types";
+import type { LlmProvider, OidcProvider, SttProvider, Term, Tone, UserWithAuth } from "@maus-inc/types";
 import type { AppState, SnackbarMode } from "../state/app.state";
 
 export type ShowSnackbarOpts = {

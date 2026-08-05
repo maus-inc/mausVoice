@@ -1,9 +1,0 @@
-targets:
-  $default:
-    sources:
-      - "lib/model/**"
-      - "lib/state/**"
-      - "pubspec.yaml"
-      - "build.yaml"
-      - $package$
-      - lib/$lib$

@@ -6,6 +6,7 @@ import { A11yPermsForm } from "./A11yPermsForm";
 import { ChooseLlmForm } from "./ChooseLlmForm";
 import { ChooseTranscriptionForm } from "./ChooseTranscriptionForm";
 import { KeybindingsForm } from "./KeybindingsForm";
+import { PersonalCredentialsForm } from "./PersonalCredentialsForm";
 import { MicCheckForm } from "./MicCheckForm";
 import { MicPermsForm } from "./MicPermsForm";
 import { ReferralSourceForm } from "./ReferralSourceForm";
@@ -29,6 +30,7 @@ export default function OnboardingPage() {
       sx={{ height: "100%" }}
     >
       {currentPage === "signIn" && <SignInForm />}
+      {currentPage === "personalCredentials" && <PersonalCredentialsForm />}
       {currentPage === "chooseTranscription" && <ChooseTranscriptionForm />}
       {currentPage === "chooseLlm" && <ChooseLlmForm />}
       {currentPage === "userDetails" && <UserDetailsForm />}

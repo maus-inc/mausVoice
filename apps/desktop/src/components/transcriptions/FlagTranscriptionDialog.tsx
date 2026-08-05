@@ -10,8 +10,8 @@ import {
   TextField,
   Typography,
 } from "@mui/material";
-import { invokeHandler } from "@voquill/functions";
-import { getRec } from "@voquill/utilities";
+import { invokeHandler } from "@maus-inc/functions";
+import { getRec } from "@maus-inc/utilities";
 import { getStorage, ref, uploadBytesResumable } from "firebase/storage";
 import { useCallback, useMemo, useState } from "react";
 import { FormattedMessage, useIntl } from "react-intl";
@@ -27,7 +27,7 @@ import { TranscriptionTextBlock } from "./TranscriptionTextBlock";
 const formatModeLabel = (mode: string | null | undefined): React.ReactNode => {
   if (mode === "api") return <FormattedMessage defaultMessage="API" />;
   if (mode === "cloud")
-    return <FormattedMessage defaultMessage="Voquill Cloud" />;
+    return <FormattedMessage defaultMessage="mausVoice Cloud" />;
   if (mode === "local") return <FormattedMessage defaultMessage="Local" />;
   return <FormattedMessage defaultMessage="Unknown" />;
 };
@@ -37,7 +37,7 @@ const formatPostProcessModeLabel = (
 ): React.ReactNode => {
   if (mode === "api") return <FormattedMessage defaultMessage="API" />;
   if (mode === "cloud")
-    return <FormattedMessage defaultMessage="Voquill Cloud" />;
+    return <FormattedMessage defaultMessage="mausVoice Cloud" />;
   return <FormattedMessage defaultMessage="Disabled" />;
 };
 
@@ -172,7 +172,7 @@ export const FlagTranscriptionDialog = () => {
         {transcription ? (
           <Stack spacing={3}>
             <Typography variant="body2" color="text.secondary">
-              <FormattedMessage defaultMessage="Send this transcription to the Voquill team so we can review what went wrong. Your data is only shared with the Voquill team and never with third parties. Adding a note below helps us understand and fix the issue." />
+              <FormattedMessage defaultMessage="Send this transcription to the mausVoice team so we can review what went wrong. Your data is only shared with the mausVoice team and never with third parties. Adding a note below helps us understand and fix the issue." />
             </Typography>
 
             {transcription.audio && (

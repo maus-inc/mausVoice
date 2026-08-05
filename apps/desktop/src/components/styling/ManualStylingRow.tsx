@@ -6,7 +6,7 @@ import {
   PublicOutlined,
 } from "@mui/icons-material";
 import { IconButton, Radio, Stack, Tooltip, Typography } from "@mui/material";
-import { getRec } from "@voquill/utilities";
+import { getRec } from "@maus-inc/utilities";
 import { useCallback, useMemo } from "react";
 import { FormattedMessage } from "react-intl";
 import { openToneEditorDialog } from "../../actions/tone.actions";

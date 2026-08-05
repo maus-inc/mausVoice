@@ -9,7 +9,7 @@ import {
   Divider,
   Stack,
 } from "@mui/material";
-import { Nullable } from "@voquill/types";
+import { Nullable } from "@maus-inc/types";
 import { useCallback, useEffect, useState } from "react";
 import { FormattedMessage } from "react-intl";
 import { setPreferredMicrophone } from "../../actions/user.actions";
@@ -86,7 +86,7 @@ export const MicrophoneDialog = () => {
             <SettingSection
               title={<FormattedMessage defaultMessage="Preferred microphone" />}
               description={
-                <FormattedMessage defaultMessage="Choose which microphone Voquill should use when recording. Automatic picks the best available device each time." />
+                <FormattedMessage defaultMessage="Choose which microphone mausVoice should use when recording. Automatic picks the best available device each time." />
               }
               sx={{ pb: 0.5 }}
             />

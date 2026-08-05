@@ -1,9 +1,9 @@
 ---
 title: Local Transcription
-description: Set up local speech-to-text transcription for your on-premise Voquill deployment.
+description: Set up local speech-to-text transcription for your on-premise mausVoice deployment.
 ---
 
-Local transcription converts speech to text on your own infrastructure without sending audio to an external service. Voquill desktop clients are automatically pointed at providers you configure in the admin portal, so all audio and transcription traffic stays within your internal network.
+Local transcription converts speech to text on your own infrastructure without sending audio to an external service. mausVoice desktop clients are automatically pointed at providers you configure in the admin portal, so all audio and transcription traffic stays within your internal network.
 
 ## Overview
 
@@ -21,7 +21,7 @@ speaches:
   volumes:
     - speaches_data:/home/ubuntu/.cache
   networks:
-    - voquill
+    - mausvoice
   deploy:
     resources:
       reservations:
@@ -41,7 +41,7 @@ speaches:
   volumes:
     - speaches_data:/home/ubuntu/.cache
   networks:
-    - voquill
+    - mausvoice
 ```
 
 And add the volume to your existing `volumes` section:
@@ -58,7 +58,7 @@ Start the service:
 docker compose up -d speaches
 ```
 
-## 2. Configure Voquill
+## 2. Configure mausVoice
 
 Open the admin portal and navigate to the **Transcription Providers** page. Add a new provider with the following settings:
 
@@ -70,10 +70,10 @@ Open the admin portal and navigate to the **Transcription Providers** page. Add 
 
 ## 3. Model Sync
 
-After adding a provider, the UI shows the sync status of each model. You can monitor this to see whether the model has been pulled successfully, and click to retry if it failed. To change the model later, use the three-dot menu on the provider card to update the configuration. Voquill will automatically pull the new model.
+After adding a provider, the UI shows the sync status of each model. You can monitor this to see whether the model has been pulled successfully, and click to retry if it failed. To change the model later, use the three-dot menu on the provider card to update the configuration. mausVoice will automatically pull the new model.
 
 ![Model sync status in the admin portal](./local-transcription-syncing.png)
 
 ## Scaling Across Machines
 
-You can run multiple Speaches instances on different machines within your organization. Add each one as a separate provider in the admin portal. Voquill handles load balancing automatically and will distribute transcription requests across all configured providers.
+You can run multiple Speaches instances on different machines within your organization. Add each one as a separate provider in the admin portal. mausVoice handles load balancing automatically and will distribute transcription requests across all configured providers.

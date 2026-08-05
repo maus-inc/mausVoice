@@ -27,8 +27,8 @@ import {
   type HandlerName,
   type StreamHandlerInput,
   type StreamHandlerName,
-} from "@voquill/functions";
-import type { LlmStreamEvent } from "@voquill/types";
+} from "@maus-inc/functions";
+import type { LlmStreamEvent } from "@maus-inc/types";
 import cors from "cors";
 import type { Request, Response } from "express";
 import express from "express";

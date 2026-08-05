@@ -1,4 +1,4 @@
-import type { OidcProvider } from "@voquill/types";
+import type { OidcProvider } from "@maus-inc/types";
 import { isDev } from "../utils/env.utils";
 
 export type ActionStatus = "loading" | "success" | "error" | "idle";
@@ -26,7 +26,7 @@ export const INITIAL_LOGIN_STATE: LoginState = {
 };
 
 if (isDev()) {
-  INITIAL_LOGIN_STATE.email = "admin@voquill.com";
+  INITIAL_LOGIN_STATE.email = "admin@mausvoice.com";
   INITIAL_LOGIN_STATE.password = "password123";
   INITIAL_LOGIN_STATE.confirmPassword = "password123";
 }

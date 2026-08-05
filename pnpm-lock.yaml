@@ -86,6 +86,24 @@ importers:
       '@fontsource/roboto':
         specifier: ^5.2.10
         version: 5.2.10
+      '@maus-inc/desktop-utils':
+        specifier: workspace:*
+        version: link:../../packages/desktop-utils
+      '@maus-inc/functions':
+        specifier: workspace:*
+        version: link:../../packages/functions
+      '@maus-inc/pricing':
+        specifier: workspace:*
+        version: link:../../packages/pricing
+      '@maus-inc/types':
+        specifier: workspace:*
+        version: link:../../packages/types
+      '@maus-inc/utilities':
+        specifier: workspace:*
+        version: link:../../packages/utilities
+      '@maus-inc/voice-ai':
+        specifier: workspace:*
+        version: link:../../packages/voice-ai
       '@mui/icons-material':
         specifier: ^7.3.9
         version: 7.3.9(@mui/material@7.3.9(@emotion/react@11.14.0(@types/react@19.2.10)(react@19.2.4))(@emotion/styled@11.14.1(@emotion/react@11.14.0(@types/react@19.2.10)(react@19.2.4))(@types/react@19.2.10)(react@19.2.4))(@types/react@19.2.10)(react-dom@19.2.4(react@19.2.4))(react@19.2.4))(@types/react@19.2.10)(react@19.2.4)
@@ -134,27 +152,15 @@ importers:
       '@tauri-apps/plugin-updater':
         specifier: ~2.10.1
         version: 2.10.1
-      '@voquill/desktop-utils':
-        specifier: workspace:*
-        version: link:../../packages/desktop-utils
-      '@voquill/functions':
-        specifier: workspace:*
-        version: link:../../packages/functions
-      '@voquill/pricing':
-        specifier: workspace:*
-        version: link:../../packages/pricing
-      '@voquill/types':
-        specifier: workspace:*
-        version: link:../../packages/types
-      '@voquill/utilities':
-        specifier: workspace:*
-        version: link:../../packages/utilities
-      '@voquill/voice-ai':
-        specifier: workspace:*
-        version: link:../../packages/voice-ai
       chroma-js:
         specifier: ^3.2.0
         version: 3.2.0
+      class-variance-authority:
+        specifier: ^0.7.1
+        version: 0.7.1
+      clsx:
+        specifier: ^2.1.1
+        version: 2.1.1
       dayjs:
         specifier: ^1.11.20
         version: 1.11.20
@@ -170,9 +176,15 @@ importers:
       lodash-es:
         specifier: ^4.18.1
         version: 4.18.1
+      lucide:
+        specifier: ^1.28.0
+        version: 1.28.0
       mixpanel-browser:
         specifier: ^2.77.0
         version: 2.77.0
+      morphicons:
+        specifier: ^1.4.1
+        version: 1.4.1(react@19.2.4)
       react:
         specifier: ^19.2.4
         version: 19.2.4
@@ -206,6 +218,9 @@ importers:
       rxjs:
         specifier: ^7.8.2
         version: 7.8.2
+      tailwind-merge:
+        specifier: ^3.6.0
+        version: 3.6.0
       vite-plugin-svgr:
         specifier: ^4.5.0
         version: 4.5.0(rollup@4.60.1)(typescript@5.8.3)(vite@7.3.6(@types/node@24.12.2)(jiti@2.6.1)(lightningcss@1.32.0)(tsx@4.21.0)(yaml@2.8.3))
@@ -341,6 +356,12 @@ importers:
       '@emotion/styled':
         specifier: ^11.14.1
         version: 11.14.1(@emotion/react@11.14.0(@types/react@19.2.10)(react@19.2.4))(@types/react@19.2.10)(react@19.2.4)
+      '@maus-inc/functions':
+        specifier: workspace:*
+        version: link:../../packages/functions
+      '@maus-inc/types':
+        specifier: workspace:*
+        version: link:../../packages/types
       '@mui/icons-material':
         specifier: ^7.3.9
         version: 7.3.9(@mui/material@7.3.9(@emotion/react@11.14.0(@types/react@19.2.10)(react@19.2.4))(@emotion/styled@11.14.1(@emotion/react@11.14.0(@types/react@19.2.10)(react@19.2.4))(@types/react@19.2.10)(react@19.2.4))(@types/react@19.2.10)(react-dom@19.2.4(react@19.2.4))(react@19.2.4))(@types/react@19.2.10)(react@19.2.4)
@@ -350,12 +371,6 @@ importers:
       '@mui/x-charts':
         specifier: ^8.28.2
         version: 8.28.2(@emotion/react@11.14.0(@types/react@19.2.10)(react@19.2.4))(@emotion/styled@11.14.1(@emotion/react@11.14.0(@types/react@19.2.10)(react@19.2.4))(@types/react@19.2.10)(react@19.2.4))(@mui/material@7.3.9(@emotion/react@11.14.0(@types/react@19.2.10)(react@19.2.4))(@emotion/styled@11.14.1(@emotion/react@11.14.0(@types/react@19.2.10)(react@19.2.4))(@types/react@19.2.10)(react@19.2.4))(@types/react@19.2.10)(react-dom@19.2.4(react@19.2.4))(react@19.2.4))(@mui/system@7.3.9(@emotion/react@11.14.0(@types/react@19.2.10)(react@19.2.4))(@emotion/styled@11.14.1(@emotion/react@11.14.0(@types/react@19.2.10)(react@19.2.4))(@types/react@19.2.10)(react@19.2.4))(@types/react@19.2.10)(react@19.2.4))(@types/react@19.2.10)(react-dom@19.2.4(react@19.2.4))(react@19.2.4)
-      '@voquill/functions':
-        specifier: workspace:*
-        version: link:../../packages/functions
-      '@voquill/types':
-        specifier: workspace:*
-        version: link:../../packages/types
       immer:
         specifier: ^10.2.0
         version: 10.2.0
@@ -441,13 +456,13 @@ importers:
 
   enterprise/gateway:
     dependencies:
-      '@voquill/functions':
+      '@maus-inc/functions':
         specifier: workspace:*
         version: link:../../packages/functions
-      '@voquill/types':
+      '@maus-inc/types':
         specifier: workspace:*
         version: link:../../packages/types
-      '@voquill/utilities':
+      '@maus-inc/utilities':
         specifier: workspace:*
         version: link:../../packages/utilities
       bcrypt:
@@ -461,7 +476,7 @@ importers:
         version: 4.22.1
       jose:
         specifier: ^6.2.2
-        version: 6.2.2
+        version: 6.2.3
       jsonwebtoken:
         specifier: ^9.0.3
         version: 9.0.3
@@ -478,6 +493,9 @@ importers:
         specifier: ^3.25.76
         version: 3.25.76
     devDependencies:
+      '@maus-inc/typescript-config':
+        specifier: workspace:*
+        version: link:../../packages/typescript-config
       '@types/bcrypt':
         specifier: ^6.0.0
         version: 6.0.0
@@ -496,9 +514,6 @@ importers:
       '@types/uuid':
         specifier: ^10.0.0
         version: 10.0.0
-      '@voquill/typescript-config':
-        specifier: workspace:*
-        version: link:../../packages/typescript-config
       esbuild:
         specifier: ^0.25.12
         version: 0.25.12
@@ -514,14 +529,14 @@ importers:
 
   packages/agent:
     dependencies:
-      '@voquill/types':
+      '@maus-inc/types':
         specifier: workspace:*
         version: link:../types
     devDependencies:
-      '@voquill/typescript-config':
+      '@maus-inc/typescript-config':
         specifier: workspace:*
         version: link:../typescript-config
-      '@voquill/voice-ai':
+      '@maus-inc/voice-ai':
         specifier: workspace:*
         version: link:../voice-ai
       tsx:
@@ -537,7 +552,7 @@ importers:
         specifier: ~2.10.1
         version: 2.10.1
     devDependencies:
-      '@voquill/typescript-config':
+      '@maus-inc/typescript-config':
         specifier: workspace:*
         version: link:../typescript-config
       typescript:
@@ -546,15 +561,15 @@ importers:
 
   packages/desktop-utils:
     devDependencies:
+      '@maus-inc/typescript-config':
+        specifier: workspace:*
+        version: link:../typescript-config
       '@tauri-apps/api':
         specifier: ~2.10.1
         version: 2.10.1
       '@types/react':
         specifier: 19.2.10
         version: 19.2.10
-      '@voquill/typescript-config':
-        specifier: workspace:*
-        version: link:../typescript-config
       react:
         specifier: ^19.2.4
         version: 19.2.4
@@ -603,14 +618,14 @@ importers:
       '@firemix/core':
         specifier: ^0.1.16
         version: 0.1.16
-      '@voquill/types':
+      '@maus-inc/types':
         specifier: workspace:*
         version: link:../types
-      '@voquill/utilities':
+      '@maus-inc/utilities':
         specifier: workspace:*
         version: link:../utilities
     devDependencies:
-      '@voquill/typescript-config':
+      '@maus-inc/typescript-config':
         specifier: workspace:*
         version: link:../typescript-config
       firebase:
@@ -622,14 +637,14 @@ importers:
 
   packages/functions:
     dependencies:
-      '@voquill/types':
+      '@maus-inc/types':
         specifier: workspace:*
         version: link:../types
       zod:
         specifier: ^3.25.76
         version: 3.25.76
     devDependencies:
-      '@voquill/typescript-config':
+      '@maus-inc/typescript-config':
         specifier: workspace:*
         version: link:../typescript-config
       firebase:
@@ -641,7 +656,7 @@ importers:
 
   packages/pricing:
     devDependencies:
-      '@voquill/typescript-config':
+      '@maus-inc/typescript-config':
         specifier: workspace:*
         version: link:../typescript-config
       typescript:
@@ -657,12 +672,12 @@ importers:
         specifier: ^3.25.76
         version: 3.25.76
     devDependencies:
+      '@maus-inc/typescript-config':
+        specifier: workspace:*
+        version: link:../typescript-config
       '@types/json-schema':
         specifier: ^7.0.15
         version: 7.0.15
-      '@voquill/typescript-config':
-        specifier: workspace:*
-        version: link:../typescript-config
       typescript:
         specifier: 5.9.2
         version: 5.9.2
@@ -671,11 +686,11 @@ importers:
 
   packages/utilities:
     dependencies:
-      '@voquill/types':
+      '@maus-inc/types':
         specifier: workspace:*
         version: link:../types
     devDependencies:
-      '@voquill/typescript-config':
+      '@maus-inc/typescript-config':
         specifier: workspace:*
         version: link:../typescript-config
       typescript:
@@ -699,10 +714,10 @@ importers:
       '@google/genai':
         specifier: ^1.48.0
         version: 1.48.0(@modelcontextprotocol/sdk@1.27.1(zod@3.25.76))
-      '@voquill/types':
+      '@maus-inc/types':
         specifier: workspace:*
         version: link:../types
-      '@voquill/utilities':
+      '@maus-inc/utilities':
         specifier: workspace:*
         version: link:../utilities
       groq-sdk:
@@ -724,7 +739,7 @@ importers:
         specifier: ^3.25.2
         version: 3.25.2(zod@3.25.76)
     devDependencies:
-      '@voquill/typescript-config':
+      '@maus-inc/typescript-config':
         specifier: workspace:*
         version: link:../typescript-config
       typescript:
@@ -3806,6 +3821,9 @@ packages:
     resolution: {integrity: sha512-77PSwercCZU2Fc4sX94eF8k8Pxte6JAwL4/ICZLFjJLqegs7kCuAsqqj/70NQF6TvDpgFjkubQB2FW2ZZddvQg==}
     engines: {node: '>=8'}
 
+  class-variance-authority@0.7.1:
+    resolution: {integrity: sha512-Ka+9Trutv7G8M6WT6SeiRWz792K5qEqIGEGzXKhAE6xOWAY6pPH8U+9IY3oCMv6kqTmLsv7Xh/2w2RigkePMsg==}
+
   cli-boxes@3.0.0:
     resolution: {integrity: sha512-/lzGpEWL/8PfI0BmBOPRwp0c/wFNX1RdUML3jK/RcSBA9T8mZDdQpqYBKtCFTOfQbwPqWEOpjqW+Fnayc0969g==}
     engines: {node: '>=10'}
@@ -5354,9 +5372,6 @@ packages:
     resolution: {integrity: sha512-ekilCSN1jwRvIbgeg/57YFh8qQDNbwDb9xT/qu2DAHbFFZUicIl4ygVaAvzveMhMVr3LnpSKTNnwt8PoOfmKhQ==}
     hasBin: true
 
-  jose@6.2.2:
-    resolution: {integrity: sha512-d7kPDd34KO/YnzaDOlikGpOurfF0ByC2sEV4cANCtdqLlTfBlw2p14O/5d/zv40gJPbIQxfES3nSx1/oYNyuZQ==}
-
   jose@6.2.3:
     resolution: {integrity: sha512-YYVDInQKFJfR/xa3ojUTl8c2KoTwiL1R5Wg9YCydwH0x0B9grbzlg5HC7mMjCtUJjbQ/YnGEZIhI5tCgfTb4Hw==}
 
@@ -5643,6 +5658,9 @@ packages:
     resolution: {integrity: sha512-jumlc0BIUrS3qJGgIkWZsyfAM7NCWiBcCDhnd+3NNM5KbBmLTgHVfWBcg6W+rLUsIpzpERPsvwUP7CckAQSOoA==}
     engines: {node: '>=12'}
 
+  lucide@1.28.0:
+    resolution: {integrity: sha512-sxVxWEXfq7rRNzmffDBRohYBOFjfoOhrO7jGGCLNNRoY2fPjeuqi2boXR2UAROEyQUm+xe13DGOQNtnmwv6Y3w==}
+
   magic-string@0.30.21:
     resolution: {integrity: sha512-vd2F4YUyEXKGcLHoq+TEyCjxueSeHnFxyyjNp80yg0XV4vUhnDer/lvvlqM/arB5bXQN5K2/3oinyCRyx8T2CQ==}
 
@@ -5916,6 +5934,26 @@ packages:
   modern-tar@0.7.6:
     resolution: {integrity: sha512-sweCIVXzx1aIGTCdzcMlSZt1h8k5Tmk08VNAuRk3IU28XamGiOH5ypi11g6De2CH7PhYqSSnGy2A/EFhbWnVKg==}
     engines: {node: '>=18.0.0'}
+
+  morphicons@1.4.1:
+    resolution: {integrity: sha512-l+F51rwvCAvuTnVq9eKrrwjd2oM40dW/fQ6fWQyz2FVSwB9Gq+mcnznJQPeFpenDvBY9qFEg17WTTCwChBdabw==}
+    peerDependencies:
+      react: '>=18'
+      react-native: '>=0.71'
+      react-native-svg: '>=14'
+      svelte: '>=5'
+      vue: '>=3.3'
+    peerDependenciesMeta:
+      react:
+        optional: true
+      react-native:
+        optional: true
+      react-native-svg:
+        optional: true
+      svelte:
+        optional: true
+      vue:
+        optional: true
 
   motion-dom@12.38.0:
     resolution: {integrity: sha512-pdkHLD8QYRp8VfiNLb8xIBJis1byQ9gPT3Jnh2jqfFtAsWUA3dEepDlsWe/xMpO8McV+VdpKVcp+E+TGJEtOoA==}
@@ -7041,6 +7079,9 @@ packages:
     resolution: {integrity: sha512-XDpWUOPC6FEibaLzjfe0ucaV0YrOjYotGJO1WpF0Zd+n6ZGEQUsSugaoLq9QkEZtAfQIxT42UChcssDVPP3+/w==}
     engines: {node: '>=16'}
     hasBin: true
+
+  tailwind-merge@3.6.0:
+    resolution: {integrity: sha512-uxL7qAVQriqRQPAyK3pj66VqskWqoZ37PW94jwOTwNfq/z9oyu1V+eqrZqtR2+fCiXdYOZe/Modt8GtvqNzu+w==}
 
   tar-fs@3.1.2:
     resolution: {integrity: sha512-QGxxTxxyleAdyM3kpFs14ymbYmNFrfY+pHj7Z8FgtbZ7w2//VAgLMac7sT6nRpIHjppXO2AwwEOg0bPFVRcmXw==}
@@ -11429,6 +11470,10 @@ snapshots:
 
   ci-info@4.4.0: {}
 
+  class-variance-authority@0.7.1:
+    dependencies:
+      clsx: 2.1.1
+
   cli-boxes@3.0.0: {}
 
   cli-width@4.1.0: {}
@@ -13413,10 +13458,7 @@ snapshots:
 
   jiti@2.6.1: {}
 
-  jose@6.2.2: {}
-
-  jose@6.2.3:
-    optional: true
+  jose@6.2.3: {}
 
   js-tokens@4.0.0: {}
 
@@ -13660,6 +13702,8 @@ snapshots:
       yallist: 3.1.1
 
   lru-cache@7.18.3: {}
+
+  lucide@1.28.0: {}
 
   magic-string@0.30.21:
     dependencies:
@@ -14241,6 +14285,10 @@ snapshots:
       yargs-unparser: 2.0.0
 
   modern-tar@0.7.6: {}
+
+  morphicons@1.4.1(react@19.2.4):
+    optionalDependencies:
+      react: 19.2.4
 
   motion-dom@12.38.0:
     dependencies:
@@ -15661,6 +15709,8 @@ snapshots:
       csso: 5.0.5
       picocolors: 1.1.1
       sax: 1.6.0
+
+  tailwind-merge@3.6.0: {}
 
   tar-fs@3.1.2:
     dependencies:

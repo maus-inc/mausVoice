@@ -18,7 +18,51 @@ use crate::draw;
 use crate::gfx::{self, Ctx};
 use crate::input;
 use crate::ipc::{self, InMessage, OutMessage, Phase, Visibility};
-use crate::state::{FlameTongue, PillState, Rocket, RocketPhase, Spark, WindowMode};
+
+// ── Safe wrappers around common Cocoa FFI patterns ─────────────────────
+// Issue #4: These reduce the blast radius of unsafe blocks by encapsulating
+// individual msg_send! calls behind safe (well-defined semantics) wrappers.
+
+/// Returns the current global mouse position in screen coordinates (bottom-up).
+unsafe fn mouse_location() -> NSPoint {
+    msg_send![class!(NSEvent), mouseLocation]
+}
+
+/// Returns a window's frame in screen coordinates.
+unsafe fn window_frame(window: id) -> NSRect {
+    msg_send![window, frame]
+}
+
+/// Sets a window's origin (top-left anchor in bottom-up coordinates).
+unsafe fn set_window_origin(window: id, origin: NSPoint) {
+    let _: () = msg_send![window, setFrameOrigin:origin];
+}
+
+/// Returns the frame of a view (in its superview's coordinate system).
+unsafe fn view_bounds(view: id) -> NSRect {
+    msg_send![view, bounds]
+}
+
+/// Converts a point from view coords to window coords.
+unsafe fn convert_point_to_view(view: id, point: NSPoint) -> NSPoint {
+    msg_send![view, convertPoint:point fromView:nil]
+}
+
+/// Returns all screens.
+unsafe fn screens() -> id {
+    msg_send![class!(NSScreen), screens]
+}
+
+/// Returns the visible frame of a screen.
+unsafe fn screen_visible_frame(screen: id) -> NSRect {
+    msg_send![screen, visibleFrame]
+}
+
+/// Returns the frame of a screen (includes title bar, etc.).
+unsafe fn screen_frame(screen: id) -> NSRect {
+    msg_send![screen, frame]
+}
+use crate::state::{FlameTongue, PillState, PopParticle, Rocket, RocketPhase, Spark, WindowMode};
 
 // ── CVDisplayLink & timing ───────────────────────────────────────
 
@@ -86,7 +130,7 @@ extern "C" fn main_thread_tick(_context: *mut c_void) {
 
 fn register_pill_view_class() -> &'static Class {
     let superclass = Class::get("NSView").unwrap();
-    let mut decl = ClassDecl::new("VoquillPillView", superclass).unwrap();
+    let mut decl = ClassDecl::new("MausVoicePillView", superclass).unwrap();
 
     unsafe {
         decl.add_method(sel!(drawRect:), draw_rect as extern "C" fn(&Object, Sel, NSRect));
@@ -109,7 +153,7 @@ fn register_pill_view_class() -> &'static Class {
 
 fn register_pill_window_class() -> &'static Class {
     let superclass = Class::get("NSPanel").unwrap();
-    let mut decl = ClassDecl::new("VoquillPillWindow", superclass).unwrap();
+    let mut decl = ClassDecl::new("MausVoicePillWindow", superclass).unwrap();
 
     unsafe {
         decl.add_method(sel!(canBecomeKeyWindow), can_become_key_window as extern "C" fn(&Object, Sel) -> BOOL);
@@ -140,8 +184,22 @@ extern "C" fn accepts_first_mouse(_this: &Object, _sel: Sel, _event: id) -> BOOL
     YES
 }
 
-extern "C" fn mouse_down(_this: &Object, _sel: Sel, _event: id) {
+extern "C" fn mouse_down(_this: &Object, _sel: Sel, event: id) {
     // Don't call super — prevents the window from stealing focus on click
+    with_ctx(|ctx| {
+        unsafe {
+            let loc: NSPoint = msg_send![event, locationInWindow];
+            let view_loc = convert_point_to_view(_this, loc);
+            // Start long-press tracking if clicking on the pill body
+            if input::is_on_pill_at(&ctx.state, view_loc.x, view_loc.y) {
+                ctx.state.long_press_active.set(true);
+                ctx.state.long_press_elapsed.set(0.0);
+                ctx.state.long_press_start_x.set(view_loc.x);
+                ctx.state.long_press_start_y.set(view_loc.y);
+                ctx.state.drag_cancelled.set(false);
+            }
+        }
+    });
 }
 
 extern "C" fn draw_rect(this: &Object, _sel: Sel, _dirty: NSRect) {
@@ -169,10 +227,28 @@ extern "C" fn mouse_exited(_this: &Object, _sel: Sel, _event: id) {
 
 extern "C" fn mouse_up(_this: &Object, _sel: Sel, event: id) {
     with_ctx(|ctx| {
-        unsafe {
-            let loc: NSPoint = msg_send![event, locationInWindow];
-            let view_loc: NSPoint = msg_send![_this, convertPoint:loc fromView:nil];
-            input::handle_click(&ctx.state, view_loc.x, view_loc.y);
+        // If pop animation is in progress, cancel the drag that would follow
+        if ctx.state.balloon_pop_active.get() {
+            ctx.state.drag_cancelled.set(true);
+            ctx.state.balloon_pop_active.set(false);
+            ctx.state.balloon_pop_elapsed.set(0.0);
+            ctx.state.balloon_pop_particles.borrow_mut().clear();
+        }
+        // Track whether we were dragging (to suppress click on release)
+        let was_dragging = ctx.state.dragging.get();
+        // End any drag
+        ctx.state.dragging.set(false);
+        // Cancel any in-progress long press
+        ctx.state.long_press_active.set(false);
+        ctx.state.long_press_elapsed.set(0.0);
+
+        // Only fire click if the user wasn't dragging
+        if !was_dragging {
+            unsafe {
+                let loc: NSPoint = msg_send![event, locationInWindow];
+                let view_loc = convert_point_to_view(_this, loc);
+                input::handle_click(&ctx.state, view_loc.x, view_loc.y);
+            }
         }
     });
 }
@@ -430,8 +506,8 @@ fn perform_tick() {
             }
         }
 
-        // Reposition window on active monitor
-        reposition_window(ctx.window);
+        // Reposition window: follow cursor when dragging, auto-center otherwise
+        reposition_window(ctx.window, &ctx.state);
 
         // Request redraw
         unsafe {
@@ -509,7 +585,12 @@ fn tick(state: &PillState, dt: f64) {
     state.wave_phase.set((state.wave_phase.get() + advance) % TAU);
 
     // Pill expand/collapse (spring)
-    let expand_target = if is_active || hovered || state.assistant_active.get() { 1.0 } else { 0.0 };
+    // Paused keeps the pill fully expanded (voice field stays open, not mini mode).
+    let expand_target = if is_active || hovered || state.assistant_active.get() || phase == Phase::Paused {
+        1.0
+    } else {
+        0.0
+    };
     spring_anim(&state.expand_t, &state.expand_velocity, expand_target, SPRING_STIFFNESS, dt);
 
     // Loading offset
@@ -518,8 +599,11 @@ fn tick(state: &PillState, dt: f64) {
     }
 
     // Tooltip animation (spring)
+    // While paused, fade/hide the style picker (polished/verbatim) but keep the
+    // main pill fully expanded via expand_target above.
     let show_tooltip = !state.assistant_active.get()
         && state.style_count.get() > 1
+        && phase != Phase::Paused
         && (hovered || phase == Phase::Recording)
         && state.expand_t.get() > 0.3;
     let tooltip_target = if show_tooltip { 1.0 } else { 0.0 };
@@ -555,6 +639,10 @@ fn tick(state: &PillState, dt: f64) {
     // Broadcast transcript
     tick_transcript(state, dt);
 
+    // Long-press balloon pop + drag
+    tick_long_press(state, dt);
+    tick_balloon_pop(state, dt);
+
     // Flash message timer
     if state.flash_visible.get() {
         let remaining = state.flash_timer.get() - dt;
@@ -570,11 +658,14 @@ fn tick(state: &PillState, dt: f64) {
     let flash_target = if state.flash_visible.get() { 1.0 } else { 0.0 };
     spring_anim(&state.flash_t, &state.flash_velocity, flash_target, SPRING_STIFFNESS, dt);
 
-    // Cancel button
-    let cancel_target = if state.hovered.get()
-        && state.phase.get() != Phase::Idle
-        && !state.assistant_active.get()
-    { 1.0 } else { 0.0 };
+    // Cancel + pause controls: visible while recording/loading/paused (always on when paused).
+    let controls_phase = state.phase.get();
+    let show_controls = !state.assistant_active.get()
+        && (controls_phase == Phase::Recording
+            || controls_phase == Phase::Loading
+            || controls_phase == Phase::Paused)
+        && (state.hovered.get() || controls_phase == Phase::Paused);
+    let cancel_target = if show_controls { 1.0 } else { 0.0 };
     spring_anim(&state.cancel_t, &state.cancel_velocity, cancel_target, SPRING_STIFFNESS * 2.0, dt);
 
     // Auto-scroll to bottom
@@ -765,6 +856,117 @@ fn tick_transcript(state: &PillState, dt: f64) {
     }
 }
 
+fn tick_long_press(state: &PillState, dt: f64) {
+    if !state.long_press_active.get() {
+        return;
+    }
+
+    // Don't allow long-press while recording, loading, paused, or in assistant mode
+    let phase = state.phase.get();
+    if phase != Phase::Idle || state.assistant_active.get() {
+        state.long_press_active.set(false);
+        state.long_press_elapsed.set(0.0);
+        return;
+    }
+
+    if state.balloon_pop_active.get() {
+        return;
+    }
+
+    // Cancel if mouse moved too far from start position (all coords in screen space).
+    unsafe {
+        let mouse = mouse_location();
+        let origin = window_frame(ctx.window).origin;
+        let start_screen_x = origin.x + state.long_press_start_x.get();
+        let start_screen_y = origin.y + state.long_press_start_y.get();
+        let dx = mouse.x - start_screen_x;
+        let dy = mouse.y - start_screen_y;
+        if (dx * dx + dy * dy) > LONG_PRESS_MOVE_THRESHOLD * LONG_PRESS_MOVE_THRESHOLD {
+            state.long_press_active.set(false);
+            state.long_press_elapsed.set(0.0);
+            return;
+        }
+    }
+
+    let elapsed = state.long_press_elapsed.get() + dt;
+    state.long_press_elapsed.set(elapsed);
+
+    if elapsed >= LONG_PRESS_DURATION {
+        state.long_press_active.set(false);
+        state.long_press_elapsed.set(0.0);
+        trigger_balloon_pop(state);
+    }
+}
+
+fn trigger_balloon_pop(state: &PillState) {
+    state.balloon_pop_active.set(true);
+    state.balloon_pop_elapsed.set(0.0);
+    state.drag_cancelled.set(false);
+
+    let dw = state.draw_width.get();
+    let dh = state.draw_height.get();
+    let cx = dw / 2.0;
+    let pill_area_top = dh - PILL_AREA_HEIGHT;
+    let cy = pill_area_top + PILL_AREA_HEIGHT / 2.0;
+
+    let mut particles = Vec::with_capacity(BALLOON_POP_PARTICLE_COUNT);
+    // Issue #10: invariant — exactly BALLOON_POP_PARTICLE_COUNT particles are spawned.
+    debug_assert!(BALLOON_POP_PARTICLE_COUNT > 0);
+    for i in 0..BALLOON_POP_PARTICLE_COUNT {
+        let angle = (i as f64 / BALLOON_POP_PARTICLE_COUNT as f64) * std::f64::consts::TAU;
+        let speed_jitter = 0.7 + (i as f64 * 0.13).sin().abs() * 0.6;
+        let speed = BALLOON_POP_PARTICLE_SPEED * speed_jitter;
+        let color = if i % 2 == 0 { BALLOON_POP_COLOR } else { BALLOON_POP_COLOR2 };
+        particles.push(PopParticle {
+            x: cx,
+            y: cy,
+            vx: angle.cos() * speed,
+            vy: angle.sin() * speed,
+            life: BALLOON_POP_PARTICLE_LIFE,
+            max_life: BALLOON_POP_PARTICLE_LIFE,
+            size: BALLOON_POP_PARTICLE_SIZE * (0.6 + (i as f64 * 0.3).sin().abs() * 0.8),
+            color,
+        });
+    }
+    *state.balloon_pop_particles.borrow_mut() = particles;
+}
+
+fn tick_balloon_pop(state: &PillState, dt: f64) {
+    if !state.balloon_pop_active.get() {
+        return;
+    }
+
+    let elapsed = state.balloon_pop_elapsed.get() + dt;
+    state.balloon_pop_elapsed.set(elapsed);
+
+    {
+        let mut particles = state.balloon_pop_particles.borrow_mut();
+        for p in particles.iter_mut() {
+            p.life -= dt;
+            p.x += p.vx * dt;
+            p.y += p.vy * dt;
+            // Apply gravity (downward acceleration)
+            p.vy += PARTICLE_GRAVITY * dt;
+            // Apply exponential drag decay
+            let drag = (PARTICLE_DRAG_COEFFICIENT * dt).exp();
+            p.vx *= drag;
+            p.vy *= drag;
+        }
+        particles.retain(|p| p.life > 0.0);
+    }
+
+    // When animation completes, enter drag mode
+    if elapsed >= BALLOON_POP_DURATION {
+        state.balloon_pop_active.set(false);
+        state.balloon_pop_elapsed.set(0.0);
+        state.balloon_pop_particles.borrow_mut().clear();
+        // Enter drag mode — pill follows cursor (unless user released during pop)
+        if !state.drag_cancelled.get() {
+            state.dragging.set(true);
+        }
+    }
+}
+
 fn spring_anim(value: &Cell<f64>, velocity: &Cell<f64>, target: f64, stiffness: f64, dt: f64) {
     let v = value.get();
     let vel = velocity.get();
@@ -801,11 +1003,20 @@ fn spring_px(value: &Cell<f64>, velocity: &Cell<f64>, target: f64, stiffness: f6
 
 // ── Window positioning ────────────────────────────────────────────
 
-fn reposition_window(window: id) {
+fn reposition_window(window: id, state: &PillState) {
     unsafe {
-        let mouse_loc: NSPoint = msg_send![class!(NSEvent), mouseLocation];
-        let screens: id = msg_send![class!(NSScreen), screens];
+        let mouse_loc = mouse_location();
+        let screens = screens();
         let count: usize = msg_send![screens, count];
+
+        let win_frame = window_frame(window);
+        let win_w = win_frame.size.width;
+        let win_h = win_frame.size.height;
+
+        // Find which monitor the cursor is on
+        let mut target_x = 0.0_f64;
+        let mut target_y = 0.0_f64;
+        let mut found = false;
 
         for i in 0..count {
             let screen: id = msg_send![screens, objectAtIndex:i];
@@ -816,20 +1027,36 @@ fn reposition_window(window: id) {
                 && mouse_loc.y >= frame.origin.y
                 && mouse_loc.y < frame.origin.y + frame.size.height
             {
-                let visible: NSRect = msg_send![screen, visibleFrame];
-                let win_frame: NSRect = msg_send![window, frame];
-                let x = visible.origin.x + (visible.size.width - win_frame.size.width) / 2.0;
-                let y = visible.origin.y + MARGIN_BOTTOM as f64;
+                let visible = screen_visible_frame(screen);
 
-                let current_origin: NSPoint = {
-                    let f: NSRect = msg_send![window, frame];
-                    f.origin
-                };
-                if (current_origin.x - x).abs() > 1.0 || (current_origin.y - y).abs() > 1.0 {
-                    let origin = NSPoint::new(x, y);
-                    let _: () = msg_send![window, setFrameOrigin:origin];
+                if state.dragging.get() {
+                    // Drag mode: center the window on the cursor position
+                    // macOS Y is flipped (origin at bottom-left), cursor Y is also bottom-up
+                    // The pill body is drawn in the bottom portion of the window,
+                    // so offset so the pill area sits at cursor Y
+                    let pill_area_h = PILL_AREA_HEIGHT;
+                    target_x = mouse_loc.x - win_w / 2.0;
+                    target_y = mouse_loc.y - pill_area_h / 2.0;
+
+                    // Clamp to visible area
+                    target_x = target_x.max(visible.origin.x).min(visible.origin.x + visible.size.width - win_w);
+                    target_y = target_y.max(visible.origin.y).min(visible.origin.y + visible.size.height - win_h);
+                } else {
+                    // Normal mode: center at bottom of monitor
+                    target_x = visible.origin.x + (visible.size.width - win_w) / 2.0;
+                    target_y = visible.origin.y + MARGIN_BOTTOM as f64;
                 }
+
+                found = true;
                 break;
+            }
+        }
+
+        if found {
+            let current_origin = window_frame(window).origin;
+            if (current_origin.x - target_x).abs() > 1.0 || (current_origin.y - target_y).abs() > 1.0 {
+                let origin = NSPoint::new(target_x, target_y);
+                set_window_origin(window, origin);
             }
         }
     }
@@ -902,7 +1129,7 @@ unsafe fn setup(receiver: Receiver<InMessage>, embedded: bool) {
     ];
     let _: () = msg_send![entry, setTextColor:white];
 
-    let font: id = msg_send![class!(NSFont), systemFontOfSize:14.0_f64];
+    let font: id = crate::font::satoshi_font(14.0, false);
     let _: () = msg_send![entry, setFont:font];
 
     let placeholder = NSString::alloc(nil).init_str("Type a message...");
@@ -978,6 +1205,15 @@ unsafe fn setup(receiver: Receiver<InMessage>, embedded: bool) {
         transcript_time_since_update: Cell::new(0.0),
         transcript_opacity: Cell::new(0.0),
         transcript_has_message: Cell::new(false),
+        long_press_active: Cell::new(false),
+        long_press_elapsed: Cell::new(0.0),
+        balloon_pop_active: Cell::new(false),
+        balloon_pop_elapsed: Cell::new(0.0),
+        balloon_pop_particles: RefCell::new(Vec::new()),
+        dragging: Cell::new(false),
+        drag_cancelled: Cell::new(false),
+        drag_cursor_x: Cell::new(0.0),
+        drag_cursor_y: Cell::new(0.0),
     });
 
     // Store in thread-local
@@ -1010,7 +1246,9 @@ unsafe fn setup(receiver: Receiver<InMessage>, embedded: bool) {
     }
 
     // Position and show (orderFront only — don't steal focus from other apps)
-    reposition_window(window);
+    with_ctx(|ctx| {
+        reposition_window(window, &ctx.state);
+    });
     let _: () = msg_send![window, orderFront:nil];
 
     ipc::send(&OutMessage::Ready);

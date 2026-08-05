@@ -1,8 +1,8 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
-  "productName": "Voquill",
+  "productName": "mausVoice",
   "version": "0.1.0",
-  "identifier": "com.voquill.desktop",
+  "identifier": "com.mausinc.desktop",
   "build": {
     "beforeDevCommand": "pnpm run dev:vite",
     "devUrl": "http://localhost:1420",
@@ -13,12 +13,14 @@
     "macOSPrivateApi": true,
     "windows": [
       {
-        "title": "Voquill",
+        "title": "mausVoice",
         "width": 1100,
         "height": 700,
         "minWidth": 800,
         "minHeight": 600,
-        "additionalBrowserArgs": "--disable-features=CalculateNativeWinOcclusion --disable-renderer-backgrounding --disable-background-timer-throttling --disable-backgrounding-occluded-windows"
+        "additionalBrowserArgs": "--disable-features=CalculateNativeWinOcclusion --disable-renderer-backgrounding --disable-background-timer-throttling --disable-backgrounding-occluded-windows",
+        "decorations": false,
+        "transparent": false
       }
     ],
     "security": {
@@ -52,29 +54,18 @@
     "macOS": {
       "hardenedRuntime": true,
       "minimumSystemVersion": "13.3",
-      "entitlements": "macos/Voquill.entitlements"
+      "entitlements": "macos/mausVoice.entitlements"
     },
     "windows": {
       "webviewInstallMode": {
         "type": "embedBootstrapper"
-      }
-    },
-    "linux": {
-      "deb": {
-        "depends": ["libxdo3", "xdotool", "libvulkan1", "libgtk-layer-shell0", "wtype"]
-      },
-      "rpm": {
-        "depends": ["xdotool", "vulkan-loader", "gtk-layer-shell", "wtype"]
-      },
-      "appimage": {
-        "bundleMediaFramework": false
       }
     }
   },
   "plugins": {
     "sql": {
       "preload": [
-        "sqlite:voquill.db"
+        "sqlite:mausvoice.db"
       ]
     },
     "updater": {

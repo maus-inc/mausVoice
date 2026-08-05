@@ -16,7 +16,7 @@ import type {
   PairedRemoteDevice,
   RemoteDevicePlatform,
   RemoteDeviceRole,
-} from "@voquill/types";
+} from "@maus-inc/types";
 import { ChangeEvent, useEffect, useState } from "react";
 import { FormattedMessage, useIntl } from "react-intl";
 import { showErrorSnackbar, showSnackbar } from "../../actions/app.actions";
@@ -274,7 +274,7 @@ export const MultiDeviceDialog = () => {
     const invite = buildRemotePairingInvite(receiverStatus);
     if (!invite) {
       showErrorSnackbar(
-        "Enable the multi-device receiver first so Voquill can generate an invite.",
+        "Enable the multi-device receiver first so mausVoice can generate an invite.",
       );
       return;
     }
@@ -339,7 +339,7 @@ export const MultiDeviceDialog = () => {
   const lastDeliveryTimeLabel = receiverStatus?.lastDeliveryAt
     ? new Date(receiverStatus.lastDeliveryAt).toLocaleString()
     : null;
-  const lastTargetLooksLikeVoquill =
+  const lastTargetLooksLikeMausVoice =
     receiverStatus?.lastTargetClassName === "Tauri Window";
   const lastTargetMissingEditableField =
     receiverStatus?.lastTargetEditable === false &&
@@ -414,7 +414,7 @@ export const MultiDeviceDialog = () => {
                 <SettingSection
                   title={<FormattedMessage defaultMessage="Receiver port" />}
                   description={
-                    <FormattedMessage defaultMessage="Leave blank to auto-assign a port, or set a fixed port and apply it immediately. If the receiver is running, Voquill will restart it for you." />
+                    <FormattedMessage defaultMessage="Leave blank to auto-assign a port, or set a fixed port and apply it immediately. If the receiver is running, mausVoice will restart it for you." />
                   }
                   action={
                     <Stack direction="row" spacing={1} alignItems="center">
@@ -444,7 +444,7 @@ export const MultiDeviceDialog = () => {
                     <FormattedMessage defaultMessage="Start receiver automatically" />
                   }
                   description={
-                    <FormattedMessage defaultMessage="When enabled, Voquill will start the multi-device receiver automatically on launch using the saved receiver port." />
+                    <FormattedMessage defaultMessage="When enabled, mausVoice will start the multi-device receiver automatically on launch using the saved receiver port." />
                   }
                   action={
                     <Switch
@@ -537,13 +537,13 @@ export const MultiDeviceDialog = () => {
                         />
                       </Typography>
                     )}
-                    {lastTargetLooksLikeVoquill && (
+                    {lastTargetLooksLikeMausVoice && (
                       <Typography
                         variant="caption"
                         color="warning.main"
                         sx={{ wordBreak: "break-word" }}
                       >
-                        <FormattedMessage defaultMessage="The last delivery targeted the Voquill window itself. Focus the destination app on the receiver machine before sending text." />
+                        <FormattedMessage defaultMessage="The last delivery targeted the mausVoice window itself. Focus the destination app on the receiver machine before sending text." />
                       </Typography>
                     )}
                     {lastTargetMissingEditableField && (
@@ -764,9 +764,6 @@ export const MultiDeviceDialog = () => {
               <MenuItem value="macos">
                 {intl.formatMessage({ defaultMessage: "macOS" })}
               </MenuItem>
-              <MenuItem value="linux">
-                {intl.formatMessage({ defaultMessage: "Linux" })}
-              </MenuItem>
             </Select>
             <TextField
               label={addressLabel}
@@ -813,7 +810,7 @@ export const MultiDeviceDialog = () => {
         <DialogContent dividers>
           <Stack spacing={2} sx={{ pt: 0.5 }}>
             <Typography variant="body2" color="text.secondary">
-              <FormattedMessage defaultMessage="Paste the invite copied from the receiver machine. Voquill will trust both devices automatically." />
+              <FormattedMessage defaultMessage="Paste the invite copied from the receiver machine. mausVoice will trust both devices automatically." />
             </Typography>
             <TextField
               label={intl.formatMessage({ defaultMessage: "Pairing invite" })}

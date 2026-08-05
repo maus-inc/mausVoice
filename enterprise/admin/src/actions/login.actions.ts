@@ -1,4 +1,4 @@
-import type { AuthContext } from "@voquill/types";
+import type { AuthContext } from "@maus-inc/types";
 import { jwtDecode } from "jwt-decode";
 import { getIntl } from "../i18n/intl";
 import { INITIAL_LOGIN_STATE, type LoginMode } from "../state/login.state";

@@ -26,7 +26,7 @@ describe("buildDeepgramWebSocketUrl", () => {
     expect(url.searchParams.get("language")).toBe("zh-TW");
   });
 
-  it("uses Deepgram multilingual streaming for automatic language detection", () => {
+  it("uses multilingual code-switching for auto-detect", () => {
     const url = new URL(
       buildDeepgramWebSocketUrl({
         sampleRate: 16000,
@@ -37,14 +37,14 @@ describe("buildDeepgramWebSocketUrl", () => {
     expect(url.searchParams.get("language")).toBe("multi");
   });
 
-  it("omits the language parameter when no language is provided", () => {
+  it("defaults to multilingual when no language is provided", () => {
     const url = new URL(
       buildDeepgramWebSocketUrl({
         sampleRate: 44100,
       }),
     );
 
-    expect(url.searchParams.has("language")).toBe(false);
+    expect(url.searchParams.get("language")).toBe("multi");
     expect(url.searchParams.get("sample_rate")).toBe("44100");
   });
 });

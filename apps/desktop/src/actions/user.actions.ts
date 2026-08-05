@@ -5,7 +5,7 @@ import {
   StylingMode,
   User,
   UserPreferences,
-} from "@voquill/types";
+} from "@maus-inc/types";
 import dayjs from "dayjs";
 import { getIntl } from "../i18n";
 import { getUserPreferencesRepo, getUserRepo } from "../repos";
@@ -761,7 +761,7 @@ export const setSelectedToneId = async (toneId: string): Promise<void> => {
     "Unable to select style. User not found.",
     "Failed to select style. Please try again.",
   );
-  setLocalStorageValue("voquill:checklist-writing-style", true);
+  setLocalStorageValue("mausvoice:checklist-writing-style", true);
 };
 
 export const activateAndSelectTone = async (toneId: string): Promise<void> => {

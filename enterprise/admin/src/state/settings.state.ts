@@ -1,4 +1,4 @@
-import type { Nullable } from "@voquill/types";
+import type { Nullable } from "@maus-inc/types";
 import type { ActionStatus } from "./login.state";
 
 export type SettingsState = {

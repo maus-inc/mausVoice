@@ -5,7 +5,7 @@ export * from "./audio";
 const BASE_URL = process.env.GATEWAY_URL || "http://localhost:4630";
 const DATABASE_URL =
   process.env.DATABASE_URL ||
-  "postgres://postgres:postgres@localhost:5432/voquill";
+  "postgres://postgres:postgres@localhost:5432/mausvoice";
 
 let pool: pg.Pool | null = null;
 

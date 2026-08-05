@@ -13,9 +13,9 @@ import wave
 
 
 FLAVOR_IDENTIFIERS = {
-    "emulators": "com.voquill.desktop.local",
-    "dev": "com.voquill.desktop.dev",
-    "prod": "com.voquill.desktop",
+    "emulators": "com.mausinc.desktop.local",
+    "dev": "com.mausinc.desktop.dev",
+    "prod": "com.mausinc.desktop",
 }
 
 
@@ -31,7 +31,7 @@ def get_app_data_dir(flavor):
 
 
 def get_db_path(flavor):
-    return os.path.join(get_app_data_dir(flavor), "voquill.db")
+    return os.path.join(get_app_data_dir(flavor), "mausvoice.db")
 
 
 def get_audio_dir(flavor):
@@ -82,14 +82,14 @@ def convert_to_wav(input_path, output_path):
 
 def main():
     parser = argparse.ArgumentParser(
-        description="Import an audio file into a running Voquill instance's database."
+        description="Import an audio file into a running mausVoice instance's database."
     )
     parser.add_argument("audio_file", help="Path to the audio file to import")
     parser.add_argument(
         "--flavor",
         choices=["emulators", "dev", "prod"],
         default="emulators",
-        help="Voquill flavor to target (default: emulators)",
+        help="mausVoice flavor to target (default: emulators)",
     )
     parser.add_argument(
         "--transcript",
@@ -105,8 +105,8 @@ def main():
 
     db_path = get_db_path(args.flavor)
     if not os.path.isfile(db_path):
-        print(f"Error: Voquill database not found at {db_path}", file=sys.stderr)
-        print("Make sure Voquill has been launched at least once.", file=sys.stderr)
+        print(f"Error: mausVoice database not found at {db_path}", file=sys.stderr)
+        print("Make sure mausVoice has been launched at least once.", file=sys.stderr)
         sys.exit(1)
 
     audio_dir = get_audio_dir(args.flavor)
@@ -148,7 +148,7 @@ def main():
     print(f"  Audio:    {dest_path}")
     print(f"  DB:       {db_path}")
     print()
-    print("Restart Voquill or refresh the transcription list to see it.")
+    print("Restart mausVoice or refresh the transcription list to see it.")
 
 
 if __name__ == "__main__":

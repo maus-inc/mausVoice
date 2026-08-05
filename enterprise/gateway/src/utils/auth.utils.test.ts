@@ -1,4 +1,4 @@
-import type { Auth, AuthContext } from "@voquill/types";
+import type { Auth, AuthContext } from "@maus-inc/types";
 import jwt from "jsonwebtoken";
 import { describe, expect, it } from "vitest";
 import {

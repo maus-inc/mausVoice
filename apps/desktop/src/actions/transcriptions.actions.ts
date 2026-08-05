@@ -1,5 +1,5 @@
-import { Transcription } from "@voquill/types";
-import { getRec } from "@voquill/utilities";
+import { Transcription } from "@maus-inc/types";
+import { getRec } from "@maus-inc/utilities";
 import { getTranscriptionRepo } from "../repos";
 import { getAppState, produceAppState } from "../store";
 import {

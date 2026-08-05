@@ -1,7 +1,7 @@
-import type { HandlerOutput } from "@voquill/functions";
-import { PRICE_KEYS, Prices, type PriceKey } from "@voquill/pricing";
-import { MemberPlan } from "@voquill/types";
-import { getRec } from "@voquill/utilities";
+import type { HandlerOutput } from "@maus-inc/functions";
+import { PRICE_KEYS, Prices, type PriceKey } from "@maus-inc/pricing";
+import { MemberPlan } from "@maus-inc/types";
+import { getRec } from "@maus-inc/utilities";
 import { getStripeRepo } from "../repos";
 import type { AppState } from "../state/app.state";
 import { isDev, isEmulators, isProd } from "./env.utils";

@@ -27,7 +27,7 @@ function resolveTauriBinary() {
     return path.resolve(projectRoot, override);
   }
 
-  const binaryName = process.platform === 'win32' ? 'Voquill.exe' : 'Voquill';
+  const binaryName = process.platform === 'win32' ? 'mausVoice.exe' : 'mausVoice';
   return path.resolve(projectRoot, 'src-tauri', 'target', 'debug', binaryName);
 }
 

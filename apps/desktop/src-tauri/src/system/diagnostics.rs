@@ -55,7 +55,7 @@ pub fn write_startup_diagnostics(app: &tauri::AppHandle) {
     let timestamp = chrono::Local::now().format("%Y-%m-%d %H:%M:%S").to_string();
 
     let mut log_content = String::new();
-    log_content.push_str("=== Voquill Startup Diagnostics ===\n");
+    log_content.push_str("=== mausVoice Startup Diagnostics ===\n");
     log_content.push_str(&format!("Timestamp: {}\n", timestamp));
     log_content.push_str(&format!("Version: {}\n", env!("CARGO_PKG_VERSION")));
     log_content.push_str(&format!("OS: {}\n", std::env::consts::OS));

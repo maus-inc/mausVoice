@@ -12,7 +12,7 @@ import {
   ToolPermission,
   Transcription,
   User,
-} from "@voquill/types";
+} from "@maus-inc/types";
 import type { AppState, SnackbarMode } from "../state/app.state";
 
 export type ShowSnackbarOpts = {

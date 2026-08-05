@@ -171,7 +171,7 @@ export const UnlockedProForm = () => {
         animate={{ opacity: 1, x: 0 }}
         transition={{ delay: 0.4, duration: 0.4 }}
       >
-        Voquill
+        mausVoice
       </MotionTypography>
       <MotionChip
         label="Pro"

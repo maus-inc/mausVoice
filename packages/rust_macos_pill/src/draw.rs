@@ -56,6 +56,16 @@ pub(crate) fn draw_all(ctx: &Ctx, state: &PillState, view_w: f64, view_h: f64) {
         }
 
         draw_cancel_button(ctx, state, ww, wh);
+
+        // Long-press ring indicator
+        if state.long_press_active.get() && !state.balloon_pop_active.get() {
+            draw_long_press_ring(ctx, state, ww, wh);
+        }
+
+        // Balloon pop animation
+        if state.balloon_pop_active.get() {
+            draw_balloon_pop(ctx, state, ww, wh);
+        }
     }
 
     ctx.restore();
@@ -101,6 +111,10 @@ fn draw_pill(ctx: &Ctx, state: &PillState, ww: f64, wh: f64) {
     match state.phase.get() {
         Phase::Recording if expand_t > 0.1 => {
             draw_waveform(ctx, rx, ry, pill_w, pill_h, expand_t, state);
+            draw_edge_gradient(ctx, rx, ry, pill_w, pill_h, radius, expand_t);
+        }
+        Phase::Paused if expand_t > 0.1 => {
+            draw_paused(ctx, rx, ry, pill_w, pill_h, expand_t);
             draw_edge_gradient(ctx, rx, ry, pill_w, pill_h, radius, expand_t);
         }
         Phase::Loading if expand_t > 0.1 => {
@@ -248,8 +262,8 @@ fn draw_loading(
 
 fn draw_idle_label(ctx: &Ctx, rx: f64, ry: f64, pill_w: f64, pill_h: f64, expand_t: f64) {
     ctx.set_source_rgba(1.0, 1.0, 1.0, 0.4 * expand_t);
-    ctx.select_font_face("sans-serif", false, true);
-    ctx.set_font_size(11.0);
+    ctx.select_font_face("Satoshi", false, true);
+    ctx.set_font_size(12.0);
     let text = "Click to dictate";
     let extents = ctx.text_extents(text);
     let tx = rx + (pill_w - extents.width) / 2.0 - extents.x_bearing;
@@ -299,8 +313,8 @@ fn draw_tooltip(ctx: &Ctx, state: &PillState, ww: f64, pill_area_top: f64) {
 
     // Style name text
     ctx.set_source_rgba(1.0, 1.0, 1.0, 0.9 * alpha);
-    ctx.select_font_face("sans-serif", false, true);
-    ctx.set_font_size(12.0);
+    ctx.select_font_face("Satoshi", false, true);
+    ctx.set_font_size(13.0);
     let text_extents = ctx.text_extents(&style_name);
     let text_area_left = tooltip_rx + padding_h + chevron_area;
     let text_area_right = tooltip_rx + tooltip_w - padding_h - chevron_area;
@@ -344,12 +358,12 @@ fn draw_flash_message(ctx: &Ctx, state: &PillState, ww: f64, wh: f64) {
     let action_label = state.flash_action_label.borrow();
     let has_action = action_label.is_some();
 
-    ctx.select_font_face("sans-serif", false, true);
-    ctx.set_font_size(12.0);
+    ctx.select_font_face("Satoshi", false, true);
+    ctx.set_font_size(13.0);
     let text_extents = ctx.text_extents(&message);
 
     let action_w = if let Some(ref label) = *action_label {
-        ctx.select_font_face("sans-serif", false, true);
+        ctx.select_font_face("Satoshi", false, true);
         ctx.set_font_size(11.0);
         let ext = ctx.text_extents(label);
         ext.width + FLASH_ACTION_PADDING_H * 2.0
@@ -383,7 +397,7 @@ fn draw_flash_message(ctx: &Ctx, state: &PillState, ww: f64, wh: f64) {
 
     // Message text
     ctx.set_source_rgba(1.0, 1.0, 1.0, 0.9 * alpha);
-    ctx.select_font_face("sans-serif", false, true);
+    ctx.select_font_face("Satoshi", false, true);
     ctx.set_font_size(12.0);
     let text_left = if has_action {
         full_x + FLASH_PADDING_H
@@ -405,7 +419,7 @@ fn draw_flash_message(ctx: &Ctx, state: &PillState, ww: f64, wh: f64) {
         ctx.fill();
 
         ctx.set_source_rgba(1.0, 1.0, 1.0, 0.95 * alpha);
-        ctx.select_font_face("sans-serif", false, true);
+        ctx.select_font_face("Satoshi", false, true);
         ctx.set_font_size(11.0);
         let label_ext = ctx.text_extents(label);
         let lx = btn_x + (action_w - label_ext.width) / 2.0 - label_ext.x_bearing;
@@ -473,7 +487,7 @@ fn draw_broadcast_transcript(ctx: &Ctx, state: &PillState, ww: f64, wh: f64) {
         return;
     }
 
-    ctx.select_font_face("sans-serif", false, false);
+    ctx.select_font_face("Satoshi", false, false);
     ctx.set_font_size(TRANSCRIPT_FONT_SIZE);
     let text_extents = ctx.text_extents(&text);
     let box_w = (text_extents.width + TRANSCRIPT_PADDING_H * 2.0).min(TRANSCRIPT_MAX_WIDTH);
@@ -809,7 +823,7 @@ fn draw_compact_content(
     let text = "What can I help you with?";
     let text_alpha = if state.phase.get() == Phase::Recording { 0.96 } else { 0.8 };
     ctx.set_source_rgba(1.0, 1.0, 1.0, text_alpha * alpha);
-    ctx.select_font_face("sans-serif", false, false);
+    ctx.select_font_face("Satoshi", false, false);
     ctx.set_font_size(18.0);
     let extents = ctx.text_extents(text);
     let tx = panel_x + (panel_w - extents.width) / 2.0 - extents.x_bearing;
@@ -839,7 +853,7 @@ fn draw_transcript(
     let scroll = state.scroll_offset.get();
     let mut y = area_y + top_pad - scroll;
 
-    ctx.select_font_face("sans-serif", false, false);
+    ctx.select_font_face("Satoshi", false, false);
     ctx.set_font_size(14.0);
 
     let line_height = 20.0;
@@ -873,7 +887,7 @@ fn draw_transcript(
             };
 
             ctx.set_source_rgba(1.0, 1.0, 1.0, 0.5 * alpha);
-            ctx.select_font_face("sans-serif", false, false);
+            ctx.select_font_face("Satoshi", false, false);
             ctx.set_font_size(12.0);
 
             draw_wrench_icon(ctx, area_x, y + 2.0, 12.0, 0.5 * alpha);
@@ -886,7 +900,7 @@ fn draw_transcript(
             let (r, g, b) = if msg.is_error { (1.0, 0.4, 0.4) } else { (1.0, 1.0, 1.0) };
 
             ctx.set_source_rgba(r, g, b, color_alpha * alpha);
-            ctx.select_font_face("sans-serif", false, false);
+            ctx.select_font_face("Satoshi", false, false);
             ctx.set_font_size(14.0);
 
             let lines = wrap_text(ctx, content, area_w);
@@ -915,7 +929,7 @@ fn draw_streaming_activity(
     ctx: &Ctx, streaming: &PillStreaming,
     x: f64, mut y: f64, _w: f64, alpha: f64,
 ) -> f64 {
-    ctx.select_font_face("sans-serif", true, false);
+    ctx.select_font_face("Satoshi", true, false);
     ctx.set_font_size(12.0);
     ctx.set_source_rgba(1.0, 1.0, 1.0, 0.5 * alpha);
 
@@ -944,7 +958,7 @@ fn draw_thinking_text(
     ctx: &Ctx, x: f64, y: f64, alpha: f64, state: &PillState,
 ) -> f64 {
     let text = "Thinking";
-    ctx.select_font_face("sans-serif", false, false);
+    ctx.select_font_face("Satoshi", false, false);
     ctx.set_font_size(14.0);
     let extents = ctx.text_extents(text);
     let text_y = y + 14.0;
@@ -988,14 +1002,14 @@ fn draw_permission_card(
 
     let tool_label = perm.description.as_deref().unwrap_or(&perm.tool_name);
     ctx.set_source_rgba(1.0, 1.0, 1.0, 0.82 * alpha);
-    ctx.select_font_face("sans-serif", false, true);
+    ctx.select_font_face("Satoshi", false, true);
     ctx.set_font_size(12.0);
     ctx.move_to(x + 12.0, y + 18.0);
     ctx.show_text(tool_label);
 
     if let Some(ref reason) = perm.reason {
         ctx.set_source_rgba(1.0, 1.0, 1.0, 0.5 * alpha);
-        ctx.select_font_face("sans-serif", false, false);
+        ctx.select_font_face("Satoshi", false, false);
         ctx.set_font_size(11.0);
         ctx.move_to(x + 12.0, y + 32.0);
         ctx.show_text(reason);
@@ -1019,7 +1033,7 @@ fn draw_permission_card(
         ctx.stroke();
 
         ctx.set_source_rgba(1.0, 1.0, 1.0, text_alpha * alpha);
-        ctx.select_font_face("sans-serif", false, false);
+        ctx.select_font_face("Satoshi", false, false);
         ctx.set_font_size(11.0);
         let ext = ctx.text_extents(label);
         ctx.move_to(
@@ -1048,7 +1062,7 @@ fn draw_user_prompt_preview(
     prompt: &str, alpha: f64,
 ) {
     ctx.set_source_rgba(1.0, 1.0, 1.0, 0.5 * alpha);
-    ctx.select_font_face("sans-serif", false, false);
+    ctx.select_font_face("Satoshi", false, false);
     ctx.set_font_size(14.0);
 
     let max_w = panel_w * 0.5;
@@ -1137,6 +1151,23 @@ fn draw_keyboard_button(ctx: &Ctx, state: &PillState, ww: f64, wh: f64) {
     }
 }
 
+fn draw_paused(ctx: &Ctx, rx: f64, ry: f64, pill_w: f64, pill_h: f64, expand_t: f64) {
+    let gap = 4.0;
+    let bar_w = 3.0;
+    let heights = [0.35_f64, 0.7, 1.0, 0.55, 0.4];
+    let total_w = heights.len() as f64 * bar_w + (heights.len() - 1) as f64 * gap;
+    let start_x = rx + (pill_w - total_w) / 2.0;
+    let mid_y = ry + pill_h / 2.0;
+    for (i, h_frac) in heights.iter().enumerate() {
+        let h = (pill_h - 10.0) * *h_frac * expand_t;
+        let x = start_x + i as f64 * (bar_w + gap);
+        let y = mid_y - h / 2.0;
+        ctx.set_source_rgba(1.0, 1.0, 1.0, 0.55 * expand_t);
+        ctx.rounded_rect(x, y, bar_w, h.max(1.0), 1.5);
+        ctx.fill();
+    }
+}
+
 fn draw_cancel_button(ctx: &Ctx, state: &PillState, ww: f64, wh: f64) {
     let t = state.cancel_t.get();
     if t < 0.01 {
@@ -1144,23 +1175,50 @@ fn draw_cancel_button(ctx: &Ctx, state: &PillState, ww: f64, wh: f64) {
     }
 
     let (pill_x, pill_y, pill_w, _) = pill_position(state, ww, wh);
+    let phase = state.phase.get();
+    let scale = 0.5 + 0.5 * t;
+
+    // Pause / resume (left)
+    let pause_x = pill_x + pill_w - CANCEL_BUTTON_SIZE * 1.5 - 6.0;
+    let pause_y = pill_y - CANCEL_BUTTON_SIZE / 2.0 - 2.0;
+    let pause_cx = pause_x + CANCEL_BUTTON_SIZE / 2.0;
+    let pause_cy = pause_y + CANCEL_BUTTON_SIZE / 2.0;
+    ctx.save();
+    ctx.translate(pause_cx, pause_cy);
+    ctx.scale(scale, scale);
+    ctx.translate(-pause_cx, -pause_cy);
+    ctx.set_source_rgba(0.52, 0.52, 0.52, t);
+    let pause_symbol = if phase == Phase::Paused {
+        "play.circle.fill"
+    } else {
+        "pause.circle.fill"
+    };
+    ctx.draw_symbol(pause_symbol, pause_cx, pause_cy, CANCEL_BUTTON_SIZE - 2.0);
+    ctx.restore();
+
+    // Cancel (right)
     let btn_x = pill_x + pill_w - CANCEL_BUTTON_SIZE / 2.0 + 2.0;
     let btn_y = pill_y - CANCEL_BUTTON_SIZE / 2.0 - 2.0;
     let cx = btn_x + CANCEL_BUTTON_SIZE / 2.0;
     let cy = btn_y + CANCEL_BUTTON_SIZE / 2.0;
-
-    let scale = 0.5 + 0.5 * t;
     ctx.save();
     ctx.translate(cx, cy);
     ctx.scale(scale, scale);
     ctx.translate(-cx, -cy);
-
     ctx.set_source_rgba(0.46, 0.46, 0.46, t);
     ctx.draw_symbol("xmark.circle.fill", cx, cy, CANCEL_BUTTON_SIZE - 2.0);
-
     ctx.restore();
 
     if t > 0.5 {
+        let pause_action = if phase == Phase::Paused {
+            ClickAction::ResumeDictation
+        } else {
+            ClickAction::PauseDictation
+        };
+        state.click_regions.borrow_mut().push(ClickRegion {
+            x: pause_x, y: pause_y, w: CANCEL_BUTTON_SIZE, h: CANCEL_BUTTON_SIZE,
+            action: pause_action,
+        });
         state.click_regions.borrow_mut().push(ClickRegion {
             x: btn_x, y: btn_y, w: CANCEL_BUTTON_SIZE, h: CANCEL_BUTTON_SIZE,
             action: ClickAction::CancelDictation,
@@ -1206,4 +1264,123 @@ fn wrap_text(ctx: &Ctx, text: &str, max_width: f64) -> Vec<String> {
         lines.push(String::new());
     }
     lines
+}
+
+// ── Long-press ring indicator ─────────────────────────────────────
+
+fn draw_long_press_ring(ctx: &Ctx, state: &PillState, ww: f64, wh: f64) {
+    let elapsed = state.long_press_elapsed.get();
+    let progress = (elapsed / LONG_PRESS_DURATION).min(1.0);
+
+    let (pill_x, pill_y, pill_w, pill_h) = pill_position(state, ww, wh);
+    let cx = pill_x + pill_w / 2.0;
+    let cy = pill_y + pill_h / 2.0;
+
+    // Pulsating glow behind the ring
+    let pulse = 0.5 + 0.5 * (elapsed * 3.0).sin();
+    let glow_radius = LONG_PRESS_RING_RADIUS + 4.0 + pulse * 3.0;
+    ctx.set_source_rgba(
+        LONG_PRESS_RING_COLOR.0,
+        LONG_PRESS_RING_COLOR.1,
+        LONG_PRESS_RING_COLOR.2,
+        0.15 * progress,
+    );
+    ctx.new_sub_path();
+    ctx.arc(cx, cy, glow_radius, 0.0, std::f64::consts::TAU);
+    ctx.fill();
+
+    // Progress arc (sweeps clockwise)
+    let start_angle = -std::f64::consts::FRAC_PI_2;
+    let end_angle = start_angle + progress * std::f64::consts::TAU;
+    ctx.set_source_rgba(
+        LONG_PRESS_RING_COLOR.0,
+        LONG_PRESS_RING_COLOR.1,
+        LONG_PRESS_RING_COLOR.2,
+        0.6 + 0.4 * progress,
+    );
+    ctx.set_line_width(LONG_PRESS_RING_STROKE);
+    ctx.set_line_cap_round();
+    ctx.new_sub_path();
+    ctx.arc(cx, cy, LONG_PRESS_RING_RADIUS, start_angle, end_angle);
+    ctx.stroke();
+
+    // Background track (faint)
+    ctx.set_source_rgba(
+        LONG_PRESS_RING_COLOR.0,
+        LONG_PRESS_RING_COLOR.1,
+        LONG_PRESS_RING_COLOR.2,
+        0.12,
+    );
+    ctx.set_line_width(LONG_PRESS_RING_STROKE * 0.5);
+    ctx.new_sub_path();
+    ctx.arc(cx, cy, LONG_PRESS_RING_RADIUS, 0.0, std::f64::consts::TAU);
+    ctx.stroke();
+}
+
+// ── Balloon pop animation ─────────────────────────────────────────
+
+fn draw_balloon_pop(ctx: &Ctx, state: &PillState, ww: f64, wh: f64) {
+    let elapsed = state.balloon_pop_elapsed.get();
+    let t = (elapsed / BALLOON_POP_DURATION).min(1.0);
+
+    let (pill_x, pill_y, pill_w, _pill_h) = pill_position(state, ww, wh);
+    let cx = pill_x + pill_w / 2.0;
+    let cy = pill_y + wh / 2.0;
+
+    // Expanding shockwave ring
+    let ring_t = t.min(0.6) / 0.6;
+    let ring_radius = gfx::lerp(LONG_PRESS_RING_RADIUS, LONG_PRESS_RING_RADIUS * 3.5, ring_t);
+    let ring_alpha = (1.0 - ring_t) * 0.7;
+    if ring_alpha > 0.01 {
+        ctx.set_source_rgba(
+            BALLOON_POP_COLOR.0,
+            BALLOON_POP_COLOR.1,
+            BALLOON_POP_COLOR.2,
+            ring_alpha,
+        );
+        ctx.set_line_width(LONG_PRESS_RING_STROKE * (1.0 - ring_t * 0.5));
+        ctx.set_line_cap_round();
+        ctx.new_sub_path();
+        ctx.arc(cx, cy, ring_radius, 0.0, std::f64::consts::TAU);
+        ctx.stroke();
+    }
+
+    // Second shockwave (slightly delayed)
+    let ring2_t = ((t - 0.1).max(0.0) / 0.5).min(1.0);
+    let ring2_radius = gfx::lerp(LONG_PRESS_RING_RADIUS * 0.6, LONG_PRESS_RING_RADIUS * 2.5, ring2_t);
+    let ring2_alpha = (1.0 - ring2_t) * 0.4;
+    if ring2_alpha > 0.01 {
+        ctx.set_source_rgba(
+            BALLOON_POP_COLOR2.0,
+            BALLOON_POP_COLOR2.1,
+            BALLOON_POP_COLOR2.2,
+            ring2_alpha,
+        );
+        ctx.set_line_width(LONG_PRESS_RING_STROKE * 0.7);
+        ctx.new_sub_path();
+        ctx.arc(cx, cy, ring2_radius, 0.0, std::f64::consts::TAU);
+        ctx.stroke();
+    }
+
+    // Particles
+    let particles = state.balloon_pop_particles.borrow();
+    for p in particles.iter() {
+        let life_ratio = (p.life / p.max_life).max(0.0);
+        let alpha = life_ratio * life_ratio;
+        let size = p.size * (0.3 + 0.7 * life_ratio);
+        ctx.set_source_rgba(p.color.0, p.color.1, p.color.2, alpha);
+        ctx.new_sub_path();
+        ctx.arc(p.x, p.y, size, 0.0, std::f64::consts::TAU);
+        ctx.fill();
+    }
+
+    // Brief flash at pop moment
+    if t < 0.15 {
+        let flash_alpha = (1.0 - t / 0.15) * 0.3;
+        let flash_radius = gfx::lerp(4.0, pill_w * 0.6, t / 0.15);
+        ctx.set_source_rgba(1.0, 1.0, 1.0, flash_alpha);
+        ctx.new_sub_path();
+        ctx.arc(cx, cy, flash_radius, 0.0, std::f64::consts::TAU);
+        ctx.fill();
+    }
 }

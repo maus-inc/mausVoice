@@ -13,7 +13,7 @@ use tauri::AppHandle;
 use tauri_plugin_opener::OpenerExt;
 use url::{form_urlencoded, Url};
 
-pub const ENTERPRISE_OIDC_EVENT: &str = "voquill:enterprise-oidc-auth";
+pub const ENTERPRISE_OIDC_EVENT: &str = "mausvoice:enterprise-oidc-auth";
 
 const CALLBACK_PATH: &str = "/callback";
 const HTTP_SERVER_TIMEOUT: Duration = Duration::from_secs(120);

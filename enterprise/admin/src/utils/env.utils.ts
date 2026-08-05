@@ -1,16 +1,16 @@
-interface VoquillEnv {
-  VOQUILL_GATEWAY_URL?: string;
-  VOQUILL_APP_NAME?: string;
+interface MausVoiceEnv {
+  MAUSVOICE_GATEWAY_URL?: string;
+  MAUSVOICE_APP_NAME?: string;
 }
 
 declare global {
   interface Window {
-    __VOQUILL__?: VoquillEnv;
+    __MAUSVOICE__?: MausVoiceEnv;
   }
 }
 
 export function getGatewayUrl(): string {
-  return window.__VOQUILL__?.VOQUILL_GATEWAY_URL || "http://localhost:4630";
+  return window.__MAUSVOICE__?.MAUSVOICE_GATEWAY_URL || "http://localhost:4630";
 }
 
 export function isDev(): boolean {
@@ -18,7 +18,7 @@ export function isDev(): boolean {
 }
 
 export function getAppName(): string {
-  return window.__VOQUILL__?.VOQUILL_APP_NAME || "Voquill Enterprise";
+  return window.__MAUSVOICE__?.MAUSVOICE_APP_NAME || "mausVoice Enterprise";
 }
 
 export function getAppVersion(): string {

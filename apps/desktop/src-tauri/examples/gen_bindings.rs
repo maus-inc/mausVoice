@@ -76,6 +76,8 @@ fn main() {
         sync_hotkey_combos,
         sync_compositor_hotkeys,
         reset_key_listener_state,
+        get_key_listener_health,
+        retry_key_listener,
         play_audio,
         get_text_field_info,
         get_screen_context,

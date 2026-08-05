@@ -42,6 +42,7 @@ pub fn notify_phase(app: &tauri::AppHandle, phase: &OverlayPhase) {
             OverlayPhase::Idle => Phase::Idle,
             OverlayPhase::Recording => Phase::Recording,
             OverlayPhase::Loading => Phase::Loading,
+            OverlayPhase::Paused => Phase::Paused,
         };
         pill.send(InMessage::Phase { phase });
     }
@@ -118,6 +119,12 @@ fn start_out_reader(app: tauri::AppHandle, rx: mpsc::Receiver<OutMessage>) {
                 }
                 OutMessage::CancelDictation => {
                     let _ = app.emit_to("main", "cancel-dictation", ());
+                }
+                OutMessage::PauseDictation => {
+                    let _ = app.emit_to("main", "pause-dictation", ());
+                }
+                OutMessage::ResumeDictation => {
+                    let _ = app.emit_to("main", "resume-dictation", ());
                 }
                 OutMessage::TypedMessage { text } => {
                     let payload = serde_json::json!({ "text": text });

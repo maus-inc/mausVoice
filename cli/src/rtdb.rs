@@ -26,15 +26,15 @@ fn session_url(env: Env, creds: &Credentials, session_id: &str) -> String {
     let path = format!("session/{}/{}", creds.uid, session_id);
     match env {
         Env::Prod => format!(
-            "https://voquill-prod-default-rtdb.firebaseio.com/{path}.json?auth={}",
+            "https://mausvoice-prod-default-rtdb.firebaseio.com/{path}.json?auth={}",
             creds.id_token
         ),
         Env::Dev => format!(
-            "https://voquill-dev-default-rtdb.firebaseio.com/{path}.json?auth={}",
+            "https://mausvoice-dev-default-rtdb.firebaseio.com/{path}.json?auth={}",
             creds.id_token
         ),
         Env::Emulator => format!(
-            "http://127.0.0.1:9000/{path}.json?ns=voquill-dev-default-rtdb&auth={}",
+            "http://127.0.0.1:9000/{path}.json?ns=mausvoice-dev-default-rtdb&auth={}",
             creds.id_token
         ),
     }
@@ -90,15 +90,15 @@ fn history_url(env: Env, creds: &Credentials, session_id: &str) -> String {
     let path = format!("session/{}/{}/history", creds.uid, session_id);
     match env {
         Env::Prod => format!(
-            "https://voquill-prod-default-rtdb.firebaseio.com/{path}.json?auth={}",
+            "https://mausvoice-prod-default-rtdb.firebaseio.com/{path}.json?auth={}",
             creds.id_token
         ),
         Env::Dev => format!(
-            "https://voquill-dev-default-rtdb.firebaseio.com/{path}.json?auth={}",
+            "https://mausvoice-dev-default-rtdb.firebaseio.com/{path}.json?auth={}",
             creds.id_token
         ),
         Env::Emulator => format!(
-            "http://127.0.0.1:9000/{path}.json?ns=voquill-dev-default-rtdb&auth={}",
+            "http://127.0.0.1:9000/{path}.json?ns=mausvoice-dev-default-rtdb&auth={}",
             creds.id_token
         ),
     }
@@ -110,9 +110,8 @@ pub fn append_history_entry(
     session_id: &str,
     entry: &serde_json::Value,
 ) -> Result<()> {
-    // History entries are stored as JSON-encoded strings (not objects) because
-    // the mobile client reads each entry as a string and jsonDecode()s it itself
-    // (see SessionHistoryEntry.tryDecode in mobile/lib/model/session_history_entry.dart).
+    // History entries are stored as JSON-encoded strings for compatibility
+    // with the remote session client protocol.
     let entry_str = serde_json::to_string(entry)?;
 
     let response = client()?

@@ -1,5 +1,5 @@
 import type { ReactNode } from "react";
-import type { ApiKeyProvider } from "@voquill/types";
+import type { ApiKeyProvider } from "@maus-inc/types";
 import {
   aldeaTestIntegration,
   assemblyaiTestIntegration,
@@ -16,7 +16,7 @@ import {
   openaiTestIntegration,
   openrouterTestIntegration,
   xaiTestIntegration,
-} from "@voquill/voice-ai";
+} from "@maus-inc/voice-ai";
 import { FormattedMessage } from "react-intl";
 import type { SettingsApiKey } from "../../state/settings.state";
 import {

@@ -1,5 +1,5 @@
 import OpenAI from "openai";
-import { retry, countWords } from "@voquill/utilities";
+import { retry, countWords } from "@maus-inc/utilities";
 import type {
   JsonResponse,
   LlmChatInput,
@@ -7,13 +7,13 @@ import type {
   OpenRouterModel,
   OpenRouterProvider,
   OpenRouterProviderRouting,
-} from "@voquill/types";
+} from "@maus-inc/types";
 import { openaiCompatibleStreamChat } from "./openai.utils";
 import type { CustomFetch } from "./types";
 
 export const OPENROUTER_BASE_URL = "https://openrouter.ai/api/v1";
-export const OPENROUTER_APP_NAME = "Voquill";
-export const OPENROUTER_APP_URL = "https://voquill.com";
+export const OPENROUTER_APP_NAME = "mausVoice";
+export const OPENROUTER_APP_URL = "https://mausvoice.com";
 
 /**
  * Pre-set favorite models for quick access.

@@ -2,7 +2,7 @@ import type {
   PairedRemoteDevice,
   RemoteDevicePlatform,
   RemoteReceiverStatus,
-} from "@voquill/types";
+} from "@maus-inc/types";
 import { invoke } from "@tauri-apps/api/core";
 import { getAppState, produceAppState } from "../store";
 import { registerPairedRemoteDevices } from "../utils/app.utils";
@@ -12,7 +12,7 @@ import {
   setRemoteTargetDeviceId,
 } from "./user.actions";
 
-const INVITE_PREFIX = "voquill-pair:";
+const INVITE_PREFIX = "mausvoice-pair:";
 
 type RemotePairingInvite = {
   version: 1;
@@ -21,6 +21,14 @@ type RemotePairingInvite = {
   receiverPlatform: RemoteDevicePlatform;
   receiverAddress: string;
   pairingCode: string;
+};
+
+const getCurrentRemoteDevicePlatform = (): RemoteDevicePlatform => {
+  const platform = getPlatform();
+  if (platform === "macos" || platform === "windows") {
+    return platform;
+  }
+  throw new Error("Remote pairing is only supported on macOS and Windows.");
 };
 
 const encodeBase64Url = (value: string): string => {
@@ -59,7 +67,7 @@ export const buildRemotePairingInvite = (
         status as RemoteReceiverStatus & {
           devicePlatform?: RemoteDevicePlatform;
         }
-      ).devicePlatform ?? (getPlatform() as RemoteDevicePlatform),
+      ).devicePlatform ?? getCurrentRemoteDevicePlatform(),
     receiverAddress: `${status.listenAddress}:${status.port}`,
     pairingCode: status.pairingCode,
   };
@@ -72,7 +80,7 @@ export const parseRemotePairingInvite = (
 ): RemotePairingInvite => {
   const trimmed = value.trim();
   if (!trimmed.startsWith(INVITE_PREFIX)) {
-    throw new Error("Pair code is not a valid Voquill remote invite.");
+    throw new Error("Pair code is not a valid mausVoice remote invite.");
   }
 
   const decoded = decodeBase64Url(trimmed.slice(INVITE_PREFIX.length));

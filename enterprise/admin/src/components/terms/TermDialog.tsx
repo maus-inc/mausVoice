@@ -9,7 +9,7 @@ import {
   Switch,
   TextField,
 } from "@mui/material";
-import type { Term } from "@voquill/types";
+import type { Term } from "@maus-inc/types";
 import { useState } from "react";
 import { FormattedMessage, useIntl } from "react-intl";
 import { upsertGlobalTerm } from "../../actions/terms.actions";

@@ -1,5 +1,5 @@
-import { invokeHandler } from "@voquill/functions";
-import { Tenant, TenantRole } from "@voquill/types";
+import { invokeHandler } from "@maus-inc/functions";
+import { Tenant, TenantRole } from "@maus-inc/types";
 import { BaseRepo } from "./base.repo";
 
 export type TenantWithRole = {

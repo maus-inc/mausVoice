@@ -1,4 +1,4 @@
-import type { HandlerOutput } from "@voquill/functions";
+import type { HandlerOutput } from "@maus-inc/functions";
 
 // These limits aren't necessary for enterprise, but are kept here to implement the schema for enterprise.
 const WORD_LIMIT = 5_000_000;

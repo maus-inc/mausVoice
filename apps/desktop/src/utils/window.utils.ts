@@ -1,7 +1,7 @@
-import { Nullable } from "@voquill/types";
+import { Nullable } from "@maus-inc/types";
 import { invoke } from "@tauri-apps/api/core";
 
-const SURFACE_WINDOW_FLAG_KEY = "voquill:surface-main-window-on-launch";
+const SURFACE_WINDOW_FLAG_KEY = "mausvoice:surface-main-window-on-launch";
 
 let surfaceWindowPromise: Promise<void> | null = null;
 

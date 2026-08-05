@@ -1,4 +1,4 @@
-import type { Tone } from "@voquill/types";
+import type { Tone } from "@maus-inc/types";
 import type { ToneRow } from "../types/tone.types";
 import { getPool } from "../utils/db.utils";
 

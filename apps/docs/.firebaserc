@@ -1,12 +1,12 @@
 {
   "projects": {
-    "default": "voquill-prod"
+    "default": "mausvoice-prod"
   },
   "targets": {
-    "voquill-prod": {
+    "mausvoice-prod": {
       "hosting": {
-        "voquill-docs": [
-          "voquill-docs"
+        "mausvoice-docs": [
+          "mausvoice-docs"
         ]
       }
     }

@@ -5,14 +5,14 @@ import {
   type FunctionDeclaration,
   type Part,
 } from "@google/genai";
-import { retry, countWords } from "@voquill/utilities";
+import { retry, countWords } from "@maus-inc/utilities";
 import type {
   JsonResponse,
   LlmChatInput,
   LlmFinishReason,
   LlmMessage,
   LlmStreamEvent,
-} from "@voquill/types";
+} from "@maus-inc/types";
 
 export const GEMINI_GENERATE_TEXT_MODELS = [
   "gemini-2.5-flash",

@@ -15,16 +15,20 @@ export const LogoWithText = ({ sx, ...rest }: LogoWithTextProps) => {
       }}
       {...rest}
     >
-      <Logo sx={{ mr: 1 }} />
+      <Logo sx={{ mr: 1.1 }} />
       <Typography
-        variant="h5"
-        fontWeight="bold"
+        component="span"
         sx={{
+          fontFamily: "var(--font-display)",
+          fontWeight: 400,
+          fontSize: "1.15rem",
+          letterSpacing: "0.02em",
+          lineHeight: 1,
           userSelect: "none",
           display: { xs: "none", sm: "block" },
         }}
       >
-        Voquill
+        mausVoice
       </Typography>
     </Stack>
   );

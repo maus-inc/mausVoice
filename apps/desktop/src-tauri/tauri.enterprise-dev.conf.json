@@ -1,11 +1,11 @@
 {
-  "productName": "Voquill Enterprise (dev)",
-  "identifier": "com.voquill.desktop.enterprise-dev",
-  "mainBinaryName": "voquill-desktop-enterprise-dev",
+  "productName": "mausVoice Enterprise (dev)",
+  "identifier": "com.mausinc.desktop.enterprise-dev",
+  "mainBinaryName": "mausvoice-desktop-enterprise-dev",
   "app": {
     "windows": [
       {
-        "title": "Voquill Enterprise (dev)",
+        "title": "mausVoice Enterprise (dev)",
         "width": 1280,
         "height": 860,
         "minWidth": 800,
@@ -14,20 +14,10 @@
       }
     ]
   },
-  "bundle": {
-    "linux": {
-      "deb": {
-        "depends": ["libxdo3", "xdotool", "libvulkan1", "libgtk-layer-shell0", "wtype"]
-      },
-      "rpm": {
-        "depends": ["xdotool", "vulkan-loader", "gtk-layer-shell", "wtype"]
-      }
-    }
-  },
   "plugins": {
     "updater": {
       "endpoints": [
-        "https://github.com/voquill/voquill/releases/download/desktop-enterprise-dev/latest.json"
+        "https://github.com/mausvoice/mausvoice/releases/download/desktop-enterprise-dev/latest.json"
       ]
     }
   }

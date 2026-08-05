@@ -11,30 +11,15 @@ pub struct InputDeviceDescriptor {
 }
 
 pub fn new_recorder() -> Arc<dyn Recorder> {
-    #[cfg(target_os = "linux")]
-    {
-        Arc::new(crate::platform::linux::audio::PulseRecorder::new())
-    }
-    #[cfg(not(target_os = "linux"))]
-    {
-        Arc::new(cpal_impl::RecordingManager::new())
-    }
+    Arc::new(cpal_impl::RecordingManager::new())
 }
 
 pub fn list_input_devices() -> Vec<InputDeviceDescriptor> {
-    #[cfg(target_os = "linux")]
-    {
-        crate::platform::linux::audio::list_pulse_input_devices()
-    }
-    #[cfg(not(target_os = "linux"))]
-    {
-        cpal_impl::list_input_devices()
-    }
+    cpal_impl::list_input_devices()
 }
 
 // ── CPAL backend (macOS, Windows) ──────────────────────────────────────
 
-#[cfg(not(target_os = "linux"))]
 mod cpal_impl {
     use super::InputDeviceDescriptor;
     use crate::domain::{RecordedAudio, RecordingMetrics, RecordingResult};
@@ -364,6 +349,32 @@ mod cpal_impl {
             Err(last_err.unwrap_or(RecordingError::InputDeviceUnavailable))
         }
 
+        fn pause_recording(&self) -> Result<(), RecordingError> {
+            let guard = self
+                .inner
+                .lock()
+                .map_err(|_| RecordingError::NotRecording)?;
+            let recording = guard.as_ref().ok_or(RecordingError::NotRecording)?;
+            recording
+                ._stream
+                .pause()
+                .map_err(|err| RecordingError::StreamPlay(err.to_string()))?;
+            Ok(())
+        }
+
+        fn resume_recording(&self) -> Result<(), RecordingError> {
+            let guard = self
+                .inner
+                .lock()
+                .map_err(|_| RecordingError::NotRecording)?;
+            let recording = guard.as_ref().ok_or(RecordingError::NotRecording)?;
+            recording
+                ._stream
+                .play()
+                .map_err(|err| RecordingError::StreamPlay(err.to_string()))?;
+            Ok(())
+        }
+
         fn stop_recording(&self) -> Result<RecordingResult, RecordingError> {
             let mut guard = self
                 .inner
@@ -413,6 +424,14 @@ mod cpal_impl {
 
         fn stop(&self) -> Result<RecordingResult, Box<dyn std::error::Error>> {
             self.stop_recording().map_err(|err| Box::new(err) as _)
+        }
+
+        fn pause(&self) -> Result<(), Box<dyn std::error::Error>> {
+            self.pause_recording().map_err(|err| Box::new(err) as _)
+        }
+
+        fn resume(&self) -> Result<(), Box<dyn std::error::Error>> {
+            self.resume_recording().map_err(|err| Box::new(err) as _)
         }
 
         fn set_preferred_input_device(&self, name: Option<String>) {

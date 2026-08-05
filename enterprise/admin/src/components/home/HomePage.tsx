@@ -22,7 +22,7 @@ import {
 import { Suspense } from "react";
 import { useIntl } from "react-intl";
 import { Outlet, useLocation, useNavigate } from "react-router-dom";
-import AppLogo from "../../assets/app-logo.svg?react";
+import appLogo from "../../assets/app-logo.png";
 import { getAppName } from "../../utils/env.utils";
 import HomeSideEffects from "./HomeSideEffects";
 import UserInfoDialog from "./UserInfoDialog";
@@ -90,7 +90,7 @@ export default function HomePage() {
         }}
       >
         <Toolbar>
-          <AppLogo width={28} height={28} style={{ marginRight: 10 }} />
+          <img src={appLogo} width={28} height={28} alt="" style={{ marginRight: 10, display: 'block' }} />
           <Typography variant="h6" noWrap>
             {getAppName()}
           </Typography>

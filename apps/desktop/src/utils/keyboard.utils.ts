@@ -109,29 +109,24 @@ export const getPrettyKeyName = (key: string): string => {
 type PlatformHotkeyCombos = {
   macos: string[][];
   windows: string[][];
-  linux: string[][];
 };
 
 export const DEFAULT_HOTKEY_COMBOS: Record<string, PlatformHotkeyCombos> = {
   [DICTATE_HOTKEY]: {
     macos: [["Function"]],
     windows: [["MetaLeft", "ControlLeft"]],
-    linux: [["ControlLeft", "Space"]],
   },
   [CANCEL_TRANSCRIPTION_HOTKEY]: {
     macos: [["Escape"]],
     windows: [["Escape"]],
-    linux: [["Escape"]],
   },
   [SWITCH_WRITING_STYLE_FORWARD_HOTKEY]: {
     macos: [["RightArrow"]],
     windows: [["RightArrow"]],
-    linux: [["RightArrow"]],
   },
   [SWITCH_WRITING_STYLE_BACKWARD_HOTKEY]: {
     macos: [["LeftArrow"]],
     windows: [["LeftArrow"]],
-    linux: [["LeftArrow"]],
   },
 };
 
@@ -146,10 +141,9 @@ export const getDefaultHotkeyCombosForAction = (
   if (defaultCombos) {
     if (getPlatform() === "macos") {
       return defaultCombos.macos;
-    } else if (getPlatform() === "windows") {
+    }
+    if (getPlatform() === "windows") {
       return defaultCombos.windows;
-    } else {
-      return defaultCombos.linux;
     }
   }
   return [];

@@ -1,11 +1,11 @@
-import { invokeHandler, type CloudModel } from "@voquill/functions";
+import { invokeHandler, type CloudModel } from "@maus-inc/functions";
 import type {
   JsonResponse,
   LlmChatInput,
   LlmStreamEvent,
   Nullable,
   OpenRouterProviderRouting,
-} from "@voquill/types";
+} from "@maus-inc/types";
 import {
   azureOpenAIGenerateText,
   azureOpenaiStreamChat,
@@ -31,7 +31,7 @@ import {
   OPENROUTER_DEFAULT_MODEL,
   openrouterGenerateTextResponse,
   openrouterStreamChat,
-} from "@voquill/voice-ai";
+} from "@maus-inc/voice-ai";
 import { fetch as tauriFetch } from "@tauri-apps/plugin-http";
 import { PostProcessingMode } from "../types/ai.types";
 import {
@@ -97,23 +97,18 @@ export class CloudGenerateTextRepo extends BaseGenerateTextRepo {
 export class GroqGenerateTextRepo extends BaseGenerateTextRepo {
   private groqApiKey: string;
   private model: GenerateTextModel;
+  private fallbackModel: GenerateTextModel = "qwen/qwen3.6-27b";
 
   constructor(apiKey: string, model: string | null) {
     super();
     this.groqApiKey = apiKey;
     this.model = GENERATE_TEXT_MODELS.includes(model as GenerateTextModel)
       ? (model as GenerateTextModel)
-      : "openai/gpt-oss-120b";
+      : "openai/gpt-oss-20b";
   }
 
   async generateText(input: GenerateTextInput): Promise<GenerateTextOutput> {
-    const response = await groqGenerateTextResponse({
-      apiKey: this.groqApiKey,
-      model: this.model,
-      prompt: input.prompt,
-      system: input.system ?? undefined,
-      jsonResponse: input.jsonResponse,
-    });
+    const response = await this.generateWithFallback(input);
 
     return {
       text: response.text,
@@ -122,6 +117,30 @@ export class GroqGenerateTextRepo extends BaseGenerateTextRepo {
         inferenceDevice: "API • Groq",
       },
     };
+  }
+
+  private async generateWithFallback(input: GenerateTextInput) {
+    try {
+      return await groqGenerateTextResponse({
+        apiKey: this.groqApiKey,
+        model: this.model,
+        prompt: input.prompt,
+        system: input.system ?? undefined,
+        jsonResponse: input.jsonResponse,
+      });
+    } catch (error) {
+      if (this.model === this.fallbackModel) {
+        throw error;
+      }
+
+      return groqGenerateTextResponse({
+        apiKey: this.groqApiKey,
+        model: this.fallbackModel,
+        prompt: input.prompt,
+        system: input.system ?? undefined,
+        jsonResponse: input.jsonResponse,
+      });
+    }
   }
 
   async *streamChat(input: LlmChatInput): AsyncGenerator<LlmStreamEvent> {

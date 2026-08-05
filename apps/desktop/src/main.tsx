@@ -1,7 +1,4 @@
-import "@fontsource/roboto/300.css";
-import "@fontsource/roboto/400.css";
-import "@fontsource/roboto/500.css";
-import "@fontsource/roboto/700.css";
+import "./styles/fonts.css";
 import { CssBaseline } from "@mui/material";
 import { ThemeProvider } from "@mui/material/styles";
 import { Elements } from "@stripe/react-stripe-js";
@@ -32,11 +29,12 @@ const firebaseConfig: FirebaseOptions = {
     import.meta.env.VITE_FIREBASE_API_KEY ||
     "AIzaSyCJ8C3ZW2bHjerneg5i0fr-b5uwuy7uULM",
   authDomain:
-    import.meta.env.VITE_FIREBASE_AUTH_DOMAIN || "voquill-dev.firebaseapp.com",
-  projectId: import.meta.env.VITE_FIREBASE_PROJECT_ID || "voquill-dev",
+    import.meta.env.VITE_FIREBASE_AUTH_DOMAIN ||
+    "mausvoice-dev.firebaseapp.com",
+  projectId: import.meta.env.VITE_FIREBASE_PROJECT_ID || "mausvoice-dev",
   storageBucket:
     import.meta.env.VITE_FIREBASE_STORAGE_BUCKET ||
-    "voquill-dev.firebasestorage.app",
+    "mausvoice-dev.firebasestorage.app",
   messagingSenderId:
     import.meta.env.VITE_FIREBASE_MESSAGING_SENDER_ID || "778214168359",
   appId:
@@ -45,7 +43,7 @@ const firebaseConfig: FirebaseOptions = {
   measurementId: import.meta.env.VITE_FIREBASE_MEASUREMENT_ID || "G-V6Y1RSFBQX",
   databaseURL:
     import.meta.env.VITE_FIREBASE_DATABASE_URL ||
-    "https://voquill-prod-default-rtdb.firebaseio.com",
+    "https://mausvoice-prod-default-rtdb.firebaseio.com",
 };
 
 const missingFirebaseConfigKeys = Object.entries(firebaseConfig)

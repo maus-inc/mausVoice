@@ -1,9 +1,9 @@
 ---
 title: Updates & Renewal
-description: Keep your on-premise Voquill deployment up to date and renew your license.
+description: Keep your on-premise mausVoice deployment up to date and renew your license.
 ---
 
-For as long as your license is valid, you can use and update Voquill to the latest version. Once your license expires, on-premise services will degrade until a new license is applied.
+For as long as your license is valid, you can use and update mausVoice to the latest version. Once your license expires, on-premise services will degrade until a new license is applied.
 
 ## Server Updates
 
@@ -18,7 +18,7 @@ Your data in Postgres is persisted via the volume and is not affected by updates
 
 ## Desktop Updates
 
-The desktop app is updated automatically as part of the open-source Voquill client. Updates will be available upon release and can be managed within the app.
+The desktop app is updated automatically as part of the open-source mausVoice client. Updates will be available upon release and can be managed within the app.
 
 ## License Renewal
 
@@ -26,7 +26,7 @@ You can visit the settings page on the admin portal to see when your license exp
 
 ![License expiration in admin portal settings](./license-expiration.png)
 
-To renew, contact [enterprise@voquill.com](mailto:enterprise@voquill.com) for a new license key. Once you have it, update the `LICENSE_KEY` environment variable in your `docker-compose.yml` and restart the gateway:
+To renew, contact [enterprise@mausvoice.com](mailto:enterprise@mausvoice.com) for a new license key. Once you have it, update the `LICENSE_KEY` environment variable in your `docker-compose.yml` and restart the gateway:
 
 ```bash
 docker compose up -d gateway

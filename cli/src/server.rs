@@ -57,7 +57,7 @@ impl SessionServer {
              <request>\n{prompt}\n</request>\n\n\
              ---\n\n\
              This session is relayed to a remote UI. Handle my request as you normally would.\n\n\
-             When your turn is done, make exactly ONE POST to {url}/reply with a JSON body containing any combination of these optional fields (or none). The response is rendered as a single agent turn on a mobile device — be extremely brief and direct, no padding or hedging.\n\n\
+             When your turn is done, make exactly ONE POST to {url}/reply with a JSON body containing any combination of these optional fields (or none). The response is rendered as a single agent turn in the remote UI — be extremely brief and direct, no padding or hedging.\n\n\
              Fields:\n\
              - summary (string): a recap of what you did or propose. One or two short sentences.\n\
              - reviews (array of strings): items for me to approve or reject, in order.\n\
