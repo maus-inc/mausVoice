@@ -185,7 +185,15 @@ export const AppHeader = () => {
                 {myInitials}
               </Avatar>
               <Stack textAlign="left" spacing={0.5}>
-                <Typography variant="subtitle1" fontWeight={700} lineHeight={1}>
+                <Typography
+                  variant="subtitle1"
+                  fontWeight={500}
+                  lineHeight={1}
+                  sx={{
+                    fontFamily: "var(--font-display)",
+                    letterSpacing: "0.01em",
+                  }}
+                >
                   {myName}
                 </Typography>
                 <Typography

@@ -117,7 +117,12 @@ export const SignInForm = () => {
       }
     >
       <Stack spacing={2}>
-        <Typography variant="h4" fontWeight={600} pb={1}>
+        <Typography
+          variant="h4"
+          fontWeight={500}
+          pb={1}
+          sx={{ fontFamily: "var(--font-display)", letterSpacing: "0.01em" }}
+        >
           <FormattedMessage defaultMessage="Welcome back" />
         </Typography>
 

@@ -1,4 +1,10 @@
-/* Display + UI — TAN-PARADISO (bundled) is the app-wide typeface */
+/*
+  Type hierarchy
+  - TAN-PARADISO: logo wordmark (near icon) + "Welcome back" / user name only
+  - Satoshi: all normal UI text (variable weights from bundled face)
+  - No Jakarta
+*/
+
 @font-face {
   font-family: "TAN-PARADISO";
   src:
@@ -10,32 +16,14 @@
   font-display: swap;
 }
 
-/* Keep Jakarta as a secondary face only where we explicitly opt in */
 @font-face {
-  font-family: "Plus Jakarta Sans";
-  src: url("../assets/fonts/jakarta/400.woff2") format("woff2");
-  font-weight: 400;
-  font-style: normal;
-  font-display: swap;
-}
-@font-face {
-  font-family: "Plus Jakarta Sans";
-  src: url("../assets/fonts/jakarta/500.woff2") format("woff2");
-  font-weight: 500;
-  font-style: normal;
-  font-display: swap;
-}
-@font-face {
-  font-family: "Plus Jakarta Sans";
-  src: url("../assets/fonts/jakarta/600.woff2") format("woff2");
-  font-weight: 600;
-  font-style: normal;
-  font-display: swap;
-}
-@font-face {
-  font-family: "Plus Jakarta Sans";
-  src: url("../assets/fonts/jakarta/700.woff2") format("woff2");
-  font-weight: 700;
+  font-family: "Satoshi";
+  src:
+    local("Satoshi"),
+    local("Satoshi Medium"),
+    local("Satoshi-Medium"),
+    url("../assets/fonts/satoshi/Satoshi-Medium.ttf") format("truetype");
+  font-weight: 100 900;
   font-style: normal;
   font-display: swap;
 }
@@ -48,8 +36,9 @@
   --duration-base: 200ms;
   --duration-enter: 250ms;
   --duration-exit: 180ms;
-  --font-display: "TAN-PARADISO", system-ui, sans-serif;
-  --font-ui: "TAN-PARADISO", system-ui, -apple-system, sans-serif;
+
+  --font-display: "TAN-PARADISO", "Satoshi", system-ui, sans-serif;
+  --font-ui: "Satoshi", system-ui, -apple-system, sans-serif;
 }
 
 @media (prefers-reduced-motion: reduce) {

@@ -22,7 +22,7 @@ export const LogoWithText = ({ sx, ...rest }: LogoWithTextProps) => {
           fontFamily: "var(--font-display)",
           fontWeight: 400,
           fontSize: "1.15rem",
-          letterSpacing: "0.01em",
+          letterSpacing: "0.02em",
           lineHeight: 1,
           userSelect: "none",
           display: { xs: "none", sm: "block" },
