@@ -16,6 +16,8 @@ use tauri::{AppHandle, Emitter, EventTarget};
 use serde::{Deserialize, Serialize};
 use strum::IntoEnumIterator;
 
+#[cfg(target_os = "linux")]
+pub use super::linux::keyboard::run_listener_process;
 #[cfg(target_os = "macos")]
 pub use super::macos::keyboard::run_listener_process;
 #[cfg(target_os = "windows")]
