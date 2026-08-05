@@ -59,19 +59,19 @@ export const theme = createTheme({
     pxToRem: (px: number) => `${px / 16}rem`,
 
     displayLarge: {
-            fontSize: 57,
+      fontSize: 57,
       lineHeight: 1.05,
       fontWeight: 500,
       letterSpacing: "-0.02em",
     },
     displayMedium: {
-            fontSize: 45,
+      fontSize: 45,
       lineHeight: 1.08,
       fontWeight: 500,
       letterSpacing: "-0.02em",
     },
     displaySmall: {
-            fontSize: 36,
+      fontSize: 36,
       lineHeight: 1.1,
       fontWeight: 500,
       letterSpacing: "-0.015em",
@@ -94,7 +94,7 @@ export const theme = createTheme({
     labelSmall: { fontSize: 12, lineHeight: 1.3, fontWeight: 600 },
 
     h5: {
-            fontWeight: 600,
+      fontWeight: 600,
       letterSpacing: "-0.02em",
     },
     body1: { fontSize: 15, lineHeight: 1.55, fontWeight: 400 },

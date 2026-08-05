@@ -80,7 +80,9 @@ export const TitleBar = () => {
         px: 1.25,
         position: "relative",
         zIndex: 20,
-        backgroundColor: dark ? "rgba(20,22,27,0.92)" : "rgba(255,255,255,0.88)",
+        backgroundColor: dark
+          ? "rgba(20,22,27,0.92)"
+          : "rgba(255,255,255,0.88)",
         backdropFilter: "blur(18px) saturate(1.2)",
         WebkitBackdropFilter: "blur(18px) saturate(1.2)",
         borderBottom: dark

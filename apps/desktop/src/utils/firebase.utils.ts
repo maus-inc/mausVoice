@@ -1,4 +1,7 @@
-import type { StreamHandlerInput, StreamHandlerName } from "@maus-inc/functions";
+import type {
+  StreamHandlerInput,
+  StreamHandlerName,
+} from "@maus-inc/functions";
 import type { LlmStreamEvent } from "@maus-inc/types";
 import { getEffectiveAuth } from "./auth.utils";
 import { getIsEmulators } from "./env.utils";

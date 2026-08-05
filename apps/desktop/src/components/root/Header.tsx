@@ -212,7 +212,12 @@ export const AppHeader = () => {
   }
 
   const left = (
-    <Stack direction="row" alignItems="center" spacing={1.25} sx={{ minWidth: 0 }}>
+    <Stack
+      direction="row"
+      alignItems="center"
+      spacing={1.25}
+      sx={{ minWidth: 0 }}
+    >
       <SenderReceiverChip />
       {leftContent}
     </Stack>
@@ -220,10 +225,7 @@ export const AppHeader = () => {
 
   return (
     <>
-      <BaseHeader
-        leftContent={left}
-        rightContent={rightContent}
-      />
+      <BaseHeader leftContent={left} rightContent={rightContent} />
       <GpuMigrationDialog
         open={gpuMigrationDialogOpen}
         onClose={() => setGpuMigrationDialogOpen(false)}

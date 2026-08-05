@@ -11,7 +11,17 @@ export const duration = {
   exit: 0.18,
 } as const;
 
-export const springSnappy = { type: "spring" as const, stiffness: 420, damping: 32, mass: 0.8 };
-export const springSoft = { type: "spring" as const, stiffness: 280, damping: 28, mass: 0.9 };
+export const springSnappy = {
+  type: "spring" as const,
+  stiffness: 420,
+  damping: 32,
+  mass: 0.8,
+};
+export const springSoft = {
+  type: "spring" as const,
+  stiffness: 280,
+  damping: 28,
+  mass: 0.9,
+};
 
 export const reducedMotionQuery = "(prefers-reduced-motion: reduce)";

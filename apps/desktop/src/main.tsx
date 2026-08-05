@@ -29,7 +29,8 @@ const firebaseConfig: FirebaseOptions = {
     import.meta.env.VITE_FIREBASE_API_KEY ||
     "AIzaSyCJ8C3ZW2bHjerneg5i0fr-b5uwuy7uULM",
   authDomain:
-    import.meta.env.VITE_FIREBASE_AUTH_DOMAIN || "mausvoice-dev.firebaseapp.com",
+    import.meta.env.VITE_FIREBASE_AUTH_DOMAIN ||
+    "mausvoice-dev.firebaseapp.com",
   projectId: import.meta.env.VITE_FIREBASE_PROJECT_ID || "mausvoice-dev",
   storageBucket:
     import.meta.env.VITE_FIREBASE_STORAGE_BUCKET ||

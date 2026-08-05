@@ -10,7 +10,8 @@
   src:
     local("TAN-PARADISO"),
     local("TAN Paradiso"),
-    url("../assets/fonts/tan-paradiso/TAN-PARADISO-Regular.woff2") format("woff2");
+    url("../assets/fonts/tan-paradiso/TAN-PARADISO-Regular.woff2")
+      format("woff2");
   font-weight: 400 700;
   font-style: normal;
   font-display: swap;

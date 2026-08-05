@@ -840,7 +840,8 @@ export const DictationSideEffects = () => {
       await strategyRef.current.setPhase("paused");
       showToast({
         message: intl.formatMessage({
-          defaultMessage: "Dictation paused — tap play to continue or X to cancel",
+          defaultMessage:
+            "Dictation paused — tap play to continue or X to cancel",
         }),
         toastType: "info",
         duration: 4_000,
