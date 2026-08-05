@@ -154,7 +154,10 @@ export const ListTile = forwardRef<HTMLDivElement, ListTileProps>(
         disablePadding
         onMouseEnter={onMouseEnter}
         onMouseLeave={onMouseLeave}
-        sx={{ position: "relative", ...((sx as object) || {}) }}
+        sx={[
+          { position: "relative" },
+          ...(sx == null ? [] : Array.isArray(sx) ? sx : [sx]),
+        ]}
       >
         {indicator}
         <ListItemButton
