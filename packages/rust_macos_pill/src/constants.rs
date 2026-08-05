@@ -188,3 +188,17 @@ pub(crate) const TRANSCRIPT_PADDING_H: f64 = 14.0;
 pub(crate) const TRANSCRIPT_RADIUS: f64 = 10.0;
 pub(crate) const TRANSCRIPT_FONT_SIZE: f64 = 12.0;
 pub(crate) const TRANSCRIPT_MAX_WIDTH: f64 = 440.0;
+
+// ── Long-press balloon pop + drag ─────────────────────────────────
+pub(crate) const LONG_PRESS_DURATION: f64 = 5.0;
+pub(crate) const LONG_PRESS_RING_RADIUS: f64 = 22.0;
+pub(crate) const LONG_PRESS_RING_STROKE: f64 = 2.5;
+pub(crate) const LONG_PRESS_RING_COLOR: (f64, f64, f64) = (0.45, 0.75, 1.0);
+
+pub(crate) const BALLOON_POP_DURATION: f64 = 0.85;
+pub(crate) const BALLOON_POP_PARTICLE_COUNT: usize = 14;
+pub(crate) const BALLOON_POP_PARTICLE_SPEED: f64 = 180.0;
+pub(crate) const BALLOON_POP_PARTICLE_LIFE: f64 = 0.7;
+pub(crate) const BALLOON_POP_PARTICLE_SIZE: f64 = 4.0;
+pub(crate) const BALLOON_POP_COLOR: (f64, f64, f64) = (0.45, 0.75, 1.0);
+pub(crate) const BALLOON_POP_COLOR2: (f64, f64, f64) = (0.7, 0.9, 1.0);

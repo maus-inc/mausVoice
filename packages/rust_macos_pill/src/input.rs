@@ -109,6 +109,41 @@ pub(crate) fn handle_scroll(state: &PillState, delta_y: f64) {
     state.should_stick.set(max_scroll - new_offset <= 32.0);
 }
 
+/// Returns true if the given point is on the pill body itself
+/// (not on a button or interactive element). Used for long-press detection.
+pub(crate) fn is_on_pill_at(state: &PillState, x: f64, y: f64) -> bool {
+    let s = state.ui_scale;
+    let (ox, oy) = state.content_offset();
+    let x = x / s - ox;
+    let y = y / s - oy;
+    let dw = state.draw_width.get();
+    let dh = state.draw_height.get();
+
+    if state.assistant_active.get() || state.panel_open_t.get() > 0.1 {
+        return false;
+    }
+
+    let pill_area_top = dh - PILL_AREA_HEIGHT;
+    let expand_t = state.expand_t.get();
+    let pill_w = gfx::lerp(MIN_PILL_WIDTH, EXPANDED_PILL_WIDTH, expand_t);
+    let hit_x = (dw - pill_w) / 2.0;
+
+    if x >= hit_x && x <= hit_x + pill_w && y >= pill_area_top && y <= dh {
+        let regions = state.click_regions.borrow();
+        for region in regions.iter().rev() {
+            if matches!(region.action, ClickAction::Pill) {
+                continue;
+            }
+            if region.contains(x, y) {
+                return false;
+            }
+        }
+        return true;
+    }
+
+    false
+}
+
 const HOVER_ENTRY_PAD_X: f64 = 8.0;
 const HOVER_ENTRY_PAD_Y: f64 = 8.0;
 const HOVER_EXIT_PAD_X: f64 = 24.0;

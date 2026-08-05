@@ -15,7 +15,7 @@ use crate::gfx::Gfx;
 use crate::input;
 use crate::ipc::{self, InMessage, OutMessage, Phase, Visibility};
 use crate::state;
-use crate::state::{ClickAction, PillState, Rocket, RocketPhase, Spark, WindowMode};
+use crate::state::{ClickAction, PillState, PopParticle, Rocket, RocketPhase, Spark, WindowMode};
 
 const TIMER_CURSOR: usize = 2;
 
@@ -138,6 +138,14 @@ pub fn run(receiver: Receiver<InMessage>) {
         transcript_time_since_update: Cell::new(0.0),
         transcript_opacity: Cell::new(0.0),
         transcript_has_message: Cell::new(false),
+        long_press_active: Cell::new(false),
+        long_press_elapsed: Cell::new(0.0),
+        balloon_pop_active: Cell::new(false),
+        balloon_pop_elapsed: Cell::new(0.0),
+        balloon_pop_particles: RefCell::new(Vec::new()),
+        dragging: Cell::new(false),
+        drag_cursor_x: Cell::new(0.0),
+        drag_cursor_y: Cell::new(0.0),
         dirty: Cell::new(true),
     };
 
@@ -224,12 +232,19 @@ unsafe extern "system" fn wndproc(hwnd: HWND, msg: u32, wparam: WPARAM, lparam: 
             }
         }
         WM_LBUTTONDOWN => {
+            let x = (lparam.0 & 0xFFFF) as i16 as f64;
+            let y = ((lparam.0 >> 16) & 0xFFFF) as i16 as f64;
             STATE.with(|s| {
                 if let Some(ref state) = *s.borrow() {
                     if state.assistant_active.get()
                         && *state.assistant_input_mode.borrow() == "type"
                     {
                         focus_edit_control();
+                    }
+                    // Start long-press tracking if clicking on the pill body
+                    if input::is_on_pill_at(state, x, y) {
+                        state.long_press_active.set(true);
+                        state.long_press_elapsed.set(0.0);
                     }
                 }
             });
@@ -240,6 +255,11 @@ unsafe extern "system" fn wndproc(hwnd: HWND, msg: u32, wparam: WPARAM, lparam: 
             let y = ((lparam.0 >> 16) & 0xFFFF) as i16 as f64;
             STATE.with(|s| {
                 if let Some(ref state) = *s.borrow() {
+                    // End any drag
+                    state.dragging.set(false);
+                    // Cancel any in-progress long press
+                    state.long_press_active.set(false);
+                    state.long_press_elapsed.set(0.0);
                     input::handle_click(state, x, y);
                 }
             });
@@ -352,7 +372,7 @@ fn on_cursor_tick(hwnd: HWND) {
     STATE.with(|s| {
         if let Some(ref state) = *s.borrow() {
             check_hover(hwnd, state);
-            reposition_to_cursor_monitor(hwnd);
+            reposition_to_cursor_monitor(hwnd, state);
         }
     });
 }
@@ -542,6 +562,8 @@ fn tick(state: &PillState, dt: f64) {
     tick_flame(state, dt);
     tick_flash_blue(state, dt);
     tick_transcript(state, dt);
+    tick_long_press(state, dt);
+    tick_balloon_pop(state, dt);
 
     if state.flash_visible.get() {
         let remaining = state.flash_timer.get() - dt;
@@ -889,7 +911,7 @@ fn initial_position() -> (i32, i32) {
     }
 }
 
-fn reposition_to_cursor_monitor(hwnd: HWND) {
+fn reposition_to_cursor_monitor(hwnd: HWND, state: &PillState) {
     unsafe {
         let mut cursor = POINT::default();
         let _ = GetCursorPos(&mut cursor);
@@ -902,8 +924,23 @@ fn reposition_to_cursor_monitor(hwnd: HWND) {
         let wa = info.rcWork;
         let wa_w = wa.right - wa.left;
         let wa_h = wa.bottom - wa.top;
-        let x = wa.left + (wa_w - WINDOW_W_TYPING) / 2;
-        let y = wa.top + wa_h - WINDOW_H_TYPING - MARGIN_BOTTOM;
+
+        let (x, y) = if state.dragging.get() {
+            // Drag mode: center the window on cursor position
+            // The pill body is in the bottom portion of the window
+            let pill_area_h = PILL_AREA_HEIGHT as i32;
+            let mut dx = cursor.x - WINDOW_W_TYPING / 2;
+            let mut dy = cursor.y - pill_area_h / 2;
+            // Clamp to work area
+            dx = dx.max(wa.left).min(wa.right - WINDOW_W_TYPING);
+            dy = dy.max(wa.top).min(wa.bottom - WINDOW_H_TYPING);
+            (dx, dy)
+        } else {
+            // Normal mode: center at bottom of monitor
+            let x = wa.left + (wa_w - WINDOW_W_TYPING) / 2;
+            let y = wa.top + wa_h - WINDOW_H_TYPING - MARGIN_BOTTOM;
+            (x, y)
+        };
 
         let mut current = RECT::default();
         let _ = GetWindowRect(hwnd, &mut current);
@@ -913,6 +950,92 @@ fn reposition_to_cursor_monitor(hwnd: HWND) {
                 SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE,
             );
         }
+    }
+}
+
+fn tick_long_press(state: &PillState, dt: f64) {
+    if !state.long_press_active.get() {
+        return;
+    }
+
+    let phase = state.phase.get();
+    if phase != Phase::Idle || state.assistant_active.get() {
+        state.long_press_active.set(false);
+        state.long_press_elapsed.set(0.0);
+        return;
+    }
+
+    if state.balloon_pop_active.get() {
+        return;
+    }
+
+    let elapsed = state.long_press_elapsed.get() + dt;
+    state.long_press_elapsed.set(elapsed);
+
+    if elapsed >= LONG_PRESS_DURATION {
+        state.long_press_active.set(false);
+        state.long_press_elapsed.set(0.0);
+        trigger_balloon_pop(state);
+    }
+}
+
+fn trigger_balloon_pop(state: &PillState) {
+    state.balloon_pop_active.set(true);
+    state.balloon_pop_elapsed.set(0.0);
+
+    let dw = state.draw_width.get();
+    let dh = state.draw_height.get();
+    let cx = dw / 2.0;
+    let pill_area_top = dh - PILL_AREA_HEIGHT;
+    let cy = pill_area_top + PILL_AREA_HEIGHT / 2.0;
+
+    let mut particles = Vec::with_capacity(BALLOON_POP_PARTICLE_COUNT);
+    for i in 0..BALLOON_POP_PARTICLE_COUNT {
+        let angle = (i as f64 / BALLOON_POP_PARTICLE_COUNT as f64) * std::f64::consts::TAU;
+        let speed_jitter = 0.7 + (i as f64 * 0.13).sin().abs() * 0.6;
+        let speed = BALLOON_POP_PARTICLE_SPEED * speed_jitter;
+        let color = if i % 2 == 0 { BALLOON_POP_COLOR } else { BALLOON_POP_COLOR2 };
+        particles.push(PopParticle {
+            x: cx,
+            y: cy,
+            vx: angle.cos() * speed,
+            vy: angle.sin() * speed,
+            life: BALLOON_POP_PARTICLE_LIFE,
+            max_life: BALLOON_POP_PARTICLE_LIFE,
+            size: BALLOON_POP_PARTICLE_SIZE * (0.6 + (i as f64 * 0.3).sin().abs() * 0.8),
+            color,
+        });
+    }
+    *state.balloon_pop_particles.borrow_mut() = particles;
+}
+
+fn tick_balloon_pop(state: &PillState, dt: f64) {
+    if !state.balloon_pop_active.get() {
+        return;
+    }
+
+    let elapsed = state.balloon_pop_elapsed.get() + dt;
+    state.balloon_pop_elapsed.set(elapsed);
+
+    {
+        let mut particles = state.balloon_pop_particles.borrow_mut();
+        for p in particles.iter_mut() {
+            p.life -= dt;
+            p.x += p.vx * dt;
+            p.y += p.vy * dt;
+            p.vy += 120.0 * dt;
+            p.vx *= (-2.0 * dt).exp();
+            p.vy *= (-2.0 * dt).exp();
+        }
+        particles.retain(|p| p.life > 0.0);
+    }
+
+    // When animation completes, enter drag mode
+    if elapsed >= BALLOON_POP_DURATION {
+        state.balloon_pop_active.set(false);
+        state.balloon_pop_elapsed.set(0.0);
+        state.balloon_pop_particles.borrow_mut().clear();
+        state.dragging.set(true);
     }
 }
 

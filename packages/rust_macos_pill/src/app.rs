@@ -18,7 +18,7 @@ use crate::draw;
 use crate::gfx::{self, Ctx};
 use crate::input;
 use crate::ipc::{self, InMessage, OutMessage, Phase, Visibility};
-use crate::state::{FlameTongue, PillState, Rocket, RocketPhase, Spark, WindowMode};
+use crate::state::{FlameTongue, PillState, PopParticle, Rocket, RocketPhase, Spark, WindowMode};
 
 // ── CVDisplayLink & timing ───────────────────────────────────────
 
@@ -140,8 +140,19 @@ extern "C" fn accepts_first_mouse(_this: &Object, _sel: Sel, _event: id) -> BOOL
     YES
 }
 
-extern "C" fn mouse_down(_this: &Object, _sel: Sel, _event: id) {
+extern "C" fn mouse_down(_this: &Object, _sel: Sel, event: id) {
     // Don't call super — prevents the window from stealing focus on click
+    with_ctx(|ctx| {
+        unsafe {
+            let loc: NSPoint = msg_send![event, locationInWindow];
+            let view_loc: NSPoint = msg_send![_this, convertPoint:loc fromView:nil];
+            // Start long-press tracking if clicking on the pill body
+            if input::is_on_pill_at(&ctx.state, view_loc.x, view_loc.y) {
+                ctx.state.long_press_active.set(true);
+                ctx.state.long_press_elapsed.set(0.0);
+            }
+        }
+    });
 }
 
 extern "C" fn draw_rect(this: &Object, _sel: Sel, _dirty: NSRect) {
@@ -169,6 +180,12 @@ extern "C" fn mouse_exited(_this: &Object, _sel: Sel, _event: id) {
 
 extern "C" fn mouse_up(_this: &Object, _sel: Sel, event: id) {
     with_ctx(|ctx| {
+        // End any drag
+        ctx.state.dragging.set(false);
+        // Cancel any in-progress long press
+        ctx.state.long_press_active.set(false);
+        ctx.state.long_press_elapsed.set(0.0);
+
         unsafe {
             let loc: NSPoint = msg_send![event, locationInWindow];
             let view_loc: NSPoint = msg_send![_this, convertPoint:loc fromView:nil];
@@ -430,8 +447,8 @@ fn perform_tick() {
             }
         }
 
-        // Reposition window on active monitor
-        reposition_window(ctx.window);
+        // Reposition window: follow cursor when dragging, auto-center otherwise
+        reposition_window(ctx.window, &ctx.state);
 
         // Request redraw
         unsafe {
@@ -562,6 +579,10 @@ fn tick(state: &PillState, dt: f64) {
 
     // Broadcast transcript
     tick_transcript(state, dt);
+
+    // Long-press balloon pop + drag
+    tick_long_press(state, dt);
+    tick_balloon_pop(state, dt);
 
     // Flash message timer
     if state.flash_visible.get() {
@@ -776,6 +797,94 @@ fn tick_transcript(state: &PillState, dt: f64) {
     }
 }
 
+fn tick_long_press(state: &PillState, dt: f64) {
+    if !state.long_press_active.get() {
+        return;
+    }
+
+    // Don't allow long-press while recording, loading, paused, or in assistant mode
+    let phase = state.phase.get();
+    if phase != Phase::Idle || state.assistant_active.get() {
+        state.long_press_active.set(false);
+        state.long_press_elapsed.set(0.0);
+        return;
+    }
+
+    if state.balloon_pop_active.get() {
+        return;
+    }
+
+    let elapsed = state.long_press_elapsed.get() + dt;
+    state.long_press_elapsed.set(elapsed);
+
+    if elapsed >= LONG_PRESS_DURATION {
+        state.long_press_active.set(false);
+        state.long_press_elapsed.set(0.0);
+        trigger_balloon_pop(state);
+    }
+}
+
+fn trigger_balloon_pop(state: &PillState) {
+    state.balloon_pop_active.set(true);
+    state.balloon_pop_elapsed.set(0.0);
+
+    let dw = state.draw_width.get();
+    let dh = state.draw_height.get();
+    let cx = dw / 2.0;
+    let pill_area_top = dh - PILL_AREA_HEIGHT;
+    let cy = pill_area_top + PILL_AREA_HEIGHT / 2.0;
+
+    let mut particles = Vec::with_capacity(BALLOON_POP_PARTICLE_COUNT);
+    for i in 0..BALLOON_POP_PARTICLE_COUNT {
+        let angle = (i as f64 / BALLOON_POP_PARTICLE_COUNT as f64) * std::f64::consts::TAU;
+        let speed_jitter = 0.7 + (i as f64 * 0.13).sin().abs() * 0.6;
+        let speed = BALLOON_POP_PARTICLE_SPEED * speed_jitter;
+        let color = if i % 2 == 0 { BALLOON_POP_COLOR } else { BALLOON_POP_COLOR2 };
+        particles.push(PopParticle {
+            x: cx,
+            y: cy,
+            vx: angle.cos() * speed,
+            vy: angle.sin() * speed,
+            life: BALLOON_POP_PARTICLE_LIFE,
+            max_life: BALLOON_POP_PARTICLE_LIFE,
+            size: BALLOON_POP_PARTICLE_SIZE * (0.6 + (i as f64 * 0.3).sin().abs() * 0.8),
+            color,
+        });
+    }
+    *state.balloon_pop_particles.borrow_mut() = particles;
+}
+
+fn tick_balloon_pop(state: &PillState, dt: f64) {
+    if !state.balloon_pop_active.get() {
+        return;
+    }
+
+    let elapsed = state.balloon_pop_elapsed.get() + dt;
+    state.balloon_pop_elapsed.set(elapsed);
+
+    {
+        let mut particles = state.balloon_pop_particles.borrow_mut();
+        for p in particles.iter_mut() {
+            p.life -= dt;
+            p.x += p.vx * dt;
+            p.y += p.vy * dt;
+            p.vy += 120.0 * dt;
+            p.vx *= (-2.0 * dt).exp();
+            p.vy *= (-2.0 * dt).exp();
+        }
+        particles.retain(|p| p.life > 0.0);
+    }
+
+    // When animation completes, enter drag mode
+    if elapsed >= BALLOON_POP_DURATION {
+        state.balloon_pop_active.set(false);
+        state.balloon_pop_elapsed.set(0.0);
+        state.balloon_pop_particles.borrow_mut().clear();
+        // Enter drag mode — pill follows cursor
+        state.dragging.set(true);
+    }
+}
+
 fn spring_anim(value: &Cell<f64>, velocity: &Cell<f64>, target: f64, stiffness: f64, dt: f64) {
     let v = value.get();
     let vel = velocity.get();
@@ -812,11 +921,20 @@ fn spring_px(value: &Cell<f64>, velocity: &Cell<f64>, target: f64, stiffness: f6
 
 // ── Window positioning ────────────────────────────────────────────
 
-fn reposition_window(window: id) {
+fn reposition_window(window: id, state: &PillState) {
     unsafe {
         let mouse_loc: NSPoint = msg_send![class!(NSEvent), mouseLocation];
         let screens: id = msg_send![class!(NSScreen), screens];
         let count: usize = msg_send![screens, count];
+
+        let win_frame: NSRect = msg_send![window, frame];
+        let win_w = win_frame.size.width;
+        let win_h = win_frame.size.height;
+
+        // Find which monitor the cursor is on
+        let mut target_x = 0.0_f64;
+        let mut target_y = 0.0_f64;
+        let mut found = false;
 
         for i in 0..count {
             let screen: id = msg_send![screens, objectAtIndex:i];
@@ -828,19 +946,38 @@ fn reposition_window(window: id) {
                 && mouse_loc.y < frame.origin.y + frame.size.height
             {
                 let visible: NSRect = msg_send![screen, visibleFrame];
-                let win_frame: NSRect = msg_send![window, frame];
-                let x = visible.origin.x + (visible.size.width - win_frame.size.width) / 2.0;
-                let y = visible.origin.y + MARGIN_BOTTOM as f64;
 
-                let current_origin: NSPoint = {
-                    let f: NSRect = msg_send![window, frame];
-                    f.origin
-                };
-                if (current_origin.x - x).abs() > 1.0 || (current_origin.y - y).abs() > 1.0 {
-                    let origin = NSPoint::new(x, y);
-                    let _: () = msg_send![window, setFrameOrigin:origin];
+                if state.dragging.get() {
+                    // Drag mode: center the window on the cursor position
+                    // macOS Y is flipped (origin at bottom-left), cursor Y is also bottom-up
+                    // The pill body is drawn in the bottom portion of the window,
+                    // so offset so the pill area sits at cursor Y
+                    let pill_area_h = PILL_AREA_HEIGHT;
+                    target_x = mouse_loc.x - win_w / 2.0;
+                    target_y = mouse_loc.y - pill_area_h / 2.0;
+
+                    // Clamp to visible area
+                    target_x = target_x.max(visible.origin.x).min(visible.origin.x + visible.size.width - win_w);
+                    target_y = target_y.max(visible.origin.y).min(visible.origin.y + visible.size.height - win_h);
+                } else {
+                    // Normal mode: center at bottom of monitor
+                    target_x = visible.origin.x + (visible.size.width - win_w) / 2.0;
+                    target_y = visible.origin.y + MARGIN_BOTTOM as f64;
                 }
+
+                found = true;
                 break;
+            }
+        }
+
+        if found {
+            let current_origin: NSPoint = {
+                let f: NSRect = msg_send![window, frame];
+                f.origin
+            };
+            if (current_origin.x - target_x).abs() > 1.0 || (current_origin.y - target_y).abs() > 1.0 {
+                let origin = NSPoint::new(target_x, target_y);
+                let _: () = msg_send![window, setFrameOrigin:origin];
             }
         }
     }
@@ -989,6 +1126,14 @@ unsafe fn setup(receiver: Receiver<InMessage>, embedded: bool) {
         transcript_time_since_update: Cell::new(0.0),
         transcript_opacity: Cell::new(0.0),
         transcript_has_message: Cell::new(false),
+        long_press_active: Cell::new(false),
+        long_press_elapsed: Cell::new(0.0),
+        balloon_pop_active: Cell::new(false),
+        balloon_pop_elapsed: Cell::new(0.0),
+        balloon_pop_particles: RefCell::new(Vec::new()),
+        dragging: Cell::new(false),
+        drag_cursor_x: Cell::new(0.0),
+        drag_cursor_y: Cell::new(0.0),
     });
 
     // Store in thread-local
@@ -1021,7 +1166,9 @@ unsafe fn setup(receiver: Receiver<InMessage>, embedded: bool) {
     }
 
     // Position and show (orderFront only — don't steal focus from other apps)
-    reposition_window(window);
+    with_ctx(|ctx| {
+        reposition_window(window, &ctx.state);
+    });
     let _: () = msg_send![window, orderFront:nil];
 
     ipc::send(&OutMessage::Ready);
