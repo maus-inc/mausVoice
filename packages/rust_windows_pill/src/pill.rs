@@ -17,6 +17,13 @@ use crate::ipc::{self, InMessage, OutMessage, Phase, Visibility};
 use crate::state;
 use crate::state::{ClickAction, PillState, PopParticle, Rocket, RocketPhase, Spark, WindowMode};
 
+// Issue #7: Thread-local statics are an architectural requirement, not a smell.
+// Win32 HWNDs are thread-affine — they must only be accessed on the thread that
+// created them (the pill process's main / message-loop thread). Global mutable
+// state in the pill would require either a separate lock per HWND (same cost) or
+// a single-threaded executor (what we already have). Thread-locals give us the
+// same ergonomics as globals without violating HWND affinity.
+
 const TIMER_CURSOR: usize = 2;
 
 thread_local! {
