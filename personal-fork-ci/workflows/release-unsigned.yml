@@ -1,0 +1,163 @@
+name: Release Unsigned Desktop
+
+on:
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Release tag (e.g. v0.1.0-unsigned.1)"
+        required: true
+        default: "unsigned-build"
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    name: Build Desktop (${{ matrix.label }})
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 35
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - label: macOS
+            os: macos-14
+            args: "--target universal-apple-darwin"
+            rust_targets: "aarch64-apple-darwin,x86_64-apple-darwin"
+            tauri_platform: macos
+            node_platform: darwin
+            bundle_dir: apps/desktop/src-tauri/target/universal-apple-darwin/release/bundle
+            require_gpu_sidecar: true
+          - label: Windows
+            os: windows-latest
+            args: ""
+            rust_targets: ""
+            tauri_platform: windows
+            node_platform: win32
+            bundle_dir: D:\cargo\release\bundle
+            require_gpu_sidecar: false
+    steps:
+      - name: Checkout source
+        uses: actions/checkout@v4
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version-file: .nvmrc
+          cache: pnpm
+          cache-dependency-path: pnpm-lock.yaml
+
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: "1.3.6"
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.rust_targets }}
+
+      - name: Ensure universal macOS Rust targets
+        if: matrix.os == 'macos-14'
+        run: |
+          rustup target add aarch64-apple-darwin
+          rustup target add x86_64-apple-darwin
+
+      - name: Cache cargo
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: |
+            apps/desktop/src-tauri -> target
+
+      - name: Set Windows-only build environment
+        if: matrix.os == 'windows-latest'
+        shell: pwsh
+        run: |
+          echo "CARGO_TARGET_DIR=D:\cargo" >> $env:GITHUB_ENV
+
+      - name: Set sidecar build environment (macOS)
+        if: matrix.os == 'macos-14'
+        run: |
+          echo "CMAKE_TOOLCHAIN_FILE=${GITHUB_WORKSPACE}/packages/rust_transcription/cmake/macos-ci-toolchain.cmake" >> "$GITHUB_ENV"
+
+      - name: Set sidecar build environment (Windows)
+        if: matrix.os == 'windows-latest'
+        shell: pwsh
+        run: |
+          echo "CMAKE_TOOLCHAIN_FILE=$env:GITHUB_WORKSPACE\packages\rust_transcription\cmake\windows-ci-toolchain.cmake" >> $env:GITHUB_ENV
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Build frontend and dependencies
+        env:
+          TAURI_PLATFORM: ${{ matrix.tauri_platform }}
+          VOQUILL_DESKTOP_PLATFORM: ${{ matrix.node_platform }}
+        run: pnpm exec turbo run build --filter=desktop...
+
+      - name: Build Tauri app
+        env:
+          TAURI_PLATFORM: ${{ matrix.tauri_platform }}
+          VOQUILL_DESKTOP_PLATFORM: ${{ matrix.node_platform }}
+          VOQUILL_REQUIRE_GPU_SIDECAR: ${{ matrix.require_gpu_sidecar && 'true' || 'false' }}
+          MACOSX_DEPLOYMENT_TARGET: "13.3"
+          CMAKE_OSX_DEPLOYMENT_TARGET: "13.3"
+          # Throwaway signing key, unsigned build only — same one build-desktop.yml uses for CI validation.
+          TAURI_SIGNING_PRIVATE_KEY: "dW50cnVzdGVkIGNvbW1lbnQ6IHJzaWduIGVuY3J5cHRlZCBzZWNyZXQga2V5ClJXUlRZMEl5OVRKZlAyVDN3dlF1Wm5mbWh1MXYwV3VjRlR2SVhUY2JqdmZUUGdtM1JOMEFBQkFBQUFBQUFBQUFBQUlBQUFBQXp4N2IwQXBxS3lTQnFWeXJuMmpaeGpKdkd5VUhTeit1cklsd3dQVTJvSnkzUktQMVlrQklPQ0duQkVZSStiMEdqTDFaSWJXZW96eTdab0VyaTZMUVNuWlpjSTZTY3NpVXA0bUZVVjh3TldRNHF1Qk1CUFBqcTduS3RMQ3FwMDFQM0VjYTlWdTZQZTQ9Cg=="
+          TAURI_CI_PUBKEY: "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IDQ2NTZFNDMzMzYyMjBCMzgKUldRNEN5STJNK1JXUmpWRDMzem12QUtjVkFxWERXanl0ZVRCWi9JOTd3bmRFRVFuQkp1QmpiN0EK"
+        working-directory: apps/desktop
+        run: |
+          node -e "
+            const fs = require('fs');
+            const p = 'src-tauri/tauri.conf.json';
+            const c = JSON.parse(fs.readFileSync(p, 'utf8'));
+            if (c.plugins?.updater?.pubkey === '__UPDATER_PUBLIC_KEY__') {
+              c.plugins.updater.pubkey = process.env.TAURI_CI_PUBKEY;
+            }
+            fs.writeFileSync(p, JSON.stringify(c, null, 2) + '\n');
+          "
+          pnpm run tauri build --ci ${{ matrix.args }}
+
+      - name: Upload build artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: voquill-${{ matrix.tauri_platform }}
+          path: |
+            ${{ matrix.bundle_dir }}/**/*.dmg
+            ${{ matrix.bundle_dir }}/**/*.app.tar.gz
+            ${{ matrix.bundle_dir }}/**/*.msi
+            ${{ matrix.bundle_dir }}/**/*.nsis.zip
+            ${{ matrix.bundle_dir }}/**/*.exe
+          if-no-files-found: warn
+          retention-days: 7
+
+  publish:
+    name: Publish GitHub Release
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - name: Download all artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: dist
+
+      - name: Publish release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ github.event.inputs.tag }}
+          name: "Unsigned build ${{ github.event.inputs.tag }}"
+          body: |
+            Unsigned, self-built desktop binaries for personal use — no code signing/notarization.
+            macOS: right-click → Open (bypass "unidentified developer" warning).
+            Windows: may trigger a SmartScreen/Defender warning — click "More info" → "Run anyway".
+          draft: false
+          prerelease: true
+          files: |
+            dist/**/*.dmg
+            dist/**/*.app.tar.gz
+            dist/**/*.msi
+            dist/**/*.nsis.zip
+            dist/**/*.exe
