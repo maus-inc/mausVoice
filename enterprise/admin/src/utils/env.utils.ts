@@ -1,11 +1,11 @@
-interface mausVoiceEnv {
+interface MausVoiceEnv {
   MAUSVOICE_GATEWAY_URL?: string;
   MAUSVOICE_APP_NAME?: string;
 }
 
 declare global {
   interface Window {
-    __MAUSVOICE__?: mausVoiceEnv;
+    __MAUSVOICE__?: MausVoiceEnv;
   }
 }
 
