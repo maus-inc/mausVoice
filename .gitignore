@@ -56,3 +56,6 @@ target/
 nul
 
 *.exe
+
+# Local craft kit (not committed)
+.craft/

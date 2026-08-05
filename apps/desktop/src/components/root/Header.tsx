@@ -6,7 +6,6 @@ import { Avatar, Box, Button, Stack, Typography } from "@mui/material";
 import { getIdentifier } from "@tauri-apps/api/app";
 import { useMemo, useState } from "react";
 import { FormattedMessage } from "react-intl";
-import { useNavigate } from "react-router-dom";
 import { openUpgradePlanDialog } from "../../actions/pricing.actions";
 import { useAsyncData } from "../../hooks/async.hooks";
 import { useHeaderPortal } from "../../hooks/header.hooks";
@@ -21,7 +20,6 @@ import {
 import { getInitials } from "../../utils/string.utils";
 import { getMyUser } from "../../utils/user.utils";
 import { FreeWordsRemaining } from "../common/FreeWordsRemaining";
-import { LogoWithText } from "../common/LogoWithText";
 import {
   MenuPopoverBuilder,
   type MenuPopoverItem,
@@ -47,9 +45,29 @@ export const BaseHeader = ({
       direction="row"
       justifyContent="space-between"
       alignItems="center"
-      sx={{ py: 1, px: 2 }}
+      sx={{
+        py: 0.75,
+        px: { xs: 1.5, sm: 2 },
+        minHeight: 52,
+        borderRadius: 2.5,
+        mx: { xs: 0.5, sm: 1 },
+        mb: 0.5,
+        bgcolor: (theme) =>
+          theme.palette.mode === "dark"
+            ? "rgba(20,22,27,0.55)"
+            : "rgba(255,255,255,0.72)",
+        border: (theme) =>
+          theme.palette.mode === "dark"
+            ? "1px solid rgba(255,255,255,0.05)"
+            : "1px solid rgba(15,18,25,0.05)",
+        boxShadow: (theme) =>
+          theme.palette.mode === "dark"
+            ? "inset 0 1px 0 rgba(255,255,255,0.06), 0 8px 20px rgba(0,0,0,0.25)"
+            : "inset 0 1px 0 rgba(255,255,255,0.9), inset 0 2px 0 rgba(255,255,255,0.35), 0 6px 16px rgba(15,18,25,0.06)",
+        backdropFilter: "blur(12px)",
+      }}
     >
-      <Box sx={{ py: 0.5, pr: 1 }}>{logo}</Box>
+      {logo ? <Box sx={{ py: 0.25, pr: 1 }}>{logo}</Box> : null}
       {leftContent}
       <Box sx={{ flexGrow: 1 }} />
       {rightContent}
@@ -58,7 +76,6 @@ export const BaseHeader = ({
 };
 
 export const AppHeader = () => {
-  const nav = useNavigate();
   const { leftContent } = useHeaderPortal();
   const isOnboarded = useIsOnboarded();
   const isPro = useAppStore(getIsPro);
@@ -95,10 +112,6 @@ export const AppHeader = () => {
     identifierData.state === "success" &&
     identifierData.data.split(".").includes("gpu");
   const [gpuMigrationDialogOpen, setGpuMigrationDialogOpen] = useState(false);
-
-  const handleLogoClick = () => {
-    nav("/");
-  };
 
   const sharedRightMenuItems: MenuPopoverItem[] = [
     {
@@ -190,20 +203,17 @@ export const AppHeader = () => {
     );
   }
 
-  const logo = (
-    <Stack direction="row" alignItems="center" spacing={1}>
-      <Box onClick={handleLogoClick} sx={{ cursor: "pointer" }}>
-        <LogoWithText />
-      </Box>
+  const left = (
+    <Stack direction="row" alignItems="center" spacing={1.25} sx={{ minWidth: 0 }}>
       <SenderReceiverChip />
+      {leftContent}
     </Stack>
   );
 
   return (
     <>
       <BaseHeader
-        logo={logo}
-        leftContent={leftContent}
+        leftContent={left}
         rightContent={rightContent}
       />
       <GpuMigrationDialog

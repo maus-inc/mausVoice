@@ -88,6 +88,8 @@ export type ListTileProps = {
   href?: string;
   disabled?: boolean;
   disableRipple?: boolean;
+  /** Optional indicator slot (e.g. motion layoutId pill) rendered behind content */
+  indicator?: React.ReactNode;
 };
 
 export const ListTile = forwardRef<HTMLDivElement, ListTileProps>(
@@ -106,7 +108,8 @@ export const ListTile = forwardRef<HTMLDivElement, ListTileProps>(
       sx,
       href,
       disabled,
-      disableRipple,
+      disableRipple = true,
+      indicator,
     },
     ref,
   ) => {
@@ -151,13 +154,15 @@ export const ListTile = forwardRef<HTMLDivElement, ListTileProps>(
         disablePadding
         onMouseEnter={onMouseEnter}
         onMouseLeave={onMouseLeave}
-        sx={sx}
+        sx={{ position: "relative", ...((sx as object) || {}) }}
       >
+        {indicator}
         <ListItemButton
           selected={selected}
           onClick={handleClick}
           disabled={disabled}
           disableRipple={disableRipple}
+          sx={{ position: "relative", zIndex: 1 }}
         >
           <Stack direction="row" alignItems="center" width="100%">
             {Boolean(leading) && (

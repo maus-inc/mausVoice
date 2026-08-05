@@ -1,4 +1,5 @@
-import { Stack, GlobalStyles } from "@mui/material";
+import { GlobalStyles, Stack } from "@mui/material";
+import { TitleBar } from "../root/TitleBar";
 
 export type PageLayoutProps = {
   header: React.ReactNode;
@@ -32,9 +33,19 @@ export const PageLayout = ({ header, footer, children }: PageLayoutProps) => (
         height: "100%",
         overflow: "hidden",
         overscrollBehavior: "none",
+        bgcolor: "level0",
       }}
     >
-      <Stack sx={{ flexShrink: 0, overscrollBehavior: "contain" }}>
+      <TitleBar />
+
+      <Stack
+        sx={{
+          flexShrink: 0,
+          overscrollBehavior: "contain",
+          px: { xs: 0.5, sm: 1 },
+          pt: 0.5,
+        }}
+      >
         {header}
       </Stack>
 
@@ -42,6 +53,7 @@ export const PageLayout = ({ header, footer, children }: PageLayoutProps) => (
         sx={{
           flexGrow: 1,
           overflowY: "auto",
+          minHeight: 0,
         }}
       >
         {children}
