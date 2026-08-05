@@ -147,6 +147,14 @@ export const ListTile = forwardRef<HTMLDivElement, ListTileProps>(
       onClick?.(event);
     };
 
+    // Normalize sx to array form for MUI
+    let normalizedSx: SxProps[] = [];
+    if (Array.isArray(sx)) {
+      normalizedSx = sx as unknown as SxProps[];
+    } else if (sx != null) {
+      normalizedSx = [sx];
+    }
+
     return (
       <ListItem
         ref={ref}
@@ -154,10 +162,7 @@ export const ListTile = forwardRef<HTMLDivElement, ListTileProps>(
         disablePadding
         onMouseEnter={onMouseEnter}
         onMouseLeave={onMouseLeave}
-        sx={[
-          { position: "relative" },
-          ...(sx == null ? [] : Array.isArray(sx) ? sx : [sx]),
-        ]}
+        sx={[{ position: "relative" }, ...normalizedSx] as any}
       >
         {indicator}
         <ListItemButton
