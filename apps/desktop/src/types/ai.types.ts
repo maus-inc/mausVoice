@@ -2,7 +2,7 @@ import type {
   AgentMode,
   PostProcessingMode,
   TranscriptionMode,
-} from "@voquill/types";
+} from "@maus-inc/types";
 
 export type { AgentMode, PostProcessingMode, TranscriptionMode };
 

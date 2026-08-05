@@ -1,4 +1,4 @@
 User-agent: *
 Allow: /
 
-Sitemap: https://docs.voquill.com/sitemap-index.xml
+Sitemap: https://docs.mausvoice.com/sitemap-index.xml

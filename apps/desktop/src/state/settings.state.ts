@@ -3,7 +3,7 @@ import {
   ApiKeyProvider,
   OpenRouterModel,
   OpenRouterProvider,
-} from "@voquill/types";
+} from "@maus-inc/types";
 import type {
   LocalSidecarDevice,
   LocalSidecarDownloadSnapshot,

@@ -10,7 +10,7 @@ import type {
   Tone,
   User,
   UserWithAuth,
-} from "@voquill/types";
+} from "@maus-inc/types";
 import {
   INITIAL_LLM_PROVIDERS_STATE,
   type LlmProvidersState,

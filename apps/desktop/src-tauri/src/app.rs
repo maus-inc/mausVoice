@@ -3,7 +3,7 @@ use tauri::{Manager, RunEvent, WindowEvent};
 use tauri_plugin_log::{Target, TargetKind, TimezoneStrategy};
 use tauri_plugin_window_state::{AppHandleExt, StateFlags};
 
-const AUTOSTART_HIDDEN_ARG: &str = "--voquill-autostart-hidden";
+const AUTOSTART_HIDDEN_ARG: &str = "--mausvoice-autostart-hidden";
 
 fn handle_run_event(app_handle: &tauri::AppHandle, event: RunEvent) {
     match &event {
@@ -29,7 +29,7 @@ pub fn build() -> tauri::Builder<tauri::Wry> {
     tauri::Builder::default()
         .plugin({
             let file_name = chrono::Local::now()
-                .format("voquill_%Y-%m-%d_%H%M%S")
+                .format("mausvoice_%Y-%m-%d_%H%M%S")
                 .to_string();
             tauri_plugin_log::Builder::new()
                 .targets([
@@ -207,9 +207,9 @@ pub fn build() -> tauri::Builder<tauri::Wry> {
                 crate::platform::compositor::deploy_trigger_script(app.handle());
             }
 
-            // Open dev tools if VOQUILL_ENABLE_DEVTOOLS is set
-            if std::env::var("VOQUILL_ENABLE_DEVTOOLS").is_ok() {
-                log::info!("VOQUILL_ENABLE_DEVTOOLS detected, opening dev tools...");
+            // Open dev tools if MAUSVOICE_ENABLE_DEVTOOLS is set
+            if std::env::var("MAUSVOICE_ENABLE_DEVTOOLS").is_ok() {
+                log::info!("MAUSVOICE_ENABLE_DEVTOOLS detected, opening dev tools...");
                 if let Some(main_window) = app.get_webview_window("main") {
                     main_window.open_devtools();
                 }

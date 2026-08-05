@@ -1,5 +1,5 @@
 import { invoke } from "@tauri-apps/api/core";
-import type { ChatMessage, ToolPermission } from "@voquill/types";
+import type { ChatMessage, ToolPermission } from "@maus-inc/types";
 import { isEqual } from "lodash-es";
 import { useEffect, useRef } from "react";
 import type { AppState, StreamingMessageState } from "../../state/app.state";

@@ -1,8 +1,8 @@
 # Personal fork merge inventory
 
-Branch: `arena/019fd252-voquill` → base `free-fix`
-Source: personal fork commits from PR #2 (`Owie6789/voquill-private`)
-PR: https://github.com/maus-inc/voquill/pull/3
+Branch: `arena/019fd252-mausvoice` → base `free-fix`
+Source: personal fork commits from PR #2 (`Owie6789/mausvoice-private`)
+PR: https://github.com/maus-inc/mausvoice/pull/3
 
 ## Method
 
@@ -191,12 +191,12 @@ Total paths deleted: **493**
 - `mobile/android/app/src/emulators/google-services.json`
 - `mobile/android/app/src/emulators/res/values/strings.xml`
 - `mobile/android/app/src/main/AndroidManifest.xml`
-- `mobile/android/app/src/main/kotlin/com/voquill/mobile/MainActivity.kt`
-- `mobile/android/app/src/main/kotlin/com/voquill/mobile/VoquillIME.kt`
-- `mobile/android/app/src/main/kotlin/com/voquill/mobile/repos/ApiUtils.kt`
-- `mobile/android/app/src/main/kotlin/com/voquill/mobile/repos/GenerateTextRepo.kt`
-- `mobile/android/app/src/main/kotlin/com/voquill/mobile/repos/RepoConfig.kt`
-- `mobile/android/app/src/main/kotlin/com/voquill/mobile/repos/TranscribeAudioRepo.kt`
+- `mobile/android/app/src/main/kotlin/com/mausvoice/mobile/MainActivity.kt`
+- `mobile/android/app/src/main/kotlin/com/mausvoice/mobile/mausVoiceIME.kt`
+- `mobile/android/app/src/main/kotlin/com/mausvoice/mobile/repos/ApiUtils.kt`
+- `mobile/android/app/src/main/kotlin/com/mausvoice/mobile/repos/GenerateTextRepo.kt`
+- `mobile/android/app/src/main/kotlin/com/mausvoice/mobile/repos/RepoConfig.kt`
+- `mobile/android/app/src/main/kotlin/com/mausvoice/mobile/repos/TranscribeAudioRepo.kt`
 - `mobile/android/app/src/main/res/drawable-hdpi/ic_launcher_foreground.png`
 - `mobile/android/app/src/main/res/drawable-mdpi/ic_launcher_foreground.png`
 - `mobile/android/app/src/main/res/drawable-night/keyboard_background.xml`
@@ -218,8 +218,8 @@ Total paths deleted: **493**
 - `packages/flutter_video_looper/android/build.gradle`
 - `packages/flutter_video_looper/android/settings.gradle`
 - `packages/flutter_video_looper/android/src/main/AndroidManifest.xml`
-- `packages/flutter_video_looper/android/src/main/kotlin/com/voquill/flutter_video_looper/FlutterVideoLooperPlugin.kt`
-- `packages/flutter_video_looper/android/src/main/kotlin/com/voquill/flutter_video_looper/VideoLooperView.kt`
+- `packages/flutter_video_looper/android/src/main/kotlin/com/mausvoice/flutter_video_looper/FlutterVideoLooperPlugin.kt`
+- `packages/flutter_video_looper/android/src/main/kotlin/com/mausvoice/flutter_video_looper/VideoLooperView.kt`
 - `packages/flutter_video_looper/example/.gitignore`
 - `packages/flutter_video_looper/example/README.md`
 - `packages/flutter_video_looper/example/analysis_options.yaml`
@@ -227,7 +227,7 @@ Total paths deleted: **493**
 - `packages/flutter_video_looper/example/android/app/build.gradle.kts`
 - `packages/flutter_video_looper/example/android/app/src/debug/AndroidManifest.xml`
 - `packages/flutter_video_looper/example/android/app/src/main/AndroidManifest.xml`
-- `packages/flutter_video_looper/example/android/app/src/main/kotlin/com/voquill/flutter_video_looper_example/MainActivity.kt`
+- `packages/flutter_video_looper/example/android/app/src/main/kotlin/com/mausvoice/flutter_video_looper_example/MainActivity.kt`
 - `packages/flutter_video_looper/example/android/app/src/main/res/drawable-v21/launch_background.xml`
 - `packages/flutter_video_looper/example/android/app/src/main/res/drawable/launch_background.xml`
 - `packages/flutter_video_looper/example/android/app/src/main/res/mipmap-hdpi/ic_launcher.png`

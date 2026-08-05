@@ -39,7 +39,7 @@ describe("oidc provider", () => {
         provider: {
           name: "Keycloak",
           issuerUrl: "https://keycloak.example.com/realms/test",
-          clientId: "voquill-desktop",
+          clientId: "mausvoice-desktop",
           clientSecret: "super-secret-key-12345",
           isEnabled: true,
         },
@@ -53,7 +53,7 @@ describe("oidc provider", () => {
     expect(data.providers[0].issuerUrl).toBe(
       "https://keycloak.example.com/realms/test",
     );
-    expect(data.providers[0].clientId).toBe("voquill-desktop");
+    expect(data.providers[0].clientId).toBe("mausvoice-desktop");
     expect(data.providers[0].isEnabled).toBe(true);
     createdId = data.providers[0].id;
   });

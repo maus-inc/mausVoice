@@ -40,7 +40,7 @@ pub fn run(receiver: Receiver<InMessage>) {
         );
     }
 
-    let class_name = w!("FoniMausPill");
+    let class_name = w!("MausVoicePill");
     let hinstance = unsafe { GetModuleHandleW(None).unwrap() };
 
     let wc = WNDCLASSEXW {
@@ -59,7 +59,7 @@ pub fn run(receiver: Receiver<InMessage>) {
         CreateWindowExW(
             WS_EX_LAYERED | WS_EX_TOPMOST | WS_EX_TOOLWINDOW | WS_EX_NOACTIVATE,
             class_name,
-            w!("FoniMausPill"),
+            w!("MausVoicePill"),
             WS_POPUP,
             wx, wy,
             WINDOW_W_TYPING, WINDOW_H_TYPING,
@@ -957,7 +957,7 @@ fn create_edit_overlay(hinstance: HMODULE, main_hwnd: HWND) {
         let brush = CreateSolidBrush(COLORREF(EDIT_COLOR_KEY));
         EDIT_BG_BRUSH.with(|b| b.set(brush));
 
-        let class_name = w!("FoniMausInput");
+        let class_name = w!("MausVoiceInput");
         let wc = WNDCLASSEXW {
             cbSize: std::mem::size_of::<WNDCLASSEXW>() as u32,
             lpfnWndProc: Some(edit_container_proc),

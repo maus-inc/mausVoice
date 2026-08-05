@@ -1,8 +1,8 @@
 <div align="center">
 
-<img src="docs/graphic.png" alt="FoniMaus Logo" width="400" />
+<img src="docs/graphic.png" alt="mausVoice Logo" width="400" />
 
-# FoniMaus — Personal Local Build
+# mausVoice — Personal Local Build
 
 ### Voice typing for your own machine. Dictate into any app, clean it up with AI, no account and no subscription.
 
@@ -10,7 +10,7 @@
 
 ---
 
-**FoniMaus** (from Greek *φωνή* / *foní*, “voice”, + Maus) is a personal, non-commercial fork of [Voquill](https://github.com/voquill/voquill), an open-source AI voice-typing desktop app. It has been trimmed and rewired to run entirely for personal use with **your own Deepgram and Groq API keys** — no Voquill account, no paywall, and no "Pro" gating.
+**mausVoice** (Maus + Voice) is a personal, non-commercial fork of [Voquill](https://github.com/voquill/voquill), an open-source AI voice-typing desktop app. It has been trimmed and rewired to run entirely for personal use with **your own Deepgram and Groq API keys** — no Voquill account, no paywall, and no "Pro" gating.
 
 > Looking for the upstream project, its hosted plans, mobile app, or marketing copy? See [`README.original.md`](README.original.md) and [voquill.com](https://voquill.com).
 
@@ -71,4 +71,4 @@ pnpm run test          # tests
 
 ## License & attribution
 
-This fork inherits Voquill's **AGPLv3** license. See [`LICENCE`](LICENCE) for the full terms and third-party attributions. All credit for the original application goes to the Voquill authors and contributors. This build is intended strictly for personal, non-commercial use.
+This fork inherits mausVoice's **AGPLv3** license. See [`LICENCE`](LICENCE) for the full terms and third-party attributions. All credit for the original application goes to the Voquill authors and contributors. This build is intended strictly for personal, non-commercial use.

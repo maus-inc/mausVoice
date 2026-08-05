@@ -25,7 +25,7 @@ describe("user", () => {
           updatedAt: "ignored",
           name: "Test User",
           bio: "A test bio",
-          company: "Voquill",
+          company: "mausVoice",
           title: "Engineer",
           onboarded: true,
           onboardedAt: new Date().toISOString(),
@@ -46,7 +46,7 @@ describe("user", () => {
     expect(data.user).toBeDefined();
     expect(data.user.name).toBe("Test User");
     expect(data.user.bio).toBe("A test bio");
-    expect(data.user.company).toBe("Voquill");
+    expect(data.user.company).toBe("mausVoice");
     expect(data.user.title).toBe("Engineer");
     expect(data.user.onboarded).toBe(true);
   });

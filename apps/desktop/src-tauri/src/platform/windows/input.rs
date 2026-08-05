@@ -30,7 +30,7 @@ pub(crate) fn paste_text_into_focused_field(
         return Ok(());
     }
 
-    let override_text = env::var("VOQUILL_DEBUG_PASTE_TEXT").ok();
+    let override_text = env::var("MAUSVOICE_DEBUG_PASTE_TEXT").ok();
     let target = override_text.as_deref().unwrap_or(text);
     log::info!(
         "attempting to inject text ({} chars)",
@@ -121,7 +121,7 @@ pub(crate) fn type_text_into_focused_field(
         return Ok(());
     }
 
-    let override_text = env::var("VOQUILL_DEBUG_PASTE_TEXT").ok();
+    let override_text = env::var("MAUSVOICE_DEBUG_PASTE_TEXT").ok();
     let target = override_text.as_deref().unwrap_or(text);
     log::info!(
         "attempting to type text ({} chars) with {}ms delay",

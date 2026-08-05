@@ -11,7 +11,7 @@ import {
   ToggleButtonGroup,
   Typography,
 } from "@mui/material";
-import type { Tone } from "@voquill/types";
+import type { Tone } from "@maus-inc/types";
 import { useState } from "react";
 import { FormattedMessage, useIntl } from "react-intl";
 import { upsertGlobalTone } from "../../actions/tones.actions";

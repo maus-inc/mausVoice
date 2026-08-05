@@ -5,8 +5,8 @@ import {
   Nullable,
   User,
   UserPreferences,
-} from "@voquill/types";
-import { countWords, getRec } from "@voquill/utilities";
+} from "@maus-inc/types";
+import { countWords, getRec } from "@maus-inc/utilities";
 import type {
   AgentMode,
   PostProcessingMode,
@@ -32,7 +32,7 @@ import {
   PRIMARY_LANGUAGE_SENTINEL,
 } from "./language.utils";
 import {
-  getIsVoquillCloudUser,
+  getIsMausVoiceCloudUser,
   getMemberExceedsLimitByState,
 } from "./member.utils";
 
@@ -57,7 +57,7 @@ export const getIsDictationUnlocked = (state: AppState): boolean => {
 };
 
 export const getHasCloudAccess = (state: AppState): boolean => {
-  return getIsVoquillCloudUser(state);
+  return getIsMausVoiceCloudUser(state);
 };
 
 const resolveMode = <T extends string>(

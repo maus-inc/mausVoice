@@ -1,4 +1,4 @@
-import type { LlmProvider } from "@voquill/types";
+import type { LlmProvider } from "@maus-inc/types";
 import type { LlmProviderRow } from "../types/llm-provider.types";
 import { getPool } from "../utils/db.utils";
 

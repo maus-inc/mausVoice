@@ -12,8 +12,8 @@ import {
   TermDoc,
   ToneDoc,
   Transcription,
-} from "@voquill/types";
-import { listify } from "@voquill/utilities";
+} from "@maus-inc/types";
+import { listify } from "@maus-inc/utilities";
 
 export const members = (
   memberId?: Nullable<string>,

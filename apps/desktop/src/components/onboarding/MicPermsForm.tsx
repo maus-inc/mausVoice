@@ -69,7 +69,7 @@ export const MicPermsForm = () => {
             <FormattedMessage defaultMessage="Set up your microphone" />
           </Typography>
           <Typography variant="body1" color="text.secondary">
-            <FormattedMessage defaultMessage="FoniMaus only activates your microphone when you choose to start recording." />
+            <FormattedMessage defaultMessage="mausVoice only activates your microphone when you choose to start recording." />
           </Typography>
         </Box>
 

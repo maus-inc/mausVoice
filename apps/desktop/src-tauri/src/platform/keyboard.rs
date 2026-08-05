@@ -472,7 +472,7 @@ pub(crate) enum WireMessage {
 
 pub(crate) fn debug_keys_enabled() -> bool {
     static DEBUG: OnceLock<bool> = OnceLock::new();
-    *DEBUG.get_or_init(|| matches!(env::var("VOQUILL_DEBUG_KEYS"), Ok(value) if value == "1"))
+    *DEBUG.get_or_init(|| matches!(env::var("MAUSVOICE_DEBUG_KEYS"), Ok(value) if value == "1"))
 }
 
 fn child_store() -> &'static Mutex<Option<Child>> {
@@ -639,8 +639,8 @@ fn spawn_listener_child(port: u16) -> Result<Child, String> {
 
     let mut command = Command::new(exe);
     command
-        .env("VOQUILL_KEYBOARD_LISTENER", "1")
-        .env("VOQUILL_KEYBOARD_PORT", port.to_string())
+        .env("MAUSVOICE_KEYBOARD_LISTENER", "1")
+        .env("MAUSVOICE_KEYBOARD_PORT", port.to_string())
         .stdin(Stdio::piped())
         .stdout(Stdio::null())
         .stderr(Stdio::inherit());
@@ -1026,10 +1026,10 @@ pub(crate) struct ListenerContext {
 }
 
 pub(crate) fn setup_listener_process() -> Result<ListenerContext, String> {
-    let port = env::var("VOQUILL_KEYBOARD_PORT")
-        .map_err(|_| "VOQUILL_KEYBOARD_PORT env var missing".to_string())?
+    let port = env::var("MAUSVOICE_KEYBOARD_PORT")
+        .map_err(|_| "MAUSVOICE_KEYBOARD_PORT env var missing".to_string())?
         .parse::<u16>()
-        .map_err(|err| format!("invalid VOQUILL_KEYBOARD_PORT: {err}"))?;
+        .map_err(|err| format!("invalid MAUSVOICE_KEYBOARD_PORT: {err}"))?;
 
     let stream = TcpStream::connect(("127.0.0.1", port))
         .map_err(|err| format!("keyboard listener failed to connect: {err}"))?;

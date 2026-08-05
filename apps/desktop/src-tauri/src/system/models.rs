@@ -5,7 +5,7 @@ use std::{
     str::FromStr,
 };
 
-const MODEL_URL_ENV: &str = "VOQUILL_WHISPER_MODEL_URL";
+const MODEL_URL_ENV: &str = "MAUSVOICE_WHISPER_MODEL_URL";
 
 #[derive(Copy, Clone, Debug, Default, PartialEq, Eq, Hash)]
 pub enum WhisperModelSize {

@@ -1,4 +1,4 @@
-import type { ToolPermissionResolution } from "@voquill/types";
+import type { ToolPermissionResolution } from "@maus-inc/types";
 import type { AppState } from "../state/app.state";
 
 export type OverlayPhase = "idle" | "recording" | "loading";

@@ -21,7 +21,7 @@ export const GpuMigrationDialog = ({
   onClose,
 }: GpuMigrationDialogProps) => {
   const handleOpenDownloadPage = () => {
-    openUrl("https://voquill.com");
+    openUrl("https://mausvoice.com");
   };
 
   return (
@@ -32,7 +32,7 @@ export const GpuMigrationDialog = ({
       <DialogContent>
         <Stack spacing={2} sx={{ mt: 0.5 }}>
           <Alert severity="warning" variant="outlined">
-            <FormattedMessage defaultMessage="The GPU version of FoniMaus will no longer receive updates." />
+            <FormattedMessage defaultMessage="The GPU version of mausVoice will no longer receive updates." />
           </Alert>
 
           <Typography variant="body2" color="text.secondary">
@@ -41,7 +41,7 @@ export const GpuMigrationDialog = ({
 
           <Stack component="ol" spacing={1} sx={{ pl: 2, mb: 0 }}>
             <Typography component="li" variant="body2" color="text.secondary">
-              <FormattedMessage defaultMessage="Uninstall the FoniMaus GPU app." />
+              <FormattedMessage defaultMessage="Uninstall the mausVoice GPU app." />
             </Typography>
             <Typography component="li" variant="body2" color="text.secondary">
               <FormattedMessage defaultMessage="Download the new Universal app from the link below." />

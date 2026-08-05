@@ -20,7 +20,7 @@ If your license is approaching expiration, refer to the renewal guide for your d
 
 ## Feature Flags
 
-Feature flags let you enable or disable specific Voquill features across your entire organization. This gives you control over which capabilities are available to your users without needing to modify any configuration on individual machines.
+Feature flags let you enable or disable specific mausVoice features across your entire organization. This gives you control over which capabilities are available to your users without needing to modify any configuration on individual machines.
 
 ## Signing Out
 

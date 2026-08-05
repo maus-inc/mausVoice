@@ -26,15 +26,15 @@ fn session_url(env: Env, creds: &Credentials, session_id: &str) -> String {
     let path = format!("session/{}/{}", creds.uid, session_id);
     match env {
         Env::Prod => format!(
-            "https://voquill-prod-default-rtdb.firebaseio.com/{path}.json?auth={}",
+            "https://mausvoice-prod-default-rtdb.firebaseio.com/{path}.json?auth={}",
             creds.id_token
         ),
         Env::Dev => format!(
-            "https://voquill-dev-default-rtdb.firebaseio.com/{path}.json?auth={}",
+            "https://mausvoice-dev-default-rtdb.firebaseio.com/{path}.json?auth={}",
             creds.id_token
         ),
         Env::Emulator => format!(
-            "http://127.0.0.1:9000/{path}.json?ns=voquill-dev-default-rtdb&auth={}",
+            "http://127.0.0.1:9000/{path}.json?ns=mausvoice-dev-default-rtdb&auth={}",
             creds.id_token
         ),
     }
@@ -90,15 +90,15 @@ fn history_url(env: Env, creds: &Credentials, session_id: &str) -> String {
     let path = format!("session/{}/{}/history", creds.uid, session_id);
     match env {
         Env::Prod => format!(
-            "https://voquill-prod-default-rtdb.firebaseio.com/{path}.json?auth={}",
+            "https://mausvoice-prod-default-rtdb.firebaseio.com/{path}.json?auth={}",
             creds.id_token
         ),
         Env::Dev => format!(
-            "https://voquill-dev-default-rtdb.firebaseio.com/{path}.json?auth={}",
+            "https://mausvoice-dev-default-rtdb.firebaseio.com/{path}.json?auth={}",
             creds.id_token
         ),
         Env::Emulator => format!(
-            "http://127.0.0.1:9000/{path}.json?ns=voquill-dev-default-rtdb&auth={}",
+            "http://127.0.0.1:9000/{path}.json?ns=mausvoice-dev-default-rtdb&auth={}",
             creds.id_token
         ),
     }

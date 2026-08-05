@@ -1,5 +1,5 @@
 import { invoke } from "@tauri-apps/api/core";
-import { listify } from "@voquill/utilities";
+import { listify } from "@maus-inc/utilities";
 import { getAuthRepo, getMemberRepo } from "../repos";
 import type { LoginMode } from "../state/login.state";
 import { getAppState, produceAppState } from "../store";

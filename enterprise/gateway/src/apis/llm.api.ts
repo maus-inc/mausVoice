@@ -6,7 +6,7 @@ import type {
   LlmStreamEvent,
   LlmTool,
   LlmToolChoice,
-} from "@voquill/types";
+} from "@maus-inc/types";
 import OpenAI from "openai";
 import type {
   ChatCompletionMessageParam,

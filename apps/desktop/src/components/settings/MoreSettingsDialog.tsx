@@ -11,7 +11,7 @@ import {
   Switch,
   TextField,
 } from "@mui/material";
-import type { DictationPillVisibility, StylingMode } from "@voquill/types";
+import type { DictationPillVisibility, StylingMode } from "@maus-inc/types";
 import { ChangeEvent, useEffect, useRef, useState } from "react";
 import { FormattedMessage, useIntl } from "react-intl";
 import {
@@ -36,7 +36,7 @@ import {
   getAllowsMultiDeviceMode,
 } from "../../utils/enterprise.utils";
 import { getEffectiveStylingMode } from "../../utils/feature.utils";
-import { getIsVoquillCloudUser } from "../../utils/member.utils";
+import { getIsMausVoiceCloudUser } from "../../utils/member.utils";
 import {
   getEffectivePillVisibility,
   getMyUserPreferences,
@@ -79,7 +79,7 @@ export const MoreSettingsDialog = () => {
       state.local.disablePillRewards,
       state.local.accurateDictationEnabled,
       state.local.disableAutoStyleLoading ?? false,
-      getIsVoquillCloudUser(state),
+      getIsMausVoiceCloudUser(state),
       prefs?.menuBarIconHidden ?? false,
     ] as const;
   });
@@ -217,7 +217,7 @@ export const MoreSettingsDialog = () => {
           <SettingSection
             title={<FormattedMessage defaultMessage="Incognito mode" />}
             description={
-              <FormattedMessage defaultMessage="When enabled, FoniMaus will not save transcription history or audio snapshots." />
+              <FormattedMessage defaultMessage="When enabled, mausVoice will not save transcription history or audio snapshots." />
             }
             action={
               <Switch
@@ -265,7 +265,7 @@ export const MoreSettingsDialog = () => {
           <SettingSection
             title={<FormattedMessage defaultMessage="Show menu bar icon" />}
             description={
-              <FormattedMessage defaultMessage="Show the FoniMaus icon in the menu bar." />
+              <FormattedMessage defaultMessage="Show the mausVoice icon in the menu bar." />
             }
             action={
               <Switch

@@ -1,5 +1,5 @@
-import { HandlerOutput, invokeHandler } from "@voquill/functions";
-import { Nullable } from "@voquill/types";
+import { HandlerOutput, invokeHandler } from "@maus-inc/functions";
+import { Nullable } from "@maus-inc/types";
 import { invokeEnterprise } from "../utils/enterprise.utils";
 import { BaseRepo } from "./base.repo";
 

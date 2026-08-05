@@ -641,8 +641,8 @@ async checkFocusedPasteTarget() : Promise<Result<PasteTargetState, string>> {
 }
 },
 /**
- * - macOS:  ~/Library/Application Support/com.voquill.desktop/enterprise.json
- * - Windows: C:\Users\<User>\AppData\Roaming\com.voquill.desktop\enterprise.json
+ * - macOS:  ~/Library/Application Support/com.mausinc.desktop/enterprise.json
+ * - Windows: C:\Users\<User>\AppData\Roaming\com.mausinc.desktop\enterprise.json
  */
 async readEnterpriseTarget() : Promise<Result<[string, string | null], string>> {
     try {

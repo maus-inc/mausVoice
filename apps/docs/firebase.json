@@ -1,6 +1,6 @@
 {
   "hosting": {
-    "target": "voquill-docs",
+    "target": "mausvoice-docs",
     "public": "dist",
     "ignore": [
       "firebase.json",

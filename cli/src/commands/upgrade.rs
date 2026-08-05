@@ -19,9 +19,9 @@ pub fn run(env: Env) -> Result<()> {
 
 fn run_unix(dev: bool) -> Result<()> {
     let script = if dev {
-        "curl -fsSL https://voquill.com/install.sh | sh -s -- --dev"
+        "curl -fsSL https://mausvoice.com/install.sh | sh -s -- --dev"
     } else {
-        "curl -fsSL https://voquill.com/install.sh | sh"
+        "curl -fsSL https://mausvoice.com/install.sh | sh"
     };
 
     let status = Command::new("sh")
@@ -38,9 +38,9 @@ fn run_unix(dev: bool) -> Result<()> {
 
 fn run_windows(dev: bool) -> Result<()> {
     let script = if dev {
-        "& ([scriptblock]::Create((iwr https://voquill.com/install.ps1 -UseBasicParsing))) -Dev"
+        "& ([scriptblock]::Create((iwr https://mausvoice.com/install.ps1 -UseBasicParsing))) -Dev"
     } else {
-        "iwr https://voquill.com/install.ps1 -UseBasicParsing | iex"
+        "iwr https://mausvoice.com/install.ps1 -UseBasicParsing | iex"
     };
 
     let status = Command::new("powershell")

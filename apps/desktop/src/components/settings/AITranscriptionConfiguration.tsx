@@ -46,7 +46,7 @@ import {
 } from "../common/SegmentedControl";
 import { maybeArrayElements } from "./AIPostProcessingConfiguration";
 import { ApiKeyList } from "./ApiKeyList";
-import { VoquillCloudSetting } from "./VoquillCloudSetting";
+import { MausVoiceCloudSetting } from "./MausVoiceCloudSetting";
 
 type ModelOption = {
   value: LocalWhisperModel;
@@ -273,7 +273,7 @@ export const AITranscriptionConfiguration = ({
             [
               {
                 value: "cloud",
-                label: "FoniMaus",
+                label: "mausVoice",
               },
             ],
           ),
@@ -543,7 +543,7 @@ export const AITranscriptionConfiguration = ({
         />
       )}
 
-      {effectiveMode === "cloud" && <VoquillCloudSetting />}
+      {effectiveMode === "cloud" && <MausVoiceCloudSetting />}
     </Stack>
   );
 };

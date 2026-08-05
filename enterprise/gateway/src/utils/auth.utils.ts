@@ -1,4 +1,4 @@
-import type { Auth, AuthContext, Nullable } from "@voquill/types";
+import type { Auth, AuthContext, Nullable } from "@maus-inc/types";
 import jwt from "jsonwebtoken";
 import { getJwtSecret } from "./env.utils";
 import { UnauthorizedError } from "./error.utils";

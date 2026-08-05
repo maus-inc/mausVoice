@@ -3,8 +3,8 @@ import {
   Nullable,
   Transcription,
   TranscriptionAudioSnapshot,
-} from "@voquill/types";
-import { countWords, dedup } from "@voquill/utilities";
+} from "@maus-inc/types";
+import { countWords, dedup } from "@maus-inc/utilities";
 import dayjs from "dayjs";
 import {
   getGenerateTextRepo,

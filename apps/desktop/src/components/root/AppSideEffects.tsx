@@ -7,8 +7,8 @@ import {
   Nullable,
   Term,
   User,
-} from "@voquill/types";
-import { getRec, listify } from "@voquill/utilities";
+} from "@maus-inc/types";
+import { getRec, listify } from "@maus-inc/utilities";
 import dayjs from "dayjs";
 import { isEqual } from "lodash-es";
 import { useCallback, useEffect, useRef, useState } from "react";
@@ -305,7 +305,7 @@ export const AppSideEffects = () => {
           showSnackbar(
             intl.formatMessage({
               defaultMessage:
-                "Keyboard hotkeys stopped working. Retrying automatically; restart FoniMaus if this persists.",
+                "Keyboard hotkeys stopped working. Retrying automatically; restart mausVoice if this persists.",
             }),
             { mode: "error", duration: 6000 },
           );

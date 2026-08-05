@@ -7,8 +7,7 @@ use rand::{rngs::OsRng, RngCore};
 use sha2::{Digest, Sha256};
 use std::sync::OnceLock;
 
-const SECRET_ENV: &str = "VOQUILL_API_KEY_SECRET";
-const FALLBACK_SECRET: &str = "voquill-default-secret";
+const SECRET_ENV: &str = "MAUSVOICE_API_KEY_SECRET";
 const XNONCE_LEN: usize = 24;
 
 static RUNTIME_SECRET: OnceLock<Vec<u8>> = OnceLock::new();
@@ -25,11 +24,11 @@ pub struct ProtectedApiKey {
 
 // Prefers a value baked in at build time (option_env!), then a runtime env var.
 // Falls back to a built-in secret so running from source never hard-fails;
-// setting VOQUILL_API_KEY_SECRET at build time is recommended for shipped builds.
+// setting MAUSVOICE_API_KEY_SECRET at build time is recommended for shipped builds.
 pub fn runtime_secret() -> &'static [u8] {
     RUNTIME_SECRET
         .get_or_init(|| {
-            if let Some(value) = option_env!("VOQUILL_API_KEY_SECRET") {
+            if let Some(value) = option_env!("MAUSVOICE_API_KEY_SECRET") {
                 if !value.is_empty() {
                     return value.as_bytes().to_vec();
                 }
@@ -43,7 +42,19 @@ pub fn runtime_secret() -> &'static [u8] {
                              at build time to protect stored API keys at rest."
                         );
                     });
-                    FALLBACK_SECRET.as_bytes().to_vec()
+                    {
+                        // Local-dev only fallback: never a fixed published secret.
+                        // Prefer setting MAUSVOICE_API_KEY_SECRET for real builds.
+                        let mut hasher = Sha256::new();
+                        hasher.update(b"mausvoice-local-dev-fallback-v1");
+                        if let Ok(home) = std::env::var("HOME").or_else(|_| std::env::var("USERPROFILE")) {
+                            hasher.update(home.as_bytes());
+                        }
+                        if let Ok(user) = std::env::var("USER").or_else(|_| std::env::var("USERNAME")) {
+                            hasher.update(user.as_bytes());
+                        }
+                        hasher.finalize().to_vec()
+                    }
                 }
             }
         })

@@ -12,5 +12,5 @@ export type GoogleAuthPayload = {
   };
 };
 
-export const GOOGLE_AUTH_EVENT = "voquill:google-auth";
+export const GOOGLE_AUTH_EVENT = "mausvoice:google-auth";
 export const GOOGLE_AUTH_COMMAND = "start_google_sign_in";

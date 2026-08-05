@@ -2,7 +2,7 @@
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
-if [[ "${VOQUILL_DEBUG_SETUP:-}" == "1" ]]; then
+if [[ "${MAUSVOICE_DEBUG_SETUP:-}" == "1" ]]; then
   set -x
 fi
 

@@ -15,7 +15,7 @@ import {
   SegmentedControlOption,
 } from "../common/SegmentedControl";
 import { ApiKeyList } from "./ApiKeyList";
-import { VoquillCloudSetting } from "./VoquillCloudSetting";
+import { MausVoiceCloudSetting } from "./MausVoiceCloudSetting";
 
 type AIPostProcessingConfigurationProps = {
   hideCloudOption?: boolean;
@@ -57,7 +57,7 @@ export const AIPostProcessingConfiguration = ({
             [
               {
                 value: "cloud",
-                label: "FoniMaus",
+                label: "mausVoice",
               },
             ],
           ),
@@ -81,7 +81,7 @@ export const AIPostProcessingConfiguration = ({
         />
       )}
 
-      {effectiveMode === "cloud" && <VoquillCloudSetting />}
+      {effectiveMode === "cloud" && <MausVoiceCloudSetting />}
     </Stack>
   );
 };

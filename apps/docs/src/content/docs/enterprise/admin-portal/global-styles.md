@@ -3,13 +3,13 @@ title: Global Styles
 description: Define organization-wide writing styles and prompt templates that apply to every user.
 ---
 
-Global styles let you define writing styles that are shared across every Voquill desktop app in your organization. Any style you add here automatically becomes available to every user — giving your entire team a consistent set of writing options without per-user configuration.
+Global styles let you define writing styles that are shared across every mausVoice desktop app in your organization. Any style you add here automatically becomes available to every user — giving your entire team a consistent set of writing options without per-user configuration.
 
 ## How It Works
 
 Global styles work the same way as the [personal styles](/guides/styles/) built into each desktop app, but at the organization level. Styles defined here are pushed to all connected desktop clients and are available for selection immediately.
 
-Each style has a name and a prompt that controls how Voquill's AI rewrites the raw transcription.
+Each style has a name and a prompt that controls how mausVoice's AI rewrites the raw transcription.
 
 ## Why Use Global Styles
 
@@ -29,7 +29,7 @@ When creating a global style, you can choose between two modes using the toggle 
 
 ### Style Mode
 
-Style mode is the simpler option. You provide a name and a prompt describing the writing style you want. Voquill wraps your prompt into a standard processing pipeline that handles the transcript, language, and JSON formatting automatically.
+Style mode is the simpler option. You provide a name and a prompt describing the writing style you want. mausVoice wraps your prompt into a standard processing pipeline that handles the transcript, language, and JSON formatting automatically.
 
 Use style mode when you want to describe _how_ the output should sound without worrying about the underlying prompt structure. For example:
 
@@ -41,7 +41,7 @@ Use style mode when you want to describe _how_ the output should sound without w
 
 ### Template Mode
 
-Template mode gives you full control over the entire prompt sent to the language model. Instead of Voquill wrapping your instructions, **your prompt _is_ the prompt** — including where the transcript appears, how the user is referenced, and what language the output should be in.
+Template mode gives you full control over the entire prompt sent to the language model. Instead of mausVoice wrapping your instructions, **your prompt _is_ the prompt** — including where the transcript appears, how the user is referenced, and what language the output should be in.
 
 Use template mode when the standard pipeline doesn't fit your use case, or when you need precise control over how the model behaves.
 
@@ -51,7 +51,7 @@ A template has two fields: an optional **System Prompt** and a required **Prompt
 
 ### System Prompt
 
-The system prompt sets the model's persona and high-level behavior. If you leave it blank, Voquill uses a default system prompt. If you provide one, it replaces the default entirely.
+The system prompt sets the model's persona and high-level behavior. If you leave it blank, mausVoice uses a default system prompt. If you provide one, it replaces the default entirely.
 
 Example:
 
@@ -88,7 +88,7 @@ Both the system prompt and the prompt template support these variables. They are
 
 ### JSON Response Requirement
 
-The model must respond in JSON format with a single field called `processedTranscription`. You should always explicitly instruct the model to respond in JSON at the end of your prompt template. While Voquill enforces a JSON schema on the model's output, including the instruction in your prompt reinforces the requirement and produces more reliable results.
+The model must respond in JSON format with a single field called `processedTranscription`. You should always explicitly instruct the model to respond in JSON at the end of your prompt template. While mausVoice enforces a JSON schema on the model's output, including the instruction in your prompt reinforces the requirement and produces more reliable results.
 
 The expected response structure is:
 

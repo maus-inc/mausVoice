@@ -3,7 +3,7 @@ title: Transcription & AI Providers
 description: Configure which transcription and AI providers your organization uses.
 ---
 
-The admin portal lets you manage which transcription providers and AI providers are available to your organization. This gives you centralized control over which external services Voquill connects to and how voice data is processed.
+The admin portal lets you manage which transcription providers and AI providers are available to your organization. This gives you centralized control over which external services mausVoice connects to and how voice data is processed.
 
 ## Transcription Providers
 

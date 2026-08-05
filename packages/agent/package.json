@@ -14,11 +14,11 @@
     "dist"
   ],
   "dependencies": {
-    "@voquill/types": "workspace:*"
+    "@maus-inc/types": "workspace:*"
   },
   "devDependencies": {
-    "@voquill/typescript-config": "workspace:*",
-    "@voquill/voice-ai": "workspace:*",
+    "@maus-inc/typescript-config": "workspace:*",
+    "@maus-inc/voice-ai": "workspace:*",
     "tsx": "^4.21.0",
     "typescript": "5.9.2"
   }

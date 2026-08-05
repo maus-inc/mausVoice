@@ -24,7 +24,7 @@ export const LogoWithText = ({ sx, ...rest }: LogoWithTextProps) => {
           display: { xs: "none", sm: "block" },
         }}
       >
-        FoniMaus
+        mausVoice
       </Typography>
     </Stack>
   );

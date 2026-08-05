@@ -128,7 +128,7 @@ export const TutorialForm = () => {
     return () => {
       cancelled = true;
       setChatTone(POLISHED_TONE_ID, submissionCompleteRef.current).then(() => {
-        clearLocalStorageValue("voquill:checklist-writing-style");
+        clearLocalStorageValue("mausvoice:checklist-writing-style");
       });
       produceAppState((draft) => {
         draft.onboarding.dictationOverrideEnabled = false;
@@ -241,7 +241,7 @@ ${userName}`;
             <FormattedMessage defaultMessage="Now try an email" />
           </Typography>
           <Typography variant="body1" color="text.secondary">
-            <FormattedMessage defaultMessage="Dictate a short email. FoniMaus works great for longer-form content like messages, notes, and documents." />
+            <FormattedMessage defaultMessage="Dictate a short email. mausVoice works great for longer-form content like messages, notes, and documents." />
           </Typography>
           <DictationInstruction />
         </Stack>

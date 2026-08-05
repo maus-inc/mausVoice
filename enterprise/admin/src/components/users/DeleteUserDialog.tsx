@@ -7,7 +7,7 @@ import {
   DialogContentText,
   DialogTitle,
 } from "@mui/material";
-import type { UserWithAuth } from "@voquill/types";
+import type { UserWithAuth } from "@maus-inc/types";
 import { useState } from "react";
 import { FormattedMessage } from "react-intl";
 import { deleteUser } from "../../actions/users.actions";

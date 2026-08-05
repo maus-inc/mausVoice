@@ -1,9 +1,9 @@
-import { Member, Nullable } from "@voquill/types";
+import { Member, Nullable } from "@maus-inc/types";
 import {
   getMemberExceedsLimits,
   getRec,
   TRIAL_DURATION_DAYS,
-} from "@voquill/utilities";
+} from "@maus-inc/utilities";
 import { getIntl } from "../i18n";
 import type { AppState } from "../state/app.state";
 import { EffectivePlan } from "../types/member.types";
@@ -23,7 +23,7 @@ export const getEffectivePlan = (state: AppState): EffectivePlan => {
   return getMyMember(state)?.plan ?? "community";
 };
 
-export const getIsVoquillCloudUser = (state: AppState): boolean => {
+export const getIsMausVoiceCloudUser = (state: AppState): boolean => {
   const member = getMyMember(state);
   return (
     state.isEnterprise || member?.plan === "free" || member?.plan === "pro"

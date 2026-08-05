@@ -11,8 +11,8 @@ import {
   type SxProps,
   type Theme,
 } from "@mui/material";
-import type { Tone } from "@voquill/types";
-import { getRec } from "@voquill/utilities";
+import type { Tone } from "@maus-inc/types";
+import { getRec } from "@maus-inc/utilities";
 import { useCallback, useMemo, useState } from "react";
 import { FormattedMessage, useIntl } from "react-intl";
 import { setLocalStorageValue } from "../../actions/local-storage.actions";
@@ -68,7 +68,7 @@ export const ToneSelect = ({
       }
 
       const toneId = event.target.value === "" ? null : event.target.value;
-      setLocalStorageValue("voquill:checklist-writing-style", true);
+      setLocalStorageValue("mausvoice:checklist-writing-style", true);
       onToneChange(toneId);
     },
     [addToneTargetId, onToneChange],

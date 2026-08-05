@@ -3,7 +3,7 @@ import {
   Transcription,
   TranscriptionAudioSnapshot,
   TranscriptionMode,
-} from "@voquill/types";
+} from "@maus-inc/types";
 import { invoke } from "@tauri-apps/api/core";
 import dayjs from "dayjs";
 import { getAppState } from "../store";

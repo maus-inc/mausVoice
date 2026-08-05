@@ -1,10 +1,10 @@
 {
-  "name": "@voquill/pricing",
+  "name": "@maus-inc/pricing",
   "version": "0.3.25",
   "description": "Shared pricing utilities",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/voquill/voquill.git",
+    "url": "git+https://github.com/mausvoice/mausvoice.git",
     "directory": "packages/pricing"
   },
   "main": "dist/index.js",
@@ -19,7 +19,7 @@
   ],
   "peerDependencies": {},
   "devDependencies": {
-    "@voquill/typescript-config": "workspace:*",
+    "@maus-inc/typescript-config": "workspace:*",
     "typescript": "5.9.2"
   },
   "publishConfig": {

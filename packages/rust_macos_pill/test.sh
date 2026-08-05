@@ -221,7 +221,7 @@ run_fireworks() {
   sleep 0.5
 
   echo '--- Fireworks: launching ---' >&2
-  echo '{"type":"fireworks","message":"Welcome to FoniMaus! 🎉"}'
+  echo '{"type":"fireworks","message":"Welcome to mausVoice! 🎉"}'
   sleep 9
 
   echo '--- Fireworks: launching ---' >&2

@@ -99,15 +99,15 @@ export function GettingStartedList() {
   const intl = useIntl();
   const onboardedAt = useAppStore((state) => getMyUser(state)?.onboardedAt);
   const [isDismissed, setDismissed] = useLocalStorage(
-    "voquill:checklist-dismissed",
+    "mausvoice:checklist-dismissed",
     false,
   );
   const [hasAddedDictionaryWord] = useLocalStorage(
-    "voquill:checklist-dictionary",
+    "mausvoice:checklist-dictionary",
     false,
   );
   const [hasSelectedWritingStyle] = useLocalStorage(
-    "voquill:checklist-writing-style",
+    "mausvoice:checklist-writing-style",
     false,
   );
   const supportsAppDetection = useAppStore(
@@ -130,11 +130,11 @@ export function GettingStartedList() {
   const checklist: ChecklistItem[] = [
     {
       label: intl.formatMessage({
-        defaultMessage: "Use FoniMaus in 3 different apps",
+        defaultMessage: "Use mausVoice in 3 different apps",
       }),
       info: intl.formatMessage({
         defaultMessage:
-          "Dictate text into 3 different applications. FoniMaus will detect each app automatically.",
+          "Dictate text into 3 different applications. mausVoice will detect each app automatically.",
       }),
       done: appsComplete,
       extra: <AppIconBoxes iconPaths={iconPaths} />,

@@ -99,7 +99,7 @@ fn enumerate_gpus_in_child_process() -> Vec<GpuAdapterInfo> {
 
     let mut command = Command::new(exe);
     command
-        .env("VOQUILL_GPU_ENUMERATOR", "1")
+        .env("MAUSVOICE_GPU_ENUMERATOR", "1")
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
         .stderr(Stdio::inherit());
@@ -178,7 +178,7 @@ pub fn list_available_gpus() -> Vec<GpuAdapterInfo> {
 }
 
 /// Entry point for the GPU enumerator child process
-/// This function is called when VOQUILL_GPU_ENUMERATOR=1
+/// This function is called when MAUSVOICE_GPU_ENUMERATOR=1
 pub fn run_gpu_enumerator_process() -> Result<(), String> {
     eprintln!("[gpu-enumerator] Starting GPU enumeration in child process");
 

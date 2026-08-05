@@ -1,13 +1,13 @@
 ---
 title: Styles
-description: Customize how Voquill cleans up your transcriptions with styles.
+description: Customize how mausVoice cleans up your transcriptions with styles.
 ---
 
-Styles (also called tones) control how Voquill's AI post-processes your raw transcription. After speech is converted to text, a language model rewrites it according to the active style's prompt.
+Styles (also called tones) control how mausVoice's AI post-processes your raw transcription. After speech is converted to text, a language model rewrites it according to the active style's prompt.
 
 ## Built-in Styles
 
-Voquill ships with several built-in styles:
+mausVoice ships with several built-in styles:
 
 - **Light** — Minimal changes. Fixes obvious errors and punctuation but keeps your words mostly intact.
 - **Casual** — Relaxed, conversational tone.

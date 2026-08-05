@@ -81,7 +81,7 @@ function StandardWelcomePage() {
             <Stack direction="row" alignItems="center" spacing={1}>
               <Logo width="4rem" height="4rem" />
               <Typography variant="h3" fontWeight={700}>
-                FoniMaus
+                mausVoice
               </Typography>
             </Stack>
             <Typography variant="body1" color="text.secondary">

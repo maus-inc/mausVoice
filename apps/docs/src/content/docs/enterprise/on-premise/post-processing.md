@@ -1,9 +1,9 @@
 ---
 title: Local Post-Processing
-description: Set up local LLM post-processing for your on-premise Voquill deployment.
+description: Set up local LLM post-processing for your on-premise mausVoice deployment.
 ---
 
-Local post-processing uses an LLM to clean up and format transcriptions without sending data to an external service. Voquill desktop clients are automatically pointed at providers you configure in the admin portal, so all post-processing traffic stays within your internal network.
+Local post-processing uses an LLM to clean up and format transcriptions without sending data to an external service. mausVoice desktop clients are automatically pointed at providers you configure in the admin portal, so all post-processing traffic stays within your internal network.
 
 ## Overview
 
@@ -21,7 +21,7 @@ ollama:
   volumes:
     - ollama_data:/root/.ollama
   networks:
-    - voquill
+    - mausvoice
 ```
 
 And add the volume to your existing `volumes` section:
@@ -38,7 +38,7 @@ Start the service:
 docker compose up -d ollama
 ```
 
-## 2. Configure Voquill
+## 2. Configure mausVoice
 
 Open the admin portal and navigate to the **AI Providers** page. Add a new provider with the following settings:
 
@@ -50,7 +50,7 @@ Open the admin portal and navigate to the **AI Providers** page. Add a new provi
 
 ## 3. Pull a Model
 
-After adding a provider, the UI shows the sync status of each model. You can monitor this to see whether the model has been pulled successfully, and click to retry if it failed. To change the model later, use the three-dot menu on the provider card to update the configuration. Voquill will automatically pull the new model.
+After adding a provider, the UI shows the sync status of each model. You can monitor this to see whether the model has been pulled successfully, and click to retry if it failed. To change the model later, use the three-dot menu on the provider card to update the configuration. mausVoice will automatically pull the new model.
 
 ![Model sync status in the admin portal](./local-post-processing-sync.png)
 
@@ -64,4 +64,4 @@ You can use any model supported by Ollama. Choose one that fits your hardware an
 
 ## Scaling Across Machines
 
-You can run multiple Ollama instances on different machines within your organization. Add each one as a separate provider in the admin portal. Voquill handles load balancing automatically and will distribute post-processing requests across all configured providers.
+You can run multiple Ollama instances on different machines within your organization. Add each one as a separate provider in the admin portal. mausVoice handles load balancing automatically and will distribute post-processing requests across all configured providers.

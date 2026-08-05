@@ -3,7 +3,7 @@ import type {
   LlmChatInput,
   LlmMessage,
   LlmToolCall,
-} from "@voquill/types";
+} from "@maus-inc/types";
 import type { AgentConfig, AgentEvent } from "./types";
 
 export class AgentLoop {

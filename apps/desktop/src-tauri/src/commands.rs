@@ -434,14 +434,14 @@ pub async fn start_google_sign_in(
     config: State<'_, crate::state::GoogleOAuthState>,
 ) -> Result<crate::system::google_oauth::GoogleAuthEventPayload, String> {
     let config = config.config().ok_or_else(|| {
-        "Google OAuth client id/secret not configured. Set VOQUILL_GOOGLE_CLIENT_ID and VOQUILL_GOOGLE_CLIENT_SECRET."
+        "Google OAuth client id/secret not configured. Set MAUSVOICE_GOOGLE_CLIENT_ID and MAUSVOICE_GOOGLE_CLIENT_SECRET."
             .to_string()
     })?;
 
     let result = crate::system::google_oauth::start_google_oauth(&app_handle, config).await?;
 
     // Keep emitting the event for backward compatibility with existing
-    // listeners (e.g. the Voquill desktop app itself). Callers that invoke
+    // listeners (e.g. the mausVoice desktop app itself). Callers that invoke
     // from a webview without the `event.listen` capability can now just use
     // the returned payload directly.
     app_handle
@@ -823,7 +823,7 @@ pub async fn export_transcription(
 
     let short_id = if id.len() > 8 { &id[..8] } else { &id };
     let dialog = rfd::AsyncFileDialog::new()
-        .set_file_name(format!("voquill-{short_id}.zip"))
+        .set_file_name(format!("mausvoice-{short_id}.zip"))
         .add_filter("ZIP Archive", &["zip"])
         .save_file()
         .await;
@@ -881,7 +881,7 @@ pub async fn export_transcription(
 #[specta::specta]
 pub async fn export_diagnostics(app: AppHandle, diagnostics_info: String) -> Result<bool, String> {
     let dialog = rfd::AsyncFileDialog::new()
-        .set_file_name("voquill-diagnostics.zip")
+        .set_file_name("mausvoice-diagnostics.zip")
         .add_filter("ZIP Archive", &["zip"])
         .save_file()
         .await;
@@ -1854,7 +1854,7 @@ pub fn enable_java_access_bridge() -> Result<JavaAccessBridgeStatus, String> {
     let parent = path
         .parent()
         .ok_or_else(|| format!("Cannot determine parent dir of {}", path.display()))?;
-    let tmp = parent.join(".accessibility.properties.voquill-tmp");
+    let tmp = parent.join(".accessibility.properties.mausvoice-tmp");
     std::fs::write(&tmp, new_contents.as_bytes())
         .map_err(|err| format!("Failed to write {}: {}", tmp.display(), err))?;
     std::fs::rename(&tmp, &path).map_err(|err| {
@@ -2222,8 +2222,8 @@ pub async fn run_terminal_command(command: String) -> Result<RunTerminalCommandR
     .map_err(|err| err.to_string())?
 }
 
-///   - macOS:  ~/Library/Application Support/com.voquill.desktop/enterprise.json
-///   - Windows: C:\Users\<User>\AppData\Roaming\com.voquill.desktop\enterprise.json
+///   - macOS:  ~/Library/Application Support/com.mausinc.desktop/enterprise.json
+///   - Windows: C:\Users\<User>\AppData\Roaming\com.mausinc.desktop\enterprise.json
 #[tauri::command]
 #[specta::specta]
 pub fn read_enterprise_target(app: AppHandle) -> Result<(String, Option<String>), String> {
@@ -2257,15 +2257,15 @@ pub fn check_app_location_writable() -> Result<bool, String> {
     {
         let exe = std::env::current_exe().map_err(|e| e.to_string())?;
 
-        // macOS layout: <dir>/Voquill.app/Contents/MacOS/voquill-desktop
+        // macOS layout: <dir>/mausVoice.app/Contents/MacOS/mausvoice-desktop
         let app_parent = exe
             .parent() // MacOS/
             .and_then(|p| p.parent()) // Contents/
-            .and_then(|p| p.parent()) // Voquill.app/
+            .and_then(|p| p.parent()) // mausVoice.app/
             .and_then(|p| p.parent()) // containing directory
             .ok_or("Could not determine app parent directory")?;
 
-        let probe = app_parent.join(".voquill_write_probe");
+        let probe = app_parent.join(".mausvoice_write_probe");
         match std::fs::File::create(&probe) {
             Ok(_) => {
                 let _ = std::fs::remove_file(&probe);
@@ -2285,7 +2285,7 @@ pub async fn download_and_open_mac_installer(url: String) -> Result<(), String> 
     let file_name = url
         .rsplit('/')
         .next()
-        .unwrap_or("FoniMausUpdate.pkg")
+        .unwrap_or("mausVoiceUpdate.pkg")
         .to_string();
     let dest = std::env::temp_dir().join(&file_name);
 
@@ -2412,7 +2412,7 @@ pub async fn floating_window_create(
 ) -> Result<FloatingWindowInfo, String> {
     let parsed_url = url::Url::parse(&args.url).map_err(|err| err.to_string())?;
     let label = state.next_label();
-    let title = args.title.clone().unwrap_or_else(|| "FoniMaus".to_string());
+    let title = args.title.clone().unwrap_or_else(|| "mausVoice".to_string());
 
     let mut builder = tauri::WebviewWindowBuilder::new(
         &app,

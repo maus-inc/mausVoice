@@ -1,4 +1,4 @@
-import type { OidcProviderInput } from "@voquill/types";
+import type { OidcProviderInput } from "@maus-inc/types";
 import { produceAppState } from "../store";
 import { invoke } from "../utils/api.utils";
 import { registerOidcProviders } from "../utils/app.utils";

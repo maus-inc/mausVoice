@@ -1,15 +1,15 @@
 ---
 title: Keycloak
-description: Configure Keycloak as an OIDC identity provider for Voquill Enterprise.
+description: Configure Keycloak as an OIDC identity provider for mausVoice Enterprise.
 ---
 
-This guide explains how to configure Keycloak as an OIDC identity provider for Voquill Enterprise. Keycloak is an open-source identity provider that can be self-hosted.
+This guide explains how to configure Keycloak as an OIDC identity provider for mausVoice Enterprise. Keycloak is an open-source identity provider that can be self-hosted.
 
 ## Prerequisites
 
 - A running Keycloak instance
-- Voquill Enterprise gateway running
-- Admin access to both Keycloak and the Voquill admin panel
+- mausVoice Enterprise gateway running
+- Admin access to both Keycloak and the mausVoice admin panel
 
 ## Keycloak Configuration
 
@@ -18,14 +18,14 @@ This guide explains how to configure Keycloak as an OIDC identity provider for V
 1. Log into the Keycloak admin console
 2. Click the dropdown in the top-left (shows "Keycloak" or "master")
 3. Click **Create realm**
-4. Enter a name (e.g., `voquill` or your company name)
+4. Enter a name (e.g., `mausvoice` or your company name)
 5. Click **Create**
 
 ### 2. Create a Client
 
 1. Go to **Clients** → **Create client**
 2. Fill in:
-   - **Client ID**: `voquill-desktop`
+   - **Client ID**: `mausvoice-desktop`
    - Click **Next**
 3. Client authentication settings:
    - **Client authentication**: ON
@@ -44,7 +44,7 @@ This guide explains how to configure Keycloak as an OIDC identity provider for V
 1. Go to **Users** → **Add user**
 2. Fill in:
    - **Username**: (required)
-   - **Email**: (required for Voquill)
+   - **Email**: (required for mausVoice)
    - **First name** / **Last name**: (optional)
 3. Click **Create**
 4. Go to the **Credentials** tab
@@ -52,11 +52,11 @@ This guide explains how to configure Keycloak as an OIDC identity provider for V
 6. Enter a password and turn off **Temporary**
 7. Click **Save**
 
-## Voquill Configuration
+## mausVoice Configuration
 
 ### Add the Identity Provider
 
-1. Open the Voquill admin panel
+1. Open the mausVoice admin panel
 2. Go to **Identity Providers**
 3. Click **Add Provider**
 4. Fill in:
@@ -65,7 +65,7 @@ This guide explains how to configure Keycloak as an OIDC identity provider for V
 | --- | --- |
 | **Name** | `Keycloak` (or your company name) |
 | **Issuer URL** | `https://your-keycloak-url/realms/{realm-name}` |
-| **Client ID** | `voquill-desktop` (or whatever you named it) |
+| **Client ID** | `mausvoice-desktop` (or whatever you named it) |
 | **Client Secret** | The secret from Keycloak |
 | **Enabled** | Yes |
 
@@ -73,12 +73,12 @@ This guide explains how to configure Keycloak as an OIDC identity provider for V
 
 ## Test the Flow
 
-1. Open the Voquill desktop app
+1. Open the mausVoice desktop app
 2. Connect to your enterprise server
 3. You should see an SSO button with your provider name
 4. Click it to authenticate via Keycloak
 5. Sign in with your test user
-6. You'll be redirected back and logged into Voquill
+6. You'll be redirected back and logged into mausVoice
 
 ## Troubleshooting
 

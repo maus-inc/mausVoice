@@ -6,7 +6,7 @@
 | --------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------- |
 | `apps/desktop`                                                                                                                                            | Tauri desktop app (Vite + React + Zustand) controlling UI, state, and business logic.                      |
 | `apps/desktop/src-tauri`                                                                                                                                  | Rust API layer invoked from TypeScript for native capabilities, SQLite storage, and Whisper inference.     |
-| `apps/web`                                                                                                                                                | Astro-powered marketing site hosted at voquill.com.                                                        |
+| `apps/web`                                                                                                                                                | Astro-powered marketing site hosted at mausvoice.com.                                                        |
 | `apps/firebase`                                                                                                                                           | Firebase Functions project handling authentication, billing, demos, and Groq-powered server transcription. |
 | `packages/voice-ai`                                                                                                                                       | Audio chunking + Groq client used for transcription and transcript cleanup.                                |
 | `packages/types`                                                                                                                                          | Shared domain models (users, transcriptions, dictionary terms, etc.).                                      |
@@ -68,7 +68,7 @@ npm run dev:mac --workspace apps/desktop
 npm run dev:windows --workspace apps/desktop
 ```
 
-During local development you can override platform detection by exporting `VOQUILL_DESKTOP_PLATFORM` (`darwin` or `win32`). The desktop dev journey now defaults to the `emulators` flavor (`apps/desktop/.env.emulators`) so that `turbo dev` and the workspace dev scripts point at the Firebase emulator suite; pass `FLAVOR=dev` or `VITE_FLAVOR=dev` when you explicitly want the hosted dev project. Set `VITE_USE_EMULATORS=true` to point at Firebase emulators (this is already true in the emulator flavor).
+During local development you can override platform detection by exporting `MAUSVOICE_DESKTOP_PLATFORM` (`darwin` or `win32`). The desktop dev journey now defaults to the `emulators` flavor (`apps/desktop/.env.emulators`) so that `turbo dev` and the workspace dev scripts point at the Firebase emulator suite; pass `FLAVOR=dev` or `VITE_FLAVOR=dev` when you explicitly want the hosted dev project. Set `VITE_USE_EMULATORS=true` to point at Firebase emulators (this is already true in the emulator flavor).
 
 ### Running on Windows
 
@@ -121,9 +121,9 @@ Individual workspaces expose the same commands if you need a narrower scope.
 
 | Variable                                                         | Purpose                                                                                                            |
 | ---------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------ |
-| `VOQUILL_API_KEY_SECRET`                                         | Secret used by the desktop app to encrypt API keys stored on disk (`apps/desktop/src-tauri/src/system/crypto.rs`). |
-| `VOQUILL_WHISPER_MODEL_URL` / `VOQUILL_WHISPER_MODEL_URL_<SIZE>` | Override download locations for Whisper models when running locally.                                               |
-| `VOQUILL_WHISPER_DISABLE_GPU`                                    | Force the desktop app to avoid GPU inference, useful for debugging.                                                |
+| `MAUSVOICE_API_KEY_SECRET`                                         | Secret used by the desktop app to encrypt API keys stored on disk (`apps/desktop/src-tauri/src/system/crypto.rs`). |
+| `MAUSVOICE_WHISPER_MODEL_URL` / `MAUSVOICE_WHISPER_MODEL_URL_<SIZE>` | Override download locations for Whisper models when running locally.                                               |
+| `MAUSVOICE_WHISPER_DISABLE_GPU`                                    | Force the desktop app to avoid GPU inference, useful for debugging.                                                |
 | `VITE_USE_EMULATORS`                                             | When set to `true`, the desktop app points to Firebase emulators instead of production services.                   |
 | `GROQ_API_KEY`                                                   | Enables Groq-backed transcription/cleanup in the Firebase functions (server-side). The desktop app takes its Deepgram/Groq keys via onboarding/Settings, not this variable. |
 
@@ -141,4 +141,4 @@ Individual workspaces expose the same commands if you need a narrower scope.
 
 ## License
 
-Unless otherwise noted, Voquill is released under the AGPLv3. See `LICENCE` for the complete terms and third-party attributions.
+Unless otherwise noted, mausVoice is released under the AGPLv3. See `LICENCE` for the complete terms and third-party attributions.

@@ -1,5 +1,5 @@
-import type { HandlerInput, HandlerOutput } from "@voquill/functions";
-import type { AuthContext, Nullable } from "@voquill/types";
+import type { HandlerInput, HandlerOutput } from "@maus-inc/functions";
+import type { AuthContext, Nullable } from "@maus-inc/types";
 import { findUserById, listAllUsers, upsertUser } from "../repo/user.repo";
 import { requireAuth } from "../utils/auth.utils";
 import { UnauthorizedError } from "../utils/error.utils";

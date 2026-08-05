@@ -96,7 +96,7 @@ jobs:
             TAG_NAME="cli-dev-v${VERSION}"
             COMMIT_SHA="${GITHUB_SHA}"
             DEV_TAG_NAME="${TAG_NAME}"
-            BINARY_NAME="voquill-dev"
+            BINARY_NAME="mausvoice-dev"
             RELEASE_SUFFIX="-dev"
           else
             if [[ -n "${INPUT_VERSION}" ]]; then
@@ -127,7 +127,7 @@ jobs:
             TAG_NAME="cli-v${VERSION}"
             COMMIT_SHA="$(git rev-parse "${TARGET_DEV_TAG}^{commit}")"
             DEV_TAG_NAME="${TARGET_DEV_TAG}"
-            BINARY_NAME="voquill"
+            BINARY_NAME="mausvoice"
             RELEASE_SUFFIX=""
           fi
 
@@ -163,7 +163,7 @@ jobs:
           gh release create "${TAG_NAME}" \
             --target "${COMMIT_SHA}" \
             --title "cli${RELEASE_SUFFIX} v${VERSION}" \
-            --notes "Voquill CLI ${RELEASE_SUFFIX:+(dev) }release ${VERSION}" \
+            --notes "mausVoice CLI ${RELEASE_SUFFIX:+(dev) }release ${VERSION}" \
             ${prerelease_flag}
 
   build:
@@ -315,7 +315,7 @@ jobs:
       - name: Clone Homebrew tap repository
         run: |
           set -euo pipefail
-          git clone "https://x-access-token:${{ secrets.PACKAGE_REPO_TOKEN }}@github.com/voquill/homebrew-voquill.git" brew-tap
+          git clone "https://x-access-token:${{ secrets.PACKAGE_REPO_TOKEN }}@github.com/mausvoice/homebrew-mausvoice.git" brew-tap
 
       - name: Write formula
         env:
@@ -326,12 +326,12 @@ jobs:
           cd brew-tap
           mkdir -p Formula
 
-          if [[ "${BINARY_NAME}" == "voquill-dev" ]]; then
-            class_name="VoquillDev"
-            desc="Voquill CLI (dev build, targets dev Firebase backend)"
+          if [[ "${BINARY_NAME}" == "mausvoice-dev" ]]; then
+            class_name="mausVoiceDev"
+            desc="mausVoice CLI (dev build, targets dev Firebase backend)"
           else
-            class_name="Voquill"
-            desc="Voquill CLI"
+            class_name="mausVoice"
+            desc="mausVoice CLI"
           fi
 
           base_url="https://github.com/${GITHUB_REPOSITORY}/releases/download/${RELEASE_TAG}"
@@ -339,7 +339,7 @@ jobs:
           cat > "Formula/${BINARY_NAME}.rb" <<FORMULA
           class ${class_name} < Formula
             desc "${desc}"
-            homepage "https://voquill.com"
+            homepage "https://mausvoice.com"
             version "${VERSION}"
             license "MIT"
 

@@ -1,6 +1,6 @@
 import { invoke } from "@tauri-apps/api/core";
-import { AppTarget } from "@voquill/types";
-import { delayed } from "@voquill/utilities";
+import { AppTarget } from "@maus-inc/types";
+import { delayed } from "@maus-inc/utilities";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useIntl } from "react-intl";
 import {

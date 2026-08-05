@@ -25,7 +25,7 @@ import {
 } from "../../utils/keyboard.utils";
 import {
   getEffectivePlan,
-  getIsVoquillCloudUser,
+  getIsMausVoiceCloudUser,
 } from "../../utils/member.utils";
 import { getIsOnboarded, getMyUser } from "../../utils/user.utils";
 import { HotkeyBadge } from "../common/HotkeyBadge";
@@ -204,7 +204,7 @@ export const FeatureReleaseDialog = () => {
   const isCommunity = useAppStore(
     (state) => getEffectivePlan(state) === "community",
   );
-  const isVoquillCloudUser = useAppStore(getIsVoquillCloudUser);
+  const isMausVoiceCloudUser = useAppStore(getIsMausVoiceCloudUser);
   const hasConfettiFired = useRef(false);
   const [pageIndex, setPageIndex] = useState(0);
 
@@ -223,10 +223,10 @@ export const FeatureReleaseDialog = () => {
   }, [open]);
 
   useEffect(() => {
-    if (open && isVoquillCloudUser) {
+    if (open && isMausVoiceCloudUser) {
       void setPreferredAgentMode("cloud");
     }
-  }, [open, isVoquillCloudUser]);
+  }, [open, isMausVoiceCloudUser]);
 
   const handleDismiss = () => {
     markFeatureSeen(CURRENT_FEATURE_DATE);

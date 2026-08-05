@@ -17,9 +17,9 @@ export const TermsNotice = ({ align = "center" }: TermsNoticeProps) => {
         fontSize: "0.75rem",
       }}
     >
-      <FormattedMessage defaultMessage="By using FoniMaus, you agree to our" />{" "}
+      <FormattedMessage defaultMessage="By using mausVoice, you agree to our" />{" "}
       <a
-        href="https://voquill.com/terms"
+        href="https://mausvoice.com/terms"
         target="_blank"
         rel="noopener noreferrer"
         style={{ color: "inherit", textDecoration: "underline" }}
@@ -28,7 +28,7 @@ export const TermsNotice = ({ align = "center" }: TermsNoticeProps) => {
       </a>{" "}
       <FormattedMessage defaultMessage="and" />{" "}
       <a
-        href="https://voquill.com/privacy"
+        href="https://mausvoice.com/privacy"
         target="_blank"
         rel="noopener noreferrer"
         style={{ color: "inherit", textDecoration: "underline" }}

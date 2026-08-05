@@ -58,7 +58,7 @@ const relaunch = async (): Promise<void> => {
 };
 
 const GITHUB_RELEASE_DOWNLOAD_BASE =
-  "https://github.com/voquill/voquill/releases/download";
+  "https://github.com/mausvoice/mausvoice/releases/download";
 const RELEASE_TAG_REGEX = /\/releases\/download\/([^/]+)\//;
 
 export type AvailableUpdateInfo = {
@@ -135,7 +135,7 @@ export const buildManualMacInstallerUrl = (
     return null;
   }
 
-  const fileName = `Voquill_${version}_universal.pkg`;
+  const fileName = `mausVoice_${version}_universal.pkg`;
   return `${GITHUB_RELEASE_DOWNLOAD_BASE}/${encodeURIComponent(releaseTag)}/${encodeURIComponent(fileName)}`;
 };
 

@@ -8,7 +8,7 @@ import {
   signInWithCredential,
   signInWithEmailAndPassword,
 } from "firebase/auth";
-import { invokeHandler } from "@voquill/functions";
+import { invokeHandler } from "@maus-inc/functions";
 import { BehaviorSubject } from "rxjs";
 import { AuthUser } from "../types/auth.types";
 import { getEffectiveAuth } from "../utils/auth.utils";

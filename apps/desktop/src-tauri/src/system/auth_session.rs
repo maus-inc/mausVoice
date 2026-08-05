@@ -171,7 +171,7 @@ impl AuthSession {
             }
         };
         let client = Client::builder()
-            .user_agent("voquill-desktop")
+            .user_agent("mausvoice-desktop")
             .build()
             .map_err(|err| AuthSessionError::Network(err.to_string()))?;
         Ok(Self {

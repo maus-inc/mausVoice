@@ -2,7 +2,7 @@ import type {
   PairedRemoteDevice,
   RemoteDevicePlatform,
   RemoteReceiverStatus,
-} from "@voquill/types";
+} from "@maus-inc/types";
 import { invoke } from "@tauri-apps/api/core";
 import { getAppState, produceAppState } from "../store";
 import { registerPairedRemoteDevices } from "../utils/app.utils";
@@ -12,7 +12,7 @@ import {
   setRemoteTargetDeviceId,
 } from "./user.actions";
 
-const INVITE_PREFIX = "voquill-pair:";
+const INVITE_PREFIX = "mausvoice-pair:";
 
 type RemotePairingInvite = {
   version: 1;
@@ -80,7 +80,7 @@ export const parseRemotePairingInvite = (
 ): RemotePairingInvite => {
   const trimmed = value.trim();
   if (!trimmed.startsWith(INVITE_PREFIX)) {
-    throw new Error("Pair code is not a valid FoniMaus remote invite.");
+    throw new Error("Pair code is not a valid mausVoice remote invite.");
   }
 
   const decoded = decodeBase64Url(trimmed.slice(INVITE_PREFIX.length));

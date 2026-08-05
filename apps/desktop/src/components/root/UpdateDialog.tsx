@@ -12,7 +12,7 @@ import {
   Typography,
 } from "@mui/material";
 import { openUrl } from "@tauri-apps/plugin-opener";
-import { isReadOnlyFilesystemInstallError } from "@voquill/desktop-utils";
+import { isReadOnlyFilesystemInstallError } from "@maus-inc/desktop-utils";
 import { useCallback, useMemo } from "react";
 import { FormattedMessage, useIntl } from "react-intl";
 import Markdown from "react-markdown";
@@ -75,12 +75,12 @@ export const UpdateDialog = () => {
   const versionLabel = availableVersion
     ? intl.formatMessage(
         {
-          defaultMessage: "FoniMaus {version}",
+          defaultMessage: "mausVoice {version}",
         },
         { version: availableVersion },
       )
     : intl.formatMessage({
-        defaultMessage: "A FoniMaus update",
+        defaultMessage: "A mausVoice update",
       });
 
   const formattedDate = useMemo(
@@ -220,11 +220,11 @@ export const UpdateDialog = () => {
           {status === "installing" &&
             (requiresManualInstall ? (
               <Alert severity="success" variant="outlined">
-                <FormattedMessage defaultMessage="The installer has been opened. Follow the prompts to complete the update, then relaunch FoniMaus." />
+                <FormattedMessage defaultMessage="The installer has been opened. Follow the prompts to complete the update, then relaunch mausVoice." />
               </Alert>
             ) : (
               <Alert severity="info" variant="outlined">
-                <FormattedMessage defaultMessage="Installation in progress. FoniMaus may restart automatically when finished." />
+                <FormattedMessage defaultMessage="Installation in progress. mausVoice may restart automatically when finished." />
               </Alert>
             ))}
 
@@ -248,7 +248,7 @@ export const UpdateDialog = () => {
                 <Typography variant="body2">{errorMessage}</Typography>
                 {showManualInstallerAction && (
                   <Typography variant="body2">
-                    <FormattedMessage defaultMessage="Your operating system is preventing FoniMaus from modifying files in its current install location. Use the download button to get the latest installer, then run it to complete the update manually." />
+                    <FormattedMessage defaultMessage="Your operating system is preventing mausVoice from modifying files in its current install location. Use the download button to get the latest installer, then run it to complete the update manually." />
                   </Typography>
                 )}
               </Stack>

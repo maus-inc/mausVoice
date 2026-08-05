@@ -15,7 +15,7 @@ import {
   Tooltip,
   Typography,
 } from "@mui/material";
-import { getRec } from "@voquill/utilities";
+import { getRec } from "@maus-inc/utilities";
 import { invoke } from "@tauri-apps/api/core";
 import dayjs from "dayjs";
 import { useCallback, useMemo } from "react";
@@ -30,7 +30,7 @@ import {
 import { getTranscriptionRepo } from "../../repos";
 import { produceAppState, useAppStore } from "../../store";
 import { getActiveRemoteTarget } from "../../utils/device.utils";
-import { getIsVoquillCloudUser } from "../../utils/member.utils";
+import { getIsMausVoiceCloudUser } from "../../utils/member.utils";
 import { TypographyWithMore } from "../common/TypographyWithMore";
 import { AudioPlayerPill } from "./AudioPlayerPill";
 
@@ -40,7 +40,7 @@ export type TranscriptionRowProps = {
 
 export const TranscriptionRow = ({ id }: TranscriptionRowProps) => {
   const intl = useIntl();
-  const isCloudUser = useAppStore(getIsVoquillCloudUser);
+  const isCloudUser = useAppStore(getIsMausVoiceCloudUser);
   const transcription = useAppStore((state) =>
     getRec(state.transcriptionById, id),
   );

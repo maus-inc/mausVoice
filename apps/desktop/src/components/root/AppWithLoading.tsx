@@ -9,12 +9,12 @@ import { MigratorSideEffects } from "./MigratorSideEffects";
 import { SessionSideEffects } from "./SessionSideEffects";
 import { LoadingApp } from "./LoadingApp";
 import { UpdateDialog } from "./UpdateDialog";
-import { getIsVoquillCloudUser } from "../../utils/member.utils";
+import { getIsMausVoiceCloudUser } from "../../utils/member.utils";
 
 export const AppWithLoading = () => {
   const initialized = useAppStore((state) => state.initialized);
   const hotkeyStrategy = useAppStore((state) => state.hotkeyStrategy);
-  const isCloud = useAppStore(getIsVoquillCloudUser);
+  const isCloud = useAppStore(getIsMausVoiceCloudUser);
 
   return (
     <>

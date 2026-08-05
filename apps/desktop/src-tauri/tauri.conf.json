@@ -1,8 +1,8 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
-  "productName": "FoniMaus",
+  "productName": "mausVoice",
   "version": "0.1.0",
-  "identifier": "com.voquill.desktop",
+  "identifier": "com.mausinc.desktop",
   "build": {
     "beforeDevCommand": "pnpm run dev:vite",
     "devUrl": "http://localhost:1420",
@@ -13,7 +13,7 @@
     "macOSPrivateApi": true,
     "windows": [
       {
-        "title": "FoniMaus",
+        "title": "mausVoice",
         "width": 1100,
         "height": 700,
         "minWidth": 800,
@@ -52,7 +52,7 @@
     "macOS": {
       "hardenedRuntime": true,
       "minimumSystemVersion": "13.3",
-      "entitlements": "macos/Voquill.entitlements"
+      "entitlements": "macos/mausVoice.entitlements"
     },
     "windows": {
       "webviewInstallMode": {
@@ -63,7 +63,7 @@
   "plugins": {
     "sql": {
       "preload": [
-        "sqlite:voquill.db"
+        "sqlite:mausvoice.db"
       ]
     },
     "updater": {

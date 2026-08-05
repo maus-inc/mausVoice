@@ -1,4 +1,4 @@
-import { Nullable } from "@voquill/types";
+import { Nullable } from "@maus-inc/types";
 
 export type PaymentState = {
   open: boolean;

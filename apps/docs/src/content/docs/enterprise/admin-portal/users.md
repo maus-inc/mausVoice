@@ -3,7 +3,7 @@ title: Users
 description: Manage user accounts, seats, and access from the admin portal.
 ---
 
-The Users section of the admin portal gives you full visibility and control over who has access to Voquill in your organization.
+The Users section of the admin portal gives you full visibility and control over who has access to mausVoice in your organization.
 
 ## Seat Management
 
@@ -13,7 +13,7 @@ To swap a seat, delete an existing user and invite a new one in their place.
 
 ## Viewing Users
 
-The user list shows everyone who currently has access to Voquill in your organization. You can see:
+The user list shows everyone who currently has access to mausVoice in your organization. You can see:
 
 - Who has been provisioned
 - Who has signed in

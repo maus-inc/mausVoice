@@ -1,9 +1,9 @@
 ---
 title: Post-Processing
-description: How Voquill uses AI to clean up your transcriptions.
+description: How mausVoice uses AI to clean up your transcriptions.
 ---
 
-After your speech is transcribed, Voquill runs a post-processing step that uses a large language model to clean up the raw text.
+After your speech is transcribed, mausVoice runs a post-processing step that uses a large language model to clean up the raw text.
 
 ## How It Works
 
@@ -20,7 +20,7 @@ Post-processing follows the same mode as your transcription setting:
 
 - **Local** — Not currently supported for post-processing. Raw transcripts are returned as-is.
 - **API** — Uses your Groq API key to call a language model directly.
-- **Cloud** — Routes through Voquill's cloud service.
+- **Cloud** — Routes through mausVoice's cloud service.
 
 ## Disabling Post-Processing
 

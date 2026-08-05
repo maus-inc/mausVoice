@@ -1,10 +1,10 @@
 {
-  "name": "@voquill/desktop-utils",
+  "name": "@maus-inc/desktop-utils",
   "version": "0.3.25",
-  "description": "Shared React hooks and logic for Voquill desktop-style clients.",
+  "description": "Shared React hooks and logic for mausVoice desktop-style clients.",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/voquill/voquill.git",
+    "url": "git+https://github.com/mausvoice/mausvoice.git",
     "directory": "packages/desktop-utils"
   },
   "main": "dist/index.js",
@@ -21,7 +21,7 @@
   "devDependencies": {
     "@tauri-apps/api": "~2.10.1",
     "@types/react": "^19.0.0",
-    "@voquill/typescript-config": "workspace:*",
+    "@maus-inc/typescript-config": "workspace:*",
     "react": "^19.2.4",
     "typescript": "5.9.2"
   },

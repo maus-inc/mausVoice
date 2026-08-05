@@ -1,5 +1,5 @@
 import { invoke } from "@tauri-apps/api/core";
-import type { Nullable } from "@voquill/types";
+import type { Nullable } from "@maus-inc/types";
 import { showErrorSnackbar, showSnackbar } from "../actions/app.actions";
 import { tryRegisterCurrentAppTarget } from "../actions/app-target.actions";
 import { showToast } from "../actions/toast.actions";

@@ -22,9 +22,9 @@ $repoRoot = Resolve-Path (Join-Path $PSScriptRoot "..")
 Set-Location $repoRoot
 
 $identifierByFlavor = @{
-    local = "com.voquill.desktop.local"
-    dev   = "com.voquill.desktop.dev"
-    prod  = "com.voquill.desktop"
+    local = "com.mausinc.desktop.local"
+    dev   = "com.mausinc.desktop.dev"
+    prod  = "com.mausinc.desktop"
 }
 
 function Get-LogDirForFlavor {
@@ -48,7 +48,7 @@ function Get-LogDirForFlavor {
             $candidateIdentifier = $identifierByFlavor[$candidateFlavor]
             $candidatePath = Join-Path $env:LOCALAPPDATA "$candidateIdentifier\logs"
             if (Test-Path $candidatePath) {
-                $latestLog = Get-ChildItem -Path $candidatePath -Filter "voquill_*.log" -File -ErrorAction SilentlyContinue |
+                $latestLog = Get-ChildItem -Path $candidatePath -Filter "mausvoice_*.log" -File -ErrorAction SilentlyContinue |
                     Sort-Object LastWriteTime -Descending |
                     Select-Object -First 1
                 [PSCustomObject]@{
@@ -62,7 +62,7 @@ function Get-LogDirForFlavor {
         Sort-Object LastWriteUtc -Descending
 
     if (-not $candidates) {
-        throw "No Voquill log directory found under %LOCALAPPDATA%."
+        throw "No mausVoice log directory found under %LOCALAPPDATA%."
     }
 
     return $candidates[0].Path
@@ -82,12 +82,12 @@ function Get-CrashMatches {
         "assertion failed: flush_paint_messages"
     )
 
-    $recentLogs = Get-ChildItem -Path $LogDir -Filter "voquill_*.log" -File -ErrorAction SilentlyContinue |
+    $recentLogs = Get-ChildItem -Path $LogDir -Filter "mausvoice_*.log" -File -ErrorAction SilentlyContinue |
         Where-Object { $_.LastWriteTime -ge $StartTime.AddMinutes(-2) } |
         Sort-Object LastWriteTime
 
     if (-not $recentLogs) {
-        $fallback = Get-ChildItem -Path $LogDir -Filter "voquill_*.log" -File -ErrorAction SilentlyContinue |
+        $fallback = Get-ChildItem -Path $LogDir -Filter "mausvoice_*.log" -File -ErrorAction SilentlyContinue |
             Sort-Object LastWriteTime -Descending |
             Select-Object -First 1
         if ($fallback) {
@@ -119,7 +119,7 @@ if (-not $NoLogCheck) {
     $logDir = Get-LogDirForFlavor -SelectedFlavor $Flavor
 }
 
-Write-Host "Voquill Windows overlay stress test"
+Write-Host "mausVoice Windows overlay stress test"
 Write-Host "Repo: $repoRoot"
 Write-Host "Branch: $branchName ($commitSha)"
 Write-Host "Duration: $DurationMinutes minute(s)"

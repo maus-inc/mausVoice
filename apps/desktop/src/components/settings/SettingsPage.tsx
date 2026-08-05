@@ -437,7 +437,7 @@ export default function SettingsPage() {
     <Section
       title={<FormattedMessage defaultMessage="Processing" />}
       description={
-        <FormattedMessage defaultMessage="How FoniMaus should manage your transcriptions." />
+        <FormattedMessage defaultMessage="How mausVoice should manage your transcriptions." />
       }
     >
       {dictationLanguageComp}
@@ -521,13 +521,13 @@ export default function SettingsPage() {
     >
       <ListTile
         title={<FormattedMessage defaultMessage="Terms & conditions" />}
-        onClick={() => openUrl("https://voquill.com/terms")}
+        onClick={() => openUrl("https://mausvoice.com/terms")}
         trailing={<ArrowOutwardRounded />}
         leading={<DescriptionOutlined />}
       />
       <ListTile
         title={<FormattedMessage defaultMessage="Privacy policy" />}
-        onClick={() => openUrl("https://voquill.com/privacy")}
+        onClick={() => openUrl("https://mausvoice.com/privacy")}
         trailing={<ArrowOutwardRounded />}
         leading={<PrivacyTipOutlined />}
       />
@@ -596,7 +596,7 @@ export default function SettingsPage() {
               slotProps={{
                 inputLabel: { shrink: true },
                 htmlInput: {
-                  "data-voquill-ignore": "true",
+                  "data-mausvoice-ignore": "true",
                 },
               }}
             />
@@ -664,7 +664,7 @@ export default function SettingsPage() {
               slotProps={{
                 inputLabel: { shrink: true },
                 htmlInput: {
-                  "data-voquill-ignore": "true",
+                  "data-mausvoice-ignore": "true",
                 },
               }}
             />

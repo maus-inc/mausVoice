@@ -1,4 +1,4 @@
-# FoniMaus Architecture Walkthrough
+# mausVoice Architecture Walkthrough
 
 A practical tour of how this repo is put together: the technology stack, the monorepo layout, the desktop app's layered design, the feature subsystems, and the customizations that make this fork a personal/local build.
 
@@ -8,7 +8,7 @@ A practical tour of how this repo is put together: the technology stack, the mon
 
 ## 1. The big picture
 
-Voquill is a cross-platform **voice-typing desktop app**. You hold a hotkey, speak, and the spoken text is transcribed, optionally cleaned up by an LLM, and pasted into whatever application you're using. It also has an AI assistant ("agent") mode that can take actions on your behalf.
+mausVoice is a cross-platform **voice-typing desktop app**. You hold a hotkey, speak, and the spoken text is transcribed, optionally cleaned up by an LLM, and pasted into whatever application you're using. It also has an AI assistant ("agent") mode that can take actions on your behalf.
 
 The desktop app is a **Tauri 2** application: a Rust backend that exposes native capabilities, and a React/TypeScript frontend that holds all the product logic. The guiding principle is:
 
@@ -117,7 +117,7 @@ State changes are written back into the Zustand store, and React re-renders. Rus
 
 ### 4.2 State management — `src/store/` and `src/state/`
 
-There is a **single Zustand store** (`src/store/index.ts`) created with `persist` (the `local` slice is persisted to `localStorage` under `voquill-local-state`). State is organized as slices in `src/state/` (`app.state.ts`, `onboarding.state.ts`, `agent.state.ts`, `settings.state.ts`, transcriptions, etc.). Mutations go through an Immer-style `produceAppState(draft => ...)` helper so updates stay immutable and ergonomic.
+There is a **single Zustand store** (`src/store/index.ts`) created with `persist` (the `local` slice is persisted to `localStorage` under `mausvoice-local-state`). State is organized as slices in `src/state/` (`app.state.ts`, `onboarding.state.ts`, `agent.state.ts`, `settings.state.ts`, transcriptions, etc.). Mutations go through an Immer-style `produceAppState(draft => ...)` helper so updates stay immutable and ergonomic.
 
 ### 4.3 Actions — `src/actions/`
 
@@ -233,7 +233,7 @@ export const isPersonalUseEnabled = (): boolean =>
 **Every personal-flow decision point routes through this single guard:** repo selection (`repos/index.ts`), onboarding sign-in routing (`SignInForm.tsx`), Google sign-in (`login.actions.ts`), the mic-permission gate (`MicPermsForm.tsx`), and the Groq defaults action. This keeps "am I in personal mode?" answered in exactly one place.
 
 ### Local sign-in — `PersonalAuthRepo` (`src/repos/auth.repo.ts`)
-In personal mode `getAuthRepo()` returns `PersonalAuthRepo`, which signs you in as a hardcoded local user (`local-user-id` / `personal@voquill.local`) with no Firebase account. The rest of the app sees a normal "logged in" user.
+In personal mode `getAuthRepo()` returns `PersonalAuthRepo`, which signs you in as a hardcoded local user (`local-user-id` / `personal@mausvoice.local`) with no Firebase account. The rest of the app sees a normal "logged in" user.
 
 ### Personal API-key defaults — `src/actions/personal-use.actions.ts`
 - Keys are **entered by the user** — the onboarding "Connect your API keys" step (`PersonalCredentialsForm`) and the Settings dialogs collect a Deepgram key (transcription) and a Groq key (post-processing/agent). They are stored as encrypted `personal-deepgram` / `personal-groq` API keys. There is **no** environment/`.env.local` key reading and nothing is baked into the build, so no key ships inside a distributed binary. (At rest, keys are sealed with XChaCha20-Poly1305 in `system/crypto.rs`.)

@@ -2,10 +2,10 @@
 name = "rust_windows_pill"
 version = "0.1.0"
 edition = "2021"
-description = "FoniMaus native Windows pill overlay (Direct2D)"
+description = "mausVoice native Windows pill overlay (Direct2D)"
 
 [[bin]]
-name = "voquill-windows-pill"
+name = "mausvoice-windows-pill"
 path = "src/main.rs"
 
 [dependencies]

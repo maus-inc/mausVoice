@@ -1,10 +1,10 @@
 {
-  "name": "@voquill/functions",
+  "name": "@maus-inc/functions",
   "version": "0.3.25",
-  "description": "Shared callable function helpers for Voquill apps.",
+  "description": "Shared callable function helpers for mausVoice apps.",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/voquill/voquill.git",
+    "url": "git+https://github.com/mausvoice/mausvoice.git",
     "directory": "packages/functions"
   },
   "main": "dist/index.js",
@@ -18,14 +18,14 @@
     "dist"
   ],
   "dependencies": {
-    "@voquill/types": "workspace:*",
+    "@maus-inc/types": "workspace:*",
     "zod": "^3.25.76"
   },
   "peerDependencies": {
     "firebase": "^11.1.0"
   },
   "devDependencies": {
-    "@voquill/typescript-config": "workspace:*",
+    "@maus-inc/typescript-config": "workspace:*",
     "firebase": "^11.10.0",
     "typescript": "5.9.2"
   },

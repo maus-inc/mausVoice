@@ -1,5 +1,5 @@
-import type { HandlerInput, HandlerOutput } from "@voquill/functions";
-import type { AuthContext, Nullable } from "@voquill/types";
+import type { HandlerInput, HandlerOutput } from "@maus-inc/functions";
+import type { AuthContext, Nullable } from "@maus-inc/types";
 import { getMetricsSummary } from "../repo/metrics.repo";
 import { listAllUsers } from "../repo/user.repo";
 import { requireAuth } from "../utils/auth.utils";

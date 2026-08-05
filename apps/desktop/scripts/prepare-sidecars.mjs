@@ -28,9 +28,9 @@ const buildTarget =
   null;
 const targetTriple = buildTarget || resolveHostTargetTriple();
 const buildProfile =
-  process.env.VOQUILL_SIDECAR_PROFILE === "release" ? "release" : "debug";
+  process.env.MAUSVOICE_SIDECAR_PROFILE === "release" ? "release" : "debug";
 const requireNativeGpuSidecar =
-  process.env.VOQUILL_REQUIRE_GPU_SIDECAR === "true";
+  process.env.MAUSVOICE_REQUIRE_GPU_SIDECAR === "true";
 const executableSuffix = isWindowsTarget(targetTriple) ? ".exe" : "";
 
 if (!existsSync(sidecarManifestPath)) {
@@ -254,7 +254,7 @@ function resolveGpuBuildState(target) {
 // macOS pill is linked directly as a Rust library dependency (no sidecar needed).
 // Windows pill is built as a separate binary.
 if (isWindowsTarget(targetTriple)) {
-  buildNativePill("rust_windows_pill", "voquill-windows-pill");
+  buildNativePill("rust_windows_pill", "mausvoice-windows-pill");
 }
 
 function buildNativePill(packageDir, binaryName) {

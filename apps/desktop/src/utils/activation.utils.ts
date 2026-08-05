@@ -1,6 +1,6 @@
-import { ActivationController } from "@voquill/desktop-utils";
+import { ActivationController } from "@maus-inc/desktop-utils";
 
-export { ActivationController } from "@voquill/desktop-utils";
+export { ActivationController } from "@maus-inc/desktop-utils";
 
 const lastToggleByKey = new Map<string, number>();
 

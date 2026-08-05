@@ -54,7 +54,7 @@ export const Faq = ({ sx }: FaqProps) => {
             <FormattedMessage defaultMessage="What websites does it work on?" />
           }
         >
-          <FormattedMessage defaultMessage="FoniMaus works on virtually any website with text input fields - email clients, social media, forms, documents, and more." />
+          <FormattedMessage defaultMessage="mausVoice works on virtually any website with text input fields - email clients, social media, forms, documents, and more." />
         </FaqRow>
         <FaqRow
           title={<FormattedMessage defaultMessage="Is my voice data secure?" />}

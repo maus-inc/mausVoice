@@ -12,7 +12,7 @@ import {
   Stack,
   Typography,
 } from "@mui/material";
-import { getRec } from "@voquill/utilities";
+import { getRec } from "@maus-inc/utilities";
 import { useMemo } from "react";
 import { FormattedMessage } from "react-intl";
 import {
@@ -87,7 +87,7 @@ export const TranscriptionDetailsDialog = () => {
       return <FormattedMessage defaultMessage="API" />;
     }
     if (transcription?.transcriptionMode === "cloud") {
-      return <FormattedMessage defaultMessage="FoniMaus Cloud" />;
+      return <FormattedMessage defaultMessage="mausVoice Cloud" />;
     }
     if (transcription?.transcriptionMode === "local") {
       return <FormattedMessage defaultMessage="Local" />;
@@ -111,7 +111,7 @@ export const TranscriptionDetailsDialog = () => {
       return <FormattedMessage defaultMessage="API" />;
     }
     if (transcription?.postProcessMode === "cloud") {
-      return <FormattedMessage defaultMessage="FoniMaus Cloud" />;
+      return <FormattedMessage defaultMessage="mausVoice Cloud" />;
     }
     return <FormattedMessage defaultMessage="Disabled" />;
   }, [transcription?.postProcessDevice, transcription?.postProcessMode]);

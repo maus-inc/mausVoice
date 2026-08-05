@@ -1,4 +1,4 @@
-import type { AppTarget, Nullable } from "@voquill/types";
+import type { AppTarget, Nullable } from "@maus-inc/types";
 import type {
   PostProcessMetadata,
   TranscribeAudioMetadata,

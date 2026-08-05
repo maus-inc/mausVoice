@@ -1,4 +1,4 @@
-import type { ApiKey } from "@voquill/types";
+import type { ApiKey } from "@maus-inc/types";
 import { createApiKey, loadApiKeys, updateApiKey } from "./api-key.actions";
 import { updateUserPreferences } from "./user.actions";
 import { getAppState } from "../store";
@@ -132,13 +132,13 @@ const applyPersonalGenerationDefaults = async (
   groqApiKey: ApiKey,
 ): Promise<void> => {
   const prefs = getAppState().userPrefs;
-  const ownedGroqIds = [PERSONAL_GROQ_API_KEY_ID, groqApiKey.id];
+  const ownedGroqIds = new Set([PERSONAL_GROQ_API_KEY_ID, groqApiKey.id]);
 
   const isOwnedOrUnset = (
     mode: string | null | undefined,
     apiKeyId: string | null | undefined,
   ): boolean =>
-    !mode || mode === "cloud" || !apiKeyId || ownedGroqIds.includes(apiKeyId);
+    !mode || mode === "cloud" || !apiKeyId || ownedGroqIds.has(apiKeyId);
 
   const alreadyGroq = (
     mode: string | null | undefined,

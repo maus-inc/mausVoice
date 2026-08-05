@@ -2,10 +2,10 @@
 name = "rust_gtk_pill"
 version = "0.1.0"
 edition = "2021"
-description = "Voquill GTK pill overlay for Wayland (layer-shell)"
+description = "mausVoice GTK pill overlay for Wayland (layer-shell)"
 
 [[bin]]
-name = "voquill-gtk-pill"
+name = "mausvoice-gtk-pill"
 path = "src/main.rs"
 
 [dependencies]

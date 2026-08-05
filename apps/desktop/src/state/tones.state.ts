@@ -1,4 +1,4 @@
-import type { Nullable } from "@voquill/types";
+import type { Nullable } from "@maus-inc/types";
 
 export type TonesState = {
   selectedToneId: Nullable<string>;

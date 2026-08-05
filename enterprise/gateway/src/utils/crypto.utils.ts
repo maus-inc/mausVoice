@@ -5,7 +5,7 @@ const IV_LENGTH = 12;
 const KEY_LENGTH = 32;
 
 function deriveKey(secret: string): Buffer {
-  return crypto.scryptSync(secret, "voquill-stt-providers", KEY_LENGTH);
+  return crypto.scryptSync(secret, "mausvoice-stt-providers", KEY_LENGTH);
 }
 
 export function encryptApiKey(plaintext: string, secret: string): string {

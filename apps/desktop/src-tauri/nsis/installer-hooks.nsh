@@ -1,4 +1,4 @@
-; Voquill NSIS Installer Hooks
+; mausVoice NSIS Installer Hooks
 ; Bundles Visual C++ Runtime DLLs directly from the CI build machine
 
 !macro NSIS_HOOK_POSTINSTALL

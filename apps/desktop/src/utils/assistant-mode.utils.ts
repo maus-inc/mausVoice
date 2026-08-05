@@ -1,7 +1,7 @@
 import { AppState } from "../state/app.state";
 
-export const ASSISTANT_MODE_ENABLED_KEY = "voquill:assistant-mode-enabled";
-export const POWER_MODE_ENABLED_KEY = "voquill:power-mode-enabled";
+export const ASSISTANT_MODE_ENABLED_KEY = "mausvoice:assistant-mode-enabled";
+export const POWER_MODE_ENABLED_KEY = "mausvoice:power-mode-enabled";
 
 export const getIsAssistantModeEnabled = (state: AppState): boolean => {
   if (state.isEnterprise) {

@@ -1,7 +1,7 @@
 use crate::domain::{OverlayPhase, PillWindowSize};
 use crate::pill_process;
 
-const BINARY_NAME: &str = "voquill-windows-pill.exe";
+const BINARY_NAME: &str = "mausvoice-windows-pill.exe";
 const PACKAGE_DIR: &str = "rust_windows_pill";
 
 pub fn try_create_native_overlays(app: &tauri::AppHandle) -> bool {

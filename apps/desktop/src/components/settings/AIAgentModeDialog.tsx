@@ -83,7 +83,7 @@ export const AIAgentModeDialog = () => {
             color="text.secondary"
             sx={{ mt: 1.5, fontWeight: 600 }}
           >
-            <FormattedMessage defaultMessage="By enabling power mode, you accept full responsibility for any actions taken by the assistant. FoniMaus is not liable for any consequences resulting from commands executed on your system." />
+            <FormattedMessage defaultMessage="By enabling power mode, you accept full responsibility for any actions taken by the assistant. mausVoice is not liable for any consequences resulting from commands executed on your system." />
           </Typography>
         </DialogContent>
         <DialogActions>
@@ -162,7 +162,7 @@ export const AIAgentModeDialog = () => {
                   <FormattedMessage defaultMessage="Power mode" />
                 </Typography>
                 <Typography variant="body2" color="text.secondary">
-                  <FormattedMessage defaultMessage="Allow the assistant to run terminal commands on your behalf. This is a temporary guardrail that will be removed in a future update. Restart FoniMaus to apply changes." />
+                  <FormattedMessage defaultMessage="Allow the assistant to run terminal commands on your behalf. This is a temporary guardrail that will be removed in a future update. Restart mausVoice to apply changes." />
                 </Typography>
               </Stack>
               <Switch

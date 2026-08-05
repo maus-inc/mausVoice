@@ -2,7 +2,7 @@ import {
   ActivationController,
   useHotkeyFire as useHotkeyFireGeneric,
   useHotkeyHoldMany as useHotkeyHoldManyGeneric,
-} from "@voquill/desktop-utils";
+} from "@maus-inc/desktop-utils";
 import { useEffect, useMemo } from "react";
 import { getAppState, useAppStore } from "../store";
 import { getHotkeyCombosForAction } from "../utils/keyboard.utils";

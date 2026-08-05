@@ -10,7 +10,7 @@ export const PERSONAL_GROQ_POST_PROCESSING_MODEL = "openai/gpt-oss-20b";
 export const PERSONAL_DEEPGRAM_API_KEY_ID = "personal-deepgram";
 export const PERSONAL_DEEPGRAM_API_KEY_NAME = "Personal Deepgram";
 export const PERSONAL_USER_ID = "local-user-id";
-export const PERSONAL_USER_EMAIL = "personal@fonimaus.local";
+export const PERSONAL_USER_EMAIL = "personal@mausvoice.local";
 export const PERSONAL_USER_DISPLAY_NAME = "Personal User";
 
 export const isPersonalUseProEnabled = (): boolean => true;

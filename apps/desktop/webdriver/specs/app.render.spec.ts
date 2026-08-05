@@ -1,6 +1,6 @@
 import { browser, expect } from "@wdio/globals";
 
-describe("FoniMaus desktop bootstrap", () => {
+describe("mausVoice desktop bootstrap", () => {
   it("renders the application shell", async () => {
     const root = await browser.$("#root");
     await root.waitForExist({ timeout: 15000 });

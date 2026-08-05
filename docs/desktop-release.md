@@ -10,8 +10,8 @@
   - Choose `environment: prod` (default) and optionally supply a `version` to promote a specific `desktop-dev-v<version>` tag; otherwise the newest dev tag is promoted.
   - Assets are published to a GitHub release tagged `desktop-v<version>` and the channel release tagged `desktop-prod` is updated with the fresh manifest.
 - During each build the Tauri config is patched so the updater reads the correct channel-specific manifest:
-  - Desktop dev channel → `https://github.com/voquill/voquill/releases/download/desktop-dev/latest.json`
-  - Desktop prod channel → `https://github.com/voquill/voquill/releases/download/desktop-prod/latest.json`
+  - Desktop dev channel → `https://github.com/mausvoice/mausvoice/releases/download/desktop-dev/latest.json`
+  - Desktop prod channel → `https://github.com/mausvoice/mausvoice/releases/download/desktop-prod/latest.json`
 
 ## GitHub Release Layout
 
@@ -39,7 +39,7 @@ No additional storage credentials are required—the workflow publishes directly
 
 ## macOS Signing & Permissions
 
-- The desktop bundle enables Hardened Runtime with custom entitlements at `apps/desktop/src-tauri/macos/Voquill.entitlements`. Keep the Developer ID certificate in sync with these capabilities if you adjust microphone or keyboard monitoring features.
+- The desktop bundle enables Hardened Runtime with custom entitlements at `apps/desktop/src-tauri/macos/mausVoice.entitlements`. Keep the Developer ID certificate in sync with these capabilities if you adjust microphone or keyboard monitoring features.
 - macOS now prompts for microphone access (`NSMicrophoneUsageDescription`) and accessibility (`NSAccessibilityUsageDescription`) the first time the app runs. These strings live in `apps/desktop/src-tauri/Info.plist`.
 
 ## Windows Installer & VC++ Runtime DLLs
@@ -54,7 +54,7 @@ No additional storage credentials are required—the workflow publishes directly
 1. Push to `main` and wait for the **Release Desktop** workflow to finish.
 2. Check the `metadata` job output for the new `desktop-dev-v*` tag.
 3. Inspect the GitHub release for that tag to confirm platform bundles and metadata uploaded successfully.
-4. Confirm the dev manifest is accessible at `https://github.com/voquill/voquill/releases/download/desktop-dev/latest.json`.
+4. Confirm the dev manifest is accessible at `https://github.com/mausvoice/mausvoice/releases/download/desktop-dev/latest.json`.
 5. Launch the dev desktop app; the updater should point at the dev manifest URL injected during CI.
 
 ## Dev → Prod Promotion Checklist
@@ -64,4 +64,4 @@ No additional storage credentials are required—the workflow publishes directly
    - Leave `version` blank to promote the most recent dev tag, or set it to an explicit `x.y.z`.
    - Ensure `environment` is `prod`.
 3. Inspect the `desktop-v<version>` GitHub release to validate the uploaded assets.
-4. Confirm the production manifest: `https://github.com/voquill/voquill/releases/download/desktop-prod/latest.json`.
+4. Confirm the production manifest: `https://github.com/mausvoice/mausvoice/releases/download/desktop-prod/latest.json`.

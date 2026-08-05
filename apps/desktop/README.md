@@ -1,4 +1,4 @@
-# Voquill Desktop
+# mausVoice Desktop
 
 Cross-platform voice-to-text desktop application built with Tauri 2 (Rust + TypeScript/React).
 
@@ -66,8 +66,8 @@ src-tauri/
 |----------|-------------|
 | `VITE_FLAVOR` | Environment: `dev`, `prod`, `emulators` (default), `enterprise`, or `enterprise-dev` |
 | `VITE_USE_EMULATORS` | Connect to Firebase emulators |
-| `VOQUILL_ENABLE_DEVTOOLS` | Open dev tools on startup |
-| `VOQUILL_DESKTOP_PLATFORM` | Override platform detection |
+| `MAUSVOICE_ENABLE_DEVTOOLS` | Open dev tools on startup |
+| `MAUSVOICE_DESKTOP_PLATFORM` | Override platform detection |
 
 ## Internationalization
 

@@ -2,8 +2,8 @@ import type {
   JsonResponse,
   LlmChatInput,
   LlmStreamEvent,
-} from "@voquill/types";
-import { countWords, retry } from "@voquill/utilities";
+} from "@maus-inc/types";
+import { countWords, retry } from "@maus-inc/utilities";
 import Groq, { toFile } from "groq-sdk/index";
 import {
   ChatCompletionContentPart,

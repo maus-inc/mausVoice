@@ -1,11 +1,11 @@
 {
-  "productName": "FoniMaus Enterprise (dev)",
-  "identifier": "com.voquill.desktop.enterprise-dev",
-  "mainBinaryName": "voquill-desktop-enterprise-dev",
+  "productName": "mausVoice Enterprise (dev)",
+  "identifier": "com.mausinc.desktop.enterprise-dev",
+  "mainBinaryName": "mausvoice-desktop-enterprise-dev",
   "app": {
     "windows": [
       {
-        "title": "FoniMaus Enterprise (dev)",
+        "title": "mausVoice Enterprise (dev)",
         "width": 1280,
         "height": 860,
         "minWidth": 800,
@@ -17,7 +17,7 @@
   "plugins": {
     "updater": {
       "endpoints": [
-        "https://github.com/voquill/voquill/releases/download/desktop-enterprise-dev/latest.json"
+        "https://github.com/mausvoice/mausvoice/releases/download/desktop-enterprise-dev/latest.json"
       ]
     }
   }

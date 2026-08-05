@@ -13,7 +13,7 @@ import {
   Switch,
   Typography,
 } from "@mui/material";
-import { AppTarget } from "@voquill/types";
+import { AppTarget } from "@maus-inc/types";
 import type { ChangeEvent } from "react";
 import { useMemo } from "react";
 import { FormattedMessage, useIntl } from "react-intl";
@@ -87,7 +87,7 @@ export const AppKeybindingsDialog = () => {
       </DialogTitle>
       <DialogContent>
         <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
-          <FormattedMessage defaultMessage="Choose how FoniMaus inserts text and which paste shortcut to use when paste insertion is selected." />
+          <FormattedMessage defaultMessage="Choose how mausVoice inserts text and which paste shortcut to use when paste insertion is selected." />
         </Typography>
         <Stack
           direction="row"

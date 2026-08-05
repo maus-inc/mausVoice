@@ -54,7 +54,7 @@ pub fn run(receiver: Receiver<InMessage>) {
             window.set_layer_shell_margin(gtk_layer_shell::Edge::Bottom, MARGIN_BOTTOM);
             window.set_keyboard_mode(gtk_layer_shell::KeyboardMode::None);
             window.set_exclusive_zone(0);
-            window.set_namespace("voquill-pill");
+            window.set_namespace("mausvoice-pill");
         }
         Backend::X11 => {
             window.connect_realize(move |window| x11::setup_x11_window(window));

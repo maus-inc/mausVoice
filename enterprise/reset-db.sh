@@ -1,6 +1,6 @@
 #!/bin/bash
 COMPOSE_DIR="$(dirname "$0")"
-docker-compose -f "$COMPOSE_DIR/docker-compose.yml" exec -T postgres psql -U postgres -d voquill -c "
+docker-compose -f "$COMPOSE_DIR/docker-compose.yml" exec -T postgres psql -U postgres -d mausvoice -c "
 DROP SCHEMA public CASCADE;
 CREATE SCHEMA public;
 "

@@ -1,7 +1,7 @@
 # Keyboard Listener Health & Lifecycle Hardening
 
 Root-cause fixes for the macOS keyboard-listener findings. The listener runs as a
-child process (`VOQUILL_KEYBOARD_LISTENER=1`) connected to the parent over loopback
+child process (`MAUSVOICE_KEYBOARD_LISTENER=1`) connected to the parent over loopback
 TCP. Today the parent respawns the child on any exit with no cap/backoff, never proves
 the child actually installed an event tap, exposes no health to TS (which gates the
 listener purely on Accessibility permission), and never explicitly stops the listener
@@ -97,10 +97,10 @@ explicitly stopped on app exit. No orphaned child, no write-to-closed-socket rac
 **Success Criteria**: Quitting the app leaves no listener child. Killing the parent causes the
 child to exit within ~1s. Normal shutdown produces no spurious kill errors in logs.
 **Verification method**: the child is the *same executable* as the parent and is marked only by
-the `VOQUILL_KEYBOARD_LISTENER` env var, so `pgrep -fl` (which searches argv, not env) will not
-identify it. Instead count `Voquill` processes and inspect env per-pid:
-`pgrep -fl Voquill` (expect the child gone, parent count drops) and
-`ps eww -p <pid> | grep VOQUILL_KEYBOARD_LISTENER` to confirm which pid is the listener.
+the `MAUSVOICE_KEYBOARD_LISTENER` env var, so `pgrep -fl` (which searches argv, not env) will not
+identify it. Instead count `mausVoice` processes and inspect env per-pid:
+`pgrep -fl mausVoice` (expect the child gone, parent count drops) and
+`ps eww -p <pid> | grep MAUSVOICE_KEYBOARD_LISTENER` to confirm which pid is the listener.
 (If easier observability is wanted later, add a listener-mode argv flag alongside the env var.)
 **Tests**: Manual process check on quit and on parent kill (per method above); log inspection.
 Existing unit tests pass.
@@ -117,7 +117,7 @@ key state).
 shows *stuck* Fn (a missed release leaving stale state), the real fix is to derive Fn state
 from macOS event flags; do that before considering this stage done.
 **Success Criteria**: Fn-based combos (`Function`, `Function+KeyZ`) press/release cleanly with
-no spurious release events (`VOQUILL_DEBUG_KEYS=1`); existing combo unit tests including
+no spurious release events (`MAUSVOICE_DEBUG_KEYS=1`); existing combo unit tests including
 `escalates_from_modifier_only_combo_to_non_modifier_combo` still pass; no stuck Fn after rapid
 Fn toggling.
 **Tests**: Existing keyboard unit tests; manual Fn combo exercise with debug logging.

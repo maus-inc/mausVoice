@@ -1,4 +1,4 @@
-import type { ChatMessage, Conversation } from "@voquill/types";
+import type { ChatMessage, Conversation } from "@maus-inc/types";
 import { abortAgentLoop, CHAT_AGENT_CONFIG, runAgent } from "../agents";
 import { getChatMessageRepo, getConversationRepo } from "../repos";
 import { produceAppState } from "../store";

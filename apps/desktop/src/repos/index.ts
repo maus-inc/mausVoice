@@ -1,7 +1,7 @@
-import type { CloudModel } from "@voquill/functions";
-import type { ApiKeyProvider } from "@voquill/types";
-import { Nullable } from "@voquill/types";
-import { getRec } from "@voquill/utilities";
+import type { CloudModel } from "@maus-inc/functions";
+import type { ApiKeyProvider } from "@maus-inc/types";
+import { Nullable } from "@maus-inc/types";
+import { getRec } from "@maus-inc/utilities";
 import { getAppState } from "../store";
 import { getIsEnterpriseEnabled } from "../utils/enterprise.utils";
 import { getLogger } from "../utils/log.utils";

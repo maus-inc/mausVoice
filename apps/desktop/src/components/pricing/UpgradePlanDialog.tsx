@@ -83,7 +83,7 @@ export const UpgradePlanDialog = () => {
               <FormattedMessage defaultMessage="Upgrade your plan" />
             </Typography>
             <Typography component="div" variant="body1" color="textSecondary">
-              <FormattedMessage defaultMessage="Cross-device sync, FoniMaus Cloud, and more advanced features." />
+              <FormattedMessage defaultMessage="Cross-device sync, mausVoice Cloud, and more advanced features." />
             </Typography>
           </DialogTitle>
           <DialogContent>

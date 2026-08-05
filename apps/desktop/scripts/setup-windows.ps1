@@ -1,10 +1,10 @@
 <#
 .SYNOPSIS
-  Installs Windows build prerequisites for the Voquill desktop app.
+  Installs Windows build prerequisites for the mausVoice desktop app.
 
 .DESCRIPTION
   Installs the shared dependencies (LLVM/Clang and CMake) required to build the
-  Tauri desktop app on Windows. When the EnableGpu switch (or VOQUILL_ENABLE_GPU=1)
+  Tauri desktop app on Windows. When the EnableGpu switch (or MAUSVOICE_ENABLE_GPU=1)
   is provided, the script will also install the Vulkan SDK used for GPU-accelerated
   Whisper builds.
 #>
@@ -176,7 +176,7 @@ if (-not (Test-IsAdministrator)) {
 $isGithub = $env:GITHUB_ACTIONS -eq 'true'
 
 if (-not $PSBoundParameters.ContainsKey('EnableGpu')) {
-  $EnableGpu = $env:VOQUILL_ENABLE_GPU -in @('1', 'true', 'TRUE')
+  $EnableGpu = $env:MAUSVOICE_ENABLE_GPU -in @('1', 'true', 'TRUE')
 }
 
 Ensure-Command -Name "node" -InstallHint "Install Node.js 18+ from https://nodejs.org/en/download/"
@@ -200,8 +200,8 @@ if ($isGithub) {
 }
 
 if ($EnableGpu) {
-  $vulkanVersion = if ($env:VOQUILL_VULKAN_SDK_VERSION) { $env:VOQUILL_VULKAN_SDK_VERSION } else { "1.3.290.0" }
-  $vulkanRoot = if ($env:VOQUILL_VULKAN_SDK_ROOT) { $env:VOQUILL_VULKAN_SDK_ROOT } else { "C:\VulkanSDK" }
+  $vulkanVersion = if ($env:MAUSVOICE_VULKAN_SDK_VERSION) { $env:MAUSVOICE_VULKAN_SDK_VERSION } else { "1.3.290.0" }
+  $vulkanRoot = if ($env:MAUSVOICE_VULKAN_SDK_ROOT) { $env:MAUSVOICE_VULKAN_SDK_ROOT } else { "C:\VulkanSDK" }
 
   Install-VulkanSdk -Version $vulkanVersion -InstallRoot $vulkanRoot -EmitGithubEnv:$isGithub
 
@@ -219,5 +219,5 @@ if ($EnableGpu) {
   Write-Host "[INFO] GPU dependencies ready. Desktop builds now include the GPU sidecar automatically."
 }
 else {
-  Write-Host "[INFO] GPU dependencies were skipped. Set VOQUILL_ENABLE_GPU=1 or rerun with -EnableGpu to install them."
+  Write-Host "[INFO] GPU dependencies were skipped. Set MAUSVOICE_ENABLE_GPU=1 or rerun with -EnableGpu to install them."
 }

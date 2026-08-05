@@ -1,7 +1,7 @@
 import {
   detectDesktopPlatform,
   type DesktopPlatform,
-} from "@voquill/desktop-utils";
+} from "@maus-inc/desktop-utils";
 
 export const getIsDevMode = (): boolean => {
   return import.meta.env.DEV;
@@ -37,7 +37,7 @@ export const getStripePublicKey = (): string =>
 export type Platform = DesktopPlatform;
 
 export const getPlatform = (): Platform => {
-  const override = import.meta.env.VOQUILL_DESKTOP_PLATFORM as
+  const override = import.meta.env.MAUSVOICE_DESKTOP_PLATFORM as
     | Platform
     | undefined;
   if (override) {

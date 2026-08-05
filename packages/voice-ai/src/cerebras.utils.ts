@@ -3,8 +3,8 @@ import {
   ChatCompletionContentPart,
   ChatCompletionMessageParam,
 } from "openai/resources/chat/completions";
-import { retry, countWords } from "@voquill/utilities";
-import type { JsonResponse, LlmChatInput, LlmStreamEvent } from "@voquill/types";
+import { retry, countWords } from "@maus-inc/utilities";
+import type { JsonResponse, LlmChatInput, LlmStreamEvent } from "@maus-inc/types";
 import { openaiCompatibleStreamChat } from "./openai.utils";
 
 export const CEREBRAS_MODELS = [

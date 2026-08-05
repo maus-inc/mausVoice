@@ -16,8 +16,8 @@
       "http://127.0.0.1/*",
       "http://127.0.0.1:*",
       "http://127.0.0.1:*/*",
-      "https://*.voquill.com",
-      "https://*.voquill.com/*"
+      "https://*.mausvoice.com",
+      "https://*.mausvoice.com/*"
     ]
   },
   "permissions": [

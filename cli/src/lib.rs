@@ -27,7 +27,7 @@ impl Env {
 
     pub fn default_site(self) -> &'static str {
         match self {
-            Env::Prod => "https://voquill.com",
+            Env::Prod => "https://mausvoice.com",
             Env::Dev | Env::Emulator => "http://localhost:4321",
         }
     }
@@ -54,7 +54,7 @@ impl Env {
 }
 
 #[derive(Parser)]
-#[command(version, about = "Voquill CLI")]
+#[command(version, about = "mausVoice CLI")]
 struct Cli {
     #[command(subcommand)]
     command: Command,
@@ -70,7 +70,7 @@ enum Command {
     },
     /// Remove stored credentials for this environment.
     Logout,
-    /// Wrap an agent command in a Voquill session.
+    /// Wrap an agent command in a mausVoice session.
     Agent {
         /// Custom session name (will be kebab-cased). Defaults to a random name.
         #[arg(long)]

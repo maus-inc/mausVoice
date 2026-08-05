@@ -47,7 +47,7 @@ impl RemoteReceiverState {
             .ok()
             .and_then(|value| value.into_string().ok())
             .filter(|value| !value.trim().is_empty())
-            .unwrap_or_else(|| "FoniMaus Desktop".to_string());
+            .unwrap_or_else(|| "mausVoice Desktop".to_string());
 
         let mut hasher = Sha256::new();
         hasher.update(device_name.as_bytes());

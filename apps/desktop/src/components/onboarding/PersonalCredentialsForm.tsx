@@ -136,7 +136,7 @@ export const PersonalCredentialsForm = () => {
             slotProps={{
               inputLabel: { shrink: true },
               htmlInput: {
-                "data-voquill-ignore": "true",
+                "data-mausvoice-ignore": "true",
               },
             }}
           />
@@ -156,7 +156,7 @@ export const PersonalCredentialsForm = () => {
             slotProps={{
               inputLabel: { shrink: true },
               htmlInput: {
-                "data-voquill-ignore": "true",
+                "data-mausvoice-ignore": "true",
               },
             }}
           />

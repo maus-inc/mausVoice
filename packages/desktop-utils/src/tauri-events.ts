@@ -1,7 +1,7 @@
 /**
  * Tauri event contract shared between the native Rust side and any webview
  * that wants to observe desktop key input. Keep these in sync with the
- * emitters in `voquill/apps/desktop/src-tauri/src/commands.rs` (and related).
+ * emitters in `mausvoice/apps/desktop/src-tauri/src/commands.rs` (and related).
  */
 
 /** Emitted continuously by the native key listener while keys are held. */

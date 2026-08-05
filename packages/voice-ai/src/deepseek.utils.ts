@@ -3,8 +3,8 @@ import {
   ChatCompletionContentPart,
   ChatCompletionMessageParam,
 } from "openai/resources/chat/completions";
-import { retry, countWords } from "@voquill/utilities";
-import type { JsonResponse, LlmChatInput, LlmStreamEvent } from "@voquill/types";
+import { retry, countWords } from "@maus-inc/utilities";
+import type { JsonResponse, LlmChatInput, LlmStreamEvent } from "@maus-inc/types";
 import { openaiCompatibleStreamChat } from "./openai.utils";
 
 export const DEEPSEEK_MODELS = ["deepseek-chat", "deepseek-reasoner"] as const;
@@ -38,7 +38,7 @@ const createClient = (apiKey: string) => {
   return new OpenAI({
     apiKey: apiKey.trim(),
     baseURL: DEEPSEEK_BASE_URL,
-    dangerouslyAllowBrowser: true, // This is safe because Voquill natively on desktop
+    dangerouslyAllowBrowser: true, // This is safe because mausVoice natively on desktop
   });
 };
 

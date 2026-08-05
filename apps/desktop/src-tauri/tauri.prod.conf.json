@@ -1,11 +1,11 @@
 {
-  "productName": "FoniMaus",
-  "identifier": "com.voquill.desktop",
-  "mainBinaryName": "FoniMaus",
+  "productName": "mausVoice",
+  "identifier": "com.mausinc.desktop",
+  "mainBinaryName": "mausVoice",
   "plugins": {
     "updater": {
       "endpoints": [
-        "https://github.com/voquill/voquill/releases/download/desktop-prod/latest.json"
+        "https://github.com/mausvoice/mausvoice/releases/download/desktop-prod/latest.json"
       ]
     }
   }

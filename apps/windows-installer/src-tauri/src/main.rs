@@ -5,7 +5,7 @@ use std::process::Stdio;
 use tauri::{AppHandle, Emitter};
 use tokio::process::Command;
 
-const EMBEDDED_INSTALLER: &[u8] = include_bytes!("../installer/Voquill_Setup.exe");
+const EMBEDDED_INSTALLER: &[u8] = include_bytes!("../installer/mausVoice_Setup.exe");
 
 #[derive(Clone, serde::Serialize)]
 struct InstallProgress {
@@ -16,7 +16,7 @@ struct InstallProgress {
 
 fn extract_installer() -> Result<PathBuf, String> {
     let temp_dir = std::env::temp_dir();
-    let installer_path = temp_dir.join("Voquill_Setup.exe");
+    let installer_path = temp_dir.join("mausVoice_Setup.exe");
 
     std::fs::write(&installer_path, EMBEDDED_INSTALLER)
         .map_err(|e| format!("Failed to extract installer: {}", e))?;
@@ -41,7 +41,7 @@ async fn start_installation(app: AppHandle) -> Result<(), String> {
 
     let installer_path = extract_installer()?;
 
-    emit_progress(&app, "installing", 15, "Starting Voquill setup...");
+    emit_progress(&app, "installing", 15, "Starting mausVoice setup...");
 
     let mut child = Command::new(&installer_path)
         .args(["/S", "/D="])
@@ -50,7 +50,7 @@ async fn start_installation(app: AppHandle) -> Result<(), String> {
         .spawn()
         .map_err(|e| format!("Failed to start installer: {}", e))?;
 
-    emit_progress(&app, "installing", 30, "Installing Voquill...");
+    emit_progress(&app, "installing", 30, "Installing mausVoice...");
 
     let progress_start = 30u32;
     let progress_range = 55u32;
@@ -59,7 +59,7 @@ async fn start_installation(app: AppHandle) -> Result<(), String> {
     for i in 0..steps {
         tokio::time::sleep(tokio::time::Duration::from_millis(500)).await;
         let progress = (progress_start + ((i + 1) * progress_range / steps)) as u8;
-        emit_progress(&app, "installing", progress.min(85), "Installing Voquill...");
+        emit_progress(&app, "installing", progress.min(85), "Installing mausVoice...");
     }
 
     let status = child
@@ -95,8 +95,8 @@ fn get_installed_app_path() -> Result<PathBuf, String> {
     let program_files = std::env::var("PROGRAMFILES").ok();
 
     let candidates = [
-        ("Voquill (dev)", "Voquill (dev).exe"),
-        ("Voquill", "Voquill.exe"),
+        ("mausVoice (dev)", "mausVoice (dev).exe"),
+        ("mausVoice", "mausVoice.exe"),
     ];
 
     for (folder, exe) in candidates {
@@ -114,7 +114,7 @@ fn get_installed_app_path() -> Result<PathBuf, String> {
         }
     }
 
-    Err("Could not find installed Voquill application".to_string())
+    Err("Could not find installed mausVoice application".to_string())
 }
 
 #[tauri::command]

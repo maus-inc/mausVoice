@@ -1,4 +1,4 @@
-import type { Transcription } from "@voquill/types";
+import type { Transcription } from "@maus-inc/types";
 import dayjs from "dayjs";
 import { getTranscriptionRepo } from "../repos";
 import { getAppState, produceAppState } from "../store";

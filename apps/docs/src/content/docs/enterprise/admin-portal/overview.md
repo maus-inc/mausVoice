@@ -3,7 +3,7 @@ title: Admin Portal
 description: Manage users, dictionary terms, transcription providers, and settings from the admin portal.
 ---
 
-The admin portal is your central hub for managing your Voquill Enterprise deployment. From here you can manage users, configure global dictionary terms, set up transcription and AI providers, and control organization-wide settings.
+The admin portal is your central hub for managing your mausVoice Enterprise deployment. From here you can manage users, configure global dictionary terms, set up transcription and AI providers, and control organization-wide settings.
 
 ## Opening the Admin Portal
 
@@ -11,7 +11,7 @@ How you access the admin portal depends on your deployment type.
 
 ### Managed Cloud
 
-If you're on a managed cloud deployment, we provide the admin portal URL during onboarding. If you've lost it, contact [enterprise@voquill.com](mailto:enterprise@voquill.com).
+If you're on a managed cloud deployment, we provide the admin portal URL during onboarding. If you've lost it, contact [enterprise@mausvoice.com](mailto:enterprise@mausvoice.com).
 
 ### Self-Hosted Cloud
 

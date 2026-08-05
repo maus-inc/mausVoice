@@ -15,7 +15,7 @@ pub struct Credentials {
 
 pub fn config_dir() -> Result<PathBuf> {
     let base = dirs::config_dir().context("Could not resolve config directory")?;
-    Ok(base.join("voquill"))
+    Ok(base.join("mausvoice"))
 }
 
 pub fn credentials_path(env: Env) -> Result<PathBuf> {

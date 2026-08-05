@@ -1,4 +1,4 @@
-import { getRec } from "@voquill/utilities";
+import { getRec } from "@maus-inc/utilities";
 import { useMemo } from "react";
 import { useIsOnboarded } from "../../hooks/user.hooks";
 import { useAppStore } from "../../store";

@@ -1,10 +1,10 @@
 {
-  "name": "@voquill/desktop-native-apis",
+  "name": "@maus-inc/desktop-native-apis",
   "version": "0.3.25",
-  "description": "Type-safe TypeScript wrappers for the Voquill desktop Tauri commands",
+  "description": "Type-safe TypeScript wrappers for the mausVoice desktop Tauri commands",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/voquill/voquill.git",
+    "url": "git+https://github.com/mausvoice/mausvoice.git",
     "directory": "packages/desktop-native-apis"
   },
   "main": "dist/index.js",
@@ -19,7 +19,7 @@
     "@tauri-apps/api": "~2.10.1"
   },
   "devDependencies": {
-    "@voquill/typescript-config": "workspace:*",
+    "@maus-inc/typescript-config": "workspace:*",
     "typescript": "5.9.2"
   },
   "files": [

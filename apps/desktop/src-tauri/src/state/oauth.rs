@@ -11,21 +11,21 @@ impl GoogleOAuthConfig {
     pub fn from_env() -> Option<Self> {
         // Try compile-time env vars first (embedded during CI builds),
         // then fall back to runtime env vars (for local development).
-        let client_id = option_env!("VOQUILL_GOOGLE_CLIENT_ID")
+        let client_id = option_env!("MAUSVOICE_GOOGLE_CLIENT_ID")
             .filter(|s| !s.trim().is_empty())
             .map(|s| s.trim().to_owned())
             .or_else(|| {
-                env::var("VOQUILL_GOOGLE_CLIENT_ID")
+                env::var("MAUSVOICE_GOOGLE_CLIENT_ID")
                     .ok()
                     .filter(|s| !s.trim().is_empty())
                     .map(|s| s.trim().to_owned())
             })?;
 
-        let client_secret = option_env!("VOQUILL_GOOGLE_CLIENT_SECRET")
+        let client_secret = option_env!("MAUSVOICE_GOOGLE_CLIENT_SECRET")
             .filter(|s| !s.trim().is_empty())
             .map(|s| s.trim().to_owned())
             .or_else(|| {
-                env::var("VOQUILL_GOOGLE_CLIENT_SECRET")
+                env::var("MAUSVOICE_GOOGLE_CLIENT_SECRET")
                     .ok()
                     .filter(|s| !s.trim().is_empty())
                     .map(|s| s.trim().to_owned())

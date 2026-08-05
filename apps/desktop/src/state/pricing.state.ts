@@ -1,5 +1,5 @@
-import { PriceKey } from "@voquill/pricing";
-import { Nullable } from "@voquill/types";
+import { PriceKey } from "@maus-inc/pricing";
+import { Nullable } from "@maus-inc/types";
 import { PricingPlan } from "../utils/price.utils";
 
 export type PricingState = {

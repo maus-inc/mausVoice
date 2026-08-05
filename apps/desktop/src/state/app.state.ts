@@ -1,4 +1,4 @@
-import { HandlerOutput } from "@voquill/functions";
+import { HandlerOutput } from "@maus-inc/functions";
 import {
   ApiKey,
   AppTarget,
@@ -22,7 +22,7 @@ import {
   Transcription,
   User,
   UserPreferences,
-} from "@voquill/types";
+} from "@maus-inc/types";
 import { AuthUser } from "../types/auth.types";
 import { Vector2 } from "../types/math.types";
 import { OverlayPhase } from "../types/overlay.types";
