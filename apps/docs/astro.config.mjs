@@ -10,7 +10,7 @@ export default defineConfig({
 		starlight({
 			title: 'mausVoice Docs',
 			logo: {
-				src: './src/assets/icon.svg',
+				src: './src/assets/logo.png',
 			},
 			customCss: ['./src/styles/custom.css'],
 			sidebar: [

@@ -1,7 +1,10 @@
 import { Box, type BoxProps } from "@mui/material";
-import AppLogo from "../../assets/app-logo.svg?react";
+import appLogo from "../../assets/app-logo.png";
 
-export type LogoProps = BoxProps;
+export type LogoProps = BoxProps & {
+  width?: number | string;
+  height?: number | string;
+};
 
 export const Logo = ({
   sx,
@@ -11,11 +14,17 @@ export const Logo = ({
 }: LogoProps) => {
   return (
     <Box
-      component={AppLogo}
+      component="img"
+      src={appLogo}
+      alt="mausVoice"
       width={width}
       height={height}
+      draggable={false}
       sx={{
-        color: "primary.main",
+        display: "block",
+        objectFit: "contain",
+        userSelect: "none",
+        flexShrink: 0,
         ...sx,
       }}
       {...rest}

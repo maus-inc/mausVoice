@@ -1,8 +1,8 @@
 import { createTheme, type Shadows } from "@mui/material/styles";
 import { premiumSurface } from "./styles/shadows";
 
-const uiFont = '"Plus Jakarta Sans", system-ui, -apple-system, sans-serif';
-const displayFont = '"TAN-PARADISO", "Plus Jakarta Sans", system-ui, sans-serif';
+const uiFont = '"TAN-PARADISO", system-ui, -apple-system, sans-serif';
+const displayFont = '"TAN-PARADISO", system-ui, sans-serif';
 
 export const theme = createTheme({
   cssVariables: {

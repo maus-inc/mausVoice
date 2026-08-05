@@ -1,14 +1,16 @@
-/* Display wordmark — TAN-PARADISO
-   To embed: add TAN-PARADISO.woff2 next to this comment path and uncomment the url() line. */
+/* Display + UI — TAN-PARADISO (bundled) is the app-wide typeface */
 @font-face {
   font-family: "TAN-PARADISO";
-  src: local("TAN-PARADISO"), local("TAN Paradiso");
+  src:
+    local("TAN-PARADISO"),
+    local("TAN Paradiso"),
+    url("../assets/fonts/tan-paradiso/TAN-PARADISO-Regular.woff2") format("woff2");
   font-weight: 400 700;
   font-style: normal;
   font-display: swap;
 }
 
-/* UI body — Plus Jakarta Sans (bundled) */
+/* Keep Jakarta as a secondary face only where we explicitly opt in */
 @font-face {
   font-family: "Plus Jakarta Sans";
   src: url("../assets/fonts/jakarta/400.woff2") format("woff2");
@@ -46,8 +48,8 @@
   --duration-base: 200ms;
   --duration-enter: 250ms;
   --duration-exit: 180ms;
-  --font-display: "TAN-PARADISO", "Plus Jakarta Sans", system-ui, sans-serif;
-  --font-ui: "Plus Jakarta Sans", system-ui, -apple-system, sans-serif;
+  --font-display: "TAN-PARADISO", system-ui, sans-serif;
+  --font-ui: "TAN-PARADISO", system-ui, -apple-system, sans-serif;
 }
 
 @media (prefers-reduced-motion: reduce) {

@@ -1,7 +1,7 @@
 import { useEffect } from 'react'
 import { FormattedMessage, useIntl } from 'react-intl'
 import VpnKeyIcon from '@mui/icons-material/VpnKey'
-import AppLogo from '../../assets/app-logo.svg?react'
+import appLogo from '../../assets/app-logo.png'
 import { getAppName } from '../../utils/env.utils'
 import { useAppStore } from '../../store'
 import { produceAppState } from '../../store'
@@ -53,7 +53,7 @@ export default function LoginPage() {
       <Card sx={{ width: '100%', maxWidth: 420, bgcolor: 'level0' }}>
         <CardContent sx={{ p: 4 }}>
           <Box sx={{ display: 'flex', flexDirection: 'column', alignItems: 'center', mb: 3 }}>
-            <AppLogo width={48} height={48} style={{ color: 'primary', marginBottom: 12 }} />
+            <img src={appLogo} width={48} height={48} alt="mausVoice" style={{ marginBottom: 12, display: 'block' }} />
             <Typography variant="h5" fontWeight={600}>
               {getAppName()}
             </Typography>

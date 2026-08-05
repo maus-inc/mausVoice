@@ -20,9 +20,9 @@ export const LogoWithText = ({ sx, ...rest }: LogoWithTextProps) => {
         component="span"
         sx={{
           fontFamily: "var(--font-display)",
-          fontWeight: 600,
-          fontSize: "1.2rem",
-          letterSpacing: "-0.03em",
+          fontWeight: 400,
+          fontSize: "1.15rem",
+          letterSpacing: "0.01em",
           lineHeight: 1,
           userSelect: "none",
           display: { xs: "none", sm: "block" },
