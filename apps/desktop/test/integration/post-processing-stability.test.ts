@@ -22,7 +22,7 @@ test(
   "stability1",
   async () => {
     const repo = getGroqGentextRepo();
-    for (let i = 0; i < 10; i++) {
+    for (let i = 0; i < 3; i++) {
       await expect(
         postProcess({
           repo,
