@@ -15,62 +15,56 @@ pub(crate) fn machine_id() -> Option<&'static str> {
     MACHINE_ID.get_or_init(resolve_machine_id).as_deref()
 }
 
+// Spawn a command, require a clean exit, and return its stdout. Both the
+// Windows registry read and the macOS platform-UUID read share this shape;
+// keeping it here avoids duplicating the spawn/status/output dance.
+fn run_and_read_stdout(program: &str, args: &[&str]) -> Option<String> {
+    use std::process::Command;
+    let out = Command::new(program).args(args).output().ok()?;
+    if !out.status.success() {
+        return None;
+    }
+    Some(String::from_utf8_lossy(&out.stdout).into_owned())
+}
+
 // Delegate a `reg query` process on Windows. Using the CLI (rather than the
 // `windows`-crate registry FFI) keeps this module dependency-light and easy to
 // reason about; `reg` ships on every supported Windows version.
 #[cfg(target_os = "windows")]
 fn read_machine_guid() -> Option<String> {
-    use std::process::Command;
-    let out = Command::new("reg")
-        .args([
+    let text = run_and_read_stdout(
+        "reg",
+        &[
             "query",
             r"HKLM\SOFTWARE\Microsoft\Cryptography",
             "/v",
             "MachineGuid",
-        ])
-        .output()
-        .ok()?;
-    if !out.status.success() {
-        return None;
-    }
-    let text = String::from_utf8_lossy(&out.stdout);
+        ],
+    )?;
     // Output line looks like: "    MachineGuid    REG_SZ    {0E12...}"
-    for part in text.split_whitespace() {
-        if part.len() >= 2 && part.as_bytes()[0] == b'{' && part.ends_with('}') {
-            return Some(part.to_string());
-        }
-    }
-    None
+    text.split_whitespace().find(|part| {
+        part.len() >= 2 && part.as_bytes()[0] == b'{' && part.ends_with('}')
+    })
+    .map(str::to_string)
 }
 
 #[cfg(target_os = "macos")]
 fn read_platform_uuid() -> Option<String> {
-    use std::process::Command;
-    let out = Command::new("/usr/sbin/ioreg")
-        .args(["-rd1", "-c", "IOPlatformExpertDevice"])
-        .output()
-        .ok()?;
-    if !out.status.success() {
-        return None;
-    }
-    let text = String::from_utf8_lossy(&out.stdout);
-    for line in text.lines() {
-        if line.contains("IOPlatformUUID") {
-            if let Some(quote) = line.split('"').nth(3) {
-                let trimmed = quote.trim();
-                if !trimmed.is_empty() {
-                    return Some(trimmed.to_string());
-                }
-            }
-        }
-    }
-    None
+    let text = run_and_read_stdout(
+        "/usr/sbin/ioreg",
+        &["-rd1", "-c", "IOPlatformExpertDevice"],
+    )?;
+    text.lines()
+        .find(|line| line.contains("IOPlatformUUID"))
+        .and_then(|line| line.split('"').nth(3))
+        .map(str::trim)
+        .filter(|trimmed| !trimmed.is_empty())
+        .map(str::to_string)
 }
 
 #[cfg(target_os = "linux")]
 fn read_machine_id_file() -> Option<String> {
-    let raw = std::fs::read_to_string("/etc/machine-id").ok()?;
-    let trimmed = raw.trim().to_string();
+    let trimmed = std::fs::read_to_string("/etc/machine-id").ok()?.trim().to_string();
     if trimmed.is_empty() {
         None
     } else {
