@@ -16,10 +16,9 @@ use tauri::{AppHandle, Emitter, EventTarget};
 use serde::{Deserialize, Serialize};
 use strum::IntoEnumIterator;
 
-/// Helper to acquire a mutex lock, recovering from poison errors.
-/// Repeated pattern throughout this file — centralized to reduce noise.
+/// Helper to acquire a mutex lock, always returning a guard by recovering from poison errors.
 fn lock<T>(mutex: &Mutex<T>) -> MutexGuard<'_, T> {
-    mutex.lock().expect("mutex poisoned")
+    mutex.lock().unwrap_or_else(|poisoned| poisoned.into_inner())
 }
 
 #[cfg(target_os = "linux")]

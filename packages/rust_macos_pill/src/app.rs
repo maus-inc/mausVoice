@@ -12,6 +12,7 @@ use cocoa::base::{id, nil, NO, YES};
 use cocoa::foundation::{NSAutoreleasePool, NSPoint, NSRect, NSSize, NSString};
 use objc::declare::ClassDecl;
 use objc::runtime::{Class, Object, Sel, BOOL};
+// Note: `Object` import kept for potential future use (currently only `&Object` is needed)
 
 use crate::constants::*;
 use crate::draw;
@@ -189,7 +190,7 @@ extern "C" fn mouse_down(_this: &Object, _sel: Sel, event: id) {
     with_ctx(|ctx| {
         unsafe {
             let loc: NSPoint = msg_send![event, locationInWindow];
-            let view_loc = convert_point_to_view(_this, loc);
+            let view_loc = convert_point_to_view(_this as id, loc);
             // Start long-press tracking if clicking on the pill body
             if input::is_on_pill_at(&ctx.state, view_loc.x, view_loc.y) {
                 ctx.state.long_press_active.set(true);
@@ -1207,6 +1208,8 @@ unsafe fn setup(receiver: Receiver<InMessage>, embedded: bool) {
         transcript_has_message: Cell::new(false),
         long_press_active: Cell::new(false),
         long_press_elapsed: Cell::new(0.0),
+        long_press_start_x: Cell::new(0.0),
+        long_press_start_y: Cell::new(0.0),
         balloon_pop_active: Cell::new(false),
         balloon_pop_elapsed: Cell::new(0.0),
         balloon_pop_particles: RefCell::new(Vec::new()),

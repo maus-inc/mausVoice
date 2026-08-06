@@ -147,6 +147,20 @@ impl Recorder for PulseRecorder {
         };
         guard.as_ref().map(|r| r.sample_rate)
     }
+
+    fn pause(&self) -> Result<(), Box<dyn std::error::Error>> {
+        // PulseAudio simple stream does not expose direct pause/resume.
+        // Returning unsupported keeps the trait contract while making the limitation explicit.
+        Err(Box::new(RecordingError::StreamPlay(
+            "PulseAudio recorder does not support pause/resume".into(),
+        )))
+    }
+
+    fn resume(&self) -> Result<(), Box<dyn std::error::Error>> {
+        Err(Box::new(RecordingError::StreamPlay(
+            "PulseAudio recorder does not support pause/resume".into(),
+        )))
+    }
 }
 
 /// Given the user's preferred device label (the display name shown in the UI),

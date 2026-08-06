@@ -2,7 +2,7 @@
 name = "mausVoice"
 version = "0.1.0"
 description = "mausVoice — AI voice dictation"
-authors = ["you"]
+authors = ["Owie Emmanuel <owieemmanuel34@gmail.com>"]
 edition = "2021"
 default-run = "mausVoice"
 
