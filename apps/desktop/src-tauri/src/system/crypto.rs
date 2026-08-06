@@ -11,7 +11,32 @@ const SECRET_ENV: &str = "MAUSVOICE_API_KEY_SECRET";
 const XNONCE_LEN: usize = 24;
 
 static RUNTIME_SECRET: OnceLock<Vec<u8>> = OnceLock::new();
+static LEGACY_FALLBACK_SECRET: OnceLock<Vec<u8>> = OnceLock::new();
 static LOGGED_FALLBACK: OnceLock<()> = OnceLock::new();
+
+// The pre-machine-id fallback derivation, for decrypting credentials that were
+// persisted before commit 79434736 added the machine identifier to the fallback
+// secret. `runtime_secret()` hashes the label + machine id + home + user; this
+// mirrors the older label + home + user derivation (no machine id) so rows
+// written under that fallback remain decryptable after upgrade.
+fn legacy_fallback_secret() -> &'static [u8] {
+    LEGACY_FALLBACK_SECRET
+        .get_or_init(|| {
+            let mut hasher = Sha256::new();
+            hasher.update(b"mausvoice-local-dev-fallback-v1");
+            if let Ok(home) =
+                std::env::var("HOME").or_else(|_| std::env::var("USERPROFILE"))
+            {
+                hasher.update(home.as_bytes());
+            }
+            if let Ok(user) = std::env::var("USER").or_else(|_| std::env::var("USERNAME"))
+            {
+                hasher.update(user.as_bytes());
+            }
+            hasher.finalize().to_vec()
+        })
+        .as_slice()
+}
 
 pub struct ProtectedApiKey {
     // Holds the per-record XChaCha20-Poly1305 nonce (kept under the existing
@@ -96,13 +121,31 @@ pub fn reveal_api_key(salt_b64: &str, ciphertext_b64: &str) -> Result<String, Cr
         .decode(ciphertext_b64)
         .map_err(|err| CryptoError::Base64(err.to_string()))?;
 
-    let secret = runtime_secret();
-    let cipher = cipher_for(secret, &nonce);
-    let plaintext = cipher
-        .decrypt(XNonce::from_slice(&nonce), ciphertext.as_ref())
-        .map_err(|err| CryptoError::Decryption(err.to_string()))?;
+    let mut last_error = None;
+    let mut candidates: Vec<&'static [u8]> = vec![runtime_secret()];
+    // Only offer the legacy derivation when the runtime secret itself is the
+    // built-in fallback; if an explicit secret is set there is no legacy variant
+    // to migrate from (all writes already used the explicit secret).
+    if option_env!("MAUSVOICE_API_KEY_SECRET").is_none()
+        && std::env::var(SECRET_ENV).map(|v| v.is_empty()).unwrap_or(true)
+    {
+        candidates.push(legacy_fallback_secret());
+    }
 
-    String::from_utf8(plaintext).map_err(|err| CryptoError::InvalidUtf8(err.to_string()))
+    for secret in candidates {
+        let cipher = cipher_for(secret, &nonce);
+        match cipher.decrypt(XNonce::from_slice(&nonce), ciphertext.as_ref()) {
+            Ok(plaintext) => {
+                return String::from_utf8(plaintext)
+                    .map_err(|err| CryptoError::InvalidUtf8(err.to_string()));
+            }
+            Err(err) => {
+                last_error = err;
+            }
+        }
+    }
+
+    Err(CryptoError::Decryption(last_error.to_string()))
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -195,5 +238,24 @@ mod tests {
     fn exposes_last_four_as_suffix() {
         let protected = protect_api_key("abcdef1234");
         assert_eq!(protected.key_suffix.as_deref(), Some("1234"));
+    }
+
+    #[test]
+    fn reveals_credentials_encrypted_with_legacy_fallback() {
+        // Simulate a row written before the machine-id fallback existed: encrypt
+        // with the legacy label + home + user derivation, then confirm reveal
+        // still decrypts it (current secret fails, legacy succeeds).
+        let legacy = legacy_fallback_secret();
+        let nonce = generate_nonce();
+        let cipher = cipher_for(legacy, &nonce);
+        let ciphertext = cipher
+            .encrypt(XNonce::from_slice(&nonce), b"gsk_legacy_row_value")
+            .expect("legacy encrypt");
+        let salt_b64 = general_purpose::STANDARD.encode(nonce);
+        let ciphertext_b64 = general_purpose::STANDARD.encode(ciphertext);
+
+        let revealed =
+            reveal_api_key(&salt_b64, &ciphertext_b64).expect("legacy row decrypts");
+        assert_eq!(revealed, "gsk_legacy_row_value");
     }
 }
