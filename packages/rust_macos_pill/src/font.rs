@@ -7,7 +7,6 @@ use std::sync::OnceLock;
 
 use cocoa::base::{id, nil};
 use cocoa::foundation::NSString;
-use objc::runtime::Object;
 use objc::{class, msg_send, sel, sel_impl};
 
 const SATOSHI_MEDIUM_TTF: &[u8] = include_bytes!("../fonts/Satoshi-Medium.ttf");

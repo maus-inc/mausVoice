@@ -1163,7 +1163,7 @@ fn draw_paused(ctx: &Ctx, rx: f64, ry: f64, pill_w: f64, pill_h: f64, expand_t: 
         let x = start_x + i as f64 * (bar_w + gap);
         let y = mid_y - h / 2.0;
         ctx.set_source_rgba(1.0, 1.0, 1.0, 0.55 * expand_t);
-        ctx.rounded_rect(x, y, bar_w, h.max(1.0), 1.5);
+        gfx::rounded_rect(ctx, x, y, bar_w, h.max(1.0), 1.5);
         ctx.fill();
     }
 }

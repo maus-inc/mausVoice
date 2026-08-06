@@ -147,6 +147,8 @@ pub fn run(receiver: Receiver<InMessage>) {
         transcript_has_message: Cell::new(false),
         long_press_active: Cell::new(false),
         long_press_elapsed: Cell::new(0.0),
+        long_press_start_x: Cell::new(0.0),
+        long_press_start_y: Cell::new(0.0),
         balloon_pop_active: Cell::new(false),
         balloon_pop_elapsed: Cell::new(0.0),
         balloon_pop_particles: RefCell::new(Vec::new()),
@@ -1180,7 +1182,8 @@ fn create_edit_overlay(hinstance: HMODULE, main_hwnd: HWND) {
         crate::font::install_embedded_satoshi();
         let mut lf = LOGFONTW::default();
         let face: Vec<u16> = "Satoshi".encode_utf16().collect();
-        lf.lfFaceName[..face.len().min(lf.lfFaceName.len())].copy_from_slice(&face[..face.len().min(lf.lfFaceName.len())]);
+        let n = face.len().min(lf.lfFaceName.len());
+        lf.lfFaceName[..n].copy_from_slice(&face[..n]);
         lf.lfHeight = -18;
         lf.lfWeight = 500; // Medium
         let font = CreateFontIndirectW(&lf);

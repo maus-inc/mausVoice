@@ -190,7 +190,7 @@ extern "C" fn mouse_down(_this: &Object, _sel: Sel, event: id) {
     with_ctx(|ctx| {
         unsafe {
             let loc: NSPoint = msg_send![event, locationInWindow];
-            let view_loc = convert_point_to_view(_this as id, loc);
+            let view_loc = convert_point_to_view(_this as *const _ as *mut _, loc);
             // Start long-press tracking if clicking on the pill body
             if input::is_on_pill_at(&ctx.state, view_loc.x, view_loc.y) {
                 ctx.state.long_press_active.set(true);
@@ -247,7 +247,7 @@ extern "C" fn mouse_up(_this: &Object, _sel: Sel, event: id) {
         if !was_dragging {
             unsafe {
                 let loc: NSPoint = msg_send![event, locationInWindow];
-                let view_loc = convert_point_to_view(_this, loc);
+                let view_loc = convert_point_to_view(_this as *const _ as *mut _, loc);
                 input::handle_click(&ctx.state, view_loc.x, view_loc.y);
             }
         }
@@ -464,7 +464,7 @@ fn perform_tick() {
         // Compute hover from actual mouse position over pill area
         update_hover(ctx.view, ctx);
 
-        tick(&ctx.state, dt);
+        tick(&ctx.state, ctx.window, dt);
 
         // Show/hide entry for typing mode
         let is_typing = ctx.state.assistant_active.get()
@@ -537,7 +537,7 @@ fn update_hover(view: id, ctx: &AppContext) {
 
 // ── Animation tick ────────────────────────────────────────────────
 
-fn tick(state: &PillState, dt: f64) {
+fn tick(state: &PillState, window: id, dt: f64) {
     let phase = state.phase.get();
     let is_active = phase != Phase::Idle;
     let is_recording = phase == Phase::Recording;
@@ -641,7 +641,7 @@ fn tick(state: &PillState, dt: f64) {
     tick_transcript(state, dt);
 
     // Long-press balloon pop + drag
-    tick_long_press(state, dt);
+    tick_long_press(state, window, dt);
     tick_balloon_pop(state, dt);
 
     // Flash message timer
@@ -857,7 +857,7 @@ fn tick_transcript(state: &PillState, dt: f64) {
     }
 }
 
-fn tick_long_press(state: &PillState, dt: f64) {
+fn tick_long_press(state: &PillState, window: id, dt: f64) {
     if !state.long_press_active.get() {
         return;
     }
@@ -877,7 +877,7 @@ fn tick_long_press(state: &PillState, dt: f64) {
     // Cancel if mouse moved too far from start position (all coords in screen space).
     unsafe {
         let mouse = mouse_location();
-        let origin = window_frame(ctx.window).origin;
+        let origin = window_frame(window).origin;
         let start_screen_x = origin.x + state.long_press_start_x.get();
         let start_screen_y = origin.y + state.long_press_start_y.get();
         let dx = mouse.x - start_screen_x;

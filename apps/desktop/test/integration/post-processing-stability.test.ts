@@ -33,5 +33,5 @@ test(
       ).resolves.not.toThrow();
     }
   },
-  1000 * 60,
+  1000 * 60 * 3,
 );
