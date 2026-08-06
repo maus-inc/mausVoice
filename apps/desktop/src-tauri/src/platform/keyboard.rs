@@ -337,14 +337,13 @@ pub fn sync_combos(combos: Vec<Vec<String>>) {
         *guard = combos.clone();
     }
 
-    if let Ok(mut guard) = lock(child_stdin_store()) {
-        if let Some(stdin) = guard.as_mut() {
-            if let Ok(json) = serde_json::to_string(&combos) {
-                if let Err(err) = writeln!(stdin, "{json}") {
-                    log::error!("Failed to write combos to child stdin: {err}");
-                }
-                let _ = stdin.flush();
+    let mut guard = lock(child_stdin_store());
+    if let Some(stdin) = guard.as_mut() {
+        if let Ok(json) = serde_json::to_string(&combos) {
+            if let Err(err) = writeln!(stdin, "{json}") {
+                log::error!("Failed to write combos to child stdin: {err}");
             }
+            let _ = stdin.flush();
         }
     }
 }
@@ -678,14 +677,13 @@ fn ensure_listener_child(port: u16) -> Result<(), String> {
         let combos = lock(combo_store())
             .clone();
         if !combos.is_empty() {
-            if let Ok(mut guard) = lock(child_stdin_store()) {
-                if let Some(stdin) = guard.as_mut() {
-                    if let Ok(json) = serde_json::to_string(&combos) {
-                        if let Err(err) = writeln!(stdin, "{json}") {
-                            log::error!("Failed to send initial combos to child: {err}");
-                        }
-                        let _ = stdin.flush();
+            let mut guard = lock(child_stdin_store());
+            if let Some(stdin) = guard.as_mut() {
+                if let Ok(json) = serde_json::to_string(&combos) {
+                    if let Err(err) = writeln!(stdin, "{json}") {
+                        log::error!("Failed to send initial combos to child: {err}");
                     }
+                    let _ = stdin.flush();
                 }
             }
         }
