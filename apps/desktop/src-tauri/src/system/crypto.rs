@@ -140,12 +140,16 @@ pub fn reveal_api_key(salt_b64: &str, ciphertext_b64: &str) -> Result<String, Cr
                     .map_err(|err| CryptoError::InvalidUtf8(err.to_string()));
             }
             Err(err) => {
-                last_error = err;
+                last_error = Some(err);
             }
         }
     }
 
-    Err(CryptoError::Decryption(last_error.to_string()))
+    Err(CryptoError::Decryption(
+        last_error
+            .map(|err| err.to_string())
+            .unwrap_or_else(|| "all decryption attempts failed".to_string()),
+    ))
 }
 
 #[derive(Debug, thiserror::Error)]
