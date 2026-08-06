@@ -1,5 +1,6 @@
 use crate::ipc::{self, OutMessage};
 use crate::state::{ClickAction, PillState};
+use crate::constants::*;
 
 pub(crate) fn handle_click(state: &PillState, x: f64, y: f64) {
     let (ox, oy) = state.content_offset();

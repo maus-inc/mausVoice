@@ -492,3 +492,7 @@ unsafe fn create_dib(hdc: HDC, width: i32, height: i32) -> HBITMAP {
     CreateDIBSection(Some(hdc), &bmi, DIB_RGB_COLORS, &mut bits, None, 0)
         .unwrap_or(HBITMAP::default())
 }
+
+pub fn lerp(a: f64, b: f64, t: f64) -> f64 {
+    a + (b - a) * t
+}

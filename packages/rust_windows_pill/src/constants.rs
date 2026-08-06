@@ -203,3 +203,7 @@ pub(crate) const BALLOON_POP_PARTICLE_LIFE: f64 = 0.7;
 pub(crate) const BALLOON_POP_PARTICLE_SIZE: f64 = 4.0;
 pub(crate) const BALLOON_POP_COLOR: (f64, f64, f64) = (0.45, 0.75, 1.0);
 pub(crate) const BALLOON_POP_COLOR2: (f64, f64, f64) = (0.7, 0.9, 1.0);
+
+// Particle physics constants
+pub(crate) const PARTICLE_GRAVITY: f64 = 120.0;  // pixels/second²
+pub(crate) const PARTICLE_DRAG_COEFFICIENT: f64 = -2.0;  // exponential decay rate
