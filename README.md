@@ -20,7 +20,7 @@
 - **Personal-use mode by default.** The app signs you in as a local user (no Firebase account) and configures sensible defaults automatically.
 - **Bring-your-own keys.** Out of the box, transcription uses **Deepgram streaming** (`nova-3`) over your Deepgram key — audio is transcribed live while you speak, so the transcript is ready almost as soon as you stop — and post-processing uses Groq `openai/gpt-oss-20b` over your Groq key. You enter both keys on first run (or in Settings); they are stored encrypted (XChaCha20-Poly1305) on your machine and are never baked into the build.
 - **Fully-local option still available.** You can also run Whisper locally (CPU or GPU) instead of the cloud APIs if you prefer zero network calls for transcription.
-- **Removed what I don't use.** The Flutter mobile app (`mobile/`), the `flutter_video_looper` package, and Linux desktop support have been removed to keep the tree focused on the macOS/Windows desktop app.
+- **Removed what I don't use.** The Flutter mobile app (`mobile/`) and the `flutter_video_looper` package have been removed to keep the tree focused on the desktop app. Linux desktop support (the GTK pill and Linux CI builds) is retained.
 
 Everything else — the dictation overlay, hotkeys, AI text cleanup, personal dictionary, writing styles, and the voice assistant — works as in upstream.
 
@@ -35,7 +35,7 @@ For the full picture — the monorepo layout, the "Rust is the API, TypeScript i
 
 ## Requirements
 
-- macOS or Windows
+- macOS, Windows, or Linux
 - Node.js 18+ and pnpm 10
 - Rust 1.77+ (see [Tauri prerequisites](https://v2.tauri.app/start/prerequisites/))
 - For the default cloud path: a [Deepgram API key](https://console.deepgram.com/) (streaming transcription) and a [Groq API key](https://console.groq.com/keys) (AI cleanup). For the fully-local path: a downloaded Whisper model instead.

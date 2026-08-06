@@ -4,7 +4,7 @@ This crate builds three binaries, one per backend environment.
 
 | Binary             | Firebase project                                  | Default `--site`        |
 | ------------------ | ------------------------------------------------- | ----------------------- |
-| `mausvoice`          | `mausvoice-prod`                                    | `https://voquill.com`   |
+| `mausvoice`          | `mausvoice-prod`                                    | `https://mausvoice.com`   |
 | `mausvoice-dev`      | `mausvoice-dev`                                     | `http://localhost:4321` |
 | `mausvoice-emulator` | `mausvoice-dev` + Auth emulator on `127.0.0.1:9099` | `http://localhost:4321` |
 
@@ -17,19 +17,19 @@ Released builds are published to GitHub Releases and mirrored to Homebrew, APT, 
 ### macOS / Linux (shell installer)
 
 ```sh
-curl -fsSL https://voquill.com/install.sh | sh
+curl -fsSL https://mausvoice.com/install.sh | sh
 ```
 
 Dev build:
 
 ```sh
-curl -fsSL https://voquill.com/install.sh | sh -s -- --dev
+curl -fsSL https://mausvoice.com/install.sh | sh -s -- --dev
 ```
 
 Pin a specific version:
 
 ```sh
-curl -fsSL https://voquill.com/install.sh | sh -s -- --version 1.2.3
+curl -fsSL https://mausvoice.com/install.sh | sh -s -- --version 1.2.3
 ```
 
 Installs to `$MAUSVOICE_INSTALL/bin` (defaults to `~/.mausvoice/bin`) and appends it to your shell profile.
@@ -37,19 +37,19 @@ Installs to `$MAUSVOICE_INSTALL/bin` (defaults to `~/.mausvoice/bin`) and append
 ### Windows (PowerShell)
 
 ```powershell
-iwr https://voquill.com/install.ps1 -UseBasicParsing | iex
+iwr https://mausvoice.com/install.ps1 -UseBasicParsing | iex
 ```
 
 Dev build:
 
 ```powershell
-& ([scriptblock]::Create((iwr https://voquill.com/install.ps1 -UseBasicParsing))) -Dev
+& ([scriptblock]::Create((iwr https://mausvoice.com/install.ps1 -UseBasicParsing))) -Dev
 ```
 
 Pin a specific version:
 
 ```powershell
-& ([scriptblock]::Create((iwr https://voquill.com/install.ps1 -UseBasicParsing))) -Version 1.2.3
+& ([scriptblock]::Create((iwr https://mausvoice.com/install.ps1 -UseBasicParsing))) -Version 1.2.3
 ```
 
 Installs to `%MAUSVOICE_INSTALL%\bin` (defaults to `%USERPROFILE%\.mausvoice\bin`) and adds it to your user `PATH`.
@@ -143,7 +143,7 @@ The [`release-cli.yml`](../.github/workflows/release-cli.yml) workflow drives ev
 - **Homebrew tap** — regenerates the formula in [`mausvoice/homebrew-mausvoice`](https://github.com/mausvoice/homebrew-mausvoice).
 - **APT repository** — adds the new `.deb` to [`mausvoice/apt`](https://github.com/mausvoice/apt) (`stable` codename for prod, `dev` for dev).
 - **RPM repository** — adds the new `.rpm` to [`mausvoice/rpm`](https://github.com/mausvoice/rpm) under `packages/stable` or `packages/dev`.
-- **Install scripts** — `apps/web/public/install.sh` and `apps/web/public/install.ps1` are served from `voquill.com` and resolve the latest matching tag on each channel.
+- **Install scripts** — `install.sh` and `install.ps1` are served from `mausvoice.com` and resolve the latest matching tag on each channel.
 
 ## Build
 
@@ -198,8 +198,8 @@ With `?env=emulator` the authorize page calls `connectAuthEmulator(auth, "http:/
 Pass `--site <origin>` to any binary if you want to test against a preview deploy, staging, or some other host. The binary still picks which Firebase project the login goes through.
 
 ```sh
-mausvoice login --site https://preview-42.voquill.com
-mausvoice-dev login --site https://staging.voquill.com
+mausvoice login --site https://preview-42.mausvoice.com
+mausvoice-dev login --site https://staging.mausvoice.com
 ```
 
 The CLI appends `/authorize` itself, so just give it the origin.
@@ -221,4 +221,4 @@ You need to `login` first so the CLI has a token to talk to RTDB. `mausvoice-emu
 Do this once for `mausvoice-prod` and once for `mausvoice-dev` in the Firebase Console:
 
 1. Authentication → Sign-in method → enable Google.
-2. Authentication → Settings → Authorized domains → add wherever the authorize page is hosted (`voquill.com` for prod). `localhost` is allowed by default.
+2. Authentication → Settings → Authorized domains → add wherever the authorize page is hosted (`mausvoice.com` for prod). `localhost` is allowed by default.

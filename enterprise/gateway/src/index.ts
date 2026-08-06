@@ -32,7 +32,7 @@ import type { LlmStreamEvent } from "@maus-inc/types";
 import cors from "cors";
 import type { Request, Response } from "express";
 import express from "express";
-import { runMigrations } from "./db/migrate";
+import { ensureDatabase, runMigrations } from "./db/migrate";
 import {
   generateText,
   streamChat,
@@ -379,6 +379,7 @@ app.get("/health", (_req: Request, res: Response) => {
 const PORT = process.env.PORT || 4630;
 
 async function main() {
+  await ensureDatabase();
   await runMigrations();
   app.listen(PORT, () => {
     console.log(`Gateway server listening on port ${PORT}`);

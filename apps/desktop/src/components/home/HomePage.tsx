@@ -87,15 +87,11 @@ export default function HomePage() {
           <Typography
             variant="h4"
             fontWeight={500}
-            sx={{
-              mb: 0.5,
-              fontFamily: "var(--font-display)",
-              letterSpacing: "0.01em",
-            }}
+            sx={{ mb: 0.5 }}
           >
             <FormattedMessage
               defaultMessage="Welcome back, {name}"
-              values={{ name: userName }}
+              values={{ name: <span style={{ fontFamily: "var(--font-display)" }}>{userName}</span> }}
             />
           </Typography>
           <DictationInstruction />

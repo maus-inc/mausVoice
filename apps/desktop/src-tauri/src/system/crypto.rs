@@ -38,15 +38,21 @@ pub fn runtime_secret() -> &'static [u8] {
                 _ => {
                     LOGGED_FALLBACK.get_or_init(|| {
                         log::warn!(
-                            "{SECRET_ENV} not set; using a built-in fallback secret. Set this \
+                            "{SECRET_ENV} not set; using a per-machine fallback secret. Set this \
                              at build time to protect stored API keys at rest."
                         );
                     });
                     {
-                        // Local-dev only fallback: never a fixed published secret.
-                        // Prefer setting MAUSVOICE_API_KEY_SECRET for real builds.
+                        // Fallback secret. Instead of a static published default, derive it from
+                        // the host's stable device id (Windows MachineGuid / macOS IOPlatformUUID /
+                        // Linux machine-id) plus the user profile, so the secret is unique per
+                        // machine and does not travel with the database. A copied DB cannot be
+                        // decrypted on another host without its machine id.
                         let mut hasher = Sha256::new();
-                        hasher.update(b"mausvoice-local-dev-fallback-v1");
+                        hasher.update(b"mausvoice-device-fallback-v1");
+                        if let Some(machine) = crate::system::machine_id::machine_id() {
+                            hasher.update(machine.as_bytes());
+                        }
                         if let Ok(home) = std::env::var("HOME").or_else(|_| std::env::var("USERPROFILE")) {
                             hasher.update(home.as_bytes());
                         }

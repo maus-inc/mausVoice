@@ -139,6 +139,42 @@ export const theme = createTheme({
           textRendering: "optimizeLegibility",
           transition: "background-color 220ms cubic-bezier(0.23, 1, 0.32, 1)",
         },
+        // Browser-owned surfaces. Theme them from the palette so every drawing
+        // plane shares the design instead of shipping platform defaults.
+        "*": {
+          caretColor: themeParam.vars.palette.text?.primary,
+          fontVariantNumeric: "tabular-nums",
+        },
+        "::selection": {
+          backgroundColor:
+            themeParam.palette.mode === "dark"
+              ? "rgba(49, 152, 255, 0.35)"
+              : "rgba(27, 138, 248, 0.25)",
+          color: "inherit",
+        },
+        "*::-webkit-scrollbar": {
+          width: 10,
+          height: 10,
+        },
+        "*::-webkit-scrollbar-track": {
+          background: "transparent",
+        },
+        "*::-webkit-scrollbar-thumb": {
+          backgroundColor:
+            themeParam.palette.mode === "dark"
+              ? "rgba(255,255,255,0.16)"
+              : "rgba(15,18,25,0.16)",
+          borderRadius: 6,
+          border: "2px solid transparent",
+          backgroundClip: "padding-box",
+        },
+        ":focus-visible": {
+          outline:
+            themeParam.palette.mode === "dark"
+              ? "2px solid rgba(49, 152, 255, 0.75)"
+              : "2px solid rgba(27, 138, 248, 0.7)",
+          outlineOffset: 2,
+        },
         "#root": {
           height: "100%",
         },
@@ -331,7 +367,7 @@ export const theme = createTheme({
             fontSize: 22,
           },
           "&:active": {
-            transform: "scale(0.98)",
+            transform: "scale(0.97)",
           },
         }),
         text: ({ theme }) => ({

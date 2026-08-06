@@ -305,9 +305,9 @@ jobs:
       RELEASE_FLAVOR: ${{ needs.metadata.outputs.release_flavor }}
       FLAVOR: ${{ needs.metadata.outputs.release_flavor }}
       VITE_FLAVOR: ${{ needs.metadata.outputs.release_flavor }}
-      VOQUILL_BUILD_FLAVOR: ${{ needs.metadata.outputs.release_flavor }}
-      VOQUILL_DESKTOP_FLAVOR: ${{ needs.metadata.outputs.release_flavor }}
-      VOQUILL_REQUIRE_GPU_SIDECAR: ${{ matrix.require_gpu_sidecar && 'true' || 'false' }}
+      MAUSVOICE_BUILD_FLAVOR: ${{ needs.metadata.outputs.release_flavor }}
+      MAUSVOICE_DESKTOP_FLAVOR: ${{ needs.metadata.outputs.release_flavor }}
+      MAUSVOICE_REQUIRE_GPU_SIDECAR: ${{ matrix.require_gpu_sidecar && 'true' || 'false' }}
       TAURI_PRIVATE_KEY: ${{ secrets.TAURI_PRIVATE_KEY }}
       TAURI_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_PRIVATE_KEY_PASSWORD }}
       TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_PRIVATE_KEY }}
@@ -614,7 +614,7 @@ jobs:
           MACOSX_DEPLOYMENT_TARGET: "13.3"
           CMAKE_OSX_DEPLOYMENT_TARGET: "13.3"
           TAURI_PLATFORM: ${{ matrix.tauri_platform }}
-          VOQUILL_DESKTOP_PLATFORM: ${{ matrix.node_platform }}
+          MAUSVOICE_DESKTOP_PLATFORM: ${{ matrix.node_platform }}
         run: pnpm exec turbo run build --filter=desktop...
 
       - name: Build and publish
@@ -622,7 +622,7 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           TAURI_PLATFORM: ${{ matrix.tauri_platform }}
-          VOQUILL_DESKTOP_PLATFORM: ${{ matrix.node_platform }}
+          MAUSVOICE_DESKTOP_PLATFORM: ${{ matrix.node_platform }}
           MACOSX_DEPLOYMENT_TARGET: "13.3"
           CMAKE_OSX_DEPLOYMENT_TARGET: "13.3"
           APPIMAGE_EXTRACT_AND_RUN: "1"
@@ -633,8 +633,8 @@ jobs:
           APPLE_API_ISSUER: ${{ env.APPLE_API_ISSUER }}
           TAURI_LOG_LEVEL: ${{ env.TAURI_LOG_LEVEL }}
           RUST_LOG: ${{ env.RUST_LOG }}
-          VOQUILL_GOOGLE_CLIENT_ID: ${{ steps.google-oauth.outputs.client_id }}
-          VOQUILL_GOOGLE_CLIENT_SECRET: ${{ steps.google-oauth.outputs.client_secret }}
+          MAUSVOICE_GOOGLE_CLIENT_ID: ${{ steps.google-oauth.outputs.client_id }}
+          MAUSVOICE_GOOGLE_CLIENT_SECRET: ${{ steps.google-oauth.outputs.client_secret }}
         with:
           projectPath: apps/desktop
           tauriScript: pnpm --filter desktop run tauri
@@ -724,11 +724,11 @@ jobs:
               bundle_identifier="com.voquill.desktop.enterprise-dev"
               ;;
             *)
-              pkg_name="Voquill_${RELEASE_VERSION}_universal.pkg"
+              pkg_name="mausVoice_${RELEASE_VERSION}_universal.pkg"
               bundle_identifier="com.voquill.desktop"
               ;;
           esac
-          unsigned_pkg="Voquill_unsigned.pkg"
+          unsigned_pkg="mausVoice_unsigned.pkg"
 
           pkgbuild \
             --component "${app_bundle_path}" \
@@ -827,7 +827,7 @@ jobs:
 
           $destDir = "apps/windows-installer/src-tauri/installer"
           New-Item -ItemType Directory -Force -Path $destDir | Out-Null
-          Copy-Item $nsisInstaller.FullName "$destDir/Voquill_Setup.exe"
+          Copy-Item $nsisInstaller.FullName "$destDir/mausVoice_Setup.exe"
 
           Write-Host "Building portable Windows installer..."
           Set-Location apps/windows-installer
@@ -879,7 +879,7 @@ jobs:
             exit 1
           }
 
-          $destName = "Voquill_Portable_Installer.exe"
+          $destName = "mausVoice_Portable_Installer.exe"
           Copy-Item $installerExe $destName
 
           Write-Host "Uploading $destName to release $env:RELEASE_TAG"
@@ -1132,7 +1132,7 @@ jobs:
             cask_name="voquill-desktop"
             app_name="Voquill"
             tag_prefix="desktop-v"
-            dmg_name="Voquill_#{version}_universal.dmg"
+            dmg_name="mausVoice_#{version}_universal.dmg"
           else
             cask_name="voquill-desktop-dev"
             app_name="Voquill (dev)"

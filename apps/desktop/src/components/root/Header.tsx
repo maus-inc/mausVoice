@@ -188,10 +188,11 @@ export const AppHeader = () => {
                 <Typography
                   variant="subtitle1"
                   fontWeight={500}
-                  lineHeight={1}
                   sx={{
                     fontFamily: "var(--font-display)",
-                    letterSpacing: "0.01em",
+                    fontSize: "1.05rem",
+                    letterSpacing: "0.02em",
+                    lineHeight: 1,
                   }}
                 >
                   {myName}

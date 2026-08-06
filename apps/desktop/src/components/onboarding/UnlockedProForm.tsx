@@ -33,7 +33,7 @@ const fadeIn = {
 };
 
 const scaleIn = {
-  initial: { opacity: 0, scale: 0.8 },
+  initial: { opacity: 0, scale: 0.95 },
   animate: { opacity: 1, scale: 1 },
 };
 
@@ -158,7 +158,7 @@ export const UnlockedProForm = () => {
       transition={{ delay: 0.2, duration: 0.6 }}
     >
       <motion.div
-        initial={{ opacity: 0, scale: 0.5, rotate: -10 }}
+        initial={{ opacity: 0, scale: 0.95, rotate: -10 }}
         animate={{ opacity: 1, scale: 1, rotate: 0 }}
         transition={{ delay: 0.3, duration: 0.5, ease: "easeOut" }}
       >
@@ -186,7 +186,7 @@ export const UnlockedProForm = () => {
             px: 2,
           },
         }}
-        initial={{ opacity: 0, scale: 0.5 }}
+        initial={{ opacity: 0, scale: 0.95 }}
         animate={{ opacity: 1, scale: 1 }}
         transition={{
           delay: 0.5,

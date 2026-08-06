@@ -57,6 +57,7 @@ pub(crate) fn draw_all(cr: &cairo::Context, state: &PillState) {
         }
 
         draw_cancel_button(cr, state, ww, wh);
+        draw_pause_resume_button(cr, state, ww, wh);
     }
 
     cr.restore().ok();
@@ -1150,6 +1151,66 @@ fn draw_cancel_button(cr: &cairo::Context, state: &PillState, ww: f64, wh: f64) 
         state.click_regions.borrow_mut().push(ClickRegion {
             x: btn_x, y: btn_y, w: CANCEL_BUTTON_SIZE, h: CANCEL_BUTTON_SIZE,
             action: ClickAction::CancelDictation,
+        });
+    }
+}
+
+fn draw_pause_resume_button(cr: &cairo::Context, state: &PillState, ww: f64, wh: f64) {
+    let t = state.cancel_t.get();
+    if t < 0.01 {
+        return;
+    }
+
+    let (pill_x, pill_y, pill_w, _) = pill_position(state, ww, wh);
+    let pause_x = pill_x + pill_w - CANCEL_BUTTON_SIZE * 1.5 - 6.0;
+    let pause_y = pill_y - CANCEL_BUTTON_SIZE / 2.0 - 2.0;
+    let pause_cx = pause_x + CANCEL_BUTTON_SIZE / 2.0;
+    let pause_cy = pause_y + CANCEL_BUTTON_SIZE / 2.0;
+
+    let scale = 0.5 + 0.5 * t;
+    let r = (CANCEL_BUTTON_SIZE / 2.0) * scale;
+    let paused = state.phase.get() == Phase::Paused;
+
+    cr.save().ok();
+    cr.translate(pause_cx, pause_cy);
+    cr.scale(scale, scale);
+    cr.translate(-pause_cx, -pause_cy);
+
+    cr.arc(pause_cx, pause_cy, r, 0.0, TAU);
+    cr.set_source_rgba(0.52, 0.52, 0.52, t);
+    let _ = cr.fill();
+
+    cr.set_source_rgba(1.0, 1.0, 1.0, t);
+    cr.set_line_width(1.8);
+    cr.set_line_cap(cairo::LineCap::Round);
+    if paused {
+        // Resume: play chevron
+        let s = 4.0 * scale;
+        cr.move_to(pause_cx - s * 0.35, pause_cy - s);
+        cr.line_to(pause_cx + s * 0.75, pause_cy);
+        cr.line_to(pause_cx - s * 0.35, pause_cy + s);
+        let _ = cr.stroke();
+    } else {
+        // Pause: two bars
+        let bw = 1.6 * scale;
+        let bh = 7.0 * scale;
+        let gap = 2.2 * scale;
+        cr.rectangle(pause_cx - gap - bw, pause_cy - bh / 2.0, bw, bh);
+        cr.rectangle(pause_cx + gap, pause_cy - bh / 2.0, bw, bh);
+        let _ = cr.fill();
+    }
+
+    cr.restore().ok();
+
+    if t > 0.5 {
+        let action = if paused {
+            ClickAction::ResumeDictation
+        } else {
+            ClickAction::PauseDictation
+        };
+        state.click_regions.borrow_mut().push(ClickRegion {
+            x: pause_x, y: pause_y, w: CANCEL_BUTTON_SIZE, h: CANCEL_BUTTON_SIZE,
+            action,
         });
     }
 }
