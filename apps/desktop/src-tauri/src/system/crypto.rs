@@ -253,7 +253,7 @@ mod tests {
         let nonce = generate_nonce();
         let cipher = cipher_for(legacy, &nonce);
         let ciphertext = cipher
-            .encrypt(XNonce::from_slice(&nonce), b"gsk_legacy_row_value")
+            .encrypt(XNonce::from_slice(&nonce), b"gsk_legacy_row_value".as_slice())
             .expect("legacy encrypt");
         let salt_b64 = general_purpose::STANDARD.encode(nonce);
         let ciphertext_b64 = general_purpose::STANDARD.encode(ciphertext);
