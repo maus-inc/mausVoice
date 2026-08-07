@@ -9,6 +9,7 @@ import { getCurrentWindow } from "@tauri-apps/api/window";
 import { useCallback, useEffect, useState } from "react";
 import { titleBarShadow } from "../../styles/shadows";
 import { LogoWithText } from "../common/LogoWithText";
+import { ThemeModeToggle } from "./ThemeModeToggle";
 
 const isTauri = () =>
   typeof window !== "undefined" &&
@@ -106,6 +107,7 @@ export const TitleBar = () => {
         spacing={1}
         sx={{ position: "relative", zIndex: 1, pl: 0.5 }}
       >
+        <ThemeModeToggle />
         <LogoWithText />
       </Stack>
 

@@ -135,7 +135,7 @@ export const DictionaryRow = ({ id }: DictionaryRowProps) => {
             disabled={isGlobal}
             multiline
             minRows={1}
-            sx={{ flex: 1 }}
+            sx={{ flex: 1, "& textarea": { lineHeight: 1.5 } }}
             error={!isGlobal && destinationValue.trim() === ""}
           />
         </>

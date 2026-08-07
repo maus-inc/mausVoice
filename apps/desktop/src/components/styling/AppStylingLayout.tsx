@@ -71,7 +71,7 @@ export function AppStylingLayout() {
             <FormattedMessage defaultMessage="1. Open up the app you want to style (like Slack or Chrome)." />
           </Typography>
           <Typography variant="body2">
-            <FormattedMessage defaultMessage='2. Click on the mausVoice icon in the menu bar, and click "Register this app".' />
+            <FormattedMessage defaultMessage='2. Click on the mausVoice icon in the menu bar, and click "Register current app".' />
           </Typography>
           <Typography variant="body2">
             <FormattedMessage defaultMessage="3. Go back to mausVoice, and select a writing style for that app." />

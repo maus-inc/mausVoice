@@ -113,7 +113,7 @@ const Main = ({ children }: ChildrenProps) => {
   return (
     <React.StrictMode>
       <IntlProvider {...intlConfig}>
-        <ThemeProvider theme={theme}>
+        <ThemeProvider theme={theme} defaultMode="system">
           <CssBaseline />
           {children}
         </ThemeProvider>
