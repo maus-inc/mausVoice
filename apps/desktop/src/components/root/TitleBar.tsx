@@ -73,11 +73,11 @@ export const TitleBar = () => {
   return (
     <Box
       sx={{
-        height: 44,
+        height: 40,
         flexShrink: 0,
         display: "flex",
         alignItems: "center",
-        px: 1.25,
+        px: 1,
         position: "relative",
         zIndex: 20,
         backgroundColor: dark

@@ -46,12 +46,12 @@ export const BaseHeader = ({
       justifyContent="space-between"
       alignItems="center"
       sx={{
-        py: 0.75,
-        px: { xs: 1.5, sm: 2 },
-        minHeight: 52,
-        borderRadius: 2.5,
+        py: 0.4,
+        px: { xs: 1, sm: 1.5 },
+        minHeight: 36,
+        borderRadius: 2,
         mx: { xs: 0.5, sm: 1 },
-        mb: 0.5,
+        mb: 0.4,
         bgcolor: (theme) =>
           theme.palette.mode === "dark"
             ? "rgba(20,22,27,0.55)"
@@ -141,7 +141,7 @@ export const AppHeader = () => {
   let rightContent: React.ReactNode;
   if (isOnboarded) {
     rightContent = (
-      <Stack direction="row" alignItems="center" gap={1.5}>
+      <Stack direction="row" alignItems="center" gap={1}>
         {isGpuBuild && (
           <Button
             onClick={() => setGpuMigrationDialogOpen(true)}
@@ -177,9 +177,9 @@ export const AppHeader = () => {
             >
               <Avatar
                 sx={{
-                  width: 32,
-                  height: 32,
-                  fontSize: 14,
+                  width: 24,
+                  height: 24,
+                  fontSize: 12,
                 }}
               >
                 {myInitials}
@@ -190,8 +190,8 @@ export const AppHeader = () => {
                   fontWeight={500}
                   sx={{
                     fontFamily: "var(--font-display)",
-                    fontSize: "1.05rem",
-                    letterSpacing: "0.02em",
+                    fontSize: "0.85rem",
+                    letterSpacing: "0.01em",
                     lineHeight: 1,
                   }}
                 >
@@ -200,7 +200,7 @@ export const AppHeader = () => {
                 <Typography
                   variant="caption"
                   color="textSecondary"
-                  lineHeight={1}
+                  sx={{ fontSize: "0.68rem", lineHeight: 1 }}
                 >
                   {planName}
                 </Typography>
