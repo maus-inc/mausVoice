@@ -15,9 +15,12 @@ pub(crate) fn machine_id() -> Option<&'static str> {
     MACHINE_ID.get_or_init(resolve_machine_id).as_deref()
 }
 
-// Spawn a command, require a clean exit, and return its stdout. Both the
-// Windows registry read and the macOS platform-UUID read share this shape;
-// keeping it here avoids duplicating the spawn/status/output dance.
+// Spawn a command, require a clean exit, and return its stdout. The Windows
+// registry read and the macOS platform-UUID read share this shape; keeping it
+// here avoids duplicating the spawn/status/output dance. Only built on the
+// platforms that consume it so cargo clippy -- -D warnings doesn't flag it as
+// dead code on Linux.
+#[cfg(any(target_os = "windows", target_os = "macos"))]
 fn run_and_read_stdout(program: &str, args: &[&str]) -> Option<String> {
     use std::process::Command;
     let out = Command::new(program).args(args).output().ok()?;
