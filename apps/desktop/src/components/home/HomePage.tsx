@@ -89,7 +89,12 @@ export default function HomePage() {
               defaultMessage="Welcome back, {name}"
               values={{
                 name: (
-                  <span style={{ fontFamily: "var(--font-display)" }}>
+                  <span
+                    style={{
+                      fontFamily: "var(--font-display)",
+                      fontSize: "0.92em",
+                    }}
+                  >
                     {userName}
                   </span>
                 ),
