@@ -178,7 +178,7 @@ pub fn set_menu_icon(app: &tauri::AppHandle, variant: MenuIconVariant) -> Result
     Ok(())
 }
 
-pub fn set_register_app_label(app: &tauri::AppHandle, app_name: Option<String>) -> Result<(), String> {
+pub fn set_register_app_label(_app: &tauri::AppHandle, app_name: Option<String>) -> Result<(), String> {
     let Some(item) = REGISTER_MENU_ITEM.get() else {
         return Err("Register menu item not initialized".to_string());
     };

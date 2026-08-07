@@ -363,3 +363,41 @@ fn resize_icon_if_needed(icon: &RgbaImage) -> RgbaImage {
         FilterType::Lanczos3,
     )
 }
+
+#[cfg(test)]
+#[cfg(not(target_os = "macos"))]
+mod prettify_app_name_tests {
+    use super::prettify_app_name;
+
+    #[test]
+    fn strips_exe_extension() {
+        assert_eq!(prettify_app_name("explorer.exe"), "Explorer");
+        assert_eq!(prettify_app_name("chrome.exe"), "Chrome");
+        assert_eq!(prettify_app_name("notepad.exe"), "Notepad");
+    }
+
+    #[test]
+    fn strips_app_extension() {
+        assert_eq!(prettify_app_name("MyApp.app"), "My App");
+    }
+
+    #[test]
+    fn splits_separators_and_camel_case() {
+        assert_eq!(prettify_app_name("some-long-name"), "Some long name");
+        assert_eq!(prettify_app_name("some_long_name"), "Some long name");
+        assert_eq!(prettify_app_name("google-chrome"), "Google chrome");
+        assert_eq!(prettify_app_name("appName"), "App Name");
+    }
+
+    #[test]
+    fn leaves_clean_names_untouched() {
+        assert_eq!(prettify_app_name("App"), "App");
+        assert_eq!(prettify_app_name("Zoom"), "Zoom");
+    }
+
+    #[test]
+    fn falls_back_to_raw_stem_when_prettify_empties() {
+        assert_eq!(prettify_app_name("___"), "___");
+    }
+}
+

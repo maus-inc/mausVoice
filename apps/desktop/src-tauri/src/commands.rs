@@ -1944,8 +1944,6 @@ pub fn set_tray_language_menu(
 
 #[tauri::command]
 #[specta::specta]
-#[tauri::command]
-#[specta::specta]
 pub fn set_register_app_label(app: AppHandle, app_name: Option<String>) -> Result<(), String> {
     crate::system::tray::set_register_app_label(&app, app_name)
 }
