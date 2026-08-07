@@ -48,6 +48,7 @@ pub const EVT_SET_DICTATION_LANGUAGE: &str = "tray-set-dictation-language";
 const TRAY_LANGUAGE_ITEM_PREFIX: &str = "tray-lang:";
 
 static UPDATE_MENU_ITEM: OnceLock<MenuItem<tauri::Wry>> = OnceLock::new();
+static REGISTER_MENU_ITEM: OnceLock<MenuItem<tauri::Wry>> = OnceLock::new();
 static LANGUAGE_SUBMENU: OnceLock<Submenu<tauri::Wry>> = OnceLock::new();
 
 #[derive(Debug, Clone, serde::Deserialize, specta::Type)]
@@ -79,10 +80,11 @@ pub fn setup_tray(app: &mut tauri::App) -> tauri::Result<()> {
     let register_current_app_item = MenuItem::with_id(
         app,
         "register-current-app",
-        "Register this app",
+        "Register current app",
         true,
         None::<&str>,
     )?;
+    let _ = REGISTER_MENU_ITEM.set(register_current_app_item.clone());
     let language_submenu = SubmenuBuilder::new(app, "Language").build()?;
     let _ = LANGUAGE_SUBMENU.set(language_submenu.clone());
     let quit_item = MenuItem::with_id(app, "quit-mausvoice", "Quit mausVoice", true, None::<&str>)?;
@@ -174,6 +176,17 @@ pub fn set_menu_icon(app: &tauri::AppHandle, variant: MenuIconVariant) -> Result
     }
 
     Ok(())
+}
+
+pub fn set_register_app_label(app: &tauri::AppHandle, app_name: Option<String>) -> Result<(), String> {
+    let Some(item) = REGISTER_MENU_ITEM.get() else {
+        return Err("Register menu item not initialized".to_string());
+    };
+    let label = match app_name {
+        Some(name) if !name.trim().is_empty() => format!("Register current app [{name}]"),
+        _ => "Register current app".to_string(),
+    };
+    item.set_text(label).map_err(|err| err.to_string())
 }
 
 pub fn set_tray_language_menu(

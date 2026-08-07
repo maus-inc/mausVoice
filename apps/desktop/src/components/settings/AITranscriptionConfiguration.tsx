@@ -40,11 +40,7 @@ import {
   normalizeLocalWhisperModel,
 } from "../../utils/local-transcription.utils";
 import { ManagedByOrgNotice } from "../common/ManagedByOrgNotice";
-import {
-  SegmentedControl,
-  SegmentedControlOption,
-} from "../common/SegmentedControl";
-import { maybeArrayElements } from "./AIPostProcessingConfiguration";
+import { SegmentedControl } from "../common/SegmentedControl";
 import { ApiKeyList } from "./ApiKeyList";
 import { MausVoiceCloudSetting } from "./MausVoiceCloudSetting";
 
@@ -118,13 +114,7 @@ const formatDownloadProgress = (
   return progressPart || bytesPart;
 };
 
-export type AITranscriptionConfigurationProps = {
-  hideCloudOption?: boolean;
-};
-
-export const AITranscriptionConfiguration = ({
-  hideCloudOption,
-}: AITranscriptionConfigurationProps) => {
+export const AITranscriptionConfiguration = () => {
   const intl = useIntl();
   const transcription = useAppStore((state) => state.settings.aiTranscription);
   const effectiveMode = useAppStore(getEffectiveTranscriptionMode);
@@ -268,15 +258,6 @@ export const AITranscriptionConfiguration = ({
         value={effectiveMode}
         onChange={handleModeChange}
         options={[
-          ...maybeArrayElements<SegmentedControlOption<TranscriptionMode>>(
-            !hideCloudOption,
-            [
-              {
-                value: "cloud",
-                label: "mausVoice",
-              },
-            ],
-          ),
           { value: "api", label: "API" },
           { value: "local", label: "Local" },
         ]}

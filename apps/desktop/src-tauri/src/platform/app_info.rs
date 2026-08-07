@@ -227,10 +227,51 @@ fn build_app_info(window: FocusedWindow, icon_size: u32) -> Result<CurrentAppInf
 #[cfg(not(target_os = "macos"))]
 fn resolve_app_name(window: &FocusedWindow) -> String {
     extract_app_name_from_title(window)
-        .or_else(|| window.process_name.clone())
+        .or_else(|| window.process_name.as_deref().map(prettify_app_name))
         .map(|name| name.trim().to_string())
         .filter(|name| !name.is_empty())
         .unwrap_or_else(|| "Unknown application".to_string())
+}
+
+// The process-name fallback is a raw binary name such as "chrome.exe" or
+// "explorer.exe". Strip the platform extension and prettify so the display is
+// a clean app name rather than a file path.
+#[cfg(not(target_os = "macos"))]
+fn prettify_app_name(process_name: &str) -> String {
+    let stem = process_name
+        .strip_suffix(".exe")
+        .or_else(|| process_name.strip_suffix(".app"))
+        .unwrap_or(process_name);
+
+    let mut out = String::with_capacity(stem.len());
+    let mut prev_lower = false;
+    for ch in stem.chars() {
+        if ch == '_' || ch == '-' || ch == '.' {
+            if prev_lower {
+                out.push(' ');
+                prev_lower = false;
+            }
+            continue;
+        }
+        if ch.is_ascii_uppercase() && prev_lower {
+            out.push(' ');
+        }
+        out.push(ch);
+        prev_lower = ch.is_ascii_lowercase();
+    }
+    let trimmed = out.trim();
+    if trimmed.is_empty() {
+        return stem.to_string();
+    }
+    let mut chars = trimmed.chars();
+    match chars.next() {
+        Some(first) => {
+            let mut result = first.to_uppercase().collect::<String>();
+            result.push_str(chars.as_str());
+            result
+        }
+        None => trimmed.to_string(),
+    }
 }
 
 #[cfg(not(target_os = "macos"))]

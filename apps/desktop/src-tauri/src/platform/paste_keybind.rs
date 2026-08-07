@@ -7,8 +7,8 @@ pub enum PasteKeystroke {
 
 pub fn parse_paste_keystroke(keybind: Option<&str>) -> PasteKeystroke {
     match keybind {
+        Some("ctrl+v") => PasteKeystroke::CtrlV,
         Some("ctrl+shift+v") => PasteKeystroke::CtrlShiftV,
-        Some("shift+insert") => PasteKeystroke::ShiftInsert,
-        _ => PasteKeystroke::CtrlV,
+        _ => PasteKeystroke::ShiftInsert,
     }
 }

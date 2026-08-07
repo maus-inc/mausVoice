@@ -10,24 +10,15 @@ import { getAllowsChangePostProcessing } from "../../utils/enterprise.utils";
 import { getEffectivePostProcessingMode } from "../../utils/user.utils";
 import { ManagedByOrgNotice } from "../common/ManagedByOrgNotice";
 import { type PostProcessingMode } from "../../types/ai.types";
-import {
-  SegmentedControl,
-  SegmentedControlOption,
-} from "../common/SegmentedControl";
+import { SegmentedControl } from "../common/SegmentedControl";
 import { ApiKeyList } from "./ApiKeyList";
 import { MausVoiceCloudSetting } from "./MausVoiceCloudSetting";
-
-type AIPostProcessingConfigurationProps = {
-  hideCloudOption?: boolean;
-};
 
 export function maybeArrayElements<T>(visible: boolean, values: T[]): T[] {
   return visible ? values : [];
 }
 
-export const AIPostProcessingConfiguration = ({
-  hideCloudOption,
-}: AIPostProcessingConfigurationProps) => {
+export const AIPostProcessingConfiguration = () => {
   const postProcessing = useAppStore(
     (state) => state.settings.aiPostProcessing,
   );
@@ -52,15 +43,6 @@ export const AIPostProcessingConfiguration = ({
         value={effectiveMode}
         onChange={handleModeChange}
         options={[
-          ...maybeArrayElements<SegmentedControlOption<PostProcessingMode>>(
-            !hideCloudOption,
-            [
-              {
-                value: "cloud",
-                label: "mausVoice",
-              },
-            ],
-          ),
           { value: "api", label: "API" },
           { value: "none", label: "Off" },
         ]}

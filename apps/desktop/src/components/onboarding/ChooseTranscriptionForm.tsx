@@ -48,7 +48,7 @@ export const ChooseTranscriptionForm = () => {
           </Typography>
         </Box>
 
-        <AITranscriptionConfiguration hideCloudOption={true} />
+        <AITranscriptionConfiguration />
       </Stack>
     </OnboardingFormLayout>
   );

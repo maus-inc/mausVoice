@@ -48,7 +48,7 @@ export const ChooseLlmForm = () => {
           </Typography>
         </Box>
 
-        <AIPostProcessingConfiguration hideCloudOption={true} />
+        <AIPostProcessingConfiguration />
       </Stack>
     </OnboardingFormLayout>
   );
