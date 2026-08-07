@@ -236,7 +236,7 @@ fn record_loop(
 
     let simple = match psimple::Simple::new(
         None,      // server (default)
-        "Voquill", // app name
+        "mausVoice", // app name
         pulse::stream::Direction::Record,
         source_ref,  // source (None = default)
         "Recording", // stream description
@@ -394,7 +394,7 @@ fn enumerate_pulse_sources() -> Vec<PulseSource> {
         }
     };
 
-    let mut ctx = match pulse::context::Context::new(&ml, "Voquill Enumerate") {
+    let mut ctx = match pulse::context::Context::new(&ml, "mausVoice Enumerate") {
         Some(ctx) => ctx,
         None => {
             log::error!("failed to create PulseAudio context");

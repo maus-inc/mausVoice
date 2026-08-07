@@ -1,7 +1,7 @@
 use crate::domain::{OverlayPhase, PillWindowSize};
 use crate::pill_process;
 
-const BINARY_NAME: &str = "voquill-gtk-pill";
+const BINARY_NAME: &str = "mausvoice-gtk-pill";
 const PACKAGE_DIR: &str = "rust_gtk_pill";
 
 pub fn try_create_native_overlays(app: &tauri::AppHandle) -> bool {

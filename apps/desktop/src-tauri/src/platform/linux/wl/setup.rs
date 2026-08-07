@@ -142,7 +142,7 @@ fn build_setup_script(username: &str) -> Result<String, String> {
 
     steps.push(format!("usermod -aG input {username}"));
     steps.push(
-        "echo 'KERNEL==\"uinput\", GROUP=\"input\", MODE=\"0660\"' > /etc/udev/rules.d/99-voquill-uinput.rules".to_string(),
+        "echo 'KERNEL==\"uinput\", GROUP=\"input\", MODE=\"0660\"' > /etc/udev/rules.d/99-mausvoice-uinput.rules".to_string(),
     );
     steps.push("udevadm control --reload-rules && udevadm trigger /dev/uinput".to_string());
     steps.push("(systemctl enable --now ydotoold 2>/dev/null || true)".to_string());

@@ -10,7 +10,6 @@ This is a **pnpm** workspace (`pnpm@10.11.0`) managed with Turborepo. The packag
 | `apps/desktop/src-tauri` | Rust API layer invoked from TypeScript for native capabilities, SQLite storage, and Whisper inference.      |
 | `apps/docs`   | Astro + Starlight documentation site.                                                                      |
 | `apps/windows-installer` | Windows installer (Tauri).                                                                     |
-| `cli`         | Rust CLI (`mausvoice`, `mausvoice-dev`, `mausvoice-emulator`) with login, agent sessions, and upgrade.      |
 | `docs`        | Architecture notes, release guides, and reference material.                                                 |
 | `enterprise/*`| Enterprise administrative dashboard and API gateway.                                                       |
 | `packages/*`  | Shared packages: types, voice-ai, desktop-native-apis, functions, pricing, UI, utilities, config, shared-fonts, and the native pill crates. |

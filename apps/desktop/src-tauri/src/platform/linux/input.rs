@@ -23,7 +23,7 @@ pub(crate) fn paste_text_into_focused_field(
         return Ok(());
     }
 
-    let override_text = std::env::var("VOQUILL_DEBUG_PASTE_TEXT").ok();
+    let override_text = std::env::var("MAUSVOICE_DEBUG_PASTE_TEXT").ok();
     let target = override_text.as_deref().unwrap_or(text);
     log::info!(
         "attempting to inject text ({} chars)",

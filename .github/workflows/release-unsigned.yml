@@ -1,14 +1,15 @@
-name: Build Desktop
+name: Release Unsigned Desktop
 
 on:
-  pull_request:
-    branches:
-      - main
-      - linting
-    paths:
-      - "apps/desktop/**"
-      - "apps/windows-installer/**"
-      - ".github/workflows/build-desktop.yml"
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Release tag (e.g. v0.1.0-unsigned.1)"
+        required: true
+        default: "unsigned-build"
+
+permissions:
+  contents: write
 
 jobs:
   build:
@@ -85,11 +86,6 @@ jobs:
         run: |
           echo "CARGO_TARGET_DIR=D:\cargo" >> $env:GITHUB_ENV
 
-      - name: Set sidecar build environment (Linux)
-        if: matrix.os == 'ubuntu-22.04'
-        run: |
-          echo "CMAKE_TOOLCHAIN_FILE=${GITHUB_WORKSPACE}/packages/rust_transcription/cmake/linux-ci-toolchain.cmake" >> "$GITHUB_ENV"
-
       - name: Set sidecar build environment (macOS)
         if: matrix.os == 'macos-14'
         run: |
@@ -100,6 +96,11 @@ jobs:
         shell: pwsh
         run: |
           echo "CMAKE_TOOLCHAIN_FILE=$env:GITHUB_WORKSPACE\packages\rust_transcription\cmake\windows-ci-toolchain.cmake" >> $env:GITHUB_ENV
+
+      - name: Set sidecar build environment (Linux)
+        if: matrix.os == 'ubuntu-22.04'
+        run: |
+          echo "CMAKE_TOOLCHAIN_FILE=${GITHUB_WORKSPACE}/packages/rust_transcription/cmake/linux-ci-toolchain.cmake" >> "$GITHUB_ENV"
 
       - name: Install system dependencies (Linux)
         if: matrix.os == 'ubuntu-22.04'
@@ -122,9 +123,7 @@ jobs:
           MAUSVOICE_REQUIRE_GPU_SIDECAR: ${{ matrix.require_gpu_sidecar && 'true' || 'false' }}
           MACOSX_DEPLOYMENT_TARGET: "13.3"
           CMAKE_OSX_DEPLOYMENT_TARGET: "13.3"
-          APPIMAGE_EXTRACT_AND_RUN: "1"
-          # Throwaway signing key for CI build validation only.
-          # Real releases use secrets in _release-desktop-impl.yml.
+          # Throwaway signing key, unsigned build only — same one build-desktop.yml uses for CI validation.
           TAURI_SIGNING_PRIVATE_KEY: "dW50cnVzdGVkIGNvbW1lbnQ6IHJzaWduIGVuY3J5cHRlZCBzZWNyZXQga2V5ClJXUlRZMEl5OVRKZlAyVDN3dlF1Wm5mbWh1MXYwV3VjRlR2SVhUY2JqdmZUUGdtM1JOMEFBQkFBQUFBQUFBQUFBQUlBQUFBQXp4N2IwQXBxS3lTQnFWeXJuMmpaeGpKdkd5VUhTeit1cklsd3dQVTJvSnkzUktQMVlrQklPQ0duQkVZSStiMEdqTDFaSWJXZW96eTdab0VyaTZMUVNuWlpjSTZTY3NpVXA0bUZVVjh3TldRNHF1Qk1CUFBqcTduS3RMQ3FwMDFQM0VjYTlWdTZQZTQ9Cg=="
           TAURI_CI_PUBKEY: "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IDQ2NTZFNDMzMzYyMjBCMzgKUldRNEN5STJNK1JXUmpWRDMzem12QUtjVkFxWERXanl0ZVRCWi9JOTd3bmRFRVFuQkp1QmpiN0EK"
         working-directory: apps/desktop
@@ -154,3 +153,33 @@ jobs:
             ${{ matrix.bundle_dir }}/**/*.AppImage
           if-no-files-found: warn
           retention-days: 7
+
+  publish:
+    name: Publish GitHub Release
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - name: Download all artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: dist
+
+      - name: Publish release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ github.event.inputs.tag }}
+          name: "Unsigned build ${{ github.event.inputs.tag }}"
+          body: |
+            Unsigned, self-built desktop binaries for personal use — no code signing/notarization.
+            macOS: right-click → Open (bypass "unidentified developer" warning).
+            Windows: may trigger a SmartScreen/Defender warning — click "More info" → "Run anyway".
+          draft: false
+          prerelease: true
+          files: |
+            dist/**/*.dmg
+            dist/**/*.app.tar.gz
+            dist/**/*.msi
+            dist/**/*.nsis.zip
+            dist/**/*.exe
+            dist/**/*.deb
+            dist/**/*.AppImage

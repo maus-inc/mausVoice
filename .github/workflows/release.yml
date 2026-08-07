@@ -1,7 +1,7 @@
 name: Release (auto)
 
 # Orchestrator. On push to `main` releases to dev; push to `prod` releases the
-# consumer-facing channel (CLI, Desktop, Docs); push to `enterprise` releases
+# consumer-facing channel (Desktop, Docs); push to `enterprise` releases
 # the enterprise channel (Desktop enterprise, Enterprise Admin, Enterprise
 # Gateway). Detects which folders changed since the previous commit on that
 # branch and invokes the per-component reusable workflows.
@@ -21,10 +21,6 @@ on:
     inputs:
       desktop:
         description: "Release desktop"
-        type: boolean
-        default: false
-      cli:
-        description: "Release CLI"
         type: boolean
         default: false
       docs:
@@ -56,7 +52,6 @@ jobs:
     runs-on: ubuntu-latest
     outputs:
       channel: ${{ steps.env.outputs.channel }}
-      cli: ${{ github.event_name == 'workflow_dispatch' && inputs.cli || steps.filter.outputs.cli }}
       desktop: ${{ github.event_name == 'workflow_dispatch' && inputs.desktop || steps.filter.outputs.desktop }}
       docs: ${{ github.event_name == 'workflow_dispatch' && inputs.docs || steps.filter.outputs.docs }}
       enterprise_admin: ${{ github.event_name == 'workflow_dispatch' && inputs.enterprise_admin || steps.filter.outputs.enterprise_admin }}
@@ -79,8 +74,6 @@ jobs:
         with:
           base: ${{ github.event.before }}
           filters: |
-            cli:
-              - 'cli/**'
             desktop:
               - 'apps/desktop/**'
               - 'apps/windows-installer/**'
@@ -93,18 +86,6 @@ jobs:
             enterprise_gateway:
               - 'enterprise/gateway/**'
               - 'packages/**'
-
-  cli:
-    name: CLI
-    needs: detect
-    # CLI has no enterprise variant — only dev (main) and prod (prod).
-    if: |
-      needs.detect.outputs.cli == 'true' &&
-      (needs.detect.outputs.channel == 'dev' || needs.detect.outputs.channel == 'prod')
-    uses: ./.github/workflows/release-cli.yml
-    with:
-      release_env: ${{ needs.detect.outputs.channel }}
-    secrets: inherit
 
   desktop:
     name: Desktop
@@ -165,7 +146,7 @@ jobs:
 
   notify:
     name: Notify Google Chat
-    needs: [detect, cli, desktop, desktop-enterprise-dev, docs, enterprise-admin, enterprise-gateway]
+    needs: [detect, desktop, desktop-enterprise-dev, docs, enterprise-admin, enterprise-gateway]
     if: always()
     runs-on: ubuntu-latest
     steps:
@@ -173,12 +154,10 @@ jobs:
         env:
           WEBHOOK: ${{ secrets.GCHAT_DEPLOY_WEBHOOK }}
           CHANNEL: ${{ needs.detect.outputs.channel }}
-          CLI_CHANGED: ${{ needs.detect.outputs.cli }}
           DESKTOP_CHANGED: ${{ needs.detect.outputs.desktop }}
           DOCS_CHANGED: ${{ needs.detect.outputs.docs }}
           ENTERPRISE_ADMIN_CHANGED: ${{ needs.detect.outputs.enterprise_admin }}
           ENTERPRISE_GATEWAY_CHANGED: ${{ needs.detect.outputs.enterprise_gateway }}
-          CLI_RESULT: ${{ needs.cli.result }}
           DESKTOP_RESULT: ${{ needs.desktop.result }}
           DESKTOP_ENTERPRISE_DEV_RESULT: ${{ needs['desktop-enterprise-dev'].result }}
           DOCS_RESULT: ${{ needs.docs.result }}
@@ -197,10 +176,10 @@ jobs:
           fi
 
           case "$CHANNEL" in
-            dev)        cli_elig=true;  desktop_elig=true;  ded_elig=true;  docs_elig=false; ea_elig=true;  eg_elig=true  ;;
-            prod)       cli_elig=true;  desktop_elig=true;  ded_elig=false; docs_elig=true;  ea_elig=false; eg_elig=false ;;
-            enterprise) cli_elig=false; desktop_elig=true;  ded_elig=false; docs_elig=false; ea_elig=true;  eg_elig=true  ;;
-            *)          cli_elig=false; desktop_elig=false; ded_elig=false; docs_elig=false; ea_elig=false; eg_elig=false ;;
+            dev)        desktop_elig=true;  ded_elig=true;  docs_elig=false; ea_elig=true;  eg_elig=true  ;;
+            prod)       desktop_elig=true;  ded_elig=false; docs_elig=true;  ea_elig=false; eg_elig=false ;;
+            enterprise) desktop_elig=true;  ded_elig=false; docs_elig=false; ea_elig=true;  eg_elig=true  ;;
+            *)          desktop_elig=false; ded_elig=false; docs_elig=false; ea_elig=false; eg_elig=false ;;
           esac
 
           lines=""
@@ -224,7 +203,6 @@ jobs:
             lines+=$'\n'"• ${comp}: ${status}"
           }
 
-          add_line cli                    "$CLI_CHANGED"                "$CLI_RESULT"                    "$cli_elig"
           add_line desktop                "$DESKTOP_CHANGED"            "$DESKTOP_RESULT"                "$desktop_elig"
           add_line desktop-enterprise-dev "$DESKTOP_CHANGED"            "$DESKTOP_ENTERPRISE_DEV_RESULT" "$ded_elig"
           add_line docs                   "$DOCS_CHANGED"               "$DOCS_RESULT"                   "$docs_elig"
@@ -245,7 +223,7 @@ jobs:
           commit_first_line="${COMMIT_MSG%%$'\n'*}"
           short_sha="${COMMIT_SHA:0:7}"
 
-          text="🎙️ *Voquill* — release to *${CHANNEL}* ${outcome}"$'\n'
+          text="🎙️ *mausVoice* — release to *${CHANNEL}* ${outcome}"$'\n'
           text+="${short_sha} by ${ACTOR}"
           if [ -n "${commit_first_line}" ]; then
             text+=": ${commit_first_line}"

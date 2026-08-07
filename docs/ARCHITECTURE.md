@@ -83,11 +83,10 @@ packages/
 enterprise/
   gateway/             # Express API gateway (enterprise; unused here)
   admin/               # enterprise admin dashboard (unused here)
-cli/                   # Rust CLI tool
 config/, release/, scripts/, docs/
 ```
 
-**Removed in this fork:** `mobile/` (Flutter app), `packages/flutter_video_looper`, and Linux desktop support (`src-tauri/src/platform/linux`, `packages/rust_gtk_pill`, Linux CI/packaging).
+**Removed in this fork:** `mobile/` (Flutter app), `packages/flutter_video_looper`, and the Rust CLI (`cli/`). Linux desktop support is retained (`src-tauri/src/platform/linux`, `packages/rust_gtk_pill`, Linux CI/packaging).
 
 ---
 
