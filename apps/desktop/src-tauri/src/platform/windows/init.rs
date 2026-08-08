@@ -79,8 +79,9 @@ pub async fn run_native_setup() -> crate::platform::NativeSetupResult {
         let verb: Vec<u16> = "runas\0".encode_utf16().collect();
 
         // Preserve the original arguments, quoting each one so values with
-        // spaces or quotes survive the round-trip, and mark this as the
-        // elevation handoff so the single-instance handler can swap instances.
+        // spaces or quotes survive the round-trip. The `--elevated` marker tells
+        // the relaunched copy it is the post-UAC instance (it is already
+        // elevated, so it will not try to relaunch again).
         let mut cli = String::from("--elevated");
         for arg in std::env::args().skip(1) {
             cli.push(' ');
@@ -99,11 +100,17 @@ pub async fn run_native_setup() -> crate::platform::NativeSetupResult {
             )
         };
 
-        // ShellExecuteW returns a value > 32 on success.
+        // ShellExecuteW returns a value > 32 on success. On success, exit this
+        // unelevated instance immediately so the elevated copy can take over the
+        // single-instance lock and become the active application. We must exit
+        // *before* the elevated copy starts, because tauri-plugin-single-instance
+        // force-closes any secondary instance while the primary is still alive.
+        // If the user dismisses the UAC prompt, ShellExecuteW returns <= 32 and we
+        // stay running.
         let handle = result.0 as isize;
         if handle > 32 {
-            // The elevated copy is launching; tell the UI a restart is happening.
-            return crate::platform::NativeSetupResult::RequireRestart;
+            log::info!("Elevated relaunch launched; exiting unelevated instance.");
+            std::process::exit(0);
         }
 
         // ERROR_CANCELLED (1223) means the user dismissed the UAC prompt.
@@ -141,9 +148,54 @@ fn windows_quote(arg: &str) -> String {
             backslashes = 0;
         }
     }
-    quoted.push_str(&"\\".repeat(backslashes));
+    // Backslashes immediately before the closing quote must be doubled so they
+    // are not consumed as an escape for the quote.
+    quoted.push_str(&"\\".repeat(backslashes * 2));
     quoted.push('"');
     quoted
+}
+
+#[cfg(test)]
+mod tests {
+    use super::windows_quote;
+
+    #[test]
+    fn quotes_empty_argument() {
+        assert_eq!(windows_quote(""), "\"\"");
+    }
+
+    #[test]
+    fn leaves_unquoted_argument_untouched() {
+        assert_eq!(windows_quote("plain"), "plain");
+    }
+
+    #[test]
+    fn quotes_argument_with_spaces() {
+        assert_eq!(windows_quote("a b"), "\"a b\"");
+    }
+
+    #[test]
+    fn escapes_embedded_quotes() {
+        assert_eq!(windows_quote("a\"b"), "\"a\\\"b\"");
+    }
+
+    #[test]
+    fn doubles_trailing_backslashes_before_closing_quote() {
+        assert_eq!(windows_quote("C:\\path"), "\"C:\\path\"");
+        assert_eq!(windows_quote("C:\\path\\"), "\"C:\\path\\\\\"");
+        assert_eq!(windows_quote("C:\\path\\\\"), "\"C:\\path\\\\\\\"");
+    }
+
+    #[test]
+    fn path_with_spaces_ending_in_backslash_round_trips() {
+        // "C:\Path With Spaces\" must keep its trailing backslash after parsing.
+        assert_eq!(windows_quote("C:\\Path With Spaces\\"), "\"C:\\Path With Spaces\\\\\"");
+    }
+
+    #[test]
+    fn backslashes_before_embedded_quote_are_escaped() {
+        assert_eq!(windows_quote("a\\\"b"), "\"a\\\\\\\"b\"");
+    }
 }
 
 pub fn ensure_background_services() {}
