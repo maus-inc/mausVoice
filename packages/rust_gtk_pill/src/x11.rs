@@ -8,8 +8,9 @@ use gtk::glib::{self, ControlFlow};
 use gtk::prelude::*;
 
 use crate::constants::MARGIN_BOTTOM;
+use crate::state::PillState;
 
-pub(crate) fn setup_x11_window(window: &gtk::Window) {
+pub(crate) fn setup_x11_window(window: &gtk::Window, state: Rc<PillState>) {
     use std::ffi::{c_char, c_int, c_uchar, c_uint, c_ulong, c_void};
 
     type XDisplay = c_void;
@@ -103,6 +104,7 @@ pub(crate) fn setup_x11_window(window: &gtk::Window) {
     };
 
     let win_ref = window.clone();
+    let state_ref = state.clone();
     let pill_pos_on_monitor =
         move |cx: c_int, cy: c_int, disp: &gdk::Display| -> Option<(c_int, c_int)> {
             let n = disp.n_monitors();
@@ -128,6 +130,17 @@ pub(crate) fn setup_x11_window(window: &gtk::Window) {
                     let win_w = alloc_w as f64 * scale;
                     let win_h = alloc_h as f64 * scale;
                     let margin = MARGIN_BOTTOM as f64 * scale;
+
+                    if state_ref.dragging.get() {
+                        let drag_x = state_ref.drag_cursor_x.get() * scale;
+                        let drag_y = state_ref.drag_cursor_y.get() * scale;
+                        let mut x = cx as f64 - drag_x;
+                        let mut y = cy as f64 - drag_y;
+                        x = x.max(wa_x).min(wa_x + wa_w - win_w);
+                        y = y.max(wa_y).min(wa_y + wa_h - win_h);
+                        return Some((x as c_int, y as c_int));
+                    }
+
                     return Some((
                         (wa_x + (wa_w - win_w) / 2.0) as c_int,
                         (wa_y + wa_h - win_h - margin) as c_int,

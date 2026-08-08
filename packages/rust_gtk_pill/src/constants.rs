@@ -9,6 +9,9 @@ pub(crate) const MARGIN_BOTTOM: i32 = 8;
 
 pub(crate) const PILL_AREA_HEIGHT: f64 = 48.0;
 
+pub(crate) const LONG_PRESS_DURATION: f64 = 0.4;
+pub(crate) const LONG_PRESS_MOVE_THRESHOLD: f64 = 12.0;
+
 pub(crate) const MIN_PILL_WIDTH: f64 = 48.0;
 pub(crate) const MIN_PILL_HEIGHT: f64 = 6.0;
 pub(crate) const EXPANDED_PILL_WIDTH: f64 = 120.0;

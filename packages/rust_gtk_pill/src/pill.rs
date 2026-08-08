@@ -56,9 +56,7 @@ pub fn run(receiver: Receiver<InMessage>) {
             window.set_exclusive_zone(0);
             window.set_namespace("mausvoice-pill");
         }
-        Backend::X11 => {
-            window.connect_realize(move |window| x11::setup_x11_window(window));
-        }
+        Backend::X11 => {}
         Backend::PlainWayland => {
             window.set_type_hint(gdk::WindowTypeHint::Dock);
             window.set_keep_above(true);
@@ -162,9 +160,22 @@ pub fn run(receiver: Receiver<InMessage>) {
         transcript_time_since_update: Cell::new(0.0),
         transcript_opacity: Cell::new(0.0),
         transcript_has_message: Cell::new(false),
+        long_press_active: Cell::new(false),
+        long_press_elapsed: Cell::new(0.0),
+        long_press_start_x: Cell::new(0.0),
+        long_press_start_y: Cell::new(0.0),
+        dragging: Cell::new(false),
+        drag_cancelled: Cell::new(false),
+        drag_cursor_x: Cell::new(0.0),
+        drag_cursor_y: Cell::new(0.0),
         alloc_width: Cell::new(0.0),
         alloc_height: Cell::new(0.0),
     });
+
+    if backend == Backend::X11 {
+        let state_realize = state.clone();
+        window.connect_realize(move |window| x11::setup_x11_window(window, state_realize.clone()));
+    }
 
     if backend == Backend::PlainWayland {
         let state_alloc = state.clone();
@@ -208,6 +219,19 @@ pub fn run(receiver: Receiver<InMessage>) {
             state_motion.hovered.set(is_over_pill);
             ipc::send(&OutMessage::Hover { hovered: is_over_pill });
         }
+
+        if state_motion.long_press_active.get() {
+            let start_x = state_motion.long_press_start_x.get();
+            let start_y = state_motion.long_press_start_y.get();
+            let dx = mx - start_x;
+            let dy = my - start_y;
+            if (dx * dx + dy * dy) > LONG_PRESS_MOVE_THRESHOLD * LONG_PRESS_MOVE_THRESHOLD {
+                state_motion.long_press_active.set(false);
+                state_motion.long_press_elapsed.set(0.0);
+                state_motion.drag_cancelled.set(true);
+            }
+        }
+
         glib::Propagation::Proceed
     });
 
@@ -224,7 +248,8 @@ pub fn run(receiver: Receiver<InMessage>) {
     let entry_press = entry.clone();
     let win_press = window.clone();
     let backend_press = backend;
-    window.connect_button_press_event(move |_, _| {
+    window.connect_button_press_event(move |_, event| {
+        let (x, y) = event.position();
         let is_typing = state_press.assistant_active.get()
             && *state_press.assistant_input_mode.borrow() == "type";
         if is_typing {
@@ -232,6 +257,15 @@ pub fn run(receiver: Receiver<InMessage>) {
                 x11::force_keyboard_focus(&win_press);
             }
             entry_press.grab_focus();
+        }
+        if input::is_on_pill_at(&state_press, x, y) {
+            state_press.long_press_active.set(true);
+            state_press.long_press_elapsed.set(0.0);
+            state_press.long_press_start_x.set(x);
+            state_press.long_press_start_y.set(y);
+            state_press.drag_cancelled.set(false);
+            state_press.drag_cursor_x.set(x);
+            state_press.drag_cursor_y.set(y);
         }
         glib::Propagation::Proceed
     });
@@ -258,8 +292,14 @@ pub fn run(receiver: Receiver<InMessage>) {
             }
         }
         last_click.set(Some(now));
-        let (x, y) = event.position();
-        input::handle_click(&state_click, x, y);
+        let was_dragging = state_click.dragging.get();
+        state_click.dragging.set(false);
+        state_click.long_press_active.set(false);
+        state_click.long_press_elapsed.set(0.0);
+        if !was_dragging {
+            let (x, y) = event.position();
+            input::handle_click(&state_click, x, y);
+        }
         glib::Propagation::Proceed
     });
 
@@ -581,6 +621,7 @@ pub fn run(receiver: Receiver<InMessage>) {
 }
 
 fn tick(state: &PillState) {
+    tick_long_press(state);
     let phase = state.phase.get();
     let is_active = phase != Phase::Idle;
     let is_recording = phase == Phase::Recording;
@@ -703,6 +744,26 @@ fn tick(state: &PillState) {
     if state.should_stick.get() && state.assistant_active.get() && !state.assistant_compact.get() {
         let max_scroll = (state.content_height.get() - state.viewport_height.get()).max(0.0);
         state.scroll_offset.set(max_scroll);
+    }
+}
+
+fn tick_long_press(state: &PillState) {
+    if !state.long_press_active.get() {
+        return;
+    }
+
+    if state.phase.get() != Phase::Idle || state.assistant_active.get() {
+        state.long_press_active.set(false);
+        state.long_press_elapsed.set(0.0);
+        return;
+    }
+
+    let elapsed = state.long_press_elapsed.get() + SPRING_DT;
+    state.long_press_elapsed.set(elapsed);
+    if elapsed >= LONG_PRESS_DURATION {
+        state.long_press_active.set(false);
+        state.long_press_elapsed.set(0.0);
+        state.dragging.set(true);
     }
 }
 

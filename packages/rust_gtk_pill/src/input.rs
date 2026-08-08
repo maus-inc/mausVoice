@@ -56,6 +56,35 @@ pub(crate) fn is_over_pill_area(state: &PillState, x: f64, y: f64) -> bool {
     false
 }
 
+pub(crate) fn is_on_pill_at(state: &PillState, x: f64, y: f64) -> bool {
+    let (ox, oy) = state.content_offset();
+    let x = x - ox;
+    let y = y - oy;
+    let dw = state.draw_width.get();
+    let dh = state.draw_height.get();
+
+    if state.assistant_active.get() || state.panel_open_t.get() > 0.1 {
+        return false;
+    }
+
+    let pill_area_top = dh - PILL_AREA_HEIGHT;
+    let (px, py, pw, ph) = pill_position(state, dw, dh);
+    if x >= px && x <= px + pw && y >= py && y <= py + ph {
+        let regions = state.click_regions.borrow();
+        for region in regions.iter().rev() {
+            if matches!(region.action, ClickAction::Pill) {
+                continue;
+            }
+            if region.contains(x, y) {
+                return false;
+            }
+        }
+        return true;
+    }
+
+    false
+}
+
 pub(crate) fn handle_click(state: &PillState, x: f64, y: f64) {
     let (ox, oy) = state.content_offset();
     let x = x - ox;
