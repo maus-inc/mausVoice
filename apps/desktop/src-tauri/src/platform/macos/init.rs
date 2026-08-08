@@ -21,12 +21,23 @@ pub fn get_native_setup_status() -> crate::platform::NativeSetupStatus {
 pub async fn run_native_setup() -> crate::platform::NativeSetupResult {
     // macOS gates global input capture behind the Accessibility and Microphone
     // privacy prompts. Triggering them (via the real permission flow) is the
-    // macOS equivalent of Linux's pkexec provisioning.
-    if let Err(err) = permissions::request_microphone_permission() {
-        log::error!("Failed to request microphone permission: {err}");
-    }
-    if let Err(err) = permissions::request_accessibility_permission() {
-        log::error!("Failed to request accessibility permission: {err}");
+    // macOS equivalent of Linux's pkexec provisioning. The prompts block while
+    // the user responds, so run them off the async runtime — same as Linux.
+    let prompt_errors = tokio::task::spawn_blocking(|| {
+        let mut errors = Vec::new();
+        if let Err(err) = permissions::request_microphone_permission() {
+            errors.push(format!("microphone: {err}"));
+        }
+        if let Err(err) = permissions::request_accessibility_permission() {
+            errors.push(format!("accessibility: {err}"));
+        }
+        errors
+    })
+    .await
+    .unwrap_or_default();
+
+    for err in &prompt_errors {
+        log::error!("Failed to request permission ({err})");
     }
 
     let mic = permissions::check_microphone_permission();
