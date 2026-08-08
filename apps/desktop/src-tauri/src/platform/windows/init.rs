@@ -148,7 +148,7 @@ pub fn run_elevate_helper_if_requested() -> bool {
 
 #[cfg(target_os = "windows")]
 fn run_elevate_helper(parent_pid: u32, rest_args: &[String]) {
-    use windows::Win32::Foundation::{CloseHandle, WAIT_OBJECT_0, ERROR_ACCESS_DENIED};
+    use windows::Win32::Foundation::{CloseHandle, WAIT_OBJECT_0, ERROR_INVALID_PARAMETER};
     use windows::Win32::System::Threading::{
         CreateProcessW, INFINITE, OpenProcess, PROCESS_INFORMATION, PROCESS_SYNCHRONIZE,
         PROCESS_CREATION_FLAGS, STARTUPINFOW, WaitForSingleObject,
@@ -181,16 +181,20 @@ fn run_elevate_helper(parent_pid: u32, rest_args: &[String]) {
             }
             Err(_) => {
                 let err = unsafe { windows::Win32::Foundation::GetLastError() };
-                if err == ERROR_ACCESS_DENIED {
+                if err == ERROR_INVALID_PARAMETER {
+                    // The PID does not exist: the parent already exited. Treat as
+                    // gone after a short poll so we give it time to release the
+                    // single-instance lock.
+                    launch = true;
+                    std::thread::sleep(std::time::Duration::from_millis(100));
+                } else {
+                    // ERROR_ACCESS_DENIED or any other (possibly transient) error:
+                    // we cannot confirm the parent state, so do NOT launch.
                     log::error!(
-                        "Elevation helper cannot open parent {parent_pid} (access denied); aborting."
+                        "Elevation helper cannot open parent {parent_pid} (error {err:#x}); aborting."
                     );
                     break;
                 }
-                // Process not found (or transient): treat as exited after a short
-                // poll so we give the parent time to release the lock.
-                launch = true;
-                std::thread::sleep(std::time::Duration::from_millis(100));
             }
         }
     }
