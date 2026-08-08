@@ -1,8 +1,7 @@
 use std::os::windows::ffi::OsStrExt;
 
-use windows::Win32::System::Threading::{
-    GetCurrentProcess, OpenProcessToken, TOKEN_ELEVATION, TOKEN_QUERY,
-};
+use windows::Win32::System::Threading::{GetCurrentProcess, OpenProcessToken};
+use windows::Win32::Security::{GetTokenInformation, TOKEN_ELEVATION, TOKEN_QUERY, TokenElevation};
 use windows::Win32::UI::Shell::ShellExecuteW;
 use windows::Win32::UI::WindowsAndMessaging::SW_SHOWNORMAL;
 use windows::core::PCWSTR;
@@ -28,9 +27,9 @@ pub fn is_process_elevated() -> bool {
 
         let mut elevation = TOKEN_ELEVATION::default();
         let mut size = std::mem::size_of::<TOKEN_ELEVATION>() as u32;
-        let status = windows::Win32::System::Threading::GetTokenInformation(
+        let status = GetTokenInformation(
             token,
-            windows::Win32::System::Threading::TokenElevation,
+            TokenElevation,
             Some(&mut elevation as *mut _ as *mut _),
             size,
             &mut size,
@@ -105,7 +104,7 @@ pub async fn run_native_setup() -> crate::platform::NativeSetupResult {
         }
 
         // ERROR_CANCELLED (1223) means the user dismissed the UAC prompt.
-        let last_err = windows::Win32::Foundation::GetLastError();
+        let last_err = unsafe { windows::Win32::Foundation::GetLastError() };
         if last_err == windows::Win32::Foundation::ERROR_CANCELLED {
             return crate::platform::NativeSetupResult::Cancelled;
         }
