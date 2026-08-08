@@ -75,14 +75,18 @@ pub async fn run_native_setup(app: tauri::AppHandle) -> crate::platform::NativeS
         let self_exe = std::env::current_exe().unwrap_or_default();
         let parent_pid = std::process::id();
 
-        let verb: Vec<u16> = "open\0".encode_utf16().collect();
+        // Launch the bootstrap helper with "runas" so the UAC prompt happens
+        // HERE, while the main process is still alive. If the user cancels UAC,
+        // the helper never starts and we stay running (return Cancelled). Only
+        // after a successful elevated launch do we perform a controlled shutdown
+        // and let the (now-elevated) helper relaunch the main app.
+        let verb: Vec<u16> = "runas\0".encode_utf16().collect();
         let exe_wide: Vec<u16> = self_exe
             .as_os_str()
             .encode_wide()
             .chain(std::iter::once(0))
             .collect();
 
-        // Pass the original arguments (minus any elevation marker) to the helper.
         let mut cli = format!("--elevate-helper {parent_pid}");
         for arg in std::env::args().skip(1) {
             cli.push(' ');
@@ -101,13 +105,12 @@ pub async fn run_native_setup(app: tauri::AppHandle) -> crate::platform::NativeS
             )
         };
 
-        // ShellExecuteW returns a value > 32 on success. The helper is now
-        // waiting for this process to exit, after which it launches the
-        // elevated copy. Perform a controlled shutdown (runs ExitRequested so
-        // window state is saved and the keyboard listener stops) rather than an
-        // abrupt std::process::exit, then the singleton is released.
         let handle = result.0 as isize;
         if handle > 32 {
+            // The elevated helper is now waiting for this process to exit, after
+            // which it launches the elevated main app. Perform a controlled
+            // shutdown (runs ExitRequested so window state is saved and the
+            // keyboard listener stops) rather than an abrupt std::process::exit.
             log::info!("Elevation helper launched; performing controlled shutdown.");
             app.exit(0);
             #[allow(unreachable_code)]
@@ -145,20 +148,36 @@ pub fn run_elevate_helper_if_requested() -> bool {
 
 #[cfg(target_os = "windows")]
 fn run_elevate_helper(parent_pid: u32, rest_args: &[String]) {
+    use windows::Win32::Foundation::CloseHandle;
     use windows::Win32::System::Threading::{
         INFINITE, OpenProcess, PROCESS_SYNCHRONIZE, WaitForSingleObject,
     };
 
     // Wait for the original (unelevated) process to exit so the single-instance
-    // lock is released before we launch the elevated copy.
+    // lock is released before we launch the elevated main app. If we cannot open
+    // the parent handle (e.g. it already exited, or access denied), fall back to
+    // a short bounded wait rather than launching immediately and recreating the
+    // race. The parent always performs a controlled exit, so it will be gone
+    // shortly.
     unsafe {
-        if let Ok(handle) = OpenProcess(PROCESS_SYNCHRONIZE, false, parent_pid) {
-            WaitForSingleObject(handle, INFINITE);
+        match OpenProcess(PROCESS_SYNCHRONIZE, false, parent_pid) {
+            Ok(handle) => {
+                WaitForSingleObject(handle, INFINITE);
+                let _ = CloseHandle(handle);
+            }
+            Err(err) => {
+                log::warn!(
+                    "Elevation helper could not open parent {parent_pid} ({err}); waiting briefly before launch."
+                );
+                std::thread::sleep(std::time::Duration::from_millis(500));
+            }
         }
     }
 
     let exe = std::env::current_exe().unwrap_or_default();
-    let verb: Vec<u16> = "runas\0".encode_utf16().collect();
+    // The helper is already elevated (launched via runas), so the main app is
+    // started normally — no second UAC prompt.
+    let verb: Vec<u16> = "open\0".encode_utf16().collect();
     let exe_wide: Vec<u16> = exe
         .as_os_str()
         .encode_wide()
@@ -172,7 +191,7 @@ fn run_elevate_helper(parent_pid: u32, rest_args: &[String]) {
     }
     let args_wide: Vec<u16> = cli.encode_utf16().chain(std::iter::once(0)).collect();
 
-    unsafe {
+    let result = unsafe {
         ShellExecuteW(
             None,
             PCWSTR(verb.as_ptr()),
@@ -180,7 +199,11 @@ fn run_elevate_helper(parent_pid: u32, rest_args: &[String]) {
             PCWSTR(args_wide.as_ptr()),
             PCWSTR::null(),
             SW_SHOWNORMAL,
-        );
+        )
+    };
+    let handle = result.0 as isize;
+    if handle <= 32 {
+        log::error!("Elevation helper failed to launch elevated main app (code {handle}).");
     }
 }
 
