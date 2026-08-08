@@ -238,8 +238,10 @@ fn run_elevate_helper(parent_pid: u32, rest_args: &[String]) {
     match result {
         Ok(()) => {
             // Close the handles we do not need; the child keeps running.
-            let _ = CloseHandle(pi.hProcess);
-            let _ = CloseHandle(pi.hThread);
+            unsafe {
+                let _ = CloseHandle(pi.hProcess);
+                let _ = CloseHandle(pi.hThread);
+            }
         }
         Err(err) => {
             log::error!("Elevation helper failed to launch elevated main app: {err}");
