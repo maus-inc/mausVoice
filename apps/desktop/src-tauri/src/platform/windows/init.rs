@@ -1,9 +1,10 @@
+use std::os::windows::ffi::OsStrExt;
+
 use windows::Win32::System::Threading::{
     GetCurrentProcess, OpenProcessToken, TOKEN_ELEVATION, TOKEN_QUERY,
 };
-use windows::Win32::UI::WindowsAndMessaging::{
-    ShellExecuteW, SW_SHOWNORMAL,
-};
+use windows::Win32::UI::Shell::ShellExecuteW;
+use windows::Win32::UI::WindowsAndMessaging::SW_SHOWNORMAL;
 use windows::core::PCWSTR;
 
 use crate::platform::permissions;
