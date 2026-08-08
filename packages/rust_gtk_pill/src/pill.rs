@@ -168,8 +168,11 @@ pub fn run(receiver: Receiver<InMessage>) {
         drag_cancelled: Cell::new(false),
         drag_cursor_x: Cell::new(0.0),
         drag_cursor_y: Cell::new(0.0),
+        drag_draw_offset_x: Cell::new(0.0),
+        drag_draw_offset_y: Cell::new(0.0),
         alloc_width: Cell::new(0.0),
         alloc_height: Cell::new(0.0),
+        backend: Cell::new(backend),
     });
 
     if backend == Backend::X11 {
@@ -230,6 +233,15 @@ pub fn run(receiver: Receiver<InMessage>) {
                 state_motion.long_press_elapsed.set(0.0);
                 state_motion.drag_cancelled.set(true);
             }
+        }
+
+        // While dragging, translate the Wayland draw position to follow the
+        // pointer (X11 handles its own toplevel movement elsewhere).
+        if state_motion.dragging.get() && state_motion.backend.get() != Backend::X11 {
+            let grab_x = state_motion.drag_cursor_x.get();
+            let grab_y = state_motion.drag_cursor_y.get();
+            state_motion.drag_draw_offset_x.set(mx - grab_x);
+            state_motion.drag_draw_offset_y.set(my - grab_y);
         }
 
         glib::Propagation::Proceed
@@ -296,6 +308,10 @@ pub fn run(receiver: Receiver<InMessage>) {
         state_click.dragging.set(false);
         state_click.long_press_active.set(false);
         state_click.long_press_elapsed.set(0.0);
+        // Revert the Wayland draw offset so the pill returns to its default
+        // bottom-center position (X11 re-centers in its own reposition loop).
+        state_click.drag_draw_offset_x.set(0.0);
+        state_click.drag_draw_offset_y.set(0.0);
         if !was_dragging {
             let (x, y) = event.position();
             input::handle_click(&state_click, x, y);

@@ -67,9 +67,9 @@ pub(crate) fn pill_position(state: &PillState, ww: f64, wh: f64) -> (f64, f64, f
     let expand_t = state.expand_t.get();
     let pill_w = lerp(MIN_PILL_WIDTH, EXPANDED_PILL_WIDTH, expand_t);
     let pill_h = lerp(MIN_PILL_HEIGHT, EXPANDED_PILL_HEIGHT, expand_t);
-    let pill_x = (ww - pill_w) / 2.0;
+    let mut pill_x = (ww - pill_w) / 2.0;
 
-    let pill_y = if state.assistant_active.get() || state.panel_open_t.get() > 0.01 {
+    let mut pill_y = if state.assistant_active.get() || state.panel_open_t.get() > 0.01 {
         let panel_bottom = wh - PANEL_BOTTOM_MARGIN;
         panel_bottom - PILL_BOTTOM_INSET - pill_h
     } else {
@@ -77,6 +77,13 @@ pub(crate) fn pill_position(state: &PillState, ww: f64, wh: f64) -> (f64, f64, f
         let bottom_offset = 6.0;
         wh - bottom_offset - pill_h
     };
+
+    // On Wayland backends the pill draws inside a full-window canvas, so a
+    // drag translates the draw position. X11 moves the real toplevel instead.
+    if state.backend.get() != crate::pill::Backend::X11 {
+        pill_x += state.drag_draw_offset_x.get();
+        pill_y += state.drag_draw_offset_y.get();
+    }
 
     (pill_x, pill_y, pill_w, pill_h)
 }

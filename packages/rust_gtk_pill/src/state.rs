@@ -3,6 +3,7 @@ use std::cell::{Cell, RefCell};
 use crate::ipc::{Phase, PillMessage, PillPermission, PillStreaming, Visibility};
 
 use crate::constants::*;
+use crate::pill::Backend;
 
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub(crate) enum RocketPhase {
@@ -202,10 +203,17 @@ pub(crate) struct PillState {
     pub(crate) drag_cancelled: Cell<bool>,
     pub(crate) drag_cursor_x: Cell<f64>,
     pub(crate) drag_cursor_y: Cell<f64>,
+    // PlainWayland draws the pill on a maximized overlay window, so dragging
+    // translates the pill's draw position rather than moving the toplevel.
+    pub(crate) drag_draw_offset_x: Cell<f64>,
+    pub(crate) drag_draw_offset_y: Cell<f64>,
 
     // Actual window allocation (used by PlainWayland for fullscreen overlay positioning)
     pub(crate) alloc_width: Cell<f64>,
     pub(crate) alloc_height: Cell<f64>,
+
+    // Active backend, so draw-side positioning can stay backend aware.
+    pub(crate) backend: Cell<Backend>,
 }
 
 impl PillState {
