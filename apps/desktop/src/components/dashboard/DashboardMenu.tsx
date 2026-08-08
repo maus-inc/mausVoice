@@ -171,7 +171,9 @@ export const DashboardMenu = ({ onChoose }: DashboardMenuProps) => {
       alignItems="stretch"
       sx={{
         height: "100%",
-        borderRight: dark
+        borderRadius: "16px",
+        margin: "0.35rem",
+        border: dark
           ? "1px solid rgba(255,255,255,0.05)"
           : "1px solid rgba(15,18,25,0.05)",
         background: dark

@@ -68,10 +68,6 @@ export default function DashboardPage() {
                 theme.palette.mode === "dark"
                   ? "1px solid rgba(255,255,255,0.05)"
                   : "1px solid rgba(15,18,25,0.05)",
-              boxShadow: (theme) =>
-                theme.palette.mode === "dark"
-                  ? "inset 0 1px 0 rgba(255,255,255,0.06), inset 0 2px 0 rgba(255,255,255,0.02), 0 10px 28px rgba(0,0,0,0.28)"
-                  : "inset 0 1px 0 rgba(255,255,255,0.95), inset 0 2px 0 rgba(255,255,255,0.4), 0 8px 24px rgba(15,18,25,0.06)",
             }}
           >
             <Outlet />
