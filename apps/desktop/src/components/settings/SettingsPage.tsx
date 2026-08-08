@@ -87,7 +87,6 @@ export default function SettingsPage() {
   const [groqSaving, setGroqSaving] = useState(false);
   const [groqError, setGroqError] = useState<string | null>(null);
 
-  const isLinux = getPlatform() === "linux";
   const [setupConfirmOpen, setSetupConfirmOpen] = useState(false);
   const [setupRunning, setSetupRunning] = useState(false);
 
@@ -568,13 +567,31 @@ export default function SettingsPage() {
     </Section>
   );
 
-  const linuxInputSetup = isLinux ? (
-    <Section
-      title={<FormattedMessage defaultMessage="Input permissions" />}
-      description={
-        <FormattedMessage defaultMessage="Configures global input capture (uinput/udev) so the pill can type for you. Requires administrator privileges." />
-      }
-    >
+  const platform = getPlatform();
+  const inputSetupTitle = (
+    <FormattedMessage defaultMessage="Input permissions" />
+  );
+  const inputSetupDescription = (() => {
+    switch (platform) {
+      case "linux":
+        return (
+          <FormattedMessage defaultMessage="Configures global input capture (uinput/udev) so the pill can type for you. Requires administrator privileges." />
+        );
+      case "windows":
+        return (
+          <FormattedMessage defaultMessage="Grants administrator privileges and input-capture access so the pill can type for you. You will see a User Account Control prompt." />
+        );
+      case "macos":
+        return (
+          <FormattedMessage defaultMessage="Requests Accessibility and Microphone access so the pill can type for you. You will be prompted in System Settings." />
+        );
+      default:
+        return null;
+    }
+  })();
+
+  const inputPermissionsSetup = (
+    <Section title={inputSetupTitle} description={inputSetupDescription}>
       <ListTile
         title={
           <FormattedMessage defaultMessage="Configure input permissions" />
@@ -584,7 +601,7 @@ export default function SettingsPage() {
         onClick={() => setSetupConfirmOpen(true)}
       />
     </Section>
-  ) : null;
+  );
 
   const dangerZone = (
     <Section
@@ -610,7 +627,7 @@ export default function SettingsPage() {
         {general}
         {processing}
         {advanced}
-        {linuxInputSetup}
+        {inputPermissionsSetup}
         {!isEnterprise && dangerZone}
       </Stack>
       <ConfirmDialog
@@ -619,7 +636,13 @@ export default function SettingsPage() {
           <FormattedMessage defaultMessage="Configure input permissions" />
         }
         content={
-          <FormattedMessage defaultMessage="This requires administrator privileges to configure global input capture. Continue?" />
+          platform === "linux" ? (
+            <FormattedMessage defaultMessage="This requires administrator privileges to configure global input capture (uinput/udev). Continue?" />
+          ) : platform === "windows" ? (
+            <FormattedMessage defaultMessage="This will prompt for administrator privileges (UAC) so the pill can capture and type input globally. Continue?" />
+          ) : (
+            <FormattedMessage defaultMessage="This will request Accessibility and Microphone access so the pill can capture and type input globally. Continue?" />
+          )
         }
         confirmLabel={<FormattedMessage defaultMessage="Continue" />}
         onCancel={() => setSetupConfirmOpen(false)}
