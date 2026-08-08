@@ -18,7 +18,7 @@ pub fn get_native_setup_status() -> crate::platform::NativeSetupStatus {
     }
 }
 
-pub async fn run_native_setup() -> crate::platform::NativeSetupResult {
+pub async fn run_native_setup(_app: tauri::AppHandle) -> crate::platform::NativeSetupResult {
     // macOS gates global input capture behind the Accessibility and Microphone
     // privacy prompts. Triggering them (via the real permission flow) is the
     // macOS equivalent of Linux's pkexec provisioning. The prompts block while

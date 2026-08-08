@@ -164,7 +164,7 @@ fn is_user_cancellation(status: &std::process::ExitStatus) -> bool {
     matches!(status.code(), Some(126) | None)
 }
 
-pub async fn run_native_setup() -> NativeSetupResult {
+pub async fn run_native_setup(_app: tauri::AppHandle) -> NativeSetupResult {
     let result = tokio::task::spawn_blocking(|| {
         let username = std::env::var("USER")
             .or_else(|_| std::env::var("LOGNAME"))
