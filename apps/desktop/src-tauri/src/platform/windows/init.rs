@@ -155,24 +155,31 @@ fn run_elevate_helper(parent_pid: u32, rest_args: &[String]) {
     };
 
     // Wait for the original (unelevated) process to exit so the single-instance
-    // lock is released before we launch the elevated main app. If we cannot open
-    // the parent handle (e.g. it already exited, or access denied), fall back to
-    // a short bounded wait rather than launching immediately and recreating the
-    // race. The parent always performs a controlled exit, so it will be gone
-    // shortly.
-    unsafe {
-        match OpenProcess(PROCESS_SYNCHRONIZE, false, parent_pid) {
+    // lock is released before we launch the elevated main app. Retry OpenProcess
+    // so we reliably detect the parent's exit: if it succeeds we wait on the
+    // handle (parent confirmed gone), and if it keeps failing we treat the parent
+    // as already exited after a bounded poll. A fixed delay alone could race with
+    // the parent's shutdown and recreate the single-instance conflict.
+    let mut parent_confirmed = false;
+    for _ in 0..50 {
+        match unsafe { OpenProcess(PROCESS_SYNCHRONIZE, false, parent_pid) } {
             Ok(handle) => {
-                WaitForSingleObject(handle, INFINITE);
-                let _ = CloseHandle(handle);
+                unsafe {
+                    WaitForSingleObject(handle, INFINITE);
+                    let _ = CloseHandle(handle);
+                }
+                parent_confirmed = true;
+                break;
             }
-            Err(err) => {
-                log::warn!(
-                    "Elevation helper could not open parent {parent_pid} ({err}); waiting briefly before launch."
-                );
-                std::thread::sleep(std::time::Duration::from_millis(500));
+            Err(_) => {
+                std::thread::sleep(std::time::Duration::from_millis(100));
             }
         }
+    }
+    if !parent_confirmed {
+        log::warn!(
+            "Elevation helper could not confirm parent {parent_pid} exited; launching after bounded wait."
+        );
     }
 
     let exe = std::env::current_exe().unwrap_or_default();
@@ -278,9 +285,17 @@ mod tests {
 
     #[test]
     fn doubles_trailing_backslashes_before_closing_quote() {
-        assert_eq!(windows_quote("C:\\path"), "\"C:\\path\"");
-        assert_eq!(windows_quote("C:\\path\\"), "\"C:\\path\\\\\"");
-        assert_eq!(windows_quote("C:\\path\\\\"), "\"C:\\path\\\\\\\"");
+        // These inputs contain spaces, so windows_quote must quote them; the
+        // trailing backslashes must be doubled before the closing quote.
+        assert_eq!(windows_quote("C:\\Path With Spaces"), "\"C:\\Path With Spaces\"");
+        assert_eq!(
+            windows_quote("C:\\Path With Spaces\\"),
+            "\"C:\\Path With Spaces\\\\\""
+        );
+        assert_eq!(
+            windows_quote("C:\\Path With Spaces\\\\"),
+            "\"C:\\Path With Spaces\\\\\\\""
+        );
     }
 
     #[test]
