@@ -141,67 +141,81 @@ pub fn run_elevate_helper_if_requested() -> bool {
 }
 
 #[cfg(target_os = "windows")]
+#[derive(Debug, PartialEq)]
+enum ParentExit {
+    Launch,
+    Abort,
+}
+
+/// Decide whether to launch the elevated replacement after confirming the
+/// original (unelevated) process exited and released the single-instance lock.
+///
+/// `open` performs exactly ONE `OpenProcess` + `WaitForSingleObject` attempt for
+/// `parent_pid`: `Ok(event)` means the handle was obtained and waited on
+/// (`event` is the `WaitForSingleObject` result); `Err(code)` means `OpenProcess`
+/// failed with `GetLastError` value `code`.
+///
+/// The attempt is made exactly once. We deliberately do NOT retry: if
+/// `OpenProcess` reports the PID is gone the parent has exited, and re-calling
+/// `OpenProcess` could observe a recycled PID belonging to an unrelated process
+/// (which would hang the helper on `WaitForSingleObject`).
+///
+/// Rules:
+/// - `Ok(WAIT_OBJECT_0)` => the parent confirmed exited => launch.
+/// - `Ok(other)` => wait failed => abort (must NOT launch).
+/// - `Err(ERROR_INVALID_PARAMETER)` => the PID does not exist (parent gone) =>
+///   launch.
+/// - `Err(other)` => cannot verify parent state => abort.
+#[cfg(target_os = "windows")]
+fn decide_parent_exit(
+    parent_pid: u32,
+    open: &mut dyn FnMut(u32) -> Option<std::result::Result<windows::Win32::Foundation::WAIT_EVENT, u32>>,
+) -> ParentExit {
+    match open(parent_pid) {
+        Some(Ok(event)) => {
+            if event == windows::Win32::Foundation::WAIT_OBJECT_0 {
+                ParentExit::Launch
+            } else {
+                ParentExit::Abort
+            }
+        }
+        Some(Err(code)) => {
+            if code == windows::Win32::Foundation::ERROR_INVALID_PARAMETER.0 {
+                ParentExit::Launch
+            } else {
+                ParentExit::Abort
+            }
+        }
+        None => ParentExit::Abort,
+    }
+}
+
+#[cfg(target_os = "windows")]
 fn run_elevate_helper(parent_pid: u32, rest_args: &[String]) {
-    use windows::Win32::Foundation::{CloseHandle, ERROR_INVALID_PARAMETER, WAIT_OBJECT_0};
+    use windows::Win32::Foundation::CloseHandle;
     use windows::Win32::System::Threading::{
         CreateProcessW, OpenProcess, WaitForSingleObject, INFINITE, PROCESS_CREATION_FLAGS,
         PROCESS_INFORMATION, PROCESS_SYNCHRONIZE, STARTUPINFOW,
     };
 
-    // Wait for the original (unelevated) process to exit and release the
-    // single-instance lock before launching the elevated replacement.
-    //
-    // Rules (per review):
-    // - OpenProcess succeeds => wait on the handle. Only WAIT_OBJECT_0 confirms
-    //   the parent exited; WAIT_FAILED must NOT permit launch.
-    // - OpenProcess fails with "not found" => the parent is already gone; safe
-    //   to launch after a bounded poll.
-    // - OpenProcess fails with access denied (or any other error) => we cannot
-    //   verify the parent state; do NOT launch and terminate the helper.
-    let mut launch = false;
-    for _ in 0..50 {
-        match unsafe { OpenProcess(PROCESS_SYNCHRONIZE, false, parent_pid) } {
+    let mut open = |pid: u32| -> Option<std::result::Result<windows::Win32::Foundation::WAIT_EVENT, u32>> {
+        match unsafe { OpenProcess(PROCESS_SYNCHRONIZE, false, pid) } {
             Ok(handle) => {
-                let result = unsafe { WaitForSingleObject(handle, INFINITE) };
+                let event = unsafe { WaitForSingleObject(handle, INFINITE) };
                 unsafe {
                     let _ = CloseHandle(handle);
                 }
-                if result == WAIT_OBJECT_0 {
-                    launch = true;
-                    break;
-                }
-                log::error!(
-                    "Elevation helper WaitForSingleObject returned {:#x}; aborting.",
-                    result.0
-                );
-                break;
+                Some(Ok(event))
             }
-            Err(_) => {
-                let err = unsafe { windows::Win32::Foundation::GetLastError() };
-                if err == ERROR_INVALID_PARAMETER {
-                    // The PID does not exist: the parent already exited. Treat as
-                    // gone after a short poll so we give it time to release the
-                    // single-instance lock. Break immediately so we do not
-                    // re-call OpenProcess (the PID could be reused by an unrelated
-                    // process, which would hang the helper on WaitForSingleObject).
-                    launch = true;
-                    std::thread::sleep(std::time::Duration::from_millis(100));
-                    break;
-                } else {
-                    // ERROR_ACCESS_DENIED or any other (possibly transient) error:
-                    // we cannot confirm the parent state, so do NOT launch.
-                    log::error!(
-                        "Elevation helper cannot open parent {parent_pid} (error {:#x}); aborting.",
-                        err.0
-                    );
-                    break;
-                }
-            }
+            Err(_) => Some(Err(unsafe { windows::Win32::Foundation::GetLastError() }.0)),
         }
-    }
-    if !launch {
-        log::error!("Elevation helper did not confirm parent exit; not launching replacement.");
-        std::process::exit(1);
+    };
+    match decide_parent_exit(parent_pid, &mut open) {
+        ParentExit::Launch => {}
+        ParentExit::Abort => {
+            log::error!("Elevation helper did not confirm parent exit; not launching replacement.");
+            std::process::exit(1);
+        }
     }
 
     let exe = std::env::current_exe().unwrap_or_default();
@@ -337,6 +351,72 @@ mod tests {
     #[test]
     fn backslashes_before_embedded_quote_are_escaped() {
         assert_eq!(windows_quote("a\\\"b"), "\"a\\\\\\\"b\"");
+    }
+
+    #[cfg(target_os = "windows")]
+    mod elevate_helper {
+        use super::super::{decide_parent_exit, ParentExit};
+        use windows::Win32::Foundation::{WAIT_EVENT, WAIT_OBJECT_0, ERROR_ACCESS_DENIED, ERROR_INVALID_PARAMETER};
+
+        type OpenResult = Option<std::result::Result<WAIT_EVENT, u32>>;
+
+        #[test]
+        fn invalid_parameter_launches_without_recalling_opener() {
+            // Regression test for the PID-reuse hang: once OpenProcess reports
+            // ERROR_INVALID_PARAMETER (PID gone), the helper must decide to
+            // launch and must NOT call OpenProcess again.
+            let mut calls = 0usize;
+            let mut open = |_pid: u32| -> OpenResult {
+                calls += 1;
+                Some(Err(ERROR_INVALID_PARAMETER.0))
+            };
+            assert_eq!(decide_parent_exit(1234, &mut open), ParentExit::Launch);
+            assert_eq!(calls, 1, "must not re-call opener after ERROR_INVALID_PARAMETER");
+        }
+
+        #[test]
+        fn wait_object_0_launches() {
+            let mut calls = 0usize;
+            let mut open = |_pid: u32| -> OpenResult {
+                calls += 1;
+                Some(Ok(WAIT_OBJECT_0))
+            };
+            assert_eq!(decide_parent_exit(1, &mut open), ParentExit::Launch);
+            assert_eq!(calls, 1);
+        }
+
+        #[test]
+        fn wait_failed_aborts() {
+            let mut calls = 0usize;
+            let mut open = |_pid: u32| -> OpenResult {
+                calls += 1;
+                Some(Ok(WAIT_EVENT(0xFFFF_FFFF)))
+            };
+            assert_eq!(decide_parent_exit(1, &mut open), ParentExit::Abort);
+            assert_eq!(calls, 1);
+        }
+
+        #[test]
+        fn access_denied_aborts() {
+            let mut calls = 0usize;
+            let mut open = |_pid: u32| -> OpenResult {
+                calls += 1;
+                Some(Err(ERROR_ACCESS_DENIED.0))
+            };
+            assert_eq!(decide_parent_exit(1, &mut open), ParentExit::Abort);
+            assert_eq!(calls, 1);
+        }
+
+        #[test]
+        fn unavailable_opener_aborts() {
+            let mut calls = 0usize;
+            let mut open = |_pid: u32| -> OpenResult {
+                calls += 1;
+                None
+            };
+            assert_eq!(decide_parent_exit(1, &mut open), ParentExit::Abort);
+            assert_eq!(calls, 1);
+        }
     }
 }
 
