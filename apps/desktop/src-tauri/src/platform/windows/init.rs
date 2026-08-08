@@ -198,7 +198,7 @@ fn run_elevate_helper(parent_pid: u32, rest_args: &[String]) {
     let result = unsafe {
         CreateProcessW(
             None,
-            Some(windows_core::PWSTR(cmd_line.as_mut_ptr())),
+            Some(windows::core::PWSTR(cmd_line.as_mut_ptr())),
             None,
             None,
             false,
