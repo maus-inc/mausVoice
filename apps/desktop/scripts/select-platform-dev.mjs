@@ -2,23 +2,20 @@
 
 import { spawn } from "node:child_process";
 
+import { resolveDesktopDevScript } from "./platform-dev-config.mjs";
+
 const platformOverride = process.env.MAUSVOICE_DESKTOP_PLATFORM?.trim();
+const resolved = resolveDesktopDevScript(platformOverride);
 
-const PLATFORM_SCRIPTS = {
-  darwin: "dev:mac",
-  win32: "dev:windows",
-};
-
-const resolvedPlatform = platformOverride || process.platform;
-const selectedScript = PLATFORM_SCRIPTS[resolvedPlatform];
-
-if (!selectedScript) {
+if (!resolved) {
   console.error(
-    `Unable to determine desktop dev script for platform "${resolvedPlatform}". ` +
-      "Set MAUSVOICE_DESKTOP_PLATFORM to darwin or win32 to override.",
+    `Unable to determine desktop dev script for platform "${platformOverride || process.platform}". ` +
+      "Set MAUSVOICE_DESKTOP_PLATFORM to darwin, linux, or win32 to override.",
   );
   process.exit(1);
 }
+
+const { selectedScript } = resolved;
 
 const npmNodeExecPath = process.env.npm_node_execpath || process.execPath;
 const npmExecPath = process.env.npm_execpath;
