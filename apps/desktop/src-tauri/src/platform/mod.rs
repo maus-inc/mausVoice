@@ -5,6 +5,10 @@ use std::sync::Arc;
 pub enum NativeSetupResult {
     Success,
     RequireRestart,
+    /// The user dismissed the privilege-elevation prompt (e.g. the polkit
+    /// authentication dialog on Linux). Distinct from `Failed` so the UI can
+    /// stay quiet instead of reporting an error.
+    Cancelled,
     Failed,
 }
 

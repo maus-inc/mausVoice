@@ -38,10 +38,11 @@ import {
   Tooltip,
   Typography,
 } from "@mui/material";
+import { invoke } from "@tauri-apps/api/core";
 import { openUrl } from "@tauri-apps/plugin-opener";
 import { ChangeEvent, useState } from "react";
 import { FormattedMessage, useIntl } from "react-intl";
-import { showSnackbar } from "../../actions/app.actions";
+import { showErrorSnackbar, showSnackbar } from "../../actions/app.actions";
 import {
   savePersonalDeepgramApiKey,
   savePersonalGroqApiKey,
@@ -72,8 +73,10 @@ import {
   PERSONAL_GROQ_API_KEY_NAME,
 } from "../../utils/personal-use.utils";
 import { ListTile } from "../common/ListTile";
+import { ConfirmDialog } from "../common/ConfirmDialog";
 import { Section } from "../common/Section";
 import { DashboardEntryLayout } from "../dashboard/DashboardEntryLayout";
+import { getPlatform } from "../../utils/platform.utils";
 
 export default function SettingsPage() {
   const isEnterprise = useAppStore((state) => state.isEnterprise);
@@ -83,6 +86,37 @@ export default function SettingsPage() {
   const [groqApiKeyInput, setGroqApiKeyInput] = useState("");
   const [groqSaving, setGroqSaving] = useState(false);
   const [groqError, setGroqError] = useState<string | null>(null);
+
+  const isLinux = getPlatform() === "linux";
+  const [setupConfirmOpen, setSetupConfirmOpen] = useState(false);
+  const [setupRunning, setSetupRunning] = useState(false);
+
+  const runNativeSetup = async () => {
+    setSetupConfirmOpen(false);
+    setSetupRunning(true);
+    try {
+      const result = (await invoke<string>("run_native_setup")) as
+        | "Success"
+        | "RequireRestart"
+        | "Cancelled"
+        | "Failed";
+      if (result === "Success") {
+        showSnackbar("Input permissions configured.");
+      } else if (result === "RequireRestart") {
+        showSnackbar(
+          "Setup complete. Please restart the app to apply input permissions.",
+        );
+      } else if (result === "Cancelled") {
+        // User dismissed the elevation prompt; stay quiet.
+      } else {
+        showErrorSnackbar("Failed to configure input permissions.");
+      }
+    } catch (err) {
+      showErrorSnackbar(err);
+    } finally {
+      setSetupRunning(false);
+    }
+  };
   const personalGroqApiKey = useAppStore((state) =>
     state.settings.apiKeys.find(
       (apiKey) =>
@@ -534,6 +568,24 @@ export default function SettingsPage() {
     </Section>
   );
 
+  const linuxInputSetup = isLinux ? (
+    <Section
+      title={<FormattedMessage defaultMessage="Input permissions" />}
+      description={
+        <FormattedMessage defaultMessage="Configures global input capture (uinput/udev) so the pill can type for you. Requires administrator privileges." />
+      }
+    >
+      <ListTile
+        title={
+          <FormattedMessage defaultMessage="Configure input permissions" />
+        }
+        leading={<KeyboardAltOutlined />}
+        disabled={setupRunning}
+        onClick={() => setSetupConfirmOpen(true)}
+      />
+    </Section>
+  ) : null;
+
   const dangerZone = (
     <Section
       title={<FormattedMessage defaultMessage="Danger zone" />}
@@ -558,8 +610,22 @@ export default function SettingsPage() {
         {general}
         {processing}
         {advanced}
+        {linuxInputSetup}
         {!isEnterprise && dangerZone}
       </Stack>
+      <ConfirmDialog
+        isOpen={setupConfirmOpen}
+        title={
+          <FormattedMessage defaultMessage="Configure input permissions" />
+        }
+        content={
+          <FormattedMessage defaultMessage="This requires administrator privileges to configure global input capture. Continue?" />
+        }
+        confirmLabel={<FormattedMessage defaultMessage="Continue" />}
+        onCancel={() => setSetupConfirmOpen(false)}
+        onConfirm={runNativeSetup}
+      />
+
       <Dialog
         open={deepgramDialogOpen}
         onClose={closeDeepgramDialog}
