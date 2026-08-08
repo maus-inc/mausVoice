@@ -175,7 +175,8 @@ fn run_elevate_helper(parent_pid: u32, rest_args: &[String]) {
                     break;
                 }
                 log::error!(
-                    "Elevation helper WaitForSingleObject returned {result:#x}; aborting."
+                    "Elevation helper WaitForSingleObject returned {:#x}; aborting.",
+                    result.0
                 );
                 break;
             }
@@ -191,7 +192,8 @@ fn run_elevate_helper(parent_pid: u32, rest_args: &[String]) {
                     // ERROR_ACCESS_DENIED or any other (possibly transient) error:
                     // we cannot confirm the parent state, so do NOT launch.
                     log::error!(
-                        "Elevation helper cannot open parent {parent_pid} (error {err:#x}); aborting."
+                        "Elevation helper cannot open parent {parent_pid} (error {:#x}); aborting.",
+                        err.0
                     );
                     break;
                 }
