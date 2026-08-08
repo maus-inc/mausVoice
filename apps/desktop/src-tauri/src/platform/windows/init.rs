@@ -181,9 +181,12 @@ fn run_elevate_helper(parent_pid: u32, rest_args: &[String]) {
                 if err == ERROR_INVALID_PARAMETER {
                     // The PID does not exist: the parent already exited. Treat as
                     // gone after a short poll so we give it time to release the
-                    // single-instance lock.
+                    // single-instance lock. Break immediately so we do not
+                    // re-call OpenProcess (the PID could be reused by an unrelated
+                    // process, which would hang the helper on WaitForSingleObject).
                     launch = true;
                     std::thread::sleep(std::time::Duration::from_millis(100));
+                    break;
                 } else {
                     // ERROR_ACCESS_DENIED or any other (possibly transient) error:
                     // we cannot confirm the parent state, so do NOT launch.
