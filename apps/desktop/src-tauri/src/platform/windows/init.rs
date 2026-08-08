@@ -148,38 +148,55 @@ pub fn run_elevate_helper_if_requested() -> bool {
 
 #[cfg(target_os = "windows")]
 fn run_elevate_helper(parent_pid: u32, rest_args: &[String]) {
-    use windows::Win32::Foundation::CloseHandle;
+    use windows::Win32::Foundation::{CloseHandle, WAIT_OBJECT_0, ERROR_ACCESS_DENIED};
     use windows::Win32::System::Threading::{
         CreateProcessW, INFINITE, OpenProcess, PROCESS_INFORMATION, PROCESS_SYNCHRONIZE,
         PROCESS_CREATION_FLAGS, STARTUPINFOW, WaitForSingleObject,
     };
 
-    // Wait for the original (unelevated) process to exit so the single-instance
-    // lock is released before we launch the elevated main app. Retry OpenProcess
-    // so we reliably detect the parent's exit: if it succeeds we wait on the
-    // handle (parent confirmed gone), and if it keeps failing we treat the parent
-    // as already exited after a bounded poll. A fixed delay alone could race with
-    // the parent's shutdown and recreate the single-instance conflict.
-    let mut parent_confirmed = false;
+    // Wait for the original (unelevated) process to exit and release the
+    // single-instance lock before launching the elevated replacement.
+    //
+    // Rules (per review):
+    // - OpenProcess succeeds => wait on the handle. Only WAIT_OBJECT_0 confirms
+    //   the parent exited; WAIT_FAILED must NOT permit launch.
+    // - OpenProcess fails with "not found" => the parent is already gone; safe
+    //   to launch after a bounded poll.
+    // - OpenProcess fails with access denied (or any other error) => we cannot
+    //   verify the parent state; do NOT launch and terminate the helper.
+    let mut launch = false;
     for _ in 0..50 {
         match unsafe { OpenProcess(PROCESS_SYNCHRONIZE, false, parent_pid) } {
             Ok(handle) => {
-                unsafe {
-                    WaitForSingleObject(handle, INFINITE);
-                    let _ = CloseHandle(handle);
+                let result = unsafe { WaitForSingleObject(handle, INFINITE) };
+                unsafe { let _ = CloseHandle(handle); }
+                if result == WAIT_OBJECT_0 {
+                    launch = true;
+                    break;
                 }
-                parent_confirmed = true;
+                log::error!(
+                    "Elevation helper WaitForSingleObject returned {result:#x}; aborting."
+                );
                 break;
             }
             Err(_) => {
+                let err = unsafe { windows::Win32::Foundation::GetLastError() };
+                if err == ERROR_ACCESS_DENIED {
+                    log::error!(
+                        "Elevation helper cannot open parent {parent_pid} (access denied); aborting."
+                    );
+                    break;
+                }
+                // Process not found (or transient): treat as exited after a short
+                // poll so we give the parent time to release the lock.
+                launch = true;
                 std::thread::sleep(std::time::Duration::from_millis(100));
             }
         }
     }
-    if !parent_confirmed {
-        log::warn!(
-            "Elevation helper could not confirm parent {parent_pid} exited; launching after bounded wait."
-        );
+    if !launch {
+        log::error!("Elevation helper did not confirm parent exit; not launching replacement.");
+        std::process::exit(1);
     }
 
     let exe = std::env::current_exe().unwrap_or_default();
