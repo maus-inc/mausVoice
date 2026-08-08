@@ -150,7 +150,8 @@ pub fn run_elevate_helper_if_requested() -> bool {
 fn run_elevate_helper(parent_pid: u32, rest_args: &[String]) {
     use windows::Win32::Foundation::CloseHandle;
     use windows::Win32::System::Threading::{
-        INFINITE, OpenProcess, PROCESS_SYNCHRONIZE, WaitForSingleObject,
+        CreateProcessW, INFINITE, OpenProcess, PROCESS_INFORMATION, PROCESS_SYNCHRONIZE,
+        PROCESS_CREATION_FLAGS, STARTUPINFOW, WaitForSingleObject,
     };
 
     // Wait for the original (unelevated) process to exit so the single-instance
@@ -175,35 +176,48 @@ fn run_elevate_helper(parent_pid: u32, rest_args: &[String]) {
     }
 
     let exe = std::env::current_exe().unwrap_or_default();
-    // The helper is already elevated (launched via runas), so the main app is
-    // started normally — no second UAC prompt.
-    let verb: Vec<u16> = "open\0".encode_utf16().collect();
-    let exe_wide: Vec<u16> = exe
-        .as_os_str()
-        .encode_wide()
-        .chain(std::iter::once(0))
-        .collect();
-
+    // The helper is already elevated (launched via runas). Start the replacement
+    // main app with CreateProcessW so the child inherits this elevated token.
+    // ShellExecuteW("open") is NOT safe here: it can be routed through the
+    // unelevated Explorer and drop the elevation, leaving the replacement
+    // unelevated.
     let mut cli = String::new();
     for arg in rest_args {
         cli.push(' ');
         cli.push_str(&windows_quote(arg));
     }
-    let args_wide: Vec<u16> = cli.encode_utf16().chain(std::iter::once(0)).collect();
+    let mut cmd_line: Vec<u16> = format!("\"{}\"{cli}", exe.display())
+        .encode_utf16()
+        .chain(std::iter::once(0))
+        .collect();
+
+    let mut pi: PROCESS_INFORMATION = unsafe { std::mem::zeroed() };
+    let mut si: STARTUPINFOW = unsafe { std::mem::zeroed() };
+    si.cb = std::mem::size_of::<STARTUPINFOW>() as u32;
 
     let result = unsafe {
-        ShellExecuteW(
+        CreateProcessW(
             None,
-            PCWSTR(verb.as_ptr()),
-            PCWSTR(exe_wide.as_ptr()),
-            PCWSTR(args_wide.as_ptr()),
-            PCWSTR::null(),
-            SW_SHOWNORMAL,
+            Some(windows_core::PWSTR(cmd_line.as_mut_ptr())),
+            None,
+            None,
+            false,
+            PROCESS_CREATION_FLAGS(0),
+            None,
+            None,
+            &si,
+            &mut pi,
         )
     };
-    let handle = result.0 as isize;
-    if handle <= 32 {
-        log::error!("Elevation helper failed to launch elevated main app (code {handle}).");
+    match result {
+        Ok(()) => {
+            // Close the handles we do not need; the child keeps running.
+            let _ = CloseHandle(pi.hProcess);
+            let _ = CloseHandle(pi.hThread);
+        }
+        Err(err) => {
+            log::error!("Elevation helper failed to launch elevated main app: {err}");
+        }
     }
 }
 
