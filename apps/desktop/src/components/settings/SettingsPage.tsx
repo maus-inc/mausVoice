@@ -95,17 +95,17 @@ export default function SettingsPage() {
     setSetupRunning(true);
     try {
       const result = (await invoke<string>("run_native_setup")) as
-        | "Success"
-        | "RequireRestart"
-        | "Cancelled"
-        | "Failed";
-      if (result === "Success") {
+        | "success"
+        | "require-restart"
+        | "cancelled"
+        | "failed";
+      if (result === "success") {
         showSnackbar("Input permissions configured.");
-      } else if (result === "RequireRestart") {
+      } else if (result === "require-restart") {
         showSnackbar(
           "Setup complete. Please restart the app to apply input permissions.",
         );
-      } else if (result === "Cancelled") {
+      } else if (result === "cancelled") {
         // User dismissed the elevation prompt; stay quiet.
       } else {
         showErrorSnackbar("Failed to configure input permissions.");
@@ -590,6 +590,23 @@ export default function SettingsPage() {
     }
   })();
 
+  const setupConfirmContent = (() => {
+    switch (platform) {
+      case "linux":
+        return (
+          <FormattedMessage defaultMessage="This requires administrator privileges to configure global input capture (uinput/udev). Continue?" />
+        );
+      case "windows":
+        return (
+          <FormattedMessage defaultMessage="This will prompt for administrator privileges (UAC) so the pill can capture and type input globally. Continue?" />
+        );
+      default:
+        return (
+          <FormattedMessage defaultMessage="This will request Accessibility and Microphone access so the pill can capture and type input globally. Continue?" />
+        );
+    }
+  })();
+
   const inputPermissionsSetup = (
     <Section title={inputSetupTitle} description={inputSetupDescription}>
       <ListTile
@@ -635,15 +652,7 @@ export default function SettingsPage() {
         title={
           <FormattedMessage defaultMessage="Configure input permissions" />
         }
-        content={
-          platform === "linux" ? (
-            <FormattedMessage defaultMessage="This requires administrator privileges to configure global input capture (uinput/udev). Continue?" />
-          ) : platform === "windows" ? (
-            <FormattedMessage defaultMessage="This will prompt for administrator privileges (UAC) so the pill can capture and type input globally. Continue?" />
-          ) : (
-            <FormattedMessage defaultMessage="This will request Accessibility and Microphone access so the pill can capture and type input globally. Continue?" />
-          )
-        }
+        content={setupConfirmContent}
         confirmLabel={<FormattedMessage defaultMessage="Continue" />}
         onCancel={() => setSetupConfirmOpen(false)}
         onConfirm={runNativeSetup}

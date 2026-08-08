@@ -21,20 +21,17 @@ const npmNodeExecPath = process.env.npm_node_execpath || process.execPath;
 const npmExecPath = process.env.npm_execpath;
 
 // Prefer invoking the npm CLI the same way npm itself would spawn lifecycle scripts.
+const npmBin = process.platform === "win32" ? "npm.cmd" : "npm";
 const child = npmExecPath
   ? spawn(npmNodeExecPath, [npmExecPath, "run", selectedScript], {
       stdio: "inherit",
       env: process.env,
     })
-  : spawn(
-      process.platform === "win32" ? "npm.cmd" : "npm",
-      ["run", selectedScript],
-      {
-        stdio: "inherit",
-        env: process.env,
-        shell: process.platform === "win32",
-      },
-    );
+  : spawn(npmBin, ["run", selectedScript], {
+      stdio: "inherit",
+      env: process.env,
+      shell: process.platform === "win32",
+    });
 
 child.on("exit", (code, signal) => {
   if (signal) {

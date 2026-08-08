@@ -1048,7 +1048,7 @@ wroteFile: boolean;
 restartRequired: boolean }
 export type MenuIconVariant = "default" | "update"
 export type MonitorAtCursor = { x: number; y: number; width: number; height: number; visibleX: number; visibleY: number; visibleWidth: number; visibleHeight: number; scaleFactor: number; cursorX: number; cursorY: number }
-export type NativeSetupResult = "success" | "require-restart" | "failed"
+export type NativeSetupResult = "success" | "require-restart" | "cancelled" | "failed"
 export type NativeSetupStatus = "ready" | "needs-setup" | "needs-restart"
 export type PairedRemoteDevice = { id: string; name: string; platform: string; role: string; sharedSecret: string; pairedAt: string; lastSeenAt?: string | null; lastKnownAddress?: string | null; trusted?: boolean }
 export type PairedRemoteDeviceDeleteArgs = { id: string }

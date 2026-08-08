@@ -77,13 +77,16 @@ pub async fn run_native_setup() -> crate::platform::NativeSetupResult {
             .chain(std::iter::once(0))
             .collect();
         let verb: Vec<u16> = "runas\0".encode_utf16().collect();
-        let args: Vec<u16> = std::env::args()
-            .skip(1)
-            .collect::<Vec<_>>()
-            .join(" ")
-            .encode_utf16()
-            .chain(std::iter::once(0))
-            .collect();
+
+        // Preserve the original arguments, quoting each one so values with
+        // spaces or quotes survive the round-trip, and mark this as the
+        // elevation handoff so the single-instance handler can swap instances.
+        let mut cli = String::from("--elevated");
+        for arg in std::env::args().skip(1) {
+            cli.push(' ');
+            cli.push_str(&windows_quote(&arg));
+        }
+        let args: Vec<u16> = cli.encode_utf16().chain(std::iter::once(0)).collect();
 
         let result = unsafe {
             ShellExecuteW(
@@ -112,6 +115,35 @@ pub async fn run_native_setup() -> crate::platform::NativeSetupResult {
     }
 
     crate::platform::NativeSetupResult::Success
+}
+
+/// Quote a single Windows command-line argument per the `CommandLineToArgvW`
+/// rules so embedded spaces and quotes survive `ShellExecuteW`.
+fn windows_quote(arg: &str) -> String {
+    if arg.is_empty() {
+        return "\"\"".to_string();
+    }
+    if !arg.contains(char::is_whitespace) && !arg.contains('"') {
+        return arg.to_string();
+    }
+    let mut quoted = String::from("\"");
+    let mut backslashes = 0;
+    for ch in arg.chars() {
+        if ch == '\\' {
+            backslashes += 1;
+        } else if ch == '"' {
+            quoted.push_str(&"\\".repeat(backslashes + 1));
+            quoted.push('"');
+            backslashes = 0;
+        } else {
+            quoted.push_str(&"\\".repeat(backslashes));
+            quoted.push(ch);
+            backslashes = 0;
+        }
+    }
+    quoted.push_str(&"\\".repeat(backslashes));
+    quoted.push('"');
+    quoted
 }
 
 pub fn ensure_background_services() {}

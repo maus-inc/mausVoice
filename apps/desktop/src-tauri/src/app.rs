@@ -55,8 +55,16 @@ pub fn build() -> tauri::Builder<tauri::Wry> {
                 })
                 .build()
         })
-        .plugin(tauri_plugin_single_instance::init(|app, _args, _cwd| {
-            // When a second instance is launched, bring the existing window to the foreground
+        .plugin(tauri_plugin_single_instance::init(|app, args, _cwd| {
+            // When a second instance is launched, bring the existing window to the foreground.
+            // If the second instance is the Windows UAC elevation handoff (launched with
+            // `--elevated`), the original unelevated instance steps aside so the elevated
+            // copy becomes the active application.
+            if args.iter().any(|a| a == "--elevated") {
+                log::info!("Elevated handoff received; exiting unelevated instance.");
+                app.cleanup_before_exit();
+                std::process::exit(0);
+            }
             if let Some(window) = app.get_webview_window("main") {
                 let _ = crate::platform::window::surface_main_window(&window);
             }
