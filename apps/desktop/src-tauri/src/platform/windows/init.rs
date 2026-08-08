@@ -1,10 +1,10 @@
 use std::os::windows::ffi::OsStrExt;
 
+use windows::core::PCWSTR;
+use windows::Win32::Security::{GetTokenInformation, TokenElevation, TOKEN_ELEVATION, TOKEN_QUERY};
 use windows::Win32::System::Threading::{GetCurrentProcess, OpenProcessToken};
-use windows::Win32::Security::{GetTokenInformation, TOKEN_ELEVATION, TOKEN_QUERY, TokenElevation};
 use windows::Win32::UI::Shell::ShellExecuteW;
 use windows::Win32::UI::WindowsAndMessaging::SW_SHOWNORMAL;
-use windows::core::PCWSTR;
 
 use crate::platform::permissions;
 
@@ -15,13 +15,7 @@ pub fn configure_display_backend() {}
 pub fn is_process_elevated() -> bool {
     unsafe {
         let mut token = windows::Win32::Foundation::HANDLE::default();
-        if OpenProcessToken(
-            GetCurrentProcess(),
-            TOKEN_QUERY,
-            &mut token,
-        )
-        .is_err()
-        {
+        if OpenProcessToken(GetCurrentProcess(), TOKEN_QUERY, &mut token).is_err() {
             return false;
         }
 
@@ -148,10 +142,10 @@ pub fn run_elevate_helper_if_requested() -> bool {
 
 #[cfg(target_os = "windows")]
 fn run_elevate_helper(parent_pid: u32, rest_args: &[String]) {
-    use windows::Win32::Foundation::{CloseHandle, WAIT_OBJECT_0, ERROR_INVALID_PARAMETER};
+    use windows::Win32::Foundation::{CloseHandle, ERROR_INVALID_PARAMETER, WAIT_OBJECT_0};
     use windows::Win32::System::Threading::{
-        CreateProcessW, INFINITE, OpenProcess, PROCESS_INFORMATION, PROCESS_SYNCHRONIZE,
-        PROCESS_CREATION_FLAGS, STARTUPINFOW, WaitForSingleObject,
+        CreateProcessW, OpenProcess, WaitForSingleObject, INFINITE, PROCESS_CREATION_FLAGS,
+        PROCESS_INFORMATION, PROCESS_SYNCHRONIZE, STARTUPINFOW,
     };
 
     // Wait for the original (unelevated) process to exit and release the
@@ -169,7 +163,9 @@ fn run_elevate_helper(parent_pid: u32, rest_args: &[String]) {
         match unsafe { OpenProcess(PROCESS_SYNCHRONIZE, false, parent_pid) } {
             Ok(handle) => {
                 let result = unsafe { WaitForSingleObject(handle, INFINITE) };
-                unsafe { let _ = CloseHandle(handle); }
+                unsafe {
+                    let _ = CloseHandle(handle);
+                }
                 if result == WAIT_OBJECT_0 {
                     launch = true;
                     break;
@@ -310,7 +306,10 @@ mod tests {
     fn doubles_trailing_backslashes_before_closing_quote() {
         // These inputs contain spaces, so windows_quote must quote them; the
         // trailing backslashes must be doubled before the closing quote.
-        assert_eq!(windows_quote("C:\\Path With Spaces"), "\"C:\\Path With Spaces\"");
+        assert_eq!(
+            windows_quote("C:\\Path With Spaces"),
+            "\"C:\\Path With Spaces\""
+        );
         assert_eq!(
             windows_quote("C:\\Path With Spaces\\"),
             "\"C:\\Path With Spaces\\\\\""
@@ -324,7 +323,10 @@ mod tests {
     #[test]
     fn path_with_spaces_ending_in_backslash_round_trips() {
         // "C:\Path With Spaces\" must keep its trailing backslash after parsing.
-        assert_eq!(windows_quote("C:\\Path With Spaces\\"), "\"C:\\Path With Spaces\\\\\"");
+        assert_eq!(
+            windows_quote("C:\\Path With Spaces\\"),
+            "\"C:\\Path With Spaces\\\\\""
+        );
     }
 
     #[test]
