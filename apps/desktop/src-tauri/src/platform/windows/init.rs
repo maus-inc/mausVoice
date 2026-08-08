@@ -55,7 +55,7 @@ pub fn get_native_setup_status() -> crate::platform::NativeSetupStatus {
     }
 }
 
-pub async fn run_native_setup() -> crate::platform::NativeSetupResult {
+pub async fn run_native_setup(app: tauri::AppHandle) -> crate::platform::NativeSetupResult {
     // Trigger the OS-native permission prompts (accessibility + microphone).
     // These show a UAC/consent prompt through the system, not pkexec.
     if let Err(err) = permissions::request_microphone_permission() {
@@ -66,51 +66,52 @@ pub async fn run_native_setup() -> crate::platform::NativeSetupResult {
     }
 
     // If the process is not elevated and the app needs admin for global input
-    // capture, relaunch as administrator via ShellExecuteW "runas". The current
-    // instance exits; the elevated copy continues. If the user dismisses the UAC
-    // prompt, ShellExecuteW reports ERROR_CANCELLED.
+    // capture, relaunch as administrator. We do NOT exit immediately and hope
+    // the elevated copy wins the single-instance race: instead we start a
+    // bootstrap helper (this same exe, unelevated) that waits for THIS process
+    // to fully exit, then launches the elevated copy. That guarantees the
+    // singleton lock is free before the elevated app starts.
     if !is_process_elevated() {
-        let exe = std::env::current_exe().unwrap_or_default();
-        let exe_wide: Vec<u16> = exe
+        let self_exe = std::env::current_exe().unwrap_or_default();
+        let parent_pid = std::process::id();
+
+        let verb: Vec<u16> = "open\0".encode_utf16().collect();
+        let exe_wide: Vec<u16> = self_exe
             .as_os_str()
             .encode_wide()
             .chain(std::iter::once(0))
             .collect();
-        let verb: Vec<u16> = "runas\0".encode_utf16().collect();
 
-        // Preserve the original arguments, quoting each one so values with
-        // spaces or quotes survive the round-trip. The `--elevated` marker tells
-        // the relaunched copy it is the post-UAC instance (it is already
-        // elevated, so it will not try to relaunch again).
-        let mut cli = String::from("--elevated");
+        // Pass the original arguments (minus any elevation marker) to the helper.
+        let mut cli = format!("--elevate-helper {parent_pid}");
         for arg in std::env::args().skip(1) {
             cli.push(' ');
             cli.push_str(&windows_quote(&arg));
         }
-        let args: Vec<u16> = cli.encode_utf16().chain(std::iter::once(0)).collect();
+        let args_wide: Vec<u16> = cli.encode_utf16().chain(std::iter::once(0)).collect();
 
         let result = unsafe {
             ShellExecuteW(
                 None,
                 PCWSTR(verb.as_ptr()),
                 PCWSTR(exe_wide.as_ptr()),
-                PCWSTR(args.as_ptr()),
+                PCWSTR(args_wide.as_ptr()),
                 PCWSTR::null(),
                 SW_SHOWNORMAL,
             )
         };
 
-        // ShellExecuteW returns a value > 32 on success. On success, exit this
-        // unelevated instance immediately so the elevated copy can take over the
-        // single-instance lock and become the active application. We must exit
-        // *before* the elevated copy starts, because tauri-plugin-single-instance
-        // force-closes any secondary instance while the primary is still alive.
-        // If the user dismisses the UAC prompt, ShellExecuteW returns <= 32 and we
-        // stay running.
+        // ShellExecuteW returns a value > 32 on success. The helper is now
+        // waiting for this process to exit, after which it launches the
+        // elevated copy. Perform a controlled shutdown (runs ExitRequested so
+        // window state is saved and the keyboard listener stops) rather than an
+        // abrupt std::process::exit, then the singleton is released.
         let handle = result.0 as isize;
         if handle > 32 {
-            log::info!("Elevated relaunch launched; exiting unelevated instance.");
-            std::process::exit(0);
+            log::info!("Elevation helper launched; performing controlled shutdown.");
+            app.exit(0);
+            #[allow(unreachable_code)]
+            return crate::platform::NativeSetupResult::RequireRestart;
         }
 
         // ERROR_CANCELLED (1223) means the user dismissed the UAC prompt.
@@ -122,6 +123,65 @@ pub async fn run_native_setup() -> crate::platform::NativeSetupResult {
     }
 
     crate::platform::NativeSetupResult::Success
+}
+
+/// If this process was started as the elevation bootstrap helper
+/// (`--elevate-helper <parent_pid> <args...>`), wait for the original process
+/// to exit, then launch the elevated copy and exit the helper. Returns true
+/// when the helper path was taken (caller must not continue normal startup).
+#[cfg(target_os = "windows")]
+pub fn run_elevate_helper_if_requested() -> bool {
+    let args: Vec<String> = std::env::args().collect();
+    if let Some(pos) = args.iter().position(|a| a == "--elevate-helper") {
+        let pid = args.get(pos + 1).and_then(|s| s.parse::<u32>().ok());
+        let rest: Vec<String> = args.iter().skip(pos + 2).cloned().collect();
+        if let Some(pid) = pid {
+            run_elevate_helper(pid, &rest);
+        }
+        std::process::exit(0);
+    }
+    false
+}
+
+#[cfg(target_os = "windows")]
+fn run_elevate_helper(parent_pid: u32, rest_args: &[String]) {
+    use windows::Win32::System::Threading::{
+        INFINITE, OpenProcess, PROCESS_SYNCHRONIZE, WaitForSingleObject,
+    };
+
+    // Wait for the original (unelevated) process to exit so the single-instance
+    // lock is released before we launch the elevated copy.
+    unsafe {
+        if let Ok(handle) = OpenProcess(PROCESS_SYNCHRONIZE, false, parent_pid) {
+            WaitForSingleObject(handle, INFINITE);
+        }
+    }
+
+    let exe = std::env::current_exe().unwrap_or_default();
+    let verb: Vec<u16> = "runas\0".encode_utf16().collect();
+    let exe_wide: Vec<u16> = exe
+        .as_os_str()
+        .encode_wide()
+        .chain(std::iter::once(0))
+        .collect();
+
+    let mut cli = String::new();
+    for arg in rest_args {
+        cli.push(' ');
+        cli.push_str(&windows_quote(arg));
+    }
+    let args_wide: Vec<u16> = cli.encode_utf16().chain(std::iter::once(0)).collect();
+
+    unsafe {
+        ShellExecuteW(
+            None,
+            PCWSTR(verb.as_ptr()),
+            PCWSTR(exe_wide.as_ptr()),
+            PCWSTR(args_wide.as_ptr()),
+            PCWSTR::null(),
+            SW_SHOWNORMAL,
+        );
+    }
 }
 
 /// Quote a single Windows command-line argument per the `CommandLineToArgvW`

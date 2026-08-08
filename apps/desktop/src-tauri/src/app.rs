@@ -341,6 +341,14 @@ pub fn build() -> tauri::Builder<tauri::Wry> {
 }
 
 pub fn run(context: tauri::Context) -> Result<(), tauri::Error> {
+    // If this process is the Windows elevation bootstrap helper, it waits for
+    // the original process to exit and then launches the elevated copy. It must
+    // run before the Tauri app initializes (and takes the single-instance lock).
+    #[cfg(target_os = "windows")]
+    if crate::platform::windows::init::run_elevate_helper_if_requested() {
+        return Ok(());
+    }
+
     let app = build().build(context)?;
     app.run(handle_run_event);
     Ok(())

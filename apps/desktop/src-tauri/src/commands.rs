@@ -1905,8 +1905,8 @@ pub fn get_native_setup_status() -> crate::platform::NativeSetupStatus {
 
 #[tauri::command]
 #[specta::specta]
-pub async fn run_native_setup() -> crate::platform::NativeSetupResult {
-    crate::platform::init::run_native_setup().await
+pub async fn run_native_setup(app: tauri::AppHandle) -> crate::platform::NativeSetupResult {
+    crate::platform::init::run_native_setup(app).await
 }
 
 #[tauri::command]
