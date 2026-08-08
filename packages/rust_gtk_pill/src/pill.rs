@@ -170,6 +170,7 @@ pub fn run(receiver: Receiver<InMessage>) {
         drag_cursor_y: Cell::new(0.0),
         drag_draw_offset_x: Cell::new(0.0),
         drag_draw_offset_y: Cell::new(0.0),
+        cancel_flash: Cell::new(0.0),
         alloc_width: Cell::new(0.0),
         alloc_height: Cell::new(0.0),
         backend: Cell::new(backend),
@@ -232,6 +233,7 @@ pub fn run(receiver: Receiver<InMessage>) {
                 state_motion.long_press_active.set(false);
                 state_motion.long_press_elapsed.set(0.0);
                 state_motion.drag_cancelled.set(true);
+                state_motion.cancel_flash.set(CANCEL_FLASH_DURATION);
             }
         }
 
@@ -745,6 +747,12 @@ fn tick(state: &PillState) {
     }
     let flash_target = if state.flash_visible.get() { 1.0 } else { 0.0 };
     spring_anim(&state.flash_t, &state.flash_velocity, flash_target, SPRING_STIFFNESS);
+
+    // Long-press cancel flash timer
+    if state.cancel_flash.get() > 0.0 {
+        let remaining = state.cancel_flash.get() - SPRING_DT;
+        state.cancel_flash.set(remaining.max(0.0));
+    }
 
     // Cancel button
     let controls_phase = state.phase.get();

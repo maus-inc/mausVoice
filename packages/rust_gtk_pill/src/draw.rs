@@ -80,7 +80,8 @@ pub(crate) fn pill_position(state: &PillState, ww: f64, wh: f64) -> (f64, f64, f
 
     // On Wayland backends the pill draws inside a full-window canvas, so a
     // drag translates the draw position. X11 moves the real toplevel instead.
-    if state.backend.get() != crate::pill::Backend::X11 {
+    // Only apply while actually dragging so a cancelled long-press reverts.
+    if state.dragging.get() && state.backend.get() != crate::pill::Backend::X11 {
         pill_x += state.drag_draw_offset_x.get();
         pill_y += state.drag_draw_offset_y.get();
     }
@@ -128,10 +129,66 @@ fn draw_pill(cr: &cairo::Context, state: &PillState, ww: f64, wh: f64) {
         _ => {}
     }
 
+    draw_long_press_ring(cr, rx, ry, pill_w, pill_h, state);
+    draw_cancel_flash(cr, rx, ry, pill_w, pill_h, state);
+
     state.click_regions.borrow_mut().push(ClickRegion {
         x: rx, y: ry, w: pill_w, h: pill_h,
         action: if state.assistant_active.get() { ClickAction::Pill } else { ClickAction::Pill },
     });
+}
+
+fn draw_long_press_ring(
+    cr: &cairo::Context, rx: f64, ry: f64, pill_w: f64, pill_h: f64, state: &PillState,
+) {
+    let show = state.long_press_active.get() || state.dragging.get();
+    if !show {
+        return;
+    }
+
+    let cx = rx + pill_w / 2.0;
+    let cy = ry + pill_h / 2.0;
+    let radius = pill_w / 2.0 + 6.0;
+
+    cr.save().ok();
+
+    // Faint full-circle track
+    cr.set_source_rgba(1.0, 1.0, 1.0, 0.18);
+    cr.set_line_width(3.0);
+    cr.arc(cx, cy, radius, 0.0, 2.0 * PI);
+    let _ = cr.stroke();
+
+    // Progress arc (top, clockwise) filling toward the 5s threshold
+    let t = (state.long_press_elapsed.get() / LONG_PRESS_DURATION).clamp(0.0, 1.0);
+    if t > 0.0 {
+        cr.set_source_rgba(0.45, 0.86, 1.0, 0.95);
+        cr.set_line_width(3.0);
+        cr.arc(cx, cy, radius, -PI / 2.0, -PI / 2.0 + t * 2.0 * PI);
+        let _ = cr.stroke();
+    }
+
+    cr.restore().ok();
+}
+
+fn draw_cancel_flash(
+    cr: &cairo::Context, rx: f64, ry: f64, pill_w: f64, pill_h: f64, state: &PillState,
+) {
+    let cf = state.cancel_flash.get();
+    if cf <= 0.0 {
+        return;
+    }
+
+    let cx = rx + pill_w / 2.0;
+    let cy = ry + pill_h / 2.0;
+    let radius = pill_w / 2.0 + 6.0;
+    let alpha = (cf / CANCEL_FLASH_DURATION).clamp(0.0, 1.0) * 0.9;
+
+    cr.save().ok();
+    cr.set_source_rgba(1.0, 0.35, 0.35, alpha);
+    cr.set_line_width(3.0);
+    cr.arc(cx, cy, radius, 0.0, 2.0 * PI);
+    let _ = cr.stroke();
+    cr.restore().ok();
 }
 
 fn draw_waveform(

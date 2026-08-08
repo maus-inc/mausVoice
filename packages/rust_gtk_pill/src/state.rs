@@ -208,6 +208,9 @@ pub(crate) struct PillState {
     pub(crate) drag_draw_offset_x: Cell<f64>,
     pub(crate) drag_draw_offset_y: Cell<f64>,
 
+    // Brief red flash shown when a long-press is cancelled by movement.
+    pub(crate) cancel_flash: Cell<f64>,
+
     // Actual window allocation (used by PlainWayland for fullscreen overlay positioning)
     pub(crate) alloc_width: Cell<f64>,
     pub(crate) alloc_height: Cell<f64>,
