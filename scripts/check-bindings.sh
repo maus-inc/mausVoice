@@ -8,9 +8,14 @@ cd "$SCRIPT_DIR/.."
 
 TARGET="packages/desktop-native-apis/src/bindings.ts"
 
-# Ensure the file is tracked and clean before regenerating.
+# Ensure the file is tracked and has no local changes before regenerating, so we
+# never overwrite a developer's in-progress work.
 if ! git ls-files --error-unmatched "$TARGET" >/dev/null 2>&1; then
   echo "ERROR: $TARGET is not tracked by git." >&2
+  exit 1
+fi
+if ! git diff --quiet -- "$TARGET" || ! git diff --cached --quiet -- "$TARGET"; then
+  echo "ERROR: $TARGET has local changes. Commit or stash them before checking bindings." >&2
   exit 1
 fi
 

@@ -13,7 +13,12 @@ cargo run --manifest-path apps/desktop/src-tauri/Cargo.toml --example gen_bindin
 # even when the project registers no events. Those unused exports fail the desktop
 # tsc build under noUnusedLocals. Strip them deterministically so the generated file
 # matches the committed output (and future regenerations stay clean).
-PY_BIN="$(command -v python3 || command -v python || true)"
+PY_BIN=""
+if command -v python3 >/dev/null 2>&1; then
+  PY_BIN="python3"
+elif command -v python >/dev/null 2>&1 && python --version 2>&1 | grep -q "Python 3"; then
+  PY_BIN="python"
+fi
 if [ -z "$PY_BIN" ]; then
   echo "ERROR: gen:bindings post-process requires Python 3 (python3 or python)." >&2
   exit 1
