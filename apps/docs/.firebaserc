@@ -1,0 +1,14 @@
+{
+  "projects": {
+    "default": "mausvoice-prod"
+  },
+  "targets": {
+    "mausvoice-prod": {
+      "hosting": {
+        "mausvoice-docs": [
+          "mausvoice-docs"
+        ]
+      }
+    }
+  }
+}

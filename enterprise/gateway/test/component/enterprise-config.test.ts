@@ -1,0 +1,177 @@
+import { cleanupTestAuths, createTestAuth, invoke, query } from "../helpers";
+
+describe("enterprise config", () => {
+  afterAll(cleanupTestAuths);
+
+  let adminToken: string;
+  let userToken: string;
+
+  beforeAll(async () => {
+    const adminEmail = `ec-admin-${Date.now()}@example.com`;
+    const adminData = await createTestAuth(adminEmail);
+    await query("UPDATE auth SET is_admin = TRUE WHERE id = $1", [
+      adminData.auth.id,
+    ]);
+    const refreshed = await invoke("auth/login", {
+      email: adminEmail,
+      password: "password123",
+    });
+    adminToken = refreshed.token;
+
+    const userEmail = `ec-user-${Date.now()}@example.com`;
+    const userData = await createTestAuth(userEmail);
+    userToken = userData.token;
+
+    await query(
+      "DELETE FROM enterprise_config; INSERT INTO enterprise_config (id) VALUES ('default')",
+    );
+  });
+
+  it("returns defaults", async () => {
+    const data = await invoke("enterprise/getConfig", {}, userToken);
+    expect(data.config.allowPostProcessing).toBe(true);
+    expect(data.config.allowChangePostProcessing).toBe(false);
+    expect(data.config.allowChangeTranscriptionMethod).toBe(false);
+    expect(data.config.assistantModeEnabled).toBe(false);
+    expect(data.config.powerModeEnabled).toBe(false);
+    expect(data.config.allowMultiDeviceMode).toBe(false);
+    expect(data.config.allowEmailSignIn).toBe(true);
+    expect(data.config.allowDevTools).toBe(false);
+    expect(data.config.stylingMode).toBe("manual");
+  });
+
+  it("returns license from license key", async () => {
+    const data = await invoke("enterprise/getConfig", {}, userToken);
+    expect(data.license).toEqual({
+      org: "Example Corp",
+      maxSeats: 5,
+      issued: "2026-01-01",
+      expires: "2027-01-01",
+    });
+  });
+
+  it("upsert sets booleans and get reflects changes", async () => {
+    await invoke(
+      "enterprise/upsertConfig",
+      {
+        config: {
+          allowPostProcessing: true,
+          allowChangePostProcessing: true,
+          allowChangeTranscriptionMethod: true,
+          assistantModeEnabled: true,
+          powerModeEnabled: true,
+          allowMultiDeviceMode: true,
+          allowEmailSignIn: false,
+          allowDevTools: true,
+          stylingMode: "manual",
+        },
+      },
+      adminToken,
+    );
+
+    const data = await invoke("enterprise/getConfig", {}, userToken);
+    expect(data.config.allowPostProcessing).toBe(true);
+    expect(data.config.allowChangePostProcessing).toBe(true);
+    expect(data.config.allowChangeTranscriptionMethod).toBe(true);
+    expect(data.config.assistantModeEnabled).toBe(true);
+    expect(data.config.powerModeEnabled).toBe(true);
+    expect(data.config.allowMultiDeviceMode).toBe(true);
+    expect(data.config.allowEmailSignIn).toBe(false);
+    expect(data.config.allowDevTools).toBe(true);
+    expect(data.config.stylingMode).toBe("manual");
+  });
+
+  it("upsert can set back to false", async () => {
+    await invoke(
+      "enterprise/upsertConfig",
+      {
+        config: {
+          allowPostProcessing: false,
+          allowChangePostProcessing: false,
+          allowChangeTranscriptionMethod: false,
+          assistantModeEnabled: false,
+          powerModeEnabled: false,
+          allowMultiDeviceMode: false,
+          allowEmailSignIn: true,
+          allowDevTools: false,
+          stylingMode: "app",
+        },
+      },
+      adminToken,
+    );
+
+    const data = await invoke("enterprise/getConfig", {}, userToken);
+    expect(data.config.allowPostProcessing).toBe(false);
+    expect(data.config.allowChangePostProcessing).toBe(false);
+    expect(data.config.allowChangeTranscriptionMethod).toBe(false);
+    expect(data.config.assistantModeEnabled).toBe(false);
+    expect(data.config.powerModeEnabled).toBe(false);
+    expect(data.config.allowMultiDeviceMode).toBe(false);
+    expect(data.config.allowEmailSignIn).toBe(true);
+    expect(data.config.allowDevTools).toBe(false);
+    expect(data.config.stylingMode).toBe("app");
+  });
+
+  it("allowDevTools toggles independently", async () => {
+    await invoke(
+      "enterprise/upsertConfig",
+      {
+        config: {
+          allowPostProcessing: true,
+          allowChangePostProcessing: false,
+          allowChangeTranscriptionMethod: false,
+          assistantModeEnabled: false,
+          powerModeEnabled: false,
+          allowMultiDeviceMode: false,
+          allowEmailSignIn: true,
+          allowDevTools: true,
+          stylingMode: "manual",
+        },
+      },
+      adminToken,
+    );
+
+    let data = await invoke("enterprise/getConfig", {}, userToken);
+    expect(data.config.allowDevTools).toBe(true);
+
+    await invoke(
+      "enterprise/upsertConfig",
+      {
+        config: {
+          ...data.config,
+          allowDevTools: false,
+        },
+      },
+      adminToken,
+    );
+
+    data = await invoke("enterprise/getConfig", {}, userToken);
+    expect(data.config.allowDevTools).toBe(false);
+  });
+
+  it("upsert requires admin", async () => {
+    await expect(
+      invoke(
+        "enterprise/upsertConfig",
+        {
+          config: {
+            allowPostProcessing: true,
+            allowChangePostProcessing: true,
+            allowChangeTranscriptionMethod: true,
+            assistantModeEnabled: true,
+            powerModeEnabled: false,
+            allowMultiDeviceMode: false,
+            allowEmailSignIn: true,
+            allowDevTools: false,
+            stylingMode: "manual",
+          },
+        },
+        userToken,
+      ),
+    ).rejects.toThrow("401");
+  });
+
+  it("get does not require auth", async () => {
+    await expect(invoke("enterprise/getConfig", {})).resolves.toBeDefined();
+  });
+});

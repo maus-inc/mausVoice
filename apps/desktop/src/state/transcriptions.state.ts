@@ -1,0 +1,28 @@
+import { Nullable } from "@maus-inc/types";
+import { ActionStatus } from "../types/state.types";
+
+export type TranscriptionsState = {
+  transcriptionIds: string[];
+  status: ActionStatus;
+  detailsDialogOpen: boolean;
+  detailsDialogTranscriptionId: Nullable<string>;
+  retranscribeDialogOpen: boolean;
+  retranscribeDialogTranscriptionId: Nullable<string>;
+  retranscribingIds: string[];
+  retranscriptionSuccessIds: string[];
+  flagDialogOpen: boolean;
+  flagDialogTranscriptionId: Nullable<string>;
+};
+
+export const INITIAL_TRANSCRIPTIONS_STATE: TranscriptionsState = {
+  transcriptionIds: [],
+  status: "idle",
+  detailsDialogOpen: false,
+  detailsDialogTranscriptionId: null,
+  retranscribeDialogOpen: false,
+  retranscribeDialogTranscriptionId: null,
+  retranscribingIds: [],
+  retranscriptionSuccessIds: [],
+  flagDialogOpen: false,
+  flagDialogTranscriptionId: null,
+};

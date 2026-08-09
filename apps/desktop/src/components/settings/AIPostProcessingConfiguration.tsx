@@ -1,0 +1,69 @@
+import { Stack, Typography } from "@mui/material";
+import { useCallback } from "react";
+import { FormattedMessage } from "react-intl";
+import {
+  setPreferredPostProcessingApiKeyId,
+  setPreferredPostProcessingMode,
+} from "../../actions/user.actions";
+import { useAppStore } from "../../store";
+import { getAllowsChangePostProcessing } from "../../utils/enterprise.utils";
+import { getEffectivePostProcessingMode } from "../../utils/user.utils";
+import { ManagedByOrgNotice } from "../common/ManagedByOrgNotice";
+import { type PostProcessingMode } from "../../types/ai.types";
+import { SegmentedControl } from "../common/SegmentedControl";
+import { ApiKeyList } from "./ApiKeyList";
+import { MausVoiceCloudSetting } from "./MausVoiceCloudSetting";
+
+export function maybeArrayElements<T>(visible: boolean, values: T[]): T[] {
+  return visible ? values : [];
+}
+
+export const AIPostProcessingConfiguration = () => {
+  const postProcessing = useAppStore(
+    (state) => state.settings.aiPostProcessing,
+  );
+  const effectiveMode = useAppStore(getEffectivePostProcessingMode);
+  const allowChange = useAppStore(getAllowsChangePostProcessing);
+
+  const handleModeChange = useCallback((mode: PostProcessingMode) => {
+    void setPreferredPostProcessingMode(mode);
+  }, []);
+
+  const handleApiKeyChange = useCallback((id: string | null) => {
+    void setPreferredPostProcessingApiKeyId(id);
+  }, []);
+
+  if (!allowChange) {
+    return <ManagedByOrgNotice />;
+  }
+
+  return (
+    <Stack spacing={3} alignItems="flex-start" sx={{ width: "100%" }}>
+      <SegmentedControl<PostProcessingMode>
+        value={effectiveMode}
+        onChange={handleModeChange}
+        options={[
+          { value: "api", label: "API" },
+          { value: "none", label: "Off" },
+        ]}
+        ariaLabel="Post-processing mode"
+      />
+
+      {effectiveMode === "none" && (
+        <Typography variant="body2" color="text.secondary">
+          <FormattedMessage defaultMessage="No AI post-processing will run on new transcripts." />
+        </Typography>
+      )}
+
+      {effectiveMode === "api" && (
+        <ApiKeyList
+          selectedApiKeyId={postProcessing.selectedApiKeyId}
+          onChange={handleApiKeyChange}
+          context="post-processing"
+        />
+      )}
+
+      {effectiveMode === "cloud" && <MausVoiceCloudSetting />}
+    </Stack>
+  );
+};

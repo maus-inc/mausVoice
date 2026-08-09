@@ -1,0 +1,53 @@
+{
+  "$schema": "https://turborepo.com/schema.json",
+  "ui": "tui",
+  "globalEnv": [
+    "TAURI_PLATFORM",
+    "MAUSVOICE_DESKTOP_PLATFORM",
+    "FIRESTORE_EMULATOR_HOST",
+    "FIREBASE_AUTH_EMULATOR_HOST",
+    "GCLOUD_PROJECT",
+    "REALTIME_DATABASE_EMULATOR_HOST"
+  ],
+  "concurrency": "15",
+  "tasks": {
+    "build": {
+      "dependsOn": ["^build"],
+      "inputs": ["$TURBO_DEFAULT$", ".env*"],
+      "outputs": [".next/**", "!.next/cache/**", "dist/**", "lib/**"]
+    },
+    "lint": {
+      "dependsOn": ["^lint"]
+    },
+    "check-types": {
+      "dependsOn": ["^check-types"]
+    },
+    "test": {
+      "dependsOn": ["^test"],
+      "inputs": [
+        "$TURBO_DEFAULT$",
+        "vitest.config.*",
+        "src/**",
+        "test/**",
+        "package.json",
+        "tsconfig.*"
+      ],
+      "outputs": []
+    },
+    "test:evals": {
+      "dependsOn": ["^build"],
+      "inputs": [
+        "$TURBO_DEFAULT$",
+        "vitest.config.*",
+        "test/evals/**",
+        "package.json",
+        "tsconfig.*"
+      ],
+      "outputs": []
+    },
+    "dev": {
+      "cache": false,
+      "persistent": true
+    }
+  }
+}

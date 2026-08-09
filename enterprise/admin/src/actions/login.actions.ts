@@ -1,0 +1,160 @@
+import type { AuthContext } from "@maus-inc/types";
+import { jwtDecode } from "jwt-decode";
+import { getIntl } from "../i18n/intl";
+import { INITIAL_LOGIN_STATE, type LoginMode } from "../state/login.state";
+import { getAppState, produceAppState } from "../store";
+import { invoke } from "../utils/api.utils";
+import { getGatewayUrl } from "../utils/env.utils";
+
+export function setAuthTokens(token: string, refreshToken: string) {
+  const payload = jwtDecode<AuthContext>(token);
+  localStorage.setItem("token", token);
+  localStorage.setItem("refreshToken", refreshToken);
+  produceAppState((draft) => {
+    draft.auth = payload;
+    draft.token = token;
+    draft.refreshToken = refreshToken;
+  });
+}
+
+export function setLoginMode(mode: LoginMode) {
+  produceAppState((draft) => {
+    draft.login.mode = mode;
+    draft.login.errorMessage = "";
+    draft.login.status = "idle";
+  });
+}
+
+export async function submitSignIn() {
+  const { email, password } = getAppState().login;
+
+  produceAppState((draft) => {
+    draft.login.status = "loading";
+    draft.login.errorMessage = "";
+  });
+
+  try {
+    const data = await invoke("auth/login", { email, password });
+    setAuthTokens(data.token, data.refreshToken);
+
+    produceAppState((draft) => {
+      draft.login.status = "success";
+    });
+  } catch (error) {
+    produceAppState((draft) => {
+      draft.login.status = "error";
+      draft.login.errorMessage =
+        error instanceof Error
+          ? error.message
+          : getIntl().formatMessage({ defaultMessage: "Sign in failed" });
+    });
+  }
+}
+
+export async function submitSignUp() {
+  const { email, password, confirmPassword } = getAppState().login;
+
+  if (password !== confirmPassword) {
+    produceAppState((draft) => {
+      draft.login.status = "error";
+      draft.login.errorMessage = getIntl().formatMessage({
+        defaultMessage: "Passwords do not match",
+      });
+    });
+    return;
+  }
+
+  produceAppState((draft) => {
+    draft.login.status = "loading";
+    draft.login.errorMessage = "";
+  });
+
+  try {
+    const data = await invoke("auth/register", { email, password });
+    setAuthTokens(data.token, data.refreshToken);
+
+    try {
+      await invoke("auth/makeAdmin", {
+        userId: data.auth.id,
+        isAdmin: true,
+      });
+      const refreshed = await invoke("auth/refresh", {
+        refreshToken: data.refreshToken,
+      });
+      setAuthTokens(refreshed.token, refreshed.refreshToken);
+    } catch (e) {
+      console.error("[signup] failed to make admin:", e);
+    }
+
+    produceAppState((draft) => {
+      draft.login.status = "success";
+    });
+  } catch (error) {
+    produceAppState((draft) => {
+      draft.login.status = "error";
+      draft.login.errorMessage =
+        error instanceof Error
+          ? error.message
+          : getIntl().formatMessage({ defaultMessage: "Registration failed" });
+    });
+  }
+}
+
+export function signOut() {
+  localStorage.removeItem("token");
+  localStorage.removeItem("refreshToken");
+  produceAppState((draft) => {
+    draft.auth = null;
+    draft.token = null;
+    draft.refreshToken = null;
+    draft.myUser = null;
+    draft.myUserLoaded = false;
+    draft.login = INITIAL_LOGIN_STATE;
+  });
+}
+
+export async function loadLoginOidcProviders() {
+  try {
+    const data = await invoke("oidcProvider/listEnabled", {});
+    produceAppState((draft) => {
+      draft.login.oidcProviders = data.providers;
+    });
+  } catch (e) {
+    console.error("[login] failed to load OIDC providers:", e);
+  }
+}
+
+export function submitSignInWithSso(providerId: string) {
+  const state = crypto.randomUUID();
+  sessionStorage.setItem("oidc_state", state);
+  const redirectUrl = `${window.location.origin}/login/oidc-callback`;
+  const params = new URLSearchParams({
+    provider_id: providerId,
+    redirect_url: redirectUrl,
+    state,
+  });
+  window.location.href = `${getGatewayUrl()}/auth/oidc/authorize?${params.toString()}`;
+}
+
+export function handleOidcCallback(): { error?: string } {
+  const params = new URLSearchParams(window.location.search);
+  const token = params.get("token");
+  const refreshToken = params.get("refreshToken");
+  const state = params.get("state");
+
+  const savedState = sessionStorage.getItem("oidc_state");
+  sessionStorage.removeItem("oidc_state");
+
+  if (!state || state !== savedState) {
+    return { error: "Invalid OIDC state. Please try signing in again." };
+  }
+
+  if (!token || !refreshToken) {
+    return {
+      error: "Missing authentication tokens. Please try signing in again.",
+    };
+  }
+
+  setAuthTokens(token, refreshToken);
+  return {};
+}

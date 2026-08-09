@@ -1,0 +1,80 @@
+// Prevents additional console window on Windows in release, DO NOT REMOVE!!
+#![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
+
+mod flavor_env;
+
+fn main() {
+    // CRITICAL: Configure display backend before GTK initialization
+    desktop_lib::platform::init::configure_display_backend();
+
+    // CRITICAL: Initialize X11 threading before ANY other operations
+    desktop_lib::platform::init::init_x11_threads();
+
+    // Initialize startup logging
+    eprintln!("=== mausVoice Startup ===");
+    eprintln!("[startup] Version: {}", env!("CARGO_PKG_VERSION"));
+    eprintln!("[startup] OS: {}", std::env::consts::OS);
+    eprintln!("[startup] Arch: {}", std::env::consts::ARCH);
+
+    flavor_env::load_flavor_env();
+
+    if std::env::var("MAUSVOICE_KEYBOARD_LISTENER").as_deref() == Ok("1") {
+        eprintln!("[startup] Running in keyboard listener mode");
+        if let Err(err) = desktop_lib::platform::keyboard::run_listener_process() {
+            eprintln!("[startup] ERROR: Keyboard listener process failed: {err}");
+            std::process::exit(1);
+        }
+        return;
+    }
+
+    if std::env::var("MAUSVOICE_GPU_ENUMERATOR").as_deref() == Ok("1") {
+        eprintln!("[startup] Running in GPU enumerator mode");
+        if let Err(err) = desktop_lib::system::gpu::run_gpu_enumerator_process() {
+            eprintln!("[startup] ERROR: GPU enumerator process failed: {err}");
+            std::process::exit(1);
+        }
+        return;
+    }
+
+    eprintln!("[startup] Building Tauri application...");
+
+    let app_result = std::panic::catch_unwind(|| desktop_lib::app::run(tauri::generate_context!()));
+
+    match app_result {
+        Ok(result) => {
+            if let Err(err) = result {
+                let err_str = err.to_string();
+                eprintln!("[startup] ERROR: Tauri runtime failure: {err}");
+
+                // Provide context-specific guidance
+                if err_str.contains("migration") {
+                    eprintln!("[startup] This is a database migration issue.");
+                    eprintln!("[startup] Try deleting the app database and restarting.");
+                } else if err_str.contains("vulkan")
+                    || err_str.contains("gpu")
+                    || err_str.contains("GPU")
+                {
+                    eprintln!("[startup] This appears to be a GPU/graphics driver issue.");
+                    eprintln!(
+                        "[startup] Local transcription can fall back to CPU from Settings if GPU acceleration is unstable."
+                    );
+                }
+                std::process::exit(1);
+            }
+        }
+        Err(panic_info) => {
+            eprintln!("[startup] PANIC: Application panicked during startup!");
+            if let Some(s) = panic_info.downcast_ref::<&str>() {
+                eprintln!("[startup] Panic message: {s}");
+            } else if let Some(s) = panic_info.downcast_ref::<String>() {
+                eprintln!("[startup] Panic message: {s}");
+            } else {
+                eprintln!("[startup] Panic message: <unknown>");
+            }
+            eprintln!(
+                "[startup] If this is GPU-related, switch local transcription to CPU in Settings."
+            );
+            std::process::exit(1);
+        }
+    }
+}

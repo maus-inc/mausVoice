@@ -1,0 +1,16 @@
+{
+  "name": "@maus-inc/typescript-config",
+  "version": "0.3.25",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/mausvoice/mausvoice.git",
+    "directory": "packages/typescript-config"
+  },
+  "files": [
+    "*.json"
+  ],
+  "publishConfig": {
+    "access": "public"
+  }
+}

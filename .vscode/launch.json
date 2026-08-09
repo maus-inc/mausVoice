@@ -1,0 +1,29 @@
+{
+  "version": "0.2.0",
+  "configurations": [
+    {
+      "name": "mobile (emulators)",
+      "cwd": "mobile",
+      "request": "launch",
+      "type": "dart",
+      "program": "lib/main_emulators.dart",
+      "args": ["--flavor", "emulators"]
+    },
+    {
+      "name": "mobile (dev)",
+      "cwd": "mobile",
+      "request": "launch",
+      "type": "dart",
+      "program": "lib/main_dev.dart",
+      "args": ["--flavor", "dev"]
+    },
+    {
+      "name": "mobile (prod)",
+      "cwd": "mobile",
+      "request": "launch",
+      "type": "dart",
+      "program": "lib/main_prod.dart",
+      "args": ["--flavor", "prod"]
+    }
+  ]
+}

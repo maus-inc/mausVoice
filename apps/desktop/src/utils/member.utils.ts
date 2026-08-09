@@ -1,0 +1,106 @@
+import { Member, Nullable } from "@maus-inc/types";
+import {
+  getMemberExceedsLimits,
+  getRec,
+  TRIAL_DURATION_DAYS,
+} from "@maus-inc/utilities";
+import { getIntl } from "../i18n";
+import type { AppState } from "../state/app.state";
+import { EffectivePlan } from "../types/member.types";
+import { isPersonalUseProEnabled } from "./personal-use.utils";
+
+export const getMyMember = (state: AppState): Nullable<Member> => {
+  return getRec(state.memberById, state.auth?.uid) ?? null;
+};
+
+export const getEffectivePlan = (state: AppState): EffectivePlan => {
+  if (state.isEnterprise) {
+    return "enterprise";
+  }
+  if (isPersonalUseProEnabled()) {
+    return "pro";
+  }
+  return getMyMember(state)?.plan ?? "community";
+};
+
+export const getIsMausVoiceCloudUser = (state: AppState): boolean => {
+  const member = getMyMember(state);
+  return (
+    state.isEnterprise || member?.plan === "free" || member?.plan === "pro"
+  );
+};
+
+export const planToDisplayName = (plan: EffectivePlan): string => {
+  if (plan === "enterprise") {
+    return getIntl().formatMessage({ defaultMessage: "Enterprise" });
+  } else if (plan === "community") {
+    return getIntl().formatMessage({ defaultMessage: "Community" });
+  } else if (plan === "free") {
+    return getIntl().formatMessage({ defaultMessage: "Free" });
+  } else {
+    return getIntl().formatMessage({ defaultMessage: "Pro" });
+  }
+};
+
+export const getIsOnTrial = (state: AppState): boolean => {
+  if (isPersonalUseProEnabled()) {
+    return false;
+  }
+  const member = getMyMember(state);
+  return member?.isOnTrial === true;
+};
+
+const TRIAL_DURATION_MS = TRIAL_DURATION_DAYS * 24 * 60 * 60 * 1000;
+
+export const getTrialDaysRemaining = (state: AppState): number | null => {
+  const member = getMyMember(state);
+  if (!member?.isOnTrial || !member.trialEndsAt) {
+    return null;
+  }
+
+  const now = Date.now();
+  const endsAt = new Date(member.trialEndsAt).getTime();
+  const msRemaining = endsAt - now;
+  return Math.max(0, Math.ceil(msRemaining / (1000 * 60 * 60 * 24)));
+};
+
+export const getTrialProgress = (state: AppState): number | null => {
+  const member = getMyMember(state);
+  if (!member?.isOnTrial || !member.trialEndsAt) {
+    return null;
+  }
+
+  const now = Date.now();
+  const endsAt = new Date(member.trialEndsAt).getTime();
+  const msRemaining = endsAt - now;
+  return Math.max(0, Math.min(1, msRemaining / TRIAL_DURATION_MS));
+};
+
+export const getIsPro = (state: AppState): boolean => {
+  if (isPersonalUseProEnabled()) {
+    return true;
+  }
+  const member = getMyMember(state);
+  if (!member) {
+    return false;
+  }
+
+  return member.plan !== "free";
+};
+
+export const getIsPaidSubscriber = (state: AppState): boolean => {
+  return getIsPro(state) && !getIsOnTrial(state);
+};
+
+export const getMemberExceedsLimitByState = (state: AppState): boolean => {
+  if (isPersonalUseProEnabled()) {
+    return false;
+  }
+  const member = getMyMember(state);
+  const config = state.config;
+  if (!member || !config) {
+    return false;
+  }
+
+  return getMemberExceedsLimits(member, config);
+};

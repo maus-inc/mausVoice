@@ -1,0 +1,52 @@
+/*
+  Type hierarchy
+  - TAN-PARADISO: logo wordmark (near icon) + "Welcome back" / user name only
+  - Satoshi: all normal UI text (variable weights from bundled face)
+  - No Jakarta
+*/
+
+@font-face {
+  font-family: "TAN-PARADISO";
+  src:
+    local("TAN-PARADISO"),
+    local("TAN Paradiso"),
+    url("../assets/fonts/tan-paradiso/TAN-PARADISO-Regular.woff2")
+      format("woff2");
+  font-weight: 400 700;
+  font-style: normal;
+  font-display: swap;
+}
+
+@font-face {
+  font-family: "Satoshi";
+  src:
+    local("Satoshi"),
+    local("Satoshi Medium"),
+    local("Satoshi-Medium"),
+    url("../assets/fonts/satoshi/Satoshi-Medium.ttf") format("truetype");
+  font-weight: 100 900;
+  font-style: normal;
+  font-display: swap;
+}
+
+:root {
+  --ease-out-quint: cubic-bezier(0.23, 1, 0.32, 1);
+  --ease-out-cubic: cubic-bezier(0.33, 1, 0.68, 1);
+  --ease-in-out-cubic: cubic-bezier(0.645, 0.045, 0.355, 1);
+  --duration-fast: 150ms;
+  --duration-base: 200ms;
+  --duration-enter: 250ms;
+  --duration-exit: 180ms;
+
+  --font-display: "TAN-PARADISO", "Satoshi", system-ui, sans-serif;
+  --font-ui: "Satoshi", system-ui, -apple-system, sans-serif;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  :root {
+    --duration-fast: 1ms;
+    --duration-base: 1ms;
+    --duration-enter: 1ms;
+    --duration-exit: 1ms;
+  }
+}

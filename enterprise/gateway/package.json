@@ -1,0 +1,44 @@
+{
+  "name": "@repo/enterprise-gateway",
+  "version": "0.1.0",
+  "private": true,
+  "main": "dist/index.js",
+  "scripts": {
+    "build": "esbuild src/index.ts --bundle --platform=node --target=node20 --format=cjs --outfile=dist/index.js --external:bcrypt --external:pg-native && node -e \"const fs=require('fs');fs.rmSync('dist/db/migrations',{recursive:true,force:true});fs.mkdirSync('dist/db',{recursive:true});fs.cpSync('src/db/migrations','dist/db/migrations',{recursive:true})\"",
+    "dev": "nodemon --exec \"pnpm run build && node dist/index.js\"",
+    "start": "node dist/index.js",
+    "check-types": "tsc --noEmit",
+    "test": "vitest run",
+    "test:unit": "vitest run src",
+    "test:component": "vitest run test/component",
+    "test:integration": "vitest run test/integration",
+    "test:watch": "vitest"
+  },
+  "dependencies": {
+    "@maus-inc/functions": "workspace:*",
+    "@maus-inc/types": "workspace:*",
+    "@maus-inc/utilities": "workspace:*",
+    "bcrypt": "^6.0.0",
+    "cors": "^2.8.6",
+    "express": "^4.22.1",
+    "jose": "^6.2.2",
+    "jsonwebtoken": "^9.0.3",
+    "openai": "^6.33.0",
+    "pg": "^8.20.0",
+    "uuid": "^8.3.2",
+    "zod": "^3.25.76"
+  },
+  "devDependencies": {
+    "@types/bcrypt": "^6.0.0",
+    "@types/cors": "^2.8.19",
+    "@types/express": "^4.17.25",
+    "@types/jsonwebtoken": "^9.0.10",
+    "@types/pg": "^8.20.0",
+    "@types/uuid": "^10.0.0",
+    "@maus-inc/typescript-config": "workspace:*",
+    "esbuild": "^0.25.12",
+    "nodemon": "^3.1.14",
+    "typescript": "5.9.2",
+    "vitest": "^4.1.2"
+  }
+}

@@ -1,0 +1,54 @@
+name: Lint Desktop
+on:
+  pull_request:
+    branches:
+      - main
+      - linting
+    paths:
+      - "apps/desktop/**"
+      - "packages/**"
+      - ".github/workflows/lint-desktop.yml"
+jobs:
+  lint:
+    name: Lint Desktop (${{ matrix.label }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - label: macOS
+            os: macos-14
+          - label: Windows
+            os: windows-latest
+    steps:
+      - name: Checkout source
+        uses: actions/checkout@v4
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version-file: .nvmrc
+          cache: pnpm
+          cache-dependency-path: pnpm-lock.yaml
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy
+      - name: Cache cargo
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: |
+            apps/desktop/src-tauri -> target
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+      - name: Build dependencies
+        run: pnpm exec turbo run build --filter=desktop^...
+      - name: Lint TypeScript
+        if: matrix.os == 'macos-14'
+        run: pnpm --filter desktop run lint
+      - name: Lint Rust
+        working-directory: apps/desktop/src-tauri
+        env:
+          TAURI_CONFIG: '{"bundle":{"externalBin":[]}}'
+        run: cargo clippy -- -D warnings
