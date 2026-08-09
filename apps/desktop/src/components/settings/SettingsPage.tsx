@@ -38,7 +38,10 @@ import {
   Tooltip,
   Typography,
 } from "@mui/material";
-import { invoke } from "@tauri-apps/api/core";
+import {
+  commands,
+  NativeSetupResult,
+} from "../../../../../packages/desktop-native-apis/src/bindings";
 import { openUrl } from "@tauri-apps/plugin-opener";
 import { ChangeEvent, useState } from "react";
 import { FormattedMessage, useIntl } from "react-intl";
@@ -94,11 +97,7 @@ export default function SettingsPage() {
     setSetupConfirmOpen(false);
     setSetupRunning(true);
     try {
-      const result = (await invoke<string>("run_native_setup")) as
-        | "success"
-        | "require-restart"
-        | "cancelled"
-        | "failed";
+      const result: NativeSetupResult = await commands.runNativeSetup();
       if (result === "success") {
         showSnackbar("Input permissions configured.");
       } else if (result === "require-restart") {
