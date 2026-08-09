@@ -35,6 +35,7 @@
   },
   "bundle": {
     "active": true,
+    "publisher": "Owie Emmanuel",
     "targets": "all",
     "createUpdaterArtifacts": true,
     "externalBin": [
