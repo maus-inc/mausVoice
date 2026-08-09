@@ -59,3 +59,7 @@ nul
 
 # Local craft kit (not committed)
 .craft/
+
+# Animation skill references (not committed)
+.emilkowalski/
+.taste/
