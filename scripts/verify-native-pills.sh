@@ -50,7 +50,7 @@ case "$(uname -s)" in
     ;;
 esac
 
-if [ -n "$crate" ]; then
+if [[ -n "$crate" ]]; then
   if command -v cargo >/dev/null 2>&1; then
     manifest="packages/$crate/Cargo.toml"
 
@@ -81,7 +81,7 @@ else
 fi
 
 echo ""
-if [ "$failed" -ne 0 ]; then
+if [[ "$failed" -ne 0 ]]; then
   echo "Native pill verification FAILED."
   exit 1
 fi

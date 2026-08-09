@@ -28,15 +28,79 @@
  *   node scripts/generate-app-icons.mjs           # regenerate all icons
  *   node scripts/generate-app-icons.mjs --check   # verify only (CI-friendly)
  *
- * Requires ImageMagick (`convert`) on PATH.
+ * Requires ImageMagick. The binary is resolved from a fixed list of trusted
+ * system directories rather than `$PATH`; override with an absolute path via
+ * `IMAGEMAGICK_CONVERT` if it lives elsewhere.
  */
 
 import { execFileSync } from "node:child_process";
-import { existsSync, mkdirSync, readFileSync, rmSync } from "node:fs";
-import { dirname, join, resolve } from "node:path";
+import { existsSync, mkdirSync, readFileSync, rmSync, statSync } from "node:fs";
+import { delimiter, dirname, isAbsolute, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
 const repoRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..");
+
+/**
+ * Directories trusted to provide the ImageMagick binary, in priority order.
+ *
+ * Resolving the executable ourselves — rather than letting the OS search
+ * `$PATH` — means a writable or attacker-controlled directory earlier in
+ * `$PATH` cannot substitute its own `convert`. Callers can still point at a
+ * specific binary with `IMAGEMAGICK_CONVERT`, which is validated below.
+ */
+const TRUSTED_BIN_DIRS = [
+  "/usr/bin",
+  "/bin",
+  "/usr/local/bin",
+  "/opt/homebrew/bin",
+  "/opt/local/bin",
+];
+
+/** Absolute path to the ImageMagick binary, resolved once at startup. */
+let convertBin = null;
+
+/**
+ * Locate ImageMagick without trusting `$PATH` ordering.
+ *
+ * Order: an explicit `IMAGEMAGICK_CONVERT` override, then the trusted
+ * directories above. Both ImageMagick 7 (`magick`) and 6 (`convert`) are
+ * accepted.
+ */
+function resolveConvertBinary() {
+  const override = process.env.IMAGEMAGICK_CONVERT?.trim();
+  if (override) {
+    if (!isAbsolute(override)) {
+      throw new Error(
+        `IMAGEMAGICK_CONVERT must be an absolute path, got: ${override}`,
+      );
+    }
+    if (!existsSync(override) || !statSync(override).isFile()) {
+      throw new Error(
+        `IMAGEMAGICK_CONVERT does not point at a file: ${override}`,
+      );
+    }
+    return override;
+  }
+
+  // Keep only trusted directories that actually appear in PATH-like locations;
+  // the list itself is fixed, so nothing user-writable can be injected here.
+  for (const dir of TRUSTED_BIN_DIRS) {
+    for (const name of ["magick", "convert"]) {
+      const candidate = join(dir, name);
+      if (existsSync(candidate) && statSync(candidate).isFile()) {
+        return candidate;
+      }
+    }
+  }
+
+  throw new Error(
+    "ImageMagick was not found in a trusted location.\n" +
+      `Searched: ${TRUSTED_BIN_DIRS.join(delimiter)}\n` +
+      "Install it, or set IMAGEMAGICK_CONVERT to an absolute path:\n" +
+      "  macOS:  brew install imagemagick\n" +
+      "  Ubuntu: sudo apt-get install imagemagick",
+  );
+}
 
 /**
  * Branding master: a 1024x1024 dark rounded tile with the mausVoice wordmark.
@@ -95,17 +159,17 @@ const ICO_SIZES = [16, 24, 32, 48, 64, 128, 256];
 const ICNS_SIZES = [16, 32, 64, 128, 256, 512, 1024];
 
 function convert(args) {
-  return execFileSync("convert", args, { stdio: ["ignore", "pipe", "pipe"] });
+  return execFileSync(convertBin, args, { stdio: ["ignore", "pipe", "pipe"] });
 }
 
+/** Resolve the binary and confirm it actually runs before doing any work. */
 function assertImageMagick() {
+  convertBin = resolveConvertBinary();
   try {
-    execFileSync("convert", ["-version"], { stdio: "ignore" });
-  } catch {
+    execFileSync(convertBin, ["-version"], { stdio: "ignore" });
+  } catch (err) {
     throw new Error(
-      "ImageMagick (`convert`) is required. Install it and re-run:\n" +
-        "  macOS:  brew install imagemagick\n" +
-        "  Ubuntu: sudo apt-get install imagemagick",
+      `Found ${convertBin}, but it failed to run: ${err.message}`,
     );
   }
 }
@@ -170,63 +234,81 @@ const CORNER_ALPHA_TOLERANCE = 0.15;
 /** Alpha of the top-left pixel, which sits in the tile's rounded corner. */
 function cornerAlpha(imageSpec) {
   const out = execFileSync(
-    "convert",
+    convertBin,
     [imageSpec, "-alpha", "on", "-format", "%[fx:p{0,0}.a]", "info:"],
     { encoding: "utf8" },
   );
   return Number.parseFloat(out.trim());
 }
 
-function verify() {
+/** True when a corner pixel is opaque enough to look like a black square. */
+function isCornerOpaque(alpha) {
+  return Number.isFinite(alpha) && alpha > CORNER_ALPHA_TOLERANCE;
+}
+
+/** Every required frame size is present, at 32bpp. */
+function checkIcoFrameSizes(ico, frames) {
   const problems = [];
+  const widths = new Set(frames.map((f) => f.width));
 
-  for (const dir of [desktopIcons, installerIcons]) {
-    const ico = join(dir, "icon.ico");
-    if (!existsSync(ico)) {
-      problems.push(`missing ${ico}`);
-      continue;
-    }
-
-    const frames = readIcoFrames(ico);
-    const widths = new Set(frames.map((f) => f.width));
-    for (const size of ICO_SIZES) {
-      if (!widths.has(size)) {
-        problems.push(`${ico}: missing a ${size}x${size} frame`);
-      }
-    }
-    for (const frame of frames) {
-      if (frame.bpp !== 32) {
-        problems.push(
-          `${ico}: frame ${frame.width}x${frame.height} is ${frame.bpp}bpp, need 32bpp for alpha`,
-        );
-      }
-    }
-
-    // Regression guard for the original bug: an opaque corner means the
-    // rounded tile was flattened into a black square.
-    for (let i = 0; i < frames.length; i += 1) {
-      const alpha = cornerAlpha(`${ico}[${i}]`);
-      if (Number.isFinite(alpha) && alpha > CORNER_ALPHA_TOLERANCE) {
-        problems.push(
-          `${ico}: frame ${frames[i].width}x${frames[i].height} has an opaque corner (alpha=${alpha}); the icon would render as a black square`,
-        );
-      }
+  for (const size of ICO_SIZES) {
+    if (!widths.has(size)) {
+      problems.push(`${ico}: missing a ${size}x${size} frame`);
     }
   }
-
-  for (const png of ["icon.png", "32x32.png", "128x128.png"]) {
-    const path = join(desktopIcons, png);
-    if (!existsSync(path)) {
-      problems.push(`missing ${path}`);
-      continue;
-    }
-    const alpha = cornerAlpha(path);
-    if (Number.isFinite(alpha) && alpha > CORNER_ALPHA_TOLERANCE) {
-      problems.push(`${path}: opaque corner (alpha=${alpha})`);
+  for (const frame of frames) {
+    if (frame.bpp !== 32) {
+      problems.push(
+        `${ico}: frame ${frame.width}x${frame.height} is ${frame.bpp}bpp, need 32bpp for alpha`,
+      );
     }
   }
-
   return problems;
+}
+
+/**
+ * Regression guard for the original bug: an opaque corner means the rounded
+ * tile was flattened into a black square.
+ */
+function checkIcoFrameAlpha(ico, frames) {
+  const problems = [];
+  for (let i = 0; i < frames.length; i += 1) {
+    if (isCornerOpaque(cornerAlpha(`${ico}[${i}]`))) {
+      problems.push(
+        `${ico}: frame ${frames[i].width}x${frames[i].height} has an opaque corner; the icon would render as a black square`,
+      );
+    }
+  }
+  return problems;
+}
+
+/** Validate one directory's icon.ico. */
+function checkIco(dir) {
+  const ico = join(dir, "icon.ico");
+  if (!existsSync(ico)) {
+    return [`missing ${ico}`];
+  }
+  const frames = readIcoFrames(ico);
+  return [
+    ...checkIcoFrameSizes(ico, frames),
+    ...checkIcoFrameAlpha(ico, frames),
+  ];
+}
+
+/** Validate a representative sample of the generated PNGs. */
+function checkPng(name) {
+  const path = join(desktopIcons, name);
+  if (!existsSync(path)) {
+    return [`missing ${path}`];
+  }
+  return isCornerOpaque(cornerAlpha(path)) ? [`${path}: opaque corner`] : [];
+}
+
+function verify() {
+  return [
+    ...[desktopIcons, installerIcons].flatMap(checkIco),
+    ...["icon.png", "32x32.png", "128x128.png"].flatMap(checkPng),
+  ];
 }
 
 function main() {
