@@ -190,11 +190,17 @@ pub(crate) const TRANSCRIPT_FONT_SIZE: f64 = 12.0;
 pub(crate) const TRANSCRIPT_MAX_WIDTH: f64 = 440.0;
 
 // ── Long-press balloon pop + drag ─────────────────────────────────
-pub(crate) const LONG_PRESS_DURATION: f64 = 0.5;
+pub(crate) const LONG_PRESS_DURATION: f64 = 0.8;
 pub(crate) const LONG_PRESS_MOVE_THRESHOLD: f64 = 8.0;
 pub(crate) const LONG_PRESS_OUTLINE_COLOR: (f64, f64, f64) = (0.45, 0.75, 1.0);
 pub(crate) const LONG_PRESS_OUTLINE_WIDTH: f64 = 2.0;
 pub(crate) const DRAG_EXPAND_AMOUNT: f64 = 8.0;
+
+// Retained for the (legacy) balloon-pop draw path which is still compiled.
+#[allow(dead_code)]
+pub(crate) const LONG_PRESS_RING_RADIUS: f64 = 22.0;
+#[allow(dead_code)]
+pub(crate) const LONG_PRESS_RING_STROKE: f64 = 2.5;
 
 pub(crate) const BALLOON_POP_DURATION: f64 = 0.85;
 pub(crate) const BALLOON_POP_PARTICLE_COUNT: usize = 14;

@@ -1,4 +1,9 @@
-import { Check, DarkMode, LightMode, SettingsBrightness } from "@mui/icons-material";
+import {
+  Check,
+  DarkMode,
+  LightMode,
+  SettingsBrightness,
+} from "@mui/icons-material";
 import {
   IconButton,
   Menu,
@@ -7,15 +12,26 @@ import {
   Typography,
   useColorScheme,
 } from "@mui/material";
-import { useCallback, useState } from "react";
+import { Moon, Sun, Monitor } from "lucide";
+import { MorphIcon } from "morphicons/react";
+import { useCallback, useMemo, useState } from "react";
 
 type ThemeChoice = "light" | "dark" | "system";
 
-const choices: { value: ThemeChoice; label: string; icon: React.ReactNode }[] = [
-  { value: "light", label: "Light", icon: <LightMode sx={{ fontSize: 16 }} /> },
-  { value: "dark", label: "Dark", icon: <DarkMode sx={{ fontSize: 16 }} /> },
-  { value: "system", label: "System", icon: <SettingsBrightness sx={{ fontSize: 16 }} /> },
-];
+const choices: { value: ThemeChoice; label: string; icon: React.ReactNode }[] =
+  [
+    {
+      value: "light",
+      label: "Light",
+      icon: <LightMode sx={{ fontSize: 16 }} />,
+    },
+    { value: "dark", label: "Dark", icon: <DarkMode sx={{ fontSize: 16 }} /> },
+    {
+      value: "system",
+      label: "System",
+      icon: <SettingsBrightness sx={{ fontSize: 16 }} />,
+    },
+  ];
 
 export const ThemeModeToggle = () => {
   const { mode, setMode } = useColorScheme();
@@ -41,14 +57,11 @@ export const ThemeModeToggle = () => {
   const activeChoice: ThemeChoice =
     mode === "light" || mode === "dark" || mode === "system" ? mode : "system";
 
-  const activeIcon =
-    activeChoice === "dark" ? (
-      <DarkMode sx={{ fontSize: 18 }} />
-    ) : activeChoice === "light" ? (
-      <LightMode sx={{ fontSize: 18 }} />
-    ) : (
-      <SettingsBrightness sx={{ fontSize: 18 }} />
-    );
+  const morphIcon = useMemo(
+    () =>
+      activeChoice === "dark" ? Moon : activeChoice === "light" ? Sun : Monitor,
+    [activeChoice],
+  );
 
   return (
     <>
@@ -65,7 +78,12 @@ export const ThemeModeToggle = () => {
           "&:hover": { backgroundColor: "action.hover" },
         }}
       >
-        {activeIcon}
+        <MorphIcon
+          icon={morphIcon}
+          size={18}
+          strokeWidth={1.9}
+          spring="snappy"
+        />
       </IconButton>
       <Menu
         anchorEl={anchorEl}
@@ -100,7 +118,12 @@ export const ThemeModeToggle = () => {
               },
             }}
           >
-            <Stack direction="row" alignItems="center" spacing={1.25} sx={{ flex: 1 }}>
+            <Stack
+              direction="row"
+              alignItems="center"
+              spacing={1.25}
+              sx={{ flex: 1 }}
+            >
               {choice.icon}
               <Typography variant="body2" fontWeight={500}>
                 {choice.label}

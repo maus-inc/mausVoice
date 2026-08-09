@@ -645,6 +645,28 @@ export default function SettingsPage() {
         {advanced}
         {inputPermissionsSetup}
         {!isEnterprise && dangerZone}
+        <Box sx={{ py: 4, textAlign: "center" }}>
+          <Typography
+            variant="caption"
+            color="text.secondary"
+            sx={{ fontSize: "0.72rem", letterSpacing: "0.02em" }}
+          >
+            Engineered with love by{" "}
+            <Link
+              href="https://github.com/Owie6789"
+              target="_blank"
+              rel="noopener noreferrer"
+              underline="hover"
+              sx={{
+                fontWeight: 600,
+                color: "text.secondary",
+                "&:hover": { color: "text.primary" },
+              }}
+            >
+              Owie Emmanuel
+            </Link>
+          </Typography>
+        </Box>
       </Stack>
       <ConfirmDialog
         isOpen={setupConfirmOpen}

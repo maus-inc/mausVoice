@@ -9,7 +9,7 @@ pub(crate) const MARGIN_BOTTOM: i32 = 8;
 
 pub(crate) const PILL_AREA_HEIGHT: f64 = 48.0;
 
-pub(crate) const LONG_PRESS_DURATION: f64 = 0.5;
+pub(crate) const LONG_PRESS_DURATION: f64 = 0.8;
 pub(crate) const CANCEL_FLASH_DURATION: f64 = 0.4;
 pub(crate) const LONG_PRESS_MOVE_THRESHOLD: f64 = 8.0;
 pub(crate) const LONG_PRESS_OUTLINE_COLOR: (f64, f64, f64) = (0.45, 0.75, 1.0);

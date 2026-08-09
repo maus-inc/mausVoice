@@ -116,8 +116,8 @@ export const UserDetailsForm = () => {
                 variant="outlined"
                 size="small"
                 label={
-                  <Stack direction="row" alignItems="center" spacing={0.75}>
-                    <FormattedMessage defaultMessage="Title" />
+                  <span>
+                    <FormattedMessage defaultMessage="Title" />{" "}
                     <Typography
                       component="span"
                       variant="caption"
@@ -126,7 +126,7 @@ export const UserDetailsForm = () => {
                     >
                       <FormattedMessage defaultMessage="(optional)" />
                     </Typography>
-                  </Stack>
+                  </span>
                 }
                 placeholder={intl.formatMessage({
                   defaultMessage: "Vice President",
@@ -147,8 +147,8 @@ export const UserDetailsForm = () => {
                 variant="outlined"
                 size="small"
                 label={
-                  <Stack direction="row" alignItems="center" spacing={0.75}>
-                    <FormattedMessage defaultMessage="Company" />
+                  <span>
+                    <FormattedMessage defaultMessage="Company" />{" "}
                     <Typography
                       component="span"
                       variant="caption"
@@ -157,7 +157,7 @@ export const UserDetailsForm = () => {
                     >
                       <FormattedMessage defaultMessage="(optional)" />
                     </Typography>
-                  </Stack>
+                  </span>
                 }
                 placeholder={intl.formatMessage({
                   defaultMessage: "Acme Inc.",
