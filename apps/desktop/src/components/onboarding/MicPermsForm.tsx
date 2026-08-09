@@ -11,6 +11,7 @@ import {
   requestMicrophonePermission,
 } from "../../utils/permission.utils";
 import { isPersonalUseEnabled } from "../../utils/personal-use.utils";
+import { isMacOS } from "../../utils/env.utils";
 import {
   BackButton,
   DualPaneLayout,
@@ -46,7 +47,7 @@ export const MicPermsForm = () => {
 
   const handleContinue = () => {
     trackButtonClick("onboarding_mic_perms_continue");
-    goToOnboardingPage("a11yPerms");
+    goToOnboardingPage(isMacOS() ? "a11yPerms" : "keybindings");
   };
 
   const form = (

@@ -840,11 +840,10 @@ export const DictationSideEffects = () => {
       await strategyRef.current.setPhase("paused");
       showToast({
         message: intl.formatMessage({
-          defaultMessage:
-            "Dictation paused — tap play to continue or X to cancel",
+          defaultMessage: "Dictation paused",
         }),
         toastType: "info",
-        duration: 4_000,
+        duration: 2_000,
       });
     } catch (error) {
       getLogger().error(`Failed to pause dictation: ${error}`);

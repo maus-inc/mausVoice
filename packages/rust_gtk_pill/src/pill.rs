@@ -166,6 +166,8 @@ pub fn run(receiver: Receiver<InMessage>) {
         long_press_start_y: Cell::new(0.0),
         dragging: Cell::new(false),
         drag_cancelled: Cell::new(false),
+        inflate_t: Cell::new(0.0),
+        inflate_velocity: Cell::new(0.0),
         drag_cursor_x: Cell::new(0.0),
         drag_cursor_y: Cell::new(0.0),
         drag_draw_offset_x: Cell::new(0.0),
@@ -310,10 +312,8 @@ pub fn run(receiver: Receiver<InMessage>) {
         state_click.dragging.set(false);
         state_click.long_press_active.set(false);
         state_click.long_press_elapsed.set(0.0);
-        // Revert the Wayland draw offset so the pill returns to its default
-        // bottom-center position (X11 re-centers in its own reposition loop).
-        state_click.drag_draw_offset_x.set(0.0);
-        state_click.drag_draw_offset_y.set(0.0);
+        // Persist the Wayland draw offset so the pill stays where it was dropped.
+        // (X11 re-centers in its own reposition loop via window move.)
         if !was_dragging {
             let (x, y) = event.position();
             input::handle_click(&state_click, x, y);
@@ -763,6 +763,10 @@ fn tick(state: &PillState) {
         && (state.hovered.get() || controls_phase == Phase::Paused);
     let cancel_target = if show_controls { 1.0 } else { 0.0 };
     spring_anim(&state.cancel_t, &state.cancel_velocity, cancel_target, SPRING_STIFFNESS * 2.0);
+
+    // Inflate animation: expand when dragging, contract when released.
+    let inflate_target = if state.dragging.get() { 1.0 } else { 0.0 };
+    spring_anim(&state.inflate_t, &state.inflate_velocity, inflate_target, DRAG_INFLATE_STIFFNESS);
 
     // Auto-scroll to bottom when new content arrives
     if state.should_stick.get() && state.assistant_active.get() && !state.assistant_compact.get() {

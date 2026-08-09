@@ -1,49 +1,177 @@
-import { IconButton, useColorScheme } from "@mui/material";
-import { Moon, Sun } from "lucide";
-import { useCallback, useMemo } from "react";
+import {
+  Check,
+  DarkMode,
+  LightMode,
+  SettingsBrightness,
+} from "@mui/icons-material";
+import {
+  IconButton,
+  Menu,
+  MenuItem,
+  Stack,
+  Typography,
+  useColorScheme,
+} from "@mui/material";
+import { Moon, Sun, Monitor } from "lucide";
+import type { IconNode } from "lucide";
 import { MorphIcon } from "morphicons/react";
+import { useCallback, useMemo, useState } from "react";
+import { FormattedMessage, useIntl } from "react-intl";
 
-/**
- * Light/dark mode toggle rendered in the title bar. Uses MUI's color-scheme
- * API (the theme defines both palettes). Cycling order: light -> dark ->
- * system -> light, so users can escape back to following the OS. The sun/moon
- * glyph morphs between states via morphicons.
- */
+type ThemeChoice = "light" | "dark" | "system";
+
+function getMorphIcon(choice: ThemeChoice): IconNode {
+  if (choice === "dark") return Moon;
+  if (choice === "light") return Sun;
+  return Monitor;
+}
+
+const menuItemSx = {
+  py: 1,
+  px: 1.5,
+  borderRadius: 1.5,
+  mx: 0.5,
+  my: 0.25,
+  gap: 1.25,
+  "&.Mui-selected": {
+    backgroundColor: "action.selected",
+  },
+} as const;
+
 export const ThemeModeToggle = () => {
-  const { mode, systemMode, setMode } = useColorScheme();
+  const { mode, setMode } = useColorScheme();
+  const intl = useIntl();
+  const [anchorEl, setAnchorEl] = useState<null | HTMLElement>(null);
+  const open = Boolean(anchorEl);
 
-  const effectiveMode = mode === "system" ? systemMode : mode;
-  const isDark = effectiveMode === "dark";
+  const handleOpen = useCallback((e: React.MouseEvent<HTMLButtonElement>) => {
+    setAnchorEl(e.currentTarget);
+  }, []);
 
-  const icon = useMemo(() => (isDark ? Moon : Sun), [isDark]);
+  const handleClose = useCallback(() => {
+    setAnchorEl(null);
+  }, []);
 
-  const cycle = useCallback(() => {
-    if (mode === "light") {
-      setMode("dark");
-    } else if (mode === "dark") {
-      setMode("system");
-    } else {
-      setMode("light");
-    }
-  }, [mode, setMode]);
+  const handleSelect = useCallback(
+    (choice: ThemeChoice) => {
+      setMode(choice);
+      handleClose();
+    },
+    [setMode, handleClose],
+  );
 
-  const label = isDark ? "Switch to light mode" : "Switch to dark mode";
+  const activeChoice: ThemeChoice =
+    mode === "light" || mode === "dark" || mode === "system" ? mode : "system";
+
+  const morphIcon = useMemo(() => getMorphIcon(activeChoice), [activeChoice]);
+
+  const ariaLabel = intl.formatMessage({
+    defaultMessage: "Theme settings",
+  });
+  const tooltipTitle = intl.formatMessage(
+    { defaultMessage: "Theme: {mode}" },
+    { mode: activeChoice },
+  );
 
   return (
-    <IconButton
-      onClick={cycle}
-      aria-label={label}
-      size="small"
-      title={label}
-      sx={{
-        width: 28,
-        height: 28,
-        borderRadius: 1.5,
-        color: "text.secondary",
-        "&:hover": { backgroundColor: "action.hover" },
-      }}
-    >
-      <MorphIcon icon={icon} size={18} strokeWidth={1.9} spring="snappy" />
-    </IconButton>
+    <>
+      <IconButton
+        onClick={handleOpen}
+        aria-label={ariaLabel}
+        size="small"
+        title={tooltipTitle}
+        sx={{
+          width: 28,
+          height: 28,
+          borderRadius: 1.5,
+          color: "text.secondary",
+          "&:hover": { backgroundColor: "action.hover" },
+        }}
+      >
+        <MorphIcon
+          icon={morphIcon}
+          size={18}
+          strokeWidth={1.9}
+          spring="snappy"
+        />
+      </IconButton>
+      <Menu
+        anchorEl={anchorEl}
+        open={open}
+        onClose={handleClose}
+        anchorOrigin={{ vertical: "bottom", horizontal: "left" }}
+        transformOrigin={{ vertical: "top", horizontal: "left" }}
+        slotProps={{
+          paper: {
+            sx: {
+              minWidth: 140,
+              mt: 0.5,
+              borderRadius: 2,
+            },
+          },
+        }}
+      >
+        <MenuItem
+          onClick={() => handleSelect("light")}
+          selected={activeChoice === "light"}
+          sx={menuItemSx}
+        >
+          <Stack
+            direction="row"
+            alignItems="center"
+            spacing={1.25}
+            sx={{ flex: 1 }}
+          >
+            <LightMode sx={{ fontSize: 16 }} />
+            <Typography variant="body2" fontWeight={500}>
+              <FormattedMessage defaultMessage="Light" />
+            </Typography>
+          </Stack>
+          {activeChoice === "light" && (
+            <Check sx={{ fontSize: 16, color: "text.secondary" }} />
+          )}
+        </MenuItem>
+        <MenuItem
+          onClick={() => handleSelect("dark")}
+          selected={activeChoice === "dark"}
+          sx={menuItemSx}
+        >
+          <Stack
+            direction="row"
+            alignItems="center"
+            spacing={1.25}
+            sx={{ flex: 1 }}
+          >
+            <DarkMode sx={{ fontSize: 16 }} />
+            <Typography variant="body2" fontWeight={500}>
+              <FormattedMessage defaultMessage="Dark" />
+            </Typography>
+          </Stack>
+          {activeChoice === "dark" && (
+            <Check sx={{ fontSize: 16, color: "text.secondary" }} />
+          )}
+        </MenuItem>
+        <MenuItem
+          onClick={() => handleSelect("system")}
+          selected={activeChoice === "system"}
+          sx={menuItemSx}
+        >
+          <Stack
+            direction="row"
+            alignItems="center"
+            spacing={1.25}
+            sx={{ flex: 1 }}
+          >
+            <SettingsBrightness sx={{ fontSize: 16 }} />
+            <Typography variant="body2" fontWeight={500}>
+              <FormattedMessage defaultMessage="System" />
+            </Typography>
+          </Stack>
+          {activeChoice === "system" && (
+            <Check sx={{ fontSize: 16, color: "text.secondary" }} />
+          )}
+        </MenuItem>
+      </Menu>
+    </>
   );
 };
