@@ -105,7 +105,12 @@ export const TitleBar = () => {
         direction="row"
         alignItems="center"
         spacing={1}
-        sx={{ position: "relative", zIndex: 1, pl: 0.5 }}
+        sx={{
+          position: "relative",
+          zIndex: 1,
+          pl: 0.5,
+          color: dark ? "rgba(255,255,255,0.85)" : "rgba(15,18,25,0.85)",
+        }}
       >
         <ThemeModeToggle />
         <LogoWithText />

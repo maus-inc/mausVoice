@@ -310,10 +310,8 @@ pub fn run(receiver: Receiver<InMessage>) {
         state_click.dragging.set(false);
         state_click.long_press_active.set(false);
         state_click.long_press_elapsed.set(0.0);
-        // Revert the Wayland draw offset so the pill returns to its default
-        // bottom-center position (X11 re-centers in its own reposition loop).
-        state_click.drag_draw_offset_x.set(0.0);
-        state_click.drag_draw_offset_y.set(0.0);
+        // Persist the Wayland draw offset so the pill stays where it was dropped.
+        // (X11 re-centers in its own reposition loop via window move.)
         if !was_dragging {
             let (x, y) = event.position();
             input::handle_click(&state_click, x, y);

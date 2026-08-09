@@ -1,49 +1,117 @@
-import { IconButton, useColorScheme } from "@mui/material";
-import { Moon, Sun } from "lucide";
-import { useCallback, useMemo } from "react";
-import { MorphIcon } from "morphicons/react";
+import { Check, DarkMode, LightMode, SettingsBrightness } from "@mui/icons-material";
+import {
+  IconButton,
+  Menu,
+  MenuItem,
+  Stack,
+  Typography,
+  useColorScheme,
+} from "@mui/material";
+import { useCallback, useState } from "react";
 
-/**
- * Light/dark mode toggle rendered in the title bar. Uses MUI's color-scheme
- * API (the theme defines both palettes). Cycling order: light -> dark ->
- * system -> light, so users can escape back to following the OS. The sun/moon
- * glyph morphs between states via morphicons.
- */
+type ThemeChoice = "light" | "dark" | "system";
+
+const choices: { value: ThemeChoice; label: string; icon: React.ReactNode }[] = [
+  { value: "light", label: "Light", icon: <LightMode sx={{ fontSize: 16 }} /> },
+  { value: "dark", label: "Dark", icon: <DarkMode sx={{ fontSize: 16 }} /> },
+  { value: "system", label: "System", icon: <SettingsBrightness sx={{ fontSize: 16 }} /> },
+];
+
 export const ThemeModeToggle = () => {
-  const { mode, systemMode, setMode } = useColorScheme();
+  const { mode, setMode } = useColorScheme();
+  const [anchorEl, setAnchorEl] = useState<null | HTMLElement>(null);
+  const open = Boolean(anchorEl);
 
-  const effectiveMode = mode === "system" ? systemMode : mode;
-  const isDark = effectiveMode === "dark";
+  const handleOpen = useCallback((e: React.MouseEvent<HTMLButtonElement>) => {
+    setAnchorEl(e.currentTarget);
+  }, []);
 
-  const icon = useMemo(() => (isDark ? Moon : Sun), [isDark]);
+  const handleClose = useCallback(() => {
+    setAnchorEl(null);
+  }, []);
 
-  const cycle = useCallback(() => {
-    if (mode === "light") {
-      setMode("dark");
-    } else if (mode === "dark") {
-      setMode("system");
-    } else {
-      setMode("light");
-    }
-  }, [mode, setMode]);
+  const handleSelect = useCallback(
+    (choice: ThemeChoice) => {
+      setMode(choice);
+      handleClose();
+    },
+    [setMode, handleClose],
+  );
 
-  const label = isDark ? "Switch to light mode" : "Switch to dark mode";
+  const activeChoice: ThemeChoice =
+    mode === "light" || mode === "dark" || mode === "system" ? mode : "system";
+
+  const activeIcon =
+    activeChoice === "dark" ? (
+      <DarkMode sx={{ fontSize: 18 }} />
+    ) : activeChoice === "light" ? (
+      <LightMode sx={{ fontSize: 18 }} />
+    ) : (
+      <SettingsBrightness sx={{ fontSize: 18 }} />
+    );
 
   return (
-    <IconButton
-      onClick={cycle}
-      aria-label={label}
-      size="small"
-      title={label}
-      sx={{
-        width: 28,
-        height: 28,
-        borderRadius: 1.5,
-        color: "text.secondary",
-        "&:hover": { backgroundColor: "action.hover" },
-      }}
-    >
-      <MorphIcon icon={icon} size={18} strokeWidth={1.9} spring="snappy" />
-    </IconButton>
+    <>
+      <IconButton
+        onClick={handleOpen}
+        aria-label="Theme settings"
+        size="small"
+        title={`Theme: ${activeChoice}`}
+        sx={{
+          width: 28,
+          height: 28,
+          borderRadius: 1.5,
+          color: "text.secondary",
+          "&:hover": { backgroundColor: "action.hover" },
+        }}
+      >
+        {activeIcon}
+      </IconButton>
+      <Menu
+        anchorEl={anchorEl}
+        open={open}
+        onClose={handleClose}
+        anchorOrigin={{ vertical: "bottom", horizontal: "left" }}
+        transformOrigin={{ vertical: "top", horizontal: "left" }}
+        slotProps={{
+          paper: {
+            sx: {
+              minWidth: 140,
+              mt: 0.5,
+              borderRadius: 2,
+            },
+          },
+        }}
+      >
+        {choices.map((choice) => (
+          <MenuItem
+            key={choice.value}
+            onClick={() => handleSelect(choice.value)}
+            selected={choice.value === activeChoice}
+            sx={{
+              py: 1,
+              px: 1.5,
+              borderRadius: 1.5,
+              mx: 0.5,
+              my: 0.25,
+              gap: 1.25,
+              "&.Mui-selected": {
+                backgroundColor: "action.selected",
+              },
+            }}
+          >
+            <Stack direction="row" alignItems="center" spacing={1.25} sx={{ flex: 1 }}>
+              {choice.icon}
+              <Typography variant="body2" fontWeight={500}>
+                {choice.label}
+              </Typography>
+            </Stack>
+            {choice.value === activeChoice && (
+              <Check sx={{ fontSize: 16, color: "text.secondary" }} />
+            )}
+          </MenuItem>
+        ))}
+      </Menu>
+    </>
   );
 };

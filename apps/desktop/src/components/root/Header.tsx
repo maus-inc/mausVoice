@@ -40,6 +40,11 @@ export const BaseHeader = ({
   leftContent,
   rightContent,
 }: BaseHeaderProps) => {
+  const hasContent = logo || leftContent || rightContent;
+  if (!hasContent) {
+    return null;
+  }
+
   return (
     <Stack
       direction="row"
@@ -49,22 +54,8 @@ export const BaseHeader = ({
         py: 0.4,
         px: { xs: 1, sm: 1.5 },
         minHeight: 36,
-        borderRadius: 2,
         mx: { xs: 0.5, sm: 1 },
         mb: 0.4,
-        bgcolor: (theme) =>
-          theme.palette.mode === "dark"
-            ? "rgba(20,22,27,0.55)"
-            : "rgba(255,255,255,0.72)",
-        border: (theme) =>
-          theme.palette.mode === "dark"
-            ? "1px solid rgba(255,255,255,0.05)"
-            : "1px solid rgba(15,18,25,0.05)",
-        boxShadow: (theme) =>
-          theme.palette.mode === "dark"
-            ? "inset 0 1px 0 rgba(255,255,255,0.06), 0 8px 20px rgba(0,0,0,0.25)"
-            : "inset 0 1px 0 rgba(255,255,255,0.9), inset 0 2px 0 rgba(255,255,255,0.35), 0 6px 16px rgba(15,18,25,0.06)",
-        backdropFilter: "blur(12px)",
       }}
     >
       {logo ? <Box sx={{ py: 0.25, pr: 1 }}>{logo}</Box> : null}

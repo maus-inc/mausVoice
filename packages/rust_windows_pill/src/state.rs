@@ -212,6 +212,9 @@ pub(crate) struct PillState {
     pub(crate) drag_cancelled: Cell<bool>,
     pub(crate) drag_cursor_x: Cell<f64>,
     pub(crate) drag_cursor_y: Cell<f64>,
+    pub(crate) has_saved_position: Cell<bool>,
+    pub(crate) saved_x: Cell<i32>,
+    pub(crate) saved_y: Cell<i32>,
 
     // Dirty flag — when false, the rendered output is identical to the previous
     // frame so we can skip draw + UpdateLayeredWindow entirely.

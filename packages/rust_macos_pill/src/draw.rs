@@ -58,7 +58,10 @@ pub(crate) fn draw_all(ctx: &Ctx, state: &PillState, view_w: f64, view_h: f64) {
         draw_cancel_button(ctx, state, ww, wh);
 
         // Long-press ring indicator
-        if state.long_press_active.get() && !state.balloon_pop_active.get() {
+        if state.long_press_active.get()
+            && !state.balloon_pop_active.get()
+            && state.long_press_elapsed.get() > 0.1
+        {
             draw_long_press_ring(ctx, state, ww, wh);
         }
 
@@ -1152,20 +1155,28 @@ fn draw_keyboard_button(ctx: &Ctx, state: &PillState, ww: f64, wh: f64) {
 }
 
 fn draw_paused(ctx: &Ctx, rx: f64, ry: f64, pill_w: f64, pill_h: f64, expand_t: f64) {
-    let gap = 4.0;
-    let bar_w = 3.0;
-    let heights = [0.35_f64, 0.7, 1.0, 0.55, 0.4];
-    let total_w = heights.len() as f64 * bar_w + (heights.len() - 1) as f64 * gap;
-    let start_x = rx + (pill_w - total_w) / 2.0;
-    let mid_y = ry + pill_h / 2.0;
-    for (i, h_frac) in heights.iter().enumerate() {
-        let h = (pill_h - 10.0) * *h_frac * expand_t;
-        let x = start_x + i as f64 * (bar_w + gap);
-        let y = mid_y - h / 2.0;
-        ctx.set_source_rgba(1.0, 1.0, 1.0, 0.55 * expand_t);
-        gfx::rounded_rect(ctx, x, y, bar_w, h.max(1.0), 1.5);
-        ctx.fill();
-    }
+    ctx.save();
+    let radius = gfx::lerp(COLLAPSED_RADIUS, EXPANDED_RADIUS, expand_t);
+    gfx::rounded_rect(ctx, rx, ry, pill_w, pill_h, radius);
+    ctx.clip();
+
+    let bar_h = 2.0;
+    let bar_y = ry + (pill_h - bar_h) / 2.0;
+    let pad = pill_h * 0.1;
+    let track_x = rx + pad;
+    let track_w = pill_w - pad * 2.0;
+
+    ctx.set_source_rgba(1.0, 1.0, 1.0, 0.1 * expand_t);
+    ctx.rectangle(track_x, bar_y, track_w, bar_h);
+    ctx.fill();
+
+    let indicator_w = track_w * LOADING_BAR_WIDTH_FRAC;
+    let ind_x = track_x + (track_w - indicator_w) / 2.0;
+    ctx.set_source_rgba(1.0, 1.0, 1.0, 0.45 * expand_t);
+    ctx.rectangle(ind_x, bar_y, indicator_w, bar_h);
+    ctx.fill();
+
+    ctx.restore();
 }
 
 fn draw_cancel_button(ctx: &Ctx, state: &PillState, ww: f64, wh: f64) {
@@ -1178,8 +1189,8 @@ fn draw_cancel_button(ctx: &Ctx, state: &PillState, ww: f64, wh: f64) {
     let phase = state.phase.get();
     let scale = 0.5 + 0.5 * t;
 
-    // Pause / resume (left)
-    let pause_x = pill_x + pill_w - CANCEL_BUTTON_SIZE * 1.5 - 6.0;
+    // Pause / resume on the LEFT side of the pill
+    let pause_x = pill_x - CANCEL_BUTTON_SIZE / 2.0 - 2.0;
     let pause_y = pill_y - CANCEL_BUTTON_SIZE / 2.0 - 2.0;
     let pause_cx = pause_x + CANCEL_BUTTON_SIZE / 2.0;
     let pause_cy = pause_y + CANCEL_BUTTON_SIZE / 2.0;
@@ -1273,47 +1284,88 @@ fn draw_long_press_ring(ctx: &Ctx, state: &PillState, ww: f64, wh: f64) {
     let progress = (elapsed / LONG_PRESS_DURATION).min(1.0);
 
     let (pill_x, pill_y, pill_w, pill_h) = pill_position(state, ww, wh);
-    let cx = pill_x + pill_w / 2.0;
-    let cy = pill_y + pill_h / 2.0;
+    let radius = gfx::lerp(COLLAPSED_RADIUS, EXPANDED_RADIUS, state.expand_t.get());
 
-    // Pulsating glow behind the ring
-    let pulse = 0.5 + 0.5 * (elapsed * 3.0).sin();
-    let glow_radius = LONG_PRESS_RING_RADIUS + 4.0 + pulse * 3.0;
-    ctx.set_source_rgba(
-        LONG_PRESS_RING_COLOR.0,
-        LONG_PRESS_RING_COLOR.1,
-        LONG_PRESS_RING_COLOR.2,
-        0.15 * progress,
-    );
-    ctx.new_sub_path();
-    ctx.arc(cx, cy, glow_radius, 0.0, std::f64::consts::TAU);
-    ctx.fill();
+    // Draw an outline that traces around the pill perimeter clockwise.
+    let inset = 2.0;
+    let ox = pill_x - inset;
+    let oy = pill_y - inset;
+    let ow = pill_w + inset * 2.0;
+    let oh = pill_h + inset * 2.0;
+    let r = (radius + inset).min(oh / 2.0);
 
-    // Progress arc (sweeps clockwise)
-    let start_angle = -std::f64::consts::FRAC_PI_2;
-    let end_angle = start_angle + progress * std::f64::consts::TAU;
+    // Build path as (x, y) points around the pill perimeter
+    let arc_steps = 16;
+    let mut path: Vec<(f64, f64)> = Vec::with_capacity(arc_steps * 2 + 4);
+
+    // Top edge (left to right)
+    path.push((ox + r, oy));
+    path.push((ox + ow - r, oy));
+
+    // Right cap (semicircle)
+    let right_cx = ox + ow - r;
+    let right_cy = oy + r;
+    for i in 0..=arc_steps {
+        let angle = -std::f64::consts::FRAC_PI_2
+            + (i as f64 / arc_steps as f64) * std::f64::consts::PI;
+        path.push((right_cx + angle.cos() * r, right_cy + angle.sin() * r));
+    }
+
+    // Bottom edge (right to left)
+    path.push((ox + r, oy + oh));
+
+    // Left cap (semicircle)
+    let left_cx = ox + r;
+    let left_cy = oy + oh - r;
+    for i in 0..=arc_steps {
+        let angle = std::f64::consts::FRAC_PI_2
+            + (i as f64 / arc_steps as f64) * std::f64::consts::PI;
+        path.push((left_cx + angle.cos() * r, left_cy + angle.sin() * r));
+    }
+
+    // Compute cumulative distances
+    let mut distances: Vec<f64> = Vec::with_capacity(path.len());
+    distances.push(0.0);
+    for i in 1..path.len() {
+        let dx = path[i].0 - path[i - 1].0;
+        let dy = path[i].1 - path[i - 1].1;
+        distances.push(distances[i - 1] + (dx * dx + dy * dy).sqrt());
+    }
+    let total_len = *distances.last().unwrap_or(&1.0);
+    let filled_len = total_len * progress;
+
+    let outline_alpha = 0.3 + 0.5 * progress;
     ctx.set_source_rgba(
-        LONG_PRESS_RING_COLOR.0,
-        LONG_PRESS_RING_COLOR.1,
-        LONG_PRESS_RING_COLOR.2,
-        0.6 + 0.4 * progress,
+        LONG_PRESS_OUTLINE_COLOR.0,
+        LONG_PRESS_OUTLINE_COLOR.1,
+        LONG_PRESS_OUTLINE_COLOR.2,
+        outline_alpha,
     );
-    ctx.set_line_width(LONG_PRESS_RING_STROKE);
+    ctx.set_line_width(LONG_PRESS_OUTLINE_WIDTH);
     ctx.set_line_cap_round();
-    ctx.new_sub_path();
-    ctx.arc(cx, cy, LONG_PRESS_RING_RADIUS, start_angle, end_angle);
-    ctx.stroke();
 
-    // Background track (faint)
-    ctx.set_source_rgba(
-        LONG_PRESS_RING_COLOR.0,
-        LONG_PRESS_RING_COLOR.1,
-        LONG_PRESS_RING_COLOR.2,
-        0.12,
-    );
-    ctx.set_line_width(LONG_PRESS_RING_STROKE * 0.5);
+    // Draw segments up to filled_len using move_to/line_to
     ctx.new_sub_path();
-    ctx.arc(cx, cy, LONG_PRESS_RING_RADIUS, 0.0, std::f64::consts::TAU);
+    let mut started = false;
+    for i in 1..path.len() {
+        if distances[i - 1] >= filled_len {
+            break;
+        }
+        let x1 = path[i - 1].0;
+        let y1 = path[i - 1].1;
+        let mut x2 = path[i].0;
+        let mut y2 = path[i].1;
+        if distances[i] > filled_len {
+            let t = (filled_len - distances[i - 1]) / (distances[i] - distances[i - 1]);
+            x2 = x1 + (x2 - x1) * t;
+            y2 = y1 + (y2 - y1) * t;
+        }
+        if !started {
+            ctx.move_to(x1, y1);
+            started = true;
+        }
+        ctx.line_to(x2, y2);
+    }
     ctx.stroke();
 }
 

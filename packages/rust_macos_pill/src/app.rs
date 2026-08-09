@@ -237,6 +237,13 @@ extern "C" fn mouse_up(_this: &Object, _sel: Sel, event: id) {
         }
         // Track whether we were dragging (to suppress click on release)
         let was_dragging = ctx.state.dragging.get();
+        if was_dragging {
+            // Persist the window position after drag
+            let frame = window_frame(ctx.window);
+            ctx.state.saved_x.set(frame.origin.x);
+            ctx.state.saved_y.set(frame.origin.y);
+            ctx.state.has_saved_position.set(true);
+        }
         // End any drag
         ctx.state.dragging.set(false);
         // Cancel any in-progress long press
@@ -895,7 +902,9 @@ fn tick_long_press(state: &PillState, window: id, dt: f64) {
     if elapsed >= LONG_PRESS_DURATION {
         state.long_press_active.set(false);
         state.long_press_elapsed.set(0.0);
-        trigger_balloon_pop(state);
+        // Enter drag mode directly (skip balloon pop for snappy interaction).
+        state.dragging.set(true);
+        state.drag_cancelled.set(false);
     }
 }
 
@@ -1032,9 +1041,6 @@ fn reposition_window(window: id, state: &PillState) {
 
                 if state.dragging.get() {
                     // Drag mode: center the window on the cursor position
-                    // macOS Y is flipped (origin at bottom-left), cursor Y is also bottom-up
-                    // The pill body is drawn in the bottom portion of the window,
-                    // so offset so the pill area sits at cursor Y
                     let pill_area_h = PILL_AREA_HEIGHT;
                     target_x = mouse_loc.x - win_w / 2.0;
                     target_y = mouse_loc.y - pill_area_h / 2.0;
@@ -1042,8 +1048,15 @@ fn reposition_window(window: id, state: &PillState) {
                     // Clamp to visible area
                     target_x = target_x.max(visible.origin.x).min(visible.origin.x + visible.size.width - win_w);
                     target_y = target_y.max(visible.origin.y).min(visible.origin.y + visible.size.height - win_h);
+                } else if state.has_saved_position.get() {
+                    // Use persisted position from last drag
+                    target_x = state.saved_x.get();
+                    target_y = state.saved_y.get();
+                    // Clamp to current visible area (monitor may have changed)
+                    target_x = target_x.max(visible.origin.x).min(visible.origin.x + visible.size.width - win_w);
+                    target_y = target_y.max(visible.origin.y).min(visible.origin.y + visible.size.height - win_h);
                 } else {
-                    // Normal mode: center at bottom of monitor
+                    // Default: center at bottom of monitor
                     target_x = visible.origin.x + (visible.size.width - win_w) / 2.0;
                     target_y = visible.origin.y + MARGIN_BOTTOM as f64;
                 }
@@ -1217,6 +1230,9 @@ unsafe fn setup(receiver: Receiver<InMessage>, embedded: bool) {
         drag_cancelled: Cell::new(false),
         drag_cursor_x: Cell::new(0.0),
         drag_cursor_y: Cell::new(0.0),
+        has_saved_position: Cell::new(false),
+        saved_x: Cell::new(0.0),
+        saved_y: Cell::new(0.0),
     });
 
     // Store in thread-local

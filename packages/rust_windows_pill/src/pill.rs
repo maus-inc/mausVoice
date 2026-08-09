@@ -156,6 +156,9 @@ pub fn run(receiver: Receiver<InMessage>) {
         drag_cancelled: Cell::new(false),
         drag_cursor_x: Cell::new(0.0),
         drag_cursor_y: Cell::new(0.0),
+        has_saved_position: Cell::new(false),
+        saved_x: Cell::new(0),
+        saved_y: Cell::new(0),
         dirty: Cell::new(true),
     };
 
@@ -277,6 +280,14 @@ unsafe extern "system" fn wndproc(hwnd: HWND, msg: u32, wparam: WPARAM, lparam: 
                     }
                     // Track whether we were dragging (to suppress click on release)
                     let was_dragging = state.dragging.get();
+                    if was_dragging {
+                        // Persist the window position after drag
+                        let mut rect = RECT::default();
+                        let _ = GetWindowRect(hwnd, &mut rect);
+                        state.saved_x.set(rect.left);
+                        state.saved_y.set(rect.top);
+                        state.has_saved_position.set(true);
+                    }
                     // End any drag
                     state.dragging.set(false);
                     // Cancel any in-progress long press
@@ -952,7 +963,6 @@ fn reposition_to_cursor_monitor(hwnd: HWND, state: &PillState) {
 
         let (x, y) = if state.dragging.get() {
             // Drag mode: center the window on cursor position
-            // The pill body is in the bottom portion of the window
             let pill_area_h = PILL_AREA_HEIGHT as i32;
             let mut dx = cursor.x - WINDOW_W_TYPING / 2;
             let mut dy = cursor.y - pill_area_h / 2;
@@ -960,8 +970,16 @@ fn reposition_to_cursor_monitor(hwnd: HWND, state: &PillState) {
             dx = dx.max(wa.left).min(wa.right - WINDOW_W_TYPING);
             dy = dy.max(wa.top).min(wa.bottom - WINDOW_H_TYPING);
             (dx, dy)
+        } else if state.has_saved_position.get() {
+            // Use persisted position from last drag
+            let mut sx = state.saved_x.get();
+            let mut sy = state.saved_y.get();
+            // Clamp to current work area (monitor may have changed)
+            sx = sx.max(wa.left).min(wa.right - WINDOW_W_TYPING);
+            sy = sy.max(wa.top).min(wa.bottom - WINDOW_H_TYPING);
+            (sx, sy)
         } else {
-            // Normal mode: center at bottom of monitor
+            // Default: center at bottom of monitor
             let x = wa.left + (wa_w - WINDOW_W_TYPING) / 2;
             let y = wa.top + wa_h - WINDOW_H_TYPING - MARGIN_BOTTOM;
             (x, y)
@@ -1019,7 +1037,15 @@ fn tick_long_press(state: &PillState, dt: f64) {
     if elapsed >= LONG_PRESS_DURATION {
         state.long_press_active.set(false);
         state.long_press_elapsed.set(0.0);
-        trigger_balloon_pop(state);
+        // Enter drag mode directly (skip balloon pop for snappy interaction).
+        state.dragging.set(true);
+        state.drag_cancelled.set(false);
+        unsafe {
+            let mut cursor = POINT::default();
+            let _ = GetCursorPos(&mut cursor);
+            state.drag_cursor_x.set(cursor.x as f64);
+            state.drag_cursor_y.set(cursor.y as f64);
+        }
     }
 }
 

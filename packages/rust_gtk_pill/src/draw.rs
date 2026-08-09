@@ -117,7 +117,7 @@ fn draw_pill(cr: &cairo::Context, state: &PillState, ww: f64, wh: f64) {
             draw_edge_gradient(cr, rx, ry, pill_w, pill_h, radius, expand_t);
         }
         Phase::Paused if expand_t > 0.1 => {
-            // Keep expanded voice field with frozen bars while paused.
+            draw_paused_bar(cr, rx, ry, pill_w, pill_h, radius, expand_t);
             draw_edge_gradient(cr, rx, ry, pill_w, pill_h, radius, expand_t);
         }
         Phase::Loading if expand_t > 0.1 => {
@@ -141,30 +141,53 @@ fn draw_pill(cr: &cairo::Context, state: &PillState, ww: f64, wh: f64) {
 fn draw_long_press_ring(
     cr: &cairo::Context, rx: f64, ry: f64, pill_w: f64, pill_h: f64, state: &PillState,
 ) {
-    let show = state.long_press_active.get() || state.dragging.get();
+    // Only show after a brief delay so normal clicks don't trigger the visual
+    let is_long_press = state.long_press_active.get() && state.long_press_elapsed.get() > 0.1;
+    let show = is_long_press || state.dragging.get();
     if !show {
         return;
     }
 
-    let cx = rx + pill_w / 2.0;
-    let cy = ry + pill_h / 2.0;
-    let radius = pill_w / 2.0 + 6.0;
+    let t = (state.long_press_elapsed.get() / LONG_PRESS_DURATION).clamp(0.0, 1.0);
+    let radius = lerp(COLLAPSED_RADIUS, EXPANDED_RADIUS, state.expand_t.get());
+
+    // Draw an outline that traces around the pill perimeter
+    let inset = 2.0;
+    let ox = rx - inset;
+    let oy = ry - inset;
+    let ow = pill_w + inset * 2.0;
+    let oh = pill_h + inset * 2.0;
+    let r = (radius + inset).min(oh / 2.0);
+
+    let outline_alpha = if state.dragging.get() {
+        0.7
+    } else {
+        0.3 + 0.5 * t
+    };
 
     cr.save().ok();
+    cr.set_source_rgba(
+        LONG_PRESS_OUTLINE_COLOR.0,
+        LONG_PRESS_OUTLINE_COLOR.1,
+        LONG_PRESS_OUTLINE_COLOR.2,
+        outline_alpha,
+    );
+    cr.set_line_width(LONG_PRESS_OUTLINE_WIDTH);
 
-    // Faint full-circle track
-    cr.set_source_rgba(1.0, 1.0, 1.0, 0.18);
-    cr.set_line_width(3.0);
-    cr.arc(cx, cy, radius, 0.0, 2.0 * PI);
-    let _ = cr.stroke();
+    let perimeter = 2.0 * (ow - 2.0 * r) + 2.0 * (oh - 2.0 * r) + 2.0 * PI * r;
+    let filled_len = perimeter * t;
+    let gap = perimeter - filled_len;
 
-    // Progress arc (top, clockwise) filling toward the 5s threshold
-    let t = (state.long_press_elapsed.get() / LONG_PRESS_DURATION).clamp(0.0, 1.0);
-    if t > 0.0 {
-        cr.set_source_rgba(0.45, 0.86, 1.0, 0.95);
-        cr.set_line_width(3.0);
-        cr.arc(cx, cy, radius, -PI / 2.0, -PI / 2.0 + t * 2.0 * PI);
+    if state.dragging.get() {
+        // When actively dragging, show a solid outline
+        rounded_rect(cr, ox, oy, ow, oh, r);
         let _ = cr.stroke();
+    } else if filled_len > 0.0 {
+        // Use dash pattern to reveal only the progress portion
+        cr.set_dash(&[filled_len, gap], -filled_len);
+        rounded_rect(cr, ox, oy, ow, oh, r);
+        let _ = cr.stroke();
+        cr.set_dash(&[], 0.0);
     }
 
     cr.restore().ok();
@@ -296,6 +319,35 @@ fn draw_loading(
     cr.restore().ok();
 
     draw_edge_gradient(cr, rx, ry, pill_w, pill_h, radius, expand_t);
+}
+
+fn draw_paused_bar(
+    cr: &cairo::Context, rx: f64, ry: f64, pill_w: f64, pill_h: f64,
+    radius: f64, expand_t: f64,
+) {
+    cr.save().ok();
+    rounded_rect(cr, rx, ry, pill_w, pill_h, radius);
+    cr.clip();
+
+    let bar_h = 2.0;
+    let bar_y = ry + (pill_h - bar_h) / 2.0;
+    let pad = pill_h * 0.1;
+    let track_x = rx + pad;
+    let track_w = pill_w - pad * 2.0;
+
+    // Dimmed track
+    cr.set_source_rgba(1.0, 1.0, 1.0, 0.1 * expand_t);
+    cr.rectangle(track_x, bar_y, track_w, bar_h);
+    let _ = cr.fill();
+
+    // Static centered indicator (same as loading but stationary and dimmed)
+    let indicator_w = track_w * LOADING_BAR_WIDTH_FRAC;
+    let ind_x = track_x + (track_w - indicator_w) / 2.0;
+    cr.set_source_rgba(1.0, 1.0, 1.0, 0.45 * expand_t);
+    cr.rectangle(ind_x, bar_y, indicator_w, bar_h);
+    let _ = cr.fill();
+
+    cr.restore().ok();
 }
 
 fn draw_idle_label(cr: &cairo::Context, rx: f64, ry: f64, pill_w: f64, pill_h: f64, expand_t: f64) {
@@ -1226,7 +1278,8 @@ fn draw_pause_resume_button(cr: &cairo::Context, state: &PillState, ww: f64, wh:
     }
 
     let (pill_x, pill_y, pill_w, _) = pill_position(state, ww, wh);
-    let pause_x = pill_x + pill_w - CANCEL_BUTTON_SIZE * 1.5 - 6.0;
+    // Pause / resume on the LEFT side of the pill
+    let pause_x = pill_x - CANCEL_BUTTON_SIZE / 2.0 - 2.0;
     let pause_y = pill_y - CANCEL_BUTTON_SIZE / 2.0 - 2.0;
     let pause_cx = pause_x + CANCEL_BUTTON_SIZE / 2.0;
     let pause_cy = pause_y + CANCEL_BUTTON_SIZE / 2.0;
@@ -1255,12 +1308,12 @@ fn draw_pause_resume_button(cr: &cairo::Context, state: &PillState, ww: f64, wh:
         cr.line_to(pause_cx - s * 0.35, pause_cy + s);
         let _ = cr.stroke();
     } else {
-        // Pause: two bars
+        // Pause: two close-set bars
         let bw = 1.6 * scale;
-        let bh = 7.0 * scale;
-        let gap = 2.2 * scale;
-        cr.rectangle(pause_cx - gap - bw, pause_cy - bh / 2.0, bw, bh);
-        cr.rectangle(pause_cx + gap, pause_cy - bh / 2.0, bw, bh);
+        let bh = 6.0 * scale;
+        let gap = 1.2 * scale;
+        cr.rectangle(pause_cx - gap - bw / 2.0, pause_cy - bh / 2.0, bw, bh);
+        cr.rectangle(pause_cx + gap - bw / 2.0, pause_cy - bh / 2.0, bw, bh);
         let _ = cr.fill();
     }
 
