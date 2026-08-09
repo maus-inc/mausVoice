@@ -166,6 +166,8 @@ pub fn run(receiver: Receiver<InMessage>) {
         long_press_start_y: Cell::new(0.0),
         dragging: Cell::new(false),
         drag_cancelled: Cell::new(false),
+        inflate_t: Cell::new(0.0),
+        inflate_velocity: Cell::new(0.0),
         drag_cursor_x: Cell::new(0.0),
         drag_cursor_y: Cell::new(0.0),
         drag_draw_offset_x: Cell::new(0.0),
@@ -761,6 +763,10 @@ fn tick(state: &PillState) {
         && (state.hovered.get() || controls_phase == Phase::Paused);
     let cancel_target = if show_controls { 1.0 } else { 0.0 };
     spring_anim(&state.cancel_t, &state.cancel_velocity, cancel_target, SPRING_STIFFNESS * 2.0);
+
+    // Inflate animation: expand when dragging, contract when released.
+    let inflate_target = if state.dragging.get() { 1.0 } else { 0.0 };
+    spring_anim(&state.inflate_t, &state.inflate_velocity, inflate_target, DRAG_INFLATE_STIFFNESS);
 
     // Auto-scroll to bottom when new content arrives
     if state.should_stick.get() && state.assistant_active.get() && !state.assistant_compact.get() {

@@ -221,6 +221,10 @@ pub(crate) struct PillState {
     pub(crate) has_saved_position: Cell<bool>,
     pub(crate) saved_x: Cell<f64>,
     pub(crate) saved_y: Cell<f64>,
+
+    // Inflate animation — pill slightly expands when entering drag, contracts on release.
+    pub(crate) inflate_t: Cell<f64>,
+    pub(crate) inflate_velocity: Cell<f64>,
 }
 
 impl PillState {

@@ -159,6 +159,8 @@ pub fn run(receiver: Receiver<InMessage>) {
         has_saved_position: Cell::new(false),
         saved_x: Cell::new(0),
         saved_y: Cell::new(0),
+        inflate_t: Cell::new(0.0),
+        inflate_velocity: Cell::new(0.0),
         dirty: Cell::new(true),
     };
 
@@ -283,7 +285,7 @@ unsafe extern "system" fn wndproc(hwnd: HWND, msg: u32, wparam: WPARAM, lparam: 
                     if was_dragging {
                         // Persist the window position after drag
                         let mut rect = RECT::default();
-                        let _ = GetWindowRect(hwnd, &mut rect);
+                        unsafe { let _ = GetWindowRect(hwnd, &mut rect); }
                         state.saved_x.set(rect.left);
                         state.saved_y.set(rect.top);
                         state.has_saved_position.set(true);
@@ -624,6 +626,10 @@ fn tick(state: &PillState, dt: f64) {
         && (state.hovered.get() || controls_phase == Phase::Paused);
     let cancel_target = if show_controls { 1.0 } else { 0.0 };
     spring_anim(&state.cancel_t, &state.cancel_velocity, cancel_target, SPRING_STIFFNESS * 2.0, dt);
+
+    // Inflate animation: expand when dragging, contract when released.
+    let inflate_target = if state.dragging.get() { 1.0 } else { 0.0 };
+    spring_anim(&state.inflate_t, &state.inflate_velocity, inflate_target, DRAG_INFLATE_STIFFNESS, dt);
 
     if state.should_stick.get() && state.assistant_active.get() && !state.assistant_compact.get() {
         let max_scroll = (state.content_height.get() - state.viewport_height.get()).max(0.0);

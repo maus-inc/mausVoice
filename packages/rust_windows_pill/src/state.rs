@@ -216,6 +216,10 @@ pub(crate) struct PillState {
     pub(crate) saved_x: Cell<i32>,
     pub(crate) saved_y: Cell<i32>,
 
+    // Inflate animation — pill slightly expands when entering drag, contracts on release.
+    pub(crate) inflate_t: Cell<f64>,
+    pub(crate) inflate_velocity: Cell<f64>,
+
     // Dirty flag — when false, the rendered output is identical to the previous
     // frame so we can skip draw + UpdateLayeredWindow entirely.
     pub(crate) dirty: Cell<bool>,

@@ -651,20 +651,25 @@ export default function SettingsPage() {
             color="text.secondary"
             sx={{ fontSize: "0.72rem", letterSpacing: "0.02em" }}
           >
-            Engineered with love by{" "}
-            <Link
-              href="https://github.com/Owie6789"
-              target="_blank"
-              rel="noopener noreferrer"
-              underline="hover"
-              sx={{
-                fontWeight: 600,
-                color: "text.secondary",
-                "&:hover": { color: "text.primary" },
+            <FormattedMessage
+              defaultMessage="Engineered with love by {author}"
+              values={{
+                author: (
+                  <Link
+                    component="button"
+                    onClick={() => openUrl("https://github.com/Owie6789")}
+                    underline="hover"
+                    sx={{
+                      fontWeight: 600,
+                      color: "text.secondary",
+                      "&:hover": { color: "text.primary" },
+                    }}
+                  >
+                    Owie Emmanuel
+                  </Link>
+                ),
               }}
-            >
-              Owie Emmanuel
-            </Link>
+            />
           </Typography>
         </Box>
       </Stack>

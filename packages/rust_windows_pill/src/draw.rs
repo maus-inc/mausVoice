@@ -52,10 +52,9 @@ pub(crate) fn draw_all(gfx: &mut Gfx, state: &PillState) {
 
         draw_cancel_button(gfx, state, ww, wh);
 
-        // Long-press outline indicator (only after a brief delay so normal clicks don't trigger it)
-        if state.long_press_active.get()
-            && !state.balloon_pop_active.get()
-            && state.long_press_elapsed.get() > 0.1
+        // Long-press outline indicator (also visible during active drag at full progress)
+        if (state.long_press_active.get() && state.long_press_elapsed.get() > 0.1)
+            || state.dragging.get()
         {
             draw_long_press_ring(gfx, state, ww, wh);
         }
@@ -72,8 +71,13 @@ pub(crate) fn draw_all(gfx: &mut Gfx, state: &PillState) {
 
 pub(crate) fn pill_position(state: &PillState, ww: f64, wh: f64) -> (f64, f64, f64, f64) {
     let expand_t = state.expand_t.get();
-    let pill_w = lerp(MIN_PILL_WIDTH, EXPANDED_PILL_WIDTH, expand_t);
-    let pill_h = lerp(MIN_PILL_HEIGHT, EXPANDED_PILL_HEIGHT, expand_t);
+    let inflate = state.inflate_t.get();
+    let inflate_px = inflate * DRAG_INFLATE_AMOUNT;
+
+    let base_w = lerp(MIN_PILL_WIDTH, EXPANDED_PILL_WIDTH, expand_t);
+    let base_h = lerp(MIN_PILL_HEIGHT, EXPANDED_PILL_HEIGHT, expand_t);
+    let pill_w = base_w + inflate_px * 2.0;
+    let pill_h = base_h + inflate_px * 2.0;
     let pill_x = (ww - pill_w) / 2.0;
 
     let pill_y = if state.assistant_active.get() || state.panel_open_t.get() > 0.01 {
@@ -1021,8 +1025,6 @@ fn draw_paused(gfx: &Gfx, rx: f64, ry: f64, pill_w: f64, pill_h: f64, expand_t: 
     gfx.fill_rect(ind_x, bar_y, indicator_w, bar_h, [1.0, 1.0, 1.0, 0.45 * expand_t]);
 
     gfx.restore();
-
-    draw_edge_gradient(gfx, rx, ry, pill_w, pill_h, expand_t);
 }
 
 fn draw_cancel_button(gfx: &Gfx, state: &PillState, ww: f64, wh: f64) {
@@ -1146,8 +1148,12 @@ fn lerp(a: f64, b: f64, t: f64) -> f64 {
 // ── Long-press outline progress indicator ──────────────────────────
 
 fn draw_long_press_ring(gfx: &Gfx, state: &PillState, ww: f64, wh: f64) {
-    let elapsed = state.long_press_elapsed.get();
-    let progress = (elapsed / LONG_PRESS_DURATION).min(1.0);
+    // While actively dragging, keep the full outline visible (progress = 1.0).
+    let progress = if state.dragging.get() {
+        1.0
+    } else {
+        (state.long_press_elapsed.get() / LONG_PRESS_DURATION).min(1.0)
+    };
 
     let (pill_x, pill_y, pill_w, pill_h) = pill_position(state, ww, wh);
     let radius = lerp(COLLAPSED_RADIUS, EXPANDED_RADIUS, state.expand_t.get());

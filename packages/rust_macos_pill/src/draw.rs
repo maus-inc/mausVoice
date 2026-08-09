@@ -57,10 +57,9 @@ pub(crate) fn draw_all(ctx: &Ctx, state: &PillState, view_w: f64, view_h: f64) {
 
         draw_cancel_button(ctx, state, ww, wh);
 
-        // Long-press ring indicator
-        if state.long_press_active.get()
-            && !state.balloon_pop_active.get()
-            && state.long_press_elapsed.get() > 0.1
+        // Long-press outline indicator (also visible during active drag at full progress)
+        if (state.long_press_active.get() && state.long_press_elapsed.get() > 0.1)
+            || state.dragging.get()
         {
             draw_long_press_ring(ctx, state, ww, wh);
         }
@@ -76,8 +75,12 @@ pub(crate) fn draw_all(ctx: &Ctx, state: &PillState, view_w: f64, view_h: f64) {
 
 pub(crate) fn pill_position(state: &PillState, ww: f64, wh: f64) -> (f64, f64, f64, f64) {
     let expand_t = state.expand_t.get();
-    let pill_w = gfx::lerp(MIN_PILL_WIDTH, EXPANDED_PILL_WIDTH, expand_t);
-    let pill_h = gfx::lerp(MIN_PILL_HEIGHT, EXPANDED_PILL_HEIGHT, expand_t);
+    let inflate = state.inflate_t.get();
+    let inflate_px = inflate * DRAG_INFLATE_AMOUNT;
+    let base_w = gfx::lerp(MIN_PILL_WIDTH, EXPANDED_PILL_WIDTH, expand_t);
+    let base_h = gfx::lerp(MIN_PILL_HEIGHT, EXPANDED_PILL_HEIGHT, expand_t);
+    let pill_w = base_w + inflate_px * 2.0;
+    let pill_h = base_h + inflate_px * 2.0;
     let pill_x = (ww - pill_w) / 2.0;
 
     let pill_y = if state.assistant_active.get() || state.panel_open_t.get() > 0.01 {
@@ -1280,8 +1283,12 @@ fn wrap_text(ctx: &Ctx, text: &str, max_width: f64) -> Vec<String> {
 // ── Long-press ring indicator ─────────────────────────────────────
 
 fn draw_long_press_ring(ctx: &Ctx, state: &PillState, ww: f64, wh: f64) {
-    let elapsed = state.long_press_elapsed.get();
-    let progress = (elapsed / LONG_PRESS_DURATION).min(1.0);
+    // While actively dragging, keep the full outline visible (progress = 1.0).
+    let progress = if state.dragging.get() {
+        1.0
+    } else {
+        (state.long_press_elapsed.get() / LONG_PRESS_DURATION).min(1.0)
+    };
 
     let (pill_x, pill_y, pill_w, pill_h) = pill_position(state, ww, wh);
     let radius = gfx::lerp(COLLAPSED_RADIUS, EXPANDED_RADIUS, state.expand_t.get());

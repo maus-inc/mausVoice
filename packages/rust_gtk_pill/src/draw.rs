@@ -65,8 +65,12 @@ pub(crate) fn draw_all(cr: &cairo::Context, state: &PillState) {
 
 pub(crate) fn pill_position(state: &PillState, ww: f64, wh: f64) -> (f64, f64, f64, f64) {
     let expand_t = state.expand_t.get();
-    let pill_w = lerp(MIN_PILL_WIDTH, EXPANDED_PILL_WIDTH, expand_t);
-    let pill_h = lerp(MIN_PILL_HEIGHT, EXPANDED_PILL_HEIGHT, expand_t);
+    let inflate = state.inflate_t.get();
+    let inflate_px = inflate * DRAG_INFLATE_AMOUNT;
+    let base_w = lerp(MIN_PILL_WIDTH, EXPANDED_PILL_WIDTH, expand_t);
+    let base_h = lerp(MIN_PILL_HEIGHT, EXPANDED_PILL_HEIGHT, expand_t);
+    let pill_w = base_w + inflate_px * 2.0;
+    let pill_h = base_h + inflate_px * 2.0;
     let mut pill_x = (ww - pill_w) / 2.0;
 
     let mut pill_y = if state.assistant_active.get() || state.panel_open_t.get() > 0.01 {
@@ -80,8 +84,8 @@ pub(crate) fn pill_position(state: &PillState, ww: f64, wh: f64) -> (f64, f64, f
 
     // On Wayland backends the pill draws inside a full-window canvas, so a
     // drag translates the draw position. X11 moves the real toplevel instead.
-    // Only apply while actually dragging so a cancelled long-press reverts.
-    if state.dragging.get() && state.backend.get() != crate::pill::Backend::X11 {
+    // Apply the offset both while dragging and after release (persisted drop position).
+    if state.backend.get() != crate::pill::Backend::X11 {
         pill_x += state.drag_draw_offset_x.get();
         pill_y += state.drag_draw_offset_y.get();
     }

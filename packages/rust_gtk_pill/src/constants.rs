@@ -9,12 +9,16 @@ pub(crate) const MARGIN_BOTTOM: i32 = 8;
 
 pub(crate) const PILL_AREA_HEIGHT: f64 = 48.0;
 
-pub(crate) const LONG_PRESS_DURATION: f64 = 0.8;
+pub(crate) const LONG_PRESS_DURATION: f64 = 1.5;
 pub(crate) const CANCEL_FLASH_DURATION: f64 = 0.4;
 pub(crate) const LONG_PRESS_MOVE_THRESHOLD: f64 = 8.0;
 pub(crate) const LONG_PRESS_OUTLINE_COLOR: (f64, f64, f64) = (0.45, 0.75, 1.0);
 pub(crate) const LONG_PRESS_OUTLINE_WIDTH: f64 = 2.0;
-pub(crate) const DRAG_EXPAND_AMOUNT: f64 = 8.0;
+
+/// How much the pill inflates (in px) when the long-press completes and drag begins.
+pub(crate) const DRAG_INFLATE_AMOUNT: f64 = 6.0;
+/// Spring stiffness for the inflate/deflate animation.
+pub(crate) const DRAG_INFLATE_STIFFNESS: f64 = 280.0;
 
 pub(crate) const MIN_PILL_WIDTH: f64 = 48.0;
 pub(crate) const MIN_PILL_HEIGHT: f64 = 6.0;

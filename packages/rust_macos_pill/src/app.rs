@@ -239,7 +239,7 @@ extern "C" fn mouse_up(_this: &Object, _sel: Sel, event: id) {
         let was_dragging = ctx.state.dragging.get();
         if was_dragging {
             // Persist the window position after drag
-            let frame = window_frame(ctx.window);
+            let frame = unsafe { window_frame(ctx.window) };
             ctx.state.saved_x.set(frame.origin.x);
             ctx.state.saved_y.set(frame.origin.y);
             ctx.state.has_saved_position.set(true);
@@ -675,6 +675,10 @@ fn tick(state: &PillState, window: id, dt: f64) {
         && (state.hovered.get() || controls_phase == Phase::Paused);
     let cancel_target = if show_controls { 1.0 } else { 0.0 };
     spring_anim(&state.cancel_t, &state.cancel_velocity, cancel_target, SPRING_STIFFNESS * 2.0, dt);
+
+    // Inflate animation: expand when dragging, contract when released.
+    let inflate_target = if state.dragging.get() { 1.0 } else { 0.0 };
+    spring_anim(&state.inflate_t, &state.inflate_velocity, inflate_target, DRAG_INFLATE_STIFFNESS, dt);
 
     // Auto-scroll to bottom
     if state.should_stick.get() && state.assistant_active.get() && !state.assistant_compact.get() {
@@ -1233,6 +1237,8 @@ unsafe fn setup(receiver: Receiver<InMessage>, embedded: bool) {
         has_saved_position: Cell::new(false),
         saved_x: Cell::new(0.0),
         saved_y: Cell::new(0.0),
+        inflate_t: Cell::new(0.0),
+        inflate_velocity: Cell::new(0.0),
     });
 
     // Store in thread-local
