@@ -26,6 +26,18 @@ function getMorphIcon(choice: ThemeChoice): IconNode {
   return Monitor;
 }
 
+const menuItemSx = {
+  py: 1,
+  px: 1.5,
+  borderRadius: 1.5,
+  mx: 0.5,
+  my: 0.25,
+  gap: 1.25,
+  "&.Mui-selected": {
+    backgroundColor: "action.selected",
+  },
+} as const;
+
 export const ThemeModeToggle = () => {
   const { mode, setMode } = useColorScheme();
   const intl = useIntl();
@@ -53,51 +65,21 @@ export const ThemeModeToggle = () => {
 
   const morphIcon = useMemo(() => getMorphIcon(activeChoice), [activeChoice]);
 
-  const label = intl.formatMessage({
+  const ariaLabel = intl.formatMessage({
     defaultMessage: "Theme settings",
-    description: "aria-label for the theme mode toggle button",
   });
-  const title = intl.formatMessage(
-    {
-      defaultMessage: "Theme: {mode}",
-      description: "tooltip showing the current theme mode",
-    },
+  const tooltipTitle = intl.formatMessage(
+    { defaultMessage: "Theme: {mode}" },
     { mode: activeChoice },
   );
-
-  const choices: {
-    value: ThemeChoice;
-    labelId: string;
-    defaultLabel: string;
-    icon: React.ReactNode;
-  }[] = [
-    {
-      value: "light",
-      labelId: "theme.light",
-      defaultLabel: "Light",
-      icon: <LightMode sx={{ fontSize: 16 }} />,
-    },
-    {
-      value: "dark",
-      labelId: "theme.dark",
-      defaultLabel: "Dark",
-      icon: <DarkMode sx={{ fontSize: 16 }} />,
-    },
-    {
-      value: "system",
-      labelId: "theme.system",
-      defaultLabel: "System",
-      icon: <SettingsBrightness sx={{ fontSize: 16 }} />,
-    },
-  ];
 
   return (
     <>
       <IconButton
         onClick={handleOpen}
-        aria-label={label}
+        aria-label={ariaLabel}
         size="small"
-        title={title}
+        title={tooltipTitle}
         sx={{
           width: 28,
           height: 28,
@@ -129,39 +111,66 @@ export const ThemeModeToggle = () => {
           },
         }}
       >
-        {choices.map((choice) => (
-          <MenuItem
-            key={choice.value}
-            onClick={() => handleSelect(choice.value)}
-            selected={choice.value === activeChoice}
-            sx={{
-              py: 1,
-              px: 1.5,
-              borderRadius: 1.5,
-              mx: 0.5,
-              my: 0.25,
-              gap: 1.25,
-              "&.Mui-selected": {
-                backgroundColor: "action.selected",
-              },
-            }}
+        <MenuItem
+          onClick={() => handleSelect("light")}
+          selected={activeChoice === "light"}
+          sx={menuItemSx}
+        >
+          <Stack
+            direction="row"
+            alignItems="center"
+            spacing={1.25}
+            sx={{ flex: 1 }}
           >
-            <Stack
-              direction="row"
-              alignItems="center"
-              spacing={1.25}
-              sx={{ flex: 1 }}
-            >
-              {choice.icon}
-              <Typography variant="body2" fontWeight={500}>
-                <FormattedMessage defaultMessage={choice.defaultLabel} />
-              </Typography>
-            </Stack>
-            {choice.value === activeChoice && (
-              <Check sx={{ fontSize: 16, color: "text.secondary" }} />
-            )}
-          </MenuItem>
-        ))}
+            <LightMode sx={{ fontSize: 16 }} />
+            <Typography variant="body2" fontWeight={500}>
+              <FormattedMessage defaultMessage="Light" />
+            </Typography>
+          </Stack>
+          {activeChoice === "light" && (
+            <Check sx={{ fontSize: 16, color: "text.secondary" }} />
+          )}
+        </MenuItem>
+        <MenuItem
+          onClick={() => handleSelect("dark")}
+          selected={activeChoice === "dark"}
+          sx={menuItemSx}
+        >
+          <Stack
+            direction="row"
+            alignItems="center"
+            spacing={1.25}
+            sx={{ flex: 1 }}
+          >
+            <DarkMode sx={{ fontSize: 16 }} />
+            <Typography variant="body2" fontWeight={500}>
+              <FormattedMessage defaultMessage="Dark" />
+            </Typography>
+          </Stack>
+          {activeChoice === "dark" && (
+            <Check sx={{ fontSize: 16, color: "text.secondary" }} />
+          )}
+        </MenuItem>
+        <MenuItem
+          onClick={() => handleSelect("system")}
+          selected={activeChoice === "system"}
+          sx={menuItemSx}
+        >
+          <Stack
+            direction="row"
+            alignItems="center"
+            spacing={1.25}
+            sx={{ flex: 1 }}
+          >
+            <SettingsBrightness sx={{ fontSize: 16 }} />
+            <Typography variant="body2" fontWeight={500}>
+              <FormattedMessage defaultMessage="System" />
+            </Typography>
+          </Stack>
+          {activeChoice === "system" && (
+            <Check sx={{ fontSize: 16, color: "text.secondary" }} />
+          )}
+        </MenuItem>
       </Menu>
     </>
   );
