@@ -10,11 +10,16 @@ cargo run --manifest-path apps/desktop/src-tauri/Cargo.toml --example gen_bindin
 
 # Post-process: tauri-specta (2.0.0-rc.21) unconditionally emits event scaffolding
 # (Channel/TAURI_CHANNEL, TAURI_API_EVENT, WebviewWindow, __EventObj__, __makeEvents__)
-# even when the project registers no events. These unused exports fail the desktop
+# even when the project registers no events. Those unused exports fail the desktop
 # tsc build under noUnusedLocals. Strip them deterministically so the generated file
 # matches the committed output (and future regenerations stay clean).
-python - <<'PY'
-import re, pathlib
+PY_BIN="$(command -v python3 || command -v python || true)"
+if [ -z "$PY_BIN" ]; then
+  echo "ERROR: gen:bindings post-process requires Python 3 (python3 or python)." >&2
+  exit 1
+fi
+"$PY_BIN" - <<'PY'
+import pathlib
 p = pathlib.Path("packages/desktop-native-apis/src/bindings.ts")
 s = p.read_text(encoding="utf-8")
 

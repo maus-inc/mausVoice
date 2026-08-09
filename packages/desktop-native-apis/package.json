@@ -13,7 +13,8 @@
     "build": "tsc",
     "dev": "tsc --watch",
     "clean": "rm -rf dist",
-    "gen:bindings": "bash ../../scripts/bindings.sh"
+    "gen:bindings": "bash ../../scripts/bindings.sh",
+    "check:bindings": "bash ../../scripts/check-bindings.sh"
   },
   "dependencies": {
     "@tauri-apps/api": "~2.10.1"
