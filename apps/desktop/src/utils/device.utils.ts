@@ -1,7 +1,7 @@
 import type {
   PairedRemoteDevice,
   RemoteOutputPreferences,
-} from "@voquill/types";
+} from "@maus-inc/types";
 import type { AppState } from "../state/app.state";
 
 export const getPairedRemoteDeviceById = (

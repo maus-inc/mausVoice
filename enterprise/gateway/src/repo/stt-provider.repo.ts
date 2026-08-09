@@ -1,4 +1,4 @@
-import type { SttProvider } from "@voquill/types";
+import type { SttProvider } from "@maus-inc/types";
 import type { SttProviderRow } from "../types/stt-provider.types";
 import { getPool } from "../utils/db.utils";
 

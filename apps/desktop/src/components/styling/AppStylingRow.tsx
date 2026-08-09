@@ -1,6 +1,6 @@
 import { Check, MoreVert } from "@mui/icons-material";
 import { Box, IconButton, Stack, Typography } from "@mui/material";
-import { getRec } from "@voquill/utilities";
+import { getRec } from "@maus-inc/utilities";
 import { useCallback } from "react";
 import { FormattedMessage, useIntl } from "react-intl";
 import {
@@ -47,17 +47,17 @@ export const AppStylingRow = ({ id }: AppStylingRowProps) => {
         return;
       }
 
-      // Store null for default (ctrl+v) to keep database cleaner
+      // Store null for the default (shift+insert) to keep database cleaner
       void setAppTargetPasteKeybind(
         target.id,
-        value === "ctrl+v" ? null : value,
+        value === "shift+insert" ? null : value,
       );
     },
     [target],
   );
 
   const toneValue = target?.toneId ?? null;
-  const pasteKeybindValue = target?.pasteKeybind ?? "ctrl+v";
+  const pasteKeybindValue = target?.pasteKeybind ?? "shift+insert";
 
   const pasteKeybindMenuItems: MenuPopoverItem[] = [
     {
@@ -76,7 +76,16 @@ export const AppStylingRow = ({ id }: AppStylingRowProps) => {
     { kind: "divider" },
     {
       kind: "listItem",
-      title: <FormattedMessage defaultMessage="Default (Ctrl+V)" />,
+      title: <FormattedMessage defaultMessage="Default (Shift+Insert)" />,
+      trailing: pasteKeybindValue === "shift+insert" ? <Check /> : undefined,
+      onClick: ({ close }) => {
+        handlePasteKeybindChange("shift+insert");
+        close();
+      },
+    },
+    {
+      kind: "listItem",
+      title: <FormattedMessage defaultMessage="Ctrl+V" />,
       trailing: pasteKeybindValue === "ctrl+v" ? <Check /> : undefined,
       onClick: ({ close }) => {
         handlePasteKeybindChange("ctrl+v");
@@ -89,15 +98,6 @@ export const AppStylingRow = ({ id }: AppStylingRowProps) => {
       trailing: pasteKeybindValue === "ctrl+shift+v" ? <Check /> : undefined,
       onClick: ({ close }) => {
         handlePasteKeybindChange("ctrl+shift+v");
-        close();
-      },
-    },
-    {
-      kind: "listItem",
-      title: <FormattedMessage defaultMessage="Shift+Insert" />,
-      trailing: pasteKeybindValue === "shift+insert" ? <Check /> : undefined,
-      onClick: ({ close }) => {
-        handlePasteKeybindChange("shift+insert");
         close();
       },
     },

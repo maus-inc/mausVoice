@@ -3,7 +3,7 @@ name = "rust_transcription"
 version = "0.1.0"
 edition = "2021"
 license = "MIT"
-description = "Voquill transcription sidecar (CPU/GPU)"
+description = "mausVoice transcription sidecar (CPU/GPU)"
 
 [features]
 default = []

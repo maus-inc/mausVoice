@@ -1,4 +1,4 @@
-import type { HandlerInput, HandlerName, HandlerOutput } from "@voquill/functions";
+import type { HandlerInput, HandlerName, HandlerOutput } from "@maus-inc/functions";
 import { getAppState } from "../store";
 import { getGatewayUrl } from "./env.utils";
 

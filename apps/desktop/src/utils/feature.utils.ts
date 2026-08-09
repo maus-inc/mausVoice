@@ -1,4 +1,4 @@
-import { StylingMode } from "@voquill/types";
+import { StylingMode } from "@maus-inc/types";
 import { AppState } from "../state/app.state";
 import { getMyUser } from "./user.utils";
 

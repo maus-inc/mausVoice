@@ -1,4 +1,4 @@
-import type { ToolInfo } from "@voquill/types";
+import type { ToolInfo } from "@maus-inc/types";
 import { getAppState } from "../store";
 
 export type AgentTypeConfig = {

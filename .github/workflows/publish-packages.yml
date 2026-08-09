@@ -48,14 +48,14 @@ jobs:
       - name: Build packages
         run: |
           pnpm exec turbo run build \
-            --filter='@voquill/types...' \
-            --filter='@voquill/utilities...' \
-            --filter='@voquill/functions...' \
-            --filter='@voquill/firemix...' \
-            --filter='@voquill/pricing...' \
-            --filter='@voquill/voice-ai...' \
-            --filter='@voquill/desktop-native-apis...' \
-            --filter='@voquill/desktop-utils...'
+            --filter='@maus-inc/types...' \
+            --filter='@maus-inc/utilities...' \
+            --filter='@maus-inc/functions...' \
+            --filter='@maus-inc/firemix...' \
+            --filter='@maus-inc/pricing...' \
+            --filter='@maus-inc/voice-ai...' \
+            --filter='@maus-inc/desktop-native-apis...' \
+            --filter='@maus-inc/desktop-utils...'
 
       - name: Publish packages
         run: |
@@ -78,13 +78,13 @@ jobs:
           }
 
           # Publish in dependency order (config packages first, then leaf → composite)
-          publish_pkg typescript-config "@voquill/typescript-config"
-          publish_pkg eslint-config     "@voquill/eslint-config"
-          publish_pkg types             "@voquill/types"
-          publish_pkg pricing           "@voquill/pricing"
-          publish_pkg utilities         "@voquill/utilities"
-          publish_pkg functions         "@voquill/functions"
-          publish_pkg voice-ai          "@voquill/voice-ai"
-          publish_pkg firemix           "@voquill/firemix"
-          publish_pkg desktop-native-apis "@voquill/desktop-native-apis"
-          publish_pkg desktop-utils     "@voquill/desktop-utils"
+          publish_pkg typescript-config "@maus-inc/typescript-config"
+          publish_pkg eslint-config     "@maus-inc/eslint-config"
+          publish_pkg types             "@maus-inc/types"
+          publish_pkg pricing           "@maus-inc/pricing"
+          publish_pkg utilities         "@maus-inc/utilities"
+          publish_pkg functions         "@maus-inc/functions"
+          publish_pkg voice-ai          "@maus-inc/voice-ai"
+          publish_pkg firemix           "@maus-inc/firemix"
+          publish_pkg desktop-native-apis "@maus-inc/desktop-native-apis"
+          publish_pkg desktop-utils     "@maus-inc/desktop-utils"

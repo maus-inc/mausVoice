@@ -1,6 +1,6 @@
 import { Add, CancelOutlined, Close, RestartAlt } from "@mui/icons-material";
 import { Button, IconButton, Stack, Switch, Typography } from "@mui/material";
-import type { Hotkey } from "@voquill/types";
+import type { Hotkey } from "@maus-inc/types";
 import type { ReactNode } from "react";
 import { FormattedMessage } from "react-intl";
 import { showErrorSnackbar } from "../../actions/app.actions";

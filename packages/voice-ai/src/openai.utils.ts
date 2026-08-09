@@ -6,8 +6,8 @@ import type {
   LlmStreamEvent,
   LlmTool,
   LlmToolChoice,
-} from "@voquill/types";
-import { countWords, retry } from "@voquill/utilities";
+} from "@maus-inc/types";
+import { countWords, retry } from "@maus-inc/utilities";
 import OpenAI, { toFile } from "openai";
 import type { CustomFetch } from "./types";
 import type {

@@ -157,7 +157,7 @@ unsafe fn nsstring_to_string(string: id) -> Option<String> {
     Some(CStr::from_ptr(utf8).to_string_lossy().into_owned())
 }
 
-// ── Non-macOS: ferrous-focus implementation ─────────────────────────
+// ── Windows: ferrous-focus implementation ─────────────────────────
 
 #[cfg(not(target_os = "macos"))]
 pub fn get_current_app_info() -> Result<CurrentAppInfo, AppInfoError> {
@@ -181,23 +181,7 @@ pub fn get_current_app_info() -> Result<CurrentAppInfo, AppInfoError> {
             let window = captured.ok_or(AppInfoError::NotAvailable)?;
             build_app_info(window, icon_size)
         }
-        Err(ref err) if is_unsupported_error(err) => {
-            // ferrous-focus doesn't support this configuration.
-            // On Wayland, try GNOME Shell Introspect D-Bus as a fallback.
-            #[cfg(target_os = "linux")]
-            if crate::platform::linux::detect::is_wayland() {
-                if let Some(info) = try_gnome_introspect_focused_app() {
-                    return Ok(info);
-                }
-                return Err(AppInfoError::Focus(
-                    "Focused window detection is not available on this Wayland compositor. \
-                     Please use the app name field to register apps manually."
-                        .into(),
-                ));
-            }
-
-            Err(AppInfoError::Unsupported)
-        }
+        Err(ref err) if is_unsupported_error(err) => Err(AppInfoError::Unsupported),
         Err(err) => Err(map_focus_error(err)),
     }
 }
@@ -205,72 +189,6 @@ pub fn get_current_app_info() -> Result<CurrentAppInfo, AppInfoError> {
 #[cfg(not(target_os = "macos"))]
 fn is_unsupported_error(err: &ferrous_focus::FerrousFocusError) -> bool {
     matches!(err, ferrous_focus::FerrousFocusError::Unsupported)
-}
-
-#[cfg(target_os = "linux")]
-fn try_gnome_introspect_focused_app() -> Option<CurrentAppInfo> {
-    let output = std::process::Command::new("gdbus")
-        .args([
-            "call",
-            "--session",
-            "--dest",
-            "org.gnome.Shell.Introspect",
-            "--object-path",
-            "/org/gnome/Shell/Introspect",
-            "--method",
-            "org.gnome.Shell.Introspect.GetWindows",
-        ])
-        .output()
-        .ok()?;
-
-    if !output.status.success() {
-        return None;
-    }
-
-    let raw = String::from_utf8_lossy(&output.stdout);
-    parse_gnome_introspect_focused(&raw)
-}
-
-#[cfg(target_os = "linux")]
-fn parse_gnome_introspect_focused(raw: &str) -> Option<CurrentAppInfo> {
-    // Find the window entry with 'focus': <true>
-    // The output looks like: {..., 'title': <'Firefox'>, 'app-id': <'firefox.desktop'>, ..., 'focus': <true>, ...}
-    let focus_idx = raw.find("'focus': <true>")?;
-
-    // Walk backwards from the focus marker to find the enclosing window block's opening '{'
-    let block_start = raw[..focus_idx].rfind('{')?;
-    let block_end = raw[focus_idx..].find('}').map(|i| focus_idx + i)?;
-    let block = &raw[block_start..=block_end];
-
-    let app_name = extract_dbus_string_value(block, "'title': <'")
-        .or_else(|| extract_dbus_string_value(block, "'app-id': <'"))
-        .map(|s| {
-            // Strip .desktop suffix from app-id
-            s.strip_suffix(".desktop").unwrap_or(&s).to_string()
-        })?;
-
-    let icon_base64 = match encode_icon_as_png(&fallback_icon(DEFAULT_ICON_SIZE)) {
-        Ok(png) => general_purpose::STANDARD.encode(png),
-        Err(_) => String::new(),
-    };
-
-    Some(CurrentAppInfo {
-        app_name,
-        icon_base64,
-    })
-}
-
-#[cfg(target_os = "linux")]
-fn extract_dbus_string_value(block: &str, prefix: &str) -> Option<String> {
-    let start = block.find(prefix)? + prefix.len();
-    let rest = &block[start..];
-    let end = rest.find('\'')?;
-    let value = rest[..end].trim().to_string();
-    if value.is_empty() {
-        None
-    } else {
-        Some(value)
-    }
 }
 
 #[cfg(not(target_os = "macos"))]
@@ -309,10 +227,51 @@ fn build_app_info(window: FocusedWindow, icon_size: u32) -> Result<CurrentAppInf
 #[cfg(not(target_os = "macos"))]
 fn resolve_app_name(window: &FocusedWindow) -> String {
     extract_app_name_from_title(window)
-        .or_else(|| window.process_name.clone())
+        .or_else(|| window.process_name.as_deref().map(prettify_app_name))
         .map(|name| name.trim().to_string())
         .filter(|name| !name.is_empty())
         .unwrap_or_else(|| "Unknown application".to_string())
+}
+
+// The process-name fallback is a raw binary name such as "chrome.exe" or
+// "explorer.exe". Strip the platform extension and prettify so the display is
+// a clean app name rather than a file path.
+#[cfg(not(target_os = "macos"))]
+fn prettify_app_name(process_name: &str) -> String {
+    let stem = process_name
+        .strip_suffix(".exe")
+        .or_else(|| process_name.strip_suffix(".app"))
+        .unwrap_or(process_name);
+
+    let mut out = String::with_capacity(stem.len());
+    let mut prev_lower = false;
+    for ch in stem.chars() {
+        if ch == '_' || ch == '-' || ch == '.' {
+            if prev_lower {
+                out.push(' ');
+                prev_lower = false;
+            }
+            continue;
+        }
+        if ch.is_ascii_uppercase() && prev_lower {
+            out.push(' ');
+        }
+        out.push(ch);
+        prev_lower = ch.is_ascii_lowercase();
+    }
+    let trimmed = out.trim();
+    if trimmed.is_empty() {
+        return stem.to_string();
+    }
+    let mut chars = trimmed.chars();
+    match chars.next() {
+        Some(first) => {
+            let mut result = first.to_uppercase().collect::<String>();
+            result.push_str(chars.as_str());
+            result
+        }
+        None => trimmed.to_string(),
+    }
 }
 
 #[cfg(not(target_os = "macos"))]
@@ -404,3 +363,41 @@ fn resize_icon_if_needed(icon: &RgbaImage) -> RgbaImage {
         FilterType::Lanczos3,
     )
 }
+
+#[cfg(test)]
+#[cfg(not(target_os = "macos"))]
+mod prettify_app_name_tests {
+    use super::prettify_app_name;
+
+    #[test]
+    fn strips_exe_extension() {
+        assert_eq!(prettify_app_name("explorer.exe"), "Explorer");
+        assert_eq!(prettify_app_name("chrome.exe"), "Chrome");
+        assert_eq!(prettify_app_name("notepad.exe"), "Notepad");
+    }
+
+    #[test]
+    fn strips_app_extension() {
+        assert_eq!(prettify_app_name("MyApp.app"), "My App");
+    }
+
+    #[test]
+    fn splits_separators_and_camel_case() {
+        assert_eq!(prettify_app_name("some-long-name"), "Some long name");
+        assert_eq!(prettify_app_name("some_long_name"), "Some long name");
+        assert_eq!(prettify_app_name("google-chrome"), "Google chrome");
+        assert_eq!(prettify_app_name("appName"), "App Name");
+    }
+
+    #[test]
+    fn leaves_clean_names_untouched() {
+        assert_eq!(prettify_app_name("App"), "App");
+        assert_eq!(prettify_app_name("Zoom"), "Zoom");
+    }
+
+    #[test]
+    fn falls_back_to_raw_stem_when_prettify_empties() {
+        assert_eq!(prettify_app_name("___"), "___");
+    }
+}
+

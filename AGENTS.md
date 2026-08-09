@@ -32,13 +32,6 @@
 - Follows STT provider pattern for new provider types (state, actions, tab, dialog, side effects).
 - Scripts: `pnpm run build`, `pnpm run lint`.
 
-** `mobile/` — Flutter mobile app **
-
-- Flutter project at repository root (`mobile/`), not inside `apps/`.
-- Uses `flutter run`, `flutter build`, standard Flutter tooling.
-- Uses `flutter_zustand` and `draft` for state management, following similar patterns as the desktop app.
-- Use `./mobile/generate.sh` to re-generate code.
-
 ** `apps/docs` — Documentation site (Astro + Starlight) **
 
 - Scripts: `pnpm run dev`, `pnpm run check-types`, `pnpm run build`.

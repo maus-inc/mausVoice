@@ -97,6 +97,7 @@ pub fn notify_phase(app: &tauri::AppHandle, phase: &OverlayPhase) {
             OverlayPhase::Idle => "idle",
             OverlayPhase::Recording => "recording",
             OverlayPhase::Loading => "loading",
+            OverlayPhase::Paused => "paused",
         };
         pill.send(&format!(r#"{{"type":"phase","phase":"{phase_str}"}}"#));
     }
@@ -252,6 +253,10 @@ fn start_stdout_reader(app: tauri::AppHandle, reader: std::io::BufReader<ChildSt
                         let _ = app.emit_to("main", "assistant-enable-type-mode", ());
                     } else if line.contains("\"cancel_dictation\"") {
                         let _ = app.emit_to("main", "cancel-dictation", ());
+                    } else if line.contains("\"pause_dictation\"") {
+                        let _ = app.emit_to("main", "pause-dictation", ());
+                    } else if line.contains("\"resume_dictation\"") {
+                        let _ = app.emit_to("main", "resume-dictation", ());
                     } else if line.contains("\"typed_message\"") {
                         if let Ok(val) = serde_json::from_str::<serde_json::Value>(&line) {
                             if let Some(text) = val.get("text").and_then(|v| v.as_str()) {

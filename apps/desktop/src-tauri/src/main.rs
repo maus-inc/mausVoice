@@ -11,14 +11,14 @@ fn main() {
     desktop_lib::platform::init::init_x11_threads();
 
     // Initialize startup logging
-    eprintln!("=== Voquill Startup ===");
+    eprintln!("=== mausVoice Startup ===");
     eprintln!("[startup] Version: {}", env!("CARGO_PKG_VERSION"));
     eprintln!("[startup] OS: {}", std::env::consts::OS);
     eprintln!("[startup] Arch: {}", std::env::consts::ARCH);
 
     flavor_env::load_flavor_env();
 
-    if std::env::var("VOQUILL_KEYBOARD_LISTENER").as_deref() == Ok("1") {
+    if std::env::var("MAUSVOICE_KEYBOARD_LISTENER").as_deref() == Ok("1") {
         eprintln!("[startup] Running in keyboard listener mode");
         if let Err(err) = desktop_lib::platform::keyboard::run_listener_process() {
             eprintln!("[startup] ERROR: Keyboard listener process failed: {err}");
@@ -27,7 +27,7 @@ fn main() {
         return;
     }
 
-    if std::env::var("VOQUILL_GPU_ENUMERATOR").as_deref() == Ok("1") {
+    if std::env::var("MAUSVOICE_GPU_ENUMERATOR").as_deref() == Ok("1") {
         eprintln!("[startup] Running in GPU enumerator mode");
         if let Err(err) = desktop_lib::system::gpu::run_gpu_enumerator_process() {
             eprintln!("[startup] ERROR: GPU enumerator process failed: {err}");

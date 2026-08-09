@@ -1,4 +1,4 @@
-import { countWords, retry } from "@voquill/utilities";
+import { countWords, retry } from "@maus-inc/utilities";
 
 const XAI_BASE_URL = "https://api.x.ai/v1";
 

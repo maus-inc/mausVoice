@@ -1,4 +1,4 @@
-import { convertFloat32ToBase64PCM16 } from "@voquill/voice-ai";
+import { convertFloat32ToBase64PCM16 } from "@maus-inc/voice-ai";
 import { listen, UnlistenFn } from "@tauri-apps/api/event";
 import {
   StopRecordingResponse,

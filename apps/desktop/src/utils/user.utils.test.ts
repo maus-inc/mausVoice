@@ -1,4 +1,4 @@
-import type { Hotkey, User, UserPreferences } from "@voquill/types";
+import type { Hotkey, User, UserPreferences } from "@maus-inc/types";
 import { describe, expect, it } from "vitest";
 import { AppState, INITIAL_APP_STATE } from "../state/app.state";
 import {

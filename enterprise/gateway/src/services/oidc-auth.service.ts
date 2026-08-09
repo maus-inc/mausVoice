@@ -1,4 +1,4 @@
-import type { Auth } from "@voquill/types";
+import type { Auth } from "@maus-inc/types";
 import {
   countAll,
   createAuth,

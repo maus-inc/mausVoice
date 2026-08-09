@@ -1,6 +1,6 @@
 # rust_transcription
 
-Rust sidecar service for local Whisper transcription in Voquill.
+Rust sidecar service for local Whisper transcription in mausVoice.
 
 It exposes one REST interface for both CPU and GPU binaries:
 
@@ -145,7 +145,7 @@ Request:
   "samples": [0.01, -0.02],
   "sampleRate": 16000,
   "language": "en",
-  "initialPrompt": "Glossary: Voquill",
+  "initialPrompt": "Glossary: mausVoice",
   "deviceId": "cpu:0"
 }
 ```
@@ -174,7 +174,7 @@ Request:
   "model": "tiny",
   "sampleRate": 16000,
   "language": "en",
-  "initialPrompt": "Glossary: Voquill",
+  "initialPrompt": "Glossary: mausVoice",
   "deviceId": "cpu:0"
 }
 ```

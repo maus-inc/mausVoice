@@ -531,6 +531,21 @@ async syncCompositorHotkeys(bindings: CompositorBinding[]) : Promise<Result<null
 async resetKeyListenerState() : Promise<void> {
     await TAURI_INVOKE("reset_key_listener_state");
 },
+async getKeyListenerHealth() : Promise<string> {
+    return await TAURI_INVOKE("get_key_listener_health");
+},
+/**
+ * Manual, user-triggered retry. Rust owns automatic recovery; this just restarts the listener
+ * (interrupting any slow-retry backoff) for when the user wants to retry immediately.
+ */
+async retryKeyListener() : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("retry_key_listener") };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
 async playAudio(clip: AudioClip) : Promise<Result<null, string>> {
     try {
     return { status: "ok", data: await TAURI_INVOKE("play_audio", { clip }) };
@@ -626,9 +641,8 @@ async checkFocusedPasteTarget() : Promise<Result<PasteTargetState, string>> {
 }
 },
 /**
- * - macOS:  ~/Library/Application Support/com.voquill.desktop/enterprise.json
- * - Linux:  ~/.config/com.voquill.desktop/enterprise.json
- * - Windows: C:\Users\<User>\AppData\Roaming\com.voquill.desktop\enterprise.json
+ * - macOS:  ~/Library/Application Support/com.mausinc.desktop/enterprise.json
+ * - Windows: C:\Users\<User>\AppData\Roaming\com.mausinc.desktop\enterprise.json
  */
 async readEnterpriseTarget() : Promise<Result<[string, string | null], string>> {
     try {
@@ -947,7 +961,7 @@ bundleId?: string | null }
 export type AppProcessMatch = { pid: number; exePath: string | null; appName: string | null; windowTitle: string | null }
 export type AppTarget = { id: string; name: string; createdAt: string; toneId: string | null; iconPath: string | null; pasteKeybind?: string | null; insertionMethod?: string | null; typingSpeedMs?: number | null }
 export type AppTargetUpsertArgs = { id: string; name: string; toneId?: string | null; iconPath?: string | null; pasteKeybind?: string | null; insertionMethod?: string | null; typingSpeedMs?: number | null }
-export type AudioClip = "start_recording_clip" | "stop_recording_clip" | "alert_linux_clip" | "alert_macos_clip" | "alert_windows_10_clip" | "alert_windows_11_clip"
+export type AudioClip = "start_recording_clip" | "stop_recording_clip" | "alert_macos_clip" | "alert_windows_10_clip" | "alert_windows_11_clip"
 export type ChatMessage = { id: string; conversationId: string; role: string; content: string; createdAt: number; metadata: string | null }
 export type CompositorBinding = { actionName: string; keys: string[] }
 export type Conversation = { id: string; title: string; createdAt: number; updatedAt: number }
@@ -1034,7 +1048,7 @@ wroteFile: boolean;
 restartRequired: boolean }
 export type MenuIconVariant = "default" | "update"
 export type MonitorAtCursor = { x: number; y: number; width: number; height: number; visibleX: number; visibleY: number; visibleWidth: number; visibleHeight: number; scaleFactor: number; cursorX: number; cursorY: number }
-export type NativeSetupResult = "success" | "require-restart" | "failed"
+export type NativeSetupResult = "success" | "require-restart" | "cancelled" | "failed"
 export type NativeSetupStatus = "ready" | "needs-setup" | "needs-restart"
 export type PairedRemoteDevice = { id: string; name: string; platform: string; role: string; sharedSecret: string; pairedAt: string; lastSeenAt?: string | null; lastKnownAddress?: string | null; trusted?: boolean }
 export type PairedRemoteDeviceDeleteArgs = { id: string }
@@ -1076,58 +1090,10 @@ export type UserPreferencesGetArgs = { userId: string }
 
 import {
 	invoke as TAURI_INVOKE,
-	Channel as TAURI_CHANNEL,
 } from "@tauri-apps/api/core";
-import * as TAURI_API_EVENT from "@tauri-apps/api/event";
-import { type WebviewWindow as __WebviewWindow__ } from "@tauri-apps/api/webviewWindow";
-
-type __EventObj__<T> = {
-	listen: (
-		cb: TAURI_API_EVENT.EventCallback<T>,
-	) => ReturnType<typeof TAURI_API_EVENT.listen<T>>;
-	once: (
-		cb: TAURI_API_EVENT.EventCallback<T>,
-	) => ReturnType<typeof TAURI_API_EVENT.once<T>>;
-	emit: null extends T
-		? (payload?: T) => ReturnType<typeof TAURI_API_EVENT.emit>
-		: (payload: T) => ReturnType<typeof TAURI_API_EVENT.emit>;
-};
 
 export type Result<T, E> =
 	| { status: "ok"; data: T }
 	| { status: "error"; error: E };
 
-function __makeEvents__<T extends Record<string, any>>(
-	mappings: Record<keyof T, string>,
-) {
-	return new Proxy(
-		{} as unknown as {
-			[K in keyof T]: __EventObj__<T[K]> & {
-				(handle: __WebviewWindow__): __EventObj__<T[K]>;
-			};
-		},
-		{
-			get: (_, event) => {
-				const name = mappings[event as keyof T];
 
-				return new Proxy((() => {}) as any, {
-					apply: (_, __, [window]: [__WebviewWindow__]) => ({
-						listen: (arg: any) => window.listen(name, arg),
-						once: (arg: any) => window.once(name, arg),
-						emit: (arg: any) => window.emit(name, arg),
-					}),
-					get: (_, command: keyof __EventObj__<any>) => {
-						switch (command) {
-							case "listen":
-								return (arg: any) => TAURI_API_EVENT.listen(name, arg);
-							case "once":
-								return (arg: any) => TAURI_API_EVENT.once(name, arg);
-							case "emit":
-								return (arg: any) => TAURI_API_EVENT.emit(name, arg);
-						}
-					},
-				});
-			},
-		},
-	);
-}

@@ -44,11 +44,11 @@ export const ChooseLlmForm = () => {
             <FormattedMessage defaultMessage="Set up post-processing" />
           </Typography>
           <Typography variant="body1" color="text.secondary">
-            <FormattedMessage defaultMessage="Choose if Voquill should enhance transcripts automatically after they are transcribed." />
+            <FormattedMessage defaultMessage="Choose if mausVoice should enhance transcripts automatically after they are transcribed." />
           </Typography>
         </Box>
 
-        <AIPostProcessingConfiguration hideCloudOption={true} />
+        <AIPostProcessingConfiguration />
       </Stack>
     </OnboardingFormLayout>
   );

@@ -1,15 +1,15 @@
 ---
 title: Azure Entra ID
-description: Configure Azure Entra ID (Azure AD) as an OIDC identity provider for Voquill Enterprise.
+description: Configure Azure Entra ID (Azure AD) as an OIDC identity provider for mausVoice Enterprise.
 ---
 
-This guide explains how to configure Azure Entra ID as an OIDC identity provider for Voquill Enterprise.
+This guide explains how to configure Azure Entra ID as an OIDC identity provider for mausVoice Enterprise.
 
 ## Prerequisites
 
 - An Azure account with access to Microsoft Entra ID
-- Voquill Enterprise gateway running
-- Admin access to the Voquill admin panel
+- mausVoice Enterprise gateway running
+- Admin access to the mausVoice admin panel
 
 ## Azure Configuration
 
@@ -19,7 +19,7 @@ This guide explains how to configure Azure Entra ID as an OIDC identity provider
 2. Navigate to **Identity** → **Applications** → **App registrations**
 3. Click **New registration**
 4. Fill in the details:
-   - **Name**: `Voquill`
+   - **Name**: `mausVoice`
    - **Supported account types**: Select based on your needs (single tenant for most enterprise setups)
    - **Redirect URI**:
      - Platform: **Web**
@@ -32,7 +32,7 @@ On the application's **Overview** page, copy these values:
 
 | Field | Used For |
 | --- | --- |
-| **Application (client) ID** | Client ID in Voquill |
+| **Application (client) ID** | Client ID in mausVoice |
 | **Directory (tenant) ID** | Constructing the Issuer URL |
 
 ### 3. Create a Client Secret
@@ -40,16 +40,16 @@ On the application's **Overview** page, copy these values:
 1. In the left sidebar, click **Certificates & secrets**
 2. Go to the **Client secrets** tab
 3. Click **New client secret**
-4. Enter a description (e.g., `voquill-gateway`)
+4. Enter a description (e.g., `mausvoice-gateway`)
 5. Choose an expiration period
 6. Click **Add**
 7. **Immediately copy the secret Value** (not the Secret ID) - it's only shown once
 
-## Voquill Configuration
+## mausVoice Configuration
 
 ### Add the Identity Provider
 
-1. Open the Voquill admin panel
+1. Open the mausVoice admin panel
 2. Go to **Identity Providers**
 3. Click **Add Provider**
 4. Fill in:
@@ -68,7 +68,7 @@ Replace `{tenant-id}` with your Directory (tenant) ID from Azure.
 
 ## Test the Flow
 
-1. Open the Voquill desktop app
+1. Open the mausVoice desktop app
 2. Connect to your enterprise server
 3. You should see a "Microsoft" SSO button
 4. Click it to authenticate via Azure
@@ -94,7 +94,7 @@ The redirect URI in Azure doesn't match what the gateway is sending.
 - The URL must end with `/v2.0`
 - No trailing slash after `v2.0`
 
-### User signs in but isn't created in Voquill
+### User signs in but isn't created in mausVoice
 
 - Check that the Azure user has an email address set
 - The OIDC flow requires the `email` claim to create/match users

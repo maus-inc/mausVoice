@@ -5,7 +5,7 @@ import {
 } from "@mui/icons-material";
 import { Box, Chip, Stack, Typography } from "@mui/material";
 import { alpha, useTheme } from "@mui/material/styles";
-import type { ToolPermission } from "@voquill/types";
+import type { ToolPermission } from "@maus-inc/types";
 import { FormattedMessage } from "react-intl";
 import { useAppStore } from "../../store";
 import { ToolParamsTooltip } from "./ToolParamsTooltip";

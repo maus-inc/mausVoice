@@ -1,10 +1,10 @@
 [package]
-name = "Voquill"
+name = "mausVoice"
 version = "0.1.0"
-description = "AI voice dictation"
-authors = ["you"]
+description = "mausVoice — AI voice dictation"
+authors = ["Owie Emmanuel <owieemmanuel34@gmail.com>"]
 edition = "2021"
-default-run = "Voquill"
+default-run = "mausVoice"
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
@@ -48,6 +48,7 @@ ferrous-focus = { git = "https://github.com/MichaelWGibson/ferrous-focus" }
 image = { version = "0.25.2", default-features = false, features = ["jpeg"] }
 rand = "0.8"
 sha2 = "0.10"
+chacha20poly1305 = "0.10"
 url = "2"
 jsonwebtoken = "9"
 dotenvy = "0.15"
@@ -74,12 +75,12 @@ arboard = "3"
 rust_macos_pill = { path = "../../../packages/rust_macos_pill" }
 
 [target.'cfg(target_os = "linux")'.dependencies]
+arboard = "3"
 enigo = "0.1"
-arboard = { version = "3", features = ["wayland-data-control"] }
-gtk = { version = "0.18", package = "gtk" }
-x11 = "2.21"
+gtk = "0.18"
 libpulse-binding = "2"
 libpulse-simple-binding = "2"
+x11 = { version = "2", features = ["xlib"] }
 
 [target.'cfg(target_os = "windows")'.dependencies]
 enigo = "0.1"
@@ -89,14 +90,25 @@ windows = { version = "0.61.3", features = [
     "Win32_UI_WindowsAndMessaging",
     "Win32_UI_Accessibility",
     "Win32_UI_Input_KeyboardAndMouse",
+    "Win32_UI_Shell",
     "Win32_System_Com",
     "Win32_System_Threading",
     "Win32_System_ProcessStatus",
     "Win32_System_LibraryLoader",
     "Win32_System_Variant",
+    "Win32_Security",
     "Win32_Media_Audio",
     "Win32_Media_Audio_Endpoints",
 ] }
 
 [lints.rust]
 unexpected_cfgs = { level = "warn", check-cfg = ["cfg(feature, values(\"cargo-clippy\"))"] }
+
+[patch.crates-io]
+block = { path = "../../../patches/block-0.1.6" }
+
+# Local fork of rdev that re-enables the macOS event tap when the OS disables it
+# (kCGEventTapDisabledByTimeout) — upstream drops that event and the tap goes dead. See
+# patches/rdev/src/macos/grab.rs.
+[patch."https://github.com/josiahsrc/rdev"]
+rdev = { path = "../../../patches/rdev" }

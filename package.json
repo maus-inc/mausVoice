@@ -1,5 +1,5 @@
 {
-  "name": "voquill",
+  "name": "mausvoice",
   "private": true,
   "scripts": {
     "build": "turbo run build",
@@ -8,7 +8,7 @@
     "format": "prettier --write \"**/*.{ts,tsx,md}\"",
     "check-types": "turbo run check-types",
     "test": "turbo run test",
-    "gen:bindings": "pnpm --filter @voquill/desktop-native-apis gen:bindings"
+    "gen:bindings": "pnpm --filter @maus-inc/desktop-native-apis gen:bindings"
   },
   "devDependencies": {
     "prettier": "^3.8.1",

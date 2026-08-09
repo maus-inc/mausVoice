@@ -1,4 +1,4 @@
-import { HandlerOutput, invokeHandler } from "@voquill/functions";
+import { HandlerOutput, invokeHandler } from "@maus-inc/functions";
 import { BaseRepo } from "./base.repo";
 
 export abstract class BaseStripeRepo extends BaseRepo {

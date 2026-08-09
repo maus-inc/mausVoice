@@ -46,7 +46,7 @@ fn get_env_search_dirs() -> Vec<PathBuf> {
                 }
             }
 
-            // Windows/Linux: Resources are in the same directory as the executable
+            // Windows: Resources are in the same directory as the executable
             #[cfg(not(target_os = "macos"))]
             {
                 dirs.push(exe_dir.to_path_buf());

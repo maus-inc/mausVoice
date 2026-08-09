@@ -6,7 +6,7 @@ import {
   useTheme,
   type SxProps,
 } from "@mui/material";
-import { isDefined } from "@voquill/utilities";
+import { isDefined } from "@maus-inc/utilities";
 
 export type AppStepperStep = {
   label: string;

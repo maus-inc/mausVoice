@@ -1,4 +1,4 @@
-import type { Member, Nullable } from "@voquill/types";
+import type { Member, Nullable } from "@maus-inc/types";
 import type { MemberRow } from "../types/member.types";
 import { getPool } from "../utils/db.utils";
 

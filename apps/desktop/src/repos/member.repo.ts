@@ -1,5 +1,5 @@
-import { invokeHandler } from "@voquill/functions";
-import { Member, Nullable } from "@voquill/types";
+import { invokeHandler } from "@maus-inc/functions";
+import { Member, Nullable } from "@maus-inc/types";
 import { invokeEnterprise } from "../utils/enterprise.utils";
 import { BaseRepo } from "./base.repo";
 
@@ -16,6 +16,16 @@ export class CloudMemberRepo extends BaseMemberRepo {
   async getMyMember(): Promise<Nullable<Member>> {
     const res = await invokeHandler("member/getMyMember", {});
     return res.member;
+  }
+}
+
+export class LocalMemberRepo extends BaseMemberRepo {
+  async tryInitialize(): Promise<void> {
+    // noop
+  }
+
+  async getMyMember(): Promise<Nullable<Member>> {
+    return null;
   }
 }
 

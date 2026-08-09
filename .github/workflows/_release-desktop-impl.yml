@@ -305,9 +305,9 @@ jobs:
       RELEASE_FLAVOR: ${{ needs.metadata.outputs.release_flavor }}
       FLAVOR: ${{ needs.metadata.outputs.release_flavor }}
       VITE_FLAVOR: ${{ needs.metadata.outputs.release_flavor }}
-      VOQUILL_BUILD_FLAVOR: ${{ needs.metadata.outputs.release_flavor }}
-      VOQUILL_DESKTOP_FLAVOR: ${{ needs.metadata.outputs.release_flavor }}
-      VOQUILL_REQUIRE_GPU_SIDECAR: ${{ matrix.require_gpu_sidecar && 'true' || 'false' }}
+      MAUSVOICE_BUILD_FLAVOR: ${{ needs.metadata.outputs.release_flavor }}
+      MAUSVOICE_DESKTOP_FLAVOR: ${{ needs.metadata.outputs.release_flavor }}
+      MAUSVOICE_REQUIRE_GPU_SIDECAR: ${{ matrix.require_gpu_sidecar && 'true' || 'false' }}
       TAURI_PRIVATE_KEY: ${{ secrets.TAURI_PRIVATE_KEY }}
       TAURI_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_PRIVATE_KEY_PASSWORD }}
       TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_PRIVATE_KEY }}
@@ -589,19 +589,19 @@ jobs:
           case "${RELEASE_ENV}" in
             prod)
               config_file="apps/desktop/src-tauri/tauri.prod.conf.json"
-              pkg_name="voquill-desktop"
+              pkg_name="mausvoice-desktop"
               ;;
             enterprise)
               config_file="apps/desktop/src-tauri/tauri.enterprise.conf.json"
-              pkg_name="voquill-desktop-enterprise"
+              pkg_name="mausvoice-desktop-enterprise"
               ;;
             enterprise-dev)
               config_file="apps/desktop/src-tauri/tauri.enterprise-dev.conf.json"
-              pkg_name="voquill-desktop-enterprise-dev"
+              pkg_name="mausvoice-desktop-enterprise-dev"
               ;;
             *)
               config_file="apps/desktop/src-tauri/tauri.dev.conf.json"
-              pkg_name="voquill-desktop-dev"
+              pkg_name="mausvoice-desktop-dev"
               ;;
           esac
           tmp=$(mktemp)
@@ -614,7 +614,7 @@ jobs:
           MACOSX_DEPLOYMENT_TARGET: "13.3"
           CMAKE_OSX_DEPLOYMENT_TARGET: "13.3"
           TAURI_PLATFORM: ${{ matrix.tauri_platform }}
-          VOQUILL_DESKTOP_PLATFORM: ${{ matrix.node_platform }}
+          MAUSVOICE_DESKTOP_PLATFORM: ${{ matrix.node_platform }}
         run: pnpm exec turbo run build --filter=desktop...
 
       - name: Build and publish
@@ -622,7 +622,7 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           TAURI_PLATFORM: ${{ matrix.tauri_platform }}
-          VOQUILL_DESKTOP_PLATFORM: ${{ matrix.node_platform }}
+          MAUSVOICE_DESKTOP_PLATFORM: ${{ matrix.node_platform }}
           MACOSX_DEPLOYMENT_TARGET: "13.3"
           CMAKE_OSX_DEPLOYMENT_TARGET: "13.3"
           APPIMAGE_EXTRACT_AND_RUN: "1"
@@ -633,8 +633,8 @@ jobs:
           APPLE_API_ISSUER: ${{ env.APPLE_API_ISSUER }}
           TAURI_LOG_LEVEL: ${{ env.TAURI_LOG_LEVEL }}
           RUST_LOG: ${{ env.RUST_LOG }}
-          VOQUILL_GOOGLE_CLIENT_ID: ${{ steps.google-oauth.outputs.client_id }}
-          VOQUILL_GOOGLE_CLIENT_SECRET: ${{ steps.google-oauth.outputs.client_secret }}
+          MAUSVOICE_GOOGLE_CLIENT_ID: ${{ steps.google-oauth.outputs.client_id }}
+          MAUSVOICE_GOOGLE_CLIENT_SECRET: ${{ steps.google-oauth.outputs.client_secret }}
         with:
           projectPath: apps/desktop
           tauriScript: pnpm --filter desktop run tauri
@@ -669,9 +669,9 @@ jobs:
           app_name="${app_bundle_name%.app}"
           case "${RELEASE_ENV}" in
             prod)           dmg_name="${app_name}_${RELEASE_VERSION}_universal.dmg" ;;
-            enterprise)     dmg_name="VoquillEnterprise_${RELEASE_VERSION}_universal.dmg" ;;
-            enterprise-dev) dmg_name="VoquillEnterpriseDev_${RELEASE_VERSION}_universal.dmg" ;;
-            *)              dmg_name="VoquillDev_${RELEASE_VERSION}_universal.dmg" ;;
+            enterprise)     dmg_name="mausVoiceEnterprise_${RELEASE_VERSION}_universal.dmg" ;;
+            enterprise-dev) dmg_name="mausVoiceEnterpriseDev_${RELEASE_VERSION}_universal.dmg" ;;
+            *)              dmg_name="mausVoiceDev_${RELEASE_VERSION}_universal.dmg" ;;
           esac
           dmg_path="$(pwd)/${dmg_name}"
           staging_dir="$(mktemp -d)"
@@ -716,19 +716,19 @@ jobs:
 
           case "${RELEASE_ENV}" in
             enterprise)
-              pkg_name="VoquillEnterprise_${RELEASE_VERSION}_universal.pkg"
-              bundle_identifier="com.voquill.desktop.enterprise"
+              pkg_name="mausVoiceEnterprise_${RELEASE_VERSION}_universal.pkg"
+              bundle_identifier="com.mausinc.desktop.enterprise"
               ;;
             enterprise-dev)
-              pkg_name="VoquillEnterpriseDev_${RELEASE_VERSION}_universal.pkg"
-              bundle_identifier="com.voquill.desktop.enterprise-dev"
+              pkg_name="mausVoiceEnterpriseDev_${RELEASE_VERSION}_universal.pkg"
+              bundle_identifier="com.mausinc.desktop.enterprise-dev"
               ;;
             *)
-              pkg_name="Voquill_${RELEASE_VERSION}_universal.pkg"
-              bundle_identifier="com.voquill.desktop"
+              pkg_name="mausVoice_${RELEASE_VERSION}_universal.pkg"
+              bundle_identifier="com.mausinc.desktop"
               ;;
           esac
-          unsigned_pkg="Voquill_unsigned.pkg"
+          unsigned_pkg="mausVoice_unsigned.pkg"
 
           pkgbuild \
             --component "${app_bundle_path}" \
@@ -827,7 +827,7 @@ jobs:
 
           $destDir = "apps/windows-installer/src-tauri/installer"
           New-Item -ItemType Directory -Force -Path $destDir | Out-Null
-          Copy-Item $nsisInstaller.FullName "$destDir/Voquill_Setup.exe"
+          Copy-Item $nsisInstaller.FullName "$destDir/mausVoice_Setup.exe"
 
           Write-Host "Building portable Windows installer..."
           Set-Location apps/windows-installer
@@ -849,7 +849,7 @@ jobs:
         if: matrix.os == 'windows-latest'
         shell: pwsh
         run: |
-          $installerExe = "D:\cargo\release\voquill-installer.exe"
+          $installerExe = "D:\cargo\release\mausvoice-installer.exe"
 
           Write-Host "Verifying signature for portable installer..."
           $sig = Get-AuthenticodeSignature -FilePath $installerExe
@@ -872,14 +872,14 @@ jobs:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           RELEASE_TAG: ${{ needs.metadata.outputs.tag_name }}
         run: |
-          $installerExe = "D:\cargo\release\voquill-installer.exe"
+          $installerExe = "D:\cargo\release\mausvoice-installer.exe"
 
           if (-not (Test-Path $installerExe)) {
             Write-Error "Could not find portable installer executable at $installerExe"
             exit 1
           }
 
-          $destName = "Voquill_Portable_Installer.exe"
+          $destName = "mausVoice_Portable_Installer.exe"
           Copy-Item $installerExe $destName
 
           Write-Host "Uploading $destName to release $env:RELEASE_TAG"
@@ -974,7 +974,7 @@ jobs:
       - name: Clone APT repository
         run: |
           set -euo pipefail
-          git clone "https://x-access-token:${{ secrets.PACKAGE_REPO_TOKEN }}@github.com/voquill/apt.git" apt-repo
+          git clone "https://x-access-token:${{ secrets.PACKAGE_REPO_TOKEN }}@github.com/mausvoice/apt.git" apt-repo
 
       - name: Import GPG key
         env:
@@ -1039,7 +1039,7 @@ jobs:
       - name: Clone RPM repository
         run: |
           set -euo pipefail
-          git clone "https://x-access-token:${{ secrets.PACKAGE_REPO_TOKEN }}@github.com/voquill/rpm.git" rpm-repo
+          git clone "https://x-access-token:${{ secrets.PACKAGE_REPO_TOKEN }}@github.com/mausvoice/rpm.git" rpm-repo
 
       - name: Import GPG key
         env:
@@ -1120,7 +1120,7 @@ jobs:
       - name: Clone Homebrew tap repository
         run: |
           set -euo pipefail
-          git clone "https://x-access-token:${{ secrets.PACKAGE_REPO_TOKEN }}@github.com/voquill/homebrew-voquill.git" brew-tap
+          git clone "https://x-access-token:${{ secrets.PACKAGE_REPO_TOKEN }}@github.com/mausvoice/homebrew-mausvoice.git" brew-tap
 
       - name: Update cask
         run: |
@@ -1129,15 +1129,15 @@ jobs:
           mkdir -p Casks
 
           if [[ "${RELEASE_ENV}" == "prod" ]]; then
-            cask_name="voquill-desktop"
-            app_name="Voquill"
+            cask_name="mausvoice-desktop"
+            app_name="mausVoice"
             tag_prefix="desktop-v"
-            dmg_name="Voquill_#{version}_universal.dmg"
+            dmg_name="mausVoice_#{version}_universal.dmg"
           else
-            cask_name="voquill-desktop-dev"
-            app_name="Voquill (dev)"
+            cask_name="mausvoice-desktop-dev"
+            app_name="mausVoice (dev)"
             tag_prefix="desktop-dev-v"
-            dmg_name="VoquillDev_#{version}_universal.dmg"
+            dmg_name="mausVoiceDev_#{version}_universal.dmg"
           fi
 
           cat > "Casks/${cask_name}.rb" <<CASK
@@ -1148,13 +1148,17 @@ jobs:
             url "https://github.com/${GITHUB_REPOSITORY}/releases/download/${tag_prefix}#{version}/${dmg_name}"
             name "${app_name}"
             desc "AI-powered dictation desktop application"
-            homepage "https://voquill.com"
+            homepage "https://mausvoice.com"
 
             depends_on macos: ">= :ventura"
 
             app "${app_name}.app"
 
             zap trash: [
+              "~/Library/Application Support/com.mausinc.desktop",
+              "~/Library/Caches/com.mausinc.desktop",
+              "~/Library/Preferences/com.mausinc.desktop.plist",
+              "~/Library/Saved Application State/com.mausinc.desktop.savedState",
               "~/Library/Application Support/com.voquill.desktop",
               "~/Library/Caches/com.voquill.desktop",
               "~/Library/Preferences/com.voquill.desktop.plist",

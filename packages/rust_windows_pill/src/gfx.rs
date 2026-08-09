@@ -71,6 +71,7 @@ impl Gfx {
             rt.SetAntialiasMode(D2D1_ANTIALIAS_MODE_PER_PRIMITIVE);
             rt.SetTextAntialiasMode(D2D1_TEXT_ANTIALIAS_MODE_GRAYSCALE);
 
+            crate::font::install_embedded_satoshi();
             let dw_factory: IDWriteFactory =
                 DWriteCreateFactory(DWRITE_FACTORY_TYPE_SHARED)?;
 
@@ -425,19 +426,7 @@ impl Gfx {
     }
 
     fn text_format(&self, size: f64, bold: bool, italic: bool) -> IDWriteTextFormat {
-        unsafe {
-            let weight = if bold { DWRITE_FONT_WEIGHT_BOLD } else { DWRITE_FONT_WEIGHT_NORMAL };
-            let style = if italic { DWRITE_FONT_STYLE_ITALIC } else { DWRITE_FONT_STYLE_NORMAL };
-            self.dw_factory.CreateTextFormat(
-                w!("Segoe UI"),
-                None,
-                weight,
-                style,
-                DWRITE_FONT_STRETCH_NORMAL,
-                size as f32,
-                w!("en-us"),
-            ).unwrap()
-        }
+        crate::font::create_text_format(&self.dw_factory, size as f32, bold, italic)
     }
 
     pub(crate) fn measure_text(&self, text: &str, size: f64, bold: bool) -> (f64, f64) {
@@ -502,4 +491,8 @@ unsafe fn create_dib(hdc: HDC, width: i32, height: i32) -> HBITMAP {
     let mut bits: *mut c_void = std::ptr::null_mut();
     CreateDIBSection(Some(hdc), &bmi, DIB_RGB_COLORS, &mut bits, None, 0)
         .unwrap_or(HBITMAP::default())
+}
+
+pub fn lerp(a: f64, b: f64, t: f64) -> f64 {
+    a + (b - a) * t
 }

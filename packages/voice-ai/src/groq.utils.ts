@@ -2,8 +2,8 @@ import type {
   JsonResponse,
   LlmChatInput,
   LlmStreamEvent,
-} from "@voquill/types";
-import { countWords, retry } from "@voquill/utilities";
+} from "@maus-inc/types";
+import { countWords, retry } from "@maus-inc/utilities";
 import Groq, { toFile } from "groq-sdk/index";
 import {
   ChatCompletionContentPart,
@@ -16,6 +16,7 @@ export const GENERATE_TEXT_MODELS = [
   "moonshotai/kimi-k2-instruct-0905",
   "openai/gpt-oss-20b",
   "openai/gpt-oss-120b",
+  "qwen/qwen3.6-27b",
 ] as const;
 export type GenerateTextModel = (typeof GENERATE_TEXT_MODELS)[number];
 
@@ -27,7 +28,10 @@ const JSON_SCHEMA_SUPPORTED_MODELS = new Set<string>([
   "openai/gpt-oss-120b",
 ]);
 
-export const TRANSCRIPTION_MODELS = ["whisper-large-v3-turbo"] as const;
+export const TRANSCRIPTION_MODELS = [
+  "whisper-large-v3-turbo",
+  "whisper-large-v3",
+] as const;
 export type TranscriptionModel = (typeof TRANSCRIPTION_MODELS)[number];
 
 const contentToString = (
@@ -119,7 +123,7 @@ export type GroqGenerateResponseOutput = {
 
 export const groqGenerateTextResponse = async ({
   apiKey,
-  model = "openai/gpt-oss-120b",
+  model = "openai/gpt-oss-20b",
   system,
   prompt,
   imageUrls = [],

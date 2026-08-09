@@ -1,4 +1,4 @@
-import type { LlmStreamEvent } from "@voquill/types";
+import type { LlmStreamEvent } from "@maus-inc/types";
 
 export async function* readNdjsonStream(
   response: Response,

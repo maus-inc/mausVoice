@@ -147,6 +147,20 @@ impl Recorder for PulseRecorder {
         };
         guard.as_ref().map(|r| r.sample_rate)
     }
+
+    fn pause(&self) -> Result<(), Box<dyn std::error::Error>> {
+        // PulseAudio simple stream does not expose direct pause/resume.
+        // Returning unsupported keeps the trait contract while making the limitation explicit.
+        Err(Box::new(RecordingError::StreamPlay(
+            "PulseAudio recorder does not support pause/resume".into(),
+        )))
+    }
+
+    fn resume(&self) -> Result<(), Box<dyn std::error::Error>> {
+        Err(Box::new(RecordingError::StreamPlay(
+            "PulseAudio recorder does not support pause/resume".into(),
+        )))
+    }
 }
 
 /// Given the user's preferred device label (the display name shown in the UI),
@@ -222,7 +236,7 @@ fn record_loop(
 
     let simple = match psimple::Simple::new(
         None,      // server (default)
-        "Voquill", // app name
+        "mausVoice", // app name
         pulse::stream::Direction::Record,
         source_ref,  // source (None = default)
         "Recording", // stream description
@@ -380,7 +394,7 @@ fn enumerate_pulse_sources() -> Vec<PulseSource> {
         }
     };
 
-    let mut ctx = match pulse::context::Context::new(&ml, "Voquill Enumerate") {
+    let mut ctx = match pulse::context::Context::new(&ml, "mausVoice Enumerate") {
         Some(ctx) => ctx,
         None => {
             log::error!("failed to create PulseAudio context");

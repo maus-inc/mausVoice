@@ -4,7 +4,7 @@ One core idea per image. Keep them simple.
 
 ## Hero — `placeholder-showcase` (16:9)
 
-Slide viewer on the left. Voquill report on the right, mid-fill.
+Slide viewer on the left. mausVoice report on the right, mid-fill.
 
 ## Logos — `placeholder-logo` (5x, 4:1)
 
@@ -20,7 +20,7 @@ Next: One spoken sentence (voice sign waves) splitting into multiple report fiel
 
 ## Feature 3 — "LIS / IMS overlay" (4:3)
 
-Voquill panel layered on top of a generic report system.
+mausVoice panel layered on top of a generic report system.
 
 ## Bento — "Edit by voice demo" (wide)
 

@@ -142,7 +142,7 @@ fn build_setup_script(username: &str) -> Result<String, String> {
 
     steps.push(format!("usermod -aG input {username}"));
     steps.push(
-        "echo 'KERNEL==\"uinput\", GROUP=\"input\", MODE=\"0660\"' > /etc/udev/rules.d/99-voquill-uinput.rules".to_string(),
+        "echo 'KERNEL==\"uinput\", GROUP=\"input\", MODE=\"0660\"' > /etc/udev/rules.d/99-mausvoice-uinput.rules".to_string(),
     );
     steps.push("udevadm control --reload-rules && udevadm trigger /dev/uinput".to_string());
     steps.push("(systemctl enable --now ydotoold 2>/dev/null || true)".to_string());
@@ -150,7 +150,21 @@ fn build_setup_script(username: &str) -> Result<String, String> {
     Ok(steps.join(" && "))
 }
 
-pub async fn run_native_setup() -> NativeSetupResult {
+/// Distinguish "the user dismissed the polkit prompt" from a genuine failure.
+///
+/// From pkexec(1): the exit code is 126 when the authorization could not be
+/// obtained because the user dismissed the authentication dialog, and 127 when
+/// the caller is not authorized / authentication failed / an error occurred.
+/// We deliberately do NOT treat 127 as a cancellation: `sh` also exits 127 for
+/// "command not found", so folding it in would hide real setup failures.
+///
+/// A missing exit code means the process was terminated by a signal (the
+/// prompt or the agent was killed), which we surface as a cancellation too.
+fn is_user_cancellation(status: &std::process::ExitStatus) -> bool {
+    matches!(status.code(), Some(126) | None)
+}
+
+pub async fn run_native_setup(_app: tauri::AppHandle) -> NativeSetupResult {
     let result = tokio::task::spawn_blocking(|| {
         let username = std::env::var("USER")
             .or_else(|_| std::env::var("LOGNAME"))
@@ -191,8 +205,13 @@ pub async fn run_native_setup() -> NativeSetupResult {
                 }
             }
             Ok(s) => {
-                log::error!("pkexec failed with exit code: {:?}", s.code());
-                NativeSetupResult::Failed
+                if is_user_cancellation(&s) {
+                    log::info!("Native setup cancelled by user (pkexec authorization dismissed)");
+                    NativeSetupResult::Cancelled
+                } else {
+                    log::error!("pkexec failed with exit code: {:?}", s.code());
+                    NativeSetupResult::Failed
+                }
             }
             Err(err) => {
                 log::error!("Failed to launch pkexec: {err}");

@@ -1,4 +1,4 @@
-export type DesktopPlatform = "darwin" | "win32" | "linux";
+export type DesktopPlatform = "darwin" | "win32" | "unknown";
 
 /**
  * Best-effort platform detection from `navigator.userAgent`. Works in any
@@ -14,5 +14,5 @@ export const detectDesktopPlatform = (): DesktopPlatform => {
   if (userAgent.includes("win")) {
     return "win32";
   }
-  return "linux";
+  return "unknown";
 };

@@ -1,4 +1,4 @@
-import { User, UserPreferences } from "@voquill/types";
+import { User, UserPreferences } from "@maus-inc/types";
 import { detectLocale } from "../i18n/intl";
 import { getUserPreferencesRepo, getUserRepo } from "../repos";
 import {
@@ -233,9 +233,9 @@ export const finishOnboarding = async () => {
     throw new Error("Cannot finish onboarding: user not found");
   }
 
-  clearLocalStorageValue("voquill:checklist-writing-style");
-  clearLocalStorageValue("voquill:checklist-dictionary");
-  clearLocalStorageValue("voquill:checklist-dismissed");
+  clearLocalStorageValue("mausvoice:checklist-writing-style");
+  clearLocalStorageValue("mausvoice:checklist-dictionary");
+  clearLocalStorageValue("mausvoice:checklist-dismissed");
 
   try {
     const repo = getUserRepo();

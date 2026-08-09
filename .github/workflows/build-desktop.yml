@@ -112,14 +112,14 @@ jobs:
       - name: Build frontend and dependencies
         env:
           TAURI_PLATFORM: ${{ matrix.tauri_platform }}
-          VOQUILL_DESKTOP_PLATFORM: ${{ matrix.node_platform }}
+          MAUSVOICE_DESKTOP_PLATFORM: ${{ matrix.node_platform }}
         run: pnpm exec turbo run build --filter=desktop...
 
       - name: Build Tauri app
         env:
           TAURI_PLATFORM: ${{ matrix.tauri_platform }}
-          VOQUILL_DESKTOP_PLATFORM: ${{ matrix.node_platform }}
-          VOQUILL_REQUIRE_GPU_SIDECAR: ${{ matrix.require_gpu_sidecar && 'true' || 'false' }}
+          MAUSVOICE_DESKTOP_PLATFORM: ${{ matrix.node_platform }}
+          MAUSVOICE_REQUIRE_GPU_SIDECAR: ${{ matrix.require_gpu_sidecar && 'true' || 'false' }}
           MACOSX_DEPLOYMENT_TARGET: "13.3"
           CMAKE_OSX_DEPLOYMENT_TARGET: "13.3"
           APPIMAGE_EXTRACT_AND_RUN: "1"
@@ -143,7 +143,7 @@ jobs:
       - name: Upload build artifacts
         uses: actions/upload-artifact@v4
         with:
-          name: voquill-${{ matrix.tauri_platform }}
+          name: mausvoice-${{ matrix.tauri_platform }}
           path: |
             ${{ matrix.bundle_dir }}/**/*.dmg
             ${{ matrix.bundle_dir }}/**/*.app.tar.gz

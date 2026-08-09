@@ -1,15 +1,15 @@
 ---
 title: Transcription
-description: Learn about Voquill's transcription modes and how to choose the right one.
+description: Learn about mausVoice's transcription modes and how to choose the right one.
 ---
 
-Voquill supports three transcription modes. You can switch between them at any time from the settings page.
+mausVoice supports three transcription modes. You can switch between them at any time from the settings page.
 
 ## Local
 
 Local mode runs transcription entirely on your device using [Whisper](https://github.com/openai/whisper). Nothing leaves your machine.
 
-- On first use, Voquill downloads a Whisper model (~142 MB for the default `base` model).
+- On first use, mausVoice downloads a Whisper model (~142 MB for the default `base` model).
 - Models are stored in your app data directory under `models/`.
 - GPU acceleration is used automatically when available (Metal on macOS, Vulkan on Windows/Linux).
 - You can force CPU-only inference by disabling GPU in settings.
@@ -26,7 +26,7 @@ API mode sends your audio directly to Groq's Whisper API (`whisper-large-v3-turb
 
 ## Cloud
 
-Cloud mode routes audio through Voquill's cloud service, which handles the Groq API call on your behalf. This is the simplest option — no API key needed, just sign in with your Voquill account.
+Cloud mode routes audio through mausVoice's cloud service, which handles the Groq API call on your behalf. This is the simplest option — no API key needed, just sign in with your mausVoice account.
 
 ## Choosing a Mode
 

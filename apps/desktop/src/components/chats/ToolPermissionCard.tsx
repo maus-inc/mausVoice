@@ -1,4 +1,4 @@
-import type { ToolPermission } from "@voquill/types";
+import type { ToolPermission } from "@maus-inc/types";
 import {
   resolveToolPermission,
   setToolAlwaysAllow,

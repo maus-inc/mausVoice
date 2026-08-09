@@ -3,7 +3,7 @@ title: Dictionary
 description: Improve transcription accuracy with glossary terms and replacement rules.
 ---
 
-The dictionary helps Voquill handle domain-specific vocabulary, names, and acronyms that speech recognition might otherwise get wrong. It has two features: glossary terms and replacement rules.
+The dictionary helps mausVoice handle domain-specific vocabulary, names, and acronyms that speech recognition might otherwise get wrong. It has two features: glossary terms and replacement rules.
 
 ## Glossary Terms
 
@@ -11,27 +11,27 @@ Glossary terms are fed directly to the transcription model as hints. When you ad
 
 This is especially useful for:
 
-- Product names (e.g., "Voquill", "PostgreSQL")
+- Product names (e.g., "mausVoice", "PostgreSQL")
 - People's names (e.g., "Josiah", "Satya Nadella")
 - Technical jargon (e.g., "Kubernetes", "WebSocket")
 - Anything the transcription model consistently mishears
 
 ## Replacement Rules
 
-Replacement rules find and replace text in the raw transcript, right before post-processing runs. If Voquill keeps getting a word wrong, you can add a replacement rule to fix it automatically.
+Replacement rules find and replace text in the raw transcript, right before post-processing runs. If mausVoice keeps getting a word wrong, you can add a replacement rule to fix it automatically.
 
 For example:
 
 | Input    | Output    |
 | -------- | --------- |
 | GPT      | ChatGPT   |
-| V quill  | Voquill   |
+| V quill  | mausVoice   |
 
 You can also use replacement rules as **snippets**. Define a short trigger phrase and have it expand into something longer — useful for boilerplate text, signatures, or common phrases you dictate frequently.
 
 | Input         | Output                                      |
 | ------------- | ------------------------------------------- |
-| sig block     | Best regards, Josiah — Voquill Team         |
+| sig block     | Best regards, Josiah — mausVoice Team         |
 | addr          | 123 Main Street, Suite 400, New York, NY    |
 
 Since replacements happen on the raw transcript before the AI post-processing step, the language model sees the corrected text and works from there.

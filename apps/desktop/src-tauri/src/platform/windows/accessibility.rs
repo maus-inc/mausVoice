@@ -1849,7 +1849,7 @@ fn get_process_name(pid: u32) -> Option<String> {
 /// Retrieve a process's executable path. Uses `QueryFullProcessImageNameW`
 /// rather than `GetModuleFileNameExW` because the former only needs
 /// `PROCESS_QUERY_LIMITED_INFORMATION` and works cleanly cross-bitness
-/// (critical for 64-bit Voquill enumerating JVM processes and vice versa).
+/// (critical for 64-bit mausVoice enumerating JVM processes and vice versa).
 fn get_process_exe_path(pid: u32) -> Option<String> {
     use windows::Win32::System::Threading::{
         OpenProcess, QueryFullProcessImageNameW, PROCESS_NAME_WIN32,

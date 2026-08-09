@@ -1,5 +1,5 @@
-import { Nullable, Tone } from "@voquill/types";
-import { getRec } from "@voquill/utilities";
+import { Nullable, Tone } from "@maus-inc/types";
+import { getRec } from "@maus-inc/utilities";
 import { getIntl } from "../i18n/intl";
 import { AppState } from "../state/app.state";
 import { getEffectiveStylingMode } from "./feature.utils";

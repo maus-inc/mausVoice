@@ -13,7 +13,7 @@ import {
   Switch,
   Typography,
 } from "@mui/material";
-import { AppTarget } from "@voquill/types";
+import { AppTarget } from "@maus-inc/types";
 import type { ChangeEvent } from "react";
 import { useMemo } from "react";
 import { FormattedMessage, useIntl } from "react-intl";
@@ -31,7 +31,7 @@ export const AppKeybindingsDialog = () => {
   const open = useAppStore((state) => state.settings.appKeybindingsDialogOpen);
   const appTargets = useAppStore((state) => state.appTargetById);
   const defaultPasteKeybind = useAppStore(
-    (state) => getMyUserPreferences(state)?.pasteKeybind ?? "ctrl+v",
+    (state) => getMyUserPreferences(state)?.pasteKeybind ?? "shift+insert",
   );
   const defaultInsertionMethod = useAppStore(
     (state) => getMyUserPreferences(state)?.insertionMethod ?? "paste",
@@ -57,7 +57,7 @@ export const AppKeybindingsDialog = () => {
   const handleDefaultChange = (event: SelectChangeEvent<string>) => {
     const value = event.target.value;
     void updateUserPreferences((prefs) => {
-      prefs.pasteKeybind = value === "ctrl+v" ? null : value;
+      prefs.pasteKeybind = value === "shift+insert" ? null : value;
     });
   };
 
@@ -87,7 +87,7 @@ export const AppKeybindingsDialog = () => {
       </DialogTitle>
       <DialogContent>
         <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
-          <FormattedMessage defaultMessage="Choose how Voquill inserts text and which paste shortcut to use when paste insertion is selected." />
+          <FormattedMessage defaultMessage="Choose how mausVoice inserts text and which paste shortcut to use when paste insertion is selected." />
         </Typography>
         <Stack
           direction="row"
@@ -179,14 +179,14 @@ export const AppKeybindingsDialog = () => {
               variant="outlined"
               sx={{ minWidth: 170, flexShrink: 0 }}
             >
+              <MenuItem value="shift+insert">
+                <FormattedMessage defaultMessage="Default (Shift+Insert)" />
+              </MenuItem>
               <MenuItem value="ctrl+v">
-                <FormattedMessage defaultMessage="Default (Ctrl+V)" />
+                <FormattedMessage defaultMessage="Ctrl+V" />
               </MenuItem>
               <MenuItem value="ctrl+shift+v">
                 <FormattedMessage defaultMessage="Terminal (Ctrl+Shift+V)" />
-              </MenuItem>
-              <MenuItem value="shift+insert">
-                <FormattedMessage defaultMessage="Shift+Insert" />
               </MenuItem>
             </Select>
           </Stack>
@@ -239,12 +239,12 @@ type AppKeybindingRowProps = {
 
 const pasteKeybindLabel = (keybind: string) => {
   switch (keybind) {
+    case "ctrl+v":
+      return "Ctrl+V";
     case "ctrl+shift+v":
       return "Ctrl+Shift+V";
-    case "shift+insert":
-      return "Shift+Insert";
     default:
-      return "Ctrl+V";
+      return "Shift+Insert";
   }
 };
 
@@ -386,14 +386,14 @@ const AppKeybindingRow = ({
                 { keybind: pasteKeybindLabel(defaultPasteKeybind) },
               )}
             </MenuItem>
+            <MenuItem value="shift+insert">
+              <FormattedMessage defaultMessage="Default (Shift+Insert)" />
+            </MenuItem>
             <MenuItem value="ctrl+v">
-              <FormattedMessage defaultMessage="Default (Ctrl+V)" />
+              <FormattedMessage defaultMessage="Ctrl+V" />
             </MenuItem>
             <MenuItem value="ctrl+shift+v">
               <FormattedMessage defaultMessage="Terminal (Ctrl+Shift+V)" />
-            </MenuItem>
-            <MenuItem value="shift+insert">
-              <FormattedMessage defaultMessage="Shift+Insert" />
             </MenuItem>
           </Select>
         </Stack>

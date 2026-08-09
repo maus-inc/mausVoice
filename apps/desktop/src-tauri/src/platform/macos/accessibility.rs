@@ -107,12 +107,12 @@ extern "C" {
     fn CGEventGetLocation(event: CFTypeRef) -> core_graphics::geometry::CGPoint;
 }
 
-/// Append a trace line to /Users/josiah/Downloads/voquill-binding-debug.log.
+/// Append a trace line to /Users/josiah/Downloads/mausvoice-binding-debug.log.
 /// Used to capture a full picture of what bind/resolve/paste does on a real
 /// run, since stdout logging gets lost in Tauri's combined output.
 fn debug_log(msg: &str) {
     use std::io::Write;
-    let path = "/Users/josiah/Downloads/voquill-binding-debug.log";
+    let path = "/Users/josiah/Downloads/mausvoice-binding-debug.log";
     if let Ok(mut f) = std::fs::OpenOptions::new()
         .create(true)
         .append(true)

@@ -10,24 +10,15 @@ import { getAllowsChangePostProcessing } from "../../utils/enterprise.utils";
 import { getEffectivePostProcessingMode } from "../../utils/user.utils";
 import { ManagedByOrgNotice } from "../common/ManagedByOrgNotice";
 import { type PostProcessingMode } from "../../types/ai.types";
-import {
-  SegmentedControl,
-  SegmentedControlOption,
-} from "../common/SegmentedControl";
+import { SegmentedControl } from "../common/SegmentedControl";
 import { ApiKeyList } from "./ApiKeyList";
-import { VoquillCloudSetting } from "./VoquillCloudSetting";
-
-type AIPostProcessingConfigurationProps = {
-  hideCloudOption?: boolean;
-};
+import { MausVoiceCloudSetting } from "./MausVoiceCloudSetting";
 
 export function maybeArrayElements<T>(visible: boolean, values: T[]): T[] {
   return visible ? values : [];
 }
 
-export const AIPostProcessingConfiguration = ({
-  hideCloudOption,
-}: AIPostProcessingConfigurationProps) => {
+export const AIPostProcessingConfiguration = () => {
   const postProcessing = useAppStore(
     (state) => state.settings.aiPostProcessing,
   );
@@ -52,15 +43,6 @@ export const AIPostProcessingConfiguration = ({
         value={effectiveMode}
         onChange={handleModeChange}
         options={[
-          ...maybeArrayElements<SegmentedControlOption<PostProcessingMode>>(
-            !hideCloudOption,
-            [
-              {
-                value: "cloud",
-                label: "Voquill",
-              },
-            ],
-          ),
           { value: "api", label: "API" },
           { value: "none", label: "Off" },
         ]}
@@ -81,7 +63,7 @@ export const AIPostProcessingConfiguration = ({
         />
       )}
 
-      {effectiveMode === "cloud" && <VoquillCloudSetting />}
+      {effectiveMode === "cloud" && <MausVoiceCloudSetting />}
     </Stack>
   );
 };

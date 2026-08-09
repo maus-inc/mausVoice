@@ -17,6 +17,7 @@ pub enum OverlayPhase {
     Idle,
     Recording,
     Loading,
+    Paused,
 }
 
 #[derive(Clone, Debug, Serialize)]
@@ -30,6 +31,7 @@ impl OverlayPhase {
             "idle" => Some(Self::Idle),
             "recording" => Some(Self::Recording),
             "loading" => Some(Self::Loading),
+            "paused" => Some(Self::Paused),
             _ => None,
         }
     }

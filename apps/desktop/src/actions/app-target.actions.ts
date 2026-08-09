@@ -1,6 +1,6 @@
 import { invoke } from "@tauri-apps/api/core";
-import { AppTarget, Nullable } from "@voquill/types";
-import { getRec } from "@voquill/utilities";
+import { AppTarget, Nullable } from "@maus-inc/types";
+import { getRec } from "@maus-inc/utilities";
 import { getAppTargetRepo, getStorageRepo } from "../repos";
 import { AppTargetUpsertParams } from "../repos/app-target.repo";
 import { getAppState, produceAppState } from "../store";
@@ -172,6 +172,14 @@ export const tryRegisterCurrentAppTarget = async (): Promise<
   const appName = appInfo.appName?.trim() ?? "";
   const appTargetId = normalizeAppTargetId(appName);
   const existingApp = getRec(getAppState().appTargetById, appTargetId);
+
+  // Surface the current foreground app on the tray menu so the user knows what
+  // "Register current app" will act on before they click it.
+  invoke<void>("set_register_app_label", { appName: appName || null }).catch(
+    () => {
+      // Best-effort: the tray label is cosmetic; ignore failures.
+    },
+  );
 
   const shouldRegisterAppTarget = !existingApp || !existingApp.iconPath;
   if (shouldRegisterAppTarget) {

@@ -1,9 +1,9 @@
 ---
 title: Introduction
-description: Get up and running with Voquill on any platform.
+description: Get up and running with mausVoice on any platform.
 ---
 
-Voquill is a cross-platform desktop application for voice-to-text transcription. It runs on macOS, Windows, and Linux.
+mausVoice is a cross-platform desktop application for voice-to-text transcription. It runs on macOS, Windows, and Linux.
 
 ## Installation
 
@@ -15,9 +15,9 @@ Choose the guide for your platform:
 
 ## First Launch
 
-1. Open Voquill after installation.
+1. Open mausVoice after installation.
 2. Choose your transcription mode: **Local**, **API**, or **Cloud**.
-3. If using local mode, Voquill will download a Whisper model on first use.
+3. If using local mode, mausVoice will download a Whisper model on first use.
 
 ### Transcription Modes
 
@@ -25,7 +25,7 @@ Choose the guide for your platform:
 | ----- | ----------------------------------------------------- |
 | Local | On-device transcription using Whisper. Fully offline. |
 | API   | Direct connection to Groq's Whisper API.              |
-| Cloud | Transcription via Voquill's cloud service.            |
+| Cloud | Transcription via mausVoice's cloud service.            |
 
 ## Recording Your First Transcription
 
@@ -39,4 +39,4 @@ Press the global hotkey to start recording. Speak naturally, then press the hotk
 
 ## Enterprise
 
-For teams looking to distribute Voquill across an organization or run it on-premise with a private configuration, see the [Enterprise](/enterprise/overview) section.
+For teams looking to distribute mausVoice across an organization or run it on-premise with a private configuration, see the [Enterprise](/enterprise/overview) section.

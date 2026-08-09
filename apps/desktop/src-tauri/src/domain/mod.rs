@@ -20,7 +20,9 @@ pub use app_target::{AppTarget, EVT_REGISTER_CURRENT_APP};
 pub use chat_message::ChatMessage;
 pub use conversation::Conversation;
 pub use hotkey::{CompositorBinding, Hotkey};
-pub use keyboard::{KeysHeldPayload, EVT_KEYS_HELD};
+pub use keyboard::{
+    KeyboardListenerHealthPayload, KeysHeldPayload, EVT_KEYBOARD_LISTENER_HEALTH, EVT_KEYS_HELD,
+};
 pub use monitor::{MonitorAtCursor, OverlayAnchor, ScreenVisibleArea};
 pub use overlay::{OverlayPhase, OverlayPhasePayload, PillWindowSize, EVT_OVERLAY_PHASE};
 pub use paired_remote_device::PairedRemoteDevice;

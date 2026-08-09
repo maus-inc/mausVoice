@@ -1,8 +1,8 @@
 import * as readline from "readline";
 import { exec } from "child_process";
 import { promisify } from "util";
-import type { LlmMessage } from "@voquill/types";
-import { openaiStreamChat } from "@voquill/voice-ai";
+import type { LlmMessage } from "@maus-inc/types";
+import { openaiStreamChat } from "@maus-inc/voice-ai";
 import { AgentLoop } from "../src/agent-loop";
 import type { AgentLlmProvider, AgentTool } from "../src/types";
 

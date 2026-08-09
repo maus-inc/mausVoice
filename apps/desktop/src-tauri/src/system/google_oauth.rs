@@ -18,7 +18,7 @@ use url::{form_urlencoded, Url};
 
 use crate::state::oauth::GoogleOAuthConfig;
 
-pub const GOOGLE_AUTH_EVENT: &str = "voquill:google-auth";
+pub const GOOGLE_AUTH_EVENT: &str = "mausvoice:google-auth";
 
 const AUTHORIZATION_URL: &str = "https://accounts.google.com/o/oauth2/v2/auth";
 const TOKEN_URL: &str = "https://oauth2.googleapis.com/token";
@@ -90,7 +90,7 @@ pub async fn start_google_oauth(
         .map_err(|err| format!("OAuth listener failed: {err}"))?;
 
     let client = Client::builder()
-        .user_agent("voquill-desktop")
+        .user_agent("mausvoice-desktop")
         .build()
         .map_err(|err| format!("Failed to build HTTP client: {err}"))?;
 

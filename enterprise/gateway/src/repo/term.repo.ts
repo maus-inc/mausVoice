@@ -1,4 +1,4 @@
-import type { Term } from "@voquill/types";
+import type { Term } from "@maus-inc/types";
 import type { TermRow } from "../types/term.types";
 import { getPool } from "../utils/db.utils";
 

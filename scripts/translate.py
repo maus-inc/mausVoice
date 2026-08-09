@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Translation script for Voquill locale files.
+Translation script for mausVoice locale files.
 
 Usage:
     python translate.py desktop|admin|web
@@ -206,7 +206,7 @@ Text to translate:
 
 
 def main():
-    parser = argparse.ArgumentParser(description="Translate locale files for Voquill apps")
+    parser = argparse.ArgumentParser(description="Translate locale files for mausVoice apps")
     parser.add_argument("app", choices=["desktop", "admin", "web"], help="The app to translate")
     parser.add_argument("--dry-run", action="store_true", help="Show what would be translated without making changes")
     args = parser.parse_args()

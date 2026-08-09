@@ -3,11 +3,15 @@ const TRAY_ICON_DEFAULT: &[u8] = include_bytes!(concat!(
     env!("CARGO_MANIFEST_DIR"),
     "/icons/tray/menu-item-macos-36.png"
 ));
-
-#[cfg(not(target_os = "macos"))]
+#[cfg(target_os = "windows")]
 const TRAY_ICON_DEFAULT: &[u8] = include_bytes!(concat!(
     env!("CARGO_MANIFEST_DIR"),
-    "/icons/tray/menu-item-win-linux-36.png"
+    "/icons/tray/menu-item-windows-36.png"
+));
+#[cfg(target_os = "linux")]
+const TRAY_ICON_DEFAULT: &[u8] = include_bytes!(concat!(
+    env!("CARGO_MANIFEST_DIR"),
+    "/icons/tray/menu-item-linux-36.png"
 ));
 
 #[cfg(target_os = "macos")]
@@ -15,11 +19,15 @@ const TRAY_ICON_UPDATE: &[u8] = include_bytes!(concat!(
     env!("CARGO_MANIFEST_DIR"),
     "/icons/tray/update-macos-36.png"
 ));
-
-#[cfg(not(target_os = "macos"))]
+#[cfg(target_os = "windows")]
 const TRAY_ICON_UPDATE: &[u8] = include_bytes!(concat!(
     env!("CARGO_MANIFEST_DIR"),
-    "/icons/tray/update-win-linux-36.png"
+    "/icons/tray/update-windows-36.png"
+));
+#[cfg(target_os = "linux")]
+const TRAY_ICON_UPDATE: &[u8] = include_bytes!(concat!(
+    env!("CARGO_MANIFEST_DIR"),
+    "/icons/tray/update-linux-36.png"
 ));
 
 #[derive(Debug, Clone, serde::Deserialize, specta::Type)]
@@ -40,6 +48,7 @@ pub const EVT_SET_DICTATION_LANGUAGE: &str = "tray-set-dictation-language";
 const TRAY_LANGUAGE_ITEM_PREFIX: &str = "tray-lang:";
 
 static UPDATE_MENU_ITEM: OnceLock<MenuItem<tauri::Wry>> = OnceLock::new();
+static REGISTER_MENU_ITEM: OnceLock<MenuItem<tauri::Wry>> = OnceLock::new();
 static LANGUAGE_SUBMENU: OnceLock<Submenu<tauri::Wry>> = OnceLock::new();
 
 #[derive(Debug, Clone, serde::Deserialize, specta::Type)]
@@ -71,13 +80,14 @@ pub fn setup_tray(app: &mut tauri::App) -> tauri::Result<()> {
     let register_current_app_item = MenuItem::with_id(
         app,
         "register-current-app",
-        "Register this app",
+        "Register current app",
         true,
         None::<&str>,
     )?;
+    let _ = REGISTER_MENU_ITEM.set(register_current_app_item.clone());
     let language_submenu = SubmenuBuilder::new(app, "Language").build()?;
     let _ = LANGUAGE_SUBMENU.set(language_submenu.clone());
-    let quit_item = MenuItem::with_id(app, "quit-voquill", "Quit Voquill", true, None::<&str>)?;
+    let quit_item = MenuItem::with_id(app, "quit-mausvoice", "Quit mausVoice", true, None::<&str>)?;
 
     let menu = MenuBuilder::new(app)
         .item(&open_item)
@@ -94,7 +104,7 @@ pub fn setup_tray(app: &mut tauri::App) -> tauri::Result<()> {
     #[allow(unused_mut)]
     let mut tray_builder = TrayIconBuilder::with_id("main")
         .menu(&menu)
-        .tooltip("Voquill")
+        .tooltip("mausVoice")
         .icon(tray_icon_image)
         .on_menu_event(|app, event| match event.id().as_ref() {
             "open-dashboard" => {
@@ -117,7 +127,7 @@ pub fn setup_tray(app: &mut tauri::App) -> tauri::Result<()> {
                     log::error!("Failed to emit register-current-app event: {err}");
                 }
             }
-            "quit-voquill" => app.exit(0),
+            "quit-mausvoice" => app.exit(0),
             other if other.starts_with(TRAY_LANGUAGE_ITEM_PREFIX) => {
                 let code = other[TRAY_LANGUAGE_ITEM_PREFIX.len()..].to_string();
                 if let Err(err) = app.emit(EVT_SET_DICTATION_LANGUAGE, code) {
@@ -166,6 +176,17 @@ pub fn set_menu_icon(app: &tauri::AppHandle, variant: MenuIconVariant) -> Result
     }
 
     Ok(())
+}
+
+pub fn set_register_app_label(_app: &tauri::AppHandle, app_name: Option<String>) -> Result<(), String> {
+    let Some(item) = REGISTER_MENU_ITEM.get() else {
+        return Err("Register menu item not initialized".to_string());
+    };
+    let label = match app_name {
+        Some(name) if !name.trim().is_empty() => format!("Register current app [{name}]"),
+        _ => "Register current app".to_string(),
+    };
+    item.set_text(label).map_err(|err| err.to_string())
 }
 
 pub fn set_tray_language_menu(

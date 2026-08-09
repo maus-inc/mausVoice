@@ -39,7 +39,7 @@ import {
   type TenantRole,
   type User,
   type UserWithAuth,
-} from "@voquill/types";
+} from "@maus-inc/types";
 import { z } from "zod";
 
 export const CLOUD_MODELS = ["low", "medium", "large"] as const;

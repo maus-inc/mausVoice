@@ -20,9 +20,9 @@ pub fn get_native_setup_status() -> NativeSetupStatus {
     }
 }
 
-pub async fn run_native_setup() -> NativeSetupResult {
+pub async fn run_native_setup(_app: tauri::AppHandle) -> NativeSetupResult {
     if super::detect::is_wayland() {
-        super::wl::setup::run_native_setup().await
+        super::wl::setup::run_native_setup(_app).await
     } else {
         NativeSetupResult::Success
     }

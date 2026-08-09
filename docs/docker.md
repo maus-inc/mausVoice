@@ -40,9 +40,9 @@ docker compose exec ollama ollama pull llama3.1:8b
 docker compose exec ollama ollama pull mistral:7b
 ```
 
-### 3. Configure Voquill
+### 3. Configure mausVoice
 
-In Voquill settings, add an Ollama API key with:
+In mausVoice settings, add an Ollama API key with:
 
 - **URL**: `http://localhost:11430` (with auth) or `http://localhost:11431` (no auth)
 - **API Key**: `test-api-key-12345` (only needed for port 11430)
@@ -54,7 +54,7 @@ In Voquill settings, add an Ollama API key with:
 ┌─────────────────────────────────────────────────────────┐
 │                    Host Machine                         │
 │                                                         │
-│  Voquill App                                            │
+│  mausVoice App                                            │
 │      │                                                  │
 │      ├──► :11430 ──► Caddy (auth) ──► Ollama (:11434)  │
 │      │                                                  │
@@ -163,14 +163,14 @@ docker compose up -d
 
 1. Check if containers are running: `docker compose ps`
 2. Check logs: `docker compose logs ollama` or `docker compose logs caddy`
-3. Verify the URL and port in Voquill settings
+3. Verify the URL and port in mausVoice settings
 4. If using port 11430, ensure the API key is set
 
 ### Model not appearing in dropdown
 
 1. Ensure the model is pulled: `docker compose exec ollama ollama list`
 2. Check Ollama logs: `docker compose logs ollama`
-3. Try refreshing the model picker in Voquill
+3. Try refreshing the model picker in mausVoice
 
 ### GPU not being used (Linux)
 
@@ -194,7 +194,7 @@ brew install ollama
 ollama serve
 ```
 
-Then point Voquill to `http://localhost:11434`.
+Then point mausVoice to `http://localhost:11434`.
 
 ## Stopping the Services
 

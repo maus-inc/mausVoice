@@ -5,6 +5,10 @@ use std::sync::Arc;
 pub enum NativeSetupResult {
     Success,
     RequireRestart,
+    /// The user dismissed the privilege-elevation prompt (e.g. the polkit
+    /// authentication dialog on Linux). Distinct from `Failed` so the UI can
+    /// stay quiet instead of reporting an error.
+    Cancelled,
     Failed,
 }
 
@@ -186,6 +190,8 @@ pub trait Recorder: Send + Sync {
         chunk_callback: Option<ChunkCallback>,
     ) -> Result<(), Box<dyn std::error::Error>>;
     fn stop(&self) -> Result<crate::domain::RecordingResult, Box<dyn std::error::Error>>;
+    fn pause(&self) -> Result<(), Box<dyn std::error::Error>>;
+    fn resume(&self) -> Result<(), Box<dyn std::error::Error>>;
     fn set_preferred_input_device(&self, _name: Option<String>) {}
     fn clear_device_cache(&self) {}
     fn current_sample_rate(&self) -> Option<u32> {

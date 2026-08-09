@@ -57,6 +57,7 @@ pub(crate) fn draw_all(cr: &cairo::Context, state: &PillState) {
         }
 
         draw_cancel_button(cr, state, ww, wh);
+        draw_pause_resume_button(cr, state, ww, wh);
     }
 
     cr.restore().ok();
@@ -66,9 +67,9 @@ pub(crate) fn pill_position(state: &PillState, ww: f64, wh: f64) -> (f64, f64, f
     let expand_t = state.expand_t.get();
     let pill_w = lerp(MIN_PILL_WIDTH, EXPANDED_PILL_WIDTH, expand_t);
     let pill_h = lerp(MIN_PILL_HEIGHT, EXPANDED_PILL_HEIGHT, expand_t);
-    let pill_x = (ww - pill_w) / 2.0;
+    let mut pill_x = (ww - pill_w) / 2.0;
 
-    let pill_y = if state.assistant_active.get() || state.panel_open_t.get() > 0.01 {
+    let mut pill_y = if state.assistant_active.get() || state.panel_open_t.get() > 0.01 {
         let panel_bottom = wh - PANEL_BOTTOM_MARGIN;
         panel_bottom - PILL_BOTTOM_INSET - pill_h
     } else {
@@ -76,6 +77,14 @@ pub(crate) fn pill_position(state: &PillState, ww: f64, wh: f64) -> (f64, f64, f
         let bottom_offset = 6.0;
         wh - bottom_offset - pill_h
     };
+
+    // On Wayland backends the pill draws inside a full-window canvas, so a
+    // drag translates the draw position. X11 moves the real toplevel instead.
+    // Only apply while actually dragging so a cancelled long-press reverts.
+    if state.dragging.get() && state.backend.get() != crate::pill::Backend::X11 {
+        pill_x += state.drag_draw_offset_x.get();
+        pill_y += state.drag_draw_offset_y.get();
+    }
 
     (pill_x, pill_y, pill_w, pill_h)
 }
@@ -107,6 +116,10 @@ fn draw_pill(cr: &cairo::Context, state: &PillState, ww: f64, wh: f64) {
             draw_waveform(cr, rx, ry, pill_w, pill_h, expand_t, state);
             draw_edge_gradient(cr, rx, ry, pill_w, pill_h, radius, expand_t);
         }
+        Phase::Paused if expand_t > 0.1 => {
+            // Keep expanded voice field with frozen bars while paused.
+            draw_edge_gradient(cr, rx, ry, pill_w, pill_h, radius, expand_t);
+        }
         Phase::Loading if expand_t > 0.1 => {
             draw_loading(cr, rx, ry, pill_w, pill_h, radius, expand_t, state);
         }
@@ -116,10 +129,66 @@ fn draw_pill(cr: &cairo::Context, state: &PillState, ww: f64, wh: f64) {
         _ => {}
     }
 
+    draw_long_press_ring(cr, rx, ry, pill_w, pill_h, state);
+    draw_cancel_flash(cr, rx, ry, pill_w, pill_h, state);
+
     state.click_regions.borrow_mut().push(ClickRegion {
         x: rx, y: ry, w: pill_w, h: pill_h,
         action: if state.assistant_active.get() { ClickAction::Pill } else { ClickAction::Pill },
     });
+}
+
+fn draw_long_press_ring(
+    cr: &cairo::Context, rx: f64, ry: f64, pill_w: f64, pill_h: f64, state: &PillState,
+) {
+    let show = state.long_press_active.get() || state.dragging.get();
+    if !show {
+        return;
+    }
+
+    let cx = rx + pill_w / 2.0;
+    let cy = ry + pill_h / 2.0;
+    let radius = pill_w / 2.0 + 6.0;
+
+    cr.save().ok();
+
+    // Faint full-circle track
+    cr.set_source_rgba(1.0, 1.0, 1.0, 0.18);
+    cr.set_line_width(3.0);
+    cr.arc(cx, cy, radius, 0.0, 2.0 * PI);
+    let _ = cr.stroke();
+
+    // Progress arc (top, clockwise) filling toward the 5s threshold
+    let t = (state.long_press_elapsed.get() / LONG_PRESS_DURATION).clamp(0.0, 1.0);
+    if t > 0.0 {
+        cr.set_source_rgba(0.45, 0.86, 1.0, 0.95);
+        cr.set_line_width(3.0);
+        cr.arc(cx, cy, radius, -PI / 2.0, -PI / 2.0 + t * 2.0 * PI);
+        let _ = cr.stroke();
+    }
+
+    cr.restore().ok();
+}
+
+fn draw_cancel_flash(
+    cr: &cairo::Context, rx: f64, ry: f64, pill_w: f64, pill_h: f64, state: &PillState,
+) {
+    let cf = state.cancel_flash.get();
+    if cf <= 0.0 {
+        return;
+    }
+
+    let cx = rx + pill_w / 2.0;
+    let cy = ry + pill_h / 2.0;
+    let radius = pill_w / 2.0 + 6.0;
+    let alpha = (cf / CANCEL_FLASH_DURATION).clamp(0.0, 1.0) * 0.9;
+
+    cr.save().ok();
+    cr.set_source_rgba(1.0, 0.35, 0.35, alpha);
+    cr.set_line_width(3.0);
+    cr.arc(cx, cy, radius, 0.0, 2.0 * PI);
+    let _ = cr.stroke();
+    cr.restore().ok();
 }
 
 fn draw_waveform(
@@ -230,9 +299,9 @@ fn draw_loading(
 }
 
 fn draw_idle_label(cr: &cairo::Context, rx: f64, ry: f64, pill_w: f64, pill_h: f64, expand_t: f64) {
-    cr.set_source_rgba(1.0, 1.0, 1.0, 0.4 * expand_t);
-    cr.select_font_face("sans-serif", cairo::FontSlant::Normal, cairo::FontWeight::Bold);
-    cr.set_font_size(11.0);
+    cr.set_source_rgba(1.0, 1.0, 1.0, 0.55 * expand_t);
+    cr.select_font_face("Satoshi", cairo::FontSlant::Normal, cairo::FontWeight::Bold);
+    cr.set_font_size(12.0);
     let text = "Click to dictate";
     let extents = cr.text_extents(text).unwrap();
     let tx = rx + (pill_w - extents.width()) / 2.0 - extents.x_bearing();
@@ -254,8 +323,8 @@ fn draw_tooltip(cr: &cairo::Context, state: &PillState, ww: f64, pill_area_top: 
         return;
     }
 
-    cr.select_font_face("sans-serif", cairo::FontSlant::Normal, cairo::FontWeight::Bold);
-    cr.set_font_size(11.0);
+    cr.select_font_face("Satoshi", cairo::FontSlant::Normal, cairo::FontWeight::Bold);
+    cr.set_font_size(12.0);
     let text_extents = cr.text_extents(&style_name).unwrap();
     let text_w = text_extents.width().clamp(20.0, 100.0);
 
@@ -304,7 +373,7 @@ fn draw_tooltip(cr: &cairo::Context, state: &PillState, ww: f64, pill_area_top: 
 
     // Style name text
     cr.set_source_rgba(1.0, 1.0, 1.0, 0.9 * alpha);
-    cr.select_font_face("sans-serif", cairo::FontSlant::Normal, cairo::FontWeight::Bold);
+    cr.select_font_face("Satoshi", cairo::FontSlant::Normal, cairo::FontWeight::Bold);
     cr.set_font_size(11.0);
     let text_area_left = tooltip_rx + padding_h + chevron_area;
     let text_area_right = tooltip_rx + tooltip_w - padding_h - chevron_area;
@@ -741,7 +810,7 @@ fn draw_compact_content(
     let text = "What can I help you with?";
     let text_alpha = if state.phase.get() == Phase::Recording { 0.96 } else { 0.8 };
     cr.set_source_rgba(1.0, 1.0, 1.0, text_alpha * alpha);
-    cr.select_font_face("sans-serif", cairo::FontSlant::Normal, cairo::FontWeight::Normal);
+    cr.select_font_face("Satoshi", cairo::FontSlant::Normal, cairo::FontWeight::Normal);
     cr.set_font_size(18.0);
     let extents = cr.text_extents(text).unwrap();
     let tx = panel_x + (panel_w - extents.width()) / 2.0 - extents.x_bearing();
@@ -770,7 +839,7 @@ fn draw_transcript(
     let scroll = state.scroll_offset.get();
     let mut y = area_y + top_pad - scroll;
 
-    cr.select_font_face("sans-serif", cairo::FontSlant::Normal, cairo::FontWeight::Normal);
+    cr.select_font_face("Satoshi", cairo::FontSlant::Normal, cairo::FontWeight::Normal);
     cr.set_font_size(14.0);
 
     let line_height = 20.0;
@@ -804,7 +873,7 @@ fn draw_transcript(
             };
 
             cr.set_source_rgba(1.0, 1.0, 1.0, 0.5 * alpha);
-            cr.select_font_face("sans-serif", cairo::FontSlant::Normal, cairo::FontWeight::Normal);
+            cr.select_font_face("Satoshi", cairo::FontSlant::Normal, cairo::FontWeight::Normal);
             cr.set_font_size(12.0);
 
             draw_wrench_icon(cr, area_x, y + 2.0, 12.0, 0.5 * alpha);
@@ -817,7 +886,7 @@ fn draw_transcript(
             let (r, g, b) = if msg.is_error { (1.0, 0.4, 0.4) } else { (1.0, 1.0, 1.0) };
 
             cr.set_source_rgba(r, g, b, color_alpha * alpha);
-            cr.select_font_face("sans-serif", cairo::FontSlant::Normal, cairo::FontWeight::Normal);
+            cr.select_font_face("Satoshi", cairo::FontSlant::Normal, cairo::FontWeight::Normal);
             cr.set_font_size(14.0);
 
             let lines = wrap_text(cr, content, area_w);
@@ -846,7 +915,7 @@ fn draw_streaming_activity(
     cr: &cairo::Context, streaming: &PillStreaming,
     x: f64, mut y: f64, _w: f64, alpha: f64,
 ) -> f64 {
-    cr.select_font_face("sans-serif", cairo::FontSlant::Italic, cairo::FontWeight::Normal);
+    cr.select_font_face("Satoshi", cairo::FontSlant::Italic, cairo::FontWeight::Normal);
     cr.set_font_size(12.0);
     cr.set_source_rgba(1.0, 1.0, 1.0, 0.5 * alpha);
 
@@ -875,7 +944,7 @@ fn draw_thinking_text(
     cr: &cairo::Context, x: f64, y: f64, alpha: f64, state: &PillState,
 ) -> f64 {
     let text = "Thinking";
-    cr.select_font_face("sans-serif", cairo::FontSlant::Normal, cairo::FontWeight::Normal);
+    cr.select_font_face("Satoshi", cairo::FontSlant::Normal, cairo::FontWeight::Normal);
     cr.set_font_size(14.0);
     let extents = cr.text_extents(text).unwrap();
 
@@ -916,14 +985,14 @@ fn draw_permission_card(
 
     let tool_label = perm.description.as_deref().unwrap_or(&perm.tool_name);
     cr.set_source_rgba(1.0, 1.0, 1.0, 0.82 * alpha);
-    cr.select_font_face("sans-serif", cairo::FontSlant::Normal, cairo::FontWeight::Bold);
+    cr.select_font_face("Satoshi", cairo::FontSlant::Normal, cairo::FontWeight::Bold);
     cr.set_font_size(12.0);
     cr.move_to(x + 12.0, y + 18.0);
     let _ = cr.show_text(tool_label);
 
     if let Some(ref reason) = perm.reason {
         cr.set_source_rgba(1.0, 1.0, 1.0, 0.5 * alpha);
-        cr.select_font_face("sans-serif", cairo::FontSlant::Normal, cairo::FontWeight::Normal);
+        cr.select_font_face("Satoshi", cairo::FontSlant::Normal, cairo::FontWeight::Normal);
         cr.set_font_size(11.0);
         cr.move_to(x + 12.0, y + 32.0);
         let _ = cr.show_text(reason);
@@ -947,7 +1016,7 @@ fn draw_permission_card(
         let _ = cr.stroke();
 
         cr.set_source_rgba(1.0, 1.0, 1.0, text_alpha * alpha);
-        cr.select_font_face("sans-serif", cairo::FontSlant::Normal, cairo::FontWeight::Normal);
+        cr.select_font_face("Satoshi", cairo::FontSlant::Normal, cairo::FontWeight::Normal);
         cr.set_font_size(11.0);
         let ext = cr.text_extents(label).unwrap();
         cr.move_to(btn_x + (btn_w - ext.width()) / 2.0 - ext.x_bearing(), btn_y + (PERM_BUTTON_HEIGHT - ext.height()) / 2.0 - ext.y_bearing());
@@ -973,7 +1042,7 @@ fn draw_user_prompt_preview(
     prompt: &str, alpha: f64,
 ) {
     cr.set_source_rgba(1.0, 1.0, 1.0, 0.5 * alpha);
-    cr.select_font_face("sans-serif", cairo::FontSlant::Normal, cairo::FontWeight::Normal);
+    cr.select_font_face("Satoshi", cairo::FontSlant::Normal, cairo::FontWeight::Normal);
     cr.set_font_size(14.0);
 
     let max_w = panel_w * 0.5;
@@ -1150,6 +1219,66 @@ fn draw_cancel_button(cr: &cairo::Context, state: &PillState, ww: f64, wh: f64) 
     }
 }
 
+fn draw_pause_resume_button(cr: &cairo::Context, state: &PillState, ww: f64, wh: f64) {
+    let t = state.cancel_t.get();
+    if t < 0.01 {
+        return;
+    }
+
+    let (pill_x, pill_y, pill_w, _) = pill_position(state, ww, wh);
+    let pause_x = pill_x + pill_w - CANCEL_BUTTON_SIZE * 1.5 - 6.0;
+    let pause_y = pill_y - CANCEL_BUTTON_SIZE / 2.0 - 2.0;
+    let pause_cx = pause_x + CANCEL_BUTTON_SIZE / 2.0;
+    let pause_cy = pause_y + CANCEL_BUTTON_SIZE / 2.0;
+
+    let scale = 0.5 + 0.5 * t;
+    let r = (CANCEL_BUTTON_SIZE / 2.0) * scale;
+    let paused = state.phase.get() == Phase::Paused;
+
+    cr.save().ok();
+    cr.translate(pause_cx, pause_cy);
+    cr.scale(scale, scale);
+    cr.translate(-pause_cx, -pause_cy);
+
+    cr.arc(pause_cx, pause_cy, r, 0.0, TAU);
+    cr.set_source_rgba(0.52, 0.52, 0.52, t);
+    let _ = cr.fill();
+
+    cr.set_source_rgba(1.0, 1.0, 1.0, t);
+    cr.set_line_width(1.8);
+    cr.set_line_cap(cairo::LineCap::Round);
+    if paused {
+        // Resume: play chevron
+        let s = 4.0 * scale;
+        cr.move_to(pause_cx - s * 0.35, pause_cy - s);
+        cr.line_to(pause_cx + s * 0.75, pause_cy);
+        cr.line_to(pause_cx - s * 0.35, pause_cy + s);
+        let _ = cr.stroke();
+    } else {
+        // Pause: two bars
+        let bw = 1.6 * scale;
+        let bh = 7.0 * scale;
+        let gap = 2.2 * scale;
+        cr.rectangle(pause_cx - gap - bw, pause_cy - bh / 2.0, bw, bh);
+        cr.rectangle(pause_cx + gap, pause_cy - bh / 2.0, bw, bh);
+        let _ = cr.fill();
+    }
+
+    cr.restore().ok();
+
+    if t > 0.5 {
+        let action = if paused {
+            ClickAction::ResumeDictation
+        } else {
+            ClickAction::PauseDictation
+        };
+        state.click_regions.borrow_mut().push(ClickRegion {
+            x: pause_x, y: pause_y, w: CANCEL_BUTTON_SIZE, h: CANCEL_BUTTON_SIZE,
+            action,
+        });
+    }
+}
+
 fn draw_wrench_icon(cr: &cairo::Context, x: f64, y: f64, size: f64, alpha: f64) {
     cr.set_source_rgba(1.0, 1.0, 1.0, alpha);
     cr.set_line_width(1.0);
@@ -1266,7 +1395,7 @@ fn draw_broadcast_transcript(cr: &cairo::Context, state: &PillState, ww: f64, wh
         return;
     }
 
-    cr.select_font_face("sans-serif", cairo::FontSlant::Normal, cairo::FontWeight::Normal);
+    cr.select_font_face("Satoshi", cairo::FontSlant::Normal, cairo::FontWeight::Normal);
     cr.set_font_size(TRANSCRIPT_FONT_SIZE);
     let extents = match cr.text_extents(&text) {
         Ok(e) => e,

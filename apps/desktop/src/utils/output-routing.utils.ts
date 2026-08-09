@@ -2,7 +2,7 @@ import { invoke } from "@tauri-apps/api/core";
 import type {
   RouteTranscriptOutputArgs,
   RouteTranscriptOutputResult,
-} from "@voquill/types";
+} from "@maus-inc/types";
 import { getIntl } from "../i18n/intl";
 import { getAppState } from "../store";
 import { getLogger } from "./log.utils";

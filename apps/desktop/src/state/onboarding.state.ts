@@ -1,9 +1,10 @@
-import { Nullable } from "@voquill/types";
+import { Nullable } from "@maus-inc/types";
 import { getIsDevMode } from "../utils/env.utils";
 import { PricingPlan } from "../utils/price.utils";
 
 export type OnboardingPageKey =
   | "signIn"
+  | "personalCredentials"
   | "chooseTranscription"
   | "chooseLlm"
   | "userDetails"

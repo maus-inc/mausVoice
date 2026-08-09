@@ -1,8 +1,8 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
-  "productName": "Voquill Installer",
+  "productName": "mausVoice Installer",
   "version": "0.1.0",
-  "identifier": "com.voquill.installer",
+  "identifier": "com.mausinc.installer",
   "build": {
     "beforeDevCommand": "vite",
     "devUrl": "http://localhost:1421",
@@ -12,7 +12,7 @@
   "app": {
     "windows": [
       {
-        "title": "Voquill Installer",
+        "title": "mausVoice Installer",
         "width": 480,
         "height": 320,
         "resizable": false,

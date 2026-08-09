@@ -14,7 +14,7 @@ import {
 } from "../common/SegmentedControl";
 import { maybeArrayElements } from "./AIPostProcessingConfiguration";
 import { ApiKeyList } from "./ApiKeyList";
-import { VoquillCloudSetting } from "./VoquillCloudSetting";
+import { MausVoiceCloudSetting } from "./MausVoiceCloudSetting";
 
 type AIAgentModeConfigurationProps = {
   hideCloudOption?: boolean;
@@ -45,7 +45,7 @@ export const AIAgentModeConfiguration = ({
             [
               {
                 value: "cloud",
-                label: "Voquill",
+                label: "mausVoice",
               },
             ],
           ),
@@ -69,7 +69,7 @@ export const AIAgentModeConfiguration = ({
         />
       )}
 
-      {effectiveMode === "cloud" && <VoquillCloudSetting />}
+      {effectiveMode === "cloud" && <MausVoiceCloudSetting />}
     </Stack>
   );
 };

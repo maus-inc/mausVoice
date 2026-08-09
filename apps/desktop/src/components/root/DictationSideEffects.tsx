@@ -1,6 +1,6 @@
 import { invoke } from "@tauri-apps/api/core";
-import { AppTarget } from "@voquill/types";
-import { delayed } from "@voquill/utilities";
+import { AppTarget } from "@maus-inc/types";
+import { delayed } from "@maus-inc/utilities";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useIntl } from "react-intl";
 import {
@@ -116,6 +116,7 @@ export const DictationSideEffects = () => {
   const recordingAutoStopTimerRef = useRef<NodeJS.Timeout | null>(null);
   const cancelPromptTimerRef = useRef<NodeJS.Timeout | null>(null);
   const isStoppingRef = useRef(false);
+  const isPausedRef = useRef(false);
   const [isStopping, setIsStopping] = useState(false);
   const assistantModeEnabled = useAppStore(getIsAssistantModeEnabled);
 
@@ -139,6 +140,8 @@ export const DictationSideEffects = () => {
       new ActivationController(
         () => startDictationRecording(),
         () => stopDictationRecording(),
+        // Hold-to-talk: dictation records while the hotkey (Fn) is held and stops on release.
+        true,
       ),
     [],
   );
@@ -211,6 +214,7 @@ export const DictationSideEffects = () => {
   }, []);
 
   const clearRecordingState = useCallback(() => {
+    isPausedRef.current = false;
     produceAppState((draft) => {
       draft.activeRecordingMode = null;
       draft.dictationLanguageOverride = null;
@@ -562,6 +566,7 @@ export const DictationSideEffects = () => {
         getLogger().info(
           `Starting recording (mic=${preferredMicrophone ?? "default"})`,
         );
+        isPausedRef.current = false;
         const [, startRecordingResult] = await Promise.all([
           strategy.setPhase("recording"),
           invoke<StartRecordingResponse>("start_recording", {
@@ -815,8 +820,72 @@ export const DictationSideEffects = () => {
     onFire: openPillConversation,
   });
 
+  const pauseDictation = useCallback(async () => {
+    if (isPausedRef.current || isStoppingRef.current) {
+      return;
+    }
+    if (!sessionRef.current || !strategyRef.current) {
+      return;
+    }
+    if (getAppState().activeRecordingMode === null) {
+      return;
+    }
+    try {
+      getLogger().info("Pausing dictation");
+      // Hold mic capture without finalizing the session so the user can resume.
+      await invoke("pause_recording");
+      isPausedRef.current = true;
+      clearRecordingTimers();
+      // Keep the voice field fully open and slide the style bar in via paused phase.
+      await strategyRef.current.setPhase("paused");
+      showToast({
+        message: intl.formatMessage({
+          defaultMessage:
+            "Dictation paused — tap play to continue or X to cancel",
+        }),
+        toastType: "info",
+        duration: 4_000,
+      });
+    } catch (error) {
+      getLogger().error(`Failed to pause dictation: ${error}`);
+    }
+  }, [clearRecordingTimers, intl]);
+
+  const resumeDictation = useCallback(async () => {
+    if (!isPausedRef.current || isStoppingRef.current) {
+      return;
+    }
+    if (!sessionRef.current || !strategyRef.current) {
+      return;
+    }
+    try {
+      getLogger().info("Resuming dictation");
+      await invoke("resume_recording");
+      isPausedRef.current = false;
+      await strategyRef.current.setPhase("recording");
+      startRecordingTimers();
+    } catch (error) {
+      getLogger().error(`Failed to resume dictation: ${error}`);
+      showToast({
+        message: intl.formatMessage({
+          defaultMessage: "Could not resume dictation",
+        }),
+        toastType: "error",
+        duration: 5_000,
+      });
+    }
+  }, [intl, startRecordingTimers]);
+
   useTauriListen<void>("cancel-dictation", () => {
     abortRecording();
+  });
+
+  useTauriListen<void>("pause-dictation", () => {
+    void pauseDictation();
+  });
+
+  useTauriListen<void>("resume-dictation", () => {
+    void resumeDictation();
   });
 
   useToastAction(async (payload) => {

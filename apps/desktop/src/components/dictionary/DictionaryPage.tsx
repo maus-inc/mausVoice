@@ -1,6 +1,6 @@
 import AddRoundedIcon from "@mui/icons-material/AddRounded";
 import { Button } from "@mui/material";
-import { Term } from "@voquill/types";
+import { Term } from "@maus-inc/types";
 import dayjs from "dayjs";
 import { useCallback, useState } from "react";
 import { FormattedMessage } from "react-intl";
@@ -47,7 +47,7 @@ export default function DictionaryPage() {
         produceAppState((draft) => {
           draft.termById[created.id] = created;
         });
-        setLocalStorageValue("voquill:checklist-dictionary", true);
+        setLocalStorageValue("mausvoice:checklist-dictionary", true);
       } catch (error) {
         produceAppState((draft) => {
           delete draft.termById[newTerm.id];
@@ -82,7 +82,7 @@ export default function DictionaryPage() {
       <ScrollListPage
         title={<FormattedMessage defaultMessage="Dictionary" />}
         subtitle={
-          <FormattedMessage defaultMessage="Voquill may misunderstand you on occasion. If you see certain words being missed frequently, you can define a replacement rule here to fix the spelling automatically." />
+          <FormattedMessage defaultMessage="mausVoice may misunderstand you on occasion. If you see certain words being missed frequently, you can define a replacement rule here to fix the spelling automatically." />
         }
         action={
           <Button

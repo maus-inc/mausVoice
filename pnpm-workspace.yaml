@@ -3,3 +3,12 @@ packages:
   - "apps/firebase/functions"
   - "packages/*"
   - "enterprise/*"
+
+onlyBuiltDependencies:
+  - "esbuild"
+  - "sharp"
+  - "bcrypt"
+  - "protobufjs"
+  - "chromedriver"
+  - "@firebase/util"
+  - "re2"

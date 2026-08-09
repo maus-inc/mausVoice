@@ -84,10 +84,21 @@ export default function HomePage() {
       <HomeSideEffects />
       <Stack direction="column" spacing={4}>
         <Box>
-          <Typography variant="h4" fontWeight={700} sx={{ mb: 0.5 }}>
+          <Typography variant="h4" fontWeight={500} sx={{ mb: 0.5 }}>
             <FormattedMessage
               defaultMessage="Welcome back, {name}"
-              values={{ name: userName }}
+              values={{
+                name: (
+                  <span
+                    style={{
+                      fontFamily: "var(--font-display)",
+                      fontSize: "0.92em",
+                    }}
+                  >
+                    {userName}
+                  </span>
+                ),
+              }}
             />
           </Typography>
           <DictationInstruction />

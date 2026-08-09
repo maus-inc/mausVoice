@@ -14,7 +14,7 @@ import {
   Tooltip,
   Typography,
 } from "@mui/material";
-import type { UserWithAuth } from "@voquill/types";
+import type { UserWithAuth } from "@maus-inc/types";
 import { useMemo, useState } from "react";
 import { FormattedMessage, useIntl } from "react-intl";
 import { loadUsers, setUserAdmin } from "../../actions/users.actions";
@@ -201,10 +201,10 @@ export default function UsersTab() {
                     values={{
                       email: (
                         <a
-                          href="mailto:enterprise@voquill.com"
+                          href="mailto:enterprise@mausvoice.com"
                           style={{ color: "inherit" }}
                         >
-                          enterprise@voquill.com
+                          enterprise@mausvoice.com
                         </a>
                       ),
                     }}

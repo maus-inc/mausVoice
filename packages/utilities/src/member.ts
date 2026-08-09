@@ -1,4 +1,4 @@
-import { FullConfig, Member, MemberPlan } from "@voquill/types";
+import { FullConfig, Member, MemberPlan } from "@maus-inc/types";
 
 export const TRIAL_DURATION_DAYS = 7;
 

@@ -1,5 +1,5 @@
 {
-  "name": "@voquill/windows-installer",
+  "name": "@maus-inc/windows-installer",
   "version": "0.1.0",
   "private": true,
   "type": "module",

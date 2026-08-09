@@ -18,7 +18,7 @@ pub struct AppState {
 impl AppState {
     pub fn new(config: SidecarConfig) -> Result<Self, String> {
         let http_client = reqwest::Client::builder()
-            .user_agent("voquill-rust-transcription/0.1")
+            .user_agent("mausvoice-rust-transcription/0.1")
             .build()
             .map_err(|err| format!("failed to initialize http client: {err}"))?;
 

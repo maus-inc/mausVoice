@@ -14,7 +14,7 @@ import {
   Stack,
   Typography,
 } from "@mui/material";
-import type { Hotkey } from "@voquill/types";
+import type { Hotkey } from "@maus-inc/types";
 import { useEffect, useMemo, useState } from "react";
 import { FormattedMessage } from "react-intl";
 import { showErrorSnackbar } from "../../actions/app.actions";

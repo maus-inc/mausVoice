@@ -1,5 +1,5 @@
 {
-  "extends": "@voquill/typescript-config/package-config.json",
+  "extends": "@maus-inc/typescript-config/package-config.json",
   "compilerOptions": {
     "rootDir": "src",
     "outDir": "dist"

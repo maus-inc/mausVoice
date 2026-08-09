@@ -1,8 +1,68 @@
 import fs from "fs";
 import path from "path";
+import pg from "pg";
 import { getPool } from "../utils/db.utils";
 
 const MIGRATIONS_DIR = path.join(__dirname, "db", "migrations");
+
+const LEGACY_DB_NAME = "voquill";
+const CURRENT_DB_NAME = "mausvoice";
+
+/**
+ * Idempotent pre-migration bootstrap for existing deployments.
+ *
+ * Postgres only honors POSTGRES_DB when the data directory is empty. An
+ * existing volume keeps whatever database it was initialized with — the
+ * pre-rebrand name "voquill". If that volume upgrades, the gateway's
+ * DATABASE_URL points at "mausvoice", which does not exist, and every
+ * connection (including migrations) fails before any SQL can run.
+ *
+ * Connect to the postgres maintenance database and:
+ *  - if "mausvoice" already exists: nothing to do;
+ *  - else if legacy "voquill" exists: rename it to "mausvoice" (preserves data);
+ *  - else: create "mausvoice".
+ */
+export async function ensureDatabase(): Promise<void> {
+  const raw = process.env.DATABASE_URL;
+  if (!raw) {
+    throw new Error("DATABASE_URL is not set");
+  }
+  const url = new URL(raw);
+  const maintenanceUrl = new URL(url.toString());
+  maintenanceUrl.pathname = "/postgres";
+
+  const client = new pg.Client({ connectionString: maintenanceUrl.toString() });
+  try {
+    await client.connect();
+    const has = async (name: string): Promise<boolean> => {
+      const result = await client.query(
+        "SELECT 1 FROM pg_database WHERE datname = $1",
+        [name],
+      );
+      return (result.rowCount ?? 0) > 0;
+    };
+
+    if (await has(CURRENT_DB_NAME)) {
+      console.log(`Database "${CURRENT_DB_NAME}" already exists; nothing to migrate`);
+      return;
+    }
+
+    if (await has(LEGACY_DB_NAME)) {
+      console.log(
+        `Renaming legacy database "${LEGACY_DB_NAME}" to "${CURRENT_DB_NAME}"`,
+      );
+      await client.query(
+        `ALTER DATABASE "${LEGACY_DB_NAME}" RENAME TO "${CURRENT_DB_NAME}"`,
+      );
+      return;
+    }
+
+    console.log(`Creating database "${CURRENT_DB_NAME}"`);
+    await client.query(`CREATE DATABASE "${CURRENT_DB_NAME}"`);
+  } finally {
+    await client.end().catch(() => {});
+  }
+}
 
 async function ensureMigrationsTable(): Promise<void> {
   const pool = getPool();

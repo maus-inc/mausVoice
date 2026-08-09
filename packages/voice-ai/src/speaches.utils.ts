@@ -1,4 +1,4 @@
-import { retry, countWords } from "@voquill/utilities";
+import { retry, countWords } from "@maus-inc/utilities";
 
 export type SpeachesTestIntegrationArgs = {
   baseUrl: string;

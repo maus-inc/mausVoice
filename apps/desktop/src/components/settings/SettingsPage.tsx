@@ -8,13 +8,10 @@ import {
   Edit,
   GraphicEqOutlined,
   KeyboardAltOutlined,
+  KeyOutlined,
   LanguageOutlined,
-  LockOutlined,
-  LogoutOutlined,
   MicOutlined,
   MoreVertOutlined,
-  PaymentOutlined,
-  PersonRemoveOutlined,
   PrivacyTipOutlined,
   RocketLaunchOutlined,
   TroubleshootOutlined,
@@ -22,9 +19,14 @@ import {
   WarningAmberOutlined,
 } from "@mui/icons-material";
 import {
+  Alert,
   Box,
   Button,
   Chip,
+  Dialog,
+  DialogActions,
+  DialogContent,
+  DialogTitle,
   IconButton,
   Link,
   MenuItem,
@@ -32,17 +34,25 @@ import {
   SelectChangeEvent,
   Stack,
   Switch,
+  TextField,
   Tooltip,
   Typography,
 } from "@mui/material";
+import {
+  commands,
+  NativeSetupResult,
+} from "../../../../../packages/desktop-native-apis/src/bindings";
 import { openUrl } from "@tauri-apps/plugin-opener";
 import { ChangeEvent, useState } from "react";
 import { FormattedMessage, useIntl } from "react-intl";
-import { showErrorSnackbar } from "../../actions/app.actions";
+import { showErrorSnackbar, showSnackbar } from "../../actions/app.actions";
+import {
+  savePersonalDeepgramApiKey,
+  savePersonalGroqApiKey,
+} from "../../actions/personal-use.actions";
 import { setAutoLaunchEnabled } from "../../actions/settings.actions";
 import { loadTones } from "../../actions/tone.actions";
 import { setPreferredLanguage } from "../../actions/user.actions";
-import { getAuthRepo, getStripeRepo } from "../../repos";
 import { produceAppState, useAppStore } from "../../store";
 import {
   getAllowsChangePostProcessing,
@@ -54,27 +64,77 @@ import {
   KEYBOARD_LAYOUT_LANGUAGE,
   WHISPER_LANGUAGES,
 } from "../../utils/language.utils";
-import { getIsPaidSubscriber } from "../../utils/member.utils";
 import {
   getDetectedSystemLocale,
   getGenerativePrefs,
-  getHasEmailProvider,
-  getIsSignedIn,
   getMyUser,
 } from "../../utils/user.utils";
+import {
+  PERSONAL_DEEPGRAM_API_KEY_ID,
+  PERSONAL_DEEPGRAM_API_KEY_NAME,
+  PERSONAL_GROQ_API_KEY_ID,
+  PERSONAL_GROQ_API_KEY_NAME,
+} from "../../utils/personal-use.utils";
 import { ListTile } from "../common/ListTile";
+import { ConfirmDialog } from "../common/ConfirmDialog";
 import { Section } from "../common/Section";
 import { DashboardEntryLayout } from "../dashboard/DashboardEntryLayout";
+import { getPlatform } from "../../utils/platform.utils";
 
 export default function SettingsPage() {
-  const hasEmailProvider = useAppStore(getHasEmailProvider);
-  const isSubscribed = useAppStore(getIsPaidSubscriber);
   const isEnterprise = useAppStore((state) => state.isEnterprise);
   const allowChangeTranscription = useAppStore(getAllowsChangeTranscription);
   const allowChangePostProcessing = useAppStore(getAllowsChangePostProcessing);
-  const [manageSubscriptionLoading, setManageSubscriptionLoading] =
-    useState(false);
-  const isSignedIn = useAppStore(getIsSignedIn);
+  const [groqDialogOpen, setGroqDialogOpen] = useState(false);
+  const [groqApiKeyInput, setGroqApiKeyInput] = useState("");
+  const [groqSaving, setGroqSaving] = useState(false);
+  const [groqError, setGroqError] = useState<string | null>(null);
+
+  const [setupConfirmOpen, setSetupConfirmOpen] = useState(false);
+  const [setupRunning, setSetupRunning] = useState(false);
+
+  const runNativeSetup = async () => {
+    setSetupConfirmOpen(false);
+    setSetupRunning(true);
+    try {
+      const result: NativeSetupResult = await commands.runNativeSetup();
+      if (result === "success") {
+        showSnackbar("Input permissions configured.");
+      } else if (result === "require-restart") {
+        showSnackbar(
+          "Setup complete. Please restart the app to apply input permissions.",
+        );
+      } else if (result === "cancelled") {
+        // User dismissed the elevation prompt; stay quiet.
+      } else {
+        showErrorSnackbar("Failed to configure input permissions.");
+      }
+    } catch (err) {
+      showErrorSnackbar(err);
+    } finally {
+      setSetupRunning(false);
+    }
+  };
+  const personalGroqApiKey = useAppStore((state) =>
+    state.settings.apiKeys.find(
+      (apiKey) =>
+        apiKey.id === PERSONAL_GROQ_API_KEY_ID ||
+        (apiKey.provider === "groq" &&
+          apiKey.name.trim() === PERSONAL_GROQ_API_KEY_NAME),
+    ),
+  );
+  const [deepgramDialogOpen, setDeepgramDialogOpen] = useState(false);
+  const [deepgramApiKeyInput, setDeepgramApiKeyInput] = useState("");
+  const [deepgramSaving, setDeepgramSaving] = useState(false);
+  const [deepgramError, setDeepgramError] = useState<string | null>(null);
+  const personalDeepgramApiKey = useAppStore((state) =>
+    state.settings.apiKeys.find(
+      (apiKey) =>
+        apiKey.id === PERSONAL_DEEPGRAM_API_KEY_ID ||
+        (apiKey.provider === "deepgram" &&
+          apiKey.name.trim() === PERSONAL_DEEPGRAM_API_KEY_NAME),
+    ),
+  );
   const [autoLaunchEnabled, autoLaunchStatus] = useAppStore((state) => [
     state.settings.autoLaunchEnabled,
     state.settings.autoLaunchStatus,
@@ -125,12 +185,6 @@ export default function SettingsPage() {
     });
   };
 
-  const openChangePasswordDialog = () => {
-    produceAppState((state) => {
-      state.settings.changePasswordDialogOpen = true;
-    });
-  };
-
   const openTranscriptionDialog = () => {
     produceAppState((draft) => {
       draft.settings.aiTranscriptionDialogOpen = true;
@@ -153,6 +207,76 @@ export default function SettingsPage() {
     produceAppState((draft) => {
       draft.settings.agentModeDialogOpen = true;
     });
+  };
+
+  const openGroqDialog = () => {
+    setGroqApiKeyInput("");
+    setGroqError(null);
+    setGroqDialogOpen(true);
+  };
+
+  const closeGroqDialog = () => {
+    if (!groqSaving) {
+      setGroqDialogOpen(false);
+    }
+  };
+
+  const handleSaveGroqApiKey = async () => {
+    const trimmed = groqApiKeyInput.trim();
+    if (!trimmed || groqSaving) {
+      return;
+    }
+
+    setGroqSaving(true);
+    setGroqError(null);
+    try {
+      await savePersonalGroqApiKey(trimmed);
+      showSnackbar("Groq API key saved", { mode: "success" });
+      setGroqApiKeyInput("");
+      setGroqDialogOpen(false);
+    } catch (error) {
+      const message =
+        error instanceof Error ? error.message : "Failed to save Groq API key.";
+      setGroqError(message);
+    } finally {
+      setGroqSaving(false);
+    }
+  };
+
+  const openDeepgramDialog = () => {
+    setDeepgramApiKeyInput("");
+    setDeepgramError(null);
+    setDeepgramDialogOpen(true);
+  };
+
+  const closeDeepgramDialog = () => {
+    if (!deepgramSaving) {
+      setDeepgramDialogOpen(false);
+    }
+  };
+
+  const handleSaveDeepgramApiKey = async () => {
+    const trimmed = deepgramApiKeyInput.trim();
+    if (!trimmed || deepgramSaving) {
+      return;
+    }
+
+    setDeepgramSaving(true);
+    setDeepgramError(null);
+    try {
+      await savePersonalDeepgramApiKey(trimmed);
+      showSnackbar("Deepgram API key saved", { mode: "success" });
+      setDeepgramApiKeyInput("");
+      setDeepgramDialogOpen(false);
+    } catch (error) {
+      const message =
+        error instanceof Error
+          ? error.message
+          : "Failed to save Deepgram API key.";
+      setDeepgramError(message);
+    } finally {
+      setDeepgramSaving(false);
+    }
   };
 
   const openMicrophoneDialog = () => {
@@ -191,35 +315,9 @@ export default function SettingsPage() {
     });
   };
 
-  const openDeleteAccountDialog = () => {
-    produceAppState((state) => {
-      state.settings.deleteAccountDialog = true;
-    });
-  };
-
   const handleToggleAutoLaunch = (event: ChangeEvent<HTMLInputElement>) => {
     const enabled = event.target.checked;
     void setAutoLaunchEnabled(enabled);
-  };
-
-  const handleManageSubscription = async () => {
-    setManageSubscriptionLoading(true);
-    try {
-      const url = await getStripeRepo()?.createCustomerPortalSession();
-      if (url) {
-        openUrl(url);
-      } else {
-        showErrorSnackbar("Unable to open manage subscription page.");
-      }
-    } catch (error) {
-      showErrorSnackbar(error);
-    } finally {
-      setManageSubscriptionLoading(false);
-    }
-  };
-
-  const handleSignOut = async () => {
-    await getAuthRepo().signOut();
   };
 
   const general = (
@@ -371,10 +469,52 @@ export default function SettingsPage() {
     <Section
       title={<FormattedMessage defaultMessage="Processing" />}
       description={
-        <FormattedMessage defaultMessage="How Voquill should manage your transcriptions." />
+        <FormattedMessage defaultMessage="How mausVoice should manage your transcriptions." />
       }
     >
       {dictationLanguageComp}
+      <ListTile
+        title={<FormattedMessage defaultMessage="Deepgram API key" />}
+        subtitle={
+          <FormattedMessage defaultMessage="Used for fast streaming transcription." />
+        }
+        leading={<KeyOutlined />}
+        onClick={openDeepgramDialog}
+        trailing={
+          <Chip
+            size="small"
+            color={personalDeepgramApiKey ? "success" : "default"}
+            label={
+              personalDeepgramApiKey ? (
+                <FormattedMessage defaultMessage="Configured" />
+              ) : (
+                <FormattedMessage defaultMessage="Not configured" />
+              )
+            }
+          />
+        }
+      />
+      <ListTile
+        title={<FormattedMessage defaultMessage="Groq API key" />}
+        subtitle={
+          <FormattedMessage defaultMessage="Used for AI post processing." />
+        }
+        leading={<KeyOutlined />}
+        onClick={openGroqDialog}
+        trailing={
+          <Chip
+            size="small"
+            color={personalGroqApiKey ? "success" : "default"}
+            label={
+              personalGroqApiKey ? (
+                <FormattedMessage defaultMessage="Configured" />
+              ) : (
+                <FormattedMessage defaultMessage="Not configured" />
+              )
+            }
+          />
+        }
+      />
       {allowChangeTranscription && (
         <ListTile
           title={<FormattedMessage defaultMessage="AI transcription" />}
@@ -411,41 +551,71 @@ export default function SettingsPage() {
         <FormattedMessage defaultMessage="Manage your account preferences and settings." />
       }
     >
-      {hasEmailProvider && (
-        <ListTile
-          title={<FormattedMessage defaultMessage="Change password" />}
-          leading={<LockOutlined />}
-          onClick={openChangePasswordDialog}
-        />
-      )}
-      {isSubscribed && !isEnterprise && (
-        <ListTile
-          title={<FormattedMessage defaultMessage="Manage subscription" />}
-          leading={<PaymentOutlined />}
-          onClick={handleManageSubscription}
-          disabled={manageSubscriptionLoading}
-          trailing={<ArrowOutwardRounded />}
-        />
-      )}
       <ListTile
         title={<FormattedMessage defaultMessage="Terms & conditions" />}
-        onClick={() => openUrl("https://voquill.com/terms")}
+        onClick={() => openUrl("https://mausvoice.com/terms")}
         trailing={<ArrowOutwardRounded />}
         leading={<DescriptionOutlined />}
       />
       <ListTile
         title={<FormattedMessage defaultMessage="Privacy policy" />}
-        onClick={() => openUrl("https://voquill.com/privacy")}
+        onClick={() => openUrl("https://mausvoice.com/privacy")}
         trailing={<ArrowOutwardRounded />}
         leading={<PrivacyTipOutlined />}
       />
-      {isSignedIn && (
-        <ListTile
-          title={<FormattedMessage defaultMessage="Sign out" />}
-          leading={<LogoutOutlined />}
-          onClick={handleSignOut}
-        />
-      )}
+    </Section>
+  );
+
+  const platform = getPlatform();
+  const inputSetupTitle = (
+    <FormattedMessage defaultMessage="Input permissions" />
+  );
+  const inputSetupDescription = (() => {
+    switch (platform) {
+      case "linux":
+        return (
+          <FormattedMessage defaultMessage="Configures global input capture (uinput/udev) so the pill can type for you. Requires administrator privileges." />
+        );
+      case "windows":
+        return (
+          <FormattedMessage defaultMessage="Grants administrator privileges and input-capture access so the pill can type for you. You will see a User Account Control prompt." />
+        );
+      case "macos":
+        return (
+          <FormattedMessage defaultMessage="Requests Accessibility and Microphone access so the pill can type for you. You will be prompted in System Settings." />
+        );
+      default:
+        return null;
+    }
+  })();
+
+  const setupConfirmContent = (() => {
+    switch (platform) {
+      case "linux":
+        return (
+          <FormattedMessage defaultMessage="This requires administrator privileges to configure global input capture (uinput/udev). Continue?" />
+        );
+      case "windows":
+        return (
+          <FormattedMessage defaultMessage="This will prompt for administrator privileges (UAC) so the pill can capture and type input globally. Continue?" />
+        );
+      default:
+        return (
+          <FormattedMessage defaultMessage="This will request Accessibility and Microphone access so the pill can capture and type input globally. Continue?" />
+        );
+    }
+  })();
+
+  const inputPermissionsSetup = (
+    <Section title={inputSetupTitle} description={inputSetupDescription}>
+      <ListTile
+        title={
+          <FormattedMessage defaultMessage="Configure input permissions" />
+        }
+        leading={<KeyboardAltOutlined />}
+        disabled={setupRunning}
+        onClick={() => setSetupConfirmOpen(true)}
+      />
     </Section>
   );
 
@@ -456,21 +626,11 @@ export default function SettingsPage() {
         <FormattedMessage defaultMessage="Be careful with these actions. They can have significant consequences for your account." />
       }
     >
-      {!isSignedIn && (
-        <ListTile
-          title={<FormattedMessage defaultMessage="Clear local data" />}
-          leading={<DeleteForeverOutlined />}
-          onClick={openClearLocalDataDialog}
-        />
-      )}
-      {isSignedIn && (
-        <ListTile
-          sx={{ mt: 1 }}
-          title={<FormattedMessage defaultMessage="Delete account" />}
-          leading={<PersonRemoveOutlined />}
-          onClick={openDeleteAccountDialog}
-        />
-      )}
+      <ListTile
+        title={<FormattedMessage defaultMessage="Clear local data" />}
+        leading={<DeleteForeverOutlined />}
+        onClick={openClearLocalDataDialog}
+      />
     </Section>
   );
 
@@ -483,8 +643,155 @@ export default function SettingsPage() {
         {general}
         {processing}
         {advanced}
+        {inputPermissionsSetup}
         {!isEnterprise && dangerZone}
       </Stack>
+      <ConfirmDialog
+        isOpen={setupConfirmOpen}
+        title={
+          <FormattedMessage defaultMessage="Configure input permissions" />
+        }
+        content={setupConfirmContent}
+        confirmLabel={<FormattedMessage defaultMessage="Continue" />}
+        onCancel={() => setSetupConfirmOpen(false)}
+        onConfirm={runNativeSetup}
+      />
+
+      <Dialog
+        open={deepgramDialogOpen}
+        onClose={closeDeepgramDialog}
+        maxWidth="xs"
+        fullWidth
+      >
+        <DialogTitle>
+          <FormattedMessage defaultMessage="Deepgram API key" />
+        </DialogTitle>
+        <DialogContent dividers>
+          <Stack spacing={2}>
+            <Typography variant="body2" color="text.secondary">
+              <FormattedMessage defaultMessage="Store your Deepgram API key locally for fast streaming transcription. The key is encrypted before it is saved." />
+            </Typography>
+            {personalDeepgramApiKey?.keySuffix && (
+              <Typography variant="body2" color="text.secondary">
+                <FormattedMessage
+                  defaultMessage="Current key ends with {suffix}."
+                  values={{ suffix: personalDeepgramApiKey.keySuffix }}
+                />
+              </Typography>
+            )}
+            {deepgramError && <Alert severity="error">{deepgramError}</Alert>}
+            <TextField
+              autoFocus
+              fullWidth
+              size="small"
+              type="password"
+              label={<FormattedMessage defaultMessage="API key" />}
+              value={deepgramApiKeyInput}
+              disabled={deepgramSaving}
+              onChange={(event) => setDeepgramApiKeyInput(event.target.value)}
+              autoComplete="off"
+              slotProps={{
+                inputLabel: { shrink: true },
+                htmlInput: {
+                  "data-mausvoice-ignore": "true",
+                },
+              }}
+            />
+            <Link
+              component="button"
+              variant="body2"
+              onClick={() => openUrl("https://console.deepgram.com/")}
+              sx={{ alignSelf: "flex-start" }}
+            >
+              <FormattedMessage defaultMessage="Open Deepgram API keys" />
+            </Link>
+          </Stack>
+        </DialogContent>
+        <DialogActions>
+          <Button onClick={closeDeepgramDialog} disabled={deepgramSaving}>
+            <FormattedMessage defaultMessage="Cancel" />
+          </Button>
+          <Button
+            variant="contained"
+            onClick={handleSaveDeepgramApiKey}
+            disabled={!deepgramApiKeyInput.trim() || deepgramSaving}
+          >
+            {deepgramSaving ? (
+              <FormattedMessage defaultMessage="Saving..." />
+            ) : (
+              <FormattedMessage defaultMessage="Save" />
+            )}
+          </Button>
+        </DialogActions>
+      </Dialog>
+      <Dialog
+        open={groqDialogOpen}
+        onClose={closeGroqDialog}
+        maxWidth="xs"
+        fullWidth
+      >
+        <DialogTitle>
+          <FormattedMessage defaultMessage="Groq API key" />
+        </DialogTitle>
+        <DialogContent dividers>
+          <Stack spacing={2}>
+            <Typography variant="body2" color="text.secondary">
+              <FormattedMessage defaultMessage="Store your Groq API key locally for transcription and AI post processing. The key is encrypted before it is saved." />
+            </Typography>
+            {personalGroqApiKey?.keySuffix && (
+              <Typography variant="body2" color="text.secondary">
+                <FormattedMessage
+                  defaultMessage="Current key ends with {suffix}."
+                  values={{ suffix: personalGroqApiKey.keySuffix }}
+                />
+              </Typography>
+            )}
+            {groqError && <Alert severity="error">{groqError}</Alert>}
+            <TextField
+              autoFocus
+              fullWidth
+              size="small"
+              type="password"
+              label={<FormattedMessage defaultMessage="API key" />}
+              placeholder={intl.formatMessage({ defaultMessage: "gsk_..." })}
+              value={groqApiKeyInput}
+              disabled={groqSaving}
+              onChange={(event) => setGroqApiKeyInput(event.target.value)}
+              autoComplete="off"
+              slotProps={{
+                inputLabel: { shrink: true },
+                htmlInput: {
+                  "data-mausvoice-ignore": "true",
+                },
+              }}
+            />
+            <Link
+              component="button"
+              variant="body2"
+              onClick={() => openUrl("https://console.groq.com/keys")}
+              sx={{ alignSelf: "flex-start" }}
+            >
+              <FormattedMessage defaultMessage="Open Groq API keys" />
+            </Link>
+          </Stack>
+        </DialogContent>
+        <DialogActions>
+          <Button onClick={closeGroqDialog} disabled={groqSaving}>
+            <FormattedMessage defaultMessage="Cancel" />
+          </Button>
+          <Button
+            variant="contained"
+            onClick={handleSaveGroqApiKey}
+            disabled={!groqApiKeyInput.trim() || groqSaving}
+          >
+            {groqSaving ? (
+              <FormattedMessage defaultMessage="Saving..." />
+            ) : (
+              <FormattedMessage defaultMessage="Save" />
+            )}
+          </Button>
+        </DialogActions>
+      </Dialog>
     </DashboardEntryLayout>
   );
 }

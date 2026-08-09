@@ -1,22 +1,23 @@
+import { Box, List, Stack, useColorScheme } from "@mui/material";
+import { motion, useReducedMotion } from "framer-motion";
 import {
-  ChatBubbleOutline,
-  ClassOutlined,
-  HelpOutline,
-  HistoryOutlined,
-  HomeOutlined,
-  PaletteOutlined,
-  SettingsOutlined,
-} from "@mui/icons-material";
-import { Box, List, Stack } from "@mui/material";
-import { openUrl } from "@tauri-apps/plugin-opener";
-import { FormattedMessage } from "react-intl";
+  BookMarked,
+  History,
+  Home,
+  MessageSquare,
+  Palette,
+  Settings,
+  type IconNode,
+} from "lucide";
 import { useMemo } from "react";
+import { FormattedMessage } from "react-intl";
 import { useLocation, useNavigate } from "react-router-dom";
 import { useAppStore } from "../../store";
+import { springSnappy } from "../../styles/motion";
+import { premiumSurface } from "../../styles/shadows";
 import { getIsAssistantModeEnabled } from "../../utils/assistant-mode.utils";
 import { ListTile } from "../common/ListTile";
-import { DiscordListTile } from "./DiscordListTile";
-import { MobileAppListTile } from "./MobileAppListTile";
+import { MorphNavIcon } from "../common/MorphNavIcon";
 import { UpdateListTile } from "./UpdateListTile";
 
 const settingsPath = "/dashboard/settings";
@@ -24,7 +25,7 @@ const settingsPath = "/dashboard/settings";
 type NavItem = {
   label: React.ReactNode;
   path: string;
-  icon: React.ReactNode;
+  icon: IconNode;
 };
 
 export type DashboardMenuProps = {
@@ -34,7 +35,11 @@ export type DashboardMenuProps = {
 export const DashboardMenu = ({ onChoose }: DashboardMenuProps) => {
   const location = useLocation();
   const nav = useNavigate();
-  const isEnterprise = useAppStore((state) => state.isEnterprise);
+  const reduceMotion = useReducedMotion();
+  const { mode, systemMode } = useColorScheme();
+  const resolved = mode === "system" ? systemMode : mode;
+  const dark = resolved === "dark";
+
   const isUpdateAvailable = useAppStore(
     (state) => state.updater.status === "ready",
   );
@@ -45,29 +50,29 @@ export const DashboardMenu = ({ onChoose }: DashboardMenuProps) => {
       {
         label: <FormattedMessage defaultMessage="Home" />,
         path: "/dashboard",
-        icon: <HomeOutlined />,
+        icon: Home,
       },
       {
         label: <FormattedMessage defaultMessage="History" />,
         path: "/dashboard/transcriptions",
-        icon: <HistoryOutlined />,
+        icon: History,
       },
       {
         label: <FormattedMessage defaultMessage="Dictionary" />,
         path: "/dashboard/dictionary",
-        icon: <ClassOutlined />,
+        icon: BookMarked,
       },
       {
         label: <FormattedMessage defaultMessage="Styles" />,
         path: "/dashboard/styling",
-        icon: <PaletteOutlined />,
+        icon: Palette,
       },
       ...(assistantModeEnabled
         ? [
             {
               label: <FormattedMessage defaultMessage="Chats" />,
               path: "/dashboard/chats",
-              icon: <ChatBubbleOutline />,
+              icon: MessageSquare,
             },
           ]
         : []),
@@ -80,46 +85,124 @@ export const DashboardMenu = ({ onChoose }: DashboardMenuProps) => {
     nav(path);
   };
 
-  const list = (
-    <List
-      sx={{
-        px: 2,
-        pb: 8,
-      }}
-    >
-      {navItems.map(({ label, path, icon }) => (
-        <ListTile
-          key={path}
-          onClick={() => onChooseHandler(path)}
-          selected={location.pathname === path}
-          leading={icon}
-          title={label}
+  const isSelected = (path: string) => {
+    if (path === "/dashboard") {
+      return location.pathname === "/dashboard";
+    }
+    return (
+      location.pathname === path || location.pathname.startsWith(`${path}/`)
+    );
+  };
+
+  const selectedShadow = dark
+    ? premiumSurface.dark.selected
+    : premiumSurface.light.selected;
+
+  const activeIndicator = (selected: boolean) => {
+    if (!selected) return null;
+    if (reduceMotion) {
+      return (
+        <Box
+          sx={{
+            position: "absolute",
+            inset: 0,
+            borderRadius: "14px",
+            bgcolor: dark ? "#1A1D24" : "#12151C",
+            boxShadow: selectedShadow,
+            zIndex: 0,
+            pointerEvents: "none",
+          }}
         />
-      ))}
+      );
+    }
+    return (
+      <Box
+        component={motion.div}
+        layoutId="sidebar-active"
+        transition={springSnappy}
+        sx={{
+          position: "absolute",
+          inset: 0,
+          borderRadius: "14px",
+          bgcolor: dark ? "#1A1D24" : "#12151C",
+          boxShadow: selectedShadow,
+          zIndex: 0,
+          pointerEvents: "none",
+        }}
+      />
+    );
+  };
+
+  const list = (
+    <List sx={{ px: 1.5, pb: 2, pt: 0.5 }}>
+      {navItems.map(({ label, path, icon }) => {
+        const selected = isSelected(path);
+        return (
+          <ListTile
+            key={path}
+            onClick={() => onChooseHandler(path)}
+            selected={selected}
+            leading={<MorphNavIcon icon={icon} />}
+            title={label}
+            disableRipple
+            indicator={activeIndicator(selected)}
+            sx={{
+              mb: 0.5,
+              "& .MuiListItemButton-root": {
+                "&.Mui-selected": {
+                  backgroundColor: "transparent",
+                  boxShadow: "none",
+                },
+                "&.Mui-selected:hover": {
+                  backgroundColor: "transparent",
+                },
+              },
+            }}
+          />
+        );
+      })}
     </List>
   );
 
+  const settingsSelected = isSelected(settingsPath);
+
   return (
-    <Stack alignItems="stretch" sx={{ height: "100%" }}>
-      <Box sx={{ flexGrow: 1, overflowY: "auto" }}>{list}</Box>
-      <Box sx={{ mt: 2, p: 2 }}>
+    <Stack
+      alignItems="stretch"
+      sx={{
+        height: "100%",
+        borderRadius: "16px",
+        margin: "0.35rem",
+        border: dark
+          ? "1px solid rgba(255,255,255,0.05)"
+          : "1px solid rgba(15,18,25,0.05)",
+        background: dark
+          ? "linear-gradient(180deg, rgba(20,22,27,0.55) 0%, rgba(11,12,15,0.2) 100%)"
+          : "linear-gradient(180deg, rgba(255,255,255,0.7) 0%, rgba(244,245,247,0.35) 100%)",
+      }}
+    >
+      <Box sx={{ flexGrow: 1, overflowY: "auto", pt: 0.5 }}>{list}</Box>
+      <Box sx={{ mt: 1, p: 1.5, pt: 0 }}>
         {isUpdateAvailable && <UpdateListTile />}
-        {!isEnterprise && !isUpdateAvailable && <MobileAppListTile />}
-        {isEnterprise ? (
-          <ListTile
-            onClick={() => openUrl("mailto:support@voquill.com")}
-            leading={<HelpOutline />}
-            title={<FormattedMessage defaultMessage="Support" />}
-          />
-        ) : (
-          <DiscordListTile />
-        )}
         <ListTile
           key={settingsPath}
           onClick={() => onChooseHandler(settingsPath)}
-          selected={location.pathname === settingsPath}
-          leading={<SettingsOutlined />}
+          selected={settingsSelected}
+          leading={<MorphNavIcon icon={Settings} />}
           title={<FormattedMessage defaultMessage="Settings" />}
+          disableRipple
+          indicator={activeIndicator(settingsSelected)}
+          sx={{
+            "& .MuiListItemButton-root": {
+              "&.Mui-selected": {
+                backgroundColor: "transparent",
+                boxShadow: "none",
+              },
+              "&.Mui-selected:hover": {
+                backgroundColor: "transparent",
+              },
+            },
+          }}
         />
       </Box>
     </Stack>

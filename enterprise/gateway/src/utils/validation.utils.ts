@@ -1,4 +1,4 @@
-import type { AuthContext } from "@voquill/types";
+import type { AuthContext } from "@maus-inc/types";
 import { z } from "zod";
 import { getLicenseKey } from "./license-key.utils";
 import { ClientError, UnauthorizedError } from "./error.utils";

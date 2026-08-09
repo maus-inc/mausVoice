@@ -6,7 +6,7 @@ import {
   Typography,
 } from "@mui/material";
 import { invoke } from "@tauri-apps/api/core";
-import { invokeHandler } from "@voquill/functions";
+import { invokeHandler } from "@maus-inc/functions";
 import { useEffect, useState } from "react";
 import { FormattedMessage } from "react-intl";
 import { signOut } from "../../actions/login.actions";

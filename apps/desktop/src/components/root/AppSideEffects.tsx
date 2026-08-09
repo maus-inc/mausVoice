@@ -7,8 +7,8 @@ import {
   Nullable,
   Term,
   User,
-} from "@voquill/types";
-import { getRec, listify } from "@voquill/utilities";
+} from "@maus-inc/types";
+import { getRec, listify } from "@maus-inc/utilities";
 import dayjs from "dayjs";
 import { isEqual } from "lodash-es";
 import { useCallback, useEffect, useRef, useState } from "react";
@@ -54,6 +54,7 @@ import {
 } from "../../repos";
 import {
   HotkeyStrategy,
+  KeyboardListenerHealth,
   MyTenantMembership,
   PasteKeybindSupport,
 } from "../../state/app.state";
@@ -94,6 +95,10 @@ type KeysHeldPayload = {
   keys: string[];
 };
 
+type KeyboardListenerHealthPayload = {
+  state: KeyboardListenerHealth;
+};
+
 type OverlayPhasePayload = {
   phase: OverlayPhase;
 };
@@ -114,7 +119,7 @@ type RemoteFinalTextReceivedPayload = {
   createdAt: string;
 };
 
-// Timeout for Firebase Auth initialization (handles cases where IndexedDB hangs on some Linux systems)
+// Timeout for Firebase Auth initialization.
 const AUTH_READY_TIMEOUT_MS = 4_000;
 
 // 10 minutes
@@ -134,6 +139,9 @@ export const AppSideEffects = () => {
   const [enterpriseReady, setEnterpriseReady] = useState(false);
   const tokensRefreshedRef = useRef(false);
   const authReadyRef = useRef(false);
+  // Tracks whether we've already notified about the current listener-failure episode, so the
+  // 30s Rust slow-retry churn (failed -> connected -> failed) doesn't re-toast every cycle.
+  const listenerFailureNotifiedRef = useRef(false);
   const isEnterprise = useAppStore((state) => state.isEnterprise);
   const updateInitializedRef = useRef(false);
   const versionData = useAsyncData(getVersion, []);
@@ -188,6 +196,20 @@ export const AppSideEffects = () => {
         "Accessibility permission not authorized, stopping key listener",
       );
       await invoke("stop_key_listener");
+    }
+
+    // Seed health from the current value: transition events emitted before the
+    // `keyboard_listener_health` subscription was registered would otherwise be missed,
+    // leaving the store stuck at its initial "stopped".
+    try {
+      const health = await invoke<KeyboardListenerHealth>(
+        "get_key_listener_health",
+      );
+      produceAppState((draft) => {
+        draft.keyboardListenerHealth = health;
+      });
+    } catch (error) {
+      getLogger().warning(`Failed to read keyboard listener health: ${error}`);
     }
   }, [keyPermAuthorized, hotkeyStrategy]);
 
@@ -255,6 +277,45 @@ export const AppSideEffects = () => {
       draft.keysHeld = payload.keys;
     });
   });
+
+  // Surface listener health (grounded in the child's actual grab/listen outcome). Rust owns
+  // automatic recovery; TS only reflects state here and exposes a manual retry elsewhere — it
+  // must not auto-restart the listener on "failed".
+  useTauriListen<KeyboardListenerHealthPayload>(
+    "keyboard_listener_health",
+    (payload) => {
+      if (getAppState().keyboardListenerHealth === payload.state) {
+        return;
+      }
+      // Reset the failure notification once the listener genuinely recovers, so a later
+      // failure episode can notify again.
+      if (
+        payload.state === "healthy_grab" ||
+        payload.state === "degraded_listen_fallback"
+      ) {
+        listenerFailureNotifiedRef.current = false;
+      }
+      if (payload.state === "failed" && !listenerFailureNotifiedRef.current) {
+        listenerFailureNotifiedRef.current = true;
+        getLogger().warning("Keyboard listener reported failed health");
+        const authorized = isPermissionAuthorized(
+          getRec(getAppState().permissions, "accessibility")?.state,
+        );
+        if (authorized) {
+          showSnackbar(
+            intl.formatMessage({
+              defaultMessage:
+                "Keyboard hotkeys stopped working. Retrying automatically; restart mausVoice if this persists.",
+            }),
+            { mode: "error", duration: 6000 },
+          );
+        }
+      }
+      produceAppState((draft) => {
+        draft.keyboardListenerHealth = payload.state;
+      });
+    },
+  );
 
   useTauriListen<RemoteFinalTextReceivedPayload>(
     "remote_final_text_received",

@@ -5,12 +5,12 @@ import sitemap from '@astrojs/sitemap';
 
 // https://astro.build/config
 export default defineConfig({
-	site: 'https://docs.voquill.com',
+	site: 'https://docs.mausvoice.com',
 	integrations: [
 		starlight({
-			title: 'Voquill Docs',
+			title: 'mausVoice Docs',
 			logo: {
-				src: './src/assets/icon.svg',
+				src: './src/assets/logo.png',
 			},
 			customCss: ['./src/styles/custom.css'],
 			sidebar: [

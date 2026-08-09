@@ -1,4 +1,4 @@
-import { listify } from "@voquill/utilities";
+import { listify } from "@maus-inc/utilities";
 import { getMemberRepo } from "../repos";
 import { getAppState, produceAppState } from "../store";
 import { registerMembers } from "../utils/app.utils";

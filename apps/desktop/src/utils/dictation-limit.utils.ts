@@ -1,4 +1,4 @@
-import type { UserPreferences } from "@voquill/types";
+import type { UserPreferences } from "@maus-inc/types";
 import type { TranscriptionMode } from "../types/ai.types";
 import { minutesToMilliseconds } from "./time.utils";
 

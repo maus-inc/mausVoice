@@ -1,4 +1,4 @@
-import type { LlmMessage, UserPreferences } from "@voquill/types";
+import type { LlmMessage, UserPreferences } from "@maus-inc/types";
 import { AppState } from "../state/app.state";
 import { CPU_DEVICE_VALUE, DEFAULT_MODEL_SIZE } from "../types/ai.types";
 import {
