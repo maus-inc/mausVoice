@@ -115,7 +115,19 @@ export const UserDetailsForm = () => {
               <TextField
                 variant="outlined"
                 size="small"
-                label={<FormattedMessage defaultMessage="Title" />}
+                label={
+                  <span>
+                    <FormattedMessage defaultMessage="Title" />{" "}
+                    <Typography
+                      component="span"
+                      variant="caption"
+                      color="text.secondary"
+                      sx={{ fontWeight: 400, fontSize: "0.7rem" }}
+                    >
+                      <FormattedMessage defaultMessage="(optional)" />
+                    </Typography>
+                  </span>
+                }
                 placeholder={intl.formatMessage({
                   defaultMessage: "Vice President",
                 })}
@@ -134,7 +146,19 @@ export const UserDetailsForm = () => {
               <TextField
                 variant="outlined"
                 size="small"
-                label={<FormattedMessage defaultMessage="Company" />}
+                label={
+                  <span>
+                    <FormattedMessage defaultMessage="Company" />{" "}
+                    <Typography
+                      component="span"
+                      variant="caption"
+                      color="text.secondary"
+                      sx={{ fontWeight: 400, fontSize: "0.7rem" }}
+                    >
+                      <FormattedMessage defaultMessage="(optional)" />
+                    </Typography>
+                  </span>
+                }
                 placeholder={intl.formatMessage({
                   defaultMessage: "Acme Inc.",
                 })}

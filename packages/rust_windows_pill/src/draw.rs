@@ -52,8 +52,10 @@ pub(crate) fn draw_all(gfx: &mut Gfx, state: &PillState) {
 
         draw_cancel_button(gfx, state, ww, wh);
 
-        // Long-press ring indicator
-        if state.long_press_active.get() && !state.balloon_pop_active.get() {
+        // Long-press outline indicator (also visible during active drag at full progress)
+        if (state.long_press_active.get() && state.long_press_elapsed.get() > 0.1)
+            || state.dragging.get()
+        {
             draw_long_press_ring(gfx, state, ww, wh);
         }
 
@@ -69,8 +71,13 @@ pub(crate) fn draw_all(gfx: &mut Gfx, state: &PillState) {
 
 pub(crate) fn pill_position(state: &PillState, ww: f64, wh: f64) -> (f64, f64, f64, f64) {
     let expand_t = state.expand_t.get();
-    let pill_w = lerp(MIN_PILL_WIDTH, EXPANDED_PILL_WIDTH, expand_t);
-    let pill_h = lerp(MIN_PILL_HEIGHT, EXPANDED_PILL_HEIGHT, expand_t);
+    let inflate = state.inflate_t.get();
+    let inflate_px = inflate * DRAG_INFLATE_AMOUNT;
+
+    let base_w = lerp(MIN_PILL_WIDTH, EXPANDED_PILL_WIDTH, expand_t);
+    let base_h = lerp(MIN_PILL_HEIGHT, EXPANDED_PILL_HEIGHT, expand_t);
+    let pill_w = base_w + inflate_px * 2.0;
+    let pill_h = base_h + inflate_px * 2.0;
     let pill_x = (ww - pill_w) / 2.0;
 
     let pill_y = if state.assistant_active.get() || state.panel_open_t.get() > 0.01 {
@@ -999,20 +1006,25 @@ fn draw_keyboard_button(gfx: &mut Gfx, state: &PillState, ww: f64, wh: f64) {
 }
 
 fn draw_paused(gfx: &Gfx, rx: f64, ry: f64, pill_w: f64, pill_h: f64, expand_t: f64) {
-    // Soft frozen waveform bars to show the session is held, not collapsed.
-    let bar_count = 5;
-    let gap = 4.0;
-    let bar_w = 3.0;
-    let total_w = bar_count as f64 * bar_w + (bar_count - 1) as f64 * gap;
-    let start_x = rx + (pill_w - total_w) / 2.0;
-    let mid_y = ry + pill_h / 2.0;
-    let heights = [0.35, 0.7, 1.0, 0.55, 0.4];
-    for (i, h_frac) in heights.iter().enumerate() {
-        let h = (pill_h - 10.0) * h_frac * expand_t;
-        let x = start_x + i as f64 * (bar_w + gap);
-        let y = mid_y - h / 2.0;
-        gfx.fill_rounded_rect(x, y, bar_w, h, 1.5, [1.0, 1.0, 1.0, 0.55 * expand_t]);
-    }
+    // Same loading bar as the loading phase, but static/dimmed to convey "held".
+    gfx.save();
+    gfx.clip_rounded_rect(rx, ry, pill_w, pill_h, lerp(COLLAPSED_RADIUS, EXPANDED_RADIUS, expand_t));
+
+    let bar_h = 2.0;
+    let bar_y = ry + (pill_h - bar_h) / 2.0;
+    let pad = pill_h * 0.1;
+    let track_x = rx + pad;
+    let track_w = pill_w - pad * 2.0;
+
+    // Dimmed track line
+    gfx.fill_rect(track_x, bar_y, track_w, bar_h, [1.0, 1.0, 1.0, 0.1 * expand_t]);
+
+    // Static indicator bar centered — same width as loading bar but dimmed
+    let indicator_w = track_w * LOADING_BAR_WIDTH_FRAC;
+    let ind_x = track_x + (track_w - indicator_w) / 2.0;
+    gfx.fill_rect(ind_x, bar_y, indicator_w, bar_h, [1.0, 1.0, 1.0, 0.45 * expand_t]);
+
+    gfx.restore();
 }
 
 fn draw_cancel_button(gfx: &Gfx, state: &PillState, ww: f64, wh: f64) {
@@ -1024,8 +1036,8 @@ fn draw_cancel_button(gfx: &Gfx, state: &PillState, ww: f64, wh: f64) {
     let scale = 0.5 + 0.5 * t;
     let r = ((CANCEL_BUTTON_SIZE - 2.0) / 2.0) * scale;
 
-    // Pause / resume sits left of cancel.
-    let pause_x = pill_x + pill_w - CANCEL_BUTTON_SIZE * 1.5 - 6.0;
+    // Pause / resume on the LEFT side of the pill
+    let pause_x = pill_x - CANCEL_BUTTON_SIZE / 2.0 - 2.0;
     let pause_y = pill_y - CANCEL_BUTTON_SIZE / 2.0 - 2.0;
     let pause_cx = pause_x + CANCEL_BUTTON_SIZE / 2.0;
     let pause_cy = pause_y + CANCEL_BUTTON_SIZE / 2.0;
@@ -1034,22 +1046,22 @@ fn draw_cancel_button(gfx: &Gfx, state: &PillState, ww: f64, wh: f64) {
     gfx.fill_circle(pause_cx, pause_cy, r, [pause_brightness, pause_brightness, pause_brightness, t]);
 
     if phase == Phase::Paused {
-        // Resume: small play chevron via two lines
+        // Resume: small play triangle via lines
         let s = 4.0 * scale;
         let col = [1.0, 1.0, 1.0, t];
         gfx.draw_line(pause_cx - s * 0.35, pause_cy - s, pause_cx + s * 0.75, pause_cy, col, 1.8);
         gfx.draw_line(pause_cx + s * 0.75, pause_cy, pause_cx - s * 0.35, pause_cy + s, col, 1.8);
         gfx.draw_line(pause_cx - s * 0.35, pause_cy - s, pause_cx - s * 0.35, pause_cy + s, col, 1.8);
     } else {
-        // Pause bars
+        // Pause: two close-set bars
         let bw = 1.6 * scale;
-        let bh = 7.0 * scale;
-        let gap = 2.2 * scale;
-        gfx.fill_rounded_rect(pause_cx - gap - bw, pause_cy - bh / 2.0, bw, bh, 0.8, [1.0, 1.0, 1.0, t]);
-        gfx.fill_rounded_rect(pause_cx + gap, pause_cy - bh / 2.0, bw, bh, 0.8, [1.0, 1.0, 1.0, t]);
+        let bh = 6.0 * scale;
+        let gap = 1.2 * scale;
+        gfx.fill_rounded_rect(pause_cx - gap - bw / 2.0, pause_cy - bh / 2.0, bw, bh, 0.6, [1.0, 1.0, 1.0, t]);
+        gfx.fill_rounded_rect(pause_cx + gap - bw / 2.0, pause_cy - bh / 2.0, bw, bh, 0.6, [1.0, 1.0, 1.0, t]);
     }
 
-    // Cancel (X) on the right
+    // Cancel (X) on the RIGHT side
     let btn_x = pill_x + pill_w - CANCEL_BUTTON_SIZE / 2.0 + 2.0;
     let btn_y = pill_y - CANCEL_BUTTON_SIZE / 2.0 - 2.0;
     let cx = btn_x + CANCEL_BUTTON_SIZE / 2.0;
@@ -1133,47 +1145,96 @@ fn lerp(a: f64, b: f64, t: f64) -> f64 {
     a + (b - a) * t
 }
 
-// ── Long-press ring indicator ─────────────────────────────────────
+// ── Long-press outline progress indicator ──────────────────────────
 
 fn draw_long_press_ring(gfx: &Gfx, state: &PillState, ww: f64, wh: f64) {
-    let elapsed = state.long_press_elapsed.get();
-    let progress = (elapsed / LONG_PRESS_DURATION).min(1.0);
+    // While actively dragging, keep the full outline visible (progress = 1.0).
+    let progress = if state.dragging.get() {
+        1.0
+    } else {
+        (state.long_press_elapsed.get() / LONG_PRESS_DURATION).min(1.0)
+    };
 
     let (pill_x, pill_y, pill_w, pill_h) = pill_position(state, ww, wh);
-    let cx = pill_x + pill_w / 2.0;
-    let cy = pill_y + pill_h / 2.0;
+    let radius = lerp(COLLAPSED_RADIUS, EXPANDED_RADIUS, state.expand_t.get());
 
-    // Pulsating glow
-    let pulse = 0.5 + 0.5 * (elapsed * 3.0).sin();
-    let glow_radius = LONG_PRESS_RING_RADIUS + 4.0 + pulse * 3.0;
-    gfx.fill_circle(cx, cy, glow_radius, [
-        LONG_PRESS_RING_COLOR.0,
-        LONG_PRESS_RING_COLOR.1,
-        LONG_PRESS_RING_COLOR.2,
-        0.15 * progress,
-    ]);
+    // Draw an outline that traces around the pill perimeter clockwise
+    // from the top-center. The filled portion matches the hold progress.
+    let inset = 2.0;
+    let ox = pill_x - inset;
+    let oy = pill_y - inset;
+    let ow = pill_w + inset * 2.0;
+    let oh = pill_h + inset * 2.0;
+    let r = (radius + inset).min(oh / 2.0);
 
-    // Background track
-    gfx.stroke_circle(cx, cy, LONG_PRESS_RING_RADIUS, [
-        LONG_PRESS_RING_COLOR.0,
-        LONG_PRESS_RING_COLOR.1,
-        LONG_PRESS_RING_COLOR.2,
-        0.12,
-    ], LONG_PRESS_RING_STROKE * 0.5);
+    // Build perimeter path as (x, y) points: top edge → right cap → bottom edge → left cap
+    let segments = 64;
+    let mut path: Vec<(f64, f64)> = Vec::with_capacity(segments);
 
-    // Progress dots along the arc
-    let dot_count = 24;
-    let filled_dots = (progress * dot_count as f64) as usize;
-    for i in 0..filled_dots.min(dot_count) {
-        let angle = -std::f64::consts::FRAC_PI_2 + (i as f64 / dot_count as f64) * std::f64::consts::TAU;
-        let dx = cx + angle.cos() * LONG_PRESS_RING_RADIUS;
-        let dy = cy + angle.sin() * LONG_PRESS_RING_RADIUS;
-        gfx.fill_circle(dx, dy, LONG_PRESS_RING_STROKE * 0.6, [
-            LONG_PRESS_RING_COLOR.0,
-            LONG_PRESS_RING_COLOR.1,
-            LONG_PRESS_RING_COLOR.2,
-            0.6 + 0.4 * progress,
-        ]);
+    // Top edge (left to right), starting from after the top-left corner
+    let top_left_x = ox + r;
+    let top_right_x = ox + ow - r;
+    let top_y = oy;
+    path.push((top_left_x, top_y));
+    path.push((top_right_x, top_y));
+
+    // Right cap (semicircle)
+    let right_cx = ox + ow - r;
+    let right_cy = oy + r;
+    let arc_steps = segments / 4;
+    for i in 0..=arc_steps {
+        let angle = -std::f64::consts::FRAC_PI_2
+            + (i as f64 / arc_steps as f64) * std::f64::consts::PI;
+        path.push((right_cx + angle.cos() * r, right_cy + angle.sin() * r));
+    }
+
+    // Bottom edge (right to left)
+    let bottom_y = oy + oh;
+    path.push((top_left_x, bottom_y));
+
+    // Left cap (semicircle)
+    let left_cx = ox + r;
+    let left_cy = oy + oh - r;
+    for i in 0..=arc_steps {
+        let angle = std::f64::consts::FRAC_PI_2
+            + (i as f64 / arc_steps as f64) * std::f64::consts::PI;
+        path.push((left_cx + angle.cos() * r, left_cy + angle.sin() * r));
+    }
+
+    // Compute cumulative distances along the path
+    let mut distances: Vec<f64> = Vec::with_capacity(path.len());
+    distances.push(0.0);
+    for i in 1..path.len() {
+        let dx = path[i].0 - path[i - 1].0;
+        let dy = path[i].1 - path[i - 1].1;
+        distances.push(distances[i - 1] + (dx * dx + dy * dy).sqrt());
+    }
+    let total_len = *distances.last().unwrap_or(&1.0);
+    let filled_len = total_len * progress;
+
+    let outline_alpha = 0.3 + 0.5 * progress;
+    let col = [
+        LONG_PRESS_OUTLINE_COLOR.0,
+        LONG_PRESS_OUTLINE_COLOR.1,
+        LONG_PRESS_OUTLINE_COLOR.2,
+        outline_alpha,
+    ];
+
+    // Draw segments up to filled_len
+    for i in 1..path.len() {
+        if distances[i - 1] >= filled_len {
+            break;
+        }
+        let x1 = path[i - 1].0;
+        let y1 = path[i - 1].1;
+        let mut x2 = path[i].0;
+        let mut y2 = path[i].1;
+        if distances[i] > filled_len {
+            let t = (filled_len - distances[i - 1]) / (distances[i] - distances[i - 1]);
+            x2 = x1 + (x2 - x1) * t;
+            y2 = y1 + (y2 - y1) * t;
+        }
+        gfx.draw_line(x1, y1, x2, y2, col, LONG_PRESS_OUTLINE_WIDTH);
     }
 }
 
