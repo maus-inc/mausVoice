@@ -40,11 +40,14 @@ const IntroPage = () => {
           width: 80,
           height: 80,
           borderRadius: "50%",
-          background: "linear-gradient(135deg, #0EA5E9 0%, #3B82F6 100%)",
+          // Brand-blue gradient sourced from the palette rather than literals.
+          background:
+            "linear-gradient(135deg, color-mix(in srgb, var(--app-palette-blue) 80%, #FFFFFF) 0%, var(--app-palette-blue) 100%)",
           display: "flex",
           alignItems: "center",
           justifyContent: "center",
-          boxShadow: "0 8px 32px rgba(59, 130, 246, 0.4)",
+          boxShadow:
+            "0 8px 32px color-mix(in srgb, var(--app-palette-blue) 40%, transparent)",
         }}
       >
         <AutoAwesome sx={{ fontSize: 40, color: "white" }} />

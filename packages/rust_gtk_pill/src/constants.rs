@@ -9,7 +9,12 @@ pub(crate) const MARGIN_BOTTOM: i32 = 8;
 
 pub(crate) const PILL_AREA_HEIGHT: f64 = 48.0;
 
-pub(crate) const LONG_PRESS_DURATION: f64 = 1.5;
+/// Total hold time before the drag gesture arms. Tuned to the 350-600ms band
+/// so the gesture feels deliberate without making the user wait.
+pub(crate) const LONG_PRESS_DURATION: f64 = 0.45;
+/// Grace period before any long-press affordance is drawn. A normal click is
+/// far shorter than this, so quick taps never flash the progress outline.
+pub(crate) const LONG_PRESS_HOLD_DELAY: f64 = 0.12;
 pub(crate) const CANCEL_FLASH_DURATION: f64 = 0.4;
 pub(crate) const LONG_PRESS_MOVE_THRESHOLD: f64 = 8.0;
 pub(crate) const LONG_PRESS_OUTLINE_COLOR: (f64, f64, f64) = (0.45, 0.75, 1.0);

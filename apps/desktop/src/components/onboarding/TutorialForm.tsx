@@ -34,14 +34,16 @@ import {
   OnboardingFormLayout,
 } from "./OnboardingCommon";
 
+// The surrounding card deliberately mimics a third-party notes app, so its
+// greys stay literal; only the focus accent follows the mausVoice brand blue.
 const pulseNotes = keyframes`
   0%, 100% {
-    border-color: rgba(25, 118, 210, 0.4);
-    box-shadow: 0 0 0 0 rgba(25, 118, 210, 0.4);
+    border-color: color-mix(in srgb, var(--app-palette-blue) 40%, transparent);
+    box-shadow: 0 0 0 0 color-mix(in srgb, var(--app-palette-blue) 40%, transparent);
   }
   50% {
-    border-color: rgba(25, 118, 210, 1);
-    box-shadow: 0 0 0 4px rgba(25, 118, 210, 0.3);
+    border-color: var(--app-palette-blue);
+    box-shadow: 0 0 0 4px color-mix(in srgb, var(--app-palette-blue) 30%, transparent);
   }
 `;
 
@@ -338,7 +340,7 @@ ${userName}`;
                   borderColor: isFieldFocused ? "#e0e0e0" : undefined,
                 },
                 "&.Mui-focused fieldset": {
-                  borderColor: "#1976d2",
+                  borderColor: "var(--app-palette-blue)",
                 },
               },
               "& .MuiInputBase-input": {

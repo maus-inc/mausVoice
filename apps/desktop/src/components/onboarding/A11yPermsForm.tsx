@@ -47,18 +47,35 @@ export const A11yPermsForm = () => {
     goToOnboardingPage("keybindings");
   };
 
+  const handleSkip = () => {
+    trackButtonClick("onboarding_a11y_perms_skip");
+    goToOnboardingPage("keybindings");
+  };
+
   const form = (
     <OnboardingFormLayout
       back={<BackButton />}
       actions={
-        <Button
-          variant="contained"
-          endIcon={<ArrowForward />}
-          onClick={handleContinue}
-          disabled={!isAuthorized}
-        >
-          <FormattedMessage defaultMessage="Continue" />
-        </Button>
+        <Stack direction="row" spacing={1} alignItems="center">
+          {/*
+            Onboarding must never dead-end. If the permission state is stuck
+            (declined, or a platform that reports no state at all) the user can
+            still continue; PermissionSideEffects keeps polling, so access
+            granted later is picked up without a restart.
+          */}
+          {!isAuthorized && (
+            <Button onClick={handleSkip} sx={{ color: "text.secondary" }}>
+              <FormattedMessage defaultMessage="Skip for now" />
+            </Button>
+          )}
+          <Button
+            variant="contained"
+            endIcon={<ArrowForward />}
+            onClick={handleContinue}
+          >
+            <FormattedMessage defaultMessage="Continue" />
+          </Button>
+        </Stack>
       }
     >
       <Stack spacing={3}>

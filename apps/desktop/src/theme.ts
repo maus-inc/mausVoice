@@ -146,11 +146,11 @@ export const theme = createTheme({
           fontVariantNumeric: "tabular-nums",
         },
         "::selection": {
-          backgroundColor:
-            themeParam.palette.mode === "dark"
-              ? "rgba(49, 152, 255, 0.35)"
-              : "rgba(27, 138, 248, 0.25)",
+          backgroundColor: "rgba(27, 138, 248, 0.25)",
           color: "inherit",
+          ...themeParam.applyStyles("dark", {
+            backgroundColor: "rgba(49, 152, 255, 0.35)",
+          }),
         },
         "*::-webkit-scrollbar": {
           width: 10,
@@ -160,20 +160,20 @@ export const theme = createTheme({
           background: "transparent",
         },
         "*::-webkit-scrollbar-thumb": {
-          backgroundColor:
-            themeParam.palette.mode === "dark"
-              ? "rgba(255,255,255,0.16)"
-              : "rgba(15,18,25,0.16)",
+          backgroundColor: "rgba(15,18,25,0.16)",
           borderRadius: 6,
           border: "2px solid transparent",
           backgroundClip: "padding-box",
+          ...themeParam.applyStyles("dark", {
+            backgroundColor: "rgba(255,255,255,0.16)",
+          }),
         },
         ":focus-visible": {
-          outline:
-            themeParam.palette.mode === "dark"
-              ? "2px solid rgba(49, 152, 255, 0.75)"
-              : "2px solid rgba(27, 138, 248, 0.7)",
+          outline: "2px solid rgba(27, 138, 248, 0.7)",
           outlineOffset: 2,
+          ...themeParam.applyStyles("dark", {
+            outline: "2px solid rgba(49, 152, 255, 0.75)",
+          }),
         },
         "#root": {
           height: "100%",
@@ -195,15 +195,12 @@ export const theme = createTheme({
           backgroundColor: theme.vars.palette.level1,
           backgroundImage: "none",
           borderRadius: 18,
-          boxShadow:
-            theme.palette.mode === "dark"
-              ? premiumSurface.dark.hover
-              : premiumSurface.light.hover,
-          border: `1px solid ${
-            theme.palette.mode === "dark"
-              ? "rgba(255,255,255,0.06)"
-              : "rgba(15,18,25,0.06)"
-          }`,
+          boxShadow: premiumSurface.light.hover,
+          border: "1px solid rgba(15,18,25,0.06)",
+          ...theme.applyStyles("dark", {
+            boxShadow: premiumSurface.dark.hover,
+            border: "1px solid rgba(255,255,255,0.06)",
+          }),
         }),
       },
     },
@@ -225,10 +222,10 @@ export const theme = createTheme({
           fontWeight: 550,
           borderRadius: 10,
           padding: "8px 12px",
-          boxShadow:
-            theme.palette.mode === "dark"
-              ? premiumSurface.dark.rest
-              : premiumSurface.light.rest,
+          boxShadow: premiumSurface.light.rest,
+          ...theme.applyStyles("dark", {
+            boxShadow: premiumSurface.dark.rest,
+          }),
         }),
       },
     },
@@ -258,26 +255,28 @@ export const theme = createTheme({
           fontSize: theme.typography.pxToRem(18),
           borderRadius: 99,
           padding: theme.spacing(2, 3),
-          boxShadow:
-            theme.palette.mode === "dark"
-              ? premiumSurface.dark.rest
-              : premiumSurface.light.rest,
+          boxShadow: premiumSurface.light.rest,
           transition:
             "transform 150ms cubic-bezier(0.23, 1, 0.32, 1), box-shadow 200ms cubic-bezier(0.23, 1, 0.32, 1)",
           "&:hover": {
             transform: "translateY(-1px)",
-            boxShadow:
-              theme.palette.mode === "dark"
-                ? premiumSurface.dark.hover
-                : premiumSurface.light.hover,
+            boxShadow: premiumSurface.light.hover,
           },
           "&:active": {
             transform: "scale(0.98)",
-            boxShadow:
-              theme.palette.mode === "dark"
-                ? premiumSurface.dark.active
-                : premiumSurface.light.active,
+            boxShadow: premiumSurface.light.active,
           },
+          ...theme.applyStyles("dark", {
+            boxShadow: premiumSurface.dark.rest,
+            "&:hover": {
+              transform: "translateY(-1px)",
+              boxShadow: premiumSurface.dark.hover,
+            },
+            "&:active": {
+              transform: "scale(0.98)",
+              boxShadow: premiumSurface.dark.active,
+            },
+          }),
           "& .MuiSvgIcon-root": {
             fontSize: 26,
           },
@@ -297,10 +296,10 @@ export const theme = createTheme({
         root: ({ theme }) => ({
           backgroundColor: theme.vars.palette.level1,
           borderRadius: theme.shape.borderRadius,
-          boxShadow:
-            theme.palette.mode === "dark"
-              ? premiumSurface.dark.rest
-              : premiumSurface.light.rest,
+          boxShadow: premiumSurface.light.rest,
+          ...theme.applyStyles("dark", {
+            boxShadow: premiumSurface.dark.rest,
+          }),
           "&:before": {
             display: "none",
           },
@@ -320,15 +319,12 @@ export const theme = createTheme({
           backgroundColor: theme.vars.palette.level1,
           backgroundImage: "none",
           borderRadius: 14,
-          border: `1px solid ${
-            theme.palette.mode === "dark"
-              ? "rgba(255,255,255,0.06)"
-              : "rgba(15,18,25,0.06)"
-          }`,
-          boxShadow:
-            theme.palette.mode === "dark"
-              ? premiumSurface.dark.hover
-              : premiumSurface.light.hover,
+          border: "1px solid rgba(15,18,25,0.06)",
+          boxShadow: premiumSurface.light.hover,
+          ...theme.applyStyles("dark", {
+            border: "1px solid rgba(255,255,255,0.06)",
+            boxShadow: premiumSurface.dark.hover,
+          }),
         }),
       },
     },
@@ -379,56 +375,68 @@ export const theme = createTheme({
             backgroundColor: theme.vars.palette.level3,
           },
         }),
-        contained: ({ theme }) => {
-          const dark = theme.palette.mode === "dark";
-          return {
-            color: dark ? "#0B0C0F" : "#FFFFFF",
-            backgroundColor: dark ? "#FFFFFF" : "#12151C",
-            boxShadow: dark
-              ? premiumSurface.dark.rest
-              : premiumSurface.light.rest,
+        contained: ({ theme }) => ({
+          color: "#FFFFFF",
+          backgroundColor: "#12151C",
+          boxShadow: premiumSurface.light.rest,
+          "&:hover": {
+            backgroundColor: "#1C2230",
+            boxShadow: premiumSurface.light.hover,
+            transform: "translateY(-1px)",
+          },
+          "&:active": {
+            transform: "scale(0.98) translateY(0)",
+            boxShadow: premiumSurface.light.active,
+            backgroundColor: "#0E1118",
+          },
+          ...theme.applyStyles("dark", {
+            color: "#0B0C0F",
+            backgroundColor: "#FFFFFF",
+            boxShadow: premiumSurface.dark.rest,
             "&:hover": {
-              backgroundColor: dark ? "#F0F2F5" : "#1C2230",
-              boxShadow: dark
-                ? premiumSurface.dark.hover
-                : premiumSurface.light.hover,
+              backgroundColor: "#F0F2F5",
+              boxShadow: premiumSurface.dark.hover,
               transform: "translateY(-1px)",
             },
             "&:active": {
               transform: "scale(0.98) translateY(0)",
-              boxShadow: dark
-                ? premiumSurface.dark.active
-                : premiumSurface.light.active,
-              backgroundColor: dark ? "#FFFFFF" : "#0E1118",
+              boxShadow: premiumSurface.dark.active,
+              backgroundColor: "#FFFFFF",
             },
-          };
-        },
+          }),
+        }),
       },
       variants: [
         {
           props: { variant: "flat" },
           style: ({ theme }) => {
-            const dark = theme.palette.mode === "dark";
             return {
               backgroundColor: theme.vars.palette.level1,
               color: theme.vars.palette.primary.main,
-              boxShadow: dark
-                ? premiumSurface.dark.rest
-                : premiumSurface.light.rest,
+              boxShadow: premiumSurface.light.rest,
               "&:hover": {
                 backgroundColor: theme.vars.palette.level2,
-                boxShadow: dark
-                  ? premiumSurface.dark.hover
-                  : premiumSurface.light.hover,
+                boxShadow: premiumSurface.light.hover,
                 transform: "translateY(-1px)",
               },
               "&:active": {
                 backgroundColor: theme.vars.palette.level3,
                 transform: "scale(0.98) translateY(0)",
-                boxShadow: dark
-                  ? premiumSurface.dark.active
-                  : premiumSurface.light.active,
+                boxShadow: premiumSurface.light.active,
               },
+              ...theme.applyStyles("dark", {
+                boxShadow: premiumSurface.dark.rest,
+                "&:hover": {
+                  backgroundColor: theme.vars.palette.level2,
+                  boxShadow: premiumSurface.dark.hover,
+                  transform: "translateY(-1px)",
+                },
+                "&:active": {
+                  backgroundColor: theme.vars.palette.level3,
+                  transform: "scale(0.98) translateY(0)",
+                  boxShadow: premiumSurface.dark.active,
+                },
+              }),
               fontSize: theme.typography.pxToRem(15),
               "& .MuiButton-startIcon > .MuiSvgIcon-root, \
     & .MuiButton-endIcon  > .MuiSvgIcon-root": {
@@ -465,30 +473,26 @@ export const theme = createTheme({
       styleOverrides: {
         outlined: ({ theme }) => ({
           backgroundColor: theme.vars.palette.level1,
-          border: `1px solid ${
-            theme.palette.mode === "dark"
-              ? "rgba(255,255,255,0.08)"
-              : "rgba(15,18,25,0.08)"
-          }`,
+          border: "1px solid rgba(15,18,25,0.08)",
+          ...theme.applyStyles("dark", {
+            border: "1px solid rgba(255,255,255,0.08)",
+          }),
         }),
       },
       variants: [
         {
           props: { variant: "flat" },
-          style: ({ theme }) => {
-            const dark = theme.palette.mode === "dark";
-            return {
-              backgroundColor: theme.vars.palette.level1,
-              boxShadow: dark
-                ? premiumSurface.dark.rest
-                : premiumSurface.light.rest,
-              border: `1px solid ${
-                dark ? "rgba(255,255,255,0.04)" : "rgba(15,18,25,0.04)"
-              }`,
-              transition:
-                "transform 180ms cubic-bezier(0.23, 1, 0.32, 1), box-shadow 200ms cubic-bezier(0.23, 1, 0.32, 1)",
-            };
-          },
+          style: ({ theme }) => ({
+            backgroundColor: theme.vars.palette.level1,
+            boxShadow: premiumSurface.light.rest,
+            border: "1px solid rgba(15,18,25,0.04)",
+            transition:
+              "transform 180ms cubic-bezier(0.23, 1, 0.32, 1), box-shadow 200ms cubic-bezier(0.23, 1, 0.32, 1)",
+            ...theme.applyStyles("dark", {
+              boxShadow: premiumSurface.dark.rest,
+              border: "1px solid rgba(255,255,255,0.04)",
+            }),
+          }),
         },
       ],
     },
@@ -527,27 +531,26 @@ export const theme = createTheme({
     MuiCard: {
       defaultProps: { variant: "flat", elevation: 0 },
       styleOverrides: {
-        root: ({ theme }) => {
-          const dark = theme.palette.mode === "dark";
-          return {
-            backgroundColor: theme.vars.palette.level1,
-            borderRadius: 16,
-            border: `1px solid ${
-              dark ? "rgba(255,255,255,0.05)" : "rgba(15,18,25,0.05)"
-            }`,
-            boxShadow: dark
-              ? premiumSurface.dark.rest
-              : premiumSurface.light.rest,
-            transition:
-              "transform 180ms cubic-bezier(0.23, 1, 0.32, 1), box-shadow 200ms cubic-bezier(0.23, 1, 0.32, 1)",
+        root: ({ theme }) => ({
+          backgroundColor: theme.vars.palette.level1,
+          borderRadius: 16,
+          border: "1px solid rgba(15,18,25,0.05)",
+          boxShadow: premiumSurface.light.rest,
+          transition:
+            "transform 180ms cubic-bezier(0.23, 1, 0.32, 1), box-shadow 200ms cubic-bezier(0.23, 1, 0.32, 1)",
+          "&:hover": {
+            transform: "translateY(-1px)",
+            boxShadow: premiumSurface.light.hover,
+          },
+          ...theme.applyStyles("dark", {
+            border: "1px solid rgba(255,255,255,0.05)",
+            boxShadow: premiumSurface.dark.rest,
             "&:hover": {
               transform: "translateY(-1px)",
-              boxShadow: dark
-                ? premiumSurface.dark.hover
-                : premiumSurface.light.hover,
+              boxShadow: premiumSurface.dark.hover,
             },
-          };
-        },
+          }),
+        }),
       },
       variants: [
         {
@@ -562,46 +565,51 @@ export const theme = createTheme({
     MuiListItemButton: {
       defaultProps: { disableRipple: true },
       styleOverrides: {
-        root: ({ theme }) => {
-          const dark = theme.palette.mode === "dark";
-          return {
-            borderRadius: 14,
-            marginBottom: 4,
-            minHeight: 44,
-            paddingTop: 10,
-            paddingBottom: 10,
-            transition:
-              "transform 120ms cubic-bezier(0.23, 1, 0.32, 1), background-color 180ms cubic-bezier(0.23, 1, 0.32, 1), box-shadow 200ms cubic-bezier(0.23, 1, 0.32, 1), color 180ms cubic-bezier(0.23, 1, 0.32, 1)",
+        root: ({ theme }) => ({
+          borderRadius: 14,
+          marginBottom: 4,
+          minHeight: 44,
+          paddingTop: 10,
+          paddingBottom: 10,
+          transition:
+            "transform 120ms cubic-bezier(0.23, 1, 0.32, 1), background-color 180ms cubic-bezier(0.23, 1, 0.32, 1), box-shadow 200ms cubic-bezier(0.23, 1, 0.32, 1), color 180ms cubic-bezier(0.23, 1, 0.32, 1)",
+          "&:hover": {
+            backgroundColor: "rgba(15,18,25,0.04)",
+          },
+          "&:active": {
+            transform: "scale(0.985)",
+          },
+          "&.Mui-selected": {
+            backgroundColor: "#12151C",
+            color: "#FFFFFF",
+            boxShadow: premiumSurface.light.selected,
             "&:hover": {
-              backgroundColor: dark
-                ? "rgba(255,255,255,0.04)"
-                : "rgba(15,18,25,0.04)",
+              backgroundColor: "#1A1F2A",
             },
-            "&:active": {
-              transform: "scale(0.985)",
+            "& .MuiListItemText-primary": {
+              color: "#FFFFFF",
+              fontWeight: 650,
+            },
+            "& .MuiListItemText-secondary": {
+              color: "rgba(255,255,255,0.72)",
+            },
+            "& .MuiSvgIcon-root": {
+              color: "#FFFFFF",
+            },
+          },
+          ...theme.applyStyles("dark", {
+            "&:hover": {
+              backgroundColor: "rgba(255,255,255,0.04)",
             },
             "&.Mui-selected": {
-              backgroundColor: dark ? "#1A1D24" : "#12151C",
-              color: "#FFFFFF",
-              boxShadow: dark
-                ? premiumSurface.dark.selected
-                : premiumSurface.light.selected,
+              backgroundColor: "#1A1D24",
+              boxShadow: premiumSurface.dark.selected,
               "&:hover": {
-                backgroundColor: dark ? "#22262F" : "#1A1F2A",
-              },
-              "& .MuiListItemText-primary": {
-                color: "#FFFFFF",
-                fontWeight: 650,
-              },
-              "& .MuiListItemText-secondary": {
-                color: "rgba(255,255,255,0.72)",
-              },
-              "& .MuiSvgIcon-root": {
-                color: "#FFFFFF",
+                backgroundColor: "#22262F",
               },
             },
-          };
-        },
+          }),
+        }),
       },
     },
 

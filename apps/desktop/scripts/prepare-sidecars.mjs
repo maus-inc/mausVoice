@@ -292,7 +292,22 @@ function buildNativePill(packageDir, binaryName) {
   });
 
   if (!buildOk) {
-    console.warn(`[sidecar] ${binaryName} build failed, skipping`);
+    // A failed pill build used to be a warning only. That let a release ship
+    // with a stale (or missing) pill binary while the build looked green:
+    // the app then falls back to the Tauri overlay, so long-press, drag and
+    // the pause/cancel controls silently keep their old behaviour. Treat it as
+    // fatal for release builds, and keep it non-fatal for local dev where a
+    // developer may not have the platform toolchain installed.
+    const message = `[sidecar] ${binaryName} build FAILED`;
+    const allowFailure =
+      process.env.MAUSVOICE_ALLOW_PILL_BUILD_FAILURE === "true";
+    if (!allowFailure && (buildProfile === "release" || process.env.CI)) {
+      fail(
+        `${message}. Refusing to package a stale or missing pill binary — ` +
+          `fix the build above, or set MAUSVOICE_ALLOW_PILL_BUILD_FAILURE=true to override.`,
+      );
+    }
+    console.warn(`${message}; continuing with the previously built binary.`);
     return;
   }
 

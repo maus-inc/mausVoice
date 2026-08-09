@@ -85,9 +85,28 @@ export const ThemeModeToggle = () => {
           height: 28,
           borderRadius: 1.5,
           color: "text.secondary",
-          "&:hover": { backgroundColor: "action.hover" },
+          // Motion per DESIGN.md: 120-180ms ease-out, no spring-bounce on tools.
+          transition: (theme) =>
+            theme.transitions.create(
+              ["background-color", "color", "transform"],
+              {
+                duration: 150,
+                easing: theme.transitions.easing.easeOut,
+              },
+            ),
+          "&:hover": { backgroundColor: "action.hover", color: "text.primary" },
+          // Designed focus ring: brand-tinted, 2px, offset 2.
+          "&:focus-visible": {
+            outline: "2px solid rgba(27, 138, 248, 0.7)",
+            outlineOffset: 2,
+          },
+          "&:active": { transform: "scale(0.94)" },
         }}
       >
+        {/*
+          `snappy` is the least bouncy MorphIcon spring, which keeps the icon
+          transition in line with the "no spring-bounce on a tool" motion rule.
+        */}
         <MorphIcon
           icon={morphIcon}
           size={18}

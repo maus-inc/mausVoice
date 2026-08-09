@@ -58,7 +58,8 @@ pub(crate) fn draw_all(ctx: &Ctx, state: &PillState, view_w: f64, view_h: f64) {
         draw_cancel_button(ctx, state, ww, wh);
 
         // Long-press outline indicator (also visible during active drag at full progress)
-        if (state.long_press_active.get() && state.long_press_elapsed.get() > 0.1)
+        if (state.long_press_active.get()
+            && state.long_press_elapsed.get() > LONG_PRESS_HOLD_DELAY)
             || state.dragging.get()
         {
             draw_long_press_ring(ctx, state, ww, wh);
@@ -1188,13 +1189,12 @@ fn draw_cancel_button(ctx: &Ctx, state: &PillState, ww: f64, wh: f64) {
         return;
     }
 
-    let (pill_x, pill_y, pill_w, _) = pill_position(state, ww, wh);
+    let (pill_x, pill_y, pill_w, pill_h) = pill_position(state, ww, wh);
     let phase = state.phase.get();
     let scale = 0.5 + 0.5 * t;
 
-    // Pause / resume on the LEFT side of the pill
-    let pause_x = pill_x - CANCEL_BUTTON_SIZE / 2.0 - 2.0;
-    let pause_y = pill_y - CANCEL_BUTTON_SIZE / 2.0 - 2.0;
+    // Pause / resume on the LEFT side, fully clear of the pill body.
+    let (pause_x, pause_y) = pause_button_origin(pill_x, pill_y, pill_h);
     let pause_cx = pause_x + CANCEL_BUTTON_SIZE / 2.0;
     let pause_cy = pause_y + CANCEL_BUTTON_SIZE / 2.0;
     ctx.save();
@@ -1210,9 +1210,8 @@ fn draw_cancel_button(ctx: &Ctx, state: &PillState, ww: f64, wh: f64) {
     ctx.draw_symbol(pause_symbol, pause_cx, pause_cy, CANCEL_BUTTON_SIZE - 2.0);
     ctx.restore();
 
-    // Cancel (right)
-    let btn_x = pill_x + pill_w - CANCEL_BUTTON_SIZE / 2.0 + 2.0;
-    let btn_y = pill_y - CANCEL_BUTTON_SIZE / 2.0 - 2.0;
+    // Cancel on the RIGHT side, fully clear of the pill body.
+    let (btn_x, btn_y) = cancel_button_origin(pill_x, pill_y, pill_w, pill_h);
     let cx = btn_x + CANCEL_BUTTON_SIZE / 2.0;
     let cy = btn_y + CANCEL_BUTTON_SIZE / 2.0;
     ctx.save();
@@ -1287,7 +1286,7 @@ fn draw_long_press_ring(ctx: &Ctx, state: &PillState, ww: f64, wh: f64) {
     let progress = if state.dragging.get() {
         1.0
     } else {
-        (state.long_press_elapsed.get() / LONG_PRESS_DURATION).min(1.0)
+        long_press_progress(state.long_press_elapsed.get())
     };
 
     let (pill_x, pill_y, pill_w, pill_h) = pill_position(state, ww, wh);
@@ -1441,5 +1440,144 @@ fn draw_balloon_pop(ctx: &Ctx, state: &PillState, ww: f64, wh: f64) {
         ctx.new_sub_path();
         ctx.arc(cx, cy, flash_radius, 0.0, std::f64::consts::TAU);
         ctx.fill();
+    }
+}
+
+/// Progress of the long-press gesture, in `0.0..=1.0`.
+///
+/// The ramp only starts once `LONG_PRESS_HOLD_DELAY` has elapsed, so a quick
+/// click never renders a partially-filled outline, and reaches 1.0 exactly when
+/// the gesture arms at `LONG_PRESS_DURATION`.
+pub(crate) fn long_press_progress(elapsed: f64) -> f64 {
+    let span = LONG_PRESS_DURATION - LONG_PRESS_HOLD_DELAY;
+    if span <= 0.0 {
+        return if elapsed >= LONG_PRESS_DURATION { 1.0 } else { 0.0 };
+    }
+    ((elapsed - LONG_PRESS_HOLD_DELAY) / span).clamp(0.0, 1.0)
+}
+
+#[cfg(test)]
+mod long_press_tests {
+    use super::*;
+
+    #[test]
+    fn no_progress_before_hold_delay() {
+        assert_eq!(long_press_progress(0.0), 0.0);
+        assert_eq!(long_press_progress(LONG_PRESS_HOLD_DELAY), 0.0);
+    }
+
+    #[test]
+    fn quick_click_never_shows_progress() {
+        // A typical click is well under the hold delay.
+        assert_eq!(long_press_progress(0.05), 0.0);
+    }
+
+    #[test]
+    fn completes_exactly_at_duration() {
+        assert_eq!(long_press_progress(LONG_PRESS_DURATION), 1.0);
+    }
+
+    #[test]
+    fn saturates_after_duration() {
+        assert_eq!(long_press_progress(LONG_PRESS_DURATION * 4.0), 1.0);
+    }
+
+    #[test]
+    fn ramps_monotonically_between_delay_and_duration() {
+        let mid = (LONG_PRESS_HOLD_DELAY + LONG_PRESS_DURATION) / 2.0;
+        let p = long_press_progress(mid);
+        assert!(p > 0.0 && p < 1.0, "expected partial progress, got {p}");
+        assert!(long_press_progress(mid) <= long_press_progress(mid + 0.01));
+    }
+}
+
+/// Horizontal gap between the pill edge and its side controls.
+///
+/// The controls must sit fully outside the pill body: any overlap would let a
+/// control's click region swallow presses meant for the pill itself (which is
+/// what starts/stops dictation).
+pub(crate) const CONTROL_EDGE_GAP: f64 = 6.0;
+
+/// Top-left corner of the pause/resume control (left of the pill).
+pub(crate) fn pause_button_origin(pill_x: f64, pill_y: f64, pill_h: f64) -> (f64, f64) {
+    let x = pill_x - CONTROL_EDGE_GAP - CANCEL_BUTTON_SIZE;
+    let y = pill_y + (pill_h - CANCEL_BUTTON_SIZE) / 2.0;
+    (x, y)
+}
+
+/// Top-left corner of the cancel control (right of the pill).
+pub(crate) fn cancel_button_origin(
+    pill_x: f64,
+    pill_y: f64,
+    pill_w: f64,
+    pill_h: f64,
+) -> (f64, f64) {
+    let x = pill_x + pill_w + CONTROL_EDGE_GAP;
+    let y = pill_y + (pill_h - CANCEL_BUTTON_SIZE) / 2.0;
+    (x, y)
+}
+
+/// True when the point falls inside either side control (pause or cancel).
+///
+/// Shared by the draw + input layers so hit-testing can never drift away from
+/// where the controls are actually painted.
+pub(crate) fn over_side_control(
+    x: f64,
+    y: f64,
+    pill_x: f64,
+    pill_y: f64,
+    pill_w: f64,
+    pill_h: f64,
+) -> bool {
+    let (px, py) = pause_button_origin(pill_x, pill_y, pill_h);
+    let (cx, cy) = cancel_button_origin(pill_x, pill_y, pill_w, pill_h);
+    let inside = |ox: f64, oy: f64| {
+        x >= ox && x <= ox + CANCEL_BUTTON_SIZE && y >= oy && y <= oy + CANCEL_BUTTON_SIZE
+    };
+    inside(px, py) || inside(cx, cy)
+}
+
+#[cfg(test)]
+mod control_layout_tests {
+    use super::*;
+
+    const PILL_X: f64 = 240.0;
+    const PILL_Y: f64 = 100.0;
+    const PILL_W: f64 = 120.0;
+    const PILL_H: f64 = 32.0;
+
+    #[test]
+    fn pause_sits_left_of_the_pill_without_overlapping() {
+        let (x, _) = pause_button_origin(PILL_X, PILL_Y, PILL_H);
+        assert!(x < PILL_X, "pause must be left of the pill");
+        assert!(
+            x + CANCEL_BUTTON_SIZE <= PILL_X,
+            "pause must not overlap the pill body"
+        );
+    }
+
+    #[test]
+    fn cancel_sits_right_of_the_pill_without_overlapping() {
+        let (x, _) = cancel_button_origin(PILL_X, PILL_Y, PILL_W, PILL_H);
+        assert!(
+            x >= PILL_X + PILL_W,
+            "cancel must not overlap the pill body"
+        );
+    }
+
+    #[test]
+    fn controls_do_not_overlap_each_other() {
+        let (px, _) = pause_button_origin(PILL_X, PILL_Y, PILL_H);
+        let (cx, _) = cancel_button_origin(PILL_X, PILL_Y, PILL_W, PILL_H);
+        assert!(px + CANCEL_BUTTON_SIZE < cx);
+    }
+
+    #[test]
+    fn controls_are_vertically_centred_on_the_pill() {
+        let (_, py) = pause_button_origin(PILL_X, PILL_Y, PILL_H);
+        let (_, cy) = cancel_button_origin(PILL_X, PILL_Y, PILL_W, PILL_H);
+        assert_eq!(py, cy, "both controls share a baseline");
+        let pill_centre = PILL_Y + PILL_H / 2.0;
+        assert!((py + CANCEL_BUTTON_SIZE / 2.0 - pill_centre).abs() < f64::EPSILON);
     }
 }

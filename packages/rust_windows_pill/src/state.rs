@@ -212,6 +212,11 @@ pub(crate) struct PillState {
     pub(crate) drag_cancelled: Cell<bool>,
     pub(crate) drag_cursor_x: Cell<f64>,
     pub(crate) drag_cursor_y: Cell<f64>,
+    /// Offset from the window origin to the cursor at the moment the drag
+    /// started. Keeping this fixed means the pill follows the cursor without
+    /// jumping so its grab point stays under the pointer.
+    pub(crate) drag_grab_offset_x: Cell<f64>,
+    pub(crate) drag_grab_offset_y: Cell<f64>,
     pub(crate) has_saved_position: Cell<bool>,
     pub(crate) saved_x: Cell<i32>,
     pub(crate) saved_y: Cell<i32>,

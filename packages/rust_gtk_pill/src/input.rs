@@ -4,7 +4,7 @@ use gtk::gdk;
 use crate::ipc::{self, OutMessage, Phase};
 
 use crate::constants::*;
-use crate::draw::pill_position;
+use crate::draw::{over_side_control, pill_position};
 use crate::state::{ClickAction, PillState};
 
 pub(crate) fn is_over_pill_area(state: &PillState, x: f64, y: f64) -> bool {
@@ -41,14 +41,10 @@ pub(crate) fn is_over_pill_area(state: &PillState, x: f64, y: f64) -> bool {
         }
     }
 
-    // Cancel button
+    // Pause / cancel side controls
     if state.phase.get() != Phase::Idle {
-        let btn_x = pill_x + pill_w - CANCEL_BUTTON_SIZE / 2.0 + 2.0;
         let pill_y = pill_area_top + (PILL_AREA_HEIGHT - EXPANDED_PILL_HEIGHT) / 2.0;
-        let btn_y = pill_y - CANCEL_BUTTON_SIZE / 2.0 - 2.0;
-        if x >= btn_x && x <= btn_x + CANCEL_BUTTON_SIZE
-            && y >= btn_y && y <= btn_y + CANCEL_BUTTON_SIZE
-        {
+        if over_side_control(x, y, pill_x, pill_y, pill_w, EXPANDED_PILL_HEIGHT) {
             return true;
         }
     }
