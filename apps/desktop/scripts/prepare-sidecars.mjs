@@ -257,6 +257,43 @@ if (isWindowsTarget(targetTriple)) {
   buildNativePill("rust_windows_pill", "mausvoice-windows-pill");
 }
 
+/// Decide what a failed pill build means.
+///
+/// A failed pill build used to be a warning only, which let a release
+/// ship with a stale (or missing) pill binary while the build looked
+/// green: the app falls back to the Tauri overlay, so long-press, drag
+/// and the pause/cancel controls silently keep their old behaviour.
+/// Treat it as fatal for release/CI builds, and keep it non-fatal for
+/// local dev where a developer may not have the platform toolchain
+/// installed — but only when a previously built binary exists to use.
+function pillBuildFailureHandled(binaryName) {
+  const message = `[sidecar] ${binaryName} build FAILED`;
+  const allowFailure =
+    process.env.MAUSVOICE_ALLOW_PILL_BUILD_FAILURE === "true";
+  const isCI = process.env.CI === "true";
+  if (!allowFailure && (buildProfile === "release" || isCI)) {
+    fail(
+      `${message}. Refusing to package a stale or missing pill binary — ` +
+        `fix the build above, or set MAUSVOICE_ALLOW_PILL_BUILD_FAILURE=true to override.`,
+    );
+  }
+
+  const pillDestPath = join(
+    desktopDir,
+    "src-tauri",
+    "resources",
+    `${binaryName}${executableSuffix}`,
+  );
+  if (!existsSync(pillDestPath)) {
+    fail(
+      `${message}. No previously built binary exists at ${pillDestPath} — ` +
+        `the build cannot proceed with a missing pill binary.`,
+    );
+  }
+
+  console.warn(`${message}; continuing with the previously built binary.`);
+}
+
 function buildNativePill(packageDir, binaryName) {
   const pillManifestPath = join(repoRoot, "packages", packageDir, "Cargo.toml");
 
@@ -292,37 +329,8 @@ function buildNativePill(packageDir, binaryName) {
   });
 
   if (!buildOk) {
-    // A failed pill build used to be a warning only. That let a release ship
-    // with a stale (or missing) pill binary while the build looked green:
-    // the app then falls back to the Tauri overlay, so long-press, drag and
-    // the pause/cancel controls silently keep their old behaviour. Treat it as
-    // fatal for release builds, and keep it non-fatal for local dev where a
-    // developer may not have the platform toolchain installed.
-    const message = `[sidecar] ${binaryName} build FAILED`;
-    const allowFailure =
-      process.env.MAUSVOICE_ALLOW_PILL_BUILD_FAILURE === "true";
-    const isCI = process.env.CI === "true";
-    if (!allowFailure && (buildProfile === "release" || isCI)) {
-      fail(
-        `${message}. Refusing to package a stale or missing pill binary — ` +
-          `fix the build above, or set MAUSVOICE_ALLOW_PILL_BUILD_FAILURE=true to override.`,
-      );
-    }
-
-    const pillDestPath = join(
-      desktopDir,
-      "src-tauri",
-      "resources",
-      `${binaryName}${executableSuffix}`,
-    );
-    if (!existsSync(pillDestPath)) {
-      fail(
-        `${message}. No previously built binary exists at ${pillDestPath} — ` +
-          `the build cannot proceed with a missing pill binary.`,
-      );
-    }
-
-    console.warn(`${message}; continuing with the previously built binary.`);
+    // A failed pill build used to be a warning only (see helper below).
+    pillBuildFailureHandled(binaryName);
     return;
   }
 

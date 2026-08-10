@@ -197,7 +197,7 @@ fn build_input_region(
         pill_h.ceil() as i32,
     );
 
-    let mut region = if tooltip_t >= TOOLTIP_VISIBLE_T && tooltip_w > 0.0 {
+    let region = if tooltip_t >= TOOLTIP_VISIBLE_T && tooltip_w > 0.0 {
         // Same helper the draw code uses, so the region always covers the
         // painted tooltip. Centring on the pill rather than the window also
         // keeps them aligned horizontally once a drag moves the pill.
