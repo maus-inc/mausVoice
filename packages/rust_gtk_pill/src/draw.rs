@@ -15,6 +15,12 @@ pub(crate) fn draw_all(cr: &cairo::Context, state: &PillState) {
 
     state.click_regions.borrow_mut().clear();
 
+    // Publish the tooltip width every frame, before any early-out below can
+    // skip draw_tooltip(). The tick reads this when it rebuilds the Wayland
+    // input region, so the region and the painted tooltip agree from the very
+    // first frame the tooltip is shown.
+    sync_tooltip_width(cr, state);
+
     let ww = state.draw_width.get();
     let wh = state.draw_height.get();
     let (ox, oy) = state.content_offset();
@@ -432,25 +438,10 @@ pub(crate) fn tooltip_has_content(style_count: u32, style_name: &str) -> bool {
     style_count > 1 && !style_name.is_empty()
 }
 
-/// Publish `tooltip_width` outside of a draw pass.
-///
-/// The tick has no Cairo context, so measure on a 1x1 scratch surface. Text
-/// metrics depend only on the font and size, not on the surface dimensions,
-/// so this yields the same width the draw pass will use.
-pub(crate) fn sync_tooltip_width_offscreen(state: &PillState) {
-    let Ok(surface) = cairo::ImageSurface::create(cairo::Format::ARgb32, 1, 1) else {
-        return;
-    };
-    let Ok(cr) = cairo::Context::new(&surface) else {
-        return;
-    };
-    sync_tooltip_width(&cr, state);
-}
-
 /// Measure the tooltip text and publish `tooltip_width` on the state.
 ///
 /// Only measures text, so any Cairo context will do.
-fn sync_tooltip_width(cr: &cairo::Context, state: &PillState) {
+pub(crate) fn sync_tooltip_width(cr: &cairo::Context, state: &PillState) {
     let style_name = state.style_name.borrow();
     if !tooltip_has_content(state.style_count.get(), &style_name) {
         state.tooltip_width.set(0.0);
@@ -458,11 +449,12 @@ fn sync_tooltip_width(cr: &cairo::Context, state: &PillState) {
     }
     cr.select_font_face("Satoshi", cairo::FontSlant::Normal, cairo::FontWeight::Bold);
     cr.set_font_size(12.0);
-    let text_w = match cr.text_extents(&style_name) {
-        Ok(extents) => extents.width(),
-        Err(_) => return,
+    let Ok(extents) = cr.text_extents(&style_name) else {
+        return;
     };
-    state.tooltip_width.set(tooltip_width_for_text(text_w));
+    state
+        .tooltip_width
+        .set(tooltip_width_for_text(extents.width()));
 }
 
 fn draw_tooltip(cr: &cairo::Context, state: &PillState, ww: f64, wh: f64) {
