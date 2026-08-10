@@ -7,8 +7,6 @@ pub(crate) const DICTATION_WINDOW_WIDTH: i32 = 200;
 pub(crate) const DICTATION_WINDOW_HEIGHT: i32 = 86;
 pub(crate) const MARGIN_BOTTOM: i32 = 8;
 
-pub(crate) const PILL_AREA_HEIGHT: f64 = 48.0;
-
 /// Total hold time before the drag gesture arms. Tuned to the 350-600ms band
 /// so the gesture feels deliberate without making the user wait.
 pub(crate) const LONG_PRESS_DURATION: f64 = 0.45;
@@ -42,6 +40,8 @@ pub(crate) const SPRING_DT: f64 = 0.016;
 // ── Tooltip (style selector) ──────────────────────────────────────
 pub(crate) const TOOLTIP_HEIGHT: f64 = 24.0;
 pub(crate) const TOOLTIP_GAP: f64 = 6.0;
+/// Distance the tooltip slides upward as it fades in.
+pub(crate) const TOOLTIP_ENTRY_SLIDE: f64 = 4.0;
 pub(crate) const TOOLTIP_RADIUS: f64 = 8.0;
 
 // ── Waveform — ported from AudioWaveform.tsx ──────────────────────

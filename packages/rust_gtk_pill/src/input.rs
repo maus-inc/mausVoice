@@ -5,7 +5,8 @@ use crate::ipc::{self, OutMessage, Phase};
 
 use crate::constants::*;
 use crate::draw::{
-    cancel_button_origin, over_side_control, pause_button_origin, pill_position, tooltip_origin,
+    cancel_button_origin, over_side_control, pause_button_origin, pill_position,
+    tooltip_rendered_origin,
 };
 use crate::state::{ClickAction, PillState};
 
@@ -31,7 +32,8 @@ pub(crate) fn is_over_pill_area(state: &PillState, x: f64, y: f64) -> bool {
     // the painted tooltip (including after a Wayland drag).
     if state.tooltip_t.get() > 0.1 {
         let tooltip_w = state.tooltip_width.get();
-        let (tooltip_x, tooltip_y) = tooltip_origin(px, py, pw, tooltip_w);
+        let (tooltip_x, tooltip_y) =
+            tooltip_rendered_origin(px, py, pw, tooltip_w, state.tooltip_t.get());
         if x >= tooltip_x && x <= tooltip_x + tooltip_w
             && y >= tooltip_y && y <= tooltip_y + TOOLTIP_HEIGHT
         {
@@ -199,7 +201,8 @@ fn build_input_region(
         // Same helper the draw code uses, so the region always covers the
         // painted tooltip. Centring on the pill rather than the window also
         // keeps them aligned horizontally once a drag moves the pill.
-        let (tooltip_rx, tooltip_ry) = tooltip_origin(pill_x, pill_y, pill_w, tooltip_w);
+        let (tooltip_rx, tooltip_ry) =
+            tooltip_rendered_origin(pill_x, pill_y, pill_w, tooltip_w, tooltip_t);
         let tooltip_rect = cairo::RectangleInt::new(
             (ox + tooltip_rx).floor() as i32,
             (oy + tooltip_ry).floor() as i32,
@@ -334,6 +337,7 @@ pub(crate) fn update_input_region(gdk_window: &gdk::Window, state: &PillState) {
 #[cfg(test)]
 mod input_region_tests {
     use super::*;
+    use crate::draw::tooltip_origin;
 
     /// After a non-X11 drag the pill is drawn at base position + offset.
     /// The input region must include the moved pill body and both side
@@ -407,7 +411,7 @@ mod input_region_tests {
 
             // Every corner and the centre of the painted tooltip must be
             // covered, so the whole selector is clickable.
-            let (tx, ty) = tooltip_origin(pill_x, pill_y, pill_w, tooltip_w);
+            let (tx, ty) = tooltip_rendered_origin(pill_x, pill_y, pill_w, tooltip_w, 1.0);
             let probes = [
                 (tx + 1.0, ty + 1.0, "top-left"),
                 (tx + tooltip_w - 1.0, ty + 1.0, "top-right"),
@@ -436,6 +440,50 @@ mod input_region_tests {
         let (x1, y1) = tooltip_origin(240.0 + 80.0, 100.0 + 40.0, 120.0, 160.0);
         assert_eq!(x1 - x0, 80.0);
         assert_eq!(y1 - y0, 40.0);
+    }
+
+    /// Mid-animation the tooltip is painted a few pixels low. The region must
+    /// follow, or the bottom edge of a fading-in tooltip is unclickable.
+    #[test]
+    fn partially_shown_tooltip_is_fully_inside_region() {
+        let (ox, oy) = (0.0f64, 0.0f64);
+        let (pill_x, pill_y, pill_w, pill_h) = (240.0f64, 100.0f64, 120.0f64, 32.0f64);
+        let tooltip_w = 160.0f64;
+
+        for tooltip_t in [0.2f64, 0.5, 0.8, 1.0] {
+            let region = build_input_region(
+                ox, oy,
+                pill_x, pill_y, pill_w, pill_h,
+                tooltip_t, tooltip_w,
+                false,
+            );
+
+            let (tx, ty) =
+                tooltip_rendered_origin(pill_x, pill_y, pill_w, tooltip_w, tooltip_t);
+            let probes = [
+                (tx + 1.0, ty + 1.0, "top-left"),
+                (tx + tooltip_w - 1.0, ty + 1.0, "top-right"),
+                (tx + tooltip_w / 2.0, ty + TOOLTIP_HEIGHT / 2.0, "centre"),
+                (tx + 1.0, ty + TOOLTIP_HEIGHT - 1.0, "bottom-left"),
+                (tx + tooltip_w - 1.0, ty + TOOLTIP_HEIGHT - 1.0, "bottom-right"),
+            ];
+            for (px, py, label) in probes {
+                assert!(
+                    region.contains_point((ox + px) as i32, (oy + py) as i32),
+                    "tooltip {label} outside region at tooltip_t={tooltip_t}"
+                );
+            }
+        }
+    }
+
+    /// The entry slide is greatest when the tooltip first appears and zero
+    /// once it has settled.
+    #[test]
+    fn tooltip_entry_offset_decays_to_zero() {
+        use crate::draw::tooltip_entry_offset;
+        assert_eq!(tooltip_entry_offset(1.0), 0.0);
+        assert!(tooltip_entry_offset(0.0) > tooltip_entry_offset(0.5));
+        assert!(tooltip_entry_offset(0.5) > tooltip_entry_offset(1.0));
     }
 
     /// Without an offset the region still covers the pill body.

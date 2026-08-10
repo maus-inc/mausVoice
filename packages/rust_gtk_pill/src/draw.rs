@@ -381,10 +381,34 @@ fn draw_idle_label(cr: &cairo::Context, rx: f64, ry: f64, pill_w: f64, pill_h: f
 /// drag translates the draw offset rather than moving the toplevel — they
 /// diverged by the whole drag distance, leaving the visible style selector
 /// outside its own input region and unclickable.
+/// Vertical slide applied while the tooltip animates in.
+///
+/// The tooltip starts a few pixels low and rises into place. Hit testing and
+/// the input region must apply the same offset, or the bottom few pixels of a
+/// partially-shown tooltip fall outside their own input shape.
+pub(crate) fn tooltip_entry_offset(tooltip_t: f64) -> f64 {
+    (1.0 - tooltip_t) * TOOLTIP_ENTRY_SLIDE
+}
+
 pub(crate) fn tooltip_origin(pill_x: f64, pill_y: f64, pill_w: f64, tooltip_w: f64) -> (f64, f64) {
     let x = pill_x + (pill_w - tooltip_w) / 2.0;
     let y = pill_y - TOOLTIP_GAP - TOOLTIP_HEIGHT;
     (x, y)
+}
+
+/// Where the tooltip is actually painted, including the entry animation.
+///
+/// This is the geometry drawing, hit testing and the input region must all
+/// agree on. `tooltip_origin()` alone is the resting position.
+pub(crate) fn tooltip_rendered_origin(
+    pill_x: f64,
+    pill_y: f64,
+    pill_w: f64,
+    tooltip_w: f64,
+    tooltip_t: f64,
+) -> (f64, f64) {
+    let (x, y) = tooltip_origin(pill_x, pill_y, pill_w, tooltip_w);
+    (x, y + tooltip_entry_offset(tooltip_t))
 }
 
 fn draw_tooltip(cr: &cairo::Context, state: &PillState, ww: f64, wh: f64) {
@@ -411,9 +435,8 @@ fn draw_tooltip(cr: &cairo::Context, state: &PillState, ww: f64, wh: f64) {
     // Anchor to the live pill so the tooltip tracks a Wayland drag, and stays
     // inside the input region built from the same helper.
     let (pill_x, pill_y, pill_w, _) = pill_position(state, ww, wh);
-    let (tooltip_rx, tooltip_base_ry) = tooltip_origin(pill_x, pill_y, pill_w, tooltip_w);
-    let y_offset = (1.0 - tooltip_t) * 4.0;
-    let tooltip_ry = tooltip_base_ry + y_offset;
+    let (tooltip_rx, tooltip_ry) =
+        tooltip_rendered_origin(pill_x, pill_y, pill_w, tooltip_w, tooltip_t);
     let alpha = tooltip_t;
 
     rounded_rect(cr, tooltip_rx, tooltip_ry, tooltip_w, TOOLTIP_HEIGHT, TOOLTIP_RADIUS);
