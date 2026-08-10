@@ -138,7 +138,7 @@ fn draw_pill(cr: &cairo::Context, state: &PillState, ww: f64, wh: f64) {
 
     state.click_regions.borrow_mut().push(ClickRegion {
         x: rx, y: ry, w: pill_w, h: pill_h,
-        action: if state.assistant_active.get() { ClickAction::Pill } else { ClickAction::Pill },
+        action: ClickAction::Pill,
     });
 }
 
@@ -1117,7 +1117,7 @@ fn draw_user_prompt_preview(
             break;
         }
         display.truncate(display.len() - 4);
-        display.push_str("…");
+        display.push('…');
     }
 
     let ext = cr.text_extents(&display).unwrap();

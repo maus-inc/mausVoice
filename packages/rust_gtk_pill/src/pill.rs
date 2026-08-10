@@ -992,7 +992,7 @@ fn spring_anim(value: &Cell<f64>, velocity: &Cell<f64>, target: f64, stiffness: 
         velocity.set(0.0);
     } else {
         value.set(new_v.clamp(0.0, 1.0));
-        velocity.set(if new_v < 0.0 || new_v > 1.0 { 0.0 } else { new_vel });
+        velocity.set(if !(0.0..=1.0).contains(&new_v) { 0.0 } else { new_vel });
     }
 }
 

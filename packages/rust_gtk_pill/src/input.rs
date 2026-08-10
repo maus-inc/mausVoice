@@ -40,10 +40,8 @@ pub(crate) fn is_over_pill_area(state: &PillState, x: f64, y: f64) -> bool {
     }
 
     // Pause / cancel side controls (live pill geometry, matching draw code)
-    if state.phase.get() != Phase::Idle {
-        if over_side_control(x, y, px, py, pw, ph) {
-            return true;
-        }
+    if state.phase.get() != Phase::Idle && over_side_control(x, y, px, py, pw, ph) {
+        return true;
     }
 
     false
@@ -279,9 +277,7 @@ pub(crate) fn update_input_region(gdk_window: &gdk::Window, state: &PillState) {
     let is_active = state.phase.get() != Phase::Idle;
     let is_assistant = state.assistant_active.get();
 
-    if is_assistant {
-        set_expanded_input_region(gdk_window, state);
-    } else if hovered || is_active {
+    if is_assistant || hovered || is_active {
         set_expanded_input_region(gdk_window, state);
     } else {
         let dw = state.draw_width.get();

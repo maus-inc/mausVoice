@@ -45,5 +45,3 @@ pub fn install_embedded_satoshi() {
         path
     });
 }
-
-pub const FAMILY: &str = "Satoshi";
