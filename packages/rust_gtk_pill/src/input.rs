@@ -4,7 +4,9 @@ use gtk::gdk;
 use crate::ipc::{self, OutMessage, Phase};
 
 use crate::constants::*;
-use crate::draw::{cancel_button_origin, over_side_control, pause_button_origin, pill_position};
+use crate::draw::{
+    cancel_button_origin, over_side_control, pause_button_origin, pill_position, tooltip_origin,
+};
 use crate::state::{ClickAction, PillState};
 
 pub(crate) fn is_over_pill_area(state: &PillState, x: f64, y: f64) -> bool {
@@ -18,8 +20,6 @@ pub(crate) fn is_over_pill_area(state: &PillState, x: f64, y: f64) -> bool {
         return x >= 0.0 && x <= dw && y >= 0.0 && y <= dh;
     }
 
-    let pill_area_top = dh - PILL_AREA_HEIGHT;
-
     // Pill area (with padding)
     let pad = if state.hovered.get() { 24.0 } else { 8.0 };
     let (px, py, pw, ph) = pill_position(state, dw, dh);
@@ -27,11 +27,11 @@ pub(crate) fn is_over_pill_area(state: &PillState, x: f64, y: f64) -> bool {
         return true;
     }
 
-    // Tooltip
+    // Tooltip: same helper the draw code uses, so the hit box always covers
+    // the painted tooltip (including after a Wayland drag).
     if state.tooltip_t.get() > 0.1 {
         let tooltip_w = state.tooltip_width.get();
-        let tooltip_x = (dw - tooltip_w) / 2.0;
-        let tooltip_y = pill_area_top - TOOLTIP_GAP - TOOLTIP_HEIGHT;
+        let (tooltip_x, tooltip_y) = tooltip_origin(px, py, pw, tooltip_w);
         if x >= tooltip_x && x <= tooltip_x + tooltip_w
             && y >= tooltip_y && y <= tooltip_y + TOOLTIP_HEIGHT
         {
@@ -183,7 +183,7 @@ pub(crate) fn handle_scroll(state: &PillState, event: &gdk::EventScroll) {
 /// both side controls stay clickable.
 #[allow(clippy::too_many_arguments)]
 fn build_input_region(
-    ox: f64, oy: f64, dw: f64,
+    ox: f64, oy: f64,
     pill_x: f64, pill_y: f64, pill_w: f64, pill_h: f64,
     tooltip_t: f64, tooltip_w: f64,
     include_side_controls: bool,
@@ -196,12 +196,13 @@ fn build_input_region(
     );
 
     let mut region = if tooltip_t > 0.1 && tooltip_w > 0.0 {
-        // Tooltip sits directly above the pill. Union the two instead of
-        // computing one spanning rectangle from the old pill-area math.
-        let tooltip_ry = (oy + pill_y) as i32 - (TOOLTIP_GAP + TOOLTIP_HEIGHT).ceil() as i32;
+        // Same helper the draw code uses, so the region always covers the
+        // painted tooltip. Centring on the pill rather than the window also
+        // keeps them aligned horizontally once a drag moves the pill.
+        let (tooltip_rx, tooltip_ry) = tooltip_origin(pill_x, pill_y, pill_w, tooltip_w);
         let tooltip_rect = cairo::RectangleInt::new(
-            (ox + (dw - tooltip_w) / 2.0).floor() as i32,
-            tooltip_ry,
+            (ox + tooltip_rx).floor() as i32,
+            (oy + tooltip_ry).floor() as i32,
             tooltip_w.ceil() as i32,
             TOOLTIP_HEIGHT.ceil() as i32,
         );
@@ -222,11 +223,11 @@ fn build_input_region(
 #[allow(clippy::too_many_arguments)]
 fn input_region(
     state: &PillState,
-    ox: f64, oy: f64, dw: f64,
+    ox: f64, oy: f64,
     pill_x: f64, pill_y: f64, pill_w: f64, pill_h: f64,
 ) -> cairo::Region {
     let region = build_input_region(
-        ox, oy, dw,
+        ox, oy,
         pill_x, pill_y, pill_w, pill_h,
         state.tooltip_t.get(), state.tooltip_width.get(),
         state.phase.get() != Phase::Idle,
@@ -254,7 +255,7 @@ pub(crate) fn set_expanded_input_region(gdk_window: &gdk::Window, state: &PillSt
         // static EXPANDED_* rectangle used to leave the moved pill unable
         // to receive hover/click once dropped elsewhere.
         let (pill_x, pill_y, pill_w, pill_h) = pill_position(state, dw, dh);
-        let region = input_region(state, ox, oy, dw, pill_x, pill_y, pill_w, pill_h);
+        let region = input_region(state, ox, oy, pill_x, pill_y, pill_w, pill_h);
         gdk_window.input_shape_combine_region(&region, 0, 0);
     }
 }
@@ -339,7 +340,7 @@ mod input_region_tests {
     /// controls at that shifted geometry.
     #[test]
     fn shifted_pill_keeps_body_and_controls_clickable() {
-        let (ox, oy, dw) = (0.0f64, 0.0f64, 640.0f64);
+        let (ox, oy) = (0.0f64, 0.0f64);
         // Base pill geometry (what pill_position returns before offset)
         let (base_x, base_y, base_w, base_h) = (240.0f64, 100.0f64, 120.0f64, 32.0f64);
         // Simulate a Wayland drag: non-zero drag_draw_offset_* shifted draw
@@ -353,7 +354,7 @@ mod input_region_tests {
 
         // Active phase -> side controls are part of the input region.
         let region = build_input_region(
-            ox, oy, dw,
+            ox, oy,
             pill_x, pill_y, pill_w, pill_h,
             0.0, 0.0,   // no tooltip
             true,       // include side controls
@@ -382,12 +383,67 @@ mod input_region_tests {
         }
     }
 
+    /// The visible tooltip must sit inside the input region, at rest and
+    /// after a drag. These previously disagreed: the draw code anchored the
+    /// tooltip to a fixed `pill_area_top` while the region followed the live
+    /// `pill_y`, so the style selector could be painted outside its own input
+    /// shape and stop receiving clicks.
+    #[test]
+    fn tooltip_stays_inside_region_when_pill_moves() {
+        let (ox, oy) = (0.0f64, 0.0f64);
+        let (base_x, base_y, pill_w, pill_h) = (240.0f64, 100.0f64, 120.0f64, 32.0f64);
+        let tooltip_w = 160.0f64;
+
+        for (offset_x, offset_y) in [(0.0, 0.0), (80.0, 40.0), (-60.0, -30.0)] {
+            let pill_x = base_x + offset_x;
+            let pill_y = base_y + offset_y;
+
+            let region = build_input_region(
+                ox, oy,
+                pill_x, pill_y, pill_w, pill_h,
+                1.0, tooltip_w,  // tooltip fully shown
+                false,
+            );
+
+            // Every corner and the centre of the painted tooltip must be
+            // covered, so the whole selector is clickable.
+            let (tx, ty) = tooltip_origin(pill_x, pill_y, pill_w, tooltip_w);
+            let probes = [
+                (tx + 1.0, ty + 1.0, "top-left"),
+                (tx + tooltip_w - 1.0, ty + 1.0, "top-right"),
+                (tx + tooltip_w / 2.0, ty + TOOLTIP_HEIGHT / 2.0, "centre"),
+                (tx + 1.0, ty + TOOLTIP_HEIGHT - 1.0, "bottom-left"),
+                (tx + tooltip_w - 1.0, ty + TOOLTIP_HEIGHT - 1.0, "bottom-right"),
+            ];
+            for (px, py, label) in probes {
+                assert!(
+                    region.contains_point((ox + px) as i32, (oy + py) as i32),
+                    "tooltip {label} missing from region at offset ({offset_x},{offset_y})"
+                );
+            }
+        }
+    }
+
+    /// The tooltip is centred on the pill and sits directly above it.
+    #[test]
+    fn tooltip_origin_tracks_the_pill() {
+        let (x0, y0) = tooltip_origin(240.0, 100.0, 120.0, 160.0);
+        // Centred: pill centre 300 - half tooltip 80 = 220.
+        assert_eq!(x0, 220.0);
+        assert_eq!(y0, 100.0 - TOOLTIP_GAP - TOOLTIP_HEIGHT);
+
+        // A drag shifts the tooltip by exactly the same delta as the pill.
+        let (x1, y1) = tooltip_origin(240.0 + 80.0, 100.0 + 40.0, 120.0, 160.0);
+        assert_eq!(x1 - x0, 80.0);
+        assert_eq!(y1 - y0, 40.0);
+    }
+
     /// Without an offset the region still covers the pill body.
     #[test]
     fn unshifted_pill_body_is_in_region() {
-        let (ox, oy, dw) = (0.0f64, 0.0f64, 640.0f64);
+        let (ox, oy) = (0.0f64, 0.0f64);
         let region = build_input_region(
-            ox, oy, dw,
+            ox, oy,
             240.0, 100.0, 120.0, 32.0,
             0.0, 0.0,
             false,

@@ -25,8 +25,7 @@ pub(crate) fn draw_all(cr: &cairo::Context, state: &PillState) {
     if state.assistant_active.get() || state.panel_open_t.get() > 0.01 {
         draw_assistant_panel(cr, state, ww, wh);
     } else if state.flash_t.get() < 0.01 {
-        let pill_area_top = wh - PILL_AREA_HEIGHT;
-        draw_tooltip(cr, state, ww, pill_area_top);
+        draw_tooltip(cr, state, ww, wh);
     }
 
     if !state.assistant_active.get() && state.flame_active.get() {
@@ -373,7 +372,22 @@ fn draw_idle_label(cr: &cairo::Context, rx: f64, ry: f64, pill_w: f64, pill_h: f
 
 // ── Tooltip (dictation style selector) ────────────────────────────
 
-fn draw_tooltip(cr: &cairo::Context, state: &PillState, ww: f64, pill_area_top: f64) {
+/// Top-left corner of the style tooltip, which sits directly above the pill.
+///
+/// Drawing, hit testing and the Wayland input region all resolve the tooltip
+/// through this one helper. They previously each derived it separately: draw
+/// used a fixed `pill_area_top`, while the input region used the live `pill_y`.
+/// Those disagreed by the tooltip gap even at rest, and on Wayland — where a
+/// drag translates the draw offset rather than moving the toplevel — they
+/// diverged by the whole drag distance, leaving the visible style selector
+/// outside its own input region and unclickable.
+pub(crate) fn tooltip_origin(pill_x: f64, pill_y: f64, pill_w: f64, tooltip_w: f64) -> (f64, f64) {
+    let x = pill_x + (pill_w - tooltip_w) / 2.0;
+    let y = pill_y - TOOLTIP_GAP - TOOLTIP_HEIGHT;
+    (x, y)
+}
+
+fn draw_tooltip(cr: &cairo::Context, state: &PillState, ww: f64, wh: f64) {
     let tooltip_t = state.tooltip_t.get();
     if tooltip_t < 0.01 {
         return;
@@ -394,9 +408,12 @@ fn draw_tooltip(cr: &cairo::Context, state: &PillState, ww: f64, pill_area_top: 
     let tooltip_w = padding_h * 2.0 + chevron_area * 2.0 + text_w;
     state.tooltip_width.set(tooltip_w);
 
-    let tooltip_rx = (ww - tooltip_w) / 2.0;
+    // Anchor to the live pill so the tooltip tracks a Wayland drag, and stays
+    // inside the input region built from the same helper.
+    let (pill_x, pill_y, pill_w, _) = pill_position(state, ww, wh);
+    let (tooltip_rx, tooltip_base_ry) = tooltip_origin(pill_x, pill_y, pill_w, tooltip_w);
     let y_offset = (1.0 - tooltip_t) * 4.0;
-    let tooltip_ry = pill_area_top - TOOLTIP_GAP - TOOLTIP_HEIGHT + y_offset;
+    let tooltip_ry = tooltip_base_ry + y_offset;
     let alpha = tooltip_t;
 
     rounded_rect(cr, tooltip_rx, tooltip_ry, tooltip_w, TOOLTIP_HEIGHT, TOOLTIP_RADIUS);

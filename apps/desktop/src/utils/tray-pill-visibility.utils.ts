@@ -1,5 +1,4 @@
-import type { DictationPillVisibility } from "@maus-inc/types";
-import type { Nullable } from "@maus-inc/types";
+import type { DictationPillVisibility, Nullable } from "@maus-inc/types";
 import { getEffectivePillVisibility } from "./user.utils";
 
 /**
