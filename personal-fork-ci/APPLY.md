@@ -16,5 +16,4 @@ git commit -m "ci: apply personal-fork workflows (no Linux, unsigned release)"
 
 Do **not** remove these free-form release helpers (they post-date the fork base):
 - `.github/workflows/release.yml` (workflow_dispatch recovery)
-- `.github/workflows/resign-windows-updater.yml`
 - `.github/workflows/retry-release.yml`
