@@ -12,17 +12,39 @@ pub fn init_x11_threads() {}
 
 pub fn configure_display_backend() {}
 
+/// Owns a Win32 `HANDLE` and closes it on drop.
+///
+/// `OpenProcessToken` hands back a kernel handle that the caller must close.
+/// Doing that manually is easy to get wrong, because every early return needs
+/// its own `CloseHandle`. Tying the close to `Drop` makes the release
+/// unconditional — including on the error paths below.
+struct OwnedHandle(windows::Win32::Foundation::HANDLE);
+
+impl Drop for OwnedHandle {
+    fn drop(&mut self) {
+        if !self.0.is_invalid() {
+            unsafe {
+                let _ = windows::Win32::Foundation::CloseHandle(self.0);
+            }
+        }
+    }
+}
+
 pub fn is_process_elevated() -> bool {
     unsafe {
         let mut token = windows::Win32::Foundation::HANDLE::default();
         if OpenProcessToken(GetCurrentProcess(), TOKEN_QUERY, &mut token).is_err() {
             return false;
         }
+        // Take ownership immediately, so every path from here closes the token.
+        // This is called once per second by the permission poller, so a missed
+        // close leaks a kernel handle per second for the app's whole runtime.
+        let token = OwnedHandle(token);
 
         let mut elevation = TOKEN_ELEVATION::default();
         let mut size = std::mem::size_of::<TOKEN_ELEVATION>() as u32;
         let status = GetTokenInformation(
-            token,
+            token.0,
             TokenElevation,
             Some(&mut elevation as *mut _ as *mut _),
             size,

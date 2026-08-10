@@ -29,14 +29,24 @@ pub(crate) fn request_microphone_permission() -> Result<PermissionStatus, String
 /// through the optional `run_native_setup` elevation flow in `init.rs` instead
 /// of gating the whole app here.
 pub(crate) fn check_accessibility_permission() -> Result<PermissionStatus, String> {
-    // Logged (not gated) so the elevation state is visible in diagnostics when
-    // a user reports hotkeys failing over an elevated window.
-    log::debug!(
-        "Windows accessibility check: process elevated = {}",
+    // Deliberately does not query the elevation state. This runs on a 1s poll
+    // (see PermissionSideEffects), and the result does not affect the reported
+    // status, so calling is_process_elevated() here would be a syscall per
+    // second for a value that is never used. Elevation is reported once at
+    // startup instead — see log_elevation_state().
+    Ok(authorized_status(PermissionKind::Accessibility))
+}
+
+/// Record the elevation state once, for diagnostics.
+///
+/// Useful when a user reports hotkeys failing over an elevated window (UIPI):
+/// an unelevated hook cannot observe input delivered to a higher-integrity
+/// process. Called once during startup rather than from the permission poll.
+pub(crate) fn log_elevation_state() {
+    log::info!(
+        "Windows input capture: process elevated = {}",
         is_process_elevated()
     );
-
-    Ok(authorized_status(PermissionKind::Accessibility))
 }
 
 /// Windows shows no OS-level accessibility prompt.
