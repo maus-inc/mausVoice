@@ -12,7 +12,8 @@ export const UpdateListTile = () => {
       sx={{
         position: "relative",
         borderRadius: 1,
-        border: "1px solid rgba(59, 130, 246, 0.3)",
+        border:
+          "1px solid color-mix(in srgb, var(--app-palette-blue) 30%, transparent)",
         overflow: "hidden",
         "&::before": {
           content: '""',
@@ -21,7 +22,7 @@ export const UpdateListTile = () => {
           borderRadius: "inherit",
           padding: "1px",
           background:
-            "linear-gradient(90deg, transparent, rgba(59, 130, 246, 0.6), transparent)",
+            "linear-gradient(90deg, transparent, color-mix(in srgb, var(--app-palette-blue) 60%, transparent), transparent)",
           backgroundSize: "200% 100%",
           animation: "shimmer 3s ease-in-out infinite",
           willChange: "transform",

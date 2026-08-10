@@ -15,7 +15,7 @@ use crate::gfx::Gfx;
 use crate::input;
 use crate::ipc::{self, InMessage, OutMessage, Phase, Visibility};
 use crate::state;
-use crate::state::{ClickAction, PillState, PopParticle, Rocket, RocketPhase, Spark, WindowMode};
+use crate::state::{ClickAction, PillState, Rocket, RocketPhase, Spark, WindowMode};
 
 // Issue #7: Thread-local statics are an architectural requirement, not a smell.
 // Win32 HWNDs are thread-affine — they must only be accessed on the thread that
@@ -149,13 +149,12 @@ pub fn run(receiver: Receiver<InMessage>) {
         long_press_elapsed: Cell::new(0.0),
         long_press_start_x: Cell::new(0.0),
         long_press_start_y: Cell::new(0.0),
-        balloon_pop_active: Cell::new(false),
-        balloon_pop_elapsed: Cell::new(0.0),
-        balloon_pop_particles: RefCell::new(Vec::new()),
         dragging: Cell::new(false),
         drag_cancelled: Cell::new(false),
         drag_cursor_x: Cell::new(0.0),
         drag_cursor_y: Cell::new(0.0),
+        drag_grab_offset_x: Cell::new(0.0),
+        drag_grab_offset_y: Cell::new(0.0),
         has_saved_position: Cell::new(false),
         saved_x: Cell::new(0),
         saved_y: Cell::new(0),
@@ -273,25 +272,10 @@ unsafe extern "system" fn wndproc(hwnd: HWND, msg: u32, wparam: WPARAM, lparam: 
             let y = ((lparam.0 >> 16) & 0xFFFF) as i16 as f64;
             STATE.with(|s| {
                 if let Some(ref state) = *s.borrow() {
-                    // If pop animation is in progress, cancel the drag that would follow
-                    if state.balloon_pop_active.get() {
-                        state.drag_cancelled.set(true);
-                        state.balloon_pop_active.set(false);
-                        state.balloon_pop_elapsed.set(0.0);
-                        state.balloon_pop_particles.borrow_mut().clear();
-                    }
-                    // Track whether we were dragging (to suppress click on release)
-                    let was_dragging = state.dragging.get();
-                    if was_dragging {
-                        // Persist the window position after drag
-                        let mut rect = RECT::default();
-                        unsafe { let _ = GetWindowRect(hwnd, &mut rect); }
-                        state.saved_x.set(rect.left);
-                        state.saved_y.set(rect.top);
-                        state.has_saved_position.set(true);
-                    }
-                    // End any drag
-                    state.dragging.set(false);
+                    // End any drag: persists the drop position and releases the
+                    // pointer capture. Returns whether a drag was in progress so
+                    // we can suppress the click that would otherwise follow.
+                    let was_dragging = end_drag(hwnd, state, true);
                     // Cancel any in-progress long press
                     state.long_press_active.set(false);
                     state.long_press_elapsed.set(0.0);
@@ -299,6 +283,20 @@ unsafe extern "system" fn wndproc(hwnd: HWND, msg: u32, wparam: WPARAM, lparam: 
                     if !was_dragging {
                         input::handle_click(state, x, y);
                     }
+                }
+            });
+            LRESULT(0)
+        }
+        WM_CAPTURECHANGED => {
+            // Another window took the capture (task switch, lock screen, ...).
+            // Treat it as the end of the gesture and keep the pill where it is,
+            // otherwise `dragging` would stay latched on.
+            STATE.with(|s| {
+                if let Some(ref state) = *s.borrow() {
+                    state.long_press_active.set(false);
+                    state.long_press_elapsed.set(0.0);
+                    // The capture is already gone, so only persist the position.
+                    let _ = end_drag(hwnd, state, true);
                 }
             });
             LRESULT(0)
@@ -386,6 +384,14 @@ fn on_anim_tick(hwnd: HWND) {
 
     STATE.with(|s| {
         if let Some(ref state) = *s.borrow() {
+            // Safety net: if the button was released without us receiving the
+            // event, end the drag here rather than following the cursor forever.
+            //
+            // Re-entrancy note: end_drag() -> ReleaseCapture() dispatches
+            // WM_CAPTURECHANGED synchronously, which re-enters STATE.with() and
+            // takes a second immutable borrow. Two immutable RefCell borrows are
+            // safe; do NOT upgrade either to borrow_mut() or this path panics.
+            tick_drag_release_fallback(hwnd, state);
             tick(state, dt);
             update_visibility(hwnd, state);
             update_typing_focus(hwnd, state);
@@ -601,7 +607,6 @@ fn tick(state: &PillState, dt: f64) {
     tick_flash_blue(state, dt);
     tick_transcript(state, dt);
     tick_long_press(state, dt);
-    tick_balloon_pop(state, dt);
 
     if state.flash_visible.get() {
         let remaining = state.flash_timer.get() - dt;
@@ -822,10 +827,10 @@ fn update_visibility(hwnd: HWND, state: &PillState) {
     unsafe {
         if should_show {
             if !IsWindowVisible(hwnd).as_bool() {
-                ShowWindow(hwnd, SW_SHOWNOACTIVATE);
+                let _ = ShowWindow(hwnd, SW_SHOWNOACTIVATE);
             }
         } else if IsWindowVisible(hwnd).as_bool() {
-            ShowWindow(hwnd, SW_HIDE);
+            let _ = ShowWindow(hwnd, SW_HIDE);
         }
     }
 }
@@ -968,11 +973,11 @@ fn reposition_to_cursor_monitor(hwnd: HWND, state: &PillState) {
         let wa_h = wa.bottom - wa.top;
 
         let (x, y) = if state.dragging.get() {
-            // Drag mode: center the window on cursor position
-            let pill_area_h = PILL_AREA_HEIGHT as i32;
-            let mut dx = cursor.x - WINDOW_W_TYPING / 2;
-            let mut dy = cursor.y - pill_area_h / 2;
-            // Clamp to work area
+            // Drag mode: keep the grabbed point of the pill under the cursor so
+            // the window tracks the pointer 1:1 instead of jumping to centre it.
+            let mut dx = cursor.x - state.drag_grab_offset_x.get().round() as i32;
+            let mut dy = cursor.y - state.drag_grab_offset_y.get().round() as i32;
+            // Clamp to the work area of whichever monitor holds the cursor.
             dx = dx.max(wa.left).min(wa.right - WINDOW_W_TYPING);
             dy = dy.max(wa.top).min(wa.bottom - WINDOW_H_TYPING);
             (dx, dy)
@@ -1014,9 +1019,6 @@ fn tick_long_press(state: &PillState, dt: f64) {
         return;
     }
 
-    if state.balloon_pop_active.get() {
-        return;
-    }
 
     // Cancel if mouse moved too far from start position (screen coords)
     unsafe {
@@ -1051,77 +1053,94 @@ fn tick_long_press(state: &PillState, dt: f64) {
             let _ = GetCursorPos(&mut cursor);
             state.drag_cursor_x.set(cursor.x as f64);
             state.drag_cursor_y.set(cursor.y as f64);
+
+            // Anchor the drag to the point the user grabbed so the pill does
+            // not jump to have its centre snap under the cursor.
+            let hwnd = HWND_CELL.with(|c| c.get());
+            let mut rect = RECT::default();
+            let _ = GetWindowRect(hwnd, &mut rect);
+            state
+                .drag_grab_offset_x
+                .set(cursor.x as f64 - rect.left as f64);
+            state
+                .drag_grab_offset_y
+                .set(cursor.y as f64 - rect.top as f64);
+
+            // Take an OS-level pointer capture so we keep receiving mouse
+            // input (and, critically, the button release) even when the
+            // pointer travels outside the pill window while dragging.
+            let _ = SetCapture(hwnd);
         }
     }
 }
 
-fn trigger_balloon_pop(state: &PillState) {
-    state.balloon_pop_active.set(true);
-    state.balloon_pop_elapsed.set(0.0);
-    state.drag_cancelled.set(false);
+/// Terminate an in-progress drag, persist the drop position and release the
+/// pointer capture. Safe to call when no drag is active.
+///
+/// Every drag must end through this function so the capture is always
+/// released — a leaked capture would swallow mouse input system-wide.
+fn end_drag(hwnd: HWND, state: &PillState, persist_position: bool) -> bool {
+    let was_dragging = state.dragging.get();
 
-    let dw = state.draw_width.get();
-    let dh = state.draw_height.get();
-    let cx = dw / 2.0;
-    let pill_area_top = dh - PILL_AREA_HEIGHT;
-    let cy = pill_area_top + PILL_AREA_HEIGHT / 2.0;
-
-    let mut particles = Vec::with_capacity(BALLOON_POP_PARTICLE_COUNT);
-    // Issue #10: invariant — exactly BALLOON_POP_PARTICLE_COUNT particles are spawned.
-    debug_assert!(BALLOON_POP_PARTICLE_COUNT > 0);
-    for i in 0..BALLOON_POP_PARTICLE_COUNT {
-        let angle = (i as f64 / BALLOON_POP_PARTICLE_COUNT as f64) * std::f64::consts::TAU;
-        let speed_jitter = 0.7 + (i as f64 * 0.13).sin().abs() * 0.6;
-        let speed = BALLOON_POP_PARTICLE_SPEED * speed_jitter;
-        let color = if i % 2 == 0 { BALLOON_POP_COLOR } else { BALLOON_POP_COLOR2 };
-        particles.push(PopParticle {
-            x: cx,
-            y: cy,
-            vx: angle.cos() * speed,
-            vy: angle.sin() * speed,
-            life: BALLOON_POP_PARTICLE_LIFE,
-            max_life: BALLOON_POP_PARTICLE_LIFE,
-            size: BALLOON_POP_PARTICLE_SIZE * (0.6 + (i as f64 * 0.3).sin().abs() * 0.8),
-            color,
-        });
+    if was_dragging && persist_position {
+        // Leave the pill where it was dropped instead of snapping back.
+        let mut rect = RECT::default();
+        unsafe {
+            let _ = GetWindowRect(hwnd, &mut rect);
+        }
+        state.saved_x.set(rect.left);
+        state.saved_y.set(rect.top);
+        state.has_saved_position.set(true);
     }
-    *state.balloon_pop_particles.borrow_mut() = particles;
+
+    state.dragging.set(false);
+
+    // Release the capture whenever this window still owns it, even if the
+    // drag flag was already cleared, so we can never strand it.
+    unsafe {
+        if GetCapture() == hwnd {
+            let _ = ReleaseCapture();
+        }
+    }
+
+    was_dragging
 }
 
-fn tick_balloon_pop(state: &PillState, dt: f64) {
-    if !state.balloon_pop_active.get() {
+/// Fallback release detection.
+///
+/// A capture can be lost without us seeing `WM_LBUTTONUP` (for example when
+/// another process steals it, or the session locks). Polling the real button
+/// state each tick guarantees a released button can never leave the pill stuck
+/// to the cursor — the exact "pill keeps moving after I let go" failure.
+fn tick_drag_release_fallback(hwnd: HWND, state: &PillState) {
+    if !state.dragging.get() && !state.long_press_active.get() {
         return;
     }
 
-    let elapsed = state.balloon_pop_elapsed.get() + dt;
-    state.balloon_pop_elapsed.set(elapsed);
-
-    {
-        let mut particles = state.balloon_pop_particles.borrow_mut();
-        for p in particles.iter_mut() {
-            p.life -= dt;
-            p.x += p.vx * dt;
-            p.y += p.vy * dt;
-            // Apply gravity (downward acceleration)
-            p.vy += PARTICLE_GRAVITY * dt;
-            // Apply exponential drag decay
-            let drag = (PARTICLE_DRAG_COEFFICIENT * dt).exp();
-            p.vx *= drag;
-            p.vy *= drag;
-        }
-        particles.retain(|p| p.life > 0.0);
+    // The high-order bit marks "currently down"; matches the convention used by
+    // the Tauri-side Windows input helpers.
+    //
+    // GetAsyncKeyState reports the PHYSICAL button, ignoring the SM_SWAPBUTTON
+    // remap, so poll the physical key that the (possibly swapped) primary
+    // button maps to; otherwise a swapped-button user would see the fallback
+    // cancel the gesture on its first tick.
+    let primary = if unsafe { GetSystemMetrics(SM_SWAPBUTTON) } != 0 {
+        VK_RBUTTON
+    } else {
+        VK_LBUTTON
+    };
+    let button_down = unsafe { GetAsyncKeyState(primary.0 as i32) < 0 };
+    if button_down {
+        return;
     }
 
-    // When animation completes, enter drag mode (unless user released)
-    if elapsed >= BALLOON_POP_DURATION {
-        state.balloon_pop_active.set(false);
-        state.balloon_pop_elapsed.set(0.0);
-        state.balloon_pop_particles.borrow_mut().clear();
-        if !state.drag_cancelled.get() {
-            state.dragging.set(true);
-        }
-    }
+    // The physical button is up, so any gesture in flight is finished.
+    state.long_press_active.set(false);
+    state.long_press_elapsed.set(0.0);
+    let _ = end_drag(hwnd, state, true);
 }
+
+
 
 fn spring_anim(value: &Cell<f64>, velocity: &Cell<f64>, target: f64, stiffness: f64, dt: f64) {
     let v = value.get();
@@ -1338,7 +1357,7 @@ fn update_edit_overlay(main_hwnd: HWND, state: &PillState) {
     if !is_typing {
         unsafe {
             if IsWindowVisible(container).as_bool() {
-                ShowWindow(container, SW_HIDE);
+                let _ = ShowWindow(container, SW_HIDE);
             }
         }
         return;
@@ -1351,9 +1370,9 @@ fn update_edit_overlay(main_hwnd: HWND, state: &PillState) {
 
     let panel_w = PANEL_EXPANDED_WIDTH;
     let panel_x = (ww - panel_w) / 2.0;
-    let panel_h = wh - PANEL_TOP_MARGIN as f64 - PANEL_BOTTOM_MARGIN as f64;
+    let panel_h = wh - PANEL_TOP_MARGIN - PANEL_BOTTOM_MARGIN;
     let y_shift = (1.0 - state.panel_open_t.get()) * 12.0;
-    let py = PANEL_TOP_MARGIN as f64 + y_shift;
+    let py = PANEL_TOP_MARGIN + y_shift;
     let input_y = py + panel_h - PANEL_INPUT_HEIGHT;
     let input_x = panel_x + PANEL_CONTENT_SIDE_INSET;
     let send_btn_size = 28.0_f64;

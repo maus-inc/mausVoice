@@ -44,12 +44,20 @@ use tauri::menu::{MenuItem, Submenu};
 pub const EVT_INSTALL_UPDATE: &str = "tray-install-update";
 pub const EVT_COPY_LAST_TRANSCRIPT: &str = "tray-copy-last-transcript";
 pub const EVT_SET_DICTATION_LANGUAGE: &str = "tray-set-dictation-language";
+pub const EVT_TOGGLE_PILL_VISIBILITY: &str = "tray-toggle-pill-visibility";
 
 const TRAY_LANGUAGE_ITEM_PREFIX: &str = "tray-lang:";
+const PILL_VISIBILITY_MENU_ID: &str = "toggle-pill-visibility";
+
+/// Label shown when clicking will hide the pill (effective `persistent` or
+/// `while_active`). Also the pre-hydration default, so the first click always
+/// has a defined meaning.
+const PILL_MENU_LABEL_HIDE: &str = "Hide Pill";
 
 static UPDATE_MENU_ITEM: OnceLock<MenuItem<tauri::Wry>> = OnceLock::new();
 static REGISTER_MENU_ITEM: OnceLock<MenuItem<tauri::Wry>> = OnceLock::new();
 static LANGUAGE_SUBMENU: OnceLock<Submenu<tauri::Wry>> = OnceLock::new();
+static PILL_VISIBILITY_MENU_ITEM: OnceLock<MenuItem<tauri::Wry>> = OnceLock::new();
 
 #[derive(Debug, Clone, serde::Deserialize, specta::Type)]
 #[serde(rename_all = "camelCase")]
@@ -85,12 +93,23 @@ pub fn setup_tray(app: &mut tauri::App) -> tauri::Result<()> {
         None::<&str>,
     )?;
     let _ = REGISTER_MENU_ITEM.set(register_current_app_item.clone());
+    // Starts as "Hide Pill". The frontend re-syncs the label as soon as
+    // preferences hydrate; until then this is the safe default action.
+    let pill_visibility_item = MenuItem::with_id(
+        app,
+        PILL_VISIBILITY_MENU_ID,
+        PILL_MENU_LABEL_HIDE,
+        true,
+        None::<&str>,
+    )?;
+    let _ = PILL_VISIBILITY_MENU_ITEM.set(pill_visibility_item.clone());
     let language_submenu = SubmenuBuilder::new(app, "Language").build()?;
     let _ = LANGUAGE_SUBMENU.set(language_submenu.clone());
     let quit_item = MenuItem::with_id(app, "quit-mausvoice", "Quit mausVoice", true, None::<&str>)?;
 
     let menu = MenuBuilder::new(app)
         .item(&open_item)
+        .item(&pill_visibility_item)
         .item(&copy_last_transcript_item)
         .item(&register_current_app_item)
         .item(&language_submenu)
@@ -120,6 +139,14 @@ pub fn setup_tray(app: &mut tauri::App) -> tauri::Result<()> {
             "install-update" => {
                 if let Err(err) = app.emit(EVT_INSTALL_UPDATE, ()) {
                     log::error!("Failed to emit install-update event: {err}");
+                }
+            }
+            PILL_VISIBILITY_MENU_ID => {
+                // Emit only. The frontend owns the preference, so the next
+                // value is derived there from the persisted state rather than
+                // from a toggle held in the tray layer.
+                if let Err(err) = app.emit(EVT_TOGGLE_PILL_VISIBILITY, ()) {
+                    log::error!("Failed to emit toggle-pill-visibility event: {err}");
                 }
             }
             "register-current-app" => {
@@ -187,6 +214,23 @@ pub fn set_register_app_label(_app: &tauri::AppHandle, app_name: Option<String>)
         _ => "Register current app".to_string(),
     };
     item.set_text(label).map_err(|err| err.to_string())
+}
+
+/// Update the pill-visibility item's label.
+///
+/// Native menu state only: this never writes user preferences. The item stays
+/// enabled in every state, so a single click is always a recovery path.
+/// The frontend resolves the localized label and passes it here.
+pub fn set_pill_visibility_menu_state(
+    _app: &tauri::AppHandle,
+    label: &str,
+) -> Result<(), String> {
+    let Some(item) = PILL_VISIBILITY_MENU_ITEM.get() else {
+        return Err("Pill visibility menu item not initialized".to_string());
+    };
+    item.set_text(label)
+        .map_err(|err| err.to_string())?;
+    item.set_enabled(true).map_err(|err| err.to_string())
 }
 
 pub fn set_tray_language_menu(

@@ -1,7 +1,7 @@
 use crate::ipc::{self, OutMessage, Phase};
 
 use crate::constants::*;
-use crate::draw::pill_position;
+use crate::draw::{over_side_control, pill_position};
 use crate::gfx;
 use crate::state::{ClickAction, PillState};
 
@@ -188,14 +188,10 @@ pub(crate) fn is_in_hover_zone(state: &PillState, x: f64, y: f64) -> bool {
             }
         }
 
-        if state.phase.get() != Phase::Idle {
-            let cancel_x = pill_x + pill_w - CANCEL_BUTTON_SIZE / 2.0 + 2.0;
-            let cancel_y = pill_y - CANCEL_BUTTON_SIZE / 2.0 - 2.0;
-            if x >= cancel_x && x <= cancel_x + CANCEL_BUTTON_SIZE
-                && y >= cancel_y && y <= cancel_y + CANCEL_BUTTON_SIZE
-            {
-                return true;
-            }
+        if state.phase.get() != Phase::Idle
+            && over_side_control(x, y, pill_x, pill_y, pill_w, pill_h)
+        {
+            return true;
         }
     }
 
@@ -239,12 +235,8 @@ pub(crate) fn is_interactive_at(state: &PillState, x: f64, y: f64) -> bool {
 
     // Cancel button
     if state.phase.get() != Phase::Idle && state.hovered.get() {
-        let (pill_x, pill_y, pw, _) = pill_position(state, dw, dh);
-        let cancel_x = pill_x + pw - CANCEL_BUTTON_SIZE / 2.0 + 2.0;
-        let cancel_y = pill_y - CANCEL_BUTTON_SIZE / 2.0 - 2.0;
-        if x >= cancel_x && x <= cancel_x + CANCEL_BUTTON_SIZE
-            && y >= cancel_y && y <= cancel_y + CANCEL_BUTTON_SIZE
-        {
+        let (pill_x, pill_y, pw, ph) = pill_position(state, dw, dh);
+        if over_side_control(x, y, pill_x, pill_y, pw, ph) {
             return true;
         }
     }
