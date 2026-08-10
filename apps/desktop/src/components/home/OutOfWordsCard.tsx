@@ -42,7 +42,6 @@ export const OutOfWordsCard = ({
       sx={{
         p: 3,
         borderRadius: 1,
-        // Brand-blue wash derived from the palette so it tracks light/dark.
         background:
           "linear-gradient(135deg, color-mix(in srgb, var(--app-palette-blue) 35%, transparent) 0%, color-mix(in srgb, var(--app-palette-blue) 20%, transparent) 100%)",
       }}
@@ -75,7 +74,6 @@ export const OutOfWordsCard = ({
           sx={{
             alignSelf: "flex-start",
             mt: 0.5,
-            // Was the literal CSS keyword `blue`; use the brand accent instead.
             backgroundColor: "var(--app-palette-blue)",
             color: "var(--app-palette-onBlue)",
             fontWeight: 600,

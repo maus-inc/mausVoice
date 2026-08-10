@@ -106,16 +106,7 @@ pub(crate) struct FlameTongue {
 }
 
 #[derive(Debug, Clone)]
-pub(crate) struct PopParticle {
-    pub(crate) x: f64,
-    pub(crate) y: f64,
-    pub(crate) vx: f64,
-    pub(crate) vy: f64,
-    pub(crate) life: f64,
-    pub(crate) max_life: f64,
-    pub(crate) size: f64,
-    pub(crate) color: (f64, f64, f64),
-}
+
 
 pub(crate) struct PillState {
     pub(crate) phase: Cell<Phase>,
@@ -211,13 +202,8 @@ pub(crate) struct PillState {
     pub(crate) long_press_elapsed: Cell<f64>,
     pub(crate) long_press_start_x: Cell<f64>,
     pub(crate) long_press_start_y: Cell<f64>,
-    pub(crate) balloon_pop_active: Cell<bool>,
-    pub(crate) balloon_pop_elapsed: Cell<f64>,
-    pub(crate) balloon_pop_particles: RefCell<Vec<PopParticle>>,
     pub(crate) dragging: Cell<bool>,
     pub(crate) drag_cancelled: Cell<bool>,
-    pub(crate) drag_cursor_x: Cell<f64>,
-    pub(crate) drag_cursor_y: Cell<f64>,
     pub(crate) has_saved_position: Cell<bool>,
     pub(crate) saved_x: Cell<f64>,
     pub(crate) saved_y: Cell<f64>,

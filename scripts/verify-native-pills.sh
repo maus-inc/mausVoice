@@ -66,18 +66,15 @@ if [[ -n "$crate" ]]; then
       failed=1
     fi
   else
-    echo "cargo not found; skipping pill checks for $crate." >&2
+    echo "cargo not found; cannot verify $crate." >&2
+    failed=1
   fi
 fi
 
 step "app icons"
-if command -v convert >/dev/null 2>&1; then
-  if ! node scripts/generate-app-icons.mjs --check; then
-    echo "FAIL: app icons are missing frames or have lost their alpha" >&2
-    failed=1
-  fi
-else
-  echo "ImageMagick not found; skipping icon verification." >&2
+if ! node scripts/generate-app-icons.mjs --check; then
+  echo "FAIL: app icons are missing frames or have lost their alpha" >&2
+  failed=1
 fi
 
 echo ""

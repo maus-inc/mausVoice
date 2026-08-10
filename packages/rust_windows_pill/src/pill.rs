@@ -149,9 +149,6 @@ pub fn run(receiver: Receiver<InMessage>) {
         long_press_elapsed: Cell::new(0.0),
         long_press_start_x: Cell::new(0.0),
         long_press_start_y: Cell::new(0.0),
-        balloon_pop_active: Cell::new(false),
-        balloon_pop_elapsed: Cell::new(0.0),
-        balloon_pop_particles: RefCell::new(Vec::new()),
         dragging: Cell::new(false),
         drag_cancelled: Cell::new(false),
         drag_cursor_x: Cell::new(0.0),
@@ -275,13 +272,6 @@ unsafe extern "system" fn wndproc(hwnd: HWND, msg: u32, wparam: WPARAM, lparam: 
             let y = ((lparam.0 >> 16) & 0xFFFF) as i16 as f64;
             STATE.with(|s| {
                 if let Some(ref state) = *s.borrow() {
-                    // If pop animation is in progress, cancel the drag that would follow
-                    if state.balloon_pop_active.get() {
-                        state.drag_cancelled.set(true);
-                        state.balloon_pop_active.set(false);
-                        state.balloon_pop_elapsed.set(0.0);
-                        state.balloon_pop_particles.borrow_mut().clear();
-                    }
                     // End any drag: persists the drop position and releases the
                     // pointer capture. Returns whether a drag was in progress so
                     // we can suppress the click that would otherwise follow.
@@ -396,6 +386,11 @@ fn on_anim_tick(hwnd: HWND) {
         if let Some(ref state) = *s.borrow() {
             // Safety net: if the button was released without us receiving the
             // event, end the drag here rather than following the cursor forever.
+            //
+            // Re-entrancy note: end_drag() -> ReleaseCapture() dispatches
+            // WM_CAPTURECHANGED synchronously, which re-enters STATE.with() and
+            // takes a second immutable borrow. Two immutable RefCell borrows are
+            // safe; do NOT upgrade either to borrow_mut() or this path panics.
             tick_drag_release_fallback(hwnd, state);
             tick(state, dt);
             update_visibility(hwnd, state);
@@ -612,7 +607,6 @@ fn tick(state: &PillState, dt: f64) {
     tick_flash_blue(state, dt);
     tick_transcript(state, dt);
     tick_long_press(state, dt);
-    tick_balloon_pop(state, dt);
 
     if state.flash_visible.get() {
         let remaining = state.flash_timer.get() - dt;
@@ -1025,9 +1019,6 @@ fn tick_long_press(state: &PillState, dt: f64) {
         return;
     }
 
-    if state.balloon_pop_active.get() {
-        return;
-    }
 
     // Cancel if mouse moved too far from start position (screen coords)
     unsafe {
@@ -1128,7 +1119,17 @@ fn tick_drag_release_fallback(hwnd: HWND, state: &PillState) {
 
     // The high-order bit marks "currently down"; matches the convention used by
     // the Tauri-side Windows input helpers.
-    let button_down = unsafe { GetAsyncKeyState(VK_LBUTTON.0 as i32) < 0 };
+    //
+    // GetAsyncKeyState reports the PHYSICAL button, ignoring the SM_SWAPBUTTON
+    // remap, so poll the physical key that the (possibly swapped) primary
+    // button maps to; otherwise a swapped-button user would see the fallback
+    // cancel the gesture on its first tick.
+    let primary = if unsafe { GetSystemMetrics(SM_SWAPBUTTON) } != 0 {
+        VK_RBUTTON
+    } else {
+        VK_LBUTTON
+    };
+    let button_down = unsafe { GetAsyncKeyState(primary.0 as i32) < 0 };
     if button_down {
         return;
     }
@@ -1140,40 +1141,6 @@ fn tick_drag_release_fallback(hwnd: HWND, state: &PillState) {
 }
 
 
-fn tick_balloon_pop(state: &PillState, dt: f64) {
-    if !state.balloon_pop_active.get() {
-        return;
-    }
-
-    let elapsed = state.balloon_pop_elapsed.get() + dt;
-    state.balloon_pop_elapsed.set(elapsed);
-
-    {
-        let mut particles = state.balloon_pop_particles.borrow_mut();
-        for p in particles.iter_mut() {
-            p.life -= dt;
-            p.x += p.vx * dt;
-            p.y += p.vy * dt;
-            // Apply gravity (downward acceleration)
-            p.vy += PARTICLE_GRAVITY * dt;
-            // Apply exponential drag decay
-            let drag = (PARTICLE_DRAG_COEFFICIENT * dt).exp();
-            p.vx *= drag;
-            p.vy *= drag;
-        }
-        particles.retain(|p| p.life > 0.0);
-    }
-
-    // When animation completes, enter drag mode (unless user released)
-    if elapsed >= BALLOON_POP_DURATION {
-        state.balloon_pop_active.set(false);
-        state.balloon_pop_elapsed.set(0.0);
-        state.balloon_pop_particles.borrow_mut().clear();
-        if !state.drag_cancelled.get() {
-            state.dragging.set(true);
-        }
-    }
-}
 
 fn spring_anim(value: &Cell<f64>, velocity: &Cell<f64>, target: f64, stiffness: f64, dt: f64) {
     let v = value.get();

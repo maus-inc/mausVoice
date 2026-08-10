@@ -1320,9 +1320,10 @@ fn draw_pause_resume_button(cr: &cairo::Context, state: &PillState, ww: f64, wh:
         let _ = cr.stroke();
     } else {
         // Pause: two bars proportional to the control, matching the other
-        // platforms so the glyph reads the same everywhere.
-        let bw = CANCEL_BUTTON_SIZE * 0.13 * scale;
-        let bh = CANCEL_BUTTON_SIZE * 0.42 * scale;
+        // platforms so the glyph reads the same everywhere. The context is
+        // already scaled above, so the bars use unscaled proportions.
+        let bw = CANCEL_BUTTON_SIZE * 0.13;
+        let bh = CANCEL_BUTTON_SIZE * 0.42;
         let offset = bw;
         cr.rectangle(pause_cx - offset - bw / 2.0, pause_cy - bh / 2.0, bw, bh);
         cr.rectangle(pause_cx + offset - bw / 2.0, pause_cy - bh / 2.0, bw, bh);

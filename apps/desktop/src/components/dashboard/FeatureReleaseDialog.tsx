@@ -40,7 +40,6 @@ const IntroPage = () => {
           width: 80,
           height: 80,
           borderRadius: "50%",
-          // Brand-blue gradient sourced from the palette rather than literals.
           background:
             "linear-gradient(135deg, color-mix(in srgb, var(--app-palette-blue) 80%, #FFFFFF) 0%, var(--app-palette-blue) 100%)",
           display: "flex",

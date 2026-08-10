@@ -4,7 +4,7 @@ use gtk::gdk;
 use crate::ipc::{self, OutMessage, Phase};
 
 use crate::constants::*;
-use crate::draw::{over_side_control, pill_position};
+use crate::draw::{cancel_button_origin, over_side_control, pause_button_origin, pill_position};
 use crate::state::{ClickAction, PillState};
 
 pub(crate) fn is_over_pill_area(state: &PillState, x: f64, y: f64) -> bool {
@@ -19,8 +19,6 @@ pub(crate) fn is_over_pill_area(state: &PillState, x: f64, y: f64) -> bool {
     }
 
     let pill_area_top = dh - PILL_AREA_HEIGHT;
-    let pill_w = EXPANDED_PILL_WIDTH;
-    let pill_x = (dw - pill_w) / 2.0;
 
     // Pill area (with padding)
     let pad = if state.hovered.get() { 24.0 } else { 8.0 };
@@ -41,10 +39,9 @@ pub(crate) fn is_over_pill_area(state: &PillState, x: f64, y: f64) -> bool {
         }
     }
 
-    // Pause / cancel side controls
+    // Pause / cancel side controls (live pill geometry, matching draw code)
     if state.phase.get() != Phase::Idle {
-        let pill_y = pill_area_top + (PILL_AREA_HEIGHT - EXPANDED_PILL_HEIGHT) / 2.0;
-        if over_side_control(x, y, pill_x, pill_y, pill_w, EXPANDED_PILL_HEIGHT) {
+        if over_side_control(x, y, px, py, pw, ph) {
             return true;
         }
     }
@@ -213,7 +210,7 @@ pub(crate) fn set_expanded_input_region(gdk_window: &gdk::Window, state: &PillSt
             let rect = cairo::RectangleInt::new(region_rx, tooltip_top, region_w, region_h);
             let region = cairo::Region::create_rectangle(&rect);
             if state.phase.get() != Phase::Idle {
-                union_cancel_button(&region, ox, oy, dw, dh);
+                union_side_controls(&region, state, ox, oy, dw, dh);
             }
             union_flash_action(&region, state, ox, oy, dw, dh);
             gdk_window.input_shape_combine_region(&region, 0, 0);
@@ -225,7 +222,7 @@ pub(crate) fn set_expanded_input_region(gdk_window: &gdk::Window, state: &PillSt
             );
             let region = cairo::Region::create_rectangle(&rect);
             if state.phase.get() != Phase::Idle {
-                union_cancel_button(&region, ox, oy, dw, dh);
+                union_side_controls(&region, state, ox, oy, dw, dh);
             }
             union_flash_action(&region, state, ox, oy, dw, dh);
             gdk_window.input_shape_combine_region(&region, 0, 0);
@@ -256,22 +253,26 @@ fn union_flash_action(
     }
 }
 
-fn union_cancel_button(
+fn union_side_controls(
     region: &cairo::Region,
+    state: &PillState,
     ox: f64, oy: f64, dw: f64, dh: f64,
 ) {
-    let pill_area_top = dh - PILL_AREA_HEIGHT;
-    let pill_y = pill_area_top + (PILL_AREA_HEIGHT - EXPANDED_PILL_HEIGHT) / 2.0;
-    let pill_x = (dw - EXPANDED_PILL_WIDTH) / 2.0;
-    let btn_x = pill_x + EXPANDED_PILL_WIDTH - CANCEL_BUTTON_SIZE / 2.0 + 2.0;
-    let btn_y = pill_y - CANCEL_BUTTON_SIZE / 2.0 - 2.0;
-    let btn_rect = cairo::RectangleInt::new(
-        (ox + btn_x) as i32,
-        (oy + btn_y) as i32,
-        CANCEL_BUTTON_SIZE.ceil() as i32,
-        CANCEL_BUTTON_SIZE.ceil() as i32,
-    );
-    let _ = region.union_rectangle(&btn_rect);
+    // Both side controls use the same shared origins as the draw code, so
+    // hit-testing can never drift away from where the controls are painted.
+    let (pill_x, pill_y, pill_w, pill_h) = pill_position(state, dw, dh);
+    let (pause_x, pause_y) = pause_button_origin(pill_x, pill_y, pill_h);
+    let (cancel_x, cancel_y) = cancel_button_origin(pill_x, pill_y, pill_w, pill_h);
+    let size = CANCEL_BUTTON_SIZE.ceil() as i32;
+    for (bx, by) in [(pause_x, pause_y), (cancel_x, cancel_y)] {
+        let btn_rect = cairo::RectangleInt::new(
+            (ox + bx) as i32,
+            (oy + by) as i32,
+            size,
+            size,
+        );
+        let _ = region.union_rectangle(&btn_rect);
+    }
 }
 
 pub(crate) fn update_input_region(gdk_window: &gdk::Window, state: &PillState) {

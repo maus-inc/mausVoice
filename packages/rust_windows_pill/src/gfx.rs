@@ -79,7 +79,7 @@ impl Gfx {
             let hdc = CreateCompatibleDC(Some(screen_dc));
             ReleaseDC(None, screen_dc);
 
-            let bitmap = create_dib(hdc, width, height);
+            let bitmap = create_dib(hdc, width, height)?;
 
             SelectObject(hdc, HGDIOBJ(bitmap.0));
 
@@ -465,7 +465,7 @@ impl Gfx {
     }
 }
 
-unsafe fn create_dib(hdc: HDC, width: i32, height: i32) -> HBITMAP {
+unsafe fn create_dib(hdc: HDC, width: i32, height: i32) -> Result<HBITMAP> {
     let bmi = BITMAPINFO {
         bmiHeader: BITMAPINFOHEADER {
             biSize: std::mem::size_of::<BITMAPINFOHEADER>() as u32,
@@ -480,7 +480,6 @@ unsafe fn create_dib(hdc: HDC, width: i32, height: i32) -> HBITMAP {
     };
     let mut bits: *mut c_void = std::ptr::null_mut();
     CreateDIBSection(Some(hdc), &bmi, DIB_RGB_COLORS, &mut bits, None, 0)
-        .unwrap_or_default()
 }
 
 pub fn lerp(a: f64, b: f64, t: f64) -> f64 {

@@ -249,10 +249,9 @@ function isCornerOpaque(alpha) {
 /** Every required frame size is present, at 32bpp. */
 function checkIcoFrameSizes(ico, frames) {
   const problems = [];
-  const widths = new Set(frames.map((f) => f.width));
 
   for (const size of ICO_SIZES) {
-    if (!widths.has(size)) {
+    if (!frames.some((frame) => frame.width === size && frame.height === size)) {
       problems.push(`${ico}: missing a ${size}x${size} frame`);
     }
   }

@@ -115,8 +115,6 @@ export const TitleBar = () => {
           position: "relative",
           zIndex: 1,
           pl: 0.5,
-          // Semantic token so the wordmark follows the active colour scheme
-          // instead of a literal that only tracks the initial mode.
           color: "text.primary",
         }}
       >

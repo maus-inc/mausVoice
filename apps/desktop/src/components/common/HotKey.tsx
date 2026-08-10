@@ -15,8 +15,6 @@ type HotKeyProps = {
   onChange?: (value: string[]) => void;
 };
 
-// Uses the theme's brand-blue CSS variable so the pulse follows the active
-// colour scheme instead of the stale MUI default blue.
 const pulseBorder = keyframes`
   0%, 100% {
     border-color: color-mix(in srgb, var(--app-palette-blue) 50%, transparent);

@@ -35,9 +35,10 @@ That is a poor trade for a always-running background tool.
 - Windows offers elevation on demand via `run_native_setup`, which relaunches
   through a bootstrap helper so the singleton lock is free before the elevated
   copy starts. Cancelling UAC returns `Cancelled` and the app keeps running.
-- Onboarding's accessibility step is skippable, so a declined or unavailable
-  elevation can never dead-end the flow. `PermissionSideEffects` keeps polling,
-  so access granted later is picked up without a restart.
+- Onboarding's accessibility step is skippable, so declining or being unable
+  to complete Windows elevation cannot block the flow. On platforms with a
+  changing accessibility permission, `PermissionSideEffects` keeps polling
+  and detects a later grant without a restart.
 - `platform/windows/permissions.rs` reports accessibility as `Authorized`
   because hotkeys genuinely work unelevated. This state gates both the key
   listener (`AppSideEffects`) and the blocking `PermissionsDialog`, so
