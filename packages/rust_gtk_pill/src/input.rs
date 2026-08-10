@@ -181,6 +181,7 @@ pub(crate) fn handle_scroll(state: &PillState, event: &gdk::EventScroll) {
 /// the optional tooltip, with no `gdk::Window` and no `PillState`, so tests
 /// can drive it with a non-zero drag offset and assert the moved pill and
 /// both side controls stay clickable.
+#[allow(clippy::too_many_arguments)]
 fn build_input_region(
     ox: f64, oy: f64, dw: f64,
     pill_x: f64, pill_y: f64, pill_w: f64, pill_h: f64,
@@ -204,7 +205,7 @@ fn build_input_region(
             tooltip_w.ceil() as i32,
             TOOLTIP_HEIGHT.ceil() as i32,
         );
-        let mut r = cairo::Region::create_rectangle(&pill_rect);
+        let r = cairo::Region::create_rectangle(&pill_rect);
         let _ = r.union_rectangle(&tooltip_rect);
         r
     } else {
@@ -218,12 +219,13 @@ fn build_input_region(
 }
 
 /// Build the input region from live pill geometry plus the optional tooltip.
+#[allow(clippy::too_many_arguments)]
 fn input_region(
     state: &PillState,
     ox: f64, oy: f64, dw: f64,
     pill_x: f64, pill_y: f64, pill_w: f64, pill_h: f64,
 ) -> cairo::Region {
-    let mut region = build_input_region(
+    let region = build_input_region(
         ox, oy, dw,
         pill_x, pill_y, pill_w, pill_h,
         state.tooltip_t.get(), state.tooltip_width.get(),
