@@ -577,7 +577,6 @@ jobs:
           releaseBody: ${{ needs.metadata.outputs.release_body }}
           releaseDraft: false
           prerelease: ${{ needs.metadata.outputs.release_env != 'prod' }}
-          includeUpdaterJson: true
 
       - name: Build and upload macOS DMG
         if: matrix.os == 'macos-14'
@@ -708,49 +707,6 @@ jobs:
 
           Write-Host "Uploading $destName to release $env:RELEASE_TAG"
           gh release upload $env:RELEASE_TAG $destName --clobber
-
-  # Azure Trusted Signing (above) rewrites the NSIS exe after Tauri computed
-  # its updater signature, so the sig and latest.json must be regenerated from
-  # the final bytes before the channel manifest is published.
-  update-channel:
-    name: Update channel release
-    needs: [metadata, build]
-    runs-on: ubuntu-latest
-    permissions:
-      contents: write
-    env:
-      GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-      GH_REPO: ${{ github.repository }}
-      CHANNEL_TAG: ${{ needs.metadata.outputs.channel_release_tag }}
-      RELEASE_TAG: ${{ needs.metadata.outputs.tag_name }}
-    steps:
-      - name: Download latest.json from release
-        run: |
-          set -euo pipefail
-          mkdir -p dist
-          gh release download "$RELEASE_TAG" --pattern "latest.json" --dir dist --clobber
-          if [[ ! -s dist/latest.json ]]; then
-            echo "latest.json was not downloaded from release ${RELEASE_TAG}" >&2
-            ls -la dist
-            exit 1
-          fi
-      - name: Validate downloaded latest.json
-        run: |
-          set -euo pipefail
-          version="$(jq -r '.version // empty' dist/latest.json)"
-          expected="${{ needs.metadata.outputs.version }}"
-          if [[ -z "${version}" ]]; then
-            echo "latest.json is missing a 'version' field." >&2
-            exit 1
-          fi
-          if [[ "${version}" != "${expected}" ]]; then
-            echo "latest.json version '${version}' does not match expected '${expected}'." >&2
-            exit 1
-          fi
-      - name: Upload to channel
-        run: |
-          set -euo pipefail
-          gh release upload "$CHANNEL_TAG" dist/latest.json --clobber
 
   publish-apt:
     name: Publish to APT repository
