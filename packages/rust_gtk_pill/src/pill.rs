@@ -578,6 +578,12 @@ pub fn run(receiver: Receiver<InMessage>) {
             win_tick.hide();
         }
 
+        // Publish the tooltip width before rebuilding the input region. The
+        // width is otherwise only computed in the draw pass, which runs after
+        // this point, so the tooltip's first frame would be painted while the
+        // region still saw a width of 0.0 and excluded it.
+        draw::sync_tooltip_width_offscreen(&state_tick);
+
         if let Some(gdk_win) = win_tick.window() {
             input::update_input_region(&gdk_win, &state_tick);
         }

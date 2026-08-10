@@ -48,6 +48,9 @@ pub(crate) const TOOLTIP_ENTRY_SLIDE: f64 = 4.0;
 /// They previously disagreed (draw at 0.01, input at 0.1), so for that sliver
 /// of the fade-in the tooltip was painted but could not be clicked.
 pub(crate) const TOOLTIP_VISIBLE_T: f64 = 0.01;
+/// Clamp range for the measured style-name text inside the tooltip.
+pub(crate) const TOOLTIP_TEXT_MIN_W: f64 = 20.0;
+pub(crate) const TOOLTIP_TEXT_MAX_W: f64 = 100.0;
 pub(crate) const TOOLTIP_RADIUS: f64 = 8.0;
 
 // ── Waveform — ported from AudioWaveform.tsx ──────────────────────

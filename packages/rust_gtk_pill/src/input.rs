@@ -519,6 +519,49 @@ mod input_region_tests {
         );
     }
 
+    /// A tooltip that is visible but has not been measured yet must not be
+    /// silently dropped from the region. This is the first-frame ordering bug:
+    /// the tick published no width, so the region excluded the tooltip while
+    /// the draw pass painted it.
+    #[test]
+    fn zero_width_tooltip_is_excluded_but_measured_width_is_included() {
+        let (pill_x, pill_y, pill_w, pill_h) = (240.0f64, 100.0f64, 120.0f64, 32.0f64);
+
+        // Unmeasured: nothing to include, and the pill must still be clickable.
+        let unmeasured = build_input_region(
+            0.0, 0.0,
+            pill_x, pill_y, pill_w, pill_h,
+            TOOLTIP_VISIBLE_T, 0.0,
+            false,
+        );
+        assert!(
+            unmeasured.contains_point(
+                (pill_x + pill_w / 2.0) as i32,
+                (pill_y + pill_h / 2.0) as i32
+            ),
+            "pill must stay clickable when the tooltip has no width yet"
+        );
+
+        // Once the tick publishes a width, the same tooltip_t must include it.
+        let tooltip_w = crate::draw::tooltip_width_for_text(60.0);
+        assert!(tooltip_w > 0.0, "measured tooltip must have a real width");
+        let measured = build_input_region(
+            0.0, 0.0,
+            pill_x, pill_y, pill_w, pill_h,
+            TOOLTIP_VISIBLE_T, tooltip_w,
+            false,
+        );
+        let (tx, ty) =
+            tooltip_rendered_origin(pill_x, pill_y, pill_w, tooltip_w, TOOLTIP_VISIBLE_T);
+        assert!(
+            measured.contains_point(
+                (tx + tooltip_w / 2.0) as i32,
+                (ty + TOOLTIP_HEIGHT / 2.0) as i32
+            ),
+            "tooltip must be clickable on the first frame it is measured"
+        );
+    }
+
     /// The entry slide is greatest when the tooltip first appears and zero
     /// once it has settled.
     #[test]
