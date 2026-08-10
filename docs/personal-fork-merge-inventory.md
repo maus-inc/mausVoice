@@ -113,7 +113,6 @@ These exist on free-form / HEAD but not on the personal fork tip. Kept on purpos
 so you get the newer polished code rather than regressing:
 
 - `.github/scripts/install-desktop-linux-deps.sh`
-- `.github/workflows/resign-windows-updater.yml`
 - `.github/workflows/retry-release.yml`
 - `apps/desktop/CONTEXT.md`
 - `apps/desktop/docs/adr/0001-tray-language-menu-is-ts-driven.md`
@@ -125,7 +124,7 @@ so you get the newer polished code rather than regressing:
 - Active dictation language helpers + preferences tests
 - Deepgram **batch** `DeepgramTranscribeAudioRepo` provider option (alongside streaming)
 - Beta update surfacing (`shouldSurfaceUpdate` / `optInToBetaUpdates`)
-- free-form release orchestrator: `workflow_dispatch`, `resign-windows-updater.yml`, `retry-release.yml`
+- free-form release orchestrator: `workflow_dispatch`, `retry-release.yml`
 - Dependency bumps in desktop package.json
 
 ## REMOVED from free-form (personal fork intent)

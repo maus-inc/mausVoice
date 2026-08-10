@@ -17,10 +17,10 @@ type HotKeyProps = {
 
 const pulseBorder = keyframes`
   0%, 100% {
-    border-color: rgba(25, 118, 210, 0.5);
+    border-color: color-mix(in srgb, var(--app-palette-blue) 50%, transparent);
   }
   50% {
-    border-color: rgba(25, 118, 210, 1);
+    border-color: var(--app-palette-blue);
   }
 `;
 

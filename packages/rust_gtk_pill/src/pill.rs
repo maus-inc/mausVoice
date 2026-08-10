@@ -14,7 +14,7 @@ use crate::state::{FlameTongue, PillState, Rocket, RocketPhase, Spark, WindowMod
 use crate::{draw, input, x11};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum Backend {
+pub(crate) enum Backend {
     LayerShell,
     X11,
     PlainWayland,
@@ -350,8 +350,20 @@ pub fn run(receiver: Receiver<InMessage>) {
     });
 
     let state_draw = state.clone();
+    let win_draw = window.clone();
     drawing_area.connect_draw(move |_area, cr| {
+        // draw_tooltip() computes tooltip_width during this pass. The tick
+        // rebuilds the Wayland input region *before* drawing, so on the frame
+        // the tooltip first appears the region was built with a width of 0.0
+        // and build_input_region() left the tooltip out. Rebuild the region
+        // here when the width changes, so the tooltip is never painted outside
+        // its own input shape.
+        let width_before = state_draw.tooltip_width.get();
         draw::draw_all(cr, &state_draw);
+        let width_changed = state_draw.tooltip_width.get() != width_before;
+        if let Some(gdk_win) = win_draw.window().filter(|_| width_changed) {
+            input::update_input_region(&gdk_win, &state_draw);
+        }
         glib::Propagation::Proceed
     });
 
@@ -563,19 +575,15 @@ pub fn run(receiver: Receiver<InMessage>) {
             }
         }
 
-        let visibility = state_tick.visibility.get();
-        let is_active = state_tick.phase.get() != Phase::Idle;
-        let is_assistant = state_tick.assistant_active.get();
-        let should_show = match backend_tick {
-            Backend::LayerShell | Backend::PlainWayland => {
-                state_tick.phase.get() == Phase::Recording
-            }
-            Backend::X11 => match visibility {
-                Visibility::Hidden => is_assistant,
-                Visibility::WhileActive => is_active || is_assistant,
-                Visibility::Persistent => true,
-            },
-        };
+        // One visibility policy for every backend. LayerShell and PlainWayland
+        // previously keyed off `phase == Recording` alone, which ignored the
+        // user's preference: a pill set to Hidden still appeared while
+        // recording, and Persistent never showed when idle.
+        let should_show = should_show_pill(
+            state_tick.visibility.get(),
+            state_tick.phase.get(),
+            state_tick.assistant_active.get(),
+        );
         if should_show {
             win_tick.show();
         } else {
@@ -992,7 +1000,7 @@ fn spring_anim(value: &Cell<f64>, velocity: &Cell<f64>, target: f64, stiffness: 
         velocity.set(0.0);
     } else {
         value.set(new_v.clamp(0.0, 1.0));
-        velocity.set(if new_v < 0.0 || new_v > 1.0 { 0.0 } else { new_vel });
+        velocity.set(if !(0.0..=1.0).contains(&new_v) { 0.0 } else { new_vel });
     }
 }
 
@@ -1010,5 +1018,62 @@ fn spring_px(value: &Cell<f64>, velocity: &Cell<f64>, target: f64, stiffness: f6
     } else {
         value.set(new_v);
         velocity.set(new_vel);
+    }
+}
+
+/// Shared pill visibility policy.
+///
+/// Every backend (X11, Layer Shell, Plain Wayland) resolves visibility through
+/// this one function, so the user's preference means the same thing everywhere.
+///
+/// | Visibility     | Idle   | Recording | Assistant |
+/// |----------------|--------|-----------|-----------|
+/// | `Hidden`       | hidden | hidden    | visible   |
+/// | `WhileActive`  | hidden | visible   | visible   |
+/// | `Persistent`   | visible| visible   | visible   |
+///
+/// Assistant mode is a deliberate exception: the pill is the assistant's own
+/// surface, so it shows even when the preference is `Hidden`.
+pub(crate) fn should_show_pill(
+    visibility: Visibility,
+    phase: Phase,
+    is_assistant: bool,
+) -> bool {
+    let is_active = phase != Phase::Idle;
+    match visibility {
+        Visibility::Hidden => is_assistant,
+        Visibility::WhileActive => is_active || is_assistant,
+        Visibility::Persistent => true,
+    }
+}
+
+#[cfg(test)]
+mod visibility_tests {
+    use super::*;
+
+    #[test]
+    fn hidden_stays_hidden_while_recording() {
+        // The Wayland regression: a Hidden pill used to appear while recording.
+        assert!(!should_show_pill(Visibility::Hidden, Phase::Recording, false));
+        assert!(!should_show_pill(Visibility::Hidden, Phase::Idle, false));
+    }
+
+    #[test]
+    fn hidden_still_shows_for_assistant() {
+        assert!(should_show_pill(Visibility::Hidden, Phase::Idle, true));
+        assert!(should_show_pill(Visibility::Hidden, Phase::Recording, true));
+    }
+
+    #[test]
+    fn while_active_shows_only_when_busy() {
+        assert!(!should_show_pill(Visibility::WhileActive, Phase::Idle, false));
+        assert!(should_show_pill(Visibility::WhileActive, Phase::Recording, false));
+        assert!(should_show_pill(Visibility::WhileActive, Phase::Idle, true));
+    }
+
+    #[test]
+    fn persistent_always_shows() {
+        assert!(should_show_pill(Visibility::Persistent, Phase::Idle, false));
+        assert!(should_show_pill(Visibility::Persistent, Phase::Recording, false));
     }
 }

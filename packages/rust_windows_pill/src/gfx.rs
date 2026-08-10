@@ -79,7 +79,7 @@ impl Gfx {
             let hdc = CreateCompatibleDC(Some(screen_dc));
             ReleaseDC(None, screen_dc);
 
-            let bitmap = create_dib(hdc, width, height);
+            let bitmap = create_dib(hdc, width, height)?;
 
             SelectObject(hdc, HGDIOBJ(bitmap.0));
 
@@ -95,20 +95,6 @@ impl Gfx {
                 clip_kinds: Vec::new(),
                 current_transform: Matrix3x2::identity(),
             })
-        }
-    }
-
-    pub(crate) fn resize(&mut self, width: i32, height: i32) {
-        if width == self.width && height == self.height {
-            return;
-        }
-        unsafe {
-            let new_bitmap = create_dib(self.hdc, width, height);
-            SelectObject(self.hdc, HGDIOBJ(new_bitmap.0));
-            let _ = DeleteObject(HGDIOBJ(self.bitmap.0));
-            self.bitmap = new_bitmap;
-            self.width = width;
-            self.height = height;
         }
     }
 
@@ -246,6 +232,7 @@ impl Gfx {
         }
     }
 
+    #[allow(clippy::too_many_arguments)]
     pub(crate) fn stroke_rounded_rect(&self, x: f64, y: f64, w: f64, h: f64, r: f64, rgba: [f64; 4], width: f64) {
         let r = r.min(w / 2.0).min(h / 2.0);
         let brush = self.brush(rgba);
@@ -332,6 +319,7 @@ impl Gfx {
         }
     }
 
+    #[allow(clippy::too_many_arguments)]
     pub(crate) fn fill_gradient_rect(
         &self, x: f64, y: f64, w: f64, h: f64,
         sx: f64, sy: f64, ex: f64, ey: f64,
@@ -442,6 +430,7 @@ impl Gfx {
         }
     }
 
+    #[allow(clippy::too_many_arguments)]
     pub(crate) fn draw_text_top_left(
         &self, text: &str, x: f64, y: f64,
         size: f64, bold: bool, italic: bool, rgba: [f64; 4],
@@ -464,6 +453,7 @@ impl Gfx {
         }
     }
 
+    #[allow(clippy::too_many_arguments)]
     pub(crate) fn draw_text_centered(
         &self, text: &str, x: f64, y: f64, w: f64, h: f64,
         size: f64, bold: bool, rgba: [f64; 4],
@@ -475,7 +465,7 @@ impl Gfx {
     }
 }
 
-unsafe fn create_dib(hdc: HDC, width: i32, height: i32) -> HBITMAP {
+unsafe fn create_dib(hdc: HDC, width: i32, height: i32) -> Result<HBITMAP> {
     let bmi = BITMAPINFO {
         bmiHeader: BITMAPINFOHEADER {
             biSize: std::mem::size_of::<BITMAPINFOHEADER>() as u32,
@@ -490,7 +480,6 @@ unsafe fn create_dib(hdc: HDC, width: i32, height: i32) -> HBITMAP {
     };
     let mut bits: *mut c_void = std::ptr::null_mut();
     CreateDIBSection(Some(hdc), &bmi, DIB_RGB_COLORS, &mut bits, None, 0)
-        .unwrap_or(HBITMAP::default())
 }
 
 pub fn lerp(a: f64, b: f64, t: f64) -> f64 {

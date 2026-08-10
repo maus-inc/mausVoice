@@ -308,17 +308,11 @@ jobs:
       MAUSVOICE_BUILD_FLAVOR: ${{ needs.metadata.outputs.release_flavor }}
       MAUSVOICE_DESKTOP_FLAVOR: ${{ needs.metadata.outputs.release_flavor }}
       MAUSVOICE_REQUIRE_GPU_SIDECAR: ${{ matrix.require_gpu_sidecar && 'true' || 'false' }}
-      TAURI_PRIVATE_KEY: ${{ secrets.TAURI_PRIVATE_KEY }}
-      TAURI_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_PRIVATE_KEY_PASSWORD }}
-      TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_PRIVATE_KEY }}
-      TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_PRIVATE_KEY_PASSWORD }}
-      TAURI_UPDATER_PUBLIC_KEY: ${{ secrets.TAURI_UPDATER_PUBLIC_KEY }}
-      APPLE_API_KEY_BASE64: ${{ secrets.APPLE_API_KEY_BASE64 }}
-      APPLE_API_KEY_ID: ${{ secrets.APPLE_API_KEY_ID }}
-      APPLE_API_ISSUER: ${{ secrets.APPLE_API_ISSUER }}
-      APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
-      APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
-      APPLE_INSTALLER_SIGNING_IDENTITY: ${{ secrets.APPLE_INSTALLER_SIGNING_IDENTITY }}
+      # Throwaway signing key, unsigned build only — same one release-unsigned.yml/
+      # build-desktop.yml use for CI validation. No real signing keys exist.
+      TAURI_SIGNING_PRIVATE_KEY: "dW50cnVzdGVkIGNvbW1lbnQ6IHJzaWduIGVuY3J5cHRlZCBzZWNyZXQga2V5ClJXUlRZMEl5OVRKZlAyVDN3dlF1Wm5mbWh1MXYwV3VjRlR2SVhUY2JqdmZUUGdtM1JOMEFBQkFBQUFBQUFBQUFBQUlBQUFBQXp4N2IwQXBxS3lTQnFWeXJuMmpaeGpKdkd5VUhTeit1cklsd3dQVTJvSnkzUktQMVlrQklPQ0duQkVZSStiMEdqTDFaSWJXZW96eTdab0VyaTZMUVNuWlpjSTZTY3NpVXA0bUZVVjh3TldRNHF1Qk1CUFBqcTduS3RMQ3FwMDFQM0VjYTlWdTZQZTQ9Cg=="
+      TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ""
+      TAURI_UPDATER_PUBLIC_KEY: "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IDQ2NTZFNDMzMzYyMjBCMzgKUldRNEN5STJNK1JXUmpWRDMzem12QUtjVkFxWERXanl0ZVRCWi9JOTd3bmRFRVFuQkp1QmpiN0EK"
     steps:
       - uses: actions/checkout@v4
         with:
@@ -449,83 +443,6 @@ jobs:
         run: |
           echo "CMAKE_TOOLCHAIN_FILE=${GITHUB_WORKSPACE}/packages/rust_transcription/cmake/macos-ci-toolchain.cmake" >> "$GITHUB_ENV"
 
-      - name: Import Apple signing certificate
-        if: matrix.os == 'macos-14'
-        id: import-macos-cert
-        uses: apple-actions/import-codesign-certs@v2
-        with:
-          create-keychain: true
-          keychain: build
-          keychain-password: ${{ secrets.KEYCHAIN_PASSWORD }}
-          keychain-timeout: 3600
-          set-default-keychain: true
-          p12-file-base64: ${{ secrets.APPLE_CERTIFICATE }}
-          p12-password: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
-
-      - name: Allow codesign access to private keys (CI keychain)
-        if: matrix.os == 'macos-14'
-        run: |
-          security set-key-partition-list -S apple-tool:,apple: -s -k "${{ secrets.KEYCHAIN_PASSWORD }}" build.keychain-db
-
-      - name: Assert Developer ID Application identity is present
-        if: matrix.os == 'macos-14'
-        run: |
-          set -euo pipefail
-          out="$(security find-identity -v -p codesigning)"
-          echo "$out"
-          echo "$out" | grep -q "Developer ID Application" || {
-            echo "No 'Developer ID Application' identity found. Import a .p12 exported with its private key." >&2
-            exit 1
-          }
-
-      - name: Assert Developer ID Installer identity is present
-        if: matrix.os == 'macos-14'
-        run: |
-          set -euo pipefail
-          out="$(security find-identity -v -p basic)"
-          echo "$out"
-          echo "$out" | grep -q "Developer ID Installer" || {
-            echo "No 'Developer ID Installer' identity found. Import a .p12 exported with its private key." >&2
-            exit 1
-          }
-
-      - name: Prepare Apple notary API key
-        if: matrix.os == 'macos-14'
-        run: |
-          set -euo pipefail
-          echo "$APPLE_API_KEY_BASE64" | base64 -d > AuthKey.p8
-          ls -l AuthKey.p8
-        shell: bash
-
-      - name: Verify Apple signing identity
-        if: matrix.os == 'macos-14'
-        run: |
-          set -euo pipefail
-          keychain_path="${{ steps.import-macos-cert.outputs['keychain-path'] }}"
-          if [[ -z "${keychain_path}" ]]; then
-            keychain_path="${HOME}/Library/Keychains/build.keychain-db"
-            echo "apple-actions/import-codesign-certs did not report a keychain path; falling back to ${keychain_path}." >&2
-          fi
-          output="$(security find-identity -v -p codesigning "${keychain_path}" || true)"
-          printf '%s\n' "$output"
-          summary_count="$(printf '%s\n' "$output" | awk '/valid identities found$/ { print $1; exit }')"
-          if [[ -z "${summary_count}" || ! "${summary_count}" =~ ^[0-9]+$ ]]; then
-            summary_count="$(printf '%s\n' "$output" | awk '/^[[:space:]]*[0-9]+\)/ { count++ } END { print count+0 }')"
-          fi
-          if [[ "${summary_count:-0}" -eq 0 ]]; then
-            echo "No valid code signing identities were imported into ${keychain_path}." >&2
-            echo "Ensure APPLE_CERTIFICATE contains a base64-encoded .p12 export that includes the private key." >&2
-            exit 1
-          fi
-
-      - name: Notary connectivity probe
-        if: matrix.os == 'macos-14'
-        run: |
-          xcrun notarytool history \
-            --key "${GITHUB_WORKSPACE}/AuthKey.p8" \
-            --key-id "${APPLE_API_KEY_ID}" \
-            --issuer "${APPLE_API_ISSUER}"
-
       - name: Set Google OAuth credentials
         id: google-oauth
         shell: bash
@@ -626,11 +543,6 @@ jobs:
           MACOSX_DEPLOYMENT_TARGET: "13.3"
           CMAKE_OSX_DEPLOYMENT_TARGET: "13.3"
           APPIMAGE_EXTRACT_AND_RUN: "1"
-          APPLE_TEAM_ID: ${{ env.APPLE_TEAM_ID }}
-          APPLE_SIGNING_IDENTITY: ${{ env.APPLE_SIGNING_IDENTITY }}
-          APPLE_API_KEY: ${{ env.APPLE_API_KEY_ID }}
-          APPLE_API_KEY_PATH: ${{ github.workspace }}/AuthKey.p8
-          APPLE_API_ISSUER: ${{ env.APPLE_API_ISSUER }}
           TAURI_LOG_LEVEL: ${{ env.TAURI_LOG_LEVEL }}
           RUST_LOG: ${{ env.RUST_LOG }}
           MAUSVOICE_GOOGLE_CLIENT_ID: ${{ steps.google-oauth.outputs.client_id }}
@@ -644,7 +556,6 @@ jobs:
           releaseBody: ${{ needs.metadata.outputs.release_body }}
           releaseDraft: false
           prerelease: ${{ needs.metadata.outputs.release_env != 'prod' }}
-          includeUpdaterJson: true
 
       - name: Build and upload macOS DMG
         if: matrix.os == 'macos-14'
@@ -689,7 +600,7 @@ jobs:
 
           gh release upload "${RELEASE_TAG}" "${dmg_path}" --clobber
 
-      - name: Build, sign, notarize, and upload macOS PKG
+      - name: Build and upload macOS PKG (unsigned)
         if: matrix.os == 'macos-14'
         shell: bash
         env:
@@ -697,14 +608,8 @@ jobs:
           RELEASE_TAG: ${{ needs.metadata.outputs.tag_name }}
           RELEASE_VERSION: ${{ needs.metadata.outputs.version }}
           RELEASE_ENV: ${{ needs.metadata.outputs.release_env }}
-          APPLE_INSTALLER_SIGNING_IDENTITY: ${{ env.APPLE_INSTALLER_SIGNING_IDENTITY }}
         run: |
           set -euo pipefail
-
-          if [[ -z "${APPLE_INSTALLER_SIGNING_IDENTITY}" ]]; then
-            echo "Missing APPLE_INSTALLER_SIGNING_IDENTITY secret." >&2
-            exit 1
-          fi
 
           bundle_dir="apps/desktop/src-tauri/target/universal-apple-darwin/release/bundle/macos"
           app_bundle_path="$(find "${bundle_dir}" -maxdepth 1 -type d -name '*.app' | head -n 1)"
@@ -728,88 +633,16 @@ jobs:
               bundle_identifier="com.mausinc.desktop"
               ;;
           esac
-          unsigned_pkg="mausVoice_unsigned.pkg"
 
+          # Unsigned build — no Developer ID identity or notary keys configured.
           pkgbuild \
             --component "${app_bundle_path}" \
             --install-location /Applications \
             --identifier "${bundle_identifier}" \
             --version "${RELEASE_VERSION}" \
-            "${unsigned_pkg}"
-
-          productsign \
-            --sign "${APPLE_INSTALLER_SIGNING_IDENTITY}" \
-            "${unsigned_pkg}" \
             "${pkg_name}"
 
-          pkgutil --check-signature "${pkg_name}"
-
-          xcrun notarytool submit "${pkg_name}" \
-            --key "${GITHUB_WORKSPACE}/AuthKey.p8" \
-            --key-id "${APPLE_API_KEY_ID}" \
-            --issuer "${APPLE_API_ISSUER}" \
-            --wait
-
-          xcrun stapler staple "${pkg_name}"
-
           gh release upload "${RELEASE_TAG}" "${pkg_name}" --clobber
-
-      - name: Azure login for code signing
-        if: matrix.os == 'windows-latest'
-        uses: azure/login@v2
-        with:
-          client-id: ${{ secrets.AZURE_CLIENT_ID }}
-          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
-          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
-
-      - name: Sign Windows NSIS installer
-        if: matrix.os == 'windows-latest'
-        uses: azure/trusted-signing-action@v0
-        with:
-          endpoint: https://eus.codesigning.azure.net/
-          trusted-signing-account-name: ${{ vars.AZURE_CODE_SIGNING_NAME }}
-          certificate-profile-name: ${{ vars.AZURE_CERT_PROFILE_NAME }}
-          files-folder: D:\cargo\release\bundle\nsis
-          files-folder-filter: exe
-
-      - name: Verify NSIS installer signature
-        if: matrix.os == 'windows-latest'
-        shell: pwsh
-        run: |
-          $nsisDir = "D:\cargo\release\bundle\nsis"
-          $installers = Get-ChildItem -Path $nsisDir -Filter "*.exe"
-
-          foreach ($installer in $installers) {
-            Write-Host "Verifying signature for: $($installer.Name)"
-            $sig = Get-AuthenticodeSignature -FilePath $installer.FullName
-
-            if ($sig.Status -ne "Valid") {
-              Write-Error "Signature verification failed for $($installer.Name): $($sig.Status)"
-              Write-Error "Status Message: $($sig.StatusMessage)"
-              exit 1
-            }
-
-            Write-Host "  Status: $($sig.Status)"
-            Write-Host "  Signer: $($sig.SignerCertificate.Subject)"
-            Write-Host "  Timestamp: $($sig.TimeStamperCertificate.Subject)"
-          }
-
-          Write-Host "All NSIS installers signed successfully"
-
-      - name: Re-upload signed NSIS installer
-        if: matrix.os == 'windows-latest'
-        shell: pwsh
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          RELEASE_TAG: ${{ needs.metadata.outputs.tag_name }}
-        run: |
-          $nsisDir = "D:\cargo\release\bundle\nsis"
-          $installers = Get-ChildItem -Path $nsisDir -Filter "*.exe"
-
-          foreach ($installer in $installers) {
-            Write-Host "Uploading signed installer: $($installer.Name)"
-            gh release upload $env:RELEASE_TAG $installer.FullName --clobber
-          }
 
       - name: Build Windows portable installer
         if: matrix.os == 'windows-latest'
@@ -834,37 +667,6 @@ jobs:
           pnpm install
           pnpm run tauri:build
 
-      - name: Sign Windows portable installer
-        if: matrix.os == 'windows-latest'
-        uses: azure/trusted-signing-action@v0
-        with:
-          endpoint: https://eus.codesigning.azure.net/
-          trusted-signing-account-name: ${{ vars.AZURE_CODE_SIGNING_NAME }}
-          certificate-profile-name: ${{ vars.AZURE_CERT_PROFILE_NAME }}
-          files-folder: D:\cargo\release
-          files-folder-filter: exe
-          file-digest: SHA256
-
-      - name: Verify portable installer signature
-        if: matrix.os == 'windows-latest'
-        shell: pwsh
-        run: |
-          $installerExe = "D:\cargo\release\mausvoice-installer.exe"
-
-          Write-Host "Verifying signature for portable installer..."
-          $sig = Get-AuthenticodeSignature -FilePath $installerExe
-
-          if ($sig.Status -ne "Valid") {
-            Write-Error "Signature verification failed: $($sig.Status)"
-            Write-Error "Status Message: $($sig.StatusMessage)"
-            exit 1
-          }
-
-          Write-Host "  Status: $($sig.Status)"
-          Write-Host "  Signer: $($sig.SignerCertificate.Subject)"
-          Write-Host "  Timestamp: $($sig.TimeStamperCertificate.Subject)"
-          Write-Host "Portable installer signed successfully"
-
       - name: Upload Windows portable installer
         if: matrix.os == 'windows-latest'
         shell: pwsh
@@ -884,57 +686,6 @@ jobs:
 
           Write-Host "Uploading $destName to release $env:RELEASE_TAG"
           gh release upload $env:RELEASE_TAG $destName --clobber
-
-  # Azure Trusted Signing (above) rewrites the NSIS exe after Tauri computed
-  # its updater signature, so the sig and latest.json must be regenerated from
-  # the final bytes before the channel manifest is published.
-  resign-windows-updater:
-    name: Re-sign Windows updater
-    needs: [metadata, build]
-    uses: ./.github/workflows/resign-windows-updater.yml
-    with:
-      release_tag: ${{ needs.metadata.outputs.tag_name }}
-    secrets: inherit
-
-  update-channel:
-    name: Update channel release
-    needs: [metadata, build, resign-windows-updater]
-    runs-on: ubuntu-latest
-    permissions:
-      contents: write
-    env:
-      GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-      GH_REPO: ${{ github.repository }}
-      CHANNEL_TAG: ${{ needs.metadata.outputs.channel_release_tag }}
-      RELEASE_TAG: ${{ needs.metadata.outputs.tag_name }}
-    steps:
-      - name: Download latest.json from release
-        run: |
-          set -euo pipefail
-          mkdir -p dist
-          gh release download "$RELEASE_TAG" --pattern "latest.json" --dir dist --clobber
-          if [[ ! -s dist/latest.json ]]; then
-            echo "latest.json was not downloaded from release ${RELEASE_TAG}" >&2
-            ls -la dist
-            exit 1
-          fi
-      - name: Validate downloaded latest.json
-        run: |
-          set -euo pipefail
-          version="$(jq -r '.version // empty' dist/latest.json)"
-          expected="${{ needs.metadata.outputs.version }}"
-          if [[ -z "${version}" ]]; then
-            echo "latest.json is missing a 'version' field." >&2
-            exit 1
-          fi
-          if [[ "${version}" != "${expected}" ]]; then
-            echo "latest.json version '${version}' does not match expected '${expected}'." >&2
-            exit 1
-          fi
-      - name: Upload to channel
-        run: |
-          set -euo pipefail
-          gh release upload "$CHANNEL_TAG" dist/latest.json --clobber
 
   publish-apt:
     name: Publish to APT repository

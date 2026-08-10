@@ -42,7 +42,8 @@ export const OutOfWordsCard = ({
       sx={{
         p: 3,
         borderRadius: 1,
-        background: "linear-gradient(135deg, #1976d258 0%, #1565c03f 100%)",
+        background:
+          "linear-gradient(135deg, color-mix(in srgb, var(--app-palette-blue) 35%, transparent) 0%, color-mix(in srgb, var(--app-palette-blue) 20%, transparent) 100%)",
       }}
     >
       <Stack spacing={1.5}>
@@ -73,11 +74,11 @@ export const OutOfWordsCard = ({
           sx={{
             alignSelf: "flex-start",
             mt: 0.5,
-            backgroundColor: "blue",
-            color: "#fff",
+            backgroundColor: "var(--app-palette-blue)",
+            color: "var(--app-palette-onBlue)",
             fontWeight: 600,
             "&:hover": {
-              backgroundColor: "#1565c0",
+              backgroundColor: "var(--app-palette-blueHover)",
             },
           }}
         >

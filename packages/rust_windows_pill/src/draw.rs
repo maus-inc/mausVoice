@@ -53,16 +53,13 @@ pub(crate) fn draw_all(gfx: &mut Gfx, state: &PillState) {
         draw_cancel_button(gfx, state, ww, wh);
 
         // Long-press outline indicator (also visible during active drag at full progress)
-        if (state.long_press_active.get() && state.long_press_elapsed.get() > 0.1)
+        if (state.long_press_active.get()
+            && state.long_press_elapsed.get() > LONG_PRESS_HOLD_DELAY)
             || state.dragging.get()
         {
             draw_long_press_ring(gfx, state, ww, wh);
         }
 
-        // Balloon pop animation
-        if state.balloon_pop_active.get() {
-            draw_balloon_pop(gfx, state, ww, wh);
-        }
     }
 
     gfx.restore();
@@ -715,6 +712,7 @@ fn draw_compact_content(
         18.0, false, [1.0, 1.0, 1.0, text_alpha * alpha]);
 }
 
+#[allow(clippy::too_many_arguments)]
 fn draw_transcript(
     gfx: &mut Gfx, state: &PillState,
     area_x: f64, area_y: f64, area_w: f64, area_h: f64, alpha: f64,
@@ -1005,7 +1003,7 @@ fn draw_keyboard_button(gfx: &mut Gfx, state: &PillState, ww: f64, wh: f64) {
     }
 }
 
-fn draw_paused(gfx: &Gfx, rx: f64, ry: f64, pill_w: f64, pill_h: f64, expand_t: f64) {
+fn draw_paused(gfx: &mut Gfx, rx: f64, ry: f64, pill_w: f64, pill_h: f64, expand_t: f64) {
     // Same loading bar as the loading phase, but static/dimmed to convey "held".
     gfx.save();
     gfx.clip_rounded_rect(rx, ry, pill_w, pill_h, lerp(COLLAPSED_RADIUS, EXPANDED_RADIUS, expand_t));
@@ -1031,14 +1029,13 @@ fn draw_cancel_button(gfx: &Gfx, state: &PillState, ww: f64, wh: f64) {
     let t = state.cancel_t.get();
     if t < 0.01 { return; }
 
-    let (pill_x, pill_y, pill_w, _) = pill_position(state, ww, wh);
+    let (pill_x, pill_y, pill_w, pill_h) = pill_position(state, ww, wh);
     let phase = state.phase.get();
     let scale = 0.5 + 0.5 * t;
     let r = ((CANCEL_BUTTON_SIZE - 2.0) / 2.0) * scale;
 
-    // Pause / resume on the LEFT side of the pill
-    let pause_x = pill_x - CANCEL_BUTTON_SIZE / 2.0 - 2.0;
-    let pause_y = pill_y - CANCEL_BUTTON_SIZE / 2.0 - 2.0;
+    // Pause / resume on the LEFT side, fully clear of the pill body.
+    let (pause_x, pause_y) = pause_button_origin(pill_x, pill_y, pill_h);
     let pause_cx = pause_x + CANCEL_BUTTON_SIZE / 2.0;
     let pause_cy = pause_y + CANCEL_BUTTON_SIZE / 2.0;
     let pause_hovered = is_mouse_over(state, pause_x, pause_y, CANCEL_BUTTON_SIZE, CANCEL_BUTTON_SIZE);
@@ -1053,17 +1050,18 @@ fn draw_cancel_button(gfx: &Gfx, state: &PillState, ww: f64, wh: f64) {
         gfx.draw_line(pause_cx + s * 0.75, pause_cy, pause_cx - s * 0.35, pause_cy + s, col, 1.8);
         gfx.draw_line(pause_cx - s * 0.35, pause_cy - s, pause_cx - s * 0.35, pause_cy + s, col, 1.8);
     } else {
-        // Pause: two close-set bars
-        let bw = 1.6 * scale;
-        let bh = 6.0 * scale;
-        let gap = 1.2 * scale;
-        gfx.fill_rounded_rect(pause_cx - gap - bw / 2.0, pause_cy - bh / 2.0, bw, bh, 0.6, [1.0, 1.0, 1.0, t]);
-        gfx.fill_rounded_rect(pause_cx + gap - bw / 2.0, pause_cy - bh / 2.0, bw, bh, 0.6, [1.0, 1.0, 1.0, t]);
+        // Pause: two bars, sized as a proportion of the control so the glyph
+        // stays balanced (previously the bars read as a thin, wide-set pair).
+        let bw = CANCEL_BUTTON_SIZE * 0.13 * scale;
+        let bh = CANCEL_BUTTON_SIZE * 0.42 * scale;
+        // Centre-to-centre distance; keeps a bar-width gutter between the bars.
+        let offset = bw;
+        gfx.fill_rounded_rect(pause_cx - offset - bw / 2.0, pause_cy - bh / 2.0, bw, bh, bw / 2.0, [1.0, 1.0, 1.0, t]);
+        gfx.fill_rounded_rect(pause_cx + offset - bw / 2.0, pause_cy - bh / 2.0, bw, bh, bw / 2.0, [1.0, 1.0, 1.0, t]);
     }
 
-    // Cancel (X) on the RIGHT side
-    let btn_x = pill_x + pill_w - CANCEL_BUTTON_SIZE / 2.0 + 2.0;
-    let btn_y = pill_y - CANCEL_BUTTON_SIZE / 2.0 - 2.0;
+    // Cancel (X) on the RIGHT side, fully clear of the pill body.
+    let (btn_x, btn_y) = cancel_button_origin(pill_x, pill_y, pill_w, pill_h);
     let cx = btn_x + CANCEL_BUTTON_SIZE / 2.0;
     let cy = btn_y + CANCEL_BUTTON_SIZE / 2.0;
     let cancel_hovered = is_mouse_over(state, btn_x, btn_y, CANCEL_BUTTON_SIZE, CANCEL_BUTTON_SIZE);
@@ -1152,7 +1150,7 @@ fn draw_long_press_ring(gfx: &Gfx, state: &PillState, ww: f64, wh: f64) {
     let progress = if state.dragging.get() {
         1.0
     } else {
-        (state.long_press_elapsed.get() / LONG_PRESS_DURATION).min(1.0)
+        long_press_progress(state.long_press_elapsed.get())
     };
 
     let (pill_x, pill_y, pill_w, pill_h) = pill_position(state, ww, wh);
@@ -1238,55 +1236,122 @@ fn draw_long_press_ring(gfx: &Gfx, state: &PillState, ww: f64, wh: f64) {
     }
 }
 
-// ── Balloon pop animation ─────────────────────────────────────────
 
-fn draw_balloon_pop(gfx: &Gfx, state: &PillState, ww: f64, wh: f64) {
-    let elapsed = state.balloon_pop_elapsed.get();
-    let t = (elapsed / BALLOON_POP_DURATION).min(1.0);
+/// Progress of the long-press gesture, in `0.0..=1.0`.
+///
+/// The ramp only starts once `LONG_PRESS_HOLD_DELAY` has elapsed, so a quick
+/// click never renders a partially-filled outline, and reaches 1.0 exactly when
+/// the gesture arms at `LONG_PRESS_DURATION`.
+pub(crate) fn long_press_progress(elapsed: f64) -> f64 {
+    let span = LONG_PRESS_DURATION - LONG_PRESS_HOLD_DELAY;
+    if span <= 0.0 {
+        return if elapsed >= LONG_PRESS_DURATION { 1.0 } else { 0.0 };
+    }
+    ((elapsed - LONG_PRESS_HOLD_DELAY) / span).clamp(0.0, 1.0)
+}
 
-    let (pill_x, pill_y, pill_w, _pill_h) = pill_position(state, ww, wh);
-    let cx = pill_x + pill_w / 2.0;
-    let cy = pill_y + wh / 2.0;
+#[cfg(test)]
+mod long_press_tests {
+    use super::*;
 
-    // Expanding shockwave ring
-    let ring_t = t.min(0.6) / 0.6;
-    let ring_radius = lerp(LONG_PRESS_RING_RADIUS, LONG_PRESS_RING_RADIUS * 3.5, ring_t);
-    let ring_alpha = (1.0 - ring_t) * 0.7;
-    if ring_alpha > 0.01 {
-        gfx.stroke_circle(cx, cy, ring_radius, [
-            BALLOON_POP_COLOR.0,
-            BALLOON_POP_COLOR.1,
-            BALLOON_POP_COLOR.2,
-            ring_alpha,
-        ], LONG_PRESS_RING_STROKE * (1.0 - ring_t * 0.5));
+    #[test]
+    fn no_progress_before_hold_delay() {
+        assert_eq!(long_press_progress(0.0), 0.0);
+        assert_eq!(long_press_progress(LONG_PRESS_HOLD_DELAY), 0.0);
     }
 
-    // Second shockwave
-    let ring2_t = ((t - 0.1).max(0.0) / 0.5).min(1.0);
-    let ring2_radius = lerp(LONG_PRESS_RING_RADIUS * 0.6, LONG_PRESS_RING_RADIUS * 2.5, ring2_t);
-    let ring2_alpha = (1.0 - ring2_t) * 0.4;
-    if ring2_alpha > 0.01 {
-        gfx.stroke_circle(cx, cy, ring2_radius, [
-            BALLOON_POP_COLOR2.0,
-            BALLOON_POP_COLOR2.1,
-            BALLOON_POP_COLOR2.2,
-            ring2_alpha,
-        ], LONG_PRESS_RING_STROKE * 0.7);
+    #[test]
+    fn quick_click_never_shows_progress() {
+        // A typical click is well under the hold delay.
+        assert_eq!(long_press_progress(0.05), 0.0);
     }
 
-    // Particles
-    let particles = state.balloon_pop_particles.borrow();
-    for p in particles.iter() {
-        let life_ratio = (p.life / p.max_life).max(0.0);
-        let alpha = life_ratio * life_ratio;
-        let size = p.size * (0.3 + 0.7 * life_ratio);
-        gfx.fill_circle(p.x, p.y, size, [p.color.0, p.color.1, p.color.2, alpha]);
+    #[test]
+    fn completes_exactly_at_duration() {
+        assert_eq!(long_press_progress(LONG_PRESS_DURATION), 1.0);
     }
 
-    // Brief flash
-    if t < 0.15 {
-        let flash_alpha = (1.0 - t / 0.15) * 0.3;
-        let flash_radius = lerp(4.0, pill_w * 0.6, t / 0.15);
-        gfx.fill_circle(cx, cy, flash_radius, [1.0, 1.0, 1.0, flash_alpha]);
+    #[test]
+    fn saturates_after_duration() {
+        assert_eq!(long_press_progress(LONG_PRESS_DURATION * 4.0), 1.0);
+    }
+
+    #[test]
+    fn ramps_monotonically_between_delay_and_duration() {
+        let mid = (LONG_PRESS_HOLD_DELAY + LONG_PRESS_DURATION) / 2.0;
+        let p = long_press_progress(mid);
+        assert!(p > 0.0 && p < 1.0, "expected partial progress, got {p}");
+        assert!(long_press_progress(mid) <= long_press_progress(mid + 0.01));
+    }
+}
+
+/// Horizontal gap between the pill edge and its side controls.
+///
+/// The controls must sit fully outside the pill body: any overlap would let a
+/// control's click region swallow presses meant for the pill itself (which is
+/// what starts/stops dictation).
+pub(crate) const CONTROL_EDGE_GAP: f64 = 6.0;
+
+/// Top-left corner of the pause/resume control (left of the pill).
+pub(crate) fn pause_button_origin(pill_x: f64, pill_y: f64, pill_h: f64) -> (f64, f64) {
+    let x = pill_x - CONTROL_EDGE_GAP - CANCEL_BUTTON_SIZE;
+    let y = pill_y + (pill_h - CANCEL_BUTTON_SIZE) / 2.0;
+    (x, y)
+}
+
+/// Top-left corner of the cancel control (right of the pill).
+pub(crate) fn cancel_button_origin(
+    pill_x: f64,
+    pill_y: f64,
+    pill_w: f64,
+    pill_h: f64,
+) -> (f64, f64) {
+    let x = pill_x + pill_w + CONTROL_EDGE_GAP;
+    let y = pill_y + (pill_h - CANCEL_BUTTON_SIZE) / 2.0;
+    (x, y)
+}
+
+#[cfg(test)]
+mod control_layout_tests {
+    use super::*;
+
+    const PILL_X: f64 = 240.0;
+    const PILL_Y: f64 = 100.0;
+    const PILL_W: f64 = 120.0;
+    const PILL_H: f64 = 32.0;
+
+    #[test]
+    fn pause_sits_left_of_the_pill_without_overlapping() {
+        let (x, _) = pause_button_origin(PILL_X, PILL_Y, PILL_H);
+        assert!(x < PILL_X, "pause must be left of the pill");
+        assert!(
+            x + CANCEL_BUTTON_SIZE <= PILL_X,
+            "pause must not overlap the pill body"
+        );
+    }
+
+    #[test]
+    fn cancel_sits_right_of_the_pill_without_overlapping() {
+        let (x, _) = cancel_button_origin(PILL_X, PILL_Y, PILL_W, PILL_H);
+        assert!(
+            x >= PILL_X + PILL_W,
+            "cancel must not overlap the pill body"
+        );
+    }
+
+    #[test]
+    fn controls_do_not_overlap_each_other() {
+        let (px, _) = pause_button_origin(PILL_X, PILL_Y, PILL_H);
+        let (cx, _) = cancel_button_origin(PILL_X, PILL_Y, PILL_W, PILL_H);
+        assert!(px + CANCEL_BUTTON_SIZE < cx);
+    }
+
+    #[test]
+    fn controls_are_vertically_centred_on_the_pill() {
+        let (_, py) = pause_button_origin(PILL_X, PILL_Y, PILL_H);
+        let (_, cy) = cancel_button_origin(PILL_X, PILL_Y, PILL_W, PILL_H);
+        assert_eq!(py, cy, "both controls share a baseline");
+        let pill_centre = PILL_Y + PILL_H / 2.0;
+        assert!((py + CANCEL_BUTTON_SIZE / 2.0 - pill_centre).abs() < f64::EPSILON);
     }
 }

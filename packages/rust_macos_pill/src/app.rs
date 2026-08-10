@@ -39,10 +39,6 @@ unsafe fn set_window_origin(window: id, origin: NSPoint) {
     let _: () = msg_send![window, setFrameOrigin:origin];
 }
 
-/// Returns the frame of a view (in its superview's coordinate system).
-unsafe fn view_bounds(view: id) -> NSRect {
-    msg_send![view, bounds]
-}
 
 /// Converts a point from view coords to window coords.
 unsafe fn convert_point_to_view(view: id, point: NSPoint) -> NSPoint {
@@ -59,11 +55,7 @@ unsafe fn screen_visible_frame(screen: id) -> NSRect {
     msg_send![screen, visibleFrame]
 }
 
-/// Returns the frame of a screen (includes title bar, etc.).
-unsafe fn screen_frame(screen: id) -> NSRect {
-    msg_send![screen, frame]
-}
-use crate::state::{FlameTongue, PillState, PopParticle, Rocket, RocketPhase, Spark, WindowMode};
+use crate::state::{FlameTongue, PillState, Rocket, RocketPhase, Spark, WindowMode};
 
 // ── CVDisplayLink & timing ───────────────────────────────────────
 
@@ -228,13 +220,6 @@ extern "C" fn mouse_exited(_this: &Object, _sel: Sel, _event: id) {
 
 extern "C" fn mouse_up(_this: &Object, _sel: Sel, event: id) {
     with_ctx(|ctx| {
-        // If pop animation is in progress, cancel the drag that would follow
-        if ctx.state.balloon_pop_active.get() {
-            ctx.state.drag_cancelled.set(true);
-            ctx.state.balloon_pop_active.set(false);
-            ctx.state.balloon_pop_elapsed.set(0.0);
-            ctx.state.balloon_pop_particles.borrow_mut().clear();
-        }
         // Track whether we were dragging (to suppress click on release)
         let was_dragging = ctx.state.dragging.get();
         if was_dragging {
@@ -649,7 +634,6 @@ fn tick(state: &PillState, window: id, dt: f64) {
 
     // Long-press balloon pop + drag
     tick_long_press(state, window, dt);
-    tick_balloon_pop(state, dt);
 
     // Flash message timer
     if state.flash_visible.get() {
@@ -881,9 +865,6 @@ fn tick_long_press(state: &PillState, window: id, dt: f64) {
         return;
     }
 
-    if state.balloon_pop_active.get() {
-        return;
-    }
 
     // Cancel if mouse moved too far from start position (all coords in screen space).
     unsafe {
@@ -912,74 +893,7 @@ fn tick_long_press(state: &PillState, window: id, dt: f64) {
     }
 }
 
-fn trigger_balloon_pop(state: &PillState) {
-    state.balloon_pop_active.set(true);
-    state.balloon_pop_elapsed.set(0.0);
-    state.drag_cancelled.set(false);
 
-    let dw = state.draw_width.get();
-    let dh = state.draw_height.get();
-    let cx = dw / 2.0;
-    let pill_area_top = dh - PILL_AREA_HEIGHT;
-    let cy = pill_area_top + PILL_AREA_HEIGHT / 2.0;
-
-    let mut particles = Vec::with_capacity(BALLOON_POP_PARTICLE_COUNT);
-    // Issue #10: invariant — exactly BALLOON_POP_PARTICLE_COUNT particles are spawned.
-    debug_assert!(BALLOON_POP_PARTICLE_COUNT > 0);
-    for i in 0..BALLOON_POP_PARTICLE_COUNT {
-        let angle = (i as f64 / BALLOON_POP_PARTICLE_COUNT as f64) * std::f64::consts::TAU;
-        let speed_jitter = 0.7 + (i as f64 * 0.13).sin().abs() * 0.6;
-        let speed = BALLOON_POP_PARTICLE_SPEED * speed_jitter;
-        let color = if i % 2 == 0 { BALLOON_POP_COLOR } else { BALLOON_POP_COLOR2 };
-        particles.push(PopParticle {
-            x: cx,
-            y: cy,
-            vx: angle.cos() * speed,
-            vy: angle.sin() * speed,
-            life: BALLOON_POP_PARTICLE_LIFE,
-            max_life: BALLOON_POP_PARTICLE_LIFE,
-            size: BALLOON_POP_PARTICLE_SIZE * (0.6 + (i as f64 * 0.3).sin().abs() * 0.8),
-            color,
-        });
-    }
-    *state.balloon_pop_particles.borrow_mut() = particles;
-}
-
-fn tick_balloon_pop(state: &PillState, dt: f64) {
-    if !state.balloon_pop_active.get() {
-        return;
-    }
-
-    let elapsed = state.balloon_pop_elapsed.get() + dt;
-    state.balloon_pop_elapsed.set(elapsed);
-
-    {
-        let mut particles = state.balloon_pop_particles.borrow_mut();
-        for p in particles.iter_mut() {
-            p.life -= dt;
-            p.x += p.vx * dt;
-            p.y += p.vy * dt;
-            // Apply gravity (downward acceleration)
-            p.vy += PARTICLE_GRAVITY * dt;
-            // Apply exponential drag decay
-            let drag = (PARTICLE_DRAG_COEFFICIENT * dt).exp();
-            p.vx *= drag;
-            p.vy *= drag;
-        }
-        particles.retain(|p| p.life > 0.0);
-    }
-
-    // When animation completes, enter drag mode
-    if elapsed >= BALLOON_POP_DURATION {
-        state.balloon_pop_active.set(false);
-        state.balloon_pop_elapsed.set(0.0);
-        state.balloon_pop_particles.borrow_mut().clear();
-        // Enter drag mode — pill follows cursor (unless user released during pop)
-        if !state.drag_cancelled.get() {
-            state.dragging.set(true);
-        }
-    }
-}
 
 fn spring_anim(value: &Cell<f64>, velocity: &Cell<f64>, target: f64, stiffness: f64, dt: f64) {
     let v = value.get();
@@ -1227,13 +1141,8 @@ unsafe fn setup(receiver: Receiver<InMessage>, embedded: bool) {
         long_press_elapsed: Cell::new(0.0),
         long_press_start_x: Cell::new(0.0),
         long_press_start_y: Cell::new(0.0),
-        balloon_pop_active: Cell::new(false),
-        balloon_pop_elapsed: Cell::new(0.0),
-        balloon_pop_particles: RefCell::new(Vec::new()),
         dragging: Cell::new(false),
         drag_cancelled: Cell::new(false),
-        drag_cursor_x: Cell::new(0.0),
-        drag_cursor_y: Cell::new(0.0),
         has_saved_position: Cell::new(false),
         saved_x: Cell::new(0.0),
         saved_y: Cell::new(0.0),

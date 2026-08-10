@@ -92,8 +92,14 @@ export const TitleBar = () => {
         boxShadow: dark ? titleBarShadow.dark : titleBarShadow.light,
       }}
     >
+      {/*
+        Full-bleed drag region. Double-click to maximise is handled explicitly:
+        with `decorations: false` the webview does not reliably synthesise the
+        native double-click-to-maximise behaviour for a drag region.
+      */}
       <Box
         data-tauri-drag-region
+        onDoubleClick={() => void toggleMax()}
         sx={{
           position: "absolute",
           inset: 0,
@@ -109,14 +115,18 @@ export const TitleBar = () => {
           position: "relative",
           zIndex: 1,
           pl: 0.5,
-          color: dark ? "rgba(255,255,255,0.85)" : "rgba(15,18,25,0.85)",
+          color: "text.primary",
         }}
       >
         <ThemeModeToggle />
         <LogoWithText />
       </Stack>
 
-      <Box sx={{ flex: 1 }} data-tauri-drag-region />
+      <Box
+        sx={{ flex: 1 }}
+        data-tauri-drag-region
+        onDoubleClick={() => void toggleMax()}
+      />
 
       <Stack
         direction="row"
