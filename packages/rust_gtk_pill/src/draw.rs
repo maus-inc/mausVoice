@@ -441,7 +441,7 @@ pub(crate) fn tooltip_has_content(style_count: u32, style_name: &str) -> bool {
 /// Measure the tooltip text and publish `tooltip_width` on the state.
 ///
 /// Only measures text, so any Cairo context will do.
-pub(crate) fn sync_tooltip_width(cr: &cairo::Context, state: &PillState) {
+fn sync_tooltip_width(cr: &cairo::Context, state: &PillState) {
     let style_name = state.style_name.borrow();
     if !tooltip_has_content(state.style_count.get(), &style_name) {
         state.tooltip_width.set(0.0);
@@ -1685,7 +1685,7 @@ mod tooltip_width_tests {
         let wide = tooltip_width_for_text(10_000.0);
         assert_eq!(narrow, tooltip_width_for_text(TOOLTIP_TEXT_MIN_W));
         assert_eq!(wide, tooltip_width_for_text(TOOLTIP_TEXT_MAX_W));
-        assert!(wide > narrow);
+        assert!(wide > narrow, "wider text must yield a wider tooltip");
     }
 
     #[test]
@@ -1702,10 +1702,21 @@ mod tooltip_width_tests {
 
     #[test]
     fn content_requires_multiple_styles_and_a_name() {
-        assert!(tooltip_has_content(2, "Default"));
-        assert!(!tooltip_has_content(1, "Default"), "single style has no switcher");
-        assert!(!tooltip_has_content(0, "Default"));
-        assert!(!tooltip_has_content(2, ""), "empty name has nothing to show");
+        // Table-driven so the arguments are runtime values rather than
+        // literals folded into a constant assertion.
+        let cases: [(u32, &str, bool); 4] = [
+            (2, "Default", true),
+            (1, "Default", false), // a single style has nothing to switch to
+            (0, "Default", false),
+            (2, "", false), // no name means nothing to show
+        ];
+        for (count, name, expected) in cases {
+            assert_eq!(
+                tooltip_has_content(count, name),
+                expected,
+                "count={count} name={name:?}"
+            );
+        }
     }
 }
 

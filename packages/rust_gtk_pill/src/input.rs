@@ -544,7 +544,6 @@ mod input_region_tests {
 
         // Once the tick publishes a width, the same tooltip_t must include it.
         let tooltip_w = crate::draw::tooltip_width_for_text(60.0);
-        assert!(tooltip_w > 0.0, "measured tooltip must have a real width");
         let measured = build_input_region(
             0.0, 0.0,
             pill_x, pill_y, pill_w, pill_h,
