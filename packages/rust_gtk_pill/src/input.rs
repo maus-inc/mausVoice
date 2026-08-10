@@ -529,6 +529,53 @@ mod input_region_tests {
         assert!(tooltip_entry_offset(0.5) > tooltip_entry_offset(1.0));
     }
 
+    /// When the style switcher disappears the tooltip stops being painted, so
+    /// its rectangle must leave the input region too. A stale positive width
+    /// would keep an invisible click-blocker floating above the pill.
+    #[test]
+    fn cleared_tooltip_width_removes_the_rectangle_from_the_region() {
+        let (pill_x, pill_y, pill_w, pill_h) = (240.0f64, 100.0f64, 120.0f64, 32.0f64);
+        let measured_w = 160.0f64; // a width the draw pass would publish
+
+        // While the switcher exists the tooltip owns input above the pill.
+        let with_tooltip = build_input_region(
+            0.0, 0.0,
+            pill_x, pill_y, pill_w, pill_h,
+            1.0, measured_w,
+            false,
+        );
+        let (tx, ty) = tooltip_rendered_origin(pill_x, pill_y, pill_w, measured_w, 1.0);
+        let probe = (
+            (tx + measured_w / 2.0) as i32,
+            (ty + TOOLTIP_HEIGHT / 2.0) as i32,
+        );
+        assert!(
+            with_tooltip.contains_point(probe.0, probe.1),
+            "a visible tooltip should own that area"
+        );
+
+        // draw_tooltip() clears the width when the switcher goes away, even
+        // though tooltip_t has not finished fading. The same point must fall
+        // through to whatever is underneath.
+        let cleared = build_input_region(
+            0.0, 0.0,
+            pill_x, pill_y, pill_w, pill_h,
+            1.0, 0.0,
+            false,
+        );
+        assert!(
+            !cleared.contains_point(probe.0, probe.1),
+            "an unpainted tooltip must not keep blocking clicks"
+        );
+        assert!(
+            cleared.contains_point(
+                (pill_x + pill_w / 2.0) as i32,
+                (pill_y + pill_h / 2.0) as i32
+            ),
+            "the pill itself must stay clickable"
+        );
+    }
+
     /// Without an offset the region still covers the pill body.
     #[test]
     fn unshifted_pill_body_is_in_region() {

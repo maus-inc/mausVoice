@@ -419,6 +419,13 @@ fn draw_tooltip(cr: &cairo::Context, state: &PillState, ww: f64, wh: f64) {
 
     let style_name = state.style_name.borrow();
     if state.style_count.get() <= 1 || style_name.is_empty() {
+        // Clear the measured width so the input region drops the tooltip.
+        // Otherwise a StyleInfo update that removes the switcher leaves the
+        // last width in place: nothing is painted, but the Wayland input shape
+        // keeps an invisible rectangle above the pill that swallows clicks
+        // until tooltip_t decays below TOOLTIP_VISIBLE_T. Changing the width
+        // also makes the draw callback rebuild the region right away.
+        state.tooltip_width.set(0.0);
         return;
     }
 
