@@ -177,6 +177,62 @@ pub(crate) fn handle_scroll(state: &PillState, event: &gdk::EventScroll) {
     state.should_stick.set(max_scroll - new_offset <= 32.0);
 }
 
+/// Pure region math: build the input region from live pill geometry plus
+/// the optional tooltip, with no `gdk::Window` and no `PillState`, so tests
+/// can drive it with a non-zero drag offset and assert the moved pill and
+/// both side controls stay clickable.
+fn build_input_region(
+    ox: f64, oy: f64, dw: f64,
+    pill_x: f64, pill_y: f64, pill_w: f64, pill_h: f64,
+    tooltip_t: f64, tooltip_w: f64,
+    include_side_controls: bool,
+) -> cairo::Region {
+    let pill_rect = cairo::RectangleInt::new(
+        (ox + pill_x) as i32,
+        (oy + pill_y) as i32,
+        pill_w.ceil() as i32,
+        pill_h.ceil() as i32,
+    );
+
+    let mut region = if tooltip_t > 0.1 && tooltip_w > 0.0 {
+        // Tooltip sits directly above the pill. Union the two instead of
+        // computing one spanning rectangle from the old pill-area math.
+        let tooltip_ry = (oy + pill_y) as i32 - (TOOLTIP_GAP + TOOLTIP_HEIGHT).ceil() as i32;
+        let tooltip_rect = cairo::RectangleInt::new(
+            (ox + (dw - tooltip_w) / 2.0).floor() as i32,
+            tooltip_ry,
+            tooltip_w.ceil() as i32,
+            TOOLTIP_HEIGHT.ceil() as i32,
+        );
+        let mut r = cairo::Region::create_rectangle(&pill_rect);
+        let _ = r.union_rectangle(&tooltip_rect);
+        r
+    } else {
+        cairo::Region::create_rectangle(&pill_rect)
+    };
+
+    if include_side_controls {
+        union_side_controls(&mut region, ox, oy, pill_x, pill_y, pill_w, pill_h);
+    }
+    region
+}
+
+/// Build the input region from live pill geometry plus the optional tooltip.
+fn input_region(
+    state: &PillState,
+    ox: f64, oy: f64, dw: f64,
+    pill_x: f64, pill_y: f64, pill_w: f64, pill_h: f64,
+) -> cairo::Region {
+    let mut region = build_input_region(
+        ox, oy, dw,
+        pill_x, pill_y, pill_w, pill_h,
+        state.tooltip_t.get(), state.tooltip_width.get(),
+        state.phase.get() != Phase::Idle,
+    );
+    union_flash_action(&region, state, ox, oy);
+    region
+}
+
 pub(crate) fn set_expanded_input_region(gdk_window: &gdk::Window, state: &PillState) {
     let dw = state.draw_width.get();
     let dh = state.draw_height.get();
@@ -190,40 +246,14 @@ pub(crate) fn set_expanded_input_region(gdk_window: &gdk::Window, state: &PillSt
         let region = cairo::Region::create_rectangle(&rect);
         gdk_window.input_shape_combine_region(&region, 0, 0);
     } else {
-        let pill_w = EXPANDED_PILL_WIDTH;
-        let pill_h = EXPANDED_PILL_HEIGHT;
-        let pill_rx = (ox + (dw - pill_w) / 2.0) as i32;
-        let pill_area_top = dh - PILL_AREA_HEIGHT;
-        let pill_ry = (oy + pill_area_top) as i32;
-
-        let tooltip_t = state.tooltip_t.get();
-        let tooltip_w = state.tooltip_width.get();
-
-        if tooltip_t > 0.1 && tooltip_w > 0.0 {
-            let tooltip_top = (oy + pill_area_top - TOOLTIP_GAP - TOOLTIP_HEIGHT) as i32;
-            let region_w = tooltip_w.ceil().max(pill_w).ceil() as i32;
-            let region_rx = (ox + (dw - region_w as f64) / 2.0) as i32;
-            let region_h = pill_ry + pill_h.ceil() as i32 + ((PILL_AREA_HEIGHT - EXPANDED_PILL_HEIGHT) / 2.0).ceil() as i32 - tooltip_top;
-            let rect = cairo::RectangleInt::new(region_rx, tooltip_top, region_w, region_h);
-            let region = cairo::Region::create_rectangle(&rect);
-            if state.phase.get() != Phase::Idle {
-                union_side_controls(&region, state, ox, oy, dw, dh);
-            }
-            union_flash_action(&region, state, ox, oy);
-            gdk_window.input_shape_combine_region(&region, 0, 0);
-        } else {
-            let rect = cairo::RectangleInt::new(
-                pill_rx, pill_ry,
-                pill_w.ceil() as i32,
-                PILL_AREA_HEIGHT.ceil() as i32,
-            );
-            let region = cairo::Region::create_rectangle(&rect);
-            if state.phase.get() != Phase::Idle {
-                union_side_controls(&region, state, ox, oy, dw, dh);
-            }
-            union_flash_action(&region, state, ox, oy);
-            gdk_window.input_shape_combine_region(&region, 0, 0);
-        }
+        // Use the SAME live geometry as the draw layer (pill_position
+        // applies drag_draw_offset_* on non-X11 backends), so the input
+        // region follows the pill after a Wayland/LayerShell drag. The
+        // static EXPANDED_* rectangle used to leave the moved pill unable
+        // to receive hover/click once dropped elsewhere.
+        let (pill_x, pill_y, pill_w, pill_h) = pill_position(state, dw, dh);
+        let region = input_region(state, ox, oy, dw, pill_x, pill_y, pill_w, pill_h);
+        gdk_window.input_shape_combine_region(&region, 0, 0);
     }
 }
 
@@ -251,13 +281,14 @@ fn union_flash_action(
 }
 
 fn union_side_controls(
-    region: &cairo::Region,
-    state: &PillState,
-    ox: f64, oy: f64, dw: f64, dh: f64,
+    region: &mut cairo::Region,
+    ox: f64, oy: f64,
+    pill_x: f64, pill_y: f64, pill_w: f64, pill_h: f64,
 ) {
     // Both side controls use the same shared origins as the draw code, so
     // hit-testing can never drift away from where the controls are painted.
-    let (pill_x, pill_y, pill_w, pill_h) = pill_position(state, dw, dh);
+    // Callers pass the live pill_position() result so the controls follow
+    // the pill after a Wayland/LayerShell drag.
     let (pause_x, pause_y) = pause_button_origin(pill_x, pill_y, pill_h);
     let (cancel_x, cancel_y) = cancel_button_origin(pill_x, pill_y, pill_w, pill_h);
     let size = CANCEL_BUTTON_SIZE.ceil() as i32;
@@ -294,5 +325,71 @@ pub(crate) fn update_input_region(gdk_window: &gdk::Window, state: &PillState) {
         let region = cairo::Region::create_rectangle(&rect);
         union_flash_action(&region, state, ox, oy);
         gdk_window.input_shape_combine_region(&region, 0, 0);
+    }
+}
+
+#[cfg(test)]
+mod input_region_tests {
+    use super::*;
+
+    /// After a non-X11 drag the pill is drawn at base position + offset.
+    /// The input region must include the moved pill body and both side
+    /// controls at that shifted geometry.
+    #[test]
+    fn shifted_pill_keeps_body_and_controls_clickable() {
+        let (ox, oy, dw) = (0.0f64, 0.0f64, 640.0f64);
+        // Base pill geometry (what pill_position returns before offset)
+        let (base_x, base_y, base_w, base_h) = (240.0f64, 100.0f64, 120.0f64, 32.0f64);
+        // Simulate a Wayland drag: non-zero drag_draw_offset_* shifted draw
+        // position. pill_position() adds these on non-X11 backends.
+        let offset_x = 80.0f64;
+        let offset_y = 40.0f64;
+        let pill_x = base_x + offset_x;
+        let pill_y = base_y + offset_y;
+        let pill_w = base_w;
+        let pill_h = base_h;
+
+        // Active phase -> side controls are part of the input region.
+        let region = build_input_region(
+            ox, oy, dw,
+            pill_x, pill_y, pill_w, pill_h,
+            0.0, 0.0,   // no tooltip
+            true,       // include side controls
+        );
+
+        // Moved pill body centre must be inside the region.
+        let pill_cx = (ox + pill_x + pill_w / 2.0) as i32;
+        let pill_cy = (oy + pill_y + pill_h / 2.0) as i32;
+        assert!(
+            region.contains_point(pill_cx, pill_cy),
+            "moved pill centre ({pill_cx},{pill_cy}) missing from input region"
+        );
+
+        // Both side controls (pause left, cancel right) must stay clickable.
+        let (pause_x, pause_y) = pause_button_origin(pill_x, pill_y, pill_h);
+        let (cancel_x, cancel_y) = cancel_button_origin(pill_x, pill_y, pill_w, pill_h);
+        let size = CANCEL_BUTTON_SIZE;
+        for (cx, cy, label) in [
+            (pause_x + size / 2.0, pause_y + size / 2.0, "pause"),
+            (cancel_x + size / 2.0, cancel_y + size / 2.0, "cancel"),
+        ] {
+            assert!(
+                region.contains_point((ox + cx) as i32, (oy + cy) as i32),
+                "{label} control centre missing from shifted input region"
+            );
+        }
+    }
+
+    /// Without an offset the region still covers the pill body.
+    #[test]
+    fn unshifted_pill_body_is_in_region() {
+        let (ox, oy, dw) = (0.0f64, 0.0f64, 640.0f64);
+        let region = build_input_region(
+            ox, oy, dw,
+            240.0, 100.0, 120.0, 32.0,
+            0.0, 0.0,
+            false,
+        );
+        assert!(region.contains_point(300, 116), "pill centre should be inside");
     }
 }
