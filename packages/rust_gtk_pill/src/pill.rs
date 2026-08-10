@@ -352,11 +352,12 @@ pub fn run(receiver: Receiver<InMessage>) {
     let state_draw = state.clone();
     let win_draw = window.clone();
     drawing_area.connect_draw(move |_area, cr| {
-        // draw_all() measures and publishes tooltip_width. On the frame the
-        // tooltip first appears the tick had no width yet and left it out of
-        // the input region, so refresh the region here now that the width is
-        // known. Without this the first painted tooltip frame sits outside the
-        // Wayland input shape and cannot be clicked.
+        // draw_tooltip() computes tooltip_width during this pass. The tick
+        // rebuilds the Wayland input region *before* drawing, so on the frame
+        // the tooltip first appears the region was built with a width of 0.0
+        // and build_input_region() left the tooltip out. Rebuild the region
+        // here when the width changes, so the tooltip is never painted outside
+        // its own input shape.
         let width_before = state_draw.tooltip_width.get();
         draw::draw_all(cr, &state_draw);
         let width_changed = state_draw.tooltip_width.get() != width_before;
@@ -589,11 +590,6 @@ pub fn run(receiver: Receiver<InMessage>) {
             win_tick.hide();
         }
 
-        // draw_all() publishes tooltip_width at the top of every draw pass, so
-        // the width from the previous frame is available here. On the first
-        // frame the tooltip appears it may still be 0.0; the draw handler
-        // rebuilds the region as soon as it measures a new width, so the
-        // tooltip never renders outside its own input shape.
         if let Some(gdk_win) = win_tick.window() {
             input::update_input_region(&gdk_win, &state_tick);
         }

@@ -15,12 +15,6 @@ pub(crate) fn draw_all(cr: &cairo::Context, state: &PillState) {
 
     state.click_regions.borrow_mut().clear();
 
-    // Publish the tooltip width every frame, before any early-out below can
-    // skip draw_tooltip(). The tick reads this when it rebuilds the Wayland
-    // input region, so the region and the painted tooltip agree from the very
-    // first frame the tooltip is shown.
-    sync_tooltip_width(cr, state);
-
     let ww = state.draw_width.get();
     let wh = state.draw_height.get();
     let (ox, oy) = state.content_offset();
@@ -417,46 +411,6 @@ pub(crate) fn tooltip_rendered_origin(
     (x, y + tooltip_entry_offset(tooltip_t))
 }
 
-/// Tooltip width for a measured text width.
-///
-/// Split out so the tick can publish `tooltip_width` *before* the input region
-/// is rebuilt. The width used to be computed only inside `draw_tooltip()`,
-/// which runs after `update_input_region()`, so on the tooltip's first frame
-/// the region saw a width of 0.0 and excluded it while the draw pass painted
-/// it — one frame of visible-but-unclickable tooltip.
-pub(crate) fn tooltip_width_for_text(text_w: f64) -> f64 {
-    let chevron_area = 20.0;
-    let padding_h = 10.0;
-    padding_h * 2.0 + chevron_area * 2.0 + text_w.clamp(TOOLTIP_TEXT_MIN_W, TOOLTIP_TEXT_MAX_W)
-}
-
-/// Whether the tooltip has any content to show.
-///
-/// Mirrors the early-outs in `draw_tooltip()` so the tick can decide whether to
-/// publish a width at all.
-pub(crate) fn tooltip_has_content(style_count: u32, style_name: &str) -> bool {
-    style_count > 1 && !style_name.is_empty()
-}
-
-/// Measure the tooltip text and publish `tooltip_width` on the state.
-///
-/// Only measures text, so any Cairo context will do.
-fn sync_tooltip_width(cr: &cairo::Context, state: &PillState) {
-    let style_name = state.style_name.borrow();
-    if !tooltip_has_content(state.style_count.get(), &style_name) {
-        state.tooltip_width.set(0.0);
-        return;
-    }
-    cr.select_font_face("Satoshi", cairo::FontSlant::Normal, cairo::FontWeight::Bold);
-    cr.set_font_size(12.0);
-    let Ok(extents) = cr.text_extents(&style_name) else {
-        return;
-    };
-    state
-        .tooltip_width
-        .set(tooltip_width_for_text(extents.width()));
-}
-
 fn draw_tooltip(cr: &cairo::Context, state: &PillState, ww: f64, wh: f64) {
     let tooltip_t = state.tooltip_t.get();
     if tooltip_t < TOOLTIP_VISIBLE_T {
@@ -464,14 +418,18 @@ fn draw_tooltip(cr: &cairo::Context, state: &PillState, ww: f64, wh: f64) {
     }
 
     let style_name = state.style_name.borrow();
-    if !tooltip_has_content(state.style_count.get(), &style_name) {
+    if state.style_count.get() <= 1 || style_name.is_empty() {
         return;
     }
 
     cr.select_font_face("Satoshi", cairo::FontSlant::Normal, cairo::FontWeight::Bold);
     cr.set_font_size(12.0);
     let text_extents = cr.text_extents(&style_name).unwrap();
-    let tooltip_w = tooltip_width_for_text(text_extents.width());
+    let text_w = text_extents.width().clamp(20.0, 100.0);
+
+    let chevron_area = 20.0;
+    let padding_h = 10.0;
+    let tooltip_w = padding_h * 2.0 + chevron_area * 2.0 + text_w;
     state.tooltip_width.set(tooltip_w);
 
     // Anchor to the live pill so the tooltip tracks a Wayland drag, and stays
@@ -1672,52 +1630,6 @@ pub(crate) fn over_side_control(
         x >= ox && x <= ox + CANCEL_BUTTON_SIZE && y >= oy && y <= oy + CANCEL_BUTTON_SIZE
     };
     inside(px, py) || inside(cx, cy)
-}
-
-#[cfg(test)]
-mod tooltip_width_tests {
-    use super::*;
-
-    #[test]
-    fn width_clamps_short_and_long_text() {
-        // Narrow and wide text collapse to the clamp bounds.
-        let narrow = tooltip_width_for_text(1.0);
-        let wide = tooltip_width_for_text(10_000.0);
-        assert_eq!(narrow, tooltip_width_for_text(TOOLTIP_TEXT_MIN_W));
-        assert_eq!(wide, tooltip_width_for_text(TOOLTIP_TEXT_MAX_W));
-        assert!(wide > narrow, "wider text must yield a wider tooltip");
-    }
-
-    #[test]
-    fn width_is_always_positive() {
-        // A zero-width measurement must still produce a usable tooltip, or the
-        // input region would drop it via the `tooltip_w > 0.0` guard.
-        for text_w in [0.0, 20.0, 60.0, 100.0, 500.0] {
-            assert!(
-                tooltip_width_for_text(text_w) > 0.0,
-                "width must be positive for text_w={text_w}"
-            );
-        }
-    }
-
-    #[test]
-    fn content_requires_multiple_styles_and_a_name() {
-        // Table-driven so the arguments are runtime values rather than
-        // literals folded into a constant assertion.
-        let cases: [(u32, &str, bool); 4] = [
-            (2, "Default", true),
-            (1, "Default", false), // a single style has nothing to switch to
-            (0, "Default", false),
-            (2, "", false), // no name means nothing to show
-        ];
-        for (count, name, expected) in cases {
-            assert_eq!(
-                tooltip_has_content(count, name),
-                expected,
-                "count={count} name={name:?}"
-            );
-        }
-    }
 }
 
 #[cfg(test)]
