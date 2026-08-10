@@ -1007,7 +1007,7 @@ fn draw_keyboard_button(gfx: &mut Gfx, state: &PillState, ww: f64, wh: f64) {
     }
 }
 
-fn draw_paused(gfx: &mut Gfx, rx: f64, ry: f64, pill_w: f64, pill_h: f64, expand_t: f64) {
+fn draw_paused(gfx: &Gfx, rx: f64, ry: f64, pill_w: f64, pill_h: f64, expand_t: f64) {
     // Same loading bar as the loading phase, but static/dimmed to convey "held".
     gfx.save();
     gfx.clip_rounded_rect(rx, ry, pill_w, pill_h, lerp(COLLAPSED_RADIUS, EXPANDED_RADIUS, expand_t));
