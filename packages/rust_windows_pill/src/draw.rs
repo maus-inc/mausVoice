@@ -716,6 +716,7 @@ fn draw_compact_content(
         18.0, false, [1.0, 1.0, 1.0, text_alpha * alpha]);
 }
 
+#[allow(clippy::too_many_arguments)]
 fn draw_transcript(
     gfx: &mut Gfx, state: &PillState,
     area_x: f64, area_y: f64, area_w: f64, area_h: f64, alpha: f64,

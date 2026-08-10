@@ -212,10 +212,6 @@ pub(crate) const LONG_PRESS_RING_RADIUS: f64 = 22.0;
 pub(crate) const LONG_PRESS_RING_STROKE: f64 = 2.5;
 
 pub(crate) const BALLOON_POP_DURATION: f64 = 0.85;
-pub(crate) const BALLOON_POP_PARTICLE_COUNT: usize = 14;
-pub(crate) const BALLOON_POP_PARTICLE_SPEED: f64 = 180.0;
-pub(crate) const BALLOON_POP_PARTICLE_LIFE: f64 = 0.7;
-pub(crate) const BALLOON_POP_PARTICLE_SIZE: f64 = 4.0;
 pub(crate) const BALLOON_POP_COLOR: (f64, f64, f64) = (0.45, 0.75, 1.0);
 pub(crate) const BALLOON_POP_COLOR2: (f64, f64, f64) = (0.7, 0.9, 1.0);
 

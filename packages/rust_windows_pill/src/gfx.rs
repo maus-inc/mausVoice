@@ -98,20 +98,6 @@ impl Gfx {
         }
     }
 
-    pub(crate) fn resize(&mut self, width: i32, height: i32) {
-        if width == self.width && height == self.height {
-            return;
-        }
-        unsafe {
-            let new_bitmap = create_dib(self.hdc, width, height);
-            SelectObject(self.hdc, HGDIOBJ(new_bitmap.0));
-            let _ = DeleteObject(HGDIOBJ(self.bitmap.0));
-            self.bitmap = new_bitmap;
-            self.width = width;
-            self.height = height;
-        }
-    }
-
     pub(crate) fn begin_frame(&mut self) {
         self.save_stack.clear();
         self.clip_kinds.clear();
@@ -246,6 +232,7 @@ impl Gfx {
         }
     }
 
+    #[allow(clippy::too_many_arguments)]
     pub(crate) fn stroke_rounded_rect(&self, x: f64, y: f64, w: f64, h: f64, r: f64, rgba: [f64; 4], width: f64) {
         let r = r.min(w / 2.0).min(h / 2.0);
         let brush = self.brush(rgba);
@@ -332,6 +319,7 @@ impl Gfx {
         }
     }
 
+    #[allow(clippy::too_many_arguments)]
     pub(crate) fn fill_gradient_rect(
         &self, x: f64, y: f64, w: f64, h: f64,
         sx: f64, sy: f64, ex: f64, ey: f64,
@@ -442,6 +430,7 @@ impl Gfx {
         }
     }
 
+    #[allow(clippy::too_many_arguments)]
     pub(crate) fn draw_text_top_left(
         &self, text: &str, x: f64, y: f64,
         size: f64, bold: bool, italic: bool, rgba: [f64; 4],
@@ -464,6 +453,7 @@ impl Gfx {
         }
     }
 
+    #[allow(clippy::too_many_arguments)]
     pub(crate) fn draw_text_centered(
         &self, text: &str, x: f64, y: f64, w: f64, h: f64,
         size: f64, bold: bool, rgba: [f64; 4],
@@ -490,7 +480,7 @@ unsafe fn create_dib(hdc: HDC, width: i32, height: i32) -> HBITMAP {
     };
     let mut bits: *mut c_void = std::ptr::null_mut();
     CreateDIBSection(Some(hdc), &bmi, DIB_RGB_COLORS, &mut bits, None, 0)
-        .unwrap_or(HBITMAP::default())
+        .unwrap_or_default()
 }
 
 pub fn lerp(a: f64, b: f64, t: f64) -> f64 {

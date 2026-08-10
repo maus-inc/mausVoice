@@ -219,6 +219,7 @@ fn draw_cancel_flash(
     cr.restore().ok();
 }
 
+#[allow(clippy::too_many_arguments)]
 fn draw_waveform(
     cr: &cairo::Context, rx: f64, ry: f64, pill_w: f64, pill_h: f64,
     expand_t: f64, state: &PillState,
@@ -261,6 +262,7 @@ fn draw_waveform(
     cr.restore().ok();
 }
 
+#[allow(clippy::too_many_arguments)]
 fn draw_edge_gradient(
     cr: &cairo::Context, rx: f64, ry: f64, pill_w: f64, pill_h: f64,
     radius: f64, expand_t: f64,
@@ -289,6 +291,7 @@ fn draw_edge_gradient(
     cr.restore().ok();
 }
 
+#[allow(clippy::too_many_arguments)]
 fn draw_loading(
     cr: &cairo::Context, rx: f64, ry: f64, pill_w: f64, pill_h: f64,
     radius: f64, expand_t: f64, state: &PillState,
@@ -326,6 +329,7 @@ fn draw_loading(
     draw_edge_gradient(cr, rx, ry, pill_w, pill_h, radius, expand_t);
 }
 
+#[allow(clippy::too_many_arguments)]
 fn draw_paused_bar(
     cr: &cairo::Context, rx: f64, ry: f64, pill_w: f64, pill_h: f64,
     radius: f64, expand_t: f64,
@@ -860,6 +864,7 @@ fn draw_assistant_panel(cr: &cairo::Context, state: &PillState, ww: f64, wh: f64
     });
 }
 
+#[allow(clippy::too_many_arguments)]
 fn draw_compact_content(
     cr: &cairo::Context, panel_x: f64, panel_y: f64, panel_w: f64,
     content_height: f64, alpha: f64, state: &PillState,
@@ -876,6 +881,7 @@ fn draw_compact_content(
     let _ = cr.show_text(text);
 }
 
+#[allow(clippy::too_many_arguments)]
 fn draw_transcript(
     cr: &cairo::Context, state: &PillState,
     area_x: f64, area_y: f64, area_w: f64, area_h: f64, alpha: f64,
@@ -1025,6 +1031,7 @@ fn draw_thinking_text(
     y + 20.0
 }
 
+#[allow(clippy::too_many_arguments)]
 fn draw_permission_card(
     cr: &cairo::Context, state: &PillState, perm: &PillPermission,
     x: f64, y: f64, w: f64, alpha: f64,

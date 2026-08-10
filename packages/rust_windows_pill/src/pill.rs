@@ -15,7 +15,7 @@ use crate::gfx::Gfx;
 use crate::input;
 use crate::ipc::{self, InMessage, OutMessage, Phase, Visibility};
 use crate::state;
-use crate::state::{ClickAction, PillState, PopParticle, Rocket, RocketPhase, Spark, WindowMode};
+use crate::state::{ClickAction, PillState, Rocket, RocketPhase, Spark, WindowMode};
 
 // Issue #7: Thread-local statics are an architectural requirement, not a smell.
 // Win32 HWNDs are thread-affine — they must only be accessed on the thread that
@@ -833,10 +833,10 @@ fn update_visibility(hwnd: HWND, state: &PillState) {
     unsafe {
         if should_show {
             if !IsWindowVisible(hwnd).as_bool() {
-                ShowWindow(hwnd, SW_SHOWNOACTIVATE);
+                let _ = ShowWindow(hwnd, SW_SHOWNOACTIVATE);
             }
         } else if IsWindowVisible(hwnd).as_bool() {
-            ShowWindow(hwnd, SW_HIDE);
+            let _ = ShowWindow(hwnd, SW_HIDE);
         }
     }
 }
@@ -1105,10 +1105,9 @@ fn end_drag(hwnd: HWND, state: &PillState, persist_position: bool) -> bool {
     state.dragging.set(false);
 
     // Release the capture whenever this window still owns it, even if the
-    // drag flag was already cleared, so we can never strand it. Compared by
-    // raw handle because HWND is a thin pointer newtype.
+    // drag flag was already cleared, so we can never strand it.
     unsafe {
-        if GetCapture().0 == hwnd.0 {
+        if GetCapture() == hwnd {
             let _ = ReleaseCapture();
         }
     }
@@ -1140,38 +1139,6 @@ fn tick_drag_release_fallback(hwnd: HWND, state: &PillState) {
     let _ = end_drag(hwnd, state, true);
 }
 
-fn trigger_balloon_pop(state: &PillState) {
-    state.balloon_pop_active.set(true);
-    state.balloon_pop_elapsed.set(0.0);
-    state.drag_cancelled.set(false);
-
-    let dw = state.draw_width.get();
-    let dh = state.draw_height.get();
-    let cx = dw / 2.0;
-    let pill_area_top = dh - PILL_AREA_HEIGHT;
-    let cy = pill_area_top + PILL_AREA_HEIGHT / 2.0;
-
-    let mut particles = Vec::with_capacity(BALLOON_POP_PARTICLE_COUNT);
-    // Issue #10: invariant — exactly BALLOON_POP_PARTICLE_COUNT particles are spawned.
-    debug_assert!(BALLOON_POP_PARTICLE_COUNT > 0);
-    for i in 0..BALLOON_POP_PARTICLE_COUNT {
-        let angle = (i as f64 / BALLOON_POP_PARTICLE_COUNT as f64) * std::f64::consts::TAU;
-        let speed_jitter = 0.7 + (i as f64 * 0.13).sin().abs() * 0.6;
-        let speed = BALLOON_POP_PARTICLE_SPEED * speed_jitter;
-        let color = if i % 2 == 0 { BALLOON_POP_COLOR } else { BALLOON_POP_COLOR2 };
-        particles.push(PopParticle {
-            x: cx,
-            y: cy,
-            vx: angle.cos() * speed,
-            vy: angle.sin() * speed,
-            life: BALLOON_POP_PARTICLE_LIFE,
-            max_life: BALLOON_POP_PARTICLE_LIFE,
-            size: BALLOON_POP_PARTICLE_SIZE * (0.6 + (i as f64 * 0.3).sin().abs() * 0.8),
-            color,
-        });
-    }
-    *state.balloon_pop_particles.borrow_mut() = particles;
-}
 
 fn tick_balloon_pop(state: &PillState, dt: f64) {
     if !state.balloon_pop_active.get() {
@@ -1423,7 +1390,7 @@ fn update_edit_overlay(main_hwnd: HWND, state: &PillState) {
     if !is_typing {
         unsafe {
             if IsWindowVisible(container).as_bool() {
-                ShowWindow(container, SW_HIDE);
+                let _ = ShowWindow(container, SW_HIDE);
             }
         }
         return;
@@ -1436,9 +1403,9 @@ fn update_edit_overlay(main_hwnd: HWND, state: &PillState) {
 
     let panel_w = PANEL_EXPANDED_WIDTH;
     let panel_x = (ww - panel_w) / 2.0;
-    let panel_h = wh - PANEL_TOP_MARGIN as f64 - PANEL_BOTTOM_MARGIN as f64;
+    let panel_h = wh - PANEL_TOP_MARGIN - PANEL_BOTTOM_MARGIN;
     let y_shift = (1.0 - state.panel_open_t.get()) * 12.0;
-    let py = PANEL_TOP_MARGIN as f64 + y_shift;
+    let py = PANEL_TOP_MARGIN + y_shift;
     let input_y = py + panel_h - PANEL_INPUT_HEIGHT;
     let input_x = panel_x + PANEL_CONTENT_SIDE_INSET;
     let send_btn_size = 28.0_f64;

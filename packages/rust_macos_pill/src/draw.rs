@@ -144,6 +144,7 @@ fn draw_pill(ctx: &Ctx, state: &PillState, ww: f64, wh: f64) {
     });
 }
 
+#[allow(clippy::too_many_arguments)]
 fn draw_waveform(
     ctx: &Ctx, rx: f64, ry: f64, pill_w: f64, pill_h: f64,
     expand_t: f64, state: &PillState,
@@ -188,6 +189,7 @@ fn draw_waveform(
     ctx.restore();
 }
 
+#[allow(clippy::too_many_arguments)]
 fn draw_edge_gradient(
     ctx: &Ctx, rx: f64, ry: f64, pill_w: f64, pill_h: f64,
     radius: f64, expand_t: f64,
@@ -823,6 +825,7 @@ fn draw_assistant_panel(ctx: &Ctx, state: &PillState, ww: f64, wh: f64) {
     });
 }
 
+#[allow(clippy::too_many_arguments)]
 fn draw_compact_content(
     ctx: &Ctx, panel_x: f64, panel_y: f64, panel_w: f64,
     content_height: f64, alpha: f64, state: &PillState,
@@ -992,6 +995,7 @@ fn draw_thinking_text(
     y + 20.0
 }
 
+#[allow(clippy::too_many_arguments)]
 fn draw_permission_card(
     ctx: &Ctx, state: &PillState, perm: &PillPermission,
     x: f64, y: f64, w: f64, alpha: f64,

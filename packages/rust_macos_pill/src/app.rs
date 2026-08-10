@@ -63,7 +63,7 @@ unsafe fn screen_visible_frame(screen: id) -> NSRect {
 unsafe fn screen_frame(screen: id) -> NSRect {
     msg_send![screen, frame]
 }
-use crate::state::{FlameTongue, PillState, PopParticle, Rocket, RocketPhase, Spark, WindowMode};
+use crate::state::{FlameTongue, PillState, Rocket, RocketPhase, Spark, WindowMode};
 
 // ── CVDisplayLink & timing ───────────────────────────────────────
 
@@ -912,38 +912,6 @@ fn tick_long_press(state: &PillState, window: id, dt: f64) {
     }
 }
 
-fn trigger_balloon_pop(state: &PillState) {
-    state.balloon_pop_active.set(true);
-    state.balloon_pop_elapsed.set(0.0);
-    state.drag_cancelled.set(false);
-
-    let dw = state.draw_width.get();
-    let dh = state.draw_height.get();
-    let cx = dw / 2.0;
-    let pill_area_top = dh - PILL_AREA_HEIGHT;
-    let cy = pill_area_top + PILL_AREA_HEIGHT / 2.0;
-
-    let mut particles = Vec::with_capacity(BALLOON_POP_PARTICLE_COUNT);
-    // Issue #10: invariant — exactly BALLOON_POP_PARTICLE_COUNT particles are spawned.
-    debug_assert!(BALLOON_POP_PARTICLE_COUNT > 0);
-    for i in 0..BALLOON_POP_PARTICLE_COUNT {
-        let angle = (i as f64 / BALLOON_POP_PARTICLE_COUNT as f64) * std::f64::consts::TAU;
-        let speed_jitter = 0.7 + (i as f64 * 0.13).sin().abs() * 0.6;
-        let speed = BALLOON_POP_PARTICLE_SPEED * speed_jitter;
-        let color = if i % 2 == 0 { BALLOON_POP_COLOR } else { BALLOON_POP_COLOR2 };
-        particles.push(PopParticle {
-            x: cx,
-            y: cy,
-            vx: angle.cos() * speed,
-            vy: angle.sin() * speed,
-            life: BALLOON_POP_PARTICLE_LIFE,
-            max_life: BALLOON_POP_PARTICLE_LIFE,
-            size: BALLOON_POP_PARTICLE_SIZE * (0.6 + (i as f64 * 0.3).sin().abs() * 0.8),
-            color,
-        });
-    }
-    *state.balloon_pop_particles.borrow_mut() = particles;
-}
 
 fn tick_balloon_pop(state: &PillState, dt: f64) {
     if !state.balloon_pop_active.get() {
