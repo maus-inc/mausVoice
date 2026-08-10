@@ -1,11 +1,13 @@
 import type { DictationPillVisibility, Nullable } from "@maus-inc/types";
+import type { IntlShape } from "react-intl";
 import { getEffectivePillVisibility } from "./user.utils";
 
 /**
- * Label shown on the tray's pill-visibility item.
+ * Label identifier for the tray's pill-visibility item.
  *
- * The label names the action a click performs, not the current state. Kept in
- * sync with `pill_menu_label()` in `src-tauri/src/system/tray.rs`.
+ * The label names the action a click performs, not the current state.
+ * This type serves as an internal contract/identifier; actual user-facing
+ * text is resolved via i18n.
  */
 export type TrayPillMenuLabel = "Hide Pill" | "Show Pill";
 
@@ -28,7 +30,7 @@ export const getNextPillVisibility = (
   getEffectivePillVisibility(current) === "hidden" ? "persistent" : "hidden";
 
 /**
- * Tray label for a visibility value.
+ * Tray label identifier for a visibility value.
  *
  * Derived from the persisted preference, never from whether the native pill
  * window happens to be on screen — in Assistant mode the pill is visible even
@@ -38,3 +40,20 @@ export const getPillMenuLabel = (
   current?: Nullable<string>,
 ): TrayPillMenuLabel =>
   getEffectivePillVisibility(current) === "hidden" ? "Show Pill" : "Hide Pill";
+
+/**
+ * Localized tray pill visibility label.
+ *
+ * Resolves the user-facing text for the pill visibility menu item based on the
+ * effective visibility state, following the same pattern as tray language menu
+ * localization.
+ */
+export const getLocalizedPillMenuLabel = (
+  current: Nullable<string>,
+  intl: IntlShape,
+): string => {
+  const effective = getEffectivePillVisibility(current);
+  return effective === "hidden"
+    ? intl.formatMessage({ defaultMessage: "Show Pill" })
+    : intl.formatMessage({ defaultMessage: "Hide Pill" });
+};

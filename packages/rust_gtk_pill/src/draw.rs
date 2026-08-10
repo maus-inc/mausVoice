@@ -372,15 +372,6 @@ fn draw_idle_label(cr: &cairo::Context, rx: f64, ry: f64, pill_w: f64, pill_h: f
 
 // ── Tooltip (dictation style selector) ────────────────────────────
 
-/// Top-left corner of the style tooltip, which sits directly above the pill.
-///
-/// Drawing, hit testing and the Wayland input region all resolve the tooltip
-/// through this one helper. They previously each derived it separately: draw
-/// used a fixed `pill_area_top`, while the input region used the live `pill_y`.
-/// Those disagreed by the tooltip gap even at rest, and on Wayland — where a
-/// drag translates the draw offset rather than moving the toplevel — they
-/// diverged by the whole drag distance, leaving the visible style selector
-/// outside its own input region and unclickable.
 /// Vertical slide applied while the tooltip animates in.
 ///
 /// The tooltip starts a few pixels low and rises into place. Hit testing and
@@ -390,6 +381,15 @@ pub(crate) fn tooltip_entry_offset(tooltip_t: f64) -> f64 {
     (1.0 - tooltip_t) * TOOLTIP_ENTRY_SLIDE
 }
 
+/// Top-left corner of the style tooltip, which sits directly above the pill.
+///
+/// Drawing, hit testing and the Wayland input region all resolve the tooltip
+/// through this one helper. They previously each derived it separately: draw
+/// used a fixed `pill_area_top`, while the input region used the live `pill_y`.
+/// Those disagreed by the tooltip gap even at rest, and on Wayland — where a
+/// drag translates the draw offset rather than moving the toplevel — they
+/// diverged by the whole drag distance, leaving the visible style selector
+/// outside its own input region and unclickable.
 pub(crate) fn tooltip_origin(pill_x: f64, pill_y: f64, pill_w: f64, tooltip_w: f64) -> (f64, f64) {
     let x = pill_x + (pill_w - tooltip_w) / 2.0;
     let y = pill_y - TOOLTIP_GAP - TOOLTIP_HEIGHT;

@@ -31,6 +31,11 @@
  * Requires ImageMagick. The binary is resolved from a fixed list of trusted
  * system directories rather than `$PATH`; override with an absolute path via
  * `IMAGEMAGICK_CONVERT` if it lives elsewhere.
+ *
+ * Windows note: this script only searches POSIX-style installation directories.
+ * Windows maintainers must set the `IMAGEMAGICK_CONVERT` environment variable
+ * to an absolute path (e.g., `C:\Program Files\ImageMagick-7.1.0-Q16\magick.exe`)
+ * before running the script.
  */
 
 import { execFileSync } from "node:child_process";
@@ -346,30 +351,32 @@ function main() {
   // Render each ICO/ICNS frame at its native size rather than letting the
   // encoder downscale one source, so the small frames stay legible.
   const tmp = [];
-  const icoFrames = ICO_SIZES.map((size) => {
-    const p = join(desktopIcons, `.tmp-ico-${size}.png`);
-    renderSquare(size, p);
-    tmp.push(p);
-    return p;
-  });
-  convert([...icoFrames, join(desktopIcons, "icon.ico")]);
-  convert([...icoFrames, join(installerIcons, "icon.ico")]);
-  console.log(`Wrote icon.ico (${ICO_SIZES.join(", ")})`);
+  try {
+    const icoFrames = ICO_SIZES.map((size) => {
+      const p = join(desktopIcons, `.tmp-ico-${size}.png`);
+      renderSquare(size, p);
+      tmp.push(p);
+      return p;
+    });
+    convert([...icoFrames, join(desktopIcons, "icon.ico")]);
+    convert([...icoFrames, join(installerIcons, "icon.ico")]);
+    console.log(`Wrote icon.ico (${ICO_SIZES.join(", ")})`);
 
-  const icnsFrames = ICNS_SIZES.map((size) => {
-    const p = join(desktopIcons, `.tmp-icns-${size}.png`);
-    renderSquare(size, p);
-    tmp.push(p);
-    return p;
-  });
-  convert([...icnsFrames, join(desktopIcons, "icon.icns")]);
-  console.log(`Wrote icon.icns (${ICNS_SIZES.join(", ")})`);
+    const icnsFrames = ICNS_SIZES.map((size) => {
+      const p = join(desktopIcons, `.tmp-icns-${size}.png`);
+      renderSquare(size, p);
+      tmp.push(p);
+      return p;
+    });
+    convert([...icnsFrames, join(desktopIcons, "icon.icns")]);
+    console.log(`Wrote icon.icns (${ICNS_SIZES.join(", ")})`);
 
-  renderSquare(512, join(publicDir, "app-icon.png"));
-  renderSquare(512, join(publicDir, "app-icon-512.png"));
-  console.log("Wrote public app icons");
-
-  for (const p of tmp) rmSync(p, { force: true });
+    renderSquare(512, join(publicDir, "app-icon.png"));
+    renderSquare(512, join(publicDir, "app-icon-512.png"));
+    console.log("Wrote public app icons");
+  } finally {
+    for (const p of tmp) rmSync(p, { force: true });
+  }
 
   const problems = verify();
   if (problems.length > 0) {

@@ -95,11 +95,6 @@ export const ThemeModeToggle = () => {
               },
             ),
           "&:hover": { backgroundColor: "action.hover", color: "text.primary" },
-          // Designed focus ring: brand-tinted, 2px, offset 2.
-          "&:focus-visible": {
-            outline: "2px solid rgba(27, 138, 248, 0.7)",
-            outlineOffset: 2,
-          },
           "&:active": { transform: "scale(0.94)" },
         }}
       >

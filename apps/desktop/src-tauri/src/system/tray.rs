@@ -230,18 +230,19 @@ pub fn set_register_app_label(_app: &tauri::AppHandle, app_name: Option<String>)
     item.set_text(label).map_err(|err| err.to_string())
 }
 
-/// Update the pill-visibility item's label from the effective preference.
+/// Update the pill-visibility item's label.
 ///
 /// Native menu state only: this never writes user preferences. The item stays
 /// enabled in every state, so a single click is always a recovery path.
+/// The frontend resolves the localized label and passes it here.
 pub fn set_pill_visibility_menu_state(
     _app: &tauri::AppHandle,
-    visibility: &str,
+    label: &str,
 ) -> Result<(), String> {
     let Some(item) = PILL_VISIBILITY_MENU_ITEM.get() else {
         return Err("Pill visibility menu item not initialized".to_string());
     };
-    item.set_text(pill_menu_label(visibility))
+    item.set_text(label)
         .map_err(|err| err.to_string())?;
     item.set_enabled(true).map_err(|err| err.to_string())
 }

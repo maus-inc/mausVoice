@@ -15,15 +15,6 @@
 # Run this for the current host platform before releasing:
 #
 #   ./scripts/verify-native-pills.sh
-#
-# CI note: to run this automatically, add a step to
-# `.github/workflows/lint-desktop.yml`:
-#
-#   - name: Verify native pills and icons
-#     run: ./scripts/verify-native-pills.sh
-#
-# (That workflow edit needs the `workflows` permission, so it is left to a
-# maintainer rather than being applied by an automated change.)
 
 set -euo pipefail
 

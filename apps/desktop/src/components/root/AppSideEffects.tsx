@@ -79,6 +79,7 @@ import { getPlatform } from "../../utils/platform.utils";
 import { minutesToMilliseconds } from "../../utils/time.utils";
 import { buildTrayLanguageMenuModel } from "../../utils/tray-language.utils";
 import {
+  getLocalizedPillMenuLabel,
   getNextPillVisibility,
   getPillMenuLabel,
 } from "../../utils/tray-pill-visibility.utils";
@@ -802,10 +803,11 @@ export const AppSideEffects = () => {
   // Label follows the persisted preference: startup hydration, tray clicks and
   // Settings edits all flow through here, so the tray cannot drift.
   useEffect(() => {
+    const label = getLocalizedPillMenuLabel(effectivePillVisibility, intl);
     invoke("set_pill_visibility_menu_state", {
-      visibility: effectivePillVisibility,
+      label,
     }).catch(console.error);
-  }, [effectivePillVisibility]);
+  }, [effectivePillVisibility, intl]);
 
   useTauriListen<void>("tray-toggle-pill-visibility", () => {
     pillVisibilityQueueRef.current = pillVisibilityQueueRef.current
@@ -819,6 +821,7 @@ export const AppSideEffects = () => {
         // surfaces the existing save error, so the effect above restores the
         // previous label. The menu therefore never claims an unsaved state.
         await setDictationPillVisibility(next);
+        pillVisibilityRef.current = next;
         getLogger().info(
           `Tray pill visibility: ${current} -> ${next} (${getPillMenuLabel(next)})`,
         );

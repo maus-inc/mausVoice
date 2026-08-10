@@ -301,12 +301,27 @@ function buildNativePill(packageDir, binaryName) {
     const message = `[sidecar] ${binaryName} build FAILED`;
     const allowFailure =
       process.env.MAUSVOICE_ALLOW_PILL_BUILD_FAILURE === "true";
-    if (!allowFailure && (buildProfile === "release" || process.env.CI)) {
+    const isCI = process.env.CI === "true";
+    if (!allowFailure && (buildProfile === "release" || isCI)) {
       fail(
         `${message}. Refusing to package a stale or missing pill binary — ` +
           `fix the build above, or set MAUSVOICE_ALLOW_PILL_BUILD_FAILURE=true to override.`,
       );
     }
+
+    const pillDestPath = join(
+      desktopDir,
+      "src-tauri",
+      "resources",
+      `${binaryName}${executableSuffix}`,
+    );
+    if (!existsSync(pillDestPath)) {
+      fail(
+        `${message}. No previously built binary exists at ${pillDestPath} — ` +
+          `the build cannot proceed with a missing pill binary.`,
+      );
+    }
+
     console.warn(`${message}; continuing with the previously built binary.`);
     return;
   }

@@ -28,31 +28,41 @@ if (!owner || !repo) {
   );
 }
 
-const configPath = path.join(
-  root,
-  "apps",
-  "desktop",
-  "src-tauri",
-  "tauri.conf.json"
-);
+const tauriDir = path.join(root, "apps", "desktop", "src-tauri");
 
-const raw = fs.readFileSync(configPath, "utf8");
-const data = JSON.parse(raw);
+const configFiles = [
+  "tauri.conf.json",
+  "tauri.dev.conf.json",
+  "tauri.prod.conf.json",
+  "tauri.enterprise.conf.json",
+  "tauri.enterprise-dev.conf.json",
+];
 
-data.version = version;
-data.plugins ??= {};
-data.plugins.updater ??= {};
+for (const fileName of configFiles) {
+  const configPath = path.join(tauriDir, fileName);
+  if (!fs.existsSync(configPath)) {
+    continue;
+  }
 
-if (updaterPublicKeyInput) {
-  data.plugins.updater.pubkey = updaterPublicKeyInput;
-  console.log("Set updater public key from environment variable.");
-} else if (data.plugins.updater.pubkey === "__UPDATER_PUBLIC_KEY__") {
-  delete data.plugins.updater.pubkey;
-  console.log("Removed placeholder updater public key.");
+  const raw = fs.readFileSync(configPath, "utf8");
+  const data = JSON.parse(raw);
+
+  if (fileName === "tauri.conf.json") {
+    data.version = version;
+  }
+
+  data.plugins ??= {};
+  data.plugins.updater ??= {};
+
+  if (updaterPublicKeyInput && data.plugins.updater.pubkey === "__UPDATER_PUBLIC_KEY__") {
+    data.plugins.updater.pubkey = updaterPublicKeyInput;
+  } else if (!updaterPublicKeyInput && data.plugins.updater.pubkey === "__UPDATER_PUBLIC_KEY__") {
+    delete data.plugins.updater.pubkey;
+  }
+
+  fs.writeFileSync(configPath, `${JSON.stringify(data, null, 2)}\n`, "utf8");
 }
 
-fs.writeFileSync(configPath, `${JSON.stringify(data, null, 2)}\n`, "utf8");
-
 console.log(
-  `Updated tauri.conf.json with version ${version} for ${releaseEnv} release.`
+  `Updated tauri.*.conf.json files with version ${version} for ${releaseEnv} release.`
 );

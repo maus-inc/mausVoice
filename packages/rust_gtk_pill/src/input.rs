@@ -191,8 +191,8 @@ fn build_input_region(
     include_side_controls: bool,
 ) -> cairo::Region {
     let pill_rect = cairo::RectangleInt::new(
-        (ox + pill_x) as i32,
-        (oy + pill_y) as i32,
+        (ox + pill_x).floor() as i32,
+        (oy + pill_y).floor() as i32,
         pill_w.ceil() as i32,
         pill_h.ceil() as i32,
     );
@@ -217,7 +217,7 @@ fn build_input_region(
     };
 
     if include_side_controls {
-        union_side_controls(&mut region, ox, oy, pill_x, pill_y, pill_w, pill_h);
+        union_side_controls(&region, ox, oy, pill_x, pill_y, pill_w, pill_h);
     }
     region
 }
@@ -287,7 +287,7 @@ fn union_flash_action(
 }
 
 fn union_side_controls(
-    region: &mut cairo::Region,
+    region: &cairo::Region,
     ox: f64, oy: f64,
     pill_x: f64, pill_y: f64, pill_w: f64, pill_h: f64,
 ) {
@@ -300,8 +300,8 @@ fn union_side_controls(
     let size = CANCEL_BUTTON_SIZE.ceil() as i32;
     for (bx, by) in [(pause_x, pause_y), (cancel_x, cancel_y)] {
         let btn_rect = cairo::RectangleInt::new(
-            (ox + bx) as i32,
-            (oy + by) as i32,
+            (ox + bx).floor() as i32,
+            (oy + by).floor() as i32,
             size,
             size,
         );
