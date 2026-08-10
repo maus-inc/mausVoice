@@ -32,6 +32,7 @@ import {
   migrateLocalUserToCloud,
   refreshCurrentUser,
   setActiveDictationLanguage,
+  setDictationPillVisibility,
   setRemoteOutputEnabled,
   setRemoteTargetDeviceId,
 } from "../../actions/user.actions";
@@ -77,6 +78,10 @@ import { isPermissionAuthorized } from "../../utils/permission.utils";
 import { getPlatform } from "../../utils/platform.utils";
 import { minutesToMilliseconds } from "../../utils/time.utils";
 import { buildTrayLanguageMenuModel } from "../../utils/tray-language.utils";
+import {
+  getNextPillVisibility,
+  getPillMenuLabel,
+} from "../../utils/tray-pill-visibility.utils";
 import {
   getEffectivePillVisibility,
   getMyUserPreferences,
@@ -772,6 +777,55 @@ export const AppSideEffects = () => {
 
   useTauriListen<string>("tray-set-dictation-language", (code) => {
     setActiveDictationLanguage(code).catch(console.error);
+  });
+
+  // ── Tray pill-visibility toggle ────────────────────────────────────────────
+  // One menu item whose label states the action it performs. The persisted
+  // preference is the source of truth; the tray never holds its own toggle.
+  const effectivePillVisibility = getEffectivePillVisibility(
+    prefs?.dictationPillVisibility,
+  );
+
+  // Read the live value inside async work. A value captured by the render that
+  // registered the listener would be stale by the time a click arrives.
+  const pillVisibilityRef = useRef(effectivePillVisibility);
+  pillVisibilityRef.current = effectivePillVisibility;
+
+  // Serializes tray clicks. `updateUserPreferences` writes the whole
+  // preferences object, so two overlapping writes can clobber each other; and
+  // AsyncLock only counts callers, it does not queue them. Chaining onto a
+  // promise gives real ordering, and each link re-reads the ref so it acts on
+  // the state left by the previous write rather than on what was current when
+  // the user clicked.
+  const pillVisibilityQueueRef = useRef<Promise<void>>(Promise.resolve());
+
+  // Label follows the persisted preference: startup hydration, tray clicks and
+  // Settings edits all flow through here, so the tray cannot drift.
+  useEffect(() => {
+    invoke("set_pill_visibility_menu_state", {
+      visibility: effectivePillVisibility,
+    }).catch(console.error);
+  }, [effectivePillVisibility]);
+
+  useTauriListen<void>("tray-toggle-pill-visibility", () => {
+    pillVisibilityQueueRef.current = pillVisibilityQueueRef.current
+      .then(async () => {
+        const current = pillVisibilityRef.current;
+        const next = getNextPillVisibility(current);
+        if (next === current) {
+          return;
+        }
+        // On failure setDictationPillVisibility rolls the store back and
+        // surfaces the existing save error, so the effect above restores the
+        // previous label. The menu therefore never claims an unsaved state.
+        await setDictationPillVisibility(next);
+        getLogger().info(
+          `Tray pill visibility: ${current} -> ${next} (${getPillMenuLabel(next)})`,
+        );
+      })
+      .catch((error) => {
+        getLogger().error(`Failed to toggle pill visibility: ${error}`);
+      });
   });
 
   return null;

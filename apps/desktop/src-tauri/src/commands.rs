@@ -1948,6 +1948,16 @@ pub fn set_register_app_label(app: AppHandle, app_name: Option<String>) -> Resul
     crate::system::tray::set_register_app_label(&app, app_name)
 }
 
+/// Sync the tray's pill-visibility label to the effective preference.
+///
+/// Presentation only — the frontend owns the preference and calls this after a
+/// successful save, so the label can never claim a state that was not persisted.
+#[tauri::command]
+#[specta::specta]
+pub fn set_pill_visibility_menu_state(app: AppHandle, visibility: String) -> Result<(), String> {
+    crate::system::tray::set_pill_visibility_menu_state(&app, &visibility)
+}
+
 #[tauri::command]
 #[specta::specta]
 pub fn set_tray_visible(app: AppHandle, visible: bool) -> Result<(), String> {
