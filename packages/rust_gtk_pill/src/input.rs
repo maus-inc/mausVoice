@@ -30,7 +30,7 @@ pub(crate) fn is_over_pill_area(state: &PillState, x: f64, y: f64) -> bool {
 
     // Tooltip: same helper the draw code uses, so the hit box always covers
     // the painted tooltip (including after a Wayland drag).
-    if state.tooltip_t.get() > 0.1 {
+    if state.tooltip_t.get() >= TOOLTIP_VISIBLE_T {
         let tooltip_w = state.tooltip_width.get();
         let (tooltip_x, tooltip_y) =
             tooltip_rendered_origin(px, py, pw, tooltip_w, state.tooltip_t.get());
@@ -197,7 +197,7 @@ fn build_input_region(
         pill_h.ceil() as i32,
     );
 
-    let mut region = if tooltip_t > 0.1 && tooltip_w > 0.0 {
+    let mut region = if tooltip_t >= TOOLTIP_VISIBLE_T && tooltip_w > 0.0 {
         // Same helper the draw code uses, so the region always covers the
         // painted tooltip. Centring on the pill rather than the window also
         // keeps them aligned horizontally once a drag moves the pill.
@@ -450,7 +450,9 @@ mod input_region_tests {
         let (pill_x, pill_y, pill_w, pill_h) = (240.0f64, 100.0f64, 120.0f64, 32.0f64);
         let tooltip_w = 160.0f64;
 
-        for tooltip_t in [0.2f64, 0.5, 0.8, 1.0] {
+        // 0.05 sits in the old dead zone: draw showed the tooltip from 0.01
+        // while input ignored it until 0.1, so it was briefly unclickable.
+        for tooltip_t in [0.05f64, 0.2, 0.5, 0.8, 1.0] {
             let region = build_input_region(
                 ox, oy,
                 pill_x, pill_y, pill_w, pill_h,
@@ -474,6 +476,47 @@ mod input_region_tests {
                 );
             }
         }
+    }
+
+    /// Drawing and input must agree on when the tooltip exists, otherwise it
+    /// is painted before it becomes clickable.
+    #[test]
+    fn tooltip_enters_region_as_soon_as_it_is_drawn() {
+        let (pill_x, pill_y, pill_w, pill_h) = (240.0f64, 100.0f64, 120.0f64, 32.0f64);
+        let tooltip_w = 160.0f64;
+
+        // Just visible: must already be in the region.
+        let region = build_input_region(
+            0.0, 0.0,
+            pill_x, pill_y, pill_w, pill_h,
+            TOOLTIP_VISIBLE_T, tooltip_w,
+            false,
+        );
+        let (tx, ty) =
+            tooltip_rendered_origin(pill_x, pill_y, pill_w, tooltip_w, TOOLTIP_VISIBLE_T);
+        assert!(
+            region.contains_point(
+                (tx + tooltip_w / 2.0) as i32,
+                (ty + TOOLTIP_HEIGHT / 2.0) as i32
+            ),
+            "tooltip must be clickable as soon as it is drawn"
+        );
+
+        // Fully hidden: the region is the pill alone, so a point above the
+        // pill (where the tooltip would sit) is excluded.
+        let hidden = build_input_region(
+            0.0, 0.0,
+            pill_x, pill_y, pill_w, pill_h,
+            0.0, tooltip_w,
+            false,
+        );
+        assert!(
+            !hidden.contains_point(
+                (tx + tooltip_w / 2.0) as i32,
+                (ty + TOOLTIP_HEIGHT / 2.0) as i32
+            ),
+            "a hidden tooltip must not claim input"
+        );
     }
 
     /// The entry slide is greatest when the tooltip first appears and zero

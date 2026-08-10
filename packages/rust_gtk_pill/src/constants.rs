@@ -42,6 +42,12 @@ pub(crate) const TOOLTIP_HEIGHT: f64 = 24.0;
 pub(crate) const TOOLTIP_GAP: f64 = 6.0;
 /// Distance the tooltip slides upward as it fades in.
 pub(crate) const TOOLTIP_ENTRY_SLIDE: f64 = 4.0;
+/// Animation progress at which the tooltip counts as on screen.
+///
+/// Drawing, hit testing and the Wayland input region all use this one value.
+/// They previously disagreed (draw at 0.01, input at 0.1), so for that sliver
+/// of the fade-in the tooltip was painted but could not be clicked.
+pub(crate) const TOOLTIP_VISIBLE_T: f64 = 0.01;
 pub(crate) const TOOLTIP_RADIUS: f64 = 8.0;
 
 // ── Waveform — ported from AudioWaveform.tsx ──────────────────────

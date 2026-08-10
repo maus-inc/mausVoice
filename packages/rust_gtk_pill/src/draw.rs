@@ -413,7 +413,7 @@ pub(crate) fn tooltip_rendered_origin(
 
 fn draw_tooltip(cr: &cairo::Context, state: &PillState, ww: f64, wh: f64) {
     let tooltip_t = state.tooltip_t.get();
-    if tooltip_t < 0.01 {
+    if tooltip_t < TOOLTIP_VISIBLE_T {
         return;
     }
 
