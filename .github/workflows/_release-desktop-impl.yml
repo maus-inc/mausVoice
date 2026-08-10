@@ -336,27 +336,6 @@ jobs:
       - name: Sync Tauri release configuration
         run: node scripts/ci/set-tauri-release-config.mjs
 
-      - name: Inject throwaway updater pubkey
-        shell: bash
-        env:
-          TAURI_CI_PUBKEY: "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IDQ2NTZFNDMzMzYyMjBCMzgKUldRNEN5STJNK1JXUmpWRDMzem12QUtjVkFxWERXanl0ZVRCWi9JOTd3bmRFRVFuQkp1QmpiN0EK"
-        working-directory: apps/desktop
-        run: |
-          set -euo pipefail
-          node -e "
-            const fs = require('fs');
-            ['src-tauri/tauri.conf.json', 'src-tauri/tauri.dev.conf.json', 'src-tauri/tauri.prod.conf.json',
-             'src-tauri/tauri.enterprise.conf.json', 'src-tauri/tauri.enterprise-dev.conf.json']
-              .filter(p => fs.existsSync(p))
-              .forEach(p => {
-                const c = JSON.parse(fs.readFileSync(p, 'utf8'));
-                if (c.plugins?.updater?.pubkey === '__UPDATER_PUBLIC_KEY__') {
-                  c.plugins.updater.pubkey = process.env.TAURI_CI_PUBKEY;
-                }
-                fs.writeFileSync(p, JSON.stringify(c, null, 2) + '\n');
-              });
-          "
-
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@stable
         with:

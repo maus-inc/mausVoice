@@ -53,25 +53,11 @@ const PILL_VISIBILITY_MENU_ID: &str = "toggle-pill-visibility";
 /// `while_active`). Also the pre-hydration default, so the first click always
 /// has a defined meaning.
 const PILL_MENU_LABEL_HIDE: &str = "Hide Pill";
-/// Label shown when clicking will show the pill (effective `hidden`).
-const PILL_MENU_LABEL_SHOW: &str = "Show Pill";
 
 static UPDATE_MENU_ITEM: OnceLock<MenuItem<tauri::Wry>> = OnceLock::new();
 static REGISTER_MENU_ITEM: OnceLock<MenuItem<tauri::Wry>> = OnceLock::new();
 static LANGUAGE_SUBMENU: OnceLock<Submenu<tauri::Wry>> = OnceLock::new();
 static PILL_VISIBILITY_MENU_ITEM: OnceLock<MenuItem<tauri::Wry>> = OnceLock::new();
-
-/// Menu label for an effective pill visibility.
-///
-/// The label names the action the click performs, not the current state. Any
-/// unrecognised value falls back to "Hide Pill": the frontend normalizes
-/// invalid values to `persistent`, and this keeps the two ends in agreement.
-pub(crate) fn pill_menu_label(visibility: &str) -> &'static str {
-    match visibility {
-        "hidden" => PILL_MENU_LABEL_SHOW,
-        _ => PILL_MENU_LABEL_HIDE,
-    }
-}
 
 #[derive(Debug, Clone, serde::Deserialize, specta::Type)]
 #[serde(rename_all = "camelCase")]
@@ -277,29 +263,4 @@ pub fn set_tray_language_menu(
     }
 
     Ok(())
-}
-
-#[cfg(test)]
-mod pill_menu_label_tests {
-    use super::*;
-
-    #[test]
-    fn hidden_offers_to_show() {
-        assert_eq!(pill_menu_label("hidden"), "Show Pill");
-    }
-
-    #[test]
-    fn visible_states_offer_to_hide() {
-        assert_eq!(pill_menu_label("persistent"), "Hide Pill");
-        assert_eq!(pill_menu_label("while_active"), "Hide Pill");
-    }
-
-    #[test]
-    fn unknown_or_missing_values_offer_to_hide() {
-        // Matches the frontend, which normalizes anything invalid to
-        // `persistent`.
-        assert_eq!(pill_menu_label(""), "Hide Pill");
-        assert_eq!(pill_menu_label("bogus"), "Hide Pill");
-        assert_eq!(pill_menu_label("HIDDEN"), "Hide Pill");
-    }
 }

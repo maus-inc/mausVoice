@@ -55,7 +55,7 @@ jobs:
             build-essential pkg-config cmake \
             libgtk-3-dev "$WEBKIT_PKG" \
             libayatana-appindicator3-dev librsvg2-dev libasound2-dev libxdo-dev \
-            libgtk-layer-shell-dev
+            libgtk-layer-shell-dev imagemagick
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
       - name: Build dependencies
