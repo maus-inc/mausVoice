@@ -60,7 +60,6 @@ pub(crate) fn is_on_pill_at(state: &PillState, x: f64, y: f64) -> bool {
         return false;
     }
 
-    let pill_area_top = dh - PILL_AREA_HEIGHT;
     let (px, py, pw, ph) = pill_position(state, dw, dh);
     if x >= px && x <= px + pw && y >= py && y <= py + ph {
         let regions = state.click_regions.borrow();
@@ -212,7 +211,7 @@ pub(crate) fn set_expanded_input_region(gdk_window: &gdk::Window, state: &PillSt
             if state.phase.get() != Phase::Idle {
                 union_side_controls(&region, state, ox, oy, dw, dh);
             }
-            union_flash_action(&region, state, ox, oy, dw, dh);
+            union_flash_action(&region, state, ox, oy);
             gdk_window.input_shape_combine_region(&region, 0, 0);
         } else {
             let rect = cairo::RectangleInt::new(
@@ -224,7 +223,7 @@ pub(crate) fn set_expanded_input_region(gdk_window: &gdk::Window, state: &PillSt
             if state.phase.get() != Phase::Idle {
                 union_side_controls(&region, state, ox, oy, dw, dh);
             }
-            union_flash_action(&region, state, ox, oy, dw, dh);
+            union_flash_action(&region, state, ox, oy);
             gdk_window.input_shape_combine_region(&region, 0, 0);
         }
     }
@@ -233,7 +232,7 @@ pub(crate) fn set_expanded_input_region(gdk_window: &gdk::Window, state: &PillSt
 fn union_flash_action(
     region: &cairo::Region,
     state: &PillState,
-    ox: f64, oy: f64, dw: f64, dh: f64,
+    ox: f64, oy: f64,
 ) {
     if state.flash_action.borrow().is_none() || state.flash_t.get() < 0.5 {
         return;
@@ -297,7 +296,7 @@ pub(crate) fn update_input_region(gdk_window: &gdk::Window, state: &PillState) {
             pill_h.ceil() as i32,
         );
         let region = cairo::Region::create_rectangle(&rect);
-        union_flash_action(&region, state, ox, oy, dw, dh);
+        union_flash_action(&region, state, ox, oy);
         gdk_window.input_shape_combine_region(&region, 0, 0);
     }
 }

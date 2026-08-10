@@ -14,7 +14,7 @@ use crate::state::{FlameTongue, PillState, Rocket, RocketPhase, Spark, WindowMod
 use crate::{draw, input, x11};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum Backend {
+pub(crate) enum Backend {
     LayerShell,
     X11,
     PlainWayland,
