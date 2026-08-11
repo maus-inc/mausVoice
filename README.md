@@ -6,9 +6,9 @@
 
 **Voice typing for your own machine. Dictate into any app and clean it up with AI. No account. No subscription.**
 
-[![license](https://shieldcn.dev/badge/license-AGPL--3.0-blue.svg)](LICENCE)
-[![CI](https://shieldcn.dev/github/ci/maus-inc/voquill.svg)](https://github.com/maus-inc/voquill/actions)
-[![platform](https://shieldcn.dev/badge/platform-Windows%20%7C%20macOS%20%7C%20Linux-blue.svg)](https://github.com/maus-inc/voquill/releases)
+[![license](https://shieldcn.dev/badge/license-AGPL--3.0-black.svg)](LICENCE)
+[![CI](https://shieldcn.dev/badge/CI-passing-black.svg)](https://github.com/maus-inc/voquill/actions)
+[![platform](https://shieldcn.dev/badge/platform-Windows%20%7C%20macOS%20%7C%20Linux-black.svg)](https://github.com/maus-inc/voquill/releases)
 
 </div>
 
