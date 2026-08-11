@@ -689,6 +689,13 @@ fn tick(state: &PillState, window: id, dt: f64) {
             && state.long_press_elapsed.get() > LONG_PRESS_HOLD_DELAY);
     if ring_held {
         state.ring_alpha.set(1.0);
+        // Remember how far the ring ramp had filled so a release or cancel
+        // mid-ramp fades from that level instead of snapping to a full ring.
+        state.ring_release_progress.set(if state.dragging.get() {
+            1.0
+        } else {
+            draw::long_press_progress(state.long_press_elapsed.get())
+        });
     } else if state.ring_alpha.get() > 0.0 {
         state
             .ring_alpha
@@ -1020,8 +1027,17 @@ fn reposition_window(window: id, state: &PillState) {
             }
         }
 
-        let Some(visible) = chosen_visible else {
-            return;
+        // An anchor that belongs to no screen means the display topology
+        // changed out from under a parked pill (monitor unplugged, resolution
+        // shrunk): recover onto the primary screen's visible frame instead of
+        // freezing wherever the pill happened to be.
+        let visible = match chosen_visible {
+            Some(visible) => visible,
+            None if count > 0 => {
+                let primary: id = msg_send![screens, objectAtIndex:0usize];
+                screen_visible_frame(primary)
+            }
+            None => return,
         };
 
         // The OS window is a fixed 600×362 transparent canvas; the visible pill
@@ -1252,6 +1268,7 @@ unsafe fn setup(receiver: Receiver<InMessage>, embedded: bool) {
         inflate_t: Cell::new(0.0),
         inflate_velocity: Cell::new(0.0),
         ring_alpha: Cell::new(0.0),
+        ring_release_progress: Cell::new(0.0),
     });
 
     // Store in thread-local

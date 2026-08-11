@@ -183,12 +183,15 @@ fn draw_long_press_ring(
         return;
     }
 
-    // While actively dragging (or just after release, fading), the outline is
-    // full; mid-press it tracks the hold-progress ramp.
-    let t = if state.dragging.get() || !state.long_press_active.get() {
+    // Full outline while dragging; mid-press it tracks the hold-progress ramp;
+    // after release or cancel it fades from the level actually reached instead
+    // of snapping to a complete outline.
+    let t = if state.dragging.get() {
         1.0
-    } else {
+    } else if state.long_press_active.get() {
         long_press_progress(state.long_press_elapsed.get())
+    } else {
+        state.ring_release_progress.get()
     };
     let radius = pill_radius(pill_w, pill_h);
 

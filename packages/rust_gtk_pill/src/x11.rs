@@ -151,14 +151,33 @@ pub(crate) fn setup_x11_window(window: &gtk::Window, state: Rc<PillState>) {
         // pill already is. Resolving the monitor from the live cursor
         // unconditionally is what used to make the pill leap to another
         // screen — and snap back to bottom-centre — on every crossing.
+        //
+        // The parked/idle anchors are window CENTRES, not toplevel origins —
+        // matching the macOS/Windows implementations. The toplevel may
+        // legitimately overhang the work-area edge now that drag clamping uses
+        // the pill's visible footprint, so a raw top-left origin can sit on
+        // the wrong monitor near a shared edge. (window.size() is logical and
+        // monitor geometry is physical, so convert with the surface scale —
+        // the toplevel lives on the monitor being resolved.)
+        let surface_scale = win_tick
+            .surface()
+            .map(|surface| surface.scale_factor() as f64)
+            .unwrap_or(1.0);
+        let (alloc_w, alloc_h) = win_tick.size();
+        let half_w = alloc_w as f64 * surface_scale / 2.0;
+        let half_h = alloc_h as f64 * surface_scale / 2.0;
+
         let (anchor_x, anchor_y) = if dragging {
             let (ax, ay) = cursor_pos();
             (ax as f64, ay as f64)
         } else if state_tick.has_saved_position.get() {
-            (state_tick.saved_x.get(), state_tick.saved_y.get())
+            (
+                state_tick.saved_x.get() + half_w,
+                state_tick.saved_y.get() + half_h,
+            )
         } else {
             let prev = last_pos.get();
-            (prev.0 as f64, prev.1 as f64)
+            (prev.0 as f64 + half_w, prev.1 as f64 + half_h)
         };
 
         if let Some((new_x, new_y)) = pill_pos_on_monitor(

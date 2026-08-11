@@ -212,6 +212,10 @@ pub(crate) struct PillState {
     // held, eased to 0 over LONG_PRESS_RING_FADE after release, so the outline
     // never fades under an active press.
     pub(crate) ring_alpha: Cell<f64>,
+
+    // Ring fill level captured at release; the post-release fade animates from
+    // this level rather than snapping to a complete outline.
+    pub(crate) ring_release_progress: Cell<f64>,
     pub(crate) drag_cursor_x: Cell<f64>,
     pub(crate) drag_cursor_y: Cell<f64>,
     // X11 drop position, in physical root coordinates, persisted when a drag

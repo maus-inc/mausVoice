@@ -222,6 +222,10 @@ pub(crate) struct PillState {
     // release, so the outline never fades under an active press.
     pub(crate) ring_alpha: Cell<f64>,
 
+    // Ring fill level captured at release; the post-release fade animates from
+    // this level rather than snapping to a complete outline.
+    pub(crate) ring_release_progress: Cell<f64>,
+
     // Dirty flag — when false, the rendered output is identical to the previous
     // frame so we can skip draw + UpdateLayeredWindow entirely.
     pub(crate) dirty: Cell<bool>,
