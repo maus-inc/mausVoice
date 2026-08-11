@@ -24,12 +24,14 @@ const customNotes = process.env.RELEASE_NOTES ?? "";
 const repository = process.env.GITHUB_REPOSITORY ?? "";
 const [owner, repo] = repository.split("/");
 
-// shieldcn (shadcn-style) badge endpoints.
-const BADGE_LICENSE = "https://shieldcn.dev/badge/license-AGPL--3.0-black.svg";
-const BADGE_CI = "https://shieldcn.dev/badge/CI-passing-black.svg";
+// Logo-only shieldcn chips: empty label + empty value + black background.
+// <img src="https://shieldcn.dev/badge/-black.svg?logo=<slug>" height="32" />
 // Windows logo as data URI (simple-icons removed the windows slug).
 const WINDOWS_LOGO =
   "data%3Aimage%2Fsvg%2Bxml%3Bbase64%2CPHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCAyNCAyNCI%2BPHBhdGggZmlsbD0iI2ZmZiIgZD0iTTAgMy40NDlMOS43NSAyLjF2OS40NTFIMG0xMC45NDktOS42MDJMMjQgMHYxMS40SDEwLjk0OU0wIDEyLjZoOS43NXY5LjQ1MUwwIDIwLjY5OU0xMC45NDkgMTIuNkgyNFYyNGwtMTIuOS0xLjgwMSIvPjwvc3ZnPg%3D%3D";
+
+// mausVoice logo rendered from the repo so releases carry the brand mark.
+const MAUSVOICE_LOGO = `https://raw.githubusercontent.com/${owner}/${repo}/main/branding/mausvoice-logo-256.png`;
 
 // GitHub flattens release assets to their basenames, so asset URLs point at the
 // basename only — never the nested artifact-directory path.
@@ -74,6 +76,10 @@ function markdownLink(label, url) {
 function badgeImage(src, alt, url) {
   const img = `<img src="${src}" alt="${alt}" height="32" />`;
   return url ? `[${img}](${url})` : img;
+}
+
+function logoChip(slug, alt, url) {
+  return badgeImage(`https://shieldcn.dev/badge/-black.svg?logo=${slug}`, alt, url);
 }
 
 async function autoNotes() {
@@ -139,38 +145,31 @@ const githubBase = `https://github.com/${owner}/${repo}`;
 const actionsUrl = `${githubBase}/actions`;
 const releasesUrl = `${githubBase}/releases`;
 
-const platformBadges = [
+const downloadChips = [
   ...(mac
-    ? [badgeImage(
-        `https://shieldcn.dev/badge/macOS-Download-black.svg?logo=apple`,
-        "Download mausVoice for macOS",
-        assetUrl(mac.basename),
-      )]
+    ? [logoChip("apple", "Download mausVoice for macOS", assetUrl(mac.basename))]
     : []),
   ...(win
-    ? [badgeImage(
-        `https://shieldcn.dev/badge/Windows-Download-black.svg?logo=${WINDOWS_LOGO}`,
-        "Download mausVoice for Windows",
-        assetUrl(win.basename),
-      )]
+    ? [logoChip(WINDOWS_LOGO, "Download mausVoice for Windows", assetUrl(win.basename))]
     : []),
   ...(linDeb || linAppImage
-    ? [badgeImage(
-        "https://shieldcn.dev/badge/Linux-Download-black.svg?logo=linux",
-        "Download mausVoice for Linux",
-        assetUrl((linAppImage ?? linDeb).basename),
-      )]
+    ? [logoChip("linux", "Download mausVoice for Linux", assetUrl((linAppImage ?? linDeb).basename))]
     : []),
 ];
 
 const body = [
+  `<p align="center">`,
+  `  <img src="${MAUSVOICE_LOGO}" alt="mausVoice" width="110" />`,
+  `</p>`,
+  "",
   `# ${releaseName}`,
   "",
   "Voice typing for your own machine. Dictate into any app, clean it up with AI. No account, no subscription.",
   "",
   `<p align="center">`,
-  `  ${badgeImage(BADGE_LICENSE, "AGPL-3.0", "LICENCE")}`,
-  `  ${badgeImage(BADGE_CI, "CI passing", actionsUrl)}`,
+  `  ${logoChip("opensourceinitiative", "AGPL-3.0 license", "LICENCE")}`,
+  `  ${logoChip("githubactions", "CI passing", actionsUrl)}`,
+  `  ${logoChip("box", "Downloads", releasesUrl)}`,
   `</p>`,
   "",
   "---",
@@ -184,7 +183,7 @@ const body = [
   "",
   "## Downloads",
   "",
-  ...(platformBadges.length ? [`<p align="center">`, ...platformBadges.map((b) => `  ${b}`), `</p>`, ""] : []),
+  ...(downloadChips.length ? [`<p align="center">`, ...downloadChips.map((b) => `  ${b}`), `</p>`, ""] : []),
   "| Platform | Package |",
   "| --- | --- |",
   ...(mac ? [`| macOS | ${markdownLink(mac.basename, assetUrl(mac.basename))} |`] : []),
