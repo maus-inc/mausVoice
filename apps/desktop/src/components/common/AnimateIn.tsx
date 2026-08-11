@@ -66,7 +66,13 @@ export type AnimateSwitchProps = {
 const PresenceGuard = ({ children }: { children: ReactNode }) => {
   const isPresent = useIsPresent();
   return (
-    <div inert={!isPresent} aria-hidden={!isPresent}>
+    <div
+      inert={!isPresent}
+      aria-hidden={!isPresent}
+      // pointer-events covers engines whose inert support lags (older
+      // WebKitGTK); inert+aria-hidden carry focus and AT semantics.
+      style={isPresent ? undefined : { pointerEvents: "none" }}
+    >
       {children}
     </div>
   );

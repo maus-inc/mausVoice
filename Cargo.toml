@@ -6,4 +6,8 @@ members = [
     "packages/rust_windows_pill",
     "packages/rust_pill_shared",
 ]
+# src-tauri keeps its own pinned lockfile (tauri 2.10.3 / tauri-build 2.5.6);
+# folding it into the shared workspace lock would force a re-resolution of the
+# whole Tauri dependency tree.
+exclude = ["apps/desktop/src-tauri"]
 resolver = "2"

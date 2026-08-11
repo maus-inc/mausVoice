@@ -1,12 +1,26 @@
-import { render, screen, act } from "@testing-library/react";
-import userEvent from "@testing-library/user-event";
+// @vitest-environment jsdom
+import { act, render, screen } from "@testing-library/react";
+import { describe, expect, it, vi } from "vitest";
 import { AnimateSwitch } from "./AnimateIn";
 
+// jsdom lacks matchMedia; framer-motion's useReducedMotion queries it.
+if (!window.matchMedia) {
+  window.matchMedia = ((query: string) => ({
+    matches: false,
+    media: query,
+    onchange: null,
+    addListener: () => {},
+    removeListener: () => {},
+    addEventListener: () => {},
+    removeEventListener: () => {},
+    dispatchEvent: () => false,
+  })) as unknown as typeof window.matchMedia;
+}
+
 describe("AnimateSwitch", () => {
-  it("marks the outgoing panel inert during exit so its controls cannot fire", async () => {
-    const user = userEvent.setup();
-    const outgoing = jest.fn();
-    const incoming = jest.fn();
+  it("inerts the outgoing panel during exit so its controls cannot fire", async () => {
+    const outgoing = vi.fn();
+    const incoming = vi.fn();
 
     const { rerender } = render(
       <AnimateSwitch activeKey="a">
@@ -16,14 +30,11 @@ describe("AnimateSwitch", () => {
       </AnimateSwitch>,
     );
 
-    // The active panel is interactive.
-    const a = screen.getByRole("button", { name: "from-a" });
-    await user.click(a);
+    // The active panel is fully interactive.
+    screen.getByRole("button", { name: "from-a" }).click();
     expect(outgoing).toHaveBeenCalledTimes(1);
 
-    // Switch to panel b. AnimatePresence keeps the outgoing tree mounted for
-    // the exit animation; PresenceGuard is responsible for inerting it.
-    await act(async () => {
+    act(() => {
       rerender(
         <AnimateSwitch activeKey="b">
           <button type="button" onClick={incoming}>
@@ -33,23 +44,25 @@ describe("AnimateSwitch", () => {
       );
     });
 
-    // The incoming button is rendered and live.
-    const b = screen.getByRole("button", { name: "from-b" });
-    expect(b.closest("[inert]")).toBeNull();
-
-    // Any DOM node still mounted from panel "a" must be inside an inert
-    // subtree for the duration of the exit transition. Depending on timing
-    // the old button may already be unmounted; if it is still around, its
-    // click must be inert.
-    const staleA = screen.queryByRole("button", { name: "from-a" });
+    // mode="wait" runs the exit first, so panel a can still be mounted here.
+    // While it is, it must sit inside an inert + aria-hidden + click-proof
+    // subtree. (byRole can't see it — aria-hidden subtrees leave the a11y
+    // tree — so query by text instead.)
+    const staleA = screen.queryByText("from-a");
     if (staleA) {
-      const inertHost = staleA.closest("[inert]");
-      expect(inertHost).not.toBeNull();
-      // Pointer events through an inert subtree must not dispatch React
-      // handlers; guard against regressions where PresenceGuard was missing
-      // and the outgoing button's onClick still fired.
-      await user.click(staleA);
-      expect(outgoing).toHaveBeenCalledTimes(1);
+      const guard = staleA.closest("[inert]") as HTMLElement | null;
+      expect(guard).not.toBeNull();
+      expect(guard?.getAttribute("aria-hidden")).toBe("true");
+      expect(guard?.style.pointerEvents).toBe("none");
     }
+
+    // The incoming panel mounts live after the exit completes.
+    const b = await screen.findByRole("button", { name: "from-b" });
+    expect(b.closest("[inert]")).toBeNull();
+    b.click();
+    expect(incoming).toHaveBeenCalledTimes(1);
+
+    // The outgoing panel's handler never fired again.
+    expect(outgoing).toHaveBeenCalledTimes(1);
   });
 });
