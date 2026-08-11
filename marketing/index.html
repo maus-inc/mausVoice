@@ -465,13 +465,13 @@ section { scroll-margin-top: 96px; }
    same sine-wave algorithm as packages/rust_macos_pill/src/draw.rs) */
 .pill-demo {
   margin: 44px auto 0;
-  width: 675.4px;
+  width: 460px;
 }
 
 .pill-demo canvas {
   display: block;
-  width: 675.4px;
-  height: 182.4px;
+  width: 460px;
+  height: 34.5px;
 }
 
 /* ------------------------------------------------------------------ *
@@ -922,7 +922,7 @@ section { scroll-margin-top: 96px; }
     </div>
 
     <div class="pill-demo fade-up" style="--delay:0.45s" role="img" aria-label="The mausVoice recording pill with a live animated sine waveform">
-      <canvas id="pill-canvas" width="640" height="173" aria-hidden="true"></canvas>
+      <canvas id="pill-canvas" width="640" height="48" aria-hidden="true"></canvas>
     </div>
   </div>
 </section>
@@ -1215,8 +1215,8 @@ section { scroll-margin-top: 96px; }
       { frequency: 1.25, multiplier: 1.05, phaseOffset: 1.7, opacity: 0.56 },
     ];
 
-    // Pill geometry: 608x30 capsule centered on the 640x173 GIF frame
-    var PILL_X = 16, PILL_Y = 70, PILL_W = 608, PILL_H = 30;
+    // Pill geometry: 608x30 capsule on a 640x48 canvas (9px margins)
+    var PILL_X = 16, PILL_Y = 9, PILL_W = 608, PILL_H = 30;
 
     var state = { phase: 0, currentLevel: 0, targetLevel: 0 };
     var nextBurst = 0;
@@ -1227,7 +1227,7 @@ section { scroll-margin-top: 96px; }
     }
     var dpr = Math.min(2, window.devicePixelRatio || 1);
     pillCanvas.width = 640 * dpr;
-    pillCanvas.height = 173 * dpr;
+    pillCanvas.height = 48 * dpr;
     ctx.scale(dpr, dpr);
 
     var reducePillMotion = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
@@ -1237,7 +1237,7 @@ section { scroll-margin-top: 96px; }
     }
 
     function drawPill(level) {
-      ctx.clearRect(0, 0, 640, 173);
+      ctx.clearRect(0, 0, 640, 48);
 
       var radius = pillRadius(PILL_W, PILL_H);
       var baseline = PILL_Y + PILL_H / 2;
