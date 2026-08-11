@@ -44,22 +44,25 @@
       // "system" via matchMedia, and paint the matching surfaces.level0
       // background so the launch canvas never flashes the wrong scheme.
       (function () {
-        var mode = "system";
+        var stored = null;
         try {
-          var stored = localStorage.getItem("mode");
-          if (stored === "light" || stored === "dark" || stored === "system") {
-            mode = stored;
-          }
-        } catch (e) {
-          /* storage unavailable; fall through to system */
+          stored = localStorage.getItem("mode");
+        } catch (error) {
+          // Storage can be unavailable (private mode, disabled cookies);
+          // fall back to the system preference.
+          stored = null;
         }
-        var resolved =
-          mode === "system"
-            ? window.matchMedia &&
-              window.matchMedia("(prefers-color-scheme: light)").matches
-              ? "light"
-              : "dark"
-            : mode;
+        var mode =
+          stored === "light" || stored === "dark" || stored === "system"
+            ? stored
+            : "system";
+        var resolved = mode;
+        if (mode === "system") {
+          var prefersLight = window.matchMedia
+            ? window.matchMedia("(prefers-color-scheme: light)").matches
+            : false;
+          resolved = prefersLight ? "light" : "dark";
+        }
         document.body.style.backgroundColor =
           resolved === "light" ? "#f5f2ed" : "#0c0c0d";
       })();

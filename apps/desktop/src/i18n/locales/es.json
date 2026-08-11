@@ -143,7 +143,7 @@
   "configure_input_permissions": "Configure input permissions",
   "configure_mcp_servers_and_integrations": "Configura servidores MCP e integraciones.",
   "configure_multiple_dictation_languages_with_hotkeys": "Configura varios idiomas de dictado con atajos de teclado.",
-  "configured": "Configurar",
+  "configured": "Configurado",
   "configures_global_input_capture_uinput_udev_so_the_pill_can": "Configures global input capture (uinput/udev) so the pill can type for you. Requires administrator privileges.",
   "confirm": "Confirmar",
   "confirm_password": "Confirmar contraseña",
