@@ -4,6 +4,10 @@
 
 # mausVoice
 
+Grab Your [Free Groq↗](https://console.groq.com/keys) and [Free Deepgram↗](https://console.deepgram.com/) API Keys.
+
+<br>
+
 **Voice typing for your own machine. Dictate into any app and clean it up with AI. No account. No subscription.**
 
 [![license](https://shieldcn.dev/badge/license-AGPL--3.0-black.svg)](LICENCE)
@@ -20,7 +24,7 @@
 
 
 
-mausVoice is a desktop app that turns your voice into text, anywhere you can type. Speech is transcribed live while you talk, tidied up by an LLM in the style you pick, and dropped straight into the app you're focused on.
+**mausVoice** is a desktop app that turns your voice into text, anywhere you can type. Speech is transcribed live while you talk, tidied up by an **LLM** in the style you pick, and dropped straight into the app you're focused on.
 
 ## How it works
 
