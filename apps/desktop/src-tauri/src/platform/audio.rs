@@ -4,6 +4,7 @@ use std::sync::Arc;
 use crate::platform::Recorder;
 
 #[derive(Clone, Debug, Serialize, specta::Type)]
+#[serde(rename_all = "camelCase")]
 pub struct InputDeviceDescriptor {
     pub label: String,
     pub is_default: bool,
@@ -28,14 +29,16 @@ mod cpal_impl {
     use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
     use cpal::{Device, HostId, SampleFormat, Stream, StreamConfig};
     use std::cmp;
-    use std::collections::{HashMap, HashSet};
+    use std::collections::HashMap;
     use std::sync::{Arc, Mutex, MutexGuard};
     use std::time::{Duration, Instant};
 
     #[derive(Clone)]
     struct CachedDeviceInfo {
         host_id: HostId,
-        device_name: String,
+        /// Disambiguated label, so the cache re-resolves the exact same device
+        /// even when the host exposes several inputs under one name.
+        device_label: String,
     }
 
     pub struct RecordingManager {
@@ -214,11 +217,11 @@ mod cpal_impl {
             }
         }
 
-        fn cache_successful_device(&self, host_id: HostId, device_name: String) {
+        fn cache_successful_device(&self, host_id: HostId, device_label: String) {
             if let Ok(mut guard) = self.last_successful_device.lock() {
                 *guard = Some(CachedDeviceInfo {
                     host_id,
-                    device_name,
+                    device_label,
                 });
             }
         }
@@ -237,17 +240,16 @@ mod cpal_impl {
             let host = cpal::host_from_id(cached.host_id).ok()?;
 
             if let Some(preferred) = preferred_normalized {
-                let cached_normalized = cached.device_name.to_ascii_lowercase();
-                if cached_normalized != preferred {
+                if !device_matches_preferred(&cached.device_label, preferred) {
                     return None;
                 }
             }
 
-            let device = find_device_by_name(&host, &cached.device_name)?;
+            let device = find_device_by_label(&host, &cached.device_label)?;
 
             let result = try_start_on_device(
                 &device,
-                Some(&cached.device_name),
+                Some(&cached.device_label),
                 level_emitter,
                 chunk_emitter,
             );
@@ -256,13 +258,13 @@ mod cpal_impl {
                 Ok(active) => {
                     log::info!(
                         "using cached device '{}' via host {:?}",
-                        cached.device_name,
+                        cached.device_label,
                         cached.host_id
                     );
-                    Some((active, cached.host_id, cached.device_name))
+                    Some((active, cached.host_id, cached.device_label))
                 }
                 Err(err) => {
-                    log::warn!("cached device '{}' failed: {err}", cached.device_name);
+                    log::warn!("cached device '{}' failed: {err}", cached.device_label);
                     None
                 }
             }
@@ -564,37 +566,13 @@ mod cpal_impl {
         0
     }
 
-    fn find_device_by_name(host: &cpal::Host, target_name: &str) -> Option<Device> {
-        let target_normalized = target_name.to_ascii_lowercase();
-
-        if let Some(device) = host.default_input_device() {
-            if let Ok(name) = device.name() {
-                if name.to_ascii_lowercase() == target_normalized {
-                    return Some(device);
-                }
-            }
-        }
-
-        if let Ok(devices) = host.input_devices() {
-            for device in devices {
-                if let Ok(name) = device.name() {
-                    if name.to_ascii_lowercase() == target_normalized {
-                        return Some(device);
-                    }
-                }
-            }
-        }
-
-        None
-    }
-
     fn try_start_on_device(
         device: &Device,
         device_name: Option<&str>,
         level_emitter: Option<Arc<LevelEmitter>>,
         chunk_emitter: Option<Arc<ChunkEmitter>>,
     ) -> Result<ActiveRecording, RecordingError> {
-        let label = device_name.unwrap_or("<unknown>");
+        let label = device_name.unwrap_or(UNKNOWN_DEVICE_LABEL);
 
         let config = device
             .default_input_config()
@@ -659,19 +637,27 @@ mod cpal_impl {
 
         let mut candidates =
             device_candidates_for_host(host, default_output_name.as_deref(), preferred_normalized);
-        candidates.sort_by_key(|candidate| (!candidate.matches_preferred, candidate.priority));
+        // Devices are no longer merged by name, so ties are broken by the host
+        // default first and then by enumeration order (`sort_by_key` is stable).
+        candidates.sort_by_key(|candidate| {
+            (
+                !candidate.matches_preferred,
+                candidate.priority,
+                !candidate.is_default,
+            )
+        });
 
         let mut last_err: Option<RecordingError> = None;
 
         for candidate in candidates {
             let DeviceCandidate {
                 device,
-                name,
+                label: device_label,
                 avoid_reason,
                 matches_preferred,
                 ..
             } = candidate;
-            let label = name.as_deref().unwrap_or("<unknown>");
+            let label = device_label.as_str();
             let fallback_preferred = preferred_label.or(preferred_normalized);
 
             if let Some(reason) = avoid_reason {
@@ -750,7 +736,6 @@ mod cpal_impl {
                 log::info!("using input device '{label}' via host {:?}", host.id());
             }
 
-            let device_name_for_cache = name.clone().unwrap_or_else(|| label.to_string());
             return Ok((
                 ActiveRecording {
                     _stream: stream,
@@ -760,7 +745,7 @@ mod cpal_impl {
                     _level_emitter: level_emitter.clone(),
                     _chunk_emitter: chunk_emitter.clone(),
                 },
-                device_name_for_cache,
+                label.to_string(),
             ));
         }
 
@@ -769,16 +754,159 @@ mod cpal_impl {
 
     struct DeviceCandidate {
         device: Device,
-        name: Option<String>,
-        _normalized_name: Option<String>,
+        /// Human-readable identity used by the UI and by saved preferences.
+        label: String,
         priority: u32,
         avoid_reason: Option<String>,
         matches_preferred: bool,
         is_default: bool,
     }
 
-    fn device_matches_preferred(device_name: &str, preferred_lower: &str) -> bool {
-        device_name.trim().to_ascii_lowercase() == preferred_lower
+    /// A host device paired with the identity the UI and preferences address it by.
+    struct LabelledDevice {
+        device: Device,
+        name: Option<String>,
+        label: String,
+        is_default: bool,
+    }
+
+    const UNKNOWN_DEVICE_LABEL: &str = "<unknown>";
+
+    fn normalized_name(value: &str) -> String {
+        value.trim().to_ascii_lowercase()
+    }
+
+    fn device_display_name(device: &Device) -> Option<String> {
+        device
+            .name()
+            .ok()
+            .map(|value| value.trim().to_string())
+            .filter(|value| !value.is_empty())
+    }
+
+    /// Suffixes the second and later devices that report the same name, so two
+    /// distinct microphones never collapse into one entry. The first device keeps
+    /// the bare name, which is what preferences saved before disambiguation hold.
+    fn disambiguated_label(name: &str, occurrence: usize) -> String {
+        if occurrence == 0 {
+            name.to_string()
+        } else {
+            format!("{name} ({})", occurrence + 1)
+        }
+    }
+
+    /// Enumerates every input device a host exposes, in host order, flagging the
+    /// default. cpal has no stable device identity, so devices are kept apart by
+    /// enumeration order instead of being merged by name.
+    fn labelled_devices_for_host(host: &cpal::Host) -> Vec<LabelledDevice> {
+        let default_device = host.default_input_device();
+        let default_normalized = default_device
+            .as_ref()
+            .and_then(device_display_name)
+            .map(|name| normalized_name(&name));
+
+        let mut devices: Vec<Device> = host
+            .input_devices()
+            .map(|devices| devices.collect())
+            .unwrap_or_default();
+
+        // The default input is normally part of `input_devices()`. Match it there
+        // instead of pushing it separately, so it is never listed twice.
+        let mut default_index = default_normalized.as_deref().and_then(|target| {
+            devices.iter().position(|device| {
+                device_display_name(device)
+                    .map(|name| normalized_name(&name))
+                    .as_deref()
+                    == Some(target)
+            })
+        });
+
+        // Either the host does not enumerate its own default, or the enumeration
+        // failed outright and the default is all we have; keep it either way so
+        // recording still has a target.
+        let default_missing =
+            default_index.is_none() && (default_normalized.is_some() || devices.is_empty());
+        if let Some(device) = default_device.filter(|_| default_missing) {
+            default_index = Some(devices.len());
+            devices.push(device);
+        }
+
+        let mut occurrences: HashMap<String, usize> = HashMap::new();
+        devices
+            .into_iter()
+            .enumerate()
+            .map(|(index, device)| {
+                let name = device_display_name(&device);
+                let display = name.as_deref().unwrap_or(UNKNOWN_DEVICE_LABEL);
+                let occurrence = occurrences.entry(normalized_name(display)).or_insert(0);
+                let label = disambiguated_label(display, *occurrence);
+                *occurrence += 1;
+
+                LabelledDevice {
+                    device,
+                    name,
+                    label,
+                    is_default: default_index == Some(index),
+                }
+            })
+            .collect()
+    }
+
+    fn find_device_by_label(host: &cpal::Host, target_label: &str) -> Option<Device> {
+        let target = normalized_name(target_label);
+        labelled_devices_for_host(host)
+            .into_iter()
+            .find(|entry| normalized_name(&entry.label) == target)
+            .map(|entry| entry.device)
+    }
+
+    fn device_matches_preferred(device_label: &str, preferred_lower: &str) -> bool {
+        normalized_name(device_label) == preferred_lower
+    }
+
+    /// Scoring for the device the host reports as its default input.
+    fn default_device_score(
+        device: &Device,
+        matches_preferred: bool,
+        default_output_name: Option<&str>,
+    ) -> (u32, Option<String>) {
+        let mut priority = if matches_preferred { 0 } else { 5 };
+        let mut avoid_reason = None;
+
+        if should_avoid_input_device(device, default_output_name) {
+            avoid_reason = Some("avoiding low-quality default device".to_string());
+            if !matches_preferred {
+                priority = 300;
+            }
+        }
+
+        (priority, avoid_reason)
+    }
+
+    /// Scoring for the remaining enumerated devices, driven by name heuristics.
+    fn enumerated_device_score(
+        name: Option<&str>,
+        matches_preferred: bool,
+    ) -> (u32, Option<String>) {
+        let mut priority = if matches_preferred { 0 } else { 100 };
+        let mut avoid_reason = None;
+
+        if let Some(label) = name {
+            if matches_preferred {
+                if name_has_low_quality_keyword(label) {
+                    avoid_reason = Some("potential low-quality input".to_string());
+                }
+            } else if is_builtin_microphone_name(label) {
+                priority = 0;
+            } else if is_preferred_input_device_name(label) {
+                priority = cmp::min(priority, 10);
+            } else if name_has_low_quality_keyword(label) {
+                priority = cmp::max(priority, 250);
+                avoid_reason = Some("potential low-quality input".to_string());
+            }
+        }
+
+        (priority, avoid_reason)
     }
 
     fn device_candidates_for_host(
@@ -786,101 +914,45 @@ mod cpal_impl {
         default_output_name: Option<&str>,
         preferred_name: Option<&str>,
     ) -> Vec<DeviceCandidate> {
-        let mut candidates = Vec::new();
-        let mut seen = HashSet::new();
-        let preferred_lower = preferred_name.map(|value| value.trim().to_ascii_lowercase());
+        let preferred_lower = preferred_name.map(normalized_name);
 
-        if let Some(default_device) = host.default_input_device() {
-            let name = default_device.name().ok();
-            let key = name
-                .as_deref()
-                .map(|value| value.trim().to_ascii_lowercase())
-                .unwrap_or_else(|| "<unknown>".to_string());
-
-            let matches_preferred = preferred_lower
-                .as_ref()
-                .and_then(|pref| {
-                    name.as_deref()
-                        .map(|device_name| device_matches_preferred(device_name, pref))
-                })
-                .unwrap_or(false);
-
-            let should_avoid = should_avoid_input_device(&default_device, default_output_name);
-            let mut priority = if matches_preferred { 0 } else { 5 };
-            let mut avoid_reason = None;
-            if should_avoid {
-                avoid_reason = Some("avoiding low-quality default device".to_string());
-                if !matches_preferred {
-                    priority = 300;
-                }
-            }
-
-            seen.insert(key.clone());
-            candidates.push(DeviceCandidate {
-                device: default_device,
-                name,
-                _normalized_name: Some(key),
-                priority,
-                avoid_reason,
-                matches_preferred,
-                is_default: true,
-            });
-        }
-
-        if let Ok(devices) = host.input_devices() {
-            for device in devices {
-                let name = device.name().ok();
-                let key = name
-                    .as_deref()
-                    .map(|value| value.trim().to_ascii_lowercase())
-                    .unwrap_or_else(|| "<unknown>".to_string());
-
-                if seen.contains(&key) {
-                    continue;
-                }
-
-                let matches_preferred = preferred_lower
-                    .as_ref()
-                    .and_then(|pref| {
-                        name.as_deref()
-                            .map(|device_name| device_matches_preferred(device_name, pref))
-                    })
-                    .unwrap_or(false);
-
-                let mut priority = if matches_preferred { 0 } else { 100 };
-                let mut avoid_reason = None;
-                if let Some(ref label) = name {
-                    if matches_preferred {
-                        if name_has_low_quality_keyword(label) {
-                            avoid_reason = Some("potential low-quality input".to_string());
-                        }
-                    } else if is_builtin_microphone_name(label) {
-                        priority = 0;
-                    } else if is_preferred_input_device_name(label) {
-                        priority = cmp::min(priority, 10);
-                    } else if name_has_low_quality_keyword(label) {
-                        priority = cmp::max(priority, 250);
-                        avoid_reason = Some("potential low-quality input".to_string());
-                    }
-                }
-
-                seen.insert(key.clone());
-                candidates.push(DeviceCandidate {
+        labelled_devices_for_host(host)
+            .into_iter()
+            .map(|entry| {
+                let LabelledDevice {
                     device,
                     name,
-                    _normalized_name: Some(key),
+                    label,
+                    is_default,
+                } = entry;
+
+                let matches_preferred = preferred_lower
+                    .as_deref()
+                    .map(|preferred| device_matches_preferred(&label, preferred))
+                    .unwrap_or(false);
+
+                let (priority, avoid_reason) = if is_default {
+                    default_device_score(&device, matches_preferred, default_output_name)
+                } else {
+                    enumerated_device_score(name.as_deref(), matches_preferred)
+                };
+
+                DeviceCandidate {
+                    device,
+                    label,
                     priority,
                     avoid_reason,
                     matches_preferred,
-                    is_default: false,
-                });
-            }
-        }
-
-        candidates
+                    is_default,
+                }
+            })
+            .collect()
     }
 
     pub fn list_input_devices() -> Vec<InputDeviceDescriptor> {
+        // Keyed by the disambiguated label: the same physical device exposed by
+        // several hosts still collapses into one row, while two distinct devices
+        // reporting the same name stay separate.
         let mut devices: HashMap<String, InputDeviceDescriptor> = HashMap::new();
 
         for host_id in ordered_host_ids() {
@@ -900,24 +972,14 @@ mod cpal_impl {
                 device_candidates_for_host(&host, default_output_name.as_deref(), None);
 
             for candidate in candidates {
-                let label = candidate
-                    .name
-                    .as_ref()
-                    .map(|value| value.trim().to_string())
-                    .unwrap_or_else(|| "<unknown>".to_string());
+                let entry = devices
+                    .entry(normalized_name(&candidate.label))
+                    .or_insert_with(|| InputDeviceDescriptor {
+                        label: candidate.label.clone(),
+                        is_default: false,
+                        caution: false,
+                    });
 
-                let key = candidate
-                    ._normalized_name
-                    .clone()
-                    .unwrap_or_else(|| label.to_ascii_lowercase());
-
-                let entry = devices.entry(key).or_insert_with(|| InputDeviceDescriptor {
-                    label: label.clone(),
-                    is_default: false,
-                    caution: candidate.avoid_reason.is_some(),
-                });
-
-                entry.label = label;
                 if candidate.avoid_reason.is_some() {
                     entry.caution = true;
                 }
@@ -1005,7 +1067,27 @@ mod cpal_impl {
 
     #[cfg(test)]
     mod tests {
-        use super::is_preferred_input_device_name;
+        use super::{device_matches_preferred, disambiguated_label, is_preferred_input_device_name};
+
+        #[test]
+        fn first_device_keeps_its_bare_name() {
+            assert_eq!(
+                disambiguated_label("Yeti Stereo Microphone", 0),
+                "Yeti Stereo Microphone"
+            );
+        }
+
+        #[test]
+        fn repeated_names_get_an_ordinal_suffix() {
+            assert_eq!(disambiguated_label("USB Microphone", 1), "USB Microphone (2)");
+            assert_eq!(disambiguated_label("USB Microphone", 2), "USB Microphone (3)");
+        }
+
+        #[test]
+        fn preferences_match_labels_case_insensitively() {
+            assert!(device_matches_preferred("USB Microphone (2)", "usb microphone (2)"));
+            assert!(!device_matches_preferred("USB Microphone", "usb microphone (2)"));
+        }
 
         #[test]
         fn preferred_name_blocks_low_quality_keywords() {

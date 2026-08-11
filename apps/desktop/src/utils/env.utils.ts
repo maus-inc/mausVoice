@@ -3,6 +3,19 @@ import {
   type DesktopPlatform,
 } from "@maus-inc/desktop-utils";
 
+/**
+ * True when the bundle is running inside the Tauri webview rather than a plain
+ * browser (unit tests, Storybook, `vite dev` in a tab). Window-chrome features
+ * — drag region, resize grips, minimise/maximise/close — must no-op outside it.
+ */
+export const isTauriRuntime = (): boolean => {
+  if (typeof window === "undefined") {
+    return false;
+  }
+  const tauriWindow = window as typeof window & Record<string, unknown>;
+  return "__TAURI_INTERNALS__" in tauriWindow || "__TAURI__" in tauriWindow;
+};
+
 export const getIsDevMode = (): boolean => {
   return import.meta.env.DEV;
 };

@@ -14,17 +14,11 @@ import {
   Typography,
 } from "@mui/material";
 import { Nullable } from "@maus-inc/types";
-import { invoke } from "@tauri-apps/api/core";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { FormattedMessage } from "react-intl";
+import { commands } from "../../../../../packages/desktop-native-apis/src/bindings";
 
 const AUTO_OPTION_VALUE = "__microphone_auto__";
-
-type InputDeviceDescriptor = {
-  label: string;
-  isDefault: boolean;
-  caution: boolean;
-};
 
 export type MicrophoneOption = {
   value: string;
@@ -61,7 +55,9 @@ export const MicrophoneSelector = ({
     setLoading(true);
     setError(null);
     try {
-      const result = await invoke<InputDeviceDescriptor[]>("list_microphones");
+      // The backend disambiguates devices that report the same name, so `label`
+      // doubles as the stable key the preference is stored under.
+      const result = await commands.listMicrophones();
       const mapped: MicrophoneOption[] = result.map((device) => ({
         value: device.label,
         label: device.label,

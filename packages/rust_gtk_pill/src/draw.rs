@@ -92,12 +92,22 @@ pub(crate) fn pill_position(state: &PillState, ww: f64, wh: f64) -> (f64, f64, f
     (pill_x, pill_y, pill_w, pill_h)
 }
 
+/// Corner radius for the pill at its *current* size.
+///
+/// Derived from the live geometry rather than `expand_t` so the radius can
+/// never drift away from the width/height animation: the corners stay exactly
+/// half of the shortest side (a true capsule) on every frame, capped at the
+/// expanded design radius so a drag-inflated pill does not over-round.
+pub(crate) fn pill_radius(pill_w: f64, pill_h: f64) -> f64 {
+    (pill_w.min(pill_h) * 0.5).min(EXPANDED_RADIUS)
+}
+
 fn draw_pill(cr: &cairo::Context, state: &PillState, ww: f64, wh: f64) {
     let expand_t = state.expand_t.get();
     let (rx, ry, pill_w, pill_h) = pill_position(state, ww, wh);
 
     let bg_alpha = lerp(IDLE_BG_ALPHA, ACTIVE_BG_ALPHA, expand_t);
-    let radius = lerp(COLLAPSED_RADIUS, EXPANDED_RADIUS, expand_t);
+    let radius = pill_radius(pill_w, pill_h);
 
     let is_typing = state.assistant_active.get()
         && *state.assistant_input_mode.borrow() == "type";
@@ -115,12 +125,16 @@ fn draw_pill(cr: &cairo::Context, state: &PillState, ww: f64, wh: f64) {
     let _ = cr.stroke();
 
     match state.phase.get() {
-        Phase::Recording if expand_t > 0.1 => {
-            draw_waveform(cr, rx, ry, pill_w, pill_h, expand_t, state);
-            draw_edge_gradient(cr, rx, ry, pill_w, pill_h, radius, expand_t);
-        }
-        Phase::Paused if expand_t > 0.1 => {
-            draw_paused_bar(cr, rx, ry, pill_w, pill_h, radius, expand_t);
+        Phase::Recording | Phase::Paused if expand_t > 0.1 => {
+            // Crossfade the live waveform into the paused bar. `pause_t` is
+            // spring-driven so a pause/resume settles instead of hard-cutting.
+            let pause_t = state.pause_t.get();
+            if pause_t < 0.999 {
+                draw_waveform(cr, rx, ry, pill_w, pill_h, expand_t, 1.0 - pause_t, state);
+            }
+            if pause_t > 0.001 {
+                draw_paused_bar(cr, rx, ry, pill_w, pill_h, radius, expand_t, pause_t);
+            }
             draw_edge_gradient(cr, rx, ry, pill_w, pill_h, radius, expand_t);
         }
         Phase::Loading if expand_t > 0.1 => {
@@ -152,8 +166,13 @@ fn draw_long_press_ring(
         return;
     }
 
-    let t = long_press_progress(state.long_press_elapsed.get());
-    let radius = lerp(COLLAPSED_RADIUS, EXPANDED_RADIUS, state.expand_t.get());
+    // While actively dragging, keep the full outline visible (progress = 1.0).
+    let t = if state.dragging.get() {
+        1.0
+    } else {
+        long_press_progress(state.long_press_elapsed.get())
+    };
+    let radius = pill_radius(pill_w, pill_h);
 
     // Draw an outline that traces around the pill perimeter
     let inset = 2.0;
@@ -163,11 +182,7 @@ fn draw_long_press_ring(
     let oh = pill_h + inset * 2.0;
     let r = (radius + inset).min(oh / 2.0);
 
-    let outline_alpha = if state.dragging.get() {
-        0.7
-    } else {
-        0.3 + 0.5 * t
-    };
+    let outline_alpha = 0.3 + 0.5 * t;
 
     cr.save().ok();
     cr.set_source_rgba(
@@ -221,21 +236,23 @@ fn draw_cancel_flash(
 #[allow(clippy::too_many_arguments)]
 fn draw_waveform(
     cr: &cairo::Context, rx: f64, ry: f64, pill_w: f64, pill_h: f64,
-    expand_t: f64, state: &PillState,
+    expand_t: f64, fade: f64, state: &PillState,
 ) {
     let wave_phase = state.wave_phase.get();
     let level = state.current_level.get();
     let baseline = ry + pill_h / 2.0;
 
     cr.save().ok();
-    rounded_rect(cr, rx, ry, pill_w, pill_h, pill_h / 2.0);
+    rounded_rect(cr, rx, ry, pill_w, pill_h, pill_radius(pill_w, pill_h));
     cr.clip();
 
     for config in WAVE_CONFIGS {
         let amplitude_factor = (level * config.multiplier).clamp(MIN_AMPLITUDE, MAX_AMPLITUDE);
-        let amplitude = (pill_h * 0.75 * amplitude_factor).max(1.0);
+        // `fade` flattens the wave towards the baseline as it hands over to
+        // the paused bar, so the two states share the same centre line.
+        let amplitude = (pill_h * 0.75 * amplitude_factor).max(1.0) * fade;
         let phase = wave_phase + config.phase_offset;
-        let alpha = config.opacity * expand_t;
+        let alpha = config.opacity * expand_t * fade;
 
         cr.set_source_rgba(1.0, 1.0, 1.0, alpha);
         cr.set_line_width(STROKE_WIDTH);
@@ -331,7 +348,7 @@ fn draw_loading(
 #[allow(clippy::too_many_arguments)]
 fn draw_paused_bar(
     cr: &cairo::Context, rx: f64, ry: f64, pill_w: f64, pill_h: f64,
-    radius: f64, expand_t: f64,
+    radius: f64, expand_t: f64, fade: f64,
 ) {
     cr.save().ok();
     rounded_rect(cr, rx, ry, pill_w, pill_h, radius);
@@ -344,14 +361,14 @@ fn draw_paused_bar(
     let track_w = pill_w - pad * 2.0;
 
     // Dimmed track
-    cr.set_source_rgba(1.0, 1.0, 1.0, 0.1 * expand_t);
+    cr.set_source_rgba(1.0, 1.0, 1.0, 0.1 * expand_t * fade);
     cr.rectangle(track_x, bar_y, track_w, bar_h);
     let _ = cr.fill();
 
     // Static centered indicator (same as loading but stationary and dimmed)
     let indicator_w = track_w * LOADING_BAR_WIDTH_FRAC;
     let ind_x = track_x + (track_w - indicator_w) / 2.0;
-    cr.set_source_rgba(1.0, 1.0, 1.0, 0.45 * expand_t);
+    cr.set_source_rgba(1.0, 1.0, 1.0, 0.45 * expand_t * fade);
     cr.rectangle(ind_x, bar_y, indicator_w, bar_h);
     let _ = cr.fill();
 
@@ -1480,8 +1497,7 @@ fn draw_flash_blue(cr: &cairo::Context, state: &PillState, ww: f64, wh: f64) {
     let rw = pw - inset * 2.0;
     let rh = ph - inset * 2.0;
 
-    let expand_t = state.expand_t.get();
-    let radius = lerp(COLLAPSED_RADIUS, EXPANDED_RADIUS, expand_t) + FLASH_BLUE_INSET;
+    let radius = pill_radius(pw, ph) + FLASH_BLUE_INSET;
 
     let (gr, gg, gb) = FLASH_BLUE_GLOW_COLOR;
     rounded_rect(cr, rx - 1.5, ry - 1.5, rw + 3.0, rh + 3.0, radius + 1.5);

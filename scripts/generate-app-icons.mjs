@@ -20,6 +20,12 @@
  *     upscales that frame, or falls back to a cached icon, so the icon appears
  *     unchanged and blurry.
  *
+ *  3. **A fake ICNS.** ImageMagick has no working ICNS encoder - handed a frame
+ *     list it silently writes the first frame as a bare PNG under an `.icns`
+ *     name. The committed `icon.icns` was a 1.2 KB 16x16 PNG, so macOS upscaled
+ *     16x16 into the Dock, Finder and Alt-Tab. The container is now assembled
+ *     directly (see `writeIcns`).
+ *
  * This script writes every size referenced by `tauri.conf.json` with alpha
  * preserved end to end, emits a genuine multi-resolution `.ico`, and then
  * verifies both properties so neither regression can land again.
@@ -39,7 +45,14 @@
  */
 
 import { execFileSync } from "node:child_process";
-import { existsSync, mkdirSync, readFileSync, rmSync, statSync } from "node:fs";
+import {
+  existsSync,
+  mkdirSync,
+  readFileSync,
+  rmSync,
+  statSync,
+  writeFileSync,
+} from "node:fs";
 import { delimiter, dirname, isAbsolute, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -160,8 +173,34 @@ const INSTALLER_PNGS = {
  */
 const ICO_SIZES = [16, 24, 32, 48, 64, 128, 256];
 
-/** Frames embedded in `icon.icns` for macOS. */
-const ICNS_SIZES = [16, 32, 64, 128, 256, 512, 1024];
+/**
+ * Frames embedded in `icon.icns`, mirroring what `iconutil` emits from a
+ * complete `.iconset`. macOS picks per surface: the Dock renders 512/1024,
+ * Finder 128/256, Alt-Tab 256, the Get Info header 512.
+ *
+ * Several sizes appear twice on purpose. A 32px frame serves both the 32pt
+ * standard slot (`icp5`) and the 16pt @2x slot (`ic11`); macOS resolves the
+ * Retina slots by chunk type, not by pixel size, so omitting the `ic1x` types
+ * makes it fall back to scaling a different frame.
+ */
+const ICNS_FRAMES = [
+  { type: "icp4", size: 16 },
+  { type: "icp5", size: 32 },
+  { type: "ic11", size: 32 },
+  { type: "icp6", size: 64 },
+  { type: "ic12", size: 64 },
+  { type: "ic07", size: 128 },
+  { type: "ic08", size: 256 },
+  { type: "ic13", size: 256 },
+  { type: "ic09", size: 512 },
+  { type: "ic14", size: 512 },
+  { type: "ic10", size: 1024 },
+];
+
+/** The distinct pixel sizes the ICNS frames are rendered at. */
+const ICNS_SIZES = [...new Set(ICNS_FRAMES.map((frame) => frame.size))];
+
+const PNG_MAGIC = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
 
 function convert(args) {
   return execFileSync(convertBin, args, { stdio: ["ignore", "pipe", "pipe"] });
@@ -227,6 +266,73 @@ function readIcoFrames(path) {
 }
 
 /**
+ * Assemble a real ICNS container.
+ *
+ * ImageMagick has no usable ICNS encoder: handed a list of frames it silently
+ * writes the *first* one as a bare PNG under an `.icns` name. That is exactly
+ * what shipped - a 1.2 KB 16x16 PNG - so macOS had a single tiny frame to
+ * upscale everywhere, which is the blurry Dock/Finder/Alt-Tab icon.
+ *
+ * The container is therefore assembled here: the `icns` magic, a big-endian
+ * total length, then one chunk per frame (4-byte type, 4-byte length including
+ * the header, PNG payload). This is the same layout `iconutil` produces.
+ */
+function writeIcns(framePathBySize, outPath) {
+  const chunks = ICNS_FRAMES.map(({ type, size }) => {
+    const png = readFileSync(framePathBySize.get(size));
+    const header = Buffer.alloc(8);
+    header.write(type, 0, 4, "ascii");
+    header.writeUInt32BE(png.length + 8, 4);
+    return Buffer.concat([header, png]);
+  });
+
+  const body = Buffer.concat(chunks);
+  const header = Buffer.alloc(8);
+  header.write("icns", 0, 4, "ascii");
+  header.writeUInt32BE(body.length + 8, 4);
+  writeFileSync(outPath, Buffer.concat([header, body]));
+}
+
+/** Width/height from a PNG's IHDR, or nulls when the payload is not a PNG. */
+function readPngSize(payload) {
+  if (payload.length < 24 || !payload.subarray(0, 8).equals(PNG_MAGIC)) {
+    return { width: null, height: null };
+  }
+  return { width: payload.readUInt32BE(16), height: payload.readUInt32BE(20) };
+}
+
+/** Walk an ICNS container so its frame set can be asserted. */
+function readIcnsFrames(path) {
+  const data = readFileSync(path);
+  if (data.length < 8 || data.toString("ascii", 0, 4) !== "icns") {
+    throw new Error(
+      `${path} is not an ICNS container (a renamed PNG will not do)`,
+    );
+  }
+  const declared = data.readUInt32BE(4);
+  if (declared !== data.length) {
+    throw new Error(
+      `${path}: header declares ${declared} bytes but the file is ${data.length}`,
+    );
+  }
+
+  const frames = [];
+  for (let offset = 8; offset + 8 <= data.length; ) {
+    const type = data.toString("ascii", offset, offset + 4);
+    const length = data.readUInt32BE(offset + 4);
+    if (length < 8 || offset + length > data.length) {
+      throw new Error(`${path}: chunk '${type}' declares an invalid length`);
+    }
+    frames.push({
+      type,
+      ...readPngSize(data.subarray(offset + 8, offset + length)),
+    });
+    offset += length;
+  }
+  return frames;
+}
+
+/**
  * Corner alpha tolerance.
  *
  * A correctly generated corner is 0, but the smallest frames pick up a little
@@ -256,7 +362,9 @@ function checkIcoFrameSizes(ico, frames) {
   const problems = [];
 
   for (const size of ICO_SIZES) {
-    if (!frames.some((frame) => frame.width === size && frame.height === size)) {
+    if (
+      !frames.some((frame) => frame.width === size && frame.height === size)
+    ) {
       problems.push(`${ico}: missing a ${size}x${size} frame`);
     }
   }
@@ -299,6 +407,39 @@ function checkIco(dir) {
   ];
 }
 
+/**
+ * Validate `icon.icns`: a real container, every expected chunk type present,
+ * and each frame carrying a PNG at the pixel size that chunk type promises.
+ */
+function checkIcns(dir) {
+  const icns = join(dir, "icon.icns");
+  if (!existsSync(icns)) {
+    return [`missing ${icns}`];
+  }
+
+  let frames;
+  try {
+    frames = readIcnsFrames(icns);
+  } catch (err) {
+    return [err.message];
+  }
+
+  const problems = [];
+  for (const { type, size } of ICNS_FRAMES) {
+    const frame = frames.find((candidate) => candidate.type === type);
+    if (!frame) {
+      problems.push(`${icns}: missing the ${size}x${size} '${type}' frame`);
+      continue;
+    }
+    if (frame.width !== size || frame.height !== size) {
+      problems.push(
+        `${icns}: '${type}' frame is ${frame.width}x${frame.height}, expected ${size}x${size}`,
+      );
+    }
+  }
+  return problems;
+}
+
 /** Validate a representative sample of the generated PNGs. */
 function checkPng(name) {
   const path = join(desktopIcons, name);
@@ -311,6 +452,7 @@ function checkPng(name) {
 function verify() {
   return [
     ...[desktopIcons, installerIcons].flatMap(checkIco),
+    ...checkIcns(desktopIcons),
     ...["icon.png", "32x32.png", "128x128.png"].flatMap(checkPng),
   ];
 }
@@ -326,7 +468,8 @@ function main() {
       process.exit(1);
     }
     console.log(
-      "App icons OK: alpha preserved and every required ICO frame present.",
+      "App icons OK: alpha preserved, every required ICO frame present, " +
+        "and icon.icns is a real multi-resolution container.",
     );
     return;
   }
@@ -362,14 +505,18 @@ function main() {
     convert([...icoFrames, join(installerIcons, "icon.ico")]);
     console.log(`Wrote icon.ico (${ICO_SIZES.join(", ")})`);
 
-    const icnsFrames = ICNS_SIZES.map((size) => {
-      const p = join(desktopIcons, `.tmp-icns-${size}.png`);
-      renderSquare(size, p);
-      tmp.push(p);
-      return p;
-    });
-    convert([...icnsFrames, join(desktopIcons, "icon.icns")]);
-    console.log(`Wrote icon.icns (${ICNS_SIZES.join(", ")})`);
+    const icnsFrames = new Map(
+      ICNS_SIZES.map((size) => {
+        const p = join(desktopIcons, `.tmp-icns-${size}.png`);
+        renderSquare(size, p);
+        tmp.push(p);
+        return [size, p];
+      }),
+    );
+    writeIcns(icnsFrames, join(desktopIcons, "icon.icns"));
+    console.log(
+      `Wrote icon.icns (${ICNS_FRAMES.length} frames: ${ICNS_SIZES.join(", ")})`,
+    );
 
     renderSquare(512, join(publicDir, "app-icon.png"));
     renderSquare(512, join(publicDir, "app-icon-512.png"));

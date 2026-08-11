@@ -7,11 +7,19 @@ export type SegmentedControlOption<Value extends string> = {
   disabled?: boolean;
 };
 
+export type SegmentedControlAlign = "start" | "center";
+
 export type SegmentedControlProps<Value extends string> = {
   value: Value;
   options: SegmentedControlOption<Value>[];
   onChange: (value: Value) => void;
   ariaLabel?: string;
+  /**
+   * Horizontal placement of the track within its flex-column container.
+   * Defaults to `start` so existing call sites are unaffected; `center` centres
+   * the track alone and leaves full-width siblings below it untouched.
+   */
+  align?: SegmentedControlAlign;
 };
 
 const tabSx = {
@@ -39,6 +47,7 @@ export const SegmentedControl = <Value extends string>({
   options,
   onChange,
   ariaLabel,
+  align = "start",
 }: SegmentedControlProps<Value>) => {
   const activeIndexCandidate = options.findIndex(
     (option) => option.value === value && !option.disabled,
@@ -68,6 +77,9 @@ export const SegmentedControl = <Value extends string>({
     <Box
       sx={{
         display: "inline-flex",
+        // Overrides the parent Stack's `alignItems`, so the track can centre
+        // without the full-width controls beneath it following along.
+        alignSelf: align === "center" ? "center" : "flex-start",
         bgcolor: "action.hover",
         borderRadius: 2,
         p: 0.5,

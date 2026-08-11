@@ -1,9 +1,64 @@
 use sqlx::sqlite::SqlitePoolOptions;
-use tauri::{Manager, RunEvent, WindowEvent};
+use std::sync::Mutex;
+use std::time::{Duration, Instant};
+use tauri::{Manager, PhysicalPosition, RunEvent, Window, WindowEvent};
 use tauri_plugin_log::{Target, TargetKind, TimezoneStrategy};
 use tauri_plugin_window_state::{AppHandleExt, StateFlags};
 
 const AUTOSTART_HIDDEN_ARG: &str = "--mausvoice-autostart-hidden";
+
+/// Minimum gap between two window-move log lines.
+const MOVE_LOG_THROTTLE: Duration = Duration::from_millis(250);
+
+/// Records where the window manager actually placed the main window while it
+/// is being dragged.
+///
+/// The main window is frameless (`decorations: false`), so `data-tauri-drag-region`
+/// hands the gesture straight to the window manager via `start_dragging` and the
+/// app never sees the pointer. That makes a "the window will not drag past X"
+/// report impossible to triage from the frontend: the only observable is the
+/// position the OS reports back. Logging it next to the monitor geometry
+/// separates "the compositor clamped the window" from "the drag never started"
+/// (no `Moved` events at all — usually a missing `core:window:allow-start-dragging`
+/// capability). Throttled so an ordinary drag does not flood the log.
+fn log_main_window_move(window: &Window, position: &PhysicalPosition<i32>) {
+    static LAST_LOG: Mutex<Option<Instant>> = Mutex::new(None);
+
+    let Ok(mut last) = LAST_LOG.lock() else {
+        return;
+    };
+    let now = Instant::now();
+    if let Some(previous) = *last {
+        if now.duration_since(previous) < MOVE_LOG_THROTTLE {
+            return;
+        }
+    }
+    *last = Some(now);
+    drop(last);
+
+    match window.current_monitor() {
+        Ok(Some(monitor)) => {
+            let origin = monitor.position();
+            let size = monitor.size();
+            log::debug!(
+                "main window moved to ({}, {}) | monitor {:?} origin ({}, {}) size {}x{} scale {}",
+                position.x,
+                position.y,
+                monitor.name(),
+                origin.x,
+                origin.y,
+                size.width,
+                size.height,
+                monitor.scale_factor(),
+            );
+        }
+        _ => log::debug!(
+            "main window moved to ({}, {}) | monitor unavailable",
+            position.x,
+            position.y
+        ),
+    }
+}
 
 fn handle_run_event(app_handle: &tauri::AppHandle, event: RunEvent) {
     match &event {
@@ -109,6 +164,9 @@ pub fn build() -> tauri::Builder<tauri::Wry> {
                 // minimized. This breaks global hotkey detection via keys_held events.
                 // Counter this by re-asserting WebView visibility whenever focus is lost,
                 // and running a periodic keepalive to defeat ongoing occlusion detection.
+                WindowEvent::Moved(position) if window.label() == "main" => {
+                    log_main_window_move(window, position);
+                }
                 #[cfg(target_os = "windows")]
                 WindowEvent::Focused(focused) => {
                     if window.label() == "main" && !focused {

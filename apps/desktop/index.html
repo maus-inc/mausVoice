@@ -10,14 +10,19 @@
         color-scheme: light dark;
       }
 
+      /*
+        Pre-hydration canvas. Must stay in sync with `surfaces.*.level0` in
+        src/styles/palette.ts - React has not mounted yet, so the theme cannot
+        paint this and a mismatch shows as a colour flash on launch.
+      */
       body {
         margin: 0;
-        background-color: #121212;
+        background-color: #0c0c0d;
       }
 
       @media (prefers-color-scheme: light) {
         body {
-          background-color: #fff;
+          background-color: #f5f2ed;
         }
       }
 

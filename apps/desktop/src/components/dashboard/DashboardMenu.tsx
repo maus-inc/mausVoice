@@ -14,7 +14,8 @@ import { FormattedMessage } from "react-intl";
 import { useLocation, useNavigate } from "react-router-dom";
 import { useAppStore } from "../../store";
 import { springSnappy } from "../../styles/motion";
-import { premiumSurface } from "../../styles/shadows";
+import { inkSolid, surfaceAlpha, surfaces } from "../../styles/palette";
+import { hairline, premiumSurface } from "../../styles/shadows";
 import { getIsAssistantModeEnabled } from "../../utils/assistant-mode.utils";
 import { ListTile } from "../common/ListTile";
 import { MorphNavIcon } from "../common/MorphNavIcon";
@@ -107,7 +108,7 @@ export const DashboardMenu = ({ onChoose }: DashboardMenuProps) => {
             position: "absolute",
             inset: 0,
             borderRadius: "14px",
-            bgcolor: dark ? "#1A1D24" : "#12151C",
+            bgcolor: dark ? surfaces.dark.level2 : inkSolid.base,
             boxShadow: selectedShadow,
             zIndex: 0,
             pointerEvents: "none",
@@ -124,7 +125,7 @@ export const DashboardMenu = ({ onChoose }: DashboardMenuProps) => {
           position: "absolute",
           inset: 0,
           borderRadius: "14px",
-          bgcolor: dark ? "#1A1D24" : "#12151C",
+          bgcolor: dark ? surfaces.dark.level2 : inkSolid.base,
           boxShadow: selectedShadow,
           zIndex: 0,
           pointerEvents: "none",
@@ -173,12 +174,12 @@ export const DashboardMenu = ({ onChoose }: DashboardMenuProps) => {
         height: "100%",
         borderRadius: "16px",
         margin: "0.35rem",
-        border: dark
-          ? "1px solid rgba(255,255,255,0.05)"
-          : "1px solid rgba(15,18,25,0.05)",
+        border: dark ? hairline.dark(0.05) : hairline.light(0.05),
+        // Rail wash: one tier of lift at the top settling back into the canvas,
+        // derived from the surface ladder rather than one-off hexes.
         background: dark
-          ? "linear-gradient(180deg, rgba(20,22,27,0.55) 0%, rgba(11,12,15,0.2) 100%)"
-          : "linear-gradient(180deg, rgba(255,255,255,0.7) 0%, rgba(244,245,247,0.35) 100%)",
+          ? `linear-gradient(180deg, ${surfaceAlpha(surfaces.dark.level2, 0.55)} 0%, ${surfaceAlpha(surfaces.dark.level0, 0.2)} 100%)`
+          : `linear-gradient(180deg, ${surfaceAlpha(surfaces.light.level1, 0.7)} 0%, ${surfaceAlpha(surfaces.light.level0, 0.35)} 100%)`,
       }}
     >
       <Box sx={{ flexGrow: 1, overflowY: "auto", pt: 0.5 }}>{list}</Box>

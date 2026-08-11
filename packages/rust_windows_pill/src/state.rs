@@ -157,6 +157,10 @@ pub(crate) struct PillState {
 
     pub(crate) entry_text: RefCell<String>,
 
+    // Recording <-> paused crossfade (0 = live waveform, 1 = paused bar)
+    pub(crate) pause_t: Cell<f64>,
+    pub(crate) pause_velocity: Cell<f64>,
+
     // Cancel button animation
     pub(crate) cancel_t: Cell<f64>,
     pub(crate) cancel_velocity: Cell<f64>,

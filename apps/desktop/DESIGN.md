@@ -3,21 +3,24 @@
 Durable visual decisions for the mausVoice desktop app. This is an **existing, established world** (an Operate-mode tool). Refine, preserve; do not replace.
 
 ## Surface ladder (light / dark)
-Palette keys in `src/theme.ts` (`palette` colorSchemes). 4-step elevation driven by luminance, not shadow.
+Tokens live in `src/styles/palette.ts` and are wired into `src/theme.ts` (`palette` colorSchemes). 4-step elevation driven by luminance, not shadow. **Never hand-type a surface, hairline or shadow colour at a call site — import the token.**
 
-| Tier | Light | Dark |
-|------|-------|------|
-| level0 background | `#F4F5F7` | `#0B0C0F` |
-| level1 surface | `#FFFFFF` | `#14161B` |
-| level2 raised | `#ECEEF2` | `#1E2128` |
-| level3 elevated | `#E0E3E9` | `#2A2E38` |
+The two schemes have their own temperature rather than being inversions of each other: light is warm **cream paper**, dark is neutral **onyx** (the old blue-cast `#14161B` ladder is gone).
 
-- **Never pure `#000` / `#fff`** for surfaces. Tint toward the brand grey‑blue (`rgba(15,18,25,…` / `rgba(255,255,255,…`).
-- **Borders over shadows.** Cards/surfaces separated by 1px translucent hairlines (`rgba(15,18,25,0.06)` light / `rgba(255,255,255,0.08)` dark). Elevation shadows (`premiumSurface`) only on layered/floating surfaces (cards, hover), not every face.
+| Tier | Light (cream) | Dark (onyx) |
+|------|---------------|-------------|
+| level0 background | `#F5F2ED` | `#0C0C0D` |
+| level1 surface | `#FDFBF8` | `#161617` |
+| level2 raised | `#ECE8E1` | `#1F1F21` |
+| level3 elevated | `#E0DBD2` | `#2A2A2C` |
+
+- **Never pure `#000` / `#fff`** for surfaces or text. Light tints from the warm ink `ink(α)` = `rgba(26,23,18,α)`; dark tints from `highlight(α)` / `onDark(α)`. The one sanctioned `#FFFFFF` is the inverted CTA fill in dark (`chalkSolid`).
+- **Borders over shadows.** Cards/surfaces separated by 1px translucent hairlines — use `hairline.light(α)` / `hairline.dark(α)` from `styles/shadows.ts` (0.04–0.08). Elevation shadows (`premiumSurface`) only on layered/floating surfaces (cards, hover), not every face.
 - `premiumSurface` = 2px inner top highlight (emboss) + multi‑stop soft drop shadow; distinct rest/hover/active/selected. This is the "machined keycap" treatment (Raycast class).
+- Backdrop-filtered chrome uses `surfaceAlpha(tier, α)` so the translucent face can never drift from its opaque tier.
 
 ## Color (restrained — one accent)
-- `primary` = near-black charcoal in light (`#12151C`), `#FFFFFF` in dark (white CTA is the primary).
+- `primary` = warm near-black charcoal in light (`inkSolid.base` `#1A1712`), `#FFFFFF` in dark (white CTA is the primary).
 - Only accent: **blue** `primary.blue #1b8af8` (light) / `#3198ff` (dark), reserved for primary actions, current selection, state indicators, switches. Not decoration.
 - `gold` is a reward/secondary class only (inactive feature); `red` (hint) for destructive only.
 - Status vocabulary must be semantic; never color-only.
@@ -49,3 +52,6 @@ Palette keys in `src/theme.ts` (`palette` colorSchemes). 4-step elevation driven
 
 ## Custom chrome
 - Frameless custom `TitleBar` (drag region + native window controls) — height ~46px, uses title BarShadow. macOS notes traffic-light inset; Windows keeps native buttons via WCO.
+- `decorations: false` also removes the OS resize border, so `WindowResizeHandles` supplies eight invisible edge/corner grips that hand the gesture back to the window manager.
+- Every window command used by the chrome (`start-dragging`, `start-resize-dragging`, `minimize`, `maximize`, `unmaximize`, `close`) must be listed in `src-tauri/capabilities/default.json`; `core:window:default` grants none of them and the controls fail silently without them.
+- Chrome glyphs are lucide nodes rendered through `MorphNavIcon` (`snappy` spring) so state swaps morph instead of cutting.
