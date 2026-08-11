@@ -267,11 +267,11 @@ jobs:
 
       - name: Publish release
         uses: softprops/action-gh-release@3bb12739c298aeb8a4eeaf626c5b8d85266b0e65
-        # Use Owie's PAT when present so the release is authored by his account
-        # instead of github-actions[bot]; fall back to GITHUB_TOKEN otherwise.
-        env:
-          GITHUB_TOKEN: ${{ secrets.RELEASE_TOKEN || secrets.GITHUB_TOKEN }}
+        # 'token' input (default: github.token) overrides GITHUB_TOKEN, so pass the
+        # maintainer PAT here explicitly — otherwise the release is authored by
+        # github-actions[bot]. Falls back to GITHUB_TOKEN when RELEASE_TOKEN is unset.
         with:
+          token: ${{ secrets.RELEASE_TOKEN || secrets.GITHUB_TOKEN }}
           tag_name: ${{ steps.tag.outputs.tag_name }}
           name: ${{ steps.tag.outputs.release_name }}
           body_path: ${{ steps.body.outputs.body_file }}

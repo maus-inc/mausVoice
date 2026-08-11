@@ -14,9 +14,7 @@
 import { promises as fs } from "node:fs";
 import path from "node:path";
 
-const artifactsRoot = path.resolve(
-  process.env.ARTIFACTS_DIR ?? "dist",
-);
+const artifactsRoot = path.resolve(process.env.ARTIFACTS_DIR ?? "dist");
 const version = process.env.RELEASE_VERSION ?? "";
 const tag = process.env.RELEASE_TAG ?? "";
 const releaseName = process.env.RELEASE_NAME ?? "";
@@ -26,11 +24,17 @@ const customNotes = process.env.RELEASE_NOTES ?? "";
 const repository = process.env.GITHUB_REPOSITORY ?? "";
 const [owner, repo] = repository.split("/");
 
-function assetUrl(fileName) {
-  const encoded = fileName
-    .split("/")
-    .map((s) => encodeURIComponent(s))
-    .join("/");
+// shieldcn (shadcn-style) badge endpoints.
+const BADGE_LICENSE = "https://shieldcn.dev/badge/license-AGPL--3.0-black.svg";
+const BADGE_CI = "https://shieldcn.dev/badge/CI-passing-black.svg";
+// Windows logo as data URI (simple-icons removed the windows slug).
+const WINDOWS_LOGO =
+  "data%3Aimage%2Fsvg%2Bxml%3Bbase64%2CPHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCAyNCAyNCI%2BPHBhdGggZmlsbD0iI2ZmZiIgZD0iTTAgMy40NDlMOS43NSAyLjF2OS40NTFIMG0xMC45NDktOS42MDJMMjQgMHYxMS40SDEwLjk0OU0wIDEyLjZoOS43NXY5LjQ1MUwwIDIwLjY5OU0xMC45NDkgMTIuNkgyNFYyNGwtMTIuOS0xLjgwMSIvPjwvc3ZnPg%3D%3D";
+
+// GitHub flattens release assets to their basenames, so asset URLs point at the
+// basename only — never the nested artifact-directory path.
+function assetUrl(basename) {
+  const encoded = encodeURIComponent(basename);
   return `https://github.com/${owner}/${repo}/releases/download/${tag}/${encoded}`;
 }
 
@@ -67,23 +71,31 @@ function markdownLink(label, url) {
   return `[${label}](${url})`;
 }
 
+function badgeImage(src, alt, url) {
+  const img = `<img src="${src}" alt="${alt}" height="32" />`;
+  return url ? `[${img}](${url})` : img;
+}
+
 async function autoNotes() {
   // Best effort: commits since the previous mausVoice-v* tag (or everything if none).
-  const { execSync } = await import("node:child_process");
+  // spawnSync with an args array avoids shell interpretation entirely — the
+  // %(refname:short) format is otherwise parsed as a shell syntax error by /bin/sh.
+  const { spawnSync } = await import("node:child_process");
   try {
-    const tags = execSync(
-      "git for-each-ref refs/tags/mausVoice-v* --sort=-version:refname --format=%(refname:short)",
+    const tagsResult = spawnSync(
+      "git",
+      ["for-each-ref", "refs/tags/mausVoice-v*", "--sort=-version:refname", "--format=%(refname:short)"],
       { encoding: "utf8" },
-    )
+    );
+    const tags = (tagsResult.stdout ?? "")
       .trim()
       .split("\n")
       .map((s) => s.trim())
-      .find(Boolean);
-    const prev = tags;
+      .filter(Boolean);
+    const prev = tags[0];
     const range = prev ? `${prev}..HEAD` : "HEAD";
-    const log = execSync(`git log ${range} --no-merges --format=%s`, {
-      encoding: "utf8",
-    }).trim();
+    const logResult = spawnSync("git", ["log", range, "--no-merges", "--format=%s"], { encoding: "utf8" });
+    const log = (logResult.stdout ?? "").trim();
     if (!log) return null;
     return log
       .split("\n")
@@ -104,36 +116,86 @@ for (const file of files) {
   downloads.push({ ...info, rel, basename: path.basename(file) });
 }
 
-const win = downloads.find((d) => d.platform === "Windows" && d.kind === "installer") ?? downloads.find((d) => d.platform === "Windows");
-const mac = downloads.find((d) => d.platform === "macOS" && d.kind === "dmg") ?? downloads.find((d) => d.platform === "macOS");
+const win =
+  downloads.find((d) => d.platform === "Windows" && d.kind === "installer") ??
+  downloads.find((d) => d.platform === "Windows");
+const mac =
+  downloads.find((d) => d.platform === "macOS" && d.kind === "dmg") ??
+  downloads.find((d) => d.platform === "macOS");
 const linDeb = downloads.find((d) => d.platform === "Linux" && d.kind === "deb");
 const linAppImage = downloads.find((d) => d.platform === "Linux" && d.kind === "appimage");
 
-const linuxLinks = [linDeb, linAppImage].filter(Boolean).map((d) => markdownLink(d.basename, assetUrl(d.rel)));
-
 let notes = customNotes.trim();
 if (!notes) notes = (await autoNotes()) ?? "";
+if (!notes) notes = "This release continues the mausVoice desktop line with the changes on this branch.";
+const noteItems = notes
+  .split("\n")
+  .map((line) => line.trim())
+  .filter(Boolean)
+  .map((line) => (line.startsWith("- ") ? line : `- ${line}`))
+  .join("\n");
+
+const githubBase = `https://github.com/${owner}/${repo}`;
+const actionsUrl = `${githubBase}/actions`;
+const releasesUrl = `${githubBase}/releases`;
+
+const platformBadges = [
+  ...(mac
+    ? [badgeImage(
+        `https://shieldcn.dev/badge/macOS-Download-black.svg?logo=apple`,
+        "Download mausVoice for macOS",
+        assetUrl(mac.basename),
+      )]
+    : []),
+  ...(win
+    ? [badgeImage(
+        `https://shieldcn.dev/badge/Windows-Download-black.svg?logo=${WINDOWS_LOGO}`,
+        "Download mausVoice for Windows",
+        assetUrl(win.basename),
+      )]
+    : []),
+  ...(linDeb || linAppImage
+    ? [badgeImage(
+        "https://shieldcn.dev/badge/Linux-Download-black.svg?logo=linux",
+        "Download mausVoice for Linux",
+        assetUrl((linAppImage ?? linDeb).basename),
+      )]
+    : []),
+];
 
 const body = [
   `# ${releaseName}`,
   "",
   "Voice typing for your own machine. Dictate into any app, clean it up with AI. No account, no subscription.",
   "",
+  `<p align="center">`,
+  `  ${badgeImage(BADGE_LICENSE, "AGPL-3.0", "LICENCE")}`,
+  `  ${badgeImage(BADGE_CI, "CI passing", actionsUrl)}`,
+  `</p>`,
+  "",
   "---",
   "",
-  "## What's new",
+  "<details>",
+  "<summary><b>What's new</b></summary>",
   "",
-  notes || "This release continues the mausVoice desktop line with the changes on this branch.",
+  noteItems,
+  "",
+  "</details>",
   "",
   "## Downloads",
   "",
+  ...(platformBadges.length ? [`<p align="center">`, ...platformBadges.map((b) => `  ${b}`), `</p>`, ""] : []),
   "| Platform | Package |",
   "| --- | --- |",
-  ...(mac ? [`| macOS | ${markdownLink(mac.basename, assetUrl(mac.rel))} |`] : []),
-  ...(win ? [`| Windows | ${markdownLink(win.basename, assetUrl(win.rel))} |`] : []),
-  ...(linuxLinks.length ? [`| Linux | ${linuxLinks.join(" · ")} |`] : []),
+  ...(mac ? [`| macOS | ${markdownLink(mac.basename, assetUrl(mac.basename))} |`] : []),
+  ...(win ? [`| Windows | ${markdownLink(win.basename, assetUrl(win.basename))} |`] : []),
+  ...(
+    linDeb || linAppImage
+      ? [`| Linux | ${[linDeb, linAppImage].filter(Boolean).map((d) => markdownLink(d.basename, assetUrl(d.basename))).join(" · ")} |`]
+      : []
+  ),
   "",
-  ...(!mac || !win || !linuxLinks.length
+  ...(!mac || !win || !(linDeb || linAppImage)
     ? ["> Some platform packages may be missing if a matrix build failed. Check the run log for details.", ""]
     : []),
   "## Installation",
@@ -150,7 +212,7 @@ const body = [
   "",
   "---",
   "",
-  `Found an issue? [Open one on GitHub](https://github.com/${repository}/issues). · [Repository](https://github.com/${repository}) · [License](LICENCE)`,
+  `Found an issue? [Open one on GitHub](${githubBase}/issues). · [Repository](${githubBase}) · [License](LICENCE)`,
 ];
 
 console.log(body.join("\n"));
