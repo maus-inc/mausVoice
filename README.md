@@ -8,7 +8,7 @@ Grab Your [Free Groq↗](https://console.groq.com/keys) and [Free Deepgram↗](h
 
 <br>
 
-**Voice typing for your own machine. Dictate into any app and clean it up with AI. No account. No subscription.**
+**Voice typing for your own machine. Dictate into any app and clean it up with AI. With no account or subscription, written in Rust for high performance and minimal CPU and memory usage.**
 
 [![license](https://shieldcn.dev/badge/license-AGPL--3.0-black.svg)](LICENCE)
 [![CI](https://shieldcn.dev/badge/CI-passing-black.svg)](https://github.com/maus-inc/mausVoice/actions)
