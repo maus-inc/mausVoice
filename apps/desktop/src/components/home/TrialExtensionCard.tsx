@@ -48,7 +48,8 @@ export function TrialExtensionCard() {
       sx={{
         p: 3,
         py: 2,
-        borderRadius: 2,
+        // 14px radius matches the documented card treatment (DESIGN.md).
+        borderRadius: 1,
         // Reward class: the gold token carries the meaning (DESIGN.md), so the
         // card needs a surface and a hairline, not a decorative gradient.
         bgcolor: "level2",

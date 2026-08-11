@@ -143,7 +143,7 @@
   "configure_input_permissions": "Configure input permissions",
   "configure_mcp_servers_and_integrations": "配置 MCP 服务器和集成。",
   "configure_multiple_dictation_languages_with_hotkeys": "使用快捷键配置多种语音输入语言。",
-  "configured": "配置",
+  "configured": "已配置",
   "configures_global_input_capture_uinput_udev_so_the_pill_can": "Configures global input capture (uinput/udev) so the pill can type for you. Requires administrator privileges.",
   "confirm": "确认",
   "confirm_password": "确认密码",

@@ -215,7 +215,8 @@ const startAssemblyAIStreaming = async (
 
     ws.onopen = async () => {
       getLogger().info("[AssemblyAI WebSocket] Connected, sending auth...");
-      // Send auth via first message
+      // Auth is carried by the token query parameter in wsUrl; the first
+      // message sent over the socket is audio data, not credentials.
 
       // Listen for audio chunks from Rust
       try {

@@ -143,7 +143,7 @@
   "configure_input_permissions": "Configure input permissions",
   "configure_mcp_servers_and_integrations": "設定 MCP 伺服器和整合。",
   "configure_multiple_dictation_languages_with_hotkeys": "使用快捷鍵設定多種語音辨識語言。",
-  "configured": "設定",
+  "configured": "已設定",
   "configures_global_input_capture_uinput_udev_so_the_pill_can": "Configures global input capture (uinput/udev) so the pill can type for you. Requires administrator privileges.",
   "confirm": "確認",
   "confirm_password": "確認密碼",
