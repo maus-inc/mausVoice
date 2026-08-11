@@ -464,13 +464,13 @@ section { scroll-margin-top: 96px; }
 /* Live recording pill (1:1 copy of docs/animated-pill.gif, driven by the
    same sine-wave algorithm as packages/rust_macos_pill/src/draw.rs) */
 .pill-demo {
-  margin: 44px auto 0;
-  width: 280px;
+  margin: 52px auto 0;
+  width: 720px;
 }
 
 .pill-demo canvas {
   display: block;
-  width: 280px;
+  width: 720px;
   height: 64px;
 }
 
@@ -983,7 +983,7 @@ section { scroll-margin-top: 96px; }
     </p>
 
     <div class="pill-demo fade-up" style="--delay:0.45s" role="img" aria-label="The mausVoice recording pill with a live animated sine waveform">
-      <canvas id="pill-canvas" width="280" height="64" aria-hidden="true"></canvas>
+      <canvas id="pill-canvas" width="720" height="64" aria-hidden="true"></canvas>
     </div>
   </div>
 </section>
@@ -1190,8 +1190,9 @@ section { scroll-margin-top: 96px; }
     });
   }
 
-  /* ---------- Recording pill: 1:1 sine-wave replica ----------------
-     Constants and math ported verbatim from
+  /* ---------- Recording pill: 1:1 sine-wave replica, with a data
+     string flowing into it from the left and transcribed words
+     flying out to the right. Pill constants and math ported from
      packages/rust_macos_pill/src/constants.rs + draw.rs and
      apps/desktop/src/components/common/AudioWaveform.tsx
      ------------------------------------------------------------------ */
@@ -1215,8 +1216,13 @@ section { scroll-margin-top: 96px; }
       { frequency: 1.25, multiplier: 1.05, phaseOffset: 1.7, opacity: 0.56 },
     ];
 
-    // Pill geometry: 264x48 capsule on a 280x64 canvas (8px margins)
-    var PILL_X = 8, PILL_Y = 8, PILL_W = 264, PILL_H = 48;
+    // Composition: 720x64, pill 264x48 centered, stream on the left,
+    // transcribed words fly out on the right.
+    var CW = 720, CH = 64;
+    var PILL_W = 264, PILL_H = 48;
+    var PILL_X = (CW - PILL_W) / 2;
+    var PILL_Y = (CH - PILL_H) / 2;
+    var BASELINE = CH / 2;
 
     var state = { phase: 0, currentLevel: 0, targetLevel: 0 };
     var nextBurst = 0;
@@ -1226,21 +1232,31 @@ section { scroll-margin-top: 96px; }
       ctx.roundRect = function (x, y, w, h, r) { this.rect(x, y, w, h); };
     }
     var dpr = Math.min(2, window.devicePixelRatio || 1);
-    pillCanvas.width = 280 * dpr;
-    pillCanvas.height = 64 * dpr;
+    pillCanvas.width = CW * dpr;
+    pillCanvas.height = CH * dpr;
     ctx.scale(dpr, dpr);
 
     var reducePillMotion = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+
+    // Incoming data string (left -> pill mouth)
+    var stream = [];
+    var nextChar = 0;
+    var STREAM_CHARS = ["|", "~", "0", "1", "=", "|", "~", "·", "|", "="];
+    var threadDash = 0;
+
+    // Transcribed words (pill mouth -> right)
+    var words = [];
+    var nextWord = 0;
+    var TRANSCRIPT = ["hello", "world", "meeting", "tomorrow", "notes", "ship it", "done", "thanks", "brainstorm", "5pm"];
 
     function pillRadius(w, h) {
       return Math.min(w, h) * 0.5;
     }
 
     function drawPill(level) {
-      ctx.clearRect(0, 0, 280, 64);
+      ctx.clearRect(0, 0, CW, CH);
 
       var radius = pillRadius(PILL_W, PILL_H);
-      var baseline = PILL_Y + PILL_H / 2;
 
       // capsule body
       ctx.beginPath();
@@ -1272,7 +1288,7 @@ section { scroll-margin-top: 96px; }
           var t = i / segments;
           var x = PILL_X + pad + waveW * t;
           var theta = config.frequency * t * TAU + phase;
-          var y = baseline + amplitude * Math.sin(theta);
+          var y = BASELINE + amplitude * Math.sin(theta);
           if (i === 0) ctx.moveTo(x, y);
           else ctx.lineTo(x, y);
         }
@@ -1292,6 +1308,73 @@ section { scroll-margin-top: 96px; }
       ctx.stroke();
     }
 
+    function drawStream() {
+      // base thread: dashed line running from the left edge to the pill mouth
+      ctx.save();
+      ctx.beginPath();
+      ctx.moveTo(0, BASELINE);
+      ctx.lineTo(PILL_X, BASELINE);
+      ctx.setLineDash([6, 7]);
+      ctx.lineDashOffset = -(threadDash % 13);
+      ctx.strokeStyle = "rgba(255, 255, 255, 0.3)";
+      ctx.lineWidth = 1.2;
+      ctx.stroke();
+      ctx.setLineDash([]);
+      ctx.restore();
+
+      // data characters riding the thread into the pill
+      ctx.font = "500 11px 'JetBrains Mono', ui-monospace, monospace";
+      ctx.textBaseline = "middle";
+      for (var i = stream.length - 1; i >= 0; i--) {
+        var p = stream[i];
+        p.x += p.speed;
+        var a = p.a;
+        if (p.x > PILL_X - 16) a = Math.min(a, (PILL_X - p.x) / 16); // absorbed at the mouth
+        if (p.x >= PILL_X - 3 || a <= 0) { stream.splice(i, 1); continue; }
+        ctx.fillStyle = "rgba(255, 255, 255, " + a.toFixed(3) + ")";
+        ctx.fillText(p.char, p.x, BASELINE + p.yOff);
+      }
+
+      if (performance.now() > nextChar) {
+        stream.push({
+          x: -12,
+          speed: 2.0 + Math.random() * 1.6,
+          char: STREAM_CHARS[(Math.random() * STREAM_CHARS.length) | 0],
+          yOff: (Math.random() - 0.5) * 7,
+          a: 1,
+        });
+        nextChar = performance.now() + 38 + Math.random() * 55;
+      }
+    }
+
+    function drawWords() {
+      ctx.font = "500 12px 'JetBrains Mono', ui-monospace, monospace";
+      ctx.textBaseline = "middle";
+      for (var i = words.length - 1; i >= 0; i--) {
+        var w = words[i];
+        w.x += w.vx;
+        w.vx *= 0.985;
+        w.y -= 0.08;
+        w.life -= 0.012;
+        var a = Math.min(1, w.life);
+        if (w.x > CW - 50) a = Math.min(a, (CW - w.x) / 50);
+        if (w.life <= 0 || w.x > CW + 30) { words.splice(i, 1); continue; }
+        ctx.fillStyle = "rgba(255, 255, 255, " + Math.max(0, a).toFixed(3) + ")";
+        ctx.fillText(w.text, w.x, w.y);
+      }
+
+      if (performance.now() > nextWord) {
+        words.push({
+          text: TRANSCRIPT[(Math.random() * TRANSCRIPT.length) | 0],
+          x: PILL_X + PILL_W + 6,
+          y: BASELINE,
+          vx: 1.6 + Math.random() * 1.4,
+          life: 1,
+        });
+        nextWord = performance.now() + 1400 + Math.random() * 1200;
+      }
+    }
+
     function pillStep() {
       if (state.targetLevel < 0.0005) state.targetLevel = 0;
       state.currentLevel += (state.targetLevel - state.currentLevel) * LEVEL_SMOOTHING;
@@ -1301,12 +1384,22 @@ section { scroll-margin-top: 96px; }
       var level = state.currentLevel;
       state.phase = (state.phase + WAVE_BASE_PHASE_STEP + WAVE_PHASE_GAIN * level) % TAU;
 
+      threadDash += 1.2;
       drawPill(level);
+      drawStream();
+      drawWords();
     }
 
     if (reducePillMotion) {
-      // static frame at a mid level, like a paused capture
+      // static frame: pill at a mid level, a short static string and one word
       drawPill(0.45);
+      ctx.font = "500 11px 'JetBrains Mono', ui-monospace, monospace";
+      ctx.textBaseline = "middle";
+      ctx.fillStyle = "rgba(255, 255, 255, 0.35)";
+      ctx.fillText("~·|0=1·~|", 30, BASELINE);
+      ctx.font = "500 12px 'JetBrains Mono', ui-monospace, monospace";
+      ctx.fillStyle = "rgba(255, 255, 255, 0.8)";
+      ctx.fillText("hello", PILL_X + PILL_W + 6, BASELINE);
     } else {
       (function loop(now) {
         // simulate speech bursts feeding the same level pipeline as the app
