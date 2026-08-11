@@ -67,7 +67,7 @@ fn log_main_window_move(window: &Window, position: &PhysicalPosition<i32>) {
 fn handle_run_event(app_handle: &tauri::AppHandle, event: RunEvent) {
     match &event {
         RunEvent::ExitRequested { .. } => {
-            let _ = app_handle.save_window_state(StateFlags::SIZE | StateFlags::POSITION);
+            let _ = app_handle.save_window_state(StateFlags::SIZE);
             if let Err(err) = crate::platform::keyboard::stop_key_listener() {
                 log::error!("Failed to stop keyboard listener on exit: {err}");
             }
@@ -139,7 +139,11 @@ pub fn build() -> tauri::Builder<tauri::Wry> {
         .plugin(tauri_plugin_shell::init())
         .plugin(
             tauri_plugin_window_state::Builder::new()
-                .with_state_flags(StateFlags::SIZE | StateFlags::POSITION)
+                // Only persist/restore the window SIZE. The launch position is
+                // owned by `center: true` in tauri.conf.json — restoring a
+                // saved position used to spawn the window wherever it last sat
+                // (and defaulted to the top-left corner on a fresh install).
+                .with_state_flags(StateFlags::SIZE)
                 .build(),
         )
         .on_window_event(|window, event| {
@@ -148,7 +152,7 @@ pub fn build() -> tauri::Builder<tauri::Wry> {
                     api.prevent_close();
                     let _ = window
                         .app_handle()
-                        .save_window_state(StateFlags::SIZE | StateFlags::POSITION);
+                        .save_window_state(StateFlags::SIZE);
                     let _ = window.hide();
                     // On Windows, force the WebView to stay active after hiding the window
                     // so that background JS (global hotkey detection via keys_held events)

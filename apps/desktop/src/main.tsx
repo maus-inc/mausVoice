@@ -22,7 +22,13 @@ import { SnackbarEmitter } from "./components/root/SnackbarEmitter";
 import { getIntlConfig } from "./i18n";
 import { theme } from "./theme";
 import { createEffectiveAuth } from "./utils/auth.utils";
+import { applyDomMutationGuards } from "./utils/dom-guard.utils";
 import { getIsEmulators, getStripePublicKey } from "./utils/env.utils";
+
+// WebView2/Chrome page tooling (e.g. translation) can reparent text nodes that
+// React owns; guard the DOM mutators before the root renders, or one such
+// mutation kills the whole UI on the next navigation.
+applyDomMutationGuards();
 
 const firebaseConfig: FirebaseOptions = {
   apiKey:
