@@ -17,6 +17,10 @@
 <p align="center">
   <img src="docs/home-page.png" alt="mausVoice home" width="720" />
 </p>
+<p align="center">
+  <img src="docs/animated-pill.gif" alt="mausVoice pill in action" width="640" />
+</p>
+
 
 mausVoice is a desktop app that turns your voice into text, anywhere you can type. Speech is transcribed live while you talk, tidied up by an LLM in the style you pick, and dropped straight into the app you're focused on.
 
@@ -52,6 +56,10 @@ mausVoice is a desktop app that turns your voice into text, anywhere you can typ
 
 Download links point at the latest release for your platform (`.exe` on Windows, `.dmg` on macOS, `.AppImage` or `.deb` on Linux).
 
+
+<p align="center">
+  <img src="docs/mausvoice-banner.png" alt="mausVoice" width="840" />
+</p>
 <details>
 <summary>Developers quick start</summary>
 
