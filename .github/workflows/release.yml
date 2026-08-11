@@ -81,6 +81,7 @@ jobs:
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
 
       - name: Validate version input
+        shell: bash
         env:
           RELEASE_VERSION: ${{ inputs.version }}
         run: |
