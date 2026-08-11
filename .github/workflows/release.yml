@@ -152,9 +152,9 @@ jobs:
           ./.github/scripts/install-desktop-linux-deps.sh
 
       - name: Install dependencies
-        # NOSONAR githubactions:S6505 -- --ignore-scripts would skip the esbuild/sharp
-        # postinstall builds this monorepo needs; mirrors build/lint/test workflows.
-        run: pnpm install --frozen-lockfile
+        # --ignore-scripts would skip the esbuild/sharp postinstall builds this
+        # monorepo needs; mirrors build/lint/test workflows.
+        run: pnpm install --frozen-lockfile # NOSONAR
 
       - name: Sync release version
         env:
