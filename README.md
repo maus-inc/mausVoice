@@ -18,7 +18,7 @@
   <img src="docs/home-page.png" alt="mausVoice home" width="720" />
 </p>
 <p align="center">
-  <img src="docs/animated-pill.gif" alt="mausVoice pill in action" width="640" />
+  <img src="docs/animated-pill.gif" alt="mausVoice pill in action" width="200" />
 </p>
 
 
@@ -61,7 +61,7 @@ Download links point at the latest release for your platform (`.exe` on Windows,
   <img src="docs/mausvoice-banner.png" alt="mausVoice" width="840" />
 </p>
 <details>
-<summary>Developers quick start</summary>
+<summary>Developer's quick start</summary>
 
 ## Quick start
 
