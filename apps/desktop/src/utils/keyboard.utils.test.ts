@@ -1,0 +1,110 @@
+import { beforeEach, describe, expect, it, vi } from "vitest";
+import { INITIAL_APP_STATE } from "../state/app.state";
+import { setAppState } from "../store";
+import { OPEN_CHAT_HOTKEY, syncHotkeyCombosToNative } from "./keyboard.utils";
+
+const { invokeMock } = vi.hoisted(() => ({ invokeMock: vi.fn() }));
+
+vi.mock("@tauri-apps/api/core", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("@tauri-apps/api/core")>();
+  return { ...actual, invoke: invokeMock };
+});
+vi.mock("@tauri-apps/plugin-os", () => ({ platform: () => "linux" }));
+
+type Deferred = {
+  promise: Promise<unknown>;
+  resolve: () => void;
+};
+
+const defer = (): Deferred => {
+  let resolvePromise!: () => void;
+  const promise = new Promise<unknown>((resolve) => {
+    resolvePromise = () => resolve(undefined);
+  });
+  return { promise, resolve: resolvePromise };
+};
+
+const setHotkeyCombo = (keys: string[]) => {
+  setAppState({
+    ...INITIAL_APP_STATE,
+    hotkeyStrategy: "listener",
+    hotkeyById: {
+      h1: { id: "h1", actionName: OPEN_CHAT_HOTKEY, keys },
+    },
+  });
+};
+
+type SyncInvokeArgs = [string, { combos: string[][] }];
+
+const syncCalls = (): SyncInvokeArgs[] =>
+  invokeMock.mock.calls.filter(
+    ([cmd]) => cmd === "sync_hotkey_combos",
+  ) as SyncInvokeArgs[];
+
+describe("syncHotkeyCombosToNative", () => {
+  beforeEach(() => {
+    invokeMock.mockReset();
+    invokeMock.mockResolvedValue(undefined);
+    setHotkeyCombo(["ControlLeft", "KeyO"]);
+  });
+
+  it("serializes overlapping calls so an older snapshot can never land last", async () => {
+    const first = defer();
+    const events: string[] = [];
+    let invokeCount = 0;
+    invokeMock.mockImplementation((cmd: string) => {
+      if (cmd !== "sync_hotkey_combos") {
+        return Promise.resolve(undefined);
+      }
+      invokeCount += 1;
+      const current = invokeCount;
+      events.push(`start${current}`);
+      const gate = current === 1 ? first.promise : Promise.resolve(undefined);
+      return gate.then(() => {
+        events.push(`end${current}`);
+      });
+    });
+
+    // First sync starts and parks inside the native invoke.
+    const p1 = syncHotkeyCombosToNative();
+    await Promise.resolve();
+    expect(events).toEqual(["start1"]);
+
+    // Second sync is requested while the state is still v1...
+    const p2 = syncHotkeyCombosToNative();
+    expect(events).toEqual(["start1"]);
+
+    // ...then the state moves on to v2 before the first sync finishes.
+    setHotkeyCombo(["ControlLeft", "KeyP"]);
+    first.resolve();
+    await p1;
+    await p2;
+
+    // Strictly serial: the queued run starts only after the previous one
+    // fully finished, and it applies the state current at execution time —
+    // not the stale snapshot from when it was requested.
+    expect(events).toEqual(["start1", "end1", "start2", "end2"]);
+    const calls = syncCalls();
+    expect(calls).toHaveLength(2);
+    expect(calls[0][1].combos).toContainEqual(["ControlLeft", "KeyO"]);
+    expect(calls[1][1].combos).toContainEqual(["ControlLeft", "KeyP"]);
+  });
+
+  it("keeps the queue alive when a sync's native invoke fails", async () => {
+    const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+    invokeMock.mockImplementation((cmd: string) =>
+      cmd === "sync_hotkey_combos" && syncCalls().length === 0
+        ? Promise.reject(new Error("native bridge down"))
+        : Promise.resolve(undefined),
+    );
+
+    await syncHotkeyCombosToNative();
+    setHotkeyCombo(["ControlLeft", "KeyP"]);
+    await syncHotkeyCombosToNative();
+
+    const calls = syncCalls();
+    expect(calls).toHaveLength(2);
+    expect(calls[1][1].combos).toContainEqual(["ControlLeft", "KeyP"]);
+    errorSpy.mockRestore();
+  });
+});

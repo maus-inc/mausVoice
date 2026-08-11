@@ -112,6 +112,27 @@ pub(crate) fn setup_x11_window(window: &gtk::Window, state: Rc<PillState>) {
         window,
         &state,
     )
+    // Transient hot-plug states can leave the cursor on a monitor whose handle
+    // is momentarily missing from the list, so no probe matches. Falling back
+    // to (0, 0) would throw the pill into the top-left corner of the root
+    // window; park it bottom-centre on the primary monitor instead.
+    .or_else(|| {
+        let primary = display
+            .primary_monitor()
+            .or_else(|| display.monitor(0))?;
+        let g = primary.geometry();
+        let scale = primary.scale_factor() as f64;
+        let centre_x = (g.x() as f64 + g.width() as f64 / 2.0) * scale;
+        let centre_y = (g.y() as f64 + g.height() as f64 / 2.0) * scale;
+        pill_pos_on_monitor(
+            centre_x,
+            centre_y,
+            state.dragging.get(),
+            &display,
+            window,
+            &state,
+        )
+    })
     .unwrap_or((0, 0));
     unsafe {
         XMoveWindow(xdisplay, xwindow, init_pos.0, init_pos.1);
@@ -214,7 +235,12 @@ fn pill_pos_on_monitor(
 ) -> Option<(c_int, c_int)> {
     let n = display.n_monitors();
     for i in 0..n {
-        let monitor = display.monitor(i)?;
+        // A monitor can disappear between the count query and this handle query
+        // mid hot-unplug; skip it and keep scanning the remaining monitors
+        // instead of abandoning the whole placement.
+        let Some(monitor) = display.monitor(i) else {
+            continue;
+        };
         let g = monitor.geometry();
         let scale = monitor.scale_factor() as f64;
         let phys_x = g.x() as f64 * scale;

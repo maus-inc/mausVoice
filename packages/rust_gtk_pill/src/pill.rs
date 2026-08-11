@@ -619,19 +619,32 @@ pub fn run(receiver: Receiver<InMessage>) {
             if quit_monitor.get() {
                 return ControlFlow::Break;
             }
+            let display = match gdk::Display::default() {
+                Some(d) => d,
+                None => return ControlFlow::Continue,
+            };
             // Only re-home the overlay to the pointer's monitor for the FIRST
             // placement (last_geom is still the sentinel) or while the user is
             // actively dragging across screens. Chasing the pointer the rest
             // of the time is what made the pinned pill hop displays whenever
             // the cursor crossed an edge.
+            // The one exception: when the monitor the pill was homed on gets
+            // DISCONNECTED, the stored geometry stops matching any connected
+            // monitor and the layer-shell surface dies with the dead output —
+            // fall through so the pill is re-homed onto a live monitor.
             let placed_once = last_geom.get() != (0, 0, 0, 0);
             if placed_once && !state_monitor.dragging.get() {
-                return ControlFlow::Continue;
+                let stored = last_geom.get();
+                let still_connected = (0..display.n_monitors()).any(|i| {
+                    display.monitor(i).is_some_and(|monitor| {
+                        let g = monitor.geometry();
+                        (g.x(), g.y(), g.width(), g.height()) == stored
+                    })
+                });
+                if still_connected {
+                    return ControlFlow::Continue;
+                }
             }
-            let display = match gdk::Display::default() {
-                Some(d) => d,
-                None => return ControlFlow::Continue,
-            };
             let seat = match display.default_seat() {
                 Some(s) => s,
                 None => return ControlFlow::Continue,
@@ -641,7 +654,13 @@ pub fn run(receiver: Receiver<InMessage>) {
                 None => return ControlFlow::Continue,
             };
             let (_, x, y) = pointer.position();
-            if let Some(monitor) = display.monitor_at_point(x, y) {
+            // If the pointer itself sits on dead/missing output hardware, fall
+            // back to the primary monitor so the pill always has a home.
+            let monitor = display
+                .monitor_at_point(x, y)
+                .or_else(|| display.primary_monitor())
+                .or_else(|| display.monitor(0));
+            if let Some(monitor) = monitor {
                 let g = monitor.geometry();
                 let new_geom = (g.x(), g.y(), g.width(), g.height());
                 if new_geom != last_geom.get() {

@@ -1,6 +1,7 @@
 import { Box, Button, Stack } from "@mui/material";
 import { Suspense, useEffect } from "react";
 import { ErrorBoundary } from "react-error-boundary";
+import { FormattedMessage } from "react-intl";
 import { Outlet, useLocation } from "react-router-dom";
 import { trackPageView } from "../../utils/analytics.utils";
 import { getLogger } from "../../utils/log.utils";
@@ -21,11 +22,13 @@ function ErrorFallback({
   const message = error instanceof Error ? error.message : String(error);
   return (
     <Box sx={{ padding: 2 }}>
-      <h2>Something went wrong:</h2>
+      <h2>
+        <FormattedMessage defaultMessage="Something went wrong:" />
+      </h2>
       <pre style={{ whiteSpace: "pre-wrap" }}>{message}</pre>
       <Stack direction="row" spacing={1} sx={{ mt: 1 }}>
         <Button variant="contained" onClick={resetErrorBoundary}>
-          Try again
+          <FormattedMessage defaultMessage="Try again" />
         </Button>
         <Button
           variant="outlined"
@@ -33,7 +36,7 @@ function ErrorFallback({
             window.location.href = "/";
           }}
         >
-          Reload app
+          <FormattedMessage defaultMessage="Reload app" />
         </Button>
       </Stack>
     </Box>

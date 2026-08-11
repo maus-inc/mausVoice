@@ -41,6 +41,12 @@ pub struct BufferedTranscriptionSessionInput {
 #[derive(Default)]
 struct SessionStore {
     sessions: HashMap<Uuid, BufferedTranscriptionSession>,
+    /// Last time any eviction pass ran. The periodic sweeper owns cleanup;
+    /// session creation only evicts opportunistically, and at most once per
+    /// [`SWEEP_INTERVAL`] so a creation burst doesn't pay for a full map scan
+    /// on every call while still capping how much abandoned state can pile up
+    /// between sweeper ticks.
+    last_eviction: Option<Instant>,
 }
 
 impl SessionStore {
@@ -49,7 +55,18 @@ impl SessionStore {
         let before = self.sessions.len();
         self.sessions
             .retain(|_, session| now.duration_since(session.last_activity) < SESSION_IDLE_TTL);
+        self.last_eviction = Some(now);
         before - self.sessions.len()
+    }
+
+    fn evict_stale_at_most_once_per_interval(&mut self) {
+        let due = self
+            .last_eviction
+            .map(|last| last.elapsed() >= SWEEP_INTERVAL)
+            .unwrap_or(true);
+        if due {
+            self.evict_stale();
+        }
     }
 }
 
@@ -72,9 +89,10 @@ impl TranscriptionSessionRegistry {
         };
 
         let mut store = self.inner.lock().await;
-        // Opportunistic eviction while we already hold the lock, so a burst of
-        // abandoned sessions can't pile up between sweeper ticks.
-        store.evict_stale();
+        // Opportunistic eviction while we already hold the lock — gated to at
+        // most one pass per sweep interval so creation bursts don't scan the
+        // whole registry on every call; the periodic sweeper owns cleanup.
+        store.evict_stale_at_most_once_per_interval();
         store.sessions.insert(session_id, session);
         session_id
     }

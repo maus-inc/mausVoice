@@ -1,4 +1,9 @@
-import { AnimatePresence, motion, useReducedMotion } from "framer-motion";
+import {
+  AnimatePresence,
+  motion,
+  useIsPresent,
+  useReducedMotion,
+} from "framer-motion";
 import type { ReactNode } from "react";
 import { duration, springSnappy } from "../../styles/motion";
 
@@ -52,6 +57,21 @@ export type AnimateSwitchProps = {
  * height honest during the swap instead of overlapping absolutely-positioned
  * copies mid-flight.
  */
+/**
+ * While a panel is animating out it is still mounted and interactive: its
+ * buttons can be clicked a second time, firing duplicate actions behind the
+ * incoming panel. `inert` + `aria-hidden` cut pointer, keyboard, and
+ * screen-reader access to the outgoing copy for the duration of the exit.
+ */
+const PresenceGuard = ({ children }: { children: ReactNode }) => {
+  const isPresent = useIsPresent();
+  return (
+    <div inert={!isPresent} aria-hidden={!isPresent}>
+      {children}
+    </div>
+  );
+};
+
 export const AnimateSwitch = ({ activeKey, children }: AnimateSwitchProps) => {
   const reduceMotion = useReducedMotion();
 
@@ -71,7 +91,7 @@ export const AnimateSwitch = ({ activeKey, children }: AnimateSwitchProps) => {
         exit={{ opacity: 0, y: -8, scale: 0.99 }}
         transition={springSnappy}
       >
-        {children}
+        <PresenceGuard>{children}</PresenceGuard>
       </motion.div>
     </AnimatePresence>
   );

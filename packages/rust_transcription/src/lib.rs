@@ -30,15 +30,17 @@ pub async fn run_server(mode: ComputeMode) -> Result<(), String> {
     let address = config.bind_address();
     let state = AppState::new(config.clone())?;
 
-    // Sessions whose client never finalizes them (crash, drop, network blip)
-    // would otherwise buffer audio in memory forever.
-    state.transcription_sessions.spawn_sweeper();
-
-    let router = api::create_router(state);
-
     let listener = TcpListener::bind(&address)
         .await
         .map_err(|err| format!("failed to bind to {address}: {err}"))?;
+
+    // Sessions whose client never finalizes them (crash, drop, network blip)
+    // would otherwise buffer audio in memory forever. Spawned only after the
+    // bind succeeds: on a failed bind `run_server` returns while the sweeper
+    // task (and the registry it retains) would outlive the startup attempt.
+    state.transcription_sessions.spawn_sweeper();
+
+    let router = api::create_router(state);
     let bound_port = listener
         .local_addr()
         .map_err(|err| format!("failed to read bound socket address: {err}"))?
