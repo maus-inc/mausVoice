@@ -16,7 +16,7 @@
   <img src="docs/home-page.png" alt="mausVoice home" width="720" />
 </p>
 
-mausVoice is a desktop app that turns your voice into text, anywhere you can type. Speech is transcribed live while you talk, tidied up by an LLM in the style you pick, and dropped straight into the app you're focused on. Keys stay on your machine, encrypted. No cloud account, no telemetry.
+mausVoice is a desktop app that turns your voice into text, anywhere you can type. Speech is transcribed live while you talk, tidied up by an LLM in the style you pick, and dropped straight into the app you're focused on.
 
 ## How it works
 
@@ -38,7 +38,7 @@ mausVoice is a desktop app that turns your voice into text, anywhere you can typ
 
 <p align="center">
   <a href="https://github.com/maus-inc/voquill/releases">
-    <img src="https://shieldcn.dev/badge/Windows-Download-black.svg?logo=windows" alt="Download mausVoice for Windows" />
+    <img src="https://shieldcn.dev/badge/Windows-Download-black.svg?logo=data%3Aimage%2Fsvg%2Bxml%3Bbase64%2CPHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCAyNCAyNCI%2BPHBhdGggZmlsbD0iI2ZmZiIgZD0iTTAgMy40NDlMOS43NSAyLjF2OS40NTFIMG0xMC45NDktOS42MDJMMjQgMHYxMS40SDEwLjk0OU0wIDEyLjZoOS43NXY5LjQ1MUwwIDIwLjY5OU0xMC45NDkgMTIuNkgyNFYyNGwtMTIuOS0xLjgwMSIvPjwvc3ZnPg%3D%3D" alt="Download mausVoice for Windows" />
   </a>
   <a href="https://github.com/maus-inc/voquill/releases">
     <img src="https://shieldcn.dev/badge/macOS-Download-black.svg?logo=apple" alt="Download mausVoice for macOS" />
