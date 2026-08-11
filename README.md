@@ -4,7 +4,11 @@
 
 # mausVoice
 
-**Voice typing for your own machine. Dictate into any app and clean it up with AI. No account. No subscription.**
+Grab Your [Free Groq↗](https://console.groq.com/keys) and [Free Deepgram↗](https://console.deepgram.com/) API Keys.
+
+<br>
+
+**Voice typing for your own machine. Dictate into any app and clean it up with AI. With no account or subscription, written in Rust for high performance and minimal CPU and memory usage.**
 
 [![license](https://shieldcn.dev/badge/license-AGPL--3.0-black.svg)](LICENCE)
 [![CI](https://shieldcn.dev/badge/CI-passing-black.svg)](https://github.com/maus-inc/mausVoice/actions)
@@ -18,7 +22,9 @@
   <img src="docs/home-page.png" alt="mausVoice home" width="720" />
 </p>
 
-mausVoice is a desktop app that turns your voice into text, anywhere you can type. Speech is transcribed live while you talk, tidied up by an LLM in the style you pick, and dropped straight into the app you're focused on.
+
+
+**mausVoice** is a desktop app that turns your voice into text, anywhere you can type. Speech is transcribed live while you talk, tidied up by an **LLM** in the style you pick, and dropped straight into the app you're focused on.
 
 ## How it works
 
@@ -26,6 +32,12 @@ mausVoice is a desktop app that turns your voice into text, anywhere you can typ
 2. Audio is captured natively and transcribed as it happens, with streaming Deepgram (`nova-3`), or with fully local Whisper if you'd rather keep every byte on-device.
 3. The transcript is cleaned up with an LLM: filler removed, punctuation and formatting in, your chosen writing style applied.
 4. The finished text lands in whatever app you're focused on.
+<br>
+<br>
+<br>
+<p align="center">
+  <img src="docs/animated-pill.gif" alt="mausVoice pill in action" width="200" />
+</p>
 
 ## Features
 
@@ -52,8 +64,12 @@ mausVoice is a desktop app that turns your voice into text, anywhere you can typ
 
 Download links point at the latest release for your platform (`.exe` on Windows, `.dmg` on macOS, `.AppImage` or `.deb` on Linux).
 
+
+<p align="center">
+  <img src="docs/mausvoice-banner.png" alt="mausVoice" width="840" />
+</p>
 <details>
-<summary>Developers quick start</summary>
+<summary>Developer's quick start</summary>
 
 ## Quick start
 
@@ -101,4 +117,4 @@ pnpm run test          # tests
 
 [AGPLv3](LICENCE). Built on [Tauri](https://tauri.app), with the frontend in React and the audio/overlay layer in Rust.
 
-**Maintainer:** Owie Emmanuel <owieemmanuel34@gmail.com>
+**Maintainer:** [Owie Emmanuel](https://github.com/Owie6789) 
