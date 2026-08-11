@@ -1390,6 +1390,22 @@ section { scroll-margin-top: 96px; }
       ctx.strokeStyle = "rgba(255, 255, 255, " + BORDER_ALPHA + ")";
       ctx.lineWidth = 1;
       ctx.stroke();
+
+      // soften the side edges: dissolve body, waves and border into the
+      // page black at both end caps instead of a hard capsule edge
+      ctx.save();
+      ctx.beginPath();
+      ctx.roundRect(PILL_X, PILL_Y, PILL_W, PILL_H, radius);
+      ctx.clip();
+      var fade = radius * 1.5;
+      var grad = ctx.createLinearGradient(PILL_X, 0, PILL_X + PILL_W, 0);
+      grad.addColorStop(0, "rgba(0, 0, 0, 1)");
+      grad.addColorStop(Math.min(1, fade / PILL_W), "rgba(0, 0, 0, 0)");
+      grad.addColorStop(Math.max(0, 1 - fade / PILL_W), "rgba(0, 0, 0, 0)");
+      grad.addColorStop(1, "rgba(0, 0, 0, 1)");
+      ctx.fillStyle = grad;
+      ctx.fillRect(PILL_X, PILL_Y, PILL_W, PILL_H);
+      ctx.restore();
     }
 
     function pillStep() {
