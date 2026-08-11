@@ -60,7 +60,6 @@ export const useAsyncData = <T>(
   if (loading) {
     return { state: "loading", refresh };
   } else if (error) {
-    console.log("Error:", error);
     return { state: "error", error, refresh };
   }
 
