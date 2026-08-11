@@ -11,10 +11,13 @@ pub struct InputDeviceDescriptor {
     pub caution: bool,
 }
 
+/// Creates the shared recorder used by the Tauri commands.
 pub fn new_recorder() -> Arc<dyn Recorder> {
     Arc::new(cpal_impl::RecordingManager::new())
 }
 
+/// Every input device across all hosts, deduplicated by label, with default
+/// and caution flags.
 pub fn list_input_devices() -> Vec<InputDeviceDescriptor> {
     cpal_impl::list_input_devices()
 }
@@ -209,6 +212,8 @@ mod cpal_impl {
     }
 
     impl RecordingManager {
+        /// A recording manager with no active recording, preferred input, or
+        /// cached device.
         pub fn new() -> Self {
             Self {
                 inner: Arc::new(Mutex::new(None)),
@@ -217,6 +222,8 @@ mod cpal_impl {
             }
         }
 
+        /// Remembers the host and disambiguated label of a device that just
+        /// started recording successfully, so the next start can try it first.
         fn cache_successful_device(&self, host_id: HostId, device_label: String) {
             if let Ok(mut guard) = self.last_successful_device.lock() {
                 *guard = Some(CachedDeviceInfo {
@@ -226,6 +233,11 @@ mod cpal_impl {
             }
         }
 
+        /// Tries to start recording on the previously successful device.
+        ///
+        /// Returns `None` when there is no cached device, it no longer
+        /// resolves, it does not match the preferred device, or the stream
+        /// cannot be started on it.
         fn try_cached_device(
             &self,
             level_emitter: Option<Arc<LevelEmitter>>,
@@ -549,6 +561,7 @@ mod cpal_impl {
             .any(|keyword| lower.contains(keyword))
     }
 
+    /// All available hosts with the cpal default host first.
     fn ordered_host_ids() -> Vec<HostId> {
         let default_host = cpal::default_host();
         let default_id = default_host.id();
@@ -560,6 +573,12 @@ mod cpal_impl {
         ordered
     }
 
+    /// Opens an input stream on a specific device.
+    ///
+    /// # Errors
+    ///
+    /// Fails when the device has no readable default input config, its sample
+    /// format is unsupported, or the stream cannot be built.
     fn try_start_on_device(
         device: &Device,
         device_name: Option<&str>,
@@ -618,6 +637,16 @@ mod cpal_impl {
         })
     }
 
+    /// Starts recording on the best candidate device of one host.
+    ///
+    /// Candidates are scored and tried in preference order (preferred match,
+    /// then priority, then default-first); the returned label identifies the
+    /// device that ended up recording.
+    ///
+    /// # Errors
+    ///
+    /// Returns a recording error when no candidate on the host yields a usable
+    /// input stream.
     fn start_recording_on_host(
         host: &cpal::Host,
         level_emitter: Option<Arc<LevelEmitter>>,
@@ -766,10 +795,14 @@ mod cpal_impl {
 
     const UNKNOWN_DEVICE_LABEL: &str = "<unknown>";
 
+    /// Lowercases and trims a device name so labels compare and match
+    /// case-insensitively.
     fn normalized_name(value: &str) -> String {
         value.trim().to_ascii_lowercase()
     }
 
+    /// The trimmed display name of a device, or `None` when the name cannot be
+    /// read or is empty.
     fn device_display_name(device: &Device) -> Option<String> {
         device
             .name()
@@ -859,6 +892,7 @@ mod cpal_impl {
             .map(|entry| entry.device)
     }
 
+    /// Whether a device label equals the (already normalized) preferred name.
     fn device_matches_preferred(device_label: &str, preferred_lower: &str) -> bool {
         normalized_name(device_label) == preferred_lower
     }
@@ -908,6 +942,9 @@ mod cpal_impl {
         (priority, avoid_reason)
     }
 
+    /// Builds the scored candidate list for one host: every labelled device
+    /// with its priority and avoid-reason, flagging the default and any
+    /// preferred match.
     fn device_candidates_for_host(
         host: &cpal::Host,
         default_output_name: Option<&str>,
@@ -948,6 +985,9 @@ mod cpal_impl {
             .collect()
     }
 
+    /// Lists input devices across every host, merging duplicate labels and
+    /// marking default and cautionary devices. Defaults sort first, then by
+    /// case-insensitive label.
     pub fn list_input_devices() -> Vec<InputDeviceDescriptor> {
         // Keyed by the disambiguated label: the same physical device exposed by
         // several hosts still collapses into one row, while two distinct devices

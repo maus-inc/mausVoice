@@ -4,6 +4,8 @@ use crate::ipc::{Phase, PillPermission, PillStreaming};
 use crate::constants::*;
 use crate::state::{ClickAction, ClickRegion, PillState, RocketPhase};
 
+/// Paints the whole pill window: clears, scales for the UI scale factor, then
+/// draws the pill, panel, transcript, and overlays in z-order.
 pub(crate) fn draw_all(ctx: &Ctx, state: &PillState, view_w: f64, view_h: f64) {
     ctx.paint_clear(view_w, view_h);
 
@@ -104,6 +106,8 @@ pub(crate) fn pill_radius(pill_w: f64, pill_h: f64) -> f64 {
     (pill_w.min(pill_h) * 0.5).min(EXPANDED_RADIUS)
 }
 
+/// Renders the pill body and its current content (waveform, paused bar,
+/// loading, transcript, controls) and registers the pill's click region.
 fn draw_pill(ctx: &Ctx, state: &PillState, ww: f64, wh: f64) {
     let expand_t = state.expand_t.get();
     let (rx, ry, pill_w, pill_h) = pill_position(state, ww, wh);
@@ -1130,6 +1134,8 @@ fn draw_panel_button(
     ctx.draw_symbol(sym, cx, cy, 11.0);
 }
 
+/// Draws the keyboard/voice toggle button next to the pill while the
+/// assistant's keyboard button spring is active.
 fn draw_keyboard_button(ctx: &Ctx, state: &PillState, ww: f64, wh: f64) {
     let kb_t = state.kb_button_t.get();
     if kb_t < 0.01 {
@@ -1173,6 +1179,8 @@ fn draw_keyboard_button(ctx: &Ctx, state: &PillState, ww: f64, wh: f64) {
     }
 }
 
+/// Draws the dimmed pause bar that replaces the waveform while paused,
+/// crossfading in with `fade`.
 fn draw_paused(ctx: &Ctx, rx: f64, ry: f64, pill_w: f64, pill_h: f64, expand_t: f64, fade: f64) {
     ctx.save();
     let radius = pill_radius(pill_w, pill_h);
@@ -1296,6 +1304,8 @@ fn wrap_text(ctx: &Ctx, text: &str, max_width: f64) -> Vec<String> {
 
 // ── Long-press ring indicator ─────────────────────────────────────
 
+/// Draws the long-press progress ring around the pill, kept at full
+/// completion while dragging so the outline reads as a drag affordance.
 fn draw_long_press_ring(ctx: &Ctx, state: &PillState, ww: f64, wh: f64) {
     // While actively dragging, keep the full outline visible (progress = 1.0).
     let progress = if state.dragging.get() {

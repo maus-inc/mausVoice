@@ -39,6 +39,9 @@ thread_local! {
     static EDIT_BG_BRUSH: Cell<HBRUSH> = const { Cell::new(HBRUSH(std::ptr::null_mut())) };
 }
 
+/// Runs the Windows pill: registers the window class, creates the layered
+/// pill window, and drives the message/timer loop until a quit message
+/// arrives.
 pub fn run(receiver: Receiver<InMessage>) {
     let t0 = Instant::now();
     unsafe {
@@ -423,6 +426,8 @@ fn on_cursor_tick(hwnd: HWND) {
     });
 }
 
+/// Applies one IPC message to the pill state and marks the surface dirty so
+/// the next timer tick repaints.
 fn process_message(msg: InMessage, state: &PillState, _hwnd: HWND) {
     state.dirty.set(true);
     match msg {
@@ -520,6 +525,10 @@ fn process_message(msg: InMessage, state: &PillState, _hwnd: HWND) {
     }
 }
 
+/// Advances all pill animations by `dt` seconds: audio levels, springs
+/// (expand, tooltip, panel, keyboard button, window size, pause crossfade,
+/// cancel controls, drag inflate), and the fireworks/flame/flash/transcript
+/// sub-tickers.
 fn tick(state: &PillState, dt: f64) {
     let phase = state.phase.get();
     let is_active = phase != Phase::Idle;
@@ -863,6 +872,8 @@ fn update_typing_focus(_hwnd: HWND, state: &PillState) {
     }
 }
 
+/// Recomputes whether the cursor is over the pill, tooltip, or assistant
+/// panel and syncs the hovered state (and the hover IPC message) on change.
 fn check_hover(hwnd: HWND, state: &PillState) {
     let mut cursor = POINT::default();
     unsafe { let _ = GetCursorPos(&mut cursor); }

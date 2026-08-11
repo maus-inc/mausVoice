@@ -20,6 +20,8 @@ pub(crate) enum Backend {
     PlainWayland,
 }
 
+/// Runs the GTK pill: picks the display backend, creates the frameless
+/// window, and drives the message/event loop until a quit message arrives.
 pub fn run(receiver: Receiver<InMessage>) {
     let backend = if gtk_layer_shell::is_supported() {
         Backend::LayerShell

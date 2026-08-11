@@ -60,6 +60,10 @@ fn log_main_window_move(window: &Window, position: &PhysicalPosition<i32>) {
     }
 }
 
+/// Handles application lifecycle events.
+///
+/// On exit the window size/position are persisted and the global keyboard
+/// listener is stopped; on macOS `Reopen` the main window is surfaced again.
 fn handle_run_event(app_handle: &tauri::AppHandle, event: RunEvent) {
     match &event {
         RunEvent::ExitRequested { .. } => {
@@ -78,6 +82,8 @@ fn handle_run_event(app_handle: &tauri::AppHandle, event: RunEvent) {
     }
 }
 
+/// Builds the Tauri application: plugins (logging, single instance, autostart,
+/// updater, window state), the invoke handler, and window event wiring.
 pub fn build() -> tauri::Builder<tauri::Wry> {
     let updater_builder = tauri_plugin_updater::Builder::new();
 

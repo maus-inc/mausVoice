@@ -28,6 +28,7 @@ import { HomeSideEffects } from "./HomeSideEffects";
 import { OutOfWordsCard } from "./OutOfWordsCard";
 import { TrialExtensionCard } from "./TrialExtensionCard";
 
+/** A single home-dashboard statistic: optional icon, value, and label. */
 function StatCard({
   value,
   label,
@@ -64,6 +65,10 @@ const headerTitle = (
   </Typography>
 );
 
+/**
+ * Home dashboard: user stats, upgrade/trial prompts, getting-started guide,
+ * and recent transcriptions, with the side effects that keep them fresh.
+ */
 export default function HomePage() {
   const user = useAppStore(getMyUser);
   const userName = useAppStore(getMyUserName);

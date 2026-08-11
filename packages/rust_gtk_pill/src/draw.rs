@@ -62,6 +62,11 @@ pub(crate) fn draw_all(cr: &cairo::Context, state: &PillState) {
     cr.restore().ok();
 }
 
+/// Computes the pill's animated position and size within the window.
+///
+/// `expand_t` drives the collapsed↔expanded size, `inflate_t` adds the
+/// drag-inflation overshoot, and non-X11 backends translate the draw position
+/// by the drag offset (X11 moves the real toplevel instead).
 pub(crate) fn pill_position(state: &PillState, ww: f64, wh: f64) -> (f64, f64, f64, f64) {
     let expand_t = state.expand_t.get();
     let inflate = state.inflate_t.get();
@@ -102,6 +107,8 @@ pub(crate) fn pill_radius(pill_w: f64, pill_h: f64) -> f64 {
     (pill_w.min(pill_h) * 0.5).min(EXPANDED_RADIUS)
 }
 
+/// Renders the pill body and its current content (waveform, paused bar,
+/// loading, transcript, controls) and registers the pill's click region.
 fn draw_pill(cr: &cairo::Context, state: &PillState, ww: f64, wh: f64) {
     let expand_t = state.expand_t.get();
     let (rx, ry, pill_w, pill_h) = pill_position(state, ww, wh);
@@ -155,6 +162,8 @@ fn draw_pill(cr: &cairo::Context, state: &PillState, ww: f64, wh: f64) {
     });
 }
 
+/// Draws the long-press progress ring around the pill, kept at full
+/// completion while dragging so the outline reads as a drag affordance.
 fn draw_long_press_ring(
     cr: &cairo::Context, rx: f64, ry: f64, pill_w: f64, pill_h: f64, state: &PillState,
 ) {
@@ -233,6 +242,11 @@ fn draw_cancel_flash(
     cr.restore().ok();
 }
 
+/// Draws the animated waveform layers clipped to the pill shape.
+///
+/// Amplitude follows the current audio level; `fade` flattens the wave towards
+/// the baseline as the paused bar crossfades in, and `expand_t` gates
+/// visibility while the pill expands.
 #[allow(clippy::too_many_arguments)]
 fn draw_waveform(
     cr: &cairo::Context, rx: f64, ry: f64, pill_w: f64, pill_h: f64,
@@ -345,6 +359,8 @@ fn draw_loading(
     draw_edge_gradient(cr, rx, ry, pill_w, pill_h, radius, expand_t);
 }
 
+/// Draws the dimmed, centered pause bar (the paused counterpart to the
+/// waveform), crossfading in with `fade`.
 #[allow(clippy::too_many_arguments)]
 fn draw_paused_bar(
     cr: &cairo::Context, rx: f64, ry: f64, pill_w: f64, pill_h: f64,
@@ -1473,12 +1489,15 @@ fn rounded_rect(cr: &cairo::Context, x: f64, y: f64, w: f64, h: f64, r: f64) {
     cr.close_path();
 }
 
+/// Linear interpolation helper.
 fn lerp(a: f64, b: f64, t: f64) -> f64 {
     a + (b - a) * t
 }
 
 // ── Flash blue border ────────────────────────────────────────────
 
+/// Draws the fading blue border + glow after a successful action flash,
+/// driven by `flash_blue_elapsed`.
 fn draw_flash_blue(cr: &cairo::Context, state: &PillState, ww: f64, wh: f64) {
     let elapsed = state.flash_blue_elapsed.get();
     if elapsed <= 0.0 || elapsed >= FLASH_BLUE_DURATION {

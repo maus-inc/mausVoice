@@ -319,10 +319,13 @@ extern "C" fn text_field_action(_this: &Object, _sel: Sel, sender: id) {
     });
 }
 
+/// NSTimer callback: triggers one animation/interaction tick.
 extern "C" fn tick_callback(_this: &Object, _sel: Sel, _timer: id) {
     perform_tick();
 }
 
+/// Runs one frame of the pill loop: processes queued IPC messages, advances
+/// the springs/animations, and repaints when the state changed.
 fn perform_tick() {
     APP_CTX.with(|cell| {
         let borrow = cell.borrow();
@@ -529,6 +532,10 @@ fn update_hover(view: id, ctx: &AppContext) {
 
 // ── Animation tick ────────────────────────────────────────────────
 
+/// Advances all pill animations by `dt` seconds: audio levels, springs
+/// (expand, tooltip, panel, keyboard button, window size, pause crossfade,
+/// cancel controls, drag inflate), and the fireworks/flame/flash/transcript
+/// sub-tickers.
 fn tick(state: &PillState, window: id, dt: f64) {
     let phase = state.phase.get();
     let is_active = phase != Phase::Idle;

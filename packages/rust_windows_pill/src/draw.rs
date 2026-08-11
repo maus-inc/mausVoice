@@ -3,12 +3,13 @@ use crate::gfx::Gfx;
 use crate::ipc::{Phase, PillPermission, PillStreaming};
 use crate::state::{ClickAction, ClickRegion, PillState, RocketPhase};
 
+/// Paints the whole pill window: begins the Direct2D frame, clears, then
+/// draws the pill, panel, transcript, and overlays in z-order.
 pub(crate) fn draw_all(gfx: &mut Gfx, state: &PillState) {
     gfx.begin_frame();
     gfx.clear();
 
     state.click_regions.borrow_mut().clear();
-
     let ww = state.draw_width.get();
     let wh = state.draw_height.get();
     let (ox, oy) = state.content_offset();
@@ -101,6 +102,8 @@ pub(crate) fn pill_radius(pill_w: f64, pill_h: f64) -> f64 {
     (pill_w.min(pill_h) * 0.5).min(EXPANDED_RADIUS)
 }
 
+/// Renders the pill body and its current content (waveform, paused bar,
+/// loading, transcript, controls) and registers the pill's click region.
 fn draw_pill(gfx: &mut Gfx, state: &PillState, ww: f64, wh: f64) {
     let expand_t = state.expand_t.get();
     let (rx, ry, pill_w, pill_h) = pill_position(state, ww, wh);
@@ -961,6 +964,8 @@ fn draw_panel_button(gfx: &Gfx, x: f64, y: f64, size: f64, alpha: f64, icon: But
     }
 }
 
+/// Draws the keyboard/voice toggle button next to the pill while the
+/// assistant's keyboard button spring is active.
 fn draw_keyboard_button(gfx: &mut Gfx, state: &PillState, ww: f64, wh: f64) {
     let kb_t = state.kb_button_t.get();
     if kb_t < 0.01 { return; }
@@ -1019,6 +1024,8 @@ fn draw_keyboard_button(gfx: &mut Gfx, state: &PillState, ww: f64, wh: f64) {
     }
 }
 
+/// Draws the dimmed pause bar that replaces the waveform while paused,
+/// crossfading in with `fade`.
 fn draw_paused(
     gfx: &mut Gfx, rx: f64, ry: f64, pill_w: f64, pill_h: f64, expand_t: f64, fade: f64,
 ) {
@@ -1163,6 +1170,8 @@ fn lerp(a: f64, b: f64, t: f64) -> f64 {
 
 // ── Long-press outline progress indicator ──────────────────────────
 
+/// Draws the long-press progress ring around the pill, kept at full
+/// completion while dragging so the outline reads as a drag affordance.
 fn draw_long_press_ring(gfx: &Gfx, state: &PillState, ww: f64, wh: f64) {
     // While actively dragging, keep the full outline visible (progress = 1.0).
     let progress = if state.dragging.get() {

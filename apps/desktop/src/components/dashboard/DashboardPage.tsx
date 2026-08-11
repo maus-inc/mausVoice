@@ -10,6 +10,11 @@ import { FeatureReleaseDialog } from "./FeatureReleaseDialog";
 import { PermissionsDialog } from "./PermissionsDialog";
 import { TrialEndedDialog } from "./TrialEndedDialog";
 
+/**
+ * Authenticated app shell: sidebar navigation, routed content area, and the
+ * global dialogs (feature release, permissions, trial ended, transcription
+ * details). Also reports the app version into the layout.
+ */
 export default function DashboardPage() {
   const data = useAsyncData(getVersion, []);
   const location = useLocation();

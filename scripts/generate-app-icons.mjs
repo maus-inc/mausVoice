@@ -202,6 +202,7 @@ const ICNS_SIZES = [...new Set(ICNS_FRAMES.map((frame) => frame.size))];
 
 const PNG_MAGIC = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
 
+/** Runs ImageMagick with the given args; returns its stdout. */
 function convert(args) {
   return execFileSync(convertBin, args, { stdio: ["ignore", "pipe", "pipe"] });
 }
@@ -409,7 +410,7 @@ function checkIcoFrameAlpha(ico, frames) {
   return problems;
 }
 
-/** Validate one directory's icon.ico. */
+/** Validate one directory's icon.ico (frame sizes, bpp, corner alpha). */
 function checkIco(dir) {
   const ico = join(dir, "icon.ico");
   if (!existsSync(ico)) {
@@ -464,6 +465,7 @@ function checkPng(name) {
   return isCornerOpaque(cornerAlpha(path)) ? [`${path}: opaque corner`] : [];
 }
 
+/** Runs every validation pass; returns the list of problems (empty = ok). */
 function verify() {
   return [
     ...[desktopIcons, installerIcons].flatMap(checkIco),
@@ -472,6 +474,10 @@ function verify() {
   ];
 }
 
+/**
+ * Regenerates every packaged icon from the branding master, or verifies the
+ * existing assets when run with `--check` (CI-friendly).
+ */
 function main() {
   assertImageMagick();
 

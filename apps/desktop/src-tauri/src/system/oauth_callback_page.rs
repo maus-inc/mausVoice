@@ -1,3 +1,7 @@
+/// The static HTML page shown after a successful OAuth sign-in.
+///
+/// Served in the auth callback window; it confirms the sign-in and tells the
+/// user they can close the window and return to the app.
 pub fn success_html() -> &'static str {
     r##"<!DOCTYPE html>
 <html lang="en">
