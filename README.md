@@ -1,66 +1,76 @@
 <div align="center">
 
-<img src="docs/graphic.png" alt="mausVoice Logo" width="400" />
+<img src="branding/mausvoice-logo-256.png" alt="mausVoice logo" width="88" />
 
-# mausVoice — Personal Local Build
+# mausVoice
 
-### Voice typing for your own machine. Dictate into any app, clean it up with AI, no account and no subscription.
+**Voice typing for your own machine. Dictate into any app and clean it up with AI. No account. No subscription.**
+
+[![license](https://shieldcn.dev/badge/license-AGPL--3.0-blue.svg)](LICENCE)
+[![CI](https://shieldcn.dev/github/ci/maus-inc/voquill.svg)](https://github.com/maus-inc/voquill/actions)
+[![platform](https://shieldcn.dev/badge/platform-Windows%20%7C%20macOS%20%7C%20Linux-blue.svg)](https://github.com/maus-inc/voquill/releases)
 
 </div>
 
----
+<p align="center">
+  <img src="docs/home-page.png" alt="mausVoice home" width="720" />
+</p>
 
-**mausVoice** (Maus + Voice) is a personal, non-commercial fork of [Voquill](https://github.com/voquill/voquill), an open-source AI voice-typing desktop app. It has been trimmed and rewired to run entirely for personal use with **your own Deepgram and Groq API keys** — no Voquill account, no paywall, and no "Pro" gating.
+mausVoice is a desktop app that turns your voice into text, anywhere you can type. Speech is transcribed live while you talk, tidied up by an LLM in the style you pick, and dropped straight into the app you're focused on. Keys stay on your machine, encrypted. No cloud account, no telemetry.
 
-> Looking for the upstream project, its hosted plans, mobile app, or marketing copy? See [`README.original.md`](README.original.md) and [voquill.com](https://voquill.com).
+## How it works
 
-## What this fork changes
+1. Press your hotkey and speak. A small overlay shows you're recording.
+2. Audio is captured natively and transcribed as it happens, with streaming Deepgram (`nova-3`), or with fully local Whisper if you'd rather keep every byte on-device.
+3. The transcript is cleaned up with an LLM: filler removed, punctuation and formatting in, your chosen writing style applied.
+4. The finished text lands in whatever app you're focused on.
 
-- **No paywall / no Pro account gating.** All capabilities are available locally. The cloud account, billing, and trial flows are bypassed.
-- **Personal-use mode by default.** The app signs you in as a local user (no Firebase account) and configures sensible defaults automatically.
-- **Bring-your-own keys.** Out of the box, transcription uses **Deepgram streaming** (`nova-3`) over your Deepgram key — audio is transcribed live while you speak, so the transcript is ready almost as soon as you stop — and post-processing uses Groq `openai/gpt-oss-20b` over your Groq key. You enter both keys on first run (or in Settings); they are stored encrypted (XChaCha20-Poly1305) on your machine and are never baked into the build.
-- **Fully-local option still available.** You can also run Whisper locally (CPU or GPU) instead of the cloud APIs if you prefer zero network calls for transcription.
-- **Removed what I don't use.** The Flutter mobile app (`mobile/`) and the `flutter_video_looper` package have been removed to keep the tree focused on the desktop app. Linux desktop support (the GTK pill and Linux CI builds) is retained.
+## Features
 
-Everything else — the dictation overlay, hotkeys, AI text cleanup, personal dictionary, writing styles, and the voice assistant — works as in upstream.
+| | |
+| --- | --- |
+| **Live transcription** | Streaming `nova-3` transcript appears while you're still speaking. It's ready before you stop talking. |
+| **Fully local option** | Run Whisper locally (CPU or GPU) with zero network calls for transcription. |
+| **AI cleanup** | Filler words out, structure in. Choose a writing style and the result reads like you wrote it. |
+| **Your keys, encrypted** | Deepgram and Groq keys live on your machine, encrypted with XChaCha20-Poly1305. Rotate them any time in Settings without rebuilding. |
+| **Personal dictionary** | Add your names, jargon, and shorthand once and mausVoice remembers them. |
+| **Works in every app** | The overlay captures audio globally and pastes the result into whatever has focus. |
 
-## How it works (short version)
+## Quick start
 
-1. You press your hotkey and speak; an overlay "pill" shows recording state.
-2. Audio is captured natively (Rust) and sent to your chosen transcription engine (local Whisper, or Deepgram streaming transcription with your key).
-3. The transcript is optionally cleaned up by an LLM (filler removal, formatting) using your selected writing style.
-4. The result is pasted into whatever app you're focused on.
-
-For the full picture — the monorepo layout, the "Rust is the API, TypeScript is the Brain" design, the repo/action/command data flow, and every feature subsystem — read **[`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md)**.
-
-## Requirements
-
-- macOS, Windows, or Linux
-- Node.js 18+ and pnpm 10
-- Rust 1.77+ (see [Tauri prerequisites](https://v2.tauri.app/start/prerequisites/))
-- For the default cloud path: a [Deepgram API key](https://console.deepgram.com/) (streaming transcription) and a [Groq API key](https://console.groq.com/keys) (AI cleanup). For the fully-local path: a downloaded Whisper model instead.
-
-## Setup
+You'll need macOS, Windows, or Linux, plus Node 18+, pnpm 10, and a Rust toolchain (see the [Tauri prerequisites](https://v2.tauri.app/start/prerequisites/)).
 
 ```bash
 pnpm install
 ```
 
-There are no build-time keys. On first launch, the onboarding **"Connect your API keys"** step asks for your Deepgram (transcription) and Groq (AI cleanup) keys. Both are stored encrypted locally and can be changed or rotated any time in **Settings** — no rebuild required.
-
-## Run
-
-From `apps/desktop` (platform-specific commands are required for native features):
+Then run the desktop app with the platform-specific command:
 
 ```bash
 cd apps/desktop
-pnpm dev:mac          # macOS
-pnpm dev:windows      # Windows
+pnpm dev:mac        # macOS
+pnpm dev:windows    # Windows
 ```
 
-> Do not use `pnpm dev` directly — use the platform-specific command above.
+> `pnpm dev` alone won't work. Native features need the platform-specific command above.
 
-## Build & quality (run from the repo root)
+On first launch, the onboarding asks for your transcription and cleanup keys. That's it. There are no build-time secrets, and the same binary works for the local Whisper path.
+
+<details>
+<summary>API keys & configuration</summary>
+
+Two optional keys, both entered in Settings:
+
+- **Deepgram** (streaming transcription) — [get one here](https://console.deepgram.com/). If you skip it, mausVoice falls back to local Whisper.
+- **Groq** (LLM text cleanup) — [get one here](https://console.groq.com/keys).
+
+Keys are stored encrypted on your machine and can be changed or rotated any time without rebuilding. For a fully offline setup, leave both empty and point at a downloaded Whisper model.
+
+</details>
+
+## Build & quality
+
+From the repo root:
 
 ```bash
 pnpm run build         # build all workspaces (turborepo)
@@ -69,8 +79,8 @@ pnpm run check-types   # TypeScript type checking
 pnpm run test          # tests
 ```
 
-## License & attribution
+## License
 
-This fork inherits mausVoice's **AGPLv3** license. See [`LICENCE`](LICENCE) for the full terms and third-party attributions. All credit for the original application goes to the Voquill authors and contributors. This build is intended strictly for personal, non-commercial use.
+[AGPLv3](LICENCE). Built on [Tauri](https://tauri.app), with the frontend in React and the audio/overlay layer in Rust.
 
-**Maintainer:** Owie Emmanuel &lt;owieemmanuel34@gmail.com&gt;
+**Maintainer:** Owie Emmanuel <owieemmanuel34@gmail.com>
