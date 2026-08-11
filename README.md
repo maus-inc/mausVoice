@@ -36,6 +36,23 @@ mausVoice is a desktop app that turns your voice into text, anywhere you can typ
 | **Personal dictionary** | Add your names, jargon, and shorthand once and mausVoice remembers them. |
 | **Works in every app** | The overlay captures audio globally and pastes the result into whatever has focus. |
 
+<p align="center">
+  <a href="https://github.com/maus-inc/voquill/releases">
+    <img src="https://shieldcn.dev/badge/Windows-Download-black.svg?logo=windows" alt="Download mausVoice for Windows" />
+  </a>
+  <a href="https://github.com/maus-inc/voquill/releases">
+    <img src="https://shieldcn.dev/badge/macOS-Download-black.svg?logo=apple" alt="Download mausVoice for macOS" />
+  </a>
+  <a href="https://github.com/maus-inc/voquill/releases">
+    <img src="https://shieldcn.dev/badge/Linux-Download-black.svg?logo=linux" alt="Download mausVoice for Linux" />
+  </a>
+</p>
+
+Download links point at the latest release for your platform (`.exe` on Windows, `.dmg` on macOS, `.AppImage` or `.deb` on Linux).
+
+<details>
+<summary>Developers quick start</summary>
+
 ## Quick start
 
 You'll need macOS, Windows, or Linux, plus Node 18+, pnpm 10, and a Rust toolchain (see the [Tauri prerequisites](https://v2.tauri.app/start/prerequisites/)).
@@ -56,8 +73,7 @@ pnpm dev:windows    # Windows
 
 On first launch, the onboarding asks for your transcription and cleanup keys. That's it. There are no build-time secrets, and the same binary works for the local Whisper path.
 
-<details>
-<summary>API keys & configuration</summary>
+### API keys & configuration
 
 Two optional keys, both entered in Settings:
 
@@ -65,8 +81,6 @@ Two optional keys, both entered in Settings:
 - **Groq** (LLM text cleanup) — [get one here](https://console.groq.com/keys).
 
 Keys are stored encrypted on your machine and can be changed or rotated any time without rebuilding. For a fully offline setup, leave both empty and point at a downloaded Whisper model.
-
-</details>
 
 ## Build & quality
 
@@ -78,6 +92,8 @@ pnpm run lint          # lint
 pnpm run check-types   # TypeScript type checking
 pnpm run test          # tests
 ```
+
+</details>
 
 ## License
 
