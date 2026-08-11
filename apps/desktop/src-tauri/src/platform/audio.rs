@@ -209,6 +209,13 @@ mod cpal_impl {
     }
 
     impl RecordingManager {
+        /// Creates a recording manager with no active recording, preferred input, or cached device.
+        ///
+        /// # Examples
+        ///
+        /// ```
+        /// let _manager = RecordingManager::new();
+        /// ```
         pub fn new() -> Self {
             Self {
                 inner: Arc::new(Mutex::new(None)),
@@ -217,6 +224,13 @@ mod cpal_impl {
             }
         }
 
+        /// Stores the host and disambiguated device label used by a successful recording.
+        ///
+        /// # Examples
+        ///
+        /// ```
+        /// manager.cache_successful_device(host_id, "Microphone (2)".to_owned());
+        /// ```
         fn cache_successful_device(&self, host_id: HostId, device_label: String) {
             if let Ok(mut guard) = self.last_successful_device.lock() {
                 *guard = Some(CachedDeviceInfo {
@@ -226,6 +240,20 @@ mod cpal_impl {
             }
         }
 
+        /// Attempts to start a recording using the previously successful input device.
+        ///
+        /// Returns `None` when no cached device exists, the cached device cannot be
+        /// resolved, it does not match the preferred device, or starting it fails.
+        ///
+        //// # Examples
+        ///
+        /// ```ignore
+        /// let recording = manager.try_cached_device(None, None, None);
+        /// assert!(recording.is_some());
+        /// ```
+        ///
+        /// [`Some`] contains the active recording, its host identifier, and its
+        /// disambiguated device label.
         fn try_cached_device(
             &self,
             level_emitter: Option<Arc<LevelEmitter>>,
@@ -562,10 +590,34 @@ mod cpal_impl {
         ordered
     }
 
+    /// Assigns the default priority rank to a host.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// assert_eq!(host_rank(HostId::Alsa), 0);
+    /// ```
     fn host_rank(_id: HostId) -> u8 {
         0
     }
 
+    /// Starts recording from the specified input device.
+    ///
+    /// # Examples
+    ///
+    /// ```ignore
+    /// let device = cpal::default_host()
+    ///     .default_input_device()
+    ///     .expect("an input device is available");
+    /// let recording = try_start_on_device(&device, None, None, None)?;
+    /// # Ok::<(), RecordingError>(())
+    /// ```
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the device configuration cannot be read, its sample
+    /// format is unsupported, the input stream cannot be built, or playback cannot
+    /// be started.
     fn try_start_on_device(
         device: &Device,
         device_name: Option<&str>,
@@ -624,6 +676,34 @@ mod cpal_impl {
         })
     }
 
+    /// Starts a recording using a suitable input device on the specified host.
+    ///
+    /// Preferred devices are attempted first when configured, and the returned label
+    /// identifies the device selected for recording.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// // A host and optional emitters are provided by the recording setup.
+    /// let result = start_recording_on_host(&host, None, None, None, None);
+    /// assert!(result.is_ok());
+    /// ```
+    ///
+    /// # Parameters
+    ///
+    /// * `preferred_label` identifies the preferred device for diagnostic fallback
+    ///   reporting.
+    /// * `preferred_normalized` is the normalized preferred device label used for
+    ///   candidate matching.
+    ///
+    /// # Returns
+    ///
+    /// The active recording and its disambiguated device label on success.
+    ///
+    /// # Errors
+    ///
+    /// Returns a recording error when no candidate device can provide a usable
+    /// input stream.
     fn start_recording_on_host(
         host: &cpal::Host,
         level_emitter: Option<Arc<LevelEmitter>>,
@@ -772,10 +852,33 @@ mod cpal_impl {
 
     const UNKNOWN_DEVICE_LABEL: &str = "<unknown>";
 
+    /// Normalizes a name by trimming surrounding whitespace and converting it to lowercase.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// assert_eq!(normalized_name("  Microphone  "), "microphone");
+    /// ```
     fn normalized_name(value: &str) -> String {
         value.trim().to_ascii_lowercase()
     }
 
+    /// Retrieves a trimmed, non-empty display name for an input device.
+    ///
+    /// # Examples
+    ///
+    /// ```ignore
+    /// let host = cpal::default_host();
+    /// if let Some(device) = host.input_devices()?.next() {
+    ///     if let Some(name) = device_display_name(&device) {
+    ///         println!("{name}");
+    ///     }
+    /// }
+    /// # Ok::<(), cpal::DevicesError>(())
+    /// ```
+    ///
+    /// Returns `None` when the device name cannot be retrieved or is empty after trimming.
+    fn device_display_name(device: &Device) -> Option<String>
     fn device_display_name(device: &Device) -> Option<String> {
         device
             .name()
@@ -784,9 +887,25 @@ mod cpal_impl {
             .filter(|value| !value.is_empty())
     }
 
-    /// Suffixes the second and later devices that report the same name, so two
-    /// distinct microphones never collapse into one entry. The first device keeps
-    /// the bare name, which is what preferences saved before disambiguation hold.
+    /// Creates a stable label for a device occurrence, adding an ordinal suffix to duplicates.
+    
+    ///
+    
+    /// # Examples
+    
+    ///
+    
+    /// ```
+    
+    /// assert_eq!(disambiguated_label("Microphone", 0), "Microphone");
+    
+    /// assert_eq!(disambiguated_label("Microphone", 1), "Microphone (2)");
+    
+    /// ```
+    
+    ///
+    
+    /// `occurrence` is zero-based; the first occurrence retains the original name.
     fn disambiguated_label(name: &str, occurrence: usize) -> String {
         if occurrence == 0 {
             name.to_string()
@@ -795,9 +914,18 @@ mod cpal_impl {
         }
     }
 
-    /// Enumerates every input device a host exposes, in host order, flagging the
-    /// default. cpal has no stable device identity, so devices are kept apart by
-    /// enumeration order instead of being merged by name.
+    /// Enumerates a host's input devices, preserving duplicate names with disambiguated labels and marking the default device.
+    ///
+    /// If enumeration omits the default device or yields no devices, the default device is included when available.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// let host = cpal::default_host();
+    /// let devices = labelled_devices_for_host(&host);
+    ///
+    /// assert!(devices.iter().all(|device| !device.label.is_empty()));
+    /// ```
     fn labelled_devices_for_host(host: &cpal::Host) -> Vec<LabelledDevice> {
         let default_device = host.default_input_device();
         let default_normalized = default_device
@@ -852,6 +980,21 @@ mod cpal_impl {
             .collect()
     }
 
+    /// Finds an input device on a host by its normalized, disambiguated label.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// let host = cpal::default_host();
+    /// let device = find_device_by_label(&host, "Built-in Microphone");
+    /// assert!(device.is_some() || device.is_none());
+    /// ```
+    ///
+    /// `target_label` is matched case-insensitively after normalization.
+    ///
+    /// # Returns
+    ///
+    /// The matching device, or `None` if no device has the specified label.
     fn find_device_by_label(host: &cpal::Host, target_label: &str) -> Option<Device> {
         let target = normalized_name(target_label);
         labelled_devices_for_host(host)
@@ -860,11 +1003,51 @@ mod cpal_impl {
             .map(|entry| entry.device)
     }
 
+    /// Determines whether a device label matches a normalized preferred name.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// assert!(device_matches_preferred("Built-in Microphone", "built-in microphone"));
+    /// assert!(!device_matches_preferred("External Microphone", "built-in microphone"));
+    /// ```
+    ///
+    /// # Arguments
+    ///
+    /// * `device_label` - The device label to compare.
+    /// * `preferred_lower` - The normalized preferred device name.
+    ///
+    /// # Returns
+    ///
+    /// `true` if the normalized device label matches the preferred name, `false` otherwise.
     fn device_matches_preferred(device_label: &str, preferred_lower: &str) -> bool {
         normalized_name(device_label) == preferred_lower
     }
 
-    /// Scoring for the device the host reports as its default input.
+    /// Assigns a selection priority to the host's default input device.
+    ///
+    /// Preferred devices receive the highest priority. Low-quality default devices receive
+    /// a lower priority unless they match the preferred device, and the function reports
+    /// the reason for avoiding them when applicable.
+    ///
+    /// # Examples
+    ///
+    /// ```ignore
+    /// let (priority, avoid_reason) = default_device_score(&device, false, None);
+    /// assert!(priority >= 5);
+    /// assert!(avoid_reason.is_none());
+    /// ```
+    ///
+    /// # Arguments
+    ///
+    /// * `device` - The input device to score.
+    /// * `matches_preferred` - Whether the device matches the configured preferred device.
+    /// * `default_output_name` - The system's default output device name, when available.
+    ///
+    /// # Returns
+    ///
+    /// A priority score and an optional explanation for avoiding the device. Lower scores
+    /// indicate stronger preference.
     fn default_device_score(
         device: &Device,
         matches_preferred: bool,
@@ -883,7 +1066,27 @@ mod cpal_impl {
         (priority, avoid_reason)
     }
 
-    /// Scoring for the remaining enumerated devices, driven by name heuristics.
+    /// Scores an enumerated input device and identifies potential low-quality inputs.
+    ///
+    /// Preferred devices receive the highest priority. Other devices are ranked by
+    /// recognizable microphone names and low-quality device keywords.
+    ///
+    /// # Arguments
+    ///
+    /// * `name` - The device label to evaluate, if available.
+    /// * `matches_preferred` - Whether the device matches the configured preference.
+    ///
+    /// # Returns
+    ///
+    /// A priority score and an optional reason to avoid the device.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// let (priority, avoid_reason) = enumerated_device_score(None, false);
+    /// assert_eq!(priority, 100);
+    /// assert!(avoid_reason.is_none());
+    /// ```
     fn enumerated_device_score(
         name: Option<&str>,
         matches_preferred: bool,
@@ -909,6 +1112,15 @@ mod cpal_impl {
         (priority, avoid_reason)
     }
 
+    /// Builds device candidates for a host, assigning priorities and fallback reasons based on default status, preferences, and device quality.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// let host = cpal::default_host();
+    /// let candidates = device_candidates_for_host(&host, None, None);
+    /// assert!(candidates.iter().all(|candidate| !candidate.label.is_empty()));
+    /// ```
     fn device_candidates_for_host(
         host: &cpal::Host,
         default_output_name: Option<&str>,
@@ -949,6 +1161,20 @@ mod cpal_impl {
             .collect()
     }
 
+    /// Lists available input devices across audio hosts, merging duplicate labels and marking default or cautionary devices.
+    ///
+    /// Results place default devices first, followed by case-insensitive label order. Devices with the same
+    /// disambiguated label are represented once, with their default and caution flags combined.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// let devices = list_input_devices();
+    ///
+    /// for device in devices {
+    ///     println!("{}", device.label);
+    /// }
+    /// ```
     pub fn list_input_devices() -> Vec<InputDeviceDescriptor> {
         // Keyed by the disambiguated label: the same physical device exposed by
         // several hosts still collapses into one row, while two distinct devices

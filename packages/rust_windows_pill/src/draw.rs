@@ -66,6 +66,24 @@ pub(crate) fn draw_all(gfx: &mut Gfx, state: &PillState) {
     gfx.end_frame();
 }
 
+/// Computes the pill's position and dimensions for the current UI state.
+///
+/// # Examples
+///
+/// ```ignore
+/// let (x, y, width, height) = pill_position(&state, window_width, window_height);
+/// assert!(width > 0.0 && height > 0.0);
+/// ```
+///
+/// # Arguments
+///
+/// * `state` - The current pill and panel animation state.
+/// * `ww` - The window width.
+/// * `wh` - The window height.
+///
+/// # Returns
+///
+/// The pill's horizontal position, vertical position, width, and height.
 pub(crate) fn pill_position(state: &PillState, ww: f64, wh: f64) -> (f64, f64, f64, f64) {
     let expand_t = state.expand_t.get();
     let inflate = state.inflate_t.get();
@@ -91,16 +109,31 @@ pub(crate) fn pill_position(state: &PillState, ww: f64, wh: f64) -> (f64, f64, f
     (pill_x, pill_y, pill_w, pill_h)
 }
 
-/// Corner radius for the pill at its *current* size.
+/// Computes the capsule corner radius for the pill's current dimensions.
 ///
-/// Derived from the live geometry rather than `expand_t` so the radius can
-/// never drift away from the width/height animation: the corners stay exactly
-/// half of the shortest side (a true capsule) on every frame, capped at the
-/// expanded design radius so a drag-inflated pill does not over-round.
+/// The radius is half the shorter dimension, capped at the expanded design
+/// radius.
+///
+/// # Examples
+///
+/// ```
+/// let radius = pill_radius(100.0, 40.0);
+/// assert_eq!(radius, 20.0);
+/// ```
+pub(crate) fn pill_radius
 pub(crate) fn pill_radius(pill_w: f64, pill_h: f64) -> f64 {
     (pill_w.min(pill_h) * 0.5).min(EXPANDED_RADIUS)
 }
 
+/// Renders the dictation pill and its phase-specific content, registering its click region.
+///
+/// The pill is omitted while the assistant is in typing mode.
+///
+/// # Examples
+///
+/// ```ignore
+/// draw_pill(&mut gfx, &state, window_width, window_height);
+/// ```
 fn draw_pill(gfx: &mut Gfx, state: &PillState, ww: f64, wh: f64) {
     let expand_t = state.expand_t.get();
     let (rx, ry, pill_w, pill_h) = pill_position(state, ww, wh);
@@ -146,7 +179,13 @@ fn draw_pill(gfx: &mut Gfx, state: &PillState, ww: f64, wh: f64) {
     });
 }
 
-#[allow(clippy::too_many_arguments)]
+/// Draws animated waveform layers within the pill, fading them according to expansion and pause state.
+///
+/// # Examples
+///
+/// ```rust,ignore
+/// draw_waveform(&mut gfx, x, y, width, height, expand_t, fade, &state);
+/// ```
 fn draw_waveform(
     gfx: &mut Gfx, rx: f64, ry: f64, pill_w: f64, pill_h: f64,
     expand_t: f64, fade: f64, state: &PillState,
@@ -184,6 +223,13 @@ fn draw_waveform(
     gfx.restore();
 }
 
+/// Applies dark, clipped gradients along both edges of the pill.
+///
+/// # Examples
+///
+/// ```ignore
+/// draw_edge_gradient(&mut gfx, 100.0, 200.0, 240.0, 48.0, 1.0);
+/// ```
 fn draw_edge_gradient(
     gfx: &mut Gfx, rx: f64, ry: f64, pill_w: f64, pill_h: f64, expand_t: f64,
 ) {
@@ -214,6 +260,21 @@ fn draw_edge_gradient(
     gfx.restore();
 }
 
+/// Draws the animated loading indicator inside the pill.
+///
+/// The indicator is clipped to the pill's rounded bounds and fades according to
+/// the expansion progress.
+///
+/// # Arguments
+///
+/// * `expand_t` - Expansion progress controlling the indicator opacity.
+/// * `state` - State containing the indicator's animation offset.
+///
+/// # Examples
+///
+/// ```ignore
+/// draw_loading(&mut gfx, 100.0, 50.0, 120.0, 32.0, 1.0, &state);
+/// ```
 fn draw_loading(
     gfx: &mut Gfx, rx: f64, ry: f64, pill_w: f64, pill_h: f64,
     expand_t: f64, state: &PillState,
@@ -450,6 +511,15 @@ fn draw_flame(gfx: &Gfx, state: &PillState, ww: f64, wh: f64) {
 
 // ── Flash blue border ────────────────────────────────────────────
 
+/// Renders the animated blue flash border and glow around the pill.
+///
+/// The effect is drawn only while the blue-flash animation is active.
+///
+/// # Examples
+///
+/// ```ignore
+/// draw_flash_blue(&mut gfx, &state, window_width, window_height);
+/// ```
 fn draw_flash_blue(gfx: &mut Gfx, state: &PillState, ww: f64, wh: f64) {
     let elapsed = state.flash_blue_elapsed.get();
     if elapsed <= 0.0 || elapsed >= FLASH_BLUE_DURATION {
@@ -961,6 +1031,14 @@ fn draw_panel_button(gfx: &Gfx, x: f64, y: f64, size: f64, alpha: f64, icon: But
     }
 }
 
+/// Renders the animated keyboard-mode button beside the pill and registers its click action when visible.
+///
+/// # Examples
+///
+/// ```ignore
+/// draw_keyboard_button(&mut gfx, &state, window_width, window_height);
+/// ```
+fn draw_keyboard_button(gfx: &mut Gfx, state: &PillState, ww: f64, wh: f64) {
 fn draw_keyboard_button(gfx: &mut Gfx, state: &PillState, ww: f64, wh: f64) {
     let kb_t = state.kb_button_t.get();
     if kb_t < 0.01 { return; }
@@ -1019,6 +1097,15 @@ fn draw_keyboard_button(gfx: &mut Gfx, state: &PillState, ww: f64, wh: f64) {
     }
 }
 
+/// Renders a dimmed, static progress bar to indicate that dictation is paused.
+///
+/// `fade` controls the transition opacity, while `expand_t` controls visibility as the pill expands.
+///
+/// # Examples
+///
+/// ```ignore
+/// draw_paused(&mut gfx, 10.0, 20.0, 240.0, 40.0, 1.0, 1.0);
+/// ```
 fn draw_paused(
     gfx: &mut Gfx, rx: f64, ry: f64, pill_w: f64, pill_h: f64, expand_t: f64, fade: f64,
 ) {
@@ -1163,6 +1250,16 @@ fn lerp(a: f64, b: f64, t: f64) -> f64 {
 
 // ── Long-press outline progress indicator ──────────────────────────
 
+/// Draws the long-press progress outline around the pill.
+///
+/// The outline fills according to the current long-press progress and remains
+/// fully visible while the pill is being dragged.
+///
+/// # Examples
+///
+/// ```ignore
+/// draw_long_press_ring(&gfx, &state, window_width, window_height);
+/// ```
 fn draw_long_press_ring(gfx: &Gfx, state: &PillState, ww: f64, wh: f64) {
     // While actively dragging, keep the full outline visible (progress = 1.0).
     let progress = if state.dragging.get() {

@@ -62,6 +62,28 @@ pub(crate) fn draw_all(cr: &cairo::Context, state: &PillState) {
     cr.restore().ok();
 }
 
+/// Computes the pill's animated position and dimensions within the window.
+///
+/// The position reflects expansion, drag inflation, panel anchoring, and persisted
+/// draw offsets for non-X11 backends.
+///
+/// # Arguments
+///
+/// * `state` - Current pill animation, panel, and backend state.
+/// * `ww` - Window width in pixels.
+/// * `wh` - Window height in pixels.
+///
+/// # Returns
+///
+/// A tuple containing the pill's x position, y position, width, and height.
+///
+/// # Examples
+///
+/// ```ignore
+/// let (x, y, width, height) = pill_position(&state, 800.0, 600.0);
+/// assert!(width > 0.0);
+/// assert!(height > 0.0);
+/// ```
 pub(crate) fn pill_position(state: &PillState, ww: f64, wh: f64) -> (f64, f64, f64, f64) {
     let expand_t = state.expand_t.get();
     let inflate = state.inflate_t.get();
@@ -92,16 +114,31 @@ pub(crate) fn pill_position(state: &PillState, ww: f64, wh: f64) -> (f64, f64, f
     (pill_x, pill_y, pill_w, pill_h)
 }
 
-/// Corner radius for the pill at its *current* size.
+/// Calculates the pill's corner radius from its current dimensions.
 ///
-/// Derived from the live geometry rather than `expand_t` so the radius can
-/// never drift away from the width/height animation: the corners stay exactly
-/// half of the shortest side (a true capsule) on every frame, capped at the
-/// expanded design radius so a drag-inflated pill does not over-round.
+/// The radius equals half the shorter dimension, capped at the expanded design radius.
+///
+/// # Examples
+///
+/// ```
+/// let radius = pill_radius(100.0, 40.0);
+/// assert_eq!(radius, 20.0);
+/// ```
+pub(crate) fn pill_radius(pill_w: f64, pill_h: f64) -> f64
 pub(crate) fn pill_radius(pill_w: f64, pill_h: f64) -> f64 {
     (pill_w.min(pill_h) * 0.5).min(EXPANDED_RADIUS)
 }
 
+/// Renders the pill, its current content and interaction indicators, and registers its click region.
+///
+/// The pill is hidden while text input mode is active. Recording and paused states
+/// crossfade between waveform and paused-bar content.
+///
+/// # Examples
+///
+/// ```ignore
+/// draw_pill(&cr, &state, window_width, window_height);
+/// ```
 fn draw_pill(cr: &cairo::Context, state: &PillState, ww: f64, wh: f64) {
     let expand_t = state.expand_t.get();
     let (rx, ry, pill_w, pill_h) = pill_position(state, ww, wh);
@@ -155,6 +192,13 @@ fn draw_pill(cr: &cairo::Context, state: &PillState, ww: f64, wh: f64) {
     });
 }
 
+/// Draws the long-press progress outline around the pill, keeping it complete while dragging.
+///
+/// # Examples
+///
+/// ```rust,ignore
+/// draw_long_press_ring(&context, x, y, width, height, &state);
+/// ```
 fn draw_long_press_ring(
     cr: &cairo::Context, rx: f64, ry: f64, pill_w: f64, pill_h: f64, state: &PillState,
 ) {
@@ -233,6 +277,21 @@ fn draw_cancel_flash(
     cr.restore().ok();
 }
 
+/// Draws animated audio waveform layers clipped to the pill shape.
+///
+/// The waveform amplitude and opacity follow the current audio level and transition
+/// factor, while `expand_t` controls visibility during pill expansion.
+///
+/// # Examples
+///
+/// ```ignore
+/// draw_waveform(&cr, 0.0, 0.0, 240.0, 48.0, 1.0, 1.0, &state);
+/// ```
+///
+/// # Arguments
+///
+/// * `expand_t` - Visibility factor during pill expansion.
+/// * `fade` - Waveform fade factor used when transitioning to the paused state.
 #[allow(clippy::too_many_arguments)]
 fn draw_waveform(
     cr: &cairo::Context, rx: f64, ry: f64, pill_w: f64, pill_h: f64,
@@ -345,7 +404,15 @@ fn draw_loading(
     draw_edge_gradient(cr, rx, ry, pill_w, pill_h, radius, expand_t);
 }
 
-#[allow(clippy::too_many_arguments)]
+/// Renders a dimmed, centered pause indicator inside the pill.
+///
+/// # Examples
+///
+/// ```
+/// let surface = cairo::ImageSurface::create(cairo::Format::ARgb32, 120, 40).unwrap();
+/// let cr = cairo::Context::new(&surface).unwrap();
+/// draw_paused_bar(&cr, 0.0, 0.0, 120.0, 40.0, 20.0, 1.0, 1.0);
+/// ```
 fn draw_paused_bar(
     cr: &cairo::Context, rx: f64, ry: f64, pill_w: f64, pill_h: f64,
     radius: f64, expand_t: f64, fade: f64,
@@ -1479,6 +1546,14 @@ fn lerp(a: f64, b: f64, t: f64) -> f64 {
 
 // ── Flash blue border ────────────────────────────────────────────
 
+/// Draws a fading blue border and glow around the pill while the blue flash is active.
+///
+/// # Examples
+///
+/// ```rust,ignore
+/// draw_flash_blue(&cr, &state, window_width, window_height);
+/// ```
+fn draw_flash_blue cr...
 fn draw_flash_blue(cr: &cairo::Context, state: &PillState, ww: f64, wh: f64) {
     let elapsed = state.flash_blue_elapsed.get();
     if elapsed <= 0.0 || elapsed >= FLASH_BLUE_DURATION {

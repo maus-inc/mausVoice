@@ -1,3 +1,16 @@
+/// Provides the HTML page displayed after a successful sign-in.
+///
+/// # Examples
+///
+/// ```
+/// let page = success_html();
+/// assert!(page.contains("Sign-in successful"));
+/// ```
+///
+/// # Returns
+///
+/// The complete static HTML document for the sign-in success page.
+///
 pub fn success_html() -> &'static str {
     r##"<!DOCTYPE html>
 <html lang="en">

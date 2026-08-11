@@ -39,6 +39,14 @@ thread_local! {
     static EDIT_BG_BRUSH: Cell<HBRUSH> = const { Cell::new(HBRUSH(std::ptr::null_mut())) };
 }
 
+/// Starts the pill window, initializes its UI resources, and runs the message and animation loop.
+///
+/// # Examples
+///
+/// ```no_run
+/// # let receiver: Receiver<InMessage> = todo!();
+/// run(receiver);
+/// ```
 pub fn run(receiver: Receiver<InMessage>) {
     let t0 = Instant::now();
     unsafe {
@@ -520,6 +528,22 @@ fn process_message(msg: InMessage, state: &PillState, _hwnd: HWND) {
     }
 }
 
+/// Advances the pill state by one animation step.
+///
+/// Updates audio levels, visual effects, transitions, controls, and scrolling
+/// using the elapsed time since the previous update.
+///
+/// # Parameters
+///
+/// * `state` — Mutable UI state shared through interior mutability.
+/// * `dt` — Elapsed time since the previous update, in seconds.
+///
+/// # Examples
+///
+/// ```ignore
+/// tick(&state, 1.0 / 60.0);
+/// ```
+fn tick
 fn tick(state: &PillState, dt: f64) {
     let phase = state.phase.get();
     let is_active = phase != Phase::Idle;

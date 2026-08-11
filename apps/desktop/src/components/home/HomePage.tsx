@@ -28,6 +28,13 @@ import { HomeSideEffects } from "./HomeSideEffects";
 import { OutOfWordsCard } from "./OutOfWordsCard";
 import { TrialExtensionCard } from "./TrialExtensionCard";
 
+/**
+ * Displays a dashboard statistic with an optional icon, value, and label.
+ *
+ * @param value - The statistic value to display
+ * @param label - The descriptive label for the statistic
+ * @param icon - An optional icon displayed alongside the value
+ */
 function StatCard({
   value,
   label,
@@ -64,6 +71,9 @@ const headerTitle = (
   </Typography>
 );
 
+/**
+ * Renders the dashboard home page with user statistics, upgrade prompts, onboarding guidance, and recent transcriptions.
+ */
 export default function HomePage() {
   const user = useAppStore(getMyUser);
   const userName = useAppStore(getMyUserName);

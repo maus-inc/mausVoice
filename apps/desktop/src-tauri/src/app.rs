@@ -10,17 +10,16 @@ const AUTOSTART_HIDDEN_ARG: &str = "--mausvoice-autostart-hidden";
 /// Minimum gap between two window-move log lines.
 const MOVE_LOG_THROTTLE: Duration = Duration::from_millis(250);
 
-/// Records where the window manager actually placed the main window while it
-/// is being dragged.
+/// Logs the main window's position together with the current monitor geometry.
 ///
-/// The main window is frameless (`decorations: false`), so `data-tauri-drag-region`
-/// hands the gesture straight to the window manager via `start_dragging` and the
-/// app never sees the pointer. That makes a "the window will not drag past X"
-/// report impossible to triage from the frontend: the only observable is the
-/// position the OS reports back. Logging it next to the monitor geometry
-/// separates "the compositor clamped the window" from "the drag never started"
-/// (no `Moved` events at all — usually a missing `core:window:allow-start-dragging`
-/// capability). Throttled so an ordinary drag does not flood the log.
+/// Movement logs are throttled to avoid flooding the log during a drag. If monitor
+/// information is unavailable, the window position is logged without monitor details.
+///
+/// # Examples
+///
+/// ```ignore
+/// log_main_window_move(&window, &PhysicalPosition::new(100, 200));
+/// ```
 fn log_main_window_move(window: &Window, position: &PhysicalPosition<i32>) {
     static LAST_LOG: Mutex<Option<Instant>> = Mutex::new(None);
 
@@ -60,6 +59,15 @@ fn log_main_window_move(window: &Window, position: &PhysicalPosition<i32>) {
     }
 }
 
+/// Handles application lifecycle events by saving window state and stopping the keyboard listener on exit, and resurfacing the main window when macOS requests a reopen.
+///
+/// # Examples
+///
+/// ```no_run
+/// # fn example(app_handle: &tauri::AppHandle, event: tauri::RunEvent) {
+/// handle_run_event(app_handle, event);
+/// # }
+/// ```
 fn handle_run_event(app_handle: &tauri::AppHandle, event: RunEvent) {
     match &event {
         RunEvent::ExitRequested { .. } => {
@@ -78,6 +86,17 @@ fn handle_run_event(app_handle: &tauri::AppHandle, event: RunEvent) {
     }
 }
 
+/// Configures the Tauri application with its plugins, event handlers, state, and commands.
+///
+/// # Examples
+///
+/// ```
+/// let _builder = build();
+/// ```
+///
+/// # Returns
+///
+/// A configured Tauri application builder.
 pub fn build() -> tauri::Builder<tauri::Wry> {
     let updater_builder = tauri_plugin_updater::Builder::new();
 

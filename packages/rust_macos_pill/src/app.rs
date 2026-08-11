@@ -529,6 +529,23 @@ fn update_hover(view: id, ctx: &AppContext) {
 
 // ── Animation tick ────────────────────────────────────────────────
 
+/// Advances the pill UI state by one animation step.
+///
+/// Updates audio-driven animations, transitions, effects, controls, scrolling, and
+/// other time-dependent state for the elapsed interval.
+///
+/// # Parameters
+///
+/// * `state` - The mutable UI state accessed through interior mutability.
+/// * `window` - The window used for long-press and drag handling.
+/// * `dt` - Elapsed time since the previous update, in seconds.
+///
+/// # Examples
+///
+/// ```no_run
+/// tick(&state, window, 1.0 / 60.0);
+/// ```
+fn tick(state: &PillState, window: id, dt: f64) {
 fn tick(state: &PillState, window: id, dt: f64) {
     let phase = state.phase.get();
     let is_active = phase != Phase::Idle;
@@ -1005,6 +1022,21 @@ fn reposition_window(window: id, state: &PillState) {
 
 // ── Shared setup (used by both standalone and embedded modes) ─────
 
+/// Initializes the overlay window, application state, rendering callbacks, and IPC readiness handling.
+///
+/// # Parameters
+///
+/// * `receiver` — Receives messages used to update the overlay state.
+/// * `embedded` — Indicates whether the overlay runs within an existing application event loop.
+///
+/// # Examples
+///
+/// ```no_run
+/// let (_sender, receiver) = std::sync::mpsc::channel();
+/// unsafe {
+///     setup(receiver, true);
+/// }
+/// ```
 unsafe fn setup(receiver: Receiver<InMessage>, embedded: bool) {
     let view_class = register_pill_view_class();
     let window_class = register_pill_window_class();

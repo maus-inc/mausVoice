@@ -202,6 +202,11 @@ const ICNS_SIZES = [...new Set(ICNS_FRAMES.map((frame) => frame.size))];
 
 const PNG_MAGIC = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
 
+/**
+ * Executes ImageMagick with the specified arguments.
+ * @param {string[]} args - Arguments to pass to ImageMagick.
+ * @return {Buffer} The command's standard output.
+ */
 function convert(args) {
   return execFileSync(convertBin, args, { stdio: ["ignore", "pipe", "pipe"] });
 }
@@ -242,7 +247,12 @@ function renderSquare(size, outPath) {
   ]);
 }
 
-/** Parse an ICO directory so the frame list can be asserted. */
+/**
+ * Parses an ICO file and returns metadata for each contained frame.
+ * @param {string} path - Path to the ICO file.
+ * @return {Array<{width: number, height: number, bpp: number}>} The frame dimensions and bit depths.
+ * @throws {Error} If the file is not a valid ICO file.
+ */
 function readIcoFrames(path) {
   const data = readFileSync(path);
   if (
@@ -266,16 +276,9 @@ function readIcoFrames(path) {
 }
 
 /**
- * Assemble a real ICNS container.
- *
- * ImageMagick has no usable ICNS encoder: handed a list of frames it silently
- * writes the *first* one as a bare PNG under an `.icns` name. That is exactly
- * what shipped - a 1.2 KB 16x16 PNG - so macOS had a single tiny frame to
- * upscale everywhere, which is the blurry Dock/Finder/Alt-Tab icon.
- *
- * The container is therefore assembled here: the `icns` magic, a big-endian
- * total length, then one chunk per frame (4-byte type, 4-byte length including
- * the header, PNG payload). This is the same layout `iconutil` produces.
+ * Creates an ICNS file from PNG frames at the configured icon sizes.
+ * @param {Map<number, string>} framePathBySize - Maps each frame size to its PNG file path.
+ * @param {string} outPath - Path where the ICNS file is written.
  */
 function writeIcns(framePathBySize, outPath) {
   const chunks = ICNS_FRAMES.map(({ type, size }) => {
@@ -301,7 +304,12 @@ function readPngSize(payload) {
   return { width: payload.readUInt32BE(16), height: payload.readUInt32BE(20) };
 }
 
-/** Walk an ICNS container so its frame set can be asserted. */
+/**
+ * Parses an ICNS container and extracts the type and dimensions of each PNG frame.
+ * @param {string} path - The path to the ICNS file.
+ * @return {{type: string, width: number, height: number}[]} The ICNS frame descriptors.
+ * @throws {Error} If the file is not a valid ICNS container or contains invalid chunk lengths.
+ */
 function readIcnsFrames(path) {
   const data = readFileSync(path);
   if (data.length < 8 || data.toString("ascii", 0, 4) !== "icns") {
@@ -357,7 +365,12 @@ function isCornerOpaque(alpha) {
   return Number.isFinite(alpha) && alpha > CORNER_ALPHA_TOLERANCE;
 }
 
-/** Every required frame size is present, at 32bpp. */
+/**
+ * Validates that an ICO file contains all required square frame sizes with 32-bit color depth.
+ * @param {string} ico - The ICO file path used in validation messages.
+ * @param {Array<{width: number, height: number, bpp: number}>} frames - The ICO frames to validate.
+ * @return {string[]} Validation problems found.
+ */
 function checkIcoFrameSizes(ico, frames) {
   const problems = [];
 
@@ -449,6 +462,10 @@ function checkPng(name) {
   return isCornerOpaque(cornerAlpha(path)) ? [`${path}: opaque corner`] : [];
 }
 
+/**
+ * Collects validation errors for ICO, ICNS, and representative PNG assets.
+ * @returns {string[]} Validation error messages, or an empty array when all assets are valid.
+ */
 function verify() {
   return [
     ...[desktopIcons, installerIcons].flatMap(checkIco),
@@ -457,6 +474,11 @@ function verify() {
   ];
 }
 
+/**
+ * Generates application icon assets or verifies existing assets when run with `--check`.
+ *
+ * @throws {Error} If the branding master is missing or ImageMagick cannot be used.
+ */
 function main() {
   assertImageMagick();
 

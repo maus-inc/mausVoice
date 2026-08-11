@@ -70,6 +70,29 @@ pub(crate) fn draw_all(ctx: &Ctx, state: &PillState, view_w: f64, view_h: f64) {
     ctx.restore();
 }
 
+/// Calculates the pill's animated position and dimensions within the window.
+///
+/// The result accounts for expansion, drag inflation, and assistant-panel placement.
+///
+/// # Arguments
+///
+/// * `state` - Current pill and panel animation state.
+/// * `ww` - Window width.
+/// * `wh` - Window height.
+///
+/// # Returns
+///
+/// A tuple containing the pill's x-coordinate, y-coordinate, width, and height.
+///
+/// # Examples
+///
+/// ```ignore
+/// let state = PillState::default();
+/// let (x, y, width, height) = pill_position(&state, 800.0, 600.0);
+///
+/// assert!(width > 0.0);
+/// assert!(height > 0.0);
+/// ```
 pub(crate) fn pill_position(state: &PillState, ww: f64, wh: f64) -> (f64, f64, f64, f64) {
     let expand_t = state.expand_t.get();
     let inflate = state.inflate_t.get();
@@ -94,16 +117,40 @@ pub(crate) fn pill_position(state: &PillState, ww: f64, wh: f64) -> (f64, f64, f
     (pill_x, pill_y, pill_w, pill_h)
 }
 
-/// Corner radius for the pill at its *current* size.
+/// Computes the capsule corner radius for the pill's current dimensions.
 ///
-/// Derived from the live geometry rather than `expand_t` so the radius can
-/// never drift away from the width/height animation: the corners stay exactly
-/// half of the shortest side (a true capsule) on every frame, capped at the
-/// expanded design radius so a drag-inflated pill does not over-round.
+/// The radius is half the shorter dimension, capped at the expanded design radius.
+///
+/// # Examples
+///
+/// ```
+/// let radius = pill_radius(200.0, 40.0);
+/// assert_eq!(radius, 20.0);
+/// ```
+///
+/// # Arguments
+///
+/// * `pill_w` - Current pill width.
+/// * `pill_h` - Current pill height.
+///
+/// # Returns
+///
+/// The corner radius derived from the pill dimensions.
 pub(crate) fn pill_radius(pill_w: f64, pill_h: f64) -> f64 {
     (pill_w.min(pill_h) * 0.5).min(EXPANDED_RADIUS)
 }
 
+/// Renders the dictation pill and its content for the current interaction state.
+///
+/// The pill is omitted while text input mode is active. Otherwise, its appearance
+/// reflects the current recording, paused, loading, or idle state, and its bounds
+/// are registered as a clickable region.
+///
+/// # Examples
+///
+/// ```rust,ignore
+/// draw_pill(ctx, state, window_width, window_height);
+/// ```
 fn draw_pill(ctx: &Ctx, state: &PillState, ww: f64, wh: f64) {
     let expand_t = state.expand_t.get();
     let (rx, ry, pill_w, pill_h) = pill_position(state, ww, wh);
@@ -154,7 +201,17 @@ fn draw_pill(ctx: &Ctx, state: &PillState, ww: f64, wh: f64) {
     });
 }
 
-#[allow(clippy::too_many_arguments)]
+/// Renders animated waveform layers inside the dictation pill.
+///
+/// The waveform is shaped by the current recording level and fades with the
+/// recording-to-paused transition.
+///
+/// # Examples
+///
+/// ```rust,ignore
+/// draw_waveform(&ctx, rx, ry, pill_w, pill_h, 1.0, 1.0, &state);
+/// assert!(pill_w > 0.0 && pill_h > 0.0);
+/// ```
 fn draw_waveform(
     ctx: &Ctx, rx: f64, ry: f64, pill_w: f64, pill_h: f64,
     expand_t: f64, fade: f64, state: &PillState,
@@ -462,6 +519,13 @@ fn draw_flash_message(ctx: &Ctx, state: &PillState, ww: f64, wh: f64) {
 
 // ── Flash blue border ────────────────────────────────────────────
 
+/// Draws a time-limited blue border and glow around the dictation pill.
+///
+/// # Examples
+///
+/// ```ignore
+/// draw_flash_blue(&ctx, &state, window_width, window_height);
+/// ```
 fn draw_flash_blue(ctx: &Ctx, state: &PillState, ww: f64, wh: f64) {
     let elapsed = state.flash_blue_elapsed.get();
     if elapsed <= 0.0 || elapsed >= FLASH_BLUE_DURATION {
@@ -1130,6 +1194,13 @@ fn draw_panel_button(
     ctx.draw_symbol(sym, cx, cy, 11.0);
 }
 
+/// Renders the animated keyboard button beside the pill and registers its click region once sufficiently visible.
+///
+/// # Examples
+///
+/// ```
+/// draw_keyboard_button(&ctx, &state, window_width, window_height);
+/// ```
 fn draw_keyboard_button(ctx: &Ctx, state: &PillState, ww: f64, wh: f64) {
     let kb_t = state.kb_button_t.get();
     if kb_t < 0.01 {
@@ -1173,6 +1244,15 @@ fn draw_keyboard_button(ctx: &Ctx, state: &PillState, ww: f64, wh: f64) {
     }
 }
 
+/// Renders the paused-state track and centered indicator inside the pill.
+///
+/// The rendering is clipped to the pill shape and faded according to the expansion and pause-transition progress.
+///
+/// # Examples
+///
+/// ```ignore
+/// draw_paused(ctx, x, y, width, height, expand_progress, pause_fade);
+/// ```
 fn draw_paused(ctx: &Ctx, rx: f64, ry: f64, pill_w: f64, pill_h: f64, expand_t: f64, fade: f64) {
     ctx.save();
     let radius = pill_radius(pill_w, pill_h);
@@ -1296,6 +1376,16 @@ fn wrap_text(ctx: &Ctx, text: &str, max_width: f64) -> Vec<String> {
 
 // ── Long-press ring indicator ─────────────────────────────────────
 
+/// Draws the long-press progress outline around the pill.
+///
+/// The outline follows the pill perimeter and becomes fully visible while dragging.
+///
+/// # Examples
+///
+/// ```no_run
+/// draw_long_press_ring(&ctx, &state, window_width, window_height);
+/// ```
+fn draw_long_press_ring(ctx: &Ctx, state: &PillState, ww: f64, wh: f64) {
 fn draw_long_press_ring(ctx: &Ctx, state: &PillState, ww: f64, wh: f64) {
     // While actively dragging, keep the full outline visible (progress = 1.0).
     let progress = if state.dragging.get() {

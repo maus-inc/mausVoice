@@ -4,6 +4,11 @@ import { FormattedMessage } from "react-intl";
 import { produceAppState, useAppStore } from "../../store";
 import { getIsOnTrial, getMyMember } from "../../utils/member.utils";
 
+/**
+ * Displays a dismissible promotion for earning extra trial days.
+ *
+ * @returns The promotion card when the user is eligible, or `null` otherwise.
+ */
 export function TrialExtensionCard() {
   const show = useAppStore((state) => {
     if (state.local.hasHiddenTrialExtensionCard) {

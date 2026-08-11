@@ -20,6 +20,17 @@ pub(crate) enum Backend {
     PlainWayland,
 }
 
+/// Initializes the GTK window, configures the available display backend, and runs the pill interface event loop.
+///
+/// The event loop processes incoming messages, updates animation and interaction state, and renders the interface
+/// until a quit message is received.
+///
+/// # Examples
+///
+/// ```no_run
+/// let (_sender, receiver) = std::sync::mpsc::channel();
+/// run(receiver);
+/// ```
 pub fn run(receiver: Receiver<InMessage>) {
     let backend = if gtk_layer_shell::is_supported() {
         Backend::LayerShell
@@ -648,6 +659,16 @@ pub fn run(receiver: Receiver<InMessage>) {
     main_loop.run();
 }
 
+/// Advances the pill's animation and display state by one frame.
+///
+/// Updates recording levels, transitions, effects, controls, dimensions, and
+/// assistant scrolling according to the current state.
+///
+/// # Examples
+///
+/// ```
+/// tick(&state);
+/// ``` 久久精品
 fn tick(state: &PillState) {
     tick_long_press(state);
     let phase = state.phase.get();

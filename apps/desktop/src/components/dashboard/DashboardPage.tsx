@@ -10,6 +10,9 @@ import { FeatureReleaseDialog } from "./FeatureReleaseDialog";
 import { PermissionsDialog } from "./PermissionsDialog";
 import { TrialEndedDialog } from "./TrialEndedDialog";
 
+/**
+ * Renders the dashboard layout with responsive navigation, routed content, dialogs, and the application version caption.
+ */
 export default function DashboardPage() {
   const data = useAsyncData(getVersion, []);
   const location = useLocation();
