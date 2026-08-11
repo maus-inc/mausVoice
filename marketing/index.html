@@ -464,14 +464,16 @@ section { scroll-margin-top: 96px; }
 /* Live recording pill (1:1 copy of docs/animated-pill.gif, driven by the
    same sine-wave algorithm as packages/rust_macos_pill/src/draw.rs) */
 .pill-demo {
-  margin: 52px auto 0;
-  width: 720px;
+  margin: 56px 0 0;
+  width: 100vw;
+  margin-left: calc(50% - 50vw);
+  overflow: hidden;
 }
 
 .pill-demo canvas {
   display: block;
-  width: 720px;
-  height: 64px;
+  width: 100%;
+  height: 140px;
 }
 
 /* ------------------------------------------------------------------ *
@@ -982,9 +984,10 @@ section { scroll-margin-top: 96px; }
       <span class="w" style="--i:0">Built</span> <span class="w" style="--i:1">in</span> <span class="w hl" style="--i:2">Rust</span> <span class="w" style="--i:3">for</span> <span class="w" style="--i:4">speed</span> <span class="w" style="--i:5">and</span> <span class="w" style="--i:6">a</span> <span class="w" style="--i:7">small</span> <span class="w" style="--i:8">footprint,</span> <span class="w" style="--i:9">with</span> <span class="w" style="--i:10">your</span> <span class="w" style="--i:11">keys</span> <span class="w hl" style="--i:12">encrypted</span> <span class="w" style="--i:13">on</span> <span class="w" style="--i:14">disk</span> <span class="w" style="--i:15">and</span> <span class="w" style="--i:16">a</span> <span class="w" style="--i:17">fully</span> <span class="w hl" style="--i:18">local</span> <span class="w" style="--i:19">Whisper</span> <span class="w" style="--i:20">mode</span> <span class="w" style="--i:21">for</span> <span class="w" style="--i:22">when</span> <span class="w" style="--i:23">your</span> <span class="w" style="--i:24">words</span> <span class="w" style="--i:25">never</span> <span class="w" style="--i:26">leave</span> <span class="w" style="--i:27">your</span> <span class="w" style="--i:28">machine.</span>
     </p>
 
-    <div class="pill-demo fade-up" style="--delay:0.45s" role="img" aria-label="The mausVoice recording pill with a live animated sine waveform">
-      <canvas id="pill-canvas" width="720" height="64" aria-hidden="true"></canvas>
-    </div>
+  </div>
+
+  <div class="pill-demo fade-up" style="--delay:0.45s" role="img" aria-label="The mausVoice recording pill with wavy audio strings flowing in and transcribed words flowing out">
+    <canvas id="pill-canvas" aria-hidden="true"></canvas>
   </div>
 </section>
 
@@ -1190,9 +1193,11 @@ section { scroll-margin-top: 96px; }
     });
   }
 
-  /* ---------- Recording pill: 1:1 sine-wave replica, with a data
-     string flowing into it from the left and transcribed words
-     flying out to the right. Pill constants and math ported from
+  /* ---------- Recording pill stage ---------------------------------
+     Full-bleed canvas spanning the page. Wavy audio strings start at
+     the left page edge, scattered, and converge into the pill's
+     center; transcribed words flow continuously out of the right.
+     Pill: 385.8 x 104.2 px, sine engine ported from
      packages/rust_macos_pill/src/constants.rs + draw.rs and
      apps/desktop/src/components/common/AudioWaveform.tsx
      ------------------------------------------------------------------ */
@@ -1216,10 +1221,10 @@ section { scroll-margin-top: 96px; }
       { frequency: 1.25, multiplier: 1.05, phaseOffset: 1.7, opacity: 0.56 },
     ];
 
-    // Composition: 720x64, pill 264x48 centered, stream on the left,
-    // transcribed words fly out on the right.
-    var CW = 720, CH = 64;
-    var PILL_W = 264, PILL_H = 48;
+    // Stage geometry (logical px, 1:1 with CSS)
+    var CH = 140;                 // stage height, fixed
+    var CW = window.innerWidth;   // stage width: full page
+    var PILL_W = 385.8, PILL_H = 104.2;
     var PILL_X = (CW - PILL_W) / 2;
     var PILL_Y = (CH - PILL_H) / 2;
     var BASELINE = CH / 2;
@@ -1232,22 +1237,103 @@ section { scroll-margin-top: 96px; }
       ctx.roundRect = function (x, y, w, h, r) { this.rect(x, y, w, h); };
     }
     var dpr = Math.min(2, window.devicePixelRatio || 1);
-    pillCanvas.width = CW * dpr;
-    pillCanvas.height = CH * dpr;
-    ctx.scale(dpr, dpr);
+
+    function sizeStage() {
+      CW = pillCanvas.parentElement.clientWidth || window.innerWidth;
+      PILL_X = (CW - PILL_W) / 2;
+      pillCanvas.width = Math.round(CW * dpr);
+      pillCanvas.height = Math.round(CH * dpr);
+      ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    }
+    sizeStage();
+    window.addEventListener("resize", sizeStage);
 
     var reducePillMotion = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
 
-    // Incoming data string (left -> pill mouth)
-    var stream = [];
-    var nextChar = 0;
-    var STREAM_CHARS = ["|", "~", "0", "1", "=", "|", "~", "·", "|", "="];
-    var threadDash = 0;
+    // Incoming wavy strings: scattered starts at the page edge,
+    // converging to the pill center (like the pill's own wave lines)
+    var IN_LINES = [
+      { startY: 22, amp: 30, freq: 0.8,  offset: 0,    opacity: 0.55 },
+      { startY: 118, amp: 22, freq: 1.0,  offset: 0.85, opacity: 0.42 },
+      { startY: 40, amp: 26, freq: 1.25, offset: 1.7,  opacity: 0.34 },
+      { startY: 102, amp: 18, freq: 0.9,  offset: 2.5,  opacity: 0.28 },
+      { startY: 68, amp: 34, freq: 1.1,  offset: 3.4,  opacity: 0.22 },
+    ];
 
-    // Transcribed words (pill mouth -> right)
+    function easeInOut(t) {
+      return t < 0.5 ? 2 * t * t : 1 - Math.pow(-2 * t + 2, 2) / 2;
+    }
+
+    function drawIncoming() {
+      for (var li = 0; li < IN_LINES.length; li++) {
+        var line = IN_LINES[li];
+        var run = PILL_X; // from page edge to pill mouth
+        if (run < 8) continue;
+        ctx.beginPath();
+        for (var x = 0; x <= run; x += 3) {
+          var t = x / run;
+          var center = BASELINE + (line.startY - BASELINE) * (1 - easeInOut(t));
+          var amp = line.amp * (1 - t) * (1 - t);
+          var theta = line.freq * t * TAU + state.phase + line.offset;
+          var y = center + amp * Math.sin(theta);
+          if (x === 0) ctx.moveTo(x, y);
+          else ctx.lineTo(x, y);
+        }
+        var alpha = line.opacity * (0.55 + 0.45 * Math.sin(state.phase * 0.5 + li));
+        ctx.strokeStyle = "rgba(255, 255, 255, " + alpha.toFixed(3) + ")";
+        ctx.lineWidth = STROKE_WIDTH;
+        ctx.lineCap = "round";
+        ctx.lineJoin = "round";
+        ctx.stroke();
+      }
+    }
+
+    // Outgoing flow: words stream out continuously along a wavy path
     var words = [];
     var nextWord = 0;
-    var TRANSCRIPT = ["hello", "world", "meeting", "tomorrow", "notes", "ship it", "done", "thanks", "brainstorm", "5pm"];
+    var TRANSCRIPT = ["hello", "meeting", "notes", "ship it", "tomorrow", "thanks", "done", "ideas", "5pm", "review", "standup", "call", "email", "weekend", "launch", "draft"];
+
+    function drawOutgoing() {
+      // faint continuation wave the words ride
+      var runOut = CW - (PILL_X + PILL_W);
+      if (runOut > 8) {
+        ctx.beginPath();
+        for (var x = PILL_X + PILL_W; x <= CW; x += 3) {
+          var t = (x - (PILL_X + PILL_W)) / runOut;
+          var y = BASELINE + 7 * Math.sin(state.phase + t * TAU * 1.1);
+          if (x === PILL_X + PILL_W) ctx.moveTo(x, y);
+          else ctx.lineTo(x, y);
+        }
+        ctx.strokeStyle = "rgba(255, 255, 255, 0.14)";
+        ctx.lineWidth = 1.2;
+        ctx.stroke();
+      }
+
+      ctx.font = "500 13px 'JetBrains Mono', ui-monospace, monospace";
+      ctx.textBaseline = "middle";
+      for (var i = words.length - 1; i >= 0; i--) {
+        var w = words[i];
+        w.x += w.speed;
+        w.t += 0.022;
+        var y = BASELINE + 7 * Math.sin(w.t * 1.3 + w.x * 0.008);
+        var a = 1;
+        if (w.x < PILL_X + PILL_W + 14) a = Math.min(a, (w.x - (PILL_X + PILL_W)) / 14);
+        if (w.x > CW - 70) a = Math.min(a, (CW - w.x) / 70);
+        if (a <= 0 || w.x > CW + 20) { words.splice(i, 1); continue; }
+        ctx.fillStyle = "rgba(255, 255, 255, " + a.toFixed(3) + ")";
+        ctx.fillText(w.text, w.x, y);
+      }
+
+      if (performance.now() > nextWord) {
+        words.push({
+          text: TRANSCRIPT[(Math.random() * TRANSCRIPT.length) | 0],
+          x: PILL_X + PILL_W + 2,
+          t: 0,
+          speed: 1.7 + Math.random() * 0.9,
+        });
+        nextWord = performance.now() + 300 + Math.random() * 220;
+      }
+    }
 
     function pillRadius(w, h) {
       return Math.min(w, h) * 0.5;
@@ -1258,13 +1344,12 @@ section { scroll-margin-top: 96px; }
 
       var radius = pillRadius(PILL_W, PILL_H);
 
-      // capsule body
       ctx.beginPath();
       ctx.roundRect(PILL_X, PILL_Y, PILL_W, PILL_H, radius);
       ctx.fillStyle = "rgba(0, 0, 0, " + ACTIVE_BG_ALPHA + ")";
       ctx.fill();
 
-      // three layered sine waves
+      // three layered sine waves (the pill's own lines)
       ctx.save();
       ctx.beginPath();
       ctx.roundRect(PILL_X, PILL_Y, PILL_W, PILL_H, radius);
@@ -1300,79 +1385,11 @@ section { scroll-margin-top: 96px; }
       }
       ctx.restore();
 
-      // border
       ctx.beginPath();
       ctx.roundRect(PILL_X + 0.5, PILL_Y + 0.5, PILL_W - 1, PILL_H - 1, radius - 0.5);
       ctx.strokeStyle = "rgba(255, 255, 255, " + BORDER_ALPHA + ")";
       ctx.lineWidth = 1;
       ctx.stroke();
-    }
-
-    function drawStream() {
-      // base thread: dashed line running from the left edge to the pill mouth
-      ctx.save();
-      ctx.beginPath();
-      ctx.moveTo(0, BASELINE);
-      ctx.lineTo(PILL_X, BASELINE);
-      ctx.setLineDash([6, 7]);
-      ctx.lineDashOffset = -(threadDash % 13);
-      ctx.strokeStyle = "rgba(255, 255, 255, 0.3)";
-      ctx.lineWidth = 1.2;
-      ctx.stroke();
-      ctx.setLineDash([]);
-      ctx.restore();
-
-      // data characters riding the thread into the pill
-      ctx.font = "500 11px 'JetBrains Mono', ui-monospace, monospace";
-      ctx.textBaseline = "middle";
-      for (var i = stream.length - 1; i >= 0; i--) {
-        var p = stream[i];
-        p.x += p.speed;
-        var a = p.a;
-        if (p.x > PILL_X - 16) a = Math.min(a, (PILL_X - p.x) / 16); // absorbed at the mouth
-        if (p.x >= PILL_X - 3 || a <= 0) { stream.splice(i, 1); continue; }
-        ctx.fillStyle = "rgba(255, 255, 255, " + a.toFixed(3) + ")";
-        ctx.fillText(p.char, p.x, BASELINE + p.yOff);
-      }
-
-      if (performance.now() > nextChar) {
-        stream.push({
-          x: -12,
-          speed: 2.0 + Math.random() * 1.6,
-          char: STREAM_CHARS[(Math.random() * STREAM_CHARS.length) | 0],
-          yOff: (Math.random() - 0.5) * 7,
-          a: 1,
-        });
-        nextChar = performance.now() + 38 + Math.random() * 55;
-      }
-    }
-
-    function drawWords() {
-      ctx.font = "500 12px 'JetBrains Mono', ui-monospace, monospace";
-      ctx.textBaseline = "middle";
-      for (var i = words.length - 1; i >= 0; i--) {
-        var w = words[i];
-        w.x += w.vx;
-        w.vx *= 0.985;
-        w.y -= 0.08;
-        w.life -= 0.012;
-        var a = Math.min(1, w.life);
-        if (w.x > CW - 50) a = Math.min(a, (CW - w.x) / 50);
-        if (w.life <= 0 || w.x > CW + 30) { words.splice(i, 1); continue; }
-        ctx.fillStyle = "rgba(255, 255, 255, " + Math.max(0, a).toFixed(3) + ")";
-        ctx.fillText(w.text, w.x, w.y);
-      }
-
-      if (performance.now() > nextWord) {
-        words.push({
-          text: TRANSCRIPT[(Math.random() * TRANSCRIPT.length) | 0],
-          x: PILL_X + PILL_W + 6,
-          y: BASELINE,
-          vx: 1.6 + Math.random() * 1.4,
-          life: 1,
-        });
-        nextWord = performance.now() + 1400 + Math.random() * 1200;
-      }
     }
 
     function pillStep() {
@@ -1384,25 +1401,35 @@ section { scroll-margin-top: 96px; }
       var level = state.currentLevel;
       state.phase = (state.phase + WAVE_BASE_PHASE_STEP + WAVE_PHASE_GAIN * level) % TAU;
 
-      threadDash += 1.2;
       drawPill(level);
-      drawStream();
-      drawWords();
+      drawIncoming();
+      drawOutgoing();
     }
 
     if (reducePillMotion) {
-      // static frame: pill at a mid level, a short static string and one word
+      // static frame: pill at a mid level, converging strings, one word
       drawPill(0.45);
-      ctx.font = "500 11px 'JetBrains Mono', ui-monospace, monospace";
+      var sRun = PILL_X;
+      for (var li = 0; li < IN_LINES.length; li++) {
+        var line = IN_LINES[li];
+        ctx.beginPath();
+        for (var x = 0; x <= sRun; x += 3) {
+          var t = x / sRun;
+          var center = BASELINE + (line.startY - BASELINE) * (1 - easeInOut(t));
+          var y = center + line.amp * (1 - t) * (1 - t) * Math.sin(line.freq * t * TAU + 1.2);
+          if (x === 0) ctx.moveTo(x, y);
+          else ctx.lineTo(x, y);
+        }
+        ctx.strokeStyle = "rgba(255, 255, 255, " + line.opacity + ")";
+        ctx.lineWidth = STROKE_WIDTH;
+        ctx.stroke();
+      }
+      ctx.font = "500 13px 'JetBrains Mono', ui-monospace, monospace";
       ctx.textBaseline = "middle";
-      ctx.fillStyle = "rgba(255, 255, 255, 0.35)";
-      ctx.fillText("~·|0=1·~|", 30, BASELINE);
-      ctx.font = "500 12px 'JetBrains Mono', ui-monospace, monospace";
       ctx.fillStyle = "rgba(255, 255, 255, 0.8)";
-      ctx.fillText("hello", PILL_X + PILL_W + 6, BASELINE);
+      ctx.fillText("hello", PILL_X + PILL_W + 8, BASELINE);
     } else {
       (function loop(now) {
-        // simulate speech bursts feeding the same level pipeline as the app
         if (now > nextBurst) {
           var speak = Math.random() < 0.82;
           state.targetLevel = speak
