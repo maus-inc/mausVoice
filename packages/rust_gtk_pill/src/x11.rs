@@ -160,8 +160,8 @@ pub(crate) fn setup_x11_window(window: &gtk::Window, state: Rc<PillState>) {
         // monitor geometry is physical, so convert with the surface scale —
         // the toplevel lives on the monitor being resolved.)
         let surface_scale = win_tick
-            .surface()
-            .map(|surface| surface.scale_factor() as f64)
+            .window()
+            .map(|gdk_window| gdk_window.scale_factor() as f64)
             .unwrap_or(1.0);
         let (alloc_w, alloc_h) = win_tick.size();
         let half_w = alloc_w as f64 * surface_scale / 2.0;
