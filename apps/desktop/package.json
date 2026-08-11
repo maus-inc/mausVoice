@@ -1,7 +1,7 @@
 {
   "name": "desktop",
   "private": true,
-  "version": "0.1.2",
+  "version": "0.1.3",
   "type": "module",
   "scripts": {
     "prepare:sidecars": "node scripts/prepare-sidecars.mjs",
@@ -31,6 +31,7 @@
     "@emotion/react": "^11.14.0",
     "@emotion/styled": "^11.14.1",
     "@fontsource/roboto": "^5.2.10",
+    "@maus-inc/desktop-native-apis": "workspace:*",
     "@maus-inc/desktop-utils": "workspace:*",
     "@maus-inc/functions": "workspace:*",
     "@maus-inc/pricing": "workspace:*",

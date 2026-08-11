@@ -111,13 +111,13 @@ Individual workspaces expose the same commands if you need a narrower scope.
 
 ## Releases & CI
 
-- Releases are orchestrated by `.github/workflows/` reusable workflows. Pushes to `main`/`prod`/`enterprise` release to the `dev`/`prod`/`enterprise` channels. Desktop builds bump a channel tag, build Windows and macOS artifacts, and publish assets plus `latest.json` manifests. See `desktop-release.md` for step-by-step instructions.
+- Releases run through a single manual-dispatch workflow, `.github/workflows/release.yml`: enter a version, build all three platforms (macOS universal, Windows, Linux), and publish an unsigned GitHub Release with a generated body. See `RELEASE.md` for the step-by-step runbook. No channel tags or `latest.json` manifests — mausVoice ships directly from the Releases page.
 - Turbo caching is configured in `turbo.json`; CI jobs call `pnpm run build`, `pnpm run lint`, and other workspace-scoped commands.
 
 ## Documentation
 
 - Desktop architecture: `desktop-architecture.md`
-- Release playbook: `desktop-release.md`
+- Release playbook: `RELEASE.md`
 - Additional resources and inspiration: `resources.md`
 - Contributor conventions and workspace notes: `AGENTS.md` (repo root)
 

@@ -4,6 +4,8 @@ use crate::ipc::{Phase, PillPermission, PillStreaming};
 use crate::constants::*;
 use crate::state::{ClickAction, ClickRegion, PillState, RocketPhase};
 
+/// Paints the whole pill window: clears, scales for the UI scale factor, then
+/// draws the pill, panel, transcript, and overlays in z-order.
 pub(crate) fn draw_all(ctx: &Ctx, state: &PillState, view_w: f64, view_h: f64) {
     ctx.paint_clear(view_w, view_h);
 
@@ -94,12 +96,24 @@ pub(crate) fn pill_position(state: &PillState, ww: f64, wh: f64) -> (f64, f64, f
     (pill_x, pill_y, pill_w, pill_h)
 }
 
+/// Corner radius for the pill at its *current* size.
+///
+/// Derived from the live geometry rather than `expand_t` so the radius can
+/// never drift away from the width/height animation: the corners stay exactly
+/// half of the shortest side (a true capsule) on every frame, capped at the
+/// expanded design radius so a drag-inflated pill does not over-round.
+pub(crate) fn pill_radius(pill_w: f64, pill_h: f64) -> f64 {
+    (pill_w.min(pill_h) * 0.5).min(EXPANDED_RADIUS)
+}
+
+/// Renders the pill body and its current content (waveform, paused bar,
+/// loading, transcript, controls) and registers the pill's click region.
 fn draw_pill(ctx: &Ctx, state: &PillState, ww: f64, wh: f64) {
     let expand_t = state.expand_t.get();
     let (rx, ry, pill_w, pill_h) = pill_position(state, ww, wh);
 
     let bg_alpha = gfx::lerp(IDLE_BG_ALPHA, ACTIVE_BG_ALPHA, expand_t);
-    let radius = gfx::lerp(COLLAPSED_RADIUS, EXPANDED_RADIUS, expand_t);
+    let radius = pill_radius(pill_w, pill_h);
 
     let is_typing = state.assistant_active.get()
         && *state.assistant_input_mode.borrow() == "type";
@@ -112,12 +126,16 @@ fn draw_pill(ctx: &Ctx, state: &PillState, ww: f64, wh: f64) {
     ctx.fill();
 
     match state.phase.get() {
-        Phase::Recording if expand_t > 0.1 => {
-            draw_waveform(ctx, rx, ry, pill_w, pill_h, expand_t, state);
-            draw_edge_gradient(ctx, rx, ry, pill_w, pill_h, radius, expand_t);
-        }
-        Phase::Paused if expand_t > 0.1 => {
-            draw_paused(ctx, rx, ry, pill_w, pill_h, expand_t);
+        Phase::Recording | Phase::Paused if expand_t > 0.1 => {
+            // Crossfade the live waveform into the paused bar. `pause_t` is
+            // spring-driven so a pause/resume settles instead of hard-cutting.
+            let pause_t = state.pause_t.get();
+            if pause_t < 0.999 {
+                draw_waveform(ctx, rx, ry, pill_w, pill_h, expand_t, 1.0 - pause_t, state);
+            }
+            if pause_t > 0.001 {
+                draw_paused(ctx, rx, ry, pill_w, pill_h, expand_t, pause_t);
+            }
             draw_edge_gradient(ctx, rx, ry, pill_w, pill_h, radius, expand_t);
         }
         Phase::Loading if expand_t > 0.1 => {
@@ -143,21 +161,23 @@ fn draw_pill(ctx: &Ctx, state: &PillState, ww: f64, wh: f64) {
 #[allow(clippy::too_many_arguments)]
 fn draw_waveform(
     ctx: &Ctx, rx: f64, ry: f64, pill_w: f64, pill_h: f64,
-    expand_t: f64, state: &PillState,
+    expand_t: f64, fade: f64, state: &PillState,
 ) {
     let wave_phase = state.wave_phase.get();
     let level = state.current_level.get();
     let baseline = ry + pill_h / 2.0;
 
     ctx.save();
-    gfx::rounded_rect(ctx, rx, ry, pill_w, pill_h, pill_h / 2.0);
+    gfx::rounded_rect(ctx, rx, ry, pill_w, pill_h, pill_radius(pill_w, pill_h));
     ctx.clip();
 
     for config in WAVE_CONFIGS {
         let amplitude_factor = (level * config.multiplier).clamp(MIN_AMPLITUDE, MAX_AMPLITUDE);
-        let amplitude = (pill_h * 0.75 * amplitude_factor).max(1.0);
+        // `fade` flattens the wave towards the baseline as it hands over to
+        // the paused bar, so the two states share the same centre line.
+        let amplitude = (pill_h * 0.75 * amplitude_factor).max(1.0) * fade;
         let phase = wave_phase + config.phase_offset;
-        let alpha = config.opacity * expand_t;
+        let alpha = config.opacity * expand_t * fade;
 
         ctx.set_source_rgba(1.0, 1.0, 1.0, alpha);
         ctx.set_line_width(STROKE_WIDTH);
@@ -464,8 +484,7 @@ fn draw_flash_blue(ctx: &Ctx, state: &PillState, ww: f64, wh: f64) {
     let rw = pw - inset * 2.0;
     let rh = ph - inset * 2.0;
 
-    let expand_t = state.expand_t.get();
-    let radius = gfx::lerp(COLLAPSED_RADIUS, EXPANDED_RADIUS, expand_t) + FLASH_BLUE_INSET;
+    let radius = pill_radius(pw, ph) + FLASH_BLUE_INSET;
 
     let (gr, gg, gb) = FLASH_BLUE_GLOW_COLOR;
     gfx::rounded_rect(ctx, rx - 1.5, ry - 1.5, rw + 3.0, rh + 3.0, radius + 1.5);
@@ -1115,6 +1134,8 @@ fn draw_panel_button(
     ctx.draw_symbol(sym, cx, cy, 11.0);
 }
 
+/// Draws the keyboard/voice toggle button next to the pill while the
+/// assistant's keyboard button spring is active.
 fn draw_keyboard_button(ctx: &Ctx, state: &PillState, ww: f64, wh: f64) {
     let kb_t = state.kb_button_t.get();
     if kb_t < 0.01 {
@@ -1158,9 +1179,11 @@ fn draw_keyboard_button(ctx: &Ctx, state: &PillState, ww: f64, wh: f64) {
     }
 }
 
-fn draw_paused(ctx: &Ctx, rx: f64, ry: f64, pill_w: f64, pill_h: f64, expand_t: f64) {
+/// Draws the dimmed pause bar that replaces the waveform while paused,
+/// crossfading in with `fade`.
+fn draw_paused(ctx: &Ctx, rx: f64, ry: f64, pill_w: f64, pill_h: f64, expand_t: f64, fade: f64) {
     ctx.save();
-    let radius = gfx::lerp(COLLAPSED_RADIUS, EXPANDED_RADIUS, expand_t);
+    let radius = pill_radius(pill_w, pill_h);
     gfx::rounded_rect(ctx, rx, ry, pill_w, pill_h, radius);
     ctx.clip();
 
@@ -1170,13 +1193,13 @@ fn draw_paused(ctx: &Ctx, rx: f64, ry: f64, pill_w: f64, pill_h: f64, expand_t: 
     let track_x = rx + pad;
     let track_w = pill_w - pad * 2.0;
 
-    ctx.set_source_rgba(1.0, 1.0, 1.0, 0.1 * expand_t);
+    ctx.set_source_rgba(1.0, 1.0, 1.0, 0.1 * expand_t * fade);
     ctx.rectangle(track_x, bar_y, track_w, bar_h);
     ctx.fill();
 
     let indicator_w = track_w * LOADING_BAR_WIDTH_FRAC;
     let ind_x = track_x + (track_w - indicator_w) / 2.0;
-    ctx.set_source_rgba(1.0, 1.0, 1.0, 0.45 * expand_t);
+    ctx.set_source_rgba(1.0, 1.0, 1.0, 0.45 * expand_t * fade);
     ctx.rectangle(ind_x, bar_y, indicator_w, bar_h);
     ctx.fill();
 
@@ -1281,6 +1304,8 @@ fn wrap_text(ctx: &Ctx, text: &str, max_width: f64) -> Vec<String> {
 
 // ── Long-press ring indicator ─────────────────────────────────────
 
+/// Draws the long-press progress ring around the pill, kept at full
+/// completion while dragging so the outline reads as a drag affordance.
 fn draw_long_press_ring(ctx: &Ctx, state: &PillState, ww: f64, wh: f64) {
     // While actively dragging, keep the full outline visible (progress = 1.0).
     let progress = if state.dragging.get() {
@@ -1290,7 +1315,7 @@ fn draw_long_press_ring(ctx: &Ctx, state: &PillState, ww: f64, wh: f64) {
     };
 
     let (pill_x, pill_y, pill_w, pill_h) = pill_position(state, ww, wh);
-    let radius = gfx::lerp(COLLAPSED_RADIUS, EXPANDED_RADIUS, state.expand_t.get());
+    let radius = pill_radius(pill_w, pill_h);
 
     // Draw an outline that traces around the pill perimeter clockwise.
     let inset = 2.0;

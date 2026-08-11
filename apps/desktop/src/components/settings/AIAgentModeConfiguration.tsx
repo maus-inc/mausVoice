@@ -53,6 +53,7 @@ export const AIAgentModeConfiguration = ({
           { value: "none", label: "Off" },
         ]}
         ariaLabel="Assistant mode"
+        align="center"
       />
 
       {effectiveMode === "none" && (

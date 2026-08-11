@@ -20,6 +20,8 @@ pub(crate) enum Backend {
     PlainWayland,
 }
 
+/// Runs the GTK pill: picks the display backend, creates the frameless
+/// window, and drives the message/event loop until a quit message arrives.
 pub fn run(receiver: Receiver<InMessage>) {
     let backend = if gtk_layer_shell::is_supported() {
         Backend::LayerShell
@@ -137,6 +139,8 @@ pub fn run(receiver: Receiver<InMessage>) {
         should_stick: Cell::new(true),
         click_regions: RefCell::new(Vec::new()),
         entry_text: RefCell::new(String::new()),
+        pause_t: Cell::new(0.0),
+        pause_velocity: Cell::new(0.0),
         cancel_t: Cell::new(0.0),
         cancel_velocity: Cell::new(0.0),
         flash_message: RefCell::new(String::new()),
@@ -762,13 +766,22 @@ fn tick(state: &PillState) {
         state.cancel_flash.set(remaining.max(0.0));
     }
 
-    // Cancel button
+    // Recording <-> paused crossfade driven by the same critically damped
+    // spring as the other pill transitions (settles, never overshoots).
+    let pause_target = if state.phase.get() == Phase::Paused { 1.0 } else { 0.0 };
+    spring_anim(&state.pause_t, &state.pause_velocity, pause_target, SPRING_STIFFNESS);
+
+    // Cancel + pause controls.
     let controls_phase = state.phase.get();
     let show_controls = !state.assistant_active.get()
-        && (controls_phase == Phase::Recording
-            || controls_phase == Phase::Loading
-            || controls_phase == Phase::Paused)
-        && (state.hovered.get() || controls_phase == Phase::Paused);
+        && match controls_phase {
+            // Hover-revealed while recording, pinned open while paused.
+            Phase::Recording => state.hovered.get(),
+            Phase::Paused => true,
+            // Post-recording processing: neither cancel nor pause can still
+            // act on the take, so the controls fade out with the same spring.
+            Phase::Idle | Phase::Loading => false,
+        };
     let cancel_target = if show_controls { 1.0 } else { 0.0 };
     spring_anim(&state.cancel_t, &state.cancel_velocity, cancel_target, SPRING_STIFFNESS * 2.0);
 

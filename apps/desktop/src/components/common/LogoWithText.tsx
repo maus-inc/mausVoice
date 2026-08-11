@@ -25,6 +25,9 @@ export const LogoWithText = ({ sx, ...rest }: LogoWithTextProps) => {
           letterSpacing: "0.01em",
           lineHeight: 1,
           userSelect: "none",
+          // Explicit so the wordmark tracks the text ramp on both schemes
+          // instead of inheriting whatever surface it happens to sit on.
+          color: "text.primary",
           display: { xs: "none", sm: "block" },
         }}
       >

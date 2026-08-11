@@ -135,24 +135,53 @@ export const DictationSideEffects = () => {
     getEffectivePillVisibility(state.userPrefs?.dictationPillVisibility),
   );
 
+  /**
+   * A pill set to "hidden" stays off-screen even while recording, so a
+   * hotkey-started dictation would have no visual feedback. Revealing it for
+   * the session (without touching the persisted preference) means the first
+   * shortcut use after hiding brings the pill back; it hides again when idle.
+   * Resolves once the visibility change has been applied, so callers can
+   * start recording only after the pill is on screen.
+   */
+  const revealPillForActivityIfHidden = useCallback(async () => {
+    if (
+      getEffectivePillVisibility(
+        getAppState().userPrefs?.dictationPillVisibility,
+      ) !== "hidden"
+    ) {
+      return;
+    }
+    try {
+      await invoke("set_pill_visibility", { visibility: "while_active" });
+    } catch (error) {
+      getLogger().error(`Failed to reveal pill: ${error}`);
+    }
+  }, []);
+
   const dictationController = useMemo(
     () =>
       new ActivationController(
-        () => startDictationRecording(),
+        async () => {
+          await revealPillForActivityIfHidden();
+          await startDictationRecording();
+        },
         () => stopDictationRecording(),
         // Hold-to-talk: dictation records while the hotkey (Fn) is held and stops on release.
         true,
       ),
-    [],
+    [revealPillForActivityIfHidden],
   );
 
   const agentController = useMemo(
     () =>
       new ActivationController(
-        () => startAgentRecording(),
+        async () => {
+          await revealPillForActivityIfHidden();
+          await startAgentRecording();
+        },
         () => stopAgentRecording(),
       ),
-    [],
+    [revealPillForActivityIfHidden],
   );
 
   const additionalLanguageControllers = useMemo(
@@ -160,15 +189,17 @@ export const DictationSideEffects = () => {
       additionalLanguageEntries.map((entry) => ({
         actionName: entry.actionName,
         controller: new ActivationController(
-          () =>
-            startRecording({
+          async () => {
+            await revealPillForActivityIfHidden();
+            await startRecording({
               mode: "dictate",
               language: entry.language,
-            }),
+            });
+          },
           () => stopRecording(),
         ),
       })),
-    [additionalLanguageEntries],
+    [additionalLanguageEntries, revealPillForActivityIfHidden],
   );
 
   const restoreSystemVolume = useCallback(() => {

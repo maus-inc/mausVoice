@@ -1,5 +1,15 @@
 import { createTheme, type Shadows } from "@mui/material/styles";
-import { premiumSurface } from "./styles/shadows";
+import {
+  accent,
+  chalkSolid,
+  darkInk,
+  highlight,
+  ink,
+  inkSolid,
+  surfaces,
+  text,
+} from "./styles/palette";
+import { hairline, premiumSurface } from "./styles/shadows";
 
 const uiFont = '"Satoshi", system-ui, -apple-system, sans-serif';
 /** TAN-PARADISO only via CSS var(--font-display) on logo + welcome/name. */
@@ -12,40 +22,38 @@ export const theme = createTheme({
   colorSchemes: {
     light: {
       palette: {
-        primary: { main: "#12151C" },
-        secondary: { main: "#404040" },
+        primary: { main: inkSolid.base },
+        secondary: { main: "#4A443C" },
+        text: text.light,
+        divider: ink(0.08),
 
         goldFg: "rgb(104, 48, 9)",
         goldBg: "rgba(255, 193, 7, 0.6)",
-        shadow: "rgba(15, 18, 25, 0.12)",
-        blue: "#1b8af8ff",
+        shadow: ink(0.12),
+        blue: accent.light.main,
         blueHover: "#1a7cd4ff",
         blueActive: "#166bbf",
-        onBlue: "#FFFFFF",
+        onBlue: text.dark.primary,
 
-        level0: "#F4F5F7",
-        level1: "#FFFFFF",
-        level2: "#ECEEF2",
-        level3: "#E0E3E9",
+        ...surfaces.light,
       },
     },
     dark: {
       palette: {
-        primary: { main: "#FFFFFF", light: "#E8EAED" },
-        secondary: { main: "#B3B3B3" },
+        primary: { main: chalkSolid.base, light: "#E8E7E4" },
+        secondary: { main: "#B0AEAA" },
+        text: text.dark,
+        divider: highlight(0.08),
 
         goldFg: "#FFD700",
         goldBg: "rgba(255, 215, 0, 0.2)",
-        shadow: "rgba(0, 0, 0, 0.5)",
-        blue: "#3198ffff",
+        shadow: darkInk(0.5),
+        blue: accent.dark.main,
         blueHover: "#2787e6ff",
         blueActive: "#1f76cc",
-        onBlue: "#FFFFFF",
+        onBlue: text.dark.primary,
 
-        level0: "#0B0C0F",
-        level1: "#14161B",
-        level2: "#1E2128",
-        level3: "#2A2E38",
+        ...surfaces.dark,
       },
     },
   },
@@ -146,10 +154,10 @@ export const theme = createTheme({
           fontVariantNumeric: "tabular-nums",
         },
         "::selection": {
-          backgroundColor: "rgba(27, 138, 248, 0.25)",
+          backgroundColor: `rgba(${accent.light.rgb}, 0.25)`,
           color: "inherit",
           ...themeParam.applyStyles("dark", {
-            backgroundColor: "rgba(49, 152, 255, 0.35)",
+            backgroundColor: `rgba(${accent.dark.rgb}, 0.35)`,
           }),
         },
         "*::-webkit-scrollbar": {
@@ -160,19 +168,19 @@ export const theme = createTheme({
           background: "transparent",
         },
         "*::-webkit-scrollbar-thumb": {
-          backgroundColor: "rgba(15,18,25,0.16)",
+          backgroundColor: ink(0.16),
           borderRadius: 6,
           border: "2px solid transparent",
           backgroundClip: "padding-box",
           ...themeParam.applyStyles("dark", {
-            backgroundColor: "rgba(255,255,255,0.16)",
+            backgroundColor: highlight(0.16),
           }),
         },
         ":focus-visible": {
-          outline: "2px solid rgba(27, 138, 248, 0.7)",
+          outline: `2px solid rgba(${accent.light.rgb}, 0.7)`,
           outlineOffset: 2,
           ...themeParam.applyStyles("dark", {
-            outline: "2px solid rgba(49, 152, 255, 0.75)",
+            outline: `2px solid rgba(${accent.dark.rgb}, 0.75)`,
           }),
         },
         "#root": {
@@ -196,10 +204,10 @@ export const theme = createTheme({
           backgroundImage: "none",
           borderRadius: 18,
           boxShadow: premiumSurface.light.hover,
-          border: "1px solid rgba(15,18,25,0.06)",
+          border: hairline.light(),
           ...theme.applyStyles("dark", {
             boxShadow: premiumSurface.dark.hover,
-            border: "1px solid rgba(255,255,255,0.06)",
+            border: hairline.dark(),
           }),
         }),
       },
@@ -319,10 +327,10 @@ export const theme = createTheme({
           backgroundColor: theme.vars.palette.level1,
           backgroundImage: "none",
           borderRadius: 14,
-          border: "1px solid rgba(15,18,25,0.06)",
+          border: hairline.light(),
           boxShadow: premiumSurface.light.hover,
           ...theme.applyStyles("dark", {
-            border: "1px solid rgba(255,255,255,0.06)",
+            border: hairline.dark(),
             boxShadow: premiumSurface.dark.hover,
           }),
         }),
@@ -376,32 +384,32 @@ export const theme = createTheme({
           },
         }),
         contained: ({ theme }) => ({
-          color: "#FFFFFF",
-          backgroundColor: "#12151C",
+          color: surfaces.light.level1,
+          backgroundColor: inkSolid.base,
           boxShadow: premiumSurface.light.rest,
           "&:hover": {
-            backgroundColor: "#1C2230",
+            backgroundColor: inkSolid.raised,
             boxShadow: premiumSurface.light.hover,
             transform: "translateY(-1px)",
           },
           "&:active": {
             transform: "scale(0.98) translateY(0)",
             boxShadow: premiumSurface.light.active,
-            backgroundColor: "#0E1118",
+            backgroundColor: inkSolid.pressed,
           },
           ...theme.applyStyles("dark", {
-            color: "#0B0C0F",
-            backgroundColor: "#FFFFFF",
+            color: surfaces.dark.level0,
+            backgroundColor: chalkSolid.base,
             boxShadow: premiumSurface.dark.rest,
             "&:hover": {
-              backgroundColor: "#F0F2F5",
+              backgroundColor: chalkSolid.raised,
               boxShadow: premiumSurface.dark.hover,
               transform: "translateY(-1px)",
             },
             "&:active": {
               transform: "scale(0.98) translateY(0)",
               boxShadow: premiumSurface.dark.active,
-              backgroundColor: "#FFFFFF",
+              backgroundColor: chalkSolid.pressed,
             },
           }),
         }),
@@ -451,10 +459,17 @@ export const theme = createTheme({
             backgroundColor: theme.vars.palette.blue,
             color: theme.vars.palette.onBlue,
             boxShadow: `
-              inset 0 1px 0 rgba(255,255,255,0.28),
-              inset 0 2px 0 rgba(255,255,255,0.1),
-              0 6px 16px rgba(27, 138, 248, 0.35)
+              inset 0 1px 0 ${highlight(0.28)},
+              inset 0 2px 0 ${highlight(0.1)},
+              0 6px 16px rgba(${accent.light.rgb}, 0.35)
             `,
+            ...theme.applyStyles("dark", {
+              boxShadow: `
+                inset 0 1px 0 ${highlight(0.28)},
+                inset 0 2px 0 ${highlight(0.1)},
+                0 6px 16px rgba(${accent.dark.rgb}, 0.35)
+              `,
+            }),
             "&:hover": {
               backgroundColor: theme.vars.palette.blueHover,
               transform: "translateY(-1px)",
@@ -473,9 +488,9 @@ export const theme = createTheme({
       styleOverrides: {
         outlined: ({ theme }) => ({
           backgroundColor: theme.vars.palette.level1,
-          border: "1px solid rgba(15,18,25,0.08)",
+          border: hairline.light(0.08),
           ...theme.applyStyles("dark", {
-            border: "1px solid rgba(255,255,255,0.08)",
+            border: hairline.dark(0.08),
           }),
         }),
       },
@@ -485,12 +500,12 @@ export const theme = createTheme({
           style: ({ theme }) => ({
             backgroundColor: theme.vars.palette.level1,
             boxShadow: premiumSurface.light.rest,
-            border: "1px solid rgba(15,18,25,0.04)",
+            border: hairline.light(0.04),
             transition:
               "transform 180ms cubic-bezier(0.23, 1, 0.32, 1), box-shadow 200ms cubic-bezier(0.23, 1, 0.32, 1)",
             ...theme.applyStyles("dark", {
               boxShadow: premiumSurface.dark.rest,
-              border: "1px solid rgba(255,255,255,0.04)",
+              border: hairline.dark(0.04),
             }),
           }),
         },
@@ -534,7 +549,7 @@ export const theme = createTheme({
         root: ({ theme }) => ({
           backgroundColor: theme.vars.palette.level1,
           borderRadius: 16,
-          border: "1px solid rgba(15,18,25,0.05)",
+          border: hairline.light(0.05),
           boxShadow: premiumSurface.light.rest,
           transition:
             "transform 180ms cubic-bezier(0.23, 1, 0.32, 1), box-shadow 200ms cubic-bezier(0.23, 1, 0.32, 1)",
@@ -543,7 +558,7 @@ export const theme = createTheme({
             boxShadow: premiumSurface.light.hover,
           },
           ...theme.applyStyles("dark", {
-            border: "1px solid rgba(255,255,255,0.05)",
+            border: hairline.dark(0.05),
             boxShadow: premiumSurface.dark.rest,
             "&:hover": {
               transform: "translateY(-1px)",
@@ -574,38 +589,38 @@ export const theme = createTheme({
           transition:
             "transform 120ms cubic-bezier(0.23, 1, 0.32, 1), background-color 180ms cubic-bezier(0.23, 1, 0.32, 1), box-shadow 200ms cubic-bezier(0.23, 1, 0.32, 1), color 180ms cubic-bezier(0.23, 1, 0.32, 1)",
           "&:hover": {
-            backgroundColor: "rgba(15,18,25,0.04)",
+            backgroundColor: ink(0.04),
           },
           "&:active": {
             transform: "scale(0.985)",
           },
           "&.Mui-selected": {
-            backgroundColor: "#12151C",
-            color: "#FFFFFF",
+            backgroundColor: inkSolid.base,
+            color: surfaces.light.level1,
             boxShadow: premiumSurface.light.selected,
             "&:hover": {
-              backgroundColor: "#1A1F2A",
+              backgroundColor: inkSolid.raised,
             },
             "& .MuiListItemText-primary": {
-              color: "#FFFFFF",
+              color: surfaces.light.level1,
               fontWeight: 650,
             },
             "& .MuiListItemText-secondary": {
-              color: "rgba(255,255,255,0.72)",
+              color: highlight(0.72),
             },
             "& .MuiSvgIcon-root": {
-              color: "#FFFFFF",
+              color: surfaces.light.level1,
             },
           },
           ...theme.applyStyles("dark", {
             "&:hover": {
-              backgroundColor: "rgba(255,255,255,0.04)",
+              backgroundColor: highlight(0.04),
             },
             "&.Mui-selected": {
-              backgroundColor: "#1A1D24",
+              backgroundColor: surfaces.dark.level2,
               boxShadow: premiumSurface.dark.selected,
               "&:hover": {
-                backgroundColor: "#22262F",
+                backgroundColor: surfaces.dark.level3,
               },
             },
           }),

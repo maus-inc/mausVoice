@@ -1,3 +1,4 @@
+import CheckRoundedIcon from "@mui/icons-material/CheckRounded";
 import {
   Box,
   Button,
@@ -39,6 +40,7 @@ import {
   type LocalWhisperModel,
   normalizeLocalWhisperModel,
 } from "../../utils/local-transcription.utils";
+import { activeRowCheckSx, activeRowSx } from "../../styles/selection";
 import { ManagedByOrgNotice } from "../common/ManagedByOrgNotice";
 import { SegmentedControl } from "../common/SegmentedControl";
 import { ApiKeyList } from "./ApiKeyList";
@@ -262,6 +264,7 @@ export const AITranscriptionConfiguration = () => {
           { value: "local", label: "Local" },
         ]}
         ariaLabel="Processing mode"
+        align="center"
       />
 
       {effectiveMode === "local" && (
@@ -350,9 +353,10 @@ export const AITranscriptionConfiguration = () => {
                   value,
                 );
                 const progressLabel = formatDownloadProgress(downloadSnapshot);
+                const active = value === modelValue;
 
                 return (
-                  <MenuItem key={value} value={value}>
+                  <MenuItem key={value} value={value} sx={activeRowSx}>
                     <Stack spacing={0.75} sx={{ width: "100%" }}>
                       <Stack
                         direction="row"
@@ -362,9 +366,20 @@ export const AITranscriptionConfiguration = () => {
                         sx={{ width: "100%" }}
                       >
                         <Box sx={{ minWidth: 0 }}>
-                          <Typography variant="body2" fontWeight={600}>
-                            {label}
-                          </Typography>
+                          <Stack direction="row" alignItems="center" gap={0.75}>
+                            <Typography variant="body2" fontWeight={600}>
+                              {label}
+                            </Typography>
+                            {active && (
+                              <CheckRoundedIcon
+                                fontSize="small"
+                                sx={activeRowCheckSx}
+                                titleAccess={intl.formatMessage({
+                                  defaultMessage: "Selected",
+                                })}
+                              />
+                            )}
+                          </Stack>
                           <Typography
                             variant="caption"
                             color="text.secondary"

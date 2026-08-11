@@ -319,10 +319,13 @@ extern "C" fn text_field_action(_this: &Object, _sel: Sel, sender: id) {
     });
 }
 
+/// NSTimer callback: triggers one animation/interaction tick.
 extern "C" fn tick_callback(_this: &Object, _sel: Sel, _timer: id) {
     perform_tick();
 }
 
+/// Runs one frame of the pill loop: processes queued IPC messages, advances
+/// the springs/animations, and repaints when the state changed.
 fn perform_tick() {
     APP_CTX.with(|cell| {
         let borrow = cell.borrow();
@@ -529,6 +532,10 @@ fn update_hover(view: id, ctx: &AppContext) {
 
 // ── Animation tick ────────────────────────────────────────────────
 
+/// Advances all pill animations by `dt` seconds: audio levels, springs
+/// (expand, tooltip, panel, keyboard button, window size, pause crossfade,
+/// cancel controls, drag inflate), and the fireworks/flame/flash/transcript
+/// sub-tickers.
 fn tick(state: &PillState, window: id, dt: f64) {
     let phase = state.phase.get();
     let is_active = phase != Phase::Idle;
@@ -650,13 +657,22 @@ fn tick(state: &PillState, window: id, dt: f64) {
     let flash_target = if state.flash_visible.get() { 1.0 } else { 0.0 };
     spring_anim(&state.flash_t, &state.flash_velocity, flash_target, SPRING_STIFFNESS, dt);
 
-    // Cancel + pause controls: visible while recording/loading/paused (always on when paused).
+    // Recording <-> paused crossfade driven by the same critically damped
+    // spring as the other pill transitions (settles, never overshoots).
+    let pause_target = if state.phase.get() == Phase::Paused { 1.0 } else { 0.0 };
+    spring_anim(&state.pause_t, &state.pause_velocity, pause_target, SPRING_STIFFNESS, dt);
+
+    // Cancel + pause controls.
     let controls_phase = state.phase.get();
     let show_controls = !state.assistant_active.get()
-        && (controls_phase == Phase::Recording
-            || controls_phase == Phase::Loading
-            || controls_phase == Phase::Paused)
-        && (state.hovered.get() || controls_phase == Phase::Paused);
+        && match controls_phase {
+            // Hover-revealed while recording, pinned open while paused.
+            Phase::Recording => state.hovered.get(),
+            Phase::Paused => true,
+            // Post-recording processing: neither cancel nor pause can still
+            // act on the take, so the controls fade out with the same spring.
+            Phase::Idle | Phase::Loading => false,
+        };
     let cancel_target = if show_controls { 1.0 } else { 0.0 };
     spring_anim(&state.cancel_t, &state.cancel_velocity, cancel_target, SPRING_STIFFNESS * 2.0, dt);
 
@@ -1114,6 +1130,8 @@ unsafe fn setup(receiver: Receiver<InMessage>, embedded: bool) {
         should_stick: Cell::new(true),
         click_regions: RefCell::new(Vec::new()),
         entry_text: RefCell::new(String::new()),
+        pause_t: Cell::new(0.0),
+        pause_velocity: Cell::new(0.0),
         cancel_t: Cell::new(0.0),
         cancel_velocity: Cell::new(0.0),
         flash_message: RefCell::new(String::new()),

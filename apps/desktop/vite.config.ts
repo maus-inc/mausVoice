@@ -37,6 +37,40 @@ export default defineConfig(async () => {
       svgr(),
     ],
     clearScreen: false,
+    build: {
+      rollupOptions: {
+        output: {
+          // Split the heavy vendors out of the app bundle so the initial chunk
+          // stays lean and vendor updates don't invalidate the app chunk.
+          manualChunks(id) {
+            if (!id.includes("node_modules")) return undefined;
+            if (
+              id.includes("/react/") ||
+              id.includes("/react-dom/") ||
+              id.includes("/scheduler/") ||
+              id.includes("/react-is/")
+            ) {
+              return "react";
+            }
+            if (id.includes("/@mui/")) return "mui";
+            if (id.includes("/framer-motion/")) return "motion";
+            if (id.includes("/firebase/")) return "firebase";
+            if (id.includes("/lodash-es/")) return "lodash";
+            if (id.includes("/rxjs/")) return "rxjs";
+            if (
+              id.includes("/react-intl/") ||
+              id.includes("/@formatjs/") ||
+              id.includes("/intl-messageformat")
+            ) {
+              return "intl";
+            }
+            if (id.includes("/react-router")) return "router";
+            if (id.includes("/@tauri-apps/")) return "tauri";
+            return undefined;
+          },
+        },
+      },
+    },
     server: {
       port: 1420,
       strictPort: true,

@@ -157,6 +157,10 @@ pub(crate) struct PillState {
 
     pub(crate) entry_text: RefCell<String>,
 
+    // Recording <-> paused crossfade (0 = live waveform, 1 = paused bar)
+    pub(crate) pause_t: Cell<f64>,
+    pub(crate) pause_velocity: Cell<f64>,
+
     // Cancel button animation
     pub(crate) cancel_t: Cell<f64>,
     pub(crate) cancel_velocity: Cell<f64>,
@@ -240,6 +244,8 @@ impl PillState {
         if self.draw_h_velocity.get() != 0.0 { return true; }
         if self.flash_velocity.get() != 0.0 { return true; }
         if self.cancel_velocity.get() != 0.0 { return true; }
+        if self.pause_velocity.get() != 0.0 { return true; }
+        if self.inflate_velocity.get() != 0.0 { return true; }
 
         // Active visual effects
         if self.fireworks_active.get() { return true; }

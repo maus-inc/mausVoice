@@ -1,19 +1,28 @@
-# Apply personal-fork CI workflows
+# Personal fork CI templates
 
-This directory holds the personal-fork GitHub Actions workflow files that
-strip Linux from desktop CI/release and add unsigned desktop releases.
+This directory holds the personal-fork GitHub Actions workflow copies that
+survive independently of `.github/workflows/`. Their purpose is to keep a
+known-good branch of the CI definitions so they can be re-applied if the live
+workflows drift or a push token cannot update workflow files.
 
-They live here (instead of only under `.github/workflows/`) because some
-push tokens cannot update workflow files. To install them:
+- `build-desktop.yml` — desktop build gate (CI), Linux included
+- `lint-desktop.yml` — desktop lint gate (CI), all three pill crates
+
+The mausVoice release pipeline is **`.github/workflows/release.yml`** (single,
+workflow_dispatch-based). The old upstream multi-channel release stack
+(`_release-desktop-impl.yml`, `release-unsigned.yml`, release-enterprise-*,
+release-docs, retry-release, publish-packages) was deleted — do not reintroduce
+it. Releases are unsigned and authored by the maintainer's PAT (`RELEASE_TOKEN`
+secret) when present.
+
+To re-apply CI templates:
 
 ```bash
-cp personal-fork-ci/workflows/* .github/workflows/
-# remove Linux deps helper if present (no longer referenced)
-rm -f .github/scripts/install-desktop-linux-deps.sh
-git add .github/workflows .github/scripts
-git commit -m "ci: apply personal-fork workflows (no Linux, unsigned release)"
+cp personal-fork-ci/workflows/build-desktop.yml .github/workflows/
+cp personal-fork-ci/workflows/lint-desktop.yml .github/workflows/
+git add .github/workflows
+git commit -m "ci: re-apply personal-fork CI templates"
 ```
 
-Do **not** remove these free-form release helpers (they post-date the fork base):
-- `.github/workflows/release.yml` (workflow_dispatch recovery)
-- `.github/workflows/retry-release.yml`
+Do **not** remove `.github/scripts/install-desktop-linux-deps.sh` — release and
+build workflows reference it for the Linux matrix.

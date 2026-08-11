@@ -3,12 +3,13 @@ use crate::gfx::Gfx;
 use crate::ipc::{Phase, PillPermission, PillStreaming};
 use crate::state::{ClickAction, ClickRegion, PillState, RocketPhase};
 
+/// Paints the whole pill window: begins the Direct2D frame, clears, then
+/// draws the pill, panel, transcript, and overlays in z-order.
 pub(crate) fn draw_all(gfx: &mut Gfx, state: &PillState) {
     gfx.begin_frame();
     gfx.clear();
 
     state.click_regions.borrow_mut().clear();
-
     let ww = state.draw_width.get();
     let wh = state.draw_height.get();
     let (ox, oy) = state.content_offset();
@@ -91,12 +92,24 @@ pub(crate) fn pill_position(state: &PillState, ww: f64, wh: f64) -> (f64, f64, f
     (pill_x, pill_y, pill_w, pill_h)
 }
 
+/// Corner radius for the pill at its *current* size.
+///
+/// Derived from the live geometry rather than `expand_t` so the radius can
+/// never drift away from the width/height animation: the corners stay exactly
+/// half of the shortest side (a true capsule) on every frame, capped at the
+/// expanded design radius so a drag-inflated pill does not over-round.
+pub(crate) fn pill_radius(pill_w: f64, pill_h: f64) -> f64 {
+    (pill_w.min(pill_h) * 0.5).min(EXPANDED_RADIUS)
+}
+
+/// Renders the pill body and its current content (waveform, paused bar,
+/// loading, transcript, controls) and registers the pill's click region.
 fn draw_pill(gfx: &mut Gfx, state: &PillState, ww: f64, wh: f64) {
     let expand_t = state.expand_t.get();
     let (rx, ry, pill_w, pill_h) = pill_position(state, ww, wh);
 
     let bg_alpha = lerp(IDLE_BG_ALPHA, ACTIVE_BG_ALPHA, expand_t);
-    let radius = lerp(COLLAPSED_RADIUS, EXPANDED_RADIUS, expand_t);
+    let radius = pill_radius(pill_w, pill_h);
 
     let is_typing = state.assistant_active.get()
         && *state.assistant_input_mode.borrow() == "type";
@@ -109,12 +122,16 @@ fn draw_pill(gfx: &mut Gfx, state: &PillState, ww: f64, wh: f64) {
         [1.0, 1.0, 1.0, BORDER_ALPHA], 1.0);
 
     match state.phase.get() {
-        Phase::Recording if expand_t > 0.1 => {
-            draw_waveform(gfx, rx, ry, pill_w, pill_h, expand_t, state);
-            draw_edge_gradient(gfx, rx, ry, pill_w, pill_h, expand_t);
-        }
-        Phase::Paused if expand_t > 0.1 => {
-            draw_paused(gfx, rx, ry, pill_w, pill_h, expand_t);
+        Phase::Recording | Phase::Paused if expand_t > 0.1 => {
+            // Crossfade the live waveform into the paused bar. `pause_t` is
+            // spring-driven so a pause/resume settles instead of hard-cutting.
+            let pause_t = state.pause_t.get();
+            if pause_t < 0.999 {
+                draw_waveform(gfx, rx, ry, pill_w, pill_h, expand_t, 1.0 - pause_t, state);
+            }
+            if pause_t > 0.001 {
+                draw_paused(gfx, rx, ry, pill_w, pill_h, expand_t, pause_t);
+            }
             draw_edge_gradient(gfx, rx, ry, pill_w, pill_h, expand_t);
         }
         Phase::Loading if expand_t > 0.1 => {
@@ -132,22 +149,25 @@ fn draw_pill(gfx: &mut Gfx, state: &PillState, ww: f64, wh: f64) {
     });
 }
 
+#[allow(clippy::too_many_arguments)]
 fn draw_waveform(
     gfx: &mut Gfx, rx: f64, ry: f64, pill_w: f64, pill_h: f64,
-    expand_t: f64, state: &PillState,
+    expand_t: f64, fade: f64, state: &PillState,
 ) {
     let wave_phase = state.wave_phase.get();
     let level = state.current_level.get();
     let baseline = ry + pill_h / 2.0;
 
     gfx.save();
-    gfx.clip_rounded_rect(rx, ry, pill_w, pill_h, pill_h / 2.0);
+    gfx.clip_rounded_rect(rx, ry, pill_w, pill_h, pill_radius(pill_w, pill_h));
 
     for config in WAVE_CONFIGS {
         let amplitude_factor = (level * config.multiplier).clamp(MIN_AMPLITUDE, MAX_AMPLITUDE);
-        let amplitude = (pill_h * 0.75 * amplitude_factor).max(1.0);
+        // `fade` flattens the wave towards the baseline as it hands over to
+        // the paused bar, so the two states share the same centre line.
+        let amplitude = (pill_h * 0.75 * amplitude_factor).max(1.0) * fade;
         let phase = wave_phase + config.phase_offset;
-        let alpha = config.opacity * expand_t;
+        let alpha = config.opacity * expand_t * fade;
         let rgba = [1.0, 1.0, 1.0, alpha];
 
         let segments = (pill_w / 2.0).max(72.0) as i32;
@@ -173,7 +193,7 @@ fn draw_edge_gradient(
     let alpha = 0.9 * expand_t;
 
     gfx.save();
-    gfx.clip_rounded_rect(rx, ry, pill_w, pill_h, lerp(COLLAPSED_RADIUS, EXPANDED_RADIUS, expand_t));
+    gfx.clip_rounded_rect(rx, ry, pill_w, pill_h, pill_radius(pill_w, pill_h));
 
     gfx.fill_gradient_rect(
         rx, ry, pill_w * 0.18, pill_h,
@@ -202,7 +222,7 @@ fn draw_loading(
     expand_t: f64, state: &PillState,
 ) {
     gfx.save();
-    gfx.clip_rounded_rect(rx, ry, pill_w, pill_h, lerp(COLLAPSED_RADIUS, EXPANDED_RADIUS, expand_t));
+    gfx.clip_rounded_rect(rx, ry, pill_w, pill_h, pill_radius(pill_w, pill_h));
 
     let bar_h = 2.0;
     let bar_y = ry + (pill_h - bar_h) / 2.0;
@@ -451,8 +471,7 @@ fn draw_flash_blue(gfx: &mut Gfx, state: &PillState, ww: f64, wh: f64) {
     let rw = pw - inset * 2.0;
     let rh = ph - inset * 2.0;
 
-    let expand_t = state.expand_t.get();
-    let radius = lerp(COLLAPSED_RADIUS, EXPANDED_RADIUS, expand_t) + FLASH_BLUE_INSET;
+    let radius = pill_radius(pw, ph) + FLASH_BLUE_INSET;
 
     let (gr, gg, gb) = FLASH_BLUE_GLOW_COLOR;
     gfx.stroke_rounded_rect(
@@ -945,6 +964,8 @@ fn draw_panel_button(gfx: &Gfx, x: f64, y: f64, size: f64, alpha: f64, icon: But
     }
 }
 
+/// Draws the keyboard/voice toggle button next to the pill while the
+/// assistant's keyboard button spring is active.
 fn draw_keyboard_button(gfx: &mut Gfx, state: &PillState, ww: f64, wh: f64) {
     let kb_t = state.kb_button_t.get();
     if kb_t < 0.01 { return; }
@@ -1003,10 +1024,14 @@ fn draw_keyboard_button(gfx: &mut Gfx, state: &PillState, ww: f64, wh: f64) {
     }
 }
 
-fn draw_paused(gfx: &mut Gfx, rx: f64, ry: f64, pill_w: f64, pill_h: f64, expand_t: f64) {
+/// Draws the dimmed pause bar that replaces the waveform while paused,
+/// crossfading in with `fade`.
+fn draw_paused(
+    gfx: &mut Gfx, rx: f64, ry: f64, pill_w: f64, pill_h: f64, expand_t: f64, fade: f64,
+) {
     // Same loading bar as the loading phase, but static/dimmed to convey "held".
     gfx.save();
-    gfx.clip_rounded_rect(rx, ry, pill_w, pill_h, lerp(COLLAPSED_RADIUS, EXPANDED_RADIUS, expand_t));
+    gfx.clip_rounded_rect(rx, ry, pill_w, pill_h, pill_radius(pill_w, pill_h));
 
     let bar_h = 2.0;
     let bar_y = ry + (pill_h - bar_h) / 2.0;
@@ -1015,12 +1040,12 @@ fn draw_paused(gfx: &mut Gfx, rx: f64, ry: f64, pill_w: f64, pill_h: f64, expand
     let track_w = pill_w - pad * 2.0;
 
     // Dimmed track line
-    gfx.fill_rect(track_x, bar_y, track_w, bar_h, [1.0, 1.0, 1.0, 0.1 * expand_t]);
+    gfx.fill_rect(track_x, bar_y, track_w, bar_h, [1.0, 1.0, 1.0, 0.1 * expand_t * fade]);
 
     // Static indicator bar centered — same width as loading bar but dimmed
     let indicator_w = track_w * LOADING_BAR_WIDTH_FRAC;
     let ind_x = track_x + (track_w - indicator_w) / 2.0;
-    gfx.fill_rect(ind_x, bar_y, indicator_w, bar_h, [1.0, 1.0, 1.0, 0.45 * expand_t]);
+    gfx.fill_rect(ind_x, bar_y, indicator_w, bar_h, [1.0, 1.0, 1.0, 0.45 * expand_t * fade]);
 
     gfx.restore();
 }
@@ -1145,6 +1170,8 @@ fn lerp(a: f64, b: f64, t: f64) -> f64 {
 
 // ── Long-press outline progress indicator ──────────────────────────
 
+/// Draws the long-press progress ring around the pill, kept at full
+/// completion while dragging so the outline reads as a drag affordance.
 fn draw_long_press_ring(gfx: &Gfx, state: &PillState, ww: f64, wh: f64) {
     // While actively dragging, keep the full outline visible (progress = 1.0).
     let progress = if state.dragging.get() {
@@ -1154,7 +1181,7 @@ fn draw_long_press_ring(gfx: &Gfx, state: &PillState, ww: f64, wh: f64) {
     };
 
     let (pill_x, pill_y, pill_w, pill_h) = pill_position(state, ww, wh);
-    let radius = lerp(COLLAPSED_RADIUS, EXPANDED_RADIUS, state.expand_t.get());
+    let radius = pill_radius(pill_w, pill_h);
 
     // Draw an outline that traces around the pill perimeter clockwise
     // from the top-center. The filled portion matches the hold progress.

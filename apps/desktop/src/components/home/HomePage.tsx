@@ -11,6 +11,7 @@ import {
 import { useMemo } from "react";
 import { FormattedMessage, useIntl } from "react-intl";
 import { useNavigate } from "react-router-dom";
+import { useSetHeaderContent } from "../../hooks/header.hooks";
 import { useAppStore } from "../../store";
 import { getMyMember } from "../../utils/member.utils";
 import {
@@ -53,11 +54,27 @@ function StatCard({
   );
 }
 
+/**
+ * Stable node — see `useSetHeaderContent`: an inline element would re-run the
+ * publishing effect on every render.
+ */
+const headerTitle = (
+  <Typography variant="titleSmall" sx={{ color: "text.primary" }}>
+    <FormattedMessage defaultMessage="Home" />
+  </Typography>
+);
+
+/**
+ * Home dashboard: user stats, upgrade/trial prompts, getting-started guide,
+ * and recent transcriptions, with the side effects that keep them fresh.
+ */
 export default function HomePage() {
   const user = useAppStore(getMyUser);
   const userName = useAppStore(getMyUserName);
   const streak = useAppStore(getEffectiveStreak);
   const intl = useIntl();
+
+  useSetHeaderContent(headerTitle);
 
   const dictationSpeed = useAppStore(getDictationSpeed);
   const freeWordsRemaining = useAppStore((state) => {

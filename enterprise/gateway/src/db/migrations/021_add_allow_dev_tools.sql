@@ -1,1 +1,0 @@
-ALTER TABLE enterprise_config ADD COLUMN allow_dev_tools BOOLEAN NOT NULL DEFAULT FALSE;
