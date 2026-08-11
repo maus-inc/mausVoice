@@ -2,6 +2,7 @@ use crate::constants::*;
 use crate::gfx::Gfx;
 use crate::ipc::{Phase, PillPermission, PillStreaming};
 use crate::state::{ClickAction, ClickRegion, PillState, RocketPhase};
+use rust_pill_shared::{path_distances, rounded_rectangle_perimeter, RoundedRectArcSteps};
 
 /// Paints the whole pill window: begins the Direct2D frame, clears, then
 /// draws the pill, panel, transcript, and overlays in z-order.
@@ -1210,46 +1211,10 @@ fn draw_long_press_ring(gfx: &Gfx, state: &PillState, ww: f64, wh: f64) {
     let oh = pill_h + inset * 2.0;
     let r = (radius + inset).min(oh / 2.0);
 
-    // Build the perimeter as a true rounded rectangle: four corner QUARTER arcs
-    // joined by straight edges. (The old two-semicircle "stadium" path only
-    // closes cleanly when r == oh/2; once inflation pushed the height past the
-    // capped radius the caps no longer met the edges, producing the broken
-    // paperclip look.) Arc density follows the radius so the corners stay
-    // smooth at the inflated pill's larger radii.
-    let arc_steps = ((r * 0.75).ceil() as usize).clamp(6, 24);
-    let mut path: Vec<(f64, f64)> = Vec::with_capacity(arc_steps * 4 + 5);
-    let corner = |cx: f64, cy: f64, from: f64, path: &mut Vec<(f64, f64)>| {
-        for i in 1..=arc_steps {
-            let angle =
-                from + (i as f64 / arc_steps as f64) * std::f64::consts::FRAC_PI_2;
-            path.push((cx + angle.cos() * r, cy + angle.sin() * r));
-        }
-    };
-
-    // Top edge, left → right (start point doubles as the progress origin).
-    path.push((ox + r, oy));
-    path.push((ox + ow - r, oy));
-    // Top-right corner (−90° → 0°), then the right edge.
-    corner(ox + ow - r, oy + r, -std::f64::consts::FRAC_PI_2, &mut path);
-    path.push((ox + ow, oy + oh - r));
-    // Bottom-right corner (0° → 90°), then the bottom edge, right → left.
-    corner(ox + ow - r, oy + oh - r, 0.0, &mut path);
-    path.push((ox + r, oy + oh));
-    // Bottom-left corner (90° → 180°), then the left edge.
-    corner(ox + r, oy + oh - r, std::f64::consts::FRAC_PI_2, &mut path);
-    path.push((ox, oy + r));
-    // Top-left corner (180° → 270°) — closes back at the start point.
-    corner(ox + r, oy + r, std::f64::consts::PI, &mut path);
-
-    // Compute cumulative distances along the path
-    let mut distances: Vec<f64> = Vec::with_capacity(path.len());
-    distances.push(0.0);
-    for i in 1..path.len() {
-        let dx = path[i].0 - path[i - 1].0;
-        let dy = path[i].1 - path[i - 1].1;
-        distances.push(distances[i - 1] + (dx * dx + dy * dy).sqrt());
-    }
-    let total_len = *distances.last().unwrap_or(&1.0);
+    // Shared perimeter construction — identical geometry on every platform so
+    // the long-press ring traces the same path across Linux/macOS/Windows.
+    let path = rounded_rectangle_perimeter(ox, oy, ow, oh, r, RoundedRectArcSteps::Auto);
+    let (distances, total_len) = path_distances(&path);
     let filled_len = total_len * progress;
 
     let outline_alpha = (0.3 + 0.5 * progress) * alpha;

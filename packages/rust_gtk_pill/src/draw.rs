@@ -6,6 +6,7 @@ use crate::ipc::{Phase, PillPermission, PillStreaming};
 
 use crate::constants::*;
 use crate::state::{ClickAction, ClickRegion, PillState, RocketPhase};
+use rust_pill_shared::{path_distances, rounded_rectangle_perimeter, RoundedRectArcSteps};
 
 pub(crate) fn draw_all(cr: &cairo::Context, state: &PillState) {
     cr.set_operator(cairo::Operator::Source);
@@ -213,21 +214,43 @@ fn draw_long_press_ring(
         outline_alpha,
     );
     cr.set_line_width(LONG_PRESS_OUTLINE_WIDTH);
+    cr.set_line_cap(cairo::LineCap::Round);
 
-    let perimeter = 2.0 * (ow - 2.0 * r) + 2.0 * (oh - 2.0 * r) + 2.0 * PI * r;
-    let filled_len = perimeter * t;
-    let gap = perimeter - filled_len;
+    // Shared perimeter construction — identical geometry on every platform so
+    // the long-press ring traces the same path across Linux/macOS/Windows.
+    let path = rounded_rectangle_perimeter(ox, oy, ow, oh, r, RoundedRectArcSteps::Auto);
+    let (distances, total_len) = path_distances(&path);
+    let filled_len = total_len * t;
 
-    if state.dragging.get() {
-        // When actively dragging, show a solid outline
-        rounded_rect(cr, ox, oy, ow, oh, r);
+    if filled_len > 0.0 {
+        // Trace the partial outline segment-by-segment (matching the macOS
+        // and Windows renderers) instead of using a dash pattern — dash
+        // offsets against Cairo's own arc Béziers can drift from the shared
+        // polygon, producing a ring that doesn't close at the start point.
+        let mut started = false;
+        for i in 1..path.len() {
+            if distances[i - 1] >= filled_len {
+                break;
+            }
+            let (x1, y1) = path[i - 1];
+            let (mut x2, mut y2) = path[i];
+            if distances[i] > filled_len {
+                let seg = distances[i] - distances[i - 1];
+                let k = if seg > 0.0 {
+                    (filled_len - distances[i - 1]) / seg
+                } else {
+                    0.0
+                };
+                x2 = x1 + (x2 - x1) * k;
+                y2 = y1 + (y2 - y1) * k;
+            }
+            if !started {
+                cr.move_to(x1, y1);
+                started = true;
+            }
+            cr.line_to(x2, y2);
+        }
         let _ = cr.stroke();
-    } else if filled_len > 0.0 {
-        // Use dash pattern to reveal only the progress portion
-        cr.set_dash(&[filled_len, gap], -filled_len);
-        rounded_rect(cr, ox, oy, ow, oh, r);
-        let _ = cr.stroke();
-        cr.set_dash(&[], 0.0);
     }
 
     cr.restore().ok();

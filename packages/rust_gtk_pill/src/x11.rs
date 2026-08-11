@@ -115,23 +115,29 @@ pub(crate) fn setup_x11_window(window: &gtk::Window, state: Rc<PillState>) {
     // Transient hot-plug states can leave the cursor on a monitor whose handle
     // is momentarily missing from the list, so no probe matches. Falling back
     // to (0, 0) would throw the pill into the top-left corner of the root
-    // window; park it bottom-centre on the primary monitor instead.
-    .or_else(|| {
-        let primary = display
-            .primary_monitor()
-            .or_else(|| display.monitor(0))?;
-        let g = primary.geometry();
-        let scale = primary.scale_factor() as f64;
-        let centre_x = (g.x() as f64 + g.width() as f64 / 2.0) * scale;
-        let centre_y = (g.y() as f64 + g.height() as f64 / 2.0) * scale;
+    // window; park it bottom-centre on the primary monitor instead — the same
+    // anchor the idle placement logic uses for first paint.
+    .or_else(|| primary_monitor_bottom_centre(&display).and_then(|(bx, by)| {
         pill_pos_on_monitor(
-            centre_x,
-            centre_y,
+            bx,
+            by,
             state.dragging.get(),
             &display,
             window,
             &state,
         )
+    }))
+    // Last-resort: if there is literally no readable monitor we still have to
+    // move the window somewhere; bottom-centre-on-primary should have covered
+    // every real system, but keep this defensive rather than .unwrap()-ing.
+    .or_else(|| {
+        let primary = display.primary_monitor().or_else(|| display.monitor(0))?;
+        let g = primary.geometry();
+        let scale = primary.scale_factor() as f64;
+        Some((
+            ((g.x() + g.width() / 2) as f64 * scale) as c_int,
+            ((g.y() + g.height()) as f64 * scale) as c_int - 1,
+        ))
     })
     .unwrap_or((0, 0));
     unsafe {
@@ -220,6 +226,18 @@ pub(crate) fn setup_x11_window(window: &gtk::Window, state: Rc<PillState>) {
         }
         ControlFlow::Continue
     });
+}
+
+/// Returns a bottom-centre anchor point (in physical pixels) for the primary
+/// monitor (or monitor 0 if there is no primary). Used as the initial-placement
+/// anchor when the cursor sits on a transiently-missing monitor at realize().
+fn primary_monitor_bottom_centre(display: &gdk::Display) -> Option<(f64, f64)> {
+    let primary = display.primary_monitor().or_else(|| display.monitor(0))?;
+    let g = primary.geometry();
+    let scale = primary.scale_factor() as f64;
+    let centre_x = (g.x() as f64 + g.width() as f64 / 2.0) * scale;
+    let bottom_y = (g.y() as f64 + g.height() as f64) * scale;
+    Some((centre_x, bottom_y))
 }
 
 /// Computes where the toplevel belongs, given the anchor point that decides
