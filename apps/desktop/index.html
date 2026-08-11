@@ -14,6 +14,10 @@
         Pre-hydration canvas. Must stay in sync with `surfaces.*.level0` in
         src/styles/palette.ts - React has not mounted yet, so the theme cannot
         paint this and a mismatch shows as a colour flash on launch.
+
+        The inline script below overrides these with the persisted MUI mode
+        (localStorage "mode") before React mounts; the media query remains the
+        no-JS / no-preference fallback.
       */
       body {
         margin: 0;
@@ -34,6 +38,32 @@
 
   <body>
     <div id="root"></div>
+    <script>
+      // Pre-hydration theme bootstrap: read the persisted MUI mode
+      // (localStorage "mode" is the ThemeProvider default key), resolve
+      // "system" via matchMedia, and paint the matching surfaces.level0
+      // background so the launch canvas never flashes the wrong scheme.
+      (function () {
+        var mode = "system";
+        try {
+          var stored = localStorage.getItem("mode");
+          if (stored === "light" || stored === "dark" || stored === "system") {
+            mode = stored;
+          }
+        } catch (e) {
+          /* storage unavailable; fall through to system */
+        }
+        var resolved =
+          mode === "system"
+            ? window.matchMedia &&
+              window.matchMedia("(prefers-color-scheme: light)").matches
+              ? "light"
+              : "dark"
+            : mode;
+        document.body.style.backgroundColor =
+          resolved === "light" ? "#f5f2ed" : "#0c0c0d";
+      })();
+    </script>
     <script type="module" src="/src/main.tsx"></script>
   </body>
 </html>

@@ -28,7 +28,6 @@ import { HomeSideEffects } from "./HomeSideEffects";
 import { OutOfWordsCard } from "./OutOfWordsCard";
 import { TrialExtensionCard } from "./TrialExtensionCard";
 
-/** A single home-dashboard statistic: optional icon, value, and label. */
 function StatCard({
   value,
   label,

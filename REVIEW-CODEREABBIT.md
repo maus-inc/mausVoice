@@ -19,12 +19,14 @@ current code before being fixed or skipped. Validation performed:
 ## 1. Inline comments — all verified still-valid, all fixed
 
 ### `apps/desktop/DESIGN.md`
+
 - **Valid.** File had no trailing newline; `## Color` heading was flush against
   the list (MD022). Fixed: added the trailing newline + the blank line. Content
   otherwise untouched (its Prettier table-formatting drift is pre-existing and
   the lint gate only covers `src/`, so left alone).
 
 ### `apps/desktop/src-tauri/src/platform/audio.rs`
+
 - **Valid (comment).** `// Fast path: try the cached device first (avoids full
   enumeration)` was inaccurate: `find_device_by_label` → `labelled_devices_for_host`
   enumerates every input device on the host. Rewrote the comment and added a doc
@@ -40,6 +42,7 @@ current code before being fixed or skipped. Validation performed:
   `is_default = true` (verified in `list_input_devices` merge + sort).
 
 ### `apps/desktop/src/components/microphone/MicrophoneSelector.tsx` (+ `package.json`)
+
 - **Valid.** Imported bindings via a 5-level relative path into
   `packages/desktop-native-apis/src/bindings`; `@maus-inc/desktop-native-apis`
   was not a dependency. Added `"@maus-inc/desktop-native-apis": "workspace:*"`
@@ -48,6 +51,7 @@ current code before being fixed or skipped. Validation performed:
   switched too.
 
 ### `apps/desktop/src/components/root/TitleBar.tsx`
+
 - **Valid.** Minimize/Restore/Maximize/Close aria-labels were raw English.
   Now `useIntl().formatMessage({ defaultMessage: ... })` per repo convention
   (no `id` prop). The maximized conditional is preserved as a ternary between
@@ -56,6 +60,7 @@ current code before being fixed or skipped. Validation performed:
   the exact positions formatjs would emit (`close` already existed, translated).
 
 ### `apps/desktop/src/theme.ts`
+
 - **Valid.** `onBlue: "#FFFFFF"` in both schemes violated DESIGN.md's "never
   pure #fff" rule; now the semantic off-white `text.dark.primary` token
   (dark-scheme CTA fill `chalkSolid.base` untouched). Dark `shadow` literal
@@ -65,6 +70,7 @@ current code before being fixed or skipped. Validation performed:
   (mirrors the premiumSurface light/dark pattern already in the file).
 
 ### `packages/rust_windows_pill/src/state.rs`
+
 - **Valid.** `needs_redraw` checked every spring velocity except
   `pause_velocity` — a Paused→Idle transition (stop dictation while paused)
   leaves `pause_t` mid-spring with phase Idle, freezing the waveform↔paused-bar
@@ -75,6 +81,7 @@ current code before being fixed or skipped. Validation performed:
   spring could freeze mid-contract on release.
 
 ### `scripts/generate-app-icons.mjs`
+
 - **Valid.** `readPngSize` accepted any payload ≥24 bytes with the PNG magic,
   so a truncated/random payload could yield plausible dims. Now requires
   signature + first chunk `IHDR` with length 13 (payload ≥ 33). `readIcnsFrames`
@@ -213,3 +220,19 @@ production build succeeds · icons `--check` passes · `git diff --check` clean.
 Rust edits remain comment-only in the docstring commit; the two logic changes
 (audio.rs default retention, state.rs redraw conditions) were traced through
 their full call paths.
+
+## 6. CodeRabbit follow-up (PR #11) — all 9 comments addressed
+
+| Comment | Verdict | Resolution |
+|---|---|---|
+| index.html pre-hydration theme bootstrap | Valid | Inline script reads persisted MUI `mode` (ThemeProvider default localStorage key), resolves `system` via matchMedia, paints the matching `surfaces.level0` color; media-query fallback preserved. |
+| audio.rs `disambiguated_label` doc + `find_device_by_label` diagnostics | Valid | Doc now states ordinal suffixes are enumeration-position based and unstable across runs/replugging; resolution logs label + enumeration index (and warns when the cached label no longer resolves). |
+| HomePage.tsx redundant comment | Valid | Removed the tautological StatCard docstring; stability comment and props untouched. |
+| OutOfWordsCard borderRadius | Valid | `borderRadius: 2` (28px) → `1` (14px, `shape.borderRadius`), matching DESIGN.md's card radius. |
+| DictationSideEffects async reveal | Valid | `revealPillForActivityIfHidden` is now async and awaited; all three `ActivationController` activate callbacks await it before starting recording (controller serializes promise callbacks via its op-chain). |
+| Locale translations (de/es/fr/it/ko/pt-BR/pt/zh-CN/zh-TW) | Valid | The i18n regeneration had re-ID'd keys whose old translations were pruned. Ported 24 exact + 3 near-match translations per locale; added real translations for the new title-bar keys (minimize/maximize/restore); pt-BR/pt dictation prompt now uses the imperative "Dite {words}…". Remaining English values are genuinely new or pre-existing fallbacks (baseline: 28–46/locale pre-regen vs 46–64 now on 16 more keys). |
+| AssemblyAI credential logging | Valid | No longer logs `wsUrl` (contains the token query param), the raw `apiKey`, or a key preview — only presence + length. |
+| AssemblyAI raw message logging | Valid | `Received message` logs metadata only (type, turn order, end-of-turn, transcript length), never the transcript payload. |
+| REVIEW-CODEREABBIT.md / DESIGN.md MD022 | Partial | DESIGN.md has no `###` headings (Prettier pass already satisfied MD022); the report file itself had 7 `###`-heading/list violations — fixed. |
+
+Validation: `tsc` clean · prettier + oxlint clean · 300/300 unit tests · production build succeeds · `git diff --check` clean.

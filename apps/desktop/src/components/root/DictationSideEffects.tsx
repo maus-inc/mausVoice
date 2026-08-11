@@ -140,25 +140,30 @@ export const DictationSideEffects = () => {
    * hotkey-started dictation would have no visual feedback. Revealing it for
    * the session (without touching the persisted preference) means the first
    * shortcut use after hiding brings the pill back; it hides again when idle.
+   * Resolves once the visibility change has been applied, so callers can
+   * start recording only after the pill is on screen.
    */
-  const revealPillForActivityIfHidden = useCallback(() => {
+  const revealPillForActivityIfHidden = useCallback(async () => {
     if (
       getEffectivePillVisibility(
         getAppState().userPrefs?.dictationPillVisibility,
-      ) === "hidden"
+      ) !== "hidden"
     ) {
-      invoke("set_pill_visibility", { visibility: "while_active" }).catch(
-        (error) => getLogger().error(`Failed to reveal pill: ${error}`),
-      );
+      return;
+    }
+    try {
+      await invoke("set_pill_visibility", { visibility: "while_active" });
+    } catch (error) {
+      getLogger().error(`Failed to reveal pill: ${error}`);
     }
   }, []);
 
   const dictationController = useMemo(
     () =>
       new ActivationController(
-        () => {
-          revealPillForActivityIfHidden();
-          startDictationRecording();
+        async () => {
+          await revealPillForActivityIfHidden();
+          await startDictationRecording();
         },
         () => stopDictationRecording(),
         // Hold-to-talk: dictation records while the hotkey (Fn) is held and stops on release.
@@ -170,9 +175,9 @@ export const DictationSideEffects = () => {
   const agentController = useMemo(
     () =>
       new ActivationController(
-        () => {
-          revealPillForActivityIfHidden();
-          startAgentRecording();
+        async () => {
+          await revealPillForActivityIfHidden();
+          await startAgentRecording();
         },
         () => stopAgentRecording(),
       ),
@@ -184,9 +189,9 @@ export const DictationSideEffects = () => {
       additionalLanguageEntries.map((entry) => ({
         actionName: entry.actionName,
         controller: new ActivationController(
-          () => {
-            revealPillForActivityIfHidden();
-            startRecording({
+          async () => {
+            await revealPillForActivityIfHidden();
+            await startRecording({
               mode: "dictate",
               language: entry.language,
             });

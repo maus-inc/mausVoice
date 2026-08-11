@@ -204,21 +204,17 @@ const startAssemblyAIStreaming = async (
 
     // Open WebSocket
     const wsUrl = `wss://streaming.assemblyai.com/v3/ws?sample_rate=${sampleRate}&token=${apiKey}`;
-    getLogger().info("[AssemblyAI WebSocket] Connecting to:", wsUrl, apiKey);
+    getLogger().info(
+      "[AssemblyAI WebSocket] Connecting (api key present:",
+      Boolean(apiKey),
+      "length:",
+      apiKey?.length ?? 0,
+      ")",
+    );
     ws = new WebSocket(wsUrl);
 
     ws.onopen = async () => {
       getLogger().info("[AssemblyAI WebSocket] Connected, sending auth...");
-      getLogger().info(
-        "[AssemblyAI WebSocket] API Key present:",
-        !!apiKey,
-        "length:",
-        apiKey?.length ?? 0,
-      );
-      getLogger().info(
-        "[AssemblyAI WebSocket] API Key preview:",
-        apiKey?.substring(0, 10) + "...",
-      );
       // Send auth via first message
 
       // Listen for audio chunks from Rust
@@ -273,11 +269,14 @@ const startAssemblyAIStreaming = async (
     ws.onmessage = (event) => {
       try {
         const data = JSON.parse(event.data);
-        getLogger().info(
-          "[AssemblyAI WebSocket] Received message:",
-          data.type,
-          data,
-        );
+        // Turn messages carry the user's transcript; log metadata only.
+        getLogger().info("[AssemblyAI WebSocket] Received message", {
+          type: data.type,
+          turnOrder: data.turn_order,
+          endOfTurn: data.end_of_turn,
+          transcriptLength:
+            typeof data.transcript === "string" ? data.transcript.length : 0,
+        });
 
         if (data.type === "Turn" && data.end_of_turn) {
           // Final formatted transcript

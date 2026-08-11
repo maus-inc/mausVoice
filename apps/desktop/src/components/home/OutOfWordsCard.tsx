@@ -41,7 +41,8 @@ export const OutOfWordsCard = ({
     <Box
       sx={{
         p: 3,
-        borderRadius: 2,
+        // 14px radius matches the documented card treatment (DESIGN.md).
+        borderRadius: 1,
         // The blue accent is reserved for the action itself; the card is just a
         // surface so the CTA is the only thing carrying it.
         bgcolor: "level2",

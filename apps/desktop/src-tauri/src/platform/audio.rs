@@ -814,6 +814,10 @@ mod cpal_impl {
     /// Suffixes the second and later devices that report the same name, so two
     /// distinct microphones never collapse into one entry. The first device keeps
     /// the bare name, which is what preferences saved before disambiguation hold.
+    ///
+    /// Ordinal suffixes are assigned by enumeration position, which cpal does
+    /// not guarantee across runs or device replugging, so a disambiguated label
+    /// is only stable for the lifetime of one enumeration.
     fn disambiguated_label(name: &str, occurrence: usize) -> String {
         if occurrence == 0 {
             name.to_string()
@@ -886,10 +890,25 @@ mod cpal_impl {
     /// slow path, not the per-host enumeration itself.
     fn find_device_by_label(host: &cpal::Host, target_label: &str) -> Option<Device> {
         let target = normalized_name(target_label);
-        labelled_devices_for_host(host)
-            .into_iter()
-            .find(|entry| normalized_name(&entry.label) == target)
-            .map(|entry| entry.device)
+        let mut devices = labelled_devices_for_host(host).into_iter().enumerate();
+        let found = devices.find(|(_, entry)| normalized_name(&entry.label) == target);
+        match found {
+            Some((index, entry)) => {
+                log::debug!(
+                    "resolved label '{target_label}' -> '{}' (index {index}) on host {:?}",
+                    entry.label,
+                    host.id()
+                );
+                Some(entry.device)
+            }
+            None => {
+                log::warn!(
+                    "cached device label '{target_label}' not found on host {:?}",
+                    host.id()
+                );
+                None
+            }
+        }
     }
 
     /// Whether a device label equals the (already normalized) preferred name.
