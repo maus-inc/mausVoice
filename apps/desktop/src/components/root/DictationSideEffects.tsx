@@ -135,24 +135,48 @@ export const DictationSideEffects = () => {
     getEffectivePillVisibility(state.userPrefs?.dictationPillVisibility),
   );
 
+  /**
+   * A pill set to "hidden" stays off-screen even while recording, so a
+   * hotkey-started dictation would have no visual feedback. Revealing it for
+   * the session (without touching the persisted preference) means the first
+   * shortcut use after hiding brings the pill back; it hides again when idle.
+   */
+  const revealPillForActivityIfHidden = useCallback(() => {
+    if (
+      getEffectivePillVisibility(
+        getAppState().userPrefs?.dictationPillVisibility,
+      ) === "hidden"
+    ) {
+      invoke("set_pill_visibility", { visibility: "while_active" }).catch(
+        (error) => getLogger().error(`Failed to reveal pill: ${error}`),
+      );
+    }
+  }, []);
+
   const dictationController = useMemo(
     () =>
       new ActivationController(
-        () => startDictationRecording(),
+        () => {
+          revealPillForActivityIfHidden();
+          startDictationRecording();
+        },
         () => stopDictationRecording(),
         // Hold-to-talk: dictation records while the hotkey (Fn) is held and stops on release.
         true,
       ),
-    [],
+    [revealPillForActivityIfHidden],
   );
 
   const agentController = useMemo(
     () =>
       new ActivationController(
-        () => startAgentRecording(),
+        () => {
+          revealPillForActivityIfHidden();
+          startAgentRecording();
+        },
         () => stopAgentRecording(),
       ),
-    [],
+    [revealPillForActivityIfHidden],
   );
 
   const additionalLanguageControllers = useMemo(
@@ -160,15 +184,17 @@ export const DictationSideEffects = () => {
       additionalLanguageEntries.map((entry) => ({
         actionName: entry.actionName,
         controller: new ActivationController(
-          () =>
+          () => {
+            revealPillForActivityIfHidden();
             startRecording({
               mode: "dictate",
               language: entry.language,
-            }),
+            });
+          },
           () => stopRecording(),
         ),
       })),
-    [additionalLanguageEntries],
+    [additionalLanguageEntries, revealPillForActivityIfHidden],
   );
 
   const restoreSystemVolume = useCallback(() => {
