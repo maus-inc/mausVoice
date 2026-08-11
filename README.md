@@ -7,8 +7,8 @@
 **Voice typing for your own machine. Dictate into any app and clean it up with AI. No account. No subscription.**
 
 [![license](https://shieldcn.dev/badge/license-AGPL--3.0-black.svg)](LICENCE)
-[![CI](https://shieldcn.dev/badge/CI-passing-black.svg)](https://github.com/maus-inc/voquill/actions)
-[![platform](https://shieldcn.dev/badge/platform-Windows%20%7C%20macOS%20%7C%20Linux-black.svg)](https://github.com/maus-inc/voquill/releases)
+[![CI](https://shieldcn.dev/badge/CI-passing-black.svg)](https://github.com/maus-inc/mausVoice/actions)
+[![platform](https://shieldcn.dev/badge/platform-Windows%20%7C%20macOS%20%7C%20Linux-black.svg)](https://github.com/maus-inc/mausVoice/releases)
 
 </div>
 
@@ -37,13 +37,13 @@ mausVoice is a desktop app that turns your voice into text, anywhere you can typ
 | **Works in every app** | The overlay captures audio globally and pastes the result into whatever has focus. |
 
 <p align="center">
-  <a href="https://github.com/maus-inc/voquill/releases">
+  <a href="https://github.com/maus-inc/mausVoice/releases">
     <img src="https://shieldcn.dev/badge/Windows-Download-black.svg?logo=data%3Aimage%2Fsvg%2Bxml%3Bbase64%2CPHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCAyNCAyNCI%2BPHBhdGggZmlsbD0iI2ZmZiIgZD0iTTAgMy40NDlMOS43NSAyLjF2OS40NTFIMG0xMC45NDktOS42MDJMMjQgMHYxMS40SDEwLjk0OU0wIDEyLjZoOS43NXY5LjQ1MUwwIDIwLjY5OU0xMC45NDkgMTIuNkgyNFYyNGwtMTIuOS0xLjgwMSIvPjwvc3ZnPg%3D%3D" alt="Download mausVoice for Windows" />
   </a>
-  <a href="https://github.com/maus-inc/voquill/releases">
+  <a href="https://github.com/maus-inc/mausVoice/releases">
     <img src="https://shieldcn.dev/badge/macOS-Download-black.svg?logo=apple" alt="Download mausVoice for macOS" />
   </a>
-  <a href="https://github.com/maus-inc/voquill/releases">
+  <a href="https://github.com/maus-inc/mausVoice/releases">
     <img src="https://shieldcn.dev/badge/Linux-Download-black.svg?logo=linux" alt="Download mausVoice for Linux" />
   </a>
 </p>

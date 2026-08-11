@@ -68,7 +68,7 @@ attached.
 
 ### 4. Verify
 
-Open `https://github.com/maus-inc/voquill/releases` and check:
+Open `https://github.com/maus-inc/mausVoice/releases` and check:
 
 - The tag `mausVoice-v{version}` exists and the release is authored by
   **Owie6789**
@@ -85,7 +85,7 @@ Open `https://github.com/maus-inc/voquill/releases` and check:
 | --- | --- |
 | Build job fails | Read the Actions log. Batch all fixes, push once — CI minutes are finite. Integration tests failing with a Groq 429/timeout is a rate limit, not your code: wait for reset and rerun. |
 | macOS/Windows fail but Linux passes (or vice versa) | Platform-specific toolchain issue. macOS needs its two Rust targets; check the "Ensure universal macOS Rust targets" step. Windows needs the `CARGO_TARGET_DIR=D:\cargo` env. |
-| Release shows `github-actions[bot]` | `RELEASE_TOKEN` secret missing/wrong. Set it again: `gh secret set RELEASE_TOKEN --repo maus-inc/voquill --body "$(gh auth token)"` (or a fine-grained PAT with repo contents). |
+| Release shows `github-actions[bot]` | `RELEASE_TOKEN` secret missing/wrong. Set it again: `gh secret set RELEASE_TOKEN --repo maus-inc/mausVoice --body "$(gh auth token)"` (or a fine-grained PAT with repo contents). |
 | Tag already exists | You're releasing a version that was already tagged. Pick a new version or delete the old tag (only if you're sure). |
 | No Linux `.AppImage` | The matrix bundles `deb,appimage`; if AppImage packaging fails the whole Linux job fails. Check log for linuxdeploy errors. |
 | Body looks wrong | `scripts/ci/generate-release-body.mjs` builds the release description. You can run it locally with `ARTIFACTS_DIR=... RELEASE_TAG=...` etc. to preview. |
