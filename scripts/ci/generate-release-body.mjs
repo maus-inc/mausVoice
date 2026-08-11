@@ -78,8 +78,8 @@ async function autoNotes() {
       .trim()
       .split("\n")
       .map((s) => s.trim())
-      .filter(Boolean);
-    const prev = tags[0];
+      .find(Boolean);
+    const prev = tags;
     const range = prev ? `${prev}..HEAD` : "HEAD";
     const log = execSync(`git log ${range} --no-merges --format=%s`, {
       encoding: "utf8",
@@ -109,51 +109,48 @@ const mac = downloads.find((d) => d.platform === "macOS" && d.kind === "dmg") ??
 const linDeb = downloads.find((d) => d.platform === "Linux" && d.kind === "deb");
 const linAppImage = downloads.find((d) => d.platform === "Linux" && d.kind === "appimage");
 
-const body = [];
-body.push(`# ${releaseName}`);
-body.push("");
-body.push(
-  "Voice typing for your own machine. Dictate into any app, clean it up with AI. No account, no subscription.",
-);
-body.push("");
-body.push("---");
-body.push("");
+const linuxLinks = [linDeb, linAppImage].filter(Boolean).map((d) => markdownLink(d.basename, assetUrl(d.rel)));
 
-body.push("## What's new");
-body.push("");
 let notes = customNotes.trim();
 if (!notes) notes = (await autoNotes()) ?? "";
-body.push(notes || "This release continues the mausVoice desktop line with the changes on this branch.");
-body.push("");
 
-body.push("## Downloads");
-body.push("");
-body.push("| Platform | Package |");
-body.push("| --- | --- |");
-if (mac) body.push(`| macOS | ${markdownLink(mac.basename, assetUrl(mac.rel))} |`);
-if (win) body.push(`| Windows | ${markdownLink(win.basename, assetUrl(win.rel))} |`);
-const linuxLinks = [linDeb, linAppImage].filter(Boolean).map((d) => markdownLink(d.basename, assetUrl(d.rel)));
-if (linuxLinks.length) body.push(`| Linux | ${linuxLinks.join(" · ")} |`);
-body.push("");
-if (!mac || !win || !linuxLinks.length) {
-  body.push("> Some platform packages may be missing if a matrix build failed. Check the run log for details.");
-  body.push("");
-}
-
-body.push("## Installation");
-body.push("");
-body.push(prerelease
-  ? "This is an **unsigned pre-release** build for personal testing. No code signing or notarization."
-  : "Unsigned, self-built binaries for personal use. No code signing or notarization.");
-body.push("");
-body.push("- **macOS** — right-click the `.dmg`, choose **Open**, then confirm. The first launch bypasses the \"unidentified developer\" warning.");
-body.push("- **Windows** — SmartScreen may warn about an unknown publisher. Click **More info → Run anyway**.");
-body.push("- **Linux** — install the `.deb` with `sudo dpkg -i <file>.deb`, or mark the AppImage executable and run it.");
-body.push("");
-body.push("> You'll need your own transcription (Deepgram) and cleanup (Groq) API keys on first launch. Keys stay on your machine, encrypted.");
-body.push("");
-body.push("---");
-body.push("");
-body.push(`Found an issue? [Open one on GitHub](https://github.com/${repository}/issues). · [Repository](https://github.com/${repository}) · [License](LICENCE)`);
+const body = [
+  `# ${releaseName}`,
+  "",
+  "Voice typing for your own machine. Dictate into any app, clean it up with AI. No account, no subscription.",
+  "",
+  "---",
+  "",
+  "## What's new",
+  "",
+  notes || "This release continues the mausVoice desktop line with the changes on this branch.",
+  "",
+  "## Downloads",
+  "",
+  "| Platform | Package |",
+  "| --- | --- |",
+  ...(mac ? [`| macOS | ${markdownLink(mac.basename, assetUrl(mac.rel))} |`] : []),
+  ...(win ? [`| Windows | ${markdownLink(win.basename, assetUrl(win.rel))} |`] : []),
+  ...(linuxLinks.length ? [`| Linux | ${linuxLinks.join(" · ")} |`] : []),
+  "",
+  ...(!mac || !win || !linuxLinks.length
+    ? ["> Some platform packages may be missing if a matrix build failed. Check the run log for details.", ""]
+    : []),
+  "## Installation",
+  "",
+  prerelease
+    ? "This is an **unsigned pre-release** build for personal testing. No code signing or notarization."
+    : "Unsigned, self-built binaries for personal use. No code signing or notarization.",
+  "",
+  "- **macOS** — right-click the `.dmg`, choose **Open**, then confirm. The first launch bypasses the \"unidentified developer\" warning.",
+  "- **Windows** — SmartScreen may warn about an unknown publisher. Click **More info → Run anyway**.",
+  "- **Linux** — install the `.deb` with `sudo dpkg -i <file>.deb`, or mark the AppImage executable and run it.",
+  "",
+  "> You'll need your own transcription (Deepgram) and cleanup (Groq) API keys on first launch. Keys stay on your machine, encrypted.",
+  "",
+  "---",
+  "",
+  `Found an issue? [Open one on GitHub](https://github.com/${repository}/issues). · [Repository](https://github.com/${repository}) · [License](LICENCE)`,
+];
 
 console.log(body.join("\n"));
