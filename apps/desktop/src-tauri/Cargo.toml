@@ -38,7 +38,8 @@ thiserror = "1"
 reqwest = { version = "0.12", default-features = false, features = ["blocking", "json", "rustls-tls-native-roots"] }
 cpal = "0.15"
 tauri-plugin-os = "2.3.1"
-rdev = { git = "https://github.com/josiahsrc/rdev" }
+# Local fork that restores macOS event taps disabled by the OS.
+rdev = { path = "../../../patches/rdev" }
 strum = "0.24"
 rodio = "0.17"
 wgpu = "0.20"
@@ -106,9 +107,3 @@ unexpected_cfgs = { level = "warn", check-cfg = ["cfg(feature, values(\"cargo-cl
 
 [patch.crates-io]
 block = { path = "../../../patches/block-0.1.6" }
-
-# Local fork of rdev that re-enables the macOS event tap when the OS disables it
-# (kCGEventTapDisabledByTimeout) — upstream drops that event and the tap goes dead. See
-# patches/rdev/src/macos/grab.rs.
-[patch."https://github.com/josiahsrc/rdev"]
-rdev = { path = "../../../patches/rdev" }
