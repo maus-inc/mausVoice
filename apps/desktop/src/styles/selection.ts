@@ -5,20 +5,17 @@ import { duration, easeOutCubic } from "./motion";
  *
  * MUI's default `.Mui-selected` wash is a few percent of `action.selected`,
  * which is impossible to find at a glance in a long, scrolling model list. The
- * active row instead gets an accent rail plus a tinted fill derived from the
- * single accent blue, so the selection reads immediately and identically in
- * both menus.
+ * active row instead gets an always-present rail that only changes colour, a
+ * neutral tinted fill, and a check glyph. It is intentionally neutral (no
+ * accent) so it reads as "selected" without reintroducing the blue the app
+ * moved away from.
  */
 
-/** Width of the accent rail that marks the active row. */
+/** Width of the rail that marks the active row. */
 const RAIL_WIDTH = 3;
 
 const ease = `cubic-bezier(${easeOutCubic.join(", ")})`;
 const transition = `${duration.fast}s ${ease}`;
-
-/** The accent at partial strength, resolved per scheme via the CSS variable. */
-const accentFill = (percent: number) =>
-  `color-mix(in srgb, var(--app-palette-blue) ${percent}%, transparent)`;
 
 /**
  * Applies to the row itself. Mark the active row with either `data-active`
@@ -36,16 +33,17 @@ export const activeRowSx = {
     backgroundColor: "action.hover",
   },
   "&[data-active='true'], &.Mui-selected": {
-    borderLeftColor: "var(--app-palette-blue)",
-    backgroundColor: accentFill(12),
+    // Neutral onyx rail + a low-contrast neutral fill (no accent colour).
+    borderLeftColor: "text.primary",
+    backgroundColor: "action.selected",
     "&:hover": {
-      backgroundColor: accentFill(18),
+      backgroundColor: "action.selected",
     },
   },
 };
 
 /** The check glyph that accompanies the rail on the active row. */
 export const activeRowCheckSx = {
-  color: "var(--app-palette-blue)",
+  color: "text.primary",
   flexShrink: 0,
 };

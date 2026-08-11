@@ -25,7 +25,7 @@ pub fn success_html() -> &'static str {
     align-items: center;
     max-width: 400px;
     width: 90%;
-    color: #12151C;
+    color: #161617;
   }
 
   .logo { width: 48px; height: 48px; margin-bottom: 16px; }
@@ -33,7 +33,7 @@ pub fn success_html() -> &'static str {
   .card {
     text-align: center;
     background: #F5F5F5;
-    color: #12151C;
+    color: #161617;
     border-radius: 12px;
     padding: 32px 40px;
     width: 100%;
