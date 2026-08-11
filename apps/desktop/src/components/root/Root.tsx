@@ -16,8 +16,8 @@ function ErrorFallback({
   error,
   resetErrorBoundary,
 }: {
-  error: unknown;
-  resetErrorBoundary: () => void;
+  readonly error: unknown;
+  readonly resetErrorBoundary: () => void;
 }) {
   const message = error instanceof Error ? error.message : String(error);
   return (

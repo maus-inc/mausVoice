@@ -1,0 +1,9 @@
+[workspace]
+members = [
+    "packages/rust_gtk_pill",
+    "packages/rust_macos_pill",
+    "packages/rust_transcription",
+    "packages/rust_windows_pill",
+    "packages/rust_pill_shared",
+]
+resolver = "2"

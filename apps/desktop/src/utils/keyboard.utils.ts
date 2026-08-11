@@ -235,50 +235,66 @@ export const syncHotkeyCombosToNative = (): Promise<void> => {
   return run;
 };
 
-const syncHotkeyCombosToNativeNow = async (): Promise<void> => {
-  const state = useAppStore.getState();
+const collectActionNames = (state: AppState): Set<string> => {
   const actionNames = new Set<string>();
-
   for (const hotkey of Object.values(state.hotkeyById)) {
     if (hotkey.keys.length > 0) {
       actionNames.add(hotkey.actionName);
     }
   }
-
   for (const name of Object.keys(DEFAULT_HOTKEY_COMBOS)) {
     actionNames.add(name);
   }
+  return actionNames;
+};
+
+const collectCombosForAction = (
+  state: AppState,
+  actionName: string,
+): { grabbable: string[][]; primaryNonModifier: string[] | null } => {
+  const actionCombos = getHotkeyCombosForAction(state, actionName);
+  const grabbable: string[][] = [];
+  let primaryNonModifier: string[] | null = null;
+
+  if (!isActionGrabbable(state, actionName)) {
+    return { grabbable, primaryNonModifier };
+  }
+
+  for (const combo of actionCombos) {
+    if (combo.length === 0) {
+      continue;
+    }
+    // Modifier-only fire hotkeys (e.g. Cmd) must not be natively grabbed:
+    // they need key-up handling so supersets like Cmd+Z still pass through.
+    if (!isHoldActionHotkey(actionName) && isModifierOnlyCombo(combo)) {
+      continue;
+    }
+    grabbable.push(combo);
+    if (primaryNonModifier === null && !isModifierOnlyCombo(combo)) {
+      primaryNonModifier = combo;
+    }
+  }
+  return { grabbable, primaryNonModifier };
+};
+
+const syncHotkeyCombosToNativeNow = async (): Promise<void> => {
+  const state = useAppStore.getState();
+  const actionNames = collectActionNames(state);
 
   const combos: string[][] = [];
   const compositorBindings: CompositorBinding[] = [];
 
   for (const actionName of actionNames) {
-    const actionCombos = getHotkeyCombosForAction(state, actionName);
+    const { grabbable, primaryNonModifier } = collectCombosForAction(
+      state,
+      actionName,
+    );
+    combos.push(...grabbable);
 
-    if (isActionGrabbable(state, actionName)) {
-      for (const combo of actionCombos) {
-        if (combo.length > 0) {
-          // Modifier-only fire hotkeys (e.g. Cmd) must not be natively grabbed:
-          // they need key-up handling so supersets like Cmd+Z still pass through.
-          if (!isHoldActionHotkey(actionName) && isModifierOnlyCombo(combo)) {
-            continue;
-          }
-
-          combos.push(combo);
-        }
-      }
-    }
-
-    if (
-      isCompositorTriggerAction(actionName) &&
-      isActionGrabbable(state, actionName) &&
-      actionCombos.length > 0 &&
-      actionCombos[0].length > 0 &&
-      !isModifierOnlyCombo(actionCombos[0])
-    ) {
+    if (isCompositorTriggerAction(actionName) && primaryNonModifier) {
       compositorBindings.push({
         actionName,
-        keys: actionCombos[0],
+        keys: primaryNonModifier,
       });
     }
   }
