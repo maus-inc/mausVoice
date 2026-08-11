@@ -1,3 +1,4 @@
+import CheckRoundedIcon from "@mui/icons-material/CheckRounded";
 import CloseIcon from "@mui/icons-material/Close";
 import ExpandMoreIcon from "@mui/icons-material/ExpandMore";
 import SearchIcon from "@mui/icons-material/Search";
@@ -17,7 +18,7 @@ import {
 import { OpenRouterModel } from "@maus-inc/types";
 import { OPENROUTER_FAVORITE_MODELS } from "@maus-inc/voice-ai";
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { FormattedMessage } from "react-intl";
+import { FormattedMessage, useIntl } from "react-intl";
 import { Virtuoso } from "react-virtuoso";
 import {
   getOpenRouterConfigForKey,
@@ -26,6 +27,7 @@ import {
   toggleOpenRouterFavoriteModel,
 } from "../../actions/openrouter.actions";
 import { useAppStore } from "../../store";
+import { activeRowCheckSx, activeRowSx } from "../../styles/selection";
 
 type OpenRouterModelPickerProps = {
   apiKeyId: string;
@@ -55,6 +57,7 @@ const ModelRow = ({
   onSelect,
   onToggleFavorite,
 }: ModelRowProps) => {
+  const intl = useIntl();
   const [hovered, setHovered] = useState(false);
 
   return (
@@ -62,20 +65,17 @@ const ModelRow = ({
       onClick={onSelect}
       onMouseEnter={() => setHovered(true)}
       onMouseLeave={() => setHovered(false)}
+      data-active={selected}
       sx={{
-        px: 1.5,
+        pl: 1.25,
+        pr: 1.5,
         py: 1,
         cursor: "pointer",
         display: "flex",
         alignItems: "center",
         gap: 1,
-        backgroundColor: selected
-          ? "action.selected"
-          : hovered
-            ? "action.hover"
-            : "transparent",
         borderRadius: 1,
-        transition: "background-color 0.15s ease",
+        ...activeRowSx,
       }}
     >
       <Box sx={{ flex: 1, minWidth: 0 }}>
@@ -115,10 +115,12 @@ const ModelRow = ({
           )}
         </IconButton>
       )}
-      {selected && !hovered && !isFavorite && (
-        <Typography variant="caption" color="primary.main" fontWeight={600}>
-          <FormattedMessage defaultMessage="Selected" />
-        </Typography>
+      {selected && (
+        <CheckRoundedIcon
+          fontSize="small"
+          sx={activeRowCheckSx}
+          titleAccess={intl.formatMessage({ defaultMessage: "Selected" })}
+        />
       )}
     </Box>
   );

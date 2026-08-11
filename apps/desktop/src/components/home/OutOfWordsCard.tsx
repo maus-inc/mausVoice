@@ -41,9 +41,13 @@ export const OutOfWordsCard = ({
     <Box
       sx={{
         p: 3,
+        // 14px radius matches the documented card treatment (DESIGN.md).
         borderRadius: 1,
-        background:
-          "linear-gradient(135deg, color-mix(in srgb, var(--app-palette-blue) 35%, transparent) 0%, color-mix(in srgb, var(--app-palette-blue) 20%, transparent) 100%)",
+        // The blue accent is reserved for the action itself; the card is just a
+        // surface so the CTA is the only thing carrying it.
+        bgcolor: "level2",
+        border: "1px solid",
+        borderColor: "divider",
       }}
     >
       <Stack spacing={1.5}>

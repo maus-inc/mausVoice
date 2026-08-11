@@ -1,19 +1,19 @@
-import {
-  CloseRounded,
-  CropSquareRounded,
-  FilterNoneRounded,
-  HorizontalRuleRounded,
-} from "@mui/icons-material";
 import { Box, IconButton, Stack, useColorScheme } from "@mui/material";
 import { getCurrentWindow } from "@tauri-apps/api/window";
-import { useCallback, useEffect, useState } from "react";
-import { titleBarShadow } from "../../styles/shadows";
+import { Copy, Minus, Square, X } from "lucide";
+import { useCallback, useEffect, useMemo, useState } from "react";
+import { useIntl } from "react-intl";
+import { surfaceAlpha, surfaces } from "../../styles/palette";
+import { hairline, titleBarShadow } from "../../styles/shadows";
+import { isTauriRuntime } from "../../utils/env.utils";
 import { LogoWithText } from "../common/LogoWithText";
+import { MorphNavIcon } from "../common/MorphNavIcon";
 import { ThemeModeToggle } from "./ThemeModeToggle";
+import { WindowResizeHandles } from "./WindowResizeHandles";
 
-const isTauri = () =>
-  typeof window !== "undefined" &&
-  ("__TAURI_INTERNALS__" in window || "__TAURI__" in window);
+/** Window-control glyphs are 16px so they stay optically level with the 18px
+ * theme toggle without crowding the 28px button. */
+const CONTROL_ICON_SIZE = 16;
 
 /**
  * Custom frameless chrome title bar.
@@ -23,10 +23,11 @@ export const TitleBar = () => {
   const { mode, systemMode } = useColorScheme();
   const resolved = mode === "system" ? systemMode : mode;
   const dark = resolved === "dark";
+  const intl = useIntl();
   const [maximized, setMaximized] = useState(false);
 
   useEffect(() => {
-    if (!isTauri()) return;
+    if (!isTauriRuntime()) return;
     let unlisten: (() => void) | undefined;
     const win = getCurrentWindow();
     win
@@ -49,12 +50,12 @@ export const TitleBar = () => {
   }, []);
 
   const minimize = useCallback(async () => {
-    if (!isTauri()) return;
+    if (!isTauriRuntime()) return;
     await getCurrentWindow().minimize();
   }, []);
 
   const toggleMax = useCallback(async () => {
-    if (!isTauri()) return;
+    if (!isTauriRuntime()) return;
     const win = getCurrentWindow();
     const isMax = await win.isMaximized();
     if (isMax) {
@@ -66,110 +67,115 @@ export const TitleBar = () => {
     }
   }, []);
 
+  // `Square` -> `Copy` (two offset squares) is the conventional
+  // maximise/restore pair; MorphNavIcon tweens between the two paths.
+  const maximizeIcon = useMemo(() => (maximized ? Copy : Square), [maximized]);
+
   const close = useCallback(async () => {
-    if (!isTauri()) return;
+    if (!isTauriRuntime()) return;
     await getCurrentWindow().close();
   }, []);
 
   return (
-    <Box
-      sx={{
-        height: 40,
-        flexShrink: 0,
-        display: "flex",
-        alignItems: "center",
-        px: 1,
-        position: "relative",
-        zIndex: 20,
-        backgroundColor: dark
-          ? "rgba(20,22,27,0.92)"
-          : "rgba(255,255,255,0.88)",
-        backdropFilter: "blur(18px) saturate(1.2)",
-        WebkitBackdropFilter: "blur(18px) saturate(1.2)",
-        borderBottom: dark
-          ? "1px solid rgba(255,255,255,0.05)"
-          : "1px solid rgba(15,18,25,0.06)",
-        boxShadow: dark ? titleBarShadow.dark : titleBarShadow.light,
-      }}
-    >
-      {/*
-        Full-bleed drag region. Double-click to maximise is handled explicitly:
-        with `decorations: false` the webview does not reliably synthesise the
-        native double-click-to-maximise behaviour for a drag region.
-      */}
+    <>
+      <WindowResizeHandles />
       <Box
-        data-tauri-drag-region
-        onDoubleClick={() => void toggleMax()}
         sx={{
-          position: "absolute",
-          inset: 0,
-          zIndex: 0,
-        }}
-      />
-
-      <Stack
-        direction="row"
-        alignItems="center"
-        spacing={1}
-        sx={{
+          height: 40,
+          flexShrink: 0,
+          display: "flex",
+          alignItems: "center",
+          px: 1,
           position: "relative",
-          zIndex: 1,
-          pl: 0.5,
-          color: "text.primary",
+          zIndex: 20,
+          backgroundColor: dark
+            ? surfaceAlpha(surfaces.dark.level1, 0.92)
+            : surfaceAlpha(surfaces.light.level1, 0.88),
+          backdropFilter: "blur(18px) saturate(1.2)",
+          WebkitBackdropFilter: "blur(18px) saturate(1.2)",
+          borderBottom: dark ? hairline.dark(0.05) : hairline.light(0.06),
+          boxShadow: dark ? titleBarShadow.dark : titleBarShadow.light,
         }}
       >
-        <ThemeModeToggle />
-        <LogoWithText />
-      </Stack>
-
-      <Box
-        sx={{ flex: 1 }}
-        data-tauri-drag-region
-        onDoubleClick={() => void toggleMax()}
-      />
-
-      <Stack
-        direction="row"
-        alignItems="center"
-        spacing={0.25}
-        sx={{ position: "relative", zIndex: 1 }}
-      >
-        <IconButton
-          size="small"
-          onClick={() => void minimize()}
-          aria-label="Minimize"
-          sx={controlSx}
-        >
-          <HorizontalRuleRounded sx={{ fontSize: 16 }} />
-        </IconButton>
-        <IconButton
-          size="small"
-          onClick={() => void toggleMax()}
-          aria-label={maximized ? "Restore" : "Maximize"}
-          sx={controlSx}
-        >
-          {maximized ? (
-            <FilterNoneRounded sx={{ fontSize: 14 }} />
-          ) : (
-            <CropSquareRounded sx={{ fontSize: 15 }} />
-          )}
-        </IconButton>
-        <IconButton
-          size="small"
-          onClick={() => void close()}
-          aria-label="Close"
+        {/*
+          Full-bleed drag region. Double-click to maximise is handled explicitly:
+          with `decorations: false` the webview does not reliably synthesise the
+          native double-click-to-maximise behaviour for a drag region.
+        */}
+        <Box
+          data-tauri-drag-region
+          onDoubleClick={() => void toggleMax()}
           sx={{
-            ...controlSx,
-            "&:hover": {
-              backgroundColor: "rgba(232, 77, 77, 0.92)",
-              color: "#fff",
-            },
+            position: "absolute",
+            inset: 0,
+            zIndex: 0,
+          }}
+        />
+
+        <Stack
+          direction="row"
+          alignItems="center"
+          spacing={1}
+          sx={{
+            position: "relative",
+            zIndex: 1,
+            pl: 0.5,
+            color: "text.primary",
           }}
         >
-          <CloseRounded sx={{ fontSize: 16 }} />
-        </IconButton>
-      </Stack>
-    </Box>
+          <ThemeModeToggle />
+          <LogoWithText />
+        </Stack>
+
+        <Box
+          sx={{ flex: 1 }}
+          data-tauri-drag-region
+          onDoubleClick={() => void toggleMax()}
+        />
+
+        <Stack
+          direction="row"
+          alignItems="center"
+          spacing={0.25}
+          sx={{ position: "relative", zIndex: 1 }}
+        >
+          <IconButton
+            size="small"
+            onClick={() => void minimize()}
+            aria-label={intl.formatMessage({ defaultMessage: "Minimize" })}
+            sx={controlSx}
+          >
+            <MorphNavIcon icon={Minus} size={CONTROL_ICON_SIZE} />
+          </IconButton>
+          <IconButton
+            size="small"
+            onClick={() => void toggleMax()}
+            aria-label={
+              maximized
+                ? intl.formatMessage({ defaultMessage: "Restore" })
+                : intl.formatMessage({ defaultMessage: "Maximize" })
+            }
+            sx={controlSx}
+          >
+            <MorphNavIcon icon={maximizeIcon} size={CONTROL_ICON_SIZE} />
+          </IconButton>
+          <IconButton
+            size="small"
+            onClick={() => void close()}
+            aria-label={intl.formatMessage({ defaultMessage: "Close" })}
+            sx={{
+              ...controlSx,
+              "&:hover": {
+                backgroundColor: "rgba(232, 77, 77, 0.92)",
+                color: "#fff",
+              },
+            }}
+          >
+            <MorphNavIcon icon={X} size={CONTROL_ICON_SIZE} />
+          </IconButton>
+        </Stack>
+      </Box>
+    </>
   );
 };
 

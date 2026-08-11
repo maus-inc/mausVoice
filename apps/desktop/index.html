@@ -10,14 +10,23 @@
         color-scheme: light dark;
       }
 
+      /*
+        Pre-hydration canvas. Must stay in sync with `surfaces.*.level0` in
+        src/styles/palette.ts - React has not mounted yet, so the theme cannot
+        paint this and a mismatch shows as a colour flash on launch.
+
+        The inline script below overrides these with the persisted MUI mode
+        (localStorage "mode") before React mounts; the media query remains the
+        no-JS / no-preference fallback.
+      */
       body {
         margin: 0;
-        background-color: #121212;
+        background-color: #0c0c0d;
       }
 
       @media (prefers-color-scheme: light) {
         body {
-          background-color: #fff;
+          background-color: #f5f2ed;
         }
       }
 
@@ -29,6 +38,35 @@
 
   <body>
     <div id="root"></div>
+    <script>
+      // Pre-hydration theme bootstrap: read the persisted MUI mode
+      // (localStorage "mode" is the ThemeProvider default key), resolve
+      // "system" via matchMedia, and paint the matching surfaces.level0
+      // background so the launch canvas never flashes the wrong scheme.
+      (function () {
+        var stored = null;
+        try {
+          stored = localStorage.getItem("mode");
+        } catch (error) {
+          // Storage can be unavailable (private mode, disabled cookies);
+          // fall back to the system preference.
+          stored = null;
+        }
+        var mode =
+          stored === "light" || stored === "dark" || stored === "system"
+            ? stored
+            : "system";
+        var resolved = mode;
+        if (mode === "system") {
+          var prefersLight = window.matchMedia
+            ? window.matchMedia("(prefers-color-scheme: light)").matches
+            : false;
+          resolved = prefersLight ? "light" : "dark";
+        }
+        document.body.style.backgroundColor =
+          resolved === "light" ? "#f5f2ed" : "#0c0c0d";
+      })();
+    </script>
     <script type="module" src="/src/main.tsx"></script>
   </body>
 </html>

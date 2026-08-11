@@ -15,7 +15,9 @@ pub(crate) const LONG_PRESS_DURATION: f64 = 0.45;
 pub(crate) const LONG_PRESS_HOLD_DELAY: f64 = 0.12;
 pub(crate) const CANCEL_FLASH_DURATION: f64 = 0.4;
 pub(crate) const LONG_PRESS_MOVE_THRESHOLD: f64 = 8.0;
-pub(crate) const LONG_PRESS_OUTLINE_COLOR: (f64, f64, f64) = (0.45, 0.75, 1.0);
+// Silver-white with a very slight cool tint — reads as a neutral "grab" affordance
+// and stays distinct from the blue commit flash (`FLASH_BLUE_COLOR`).
+pub(crate) const LONG_PRESS_OUTLINE_COLOR: (f64, f64, f64) = (0.92, 0.95, 1.0);
 pub(crate) const LONG_PRESS_OUTLINE_WIDTH: f64 = 2.0;
 
 /// How much the pill inflates (in px) when the long-press completes and drag begins.
@@ -28,7 +30,9 @@ pub(crate) const MIN_PILL_HEIGHT: f64 = 6.0;
 pub(crate) const EXPANDED_PILL_WIDTH: f64 = 120.0;
 pub(crate) const EXPANDED_PILL_HEIGHT: f64 = 32.0;
 
-pub(crate) const COLLAPSED_RADIUS: f64 = 6.0;
+/// Upper bound for the pill corner radius. The radius actually painted is
+/// derived from the pill's live geometry (`draw::pill_radius`) so the corner
+/// rounding stays locked to the shortest side while the pill grows.
 pub(crate) const EXPANDED_RADIUS: f64 = 16.0;
 pub(crate) const IDLE_BG_ALPHA: f64 = 0.6;
 pub(crate) const ACTIVE_BG_ALPHA: f64 = 0.92;

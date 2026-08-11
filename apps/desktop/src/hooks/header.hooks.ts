@@ -10,6 +10,14 @@ export const useHeaderPortal = () => {
   return context;
 };
 
+/**
+ * Publishes a node into the app header's left slot for as long as the caller is
+ * mounted.
+ *
+ * `content` is an effect dependency and the provider lives above the router, so
+ * pass a **referentially stable** node (module constant or `useMemo`). An inline
+ * element is a new object on every render and would set state in a loop.
+ */
 export const useSetHeaderContent = (content: ReactNode) => {
   const { setLeftContent } = useHeaderPortal();
 

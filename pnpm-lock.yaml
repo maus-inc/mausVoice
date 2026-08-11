@@ -86,6 +86,9 @@ importers:
       '@fontsource/roboto':
         specifier: ^5.2.10
         version: 5.2.10
+      '@maus-inc/desktop-native-apis':
+        specifier: workspace:*
+        version: link:../../packages/desktop-native-apis
       '@maus-inc/desktop-utils':
         specifier: workspace:*
         version: link:../../packages/desktop-utils

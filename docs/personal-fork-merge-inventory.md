@@ -1,5 +1,11 @@
 # Personal fork merge inventory
 
+> **Historical record.** This documents the PR #3 fork merge. The release
+> pipeline described here (channel orchestrator, `_release-desktop-impl.yml`,
+> `release-unsigned.yml`, enterprise flavors) has since been replaced by the
+> single `release.yml` workflow. Linux is retained on all platforms. See
+> `release.yml` and APPLY.md for the current CI/release layout.
+
 Branch: `arena/019fd252-mausvoice` → base `free-fix`
 Source: personal fork commits from PR #2 (`Owie6789/mausvoice-private`)
 PR: https://github.com/maus-inc/mausvoice/pull/3

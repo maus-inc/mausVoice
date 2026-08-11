@@ -10,6 +10,11 @@ import { FeatureReleaseDialog } from "./FeatureReleaseDialog";
 import { PermissionsDialog } from "./PermissionsDialog";
 import { TrialEndedDialog } from "./TrialEndedDialog";
 
+/**
+ * Authenticated app shell: sidebar navigation, routed content area, and the
+ * global dialogs (feature release, permissions, trial ended, transcription
+ * details). Also reports the app version into the layout.
+ */
 export default function DashboardPage() {
   const data = useAsyncData(getVersion, []);
   const location = useLocation();
@@ -58,16 +63,13 @@ export default function DashboardPage() {
             }
             animate={{ opacity: 1, y: 0, filter: "blur(0px)" }}
             transition={{ duration: 0.22, ease: easeOutQuint }}
+            // Flat: the route content owns its own surfaces (cards, rows), so
+            // wrapping it in a second bordered panel stacked two tiers of
+            // elevation for one plane and boxed the page inside the page.
             sx={{
               flexGrow: 1,
               minHeight: 0,
               overflow: "auto",
-              borderRadius: 3,
-              bgcolor: "level1",
-              border: (theme) =>
-                theme.palette.mode === "dark"
-                  ? "1px solid rgba(255,255,255,0.05)"
-                  : "1px solid rgba(15,18,25,0.05)",
             }}
           >
             <Outlet />

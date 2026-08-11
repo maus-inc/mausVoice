@@ -1,237 +1,286 @@
-name: Release (auto)
+name: Release mausVoice
 
-# Orchestrator. On push to `main` releases to dev; push to `prod` releases the
-# consumer-facing channel (Desktop, Docs); push to `enterprise` releases
-# the enterprise channel (Desktop enterprise, Enterprise Admin, Enterprise
-# Gateway). Detects which folders changed since the previous commit on that
-# branch and invokes the per-component reusable workflows.
+# Robust release pipeline for mausVoice desktop.
 #
-# Promotion: fast-forward merge `main` into `prod` or `enterprise` → this
-# workflow runs on that branch and only the components that changed since
-# the last release on that branch ship.
+# Trigger: manual dispatch ("Run workflow"). This publishes a versioned
+# GitHub Release with unsigned, self-built installers for macOS (universal),
+# Windows, and Linux. No code signing, no notarization, no updater channel
+# metadata — the signing key is the repo-visible throwaway CI key, so the
+# updater must never publish latest.json.
 #
-# Manual dispatch releases the selected components on the chosen branch —
-# the recovery path when a push-triggered release fails, since reruns use
-# the original (broken) workflow snapshot.
+# Typical flow:
+#   1. Enter the version (e.g. 0.1.3) and optional release notes
+#   2. Run this workflow
+#   3. Assets + a formatted release body land on the GitHub Release
 
 on:
-  push:
-    branches: [main, prod, enterprise]
   workflow_dispatch:
     inputs:
-      desktop:
-        description: "Release desktop"
-        type: boolean
+      version:
+        description: "Version to release (e.g. 0.1.3, 0.2.0-rc.1). Used for the tag and release title."
+        required: true
+        type: string
+      prerelease:
+        description: "Mark this release as a pre-release"
+        required: false
         default: false
-      docs:
-        description: "Release docs"
         type: boolean
-        default: false
-      enterprise_admin:
-        description: "Release enterprise admin"
-        type: boolean
-        default: false
-      enterprise_gateway:
-        description: "Release enterprise gateway"
-        type: boolean
-        default: false
-
-concurrency:
-  group: release-${{ github.ref_name }}-orchestrator
-  cancel-in-progress: false
+      notes:
+        description: "Optional markdown for the 'What's new' section. Leave empty to auto-generate from commits."
+        required: false
+        default: ""
+        type: string
+      tag:
+        description: "Optional explicit tag (default: mausVoice-v{version})"
+        required: false
+        default: ""
+        type: string
 
 permissions:
   contents: write
-  id-token: write
-  packages: write
-  actions: write
+
+concurrency:
+  group: release-mausvoice
+  cancel-in-progress: false
 
 jobs:
-  detect:
-    name: Detect changed folders
-    runs-on: ubuntu-latest
-    outputs:
-      channel: ${{ steps.env.outputs.channel }}
-      desktop: ${{ github.event_name == 'workflow_dispatch' && inputs.desktop || steps.filter.outputs.desktop }}
-      docs: ${{ github.event_name == 'workflow_dispatch' && inputs.docs || steps.filter.outputs.docs }}
-      enterprise_admin: ${{ github.event_name == 'workflow_dispatch' && inputs.enterprise_admin || steps.filter.outputs.enterprise_admin }}
-      enterprise_gateway: ${{ github.event_name == 'workflow_dispatch' && inputs.enterprise_gateway || steps.filter.outputs.enterprise_gateway }}
+  build:
+    name: Build ${{ matrix.label }}
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - label: macOS (universal)
+            os: macos-14
+            args: "--target universal-apple-darwin"
+            rust_targets: "aarch64-apple-darwin,x86_64-apple-darwin"
+            tauri_platform: macos
+            node_platform: darwin
+            bundle_dir: apps/desktop/src-tauri/target/universal-apple-darwin/release/bundle
+            require_gpu_sidecar: true
+          - label: Windows
+            os: windows-latest
+            args: ""
+            rust_targets: ""
+            tauri_platform: windows
+            node_platform: win32
+            bundle_dir: D:\cargo\release\bundle
+            require_gpu_sidecar: false
+          - label: Linux
+            os: ubuntu-22.04
+            args: "--bundles deb,appimage"
+            rust_targets: ""
+            tauri_platform: linux
+            node_platform: linux
+            bundle_dir: apps/desktop/src-tauri/target/release/bundle
+            require_gpu_sidecar: false
     steps:
-      - uses: actions/checkout@v4
+      - name: Checkout source
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
 
-      - name: Resolve channel from branch
-        id: env
-        run: |
-          case "${{ github.ref_name }}" in
-            prod)       echo "channel=prod"       >> "$GITHUB_OUTPUT" ;;
-            enterprise) echo "channel=enterprise" >> "$GITHUB_OUTPUT" ;;
-            *)          echo "channel=dev"        >> "$GITHUB_OUTPUT" ;;
-          esac
-
-      - uses: dorny/paths-filter@v3
-        if: github.event_name == 'push'
-        id: filter
-        with:
-          base: ${{ github.event.before }}
-          filters: |
-            desktop:
-              - 'apps/desktop/**'
-              - 'apps/windows-installer/**'
-              - 'packages/**'
-            docs:
-              - 'apps/docs/**'
-            enterprise_admin:
-              - 'enterprise/admin/**'
-              - 'packages/**'
-            enterprise_gateway:
-              - 'enterprise/gateway/**'
-              - 'packages/**'
-
-  desktop:
-    name: Desktop
-    needs: detect
-    # Desktop is released on all three channels. The channel name matches the
-    # reusable's release_env input directly (dev/prod/enterprise).
-    if: needs.detect.outputs.desktop == 'true'
-    uses: ./.github/workflows/_release-desktop-impl.yml
-    with:
-      release_env: ${{ needs.detect.outputs.channel }}
-    secrets: inherit
-
-  desktop-enterprise-dev:
-    name: Desktop (enterprise-dev)
-    needs: detect
-    # `main` ships the dev flavor AND the enterprise-dev flavor in parallel, so
-    # enterprise testers on main get the same commit packaged as the enterprise
-    # build. Only fires on the dev channel — prod/enterprise have their own flavors.
-    if: needs.detect.outputs.desktop == 'true' && needs.detect.outputs.channel == 'dev'
-    uses: ./.github/workflows/_release-desktop-impl.yml
-    with:
-      release_env: enterprise-dev
-    secrets: inherit
-
-  docs:
-    name: Docs
-    needs: detect
-    # Docs is a single-environment Firebase deploy — only on `prod`.
-    if: |
-      needs.detect.outputs.docs == 'true' &&
-      needs.detect.outputs.channel == 'prod'
-    uses: ./.github/workflows/release-docs.yml
-    secrets: inherit
-
-  enterprise-admin:
-    name: Enterprise Admin
-    needs: detect
-    # Enterprise admin runs on dev (main) and the enterprise channel maps to
-    # its `prod` release env.
-    if: |
-      needs.detect.outputs.enterprise_admin == 'true' &&
-      (needs.detect.outputs.channel == 'dev' || needs.detect.outputs.channel == 'enterprise')
-    uses: ./.github/workflows/release-enterprise-admin.yml
-    with:
-      release_env: ${{ needs.detect.outputs.channel == 'enterprise' && 'prod' || 'dev' }}
-    secrets: inherit
-
-  enterprise-gateway:
-    name: Enterprise Gateway
-    needs: detect
-    if: |
-      needs.detect.outputs.enterprise_gateway == 'true' &&
-      (needs.detect.outputs.channel == 'dev' || needs.detect.outputs.channel == 'enterprise')
-    uses: ./.github/workflows/release-enterprise-gateway.yml
-    with:
-      release_env: ${{ needs.detect.outputs.channel == 'enterprise' && 'prod' || 'dev' }}
-    secrets: inherit
-
-  notify:
-    name: Notify Google Chat
-    needs: [detect, desktop, desktop-enterprise-dev, docs, enterprise-admin, enterprise-gateway]
-    if: always()
-    runs-on: ubuntu-latest
-    steps:
-      - name: Post release summary
+      - name: Validate version input
         env:
-          WEBHOOK: ${{ secrets.GCHAT_DEPLOY_WEBHOOK }}
-          CHANNEL: ${{ needs.detect.outputs.channel }}
-          DESKTOP_CHANGED: ${{ needs.detect.outputs.desktop }}
-          DOCS_CHANGED: ${{ needs.detect.outputs.docs }}
-          ENTERPRISE_ADMIN_CHANGED: ${{ needs.detect.outputs.enterprise_admin }}
-          ENTERPRISE_GATEWAY_CHANGED: ${{ needs.detect.outputs.enterprise_gateway }}
-          DESKTOP_RESULT: ${{ needs.desktop.result }}
-          DESKTOP_ENTERPRISE_DEV_RESULT: ${{ needs['desktop-enterprise-dev'].result }}
-          DOCS_RESULT: ${{ needs.docs.result }}
-          ENTERPRISE_ADMIN_RESULT: ${{ needs['enterprise-admin'].result }}
-          ENTERPRISE_GATEWAY_RESULT: ${{ needs['enterprise-gateway'].result }}
-          COMMIT_SHA: ${{ github.sha }}
-          COMMIT_MSG: ${{ github.event.head_commit.message }}
-          ACTOR: ${{ github.actor }}
-          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+          RELEASE_VERSION: ${{ inputs.version }}
         run: |
-          set -euo pipefail
-
-          if [ -z "${WEBHOOK:-}" ]; then
-            echo "GCHAT_DEPLOY_WEBHOOK not set; skipping notification."
-            exit 0
-          fi
-
-          case "$CHANNEL" in
-            dev)        desktop_elig=true;  ded_elig=true;  docs_elig=false; ea_elig=true;  eg_elig=true  ;;
-            prod)       desktop_elig=true;  ded_elig=false; docs_elig=true;  ea_elig=false; eg_elig=false ;;
-            enterprise) desktop_elig=true;  ded_elig=false; docs_elig=false; ea_elig=true;  eg_elig=true  ;;
-            *)          desktop_elig=false; ded_elig=false; docs_elig=false; ea_elig=false; eg_elig=false ;;
+          case "$RELEASE_VERSION" in
+            ''|*[!0-9A-Za-z.\-]*|.*|..*)
+              echo "Invalid version '$RELEASE_VERSION' (expected semver like 0.1.3)" >&2
+              exit 1 ;;
+            *) echo "Version OK: $RELEASE_VERSION" ;;
           esac
 
-          lines=""
-          any_released=false
-          any_failed=false
+      - name: Setup pnpm
+        uses: pnpm/action-setup@b906affcce14559ad1aafd4ab0e942779e9f58b1
 
-          add_line() {
-            local comp="$1" changed="$2" result="$3" eligible="$4"
-            if [ "$eligible" != "true" ] || [ "$changed" != "true" ]; then
-              return 0
-            fi
-            any_released=true
-            local status
-            case "$result" in
-              success)   status="succeeded" ;;
-              failure)   status="FAILED"; any_failed=true ;;
-              cancelled) status="cancelled"; any_failed=true ;;
-              skipped)   status="skipped (upstream failed)"; any_failed=true ;;
-              *)         status="$result" ;;
-            esac
-            lines+=$'\n'"• ${comp}: ${status}"
-          }
+      - name: Setup Node
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version-file: .nvmrc
+          cache: pnpm
+          cache-dependency-path: pnpm-lock.yaml
 
-          add_line desktop                "$DESKTOP_CHANGED"            "$DESKTOP_RESULT"                "$desktop_elig"
-          add_line desktop-enterprise-dev "$DESKTOP_CHANGED"            "$DESKTOP_ENTERPRISE_DEV_RESULT" "$ded_elig"
-          add_line docs                   "$DOCS_CHANGED"               "$DOCS_RESULT"                   "$docs_elig"
-          add_line enterprise-admin       "$ENTERPRISE_ADMIN_CHANGED"   "$ENTERPRISE_ADMIN_RESULT"       "$ea_elig"
-          add_line enterprise-gateway     "$ENTERPRISE_GATEWAY_CHANGED" "$ENTERPRISE_GATEWAY_RESULT"     "$eg_elig"
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6
+        with:
+          bun-version: "1.3.6"
 
-          if [ "$any_released" != "true" ]; then
-            echo "No components released; skipping notification."
-            exit 0
-          fi
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@4360b52568e2003a75bf9bc1d59f33a8e3fc893c
+        with:
+          targets: ${{ matrix.rust_targets }}
 
-          if [ "$any_failed" = "true" ]; then
-            outcome="had failures"
+      - name: Ensure universal macOS Rust targets
+        if: matrix.os == 'macos-14'
+        run: |
+          rustup target add aarch64-apple-darwin
+          rustup target add x86_64-apple-darwin
+
+      - name: Cache cargo
+        uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6
+        with:
+          workspaces: |
+            apps/desktop/src-tauri -> ${{ matrix.os == 'windows-latest' && 'D:\cargo' || 'target' }}
+          key: ${{ matrix.os }}-release
+
+      - name: Set Windows-only build environment
+        if: matrix.os == 'windows-latest'
+        shell: pwsh
+        run: |
+          echo "CARGO_TARGET_DIR=D:\cargo" >> $env:GITHUB_ENV
+
+      - name: Set sidecar build environment (macOS)
+        if: matrix.os == 'macos-14'
+        run: |
+          echo "CMAKE_TOOLCHAIN_FILE=${GITHUB_WORKSPACE}/packages/rust_transcription/cmake/macos-ci-toolchain.cmake" >> "$GITHUB_ENV"
+
+      - name: Set sidecar build environment (Windows)
+        if: matrix.os == 'windows-latest'
+        shell: pwsh
+        run: |
+          echo "CMAKE_TOOLCHAIN_FILE=$env:GITHUB_WORKSPACE\packages\rust_transcription\cmake\windows-ci-toolchain.cmake" >> $env:GITHUB_ENV
+
+      - name: Set sidecar build environment (Linux)
+        if: matrix.os == 'ubuntu-22.04'
+        run: |
+          echo "CMAKE_TOOLCHAIN_FILE=${GITHUB_WORKSPACE}/packages/rust_transcription/cmake/linux-ci-toolchain.cmake" >> "$GITHUB_ENV"
+
+      - name: Install system dependencies (Linux)
+        if: matrix.os == 'ubuntu-22.04'
+        run: |
+          ./.github/scripts/install-desktop-linux-deps.sh
+
+      - name: Install dependencies
+        # --ignore-scripts would skip the esbuild/sharp postinstall builds this
+        # monorepo needs; mirrors build/lint/test workflows.
+        run: pnpm install --frozen-lockfile # NOSONAR
+
+      - name: Sync release version
+        env:
+          RELEASE_VERSION: ${{ inputs.version }}
+        run: |
+          node -e "
+            const fs = require('fs');
+            const version = process.env.RELEASE_VERSION;
+            const files = [
+              'apps/desktop/package.json',
+              'apps/desktop/src-tauri/tauri.conf.json',
+              'apps/desktop/src-tauri/tauri.prod.conf.json'
+            ];
+            for (const f of files) {
+              const p = JSON.parse(fs.readFileSync(f, 'utf8'));
+              p.version = version;
+              fs.writeFileSync(f, JSON.stringify(p, null, 2) + '\n');
+            }
+            console.log('Version synced to ' + version);
+          "
+
+      - name: Build frontend and dependencies
+        env:
+          TAURI_PLATFORM: ${{ matrix.tauri_platform }}
+          MAUSVOICE_DESKTOP_PLATFORM: ${{ matrix.node_platform }}
+        run: pnpm exec turbo run build --filter=desktop...
+
+      - name: Build Tauri app
+        env:
+          TAURI_PLATFORM: ${{ matrix.tauri_platform }}
+          MAUSVOICE_DESKTOP_PLATFORM: ${{ matrix.node_platform }}
+          MAUSVOICE_REQUIRE_GPU_SIDECAR: ${{ matrix.require_gpu_sidecar && 'true' || 'false' }}
+          MACOSX_DEPLOYMENT_TARGET: "13.3"
+          CMAKE_OSX_DEPLOYMENT_TARGET: "13.3"
+          # Throwaway signing key, unsigned build only — same one build-desktop.yml uses for CI validation.
+          TAURI_SIGNING_PRIVATE_KEY: "dW50cnVzdGVkIGNvbW1lbnQ6IHJzaWduIGVuY3J5cHRlZCBzZWNyZXQga2V5ClJXUlRZMEl5OVRKZlAyVDN3dlF1Wm5mbWh1MXYwV3VjRlR2SVhUY2JqdmZUUGdtM1JOMEFBQkFBQUFBQUFBQUFBQUlBQUFBQXp4N2IwQXBxS3lTQnFWeXJuMmpaeGpKdkd5VUhTeit1cklsd3dQVTJvSnkzUktQMVlrQklPQ0duQkVZSStiMEdqTDFaSWJXZW96eTdab0VyaTZMUVNuWlpjSTZTY3NpVXA0bUZVVjh3TldRNHF1Qk1CUFBqcTduS3RMQ3FwMDFQM0VjYTlWdTZQZTQ9Cg=="
+          TAURI_CI_PUBKEY: "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IDQ2NTZFNDMzMzYyMjBCMzgKUldRNEN5STJNK1JXUmpWRDMzem12QUtjVkFxWERXanl0ZVRCWi9JOTd3bmRFRVFuQkp1QmpiN0EK"
+        working-directory: apps/desktop
+        run: |
+          node -e "
+            const fs = require('fs');
+            const p = 'src-tauri/tauri.conf.json';
+            const c = JSON.parse(fs.readFileSync(p, 'utf8'));
+            if (c.plugins?.updater?.pubkey === '__UPDATER_PUBLIC_KEY__') {
+              c.plugins.updater.pubkey = process.env.TAURI_CI_PUBKEY;
+            }
+            fs.writeFileSync(p, JSON.stringify(c, null, 2) + '\n');
+          "
+          pnpm run tauri build --ci ${{ matrix.args }}
+
+      - name: Upload build artifacts
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: mausvoice-${{ matrix.tauri_platform }}
+          path: |
+            ${{ matrix.bundle_dir }}/**/*.dmg
+            ${{ matrix.bundle_dir }}/**/*.app.tar.gz
+            ${{ matrix.bundle_dir }}/**/*.msi
+            ${{ matrix.bundle_dir }}/**/*.nsis.zip
+            ${{ matrix.bundle_dir }}/**/*.exe
+            ${{ matrix.bundle_dir }}/**/*.deb
+            ${{ matrix.bundle_dir }}/**/*.AppImage
+          if-no-files-found: warn
+          retention-days: 7
+
+  publish:
+    name: Publish GitHub Release
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Checkout source (for auto release notes)
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          fetch-depth: 0
+
+      - name: Download all artifacts
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
+        with:
+          path: dist
+
+      - name: Resolve tag name
+        id: tag
+        env:
+          INPUT_TAG: ${{ inputs.tag }}
+          INPUT_VERSION: ${{ inputs.version }}
+        run: |
+          if [ -n "$INPUT_TAG" ]; then
+            echo "tag_name=$INPUT_TAG" >> "$GITHUB_OUTPUT"
+            echo "release_name=mausVoice $INPUT_TAG" >> "$GITHUB_OUTPUT"
           else
-            outcome="succeeded"
+            echo "tag_name=mausVoice-v$INPUT_VERSION" >> "$GITHUB_OUTPUT"
+            echo "release_name=mausVoice v$INPUT_VERSION" >> "$GITHUB_OUTPUT"
           fi
 
-          commit_first_line="${COMMIT_MSG%%$'\n'*}"
-          short_sha="${COMMIT_SHA:0:7}"
+      - name: Generate release body
+        id: body
+        env:
+          ARTIFACTS_DIR: dist
+          RELEASE_VERSION: ${{ inputs.version }}
+          RELEASE_TAG: ${{ steps.tag.outputs.tag_name }}
+          RELEASE_NAME: ${{ steps.tag.outputs.release_name }}
+          RELEASE_PRERELEASE: ${{ inputs.prerelease }}
+          RELEASE_NOTES: ${{ inputs.notes }}
+        run: |
+          node scripts/ci/generate-release-body.mjs > "$RUNNER_TEMP/release-body.md"
+          echo "body_file=$RUNNER_TEMP/release-body.md" >> "$GITHUB_OUTPUT"
 
-          text="🎙️ *mausVoice* — release to *${CHANNEL}* ${outcome}"$'\n'
-          text+="${short_sha} by ${ACTOR}"
-          if [ -n "${commit_first_line}" ]; then
-            text+=": ${commit_first_line}"
-          fi
-          text+="${lines}"$'\n'
-          text+="<${RUN_URL}|View run>"
-
-          jq -n --arg text "$text" '{text: $text}' \
-            | curl -sS --fail-with-body -X POST \
-                -H 'Content-Type: application/json; charset=UTF-8' \
-                -d @- "$WEBHOOK"
+      - name: Publish release
+        uses: softprops/action-gh-release@3bb12739c298aeb8a4eeaf626c5b8d85266b0e65
+        # Use Owie's PAT when present so the release is authored by his account
+        # instead of github-actions[bot]; fall back to GITHUB_TOKEN otherwise.
+        env:
+          GITHUB_TOKEN: ${{ secrets.RELEASE_TOKEN || secrets.GITHUB_TOKEN }}
+        with:
+          tag_name: ${{ steps.tag.outputs.tag_name }}
+          name: ${{ steps.tag.outputs.release_name }}
+          body_path: ${{ steps.body.outputs.body_file }}
+          draft: false
+          prerelease: ${{ inputs.prerelease }}
+          files: |
+            dist/**/*.dmg
+            dist/**/*.app.tar.gz
+            dist/**/*.msi
+            dist/**/*.nsis.zip
+            dist/**/*.exe
+            dist/**/*.deb
+            dist/**/*.AppImage

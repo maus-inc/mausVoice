@@ -38,10 +38,7 @@ import {
   Tooltip,
   Typography,
 } from "@mui/material";
-import {
-  commands,
-  NativeSetupResult,
-} from "../../../../../packages/desktop-native-apis/src/bindings";
+import { commands, NativeSetupResult } from "@maus-inc/desktop-native-apis";
 import { openUrl } from "@tauri-apps/plugin-opener";
 import { ChangeEvent, useState } from "react";
 import { FormattedMessage, useIntl } from "react-intl";

@@ -4,6 +4,12 @@ import { FormattedMessage } from "react-intl";
 import { produceAppState, useAppStore } from "../../store";
 import { getIsOnTrial, getMyMember } from "../../utils/member.utils";
 
+/**
+ * Dismissible promotion for earning extra trial days.
+ *
+ * Renders only while the member is on an active trial and has not already
+ * dismissed the card.
+ */
 export function TrialExtensionCard() {
   const show = useAppStore((state) => {
     if (state.local.hasHiddenTrialExtensionCard) {
@@ -42,8 +48,15 @@ export function TrialExtensionCard() {
       sx={{
         p: 3,
         py: 2,
+        // 14px radius matches the documented card treatment (DESIGN.md).
         borderRadius: 1,
-        background: "linear-gradient(135deg, #FF6B3558 0%, #FF8F0040 100%)",
+        // Reward class: the gold token carries the meaning (DESIGN.md), so the
+        // card needs a surface and a hairline, not a decorative gradient.
+        bgcolor: "level2",
+        border: "1px solid",
+        borderColor: "divider",
+        borderLeft: "3px solid",
+        borderLeftColor: "goldBg",
         position: "relative",
       }}
     >

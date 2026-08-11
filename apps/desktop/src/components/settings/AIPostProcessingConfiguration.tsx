@@ -47,6 +47,7 @@ export const AIPostProcessingConfiguration = () => {
           { value: "none", label: "Off" },
         ]}
         ariaLabel="Post-processing mode"
+        align="center"
       />
 
       {effectiveMode === "none" && (
