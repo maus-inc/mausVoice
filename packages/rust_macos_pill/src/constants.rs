@@ -204,10 +204,18 @@ pub(crate) const LONG_PRESS_MOVE_THRESHOLD: f64 = 8.0;
 pub(crate) const LONG_PRESS_OUTLINE_COLOR: (f64, f64, f64) = (0.92, 0.95, 1.0);
 pub(crate) const LONG_PRESS_OUTLINE_WIDTH: f64 = 2.0;
 
-/// How much the pill inflates (in px) when the long-press completes and drag begins.
-pub(crate) const DRAG_INFLATE_AMOUNT: f64 = 6.0;
+/// How much the pill inflates when the long-press completes and drag begins,
+/// expressed as a scale factor applied to BOTH axes about the pill's centre.
+/// (An additive px amount visually read as "mostly taller": the same +12px is a
+/// third of the collapsed pill's height but a sliver of its width.)
+pub(crate) const DRAG_INFLATE_SCALE: f64 = 0.18;
 /// Spring stiffness for the inflate/deflate animation.
 pub(crate) const DRAG_INFLATE_STIFFNESS: f64 = 280.0;
+
+/// Once the press/drag ends, the long-press outline lingers only this long.
+/// While the gesture is held the outline is pinned at full alpha — it must
+/// never fade while the pill is still pressed and inflated.
+pub(crate) const LONG_PRESS_RING_FADE: f64 = 0.5;
 
 #[allow(dead_code)]
 pub(crate) const LONG_PRESS_RING_RADIUS: f64 = 22.0;

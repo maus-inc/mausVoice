@@ -29,6 +29,11 @@ pub async fn run_server(mode: ComputeMode) -> Result<(), String> {
 
     let address = config.bind_address();
     let state = AppState::new(config.clone())?;
+
+    // Sessions whose client never finalizes them (crash, drop, network blip)
+    // would otherwise buffer audio in memory forever.
+    state.transcription_sessions.spawn_sweeper();
+
     let router = api::create_router(state);
 
     let listener = TcpListener::bind(&address)

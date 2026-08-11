@@ -172,8 +172,12 @@ pub fn run(receiver: Receiver<InMessage>) {
         drag_cancelled: Cell::new(false),
         inflate_t: Cell::new(0.0),
         inflate_velocity: Cell::new(0.0),
+        ring_alpha: Cell::new(0.0),
         drag_cursor_x: Cell::new(0.0),
         drag_cursor_y: Cell::new(0.0),
+        has_saved_position: Cell::new(false),
+        saved_x: Cell::new(0.0),
+        saved_y: Cell::new(0.0),
         drag_draw_offset_x: Cell::new(0.0),
         drag_draw_offset_y: Cell::new(0.0),
         cancel_flash: Cell::new(0.0),
@@ -608,10 +612,20 @@ pub fn run(receiver: Receiver<InMessage>) {
     if backend == Backend::LayerShell {
         let window_ref = window.clone();
         let quit_monitor = quit_flag.clone();
+        let state_monitor = state.clone();
         let last_geom: Rc<Cell<(i32, i32, i32, i32)>> = Rc::new(Cell::new((0, 0, 0, 0)));
         glib::timeout_add_local(Duration::from_millis(100), move || {
             if quit_monitor.get() {
                 return ControlFlow::Break;
+            }
+            // Only re-home the overlay to the pointer's monitor for the FIRST
+            // placement (last_geom is still the sentinel) or while the user is
+            // actively dragging across screens. Chasing the pointer the rest
+            // of the time is what made the pinned pill hop displays whenever
+            // the cursor crossed an edge.
+            let placed_once = last_geom.get() != (0, 0, 0, 0);
+            if placed_once && !state_monitor.dragging.get() {
+                return ControlFlow::Continue;
             }
             let display = match gdk::Display::default() {
                 Some(d) => d,
@@ -788,6 +802,21 @@ fn tick(state: &PillState) {
     // Inflate animation: expand when dragging, contract when released.
     let inflate_target = if state.dragging.get() { 1.0 } else { 0.0 };
     spring_anim(&state.inflate_t, &state.inflate_velocity, inflate_target, DRAG_INFLATE_STIFFNESS);
+
+    // Long-press outline master alpha. While the gesture is held (long press
+    // past the hold delay, or dragging) the outline is pinned at full alpha —
+    // it must not fade underneath an active hold. Once released it eases out
+    // over LONG_PRESS_RING_FADE so the affordance dissolves instead of popping.
+    let ring_held = state.dragging.get()
+        || (state.long_press_active.get()
+            && state.long_press_elapsed.get() > LONG_PRESS_HOLD_DELAY);
+    if ring_held {
+        state.ring_alpha.set(1.0);
+    } else if state.ring_alpha.get() > 0.0 {
+        state
+            .ring_alpha
+            .set((state.ring_alpha.get() - SPRING_DT / LONG_PRESS_RING_FADE).max(0.0));
+    }
 
     // Auto-scroll to bottom when new content arrives
     if state.should_stick.get() && state.assistant_active.get() && !state.assistant_compact.get() {

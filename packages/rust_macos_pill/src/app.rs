@@ -680,6 +680,21 @@ fn tick(state: &PillState, window: id, dt: f64) {
     let inflate_target = if state.dragging.get() { 1.0 } else { 0.0 };
     spring_anim(&state.inflate_t, &state.inflate_velocity, inflate_target, DRAG_INFLATE_STIFFNESS, dt);
 
+    // Long-press outline master alpha. While the gesture is held (long press
+    // past the hold delay, or dragging) the outline is pinned at full alpha —
+    // it must not fade underneath an active hold. Once released it eases out
+    // over LONG_PRESS_RING_FADE so the affordance dissolves instead of popping.
+    let ring_held = state.dragging.get()
+        || (state.long_press_active.get()
+            && state.long_press_elapsed.get() > LONG_PRESS_HOLD_DELAY);
+    if ring_held {
+        state.ring_alpha.set(1.0);
+    } else if state.ring_alpha.get() > 0.0 {
+        state
+            .ring_alpha
+            .set((state.ring_alpha.get() - dt / LONG_PRESS_RING_FADE).max(0.0));
+    }
+
     // Auto-scroll to bottom
     if state.should_stick.get() && state.assistant_active.get() && !state.assistant_compact.get() {
         let max_scroll = (state.content_height.get() - state.viewport_height.get()).max(0.0);
@@ -906,6 +921,15 @@ fn tick_long_press(state: &PillState, window: id, dt: f64) {
         // Enter drag mode directly (skip balloon pop for snappy interaction).
         state.dragging.set(true);
         state.drag_cancelled.set(false);
+
+        // Anchor the drag to the point the user grabbed so the pill tracks the
+        // cursor 1:1 instead of jumping to centre itself under the pointer.
+        unsafe {
+            let mouse = mouse_location();
+            let origin = window_frame(window).origin;
+            state.drag_grab_offset_x.set(mouse.x - origin.x);
+            state.drag_grab_offset_y.set(mouse.y - origin.y);
+        }
     }
 }
 
@@ -957,55 +981,114 @@ fn reposition_window(window: id, state: &PillState) {
         let win_w = win_frame.size.width;
         let win_h = win_frame.size.height;
 
-        // Find which monitor the cursor is on
-        let mut target_x = 0.0_f64;
-        let mut target_y = 0.0_f64;
-        let mut found = false;
+        // A drag belongs to whichever screen the cursor is on. Everything else
+        // belongs to the screen the pill actually lives on — resolving the
+        // screen from the live cursor here is what made a pinned pill hop
+        // monitors (and clamp into the wrong visible frame) whenever the
+        // pointer crossed a screen edge.
+        let dragging = state.dragging.get();
+        // A brand-new window sits at (0, 0) before its first layout — let the
+        // first placement follow the cursor's screen, then never chase it.
+        let never_positioned = win_frame.origin.x == 0.0 && win_frame.origin.y == 0.0;
+        let (anchor_x, anchor_y) = if dragging || (!state.has_saved_position.get() && never_positioned) {
+            (mouse_loc.x, mouse_loc.y)
+        } else if state.has_saved_position.get() {
+            (
+                state.saved_x.get() + win_w / 2.0,
+                state.saved_y.get() + win_h / 2.0,
+            )
+        } else {
+            (
+                win_frame.origin.x + win_w / 2.0,
+                win_frame.origin.y + win_h / 2.0,
+            )
+        };
 
+        // Find the screen the anchor point belongs to.
+        let mut chosen_visible: Option<NSRect> = None;
         for i in 0..count {
             let screen: id = msg_send![screens, objectAtIndex:i];
             let frame: NSRect = msg_send![screen, frame];
 
-            if mouse_loc.x >= frame.origin.x
-                && mouse_loc.x < frame.origin.x + frame.size.width
-                && mouse_loc.y >= frame.origin.y
-                && mouse_loc.y < frame.origin.y + frame.size.height
+            if anchor_x >= frame.origin.x
+                && anchor_x < frame.origin.x + frame.size.width
+                && anchor_y >= frame.origin.y
+                && anchor_y < frame.origin.y + frame.size.height
             {
-                let visible = screen_visible_frame(screen);
-
-                if state.dragging.get() {
-                    // Drag mode: center the window on the cursor position
-                    let pill_area_h = PILL_AREA_HEIGHT;
-                    target_x = mouse_loc.x - win_w / 2.0;
-                    target_y = mouse_loc.y - pill_area_h / 2.0;
-
-                    // Clamp to visible area
-                    target_x = target_x.max(visible.origin.x).min(visible.origin.x + visible.size.width - win_w);
-                    target_y = target_y.max(visible.origin.y).min(visible.origin.y + visible.size.height - win_h);
-                } else if state.has_saved_position.get() {
-                    // Use persisted position from last drag
-                    target_x = state.saved_x.get();
-                    target_y = state.saved_y.get();
-                    // Clamp to current visible area (monitor may have changed)
-                    target_x = target_x.max(visible.origin.x).min(visible.origin.x + visible.size.width - win_w);
-                    target_y = target_y.max(visible.origin.y).min(visible.origin.y + visible.size.height - win_h);
-                } else {
-                    // Default: center at bottom of monitor
-                    target_x = visible.origin.x + (visible.size.width - win_w) / 2.0;
-                    target_y = visible.origin.y + MARGIN_BOTTOM as f64;
-                }
-
-                found = true;
+                chosen_visible = Some(screen_visible_frame(screen));
                 break;
             }
         }
 
-        if found {
-            let current_origin = window_frame(window).origin;
-            if (current_origin.x - target_x).abs() > 1.0 || (current_origin.y - target_y).abs() > 1.0 {
-                let origin = NSPoint::new(target_x, target_y);
-                set_window_origin(window, origin);
-            }
+        let Some(visible) = chosen_visible else {
+            return;
+        };
+
+        // The OS window is a fixed 600×362 transparent canvas; the visible pill
+        // is drawn inside it, centred horizontally and bottom-anchored.
+        // Clamping the *window* into the visible frame boxes the pill into the
+        // middle of the screen — the invisible canvas margins eat hundreds of
+        // pixels on every side. In dictation mode, clamp the pill's visible
+        // footprint instead so it can be parked at the true screen edges;
+        // panel/typing modes fill the canvas, so they keep whole-window
+        // clamping. (Window origin is the bottom-left corner in y-up screen
+        // coordinates, while the view is flipped y-down, so a view-space top
+        // edge at `fy` maps to screen y = origin.y + win_h − fy.)
+        let (min_x, min_y, max_x, max_y) =
+            if state.window_mode.get() == WindowMode::Dictation
+                && !state.assistant_active.get()
+            {
+                let (px, py, pw, ph) = draw::pill_position(
+                    state,
+                    state.draw_width.get(),
+                    state.draw_height.get(),
+                );
+                let (cox, coy) = state.content_offset();
+                let fx = cox + px;
+                let fy = coy + py;
+                (
+                    visible.origin.x - fx,
+                    visible.origin.y - win_h + fy + ph,
+                    visible.origin.x + visible.size.width - fx - pw,
+                    visible.origin.y + visible.size.height - win_h + fy,
+                )
+            } else {
+                (
+                    visible.origin.x,
+                    visible.origin.y,
+                    visible.origin.x + visible.size.width - win_w,
+                    visible.origin.y + visible.size.height - win_h,
+                )
+            };
+
+        let (target_x, target_y) = if dragging {
+            // Drag mode: keep the grabbed point of the window under the cursor
+            // (1:1 tracking instead of snapping the window centre to it),
+            // clamped so the pill's footprint stays inside the visible frame.
+            let mut tx = mouse_loc.x - state.drag_grab_offset_x.get();
+            let mut ty = mouse_loc.y - state.drag_grab_offset_y.get();
+            tx = tx.max(min_x).min(max_x);
+            ty = ty.max(min_y).min(max_y);
+            (tx, ty)
+        } else if state.has_saved_position.get() {
+            // Use persisted position from last drag, clamped into the visible
+            // frame of the screen that position belongs to.
+            let mut tx = state.saved_x.get();
+            let mut ty = state.saved_y.get();
+            tx = tx.max(min_x).min(max_x);
+            ty = ty.max(min_y).min(max_y);
+            (tx, ty)
+        } else {
+            // Default: centre at bottom of the pill's own screen.
+            let tx = visible.origin.x + (visible.size.width - win_w) / 2.0;
+            let ty = visible.origin.y + MARGIN_BOTTOM as f64;
+            (tx, ty)
+        };
+
+        let current_origin = window_frame(window).origin;
+        if (current_origin.x - target_x).abs() > 1.0 || (current_origin.y - target_y).abs() > 1.0 {
+            let origin = NSPoint::new(target_x, target_y);
+            set_window_origin(window, origin);
         }
     }
 }
@@ -1161,11 +1244,14 @@ unsafe fn setup(receiver: Receiver<InMessage>, embedded: bool) {
         long_press_start_y: Cell::new(0.0),
         dragging: Cell::new(false),
         drag_cancelled: Cell::new(false),
+        drag_grab_offset_x: Cell::new(0.0),
+        drag_grab_offset_y: Cell::new(0.0),
         has_saved_position: Cell::new(false),
         saved_x: Cell::new(0.0),
         saved_y: Cell::new(0.0),
         inflate_t: Cell::new(0.0),
         inflate_velocity: Cell::new(0.0),
+        ring_alpha: Cell::new(0.0),
     });
 
     // Store in thread-local

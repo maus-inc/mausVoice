@@ -43,6 +43,7 @@ import { useStreamWithSideEffects } from "../../hooks/stream.hooks";
 import { useTauriListen } from "../../hooks/tauri.hooks";
 import { useToastAction } from "../../hooks/toast.hooks";
 import { detectLocale } from "../../i18n";
+import { getEffectiveStylingMode } from "../../utils/feature.utils";
 import {
   getAuthRepo,
   getConfigRepo,
@@ -54,6 +55,7 @@ import {
   getUserRepo,
 } from "../../repos";
 import {
+  AppState,
   HotkeyStrategy,
   KeyboardListenerHealth,
   MyTenantMembership,
@@ -71,7 +73,10 @@ import {
 } from "../../utils/enterprise.utils";
 import { getIsDevMode } from "../../utils/env.utils";
 import { createId } from "../../utils/id.utils";
-import { ADD_TO_DICTIONARY_HOTKEY } from "../../utils/keyboard.utils";
+import {
+  ADD_TO_DICTIONARY_HOTKEY,
+  syncHotkeyCombosToNative,
+} from "../../utils/keyboard.utils";
 import { getLogger, initLogging } from "../../utils/log.utils";
 import { sendPillFlashMessage } from "../../utils/overlay.utils";
 import { isPermissionAuthorized } from "../../utils/permission.utils";
@@ -85,6 +90,7 @@ import {
 } from "../../utils/tray-pill-visibility.utils";
 import {
   getEffectivePillVisibility,
+  getIsDictationUnlocked,
   getMyUserPreferences,
   LOCAL_USER_ID,
 } from "../../utils/user.utils";
@@ -136,6 +142,28 @@ const TOKEN_REFRESH_INTERVAL_MS = 5 * 60 * 1000;
 
 // 60 seconds
 const ENTERPRISE_REFRESH_INTERVAL_MS = 1000 * 60;
+
+/**
+ * Fingerprint of every state input that decides which combos the native
+ * listener grabs (the combo maps themselves plus everything `isActionGrabbable`
+ * reads). Those inputs load in an arbitrary order — hotkeys repo, onboarding /
+ * user record, strategy probe — so a sync keyed to only one or two of them can
+ * leave the listener running on an empty or stale combo set, which is exactly
+ * how the global hotkey "stops working" after startup.
+ */
+const hotkeyGrabFingerprint = (state: AppState): string => {
+  const hotkeyKey = Object.values(state.hotkeyById)
+    .map((hotkey) => `${hotkey.actionName}:${hotkey.keys.join("+")}`)
+    .sort((a, b) => a.localeCompare(b))
+    .join(",");
+  return [
+    state.hotkeyStrategy ?? "",
+    state.activeRecordingMode ?? "",
+    getIsDictationUnlocked(state) ? "1" : "0",
+    getEffectiveStylingMode(state),
+    hotkeyKey,
+  ].join("|");
+};
 
 export const AppSideEffects = () => {
   const intl = useIntl();
@@ -218,6 +246,30 @@ export const AppSideEffects = () => {
       getLogger().warning(`Failed to read keyboard listener health: ${error}`);
     }
   }, [keyPermAuthorized, hotkeyStrategy]);
+
+  // Keep the native grab set in lockstep with the state it derives from. The
+  // push is gated on the strategy being known so the compositor (bridge) branch
+  // of the sync never runs half-configured, and re-runs whenever any
+  // grab-relevant input changes — regardless of data load order.
+  useEffect(() => {
+    const push = () => {
+      if (getAppState().hotkeyStrategy) {
+        void syncHotkeyCombosToNative();
+      }
+    };
+
+    push();
+
+    let lastFingerprint = hotkeyGrabFingerprint(getAppState());
+    return useAppStore.subscribe((state) => {
+      const next = hotkeyGrabFingerprint(state);
+      if (next === lastFingerprint) {
+        return;
+      }
+      lastFingerprint = next;
+      push();
+    });
+  }, []);
 
   useEffect(() => {
     void initLogging();

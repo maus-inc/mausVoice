@@ -208,6 +208,11 @@ pub(crate) struct PillState {
     pub(crate) long_press_start_y: Cell<f64>,
     pub(crate) dragging: Cell<bool>,
     pub(crate) drag_cancelled: Cell<bool>,
+    /// Window-space offset from the window origin to the cursor, captured when
+    /// the drag arms. Keeping it fixed means the pill tracks the pointer 1:1
+    /// instead of snapping its centre under the cursor.
+    pub(crate) drag_grab_offset_x: Cell<f64>,
+    pub(crate) drag_grab_offset_y: Cell<f64>,
     pub(crate) has_saved_position: Cell<bool>,
     pub(crate) saved_x: Cell<f64>,
     pub(crate) saved_y: Cell<f64>,
@@ -215,6 +220,11 @@ pub(crate) struct PillState {
     // Inflate animation — pill slightly expands when entering drag, contracts on release.
     pub(crate) inflate_t: Cell<f64>,
     pub(crate) inflate_velocity: Cell<f64>,
+
+    // Master alpha for the long-press outline. Driven by the tick: pinned at
+    // 1 while the gesture is held, eased to 0 over LONG_PRESS_RING_FADE after
+    // release, so the outline never fades under an active press.
+    pub(crate) ring_alpha: Cell<f64>,
 }
 
 impl PillState {

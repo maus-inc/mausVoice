@@ -27,6 +27,16 @@ export const theme = createTheme({
         text: text.light,
         divider: ink(0.08),
 
+        // Route MUI's built-in background tokens through the surface ladder so
+        // components that read `background.default` / `background.paper` (or
+        // fall back to MUI defaults internally) never show the stock
+        // `#fff` / `#121212` fills — those are what made panels read as the
+        // wrong colour against the app canvas in both schemes.
+        background: {
+          default: surfaces.light.level0,
+          paper: surfaces.light.level1,
+        },
+
         goldFg: "rgb(104, 48, 9)",
         goldBg: "rgba(255, 193, 7, 0.6)",
         shadow: ink(0.12),
@@ -44,6 +54,11 @@ export const theme = createTheme({
         secondary: { main: "#B0AEAA" },
         text: text.dark,
         divider: highlight(0.08),
+
+        background: {
+          default: surfaces.dark.level0,
+          paper: surfaces.dark.level1,
+        },
 
         goldFg: "#FFD700",
         goldBg: "rgba(255, 215, 0, 0.2)",

@@ -8,7 +8,7 @@ use gtk::glib::{self, ControlFlow};
 use gtk::prelude::*;
 
 use crate::constants::MARGIN_BOTTOM;
-use crate::state::PillState;
+use crate::state::{PillState, WindowMode};
 
 pub(crate) fn setup_x11_window(window: &gtk::Window, state: Rc<PillState>) {
     use std::ffi::{c_char, c_int, c_uchar, c_uint, c_ulong, c_void};
@@ -103,64 +103,72 @@ pub(crate) fn setup_x11_window(window: &gtk::Window, state: Rc<PillState>) {
         }
     };
 
-    let win_ref = window.clone();
-    let state_ref = state.clone();
-    let pill_pos_on_monitor =
-        move |cx: c_int, cy: c_int, disp: &gdk::Display| -> Option<(c_int, c_int)> {
-            let n = disp.n_monitors();
-            for i in 0..n {
-                let monitor = disp.monitor(i)?;
-                let g = monitor.geometry();
-                let scale = monitor.scale_factor() as f64;
-                let phys_x = g.x() as f64 * scale;
-                let phys_y = g.y() as f64 * scale;
-                let phys_w = g.width() as f64 * scale;
-                let phys_h = g.height() as f64 * scale;
-                if (cx as f64) >= phys_x && (cx as f64) < phys_x + phys_w
-                    && (cy as f64) >= phys_y && (cy as f64) < phys_y + phys_h
-                {
-                    let wa = monitor.workarea();
-                    let wa_x = wa.x() as f64 * scale;
-                    let wa_y = wa.y() as f64 * scale;
-                    let wa_w = wa.width() as f64 * scale;
-                    let wa_h = wa.height() as f64 * scale;
-                    let (alloc_w, alloc_h) = win_ref.size();
-                    // win_ref.size() returns logical pixels; XMoveWindow and the
-                    // workarea math above are in physical pixels, so scale here too.
-                    let win_w = alloc_w as f64 * scale;
-                    let win_h = alloc_h as f64 * scale;
-                    let margin = MARGIN_BOTTOM as f64 * scale;
-
-                    if state_ref.dragging.get() {
-                        let drag_x = state_ref.drag_cursor_x.get() * scale;
-                        let drag_y = state_ref.drag_cursor_y.get() * scale;
-                        let mut x = cx as f64 - drag_x;
-                        let mut y = cy as f64 - drag_y;
-                        x = x.max(wa_x).min(wa_x + wa_w - win_w);
-                        y = y.max(wa_y).min(wa_y + wa_h - win_h);
-                        return Some((x as c_int, y as c_int));
-                    }
-
-                    return Some((
-                        (wa_x + (wa_w - win_w) / 2.0) as c_int,
-                        (wa_y + wa_h - win_h - margin) as c_int,
-                    ));
-                }
-            }
-            None
-        };
-
     let (cx, cy) = cursor_pos();
-    let init_pos = pill_pos_on_monitor(cx, cy, &display).unwrap_or((0, 0));
+    let init_pos = pill_pos_on_monitor(
+        cx as f64,
+        cy as f64,
+        state.dragging.get(),
+        &display,
+        window,
+        &state,
+    )
+    .unwrap_or((0, 0));
     unsafe {
         XMoveWindow(xdisplay, xwindow, init_pos.0, init_pos.1);
         XFlush(xdisplay);
     }
 
     let last_pos = Rc::new(Cell::new(init_pos));
+    let was_dragging = Rc::new(Cell::new(false));
+    let win_tick = window.clone();
+    let state_tick = state.clone();
     glib::timeout_add_local(Duration::from_millis(100), move || {
-        let (cx, cy) = cursor_pos();
-        if let Some((new_x, new_y)) = pill_pos_on_monitor(cx, cy, &display) {
+        let dragging = state_tick.dragging.get();
+
+        // Drop edge of a drag: persist the exact drop position (the cursor
+        // query here is fresh, the last tick snapshot could be up to one
+        // interval stale) so the re-centering below never throws away where
+        // the user left the pill.
+        if !dragging && was_dragging.get() {
+            let (cx, cy) = cursor_pos();
+            if let Some((drop_x, drop_y)) = pill_pos_on_monitor(
+                cx as f64,
+                cy as f64,
+                true,
+                &display,
+                &win_tick,
+                &state_tick,
+            ) {
+                state_tick.saved_x.set(drop_x as f64);
+                state_tick.saved_y.set(drop_y as f64);
+                state_tick.has_saved_position.set(true);
+            }
+        }
+        was_dragging.set(dragging);
+
+        // Pick the anchor that decides which monitor owns the pill: the cursor
+        // while dragging, the saved drop point when parked, else wherever the
+        // pill already is. Resolving the monitor from the live cursor
+        // unconditionally is what used to make the pill leap to another
+        // screen — and snap back to bottom-centre — on every crossing.
+        let (anchor_x, anchor_y) = if dragging {
+            let (ax, ay) = cursor_pos();
+            (ax as f64, ay as f64)
+        } else if state_tick.has_saved_position.get() {
+            (state_tick.saved_x.get(), state_tick.saved_y.get())
+        } else {
+            let prev = last_pos.get();
+            (prev.0 as f64, prev.1 as f64)
+        };
+
+        if let Some((new_x, new_y)) = pill_pos_on_monitor(
+            anchor_x,
+            anchor_y,
+            dragging,
+            &display,
+            &win_tick,
+            &state_tick,
+        ) {
             let prev = last_pos.get();
             if new_x != prev.0 || new_y != prev.1 {
                 last_pos.set((new_x, new_y));
@@ -172,6 +180,107 @@ pub(crate) fn setup_x11_window(window: &gtk::Window, state: Rc<PillState>) {
         }
         ControlFlow::Continue
     });
+}
+
+/// Computes where the toplevel belongs, given the anchor point that decides
+/// which monitor owns the pill. All coordinates are physical pixels: cursor
+/// queries are physical root coords, and monitor geometry is scaled to match.
+fn pill_pos_on_monitor(
+    anchor_x: f64,
+    anchor_y: f64,
+    dragging: bool,
+    display: &gdk::Display,
+    window: &gtk::Window,
+    state: &PillState,
+) -> Option<(c_int, c_int)> {
+    let n = display.n_monitors();
+    for i in 0..n {
+        let monitor = display.monitor(i)?;
+        let g = monitor.geometry();
+        let scale = monitor.scale_factor() as f64;
+        let phys_x = g.x() as f64 * scale;
+        let phys_y = g.y() as f64 * scale;
+        let phys_w = g.width() as f64 * scale;
+        let phys_h = g.height() as f64 * scale;
+        if anchor_x >= phys_x
+            && anchor_x < phys_x + phys_w
+            && anchor_y >= phys_y
+            && anchor_y < phys_y + phys_h
+        {
+            let wa = monitor.workarea();
+            let wa_x = wa.x() as f64 * scale;
+            let wa_y = wa.y() as f64 * scale;
+            let wa_w = wa.width() as f64 * scale;
+            let wa_h = wa.height() as f64 * scale;
+            let (alloc_w, alloc_h) = window.size();
+            // window.size() returns logical pixels; XMoveWindow and the
+            // workarea math above are in physical pixels, so scale here too.
+            let win_w = alloc_w as f64 * scale;
+            let win_h = alloc_h as f64 * scale;
+            let margin = MARGIN_BOTTOM as f64 * scale;
+
+            // The toplevel is a fixed-size transparent canvas; the visible pill
+            // is drawn inside it, centred horizontally and bottom-anchored.
+            // Clamping the *toplevel* into the work area boxes the pill into
+            // the middle of the monitor — the invisible canvas margins eat
+            // hundreds of pixels on every side. In dictation mode, clamp the
+            // pill's visible footprint instead so it can be parked at the true
+            // screen edges; panel/typing modes fill the canvas, so they keep
+            // whole-window clamping.
+            let (min_x, min_y, max_x, max_y) =
+                if state.window_mode.get() == WindowMode::Dictation
+                    && !state.assistant_active.get()
+                {
+                    let (px, py, pw, ph) = crate::draw::pill_position(
+                        state,
+                        state.draw_width.get(),
+                        state.draw_height.get(),
+                    );
+                    let (cox, coy) = state.content_offset();
+                    let fx = (cox + px) * scale;
+                    let fy = (coy + py) * scale;
+                    let fw = pw * scale;
+                    let fh = ph * scale;
+                    (
+                        wa_x - fx,
+                        wa_y - fy,
+                        wa_x + wa_w - fx - fw,
+                        wa_y + wa_h - fy - fh,
+                    )
+                } else {
+                    (wa_x, wa_y, wa_x + wa_w - win_w, wa_y + wa_h - win_h)
+                };
+
+            if dragging {
+                // Keep the grabbed point of the window under the cursor (1:1
+                // tracking instead of snapping the window centre to it),
+                // clamped so the pill's footprint stays in the work area.
+                let drag_x = state.drag_cursor_x.get() * scale;
+                let drag_y = state.drag_cursor_y.get() * scale;
+                let mut x = anchor_x - drag_x;
+                let mut y = anchor_y - drag_y;
+                x = x.max(min_x).min(max_x);
+                y = y.max(min_y).min(max_y);
+                return Some((x as c_int, y as c_int));
+            }
+
+            if state.has_saved_position.get() {
+                // Park at the persisted drop position, clamped into the work
+                // area of the monitor that position belongs to.
+                let mut x = state.saved_x.get();
+                let mut y = state.saved_y.get();
+                x = x.max(min_x).min(max_x);
+                y = y.max(min_y).min(max_y);
+                return Some((x as c_int, y as c_int));
+            }
+
+            return Some((
+                (wa_x + (wa_w - win_w) / 2.0) as c_int,
+                (wa_y + wa_h - win_h - margin) as c_int,
+            ));
+        }
+    }
+    None
 }
 
 pub(crate) fn force_keyboard_focus(window: &gtk::Window) {

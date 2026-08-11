@@ -10,6 +10,7 @@ import { getAllowsChangePostProcessing } from "../../utils/enterprise.utils";
 import { getEffectivePostProcessingMode } from "../../utils/user.utils";
 import { ManagedByOrgNotice } from "../common/ManagedByOrgNotice";
 import { type PostProcessingMode } from "../../types/ai.types";
+import { AnimateSwitch } from "../common/AnimateIn";
 import { SegmentedControl } from "../common/SegmentedControl";
 import { ApiKeyList } from "./ApiKeyList";
 import { MausVoiceCloudSetting } from "./MausVoiceCloudSetting";
@@ -50,21 +51,23 @@ export const AIPostProcessingConfiguration = () => {
         align="center"
       />
 
-      {effectiveMode === "none" && (
-        <Typography variant="body2" color="text.secondary">
-          <FormattedMessage defaultMessage="No AI post-processing will run on new transcripts." />
-        </Typography>
-      )}
+      <AnimateSwitch activeKey={effectiveMode}>
+        {effectiveMode === "none" && (
+          <Typography variant="body2" color="text.secondary">
+            <FormattedMessage defaultMessage="No AI post-processing will run on new transcripts." />
+          </Typography>
+        )}
 
-      {effectiveMode === "api" && (
-        <ApiKeyList
-          selectedApiKeyId={postProcessing.selectedApiKeyId}
-          onChange={handleApiKeyChange}
-          context="post-processing"
-        />
-      )}
+        {effectiveMode === "api" && (
+          <ApiKeyList
+            selectedApiKeyId={postProcessing.selectedApiKeyId}
+            onChange={handleApiKeyChange}
+            context="post-processing"
+          />
+        )}
 
-      {effectiveMode === "cloud" && <MausVoiceCloudSetting />}
+        {effectiveMode === "cloud" && <MausVoiceCloudSetting />}
+      </AnimateSwitch>
     </Stack>
   );
 };

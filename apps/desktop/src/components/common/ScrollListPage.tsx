@@ -227,9 +227,11 @@ export function ScrollListPage<Item>({
           <Box
             sx={(theme) => ({
               pr: 2,
+              // The page canvas is `level0` (PageLayout), so the sticky header
+              // band must sit on the same tier or it reads as an off-colour
+              // seam over the list content.
               backgroundColor:
-                theme.vars?.palette.background.default ??
-                theme.palette.background.default,
+                theme.vars?.palette.level0 ?? theme.palette.background.default,
               position: "sticky",
               top: 0,
               zIndex: theme.zIndex.appBar,
@@ -294,8 +296,7 @@ export function ScrollListPage<Item>({
             sx={(theme) => ({
               pr: 2,
               backgroundColor:
-                theme.vars?.palette.background.default ??
-                theme.palette.background.default,
+                theme.vars?.palette.level0 ?? theme.palette.background.default,
               position: "sticky",
               top: 0,
               zIndex: theme.zIndex.appBar,

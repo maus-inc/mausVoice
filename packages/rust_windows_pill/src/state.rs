@@ -217,6 +217,11 @@ pub(crate) struct PillState {
     pub(crate) inflate_t: Cell<f64>,
     pub(crate) inflate_velocity: Cell<f64>,
 
+    // Master alpha for the long-press outline. Driven by the tick: pinned at
+    // 1 while the gesture is held, eased to 0 over LONG_PRESS_RING_FADE after
+    // release, so the outline never fades under an active press.
+    pub(crate) ring_alpha: Cell<f64>,
+
     // Dirty flag — when false, the rendered output is identical to the previous
     // frame so we can skip draw + UpdateLayeredWindow entirely.
     pub(crate) dirty: Cell<bool>,
@@ -255,9 +260,11 @@ impl PillState {
         if self.transcript_has_message.get() { return true; }
         if self.transcript_opacity.get() > 0.001 { return true; }
 
-        // Long-press balloon pop + drag
+        // Long-press balloon pop + drag (ring_alpha keeps drawing while the
+        // release fade is in flight).
         if self.long_press_active.get() { return true; }
         if self.dragging.get() { return true; }
+        if self.ring_alpha.get() > 0.0 { return true; }
 
         // Assistant panel has shimmer and streaming content
         if self.assistant_active.get() { return true; }

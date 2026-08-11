@@ -70,21 +70,30 @@ pub(crate) fn draw_all(cr: &cairo::Context, state: &PillState) {
 pub(crate) fn pill_position(state: &PillState, ww: f64, wh: f64) -> (f64, f64, f64, f64) {
     let expand_t = state.expand_t.get();
     let inflate = state.inflate_t.get();
-    let inflate_px = inflate * DRAG_INFLATE_AMOUNT;
     let base_w = lerp(MIN_PILL_WIDTH, EXPANDED_PILL_WIDTH, expand_t);
     let base_h = lerp(MIN_PILL_HEIGHT, EXPANDED_PILL_HEIGHT, expand_t);
-    let pill_w = base_w + inflate_px * 2.0;
-    let pill_h = base_h + inflate_px * 2.0;
-    let mut pill_x = (ww - pill_w) / 2.0;
 
-    let mut pill_y = if state.assistant_active.get() || state.panel_open_t.get() > 0.01 {
+    // Inflate by scaling BOTH axes about the pill's centre. An additive pixel
+    // amount grows the small height disproportionately (reading as "only got
+    // taller"), and anchoring to the bottom edge grows the pill upward-only;
+    // scaling about the centre preserves the squircle's proportions and grows
+    // it diagonally, the way a physical pill would.
+    let scale = 1.0 + inflate * DRAG_INFLATE_SCALE;
+    let pill_w = base_w * scale;
+    let pill_h = base_h * scale;
+
+    let base_x = (ww - base_w) / 2.0;
+    let base_y = if state.assistant_active.get() || state.panel_open_t.get() > 0.01 {
         let panel_bottom = wh - PANEL_BOTTOM_MARGIN;
-        panel_bottom - PILL_BOTTOM_INSET - pill_h
+        panel_bottom - PILL_BOTTOM_INSET - base_h
     } else {
         // Anchor to bottom: pill grows upward from a fixed bottom edge
         let bottom_offset = 6.0;
-        wh - bottom_offset - pill_h
+        wh - bottom_offset - base_h
     };
+
+    let mut pill_x = base_x + base_w / 2.0 - pill_w / 2.0;
+    let mut pill_y = base_y + base_h / 2.0 - pill_h / 2.0;
 
     // On Wayland backends the pill draws inside a full-window canvas, so a
     // drag translates the draw position. X11 moves the real toplevel instead.
@@ -164,19 +173,19 @@ fn draw_pill(cr: &cairo::Context, state: &PillState, ww: f64, wh: f64) {
 
 /// Draws the long-press progress ring around the pill, kept at full
 /// completion while dragging so the outline reads as a drag affordance.
+/// Opacity is owned by `state.ring_alpha` (pinned while held, eased out after
+/// release), never by the press-progress ramp.
 fn draw_long_press_ring(
     cr: &cairo::Context, rx: f64, ry: f64, pill_w: f64, pill_h: f64, state: &PillState,
 ) {
-    // Only show after a brief delay so normal clicks don't trigger the visual
-    let is_long_press =
-        state.long_press_active.get() && state.long_press_elapsed.get() > LONG_PRESS_HOLD_DELAY;
-    let show = is_long_press || state.dragging.get();
-    if !show {
+    let alpha = state.ring_alpha.get();
+    if alpha <= 0.0 {
         return;
     }
 
-    // While actively dragging, keep the full outline visible (progress = 1.0).
-    let t = if state.dragging.get() {
+    // While actively dragging (or just after release, fading), the outline is
+    // full; mid-press it tracks the hold-progress ramp.
+    let t = if state.dragging.get() || !state.long_press_active.get() {
         1.0
     } else {
         long_press_progress(state.long_press_elapsed.get())
@@ -191,7 +200,7 @@ fn draw_long_press_ring(
     let oh = pill_h + inset * 2.0;
     let r = (radius + inset).min(oh / 2.0);
 
-    let outline_alpha = 0.3 + 0.5 * t;
+    let outline_alpha = (0.3 + 0.5 * t) * alpha;
 
     cr.save().ok();
     cr.set_source_rgba(

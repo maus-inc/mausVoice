@@ -53,11 +53,10 @@ pub(crate) fn draw_all(gfx: &mut Gfx, state: &PillState) {
 
         draw_cancel_button(gfx, state, ww, wh);
 
-        // Long-press outline indicator (also visible during active drag at full progress)
-        if (state.long_press_active.get()
-            && state.long_press_elapsed.get() > LONG_PRESS_HOLD_DELAY)
-            || state.dragging.get()
-        {
+        // Long-press outline indicator. `ring_alpha` stays pinned for the whole
+        // hold and eases out after release, so the outline survives the
+        // press→drag hand-off and never vanishes under an inflated pill.
+        if state.ring_alpha.get() > 0.0 {
             draw_long_press_ring(gfx, state, ww, wh);
         }
 
@@ -70,26 +69,34 @@ pub(crate) fn draw_all(gfx: &mut Gfx, state: &PillState) {
 pub(crate) fn pill_position(state: &PillState, ww: f64, wh: f64) -> (f64, f64, f64, f64) {
     let expand_t = state.expand_t.get();
     let inflate = state.inflate_t.get();
-    let inflate_px = inflate * DRAG_INFLATE_AMOUNT;
 
     let base_w = lerp(MIN_PILL_WIDTH, EXPANDED_PILL_WIDTH, expand_t);
     let base_h = lerp(MIN_PILL_HEIGHT, EXPANDED_PILL_HEIGHT, expand_t);
-    let pill_w = base_w + inflate_px * 2.0;
-    let pill_h = base_h + inflate_px * 2.0;
-    let pill_x = (ww - pill_w) / 2.0;
 
-    let pill_y = if state.assistant_active.get() || state.panel_open_t.get() > 0.01 {
+    // Inflate by scaling BOTH axes about the pill's centre. An additive pixel
+    // amount grows the small height disproportionately (reading as "only got
+    // taller"), and anchoring to the bottom edge grows the pill upward-only;
+    // scaling about the centre preserves the squircle's proportions and grows
+    // it diagonally, the way a physical pill would.
+    let scale = 1.0 + inflate * DRAG_INFLATE_SCALE;
+    let pill_w = base_w * scale;
+    let pill_h = base_h * scale;
+
+    let base_x = (ww - base_w) / 2.0;
+    let base_y = if state.assistant_active.get() || state.panel_open_t.get() > 0.01 {
         let panel_bottom = wh - PANEL_BOTTOM_MARGIN;
-        panel_bottom - PILL_BOTTOM_INSET - pill_h
+        panel_bottom - PILL_BOTTOM_INSET - base_h
     } else {
         // Collapsed: hug the bottom (4px); expanded: rise to centered position
         let collapsed_bottom = 4.0;
         let expanded_bottom = (PILL_AREA_HEIGHT - EXPANDED_PILL_HEIGHT) / 2.0;
         let bottom_offset = lerp(collapsed_bottom, expanded_bottom, expand_t);
-        wh - bottom_offset - pill_h
+        wh - bottom_offset - base_h
     };
 
-    (pill_x, pill_y, pill_w, pill_h)
+    let center_x = base_x + base_w / 2.0;
+    let center_y = base_y + base_h / 2.0;
+    (center_x - pill_w / 2.0, center_y - pill_h / 2.0, pill_w, pill_h)
 }
 
 /// Corner radius for the pill at its *current* size.
@@ -1172,9 +1179,17 @@ fn lerp(a: f64, b: f64, t: f64) -> f64 {
 
 /// Draws the long-press progress ring around the pill, kept at full
 /// completion while dragging so the outline reads as a drag affordance.
+/// Opacity is owned by `state.ring_alpha` (pinned while held, eased out after
+/// release), never by the press-progress ramp.
 fn draw_long_press_ring(gfx: &Gfx, state: &PillState, ww: f64, wh: f64) {
-    // While actively dragging, keep the full outline visible (progress = 1.0).
-    let progress = if state.dragging.get() {
+    let alpha = state.ring_alpha.get();
+    if alpha <= 0.0 {
+        return;
+    }
+
+    // While actively dragging (or just after release, fading), the outline is
+    // full; mid-press it tracks the hold-progress ramp.
+    let progress = if state.dragging.get() || !state.long_press_active.get() {
         1.0
     } else {
         long_press_progress(state.long_press_elapsed.get())
@@ -1184,7 +1199,7 @@ fn draw_long_press_ring(gfx: &Gfx, state: &PillState, ww: f64, wh: f64) {
     let radius = pill_radius(pill_w, pill_h);
 
     // Draw an outline that traces around the pill perimeter clockwise
-    // from the top-center. The filled portion matches the hold progress.
+    // from the top-left corner. The filled portion matches the hold progress.
     let inset = 2.0;
     let ox = pill_x - inset;
     let oy = pill_y - inset;
@@ -1192,39 +1207,36 @@ fn draw_long_press_ring(gfx: &Gfx, state: &PillState, ww: f64, wh: f64) {
     let oh = pill_h + inset * 2.0;
     let r = (radius + inset).min(oh / 2.0);
 
-    // Build perimeter path as (x, y) points: top edge → right cap → bottom edge → left cap
-    let segments = 64;
-    let mut path: Vec<(f64, f64)> = Vec::with_capacity(segments);
+    // Build the perimeter as a true rounded rectangle: four corner QUARTER arcs
+    // joined by straight edges. (The old two-semicircle "stadium" path only
+    // closes cleanly when r == oh/2; once inflation pushed the height past the
+    // capped radius the caps no longer met the edges, producing the broken
+    // paperclip look.) Arc density follows the radius so the corners stay
+    // smooth at the inflated pill's larger radii.
+    let arc_steps = ((r * 0.75).ceil() as usize).clamp(6, 24);
+    let mut path: Vec<(f64, f64)> = Vec::with_capacity(arc_steps * 4 + 5);
+    let corner = |cx: f64, cy: f64, from: f64, path: &mut Vec<(f64, f64)>| {
+        for i in 1..=arc_steps {
+            let angle =
+                from + (i as f64 / arc_steps as f64) * std::f64::consts::FRAC_PI_2;
+            path.push((cx + angle.cos() * r, cy + angle.sin() * r));
+        }
+    };
 
-    // Top edge (left to right), starting from after the top-left corner
-    let top_left_x = ox + r;
-    let top_right_x = ox + ow - r;
-    let top_y = oy;
-    path.push((top_left_x, top_y));
-    path.push((top_right_x, top_y));
-
-    // Right cap (semicircle)
-    let right_cx = ox + ow - r;
-    let right_cy = oy + r;
-    let arc_steps = segments / 4;
-    for i in 0..=arc_steps {
-        let angle = -std::f64::consts::FRAC_PI_2
-            + (i as f64 / arc_steps as f64) * std::f64::consts::PI;
-        path.push((right_cx + angle.cos() * r, right_cy + angle.sin() * r));
-    }
-
-    // Bottom edge (right to left)
-    let bottom_y = oy + oh;
-    path.push((top_left_x, bottom_y));
-
-    // Left cap (semicircle)
-    let left_cx = ox + r;
-    let left_cy = oy + oh - r;
-    for i in 0..=arc_steps {
-        let angle = std::f64::consts::FRAC_PI_2
-            + (i as f64 / arc_steps as f64) * std::f64::consts::PI;
-        path.push((left_cx + angle.cos() * r, left_cy + angle.sin() * r));
-    }
+    // Top edge, left → right (start point doubles as the progress origin).
+    path.push((ox + r, oy));
+    path.push((ox + ow - r, oy));
+    // Top-right corner (−90° → 0°), then the right edge.
+    corner(ox + ow - r, oy + r, -std::f64::consts::FRAC_PI_2, &mut path);
+    path.push((ox + ow, oy + oh - r));
+    // Bottom-right corner (0° → 90°), then the bottom edge, right → left.
+    corner(ox + ow - r, oy + oh - r, 0.0, &mut path);
+    path.push((ox + r, oy + oh));
+    // Bottom-left corner (90° → 180°), then the left edge.
+    corner(ox + r, oy + oh - r, std::f64::consts::FRAC_PI_2, &mut path);
+    path.push((ox, oy + r));
+    // Top-left corner (180° → 270°) — closes back at the start point.
+    corner(ox + r, oy + r, std::f64::consts::PI, &mut path);
 
     // Compute cumulative distances along the path
     let mut distances: Vec<f64> = Vec::with_capacity(path.len());
@@ -1237,7 +1249,7 @@ fn draw_long_press_ring(gfx: &Gfx, state: &PillState, ww: f64, wh: f64) {
     let total_len = *distances.last().unwrap_or(&1.0);
     let filled_len = total_len * progress;
 
-    let outline_alpha = 0.3 + 0.5 * progress;
+    let outline_alpha = (0.3 + 0.5 * progress) * alpha;
     let col = [
         LONG_PRESS_OUTLINE_COLOR.0,
         LONG_PRESS_OUTLINE_COLOR.1,

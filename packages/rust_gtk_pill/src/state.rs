@@ -208,8 +208,17 @@ pub(crate) struct PillState {
     // Inflate animation — pill slightly expands when entering drag, contracts on release.
     pub(crate) inflate_t: Cell<f64>,
     pub(crate) inflate_velocity: Cell<f64>,
+    // Master alpha for the long-press outline. Pinned at 1 while the gesture is
+    // held, eased to 0 over LONG_PRESS_RING_FADE after release, so the outline
+    // never fades under an active press.
+    pub(crate) ring_alpha: Cell<f64>,
     pub(crate) drag_cursor_x: Cell<f64>,
     pub(crate) drag_cursor_y: Cell<f64>,
+    // X11 drop position, in physical root coordinates, persisted when a drag
+    // ends so the toplevel stays parked until the user moves it again.
+    pub(crate) has_saved_position: Cell<bool>,
+    pub(crate) saved_x: Cell<f64>,
+    pub(crate) saved_y: Cell<f64>,
     // PlainWayland draws the pill on a maximized overlay window, so dragging
     // translates the pill's draw position rather than moving the toplevel.
     pub(crate) drag_draw_offset_x: Cell<f64>,
