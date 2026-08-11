@@ -293,9 +293,18 @@ function writeIcns(framePathBySize, outPath) {
   writeFileSync(outPath, Buffer.concat([header, body]));
 }
 
-/** Width/height from a PNG's IHDR, or nulls when the payload is not a PNG. */
+/**
+ * Width/height from a PNG's IHDR, or nulls when the payload is not a PNG.
+ * Requires the 8-byte signature followed by a first chunk of type `IHDR` with
+ * length 13, so a truncated or random payload cannot yield plausible dims.
+ */
 function readPngSize(payload) {
-  if (payload.length < 24 || !payload.subarray(0, 8).equals(PNG_MAGIC)) {
+  const isPng =
+    payload.length >= 33 &&
+    payload.subarray(0, 8).equals(PNG_MAGIC) &&
+    payload.readUInt32BE(8) === 13 &&
+    payload.toString("ascii", 12, 16) === "IHDR";
+  if (!isPng) {
     return { width: null, height: null };
   }
   return { width: payload.readUInt32BE(16), height: payload.readUInt32BE(20) };
@@ -317,7 +326,8 @@ function readIcnsFrames(path) {
   }
 
   const frames = [];
-  for (let offset = 8; offset + 8 <= data.length; ) {
+  let offset = 8;
+  while (offset + 8 <= data.length) {
     const type = data.toString("ascii", offset, offset + 4);
     const length = data.readUInt32BE(offset + 4);
     if (length < 8 || offset + length > data.length) {
@@ -328,6 +338,11 @@ function readIcnsFrames(path) {
       ...readPngSize(data.subarray(offset + 8, offset + length)),
     });
     offset += length;
+  }
+  if (offset !== data.length) {
+    throw new Error(
+      `${path}: ${data.length - offset} trailing byte(s) after the last chunk`,
+    );
   }
   return frames;
 }

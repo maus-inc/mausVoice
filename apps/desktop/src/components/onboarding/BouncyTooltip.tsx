@@ -1,4 +1,4 @@
-import { Box, keyframes } from "@mui/material";
+import { Box, keyframes, useMediaQuery } from "@mui/material";
 import { ReactNode, useEffect, useRef } from "react";
 
 const fadeIn = keyframes`
@@ -44,6 +44,11 @@ export const BouncyTooltip = ({
   delay = 0,
 }: BouncyTooltipProps) => {
   const hasBeenVisible = useRef(false);
+  // DESIGN.md: reduced motion is honored everywhere; the attention bounce is
+  // the first thing to drop.
+  const prefersReducedMotion = useMediaQuery(
+    "(prefers-reduced-motion: reduce)",
+  );
 
   useEffect(() => {
     if (visible) {
@@ -53,7 +58,10 @@ export const BouncyTooltip = ({
 
   const getAnimation = () => {
     if (visible) {
-      return `${fadeIn} 0.2s ease-out ${delay}s both, ${bounce} 1s ease-in-out ${delay}s infinite`;
+      const bouncePart = prefersReducedMotion
+        ? ""
+        : `${bounce} 1s ease-in-out ${delay}s infinite, `;
+      return `${bouncePart}${fadeIn} 0.2s ease-out ${delay}s both`;
     }
     if (hasBeenVisible.current) {
       return `${fadeOutDown} 0.2s ease-in forwards`;

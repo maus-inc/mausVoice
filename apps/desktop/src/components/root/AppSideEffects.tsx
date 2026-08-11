@@ -652,7 +652,6 @@ export const AppSideEffects = () => {
   const handleAddToDictionary = useCallback(async () => {
     try {
       const selectedText = await invoke<string | null>("get_selected_text");
-      console.log("selected text:", selectedText);
       if (!selectedText?.trim()) {
         return;
       }

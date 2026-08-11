@@ -2,6 +2,7 @@ import { Box, IconButton, Stack, useColorScheme } from "@mui/material";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { Copy, Minus, Square, X } from "lucide";
 import { useCallback, useEffect, useMemo, useState } from "react";
+import { useIntl } from "react-intl";
 import { surfaceAlpha, surfaces } from "../../styles/palette";
 import { hairline, titleBarShadow } from "../../styles/shadows";
 import { isTauriRuntime } from "../../utils/env.utils";
@@ -22,6 +23,7 @@ export const TitleBar = () => {
   const { mode, systemMode } = useColorScheme();
   const resolved = mode === "system" ? systemMode : mode;
   const dark = resolved === "dark";
+  const intl = useIntl();
   const [maximized, setMaximized] = useState(false);
 
   useEffect(() => {
@@ -140,7 +142,7 @@ export const TitleBar = () => {
           <IconButton
             size="small"
             onClick={() => void minimize()}
-            aria-label="Minimize"
+            aria-label={intl.formatMessage({ defaultMessage: "Minimize" })}
             sx={controlSx}
           >
             <MorphNavIcon icon={Minus} size={CONTROL_ICON_SIZE} />
@@ -148,7 +150,11 @@ export const TitleBar = () => {
           <IconButton
             size="small"
             onClick={() => void toggleMax()}
-            aria-label={maximized ? "Restore" : "Maximize"}
+            aria-label={
+              maximized
+                ? intl.formatMessage({ defaultMessage: "Restore" })
+                : intl.formatMessage({ defaultMessage: "Maximize" })
+            }
             sx={controlSx}
           >
             <MorphNavIcon icon={maximizeIcon} size={CONTROL_ICON_SIZE} />
@@ -156,7 +162,7 @@ export const TitleBar = () => {
           <IconButton
             size="small"
             onClick={() => void close()}
-            aria-label="Close"
+            aria-label={intl.formatMessage({ defaultMessage: "Close" })}
             sx={{
               ...controlSx,
               "&:hover": {

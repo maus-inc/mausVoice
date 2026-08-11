@@ -2,6 +2,7 @@ import { createTheme, type Shadows } from "@mui/material/styles";
 import {
   accent,
   chalkSolid,
+  darkInk,
   highlight,
   ink,
   inkSolid,
@@ -32,7 +33,7 @@ export const theme = createTheme({
         blue: accent.light.main,
         blueHover: "#1a7cd4ff",
         blueActive: "#166bbf",
-        onBlue: "#FFFFFF",
+        onBlue: text.dark.primary,
 
         ...surfaces.light,
       },
@@ -46,11 +47,11 @@ export const theme = createTheme({
 
         goldFg: "#FFD700",
         goldBg: "rgba(255, 215, 0, 0.2)",
-        shadow: "rgba(0, 0, 0, 0.5)",
+        shadow: darkInk(0.5),
         blue: accent.dark.main,
         blueHover: "#2787e6ff",
         blueActive: "#1f76cc",
-        onBlue: "#FFFFFF",
+        onBlue: text.dark.primary,
 
         ...surfaces.dark,
       },
@@ -462,6 +463,13 @@ export const theme = createTheme({
               inset 0 2px 0 ${highlight(0.1)},
               0 6px 16px rgba(${accent.light.rgb}, 0.35)
             `,
+            ...theme.applyStyles("dark", {
+              boxShadow: `
+                inset 0 1px 0 ${highlight(0.28)},
+                inset 0 2px 0 ${highlight(0.1)},
+                0 6px 16px rgba(${accent.dark.rgb}, 0.35)
+              `,
+            }),
             "&:hover": {
               backgroundColor: theme.vars.palette.blueHover,
               transform: "translateY(-1px)",

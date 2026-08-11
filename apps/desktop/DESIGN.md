@@ -20,6 +20,7 @@ The two schemes have their own temperature rather than being inversions of each 
 - Backdrop-filtered chrome uses `surfaceAlpha(tier, α)` so the translucent face can never drift from its opaque tier.
 
 ## Color (restrained — one accent)
+
 - `primary` = warm near-black charcoal in light (`inkSolid.base` `#1A1712`), `#FFFFFF` in dark (white CTA is the primary).
 - Only accent: **blue** `primary.blue #1b8af8` (light) / `#3198ff` (dark), reserved for primary actions, current selection, state indicators, switches. Not decoration.
 - `gold` is a reward/secondary class only (inactive feature); `red` (hint) for destructive only.

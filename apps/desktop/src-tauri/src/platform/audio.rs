@@ -306,7 +306,9 @@ mod cpal_impl {
             let level_emitter = level_callback.map(LevelEmitter::new);
             let chunk_emitter = chunk_callback.map(ChunkEmitter::new);
 
-            // Fast path: try the cached device first (avoids full enumeration)
+            // Fast path: try the cached device first. Resolving the cached label
+            // still enumerates the selected host's input devices, but it skips
+            // candidate scoring and never iterates the other hosts.
             if let Some((active, host_id, device_name)) = self.try_cached_device(
                 level_emitter.clone(),
                 chunk_emitter.clone(),
@@ -550,20 +552,12 @@ mod cpal_impl {
     fn ordered_host_ids() -> Vec<HostId> {
         let default_host = cpal::default_host();
         let default_id = default_host.id();
-        let mut others: Vec<HostId> = cpal::available_hosts()
+        let mut ordered: Vec<HostId> = cpal::available_hosts()
             .into_iter()
             .filter(|id| *id != default_id)
             .collect();
-        others.sort_by_key(|id| host_rank(*id));
-
-        let mut ordered = Vec::with_capacity(others.len() + 1);
-        ordered.push(default_id);
-        ordered.extend(others);
+        ordered.insert(0, default_id);
         ordered
-    }
-
-    fn host_rank(_id: HostId) -> u8 {
-        0
     }
 
     fn try_start_on_device(
@@ -821,11 +815,12 @@ mod cpal_impl {
             })
         });
 
-        // Either the host does not enumerate its own default, or the enumeration
-        // failed outright and the default is all we have; keep it either way so
-        // recording still has a target.
-        let default_missing =
-            default_index.is_none() && (default_normalized.is_some() || devices.is_empty());
+        // Keep the host default whenever the enumeration found no positional
+        // match: either the host does not enumerate its own default, the
+        // enumeration failed outright and the default is all we have, or the
+        // default has no resolvable display name. Retaining it keeps a recording
+        // target available and the default keeps its default-candidate status.
+        let default_missing = default_index.is_none();
         if let Some(device) = default_device.filter(|_| default_missing) {
             default_index = Some(devices.len());
             devices.push(device);
@@ -852,6 +847,10 @@ mod cpal_impl {
             .collect()
     }
 
+    /// Resolves a cached device label back to a live `Device` on the given host.
+    /// This still enumerates every input device the host exposes, so the cached
+    /// path only saves the candidate scoring and the cross-host iteration of the
+    /// slow path, not the per-host enumeration itself.
     fn find_device_by_label(host: &cpal::Host, target_label: &str) -> Option<Device> {
         let target = normalized_name(target_label);
         labelled_devices_for_host(host)

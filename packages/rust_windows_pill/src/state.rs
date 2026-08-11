@@ -244,6 +244,8 @@ impl PillState {
         if self.draw_h_velocity.get() != 0.0 { return true; }
         if self.flash_velocity.get() != 0.0 { return true; }
         if self.cancel_velocity.get() != 0.0 { return true; }
+        if self.pause_velocity.get() != 0.0 { return true; }
+        if self.inflate_velocity.get() != 0.0 { return true; }
 
         // Active visual effects
         if self.fireworks_active.get() { return true; }

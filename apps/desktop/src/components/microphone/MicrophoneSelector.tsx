@@ -16,7 +16,7 @@ import {
 import { Nullable } from "@maus-inc/types";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { FormattedMessage } from "react-intl";
-import { commands } from "../../../../../packages/desktop-native-apis/src/bindings";
+import { commands } from "@maus-inc/desktop-native-apis";
 
 const AUTO_OPTION_VALUE = "__microphone_auto__";
 
