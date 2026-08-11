@@ -8,7 +8,7 @@
 
 [![license](https://shieldcn.dev/badge/license-AGPL--3.0-black.svg)](LICENCE)
 [![CI](https://shieldcn.dev/badge/CI-passing-black.svg)](https://github.com/maus-inc/mausVoice/actions)
-[![platform](https://shieldcn.dev/badge/platform-Windows%20%7C%20macOS%20%7C%20Linux-black.svg)](https://github.com/maus-inc/mausVoice/releases)
+[![platform](https://shieldcn.dev/group/apple+windows+linux.svg)](https://github.com/maus-inc/mausVoice/releases)
 
 </div>
 
