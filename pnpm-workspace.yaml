@@ -2,7 +2,6 @@ packages:
   - "apps/*"
   - "apps/firebase/functions"
   - "packages/*"
-  - "enterprise/*"
 
 onlyBuiltDependencies:
   - "esbuild"
