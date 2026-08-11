@@ -17,9 +17,7 @@
 <p align="center">
   <img src="docs/home-page.png" alt="mausVoice home" width="720" />
 </p>
-<p align="center">
-  <img src="docs/animated-pill.gif" alt="mausVoice pill in action" width="200" />
-</p>
+
 
 
 mausVoice is a desktop app that turns your voice into text, anywhere you can type. Speech is transcribed live while you talk, tidied up by an LLM in the style you pick, and dropped straight into the app you're focused on.
@@ -30,6 +28,12 @@ mausVoice is a desktop app that turns your voice into text, anywhere you can typ
 2. Audio is captured natively and transcribed as it happens, with streaming Deepgram (`nova-3`), or with fully local Whisper if you'd rather keep every byte on-device.
 3. The transcript is cleaned up with an LLM: filler removed, punctuation and formatting in, your chosen writing style applied.
 4. The finished text lands in whatever app you're focused on.
+<br>
+<br>
+<br>
+<p align="center">
+  <img src="docs/animated-pill.gif" alt="mausVoice pill in action" width="200" />
+</p>
 
 ## Features
 
@@ -109,4 +113,4 @@ pnpm run test          # tests
 
 [AGPLv3](LICENCE). Built on [Tauri](https://tauri.app), with the frontend in React and the audio/overlay layer in Rust.
 
-**Maintainer:** Owie Emmanuel <owieemmanuel34@gmail.com>
+**Maintainer:** [Owie Emmanuel](https://github.com/Owie6789) 
