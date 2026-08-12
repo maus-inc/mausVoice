@@ -43,6 +43,10 @@ pub fn notify_assistant_state(app: &tauri::AppHandle, payload: &str) {
     pill_process::notify_assistant_state(app, payload);
 }
 
+pub fn notify_reset_position(app: &tauri::AppHandle) -> Result<(), String> {
+    pill_process::notify_reset_position(app)
+}
+
 fn resolve_pill_binary_path(app: &tauri::AppHandle) -> Option<std::path::PathBuf> {
     pill_process::resolve_pill_binary_in_resources(app, BINARY_NAME)
         .or_else(|| pill_process::resolve_pill_binary_in_dev(PACKAGE_DIR, BINARY_NAME))

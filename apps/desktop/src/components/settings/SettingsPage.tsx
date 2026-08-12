@@ -12,7 +12,6 @@ import {
   LanguageOutlined,
   MicOutlined,
   MoreVertOutlined,
-  PrivacyTipOutlined,
   RocketLaunchOutlined,
   TroubleshootOutlined,
   VolumeUpOutlined,
@@ -555,16 +554,6 @@ export default function SettingsPage() {
         }
         trailing={<ArrowOutwardRounded />}
         leading={<DescriptionOutlined />}
-      />
-      <ListTile
-        title={<FormattedMessage defaultMessage="Privacy policy" />}
-        onClick={() =>
-          openUrl(
-            "https://github.com/maus-inc/mausVoice/blob/main/CODE_OF_CONDUCT.md",
-          )
-        }
-        trailing={<ArrowOutwardRounded />}
-        leading={<PrivacyTipOutlined />}
       />
     </Section>
   );
