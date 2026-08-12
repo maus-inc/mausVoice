@@ -64,10 +64,14 @@ Grab Your [Free Groq↗](https://console.groq.com/keys) and [Free Deepgram↗](h
 
 Download links point at the latest release for your platform (`.exe` on Windows, `.dmg` on macOS, `.AppImage` or `.deb` on Linux).
 
+<br>
 
-<p align="center">
+<div align="center">
   <img src="docs/mausvoice-banner.png" alt="mausVoice" width="840" />
-</p>
+</div>
+
+<br>
+
 <details>
 <summary>Developer's quick start</summary>
 

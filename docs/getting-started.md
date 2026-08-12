@@ -15,7 +15,7 @@ This is a **pnpm** workspace (`pnpm@10.11.0`) managed with Turborepo. The packag
 | `packages/*`  | Shared packages: types, voice-ai, desktop-native-apis, functions, pricing, UI, utilities, config, shared-fonts, and the native pill crates. |
 | `scripts`     | Automation and helper scripts for local development and release tasks.                                     |
 
-> The marketing site (`apps/web`) and Firebase functions (`apps/firebase`) referenced in some legacy docs are **not part of this repository**. The marketing site and its install scripts are served from `mausvoice.com` externally.
+> The marketing site (`apps/web`) and Firebase functions (`apps/firebase`) referenced in some legacy docs are **not part of this repository**. The marketing site is published at [maus-inc.github.io/mausVoice](https://maus-inc.github.io/mausVoice/).
 
 ## Architecture Overview
 

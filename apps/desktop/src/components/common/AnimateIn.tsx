@@ -24,6 +24,7 @@ export const AnimateIn = ({ children, visible = true }: AnimateInProps) => {
     <AnimatePresence initial={false}>
       {visible ? (
         <motion.div
+          key="animate-in"
           initial={
             reduceMotion ? { opacity: 0 } : { opacity: 0, y: 6, scale: 0.99 }
           }
@@ -52,12 +53,6 @@ export type AnimateSwitchProps = {
 };
 
 /**
- * Crossfades between mutually exclusive sections (e.g. the off / api / local
- * blocks in the AI configuration menus). `mode="wait"` keeps the container
- * height honest during the swap instead of overlapping absolutely-positioned
- * copies mid-flight.
- */
-/**
  * While a panel is animating out it is still mounted and interactive: its
  * buttons can be clicked a second time, firing duplicate actions behind the
  * incoming panel. `inert` + `aria-hidden` cut pointer, keyboard, and
@@ -72,6 +67,12 @@ const PresenceGuard = ({ children }: { children: ReactNode }) => {
   );
 };
 
+/**
+ * Crossfades between mutually exclusive sections (e.g. the off / api / local
+ * blocks in the AI configuration menus). `mode="wait"` keeps the container
+ * height honest during the swap instead of overlapping absolutely-positioned
+ * copies mid-flight.
+ */
 export const AnimateSwitch = ({ activeKey, children }: AnimateSwitchProps) => {
   const reduceMotion = useReducedMotion();
 

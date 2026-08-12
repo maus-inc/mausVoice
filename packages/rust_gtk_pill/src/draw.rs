@@ -214,7 +214,6 @@ fn draw_long_press_ring(
     let filled_len = total_len * t;
 
     if filled_len <= 0.0 {
-        cr.restore().ok();
         return;
     }
 

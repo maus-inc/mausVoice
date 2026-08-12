@@ -5,13 +5,59 @@ import sitemap from '@astrojs/sitemap';
 
 // https://astro.build/config
 export default defineConfig({
-	site: 'https://docs.mausvoice.com',
+	site: 'https://maus-inc.github.io',
+	base: '/mausVoice/',
 	integrations: [
 		starlight({
 			title: 'mausVoice Docs',
+			description: 'Official documentation for mausVoice, the cross-platform voice-to-text desktop app.',
 			logo: {
 				src: './src/assets/logo.png',
 			},
+			head: [
+				{
+					tag: 'meta',
+					attrs: {
+						name: 'robots',
+						content: 'index, follow, max-image-preview:large, max-snippet:-1, max-video-preview:-1',
+					},
+				},
+				{ tag: 'meta', attrs: { property: 'og:site_name', content: 'mausVoice Docs' } },
+				{ tag: 'meta', attrs: { property: 'og:locale', content: 'en_US' } },
+				{
+					tag: 'meta',
+					attrs: { property: 'og:image', content: 'https://maus-inc.github.io/mausVoice/docs/mausvoice-banner.png' },
+				},
+				{
+					tag: 'meta',
+					attrs: { property: 'og:image:secure_url', content: 'https://maus-inc.github.io/mausVoice/docs/mausvoice-banner.png' },
+				},
+				{ tag: 'meta', attrs: { property: 'og:image:type', content: 'image/png' } },
+				{ tag: 'meta', attrs: { property: 'og:image:width', content: '1684' } },
+				{ tag: 'meta', attrs: { property: 'og:image:height', content: '764' } },
+				{
+					tag: 'meta',
+					attrs: { property: 'og:image:alt', content: 'mausVoice — your voice, typed anywhere' },
+				},
+				{ tag: 'meta', attrs: { name: 'twitter:card', content: 'summary_large_image' } },
+				{
+					tag: 'meta',
+					attrs: { name: 'twitter:image', content: 'https://maus-inc.github.io/mausVoice/docs/mausvoice-banner.png' },
+				},
+				{
+					tag: 'meta',
+					attrs: { name: 'twitter:image:alt', content: 'mausVoice — your voice, typed anywhere' },
+				},
+				{
+					tag: 'link',
+					attrs: {
+						rel: 'alternate',
+						type: 'text/plain',
+						href: 'https://maus-inc.github.io/mausVoice/llms.txt',
+						title: 'mausVoice documentation for language models',
+					},
+				},
+			],
 			customCss: ['./src/styles/custom.css'],
 			sidebar: [
 				{
