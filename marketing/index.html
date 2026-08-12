@@ -243,7 +243,7 @@ section { scroll-margin-top: 96px; }
   text-decoration: none;
   cursor: pointer;
   border: none;
-  transition: transform 0.2s var(--ease-out), background-color 0.2s var(--ease-out);
+  transition: transform 0.15s var(--ease-out), background-color 0.15s var(--ease-out);
 }
 
 .btn svg { width: 16px; height: 16px; }
@@ -687,7 +687,7 @@ section { scroll-margin-top: 96px; }
 .words .w {
   opacity: 0.15;
   color: hsl(var(--hero-subtitle));
-  transition: opacity 0.6s ease;
+  transition: opacity 0.55s var(--ease-out);
 }
 
 .words .w.hl { color: hsl(var(--foreground)); }
@@ -1036,8 +1036,8 @@ section { scroll-margin-top: 96px; }
   opacity: 0;
   translate: 0 20px;
   transition:
-    opacity 0.6s ease,
-    translate 0.6s ease;
+    opacity 0.6s var(--ease-out),
+    translate 0.6s var(--ease-out);
   transition-delay: var(--delay, 0s);
 }
 
@@ -1056,6 +1056,8 @@ section { scroll-margin-top: 96px; }
     animation-duration: 1ms !important;
     animation-iteration-count: 1 !important;
     transition-duration: 1ms !important;
+    transition-delay: 0s !important;
+    scroll-behavior: auto !important;
   }
   .fade-up, .words .w { opacity: 1 !important; transform: none; translate: none; }
   .btn:hover { transform: none; }
@@ -1736,7 +1738,11 @@ section { scroll-margin-top: 96px; }
         ctx.fillText("hello", PILL_X + PILL_W + 8, BASELINE);
       }
     } else {
-      (function loop(now) {
+      // Off-screen gating: only run the rAF loop while the canvas is
+      // visible. Hidden canvases burn main-thread frames for nothing.
+      var rafId = 0;
+      var running = false;
+      function loop(now) {
         if (now > nextBurst) {
           var speak = rand() < 0.82;
           state.targetLevel = speak
@@ -1745,8 +1751,30 @@ section { scroll-margin-top: 96px; }
           nextBurst = now + 90 + rand() * 160;
         }
         pillStep();
-        requestAnimationFrame(loop);
-      })(0);
+        rafId = requestAnimationFrame(loop);
+      }
+      function start() {
+        if (!running) {
+          running = true;
+          rafId = requestAnimationFrame(loop);
+        }
+      }
+      function stop() {
+        running = false;
+        if (rafId) cancelAnimationFrame(rafId);
+        rafId = 0;
+      }
+      if ("IntersectionObserver" in window) {
+        var pillIO = new IntersectionObserver(function (entries) {
+          entries.forEach(function (entry) {
+            if (entry.isIntersecting) start();
+            else stop();
+          });
+        }, { threshold: 0.05 });
+        pillIO.observe(canvas);
+      } else {
+        start();
+      }
     }
   }
 
