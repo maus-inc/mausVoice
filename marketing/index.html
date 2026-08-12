@@ -480,6 +480,18 @@ section { scroll-margin-top: 96px; }
   height: 140px;
 }
 
+.pill-cta {
+  margin: 34px auto 0;
+  width: 270.1px;
+  height: 72.9px;
+}
+
+.pill-cta canvas {
+  display: block;
+  width: 270.1px;
+  height: 72.9px;
+}
+
 /* ------------------------------------------------------------------ *
  * Section shell
  * ------------------------------------------------------------------ */
@@ -1118,6 +1130,10 @@ section { scroll-margin-top: 96px; }
       or go fully local.
     </p>
 
+    <div class="pill-cta fade-up" style="--delay:0.15s" role="img" aria-label="The mausVoice recording pill with a live animated sine waveform">
+      <canvas id="pill-canvas-cta" aria-hidden="true"></canvas>
+    </div>
+
     <div class="cta-actions fade-up" style="--delay:0.2s">
       <a class="btn btn-solid" href="https://github.com/maus-inc/mausVoice/releases" rel="noopener">
         Download
@@ -1197,17 +1213,18 @@ section { scroll-margin-top: 96px; }
     });
   }
 
-  /* ---------- Recording pill stage ---------------------------------
-     Full-bleed canvas spanning the page. Wavy audio strings start at
-     the left page edge, scattered, and converge into the pill's
-     center; transcribed words flow continuously out of the right.
-     Pill: 270.1 x 72.9 px (385.8 x 104.2 reduced 30%), sine engine ported from
+  /* ---------- Recording pill engine ---------------------------------
+     Factory: full-stage mode (mission section) draws wavy strings
+     converging into the pill from the page edge and words flowing out
+     the right; compact mode (CTA section) draws the pill only.
+     Pill: 270.1 x 72.9 px, sine engine ported from
      packages/rust_macos_pill/src/constants.rs + draw.rs and
      apps/desktop/src/components/common/AudioWaveform.tsx
      ------------------------------------------------------------------ */
 
-  var pillCanvas = document.getElementById("pill-canvas");
-  if (pillCanvas && pillCanvas.getContext) {
+  function initPillStage(canvas, fullStage) {
+    if (!canvas || !canvas.getContext) return;
+
     var TAU = Math.PI * 2;
     var LEVEL_SMOOTHING = 0.18;
     var TARGET_DECAY_PER_FRAME = 0.985;
@@ -1225,37 +1242,40 @@ section { scroll-margin-top: 96px; }
       { frequency: 1.25, multiplier: 1.05, phaseOffset: 1.7, opacity: 0.56 },
     ];
 
-    // Stage geometry (logical px, 1:1 with CSS)
-    var CH = 140;                 // stage height, fixed
-    var CW = window.innerWidth;   // stage width: full page
+    // Geometry: stage spans the page (mission) or matches the pill (CTA)
     var PILL_W = 270.1, PILL_H = 72.9;
-    var PILL_X = (CW - PILL_W) / 2;
-    var PILL_Y = (CH - PILL_H) / 2;
+    var CH = fullStage ? 140 : PILL_H;
+    var CW = fullStage ? (canvas.parentElement.clientWidth || window.innerWidth) : PILL_W;
+    var PILL_X = fullStage ? (CW - PILL_W) / 2 : 0;
+    var PILL_Y = fullStage ? (CH - PILL_H) / 2 : 0;
     var BASELINE = CH / 2;
 
     var state = { phase: 0, currentLevel: 0, targetLevel: 0 };
     var nextBurst = 0;
 
-    var ctx = pillCanvas.getContext("2d");
+    var ctx = canvas.getContext("2d");
     if (!ctx.roundRect) {
       ctx.roundRect = function (x, y, w, h, r) { this.rect(x, y, w, h); };
     }
     var dpr = Math.min(2, window.devicePixelRatio || 1);
 
     function sizeStage() {
-      CW = pillCanvas.parentElement.clientWidth || window.innerWidth;
-      PILL_X = (CW - PILL_W) / 2;
-      pillCanvas.width = Math.round(CW * dpr);
-      pillCanvas.height = Math.round(CH * dpr);
+      if (fullStage) {
+        CW = canvas.parentElement.clientWidth || window.innerWidth;
+        PILL_X = (CW - PILL_W) / 2;
+      }
+      canvas.width = Math.round(CW * dpr);
+      canvas.height = Math.round(CH * dpr);
       ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
     }
     sizeStage();
-    window.addEventListener("resize", sizeStage);
+    if (fullStage) {
+      window.addEventListener("resize", sizeStage);
+    }
 
     var reducePillMotion = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
 
-    // Incoming wavy strings: scattered starts at the page edge,
-    // converging to the pill center (like the pill's own wave lines)
+    // Incoming wavy strings (full-stage mode only)
     var IN_LINES = [
       { startY: 22, amp: 30, freq: 0.8,  offset: 0,    opacity: 0.55 },
       { startY: 118, amp: 22, freq: 1.0,  offset: 0.85, opacity: 0.42 },
@@ -1271,7 +1291,7 @@ section { scroll-margin-top: 96px; }
     function drawIncoming() {
       for (var li = 0; li < IN_LINES.length; li++) {
         var line = IN_LINES[li];
-        var run = PILL_X; // from page edge to pill mouth
+        var run = PILL_X;
         if (run < 8) continue;
         ctx.beginPath();
         for (var x = 0; x <= run; x += 3) {
@@ -1292,13 +1312,12 @@ section { scroll-margin-top: 96px; }
       }
     }
 
-    // Outgoing flow: words stream out continuously along a wavy path
+    // Outgoing word flow (full-stage mode only)
     var words = [];
     var nextWord = 0;
     var TRANSCRIPT = ["hello", "meeting", "notes", "ship it", "tomorrow", "thanks", "done", "ideas", "5pm", "review", "standup", "call", "email", "weekend", "launch", "draft"];
 
     function drawOutgoing() {
-      // faint continuation wave the words ride
       var runOut = CW - (PILL_X + PILL_W);
       if (runOut > 8) {
         ctx.beginPath();
@@ -1422,32 +1441,36 @@ section { scroll-margin-top: 96px; }
       state.phase = (state.phase + WAVE_BASE_PHASE_STEP + WAVE_PHASE_GAIN * level) % TAU;
 
       drawPill(level);
-      drawIncoming();
-      drawOutgoing();
+      if (fullStage) {
+        drawIncoming();
+        drawOutgoing();
+      }
     }
 
     if (reducePillMotion) {
-      // static frame: pill at a mid level, converging strings, one word
+      // static frame: pill at a mid level (+ strings and one word on stage)
       drawPill(0.45);
-      var sRun = PILL_X;
-      for (var li = 0; li < IN_LINES.length; li++) {
-        var line = IN_LINES[li];
-        ctx.beginPath();
-        for (var x = 0; x <= sRun; x += 3) {
-          var t = x / sRun;
-          var center = BASELINE + (line.startY - BASELINE) * (1 - easeInOut(t));
-          var y = center + line.amp * (1 - t) * (1 - t) * Math.sin(line.freq * t * TAU + 1.2);
-          if (x === 0) ctx.moveTo(x, y);
-          else ctx.lineTo(x, y);
+      if (fullStage) {
+        var sRun = PILL_X;
+        for (var li = 0; li < IN_LINES.length; li++) {
+          var line = IN_LINES[li];
+          ctx.beginPath();
+          for (var x = 0; x <= sRun; x += 3) {
+            var t = x / sRun;
+            var center = BASELINE + (line.startY - BASELINE) * (1 - easeInOut(t));
+            var y = center + line.amp * (1 - t) * (1 - t) * Math.sin(line.freq * t * TAU + 1.2);
+            if (x === 0) ctx.moveTo(x, y);
+            else ctx.lineTo(x, y);
+          }
+          ctx.strokeStyle = "rgba(255, 255, 255, " + line.opacity + ")";
+          ctx.lineWidth = STROKE_WIDTH;
+          ctx.stroke();
         }
-        ctx.strokeStyle = "rgba(255, 255, 255, " + line.opacity + ")";
-        ctx.lineWidth = STROKE_WIDTH;
-        ctx.stroke();
+        ctx.font = "500 13px 'JetBrains Mono', ui-monospace, monospace";
+        ctx.textBaseline = "middle";
+        ctx.fillStyle = "rgba(255, 255, 255, 0.8)";
+        ctx.fillText("hello", PILL_X + PILL_W + 8, BASELINE);
       }
-      ctx.font = "500 13px 'JetBrains Mono', ui-monospace, monospace";
-      ctx.textBaseline = "middle";
-      ctx.fillStyle = "rgba(255, 255, 255, 0.8)";
-      ctx.fillText("hello", PILL_X + PILL_W + 8, BASELINE);
     } else {
       (function loop(now) {
         if (now > nextBurst) {
@@ -1462,6 +1485,9 @@ section { scroll-margin-top: 96px; }
       })(0);
     }
   }
+
+  initPillStage(document.getElementById("pill-canvas"), true);
+  initPillStage(document.getElementById("pill-canvas-cta"), false);
 
   /* ---------- Videos: pause when off-screen, play when visible ---------- */
 
