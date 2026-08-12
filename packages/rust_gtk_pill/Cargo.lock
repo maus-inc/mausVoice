@@ -582,9 +582,14 @@ dependencies = [
  "gtk-layer-shell",
  "pango",
  "pangocairo",
+ "rust_pill_shared",
  "serde",
  "serde_json",
 ]
+
+[[package]]
+name = "rust_pill_shared"
+version = "0.1.0"
 
 [[package]]
 name = "rustc_version"

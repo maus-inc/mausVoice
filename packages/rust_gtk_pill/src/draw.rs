@@ -218,6 +218,8 @@ fn draw_long_press_ring(
         return;
     }
 
+    cr.save().ok();
+
     let shimmer_freq = RING_SHIMMER_CYCLES * std::f64::consts::TAU / total_len.max(1.0);
     let wave_phase = state.wave_phase.get();
 

@@ -1,4 +1,5 @@
 import { expect, test, vi } from "vitest";
+import { ZodError } from "zod";
 import {
   getGroqGentextRepo,
   getWritingStyle,
@@ -20,6 +21,14 @@ vi.mock("../../src/i18n/intl", async (importOriginal) => {
 
 const isTransientProviderError = (err: unknown): boolean => {
   if (!err) return false;
+  if (err instanceof SyntaxError || err instanceof ZodError) return true;
+  if (
+    typeof err === "object" &&
+    "status" in err &&
+    typeof err.status === "number" &&
+    err.status === 429
+  )
+    return true;
   const msg = err instanceof Error ? err.message : String(err);
   return (
     /\b429\b|rate[-_ ]?limit/i.test(msg) ||

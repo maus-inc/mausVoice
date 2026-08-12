@@ -203,21 +203,28 @@ pub(crate) fn setup_x11_window(window: &gtk::Window, state: Rc<PillState>) {
             .window()
             .map(|gdk_window| gdk_window.scale_factor() as f64)
             .unwrap_or(1.0);
+
+        let (ox, oy) = state_tick.content_offset();
         let (alloc_w, alloc_h) = win_tick.size();
-        let half_w = alloc_w as f64 * surface_scale / 2.0;
-        let half_h = alloc_h as f64 * surface_scale / 2.0;
+        let (pill_x, pill_y, pill_w, pill_h) = crate::draw::pill_position(
+            &state_tick,
+            alloc_w as f64,
+            alloc_h as f64,
+        );
+        let center_x = (ox + pill_x + pill_w / 2.0) * surface_scale;
+        let center_y = (oy + pill_y + pill_h / 2.0) * surface_scale;
 
         let (anchor_x, anchor_y) = if dragging {
             let (ax, ay) = cursor_pos();
             (ax as f64, ay as f64)
         } else if state_tick.has_saved_position.get() {
             (
-                state_tick.saved_x.get() + half_w,
-                state_tick.saved_y.get() + half_h,
+                state_tick.saved_x.get() + center_x,
+                state_tick.saved_y.get() + center_y,
             )
         } else {
             let prev = last_pos.get();
-            (prev.0 as f64 + half_w, prev.1 as f64 + half_h)
+            (prev.0 as f64 + center_x, prev.1 as f64 + center_y)
         };
 
         if let Some((new_x, new_y)) = pill_pos_on_monitor(

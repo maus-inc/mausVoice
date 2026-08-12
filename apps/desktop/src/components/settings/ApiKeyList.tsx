@@ -21,7 +21,7 @@ import {
 } from "@mui/material";
 import { API_KEY_PROVIDERS, type ApiKeyProvider } from "@maus-inc/types";
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { FormattedMessage } from "react-intl";
+import { FormattedMessage, useIntl } from "react-intl";
 import {
   createApiKey,
   deleteApiKey,
@@ -584,6 +584,7 @@ const ApiKeyCard = ({
   onModelChange: (model: string | null) => void;
   context: ApiKeyListContext;
 }) => {
+  const intl = useIntl();
   const config = useMemo(
     () => getProviderFormConfig(apiKey.provider, context),
     [apiKey.provider, context],
@@ -628,7 +629,7 @@ const ApiKeyCard = ({
               <CheckRoundedIcon
                 fontSize="small"
                 sx={{ color: "text.primary", flexShrink: 0 }}
-                titleAccess="Selected"
+                titleAccess={intl.formatMessage({ defaultMessage: "Selected" })}
               />
             )}
           </Stack>

@@ -323,6 +323,10 @@ pub fn run(receiver: Receiver<InMessage>) {
         state_click.long_press_elapsed.set(0.0);
         // Persist the Wayland draw offset so the pill stays where it was dropped.
         // (X11 re-centers in its own reposition loop via window move.)
+        if was_dragging && state_click.backend.get() != Backend::X11 {
+            state_click.has_saved_position.set(true);
+            ipc::send(&OutMessage::PositionChanged { has_saved_position: true });
+        }
         if !was_dragging {
             let (x, y) = event.position();
             input::handle_click(&state_click, x, y);
@@ -501,6 +505,8 @@ pub fn run(receiver: Receiver<InMessage>) {
                     }
                 }
                 InMessage::ResetPosition => {
+                    state_tick.drag_draw_offset_x.set(0.0);
+                    state_tick.drag_draw_offset_y.set(0.0);
                     state_tick.has_saved_position.set(false);
                     ipc::send(&OutMessage::PositionChanged { has_saved_position: false });
                 }
