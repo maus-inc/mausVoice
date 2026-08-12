@@ -13,7 +13,7 @@ import type { CustomFetch } from "./types";
 
 export const OPENROUTER_BASE_URL = "https://openrouter.ai/api/v1";
 export const OPENROUTER_APP_NAME = "mausVoice";
-export const OPENROUTER_APP_URL = "https://mausvoice.com";
+export const OPENROUTER_APP_URL = "https://maus-inc.github.io/mausVoice/";
 
 /**
  * Pre-set favorite models for quick access.

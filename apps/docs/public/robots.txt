@@ -1,3 +1,7 @@
+# robots.txt for https://maus-inc.github.io/mausVoice/
+# Public mausVoice user and enterprise documentation is crawlable.
+# Updated: 2026-08-12
+
 User-agent: *
 Allow: /
 
