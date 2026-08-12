@@ -481,15 +481,15 @@ section { scroll-margin-top: 96px; }
 }
 
 .pill-cta {
-  margin: 34px auto 0;
-  width: 270.1px;
-  height: 72.9px;
+  margin: 30px auto 0;
+  width: 189.1px;
+  height: 51px;
 }
 
 .pill-cta canvas {
   display: block;
-  width: 270.1px;
-  height: 72.9px;
+  width: 189.1px;
+  height: 51px;
 }
 
 /* ------------------------------------------------------------------ *
@@ -793,41 +793,155 @@ section { scroll-margin-top: 96px; }
  * Footer
  * ------------------------------------------------------------------ */
 
-.footer {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  justify-content: space-between;
-  gap: 16px;
-  padding: 48px 32px;
+/* Liquid-glass footer (adapted from the LUMINA footer design) */
+.footer-glass {
+  margin: 128px auto 56px;
+  width: calc(100% - 48px);
+  max-width: 1280px;
+  border-radius: 24px;
+  padding: 24px;
+  color: rgba(255, 255, 255, 0.7);
 }
 
 @media (min-width: 768px) {
-  .footer { padding: 48px 112px; }
+  .footer-glass {
+    margin-top: 256px;
+    padding: 40px;
+  }
 }
 
-.footer p {
-  font-size: 14px;
-  color: hsl(var(--muted-foreground));
+.fg-grid {
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: 40px;
+  margin-bottom: 40px;
 }
 
-.footer-links {
+@media (min-width: 768px) {
+  .fg-grid {
+    grid-template-columns: repeat(12, 1fr);
+    gap: 48px;
+  }
+}
+
+.fg-brand { grid-column: span 12; }
+
+@media (min-width: 768px) {
+  .fg-brand { grid-column: span 5; }
+}
+
+.fg-brand-row {
   display: flex;
-  flex-wrap: wrap;
-  gap: 24px;
+  align-items: center;
+  gap: 10px;
+}
+
+.fg-brand-row svg { width: 24px; height: 24px; fill: currentColor; }
+
+.fg-brand-row span {
+  font-size: 20px;
+  font-weight: 500;
+  color: #fff;
+}
+
+.fg-brand p {
+  margin-top: 14px;
+  font-size: 14px;
+  line-height: 1.625;
+  max-width: 384px;
+}
+
+.fg-links {
+  grid-column: span 12;
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: 32px;
+}
+
+@media (min-width: 768px) {
+  .fg-links {
+    grid-column: span 7;
+    grid-template-columns: repeat(3, 1fr);
+    gap: 12px;
+  }
+}
+
+.fg-links h4 {
+  margin: 0 0 16px;
+  font-size: 14px;
+  font-weight: 500;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: #fff;
+}
+
+.fg-links ul {
   margin: 0;
   padding: 0;
   list-style: none;
+  display: grid;
+  gap: 8px;
 }
 
-.footer-links a {
-  font-size: 14px;
-  color: hsl(var(--muted-foreground));
+.fg-links a {
+  display: block;
+  font-size: 12px;
+  color: inherit;
   text-decoration: none;
   transition: color 0.2s var(--ease-out);
 }
 
-.footer-links a:hover { color: hsl(var(--foreground)); }
+.fg-links a:hover { color: #fff; }
+
+.fg-bottom {
+  padding-top: 24px;
+  border-top: 1px solid rgba(255, 255, 255, 0.1);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: space-between;
+  gap: 24px;
+}
+
+@media (min-width: 768px) {
+  .fg-bottom {
+    flex-direction: row;
+    gap: 16px;
+  }
+}
+
+.fg-bottom p,
+.fg-bottom .join-label {
+  margin: 0;
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.1em;
+  opacity: 0.5;
+}
+
+.fg-socials {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.fg-socials .join-label { margin-right: 4px; }
+
+.fg-socials a {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  opacity: 0.7;
+  color: inherit;
+  transition: opacity 0.2s var(--ease-out), color 0.2s var(--ease-out);
+}
+
+.fg-socials a:hover { opacity: 1; color: #fff; }
+
+.fg-socials svg {
+  width: 16px;
+  height: 16px;
+}
 
 /* ------------------------------------------------------------------ *
  * fadeUp pattern (template: opacity 0 -> 1, y 20 -> 0, 0.6s, easeOut)
@@ -1150,16 +1264,68 @@ section { scroll-margin-top: 96px; }
 
 <!-- ================= Footer ================= -->
 
-<footer class="footer">
-  <p>&copy; 2026 maus-inc. All rights reserved.</p>
-  <nav aria-label="Footer">
-    <ul class="footer-links">
-      <li><a href="https://github.com/maus-inc/mausVoice" rel="noopener">GitHub</a></li>
-      <li><a href="https://github.com/maus-inc/mausVoice/releases" rel="noopener">Releases</a></li>
-      <li><a href="https://github.com/maus-inc/mausVoice/tree/main/docs" rel="noopener">Docs</a></li>
-      <li><a href="https://github.com/maus-inc/mausVoice/blob/main/LICENCE" rel="noopener">License</a></li>
-    </ul>
-  </nav>
+<footer class="liquid-glass footer-glass fade-up" style="--delay:0.4s">
+  <div class="fg-grid">
+    <div class="fg-brand">
+      <div class="fg-brand-row">
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 256 256" aria-hidden="true"><path d="M 4.688 136 C 68.373 136 120 187.627 120 251.312 C 120 252.883 119.967 254.445 119.905 256 L 0 256 L 0 136.096 C 1.555 136.034 3.117 136 4.688 136 Z M 251.312 136 C 252.883 136 254.445 136.034 256 136.096 L 256 256 L 136.095 256 C 136.032 254.438 136.001 252.875 136 251.312 C 136 187.627 187.627 136 251.312 136 Z M 119.905 0 C 119.967 1.555 120 3.117 120 4.688 C 120 68.373 68.373 120 4.687 120 C 3.117 120 1.555 119.967 0 119.905 L 0 0 Z M 256 119.905 C 254.445 119.967 252.883 120 251.312 120 C 187.627 120 136 68.373 136 4.687 C 136 3.117 136.033 1.555 136.095 0 L 256 0 Z" /></svg>
+        <span>mausVoice</span>
+      </div>
+      <p>Voice typing for your own machine. Transcribe live, clean it up with AI, and type into any app. Free, local, and private.</p>
+    </div>
+
+    <div class="fg-links">
+      <nav aria-label="Discover">
+        <h4>Discover</h4>
+        <ul>
+          <li><a href="#how-it-works">How it works</a></li>
+          <li><a href="#why">Why voice</a></li>
+          <li><a href="#features">Product</a></li>
+          <li><a href="#download">Download</a></li>
+        </ul>
+      </nav>
+      <nav aria-label="The Mission">
+        <h4>The Mission</h4>
+        <ul>
+          <li><a href="https://github.com/maus-inc/mausVoice" rel="noopener">GitHub</a></li>
+          <li><a href="https://github.com/maus-inc/mausVoice/releases" rel="noopener">Releases</a></li>
+          <li><a href="https://github.com/maus-inc/mausVoice/tree/main/docs" rel="noopener">Docs</a></li>
+          <li><a href="https://github.com/maus-inc/mausVoice/blob/main/LICENCE" rel="noopener">License</a></li>
+        </ul>
+      </nav>
+      <nav aria-label="Concierge">
+        <h4>Concierge</h4>
+        <ul>
+          <li><a href="https://github.com/maus-inc/mausVoice/issues" rel="noopener">Get in touch</a></li>
+          <li><a href="https://github.com/maus-inc/mausVoice/blob/main/LICENCE" rel="noopener">Legal privacy</a></li>
+          <li><a href="https://github.com/maus-inc/mausVoice/blob/main/CODE_OF_CONDUCT.md" rel="noopener">User agreement</a></li>
+          <li><a href="https://github.com/maus-inc/mausVoice/issues" rel="noopener">Report concern</a></li>
+        </ul>
+      </nav>
+    </div>
+  </div>
+
+  <div class="fg-bottom">
+    <p>Curated by @GotInGeorgiG</p>
+    <div class="fg-socials">
+      <span class="join-label">Join the Journey:</span>
+      <a href="https://github.com/maus-inc/mausVoice" rel="noopener" aria-label="Music">
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="8" cy="18" r="4"/><path d="M12 18V2l7 4"/></svg>
+      </a>
+      <a href="https://github.com/maus-inc/mausVoice" rel="noopener" aria-label="Facebook">
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M18 2h-3a5 5 0 0 0-5 5v3H7v4h3v8h4v-8h3l1-4h-4V7a1 1 0 0 1 1-1h3z"/></svg>
+      </a>
+      <a href="https://github.com/maus-inc/mausVoice" rel="noopener" aria-label="Twitter">
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M22 4s-.7 2.1-2 3.4c1.6 10-9.4 17.3-18 11.6 2.2.1 4.4-.6 6-2C3 15.5.5 9.6 3 5c2.2 2.6 5.6 4.1 9 4-.9-4.2 4-6.6 7-3.8 1.1 0 3-1.2 3-1.2z"/></svg>
+      </a>
+      <a href="https://github.com/maus-inc/mausVoice" rel="noopener" aria-label="YouTube">
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M2.5 17a24.12 24.12 0 0 1 0-10 2 2 0 0 1 1.4-1.4 49.56 49.56 0 0 1 16.2 0A2 2 0 0 1 21.5 7a24.12 24.12 0 0 1 0 10 2 2 0 0 1-1.4 1.4 49.55 49.55 0 0 1-16.2 0A2 2 0 0 1 2.5 17"/><path d="m10 15 5-3-5-3z"/></svg>
+      </a>
+      <a href="https://github.com/maus-inc/mausVoice" rel="noopener" aria-label="Instagram">
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect width="20" height="20" x="2" y="2" rx="5" ry="5"/><path d="M16 11.37A4 4 0 1 1 12.63 8 4 4 0 0 1 16 11.37z"/><line x1="17.5" x2="17.51" y1="6.5" y2="6.5"/></svg>
+      </a>
+    </div>
+  </div>
 </footer>
 
 <script>
@@ -1242,8 +1408,9 @@ section { scroll-margin-top: 96px; }
       { frequency: 1.25, multiplier: 1.05, phaseOffset: 1.7, opacity: 0.56 },
     ];
 
-    // Geometry: stage spans the page (mission) or matches the pill (CTA)
-    var PILL_W = 270.1, PILL_H = 72.9;
+    // Geometry: stage spans the page (mission) or matches the pill (CTA).
+    // CTA pill is 30% smaller (189.1 x 51.0).
+    var PILL_W = fullStage ? 270.1 : 189.1, PILL_H = fullStage ? 72.9 : 51.0;
     var CH = fullStage ? 140 : PILL_H;
     var CW = fullStage ? (canvas.parentElement.clientWidth || window.innerWidth) : PILL_W;
     var PILL_X = fullStage ? (CW - PILL_W) / 2 : 0;
