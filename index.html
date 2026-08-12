@@ -1463,30 +1463,47 @@ section { scroll-margin-top: 96px; }
       { opacity: 1, y: 0, duration: 0.9, ease: "power3.out", stagger: 0.1, delay: 0.15, overwrite: true }
     );
 
-    // below the fold: smooth staggered batch reveals
+    // below the fold: staggered batch reveals that reverse on
+    // scroll-up (scrub-linked, no 'once')
     var fadeEls = gsap.utils.toArray(".fade-up").filter(function (el) {
       return !el.closest(".hero");
     });
-    ScrollTrigger.batch(fadeEls, {
-      start: "top 88%",
-      once: true,
-      onEnter: function (els) {
-        gsap.fromTo(els,
-          { opacity: 0, y: 24 },
-          { opacity: 1, y: 0, duration: 0.75, ease: "power3.out", stagger: 0.09, overwrite: true }
-        );
-      }
+    fadeEls.forEach(function (el) {
+      gsap.fromTo(el,
+        { opacity: 0, y: 24 },
+        {
+          opacity: 1, y: 0,
+          ease: "power2.out",
+          scrollTrigger: {
+            trigger: el,
+            start: "top 88%",
+            end: "top 62%",
+            scrub: 0.4,
+            toggleActions: "play none none reverse"
+          }
+        }
+      );
     });
 
-    // word-by-word mission reveal, staggered and smooth
+    // word-by-word mission reveal: reverses when scrolling back up
     gsap.utils.toArray(".words").forEach(function (block) {
-      gsap.to(block.querySelectorAll(".w"), {
-        opacity: 1,
-        duration: 0.5,
-        ease: "power2.out",
-        stagger: 0.028,
-        scrollTrigger: { trigger: block, start: "top 82%", once: true }
-      });
+      var words = block.querySelectorAll(".w");
+      gsap.fromTo(words,
+        { opacity: 0.15 },
+        {
+          opacity: 1,
+          duration: 0.45,
+          ease: "power2.out",
+          stagger: 0.028,
+          scrollTrigger: {
+            trigger: block,
+            start: "top 82%",
+            end: "top 40%",
+            scrub: 0.3,
+            toggleActions: "play none none reverse"
+          }
+        }
+      );
     });
 
     // subtle scroll-linked parallax on the product band
