@@ -250,10 +250,19 @@ fn draw_long_press_ring(
         (RING_CORE_WIDTH, RING_CORE_ALPHA),
     ];
 
-    cr.set_line_cap(cairo::LineCap::Round);
+    cr.set_line_cap(cairo::LineCap::Butt);
 
+    // Batch segments that share a quantized alpha into one sub-path per pass
+    // and stroke it once, instead of a per-segment stroke whose Round caps
+    // piled opacity at every joint. The bucket index is reconstructed back to
+    // its absolute alpha (b / (N-1)) — the exact inverse of the round(a*(N-1))
+    // assignment above — so the emitted alpha matches the intended shimmer and
+    // edge fade rather than being distorted by a per-pass range remap.
+    const ALPHA_BUCKETS: usize = 8;
     for &(width, pass_alpha) in &passes {
         cr.set_line_width(width);
+        let mut buckets: [Vec<(f64, f64, f64, f64)>; ALPHA_BUCKETS] =
+            std::array::from_fn(|_| Vec::new());
         for &(x1, y1, x2, y2, mid_dist) in &segments {
             let shimmer = 0.55 + 0.45 * (mid_dist * shimmer_freq + wave_phase).sin();
             let edge_fade = ((filled_len - mid_dist) / RING_EDGE_FADE).min(1.0);
@@ -261,14 +270,29 @@ fn draw_long_press_ring(
             if a < 0.005 {
                 continue;
             }
+            let bucket =
+                ((a * (ALPHA_BUCKETS as f64 - 1.0)).round() as usize).min(ALPHA_BUCKETS - 1);
+            buckets[bucket].push((x1, y1, x2, y2));
+        }
+        for (b, segs) in buckets.iter().enumerate() {
+            if segs.is_empty() {
+                continue;
+            }
+            // Reconstruct a representative alpha for bucket b. Using the
+            // bucket's midpoint (b + 0.5)/(N-1) keeps every populated bucket at
+            // a non-zero alpha (bucket 0 is never fully transparent) and stays
+            // monotonic with the quantized source alpha.
+            let a = (b as f64 + 0.5) / (ALPHA_BUCKETS as f64 - 1.0);
             cr.set_source_rgba(
                 LONG_PRESS_OUTLINE_COLOR.0,
                 LONG_PRESS_OUTLINE_COLOR.1,
                 LONG_PRESS_OUTLINE_COLOR.2,
                 a,
             );
-            cr.move_to(x1, y1);
-            cr.line_to(x2, y2);
+            for &(x1, y1, x2, y2) in segs {
+                cr.move_to(x1, y1);
+                cr.line_to(x2, y2);
+            }
             let _ = cr.stroke();
         }
     }

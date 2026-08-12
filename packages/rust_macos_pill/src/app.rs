@@ -999,9 +999,10 @@ fn reposition_window(window: id, state: &PillState) {
         // monitors (and clamp into the wrong visible frame) whenever the
         // pointer crossed a screen edge.
         let dragging = state.dragging.get();
-        // A brand-new window sits at (0, 0) before its first layout — let the
-        // first placement follow the cursor's screen, then never chase it.
-        let never_positioned = win_frame.origin.x == 0.0 && win_frame.origin.y == 0.0;
+        // The pill's first placement (before any saved position) should follow
+        // the cursor's screen once; afterwards it stays put even if it happens
+        // to sit at (0, 0), so a legitimately-placed window is never chased.
+        let first_placement = !state.first_placement_done.get();
         let (px, py, pw, ph) = draw::pill_position(
             state,
             state.draw_width.get(),
@@ -1017,7 +1018,12 @@ fn reposition_window(window: id, state: &PillState) {
                 origin_y + win_h - fy - ph / 2.0,
             )
         };
-        let (anchor_x, anchor_y) = if dragging || (!state.has_saved_position.get() && never_positioned) {
+        let (anchor_x, anchor_y) = if dragging || (!state.has_saved_position.get() && first_placement) {
+            // First placement at the cursor: mark it done so subsequent ticks
+            // keep the window where it landed instead of re-chasing the cursor.
+            if !dragging && !state.has_saved_position.get() {
+                state.first_placement_done.set(true);
+            }
             (mouse_loc.x, mouse_loc.y)
         } else if state.has_saved_position.get() {
             footprint_center(state.saved_x.get(), state.saved_y.get())
@@ -1276,6 +1282,7 @@ unsafe fn setup(receiver: Receiver<InMessage>, embedded: bool) {
         has_saved_position: Cell::new(false),
         saved_x: Cell::new(0.0),
         saved_y: Cell::new(0.0),
+        first_placement_done: Cell::new(false),
         inflate_t: Cell::new(0.0),
         inflate_velocity: Cell::new(0.0),
         ring_alpha: Cell::new(0.0),

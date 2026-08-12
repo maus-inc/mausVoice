@@ -132,8 +132,25 @@ impl RunningSidecar {
     async fn start_cpu_with_env(
         extra_env: &[(&str, &str)],
     ) -> Result<Self, Box<dyn std::error::Error + Send + Sync>> {
+        Self::spawn(env!("CARGO_BIN_EXE_rust-transcription-cpu"), extra_env).await
+    }
+
+    #[cfg(feature = "gpu")]
+    async fn start_gpu() -> Result<Self, Box<dyn std::error::Error + Send + Sync>> {
+        Self::spawn(env!("CARGO_BIN_EXE_rust-transcription-gpu"), &[]).await
+    }
+
+    // Both CPU and GPU sidecars share the same spawn + health-ready lifecycle;
+    // only the compiled binary (resolved via `env!` at the call site) differs.
+    // `read_announced_port` holds a mutable borrow of `child` only for the
+    // duration of the port read — ownership stays here and `Drop` kills the
+    // child when the test ends.
+    async fn spawn(
+        binary_path: &str,
+        extra_env: &[(&str, &str)],
+    ) -> Result<Self, Box<dyn std::error::Error + Send + Sync>> {
         let models_dir = tempfile::tempdir()?;
-        let mut command = Command::new(env!("CARGO_BIN_EXE_rust-transcription-cpu"));
+        let mut command = Command::new(binary_path);
         command
             .env("RUST_TRANSCRIPTION_HOST", "127.0.0.1")
             // Let the OS assign a free port and have the sidecar announce it
@@ -149,34 +166,6 @@ impl RunningSidecar {
         for (key, value) in extra_env {
             command.env(key, value);
         }
-
-        let mut child = command.spawn()?;
-        let port = read_announced_port(&mut child).await?;
-        let base_url = format!("http://127.0.0.1:{port}");
-
-        let client = Client::builder().timeout(Duration::from_secs(10)).build()?;
-
-        let mut sidecar = Self {
-            child,
-            client,
-            base_url,
-            models_dir,
-        };
-
-        sidecar.wait_until_healthy().await?;
-        Ok(sidecar)
-    }
-
-    #[cfg(feature = "gpu")]
-    async fn start_gpu() -> Result<Self, Box<dyn std::error::Error + Send + Sync>> {
-        let models_dir = tempfile::tempdir()?;
-        let mut command = Command::new(env!("CARGO_BIN_EXE_rust-transcription-gpu"));
-        command
-            .env("RUST_TRANSCRIPTION_HOST", "127.0.0.1")
-            .env("RUST_TRANSCRIPTION_PORT", "0")
-            .env("RUST_TRANSCRIPTION_MODELS_DIR", models_dir.path())
-            .stdout(Stdio::piped())
-            .stderr(Stdio::inherit());
 
         let mut child = command.spawn()?;
         let port = read_announced_port(&mut child).await?;
@@ -647,7 +636,8 @@ async fn read_announced_port(
         .take()
         .ok_or("sidecar stdout was not captured")?;
 
-    let (tx, rx) = tokio::sync::oneshot::channel();
+    let (tx, rx) = tokio::sync::oneshot::channel::<u16>();
+    let mut tx = Some(tx);
 
     // Drains the sidecar's stdout for its whole lifetime. Sends the bound
     // port once on the first matching line, then keeps reading until EOF so
@@ -668,7 +658,12 @@ async fn read_announced_port(
                         {
                             if let Ok(port) = captured.trim().parse::<u16>() {
                                 announced = true;
-                                let _ = tx.send(port);
+                                // `tx.send` moves `tx`; take() it so the move
+                                // happens exactly once and the drain loop can
+                                // keep reading on later iterations.
+                                if let Some(t) = tx.take() {
+                                    let _ = t.send(port);
+                                }
                             }
                         }
                     }

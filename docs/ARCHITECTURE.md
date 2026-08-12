@@ -196,13 +196,20 @@ Two paths, selected by user preferences:
 
 The personal dictionary is injected as the Whisper `initialPrompt` to bias recognition toward your terms.
 
+**Streaming session lifecycle** — `rust_transcription`'s in-memory streaming-session registry evicts a session after **10 minutes** with no appended audio (`SESSION_IDLE_TTL`), so a client that connects but never finalizes can't accumulate buffered audio in RAM indefinitely. An independent background task sweeps the registry every **60 seconds** (`SWEEP_INTERVAL`) and removes anything past the TTL; appending samples to a session refreshes its activity timestamp and cancels the countdown.
+
 ### Post-processing (AI cleanup)
 
 After transcription, text can be cleaned up (remove filler, fix formatting) by an LLM through a Generate-Text repo. The active **writing style/tone** becomes the system prompt. Personal build default: Groq `openai/gpt-oss-20b`.
 
 ### Dictation overlay ("pill")
+A separate native implementation renders the floating recording indicator, one per platform: `rust_macos_pill` (macOS), `rust_windows_pill` (Windows), and `rust_gtk_pill` (Linux, GTK). macOS runs it embedded in-process over `mpsc` channels (`platform/macos/overlay.rs`); Windows and Linux spawn it as a subprocess and talk to it over stdio (`pill_process.rs`, `platform/linux/overlay.rs`). All three exchange the same `InMessage`/`OutMessage` IPC vocabulary.
 
-A separate native process renders the floating recording indicator: `rust_macos_pill` (macOS) and `rust_windows_pill` (Windows). The desktop app spawns it (`pill_process.rs`) and streams overlay-phase events over stdio.
+**Monitor selection** follows one rule on all three platforms: while the user is actively dragging, the pill's owning monitor is whichever display the cursor is currently over; once parked (drag released), the pill stays anchored to the monitor that contains its saved footprint position and does not follow the cursor across screen edges. Windows falls back to `MonitorFromPoint`'s nearest-monitor behavior, macOS looks up the screen containing the saved anchor point, and GTK/X11 combines an X11 anchor with the exact drop-position persisted from the last drag; GTK's LayerShell backend only re-homes the surface to a different output on first placement or while a drag is active.
+
+**Visible-footprint clamping** — the native window itself is a fixed, oversized transparent canvas (the pill is drawn somewhere inside it, not centered on it). Dragging and edge/monitor clamping operate on the pill's *visible footprint* inside that canvas, not the canvas bounds, so the pill can be pushed flush against a real screen edge instead of stopping short (or overshooting) by the canvas margin. Non-dictation panel modes still clamp the whole window, since the panel content fills it.
+
+**Reset / position IPC** — the pill IPC protocol carries `InMessage::ResetPosition` (desktop → pill: forget the saved position and re-center) and `OutMessage::PositionChanged { has_saved_position: bool }` (pill → desktop: report after a drag ends or a reset that a saved position now does/doesn't exist). The desktop relays `PositionChanged` as the `pill-position-changed` Tauri event, which the frontend uses to enable/disable the tray's **Reset Pill Position** menu item; selecting that item invokes the `reset_pill_position` command, which sends `ResetPosition` back down to the pill.
 
 ### Hotkeys
 

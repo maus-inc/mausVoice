@@ -216,6 +216,12 @@ pub(crate) struct PillState {
     pub(crate) has_saved_position: Cell<bool>,
     pub(crate) saved_x: Cell<f64>,
     pub(crate) saved_y: Cell<f64>,
+    /// True once the pill has been placed at least once. A brand-new window
+    /// sits at (0, 0) before its first layout, so an origin check alone would
+    /// mistake a legitimately-placed window for "never positioned" and keep
+    /// chasing the cursor; this flag lets the first placement follow the cursor
+    /// and then stays put.
+    pub(crate) first_placement_done: Cell<bool>,
 
     // Inflate animation — pill slightly expands when entering drag, contracts on release.
     pub(crate) inflate_t: Cell<f64>,
