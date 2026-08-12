@@ -614,11 +614,52 @@ section { scroll-margin-top: 96px; }
 }
 
 .mission-video {
+  position: relative;
   max-width: 800px;
   margin: 0 auto 96px;
   border-radius: 24px;
   overflow: hidden;
 }
+
+/* Caption toggle: hidden by default, appears faintly on hover of the
+   video, bottom-right corner. Small and barely noticeable. */
+.caption-toggle {
+  position: absolute;
+  right: 10px;
+  bottom: 10px;
+  z-index: 5;
+  width: 30px;
+  height: 30px;
+  border: 1px solid rgba(255, 255, 255, 0.16);
+  border-radius: 8px;
+  background: rgba(0, 0, 0, 0.55);
+  color: rgba(255, 255, 255, 0.6);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  opacity: 0;
+  transition: opacity 0.2s var(--ease-out), color 0.2s var(--ease-out),
+              background-color 0.2s var(--ease-out);
+}
+
+.caption-toggle svg {
+  width: 15px;
+  height: 15px;
+}
+
+.caption-toggle .ic-off { display: none; }
+
+.caption-toggle.on { opacity: 0.85; color: #fff; }
+.caption-toggle.on .ic-on { display: none; }
+.caption-toggle.on .ic-off { display: block; }
+
+@media (hover: hover) and (pointer: fine) {
+  .mission-video:hover .caption-toggle { opacity: 0.45; }
+  .caption-toggle:hover { opacity: 0.9 !important; color: #fff; background: rgba(0, 0, 0, 0.75); }
+}
+
+.mission-video .caption-toggle:focus-visible { opacity: 0.9; }
 
 .mission-video video { width: 100%; height: auto; }
 
@@ -1146,9 +1187,14 @@ section { scroll-margin-top: 96px; }
 
   <div class="mission-video fade-up">
     <video src="assets/demo.mp4" poster="assets/demo-poster.jpg" autoplay muted loop playsinline preload="none" aria-label="Screen recording of mausVoice transcribing speech and pasting the cleaned text">
-      <track kind="captions" src="assets/captions.vtt" srclang="en" label="English captions" default />
+      <track kind="captions" src="assets/captions.vtt" srclang="en" label="English captions" />
       <track kind="descriptions" src="assets/descriptions.vtt" srclang="en" label="English descriptions" />
     </video>
+
+    <button class="caption-toggle" id="caption-toggle" type="button" aria-pressed="false" aria-label="Show captions" title="Captions">
+      <svg class="ic-on" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect width="18" height="14" x="3" y="5" rx="2" ry="2"/><path d="M7 15h4M15 15h2M7 11h2M13 11h4"/></svg>
+      <svg class="ic-off" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M10.5 5H19a2 2 0 0 1 2 2v8.5"/><path d="M17 11h-.5"/><path d="M19 19H5a2 2 0 0 1-2-2V7a2 2 0 0 1 2-2"/><path d="m2 2 20 20"/><path d="M7 11h4"/><path d="M7 15h2.5"/></svg>
+    </button>
   </div>
 
   <div class="mission-copy">
@@ -1706,6 +1752,24 @@ section { scroll-margin-top: 96px; }
 
   initPillStage(document.getElementById("pill-canvas"), true);
   initPillStage(document.getElementById("pill-canvas-cta"), false);
+
+  /* ---------- Caption toggle: hidden by default, reveal on demand ---------- */
+
+  var captionBtn = document.getElementById("caption-toggle");
+  var captionVideo = captionBtn && document.querySelector(".mission-video video");
+  if (captionBtn && captionVideo && captionVideo.textTracks) {
+    var capTrack = captionVideo.textTracks[0];
+    if (capTrack) {
+      capTrack.mode = "hidden"; // hidden by default
+      captionBtn.addEventListener("click", function () {
+        var show = capTrack.mode !== "showing";
+        capTrack.mode = show ? "showing" : "hidden";
+        captionBtn.classList.toggle("on", show);
+        captionBtn.setAttribute("aria-pressed", show ? "true" : "false");
+        captionBtn.setAttribute("aria-label", show ? "Hide captions" : "Show captions");
+      });
+    }
+  }
 
   /* ---------- Videos: pause when off-screen, play when visible ---------- */
 
