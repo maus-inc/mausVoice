@@ -7,8 +7,11 @@ import { AnimateIn } from "./AnimateIn";
 // static markup. jsdom is intentionally avoided (it previously tripped
 // Socket's obfuscated-code scanner), so this suite is scoped to initial
 // static-markup assertions: the child renders when visible and is removed from
-// the DOM when not (the presence-guard removal contract), wrapped in exactly
-// one root element.
+// the DOM when not (the presence-guard removal contract).
+//
+// Rendered structure (visible): an outer motion.div (the animated wrapper)
+// containing the PresenceGuard div (aria-hidden reflects !isPresent) which in
+// turn wraps the child element.
 describe("AnimateIn static markup", () => {
   it("renders its children when visible", () => {
     const html = renderToStaticMarkup(
@@ -32,17 +35,17 @@ describe("AnimateIn static markup", () => {
     expect(html).not.toContain("hidden-pill");
   });
 
-  it("wraps children in exactly one root div containing one span", () => {
+  it("wraps children in the motion.div → PresenceGuard → span structure", () => {
     const html = renderToStaticMarkup(
       createElement(AnimateIn, {
         visible: true,
         children: createElement("span", null, "wrapped-pill"),
       }),
     );
-    // Anchored at both ends: a single root <div> whose only child element is
-    // the <span> wrapping the content, with no extra wrapper fragments.
+    // Outer motion.div (animated wrapper) → PresenceGuard div (aria-hidden
+    // reflects !isPresent) → the single child span. Anchored at both ends.
     expect(html).toMatch(
-      /^<div[^>]*>.*<span[^>]*>wrapped-pill<\/span>.*<\/div>$/s,
+      /^<div[^>]*><div aria-hidden="false"><span[^>]*>wrapped-pill<\/span><\/div><\/div>$/,
     );
   });
 });
