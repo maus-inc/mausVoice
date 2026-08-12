@@ -882,5 +882,29 @@ export const AppSideEffects = () => {
       });
   });
 
+  // ── Tray reset-pill-position ─────────────────────────────────────────────
+  // The native pill tracks whether the user has dragged it away from its
+  // default centre-bottom spawn. When it reports a position change we sync
+  // the tray menu item's enabled state; when the user clicks "Reset Pill
+  // Position" we forward the IPC message and the pill re-homes itself.
+  useTauriListen<void>("tray-reset-pill-position", () => {
+    invoke("reset_pill_position").catch((error) => {
+      getLogger().error(`Failed to reset pill position: ${error}`);
+    });
+  });
+
+  useTauriListen<{ hasSavedPosition: boolean }>(
+    "pill-position-changed",
+    (event) => {
+      invoke("set_reset_pill_position_enabled", {
+        enabled: event.payload.hasSavedPosition,
+      }).catch((error) => {
+        getLogger().error(
+          `Failed to update reset-pill-position menu state: ${error}`,
+        );
+      });
+    },
+  );
+
   return null;
 };

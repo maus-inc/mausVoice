@@ -351,6 +351,8 @@ pub fn build() -> tauri::Builder<tauri::Wry> {
             crate::commands::set_tray_language_menu,
             crate::commands::set_register_app_label,
             crate::commands::set_pill_visibility_menu_state,
+            crate::commands::set_reset_pill_position_enabled,
+            crate::commands::reset_pill_position,
             crate::commands::set_tray_visible,
             crate::commands::api_key_create,
             crate::commands::api_key_list,

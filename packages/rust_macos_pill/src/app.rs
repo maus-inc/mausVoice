@@ -228,6 +228,7 @@ extern "C" fn mouse_up(_this: &Object, _sel: Sel, event: id) {
             ctx.state.saved_x.set(frame.origin.x);
             ctx.state.saved_y.set(frame.origin.y);
             ctx.state.has_saved_position.set(true);
+            ipc::send(&OutMessage::PositionChanged { has_saved_position: true });
         }
         // End any drag
         ctx.state.dragging.set(false);
@@ -436,6 +437,10 @@ fn perform_tick() {
                         ctx.state.should_stick.set(true);
                         ctx.state.scroll_offset.set(0.0);
                     }
+                }
+                InMessage::ResetPosition => {
+                    ctx.state.has_saved_position.set(false);
+                    ipc::send(&OutMessage::PositionChanged { has_saved_position: false });
                 }
                 InMessage::Quit => {
                     ctx.quit.set(true);

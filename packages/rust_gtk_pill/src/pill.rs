@@ -500,6 +500,10 @@ pub fn run(receiver: Receiver<InMessage>) {
                         state_tick.scroll_offset.set(0.0);
                     }
                 }
+                InMessage::ResetPosition => {
+                    state_tick.has_saved_position.set(false);
+                    ipc::send(&OutMessage::PositionChanged { has_saved_position: false });
+                }
                 InMessage::Quit => {
                     quit_tick.set(true);
                 }

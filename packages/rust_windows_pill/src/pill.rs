@@ -521,6 +521,11 @@ fn process_message(msg: InMessage, state: &PillState, _hwnd: HWND) {
                 state.scroll_offset.set(0.0);
             }
         }
+        InMessage::ResetPosition => {
+            state.has_saved_position.set(false);
+            state.dirty.set(true);
+            ipc::send(&OutMessage::PositionChanged { has_saved_position: false });
+        }
         InMessage::Quit => {
             QUIT.with(|q| q.set(true));
         }
@@ -1204,6 +1209,7 @@ fn end_drag(hwnd: HWND, state: &PillState, persist_position: bool) -> bool {
         state.saved_x.set(rect.left);
         state.saved_y.set(rect.top);
         state.has_saved_position.set(true);
+        ipc::send(&OutMessage::PositionChanged { has_saved_position: true });
     }
 
     state.dragging.set(false);

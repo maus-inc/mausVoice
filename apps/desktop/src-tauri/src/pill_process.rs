@@ -151,6 +151,12 @@ pub fn notify_assistant_state(app: &tauri::AppHandle, payload: &str) {
     }
 }
 
+pub fn notify_reset_position(app: &tauri::AppHandle) {
+    if let Some(pill) = app.try_state::<std::sync::Arc<PillProcess>>() {
+        pill.send(r#"{"type":"reset_position"}"#);
+    }
+}
+
 pub fn resolve_pill_binary_in_resources(
     app: &tauri::AppHandle,
     binary_name: &str,
@@ -305,6 +311,15 @@ fn start_stdout_reader(app: tauri::AppHandle, reader: std::io::BufReader<ChildSt
                                 let payload = serde_json::json!({ "action": action });
                                 let _ = app.emit_to("main", "toast-action", payload);
                             }
+                        }
+                    } else if line.contains("\"position_changed\"") {
+                        if let Ok(val) = serde_json::from_str::<serde_json::Value>(&line) {
+                            let has_saved = val
+                                .get("has_saved_position")
+                                .and_then(|v| v.as_bool())
+                                .unwrap_or(false);
+                            let payload = serde_json::json!({ "hasSavedPosition": has_saved });
+                            let _ = app.emit_to("main", "pill-position-changed", payload);
                         }
                     }
                 }

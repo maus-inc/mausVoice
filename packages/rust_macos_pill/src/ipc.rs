@@ -95,6 +95,7 @@ pub enum InMessage {
         streaming: Option<PillStreaming>,
         permissions: Vec<PillPermission>,
     },
+    ResetPosition,
     Quit,
 }
 
@@ -119,6 +120,7 @@ pub enum OutMessage {
     PauseDictation,
     ResumeDictation,
     ToastAction { action: String },
+    PositionChanged { has_saved_position: bool },
 }
 
 pub fn send(msg: &OutMessage) {

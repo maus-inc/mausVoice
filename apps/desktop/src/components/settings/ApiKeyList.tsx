@@ -627,7 +627,7 @@ const ApiKeyCard = ({
             {selected && (
               <CheckRoundedIcon
                 fontSize="small"
-                sx={{ color: "primary.main", flexShrink: 0 }}
+                sx={{ color: "text.primary", flexShrink: 0 }}
                 titleAccess="Selected"
               />
             )}

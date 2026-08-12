@@ -8,6 +8,7 @@ use gtk::glib::{self, ControlFlow};
 use gtk::prelude::*;
 
 use crate::constants::MARGIN_BOTTOM;
+use crate::ipc::{self, OutMessage};
 use crate::state::{PillState, WindowMode};
 
 pub(crate) fn setup_x11_window(window: &gtk::Window, state: Rc<PillState>) {
@@ -180,6 +181,7 @@ pub(crate) fn setup_x11_window(window: &gtk::Window, state: Rc<PillState>) {
                 state_tick.saved_x.set(drop_x as f64);
                 state_tick.saved_y.set(drop_y as f64);
                 state_tick.has_saved_position.set(true);
+                ipc::send(&OutMessage::PositionChanged { has_saved_position: true });
             }
         }
         was_dragging.set(dragging);
