@@ -64,9 +64,11 @@ export default function Root() {
         FallbackComponent={ErrorFallback}
         resetKeys={[location.pathname]}
         onError={(error) => {
-          getLogger().error(
-            `UI crashed at ${location.pathname}: ${error instanceof Error ? error.message : String(error)}`,
-          );
+          // Log only a stable error category — raw error.message can contain
+          // unsanitized user data (stack frames, form values, API responses).
+          const category =
+            error instanceof Error ? error.constructor.name : "UnknownError";
+          getLogger().error(`UI crashed at ${location.pathname}: ${category}`);
         }}
       >
         <Suspense fallback={<LoadingApp />}>

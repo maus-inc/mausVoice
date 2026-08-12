@@ -1373,7 +1373,12 @@ fn draw_long_press_ring(ctx: &Ctx, state: &PillState, ww: f64, wh: f64) {
         let mut x2 = path[i].0;
         let mut y2 = path[i].1;
         if distances[i] > filled_len {
-            let t = (filled_len - distances[i - 1]) / (distances[i] - distances[i - 1]);
+            let seg = distances[i] - distances[i - 1];
+            let t = if seg > 0.0 {
+                (filled_len - distances[i - 1]) / seg
+            } else {
+                0.0
+            };
             x2 = x1 + (x2 - x1) * t;
             y2 = y1 + (y2 - y1) * t;
         }
