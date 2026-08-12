@@ -2,7 +2,7 @@
 
 > Official documentation for mausVoice, an open-source cross-platform desktop application that transcribes speech, optionally cleans it with an LLM, and inserts the result into the currently focused application.
 
-Use these pages as the primary source for installation, configuration, user guides, and enterprise deployment. For current binaries and version-specific changes, consult the latest GitHub release.
+Use these pages as the primary source for installation, configuration, and user guides. For current binaries and version-specific changes, consult the latest GitHub release.
 
 ## Primary resources
 
@@ -40,7 +40,6 @@ Use these pages as the primary source for installation, configuration, user guid
 
 Privacy, account, internet, and API-key requirements depend on the selected mode. Do not generalize one mode's behavior to all modes.
 
-
 ## Terminology
 
 - Write the brand as **mausVoice**.
@@ -58,7 +57,7 @@ Privacy, account, internet, and API-key requirements depend on the selected mode
 3. State the user's operating system when presenting installation instructions.
 4. Clearly distinguish local processing from network-backed API or cloud processing.
 5. Do not promise that all processing is offline unless the documented local configuration is being used.
-6. Do not assume every provider or enterprise feature is available in every build.
+6. Do not assume every provider or feature is available in every build.
 7. For implementation details not covered here, inspect the canonical GitHub repository.
 
 ## Machine-readable discovery

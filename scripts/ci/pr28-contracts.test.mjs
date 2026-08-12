@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { readFileSync, statSync } from "node:fs";
+import { existsSync, readFileSync, statSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { describe, it } from "node:test";
@@ -35,6 +35,9 @@ const source = Object.fromEntries(
     ["docsWorkflow", ".github/workflows/test-docs.yml"],
     ["index", "index.html"],
     ["astro", "apps/docs/astro.config.mjs"],
+    ["docsIndex", "apps/docs/src/content/docs/index.mdx"],
+    ["docsLlms", "apps/docs/public/llms.txt"],
+    ["docsRobots", "apps/docs/public/robots.txt"],
   ].map(([name, path]) => [name, read(path)]),
 );
 
@@ -138,6 +141,19 @@ describe("PR28 fork-workflow secret isolation", () => {
       source.integrationWorkflow,
       /Keep fork PRs from[\s\S]*?withholds secrets/,
     );
+  });
+});
+
+describe("PR28 removed-enterprise-docs contracts", () => {
+  it("removes the docs tree and all public navigation references", () => {
+    assert.equal(
+      existsSync(resolve(repoRoot, "apps/docs/src/content/docs/enterprise")),
+      false,
+    );
+    assert.doesNotMatch(source.astro, /enterprise/i);
+    assert.doesNotMatch(source.docsIndex, /Enterprise/);
+    assert.doesNotMatch(source.docsLlms, /maus-inc\.github\.io\/mausVoice\/enterprise\//);
+    assert.doesNotMatch(source.docsRobots, /enterprise documentation/i);
   });
 });
 

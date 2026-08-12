@@ -13,18 +13,6 @@ const socialImage = `${docsSite}${docsBase}docs/assets/mausvoice-banner.png`;
  */
 const meta = (attrs) => ({ tag: "meta", attrs });
 
-/**
- * @param {string} label
- * @param {string[][]} items
- * @returns {{ label: string, collapsed: true, items: { label: string, slug: string }[] }}
- */
-const collapsedSection = (label, items) => ({
-  label,
-  collapsed: true,
-  items: items.map(([itemLabel, slug]) => ({ label: itemLabel, slug })),
-});
-
-
 const sidebar = [
   {
     label: "Getting Started",
