@@ -31,6 +31,10 @@ Choose the guide for your platform:
 
 Press the global hotkey to start recording. Speak naturally, then press the hotkey again to stop. Your transcription will appear automatically.
 
+## Positioning the Pill
+
+The floating recording pill can be dragged anywhere on your screen — long-press it, then drag it to where you'd like it to stay. mausVoice remembers the spot, even across monitors. If you ever want to start over, use **Reset Pill Position** from the tray icon menu. See the [pill positioning guide](/guides/pill-positioning/) for the full walkthrough and platform notes.
+
 ## Next Steps
 
 - Configure tones to adjust how your transcriptions are cleaned up.
