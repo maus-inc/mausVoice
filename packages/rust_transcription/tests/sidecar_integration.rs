@@ -1,4 +1,3 @@
-use std::net::TcpListener;
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
 use std::time::{Duration, Instant};
@@ -133,23 +132,27 @@ impl RunningSidecar {
     async fn start_cpu_with_env(
         extra_env: &[(&str, &str)],
     ) -> Result<Self, Box<dyn std::error::Error + Send + Sync>> {
-        let port = reserve_local_port()?;
         let models_dir = tempfile::tempdir()?;
-        let base_url = format!("http://127.0.0.1:{port}");
-
         let mut command = Command::new(env!("CARGO_BIN_EXE_rust-transcription-cpu"));
         command
             .env("RUST_TRANSCRIPTION_HOST", "127.0.0.1")
-            .env("RUST_TRANSCRIPTION_PORT", port.to_string())
+            // Let the OS assign a free port and have the sidecar announce it
+            // back on stdout. Pre-reserving a port (bind :0, read it, drop,
+            // then rebind in the child) creates a TOCTOU race where another
+            // process can claim the port in the gap — that is what caused the
+            // intermittent "Address already in use" failures.
+            .env("RUST_TRANSCRIPTION_PORT", "0")
             .env("RUST_TRANSCRIPTION_MODELS_DIR", models_dir.path())
-            .stdout(Stdio::inherit())
+            .stdout(Stdio::piped())
             .stderr(Stdio::inherit());
 
         for (key, value) in extra_env {
             command.env(key, value);
         }
 
-        let child = command.spawn()?;
+        let mut child = command.spawn()?;
+        let port = read_announced_port(&mut child).await?;
+        let base_url = format!("http://127.0.0.1:{port}");
 
         let client = Client::builder().timeout(Duration::from_secs(10)).build()?;
 
@@ -166,19 +169,18 @@ impl RunningSidecar {
 
     #[cfg(feature = "gpu")]
     async fn start_gpu() -> Result<Self, Box<dyn std::error::Error + Send + Sync>> {
-        let port = reserve_local_port()?;
         let models_dir = tempfile::tempdir()?;
-        let base_url = format!("http://127.0.0.1:{port}");
-
         let mut command = Command::new(env!("CARGO_BIN_EXE_rust-transcription-gpu"));
         command
             .env("RUST_TRANSCRIPTION_HOST", "127.0.0.1")
-            .env("RUST_TRANSCRIPTION_PORT", port.to_string())
+            .env("RUST_TRANSCRIPTION_PORT", "0")
             .env("RUST_TRANSCRIPTION_MODELS_DIR", models_dir.path())
-            .stdout(Stdio::inherit())
+            .stdout(Stdio::piped())
             .stderr(Stdio::inherit());
 
-        let child = command.spawn()?;
+        let mut child = command.spawn()?;
+        let port = read_announced_port(&mut child).await?;
+        let base_url = format!("http://127.0.0.1:{port}");
 
         let client = Client::builder().timeout(Duration::from_secs(10)).build()?;
 
@@ -629,11 +631,56 @@ async fn gpu_sidecar_lists_gpu_devices() -> Result<(), Box<dyn std::error::Error
     Ok(())
 }
 
-fn reserve_local_port() -> Result<u16, std::io::Error> {
-    let listener = TcpListener::bind("127.0.0.1:0")?;
-    let port = listener.local_addr()?.port();
-    drop(listener);
-    Ok(port)
+/// Reads the port the sidecar bound to from its stdout announcement
+/// (`RUST_TRANSCRIPTION_BOUND_PORT=<port>`), which `run_server` emits right
+/// after the OS-assigned bind succeeds. Reading it back from the child avoids
+/// the race of pre-reserving a port in the parent and hoping it stays free.
+async fn read_announced_port(
+    child: &mut Child,
+) -> Result<u16, Box<dyn std::error::Error + Send + Sync>> {
+    let stdout = child
+        .stdout
+        .take()
+        .ok_or("sidecar stdout was not captured")?;
+
+    let port = tokio::time::timeout(HEALTH_TIMEOUT, tokio::task::spawn_blocking(move || read_announced_port_blocking(stdout)))
+        .await
+        .map_err(|_| "timed out waiting for sidecar to announce its port".to_string())?
+        .map_err(|err| format!("port reader task panicked: {err}"))?;
+
+    match port {
+        Some(port) => Ok(port),
+        None => {
+            if let Some(status) = child.try_wait()? {
+                return Err(format!("sidecar exited early with status {status}").into());
+            }
+            Err("sidecar closed stdout without announcing a port".into())
+        }
+    }
+}
+
+/// Blocks on the sidecar's stdout, returning the first announced port.
+/// Runs on a blocking thread so the async runtime is not stalled.
+fn read_announced_port_blocking(
+    mut stdout: std::process::ChildStdout,
+) -> Option<u16> {
+    use std::io::{BufRead, BufReader};
+    let mut reader = BufReader::new(&mut stdout);
+    let mut line = String::new();
+    loop {
+        line.clear();
+        match reader.read_line(&mut line) {
+            Ok(0) => return None, // EOF before announcement
+            Ok(_) => {
+                if let Some(captured) = line.strip_prefix("RUST_TRANSCRIPTION_BOUND_PORT=") {
+                    if let Ok(port) = captured.trim().parse::<u16>() {
+                        return Some(port);
+                    }
+                }
+            }
+            Err(_) => return None,
+        }
+    }
 }
 
 fn audio_asset_path(file_name: &str) -> Result<PathBuf, Box<dyn std::error::Error + Send + Sync>> {
