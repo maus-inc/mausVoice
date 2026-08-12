@@ -14,22 +14,20 @@ import { AnimateIn } from "./AnimateIn";
 describe("AnimateSwitch rendering", () => {
   it("renders its children when visible", () => {
     const html = renderToStaticMarkup(
-      createElement(
-        AnimateIn,
-        { visible: true },
-        createElement("span", null, "hello-pill"),
-      ),
+      createElement(AnimateIn, {
+        visible: true,
+        children: createElement("span", null, "hello-pill"),
+      }),
     );
     expect(html).toContain("hello-pill");
   });
 
   it("removes children from the DOM when not visible (presence wrap, not leak)", () => {
     const html = renderToStaticMarkup(
-      createElement(
-        AnimateIn,
-        { visible: false },
-        createElement("span", null, "hidden-pill"),
-      ),
+      createElement(AnimateIn, {
+        visible: false,
+        children: createElement("span", null, "hidden-pill"),
+      }),
     );
     // The content is removed by the presence guard rather than left in the
     // tree, so it must not appear in the static markup.
@@ -38,11 +36,10 @@ describe("AnimateSwitch rendering", () => {
 
   it("wraps children in a single element (no fragment leak)", () => {
     const html = renderToStaticMarkup(
-      createElement(
-        AnimateIn,
-        { visible: true },
-        createElement("span", null, "wrapped-pill"),
-      ),
+      createElement(AnimateIn, {
+        visible: true,
+        children: createElement("span", null, "wrapped-pill"),
+      }),
     );
     // Exactly one root element wrapping the child span.
     expect(html.startsWith("<div")).toBe(true);
