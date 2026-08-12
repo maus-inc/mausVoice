@@ -23,15 +23,15 @@ describe("AnimateIn static markup", () => {
     expect(html).toContain("hello-pill");
   });
 
-  it("removes children from the DOM when not visible (presence guard, not leak)", () => {
+  it("omits children from initial SSR markup when not visible", () => {
     const html = renderToStaticMarkup(
       createElement(AnimateIn, {
         visible: false,
         children: createElement("span", null, "hidden-pill"),
       }),
     );
-    // The content is removed by the presence guard rather than left in the
-    // tree, so it must not appear in the static markup.
+    // visible=false skips the motion.div/PresenceGuard branches before they
+    // run, so the subtree is simply absent from the initial SSR output.
     expect(html).not.toContain("hidden-pill");
   });
 
