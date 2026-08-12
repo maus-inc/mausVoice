@@ -65,7 +65,7 @@ export type AnimateSwitchProps = {
  */
 const PresenceGuard = ({ children }: { children: ReactNode }) => {
   const isPresent = useIsPresent();
-    return (
+  return (
     <div inert={!isPresent} aria-hidden={!isPresent}>
       {children}
     </div>

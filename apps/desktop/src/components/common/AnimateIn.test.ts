@@ -14,10 +14,7 @@ import { describe, expect, it } from "vitest";
 // "node" vitest environment avoids pulling in jsdom/@testing-library
 // (which tripped Socket's obfuscated-code detector).
 const __dirname = dirname(fileURLToPath(import.meta.url));
-const animateInSrc = readFileSync(
-  join(__dirname, "AnimateIn.tsx"),
-  "utf8",
-);
+const animateInSrc = readFileSync(join(__dirname, "AnimateIn.tsx"), "utf8");
 
 describe("AnimateSwitch PresenceGuard", () => {
   it("applies inert and aria-hidden via useIsPresent for exiting panels", () => {
@@ -29,8 +26,9 @@ describe("AnimateSwitch PresenceGuard", () => {
 
   it("uses AnimatePresence with mode wait and initial=false", () => {
     expect(animateInSrc).toContain("AnimatePresence");
-    expect(animateInSrc).toMatch(/mode=\{?"wait"?\}/);
-    expect(animateInSrc).toMatch(/initial=\{?false\}?/);
+    // Accept both mode="wait" and mode={"wait"} spellings.
+    expect(animateInSrc).toMatch(/mode=(?:"wait"|\{"wait"\})/);
+    expect(animateInSrc).toContain("initial={false}");
   });
 
   it("wraps rendered children inside PresenceGuard inside the motion.div", () => {
