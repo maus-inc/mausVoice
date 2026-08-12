@@ -211,7 +211,6 @@ pub(crate) const LONG_PRESS_OUTLINE_WIDTH: f64 = 2.0;
 /// "lift" — 0.18 adds roughly 18 % to each axis, which is noticeable without
 /// making the pill look cartoonishly large.
 // (Definition lives in `rust_pill_shared`; re-exported below.)
-
 /// Once the press/drag ends, the long-press outline lingers only this long.
 /// While the gesture is held the outline is pinned at full alpha — it must
 /// never fade while the pill is still pressed and inflated.
