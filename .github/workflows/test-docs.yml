@@ -21,6 +21,8 @@ on:
 
 permissions:
   contents: read
+  pages: write
+  id-token: write
 
 jobs:
   build:
@@ -66,3 +68,28 @@ jobs:
             ../../index.html
           grep -Fq 'docs/assets/mausvoice-banner.png' \
             astro.config.mjs
+      - name: Assemble Pages artifact (landing page + docs)
+        # Option B: keep index.html at the site root and publish the built
+        # docs underneath /mausVoice/ (matches the existing base). The legacy
+        # Pages source must be switched to "GitHub Actions" for this to publish.
+        run: |
+          mkdir -p publish/mausVoice
+          cp index.html publish/index.html
+          cp -r apps/docs/dist/* publish/mausVoice/
+      - name: Upload Pages artifact
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: publish
+
+  deploy:
+    name: Deploy Docs
+    needs: build
+    if: github.ref == 'refs/heads/main' && github.event_name == 'push'
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - name: Deploy to GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@v4

@@ -1,6 +1,16 @@
 ---
 title: Introduction
 description: Get up and running with mausVoice on any platform.
+hero:
+  tagline: Your voice, typed anywhere — press a hotkey, speak, and mausVoice transcribes, cleans up with AI, and inserts the result into any app.
+  actions:
+    - text: Get the app
+      link: /mausVoice/
+      icon: external
+      variant: primary
+    - text: macOS setup
+      link: /mausVoice/getting-started/macos/
+      variant: minimal
 ---
 
 mausVoice is a cross-platform desktop application for voice-to-text transcription. It runs on macOS, Windows, and Linux.
