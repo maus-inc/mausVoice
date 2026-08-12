@@ -19,7 +19,7 @@ Grab Your [Free Groq↗](https://console.groq.com/keys) and [Free Deepgram↗](h
 </div>
 
 <p align="center">
-  <img src="docs/home-page.png" alt="mausVoice home" width="720" />
+  <img src="docs/assets/home-page.png" alt="mausVoice home" width="720" />
 </p>
 
 
@@ -36,7 +36,7 @@ Grab Your [Free Groq↗](https://console.groq.com/keys) and [Free Deepgram↗](h
 <br>
 <br>
 <p align="center">
-  <img src="docs/animated-pill.gif" alt="mausVoice pill in action" width="200" />
+  <img src="docs/assets/animated-pill.gif" alt="mausVoice pill in action" width="200" />
 </p>
 
 ## Features
@@ -67,7 +67,7 @@ Download links point at the latest release for your platform (`.exe` on Windows,
 <br>
 
 <div align="center">
-  <img src="docs/mausvoice-banner.png" alt="mausVoice" width="840" />
+  <img src="docs/assets/mausvoice-banner.png" alt="mausVoice" width="840" />
 </div>
 
 <br>
