@@ -22,8 +22,8 @@ pub(crate) const LONG_PRESS_OUTLINE_WIDTH: f64 = 2.0;
 
 /// How much the pill inflates when the long-press completes and drag begins,
 /// expressed as a scale factor applied to BOTH axes about the pill's centre.
-/// (An additive px amount visually read as "mostly taller": the same +12px is a
-/// third of the collapsed pill's height but a sliver of its width.)
+/// (An additive px amount visually read as "mostly taller": the same increment
+/// is a third of the collapsed pill's height but a sliver of its width.)
 pub(crate) const DRAG_INFLATE_SCALE: f64 = 0.18;
 /// Spring stiffness for the inflate/deflate animation.
 pub(crate) const DRAG_INFLATE_STIFFNESS: f64 = 280.0;
