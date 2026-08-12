@@ -1091,6 +1091,11 @@ fn reposition_to_cursor_monitor(hwnd: HWND, state: &PillState) {
                 (wa.left, wa.top, wa.right - win_w, wa.bottom - win_h)
             };
 
+        // A visible frame smaller than the clamp target inverts the bounds;
+        // keep max >= min so the clamp cannot push the origin off screen.
+        let max_x = max_x.max(min_x);
+        let max_y = max_y.max(min_y);
+
         let (x, y) = if dragging {
             // Drag mode: keep the grabbed point of the pill under the cursor so
             // the window tracks the pointer 1:1 instead of jumping to centre it.

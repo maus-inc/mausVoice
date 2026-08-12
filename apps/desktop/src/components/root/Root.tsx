@@ -13,19 +13,16 @@ import { RootDialogs } from "./RootDialogs";
 import { RootSideEffects } from "./RootSideEffects";
 
 function ErrorFallback({
-  error,
   resetErrorBoundary,
 }: {
-  readonly error: unknown;
   readonly resetErrorBoundary: () => void;
 }) {
-  const message = error instanceof Error ? error.message : String(error);
   return (
     <Box sx={{ padding: 2 }}>
       <h2>
         <FormattedMessage defaultMessage="Something went wrong:" />
       </h2>
-      <pre style={{ whiteSpace: "pre-wrap" }}>{message}</pre>
+      <FormattedMessage defaultMessage="The application encountered an unexpected error." />
       <Stack direction="row" spacing={1} sx={{ mt: 1 }}>
         <Button variant="contained" onClick={resetErrorBoundary}>
           <FormattedMessage defaultMessage="Try again" />
