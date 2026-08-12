@@ -895,6 +895,21 @@ section { scroll-margin-top: 96px; }
 
 .fg-links a:hover { color: #fff; }
 
+.footer-ascii {
+  position: absolute;
+  right: 28px;
+  bottom: 78px;
+  width: 190px;
+  max-width: 24%;
+  opacity: 0.45;
+  pointer-events: none;
+  user-select: none;
+}
+
+@media (max-width: 768px) {
+  .footer-ascii { display: none; }
+}
+
 .fg-bottom {
   padding-top: 24px;
   border-top: 1px solid rgba(255, 255, 255, 0.1);
@@ -1267,6 +1282,7 @@ section { scroll-margin-top: 96px; }
 <!-- ================= Footer ================= -->
 
 <footer class="liquid-glass footer-glass fade-up" style="--delay:0.4s">
+  <img class="footer-ascii" src="assets/footer-ascii.png" alt="" aria-hidden="true" />
   <div class="fg-grid">
     <div class="fg-brand">
       <div class="fg-brand-row">
