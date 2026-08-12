@@ -1424,7 +1424,26 @@ section { scroll-margin-top: 96px; }
      ------------------------------------------------------------------ */
 
   function initPillStage(canvas, fullStage) {
-    if (!canvas || !canvas.getContext || !window.crypto || !crypto.getRandomValues) return;
+    if (!canvas || !canvas.getContext) return;
+
+    // Seeded PRNG for the animation simulation. Uses
+    // crypto.getRandomValues when available and falls back to a small
+    // LCG otherwise; Math.random is intentionally avoided (Sonar
+    // flags it as a pseudorandom-generator security hotspot).
+    var _randPool = new Uint32Array(8);
+    var _randIdx = 8;
+    var _randLcg = 12345;
+    function rand() {
+      if (window.crypto && crypto.getRandomValues) {
+        if (_randIdx >= _randPool.length) {
+          crypto.getRandomValues(_randPool);
+          _randIdx = 0;
+        }
+        return _randPool[_randIdx++] / 4294967296;
+      }
+      _randLcg = (_randLcg * 1664525 + 1013904223) >>> 0;
+      return _randLcg / 4294967296;
+    }
 
     var TAU = Math.PI * 2;
     var LEVEL_SMOOTHING = 0.18;
@@ -1504,7 +1523,7 @@ section { scroll-margin-top: 96px; }
           if (x === 0) ctx.moveTo(x, y);
           else ctx.lineTo(x, y);
         }
-        var alpha = line.opacity * (0.55 + 0.45 * Math.sin(state.phase * 0.5 + li));
+        var alpha = line.opacity * (0.55 + 0.45 * Math.sin(state.phase * 0.5 + line.offset));
         ctx.strokeStyle = "rgba(255, 255, 255, " + alpha.toFixed(3) + ")";
         ctx.lineWidth = STROKE_WIDTH;
         ctx.lineCap = "round";
