@@ -21,7 +21,7 @@ export const GpuMigrationDialog = ({
   onClose,
 }: GpuMigrationDialogProps) => {
   const handleOpenDownloadPage = () => {
-    openUrl("https://mausvoice.com");
+    openUrl("https://maus-inc.github.io/mausVoice/");
   };
 
   return (

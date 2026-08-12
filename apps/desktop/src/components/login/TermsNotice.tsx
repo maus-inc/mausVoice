@@ -19,7 +19,7 @@ export const TermsNotice = ({ align = "center" }: TermsNoticeProps) => {
     >
       <FormattedMessage defaultMessage="By using mausVoice, you agree to our" />{" "}
       <a
-        href="https://mausvoice.com/terms"
+        href="https://maus-inc.github.io/mausVoice/terms"
         target="_blank"
         rel="noopener noreferrer"
         style={{ color: "inherit", textDecoration: "underline" }}
@@ -28,7 +28,7 @@ export const TermsNotice = ({ align = "center" }: TermsNoticeProps) => {
       </a>{" "}
       <FormattedMessage defaultMessage="and" />{" "}
       <a
-        href="https://mausvoice.com/privacy"
+        href="https://maus-inc.github.io/mausVoice/privacy"
         target="_blank"
         rel="noopener noreferrer"
         style={{ color: "inherit", textDecoration: "underline" }}
