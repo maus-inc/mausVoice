@@ -38,7 +38,7 @@ export const AITranscriptionDialog = () => {
       <DialogContent dividers>
         <Stack spacing={3} alignItems="flex-start">
           <Typography variant="body1" color="text.secondary">
-            <FormattedMessage defaultMessage="Decide how mausVoice should transcribe your recordings—locally on your machine or through a connected provider." />
+            <FormattedMessage defaultMessage="Decide how mausVoice should transcribe your recordings, locally on your machine or through a connected provider." />
           </Typography>
           <AITranscriptionConfiguration />
         </Stack>
