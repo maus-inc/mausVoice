@@ -92,11 +92,17 @@ describe("syncHotkeyCombosToNative", () => {
 
   it("keeps the queue alive when a sync's native invoke fails", async () => {
     const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
-    invokeMock.mockImplementation((cmd: string) =>
-      cmd === "sync_hotkey_combos" && syncCalls().length === 0
-        ? Promise.reject(new Error("native bridge down"))
-        : Promise.resolve(undefined),
-    );
+    let failedFirstSync = false;
+    invokeMock.mockImplementation((cmd: string) => {
+      if (cmd !== "sync_hotkey_combos") {
+        return Promise.resolve(undefined);
+      }
+      if (!failedFirstSync) {
+        failedFirstSync = true;
+        return Promise.reject(new Error("native bridge down"));
+      }
+      return Promise.resolve(undefined);
+    });
 
     await syncHotkeyCombosToNative();
     setHotkeyCombo(["ControlLeft", "KeyP"]);

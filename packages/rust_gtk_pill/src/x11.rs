@@ -131,12 +131,23 @@ pub(crate) fn setup_x11_window(window: &gtk::Window, state: Rc<PillState>) {
     // move the window somewhere; bottom-centre-on-primary should have covered
     // every real system, but keep this defensive rather than .unwrap()-ing.
     .or_else(|| {
+        // XMoveWindow wants a toplevel origin, not a monitor-edge anchor.
+        // Match pill_pos_on_monitor's default placement: centre on width,
+        // sit the origin above the monitor bottom by window height + margin.
         let primary = display.primary_monitor().or_else(|| display.monitor(0))?;
         let g = primary.geometry();
         let scale = primary.scale_factor() as f64;
+        let (alloc_w, alloc_h) = window.size();
+        let win_w = alloc_w as f64 * scale;
+        let win_h = alloc_h as f64 * scale;
+        let margin = MARGIN_BOTTOM as f64 * scale;
+        let phys_x = g.x() as f64 * scale;
+        let phys_y = g.y() as f64 * scale;
+        let phys_w = g.width() as f64 * scale;
+        let phys_h = g.height() as f64 * scale;
         Some((
-            ((g.x() + g.width() / 2) as f64 * scale) as c_int,
-            ((g.y() + g.height()) as f64 * scale) as c_int - 1,
+            (phys_x + (phys_w - win_w) / 2.0) as c_int,
+            (phys_y + phys_h - win_h - margin) as c_int,
         ))
     })
     .unwrap_or((0, 0));
@@ -236,7 +247,9 @@ fn primary_monitor_bottom_centre(display: &gdk::Display) -> Option<(f64, f64)> {
     let g = primary.geometry();
     let scale = primary.scale_factor() as f64;
     let centre_x = (g.x() as f64 + g.width() as f64 / 2.0) * scale;
-    let bottom_y = (g.y() as f64 + g.height() as f64) * scale;
+    // Containment is exclusive on the lower edge (`anchor_y < phys_y + phys_h`),
+    // so sit one physical pixel inside rather than on the boundary.
+    let bottom_y = (g.y() as f64 + g.height() as f64) * scale - 1.0;
     Some((centre_x, bottom_y))
 }
 

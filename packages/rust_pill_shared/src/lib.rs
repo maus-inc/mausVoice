@@ -33,9 +33,7 @@ pub fn rounded_rectangle_perimeter(
         RoundedRectArcSteps::Exact(n) => n.max(1),
     };
 
-    let cap = (w - 2.0 * r).max(0.0) + (h - 2.0 * r).max(0.0);
-    let mut path: Vec<(f64, f64)> =
-        Vec::with_capacity(steps * 4 + if cap > 0.0 { 5 } else { 4 });
+    let mut path: Vec<(f64, f64)> = Vec::with_capacity(steps * 4 + 5);
 
     let corner = |cx: f64, cy: f64, from: f64, path: &mut Vec<(f64, f64)>| {
         for i in 1..=steps {
@@ -45,10 +43,9 @@ pub fn rounded_rectangle_perimeter(
     };
 
     // Top edge, left -> right (start point doubles as the progress origin).
+    // Always emit both endpoints; consumers already tolerate zero-length segments.
     path.push((x + r, y));
-    if cap > 0.0 {
-        path.push((x + w - r, y));
-    }
+    path.push((x + w - r, y));
     // Top-right corner (-90deg -> 0deg), then the right edge.
     corner(x + w - r, y + r, -FRAC_PI_2, &mut path);
     path.push((x + w, y + h - r));
@@ -110,8 +107,9 @@ mod tests {
     #[test]
     fn zero_radius_produces_a_rectangle() {
         let pts = rounded_rectangle_perimeter(0.0, 0.0, 100.0, 50.0, 0.0, RoundedRectArcSteps::Exact(1));
-        // With r=0 the "arcs" collapse to the corners, giving 8 points total.
-        assert_eq!(pts.len(), 8);
+        // With r=0 the "arcs" collapse to the corners: 4 edge endpoints +
+        // 4 one-step corners + the closing start point = 9.
+        assert_eq!(pts.len(), 9);
         let (_, total) = path_distances(&pts);
         assert!((total - 300.0).abs() < 1e-6);
     }

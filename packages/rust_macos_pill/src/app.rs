@@ -997,18 +997,27 @@ fn reposition_window(window: id, state: &PillState) {
         // A brand-new window sits at (0, 0) before its first layout — let the
         // first placement follow the cursor's screen, then never chase it.
         let never_positioned = win_frame.origin.x == 0.0 && win_frame.origin.y == 0.0;
+        let (px, py, pw, ph) = draw::pill_position(
+            state,
+            state.draw_width.get(),
+            state.draw_height.get(),
+        );
+        let (cox, coy) = state.content_offset();
+        let fx = cox + px;
+        let fy = coy + py;
+        // View is flipped y-down; screen origin is bottom-left (y-up).
+        let footprint_center = |origin_x: f64, origin_y: f64| {
+            (
+                origin_x + fx + pw / 2.0,
+                origin_y + win_h - fy - ph / 2.0,
+            )
+        };
         let (anchor_x, anchor_y) = if dragging || (!state.has_saved_position.get() && never_positioned) {
             (mouse_loc.x, mouse_loc.y)
         } else if state.has_saved_position.get() {
-            (
-                state.saved_x.get() + win_w / 2.0,
-                state.saved_y.get() + win_h / 2.0,
-            )
+            footprint_center(state.saved_x.get(), state.saved_y.get())
         } else {
-            (
-                win_frame.origin.x + win_w / 2.0,
-                win_frame.origin.y + win_h / 2.0,
-            )
+            footprint_center(win_frame.origin.x, win_frame.origin.y)
         };
 
         // Find the screen the anchor point belongs to.

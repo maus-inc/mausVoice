@@ -1028,16 +1028,28 @@ fn reposition_to_cursor_monitor(hwnd: HWND, state: &PillState) {
         // monitors (and clamp into the wrong work area) whenever the pointer
         // crossed a screen edge.
         let dragging = state.dragging.get();
+        let (px, py, pw, ph) = draw::pill_position(
+            state,
+            state.draw_width.get(),
+            state.draw_height.get(),
+        );
+        let (cox, coy) = state.content_offset();
+        let footprint_cx = (cox + px + pw / 2.0).round() as i32;
+        let footprint_cy = (coy + py + ph / 2.0).round() as i32;
         let monitor = if dragging {
             MonitorFromPoint(cursor, MONITOR_DEFAULTTOPRIMARY)
         } else if state.has_saved_position.get() {
             let saved_center = POINT {
-                x: state.saved_x.get() + win_w / 2,
-                y: state.saved_y.get() + win_h / 2,
+                x: state.saved_x.get() + footprint_cx,
+                y: state.saved_y.get() + footprint_cy,
             };
             MonitorFromPoint(saved_center, MONITOR_DEFAULTTONEAREST)
         } else {
-            MonitorFromWindow(hwnd, MONITOR_DEFAULTTONEAREST)
+            let probe = POINT {
+                x: current.left + footprint_cx,
+                y: current.top + footprint_cy,
+            };
+            MonitorFromPoint(probe, MONITOR_DEFAULTTONEAREST)
         };
         let mut info = MONITORINFO {
             cbSize: std::mem::size_of::<MONITORINFO>() as u32,
