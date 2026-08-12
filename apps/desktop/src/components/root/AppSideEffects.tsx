@@ -897,7 +897,7 @@ export const AppSideEffects = () => {
     "pill-position-changed",
     (event) => {
       invoke("set_reset_pill_position_enabled", {
-        enabled: event.payload.hasSavedPosition,
+        enabled: event.hasSavedPosition,
       }).catch((error) => {
         getLogger().error(
           `Failed to update reset-pill-position menu state: ${error}`,
