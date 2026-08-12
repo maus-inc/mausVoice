@@ -205,11 +205,10 @@ pub(crate) fn setup_x11_window(window: &gtk::Window, state: Rc<PillState>) {
             .unwrap_or(1.0);
 
         let (ox, oy) = state_tick.content_offset();
-        let (alloc_w, alloc_h) = win_tick.size();
         let (pill_x, pill_y, pill_w, pill_h) = crate::draw::pill_position(
             &state_tick,
-            alloc_w as f64,
-            alloc_h as f64,
+            state_tick.draw_width.get(),
+            state_tick.draw_height.get(),
         );
         let center_x = (ox + pill_x + pill_w / 2.0) * surface_scale;
         let center_y = (oy + pill_y + pill_h / 2.0) * surface_scale;

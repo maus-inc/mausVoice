@@ -1083,6 +1083,11 @@ fn reposition_window(window: id, state: &PillState) {
                 )
             };
 
+        // A visible frame smaller than the clamp target inverts the bounds;
+        // keep max >= min so the clamp cannot push the origin off screen.
+        let max_x = max_x.max(min_x);
+        let max_y = max_y.max(min_y);
+
         let (target_x, target_y) = if dragging {
             // Drag mode: keep the grabbed point of the window under the cursor
             // (1:1 tracking instead of snapping the window centre to it),

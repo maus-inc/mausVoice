@@ -21,42 +21,13 @@ pub(crate) const LONG_PRESS_OUTLINE_COLOR: (f64, f64, f64) = (0.92, 0.95, 1.0);
 #[allow(dead_code)]
 pub(crate) const LONG_PRESS_OUTLINE_WIDTH: f64 = 2.0;
 
-/// How much the pill inflates when the long-press completes and drag begins,
-/// expressed as a scale factor applied to BOTH axes about the pill's centre.
-/// (An additive px amount visually read as "mostly taller": the same increment
-/// is a third of the collapsed pill's height but a sliver of its width.)
-pub(crate) const DRAG_INFLATE_SCALE: f64 = 0.18;
-/// Spring stiffness for the inflate/deflate animation.
-pub(crate) const DRAG_INFLATE_STIFFNESS: f64 = 280.0;
-
-/// Once the press/drag ends, the long-press outline lingers only this long.
-/// While the gesture is held the outline is pinned at full alpha — it must
-/// never fade while the pill is still pressed and inflated.
-pub(crate) const LONG_PRESS_RING_FADE: f64 = 0.5;
-
-// ── Long-press ring rendering passes ──────────────────────────────────────
-// Three-pass silver gradient: wide soft glow → mid-tone → thin bright core.
-// Each pass is modulated by a sine-wave shimmer that travels along the
-// perimeter in sync with the internal waveform phase, so the ring looks
-// like the sine waves inside the pill are bleeding through to the border.
-
-/// Full sine-wave cycles around the perimeter. ~2 cycles gives a gentle
-/// shimmer without looking busy.
-pub(crate) const RING_SHIMMER_CYCLES: f64 = 2.0;
-/// Width of the soft outer glow pass.
-pub(crate) const RING_GLOW_WIDTH: f64 = 5.0;
-/// Alpha multiplier for the soft outer glow.
-pub(crate) const RING_GLOW_ALPHA: f64 = 0.15;
-/// Width of the mid-tone pass.
-pub(crate) const RING_MID_WIDTH: f64 = 3.0;
-/// Alpha multiplier for the mid-tone pass.
-pub(crate) const RING_MID_ALPHA: f64 = 0.35;
-/// Width of the bright core pass.
-pub(crate) const RING_CORE_WIDTH: f64 = 1.2;
-/// Alpha multiplier for the bright core.
-pub(crate) const RING_CORE_ALPHA: f64 = 0.85;
-/// Length (in px) over which the leading edge fades to zero.
-pub(crate) const RING_EDGE_FADE: f64 = 30.0;
+// Ring + drag tuning constants live in `rust_pill_shared` so every platform
+// draws the long-press ring from one source of truth.
+pub(crate) use rust_pill_shared::{
+    DRAG_INFLATE_SCALE, DRAG_INFLATE_STIFFNESS, LONG_PRESS_RING_FADE,
+    RING_SHIMMER_CYCLES, RING_GLOW_WIDTH, RING_GLOW_ALPHA, RING_MID_WIDTH,
+    RING_MID_ALPHA, RING_CORE_WIDTH, RING_CORE_ALPHA, RING_EDGE_FADE,
+};
 
 pub(crate) const MIN_PILL_WIDTH: f64 = 48.0;
 pub(crate) const MIN_PILL_HEIGHT: f64 = 6.0;
