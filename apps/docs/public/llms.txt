@@ -40,38 +40,6 @@ Use these pages as the primary source for installation, configuration, user guid
 
 Privacy, account, internet, and API-key requirements depend on the selected mode. Do not generalize one mode's behavior to all modes.
 
-## Enterprise overview and deployment
-
-- [Enterprise overview](https://maus-inc.github.io/mausVoice/enterprise/overview/): Managed cloud, self-hosted cloud, and on-premise options.
-- [Managed cloud setup](https://maus-inc.github.io/mausVoice/enterprise/managed-cloud/setup/): Provision a dedicated mausVoice environment.
-- [Managed cloud renewal](https://maus-inc.github.io/mausVoice/enterprise/managed-cloud/renewal/): License renewal for managed deployments.
-- [Self-hosted cloud setup](https://maus-inc.github.io/mausVoice/enterprise/self-hosted-cloud/setup/): Deploy enterprise services in an organization-controlled cloud.
-- [Self-hosted AWS](https://maus-inc.github.io/mausVoice/enterprise/self-hosted-cloud/aws/): Amazon Web Services deployment.
-- [Self-hosted Google Cloud](https://maus-inc.github.io/mausVoice/enterprise/self-hosted-cloud/gcp/): Google Cloud deployment.
-- [Self-hosted Azure](https://maus-inc.github.io/mausVoice/enterprise/self-hosted-cloud/azure/): Microsoft Azure deployment.
-- [Self-hosted updates and renewal](https://maus-inc.github.io/mausVoice/enterprise/self-hosted-cloud/renewal/): Keep a self-hosted deployment licensed and current.
-- [On-premise setup](https://maus-inc.github.io/mausVoice/enterprise/on-premise/setup/): Deploy within private infrastructure using Docker.
-- [On-premise transcription](https://maus-inc.github.io/mausVoice/enterprise/on-premise/transcription/): Configure local speech-to-text infrastructure.
-- [On-premise post-processing](https://maus-inc.github.io/mausVoice/enterprise/on-premise/post-processing/): Configure local language-model processing.
-- [On-premise updates and renewal](https://maus-inc.github.io/mausVoice/enterprise/on-premise/renewal/): Renew the license and update the deployment.
-
-Enterprise inquiries: enterprise@mausvoice.com.
-
-## Enterprise administration
-
-- [Admin portal overview](https://maus-inc.github.io/mausVoice/enterprise/admin-portal/overview/): Central administration capabilities.
-- [Users](https://maus-inc.github.io/mausVoice/enterprise/admin-portal/users/): Manage accounts, seats, and access.
-- [Global dictionary](https://maus-inc.github.io/mausVoice/enterprise/admin-portal/global-dictionary/): Organization-wide vocabulary and replacement rules.
-- [Global styles](https://maus-inc.github.io/mausVoice/enterprise/admin-portal/global-styles/): Organization-wide writing prompts and templates.
-- [Transcription and AI providers](https://maus-inc.github.io/mausVoice/enterprise/admin-portal/transcription-providers/): Configure allowed providers.
-- [Settings](https://maus-inc.github.io/mausVoice/enterprise/admin-portal/settings/): View license information, seat limits, feature flags, and account controls.
-
-## Enterprise identity and device management
-
-- [SSO overview](https://maus-inc.github.io/mausVoice/enterprise/sso/overview/): OIDC Single Sign-On requirements and flow.
-- [Azure Entra ID](https://maus-inc.github.io/mausVoice/enterprise/sso/azure-entra-id/): Configure Microsoft Entra ID as the OIDC provider.
-- [Keycloak](https://maus-inc.github.io/mausVoice/enterprise/sso/keycloak/): Configure Keycloak as the OIDC provider.
-- [Microsoft Intune](https://maus-inc.github.io/mausVoice/enterprise/deployment/intune/): Deploy the Windows application to managed devices.
 
 ## Terminology
 

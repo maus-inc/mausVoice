@@ -122,7 +122,8 @@ jobs:
         env:
           TAURI_PLATFORM: ${{ matrix.tauri_platform }}
           MAUSVOICE_DESKTOP_PLATFORM: ${{ matrix.node_platform }}
-        run: pnpm exec turbo run build --filter=desktop... --verbosity=2 --continue
+          NODE_OPTIONS: ${{ matrix.os == 'windows-latest' && '--max-old-space-size=4096' || '' }}
+        run: pnpm exec turbo run build --filter=desktop... --verbosity=2 --continue ${{ matrix.os == 'windows-latest' && '--concurrency=1' || '' }}
 
       - name: Build Tauri app
         env:

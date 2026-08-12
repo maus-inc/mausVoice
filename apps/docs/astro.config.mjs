@@ -24,45 +24,6 @@ const collapsedSection = (label, items) => ({
   items: items.map(([itemLabel, slug]) => ({ label: itemLabel, slug })),
 });
 
-const enterpriseSidebar = [
-  { label: "Overview", slug: "enterprise/overview" },
-  collapsedSection("Managed Cloud", [
-    ["Setup", "enterprise/managed-cloud/setup"],
-    ["Renewal", "enterprise/managed-cloud/renewal"],
-  ]),
-  collapsedSection("Self-Hosted Cloud", [
-    ["Setup", "enterprise/self-hosted-cloud/setup"],
-    ["AWS", "enterprise/self-hosted-cloud/aws"],
-    ["GCP", "enterprise/self-hosted-cloud/gcp"],
-    ["Azure", "enterprise/self-hosted-cloud/azure"],
-    ["Updates & Renewal", "enterprise/self-hosted-cloud/renewal"],
-  ]),
-  collapsedSection("On-Premise", [
-    ["Setup", "enterprise/on-premise/setup"],
-    ["Local Transcription", "enterprise/on-premise/transcription"],
-    ["Local Post-Processing", "enterprise/on-premise/post-processing"],
-    ["Updates & Renewal", "enterprise/on-premise/renewal"],
-  ]),
-  collapsedSection("Admin Portal", [
-    ["Overview", "enterprise/admin-portal/overview"],
-    ["Users", "enterprise/admin-portal/users"],
-    ["Global Dictionary", "enterprise/admin-portal/global-dictionary"],
-    ["Global Styles", "enterprise/admin-portal/global-styles"],
-    [
-      "Transcription & AI Providers",
-      "enterprise/admin-portal/transcription-providers",
-    ],
-    ["Settings", "enterprise/admin-portal/settings"],
-  ]),
-  collapsedSection("SSO", [
-    ["Overview", "enterprise/sso/overview"],
-    ["Azure Entra ID", "enterprise/sso/azure-entra-id"],
-    ["Keycloak", "enterprise/sso/keycloak"],
-  ]),
-  collapsedSection("Deployment", [
-    ["Microsoft Intune", "enterprise/deployment/intune"],
-  ]),
-];
 
 const sidebar = [
   {
@@ -77,10 +38,6 @@ const sidebar = [
   {
     label: "Guides",
     autogenerate: { directory: "guides" },
-  },
-  {
-    label: "Enterprise",
-    items: enterpriseSidebar,
   },
 ];
 

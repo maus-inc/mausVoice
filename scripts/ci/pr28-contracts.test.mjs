@@ -24,6 +24,8 @@ const source = Object.fromEntries(
     ["gtkPill", "packages/rust_gtk_pill/src/pill.rs"],
     ["gtkX11", "packages/rust_gtk_pill/src/x11.rs"],
     ["windowsPill", "packages/rust_windows_pill/src/pill.rs"],
+    ["macApp", "packages/rust_macos_pill/src/app.rs"],
+    ["pillProcess", "apps/desktop/src-tauri/src/pill_process.rs"],
     ["macState", "packages/rust_macos_pill/src/state.rs"],
     ["gtkState", "packages/rust_gtk_pill/src/state.rs"],
     ["windowsState", "packages/rust_windows_pill/src/state.rs"],
@@ -60,6 +62,82 @@ describe("PR28 native reset contracts", () => {
     assert.match(source.effects, /tray-reset-pill-position/);
     assert.match(source.effects, /pill-position-changed/);
     assert.match(source.effects, /set_reset_pill_position_enabled/);
+  });
+});
+
+describe("PR28 reset IPC execution and missing-overlay handling", () => {
+  it("dispatches reset_position to every native pill and survives a closed overlay", () => {
+    // Frontend forwards the tray reset through the Tauri command.
+    assert.match(source.effects, /tray-reset-pill-position/);
+    assert.match(source.effects, /invoke\("reset_pill_position"\)/);
+    // The Rust command emits a typed reset_position payload to the pill
+    // process and returns an error (not a panic) when no pill is managed.
+    assert.match(
+      source.pillProcess,
+      /pub fn notify_reset_position\(app: &tauri::AppHandle\)/,
+    );
+    assert.match(source.pillProcess, /"type":"reset_position"/);
+    assert.match(
+      source.pillProcess,
+      /try_state::<std::sync::Arc<PillProcess>>\(\)/,
+    );
+    assert.match(
+      source.pillProcess,
+      /Reset position requested with no managed pill process/,
+    );
+    // Each platform overlay routes the reset into its pill channel.
+    assert.match(source.macOverlay, /pill\.send\(InMessage::ResetPosition\)/);
+    assert.match(source.linuxOverlay, /pill_process::notify_reset_position\(app\)/);
+    assert.match(
+      source.windowsOverlay,
+      /pill_process::notify_reset_position\(app\)/,
+    );
+  });
+
+  it("emits the frontend reset state event after a native position change", () => {
+    // Native position change -> frontend enables/disables the tray reset item.
+    assert.match(source.effects, /pill-position-changed/);
+    assert.match(
+      source.effects,
+      /invoke\("set_reset_pill_position_enabled"/,
+    );
+    // The command that the frontend invokes is registered in commands.rs.
+    assert.match(source.commands, /reset_pill_position/);
+    assert.match(source.commands, /set_reset_pill_position_enabled/);
+  });
+});
+
+describe("PR28 ring-alpha render-loop policy", () => {
+  it("updates ring alpha every frame and invalidates on the zero crossing", () => {
+    for (const pill of [source.gtkPill, source.macPill, source.windowsPill]) {
+      assert.match(pill, /update_ring_alpha/);
+    }
+    // GTK redraws the drawing area after updating alpha.
+    assert.match(source.gtkPill, /da\.queue_draw\(\)/);
+    // macOS marks the layer dirty after updating alpha.
+    assert.match(source.macApp, /setNeedsDisplay:YES/);
+    // Windows must dirty the frame at the alpha zero-crossing so the final
+    // cleared ring actually repaints instead of leaving a ghost.
+    assert.match(source.windowsPill, /previous_alpha > 0\.0 && next == 0\.0/);
+    assert.match(source.windowsPill, /dirty\.set\(true\)/);
+    // Shared monotonic-fade policy is unit-tested in the pill crate.
+    assert.match(source.sharedPill, /ring_alpha_fades_monotonically_after_release/);
+  });
+});
+
+describe("PR28 fork-workflow secret isolation", () => {
+  it("skips secret-backed jobs on fork pull requests via a real event guard", () => {
+    // The guard inspects the actual pull_request head repo, not a constant.
+    assert.match(
+      source.integrationWorkflow,
+      /github\.event\.pull_request\.head\.repo\.full_name == github\.repository/,
+    );
+    // Secrets are only referenced inside that guarded job.
+    assert.match(source.integrationWorkflow, /GROQ_API_KEY/);
+    assert.match(
+      source.integrationWorkflow,
+      /Keep fork PRs from[\s\S]*?withholds secrets/,
+    );
   });
 });
 

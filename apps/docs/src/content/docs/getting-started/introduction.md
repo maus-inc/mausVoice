@@ -40,7 +40,3 @@ The floating recording pill can be dragged anywhere on your screen — long-pres
 - Configure tones to adjust how your transcriptions are cleaned up.
 - Add dictionary terms for domain-specific vocabulary.
 - Explore keyboard shortcuts in the settings.
-
-## Enterprise
-
-For teams looking to distribute mausVoice across an organization or run it on-premise with a private configuration, see the [Enterprise](../../enterprise/overview/) section.
