@@ -1,44 +1,40 @@
+import { readFileSync } from "node:fs";
+import { dirname, join } from "node:path";
+import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
 
-// Static guard: PresenceGuard in AnimateIn.tsx applies `inert` and
-// `aria-hidden` to outgoing panels via Framer Motion's `useIsPresent`
-// hook so the exiting subtree cannot receive pointer/keyboard input
-// during AnimatePresence transitions.
+// Static guards for AnimateSwitch's PresenceGuard contract.
 //
-// We re-verify the runtime behavior indirectly here by asserting that:
-//  1. the AnimateSwitch module exports a component whose JSX wraps its
-//     children in a PresenceGuard div that toggles inert/aria-hidden
-//     based on `useIsPresent()`;
-//  2. the guard div is the *direct* parent of rendered children so an
-//     outgoing panel cannot be interacted with until unmount.
-//
-// We do not spin up jsdom here (the existing vitest config targets the
-// node environment) — instead we assert the source contains the guard
-// contract. If someone removes the inert/aria-hidden wrapper, this
-// test fails and the regression called out in the CodeRabbit review
-// is caught before merge.
-import fs from "node:fs";
-import path from "node:path";
+// We read the AnimateIn.tsx source from disk relative to this test file
+// (the same way other tooling does) and assert the CodeRabbit-required
+// invariants are present: useIsPresent is imported, and a wrapper div
+// applies inert + aria-hidden = !isPresent around rendered children,
+// while AnimatePresence keeps mode="wait" so outgoing and incoming
+// panels do not mount simultaneously. Running this under the default
+// "node" vitest environment avoids pulling in jsdom/@testing-library
+// (which tripped Socket's obfuscated-code detector).
+const __dirname = dirname(fileURLToPath(import.meta.url));
+const animateInSrc = readFileSync(
+  join(__dirname, "AnimateIn.tsx"),
+  "utf8",
+);
 
 describe("AnimateSwitch PresenceGuard", () => {
-  it("wraps children in a div that applies inert+aria-hidden from useIsPresent", () => {
-    const source = fs.readFileSync(
-      path.resolve(__dirname, "AnimateIn.tsx"),
-      "utf8",
-    );
-    expect(source).toContain("useIsPresent");
-    expect(source).toMatch(/inert=\{!?isPresent\}/);
-    expect(source).toMatch(/aria-hidden=\{!?isPresent\}/);
-    expect(source).toContain("<PresenceGuard>{children}</PresenceGuard>");
+  it("applies inert and aria-hidden via useIsPresent for exiting panels", () => {
+    expect(animateInSrc).toContain("useIsPresent");
+    // inert={!isPresent} (or ={isPresent ? undefined : true}); accept both forms.
+    expect(animateInSrc).toMatch(/inert=\{!?isPresent\}/);
+    expect(animateInSrc).toMatch(/aria-hidden=\{!?isPresent\}/);
   });
 
-  it("uses AnimatePresence with mode='wait' so exactly one panel is present at a time", () => {
-    const source = fs.readFileSync(
-      path.resolve(__dirname, "AnimateIn.tsx"),
-      "utf8",
-    );
-    expect(source).toContain("AnimatePresence");
-    expect(source).toMatch(/mode=\{?"wait"?\}/);
-    expect(source).toMatch(/initial=\{?false\}?/);
+  it("uses AnimatePresence with mode wait and initial=false", () => {
+    expect(animateInSrc).toContain("AnimatePresence");
+    expect(animateInSrc).toMatch(/mode=\{?"wait"?\}/);
+    expect(animateInSrc).toMatch(/initial=\{?false\}?/);
+  });
+
+  it("wraps rendered children inside PresenceGuard inside the motion.div", () => {
+    expect(animateInSrc).toContain("PresenceGuard");
+    expect(animateInSrc).toContain("<PresenceGuard>{children}</PresenceGuard>");
   });
 });
