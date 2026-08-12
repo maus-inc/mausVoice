@@ -1116,8 +1116,11 @@ fn reposition_to_cursor_monitor(hwnd: HWND, state: &PillState) {
             (sx, sy)
         } else {
             // Default: centre at the bottom of the pill's current monitor.
-            let x = wa.left + (wa_w - win_w) / 2;
-            let y = wa.top + wa_h - win_h - MARGIN_BOTTOM;
+            let mut x = wa.left + (wa_w - win_w) / 2;
+            let mut y = wa.top + wa_h - win_h - MARGIN_BOTTOM;
+            // Clamp into the work area, matching the drag and saved branches.
+            x = x.max(min_x).min(max_x);
+            y = y.max(min_y).min(max_y);
             (x, y)
         };
 

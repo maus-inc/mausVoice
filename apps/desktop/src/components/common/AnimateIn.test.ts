@@ -19,9 +19,10 @@ const animateInSrc = readFileSync(join(__dirname, "AnimateIn.tsx"), "utf8");
 describe("AnimateSwitch PresenceGuard", () => {
   it("applies inert and aria-hidden via useIsPresent for exiting panels", () => {
     expect(animateInSrc).toContain("useIsPresent");
-    // inert={!isPresent} (or ={isPresent ? undefined : true}); accept both forms.
-    expect(animateInSrc).toMatch(/inert=\{!?isPresent\}/);
-    expect(animateInSrc).toMatch(/aria-hidden=\{!?isPresent\}/);
+    // PresenceGuard renders inert/aria-hidden from !isPresent, so require the
+    // negated expression exactly (not the positive isPresent form).
+    expect(animateInSrc).toMatch(/inert=\{!isPresent\}/);
+    expect(animateInSrc).toMatch(/aria-hidden=\{!isPresent\}/);
   });
 
   it("uses AnimatePresence with mode wait and initial=false", () => {

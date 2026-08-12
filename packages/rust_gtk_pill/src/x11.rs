@@ -242,6 +242,16 @@ pub(crate) fn setup_x11_window(window: &gtk::Window, state: Rc<PillState>) {
                     XFlush(xdisplay);
                 }
             }
+        } else {
+            // Monitor resolution failed (e.g. display reconfig mid-tick): keep
+            // the last known position instead of snapping to the origin.
+            let (lx, ly) = last_pos.get();
+            state_tick.saved_x.set(lx as f64);
+            state_tick.saved_y.set(ly as f64);
+            state_tick.has_saved_position.set(true);
+            ipc::send(&OutMessage::PositionChanged {
+                has_saved_position: true,
+            });
         }
         ControlFlow::Continue
     });

@@ -34,7 +34,7 @@ export const AnimateIn = ({ children, visible = true }: AnimateInProps) => {
           }
           transition={reduceMotion ? { duration: duration.exit } : springSnappy}
         >
-          {children}
+          <PresenceGuard>{children}</PresenceGuard>
         </motion.div>
       ) : null}
     </AnimatePresence>

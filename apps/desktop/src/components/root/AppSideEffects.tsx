@@ -254,7 +254,12 @@ export const AppSideEffects = () => {
   useEffect(() => {
     const push = () => {
       if (getAppState().hotkeyStrategy) {
-        void syncHotkeyCombosToNative();
+        // syncHotkeyCombosToNative rejects if the native grab fails to install
+        // (e.g. bridge not ready); swallow it so it doesn't become an unhandled
+        // promise rejection that crashes the effect's subscription.
+        syncHotkeyCombosToNative().catch((err) => {
+          console.warn("[AppSideEffects] hotkey sync failed", err);
+        });
       }
     };
 
