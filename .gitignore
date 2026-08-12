@@ -60,6 +60,15 @@ nul
 # Local craft kit (not committed)
 .craft/
 
-# Animation skill references (not committed)
-.emilkowalski/
+# Local skill kits (fetched for design work, not committed)
+.humanize/
+.impeccable/
 .taste/
+.brandkit/
+.emilkowalski/
+.ui-ux-pro-max/
+.design-md/
+.motion-ui/
+.review-animations/
+.creative-excellence/
+.design-motion-principles/
