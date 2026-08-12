@@ -142,14 +142,36 @@ pub(crate) fn setup_x11_window(window: &gtk::Window, state: Rc<PillState>) {
         let dragging = state_tick.dragging.get();
 
         // Drop edge of a drag: persist the exact drop position from last_pos
-        // (the cursor query here could be stale by one tick and re-querying
-        // pill_pos_on_monitor with dragging=true duplicates the live anchor
-        // resolution below) so the re-centering never throws away where the
-        // user left the pill.
+        // Drag just ended: persist the actual drop point. `last_pos` is only
+        // refreshed on the placement tick (up to a 100ms cadence), so reusing
+        // it here can persist a position one interval behind the real drop.
+        // Query the pointer at release and resolve the top-left directly.
         if !dragging && was_dragging.get() {
-            let (lx, ly) = last_pos.get();
-            state_tick.saved_x.set(lx as f64);
-            state_tick.saved_y.set(ly as f64);
+            let surface_scale = win_tick
+                .window()
+                .map(|gdk_window| gdk_window.scale_factor() as f64)
+                .unwrap_or(1.0);
+            let (ox, oy) = state_tick.content_offset();
+            let (pill_x, pill_y, pill_w, pill_h) = crate::draw::pill_position(
+                &state_tick,
+                state_tick.draw_width.get(),
+                state_tick.draw_height.get(),
+            );
+            let center_x = (ox + pill_x + pill_w / 2.0) * surface_scale;
+            let center_y = (oy + pill_y + pill_h / 2.0) * surface_scale;
+            let (cx, cy) = cursor_pos();
+            let (dx, dy) = pill_pos_on_monitor(
+                cx as f64,
+                cy as f64,
+                true,
+                &display,
+                &win_tick,
+                &state_tick,
+            )
+            .unwrap_or_else(|| last_pos.get());
+            last_pos.set((dx, dy));
+            state_tick.saved_x.set(dx as f64 - center_x);
+            state_tick.saved_y.set(dy as f64 - center_y);
             state_tick.has_saved_position.set(true);
             ipc::send(&OutMessage::PositionChanged { has_saved_position: true });
         }

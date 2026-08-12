@@ -1398,8 +1398,6 @@ fn draw_long_press_ring(ctx: &Ctx, state: &PillState, ww: f64, wh: f64) {
         ctx.set_line_width(width);
         let mut buckets: [Vec<(f64, f64, f64, f64)>; ALPHA_BUCKETS] =
             std::array::from_fn(|_| Vec::new());
-        let mut min_a = f64::INFINITY;
-        let mut max_a = 0.0f64;
         for &(x1, y1, x2, y2, mid_dist) in &segments {
             let shimmer = 0.55 + 0.45 * (mid_dist * shimmer_freq + wave_phase).sin();
             let edge_fade = ((filled_len - mid_dist) / RING_EDGE_FADE).min(1.0);
@@ -1407,25 +1405,22 @@ fn draw_long_press_ring(ctx: &Ctx, state: &PillState, ww: f64, wh: f64) {
             if a < 0.005 {
                 continue;
             }
-            min_a = min_a.min(a);
-            max_a = max_a.max(a);
             let bucket =
                 ((a * (ALPHA_BUCKETS as f64 - 1.0)).round() as usize).min(ALPHA_BUCKETS - 1);
             buckets[bucket].push((x1, y1, x2, y2));
         }
-        let span = (max_a - min_a).max(0.0);
         for (b, segs) in buckets.iter().enumerate() {
             if segs.is_empty() {
                 continue;
             }
-            // Map bucket index back onto this pass's [min_a, max_a] range so
-            // bucket 0 equals the pass's lowest surviving alpha, not 0.
-            let a = min_a + (b as f64 / (ALPHA_BUCKETS as f64 - 1.0)) * span;
+            // Invert the bucket assignment exactly: b/(N-1) is the alpha that
+            // produced bucket b in the round() above.
+            let a = (b as f64 / (ALPHA_BUCKETS as f64 - 1.0)).max(0.0);
             ctx.set_source_rgba(
                 LONG_PRESS_OUTLINE_COLOR.0,
                 LONG_PRESS_OUTLINE_COLOR.1,
                 LONG_PRESS_OUTLINE_COLOR.2,
-                a.max(0.0),
+                a,
             );
             // One sub-path per bucket: each move_to starts a fresh segment run
             // so a single stroke() paints the whole bucket without joining ends.
