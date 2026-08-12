@@ -159,6 +159,10 @@ fn start_out_reader(app: tauri::AppHandle, rx: mpsc::Receiver<OutMessage>) {
                     let _ = app.emit_to("main", "toast-action", payload);
                 }
                 OutMessage::Hover { .. } => {}
+                OutMessage::PositionChanged { has_saved_position } => {
+                    let payload = serde_json::json!({ "hasSavedPosition": has_saved_position });
+                    let _ = app.emit_to("main", "pill-position-changed", payload);
+                }
             }
         }
         log::info!("Native macOS pill channel closed");

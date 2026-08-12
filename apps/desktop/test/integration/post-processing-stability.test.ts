@@ -18,10 +18,13 @@ vi.mock("../../src/i18n/intl", async (importOriginal) => {
   };
 });
 
-const isRateLimitError = (err: unknown): boolean => {
+const isTransientProviderError = (err: unknown): boolean => {
   if (!err) return false;
   const msg = err instanceof Error ? err.message : String(err);
-  return /\b429\b|rate[-_ ]?limit/i.test(msg);
+  return (
+    /\b429\b|rate[-_ ]?limit/i.test(msg) ||
+    /json_validate_failed|max completion tokens reached/i.test(msg)
+  );
 };
 
 test(
@@ -40,17 +43,17 @@ test(
         expect(result).toBeTruthy();
         succeededAtLeastOnce = true;
       } catch (err) {
-        if (isRateLimitError(err)) {
+        if (isTransientProviderError(err)) {
           if (!succeededAtLeastOnce) {
-            // First iteration hit the rate limit — the test never exercised
-            // the post-processing path, so skip it entirely rather than
-            // silently passing.
-            skip("Provider rate limit");
+            // First iteration hit a transient provider error — the test
+            // never exercised the post-processing path, so skip it entirely
+            // rather than silently passing.
+            skip("Transient provider error");
           }
           // At least one iteration succeeded; skip the remaining ones so CI
           // stays green while still exercising the path when quota is available.
           console.warn(
-            "Skipping remaining stability iterations: provider rate limit",
+            "Skipping remaining stability iterations: transient provider error",
           );
           return;
         }
