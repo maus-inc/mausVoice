@@ -1,12 +1,19 @@
 name: Test Package Rust Transcription
 
 on:
+  push:
+    branches:
+      - main
+    paths:
+      - "packages/rust_transcription/**"
+      - ".github/workflows/test-package-rust-transcription.yml"
   pull_request:
     branches:
       - main
     paths:
       - "packages/rust_transcription/**"
       - ".github/workflows/test-package-rust-transcription.yml"
+  workflow_dispatch:
 
 jobs:
   test:

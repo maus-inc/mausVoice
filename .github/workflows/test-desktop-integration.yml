@@ -1,18 +1,26 @@
 name: Test Desktop Integration
 
 on:
-  pull_request:
+  push:
     branches:
       - main
     paths:
       - "apps/desktop/**"
       - "packages/**"
       - ".github/workflows/test-desktop-integration.yml"
+  pull_request:
+    branches:
+      - main
 
 jobs:
   integration-tests:
     name: Desktop Integration Tests
     runs-on: ubuntu-latest
+    # Provider-backed tests need the repository secret. Keep fork PRs from
+    # failing solely because GitHub withholds secrets from fork workflows.
+    if: |
+      github.event_name == 'push' ||
+      (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository)
     steps:
       - name: Checkout source
         uses: actions/checkout@v5

@@ -1,0 +1,50 @@
+name: Test Docs
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - "apps/docs/**"
+      - "pnpm-lock.yaml"
+      - ".github/workflows/test-docs.yml"
+  pull_request:
+    branches:
+      - main
+    paths:
+      - "apps/docs/**"
+      - "pnpm-lock.yaml"
+      - ".github/workflows/test-docs.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    name: Build Docs
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout source
+        uses: actions/checkout@v5
+      - name: Setup pnpm
+        uses: pnpm/action-setup@a8198c4bff370c8506180b035930dea56dbd5288 # v5
+      - name: Setup Node
+        uses: actions/setup-node@v5
+        with:
+          node-version-file: .nvmrc
+          cache: pnpm
+          cache-dependency-path: pnpm-lock.yaml
+      - name: Install dependencies
+        run: pnpm install --filter docs... --frozen-lockfile
+      - name: Check docs types
+        run: pnpm --filter docs run check-types
+      - name: Build docs
+        run: pnpm --filter docs run build
+      - name: Verify project-site URLs
+        working-directory: apps/docs
+        run: |
+          grep -Fq 'https://maus-inc.github.io/mausVoice/getting-started/introduction/' \
+            dist/getting-started/introduction/index.html
+          grep -Fq 'https://maus-inc.github.io/mausVoice/sitemap-0.xml' \
+            dist/sitemap-index.xml
