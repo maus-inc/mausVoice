@@ -9,7 +9,7 @@ This guide walks you through deploying mausVoice to Windows devices in your orga
 
 - Microsoft Intune admin access
 - [Microsoft Win32 Content Prep Tool](https://github.com/microsoft/Microsoft-Win32-Content-Prep-Tool) installed
-- A configured mausVoice Enterprise gateway (see [On-Premise Setup](/enterprise/on-premise/setup) or your cloud deployment)
+- A configured mausVoice Enterprise gateway (see [On-Premise Setup](../../on-premise/setup/) or your cloud deployment)
 
 ## Part 1: Deploy the mausVoice App
 

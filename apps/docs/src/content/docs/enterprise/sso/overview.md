@@ -9,8 +9,8 @@ mausVoice Enterprise supports OIDC-based Single Sign-On, allowing users to authe
 
 Any OIDC-compliant identity provider should work. Tested providers include:
 
-- [Azure Entra ID (Azure AD)](/enterprise/sso/azure-entra-id/)
-- [Keycloak](/enterprise/sso/keycloak/)
+- [Azure Entra ID (Azure AD)](../azure-entra-id/)
+- [Keycloak](../keycloak/)
 
 ## How It Works
 

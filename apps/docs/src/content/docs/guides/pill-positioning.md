@@ -30,4 +30,4 @@ This menu item is only enabled after you've moved the pill; if the pill is alrea
 
 - **Windows and macOS** — dragging, edge clamping, and multi-monitor behavior described above work as documented.
 - **Linux (X11)** — dragging and edge clamping work as documented.
-- **Linux (Wayland)** — dragging works within what the `wlr-layer-shell` protocol exposes on your compositor. On GNOME versions older than 46, the pill overlay itself isn't rendered at all (see [Linux setup](/getting-started/linux/#known-limitations)); recording and hotkeys are unaffected, but there's nothing to drag.
+- **Linux (Wayland)** — dragging works within what the `wlr-layer-shell` protocol exposes on your compositor. On GNOME versions older than 46, the pill overlay itself isn't rendered at all (see [Linux setup](../../getting-started/linux/#known-limitations)); recording and hotkeys are unaffected, but there's nothing to drag.

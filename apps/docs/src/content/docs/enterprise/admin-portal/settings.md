@@ -14,9 +14,9 @@ From settings you can view:
 
 If your license is approaching expiration, refer to the renewal guide for your deployment type:
 
-- [Managed Cloud Renewal](/enterprise/managed-cloud/renewal/)
-- [Self-Hosted Cloud Renewal](/enterprise/self-hosted-cloud/renewal/)
-- [On-Premise Renewal](/enterprise/on-premise/renewal/)
+- [Managed Cloud Renewal](../../managed-cloud/renewal/)
+- [Self-Hosted Cloud Renewal](../../self-hosted-cloud/renewal/)
+- [On-Premise Renewal](../../on-premise/renewal/)
 
 ## Feature Flags
 

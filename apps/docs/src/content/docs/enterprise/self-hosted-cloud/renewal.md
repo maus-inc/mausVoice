@@ -7,7 +7,7 @@ For as long as your license is valid, you can use and update mausVoice to the la
 
 ## Server Updates
 
-To update the gateway and admin portal, redeploy your services with the latest container images. The specific steps depend on your cloud provider — see the updating section in the [AWS](/enterprise/self-hosted-cloud/aws/#updating), [GCP](/enterprise/self-hosted-cloud/gcp/#updating), or [Azure](/enterprise/self-hosted-cloud/azure/#updating) guide for details. Your database is not affected by service redeployments.
+To update the gateway and admin portal, redeploy your services with the latest container images. The specific steps depend on your cloud provider — see the updating section in the [AWS](../aws/#updating), [GCP](../gcp/#updating), or [Azure](../azure/#updating) guide for details. Your database is not affected by service redeployments.
 
 ## Desktop Updates
 

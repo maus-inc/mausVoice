@@ -9,9 +9,9 @@ mausVoice is a cross-platform desktop application for voice-to-text transcriptio
 
 Choose the guide for your platform:
 
-- [macOS](/getting-started/macos)
-- [Windows](/getting-started/windows)
-- [Linux](/getting-started/linux)
+- [macOS](../macos/)
+- [Windows](../windows/)
+- [Linux](../linux/)
 
 ## First Launch
 
@@ -33,7 +33,7 @@ Press the global hotkey to start recording. Speak naturally, then press the hotk
 
 ## Positioning the Pill
 
-The floating recording pill can be dragged anywhere on your screen — long-press it, then drag it to where you'd like it to stay. mausVoice remembers the spot, even across monitors. If you ever want to start over, use **Reset Pill Position** from the tray icon menu. See the [pill positioning guide](/guides/pill-positioning/) for the full walkthrough and platform notes.
+The floating recording pill can be dragged anywhere on your screen — long-press it, then drag it to where you'd like it to stay. mausVoice remembers the spot, even across monitors. If you ever want to start over, use **Reset Pill Position** from the tray icon menu. See the [pill positioning guide](../../guides/pill-positioning/) for the full walkthrough and platform notes.
 
 ## Next Steps
 
@@ -43,4 +43,4 @@ The floating recording pill can be dragged anywhere on your screen — long-pres
 
 ## Enterprise
 
-For teams looking to distribute mausVoice across an organization or run it on-premise with a private configuration, see the [Enterprise](/enterprise/overview) section.
+For teams looking to distribute mausVoice across an organization or run it on-premise with a private configuration, see the [Enterprise](../../enterprise/overview/) section.

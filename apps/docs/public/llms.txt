@@ -99,4 +99,4 @@ Enterprise inquiries: enterprise@mausvoice.com.
 - [Documentation robots policy](https://maus-inc.github.io/mausVoice/robots.txt)
 - [Website sitemap](https://maus-inc.github.io/mausVoice/sitemap.xml)
 - [Website robots policy](https://maus-inc.github.io/mausVoice/robots.txt)
-- [Canonical social image](https://maus-inc.github.io/mausVoice/docs/mausvoice-banner.png)
+- [Canonical social image](https://maus-inc.github.io/mausVoice/docs/assets/mausvoice-banner.png)

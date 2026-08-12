@@ -11,7 +11,7 @@ When you transcribe audio, the raw transcript can be improved by running it thro
 
 ## 1. Add Ollama to Docker Compose
 
-Add the following service to the `docker-compose.yml` you created during [initial setup](/enterprise/on-premise/setup/):
+Add the following service to the `docker-compose.yml` you created during [initial setup](../setup/):
 
 ```yaml
 ollama:

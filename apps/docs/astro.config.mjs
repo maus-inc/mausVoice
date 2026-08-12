@@ -26,11 +26,11 @@ export default defineConfig({
 				{ tag: 'meta', attrs: { property: 'og:locale', content: 'en_US' } },
 				{
 					tag: 'meta',
-					attrs: { property: 'og:image', content: 'https://maus-inc.github.io/mausVoice/docs/mausvoice-banner.png' },
+					attrs: { property: 'og:image', content: 'https://maus-inc.github.io/mausVoice/docs/assets/mausvoice-banner.png' },
 				},
 				{
 					tag: 'meta',
-					attrs: { property: 'og:image:secure_url', content: 'https://maus-inc.github.io/mausVoice/docs/mausvoice-banner.png' },
+					attrs: { property: 'og:image:secure_url', content: 'https://maus-inc.github.io/mausVoice/docs/assets/mausvoice-banner.png' },
 				},
 				{ tag: 'meta', attrs: { property: 'og:image:type', content: 'image/png' } },
 				{ tag: 'meta', attrs: { property: 'og:image:width', content: '1684' } },
@@ -42,7 +42,7 @@ export default defineConfig({
 				{ tag: 'meta', attrs: { name: 'twitter:card', content: 'summary_large_image' } },
 				{
 					tag: 'meta',
-					attrs: { name: 'twitter:image', content: 'https://maus-inc.github.io/mausVoice/docs/mausvoice-banner.png' },
+					attrs: { name: 'twitter:image', content: 'https://maus-inc.github.io/mausVoice/docs/assets/mausvoice-banner.png' },
 				},
 				{
 					tag: 'meta',

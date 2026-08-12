@@ -7,7 +7,7 @@ The global dictionary lets you define glossary terms and replacement rules that 
 
 ## How It Works
 
-The global dictionary works the same way as the [personal dictionary](/guides/dictionary/) built into each desktop app, but at the organization level. Terms defined here are pushed to all connected desktop clients and take effect on their next transcription.
+The global dictionary works the same way as the [personal dictionary](../../../guides/dictionary/) built into each desktop app, but at the organization level. Terms defined here are pushed to all connected desktop clients and take effect on their next transcription.
 
 There are two types of entries:
 

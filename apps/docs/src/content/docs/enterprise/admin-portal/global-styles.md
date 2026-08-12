@@ -7,7 +7,7 @@ Global styles let you define writing styles that are shared across every mausVoi
 
 ## How It Works
 
-Global styles work the same way as the [personal styles](/guides/styles/) built into each desktop app, but at the organization level. Styles defined here are pushed to all connected desktop clients and are available for selection immediately.
+Global styles work the same way as the [personal styles](../../../guides/styles/) built into each desktop app, but at the organization level. Styles defined here are pushed to all connected desktop clients and are available for selection immediately.
 
 Each style has a name and a prompt that controls how mausVoice's AI rewrites the raw transcription.
 

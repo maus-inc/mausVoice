@@ -11,7 +11,7 @@ By hosting your own instance of [Speaches](https://speaches.ai), you can run spe
 
 ## 1. Add Speaches to Docker Compose
 
-Add the following service to the `docker-compose.yml` you created during [initial setup](/enterprise/on-premise/setup/):
+Add the following service to the `docker-compose.yml` you created during [initial setup](../setup/):
 
 ```yaml
 speaches:

@@ -18,9 +18,9 @@ Contact [enterprise@mausvoice.com](mailto:enterprise@mausvoice.com) to obtain yo
 
 Follow the guide for your cloud provider:
 
-- [AWS](/enterprise/self-hosted-cloud/aws/)
-- [GCP](/enterprise/self-hosted-cloud/gcp/)
-- [Azure](/enterprise/self-hosted-cloud/azure/)
+- [AWS](../aws/)
+- [GCP](../gcp/)
+- [Azure](../azure/)
 Each guide walks you through provisioning the necessary resources and deploying the mausVoice services.
 
 ### Invite Gateway URL

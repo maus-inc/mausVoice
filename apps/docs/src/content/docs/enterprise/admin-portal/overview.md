@@ -17,13 +17,13 @@ If you're on a managed cloud deployment, we provide the admin portal URL during 
 
 You'll need to host the admin portal yourself as part of your cloud deployment. The URL depends on where and how you deployed the admin service. Refer to your cloud provider setup guide for details:
 
-- [AWS](/enterprise/self-hosted-cloud/aws/)
-- [GCP](/enterprise/self-hosted-cloud/gcp/)
-- [Azure](/enterprise/self-hosted-cloud/azure/)
+- [AWS](../../self-hosted-cloud/aws/)
+- [GCP](../../self-hosted-cloud/gcp/)
+- [Azure](../../self-hosted-cloud/azure/)
 
 ### On-Premise
 
-The admin portal runs as a Docker container on port `5100` by default. Access it at `http://your-host:5100` where `your-host` is the hostname or IP of the machine running your Docker services. See the [On-Premise Setup](/enterprise/on-premise/setup/) guide for details.
+The admin portal runs as a Docker container on port `5100` by default. Access it at `http://your-host:5100` where `your-host` is the hostname or IP of the machine running your Docker services. See the [On-Premise Setup](../../on-premise/setup/) guide for details.
 
 ## Sections
 
