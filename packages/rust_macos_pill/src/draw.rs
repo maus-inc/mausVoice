@@ -93,7 +93,7 @@ pub(crate) fn pill_position(state: &PillState, ww: f64, wh: f64) -> (f64, f64, f
         panel_bottom - PILL_BOTTOM_INSET - base_h
     } else {
         // Collapsed: sit closer to the bottom; expanded: rise up to centered position
-        let collapsed_bottom = 4.0;
+        let collapsed_bottom = 6.0;
         let expanded_bottom = (PILL_AREA_HEIGHT - EXPANDED_PILL_HEIGHT) / 2.0;
         let bottom_offset = gfx::lerp(collapsed_bottom, expanded_bottom, expand_t);
         wh - bottom_offset - base_h
@@ -1388,8 +1388,16 @@ fn draw_long_press_ring(ctx: &Ctx, state: &PillState, ww: f64, wh: f64) {
 
     ctx.set_line_cap_round();
 
+    // Batch segments that share a quantized alpha into one sub-path per pass
+    // and issue one stroke per populated bucket, instead of one stroke() call
+    // per perimeter segment. Buckets are normalized to the pass's own alpha
+    // range so the lowest bucket still paints a (non-zero) shimmer level
+    // instead of collapsing to full transparency.
+    const ALPHA_BUCKETS: usize = 8;
     for &(width, pass_alpha) in &passes {
         ctx.set_line_width(width);
+        let mut buckets: [Vec<(f64, f64, f64, f64)>; ALPHA_BUCKETS] =
+            std::array::from_fn(|_| Vec::new());
         for &(x1, y1, x2, y2, mid_dist) in &segments {
             let shimmer = 0.55 + 0.45 * (mid_dist * shimmer_freq + wave_phase).sin();
             let edge_fade = ((filled_len - mid_dist) / RING_EDGE_FADE).min(1.0);
@@ -1397,15 +1405,32 @@ fn draw_long_press_ring(ctx: &Ctx, state: &PillState, ww: f64, wh: f64) {
             if a < 0.005 {
                 continue;
             }
+            let bucket =
+                ((a * (ALPHA_BUCKETS as f64 - 1.0)).round() as usize).min(ALPHA_BUCKETS - 1);
+            buckets[bucket].push((x1, y1, x2, y2));
+        }
+        for (b, segs) in buckets.iter().enumerate() {
+            if segs.is_empty() {
+                continue;
+            }
+            // Reconstruct a representative alpha for bucket b. Using the
+            // bucket's midpoint (b + 0.5)/(N-1) keeps every populated bucket at
+            // a non-zero alpha (bucket 0 is never fully transparent) and stays
+            // monotonic with the quantized source alpha.
+            let a = (b as f64 + 0.5) / (ALPHA_BUCKETS as f64 - 1.0);
             ctx.set_source_rgba(
                 LONG_PRESS_OUTLINE_COLOR.0,
                 LONG_PRESS_OUTLINE_COLOR.1,
                 LONG_PRESS_OUTLINE_COLOR.2,
                 a,
             );
+            // One sub-path per bucket: each move_to starts a fresh segment run
+            // so a single stroke() paints the whole bucket without joining ends.
             ctx.new_sub_path();
-            ctx.move_to(x1, y1);
-            ctx.line_to(x2, y2);
+            for &(x1, y1, x2, y2) in segs {
+                ctx.move_to(x1, y1);
+                ctx.line_to(x2, y2);
+            }
             ctx.stroke();
         }
     }

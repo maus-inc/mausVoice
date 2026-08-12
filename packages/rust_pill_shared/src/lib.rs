@@ -157,4 +157,17 @@ mod tests {
         assert!(big.len() > small.len());
         assert!(small.len() >= 6 * 4 + 5);
     }
+
+    #[test]
+    fn perimeter_total_length_matches_rectangle() {
+        // A plain rectangle (r = 0) has a known perimeter 2*(w + h). The
+        // collapsed corner arcs degenerate to the edge endpoints (so the path
+        // legitimately repeats a vertex there), which is why we assert only the
+        // total length rather than uniqueness of every point.
+        let w = 120.0;
+        let h = 32.0;
+        let pts = rounded_rectangle_perimeter(0.0, 0.0, w, h, 0.0, RoundedRectArcSteps::Exact(1));
+        let (_, total) = path_distances(&pts);
+        assert!((total - 2.0 * (w + h)).abs() < 1e-6);
+    }
 }

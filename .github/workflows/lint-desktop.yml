@@ -80,6 +80,9 @@ jobs:
       - name: Test native pill
         if: matrix.os == 'windows-latest'
         run: cargo test --manifest-path packages/rust_windows_pill/Cargo.toml
+      - name: Test shared pill geometry
+        if: matrix.os == 'ubuntu-22.04'
+        run: cargo test --manifest-path packages/rust_pill_shared/Cargo.toml
       - name: Verify app icons
         if: matrix.os == 'ubuntu-22.04'
         run: |

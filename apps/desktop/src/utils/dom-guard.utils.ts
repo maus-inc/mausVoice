@@ -32,6 +32,17 @@ export const applyDomMutationGuards = () => {
   const isNotFoundError = (error: unknown): boolean =>
     error instanceof DOMException && error.name === "NotFoundError";
 
+  // Tolerated mutations are expected noise from host page tooling; log each
+  // kind only once and silently count the rest so the console stays usable.
+  const warnedOnce = new Set<string>();
+  const warnOnce = (key: string, message: string) => {
+    if (warnedOnce.has(key)) {
+      return;
+    }
+    warnedOnce.add(key);
+    console.warn(message);
+  };
+
   const originalRemoveChild = Node.prototype.removeChild;
   Object.defineProperty(Node.prototype, "removeChild", {
     configurable: true,
@@ -41,7 +52,8 @@ export const applyDomMutationGuards = () => {
         return originalRemoveChild.call(this, child) as T;
       } catch (error) {
         if (isNotFoundError(error)) {
-          console.warn(
+          warnOnce(
+            "removeChild",
             "[dom-guard] tolerated a stale removeChild (DOM moved by host page tooling)",
           );
           return child;
@@ -64,17 +76,18 @@ export const applyDomMutationGuards = () => {
         return originalInsertBefore.call(this, node, reference) as T;
       } catch (error) {
         if (isNotFoundError(error)) {
-          console.warn(
+          warnOnce(
+            "insertBefore",
             "[dom-guard] tolerated a stale insertBefore (DOM moved by host page tooling)",
           );
           // The anchor node vanished from its parent; appending keeps the
           // content reachable instead of dropping the subtree on the floor.
           try {
             return this.appendChild(node) as T;
-          } catch (appendError) {
-            console.warn(
+          } catch {
+            warnOnce(
+              "insertBefore-fallback",
               "[dom-guard] insertBefore fallback failed",
-              appendError,
             );
             return node;
           }

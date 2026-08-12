@@ -1258,7 +1258,12 @@ fn draw_long_press_ring(gfx: &Gfx, state: &PillState, ww: f64, wh: f64) {
         (RING_CORE_WIDTH, RING_CORE_ALPHA),
     ];
 
+    // Batch segments that share a quantized alpha into one call per bucket,
+    // reusing a single brush/style instead of creating one per segment.
+    const ALPHA_BUCKETS: usize = 8;
     for &(width, pass_alpha) in &passes {
+        let mut buckets: [Vec<(f64, f64, f64, f64)>; ALPHA_BUCKETS] =
+            std::array::from_fn(|_| Vec::new());
         for &(x1, y1, x2, y2, mid_dist) in &segments {
             let shimmer = 0.55 + 0.45 * (mid_dist * shimmer_freq + wave_phase).sin();
             let edge_fade = ((filled_len - mid_dist) / RING_EDGE_FADE).min(1.0);
@@ -1266,13 +1271,26 @@ fn draw_long_press_ring(gfx: &Gfx, state: &PillState, ww: f64, wh: f64) {
             if a < 0.005 {
                 continue;
             }
+            let bucket =
+                ((a * (ALPHA_BUCKETS as f64 - 1.0)).round() as usize).min(ALPHA_BUCKETS - 1);
+            buckets[bucket].push((x1, y1, x2, y2));
+        }
+        for (b, segs) in buckets.iter().enumerate() {
+            if segs.is_empty() {
+                continue;
+            }
+            // Reconstruct a representative alpha for bucket b. Using the
+            // bucket's midpoint (b + 0.5)/(N-1) keeps every populated bucket at
+            // a non-zero alpha (bucket 0 is never fully transparent) and stays
+            // monotonic with the quantized source alpha.
+            let a = (b as f64 + 0.5) / (ALPHA_BUCKETS as f64 - 1.0);
             let col = [
                 LONG_PRESS_OUTLINE_COLOR.0,
                 LONG_PRESS_OUTLINE_COLOR.1,
                 LONG_PRESS_OUTLINE_COLOR.2,
                 a,
             ];
-            gfx.draw_line(x1, y1, x2, y2, col, width);
+            gfx.draw_line_batch(segs, col, width);
         }
     }
 }

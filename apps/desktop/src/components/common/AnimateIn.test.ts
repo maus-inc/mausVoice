@@ -1,38 +1,51 @@
-import { readFileSync } from "node:fs";
-import { dirname, join } from "node:path";
-import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
+import { renderToStaticMarkup } from "react-dom/server";
+import { createElement } from "react";
+import { AnimateIn } from "./AnimateIn";
 
-// Static guards for AnimateSwitch's PresenceGuard contract.
+// Behavioral contract for AnimateIn's PresenceGuard wrapper, validated via SSR
+// static markup. jsdom is intentionally avoided (it previously tripped
+// Socket's obfuscated-code scanner), so this suite is scoped to initial
+// static-markup assertions: the child renders when visible and is removed from
+// the DOM when not (the presence-guard removal contract).
 //
-// We read the AnimateIn.tsx source from disk relative to this test file
-// (the same way other tooling does) and assert the CodeRabbit-required
-// invariants are present: useIsPresent is imported, and a wrapper div
-// applies inert + aria-hidden = !isPresent around rendered children,
-// while AnimatePresence keeps mode="wait" so outgoing and incoming
-// panels do not mount simultaneously. Running this under the default
-// "node" vitest environment avoids pulling in jsdom/@testing-library
-// (which tripped Socket's obfuscated-code detector).
-const __dirname = dirname(fileURLToPath(import.meta.url));
-const animateInSrc = readFileSync(join(__dirname, "AnimateIn.tsx"), "utf8");
-
-describe("AnimateSwitch PresenceGuard", () => {
-  it("applies inert and aria-hidden via useIsPresent for exiting panels", () => {
-    expect(animateInSrc).toContain("useIsPresent");
-    // inert={!isPresent} (or ={isPresent ? undefined : true}); accept both forms.
-    expect(animateInSrc).toMatch(/inert=\{!?isPresent\}/);
-    expect(animateInSrc).toMatch(/aria-hidden=\{!?isPresent\}/);
+// Rendered structure (visible): an outer motion.div (the animated wrapper)
+// containing the PresenceGuard div (aria-hidden reflects !isPresent) which in
+// turn wraps the child element.
+describe("AnimateIn static markup", () => {
+  it("renders its children when visible", () => {
+    const html = renderToStaticMarkup(
+      createElement(AnimateIn, {
+        visible: true,
+        children: createElement("span", null, "hello-pill"),
+      }),
+    );
+    expect(html).toContain("hello-pill");
   });
 
-  it("uses AnimatePresence with mode wait and initial=false", () => {
-    expect(animateInSrc).toContain("AnimatePresence");
-    // Accept both mode="wait" and mode={"wait"} spellings.
-    expect(animateInSrc).toMatch(/mode=(?:"wait"|\{"wait"\})/);
-    expect(animateInSrc).toContain("initial={false}");
+  it("omits children from initial SSR markup when not visible", () => {
+    const html = renderToStaticMarkup(
+      createElement(AnimateIn, {
+        visible: false,
+        children: createElement("span", null, "hidden-pill"),
+      }),
+    );
+    // visible=false skips the motion.div/PresenceGuard branches before they
+    // run, so the subtree is simply absent from the initial SSR output.
+    expect(html).not.toContain("hidden-pill");
   });
 
-  it("wraps rendered children inside PresenceGuard inside the motion.div", () => {
-    expect(animateInSrc).toContain("PresenceGuard");
-    expect(animateInSrc).toContain("<PresenceGuard>{children}</PresenceGuard>");
+  it("wraps children in the motion.div → PresenceGuard → span structure", () => {
+    const html = renderToStaticMarkup(
+      createElement(AnimateIn, {
+        visible: true,
+        children: createElement("span", null, "wrapped-pill"),
+      }),
+    );
+    // Outer motion.div (animated wrapper) → PresenceGuard div (aria-hidden
+    // reflects !isPresent) → the single child span. Anchored at both ends.
+    expect(html).toMatch(
+      /^<div[^>]*><div aria-hidden="false"><span[^>]*>wrapped-pill<\/span><\/div><\/div>$/,
+    );
   });
 });

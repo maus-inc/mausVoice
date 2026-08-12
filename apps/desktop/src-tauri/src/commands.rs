@@ -1977,7 +1977,7 @@ pub fn set_reset_pill_position_enabled(app: AppHandle, enabled: bool) -> Result<
 #[tauri::command]
 #[specta::specta]
 pub fn reset_pill_position(app: AppHandle) -> Result<(), String> {
-    crate::pill_process::notify_reset_position(&app);
+    crate::pill_process::notify_reset_position(&app)?;
     Ok(())
 }
 
