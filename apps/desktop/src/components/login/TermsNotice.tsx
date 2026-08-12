@@ -25,15 +25,6 @@ export const TermsNotice = ({ align = "center" }: TermsNoticeProps) => {
         style={{ color: "inherit", textDecoration: "underline" }}
       >
         <FormattedMessage defaultMessage="Terms & Conditions" />
-      </a>{" "}
-      <FormattedMessage defaultMessage="and" />{" "}
-      <a
-        href="https://github.com/maus-inc/mausVoice/blob/main/CODE_OF_CONDUCT.md"
-        target="_blank"
-        rel="noopener noreferrer"
-        style={{ color: "inherit", textDecoration: "underline" }}
-      >
-        <FormattedMessage defaultMessage="Privacy Policy" />
       </a>
     </Typography>
   );

@@ -41,6 +41,6 @@ The floating recording pill can be dragged anywhere on your screen — long-pres
 - Add dictionary terms for domain-specific vocabulary.
 - Explore keyboard shortcuts in the settings.
 
-## For teams
+## Enterprise
 
-mausVoice is built for individuals. For organization-wide deployment or on-premise configurations, reach out through the [community](/guides/community) channels.
+For teams looking to distribute mausVoice across an organization or run it on-premise with a private configuration, see the [Enterprise](/enterprise/overview) section.
