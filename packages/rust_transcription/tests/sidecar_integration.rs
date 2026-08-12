@@ -647,7 +647,8 @@ async fn read_announced_port(
         .take()
         .ok_or("sidecar stdout was not captured")?;
 
-    let (tx, rx) = tokio::sync::oneshot::channel();
+    let (tx, rx) = tokio::sync::oneshot::channel::<u16>();
+    let mut tx = Some(tx);
 
     // Drains the sidecar's stdout for its whole lifetime. Sends the bound
     // port once on the first matching line, then keeps reading until EOF so
@@ -668,7 +669,12 @@ async fn read_announced_port(
                         {
                             if let Ok(port) = captured.trim().parse::<u16>() {
                                 announced = true;
-                                let _ = tx.send(port);
+                                // `tx.send` moves `tx`; take() it so the move
+                                // happens exactly once and the drain loop can
+                                // keep reading on later iterations.
+                                if let Some(t) = tx.take() {
+                                    let _ = t.send(port);
+                                }
                             }
                         }
                     }
