@@ -1,6 +1,6 @@
 [package]
 name = "mausVoice"
-version = "0.1.4",
+version = "0.1.4"
 description = "mausVoice — AI voice dictation"
 authors = ["Owie Emmanuel <owieemmanuel34@gmail.com>"]
 edition = "2021"
