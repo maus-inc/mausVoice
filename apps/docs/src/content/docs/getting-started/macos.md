@@ -5,7 +5,7 @@ description: Install mausVoice on macOS.
 
 ## Download
 
-Download the latest release from [mausvoice.com/download](https://mausvoice.com/download).
+Download the latest release from [the mausVoice website](https://maus-inc.github.io/mausVoice/download).
 
 1. Open the downloaded `.dmg` file.
 2. Drag the mausVoice icon into the Applications folder.
