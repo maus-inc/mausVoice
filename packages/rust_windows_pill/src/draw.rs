@@ -1279,9 +1279,11 @@ fn draw_long_press_ring(gfx: &Gfx, state: &PillState, ww: f64, wh: f64) {
             if segs.is_empty() {
                 continue;
             }
-            // Invert the bucket assignment exactly: b/(N-1) is the alpha that
-            // produced bucket b in the round() above.
-            let a = (b as f64 / (ALPHA_BUCKETS as f64 - 1.0)).max(0.0);
+            // Reconstruct a representative alpha for bucket b. Using the
+            // bucket's midpoint (b + 0.5)/(N-1) keeps every populated bucket at
+            // a non-zero alpha (bucket 0 is never fully transparent) and stays
+            // monotonic with the quantized source alpha.
+            let a = (b as f64 + 0.5) / (ALPHA_BUCKETS as f64 - 1.0);
             let col = [
                 LONG_PRESS_OUTLINE_COLOR.0,
                 LONG_PRESS_OUTLINE_COLOR.1,

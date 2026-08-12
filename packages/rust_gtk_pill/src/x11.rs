@@ -169,9 +169,14 @@ pub(crate) fn setup_x11_window(window: &gtk::Window, state: Rc<PillState>) {
                 &state_tick,
             )
             .unwrap_or_else(|| last_pos.get());
+            // `pill_pos_on_monitor` returns the window top-left. `saved_x`/
+            // `saved_y` are used verbatim as the top-left when parked (see the
+            // has_saved_position branch), so store the top-left directly here.
+            // (The center offset is only re-added for monitor-selection anchor
+            // math elsewhere, not for the persisted parked coordinate.)
             last_pos.set((dx, dy));
-            state_tick.saved_x.set(dx as f64 - center_x);
-            state_tick.saved_y.set(dy as f64 - center_y);
+            state_tick.saved_x.set(dx as f64);
+            state_tick.saved_y.set(dy as f64);
             state_tick.has_saved_position.set(true);
             ipc::send(&OutMessage::PositionChanged { has_saved_position: true });
         }
