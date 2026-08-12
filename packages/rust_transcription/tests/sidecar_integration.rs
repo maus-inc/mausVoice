@@ -635,6 +635,10 @@ async fn gpu_sidecar_lists_gpu_devices() -> Result<(), Box<dyn std::error::Error
 /// (`RUST_TRANSCRIPTION_BOUND_PORT=<port>`), which `run_server` emits right
 /// after the OS-assigned bind succeeds. Reading it back from the child avoids
 /// the race of pre-reserving a port in the parent and hoping it stays free.
+///
+/// The reader keeps draining stdout until the child exits so the OS pipe
+/// buffer can never fill and stall the sidecar (it writes tracing output
+/// during long transcriptions). Only the first announced port is returned.
 async fn read_announced_port(
     child: &mut Child,
 ) -> Result<u16, Box<dyn std::error::Error + Send + Sync>> {
@@ -643,43 +647,41 @@ async fn read_announced_port(
         .take()
         .ok_or("sidecar stdout was not captured")?;
 
-    let port = tokio::time::timeout(HEALTH_TIMEOUT, tokio::task::spawn_blocking(move || read_announced_port_blocking(stdout)))
-        .await
-        .map_err(|_| "timed out waiting for sidecar to announce its port".to_string())?
-        .map_err(|err| format!("port reader task panicked: {err}"))?;
+    let (tx, rx) = tokio::sync::oneshot::channel();
 
-    match port {
-        Some(port) => Ok(port),
-        None => {
-            if let Some(status) = child.try_wait()? {
-                return Err(format!("sidecar exited early with status {status}").into());
-            }
-            Err("sidecar closed stdout without announcing a port".into())
-        }
-    }
-}
-
-/// Blocks on the sidecar's stdout, returning the first announced port.
-/// Runs on a blocking thread so the async runtime is not stalled.
-fn read_announced_port_blocking(
-    mut stdout: std::process::ChildStdout,
-) -> Option<u16> {
-    use std::io::{BufRead, BufReader};
-    let mut reader = BufReader::new(&mut stdout);
-    let mut line = String::new();
-    loop {
-        line.clear();
-        match reader.read_line(&mut line) {
-            Ok(0) => return None, // EOF before announcement
-            Ok(_) => {
-                if let Some(captured) = line.strip_prefix("RUST_TRANSCRIPTION_BOUND_PORT=") {
-                    if let Ok(port) = captured.trim().parse::<u16>() {
-                        return Some(port);
+    // Drains the sidecar's stdout for its whole lifetime. Sends the bound
+    // port once on the first matching line, then keeps reading until EOF so
+    // the pipe never backs up and blocks the child's writes.
+    tokio::task::spawn_blocking(move || {
+        use std::io::{BufRead, BufReader};
+        let mut reader = BufReader::new(stdout);
+        let mut line = String::new();
+        let mut announced = false;
+        loop {
+            line.clear();
+            match reader.read_line(&mut line) {
+                Ok(0) => break, // EOF
+                Ok(_) => {
+                    if !announced {
+                        if let Some(captured) =
+                            line.strip_prefix("RUST_TRANSCRIPTION_BOUND_PORT=")
+                        {
+                            if let Ok(port) = captured.trim().parse::<u16>() {
+                                announced = true;
+                                let _ = tx.send(port);
+                            }
+                        }
                     }
                 }
+                Err(_) => break,
             }
-            Err(_) => return None,
         }
+    });
+
+    match tokio::time::timeout(HEALTH_TIMEOUT, rx).await {
+        Ok(Ok(port)) => Ok(port),
+        Ok(Err(_)) => Err("sidecar closed stdout without announcing a port".into()),
+        Err(_) => Err("timed out waiting for sidecar to announce its port".into()),
     }
 }
 
