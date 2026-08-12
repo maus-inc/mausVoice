@@ -36,7 +36,9 @@ jobs:
           cache: pnpm
           cache-dependency-path: pnpm-lock.yaml
       - name: Install dependencies
-        run: pnpm install --filter docs... --frozen-lockfile
+        # Docs are static and do not need dependency lifecycle scripts in CI.
+        # Keeping scripts disabled also prevents install-time code execution.
+        run: pnpm install --filter docs... --frozen-lockfile --ignore-scripts
       - name: Check docs types
         run: pnpm --filter docs run check-types
       - name: Build docs
