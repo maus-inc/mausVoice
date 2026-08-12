@@ -506,6 +506,7 @@ section { scroll-margin-top: 96px; }
  * ------------------------------------------------------------------ */
 
 .why {
+  position: relative;
   padding: 208px 24px 36px;
 }
 
@@ -592,6 +593,7 @@ section { scroll-margin-top: 96px; }
  * ------------------------------------------------------------------ */
 
 .mission {
+  position: relative;
   padding: 0 24px 128px;
 }
 
@@ -647,6 +649,7 @@ section { scroll-margin-top: 96px; }
  * ------------------------------------------------------------------ */
 
 .solution {
+  position: relative;
   padding: 128px 24px 176px;
   border-top: 1px solid hsl(var(--border) / 0.3);
   text-align: center;
@@ -895,6 +898,18 @@ section { scroll-margin-top: 96px; }
 
 .fg-links a:hover { color: #fff; }
 
+.ascii-deco {
+  position: absolute;
+  pointer-events: none;
+  user-select: none;
+  opacity: 0.32;
+  z-index: 1;
+}
+
+@media (max-width: 960px) {
+  .ascii-deco { display: none; }
+}
+
 .footer-ascii {
   position: absolute;
   right: 32px;
@@ -1046,6 +1061,9 @@ section { scroll-margin-top: 96px; }
   <div class="hero-overlay" aria-hidden="true"></div>
   <div class="hero-fade" aria-hidden="true"></div>
 
+  <img class="ascii-deco" src="assets/ascii-eq.png" alt="" aria-hidden="true" style="left:28px; bottom:30px; width:280px;" />
+  <img class="ascii-deco" src="assets/ascii-term.png" alt="" aria-hidden="true" style="right:36px; bottom:26px; width:150px;" />
+
   <div class="hero-content">
     <p class="hero-meta fade-up" style="--delay:0s">
       <svg class="os-mark" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" aria-hidden="true"><path d="M12.152 6.896c-.948 0-2.415-1.078-3.96-1.04-2.04.027-3.91 1.183-4.961 3.014-2.117 3.675-.546 9.103 1.519 12.09 1.013 1.454 2.208 3.09 3.792 3.039 1.52-.065 2.09-.987 3.935-.987 1.831 0 2.35.987 3.96.948 1.637-.026 2.676-1.48 3.676-2.948 1.156-1.688 1.636-3.325 1.662-3.415-.039-.013-3.182-1.221-3.22-4.857-.026-3.04 2.48-4.494 2.597-4.559-1.429-2.09-3.623-2.324-4.39-2.376-2-.156-3.675 1.09-4.61 1.09zM15.53 3.83c.843-1.012 1.4-2.427 1.245-3.83-1.207.052-2.662.805-3.532 1.818-.78.896-1.454 2.338-1.273 3.714 1.338.104 2.715-.688 3.559-1.701"/></svg>
@@ -1076,6 +1094,8 @@ section { scroll-margin-top: 96px; }
 <!-- ================= "Typing has changed" ================= -->
 
 <section class="why" id="why">
+  <img class="ascii-deco" src="assets/ascii-wave.png" alt="" aria-hidden="true" style="left:26px; top:52%; width:330px;" />
+
   <div class="section-head">
     <h2 class="fade-up">
       Typing has <span class="cursive">changed.</span> Have you?
@@ -1118,6 +1138,8 @@ section { scroll-margin-top: 96px; }
 <!-- ================= Mission ================= -->
 
 <section class="mission" id="how-it-works">
+  <img class="ascii-deco" src="assets/ascii-phones.png" alt="" aria-hidden="true" style="right:26px; top:38%; width:170px;" />
+
   <div class="mission-video fade-up">
     <video src="assets/demo.mp4" poster="assets/demo-poster.jpg" autoplay muted loop playsinline preload="none" aria-label="Screen recording of mausVoice transcribing speech and pasting the cleaned text"></video>
   </div>
@@ -1141,6 +1163,8 @@ section { scroll-margin-top: 96px; }
 <!-- ================= Solution ================= -->
 
 <section class="solution" id="features">
+  <img class="ascii-deco" src="assets/ascii-eq.png" alt="" aria-hidden="true" style="left:26px; top:42%; width:220px;" />
+
   <p class="solution-label fade-up">Product</p>
 
   <h2 class="fade-up" style="--delay:0.1s">
@@ -1246,6 +1270,8 @@ section { scroll-margin-top: 96px; }
 <section class="cta" id="download">
   <img class="cta-bg" src="assets/cta-bg.jpg" alt="" aria-hidden="true" />
   <div class="cta-overlay" aria-hidden="true"></div>
+
+  <img class="ascii-deco" src="assets/ascii-wave.png" alt="" aria-hidden="true" style="right:30px; top:44%; width:280px;" />
 
   <div class="cta-content">
     <div class="logo-mark" aria-hidden="true">
