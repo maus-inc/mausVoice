@@ -1217,15 +1217,18 @@ fn draw_long_press_ring(gfx: &Gfx, state: &PillState, ww: f64, wh: f64) {
     let (distances, total_len) = path_distances(&path);
     let filled_len = total_len * progress;
 
-    let outline_alpha = (0.3 + 0.5 * progress) * alpha;
-    let col = [
-        LONG_PRESS_OUTLINE_COLOR.0,
-        LONG_PRESS_OUTLINE_COLOR.1,
-        LONG_PRESS_OUTLINE_COLOR.2,
-        outline_alpha,
-    ];
+    // Three-pass silver gradient ring with sine-wave shimmer.
+    // Each pass draws the same path at a different width and alpha, creating
+    // a soft-edged glow that tapers to a bright silver core. The shimmer
+    // modulates per-segment alpha using a sine wave synced to the internal
+    // waveform phase, so the ring looks like the pill's sine waves are
+    // bleeding through to the border.
+    let master_alpha = (0.3 + 0.5 * progress) * alpha;
+    let shimmer_freq = RING_SHIMMER_CYCLES * std::f64::consts::TAU / total_len.max(1.0);
+    let wave_phase = state.wave_phase.get();
 
-    // Draw segments up to filled_len
+    // Collect the filled segments once so each pass reuses them.
+    let mut segments: Vec<(f64, f64, f64, f64, f64)> = Vec::new(); // (x1,y1,x2,y2,mid_dist)
     for i in 1..path.len() {
         if distances[i - 1] >= filled_len {
             break;
@@ -1236,15 +1239,41 @@ fn draw_long_press_ring(gfx: &Gfx, state: &PillState, ww: f64, wh: f64) {
         let mut y2 = path[i].1;
         if distances[i] > filled_len {
             let seg = distances[i] - distances[i - 1];
-            let t = if seg > 0.0 {
+            let k = if seg > 0.0 {
                 (filled_len - distances[i - 1]) / seg
             } else {
                 0.0
             };
-            x2 = x1 + (x2 - x1) * t;
-            y2 = y1 + (y2 - y1) * t;
+            x2 = x1 + (x2 - x1) * k;
+            y2 = y1 + (y2 - y1) * k;
         }
-        gfx.draw_line(x1, y1, x2, y2, col, LONG_PRESS_OUTLINE_WIDTH);
+        let mid_dist = (distances[i - 1] + distances[i].min(filled_len)) * 0.5;
+        segments.push((x1, y1, x2, y2, mid_dist));
+    }
+
+    // Draw three passes: outer glow → mid-tone → bright core.
+    let passes: [(f64, f64); 3] = [
+        (RING_GLOW_WIDTH, RING_GLOW_ALPHA),
+        (RING_MID_WIDTH, RING_MID_ALPHA),
+        (RING_CORE_WIDTH, RING_CORE_ALPHA),
+    ];
+
+    for &(width, pass_alpha) in &passes {
+        for &(x1, y1, x2, y2, mid_dist) in &segments {
+            let shimmer = 0.55 + 0.45 * (mid_dist * shimmer_freq + wave_phase).sin();
+            let edge_fade = ((filled_len - mid_dist) / RING_EDGE_FADE).min(1.0);
+            let a = master_alpha * pass_alpha * shimmer * edge_fade;
+            if a < 0.005 {
+                continue;
+            }
+            let col = [
+                LONG_PRESS_OUTLINE_COLOR.0,
+                LONG_PRESS_OUTLINE_COLOR.1,
+                LONG_PRESS_OUTLINE_COLOR.2,
+                a,
+            ];
+            gfx.draw_line(x1, y1, x2, y2, col, width);
+        }
     }
 }
 

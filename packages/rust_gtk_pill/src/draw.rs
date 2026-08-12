@@ -204,17 +204,8 @@ fn draw_long_press_ring(
     let oh = pill_h + inset * 2.0;
     let r = (radius + inset).min(oh / 2.0);
 
-    let outline_alpha = (0.3 + 0.5 * t) * alpha;
-
-    cr.save().ok();
-    cr.set_source_rgba(
-        LONG_PRESS_OUTLINE_COLOR.0,
-        LONG_PRESS_OUTLINE_COLOR.1,
-        LONG_PRESS_OUTLINE_COLOR.2,
-        outline_alpha,
-    );
-    cr.set_line_width(LONG_PRESS_OUTLINE_WIDTH);
-    cr.set_line_cap(cairo::LineCap::Round);
+    // Three-pass silver gradient ring with sine-wave shimmer.
+    let master_alpha = (0.3 + 0.5 * t) * alpha;
 
     // Shared perimeter construction — identical geometry on every platform so
     // the long-press ring traces the same path across Linux/macOS/Windows.
@@ -222,35 +213,63 @@ fn draw_long_press_ring(
     let (distances, total_len) = path_distances(&path);
     let filled_len = total_len * t;
 
-    if filled_len > 0.0 {
-        // Trace the partial outline segment-by-segment (matching the macOS
-        // and Windows renderers) instead of using a dash pattern — dash
-        // offsets against Cairo's own arc Béziers can drift from the shared
-        // polygon, producing a ring that doesn't close at the start point.
-        let mut started = false;
-        for i in 1..path.len() {
-            if distances[i - 1] >= filled_len {
-                break;
-            }
-            let (x1, y1) = path[i - 1];
-            let (mut x2, mut y2) = path[i];
-            if distances[i] > filled_len {
-                let seg = distances[i] - distances[i - 1];
-                let k = if seg > 0.0 {
-                    (filled_len - distances[i - 1]) / seg
-                } else {
-                    0.0
-                };
-                x2 = x1 + (x2 - x1) * k;
-                y2 = y1 + (y2 - y1) * k;
-            }
-            if !started {
-                cr.move_to(x1, y1);
-                started = true;
-            }
-            cr.line_to(x2, y2);
+    if filled_len <= 0.0 {
+        cr.restore().ok();
+        return;
+    }
+
+    let shimmer_freq = RING_SHIMMER_CYCLES * std::f64::consts::TAU / total_len.max(1.0);
+    let wave_phase = state.wave_phase.get();
+
+    // Collect the filled segments once so each pass reuses them.
+    let mut segments: Vec<(f64, f64, f64, f64, f64)> = Vec::new();
+    for i in 1..path.len() {
+        if distances[i - 1] >= filled_len {
+            break;
         }
-        let _ = cr.stroke();
+        let (x1, y1) = path[i - 1];
+        let (mut x2, mut y2) = path[i];
+        if distances[i] > filled_len {
+            let seg = distances[i] - distances[i - 1];
+            let k = if seg > 0.0 {
+                (filled_len - distances[i - 1]) / seg
+            } else {
+                0.0
+            };
+            x2 = x1 + (x2 - x1) * k;
+            y2 = y1 + (y2 - y1) * k;
+        }
+        let mid_dist = (distances[i - 1] + distances[i].min(filled_len)) * 0.5;
+        segments.push((x1, y1, x2, y2, mid_dist));
+    }
+
+    let passes: [(f64, f64); 3] = [
+        (RING_GLOW_WIDTH, RING_GLOW_ALPHA),
+        (RING_MID_WIDTH, RING_MID_ALPHA),
+        (RING_CORE_WIDTH, RING_CORE_ALPHA),
+    ];
+
+    cr.set_line_cap(cairo::LineCap::Round);
+
+    for &(width, pass_alpha) in &passes {
+        cr.set_line_width(width);
+        for &(x1, y1, x2, y2, mid_dist) in &segments {
+            let shimmer = 0.55 + 0.45 * (mid_dist * shimmer_freq + wave_phase).sin();
+            let edge_fade = ((filled_len - mid_dist) / RING_EDGE_FADE).min(1.0);
+            let a = master_alpha * pass_alpha * shimmer * edge_fade;
+            if a < 0.005 {
+                continue;
+            }
+            cr.set_source_rgba(
+                LONG_PRESS_OUTLINE_COLOR.0,
+                LONG_PRESS_OUTLINE_COLOR.1,
+                LONG_PRESS_OUTLINE_COLOR.2,
+                a,
+            );
+            cr.move_to(x1, y1);
+            cr.line_to(x2, y2);
+            let _ = cr.stroke();
+        }
     }
 
     cr.restore().ok();
