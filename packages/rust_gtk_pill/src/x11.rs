@@ -141,24 +141,11 @@ pub(crate) fn setup_x11_window(window: &gtk::Window, state: Rc<PillState>) {
     glib::timeout_add_local(Duration::from_millis(100), move || {
         let dragging = state_tick.dragging.get();
 
-        // Drop edge of a drag: persist the exact drop position from last_pos
         // Drag just ended: persist the actual drop point. `last_pos` is only
         // refreshed on the placement tick (up to a 100ms cadence), so reusing
         // it here can persist a position one interval behind the real drop.
         // Query the pointer at release and resolve the top-left directly.
         if !dragging && was_dragging.get() {
-            let surface_scale = win_tick
-                .window()
-                .map(|gdk_window| gdk_window.scale_factor() as f64)
-                .unwrap_or(1.0);
-            let (ox, oy) = state_tick.content_offset();
-            let (pill_x, pill_y, pill_w, pill_h) = crate::draw::pill_position(
-                &state_tick,
-                state_tick.draw_width.get(),
-                state_tick.draw_height.get(),
-            );
-            let center_x = (ox + pill_x + pill_w / 2.0) * surface_scale;
-            let center_y = (oy + pill_y + pill_h / 2.0) * surface_scale;
             let (cx, cy) = cursor_pos();
             let (dx, dy) = pill_pos_on_monitor(
                 cx as f64,
@@ -169,11 +156,9 @@ pub(crate) fn setup_x11_window(window: &gtk::Window, state: Rc<PillState>) {
                 &state_tick,
             )
             .unwrap_or_else(|| last_pos.get());
-            // `pill_pos_on_monitor` returns the window top-left. `saved_x`/
-            // `saved_y` are used verbatim as the top-left when parked (see the
-            // has_saved_position branch), so store the top-left directly here.
-            // (The center offset is only re-added for monitor-selection anchor
-            // math elsewhere, not for the persisted parked coordinate.)
+            // `pill_pos_on_monitor` returns the window top-left, and
+            // `saved_x`/`saved_y` are used verbatim as the top-left when parked
+            // (see the has_saved_position branch), so store it directly.
             last_pos.set((dx, dy));
             state_tick.saved_x.set(dx as f64);
             state_tick.saved_y.set(dy as f64);
