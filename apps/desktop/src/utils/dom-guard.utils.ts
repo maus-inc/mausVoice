@@ -1,3 +1,5 @@
+import { isWindows } from "./env.utils";
+
 /**
  * Hardens the DOM against mutations performed outside React's control.
  * Chromium-based hosts (WebView2 on Windows in particular) ship features —
@@ -14,7 +16,11 @@
  * so the patch is idempotent and lint-clean (no-extend-native).
  */
 export const applyDomMutationGuards = () => {
-  if (typeof window === "undefined") {
+  // The prototype patch only addresses WebView2 page-translation reparenting
+  // on Windows. On every other platform the native prototypes are correct, so
+  // leaving them untouched keeps real NotFoundError defects visible instead of
+  // silently downgrading them to warnings.
+  if (typeof window === "undefined" || !isWindows()) {
     return;
   }
   const guardFlag = "__mausDomMutationGuardsApplied";
@@ -63,7 +69,15 @@ export const applyDomMutationGuards = () => {
           );
           // The anchor node vanished from its parent; appending keeps the
           // content reachable instead of dropping the subtree on the floor.
-          return this.appendChild(node) as T;
+          try {
+            return this.appendChild(node) as T;
+          } catch (appendError) {
+            console.warn(
+              "[dom-guard] insertBefore fallback failed",
+              appendError,
+            );
+            return node;
+          }
         }
         throw error;
       }
