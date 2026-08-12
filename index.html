@@ -1,0 +1,1928 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>mausVoice - Your voice, typed anywhere</title>
+<meta name="description" content="Voice typing for your own machine. Press a hotkey, speak, and mausVoice transcribes live, cleans it up with AI, and types it into any app. No account, no subscription, written in Rust." />
+<meta property="og:type" content="website" />
+<meta property="og:title" content="mausVoice - Your voice, typed anywhere" />
+<meta property="og:description" content="Dictate into any app and clean it up with AI. No account, no subscription, written in Rust." />
+<meta property="og:image" content="marketing/assets/og-card.jpg" />
+<meta name="twitter:card" content="summary_large_image" />
+<link rel="icon" type="image/png" href="marketing/assets/favicon.png" />
+
+<style>
+/* ------------------------------------------------------------------ *
+ * mausVoice - one-page marketing site.
+ * Monochrome design system: pure black, pure white, gray steps.
+ * Tokens in HSL, matching the template design system exactly.
+ * ------------------------------------------------------------------ */
+
+@font-face {
+  font-family: "Satoshi";
+  src: local("Satoshi"), local("Satoshi Medium"), local("Satoshi-Medium"),
+       url("marketing/assets/fonts/Satoshi-Medium.ttf") format("truetype");
+  font-weight: 100 900;
+  font-style: normal;
+  font-display: swap;
+}
+@font-face {
+  font-family: "Inter";
+  src: url("marketing/assets/fonts/inter-latin-400-normal.woff2") format("woff2");
+  font-weight: 400;
+  font-style: normal;
+  font-display: swap;
+}
+@font-face {
+  font-family: "Inter";
+  src: url("marketing/assets/fonts/inter-latin-500-normal.woff2") format("woff2");
+  font-weight: 500;
+  font-style: normal;
+  font-display: swap;
+}
+@font-face {
+  font-family: "Inter";
+  src: url("marketing/assets/fonts/inter-latin-600-normal.woff2") format("woff2");
+  font-weight: 600;
+  font-style: normal;
+  font-display: swap;
+}
+@font-face {
+  font-family: "Inter";
+  src: url("marketing/assets/fonts/inter-latin-700-normal.woff2") format("woff2");
+  font-weight: 700;
+  font-style: normal;
+  font-display: swap;
+}
+@font-face {
+  font-family: "JetBrains Mono";
+  src: url("marketing/assets/fonts/jetbrains-mono-latin-400-normal.woff2") format("woff2");
+  font-weight: 400;
+  font-style: normal;
+  font-display: swap;
+}
+@font-face {
+  font-family: "JetBrains Mono";
+  src: url("marketing/assets/fonts/jetbrains-mono-latin-500-normal.woff2") format("woff2");
+  font-weight: 500;
+  font-style: normal;
+  font-display: swap;
+}
+@font-face {
+  font-family: "JetBrains Mono";
+  src: url("marketing/assets/fonts/jetbrains-mono-latin-700-normal.woff2") format("woff2");
+  font-weight: 700;
+  font-style: normal;
+  font-display: swap;
+}
+@font-face {
+  font-family: "TAN-PARADISO";
+  src:
+    local("TAN-PARADISO"),
+    local("TAN Paradiso"),
+    url("marketing/assets/fonts/TAN-PARADISO-Regular.woff2") format("woff2");
+  font-weight: 400 700;
+  font-style: normal;
+  font-display: swap;
+}
+
+:root {
+  --background: 0 0% 0%;
+  --foreground: 0 0% 100%;
+  --card: 0 0% 5%;
+  --card-foreground: 0 0% 100%;
+  --primary: 0 0% 100%;
+  --primary-foreground: 0 0% 0%;
+  --secondary: 0 0% 12%;
+  --secondary-foreground: 0 0% 85%;
+  --muted: 0 0% 15%;
+  --muted-foreground: 0 0% 65%;
+  --accent: 170 15% 45%;
+  --accent-foreground: 0 0% 100%;
+  --border: 0 0% 20%;
+  --input: 0 0% 18%;
+  --ring: 0 0% 40%;
+  --hero-subtitle: 210 17% 95%;
+
+  --font-sans: "Satoshi", "Inter", system-ui, -apple-system, sans-serif;
+  --font-display: "TAN-PARADISO", "Inter", system-ui, sans-serif;
+  --font-mono: "JetBrains Mono", ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+
+  --ease-out: cubic-bezier(0.23, 1, 0.32, 1);
+}
+
+* { box-sizing: border-box; }
+
+html { scroll-behavior: smooth; }
+
+body {
+  margin: 0;
+  font-family: var(--font-sans);
+  font-size: 16px;
+  line-height: 1.5;
+  color: hsl(var(--foreground));
+  background: hsl(var(--background));
+  -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
+}
+
+h1, h2, h3, h4, p { margin: 0; }
+
+a { color: inherit; }
+
+img, video { display: block; max-width: 100%; }
+
+::selection { background: hsl(var(--foreground)); color: hsl(var(--background)); }
+
+:focus-visible {
+  outline: 1px solid hsl(var(--ring));
+  outline-offset: 3px;
+  border-radius: 4px;
+}
+
+.skip-link {
+  position: absolute;
+  left: -999px;
+  top: 0;
+  z-index: 200;
+  padding: 10px 16px;
+  background: hsl(var(--foreground));
+  color: hsl(var(--background));
+}
+.skip-link:focus { left: 0; }
+
+.visually-hidden {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  margin: -1px;
+  padding: 0;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  white-space: nowrap;
+  border: 0;
+}
+
+section { scroll-margin-top: 96px; }
+
+/* Brand display accent words (TAN-PARADISO, forced italic + slightly smaller) */
+.cursive {
+  font-family: var(--font-display);
+  font-style: italic;
+  font-weight: 400;
+  font-size: 0.78em;
+  letter-spacing: -0.02em;
+  line-height: 1.15;
+  font-stretch: condensed;
+  transform: scaleX(0.9);
+  transform-origin: left center;
+  display: inline-block;
+}
+
+/* ------------------------------------------------------------------ *
+ * 3D ASCII elements (product cards)
+ * ------------------------------------------------------------------ */
+
+.ascii3d {
+  margin: 0 0 22px;
+  font-family: var(--font-mono);
+  font-size: 9px;
+  line-height: 1.2;
+  color: hsl(var(--muted-foreground) / 0.85);
+  text-shadow: 0 1px 0 hsl(var(--foreground) / 0.1);
+  transform: perspective(260px) rotateX(8deg);
+  transform-origin: 50% 100%;
+  user-select: none;
+}
+
+/* ------------------------------------------------------------------ *
+ * Liquid glass (verbatim template class)
+ * ------------------------------------------------------------------ */
+
+.liquid-glass {
+  background: rgba(255, 255, 255, 0.01);
+  background-blend-mode: luminosity;
+  backdrop-filter: blur(4px);
+  -webkit-backdrop-filter: blur(4px);
+  border: none;
+  box-shadow: inset 0 1px 1px rgba(255, 255, 255, 0.1);
+  position: relative;
+  overflow: hidden;
+}
+
+.liquid-glass::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  padding: 1.4px;
+  background: linear-gradient(180deg,
+    rgba(255,255,255,0.45) 0%, rgba(255,255,255,0.15) 20%,
+    rgba(255,255,255,0) 40%, rgba(255,255,255,0) 60%,
+    rgba(255,255,255,0.15) 80%, rgba(255,255,255,0.45) 100%);
+  -webkit-mask: linear-gradient(#fff 0 0) content-box, linear-gradient(#fff 0 0);
+  -webkit-mask-composite: xor;
+  mask-composite: exclude;
+  pointer-events: none;
+}
+
+/* ------------------------------------------------------------------ *
+ * Buttons
+ * ------------------------------------------------------------------ */
+
+.btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  font-family: inherit;
+  font-size: 15px;
+  font-weight: 500;
+  line-height: 1;
+  text-decoration: none;
+  cursor: pointer;
+  border: none;
+  transition: transform 0.15s var(--ease-out), background-color 0.15s var(--ease-out);
+}
+
+.btn svg { width: 16px; height: 16px; }
+
+.btn-solid {
+  background: hsl(var(--foreground));
+  color: hsl(var(--background));
+  box-shadow: inset 0 3px 10px rgba(0, 0, 0, 0.4);
+}
+.btn-solid:hover { background: hsl(var(--secondary-foreground)); }
+
+.btn-glass {
+  background: rgba(255, 255, 255, 0.01);
+  backdrop-filter: blur(4px);
+  -webkit-backdrop-filter: blur(4px);
+  box-shadow: inset 0 1px 1px rgba(255, 255, 255, 0.1);
+  color: hsl(var(--foreground));
+}
+.btn-glass:hover { background: rgba(255, 255, 255, 0.06); }
+
+@media (hover: hover) and (pointer: fine) {
+  .btn:hover { transform: scale(1.03); }
+  .btn:active { transform: scale(0.98); }
+}
+
+/* ------------------------------------------------------------------ *
+ * Navbar (fixed, transparent)
+ * ------------------------------------------------------------------ */
+
+.nav {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  z-index: 50;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 24px;
+  padding: 16px 32px;
+  background: transparent;
+}
+
+@media (min-width: 768px) {
+  .nav { padding: 16px 112px; }
+}
+
+.brand {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+  text-decoration: none;
+  color: hsl(var(--foreground));
+}
+
+.brand img {
+  width: 28px;
+  height: 28px;
+}
+
+.brand-name {
+  font-family: var(--font-display);
+  font-style: italic;
+  font-size: 17px;
+  font-weight: 400;
+  letter-spacing: 0.01em;
+  line-height: 1;
+}
+
+.nav-links {
+  display: flex;
+  align-items: center;
+  gap: 18px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.nav-links a {
+  color: hsl(var(--muted-foreground));
+  font-size: 14px;
+  font-weight: 500;
+  text-decoration: none;
+  transition: color 0.2s var(--ease-out);
+}
+
+.nav-links a:hover { color: hsl(var(--foreground)); }
+
+.nav-links .sep { color: hsl(var(--muted-foreground) / 0.6); font-size: 12px; }
+
+.nav-socials {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.social-btn {
+  width: 40px;
+  height: 40px;
+  border-radius: 50%;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  color: hsl(var(--muted-foreground));
+  text-decoration: none;
+  transition: color 0.2s var(--ease-out), background-color 0.2s var(--ease-out);
+}
+
+.social-btn svg { width: 17px; height: 17px; }
+
+.social-btn:hover { color: hsl(var(--foreground)); background: rgba(255, 255, 255, 0.06); }
+
+@media (max-width: 768px) {
+  .nav-links { display: none; }
+}
+
+/* ------------------------------------------------------------------ *
+ * Hero
+ * ------------------------------------------------------------------ */
+
+.hero {
+  position: relative;
+  min-height: 100vh;
+  min-height: 100dvh;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  text-align: center;
+  padding: 112px 24px 96px;
+  overflow: hidden;
+}
+
+.hero-bg {
+  position: absolute;
+  inset: 0;
+  z-index: 0;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+.hero-overlay {
+  position: absolute;
+  inset: 0;
+  z-index: 1;
+  background: hsl(var(--background) / 0.35);
+}
+
+.hero-fade {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  z-index: 1;
+  height: 256px;
+  background: linear-gradient(to top, hsl(var(--background)), transparent);
+  pointer-events: none;
+}
+
+.hero-content {
+  position: relative;
+  z-index: 10;
+  width: 100%;
+  max-width: 900px;
+  padding-top: 24px;
+}
+
+.hero-meta {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  margin-bottom: 28px;
+  color: hsl(var(--muted-foreground));
+  font-size: 14px;
+}
+
+.hero-meta .os-mark { width: 15px; height: 15px; fill: currentColor; }
+
+.hero h1 {
+  font-size: clamp(3rem, 8vw, 6rem);
+  font-weight: 500;
+  letter-spacing: -0.04em;
+  line-height: 1.1;
+  font-stretch: condensed;
+  transform: scaleX(0.93);
+  transform-origin: left center;
+}
+
+
+.hero-sub {
+  margin: 28px auto 0;
+  max-width: 620px;
+  font-size: 18px;
+  line-height: 1.6;
+  color: hsl(var(--hero-subtitle));
+}
+
+.hero-form {
+  margin: 40px auto 0;
+  max-width: 460px;
+  border-radius: 999px;
+  padding: 8px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.hero-form .form-hint {
+  padding: 0 10px 0 18px;
+  font-size: 13.5px;
+  font-weight: 500;
+  color: hsl(var(--secondary-foreground) / 0.9);
+  text-align: left;
+}
+
+.hero-form .btn {
+  flex: none;
+  padding: 14px 32px;
+  border-radius: 999px;
+  font-weight: 600;
+  font-size: 13px;
+  letter-spacing: 0.04em;
+}
+
+@media (max-width: 560px) {
+  .hero-form { flex-direction: column; border-radius: 28px; }
+  .hero-form .form-hint { padding: 8px 12px 0; text-align: center; }
+  .hero-form .btn { width: 100%; }
+}
+
+/* Live recording pill (1:1 copy of docs/animated-pill.gif, driven by the
+   same sine-wave algorithm as packages/rust_macos_pill/src/draw.rs) */
+.pill-demo {
+  margin: 56px 0 0;
+  width: 100vw;
+  margin-left: calc(50% - 50vw);
+  overflow: hidden;
+}
+
+.pill-demo canvas {
+  display: block;
+  width: 100%;
+  height: 140px;
+}
+
+.pill-cta {
+  margin: 30px auto 0;
+  width: 189.1px;
+  height: 51px;
+}
+
+.pill-cta canvas {
+  display: block;
+  width: 189.1px;
+  height: 51px;
+}
+
+/* ------------------------------------------------------------------ *
+ * Section shell
+ * ------------------------------------------------------------------ */
+
+.section-head {
+  text-align: center;
+  padding-inline: 24px;
+}
+
+/* ------------------------------------------------------------------ *
+ * "Typing has changed" section
+ * ------------------------------------------------------------------ */
+
+.why {
+  position: relative;
+  padding: 208px 24px 36px;
+}
+
+@media (min-width: 768px) {
+  .why { padding: 256px 24px 36px; }
+}
+
+.why h2 {
+  font-size: clamp(2.75rem, 7vw, 6rem);
+  font-weight: 500;
+  letter-spacing: -0.04em;
+  line-height: 1.1;
+  font-stretch: condensed;
+  transform: scaleX(0.93);
+  transform-origin: left center;
+}
+
+.why .sub {
+  margin: 28px auto 96px;
+  max-width: 640px;
+  font-size: 18px;
+  line-height: 1.6;
+  color: hsl(var(--muted-foreground));
+}
+
+.platforms {
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: 48px;
+  max-width: 1080px;
+  margin: 0 auto 80px;
+}
+
+@media (min-width: 768px) {
+  .platforms { grid-template-columns: repeat(3, 1fr); gap: 32px; }
+}
+
+.platform-card {
+  text-align: center;
+  display: block;
+  text-decoration: none;
+  color: inherit;
+}
+
+.platform-card .icon-box {
+  width: 200px;
+  height: 200px;
+  margin: 0 auto 28px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 50%;
+  border: 1px solid hsl(var(--border) / 0.5);
+  color: hsl(var(--muted-foreground));
+}
+
+.platform-card .icon-box svg {
+  width: 72px;
+  height: 72px;
+  fill: currentColor;
+  opacity: 0.85;
+}
+
+.platform-card h3 {
+  font-size: 16px;
+  font-weight: 600;
+}
+
+.platform-card p {
+  margin-top: 10px;
+  font-size: 14px;
+  line-height: 1.6;
+  color: hsl(var(--muted-foreground));
+}
+
+.why .tagline {
+  text-align: center;
+  font-size: 14px;
+  color: hsl(var(--muted-foreground));
+}
+
+/* ------------------------------------------------------------------ *
+ * Mission (scroll word reveal)
+ * ------------------------------------------------------------------ */
+
+.mission {
+  position: relative;
+  padding: 0 24px 128px;
+}
+
+@media (min-width: 768px) {
+  .mission { padding: 0 24px 176px; }
+}
+
+.mission-video {
+  position: relative;
+  max-width: 800px;
+  margin: 0 auto 96px;
+  border-radius: 24px;
+  overflow: hidden;
+}
+
+/* Caption toggle: hidden by default, appears faintly on hover of the
+   video, bottom-right corner. Small and barely noticeable. */
+.caption-toggle {
+  position: absolute;
+  right: 10px;
+  bottom: 10px;
+  z-index: 5;
+  width: 30px;
+  height: 30px;
+  border: 1px solid rgba(255, 255, 255, 0.16);
+  border-radius: 8px;
+  background: rgba(0, 0, 0, 0.55);
+  color: rgba(255, 255, 255, 0.6);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  opacity: 0;
+  transition: opacity 0.2s var(--ease-out), color 0.2s var(--ease-out),
+              background-color 0.2s var(--ease-out);
+}
+
+.caption-toggle svg {
+  width: 15px;
+  height: 15px;
+}
+
+.caption-toggle .ic-off { display: none; }
+
+.caption-toggle.on { opacity: 0.85; color: #fff; }
+.caption-toggle.on .ic-on { display: none; }
+.caption-toggle.on .ic-off { display: block; }
+
+@media (hover: hover) and (pointer: fine) {
+  .mission-video:hover .caption-toggle { opacity: 0.45; }
+  .caption-toggle:hover { opacity: 0.9 !important; color: #fff; background: rgba(0, 0, 0, 0.75); }
+}
+
+.mission-video .caption-toggle:focus-visible { opacity: 0.9; }
+
+.mission-video video { width: 100%; height: auto; }
+
+.mission-copy {
+  max-width: 860px;
+  margin: 0 auto;
+}
+
+.mission-copy p {
+  font-weight: 500;
+  letter-spacing: -1px;
+  line-height: 1.3;
+}
+
+.mission-copy p.p1 {
+  font-size: clamp(1.5rem, 3.4vw, 3rem);
+}
+
+.mission-copy p.p2 {
+  margin-top: 40px;
+  font-size: clamp(1.25rem, 2.2vw, 1.875rem);
+}
+
+/* Words fade from dim to full as the paragraph enters view */
+.words .w {
+  opacity: 0.15;
+  color: hsl(var(--hero-subtitle));
+  transition: opacity 0.55s var(--ease-out);
+}
+
+.words .w.hl { color: hsl(var(--foreground)); }
+
+.words.in .w {
+  opacity: 1;
+  transition-delay: calc(var(--i) * 28ms);
+}
+
+/* ------------------------------------------------------------------ *
+ * Solution
+ * ------------------------------------------------------------------ */
+
+.solution {
+  position: relative;
+  padding: 128px 24px 176px;
+  border-top: 1px solid hsl(var(--border) / 0.3);
+  text-align: center;
+}
+
+.solution-label {
+  font-size: 12px;
+  font-weight: 500;
+  letter-spacing: 3px;
+  text-transform: uppercase;
+  color: hsl(var(--muted-foreground));
+}
+
+.solution h2 {
+  margin-top: 20px;
+  font-size: clamp(2.25rem, 5.4vw, 3.75rem);
+  font-weight: 500;
+  letter-spacing: -0.04em;
+  line-height: 1.12;
+  font-stretch: condensed;
+  transform: scaleX(0.93);
+  transform-origin: left center;
+}
+
+.solution .band {
+  position: relative;
+  max-width: 1100px;
+  margin: 64px auto 96px;
+  border-radius: 16px;
+  overflow: hidden;
+  aspect-ratio: 3 / 1;
+}
+
+.solution .band img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  object-position: center 30%;
+}
+
+.features {
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: 32px;
+  max-width: 1080px;
+  margin: 0 auto;
+  text-align: left;
+}
+
+@media (min-width: 768px) {
+  .features { grid-template-columns: repeat(4, 1fr); gap: 32px; }
+}
+
+.feature h3 { font-size: 16px; font-weight: 600; }
+
+.feature p {
+  margin-top: 10px;
+  font-size: 14px;
+  line-height: 1.6;
+  color: hsl(var(--muted-foreground));
+}
+
+/* ------------------------------------------------------------------ *
+ * CTA
+ * ------------------------------------------------------------------ */
+
+.cta {
+  position: relative;
+  padding: 128px 24px 176px;
+  border-top: 1px solid hsl(var(--border) / 0.3);
+  text-align: center;
+  overflow: hidden;
+}
+
+.cta-bg {
+  position: absolute;
+  inset: 0;
+  z-index: 0;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+.cta-overlay {
+  position: absolute;
+  inset: 0;
+  z-index: 1;
+  background: hsl(var(--background) / 0.3);
+}
+
+.cta-content {
+  position: relative;
+  z-index: 10;
+  max-width: 720px;
+  margin: 0 auto;
+}
+
+.cta .logo-mark {
+  width: 44px;
+  height: 44px;
+  margin: 0 auto 28px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.cta .logo-mark img {
+  width: 44px;
+  height: 44px;
+}
+
+.cta h2 {
+  font-size: clamp(2.5rem, 6vw, 4.5rem);
+  font-weight: 500;
+  letter-spacing: -0.04em;
+  line-height: 1.12;
+  font-stretch: condensed;
+  transform: scaleX(0.93);
+  transform-origin: left center;
+}
+
+.cta .sub {
+  margin: 20px auto 0;
+  max-width: 460px;
+  font-size: 16px;
+  line-height: 1.6;
+  color: hsl(var(--muted-foreground));
+}
+
+.cta-actions {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: 14px;
+  margin-top: 40px;
+}
+
+.cta-actions .btn {
+  padding: 14px 32px;
+  border-radius: 8px;
+}
+
+/* ------------------------------------------------------------------ *
+ * Footer
+ * ------------------------------------------------------------------ */
+
+/* Liquid-glass footer (adapted from the LUMINA footer design) */
+.footer-glass {
+  margin: 128px auto 56px;
+  width: calc(100% - 48px);
+  max-width: 1280px;
+  border-radius: 24px;
+  padding: 24px;
+  color: rgba(255, 255, 255, 0.7);
+}
+
+@media (min-width: 768px) {
+  .footer-glass {
+    margin-top: 256px;
+    padding: 40px;
+  }
+}
+
+.fg-grid {
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: 40px;
+  margin-bottom: 40px;
+}
+
+@media (min-width: 768px) {
+  .fg-grid {
+    grid-template-columns: repeat(12, 1fr);
+    gap: 48px;
+  }
+}
+
+.fg-brand { grid-column: span 12; }
+
+@media (min-width: 768px) {
+  .fg-brand { grid-column: span 5; }
+}
+
+.fg-brand-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.fg-brand-row svg, .fg-brand-row img { width: 24px; height: 24px; }
+.fg-brand-row svg { fill: currentColor; }
+.fg-brand-row img { border-radius: 6px; }
+
+.fg-brand-row span {
+  font-size: 20px;
+  font-weight: 500;
+  color: #fff;
+}
+
+.fg-brand p {
+  margin-top: 14px;
+  font-size: 14px;
+  line-height: 1.625;
+  max-width: 384px;
+}
+
+.fg-links {
+  grid-column: span 12;
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: 32px;
+}
+
+@media (min-width: 768px) {
+  .fg-links {
+    grid-column: span 7;
+    grid-template-columns: repeat(3, 1fr);
+    gap: 12px;
+  }
+}
+
+.fg-links h4 {
+  margin: 0 0 16px;
+  font-size: 14px;
+  font-weight: 500;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: #fff;
+}
+
+.fg-links ul {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  display: grid;
+  gap: 8px;
+}
+
+.fg-links a {
+  display: block;
+  font-size: 12px;
+  color: inherit;
+  text-decoration: none;
+  transition: color 0.2s var(--ease-out);
+}
+
+.fg-links a:hover { color: #fff; }
+
+.ascii-deco {
+  position: absolute;
+  pointer-events: none;
+  user-select: none;
+  opacity: 0.32;
+  z-index: 1;
+}
+
+@media (max-width: 960px) {
+  .ascii-deco { display: none; }
+}
+
+.footer-ascii {
+  position: absolute;
+  right: 32px;
+  bottom: 26px;
+  width: 220px;
+  max-width: 26%;
+  opacity: 0.8;
+  pointer-events: none;
+  user-select: none;
+}
+
+@media (max-width: 768px) {
+  .footer-ascii { display: none; }
+}
+
+.fg-bottom {
+  padding-top: 24px;
+  border-top: 1px solid rgba(255, 255, 255, 0.1);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: space-between;
+  gap: 24px;
+}
+
+@media (min-width: 768px) {
+  .fg-bottom {
+    flex-direction: row;
+    gap: 16px;
+  }
+}
+
+.fg-bottom p,
+.fg-bottom .join-label {
+  margin: 0;
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.1em;
+  opacity: 0.5;
+}
+
+.fg-socials {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.fg-socials .join-label { margin-right: 4px; }
+
+.fg-socials a {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  opacity: 0.7;
+  color: inherit;
+  transition: opacity 0.2s var(--ease-out), color 0.2s var(--ease-out);
+}
+
+.fg-socials a:hover { opacity: 1; color: #fff; }
+
+.fg-socials svg {
+  width: 16px;
+  height: 16px;
+}
+
+/* ------------------------------------------------------------------ *
+ * fadeUp pattern (template: opacity 0 -> 1, y 20 -> 0, 0.6s, easeOut)
+ * ------------------------------------------------------------------ */
+
+.fade-up {
+  opacity: 0;
+  translate: 0 20px;
+  transition:
+    opacity 0.6s var(--ease-out),
+    translate 0.6s var(--ease-out);
+  transition-delay: var(--delay, 0s);
+}
+
+.fade-up.in {
+  opacity: 1;
+  translate: 0 0;
+}
+
+/* When Lenis + GSAP take over, let GSAP drive the reveals entirely */
+.gsap-active .fade-up,
+.gsap-active .words .w {
+  transition: none;
+}
+
+.gsap-active .fade-up {
+  translate: none;
+}
+
+/* ------------------------------------------------------------------ *
+ * Reduced motion
+ * ------------------------------------------------------------------ */
+
+@media (prefers-reduced-motion: reduce) {
+  html { scroll-behavior: auto; }
+  *, *::before, *::after {
+    animation-duration: 1ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 1ms !important;
+    transition-delay: 0s !important;
+    scroll-behavior: auto !important;
+  }
+  .fade-up, .words .w { opacity: 1 !important; transform: none; translate: none; }
+  .btn:hover { transform: none; }
+}
+</style>
+<noscript>
+  <style>
+    .fade-up { opacity: 1; transform: none; translate: none; }
+    .words .w { opacity: 1; }
+  </style>
+</noscript>
+</head>
+<body>
+
+<a class="skip-link" href="#main">Skip to content</a>
+
+<header class="nav">
+  <a class="brand" href="#top" aria-label="mausVoice home">
+    <img src="marketing/assets/logo.png" alt="" width="28" height="28" />
+    <span class="brand-name">mausVoice</span>
+  </a>
+
+  <nav aria-label="Primary">
+    <ul class="nav-links">
+      <li><a href="#top">Home</a></li>
+      <li class="sep" aria-hidden="true">&bull;</li>
+      <li><a href="#why">Why voice</a></li>
+      <li class="sep" aria-hidden="true">&bull;</li>
+      <li><a href="#how-it-works">How it works</a></li>
+      <li class="sep" aria-hidden="true">&bull;</li>
+      <li><a href="#features">Features</a></li>
+    </ul>
+  </nav>
+
+  <div class="nav-socials">
+    <a class="social-btn liquid-glass" href="https://github.com/maus-inc/mausVoice" rel="noopener" aria-label="mausVoice on GitHub">
+      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M12 .297c-6.63 0-12 5.373-12 12 0 5.303 3.438 9.8 8.205 11.385.6.113.82-.258.82-.577 0-.285-.01-1.04-.015-2.04-3.338.724-4.042-1.61-4.042-1.61C4.422 18.07 3.633 17.7 3.633 17.7c-1.087-.744.084-.729.084-.729 1.205.084 1.838 1.236 1.838 1.236 1.07 1.835 2.809 1.305 3.495.998.108-.776.417-1.305.76-1.605-2.665-.3-5.466-1.332-5.466-5.93 0-1.31.465-2.38 1.235-3.22-.135-.303-.54-1.523.105-3.176 0 0 1.005-.322 3.3 1.23.96-.267 1.98-.399 3-.405 1.02.006 2.04.138 3 .405 2.28-1.552 3.285-1.23 3.285-1.23.645 1.653.24 2.873.12 3.176.765.84 1.23 1.91 1.23 3.22 0 4.61-2.805 5.625-5.475 5.92.42.36.81 1.096.81 2.22 0 1.606-.015 2.896-.015 3.286 0 .315.21.69.825.57C20.565 22.092 24 17.592 24 12.297c0-6.627-5.373-12-12-12"/></svg>
+    </a>
+    <a class="social-btn liquid-glass" href="https://github.com/maus-inc/mausVoice/tree/main/docs" rel="noopener" aria-label="Documentation">
+      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 7v14"/><path d="M16 12h2"/><path d="M16 8h2"/><path d="M3 18a1 1 0 0 1-1-1V4a1 1 0 0 1 1-1h5a4 4 0 0 1 4 4 4 4 0 0 1 4-4h5a1 1 0 0 1 1 1v13a1 1 0 0 1-1 1h-6a3 3 0 0 0-3 3 3 3 0 0 0-3-3z"/><path d="M6 12h2"/><path d="M6 8h2"/></svg>
+    </a>
+    <a class="social-btn liquid-glass" href="https://github.com/maus-inc/mausVoice/releases" rel="noopener" aria-label="Downloads and releases">
+      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 3v12"/><path d="m7 10 5 5 5-5"/><path d="M5 21h14"/></svg>
+    </a>
+  </div>
+</header>
+
+<main id="main">
+
+<section class="hero" id="top">
+  <img class="hero-bg" src="marketing/assets/hero-bg.jpg" alt="" aria-hidden="true" />
+  <div class="hero-overlay" aria-hidden="true"></div>
+  <div class="hero-fade" aria-hidden="true"></div>
+
+  <img class="ascii-deco" src="marketing/assets/ascii-eq.png" alt="" aria-hidden="true" style="left:28px; bottom:30px; width:280px;" />
+  <img class="ascii-deco" src="marketing/assets/ascii-term.png" alt="" aria-hidden="true" style="right:36px; bottom:26px; width:150px;" />
+
+  <div class="hero-content">
+    <p class="hero-meta fade-up" style="--delay:0s">
+      <svg class="os-mark" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" aria-hidden="true"><path d="M12.152 6.896c-.948 0-2.415-1.078-3.96-1.04-2.04.027-3.91 1.183-4.961 3.014-2.117 3.675-.546 9.103 1.519 12.09 1.013 1.454 2.208 3.09 3.792 3.039 1.52-.065 2.09-.987 3.935-.987 1.831 0 2.35.987 3.96.948 1.637-.026 2.676-1.48 3.676-2.948 1.156-1.688 1.636-3.325 1.662-3.415-.039-.013-3.182-1.221-3.22-4.857-.026-3.04 2.48-4.494 2.597-4.559-1.429-2.09-3.623-2.324-4.39-2.376-2-.156-3.675 1.09-4.61 1.09zM15.53 3.83c.843-1.012 1.4-2.427 1.245-3.83-1.207.052-2.662.805-3.532 1.818-.78.896-1.454 2.338-1.273 3.714 1.338.104 2.715-.688 3.559-1.701"/></svg>
+      <svg class="os-mark" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" aria-hidden="true"><path d="M0 3.449 9.75 2.1v9.451H0m10.949-9.602L24 0v11.4H10.949M0 12.6h9.75v9.451L0 20.699m10.949-8.099H24V24l-12.9-1.801"/></svg>
+      <svg class="os-mark" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" aria-hidden="true"><path d="M12.504 0c-.155 0-.315.008-.48.021-4.226.333-3.105 4.807-3.17 6.298-.076 1.092-.3 1.953-1.05 3.02-.885 1.051-2.127 2.75-2.716 4.521-.278.832-.41 1.684-.287 2.489a.424.424 0 00-.11.135c-.26.268-.45.6-.663.839-.199.199-.485.267-.797.4-.313.136-.658.269-.864.68-.09.189-.136.394-.132.602 0 .199.027.4.055.536.058.399.116.728.04.97-.249.68-.28 1.145-.106 1.484.174.334.535.47.94.601.81.2 1.91.135 2.774.6.926.466 1.866.67 2.616.47.526-.116.97-.464 1.208-.946.587-.003 1.23-.269 2.26-.334.699-.058 1.574.267 2.577.2.025.134.063.198.114.333l.003.003c.391.778 1.113 1.132 1.884 1.071.771-.06 1.592-.536 2.257-1.306.631-.765 1.683-1.084 2.378-1.503.348-.199.629-.469.649-.853.023-.4-.2-.811-.714-1.376v-.097l-.003-.003c-.17-.2-.25-.535-.338-.926-.085-.401-.182-.786-.492-1.046h-.003c-.059-.054-.123-.067-.188-.135a.357.357 0 00-.19-.064c.431-1.278.264-2.55-.173-3.694-.533-1.41-1.465-2.638-2.175-3.483-.796-1.005-1.576-1.957-1.56-3.368.026-2.152.236-6.133-3.544-6.139zm.529 3.405h.013c.213 0 .396.062.584.198.19.135.33.332.438.533.105.259.158.459.166.724 0-.02.006-.04.006-.06v.105a.086.086 0 01-.004-.021l-.004-.024a1.807 1.807 0 01-.15.706.953.953 0 01-.213.335.71.71 0 00-.088-.042c-.104-.045-.198-.064-.284-.133a1.312 1.312 0 00-.22-.066c.05-.06.146-.133.183-.198.053-.128.082-.264.088-.402v-.02a1.21 1.21 0 00-.061-.4c-.045-.134-.101-.2-.183-.333-.084-.066-.167-.132-.267-.132h-.016c-.093 0-.176.03-.262.132a.8.8 0 00-.205.334 1.18 1.18 0 00-.09.4v.019c.002.089.008.179.02.267-.193-.067-.438-.135-.607-.202a1.635 1.635 0 01-.018-.2v-.02a1.772 1.772 0 01.15-.768c.082-.22.232-.406.43-.533a.985.985 0 01.594-.2zm-2.962.059h.036c.142 0 .27.048.399.135.146.129.264.288.344.465.09.199.14.4.153.667v.004c.007.134.006.2-.002.266v.08c-.03.007-.056.018-.083.024-.152.055-.274.135-.393.2.012-.09.013-.18.003-.267v-.015c-.012-.133-.04-.2-.082-.333a.613.613 0 00-.166-.267.248.248 0 00-.183-.064h-.021c-.071.006-.13.04-.186.132a.552.552 0 00-.12.27.944.944 0 00-.023.33v.015c.012.135.037.2.08.334.046.134.098.2.166.268.01.009.02.018.034.024-.07.057-.117.07-.176.136a.304.304 0 01-.131.068 2.62 2.62 0 01-.275-.402 1.772 1.772 0 01-.155-.667 1.759 1.759 0 01.08-.668 1.43 1.43 0 01.283-.535c.128-.133.26-.2.418-.2zm1.37 1.706c.332 0 .733.065 1.216.399.293.2.523.269 1.052.468h.003c.255.136.405.266.478.399v-.131a.571.571 0 01.016.47c-.123.31-.516.643-1.063.842v.002c-.268.135-.501.333-.775.465-.276.135-.588.292-1.012.267a1.139 1.139 0 01-.448-.067 3.566 3.566 0 01-.322-.198c-.195-.135-.363-.332-.612-.465v-.005h-.005c-.4-.246-.616-.512-.686-.71-.07-.268-.005-.47.193-.6.224-.135.38-.271.483-.336.104-.074.143-.102.176-.131h.002v-.003c.169-.202.436-.47.839-.601.139-.036.294-.065.466-.065zm2.8 2.142c.358 1.417 1.196 3.475 1.735 4.473.286.534.855 1.659 1.102 3.024.156-.005.33.018.513.064.646-1.671-.546-3.467-1.089-3.966-.22-.2-.232-.335-.123-.335.59.534 1.365 1.572 1.646 2.757.13.535.16 1.104.021 1.67.067.028.135.06.205.067 1.032.534 1.413.938 1.23 1.537v-.043c-.06-.003-.12 0-.18 0h-.016c.151-.467-.182-.825-1.065-1.224-.915-.4-1.646-.336-1.77.465-.008.043-.013.066-.018.135-.068.023-.139.053-.209.064-.43.268-.662.669-.793 1.187-.13.533-.17 1.156-.205 1.869v.003c-.02.334-.17.838-.319 1.35-1.5 1.072-3.58 1.538-5.348.334a2.645 2.645 0 00-.402-.533 1.45 1.45 0 00-.275-.333c.182 0 .338-.03.465-.067a.615.615 0 00.314-.334c.108-.267 0-.697-.345-1.163-.345-.467-.931-.995-1.788-1.521-.63-.4-.986-.87-1.15-1.396-.165-.534-.143-1.085-.015-1.645.245-1.07.873-2.11 1.274-2.763.107-.065.037.135-.408.974-.396.751-1.14 2.497-.122 3.854a8.123 8.123 0 01.647-2.876c.564-1.278 1.743-3.504 1.836-5.268.048.036.217.135.289.202.218.133.38.333.59.465.21.201.477.335.876.335.039.003.075.006.11.006.412 0 .73-.134.997-.268.29-.134.52-.334.74-.4h.005c.467-.135.835-.402 1.044-.7zm2.185 8.958c.037.6.343 1.245.882 1.377.588.134 1.434-.333 1.791-.765l.211-.01c.315-.007.577.01.847.268l.003.003c.208.199.305.53.391.876.085.4.154.78.409 1.066.486.527.645.906.636 1.14l.003-.007v.018l-.003-.012c-.015.262-.185.396-.498.595-.63.401-1.746.712-2.457 1.57-.618.737-1.37 1.14-2.036 1.191-.664.053-1.237-.2-1.574-.898l-.005-.003c-.21-.4-.12-1.025.056-1.69.176-.668.428-1.344.463-1.897.037-.714.076-1.335.195-1.814.12-.465.308-.797.641-.984l.045-.022zm-10.814.049h.01c.053 0 .105.005.157.014.376.055.706.333 1.023.752l.91 1.664.003.003c.243.533.754 1.064 1.189 1.637.434.598.77 1.131.729 1.57v.006c-.057.744-.48 1.148-1.125 1.294-.645.135-1.52.002-2.395-.464-.968-.536-2.118-.469-2.857-.602-.369-.066-.61-.2-.723-.4-.11-.2-.113-.602.123-1.23v-.004l.002-.003c.117-.334.03-.752-.027-1.118-.055-.401-.083-.71.043-.94.16-.334.396-.4.69-.533.294-.135.64-.202.915-.47h.002v-.002c.256-.268.445-.601.668-.838.19-.201.38-.336.663-.336zm7.159-9.074c-.435.201-.945.535-1.488.535-.542 0-.97-.267-1.28-.466-.154-.134-.28-.268-.373-.335-.164-.134-.144-.333-.074-.333.109.016.129.134.199.2.096.066.215.2.36.333.292.2.68.467 1.167.467.485 0 1.053-.267 1.398-.466.195-.135.445-.334.648-.467.156-.136.149-.267.279-.267.128.016.034.134-.147.332a8.097 8.097 0 01-.69.468zm-1.082-1.583V5.64c-.006-.02.013-.042.029-.05.074-.043.18-.027.26.004.063 0 .16.067.15.135-.006.049-.085.066-.135.066-.055 0-.092-.043-.141-.068-.052-.018-.146-.008-.163-.065zm-.551 0c-.02.058-.113.049-.166.066-.047.025-.086.068-.14.068-.05 0-.13-.02-.136-.068-.01-.066.088-.133.15-.133.08-.031.184-.047.259-.005.019.009.036.03.03.05v.02h.003z"/></svg>
+      Free + open source
+    </p>
+
+    <h1 class="fade-up" style="--delay:0.1s">
+      Your voice, typed <span class="cursive">anywhere.</span>
+    </h1>
+
+    <p class="hero-sub fade-up" style="--delay:0.2s">
+      Press a hotkey, speak, and mausVoice transcribes live, cleans it up
+      with AI, and types it into any app. No account. No subscription.
+    </p>
+
+    <div class="hero-form liquid-glass fade-up" style="--delay:0.3s">
+      <span class="form-hint">Free for macOS, Windows &amp; Linux</span>
+      <a class="btn btn-solid" href="https://github.com/maus-inc/mausVoice/releases" rel="noopener">
+        DOWNLOAD
+      </a>
+    </div>
+
+  </div>
+</section>
+
+<section class="why" id="why">
+  <img class="ascii-deco" src="marketing/assets/ascii-rings.png" alt="" aria-hidden="true" style="left:26px; top:48%; width:210px;" />
+
+  <div class="section-head">
+    <h2 class="fade-up">
+      Typing has <span class="cursive">changed.</span> Have you?
+    </h2>
+    <p class="sub fade-up" style="--delay:0.1s">
+      Live transcription is fast, accurate, and free to try. The only
+      habit left to change is reaching for the keyboard.
+    </p>
+  </div>
+
+  <div class="platforms">
+    <a class="platform-card fade-up" href="https://github.com/maus-inc/mausVoice/releases" rel="noopener">
+      <div class="icon-box" aria-hidden="true">
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12.152 6.896c-.948 0-2.415-1.078-3.96-1.04-2.04.027-3.91 1.183-4.961 3.014-2.117 3.675-.546 9.103 1.519 12.09 1.013 1.454 2.208 3.09 3.792 3.039 1.52-.065 2.09-.987 3.935-.987 1.831 0 2.35.987 3.96.948 1.637-.026 2.676-1.48 3.676-2.948 1.156-1.688 1.636-3.325 1.662-3.415-.039-.013-3.182-1.221-3.22-4.857-.026-3.04 2.48-4.494 2.597-4.559-1.429-2.09-3.623-2.324-4.39-2.376-2-.156-3.675 1.09-4.61 1.09zM15.53 3.83c.843-1.012 1.4-2.427 1.245-3.83-1.207.052-2.662.805-3.532 1.818-.78.896-1.454 2.338-1.273 3.714 1.338.104 2.715-.688 3.559-1.701"/></svg>
+      </div>
+      <h3>macOS</h3>
+      <p>Native builds for Apple silicon and Intel Macs.</p>
+    </a>
+
+    <a class="platform-card fade-up" style="--delay:0.1s" href="https://github.com/maus-inc/mausVoice/releases" rel="noopener">
+      <div class="icon-box" aria-hidden="true">
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M0 3.449 9.75 2.1v9.451H0m10.949-9.602L24 0v11.4H10.949M0 12.6h9.75v9.451L0 20.699m10.949-8.099H24V24l-12.9-1.801"/></svg>
+      </div>
+      <h3>Windows</h3>
+      <p>A native installer, up and running in minutes.</p>
+    </a>
+
+    <a class="platform-card fade-up" style="--delay:0.2s" href="https://github.com/maus-inc/mausVoice/releases" rel="noopener">
+      <div class="icon-box" aria-hidden="true">
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12.504 0c-.155 0-.315.008-.48.021-4.226.333-3.105 4.807-3.17 6.298-.076 1.092-.3 1.953-1.05 3.02-.885 1.051-2.127 2.75-2.716 4.521-.278.832-.41 1.684-.287 2.489a.424.424 0 00-.11.135c-.26.268-.45.6-.663.839-.199.199-.485.267-.797.4-.313.136-.658.269-.864.68-.09.189-.136.394-.132.602 0 .199.027.4.055.536.058.399.116.728.04.97-.249.68-.28 1.145-.106 1.484.174.334.535.47.94.601.81.2 1.91.135 2.774.6.926.466 1.866.67 2.616.47.526-.116.97-.464 1.208-.946.587-.003 1.23-.269 2.26-.334.699-.058 1.574.267 2.577.2.025.134.063.198.114.333l.003.003c.391.778 1.113 1.132 1.884 1.071.771-.06 1.592-.536 2.257-1.306.631-.765 1.683-1.084 2.378-1.503.348-.199.629-.469.649-.853.023-.4-.2-.811-.714-1.376v-.097l-.003-.003c-.17-.2-.25-.535-.338-.926-.085-.401-.182-.786-.492-1.046h-.003c-.059-.054-.123-.067-.188-.135a.357.357 0 00-.19-.064c.431-1.278.264-2.55-.173-3.694-.533-1.41-1.465-2.638-2.175-3.483-.796-1.005-1.576-1.957-1.56-3.368.026-2.152.236-6.133-3.544-6.139zm.529 3.405h.013c.213 0 .396.062.584.198.19.135.33.332.438.533.105.259.158.459.166.724 0-.02.006-.04.006-.06v.105a.086.086 0 01-.004-.021l-.004-.024a1.807 1.807 0 01-.15.706.953.953 0 01-.213.335.71.71 0 00-.088-.042c-.104-.045-.198-.064-.284-.133a1.312 1.312 0 00-.22-.066c.05-.06.146-.133.183-.198.053-.128.082-.264.088-.402v-.02a1.21 1.21 0 00-.061-.4c-.045-.134-.101-.2-.183-.333-.084-.066-.167-.132-.267-.132h-.016c-.093 0-.176.03-.262.132a.8.8 0 00-.205.334 1.18 1.18 0 00-.09.4v.019c.002.089.008.179.02.267-.193-.067-.438-.135-.607-.202a1.635 1.635 0 01-.018-.2v-.02a1.772 1.772 0 01.15-.768c.082-.22.232-.406.43-.533a.985.985 0 01.594-.2zm-2.962.059h.036c.142 0 .27.048.399.135.146.129.264.288.344.465.09.199.14.4.153.667v.004c.007.134.006.2-.002.266v.08c-.03.007-.056.018-.083.024-.152.055-.274.135-.393.2.012-.09.013-.18.003-.267v-.015c-.012-.133-.04-.2-.082-.333a.613.613 0 00-.166-.267.248.248 0 00-.183-.064h-.021c-.071.006-.13.04-.186.132a.552.552 0 00-.12.27.944.944 0 00-.023.33v.015c.012.135.037.2.08.334.046.134.098.2.166.268.01.009.02.018.034.024-.07.057-.117.07-.176.136a.304.304 0 01-.131.068 2.62 2.62 0 01-.275-.402 1.772 1.772 0 01-.155-.667 1.759 1.759 0 01.08-.668 1.43 1.43 0 01.283-.535c.128-.133.26-.2.418-.2zm1.37 1.706c.332 0 .733.065 1.216.399.293.2.523.269 1.052.468h.003c.255.136.405.266.478.399v-.131a.571.571 0 01.016.47c-.123.31-.516.643-1.063.842v.002c-.268.135-.501.333-.775.465-.276.135-.588.292-1.012.267a1.139 1.139 0 01-.448-.067 3.566 3.566 0 01-.322-.198c-.195-.135-.363-.332-.612-.465v-.005h-.005c-.4-.246-.616-.512-.686-.71-.07-.268-.005-.47.193-.6.224-.135.38-.271.483-.336.104-.074.143-.102.176-.131h.002v-.003c.169-.202.436-.47.839-.601.139-.036.294-.065.466-.065zm2.8 2.142c.358 1.417 1.196 3.475 1.735 4.473.286.534.855 1.659 1.102 3.024.156-.005.33.018.513.064.646-1.671-.546-3.467-1.089-3.966-.22-.2-.232-.335-.123-.335.59.534 1.365 1.572 1.646 2.757.13.535.16 1.104.021 1.67.067.028.135.06.205.067 1.032.534 1.413.938 1.23 1.537v-.043c-.06-.003-.12 0-.18 0h-.016c.151-.467-.182-.825-1.065-1.224-.915-.4-1.646-.336-1.77.465-.008.043-.013.066-.018.135-.068.023-.139.053-.209.064-.43.268-.662.669-.793 1.187-.13.533-.17 1.156-.205 1.869v.003c-.02.334-.17.838-.319 1.35-1.5 1.072-3.58 1.538-5.348.334a2.645 2.645 0 00-.402-.533 1.45 1.45 0 00-.275-.333c.182 0 .338-.03.465-.067a.615.615 0 00.314-.334c.108-.267 0-.697-.345-1.163-.345-.467-.931-.995-1.788-1.521-.63-.4-.986-.87-1.15-1.396-.165-.534-.143-1.085-.015-1.645.245-1.07.873-2.11 1.274-2.763.107-.065.037.135-.408.974-.396.751-1.14 2.497-.122 3.854a8.123 8.123 0 01.647-2.876c.564-1.278 1.743-3.504 1.836-5.268.048.036.217.135.289.202.218.133.38.333.59.465.21.201.477.335.876.335.039.003.075.006.11.006.412 0 .73-.134.997-.268.29-.134.52-.334.74-.4h.005c.467-.135.835-.402 1.044-.7zm2.185 8.958c.037.6.343 1.245.882 1.377.588.134 1.434-.333 1.791-.765l.211-.01c.315-.007.577.01.847.268l.003.003c.208.199.305.53.391.876.085.4.154.78.409 1.066.486.527.645.906.636 1.14l.003-.007v.018l-.003-.012c-.015.262-.185.396-.498.595-.63.401-1.746.712-2.457 1.57-.618.737-1.37 1.14-2.036 1.191-.664.053-1.237-.2-1.574-.898l-.005-.003c-.21-.4-.12-1.025.056-1.69.176-.668.428-1.344.463-1.897.037-.714.076-1.335.195-1.814.12-.465.308-.797.641-.984l.045-.022zm-10.814.049h.01c.053 0 .105.005.157.014.376.055.706.333 1.023.752l.91 1.664.003.003c.243.533.754 1.064 1.189 1.637.434.598.77 1.131.729 1.57v.006c-.057.744-.48 1.148-1.125 1.294-.645.135-1.52.002-2.395-.464-.968-.536-2.118-.469-2.857-.602-.369-.066-.61-.2-.723-.4-.11-.2-.113-.602.123-1.23v-.004l.002-.003c.117-.334.03-.752-.027-1.118-.055-.401-.083-.71.043-.94.16-.334.396-.4.69-.533.294-.135.64-.202.915-.47h.002v-.002c.256-.268.445-.601.668-.838.19-.201.38-.336.663-.336zm7.159-9.074c-.435.201-.945.535-1.488.535-.542 0-.97-.267-1.28-.466-.154-.134-.28-.268-.373-.335-.164-.134-.144-.333-.074-.333.109.016.129.134.199.2.096.066.215.2.36.333.292.2.68.467 1.167.467.485 0 1.053-.267 1.398-.466.195-.135.445-.334.648-.467.156-.136.149-.267.279-.267.128.016.034.134-.147.332a8.097 8.097 0 01-.69.468zm-1.082-1.583V5.64c-.006-.02.013-.042.029-.05.074-.043.18-.027.26.004.063 0 .16.067.15.135-.006.049-.085.066-.135.066-.055 0-.092-.043-.141-.068-.052-.018-.146-.008-.163-.065zm-.551 0c-.02.058-.113.049-.166.066-.047.025-.086.068-.14.068-.05 0-.13-.02-.136-.068-.01-.066.088-.133.15-.133.08-.031.184-.047.259-.005.019.009.036.03.03.05v.02h.003z"/></svg>
+      </div>
+      <h3>Linux</h3>
+      <p>Linux builds with full local Whisper support.</p>
+    </a>
+  </div>
+
+  <p class="tagline fade-up">If you don't say it, you'll type it.</p>
+</section>
+
+<section class="mission" id="how-it-works">
+  <img class="ascii-deco" src="marketing/assets/ascii-phones.png" alt="" aria-hidden="true" style="right:26px; top:38%; width:170px;" />
+
+  <div class="mission-video fade-up">
+    <video src="marketing/assets/demo.mp4" poster="marketing/assets/demo-poster.jpg" autoplay muted loop playsinline preload="none" aria-label="Screen recording of mausVoice transcribing speech and pasting the cleaned text">
+      <track kind="captions" src="marketing/assets/captions.vtt" srclang="en" label="English captions" />
+      <track kind="descriptions" src="marketing/assets/descriptions.vtt" srclang="en" label="English descriptions" />
+    </video>
+
+    <button class="caption-toggle" id="caption-toggle" type="button" aria-pressed="false" aria-label="Show captions" title="Captions">
+      <svg class="ic-on" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect width="18" height="14" x="3" y="5" rx="2" ry="2"/><path d="M7 15h4M15 15h2M7 11h2M13 11h4"/></svg>
+      <svg class="ic-off" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M10.5 5H19a2 2 0 0 1 2 2v8.5"/><path d="M17 11h-.5"/><path d="M19 19H5a2 2 0 0 1-2-2V7a2 2 0 0 1 2-2"/><path d="m2 2 20 20"/><path d="M7 11h4"/><path d="M7 15h2.5"/></svg>
+    </button>
+  </div>
+
+  <div class="mission-copy">
+    <p class="p1 words">
+      <span class="w" style="--i:0">mausVoice</span> <span class="w" style="--i:1">turns</span> <span class="w" style="--i:2">your</span> <span class="w hl" style="--i:3">voice</span> <span class="w" style="--i:4">into</span> <span class="w hl" style="--i:5">text,</span> <span class="w" style="--i:6">anywhere</span> <span class="w" style="--i:7">you</span> <span class="w" style="--i:8">can</span> <span class="w" style="--i:9">type.</span> <span class="w" style="--i:10">Press</span> <span class="w" style="--i:11">a</span> <span class="w" style="--i:12">hotkey,</span> <span class="w" style="--i:13">speak,</span> <span class="w" style="--i:14">and</span> <span class="w" style="--i:15">the</span> <span class="w" style="--i:16">cleaned-up</span> <span class="w" style="--i:17">result</span> <span class="w hl" style="--i:18">lands</span> <span class="w" style="--i:19">in</span> <span class="w" style="--i:20">the</span> <span class="w" style="--i:21">app</span> <span class="w" style="--i:22">you&#x27;re</span> <span class="w" style="--i:23">focused</span> <span class="w" style="--i:24">on.</span>
+    </p>
+
+    <p class="p2 words">
+      <span class="w" style="--i:0">Built</span> <span class="w" style="--i:1">in</span> <span class="w hl" style="--i:2">Rust</span> <span class="w" style="--i:3">for</span> <span class="w" style="--i:4">speed</span> <span class="w" style="--i:5">and</span> <span class="w" style="--i:6">a</span> <span class="w" style="--i:7">small</span> <span class="w" style="--i:8">footprint,</span> <span class="w" style="--i:9">with</span> <span class="w" style="--i:10">your</span> <span class="w" style="--i:11">keys</span> <span class="w hl" style="--i:12">encrypted</span> <span class="w" style="--i:13">on</span> <span class="w" style="--i:14">disk</span> <span class="w" style="--i:15">and</span> <span class="w" style="--i:16">a</span> <span class="w" style="--i:17">fully</span> <span class="w hl" style="--i:18">local</span> <span class="w" style="--i:19">Whisper</span> <span class="w" style="--i:20">mode</span> <span class="w" style="--i:21">for</span> <span class="w" style="--i:22">when</span> <span class="w" style="--i:23">your</span> <span class="w" style="--i:24">words</span> <span class="w" style="--i:25">never</span> <span class="w" style="--i:26">leave</span> <span class="w" style="--i:27">your</span> <span class="w" style="--i:28">machine.</span>
+    </p>
+
+  </div>
+
+  <div class="pill-demo fade-up" style="--delay:0.45s">
+    <canvas id="pill-canvas"></canvas>
+    <span class="visually-hidden">The mausVoice recording pill with wavy audio strings flowing in and transcribed words flowing out</span>
+  </div>
+</section>
+
+<section class="solution" id="features">
+  <img class="ascii-deco" src="marketing/assets/ascii-eq.png" alt="" aria-hidden="true" style="left:26px; top:42%; width:220px;" />
+
+  <p class="solution-label fade-up">Product</p>
+
+  <h2 class="fade-up" style="--delay:0.1s">
+    The fastest way from thought to <span class="cursive">text</span>
+  </h2>
+
+  <div class="band fade-up" style="--delay:0.2s">
+    <img src="marketing/assets/home-page.png" alt="The mausVoice desktop app with a live transcript and writing style options" loading="lazy" />
+  </div>
+
+  <div class="features">
+    <div class="feature fade-up">
+<pre class="ascii3d" aria-hidden="true">
+        .-=======-.
+       /###########\
+      /#############\
+     /###############\
+    /###+-----------+###\
+   /###+           +###\
+   /###+           +###\
+   /###+           +###\
+    \###+-----------+###/
+     \###############/
+      \#############/
+       \###########/
+        '-=======-'
+           |  |
+         .-+--+-.
+         |  |  |  |
+         |  |  |  |
+        /   |  |   \
+       /____|  |____\
+</pre>
+            <h3>Live transcription</h3>
+      <p>Streaming nova-3 renders the words while you're still speaking.</p>
+    </div>
+    <div class="feature fade-up" style="--delay:0.1s">
+<pre class="ascii3d" aria-hidden="true">
+           .+*+.
+         .*#####*.
+        *#########*
+       *###########*
+    +  *###########*  +
+   ##  *###########*  ##
+    +  *###########*  +
+       *###########*
+        *#########*
+         .*#####*.
+           .+*+.
+</pre>
+            <h3>AI cleanup</h3>
+      <p>Filler words out, punctuation in, your writing style applied.</p>
+    </div>
+    <div class="feature fade-up" style="--delay:0.2s">
+<pre class="ascii3d" aria-hidden="true">
+    .-----------------.
+   /###################\
+  /#####################\
+ |#######################|
+ |##+---------------+##|
+ |##|  ###########  |##|
+ |##|  ###########  |##|
+ |##|  ###########  |##|
+ |##+---------------+##|
+ |#######################|
+  \#####################/
+   \###################/
+    '-----------------'
+      |  |  |  |  |  |
+     -+--+--+--+--+--+-
+      |  |  |  |  |  |
+</pre>
+            <h3>Fully local</h3>
+      <p>Whisper on your CPU or GPU. Zero network calls.</p>
+    </div>
+    <div class="feature fade-up" style="--delay:0.3s">
+<pre class="ascii3d" aria-hidden="true">
+    .-----------------.
+   /###################\
+  /#####################\
+ |#######################|
+ |##+---------------+##|
+ |##|               |##|
+ |##|  _  _  _  _  |##|
+ |##|               |##|
+ |##+---------------+##|
+ |#######################|
+  \#####################/
+   \###################/
+    '-----------------'
+         |   |
+        -+---+-
+         |   |
+</pre>
+            <h3>Works everywhere</h3>
+      <p>One hotkey, and the text lands in whatever has focus.</p>
+    </div>
+  </div>
+</section>
+
+<section class="cta" id="download">
+  <img class="cta-bg" src="marketing/assets/cta-bg.jpg" alt="" aria-hidden="true" />
+  <div class="cta-overlay" aria-hidden="true"></div>
+
+  <img class="ascii-deco" src="marketing/assets/ascii-rings.png" alt="" aria-hidden="true" style="right:30px; top:44%; width:190px;" />
+
+  <div class="cta-content">
+    <div class="logo-mark" aria-hidden="true">
+      <img src="marketing/assets/logo.png" alt="" width="44" height="44" />
+    </div>
+
+    <h2 class="fade-up">
+      Start <span class="cursive">dictating</span>
+    </h2>
+
+    <p class="sub fade-up" style="--delay:0.1s">
+      Free forever. No account, no subscription. Bring your own keys
+      or go fully local.
+    </p>
+
+    <div class="pill-cta fade-up" style="--delay:0.15s">
+      <canvas id="pill-canvas-cta"></canvas>
+      <span class="visually-hidden">The mausVoice recording pill with a live animated sine waveform</span>
+    </div>
+
+    <div class="cta-actions fade-up" style="--delay:0.2s">
+      <a class="btn btn-solid" href="https://github.com/maus-inc/mausVoice/releases" rel="noopener">
+        Download
+      </a>
+      <a class="btn btn-glass" href="https://github.com/maus-inc/mausVoice" rel="noopener">
+        View source
+      </a>
+    </div>
+
+  </div>
+</section>
+
+</main>
+
+<footer class="liquid-glass footer-glass fade-up" style="--delay:0.4s">
+  <img class="footer-ascii" src="marketing/assets/footer-ascii.png" alt="" aria-hidden="true" />
+  <div class="fg-grid">
+    <div class="fg-brand">
+      <div class="fg-brand-row">
+        <img src="marketing/assets/logo.png" alt="mausVoice logo" width="24" height="24" />
+        <span>mausVoice</span>
+      </div>
+      <p>Voice typing for your own machine. Transcribe live, clean it up with AI, and type into any app. Free, local, and private.</p>
+    </div>
+
+    <div class="fg-links">
+      <nav aria-label="Discover">
+        <h4>Discover</h4>
+        <ul>
+          <li><a href="#how-it-works">How it works</a></li>
+          <li><a href="#why">Why voice</a></li>
+          <li><a href="#features">Product</a></li>
+          <li><a href="#download">Download</a></li>
+        </ul>
+      </nav>
+      <nav aria-label="The Mission">
+        <h4>The Mission</h4>
+        <ul>
+          <li><a href="https://github.com/maus-inc/mausVoice" rel="noopener">GitHub</a></li>
+          <li><a href="https://github.com/maus-inc/mausVoice/releases" rel="noopener">Releases</a></li>
+          <li><a href="https://github.com/maus-inc/mausVoice/tree/main/docs" rel="noopener">Docs</a></li>
+          <li><a href="https://github.com/maus-inc/mausVoice/blob/main/LICENCE" rel="noopener">License</a></li>
+        </ul>
+      </nav>
+      <nav aria-label="Concierge">
+        <h4>Concierge</h4>
+        <ul>
+          <li><a href="https://github.com/maus-inc/mausVoice/issues" rel="noopener">Get in touch</a></li>
+          <li><a href="https://github.com/maus-inc/mausVoice/blob/main/LICENCE" rel="noopener">Legal privacy</a></li>
+          <li><a href="https://github.com/maus-inc/mausVoice/blob/main/CODE_OF_CONDUCT.md" rel="noopener">User agreement</a></li>
+          <li><a href="https://github.com/maus-inc/mausVoice/issues" rel="noopener">Report concern</a></li>
+        </ul>
+      </nav>
+    </div>
+  </div>
+
+  <div class="fg-bottom">
+    <p>Curated by Owie Emmanuel</p>
+    <div class="fg-socials">
+      <span class="join-label">Find us on GitHub</span>
+      <a href="https://github.com/maus-inc/mausVoice" rel="noopener" aria-label="GitHub">
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M15 22v-4a4.8 4.8 0 0 0-1-3.5c3 0 6-2 6-5.5.08-1.25-.27-2.48-1-3.5.28-1.15.28-2.35 0-3.5 0 0-1 0-3 1.5-2.64-.5-5.36-.5-8 0C6 2 5 2 5 2c-.3 1.15-.3 2.35 0 3.5A5.403 5.403 0 0 0 4 9c0 3.5 3 5.5 6 5.5-.39.49-.68 1.05-.85 1.65-.17.6-.22 1.23-.15 1.85v4"/><path d="M9 18c-4.51 2-5-2-7-2"/></svg>
+      </a>
+    </div>
+  </div>
+</footer>
+
+<script src="marketing/assets/vendor/gsap.min.js"></script>
+<script src="marketing/assets/vendor/ScrollTrigger.min.js"></script>
+<script src="marketing/assets/vendor/lenis.min.js"></script>
+<script>
+(function () {
+  "use strict";
+
+  var reduceMotion = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+  var supportsIO = "IntersectionObserver" in window;
+
+  /* ---------- Lenis smooth scroll + GSAP staggered reveals ---------- */
+
+  var gsapReady = typeof window.gsap !== "undefined" && typeof window.ScrollTrigger !== "undefined";
+  var smoothScroll = !reduceMotion && gsapReady && typeof Lenis !== "undefined";
+
+  if (smoothScroll) {
+    gsap.registerPlugin(ScrollTrigger);
+
+    var lenis = new Lenis({ lerp: 0.12, smoothWheel: true });
+    lenis.on("scroll", ScrollTrigger.update);
+    gsap.ticker.add(function (time) { lenis.raf(time * 1000); });
+    gsap.ticker.lagSmoothing(0);
+
+    // smooth anchor navigation
+    document.querySelectorAll('a[href^="#"]').forEach(function (a) {
+      a.addEventListener("click", function (e) {
+        var target = a.getAttribute("href");
+        if (target && target.length > 1) {
+          e.preventDefault();
+          lenis.scrollTo(target, { offset: -80 });
+        }
+      });
+    });
+
+    document.documentElement.classList.add("gsap-active");
+
+    // hero: staggered entrance on load
+    gsap.fromTo(".hero .fade-up",
+      { opacity: 0, y: 24 },
+      { opacity: 1, y: 0, duration: 0.9, ease: "power3.out", stagger: 0.1, delay: 0.15, overwrite: true }
+    );
+
+    // below the fold: staggered batch reveals that reverse on
+    // scroll-up (scrub-linked, no 'once')
+    var fadeEls = gsap.utils.toArray(".fade-up").filter(function (el) {
+      return !el.closest(".hero");
+    });
+    fadeEls.forEach(function (el) {
+      gsap.fromTo(el,
+        { opacity: 0, y: 24 },
+        {
+          opacity: 1, y: 0,
+          ease: "power2.out",
+          scrollTrigger: {
+            trigger: el,
+            start: "top 88%",
+            end: "top 62%",
+            scrub: 0.4,
+            toggleActions: "play none none reverse"
+          }
+        }
+      );
+    });
+
+    // word-by-word mission reveal: reverses when scrolling back up
+    gsap.utils.toArray(".words").forEach(function (block) {
+      var words = block.querySelectorAll(".w");
+      gsap.fromTo(words,
+        { opacity: 0.15 },
+        {
+          opacity: 1,
+          duration: 0.45,
+          ease: "power2.out",
+          stagger: 0.028,
+          scrollTrigger: {
+            trigger: block,
+            start: "top 82%",
+            end: "top 40%",
+            scrub: 0.3,
+            toggleActions: "play none none reverse"
+          }
+        }
+      );
+    });
+
+    // subtle scroll-linked parallax on the product band
+    var bandImg = document.querySelector(".band img");
+    if (bandImg) {
+      gsap.fromTo(bandImg,
+        { yPercent: 5, scale: 1.06 },
+        {
+          yPercent: -5,
+          ease: "none",
+          scrollTrigger: { trigger: ".band", start: "top bottom", end: "bottom top", scrub: 0.6 }
+        }
+      );
+    }
+  }
+
+  /* ---------- fadeUp + words reveals ----------
+     GSAP/Lenis own the reveals when smooth scroll is active; the
+     IntersectionObserver path is the fallback otherwise. ---------- */
+
+  if (!smoothScroll) {
+    var fades = Array.prototype.slice.call(document.querySelectorAll(".fade-up"));
+
+    if (reduceMotion || !supportsIO) {
+      fades.forEach(function (el) { el.classList.add("in"); });
+    } else {
+      fades.forEach(function (el) {
+        if (el.closest(".hero")) {
+          el.classList.add("in");
+        } else {
+          var io = new IntersectionObserver(function (entries) {
+            entries.forEach(function (entry) {
+              if (entry.isIntersecting) {
+                entry.target.classList.add("in");
+                io.unobserve(entry.target);
+              }
+            });
+          }, { threshold: 0.12, rootMargin: "-100px 0px" });
+          io.observe(el);
+        }
+      });
+    }
+
+    var wordBlocks = Array.prototype.slice.call(document.querySelectorAll(".words"));
+
+    if (reduceMotion || !supportsIO) {
+      wordBlocks.forEach(function (el) { el.classList.add("in"); });
+    } else {
+      wordBlocks.forEach(function (el) {
+        var io = new IntersectionObserver(function (entries) {
+          entries.forEach(function (entry) {
+            if (entry.isIntersecting) {
+              entry.target.classList.add("in");
+              io.unobserve(entry.target);
+            }
+          });
+        }, { threshold: 0.35 });
+        io.observe(el);
+      });
+    }
+  }
+
+  /* ---------- Recording pill engine ---------------------------------
+     Factory: full-stage mode (mission section) draws wavy strings
+     converging into the pill from the page edge and words flowing out
+     the right; compact mode (CTA section) draws the pill only.
+     Pill: 270.1 x 72.9 px, sine engine ported from
+     packages/rust_macos_pill/src/constants.rs + draw.rs and
+     apps/desktop/src/components/common/AudioWaveform.tsx
+     ------------------------------------------------------------------ */
+
+  function initPillStage(canvas, fullStage) {
+    if (!canvas || !canvas.getContext) return;
+
+    // Seeded PRNG for the animation simulation. Uses
+    // crypto.getRandomValues when available and falls back to a small
+    // LCG otherwise; Math.random is intentionally avoided (Sonar
+    // flags it as a pseudorandom-generator security hotspot).
+    var _randPool = new Uint32Array(8);
+    var _randIdx = 8;
+    var _randLcg = 12345;
+    function rand() {
+      if (window.crypto && crypto.getRandomValues) {
+        if (_randIdx >= _randPool.length) {
+          crypto.getRandomValues(_randPool);
+          _randIdx = 0;
+        }
+        return _randPool[_randIdx++] / 4294967296;
+      }
+      _randLcg = (_randLcg * 1664525 + 1013904223) >>> 0;
+      return _randLcg / 4294967296;
+    }
+
+    var TAU = Math.PI * 2;
+    var LEVEL_SMOOTHING = 0.18;
+    var TARGET_DECAY_PER_FRAME = 0.985;
+    var WAVE_BASE_PHASE_STEP = 0.11;
+    var WAVE_PHASE_GAIN = 0.32;
+    var MIN_AMPLITUDE = 0.03;
+    var MAX_AMPLITUDE = 0.6;
+    var STROKE_WIDTH = 1.6;
+    var ACTIVE_BG_ALPHA = 0.92;
+    var BORDER_ALPHA = 0.3;
+
+    var WAVE_CONFIGS = [
+      { frequency: 0.8, multiplier: 1.6, phaseOffset: 0, opacity: 1 },
+      { frequency: 1.0, multiplier: 1.35, phaseOffset: 0.85, opacity: 0.78 },
+      { frequency: 1.25, multiplier: 1.05, phaseOffset: 1.7, opacity: 0.56 },
+    ];
+
+    // Geometry: stage spans the page (mission) or matches the pill (CTA).
+    // CTA pill is 30% smaller (189.1 x 51.0).
+    var PILL_W = fullStage ? 270.1 : 189.1, PILL_H = fullStage ? 72.9 : 51.0;
+    var CH = fullStage ? 140 : PILL_H;
+    var CW = fullStage ? (canvas.parentElement.clientWidth || window.innerWidth) : PILL_W;
+    var PILL_X = fullStage ? (CW - PILL_W) / 2 : 0;
+    var PILL_Y = fullStage ? (CH - PILL_H) / 2 : 0;
+    var BASELINE = CH / 2;
+
+    var state = { phase: 0, currentLevel: 0, targetLevel: 0 };
+    var nextBurst = 0;
+
+    var ctx = canvas.getContext("2d");
+    if (!ctx.roundRect) {
+      ctx.roundRect = function (x, y, w, h, r) { this.rect(x, y, w, h); };
+    }
+    var dpr = Math.min(2, window.devicePixelRatio || 1);
+
+    function sizeStage() {
+      if (fullStage) {
+        CW = canvas.parentElement.clientWidth || window.innerWidth;
+        PILL_X = (CW - PILL_W) / 2;
+      }
+      canvas.width = Math.round(CW * dpr);
+      canvas.height = Math.round(CH * dpr);
+      ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    }
+    sizeStage();
+    if (fullStage) {
+      window.addEventListener("resize", sizeStage);
+    }
+
+    var reducePillMotion = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+
+    // Incoming wavy strings (full-stage mode only)
+    var IN_LINES = [
+      { startY: 22, amp: 30, freq: 0.8,  offset: 0,    opacity: 0.55 },
+      { startY: 118, amp: 22, freq: 1.0,  offset: 0.85, opacity: 0.42 },
+      { startY: 40, amp: 26, freq: 1.25, offset: 1.7,  opacity: 0.34 },
+      { startY: 102, amp: 18, freq: 0.9,  offset: 2.5,  opacity: 0.28 },
+      { startY: 68, amp: 34, freq: 1.1,  offset: 3.4,  opacity: 0.22 },
+    ];
+
+    function easeInOut(t) {
+      return t < 0.5 ? 2 * t * t : 1 - Math.pow(-2 * t + 2, 2) / 2;
+    }
+
+    function drawIncoming() {
+      for (var line of IN_LINES) {
+        var run = PILL_X;
+        if (run < 8) continue;
+        ctx.beginPath();
+        for (var x = 0; x <= run; x += 3) {
+          var t = x / run;
+          var center = BASELINE + (line.startY - BASELINE) * (1 - easeInOut(t));
+          var amp = line.amp * (1 - t) * (1 - t);
+          var theta = line.freq * t * TAU + state.phase + line.offset;
+          var y = center + amp * Math.sin(theta);
+          if (x === 0) ctx.moveTo(x, y);
+          else ctx.lineTo(x, y);
+        }
+        var alpha = line.opacity * (0.55 + 0.45 * Math.sin(state.phase * 0.5 + line.offset));
+        ctx.strokeStyle = "rgba(255, 255, 255, " + alpha.toFixed(3) + ")";
+        ctx.lineWidth = STROKE_WIDTH;
+        ctx.lineCap = "round";
+        ctx.lineJoin = "round";
+        ctx.stroke();
+      }
+    }
+
+    // Outgoing word flow (full-stage mode only)
+    var words = [];
+    var nextWord = 0;
+    var TRANSCRIPT = ["hello", "meeting", "notes", "ship it", "tomorrow", "thanks", "done", "ideas", "5pm", "review", "standup", "call", "email", "weekend", "launch", "draft"];
+
+    function drawOutgoing() {
+      var runOut = CW - (PILL_X + PILL_W);
+      if (runOut > 8) {
+        ctx.beginPath();
+        for (var x = PILL_X + PILL_W; x <= CW; x += 3) {
+          var t = (x - (PILL_X + PILL_W)) / runOut;
+          var y = BASELINE + 7 * Math.sin(state.phase + t * TAU * 1.1);
+          if (x === PILL_X + PILL_W) ctx.moveTo(x, y);
+          else ctx.lineTo(x, y);
+        }
+        ctx.strokeStyle = "rgba(255, 255, 255, 0.14)";
+        ctx.lineWidth = 1.2;
+        ctx.stroke();
+      }
+
+      ctx.font = "500 13px 'JetBrains Mono', ui-monospace, monospace";
+      ctx.textBaseline = "middle";
+      for (var i = words.length - 1; i >= 0; i--) {
+        var w = words[i];
+        w.x += w.speed;
+        w.t += 0.022;
+        var y = BASELINE + 7 * Math.sin(w.t * 1.3 + w.x * 0.008);
+        var a = 1;
+        if (w.x < PILL_X + PILL_W + 14) a = Math.min(a, (w.x - (PILL_X + PILL_W)) / 14);
+        if (w.x > CW - 70) a = Math.min(a, (CW - w.x) / 70);
+        if (a <= 0 || w.x > CW + 20) { words.splice(i, 1); continue; }
+        ctx.fillStyle = "rgba(255, 255, 255, " + a.toFixed(3) + ")";
+        ctx.fillText(w.text, w.x, y);
+      }
+
+      if (performance.now() > nextWord) {
+        words.push({
+          text: TRANSCRIPT[(rand() * TRANSCRIPT.length) | 0],
+          x: PILL_X + PILL_W + 2,
+          t: 0,
+          speed: 1.7 + rand() * 0.9,
+        });
+        nextWord = performance.now() + 300 + rand() * 220;
+      }
+    }
+
+    function pillRadius(w, h) {
+      return Math.min(w, h) * 0.5;
+    }
+
+    function drawPill(level) {
+      ctx.clearRect(0, 0, CW, CH);
+
+      var radius = pillRadius(PILL_W, PILL_H);
+
+      ctx.beginPath();
+      ctx.roundRect(PILL_X, PILL_Y, PILL_W, PILL_H, radius);
+      ctx.fillStyle = "rgba(0, 0, 0, " + ACTIVE_BG_ALPHA + ")";
+      ctx.fill();
+
+      // three layered sine waves (the pill's own lines)
+      ctx.save();
+      ctx.beginPath();
+      ctx.roundRect(PILL_X, PILL_Y, PILL_W, PILL_H, radius);
+      ctx.clip();
+
+      var pad = PILL_H * 0.1;
+      var waveW = PILL_W - pad * 2;
+      var segments = Math.max(72, Math.floor(waveW / 2));
+
+      for (var config of WAVE_CONFIGS) {
+        var amplitudeFactor = Math.min(
+          MAX_AMPLITUDE,
+          Math.max(MIN_AMPLITUDE, level * config.multiplier),
+        );
+        var amplitude = Math.max(1, PILL_H * 0.38 * amplitudeFactor);
+        var phase = state.phase + config.phaseOffset;
+
+        ctx.beginPath();
+        for (var i = 0; i <= segments; i++) {
+          var t = i / segments;
+          var x = PILL_X + pad + waveW * t;
+          var theta = config.frequency * t * TAU + phase;
+          var y = BASELINE + amplitude * Math.sin(theta);
+          if (i === 0) ctx.moveTo(x, y);
+          else ctx.lineTo(x, y);
+        }
+        ctx.strokeStyle = "rgba(255, 255, 255, " + config.opacity + ")";
+        ctx.lineWidth = STROKE_WIDTH;
+        ctx.lineCap = "round";
+        ctx.lineJoin = "round";
+        ctx.stroke();
+      }
+      ctx.restore();
+
+      ctx.beginPath();
+      ctx.roundRect(PILL_X + 0.5, PILL_Y + 0.5, PILL_W - 1, PILL_H - 1, radius - 0.5);
+      ctx.strokeStyle = "rgba(255, 255, 255, " + BORDER_ALPHA + ")";
+      ctx.lineWidth = 1;
+      ctx.stroke();
+
+      // soften the side edges: dissolve body, waves and border into the
+      // page black at both end caps instead of a hard capsule edge
+      ctx.save();
+      ctx.beginPath();
+      ctx.roundRect(PILL_X, PILL_Y, PILL_W, PILL_H, radius);
+      ctx.clip();
+      var fade = radius * 1.5;
+      var grad = ctx.createLinearGradient(PILL_X, 0, PILL_X + PILL_W, 0);
+      grad.addColorStop(0, "rgba(0, 0, 0, 1)");
+      grad.addColorStop(Math.min(1, fade / PILL_W), "rgba(0, 0, 0, 0)");
+      grad.addColorStop(Math.max(0, 1 - fade / PILL_W), "rgba(0, 0, 0, 0)");
+      grad.addColorStop(1, "rgba(0, 0, 0, 1)");
+      ctx.fillStyle = grad;
+      ctx.fillRect(PILL_X, PILL_Y, PILL_W, PILL_H);
+      ctx.restore();
+    }
+
+    function pillStep() {
+      if (state.targetLevel < 0.0005) state.targetLevel = 0;
+      state.currentLevel += (state.targetLevel - state.currentLevel) * LEVEL_SMOOTHING;
+      if (state.currentLevel < 0.0002) state.currentLevel = 0;
+      state.targetLevel *= TARGET_DECAY_PER_FRAME;
+
+      var level = state.currentLevel;
+      state.phase = (state.phase + WAVE_BASE_PHASE_STEP + WAVE_PHASE_GAIN * level) % TAU;
+
+      drawPill(level);
+      if (fullStage) {
+        drawIncoming();
+        drawOutgoing();
+      }
+    }
+
+    if (reducePillMotion) {
+      // static frame: pill at a mid level (+ strings and one word on stage)
+      drawPill(0.45);
+      if (fullStage) {
+        var sRun = PILL_X;
+        for (var line of IN_LINES) {
+          ctx.beginPath();
+          for (var x = 0; x <= sRun; x += 3) {
+            var t = x / sRun;
+            var center = BASELINE + (line.startY - BASELINE) * (1 - easeInOut(t));
+            var y = center + line.amp * (1 - t) * (1 - t) * Math.sin(line.freq * t * TAU + 1.2);
+            if (x === 0) ctx.moveTo(x, y);
+            else ctx.lineTo(x, y);
+          }
+          ctx.strokeStyle = "rgba(255, 255, 255, " + line.opacity + ")";
+          ctx.lineWidth = STROKE_WIDTH;
+          ctx.stroke();
+        }
+        ctx.font = "500 13px 'JetBrains Mono', ui-monospace, monospace";
+        ctx.textBaseline = "middle";
+        ctx.fillStyle = "rgba(255, 255, 255, 0.8)";
+        ctx.fillText("hello", PILL_X + PILL_W + 8, BASELINE);
+      }
+    } else {
+      // Off-screen gating: only run the rAF loop while the canvas is
+      // visible. Hidden canvases burn main-thread frames for nothing.
+      var rafId = 0;
+      var running = false;
+      function loop(now) {
+        if (now > nextBurst) {
+          var speak = rand() < 0.82;
+          state.targetLevel = speak
+            ? 0.15 + rand() * 0.4
+            : rand() * 0.06;
+          nextBurst = now + 90 + rand() * 160;
+        }
+        pillStep();
+        rafId = requestAnimationFrame(loop);
+      }
+      function start() {
+        if (!running) {
+          running = true;
+          rafId = requestAnimationFrame(loop);
+        }
+      }
+      function stop() {
+        running = false;
+        if (rafId) cancelAnimationFrame(rafId);
+        rafId = 0;
+      }
+      if ("IntersectionObserver" in window) {
+        var pillIO = new IntersectionObserver(function (entries) {
+          entries.forEach(function (entry) {
+            if (entry.isIntersecting) start();
+            else stop();
+          });
+        }, { threshold: 0.05 });
+        pillIO.observe(canvas);
+      } else {
+        start();
+      }
+    }
+  }
+
+  initPillStage(document.getElementById("pill-canvas"), true);
+  initPillStage(document.getElementById("pill-canvas-cta"), false);
+
+  /* ---------- Caption toggle: hidden by default, reveal on demand ---------- */
+
+  var captionBtn = document.getElementById("caption-toggle");
+  var captionVideo = captionBtn && document.querySelector(".mission-video video");
+  if (captionBtn && captionVideo && captionVideo.textTracks) {
+    var capTrack = captionVideo.textTracks[0];
+    if (capTrack) {
+      capTrack.mode = "hidden"; // hidden by default
+      captionBtn.addEventListener("click", function () {
+        var show = capTrack.mode !== "showing";
+        capTrack.mode = show ? "showing" : "hidden";
+        captionBtn.classList.toggle("on", show);
+        captionBtn.setAttribute("aria-pressed", show ? "true" : "false");
+        captionBtn.setAttribute("aria-label", show ? "Hide captions" : "Show captions");
+      });
+    }
+  }
+
+  /* ---------- Videos: pause when off-screen, play when visible ---------- */
+
+  var videos = Array.prototype.slice.call(document.querySelectorAll("video"));
+
+  videos.forEach(function (v) {
+    if (reduceMotion) { v.pause(); return; }
+    if (v.closest(".hero")) return; // hero video always plays
+    var io = new IntersectionObserver(function (entries) {
+      entries.forEach(function (entry) {
+        if (entry.isIntersecting) {
+          if (v.paused) v.play().catch(function () {});
+        } else {
+          v.pause();
+        }
+      });
+    }, { threshold: 0.15 });
+    io.observe(v);
+  });
+})();
+</script>
+
+</body>
+</html>
