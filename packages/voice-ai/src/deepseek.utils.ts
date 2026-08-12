@@ -4,7 +4,11 @@ import {
   ChatCompletionMessageParam,
 } from "openai/resources/chat/completions";
 import { retry, countWords } from "@maus-inc/utilities";
-import type { JsonResponse, LlmChatInput, LlmStreamEvent } from "@maus-inc/types";
+import type {
+  JsonResponse,
+  LlmChatInput,
+  LlmStreamEvent,
+} from "@maus-inc/types";
 import { openaiCompatibleStreamChat } from "./openai.utils";
 
 export const DEEPSEEK_MODELS = ["deepseek-chat", "deepseek-reasoner"] as const;

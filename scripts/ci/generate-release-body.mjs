@@ -45,7 +45,9 @@ async function collectFiles(dir) {
   const queue = [dir];
   while (queue.length) {
     const current = queue.pop();
-    const entries = await fs.readdir(current, { withFileTypes: true }).catch(() => []);
+    const entries = await fs
+      .readdir(current, { withFileTypes: true })
+      .catch(() => []);
     for (const entry of entries) {
       const full = path.join(current, entry.name);
       if (entry.isDirectory()) queue.push(full);
@@ -58,14 +60,27 @@ async function collectFiles(dir) {
 function classify(fileName) {
   const lower = fileName.toLowerCase();
   const ext = path.extname(lower);
-  if (lower.includes("setup") || lower.includes("installer") || ext === ".exe") {
-    return { platform: "Windows", kind: "installer", label: "Windows installer (.exe)" };
+  if (
+    lower.includes("setup") ||
+    lower.includes("installer") ||
+    ext === ".exe"
+  ) {
+    return {
+      platform: "Windows",
+      kind: "installer",
+      label: "Windows installer (.exe)",
+    };
   }
-  if (ext === ".msi") return { platform: "Windows", kind: "msi", label: "Windows MSI (.msi)" };
-  if (ext === ".appimage") return { platform: "Linux", kind: "appimage", label: "Linux AppImage" };
-  if (ext === ".deb") return { platform: "Linux", kind: "deb", label: "Linux DEB (.deb)" };
-  if (lower.endsWith(".app.tar.gz")) return { platform: "macOS", kind: "app", label: "macOS app archive" };
-  if (ext === ".dmg") return { platform: "macOS", kind: "dmg", label: "macOS DMG (.dmg)" };
+  if (ext === ".msi")
+    return { platform: "Windows", kind: "msi", label: "Windows MSI (.msi)" };
+  if (ext === ".appimage")
+    return { platform: "Linux", kind: "appimage", label: "Linux AppImage" };
+  if (ext === ".deb")
+    return { platform: "Linux", kind: "deb", label: "Linux DEB (.deb)" };
+  if (lower.endsWith(".app.tar.gz"))
+    return { platform: "macOS", kind: "app", label: "macOS app archive" };
+  if (ext === ".dmg")
+    return { platform: "macOS", kind: "dmg", label: "macOS DMG (.dmg)" };
   return null;
 }
 
@@ -79,7 +94,11 @@ function badgeImage(src, alt, url) {
 }
 
 function logoChip(slug, alt, url) {
-  return badgeImage(`https://shieldcn.dev/badge/-black.svg?logo=${slug}`, alt, url);
+  return badgeImage(
+    `https://shieldcn.dev/badge/-black.svg?logo=${slug}`,
+    alt,
+    url,
+  );
 }
 
 async function autoNotes() {
@@ -90,7 +109,12 @@ async function autoNotes() {
   try {
     const tagsResult = spawnSync(
       "git",
-      ["for-each-ref", "refs/tags/mausVoice-v*", "--sort=-version:refname", "--format=%(refname:short)"],
+      [
+        "for-each-ref",
+        "refs/tags/mausVoice-v*",
+        "--sort=-version:refname",
+        "--format=%(refname:short)",
+      ],
       { encoding: "utf8" },
     );
     const tags = (tagsResult.stdout ?? "")
@@ -100,7 +124,11 @@ async function autoNotes() {
       .filter(Boolean);
     const prev = tags[0];
     const range = prev ? `${prev}..HEAD` : "HEAD";
-    const logResult = spawnSync("git", ["log", range, "--no-merges", "--format=%s"], { encoding: "utf8" });
+    const logResult = spawnSync(
+      "git",
+      ["log", range, "--no-merges", "--format=%s"],
+      { encoding: "utf8" },
+    );
     const log = (logResult.stdout ?? "").trim();
     if (!log) return null;
     return log
@@ -116,7 +144,10 @@ async function autoNotes() {
 const files = await collectFiles(artifactsRoot);
 const downloads = [];
 for (const file of files) {
-  const rel = path.relative(artifactsRoot, file).split(path.sep).join(path.posix.sep);
+  const rel = path
+    .relative(artifactsRoot, file)
+    .split(path.sep)
+    .join(path.posix.sep);
   const info = classify(path.basename(file));
   if (!info) continue;
   downloads.push({ ...info, rel, basename: path.basename(file) });
@@ -128,12 +159,18 @@ const win =
 const mac =
   downloads.find((d) => d.platform === "macOS" && d.kind === "dmg") ??
   downloads.find((d) => d.platform === "macOS");
-const linDeb = downloads.find((d) => d.platform === "Linux" && d.kind === "deb");
-const linAppImage = downloads.find((d) => d.platform === "Linux" && d.kind === "appimage");
+const linDeb = downloads.find(
+  (d) => d.platform === "Linux" && d.kind === "deb",
+);
+const linAppImage = downloads.find(
+  (d) => d.platform === "Linux" && d.kind === "appimage",
+);
 
 let notes = customNotes.trim();
 if (!notes) notes = (await autoNotes()) ?? "";
-if (!notes) notes = "This release continues the mausVoice desktop line with the changes on this branch.";
+if (!notes)
+  notes =
+    "This release continues the mausVoice desktop line with the changes on this branch.";
 const noteItems = notes
   .split("\n")
   .map((line) => line.trim())
@@ -147,13 +184,31 @@ const releasesUrl = `${githubBase}/releases`;
 
 const downloadChips = [
   ...(mac
-    ? [logoChip("apple", "Download mausVoice for macOS", assetUrl(mac.basename))]
+    ? [
+        logoChip(
+          "apple",
+          "Download mausVoice for macOS",
+          assetUrl(mac.basename),
+        ),
+      ]
     : []),
   ...(win
-    ? [logoChip(WINDOWS_LOGO, "Download mausVoice for Windows", assetUrl(win.basename))]
+    ? [
+        logoChip(
+          WINDOWS_LOGO,
+          "Download mausVoice for Windows",
+          assetUrl(win.basename),
+        ),
+      ]
     : []),
   ...(linDeb || linAppImage
-    ? [logoChip("linux", "Download mausVoice for Linux", assetUrl((linAppImage ?? linDeb).basename))]
+    ? [
+        logoChip(
+          "linux",
+          "Download mausVoice for Linux",
+          assetUrl((linAppImage ?? linDeb).basename),
+        ),
+      ]
     : []),
 ];
 
@@ -183,19 +238,31 @@ const body = [
   "",
   "## Downloads",
   "",
-  ...(downloadChips.length ? [`<p align="center">`, ...downloadChips.map((b) => `  ${b}`), `</p>`, ""] : []),
+  ...(downloadChips.length
+    ? [`<p align="center">`, ...downloadChips.map((b) => `  ${b}`), `</p>`, ""]
+    : []),
   "| Platform | Package |",
   "| --- | --- |",
-  ...(mac ? [`| macOS | ${markdownLink(mac.basename, assetUrl(mac.basename))} |`] : []),
-  ...(win ? [`| Windows | ${markdownLink(win.basename, assetUrl(win.basename))} |`] : []),
-  ...(
-    linDeb || linAppImage
-      ? [`| Linux | ${[linDeb, linAppImage].filter(Boolean).map((d) => markdownLink(d.basename, assetUrl(d.basename))).join(" · ")} |`]
-      : []
-  ),
+  ...(mac
+    ? [`| macOS | ${markdownLink(mac.basename, assetUrl(mac.basename))} |`]
+    : []),
+  ...(win
+    ? [`| Windows | ${markdownLink(win.basename, assetUrl(win.basename))} |`]
+    : []),
+  ...(linDeb || linAppImage
+    ? [
+        `| Linux | ${[linDeb, linAppImage]
+          .filter(Boolean)
+          .map((d) => markdownLink(d.basename, assetUrl(d.basename)))
+          .join(" · ")} |`,
+      ]
+    : []),
   "",
   ...(!mac || !win || !(linDeb || linAppImage)
-    ? ["> Some platform packages may be missing if a matrix build failed. Check the run log for details.", ""]
+    ? [
+        "> Some platform packages may be missing if a matrix build failed. Check the run log for details.",
+        "",
+      ]
     : []),
   "## Installation",
   "",
@@ -203,7 +270,7 @@ const body = [
     ? "This is an **unsigned pre-release** build for personal testing. No code signing or notarization."
     : "Unsigned, self-built binaries for personal use. No code signing or notarization.",
   "",
-  "- **macOS** — right-click the `.dmg`, choose **Open**, then confirm. The first launch bypasses the \"unidentified developer\" warning.",
+  '- **macOS** — right-click the `.dmg`, choose **Open**, then confirm. The first launch bypasses the "unidentified developer" warning.',
   "- **Windows** — SmartScreen may warn about an unknown publisher. Click **More info → Run anyway**.",
   "- **Linux** — install the `.deb` with `sudo dpkg -i <file>.deb`, or mark the AppImage executable and run it.",
   "",

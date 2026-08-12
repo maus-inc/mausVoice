@@ -33,7 +33,11 @@ Commands that return `Result<T, E>` need a `.status` check. Commands that return
 Type definitions for every argument and return type are exported alongside the commands:
 
 ```ts
-import type { Transcription, UserPreferences, PillWindowSize } from "@maus-inc/desktop-native-apis";
+import type {
+  Transcription,
+  UserPreferences,
+  PillWindowSize,
+} from "@maus-inc/desktop-native-apis";
 ```
 
 ## Runtime requirement

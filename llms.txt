@@ -1,166 +1,114 @@
 # mausVoice
 
-> mausVoice is an open-source, cross-platform desktop voice-to-text application. Press a global hotkey, speak naturally, and mausVoice transcribes, optionally cleans the transcript with an LLM, and inserts the result into the currently focused application. It supports macOS, Windows, and Linux, including private on-device transcription.
+> Voice typing for your own machine. Press a hotkey, speak, and mausVoice
+> transcribes live, cleans it up with AI, and types it into any app. No
+> account, no subscription, built with Rust and TypeScript/React.
 
-This file is the canonical machine-readable guide to mausVoice's public website, documentation, source code, releases, and support resources. Product behavior and installation details can change; prefer the documentation and latest release notes over third-party descriptions.
+## Project
 
-## Canonical resources
+- **Name:** mausVoice
+- **Site:** https://maus-inc.github.io/mausVoice/
+- **Repository:** https://github.com/maus-inc/mausVoice
+- **License:** AGPLv3
+- **Maintainer:** Owie Emmanuel (https://github.com/Owie6789)
+- **Package Manager:** pnpm@10.11.0 (Turborepo monorepo)
 
-- [Official website](https://maus-inc.github.io/mausVoice/): Product overview, features, demonstration, and download entry point.
-- [Documentation](https://maus-inc.github.io/mausVoice/): User, installation, configuration, and enterprise documentation.
-- [Documentation LLM index](https://maus-inc.github.io/mausVoice/llms.txt): Documentation-specific machine-readable page index.
-- [Source repository](https://github.com/maus-inc/mausVoice): Canonical source code and project files.
-- [Latest releases](https://github.com/maus-inc/mausVoice/releases): Current installers, packages, checksums, and release notes.
-- [Issue tracker](https://github.com/maus-inc/mausVoice/issues): Bug reports and feature requests.
-- [License](https://github.com/maus-inc/mausVoice/blob/main/LICENCE): Canonical software license text (AGPLv3).
-- [Code of Conduct](https://github.com/maus-inc/mausVoice/blob/main/CODE_OF_CONDUCT.md): Community participation expectations.
-- [Open Graph banner](https://maus-inc.github.io/mausVoice/docs/mausvoice-banner.png): Canonical social preview image for mausVoice pages.
+## Quickstart
 
-## Product summary
+```bash
+pnpm install
+cd apps/desktop
+pnpm dev:mac        # macOS
+pnpm dev:windows    # Windows
+```
 
-mausVoice turns speech into text anywhere the user can type. Its desktop application uses a native global hotkey and recording overlay, captures audio, transcribes speech, optionally applies an AI writing style or cleanup pass, and inserts the result into the focused application.
+Prerequisites: Node 18+, pnpm 10, Rust toolchain (Tauri v2).
 
-Key characteristics:
+## Architecture
 
-- Cross-platform desktop support for macOS, Windows, and Linux.
-- Global dictation into arbitrary applications.
-- Live cloud transcription and local Whisper transcription options.
-- Optional LLM cleanup for punctuation, filler removal, formatting, and user-selected writing styles.
-- Personal dictionary with glossary terms and replacement rules.
-- Local encrypted storage for user-provided API keys.
-- No account or subscription is required for local and bring-your-own-key workflows.
-- Open-source implementation built with Tauri, React, TypeScript, and Rust.
-- Enterprise deployment options for managed cloud, self-hosted cloud, and on-premise environments.
+mausVoice is a Tauri v2 desktop application (Rust + TypeScript/React). The
+"Rust is the API, TypeScript is the Brain" pattern keeps all business logic in
+TypeScript (Zustand + Immer) while Rust handles native capabilities (audio
+capture, keyboard injection, updater, encryption, GPU enumeration, filesystem).
 
-## Typical workflow
+```
+User input / System events
+        ↓
+React + Zustand state (TypeScript)
+        ↓
+Repos choose local vs. remote storage
+        ↓
+Tauri commands (Rust API bridge)
+        ↓
+SQLite, Whisper models, or external services
+```
 
-1. Install mausVoice for the user's operating system.
-2. Configure local processing or add the user's own transcription and language-model provider keys.
-3. Press the global hotkey to start recording.
-4. Speak naturally while the recording overlay shows status.
-5. Stop recording with the hotkey.
-6. mausVoice transcribes the audio, applies the active dictionary and writing style where configured, then types or pastes the final text into the focused app.
+## Repository Structure
 
-## Installation
+| Path | Description |
+|---|---|
+| `apps/desktop` | Tauri desktop app (Vite + React + Zustand) |
+| `apps/desktop/src-tauri` | Rust API layer (native capabilities, SQLite, Whisper) |
+| `apps/docs` | Astro + Starlight documentation site |
+| `apps/windows-installer` | Windows installer (Tauri) |
+| `docs` | Architecture notes, release guides, reference material |
+| `packages/*` | Shared packages: types, voice-ai, desktop-native-apis, functions, pricing, UI, utilities, config, shared-fonts, native pill crates |
+| `scripts` | Automation and helper scripts |
+| `marketing` | Marketing site assets (fonts, images, vendor scripts) |
 
-Always use the latest release unless a specific older version is required.
+## Key Features
 
-- [All platforms](https://github.com/maus-inc/mausVoice/releases): Release artifacts for supported operating systems.
-- [macOS installation](https://maus-inc.github.io/mausVoice/getting-started/macos/): macOS download and setup instructions.
-- [Windows installation](https://maus-inc.github.io/mausVoice/getting-started/windows/): Windows download and setup instructions.
-- [Linux installation](https://maus-inc.github.io/mausVoice/getting-started/linux/): AppImage, Debian package, permissions, desktop integration, and troubleshooting.
-- [Linux on Wayland](https://maus-inc.github.io/mausVoice/getting-started/linux-wayland/): Redirects to current Linux guidance.
-- [Linux on X11](https://maus-inc.github.io/mausVoice/getting-started/linux-x11/): Redirects to current Linux guidance.
+- **Live transcription:** Streaming nova-3 via Deepgram, or fully local Whisper
+  (CPU/GPU) with zero network calls.
+- **AI cleanup:** Filler words removed, punctuation and formatting applied via
+  LLM (Groq/OpenRouter), with configurable writing styles.
+- **Works everywhere:** One hotkey pastes cleaned text into whatever app has focus.
+- **Encrypted keys:** Deepgram & Groq API keys stored encrypted with
+  XChaCha20-Poly1305. Rotatable in Settings.
+- **Personal dictionary:** Custom names, jargon, and shorthand remembered
+  across sessions.
+- **Cross-platform:** Native builds for macOS (Apple silicon + Intel), Windows,
+  and Linux (APT, RPM, AppImage).
 
-Supported release formats may include a macOS disk image, a Windows installer, and Linux AppImage or Debian packages. Consult the release assets and platform guide for the current set.
+## API Keys & Configuration
 
-## Transcription and privacy modes
+Two optional keys entered in-app (Settings):
+- **Deepgram** (streaming transcription) — https://console.deepgram.com/
+- **Groq** (LLM text cleanup) — https://console.groq.com/keys
 
-- **Local:** Runs Whisper transcription on the user's device. This is the preferred option when audio must remain on-device or internet access is unavailable. Model files are downloaded and stored locally. Hardware acceleration may be used when available.
-- **API / bring your own key:** Sends requests directly to a configured third-party provider using a user-supplied API key. Provider terms and data handling apply.
-- **Cloud:** Routes supported operations through mausVoice cloud services. An account or organization configuration may be required depending on the workflow.
+Keys are encrypted on disk. For fully offline use, leave both empty and use
+local Whisper.
 
-Do not describe every mausVoice workflow as fully offline. Local transcription can be offline, while API and cloud modes require network services. AI post-processing also depends on the selected configuration and provider.
+## Quality Commands
 
-## User guides
+```bash
+pnpm run build         # Build all workspaces (turborepo)
+pnpm run lint          # Lint all workspaces
+pnpm run check-types   # TypeScript type checking
+pnpm run test          # Run tests
+pnpm run format        # Prettier format (ts, tsx, md)
+```
 
-- [Introduction](https://maus-inc.github.io/mausVoice/getting-started/introduction/): Product basics and first transcription.
-- [Transcription modes](https://maus-inc.github.io/mausVoice/guides/transcription/): Local, direct API, and cloud transcription choices.
-- [Post-processing](https://maus-inc.github.io/mausVoice/guides/post-processing/): How language models clean and rewrite raw transcripts.
-- [Writing styles](https://maus-inc.github.io/mausVoice/guides/styles/): Built-in and custom prompts that control transcript cleanup.
-- [Dictionary](https://maus-inc.github.io/mausVoice/guides/dictionary/): Glossary hints, replacement rules, and text snippets.
-- [Community](https://maus-inc.github.io/mausVoice/guides/community/): Contributing, support, and community channels.
+## State Management
 
-## Enterprise
+Single Zustand store with Immer. Actions compose pure utility functions and
+call into repos. Repos abstract local (SQLite) vs remote persistence.
 
-mausVoice Enterprise supports centralized deployment and administration while offering different infrastructure ownership models.
+## Important Patterns
 
-- [Enterprise overview](https://maus-inc.github.io/mausVoice/enterprise/overview/): Capabilities and deployment models.
-- [Managed cloud setup](https://maus-inc.github.io/mausVoice/enterprise/managed-cloud/setup/): Dedicated managed deployment onboarding.
-- [Self-hosted cloud setup](https://maus-inc.github.io/mausVoice/enterprise/self-hosted-cloud/setup/): Deploy on organization-controlled cloud infrastructure.
-- [AWS](https://maus-inc.github.io/mausVoice/enterprise/self-hosted-cloud/aws/): Amazon Web Services deployment guidance.
-- [Google Cloud](https://maus-inc.github.io/mausVoice/enterprise/self-hosted-cloud/gcp/): Google Cloud deployment guidance.
-- [Microsoft Azure](https://maus-inc.github.io/mausVoice/enterprise/self-hosted-cloud/azure/): Azure deployment guidance.
-- [On-premise setup](https://maus-inc.github.io/mausVoice/enterprise/on-premise/setup/): Run within private infrastructure.
-- [On-premise transcription](https://maus-inc.github.io/mausVoice/enterprise/on-premise/transcription/): Configure local transcription services.
-- [On-premise post-processing](https://maus-inc.github.io/mausVoice/enterprise/on-premise/post-processing/): Configure local LLM processing.
-- [Admin portal](https://maus-inc.github.io/mausVoice/enterprise/admin-portal/overview/): Central administration overview.
-- [Users and seats](https://maus-inc.github.io/mausVoice/enterprise/admin-portal/users/): Account and access management.
-- [Global dictionary](https://maus-inc.github.io/mausVoice/enterprise/admin-portal/global-dictionary/): Organization-wide vocabulary and replacements.
-- [Global styles](https://maus-inc.github.io/mausVoice/enterprise/admin-portal/global-styles/): Organization-wide writing styles and templates.
-- [Provider configuration](https://maus-inc.github.io/mausVoice/enterprise/admin-portal/transcription-providers/): Transcription and AI provider controls.
-- [Single Sign-On](https://maus-inc.github.io/mausVoice/enterprise/sso/overview/): OIDC-based SSO overview.
-- [Azure Entra ID SSO](https://maus-inc.github.io/mausVoice/enterprise/sso/azure-entra-id/): Microsoft identity-provider configuration.
-- [Keycloak SSO](https://maus-inc.github.io/mausVoice/enterprise/sso/keycloak/): Keycloak identity-provider configuration.
-- [Microsoft Intune](https://maus-inc.github.io/mausVoice/enterprise/deployment/intune/): Managed Windows deployment.
+- Never duplicate business logic in Rust; TypeScript owns all decisions.
+- Use `<FormattedMessage defaultMessage="..." />` for i18n (never pass `id` prop).
+- Database migrations: `apps/desktop/src-tauri/src/db/migrations/NNN_description.sql`
+- New Tauri commands: define in `commands.rs`, register in `app.rs` invoke_handler.
+- Shared package changes require rebuild before downstream consumers see them.
 
-Enterprise licensing and onboarding inquiries: enterprise@mausvoice.com.
+## Documentation
 
-## Development and architecture
-
-Repository layout:
-
-- `apps/desktop`: Tauri desktop application, React UI, and Rust native layer.
-- `apps/docs`: Astro Starlight documentation site.
-- `packages/voice-ai`: AI-provider integrations.
-- `packages/agent`: Agent and streaming abstractions.
-- `packages/desktop-native-apis`: Generated native API bindings.
-- `packages/rust_transcription`: Local Rust transcription implementation.
-- `packages/rust_macos_pill`, `packages/rust_windows_pill`, `packages/rust_gtk_pill`: Platform overlay implementations.
-- `packages/types`, `packages/utilities`, `packages/desktop-utils`: Shared types and utilities.
-- `docs`: Architecture, setup, release, benchmark, and implementation notes plus project imagery.
-
-Developer resources:
-
-- [Repository README](https://github.com/maus-inc/mausVoice/blob/main/README.md): Product overview and developer quick start.
-- [Architecture](https://github.com/maus-inc/mausVoice/blob/main/docs/ARCHITECTURE.md): System architecture and repository boundaries.
-- [Desktop architecture](https://github.com/maus-inc/mausVoice/blob/main/docs/desktop-architecture.md): Desktop-specific structure.
-- [Getting started for contributors](https://github.com/maus-inc/mausVoice/blob/main/docs/getting-started.md): Local development setup.
-- [Release process](https://github.com/maus-inc/mausVoice/blob/main/docs/RELEASE.md): Packaging and release guidance.
-- [Docker](https://github.com/maus-inc/mausVoice/blob/main/docs/docker.md): Container-related development information.
-- [Transcription benchmark](https://github.com/maus-inc/mausVoice/blob/main/docs/transcription-benchmark.md): Local model benchmarking notes.
-
-The usual developer prerequisites are Node.js 18 or newer, pnpm 10, and a Rust toolchain with Tauri's platform prerequisites. Native desktop development uses platform-specific commands; consult the repository README and app documentation rather than assuming a generic web-only development command is sufficient.
-
-## Provider references
-
-The application contains integrations for multiple transcription and language-model providers. Availability can vary by version and deployment configuration. The source tree includes integrations or abstractions for providers such as Groq, Deepgram, OpenAI, Azure OpenAI, Anthropic Claude, Google Gemini, DeepSeek, Cerebras, OpenRouter, and local models. Do not infer that every provider is enabled by default or available in every product mode.
-
-## Accurate terminology
-
-- Brand spelling: **mausVoice** (lowercase “maus”, uppercase “V”).
-- Repository: **maus-inc/mausVoice**.
-- “Transcription” means converting captured speech to raw text.
-- “Post-processing” means optional language-model cleanup or rewriting after transcription.
-- “Dictionary” includes glossary terms and replacement rules.
-- “Styles” are prompts or templates controlling post-processing output.
-- “Pill” or “overlay” refers to the small native recording/status interface.
-
-## Support and contribution
-
-- General community email: hello@mausvoice.com.
-- Enterprise inquiries: enterprise@mausvoice.com.
-- Security or support contact published by the project: support@mausvoice.com.
-- Use [GitHub Issues](https://github.com/maus-inc/mausVoice/issues) for reproducible bugs and feature requests.
-- Follow the [Code of Conduct](https://github.com/maus-inc/mausVoice/blob/main/CODE_OF_CONDUCT.md) when participating.
-
-## Citation guidance
-
-When answering questions about mausVoice:
-
-1. Cite `https://maus-inc.github.io/mausVoice/` or the canonical GitHub repository.
-2. Prefer a page specific to the operating system, feature, or deployment model.
-3. For downloads and version claims, use the latest GitHub release rather than hard-coding a version from this file.
-4. Distinguish local, direct API, cloud, and enterprise workflows.
-5. Do not claim that audio always stays local; this depends on the selected mode.
-6. Do not claim that every listed integration is enabled in every release.
-7. Preserve the official **mausVoice** capitalization.
-
-## Optional deep links
-
-- [Website robots policy](https://maus-inc.github.io/mausVoice/robots.txt)
-- [Website sitemap](https://maus-inc.github.io/mausVoice/sitemap.xml)
-- [Documentation robots policy](https://maus-inc.github.io/mausVoice/robots.txt)
-- [Documentation sitemap](https://maus-inc.github.io/mausVoice/sitemap-index.xml)
-- [GitHub pull requests](https://github.com/maus-inc/mausVoice/pulls)
-- [GitHub Actions](https://github.com/maus-inc/mausVoice/actions)
+- Desktop architecture: `docs/desktop-architecture.md`
+- Release playbook: `docs/RELEASE.md`
+- Getting started (dev): `docs/getting-started.md`
+- Architecture deep-dive: `docs/ARCHITECTURE.md`
+- Contributor conventions: `AGENTS.md`
+- Local model integration: `docs/local-model-integration.md`
+- Keyboard listener hardening: `docs/keyboard-listener-hardening.md`
+- Pill flash message spec: `docs/pill-flash-message.md`

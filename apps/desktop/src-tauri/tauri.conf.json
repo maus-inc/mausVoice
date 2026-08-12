@@ -28,9 +28,7 @@
       "csp": null,
       "assetProtocol": {
         "enable": true,
-        "scope": [
-          "$APPDATA/transcription-audio/**"
-        ]
+        "scope": ["$APPDATA/transcription-audio/**"]
       }
     }
   },
@@ -50,9 +48,7 @@
       "icons/icon.icns",
       "icons/icon.ico"
     ],
-    "resources": [
-      "resources/*"
-    ],
+    "resources": ["resources/*"],
     "macOS": {
       "hardenedRuntime": true,
       "minimumSystemVersion": "13.3",
@@ -69,9 +65,7 @@
   },
   "plugins": {
     "sql": {
-      "preload": [
-        "sqlite:mausvoice.db"
-      ]
+      "preload": ["sqlite:mausvoice.db"]
     },
     "updater": {
       "endpoints": [],

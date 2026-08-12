@@ -32,15 +32,18 @@ fn callback(event: Event) {
 ```
 
 ### OS Caveats:
+
 When using the `listen` function, the following caveats apply:
 
-### Mac OS
+### macOS
+
 The process running the blocking `listen` function (loop) needs to be the parent process (no fork before).
 The process needs to be granted access to the **Accessibility API** (ie. if you're running your process
 inside Terminal.app, then Terminal.app needs to be added in
 System Preferences > Security & Privacy > Privacy > Accessibility).
 
 **Note:** This fork uses `NSEvent.addGlobalMonitorForEvents` instead of `CGEventTap`, which means:
+
 - Only **Accessibility permission** is required, NOT Input Monitoring permission
 - This is more privacy-friendly and easier for users to configure
 - Your callback will NOT be called for events sent to your own application (this is a limitation of NSEvent global monitors)
@@ -50,6 +53,7 @@ If the process is not granted access to the Accessibility API, MacOS will silent
 `listen` callback and will not trigger it with events. No error will be generated.
 
 ### Linux
+
 The `listen` function uses X11 APIs, and so will not work in Wayland or in the linux kernel virtual console
 
 ## Sending some events
@@ -82,13 +86,15 @@ send(&EventType::Wheel {
     delta_y: 1,
 });
 ```
+
 ## Main structs
+
 ### Event
 
 In order to detect what a user types, we need to plug to the OS level management
 of keyboard state (modifiers like shift, ctrl, but also dead keys if they exist).
 
-`EventType` corresponds to a *physical* event, corresponding to QWERTY layout
+`EventType` corresponds to a _physical_ event, corresponding to QWERTY layout
 `Event` corresponds to an actual event that was received and `Event.name` reflects
 what key was interpreted by the OS at that time, it will respect the layout.
 
@@ -144,7 +150,6 @@ pub enum EventType {
     },
 }
 ```
-
 
 ## Getting the main screen size
 
@@ -206,9 +211,11 @@ if let Err(error) = grab(callback) {
 ```
 
 ### OS Caveats:
+
 When using the `listen` and/or `grab` functions, the following caveats apply:
 
-#### Mac OS
+#### macOS
+
 The process running the blocking `grab` function (loop) needs to be the parent process (no fork before).
 The process needs to be granted access to the Accessibility API (ie. if you're running your process
 inside Terminal.app, then Terminal.app needs to be added in
@@ -217,6 +224,7 @@ If the process is not granted access to the Accessibility API, the `grab` call w
 EventTapError (at least in MacOS 10.15, possibly other versions as well)
 
 #### Linux
+
 The `grab` function use the `evdev` library to intercept events, so they will work with both X11 and Wayland
 In order for this to work, the process runnign the `listen` or `grab` loop needs to either run as root (not recommended),
 or run as a user who's a member of the `input` group (recommended)
@@ -227,4 +235,3 @@ When in doubt, add your user to both groups if they exist.
 
 Event data returned by the `listen` and `grab` functions can be serialized and de-serialized with
 Serde if you install this library with the `serialize` feature.
-

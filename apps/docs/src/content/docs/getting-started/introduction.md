@@ -25,7 +25,7 @@ Choose the guide for your platform:
 | ----- | ----------------------------------------------------- |
 | Local | On-device transcription using Whisper. Fully offline. |
 | API   | Direct connection to Groq's Whisper API.              |
-| Cloud | Transcription via mausVoice's cloud service.            |
+| Cloud | Transcription via mausVoice's cloud service.          |
 
 ## Recording Your First Transcription
 
@@ -41,6 +41,6 @@ The floating recording pill can be dragged anywhere on your screen — long-pres
 - Add dictionary terms for domain-specific vocabulary.
 - Explore keyboard shortcuts in the settings.
 
-## Enterprise
+## For teams
 
-For teams looking to distribute mausVoice across an organization or run it on-premise with a private configuration, see the [Enterprise](/enterprise/overview) section.
+mausVoice is built for individuals. For organization-wide deployment or on-premise configurations, reach out through the [community](/guides/community) channels.

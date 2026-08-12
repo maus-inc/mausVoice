@@ -72,10 +72,7 @@ function composeUniversalMacSidecars() {
   }
 
   const binariesDir = join(process.cwd(), "src-tauri", "binaries");
-  const sidecars = [
-    "rust-transcription-cpu",
-    "rust-transcription-gpu",
-  ];
+  const sidecars = ["rust-transcription-cpu", "rust-transcription-gpu"];
 
   for (const sidecarName of sidecars) {
     const arm64Path = join(binariesDir, `${sidecarName}-aarch64-apple-darwin`);

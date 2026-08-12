@@ -32,10 +32,7 @@ export const OPENROUTER_DEFAULT_MODEL = "openai/gpt-4o-mini";
 /**
  * Create OpenAI client configured for OpenRouter
  */
-const createClient = (
-  apiKey: string,
-  customFetch?: CustomFetch,
-) => {
+const createClient = (apiKey: string, customFetch?: CustomFetch) => {
   return new OpenAI({
     apiKey: apiKey.trim(),
     baseURL: OPENROUTER_BASE_URL,

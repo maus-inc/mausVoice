@@ -24,7 +24,12 @@ export class AgentLoop {
 
     for (let i = 0; i < maxIterations; i++) {
       if (this.aborted) {
-        yield { type: "finish", reason: "aborted", text: "", messages: history };
+        yield {
+          type: "finish",
+          reason: "aborted",
+          text: "",
+          messages: history,
+        };
         return;
       }
 
@@ -74,7 +79,12 @@ export class AgentLoop {
       }
 
       if (this.aborted) {
-        yield { type: "finish", reason: "aborted", text: "", messages: history };
+        yield {
+          type: "finish",
+          reason: "aborted",
+          text: "",
+          messages: history,
+        };
         return;
       }
 
@@ -85,14 +95,24 @@ export class AgentLoop {
       });
 
       if (toolCalls.length === 0) {
-        yield { type: "finish", reason: "stop", text: content, messages: history };
+        yield {
+          type: "finish",
+          reason: "stop",
+          text: content,
+          messages: history,
+        };
         return;
       }
 
       yield* this.processToolCalls(history, toolCalls);
     }
 
-    yield { type: "finish", reason: "max-iterations", text: "", messages: history };
+    yield {
+      type: "finish",
+      reason: "max-iterations",
+      text: "",
+      messages: history,
+    };
   }
 
   private buildInput(history: LlmMessage[]): LlmChatInput {
@@ -121,10 +141,7 @@ export class AgentLoop {
         description: "Why you are calling this tool",
       },
     };
-    const required = [
-      ...((schema.required as string[]) ?? []),
-      "reason",
-    ];
+    const required = [...((schema.required as string[]) ?? []), "reason"];
     return { ...schema, properties, required };
   }
 
@@ -174,7 +191,7 @@ export class AgentLoop {
         ? typeof output.result === "string"
           ? output.result
           : JSON.stringify(output.result ?? {})
-        : output.failureReason ?? "Tool execution failed";
+        : (output.failureReason ?? "Tool execution failed");
 
       history.push({ role: "tool", toolCallId: tc.id, content: resultStr });
       yield {

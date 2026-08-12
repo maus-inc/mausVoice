@@ -25,8 +25,10 @@ function computeChangedKeys(before, after) {
   return [...keys].filter((key) => {
     const beforeValue = before[key];
     const afterValue = after[key];
-    const beforeSerialized = beforeValue === undefined ? undefined : JSON.stringify(beforeValue);
-    const afterSerialized = afterValue === undefined ? undefined : JSON.stringify(afterValue);
+    const beforeSerialized =
+      beforeValue === undefined ? undefined : JSON.stringify(beforeValue);
+    const afterSerialized =
+      afterValue === undefined ? undefined : JSON.stringify(afterValue);
     return beforeSerialized !== afterSerialized;
   });
 }
@@ -58,7 +60,9 @@ async function main() {
     console.log("No changes detected in en.json; skipping locale pruning.");
     return;
   }
-  console.log(`Detected ${changedKeys.length} changed en.json entr${changedKeys.length === 1 ? "y" : "ies"}. Removing them from other locales.`);
+  console.log(
+    `Detected ${changedKeys.length} changed en.json entr${changedKeys.length === 1 ? "y" : "ies"}. Removing them from other locales.`,
+  );
 
   const localeFiles = (await readdir(localesDir)).filter(
     (fileName) => fileName.endsWith(".json") && fileName !== "en.json",
@@ -72,9 +76,13 @@ async function main() {
   }
 
   if (prunedLocales.length > 0) {
-    console.log(`Pruned ${changedKeys.length} key(s) from ${prunedLocales.join(", ")}.`);
+    console.log(
+      `Pruned ${changedKeys.length} key(s) from ${prunedLocales.join(", ")}.`,
+    );
   } else {
-    console.log("Other locale files already matched the English locale after extraction.");
+    console.log(
+      "Other locale files already matched the English locale after extraction.",
+    );
   }
 }
 

@@ -44,25 +44,25 @@ b1354800 docs: personal-build README + architecture walkthrough
 
 ### Intentional content differences (kept free-form polish over older fork base)
 
-| File | Why HEAD differs from personal fork |
-|------|-------------------------------------|
-| `.github/scripts/install-desktop-linux-deps.sh` | kept temporarily: token cannot delete/update workflows that reference it; personal-fork-ci omits it |
-| `.github/workflows/_release-desktop-impl.yml` | live file is free-form; personal-fork version in `personal-fork-ci/workflows/` |
-| `.github/workflows/build-desktop.yml` | same — packaged under personal-fork-ci |
-| `.github/workflows/lint-desktop.yml` | same — packaged under personal-fork-ci |
-| `.github/workflows/release-cli.yml` | same — packaged under personal-fork-ci |
-| `apps/desktop/package.json` | free-form dependency bumps (`react-router-dom` ^6.30.4, `@types/node`) |
-| `apps/desktop/src-tauri/src/app.rs` | free-form `set_tray_language_menu` command registration |
-| `apps/desktop/src-tauri/src/commands.rs` | free-form tray language menu command |
-| `apps/desktop/src-tauri/src/system/tray.rs` | free-form tray: Language submenu + Copy Latest Transcript |
-| `apps/desktop/src/actions/updater.actions.ts` | free-form beta-update surfacing (`shouldSurfaceUpdate`) |
-| `apps/desktop/src/components/dashboard/DashboardMenu.tsx` | free-form beta-update badge gating |
-| `apps/desktop/src/components/root/AppSideEffects.tsx` | free-form tray language sync + copy-last-transcript listener |
-| `apps/desktop/src/repos/generate-text.repo.ts` | free-form `GENERATE_TEXT_MODELS` validation + personal default `gpt-oss-20b` |
-| `apps/desktop/src/repos/index.ts` | free-form `DeepgramTranscribeAudioRepo` batch provider wiring |
-| `apps/desktop/src/utils/user.utils.ts` | free-form Active Dictation Language / configured languages helpers |
-| `packages/voice-ai/src/groq.utils.ts` | free-form model list extras; personal default remains `gpt-oss-20b` |
-| `.github/workflows/release-unsigned.yml` | missing at path; packaged at `personal-fork-ci/workflows/release-unsigned.yml` |
+| File                                                      | Why HEAD differs from personal fork                                                                 |
+| --------------------------------------------------------- | --------------------------------------------------------------------------------------------------- |
+| `.github/scripts/install-desktop-linux-deps.sh`           | kept temporarily: token cannot delete/update workflows that reference it; personal-fork-ci omits it |
+| `.github/workflows/_release-desktop-impl.yml`             | live file is free-form; personal-fork version in `personal-fork-ci/workflows/`                      |
+| `.github/workflows/build-desktop.yml`                     | same — packaged under personal-fork-ci                                                              |
+| `.github/workflows/lint-desktop.yml`                      | same — packaged under personal-fork-ci                                                              |
+| `.github/workflows/release-cli.yml`                       | same — packaged under personal-fork-ci                                                              |
+| `apps/desktop/package.json`                               | free-form dependency bumps (`react-router-dom` ^6.30.4, `@types/node`)                              |
+| `apps/desktop/src-tauri/src/app.rs`                       | free-form `set_tray_language_menu` command registration                                             |
+| `apps/desktop/src-tauri/src/commands.rs`                  | free-form tray language menu command                                                                |
+| `apps/desktop/src-tauri/src/system/tray.rs`               | free-form tray: Language submenu + Copy Latest Transcript                                           |
+| `apps/desktop/src/actions/updater.actions.ts`             | free-form beta-update surfacing (`shouldSurfaceUpdate`)                                             |
+| `apps/desktop/src/components/dashboard/DashboardMenu.tsx` | free-form beta-update badge gating                                                                  |
+| `apps/desktop/src/components/root/AppSideEffects.tsx`     | free-form tray language sync + copy-last-transcript listener                                        |
+| `apps/desktop/src/repos/generate-text.repo.ts`            | free-form `GENERATE_TEXT_MODELS` validation + personal default `gpt-oss-20b`                        |
+| `apps/desktop/src/repos/index.ts`                         | free-form `DeepgramTranscribeAudioRepo` batch provider wiring                                       |
+| `apps/desktop/src/utils/user.utils.ts`                    | free-form Active Dictation Language / configured languages helpers                                  |
+| `packages/voice-ai/src/groq.utils.ts`                     | free-form model list extras; personal default remains `gpt-oss-20b`                                 |
+| `.github/workflows/release-unsigned.yml`                  | missing at path; packaged at `personal-fork-ci/workflows/release-unsigned.yml`                      |
 
 ### Pill hover fix
 
@@ -72,6 +72,7 @@ Includes tooltip hover detection so the pill does not fade while the cursor is o
 ## KEPT — Personal fork features (what you wanted)
 
 ### Product / paywall
+
 - Personal-use mode via `isPersonalUseEnabled` / `isPersonalUseProEnabled` (always on)
 - No paywall / Pro account gating; local personal user
 - In-app Deepgram + Groq API keys (onboarding `PersonalCredentialsForm` + Settings)
@@ -83,6 +84,7 @@ Includes tooltip hover detection so the pill does not fade while the cursor is o
 - Multi-device dialog stripped of cloud pairing noise where personal fork did so
 
 ### Dictation / keyboard
+
 - macOS keyboard listener hardening (vendored/patched `rdev`, tap re-enable on timeout)
 - Listener health lifecycle + TS surface (`get_key_listener_health`, health events, retry)
 - Hold-to-talk dictation (`ActivationController.holdToTalk`, "Hold to dictate" copy)
@@ -90,10 +92,12 @@ Includes tooltip hover detection so the pill does not fade while the cursor is o
 - i18n locale sync for new strings
 
 ### Windows pill
+
 - Tooltip hover detection (pill stays visible on tooltip hover)
 - Font height / spacing formatting fixes after merge
 
 ### Platform scope
+
 - **Removed** entire Flutter `mobile/` app (366 files)
 - **Removed** `packages/flutter_video_looper` (89 files)
 - **Removed** Linux desktop platform (`apps/desktop/src-tauri/src/platform/linux/**`)
@@ -102,6 +106,7 @@ Includes tooltip hover detection so the pill does not fade while the cursor is o
 - Dev scripts: no `dev:linux` / `dev:linux:gpu`
 
 ### Docs
+
 - Personal-build `README.md` + `README.original.md`
 - `docs/ARCHITECTURE.md`
 - `docs/keyboard-listener-hardening.md`
@@ -109,6 +114,7 @@ Includes tooltip hover detection so the pill does not fade while the cursor is o
 - AGENTS.md: mobile section removed
 
 ### CI (intent)
+
 - `personal-fork-ci/workflows/release-unsigned.yml` — unsigned macOS/Windows desktop binaries
 - Linux stripped from desktop release/build/lint matrices (packaged; apply via APPLY.md)
 - Slimmed `release-cli.yml` for personal build
@@ -244,6 +250,7 @@ Total paths deleted: **493**
 Total added paths: **73** (incl. vendored patches)
 
 ### App / docs / config
+
 - `README.original.md`
 - `apps/desktop/.env.local.example`
 - `apps/desktop/src-tauri/icons/tray/menu-item-windows-36.png`
@@ -256,10 +263,12 @@ Total added paths: **73** (incl. vendored patches)
 - `docs/keyboard-listener-hardening.md`
 
 ### Vendored patches (`patches/`) — 57 files
+
 - `patches/rdev/**` — macOS event-tap re-enable + keyboard listener fix
 - `patches/block-0.1.6/**` — dependency patch for rdev stack
 
 ### Packaged CI (`personal-fork-ci/`) — 6 files
+
 - `personal-fork-ci/APPLY.md`
 - `personal-fork-ci/workflows/_release-desktop-impl.yml`
 - `personal-fork-ci/workflows/build-desktop.yml`
@@ -278,6 +287,7 @@ voice-ai groq defaults, README/docs.
 
 This environment’s GitHub token **cannot push changes under `.github/workflows/`**.
 Therefore:
+
 - Live `.github/workflows/*` on the branch still match free-form (includes Linux matrix).
 - Personal-fork workflow intent is complete under `personal-fork-ci/workflows/`.
 - Apply with `personal-fork-ci/APPLY.md` when you have a token/user with `workflows` permission.

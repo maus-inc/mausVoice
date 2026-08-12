@@ -196,9 +196,7 @@ function llmMessagesToClaude(messages: LlmMessage[]): {
   return { system, messages: out };
 }
 
-function claudeFinishReason(
-  raw: string | null | undefined,
-): LlmFinishReason {
+function claudeFinishReason(raw: string | null | undefined): LlmFinishReason {
   switch (raw) {
     case "end_turn":
       return "stop";
@@ -237,11 +235,7 @@ export async function* claudeStreamChat({
         }))
       : undefined;
 
-  let toolChoice:
-    | ToolChoiceAuto
-    | ToolChoiceAny
-    | ToolChoiceTool
-    | undefined;
+  let toolChoice: ToolChoiceAuto | ToolChoiceAny | ToolChoiceTool | undefined;
   if (input.toolChoice && tools) {
     if (typeof input.toolChoice === "string") {
       switch (input.toolChoice) {

@@ -10,7 +10,7 @@ workflows drift or a push token cannot update workflow files.
 
 The mausVoice release pipeline is **`.github/workflows/release.yml`** (single,
 workflow_dispatch-based). The old upstream multi-channel release stack
-(`_release-desktop-impl.yml`, `release-unsigned.yml`, release-enterprise-*,
+(`_release-desktop-impl.yml`, `release-unsigned.yml`, release-enterprise-\*,
 release-docs, retry-release, publish-packages) was deleted — do not reintroduce
 it. Releases are unsigned and authored by the maintainer's PAT (`RELEASE_TOKEN`
 secret) when present.
