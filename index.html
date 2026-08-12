@@ -8,9 +8,9 @@
 <meta property="og:type" content="website" />
 <meta property="og:title" content="mausVoice - Your voice, typed anywhere" />
 <meta property="og:description" content="Dictate into any app and clean it up with AI. No account, no subscription, written in Rust." />
-<meta property="og:image" content="assets/og-card.jpg" />
+<meta property="og:image" content="marketing/assets/og-card.jpg" />
 <meta name="twitter:card" content="summary_large_image" />
-<link rel="icon" type="image/png" href="assets/favicon.png" />
+<link rel="icon" type="image/png" href="marketing/assets/favicon.png" />
 
 <style>
 /* ------------------------------------------------------------------ *
@@ -22,56 +22,56 @@
 @font-face {
   font-family: "Satoshi";
   src: local("Satoshi"), local("Satoshi Medium"), local("Satoshi-Medium"),
-       url("assets/fonts/Satoshi-Medium.ttf") format("truetype");
+       url("marketing/assets/fonts/Satoshi-Medium.ttf") format("truetype");
   font-weight: 100 900;
   font-style: normal;
   font-display: swap;
 }
 @font-face {
   font-family: "Inter";
-  src: url("assets/fonts/inter-latin-400-normal.woff2") format("woff2");
+  src: url("marketing/assets/fonts/inter-latin-400-normal.woff2") format("woff2");
   font-weight: 400;
   font-style: normal;
   font-display: swap;
 }
 @font-face {
   font-family: "Inter";
-  src: url("assets/fonts/inter-latin-500-normal.woff2") format("woff2");
+  src: url("marketing/assets/fonts/inter-latin-500-normal.woff2") format("woff2");
   font-weight: 500;
   font-style: normal;
   font-display: swap;
 }
 @font-face {
   font-family: "Inter";
-  src: url("assets/fonts/inter-latin-600-normal.woff2") format("woff2");
+  src: url("marketing/assets/fonts/inter-latin-600-normal.woff2") format("woff2");
   font-weight: 600;
   font-style: normal;
   font-display: swap;
 }
 @font-face {
   font-family: "Inter";
-  src: url("assets/fonts/inter-latin-700-normal.woff2") format("woff2");
+  src: url("marketing/assets/fonts/inter-latin-700-normal.woff2") format("woff2");
   font-weight: 700;
   font-style: normal;
   font-display: swap;
 }
 @font-face {
   font-family: "JetBrains Mono";
-  src: url("assets/fonts/jetbrains-mono-latin-400-normal.woff2") format("woff2");
+  src: url("marketing/assets/fonts/jetbrains-mono-latin-400-normal.woff2") format("woff2");
   font-weight: 400;
   font-style: normal;
   font-display: swap;
 }
 @font-face {
   font-family: "JetBrains Mono";
-  src: url("assets/fonts/jetbrains-mono-latin-500-normal.woff2") format("woff2");
+  src: url("marketing/assets/fonts/jetbrains-mono-latin-500-normal.woff2") format("woff2");
   font-weight: 500;
   font-style: normal;
   font-display: swap;
 }
 @font-face {
   font-family: "JetBrains Mono";
-  src: url("assets/fonts/jetbrains-mono-latin-700-normal.woff2") format("woff2");
+  src: url("marketing/assets/fonts/jetbrains-mono-latin-700-normal.woff2") format("woff2");
   font-weight: 700;
   font-style: normal;
   font-display: swap;
@@ -81,7 +81,7 @@
   src:
     local("TAN-PARADISO"),
     local("TAN Paradiso"),
-    url("assets/fonts/TAN-PARADISO-Regular.woff2") format("woff2");
+    url("marketing/assets/fonts/TAN-PARADISO-Regular.woff2") format("woff2");
   font-weight: 400 700;
   font-style: normal;
   font-display: swap;
@@ -1046,6 +1046,16 @@ section { scroll-margin-top: 96px; }
   translate: 0 0;
 }
 
+/* When Lenis + GSAP take over, let GSAP drive the reveals entirely */
+.gsap-active .fade-up,
+.gsap-active .words .w {
+  transition: none;
+}
+
+.gsap-active .fade-up {
+  translate: none;
+}
+
 /* ------------------------------------------------------------------ *
  * Reduced motion
  * ------------------------------------------------------------------ */
@@ -1076,7 +1086,7 @@ section { scroll-margin-top: 96px; }
 
 <header class="nav">
   <a class="brand" href="#top" aria-label="mausVoice home">
-    <img src="assets/logo.png" alt="" width="28" height="28" />
+    <img src="marketing/assets/logo.png" alt="" width="28" height="28" />
     <span class="brand-name">mausVoice</span>
   </a>
 
@@ -1108,12 +1118,12 @@ section { scroll-margin-top: 96px; }
 <main id="main">
 
 <section class="hero" id="top">
-  <img class="hero-bg" src="assets/hero-bg.jpg" alt="" aria-hidden="true" />
+  <img class="hero-bg" src="marketing/assets/hero-bg.jpg" alt="" aria-hidden="true" />
   <div class="hero-overlay" aria-hidden="true"></div>
   <div class="hero-fade" aria-hidden="true"></div>
 
-  <img class="ascii-deco" src="assets/ascii-eq.png" alt="" aria-hidden="true" style="left:28px; bottom:30px; width:280px;" />
-  <img class="ascii-deco" src="assets/ascii-term.png" alt="" aria-hidden="true" style="right:36px; bottom:26px; width:150px;" />
+  <img class="ascii-deco" src="marketing/assets/ascii-eq.png" alt="" aria-hidden="true" style="left:28px; bottom:30px; width:280px;" />
+  <img class="ascii-deco" src="marketing/assets/ascii-term.png" alt="" aria-hidden="true" style="right:36px; bottom:26px; width:150px;" />
 
   <div class="hero-content">
     <p class="hero-meta fade-up" style="--delay:0s">
@@ -1143,7 +1153,7 @@ section { scroll-margin-top: 96px; }
 </section>
 
 <section class="why" id="why">
-  <img class="ascii-deco" src="assets/ascii-rings.png" alt="" aria-hidden="true" style="left:26px; top:48%; width:210px;" />
+  <img class="ascii-deco" src="marketing/assets/ascii-rings.png" alt="" aria-hidden="true" style="left:26px; top:48%; width:210px;" />
 
   <div class="section-head">
     <h2 class="fade-up">
@@ -1185,12 +1195,12 @@ section { scroll-margin-top: 96px; }
 </section>
 
 <section class="mission" id="how-it-works">
-  <img class="ascii-deco" src="assets/ascii-phones.png" alt="" aria-hidden="true" style="right:26px; top:38%; width:170px;" />
+  <img class="ascii-deco" src="marketing/assets/ascii-phones.png" alt="" aria-hidden="true" style="right:26px; top:38%; width:170px;" />
 
   <div class="mission-video fade-up">
-    <video src="assets/demo.mp4" poster="assets/demo-poster.jpg" autoplay muted loop playsinline preload="none" aria-label="Screen recording of mausVoice transcribing speech and pasting the cleaned text">
-      <track kind="captions" src="assets/captions.vtt" srclang="en" label="English captions" />
-      <track kind="descriptions" src="assets/descriptions.vtt" srclang="en" label="English descriptions" />
+    <video src="marketing/assets/demo.mp4" poster="marketing/assets/demo-poster.jpg" autoplay muted loop playsinline preload="none" aria-label="Screen recording of mausVoice transcribing speech and pasting the cleaned text">
+      <track kind="captions" src="marketing/assets/captions.vtt" srclang="en" label="English captions" />
+      <track kind="descriptions" src="marketing/assets/descriptions.vtt" srclang="en" label="English descriptions" />
     </video>
 
     <button class="caption-toggle" id="caption-toggle" type="button" aria-pressed="false" aria-label="Show captions" title="Captions">
@@ -1217,7 +1227,7 @@ section { scroll-margin-top: 96px; }
 </section>
 
 <section class="solution" id="features">
-  <img class="ascii-deco" src="assets/ascii-eq.png" alt="" aria-hidden="true" style="left:26px; top:42%; width:220px;" />
+  <img class="ascii-deco" src="marketing/assets/ascii-eq.png" alt="" aria-hidden="true" style="left:26px; top:42%; width:220px;" />
 
   <p class="solution-label fade-up">Product</p>
 
@@ -1226,7 +1236,7 @@ section { scroll-margin-top: 96px; }
   </h2>
 
   <div class="band fade-up" style="--delay:0.2s">
-    <img src="assets/home-page.png" alt="The mausVoice desktop app with a live transcript and writing style options" loading="lazy" />
+    <img src="marketing/assets/home-page.png" alt="The mausVoice desktop app with a live transcript and writing style options" loading="lazy" />
   </div>
 
   <div class="features">
@@ -1320,14 +1330,14 @@ section { scroll-margin-top: 96px; }
 </section>
 
 <section class="cta" id="download">
-  <img class="cta-bg" src="assets/cta-bg.jpg" alt="" aria-hidden="true" />
+  <img class="cta-bg" src="marketing/assets/cta-bg.jpg" alt="" aria-hidden="true" />
   <div class="cta-overlay" aria-hidden="true"></div>
 
-  <img class="ascii-deco" src="assets/ascii-rings.png" alt="" aria-hidden="true" style="right:30px; top:44%; width:190px;" />
+  <img class="ascii-deco" src="marketing/assets/ascii-rings.png" alt="" aria-hidden="true" style="right:30px; top:44%; width:190px;" />
 
   <div class="cta-content">
     <div class="logo-mark" aria-hidden="true">
-      <img src="assets/logo.png" alt="" width="44" height="44" />
+      <img src="marketing/assets/logo.png" alt="" width="44" height="44" />
     </div>
 
     <h2 class="fade-up">
@@ -1359,11 +1369,11 @@ section { scroll-margin-top: 96px; }
 </main>
 
 <footer class="liquid-glass footer-glass fade-up" style="--delay:0.4s">
-  <img class="footer-ascii" src="assets/footer-ascii.png" alt="" aria-hidden="true" />
+  <img class="footer-ascii" src="marketing/assets/footer-ascii.png" alt="" aria-hidden="true" />
   <div class="fg-grid">
     <div class="fg-brand">
       <div class="fg-brand-row">
-        <img src="assets/logo.png" alt="mausVoice logo" width="24" height="24" />
+        <img src="marketing/assets/logo.png" alt="mausVoice logo" width="24" height="24" />
         <span>mausVoice</span>
       </div>
       <p>Voice typing for your own machine. Transcribe live, clean it up with AI, and type into any app. Free, local, and private.</p>
@@ -1411,6 +1421,9 @@ section { scroll-margin-top: 96px; }
   </div>
 </footer>
 
+<script src="marketing/assets/vendor/gsap.min.js"></script>
+<script src="marketing/assets/vendor/ScrollTrigger.min.js"></script>
+<script src="marketing/assets/vendor/lenis.min.js"></script>
 <script>
 (function () {
   "use strict";
@@ -1418,17 +1431,111 @@ section { scroll-margin-top: 96px; }
   var reduceMotion = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
   var supportsIO = "IntersectionObserver" in window;
 
-  /* ---------- fadeUp: hero animates on load, rest on scroll ---------- */
+  /* ---------- Lenis smooth scroll + GSAP staggered reveals ---------- */
 
-  var fades = Array.prototype.slice.call(document.querySelectorAll(".fade-up"));
+  var gsapReady = typeof window.gsap !== "undefined" && typeof window.ScrollTrigger !== "undefined";
+  var smoothScroll = !reduceMotion && gsapReady && typeof Lenis !== "undefined";
 
-  if (reduceMotion || !supportsIO) {
-    fades.forEach(function (el) { el.classList.add("in"); });
-  } else {
-    fades.forEach(function (el) {
-      if (el.closest(".hero")) {
-        el.classList.add("in");
-      } else {
+  if (smoothScroll) {
+    gsap.registerPlugin(ScrollTrigger);
+
+    var lenis = new Lenis({ lerp: 0.12, smoothWheel: true });
+    lenis.on("scroll", ScrollTrigger.update);
+    gsap.ticker.add(function (time) { lenis.raf(time * 1000); });
+    gsap.ticker.lagSmoothing(0);
+
+    // smooth anchor navigation
+    document.querySelectorAll('a[href^="#"]').forEach(function (a) {
+      a.addEventListener("click", function (e) {
+        var target = a.getAttribute("href");
+        if (target && target.length > 1) {
+          e.preventDefault();
+          lenis.scrollTo(target, { offset: -80 });
+        }
+      });
+    });
+
+    document.documentElement.classList.add("gsap-active");
+
+    // hero: staggered entrance on load
+    gsap.fromTo(".hero .fade-up",
+      { opacity: 0, y: 24 },
+      { opacity: 1, y: 0, duration: 0.9, ease: "power3.out", stagger: 0.1, delay: 0.15, overwrite: true }
+    );
+
+    // below the fold: smooth staggered batch reveals
+    var fadeEls = gsap.utils.toArray(".fade-up").filter(function (el) {
+      return !el.closest(".hero");
+    });
+    ScrollTrigger.batch(fadeEls, {
+      start: "top 88%",
+      once: true,
+      onEnter: function (els) {
+        gsap.fromTo(els,
+          { opacity: 0, y: 24 },
+          { opacity: 1, y: 0, duration: 0.75, ease: "power3.out", stagger: 0.09, overwrite: true }
+        );
+      }
+    });
+
+    // word-by-word mission reveal, staggered and smooth
+    gsap.utils.toArray(".words").forEach(function (block) {
+      gsap.to(block.querySelectorAll(".w"), {
+        opacity: 1,
+        duration: 0.5,
+        ease: "power2.out",
+        stagger: 0.028,
+        scrollTrigger: { trigger: block, start: "top 82%", once: true }
+      });
+    });
+
+    // subtle scroll-linked parallax on the product band
+    var bandImg = document.querySelector(".band img");
+    if (bandImg) {
+      gsap.fromTo(bandImg,
+        { yPercent: 5, scale: 1.06 },
+        {
+          yPercent: -5,
+          ease: "none",
+          scrollTrigger: { trigger: ".band", start: "top bottom", end: "bottom top", scrub: 0.6 }
+        }
+      );
+    }
+  }
+
+  /* ---------- fadeUp + words reveals ----------
+     GSAP/Lenis own the reveals when smooth scroll is active; the
+     IntersectionObserver path is the fallback otherwise. ---------- */
+
+  if (!smoothScroll) {
+    var fades = Array.prototype.slice.call(document.querySelectorAll(".fade-up"));
+
+    if (reduceMotion || !supportsIO) {
+      fades.forEach(function (el) { el.classList.add("in"); });
+    } else {
+      fades.forEach(function (el) {
+        if (el.closest(".hero")) {
+          el.classList.add("in");
+        } else {
+          var io = new IntersectionObserver(function (entries) {
+            entries.forEach(function (entry) {
+              if (entry.isIntersecting) {
+                entry.target.classList.add("in");
+                io.unobserve(entry.target);
+              }
+            });
+          }, { threshold: 0.12, rootMargin: "-100px 0px" });
+          io.observe(el);
+        }
+      });
+    }
+
+    var wordBlocks = Array.prototype.slice.call(document.querySelectorAll(".words"));
+
+    if (reduceMotion || !supportsIO) {
+      wordBlocks.forEach(function (el) { el.classList.add("in"); });
+    } else {
+      wordBlocks.forEach(function (el) {
         var io = new IntersectionObserver(function (entries) {
           entries.forEach(function (entry) {
             if (entry.isIntersecting) {
@@ -1436,30 +1543,10 @@ section { scroll-margin-top: 96px; }
               io.unobserve(entry.target);
             }
           });
-        }, { threshold: 0.12, rootMargin: "-100px 0px" });
+        }, { threshold: 0.35 });
         io.observe(el);
-      }
-    });
-  }
-
-  /* ---------- Word-by-word mission reveal ---------- */
-
-  var wordBlocks = Array.prototype.slice.call(document.querySelectorAll(".words"));
-
-  if (reduceMotion || !supportsIO) {
-    wordBlocks.forEach(function (el) { el.classList.add("in"); });
-  } else {
-    wordBlocks.forEach(function (el) {
-      var io = new IntersectionObserver(function (entries) {
-        entries.forEach(function (entry) {
-          if (entry.isIntersecting) {
-            entry.target.classList.add("in");
-            io.unobserve(entry.target);
-          }
-        });
-      }, { threshold: 0.35 });
-      io.observe(el);
-    });
+      });
+    }
   }
 
   /* ---------- Recording pill engine ---------------------------------
