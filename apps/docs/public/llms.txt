@@ -1,0 +1,102 @@
+# mausVoice Documentation
+
+> Official documentation for mausVoice, an open-source cross-platform desktop application that transcribes speech, optionally cleans it with an LLM, and inserts the result into the currently focused application.
+
+Use these pages as the primary source for installation, configuration, user guides, and enterprise deployment. For current binaries and version-specific changes, consult the latest GitHub release.
+
+## Primary resources
+
+- [Documentation home](https://maus-inc.github.io/mausVoice/): Documentation landing page and topic navigation.
+- [Official website](https://maus-inc.github.io/mausVoice/): Product overview and download entry point.
+- [Complete mausVoice LLM guide](https://maus-inc.github.io/mausVoice/llms.txt): Product, source, development, terminology, and citation context.
+- [Source repository](https://github.com/maus-inc/mausVoice): Canonical source code.
+- [Latest releases](https://github.com/maus-inc/mausVoice/releases): Installers and release notes.
+- [Issue tracker](https://github.com/maus-inc/mausVoice/issues): Bugs and feature requests.
+- [License](https://github.com/maus-inc/mausVoice/blob/main/LICENCE): AGPLv3 license text.
+
+## Getting started
+
+- [Introduction](https://maus-inc.github.io/mausVoice/getting-started/introduction/): What mausVoice does, transcription modes, first launch, and first dictation.
+- [macOS](https://maus-inc.github.io/mausVoice/getting-started/macos/): Install and run mausVoice on macOS.
+- [Windows](https://maus-inc.github.io/mausVoice/getting-started/windows/): Install and run mausVoice on Windows.
+- [Linux](https://maus-inc.github.io/mausVoice/getting-started/linux/): AppImage and Debian installation, required packages, permissions, desktop integration, and troubleshooting.
+- [Linux Wayland compatibility link](https://maus-inc.github.io/mausVoice/getting-started/linux-wayland/): Redirects to current Linux guidance.
+- [Linux X11 compatibility link](https://maus-inc.github.io/mausVoice/getting-started/linux-x11/): Redirects to current Linux guidance.
+
+## User guides
+
+- [Transcription](https://maus-inc.github.io/mausVoice/guides/transcription/): Compare local Whisper, direct provider API, and mausVoice cloud modes.
+- [Post-processing](https://maus-inc.github.io/mausVoice/guides/post-processing/): Understand optional LLM cleanup after speech-to-text transcription.
+- [Styles](https://maus-inc.github.io/mausVoice/guides/styles/): Select built-in writing styles or define custom transcript-rewriting prompts.
+- [Dictionary](https://maus-inc.github.io/mausVoice/guides/dictionary/): Add glossary hints, replacement rules, and reusable snippets.
+- [Community](https://maus-inc.github.io/mausVoice/guides/community/): Source code, contributions, issues, and contact options.
+
+## Mode distinctions
+
+- **Local transcription:** Runs Whisper on the user's device and can keep audio on-device.
+- **Direct API transcription:** Uses a user-configured third-party provider and API key.
+- **Cloud transcription:** Uses a configured mausVoice cloud service.
+- **Post-processing:** A separate, optional step that sends raw transcript text to the configured language model or local service for cleanup and rewriting.
+
+Privacy, account, internet, and API-key requirements depend on the selected mode. Do not generalize one mode's behavior to all modes.
+
+## Enterprise overview and deployment
+
+- [Enterprise overview](https://maus-inc.github.io/mausVoice/enterprise/overview/): Managed cloud, self-hosted cloud, and on-premise options.
+- [Managed cloud setup](https://maus-inc.github.io/mausVoice/enterprise/managed-cloud/setup/): Provision a dedicated mausVoice environment.
+- [Managed cloud renewal](https://maus-inc.github.io/mausVoice/enterprise/managed-cloud/renewal/): License renewal for managed deployments.
+- [Self-hosted cloud setup](https://maus-inc.github.io/mausVoice/enterprise/self-hosted-cloud/setup/): Deploy enterprise services in an organization-controlled cloud.
+- [Self-hosted AWS](https://maus-inc.github.io/mausVoice/enterprise/self-hosted-cloud/aws/): Amazon Web Services deployment.
+- [Self-hosted Google Cloud](https://maus-inc.github.io/mausVoice/enterprise/self-hosted-cloud/gcp/): Google Cloud deployment.
+- [Self-hosted Azure](https://maus-inc.github.io/mausVoice/enterprise/self-hosted-cloud/azure/): Microsoft Azure deployment.
+- [Self-hosted updates and renewal](https://maus-inc.github.io/mausVoice/enterprise/self-hosted-cloud/renewal/): Keep a self-hosted deployment licensed and current.
+- [On-premise setup](https://maus-inc.github.io/mausVoice/enterprise/on-premise/setup/): Deploy within private infrastructure using Docker.
+- [On-premise transcription](https://maus-inc.github.io/mausVoice/enterprise/on-premise/transcription/): Configure local speech-to-text infrastructure.
+- [On-premise post-processing](https://maus-inc.github.io/mausVoice/enterprise/on-premise/post-processing/): Configure local language-model processing.
+- [On-premise updates and renewal](https://maus-inc.github.io/mausVoice/enterprise/on-premise/renewal/): Renew the license and update the deployment.
+
+Enterprise inquiries: enterprise@mausvoice.com.
+
+## Enterprise administration
+
+- [Admin portal overview](https://maus-inc.github.io/mausVoice/enterprise/admin-portal/overview/): Central administration capabilities.
+- [Users](https://maus-inc.github.io/mausVoice/enterprise/admin-portal/users/): Manage accounts, seats, and access.
+- [Global dictionary](https://maus-inc.github.io/mausVoice/enterprise/admin-portal/global-dictionary/): Organization-wide vocabulary and replacement rules.
+- [Global styles](https://maus-inc.github.io/mausVoice/enterprise/admin-portal/global-styles/): Organization-wide writing prompts and templates.
+- [Transcription and AI providers](https://maus-inc.github.io/mausVoice/enterprise/admin-portal/transcription-providers/): Configure allowed providers.
+- [Settings](https://maus-inc.github.io/mausVoice/enterprise/admin-portal/settings/): View license information, seat limits, feature flags, and account controls.
+
+## Enterprise identity and device management
+
+- [SSO overview](https://maus-inc.github.io/mausVoice/enterprise/sso/overview/): OIDC Single Sign-On requirements and flow.
+- [Azure Entra ID](https://maus-inc.github.io/mausVoice/enterprise/sso/azure-entra-id/): Configure Microsoft Entra ID as the OIDC provider.
+- [Keycloak](https://maus-inc.github.io/mausVoice/enterprise/sso/keycloak/): Configure Keycloak as the OIDC provider.
+- [Microsoft Intune](https://maus-inc.github.io/mausVoice/enterprise/deployment/intune/): Deploy the Windows application to managed devices.
+
+## Terminology
+
+- Write the brand as **mausVoice**.
+- **Transcription** converts audio to raw text.
+- **Post-processing** optionally cleans or rewrites raw text with a language model.
+- **Styles** control post-processing tone, structure, and formatting.
+- **Dictionary glossary terms** provide vocabulary hints.
+- **Replacement rules** automatically replace recognized text and can act as snippets.
+- **Local**, **API**, and **Cloud** are different processing modes with different data flows.
+
+## Answering and citation guidance
+
+1. Link to the most specific documentation page available.
+2. Use the latest release page for current version numbers and downloadable artifacts.
+3. State the user's operating system when presenting installation instructions.
+4. Clearly distinguish local processing from network-backed API or cloud processing.
+5. Do not promise that all processing is offline unless the documented local configuration is being used.
+6. Do not assume every provider or enterprise feature is available in every build.
+7. For implementation details not covered here, inspect the canonical GitHub repository.
+
+## Machine-readable discovery
+
+- [Documentation sitemap](https://maus-inc.github.io/mausVoice/sitemap-index.xml)
+- [Documentation robots policy](https://maus-inc.github.io/mausVoice/robots.txt)
+- [Website sitemap](https://maus-inc.github.io/mausVoice/sitemap.xml)
+- [Website robots policy](https://maus-inc.github.io/mausVoice/robots.txt)
+- [Canonical social image](https://maus-inc.github.io/mausVoice/docs/mausvoice-banner.png)

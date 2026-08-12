@@ -5,7 +5,7 @@ description: Install and configure mausVoice on Linux.
 
 ## Installation
 
-There are multiple Linux installation options available on the [mausvoice.com/download](https://mausvoice.com/download) page.
+There are multiple Linux installation options available on the [the mausVoice website](https://maus-inc.github.io/mausVoice/download) page.
 
 ### APT (Debian, Ubuntu)
 
@@ -135,7 +135,7 @@ sudo zypper update mausvoice-desktop
 
 ### AppImage
 
-A standalone AppImage is also available on the [download page](https://mausvoice.com/download). No installation required — just download, make executable, and run:
+A standalone AppImage is also available on the [download page](https://maus-inc.github.io/mausVoice/download). No installation required — just download, make executable, and run:
 
 ```bash
 chmod +x mausVoice_*.AppImage

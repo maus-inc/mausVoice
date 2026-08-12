@@ -550,13 +550,13 @@ export default function SettingsPage() {
     >
       <ListTile
         title={<FormattedMessage defaultMessage="Terms & conditions" />}
-        onClick={() => openUrl("https://mausvoice.com/terms")}
+        onClick={() => openUrl("https://maus-inc.github.io/mausVoice/terms")}
         trailing={<ArrowOutwardRounded />}
         leading={<DescriptionOutlined />}
       />
       <ListTile
         title={<FormattedMessage defaultMessage="Privacy policy" />}
-        onClick={() => openUrl("https://mausvoice.com/privacy")}
+        onClick={() => openUrl("https://maus-inc.github.io/mausVoice/privacy")}
         trailing={<ArrowOutwardRounded />}
         leading={<PrivacyTipOutlined />}
       />
