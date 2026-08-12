@@ -43,10 +43,22 @@ jobs:
         run: pnpm --filter docs run check-types
       - name: Build docs
         run: pnpm --filter docs run build
-      - name: Verify project-site URLs
+      - name: Verify internal docs links
         working-directory: apps/docs
         run: |
+          if grep -RInE '\]\(/' src/content/docs; then
+            echo 'Found a root-relative docs link that omits the /mausVoice/ base.' >&2
+            exit 1
+          fi
+      - name: Verify project-site URLs and assets
+        working-directory: apps/docs
+        run: |
+          test -f ../../docs/assets/mausvoice-banner.png
           grep -Fq 'https://maus-inc.github.io/mausVoice/getting-started/introduction/' \
             dist/getting-started/introduction/index.html
           grep -Fq 'https://maus-inc.github.io/mausVoice/sitemap-0.xml' \
             dist/sitemap-index.xml
+          grep -Fq 'https://maus-inc.github.io/mausVoice/docs/assets/mausvoice-banner.png' \
+            ../../index.html
+          grep -Fq 'docs/assets/mausvoice-banner.png' \
+            astro.config.mjs
