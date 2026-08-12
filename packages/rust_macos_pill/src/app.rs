@@ -1063,14 +1063,6 @@ fn reposition_window(window: id, state: &PillState) {
             if state.window_mode.get() == WindowMode::Dictation
                 && !state.assistant_active.get()
             {
-                let (px, py, pw, ph) = draw::pill_position(
-                    state,
-                    state.draw_width.get(),
-                    state.draw_height.get(),
-                );
-                let (cox, coy) = state.content_offset();
-                let fx = cox + px;
-                let fy = coy + py;
                 (
                     visible.origin.x - fx,
                     visible.origin.y - win_h + fy + ph,

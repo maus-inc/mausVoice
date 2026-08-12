@@ -1072,12 +1072,6 @@ fn reposition_to_cursor_monitor(hwnd: HWND, state: &PillState) {
             if state.window_mode.get() == WindowMode::Dictation
                 && !state.assistant_active.get()
             {
-                let (px, py, pw, ph) = draw::pill_position(
-                    state,
-                    state.draw_width.get(),
-                    state.draw_height.get(),
-                );
-                let (cox, coy) = state.content_offset();
                 let fx = (cox + px).round() as i32;
                 let fy = (coy + py).round() as i32;
                 let fw = pw.round().max(1.0) as i32;
