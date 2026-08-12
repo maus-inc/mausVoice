@@ -8,7 +8,8 @@ const rawArgs = process.argv.slice(2);
 const viteSubcommands = new Set(["build", "preview"]);
 
 const explicitCommand = rawArgs[0];
-const hasExplicitCommand = explicitCommand && viteSubcommands.has(explicitCommand);
+const hasExplicitCommand =
+  explicitCommand && viteSubcommands.has(explicitCommand);
 const modeHint = hasExplicitCommand ? explicitCommand : "dev";
 const subcommandArgs = hasExplicitCommand ? rawArgs.slice(1) : rawArgs;
 
@@ -23,7 +24,7 @@ const flavorFromEnv =
 const desiredMode = flavorFromEnv || defaultMode;
 
 const hasModeFlag = finalArgs.some(
-  (arg) => arg === "--mode" || arg.startsWith("--mode=")
+  (arg) => arg === "--mode" || arg.startsWith("--mode="),
 );
 if (!hasModeFlag) {
   finalArgs.push("--mode", desiredMode);

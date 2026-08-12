@@ -59,8 +59,11 @@ representative at an online or offline event.
 ## Enforcement
 
 Instances of abusive, harassing, or otherwise unacceptable behavior may be
-reported to the community leaders responsible for enforcement at
-support@mausvoice.com.
+reported confidentially to the maintainer, Owie Emmanuel, via Discord DM
+(https://discord.com/users/1366875256471687323) or by emailing
+owieemmanuel34@proton.me. You can also reach the maintainer directly through
+their GitHub profile at https://github.com/Owie6789. Do not report sensitive
+incidents through public GitHub Issues.
 All complaints will be reviewed and investigated promptly and fairly.
 
 All community leaders are obligated to respect the privacy and security of the

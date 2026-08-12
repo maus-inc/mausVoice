@@ -74,4 +74,3 @@ export const globalDictionaries = (
 ): FiremixPath<DatabaseGlobalDictionary> => {
   return ["globalDictionaries", ...listify(tenantId)];
 };
-

@@ -24,4 +24,4 @@ mausVoice's source code lives on [GitHub](https://github.com/mausvoice/mausvoice
 
 ## Get in Touch
 
-Have something that doesn't fit Discord or GitHub? Reach out at [hello@mausvoice.com](mailto:hello@mausvoice.com).
+Have something that doesn't fit Discord or GitHub? Open a discussion on [GitHub Issues](https://github.com/maus-inc/mausVoice/issues).

@@ -49,13 +49,11 @@ export const Prices: Record<PriceKey, PriceInfo> = {
 };
 
 export const priceKeyById: Record<string, PriceKey> = Object.fromEntries(
-  [
-    ...Object.entries(Prices).flatMap(([key, value]) =>
-      [value.sandboxId, value.devId, value.prodId]
-        .filter((id) => id.length > 0)
-        .map((id) => [id, key]),
-    ),
-  ],
+  Object.entries(Prices).flatMap(([key, value]) =>
+    [value.sandboxId, value.devId, value.prodId]
+      .filter((id) => id.length > 0)
+      .map((id) => [id, key]),
+  ),
 ) as Record<string, PriceKey>;
 
 /** Reverse map containing only team-tier prices. */

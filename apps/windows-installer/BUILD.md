@@ -77,9 +77,9 @@ Edit `src/styles.css` to customize colors:
 
 ```css
 :root {
-  --bg-primary: #0a0a0f;      /* Main background */
-  --accent: #6366f1;           /* Progress bar, buttons */
-  --success: #22c55e;          /* Completion state */
+  --bg-primary: #0a0a0f; /* Main background */
+  --accent: #6366f1; /* Progress bar, buttons */
+  --success: #22c55e; /* Completion state */
 }
 ```
 

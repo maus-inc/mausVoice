@@ -62,12 +62,12 @@ src-tauri/
 
 ## Environment Variables
 
-| Variable | Description |
-|----------|-------------|
-| `VITE_FLAVOR` | Environment: `dev`, `prod`, `emulators` (default), `enterprise`, or `enterprise-dev` |
-| `VITE_USE_EMULATORS` | Connect to Firebase emulators |
-| `MAUSVOICE_ENABLE_DEVTOOLS` | Open dev tools on startup |
-| `MAUSVOICE_DESKTOP_PLATFORM` | Override platform detection |
+| Variable                     | Description                                                                          |
+| ---------------------------- | ------------------------------------------------------------------------------------ |
+| `VITE_FLAVOR`                | Environment: `dev`, `prod`, `emulators` (default), `enterprise`, or `enterprise-dev` |
+| `VITE_USE_EMULATORS`         | Connect to Firebase emulators                                                        |
+| `MAUSVOICE_ENABLE_DEVTOOLS`  | Open dev tools on startup                                                            |
+| `MAUSVOICE_DESKTOP_PLATFORM` | Override platform detection                                                          |
 
 ## Internationalization
 

@@ -16,7 +16,7 @@ already granted". Elevation does not do that on any of our platforms:
   Accessibility.
 - **Linux (AT-SPI).** Assistive technology talks over the user's session bus.
   Running as root moves the process off that bus and generally makes input
-  integration *worse*, not better.
+  integration _worse_, not better.
 - **Windows (UAC/UIPI).** There is no accessibility permission to grant. The
   dictation hotkey is a low-level keyboard hook, which a standard user can
   install. Elevation only affects User Interface Privilege Isolation: an

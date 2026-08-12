@@ -27,11 +27,7 @@ export interface AgentLlmProvider {
   streamChat(input: LlmChatInput): AsyncGenerator<LlmStreamEvent>;
 }
 
-export type AgentFinishReason =
-  | "stop"
-  | "max-iterations"
-  | "aborted"
-  | "error";
+export type AgentFinishReason = "stop" | "max-iterations" | "aborted" | "error";
 
 export type AgentEvent =
   | { type: "text-delta"; text: string }
