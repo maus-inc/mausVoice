@@ -100,6 +100,19 @@ pub const DRAG_INFLATE_STIFFNESS: f64 = 280.0;
 /// never fade while the pill is still pressed and inflated.
 pub const LONG_PRESS_RING_FADE: f64 = 0.5;
 
+/// Advances the long-press ring alpha for one animation tick.
+///
+/// The ring is pinned while the gesture is held and fades monotonically after
+/// release. Keeping this policy shared prevents platform renderers from
+/// drifting apart.
+pub fn update_ring_alpha(current: f64, held: bool, delta_seconds: f64) -> f64 {
+    if held {
+        return 1.0;
+    }
+
+    (current.clamp(0.0, 1.0) - delta_seconds.max(0.0) / LONG_PRESS_RING_FADE).max(0.0)
+}
+
 // ── Long-press ring rendering passes ──────────────────────────────────────
 // Three-pass silver gradient: wide soft glow → mid-tone → thin bright core.
 // Each pass is modulated by a sine-wave shimmer that travels along the
@@ -169,5 +182,23 @@ mod tests {
         let pts = rounded_rectangle_perimeter(0.0, 0.0, w, h, 0.0, RoundedRectArcSteps::Exact(1));
         let (_, total) = path_distances(&pts);
         assert!((total - 2.0 * (w + h)).abs() < 1e-6);
+    }
+
+    #[test]
+    fn ring_alpha_is_pinned_while_held() {
+        assert_eq!(update_ring_alpha(0.2, true, 0.016), 1.0);
+    }
+
+    #[test]
+    fn ring_alpha_fades_monotonically_after_release() {
+        let next = update_ring_alpha(1.0, false, 0.1);
+        assert!((next - 0.8).abs() < 1e-9);
+        assert!(update_ring_alpha(next, false, 0.1) < next);
+    }
+
+    #[test]
+    fn ring_alpha_never_goes_below_zero() {
+        assert_eq!(update_ring_alpha(0.01, false, 1.0), 0.0);
+        assert_eq!(update_ring_alpha(-1.0, false, 0.0), 0.0);
     }
 }

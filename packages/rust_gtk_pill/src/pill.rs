@@ -841,7 +841,6 @@ fn tick(state: &PillState) {
         || (state.long_press_active.get()
             && state.long_press_elapsed.get() > LONG_PRESS_HOLD_DELAY);
     if ring_held {
-        state.ring_alpha.set(1.0);
         // Remember how far the ring ramp had filled so a release or cancel
         // mid-ramp fades from that level instead of snapping to a full ring.
         state.ring_release_progress.set(if state.dragging.get() {
@@ -849,11 +848,12 @@ fn tick(state: &PillState) {
         } else {
             draw::long_press_progress(state.long_press_elapsed.get())
         });
-    } else if state.ring_alpha.get() > 0.0 {
-        state
-            .ring_alpha
-            .set((state.ring_alpha.get() - SPRING_DT / LONG_PRESS_RING_FADE).max(0.0));
     }
+    state.ring_alpha.set(rust_pill_shared::update_ring_alpha(
+        state.ring_alpha.get(),
+        ring_held,
+        SPRING_DT,
+    ));
 
     // Auto-scroll to bottom when new content arrives
     if state.should_stick.get() && state.assistant_active.get() && !state.assistant_compact.get() {

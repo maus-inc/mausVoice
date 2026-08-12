@@ -671,7 +671,6 @@ fn tick(state: &PillState, dt: f64) {
         || (state.long_press_active.get()
             && state.long_press_elapsed.get() > LONG_PRESS_HOLD_DELAY);
     if ring_held {
-        state.ring_alpha.set(1.0);
         // Remember how far the ring ramp had filled so a release or cancel
         // mid-ramp fades from that level instead of snapping to a full ring.
         state.ring_release_progress.set(if state.dragging.get() {
@@ -679,15 +678,15 @@ fn tick(state: &PillState, dt: f64) {
         } else {
             draw::long_press_progress(state.long_press_elapsed.get())
         });
-    } else if state.ring_alpha.get() > 0.0 {
-        let next = (state.ring_alpha.get() - dt / LONG_PRESS_RING_FADE).max(0.0);
-        state.ring_alpha.set(next);
-        // needs_redraw() is only true while alpha > 0, so the zero crossing
-        // must dirty the frame explicitly — otherwise the final cleared frame
-        // never repaints and a faint ghost of the ring lingers.
-        if next == 0.0 {
-            state.dirty.set(true);
-        }
+    }
+    let previous_alpha = state.ring_alpha.get();
+    let next = rust_pill_shared::update_ring_alpha(previous_alpha, ring_held, dt);
+    state.ring_alpha.set(next);
+    // needs_redraw() is only true while alpha > 0, so the zero crossing
+    // must dirty the frame explicitly — otherwise the final cleared frame
+    // never repaints and a faint ghost of the ring lingers.
+    if previous_alpha > 0.0 && next == 0.0 {
+        state.dirty.set(true);
     }
 
     if state.should_stick.get() && state.assistant_active.get() && !state.assistant_compact.get() {

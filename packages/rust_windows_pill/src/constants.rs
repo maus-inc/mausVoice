@@ -208,8 +208,8 @@ pub(crate) const LONG_PRESS_OUTLINE_WIDTH: f64 = 2.0;
 // Ring + drag tuning constants live in `rust_pill_shared` so every platform
 // draws the long-press ring from one source of truth.
 pub(crate) use rust_pill_shared::{
-    DRAG_INFLATE_SCALE, DRAG_INFLATE_STIFFNESS, LONG_PRESS_RING_FADE,
-    RING_SHIMMER_CYCLES, RING_GLOW_WIDTH, RING_GLOW_ALPHA, RING_MID_WIDTH,
+    DRAG_INFLATE_SCALE, DRAG_INFLATE_STIFFNESS, RING_SHIMMER_CYCLES,
+    RING_GLOW_WIDTH, RING_GLOW_ALPHA, RING_MID_WIDTH,
     RING_MID_ALPHA, RING_CORE_WIDTH, RING_CORE_ALPHA, RING_EDGE_FADE,
 };
 
