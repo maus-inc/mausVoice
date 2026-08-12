@@ -128,29 +128,6 @@ pub(crate) fn setup_x11_window(window: &gtk::Window, state: Rc<PillState>) {
             &state,
         )
     }))
-    // Last-resort: if there is literally no readable monitor we still have to
-    // move the window somewhere; bottom-centre-on-primary should have covered
-    // every real system, but keep this defensive rather than .unwrap()-ing.
-    .or_else(|| {
-        // XMoveWindow wants a toplevel origin, not a monitor-edge anchor.
-        // Match pill_pos_on_monitor's default placement: centre on width,
-        // sit the origin above the monitor bottom by window height + margin.
-        let primary = display.primary_monitor().or_else(|| display.monitor(0))?;
-        let g = primary.geometry();
-        let scale = primary.scale_factor() as f64;
-        let (alloc_w, alloc_h) = window.size();
-        let win_w = alloc_w as f64 * scale;
-        let win_h = alloc_h as f64 * scale;
-        let margin = MARGIN_BOTTOM as f64 * scale;
-        let phys_x = g.x() as f64 * scale;
-        let phys_y = g.y() as f64 * scale;
-        let phys_w = g.width() as f64 * scale;
-        let phys_h = g.height() as f64 * scale;
-        Some((
-            (phys_x + (phys_w - win_w) / 2.0) as c_int,
-            (phys_y + phys_h - win_h - margin) as c_int,
-        ))
-    })
     .unwrap_or((0, 0));
     unsafe {
         XMoveWindow(xdisplay, xwindow, init_pos.0, init_pos.1);
@@ -164,25 +141,29 @@ pub(crate) fn setup_x11_window(window: &gtk::Window, state: Rc<PillState>) {
     glib::timeout_add_local(Duration::from_millis(100), move || {
         let dragging = state_tick.dragging.get();
 
-        // Drop edge of a drag: persist the exact drop position (the cursor
-        // query here is fresh, the last tick snapshot could be up to one
-        // interval stale) so the re-centering below never throws away where
-        // the user left the pill.
+        // Drag just ended: persist the actual drop point. `last_pos` is only
+        // refreshed on the placement tick (up to a 100ms cadence), so reusing
+        // it here can persist a position one interval behind the real drop.
+        // Query the pointer at release and resolve the top-left directly.
         if !dragging && was_dragging.get() {
             let (cx, cy) = cursor_pos();
-            if let Some((drop_x, drop_y)) = pill_pos_on_monitor(
+            let (dx, dy) = pill_pos_on_monitor(
                 cx as f64,
                 cy as f64,
                 true,
                 &display,
                 &win_tick,
                 &state_tick,
-            ) {
-                state_tick.saved_x.set(drop_x as f64);
-                state_tick.saved_y.set(drop_y as f64);
-                state_tick.has_saved_position.set(true);
-                ipc::send(&OutMessage::PositionChanged { has_saved_position: true });
-            }
+            )
+            .unwrap_or_else(|| last_pos.get());
+            // `pill_pos_on_monitor` returns the window top-left, and
+            // `saved_x`/`saved_y` are used verbatim as the top-left when parked
+            // (see the has_saved_position branch), so store it directly.
+            last_pos.set((dx, dy));
+            state_tick.saved_x.set(dx as f64);
+            state_tick.saved_y.set(dy as f64);
+            state_tick.has_saved_position.set(true);
+            ipc::send(&OutMessage::PositionChanged { has_saved_position: true });
         }
         was_dragging.set(dragging);
 
@@ -242,6 +223,10 @@ pub(crate) fn setup_x11_window(window: &gtk::Window, state: Rc<PillState>) {
                     XFlush(xdisplay);
                 }
             }
+        } else {
+            // Monitor resolution failed (e.g. display reconfig mid-tick): leave
+            // the window where it is rather than mutating saved-position state or
+            // snapping to the origin.
         }
         ControlFlow::Continue
     });
@@ -334,6 +319,13 @@ fn pill_pos_on_monitor(
                 } else {
                     (wa_x, wa_y, wa_x + wa_w - win_w, wa_y + wa_h - win_h)
                 };
+
+            // Guard against inverted bounds (e.g. a zero-size work area or a
+            // footprint larger than the monitor): normalize the max to the min so
+            // the clamp below resolves to the minimum boundary instead of placing
+            // the window outside the work area.
+            let max_x = max_x.max(min_x);
+            let max_y = max_y.max(min_y);
 
             if dragging {
                 // Keep the grabbed point of the window under the cursor (1:1
