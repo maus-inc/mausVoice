@@ -3,15 +3,13 @@ import { renderToStaticMarkup } from "react-dom/server";
 import { createElement } from "react";
 import { AnimateIn } from "./AnimateIn";
 
-// Behavioral contract for AnimateSwitch's PresenceGuard wrapper.
-//
-// Under the default "node" vitest environment (jsdom is intentionally avoided —
-// it previously tripped Socket's obfuscated-code scanner) we render to static
-// markup and assert the *visible outcome* rather than grepping the source:
-// the children render when visible, and are removed from the DOM when not
-// (the PresenceGuard/AnimatePresence contract), instead of being leaked as a
-// stale fragment.
-describe("AnimateSwitch rendering", () => {
+// Behavioral contract for AnimateIn's PresenceGuard wrapper, validated via SSR
+// static markup. jsdom is intentionally avoided (it previously tripped
+// Socket's obfuscated-code scanner), so this suite is scoped to initial
+// static-markup assertions: the child renders when visible and is removed from
+// the DOM when not (the presence-guard removal contract), wrapped in exactly
+// one root element.
+describe("AnimateIn static markup", () => {
   it("renders its children when visible", () => {
     const html = renderToStaticMarkup(
       createElement(AnimateIn, {
@@ -22,7 +20,7 @@ describe("AnimateSwitch rendering", () => {
     expect(html).toContain("hello-pill");
   });
 
-  it("removes children from the DOM when not visible (presence wrap, not leak)", () => {
+  it("removes children from the DOM when not visible (presence guard, not leak)", () => {
     const html = renderToStaticMarkup(
       createElement(AnimateIn, {
         visible: false,
@@ -34,16 +32,17 @@ describe("AnimateSwitch rendering", () => {
     expect(html).not.toContain("hidden-pill");
   });
 
-  it("wraps children in a single element (no fragment leak)", () => {
+  it("wraps children in exactly one root div containing one span", () => {
     const html = renderToStaticMarkup(
       createElement(AnimateIn, {
         visible: true,
         children: createElement("span", null, "wrapped-pill"),
       }),
     );
-    // Exactly one root element wrapping the child span.
-    expect(html.startsWith("<div")).toBe(true);
-    expect(html).toContain("<span");
-    expect(html.endsWith("</div>")).toBe(true);
+    // Anchored at both ends: a single root <div> whose only child element is
+    // the <span> wrapping the content, with no extra wrapper fragments.
+    expect(html).toMatch(
+      /^<div[^>]*>.*<span[^>]*>wrapped-pill<\/span>.*<\/div>$/s,
+    );
   });
 });
