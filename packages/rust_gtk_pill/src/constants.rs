@@ -18,8 +18,6 @@ pub(crate) const LONG_PRESS_MOVE_THRESHOLD: f64 = 8.0;
 // Silver-white with a very slight cool tint — reads as a neutral "grab" affordance
 // and stays distinct from the blue commit flash (`FLASH_BLUE_COLOR`).
 pub(crate) const LONG_PRESS_OUTLINE_COLOR: (f64, f64, f64) = (0.92, 0.95, 1.0);
-#[allow(dead_code)]
-pub(crate) const LONG_PRESS_OUTLINE_WIDTH: f64 = 2.0;
 
 // Ring + drag tuning constants live in `rust_pill_shared` so every platform
 // draws the long-press ring from one source of truth.

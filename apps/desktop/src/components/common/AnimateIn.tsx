@@ -4,11 +4,11 @@ import {
   useIsPresent,
   useReducedMotion,
 } from "framer-motion";
-import type { ReactNode } from "react";
+import type { ReactElement, ReactNode } from "react";
 import { duration, springSnappy } from "../../styles/motion";
 
 export type AnimateInProps = {
-  children: React.ReactElement<unknown, any>;
+  children: ReactElement;
   visible?: boolean;
 };
 
@@ -77,9 +77,14 @@ export const AnimateSwitch = ({ activeKey, children }: AnimateSwitchProps) => {
   const reduceMotion = useReducedMotion();
 
   if (reduceMotion) {
-    // No animation preference stack: render content directly, keyed so state
-    // owned by one mode can't bleed into another.
-    return <div key={activeKey}>{children}</div>;
+    // No animation preference: render content directly, keyed so state owned
+    // by one mode can't bleed into another. Match the animated branch's
+    // full-width styling so layout doesn't shift between modes.
+    return (
+      <div key={activeKey} style={{ width: "100%" }}>
+        {children}
+      </div>
+    );
   }
 
   return (
