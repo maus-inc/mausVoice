@@ -41,6 +41,7 @@ export default defineConfig({
       logo: {
         src: "./src/assets/logo.png",
       },
+      favicon: "/favicon.png",
       head: [
         meta({
           name: "robots",
