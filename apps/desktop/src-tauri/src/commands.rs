@@ -2462,7 +2462,7 @@ fn validate_terminal_command_args(
         ));
     }
 
-    for token in *user_args {
+    for token in user_args {
         if !is_safe_arg_token(token) {
             return Err(format!(
                 "Command argument contains disallowed characters: {token:?}"
