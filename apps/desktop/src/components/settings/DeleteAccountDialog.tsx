@@ -37,6 +37,21 @@ export const DeleteAccountDialog = () => {
 
     try {
       await getAuthRepo().deleteMyAccount();
+
+      // Tear down long-running native subsystems before wiping data so
+      // in-flight callbacks don't race against the cleared DB. Same
+      // rationale as ClearLocalDataDialog.
+      try {
+        await invoke("stop_key_listener");
+      } catch {
+        /* no listener active */
+      }
+      try {
+        await invoke("stop_recording");
+      } catch {
+        /* no active recording */
+      }
+
       await invoke("clear_local_data");
       setConfirmationEmail("");
       showSnackbar("You account has been deleted", { duration: 15000 });

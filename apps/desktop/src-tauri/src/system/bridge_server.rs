@@ -6,6 +6,55 @@ use tokio::net::TcpListener;
 
 pub const EVT_BRIDGE_HOTKEY_TRIGGER: &str = "bridge_hotkey_trigger";
 
+/// Validate a hotkey name from a bridge-server URL path.
+///
+/// The bridge server accepts plain HTTP POSTs from localhost and dispatches
+/// events into the app based solely on the URL path, so we tightly restrict
+/// what characters are allowed: short alphanumeric/dashed/snake/colon
+/// identifiers only. No path separators, no NULs, no URL-encoded metachars,
+/// no query strings — just the id the frontend registered.
+pub(crate) fn is_valid_hotkey_name(name: &str) -> bool {
+    if name.is_empty() || name.len() > 64 {
+        return false;
+    }
+    name.chars().all(|ch| {
+        matches!(ch, 'a'..='z' | 'A'..='Z' | '0'..='9' | '-' | '_' | ':' | '.')
+    })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::is_valid_hotkey_name;
+
+    #[test]
+    fn rejects_empty() {
+        assert!(!is_valid_hotkey_name(""));
+    }
+
+    #[test]
+    fn rejects_path_traversal() {
+        assert!(!is_valid_hotkey_name("../etc/passwd"));
+        assert!(!is_valid_hotkey_name("foo/bar"));
+        assert!(!is_valid_hotkey_name("foo\\bar"));
+    }
+
+    #[test]
+    fn rejects_metacharacters() {
+        assert!(!is_valid_hotkey_name("foo;rm"));
+        assert!(!is_valid_hotkey_name("foo bar"));
+        assert!(!is_valid_hotkey_name("foo%20bar"));
+        assert!(!is_valid_hotkey_name("foo?query=1"));
+    }
+
+    #[test]
+    fn accepts_normal_ids() {
+        assert!(is_valid_hotkey_name("push-to-talk"));
+        assert!(is_valid_hotkey_name("combo_1"));
+        assert!(is_valid_hotkey_name("ctrl:shift:a"));
+        assert!(is_valid_hotkey_name("PTT"));
+    }
+}
+
 #[derive(Debug, Clone, Serialize)]
 pub struct BridgeHotkeyTriggerPayload {
     pub hotkey: String,
@@ -108,7 +157,7 @@ async fn handle_connection(stream: tokio::net::TcpStream, app: AppHandle) -> Res
     }
 
     let hotkey = match path.strip_prefix("/hotkey/") {
-        Some(name) if !name.is_empty() && !name.contains('/') => name,
+        Some(name) if is_valid_hotkey_name(name) => name,
         _ => return write_response(&mut writer, 404, "Not Found").await,
     };
 

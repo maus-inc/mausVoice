@@ -134,6 +134,16 @@ pub async fn start(
     Ok(state.status())
 }
 
+/// Pick a "best-guess" LAN IP address the companion device can use to reach
+/// this machine, without actually sending any packet.
+///
+/// We use the standard "UDP connect to a TEST-NET address" trick (RFC 5737 —
+/// `192.0.2.0/24` is reserved documentation range and is guaranteed not to
+/// host a real host): `connect()` on a connectionless UDP socket does NOT
+/// send traffic; it only pins a source address chosen by the OS routing
+/// table for that destination, which on a normal home LAN resolves to the
+/// machine's private IPv4. The socket is dropped immediately after reading
+/// the local address.
 fn detect_connect_address() -> Option<String> {
     let socket = UdpSocket::bind("0.0.0.0:0").ok()?;
     socket.connect("192.0.2.1:80").ok()?;

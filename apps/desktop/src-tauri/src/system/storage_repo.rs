@@ -82,3 +82,55 @@ impl StorageRepo {
         Ok(format!("data:application/octet-stream;base64,{encoded}"))
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn test_repo() -> StorageRepo {
+        StorageRepo {
+            base_dir: PathBuf::from("/tmp/mausvoice-test-storage"),
+        }
+    }
+
+    #[test]
+    fn rejects_empty_path() {
+        let repo = test_repo();
+        assert!(repo.resolve_relative_path("").is_err());
+    }
+
+    #[test]
+    fn rejects_absolute_paths() {
+        let repo = test_repo();
+        assert!(repo.resolve_relative_path("/etc/passwd").is_err());
+        #[cfg(windows)]
+        assert!(repo.resolve_relative_path("C:\\Windows\\System32").is_err());
+    }
+
+    #[test]
+    fn rejects_parent_traversal() {
+        let repo = test_repo();
+        assert!(repo.resolve_relative_path("../secret").is_err());
+        assert!(repo.resolve_relative_path("foo/../../bar").is_err());
+        assert!(repo.resolve_relative_path("a/..").is_err());
+        assert!(repo.resolve_relative_path("./..").is_err());
+    }
+
+    #[test]
+    fn resolves_nested_path_inside_base() {
+        let repo = test_repo();
+        let resolved = repo.resolve_relative_path("audio/clip1.wav").unwrap();
+        assert!(resolved.starts_with(repo.base_dir));
+        assert_eq!(
+            resolved.file_name().and_then(|s| s.to_str()),
+            Some("clip1.wav")
+        );
+    }
+
+    #[test]
+    fn allows_single_segment() {
+        let repo = test_repo();
+        let resolved = repo.resolve_relative_path("thing.bin").unwrap();
+        assert!(resolved.starts_with(repo.base_dir));
+    }
+}

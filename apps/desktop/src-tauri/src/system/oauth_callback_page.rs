@@ -10,12 +10,14 @@ pub fn success_html() -> &'static str {
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Sign-in successful</title>
 <style>
-  @import url('https://fonts.googleapis.com/css2?family=Roboto:wght@400;500&display=swap');
-
+  /* NOTE: Do not @import remote fonts here. This page is served from the
+     local OAuth loopback listener and the app enforces a strict CSP that
+     blocks remote font/stylesheet loads. A system sans-serif stack renders
+     identically across macOS/Windows/Linux without a network fetch. */
   *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
 
   body {
-    font-family: 'Roboto', 'Helvetica', 'Arial', sans-serif;
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif, "Apple Color Emoji", "Segoe UI Emoji";
     display: flex;
     align-items: center;
     justify-content: center;

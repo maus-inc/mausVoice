@@ -85,9 +85,9 @@ async authSignOut() : Promise<Result<null, string>> {
     else return { status: "error", error: e  as any };
 }
 },
-async cancelTyping() : Promise<Result<null, string>> {
+async cancelTyping(typingId?: number | null) : Promise<Result<null, string>> {
     try {
-    return { status: "ok", data: await TAURI_INVOKE("cancel_typing") };
+    return { status: "ok", data: await TAURI_INVOKE("cancel_typing", { typingId: typingId ?? null }) };
 } catch (e) {
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };
@@ -640,8 +640,13 @@ async setPhase(phase: string) : Promise<Result<null, string>> {
     else return { status: "error", error: e  as any };
 }
 },
-async setPillVisibility(visibility: string) : Promise<void> {
-    await TAURI_INVOKE("set_pill_visibility", { visibility });
+async setPillVisibility(visibility: string) : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("set_pill_visibility", { visibility }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
 },
 /**
  * Sync the tray's pill-visibility label.
@@ -716,7 +721,7 @@ async setTrayVisible(visible: boolean) : Promise<Result<null, string>> {
     else return { status: "error", error: e  as any };
 }
 },
-async simulateType(text: string, delayMs: number) : Promise<Result<null, string>> {
+async simulateType(text: string, delayMs: number) : Promise<Result<SimulateTypeResponse, string>> {
     try {
     return { status: "ok", data: await TAURI_INVOKE("simulate_type", { text, delayMs }) };
 } catch (e) {

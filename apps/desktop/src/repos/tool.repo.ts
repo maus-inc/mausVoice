@@ -45,15 +45,19 @@ export class ToolRepo extends BaseRepo {
     if (getIsPowerModeEnabled(getAppState())) {
       tools.push({
         id: "run_terminal_command",
-        description: "Run terminal command",
+        description: "Run a read-only terminal command",
         instructions:
-          "Execute a shell command in the user's terminal and return the output. Use this for file operations, running scripts, checking system state, or any task that requires shell access. This is your go-to tool. Use this to creatively accomplish user goals with full automation (i.e. sending emails, opening apps, manipulating files, etc).",
+          "Execute a restricted allow-listed terminal command without a shell (no `sh`/`cmd`/`bash`, no pipes/redirection/shell metacharacters) and return its output. " +
+          "Allowed binaries: ls, pwd, echo, cat, which, whoami, date, uname, df, du, head, tail, wc, and the platform file-browser opener (open/xdg-open/explorer). " +
+          "The command is whitespace-tokenised, times out after 15 seconds, and output is capped at 128KiB. " +
+          "Use this for read-only inspection (listing directories, checking system state, reading small files). Do NOT attempt scripts, file edits, network commands, or chained commands — those will be rejected.",
         schema: {
           type: "object",
           properties: {
             command: {
               type: "string",
-              description: "The shell command to execute",
+              description:
+                "A single allow-listed command with plain arguments, e.g. 'ls -la ~/Documents'. No shell metacharacters.",
             },
           },
           required: ["command"],

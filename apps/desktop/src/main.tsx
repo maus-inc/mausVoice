@@ -21,6 +21,16 @@ import { getIsEmulators } from "./utils/env.utils";
 // mutation kills the whole UI on the next navigation.
 applyDomMutationGuards();
 
+// NOTE: Firebase Web SDK configuration is NOT a secret — the apiKey,
+// appId, projectId, etc. are *client-side* identifiers that get shipped to
+// every browser/app build and are meant to be public. They identify which
+// Firebase project this client talks to; actual authorization is enforced
+// server-side by Firebase Auth + Security Rules. Committing a fallback
+// value here is intentional (it lets contributors build from source
+// without supplying their own project), and per-build overrides are
+// passed through the VITE_FIREBASE_* env vars at release-bundle time.
+//
+// See: https://firebase.google.com/docs/projects/api-keys#api-keys-for-firebase-are-different
 const firebaseConfig: FirebaseOptions = {
   apiKey:
     import.meta.env.VITE_FIREBASE_API_KEY ||
