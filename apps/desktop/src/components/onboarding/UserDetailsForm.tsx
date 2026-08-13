@@ -5,7 +5,6 @@ import rocketImage from "../../assets/4-rocket.png";
 import { goToOnboardingPage } from "../../actions/onboarding.actions";
 import { produceAppState, useAppStore } from "../../store";
 import { trackButtonClick } from "../../utils/analytics.utils";
-import { isMacOS } from "../../utils/env.utils";
 import {
   BackButton,
   DualPaneLayout,
@@ -18,7 +17,6 @@ export const UserDetailsForm = () => {
   const title = useAppStore((state) => state.onboarding.title);
   const company = useAppStore((state) => state.onboarding.company);
   const submitting = useAppStore((state) => state.onboarding.submitting);
-  const isEnterprise = useAppStore((state) => state.isEnterprise);
 
   const canContinue = name && !submitting;
 
@@ -60,11 +58,7 @@ export const UserDetailsForm = () => {
 
   const handleContinue = () => {
     trackButtonClick("onboarding_user_details_continue");
-    if (isEnterprise) {
-      goToOnboardingPage(isMacOS() ? "micPerms" : "keybindings");
-    } else {
-      goToOnboardingPage("referralSource");
-    }
+    goToOnboardingPage("referralSource");
   };
 
   const form = (
@@ -110,71 +104,67 @@ export const UserDetailsForm = () => {
             }}
           />
 
-          {!isEnterprise && (
-            <>
-              <TextField
-                variant="outlined"
-                size="small"
-                label={
-                  <span>
-                    <FormattedMessage defaultMessage="Title" />{" "}
-                    <Typography
-                      component="span"
-                      variant="caption"
-                      color="text.secondary"
-                      sx={{ fontWeight: 400, fontSize: "0.7rem" }}
-                    >
-                      <FormattedMessage defaultMessage="(optional)" />
-                    </Typography>
-                  </span>
-                }
-                placeholder={intl.formatMessage({
-                  defaultMessage: "Vice President",
-                })}
-                value={title}
-                onChange={handleTitleChange}
-                onBlur={handleTitleBlur}
-                autoComplete="organization-title"
-                slotProps={{
-                  inputLabel: { shrink: true },
-                  htmlInput: {
-                    "data-mausvoice-ignore": "true",
-                  },
-                }}
-              />
+          <TextField
+            variant="outlined"
+            size="small"
+            label={
+              <span>
+                <FormattedMessage defaultMessage="Title" />{" "}
+                <Typography
+                  component="span"
+                  variant="caption"
+                  color="text.secondary"
+                  sx={{ fontWeight: 400, fontSize: "0.7rem" }}
+                >
+                  <FormattedMessage defaultMessage="(optional)" />
+                </Typography>
+              </span>
+            }
+            placeholder={intl.formatMessage({
+              defaultMessage: "Vice President",
+            })}
+            value={title}
+            onChange={handleTitleChange}
+            onBlur={handleTitleBlur}
+            autoComplete="organization-title"
+            slotProps={{
+              inputLabel: { shrink: true },
+              htmlInput: {
+                "data-mausvoice-ignore": "true",
+              },
+            }}
+          />
 
-              <TextField
-                variant="outlined"
-                size="small"
-                label={
-                  <span>
-                    <FormattedMessage defaultMessage="Company" />{" "}
-                    <Typography
-                      component="span"
-                      variant="caption"
-                      color="text.secondary"
-                      sx={{ fontWeight: 400, fontSize: "0.7rem" }}
-                    >
-                      <FormattedMessage defaultMessage="(optional)" />
-                    </Typography>
-                  </span>
-                }
-                placeholder={intl.formatMessage({
-                  defaultMessage: "Acme Inc.",
-                })}
-                value={company}
-                onChange={handleCompanyChange}
-                onBlur={handleCompanyBlur}
-                autoComplete="organization"
-                slotProps={{
-                  inputLabel: { shrink: true },
-                  htmlInput: {
-                    "data-mausvoice-ignore": "true",
-                  },
-                }}
-              />
-            </>
-          )}
+          <TextField
+            variant="outlined"
+            size="small"
+            label={
+              <span>
+                <FormattedMessage defaultMessage="Company" />{" "}
+                <Typography
+                  component="span"
+                  variant="caption"
+                  color="text.secondary"
+                  sx={{ fontWeight: 400, fontSize: "0.7rem" }}
+                >
+                  <FormattedMessage defaultMessage="(optional)" />
+                </Typography>
+              </span>
+            }
+            placeholder={intl.formatMessage({
+              defaultMessage: "Acme Inc.",
+            })}
+            value={company}
+            onChange={handleCompanyChange}
+            onBlur={handleCompanyBlur}
+            autoComplete="organization"
+            slotProps={{
+              inputLabel: { shrink: true },
+              htmlInput: {
+                "data-mausvoice-ignore": "true",
+              },
+            }}
+          />
         </Stack>
       </Stack>
     </OnboardingFormLayout>

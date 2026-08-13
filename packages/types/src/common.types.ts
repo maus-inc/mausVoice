@@ -22,13 +22,15 @@ export type JsonResponse = {
   schema: Record<string, unknown>;
 };
 
-export type TranscriptionMode = "local" | "api" | "cloud";
+export type TranscriptionMode = "local" | "api";
 
-export type PostProcessingMode = "none" | "api" | "cloud";
+export type PostProcessingMode = "none" | "api";
 
 export type AgentMode = PostProcessingMode | "openclaw";
 
 export type DictationPillVisibility = "hidden" | "while_active" | "persistent";
+
+export type PillResetMonitorStrategy = "current" | "cursor";
 
 export type PullStatus = "in_progress" | "error" | "complete";
 

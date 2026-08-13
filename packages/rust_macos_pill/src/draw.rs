@@ -110,8 +110,13 @@ pub(crate) fn pill_position(state: &PillState, ww: f64, wh: f64) -> (f64, f64, f
 /// never drift away from the width/height animation: the corners stay exactly
 /// half of the shortest side (a true capsule) on every frame, capped at the
 /// expanded design radius so a drag-inflated pill does not over-round.
-pub(crate) fn pill_radius(pill_w: f64, pill_h: f64) -> f64 {
-    (pill_w.min(pill_h) * 0.5).min(EXPANDED_RADIUS)
+/// Corner radius for the pill at its *current* size. The cap scales with
+/// the drag-inflate amount so the corners stay true semicircles while the
+/// pill grows; at rest (`inflate = 0`) this is exactly the previous
+/// `EXPANDED_RADIUS` clamp.
+pub(crate) fn pill_radius(pill_w: f64, pill_h: f64, inflate: f64) -> f64 {
+    let cap = EXPANDED_RADIUS * (1.0 + inflate * DRAG_INFLATE_SCALE);
+    (pill_w.min(pill_h) * 0.5).min(cap)
 }
 
 /// Renders the pill body and its current content (waveform, paused bar,
@@ -121,7 +126,7 @@ fn draw_pill(ctx: &Ctx, state: &PillState, ww: f64, wh: f64) {
     let (rx, ry, pill_w, pill_h) = pill_position(state, ww, wh);
 
     let bg_alpha = gfx::lerp(IDLE_BG_ALPHA, ACTIVE_BG_ALPHA, expand_t);
-    let radius = pill_radius(pill_w, pill_h);
+    let radius = pill_radius(pill_w, pill_h, state.inflate_t.get());
 
     let is_typing = state.assistant_active.get()
         && *state.assistant_input_mode.borrow() == "type";
@@ -142,7 +147,7 @@ fn draw_pill(ctx: &Ctx, state: &PillState, ww: f64, wh: f64) {
                 draw_waveform(ctx, rx, ry, pill_w, pill_h, expand_t, 1.0 - pause_t, state);
             }
             if pause_t > 0.001 {
-                draw_paused(ctx, rx, ry, pill_w, pill_h, expand_t, pause_t);
+                draw_paused(ctx, rx, ry, pill_w, pill_h, expand_t, pause_t, state);
             }
             draw_edge_gradient(ctx, rx, ry, pill_w, pill_h, radius, expand_t);
         }
@@ -176,7 +181,7 @@ fn draw_waveform(
     let baseline = ry + pill_h / 2.0;
 
     ctx.save();
-    gfx::rounded_rect(ctx, rx, ry, pill_w, pill_h, pill_radius(pill_w, pill_h));
+    gfx::rounded_rect(ctx, rx, ry, pill_w, pill_h, pill_radius(pill_w, pill_h, state.inflate_t.get()));
     ctx.clip();
 
     for config in WAVE_CONFIGS {
@@ -492,7 +497,7 @@ fn draw_flash_blue(ctx: &Ctx, state: &PillState, ww: f64, wh: f64) {
     let rw = pw - inset * 2.0;
     let rh = ph - inset * 2.0;
 
-    let radius = pill_radius(pw, ph) + FLASH_BLUE_INSET;
+    let radius = pill_radius(pw, ph, state.inflate_t.get()) + FLASH_BLUE_INSET;
 
     let (gr, gg, gb) = FLASH_BLUE_GLOW_COLOR;
     gfx::rounded_rect(ctx, rx - 1.5, ry - 1.5, rw + 3.0, rh + 3.0, radius + 1.5);
@@ -1189,9 +1194,13 @@ fn draw_keyboard_button(ctx: &Ctx, state: &PillState, ww: f64, wh: f64) {
 
 /// Draws the dimmed pause bar that replaces the waveform while paused,
 /// crossfading in with `fade`.
-fn draw_paused(ctx: &Ctx, rx: f64, ry: f64, pill_w: f64, pill_h: f64, expand_t: f64, fade: f64) {
+#[allow(clippy::too_many_arguments)]
+fn draw_paused(
+    ctx: &Ctx, rx: f64, ry: f64, pill_w: f64, pill_h: f64,
+    expand_t: f64, fade: f64, state: &PillState,
+) {
     ctx.save();
-    let radius = pill_radius(pill_w, pill_h);
+    let radius = pill_radius(pill_w, pill_h, state.inflate_t.get());
     gfx::rounded_rect(ctx, rx, ry, pill_w, pill_h, radius);
     ctx.clip();
 
@@ -1334,7 +1343,7 @@ fn draw_long_press_ring(ctx: &Ctx, state: &PillState, ww: f64, wh: f64) {
     };
 
     let (pill_x, pill_y, pill_w, pill_h) = pill_position(state, ww, wh);
-    let radius = pill_radius(pill_w, pill_h);
+    let radius = pill_radius(pill_w, pill_h, state.inflate_t.get());
 
     // Draw an outline that traces around the pill perimeter clockwise from the
     // top-left corner.
@@ -1353,7 +1362,6 @@ fn draw_long_press_ring(ctx: &Ctx, state: &PillState, ww: f64, wh: f64) {
 
     // Three-pass silver gradient ring with sine-wave shimmer.
     let master_alpha = (0.3 + 0.5 * progress) * alpha;
-    let shimmer_freq = RING_SHIMMER_CYCLES * std::f64::consts::TAU / total_len.max(1.0);
     let wave_phase = state.wave_phase.get();
 
     // Collect the filled segments once so each pass reuses them.
@@ -1380,60 +1388,47 @@ fn draw_long_press_ring(ctx: &Ctx, state: &PillState, ww: f64, wh: f64) {
         segments.push((x1, y1, x2, y2, mid_dist));
     }
 
-    let passes: [(f64, f64); 3] = [
-        (RING_GLOW_WIDTH, RING_GLOW_ALPHA),
-        (RING_MID_WIDTH, RING_MID_ALPHA),
-        (RING_CORE_WIDTH, RING_CORE_ALPHA),
-    ];
+    // 2-pass dash-shimmer ring (0.1.6 redesign): a constant base outline plus
+    // a shimmer whose dashes travel in sync with the internal waveform phase.
+    // The dash ranges come from shared geometry so all three platforms render
+    // the same pattern; the old per-segment alpha buckets are gone — exactly
+    // two stroke calls total.
+    let dash_period = ring_dash_period(total_len);
+    let dash_offset = ring_dash_offset(wave_phase, total_len);
 
-    ctx.set_line_cap_round();
+    // Pass A: constant base outline over the filled perimeter.
+    let base_alpha = master_alpha * RING_BASE_ALPHA;
+    ctx.set_line_width(RING_BASE_WIDTH);
+    ctx.set_source_rgba(
+        LONG_PRESS_OUTLINE_COLOR.0,
+        LONG_PRESS_OUTLINE_COLOR.1,
+        LONG_PRESS_OUTLINE_COLOR.2,
+        base_alpha,
+    );
+    ctx.new_sub_path();
+    for &(x1, y1, x2, y2, _) in &segments {
+        ctx.move_to(x1, y1);
+        ctx.line_to(x2, y2);
+    }
+    ctx.stroke();
 
-    // Batch segments that share a quantized alpha into one sub-path per pass
-    // and issue one stroke per populated bucket, instead of one stroke() call
-    // per perimeter segment. Buckets are normalized to the pass's own alpha
-    // range so the lowest bucket still paints a (non-zero) shimmer level
-    // instead of collapsing to full transparency.
-    const ALPHA_BUCKETS: usize = 8;
-    for &(width, pass_alpha) in &passes {
-        ctx.set_line_width(width);
-        let mut buckets: [Vec<(f64, f64, f64, f64)>; ALPHA_BUCKETS] =
-            std::array::from_fn(|_| Vec::new());
-        for &(x1, y1, x2, y2, mid_dist) in &segments {
-            let shimmer = 0.55 + 0.45 * (mid_dist * shimmer_freq + wave_phase).sin();
-            let edge_fade = ((filled_len - mid_dist) / RING_EDGE_FADE).min(1.0);
-            let a = master_alpha * pass_alpha * shimmer * edge_fade;
-            if a < 0.005 {
-                continue;
-            }
-            let bucket =
-                ((a * (ALPHA_BUCKETS as f64 - 1.0)).round() as usize).min(ALPHA_BUCKETS - 1);
-            buckets[bucket].push((x1, y1, x2, y2));
-        }
-        for (b, segs) in buckets.iter().enumerate() {
-            if segs.is_empty() {
-                continue;
-            }
-            // Reconstruct a representative alpha for bucket b. Using the
-            // bucket's midpoint (b + 0.5)/(N-1) keeps every populated bucket at
-            // a non-zero alpha (bucket 0 is never fully transparent) and stays
-            // monotonic with the quantized source alpha.
-            let a = (b as f64 + 0.5) / (ALPHA_BUCKETS as f64 - 1.0);
-            ctx.set_source_rgba(
-                LONG_PRESS_OUTLINE_COLOR.0,
-                LONG_PRESS_OUTLINE_COLOR.1,
-                LONG_PRESS_OUTLINE_COLOR.2,
-                a,
-            );
-            // One sub-path per bucket: each move_to starts a fresh segment run
-            // so a single stroke() paints the whole bucket without joining ends.
-            ctx.new_sub_path();
-            for &(x1, y1, x2, y2) in segs {
-                ctx.move_to(x1, y1);
-                ctx.line_to(x2, y2);
-            }
-            ctx.stroke();
+    // Pass B: traveling dash shimmer — only the painted ("on") dash ranges.
+    let shimmer_alpha = master_alpha * RING_SHIMMER_ALPHA;
+    ctx.set_line_width(RING_SHIMMER_WIDTH);
+    ctx.set_source_rgba(
+        LONG_PRESS_OUTLINE_COLOR.0,
+        LONG_PRESS_OUTLINE_COLOR.1,
+        LONG_PRESS_OUTLINE_COLOR.2,
+        shimmer_alpha,
+    );
+    ctx.new_sub_path();
+    for &(x1, y1, x2, y2, mid_dist) in &segments {
+        if ring_dash_is_on(mid_dist, dash_period, dash_offset) {
+            ctx.move_to(x1, y1);
+            ctx.line_to(x2, y2);
         }
     }
+    ctx.stroke();
 }
 
 // ── Balloon pop animation ─────────────────────────────────────────

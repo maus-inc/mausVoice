@@ -1,10 +1,15 @@
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::mpsc;
 use std::sync::Mutex;
 
 use tauri::{Emitter, Manager};
 
 use crate::domain::{OverlayPhase, PillWindowSize};
-use rust_macos_pill::ipc::{InMessage, OutMessage, Phase, Visibility};
+use rust_macos_pill::ipc::{InMessage, OutMessage, Phase, ResetStrategy, Visibility};
+
+/// Monotonic sequence number for phase messages (mirrors `pill_process.rs`);
+/// lets the pill ignore stale/duplicate phase writes.
+static PHASE_SEQ: AtomicU64 = AtomicU64::new(0);
 
 struct MacosPill {
     sender: Mutex<mpsc::Sender<InMessage>>,
@@ -44,7 +49,8 @@ pub fn notify_phase(app: &tauri::AppHandle, phase: &OverlayPhase) {
             OverlayPhase::Loading => Phase::Loading,
             OverlayPhase::Paused => Phase::Paused,
         };
-        pill.send(InMessage::Phase { phase });
+        let seq = PHASE_SEQ.fetch_add(1, Ordering::Relaxed) + 1;
+        pill.send(InMessage::Phase { phase, seq });
     }
 }
 
@@ -98,10 +104,18 @@ pub fn notify_assistant_state(app: &tauri::AppHandle, payload: &str) {
     }
 }
 
-pub fn notify_reset_position(app: &tauri::AppHandle) -> Result<(), String> {
+pub fn notify_reset_position(
+    app: &tauri::AppHandle,
+    strategy: &str,
+) -> Result<(), String> {
+    let strategy = if strategy == "cursor" {
+        ResetStrategy::Cursor
+    } else {
+        ResetStrategy::Current
+    };
     match app.try_state::<std::sync::Arc<MacosPill>>() {
         Some(pill) => {
-            pill.send(InMessage::ResetPosition);
+            pill.send(InMessage::ResetPosition { strategy });
             Ok(())
         }
         None => Err("Reset position requested with no managed macOS pill".to_string()),

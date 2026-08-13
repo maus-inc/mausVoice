@@ -2,6 +2,7 @@ import {
   AgentMode,
   DictationPillVisibility,
   Nullable,
+  PillResetMonitorStrategy,
   PostProcessingMode,
   TranscriptionMode,
   UserPreferences,
@@ -33,7 +34,6 @@ type LocalUserPreferences = {
   openclawGatewayUrl: Nullable<string>;
   openclawToken: Nullable<string>;
   lastSeenFeature: Nullable<string>;
-  isEnterprise: boolean;
   languageSwitchEnabled: boolean;
   secondaryDictationLanguage: Nullable<string>;
   activeDictationLanguage: Nullable<string>;
@@ -54,18 +54,24 @@ type LocalUserPreferences = {
   menuBarIconHidden: boolean;
   insertionMethod: Nullable<string>;
   typingSpeedMs: Nullable<number>;
+  pillResetMonitorStrategy?: Nullable<PillResetMonitorStrategy>;
+  alwaysRequestAdminOnStartup?: boolean;
 };
 
+const normalizePillResetMonitorStrategy = (
+  strategy: Nullable<string> | undefined,
+): PillResetMonitorStrategy => (strategy === "cursor" ? "cursor" : "current");
+
 // Normalize post-processing mode for backwards compatibility
-// "ollama" mode is no longer supported - treat it as "none" (user needs to re-add Ollama via API keys)
+// "ollama" and the removed "cloud" modes are no longer supported - treat them
+// as "none" (the user needs to re-add Ollama via API keys).
 const normalizePostProcessingMode = (
   mode: Nullable<string>,
 ): Nullable<PostProcessingMode> => {
   if (!mode) return null;
-  if (mode === "api" || mode === "cloud" || mode === "none") {
+  if (mode === "api" || mode === "none") {
     return mode;
   }
-  // "ollama" or any other unknown mode falls back to "none"
   return "none";
 };
 
@@ -91,7 +97,6 @@ export const fromLocalPreferences = (
   openclawGatewayUrl: preferences.openclawGatewayUrl ?? null,
   openclawToken: preferences.openclawToken ?? null,
   lastSeenFeature: preferences.lastSeenFeature,
-  isEnterprise: preferences.isEnterprise,
   activeDictationLanguage: preferences.activeDictationLanguage ?? null,
   preferredMicrophone: preferences.preferredMicrophone ?? null,
   ignoreUpdateDialog: preferences.ignoreUpdateDialog ?? false,
@@ -113,6 +118,10 @@ export const fromLocalPreferences = (
   menuBarIconHidden: preferences.menuBarIconHidden ?? false,
   insertionMethod: preferences.insertionMethod ?? null,
   typingSpeedMs: preferences.typingSpeedMs ?? null,
+  pillResetMonitorStrategy: normalizePillResetMonitorStrategy(
+    preferences.pillResetMonitorStrategy,
+  ),
+  alwaysRequestAdminOnStartup: preferences.alwaysRequestAdminOnStartup ?? false,
 });
 
 export const toLocalPreferences = (
@@ -135,7 +144,6 @@ export const toLocalPreferences = (
   openclawGatewayUrl: preferences.openclawGatewayUrl ?? null,
   openclawToken: preferences.openclawToken ?? null,
   lastSeenFeature: preferences.lastSeenFeature ?? null,
-  isEnterprise: preferences.isEnterprise,
   languageSwitchEnabled: false,
   secondaryDictationLanguage: null,
   activeDictationLanguage:
@@ -161,6 +169,10 @@ export const toLocalPreferences = (
   menuBarIconHidden: preferences.menuBarIconHidden ?? false,
   insertionMethod: preferences.insertionMethod ?? null,
   typingSpeedMs: preferences.typingSpeedMs ?? null,
+  pillResetMonitorStrategy: normalizePillResetMonitorStrategy(
+    preferences.pillResetMonitorStrategy,
+  ),
+  alwaysRequestAdminOnStartup: preferences.alwaysRequestAdminOnStartup ?? false,
 });
 
 export abstract class BaseUserPreferencesRepo extends BaseRepo {

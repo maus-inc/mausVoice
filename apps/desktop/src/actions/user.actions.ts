@@ -2,6 +2,7 @@ import {
   type AgentMode,
   DictationPillVisibility,
   Nullable,
+  PillResetMonitorStrategy,
   StylingMode,
   User,
   UserPreferences,
@@ -9,7 +10,6 @@ import {
 import dayjs from "dayjs";
 import { getIntl } from "../i18n";
 import { getUserPreferencesRepo, getUserRepo } from "../repos";
-import { CloudUserRepo } from "../repos/user.repo";
 import { getAppState, produceAppState } from "../store";
 import {
   type PostProcessingMode,
@@ -20,7 +20,6 @@ import {
   DEFAULT_DICTATION_LIMIT_MINUTES,
   normalizeDictationLimitMinutes,
 } from "../utils/dictation-limit.utils";
-import { getIsEnterpriseEnabled } from "../utils/enterprise.utils";
 import { PRIMARY_LANGUAGE_SENTINEL } from "../utils/language.utils";
 import {
   isGpuPreferredTranscriptionDevice,
@@ -101,7 +100,6 @@ export const createDefaultPreferences = (): UserPreferences => ({
   openclawGatewayUrl: null,
   openclawToken: null,
   lastSeenFeature: null,
-  isEnterprise: false,
   activeDictationLanguage: PRIMARY_LANGUAGE_SENTINEL,
   preferredMicrophone: null,
   ignoreUpdateDialog: false,
@@ -109,6 +107,9 @@ export const createDefaultPreferences = (): UserPreferences => ({
   incognitoModeIncludeInStats: false,
   dictationLimitMinutes: DEFAULT_DICTATION_LIMIT_MINUTES,
   dictationPillVisibility: "while_active",
+  pillResetMonitorStrategy: "current",
+
+  alwaysRequestAdminOnStartup: false,
   realtimeOutputEnabled: false,
   remoteOutputEnabled: false,
   remoteTargetDeviceId: null,
@@ -174,10 +175,6 @@ const getYesterdayDateString = (): string =>
 type StreakInfo = ["flame" | "fireworks", string] | null;
 
 const getStreakInfo = (streak: number): StreakInfo => {
-  if (getIsEnterpriseEnabled()) {
-    return null;
-  }
-
   const intl = getIntl();
 
   if (streak === 1) {
@@ -464,20 +461,6 @@ export const setPreferredTranscriptionMode = async (
   });
 };
 
-export const setAllModesToCloud = async (): Promise<void> => {
-  produceAppState((draft) => {
-    draft.settings.aiTranscription.mode = "cloud";
-    draft.settings.aiPostProcessing.mode = "cloud";
-    draft.settings.agentMode.mode = "cloud";
-  });
-
-  await updateUserPreferences((preferences) => {
-    preferences.transcriptionMode = "cloud";
-    preferences.postProcessingMode = "cloud";
-    preferences.agentMode = "cloud";
-  });
-};
-
 export const setPreferredTranscriptionApiKeyId = async (
   id: Nullable<string>,
 ): Promise<void> => {
@@ -581,43 +564,6 @@ export const setPreferredAgentModeApiKeyId = async (
   });
 };
 
-export const migrateLocalUserToCloud = async (): Promise<void> => {
-  const state = getAppState();
-  const userId = state.auth?.uid;
-  if (!userId) {
-    return;
-  }
-
-  const localUser = state.userById[LOCAL_USER_ID];
-  if (!localUser) {
-    return;
-  }
-
-  if (state.userById[userId]) {
-    return;
-  }
-
-  const repo = new CloudUserRepo();
-  const now = new Date().toISOString();
-  const payload: User = {
-    ...localUser,
-    id: userId,
-    createdAt: localUser.createdAt ?? now,
-    updatedAt: now,
-    shouldShowUpgradeDialog: false,
-  };
-
-  try {
-    const saved = await repo.setMyUser(payload);
-    produceAppState((draft) => {
-      setCurrentUser(draft, saved);
-    });
-  } catch (error) {
-    console.error("Failed migrating local user to cloud", error);
-    throw error;
-  }
-};
-
 export const setGotStartedAtNow = async (): Promise<void> => {
   await updateUserPreferences((preferences) => {
     preferences.gotStartedAt = Date.now();
@@ -668,6 +614,22 @@ export const setDictationPillVisibility = async (
   await updateUserPreferences((preferences) => {
     preferences.dictationPillVisibility = visibility;
   }, "Failed to save dictation pill visibility preference. Please try again.");
+};
+
+export const setPillResetMonitorStrategy = async (
+  strategy: PillResetMonitorStrategy,
+): Promise<void> => {
+  await updateUserPreferences((preferences) => {
+    preferences.pillResetMonitorStrategy = strategy;
+  }, "Failed to save pill reset monitor strategy. Please try again.");
+};
+
+export const setAlwaysRequestAdminOnStartup = async (
+  enabled: boolean,
+): Promise<void> => {
+  await updateUserPreferences((preferences) => {
+    preferences.alwaysRequestAdminOnStartup = enabled;
+  }, "Failed to save admin on startup preference. Please try again.");
 };
 
 export const setDictationLimitMinutes = async (

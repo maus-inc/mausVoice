@@ -1,20 +1,13 @@
-import { HandlerOutput } from "@maus-inc/functions";
 import {
   ApiKey,
   AppTarget,
   ChatMessage,
   Conversation,
-  EnterpriseConfig,
-  EnterpriseLicense,
-  FullConfig,
   Hotkey,
   Member,
   Nullable,
-  OidcProvider,
   PairedRemoteDevice,
   RemoteReceiverStatus,
-  Tenant,
-  TenantRole,
   Term,
   Tone,
   ToolInfo,
@@ -37,8 +30,6 @@ import {
   INITIAL_ONBOARDING_STATE,
   type OnboardingState,
 } from "./onboarding.state";
-import { INITIAL_PAYMENT_STATE, PaymentState } from "./payment.state";
-import { INITIAL_PRICING_STATE, PricingState } from "./pricing.state";
 import { INITIAL_SETTINGS_STATE, SettingsState } from "./settings.state";
 import {
   INITIAL_TONE_EDITOR_STATE,
@@ -83,14 +74,6 @@ export type RecordingMode = "dictate" | "agent";
 
 export type AssistantInputMode = "voice" | "type";
 
-export type PriceValue = HandlerOutput<"stripe/getPrices">["prices"];
-
-export type MyTenantMembership = {
-  tenant: Tenant;
-  role: TenantRole;
-  hasSeat: boolean;
-};
-
 export type AppState = {
   initialized: boolean;
   auth: Nullable<AuthUser>;
@@ -109,7 +92,6 @@ export type AppState = {
   userById: Record<string, User>;
   /** First tenant the signed-in user belongs to, with their role and seat
    * status on it. Null if the user has no tenants. */
-  myTenant: Nullable<MyTenantMembership>;
   termById: Record<string, Term>;
   appTargetById: Record<string, AppTarget>;
   pairedRemoteDeviceById: Record<string, PairedRemoteDevice>;
@@ -125,12 +107,6 @@ export type AppState = {
   toolPermissionById: Record<string, ToolPermission>;
   agentStateByConversationId: Record<string, AgentRunState>;
   streamingMessageById: Record<string, StreamingMessageState>;
-  config: Nullable<FullConfig>;
-  priceValueByKey: Record<string, PriceValue>;
-  enterpriseConfig: Nullable<EnterpriseConfig>;
-  enterpriseLicense: Nullable<EnterpriseLicense>;
-  isEnterprise: boolean;
-  oidcProviders: OidcProvider[];
 
   local: LocalState;
   onboarding: OnboardingState;
@@ -140,8 +116,6 @@ export type AppState = {
   toneEditor: ToneEditorState;
   settings: SettingsState;
   updater: UpdaterState;
-  payment: PaymentState;
-  pricing: PricingState;
   login: LoginState;
   pillConversationId: Nullable<string>;
   assistantInputMode: AssistantInputMode;
@@ -166,20 +140,14 @@ export const INITIAL_APP_STATE: AppState = {
   isRecordingHotkey: false,
   activeRecordingMode: null,
   dictationLanguageOverride: null,
-  enterpriseConfig: null,
-  enterpriseLicense: null,
-  isEnterprise: false,
   localStorageCache: {},
-  oidcProviders: [],
   memberById: {},
   userById: {},
-  myTenant: null,
   termById: {},
   appTargetById: {},
   pairedRemoteDeviceById: {},
   remoteReceiverStatus: null,
   transcriptionById: {},
-  priceValueByKey: {},
   apiKeyById: {},
   toneById: {},
   conversationById: {},
@@ -198,7 +166,6 @@ export const INITIAL_APP_STATE: AppState = {
   hotkeyById: {},
   auth: null,
   confettiCounter: 0,
-  config: null,
   keysHeld: [],
   initialized: false,
   snackbarCounter: 0,
@@ -222,7 +189,5 @@ export const INITIAL_APP_STATE: AppState = {
   toneEditor: INITIAL_TONE_EDITOR_STATE,
   settings: INITIAL_SETTINGS_STATE,
   updater: INITIAL_UPDATER_STATE,
-  payment: INITIAL_PAYMENT_STATE,
-  pricing: INITIAL_PRICING_STATE,
   login: INITIAL_LOGIN_STATE,
 };

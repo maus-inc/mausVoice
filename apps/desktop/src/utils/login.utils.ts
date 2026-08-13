@@ -100,9 +100,6 @@ export const getCanSubmitSignUp = (state: AppState): boolean => {
   return !emailError && !passwordError && !confirmPasswordError;
 };
 
-export const getShouldShowEmailForm = (state: AppState): boolean => {
-  if (!state.isEnterprise) {
-    return true;
-  }
-  return state.enterpriseConfig?.allowEmailSignIn ?? true;
+export const getShouldShowEmailForm = (_state: AppState): boolean => {
+  return true;
 };

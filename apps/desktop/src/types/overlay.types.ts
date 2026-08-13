@@ -24,7 +24,6 @@ export type OverlaySyncPayload = Partial<
     | "memberById"
     | "onboarding"
     | "toneById"
-    | "enterpriseConfig"
     | "toolPermissionById"
     | "toolInfoById"
     | "streamingMessageById"

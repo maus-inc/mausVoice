@@ -1,9 +1,5 @@
-import { invokeHandler } from "@maus-inc/functions";
 import { Tone } from "@maus-inc/types";
-import { getRec } from "@maus-inc/utilities";
 import { invoke } from "@tauri-apps/api/core";
-import { getConfigRepo } from ".";
-import { invokeEnterprise } from "../utils/enterprise.utils";
 import { getLogger } from "../utils/log.utils";
 import { getDefaultSystemTones } from "../utils/tone.utils";
 import { BaseRepo } from "./base.repo";
@@ -49,6 +45,8 @@ export abstract class BaseToneRepo extends BaseRepo {
   protected abstract deleteToneInternal(id: string): Promise<void>;
 
   async listTones(): Promise<Tone[]> {
+    // The remote tone-overrides fetch (a mausVoice Cloud feature) was removed
+    // in 0.1.6: built-in and user-defined styles are used as-is.
     const userTones = await this.listTonesInternal().catch((error) => {
       getLogger().warning(
         `Failed to load user-defined styles, falling back to built-in styles: ${error}`,
@@ -56,26 +54,7 @@ export abstract class BaseToneRepo extends BaseRepo {
       return [];
     });
 
-    const result = mergeSystemTones(userTones);
-    const config = await getConfigRepo()
-      .getFullConfig()
-      .catch((error) => {
-        getLogger().warning(
-          `Failed to load tone overrides, falling back to built-in styles: ${error}`,
-        );
-        return null;
-      });
-
-    return result.map((tone) => {
-      const override = getRec(config?.toneOverrides, tone.id);
-      if (override) {
-        return {
-          ...tone,
-          promptTemplate: override,
-        };
-      }
-      return tone;
-    });
+    return mergeSystemTones(userTones);
   }
 
   async getTone(id: string): Promise<Tone | null> {
@@ -121,47 +100,5 @@ export class LocalToneRepo extends BaseToneRepo {
 
   protected async deleteToneInternal(id: string): Promise<void> {
     await invoke("tone_delete", { id });
-  }
-}
-
-export class CloudToneRepo extends BaseToneRepo {
-  protected async listTonesInternal(): Promise<Tone[]> {
-    const res = await invokeHandler("tone/listMyTones", {});
-    return res.tones;
-  }
-
-  protected async getToneInternal(id: string): Promise<Tone | null> {
-    const res = await invokeHandler("tone/listMyTones", {});
-    return res.tones.find((t) => t.id === id) ?? null;
-  }
-
-  protected async upsertToneInternal(tone: Tone): Promise<Tone> {
-    await invokeHandler("tone/upsertMyTone", { tone });
-    return tone;
-  }
-
-  protected async deleteToneInternal(id: string): Promise<void> {
-    await invokeHandler("tone/deleteMyTone", { toneId: id });
-  }
-}
-
-export class EnterpriseToneRepo extends BaseToneRepo {
-  protected async listTonesInternal(): Promise<Tone[]> {
-    const res = await invokeEnterprise("tone/listMyTones", {});
-    return res.tones;
-  }
-
-  protected async getToneInternal(id: string): Promise<Tone | null> {
-    const res = await invokeEnterprise("tone/listMyTones", {});
-    return res.tones.find((t) => t.id === id) ?? null;
-  }
-
-  protected async upsertToneInternal(tone: Tone): Promise<Tone> {
-    await invokeEnterprise("tone/upsertMyTone", { tone });
-    return tone;
-  }
-
-  protected async deleteToneInternal(id: string): Promise<void> {
-    await invokeEnterprise("tone/deleteMyTone", { toneId: id });
   }
 }

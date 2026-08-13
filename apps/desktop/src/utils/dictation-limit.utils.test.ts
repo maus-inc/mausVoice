@@ -48,7 +48,6 @@ describe("shouldEnableDictationLimit", () => {
   it("only enables the setting for local and api transcription modes", () => {
     expect(shouldEnableDictationLimit("local")).toBe(true);
     expect(shouldEnableDictationLimit("api")).toBe(true);
-    expect(shouldEnableDictationLimit("cloud")).toBe(false);
     expect(shouldEnableDictationLimit(null)).toBe(false);
   });
 });

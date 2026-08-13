@@ -1,10 +1,10 @@
 pub mod audio_feedback;
+pub mod capabilities;
 pub mod audio_store;
 pub mod auth_session;
 pub mod bridge_server;
 pub mod crypto;
 pub mod diagnostics;
-pub mod enterprise_oidc;
 pub mod google_oauth;
 pub mod gpu;
 pub mod machine_id;

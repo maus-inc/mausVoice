@@ -18,7 +18,7 @@ use crate::constants::*;
 use crate::draw;
 use crate::gfx::{self, Ctx};
 use crate::input;
-use crate::ipc::{self, InMessage, OutMessage, Phase, Visibility};
+use crate::ipc::{self, InMessage, OutMessage, Phase, ResetStrategy, Visibility};
 
 // ── Safe wrappers around common Cocoa FFI patterns ─────────────────────
 // Issue #4: These reduce the blast radius of unsafe blocks by encapsulating
@@ -328,6 +328,10 @@ extern "C" fn tick_callback(_this: &Object, _sel: Sel, _timer: id) {
 /// Runs one frame of the pill loop: processes queued IPC messages, advances
 /// the springs/animations, and repaints when the state changed.
 fn perform_tick() {
+    // Phase message sequence guard: see ipc::InMessage::Phase.
+    thread_local! {
+        static LAST_PHASE_SEQ: std::cell::Cell<u64> = const { std::cell::Cell::new(0) };
+    }
     APP_CTX.with(|cell| {
         let borrow = cell.borrow();
         let Some(ctx) = borrow.as_ref() else { return };
@@ -342,7 +346,17 @@ fn perform_tick() {
         let rx = ctx.receiver.borrow();
         while let Ok(msg) = rx.try_recv() {
             match msg {
-                InMessage::Phase { phase } => {
+                InMessage::Phase { phase, seq } => {
+                    let stale = LAST_PHASE_SEQ.with(|last| {
+                        let stale = seq < last.get();
+                        if !stale {
+                            last.set(seq);
+                        }
+                        stale
+                    });
+                    if stale {
+                        continue;
+                    }
                     let prev = ctx.state.phase.get();
                     ctx.state.phase.set(phase);
                     if phase == Phase::Idle && prev != Phase::Idle {
@@ -438,8 +452,9 @@ fn perform_tick() {
                         ctx.state.scroll_offset.set(0.0);
                     }
                 }
-                InMessage::ResetPosition => {
+                InMessage::ResetPosition { strategy } => {
                     ctx.state.has_saved_position.set(false);
+                    ctx.state.reset_strategy.set(strategy);
                     ipc::send(&OutMessage::PositionChanged { has_saved_position: false });
                 }
                 InMessage::Quit => {
@@ -1018,12 +1033,21 @@ fn reposition_window(window: id, state: &PillState) {
                 origin_y + win_h - fy - ph / 2.0,
             )
         };
+        // A reset with the "cursor" strategy re-homes onto the screen under
+        // the pointer exactly once; the strategy is consumed so later ticks
+        // keep the pill where it landed instead of chasing the cursor.
+        let reset_to_cursor = !state.has_saved_position.get()
+            && state.reset_strategy.get() == ResetStrategy::Cursor;
         let (anchor_x, anchor_y) = if dragging || (!state.has_saved_position.get() && first_placement) {
             // First placement at the cursor: mark it done so subsequent ticks
             // keep the window where it landed instead of re-chasing the cursor.
             if !dragging && !state.has_saved_position.get() {
                 state.first_placement_done.set(true);
+                state.reset_strategy.set(ResetStrategy::Current);
             }
+            (mouse_loc.x, mouse_loc.y)
+        } else if reset_to_cursor {
+            state.reset_strategy.set(ResetStrategy::Current);
             (mouse_loc.x, mouse_loc.y)
         } else if state.has_saved_position.get() {
             footprint_center(state.saved_x.get(), state.saved_y.get())
@@ -1280,6 +1304,7 @@ unsafe fn setup(receiver: Receiver<InMessage>, embedded: bool) {
         drag_grab_offset_x: Cell::new(0.0),
         drag_grab_offset_y: Cell::new(0.0),
         has_saved_position: Cell::new(false),
+        reset_strategy: Cell::new(ResetStrategy::Current),
         saved_x: Cell::new(0.0),
         saved_y: Cell::new(0.0),
         first_placement_done: Cell::new(false),

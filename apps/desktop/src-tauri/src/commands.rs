@@ -15,7 +15,6 @@ use crate::domain::{
 use crate::platform::{ChunkCallback, LevelCallback};
 use crate::system::crypto::{protect_api_key, reveal_api_key};
 use crate::system::StorageRepo;
-use crate::utils::decode_to_utf8;
 use sqlx::Row;
 
 use crate::platform::input::paste_text_into_focused_field as platform_paste_text;
@@ -457,31 +456,6 @@ pub async fn start_google_sign_in(
 
 #[tauri::command]
 #[specta::specta]
-pub async fn start_enterprise_oidc_sign_in(
-    app_handle: AppHandle,
-    gateway_url: String,
-    provider_id: String,
-) -> Result<(), String> {
-    let result = crate::system::enterprise_oidc::start_enterprise_oidc_flow(
-        &app_handle,
-        &gateway_url,
-        &provider_id,
-    )
-    .await?;
-
-    app_handle
-        .emit_to(
-            EventTarget::any(),
-            crate::system::enterprise_oidc::ENTERPRISE_OIDC_EVENT,
-            result,
-        )
-        .map_err(|err| err.to_string())?;
-
-    Ok(())
-}
-
-#[tauri::command]
-#[specta::specta]
 pub fn list_microphones() -> Vec<crate::platform::audio::InputDeviceDescriptor> {
     crate::platform::audio::list_input_devices()
 }
@@ -490,6 +464,14 @@ pub fn list_microphones() -> Vec<crate::platform::audio::InputDeviceDescriptor> 
 #[specta::specta]
 pub fn list_gpus() -> Vec<crate::system::gpu::GpuAdapterInfo> {
     crate::system::gpu::list_available_gpus()
+}
+
+/// Static machine capabilities (RAM, CPU cores, GPU list) used by the
+/// frontend to recommend local transcription models that fit the device.
+#[tauri::command]
+#[specta::specta]
+pub fn get_system_capabilities() -> crate::system::capabilities::SystemCapabilities {
+    crate::system::capabilities::get_system_capabilities()
 }
 
 #[tauri::command]
@@ -1972,12 +1954,18 @@ pub fn set_reset_pill_position_enabled(app: AppHandle, enabled: bool) -> Result<
 
 /// Send a reset-position IPC message to the native pill overlay.
 ///
-/// Clears the pill's saved position so the next tick repositions it to
-/// the default centre-bottom of the current monitor.
+/// Clears the pill's saved position so the next tick repositions it to the
+/// default centre-bottom of a monitor. `strategy` selects which monitor:
+/// `"current"` (the monitor the pill lives on, the historical default) or
+/// `"cursor"` (the monitor under the mouse).
 #[tauri::command]
 #[specta::specta]
-pub fn reset_pill_position(app: AppHandle) -> Result<(), String> {
-    crate::platform::overlay::notify_reset_position(&app)
+pub fn reset_pill_position(
+    app: AppHandle,
+    strategy: Option<String>,
+) -> Result<(), String> {
+    let strategy = strategy.unwrap_or_else(|| "current".to_string());
+    crate::platform::overlay::notify_reset_position(&app, &strategy)
 }
 
 #[tauri::command]
@@ -2241,9 +2229,6 @@ pub async fn chat_message_delete_many(
         .map_err(|err| err.to_string())
 }
 
-/// Reads `enterprise.json` from the app config directory. Returns `None` if the file does not exist.
-///
-/// Platform paths:
 #[derive(serde::Serialize, specta::Type)]
 #[serde(rename_all = "camelCase")]
 pub struct RunTerminalCommandResponse {
@@ -2281,25 +2266,6 @@ pub async fn run_terminal_command(command: String) -> Result<RunTerminalCommandR
     })
     .await
     .map_err(|err| err.to_string())?
-}
-
-///   - macOS:  ~/Library/Application Support/com.mausinc.desktop/enterprise.json
-///   - Windows: C:\Users\<User>\AppData\Roaming\com.mausinc.desktop\enterprise.json
-#[tauri::command]
-#[specta::specta]
-pub fn read_enterprise_target(app: AppHandle) -> Result<(String, Option<String>), String> {
-    let mut path = app.path().app_config_dir().map_err(|err| err.to_string())?;
-    path.push("enterprise.json");
-    let path_str = path.to_string_lossy().to_string();
-    log::info!("Reading enterprise target from {:?}", path);
-    if !path.exists() {
-        return Ok((path_str, None));
-    }
-
-    let bytes = std::fs::read(&path).map_err(|err| err.to_string())?;
-    let content =
-        decode_to_utf8(&bytes).map_err(|err| format!("Failed to decode enterprise.json: {err}"))?;
-    Ok((path_str, Some(content)))
 }
 
 /// Returns `true` when the running app bundle can be updated in-place.

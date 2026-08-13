@@ -41,8 +41,6 @@ pub struct UserPreferences {
     #[serde(default)]
     pub last_seen_feature: Option<String>,
     #[serde(default)]
-    pub is_enterprise: bool,
-    #[serde(default)]
     pub language_switch_enabled: bool,
     #[serde(default)]
     pub secondary_dictation_language: Option<String>,
@@ -82,6 +80,18 @@ pub struct UserPreferences {
     pub insertion_method: Option<String>,
     #[serde(default)]
     pub typing_speed_ms: Option<i64>,
+    /// Which monitor "Reset Pill Position" re-homes the pill onto:
+    /// "current" (the monitor the pill lives on) or "cursor".
+    #[serde(default = "default_pill_reset_monitor_strategy")]
+    pub pill_reset_monitor_strategy: String,
+    /// Request admin elevation (UAC) on every startup. Windows-only; off by
+    /// default so existing behavior is unchanged.
+    #[serde(default)]
+    pub always_request_admin_on_startup: bool,
+}
+
+fn default_pill_reset_monitor_strategy() -> String {
+    "current".to_string()
 }
 
 fn default_dictation_pill_visibility() -> String {

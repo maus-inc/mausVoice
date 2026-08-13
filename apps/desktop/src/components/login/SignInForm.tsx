@@ -1,13 +1,5 @@
-import {
-  Button,
-  Divider,
-  IconButton,
-  Link,
-  Stack,
-  TextField,
-} from "@mui/material";
+import { Button, IconButton, Link, Stack, TextField } from "@mui/material";
 import { FormattedMessage } from "react-intl";
-import { OidcProviders } from "./OidcProviders";
 import { setMode, submitSignIn } from "../../actions/login.actions";
 import { produceAppState, useAppStore } from "../../store";
 import {
@@ -17,11 +9,7 @@ import {
 import { useState } from "react";
 import { Visibility, VisibilityOff } from "@mui/icons-material";
 
-type SignInFormProps = {
-  hideOidcProviders?: boolean;
-};
-
-export const SignInForm = ({ hideOidcProviders = false }: SignInFormProps) => {
+export const SignInForm = () => {
   const [passwordVisible, setPasswordVisible] = useState(false);
 
   const email = useAppStore((state) => state.login.email);
@@ -55,16 +43,8 @@ export const SignInForm = ({ hideOidcProviders = false }: SignInFormProps) => {
 
   return (
     <Stack spacing={2}>
-      {!hideOidcProviders && <OidcProviders />}
-
       {showEmailForm && (
         <>
-          {!hideOidcProviders && (
-            <Divider>
-              <FormattedMessage defaultMessage="or" />
-            </Divider>
-          )}
-
           <TextField
             label={<FormattedMessage defaultMessage="Email" />}
             type="email"

@@ -9,7 +9,7 @@ use gtk::prelude::*;
 use gtk_layer_shell::LayerShell;
 
 use crate::constants::*;
-use crate::ipc::{self, InMessage, OutMessage, Phase, Visibility};
+use crate::ipc::{self, InMessage, OutMessage, Phase, ResetStrategy, Visibility};
 use crate::state::{FlameTongue, PillState, Rocket, RocketPhase, Spark, WindowMode};
 use crate::{draw, input, x11};
 
@@ -23,6 +23,10 @@ pub(crate) enum Backend {
 /// Runs the GTK pill: picks the display backend, creates the frameless
 /// window, and drives the message/event loop until a quit message arrives.
 pub fn run(receiver: Receiver<InMessage>) {
+    // Phase message sequence guard: see ipc::InMessage::Phase.
+    thread_local! {
+        static LAST_PHASE_SEQ: std::cell::Cell<u64> = const { std::cell::Cell::new(0) };
+    }
     let backend = if gtk_layer_shell::is_supported() {
         Backend::LayerShell
     } else {
@@ -177,6 +181,7 @@ pub fn run(receiver: Receiver<InMessage>) {
         drag_cursor_x: Cell::new(0.0),
         drag_cursor_y: Cell::new(0.0),
         has_saved_position: Cell::new(false),
+        reset_strategy: Cell::new(ResetStrategy::Current),
         saved_x: Cell::new(0.0),
         saved_y: Cell::new(0.0),
         x11_release_persisted: Cell::new(false),
@@ -417,7 +422,17 @@ pub fn run(receiver: Receiver<InMessage>) {
         let rx = receiver.borrow();
         while let Ok(msg) = rx.try_recv() {
             match msg {
-                InMessage::Phase { phase } => {
+                InMessage::Phase { phase, seq } => {
+                    let stale = LAST_PHASE_SEQ.with(|last| {
+                        let stale = seq < last.get();
+                        if !stale {
+                            last.set(seq);
+                        }
+                        stale
+                    });
+                    if stale {
+                        continue;
+                    }
                     let prev = state_tick.phase.get();
                     state_tick.phase.set(phase);
                     if phase == Phase::Idle && prev != Phase::Idle {
@@ -513,10 +528,11 @@ pub fn run(receiver: Receiver<InMessage>) {
                         state_tick.scroll_offset.set(0.0);
                     }
                 }
-                InMessage::ResetPosition => {
+                InMessage::ResetPosition { strategy } => {
                     state_tick.drag_draw_offset_x.set(0.0);
                     state_tick.drag_draw_offset_y.set(0.0);
                     state_tick.has_saved_position.set(false);
+                    state_tick.reset_strategy.set(strategy);
                     ipc::send(&OutMessage::PositionChanged { has_saved_position: false });
                 }
                 InMessage::Quit => {
@@ -652,7 +668,11 @@ pub fn run(receiver: Receiver<InMessage>) {
             // monitor and the layer-shell surface dies with the dead output —
             // fall through so the pill is re-homed onto a live monitor.
             let placed_once = last_geom.get() != (0, 0, 0, 0);
-            if placed_once && !state_monitor.dragging.get() {
+            // A reset with the "cursor" strategy forces one re-home pass onto
+            // the pointer's monitor; the strategy is consumed once applied.
+            let reset_to_cursor = !state_monitor.dragging.get()
+                && state_monitor.reset_strategy.get() == ResetStrategy::Cursor;
+            if placed_once && !state_monitor.dragging.get() && !reset_to_cursor {
                 let stored = last_geom.get();
                 let still_connected = (0..display.n_monitors()).any(|i| {
                     display.monitor(i).is_some_and(|monitor| {
@@ -685,6 +705,9 @@ pub fn run(receiver: Receiver<InMessage>) {
                 if new_geom != last_geom.get() {
                     last_geom.set(new_geom);
                     window_ref.set_monitor(&monitor);
+                }
+                if reset_to_cursor {
+                    state_monitor.reset_strategy.set(ResetStrategy::Current);
                 }
             }
             ControlFlow::Continue

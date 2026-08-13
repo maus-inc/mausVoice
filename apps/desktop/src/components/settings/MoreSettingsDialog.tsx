@@ -11,12 +11,17 @@ import {
   Switch,
   TextField,
 } from "@mui/material";
-import type { DictationPillVisibility, StylingMode } from "@maus-inc/types";
+import type {
+  DictationPillVisibility,
+  PillResetMonitorStrategy,
+  StylingMode,
+} from "@maus-inc/types";
 import { ChangeEvent, useEffect, useRef, useState } from "react";
 import { FormattedMessage, useIntl } from "react-intl";
 import {
   setDictationLimitMinutes,
   setDictationPillVisibility,
+  setPillResetMonitorStrategy,
   setIgnoreUpdateDialog,
   setIncognitoModeEnabled,
   setIncognitoModeIncludeInStats,
@@ -31,17 +36,13 @@ import {
   normalizeDictationLimitMinutes,
   shouldEnableDictationLimit,
 } from "../../utils/dictation-limit.utils";
-import {
-  getAllowChangeStylingMode,
-  getAllowsMultiDeviceMode,
-} from "../../utils/enterprise.utils";
 import { getEffectiveStylingMode } from "../../utils/feature.utils";
-import { getIsMausVoiceCloudUser } from "../../utils/member.utils";
 import {
   getEffectivePillVisibility,
   getMyUserPreferences,
   getTranscriptionPrefs,
 } from "../../utils/user.utils";
+import { SegmentedControl } from "../common/SegmentedControl";
 import { SettingSection } from "../common/SettingSection";
 
 export const MoreSettingsDialog = () => {
@@ -52,15 +53,14 @@ export const MoreSettingsDialog = () => {
     incognitoModeEnabled,
     incognitoIncludeInStats,
     dictationPillVisibility,
+    pillResetMonitorStrategy,
     realtimeOutputEnabled,
     stylingMode,
     canChangeStylingMode,
     showDictationLimitSetting,
     dictationLimitMinutes,
     disablePillRewards,
-    accurateDictationEnabled,
     disableAutoStyleLoading,
-    isCloudUser,
     menuBarIconHidden,
   ] = useAppStore((state) => {
     const prefs = getMyUserPreferences(state);
@@ -71,15 +71,14 @@ export const MoreSettingsDialog = () => {
       prefs?.incognitoModeEnabled ?? false,
       prefs?.incognitoModeIncludeInStats ?? false,
       getEffectivePillVisibility(prefs?.dictationPillVisibility),
+      prefs?.pillResetMonitorStrategy ?? "current",
       prefs?.realtimeOutputEnabled ?? false,
       getEffectiveStylingMode(state),
-      getAllowChangeStylingMode(state),
+      true,
       shouldEnableDictationLimit(transcriptionPrefs.mode),
       getEffectiveDictationLimitMinutes(prefs),
       state.local.disablePillRewards,
-      state.local.accurateDictationEnabled,
       state.local.disableAutoStyleLoading ?? false,
-      getIsMausVoiceCloudUser(state),
       prefs?.menuBarIconHidden ?? false,
     ] as const;
   });
@@ -152,6 +151,12 @@ export const MoreSettingsDialog = () => {
     void setDictationPillVisibility(visibility);
   };
 
+  const handlePillResetMonitorStrategyChange = (
+    strategy: PillResetMonitorStrategy,
+  ) => {
+    void setPillResetMonitorStrategy(strategy);
+  };
+
   const handleToggleRealtimeOutput = (event: ChangeEvent<HTMLInputElement>) => {
     void setRealtimeOutputEnabled(event.target.checked);
   };
@@ -161,14 +166,6 @@ export const MoreSettingsDialog = () => {
   ) => {
     produceAppState((draft) => {
       draft.local.disablePillRewards = !event.target.checked;
-    });
-  };
-
-  const handleToggleAccurateDictation = (
-    event: ChangeEvent<HTMLInputElement>,
-  ) => {
-    produceAppState((draft) => {
-      draft.local.accurateDictationEnabled = event.target.checked;
     });
   };
 
@@ -193,7 +190,7 @@ export const MoreSettingsDialog = () => {
     commitDictationLimitInput();
   };
 
-  const allowMultiDevice = useAppStore(getAllowsMultiDeviceMode);
+  const allowMultiDevice = true;
 
   const handleStylingModeChange = (event: SelectChangeEvent<string>) => {
     const value = event.target.value;
@@ -304,6 +301,24 @@ export const MoreSettingsDialog = () => {
           />
 
           <SettingSection
+            title={<FormattedMessage defaultMessage="Reset pill position" />}
+            description={
+              <FormattedMessage defaultMessage="Choose which monitor the pill returns to when you reset its position: the monitor the pill is on, or the monitor your mouse is on." />
+            }
+            action={
+              <SegmentedControl<PillResetMonitorStrategy>
+                value={pillResetMonitorStrategy}
+                onChange={handlePillResetMonitorStrategyChange}
+                options={[
+                  { value: "current", label: "Current monitor" },
+                  { value: "cursor", label: "Cursor monitor" },
+                ]}
+                ariaLabel="Reset pill position monitor"
+              />
+            }
+          />
+
+          <SettingSection
             title={<FormattedMessage defaultMessage="Real-time output" />}
             description={
               <FormattedMessage defaultMessage="Stream dictation text as you speak instead of pasting all at once when you stop. Only applies to Verbatim mode with supported providers." />
@@ -330,22 +345,6 @@ export const MoreSettingsDialog = () => {
               />
             }
           />
-
-          {isCloudUser && (
-            <SettingSection
-              title={<FormattedMessage defaultMessage="Accurate dictation" />}
-              description={
-                <FormattedMessage defaultMessage="Use a more accurate transcription engine for higher quality results." />
-              }
-              action={
-                <Switch
-                  edge="end"
-                  checked={accurateDictationEnabled}
-                  onChange={handleToggleAccurateDictation}
-                />
-              }
-            />
-          )}
 
           {showDictationLimitSetting && (
             <SettingSection

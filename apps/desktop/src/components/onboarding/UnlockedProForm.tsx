@@ -9,7 +9,6 @@ import { Box, Button, Chip, Stack, Typography } from "@mui/material";
 import { motion } from "framer-motion";
 import { FormattedMessage } from "react-intl";
 import { goToOnboardingPage } from "../../actions/onboarding.actions";
-import { setAllModesToCloud } from "../../actions/user.actions";
 import { trackButtonClick } from "../../utils/analytics.utils";
 import { Logo } from "../common/Logo";
 import {
@@ -38,9 +37,8 @@ const scaleIn = {
 };
 
 export const UnlockedProForm = () => {
-  const handleContinue = async () => {
+  const handleContinue = () => {
     trackButtonClick("onboarding_unlocked_pro_continue");
-    await setAllModesToCloud();
     goToOnboardingPage("tutorial");
   };
 

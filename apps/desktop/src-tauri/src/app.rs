@@ -230,6 +230,30 @@ pub fn build() -> tauri::Builder<tauri::Wry> {
             app.manage(crate::state::RemoteReceiverState::new());
             app.manage(crate::state::FloatingWindowState::new());
 
+            // Admin-on-startup preference (Windows): when enabled, request UAC
+            // elevation at every launch. A decline emits `elevation-declined`
+            // so the frontend can offer "launch normally / close the app";
+            // either way startup continues.
+            #[cfg(target_os = "windows")]
+            {
+                let want_elevation = tauri::async_runtime::block_on(async {
+                    crate::db::preferences_queries::fetch_user_preferences(
+                        pool.clone(),
+                        "local-user-id",
+                    )
+                    .await
+                    .ok()
+                    .flatten()
+                    .map(|prefs| prefs.always_request_admin_on_startup)
+                    .unwrap_or(false)
+                });
+                if want_elevation {
+                    crate::platform::windows::init::request_elevation_relaunch(
+                        app.handle().clone(),
+                    );
+                }
+            }
+
             match crate::system::auth_session::AuthSession::new(app.handle()) {
                 Ok(session) => {
                     app.manage(session);
@@ -297,10 +321,10 @@ pub fn build() -> tauri::Builder<tauri::Wry> {
             crate::commands::user_set_one,
             crate::commands::user_preferences_get,
             crate::commands::start_google_sign_in,
-            crate::commands::start_enterprise_oidc_sign_in,
             crate::commands::user_preferences_set,
             crate::commands::list_microphones,
             crate::commands::list_gpus,
+            crate::commands::get_system_capabilities,
             crate::commands::get_screen_visible_area,
             crate::commands::get_monitor_at_cursor,
             crate::commands::check_microphone_permission,
@@ -386,7 +410,6 @@ pub fn build() -> tauri::Builder<tauri::Wry> {
             crate::commands::read_accessibility_field_values,
             crate::commands::resolve_app_pids,
             crate::commands::check_focused_paste_target,
-            crate::commands::read_enterprise_target,
             crate::commands::run_terminal_command,
             crate::commands::get_hotkey_strategy,
             crate::commands::supports_app_detection,

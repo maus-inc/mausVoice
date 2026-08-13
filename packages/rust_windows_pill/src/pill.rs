@@ -13,7 +13,7 @@ use crate::constants::*;
 use crate::draw;
 use crate::gfx::Gfx;
 use crate::input;
-use crate::ipc::{self, InMessage, OutMessage, Phase, Visibility};
+use crate::ipc::{self, InMessage, OutMessage, Phase, ResetStrategy, Visibility};
 use crate::state;
 use crate::state::{ClickAction, PillState, Rocket, RocketPhase, Spark, WindowMode};
 
@@ -161,6 +161,7 @@ pub fn run(receiver: Receiver<InMessage>) {
         drag_grab_offset_x: Cell::new(0.0),
         drag_grab_offset_y: Cell::new(0.0),
         has_saved_position: Cell::new(false),
+        reset_strategy: Cell::new(ResetStrategy::Current),
         saved_x: Cell::new(0),
         saved_y: Cell::new(0),
         inflate_t: Cell::new(0.0),
@@ -431,9 +432,23 @@ fn on_cursor_tick(hwnd: HWND) {
 /// Applies one IPC message to the pill state and marks the surface dirty so
 /// the next timer tick repaints.
 fn process_message(msg: InMessage, state: &PillState, _hwnd: HWND) {
+    // Phase message sequence guard: see ipc::InMessage::Phase.
+    thread_local! {
+        static LAST_PHASE_SEQ: std::cell::Cell<u64> = const { std::cell::Cell::new(0) };
+    }
     state.dirty.set(true);
     match msg {
-        InMessage::Phase { phase } => {
+        InMessage::Phase { phase, seq } => {
+            let stale = LAST_PHASE_SEQ.with(|last| {
+                let stale = seq < last.get();
+                if !stale {
+                    last.set(seq);
+                }
+                stale
+            });
+            if stale {
+                return;
+            }
             let prev = state.phase.get();
             state.phase.set(phase);
             if phase == Phase::Idle && prev != Phase::Idle {
@@ -521,8 +536,9 @@ fn process_message(msg: InMessage, state: &PillState, _hwnd: HWND) {
                 state.scroll_offset.set(0.0);
             }
         }
-        InMessage::ResetPosition => {
+        InMessage::ResetPosition { strategy } => {
             state.has_saved_position.set(false);
+            state.reset_strategy.set(strategy);
             state.dirty.set(true);
             ipc::send(&OutMessage::PositionChanged { has_saved_position: false });
         }
@@ -1040,7 +1056,14 @@ fn reposition_to_cursor_monitor(hwnd: HWND, state: &PillState) {
         let (cox, coy) = state.content_offset();
         let footprint_cx = (cox + px + pw / 2.0).round() as i32;
         let footprint_cy = (coy + py + ph / 2.0).round() as i32;
+        let reset_to_cursor = !state.has_saved_position.get()
+            && state.reset_strategy.get() == ResetStrategy::Cursor;
         let monitor = if dragging {
+            MonitorFromPoint(cursor, MONITOR_DEFAULTTOPRIMARY)
+        } else if reset_to_cursor {
+            // One-shot re-home onto the cursor's monitor, then revert so the
+            // pill stays put on subsequent ticks.
+            state.reset_strategy.set(ResetStrategy::Current);
             MonitorFromPoint(cursor, MONITOR_DEFAULTTOPRIMARY)
         } else if state.has_saved_position.get() {
             let saved_center = POINT {

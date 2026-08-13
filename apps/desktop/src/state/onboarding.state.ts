@@ -1,6 +1,5 @@
 import { Nullable } from "@maus-inc/types";
 import { getIsDevMode } from "../utils/env.utils";
-import { PricingPlan } from "../utils/price.utils";
 
 export type OnboardingPageKey =
   | "signIn"
@@ -23,10 +22,8 @@ export type OnboardingState = {
   history: OnboardingPageKey[];
   submitting: boolean;
   tryItOutInput: string;
-  selectedPlan: PricingPlan | null;
   loggingIn: boolean;
   preferredMicrophone: Nullable<string>;
-  isEnterprise: boolean;
   company: string;
   isMac: boolean;
   didSignUpWithAccount: boolean;
@@ -42,10 +39,8 @@ export const INITIAL_ONBOARDING_STATE: OnboardingState = {
   history: [],
   submitting: false,
   tryItOutInput: "",
-  selectedPlan: null,
   loggingIn: false,
   preferredMicrophone: null,
-  isEnterprise: false,
   company: "",
   isMac: false,
   didSignUpWithAccount: false,

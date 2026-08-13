@@ -92,12 +92,6 @@ importers:
       '@maus-inc/desktop-utils':
         specifier: workspace:*
         version: link:../../packages/desktop-utils
-      '@maus-inc/functions':
-        specifier: workspace:*
-        version: link:../../packages/functions
-      '@maus-inc/pricing':
-        specifier: workspace:*
-        version: link:../../packages/pricing
       '@maus-inc/types':
         specifier: workspace:*
         version: link:../../packages/types
@@ -455,34 +449,6 @@ importers:
       firebase:
         specifier: ^11.10.0
         version: 11.10.0
-      typescript:
-        specifier: 5.9.2
-        version: 5.9.2
-
-  packages/functions:
-    dependencies:
-      '@maus-inc/types':
-        specifier: workspace:*
-        version: link:../types
-      zod:
-        specifier: ^3.25.76
-        version: 3.25.76
-    devDependencies:
-      '@maus-inc/typescript-config':
-        specifier: workspace:*
-        version: link:../typescript-config
-      firebase:
-        specifier: ^11.10.0
-        version: 11.10.0
-      typescript:
-        specifier: 5.9.2
-        version: 5.9.2
-
-  packages/pricing:
-    devDependencies:
-      '@maus-inc/typescript-config':
-        specifier: workspace:*
-        version: link:../typescript-config
       typescript:
         specifier: 5.9.2
         version: 5.9.2

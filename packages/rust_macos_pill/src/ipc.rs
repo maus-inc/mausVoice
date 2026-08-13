@@ -30,6 +30,16 @@ pub enum Phase {
     Paused,
 }
 
+
+/// Which monitor a reset-position re-homes the pill onto.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ResetStrategy {
+    #[default]
+    Current,
+    Cursor,
+}
+
 #[derive(Debug, Clone, Deserialize)]
 pub struct PillMessage {
     pub id: String,
@@ -68,7 +78,14 @@ pub struct PillPermission {
 #[derive(Debug, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum InMessage {
-    Phase { phase: Phase },
+    Phase {
+        phase: Phase,
+        /// Monotonic sequence number from the host; messages older than the
+        /// last applied phase are ignored so a rapid loading -> idle burst
+        /// can never leave the pill on a stale phase.
+        #[serde(default)]
+        seq: u64,
+    },
     Levels { levels: Vec<f32> },
     StyleInfo { count: u32, name: String },
     Visibility { visibility: Visibility },
@@ -95,7 +112,13 @@ pub enum InMessage {
         streaming: Option<PillStreaming>,
         permissions: Vec<PillPermission>,
     },
-    ResetPosition,
+    /// Clears the saved position; `strategy` picks which monitor the pill
+    /// re-homes onto ("current" = the monitor it lives on, "cursor" = the
+    /// monitor under the pointer).
+    ResetPosition {
+        #[serde(default)]
+        strategy: ResetStrategy,
+    },
     Quit,
 }
 

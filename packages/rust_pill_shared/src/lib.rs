@@ -137,6 +137,48 @@ pub const RING_CORE_ALPHA: f64 = 0.85;
 /// Length (in px) over which the leading edge fades to zero.
 pub const RING_EDGE_FADE: f64 = 30.0;
 
+// ── 2-pass dash-shimmer ring (0.1.6 redesign) ─────────────────────────────
+// The old three-pass × alpha-bucket renderer is replaced by exactly two
+// stroke calls: a constant base outline plus a traveling dash shimmer. The
+// dash ranges are computed from this shared geometry (not a backend dash
+// style), so all three platforms render the same path with the same
+// quantization, and the shimmer travels in sync with the internal waveform
+// phase — the sine waves "bleeding through" to the border.
+
+/// Width of the constant base-outline pass.
+pub const RING_BASE_WIDTH: f64 = 2.5;
+/// Alpha multiplier for the base outline.
+pub const RING_BASE_ALPHA: f64 = 0.30;
+/// Width of the traveling shimmer pass.
+pub const RING_SHIMMER_WIDTH: f64 = 1.2;
+/// Alpha multiplier for the shimmer dashes.
+pub const RING_SHIMMER_ALPHA: f64 = 0.8;
+/// Fraction of each dash period that is painted ("on") for the shimmer.
+pub const RING_DASH_ON_FRACTION: f64 = 0.4;
+
+/// Length of one dash period along the perimeter:
+/// `perimeter / RING_SHIMMER_CYCLES` full on/off cycles around the ring.
+pub fn ring_dash_period(total_len: f64) -> f64 {
+    total_len.max(1.0) / RING_SHIMMER_CYCLES
+}
+
+/// The traveling offset of the dash pattern, driven by the shared waveform
+/// phase so the shimmer moves in lockstep with the sine waves inside the
+/// pill. One full `TAU` of phase advances the pattern by one dash period.
+pub fn ring_dash_offset(wave_phase: f64, total_len: f64) -> f64 {
+    let period = ring_dash_period(total_len);
+    let t = (wave_phase / std::f64::consts::TAU).fract();
+    period * t
+}
+
+/// True when the distance-along-perimeter `dist` falls inside the painted
+/// ("on") part of the dash cycle for the given `offset`.
+pub fn ring_dash_is_on(dist: f64, period: f64, offset: f64) -> bool {
+    let on_len = period * RING_DASH_ON_FRACTION;
+    let pos = (dist + offset).rem_euclid(period);
+    pos < on_len
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -200,5 +242,36 @@ mod tests {
     fn ring_alpha_never_goes_below_zero() {
         assert_eq!(update_ring_alpha(0.01, false, 1.0), 0.0);
         assert_eq!(update_ring_alpha(-1.0, false, 0.0), 0.0);
+    }
+
+    #[test]
+    fn dash_period_splits_perimeter_into_shimmer_cycles() {
+        let period = ring_dash_period(400.0);
+        // RING_SHIMMER_CYCLES = 2 -> one period covers half the perimeter.
+        assert!((period - 200.0).abs() < 1e-9);
+    }
+
+    #[test]
+    fn dash_offset_is_periodic_in_wave_phase() {
+        let total = 400.0;
+        let at_zero = ring_dash_offset(0.0, total);
+        let at_tau = ring_dash_offset(std::f64::consts::TAU, total);
+        assert!((at_zero - 0.0).abs() < 1e-9);
+        assert!(at_tau.abs() < 1e-9);
+        // Half a turn advances the pattern by half a period.
+        let half = ring_dash_offset(std::f64::consts::PI, total);
+        assert!((half - 100.0).abs() < 1e-9);
+    }
+
+    #[test]
+    fn dash_on_ranges_follow_the_on_fraction() {
+        let period = 200.0;
+        let offset = 0.0;
+        assert!(ring_dash_is_on(10.0, period, offset));
+        // on_len = 0.4 * 200 = 80.
+        assert!(!ring_dash_is_on(90.0, period, offset));
+        assert!(ring_dash_is_on(210.0, period, offset));
+        // Offset shifts the pattern: dist 70 with offset 20 lands at 90 (off).
+        assert!(!ring_dash_is_on(70.0, period, 20.0));
     }
 }

@@ -46,6 +46,48 @@ export const extractJsonFromMarkdown = (text: string): string => {
   return text.trim();
 };
 
+/**
+ * Parses LLM JSON output, repairing truncation at the model's token limit
+ * (the classic failure is `SyntaxError: Unterminated string in JSON at
+ * position N`). Walks the tail of the extracted JSON backwards, dropping
+ * partial tokens and re-closing the object until it parses, so a truncated
+ * response degrades to whatever complete fields survived instead of
+ * discarding the whole post-processing result.
+ */
+export const parsePostProcessingJson = (raw: string): unknown => {
+  const extracted = extractJsonFromMarkdown(raw);
+
+  // Fast path: complete JSON.
+  try {
+    return JSON.parse(extracted);
+  } catch {
+    // Fall through to truncation repair.
+  }
+
+  let cut = extracted.length;
+  while (cut > 0) {
+    const boundary = Math.max(
+      extracted.lastIndexOf(",", cut - 1),
+      extracted.lastIndexOf('"', cut - 1),
+      extracted.lastIndexOf(" ", cut - 1),
+      extracted.lastIndexOf("\n", cut - 1),
+      extracted.lastIndexOf("\t", cut - 1),
+    );
+    if (boundary <= 0) {
+      break;
+    }
+    cut = boundary;
+    const repaired = `${extracted.slice(0, cut).replace(/,\s*$/, "")}"}`;
+    try {
+      return JSON.parse(repaired);
+    } catch {
+      // Keep cutting back towards the last complete boundary.
+    }
+  }
+
+  throw new Error("Could not parse or repair LLM JSON output");
+};
+
 export const applyAiPreferences = (
   draft: AppState,
   preferences: UserPreferences,

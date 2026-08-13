@@ -8,7 +8,6 @@ import {
   MenuItem,
   Select,
   SelectChangeEvent,
-  Slider,
   Stack,
   Switch,
   Typography,
@@ -25,6 +24,7 @@ import {
 import { updateUserPreferences } from "../../actions/user.actions";
 import { produceAppState, useAppStore } from "../../store";
 import { getMyUserPreferences } from "../../utils/user.utils";
+import { ElasticSlider } from "../common/ElasticSlider";
 import { StorageImage } from "../common/StorageImage";
 
 export const AppKeybindingsDialog = () => {
@@ -70,11 +70,7 @@ export const AppKeybindingsDialog = () => {
     });
   };
 
-  const handleDefaultTypingSpeedChange = (
-    _: Event,
-    value: number | number[],
-  ) => {
-    const num = Array.isArray(value) ? value[0] : value;
+  const handleDefaultTypingSpeedCommit = (num: number) => {
     void updateUserPreferences((prefs) => {
       prefs.typingSpeedMs = num;
     });
@@ -138,15 +134,14 @@ export const AppKeybindingsDialog = () => {
               <FormattedMessage defaultMessage="Default simulated typing speed" />
             </Typography>
             <Stack direction="row" spacing={2} alignItems="center">
-              <Slider
+              <ElasticSlider
                 value={defaultTypingSpeedMs}
-                onChange={handleDefaultTypingSpeedChange}
+                onCommit={handleDefaultTypingSpeedCommit}
                 min={1}
                 max={40}
                 step={1}
                 valueLabelDisplay="auto"
                 valueLabelFormat={(value) => `${value}ms`}
-                sx={{ flex: 1 }}
               />
             </Stack>
           </Stack>
@@ -282,8 +277,7 @@ const AppKeybindingRow = ({
     );
   };
 
-  const handleTypingSpeedChange = (_: Event, value: number | number[]) => {
-    const num = Array.isArray(value) ? value[0] : value;
+  const handleTypingSpeedCommit = (num: number) => {
     void setAppTargetTypingSpeed(target.id, num);
   };
 
@@ -432,15 +426,14 @@ const AppKeybindingRow = ({
               >
                 <FormattedMessage defaultMessage="Speed" />
               </Typography>
-              <Slider
+              <ElasticSlider
                 value={typingSpeedValue}
-                onChange={handleTypingSpeedChange}
+                onCommit={handleTypingSpeedCommit}
                 min={1}
                 max={40}
                 step={1}
                 valueLabelDisplay="auto"
                 valueLabelFormat={(value) => `${value}ms`}
-                sx={{ flex: 1 }}
               />
             </Stack>
           )}

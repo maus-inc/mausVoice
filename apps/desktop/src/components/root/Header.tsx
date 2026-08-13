@@ -1,31 +1,19 @@
-import {
-  AccountCircleOutlined,
-  RocketLaunchOutlined,
-} from "@mui/icons-material";
-import { Avatar, Box, Button, Stack, Typography } from "@mui/material";
+import { AccountCircleOutlined } from "@mui/icons-material";
 import { getIdentifier } from "@tauri-apps/api/app";
+import { Avatar, Box, Button, Stack, Typography } from "@mui/material";
 import { useMemo, useState } from "react";
 import { FormattedMessage } from "react-intl";
-import { openUpgradePlanDialog } from "../../actions/pricing.actions";
 import { useAsyncData } from "../../hooks/async.hooks";
 import { useHeaderPortal } from "../../hooks/header.hooks";
 import { useIsOnboarded } from "../../hooks/user.hooks";
 import { produceAppState, useAppStore } from "../../store";
-import {
-  getEffectivePlan,
-  getIsOnTrial,
-  getIsPro,
-  planToDisplayName,
-} from "../../utils/member.utils";
+import { getEffectivePlan, planToDisplayName } from "../../utils/member.utils";
 import { getInitials } from "../../utils/string.utils";
 import { getMyUser } from "../../utils/user.utils";
-import { FreeWordsRemaining } from "../common/FreeWordsRemaining";
 import {
   MenuPopoverBuilder,
   type MenuPopoverItem,
 } from "../common/MenuPopover";
-import { TrialCountdown } from "../common/TrialCountdown";
-import { maybeArrayElements } from "../settings/AIPostProcessingConfiguration";
 import { GpuMigrationDialog } from "./GpuMigrationDialog";
 import { SenderReceiverChip } from "./SenderReceiverChip";
 
@@ -69,28 +57,9 @@ export const BaseHeader = ({
 export const AppHeader = () => {
   const { leftContent } = useHeaderPortal();
   const isOnboarded = useIsOnboarded();
-  const isPro = useAppStore(getIsPro);
-  const isOnTrial = useAppStore(getIsOnTrial);
-  const plan = useAppStore((state) => getEffectivePlan(state));
-  const planName = useAppStore((state) => {
-    const plan = getEffectivePlan(state);
-    if (plan === "enterprise") {
-      const orgName = state.enterpriseLicense?.org.trim();
-      return orgName || planToDisplayName(plan);
-    }
-
-    // Only show the tenant name if the user is actually occupying one of the
-    // tenant's paid seats. Members without a seat fall back to their personal
-    // plan label.
-    if (state.myTenant?.hasSeat) {
-      const tenantName = state.myTenant.tenant.name.trim();
-      if (tenantName) {
-        return tenantName;
-      }
-    }
-
-    return planToDisplayName(plan);
-  });
+  const planName = useAppStore((state) =>
+    planToDisplayName(getEffectivePlan(state)),
+  );
 
   const myName = useAppStore((state) => {
     const user = getMyUser(state);
@@ -116,17 +85,6 @@ export const AppHeader = () => {
       },
       leading: <AccountCircleOutlined />,
     },
-    ...maybeArrayElements<MenuPopoverItem>(!isPro, [
-      {
-        kind: "listItem",
-        title: <FormattedMessage defaultMessage="Upgrade to Pro" />,
-        onClick: ({ close }) => {
-          openUpgradePlanDialog();
-          close();
-        },
-        leading: <RocketLaunchOutlined />,
-      },
-    ]),
   ];
 
   let rightContent: React.ReactNode;
@@ -147,8 +105,6 @@ export const AppHeader = () => {
             <FormattedMessage defaultMessage="GPU App Deprecation | Upgrade Now" />
           </Button>
         )}
-        {plan === "free" && <FreeWordsRemaining />}
-        {isOnTrial && <TrialCountdown />}
         <MenuPopoverBuilder
           anchorOrigin={{ vertical: "bottom", horizontal: "right" }}
           transformOrigin={{ vertical: "top", horizontal: "right" }}

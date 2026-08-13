@@ -1,6 +1,6 @@
 use std::cell::{Cell, RefCell};
 
-use crate::ipc::{Phase, PillMessage, PillPermission, PillStreaming, Visibility};
+use crate::ipc::{Phase, PillMessage, PillPermission, PillStreaming, ResetStrategy, Visibility};
 use crate::constants::*;
 
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -210,6 +210,8 @@ pub(crate) struct PillState {
     pub(crate) drag_grab_offset_x: Cell<f64>,
     pub(crate) drag_grab_offset_y: Cell<f64>,
     pub(crate) has_saved_position: Cell<bool>,
+    /// Monitor strategy for the next re-home after a reset-position command.
+    pub(crate) reset_strategy: Cell<ResetStrategy>,
     pub(crate) saved_x: Cell<i32>,
     pub(crate) saved_y: Cell<i32>,
 

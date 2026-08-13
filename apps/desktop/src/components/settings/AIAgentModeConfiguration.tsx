@@ -8,22 +8,10 @@ import {
 import { useAppStore } from "../../store";
 import { type AgentMode } from "../../types/ai.types";
 import { getEffectiveAgentMode } from "../../utils/user.utils";
-import {
-  SegmentedControl,
-  SegmentedControlOption,
-} from "../common/SegmentedControl";
-import { AnimateSwitch } from "../common/AnimateIn";
-import { maybeArrayElements } from "./AIPostProcessingConfiguration";
+import { SegmentedControl } from "../common/SegmentedControl";
 import { ApiKeyList } from "./ApiKeyList";
-import { MausVoiceCloudSetting } from "./MausVoiceCloudSetting";
 
-type AIAgentModeConfigurationProps = {
-  hideCloudOption?: boolean;
-};
-
-export const AIAgentModeConfiguration = ({
-  hideCloudOption,
-}: AIAgentModeConfigurationProps) => {
+export const AIAgentModeConfiguration = () => {
   const agentMode = useAppStore((state) => state.settings.agentMode);
   const effectiveMode = useAppStore(getEffectiveAgentMode);
 
@@ -41,15 +29,6 @@ export const AIAgentModeConfiguration = ({
         value={effectiveMode}
         onChange={handleModeChange}
         options={[
-          ...maybeArrayElements<SegmentedControlOption<AgentMode>>(
-            !hideCloudOption,
-            [
-              {
-                value: "cloud",
-                label: "mausVoice",
-              },
-            ],
-          ),
           { value: "api", label: "API" },
           { value: "none", label: "Off" },
         ]}
@@ -57,23 +36,19 @@ export const AIAgentModeConfiguration = ({
         align="center"
       />
 
-      <AnimateSwitch activeKey={effectiveMode}>
-        {effectiveMode === "none" && (
-          <Typography variant="body2" color="text.secondary">
-            <FormattedMessage defaultMessage="Assistant mode is disabled." />
-          </Typography>
-        )}
+      {effectiveMode === "none" && (
+        <Typography variant="body2" color="text.secondary">
+          <FormattedMessage defaultMessage="Assistant mode is disabled." />
+        </Typography>
+      )}
 
-        {effectiveMode === "api" && (
-          <ApiKeyList
-            selectedApiKeyId={agentMode.selectedApiKeyId}
-            onChange={handleApiKeyChange}
-            context="post-processing"
-          />
-        )}
-
-        {effectiveMode === "cloud" && <MausVoiceCloudSetting />}
-      </AnimateSwitch>
+      {effectiveMode === "api" && (
+        <ApiKeyList
+          selectedApiKeyId={agentMode.selectedApiKeyId}
+          onChange={handleApiKeyChange}
+          context="post-processing"
+        />
+      )}
     </Stack>
   );
 };

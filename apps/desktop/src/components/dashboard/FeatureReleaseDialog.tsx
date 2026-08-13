@@ -13,20 +13,14 @@ import {
 import { ChangeEvent, Fragment, useEffect, useRef, useState } from "react";
 import { FormattedMessage, useIntl } from "react-intl";
 import { showConfetti } from "../../actions/app.actions";
-import {
-  markFeatureSeen,
-  setPreferredAgentMode,
-} from "../../actions/user.actions";
+import { markFeatureSeen } from "../../actions/user.actions";
 import { useAppStore } from "../../store";
 import { CURRENT_FEATURE_DATE } from "../../utils/feature.utils";
 import {
   AGENT_DICTATE_HOTKEY,
   getHotkeyCombosForAction,
 } from "../../utils/keyboard.utils";
-import {
-  getEffectivePlan,
-  getIsMausVoiceCloudUser,
-} from "../../utils/member.utils";
+import { getEffectivePlan } from "../../utils/member.utils";
 import { getIsOnboarded, getMyUser } from "../../utils/user.utils";
 import { HotkeyBadge } from "../common/HotkeyBadge";
 import { AIAgentModeConfiguration } from "../settings/AIAgentModeConfiguration";
@@ -190,7 +184,7 @@ const ProcessorPage = () => {
         </Typography>
       </Stack>
       <Box sx={{ pt: 2 }}>
-        <AIAgentModeConfiguration hideCloudOption />
+        <AIAgentModeConfiguration />
       </Box>
       <Typography variant="body2" color="text.secondary" fontStyle="italic">
         <FormattedMessage defaultMessage="Tip: Choose a stronger model for better results. Smaller or weaker models may produce lower quality output." />
@@ -206,7 +200,6 @@ export const FeatureReleaseDialog = () => {
   const isCommunity = useAppStore(
     (state) => getEffectivePlan(state) === "community",
   );
-  const isMausVoiceCloudUser = useAppStore(getIsMausVoiceCloudUser);
   const hasConfettiFired = useRef(false);
   const [pageIndex, setPageIndex] = useState(0);
 
@@ -223,12 +216,6 @@ export const FeatureReleaseDialog = () => {
       showConfetti();
     }
   }, [open]);
-
-  useEffect(() => {
-    if (open && isMausVoiceCloudUser) {
-      void setPreferredAgentMode("cloud");
-    }
-  }, [open, isMausVoiceCloudUser]);
 
   const handleDismiss = () => {
     markFeatureSeen(CURRENT_FEATURE_DATE);

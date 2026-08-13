@@ -2,6 +2,7 @@ import type {
   AgentMode,
   DictationPillVisibility,
   Nullable,
+  PillResetMonitorStrategy,
   PostProcessingMode,
   TranscriptionMode,
 } from "./common.types";
@@ -41,7 +42,8 @@ export type UserPreferences = {
   menuBarIconHidden: boolean;
   insertionMethod: Nullable<string>;
   typingSpeedMs: Nullable<number>;
+  pillResetMonitorStrategy: PillResetMonitorStrategy;
+  alwaysRequestAdminOnStartup: boolean;
 
   // deprecated
-  isEnterprise: boolean;
 };

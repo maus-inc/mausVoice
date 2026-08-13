@@ -16,7 +16,7 @@ import { PostProcessingMode, TranscriptionMode } from "../types/ai.types";
 import { AudioSamples } from "../types/audio.types";
 import { StopRecordingResponse } from "../types/transcription-session.types";
 import {
-  extractJsonFromMarkdown,
+  parsePostProcessingJson,
   unwrapNestedLlmResponse,
 } from "../utils/ai.utils";
 import { createId } from "../utils/id.utils";
@@ -191,11 +191,9 @@ export const postProcessTranscript = async ({
 
   const tone = getToneById(state, toneId);
   const toneProcessingDisabled = tone?.shouldDisablePostProcessing ?? false;
-  const enterpriseProcessingDisabled =
-    state.enterpriseConfig?.allowPostProcessing === false;
 
   let processedTranscript = rawTranscript;
-  if (toneProcessingDisabled || enterpriseProcessingDisabled) {
+  if (toneProcessingDisabled) {
     getLogger().info(`Post-processing disabled for tone=${toneId}`);
     metadata.postProcessMode = "none";
   } else if (genRepo) {
@@ -248,9 +246,8 @@ export const postProcessTranscript = async ({
     getLogger().verbose("LLM raw output length:", genOutput.text.length);
 
     try {
-      const extractedJson = extractJsonFromMarkdown(genOutput.text);
       const parsed = unwrapNestedLlmResponse(
-        JSON.parse(extractedJson),
+        parsePostProcessingJson(genOutput.text) as Record<string, unknown>,
         "processedTranscription",
       );
 
@@ -272,8 +269,12 @@ export const postProcessTranscript = async ({
       }
     } catch (e) {
       getLogger().error("Failed to parse post-processing response:", e);
+      const message = (e as Error).message;
+      const truncationHint = /Unterminated string/i.test(message)
+        ? " The model output may have been truncated at its token limit."
+        : "";
       warnings.push(
-        `Failed to parse post-processing response: ${(e as Error).message}`,
+        `Failed to parse post-processing response: ${message}.${truncationHint}`,
       );
     }
 

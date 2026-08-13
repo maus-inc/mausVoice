@@ -119,6 +119,16 @@ export class SidecarRequestError extends Error {
   }
 }
 
+/**
+ * True when the sidecar reports a 404 `session_not_found` — the streaming
+ * session was lost (process restarted, session evicted) and the caller
+ * should fall back to batch transcription.
+ */
+export const isSessionNotFoundError = (error: unknown): boolean =>
+  error instanceof SidecarRequestError &&
+  error.status === 404 &&
+  error.code === "session_not_found";
+
 export class LocalTranscriptionSidecar extends BaseSidecar {
   readonly mode: SidecarMode;
   private readyModels = new Map<string, Promise<void>>();
@@ -289,13 +299,20 @@ export class LocalTranscriptionSidecar extends BaseSidecar {
     this.markModelReady(input.model);
 
     const sessionPath = `/v1/transcriptions/sessions/${created.sessionId}`;
+    const sidecarPid = this.getRuntime()?.child.pid ?? null;
     getLogger().info(
-      `[${this.config.logPrefix}] created streaming session ${created.sessionId}`,
+      `[${this.config.logPrefix}] created streaming session ${created.sessionId} (pid=${sidecarPid})`,
     );
     let queue = Promise.resolve();
     let queuedError: unknown = null;
     let released = false;
     let finalizePromise: Promise<LocalSidecarTranscribeOutput> | null = null;
+
+    // Pin the sidecar process for the lifetime of this session: the 60s
+    // idle-dispose must never kill the process under an open session (a long
+    // speech pause used to do exactly that, producing 404 session_not_found
+    // on the next chunk/finalize).
+    const releaseActivityLease = this.beginActivityLease();
 
     const releaseSession = async (): Promise<void> => {
       if (released) {
@@ -303,6 +320,7 @@ export class LocalTranscriptionSidecar extends BaseSidecar {
       }
 
       released = true;
+      releaseActivityLease();
       await this.requestJson<SidecarDeleteTranscriptionSessionResponse>(
         sessionPath,
         { method: "DELETE" },

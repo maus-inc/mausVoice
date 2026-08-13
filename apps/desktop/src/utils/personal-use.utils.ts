@@ -1,6 +1,4 @@
 import type { TranscriptionMode } from "../types/ai.types";
-import { getIsEnterpriseEnabled } from "./enterprise.utils";
-import { isEnterpriseFlavor } from "./env.utils";
 
 export const PERSONAL_GROQ_API_KEY_ID = "personal-groq";
 export const PERSONAL_GROQ_API_KEY_NAME = "Personal Groq";
@@ -15,10 +13,7 @@ export const PERSONAL_USER_DISPLAY_NAME = "Personal User";
 
 export const isPersonalUseProEnabled = (): boolean => true;
 
-export const isPersonalUseEnabled = (): boolean =>
-  isPersonalUseProEnabled() &&
-  !isEnterpriseFlavor() &&
-  !getIsEnterpriseEnabled();
+export const isPersonalUseEnabled = (): boolean => isPersonalUseProEnabled();
 
 type PersonalTranscriptionTargetArgs = {
   deepgramKeyId: string | null;
@@ -56,7 +51,6 @@ export const resolvePersonalTranscriptionTarget = ({
 
   const isOwnedOrUnset =
     currentMode === null ||
-    currentMode === "cloud" ||
     currentMode === "local" ||
     currentApiKeyId === null ||
     ownedKeyIds.includes(currentApiKeyId);

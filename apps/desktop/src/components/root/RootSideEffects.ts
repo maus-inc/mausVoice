@@ -5,10 +5,6 @@ import {
 } from "../../actions/app-target.actions";
 import { loadDictionary } from "../../actions/dictionary.actions";
 import { loadHotkeys } from "../../actions/hotkey.actions";
-import {
-  handleEnterpriseOidcPayload,
-  handleGoogleAuthPayload,
-} from "../../actions/login.actions";
 import { configurePersonalDefaults } from "../../actions/personal-use.actions";
 import { refreshMember } from "../../actions/member.actions";
 import { syncAutoLaunchSetting } from "../../actions/settings.actions";
@@ -21,12 +17,8 @@ import {
 import { useAsyncEffect } from "../../hooks/async.hooks";
 import { useIntervalAsync } from "../../hooks/helper.hooks";
 import { useTauriListen } from "../../hooks/tauri.hooks";
-import { useAppStore } from "../../store";
+import { produceAppState, useAppStore } from "../../store";
 import { REGISTER_CURRENT_APP_EVENT } from "../../types/app-target.types";
-import type { EnterpriseOidcPayload } from "../../types/enterprise-oidc.types";
-import { ENTERPRISE_OIDC_EVENT } from "../../types/enterprise-oidc.types";
-import type { GoogleAuthPayload } from "../../types/google-auth.types";
-import { GOOGLE_AUTH_EVENT } from "../../types/google-auth.types";
 import { getLogger } from "../../utils/log.utils";
 import { minutesToMilliseconds } from "../../utils/time.utils";
 
@@ -72,13 +64,13 @@ export const RootSideEffects = () => {
     await tryRegisterCurrentAppTarget();
   });
 
-  useTauriListen<GoogleAuthPayload>(GOOGLE_AUTH_EVENT, (payload) =>
-    handleGoogleAuthPayload(payload),
-  );
-
-  useTauriListen<EnterpriseOidcPayload>(ENTERPRISE_OIDC_EVENT, (payload) =>
-    handleEnterpriseOidcPayload(payload),
-  );
+  // Windows UAC admin-on-startup was declined: surface the confirm dialog
+  // (launch normally / close the app) instead of failing silently.
+  useTauriListen<void>("elevation-declined", () => {
+    produceAppState((draft) => {
+      draft.settings.elevationDeclinedDialogOpen = true;
+    });
+  });
 
   return null;
 };
