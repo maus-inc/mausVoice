@@ -239,7 +239,7 @@ async fn delete_model(
             return Err(ApiError::bad_request(
                 "download_in_progress",
                 format!(
-                    "model '{}' is currently downloading; pause or cancel it before deleting",
+                    "model '{}' is currently downloading; wait for it to finish before deleting",
                     model.as_slug()
                 ),
             ));
