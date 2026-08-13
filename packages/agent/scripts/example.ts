@@ -41,7 +41,9 @@ const spinnerFrames = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "
 function createSpinner(message: string) {
   let i = 0;
   const timer = setInterval(() => {
-    process.stdout.write(`\r  ${spinnerFrames[i++ % spinnerFrames.length]} ${message}`);
+    process.stdout.write(
+      `\r  ${spinnerFrames[i++ % spinnerFrames.length]} ${message}`,
+    );
   }, 80);
   return {
     update(msg: string) {
@@ -82,7 +84,10 @@ const pasteText: AgentTool = {
   parameters: {
     type: "object",
     properties: {
-      text: { type: "string", description: "The text to type into the focused field" },
+      text: {
+        type: "string",
+        description: "The text to type into the focused field",
+      },
     },
     required: ["text"],
   },
@@ -134,7 +139,12 @@ const executeTerminalCommand: AgentTool = {
         result: { stdout: stdout.trim(), stderr: stderr.trim(), exitCode: 0 },
       };
     } catch (err: unknown) {
-      const e = err as { stdout?: string; stderr?: string; message?: string; code?: number };
+      const e = err as {
+        stdout?: string;
+        stderr?: string;
+        message?: string;
+        code?: number;
+      };
       return {
         success: false,
         failureReason: e.stderr?.trim() ?? e.message ?? "Command failed",
@@ -191,11 +201,16 @@ async function chat(userMessage: string) {
         process.stdout.write(event.text);
         break;
       case "iteration-start":
-        spinner.update(event.iteration === 0 ? "Thinking..." : "Thinking more...");
+        spinner.update(
+          event.iteration === 0 ? "Thinking..." : "Thinking more...",
+        );
         break;
       case "tool-call-start":
         spinner.stop();
-        console.log(`\n  [${event.toolName}]`, JSON.stringify(event.args).substring(0, 120));
+        console.log(
+          `\n  [${event.toolName}]`,
+          JSON.stringify(event.args).substring(0, 120),
+        );
         spinner.update(`Running ${event.toolName}...`);
         break;
       case "tool-call-result":

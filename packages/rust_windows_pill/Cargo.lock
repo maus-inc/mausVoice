@@ -33,9 +33,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "rust_pill_shared"
+version = "0.1.0"
+
+[[package]]
 name = "rust_windows_pill"
 version = "0.1.0"
 dependencies = [
+ "rust_pill_shared",
  "serde",
  "serde_json",
  "windows",

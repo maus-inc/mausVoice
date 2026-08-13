@@ -121,8 +121,7 @@ export const useHotkeyHoldMany = (args: UseHotkeyHoldManyArgs): void => {
   useEffect(() => {
     if (!isDisabled) {
       for (const action of actions) {
-        const prev =
-          prevTriggerCountsRef.current.get(action.controller) ?? 0;
+        const prev = prevTriggerCountsRef.current.get(action.controller) ?? 0;
         const curr = action.triggerCount;
         if (curr > prev) {
           action.controller.toggle();

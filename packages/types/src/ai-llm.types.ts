@@ -22,11 +22,7 @@ export interface LlmTool {
   parameters?: JSONSchema;
 }
 
-export type LlmToolChoice =
-  | "auto"
-  | "none"
-  | "required"
-  | { name: string };
+export type LlmToolChoice = "auto" | "none" | "required" | { name: string };
 
 export interface LlmChatInput {
   messages: LlmMessage[];

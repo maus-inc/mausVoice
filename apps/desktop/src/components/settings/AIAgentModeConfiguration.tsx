@@ -12,6 +12,7 @@ import {
   SegmentedControl,
   SegmentedControlOption,
 } from "../common/SegmentedControl";
+import { AnimateSwitch } from "../common/AnimateIn";
 import { maybeArrayElements } from "./AIPostProcessingConfiguration";
 import { ApiKeyList } from "./ApiKeyList";
 import { MausVoiceCloudSetting } from "./MausVoiceCloudSetting";
@@ -56,21 +57,23 @@ export const AIAgentModeConfiguration = ({
         align="center"
       />
 
-      {effectiveMode === "none" && (
-        <Typography variant="body2" color="text.secondary">
-          <FormattedMessage defaultMessage="Assistant mode is disabled." />
-        </Typography>
-      )}
+      <AnimateSwitch activeKey={effectiveMode}>
+        {effectiveMode === "none" && (
+          <Typography variant="body2" color="text.secondary">
+            <FormattedMessage defaultMessage="Assistant mode is disabled." />
+          </Typography>
+        )}
 
-      {effectiveMode === "api" && (
-        <ApiKeyList
-          selectedApiKeyId={agentMode.selectedApiKeyId}
-          onChange={handleApiKeyChange}
-          context="post-processing"
-        />
-      )}
+        {effectiveMode === "api" && (
+          <ApiKeyList
+            selectedApiKeyId={agentMode.selectedApiKeyId}
+            onChange={handleApiKeyChange}
+            context="post-processing"
+          />
+        )}
 
-      {effectiveMode === "cloud" && <MausVoiceCloudSetting />}
+        {effectiveMode === "cloud" && <MausVoiceCloudSetting />}
+      </AnimateSwitch>
     </Stack>
   );
 };

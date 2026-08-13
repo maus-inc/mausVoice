@@ -1,4 +1,3 @@
-use std::net::TcpListener;
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
 use std::time::{Duration, Instant};
@@ -133,52 +132,44 @@ impl RunningSidecar {
     async fn start_cpu_with_env(
         extra_env: &[(&str, &str)],
     ) -> Result<Self, Box<dyn std::error::Error + Send + Sync>> {
-        let port = reserve_local_port()?;
-        let models_dir = tempfile::tempdir()?;
-        let base_url = format!("http://127.0.0.1:{port}");
+        Self::spawn(env!("CARGO_BIN_EXE_rust-transcription-cpu"), extra_env).await
+    }
 
-        let mut command = Command::new(env!("CARGO_BIN_EXE_rust-transcription-cpu"));
+    #[cfg(feature = "gpu")]
+    async fn start_gpu() -> Result<Self, Box<dyn std::error::Error + Send + Sync>> {
+        Self::spawn(env!("CARGO_BIN_EXE_rust-transcription-gpu"), &[]).await
+    }
+
+    // Both CPU and GPU sidecars share the same spawn + health-ready lifecycle;
+    // only the compiled binary (resolved via `env!` at the call site) differs.
+    // `read_announced_port` holds a mutable borrow of `child` only for the
+    // duration of the port read — ownership stays here and `Drop` kills the
+    // child when the test ends.
+    async fn spawn(
+        binary_path: &str,
+        extra_env: &[(&str, &str)],
+    ) -> Result<Self, Box<dyn std::error::Error + Send + Sync>> {
+        let models_dir = tempfile::tempdir()?;
+        let mut command = Command::new(binary_path);
         command
             .env("RUST_TRANSCRIPTION_HOST", "127.0.0.1")
-            .env("RUST_TRANSCRIPTION_PORT", port.to_string())
+            // Let the OS assign a free port and have the sidecar announce it
+            // back on stdout. Pre-reserving a port (bind :0, read it, drop,
+            // then rebind in the child) creates a TOCTOU race where another
+            // process can claim the port in the gap — that is what caused the
+            // intermittent "Address already in use" failures.
+            .env("RUST_TRANSCRIPTION_PORT", "0")
             .env("RUST_TRANSCRIPTION_MODELS_DIR", models_dir.path())
-            .stdout(Stdio::inherit())
+            .stdout(Stdio::piped())
             .stderr(Stdio::inherit());
 
         for (key, value) in extra_env {
             command.env(key, value);
         }
 
-        let child = command.spawn()?;
-
-        let client = Client::builder().timeout(Duration::from_secs(10)).build()?;
-
-        let mut sidecar = Self {
-            child,
-            client,
-            base_url,
-            models_dir,
-        };
-
-        sidecar.wait_until_healthy().await?;
-        Ok(sidecar)
-    }
-
-    #[cfg(feature = "gpu")]
-    async fn start_gpu() -> Result<Self, Box<dyn std::error::Error + Send + Sync>> {
-        let port = reserve_local_port()?;
-        let models_dir = tempfile::tempdir()?;
+        let mut child = command.spawn()?;
+        let port = read_announced_port(&mut child).await?;
         let base_url = format!("http://127.0.0.1:{port}");
-
-        let mut command = Command::new(env!("CARGO_BIN_EXE_rust-transcription-gpu"));
-        command
-            .env("RUST_TRANSCRIPTION_HOST", "127.0.0.1")
-            .env("RUST_TRANSCRIPTION_PORT", port.to_string())
-            .env("RUST_TRANSCRIPTION_MODELS_DIR", models_dir.path())
-            .stdout(Stdio::inherit())
-            .stderr(Stdio::inherit());
-
-        let child = command.spawn()?;
 
         let client = Client::builder().timeout(Duration::from_secs(10)).build()?;
 
@@ -629,11 +620,64 @@ async fn gpu_sidecar_lists_gpu_devices() -> Result<(), Box<dyn std::error::Error
     Ok(())
 }
 
-fn reserve_local_port() -> Result<u16, std::io::Error> {
-    let listener = TcpListener::bind("127.0.0.1:0")?;
-    let port = listener.local_addr()?.port();
-    drop(listener);
-    Ok(port)
+/// Reads the port the sidecar bound to from its stdout announcement
+/// (`RUST_TRANSCRIPTION_BOUND_PORT=<port>`), which `run_server` emits right
+/// after the OS-assigned bind succeeds. Reading it back from the child avoids
+/// the race of pre-reserving a port in the parent and hoping it stays free.
+///
+/// The reader keeps draining stdout until the child exits so the OS pipe
+/// buffer can never fill and stall the sidecar (it writes tracing output
+/// during long transcriptions). Only the first announced port is returned.
+async fn read_announced_port(
+    child: &mut Child,
+) -> Result<u16, Box<dyn std::error::Error + Send + Sync>> {
+    let stdout = child
+        .stdout
+        .take()
+        .ok_or("sidecar stdout was not captured")?;
+
+    let (tx, rx) = tokio::sync::oneshot::channel::<u16>();
+    let mut tx = Some(tx);
+
+    // Drains the sidecar's stdout for its whole lifetime. Sends the bound
+    // port once on the first matching line, then keeps reading until EOF so
+    // the pipe never backs up and blocks the child's writes.
+    tokio::task::spawn_blocking(move || {
+        use std::io::{BufRead, BufReader};
+        let mut reader = BufReader::new(stdout);
+        let mut line = String::new();
+        let mut announced = false;
+        loop {
+            line.clear();
+            match reader.read_line(&mut line) {
+                Ok(0) => break, // EOF
+                Ok(_) => {
+                    if !announced {
+                        if let Some(captured) =
+                            line.strip_prefix("RUST_TRANSCRIPTION_BOUND_PORT=")
+                        {
+                            if let Ok(port) = captured.trim().parse::<u16>() {
+                                announced = true;
+                                // `tx.send` moves `tx`; take() it so the move
+                                // happens exactly once and the drain loop can
+                                // keep reading on later iterations.
+                                if let Some(t) = tx.take() {
+                                    let _ = t.send(port);
+                                }
+                            }
+                        }
+                    }
+                }
+                Err(_) => break,
+            }
+        }
+    });
+
+    match tokio::time::timeout(HEALTH_TIMEOUT, rx).await {
+        Ok(Ok(port)) => Ok(port),
+        Ok(Err(_)) => Err("sidecar closed stdout without announcing a port".into()),
+        Err(_) => Err("timed out waiting for sidecar to announce its port".into()),
+    }
 }
 
 fn audio_asset_path(file_name: &str) -> Result<PathBuf, Box<dyn std::error::Error + Send + Sync>> {

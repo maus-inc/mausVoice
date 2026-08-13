@@ -19,21 +19,12 @@ export const TermsNotice = ({ align = "center" }: TermsNoticeProps) => {
     >
       <FormattedMessage defaultMessage="By using mausVoice, you agree to our" />{" "}
       <a
-        href="https://maus-inc.github.io/mausVoice/terms"
+        href="https://github.com/maus-inc/mausVoice/blob/main/LICENCE"
         target="_blank"
         rel="noopener noreferrer"
         style={{ color: "inherit", textDecoration: "underline" }}
       >
         <FormattedMessage defaultMessage="Terms & Conditions" />
-      </a>{" "}
-      <FormattedMessage defaultMessage="and" />{" "}
-      <a
-        href="https://maus-inc.github.io/mausVoice/privacy"
-        target="_blank"
-        rel="noopener noreferrer"
-        style={{ color: "inherit", textDecoration: "underline" }}
-      >
-        <FormattedMessage defaultMessage="Privacy Policy" />
       </a>
     </Typography>
   );

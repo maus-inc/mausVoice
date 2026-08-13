@@ -6,10 +6,10 @@ This guide covers the Docker Compose setup for running Ollama locally during dev
 
 The Docker setup provides two ways to access Ollama:
 
-| Port  | Service | Authentication | Use Case |
-|-------|---------|----------------|----------|
+| Port  | Service        | Authentication        | Use Case                                                         |
+| ----- | -------------- | --------------------- | ---------------------------------------------------------------- |
 | 11430 | Caddy → Ollama | Bearer token required | Testing API key auth (e.g., secured Ollama behind reverse proxy) |
-| 11431 | Ollama direct | None | Standard local development |
+| 11431 | Ollama direct  | None                  | Standard local development                                       |
 
 ## Quick Start
 
@@ -87,13 +87,13 @@ docker compose exec ollama ollama rm <model-name>
 
 ### Model recommendations
 
-| Model | Size | Speed | Quality | Best For |
-|-------|------|-------|---------|----------|
-| `llama3.2:1b` | ~2GB | Fast | Good | Quick testing, light post-processing |
-| `llama3.2:3b` | ~4GB | Medium | Better | General use |
-| `llama3.1:8b` | ~8GB | Slower | Best | High-quality post-processing |
-| `mistral:7b` | ~7GB | Medium | Great | Alternative to Llama |
-| `phi3:mini` | ~2GB | Fast | Good | Lightweight alternative |
+| Model         | Size | Speed  | Quality | Best For                             |
+| ------------- | ---- | ------ | ------- | ------------------------------------ |
+| `llama3.2:1b` | ~2GB | Fast   | Good    | Quick testing, light post-processing |
+| `llama3.2:3b` | ~4GB | Medium | Better  | General use                          |
+| `llama3.1:8b` | ~8GB | Slower | Best    | High-quality post-processing         |
+| `mistral:7b`  | ~7GB | Medium | Great   | Alternative to Llama                 |
+| `phi3:mini`   | ~2GB | Fast   | Good    | Lightweight alternative              |
 
 Browse all available models at [ollama.com/library](https://ollama.com/library).
 

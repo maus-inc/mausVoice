@@ -1,5 +1,5 @@
 # robots.txt for https://maus-inc.github.io/mausVoice/
-# Public mausVoice user and enterprise documentation is crawlable.
+# Public mausVoice documentation is crawlable.
 # Updated: 2026-08-12
 
 User-agent: *
@@ -62,7 +62,7 @@ User-agent: Bytespider
 Allow: /
 
 # Machine-readable documentation summary:
-# https://maus-inc.github.io/mausVoice/llms.txt
+# https://maus-inc.github.io/mausVoice/docs/llms.txt
 
-Sitemap: https://maus-inc.github.io/mausVoice/sitemap-index.xml
+Sitemap: https://maus-inc.github.io/mausVoice/docs/sitemap-index.xml
 Host: maus-inc.github.io

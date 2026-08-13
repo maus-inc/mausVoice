@@ -2,6 +2,7 @@ use crate::constants::*;
 use crate::gfx::Gfx;
 use crate::ipc::{Phase, PillPermission, PillStreaming};
 use crate::state::{ClickAction, ClickRegion, PillState, RocketPhase};
+use rust_pill_shared::{path_distances, rounded_rectangle_perimeter, RoundedRectArcSteps};
 
 /// Paints the whole pill window: begins the Direct2D frame, clears, then
 /// draws the pill, panel, transcript, and overlays in z-order.
@@ -53,11 +54,10 @@ pub(crate) fn draw_all(gfx: &mut Gfx, state: &PillState) {
 
         draw_cancel_button(gfx, state, ww, wh);
 
-        // Long-press outline indicator (also visible during active drag at full progress)
-        if (state.long_press_active.get()
-            && state.long_press_elapsed.get() > LONG_PRESS_HOLD_DELAY)
-            || state.dragging.get()
-        {
+        // Long-press outline indicator. `ring_alpha` stays pinned for the whole
+        // hold and eases out after release, so the outline survives the
+        // press→drag hand-off and never vanishes under an inflated pill.
+        if state.ring_alpha.get() > 0.0 {
             draw_long_press_ring(gfx, state, ww, wh);
         }
 
@@ -70,26 +70,34 @@ pub(crate) fn draw_all(gfx: &mut Gfx, state: &PillState) {
 pub(crate) fn pill_position(state: &PillState, ww: f64, wh: f64) -> (f64, f64, f64, f64) {
     let expand_t = state.expand_t.get();
     let inflate = state.inflate_t.get();
-    let inflate_px = inflate * DRAG_INFLATE_AMOUNT;
 
     let base_w = lerp(MIN_PILL_WIDTH, EXPANDED_PILL_WIDTH, expand_t);
     let base_h = lerp(MIN_PILL_HEIGHT, EXPANDED_PILL_HEIGHT, expand_t);
-    let pill_w = base_w + inflate_px * 2.0;
-    let pill_h = base_h + inflate_px * 2.0;
-    let pill_x = (ww - pill_w) / 2.0;
 
-    let pill_y = if state.assistant_active.get() || state.panel_open_t.get() > 0.01 {
+    // Inflate by scaling BOTH axes about the pill's centre. An additive pixel
+    // amount grows the small height disproportionately (reading as "only got
+    // taller"), and anchoring to the bottom edge grows the pill upward-only;
+    // scaling about the centre preserves the squircle's proportions and grows
+    // it diagonally, the way a physical pill would.
+    let scale = 1.0 + inflate * DRAG_INFLATE_SCALE;
+    let pill_w = base_w * scale;
+    let pill_h = base_h * scale;
+
+    let base_x = (ww - base_w) / 2.0;
+    let base_y = if state.assistant_active.get() || state.panel_open_t.get() > 0.01 {
         let panel_bottom = wh - PANEL_BOTTOM_MARGIN;
-        panel_bottom - PILL_BOTTOM_INSET - pill_h
+        panel_bottom - PILL_BOTTOM_INSET - base_h
     } else {
         // Collapsed: hug the bottom (4px); expanded: rise to centered position
         let collapsed_bottom = 4.0;
         let expanded_bottom = (PILL_AREA_HEIGHT - EXPANDED_PILL_HEIGHT) / 2.0;
         let bottom_offset = lerp(collapsed_bottom, expanded_bottom, expand_t);
-        wh - bottom_offset - pill_h
+        wh - bottom_offset - base_h
     };
 
-    (pill_x, pill_y, pill_w, pill_h)
+    let center_x = base_x + base_w / 2.0;
+    let center_y = base_y + base_h / 2.0;
+    (center_x - pill_w / 2.0, center_y - pill_h / 2.0, pill_w, pill_h)
 }
 
 /// Corner radius for the pill at its *current* size.
@@ -1172,19 +1180,30 @@ fn lerp(a: f64, b: f64, t: f64) -> f64 {
 
 /// Draws the long-press progress ring around the pill, kept at full
 /// completion while dragging so the outline reads as a drag affordance.
+/// Opacity is owned by `state.ring_alpha` (pinned while held, eased out after
+/// release), never by the press-progress ramp.
 fn draw_long_press_ring(gfx: &Gfx, state: &PillState, ww: f64, wh: f64) {
-    // While actively dragging, keep the full outline visible (progress = 1.0).
+    let alpha = state.ring_alpha.get();
+    if alpha <= 0.0 {
+        return;
+    }
+
+    // Full outline while dragging; mid-press it tracks the hold-progress ramp;
+    // after release or cancel it fades from the level actually reached instead
+    // of snapping to a complete outline.
     let progress = if state.dragging.get() {
         1.0
-    } else {
+    } else if state.long_press_active.get() {
         long_press_progress(state.long_press_elapsed.get())
+    } else {
+        state.ring_release_progress.get()
     };
 
     let (pill_x, pill_y, pill_w, pill_h) = pill_position(state, ww, wh);
     let radius = pill_radius(pill_w, pill_h);
 
     // Draw an outline that traces around the pill perimeter clockwise
-    // from the top-center. The filled portion matches the hold progress.
+    // from the top-left corner. The filled portion matches the hold progress.
     let inset = 2.0;
     let ox = pill_x - inset;
     let oy = pill_y - inset;
@@ -1192,60 +1211,24 @@ fn draw_long_press_ring(gfx: &Gfx, state: &PillState, ww: f64, wh: f64) {
     let oh = pill_h + inset * 2.0;
     let r = (radius + inset).min(oh / 2.0);
 
-    // Build perimeter path as (x, y) points: top edge → right cap → bottom edge → left cap
-    let segments = 64;
-    let mut path: Vec<(f64, f64)> = Vec::with_capacity(segments);
-
-    // Top edge (left to right), starting from after the top-left corner
-    let top_left_x = ox + r;
-    let top_right_x = ox + ow - r;
-    let top_y = oy;
-    path.push((top_left_x, top_y));
-    path.push((top_right_x, top_y));
-
-    // Right cap (semicircle)
-    let right_cx = ox + ow - r;
-    let right_cy = oy + r;
-    let arc_steps = segments / 4;
-    for i in 0..=arc_steps {
-        let angle = -std::f64::consts::FRAC_PI_2
-            + (i as f64 / arc_steps as f64) * std::f64::consts::PI;
-        path.push((right_cx + angle.cos() * r, right_cy + angle.sin() * r));
-    }
-
-    // Bottom edge (right to left)
-    let bottom_y = oy + oh;
-    path.push((top_left_x, bottom_y));
-
-    // Left cap (semicircle)
-    let left_cx = ox + r;
-    let left_cy = oy + oh - r;
-    for i in 0..=arc_steps {
-        let angle = std::f64::consts::FRAC_PI_2
-            + (i as f64 / arc_steps as f64) * std::f64::consts::PI;
-        path.push((left_cx + angle.cos() * r, left_cy + angle.sin() * r));
-    }
-
-    // Compute cumulative distances along the path
-    let mut distances: Vec<f64> = Vec::with_capacity(path.len());
-    distances.push(0.0);
-    for i in 1..path.len() {
-        let dx = path[i].0 - path[i - 1].0;
-        let dy = path[i].1 - path[i - 1].1;
-        distances.push(distances[i - 1] + (dx * dx + dy * dy).sqrt());
-    }
-    let total_len = *distances.last().unwrap_or(&1.0);
+    // Shared perimeter construction — identical geometry on every platform so
+    // the long-press ring traces the same path across Linux/macOS/Windows.
+    let path = rounded_rectangle_perimeter(ox, oy, ow, oh, r, RoundedRectArcSteps::Auto);
+    let (distances, total_len) = path_distances(&path);
     let filled_len = total_len * progress;
 
-    let outline_alpha = 0.3 + 0.5 * progress;
-    let col = [
-        LONG_PRESS_OUTLINE_COLOR.0,
-        LONG_PRESS_OUTLINE_COLOR.1,
-        LONG_PRESS_OUTLINE_COLOR.2,
-        outline_alpha,
-    ];
+    // Three-pass silver gradient ring with sine-wave shimmer.
+    // Each pass draws the same path at a different width and alpha, creating
+    // a soft-edged glow that tapers to a bright silver core. The shimmer
+    // modulates per-segment alpha using a sine wave synced to the internal
+    // waveform phase, so the ring looks like the pill's sine waves are
+    // bleeding through to the border.
+    let master_alpha = (0.3 + 0.5 * progress) * alpha;
+    let shimmer_freq = RING_SHIMMER_CYCLES * std::f64::consts::TAU / total_len.max(1.0);
+    let wave_phase = state.wave_phase.get();
 
-    // Draw segments up to filled_len
+    // Collect the filled segments once so each pass reuses them.
+    let mut segments: Vec<(f64, f64, f64, f64, f64)> = Vec::new(); // (x1,y1,x2,y2,mid_dist)
     for i in 1..path.len() {
         if distances[i - 1] >= filled_len {
             break;
@@ -1255,11 +1238,60 @@ fn draw_long_press_ring(gfx: &Gfx, state: &PillState, ww: f64, wh: f64) {
         let mut x2 = path[i].0;
         let mut y2 = path[i].1;
         if distances[i] > filled_len {
-            let t = (filled_len - distances[i - 1]) / (distances[i] - distances[i - 1]);
-            x2 = x1 + (x2 - x1) * t;
-            y2 = y1 + (y2 - y1) * t;
+            let seg = distances[i] - distances[i - 1];
+            let k = if seg > 0.0 {
+                (filled_len - distances[i - 1]) / seg
+            } else {
+                0.0
+            };
+            x2 = x1 + (x2 - x1) * k;
+            y2 = y1 + (y2 - y1) * k;
         }
-        gfx.draw_line(x1, y1, x2, y2, col, LONG_PRESS_OUTLINE_WIDTH);
+        let mid_dist = (distances[i - 1] + distances[i].min(filled_len)) * 0.5;
+        segments.push((x1, y1, x2, y2, mid_dist));
+    }
+
+    // Draw three passes: outer glow → mid-tone → bright core.
+    let passes: [(f64, f64); 3] = [
+        (RING_GLOW_WIDTH, RING_GLOW_ALPHA),
+        (RING_MID_WIDTH, RING_MID_ALPHA),
+        (RING_CORE_WIDTH, RING_CORE_ALPHA),
+    ];
+
+    // Batch segments that share a quantized alpha into one call per bucket,
+    // reusing a single brush/style instead of creating one per segment.
+    const ALPHA_BUCKETS: usize = 8;
+    for &(width, pass_alpha) in &passes {
+        let mut buckets: [Vec<(f64, f64, f64, f64)>; ALPHA_BUCKETS] =
+            std::array::from_fn(|_| Vec::new());
+        for &(x1, y1, x2, y2, mid_dist) in &segments {
+            let shimmer = 0.55 + 0.45 * (mid_dist * shimmer_freq + wave_phase).sin();
+            let edge_fade = ((filled_len - mid_dist) / RING_EDGE_FADE).min(1.0);
+            let a = master_alpha * pass_alpha * shimmer * edge_fade;
+            if a < 0.005 {
+                continue;
+            }
+            let bucket =
+                ((a * (ALPHA_BUCKETS as f64 - 1.0)).round() as usize).min(ALPHA_BUCKETS - 1);
+            buckets[bucket].push((x1, y1, x2, y2));
+        }
+        for (b, segs) in buckets.iter().enumerate() {
+            if segs.is_empty() {
+                continue;
+            }
+            // Reconstruct a representative alpha for bucket b. Using the
+            // bucket's midpoint (b + 0.5)/(N-1) keeps every populated bucket at
+            // a non-zero alpha (bucket 0 is never fully transparent) and stays
+            // monotonic with the quantized source alpha.
+            let a = (b as f64 + 0.5) / (ALPHA_BUCKETS as f64 - 1.0);
+            let col = [
+                LONG_PRESS_OUTLINE_COLOR.0,
+                LONG_PRESS_OUTLINE_COLOR.1,
+                LONG_PRESS_OUTLINE_COLOR.2,
+                a,
+            ];
+            gfx.draw_line_batch(segs, col, width);
+        }
     }
 }
 

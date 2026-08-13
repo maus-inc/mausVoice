@@ -222,7 +222,17 @@ export const useInterval = (
   }, [callback]);
 
   useEffect(() => {
+    // Every consumer of this hook is a background refresh (config, tokens,
+    // permissions, heartbeats, countdowns). None of it is observable while the
+    // window is hidden, so ticking then only burns CPU and wakes IPC for
+    // nothing — skip the tick and fire once immediately when the app returns.
+    const isHidden = () =>
+      typeof document !== "undefined" && document.visibilityState === "hidden";
+
     function tick() {
+      if (isHidden()) {
+        return;
+      }
       if (savedCallback.current) {
         savedCallback.current();
       }
@@ -233,8 +243,16 @@ export const useInterval = (
     if (intervalIdRef.current) clearInterval(intervalIdRef.current);
     intervalIdRef.current = setInterval(tick, delay);
 
+    const onVisibilityChange = () => {
+      if (!isHidden()) {
+        tick();
+      }
+    };
+    document.addEventListener("visibilitychange", onVisibilityChange);
+
     return () => {
       if (intervalIdRef.current) clearInterval(intervalIdRef.current);
+      document.removeEventListener("visibilitychange", onVisibilityChange);
     };
   }, [delay, ...dependencies]);
 };

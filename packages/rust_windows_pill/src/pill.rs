@@ -165,6 +165,8 @@ pub fn run(receiver: Receiver<InMessage>) {
         saved_y: Cell::new(0),
         inflate_t: Cell::new(0.0),
         inflate_velocity: Cell::new(0.0),
+        ring_alpha: Cell::new(0.0),
+        ring_release_progress: Cell::new(0.0),
         dirty: Cell::new(true),
     };
 
@@ -519,6 +521,11 @@ fn process_message(msg: InMessage, state: &PillState, _hwnd: HWND) {
                 state.scroll_offset.set(0.0);
             }
         }
+        InMessage::ResetPosition => {
+            state.has_saved_position.set(false);
+            state.dirty.set(true);
+            ipc::send(&OutMessage::PositionChanged { has_saved_position: false });
+        }
         InMessage::Quit => {
             QUIT.with(|q| q.set(true));
         }
@@ -655,6 +662,32 @@ fn tick(state: &PillState, dt: f64) {
     // Inflate animation: expand when dragging, contract when released.
     let inflate_target = if state.dragging.get() { 1.0 } else { 0.0 };
     spring_anim(&state.inflate_t, &state.inflate_velocity, inflate_target, DRAG_INFLATE_STIFFNESS, dt);
+
+    // Long-press outline master alpha. While the gesture is held (long press
+    // past the hold delay, or dragging) the outline is pinned at full alpha —
+    // it must not fade underneath an active hold. Once released it eases out
+    // over LONG_PRESS_RING_FADE so the affordance dissolves instead of popping.
+    let ring_held = state.dragging.get()
+        || (state.long_press_active.get()
+            && state.long_press_elapsed.get() > LONG_PRESS_HOLD_DELAY);
+    if ring_held {
+        // Remember how far the ring ramp had filled so a release or cancel
+        // mid-ramp fades from that level instead of snapping to a full ring.
+        state.ring_release_progress.set(if state.dragging.get() {
+            1.0
+        } else {
+            draw::long_press_progress(state.long_press_elapsed.get())
+        });
+    }
+    let previous_alpha = state.ring_alpha.get();
+    let next = rust_pill_shared::update_ring_alpha(previous_alpha, ring_held, dt);
+    state.ring_alpha.set(next);
+    // needs_redraw() is only true while alpha > 0, so the zero crossing
+    // must dirty the frame explicitly — otherwise the final cleared frame
+    // never repaints and a faint ghost of the ring lingers.
+    if previous_alpha > 0.0 && next == 0.0 {
+        state.dirty.set(true);
+    }
 
     if state.should_stick.get() && state.assistant_active.get() && !state.assistant_compact.get() {
         let max_scroll = (state.content_height.get() - state.viewport_height.get()).max(0.0);
@@ -984,7 +1017,44 @@ fn reposition_to_cursor_monitor(hwnd: HWND, state: &PillState) {
     unsafe {
         let mut cursor = POINT::default();
         let _ = GetCursorPos(&mut cursor);
-        let monitor = MonitorFromPoint(cursor, MONITOR_DEFAULTTOPRIMARY);
+
+        // The main window is never resized (fixed 600×362 canvas), so the live
+        // rect and the typing constants agree — but use the live rect anyway so
+        // nothing here assumes a specific mode's size.
+        let mut current = RECT::default();
+        let _ = GetWindowRect(hwnd, &mut current);
+        let win_w = current.right - current.left;
+        let win_h = current.bottom - current.top;
+
+        // A drag belongs to whichever monitor the cursor is on. Everything
+        // else belongs to the monitor the pill actually lives on — resolving
+        // the monitor from the live cursor here is what made a pinned pill hop
+        // monitors (and clamp into the wrong work area) whenever the pointer
+        // crossed a screen edge.
+        let dragging = state.dragging.get();
+        let (px, py, pw, ph) = draw::pill_position(
+            state,
+            state.draw_width.get(),
+            state.draw_height.get(),
+        );
+        let (cox, coy) = state.content_offset();
+        let footprint_cx = (cox + px + pw / 2.0).round() as i32;
+        let footprint_cy = (coy + py + ph / 2.0).round() as i32;
+        let monitor = if dragging {
+            MonitorFromPoint(cursor, MONITOR_DEFAULTTOPRIMARY)
+        } else if state.has_saved_position.get() {
+            let saved_center = POINT {
+                x: state.saved_x.get() + footprint_cx,
+                y: state.saved_y.get() + footprint_cy,
+            };
+            MonitorFromPoint(saved_center, MONITOR_DEFAULTTONEAREST)
+        } else {
+            let probe = POINT {
+                x: current.left + footprint_cx,
+                y: current.top + footprint_cy,
+            };
+            MonitorFromPoint(probe, MONITOR_DEFAULTTONEAREST)
+        };
         let mut info = MONITORINFO {
             cbSize: std::mem::size_of::<MONITORINFO>() as u32,
             ..Default::default()
@@ -994,32 +1064,65 @@ fn reposition_to_cursor_monitor(hwnd: HWND, state: &PillState) {
         let wa_w = wa.right - wa.left;
         let wa_h = wa.bottom - wa.top;
 
-        let (x, y) = if state.dragging.get() {
+        // The OS window is a fixed 600×362 transparent canvas; the visible pill
+        // is drawn inside it, centred horizontally and bottom-anchored.
+        // Clamping the *window* into the work area boxes the pill into the
+        // middle of the screen — the invisible canvas margins eat hundreds of
+        // pixels on every side. In dictation mode, clamp the pill's visible
+        // footprint instead so it can be parked at the true screen edges;
+        // panel/typing modes fill the canvas, so they keep whole-window
+        // clamping.
+        let (min_x, min_y, max_x, max_y) =
+            if state.window_mode.get() == WindowMode::Dictation
+                && !state.assistant_active.get()
+            {
+                let fx = (cox + px).round() as i32;
+                let fy = (coy + py).round() as i32;
+                let fw = pw.round().max(1.0) as i32;
+                let fh = ph.round().max(1.0) as i32;
+                (
+                    wa.left - fx,
+                    wa.top - fy,
+                    wa.right - fx - fw,
+                    wa.bottom - fy - fh,
+                )
+            } else {
+                (wa.left, wa.top, wa.right - win_w, wa.bottom - win_h)
+            };
+
+        // A visible frame smaller than the clamp target inverts the bounds;
+        // keep max >= min so the clamp cannot push the origin off screen.
+        let max_x = max_x.max(min_x);
+        let max_y = max_y.max(min_y);
+
+        let (x, y) = if dragging {
             // Drag mode: keep the grabbed point of the pill under the cursor so
             // the window tracks the pointer 1:1 instead of jumping to centre it.
             let mut dx = cursor.x - state.drag_grab_offset_x.get().round() as i32;
             let mut dy = cursor.y - state.drag_grab_offset_y.get().round() as i32;
-            // Clamp to the work area of whichever monitor holds the cursor.
-            dx = dx.max(wa.left).min(wa.right - WINDOW_W_TYPING);
-            dy = dy.max(wa.top).min(wa.bottom - WINDOW_H_TYPING);
+            // Clamp the pill's footprint to the work area of whichever monitor
+            // holds the cursor.
+            dx = dx.max(min_x).min(max_x);
+            dy = dy.max(min_y).min(max_y);
             (dx, dy)
         } else if state.has_saved_position.get() {
-            // Use persisted position from last drag
+            // Use persisted position from last drag, clamped into the work area
+            // of the monitor that position belongs to.
             let mut sx = state.saved_x.get();
             let mut sy = state.saved_y.get();
-            // Clamp to current work area (monitor may have changed)
-            sx = sx.max(wa.left).min(wa.right - WINDOW_W_TYPING);
-            sy = sy.max(wa.top).min(wa.bottom - WINDOW_H_TYPING);
+            sx = sx.max(min_x).min(max_x);
+            sy = sy.max(min_y).min(max_y);
             (sx, sy)
         } else {
-            // Default: center at bottom of monitor
-            let x = wa.left + (wa_w - WINDOW_W_TYPING) / 2;
-            let y = wa.top + wa_h - WINDOW_H_TYPING - MARGIN_BOTTOM;
+            // Default: centre at the bottom of the pill's current monitor.
+            let mut x = wa.left + (wa_w - win_w) / 2;
+            let mut y = wa.top + wa_h - win_h - MARGIN_BOTTOM;
+            // Clamp into the work area, matching the drag and saved branches.
+            x = x.max(min_x).min(max_x);
+            y = y.max(min_y).min(max_y);
             (x, y)
         };
 
-        let mut current = RECT::default();
-        let _ = GetWindowRect(hwnd, &mut current);
         if current.left != x || current.top != y {
             let _ = SetWindowPos(
                 hwnd, None, x, y, 0, 0,
@@ -1113,6 +1216,7 @@ fn end_drag(hwnd: HWND, state: &PillState, persist_position: bool) -> bool {
         state.saved_x.set(rect.left);
         state.saved_y.set(rect.top);
         state.has_saved_position.set(true);
+        ipc::send(&OutMessage::PositionChanged { has_saved_position: true });
     }
 
     state.dragging.set(false);

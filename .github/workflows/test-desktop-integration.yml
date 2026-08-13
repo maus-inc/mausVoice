@@ -20,35 +20,31 @@ jobs:
   integration-tests:
     name: Desktop Integration Tests
     runs-on: ubuntu-latest
-    # Only run on push to main OR on PRs from the same repo (not forks)
+    # Provider-backed tests need the repository secret. Keep fork PRs from
+    # failing solely because GitHub withholds secrets from fork workflows.
     if: |
       github.event_name == 'push' ||
       (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository)
     steps:
       - name: Checkout source
-        uses: actions/checkout@v4
-
+        uses: actions/checkout@v5
       - name: Setup pnpm
-        uses: pnpm/action-setup@v4
-
+        uses: pnpm/action-setup@a8198c4bff370c8506180b035930dea56dbd5288 # v5
       - name: Setup Node
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v5
         with:
           node-version-file: .nvmrc
           cache: pnpm
-          cache-dependency-path: pnpm-lock.yaml
-
+          cache-dependency-path: |
+            pnpm-lock.yaml
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
-
       - name: Build dependencies
-        run: pnpm exec turbo run build --filter=desktop^...
-
+        run: pnpm exec turbo run build --filter=desktop^... --verbosity=2 --continue
       - name: Create empty .env file since secrets are injected via env vars
         run: |
           echo '' > apps/desktop/test/helpers/.env
-
-      - name: Run desktop integration tests
+      - name: Run integration tests
         env:
           GROQ_API_KEY: ${{ secrets.GROQ_API_KEY }}
         run: pnpm --filter desktop run test:integration

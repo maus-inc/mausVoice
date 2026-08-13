@@ -2,9 +2,5 @@
   "identifier": "default",
   "description": "Capability for the installer",
   "windows": ["main"],
-  "permissions": [
-    "core:default",
-    "shell:allow-spawn",
-    "shell:allow-execute"
-  ]
+  "permissions": ["core:default", "shell:allow-spawn", "shell:allow-execute"]
 }

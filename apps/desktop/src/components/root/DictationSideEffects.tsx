@@ -72,7 +72,6 @@ import {
   OPEN_CHAT_HOTKEY,
   SWITCH_WRITING_STYLE_BACKWARD_HOTKEY,
   SWITCH_WRITING_STYLE_FORWARD_HOTKEY,
-  syncHotkeyCombosToNative,
 } from "../../utils/keyboard.utils";
 import { getLogger } from "../../utils/log.utils";
 import {
@@ -769,9 +768,10 @@ export const DictationSideEffects = () => {
     actions: additionalLanguageControllers,
   });
 
-  useEffect(() => {
-    syncHotkeyCombosToNative();
-  }, [isActiveSession, isManualStyling]);
+  // Native combo sync lives in AppSideEffects: it subscribes to every
+  // grab-relevant input (session state, styling mode, unlock state, hotkey
+  // map, strategy) and repushes on any change, so a per-component effect keyed
+  // to just recording/styling state can't leave the listener stale.
 
   const openPillConversation = useCallback(
     async (conversationId?: string) => {

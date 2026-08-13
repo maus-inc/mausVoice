@@ -30,10 +30,6 @@
     "active": true,
     "publisher": "Owie Emmanuel",
     "targets": [],
-    "icon": [
-      "icons/32x32.png",
-      "icons/128x128.png",
-      "icons/icon.ico"
-    ]
+    "icon": ["icons/32x32.png", "icons/128x128.png", "icons/icon.ico"]
   }
 }

@@ -6,6 +6,7 @@ use crate::ipc::{Phase, PillPermission, PillStreaming};
 
 use crate::constants::*;
 use crate::state::{ClickAction, ClickRegion, PillState, RocketPhase};
+use rust_pill_shared::{path_distances, rounded_rectangle_perimeter, RoundedRectArcSteps};
 
 pub(crate) fn draw_all(cr: &cairo::Context, state: &PillState) {
     cr.set_operator(cairo::Operator::Source);
@@ -70,21 +71,30 @@ pub(crate) fn draw_all(cr: &cairo::Context, state: &PillState) {
 pub(crate) fn pill_position(state: &PillState, ww: f64, wh: f64) -> (f64, f64, f64, f64) {
     let expand_t = state.expand_t.get();
     let inflate = state.inflate_t.get();
-    let inflate_px = inflate * DRAG_INFLATE_AMOUNT;
     let base_w = lerp(MIN_PILL_WIDTH, EXPANDED_PILL_WIDTH, expand_t);
     let base_h = lerp(MIN_PILL_HEIGHT, EXPANDED_PILL_HEIGHT, expand_t);
-    let pill_w = base_w + inflate_px * 2.0;
-    let pill_h = base_h + inflate_px * 2.0;
-    let mut pill_x = (ww - pill_w) / 2.0;
 
-    let mut pill_y = if state.assistant_active.get() || state.panel_open_t.get() > 0.01 {
+    // Inflate by scaling BOTH axes about the pill's centre. An additive pixel
+    // amount grows the small height disproportionately (reading as "only got
+    // taller"), and anchoring to the bottom edge grows the pill upward-only;
+    // scaling about the centre preserves the squircle's proportions and grows
+    // it diagonally, the way a physical pill would.
+    let scale = 1.0 + inflate * DRAG_INFLATE_SCALE;
+    let pill_w = base_w * scale;
+    let pill_h = base_h * scale;
+
+    let base_x = (ww - base_w) / 2.0;
+    let base_y = if state.assistant_active.get() || state.panel_open_t.get() > 0.01 {
         let panel_bottom = wh - PANEL_BOTTOM_MARGIN;
-        panel_bottom - PILL_BOTTOM_INSET - pill_h
+        panel_bottom - PILL_BOTTOM_INSET - base_h
     } else {
         // Anchor to bottom: pill grows upward from a fixed bottom edge
         let bottom_offset = 6.0;
-        wh - bottom_offset - pill_h
+        wh - bottom_offset - base_h
     };
+
+    let mut pill_x = base_x + base_w / 2.0 - pill_w / 2.0;
+    let mut pill_y = base_y + base_h / 2.0 - pill_h / 2.0;
 
     // On Wayland backends the pill draws inside a full-window canvas, so a
     // drag translates the draw position. X11 moves the real toplevel instead.
@@ -164,22 +174,25 @@ fn draw_pill(cr: &cairo::Context, state: &PillState, ww: f64, wh: f64) {
 
 /// Draws the long-press progress ring around the pill, kept at full
 /// completion while dragging so the outline reads as a drag affordance.
+/// Opacity is owned by `state.ring_alpha` (pinned while held, eased out after
+/// release), never by the press-progress ramp.
 fn draw_long_press_ring(
     cr: &cairo::Context, rx: f64, ry: f64, pill_w: f64, pill_h: f64, state: &PillState,
 ) {
-    // Only show after a brief delay so normal clicks don't trigger the visual
-    let is_long_press =
-        state.long_press_active.get() && state.long_press_elapsed.get() > LONG_PRESS_HOLD_DELAY;
-    let show = is_long_press || state.dragging.get();
-    if !show {
+    let alpha = state.ring_alpha.get();
+    if alpha <= 0.0 {
         return;
     }
 
-    // While actively dragging, keep the full outline visible (progress = 1.0).
+    // Full outline while dragging; mid-press it tracks the hold-progress ramp;
+    // after release or cancel it fades from the level actually reached instead
+    // of snapping to a complete outline.
     let t = if state.dragging.get() {
         1.0
-    } else {
+    } else if state.long_press_active.get() {
         long_press_progress(state.long_press_elapsed.get())
+    } else {
+        state.ring_release_progress.get()
     };
     let radius = pill_radius(pill_w, pill_h);
 
@@ -191,31 +204,97 @@ fn draw_long_press_ring(
     let oh = pill_h + inset * 2.0;
     let r = (radius + inset).min(oh / 2.0);
 
-    let outline_alpha = 0.3 + 0.5 * t;
+    // Three-pass silver gradient ring with sine-wave shimmer.
+    let master_alpha = (0.3 + 0.5 * t) * alpha;
+
+    // Shared perimeter construction — identical geometry on every platform so
+    // the long-press ring traces the same path across Linux/macOS/Windows.
+    let path = rounded_rectangle_perimeter(ox, oy, ow, oh, r, RoundedRectArcSteps::Auto);
+    let (distances, total_len) = path_distances(&path);
+    let filled_len = total_len * t;
+
+    if filled_len <= 0.0 {
+        return;
+    }
 
     cr.save().ok();
-    cr.set_source_rgba(
-        LONG_PRESS_OUTLINE_COLOR.0,
-        LONG_PRESS_OUTLINE_COLOR.1,
-        LONG_PRESS_OUTLINE_COLOR.2,
-        outline_alpha,
-    );
-    cr.set_line_width(LONG_PRESS_OUTLINE_WIDTH);
 
-    let perimeter = 2.0 * (ow - 2.0 * r) + 2.0 * (oh - 2.0 * r) + 2.0 * PI * r;
-    let filled_len = perimeter * t;
-    let gap = perimeter - filled_len;
+    let shimmer_freq = RING_SHIMMER_CYCLES * std::f64::consts::TAU / total_len.max(1.0);
+    let wave_phase = state.wave_phase.get();
 
-    if state.dragging.get() {
-        // When actively dragging, show a solid outline
-        rounded_rect(cr, ox, oy, ow, oh, r);
-        let _ = cr.stroke();
-    } else if filled_len > 0.0 {
-        // Use dash pattern to reveal only the progress portion
-        cr.set_dash(&[filled_len, gap], -filled_len);
-        rounded_rect(cr, ox, oy, ow, oh, r);
-        let _ = cr.stroke();
-        cr.set_dash(&[], 0.0);
+    // Collect the filled segments once so each pass reuses them.
+    let mut segments: Vec<(f64, f64, f64, f64, f64)> = Vec::new();
+    for i in 1..path.len() {
+        if distances[i - 1] >= filled_len {
+            break;
+        }
+        let (x1, y1) = path[i - 1];
+        let (mut x2, mut y2) = path[i];
+        if distances[i] > filled_len {
+            let seg = distances[i] - distances[i - 1];
+            let k = if seg > 0.0 {
+                (filled_len - distances[i - 1]) / seg
+            } else {
+                0.0
+            };
+            x2 = x1 + (x2 - x1) * k;
+            y2 = y1 + (y2 - y1) * k;
+        }
+        let mid_dist = (distances[i - 1] + distances[i].min(filled_len)) * 0.5;
+        segments.push((x1, y1, x2, y2, mid_dist));
+    }
+
+    let passes: [(f64, f64); 3] = [
+        (RING_GLOW_WIDTH, RING_GLOW_ALPHA),
+        (RING_MID_WIDTH, RING_MID_ALPHA),
+        (RING_CORE_WIDTH, RING_CORE_ALPHA),
+    ];
+
+    cr.set_line_cap(cairo::LineCap::Butt);
+
+    // Batch segments that share a quantized alpha into one sub-path per pass
+    // and stroke it once, instead of a per-segment stroke whose Round caps
+    // piled opacity at every joint. The bucket index is reconstructed back to
+    // its absolute alpha (b / (N-1)) — the exact inverse of the round(a*(N-1))
+    // assignment above — so the emitted alpha matches the intended shimmer and
+    // edge fade rather than being distorted by a per-pass range remap.
+    const ALPHA_BUCKETS: usize = 8;
+    for &(width, pass_alpha) in &passes {
+        cr.set_line_width(width);
+        let mut buckets: [Vec<(f64, f64, f64, f64)>; ALPHA_BUCKETS] =
+            std::array::from_fn(|_| Vec::new());
+        for &(x1, y1, x2, y2, mid_dist) in &segments {
+            let shimmer = 0.55 + 0.45 * (mid_dist * shimmer_freq + wave_phase).sin();
+            let edge_fade = ((filled_len - mid_dist) / RING_EDGE_FADE).min(1.0);
+            let a = master_alpha * pass_alpha * shimmer * edge_fade;
+            if a < 0.005 {
+                continue;
+            }
+            let bucket =
+                ((a * (ALPHA_BUCKETS as f64 - 1.0)).round() as usize).min(ALPHA_BUCKETS - 1);
+            buckets[bucket].push((x1, y1, x2, y2));
+        }
+        for (b, segs) in buckets.iter().enumerate() {
+            if segs.is_empty() {
+                continue;
+            }
+            // Reconstruct a representative alpha for bucket b. Using the
+            // bucket's midpoint (b + 0.5)/(N-1) keeps every populated bucket at
+            // a non-zero alpha (bucket 0 is never fully transparent) and stays
+            // monotonic with the quantized source alpha.
+            let a = (b as f64 + 0.5) / (ALPHA_BUCKETS as f64 - 1.0);
+            cr.set_source_rgba(
+                LONG_PRESS_OUTLINE_COLOR.0,
+                LONG_PRESS_OUTLINE_COLOR.1,
+                LONG_PRESS_OUTLINE_COLOR.2,
+                a,
+            );
+            for &(x1, y1, x2, y2) in segs {
+                cr.move_to(x1, y1);
+                cr.line_to(x2, y2);
+            }
+            let _ = cr.stroke();
+        }
     }
 
     cr.restore().ok();

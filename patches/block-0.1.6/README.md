@@ -8,7 +8,7 @@ Clang's documentation: http://clang.llvm.org/docs/Block-ABI-Apple.html
 The `Block` struct is used for invoking blocks from Objective-C. For example,
 consider this Objective-C function:
 
-``` objc
+```objc
 int32_t sum(int32_t (^block)(int32_t, int32_t)) {
     return block(5, 8);
 }
@@ -16,7 +16,7 @@ int32_t sum(int32_t (^block)(int32_t, int32_t)) {
 
 We could write it in Rust as the following:
 
-``` rust
+```rust
 unsafe fn sum(block: &Block<(i32, i32), i32>) -> i32 {
     block.call((5, 8))
 }
@@ -30,7 +30,7 @@ passed as a tuple.
 Creating a block to pass to Objective-C can be done with the `ConcreteBlock`
 struct. For example, to create a block that adds two `i32`s, we could write:
 
-``` rust
+```rust
 let block = ConcreteBlock::new(|a: i32, b: i32| a + b);
 let block = block.copy();
 assert!(unsafe { block.call((5, 8)) } == 13);

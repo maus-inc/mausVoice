@@ -2,7 +2,7 @@
 
 The shared rules that every surface must follow. This is the short, actionable
 extract of [`DESIGN.md`](../DESIGN.md) — read that for the reasoning and the
-full surface ladder. Applies to the React UI *and* to the native pill, so the
+full surface ladder. Applies to the React UI _and_ to the native pill, so the
 two never drift apart.
 
 ## Colour

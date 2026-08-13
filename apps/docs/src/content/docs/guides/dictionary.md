@@ -22,17 +22,17 @@ Replacement rules find and replace text in the raw transcript, right before post
 
 For example:
 
-| Input    | Output    |
-| -------- | --------- |
-| GPT      | ChatGPT   |
-| V quill  | mausVoice   |
+| Input   | Output    |
+| ------- | --------- |
+| GPT     | ChatGPT   |
+| V quill | mausVoice |
 
 You can also use replacement rules as **snippets**. Define a short trigger phrase and have it expand into something longer — useful for boilerplate text, signatures, or common phrases you dictate frequently.
 
-| Input         | Output                                      |
-| ------------- | ------------------------------------------- |
-| sig block     | Best regards, Josiah — mausVoice Team         |
-| addr          | 123 Main Street, Suite 400, New York, NY    |
+| Input     | Output                                   |
+| --------- | ---------------------------------------- |
+| sig block | Best regards, Josiah — mausVoice Team    |
+| addr      | 123 Main Street, Suite 400, New York, NY |
 
 Since replacements happen on the raw transcript before the AI post-processing step, the language model sees the corrected text and works from there.
 

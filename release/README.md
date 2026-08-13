@@ -1,10 +1,10 @@
 # Releases
 
-| Branch       | Channel      | Eligible components                                                          |
-| ------------ | ------------ | ---------------------------------------------------------------------------- |
+| Branch       | Channel      | Eligible components                                                     |
+| ------------ | ------------ | ----------------------------------------------------------------------- |
 | `main`       | `dev`        | desktop, desktop `enterprise-dev`, enterprise admin, enterprise gateway |
-| `prod`       | `prod`       | desktop, docs                                                               |
-| `enterprise` | `enterprise` | Desktop, enterprise admin, enterprise gateway                                |
+| `prod`       | `prod`       | desktop, docs                                                           |
+| `enterprise` | `enterprise` | Desktop, enterprise admin, enterprise gateway                           |
 
 Pushing to any of these branches runs
 [`release.yml`](../.github/workflows/release.yml). Its path filters detect

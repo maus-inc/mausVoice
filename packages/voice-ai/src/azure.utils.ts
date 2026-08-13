@@ -121,18 +121,23 @@ export const azureTranscribeAudio = async ({
 
     const speechConfig = sdk.SpeechConfig.fromSubscription(
       trimmedKey,
-      trimmedRegion
+      trimmedRegion,
     );
     speechConfig.speechRecognitionLanguage = azureLocale;
 
-    const audioBuffer = blob instanceof ArrayBuffer ? blob : blob.buffer as ArrayBuffer;
+    const audioBuffer =
+      blob instanceof ArrayBuffer ? blob : (blob.buffer as ArrayBuffer);
 
     const dataView = new DataView(audioBuffer);
     const sampleRate = dataView.getUint32(24, true);
     const bitsPerSample = dataView.getUint16(34, true);
     const channels = dataView.getUint16(22, true);
 
-    const audioFormat = sdk.AudioStreamFormat.getWaveFormatPCM(sampleRate, bitsPerSample, channels);
+    const audioFormat = sdk.AudioStreamFormat.getWaveFormatPCM(
+      sampleRate,
+      bitsPerSample,
+      channels,
+    );
     const pushStream = sdk.AudioInputStream.createPushStream(audioFormat);
 
     const uint8Array = new Uint8Array(audioBuffer);
@@ -146,9 +151,10 @@ export const azureTranscribeAudio = async ({
     const recognizer = new sdk.SpeechRecognizer(speechConfig, audioConfig);
 
     if (prompt) {
-      const phraseListGrammar = sdk.PhraseListGrammar.fromRecognizer(recognizer);
-      const phrases = prompt.split(/[\s,]+/).filter(p => p.length > 0);
-      phrases.forEach(phrase => phraseListGrammar.addPhrase(phrase));
+      const phraseListGrammar =
+        sdk.PhraseListGrammar.fromRecognizer(recognizer);
+      const phrases = prompt.split(/[\s,]+/).filter((p) => p.length > 0);
+      phrases.forEach((phrase) => phraseListGrammar.addPhrase(phrase));
     }
 
     recognizer.recognizeOnceAsync(
@@ -166,7 +172,7 @@ export const azureTranscribeAudio = async ({
       (error) => {
         recognizer.close();
         reject(new Error(`Azure API request failed: ${error}`));
-      }
+      },
     );
   });
 };
@@ -190,7 +196,10 @@ export const azureTestIntegration = async ({
     return true;
   } catch (error) {
     const errorMessage = error instanceof Error ? error.message : "";
-    return !errorMessage.includes("authentication") && !errorMessage.includes("subscription");
+    return (
+      !errorMessage.includes("authentication") &&
+      !errorMessage.includes("subscription")
+    );
   }
 };
 
@@ -222,23 +231,24 @@ export const createAzureStreamingSession = async ({
 
     const speechConfig = sdk.SpeechConfig.fromSubscription(
       trimmedKey,
-      trimmedRegion
+      trimmedRegion,
     );
     speechConfig.speechRecognitionLanguage = azureLocale;
 
     const audioFormat = sdk.AudioStreamFormat.getWaveFormatPCM(
       sampleRate,
       16,
-      1
+      1,
     );
     const pushStream = sdk.AudioInputStream.createPushStream(audioFormat);
     const audioConfig = sdk.AudioConfig.fromStreamInput(pushStream);
     const recognizer = new sdk.SpeechRecognizer(speechConfig, audioConfig);
 
     if (prompt) {
-      const phraseListGrammar = sdk.PhraseListGrammar.fromRecognizer(recognizer);
-      const phrases = prompt.split(/[\s,]+/).filter(p => p.length > 0);
-      phrases.forEach(phrase => phraseListGrammar.addPhrase(phrase));
+      const phraseListGrammar =
+        sdk.PhraseListGrammar.fromRecognizer(recognizer);
+      const phrases = prompt.split(/[\s,]+/).filter((p) => p.length > 0);
+      phrases.forEach((phrase) => phraseListGrammar.addPhrase(phrase));
     }
 
     let fullTranscript = "";
@@ -247,7 +257,10 @@ export const createAzureStreamingSession = async ({
     recognizer.recognized = (_s, e) => {
       if (e.result.reason === sdk.ResultReason.RecognizedSpeech) {
         fullTranscript += (fullTranscript ? " " : "") + e.result.text;
-        console.log("[Azure Streaming] Recognized segment, length:", e.result.text.length);
+        console.log(
+          "[Azure Streaming] Recognized segment, length:",
+          e.result.text.length,
+        );
       } else if (e.result.reason === sdk.ResultReason.NoMatch) {
         console.log("[Azure Streaming] No speech recognized in segment");
       }
@@ -255,7 +268,10 @@ export const createAzureStreamingSession = async ({
 
     recognizer.recognizing = (_s, e) => {
       if (e.result.reason === sdk.ResultReason.RecognizingSpeech) {
-        console.log("[Azure Streaming] Recognizing, length:", e.result.text.length);
+        console.log(
+          "[Azure Streaming] Recognizing, length:",
+          e.result.text.length,
+        );
       }
     };
 
@@ -280,7 +296,9 @@ export const createAzureStreamingSession = async ({
 
         const writeAudioChunk = (chunk: Float32Array) => {
           if (isFinalized) {
-            console.warn("[Azure Streaming] Attempted to write chunk after finalization");
+            console.warn(
+              "[Azure Streaming] Attempted to write chunk after finalization",
+            );
             return;
           }
 
@@ -289,7 +307,7 @@ export const createAzureStreamingSession = async ({
 
           for (let i = 0; i < chunk.length; i++) {
             const s = Math.max(-1, Math.min(1, chunk[i] ?? 0));
-            pcm16View[i] = s < 0 ? s * 0x8000 : s * 0x7FFF;
+            pcm16View[i] = s < 0 ? s * 0x8000 : s * 0x7fff;
           }
 
           pushStream.write(pcm16Buffer);
@@ -298,7 +316,9 @@ export const createAzureStreamingSession = async ({
         const finalize = (): Promise<string> => {
           return new Promise((resolveFinalize) => {
             if (isFinalized) {
-              console.log("[Azure Streaming] Already finalized, returning transcript");
+              console.log(
+                "[Azure Streaming] Already finalized, returning transcript",
+              );
               resolveFinalize(fullTranscript);
               return;
             }
@@ -309,7 +329,10 @@ export const createAzureStreamingSession = async ({
             pushStream.close();
 
             const timeout = setTimeout(() => {
-              console.log("[Azure Streaming] Timeout reached, finalizing with transcript length:", fullTranscript.length);
+              console.log(
+                "[Azure Streaming] Timeout reached, finalizing with transcript length:",
+                fullTranscript.length,
+              );
               recognizer.close();
               resolveFinalize(fullTranscript);
             }, 2000);
@@ -317,16 +340,22 @@ export const createAzureStreamingSession = async ({
             recognizer.stopContinuousRecognitionAsync(
               () => {
                 clearTimeout(timeout);
-                console.log("[Azure Streaming] Recognition stopped, final transcript length:", fullTranscript.length);
+                console.log(
+                  "[Azure Streaming] Recognition stopped, final transcript length:",
+                  fullTranscript.length,
+                );
                 recognizer.close();
                 resolveFinalize(fullTranscript);
               },
               (error) => {
                 clearTimeout(timeout);
-                console.error("[Azure Streaming] Error stopping recognition:", error);
+                console.error(
+                  "[Azure Streaming] Error stopping recognition:",
+                  error,
+                );
                 recognizer.close();
                 resolveFinalize(fullTranscript);
-              }
+              },
             );
           });
         };
@@ -348,7 +377,7 @@ export const createAzureStreamingSession = async ({
         console.error("[Azure Streaming] Failed to start recognition:", error);
         recognizer.close();
         reject(new Error(`Failed to start Azure recognition: ${error}`));
-      }
+      },
     );
   });
 };

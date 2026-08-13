@@ -202,12 +202,16 @@ pub(crate) const LONG_PRESS_MOVE_THRESHOLD: f64 = 8.0;
 // Silver-white with a very slight cool tint — reads as a neutral "grab" affordance
 // and stays distinct from the blue commit flash (`FLASH_BLUE_COLOR`).
 pub(crate) const LONG_PRESS_OUTLINE_COLOR: (f64, f64, f64) = (0.92, 0.95, 1.0);
+#[allow(dead_code)]
 pub(crate) const LONG_PRESS_OUTLINE_WIDTH: f64 = 2.0;
 
-/// How much the pill inflates (in px) when the long-press completes and drag begins.
-pub(crate) const DRAG_INFLATE_AMOUNT: f64 = 6.0;
-/// Spring stiffness for the inflate/deflate animation.
-pub(crate) const DRAG_INFLATE_STIFFNESS: f64 = 280.0;
+// Ring + drag tuning constants live in `rust_pill_shared` so every platform
+// draws the long-press ring from one source of truth.
+pub(crate) use rust_pill_shared::{
+    DRAG_INFLATE_SCALE, DRAG_INFLATE_STIFFNESS, RING_SHIMMER_CYCLES,
+    RING_GLOW_WIDTH, RING_GLOW_ALPHA, RING_MID_WIDTH,
+    RING_MID_ALPHA, RING_CORE_WIDTH, RING_CORE_ALPHA, RING_EDGE_FADE,
+};
 
 // Retained for the (legacy) balloon-pop draw path which is still compiled.
 #[allow(dead_code)]

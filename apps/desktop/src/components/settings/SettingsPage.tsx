@@ -12,7 +12,6 @@ import {
   LanguageOutlined,
   MicOutlined,
   MoreVertOutlined,
-  PrivacyTipOutlined,
   RocketLaunchOutlined,
   TroubleshootOutlined,
   VolumeUpOutlined,
@@ -550,15 +549,11 @@ export default function SettingsPage() {
     >
       <ListTile
         title={<FormattedMessage defaultMessage="Terms & conditions" />}
-        onClick={() => openUrl("https://maus-inc.github.io/mausVoice/terms")}
+        onClick={() =>
+          openUrl("https://github.com/maus-inc/mausVoice/blob/main/LICENCE")
+        }
         trailing={<ArrowOutwardRounded />}
         leading={<DescriptionOutlined />}
-      />
-      <ListTile
-        title={<FormattedMessage defaultMessage="Privacy policy" />}
-        onClick={() => openUrl("https://maus-inc.github.io/mausVoice/privacy")}
-        trailing={<ArrowOutwardRounded />}
-        leading={<PrivacyTipOutlined />}
       />
     </Section>
   );

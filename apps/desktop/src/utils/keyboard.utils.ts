@@ -219,50 +219,82 @@ const isActionGrabbable = (state: AppState, actionName: string): boolean => {
   return true;
 };
 
-export const syncHotkeyCombosToNative = async (): Promise<void> => {
-  const state = useAppStore.getState();
-  const actionNames = new Set<string>();
+// Serializes native combo syncs. The store subscription in AppSideEffects
+// fires this once per grab-relevant change, and those arrive in bursts while
+// startup data loads — overlapping calls snapshot `getState()` at call time,
+// so an older push could resolve last and leave the native listener grabbing
+// a stale combo set. Chaining each run onto the previous one (and reading the
+// store when the run actually starts, not when it was requested) guarantees
+// the last applied set is always the latest state. A failed run must not
+// break the chain, hence the trailing catch.
+let syncQueue: Promise<void> = Promise.resolve();
 
+export const syncHotkeyCombosToNative = (): Promise<void> => {
+  const run = syncQueue.then(() => syncHotkeyCombosToNativeNow());
+  syncQueue = run.catch(() => undefined);
+  return run;
+};
+
+const collectActionNames = (state: AppState): Set<string> => {
+  const actionNames = new Set<string>();
   for (const hotkey of Object.values(state.hotkeyById)) {
     if (hotkey.keys.length > 0) {
       actionNames.add(hotkey.actionName);
     }
   }
-
   for (const name of Object.keys(DEFAULT_HOTKEY_COMBOS)) {
     actionNames.add(name);
   }
+  return actionNames;
+};
+
+const collectCombosForAction = (
+  state: AppState,
+  actionName: string,
+): { grabbable: string[][]; primaryNonModifier: string[] | null } => {
+  const actionCombos = getHotkeyCombosForAction(state, actionName);
+  const grabbable: string[][] = [];
+  let primaryNonModifier: string[] | null = null;
+
+  if (!isActionGrabbable(state, actionName)) {
+    return { grabbable, primaryNonModifier };
+  }
+
+  for (const combo of actionCombos) {
+    if (combo.length === 0) {
+      continue;
+    }
+    // Modifier-only fire hotkeys (e.g. Cmd) must not be natively grabbed:
+    // they need key-up handling so supersets like Cmd+Z still pass through.
+    if (!isHoldActionHotkey(actionName) && isModifierOnlyCombo(combo)) {
+      continue;
+    }
+    grabbable.push(combo);
+    if (primaryNonModifier === null && !isModifierOnlyCombo(combo)) {
+      primaryNonModifier = combo;
+    }
+  }
+  return { grabbable, primaryNonModifier };
+};
+
+const syncHotkeyCombosToNativeNow = async (): Promise<void> => {
+  const state = useAppStore.getState();
+  const actionNames = collectActionNames(state);
 
   const combos: string[][] = [];
   const compositorBindings: CompositorBinding[] = [];
 
   for (const actionName of actionNames) {
-    const actionCombos = getHotkeyCombosForAction(state, actionName);
+    const { grabbable, primaryNonModifier } = collectCombosForAction(
+      state,
+      actionName,
+    );
+    combos.push(...grabbable);
 
-    if (isActionGrabbable(state, actionName)) {
-      for (const combo of actionCombos) {
-        if (combo.length > 0) {
-          // Modifier-only fire hotkeys (e.g. Cmd) must not be natively grabbed:
-          // they need key-up handling so supersets like Cmd+Z still pass through.
-          if (!isHoldActionHotkey(actionName) && isModifierOnlyCombo(combo)) {
-            continue;
-          }
-
-          combos.push(combo);
-        }
-      }
-    }
-
-    if (
-      isCompositorTriggerAction(actionName) &&
-      isActionGrabbable(state, actionName) &&
-      actionCombos.length > 0 &&
-      actionCombos[0].length > 0 &&
-      !isModifierOnlyCombo(actionCombos[0])
-    ) {
+    if (isCompositorTriggerAction(actionName) && primaryNonModifier) {
       compositorBindings.push({
         actionName,
-        keys: actionCombos[0],
+        keys: primaryNonModifier,
       });
     }
   }

@@ -45,9 +45,11 @@ pub const EVT_INSTALL_UPDATE: &str = "tray-install-update";
 pub const EVT_COPY_LAST_TRANSCRIPT: &str = "tray-copy-last-transcript";
 pub const EVT_SET_DICTATION_LANGUAGE: &str = "tray-set-dictation-language";
 pub const EVT_TOGGLE_PILL_VISIBILITY: &str = "tray-toggle-pill-visibility";
+pub const EVT_RESET_PILL_POSITION: &str = "tray-reset-pill-position";
 
 const TRAY_LANGUAGE_ITEM_PREFIX: &str = "tray-lang:";
 const PILL_VISIBILITY_MENU_ID: &str = "toggle-pill-visibility";
+const RESET_PILL_POSITION_MENU_ID: &str = "reset-pill-position";
 
 /// Label shown when clicking will hide the pill (effective `persistent` or
 /// `while_active`). Also the pre-hydration default, so the first click always
@@ -58,6 +60,7 @@ static UPDATE_MENU_ITEM: OnceLock<MenuItem<tauri::Wry>> = OnceLock::new();
 static REGISTER_MENU_ITEM: OnceLock<MenuItem<tauri::Wry>> = OnceLock::new();
 static LANGUAGE_SUBMENU: OnceLock<Submenu<tauri::Wry>> = OnceLock::new();
 static PILL_VISIBILITY_MENU_ITEM: OnceLock<MenuItem<tauri::Wry>> = OnceLock::new();
+static RESET_PILL_POSITION_MENU_ITEM: OnceLock<MenuItem<tauri::Wry>> = OnceLock::new();
 
 #[derive(Debug, Clone, serde::Deserialize, specta::Type)]
 #[serde(rename_all = "camelCase")]
@@ -103,6 +106,16 @@ pub fn setup_tray(app: &mut tauri::App) -> tauri::Result<()> {
         None::<&str>,
     )?;
     let _ = PILL_VISIBILITY_MENU_ITEM.set(pill_visibility_item.clone());
+    // Starts disabled: the pill spawns at its default centre position, so
+    // there is nothing to reset until the user drags it somewhere else.
+    let reset_pill_position_item = MenuItem::with_id(
+        app,
+        RESET_PILL_POSITION_MENU_ID,
+        "Reset Pill Position",
+        false,
+        None::<&str>,
+    )?;
+    let _ = RESET_PILL_POSITION_MENU_ITEM.set(reset_pill_position_item.clone());
     let language_submenu = SubmenuBuilder::new(app, "Language").build()?;
     let _ = LANGUAGE_SUBMENU.set(language_submenu.clone());
     let quit_item = MenuItem::with_id(app, "quit-mausvoice", "Quit mausVoice", true, None::<&str>)?;
@@ -110,6 +123,7 @@ pub fn setup_tray(app: &mut tauri::App) -> tauri::Result<()> {
     let menu = MenuBuilder::new(app)
         .item(&open_item)
         .item(&pill_visibility_item)
+        .item(&reset_pill_position_item)
         .item(&copy_last_transcript_item)
         .item(&register_current_app_item)
         .item(&language_submenu)
@@ -147,6 +161,11 @@ pub fn setup_tray(app: &mut tauri::App) -> tauri::Result<()> {
                 // from a toggle held in the tray layer.
                 if let Err(err) = app.emit(EVT_TOGGLE_PILL_VISIBILITY, ()) {
                     log::error!("Failed to emit toggle-pill-visibility event: {err}");
+                }
+            }
+            RESET_PILL_POSITION_MENU_ID => {
+                if let Err(err) = app.emit(EVT_RESET_PILL_POSITION, ()) {
+                    log::error!("Failed to emit reset-pill-position event: {err}");
                 }
             }
             "register-current-app" => {
@@ -231,6 +250,21 @@ pub fn set_pill_visibility_menu_state(
     item.set_text(label)
         .map_err(|err| err.to_string())?;
     item.set_enabled(true).map_err(|err| err.to_string())
+}
+
+/// Enable or disable the "Reset Pill Position" tray menu item.
+///
+/// The frontend tracks whether the pill has been dragged away from its
+/// default centre position and calls this to keep the menu item's state
+/// in sync — disabled when there is nothing to reset, enabled otherwise.
+pub fn set_reset_pill_position_enabled(
+    _app: &tauri::AppHandle,
+    enabled: bool,
+) -> Result<(), String> {
+    let Some(item) = RESET_PILL_POSITION_MENU_ITEM.get() else {
+        return Err("Reset pill position menu item not initialized".to_string());
+    };
+    item.set_enabled(enabled).map_err(|err| err.to_string())
 }
 
 pub fn set_tray_language_menu(

@@ -1959,6 +1959,27 @@ pub fn set_pill_visibility_menu_state(app: AppHandle, label: String) -> Result<(
     crate::system::tray::set_pill_visibility_menu_state(&app, &label)
 }
 
+/// Enable or disable the "Reset Pill Position" tray menu item.
+///
+/// Called by the frontend whenever the pill's saved-position state changes
+/// (drag end → enable; reset → disable) so the menu item is grayed out
+/// when there is nothing to reset.
+#[tauri::command]
+#[specta::specta]
+pub fn set_reset_pill_position_enabled(app: AppHandle, enabled: bool) -> Result<(), String> {
+    crate::system::tray::set_reset_pill_position_enabled(&app, enabled)
+}
+
+/// Send a reset-position IPC message to the native pill overlay.
+///
+/// Clears the pill's saved position so the next tick repositions it to
+/// the default centre-bottom of the current monitor.
+#[tauri::command]
+#[specta::specta]
+pub fn reset_pill_position(app: AppHandle) -> Result<(), String> {
+    crate::platform::overlay::notify_reset_position(&app)
+}
+
 #[tauri::command]
 #[specta::specta]
 pub fn set_tray_visible(app: AppHandle, visible: bool) -> Result<(), String> {

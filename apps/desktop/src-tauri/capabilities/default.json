@@ -2,10 +2,7 @@
   "$schema": "../gen/schemas/desktop-schema.json",
   "identifier": "default",
   "description": "Capability for the main window and any floating-* webview spawned via floating_window_create",
-  "windows": [
-    "main",
-    "floating-*"
-  ],
+  "windows": ["main", "floating-*"],
   "remote": {
     "urls": [
       "http://localhost",
@@ -16,8 +13,7 @@
       "http://127.0.0.1/*",
       "http://127.0.0.1:*",
       "http://127.0.0.1:*/*",
-      "https://*.mausvoice.com",
-      "https://*.mausvoice.com/*"
+      "https://maus-inc.github.io/mausVoice/*"
     ]
   },
   "permissions": [

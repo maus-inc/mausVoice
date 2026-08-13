@@ -4,18 +4,17 @@
 
 This is a **pnpm** workspace (`pnpm@10.11.0`) managed with Turborepo. The package manager is declared in the root `package.json` and driven by `pnpm-lock.yaml` — do not use `npm`.
 
-| Path          | Description                                                                                                |
-| ------------- | ---------------------------------------------------------------------------------------------------------- |
-| `apps/desktop`| Tauri desktop app (Vite + React + Zustand) controlling UI, state, and business logic.                      |
-| `apps/desktop/src-tauri` | Rust API layer invoked from TypeScript for native capabilities, SQLite storage, and Whisper inference.      |
-| `apps/docs`   | Astro + Starlight documentation site.                                                                      |
-| `apps/windows-installer` | Windows installer (Tauri).                                                                     |
-| `docs`        | Architecture notes, release guides, and reference material.                                                 |
-| `enterprise/*`| Enterprise administrative dashboard and API gateway.                                                       |
-| `packages/*`  | Shared packages: types, voice-ai, desktop-native-apis, functions, pricing, UI, utilities, config, shared-fonts, and the native pill crates. |
-| `scripts`     | Automation and helper scripts for local development and release tasks.                                     |
+| Path                     | Description                                                                                                                                 |
+| ------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------- |
+| `apps/desktop`           | Tauri desktop app (Vite + React + Zustand) controlling UI, state, and business logic.                                                       |
+| `apps/desktop/src-tauri` | Rust API layer invoked from TypeScript for native capabilities, SQLite storage, and Whisper inference.                                      |
+| `apps/docs`              | Astro + Starlight documentation site.                                                                                                       |
+| `apps/windows-installer` | Windows installer (Tauri).                                                                                                                  |
+| `docs`                   | Architecture notes, release guides, and reference material.                                                                                                                                                                       |
+| `packages/*`             | Shared packages: types, voice-ai, desktop-native-apis, functions, pricing, UI, utilities, config, shared-fonts, and the native pill crates. |
+| `scripts`                | Automation and helper scripts for local development and release tasks.                                                                      |
 
-> The marketing site (`apps/web`) and Firebase functions (`apps/firebase`) referenced in some legacy docs are **not part of this repository**. The marketing site is published at [maus-inc.github.io/mausVoice](https://maus-inc.github.io/mausVoice/).
+> The marketing site (`apps/web`) and Firebase functions (`apps/firebase`) referenced in some legacy docs are **not part of this repository**. The marketing site and its install scripts are served from `https://maus-inc.github.io/mausVoice/` externally.
 
 ## Architecture Overview
 
@@ -101,13 +100,13 @@ Individual workspaces expose the same commands if you need a narrower scope.
 
 ## Environment Reference
 
-| Variable                                                        | Purpose                                                                                                          |
-| --------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------- |
-| `MAUSVOICE_API_KEY_SECRET`                                        | Secret used by the desktop app to encrypt API keys stored on disk (`apps/desktop/src-tauri/src/system/crypto.rs`). |
-| `MAUSVOICE_WHISPER_MODEL_URL` / `MAUSVOICE_WHISPER_MODEL_URL_<SIZE>` | Override download locations for Whisper models when running locally.                                         |
-| `MAUSVOICE_WHISPER_DISABLE_GPU`                                 | Force the desktop app to avoid GPU inference, useful for debugging.                                              |
-| `VITE_USE_EMULATORS`                                            | When set to `true`, the desktop app points to local emulators instead of hosted services.                        |
-| `GROQ_API_KEY`                                                  | Enables Groq-backed transcription in server-side components. The desktop app takes its Deepgram/Groq keys via onboarding/Settings. |
+| Variable                                                             | Purpose                                                                                                                            |
+| -------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------- |
+| `MAUSVOICE_API_KEY_SECRET`                                           | Secret used by the desktop app to encrypt API keys stored on disk (`apps/desktop/src-tauri/src/system/crypto.rs`).                 |
+| `MAUSVOICE_WHISPER_MODEL_URL` / `MAUSVOICE_WHISPER_MODEL_URL_<SIZE>` | Override download locations for Whisper models when running locally.                                                               |
+| `MAUSVOICE_WHISPER_DISABLE_GPU`                                      | Force the desktop app to avoid GPU inference, useful for debugging.                                                                |
+| `VITE_USE_EMULATORS`                                                 | When set to `true`, the desktop app points to local emulators instead of hosted services.                                          |
+| `GROQ_API_KEY`                                                       | Enables Groq-backed transcription in server-side components. The desktop app takes its Deepgram/Groq keys via onboarding/Settings. |
 
 ## Releases & CI
 

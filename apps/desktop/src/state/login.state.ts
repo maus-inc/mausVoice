@@ -28,7 +28,7 @@ export const INITIAL_LOGIN_STATE: LoginState = {
 };
 
 if (isEmulators()) {
-  INITIAL_LOGIN_STATE.email = "emulator@mausvoice.com";
+  INITIAL_LOGIN_STATE.email = "emulator@mausvoice.local";
   INITIAL_LOGIN_STATE.password = "P@ssw0rd!";
   INITIAL_LOGIN_STATE.confirmPassword = "P@ssw0rd!";
 }

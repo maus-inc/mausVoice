@@ -33,7 +33,10 @@ import {
   normalizeLocalWhisperModel,
 } from "../utils/local-transcription.utils";
 import { getLogger } from "../utils/log.utils";
-import { NEW_SERVER_URL } from "../utils/new-server.utils";
+import {
+  buildNewServerWebSocketUrl,
+  NEW_SERVER_URL,
+} from "../utils/new-server.utils";
 import { openaiCompatibleTranscribeAudio } from "../utils/openai-compatible-transcribe.utils";
 import { collectDictionaryEntries } from "../utils/prompt.utils";
 import { speachesTranscribeAudio } from "../utils/speaches.utils";
@@ -792,7 +795,10 @@ export class NewServerTranscribeAudioRepo extends BaseTranscribeAudioRepo {
   protected async transcribeSegment(
     input: TranscribeSegmentInput,
   ): Promise<TranscribeAudioOutput> {
-    const wsUrl = NEW_SERVER_URL.replace(/^http/, "ws") + "/v1/transcribe-raw";
+    const wsUrl = buildNewServerWebSocketUrl(
+      NEW_SERVER_URL,
+      "/v1/transcribe-raw",
+    );
 
     return new Promise((resolve, reject) => {
       const ws = new WebSocket(wsUrl);

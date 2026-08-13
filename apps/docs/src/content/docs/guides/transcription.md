@@ -30,10 +30,10 @@ Cloud mode routes audio through mausVoice's cloud service, which handles the Gro
 
 ## Choosing a Mode
 
-| Consideration       | Local        | API          | Cloud        |
-| ------------------- | ------------ | ------------ | ------------ |
-| Privacy             | Best         | Good         | Good         |
-| Accuracy            | Good         | Best         | Best         |
-| Internet required   | No           | Yes          | Yes          |
-| API key required    | No           | Yes          | No           |
-| Account required    | No           | No           | Yes          |
+| Consideration     | Local | API  | Cloud |
+| ----------------- | ----- | ---- | ----- |
+| Privacy           | Best  | Good | Good  |
+| Accuracy          | Good  | Best | Best  |
+| Internet required | No    | Yes  | Yes   |
+| API key required  | No    | Yes  | No    |
+| Account required  | No    | No   | Yes   |

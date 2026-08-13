@@ -172,8 +172,14 @@ pub fn run(receiver: Receiver<InMessage>) {
         drag_cancelled: Cell::new(false),
         inflate_t: Cell::new(0.0),
         inflate_velocity: Cell::new(0.0),
+        ring_alpha: Cell::new(0.0),
+        ring_release_progress: Cell::new(0.0),
         drag_cursor_x: Cell::new(0.0),
         drag_cursor_y: Cell::new(0.0),
+        has_saved_position: Cell::new(false),
+        saved_x: Cell::new(0.0),
+        saved_y: Cell::new(0.0),
+        x11_release_persisted: Cell::new(false),
         drag_draw_offset_x: Cell::new(0.0),
         drag_draw_offset_y: Cell::new(0.0),
         cancel_flash: Cell::new(0.0),
@@ -279,6 +285,7 @@ pub fn run(receiver: Receiver<InMessage>) {
             entry_press.grab_focus();
         }
         if input::is_on_pill_at(&state_press, x, y) {
+            state_press.x11_release_persisted.set(false);
             state_press.long_press_active.set(true);
             state_press.long_press_elapsed.set(0.0);
             state_press.long_press_start_x.set(x);
@@ -303,6 +310,7 @@ pub fn run(receiver: Receiver<InMessage>) {
     }
 
     let state_click = state.clone();
+    let win_click = window.clone();
     let last_click: Rc<Cell<Option<Instant>>> = Rc::new(Cell::new(None));
     window.connect_button_release_event(move |_, event| {
         let now = Instant::now();
@@ -313,11 +321,21 @@ pub fn run(receiver: Receiver<InMessage>) {
         }
         last_click.set(Some(now));
         let was_dragging = state_click.dragging.get();
+        if was_dragging && state_click.backend.get() == Backend::X11 {
+            // Persist the actual release position before clearing the drag flag;
+            // the X11 timer remains a fallback for missed release events.
+            let persisted = x11::persist_drop_position(&win_click, &state_click);
+            state_click.x11_release_persisted.set(persisted);
+        }
         state_click.dragging.set(false);
         state_click.long_press_active.set(false);
         state_click.long_press_elapsed.set(0.0);
         // Persist the Wayland draw offset so the pill stays where it was dropped.
         // (X11 re-centers in its own reposition loop via window move.)
+        if was_dragging && state_click.backend.get() != Backend::X11 {
+            state_click.has_saved_position.set(true);
+            ipc::send(&OutMessage::PositionChanged { has_saved_position: true });
+        }
         if !was_dragging {
             let (x, y) = event.position();
             input::handle_click(&state_click, x, y);
@@ -495,6 +513,12 @@ pub fn run(receiver: Receiver<InMessage>) {
                         state_tick.scroll_offset.set(0.0);
                     }
                 }
+                InMessage::ResetPosition => {
+                    state_tick.drag_draw_offset_x.set(0.0);
+                    state_tick.drag_draw_offset_y.set(0.0);
+                    state_tick.has_saved_position.set(false);
+                    ipc::send(&OutMessage::PositionChanged { has_saved_position: false });
+                }
                 InMessage::Quit => {
                     quit_tick.set(true);
                 }
@@ -608,6 +632,7 @@ pub fn run(receiver: Receiver<InMessage>) {
     if backend == Backend::LayerShell {
         let window_ref = window.clone();
         let quit_monitor = quit_flag.clone();
+        let state_monitor = state.clone();
         let last_geom: Rc<Cell<(i32, i32, i32, i32)>> = Rc::new(Cell::new((0, 0, 0, 0)));
         glib::timeout_add_local(Duration::from_millis(100), move || {
             if quit_monitor.get() {
@@ -617,6 +642,28 @@ pub fn run(receiver: Receiver<InMessage>) {
                 Some(d) => d,
                 None => return ControlFlow::Continue,
             };
+            // Only re-home the overlay to the pointer's monitor for the FIRST
+            // placement (last_geom is still the sentinel) or while the user is
+            // actively dragging across screens. Chasing the pointer the rest
+            // of the time is what made the pinned pill hop displays whenever
+            // the cursor crossed an edge.
+            // The one exception: when the monitor the pill was homed on gets
+            // DISCONNECTED, the stored geometry stops matching any connected
+            // monitor and the layer-shell surface dies with the dead output —
+            // fall through so the pill is re-homed onto a live monitor.
+            let placed_once = last_geom.get() != (0, 0, 0, 0);
+            if placed_once && !state_monitor.dragging.get() {
+                let stored = last_geom.get();
+                let still_connected = (0..display.n_monitors()).any(|i| {
+                    display.monitor(i).is_some_and(|monitor| {
+                        let g = monitor.geometry();
+                        (g.x(), g.y(), g.width(), g.height()) == stored
+                    })
+                });
+                if still_connected {
+                    return ControlFlow::Continue;
+                }
+            }
             let seat = match display.default_seat() {
                 Some(s) => s,
                 None => return ControlFlow::Continue,
@@ -626,7 +673,13 @@ pub fn run(receiver: Receiver<InMessage>) {
                 None => return ControlFlow::Continue,
             };
             let (_, x, y) = pointer.position();
-            if let Some(monitor) = display.monitor_at_point(x, y) {
+            // If the pointer itself sits on dead/missing output hardware, fall
+            // back to the primary monitor so the pill always has a home.
+            let monitor = display
+                .monitor_at_point(x, y)
+                .or_else(|| display.primary_monitor())
+                .or_else(|| display.monitor(0));
+            if let Some(monitor) = monitor {
                 let g = monitor.geometry();
                 let new_geom = (g.x(), g.y(), g.width(), g.height());
                 if new_geom != last_geom.get() {
@@ -788,6 +841,28 @@ fn tick(state: &PillState) {
     // Inflate animation: expand when dragging, contract when released.
     let inflate_target = if state.dragging.get() { 1.0 } else { 0.0 };
     spring_anim(&state.inflate_t, &state.inflate_velocity, inflate_target, DRAG_INFLATE_STIFFNESS);
+
+    // Long-press outline master alpha. While the gesture is held (long press
+    // past the hold delay, or dragging) the outline is pinned at full alpha —
+    // it must not fade underneath an active hold. Once released it eases out
+    // over LONG_PRESS_RING_FADE so the affordance dissolves instead of popping.
+    let ring_held = state.dragging.get()
+        || (state.long_press_active.get()
+            && state.long_press_elapsed.get() > LONG_PRESS_HOLD_DELAY);
+    if ring_held {
+        // Remember how far the ring ramp had filled so a release or cancel
+        // mid-ramp fades from that level instead of snapping to a full ring.
+        state.ring_release_progress.set(if state.dragging.get() {
+            1.0
+        } else {
+            draw::long_press_progress(state.long_press_elapsed.get())
+        });
+    }
+    state.ring_alpha.set(rust_pill_shared::update_ring_alpha(
+        state.ring_alpha.get(),
+        ring_held,
+        SPRING_DT,
+    ));
 
     // Auto-scroll to bottom when new content arrives
     if state.should_stick.get() && state.assistant_active.get() && !state.assistant_compact.get() {

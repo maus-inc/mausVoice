@@ -121,7 +121,8 @@ class Installer {
   private render() {
     const app = document.getElementById("app")!;
 
-    const showProgress = this.state === "installing" || this.state === "complete";
+    const showProgress =
+      this.state === "installing" || this.state === "complete";
     const showLaunchButton = this.state === "complete";
     const showRetryButton = this.state === "error";
     const showCloseButton = this.state === "error" || this.state === "complete";

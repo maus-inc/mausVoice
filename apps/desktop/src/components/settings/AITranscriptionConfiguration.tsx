@@ -42,6 +42,7 @@ import {
 } from "../../utils/local-transcription.utils";
 import { activeRowCheckSx, activeRowSx } from "../../styles/selection";
 import { ManagedByOrgNotice } from "../common/ManagedByOrgNotice";
+import { AnimateSwitch } from "../common/AnimateIn";
 import { SegmentedControl } from "../common/SegmentedControl";
 import { ApiKeyList } from "./ApiKeyList";
 import { MausVoiceCloudSetting } from "./MausVoiceCloudSetting";
@@ -267,279 +268,292 @@ export const AITranscriptionConfiguration = () => {
         align="center"
       />
 
-      {effectiveMode === "local" && (
-        <Stack spacing={3} sx={{ width: "100%" }}>
-          <FormControl
-            fullWidth
-            size="small"
-            sx={{ position: "relative" }}
-            disabled={transcription.availableDevicesLoading}
-          >
-            <InputLabel id="processing-device-label">
-              <FormattedMessage defaultMessage="Processing device" />
-            </InputLabel>
-            <Select
-              labelId="processing-device-label"
-              label={<FormattedMessage defaultMessage="Processing device" />}
-              value={deviceValue}
-              onChange={(event) =>
-                handleDeviceChange(String(event.target.value))
-              }
+      <AnimateSwitch activeKey={effectiveMode}>
+        {effectiveMode === "local" && (
+          <Stack spacing={3} sx={{ width: "100%" }}>
+            <FormControl
+              fullWidth
+              size="small"
+              sx={{ position: "relative" }}
+              disabled={transcription.availableDevicesLoading}
             >
-              {transcription.availableDevices.length === 0 ? (
-                <MenuItem value={CPU_DEVICE_VALUE} disabled>
-                  {transcription.availableDevicesLoading
-                    ? intl.formatMessage({
-                        defaultMessage: "Loading devices...",
-                      })
-                    : intl.formatMessage({
-                        defaultMessage: "No devices available",
-                      })}
-                </MenuItem>
-              ) : (
-                transcription.availableDevices.map((device) => {
-                  const modeLabel =
-                    device.mode === "gpu"
-                      ? intl.formatMessage({ defaultMessage: "GPU" })
-                      : intl.formatMessage({ defaultMessage: "CPU" });
+              <InputLabel id="processing-device-label">
+                <FormattedMessage defaultMessage="Processing device" />
+              </InputLabel>
+              <Select
+                labelId="processing-device-label"
+                label={<FormattedMessage defaultMessage="Processing device" />}
+                value={deviceValue}
+                onChange={(event) =>
+                  handleDeviceChange(String(event.target.value))
+                }
+              >
+                {transcription.availableDevices.length === 0 ? (
+                  <MenuItem value={CPU_DEVICE_VALUE} disabled>
+                    {transcription.availableDevicesLoading
+                      ? intl.formatMessage({
+                          defaultMessage: "Loading devices...",
+                        })
+                      : intl.formatMessage({
+                          defaultMessage: "No devices available",
+                        })}
+                  </MenuItem>
+                ) : (
+                  transcription.availableDevices.map((device) => {
+                    const modeLabel =
+                      device.mode === "gpu"
+                        ? intl.formatMessage({ defaultMessage: "GPU" })
+                        : intl.formatMessage({ defaultMessage: "CPU" });
+
+                    return (
+                      <MenuItem key={device.id} value={device.id}>
+                        {`${modeLabel} • ${device.name}`}
+                      </MenuItem>
+                    );
+                  })
+                )}
+              </Select>
+            </FormControl>
+
+            <FormControl fullWidth size="small">
+              <InputLabel id="model-size-label">
+                <FormattedMessage defaultMessage="Model size" />
+              </InputLabel>
+              <Select
+                labelId="model-size-label"
+                label={<FormattedMessage defaultMessage="Model size" />}
+                value={modelValue}
+                onChange={(event) =>
+                  handleModelSizeChange(String(event.target.value))
+                }
+                renderValue={(value) => {
+                  const model = normalizeLocalWhisperModel(String(value));
+                  const option = MODEL_OPTIONS.find(
+                    (item) => item.value === model,
+                  );
+                  return option?.label ?? model;
+                }}
+                sx={
+                  showInlineModelDownloadAction
+                    ? {
+                        "& .MuiSelect-select": {
+                          pr: "132px !important",
+                        },
+                      }
+                    : undefined
+                }
+              >
+                {MODEL_OPTIONS.map(({ value, label, helper }) => {
+                  const status = localTranscriptionConfig.modelStatuses[value];
+                  const downloadSnapshot =
+                    localTranscriptionConfig.modelDownloads[value];
+                  const downloading =
+                    isLocalTranscriptionModelDownloadInProgress(
+                      downloadSnapshot,
+                    );
+                  const deleting =
+                    !!localTranscriptionConfig.modelDeletes[value];
+                  const selectable = isLocalTranscriptionModelSelectable(
+                    transcription,
+                    value,
+                  );
+                  const progressLabel =
+                    formatDownloadProgress(downloadSnapshot);
+                  const active = value === modelValue;
 
                   return (
-                    <MenuItem key={device.id} value={device.id}>
-                      {`${modeLabel} • ${device.name}`}
+                    <MenuItem key={value} value={value} sx={activeRowSx}>
+                      <Stack spacing={0.75} sx={{ width: "100%" }}>
+                        <Stack
+                          direction="row"
+                          alignItems="center"
+                          justifyContent="space-between"
+                          gap={1}
+                          sx={{ width: "100%" }}
+                        >
+                          <Box sx={{ minWidth: 0 }}>
+                            <Stack
+                              direction="row"
+                              alignItems="center"
+                              gap={0.75}
+                            >
+                              <Typography variant="body2" fontWeight={600}>
+                                {label}
+                              </Typography>
+                              {active && (
+                                <CheckRoundedIcon
+                                  fontSize="small"
+                                  sx={activeRowCheckSx}
+                                  titleAccess={intl.formatMessage({
+                                    defaultMessage: "Selected",
+                                  })}
+                                />
+                              )}
+                            </Stack>
+                            <Typography
+                              variant="caption"
+                              color="text.secondary"
+                              display="block"
+                            >
+                              {helper}
+                            </Typography>
+                            <Typography
+                              variant="caption"
+                              color="text.secondary"
+                            >
+                              {selectable
+                                ? intl.formatMessage({
+                                    defaultMessage: "Downloaded",
+                                  })
+                                : status?.validationError || null}
+                            </Typography>
+                          </Box>
+                          <Button
+                            size="small"
+                            variant="contained"
+                            color={selectable ? "error" : "primary"}
+                            disabled={downloading || deleting}
+                            sx={{
+                              minWidth: 0,
+                              minHeight: 24,
+                              px: 1.25,
+                              borderRadius: 999,
+                              boxShadow: "none",
+                              textTransform: "none",
+                              fontSize: 12,
+                              lineHeight: 1.2,
+                              alignSelf: "center",
+                              "&:hover": {
+                                boxShadow: "none",
+                              },
+                            }}
+                            onMouseDown={(event) => {
+                              event.preventDefault();
+                              event.stopPropagation();
+                            }}
+                            onClick={(event) => {
+                              event.preventDefault();
+                              event.stopPropagation();
+                              if (selectable) {
+                                handleDeleteModel(value);
+                                return;
+                              }
+                              handleDownloadModel(value);
+                            }}
+                          >
+                            {downloading
+                              ? intl.formatMessage({
+                                  defaultMessage: "Downloading...",
+                                })
+                              : deleting
+                                ? intl.formatMessage({
+                                    defaultMessage: "Deleting...",
+                                  })
+                                : selectable
+                                  ? intl.formatMessage({
+                                      defaultMessage: "Delete",
+                                    })
+                                  : intl.formatMessage({
+                                      defaultMessage: "Download",
+                                    })}
+                          </Button>
+                        </Stack>
+
+                        {downloading && (
+                          <LinearProgress
+                            variant={
+                              downloadSnapshot?.progress != null
+                                ? "determinate"
+                                : "indeterminate"
+                            }
+                            value={
+                              downloadSnapshot?.progress != null
+                                ? Math.max(
+                                    0,
+                                    Math.min(1, downloadSnapshot.progress),
+                                  ) * 100
+                                : undefined
+                            }
+                          />
+                        )}
+
+                        {downloading && progressLabel && (
+                          <Typography variant="caption" color="text.secondary">
+                            {progressLabel}
+                          </Typography>
+                        )}
+                      </Stack>
                     </MenuItem>
                   );
-                })
-              )}
-            </Select>
-          </FormControl>
-
-          <FormControl fullWidth size="small">
-            <InputLabel id="model-size-label">
-              <FormattedMessage defaultMessage="Model size" />
-            </InputLabel>
-            <Select
-              labelId="model-size-label"
-              label={<FormattedMessage defaultMessage="Model size" />}
-              value={modelValue}
-              onChange={(event) =>
-                handleModelSizeChange(String(event.target.value))
-              }
-              renderValue={(value) => {
-                const model = normalizeLocalWhisperModel(String(value));
-                const option = MODEL_OPTIONS.find(
-                  (item) => item.value === model,
-                );
-                return option?.label ?? model;
-              }}
-              sx={
-                showInlineModelDownloadAction
-                  ? {
-                      "& .MuiSelect-select": {
-                        pr: "132px !important",
-                      },
-                    }
-                  : undefined
-              }
-            >
-              {MODEL_OPTIONS.map(({ value, label, helper }) => {
-                const status = localTranscriptionConfig.modelStatuses[value];
-                const downloadSnapshot =
-                  localTranscriptionConfig.modelDownloads[value];
-                const downloading =
-                  isLocalTranscriptionModelDownloadInProgress(downloadSnapshot);
-                const deleting = !!localTranscriptionConfig.modelDeletes[value];
-                const selectable = isLocalTranscriptionModelSelectable(
-                  transcription,
-                  value,
-                );
-                const progressLabel = formatDownloadProgress(downloadSnapshot);
-                const active = value === modelValue;
-
-                return (
-                  <MenuItem key={value} value={value} sx={activeRowSx}>
-                    <Stack spacing={0.75} sx={{ width: "100%" }}>
-                      <Stack
-                        direction="row"
-                        alignItems="center"
-                        justifyContent="space-between"
-                        gap={1}
-                        sx={{ width: "100%" }}
-                      >
-                        <Box sx={{ minWidth: 0 }}>
-                          <Stack direction="row" alignItems="center" gap={0.75}>
-                            <Typography variant="body2" fontWeight={600}>
-                              {label}
-                            </Typography>
-                            {active && (
-                              <CheckRoundedIcon
-                                fontSize="small"
-                                sx={activeRowCheckSx}
-                                titleAccess={intl.formatMessage({
-                                  defaultMessage: "Selected",
-                                })}
-                              />
-                            )}
-                          </Stack>
-                          <Typography
-                            variant="caption"
-                            color="text.secondary"
-                            display="block"
-                          >
-                            {helper}
-                          </Typography>
-                          <Typography variant="caption" color="text.secondary">
-                            {selectable
-                              ? intl.formatMessage({
-                                  defaultMessage: "Downloaded",
-                                })
-                              : status?.validationError || null}
-                          </Typography>
-                        </Box>
-                        <Button
-                          size="small"
-                          variant="contained"
-                          color={selectable ? "error" : "primary"}
-                          disabled={downloading || deleting}
-                          sx={{
-                            minWidth: 0,
-                            minHeight: 24,
-                            px: 1.25,
-                            borderRadius: 999,
-                            boxShadow: "none",
-                            textTransform: "none",
-                            fontSize: 12,
-                            lineHeight: 1.2,
-                            alignSelf: "center",
-                            "&:hover": {
-                              boxShadow: "none",
-                            },
-                          }}
-                          onMouseDown={(event) => {
-                            event.preventDefault();
-                            event.stopPropagation();
-                          }}
-                          onClick={(event) => {
-                            event.preventDefault();
-                            event.stopPropagation();
-                            if (selectable) {
-                              handleDeleteModel(value);
-                              return;
-                            }
-                            handleDownloadModel(value);
-                          }}
-                        >
-                          {downloading
-                            ? intl.formatMessage({
-                                defaultMessage: "Downloading...",
-                              })
-                            : deleting
-                              ? intl.formatMessage({
-                                  defaultMessage: "Deleting...",
-                                })
-                              : selectable
-                                ? intl.formatMessage({
-                                    defaultMessage: "Delete",
-                                  })
-                                : intl.formatMessage({
-                                    defaultMessage: "Download",
-                                  })}
-                        </Button>
-                      </Stack>
-
-                      {downloading && (
-                        <LinearProgress
-                          variant={
-                            downloadSnapshot?.progress != null
-                              ? "determinate"
-                              : "indeterminate"
-                          }
-                          value={
-                            downloadSnapshot?.progress != null
-                              ? Math.max(
-                                  0,
-                                  Math.min(1, downloadSnapshot.progress),
-                                ) * 100
-                              : undefined
-                          }
-                        />
-                      )}
-
-                      {downloading && progressLabel && (
-                        <Typography variant="caption" color="text.secondary">
-                          {progressLabel}
-                        </Typography>
-                      )}
-                    </Stack>
-                  </MenuItem>
-                );
-              })}
-            </Select>
-            {showInlineModelDownloadAction && (
-              <Box
-                sx={{
-                  position: "absolute",
-                  right: 36,
-                  top: "50%",
-                  transform: "translateY(-50%)",
-                  zIndex: 1,
-                }}
-              >
-                <Button
-                  size="small"
-                  variant="contained"
-                  color="primary"
+                })}
+              </Select>
+              {showInlineModelDownloadAction && (
+                <Box
                   sx={{
-                    minWidth: 0,
-                    minHeight: 24,
-                    px: 1.25,
-                    borderRadius: 999,
-                    boxShadow: "none",
-                    textTransform: "none",
-                    fontSize: 12,
-                    lineHeight: 1.2,
-                    "&:hover": {
-                      boxShadow: "none",
-                    },
-                  }}
-                  disabled={modelDownloading}
-                  onMouseDown={(event) => {
-                    event.preventDefault();
-                    event.stopPropagation();
-                  }}
-                  onClick={(event) => {
-                    event.preventDefault();
-                    event.stopPropagation();
-                    handleDownloadModel(modelValue);
+                    position: "absolute",
+                    right: 36,
+                    top: "50%",
+                    transform: "translateY(-50%)",
+                    zIndex: 1,
                   }}
                 >
-                  {modelDownloading
-                    ? intl.formatMessage({ defaultMessage: "Downloading..." })
-                    : intl.formatMessage({ defaultMessage: "Download" })}
-                </Button>
-              </Box>
+                  <Button
+                    size="small"
+                    variant="contained"
+                    color="primary"
+                    sx={{
+                      minWidth: 0,
+                      minHeight: 24,
+                      px: 1.25,
+                      borderRadius: 999,
+                      boxShadow: "none",
+                      textTransform: "none",
+                      fontSize: 12,
+                      lineHeight: 1.2,
+                      "&:hover": {
+                        boxShadow: "none",
+                      },
+                    }}
+                    disabled={modelDownloading}
+                    onMouseDown={(event) => {
+                      event.preventDefault();
+                      event.stopPropagation();
+                    }}
+                    onClick={(event) => {
+                      event.preventDefault();
+                      event.stopPropagation();
+                      handleDownloadModel(modelValue);
+                    }}
+                  >
+                    {modelDownloading
+                      ? intl.formatMessage({ defaultMessage: "Downloading..." })
+                      : intl.formatMessage({ defaultMessage: "Download" })}
+                  </Button>
+                </Box>
+              )}
+            </FormControl>
+
+            {localTranscriptionConfig.modelStatusesLoading && (
+              <Stack direction="row" spacing={1} alignItems="center">
+                <CircularProgress size={14} />
+                <Typography variant="caption" color="text.secondary">
+                  <FormattedMessage defaultMessage="Refreshing model status..." />
+                </Typography>
+              </Stack>
             )}
-          </FormControl>
+          </Stack>
+        )}
 
-          {localTranscriptionConfig.modelStatusesLoading && (
-            <Stack direction="row" spacing={1} alignItems="center">
-              <CircularProgress size={14} />
-              <Typography variant="caption" color="text.secondary">
-                <FormattedMessage defaultMessage="Refreshing model status..." />
-              </Typography>
-            </Stack>
-          )}
-        </Stack>
-      )}
+        {effectiveMode === "api" && (
+          <ApiKeyList
+            selectedApiKeyId={transcription.selectedApiKeyId}
+            onChange={handleApiKeyChange}
+            context="transcription"
+          />
+        )}
 
-      {effectiveMode === "api" && (
-        <ApiKeyList
-          selectedApiKeyId={transcription.selectedApiKeyId}
-          onChange={handleApiKeyChange}
-          context="transcription"
-        />
-      )}
-
-      {effectiveMode === "cloud" && <MausVoiceCloudSetting />}
+        {effectiveMode === "cloud" && <MausVoiceCloudSetting />}
+      </AnimateSwitch>
     </Stack>
   );
 };

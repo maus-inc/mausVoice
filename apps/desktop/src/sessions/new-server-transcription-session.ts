@@ -8,7 +8,10 @@ import {
 } from "../types/transcription-session.types";
 import { getEffectiveAuth } from "../utils/auth.utils";
 import { getLogger } from "../utils/log.utils";
-import { NEW_SERVER_URL } from "../utils/new-server.utils";
+import {
+  buildNewServerWebSocketUrl,
+  NEW_SERVER_URL,
+} from "../utils/new-server.utils";
 import {
   buildPostProcessingPrompt,
   buildSystemPostProcessingTonePrompt,
@@ -231,7 +234,7 @@ const startNewServerStreaming = async (
       });
     };
 
-    const wsUrl = NEW_SERVER_URL.replace(/^http/, "ws") + "/v1/dictation";
+    const wsUrl = buildNewServerWebSocketUrl(NEW_SERVER_URL, "/v1/dictation");
     console.log("[NewServer WebSocket] Connecting to:", wsUrl);
     ws = new WebSocket(wsUrl);
 

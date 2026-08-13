@@ -1,4 +1,5 @@
 import AddIcon from "@mui/icons-material/Add";
+import CheckRoundedIcon from "@mui/icons-material/CheckRounded";
 import DeleteOutlineIcon from "@mui/icons-material/DeleteOutline";
 import EditOutlinedIcon from "@mui/icons-material/EditOutlined";
 import {
@@ -20,7 +21,7 @@ import {
 } from "@mui/material";
 import { API_KEY_PROVIDERS, type ApiKeyProvider } from "@maus-inc/types";
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { FormattedMessage } from "react-intl";
+import { FormattedMessage, useIntl } from "react-intl";
 import {
   createApiKey,
   deleteApiKey,
@@ -583,6 +584,7 @@ const ApiKeyCard = ({
   onModelChange: (model: string | null) => void;
   context: ApiKeyListContext;
 }) => {
+  const intl = useIntl();
   const config = useMemo(
     () => getProviderFormConfig(apiKey.provider, context),
     [apiKey.provider, context],
@@ -619,9 +621,18 @@ const ApiKeyCard = ({
         sx={{ width: "100%" }}
       >
         <Stack spacing={0.5} sx={{ flex: 1, minWidth: 0 }}>
-          <Typography variant="subtitle1" fontWeight={600}>
-            {apiKey.name}
-          </Typography>
+          <Stack direction="row" alignItems="center" gap={0.75}>
+            <Typography variant="subtitle1" fontWeight={600}>
+              {apiKey.name}
+            </Typography>
+            {selected && (
+              <CheckRoundedIcon
+                fontSize="small"
+                sx={{ color: "text.primary", flexShrink: 0 }}
+                titleAccess={intl.formatMessage({ defaultMessage: "Selected" })}
+              />
+            )}
+          </Stack>
           <Typography variant="body2" color="text.secondary">
             {config.displayName}
           </Typography>

@@ -8,7 +8,7 @@ After your speech is transcribed, mausVoice runs a post-processing step that use
 ## How It Works
 
 1. You record audio and it gets transcribed to raw text (via local Whisper or the Groq API).
-2. The raw transcript is combined with your active [style](/guides/styles/) prompt and any [dictionary](/guides/dictionary/) glossary terms.
+2. The raw transcript is combined with your active [style](../styles/) prompt and any [dictionary](../dictionary/) glossary terms.
 3. This combined prompt is sent to a language model that rewrites the text according to your style.
 4. The cleaned-up result is what you see (and what gets pasted if auto-paste is enabled).
 

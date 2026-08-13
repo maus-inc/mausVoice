@@ -98,6 +98,16 @@ pub fn notify_assistant_state(app: &tauri::AppHandle, payload: &str) {
     }
 }
 
+pub fn notify_reset_position(app: &tauri::AppHandle) -> Result<(), String> {
+    match app.try_state::<std::sync::Arc<MacosPill>>() {
+        Some(pill) => {
+            pill.send(InMessage::ResetPosition);
+            Ok(())
+        }
+        None => Err("Reset position requested with no managed macOS pill".to_string()),
+    }
+}
+
 fn start_out_reader(app: tauri::AppHandle, rx: mpsc::Receiver<OutMessage>) {
     std::thread::spawn(move || {
         while let Ok(msg) = rx.recv() {
@@ -159,6 +169,10 @@ fn start_out_reader(app: tauri::AppHandle, rx: mpsc::Receiver<OutMessage>) {
                     let _ = app.emit_to("main", "toast-action", payload);
                 }
                 OutMessage::Hover { .. } => {}
+                OutMessage::PositionChanged { has_saved_position } => {
+                    let payload = serde_json::json!({ "hasSavedPosition": has_saved_position });
+                    let _ = app.emit_to("main", "pill-position-changed", payload);
+                }
             }
         }
         log::info!("Native macOS pill channel closed");
