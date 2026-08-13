@@ -30,6 +30,22 @@
         }
       }
 
+      /*
+        Pre-hydration boot classes. The inline script below adds one of these
+        to <body> instead of setting an inline background-color: an inline
+        style outranks the MUI CssBaseline body rule forever, which hardcoded
+        the canvas to the launch-time scheme and made runtime light-mode
+        switches appear broken. These classes are removed on mount (see
+        src/main.tsx) so the runtime theme owns the background from then on.
+      */
+      body.boot-theme-dark {
+        background-color: #0c0c0d !important;
+      }
+
+      body.boot-theme-light {
+        background-color: #f5f2ed !important;
+      }
+
       .firebase-emulator-warning {
         display: none !important;
       }
@@ -40,13 +56,29 @@
     <div id="root"></div>
     <script>
       // Pre-hydration theme bootstrap: read the persisted MUI mode
-      // (localStorage "mode" is the ThemeProvider default key), resolve
+      // (localStorage "mode" — ThemeProvider's colorSchemeStorageKey), resolve
       // "system" via matchMedia, and paint the matching surfaces.level0
-      // background so the launch canvas never flashes the wrong scheme.
+      // background via a boot class so the launch canvas never flashes the
+      // wrong scheme. The class is removed on mount (src/main.tsx).
       (function () {
         var stored = null;
         try {
           stored = localStorage.getItem("mode");
+          if (stored === null) {
+            // One-time migration: MUI previously persisted the scheme under
+            // its own default key; the app now uses "mode" explicitly
+            // (ThemeProvider colorSchemeStorageKey). Carry the old choice
+            // over so users don't lose their theme on first launch.
+            var legacy = localStorage.getItem("mui-mode");
+            if (
+              legacy === "light" ||
+              legacy === "dark" ||
+              legacy === "system"
+            ) {
+              stored = legacy;
+              localStorage.setItem("mode", legacy);
+            }
+          }
         } catch (error) {
           // Storage can be unavailable (private mode, disabled cookies);
           // fall back to the system preference.
@@ -63,8 +95,9 @@
             : false;
           resolved = prefersLight ? "light" : "dark";
         }
-        document.body.style.backgroundColor =
-          resolved === "light" ? "#f5f2ed" : "#0c0c0d";
+        document.body.classList.add(
+          resolved === "light" ? "boot-theme-light" : "boot-theme-dark",
+        );
       })();
     </script>
     <script type="module" src="/src/main.tsx"></script>
