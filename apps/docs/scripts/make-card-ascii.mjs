@@ -48,7 +48,7 @@ const art = {
 };
 
 function escapeXml(s) {
-  return s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+  return s.replaceAll("&", "&amp;").replaceAll("<", "&lt;").replaceAll(">", "&gt;");
 }
 
 for (const [name, ascii] of Object.entries(art)) {
