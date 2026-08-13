@@ -45,7 +45,6 @@ import { ManagedByOrgNotice } from "../common/ManagedByOrgNotice";
 import { AnimateSwitch } from "../common/AnimateIn";
 import { SegmentedControl } from "../common/SegmentedControl";
 import { ApiKeyList } from "./ApiKeyList";
-import { MausVoiceCloudSetting } from "./MausVoiceCloudSetting";
 
 type ModelOption = {
   value: LocalWhisperModel;
@@ -551,8 +550,6 @@ export const AITranscriptionConfiguration = () => {
             context="transcription"
           />
         )}
-
-        {effectiveMode === "cloud" && <MausVoiceCloudSetting />}
       </AnimateSwitch>
     </Stack>
   );

@@ -1,4 +1,4 @@
-import { invokeHandler, type CloudModel } from "@maus-inc/functions";
+import type { CloudModel } from "@maus-inc/functions";
 import type {
   JsonResponse,
   LlmChatInput,
@@ -38,7 +38,6 @@ import {
   invokeEnterprise,
   invokeEnterpriseStream,
 } from "../utils/enterprise.utils";
-import { invokeHandlerStream } from "../utils/firebase.utils";
 import { BaseRepo } from "./base.repo";
 
 export type GenerateTextInput = {
@@ -60,38 +59,6 @@ export type GenerateTextOutput = {
 export abstract class BaseGenerateTextRepo extends BaseRepo {
   abstract generateText(input: GenerateTextInput): Promise<GenerateTextOutput>;
   abstract streamChat(input: LlmChatInput): AsyncGenerator<LlmStreamEvent>;
-}
-
-export class CloudGenerateTextRepo extends BaseGenerateTextRepo {
-  private model: CloudModel;
-
-  constructor(model: CloudModel = "medium") {
-    super();
-    this.model = model;
-  }
-
-  async generateText(input: GenerateTextInput): Promise<GenerateTextOutput> {
-    const response = await invokeHandler("ai/generateText", {
-      system: input.system,
-      prompt: input.prompt,
-      jsonResponse: input.jsonResponse,
-      model: this.model,
-    });
-
-    return {
-      text: response.text,
-      metadata: {
-        postProcessingMode: "cloud",
-      },
-    };
-  }
-
-  async *streamChat(input: LlmChatInput): AsyncGenerator<LlmStreamEvent> {
-    yield* invokeHandlerStream("ai/streamChat", {
-      ...input,
-      model: this.model,
-    });
-  }
 }
 
 export class GroqGenerateTextRepo extends BaseGenerateTextRepo {
@@ -527,7 +494,7 @@ export class EnterpriseGenerateTextRepo extends BaseGenerateTextRepo {
     return {
       text: response.text,
       metadata: {
-        postProcessingMode: "cloud",
+        postProcessingMode: "api",
       },
     };
   }

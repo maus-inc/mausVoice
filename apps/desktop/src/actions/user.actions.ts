@@ -464,20 +464,6 @@ export const setPreferredTranscriptionMode = async (
   });
 };
 
-export const setAllModesToCloud = async (): Promise<void> => {
-  produceAppState((draft) => {
-    draft.settings.aiTranscription.mode = "cloud";
-    draft.settings.aiPostProcessing.mode = "cloud";
-    draft.settings.agentMode.mode = "cloud";
-  });
-
-  await updateUserPreferences((preferences) => {
-    preferences.transcriptionMode = "cloud";
-    preferences.postProcessingMode = "cloud";
-    preferences.agentMode = "cloud";
-  });
-};
-
 export const setPreferredTranscriptionApiKeyId = async (
   id: Nullable<string>,
 ): Promise<void> => {

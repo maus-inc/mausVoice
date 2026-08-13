@@ -86,9 +86,6 @@ export const TranscriptionDetailsDialog = () => {
     if (transcription?.transcriptionMode === "api") {
       return <FormattedMessage defaultMessage="API" />;
     }
-    if (transcription?.transcriptionMode === "cloud") {
-      return <FormattedMessage defaultMessage="mausVoice Cloud" />;
-    }
     if (transcription?.transcriptionMode === "local") {
       return <FormattedMessage defaultMessage="Local" />;
     }
@@ -109,9 +106,6 @@ export const TranscriptionDetailsDialog = () => {
   const postProcessModeLabel = useMemo(() => {
     if (transcription?.postProcessMode === "api") {
       return <FormattedMessage defaultMessage="API" />;
-    }
-    if (transcription?.postProcessMode === "cloud") {
-      return <FormattedMessage defaultMessage="mausVoice Cloud" />;
     }
     return <FormattedMessage defaultMessage="Disabled" />;
   }, [transcription?.postProcessDevice, transcription?.postProcessMode]);

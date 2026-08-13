@@ -13,7 +13,6 @@ import { type PostProcessingMode } from "../../types/ai.types";
 import { AnimateSwitch } from "../common/AnimateIn";
 import { SegmentedControl } from "../common/SegmentedControl";
 import { ApiKeyList } from "./ApiKeyList";
-import { MausVoiceCloudSetting } from "./MausVoiceCloudSetting";
 
 export function maybeArrayElements<T>(visible: boolean, values: T[]): T[] {
   return visible ? values : [];
@@ -65,8 +64,6 @@ export const AIPostProcessingConfiguration = () => {
             context="post-processing"
           />
         )}
-
-        {effectiveMode === "cloud" && <MausVoiceCloudSetting />}
       </AnimateSwitch>
     </Stack>
   );

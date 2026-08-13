@@ -30,7 +30,7 @@ import {
 import { getTranscriptionRepo } from "../../repos";
 import { produceAppState, useAppStore } from "../../store";
 import { getActiveRemoteTarget } from "../../utils/device.utils";
-import { getIsMausVoiceCloudUser } from "../../utils/member.utils";
+import { getHasPaidAccess } from "../../utils/member.utils";
 import { TypographyWithMore } from "../common/TypographyWithMore";
 import { AudioPlayerPill } from "./AudioPlayerPill";
 
@@ -40,7 +40,7 @@ export type TranscriptionRowProps = {
 
 export const TranscriptionRow = ({ id }: TranscriptionRowProps) => {
   const intl = useIntl();
-  const isCloudUser = useAppStore(getIsMausVoiceCloudUser);
+  const hasPaidAccess = useAppStore(getHasPaidAccess);
   const transcription = useAppStore((state) =>
     getRec(state.transcriptionById, id),
   );
@@ -280,7 +280,7 @@ export const TranscriptionRow = ({ id }: TranscriptionRowProps) => {
                   <FileDownloadOutlinedIcon fontSize="small" />
                 </IconButton>
               </Tooltip>
-              {isCloudUser && (
+              {hasPaidAccess && (
                 <Tooltip
                   title={intl.formatMessage({
                     defaultMessage: "Report a problem with this transcription",

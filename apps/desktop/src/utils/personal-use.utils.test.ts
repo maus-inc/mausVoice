@@ -96,20 +96,18 @@ describe("resolvePersonalTranscriptionTarget", () => {
     expect(target).toBeNull();
   });
 
-  it("selects the desired key from cloud or local modes", () => {
-    for (const currentMode of ["cloud", "local"] as const) {
-      const target = resolvePersonalTranscriptionTarget({
-        deepgramKeyId: PERSONAL_DEEPGRAM_API_KEY_ID,
-        groqKeyId: PERSONAL_GROQ_API_KEY_ID,
-        currentMode,
-        currentApiKeyId: null,
-      });
+  it("selects the desired key from local mode", () => {
+    const target = resolvePersonalTranscriptionTarget({
+      deepgramKeyId: PERSONAL_DEEPGRAM_API_KEY_ID,
+      groqKeyId: PERSONAL_GROQ_API_KEY_ID,
+      currentMode: "local",
+      currentApiKeyId: null,
+    });
 
-      expect(target).toEqual({
-        mode: "api",
-        apiKeyId: PERSONAL_DEEPGRAM_API_KEY_ID,
-      });
-    }
+    expect(target).toEqual({
+      mode: "api",
+      apiKeyId: PERSONAL_DEEPGRAM_API_KEY_ID,
+    });
   });
 
   it("returns null when no personal key exists", () => {

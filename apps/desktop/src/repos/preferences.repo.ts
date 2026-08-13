@@ -57,15 +57,15 @@ type LocalUserPreferences = {
 };
 
 // Normalize post-processing mode for backwards compatibility
-// "ollama" mode is no longer supported - treat it as "none" (user needs to re-add Ollama via API keys)
+// "ollama" and the removed "cloud" modes are no longer supported - treat them
+// as "none" (the user needs to re-add Ollama via API keys).
 const normalizePostProcessingMode = (
   mode: Nullable<string>,
 ): Nullable<PostProcessingMode> => {
   if (!mode) return null;
-  if (mode === "api" || mode === "cloud" || mode === "none") {
+  if (mode === "api" || mode === "none") {
     return mode;
   }
-  // "ollama" or any other unknown mode falls back to "none"
   return "none";
 };
 

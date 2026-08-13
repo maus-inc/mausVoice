@@ -13,8 +13,6 @@ import type {
 import { getIsAssistantModeEnabled } from "../utils/assistant-mode.utils";
 import { createId } from "../utils/id.utils";
 import { getLogger } from "../utils/log.utils";
-import { getMemberExceedsLimitByState } from "../utils/member.utils";
-import { getAgentModePrefs } from "../utils/user.utils";
 import { BaseStrategy } from "./base.strategy";
 
 export class AgentStrategy extends BaseStrategy {
@@ -39,19 +37,8 @@ export class AgentStrategy extends BaseStrategy {
       };
     }
 
-    const prefs = getAgentModePrefs(getAppState());
-    if (prefs.mode === "cloud" && getMemberExceedsLimitByState(state)) {
-      return {
-        title: getIntl().formatMessage({
-          defaultMessage: "Word limit reached",
-        }),
-        body: getIntl().formatMessage({
-          defaultMessage: "You've used all your free words for today.",
-        }),
-        action: "upgrade",
-      };
-    }
-
+    // The mausVoice Cloud word-limit check was removed with the cloud
+    // offering in 0.1.6.
     return null;
   }
 

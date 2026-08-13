@@ -38,7 +38,6 @@ import {
   BaseGenerateTextRepo,
   CerebrasGenerateTextRepo,
   ClaudeGenerateTextRepo,
-  CloudGenerateTextRepo,
   DeepseekGenerateTextRepo,
   EnterpriseGenerateTextRepo,
   GeminiGenerateTextRepo,
@@ -112,7 +111,6 @@ import {
   GeminiTranscribeAudioRepo,
   GroqTranscribeAudioRepo,
   LocalTranscribeAudioRepo,
-  NewServerTranscribeAudioRepo,
   OpenAICompatibleTranscribeAudioRepo,
   OpenAITranscribeAudioRepo,
   SpeachesTranscribeAudioRepo,
@@ -267,16 +265,10 @@ const getGenTextRepoInternal = ({
 }): GenerateTextRepoOutput => {
   const state = getAppState();
 
-  if (prefs.mode === "cloud") {
-    getLogger().verbose("Using cloud generate text repo with model");
-    let repo: BaseGenerateTextRepo;
-    if (getIsEnterpriseEnabled()) {
-      repo = new EnterpriseGenerateTextRepo(cloudModel);
-    } else {
-      repo = new CloudGenerateTextRepo(cloudModel);
-    }
+  if (getIsEnterpriseEnabled()) {
+    getLogger().verbose("Using enterprise generate text repo");
     return {
-      repo,
+      repo: new EnterpriseGenerateTextRepo(cloudModel),
       apiKeyId: null,
       warnings: prefs.warnings,
     };
@@ -425,15 +417,9 @@ export type TranscribeAudioRepoOutput = {
 export const getTranscribeAudioRepo = (): TranscribeAudioRepoOutput => {
   const prefs = getTranscriptionPrefs(getAppState());
 
-  if (prefs.mode === "cloud") {
-    let repo: BaseTranscribeAudioRepo;
-    if (getIsEnterpriseEnabled()) {
-      repo = new EnterpriseTranscribeAudioRepo();
-    } else {
-      repo = new NewServerTranscribeAudioRepo();
-    }
+  if (getIsEnterpriseEnabled()) {
     return {
-      repo,
+      repo: new EnterpriseTranscribeAudioRepo(),
       apiKeyId: null,
       warnings: prefs.warnings,
     };

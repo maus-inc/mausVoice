@@ -56,7 +56,6 @@ export const resolvePersonalTranscriptionTarget = ({
 
   const isOwnedOrUnset =
     currentMode === null ||
-    currentMode === "cloud" ||
     currentMode === "local" ||
     currentApiKeyId === null ||
     ownedKeyIds.includes(currentApiKeyId);

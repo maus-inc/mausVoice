@@ -7,7 +7,6 @@ import {
   goToOnboardingPage,
   setOnboardingPreferredMicrophone,
 } from "../../actions/onboarding.actions";
-import { setAllModesToCloud } from "../../actions/user.actions";
 import { produceAppState, useAppStore } from "../../store";
 import { trackButtonClick } from "../../utils/analytics.utils";
 import { AudioWaveform } from "../common/AudioWaveform";
@@ -115,7 +114,6 @@ export const MicCheckForm = () => {
     await stopRecording();
     if (didSignUpWithAccount) {
       if (isEnterprise) {
-        await setAllModesToCloud();
         goToOnboardingPage("tutorial");
       } else {
         goToOnboardingPage("unlockedPro");

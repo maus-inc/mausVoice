@@ -19,10 +19,6 @@ import { createTranscriptionSession } from "../sessions";
 import type { AppState } from "../state/app.state";
 import { applyAiPreferences } from "./ai.utils";
 import { registerUsers } from "./app.utils";
-import {
-  getAllowsChangePostProcessing,
-  getAllowsChangeTranscription,
-} from "./enterprise.utils";
 import { getAdditionalLanguageEntries } from "./keyboard.utils";
 import {
   AUTO_LANGUAGE,
@@ -31,10 +27,6 @@ import {
   KEYBOARD_LAYOUT_LANGUAGE,
   PRIMARY_LANGUAGE_SENTINEL,
 } from "./language.utils";
-import {
-  getIsMausVoiceCloudUser,
-  getMemberExceedsLimitByState,
-} from "./member.utils";
 
 export const LOCAL_USER_ID = "local-user-id";
 
@@ -56,36 +48,25 @@ export const getIsDictationUnlocked = (state: AppState): boolean => {
   return getIsOnboarded(state) || state.onboarding.dictationOverrideEnabled;
 };
 
-export const getHasCloudAccess = (state: AppState): boolean => {
-  return getIsMausVoiceCloudUser(state);
-};
-
-const resolveMode = <T extends string>(
-  state: AppState,
-  mode: T | null,
-  fallback: T,
-): T => {
-  return mode ?? (getHasCloudAccess(state) ? ("cloud" as T) : fallback);
+const resolveMode = <T extends string>(mode: T | null, fallback: T): T => {
+  return mode ?? fallback;
 };
 
 export const getEffectiveTranscriptionMode = (
   state: AppState,
 ): TranscriptionMode => {
-  return resolveMode(state, state.settings.aiTranscription.mode, "local");
+  return resolveMode(state.settings.aiTranscription.mode, "local");
 };
 
 export const getEffectivePostProcessingMode = (
   state: AppState,
 ): PostProcessingMode => {
-  return resolveMode(state, state.settings.aiPostProcessing.mode, "none");
+  return resolveMode(state.settings.aiPostProcessing.mode, "none");
 };
 
 export const getEffectiveAgentMode = (state: AppState): AgentMode => {
-  return resolveMode(state, state.settings.agentMode.mode, "none");
+  return resolveMode(state.settings.agentMode.mode, "none");
 };
-
-export const getMyCloudUserId = (state: AppState): Nullable<string> =>
-  state.auth?.uid ?? null;
 
 export const getMyEffectiveUserId = (state: AppState): string => {
   return state.auth?.uid ?? LOCAL_USER_ID;
@@ -243,10 +224,6 @@ type BaseTranscriptionPrefs = {
   warnings: string[];
 };
 
-export type CloudTranscriptionPrefs = BaseTranscriptionPrefs & {
-  mode: "cloud";
-};
-
 export type LocalTranscriptionPrefs = BaseTranscriptionPrefs & {
   mode: "local";
   gpuEnumerationEnabled: boolean;
@@ -263,7 +240,6 @@ export type ApiTranscriptionPrefs = BaseTranscriptionPrefs & {
 };
 
 export type TranscriptionPrefs =
-  | CloudTranscriptionPrefs
   | LocalTranscriptionPrefs
   | ApiTranscriptionPrefs;
 
@@ -271,24 +247,7 @@ export const getTranscriptionPrefs = (state: AppState): TranscriptionPrefs => {
   const config = state.settings.aiTranscription;
   const mode = getEffectiveTranscriptionMode(state);
   const apiKey = getRec(state.apiKeyById, config.selectedApiKeyId)?.keyFull;
-  const cloudAvailable = getHasCloudAccess(state);
-  const exceedsLimits = getMemberExceedsLimitByState(state);
   const warnings: string[] = [];
-  const allowChange = getAllowsChangeTranscription(state);
-
-  if (mode === "cloud" || !allowChange) {
-    if (cloudAvailable) {
-      if (exceedsLimits) {
-        warnings.push("Cloud transcription limit exceeded.");
-      } else {
-        return { mode: "cloud", warnings };
-      }
-    } else {
-      warnings.push(
-        "Cloud transcription is not available. Please check your subscription.",
-      );
-    }
-  }
 
   if (mode === "api") {
     const selectedApiKey = getRec(state.apiKeyById, config.selectedApiKeyId);
@@ -330,10 +289,6 @@ type BaseGenerativePrefs = {
   warnings: string[];
 };
 
-export type CloudGenerativePrefs = BaseGenerativePrefs & {
-  mode: "cloud";
-};
-
 export type ApiGenerativePrefs = BaseGenerativePrefs & {
   mode: "api";
   provider: ApiKeyProvider;
@@ -346,13 +301,10 @@ export type NoneGenerativePrefs = BaseGenerativePrefs & {
   mode: "none";
 };
 
-export type GenerativePrefs =
-  | CloudGenerativePrefs
-  | ApiGenerativePrefs
-  | NoneGenerativePrefs;
+export type GenerativePrefs = ApiGenerativePrefs | NoneGenerativePrefs;
 
 type GenerativeConfigInput = {
-  mode: "none" | "api" | "cloud" | null;
+  mode: "none" | "api" | null;
   selectedApiKeyId: string | null;
 };
 
@@ -360,32 +312,14 @@ const getGenPrefsInternal = ({
   state,
   config,
   context,
-  allowChange,
 }: {
   state: AppState;
   config: GenerativeConfigInput;
   context: string;
-  allowChange: boolean;
 }): GenerativePrefs => {
-  const mode = resolveMode(state, config.mode, "none");
+  const mode = resolveMode(config.mode, "none");
   const apiKey = getRec(state.apiKeyById, config.selectedApiKeyId)?.keyFull;
-  const exceedsLimits = getMemberExceedsLimitByState(state);
-  const cloudAvailable = getHasCloudAccess(state);
   const warnings: string[] = [];
-
-  if (mode === "cloud" || !allowChange) {
-    if (cloudAvailable) {
-      if (exceedsLimits) {
-        warnings.push(`Cloud ${context} limit exceeded.`);
-      } else {
-        return { mode: "cloud", warnings };
-      }
-    } else {
-      warnings.push(
-        `Cloud ${context} is not available. Please check your subscription.`,
-      );
-    }
-  }
 
   if (mode === "api") {
     const selectedApiKey = getRec(state.apiKeyById, config.selectedApiKeyId);
@@ -414,7 +348,6 @@ export const getGenerativePrefs = (state: AppState): GenerativePrefs => {
     state,
     config: state.settings.aiPostProcessing,
     context: "post-processing",
-    allowChange: getAllowsChangePostProcessing(state),
   });
 };
 
@@ -434,7 +367,6 @@ export const getAgentModePrefs = (state: AppState): AgentModePrefs => {
     state,
     config: agentMode as GenerativeConfigInput,
     context: "agent mode",
-    allowChange: !state.isEnterprise,
   });
 };
 
@@ -508,15 +440,4 @@ export const getDictationSpeed = (state: AppState): DictationSpeed | null => {
 
   if (count === 0) return null;
   return { wpm: Math.round(totalWpm / count), sampleCount: count };
-};
-
-export const getUsingCloudPrefs = (state: AppState): boolean => {
-  const transcriptionPrefs = getTranscriptionPrefs(state);
-  const generativePrefs = getGenerativePrefs(state);
-  const agentModePrefs = getAgentModePrefs(state);
-  return (
-    transcriptionPrefs.mode === "cloud" ||
-    generativePrefs.mode === "cloud" ||
-    agentModePrefs.mode === "cloud"
-  );
 };

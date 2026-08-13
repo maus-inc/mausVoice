@@ -26,8 +26,6 @@ import { TranscriptionTextBlock } from "./TranscriptionTextBlock";
 
 const formatModeLabel = (mode: string | null | undefined): React.ReactNode => {
   if (mode === "api") return <FormattedMessage defaultMessage="API" />;
-  if (mode === "cloud")
-    return <FormattedMessage defaultMessage="mausVoice Cloud" />;
   if (mode === "local") return <FormattedMessage defaultMessage="Local" />;
   return <FormattedMessage defaultMessage="Unknown" />;
 };
@@ -36,8 +34,6 @@ const formatPostProcessModeLabel = (
   mode: string | null | undefined,
 ): React.ReactNode => {
   if (mode === "api") return <FormattedMessage defaultMessage="API" />;
-  if (mode === "cloud")
-    return <FormattedMessage defaultMessage="mausVoice Cloud" />;
   return <FormattedMessage defaultMessage="Disabled" />;
 };
 

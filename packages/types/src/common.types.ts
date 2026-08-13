@@ -22,9 +22,9 @@ export type JsonResponse = {
   schema: Record<string, unknown>;
 };
 
-export type TranscriptionMode = "local" | "api" | "cloud";
+export type TranscriptionMode = "local" | "api";
 
-export type PostProcessingMode = "none" | "api" | "cloud";
+export type PostProcessingMode = "none" | "api";
 
 export type AgentMode = PostProcessingMode | "openclaw";
 

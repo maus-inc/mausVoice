@@ -7,7 +7,6 @@ import {
   postProcessTranscript,
   type PostProcessMetadata,
 } from "../actions/transcribe.actions";
-import { getIntl } from "../i18n";
 import { getAppState } from "../store";
 import type { OverlayPhase } from "../types/overlay.types";
 import type {
@@ -16,18 +15,13 @@ import type {
   StrategyValidationError,
 } from "../types/strategy.types";
 import { getLogger } from "../utils/log.utils";
-import { getMemberExceedsLimitByState } from "../utils/member.utils";
 import { routeTranscriptOutput } from "../utils/output-routing.utils";
 import {
   applyReplacements,
   applySymbolConversions,
 } from "../utils/string.utils";
 import { getToneIdToUse, VERBATIM_TONE_ID } from "../utils/tone.utils";
-import {
-  getEffectivePostProcessingMode,
-  getEffectiveTranscriptionMode,
-  getMyUserPreferences,
-} from "../utils/user.utils";
+import { getMyUserPreferences } from "../utils/user.utils";
 import { BaseStrategy } from "./base.strategy";
 
 export class DictationStrategy extends BaseStrategy {
@@ -101,23 +95,8 @@ export class DictationStrategy extends BaseStrategy {
   }
 
   validateAvailability(): Nullable<StrategyValidationError> {
-    const state = getAppState();
-
-    const transcriptionMode = getEffectiveTranscriptionMode(state);
-    const generativeMode = getEffectivePostProcessingMode(state);
-    const isCloud = transcriptionMode === "cloud" || generativeMode === "cloud";
-    if (isCloud && getMemberExceedsLimitByState(state)) {
-      return {
-        title: getIntl().formatMessage({
-          defaultMessage: "Word limit reached",
-        }),
-        body: getIntl().formatMessage({
-          defaultMessage: "You've used all your free words for today.",
-        }),
-        action: "upgrade",
-      };
-    }
-
+    // The mausVoice Cloud word-limit check was removed with the cloud
+    // offering in 0.1.6; local and API dictation are always available.
     return null;
   }
 

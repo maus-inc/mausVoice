@@ -1,9 +1,5 @@
 import { Member, Nullable } from "@maus-inc/types";
-import {
-  getMemberExceedsLimits,
-  getRec,
-  TRIAL_DURATION_DAYS,
-} from "@maus-inc/utilities";
+import { getRec, TRIAL_DURATION_DAYS } from "@maus-inc/utilities";
 import { getIntl } from "../i18n";
 import type { AppState } from "../state/app.state";
 import { EffectivePlan } from "../types/member.types";
@@ -23,7 +19,13 @@ export const getEffectivePlan = (state: AppState): EffectivePlan => {
   return getMyMember(state)?.plan ?? "community";
 };
 
-export const getIsMausVoiceCloudUser = (state: AppState): boolean => {
+/**
+ * Whether the active profile has paid access (enterprise, free, or pro plan).
+ * Previously named `getIsMausVoiceCloudUser` and used to gate the removed
+ * mausVoice Cloud AI offering; it now only gates membership-level features
+ * (remote sessions, transcription feedback).
+ */
+export const getHasPaidAccess = (state: AppState): boolean => {
   const member = getMyMember(state);
   return (
     state.isEnterprise || member?.plan === "free" || member?.plan === "pro"
@@ -90,17 +92,4 @@ export const getIsPro = (state: AppState): boolean => {
 
 export const getIsPaidSubscriber = (state: AppState): boolean => {
   return getIsPro(state) && !getIsOnTrial(state);
-};
-
-export const getMemberExceedsLimitByState = (state: AppState): boolean => {
-  if (isPersonalUseProEnabled()) {
-    return false;
-  }
-  const member = getMyMember(state);
-  const config = state.config;
-  if (!member || !config) {
-    return false;
-  }
-
-  return getMemberExceedsLimits(member, config);
 };

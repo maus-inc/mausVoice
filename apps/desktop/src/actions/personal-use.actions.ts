@@ -126,7 +126,7 @@ const upsertPersonalDeepgramApiKey = async (
 };
 
 // Post-processing + agent default to the personal Groq key. Only changed when
-// currently unset/cloud or already pointing at an owned Groq key; an unrelated
+// currently unset or already pointing at an owned Groq key; an unrelated
 // user-selected key is preserved.
 const applyPersonalGenerationDefaults = async (
   groqApiKey: ApiKey,
@@ -137,8 +137,7 @@ const applyPersonalGenerationDefaults = async (
   const isOwnedOrUnset = (
     mode: string | null | undefined,
     apiKeyId: string | null | undefined,
-  ): boolean =>
-    !mode || mode === "cloud" || !apiKeyId || ownedGroqIds.has(apiKeyId);
+  ): boolean => !mode || !apiKeyId || ownedGroqIds.has(apiKeyId);
 
   const alreadyGroq = (
     mode: string | null | undefined,

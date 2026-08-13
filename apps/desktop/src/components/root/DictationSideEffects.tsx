@@ -633,7 +633,7 @@ export const DictationSideEffects = () => {
           );
           // The abort path cleans whatever was current in the refs; release
           // this (now-orphaned) session defensively — cleanup is idempotent.
-          startedSession.cleanup().catch(() => {});
+          startedSession.cleanup();
           return;
         }
 
