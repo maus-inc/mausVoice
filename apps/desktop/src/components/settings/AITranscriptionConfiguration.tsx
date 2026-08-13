@@ -83,6 +83,15 @@ const subheaderSx = {
   color: "text.secondary",
 } as const;
 
+const getDownloadProgressPercent = (
+  progress: number | null | undefined,
+): number | null => {
+  if (progress == null) {
+    return null;
+  }
+  return Math.round(Math.max(0, Math.min(1, progress)) * 100);
+};
+
 const formatDownloadProgress = (
   snapshot: LocalSidecarDownloadSnapshot | undefined,
 ): string | null => {
@@ -90,10 +99,8 @@ const formatDownloadProgress = (
     return null;
   }
 
-  const progressPart =
-    snapshot.progress != null
-      ? `${Math.round(Math.max(0, Math.min(1, snapshot.progress)) * 100)}%`
-      : null;
+  const percent = getDownloadProgressPercent(snapshot.progress);
+  const progressPart = percent != null ? `${percent}%` : null;
 
   const bytesPart =
     snapshot.totalBytes != null && snapshot.totalBytes > 0
@@ -112,10 +119,11 @@ const formatDownloadProgress = (
 const formatCompactPercent = (
   snapshot: LocalSidecarDownloadSnapshot | undefined,
 ): string | null => {
-  if (snapshot?.progress == null) {
+  const percent = getDownloadProgressPercent(snapshot?.progress);
+  if (percent == null) {
     return null;
   }
-  return `${Math.round(Math.max(0, Math.min(1, snapshot.progress)) * 100)}%`;
+  return `${percent}%`;
 };
 
 const resolveDeviceSelectValue = (
@@ -170,17 +178,40 @@ const ModelStatusText = ({
   return <>{validationError}</>;
 };
 
-const resolveBadgeLabel = (
-  paused: boolean,
-  compactPercent?: string | null,
-): string | null => {
-  if (!paused) {
-    return compactPercent ?? null;
+const PausedStatusBadge = ({
+  paused,
+  compactPercent,
+}: {
+  paused: boolean;
+  compactPercent?: string | null;
+}) => {
+  if (!paused && !compactPercent) {
+    return null;
   }
-  if (compactPercent) {
-    return `Paused (${compactPercent})`;
-  }
-  return "Paused";
+
+  const badgeColor = paused ? "warning.main" : "text.secondary";
+
+  return (
+    <Typography
+      variant="caption"
+      fontWeight={600}
+      color={badgeColor}
+      sx={{ fontVariantNumeric: "tabular-nums", mr: 0.5 }}
+    >
+      {paused ? (
+        compactPercent ? (
+          <FormattedMessage
+            defaultMessage="Paused ({percent})"
+            values={{ percent: compactPercent }}
+          />
+        ) : (
+          <FormattedMessage defaultMessage="Paused" />
+        )
+      ) : (
+        compactPercent
+      )}
+    </Typography>
+  );
 };
 
 const handleModelClick = (
@@ -209,21 +240,10 @@ const BusyDownloadButtons = ({
   onCancel: (model: LocalWhisperModel) => void;
 }) => {
   const primaryAction = paused ? onResume : onPause;
-  const badgeColor = paused ? "warning.main" : "text.secondary";
-  const badgeLabel = resolveBadgeLabel(paused, compactPercent);
 
   return (
     <Stack direction="row" spacing={0.75} alignItems="center">
-      {badgeLabel && (
-        <Typography
-          variant="caption"
-          fontWeight={600}
-          color={badgeColor}
-          sx={{ fontVariantNumeric: "tabular-nums", mr: 0.5 }}
-        >
-          {badgeLabel}
-        </Typography>
-      )}
+      <PausedStatusBadge paused={paused} compactPercent={compactPercent} />
       <Button
         size="small"
         variant={paused ? "contained" : "outlined"}
@@ -543,6 +563,9 @@ export const AITranscriptionConfiguration = () => {
     );
     const active = modelValue === value;
     const progressLabel = formatDownloadProgress(downloadSnapshot);
+    const progressPercent = getDownloadProgressPercent(
+      downloadSnapshot?.progress,
+    );
 
     return (
       <MenuItem
@@ -643,15 +666,9 @@ export const AITranscriptionConfiguration = () => {
             <LinearProgress
               color={paused ? "warning" : "primary"}
               variant={
-                downloadSnapshot?.progress != null
-                  ? "determinate"
-                  : "indeterminate"
+                progressPercent != null ? "determinate" : "indeterminate"
               }
-              value={
-                downloadSnapshot?.progress != null
-                  ? Math.max(0, Math.min(1, downloadSnapshot.progress)) * 100
-                  : undefined
-              }
+              value={progressPercent ?? undefined}
               sx={{ borderRadius: 999, height: 4 }}
             />
           )}

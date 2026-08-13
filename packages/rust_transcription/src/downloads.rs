@@ -198,27 +198,38 @@ impl DownloadRegistry {
     }
 
     pub async fn cancel_job(&self, model: WhisperModel, job_id: Uuid, destination: &PathBuf) -> Option<DownloadJobSnapshot> {
-        let mut store = self.inner.lock().await;
-        let job = store.jobs.get_mut(&job_id)?;
-        if job.model != model {
-            return None;
+        let (has_live_worker, snapshot) = {
+            let mut store = self.inner.lock().await;
+            let job = store.jobs.get_mut(&job_id)?;
+            if job.model != model {
+                return None;
+            }
+
+            let has_worker = if let Some(control_tx) = &job.control_tx {
+                let _ = control_tx.send(DownloadCommand::Cancel);
+                true
+            } else {
+                false
+            };
+
+            job.status = DownloadJobStatus::Canceled;
+            job.control_tx = None;
+            store.active_by_model.remove(&model);
+
+            (has_worker, store.snapshot(job_id))
+        };
+
+        // If there is no live worker running (e.g. job was paused), clean up the temp file now.
+        // If a worker is running, its cancellation branch will delete the file on exit.
+        if !has_live_worker {
+            let filename = destination.file_name().and_then(|name| name.to_str()).unwrap_or("model.bin");
+            let temp_path = destination.with_file_name(format!("{filename}.{job_id}.download"));
+            tokio::spawn(async move {
+                let _ = tokio::fs::remove_file(temp_path).await;
+            });
         }
 
-        if let Some(control_tx) = &job.control_tx {
-            let _ = control_tx.send(DownloadCommand::Cancel);
-        }
-
-        job.status = DownloadJobStatus::Canceled;
-        store.active_by_model.remove(&model);
-
-        // Remove temp partial download file
-        let filename = destination.file_name().and_then(|name| name.to_str()).unwrap_or("model.bin");
-        let temp_path = destination.with_file_name(format!("{filename}.{job_id}.download"));
-        tokio::spawn(async move {
-            let _ = tokio::fs::remove_file(temp_path).await;
-        });
-
-        store.snapshot(job_id)
+        snapshot
     }
 
     pub async fn cancel_active(&self, model: WhisperModel, destination: &PathBuf) -> Option<DownloadJobSnapshot> {
@@ -320,8 +331,8 @@ impl DownloadRegistry {
         loop {
             tokio::select! {
                 changed = control_rx.changed() => {
-                    if changed.is_ok() {
-                        match *control_rx.borrow() {
+                    match changed {
+                        Ok(()) => match *control_rx.borrow() {
                             DownloadCommand::Pause => {
                                 was_paused = true;
                                 break;
@@ -331,6 +342,10 @@ impl DownloadRegistry {
                                 break;
                             }
                             DownloadCommand::Run => {}
+                        },
+                        Err(_) => {
+                            // Channel sender was dropped; terminate gracefully.
+                            return Ok(());
                         }
                     }
                 }

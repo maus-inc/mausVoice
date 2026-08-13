@@ -33,8 +33,6 @@ pub fn create_router(state: AppState) -> Router {
         )
         .route("/v1/models/:model/download/pause", post(pause_download_active))
         .route("/v1/models/:model/download/cancel", post(cancel_download_active))
-        .route("/v1/models/:model/pause", post(pause_download_active))
-        .route("/v1/models/:model/cancel", post(cancel_download_active))
         .route("/v1/models/:model", delete(delete_model))
         .route("/v1/models/:model/status", get(get_model_status))
         .route("/v1/devices", get(list_devices))
