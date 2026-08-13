@@ -20,19 +20,13 @@ pub fn create_router(state: AppState) -> Router {
         .route("/health", get(get_health))
         .route("/v1/models/:model/download", post(download_model))
         .route(
-            "/v1/models/:model/download/:job_id",
-            get(get_download_progress),
+            "/v1/models/:model/download/:target",
+            get(get_download_progress).post(handle_download_action),
         )
         .route(
-            "/v1/models/:model/download/:job_id/pause",
-            post(pause_download_job),
+            "/v1/models/:model/download/:job_id/:action",
+            post(handle_job_action),
         )
-        .route(
-            "/v1/models/:model/download/:job_id/cancel",
-            post(cancel_download_job),
-        )
-        .route("/v1/models/:model/download/pause", post(pause_download_active))
-        .route("/v1/models/:model/download/cancel", post(cancel_download_active))
         .route("/v1/models/:model", delete(delete_model))
         .route("/v1/models/:model/status", get(get_model_status))
         .route("/v1/devices", get(list_devices))
@@ -93,9 +87,16 @@ struct ModelPath {
 }
 
 #[derive(Debug, Deserialize)]
-struct DownloadProgressPath {
+struct DownloadTargetPath {
+    model: String,
+    target: String,
+}
+
+#[derive(Debug, Deserialize)]
+struct DownloadJobActionPath {
     model: String,
     job_id: String,
+    action: String,
 }
 
 #[derive(Debug, Deserialize)]
@@ -133,10 +134,10 @@ async fn download_model(
 
 async fn get_download_progress(
     State(state): State<AppState>,
-    Path(path): Path<DownloadProgressPath>,
+    Path(path): Path<DownloadTargetPath>,
 ) -> Result<Json<crate::downloads::DownloadJobSnapshot>, ApiError> {
     let model = parse_model(&path.model)?;
-    let job_id = Uuid::parse_str(path.job_id.trim())
+    let job_id = Uuid::parse_str(path.target.trim())
         .map_err(|_| ApiError::bad_request("invalid_job_id", "jobId must be a valid UUID"))?;
 
     let snapshot = state
@@ -148,70 +149,67 @@ async fn get_download_progress(
     Ok(Json(snapshot))
 }
 
-async fn pause_download_job(
+async fn handle_download_action(
     State(state): State<AppState>,
-    Path(path): Path<DownloadProgressPath>,
+    Path(path): Path<DownloadTargetPath>,
+) -> Result<Json<crate::downloads::DownloadJobSnapshot>, ApiError> {
+    let model = parse_model(&path.model)?;
+    match path.target.trim() {
+        "pause" => {
+            let snapshot = state
+                .downloads
+                .pause_active(model)
+                .await
+                .ok_or_else(|| ApiError::not_found("download_not_found", "no active download found to pause"))?;
+            Ok(Json(snapshot))
+        }
+        "cancel" => {
+            let destination = state.model_path(model);
+            let snapshot = state
+                .downloads
+                .cancel_active(model, &destination)
+                .await
+                .ok_or_else(|| ApiError::not_found("download_not_found", "no active download found to cancel"))?;
+            Ok(Json(snapshot))
+        }
+        _ => Err(ApiError::bad_request(
+            "invalid_action",
+            format!("unsupported download action '{}'", path.target),
+        )),
+    }
+}
+
+async fn handle_job_action(
+    State(state): State<AppState>,
+    Path(path): Path<DownloadJobActionPath>,
 ) -> Result<Json<crate::downloads::DownloadJobSnapshot>, ApiError> {
     let model = parse_model(&path.model)?;
     let job_id = Uuid::parse_str(path.job_id.trim())
         .map_err(|_| ApiError::bad_request("invalid_job_id", "jobId must be a valid UUID"))?;
 
-    let snapshot = state
-        .downloads
-        .pause_job(model, job_id)
-        .await
-        .ok_or_else(|| ApiError::not_found("download_not_found", "download job was not found"))?;
-
-    Ok(Json(snapshot))
-}
-
-async fn cancel_download_job(
-    State(state): State<AppState>,
-    Path(path): Path<DownloadProgressPath>,
-) -> Result<Json<crate::downloads::DownloadJobSnapshot>, ApiError> {
-    let model = parse_model(&path.model)?;
-    let destination = state.model_path(model);
-    let job_id = Uuid::parse_str(path.job_id.trim())
-        .map_err(|_| ApiError::bad_request("invalid_job_id", "jobId must be a valid UUID"))?;
-
-    let snapshot = state
-        .downloads
-        .cancel_job(model, job_id, &destination)
-        .await
-        .ok_or_else(|| ApiError::not_found("download_not_found", "download job was not found"))?;
-
-    Ok(Json(snapshot))
-}
-
-async fn pause_download_active(
-    State(state): State<AppState>,
-    Path(path): Path<ModelPath>,
-) -> Result<Json<crate::downloads::DownloadJobSnapshot>, ApiError> {
-    let model = parse_model(&path.model)?;
-
-    let snapshot = state
-        .downloads
-        .pause_active(model)
-        .await
-        .ok_or_else(|| ApiError::not_found("download_not_found", "no active download found to pause"))?;
-
-    Ok(Json(snapshot))
-}
-
-async fn cancel_download_active(
-    State(state): State<AppState>,
-    Path(path): Path<ModelPath>,
-) -> Result<Json<crate::downloads::DownloadJobSnapshot>, ApiError> {
-    let model = parse_model(&path.model)?;
-    let destination = state.model_path(model);
-
-    let snapshot = state
-        .downloads
-        .cancel_active(model, &destination)
-        .await
-        .ok_or_else(|| ApiError::not_found("download_not_found", "no active download found to cancel"))?;
-
-    Ok(Json(snapshot))
+    match path.action.trim() {
+        "pause" => {
+            let snapshot = state
+                .downloads
+                .pause_job(model, job_id)
+                .await
+                .ok_or_else(|| ApiError::not_found("download_not_found", "download job was not found"))?;
+            Ok(Json(snapshot))
+        }
+        "cancel" => {
+            let destination = state.model_path(model);
+            let snapshot = state
+                .downloads
+                .cancel_job(model, job_id, &destination)
+                .await
+                .ok_or_else(|| ApiError::not_found("download_not_found", "download job was not found"))?;
+            Ok(Json(snapshot))
+        }
+        _ => Err(ApiError::bad_request(
+            "invalid_action",
+            format!("unsupported download action '{}'", path.action),
+        )),
+    }
 }
 
 async fn get_model_status(
@@ -782,5 +780,23 @@ mod tests {
             .unwrap();
 
         assert_eq!(response.status(), StatusCode::OK);
+    }
+
+    #[tokio::test]
+    async fn pause_and_cancel_active_return_not_found_when_no_job() {
+        let state = test_state();
+        let app = create_router(state);
+        let response = app
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/v1/models/tiny/download/pause")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(response.status(), StatusCode::NOT_FOUND);
     }
 }

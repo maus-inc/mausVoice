@@ -51,6 +51,28 @@ struct DownloadJobRecord {
     control_tx: Option<watch::Sender<DownloadCommand>>,
 }
 
+impl DownloadJobRecord {
+    fn to_snapshot(&self, job_id: Uuid) -> DownloadJobSnapshot {
+        let progress = match self.total_bytes {
+            Some(total) if total > 0 => {
+                Some((self.bytes_downloaded as f64 / total as f64).min(1.0))
+            }
+            Some(_) => Some(1.0),
+            None => None,
+        };
+
+        DownloadJobSnapshot {
+            job_id,
+            model: self.model,
+            status: self.status,
+            bytes_downloaded: self.bytes_downloaded,
+            total_bytes: self.total_bytes,
+            progress,
+            error: self.error.clone(),
+        }
+    }
+}
+
 #[derive(Default)]
 struct DownloadStore {
     jobs: HashMap<Uuid, DownloadJobRecord>,
@@ -73,22 +95,19 @@ impl DownloadRegistry {
         if let Some(existing_size) = existing_model_file_size(&destination).await {
             let job_id = Uuid::new_v4();
             let mut store = self.inner.lock().await;
-            store.jobs.insert(
-                job_id,
-                DownloadJobRecord {
-                    model,
-                    status: DownloadJobStatus::Completed,
-                    bytes_downloaded: existing_size,
-                    total_bytes: Some(existing_size),
-                    error: None,
-                    generation: 1,
-                    control_tx: None,
-                },
-            );
+            let record = DownloadJobRecord {
+                model,
+                status: DownloadJobStatus::Completed,
+                bytes_downloaded: existing_size,
+                total_bytes: Some(existing_size),
+                error: None,
+                generation: 1,
+                control_tx: None,
+            };
+            let snapshot = record.to_snapshot(job_id);
+            store.jobs.insert(job_id, record);
 
-            return store
-                .snapshot(job_id)
-                .ok_or_else(|| "failed to create completed job snapshot".to_string());
+            return Ok(snapshot);
         }
 
         let (job_id, generation, snapshot, control_rx, should_spawn) = {
@@ -107,44 +126,18 @@ impl DownloadRegistry {
                         record.status = DownloadJobStatus::Pending;
                         record.error = None;
                         record.control_tx = Some(control_tx);
-                        let snapshot = store
-                            .snapshot(existing_id)
-                            .ok_or_else(|| "job snapshot missing".to_string())?;
+                        let snapshot = record.to_snapshot(existing_id);
                         (existing_id, generation, snapshot, Some(control_rx), true)
                     } else {
-                        let existing = store
-                            .snapshot(existing_id)
-                            .ok_or_else(|| "active download job is missing".to_string())?;
-                        (existing_id, record.generation, existing, None, false)
+                        let generation = record.generation;
+                        let existing = record.to_snapshot(existing_id);
+                        (existing_id, generation, existing, None, false)
                     }
                 } else {
                     store.active_by_model.remove(&model);
                     let (control_tx, control_rx) = watch::channel(DownloadCommand::Run);
                     let new_job_id = Uuid::new_v4();
-                    store.jobs.insert(
-                        new_job_id,
-                        DownloadJobRecord {
-                            model,
-                            status: DownloadJobStatus::Pending,
-                            bytes_downloaded: 0,
-                            total_bytes: None,
-                            error: None,
-                            generation: 1,
-                            control_tx: Some(control_tx),
-                        },
-                    );
-                    store.active_by_model.insert(model, new_job_id);
-                    let snapshot = store
-                        .snapshot(new_job_id)
-                        .ok_or_else(|| "failed to create job snapshot".to_string())?;
-                    (new_job_id, 1, snapshot, Some(control_rx), true)
-                }
-            } else {
-                let job_id = Uuid::new_v4();
-                let (control_tx, control_rx) = watch::channel(DownloadCommand::Run);
-                store.jobs.insert(
-                    job_id,
-                    DownloadJobRecord {
+                    let record = DownloadJobRecord {
                         model,
                         status: DownloadJobStatus::Pending,
                         bytes_downloaded: 0,
@@ -152,13 +145,27 @@ impl DownloadRegistry {
                         error: None,
                         generation: 1,
                         control_tx: Some(control_tx),
-                    },
-                );
+                    };
+                    let snapshot = record.to_snapshot(new_job_id);
+                    store.jobs.insert(new_job_id, record);
+                    store.active_by_model.insert(model, new_job_id);
+                    (new_job_id, 1, snapshot, Some(control_rx), true)
+                }
+            } else {
+                let job_id = Uuid::new_v4();
+                let (control_tx, control_rx) = watch::channel(DownloadCommand::Run);
+                let record = DownloadJobRecord {
+                    model,
+                    status: DownloadJobStatus::Pending,
+                    bytes_downloaded: 0,
+                    total_bytes: None,
+                    error: None,
+                    generation: 1,
+                    control_tx: Some(control_tx),
+                };
+                let snapshot = record.to_snapshot(job_id);
+                store.jobs.insert(job_id, record);
                 store.active_by_model.insert(model, job_id);
-
-                let snapshot = store
-                    .snapshot(job_id)
-                    .ok_or_else(|| "failed to create job snapshot".to_string())?;
 
                 (job_id, 1, snapshot, Some(control_rx), true)
             }
@@ -195,7 +202,7 @@ impl DownloadRegistry {
             job.status = DownloadJobStatus::Paused;
         }
 
-        store.snapshot(job_id)
+        Some(job.to_snapshot(job_id))
     }
 
     pub async fn pause_active(&self, model: WhisperModel) -> Option<DownloadJobSnapshot> {
@@ -224,9 +231,10 @@ impl DownloadRegistry {
             job.generation += 1;
             job.status = DownloadJobStatus::Canceled;
             job.control_tx = None;
+            let snapshot = job.to_snapshot(job_id);
             store.active_by_model.remove(&model);
 
-            (has_worker, store.snapshot(job_id))
+            (has_worker, snapshot)
         };
 
         if !has_live_worker {
@@ -237,7 +245,7 @@ impl DownloadRegistry {
             });
         }
 
-        snapshot
+        Some(snapshot)
     }
 
     pub async fn cancel_active(&self, model: WhisperModel, destination: &PathBuf) -> Option<DownloadJobSnapshot> {
@@ -518,22 +526,7 @@ impl DownloadRegistry {
 
 impl DownloadStore {
     fn snapshot(&self, job_id: Uuid) -> Option<DownloadJobSnapshot> {
-        let job = self.jobs.get(&job_id)?;
-        let progress = match job.total_bytes {
-            Some(total) if total > 0 => Some((job.bytes_downloaded as f64 / total as f64).min(1.0)),
-            Some(_) => Some(1.0),
-            None => None,
-        };
-
-        Some(DownloadJobSnapshot {
-            job_id,
-            model: job.model,
-            status: job.status,
-            bytes_downloaded: job.bytes_downloaded,
-            total_bytes: job.total_bytes,
-            progress,
-            error: job.error.clone(),
-        })
+        self.jobs.get(&job_id).map(|job| job.to_snapshot(job_id))
     }
 }
 
