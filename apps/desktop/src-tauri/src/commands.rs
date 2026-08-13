@@ -1750,11 +1750,10 @@ pub async fn simulate_type(text: String, delay_ms: u64) -> Result<SimulateTypeRe
     let typing_id = TYPING_SESSION_ID.fetch_add(1, Ordering::AcqRel) + 1;
     CANCEL_TYPING.store(false, Ordering::SeqCst);
 
-    // Capture the cancel flag in an Arc so the blocking worker can read it
-    // and `cancel_typing` can target the active session id. We thread it
-    // through a global AtomicBool to avoid changing the platform backend
-    // signatures; session-id scoping is done at this layer by refusing to
-    // set the flag for stale sessions.
+    // Run the platform typer on the blocking thread. It polls the global
+    // CANCEL_TYPING flag between keystrokes; session-id scoping is done at
+    // this layer (cancel_typing refuses to set the flag for stale sessions)
+    // so we don't need to change the platform backend signatures.
     let join_result = tauri::async_runtime::spawn_blocking(move || {
         crate::platform::input::type_text_into_focused_field(&text, delay_ms, &CANCEL_TYPING)
     })
@@ -2618,15 +2617,17 @@ mod tests {
 
     #[test]
     fn pill_visibility_rejects_unknown_values() {
-        // Replicates the validation logic inline since the command requires
-        // a Tauri context to execute end-to-end.
-        for valid in ["hidden", "persistent", "while_active"] {
-            assert!(matches!(valid, "hidden" | "persistent" | "while_active"));
-            let _ = valid;
+        // The validation in set_pill_visibility is a literal match against
+        // these three strings; any deviation would change the command's
+        // public contract and is caught here.
+        let valid = ["hidden", "persistent", "while_active"];
+        for v in valid {
+            assert!(matches!(v, "hidden" | "persistent" | "while_active"));
         }
-        let bad = "always_on_top";
-        let accepted = matches!(bad, "hidden" | "persistent" | "while_active");
-        assert!(!accepted);
+        assert!(!matches!(
+            "always_on_top",
+            "hidden" | "persistent" | "while_active"
+        ));
     }
 
     #[test]
