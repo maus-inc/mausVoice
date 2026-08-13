@@ -2376,6 +2376,43 @@ pub struct RunTerminalCommandResponse {
 /// Maximum number of bytes the AI agent is allowed to read back from an allowed
 /// command. Caps stdout+stderr so a runaway command cannot OOM the app.
 const TERMINAL_COMMAND_MAX_OUTPUT_BYTES: usize = 128 * 1024;
+
+/// Read a child pipe, retaining at most `limit` bytes while still draining the
+/// stream to EOF. Draining matters: if we stopped reading at the limit, a
+/// chatty child would block forever writing into a full pipe buffer and never
+/// reach its own exit, defeating the wall-clock timeout. Memory stays bounded
+/// by `limit` regardless of how much the child emits. Returns the retained
+/// prefix and the total number of bytes the child actually produced.
+fn read_capped<R: std::io::Read>(mut reader: R, limit: usize) -> (Vec<u8>, usize) {
+    let mut retained: Vec<u8> = Vec::new();
+    let mut total = 0usize;
+    let mut chunk = [0u8; 8192];
+    loop {
+        match reader.read(&mut chunk) {
+            Ok(0) => break,
+            Ok(n) => {
+                total += n;
+                if retained.len() < limit {
+                    let take = std::cmp::min(n, limit - retained.len());
+                    retained.extend_from_slice(&chunk[..take]);
+                }
+            }
+            Err(err) if err.kind() == std::io::ErrorKind::Interrupted => continue,
+            Err(_) => break,
+        }
+    }
+    (retained, total)
+}
+
+/// Render a captured stream, appending a marker when the child produced more
+/// than we retained.
+fn format_capped_output(retained: &[u8], total: usize) -> String {
+    let mut text = String::from_utf8_lossy(retained).to_string();
+    if total > retained.len() {
+        text.push_str(&format!("\n...[truncated: {total} bytes total]"));
+    }
+    text
+}
 /// Per-command wall-clock timeout. A hung subprocess must not hang the agent.
 const TERMINAL_COMMAND_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(15);
 
@@ -2591,6 +2628,54 @@ mod tests {
     }
 
     #[test]
+    fn installer_url_accepts_trusted_release_hosts() {
+        assert!(validate_installer_url(
+            &Url::parse("https://github.com/maus-inc/mausVoice/releases/download/v1/app.pkg")
+                .unwrap()
+        )
+        .is_ok());
+        assert!(validate_installer_url(
+            &Url::parse("https://objects.githubusercontent.com/foo/app.pkg").unwrap()
+        )
+        .is_ok());
+    }
+
+    #[test]
+    fn installer_url_rejects_untrusted_hosts_schemes_and_extensions() {
+        // A redirect target on an untrusted host must be refused: this is the
+        // check the redirect policy applies to every hop.
+        assert!(
+            validate_installer_url(&Url::parse("https://evil.com/app.pkg").unwrap()).is_err()
+        );
+        assert!(validate_installer_url(
+            &Url::parse("http://github.com/maus-inc/app.pkg").unwrap()
+        )
+        .is_err());
+        assert!(validate_installer_url(
+            &Url::parse("https://github.com/maus-inc/payload.sh").unwrap()
+        )
+        .is_err());
+    }
+
+    #[test]
+    fn capped_reader_bounds_memory_and_reports_total() {
+        let payload = vec![b'x'; 10_000];
+        let (retained, total) = read_capped(payload.as_slice(), 1_000);
+        assert_eq!(retained.len(), 1_000);
+        assert_eq!(total, 10_000);
+
+        let rendered = format_capped_output(&retained, total);
+        assert!(rendered.contains("truncated: 10000 bytes total"));
+    }
+
+    #[test]
+    fn capped_reader_passes_through_small_output() {
+        let (retained, total) = read_capped(b"hello".as_slice(), 1_000);
+        assert_eq!(total, 5);
+        assert_eq!(format_capped_output(&retained, total), "hello");
+    }
+
+    #[test]
     fn floating_window_allows_localhost() {
         assert!(validate_floating_window_url("http://localhost:1420/").is_ok());
         assert!(validate_floating_window_url("http://127.0.0.1:8080/foo").is_ok());
@@ -2684,67 +2769,70 @@ pub async fn run_terminal_command(command: String) -> Result<RunTerminalCommandR
             cmd.creation_flags(CREATE_NO_WINDOW);
         }
 
-        let child = cmd.stdout(std::process::Stdio::piped())
+        let mut child = cmd
+            .stdout(std::process::Stdio::piped())
             .stderr(std::process::Stdio::piped())
             .spawn()
             .map_err(|err| format!("Failed to spawn {bin}: {err}"))?;
 
-        // Run wait_with_output on a worker thread so we can bound it with a
-        // wall-clock timeout (Command::output/wait_with_output have no
-        // native timeout).
-        let (tx, rx) = std::sync::mpsc::channel();
-        std::thread::spawn(move || {
-            let _ = tx.send(child.wait_with_output());
-        });
+        // Take the pipes and drain them on dedicated threads. Each reader
+        // retains at most TERMINAL_COMMAND_MAX_OUTPUT_BYTES, so a command
+        // streaming gigabytes cannot exhaust memory, and because the readers
+        // keep draining to EOF the child never blocks on a full pipe.
+        let stdout_pipe = child
+            .stdout
+            .take()
+            .ok_or_else(|| format!("Failed to capture stdout of {bin}"))?;
+        let stderr_pipe = child
+            .stderr
+            .take()
+            .ok_or_else(|| format!("Failed to capture stderr of {bin}"))?;
 
-        let output = match rx.recv_timeout(TERMINAL_COMMAND_TIMEOUT) {
-            Ok(Ok(output)) => output,
-            Ok(Err(err)) => return Err(format!("Failed to await {bin}: {err}")),
-            Err(std::sync::mpsc::RecvTimeoutError::Timeout) => {
-                // Worker is still running wait_with_output; we cannot kill
-                // the child from this thread (worker owns it), but the
-                // per-command wall-clock is a best-effort bound. Return a
-                // clear timeout error — the worker will finish whenever the
-                // child exits naturally.
-                return Err(format!(
-                    "Command {bin} timed out after {}s",
-                    TERMINAL_COMMAND_TIMEOUT.as_secs()
-                ));
+        let stdout_reader =
+            std::thread::spawn(move || read_capped(stdout_pipe, TERMINAL_COMMAND_MAX_OUTPUT_BYTES));
+        let stderr_reader =
+            std::thread::spawn(move || read_capped(stderr_pipe, TERMINAL_COMMAND_MAX_OUTPUT_BYTES));
+
+        // Poll for exit so this thread retains ownership of `child` and can
+        // actually kill it on timeout. `wait_with_output` would move the
+        // child into a worker and leave the process unkillable.
+        let deadline = std::time::Instant::now() + TERMINAL_COMMAND_TIMEOUT;
+        let status = loop {
+            match child.try_wait() {
+                Ok(Some(status)) => break status,
+                Ok(None) => {
+                    if std::time::Instant::now() >= deadline {
+                        // Kill the process and reap it so we don't leak a
+                        // zombie; repeated timeouts must not pile up
+                        // long-running children.
+                        let _ = child.kill();
+                        let _ = child.wait();
+                        return Err(format!(
+                            "Command {bin} timed out after {}s and was terminated",
+                            TERMINAL_COMMAND_TIMEOUT.as_secs()
+                        ));
+                    }
+                    std::thread::sleep(std::time::Duration::from_millis(20));
+                }
+                Err(err) => {
+                    let _ = child.kill();
+                    let _ = child.wait();
+                    return Err(format!("Failed to await {bin}: {err}"));
+                }
             }
-            Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => {
-                return Err(format!("Failed to await {bin}: worker thread panicked"));
-            }
         };
 
-        // Bound the output size before allocating Strings.
-        let stdout = if output.stdout.len() > TERMINAL_COMMAND_MAX_OUTPUT_BYTES {
-            let truncated = &output.stdout[..TERMINAL_COMMAND_MAX_OUTPUT_BYTES];
-            let mut s = String::from_utf8_lossy(truncated).to_string();
-            s.push_str(&format!(
-                "\n...[truncated: {} bytes total]",
-                output.stdout.len()
-            ));
-            s
-        } else {
-            String::from_utf8_lossy(&output.stdout).to_string()
-        };
-
-        let stderr = if output.stderr.len() > TERMINAL_COMMAND_MAX_OUTPUT_BYTES {
-            let truncated = &output.stderr[..TERMINAL_COMMAND_MAX_OUTPUT_BYTES];
-            let mut s = String::from_utf8_lossy(truncated).to_string();
-            s.push_str(&format!(
-                "\n...[truncated: {} bytes total]",
-                output.stderr.len()
-            ));
-            s
-        } else {
-            String::from_utf8_lossy(&output.stderr).to_string()
-        };
+        let (stdout_bytes, stdout_total) = stdout_reader
+            .join()
+            .map_err(|_| format!("Failed to read stdout of {bin}"))?;
+        let (stderr_bytes, stderr_total) = stderr_reader
+            .join()
+            .map_err(|_| format!("Failed to read stderr of {bin}"))?;
 
         Ok(RunTerminalCommandResponse {
-            stdout,
-            stderr,
-            exit_code: output.status.code().unwrap_or(-1),
+            stdout: format_capped_output(&stdout_bytes, stdout_total),
+            stderr: format_capped_output(&stderr_bytes, stderr_total),
+            exit_code: status.code().unwrap_or(-1),
         })
     })
     .await
@@ -2788,6 +2876,29 @@ pub fn check_app_location_writable() -> Result<bool, String> {
     }
 }
 
+/// Maximum size we are willing to download for a `.pkg` installer.
+const INSTALLER_MAX_BYTES: u64 = 250 * 1024 * 1024;
+
+/// Validate an installer URL (scheme, host allow-list, `.pkg` path). Applied
+/// to the initial URL *and* to every redirect hop, because the redirect chain
+/// is attacker-influenced: an allowed host could otherwise bounce us to an
+/// untrusted origin whose bytes we would write and execute.
+fn validate_installer_url(url: &Url) -> Result<(), String> {
+    if url.scheme() != "https" {
+        return Err("Installer URL must use https".to_string());
+    }
+    let host = url.host_str().unwrap_or("");
+    if !matches!(host, "github.com" | "objects.githubusercontent.com") {
+        return Err(format!(
+            "Installer URL host {host:?} is not in the trusted allow-list"
+        ));
+    }
+    if !url.path().ends_with(".pkg") {
+        return Err("Installer URL must point to a .pkg file".to_string());
+    }
+    Ok(())
+}
+
 /// Downloads a `.pkg` installer to a temp directory and opens it with
 /// macOS Installer.app. This is used as a fallback when the normal in-place
 /// updater cannot write to the app's install location.
@@ -2799,19 +2910,7 @@ pub async fn download_and_open_mac_installer(url: String) -> Result<(), String> 
     // any future caller (including a compromised webview) must not be able
     // to make us download+execute arbitrary files.
     let parsed = Url::parse(&url).map_err(|e| format!("Invalid URL: {e}"))?;
-    if parsed.scheme() != "https" {
-        return Err("Installer URL must use https".to_string());
-    }
-    let host = parsed.host_str().unwrap_or("");
-    if !matches!(host, "github.com" | "objects.githubusercontent.com") {
-        return Err(format!(
-            "Installer URL host {host:?} is not in the trusted allow-list"
-        ));
-    }
-    let path = parsed.path();
-    if !path.ends_with(".pkg") {
-        return Err("Installer URL must point to a .pkg file".to_string());
-    }
+    validate_installer_url(&parsed)?;
 
     // Use a unique temp filename (not the URL-derived basename) so a crafted
     // path like "../../../LaunchAgents/foo" cannot escape the temp dir. The
@@ -2827,15 +2926,53 @@ pub async fn download_and_open_mac_installer(url: String) -> Result<(), String> 
     // Remove any stale previous download (best-effort).
     let _ = std::fs::remove_file(&dest);
 
-    let response = reqwest::get(parsed).await.map_err(|e| e.to_string())?;
+    // Validate every redirect hop rather than trusting the initial URL: the
+    // default policy would silently follow an allowed host to an arbitrary one.
+    let redirect_policy = reqwest::redirect::Policy::custom(|attempt| {
+        if attempt.previous().len() >= 10 {
+            return attempt.error("too many redirects");
+        }
+        match validate_installer_url(attempt.url()) {
+            Ok(()) => attempt.follow(),
+            Err(err) => attempt.error(err),
+        }
+    });
+    let client = reqwest::Client::builder()
+        .redirect(redirect_policy)
+        .build()
+        .map_err(|e| e.to_string())?;
+
+    let mut response = client
+        .get(parsed)
+        .send()
+        .await
+        .map_err(|e| e.to_string())?;
     if !response.status().is_success() {
         return Err(format!("Download failed with status {}", response.status()));
     }
-    let bytes = response.bytes().await.map_err(|e| e.to_string())?;
-    if bytes.len() > 250 * 1024 * 1024 {
-        return Err("Installer download exceeded 250MiB safety limit".to_string());
+
+    // Reject an oversized advertised length before transferring anything.
+    if let Some(len) = response.content_length() {
+        if len > INSTALLER_MAX_BYTES {
+            return Err("Installer download exceeded 250MiB safety limit".to_string());
+        }
     }
-    std::fs::write(&dest, &bytes).map_err(|e| e.to_string())?;
+
+    // Stream to disk, enforcing the cap as we go so a server that lies about
+    // (or omits) Content-Length cannot exhaust memory or fill the disk.
+    let mut file = std::fs::File::create(&dest).map_err(|e| e.to_string())?;
+    let mut written: u64 = 0;
+    while let Some(chunk) = response.chunk().await.map_err(|e| e.to_string())? {
+        written += chunk.len() as u64;
+        if written > INSTALLER_MAX_BYTES {
+            drop(file);
+            let _ = std::fs::remove_file(&dest);
+            return Err("Installer download exceeded 250MiB safety limit".to_string());
+        }
+        std::io::Write::write_all(&mut file, &chunk).map_err(|e| e.to_string())?;
+    }
+    std::io::Write::flush(&mut file).map_err(|e| e.to_string())?;
+    drop(file);
 
     std::process::Command::new("open")
         .arg(&dest)
