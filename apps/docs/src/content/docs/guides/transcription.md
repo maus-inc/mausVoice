@@ -26,14 +26,13 @@ API mode sends your audio to the transcription provider of your choice — for e
 
 ## Cloud
 
-Cloud mode routes audio through mausVoice's cloud service, which handles the Groq API call on your behalf. This is the simplest option — no API key needed, just sign in with your mausVoice account.
+Cloud mode routes audio through mausVoice's cloud service, which handles the Groq API call on your behalf. This is the simplest option — no API key needed.
 
 ## Choosing a Mode
 
-| Consideration             | Local | API  | Cloud |
-| ------------------------- | ----- | ---- | ----- |
-| Privacy                   | Best  | Good | Good  |
-| Accuracy                  | Good  | Best | Best  |
-| Internet required         | No    | Yes  | Yes   |
-| API key required          | No    | Yes  | No    |
-| mausVoice account required | No    | No   | Yes   |
+| Consideration     | Local | API  | Cloud |
+| ----------------- | ----- | ---- | ----- |
+| Privacy           | Best  | Good | Good  |
+| Accuracy          | Good  | Best | Best  |
+| Internet required | No    | Yes  | Yes   |
+| API key required  | No    | Yes  | No    |
