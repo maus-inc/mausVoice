@@ -75,7 +75,7 @@ jobs:
             dist/sitemap-index.xml
           grep -Fq 'https://maus-inc.github.io/mausVoice/docs/assets/mausvoice-banner.png' \
             ../../index.html
-          grep -Fq 'docs/assets/mausvoice-banner.png' \
+          grep -Fq 'docsBase}assets/mausvoice-banner.png' \
             astro.config.mjs
       - name: Assemble Pages artifact (landing page + docs + assets)
         run: |
