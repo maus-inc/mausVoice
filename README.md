@@ -52,17 +52,17 @@ Grab Your [Free Groq↗](https://console.groq.com/keys) and [Free Deepgram↗](h
 
 <p align="center">
   <a href="https://github.com/maus-inc/mausVoice/releases">
-    <img src="https://shieldcn.dev/badge/Windows-Download-black.svg?logo=data%3Aimage%2Fsvg%2Bxml%3Bbase64%2CPHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCAyNCAyNCI%2BPHBhdGggZmlsbD0iI2ZmZiIgZD0iTTAgMy40NDlMOS43NSAyLjF2OS40NTFIMG0xMC45NDktOS42MDJMMjQgMHYxMS40SDEwLjk0OU0wIDEyLjZoOS43NXY5LjQ1MUwwIDIwLjY5OU0xMC45NDkgMTIuNkgyNFYyNGwtMTIuOS0xLjgwMSIvPjwvc3ZnPg%3D%3D" alt="Download mausVoice for Windows" />
+    <img src="https://shieldcn.dev/badge/-black.svg?logo=data%3Aimage%2Fsvg%2Bxml%3Bbase64%2CPHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCAyNCAyNCI%2BPHBhdGggZmlsbD0iI2ZmZiIgZD0iTTAgMy40NDlMOS43NSAyLjF2OS40NTFIMG0xMC45NDktOS42MDJMMjQgMHYxMS40SDEwLjk0OU0wIDEyLjZoOS43NXY5LjQ1MUwwIDIwLjY5OU0xMC45NDkgMTIuNkgyNFYyNGwtMTIuOS0xLjgwMSIvPjwvc3ZnPg%3D%3D" alt="Download mausVoice for Windows" height="32" />
   </a>
   <a href="https://github.com/maus-inc/mausVoice/releases">
-    <img src="https://shieldcn.dev/badge/macOS-Download-black.svg?logo=apple" alt="Download mausVoice for macOS" />
+    <img src="https://shieldcn.dev/badge/-black.svg?logo=apple" alt="Download mausVoice for macOS" height="32" />
   </a>
   <a href="https://github.com/maus-inc/mausVoice/releases">
-    <img src="https://shieldcn.dev/badge/Linux-Download-black.svg?logo=linux" alt="Download mausVoice for Linux" />
+    <img src="https://shieldcn.dev/badge/-black.svg?logo=linux" alt="Download mausVoice for Linux" height="32" />
   </a>
 </p>
 
-Download links point at the latest release for your platform (`.exe` on Windows, `.dmg` on macOS, `.AppImage` or `.deb` on Linux).
+Download links open the releases page, where you'll find the latest `.exe` (Windows), `.dmg` (macOS), and `.AppImage`/`.deb` (Linux) for your platform.
 
 <br>
 
