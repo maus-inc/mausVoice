@@ -19,15 +19,12 @@ on:
       - ".github/workflows/test-docs.yml"
   workflow_dispatch:
 
-permissions:
-  contents: read
-  pages: write
-  id-token: write
-
 jobs:
   build:
     name: Build Docs
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
     steps:
       - name: Checkout source
         uses: actions/checkout@v5
@@ -86,6 +83,10 @@ jobs:
     needs: build
     if: github.ref == 'refs/heads/main' && github.event_name == 'push'
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pages: write
+      id-token: write
     environment:
       name: github-pages
       url: ${{ steps.deployment.outputs.page_url }}
