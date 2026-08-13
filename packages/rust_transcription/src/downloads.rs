@@ -48,6 +48,7 @@ struct DownloadJobRecord {
     total_bytes: Option<u64>,
     error: Option<String>,
     generation: u64,
+    is_finalizing: bool,
     control_tx: Option<watch::Sender<DownloadCommand>>,
 }
 
@@ -102,6 +103,7 @@ impl DownloadRegistry {
                 total_bytes: Some(existing_size),
                 error: None,
                 generation: 1,
+                is_finalizing: false,
                 control_tx: None,
             };
             let snapshot = record.to_snapshot(job_id);
@@ -115,7 +117,7 @@ impl DownloadRegistry {
 
             if let Some(existing_id) = store.active_by_model.get(&model).copied() {
                 if let Some(record) = store.jobs.get_mut(&existing_id) {
-                    if record.status == DownloadJobStatus::Paused {
+                    if record.status == DownloadJobStatus::Paused && !record.is_finalizing {
                         // Signal any previous worker to stop if it hasn't already
                         if let Some(tx) = &record.control_tx {
                             let _ = tx.send(DownloadCommand::Pause);
@@ -144,6 +146,7 @@ impl DownloadRegistry {
                         total_bytes: None,
                         error: None,
                         generation: 1,
+                        is_finalizing: false,
                         control_tx: Some(control_tx),
                     };
                     let snapshot = record.to_snapshot(new_job_id);
@@ -161,6 +164,7 @@ impl DownloadRegistry {
                     total_bytes: None,
                     error: None,
                     generation: 1,
+                    is_finalizing: false,
                     control_tx: Some(control_tx),
                 };
                 let snapshot = record.to_snapshot(job_id);
@@ -195,6 +199,10 @@ impl DownloadRegistry {
             return None;
         }
 
+        if job.is_finalizing || job.status == DownloadJobStatus::Completed {
+            return Some(job.to_snapshot(job_id));
+        }
+
         if matches!(job.status, DownloadJobStatus::Running | DownloadJobStatus::Pending) {
             if let Some(control_tx) = &job.control_tx {
                 let _ = control_tx.send(DownloadCommand::Pause);
@@ -214,19 +222,20 @@ impl DownloadRegistry {
     }
 
     pub async fn cancel_job(&self, model: WhisperModel, job_id: Uuid, destination: &PathBuf) -> Option<DownloadJobSnapshot> {
-        let (has_live_worker, snapshot) = {
+        let (snapshot, temp_file_path) = {
             let mut store = self.inner.lock().await;
             let job = store.jobs.get_mut(&job_id)?;
             if job.model != model {
                 return None;
             }
 
-            let has_worker = if let Some(control_tx) = &job.control_tx {
+            if job.is_finalizing || job.status == DownloadJobStatus::Completed {
+                return Some(job.to_snapshot(job_id));
+            }
+
+            if let Some(control_tx) = &job.control_tx {
                 let _ = control_tx.send(DownloadCommand::Cancel);
-                true
-            } else {
-                false
-            };
+            }
 
             job.generation += 1;
             job.status = DownloadJobStatus::Canceled;
@@ -234,16 +243,14 @@ impl DownloadRegistry {
             let snapshot = job.to_snapshot(job_id);
             store.active_by_model.remove(&model);
 
-            (has_worker, snapshot)
-        };
-
-        if !has_live_worker {
             let filename = destination.file_name().and_then(|name| name.to_str()).unwrap_or("model.bin");
             let temp_path = destination.with_file_name(format!("{filename}.{job_id}.download"));
-            tokio::spawn(async move {
-                let _ = tokio::fs::remove_file(temp_path).await;
-            });
-        }
+            (snapshot, temp_path)
+        };
+
+        tokio::spawn(async move {
+            let _ = tokio::fs::remove_file(temp_file_path).await;
+        });
 
         Some(snapshot)
     }
@@ -398,41 +405,74 @@ impl DownloadRegistry {
             return Ok(());
         }
 
-        // Before finalizing to destination, ensure generation is still valid and job is running or pending
-        let should_finalize = {
-            let store = self.inner.lock().await;
-            if let Some(job) = store.jobs.get(&job_id) {
-                job.generation == generation && matches!(job.status, DownloadJobStatus::Pending | DownloadJobStatus::Running)
+        // Atomically claim finalization while holding the registry lock.
+        // Once claimed, pause and cancel requests will not override finalization.
+        if !self.claim_finalization(job_id, generation).await {
+            let is_canceled = {
+                let store = self.inner.lock().await;
+                store
+                    .jobs
+                    .get(&job_id)
+                    .map(|j| j.status == DownloadJobStatus::Canceled || j.generation != generation)
+                    .unwrap_or(true)
+            };
+            if is_canceled {
+                let _ = tokio::fs::remove_file(&temp_path).await;
             } else {
-                false
+                let _ = file.flush().await;
+                let _ = file.sync_all().await;
             }
-        };
-
-        if !should_finalize {
             return Ok(());
         }
 
-        file.flush()
-            .await
-            .map_err(|err| format!("failed to flush model file: {err}"))?;
-        file.sync_all()
-            .await
-            .map_err(|err| format!("failed to sync model file: {err}"))?;
-
-        if destination.exists() {
-            tokio::fs::remove_file(&destination)
-                .await
-                .map_err(|err| format!("failed to replace existing model file: {err}"))?;
+        if let Err(err) = file.flush().await {
+            let _ = tokio::fs::remove_file(&temp_path).await;
+            let msg = format!("failed to flush model file: {err}");
+            self.mark_failed(job_id, generation, model, msg.clone()).await;
+            return Err(msg);
+        }
+        if let Err(err) = file.sync_all().await {
+            let _ = tokio::fs::remove_file(&temp_path).await;
+            let msg = format!("failed to sync model file: {err}");
+            self.mark_failed(job_id, generation, model, msg.clone()).await;
+            return Err(msg);
         }
 
-        tokio::fs::rename(&temp_path, &destination)
-            .await
-            .map_err(|err| format!("failed to finalize model file: {err}"))?;
+        if destination.exists() {
+            if let Err(err) = tokio::fs::remove_file(&destination).await {
+                let _ = tokio::fs::remove_file(&temp_path).await;
+                let msg = format!("failed to replace existing model file: {err}");
+                self.mark_failed(job_id, generation, model, msg.clone()).await;
+                return Err(msg);
+            }
+        }
+
+        if let Err(err) = tokio::fs::rename(&temp_path, &destination).await {
+            let _ = tokio::fs::remove_file(&temp_path).await;
+            let msg = format!("failed to finalize model file: {err}");
+            self.mark_failed(job_id, generation, model, msg.clone()).await;
+            return Err(msg);
+        }
 
         self.mark_completed(job_id, generation, model, downloaded, total_bytes)
             .await;
 
         Ok(())
+    }
+
+    async fn claim_finalization(&self, job_id: Uuid, generation: u64) -> bool {
+        let mut store = self.inner.lock().await;
+        if let Some(job) = store.jobs.get_mut(&job_id) {
+            if job.generation == generation
+                && matches!(job.status, DownloadJobStatus::Pending | DownloadJobStatus::Running)
+                && !job.is_finalizing
+            {
+                job.is_finalizing = true;
+                job.control_tx = None;
+                return true;
+            }
+        }
+        false
     }
 
     async fn mark_running(&self, job_id: Uuid, generation: u64) -> bool {
@@ -450,7 +490,7 @@ impl DownloadRegistry {
     async fn mark_paused(&self, job_id: Uuid, generation: u64) {
         let mut store = self.inner.lock().await;
         if let Some(job) = store.jobs.get_mut(&job_id) {
-            if job.generation == generation {
+            if job.generation == generation && !job.is_finalizing {
                 job.status = DownloadJobStatus::Paused;
                 job.control_tx = None;
             }
@@ -462,6 +502,7 @@ impl DownloadRegistry {
         if let Some(job) = store.jobs.get_mut(&job_id) {
             if job.generation == generation {
                 job.status = DownloadJobStatus::Canceled;
+                job.is_finalizing = false;
                 job.control_tx = None;
                 store.active_by_model.remove(&model);
             }
@@ -494,11 +535,12 @@ impl DownloadRegistry {
     ) {
         let mut store = self.inner.lock().await;
         if let Some(job) = store.jobs.get_mut(&job_id) {
-            if job.generation == generation && matches!(job.status, DownloadJobStatus::Pending | DownloadJobStatus::Running) {
+            if job.generation == generation {
                 job.status = DownloadJobStatus::Completed;
                 job.bytes_downloaded = downloaded;
                 job.total_bytes = total_bytes.or(Some(downloaded));
                 job.error = None;
+                job.is_finalizing = false;
                 job.control_tx = None;
                 store.active_by_model.remove(&model);
             }
@@ -514,9 +556,10 @@ impl DownloadRegistry {
     ) {
         let mut store = self.inner.lock().await;
         if let Some(job) = store.jobs.get_mut(&job_id) {
-            if job.generation == generation && matches!(job.status, DownloadJobStatus::Pending | DownloadJobStatus::Running) {
+            if job.generation == generation {
                 job.status = DownloadJobStatus::Failed;
                 job.error = Some(error_message);
+                job.is_finalizing = false;
                 job.control_tx = None;
                 store.active_by_model.remove(&model);
             }
@@ -556,6 +599,7 @@ mod tests {
                     total_bytes: Some(1000),
                     error: None,
                     generation: 1,
+                    is_finalizing: false,
                     control_tx: None,
                 },
             );
@@ -577,5 +621,90 @@ mod tests {
         registry.mark_paused(job_id, 1).await;
         let current = registry.get_job(WhisperModel::Tiny, job_id).await.unwrap();
         assert_eq!(current.status, DownloadJobStatus::Pending);
+    }
+
+    #[tokio::test]
+    async fn test_claim_finalization_prevents_pause_or_cancel() {
+        let registry = DownloadRegistry::default();
+        let job_id = Uuid::new_v4();
+        {
+            let mut store = registry.inner.lock().await;
+            store.jobs.insert(
+                job_id,
+                DownloadJobRecord {
+                    model: WhisperModel::Tiny,
+                    status: DownloadJobStatus::Running,
+                    bytes_downloaded: 1000,
+                    total_bytes: Some(1000),
+                    error: None,
+                    generation: 1,
+                    is_finalizing: false,
+                    control_tx: None,
+                },
+            );
+            store.active_by_model.insert(WhisperModel::Tiny, job_id);
+        }
+
+        let claimed = registry.claim_finalization(job_id, 1).await;
+        assert!(claimed);
+
+        // Subsequent pause should not change status to Paused
+        let paused = registry.pause_job(WhisperModel::Tiny, job_id).await;
+        assert_ne!(paused.unwrap().status, DownloadJobStatus::Paused);
+
+        // Subsequent cancel should not cancel finalizing job
+        let dest = PathBuf::from("/tmp/fake-model.bin");
+        let canceled = registry.cancel_job(WhisperModel::Tiny, job_id, &dest).await;
+        assert_ne!(canceled.unwrap().status, DownloadJobStatus::Canceled);
+
+        // Worker marks completed
+        registry
+            .mark_completed(job_id, 1, WhisperModel::Tiny, 1000, Some(1000))
+            .await;
+        let final_job = registry.get_job(WhisperModel::Tiny, job_id).await.unwrap();
+        assert_eq!(final_job.status, DownloadJobStatus::Completed);
+    }
+
+    #[tokio::test]
+    async fn test_cancel_job_cleans_up_temp_file() {
+        let temp_dir = tempfile::tempdir().unwrap();
+        let destination = temp_dir.path().join("model.bin");
+        let registry = DownloadRegistry::default();
+        let job_id = Uuid::new_v4();
+
+        let filename = destination
+            .file_name()
+            .and_then(|n| n.to_str())
+            .unwrap();
+        let temp_file = destination.with_file_name(format!("{filename}.{job_id}.download"));
+        tokio::fs::write(&temp_file, b"partial bytes").await.unwrap();
+        assert!(temp_file.exists());
+
+        {
+            let mut store = registry.inner.lock().await;
+            store.jobs.insert(
+                job_id,
+                DownloadJobRecord {
+                    model: WhisperModel::Tiny,
+                    status: DownloadJobStatus::Running,
+                    bytes_downloaded: 50,
+                    total_bytes: Some(100),
+                    error: None,
+                    generation: 1,
+                    is_finalizing: false,
+                    control_tx: None,
+                },
+            );
+            store.active_by_model.insert(WhisperModel::Tiny, job_id);
+        }
+
+        let canceled = registry
+            .cancel_job(WhisperModel::Tiny, job_id, &destination)
+            .await;
+        assert_eq!(canceled.unwrap().status, DownloadJobStatus::Canceled);
+
+        // Wait for async deletion task
+        tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
+        assert!(!temp_file.exists());
     }
 }
