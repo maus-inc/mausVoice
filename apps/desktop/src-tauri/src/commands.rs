@@ -1658,13 +1658,8 @@ pub async fn paste(
     // Re-entry guard: a paste in progress owns the clipboard and the
     // synthetic keystroke pipeline. Racing a second paste interleaves both
     // clipboard swaps and keystrokes and produces garbled output.
-    if PASTE_IN_PROGRESS
-        .compare_exchange(false, true, Ordering::AcqRel, Ordering::Acquire)
-        .is_err()
-    {
-        return Err("Paste is already in progress".to_string());
-    }
-    let _paste_guard = ReentryGuard { flag: &PASTE_IN_PROGRESS };
+    let _paste_guard =
+        ReentryGuard::acquire(&PASTE_IN_PROGRESS).map_err(|_| "Paste is already in progress".to_string())?;
 
     // Probe the focused target first. If it clearly can't accept text, write
     // the transcript to the clipboard and skip the paste keystroke entirely —
@@ -1748,13 +1743,8 @@ pub async fn simulate_type(text: String, delay_ms: u64) -> Result<SimulateTypeRe
 
     // Re-entry guard: two concurrent `simulate_type` calls would race the
     // global CANCEL_TYPING flag and interleave keystrokes. Serialize them.
-    if SIMULATE_TYPE_IN_PROGRESS
-        .compare_exchange(false, true, Ordering::AcqRel, Ordering::Acquire)
-        .is_err()
-    {
-        return Err("Simulated typing is already in progress".to_string());
-    }
-    let _type_guard = ReentryGuard { flag: &SIMULATE_TYPE_IN_PROGRESS };
+    let _type_guard = ReentryGuard::acquire(&SIMULATE_TYPE_IN_PROGRESS)
+        .map_err(|_| "Simulated typing is already in progress".to_string())?;
 
     // Allocate a fresh session id and reset the cancel flag for this run.
     let typing_id = TYPING_SESSION_ID.fetch_add(1, Ordering::AcqRel) + 1;
@@ -2810,9 +2800,10 @@ pub async fn download_and_open_mac_installer(url: String) -> Result<(), String> 
         return Err("Installer URL must use https".to_string());
     }
     let host = parsed.host_str().unwrap_or("");
-    let trusted_hosts = ["github.com", "objects.githubusercontent.com"];
-    if !trusted_hosts.iter().any(|h| host == *h) {
-        return Err(format!("Installer URL host {host:?} is not in the trusted allow-list"));
+    if !matches!(host, "github.com" | "objects.githubusercontent.com") {
+        return Err(format!(
+            "Installer URL host {host:?} is not in the trusted allow-list"
+        ));
     }
     let path = parsed.path();
     if !path.ends_with(".pkg") {
@@ -2967,7 +2958,8 @@ pub async fn floating_window_create(
             // and the GitHub Pages docs site. Other remote origins are
             // rejected — they would otherwise have full IPC access via the
             // floating-* capability.
-            let is_localhost = host == "localhost" || host == "127.0.0.1" || host == "[::1]";
+            let is_localhost =
+                matches!(host, "localhost" | "127.0.0.1" | "[::1]");
             let is_docs_site = host == "maus-inc.github.io"
                 && parsed_url.path().starts_with("/mausVoice/");
             if !is_localhost && !is_docs_site {
