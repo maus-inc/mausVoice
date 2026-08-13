@@ -17,7 +17,7 @@ pnpm --filter docs build
 
 Use relative links for other docs pages. A Markdown URL beginning `/` points at the GitHub Pages domain root, not `/mausVoice/docs/`, and CI rejects it. Static files in `apps/docs/public/` are served under the docs base; configuration metadata that needs an absolute URL must include the full base.
 
-`src/styles/custom.css` loads tracked Satoshi/TAN Paradiso files, tightens Starlight typography, and targets `.site-title span[translate="no"]` so the masthead does not depend on generated Astro class hashes. `src/pages/404.astro` owns the custom page because Starlight's default 404 is disabled.
+`src/styles/custom.css` loads tracked Satoshi/TAN Paradiso files, tightens Starlight typography, and targets the `.site-title .site-title-brand` and `.site-title .site-title-suffix` spans so the masthead does not depend on generated Astro class hashes. A `SiteTitle` component override (`src/components/SiteTitle.astro`, registered in `astro.config.mjs`) splits the title into the cursive `mausVoice` brand and the Satoshi `Docs` suffix those rules style. `src/pages/404.astro` owns the custom page because Starlight's default 404 is disabled.
 
 The Pages workflow does more than upload `apps/docs/dist`. It assembles root `index.html`, the root custom `404.html`, `marketing/`, Astro output under `docs/`, shared `docs/assets/`, and root machine-readable files into one artifact. Preserve that topology when changing links or asset paths.
 
