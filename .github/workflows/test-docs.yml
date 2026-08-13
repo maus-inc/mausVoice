@@ -11,6 +11,7 @@ on:
       - "docs/assets/**"
       - "sitemap.xml"
       - "robots.txt"
+      - "llms.txt"
       - "scripts/ci/pr28-contracts.test.mjs"
       - "pnpm-lock.yaml"
       - ".github/workflows/test-docs.yml"
@@ -24,6 +25,7 @@ on:
       - "docs/assets/**"
       - "sitemap.xml"
       - "robots.txt"
+      - "llms.txt"
       - "scripts/ci/pr28-contracts.test.mjs"
       - "pnpm-lock.yaml"
       - ".github/workflows/test-docs.yml"
@@ -67,34 +69,37 @@ jobs:
         working-directory: apps/docs
         run: |
           test -f ../../docs/assets/mausvoice-banner.png
-          grep -Fq 'https://maus-inc.github.io/mausVoice/getting-started/introduction/' \
+          grep -Fq 'https://maus-inc.github.io/mausVoice/docs/getting-started/introduction/' \
             dist/getting-started/introduction/index.html
-          grep -Fq 'https://maus-inc.github.io/mausVoice/sitemap-0.xml' \
+          grep -Fq 'https://maus-inc.github.io/mausVoice/docs/sitemap-0.xml' \
             dist/sitemap-index.xml
           grep -Fq 'https://maus-inc.github.io/mausVoice/docs/assets/mausvoice-banner.png' \
             ../../index.html
           grep -Fq 'docs/assets/mausvoice-banner.png' \
             astro.config.mjs
       - name: Assemble Pages artifact (landing page + docs + assets)
-        # Option B: keep index.html at the site root and publish the built
-        # docs underneath /mausVoice/ (matches the existing base). The legacy
-        # Pages source must be switched to "GitHub Actions" for this to publish.
         run: |
-          mkdir -p publish/mausVoice publish/marketing/assets publish/docs/assets
-          # Landing page + its referenced root assets
+          rm -rf publish
+          mkdir -p publish/docs/assets
           cp index.html publish/index.html
-          cp -r marketing/assets/. publish/marketing/assets/
+          cp -r marketing publish/marketing
+          cp -r apps/docs/dist/. publish/docs/
           cp -r docs/assets/. publish/docs/assets/
-          cp sitemap.xml robots.txt publish/ 2>/dev/null || true
-          # Built docs (Astro already bakes the /mausVoice/ base into URLs)
-          cp -r apps/docs/dist/. publish/mausVoice/
+          cp sitemap.xml robots.txt llms.txt publish/
       - name: Smoke test assembled artifact
         run: |
           test -f publish/index.html
-          test -f publish/mausVoice/getting-started/introduction/index.html
-          test -f publish/mausVoice/docs/assets/fonts/Satoshi-Medium.ttf
           test -f publish/marketing/assets/logo.png
+          test -f publish/marketing/assets/vendor/gsap.min.js
+          test -f publish/docs/getting-started/introduction/index.html
+          test -f publish/docs/assets/fonts/Satoshi-Medium.ttf
           test -f publish/docs/assets/mausvoice-banner.png
+          test -f publish/llms.txt
+          test -f publish/docs/llms.txt
+          grep -Fq 'https://maus-inc.github.io/mausVoice/docs/getting-started/introduction/' \
+            publish/docs/getting-started/introduction/index.html
+          grep -Fq 'https://maus-inc.github.io/mausVoice/docs/sitemap-0.xml' \
+            publish/docs/sitemap-index.xml
       - name: Upload Pages artifact
         uses: actions/upload-pages-artifact@v3
         with:
