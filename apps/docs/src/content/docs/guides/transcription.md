@@ -18,9 +18,9 @@ Local mode is ideal when privacy is a priority or when you don't have a reliable
 
 ## API
 
-API mode sends your audio to the transcription provider of your choice — for example Groq's Whisper, Deepgram (`nova-3`), or OpenAI's Whisper. This requires an API key from that provider, which you can add in settings.
+API mode sends your audio to the transcription provider of your choice — for example Groq's Whisper, Deepgram (`nova-3`), or OpenAI's Whisper. Most providers need an API key, which you add in settings; self-hosted providers such as Speaches or a local OpenAI-compatible endpoint work without one.
 
-- Your API key is encrypted and stored locally.
+- Any API key you enter is encrypted and stored locally.
 - Transcription quality is generally higher than the local `tiny` model since it uses a larger model.
 - Requires an internet connection.
 
@@ -30,9 +30,9 @@ Cloud mode routes audio through mausVoice's cloud service, which handles the Gro
 
 ## Choosing a Mode
 
-| Consideration     | Local | API  | Cloud |
-| ----------------- | ----- | ---- | ----- |
-| Privacy           | Best  | Good | Good  |
-| Accuracy          | Good  | Best | Best  |
-| Internet required | No    | Yes  | Yes   |
-| API key required  | No    | Yes  | No    |
+| Consideration     | Local | API                 | Cloud |
+| ----------------- | ----- | ------------------- | ----- |
+| Privacy           | Best  | Good                | Good  |
+| Accuracy          | Good  | Best                | Best  |
+| Internet required | No    | Yes                 | Yes   |
+| API key required  | No    | Depends on provider | No    |

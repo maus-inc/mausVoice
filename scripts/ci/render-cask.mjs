@@ -24,6 +24,10 @@ if (!sha256) {
   console.error("SHA256 is required");
   process.exit(1);
 }
+if (!/^[0-9a-f]{64}$/i.test(sha256)) {
+  console.error("SHA256 must be a 64-character hexadecimal digest");
+  process.exit(1);
+}
 if (!tag) {
   console.error("TAG is required");
   process.exit(1);

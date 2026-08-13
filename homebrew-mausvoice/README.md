@@ -28,8 +28,10 @@ pre-releases. This means:
 
 - `brew livecheck mausvoice-desktop` and `brew outdated --cask` automatically
   report the newest published release (including pre-releases).
-- The download URL is templated on `version`, so a new release is a one-line
-  version bump.
+- The download URL is templated on the release `tag` and asset `version`. A
+  published cask is rendered from the repo template with the exact `version`,
+  `tag`, and `sha256` (see "How the tap is published" below) — it is not edited
+  by hand.
 
 Why not fully "latest" URL: the release asset is named with its version
 (`mausVoice_<version>_universal.dmg`), and because every release is currently a
