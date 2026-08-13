@@ -471,34 +471,6 @@ pub async fn user_preferences_get(
 
 #[tauri::command]
 #[specta::specta]
-pub async fn start_google_sign_in(
-    app_handle: AppHandle,
-    config: State<'_, crate::state::GoogleOAuthState>,
-) -> Result<crate::system::google_oauth::GoogleAuthEventPayload, String> {
-    let config = config.config().ok_or_else(|| {
-        "Google OAuth client id/secret not configured. Set MAUSVOICE_GOOGLE_CLIENT_ID and MAUSVOICE_GOOGLE_CLIENT_SECRET."
-            .to_string()
-    })?;
-
-    let result = crate::system::google_oauth::start_google_oauth(&app_handle, config).await?;
-
-    // Keep emitting the event for backward compatibility with existing
-    // listeners (e.g. the mausVoice desktop app itself). Callers that invoke
-    // from a webview without the `event.listen` capability can now just use
-    // the returned payload directly.
-    app_handle
-        .emit_to(
-            EventTarget::any(),
-            crate::system::google_oauth::GOOGLE_AUTH_EVENT,
-            result.payload.clone(),
-        )
-        .map_err(|err| err.to_string())?;
-
-    Ok(result.payload)
-}
-
-#[tauri::command]
-#[specta::specta]
 pub fn list_microphones() -> Vec<crate::platform::audio::InputDeviceDescriptor> {
     crate::platform::audio::list_input_devices()
 }
@@ -2854,58 +2826,6 @@ pub fn get_system_volume() -> Result<f64, String> {
 pub fn set_system_volume(volume: f64) -> Result<(), String> {
     let clamped = volume.clamp(0.0, 1.0);
     crate::platform::volume::set_system_volume(clamped)
-}
-
-#[tauri::command]
-#[specta::specta]
-pub async fn auth_sign_in_with_custom_token(
-    custom_token: String,
-    session: State<'_, crate::system::auth_session::AuthSession>,
-) -> Result<(), String> {
-    session
-        .sign_in_with_custom_token(&custom_token)
-        .await
-        .map_err(|err| err.to_user_string())
-}
-
-#[tauri::command]
-#[specta::specta]
-pub async fn auth_mint_custom_token(
-    session: State<'_, crate::system::auth_session::AuthSession>,
-) -> Result<String, String> {
-    session
-        .mint_custom_token()
-        .await
-        .map_err(|err| err.to_user_string())
-}
-
-#[tauri::command]
-#[specta::specta]
-pub async fn auth_sign_out(
-    app_handle: AppHandle,
-    session: State<'_, crate::system::auth_session::AuthSession>,
-) -> Result<(), String> {
-    session
-        .sign_out(&app_handle)
-        .await
-        .map_err(|err| err.to_user_string())
-}
-
-#[tauri::command]
-#[specta::specta]
-pub fn return_to_shell(app_handle: AppHandle) -> Result<(), String> {
-    crate::system::auth_session::navigate_main_to_built_in(&app_handle)
-}
-
-#[tauri::command]
-#[specta::specta]
-pub async fn auth_is_signed_in(
-    session: State<'_, crate::system::auth_session::AuthSession>,
-) -> Result<bool, String> {
-    session
-        .is_signed_in()
-        .await
-        .map_err(|err| err.to_user_string())
 }
 
 #[derive(serde::Deserialize, specta::Type)]
