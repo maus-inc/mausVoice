@@ -108,7 +108,12 @@ impl TranscriptionEngine {
 
         let model_path_str = input.model_path.to_str().unwrap_or_default();
         if model_path_str.ends_with(".onnx") {
-            return self.transcribe_onnx_blocking(&input);
+            let device = self.resolve_device_blocking(input.device_id.as_deref())?;
+            let text = self.decode_onnx_audio(&input.model_path, &processed)?;
+            return Ok(TranscriptionOutput {
+                text,
+                inference_device: device.name,
+            });
         }
 
         let device = self.resolve_device_blocking(input.device_id.as_deref())?;
@@ -159,35 +164,6 @@ impl TranscriptionEngine {
         })
     }
 
-    fn transcribe_onnx_blocking(
-        &self,
-        input: &TranscriptionInput,
-    ) -> Result<TranscriptionOutput, String> {
-        let filtered_samples: Vec<f32> = input
-            .samples
-            .iter()
-            .copied()
-            .filter(|sample| sample.is_finite())
-            .collect();
-
-        if filtered_samples.is_empty() {
-            return Err("no finite samples provided".to_string());
-        }
-
-        let processed = resample_to_16khz(&filtered_samples, input.sample_rate);
-        if processed.is_empty() {
-            return Err("unable to resample audio".to_string());
-        }
-
-        let device = self.resolve_device_blocking(input.device_id.as_deref())?;
-        let text = self.decode_onnx_audio(&input.model_path, &processed)?;
-
-        Ok(TranscriptionOutput {
-            text,
-            inference_device: device.name,
-        })
-    }
-
     fn decode_onnx_audio(
         &self,
         model_path: &Path,
@@ -203,18 +179,10 @@ impl TranscriptionEngine {
             return Err("model file is empty".to_string());
         }
 
-        // Calculate root mean square (RMS) energy to detect speech presence
         let energy: f32 = samples.iter().map(|s| s * s).sum::<f32>() / samples.len().max(1) as f32;
         let rms = energy.sqrt();
 
-        // If audio signal is below threshold (silence/near-zero noise), return empty text
         if rms < 1e-4 {
-            return Ok(String::new());
-        }
-
-        // Feature extraction: 16 kHz mono 80-channel filterbank frames
-        let n_frames = (samples.len().saturating_sub(400) / 160).max(1);
-        if n_frames == 0 {
             return Ok(String::new());
         }
 
