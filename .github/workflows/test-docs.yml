@@ -13,6 +13,7 @@ on:
       - "robots.txt"
       - "llms.txt"
       - "scripts/ci/pr28-contracts.test.mjs"
+      - "scripts/ci/pr37-contracts.test.mjs"
       - "pnpm-lock.yaml"
       - ".github/workflows/test-docs.yml"
   pull_request:
@@ -27,6 +28,7 @@ on:
       - "robots.txt"
       - "llms.txt"
       - "scripts/ci/pr28-contracts.test.mjs"
+      - "scripts/ci/pr37-contracts.test.mjs"
       - "pnpm-lock.yaml"
       - ".github/workflows/test-docs.yml"
   workflow_dispatch:
