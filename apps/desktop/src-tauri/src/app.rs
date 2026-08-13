@@ -225,7 +225,6 @@ pub fn build() -> tauri::Builder<tauri::Wry> {
             .map_err(|err| -> Box<dyn std::error::Error> { Box::new(err) })?;
 
             app.manage(crate::state::OptionKeyDatabase::new(pool.clone()));
-            app.manage(crate::state::GoogleOAuthState::from_env());
             app.manage(crate::state::OverlayState::new());
             app.manage(crate::state::RemoteReceiverState::new());
             app.manage(crate::state::FloatingWindowState::new());
@@ -251,15 +250,6 @@ pub fn build() -> tauri::Builder<tauri::Wry> {
                     crate::platform::windows::init::request_elevation_relaunch(
                         app.handle().clone(),
                     );
-                }
-            }
-
-            match crate::system::auth_session::AuthSession::new(app.handle()) {
-                Ok(session) => {
-                    app.manage(session);
-                }
-                Err(err) => {
-                    log::error!("failed to initialize auth session: {err}");
                 }
             }
 
@@ -320,7 +310,6 @@ pub fn build() -> tauri::Builder<tauri::Wry> {
             crate::commands::user_get_one,
             crate::commands::user_set_one,
             crate::commands::user_preferences_get,
-            crate::commands::start_google_sign_in,
             crate::commands::user_preferences_set,
             crate::commands::list_microphones,
             crate::commands::list_gpus,
@@ -430,11 +419,6 @@ pub fn build() -> tauri::Builder<tauri::Wry> {
             crate::commands::download_and_open_mac_installer,
             crate::commands::get_system_volume,
             crate::commands::set_system_volume,
-            crate::commands::auth_sign_in_with_custom_token,
-            crate::commands::auth_mint_custom_token,
-            crate::commands::auth_sign_out,
-            crate::commands::auth_is_signed_in,
-            crate::commands::return_to_shell,
             crate::commands::floating_window_create,
             crate::commands::floating_window_destroy,
             crate::commands::floating_window_list,
