@@ -4,8 +4,21 @@ export const DEFAULT_NEW_SERVER_URL = "https://api.mausvoice.com";
 
 const SUPPORTED_SERVER_PROTOCOLS = new Set(["http:", "https:"]);
 
-const withoutTrailingSlash = (value: string): string =>
-  value.replace(/\/+$/, "");
+const withoutTrailingSlash = (value: string): string => {
+  let end = value.length;
+  while (end > 0 && value[end - 1] === "/") {
+    end -= 1;
+  }
+  return value.slice(0, end);
+};
+
+const withoutLeadingSlash = (value: string): string => {
+  let start = 0;
+  while (start < value.length && value[start] === "/") {
+    start += 1;
+  }
+  return value.slice(start);
+};
 
 /**
  * Resolves the build-time server URL to a safe HTTP(S) origin/path.
@@ -48,7 +61,7 @@ export const buildNewServerWebSocketUrl = (
   const normalized = resolveNewServerUrl(baseUrl);
   const parsed = new URL(normalized);
   parsed.protocol = parsed.protocol === "https:" ? "wss:" : "ws:";
-  const endpointPath = endpoint.replace(/^\/+/, "");
+  const endpointPath = withoutLeadingSlash(endpoint);
   parsed.pathname = `${withoutTrailingSlash(parsed.pathname)}/${endpointPath}`;
   parsed.search = "";
   parsed.hash = "";
