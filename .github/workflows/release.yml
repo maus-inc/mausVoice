@@ -308,11 +308,10 @@ jobs:
         env:
           VERSION: ${{ inputs.version }}
           TAG: ${{ steps.tag.outputs.tag_name }}
-          TOKEN: ${{ secrets.RELEASE_TOKEN || secrets.GITHUB_TOKEN }}
         run: |
           set -euo pipefail
           URL="https://github.com/maus-inc/mausVoice/releases/download/${TAG}/mausVoice_${VERSION}_universal.dmg"
-          curl --proto '=https' --tlsv1.2 -fsSL -H "Authorization: token ${TOKEN}" -o /tmp/mausVoice.dmg "$URL"
+          curl --proto '=https' --tlsv1.2 -fsSL -o /tmp/mausVoice.dmg "$URL"
 
       - name: Compute checksum
         id: checksum
