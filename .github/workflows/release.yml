@@ -285,3 +285,56 @@ jobs:
             dist/**/*.exe
             dist/**/*.deb
             dist/**/*.AppImage
+
+  publish-cask:
+    name: Publish Homebrew cask
+    needs: publish
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout source
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+
+      - name: Download macOS DMG
+        env:
+          VERSION: ${{ inputs.version }}
+          INPUT_TAG: ${{ inputs.tag }}
+          TOKEN: ${{ secrets.RELEASE_TOKEN || secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          TAG="${INPUT_TAG:-mausVoice-v${VERSION}}"
+          URL="https://github.com/maus-inc/mausVoice/releases/download/${TAG}/mausVoice_${VERSION}_universal.dmg"
+          curl -fsSL -H "Authorization: token ${TOKEN}" -o /tmp/mausVoice.dmg "$URL"
+
+      - name: Compute checksum
+        id: checksum
+        run: |
+          echo "sha256=$(shasum -a 256 /tmp/mausVoice.dmg | cut -d' ' -f1)" >> "$GITHUB_OUTPUT"
+
+      - name: Render cask
+        env:
+          VERSION: ${{ inputs.version }}
+          SHA256: ${{ steps.checksum.outputs.sha256 }}
+        run: |
+          node scripts/ci/render-cask.mjs > /tmp/mausvoice-desktop.rb
+          cat /tmp/mausvoice-desktop.rb
+
+      - name: Publish cask to tap
+        env:
+          VERSION: ${{ inputs.version }}
+          TOKEN: ${{ secrets.RELEASE_TOKEN || secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          REPO_URL="https://x-access-token:${TOKEN}@github.com/maus-inc/homebrew-mausvoice.git"
+          rm -rf /tmp/tap && mkdir -p /tmp/tap && cd /tmp/tap
+          git init -b main
+          git remote add origin "$REPO_URL"
+          git fetch --depth 1 origin main 2>/dev/null && git reset --hard FETCH_HEAD || true
+          mkdir -p Casks
+          cp /tmp/mausvoice-desktop.rb Casks/mausvoice-desktop.rb
+          git config user.name "mausVoice release"
+          git config user.email "release@maus-inc.local"
+          git add Casks/mausvoice-desktop.rb
+          git commit -m "mausvoice-desktop ${VERSION}" || echo "Cask unchanged"
+          git push origin main

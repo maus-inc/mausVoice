@@ -7,131 +7,16 @@ description: Install and configure mausVoice on Linux.
 
 There are multiple Linux installation options available on the [download page](https://maus-inc.github.io/mausVoice/).
 
-### APT (Debian, Ubuntu)
+### Debian / Ubuntu (.deb)
 
-The easiest option for Debian-based distros is the APT package, which provides automatic updates:
-
-```bash
-curl -fsSL https://mausvoice.github.io/apt/install.sh | bash
-```
-
-Or set up the repository manually:
+Download the latest `.deb` from the [download page](https://maus-inc.github.io/mausVoice/), then install it:
 
 ```bash
-# Add GPG key
-curl -fsSL https://mausvoice.github.io/apt/gpg-key.asc \
-  | sudo gpg --dearmor -o /usr/share/keyrings/mausvoice.gpg
-
-# Add repository
-echo "deb [signed-by=/usr/share/keyrings/mausvoice.gpg arch=amd64] https://mausvoice.github.io/apt stable main" \
-  | sudo tee /etc/apt/sources.list.d/mausvoice.list
-
-# Install
-sudo apt-get update
-sudo apt-get install mausvoice-desktop
+sudo dpkg -i mausVoice_*.deb
+sudo apt-get install -f   # install any missing dependencies
 ```
 
-To install the development channel instead:
-
-```bash
-curl -fsSL https://mausvoice.github.io/apt/install.sh | bash -s -- --dev
-```
-
-Or set up the dev repository manually:
-
-```bash
-# Add GPG key
-curl -fsSL https://mausvoice.github.io/apt/gpg-key.asc \
-  | sudo gpg --dearmor -o /usr/share/keyrings/mausvoice.gpg
-
-# Add dev repository
-echo "deb [signed-by=/usr/share/keyrings/mausvoice.gpg arch=amd64] https://mausvoice.github.io/apt dev main" \
-  | sudo tee /etc/apt/sources.list.d/mausvoice.list
-
-# Install
-sudo apt-get update
-sudo apt-get install mausvoice-desktop
-```
-
-Upgrade with:
-
-```bash
-sudo apt-get update && sudo apt-get upgrade mausvoice-desktop
-```
-
-### RPM (Fedora, RHEL, openSUSE)
-
-For RPM-based distros, use the mausVoice RPM repository:
-
-```bash
-curl -fsSL https://mausvoice.github.io/rpm/install.sh | bash
-```
-
-Or set up the repository manually:
-
-**Fedora / RHEL:**
-
-```bash
-sudo tee /etc/yum.repos.d/mausvoice.repo << 'EOF'
-[mausvoice-stable]
-name=mausVoice Desktop (stable)
-baseurl=https://mausvoice.github.io/rpm/packages/stable
-enabled=1
-gpgcheck=1
-gpgkey=https://mausvoice.github.io/rpm/gpg-key.asc
-EOF
-
-sudo dnf install mausvoice-desktop
-```
-
-**openSUSE:**
-
-```bash
-sudo zypper addrepo --gpgcheck https://mausvoice.github.io/rpm/packages/stable mausvoice-stable
-sudo rpm --import https://mausvoice.github.io/rpm/gpg-key.asc
-sudo zypper install mausvoice-desktop
-```
-
-To install the development channel instead:
-
-```bash
-curl -fsSL https://mausvoice.github.io/rpm/install.sh | bash -s -- --dev
-```
-
-Or set up the dev repository manually:
-
-**Fedora / RHEL:**
-
-```bash
-sudo tee /etc/yum.repos.d/mausvoice.repo << 'EOF'
-[mausvoice-dev]
-name=mausVoice Desktop (dev)
-baseurl=https://mausvoice.github.io/rpm/packages/dev
-enabled=1
-gpgcheck=1
-gpgkey=https://mausvoice.github.io/rpm/gpg-key.asc
-EOF
-
-sudo dnf install mausvoice-desktop
-```
-
-**openSUSE:**
-
-```bash
-sudo zypper addrepo --gpgcheck https://mausvoice.github.io/rpm/packages/dev mausvoice-dev
-sudo rpm --import https://mausvoice.github.io/rpm/gpg-key.asc
-sudo zypper install mausvoice-desktop
-```
-
-Upgrade with:
-
-```bash
-# Fedora / RHEL
-sudo dnf upgrade mausvoice-desktop
-
-# openSUSE
-sudo zypper update mausvoice-desktop
-```
+Upgrade by downloading the newer `.deb` and repeating the `dpkg -i` command.
 
 ### AppImage
 
