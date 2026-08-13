@@ -170,6 +170,19 @@ const ModelStatusText = ({
   return <>{validationError}</>;
 };
 
+const resolveBadgeLabel = (
+  paused: boolean,
+  compactPercent?: string | null,
+): string | null => {
+  if (!paused) {
+    return compactPercent ?? null;
+  }
+  if (compactPercent) {
+    return `Paused (${compactPercent})`;
+  }
+  return "Paused";
+};
+
 const BusyDownloadButtons = ({
   model,
   paused,
@@ -196,11 +209,7 @@ const BusyDownloadButtons = ({
 
   const primaryAction = paused ? onResume : onPause;
   const badgeColor = paused ? "warning.main" : "text.secondary";
-  const badgeLabel = paused
-    ? compactPercent
-      ? `Paused (${compactPercent})`
-      : "Paused"
-    : compactPercent;
+  const badgeLabel = resolveBadgeLabel(paused, compactPercent);
 
   return (
     <Stack direction="row" spacing={0.75} alignItems="center">
@@ -503,18 +512,6 @@ export const AITranscriptionConfiguration = () => {
     [localTranscriptionConfig.modelDownloads],
   );
 
-  const handlePauseModel = useCallback((model: LocalWhisperModel) => {
-    void pauseLocalTranscriptionModelDownload(model);
-  }, []);
-
-  const handleResumeModel = useCallback((model: LocalWhisperModel) => {
-    void resumeLocalTranscriptionModelDownload(model);
-  }, []);
-
-  const handleCancelModel = useCallback((model: LocalWhisperModel) => {
-    void cancelLocalTranscriptionModelDownload(model);
-  }, []);
-
   const handleDeleteModel = useCallback(
     (model: LocalWhisperModel) => {
       if (localTranscriptionConfig.modelDeletes[model]) {
@@ -642,9 +639,9 @@ export const AITranscriptionConfiguration = () => {
                 selectable={selectable}
                 deleting={deleting}
                 onDownload={handleDownloadModel}
-                onPause={handlePauseModel}
-                onResume={handleResumeModel}
-                onCancel={handleCancelModel}
+                onPause={pauseLocalTranscriptionModelDownload}
+                onResume={resumeLocalTranscriptionModelDownload}
+                onCancel={cancelLocalTranscriptionModelDownload}
                 onDelete={handleDeleteModel}
               />
             </Box>
@@ -806,9 +803,9 @@ export const AITranscriptionConfiguration = () => {
                     selectable={modelSelectable}
                     compactPercent={compactPercent}
                     onDownload={handleDownloadModel}
-                    onPause={handlePauseModel}
-                    onResume={handleResumeModel}
-                    onCancel={handleCancelModel}
+                    onPause={pauseLocalTranscriptionModelDownload}
+                    onResume={resumeLocalTranscriptionModelDownload}
+                    onCancel={cancelLocalTranscriptionModelDownload}
                   />
                 </Box>
               )}
