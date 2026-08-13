@@ -9,11 +9,13 @@ Onboarding establishes the permissions and processing path needed for a useful f
 
 ## What onboarding covers
 
-The exact branch depends on the build and whether you choose account sign-in or local/personal setup:
+The current desktop build initializes a local personal profile automatically. It does not require or connect to a mausVoice cloud account. Some account-oriented screens and labels remain in the source tree for compatibility, but they are not an active authentication path.
 
-1. **Setup path.** The opening screen can continue an existing sign-in or start a local setup. An account is not required for the local, bring-your-own-key path.
-2. **Processing choices.** The general local-setup branch presents transcription and post-processing choices. The personal-use branch instead offers optional Deepgram and Groq credential fields; either key can be skipped and configured later.
-3. **Profile.** The flow records a display name and optional role/company details, followed by a referral-source question.
+The reachable first-run flow is:
+
+1. **Local profile.** Continue from the initialized personal profile into onboarding. No email address, password, or hosted account is required.
+2. **API credentials.** Add an optional Deepgram key for streaming transcription and/or a Groq key for transcription and AI post-processing. Either field can be skipped and configured later.
+3. **Profile.** Enter a display name and optional role/company details, followed by a referral-source question.
 4. **Permissions.** macOS receives dedicated Microphone and Accessibility screens. Other platforms proceed to the shortcut test and rely on their platform-specific input setup.
 5. **Shortcut test.** Confirm that the hold-to-dictate combination can be observed outside the main window.
 6. **Microphone test.** Select an input and check that a signal reaches the recorder.

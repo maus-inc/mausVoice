@@ -11,7 +11,7 @@ The Rust application lives in `apps/desktop/src-tauri/`. `main.rs` configures th
 
 - `commands.rs` is the frontend command surface for recording, permissions, keyboard, insertion, database entities, audio snapshots, diagnostics, pairing, and receiver/sender operations.
 - `platform/` contains OS-specific focus, keyboard, paste, audio, overlay, and permission code.
-- `system/` owns paths, crypto, diagnostics, GPU/model information, tray, auth, storage, and remote transport.
+- `system/` owns audio feedback and snapshots, capabilities, bridge and remote transport, crypto, diagnostics, GPU/model information, machine identity, managed paths, storage, and tray behavior. It has no authentication module; the active local personal profile is implemented by the TypeScript `PersonalAuthRepo`.
 - `db/`, `domain/`, and `state/` contain SQL queries/migrations, serialized domain types, and Tauri-managed resources.
 
 Startup opens an SQLx pool with at most five connections, registers plugin-SQL migrations, purges old logs, writes startup diagnostics, creates the recorder/overlay/tray, and prewarms interaction audio. Closing the main window normally hides it rather than exiting. Windows includes WebView keepalive handling so background hotkeys survive occlusion.

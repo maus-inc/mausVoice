@@ -16,7 +16,7 @@ sidebar:
 
 Settings remains anchored at the bottom of the desktop sidebar; an available-update tile can appear above it. On narrow window widths, the persistent sidebar is hidden, so use the available compact navigation rather than resizing below the configured 800 px minimum.
 
-Before the dashboard, guards can send a profile to `/welcome`, `/login`, or `/onboarding`. `/` redirects to `/dashboard`, after which guards choose the valid state. User instructions should name the visible screen/control rather than telling people to type these webview-internal URLs.
+`/` redirects to `/dashboard`, after which the active guard graph chooses among the welcome, onboarding, and dashboard states. The current build initializes its local personal profile automatically, so a new, not-yet-onboarded profile proceeds to `/onboarding`; no guard transition targets `/login`. The router still declares `/login`, and account-oriented components remain in the source tree, but they are retained legacy implementation rather than an active authentication flow. User instructions should name the visible screen or control instead of telling people to type these webview-internal URLs.
 
 Many tasks open dialogs without creating routes. Examples include microphone/audio, diagnostics, hotkeys, API-provider selection, Assistant setup, More Settings, clear-local-data, profile, permissions, transcription details/retranscription, and the style editor. Closing one returns to its owning routed page.
 

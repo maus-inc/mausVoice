@@ -291,3 +291,5 @@ describe("PR28 workflow and public-asset contracts", () => {
   });
 
 });
+
+await import("./pr37-contracts.test.mjs");
