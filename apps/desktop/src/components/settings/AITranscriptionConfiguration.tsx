@@ -787,16 +787,16 @@ export const AITranscriptionConfiguration = () => {
                 <ListSubheader sx={subheaderSx}>
                   <FormattedMessage defaultMessage="NVIDIA NeMo / Sherpa-ONNX (Fast & No Hallucinations)" />
                 </ListSubheader>
-                {LOCAL_MODEL_OPTIONS.filter((opt) => opt.category === "fast").map(
-                  (opt) => renderModelMenuItem(opt),
-                )}
+                {LOCAL_MODEL_OPTIONS.filter(
+                  (opt) => opt.category === "fast",
+                ).map((opt) => renderModelMenuItem(opt))}
 
                 <ListSubheader sx={subheaderSx}>
                   <FormattedMessage defaultMessage="OpenAI Whisper (Multilingual GGML)" />
                 </ListSubheader>
-                {LOCAL_MODEL_OPTIONS.filter((opt) => opt.category === "whisper").map(
-                  (opt) => renderModelMenuItem(opt),
-                )}
+                {LOCAL_MODEL_OPTIONS.filter(
+                  (opt) => opt.category === "whisper",
+                ).map((opt) => renderModelMenuItem(opt))}
               </Select>
               {showInlineModelDownloadAction && (
                 <Box
