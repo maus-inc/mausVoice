@@ -1,0 +1,264 @@
+---
+const base = "/mausVoice/docs/";
+const site = "/mausVoice/";
+---
+
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width" />
+    <meta name="robots" content="noindex, follow" />
+    <meta name="theme-color" content="#050505" />
+    <title>Page not found — mausVoice Docs</title>
+    <meta
+      name="description"
+      content="The requested mausVoice documentation page could not be found."
+    />
+    <link rel="icon" href={`${base}favicon.png`} />
+    <style>
+      @font-face {
+        font-family: "Satoshi";
+        src: url("/mausVoice/docs/assets/fonts/Satoshi-Medium.ttf") format("truetype");
+        font-display: swap;
+      }
+      @font-face {
+        font-family: "TAN Paradiso";
+        src: url("/mausVoice/docs/assets/fonts/TAN-PARADISO-Regular.woff2") format("woff2");
+        font-display: swap;
+      }
+      @font-face {
+        font-family: "JetBrains Mono";
+        src: url("/mausVoice/docs/assets/fonts/jetbrains-mono-latin-400-normal.woff2") format("woff2");
+        font-display: swap;
+      }
+      :root {
+        color-scheme: dark;
+        font-family: "Satoshi", system-ui, sans-serif;
+        background: #050505;
+        color: #f7f7f5;
+        font-synthesis: none;
+      }
+      * { box-sizing: border-box; }
+      html, body { min-height: 100%; margin: 0; }
+      body {
+        min-height: 100vh;
+        overflow-x: hidden;
+        background:
+          linear-gradient(180deg, rgb(0 0 0 / 0.14), #050505 82%),
+          url("/mausVoice/docs/assets/404/hero-bg.jpg") center top / cover fixed;
+        letter-spacing: -0.025em;
+      }
+      a { color: inherit; }
+      .skip {
+        position: fixed;
+        z-index: 20;
+        top: -4rem;
+        left: 1rem;
+        padding: .7rem 1rem;
+        background: white;
+        color: black;
+        transition: top .15s;
+      }
+      .skip:focus { top: 1rem; }
+      header {
+        width: min(1320px, calc(100% - 2rem));
+        height: 80px;
+        margin: 0 auto;
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        border-bottom: 1px solid rgb(255 255 255 / .16);
+      }
+      .brand {
+        display: flex;
+        align-items: center;
+        gap: .7rem;
+        text-decoration: none;
+      }
+      .brand img { width: 34px; height: 34px; object-fit: contain; }
+      .brand span {
+        font-family: "TAN Paradiso", serif;
+        font-size: clamp(1.1rem, 2vw, 1.45rem);
+        letter-spacing: -.06em;
+      }
+      nav { display: flex; gap: .55rem; }
+      nav a, .button {
+        border: 1px solid rgb(255 255 255 / .28);
+        border-radius: 999px;
+        padding: .68rem 1rem;
+        text-decoration: none;
+        font-size: .82rem;
+        line-height: 1;
+        transition: background .18s, color .18s, border-color .18s;
+      }
+      nav a:hover, .button:hover { background: white; color: black; border-color: white; }
+      main {
+        position: relative;
+        width: min(1320px, calc(100% - 2rem));
+        min-height: calc(100vh - 80px);
+        margin: 0 auto;
+        padding: clamp(4rem, 10vh, 8rem) 0 3rem;
+        display: grid;
+        grid-template-columns: minmax(0, 1fr) minmax(280px, .68fr);
+        align-items: center;
+        gap: clamp(3rem, 8vw, 8rem);
+      }
+      .eyebrow {
+        display: flex;
+        align-items: center;
+        gap: .75rem;
+        margin: 0 0 1.3rem;
+        font: .72rem/1.2 "JetBrains Mono", monospace;
+        letter-spacing: .08em;
+        text-transform: uppercase;
+        color: #aaa;
+      }
+      .eyebrow::before { content: ""; width: 34px; border-top: 1px solid #777; }
+      h1 {
+        max-width: 850px;
+        margin: 0;
+        font-size: clamp(4.5rem, 12vw, 10.6rem);
+        line-height: .78;
+        font-weight: 500;
+        letter-spacing: -.085em;
+      }
+      h1 em {
+        display: block;
+        margin-left: .06em;
+        font: normal clamp(3.3rem, 9vw, 7.5rem)/.9 "TAN Paradiso", serif;
+        letter-spacing: -.06em;
+        color: #b9b9b5;
+      }
+      .copy {
+        max-width: 570px;
+        margin: 2.2rem 0 0;
+        color: #b5b5b1;
+        font-size: clamp(1rem, 2vw, 1.22rem);
+        line-height: 1.45;
+        letter-spacing: -.02em;
+      }
+      .actions { display: flex; flex-wrap: wrap; gap: .7rem; margin-top: 2rem; }
+      .button { padding: .85rem 1.25rem; }
+      .button.primary { background: white; color: black; border-color: white; }
+      .button.primary:hover { background: #bbb; border-color: #bbb; }
+      .terminal {
+        position: relative;
+        min-height: 440px;
+        border: 1px solid rgb(255 255 255 / .18);
+        background: rgb(7 7 7 / .74);
+        backdrop-filter: blur(18px);
+        overflow: hidden;
+      }
+      .terminal::after {
+        content: "";
+        position: absolute;
+        inset: 0;
+        background: linear-gradient(110deg, transparent 35%, rgb(255 255 255 / .045), transparent 65%);
+        transform: translateX(-100%);
+        animation: scan 6s ease-in-out infinite;
+        pointer-events: none;
+      }
+      .term-head {
+        display: flex;
+        justify-content: space-between;
+        padding: .8rem 1rem;
+        border-bottom: 1px solid rgb(255 255 255 / .14);
+        font: .65rem/1 "JetBrains Mono", monospace;
+        letter-spacing: .08em;
+        text-transform: uppercase;
+        color: #888;
+      }
+      .signal { display: flex; gap: 5px; }
+      .signal i { width: 6px; height: 6px; border-radius: 50%; background: #4d4d4d; }
+      .term-body {
+        min-height: 388px;
+        display: grid;
+        place-items: center;
+        padding: 2rem;
+        background: url("/mausVoice/docs/assets/404/ascii-term.png") center 92% / 112% auto no-repeat;
+      }
+      .code { position: relative; text-align: center; }
+      .code strong { display: block; font-size: clamp(6rem, 13vw, 9.5rem); line-height: .8; letter-spacing: -.09em; }
+      .code span { font: .68rem/1.6 "JetBrains Mono", monospace; color: #8d8d89; letter-spacing: .05em; }
+      footer {
+        grid-column: 1 / -1;
+        align-self: end;
+        display: flex;
+        justify-content: space-between;
+        gap: 1rem;
+        padding-top: 3rem;
+        color: #777;
+        font: .65rem/1.4 "JetBrains Mono", monospace;
+        letter-spacing: .04em;
+        text-transform: uppercase;
+      }
+      footer::before {
+        content: "";
+        position: absolute;
+        left: 52%; right: -12%; bottom: 0;
+        height: 90px;
+        opacity: .2;
+        background: url("/mausVoice/docs/assets/404/footer-ascii.png") right bottom / contain no-repeat;
+        pointer-events: none;
+      }
+      :focus-visible { outline: 2px solid white; outline-offset: 4px; }
+      @keyframes scan { 0%, 20% { transform: translateX(-120%); } 65%, 100% { transform: translateX(120%); } }
+      @media (max-width: 780px) {
+        header { height: 68px; }
+        nav a:last-child { display: none; }
+        main { grid-template-columns: 1fr; align-items: start; padding-top: 4rem; }
+        .terminal { min-height: 310px; }
+        .term-body { min-height: 260px; }
+        footer { grid-column: 1; }
+        footer::before { display: none; }
+      }
+      @media (prefers-reduced-motion: reduce) {
+        *, *::before, *::after { scroll-behavior: auto !important; animation: none !important; transition: none !important; }
+      }
+    </style>
+  </head>
+  <body>
+    <a class="skip" href="#content">Skip to content</a>
+    <header>
+      <a class="brand" href={base} aria-label="mausVoice documentation home">
+        <img src={`${base}assets/404/logo.png`} alt="" />
+        <span>mausVoice Docs</span>
+      </a>
+      <nav aria-label="404 navigation">
+        <a href={base}>Documentation</a>
+        <a href={site}>Product site</a>
+      </nav>
+    </header>
+    <main id="content">
+      <section>
+        <p class="eyebrow">Routing error / documentation</p>
+        <h1>Wrong turn.<em>Keep speaking.</em></h1>
+        <p class="copy">
+          This page has moved, never existed, or got lost between words. The
+          documentation home and search can get you back to the answer.
+        </p>
+        <div class="actions">
+          <a class="button primary" href={base}>Explore the docs →</a>
+          <a class="button" href={`${base}getting-started/overview/`}>Start from setup</a>
+        </div>
+      </section>
+      <aside class="terminal" aria-label="Page not found status">
+        <div class="term-head">
+          <span>mausVoice / route</span>
+          <span class="signal" aria-hidden="true"><i></i><i></i><i></i></span>
+        </div>
+        <div class="term-body">
+          <div class="code">
+            <strong>404</strong>
+            <span>NO MATCHING DOCUMENT<br />RETURN TO INDEX</span>
+          </div>
+        </div>
+      </aside>
+      <footer>
+        <span>Your voice, typed anywhere.</span>
+        <span>Open source · AGPL-3.0</span>
+      </footer>
+    </main>
+  </body>
+</html>

@@ -94,8 +94,13 @@ export const insertLocalTranscriptOutputViaTyping = async (
 ): Promise<void> => {
   const sanitized = sanitizeIndentation(text);
 
+  // Capture the session id returned by simulate_type so the blur/Escape
+  // cancel signal can target exactly this session and won't clobber a
+  // later typing session the user may have started.
+  let activeTypingId: number | null = null;
+
   const handleCancel = () => {
-    void invoke("cancel_typing");
+    void invoke("cancel_typing", { typingId: activeTypingId });
   };
 
   window.addEventListener("blur", handleCancel, { once: true });
@@ -107,10 +112,11 @@ export const insertLocalTranscriptOutputViaTyping = async (
   window.addEventListener("keydown", keydownHandler);
 
   try {
-    await invoke("simulate_type", {
+    const result = (await invoke<{ typingId: number }>("simulate_type", {
       text: sanitized,
       delayMs,
-    });
+    })) as { typingId: number };
+    activeTypingId = result?.typingId ?? null;
   } finally {
     window.removeEventListener("blur", handleCancel);
     window.removeEventListener("keydown", keydownHandler);

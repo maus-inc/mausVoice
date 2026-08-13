@@ -53,41 +53,9 @@ async appTargetUpsert(args: AppTargetUpsertArgs) : Promise<Result<AppTarget, str
     else return { status: "error", error: e  as any };
 }
 },
-async authIsSignedIn() : Promise<Result<boolean, string>> {
+async cancelTyping(typingId?: number | null) : Promise<Result<null, string>> {
     try {
-    return { status: "ok", data: await TAURI_INVOKE("auth_is_signed_in") };
-} catch (e) {
-    if(e instanceof Error) throw e;
-    else return { status: "error", error: e  as any };
-}
-},
-async authMintCustomToken() : Promise<Result<string, string>> {
-    try {
-    return { status: "ok", data: await TAURI_INVOKE("auth_mint_custom_token") };
-} catch (e) {
-    if(e instanceof Error) throw e;
-    else return { status: "error", error: e  as any };
-}
-},
-async authSignInWithCustomToken(customToken: string) : Promise<Result<null, string>> {
-    try {
-    return { status: "ok", data: await TAURI_INVOKE("auth_sign_in_with_custom_token", { customToken }) };
-} catch (e) {
-    if(e instanceof Error) throw e;
-    else return { status: "error", error: e  as any };
-}
-},
-async authSignOut() : Promise<Result<null, string>> {
-    try {
-    return { status: "ok", data: await TAURI_INVOKE("auth_sign_out") };
-} catch (e) {
-    if(e instanceof Error) throw e;
-    else return { status: "error", error: e  as any };
-}
-},
-async cancelTyping() : Promise<Result<null, string>> {
-    try {
-    return { status: "ok", data: await TAURI_INVOKE("cancel_typing") };
+    return { status: "ok", data: await TAURI_INVOKE("cancel_typing", { typingId: typingId ?? null }) };
 } catch (e) {
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };
@@ -605,14 +573,6 @@ async retryKeyListener() : Promise<Result<null, string>> {
     else return { status: "error", error: e  as any };
 }
 },
-async returnToShell() : Promise<Result<null, string>> {
-    try {
-    return { status: "ok", data: await TAURI_INVOKE("return_to_shell") };
-} catch (e) {
-    if(e instanceof Error) throw e;
-    else return { status: "error", error: e  as any };
-}
-},
 async runNativeSetup() : Promise<NativeSetupResult> {
     return await TAURI_INVOKE("run_native_setup");
 },
@@ -640,8 +600,13 @@ async setPhase(phase: string) : Promise<Result<null, string>> {
     else return { status: "error", error: e  as any };
 }
 },
-async setPillVisibility(visibility: string) : Promise<void> {
-    await TAURI_INVOKE("set_pill_visibility", { visibility });
+async setPillVisibility(visibility: string) : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("set_pill_visibility", { visibility }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
 },
 /**
  * Sync the tray's pill-visibility label.
@@ -716,17 +681,9 @@ async setTrayVisible(visible: boolean) : Promise<Result<null, string>> {
     else return { status: "error", error: e  as any };
 }
 },
-async simulateType(text: string, delayMs: number) : Promise<Result<null, string>> {
+async simulateType(text: string, delayMs: number) : Promise<Result<SimulateTypeResponse, string>> {
     try {
     return { status: "ok", data: await TAURI_INVOKE("simulate_type", { text, delayMs }) };
-} catch (e) {
-    if(e instanceof Error) throw e;
-    else return { status: "error", error: e  as any };
-}
-},
-async startGoogleSignIn() : Promise<Result<GoogleAuthEventPayload, string>> {
-    try {
-    return { status: "ok", data: await TAURI_INVOKE("start_google_sign_in") };
 } catch (e) {
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };
@@ -1144,6 +1101,7 @@ export type RemoteSenderDeliverArgs = { targetDeviceId: string; text: string; mo
 export type RemoteSenderPairArgs = { receiverDeviceId: string; receiverName: string; receiverPlatform: string; receiverAddress: string; pairingCode: string }
 export type RunTerminalCommandResponse = { stdout: string; stderr: string; exitCode: number }
 export type ScreenContextInfo = { screenContext: string | null }
+export type SimulateTypeResponse = { typingId: number }
 export type ScreenVisibleArea = { topInset: number; bottomInset: number; leftInset: number; rightInset: number }
 export type StartRecordingArgs = { preferredMicrophone: string | null }
 export type StartRecordingResponse = { sampleRate: number }

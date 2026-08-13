@@ -1,0 +1,28 @@
+---
+title: "Rust transcription sidecar"
+description: "Build, run, test, and integrate the buffered CPU/GPU Whisper HTTP service."
+sidebar:
+  order: 6
+---
+
+`packages/rust_transcription` builds `rust-transcription-cpu` and feature-gated `rust-transcription-gpu`. The desktop launches them on ephemeral loopback ports, although standalone defaults are `127.0.0.1:7771` for CPU and `:7772` for GPU.
+
+```bash
+cargo build --manifest-path packages/rust_transcription/Cargo.toml --release --bin rust-transcription-cpu
+cargo build --manifest-path packages/rust_transcription/Cargo.toml --release --bin rust-transcription-gpu --features gpu,gpu-metal
+# Linux/Windows GPU:
+cargo build --manifest-path packages/rust_transcription/Cargo.toml --release --bin rust-transcription-gpu --features gpu,gpu-vulkan
+```
+
+Routes cover health, device enumeration, model download/job status/delete/validation, one-shot transcription, and create/chunk/finalize/delete session operations. Session chunks are raw little-endian Float32 bytes. “Streaming” here means chunked transport and in-memory buffering: inference runs at finalization, after finite samples are resampled to 16 kHz. Idle session buffers older than ten minutes are evicted.
+
+Model IDs are `tiny`, `base`, `small`, `medium`, `turbo`, `large`, and `hindi2hinglish`. URLs default to the repositories recorded in `models.rs` and can be overridden with `RUST_TRANSCRIPTION_MODEL_URL_<ID>`. Host, port, and model directory also have environment overrides. Never bind the desktop-managed service to a public interface.
+
+Run the binary-level integration suite with:
+
+```bash
+cargo test --manifest-path packages/rust_transcription/Cargo.toml \
+  --test sidecar_integration -- --nocapture --test-threads=1
+```
+
+Add `--ignored` to run the full fixture transcription that downloads Tiny. Unit tests cover routing/session behavior separately. If the API changes, update the Rust README, desktop facade/client under `apps/desktop/src/sidecars/`, fallback behavior, and integration test together.

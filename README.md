@@ -18,13 +18,19 @@ Grab Your [Free Groq↗](https://console.groq.com/keys) and [Free Deepgram↗](h
 
 </div>
 
+## Documentation
+
+**New to mausVoice, tuning a provider, or building from source? Visit the complete [mausVoice Documentation](https://maus-inc.github.io/mausVoice/docs/).** It covers platform setup, daily dictation, every configuration area, provider behavior, privacy and local data, troubleshooting, and the repository architecture.
+
+<p align="center">
+  <a href="https://maus-inc.github.io/mausVoice/docs/"><strong>Read the docs →</strong></a>
+</p>
+
 <p align="center">
   <img src="docs/assets/home-page.png" alt="mausVoice home" width="720" />
 </p>
 
-
-
-**mausVoice** is a desktop app that turns your voice into text, anywhere you can type. Speech is transcribed live while you talk, tidied up by an **LLM** in the style you pick, and dropped straight into the app you're focused on.
+**mausVoice** is a desktop app that turns your voice into text anywhere you can type. Hold a global shortcut, speak, and release: mausVoice transcribes locally or through your chosen provider, optionally applies an **LLM** writing style, and sends the result to the field in focus.
 
 ## How it works
 
@@ -41,14 +47,14 @@ Grab Your [Free Groq↗](https://console.groq.com/keys) and [Free Deepgram↗](h
 
 ## Features
 
-| | |
-| --- | --- |
-| **Live transcription** | Streaming `nova-3` transcript appears while you're still speaking. It's ready before you stop talking. |
-| **Fully local option** | Run Whisper locally (CPU or GPU) with zero network calls for transcription. |
-| **AI cleanup** | Filler words out, structure in. Choose a writing style and the result reads like you wrote it. |
+|                          |                                                                                                                                      |
+| ------------------------ | ------------------------------------------------------------------------------------------------------------------------------------ |
+| **Live transcription**   | Streaming `nova-3` transcript appears while you're still speaking. It's ready before you stop talking.                               |
+| **Fully local option**   | Run Whisper locally (CPU or GPU) with zero network calls for transcription.                                                          |
+| **AI cleanup**           | Filler words out, structure in. Choose a writing style and the result reads like you wrote it.                                       |
 | **Your keys, encrypted** | Deepgram and Groq keys live on your machine, encrypted with XChaCha20-Poly1305. Rotate them any time in Settings without rebuilding. |
-| **Personal dictionary** | Add your names, jargon, and shorthand once and mausVoice remembers them. |
-| **Works in every app** | The overlay captures audio globally and pastes the result into whatever has focus. |
+| **Personal dictionary**  | Add your names, jargon, and shorthand once and mausVoice remembers them.                                                             |
+| **Works in every app**   | The overlay captures audio globally and pastes the result into whatever has focus.                                                   |
 
 <p align="center">
   <a href="https://github.com/maus-inc/mausVoice/releases">
@@ -121,4 +127,4 @@ pnpm run test          # tests
 
 [AGPLv3](LICENCE). Built on [Tauri](https://tauri.app), with the frontend in React and the audio/overlay layer in Rust.
 
-**Maintainer:** [Owie Emmanuel](https://github.com/Owie6789) 
+**Maintainer:** [Owie Emmanuel](https://github.com/Owie6789)
