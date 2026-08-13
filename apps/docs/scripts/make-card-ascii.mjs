@@ -58,7 +58,9 @@ for (const [name, ascii] of Object.entries(art)) {
 
   const texts = lines
     .map((line, i) => {
-      return `\t<text x="0" y="${i + 1}" font-size="1" fill="#c8c8c8">${escapeXml(line)}</text>`;
+      // White strokes so the artwork reads clearly on the dark cards; a
+      // `filter: invert(1)` on light theme turns the white to black.
+      return `\t<text x="0" y="${i + 1}" font-size="1" fill="#ffffff">${escapeXml(line)}</text>`;
     })
     .join("\n");
 

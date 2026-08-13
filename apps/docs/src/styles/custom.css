@@ -222,10 +222,14 @@ header,
  * Primary action button — inner white highlight plus a soft drop shadow.
  * ------------------------------------------------------------------ */
 .sl-link-button.primary {
+  /* On the dark (white) button the top white highlight is invisible, so a
+   * bottom inner shadow carries the bevel; on the light (black) button the
+   * top white highlight is what reads. Together they make the design visible
+   * in both themes, plus a small outer drop shadow. */
   box-shadow:
-    inset 0 1px 0 hsl(0 0% 100% / 0.5),
-    inset 0 0 0 1px hsl(0 0% 100% / 0.2),
-    0 2px 5px hsl(0 0% 0% / 0.35);
+    inset 0 2px 0 hsl(0 0% 100% / 0.85),
+    inset 0 -2px 3px hsl(0 0% 0% / 0.22),
+    0 3px 8px hsl(0 0% 0% / 0.4);
 }
 
 /* ------------------------------------------------------------------ *
@@ -242,13 +246,13 @@ header,
 .card-grid.stagger .card::before {
   content: "";
   position: absolute;
-  width: 180px;
-  height: 120px;
+  width: 220px;
+  height: 150px;
   background-repeat: no-repeat;
   background-size: contain;
   background-position: center;
   pointer-events: none;
-  opacity: 0.55;
+  opacity: 0.85;
 }
 
 /* Cube — top-left */
@@ -304,8 +308,8 @@ header,
   mask-image: linear-gradient(315deg, #000 0%, transparent 70%);
 }
 
-/* Invert the ASCII artwork on light theme. */
+/* Invert the white ASCII artwork to black on light theme. */
 :root[data-theme="light"] .card-grid.stagger .card::before {
   filter: invert(1);
-  opacity: 0.38;
+  opacity: 0.6;
 }
