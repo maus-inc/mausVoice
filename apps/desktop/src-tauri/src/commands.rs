@@ -1293,7 +1293,8 @@ pub async fn clear_local_data(
         // directory that are no longer referenced by the (now-empty) DB
         // (e.g. files left over from an interrupted record).
         if let Ok(entries) = std::fs::read_dir(&audio_dir) {
-            for entry in entries.flatten() {
+            for entry in entries {
+                let Ok(entry) = entry else { continue };
                 let p = entry.path();
                 if p.extension().and_then(|e| e.to_str()) == Some("wav") {
                     if let Err(err) = std::fs::remove_file(&p) {
@@ -2417,13 +2418,18 @@ const ALLOWED_COMMANDS: &[AllowedCommand] = &[
 
 #[cfg(target_os = "windows")]
 const ALLOWED_COMMANDS: &[AllowedCommand] = &[
-    AllowedCommand { binary: "dir", fixed_args: &[] },
-    AllowedCommand { binary: "echo", fixed_args: &[] },
-    AllowedCommand { binary: "cd", fixed_args: &[] },
+    // NOTE: CMD.EXE built-ins (`dir`, `echo`, `cd`, `date`, `ver`, etc.) are
+    // intentionally absent. `std::process::Command::new("dir")` fails to
+    // spawn on Windows because there is no `dir.exe` on PATH; invoking them
+    // would require going through `cmd /c`, which we forbid because it
+    // reintroduces shell parsing. Only real binaries that ship with Windows
+    // and are useful for the AI tool sandbox are listed here.
     AllowedCommand { binary: "whoami", fixed_args: &[] },
-    AllowedCommand { binary: "date", fixed_args: &["/t"] },
-    AllowedCommand { binary: "ver", fixed_args: &[] },
     AllowedCommand { binary: "explorer", fixed_args: &[] },
+    AllowedCommand { binary: "ipconfig", fixed_args: &[] },
+    AllowedCommand { binary: "systeminfo", fixed_args: &[] },
+    AllowedCommand { binary: "tasklist", fixed_args: &[] },
+    AllowedCommand { binary: "netstat", fixed_args: &["-e"] },
 ];
 
 /// Validate that a single argv token contains no NUL bytes (which would truncate
@@ -2542,21 +2548,39 @@ mod tests {
 
     #[test]
     fn terminal_command_allows_allowlisted() {
-        assert_eq!(
-            validate_terminal_command_args("ls -la").unwrap().0.binary,
-            "ls"
-        );
-        assert_eq!(
-            validate_terminal_command_args("pwd").unwrap().0.binary,
-            "pwd"
-        );
-        assert_eq!(
-            validate_terminal_command_args("echo hello world")
-                .unwrap()
-                .0
-                .binary,
-            "echo"
-        );
+        // The non-Windows list is a superset of the binaries we assert here;
+        // on Windows `ls`/`pwd`/`echo` are all CMD built-ins and aren't in
+        // the allow-list, so gate these assertions to non-Windows.
+        #[cfg(not(target_os = "windows"))]
+        {
+            assert_eq!(
+                validate_terminal_command_args("ls -la").unwrap().0.binary,
+                "ls"
+            );
+            assert_eq!(
+                validate_terminal_command_args("pwd").unwrap().0.binary,
+                "pwd"
+            );
+            assert_eq!(
+                validate_terminal_command_args("echo hello world")
+                    .unwrap()
+                    .0
+                    .binary,
+                "echo"
+            );
+        }
+
+        #[cfg(target_os = "windows")]
+        {
+            assert_eq!(
+                validate_terminal_command_args("whoami").unwrap().0.binary,
+                "whoami"
+            );
+            assert_eq!(
+                validate_terminal_command_args("ipconfig").unwrap().0.binary,
+                "ipconfig"
+            );
+        }
     }
 
     #[test]
