@@ -13,6 +13,8 @@ on:
       - "robots.txt"
       - "llms.txt"
       - "scripts/ci/pr28-contracts.test.mjs"
+      - "scripts/ci/pr37-contracts.test.mjs"
+      - "scripts/ci/generate-release-body.mjs"
       - "pnpm-lock.yaml"
       - ".github/workflows/test-docs.yml"
   pull_request:
@@ -27,6 +29,8 @@ on:
       - "robots.txt"
       - "llms.txt"
       - "scripts/ci/pr28-contracts.test.mjs"
+      - "scripts/ci/pr37-contracts.test.mjs"
+      - "scripts/ci/generate-release-body.mjs"
       - "pnpm-lock.yaml"
       - ".github/workflows/test-docs.yml"
   workflow_dispatch:
@@ -69,6 +73,7 @@ jobs:
         working-directory: apps/docs
         run: |
           test -f ../../docs/assets/mausvoice-banner.png
+          test -f public/assets/fonts/Satoshi-Medium.ttf
           grep -Fq 'https://maus-inc.github.io/mausVoice/docs/getting-started/introduction/' \
             dist/getting-started/introduction/index.html
           grep -Fq 'https://maus-inc.github.io/mausVoice/docs/sitemap-0.xml' \
@@ -82,6 +87,7 @@ jobs:
           rm -rf publish
           mkdir -p publish/docs/assets
           cp index.html publish/index.html
+          cp apps/docs/dist/404.html publish/404.html
           cp -r marketing publish/marketing
           cp -r apps/docs/dist/. publish/docs/
           cp -r docs/assets/. publish/docs/assets/
@@ -89,6 +95,8 @@ jobs:
       - name: Smoke test assembled artifact
         run: |
           test -f publish/index.html
+          test -f publish/404.html
+          grep -Fq 'Wrong turn.' publish/404.html
           test -f publish/marketing/assets/logo.png
           test -f publish/marketing/assets/vendor/gsap.min.js
           test -f publish/docs/getting-started/introduction/index.html

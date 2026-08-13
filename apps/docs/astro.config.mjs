@@ -14,20 +14,16 @@ const socialImage = `${docsSite}${docsBase}assets/mausvoice-banner.png`;
 const meta = (attrs) => ({ tag: "meta", attrs });
 
 const sidebar = [
-  {
-    label: "Getting Started",
-    items: [
-      { label: "Introduction", slug: "getting-started/introduction" },
-      { label: "macOS", slug: "getting-started/macos" },
-      { label: "Windows", slug: "getting-started/windows" },
-      { label: "Linux", slug: "getting-started/linux" },
-    ],
-  },
-  {
-    label: "Guides",
-    autogenerate: { directory: "guides" },
-  },
-];
+  ["Getting started", "getting-started"],
+  ["Using mausVoice", "using-mausvoice"],
+  ["Configuration", "configuration"],
+  ["Providers", "providers"],
+  ["Privacy & security", "privacy-security"],
+  ["Troubleshooting", "troubleshooting"],
+  ["Reference", "reference"],
+  ["Development", "development"],
+  ["Project", "project"],
+].map(([label, directory]) => ({ label, autogenerate: { directory } }));
 
 // https://astro.build/config
 export default defineConfig({
@@ -36,12 +32,24 @@ export default defineConfig({
   integrations: [
     starlight({
       title: "mausVoice Docs",
+      disable404Route: true,
       description:
         "Official documentation for mausVoice, the cross-platform voice-to-text desktop app.",
       logo: {
         src: "./src/assets/logo.png",
       },
       favicon: "/favicon.png",
+      social: [
+        {
+          icon: "github",
+          label: "mausVoice on GitHub",
+          href: "https://github.com/maus-inc/mausVoice",
+        },
+      ],
+      lastUpdated: true,
+      editLink: {
+        baseUrl: "https://github.com/maus-inc/mausVoice/edit/main/apps/docs/",
+      },
       head: [
         meta({
           name: "robots",
