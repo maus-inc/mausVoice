@@ -2229,6 +2229,45 @@ pub async fn chat_message_delete_many(
         .map_err(|err| err.to_string())
 }
 
+#[derive(serde::Serialize, specta::Type)]
+#[serde(rename_all = "camelCase")]
+pub struct RunTerminalCommandResponse {
+    pub stdout: String,
+    pub stderr: String,
+    pub exit_code: i32,
+}
+
+#[tauri::command]
+#[specta::specta]
+pub async fn run_terminal_command(command: String) -> Result<RunTerminalCommandResponse, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let (shell, flag) = if cfg!(target_os = "windows") {
+            ("cmd", "/C")
+        } else {
+            ("sh", "-c")
+        };
+        let mut cmd = std::process::Command::new(shell);
+        cmd.args([flag, &command]);
+
+        #[cfg(target_os = "windows")]
+        {
+            use std::os::windows::process::CommandExt;
+            const CREATE_NO_WINDOW: u32 = 0x08000000;
+            cmd.creation_flags(CREATE_NO_WINDOW);
+        }
+
+        let output = cmd.output().map_err(|err| err.to_string())?;
+
+        Ok(RunTerminalCommandResponse {
+            stdout: String::from_utf8_lossy(&output.stdout).to_string(),
+            stderr: String::from_utf8_lossy(&output.stderr).to_string(),
+            exit_code: output.status.code().unwrap_or(-1),
+        })
+    })
+    .await
+    .map_err(|err| err.to_string())?
+}
+
 /// Returns `true` when the running app bundle can be updated in-place.
 /// On macOS this checks whether the process can write to the directory that
 /// contains the `.app` bundle (typically `/Applications`).

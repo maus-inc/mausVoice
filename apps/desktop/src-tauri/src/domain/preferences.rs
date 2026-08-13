@@ -41,7 +41,6 @@ pub struct UserPreferences {
     #[serde(default)]
     pub last_seen_feature: Option<String>,
     #[serde(default)]
-    #[serde(default)]
     pub language_switch_enabled: bool,
     #[serde(default)]
     pub secondary_dictation_language: Option<String>,
