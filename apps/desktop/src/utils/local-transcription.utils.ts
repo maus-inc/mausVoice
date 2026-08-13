@@ -12,19 +12,84 @@ export type LocalWhisperModel =
   | "parakeet-tdt-0.6b"
   | "canary-1b";
 
+export type LocalModelCategory = "fast" | "whisper";
+
+export type LocalModelOption = {
+  value: LocalWhisperModel;
+  label: string;
+  helper: string;
+  category: LocalModelCategory;
+};
+
 export const DEFAULT_LOCAL_WHISPER_MODEL: LocalWhisperModel = "tiny";
-export const LOCAL_WHISPER_MODELS: LocalWhisperModel[] = [
-  "tiny",
-  "base",
-  "small",
-  "medium",
-  "turbo",
-  "large",
-  "hindi2hinglish",
-  "parakeet-ctc-0.6b",
-  "parakeet-tdt-0.6b",
-  "canary-1b",
+
+export const LOCAL_MODEL_OPTIONS: LocalModelOption[] = [
+  // Fast & Non-hallucinating Local Models (Parakeet / Canary / Sherpa-ONNX)
+  {
+    value: "parakeet-ctc-0.6b",
+    label: "NVIDIA Parakeet CTC 0.6B (120 MB)",
+    helper: "Ultra-fast English dictation, zero hallucination loops",
+    category: "fast",
+  },
+  {
+    value: "parakeet-tdt-0.6b",
+    label: "NVIDIA Parakeet TDT 0.6B (240 MB)",
+    helper: "State-of-the-art English dictation speed & accuracy",
+    category: "fast",
+  },
+  {
+    value: "canary-1b",
+    label: "NVIDIA Canary 1B (1.2 GB)",
+    helper: "Multilingual STT + automatic punctuation & casing",
+    category: "fast",
+  },
+  // OpenAI Whisper Models
+  {
+    value: "tiny",
+    label: "Whisper Tiny (77 MB)",
+    helper: "Fastest, lowest accuracy",
+    category: "whisper",
+  },
+  {
+    value: "base",
+    label: "Whisper Base (148 MB)",
+    helper: "Great balance of speed and accuracy",
+    category: "whisper",
+  },
+  {
+    value: "small",
+    label: "Whisper Small (488 MB)",
+    helper: "Recommended with GPU acceleration",
+    category: "whisper",
+  },
+  {
+    value: "medium",
+    label: "Whisper Medium (1.53 GB)",
+    helper: "Balanced quality and speed",
+    category: "whisper",
+  },
+  {
+    value: "turbo",
+    label: "Whisper Large v3 Turbo (1.6 GB)",
+    helper: "Fast large model, great accuracy",
+    category: "whisper",
+  },
+  {
+    value: "large",
+    label: "Whisper Large v3 (3.1 GB)",
+    helper: "Highest accuracy, requires GPU",
+    category: "whisper",
+  },
+  {
+    value: "hindi2hinglish",
+    label: "Whisper Hindi2Hinglish Apex (595 MB)",
+    helper: "Hindi speech transcribed as Hinglish (Latin script)",
+    category: "whisper",
+  },
 ];
+
+export const LOCAL_WHISPER_MODELS: LocalWhisperModel[] =
+  LOCAL_MODEL_OPTIONS.map((option) => option.value);
 
 export const normalizeLocalWhisperModel = (
   value: string | null | undefined,
