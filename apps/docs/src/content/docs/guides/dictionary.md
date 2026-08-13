@@ -22,10 +22,10 @@ Replacement rules find and replace text in the raw transcript, right before post
 
 For example:
 
-| Input   | Output    |
-| ------- | --------- |
-| GPT     | ChatGPT   |
-| V quill | mausVoice |
+| Input     | Output   |
+| --------- | -------- |
+| GPT       | ChatGPT  |
+| Deep Gram | Deepgram |
 
 You can also use replacement rules as **snippets**. Define a short trigger phrase and have it expand into something longer — useful for boilerplate text, signatures, or common phrases you dictate frequently.
 

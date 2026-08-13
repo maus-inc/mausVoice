@@ -34,7 +34,7 @@ Choose the guide for your platform:
 | Mode  | Description                                           |
 | ----- | ----------------------------------------------------- |
 | Local | On-device transcription using Whisper. Fully offline. |
-| API   | Direct connection to Groq's Whisper API.              |
+| API   | Direct connection to your chosen transcription provider. |
 | Cloud | Transcription via mausVoice's cloud service.          |
 
 ## Recording Your First Transcription

@@ -17,7 +17,7 @@ Download the latest release from the [download page](https://maus-inc.github.io/
 You can also install mausVoice via [Homebrew](https://brew.sh):
 
 ```bash
-brew tap mausvoice/mausvoice
+brew tap maus-inc/mausvoice
 brew install --cask mausvoice-desktop
 ```
 
@@ -25,10 +25,4 @@ Upgrade with:
 
 ```bash
 brew upgrade --cask mausvoice-desktop
-```
-
-To install the development channel instead:
-
-```bash
-brew install --cask mausvoice-desktop-dev
 ```

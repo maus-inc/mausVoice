@@ -7,7 +7,7 @@ After your speech is transcribed, mausVoice runs a post-processing step that use
 
 ## How It Works
 
-1. You record audio and it gets transcribed to raw text (via local Whisper or the Groq API).
+1. You record audio and it gets transcribed to raw text (via local Whisper or your configured API provider).
 2. The raw transcript is combined with your active [style](../styles/) prompt and any [dictionary](../dictionary/) glossary terms.
 3. This combined prompt is sent to a language model that rewrites the text according to your style.
 4. The cleaned-up result is what you see (and what gets pasted if auto-paste is enabled).
@@ -16,11 +16,10 @@ Both the raw transcript and the post-processed version are saved, so you can alw
 
 ## Post-Processing Modes
 
-Post-processing follows the same mode as your transcription setting:
+Post-processing is configured independently of your transcription mode:
 
-- **Local** — Not currently supported for post-processing. Raw transcripts are returned as-is.
-- **API** — Uses your Groq API key to call a language model directly.
-- **Cloud** — Routes through mausVoice's cloud service.
+- **API** — Uses a large language model through your selected provider (for example Groq, OpenAI, or a local model via Ollama).
+- **Off** — No post-processing runs. Raw transcripts are returned as-is.
 
 ## Disabling Post-Processing
 

@@ -88,9 +88,12 @@ function markdownLink(label, url) {
   return `[${label}](${url})`;
 }
 
+// Badges and download chips live inside `<p align="center">` raw-HTML blocks.
+// GitHub does not parse Markdown link syntax inside raw HTML, so a
+// `[<img>](url)` here renders as literal text. Emit a real HTML anchor instead.
 function badgeImage(src, alt, url) {
   const img = `<img src="${src}" alt="${alt}" height="32" />`;
-  return url ? `[${img}](${url})` : img;
+  return url ? `<a href="${url}">${img}</a>` : img;
 }
 
 function logoChip(slug, alt, url) {
@@ -181,6 +184,7 @@ const noteItems = notes
 const githubBase = `https://github.com/${owner}/${repo}`;
 const actionsUrl = `${githubBase}/actions`;
 const releasesUrl = `${githubBase}/releases`;
+const licenceUrl = `${githubBase}/blob/main/LICENCE`;
 
 const downloadChips = [
   ...(mac
@@ -222,7 +226,7 @@ const body = [
   "Voice typing for your own machine. Dictate into any app, clean it up with AI. No account, no subscription.",
   "",
   `<p align="center">`,
-  `  ${logoChip("opensourceinitiative", "AGPL-3.0 license", "LICENCE")}`,
+  `  ${logoChip("opensourceinitiative", "AGPL-3.0 license", licenceUrl)}`,
   `  ${logoChip("githubactions", "CI passing", actionsUrl)}`,
   `  ${logoChip("box", "Downloads", releasesUrl)}`,
   `</p>`,
