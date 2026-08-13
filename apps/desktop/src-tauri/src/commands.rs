@@ -48,7 +48,7 @@ impl Drop for ReentryGuard<'_> {
 static TYPING_SESSION_ID: AtomicU64 = AtomicU64::new(0);
 
 static CANCEL_TYPING: AtomicBool = AtomicBool::new(false);
-use tauri::{AppHandle, Emitter, EventTarget, Manager, State};
+use tauri::{AppHandle, EventTarget, Manager, State};
 
 use crate::domain::{
     ApiKey, ApiKeyCreateRequest, ApiKeyView, AudioChunkPayload, OverlayPhase, OverlayPhasePayload,
@@ -58,7 +58,6 @@ use crate::domain::{
 use crate::platform::{ChunkCallback, LevelCallback};
 use crate::system::crypto::{protect_api_key, reveal_api_key};
 use crate::system::StorageRepo;
-use sqlx::Row;
 
 use crate::platform::input::paste_text_into_focused_field as platform_paste_text;
 
