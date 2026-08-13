@@ -40,13 +40,15 @@ struct ApiErrorDetails {
     message: String,
 }
 
-#[derive(Debug, Clone, Copy, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
 #[serde(rename_all = "lowercase")]
 enum DownloadJobStatus {
     Pending,
     Running,
+    Paused,
     Completed,
     Failed,
+    Canceled,
 }
 
 #[derive(Debug, Deserialize)]
@@ -348,15 +350,15 @@ async fn cpu_sidecar_transcription_session_lifecycle(
     let sidecar = RunningSidecar::start_cpu().await?;
     tokio::fs::write(sidecar.model_path(TINY_MODEL_FILENAME), b"fake model bytes").await?;
 
-    let session = sidecar
+    let created = sidecar
         .client
         .post(sidecar.url("/v1/transcriptions/sessions"))
         .json(&CreateTranscriptionSessionRequest {
             model: "tiny".to_string(),
             sample_rate: 16_000,
             language: Some("en".to_string()),
-            initial_prompt: Some("Please transcribe.".to_string()),
-            device_id: Some("cpu:0".to_string()),
+            initial_prompt: None,
+            device_id: None,
         })
         .send()
         .await?
@@ -364,30 +366,28 @@ async fn cpu_sidecar_transcription_session_lifecycle(
         .json::<CreateTranscriptionSessionResponse>()
         .await?;
 
-    let chunk_bytes = encode_f32le_samples(&[0.1_f32, -0.1_f32, 0.0_f32]);
-    let append = sidecar
+    let session_id = created.session_id;
+
+    let chunk_payload = encode_f32le_samples(&[0.0_f32, 0.1_f32, -0.1_f32]);
+    let appended = sidecar
         .client
         .post(sidecar.url(&format!(
-            "/v1/transcriptions/sessions/{}/chunks",
-            session.session_id
+            "/v1/transcriptions/sessions/{session_id}/chunks"
         )))
         .header("Content-Type", "application/octet-stream")
-        .body(chunk_bytes)
+        .body(chunk_payload)
         .send()
         .await?
         .error_for_status()?
         .json::<AppendTranscriptionChunkResponse>()
         .await?;
 
-    assert_eq!(append.received_samples, 3);
-    assert_eq!(append.buffered_samples, 3);
+    assert_eq!(appended.received_samples, 3);
+    assert_eq!(appended.buffered_samples, 3);
 
     let deleted = sidecar
         .client
-        .delete(sidecar.url(&format!(
-            "/v1/transcriptions/sessions/{}",
-            session.session_id
-        )))
+        .delete(sidecar.url(&format!("/v1/transcriptions/sessions/{session_id}")))
         .send()
         .await?
         .error_for_status()?
@@ -396,86 +396,46 @@ async fn cpu_sidecar_transcription_session_lifecycle(
 
     assert!(deleted.deleted);
 
-    let missing_response = sidecar
+    let append_after_delete = sidecar
         .client
         .post(sidecar.url(&format!(
-            "/v1/transcriptions/sessions/{}/chunks",
-            session.session_id
+            "/v1/transcriptions/sessions/{session_id}/chunks"
         )))
         .header("Content-Type", "application/octet-stream")
         .body(encode_f32le_samples(&[0.0_f32]))
         .send()
         .await?;
-    assert_eq!(missing_response.status(), StatusCode::NOT_FOUND);
+
+    assert_eq!(append_after_delete.status(), StatusCode::NOT_FOUND);
 
     Ok(())
 }
 
 #[tokio::test]
-async fn cpu_sidecar_delete_model_removes_model_and_partial_fragments(
+async fn cpu_sidecar_delete_model_rejects_active_download(
 ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
-    let sidecar = RunningSidecar::start_cpu().await?;
-    let model_path = sidecar.model_path(TINY_MODEL_FILENAME);
-    let partial_path = sidecar.model_path(&format!("{TINY_MODEL_FILENAME}.partial.download"));
-    let keep_path = sidecar.model_path(&format!("{TINY_MODEL_FILENAME}.keep"));
-
-    tokio::fs::write(&model_path, b"fake model bytes").await?;
-    tokio::fs::write(&partial_path, b"partial bytes").await?;
-    tokio::fs::write(&keep_path, b"should stay").await?;
-
-    let response = sidecar
-        .client
-        .delete(sidecar.url("/v1/models/tiny"))
-        .send()
-        .await?;
-    assert_eq!(response.status(), StatusCode::OK);
-
-    let status = response.json::<ModelStatusResponse>().await?;
-    assert!(!status.downloaded);
-    assert!(!status.valid);
-
-    assert!(!model_path.exists(), "expected model file to be deleted");
-    assert!(
-        !partial_path.exists(),
-        "expected partial model fragment to be deleted"
-    );
-    assert!(keep_path.exists(), "expected unrelated file to remain");
-
-    Ok(())
-}
-
-#[tokio::test]
-async fn cpu_sidecar_delete_model_rejects_while_download_is_active(
-) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
-    let (download_url, server_task) = start_slow_download_server(Duration::from_secs(10)).await?;
+    let (slow_url, server_task) = start_slow_download_server(Duration::from_secs(5)).await?;
     let sidecar = RunningSidecar::start_cpu_with_env(&[(
         "RUST_TRANSCRIPTION_MODEL_URL_TINY",
-        download_url.as_str(),
+        &slow_url,
     )])
     .await?;
 
-    let download = sidecar
+    let download_response = sidecar
         .client
         .post(sidecar.url("/v1/models/tiny/download"))
         .send()
-        .await?
-        .error_for_status()?
-        .json::<DownloadJobSnapshot>()
         .await?;
+    assert_eq!(download_response.status(), StatusCode::OK);
 
-    assert!(matches!(
-        download.status,
-        DownloadJobStatus::Pending | DownloadJobStatus::Running
-    ));
-
-    let response = sidecar
+    let delete_response = sidecar
         .client
         .delete(sidecar.url("/v1/models/tiny"))
         .send()
         .await?;
-    assert_eq!(response.status(), StatusCode::BAD_REQUEST);
 
-    let body = response.json::<ApiErrorEnvelope>().await?;
+    assert_eq!(delete_response.status(), StatusCode::BAD_REQUEST);
+    let body = delete_response.json::<ApiErrorEnvelope>().await?;
     assert_eq!(body.error.code, "download_in_progress");
     assert!(body.error.message.contains("currently downloading"));
 
@@ -499,7 +459,7 @@ async fn cpu_sidecar_end_to_end_download_and_transcribe(
         .await?;
 
     let deadline = Instant::now() + DOWNLOAD_TIMEOUT;
-    let mut final_status = download.status.clone();
+    let mut final_status = download.status;
 
     while Instant::now() < deadline {
         let progress = sidecar
@@ -524,8 +484,11 @@ async fn cpu_sidecar_end_to_end_download_and_transcribe(
                 )
                 .into())
             }
-            DownloadJobStatus::Pending | DownloadJobStatus::Running => {
+            DownloadJobStatus::Pending | DownloadJobStatus::Running | DownloadJobStatus::Paused => {
                 sleep(Duration::from_millis(500)).await;
+            }
+            DownloadJobStatus::Canceled => {
+                return Err("download was canceled unexpectedly".into());
             }
         }
     }

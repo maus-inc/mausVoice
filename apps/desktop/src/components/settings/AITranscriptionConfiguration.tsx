@@ -102,12 +102,12 @@ const formatDownloadProgress = (
   const percent = getDownloadProgressPercent(snapshot.progress);
   const progressPart = percent != null ? `${percent}%` : null;
 
-  const bytesPart =
-    snapshot.totalBytes != null && snapshot.totalBytes > 0
-      ? `${formatSize(snapshot.bytesDownloaded)} of ${formatSize(snapshot.totalBytes)}`
-      : snapshot.bytesDownloaded > 0
-        ? formatSize(snapshot.bytesDownloaded)
-        : null;
+  let bytesPart: string | null = null;
+  if (snapshot.totalBytes != null && snapshot.totalBytes > 0) {
+    bytesPart = `${formatSize(snapshot.bytesDownloaded)} of ${formatSize(snapshot.totalBytes)}`;
+  } else if (snapshot.bytesDownloaded > 0) {
+    bytesPart = formatSize(snapshot.bytesDownloaded);
+  }
 
   if (progressPart && bytesPart) {
     return `${progressPart} • ${bytesPart}`;
@@ -191,6 +191,21 @@ const PausedStatusBadge = ({
 
   const badgeColor = paused ? "warning.main" : "text.secondary";
 
+  const renderBadgeText = () => {
+    if (!paused) {
+      return compactPercent;
+    }
+    if (compactPercent) {
+      return (
+        <FormattedMessage
+          defaultMessage="Paused ({percent})"
+          values={{ percent: compactPercent }}
+        />
+      );
+    }
+    return <FormattedMessage defaultMessage="Paused" />;
+  };
+
   return (
     <Typography
       variant="caption"
@@ -198,18 +213,7 @@ const PausedStatusBadge = ({
       color={badgeColor}
       sx={{ fontVariantNumeric: "tabular-nums", mr: 0.5 }}
     >
-      {paused ? (
-        compactPercent ? (
-          <FormattedMessage
-            defaultMessage="Paused ({percent})"
-            values={{ percent: compactPercent }}
-          />
-        ) : (
-          <FormattedMessage defaultMessage="Paused" />
-        )
-      ) : (
-        compactPercent
-      )}
+      {renderBadgeText()}
     </Typography>
   );
 };
@@ -599,6 +603,10 @@ export const AITranscriptionConfiguration = () => {
                   ) {
                     return null;
                   }
+                  const warningColor =
+                    fit?.level === "discouraged"
+                      ? "error.main"
+                      : "warning.main";
                   return (
                     <WarningAmberRoundedIcon
                       fontSize="small"
@@ -606,12 +614,7 @@ export const AITranscriptionConfiguration = () => {
                         defaultMessage:
                           "This model may not run well on this device",
                       })}
-                      sx={{
-                        color:
-                          fit.level === "discouraged"
-                            ? "error.main"
-                            : "warning.main",
-                      }}
+                      sx={{ color: warningColor }}
                     />
                   );
                 })()}
@@ -736,10 +739,10 @@ export const AITranscriptionConfiguration = () => {
                   </MenuItem>
                 ) : (
                   transcription.availableDevices.map((device) => {
-                    const modeLabel =
-                      device.mode === "gpu"
-                        ? intl.formatMessage({ defaultMessage: "GPU" })
-                        : intl.formatMessage({ defaultMessage: "CPU" });
+                    const isGpu = device.mode === "gpu";
+                    const modeLabel = isGpu
+                      ? intl.formatMessage({ defaultMessage: "GPU" })
+                      : intl.formatMessage({ defaultMessage: "CPU" });
 
                     return (
                       <MenuItem key={device.id} value={device.id}>
@@ -784,16 +787,16 @@ export const AITranscriptionConfiguration = () => {
                 <ListSubheader sx={subheaderSx}>
                   <FormattedMessage defaultMessage="NVIDIA NeMo / Sherpa-ONNX (Fast & No Hallucinations)" />
                 </ListSubheader>
-                {LOCAL_MODEL_OPTIONS.filter(
-                  (opt) => opt.category === "fast",
-                ).map((opt) => renderModelMenuItem(opt))}
+                {LOCAL_MODEL_OPTIONS.filter((opt) => opt.category === "fast").map(
+                  (opt) => renderModelMenuItem(opt),
+                )}
 
                 <ListSubheader sx={subheaderSx}>
                   <FormattedMessage defaultMessage="OpenAI Whisper (Multilingual GGML)" />
                 </ListSubheader>
-                {LOCAL_MODEL_OPTIONS.filter(
-                  (opt) => opt.category === "whisper",
-                ).map((opt) => renderModelMenuItem(opt))}
+                {LOCAL_MODEL_OPTIONS.filter((opt) => opt.category === "whisper").map(
+                  (opt) => renderModelMenuItem(opt),
+                )}
               </Select>
               {showInlineModelDownloadAction && (
                 <Box
