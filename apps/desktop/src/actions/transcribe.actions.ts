@@ -372,13 +372,12 @@ export const storeTranscription = async (
     return { transcription: null, wordCount: wordsAdded };
   }
 
+  // Coerce the samples to an Array regardless of whether the IPC layer
+  // returned a plain Array or a typed-array-like. The rate<=0 / empty
+  // short-circuit above already guarantees this path is non-empty.
   const payloadSamples = Array.isArray(input.audio.samples)
     ? input.audio.samples
     : Array.from(input.audio.samples ?? []);
-
-  if (rate <= 0 || payloadSamples.length === 0) {
-    return { transcription: null, wordCount: 0 };
-  }
 
   const transcriptionId = createId();
 

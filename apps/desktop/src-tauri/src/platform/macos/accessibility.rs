@@ -27,9 +27,19 @@ where
     where
         F: FnOnce() -> R,
     {
+        // Use expect() instead of unwrap() so a poisoned/already-consumed
+        // context surfaces a descriptive message rather than a generic
+        // "called `Option::unwrap()` on a `None` value" panic. The take()
+        // is guaranteed to succeed here because trampoline is invoked
+        // exactly once by dispatch_sync_f for a given context, but we
+        // prefer a clear message for post-hoc triage if something goes
+        // sideways.
         unsafe {
             let ctx = &mut *(ctx as *mut Context<F, R>);
-            let f = ctx.f.take().unwrap();
+            let f = ctx
+                .f
+                .take()
+                .expect("dispatch_sync_f context invoked twice or with corrupted state");
             ctx.result = Some(f());
         }
     }
@@ -48,7 +58,8 @@ where
         );
     }
 
-    ctx.result.unwrap()
+    ctx.result
+        .expect("run_on_main_thread trampoline did not populate result")
 }
 
 // AXUIElement types and functions from ApplicationServices framework
