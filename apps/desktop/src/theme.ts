@@ -255,6 +255,17 @@ export const theme = createTheme({
 
     MuiSwitch: {
       styleOverrides: {
+        root: {
+          // Square switch (shadcn switch-2 look, adapted to MUI): small radii
+          // on the thumb and track instead of the default pill geometry.
+          // Applied globally so every <Switch> inherits the new look.
+          "& .MuiSwitch-thumb": {
+            borderRadius: 3,
+          },
+          "& .MuiSwitch-track": {
+            borderRadius: 5,
+          },
+        },
         switchBase: ({ theme }) => ({
           "&.Mui-checked": {
             color: theme.vars.palette.blue,
