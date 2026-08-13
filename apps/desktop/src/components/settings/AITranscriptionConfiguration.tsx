@@ -177,6 +177,215 @@ const formatCompactPercent = (
   return `${Math.round(Math.max(0, Math.min(1, snapshot.progress)) * 100)}%`;
 };
 
+type ModelDownloadActionButtonsProps = {
+  model: LocalWhisperModel;
+  downloading: boolean;
+  paused: boolean;
+  selectable: boolean;
+  deleting?: boolean;
+  compactPercent?: string | null;
+  onDownload: (model: LocalWhisperModel) => void;
+  onPause: (model: LocalWhisperModel) => void;
+  onResume: (model: LocalWhisperModel) => void;
+  onCancel: (model: LocalWhisperModel) => void;
+  onDelete?: (model: LocalWhisperModel) => void;
+};
+
+const ModelDownloadActionButtons = ({
+  model,
+  downloading,
+  paused,
+  selectable,
+  deleting,
+  compactPercent,
+  onDownload,
+  onPause,
+  onResume,
+  onCancel,
+  onDelete,
+}: ModelDownloadActionButtonsProps) => {
+  const handleAction = (
+    event: React.MouseEvent,
+    action: (m: LocalWhisperModel) => void,
+  ) => {
+    event.preventDefault();
+    event.stopPropagation();
+    action(model);
+  };
+
+  if (downloading) {
+    return (
+      <Stack direction="row" spacing={0.75} alignItems="center">
+        {compactPercent && (
+          <Typography
+            variant="caption"
+            fontWeight={600}
+            color="text.secondary"
+            sx={{ fontVariantNumeric: "tabular-nums", mr: 0.5 }}
+          >
+            {compactPercent}
+          </Typography>
+        )}
+        <Button
+          size="small"
+          variant="outlined"
+          color="warning"
+          startIcon={<PauseRoundedIcon sx={{ fontSize: 14 }} />}
+          sx={{
+            ...buttonSx,
+            minWidth: 0,
+            minHeight: 24,
+            px: 1,
+            borderRadius: 999,
+            textTransform: "none",
+            fontSize: 12,
+            lineHeight: 1.2,
+          }}
+          onMouseDown={(e) => {
+            e.preventDefault();
+            e.stopPropagation();
+          }}
+          onClick={(e) => handleAction(e, onPause)}
+        >
+          <FormattedMessage defaultMessage="Pause" />
+        </Button>
+        <Button
+          size="small"
+          variant="text"
+          color="inherit"
+          startIcon={<CloseRoundedIcon sx={{ fontSize: 14 }} />}
+          sx={{
+            ...buttonSx,
+            minWidth: 0,
+            minHeight: 24,
+            px: 1,
+            borderRadius: 999,
+            textTransform: "none",
+            fontSize: 12,
+            lineHeight: 1.2,
+            color: "text.secondary",
+          }}
+          onMouseDown={(e) => {
+            e.preventDefault();
+            e.stopPropagation();
+          }}
+          onClick={(e) => handleAction(e, onCancel)}
+        >
+          <FormattedMessage defaultMessage="Cancel" />
+        </Button>
+      </Stack>
+    );
+  }
+
+  if (paused) {
+    return (
+      <Stack direction="row" spacing={0.75} alignItems="center">
+        {compactPercent && (
+          <Typography
+            variant="caption"
+            fontWeight={600}
+            color="warning.main"
+            sx={{ fontVariantNumeric: "tabular-nums", mr: 0.5 }}
+          >
+            {`Paused (${compactPercent})`}
+          </Typography>
+        )}
+        <Button
+          size="small"
+          variant="contained"
+          color="primary"
+          startIcon={<PlayArrowRoundedIcon sx={{ fontSize: 14 }} />}
+          sx={{
+            ...buttonSx,
+            minWidth: 0,
+            minHeight: 24,
+            px: 1,
+            borderRadius: 999,
+            boxShadow: "none",
+            textTransform: "none",
+            fontSize: 12,
+            lineHeight: 1.2,
+          }}
+          onMouseDown={(e) => {
+            e.preventDefault();
+            e.stopPropagation();
+          }}
+          onClick={(e) => handleAction(e, onResume)}
+        >
+          <FormattedMessage defaultMessage="Resume" />
+        </Button>
+        <Button
+          size="small"
+          variant="text"
+          color="inherit"
+          startIcon={<CloseRoundedIcon sx={{ fontSize: 14 }} />}
+          sx={{
+            ...buttonSx,
+            minWidth: 0,
+            minHeight: 24,
+            px: 1,
+            borderRadius: 999,
+            textTransform: "none",
+            fontSize: 12,
+            lineHeight: 1.2,
+            color: "text.secondary",
+          }}
+          onMouseDown={(e) => {
+            e.preventDefault();
+            e.stopPropagation();
+          }}
+          onClick={(e) => handleAction(e, onCancel)}
+        >
+          <FormattedMessage defaultMessage="Cancel" />
+        </Button>
+      </Stack>
+    );
+  }
+
+  return (
+    <Button
+      size="small"
+      variant="contained"
+      color={selectable ? "error" : "primary"}
+      disabled={deleting}
+      sx={{
+        ...buttonSx,
+        minWidth: 0,
+        minHeight: 24,
+        px: 1.25,
+        borderRadius: 999,
+        boxShadow: "none",
+        textTransform: "none",
+        fontSize: 12,
+        lineHeight: 1.2,
+        alignSelf: "center",
+        "&:hover": {
+          boxShadow: "none",
+        },
+      }}
+      onMouseDown={(e) => {
+        e.preventDefault();
+        e.stopPropagation();
+      }}
+      onClick={(e) => {
+        if (selectable && onDelete) {
+          handleAction(e, onDelete);
+        } else {
+          handleAction(e, onDownload);
+        }
+      }}
+    >
+      {deleting ? (
+        <FormattedMessage defaultMessage="Deleting..." />
+      ) : selectable ? (
+        <FormattedMessage defaultMessage="Delete" />
+      ) : (
+        <FormattedMessage defaultMessage="Download" />
+      )}
+    </Button>
+  );
+};
+
 export const AITranscriptionConfiguration = () => {
   const intl = useIntl();
   const transcription = useAppStore((state) => state.settings.aiTranscription);
@@ -440,179 +649,20 @@ export const AITranscriptionConfiguration = () => {
               </Typography>
             </Box>
 
-            <Stack
-              direction="row"
-              spacing={0.75}
-              alignItems="center"
-              alignSelf="center"
-            >
-              {downloading && (
-                <>
-                  <Button
-                    size="small"
-                    variant="outlined"
-                    color="warning"
-                    startIcon={<PauseRoundedIcon sx={{ fontSize: 14 }} />}
-                    sx={{
-                      ...buttonSx,
-                      minWidth: 0,
-                      minHeight: 24,
-                      px: 1,
-                      borderRadius: 999,
-                      boxShadow: "none",
-                      textTransform: "none",
-                      fontSize: 12,
-                      lineHeight: 1.2,
-                    }}
-                    onMouseDown={(event) => {
-                      event.preventDefault();
-                      event.stopPropagation();
-                    }}
-                    onClick={(event) => {
-                      event.preventDefault();
-                      event.stopPropagation();
-                      handlePauseModel(value);
-                    }}
-                  >
-                    <FormattedMessage defaultMessage="Pause" />
-                  </Button>
-                  <Button
-                    size="small"
-                    variant="text"
-                    color="inherit"
-                    startIcon={<CloseRoundedIcon sx={{ fontSize: 14 }} />}
-                    sx={{
-                      ...buttonSx,
-                      minWidth: 0,
-                      minHeight: 24,
-                      px: 1,
-                      borderRadius: 999,
-                      textTransform: "none",
-                      fontSize: 12,
-                      lineHeight: 1.2,
-                      color: "text.secondary",
-                    }}
-                    onMouseDown={(event) => {
-                      event.preventDefault();
-                      event.stopPropagation();
-                    }}
-                    onClick={(event) => {
-                      event.preventDefault();
-                      event.stopPropagation();
-                      handleCancelModel(value);
-                    }}
-                  >
-                    <FormattedMessage defaultMessage="Cancel" />
-                  </Button>
-                </>
-              )}
-
-              {paused && (
-                <>
-                  <Button
-                    size="small"
-                    variant="contained"
-                    color="primary"
-                    startIcon={<PlayArrowRoundedIcon sx={{ fontSize: 14 }} />}
-                    sx={{
-                      ...buttonSx,
-                      minWidth: 0,
-                      minHeight: 24,
-                      px: 1,
-                      borderRadius: 999,
-                      boxShadow: "none",
-                      textTransform: "none",
-                      fontSize: 12,
-                      lineHeight: 1.2,
-                    }}
-                    onMouseDown={(event) => {
-                      event.preventDefault();
-                      event.stopPropagation();
-                    }}
-                    onClick={(event) => {
-                      event.preventDefault();
-                      event.stopPropagation();
-                      handleResumeModel(value);
-                    }}
-                  >
-                    <FormattedMessage defaultMessage="Resume" />
-                  </Button>
-                  <Button
-                    size="small"
-                    variant="text"
-                    color="inherit"
-                    startIcon={<CloseRoundedIcon sx={{ fontSize: 14 }} />}
-                    sx={{
-                      ...buttonSx,
-                      minWidth: 0,
-                      minHeight: 24,
-                      px: 1,
-                      borderRadius: 999,
-                      textTransform: "none",
-                      fontSize: 12,
-                      lineHeight: 1.2,
-                      color: "text.secondary",
-                    }}
-                    onMouseDown={(event) => {
-                      event.preventDefault();
-                      event.stopPropagation();
-                    }}
-                    onClick={(event) => {
-                      event.preventDefault();
-                      event.stopPropagation();
-                      handleCancelModel(value);
-                    }}
-                  >
-                    <FormattedMessage defaultMessage="Cancel" />
-                  </Button>
-                </>
-              )}
-
-              {!downloading && !paused && (
-                <Button
-                  size="small"
-                  variant="contained"
-                  color={selectable ? "error" : "primary"}
-                  disabled={deleting}
-                  sx={{
-                    ...buttonSx,
-                    minWidth: 0,
-                    minHeight: 24,
-                    px: 1.25,
-                    borderRadius: 999,
-                    boxShadow: "none",
-                    textTransform: "none",
-                    fontSize: 12,
-                    lineHeight: 1.2,
-                    alignSelf: "center",
-                    "&:hover": {
-                      boxShadow: "none",
-                    },
-                  }}
-                  onMouseDown={(event) => {
-                    event.preventDefault();
-                    event.stopPropagation();
-                  }}
-                  onClick={(event) => {
-                    event.preventDefault();
-                    event.stopPropagation();
-                    if (selectable) {
-                      handleDeleteModel(value);
-                      return;
-                    }
-                    handleDownloadModel(value);
-                  }}
-                >
-                  {deleting ? (
-                    <FormattedMessage defaultMessage="Deleting..." />
-                  ) : selectable ? (
-                    <FormattedMessage defaultMessage="Delete" />
-                  ) : (
-                    <FormattedMessage defaultMessage="Download" />
-                  )}
-                </Button>
-              )}
-            </Stack>
+            <Box sx={{ alignSelf: "center" }}>
+              <ModelDownloadActionButtons
+                model={value}
+                downloading={downloading}
+                paused={paused}
+                selectable={selectable}
+                deleting={deleting}
+                onDownload={handleDownloadModel}
+                onPause={handlePauseModel}
+                onResume={handleResumeModel}
+                onCancel={handleCancelModel}
+                onDelete={handleDeleteModel}
+              />
+            </Box>
           </Stack>
 
           {(downloading || paused) && (
@@ -784,183 +834,17 @@ export const AITranscriptionConfiguration = () => {
                     zIndex: 1,
                   }}
                 >
-                  <Stack direction="row" spacing={0.75} alignItems="center">
-                    {modelDownloading && (
-                      <>
-                        {compactPercent && (
-                          <Typography
-                            variant="caption"
-                            fontWeight={600}
-                            color="text.secondary"
-                            sx={{ fontVariantNumeric: "tabular-nums", mr: 0.5 }}
-                          >
-                            {compactPercent}
-                          </Typography>
-                        )}
-                        <Button
-                          size="small"
-                          variant="outlined"
-                          color="warning"
-                          startIcon={<PauseRoundedIcon sx={{ fontSize: 14 }} />}
-                          sx={{
-                            ...buttonSx,
-                            minWidth: 0,
-                            minHeight: 24,
-                            px: 1,
-                            borderRadius: 999,
-                            textTransform: "none",
-                            fontSize: 12,
-                            lineHeight: 1.2,
-                          }}
-                          onMouseDown={(event) => {
-                            event.preventDefault();
-                            event.stopPropagation();
-                          }}
-                          onClick={(event) => {
-                            event.preventDefault();
-                            event.stopPropagation();
-                            handlePauseModel(modelValue);
-                          }}
-                        >
-                          <FormattedMessage defaultMessage="Pause" />
-                        </Button>
-                        <Button
-                          size="small"
-                          variant="text"
-                          color="inherit"
-                          startIcon={<CloseRoundedIcon sx={{ fontSize: 14 }} />}
-                          sx={{
-                            ...buttonSx,
-                            minWidth: 0,
-                            minHeight: 24,
-                            px: 1,
-                            borderRadius: 999,
-                            textTransform: "none",
-                            fontSize: 12,
-                            lineHeight: 1.2,
-                            color: "text.secondary",
-                          }}
-                          onMouseDown={(event) => {
-                            event.preventDefault();
-                            event.stopPropagation();
-                          }}
-                          onClick={(event) => {
-                            event.preventDefault();
-                            event.stopPropagation();
-                            handleCancelModel(modelValue);
-                          }}
-                        >
-                          <FormattedMessage defaultMessage="Cancel" />
-                        </Button>
-                      </>
-                    )}
-
-                    {modelPaused && (
-                      <>
-                        <Typography
-                          variant="caption"
-                          fontWeight={600}
-                          color="warning.main"
-                          sx={{ fontVariantNumeric: "tabular-nums", mr: 0.5 }}
-                        >
-                          {compactPercent
-                            ? `Paused (${compactPercent})`
-                            : "Paused"}
-                        </Typography>
-                        <Button
-                          size="small"
-                          variant="contained"
-                          color="primary"
-                          startIcon={
-                            <PlayArrowRoundedIcon sx={{ fontSize: 14 }} />
-                          }
-                          sx={{
-                            ...buttonSx,
-                            minWidth: 0,
-                            minHeight: 24,
-                            px: 1,
-                            borderRadius: 999,
-                            boxShadow: "none",
-                            textTransform: "none",
-                            fontSize: 12,
-                            lineHeight: 1.2,
-                          }}
-                          onMouseDown={(event) => {
-                            event.preventDefault();
-                            event.stopPropagation();
-                          }}
-                          onClick={(event) => {
-                            event.preventDefault();
-                            event.stopPropagation();
-                            handleResumeModel(modelValue);
-                          }}
-                        >
-                          <FormattedMessage defaultMessage="Resume" />
-                        </Button>
-                        <Button
-                          size="small"
-                          variant="text"
-                          color="inherit"
-                          startIcon={<CloseRoundedIcon sx={{ fontSize: 14 }} />}
-                          sx={{
-                            ...buttonSx,
-                            minWidth: 0,
-                            minHeight: 24,
-                            px: 1,
-                            borderRadius: 999,
-                            textTransform: "none",
-                            fontSize: 12,
-                            lineHeight: 1.2,
-                            color: "text.secondary",
-                          }}
-                          onMouseDown={(event) => {
-                            event.preventDefault();
-                            event.stopPropagation();
-                          }}
-                          onClick={(event) => {
-                            event.preventDefault();
-                            event.stopPropagation();
-                            handleCancelModel(modelValue);
-                          }}
-                        >
-                          <FormattedMessage defaultMessage="Cancel" />
-                        </Button>
-                      </>
-                    )}
-
-                    {!modelDownloading && !modelPaused && (
-                      <Button
-                        size="small"
-                        variant="contained"
-                        color="primary"
-                        sx={{
-                          ...buttonSx,
-                          minWidth: 0,
-                          minHeight: 24,
-                          px: 1.25,
-                          borderRadius: 999,
-                          boxShadow: "none",
-                          textTransform: "none",
-                          fontSize: 12,
-                          lineHeight: 1.2,
-                          "&:hover": {
-                            boxShadow: "none",
-                          },
-                        }}
-                        onMouseDown={(event) => {
-                          event.preventDefault();
-                          event.stopPropagation();
-                        }}
-                        onClick={(event) => {
-                          event.preventDefault();
-                          event.stopPropagation();
-                          handleDownloadModel(modelValue);
-                        }}
-                      >
-                        <FormattedMessage defaultMessage="Download" />
-                      </Button>
-                    )}
-                  </Stack>
+                  <ModelDownloadActionButtons
+                    model={modelValue}
+                    downloading={modelDownloading}
+                    paused={modelPaused}
+                    selectable={modelSelectable}
+                    compactPercent={compactPercent}
+                    onDownload={handleDownloadModel}
+                    onPause={handlePauseModel}
+                    onResume={handleResumeModel}
+                    onCancel={handleCancelModel}
+                  />
                 </Box>
               )}
             </FormControl>
