@@ -14,43 +14,16 @@ const socialImage = `${docsSite}${docsBase}assets/mausvoice-banner.png`;
 const meta = (attrs) => ({ tag: "meta", attrs });
 
 const sidebar = [
-  {
-    label: "Getting started",
-    autogenerate: { directory: "getting-started" },
-  },
-  {
-    label: "Using mausVoice",
-    autogenerate: { directory: "using-mausvoice" },
-  },
-  {
-    label: "Configuration",
-    autogenerate: { directory: "configuration" },
-  },
-  {
-    label: "Providers",
-    autogenerate: { directory: "providers" },
-  },
-  {
-    label: "Privacy & security",
-    autogenerate: { directory: "privacy-security" },
-  },
-  {
-    label: "Troubleshooting",
-    autogenerate: { directory: "troubleshooting" },
-  },
-  {
-    label: "Reference",
-    autogenerate: { directory: "reference" },
-  },
-  {
-    label: "Development",
-    autogenerate: { directory: "development" },
-  },
-  {
-    label: "Project",
-    autogenerate: { directory: "project" },
-  },
-];
+  ["Getting started", "getting-started"],
+  ["Using mausVoice", "using-mausvoice"],
+  ["Configuration", "configuration"],
+  ["Providers", "providers"],
+  ["Privacy & security", "privacy-security"],
+  ["Troubleshooting", "troubleshooting"],
+  ["Reference", "reference"],
+  ["Development", "development"],
+  ["Project", "project"],
+].map(([label, directory]) => ({ label, autogenerate: { directory } }));
 
 // https://astro.build/config
 export default defineConfig({
