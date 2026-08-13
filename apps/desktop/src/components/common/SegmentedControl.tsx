@@ -1,5 +1,7 @@
 import { Box, Tab, Tabs } from "@mui/material";
-import { SyntheticEvent } from "react";
+import { motion, useReducedMotion } from "framer-motion";
+import { SyntheticEvent, useId } from "react";
+import { springSnappy } from "../../styles/motion";
 
 export type SegmentedControlOption<Value extends string> = {
   value: Value;
@@ -29,12 +31,10 @@ const tabSx = {
   px: 2.5,
   borderRadius: 1.5,
   fontWeight: 600,
-  transition: "all 0.2s ease",
   color: "text.secondary",
+  position: "relative",
   "&.Mui-selected": {
     color: "text.primary",
-    bgcolor: "background.paper",
-    boxShadow: "inset 0 1px 3px rgba(0,0,0,0.2), 0 1px 2px rgba(0,0,0,0.05)",
   },
   "&:hover:not(.Mui-selected)": {
     color: "text.primary",
@@ -49,6 +49,11 @@ export const SegmentedControl = <Value extends string>({
   ariaLabel,
   align = "start",
 }: SegmentedControlProps<Value>) => {
+  const reduceMotion = useReducedMotion();
+  // Scoped per control instance so multiple SegmentedControls on one page
+  // don't share a layout animation.
+  const layoutId = `segmented-active-${useId().replace(/[^a-zA-Z0-9_-]/g, "")}`;
+
   const activeIndexCandidate = options.findIndex(
     (option) => option.value === value && !option.disabled,
   );
@@ -71,6 +76,50 @@ export const SegmentedControl = <Value extends string>({
     if (option.value !== value) {
       onChange(option.value);
     }
+  };
+
+  const activeIndicator = (isActive: boolean) => {
+    if (!isActive) {
+      return null;
+    }
+
+    // Static fallback for reduced motion, matching the sidebar implementation.
+    if (reduceMotion) {
+      return (
+        <Box
+          sx={{
+            position: "absolute",
+            inset: 0,
+            borderRadius: 1.5,
+            bgcolor: "background.paper",
+            boxShadow:
+              "inset 0 1px 3px rgba(0,0,0,0.2), 0 1px 2px rgba(0,0,0,0.05)",
+            zIndex: 0,
+            pointerEvents: "none",
+          }}
+        />
+      );
+    }
+
+    // Shared-layout highlight: the selected-tab background slides between
+    // tabs with the same spring used by the sidebar navigation.
+    return (
+      <Box
+        component={motion.div}
+        layoutId={layoutId}
+        transition={springSnappy}
+        sx={{
+          position: "absolute",
+          inset: 0,
+          borderRadius: 1.5,
+          bgcolor: "background.paper",
+          boxShadow:
+            "inset 0 1px 3px rgba(0,0,0,0.2), 0 1px 2px rgba(0,0,0,0.05)",
+          zIndex: 0,
+          pointerEvents: "none",
+        }}
+      />
+    );
   };
 
   return (
@@ -99,10 +148,17 @@ export const SegmentedControl = <Value extends string>({
           },
         }}
       >
-        {options.map((option) => (
+        {options.map((option, index) => (
           <Tab
             key={option.value}
-            label={option.label}
+            label={
+              <>
+                <Box sx={{ position: "relative", zIndex: 1 }}>
+                  {option.label}
+                </Box>
+                {activeIndicator(index === activeIndex)}
+              </>
+            }
             sx={tabSx}
             disabled={option.disabled}
           />
