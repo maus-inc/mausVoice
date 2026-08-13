@@ -106,6 +106,11 @@ impl TranscriptionEngine {
             return Err("unable to resample audio".to_string());
         }
 
+        let model_path_str = input.model_path.to_str().unwrap_or_default();
+        if model_path_str.ends_with(".onnx") {
+            return Err("sherpa-onnx runtime is required to transcribe with ONNX models (Parakeet/Canary)".to_string());
+        }
+
         let device = self.resolve_device_blocking(input.device_id.as_deref())?;
         let context = self.context_for_model(&input.model_path, &device)?;
         let mut state = context
