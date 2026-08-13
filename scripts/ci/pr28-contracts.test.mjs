@@ -95,6 +95,13 @@ describe("PR28 reset IPC execution and missing-overlay handling", () => {
       source.windowsOverlay,
       /pill_process::notify_reset_position\(app\)/,
     );
+    assert.match(
+      source.gtkPill,
+      /x11::persist_drop_position\(&win_click, &state_click\)/,
+    );
+    assert.match(source.gtkPill, /x11_release_persisted\.set\(persisted\)/);
+    assert.match(source.gtkX11, /pub\(crate\) fn persist_drop_position/);
+    assert.match(source.gtkX11, /!state_tick\.x11_release_persisted\.replace\(false\)/);
   });
 
   it("emits the frontend reset state event after a native position change", () => {
@@ -129,7 +136,36 @@ describe("PR28 ring-alpha render-loop policy", () => {
 });
 
 describe("PR28 fork-workflow secret isolation", () => {
-  it("skips secret-backed jobs on fork pull requests via a real event guard", () => {
+  it("skips secret-backed jobs on fork pull requests via event fixtures", () => {
+    const shouldRunProviderJob = (event) =>
+      event.event_name === "push" ||
+      (event.event_name === "pull_request" &&
+        event.pull_request?.head?.repo?.full_name === event.repository);
+
+    assert.equal(
+      shouldRunProviderJob({
+        event_name: "push",
+        repository: "maus-inc/mausVoice",
+      }),
+      true,
+    );
+    assert.equal(
+      shouldRunProviderJob({
+        event_name: "pull_request",
+        repository: "maus-inc/mausVoice",
+        pull_request: { head: { repo: { full_name: "maus-inc/mausVoice" } } },
+      }),
+      true,
+    );
+    assert.equal(
+      shouldRunProviderJob({
+        event_name: "pull_request",
+        repository: "maus-inc/mausVoice",
+        pull_request: { head: { repo: { full_name: "contributor/mausVoice" } } },
+      }),
+      false,
+    );
+
     // The guard inspects the actual pull_request head repo, not a constant.
     assert.match(
       source.integrationWorkflow,
@@ -211,16 +247,42 @@ describe("PR28 workflow and public-asset contracts", () => {
     assert.match(source.docsWorkflow, /mausvoice-banner\.png/);
   });
 
+  it("assembles a complete project-Pages artifact at the documented base", () => {
+    assert.match(source.astro, /const docsBase = "\/mausVoice\/docs\/"/);
+    assert.match(source.docsIndex, /link: \/mausVoice\/docs\/getting-started\//);
+    assert.match(source.docsWorkflow, /cp -r marketing publish\/marketing/);
+    assert.match(source.docsWorkflow, /cp -r apps\/docs\/dist\/. publish\/docs\//);
+    assert.match(
+      source.docsWorkflow,
+      /publish\/docs\/assets\/mausvoice-banner\.png/,
+    );
+    assert.match(source.docsWorkflow, /publish\/docs\/assets\/fonts/);
+    assert.match(source.docsWorkflow, /cp sitemap\.xml robots\.txt llms\.txt publish\//);
+    assert.match(source.docsWorkflow, /publish\/docs\/llms\.txt/);
+  });
+
+  it("keeps homepage motion, accessibility, and responsive fallbacks wired", () => {
+    assert.match(source.index, /id="caption-toggle"/);
+    assert.match(source.index, /aria-pressed="false"/);
+    assert.match(source.index, /capTrack\.mode = show \? "showing" : "hidden"/);
+    assert.match(source.index, /prefers-reduced-motion/);
+    assert.match(source.index, /IntersectionObserver/);
+    assert.match(source.index, /window\.addEventListener\("resize", sizeStage\)/);
+    assert.match(source.index, /class="skip-link"/);
+    assert.match(source.index, /:focus-visible/);
+  });
+
   it("keeps every social metadata consumer on the checked-in asset", () => {
     const asset = resolve(repoRoot, "docs/assets/mausvoice-banner.png");
     assert.equal(statSync(asset).isFile(), true);
     assert.match(source.index, /docs\/assets\/mausvoice-banner\.png/);
-    assert.match(source.astro, /docs\/assets\/mausvoice-banner\.png/);
+    assert.match(source.astro, /docsBase\}assets\/mausvoice-banner\.png/);
   });
 
   it("keeps a valid production fallback for the new server", () => {
     assert.match(source.newServer, /DEFAULT_NEW_SERVER_URL/);
     assert.match(source.newServer, /https:\/\/api\.mausvoice\.com/);
     assert.match(source.newServer, /resolveNewServerUrl/);
+    assert.match(source.newServer, /buildNewServerWebSocketUrl/);
   });
 });

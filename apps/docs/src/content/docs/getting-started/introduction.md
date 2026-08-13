@@ -9,7 +9,7 @@ hero:
       icon: external
       variant: primary
     - text: macOS setup
-      link: /mausVoice/getting-started/macos/
+      link: /mausVoice/docs/getting-started/macos/
       variant: minimal
 ---
 

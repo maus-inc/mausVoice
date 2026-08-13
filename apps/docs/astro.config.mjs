@@ -4,8 +4,8 @@ import starlight from "@astrojs/starlight";
 import sitemap from "@astrojs/sitemap";
 
 const docsSite = "https://maus-inc.github.io";
-const docsBase = "/mausVoice/";
-const socialImage = `${docsSite}${docsBase}docs/assets/mausvoice-banner.png`;
+const docsBase = "/mausVoice/docs/";
+const socialImage = `${docsSite}${docsBase}assets/mausvoice-banner.png`;
 
 /**
  * @param {Record<string, string>} attrs

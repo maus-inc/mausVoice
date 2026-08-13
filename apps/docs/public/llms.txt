@@ -6,9 +6,9 @@ Use these pages as the primary source for installation, configuration, and user 
 
 ## Primary resources
 
-- [Documentation home](https://maus-inc.github.io/mausVoice/): Documentation landing page and topic navigation.
+- [Documentation home](https://maus-inc.github.io/mausVoice/docs/): Documentation landing page and topic navigation.
 - [Official website](https://maus-inc.github.io/mausVoice/): Product overview and download entry point.
-- [Complete mausVoice LLM guide](https://maus-inc.github.io/mausVoice/llms.txt): Product, source, development, terminology, and citation context.
+- [Complete mausVoice LLM guide](https://maus-inc.github.io/mausVoice/docs/llms.txt): Product, source, development, terminology, and citation context.
 - [Source repository](https://github.com/maus-inc/mausVoice): Canonical source code.
 - [Latest releases](https://github.com/maus-inc/mausVoice/releases): Installers and release notes.
 - [Issue tracker](https://github.com/maus-inc/mausVoice/issues): Bugs and feature requests.
@@ -16,20 +16,20 @@ Use these pages as the primary source for installation, configuration, and user 
 
 ## Getting started
 
-- [Introduction](https://maus-inc.github.io/mausVoice/getting-started/introduction/): What mausVoice does, transcription modes, first launch, and first dictation.
-- [macOS](https://maus-inc.github.io/mausVoice/getting-started/macos/): Install and run mausVoice on macOS.
-- [Windows](https://maus-inc.github.io/mausVoice/getting-started/windows/): Install and run mausVoice on Windows.
-- [Linux](https://maus-inc.github.io/mausVoice/getting-started/linux/): AppImage and Debian installation, required packages, permissions, desktop integration, and troubleshooting.
-- [Linux Wayland compatibility link](https://maus-inc.github.io/mausVoice/getting-started/linux-wayland/): Redirects to current Linux guidance.
-- [Linux X11 compatibility link](https://maus-inc.github.io/mausVoice/getting-started/linux-x11/): Redirects to current Linux guidance.
+- [Introduction](https://maus-inc.github.io/mausVoice/docs/getting-started/introduction/): What mausVoice does, transcription modes, first launch, and first dictation.
+- [macOS](https://maus-inc.github.io/mausVoice/docs/getting-started/macos/): Install and run mausVoice on macOS.
+- [Windows](https://maus-inc.github.io/mausVoice/docs/getting-started/windows/): Install and run mausVoice on Windows.
+- [Linux](https://maus-inc.github.io/mausVoice/docs/getting-started/linux/): AppImage and Debian installation, required packages, permissions, desktop integration, and troubleshooting.
+- [Linux Wayland compatibility link](https://maus-inc.github.io/mausVoice/docs/getting-started/linux-wayland/): Redirects to current Linux guidance.
+- [Linux X11 compatibility link](https://maus-inc.github.io/mausVoice/docs/getting-started/linux-x11/): Redirects to current Linux guidance.
 
 ## User guides
 
-- [Transcription](https://maus-inc.github.io/mausVoice/guides/transcription/): Compare local Whisper, direct provider API, and mausVoice cloud modes.
-- [Post-processing](https://maus-inc.github.io/mausVoice/guides/post-processing/): Understand optional LLM cleanup after speech-to-text transcription.
-- [Styles](https://maus-inc.github.io/mausVoice/guides/styles/): Select built-in writing styles or define custom transcript-rewriting prompts.
-- [Dictionary](https://maus-inc.github.io/mausVoice/guides/dictionary/): Add glossary hints, replacement rules, and reusable snippets.
-- [Community](https://maus-inc.github.io/mausVoice/guides/community/): Source code, contributions, issues, and contact options.
+- [Transcription](https://maus-inc.github.io/mausVoice/docs/guides/transcription/): Compare local Whisper, direct provider API, and mausVoice cloud modes.
+- [Post-processing](https://maus-inc.github.io/mausVoice/docs/guides/post-processing/): Understand optional LLM cleanup after speech-to-text transcription.
+- [Styles](https://maus-inc.github.io/mausVoice/docs/guides/styles/): Select built-in writing styles or define custom transcript-rewriting prompts.
+- [Dictionary](https://maus-inc.github.io/mausVoice/docs/guides/dictionary/): Add glossary hints, replacement rules, and reusable snippets.
+- [Community](https://maus-inc.github.io/mausVoice/docs/guides/community/): Source code, contributions, issues, and contact options.
 
 ## Mode distinctions
 
@@ -62,8 +62,8 @@ Privacy, account, internet, and API-key requirements depend on the selected mode
 
 ## Machine-readable discovery
 
-- [Documentation sitemap](https://maus-inc.github.io/mausVoice/sitemap-index.xml)
-- [Documentation robots policy](https://maus-inc.github.io/mausVoice/robots.txt)
+- [Documentation sitemap](https://maus-inc.github.io/mausVoice/docs/sitemap-index.xml)
+- [Documentation robots policy](https://maus-inc.github.io/mausVoice/docs/robots.txt)
 - [Website sitemap](https://maus-inc.github.io/mausVoice/sitemap.xml)
 - [Website robots policy](https://maus-inc.github.io/mausVoice/robots.txt)
 - [Canonical social image](https://maus-inc.github.io/mausVoice/docs/assets/mausvoice-banner.png)

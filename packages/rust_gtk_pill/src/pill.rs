@@ -179,6 +179,7 @@ pub fn run(receiver: Receiver<InMessage>) {
         has_saved_position: Cell::new(false),
         saved_x: Cell::new(0.0),
         saved_y: Cell::new(0.0),
+        x11_release_persisted: Cell::new(false),
         drag_draw_offset_x: Cell::new(0.0),
         drag_draw_offset_y: Cell::new(0.0),
         cancel_flash: Cell::new(0.0),
@@ -284,6 +285,7 @@ pub fn run(receiver: Receiver<InMessage>) {
             entry_press.grab_focus();
         }
         if input::is_on_pill_at(&state_press, x, y) {
+            state_press.x11_release_persisted.set(false);
             state_press.long_press_active.set(true);
             state_press.long_press_elapsed.set(0.0);
             state_press.long_press_start_x.set(x);
@@ -308,6 +310,7 @@ pub fn run(receiver: Receiver<InMessage>) {
     }
 
     let state_click = state.clone();
+    let win_click = window.clone();
     let last_click: Rc<Cell<Option<Instant>>> = Rc::new(Cell::new(None));
     window.connect_button_release_event(move |_, event| {
         let now = Instant::now();
@@ -318,6 +321,12 @@ pub fn run(receiver: Receiver<InMessage>) {
         }
         last_click.set(Some(now));
         let was_dragging = state_click.dragging.get();
+        if was_dragging && state_click.backend.get() == Backend::X11 {
+            // Persist the actual release position before clearing the drag flag;
+            // the X11 timer remains a fallback for missed release events.
+            let persisted = x11::persist_drop_position(&win_click, &state_click);
+            state_click.x11_release_persisted.set(persisted);
+        }
         state_click.dragging.set(false);
         state_click.long_press_active.set(false);
         state_click.long_press_elapsed.set(0.0);

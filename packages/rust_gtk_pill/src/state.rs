@@ -223,6 +223,9 @@ pub(crate) struct PillState {
     pub(crate) has_saved_position: Cell<bool>,
     pub(crate) saved_x: Cell<f64>,
     pub(crate) saved_y: Cell<f64>,
+    // Set by the release handler when X11 already persisted the exact drop;
+    // the timer uses it to avoid overwriting that point with a later cursor poll.
+    pub(crate) x11_release_persisted: Cell<bool>,
     // PlainWayland draws the pill on a maximized overlay window, so dragging
     // translates the pill's draw position rather than moving the toplevel.
     pub(crate) drag_draw_offset_x: Cell<f64>,

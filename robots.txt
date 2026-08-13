@@ -63,8 +63,7 @@ Allow: /
 
 # Machine-readable site summaries
 # https://maus-inc.github.io/mausVoice/llms.txt
-# https://maus-inc.github.io/mausVoice/llms.txt
 
 Sitemap: https://maus-inc.github.io/mausVoice/sitemap.xml
-Sitemap: https://maus-inc.github.io/mausVoice/sitemap-index.xml
+Sitemap: https://maus-inc.github.io/mausVoice/docs/sitemap-index.xml
 Host: maus-inc.github.io

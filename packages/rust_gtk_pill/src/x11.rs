@@ -11,6 +11,88 @@ use crate::constants::MARGIN_BOTTOM;
 use crate::ipc::{self, OutMessage};
 use crate::state::{PillState, WindowMode};
 
+type XDisplay = c_void;
+type XWindow = c_ulong;
+
+extern "C" {
+    fn gdk_x11_display_get_xdisplay(display: *mut c_void) -> *mut XDisplay;
+}
+
+#[link(name = "X11")]
+extern "C" {
+    fn XDefaultRootWindow(display: *mut XDisplay) -> XWindow;
+    fn XQueryPointer(
+        display: *mut XDisplay,
+        window: XWindow,
+        root_return: *mut XWindow,
+        child_return: *mut XWindow,
+        root_x_return: *mut c_int,
+        root_y_return: *mut c_int,
+        win_x_return: *mut c_int,
+        win_y_return: *mut c_int,
+        mask_return: *mut u32,
+    ) -> c_int;
+}
+
+fn query_root_pointer(xdisplay: *mut XDisplay) -> (c_int, c_int) {
+    unsafe {
+        let root = XDefaultRootWindow(xdisplay);
+        let (mut root_x, mut root_y) = (0, 0);
+        let (mut child, mut root_window) = (0 as XWindow, 0 as XWindow);
+        let (mut window_x, mut window_y) = (0, 0);
+        let mut mask = 0_u32;
+        XQueryPointer(
+            xdisplay,
+            root,
+            &mut root_window,
+            &mut child,
+            &mut root_x,
+            &mut root_y,
+            &mut window_x,
+            &mut window_y,
+            &mut mask,
+        );
+        (root_x, root_y)
+    }
+}
+
+/// Persists the X11 drop position at button-release time.
+///
+/// The timer in `setup_x11_window` remains a fallback for release events that
+/// GTK misses, but normal releases must use the pointer position from the
+/// release handler rather than a later 100 ms poll.
+pub(crate) fn persist_drop_position(
+    window: &gtk::Window,
+    state: &PillState,
+) -> bool {
+    let display = window.display();
+    let xdisplay = unsafe {
+        gdk_x11_display_get_xdisplay(
+            glib::translate::ToGlibPtr::<*mut gdk::ffi::GdkDisplay>::to_glib_none(&display).0
+                as *mut c_void,
+        )
+    };
+    let (root_x, root_y) = query_root_pointer(xdisplay);
+    let Some((drop_x, drop_y)) = pill_pos_on_monitor(
+        root_x as f64,
+        root_y as f64,
+        true,
+        &display,
+        window,
+        state,
+    ) else {
+        return false;
+    };
+
+    state.saved_x.set(drop_x as f64);
+    state.saved_y.set(drop_y as f64);
+    state.has_saved_position.set(true);
+    ipc::send(&OutMessage::PositionChanged {
+        has_saved_position: true,
+    });
+    true
+}
+
 pub(crate) fn setup_x11_window(window: &gtk::Window, state: Rc<PillState>) {
     use std::ffi::{c_char, c_int, c_uchar, c_uint, c_ulong, c_void};
 
@@ -145,7 +227,10 @@ pub(crate) fn setup_x11_window(window: &gtk::Window, state: Rc<PillState>) {
         // refreshed on the placement tick (up to a 100ms cadence), so reusing
         // it here can persist a position one interval behind the real drop.
         // Query the pointer at release and resolve the top-left directly.
-        if !dragging && was_dragging.get() {
+        if !dragging
+            && was_dragging.get()
+            && !state_tick.x11_release_persisted.replace(false)
+        {
             let (cx, cy) = cursor_pos();
             let (dx, dy) = pill_pos_on_monitor(
                 cx as f64,
