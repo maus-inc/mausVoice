@@ -1,5 +1,6 @@
 use std::io::{BufRead, Write};
 use std::process::{Child, ChildStdin, ChildStdout, Command, Stdio};
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::mpsc::RecvTimeoutError;
 use std::sync::Mutex;
 use std::time::{Duration, Instant};
@@ -12,17 +13,45 @@ pub struct PillProcess {
     stdin: Mutex<ChildStdin>,
 }
 
+/// Monotonic sequence number for phase messages. A rapid loading -> idle
+/// sequence must never leave the pill rendering a stale phase, and a
+/// duplicate/late write must not regress the rendered phase.
+static PHASE_SEQ: AtomicU64 = AtomicU64::new(0);
+
 impl PillProcess {
-    pub fn send(&self, msg: &str) {
-        if let Ok(mut stdin) = self.stdin.lock() {
-            if let Err(e) = stdin
+    /// Writes one newline-terminated message to the pill's stdin.
+    ///
+    /// On write failure (broken pipe, pill exited), retries once immediately
+    /// and then surfaces the error to the caller instead of only logging it.
+    pub fn send(&self, msg: &str) -> Result<(), String> {
+        let mut attempt = |label: &str| -> Result<(), String> {
+            let mut stdin = self
+                .stdin
+                .lock()
+                .map_err(|err| format!("failed to lock pill stdin: {err}"))?;
+            stdin
                 .write_all(msg.as_bytes())
                 .and_then(|_| stdin.write_all(b"\n"))
                 .and_then(|_| stdin.flush())
-            {
-                log::warn!("Failed to write to pill process: {e}");
-            }
+                .map_err(|err| format!("{label}: {err}"))
+        };
+
+        if let Err(first) = attempt("failed to write to pill process") {
+            let second = attempt("retry failed to write to pill process");
+            let error = match second {
+                Ok(()) => {
+                    log::warn!(
+                        "Pill stdin write succeeded on retry (first attempt failed: {first})"
+                    );
+                    return Ok(());
+                }
+                Err(second) => format!("{first}; {second}"),
+            };
+            log::error!("Pill stdin write failed: {error}");
+            return Err(error);
         }
+
+        Ok(())
     }
 }
 
@@ -99,7 +128,11 @@ pub fn notify_phase(app: &tauri::AppHandle, phase: &OverlayPhase) {
             OverlayPhase::Loading => "loading",
             OverlayPhase::Paused => "paused",
         };
-        pill.send(&format!(r#"{{"type":"phase","phase":"{phase_str}"}}"#));
+        let seq = PHASE_SEQ.fetch_add(1, Ordering::Relaxed) + 1;
+        let msg = format!(r#"{{"type":"phase","phase":"{phase_str}","seq":{seq}}}"#);
+        if let Err(err) = pill.send(&msg) {
+            log::error!("Failed to notify pill of phase {phase_str}: {err}");
+        }
     }
 }
 
@@ -108,16 +141,19 @@ pub fn notify_audio_levels(app: &tauri::AppHandle, levels: &[f32]) {
         if let Ok(json) =
             serde_json::to_string(&serde_json::json!({"type": "levels", "levels": levels}))
         {
-            pill.send(&json);
+            if let Err(err) = pill.send(&json) {
+                log::error!("Failed to notify pill of audio levels: {err}");
+            }
         }
     }
 }
 
 pub fn notify_visibility(app: &tauri::AppHandle, visibility: &str) {
     if let Some(pill) = app.try_state::<std::sync::Arc<PillProcess>>() {
-        pill.send(&format!(
-            r#"{{"type":"visibility","visibility":"{visibility}"}}"#
-        ));
+        let msg = format!(r#"{{"type":"visibility","visibility":"{visibility}"}}"#);
+        if let Err(err) = pill.send(&msg) {
+            log::error!("Failed to notify pill of visibility: {err}");
+        }
     }
 }
 
@@ -128,7 +164,9 @@ pub fn notify_style_info(app: &tauri::AppHandle, count: u32, name: &str) {
             "count": count,
             "name": name,
         })) {
-            pill.send(&json);
+            if let Err(err) = pill.send(&json) {
+                log::error!("Failed to notify pill of style info: {err}");
+            }
         }
     }
 }
@@ -141,22 +179,26 @@ pub fn notify_pill_window_size(app: &tauri::AppHandle, size: &PillWindowSize) {
             PillWindowSize::AssistantExpanded => "assistant_expanded",
             PillWindowSize::AssistantTyping => "assistant_typing",
         };
-        pill.send(&format!(r#"{{"type":"window_size","size":"{size_str}"}}"#));
+        let msg = format!(r#"{{"type":"window_size","size":"{size_str}"}}"#);
+        if let Err(err) = pill.send(&msg) {
+            log::error!("Failed to notify pill of window size: {err}");
+        }
     }
 }
 
 pub fn notify_assistant_state(app: &tauri::AppHandle, payload: &str) {
     if let Some(pill) = app.try_state::<std::sync::Arc<PillProcess>>() {
-        pill.send(payload);
+        if let Err(err) = pill.send(payload) {
+            log::error!("Failed to notify pill of assistant state: {err}");
+        }
     }
 }
 
 pub fn notify_reset_position(app: &tauri::AppHandle) -> Result<(), String> {
     match app.try_state::<std::sync::Arc<PillProcess>>() {
-        Some(pill) => {
-            pill.send(r#"{"type":"reset_position"}"#);
-            Ok(())
-        }
+        Some(pill) => pill
+            .send(r#"{"type":"reset_position"}"#)
+            .map_err(|err| format!("failed to reset pill position: {err}")),
         None => Err("Reset position requested with no managed pill process".to_string()),
     }
 }

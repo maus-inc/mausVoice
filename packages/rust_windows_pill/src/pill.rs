@@ -431,9 +431,23 @@ fn on_cursor_tick(hwnd: HWND) {
 /// Applies one IPC message to the pill state and marks the surface dirty so
 /// the next timer tick repaints.
 fn process_message(msg: InMessage, state: &PillState, _hwnd: HWND) {
+    // Phase message sequence guard: see ipc::InMessage::Phase.
+    thread_local! {
+        static LAST_PHASE_SEQ: std::cell::Cell<u64> = const { std::cell::Cell::new(0) };
+    }
     state.dirty.set(true);
     match msg {
-        InMessage::Phase { phase } => {
+        InMessage::Phase { phase, seq } => {
+            let stale = LAST_PHASE_SEQ.with(|last| {
+                let stale = seq < last.get();
+                if !stale {
+                    last.set(seq);
+                }
+                stale
+            });
+            if stale {
+                return;
+            }
             let prev = state.phase.get();
             state.phase.set(phase);
             if phase == Phase::Idle && prev != Phase::Idle {

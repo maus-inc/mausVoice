@@ -23,6 +23,10 @@ pub(crate) enum Backend {
 /// Runs the GTK pill: picks the display backend, creates the frameless
 /// window, and drives the message/event loop until a quit message arrives.
 pub fn run(receiver: Receiver<InMessage>) {
+    // Phase message sequence guard: see ipc::InMessage::Phase.
+    thread_local! {
+        static LAST_PHASE_SEQ: std::cell::Cell<u64> = const { std::cell::Cell::new(0) };
+    }
     let backend = if gtk_layer_shell::is_supported() {
         Backend::LayerShell
     } else {
@@ -417,7 +421,17 @@ pub fn run(receiver: Receiver<InMessage>) {
         let rx = receiver.borrow();
         while let Ok(msg) = rx.try_recv() {
             match msg {
-                InMessage::Phase { phase } => {
+                InMessage::Phase { phase, seq } => {
+                    let stale = LAST_PHASE_SEQ.with(|last| {
+                        let stale = seq < last.get();
+                        if !stale {
+                            last.set(seq);
+                        }
+                        stale
+                    });
+                    if stale {
+                        continue;
+                    }
                     let prev = state_tick.phase.get();
                     state_tick.phase.set(phase);
                     if phase == Phase::Idle && prev != Phase::Idle {

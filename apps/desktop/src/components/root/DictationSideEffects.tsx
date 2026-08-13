@@ -40,7 +40,10 @@ import { AgentStrategy } from "../../strategies/agent.strategy";
 import { BaseStrategy } from "../../strategies/base.strategy";
 import { DictationStrategy } from "../../strategies/dictation.strategy";
 import { TextFieldInfo } from "../../types/accessibility.types";
-import type { OverlayResolvePermissionPayload } from "../../types/overlay.types";
+import type {
+  OverlayPhase,
+  OverlayResolvePermissionPayload,
+} from "../../types/overlay.types";
 import {
   StopRecordingResponse,
   TranscriptionSession,
@@ -80,6 +83,7 @@ import {
   getToneById,
   getToneIdToUse,
 } from "../../utils/tone.utils";
+import { withTimeout } from "../../utils/timeout.utils";
 import {
   getEffectivePillVisibility,
   getIsDictationUnlocked,
@@ -105,6 +109,10 @@ type RawStopResp = {
   abortMessage?: string;
 };
 
+const FINALIZE_TIMEOUT_MS = 90_000;
+const HANDLE_TRANSCRIPT_TIMEOUT_MS = 60_000;
+const PHASE_HEARTBEAT_INTERVAL_MS = 5_000;
+
 export const DictationSideEffects = () => {
   const intl = useIntl();
 
@@ -116,6 +124,9 @@ export const DictationSideEffects = () => {
   const cancelPromptTimerRef = useRef<NodeJS.Timeout | null>(null);
   const isStoppingRef = useRef(false);
   const isPausedRef = useRef(false);
+  // Last phase actually sent to the pill; drives the idle-reconciliation
+  // heartbeat and keeps duplicate idle writes out of the pipe.
+  const lastPhaseSentRef = useRef<OverlayPhase | null>(null);
   const [isStopping, setIsStopping] = useState(false);
   const assistantModeEnabled = useAppStore(getIsAssistantModeEnabled);
 
@@ -268,6 +279,45 @@ export const DictationSideEffects = () => {
     );
   }, [additionalLanguageControllers, agentController, dictationController]);
 
+  /**
+   * Sends a phase to the pill with one immediate retry, and records it for
+   * the reconciliation heartbeat. A failed pipe write must not leave the
+   * pill stuck on a stale phase.
+   */
+  const sendPhaseToPill = useCallback(async (phase: OverlayPhase) => {
+    lastPhaseSentRef.current = phase;
+    try {
+      await invoke<void>("set_phase", { phase });
+    } catch (error) {
+      getLogger().warning(
+        `Failed to send phase ${phase} to pill: ${error}; retrying once`,
+      );
+      try {
+        await invoke<void>("set_phase", { phase });
+      } catch (retryError) {
+        getLogger().error(
+          `Failed to send phase ${phase} to pill on retry: ${retryError}`,
+        );
+      }
+    }
+  }, []);
+
+  // Idle-reconciliation heartbeat: if nothing is recording and the pill was
+  // not last told to idle, re-send idle so a dropped phase IPC self-heals.
+  useEffect(() => {
+    const interval = setInterval(() => {
+      const state = getAppState();
+      if (state.activeRecordingMode !== null) {
+        return;
+      }
+      if (lastPhaseSentRef.current === "idle") {
+        return;
+      }
+      void sendPhaseToPill("idle");
+    }, PHASE_HEARTBEAT_INTERVAL_MS);
+    return () => clearInterval(interval);
+  }, [sendPhaseToPill]);
+
   const abortRecording = useCallback(
     async (message?: AbortMessage) => {
       getLogger().info(
@@ -277,15 +327,28 @@ export const DictationSideEffects = () => {
       clearCancelPromptTimer();
       hardResetHotkeyState();
       restoreSystemVolume();
-      invoke<void>("set_phase", { phase: "idle" });
+      await sendPhaseToPill("idle");
       invoke("stop_recording").catch((e) =>
         getLogger().verbose(`stop_recording failed during abort: ${e}`),
       );
 
-      sessionRef.current?.cleanup();
-      strategyRef.current?.cleanup();
+      // Deterministic cleanup: clear the refs first so no other path can
+      // reach the session mid-cleanup, then guard each cleanup call.
+      const session = sessionRef.current;
+      const strategy = strategyRef.current;
       strategyRef.current = null;
       sessionRef.current = null;
+
+      try {
+        session?.cleanup();
+      } catch (error) {
+        getLogger().warning(`Session cleanup failed during abort: ${error}`);
+      }
+      try {
+        await strategy?.cleanup();
+      } catch (error) {
+        getLogger().warning(`Strategy cleanup failed during abort: ${error}`);
+      }
 
       clearRecordingState();
 
@@ -304,6 +367,7 @@ export const DictationSideEffects = () => {
       clearRecordingTimers,
       hardResetHotkeyState,
       restoreSystemVolume,
+      sendPhaseToPill,
       intl,
     ],
   );
@@ -313,141 +377,167 @@ export const DictationSideEffects = () => {
     clearRecordingTimers();
     restoreSystemVolume();
 
-    const [audio, a11yInfo, appTarget] = await getLogger().stopwatch(
-      "stopRecording",
-      async () => {
-        let audio: StopRecordingResponse | null = null;
-        let a11yInfo: TextFieldInfo | null = null;
-        let appTarget: AppTarget | null = null;
-        try {
-          tryPlayAudioChime("stop_recording_clip");
+    try {
+      const [audio, a11yInfo, appTarget] = await getLogger().stopwatch(
+        "stopRecording",
+        async () => {
+          let audio: StopRecordingResponse | null = null;
+          let a11yInfo: TextFieldInfo | null = null;
+          let appTarget: AppTarget | null = null;
+          try {
+            tryPlayAudioChime("stop_recording_clip");
 
-          getLogger().verbose("Invoking stop_recording and fetching a11y info");
-          const [, outAudio, outA11yInfo, outAppTarget] = await Promise.all([
-            strategyRef.current?.setPhase("loading"),
-            invoke<StopRecordingResponse>("stop_recording"),
-            invoke<TextFieldInfo>("get_text_field_info").catch((error) => {
-              getLogger().verbose(`Failed to get text field info: ${error}`);
-              return null;
-            }),
-            tryRegisterCurrentAppTarget().catch((error) => {
-              getLogger().verbose(`Failed to get current app target: ${error}`);
-              return null;
-            }),
-          ]);
+            getLogger().verbose(
+              "Invoking stop_recording and fetching a11y info",
+            );
+            const [, outAudio, outA11yInfo, outAppTarget] = await Promise.all([
+              strategyRef.current?.setPhase("loading"),
+              invoke<StopRecordingResponse>("stop_recording"),
+              invoke<TextFieldInfo>("get_text_field_info").catch((error) => {
+                getLogger().verbose(`Failed to get text field info: ${error}`);
+                return null;
+              }),
+              tryRegisterCurrentAppTarget().catch((error) => {
+                getLogger().verbose(
+                  `Failed to get current app target: ${error}`,
+                );
+                return null;
+              }),
+            ]);
 
-          audio = outAudio;
-          a11yInfo = outA11yInfo;
-          appTarget = outAppTarget;
-          getLogger().verbose(
-            `Recording stopped (hasSamples=${!!audio?.samples})`,
-          );
-        } catch (error) {
-          getLogger().error(`Failed to stop recording: ${error}`);
-          showToast({
-            message: intl.formatMessage({
-              defaultMessage: "Failed to stop recording",
-            }),
-            toastType: "error",
-            duration: 8_000,
-          });
-        }
+            audio = outAudio;
+            a11yInfo = outA11yInfo;
+            appTarget = outAppTarget;
+            getLogger().verbose(
+              `Recording stopped (hasSamples=${!!audio?.samples})`,
+            );
+          } catch (error) {
+            getLogger().error(`Failed to stop recording: ${error}`);
+            showToast({
+              message: intl.formatMessage({
+                defaultMessage: "Failed to stop recording",
+              }),
+              toastType: "error",
+              duration: 8_000,
+            });
+          }
 
-        return [audio, a11yInfo, appTarget];
-      },
-    );
+          return [audio, a11yInfo, appTarget];
+        },
+      );
 
-    if (!audio) {
-      getLogger().warning("stopRecordingRaw: no audio data received");
+      if (!audio) {
+        getLogger().warning("stopRecordingRaw: no audio data received");
+        return {
+          shouldContinue: false,
+          abortMessage: "No audio data received",
+        };
+      }
+
+      getLogger().info("Finalizing transcription session");
+      trackAppUsed(appTarget?.name ?? "Unknown");
+
+      if (appTarget) {
+        saveManualStyleForApp(appTarget);
+      }
+
+      const toneId = getToneIdToUse(getAppState(), {
+        currentAppToneId: appTarget?.toneId ?? null,
+      });
+
+      const transcribeResult = await withTimeout(
+        sessionRef.current?.finalize(audio, {
+          toneId,
+          a11yInfo,
+        }) ?? Promise.resolve(undefined),
+        FINALIZE_TIMEOUT_MS,
+        "Transcription finalize",
+      );
+      const rawTranscript = transcribeResult?.rawTranscript;
+      getLogger().verbose(
+        `Transcription result: rawTranscript=${rawTranscript ? `${rawTranscript.length} chars` : "empty"}, toneId=${toneId ?? "none"}, app=${appTarget?.name ?? "unknown"}`,
+      );
+      if (!rawTranscript) {
+        getLogger().warning("stopRecordingRaw: no rawTranscript from finalize");
+        return {
+          shouldContinue: false,
+        };
+      }
+
+      const session = sessionRef.current;
+      const strategy = strategyRef.current;
+      if (!session || !strategy) {
+        getLogger().warning(
+          `stopRecordingRaw: refs cleared (session=${!!session}, strategy=${!!strategy})`,
+        );
+        return {
+          shouldContinue: false,
+        };
+      }
+
+      if (getAppState().activeRecordingMode === "agent") {
+        await sendPhaseToPill("idle");
+      }
+
+      getLogger().info("Post-processing transcript");
+      const result = await withTimeout(
+        strategy.handleTranscript({
+          rawTranscript,
+          processedTranscript: transcribeResult.processedTranscript,
+          serverPostProcessMetadata: transcribeResult.postProcessMetadata,
+          toneId,
+          a11yInfo,
+          currentApp: appTarget,
+          loadingToken: null,
+          audio,
+          transcriptionMetadata: transcribeResult.metadata,
+          transcriptionWarnings: transcribeResult.warnings,
+        }),
+        HANDLE_TRANSCRIPT_TIMEOUT_MS,
+        "Transcript post-processing",
+      );
+
+      const transcript = result.transcript;
+      const sanitizedTranscript = result.sanitizedTranscript;
+      const postProcessMetadata = result.postProcessMetadata;
+      const postProcessWarnings = result.postProcessWarnings;
+      getLogger().verbose(
+        `Post-processing complete: transcript=${transcript ? `${transcript.length} chars` : "empty"}, warnings=${postProcessWarnings.length}`,
+      );
+
+      if (strategy.shouldStoreTranscript()) {
+        getLogger().verbose("Storing transcription");
+        storeTranscription({
+          audio,
+          rawTranscript: rawTranscript ?? null,
+          sanitizedTranscript,
+          transcript,
+          transcriptionMetadata: transcribeResult.metadata,
+          postProcessMetadata,
+          warnings: [...transcribeResult.warnings, ...postProcessWarnings],
+          remoteStatus: result.remoteStatus,
+          remoteDeviceId: result.remoteDeviceId,
+        });
+      }
+
+      refreshMember();
       return {
-        shouldContinue: false,
-        abortMessage: "No audio data received",
+        shouldContinue: result.shouldContinue,
       };
-    }
-
-    getLogger().info("Finalizing transcription session");
-    trackAppUsed(appTarget?.name ?? "Unknown");
-
-    if (appTarget) {
-      saveManualStyleForApp(appTarget);
-    }
-
-    const toneId = getToneIdToUse(getAppState(), {
-      currentAppToneId: appTarget?.toneId ?? null,
-    });
-
-    const transcribeResult = await sessionRef.current?.finalize(audio, {
-      toneId,
-      a11yInfo,
-    });
-    const rawTranscript = transcribeResult?.rawTranscript;
-    getLogger().verbose(
-      `Transcription result: rawTranscript=${rawTranscript ? `${rawTranscript.length} chars` : "empty"}, toneId=${toneId ?? "none"}, app=${appTarget?.name ?? "unknown"}`,
-    );
-    if (!rawTranscript) {
-      getLogger().warning("stopRecordingRaw: no rawTranscript from finalize");
-      return {
-        shouldContinue: false,
-      };
-    }
-
-    const session = sessionRef.current;
-    const strategy = strategyRef.current;
-    if (!session || !strategy) {
-      getLogger().warning(
-        `stopRecordingRaw: refs cleared (session=${!!session}, strategy=${!!strategy})`,
+    } catch (error) {
+      getLogger().error(
+        `Error during stopRecording: ${error}${error instanceof Error ? ` [name=${error.name}]` : ""}`,
       );
       return {
         shouldContinue: false,
+        abortMessage: String(error),
       };
+    } finally {
+      // Phase convergence: every stop path (success, error, watchdog
+      // timeout) must return the pill to idle.
+      await sendPhaseToPill("idle");
     }
-
-    if (getAppState().activeRecordingMode === "agent") {
-      await strategy.setPhase("idle");
-    }
-
-    getLogger().info("Post-processing transcript");
-    const result = await strategy.handleTranscript({
-      rawTranscript,
-      processedTranscript: transcribeResult.processedTranscript,
-      serverPostProcessMetadata: transcribeResult.postProcessMetadata,
-      toneId,
-      a11yInfo,
-      currentApp: appTarget,
-      loadingToken: null,
-      audio,
-      transcriptionMetadata: transcribeResult.metadata,
-      transcriptionWarnings: transcribeResult.warnings,
-    });
-
-    const transcript = result.transcript;
-    const sanitizedTranscript = result.sanitizedTranscript;
-    const postProcessMetadata = result.postProcessMetadata;
-    const postProcessWarnings = result.postProcessWarnings;
-    getLogger().verbose(
-      `Post-processing complete: transcript=${transcript ? `${transcript.length} chars` : "empty"}, warnings=${postProcessWarnings.length}`,
-    );
-
-    if (strategy.shouldStoreTranscript()) {
-      getLogger().verbose("Storing transcription");
-      storeTranscription({
-        audio,
-        rawTranscript: rawTranscript ?? null,
-        sanitizedTranscript,
-        transcript,
-        transcriptionMetadata: transcribeResult.metadata,
-        postProcessMetadata,
-        warnings: [...transcribeResult.warnings, ...postProcessWarnings],
-        remoteStatus: result.remoteStatus,
-        remoteDeviceId: result.remoteDeviceId,
-      });
-    }
-
-    refreshMember();
-    return {
-      shouldContinue: result.shouldContinue,
-    };
-  }, [restoreSystemVolume]);
+  }, [restoreSystemVolume, sendPhaseToPill]);
 
   const stopRecording = useCallback(async () => {
     if (isStoppingRef.current) {
@@ -483,11 +573,20 @@ export const DictationSideEffects = () => {
         );
       }
     } finally {
+      // Timers must be cleared even when the transcribe chain fails or the
+      // watchdog fires, so no stale auto-stop can fire into the next session.
+      clearRecordingTimers();
       hardResetHotkeyState();
       isStoppingRef.current = false;
       setIsStopping(false);
     }
-  }, [abortRecording, hardResetHotkeyState, stopRecordingRaw, setIsStopping]);
+  }, [
+    abortRecording,
+    clearRecordingTimers,
+    hardResetHotkeyState,
+    stopRecordingRaw,
+    setIsStopping,
+  ]);
 
   const startRecordingTimers = useCallback(() => {
     clearRecordingTimers();

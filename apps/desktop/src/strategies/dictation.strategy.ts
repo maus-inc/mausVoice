@@ -234,6 +234,13 @@ export class DictationStrategy extends BaseStrategy {
   }
 
   async cleanup(): Promise<void> {
-    // Nothing to clean up for dictation
+    // Reset the streaming state so a stale queued paste can't chain into the
+    // next session. The in-flight promise is replaced: any paste that already
+    // started is allowed to complete, but no new work queues onto it and the
+    // final-transcript path will not wait on a stale queue.
+    this.pasteQueue = Promise.resolve();
+    this.streamedSegmentCount = 0;
+    this.streamedProcessedText = "";
+    this.currentAppId = null;
   }
 }

@@ -328,6 +328,10 @@ extern "C" fn tick_callback(_this: &Object, _sel: Sel, _timer: id) {
 /// Runs one frame of the pill loop: processes queued IPC messages, advances
 /// the springs/animations, and repaints when the state changed.
 fn perform_tick() {
+    // Phase message sequence guard: see ipc::InMessage::Phase.
+    thread_local! {
+        static LAST_PHASE_SEQ: std::cell::Cell<u64> = const { std::cell::Cell::new(0) };
+    }
     APP_CTX.with(|cell| {
         let borrow = cell.borrow();
         let Some(ctx) = borrow.as_ref() else { return };
@@ -342,7 +346,17 @@ fn perform_tick() {
         let rx = ctx.receiver.borrow();
         while let Ok(msg) = rx.try_recv() {
             match msg {
-                InMessage::Phase { phase } => {
+                InMessage::Phase { phase, seq } => {
+                    let stale = LAST_PHASE_SEQ.with(|last| {
+                        let stale = seq < last.get();
+                        if !stale {
+                            last.set(seq);
+                        }
+                        stale
+                    });
+                    if stale {
+                        continue;
+                    }
                     let prev = ctx.state.phase.get();
                     ctx.state.phase.set(phase);
                     if phase == Phase::Idle && prev != Phase::Idle {

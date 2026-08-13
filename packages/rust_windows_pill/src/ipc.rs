@@ -58,7 +58,14 @@ pub struct PillPermission {
 #[derive(Debug, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum InMessage {
-    Phase { phase: Phase },
+    Phase {
+        phase: Phase,
+        /// Monotonic sequence number from the host; messages older than the
+        /// last applied phase are ignored so a rapid loading -> idle burst
+        /// can never leave the pill on a stale phase.
+        #[serde(default)]
+        seq: u64,
+    },
     Levels { levels: Vec<f32> },
     StyleInfo { count: u32, name: String },
     Visibility { visibility: Visibility },
