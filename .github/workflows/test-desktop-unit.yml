@@ -1,6 +1,13 @@
 name: Test Desktop Unit
 
 on:
+  push:
+    branches:
+      - main
+    paths:
+      - "apps/desktop/**"
+      - "packages/**"
+      - ".github/workflows/test-desktop-unit.yml"
   pull_request:
     branches:
       - main
