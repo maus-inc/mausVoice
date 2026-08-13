@@ -2072,8 +2072,12 @@ pub fn set_tray_title(app: AppHandle, title: Option<String>) -> Result<(), Strin
         }
     }
 
-    #[allow(unused_variables)]
-    let _ = (app, title);
+    // Silence unused-parameter warnings on non-macOS builds without adding
+    // extra cfg-attributes to the function signature.
+    #[cfg(not(target_os = "macos"))]
+    {
+        let _ = (app, title);
+    }
     Ok(())
 }
 
@@ -2472,12 +2476,20 @@ fn is_safe_arg_token(token: &str) -> bool {
     token.chars().all(|ch| !(ch.is_control() && ch != '\t') && ch != '\0')
 }
 
+/// Characters that are forbidden inside any argv token passed through
+/// `run_terminal_command`. Blocked as defense-in-depth even though we never
+/// invoke a shell — makes it obvious to model authors that shell
+/// composition is out.
+const TERMINAL_FORBIDDEN_CHARS: &[char] =
+    &[';', '|', '&', '$', '`', '>', '<', '(', ')', '\n', '\r'];
+
 /// Validate a user-supplied command string against the same rules
-/// `run_terminal_command` enforces. Split out so unit tests can assert the
-/// whitelist without needing to spawn processes. Returns the binary name
-/// on success, or a user-facing error string.
-#[cfg(test)]
-fn validate_terminal_command(command: &str) -> Result<&str, String> {
+/// `run_terminal_command` enforces. Shared between the command itself and
+/// its unit tests so both paths can't drift apart. On success returns the
+/// matched `AllowedCommand` entry and the split argv tail (user args).
+fn validate_terminal_command_args(
+    command: &str,
+) -> Result<(&'static AllowedCommand, Vec<String>), String> {
     let tokens: Vec<&str> = command.split_whitespace().collect();
     let Some((binary, user_args)) = tokens.split_first() else {
         return Err("Empty command".to_string());
@@ -2489,16 +2501,14 @@ fn validate_terminal_command(command: &str) -> Result<&str, String> {
         ));
     }
 
-    const FORBIDDEN_IN_TOKENS: &[char] =
-        &[';', '|', '&', '$', '`', '>', '<', '(', ')', '\n', '\r'];
-    for token in user_args {
+    for token in *user_args {
         if !is_safe_arg_token(token) {
             return Err(format!(
                 "Command argument contains disallowed characters: {token:?}"
             ));
         }
         for ch in token.chars() {
-            if FORBIDDEN_IN_TOKENS.contains(&ch) {
+            if TERMINAL_FORBIDDEN_CHARS.contains(&ch) {
                 return Err(format!(
                     "Shell metacharacters are not permitted in command arguments (found {ch:?} in {token:?})"
                 ));
@@ -2506,23 +2516,11 @@ fn validate_terminal_command(command: &str) -> Result<&str, String> {
         }
     }
 
-    #[cfg(target_os = "macos")]
-    const ALLOWED: &[&str] = &[
-        "ls", "pwd", "echo", "cat", "which", "whoami", "date", "uname", "df", "du", "head",
-        "tail", "wc", "open",
-    ];
-    #[cfg(all(unix, not(target_os = "macos")))]
-    const ALLOWED: &[&str] = &[
-        "ls", "pwd", "echo", "cat", "which", "whoami", "date", "uname", "df", "du", "head",
-        "tail", "wc", "xdg-open",
-    ];
-    #[cfg(target_os = "windows")]
-    const ALLOWED: &[&str] = &["dir", "echo", "cd", "whoami", "date", "ver", "explorer"];
-
-    if !ALLOWED.contains(&binary) {
-        return Err(format!("Command not in allow-list: {binary}"));
-    }
-    Ok(binary)
+    let allowed = ALLOWED_COMMANDS
+        .iter()
+        .find(|entry| entry.binary == *binary)
+        .ok_or_else(|| format!("Command not in allow-list: {binary}"))?;
+    Ok((allowed, user_args.iter().map(|s| s.to_string()).collect()))
 }
 
 /// Validate a floating-window URL before navigation. Extracted from
@@ -2560,33 +2558,45 @@ mod tests {
 
     #[test]
     fn terminal_command_rejects_empty() {
-        assert!(validate_terminal_command("").is_err());
-        assert!(validate_terminal_command("   ").is_err());
+        assert!(validate_terminal_command_args("").is_err());
+        assert!(validate_terminal_command_args("   ").is_err());
     }
 
     #[test]
     fn terminal_command_rejects_paths_and_shells() {
-        assert!(validate_terminal_command("/bin/sh").is_err());
-        assert!(validate_terminal_command("../../sh").is_err());
-        assert!(validate_terminal_command("sh -c 'echo hi'").is_err());
-        assert!(validate_terminal_command("bash ls").is_err());
-        assert!(validate_terminal_command("cmd /c dir").is_err());
+        assert!(validate_terminal_command_args("/bin/sh").is_err());
+        assert!(validate_terminal_command_args("../../sh").is_err());
+        assert!(validate_terminal_command_args("sh -c 'echo hi'").is_err());
+        assert!(validate_terminal_command_args("bash ls").is_err());
+        assert!(validate_terminal_command_args("cmd /c dir").is_err());
     }
 
     #[test]
     fn terminal_command_rejects_metacharacters() {
-        assert!(validate_terminal_command("ls ; rm -rf /").is_err());
-        assert!(validate_terminal_command("ls | cat").is_err());
-        assert!(validate_terminal_command("echo $(whoami)").is_err());
-        assert!(validate_terminal_command("echo `whoami`").is_err());
-        assert!(validate_terminal_command("echo > file").is_err());
+        assert!(validate_terminal_command_args("ls ; rm -rf /").is_err());
+        assert!(validate_terminal_command_args("ls | cat").is_err());
+        assert!(validate_terminal_command_args("echo $(whoami)").is_err());
+        assert!(validate_terminal_command_args("echo `whoami`").is_err());
+        assert!(validate_terminal_command_args("echo > file").is_err());
     }
 
     #[test]
     fn terminal_command_allows_allowlisted() {
-        assert_eq!(validate_terminal_command("ls -la").unwrap(), "ls");
-        assert_eq!(validate_terminal_command("pwd").unwrap(), "pwd");
-        assert_eq!(validate_terminal_command("echo hello world").unwrap(), "echo");
+        assert_eq!(
+            validate_terminal_command_args("ls -la").unwrap().0.binary,
+            "ls"
+        );
+        assert_eq!(
+            validate_terminal_command_args("pwd").unwrap().0.binary,
+            "pwd"
+        );
+        assert_eq!(
+            validate_terminal_command_args("echo hello world")
+                .unwrap()
+                .0
+                .binary,
+            "echo"
+        );
     }
 
     #[test]
@@ -2655,44 +2665,12 @@ mod tests {
 pub async fn run_terminal_command(command: String) -> Result<RunTerminalCommandResponse, String> {
     // Whitespace-tokenize without shell interpretation. Quoting is deliberately
     // unsupported — AI tools pass structured argv tokens separated by spaces.
-    let tokens: Vec<&str> = command.split_whitespace().collect();
-    let Some((binary, user_args)) = tokens.split_first() else {
-        return Err("Empty command".to_string());
-    };
-
-    // Reject path-like binaries entirely. Only bare allow-listed names are
-    // resolved via PATH (via Command::new, which uses the platform's search).
-    if binary.contains('/') || binary.contains('\\') {
-        return Err(format!(
-            "Command not allowed: absolute or relative paths are not permitted (got {binary:?})"
-        ));
-    }
-
-    // Reject any token containing shell metacharacters as defense-in-depth.
-    // These characters are harmless when passed as literal argv, but blocking
-    // them makes it obvious to model-authors that shell composition is out.
-    const FORBIDDEN_IN_TOKENS: &[char] = &[';', '|', '&', '$', '`', '>', '<', '(', ')', '\n', '\r'];
-    for token in user_args {
-        if !is_safe_arg_token(token) {
-            return Err(format!("Command argument contains disallowed characters: {token:?}"));
-        }
-        for ch in token.chars() {
-            if FORBIDDEN_IN_TOKENS.contains(&ch) {
-                return Err(format!(
-                    "Shell metacharacters are not permitted in command arguments (found {ch:?} in {token:?})"
-                ));
-            }
-        }
-    }
-
-    let allowed = ALLOWED_COMMANDS
-        .iter()
-        .find(|entry| entry.binary == binary)
-        .ok_or_else(|| format!("Command not in allow-list: {binary}"))?;
+    // All validation is centralised in validate_terminal_command_args so the
+    // production path and unit tests can't drift.
+    let (allowed, user) = validate_terminal_command_args(&command)?;
 
     let fixed = allowed.fixed_args.to_vec();
     let bin = allowed.binary.to_string();
-    let user: Vec<String> = user_args.iter().map(|s| s.to_string()).collect();
 
     let result = tauri::async_runtime::spawn_blocking(move || {
         let mut cmd = std::process::Command::new(&bin);
