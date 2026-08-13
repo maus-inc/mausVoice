@@ -78,6 +78,7 @@ export type SettingsState = {
   multiDeviceDialogOpen: boolean;
   dictationLanguageDialogOpen: boolean;
   appKeybindingsDialogOpen: boolean;
+  elevationDeclinedDialogOpen: boolean;
   diagnosticsDialogOpen: boolean;
   aiTranscription: SettingsTranscriptionState;
   aiPostProcessing: SettingsGenerativeState;
@@ -130,6 +131,7 @@ export const INITIAL_SETTINGS_STATE: SettingsState = {
   multiDeviceDialogOpen: false,
   dictationLanguageDialogOpen: false,
   appKeybindingsDialogOpen: false,
+  elevationDeclinedDialogOpen: false,
   diagnosticsDialogOpen: false,
   aiTranscription: {
     mode: null,

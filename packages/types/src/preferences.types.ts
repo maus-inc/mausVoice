@@ -43,6 +43,7 @@ export type UserPreferences = {
   insertionMethod: Nullable<string>;
   typingSpeedMs: Nullable<number>;
   pillResetMonitorStrategy: PillResetMonitorStrategy;
+  alwaysRequestAdminOnStartup: boolean;
 
   // deprecated
 };

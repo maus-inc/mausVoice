@@ -201,6 +201,7 @@ export const submitOnboarding = async () => {
       insertionMethod: null,
       typingSpeedMs: null,
       pillResetMonitorStrategy: "current",
+      alwaysRequestAdminOnStartup: false,
     };
 
     const [savedUser, savedPreferences] = await Promise.all([

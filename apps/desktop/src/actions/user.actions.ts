@@ -108,6 +108,8 @@ export const createDefaultPreferences = (): UserPreferences => ({
   dictationLimitMinutes: DEFAULT_DICTATION_LIMIT_MINUTES,
   dictationPillVisibility: "while_active",
   pillResetMonitorStrategy: "current",
+
+  alwaysRequestAdminOnStartup: false,
   realtimeOutputEnabled: false,
   remoteOutputEnabled: false,
   remoteTargetDeviceId: null,
@@ -620,6 +622,14 @@ export const setPillResetMonitorStrategy = async (
   await updateUserPreferences((preferences) => {
     preferences.pillResetMonitorStrategy = strategy;
   }, "Failed to save pill reset monitor strategy. Please try again.");
+};
+
+export const setAlwaysRequestAdminOnStartup = async (
+  enabled: boolean,
+): Promise<void> => {
+  await updateUserPreferences((preferences) => {
+    preferences.alwaysRequestAdminOnStartup = enabled;
+  }, "Failed to save admin on startup preference. Please try again.");
 };
 
 export const setDictationLimitMinutes = async (

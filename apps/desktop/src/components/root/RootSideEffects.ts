@@ -17,7 +17,7 @@ import {
 import { useAsyncEffect } from "../../hooks/async.hooks";
 import { useIntervalAsync } from "../../hooks/helper.hooks";
 import { useTauriListen } from "../../hooks/tauri.hooks";
-import { useAppStore } from "../../store";
+import { produceAppState, useAppStore } from "../../store";
 import { REGISTER_CURRENT_APP_EVENT } from "../../types/app-target.types";
 import { getLogger } from "../../utils/log.utils";
 import { minutesToMilliseconds } from "../../utils/time.utils";
@@ -62,6 +62,14 @@ export const RootSideEffects = () => {
 
   useTauriListen<void>(REGISTER_CURRENT_APP_EVENT, async () => {
     await tryRegisterCurrentAppTarget();
+  });
+
+  // Windows UAC admin-on-startup was declined: surface the confirm dialog
+  // (launch normally / close the app) instead of failing silently.
+  useTauriListen<void>("elevation-declined", () => {
+    produceAppState((draft) => {
+      draft.settings.elevationDeclinedDialogOpen = true;
+    });
   });
 
   return null;

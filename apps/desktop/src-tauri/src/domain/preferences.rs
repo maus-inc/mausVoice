@@ -85,6 +85,10 @@ pub struct UserPreferences {
     /// "current" (the monitor the pill lives on) or "cursor".
     #[serde(default = "default_pill_reset_monitor_strategy")]
     pub pill_reset_monitor_strategy: String,
+    /// Request admin elevation (UAC) on every startup. Windows-only; off by
+    /// default so existing behavior is unchanged.
+    #[serde(default)]
+    pub always_request_admin_on_startup: bool,
 }
 
 fn default_pill_reset_monitor_strategy() -> String {

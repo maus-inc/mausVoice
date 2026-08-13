@@ -1,5 +1,6 @@
 use std::os::windows::ffi::OsStrExt;
 
+use tauri::Emitter;
 use windows::core::PCWSTR;
 use windows::Win32::Security::{GetTokenInformation, TokenElevation, TOKEN_ELEVATION, TOKEN_QUERY};
 use windows::Win32::System::Threading::{GetCurrentProcess, OpenProcessToken};
@@ -81,67 +82,84 @@ pub async fn run_native_setup(app: tauri::AppHandle) -> crate::platform::NativeS
         log::error!("Failed to request accessibility permission: {err}");
     }
 
-    // If the process is not elevated and the app needs admin for global input
-    // capture, relaunch as administrator. We do NOT exit immediately and hope
-    // the elevated copy wins the single-instance race: instead we start a
-    // bootstrap helper (this same exe, unelevated) that waits for THIS process
-    // to fully exit, then launches the elevated copy. That guarantees the
-    // singleton lock is free before the elevated app starts.
-    if !is_process_elevated() {
-        let self_exe = std::env::current_exe().unwrap_or_default();
-        let parent_pid = std::process::id();
+    if is_process_elevated() {
+        return crate::platform::NativeSetupResult::Success;
+    }
+    request_elevation_relaunch(app)
+}
 
-        // Launch the bootstrap helper with "runas" so the UAC prompt happens
-        // HERE, while the main process is still alive. If the user cancels UAC,
-        // the helper never starts and we stay running (return Cancelled). Only
-        // after a successful elevated launch do we perform a controlled shutdown
-        // and let the (now-elevated) helper relaunch the main app.
-        let verb: Vec<u16> = "runas\0".encode_utf16().collect();
-        let exe_wide: Vec<u16> = self_exe
-            .as_os_str()
-            .encode_wide()
-            .chain(std::iter::once(0))
-            .collect();
-
-        let mut cli = format!("--elevate-helper {parent_pid}");
-        for arg in std::env::args().skip(1) {
-            cli.push(' ');
-            cli.push_str(&windows_quote(&arg));
-        }
-        let args_wide: Vec<u16> = cli.encode_utf16().chain(std::iter::once(0)).collect();
-
-        let result = unsafe {
-            ShellExecuteW(
-                None,
-                PCWSTR(verb.as_ptr()),
-                PCWSTR(exe_wide.as_ptr()),
-                PCWSTR(args_wide.as_ptr()),
-                PCWSTR::null(),
-                SW_SHOWNORMAL,
-            )
-        };
-
-        let handle = result.0 as isize;
-        if handle > 32 {
-            // The elevated helper is now waiting for this process to exit, after
-            // which it launches the elevated main app. Perform a controlled
-            // shutdown (runs ExitRequested so window state is saved and the
-            // keyboard listener stops) rather than an abrupt std::process::exit.
-            log::info!("Elevation helper launched; performing controlled shutdown.");
-            app.exit(0);
-            #[allow(unreachable_code)]
-            return crate::platform::NativeSetupResult::RequireRestart;
-        }
-
-        // ERROR_CANCELLED (1223) means the user dismissed the UAC prompt.
-        let last_err = unsafe { windows::Win32::Foundation::GetLastError() };
-        if last_err == windows::Win32::Foundation::ERROR_CANCELLED {
-            return crate::platform::NativeSetupResult::Cancelled;
-        }
-        return crate::platform::NativeSetupResult::Failed;
+/// Relaunches the app elevated via the `runas` bootstrap helper. If the
+/// process is not elevated and the app needs admin for global input capture,
+/// we do NOT exit immediately and hope the elevated copy wins the
+/// single-instance race: instead we start a bootstrap helper (this same exe,
+/// unelevated) that waits for THIS process to fully exit, then launches the
+/// elevated copy. That guarantees the singleton lock is free before the
+/// elevated app starts.
+///
+/// On UAC cancellation the app keeps running and emits `elevation-declined`
+/// so the frontend can offer "launch normally / close the app".
+pub fn request_elevation_relaunch(
+    app: tauri::AppHandle,
+) -> crate::platform::NativeSetupResult {
+    if is_process_elevated() {
+        return crate::platform::NativeSetupResult::Success;
     }
 
-    crate::platform::NativeSetupResult::Success
+    let self_exe = std::env::current_exe().unwrap_or_default();
+    let parent_pid = std::process::id();
+
+    // Launch the bootstrap helper with "runas" so the UAC prompt happens
+    // HERE, while the main process is still alive. If the user cancels UAC,
+    // the helper never starts and we stay running (return Cancelled). Only
+    // after a successful elevated launch do we perform a controlled shutdown
+    // and let the (now-elevated) helper relaunch the main app.
+    let verb: Vec<u16> = "runas\0".encode_utf16().collect();
+    let exe_wide: Vec<u16> = self_exe
+        .as_os_str()
+        .encode_wide()
+        .chain(std::iter::once(0))
+        .collect();
+
+    let mut cli = format!("--elevate-helper {parent_pid}");
+    for arg in std::env::args().skip(1) {
+        cli.push(' ');
+        cli.push_str(&windows_quote(&arg));
+    }
+    let args_wide: Vec<u16> = cli.encode_utf16().chain(std::iter::once(0)).collect();
+
+    let result = unsafe {
+        ShellExecuteW(
+            None,
+            PCWSTR(verb.as_ptr()),
+            PCWSTR(exe_wide.as_ptr()),
+            PCWSTR(args_wide.as_ptr()),
+            PCWSTR::null(),
+            SW_SHOWNORMAL,
+        )
+    };
+
+    let handle = result.0 as isize;
+    if handle > 32 {
+        // The elevated helper is now waiting for this process to exit, after
+        // which it launches the elevated main app. Perform a controlled
+        // shutdown (runs ExitRequested so window state is saved and the
+        // keyboard listener stops) rather than an abrupt std::process::exit.
+        log::info!("Elevation helper launched; performing controlled shutdown.");
+        app.exit(0);
+        #[allow(unreachable_code)]
+        return crate::platform::NativeSetupResult::RequireRestart;
+    }
+
+    // ERROR_CANCELLED (1223) means the user dismissed the UAC prompt.
+    let last_err = unsafe { windows::Win32::Foundation::GetLastError() };
+    if last_err == windows::Win32::Foundation::ERROR_CANCELLED {
+        log::info!("UAC elevation declined by user; continuing unelevated");
+        if let Err(err) = app.emit("elevation-declined", ()) {
+            log::warn!("Failed to emit elevation-declined: {err}");
+        }
+        return crate::platform::NativeSetupResult::Cancelled;
+    }
+    crate::platform::NativeSetupResult::Failed
 }
 
 /// If this process was started as the elevation bootstrap helper

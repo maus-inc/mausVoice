@@ -135,6 +135,8 @@ pub const DROP_IS_ENTERPRISE_MIGRATION_SQL: &str =
     include_str!("migrations/072_drop_is_enterprise.sql");
 pub const PILL_RESET_MONITOR_STRATEGY_MIGRATION_SQL: &str =
     include_str!("migrations/073_pill_reset_monitor_strategy.sql");
+pub const ALWAYS_REQUEST_ADMIN_ON_STARTUP_MIGRATION_SQL: &str =
+    include_str!("migrations/074_always_request_admin_on_startup.sql");
 
 pub fn migrations() -> Vec<tauri_plugin_sql::Migration> {
     vec![
@@ -562,6 +564,12 @@ pub fn migrations() -> Vec<tauri_plugin_sql::Migration> {
             version: 73,
             description: "add_pill_reset_monitor_strategy",
             sql: PILL_RESET_MONITOR_STRATEGY_MIGRATION_SQL,
+            kind: tauri_plugin_sql::MigrationKind::Up,
+        },
+        tauri_plugin_sql::Migration {
+            version: 74,
+            description: "add_always_request_admin_on_startup",
+            sql: ALWAYS_REQUEST_ADMIN_ON_STARTUP_MIGRATION_SQL,
             kind: tauri_plugin_sql::MigrationKind::Up,
         },
     ]

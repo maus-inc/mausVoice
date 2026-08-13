@@ -47,8 +47,12 @@ import {
   savePersonalGroqApiKey,
 } from "../../actions/personal-use.actions";
 import { setAutoLaunchEnabled } from "../../actions/settings.actions";
+import { SettingSection } from "../common/SettingSection";
 import { loadTones } from "../../actions/tone.actions";
-import { setPreferredLanguage } from "../../actions/user.actions";
+import {
+  setAlwaysRequestAdminOnStartup,
+  setPreferredLanguage,
+} from "../../actions/user.actions";
 import { produceAppState, useAppStore } from "../../store";
 import { getAdditionalLanguageEntries } from "../../utils/keyboard.utils";
 import {
@@ -585,6 +589,17 @@ export default function SettingsPage() {
     }
   })();
 
+  const isWindowsPlatform = platform === "windows";
+  const alwaysRequestAdminOnStartup = useAppStore(
+    (state) => state.userPrefs?.alwaysRequestAdminOnStartup ?? false,
+  );
+
+  const handleToggleAlwaysRequestAdmin = (
+    event: ChangeEvent<HTMLInputElement>,
+  ) => {
+    void setAlwaysRequestAdminOnStartup(event.target.checked);
+  };
+
   const inputPermissionsSetup = (
     <Section title={inputSetupTitle} description={inputSetupDescription}>
       <ListTile
@@ -595,6 +610,23 @@ export default function SettingsPage() {
         disabled={setupRunning}
         onClick={() => setSetupConfirmOpen(true)}
       />
+      {isWindowsPlatform && (
+        <SettingSection
+          title={
+            <FormattedMessage defaultMessage="Always run as administrator" />
+          }
+          description={
+            <FormattedMessage defaultMessage="Ask for administrator permission every time mausVoice starts, instead of configuring input permissions manually. Takes effect on the next launch." />
+          }
+          action={
+            <Switch
+              edge="end"
+              checked={alwaysRequestAdminOnStartup}
+              onChange={handleToggleAlwaysRequestAdmin}
+            />
+          }
+        />
+      )}
     </Section>
   );
 
