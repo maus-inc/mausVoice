@@ -23,70 +23,84 @@ export type LocalModelOption = {
 
 export const DEFAULT_LOCAL_WHISPER_MODEL: LocalWhisperModel = "tiny";
 
-const MODEL_SPECS: [LocalWhisperModel, string, string, LocalModelCategory][] = [
-  [
-    "parakeet-ctc-0.6b",
-    "NVIDIA Parakeet CTC 0.6B (120 MB)",
-    "Ultra-fast English dictation, zero hallucination loops",
-    "fast",
-  ],
-  [
-    "parakeet-tdt-0.6b",
-    "NVIDIA Parakeet TDT 0.6B (240 MB)",
-    "State-of-the-art English dictation speed & accuracy",
-    "fast",
-  ],
-  [
-    "canary-1b",
-    "NVIDIA Canary 1B (1.2 GB)",
-    "Multilingual STT + automatic punctuation & casing",
-    "fast",
-  ],
-  ["tiny", "Whisper Tiny (77 MB)", "Fastest, lowest accuracy", "whisper"],
-  [
-    "base",
-    "Whisper Base (148 MB)",
-    "Great balance of speed and accuracy",
-    "whisper",
-  ],
-  [
-    "small",
-    "Whisper Small (488 MB)",
-    "Recommended with GPU acceleration",
-    "whisper",
-  ],
-  [
-    "medium",
-    "Whisper Medium (1.53 GB)",
-    "Balanced quality and speed",
-    "whisper",
-  ],
-  [
-    "turbo",
-    "Whisper Large v3 Turbo (1.6 GB)",
-    "Fast large model, great accuracy",
-    "whisper",
-  ],
-  [
-    "large",
-    "Whisper Large v3 (3.1 GB)",
-    "Highest accuracy, requires GPU",
-    "whisper",
-  ],
-  [
-    "hindi2hinglish",
-    "Whisper Hindi2Hinglish Apex (595 MB)",
-    "Hindi speech transcribed as Hinglish (Latin script)",
-    "whisper",
-  ],
+export const LOCAL_WHISPER_MODELS: LocalWhisperModel[] = [
+  "parakeet-ctc-0.6b",
+  "parakeet-tdt-0.6b",
+  "canary-1b",
+  "tiny",
+  "base",
+  "small",
+  "medium",
+  "turbo",
+  "large",
+  "hindi2hinglish",
 ];
 
-export const LOCAL_MODEL_OPTIONS: LocalModelOption[] = MODEL_SPECS.map(
-  ([value, label, helper, category]) => ({ value, label, helper, category }),
-);
+type ModelMeta = {
+  label: string;
+  helper: string;
+  category: LocalModelCategory;
+};
 
-export const LOCAL_WHISPER_MODELS: LocalWhisperModel[] =
-  LOCAL_MODEL_OPTIONS.map((option) => option.value);
+const MODEL_LOOKUP: Record<LocalWhisperModel, ModelMeta> = {
+  "parakeet-ctc-0.6b": {
+    label: "NVIDIA Parakeet CTC 0.6B (120 MB)",
+    helper: "Ultra-fast English dictation, zero hallucination loops",
+    category: "fast",
+  },
+  "parakeet-tdt-0.6b": {
+    label: "NVIDIA Parakeet TDT 0.6B (240 MB)",
+    helper: "State-of-the-art English dictation speed & accuracy",
+    category: "fast",
+  },
+  "canary-1b": {
+    label: "NVIDIA Canary 1B (1.2 GB)",
+    helper: "Multilingual STT + automatic punctuation & casing",
+    category: "fast",
+  },
+  tiny: {
+    label: "Whisper Tiny (77 MB)",
+    helper: "Fastest, lowest accuracy",
+    category: "whisper",
+  },
+  base: {
+    label: "Whisper Base (148 MB)",
+    helper: "Great balance of speed and accuracy",
+    category: "whisper",
+  },
+  small: {
+    label: "Whisper Small (488 MB)",
+    helper: "Recommended with GPU acceleration",
+    category: "whisper",
+  },
+  medium: {
+    label: "Whisper Medium (1.53 GB)",
+    helper: "Balanced quality and speed",
+    category: "whisper",
+  },
+  turbo: {
+    label: "Whisper Large v3 Turbo (1.6 GB)",
+    helper: "Fast large model, great accuracy",
+    category: "whisper",
+  },
+  large: {
+    label: "Whisper Large v3 (3.1 GB)",
+    helper: "Highest accuracy, requires GPU",
+    category: "whisper",
+  },
+  hindi2hinglish: {
+    label: "Whisper Hindi2Hinglish Apex (595 MB)",
+    helper: "Hindi speech transcribed as Hinglish (Latin script)",
+    category: "whisper",
+  },
+};
+
+export const LOCAL_MODEL_OPTIONS: LocalModelOption[] = LOCAL_WHISPER_MODELS.map(
+  (value) => ({
+    value,
+    ...MODEL_LOOKUP[value],
+  }),
+);
 
 export const normalizeLocalWhisperModel = (
   value: string | null | undefined,

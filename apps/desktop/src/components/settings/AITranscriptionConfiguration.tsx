@@ -183,6 +183,16 @@ const resolveBadgeLabel = (
   return "Paused";
 };
 
+const handleModelClick = (
+  event: React.MouseEvent,
+  model: LocalWhisperModel,
+  action: (m: LocalWhisperModel) => void,
+) => {
+  event.preventDefault();
+  event.stopPropagation();
+  action(model);
+};
+
 const BusyDownloadButtons = ({
   model,
   paused,
@@ -198,15 +208,6 @@ const BusyDownloadButtons = ({
   onResume: (model: LocalWhisperModel) => void;
   onCancel: (model: LocalWhisperModel) => void;
 }) => {
-  const trigger = (
-    event: React.MouseEvent,
-    action: (m: LocalWhisperModel) => void,
-  ) => {
-    event.preventDefault();
-    event.stopPropagation();
-    action(model);
-  };
-
   const primaryAction = paused ? onResume : onPause;
   const badgeColor = paused ? "warning.main" : "text.secondary";
   const badgeLabel = resolveBadgeLabel(paused, compactPercent);
@@ -248,7 +249,7 @@ const BusyDownloadButtons = ({
           e.preventDefault();
           e.stopPropagation();
         }}
-        onClick={(e) => trigger(e, primaryAction)}
+        onClick={(e) => handleModelClick(e, model, primaryAction)}
       >
         {paused ? (
           <FormattedMessage defaultMessage="Resume" />
@@ -276,7 +277,7 @@ const BusyDownloadButtons = ({
           e.preventDefault();
           e.stopPropagation();
         }}
-        onClick={(e) => trigger(e, onCancel)}
+        onClick={(e) => handleModelClick(e, model, onCancel)}
       >
         <FormattedMessage defaultMessage="Cancel" />
       </Button>
@@ -297,15 +298,6 @@ const IdleDownloadButton = ({
   onDownload: (model: LocalWhisperModel) => void;
   onDelete?: (model: LocalWhisperModel) => void;
 }) => {
-  const trigger = (
-    event: React.MouseEvent,
-    action: (m: LocalWhisperModel) => void,
-  ) => {
-    event.preventDefault();
-    event.stopPropagation();
-    action(model);
-  };
-
   const isDestructive = selectable;
   const primaryHandler = isDestructive && onDelete ? onDelete : onDownload;
 
@@ -334,7 +326,7 @@ const IdleDownloadButton = ({
         e.preventDefault();
         e.stopPropagation();
       }}
-      onClick={(e) => trigger(e, primaryHandler)}
+      onClick={(e) => handleModelClick(e, model, primaryHandler)}
     >
       <ActionButtonLabel deleting={deleting} selectable={selectable} />
     </Button>
