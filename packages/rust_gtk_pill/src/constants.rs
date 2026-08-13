@@ -22,7 +22,7 @@ pub(crate) const LONG_PRESS_OUTLINE_COLOR: (f64, f64, f64) = (0.92, 0.95, 1.0);
 // Ring + drag tuning constants live in `rust_pill_shared` so every platform
 // draws the long-press ring from one source of truth.
 pub(crate) use rust_pill_shared::{
-    DRAG_INFLATE_SCALE, DRAG_INFLATE_STIFFNESS, RING_SHIMMER_CYCLES,
+    DRAG_INFLATE_SCALE, DRAG_INFLATE_STIFFNESS,
     RING_BASE_WIDTH, RING_BASE_ALPHA, RING_SHIMMER_WIDTH, RING_SHIMMER_ALPHA,
     ring_dash_period, ring_dash_offset, ring_dash_is_on,
 };

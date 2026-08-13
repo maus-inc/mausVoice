@@ -260,8 +260,6 @@ pub async fn fetch_user_preferences(
         last_seen_feature: row
             .try_get::<Option<String>, _>("last_seen_feature")
             .unwrap_or(None),
-            .map(|v| v != 0)
-            .unwrap_or(false),
         language_switch_enabled: row
             .try_get::<i64, _>("language_switch_enabled")
             .map(|v| v != 0)

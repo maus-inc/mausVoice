@@ -15,7 +15,6 @@ use crate::domain::{
 use crate::platform::{ChunkCallback, LevelCallback};
 use crate::system::crypto::{protect_api_key, reveal_api_key};
 use crate::system::StorageRepo;
-use crate::utils::decode_to_utf8;
 use sqlx::Row;
 
 use crate::platform::input::paste_text_into_focused_field as platform_paste_text;
