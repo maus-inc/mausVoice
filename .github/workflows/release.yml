@@ -296,16 +296,23 @@ jobs:
       - name: Checkout source
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
 
+      - name: Resolve tag
+        id: tag
+        env:
+          INPUT_TAG: ${{ inputs.tag }}
+          VERSION: ${{ inputs.version }}
+        run: |
+          echo "tag_name=${INPUT_TAG:-mausVoice-v${VERSION}}" >> "$GITHUB_OUTPUT"
+
       - name: Download macOS DMG
         env:
           VERSION: ${{ inputs.version }}
-          INPUT_TAG: ${{ inputs.tag }}
+          TAG: ${{ steps.tag.outputs.tag_name }}
           TOKEN: ${{ secrets.RELEASE_TOKEN || secrets.GITHUB_TOKEN }}
         run: |
           set -euo pipefail
-          TAG="${INPUT_TAG:-mausVoice-v${VERSION}}"
           URL="https://github.com/maus-inc/mausVoice/releases/download/${TAG}/mausVoice_${VERSION}_universal.dmg"
-          curl -fsSL --proto '=https' -H "Authorization: token ${TOKEN}" -o /tmp/mausVoice.dmg "$URL"
+          curl --proto '=https' --tlsv1.2 -fsSL -H "Authorization: token ${TOKEN}" -o /tmp/mausVoice.dmg "$URL"
 
       - name: Compute checksum
         id: checksum
@@ -316,7 +323,7 @@ jobs:
         env:
           VERSION: ${{ inputs.version }}
           SHA256: ${{ steps.checksum.outputs.sha256 }}
-          TAG: ${{ inputs.tag || format('mausVoice-v{0}', inputs.version) }}
+          TAG: ${{ steps.tag.outputs.tag_name }}
         run: |
           node scripts/ci/render-cask.mjs > /tmp/mausvoice-desktop.rb
           cat /tmp/mausvoice-desktop.rb
