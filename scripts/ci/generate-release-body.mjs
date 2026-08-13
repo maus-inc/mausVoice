@@ -280,6 +280,8 @@ const body = [
   "",
   "> You'll need your own transcription (Deepgram) and cleanup (Groq) API keys on first launch. Keys stay on your machine, encrypted.",
   "",
+  "Grab Your [Free Groq↗]([https://console.groq.com/keys](https://console.groq.com/keys)) and [Free Deepgram↗]([https://console.deepgram.com/](https://console.deepgram.com/)) API Keys.",
+  "",
   "---",
   "",
   `Found an issue? [Open one on GitHub](${githubBase}/issues). · [Repository](${githubBase}) · [License](LICENCE)`,

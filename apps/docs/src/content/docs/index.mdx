@@ -1,37 +1,84 @@
 ---
 title: mausVoice Docs
-description: Documentation for mausVoice, the cross-platform voice-to-text desktop app.
+description: Accurate user, provider, privacy, troubleshooting, and developer documentation for mausVoice.
 template: splash
 hero:
-  tagline: Cross-platform Voice OS, powered by AI.
+  tagline: Your voice, typed anywhere — with every processing step explained.
   actions:
-    - text: Getting Started
+    - text: Start with mausVoice
       link: /mausVoice/docs/getting-started/
       icon: right-arrow
-    - text: Visit mausVoice
-      link: https://maus-inc.github.io/mausVoice/
-      icon: external
+    - text: Download the app
+      link: https://github.com/maus-inc/mausVoice/releases
+      icon: download
       variant: minimal
 ---
 
-import { Card, CardGrid } from "@astrojs/starlight/components";
+import { Card, CardGrid, LinkCard } from "@astrojs/starlight/components";
 
-## Next steps
+## Find the right answer
+
+mausVoice records speech from a global shortcut, transcribes it locally or through a provider, optionally rewrites the raw text, and delivers the result to the focused application. These guides keep those stages separate so setup and privacy decisions stay clear.
 
 <CardGrid stagger>
-  <Card title="Getting Started" icon="rocket">
-    New to mausVoice? Learn how to install the app and make your first
-    transcription.
+  <Card title="Get a first dictation working" icon="rocket">
+    Choose your platform, finish permissions, configure Local or API
+    transcription, and run a controlled test in a plain text editor.
+
+    [Start here](getting-started/overview/)
+
   </Card>
-  <Card title="Transcription Modes" icon="setting">
-    Choose between local, API, or cloud transcription depending on your needs.
+  <Card title="Use every daily feature" icon="pencil">
+    Learn recording controls, the floating pill, History, Styles, Dictionary,
+    insertion, language selection, and optional Assistant mode.
+
+    [Explore daily use](using-mausvoice/app-tour/)
+
   </Card>
-  <Card title="Tones & Dictionary" icon="pencil">
-    Customize how your transcriptions are cleaned up with tones and
-    domain-specific vocabulary.
+  <Card title="Configure providers correctly" icon="setting">
+    Match transcription and generative providers to the task, manage encrypted
+    API keys, or run the local Whisper sidecar.
+
+    [Open configuration](configuration/settings-map/)
+
   </Card>
-  <Card title="Open Source" icon="github">
-    mausVoice is open source. Browse the code, report issues, and contribute on
-    [GitHub](https://github.com/mausvoice/mausvoice).
+  <Card title="Understand the data flow" icon="lock">
+    See exactly when audio, transcript text, style context, history, clipboard
+    output, and remote output are local or network-backed.
+
+    [Review privacy and security](privacy-security/data-flow/)
+
+  </Card>
+  <Card title="Fix a broken pipeline" icon="magnifier">
+    Isolate shortcut, microphone, transcription, rewriting, persistence, and
+    insertion instead of resetting everything at once.
+
+    [Troubleshoot in order](troubleshooting/first-response/)
+
+  </Card>
+  <Card title="Build and contribute" icon="github">
+    Tour the React/Tauri architecture, shared packages, native pill crates,
+    local sidecar, migrations, tests, docs, and releases.
+
+    [Map the repository](development/repository-overview/)
+
   </Card>
 </CardGrid>
+
+## Common destinations
+
+<CardGrid>
+  <LinkCard title="Install on macOS" href="getting-started/install-macos/" />
+  <LinkCard
+    title="Install on Windows"
+    href="getting-started/install-windows/"
+  />
+  <LinkCard title="Install on Linux" href="getting-started/install-linux/" />
+  <LinkCard title="Local models" href="configuration/local-models/" />
+  <LinkCard title="Provider reference" href="reference/providers/" />
+  <LinkCard title="Data locations" href="reference/data-locations/" />
+</CardGrid>
+
+:::note[Documentation scope]
+The current desktop UI offers **Local** and **API** transcription modes, plus **API** or **Off** for post-processing. Pages describe the source in this repository; external provider prices, quotas, models, and policies can change independently.
+:::
