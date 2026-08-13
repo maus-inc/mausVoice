@@ -22,17 +22,12 @@ pub enum Phase {
 
 
 /// Which monitor a reset-position re-homes the pill onto.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum ResetStrategy {
+    #[default]
     Current,
     Cursor,
-}
-
-impl Default for ResetStrategy {
-    fn default() -> Self {
-        ResetStrategy::Current
-    }
 }
 
 #[derive(Debug, Clone, Deserialize)]

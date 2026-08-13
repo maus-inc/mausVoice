@@ -24,7 +24,7 @@ impl PillProcess {
     /// On write failure (broken pipe, pill exited), retries once immediately
     /// and then surfaces the error to the caller instead of only logging it.
     pub fn send(&self, msg: &str) -> Result<(), String> {
-        let mut attempt = |label: &str| -> Result<(), String> {
+        let attempt = |label: &str| -> Result<(), String> {
             let mut stdin = self
                 .stdin
                 .lock()
