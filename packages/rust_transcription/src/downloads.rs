@@ -801,4 +801,57 @@ mod tests {
         tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
         assert!(!temp_file.exists());
     }
+
+    #[tokio::test]
+    async fn test_pause_and_resume_worker_handover_preserves_file() {
+        let temp_dir = tempfile::tempdir().unwrap();
+        let destination = temp_dir.path().join("model.bin");
+        let registry = DownloadRegistry::default();
+        let job_id = Uuid::new_v4();
+
+        let filename = destination
+            .file_name()
+            .and_then(|n| n.to_str())
+            .unwrap();
+        let temp_file = destination.with_file_name(format!("{filename}.{job_id}.download"));
+        tokio::fs::write(&temp_file, b"first-chunk").await.unwrap();
+
+        let (finished_tx, finished_rx) = watch::channel(false);
+        {
+            let mut store = registry.inner.lock().await;
+            store.jobs.insert(
+                job_id,
+                DownloadJobRecord {
+                    model: WhisperModel::Tiny,
+                    status: DownloadJobStatus::Paused,
+                    bytes_downloaded: 11,
+                    total_bytes: Some(22),
+                    error: None,
+                    generation: 1,
+                    is_finalizing: false,
+                    control_tx: None,
+                    worker_finished_rx: Some(finished_rx),
+                },
+            );
+            store.active_by_model.insert(WhisperModel::Tiny, job_id);
+        }
+
+        // Simulate old worker releasing file
+        finished_tx.send(true).unwrap();
+
+        // Resuming the job
+        let client = reqwest::Client::new();
+        let snapshot = registry
+            .start_or_get_active(
+                WhisperModel::Tiny,
+                "http://127.0.0.1:9999/model.bin".to_string(),
+                destination.clone(),
+                client,
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(snapshot.status, DownloadJobStatus::Pending);
+        assert_eq!(snapshot.bytes_downloaded, 11);
+    }
 }
