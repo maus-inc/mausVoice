@@ -6,6 +6,11 @@ on:
       - main
     paths:
       - "apps/docs/**"
+      - "index.html"
+      - "marketing/**"
+      - "docs/assets/**"
+      - "sitemap.xml"
+      - "robots.txt"
       - "scripts/ci/pr28-contracts.test.mjs"
       - "pnpm-lock.yaml"
       - ".github/workflows/test-docs.yml"
@@ -14,6 +19,11 @@ on:
       - main
     paths:
       - "apps/docs/**"
+      - "index.html"
+      - "marketing/**"
+      - "docs/assets/**"
+      - "sitemap.xml"
+      - "robots.txt"
       - "scripts/ci/pr28-contracts.test.mjs"
       - "pnpm-lock.yaml"
       - ".github/workflows/test-docs.yml"
@@ -65,14 +75,26 @@ jobs:
             ../../index.html
           grep -Fq 'docs/assets/mausvoice-banner.png' \
             astro.config.mjs
-      - name: Assemble Pages artifact (landing page + docs)
+      - name: Assemble Pages artifact (landing page + docs + assets)
         # Option B: keep index.html at the site root and publish the built
         # docs underneath /mausVoice/ (matches the existing base). The legacy
         # Pages source must be switched to "GitHub Actions" for this to publish.
         run: |
-          mkdir -p publish/mausVoice
+          mkdir -p publish/mausVoice publish/marketing/assets publish/docs/assets
+          # Landing page + its referenced root assets
           cp index.html publish/index.html
-          cp -r apps/docs/dist/* publish/mausVoice/
+          cp -r marketing/assets/. publish/marketing/assets/
+          cp -r docs/assets/. publish/docs/assets/
+          cp sitemap.xml robots.txt publish/ 2>/dev/null || true
+          # Built docs (Astro already bakes the /mausVoice/ base into URLs)
+          cp -r apps/docs/dist/. publish/mausVoice/
+      - name: Smoke test assembled artifact
+        run: |
+          test -f publish/index.html
+          test -f publish/mausVoice/getting-started/introduction/index.html
+          test -f publish/mausVoice/docs/assets/fonts/Satoshi-Medium.ttf
+          test -f publish/marketing/assets/logo.png
+          test -f publish/docs/assets/mausvoice-banner.png
       - name: Upload Pages artifact
         uses: actions/upload-pages-artifact@v3
         with:
