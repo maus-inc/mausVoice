@@ -2416,14 +2416,15 @@ const ALLOWED_COMMANDS: &[AllowedCommand] = &[
     AllowedCommand { binary: "xdg-open", fixed_args: &[] },
 ];
 
+/// Windows allow-list. Deliberately excludes CMD builtins (`dir`, `cd`,
+/// `echo`, `date`, `ver`): we spawn binaries directly rather than through
+/// `cmd /c`, so a builtin has no `.exe` on PATH and `Command::new` would
+/// always fail with "program not found". Only real executables are listed.
 #[cfg(target_os = "windows")]
 const ALLOWED_COMMANDS: &[AllowedCommand] = &[
-    AllowedCommand { binary: "dir", fixed_args: &[] },
-    AllowedCommand { binary: "echo", fixed_args: &[] },
-    AllowedCommand { binary: "cd", fixed_args: &[] },
     AllowedCommand { binary: "whoami", fixed_args: &[] },
-    AllowedCommand { binary: "date", fixed_args: &["/t"] },
-    AllowedCommand { binary: "ver", fixed_args: &[] },
+    AllowedCommand { binary: "where", fixed_args: &[] },
+    AllowedCommand { binary: "hostname", fixed_args: &[] },
     AllowedCommand { binary: "explorer", fixed_args: &[] },
 ];
 
@@ -2541,6 +2542,7 @@ mod tests {
         assert!(validate_terminal_command_args("echo > file").is_err());
     }
 
+    #[cfg(not(target_os = "windows"))]
     #[test]
     fn terminal_command_allows_allowlisted() {
         assert_eq!(
@@ -2558,6 +2560,34 @@ mod tests {
                 .binary,
             "echo"
         );
+    }
+
+    #[cfg(target_os = "windows")]
+    #[test]
+    fn terminal_command_allows_allowlisted() {
+        assert_eq!(
+            validate_terminal_command_args("whoami").unwrap().0.binary,
+            "whoami"
+        );
+        assert_eq!(
+            validate_terminal_command_args("where cargo").unwrap().0.binary,
+            "where"
+        );
+        // CMD builtins are intentionally absent: without a shell they have
+        // no executable to spawn.
+        assert!(validate_terminal_command_args("dir").is_err());
+    }
+
+    /// Every allow-listed entry must be reachable through the validator,
+    /// so the const and the parser can't drift apart on any platform.
+    #[test]
+    fn terminal_command_allowlist_entries_are_reachable() {
+        for entry in ALLOWED_COMMANDS {
+            let (matched, args) = validate_terminal_command_args(entry.binary)
+                .unwrap_or_else(|err| panic!("{} should validate: {err}", entry.binary));
+            assert_eq!(matched.binary, entry.binary);
+            assert!(args.is_empty());
+        }
     }
 
     #[test]
