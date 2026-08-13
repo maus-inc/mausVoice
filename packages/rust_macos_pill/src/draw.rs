@@ -1194,6 +1194,7 @@ fn draw_keyboard_button(ctx: &Ctx, state: &PillState, ww: f64, wh: f64) {
 
 /// Draws the dimmed pause bar that replaces the waveform while paused,
 /// crossfading in with `fade`.
+#[allow(clippy::too_many_arguments)]
 fn draw_paused(
     ctx: &Ctx, rx: f64, ry: f64, pill_w: f64, pill_h: f64,
     expand_t: f64, fade: f64, state: &PillState,
