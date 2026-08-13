@@ -1149,6 +1149,7 @@ export type RemoteSenderDeliverArgs = { targetDeviceId: string; text: string; mo
 export type RemoteSenderPairArgs = { receiverDeviceId: string; receiverName: string; receiverPlatform: string; receiverAddress: string; pairingCode: string }
 export type RunTerminalCommandResponse = { stdout: string; stderr: string; exitCode: number }
 export type ScreenContextInfo = { screenContext: string | null }
+export type SimulateTypeResponse = { typingId: number }
 export type ScreenVisibleArea = { topInset: number; bottomInset: number; leftInset: number; rightInset: number }
 export type StartRecordingArgs = { preferredMicrophone: string | null }
 export type StartRecordingResponse = { sampleRate: number }
