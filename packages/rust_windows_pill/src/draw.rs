@@ -106,8 +106,13 @@ pub(crate) fn pill_position(state: &PillState, ww: f64, wh: f64) -> (f64, f64, f
 /// never drift away from the width/height animation: the corners stay exactly
 /// half of the shortest side (a true capsule) on every frame, capped at the
 /// expanded design radius so a drag-inflated pill does not over-round.
-pub(crate) fn pill_radius(pill_w: f64, pill_h: f64) -> f64 {
-    (pill_w.min(pill_h) * 0.5).min(EXPANDED_RADIUS)
+/// Corner radius for the pill at its *current* size. The cap scales with
+/// the drag-inflate amount so the corners stay true semicircles while the
+/// pill grows; at rest (`inflate = 0`) this is exactly the previous
+/// `EXPANDED_RADIUS` clamp.
+pub(crate) fn pill_radius(pill_w: f64, pill_h: f64, inflate: f64) -> f64 {
+    let cap = EXPANDED_RADIUS * (1.0 + inflate * DRAG_INFLATE_SCALE);
+    (pill_w.min(pill_h) * 0.5).min(cap)
 }
 
 /// Renders the pill body and its current content (waveform, paused bar,
@@ -117,7 +122,7 @@ fn draw_pill(gfx: &mut Gfx, state: &PillState, ww: f64, wh: f64) {
     let (rx, ry, pill_w, pill_h) = pill_position(state, ww, wh);
 
     let bg_alpha = lerp(IDLE_BG_ALPHA, ACTIVE_BG_ALPHA, expand_t);
-    let radius = pill_radius(pill_w, pill_h);
+    let radius = pill_radius(pill_w, pill_h, state.inflate_t.get());
 
     let is_typing = state.assistant_active.get()
         && *state.assistant_input_mode.borrow() == "type";
@@ -138,9 +143,9 @@ fn draw_pill(gfx: &mut Gfx, state: &PillState, ww: f64, wh: f64) {
                 draw_waveform(gfx, rx, ry, pill_w, pill_h, expand_t, 1.0 - pause_t, state);
             }
             if pause_t > 0.001 {
-                draw_paused(gfx, rx, ry, pill_w, pill_h, expand_t, pause_t);
+                draw_paused(gfx, rx, ry, pill_w, pill_h, expand_t, pause_t, state);
             }
-            draw_edge_gradient(gfx, rx, ry, pill_w, pill_h, expand_t);
+            draw_edge_gradient(gfx, rx, ry, pill_w, pill_h, expand_t, state);
         }
         Phase::Loading if expand_t > 0.1 => {
             draw_loading(gfx, rx, ry, pill_w, pill_h, expand_t, state);
@@ -167,7 +172,7 @@ fn draw_waveform(
     let baseline = ry + pill_h / 2.0;
 
     gfx.save();
-    gfx.clip_rounded_rect(rx, ry, pill_w, pill_h, pill_radius(pill_w, pill_h));
+    gfx.clip_rounded_rect(rx, ry, pill_w, pill_h, pill_radius(pill_w, pill_h, state.inflate_t.get()));
 
     for config in WAVE_CONFIGS {
         let amplitude_factor = (level * config.multiplier).clamp(MIN_AMPLITUDE, MAX_AMPLITUDE);
@@ -201,7 +206,7 @@ fn draw_edge_gradient(
     let alpha = 0.9 * expand_t;
 
     gfx.save();
-    gfx.clip_rounded_rect(rx, ry, pill_w, pill_h, pill_radius(pill_w, pill_h));
+    gfx.clip_rounded_rect(rx, ry, pill_w, pill_h, pill_radius(pill_w, pill_h, state.inflate_t.get()));
 
     gfx.fill_gradient_rect(
         rx, ry, pill_w * 0.18, pill_h,
@@ -230,7 +235,7 @@ fn draw_loading(
     expand_t: f64, state: &PillState,
 ) {
     gfx.save();
-    gfx.clip_rounded_rect(rx, ry, pill_w, pill_h, pill_radius(pill_w, pill_h));
+    gfx.clip_rounded_rect(rx, ry, pill_w, pill_h, pill_radius(pill_w, pill_h, state.inflate_t.get()));
 
     let bar_h = 2.0;
     let bar_y = ry + (pill_h - bar_h) / 2.0;
@@ -254,7 +259,7 @@ fn draw_loading(
 
     gfx.restore();
 
-    draw_edge_gradient(gfx, rx, ry, pill_w, pill_h, expand_t);
+    draw_edge_gradient(gfx, rx, ry, pill_w, pill_h, expand_t, state);
 }
 
 fn draw_idle_label(gfx: &Gfx, rx: f64, ry: f64, pill_w: f64, pill_h: f64, expand_t: f64) {
@@ -479,7 +484,7 @@ fn draw_flash_blue(gfx: &mut Gfx, state: &PillState, ww: f64, wh: f64) {
     let rw = pw - inset * 2.0;
     let rh = ph - inset * 2.0;
 
-    let radius = pill_radius(pw, ph) + FLASH_BLUE_INSET;
+    let radius = pill_radius(pw, ph, state.inflate_t.get()) + FLASH_BLUE_INSET;
 
     let (gr, gg, gb) = FLASH_BLUE_GLOW_COLOR;
     gfx.stroke_rounded_rect(
@@ -1039,7 +1044,7 @@ fn draw_paused(
 ) {
     // Same loading bar as the loading phase, but static/dimmed to convey "held".
     gfx.save();
-    gfx.clip_rounded_rect(rx, ry, pill_w, pill_h, pill_radius(pill_w, pill_h));
+    gfx.clip_rounded_rect(rx, ry, pill_w, pill_h, pill_radius(pill_w, pill_h, state.inflate_t.get()));
 
     let bar_h = 2.0;
     let bar_y = ry + (pill_h - bar_h) / 2.0;
@@ -1200,7 +1205,7 @@ fn draw_long_press_ring(gfx: &Gfx, state: &PillState, ww: f64, wh: f64) {
     };
 
     let (pill_x, pill_y, pill_w, pill_h) = pill_position(state, ww, wh);
-    let radius = pill_radius(pill_w, pill_h);
+    let radius = pill_radius(pill_w, pill_h, state.inflate_t.get());
 
     // Draw an outline that traces around the pill perimeter clockwise
     // from the top-left corner. The filled portion matches the hold progress.
@@ -1224,7 +1229,6 @@ fn draw_long_press_ring(gfx: &Gfx, state: &PillState, ww: f64, wh: f64) {
     // waveform phase, so the ring looks like the pill's sine waves are
     // bleeding through to the border.
     let master_alpha = (0.3 + 0.5 * progress) * alpha;
-    let shimmer_freq = RING_SHIMMER_CYCLES * std::f64::consts::TAU / total_len.max(1.0);
     let wave_phase = state.wave_phase.get();
 
     // Collect the filled segments once so each pass reuses them.
@@ -1251,48 +1255,42 @@ fn draw_long_press_ring(gfx: &Gfx, state: &PillState, ww: f64, wh: f64) {
         segments.push((x1, y1, x2, y2, mid_dist));
     }
 
-    // Draw three passes: outer glow → mid-tone → bright core.
-    let passes: [(f64, f64); 3] = [
-        (RING_GLOW_WIDTH, RING_GLOW_ALPHA),
-        (RING_MID_WIDTH, RING_MID_ALPHA),
-        (RING_CORE_WIDTH, RING_CORE_ALPHA),
-    ];
+    // 2-pass dash-shimmer ring (0.1.6 redesign): a constant base outline plus
+    // a shimmer whose dashes travel in sync with the internal waveform phase.
+    // The dash ranges come from shared geometry so all three platforms render
+    // the same pattern; the old per-segment alpha buckets are gone — exactly
+    // two draw calls total.
+    let dash_period = ring_dash_period(total_len);
+    let dash_offset = ring_dash_offset(wave_phase, total_len);
 
-    // Batch segments that share a quantized alpha into one call per bucket,
-    // reusing a single brush/style instead of creating one per segment.
-    const ALPHA_BUCKETS: usize = 8;
-    for &(width, pass_alpha) in &passes {
-        let mut buckets: [Vec<(f64, f64, f64, f64)>; ALPHA_BUCKETS] =
-            std::array::from_fn(|_| Vec::new());
-        for &(x1, y1, x2, y2, mid_dist) in &segments {
-            let shimmer = 0.55 + 0.45 * (mid_dist * shimmer_freq + wave_phase).sin();
-            let edge_fade = ((filled_len - mid_dist) / RING_EDGE_FADE).min(1.0);
-            let a = master_alpha * pass_alpha * shimmer * edge_fade;
-            if a < 0.005 {
-                continue;
-            }
-            let bucket =
-                ((a * (ALPHA_BUCKETS as f64 - 1.0)).round() as usize).min(ALPHA_BUCKETS - 1);
-            buckets[bucket].push((x1, y1, x2, y2));
-        }
-        for (b, segs) in buckets.iter().enumerate() {
-            if segs.is_empty() {
-                continue;
-            }
-            // Reconstruct a representative alpha for bucket b. Using the
-            // bucket's midpoint (b + 0.5)/(N-1) keeps every populated bucket at
-            // a non-zero alpha (bucket 0 is never fully transparent) and stays
-            // monotonic with the quantized source alpha.
-            let a = (b as f64 + 0.5) / (ALPHA_BUCKETS as f64 - 1.0);
-            let col = [
-                LONG_PRESS_OUTLINE_COLOR.0,
-                LONG_PRESS_OUTLINE_COLOR.1,
-                LONG_PRESS_OUTLINE_COLOR.2,
-                a,
-            ];
-            gfx.draw_line_batch(segs, col, width);
-        }
-    }
+    // Pass A: constant base outline over the filled perimeter.
+    let base_col = [
+        LONG_PRESS_OUTLINE_COLOR.0,
+        LONG_PRESS_OUTLINE_COLOR.1,
+        LONG_PRESS_OUTLINE_COLOR.2,
+        master_alpha * RING_BASE_ALPHA,
+    ];
+    let base_segments: Vec<(f64, f64, f64, f64)> = segments
+        .iter()
+        .map(|&(x1, y1, x2, y2, _)| (x1, y1, x2, y2))
+        .collect();
+    gfx.draw_line_batch(&base_segments, base_col, RING_BASE_WIDTH);
+
+    // Pass B: traveling dash shimmer — only the painted ("on") dash ranges.
+    let shimmer_col = [
+        LONG_PRESS_OUTLINE_COLOR.0,
+        LONG_PRESS_OUTLINE_COLOR.1,
+        LONG_PRESS_OUTLINE_COLOR.2,
+        master_alpha * RING_SHIMMER_ALPHA,
+    ];
+    let shimmer_segments: Vec<(f64, f64, f64, f64)> = segments
+        .iter()
+        .filter(|&&(_, _, _, _, mid_dist)| {
+            ring_dash_is_on(mid_dist, dash_period, dash_offset)
+        })
+        .map(|&(x1, y1, x2, y2, _)| (x1, y1, x2, y2))
+        .collect();
+    gfx.draw_line_batch(&shimmer_segments, shimmer_col, RING_SHIMMER_WIDTH);
 }
 
 

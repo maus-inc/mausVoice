@@ -215,8 +215,8 @@ pub(crate) const LONG_PRESS_OUTLINE_WIDTH: f64 = 2.0;
 // draws the long-press ring from one source of truth.
 pub(crate) use rust_pill_shared::{
     DRAG_INFLATE_SCALE, DRAG_INFLATE_STIFFNESS, RING_SHIMMER_CYCLES,
-    RING_GLOW_WIDTH, RING_GLOW_ALPHA, RING_MID_WIDTH, RING_MID_ALPHA,
-    RING_CORE_WIDTH, RING_CORE_ALPHA, RING_EDGE_FADE,
+    RING_BASE_WIDTH, RING_BASE_ALPHA, RING_SHIMMER_WIDTH, RING_SHIMMER_ALPHA,
+    ring_dash_period, ring_dash_offset, ring_dash_is_on,
 };
 
 #[allow(dead_code)]

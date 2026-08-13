@@ -113,8 +113,16 @@ pub(crate) fn pill_position(state: &PillState, ww: f64, wh: f64) -> (f64, f64, f
 /// never drift away from the width/height animation: the corners stay exactly
 /// half of the shortest side (a true capsule) on every frame, capped at the
 /// expanded design radius so a drag-inflated pill does not over-round.
-pub(crate) fn pill_radius(pill_w: f64, pill_h: f64) -> f64 {
-    (pill_w.min(pill_h) * 0.5).min(EXPANDED_RADIUS)
+/// Corner radius for the pill at its *current* size.
+///
+/// The cap scales with the drag-inflate amount so the corners stay true
+/// semicircles while the pill grows: a fixed 16px cap made an inflated pill
+/// read as a rounded rectangle ("button"). At rest (`inflate = 0`) this is
+/// exactly the previous `EXPANDED_RADIUS` clamp, so the idle and expanded
+/// looks are unchanged.
+pub(crate) fn pill_radius(pill_w: f64, pill_h: f64, inflate: f64) -> f64 {
+    let cap = EXPANDED_RADIUS * (1.0 + inflate * DRAG_INFLATE_SCALE);
+    (pill_w.min(pill_h) * 0.5).min(cap)
 }
 
 /// Renders the pill body and its current content (waveform, paused bar,
@@ -124,7 +132,7 @@ fn draw_pill(cr: &cairo::Context, state: &PillState, ww: f64, wh: f64) {
     let (rx, ry, pill_w, pill_h) = pill_position(state, ww, wh);
 
     let bg_alpha = lerp(IDLE_BG_ALPHA, ACTIVE_BG_ALPHA, expand_t);
-    let radius = pill_radius(pill_w, pill_h);
+    let radius = pill_radius(pill_w, pill_h, state.inflate_t.get());
 
     let is_typing = state.assistant_active.get()
         && *state.assistant_input_mode.borrow() == "type";
@@ -194,7 +202,7 @@ fn draw_long_press_ring(
     } else {
         state.ring_release_progress.get()
     };
-    let radius = pill_radius(pill_w, pill_h);
+    let radius = pill_radius(pill_w, pill_h, state.inflate_t.get());
 
     // Draw an outline that traces around the pill perimeter
     let inset = 2.0;
@@ -219,7 +227,6 @@ fn draw_long_press_ring(
 
     cr.save().ok();
 
-    let shimmer_freq = RING_SHIMMER_CYCLES * std::f64::consts::TAU / total_len.max(1.0);
     let wave_phase = state.wave_phase.get();
 
     // Collect the filled segments once so each pass reuses them.
@@ -244,58 +251,46 @@ fn draw_long_press_ring(
         segments.push((x1, y1, x2, y2, mid_dist));
     }
 
-    let passes: [(f64, f64); 3] = [
-        (RING_GLOW_WIDTH, RING_GLOW_ALPHA),
-        (RING_MID_WIDTH, RING_MID_ALPHA),
-        (RING_CORE_WIDTH, RING_CORE_ALPHA),
-    ];
-
+    // 2-pass dash-shimmer ring (0.1.6 redesign): a constant base outline plus
+    // a shimmer whose dashes travel in sync with the internal waveform phase.
+    // The dash ranges come from shared geometry so all three platforms render
+    // the same pattern; the old per-segment alpha buckets are gone — exactly
+    // two stroke calls total.
+    let dash_period = ring_dash_period(total_len);
+    let dash_offset = ring_dash_offset(wave_phase, total_len);
     cr.set_line_cap(cairo::LineCap::Butt);
 
-    // Batch segments that share a quantized alpha into one sub-path per pass
-    // and stroke it once, instead of a per-segment stroke whose Round caps
-    // piled opacity at every joint. The bucket index is reconstructed back to
-    // its absolute alpha (b / (N-1)) — the exact inverse of the round(a*(N-1))
-    // assignment above — so the emitted alpha matches the intended shimmer and
-    // edge fade rather than being distorted by a per-pass range remap.
-    const ALPHA_BUCKETS: usize = 8;
-    for &(width, pass_alpha) in &passes {
-        cr.set_line_width(width);
-        let mut buckets: [Vec<(f64, f64, f64, f64)>; ALPHA_BUCKETS] =
-            std::array::from_fn(|_| Vec::new());
-        for &(x1, y1, x2, y2, mid_dist) in &segments {
-            let shimmer = 0.55 + 0.45 * (mid_dist * shimmer_freq + wave_phase).sin();
-            let edge_fade = ((filled_len - mid_dist) / RING_EDGE_FADE).min(1.0);
-            let a = master_alpha * pass_alpha * shimmer * edge_fade;
-            if a < 0.005 {
-                continue;
-            }
-            let bucket =
-                ((a * (ALPHA_BUCKETS as f64 - 1.0)).round() as usize).min(ALPHA_BUCKETS - 1);
-            buckets[bucket].push((x1, y1, x2, y2));
-        }
-        for (b, segs) in buckets.iter().enumerate() {
-            if segs.is_empty() {
-                continue;
-            }
-            // Reconstruct a representative alpha for bucket b. Using the
-            // bucket's midpoint (b + 0.5)/(N-1) keeps every populated bucket at
-            // a non-zero alpha (bucket 0 is never fully transparent) and stays
-            // monotonic with the quantized source alpha.
-            let a = (b as f64 + 0.5) / (ALPHA_BUCKETS as f64 - 1.0);
-            cr.set_source_rgba(
-                LONG_PRESS_OUTLINE_COLOR.0,
-                LONG_PRESS_OUTLINE_COLOR.1,
-                LONG_PRESS_OUTLINE_COLOR.2,
-                a,
-            );
-            for &(x1, y1, x2, y2) in segs {
-                cr.move_to(x1, y1);
-                cr.line_to(x2, y2);
-            }
-            let _ = cr.stroke();
+    // Pass A: constant base outline over the filled perimeter.
+    let base_alpha = master_alpha * RING_BASE_ALPHA;
+    cr.set_line_width(RING_BASE_WIDTH);
+    cr.set_source_rgba(
+        LONG_PRESS_OUTLINE_COLOR.0,
+        LONG_PRESS_OUTLINE_COLOR.1,
+        LONG_PRESS_OUTLINE_COLOR.2,
+        base_alpha,
+    );
+    for &(x1, y1, x2, y2, _) in &segments {
+        cr.move_to(x1, y1);
+        cr.line_to(x2, y2);
+    }
+    let _ = cr.stroke();
+
+    // Pass B: traveling dash shimmer — only the painted ("on") dash ranges.
+    let shimmer_alpha = master_alpha * RING_SHIMMER_ALPHA;
+    cr.set_line_width(RING_SHIMMER_WIDTH);
+    cr.set_source_rgba(
+        LONG_PRESS_OUTLINE_COLOR.0,
+        LONG_PRESS_OUTLINE_COLOR.1,
+        LONG_PRESS_OUTLINE_COLOR.2,
+        shimmer_alpha,
+    );
+    for &(x1, y1, x2, y2, mid_dist) in &segments {
+        if ring_dash_is_on(mid_dist, dash_period, dash_offset) {
+            cr.move_to(x1, y1);
+            cr.line_to(x2, y2);
         }
     }
+    let _ = cr.stroke();
 
     cr.restore().ok();
 }
@@ -336,7 +331,7 @@ fn draw_waveform(
     let baseline = ry + pill_h / 2.0;
 
     cr.save().ok();
-    rounded_rect(cr, rx, ry, pill_w, pill_h, pill_radius(pill_w, pill_h));
+    rounded_rect(cr, rx, ry, pill_w, pill_h, pill_radius(pill_w, pill_h, state.inflate_t.get()));
     cr.clip();
 
     for config in WAVE_CONFIGS {
@@ -638,7 +633,7 @@ fn draw_flash_message(cr: &cairo::Context, state: &PillState, ww: f64, wh: f64) 
     let has_action = action_label.is_some();
 
     let layout = pangocairo::functions::create_layout(cr);
-    let font_desc = pango::FontDescription::from_string("sans bold 12");
+    let font_desc = pango::FontDescription::from_string("Satoshi Bold 12");
     layout.set_font_description(Some(&font_desc));
     layout.set_text(&message);
     let (text_w, text_h) = layout.pixel_size();
@@ -647,7 +642,7 @@ fn draw_flash_message(cr: &cairo::Context, state: &PillState, ww: f64, wh: f64) 
 
     let (action_w, action_layout) = if let Some(ref label) = *action_label {
         let al = pangocairo::functions::create_layout(cr);
-        let af = pango::FontDescription::from_string("sans bold 11");
+        let af = pango::FontDescription::from_string("Satoshi Bold 11");
         al.set_font_description(Some(&af));
         al.set_text(label);
         let (aw, _) = al.pixel_size();
@@ -1595,7 +1590,7 @@ fn draw_flash_blue(cr: &cairo::Context, state: &PillState, ww: f64, wh: f64) {
     let rw = pw - inset * 2.0;
     let rh = ph - inset * 2.0;
 
-    let radius = pill_radius(pw, ph) + FLASH_BLUE_INSET;
+    let radius = pill_radius(pw, ph, state.inflate_t.get()) + FLASH_BLUE_INSET;
 
     let (gr, gg, gb) = FLASH_BLUE_GLOW_COLOR;
     rounded_rect(cr, rx - 1.5, ry - 1.5, rw + 3.0, rh + 3.0, radius + 1.5);
