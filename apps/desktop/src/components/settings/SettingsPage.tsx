@@ -50,10 +50,6 @@ import { setAutoLaunchEnabled } from "../../actions/settings.actions";
 import { loadTones } from "../../actions/tone.actions";
 import { setPreferredLanguage } from "../../actions/user.actions";
 import { produceAppState, useAppStore } from "../../store";
-import {
-  getAllowsChangePostProcessing,
-  getAllowsChangeTranscription,
-} from "../../utils/enterprise.utils";
 import { getAdditionalLanguageEntries } from "../../utils/keyboard.utils";
 import {
   DICTATION_LANGUAGE_OPTIONS,
@@ -78,9 +74,6 @@ import { DashboardEntryLayout } from "../dashboard/DashboardEntryLayout";
 import { getPlatform } from "../../utils/platform.utils";
 
 export default function SettingsPage() {
-  const isEnterprise = useAppStore((state) => state.isEnterprise);
-  const allowChangeTranscription = useAppStore(getAllowsChangeTranscription);
-  const allowChangePostProcessing = useAppStore(getAllowsChangePostProcessing);
   const [groqDialogOpen, setGroqDialogOpen] = useState(false);
   const [groqApiKeyInput, setGroqApiKeyInput] = useState("");
   const [groqSaving, setGroqSaving] = useState(false);
@@ -511,32 +504,26 @@ export default function SettingsPage() {
           />
         }
       />
-      {allowChangeTranscription && (
-        <ListTile
-          title={<FormattedMessage defaultMessage="AI transcription" />}
-          leading={<GraphicEqOutlined />}
-          onClick={openTranscriptionDialog}
-        />
-      )}
-      {allowChangePostProcessing && (
-        <ListTile
-          title={<FormattedMessage defaultMessage="AI post processing" />}
-          leading={<AutoFixHighOutlined />}
-          onClick={openPostProcessingDialog}
-        />
-      )}
-      {!isEnterprise && (
-        <ListTile
-          title={
-            <Stack direction="row" alignItems="center">
-              <FormattedMessage defaultMessage="Assistant mode" />
-              <Chip label="Beta" size="small" color="primary" sx={{ ml: 1 }} />
-            </Stack>
-          }
-          leading={<AutoAwesomeOutlined />}
-          onClick={openAgentModeDialog}
-        />
-      )}
+      <ListTile
+        title={<FormattedMessage defaultMessage="AI transcription" />}
+        leading={<GraphicEqOutlined />}
+        onClick={openTranscriptionDialog}
+      />
+      <ListTile
+        title={<FormattedMessage defaultMessage="AI post processing" />}
+        leading={<AutoFixHighOutlined />}
+        onClick={openPostProcessingDialog}
+      />
+      <ListTile
+        title={
+          <Stack direction="row" alignItems="center">
+            <FormattedMessage defaultMessage="Assistant mode" />
+            <Chip label="Beta" size="small" color="primary" sx={{ ml: 1 }} />
+          </Stack>
+        }
+        leading={<AutoAwesomeOutlined />}
+        onClick={openAgentModeDialog}
+      />
     </Section>
   );
 
@@ -636,7 +623,7 @@ export default function SettingsPage() {
         {processing}
         {advanced}
         {inputPermissionsSetup}
-        {!isEnterprise && dangerZone}
+        {dangerZone}
         <Box sx={{ py: 4, textAlign: "center" }}>
           <Typography
             variant="caption"

@@ -41,7 +41,6 @@ pub async fn upsert_user_preferences(
              gpu_enumeration_enabled,
              paste_keybind,
              last_seen_feature,
-             is_enterprise,
              language_switch_enabled,
              secondary_dictation_language,
              active_dictation_language,
@@ -82,7 +81,6 @@ pub async fn upsert_user_preferences(
             gpu_enumeration_enabled = excluded.gpu_enumeration_enabled,
             paste_keybind = excluded.paste_keybind,
             last_seen_feature = excluded.last_seen_feature,
-            is_enterprise = excluded.is_enterprise,
             language_switch_enabled = excluded.language_switch_enabled,
             secondary_dictation_language = excluded.secondary_dictation_language,
             active_dictation_language = excluded.active_dictation_language,
@@ -122,7 +120,6 @@ pub async fn upsert_user_preferences(
     .bind(preferences.gpu_enumeration_enabled)
     .bind(&preferences.paste_keybind)
     .bind(&preferences.last_seen_feature)
-    .bind(preferences.is_enterprise)
     .bind(preferences.language_switch_enabled)
     .bind(&preferences.secondary_dictation_language)
     .bind(&preferences.active_dictation_language)
@@ -173,7 +170,6 @@ pub async fn fetch_user_preferences(
             gpu_enumeration_enabled,
             paste_keybind,
             last_seen_feature,
-            is_enterprise,
             language_switch_enabled,
             secondary_dictation_language,
             active_dictation_language,
@@ -256,8 +252,6 @@ pub async fn fetch_user_preferences(
         last_seen_feature: row
             .try_get::<Option<String>, _>("last_seen_feature")
             .unwrap_or(None),
-        is_enterprise: row
-            .try_get::<i64, _>("is_enterprise")
             .map(|v| v != 0)
             .unwrap_or(false),
         language_switch_enabled: row

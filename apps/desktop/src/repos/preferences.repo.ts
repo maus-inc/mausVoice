@@ -33,7 +33,6 @@ type LocalUserPreferences = {
   openclawGatewayUrl: Nullable<string>;
   openclawToken: Nullable<string>;
   lastSeenFeature: Nullable<string>;
-  isEnterprise: boolean;
   languageSwitchEnabled: boolean;
   secondaryDictationLanguage: Nullable<string>;
   activeDictationLanguage: Nullable<string>;
@@ -91,7 +90,6 @@ export const fromLocalPreferences = (
   openclawGatewayUrl: preferences.openclawGatewayUrl ?? null,
   openclawToken: preferences.openclawToken ?? null,
   lastSeenFeature: preferences.lastSeenFeature,
-  isEnterprise: preferences.isEnterprise,
   activeDictationLanguage: preferences.activeDictationLanguage ?? null,
   preferredMicrophone: preferences.preferredMicrophone ?? null,
   ignoreUpdateDialog: preferences.ignoreUpdateDialog ?? false,
@@ -135,7 +133,6 @@ export const toLocalPreferences = (
   openclawGatewayUrl: preferences.openclawGatewayUrl ?? null,
   openclawToken: preferences.openclawToken ?? null,
   lastSeenFeature: preferences.lastSeenFeature ?? null,
-  isEnterprise: preferences.isEnterprise,
   languageSwitchEnabled: false,
   secondaryDictationLanguage: null,
   activeDictationLanguage:

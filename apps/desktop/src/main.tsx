@@ -1,18 +1,9 @@
 import "./styles/fonts.css";
 import { CssBaseline } from "@mui/material";
 import { ThemeProvider } from "@mui/material/styles";
-import { Elements } from "@stripe/react-stripe-js";
-import { loadStripe } from "@stripe/stripe-js";
 import { FirebaseOptions, initializeApp } from "firebase/app";
 import mixpanel from "mixpanel-browser";
 import { connectAuthEmulator } from "firebase/auth";
-import {
-  connectFirestoreEmulator,
-  getFirestore,
-  initializeFirestore,
-} from "firebase/firestore";
-import { connectFunctionsEmulator, getFunctions } from "firebase/functions";
-import { connectStorageEmulator, getStorage } from "firebase/storage";
 import { connectDatabaseEmulator, getDatabase } from "firebase/database";
 import React, { useEffect, useMemo } from "react";
 import ReactDOM from "react-dom/client";
@@ -23,7 +14,7 @@ import { getIntlConfig } from "./i18n";
 import { theme } from "./theme";
 import { createEffectiveAuth } from "./utils/auth.utils";
 import { applyDomMutationGuards } from "./utils/dom-guard.utils";
-import { getIsEmulators, getStripePublicKey } from "./utils/env.utils";
+import { getIsEmulators } from "./utils/env.utils";
 
 // WebView2/Chrome page tooling (e.g. translation) can reparent text nodes that
 // React owns; guard the DOM mutators before the root renders, or one such
@@ -64,26 +55,9 @@ if (missingFirebaseConfigKeys.length > 0) {
 
 const app = initializeApp(firebaseConfig);
 
-initializeFirestore(app, { ignoreUndefinedProperties: true });
-
 const auth = createEffectiveAuth(app);
 if (getIsEmulators()) {
   connectAuthEmulator(auth, `http://localhost:9099`);
-}
-
-const firestore = getFirestore(app);
-if (getIsEmulators()) {
-  connectFirestoreEmulator(firestore, "localhost", 8760);
-}
-
-const functions = getFunctions(app);
-if (getIsEmulators()) {
-  connectFunctionsEmulator(functions, "localhost", 5001);
-}
-
-const storage = getStorage(app);
-if (getIsEmulators()) {
-  connectStorageEmulator(storage, "localhost", 9199);
 }
 
 const database = getDatabase(app);
@@ -129,7 +103,11 @@ const Main = ({ children }: ChildrenProps) => {
   return (
     <React.StrictMode>
       <IntlProvider {...intlConfig}>
-        <ThemeProvider theme={theme} defaultMode="system" colorSchemeStorageKey="mode">
+        <ThemeProvider
+          theme={theme}
+          defaultMode="system"
+          colorSchemeStorageKey="mode"
+        >
           <CssBaseline />
           {children}
         </ThemeProvider>
@@ -139,13 +117,10 @@ const Main = ({ children }: ChildrenProps) => {
 };
 
 {
-  const stripePromise = loadStripe(getStripePublicKey());
   root.render(
     <Main>
-      <Elements stripe={stripePromise}>
-        <SnackbarEmitter />
-        <AppWithLoading />
-      </Elements>
+      <SnackbarEmitter />
+      <AppWithLoading />
     </Main>,
   );
 }

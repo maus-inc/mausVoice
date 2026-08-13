@@ -457,31 +457,6 @@ pub async fn start_google_sign_in(
 
 #[tauri::command]
 #[specta::specta]
-pub async fn start_enterprise_oidc_sign_in(
-    app_handle: AppHandle,
-    gateway_url: String,
-    provider_id: String,
-) -> Result<(), String> {
-    let result = crate::system::enterprise_oidc::start_enterprise_oidc_flow(
-        &app_handle,
-        &gateway_url,
-        &provider_id,
-    )
-    .await?;
-
-    app_handle
-        .emit_to(
-            EventTarget::any(),
-            crate::system::enterprise_oidc::ENTERPRISE_OIDC_EVENT,
-            result,
-        )
-        .map_err(|err| err.to_string())?;
-
-    Ok(())
-}
-
-#[tauri::command]
-#[specta::specta]
 pub fn list_microphones() -> Vec<crate::platform::audio::InputDeviceDescriptor> {
     crate::platform::audio::list_input_devices()
 }
@@ -2239,67 +2214,6 @@ pub async fn chat_message_delete_many(
     crate::db::chat_message_queries::delete_chat_messages(database.pool(), &ids)
         .await
         .map_err(|err| err.to_string())
-}
-
-/// Reads `enterprise.json` from the app config directory. Returns `None` if the file does not exist.
-///
-/// Platform paths:
-#[derive(serde::Serialize, specta::Type)]
-#[serde(rename_all = "camelCase")]
-pub struct RunTerminalCommandResponse {
-    pub stdout: String,
-    pub stderr: String,
-    pub exit_code: i32,
-}
-
-#[tauri::command]
-#[specta::specta]
-pub async fn run_terminal_command(command: String) -> Result<RunTerminalCommandResponse, String> {
-    tauri::async_runtime::spawn_blocking(move || {
-        let (shell, flag) = if cfg!(target_os = "windows") {
-            ("cmd", "/C")
-        } else {
-            ("sh", "-c")
-        };
-        let mut cmd = std::process::Command::new(shell);
-        cmd.args([flag, &command]);
-
-        #[cfg(target_os = "windows")]
-        {
-            use std::os::windows::process::CommandExt;
-            const CREATE_NO_WINDOW: u32 = 0x08000000;
-            cmd.creation_flags(CREATE_NO_WINDOW);
-        }
-
-        let output = cmd.output().map_err(|err| err.to_string())?;
-
-        Ok(RunTerminalCommandResponse {
-            stdout: String::from_utf8_lossy(&output.stdout).to_string(),
-            stderr: String::from_utf8_lossy(&output.stderr).to_string(),
-            exit_code: output.status.code().unwrap_or(-1),
-        })
-    })
-    .await
-    .map_err(|err| err.to_string())?
-}
-
-///   - macOS:  ~/Library/Application Support/com.mausinc.desktop/enterprise.json
-///   - Windows: C:\Users\<User>\AppData\Roaming\com.mausinc.desktop\enterprise.json
-#[tauri::command]
-#[specta::specta]
-pub fn read_enterprise_target(app: AppHandle) -> Result<(String, Option<String>), String> {
-    let mut path = app.path().app_config_dir().map_err(|err| err.to_string())?;
-    path.push("enterprise.json");
-    let path_str = path.to_string_lossy().to_string();
-    log::info!("Reading enterprise target from {:?}", path);
-    if !path.exists() {
-        return Ok((path_str, None));
-    }
-
-    let bytes = std::fs::read(&path).map_err(|err| err.to_string())?;
-    let content =
-        decode_to_utf8(&bytes).map_err(|err| format!("Failed to decode enterprise.json: {err}"))?;
-    Ok((path_str, Some(content)))
 }
 
 /// Returns `true` when the running app bundle can be updated in-place.

@@ -10,8 +10,6 @@ export type TranscriptionsState = {
   retranscribeDialogTranscriptionId: Nullable<string>;
   retranscribingIds: string[];
   retranscriptionSuccessIds: string[];
-  flagDialogOpen: boolean;
-  flagDialogTranscriptionId: Nullable<string>;
 };
 
 export const INITIAL_TRANSCRIPTIONS_STATE: TranscriptionsState = {
@@ -23,6 +21,4 @@ export const INITIAL_TRANSCRIPTIONS_STATE: TranscriptionsState = {
   retranscribeDialogTranscriptionId: null,
   retranscribingIds: [],
   retranscriptionSuccessIds: [],
-  flagDialogOpen: false,
-  flagDialogTranscriptionId: null,
 };

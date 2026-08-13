@@ -22,7 +22,6 @@ import {
   ensureFloat32Array,
   normalizeSamples,
 } from "../utils/audio.utils";
-import { invokeEnterprise } from "../utils/enterprise.utils";
 import { getLocalTranscriptionSidecarManager } from "../sidecars";
 import {
   getTranscriptionSidecarDeviceId,
@@ -682,47 +681,6 @@ export class OpenAICompatibleTranscribeAudioRepo extends BaseTranscribeAudioRepo
       metadata: {
         inferenceDevice: "API • OpenAI Compatible",
         modelSize: this.model,
-        transcriptionMode: "api",
-      },
-    };
-  }
-}
-
-export class EnterpriseTranscribeAudioRepo extends BaseTranscribeAudioRepo {
-  protected getSegmentDurationSec(): number {
-    return 60;
-  }
-
-  protected getOverlapDurationSec(): number {
-    return 5;
-  }
-
-  protected getBatchChunkCount(): number {
-    return 3;
-  }
-
-  protected async transcribeSegment(
-    input: TranscribeSegmentInput,
-  ): Promise<TranscribeAudioOutput> {
-    const wavBuffer = buildWaveFile(input.samples, input.sampleRate);
-
-    const bytes = new Uint8Array(wavBuffer);
-    let binary = "";
-    for (let i = 0; i < bytes.length; i++) {
-      binary += String.fromCharCode(bytes[i]!);
-    }
-
-    const audioBase64 = btoa(binary);
-    const response = await invokeEnterprise("ai/transcribeAudio", {
-      prompt: input.prompt,
-      audioBase64,
-      audioMimeType: "audio/wav",
-      language: input.language,
-    });
-
-    return {
-      text: response.text,
-      metadata: {
         transcriptionMode: "api",
       },
     };

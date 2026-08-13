@@ -129,6 +129,10 @@ pub const INSERTION_METHOD_MIGRATION_SQL: &str =
     include_str!("migrations/067_insertion_method.sql");
 pub const APP_TARGET_INSERTION_METHOD_MIGRATION_SQL: &str =
     include_str!("migrations/068_app_target_insertion_method.sql");
+pub const REMOVE_CLOUD_MODES_MIGRATION_SQL: &str =
+    include_str!("migrations/071_remove_cloud_modes.sql");
+pub const DROP_IS_ENTERPRISE_MIGRATION_SQL: &str =
+    include_str!("migrations/072_drop_is_enterprise.sql");
 
 pub fn migrations() -> Vec<tauri_plugin_sql::Migration> {
     vec![
@@ -538,6 +542,18 @@ pub fn migrations() -> Vec<tauri_plugin_sql::Migration> {
             version: 68,
             description: "add_app_target_insertion_method",
             sql: APP_TARGET_INSERTION_METHOD_MIGRATION_SQL,
+            kind: tauri_plugin_sql::MigrationKind::Up,
+        },
+        tauri_plugin_sql::Migration {
+            version: 71,
+            description: "remove_cloud_modes",
+            sql: REMOVE_CLOUD_MODES_MIGRATION_SQL,
+            kind: tauri_plugin_sql::MigrationKind::Up,
+        },
+        tauri_plugin_sql::Migration {
+            version: 72,
+            description: "drop_is_enterprise",
+            sql: DROP_IS_ENTERPRISE_MIGRATION_SQL,
             kind: tauri_plugin_sql::MigrationKind::Up,
         },
     ]

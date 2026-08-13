@@ -31,10 +31,6 @@ import {
   normalizeDictationLimitMinutes,
   shouldEnableDictationLimit,
 } from "../../utils/dictation-limit.utils";
-import {
-  getAllowChangeStylingMode,
-  getAllowsMultiDeviceMode,
-} from "../../utils/enterprise.utils";
 import { getEffectiveStylingMode } from "../../utils/feature.utils";
 import {
   getEffectivePillVisibility,
@@ -70,7 +66,7 @@ export const MoreSettingsDialog = () => {
       getEffectivePillVisibility(prefs?.dictationPillVisibility),
       prefs?.realtimeOutputEnabled ?? false,
       getEffectiveStylingMode(state),
-      getAllowChangeStylingMode(state),
+      true,
       shouldEnableDictationLimit(transcriptionPrefs.mode),
       getEffectiveDictationLimitMinutes(prefs),
       state.local.disablePillRewards,
@@ -180,7 +176,7 @@ export const MoreSettingsDialog = () => {
     commitDictationLimitInput();
   };
 
-  const allowMultiDevice = useAppStore(getAllowsMultiDeviceMode);
+  const allowMultiDevice = true;
 
   const handleStylingModeChange = (event: SelectChangeEvent<string>) => {
     const value = event.target.value;

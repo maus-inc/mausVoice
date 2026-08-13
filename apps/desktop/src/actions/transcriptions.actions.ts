@@ -34,19 +34,6 @@ export const closeRetranscribeDialog = () => {
   });
 };
 
-export const openFlagTranscriptionDialog = (transcriptionId: string) => {
-  produceAppState((draft) => {
-    draft.transcriptions.flagDialogTranscriptionId = transcriptionId;
-    draft.transcriptions.flagDialogOpen = true;
-  });
-};
-
-export const closeFlagTranscriptionDialog = () => {
-  produceAppState((draft) => {
-    draft.transcriptions.flagDialogOpen = false;
-  });
-};
-
 type RetranscribeTranscriptionParams = {
   transcriptionId: string;
   toneId?: string | null;

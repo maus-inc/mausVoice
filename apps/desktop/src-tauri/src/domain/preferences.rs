@@ -41,7 +41,6 @@ pub struct UserPreferences {
     #[serde(default)]
     pub last_seen_feature: Option<String>,
     #[serde(default)]
-    pub is_enterprise: bool,
     #[serde(default)]
     pub language_switch_enabled: bool,
     #[serde(default)]

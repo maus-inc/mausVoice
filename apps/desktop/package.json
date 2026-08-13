@@ -33,8 +33,6 @@
     "@fontsource/roboto": "^5.2.10",
     "@maus-inc/desktop-native-apis": "workspace:*",
     "@maus-inc/desktop-utils": "workspace:*",
-    "@maus-inc/functions": "workspace:*",
-    "@maus-inc/pricing": "workspace:*",
     "@maus-inc/types": "workspace:*",
     "@maus-inc/utilities": "workspace:*",
     "@maus-inc/voice-ai": "workspace:*",

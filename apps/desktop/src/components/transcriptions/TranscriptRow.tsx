@@ -2,7 +2,6 @@ import ContentCopyRoundedIcon from "@mui/icons-material/ContentCopyRounded";
 import CheckCircleRoundedIcon from "@mui/icons-material/CheckCircleRounded";
 import DeleteOutlineRoundedIcon from "@mui/icons-material/DeleteOutlineRounded";
 import FileDownloadOutlinedIcon from "@mui/icons-material/FileDownloadOutlined";
-import FlagOutlinedIcon from "@mui/icons-material/FlagOutlined";
 import InfoOutlinedIcon from "@mui/icons-material/InfoOutlined";
 import ReplayRoundedIcon from "@mui/icons-material/ReplayRounded";
 import SendRoundedIcon from "@mui/icons-material/SendRounded";
@@ -23,14 +22,12 @@ import { useIntl } from "react-intl";
 import { showErrorSnackbar, showSnackbar } from "../../actions/app.actions";
 import { sendTextToActiveRemoteTarget } from "../../actions/remote-output.actions";
 import {
-  openFlagTranscriptionDialog,
   openRetranscribeDialog,
   openTranscriptionDetailsDialog,
 } from "../../actions/transcriptions.actions";
 import { getTranscriptionRepo } from "../../repos";
 import { produceAppState, useAppStore } from "../../store";
 import { getActiveRemoteTarget } from "../../utils/device.utils";
-import { getHasPaidAccess } from "../../utils/member.utils";
 import { TypographyWithMore } from "../common/TypographyWithMore";
 import { AudioPlayerPill } from "./AudioPlayerPill";
 
@@ -40,7 +37,6 @@ export type TranscriptionRowProps = {
 
 export const TranscriptionRow = ({ id }: TranscriptionRowProps) => {
   const intl = useIntl();
-  const hasPaidAccess = useAppStore(getHasPaidAccess);
   const transcription = useAppStore((state) =>
     getRec(state.transcriptionById, id),
   );
@@ -280,26 +276,6 @@ export const TranscriptionRow = ({ id }: TranscriptionRowProps) => {
                   <FileDownloadOutlinedIcon fontSize="small" />
                 </IconButton>
               </Tooltip>
-              {hasPaidAccess && (
-                <Tooltip
-                  title={intl.formatMessage({
-                    defaultMessage: "Report a problem with this transcription",
-                  })}
-                  placement="top"
-                >
-                  <IconButton
-                    aria-label={intl.formatMessage({
-                      defaultMessage:
-                        "Report a problem with this transcription",
-                    })}
-                    size="small"
-                    onClick={() => openFlagTranscriptionDialog(id)}
-                    sx={{ p: 0.5 }}
-                  >
-                    <FlagOutlinedIcon fontSize="small" />
-                  </IconButton>
-                </Tooltip>
-              )}
             </>
           }
         />

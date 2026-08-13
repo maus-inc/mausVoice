@@ -43,5 +43,4 @@ export type UserPreferences = {
   typingSpeedMs: Nullable<number>;
 
   // deprecated
-  isEnterprise: boolean;
 };

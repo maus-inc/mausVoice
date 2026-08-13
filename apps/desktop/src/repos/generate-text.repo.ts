@@ -1,4 +1,3 @@
-import type { CloudModel } from "@maus-inc/functions";
 import type {
   JsonResponse,
   LlmChatInput,
@@ -34,10 +33,6 @@ import {
 } from "@maus-inc/voice-ai";
 import { fetch as tauriFetch } from "@tauri-apps/plugin-http";
 import { PostProcessingMode } from "../types/ai.types";
-import {
-  invokeEnterprise,
-  invokeEnterpriseStream,
-} from "../utils/enterprise.utils";
 import { BaseRepo } from "./base.repo";
 
 export type GenerateTextInput = {
@@ -471,38 +466,6 @@ export class CerebrasGenerateTextRepo extends BaseGenerateTextRepo {
       apiKey: this.apiKey,
       model: this.model,
       input,
-    });
-  }
-}
-
-export class EnterpriseGenerateTextRepo extends BaseGenerateTextRepo {
-  private model: CloudModel;
-
-  constructor(model: CloudModel = "medium") {
-    super();
-    this.model = model;
-  }
-
-  async generateText(input: GenerateTextInput): Promise<GenerateTextOutput> {
-    const response = await invokeEnterprise("ai/generateText", {
-      system: input.system,
-      prompt: input.prompt,
-      jsonResponse: input.jsonResponse,
-      model: this.model,
-    });
-
-    return {
-      text: response.text,
-      metadata: {
-        postProcessingMode: "api",
-      },
-    };
-  }
-
-  async *streamChat(input: LlmChatInput): AsyncGenerator<LlmStreamEvent> {
-    yield* invokeEnterpriseStream("ai/streamChat", {
-      ...input,
-      model: this.model,
     });
   }
 }

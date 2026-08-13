@@ -32,7 +32,6 @@ import {
 } from "../../state/settings.state";
 import { useAppStore } from "../../store";
 import { CPU_DEVICE_VALUE, type TranscriptionMode } from "../../types/ai.types";
-import { getAllowsChangeTranscription } from "../../utils/enterprise.utils";
 import { getEffectiveTranscriptionMode } from "../../utils/user.utils";
 import { formatSize } from "../../utils/format.utils";
 import { type LocalSidecarDownloadSnapshot } from "../../sidecars";
@@ -41,7 +40,6 @@ import {
   normalizeLocalWhisperModel,
 } from "../../utils/local-transcription.utils";
 import { activeRowCheckSx, activeRowSx } from "../../styles/selection";
-import { ManagedByOrgNotice } from "../common/ManagedByOrgNotice";
 import { AnimateSwitch } from "../common/AnimateIn";
 import { SegmentedControl } from "../common/SegmentedControl";
 import { ApiKeyList } from "./ApiKeyList";
@@ -120,7 +118,6 @@ export const AITranscriptionConfiguration = () => {
   const intl = useIntl();
   const transcription = useAppStore((state) => state.settings.aiTranscription);
   const effectiveMode = useAppStore(getEffectiveTranscriptionMode);
-  const allowChange = useAppStore(getAllowsChangeTranscription);
   const localTranscriptionConfig = transcription.localModelManagement;
 
   const hasSelectedDevice = transcription.availableDevices.some(
@@ -249,10 +246,6 @@ export const AITranscriptionConfiguration = () => {
     },
     [localTranscriptionConfig.modelDeletes, modelValue],
   );
-
-  if (!allowChange) {
-    return <ManagedByOrgNotice />;
-  }
 
   return (
     <Stack spacing={3} alignItems="flex-start" sx={{ width: "100%" }}>

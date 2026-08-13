@@ -8,7 +8,6 @@ import { TranscriptionDetailsDialog } from "../transcriptions/TranscriptionDetai
 import { DashboardMenu } from "./DashboardMenu";
 import { FeatureReleaseDialog } from "./FeatureReleaseDialog";
 import { PermissionsDialog } from "./PermissionsDialog";
-import { TrialEndedDialog } from "./TrialEndedDialog";
 
 /**
  * Authenticated app shell: sidebar navigation, routed content area, and the
@@ -25,7 +24,6 @@ export default function DashboardPage() {
       <FeatureReleaseDialog />
       <PermissionsDialog />
       <TranscriptionDetailsDialog />
-      <TrialEndedDialog />
       <Stack
         direction="row"
         sx={{ height: "100%", width: "100%", overflow: "hidden" }}

@@ -191,11 +191,9 @@ export const postProcessTranscript = async ({
 
   const tone = getToneById(state, toneId);
   const toneProcessingDisabled = tone?.shouldDisablePostProcessing ?? false;
-  const enterpriseProcessingDisabled =
-    state.enterpriseConfig?.allowPostProcessing === false;
 
   let processedTranscript = rawTranscript;
-  if (toneProcessingDisabled || enterpriseProcessingDisabled) {
+  if (toneProcessingDisabled) {
     getLogger().info(`Post-processing disabled for tone=${toneId}`);
     metadata.postProcessMode = "none";
   } else if (genRepo) {

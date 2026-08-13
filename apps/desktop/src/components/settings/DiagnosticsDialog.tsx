@@ -47,7 +47,6 @@ function useDiagnosticsData() {
     const postProcessingPrefs = getGenerativePrefs(state);
     const agentModePrefs = getAgentModePrefs(state);
     const stylingMode = getEffectiveStylingMode(state);
-    const isEnterprise = state.isEnterprise;
     const settings = state.settings;
 
     return {
@@ -62,7 +61,6 @@ function useDiagnosticsData() {
       postProcessingMode: postProcessingPrefs.mode,
       agentMode: agentModePrefs.mode,
       stylingMode,
-      isEnterprise,
       autoLaunchEnabled: settings.autoLaunchEnabled,
       transcriptionModelSize: settings.aiTranscription.modelSize,
       transcriptionDevice: settings.aiTranscription.device,
@@ -92,7 +90,6 @@ function buildDiagnosticsText(
     `Member Plan: ${data.memberPlan ?? "N/A"}`,
     `On Trial: ${data.isOnTrial}`,
     `Trial Days Remaining: ${data.trialDaysRemaining ?? "N/A"}`,
-    `Enterprise: ${data.isEnterprise}`,
     "",
     "--- Transcription ---",
     `Mode: ${data.transcriptionMode}`,

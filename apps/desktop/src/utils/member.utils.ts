@@ -10,32 +10,14 @@ export const getMyMember = (state: AppState): Nullable<Member> => {
 };
 
 export const getEffectivePlan = (state: AppState): EffectivePlan => {
-  if (state.isEnterprise) {
-    return "enterprise";
-  }
   if (isPersonalUseProEnabled()) {
     return "pro";
   }
   return getMyMember(state)?.plan ?? "community";
 };
 
-/**
- * Whether the active profile has paid access (enterprise, free, or pro plan).
- * Previously named `getIsMausVoiceCloudUser` and used to gate the removed
- * mausVoice Cloud AI offering; it now only gates membership-level features
- * (remote sessions, transcription feedback).
- */
-export const getHasPaidAccess = (state: AppState): boolean => {
-  const member = getMyMember(state);
-  return (
-    state.isEnterprise || member?.plan === "free" || member?.plan === "pro"
-  );
-};
-
 export const planToDisplayName = (plan: EffectivePlan): string => {
-  if (plan === "enterprise") {
-    return getIntl().formatMessage({ defaultMessage: "Enterprise" });
-  } else if (plan === "community") {
+  if (plan === "community") {
     return getIntl().formatMessage({ defaultMessage: "Community" });
   } else if (plan === "free") {
     return getIntl().formatMessage({ defaultMessage: "Free" });

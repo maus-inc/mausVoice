@@ -1,13 +1,6 @@
 import { getVersion } from "@tauri-apps/api/app";
 import { invoke } from "@tauri-apps/api/core";
-import {
-  EnterpriseConfig,
-  EnterpriseLicense,
-  Member,
-  Nullable,
-  Term,
-  User,
-} from "@maus-inc/types";
+import { Member, Nullable, Term, User } from "@maus-inc/types";
 import { getRec, listify } from "@maus-inc/utilities";
 import dayjs from "dayjs";
 import { isEqual } from "lodash-es";
@@ -15,9 +8,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { useIntl } from "react-intl";
 import { combineLatest, from, Observable, of } from "rxjs";
 import { showErrorSnackbar, showSnackbar } from "../../actions/app.actions";
-import { ensureRustSessionSync } from "../../actions/login.actions";
 import { loadPairedRemoteDevices } from "../../actions/paired-remote-device.actions";
-import { openUpgradePlanDialog } from "../../actions/pricing.actions";
 import {
   refreshRemoteReceiverStatus,
   startRemoteReceiver,
@@ -29,7 +20,6 @@ import {
   installAvailableUpdate,
 } from "../../actions/updater.actions";
 import {
-  migrateLocalUserToCloud,
   refreshCurrentUser,
   setActiveDictationLanguage,
   setDictationPillVisibility,
@@ -46,10 +36,7 @@ import { detectLocale } from "../../i18n";
 import { getEffectiveStylingMode } from "../../utils/feature.utils";
 import {
   getAuthRepo,
-  getConfigRepo,
-  getEnterpriseRepo,
   getMemberRepo,
-  getTenantRepo,
   getTermRepo,
   getTranscriptionRepo,
   getUserRepo,
@@ -58,7 +45,6 @@ import {
   AppState,
   HotkeyStrategy,
   KeyboardListenerHealth,
-  MyTenantMembership,
   PasteKeybindSupport,
 } from "../../state/app.state";
 import { getAppState, produceAppState, useAppStore } from "../../store";
@@ -66,11 +52,6 @@ import { AuthUser } from "../../types/auth.types";
 import { OverlayPhase } from "../../types/overlay.types";
 import { CURRENT_COHORT, getMixpanel } from "../../utils/analytics.utils";
 import { registerMembers, registerUsers } from "../../utils/app.utils";
-import {
-  getEnterpriseTarget,
-  invokeEnterprise,
-  loadEnterpriseTarget,
-} from "../../utils/enterprise.utils";
 import { getIsDevMode } from "../../utils/env.utils";
 import { createId } from "../../utils/id.utils";
 import {
@@ -99,9 +80,7 @@ import {
   surfaceMainWindow,
 } from "../../utils/window.utils";
 
-type StreamRet = Nullable<
-  [Nullable<Member>, Nullable<User>, Nullable<MyTenantMembership>]
->;
+type StreamRet = Nullable<[Nullable<Member>, Nullable<User>]>;
 
 type KeysHeldPayload = {
   keys: string[];
@@ -135,13 +114,8 @@ type RemoteFinalTextReceivedPayload = {
 const AUTH_READY_TIMEOUT_MS = 4_000;
 
 // 10 minutes
-const CONFIG_REFRESH_INTERVAL_MS = 1000 * 60 * 10;
-
-// 5 minutes
-const TOKEN_REFRESH_INTERVAL_MS = 5 * 60 * 1000;
 
 // 60 seconds
-const ENTERPRISE_REFRESH_INTERVAL_MS = 1000 * 60;
 
 /**
  * Fingerprint of every state input that decides which combos the native
@@ -170,18 +144,12 @@ export const AppSideEffects = () => {
   const [authReady, setAuthReady] = useState(false);
   const [streamReady, setStreamReady] = useState(false);
   const [initReady, setInitReady] = useState(false);
-  const [enterpriseReady, setEnterpriseReady] = useState(false);
-  const tokensRefreshedRef = useRef(false);
   const authReadyRef = useRef(false);
   // Tracks whether we've already notified about the current listener-failure episode, so the
   // 30s Rust slow-retry churn (failed -> connected -> failed) doesn't re-toast every cycle.
   const listenerFailureNotifiedRef = useRef(false);
-  const isEnterprise = useAppStore((state) => state.isEnterprise);
   const updateInitializedRef = useRef(false);
   const versionData = useAsyncData(getVersion, []);
-  const allowDevTools = useAppStore(
-    (state) => state.enterpriseConfig?.allowDevTools ?? true,
-  );
   const userId = useAppStore((state) => state.auth?.uid ?? "");
   const initialized = useAppStore((state) => state.initialized);
   const member = useAppStore((state) => {
@@ -191,10 +159,6 @@ export const AppSideEffects = () => {
   const localUser = useAppStore(
     (state) => state.userById[LOCAL_USER_ID] ?? null,
   );
-  const cloudUser = useAppStore((state) => {
-    const uid = state.auth?.uid;
-    return uid ? (state.userById[uid] ?? null) : null;
-  });
   const prefs = useAppStore((state) => getMyUserPreferences(state));
   const keyPermAuthorized = useAppStore((state) =>
     isPermissionAuthorized(getRec(state.permissions, "accessibility")?.state),
@@ -284,10 +248,6 @@ export const AppSideEffects = () => {
     if (consumeSurfaceWindowFlag()) {
       await surfaceMainWindow();
     }
-  }, []);
-
-  useAsyncEffect(async () => {
-    await ensureRustSessionSync();
   }, []);
 
   const onAuthStateChanged = (user: AuthUser | null) => {
@@ -389,16 +349,6 @@ export const AppSideEffects = () => {
   );
 
   useEffect(() => {
-    if (allowDevTools) {
-      return;
-    }
-
-    const handler = (e: MouseEvent) => e.preventDefault();
-    document.addEventListener("contextmenu", handler);
-    return () => document.removeEventListener("contextmenu", handler);
-  }, [isEnterprise, allowDevTools]);
-
-  useEffect(() => {
     authReadyRef.current = false;
 
     const timeoutId = setTimeout(() => {
@@ -420,66 +370,6 @@ export const AppSideEffects = () => {
       clearTimeout(timeoutId);
       unsubscribe();
     };
-  }, [isEnterprise]);
-
-  useIntervalAsync(CONFIG_REFRESH_INTERVAL_MS, async () => {
-    const config = await getConfigRepo()
-      .getFullConfig()
-      .catch(() => null);
-
-    if (config) {
-      produceAppState((draft) => {
-        draft.config = config;
-      });
-    }
-  }, []);
-
-  useIntervalAsync(ENTERPRISE_REFRESH_INTERVAL_MS, async () => {
-    getLogger().verbose("Loading enterprise target");
-    const debugInfo = await loadEnterpriseTarget();
-
-    getLogger().verbose(
-      "Enterprise target reloaded from",
-      debugInfo,
-      getEnterpriseTarget(),
-    );
-
-    let config: Nullable<EnterpriseConfig> = null;
-    let license: Nullable<EnterpriseLicense> = null;
-    let isEnterprise = false;
-
-    const repo = getEnterpriseRepo();
-    if (repo) {
-      isEnterprise = true;
-      [config, license] = await repo.getConfig().catch((e) => {
-        getLogger().error(`Failed to refresh enterprise config: ${e}`);
-        return [null, null];
-      });
-    }
-
-    const oidcProviders = isEnterprise
-      ? await invokeEnterprise("oidcProvider/listEnabled", {})
-          .then((res) => res.providers)
-          .catch(() => [])
-      : [];
-
-    produceAppState((draft) => {
-      draft.enterpriseConfig = config;
-      draft.enterpriseLicense = license;
-      draft.isEnterprise = isEnterprise;
-      draft.oidcProviders = oidcProviders;
-    });
-
-    if (!tokensRefreshedRef.current) {
-      tokensRefreshedRef.current = true;
-      await getAuthRepo().refreshTokens();
-    }
-
-    setEnterpriseReady(true);
-  }, []);
-
-  useIntervalAsync(TOKEN_REFRESH_INTERVAL_MS, async () => {
-    await getAuthRepo().refreshTokens();
   }, []);
 
   useStreamWithSideEffects({
@@ -489,7 +379,7 @@ export const AppSideEffects = () => {
       }
 
       if (!userId) {
-        return combineLatest([of(null), of(null), of(null)]);
+        return combineLatest([of(null), of(null)]);
       }
 
       return combineLatest([
@@ -503,25 +393,6 @@ export const AppSideEffects = () => {
             .getMyUser()
             .catch(() => null),
         ),
-        from(
-          (async (): Promise<Nullable<MyTenantMembership>> => {
-            const repo = getTenantRepo();
-            if (!repo) return null;
-            try {
-              const tenants = await repo.listMine();
-              const first = tenants[0];
-              return first
-                ? {
-                    tenant: first.tenant,
-                    role: first.role,
-                    hasSeat: first.hasSeat,
-                  }
-                : null;
-            } catch {
-              return null;
-            }
-          })(),
-        ),
       ]);
     },
     onSuccess: (results) => {
@@ -530,14 +401,13 @@ export const AppSideEffects = () => {
         return;
       }
 
-      const [members, user, tenant] = results;
+      const [members, user] = results;
       produceAppState((draft) => {
         registerUsers(draft, listify(user));
         registerMembers(draft, listify(members));
-        draft.myTenant = tenant;
       });
     },
-    dependencies: [userId, authReady, isEnterprise],
+    dependencies: [userId, authReady],
   });
 
   useAsyncEffect(async () => {
@@ -545,7 +415,7 @@ export const AppSideEffects = () => {
       await refreshCurrentUser();
       setInitReady(true);
     }
-  }, [authReady, isEnterprise]);
+  }, [authReady]);
 
   useAsyncEffect(async () => {
     if (initReady) {
@@ -567,43 +437,13 @@ export const AppSideEffects = () => {
   }, [initReady]);
 
   useEffect(() => {
-    if (streamReady && initReady && !initialized && enterpriseReady) {
+    if (streamReady && initReady && !initialized) {
       getLogger().info("App fully initialized");
       produceAppState((draft) => {
         draft.initialized = true;
       });
     }
-  }, [streamReady, initReady, initialized, enterpriseReady]);
-
-  const isMigratingLocalUserRef = useRef(false);
-  const memberPlan = member?.plan;
-  useEffect(() => {
-    if (!userId || !memberPlan) {
-      return;
-    }
-
-    if (memberPlan !== "free" && memberPlan !== "pro") {
-      return;
-    }
-
-    if (!localUser || cloudUser || isMigratingLocalUserRef.current) {
-      return;
-    }
-
-    isMigratingLocalUserRef.current = true;
-    getLogger().info("Migrating local user to cloud");
-    (async () => {
-      try {
-        await migrateLocalUserToCloud();
-        getLogger().info("Local user migrated to cloud successfully");
-      } catch (error) {
-        getLogger().error(`Failed to migrate local user to cloud: ${error}`);
-        showErrorSnackbar(error);
-      } finally {
-        isMigratingLocalUserRef.current = false;
-      }
-    })();
-  }, [userId, memberPlan, localUser, cloudUser]);
+  }, [streamReady, initReady, initialized]);
 
   const auth = useAppStore((state) => state.auth);
   const prevUserIdRef = useRef<string | null>(null);
@@ -628,13 +468,13 @@ export const AppSideEffects = () => {
     const isCommunity = !currentUserId;
     const isTrial = member?.isOnTrial ?? false;
     const isPaying = !isTrial && isPro;
-    const onboardedAt = cloudUser?.onboardedAt ?? localUser?.onboardedAt;
+    const onboardedAt = localUser?.onboardedAt;
     const daysSinceOnboarded = onboardedAt
       ? dayjs().diff(dayjs(onboardedAt), "day")
       : 0;
     const platform = getPlatform();
     const locale = detectLocale();
-    const onboarded = cloudUser?.onboarded ?? localUser?.onboarded ?? false;
+    const onboarded = localUser?.onboarded ?? false;
     const planStatus = member?.plan ?? "community";
 
     if (currentUserId && currentUserId !== prevUserId) {
@@ -668,10 +508,6 @@ export const AppSideEffects = () => {
       activeSystemCohort: CURRENT_COHORT,
       daysSinceOnboarded,
       pillState: getEffectivePillVisibility(prefs?.dictationPillVisibility),
-      company: cloudUser?.company ?? undefined,
-      title: cloudUser?.title ?? undefined,
-      referralSource: cloudUser?.referralSource ?? undefined,
-      isEnterprise,
     });
 
     mp.register({
@@ -695,16 +531,7 @@ export const AppSideEffects = () => {
     }
 
     prevUserIdRef.current = currentUserId;
-  }, [
-    initialized,
-    auth,
-    member,
-    cloudUser,
-    localUser,
-    prefs,
-    versionData,
-    isEnterprise,
-  ]);
+  }, [initialized, auth, member, localUser, prefs, versionData]);
 
   const handleAddToDictionary = useCallback(async () => {
     try {
@@ -786,10 +613,7 @@ export const AppSideEffects = () => {
   );
 
   useToastAction(async (payload) => {
-    if (payload.action === "upgrade") {
-      surfaceMainWindow();
-      openUpgradePlanDialog();
-    } else if (payload.action === "open_agent_settings") {
+    if (payload.action === "open_agent_settings") {
       surfaceMainWindow();
       produceAppState((draft) => {
         draft.settings.agentModeDialogOpen = true;

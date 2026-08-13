@@ -1,13 +1,10 @@
-import type { CloudModel } from "@maus-inc/functions";
 import type { ApiKeyProvider } from "@maus-inc/types";
 import { Nullable } from "@maus-inc/types";
 import { getRec } from "@maus-inc/utilities";
 import { getAppState } from "../store";
-import { getIsEnterpriseEnabled } from "../utils/enterprise.utils";
 import { getLogger } from "../utils/log.utils";
 import { OLLAMA_DEFAULT_URL } from "../utils/ollama.utils";
 import { buildOpenAICompatibleUrl } from "../utils/openai-compatible.utils";
-import { isPersonalUseEnabled } from "../utils/personal-use.utils";
 import {
   GenerativePrefs,
   getAgentModePrefs,
@@ -16,30 +13,18 @@ import {
 } from "../utils/user.utils";
 import { BaseApiKeyRepo, LocalApiKeyRepo } from "./api-key.repo";
 import { BaseAppTargetRepo, LocalAppTargetRepo } from "./app-target.repo";
-import {
-  BaseAuthRepo,
-  CloudAuthRepo,
-  EnterpriseAuthRepo,
-  PersonalAuthRepo,
-} from "./auth.repo";
+import { BaseAuthRepo, PersonalAuthRepo } from "./auth.repo";
 import { BaseChatMessageRepo, LocalChatMessageRepo } from "./chat-message.repo";
-import {
-  BaseConfigRepo,
-  CloudConfigRepo,
-  EnterpriseConfigRepo,
-} from "./config.repo";
 import {
   BaseConversationRepo,
   LocalConversationRepo,
 } from "./conversation.repo";
-import { EnterpriseRepo } from "./enterprise.repo";
 import {
   AzureOpenAIGenerateTextRepo,
   BaseGenerateTextRepo,
   CerebrasGenerateTextRepo,
   ClaudeGenerateTextRepo,
   DeepseekGenerateTextRepo,
-  EnterpriseGenerateTextRepo,
   GeminiGenerateTextRepo,
   GroqGenerateTextRepo,
   OllamaGenerateTextRepo,
@@ -48,12 +33,7 @@ import {
   OpenRouterGenerateTextRepo,
 } from "./generate-text.repo";
 import { BaseHotkeyRepo, LocalHotkeyRepo } from "./hotkey.repo";
-import {
-  BaseMemberRepo,
-  CloudMemberRepo,
-  EnterpriseMemberRepo,
-  LocalMemberRepo,
-} from "./member.repo";
+import { BaseMemberRepo, LocalMemberRepo } from "./member.repo";
 import {
   AldeaModelProviderRepo,
   AssemblyAIModelProviderRepo,
@@ -86,20 +66,8 @@ import {
   LocalRemoteReceiverRepo,
 } from "./remote-receiver.repo";
 import { BaseStorageRepo, LocalStorageRepo } from "./storage.repo";
-import { BaseStripeRepo, CloudStripeRepo } from "./stripe.repo";
-import { BaseTenantRepo, CloudTenantRepo } from "./tenant.repo";
-import {
-  BaseTermRepo,
-  CloudTermRepo,
-  EnterpriseTermRepo,
-  LocalTermRepo,
-} from "./term.repo";
-import {
-  BaseToneRepo,
-  CloudToneRepo,
-  EnterpriseToneRepo,
-  LocalToneRepo,
-} from "./tone.repo";
+import { BaseTermRepo, LocalTermRepo } from "./term.repo";
+import { BaseToneRepo, LocalToneRepo } from "./tone.repo";
 import { ToolRepo } from "./tool.repo";
 import {
   AldeaTranscribeAudioRepo,
@@ -107,7 +75,6 @@ import {
   BaseTranscribeAudioRepo,
   DeepgramTranscribeAudioRepo,
   ElevenLabsTranscribeAudioRepo,
-  EnterpriseTranscribeAudioRepo,
   GeminiTranscribeAudioRepo,
   GroqTranscribeAudioRepo,
   LocalTranscribeAudioRepo,
@@ -120,68 +87,23 @@ import {
   BaseTranscriptionRepo,
   LocalTranscriptionRepo,
 } from "./transcription.repo";
-import {
-  BaseUserRepo,
-  CloudUserRepo,
-  EnterpriseUserRepo,
-  LocalUserRepo,
-} from "./user.repo";
+import { BaseUserRepo, LocalUserRepo } from "./user.repo";
 export { BaseModelProviderRepo } from "./model-provider.repo";
 
-const isEnterprise = () => getIsEnterpriseEnabled();
-const isPersonalUse = () => isPersonalUseEnabled();
-const isLoggedIn = () => !!getAppState().auth;
+// The mausVoice Cloud backend (hosted AI, membership, billing) and the
+// enterprise self-hosted gateway were both deprecated and removed in 0.1.6.
+// Every repo factory now resolves to a local implementation.
 
 export const getMemberRepo = (): BaseMemberRepo => {
-  if (isPersonalUse()) {
-    return new LocalMemberRepo();
-  }
-
-  return isEnterprise() ? new EnterpriseMemberRepo() : new CloudMemberRepo();
-};
-
-export const getStripeRepo = (): Nullable<BaseStripeRepo> => {
-  if (isPersonalUse()) {
-    return null;
-  }
-
-  return isEnterprise() ? null : new CloudStripeRepo();
-};
-
-export const getTenantRepo = (): Nullable<BaseTenantRepo> => {
-  if (isPersonalUse()) {
-    return null;
-  }
-
-  return isEnterprise() ? null : new CloudTenantRepo();
-};
-
-export const getConfigRepo = (): BaseConfigRepo => {
-  return isEnterprise() ? new EnterpriseConfigRepo() : new CloudConfigRepo();
-};
-
-export const getEnterpriseRepo = (): Nullable<EnterpriseRepo> => {
-  return isEnterprise() ? new EnterpriseRepo() : null;
+  return new LocalMemberRepo();
 };
 
 export const getAuthRepo = (): BaseAuthRepo => {
-  if (isPersonalUse()) {
-    return new PersonalAuthRepo();
-  }
-
-  return isEnterprise() ? new EnterpriseAuthRepo() : new CloudAuthRepo();
+  return new PersonalAuthRepo();
 };
 
 export const getUserRepo = (): BaseUserRepo => {
-  if (isPersonalUse()) {
-    return new LocalUserRepo();
-  }
-
-  if (isEnterprise()) {
-    return new EnterpriseUserRepo();
-  }
-
-  return isLoggedIn() ? new CloudUserRepo() : new LocalUserRepo();
+  return new LocalUserRepo();
 };
 
 export const getUserPreferencesRepo = (): BaseUserPreferencesRepo => {
@@ -205,14 +127,7 @@ export const getAppTargetRepo = (): BaseAppTargetRepo => {
 };
 
 export const getTermRepo = (): BaseTermRepo => {
-  if (isPersonalUse()) {
-    return new LocalTermRepo();
-  }
-
-  if (isEnterprise()) {
-    return new EnterpriseTermRepo();
-  }
-  return isLoggedIn() ? new CloudTermRepo() : new LocalTermRepo();
+  return new LocalTermRepo();
 };
 
 export const getHotkeyRepo = (): BaseHotkeyRepo => {
@@ -224,14 +139,7 @@ export const getApiKeyRepo = (): BaseApiKeyRepo => {
 };
 
 export const getToneRepo = (): BaseToneRepo => {
-  if (isPersonalUse()) {
-    return new LocalToneRepo();
-  }
-
-  if (isEnterprise()) {
-    return new EnterpriseToneRepo();
-  }
-  return isLoggedIn() ? new CloudToneRepo() : new LocalToneRepo();
+  return new LocalToneRepo();
 };
 
 export const getStorageRepo = (): BaseStorageRepo => {
@@ -258,21 +166,12 @@ export type GenerateTextRepoOutput = {
 
 const getGenTextRepoInternal = ({
   prefs,
-  cloudModel,
 }: {
   prefs: GenerativePrefs;
-  cloudModel: CloudModel;
 }): GenerateTextRepoOutput => {
   const state = getAppState();
 
-  if (getIsEnterpriseEnabled()) {
-    getLogger().verbose("Using enterprise generate text repo");
-    return {
-      repo: new EnterpriseGenerateTextRepo(cloudModel),
-      apiKeyId: null,
-      warnings: prefs.warnings,
-    };
-  } else if (prefs.mode === "api") {
+  if (prefs.mode === "api") {
     let repo: BaseGenerateTextRepo | null = null;
 
     if (prefs.provider === "ollama") {
@@ -387,25 +286,17 @@ const getGenTextRepoInternal = ({
 };
 
 export const getGenerateTextRepo = (): GenerateTextRepoOutput => {
-  const state = getAppState();
-  const prefs = getGenerativePrefs(state);
-  return getGenTextRepoInternal({
-    prefs,
-    cloudModel: "medium",
-  });
+  const prefs = getGenerativePrefs(getAppState());
+  return getGenTextRepoInternal({ prefs });
 };
 
 export const getAgentRepo = (): GenerateTextRepoOutput => {
-  const state = getAppState();
-  const prefs = getAgentModePrefs(state);
+  const prefs = getAgentModePrefs(getAppState());
   if (prefs.mode === "openclaw") {
     throw new Error("OpenClaw provides its own LLM processor");
   }
 
-  return getGenTextRepoInternal({
-    prefs,
-    cloudModel: "large",
-  });
+  return getGenTextRepoInternal({ prefs });
 };
 
 export type TranscribeAudioRepoOutput = {
@@ -417,13 +308,7 @@ export type TranscribeAudioRepoOutput = {
 export const getTranscribeAudioRepo = (): TranscribeAudioRepoOutput => {
   const prefs = getTranscriptionPrefs(getAppState());
 
-  if (getIsEnterpriseEnabled()) {
-    return {
-      repo: new EnterpriseTranscribeAudioRepo(),
-      apiKeyId: null,
-      warnings: prefs.warnings,
-    };
-  } else if (prefs.mode === "api") {
+  if (prefs.mode === "api") {
     let repo: BaseTranscribeAudioRepo;
 
     if (prefs.provider === "openai") {

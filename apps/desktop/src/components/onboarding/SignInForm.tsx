@@ -23,7 +23,6 @@ import { getShouldShowEmailForm } from "../../utils/login.utils";
 import { isPersonalUseEnabled } from "../../utils/personal-use.utils";
 import { ConfirmDialog } from "../common/ConfirmDialog";
 import { LoginForm } from "../login/LoginForm";
-import { OidcProviders } from "../login/OidcProviders";
 import { TermsNotice } from "../login/TermsNotice";
 import {
   BackButton,
@@ -36,7 +35,6 @@ export const SignInForm = () => {
   const [confirmLocalSetupOpen, setConfirmLocalSetupOpen] = useState(false);
 
   const auth = useAppStore((state) => state.auth);
-  const isEnterprise = useAppStore((state) => state.isEnterprise);
   const isPersonalUse = isPersonalUseEnabled();
   const loginStatus = useAppStore((state) => state.login.status);
   const awaitingSignInNavigation = useAppStore(
@@ -149,30 +147,20 @@ export const SignInForm = () => {
     <OnboardingFormLayout
       back={<BackButton />}
       actions={
-        !isEnterprise && (
-          <Button
-            onClick={handleClickLocalSetup}
-            variant="text"
-            endIcon={<ArrowForward />}
-            sx={{ color: "text.disabled", fontWeight: 400 }}
-          >
-            <FormattedMessage defaultMessage="Local set up" />
-          </Button>
-        )
+        <Button
+          onClick={handleClickLocalSetup}
+          variant="text"
+          endIcon={<ArrowForward />}
+          sx={{ color: "text.disabled", fontWeight: 400 }}
+        >
+          <FormattedMessage defaultMessage="Local set up" />
+        </Button>
       }
     >
       <Stack spacing={2}>
         <Typography variant="h4" fontWeight={600} pb={1}>
           <FormattedMessage defaultMessage="Create your account" />
         </Typography>
-
-        <OidcProviders
-          variant="contained"
-          onBeforeSignIn={() => {
-            trackButtonClick("onboarding_continue_with_provider");
-            setAwaitingSignInNavigation(true);
-          }}
-        />
 
         {showEmailButton && (
           <Button
@@ -196,7 +184,7 @@ export const SignInForm = () => {
         fullWidth
       >
         <DialogContent>
-          <LoginForm hideModeSwitch hideOidcProviders defaultMode="signUp" />
+          <LoginForm hideModeSwitch defaultMode="signUp" />
         </DialogContent>
       </Dialog>
 
