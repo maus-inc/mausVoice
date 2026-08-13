@@ -13,7 +13,8 @@
 
 @font-face {
   font-family: "Inter";
-  src: url("/mausVoice/docs/assets/fonts/inter-latin-400-normal.woff2") format("woff2");
+  src: url("/mausVoice/docs/assets/fonts/inter-latin-400-normal.woff2")
+    format("woff2");
   font-weight: 400;
   font-style: normal;
   font-display: swap;
@@ -21,7 +22,8 @@
 
 @font-face {
   font-family: "Inter";
-  src: url("/mausVoice/docs/assets/fonts/inter-latin-500-normal.woff2") format("woff2");
+  src: url("/mausVoice/docs/assets/fonts/inter-latin-500-normal.woff2")
+    format("woff2");
   font-weight: 500;
   font-style: normal;
   font-display: swap;
@@ -29,7 +31,8 @@
 
 @font-face {
   font-family: "Inter";
-  src: url("/mausVoice/docs/assets/fonts/inter-latin-600-normal.woff2") format("woff2");
+  src: url("/mausVoice/docs/assets/fonts/inter-latin-600-normal.woff2")
+    format("woff2");
   font-weight: 600;
   font-style: normal;
   font-display: swap;
@@ -37,7 +40,8 @@
 
 @font-face {
   font-family: "Inter";
-  src: url("/mausVoice/docs/assets/fonts/inter-latin-700-normal.woff2") format("woff2");
+  src: url("/mausVoice/docs/assets/fonts/inter-latin-700-normal.woff2")
+    format("woff2");
   font-weight: 700;
   font-style: normal;
   font-display: swap;
@@ -45,7 +49,8 @@
 
 @font-face {
   font-family: "JetBrains Mono";
-  src: url("/mausVoice/docs/assets/fonts/jetbrains-mono-latin-400-normal.woff2") format("woff2");
+  src: url("/mausVoice/docs/assets/fonts/jetbrains-mono-latin-400-normal.woff2")
+    format("woff2");
   font-weight: 400;
   font-style: normal;
   font-display: swap;
@@ -53,7 +58,8 @@
 
 @font-face {
   font-family: "JetBrains Mono";
-  src: url("/mausVoice/docs/assets/fonts/jetbrains-mono-latin-500-normal.woff2") format("woff2");
+  src: url("/mausVoice/docs/assets/fonts/jetbrains-mono-latin-500-normal.woff2")
+    format("woff2");
   font-weight: 500;
   font-style: normal;
   font-display: swap;
@@ -61,7 +67,8 @@
 
 @font-face {
   font-family: "JetBrains Mono";
-  src: url("/mausVoice/docs/assets/fonts/jetbrains-mono-latin-700-normal.woff2") format("woff2");
+  src: url("/mausVoice/docs/assets/fonts/jetbrains-mono-latin-700-normal.woff2")
+    format("woff2");
   font-weight: 700;
   font-style: normal;
   font-display: swap;
@@ -69,7 +76,8 @@
 
 @font-face {
   font-family: "TAN-PARADISO";
-  src: url("/mausVoice/docs/assets/fonts/TAN-PARADISO-Regular.woff2") format("woff2");
+  src: url("/mausVoice/docs/assets/fonts/TAN-PARADISO-Regular.woff2")
+    format("woff2");
   font-weight: 400 700;
   font-style: normal;
   font-display: swap;
@@ -96,8 +104,8 @@
   --sl-color-text-invert: hsl(0 0% 0%);
 
   --sl-font: "Satoshi", "Inter", system-ui, -apple-system, sans-serif;
-  --sl-font-mono: "JetBrains Mono", ui-monospace, "SF Mono", Menlo, Consolas,
-    monospace;
+  --sl-font-mono:
+    "JetBrains Mono", ui-monospace, "SF Mono", Menlo, Consolas, monospace;
 }
 
 /* Light theme. */
@@ -123,19 +131,61 @@
 
 html {
   scroll-behavior: smooth;
+  letter-spacing: -0.012em;
 }
 
 body {
   font-family: var(--sl-font);
+  line-height: 1.42;
   -webkit-font-smoothing: antialiased;
   text-rendering: optimizeLegibility;
 }
 
-/* Headings use the display font for the brand feel. */
+/* The Starlight masthead wraps its title in a non-translatable span. Keep a
+ * stable selector first; the hashed selector is retained for the currently
+ * generated component markup called out in the design brief. */
+.site-title span[translate="no"],
+span.astro-25bx3oyc[translate="no"] {
+  font-family: "TAN-PARADISO", "Satoshi", sans-serif;
+  font-weight: 400;
+  letter-spacing: -0.045em;
+  line-height: 0.95;
+}
+
+/* Condensed editorial rhythm: denser than Starlight's defaults without
+ * sacrificing the scan lines that make long reference pages readable. */
+.sl-markdown-content {
+  line-height: 1.48;
+  letter-spacing: -0.014em;
+}
+
+.sl-markdown-content :is(p, ul, ol, blockquote) {
+  margin-block: 0.72rem;
+}
+
+.sl-markdown-content :is(li + li) {
+  margin-top: 0.18rem;
+}
+
+.sl-markdown-content :is(h2, h3, h4) {
+  margin-bottom: 0.48rem;
+}
+
+.sidebar-content,
+.right-sidebar,
+header,
+.sl-link-button {
+  letter-spacing: -0.018em;
+  line-height: 1.32;
+}
+
+/* Headings use Satoshi rather than the decorative brand face, preserving
+ * readability on API names and longer troubleshooting headings. */
 .sl-markdown-content h1,
 .sl-markdown-content h2 {
   font-family: "Satoshi", "Inter", system-ui, sans-serif;
-  letter-spacing: -0.01em;
+  letter-spacing: -0.035em;
+  line-height: 1.05;
 }
 
 /* Cards / callouts echo the landing page .card surface. */

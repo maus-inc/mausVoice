@@ -1,49 +1,29 @@
-# Starlight Starter Kit: Basics
+# mausVoice documentation
 
-[![Built with Starlight](https://astro.badg.es/v2/built-with-starlight/tiny.svg)](https://starlight.astro.build)
+This Astro Starlight site is the canonical user and developer documentation for mausVoice.
 
-```
-npm create astro@latest -- --template starlight
-```
+- Published site: <https://maus-inc.github.io/mausVoice/docs/>
+- Content: `src/content/docs/`
+- Sidebar and site metadata: `astro.config.mjs`
+- Theme: `src/styles/custom.css`
+- Static assets and machine-readable index: `public/`
 
-> 🧑‍🚀 **Seasoned astronaut?** Delete this file. Have fun!
+## Work locally
 
-## 🚀 Project Structure
+From the repository root, install the pinned workspace dependencies and start the docs server:
 
-Inside of your Astro + Starlight project, you'll see the following folders and files:
-
-```
-.
-├── public/
-├── src/
-│   ├── assets/
-│   ├── content/
-│   │   └── docs/
-│   └── content.config.ts
-├── astro.config.mjs
-├── package.json
-└── tsconfig.json
+```bash
+pnpm install
+pnpm --filter docs dev
 ```
 
-Starlight looks for `.md` or `.mdx` files in the `src/content/docs/` directory. Each file is exposed as a route based on its file name.
+The development server uses port 3490. Before opening a pull request, run both checks used by CI:
 
-Images can be added to `src/assets/` and embedded in Markdown with a relative link.
+```bash
+pnpm --filter docs check-types
+pnpm --filter docs build
+```
 
-Static assets, like favicons, can be placed in the `public/` directory.
+Write product claims against the current source, not assumptions from an older release. Keep mode-specific privacy statements explicit: local transcription, network API transcription, and optional post-processing have different data flows. Use relative links between documentation pages so the deployed `/mausVoice/docs/` base remains intact.
 
-## 🧞 Commands
-
-All commands are run from the root of the project, from a terminal:
-
-| Command                   | Action                                           |
-| :------------------------ | :----------------------------------------------- |
-| `npm install`             | Installs dependencies                            |
-| `npm run dev`             | Starts local dev server at `localhost:4321`      |
-| `npm run build`           | Build your production site to `./dist/`          |
-| `npm run preview`         | Preview your build locally, before deploying     |
-| `npm run astro ...`       | Run CLI commands like `astro add`, `astro check` |
-| `npm run astro -- --help` | Get help using the Astro CLI                     |
-
-## 👀 Want to learn more?
-
-Check out [Starlight’s docs](https://starlight.astro.build/), read [the Astro documentation](https://docs.astro.build), or jump into the [Astro Discord server](https://astro.build/chat).
+Issues and corrections belong in the [GitHub issue tracker](https://github.com/maus-inc/mausVoice/issues). Security-sensitive reports should follow the private contact guidance in the documentation or code of conduct rather than a public issue.
