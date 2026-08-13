@@ -316,6 +316,7 @@ jobs:
         env:
           VERSION: ${{ inputs.version }}
           SHA256: ${{ steps.checksum.outputs.sha256 }}
+          TAG: ${{ inputs.tag || format('mausVoice-v{0}', inputs.version) }}
         run: |
           node scripts/ci/render-cask.mjs > /tmp/mausvoice-desktop.rb
           cat /tmp/mausvoice-desktop.rb

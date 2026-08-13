@@ -22,7 +22,7 @@ API mode sends your audio to the transcription provider of your choice — for e
 
 - Any API key you enter is encrypted and stored locally.
 - Transcription quality is generally higher than the local `tiny` model since it uses a larger model.
-- Requires an internet connection.
+- Requires network access to the provider you configure. When using a hosted provider (Groq, Deepgram, OpenAI, etc.) this means external internet access; self-hosted providers (Speaches or a local OpenAI-compatible endpoint) work entirely on your own network with no external internet required.
 
 ## Cloud
 
@@ -30,9 +30,9 @@ Cloud mode routes audio through mausVoice's cloud service, which handles the Gro
 
 ## Choosing a Mode
 
-| Consideration     | Local | API                 | Cloud |
-| ----------------- | ----- | ------------------- | ----- |
-| Privacy           | Best  | Good                | Good  |
-| Accuracy          | Good  | Best                | Best  |
-| Internet required | No    | Yes                 | Yes   |
-| API key required  | No    | Depends on provider | No    |
+| Consideration     | Local | API                       | Cloud |
+| ----------------- | ----- | ------------------------- | ----- |
+| Privacy           | Best  | Good                      | Good  |
+| Accuracy          | Good  | Best                      | Best  |
+| Internet required | No    | Only for hosted providers | Yes   |
+| API key required  | No    | Depends on provider       | No    |
