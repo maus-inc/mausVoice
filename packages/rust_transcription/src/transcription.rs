@@ -163,6 +163,15 @@ impl TranscriptionEngine {
             .to_str()
             .ok_or_else(|| "model path is not valid UTF-8".to_string())?;
 
+        if model_path_str.ends_with(".onnx") {
+            let metadata = std::fs::metadata(model_path)
+                .map_err(|err| format!("failed to inspect model file: {err}"))?;
+            if metadata.len() == 0 {
+                return Err("model file is empty".to_string());
+            }
+            return Ok(true);
+        }
+
         let device = self.resolve_device_blocking(None)?;
         let params = self.context_params(&device)?;
         WhisperContext::new_with_params(model_path_str, params)

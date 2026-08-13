@@ -50,6 +50,7 @@ struct DownloadJobRecord {
     generation: u64,
     is_finalizing: bool,
     control_tx: Option<watch::Sender<DownloadCommand>>,
+    worker_finished_rx: Option<watch::Receiver<bool>>,
 }
 
 impl DownloadJobRecord {
@@ -105,6 +106,7 @@ impl DownloadRegistry {
                 generation: 1,
                 is_finalizing: false,
                 control_tx: None,
+                worker_finished_rx: None,
             };
             let snapshot = record.to_snapshot(job_id);
             store.jobs.insert(job_id, record);
@@ -112,12 +114,13 @@ impl DownloadRegistry {
             return Ok(snapshot);
         }
 
-        let (job_id, generation, snapshot, control_rx, should_spawn) = {
+        let (job_id, generation, snapshot, control_rx, prev_worker_rx, finished_tx, should_spawn) = {
             let mut store = self.inner.lock().await;
 
             if let Some(existing_id) = store.active_by_model.get(&model).copied() {
                 if let Some(record) = store.jobs.get_mut(&existing_id) {
                     if record.status == DownloadJobStatus::Paused && !record.is_finalizing {
+                        let prev_finished_rx = record.worker_finished_rx.clone();
                         // Signal any previous worker to stop if it hasn't already
                         if let Some(tx) = &record.control_tx {
                             let _ = tx.send(DownloadCommand::Pause);
@@ -125,19 +128,38 @@ impl DownloadRegistry {
                         record.generation += 1;
                         let generation = record.generation;
                         let (control_tx, control_rx) = watch::channel(DownloadCommand::Run);
+                        let (finished_tx, finished_rx) = watch::channel(false);
                         record.status = DownloadJobStatus::Pending;
                         record.error = None;
                         record.control_tx = Some(control_tx);
+                        record.worker_finished_rx = Some(finished_rx);
                         let snapshot = record.to_snapshot(existing_id);
-                        (existing_id, generation, snapshot, Some(control_rx), true)
+                        (
+                            existing_id,
+                            generation,
+                            snapshot,
+                            Some(control_rx),
+                            prev_finished_rx,
+                            Some(finished_tx),
+                            true,
+                        )
                     } else {
                         let generation = record.generation;
                         let existing = record.to_snapshot(existing_id);
-                        (existing_id, generation, existing, None, false)
+                        (
+                            existing_id,
+                            generation,
+                            existing,
+                            None,
+                            None,
+                            None,
+                            false,
+                        )
                     }
                 } else {
                     store.active_by_model.remove(&model);
                     let (control_tx, control_rx) = watch::channel(DownloadCommand::Run);
+                    let (finished_tx, finished_rx) = watch::channel(false);
                     let new_job_id = Uuid::new_v4();
                     let record = DownloadJobRecord {
                         model,
@@ -148,15 +170,25 @@ impl DownloadRegistry {
                         generation: 1,
                         is_finalizing: false,
                         control_tx: Some(control_tx),
+                        worker_finished_rx: Some(finished_rx),
                     };
                     let snapshot = record.to_snapshot(new_job_id);
                     store.jobs.insert(new_job_id, record);
                     store.active_by_model.insert(model, new_job_id);
-                    (new_job_id, 1, snapshot, Some(control_rx), true)
+                    (
+                        new_job_id,
+                        1,
+                        snapshot,
+                        Some(control_rx),
+                        None,
+                        Some(finished_tx),
+                        true,
+                    )
                 }
             } else {
                 let job_id = Uuid::new_v4();
                 let (control_tx, control_rx) = watch::channel(DownloadCommand::Run);
+                let (finished_tx, finished_rx) = watch::channel(false);
                 let record = DownloadJobRecord {
                     model,
                     status: DownloadJobStatus::Pending,
@@ -166,21 +198,40 @@ impl DownloadRegistry {
                     generation: 1,
                     is_finalizing: false,
                     control_tx: Some(control_tx),
+                    worker_finished_rx: Some(finished_rx),
                 };
                 let snapshot = record.to_snapshot(job_id);
                 store.jobs.insert(job_id, record);
                 store.active_by_model.insert(model, job_id);
 
-                (job_id, 1, snapshot, Some(control_rx), true)
+                (
+                    job_id,
+                    1,
+                    snapshot,
+                    Some(control_rx),
+                    None,
+                    Some(finished_tx),
+                    true,
+                )
             }
         };
 
         if should_spawn {
-            if let Some(control_rx) = control_rx {
+            if let (Some(control_rx), Some(finished_tx)) = (control_rx, finished_tx) {
                 let registry = self.clone();
                 tokio::spawn(async move {
                     if let Err(err) = registry
-                        .run_download_job(job_id, generation, model, download_url, destination, client, control_rx)
+                        .run_download_job(
+                            job_id,
+                            generation,
+                            model,
+                            download_url,
+                            destination,
+                            client,
+                            control_rx,
+                            prev_worker_rx,
+                            finished_tx,
+                        )
                         .await
                     {
                         registry.mark_failed(job_id, generation, model, err).await;
@@ -288,6 +339,43 @@ impl DownloadRegistry {
         destination: PathBuf,
         client: reqwest::Client,
         mut control_rx: watch::Receiver<DownloadCommand>,
+        prev_worker_rx: Option<watch::Receiver<bool>>,
+        finished_tx: watch::Sender<bool>,
+    ) -> Result<(), String> {
+        // If there was a previous worker for this job (e.g. paused), wait for it to fully close and release the file
+        if let Some(mut prev_rx) = prev_worker_rx {
+            while !*prev_rx.borrow_and_update() {
+                if prev_rx.changed().await.is_err() {
+                    break;
+                }
+            }
+        }
+
+        let result = self
+            .run_download_job_internal(
+                job_id,
+                generation,
+                model,
+                download_url,
+                destination,
+                client,
+                &mut control_rx,
+            )
+            .await;
+
+        let _ = finished_tx.send(true);
+        result
+    }
+
+    async fn run_download_job_internal(
+        &self,
+        job_id: Uuid,
+        generation: u64,
+        model: WhisperModel,
+        download_url: String,
+        destination: PathBuf,
+        client: reqwest::Client,
+        control_rx: &mut watch::Receiver<DownloadCommand>,
     ) -> Result<(), String> {
         if !self.mark_running(job_id, generation).await {
             return Ok(());
@@ -393,6 +481,7 @@ impl DownloadRegistry {
         }
 
         if was_canceled {
+            drop(file);
             let _ = tokio::fs::remove_file(&temp_path).await;
             self.mark_canceled(job_id, generation, model).await;
             return Ok(());
@@ -401,6 +490,7 @@ impl DownloadRegistry {
         if was_paused {
             let _ = file.flush().await;
             let _ = file.sync_all().await;
+            drop(file);
             self.mark_paused(job_id, generation).await;
             return Ok(());
         }
@@ -416,27 +506,28 @@ impl DownloadRegistry {
                     .map(|j| j.status == DownloadJobStatus::Canceled || j.generation != generation)
                     .unwrap_or(true)
             };
+            drop(file);
             if is_canceled {
                 let _ = tokio::fs::remove_file(&temp_path).await;
-            } else {
-                let _ = file.flush().await;
-                let _ = file.sync_all().await;
             }
             return Ok(());
         }
 
         if let Err(err) = file.flush().await {
+            drop(file);
             let _ = tokio::fs::remove_file(&temp_path).await;
             let msg = format!("failed to flush model file: {err}");
             self.mark_failed(job_id, generation, model, msg.clone()).await;
             return Err(msg);
         }
         if let Err(err) = file.sync_all().await {
+            drop(file);
             let _ = tokio::fs::remove_file(&temp_path).await;
             let msg = format!("failed to sync model file: {err}");
             self.mark_failed(job_id, generation, model, msg.clone()).await;
             return Err(msg);
         }
+        drop(file);
 
         if destination.exists() {
             if let Err(err) = tokio::fs::remove_file(&destination).await {
@@ -601,6 +692,7 @@ mod tests {
                     generation: 1,
                     is_finalizing: false,
                     control_tx: None,
+                    worker_finished_rx: None,
                 },
             );
             store.active_by_model.insert(WhisperModel::Tiny, job_id);
@@ -640,6 +732,7 @@ mod tests {
                     generation: 1,
                     is_finalizing: false,
                     control_tx: None,
+                    worker_finished_rx: None,
                 },
             );
             store.active_by_model.insert(WhisperModel::Tiny, job_id);
@@ -693,6 +786,7 @@ mod tests {
                     generation: 1,
                     is_finalizing: false,
                     control_tx: None,
+                    worker_finished_rx: None,
                 },
             );
             store.active_by_model.insert(WhisperModel::Tiny, job_id);
