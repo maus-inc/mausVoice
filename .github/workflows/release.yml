@@ -305,7 +305,7 @@ jobs:
           set -euo pipefail
           TAG="${INPUT_TAG:-mausVoice-v${VERSION}}"
           URL="https://github.com/maus-inc/mausVoice/releases/download/${TAG}/mausVoice_${VERSION}_universal.dmg"
-          curl -fsSL -H "Authorization: token ${TOKEN}" -o /tmp/mausVoice.dmg "$URL"
+          curl -fsSL --proto '=https' -H "Authorization: token ${TOKEN}" -o /tmp/mausVoice.dmg "$URL"
 
       - name: Compute checksum
         id: checksum
