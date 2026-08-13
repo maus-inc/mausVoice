@@ -61,7 +61,7 @@
       // background via a boot class so the launch canvas never flashes the
       // wrong scheme. The class is removed on mount (src/main.tsx).
       (function () {
-        var stored = null;
+        var stored;
         try {
           stored = localStorage.getItem("mode");
           if (stored === null) {
@@ -79,7 +79,7 @@
               localStorage.setItem("mode", legacy);
             }
           }
-        } catch (error) {
+        } catch {
           // Storage can be unavailable (private mode, disabled cookies);
           // fall back to the system preference.
           stored = null;

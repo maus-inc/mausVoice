@@ -116,11 +116,9 @@ const Main = ({ children }: ChildrenProps) => {
   );
 };
 
-{
-  root.render(
-    <Main>
-      <SnackbarEmitter />
-      <AppWithLoading />
-    </Main>,
-  );
-}
+root.render(
+  <Main>
+    <SnackbarEmitter />
+    <AppWithLoading />
+  </Main>,
+);

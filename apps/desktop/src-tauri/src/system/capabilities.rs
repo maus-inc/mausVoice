@@ -11,16 +11,20 @@ pub struct SystemCapabilities {
     pub gpus: Vec<crate::system::gpu::GpuAdapterInfo>,
 }
 
-/// Collects RAM and CPU info via `sysinfo` and reuses the GPU enumeration.
+/// Collects RAM via `sysinfo` (built with only the `system` feature, so only
+/// the core `System::new` + `refresh_memory` API is available) and the CPU
+/// core count via the standard library, then reuses the GPU enumeration.
 /// Values are best-effort: on any platform quirk the struct degrades to
 /// zeros rather than failing the caller.
 pub fn get_system_capabilities() -> SystemCapabilities {
-    let mut system = sysinfo::System::new_all();
+    let mut system = sysinfo::System::new();
     system.refresh_memory();
 
     let total_ram_bytes = system.total_memory();
     let ram_gb = (total_ram_bytes as f64) / (1024.0 * 1024.0 * 1024.0);
-    let cpu_cores = system.cpus().len() as u32;
+    let cpu_cores = std::thread::available_parallelism()
+        .map(|count| count.get() as u32)
+        .unwrap_or(0);
 
     SystemCapabilities {
         ram_gb: (ram_gb * 10.0).round() / 10.0,

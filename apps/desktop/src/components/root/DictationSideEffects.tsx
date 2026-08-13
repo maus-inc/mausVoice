@@ -525,9 +525,8 @@ export const DictationSideEffects = () => {
         shouldContinue: result.shouldContinue,
       };
     } catch (error) {
-      getLogger().error(
-        `Error during stopRecording: ${error}${error instanceof Error ? ` [name=${error.name}]` : ""}`,
-      );
+      const errorName = error instanceof Error ? ` [name=${error.name}]` : "";
+      getLogger().error(`Error during stopRecording: ${error}${errorName}`);
       return {
         shouldContinue: false,
         abortMessage: String(error),

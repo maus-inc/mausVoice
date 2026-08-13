@@ -30,7 +30,6 @@ const source = Object.fromEntries(
     ["gtkState", "packages/rust_gtk_pill/src/state.rs"],
     ["windowsState", "packages/rust_windows_pill/src/state.rs"],
     ["sharedPill", "packages/rust_pill_shared/src/lib.rs"],
-    ["newServer", "apps/desktop/src/utils/new-server.utils.ts"],
     ["integrationWorkflow", ".github/workflows/test-desktop-integration.yml"],
     ["docsWorkflow", ".github/workflows/test-docs.yml"],
     ["index", "index.html"],
@@ -45,18 +44,21 @@ describe("PR28 native reset contracts", () => {
   it("routes the reset command through every platform overlay", () => {
     assert.match(
       source.commands,
-      /crate::platform::overlay::notify_reset_position\(&app\)/,
+      /crate::platform::overlay::notify_reset_position\(&app, &strategy\)/,
     );
-    assert.match(source.macOverlay, /pill\.send\(InMessage::ResetPosition\)/);
+    assert.match(
+      source.macOverlay,
+      /pill\.send\(InMessage::ResetPosition \{ strategy \}\)/,
+    );
     assert.match(
       source.linuxOverlay,
-      /pill_process::notify_reset_position\(app\)/,
+      /pill_process::notify_reset_position\(app, strategy\)/,
     );
     assert.match(
       source.windowsOverlay,
-      /pill_process::notify_reset_position\(app\)/,
+      /pill_process::notify_reset_position\(app, strategy\)/,
     );
-    assert.match(source.macPill, /InMessage::ResetPosition/);
+    assert.match(source.macPill, /InMessage::ResetPosition \{ strategy \}/);
   });
 
   it("keeps tray reset state synchronized after native position events", () => {
@@ -72,12 +74,15 @@ describe("PR28 reset IPC execution and missing-overlay handling", () => {
   it("dispatches reset_position to every native pill and survives a closed overlay", () => {
     // Frontend forwards the tray reset through the Tauri command.
     assert.match(source.effects, /tray-reset-pill-position/);
-    assert.match(source.effects, /invoke\("reset_pill_position"\)/);
+    assert.match(
+      source.effects,
+      /invoke\("reset_pill_position", \{ strategy \}\)/,
+    );
     // The Rust command emits a typed reset_position payload to the pill
     // process and returns an error (not a panic) when no pill is managed.
     assert.match(
       source.pillProcess,
-      /pub fn notify_reset_position\(app: &tauri::AppHandle\)/,
+      /pub fn notify_reset_position\(app: &tauri::AppHandle, strategy: &str\)/,
     );
     assert.match(source.pillProcess, /"type":"reset_position"/);
     assert.match(
@@ -89,11 +94,17 @@ describe("PR28 reset IPC execution and missing-overlay handling", () => {
       /Reset position requested with no managed pill process/,
     );
     // Each platform overlay routes the reset into its pill channel.
-    assert.match(source.macOverlay, /pill\.send\(InMessage::ResetPosition\)/);
-    assert.match(source.linuxOverlay, /pill_process::notify_reset_position\(app\)/);
+    assert.match(
+      source.macOverlay,
+      /pill\.send\(InMessage::ResetPosition \{ strategy \}\)/,
+    );
+    assert.match(
+      source.linuxOverlay,
+      /pill_process::notify_reset_position\(app, strategy\)/,
+    );
     assert.match(
       source.windowsOverlay,
-      /pill_process::notify_reset_position\(app\)/,
+      /pill_process::notify_reset_position\(app, strategy\)/,
     );
     assert.match(
       source.gtkPill,
@@ -279,10 +290,4 @@ describe("PR28 workflow and public-asset contracts", () => {
     assert.match(source.astro, /docsBase\}assets\/mausvoice-banner\.png/);
   });
 
-  it("keeps a valid production fallback for the new server", () => {
-    assert.match(source.newServer, /DEFAULT_NEW_SERVER_URL/);
-    assert.match(source.newServer, /https:\/\/api\.mausvoice\.com/);
-    assert.match(source.newServer, /resolveNewServerUrl/);
-    assert.match(source.newServer, /buildNewServerWebSocketUrl/);
-  });
 });

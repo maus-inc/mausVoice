@@ -201,7 +201,8 @@ fn draw_waveform(
 }
 
 fn draw_edge_gradient(
-    gfx: &mut Gfx, rx: f64, ry: f64, pill_w: f64, pill_h: f64, expand_t: f64,
+    gfx: &mut Gfx, rx: f64, ry: f64, pill_w: f64, pill_h: f64,
+    expand_t: f64, state: &PillState,
 ) {
     let alpha = 0.9 * expand_t;
 
@@ -1040,7 +1041,8 @@ fn draw_keyboard_button(gfx: &mut Gfx, state: &PillState, ww: f64, wh: f64) {
 /// Draws the dimmed pause bar that replaces the waveform while paused,
 /// crossfading in with `fade`.
 fn draw_paused(
-    gfx: &mut Gfx, rx: f64, ry: f64, pill_w: f64, pill_h: f64, expand_t: f64, fade: f64,
+    gfx: &mut Gfx, rx: f64, ry: f64, pill_w: f64, pill_h: f64,
+    expand_t: f64, fade: f64, state: &PillState,
 ) {
     // Same loading bar as the loading phase, but static/dimmed to convey "held".
     gfx.save();
