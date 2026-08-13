@@ -606,9 +606,34 @@ export const DictationSideEffects = () => {
 
         const sampleRate = startRecordingResult.sampleRate;
         getLogger().verbose(`Recording started (sampleRate=${sampleRate})`);
-        await sessionRef.current.onRecordingStart(sampleRate);
-        if (!sessionRef.current || !strategyRef.current) {
-          abortRecording();
+
+        // A stop/abort can arrive while `start_recording` is still opening
+        // the mic (WASAPI init can take >1s on loaded machines).
+        // `abortRecording` nulls the refs, so re-check against a snapshot
+        // taken after the await — reading `sessionRef.current` here is what
+        // threw "Cannot read properties of null (reading 'onRecordingStart')"
+        // when the user stopped mid-initialization.
+        const startedSession = sessionRef.current;
+        const startedStrategy = strategyRef.current;
+        if (!startedSession || !startedStrategy) {
+          getLogger().warning(
+            "Recording start raced an abort; skipping session start (abort already ran cleanup)",
+          );
+          return;
+        }
+
+        await startedSession.onRecordingStart(sampleRate);
+
+        if (
+          sessionRef.current !== startedSession ||
+          strategyRef.current !== startedStrategy
+        ) {
+          getLogger().warning(
+            "Session was aborted while starting; skipping timers and volume dim",
+          );
+          // The abort path cleans whatever was current in the refs; release
+          // this (now-orphaned) session defensively — cleanup is idempotent.
+          startedSession.cleanup().catch(() => {});
           return;
         }
 
