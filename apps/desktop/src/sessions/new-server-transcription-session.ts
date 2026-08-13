@@ -234,10 +234,7 @@ const startNewServerStreaming = async (
       });
     };
 
-    const wsUrl = buildNewServerWebSocketUrl(
-      NEW_SERVER_URL,
-      "/v1/dictation",
-    );
+    const wsUrl = buildNewServerWebSocketUrl(NEW_SERVER_URL, "/v1/dictation");
     console.log("[NewServer WebSocket] Connecting to:", wsUrl);
     ws = new WebSocket(wsUrl);
 

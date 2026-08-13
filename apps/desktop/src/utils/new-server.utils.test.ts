@@ -36,39 +36,28 @@ describe("resolveNewServerUrl", () => {
     );
   });
 
-  it(
-    "falls back for blank, malformed, unsupported, and credentialed URLs",
-    () => {
-      expect(resolveNewServerUrl("   ")).toBe("https://api.mausvoice.com");
-      expect(resolveNewServerUrl("not a URL")).toBe(
-        "https://api.mausvoice.com",
-      );
-      expect(resolveNewServerUrl("ftp://example.test")).toBe(
-        "https://api.mausvoice.com",
-      );
-      expect(resolveNewServerUrl("https://user:pass@example.test")).toBe(
-        "https://api.mausvoice.com",
-      );
-    },
-  );
+  it("falls back for blank, malformed, unsupported, and credentialed URLs", () => {
+    expect(resolveNewServerUrl("   ")).toBe("https://api.mausvoice.com");
+    expect(resolveNewServerUrl("not a URL")).toBe("https://api.mausvoice.com");
+    expect(resolveNewServerUrl("ftp://example.test")).toBe(
+      "https://api.mausvoice.com",
+    );
+    expect(resolveNewServerUrl("https://user:pass@example.test")).toBe(
+      "https://api.mausvoice.com",
+    );
+  });
 });
 
 describe("buildNewServerWebSocketUrl", () => {
-  it(
-    "maps HTTP(S) to WS(S), joins paths once, and drops query fragments",
-    () => {
-      expect(
-        buildNewServerWebSocketUrl(
-          "https://example.test/base///?ignored=true#ignored",
-          "/v1/dictation",
-        ),
-      ).toBe("wss://example.test/base/v1/dictation");
-      expect(
-        buildNewServerWebSocketUrl(
-          "http://localhost:6325/",
-          "v1/transcribe-raw",
-        ),
-      ).toBe("ws://localhost:6325/v1/transcribe-raw");
-    },
-  );
+  it("maps HTTP(S) to WS(S), joins paths once, and drops query fragments", () => {
+    expect(
+      buildNewServerWebSocketUrl(
+        "https://example.test/base///?ignored=true#ignored",
+        "/v1/dictation",
+      ),
+    ).toBe("wss://example.test/base/v1/dictation");
+    expect(
+      buildNewServerWebSocketUrl("http://localhost:6325/", "v1/transcribe-raw"),
+    ).toBe("ws://localhost:6325/v1/transcribe-raw");
+  });
 });
