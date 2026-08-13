@@ -184,6 +184,7 @@ const noteItems = notes
 const githubBase = `https://github.com/${owner}/${repo}`;
 const actionsUrl = `${githubBase}/actions`;
 const releasesUrl = `${githubBase}/releases`;
+const licenceUrl = `${githubBase}/blob/main/LICENCE`;
 
 const downloadChips = [
   ...(mac
@@ -225,7 +226,7 @@ const body = [
   "Voice typing for your own machine. Dictate into any app, clean it up with AI. No account, no subscription.",
   "",
   `<p align="center">`,
-  `  ${logoChip("opensourceinitiative", "AGPL-3.0 license", `${githubBase}/blob/main/LICENCE`)}`,
+  `  ${logoChip("opensourceinitiative", "AGPL-3.0 license", licenceUrl)}`,
   `  ${logoChip("githubactions", "CI passing", actionsUrl)}`,
   `  ${logoChip("box", "Downloads", releasesUrl)}`,
   `</p>`,

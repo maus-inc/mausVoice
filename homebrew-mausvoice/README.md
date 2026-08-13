@@ -43,8 +43,10 @@ automatically on every release:
 
 1. The `publish-cask` job downloads the freshly released macOS DMG and computes
    its SHA-256.
-2. `scripts/ci/render-cask.mjs` stamps the `version` and `sha256` into the cask
-   (source of truth lives here in `mausVoice`).
+2. `scripts/ci/render-cask.mjs` stamps the `version`, the release `tag`, and the
+   `sha256` into the cask (source of truth lives here in `mausVoice`). It fails
+   if the rendered cask still contains `:no_check`, so a checksum-less cask is
+   never published.
 3. The job commits and pushes `Casks/mausvoice-desktop.rb` to this repository.
 
 It authenticates with the `RELEASE_TOKEN` secret (the same maintainer token the
@@ -53,29 +55,32 @@ release job uses), so it must have `Contents: write` on
 
 ## First-time setup (one-off, manual)
 
-Create the tap repository and seed it once, then CI takes over:
+Create the tap repository and seed it with just this README; the `publish-cask`
+job adds `Casks/mausvoice-desktop.rb` (with a real checksum) on the first
+release:
 
 ```bash
 git clone https://github.com/maus-inc/mausVoice.git && cd mausVoice
 git checkout <branch with homebrew-mausvoice/>
 cd homebrew-mausvoice
 git init -b main
-git add Casks README.md
-git commit -m "Add mausvoice-desktop cask"
+git add README.md
+git commit -m "Add mausVoice tap"
 git remote add origin https://github.com/maus-inc/homebrew-mausvoice.git
 git push -u origin main
 ```
 
-Verify:
+The cask is not committed here — it is rendered from the repo template on every
+release. `render-cask.mjs` refuses to emit a cask that still contains
+`:no_check`, so a checksum-less cask is never published.
+
+Verify (after the first release has published the cask):
 
 ```bash
 brew tap maus-inc/mausvoice
 brew install --cask mausvoice-desktop
 brew audit --cask mausvoice-desktop
 ```
-
-Until the first release runs through the new pipeline, the checked-in cask uses
-`sha256 :no_check`; the first automated publish pins the real checksum.
 
 ## Notes
 
