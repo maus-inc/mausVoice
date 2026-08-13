@@ -248,7 +248,9 @@ pub fn build() -> tauri::Builder<tauri::Wry> {
                     .unwrap_or(false)
                 });
                 if want_elevation {
-                    crate::platform::windows::init::request_elevation_relaunch(app.handle());
+                    crate::platform::windows::init::request_elevation_relaunch(
+                        app.handle().clone(),
+                    );
                 }
             }
 
