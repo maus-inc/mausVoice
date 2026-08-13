@@ -23,6 +23,18 @@ pub fn create_router(state: AppState) -> Router {
             "/v1/models/:model/download/:job_id",
             get(get_download_progress),
         )
+        .route(
+            "/v1/models/:model/download/:job_id/pause",
+            post(pause_download_job),
+        )
+        .route(
+            "/v1/models/:model/download/:job_id/cancel",
+            post(cancel_download_job),
+        )
+        .route("/v1/models/:model/download/pause", post(pause_download_active))
+        .route("/v1/models/:model/download/cancel", post(cancel_download_active))
+        .route("/v1/models/:model/pause", post(pause_download_active))
+        .route("/v1/models/:model/cancel", post(cancel_download_active))
         .route("/v1/models/:model", delete(delete_model))
         .route("/v1/models/:model/status", get(get_model_status))
         .route("/v1/devices", get(list_devices))
@@ -138,6 +150,72 @@ async fn get_download_progress(
     Ok(Json(snapshot))
 }
 
+async fn pause_download_job(
+    State(state): State<AppState>,
+    Path(path): Path<DownloadProgressPath>,
+) -> Result<Json<crate::downloads::DownloadJobSnapshot>, ApiError> {
+    let model = parse_model(&path.model)?;
+    let job_id = Uuid::parse_str(path.job_id.trim())
+        .map_err(|_| ApiError::bad_request("invalid_job_id", "jobId must be a valid UUID"))?;
+
+    let snapshot = state
+        .downloads
+        .pause_job(model, job_id)
+        .await
+        .ok_or_else(|| ApiError::not_found("download_not_found", "download job was not found"))?;
+
+    Ok(Json(snapshot))
+}
+
+async fn cancel_download_job(
+    State(state): State<AppState>,
+    Path(path): Path<DownloadProgressPath>,
+) -> Result<Json<crate::downloads::DownloadJobSnapshot>, ApiError> {
+    let model = parse_model(&path.model)?;
+    let destination = state.model_path(model);
+    let job_id = Uuid::parse_str(path.job_id.trim())
+        .map_err(|_| ApiError::bad_request("invalid_job_id", "jobId must be a valid UUID"))?;
+
+    let snapshot = state
+        .downloads
+        .cancel_job(model, job_id, &destination)
+        .await
+        .ok_or_else(|| ApiError::not_found("download_not_found", "download job was not found"))?;
+
+    Ok(Json(snapshot))
+}
+
+async fn pause_download_active(
+    State(state): State<AppState>,
+    Path(path): Path<ModelPath>,
+) -> Result<Json<crate::downloads::DownloadJobSnapshot>, ApiError> {
+    let model = parse_model(&path.model)?;
+
+    let snapshot = state
+        .downloads
+        .pause_active(model)
+        .await
+        .ok_or_else(|| ApiError::not_found("download_not_found", "no active download found to pause"))?;
+
+    Ok(Json(snapshot))
+}
+
+async fn cancel_download_active(
+    State(state): State<AppState>,
+    Path(path): Path<ModelPath>,
+) -> Result<Json<crate::downloads::DownloadJobSnapshot>, ApiError> {
+    let model = parse_model(&path.model)?;
+    let destination = state.model_path(model);
+
+    let snapshot = state
+        .downloads
+        .cancel_active(model, &destination)
+        .await
+        .ok_or_else(|| ApiError::not_found("download_not_found", "no active download found to cancel"))?;
+
+    Ok(Json(snapshot))
+}
+
 async fn get_model_status(
     State(state): State<AppState>,
     Path(path): Path<ModelPath>,
@@ -163,7 +241,7 @@ async fn delete_model(
             return Err(ApiError::bad_request(
                 "download_in_progress",
                 format!(
-                    "model '{}' is currently downloading; wait for it to finish before deleting",
+                    "model '{}' is currently downloading; pause or cancel it before deleting",
                     model.as_slug()
                 ),
             ));

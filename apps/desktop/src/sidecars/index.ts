@@ -121,9 +121,34 @@ class LocalTranscriptionSidecarFacade {
     model: LocalWhisperModel;
     preferGpu: boolean;
     onProgress?: (snapshot: LocalSidecarDownloadSnapshot) => void;
-  }): Promise<LocalSidecarModelStatus> {
+  }): Promise<LocalSidecarModelStatus | null> {
     const sidecar = await this.resolveRuntime(preferGpu);
     return await sidecar.downloadModel(model, onProgress);
+  }
+
+  async pauseModelDownload({
+    model,
+    preferGpu,
+  }: {
+    model: LocalWhisperModel;
+    preferGpu: boolean;
+  }): Promise<LocalSidecarDownloadSnapshot> {
+    const sidecar = await this.resolveRuntime(preferGpu);
+    return await sidecar.pauseDownload(model);
+  }
+
+  async cancelModelDownload({
+    model,
+    preferGpu,
+  }: {
+    model: LocalWhisperModel;
+    preferGpu: boolean;
+  }): Promise<LocalSidecarDownloadSnapshot> {
+    const sidecar = await this.resolveRuntime(preferGpu);
+    const result = await sidecar.cancelDownload(model);
+    this.cpuSidecar.invalidateModelReadiness(model);
+    this.gpuSidecar.invalidateModelReadiness(model);
+    return result;
   }
 
   async deleteModel({

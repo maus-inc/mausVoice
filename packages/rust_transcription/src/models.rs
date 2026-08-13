@@ -21,6 +21,26 @@ pub enum WhisperModel {
         alias = "whisper-hindi2hinglish-apex"
     )]
     Hindi2Hinglish,
+    #[serde(
+        rename = "parakeet-ctc-0.6b",
+        alias = "parakeet-ctc",
+        alias = "parakeet_ctc",
+        alias = "parakeet_ctc_0.6b"
+    )]
+    ParakeetCtc06B,
+    #[serde(
+        rename = "parakeet-tdt-0.6b",
+        alias = "parakeet-tdt",
+        alias = "parakeet_tdt",
+        alias = "parakeet_tdt_0.6b"
+    )]
+    ParakeetTdt06B,
+    #[serde(
+        rename = "canary-1b",
+        alias = "canary",
+        alias = "canary_1b"
+    )]
+    Canary1B,
 }
 
 impl WhisperModel {
@@ -36,6 +56,13 @@ impl WhisperModel {
             | "hindi-hinglish"
             | "hindi2hinglish-apex"
             | "whisper-hindi2hinglish-apex" => Some(Self::Hindi2Hinglish),
+            "parakeet-ctc-0.6b" | "parakeet-ctc" | "parakeet_ctc" | "parakeet_ctc_0.6b" => {
+                Some(Self::ParakeetCtc06B)
+            }
+            "parakeet-tdt-0.6b" | "parakeet-tdt" | "parakeet_tdt" | "parakeet_tdt_0.6b" => {
+                Some(Self::ParakeetTdt06B)
+            }
+            "canary-1b" | "canary" | "canary_1b" => Some(Self::Canary1B),
             _ => None,
         }
     }
@@ -49,6 +76,9 @@ impl WhisperModel {
             Self::Large => "large",
             Self::Turbo => "turbo",
             Self::Hindi2Hinglish => "hindi2hinglish",
+            Self::ParakeetCtc06B => "parakeet-ctc-0.6b",
+            Self::ParakeetTdt06B => "parakeet-tdt-0.6b",
+            Self::Canary1B => "canary-1b",
         }
     }
 
@@ -61,13 +91,16 @@ impl WhisperModel {
             Self::Large => "ggml-large-v3.bin",
             Self::Turbo => "ggml-large-v3-turbo.bin",
             Self::Hindi2Hinglish => "ggml-hindi2hinglish-apex-q5_1.bin",
+            Self::ParakeetCtc06B => "sherpa-onnx-parakeet-ctc-0.6b.onnx",
+            Self::ParakeetTdt06B => "sherpa-onnx-parakeet-tdt-0.6b.onnx",
+            Self::Canary1B => "sherpa-onnx-canary-1b.onnx",
         }
     }
 
     pub fn download_url(self) -> String {
         let env_var = format!(
             "RUST_TRANSCRIPTION_MODEL_URL_{}",
-            self.as_slug().to_ascii_uppercase()
+            self.as_slug().replace('-', "_").to_ascii_uppercase()
         );
 
         if let Ok(value) = std::env::var(env_var) {
@@ -95,6 +128,15 @@ impl WhisperModel {
             Self::Hindi2Hinglish => {
                 "https://huggingface.co/mausvoice/whisper-hindi2hinglish-apex-ggml/resolve/main/ggml-hindi2hinglish-apex-q5_1.bin"
             }
+            Self::ParakeetCtc06B => {
+                "https://huggingface.co/csukuangfj/sherpa-onnx-nemo-fast-conformer-ctc-en-24500/resolve/main/model.int8.onnx"
+            }
+            Self::ParakeetTdt06B => {
+                "https://huggingface.co/csukuangfj/sherpa-onnx-nemo-fast-conformer-tdt-en-24500/resolve/main/model.int8.onnx"
+            }
+            Self::Canary1B => {
+                "https://huggingface.co/csukuangfj/sherpa-onnx-nemo-canary-1b-en-de-es-fr-int8/resolve/main/model.int8.onnx"
+            }
         }
         .to_string()
     }
@@ -108,6 +150,9 @@ impl WhisperModel {
             "large",
             "turbo",
             "hindi2hinglish",
+            "parakeet-ctc-0.6b",
+            "parakeet-tdt-0.6b",
+            "canary-1b",
         ]
     }
 }

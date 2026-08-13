@@ -26,7 +26,13 @@ type SidecarModelStatusResponse = {
 type SidecarDownloadSnapshot = {
   jobId: string;
   model: LocalWhisperModel;
-  status: "pending" | "running" | "completed" | "failed";
+  status:
+    | "pending"
+    | "running"
+    | "paused"
+    | "completed"
+    | "failed"
+    | "canceled";
   bytesDownloaded: number;
   totalBytes: number | null;
   progress: number | null;
@@ -239,8 +245,11 @@ export class LocalTranscriptionSidecar extends BaseSidecar {
   async downloadModel(
     model: LocalWhisperModel,
     onProgress?: (snapshot: LocalSidecarDownloadSnapshot) => void,
-  ): Promise<LocalSidecarModelStatus> {
-    await this.downloadModelInternal(model, onProgress);
+  ): Promise<LocalSidecarModelStatus | null> {
+    const result = await this.downloadModelInternal(model, onProgress);
+    if (result.status === "paused" || result.status === "canceled") {
+      return null;
+    }
 
     const finalStatus = await this.getModelStatus(model, true);
     if (!finalStatus.downloaded || !finalStatus.valid) {
@@ -252,6 +261,26 @@ export class LocalTranscriptionSidecar extends BaseSidecar {
 
     this.markModelReady(model);
     return finalStatus;
+  }
+
+  async pauseDownload(
+    model: LocalWhisperModel,
+  ): Promise<LocalSidecarDownloadSnapshot> {
+    return await this.requestJson<SidecarDownloadSnapshot>(
+      `/v1/models/${model}/download/pause`,
+      { method: "POST" },
+    );
+  }
+
+  async cancelDownload(
+    model: LocalWhisperModel,
+  ): Promise<LocalSidecarDownloadSnapshot> {
+    const result = await this.requestJson<SidecarDownloadSnapshot>(
+      `/v1/models/${model}/download/cancel`,
+      { method: "POST" },
+    );
+    this.invalidateModelReadiness(model);
+    return result;
   }
 
   async deleteModel(
@@ -535,7 +564,7 @@ export class LocalTranscriptionSidecar extends BaseSidecar {
   private async downloadModelInternal(
     model: LocalWhisperModel,
     onProgress?: (snapshot: LocalSidecarDownloadSnapshot) => void,
-  ): Promise<void> {
+  ): Promise<SidecarDownloadSnapshot> {
     const job = await this.requestJson<SidecarDownloadSnapshot>(
       `/v1/models/${model}/download`,
       { method: "POST" },
@@ -543,8 +572,12 @@ export class LocalTranscriptionSidecar extends BaseSidecar {
 
     onProgress?.(job);
 
-    if (job.status === "completed") {
-      return;
+    if (
+      job.status === "completed" ||
+      job.status === "paused" ||
+      job.status === "canceled"
+    ) {
+      return job;
     }
 
     if (job.status === "failed") {
@@ -564,8 +597,12 @@ export class LocalTranscriptionSidecar extends BaseSidecar {
 
       onProgress?.(progress);
 
-      if (progress.status === "completed") {
-        return;
+      if (
+        progress.status === "completed" ||
+        progress.status === "paused" ||
+        progress.status === "canceled"
+      ) {
+        return progress;
       }
 
       if (progress.status === "failed") {

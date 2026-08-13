@@ -21,6 +21,13 @@ describe("local-transcription-sidecar manager helpers", () => {
     expect(normalizeLocalWhisperModel("large-turbo")).toBe("turbo");
     expect(normalizeLocalWhisperModel("large-v3")).toBe("large");
     expect(normalizeLocalWhisperModel("large")).toBe("large");
+    expect(normalizeLocalWhisperModel("parakeet-ctc-0.6b")).toBe(
+      "parakeet-ctc-0.6b",
+    );
+    expect(normalizeLocalWhisperModel("parakeet-tdt-0.6b")).toBe(
+      "parakeet-tdt-0.6b",
+    );
+    expect(normalizeLocalWhisperModel("canary-1b")).toBe("canary-1b");
   });
 
   it("defaults unknown model values to tiny", () => {

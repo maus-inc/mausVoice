@@ -7,7 +7,10 @@ export type LocalWhisperModel =
   | "medium"
   | "large"
   | "turbo"
-  | "hindi2hinglish";
+  | "hindi2hinglish"
+  | "parakeet-ctc-0.6b"
+  | "parakeet-tdt-0.6b"
+  | "canary-1b";
 
 export const DEFAULT_LOCAL_WHISPER_MODEL: LocalWhisperModel = "tiny";
 export const LOCAL_WHISPER_MODELS: LocalWhisperModel[] = [
@@ -18,6 +21,9 @@ export const LOCAL_WHISPER_MODELS: LocalWhisperModel[] = [
   "turbo",
   "large",
   "hindi2hinglish",
+  "parakeet-ctc-0.6b",
+  "parakeet-tdt-0.6b",
+  "canary-1b",
 ];
 
 export const normalizeLocalWhisperModel = (
@@ -61,6 +67,32 @@ export const normalizeLocalWhisperModel = (
     normalized === "whisper-hindi2hinglish-apex"
   ) {
     return "hindi2hinglish";
+  }
+
+  if (
+    normalized === "parakeet-ctc-0.6b" ||
+    normalized === "parakeet-ctc" ||
+    normalized === "parakeet_ctc" ||
+    normalized === "parakeet_ctc_0.6b"
+  ) {
+    return "parakeet-ctc-0.6b";
+  }
+
+  if (
+    normalized === "parakeet-tdt-0.6b" ||
+    normalized === "parakeet-tdt" ||
+    normalized === "parakeet_tdt" ||
+    normalized === "parakeet_tdt_0.6b"
+  ) {
+    return "parakeet-tdt-0.6b";
+  }
+
+  if (
+    normalized === "canary-1b" ||
+    normalized === "canary" ||
+    normalized === "canary_1b"
+  ) {
+    return "canary-1b";
   }
 
   return DEFAULT_LOCAL_WHISPER_MODEL;

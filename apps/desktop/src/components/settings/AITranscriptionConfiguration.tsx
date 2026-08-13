@@ -1,4 +1,7 @@
 import CheckRoundedIcon from "@mui/icons-material/CheckRounded";
+import CloseRoundedIcon from "@mui/icons-material/CloseRounded";
+import PauseRoundedIcon from "@mui/icons-material/PauseRounded";
+import PlayArrowRoundedIcon from "@mui/icons-material/PlayArrowRounded";
 import WarningAmberRoundedIcon from "@mui/icons-material/WarningAmberRounded";
 import {
   Box,
@@ -7,6 +10,7 @@ import {
   FormControl,
   InputLabel,
   LinearProgress,
+  ListSubheader,
   MenuItem,
   Select,
   Stack,
@@ -18,6 +22,9 @@ import {
   refreshLocalTranscriptionDevices,
   deleteLocalTranscriptionModel,
   downloadLocalTranscriptionModel,
+  pauseLocalTranscriptionModelDownload,
+  resumeLocalTranscriptionModelDownload,
+  cancelLocalTranscriptionModelDownload,
   refreshLocalTranscriptionModelStatuses,
 } from "../../actions/settings-local-transcription.actions";
 import { showErrorSnackbar } from "../../actions/app.actions";
@@ -29,6 +36,7 @@ import {
 } from "../../actions/user.actions";
 import {
   isLocalTranscriptionModelDownloadInProgress,
+  isLocalTranscriptionModelDownloadPaused,
   isLocalTranscriptionModelSelectable,
 } from "../../state/settings.state";
 import { useAppStore } from "../../store";
@@ -47,6 +55,7 @@ import {
   normalizeLocalWhisperModel,
 } from "../../utils/local-transcription.utils";
 import { activeRowCheckSx, activeRowSx } from "../../styles/selection";
+import { duration, easeOutCubic } from "../../styles/motion";
 import { AnimateSwitch } from "../common/AnimateIn";
 import { SegmentedControl } from "../common/SegmentedControl";
 import { ApiKeyList } from "./ApiKeyList";
@@ -55,45 +64,83 @@ type ModelOption = {
   value: LocalWhisperModel;
   label: string;
   helper: string;
+  category: "fast" | "whisper";
 };
 
 const MODEL_OPTIONS: ModelOption[] = [
+  // Fast & Non-hallucinating Local Models (Parakeet / Canary / Sherpa-ONNX)
+  {
+    value: "parakeet-ctc-0.6b",
+    label: "NVIDIA Parakeet CTC 0.6B (120 MB)",
+    helper: "Ultra-fast English dictation, zero hallucination loops",
+    category: "fast",
+  },
+  {
+    value: "parakeet-tdt-0.6b",
+    label: "NVIDIA Parakeet TDT 0.6B (240 MB)",
+    helper: "State-of-the-art English dictation speed & accuracy",
+    category: "fast",
+  },
+  {
+    value: "canary-1b",
+    label: "NVIDIA Canary 1B (1.2 GB)",
+    helper: "Multilingual STT + automatic punctuation & casing",
+    category: "fast",
+  },
+  // OpenAI Whisper Models
   {
     value: "tiny",
     label: "Whisper Tiny (77 MB)",
     helper: "Fastest, lowest accuracy",
+    category: "whisper",
   },
   {
     value: "base",
     label: "Whisper Base (148 MB)",
     helper: "Great balance of speed and accuracy",
+    category: "whisper",
   },
   {
     value: "small",
     label: "Whisper Small (488 MB)",
     helper: "Recommended with GPU acceleration",
+    category: "whisper",
   },
   {
     value: "medium",
     label: "Whisper Medium (1.53 GB)",
     helper: "Balanced quality and speed",
+    category: "whisper",
   },
   {
     value: "turbo",
     label: "Whisper Large v3 Turbo (1.6 GB)",
     helper: "Fast large model, great accuracy",
+    category: "whisper",
   },
   {
     value: "large",
     label: "Whisper Large v3 (3.1 GB)",
     helper: "Highest accuracy, requires GPU",
+    category: "whisper",
   },
   {
     value: "hindi2hinglish",
     label: "Whisper Hindi2Hinglish Apex (595 MB)",
     helper: "Hindi speech transcribed as Hinglish (Latin script)",
+    category: "whisper",
   },
 ];
+
+const ease = `cubic-bezier(${easeOutCubic.join(", ")})`;
+const buttonTransition = `background-color ${duration.fast}s ${ease}, border-color ${duration.fast}s ${ease}, transform ${duration.instant}s ${ease}`;
+
+const buttonSx = {
+  transition: buttonTransition,
+  "&:active": {
+    transform: "scale(0.97)",
+  },
+};
 
 const formatDownloadProgress = (
   snapshot: LocalSidecarDownloadSnapshot | undefined,
@@ -121,6 +168,15 @@ const formatDownloadProgress = (
   return progressPart || bytesPart;
 };
 
+const formatCompactPercent = (
+  snapshot: LocalSidecarDownloadSnapshot | undefined,
+): string | null => {
+  if (!snapshot || snapshot.progress == null) {
+    return null;
+  }
+  return `${Math.round(Math.max(0, Math.min(1, snapshot.progress)) * 100)}%`;
+};
+
 export const AITranscriptionConfiguration = () => {
   const intl = useIntl();
   const transcription = useAppStore((state) => state.settings.aiTranscription);
@@ -140,6 +196,9 @@ export const AITranscriptionConfiguration = () => {
   const modelDownloadSnapshot =
     localTranscriptionConfig.modelDownloads[modelValue];
   const modelDownloading = isLocalTranscriptionModelDownloadInProgress(
+    modelDownloadSnapshot,
+  );
+  const modelPaused = isLocalTranscriptionModelDownloadPaused(
     modelDownloadSnapshot,
   );
   const modelSelectable = isLocalTranscriptionModelSelectable(
@@ -243,6 +302,18 @@ export const AITranscriptionConfiguration = () => {
     [localTranscriptionConfig.modelDownloads],
   );
 
+  const handlePauseModel = useCallback((model: LocalWhisperModel) => {
+    void pauseLocalTranscriptionModelDownload(model);
+  }, []);
+
+  const handleResumeModel = useCallback((model: LocalWhisperModel) => {
+    void resumeLocalTranscriptionModelDownload(model);
+  }, []);
+
+  const handleCancelModel = useCallback((model: LocalWhisperModel) => {
+    void cancelLocalTranscriptionModelDownload(model);
+  }, []);
+
   const handleDeleteModel = useCallback(
     (model: LocalWhisperModel) => {
       if (localTranscriptionConfig.modelDeletes[model]) {
@@ -267,6 +338,317 @@ export const AITranscriptionConfiguration = () => {
     },
     [localTranscriptionConfig.modelDeletes, modelValue],
   );
+
+  const renderModelMenuItem = (option: ModelOption) => {
+    const { value, label, helper } = option;
+    const status = localTranscriptionConfig.modelStatuses[value];
+    const downloadSnapshot = localTranscriptionConfig.modelDownloads[value];
+    const deleting = !!localTranscriptionConfig.modelDeletes[value];
+    const downloading =
+      isLocalTranscriptionModelDownloadInProgress(downloadSnapshot);
+    const paused = isLocalTranscriptionModelDownloadPaused(downloadSnapshot);
+    const selectable = isLocalTranscriptionModelSelectable(
+      transcription,
+      value,
+    );
+    const active = modelValue === value;
+    const progressLabel = formatDownloadProgress(downloadSnapshot);
+
+    return (
+      <MenuItem
+        key={value}
+        value={value}
+        sx={{
+          ...activeRowSx,
+          alignItems: "stretch",
+          py: 1.25,
+        }}
+      >
+        <Stack spacing={0.75} sx={{ width: "100%" }}>
+          <Stack
+            direction="row"
+            justifyContent="space-between"
+            alignItems="flex-start"
+            spacing={1.5}
+          >
+            <Box sx={{ minWidth: 0, flex: 1 }}>
+              <Stack direction="row" alignItems="center" spacing={0.5}>
+                <Typography variant="body2" fontWeight={600}>
+                  {label}
+                </Typography>
+                {(() => {
+                  const fit = capabilities
+                    ? getModelFit(capabilities, value)
+                    : null;
+                  if (
+                    fit?.level !== "caution" &&
+                    fit?.level !== "discouraged"
+                  ) {
+                    return null;
+                  }
+                  return (
+                    <WarningAmberRoundedIcon
+                      fontSize="small"
+                      titleAccess={intl.formatMessage({
+                        defaultMessage:
+                          "This model may not run well on this device",
+                      })}
+                      sx={{
+                        color:
+                          fit.level === "discouraged"
+                            ? "error.main"
+                            : "warning.main",
+                      }}
+                    />
+                  );
+                })()}
+                {active && (
+                  <CheckRoundedIcon
+                    fontSize="small"
+                    sx={activeRowCheckSx}
+                    titleAccess={intl.formatMessage({
+                      defaultMessage: "Selected",
+                    })}
+                  />
+                )}
+              </Stack>
+              <Typography
+                variant="caption"
+                color="text.secondary"
+                display="block"
+              >
+                {helper}
+              </Typography>
+              <Typography
+                variant="caption"
+                color="text.secondary"
+                sx={{ fontVariantNumeric: "tabular-nums" }}
+              >
+                {downloading
+                  ? intl.formatMessage({
+                      defaultMessage: "Downloading...",
+                    })
+                  : paused
+                    ? intl.formatMessage({
+                        defaultMessage: "Paused",
+                      })
+                    : selectable
+                      ? intl.formatMessage({
+                          defaultMessage: "Downloaded",
+                        })
+                      : status?.validationError || null}
+              </Typography>
+            </Box>
+
+            <Stack
+              direction="row"
+              spacing={0.75}
+              alignItems="center"
+              alignSelf="center"
+            >
+              {downloading && (
+                <>
+                  <Button
+                    size="small"
+                    variant="outlined"
+                    color="warning"
+                    startIcon={<PauseRoundedIcon sx={{ fontSize: 14 }} />}
+                    sx={{
+                      ...buttonSx,
+                      minWidth: 0,
+                      minHeight: 24,
+                      px: 1,
+                      borderRadius: 999,
+                      boxShadow: "none",
+                      textTransform: "none",
+                      fontSize: 12,
+                      lineHeight: 1.2,
+                    }}
+                    onMouseDown={(event) => {
+                      event.preventDefault();
+                      event.stopPropagation();
+                    }}
+                    onClick={(event) => {
+                      event.preventDefault();
+                      event.stopPropagation();
+                      handlePauseModel(value);
+                    }}
+                  >
+                    <FormattedMessage defaultMessage="Pause" />
+                  </Button>
+                  <Button
+                    size="small"
+                    variant="text"
+                    color="inherit"
+                    startIcon={<CloseRoundedIcon sx={{ fontSize: 14 }} />}
+                    sx={{
+                      ...buttonSx,
+                      minWidth: 0,
+                      minHeight: 24,
+                      px: 1,
+                      borderRadius: 999,
+                      textTransform: "none",
+                      fontSize: 12,
+                      lineHeight: 1.2,
+                      color: "text.secondary",
+                    }}
+                    onMouseDown={(event) => {
+                      event.preventDefault();
+                      event.stopPropagation();
+                    }}
+                    onClick={(event) => {
+                      event.preventDefault();
+                      event.stopPropagation();
+                      handleCancelModel(value);
+                    }}
+                  >
+                    <FormattedMessage defaultMessage="Cancel" />
+                  </Button>
+                </>
+              )}
+
+              {paused && (
+                <>
+                  <Button
+                    size="small"
+                    variant="contained"
+                    color="primary"
+                    startIcon={<PlayArrowRoundedIcon sx={{ fontSize: 14 }} />}
+                    sx={{
+                      ...buttonSx,
+                      minWidth: 0,
+                      minHeight: 24,
+                      px: 1,
+                      borderRadius: 999,
+                      boxShadow: "none",
+                      textTransform: "none",
+                      fontSize: 12,
+                      lineHeight: 1.2,
+                    }}
+                    onMouseDown={(event) => {
+                      event.preventDefault();
+                      event.stopPropagation();
+                    }}
+                    onClick={(event) => {
+                      event.preventDefault();
+                      event.stopPropagation();
+                      handleResumeModel(value);
+                    }}
+                  >
+                    <FormattedMessage defaultMessage="Resume" />
+                  </Button>
+                  <Button
+                    size="small"
+                    variant="text"
+                    color="inherit"
+                    startIcon={<CloseRoundedIcon sx={{ fontSize: 14 }} />}
+                    sx={{
+                      ...buttonSx,
+                      minWidth: 0,
+                      minHeight: 24,
+                      px: 1,
+                      borderRadius: 999,
+                      textTransform: "none",
+                      fontSize: 12,
+                      lineHeight: 1.2,
+                      color: "text.secondary",
+                    }}
+                    onMouseDown={(event) => {
+                      event.preventDefault();
+                      event.stopPropagation();
+                    }}
+                    onClick={(event) => {
+                      event.preventDefault();
+                      event.stopPropagation();
+                      handleCancelModel(value);
+                    }}
+                  >
+                    <FormattedMessage defaultMessage="Cancel" />
+                  </Button>
+                </>
+              )}
+
+              {!downloading && !paused && (
+                <Button
+                  size="small"
+                  variant="contained"
+                  color={selectable ? "error" : "primary"}
+                  disabled={deleting}
+                  sx={{
+                    ...buttonSx,
+                    minWidth: 0,
+                    minHeight: 24,
+                    px: 1.25,
+                    borderRadius: 999,
+                    boxShadow: "none",
+                    textTransform: "none",
+                    fontSize: 12,
+                    lineHeight: 1.2,
+                    alignSelf: "center",
+                    "&:hover": {
+                      boxShadow: "none",
+                    },
+                  }}
+                  onMouseDown={(event) => {
+                    event.preventDefault();
+                    event.stopPropagation();
+                  }}
+                  onClick={(event) => {
+                    event.preventDefault();
+                    event.stopPropagation();
+                    if (selectable) {
+                      handleDeleteModel(value);
+                      return;
+                    }
+                    handleDownloadModel(value);
+                  }}
+                >
+                  {deleting ? (
+                    <FormattedMessage defaultMessage="Deleting..." />
+                  ) : selectable ? (
+                    <FormattedMessage defaultMessage="Delete" />
+                  ) : (
+                    <FormattedMessage defaultMessage="Download" />
+                  )}
+                </Button>
+              )}
+            </Stack>
+          </Stack>
+
+          {(downloading || paused) && (
+            <LinearProgress
+              color={paused ? "warning" : "primary"}
+              variant={
+                downloadSnapshot?.progress != null
+                  ? "determinate"
+                  : "indeterminate"
+              }
+              value={
+                downloadSnapshot?.progress != null
+                  ? Math.max(0, Math.min(1, downloadSnapshot.progress)) * 100
+                  : undefined
+              }
+              sx={{ borderRadius: 999, height: 4 }}
+            />
+          )}
+
+          {(downloading || paused) && progressLabel && (
+            <Typography
+              variant="caption"
+              color={paused ? "warning.main" : "text.secondary"}
+              sx={{ fontVariantNumeric: "tabular-nums" }}
+            >
+              {paused
+                ? `${intl.formatMessage({ defaultMessage: "Paused" })} • ${progressLabel}`
+                : progressLabel}
+            </Typography>
+          )}
+        </Stack>
+      </MenuItem>
+    );
+  };
+
+  const compactPercent = formatCompactPercent(modelDownloadSnapshot);
 
   return (
     <Stack spacing={3} alignItems="flex-start" sx={{ width: "100%" }}>
@@ -320,7 +702,7 @@ export const AITranscriptionConfiguration = () => {
 
                     return (
                       <MenuItem key={device.id} value={device.id}>
-                        {`${modeLabel} • ${device.name}`}
+                        {device.name} ({modeLabel})
                       </MenuItem>
                     );
                   })
@@ -328,13 +710,15 @@ export const AITranscriptionConfiguration = () => {
               </Select>
             </FormControl>
 
-            <FormControl fullWidth size="small">
-              <InputLabel id="model-size-label">
-                <FormattedMessage defaultMessage="Model size" />
+            <FormControl fullWidth size="small" sx={{ position: "relative" }}>
+              <InputLabel id="transcription-model-label">
+                <FormattedMessage defaultMessage="Transcription model" />
               </InputLabel>
               <Select
-                labelId="model-size-label"
-                label={<FormattedMessage defaultMessage="Model size" />}
+                labelId="transcription-model-label"
+                label={
+                  <FormattedMessage defaultMessage="Transcription model" />
+                }
                 value={modelValue}
                 onChange={(event) =>
                   handleModelSizeChange(String(event.target.value))
@@ -344,187 +728,51 @@ export const AITranscriptionConfiguration = () => {
                   const option = MODEL_OPTIONS.find(
                     (item) => item.value === model,
                   );
-                  return option?.label ?? model;
+                  return option?.label || model;
                 }}
                 sx={
                   showInlineModelDownloadAction
                     ? {
                         "& .MuiSelect-select": {
-                          pr: "132px !important",
+                          pr: "180px !important",
                         },
                       }
                     : undefined
                 }
               >
-                {MODEL_OPTIONS.map(({ value, label, helper }) => {
-                  const status = localTranscriptionConfig.modelStatuses[value];
-                  const downloadSnapshot =
-                    localTranscriptionConfig.modelDownloads[value];
-                  const downloading =
-                    isLocalTranscriptionModelDownloadInProgress(
-                      downloadSnapshot,
-                    );
-                  const deleting =
-                    !!localTranscriptionConfig.modelDeletes[value];
-                  const selectable = isLocalTranscriptionModelSelectable(
-                    transcription,
-                    value,
-                  );
-                  const progressLabel =
-                    formatDownloadProgress(downloadSnapshot);
-                  const active = value === modelValue;
+                <ListSubheader
+                  sx={{
+                    bgcolor: "background.paper",
+                    lineHeight: "28px",
+                    fontWeight: 700,
+                    fontSize: 11,
+                    letterSpacing: "0.04em",
+                    textTransform: "uppercase",
+                    color: "text.secondary",
+                  }}
+                >
+                  <FormattedMessage defaultMessage="NVIDIA NeMo / Sherpa-ONNX (Fast & No Hallucinations)" />
+                </ListSubheader>
+                {MODEL_OPTIONS.filter((opt) => opt.category === "fast").map(
+                  (opt) => renderModelMenuItem(opt),
+                )}
 
-                  return (
-                    <MenuItem key={value} value={value} sx={activeRowSx}>
-                      <Stack spacing={0.75} sx={{ width: "100%" }}>
-                        <Stack
-                          direction="row"
-                          alignItems="center"
-                          justifyContent="space-between"
-                          gap={1}
-                          sx={{ width: "100%" }}
-                        >
-                          <Box sx={{ minWidth: 0 }}>
-                            <Stack
-                              direction="row"
-                              alignItems="center"
-                              gap={0.75}
-                            >
-                              <Typography variant="body2" fontWeight={600}>
-                                {label}
-                              </Typography>
-                              {(() => {
-                                const fit = capabilities
-                                  ? getModelFit(capabilities, value)
-                                  : null;
-                                if (
-                                  fit?.level !== "caution" &&
-                                  fit?.level !== "discouraged"
-                                ) {
-                                  return null;
-                                }
-                                return (
-                                  <WarningAmberRoundedIcon
-                                    fontSize="small"
-                                    titleAccess={intl.formatMessage({
-                                      defaultMessage:
-                                        "This model may not run well on this device",
-                                    })}
-                                    sx={{
-                                      color:
-                                        fit.level === "discouraged"
-                                          ? "error.main"
-                                          : "warning.main",
-                                    }}
-                                  />
-                                );
-                              })()}
-                              {active && (
-                                <CheckRoundedIcon
-                                  fontSize="small"
-                                  sx={activeRowCheckSx}
-                                  titleAccess={intl.formatMessage({
-                                    defaultMessage: "Selected",
-                                  })}
-                                />
-                              )}
-                            </Stack>
-                            <Typography
-                              variant="caption"
-                              color="text.secondary"
-                              display="block"
-                            >
-                              {helper}
-                            </Typography>
-                            <Typography
-                              variant="caption"
-                              color="text.secondary"
-                            >
-                              {selectable
-                                ? intl.formatMessage({
-                                    defaultMessage: "Downloaded",
-                                  })
-                                : status?.validationError || null}
-                            </Typography>
-                          </Box>
-                          <Button
-                            size="small"
-                            variant="contained"
-                            color={selectable ? "error" : "primary"}
-                            disabled={downloading || deleting}
-                            sx={{
-                              minWidth: 0,
-                              minHeight: 24,
-                              px: 1.25,
-                              borderRadius: 999,
-                              boxShadow: "none",
-                              textTransform: "none",
-                              fontSize: 12,
-                              lineHeight: 1.2,
-                              alignSelf: "center",
-                              "&:hover": {
-                                boxShadow: "none",
-                              },
-                            }}
-                            onMouseDown={(event) => {
-                              event.preventDefault();
-                              event.stopPropagation();
-                            }}
-                            onClick={(event) => {
-                              event.preventDefault();
-                              event.stopPropagation();
-                              if (selectable) {
-                                handleDeleteModel(value);
-                                return;
-                              }
-                              handleDownloadModel(value);
-                            }}
-                          >
-                            {downloading
-                              ? intl.formatMessage({
-                                  defaultMessage: "Downloading...",
-                                })
-                              : deleting
-                                ? intl.formatMessage({
-                                    defaultMessage: "Deleting...",
-                                  })
-                                : selectable
-                                  ? intl.formatMessage({
-                                      defaultMessage: "Delete",
-                                    })
-                                  : intl.formatMessage({
-                                      defaultMessage: "Download",
-                                    })}
-                          </Button>
-                        </Stack>
-
-                        {downloading && (
-                          <LinearProgress
-                            variant={
-                              downloadSnapshot?.progress != null
-                                ? "determinate"
-                                : "indeterminate"
-                            }
-                            value={
-                              downloadSnapshot?.progress != null
-                                ? Math.max(
-                                    0,
-                                    Math.min(1, downloadSnapshot.progress),
-                                  ) * 100
-                                : undefined
-                            }
-                          />
-                        )}
-
-                        {downloading && progressLabel && (
-                          <Typography variant="caption" color="text.secondary">
-                            {progressLabel}
-                          </Typography>
-                        )}
-                      </Stack>
-                    </MenuItem>
-                  );
-                })}
+                <ListSubheader
+                  sx={{
+                    bgcolor: "background.paper",
+                    lineHeight: "28px",
+                    fontWeight: 700,
+                    fontSize: 11,
+                    letterSpacing: "0.04em",
+                    textTransform: "uppercase",
+                    color: "text.secondary",
+                  }}
+                >
+                  <FormattedMessage defaultMessage="OpenAI Whisper (Multilingual GGML)" />
+                </ListSubheader>
+                {MODEL_OPTIONS.filter((opt) => opt.category === "whisper").map(
+                  (opt) => renderModelMenuItem(opt),
+                )}
               </Select>
               {showInlineModelDownloadAction && (
                 <Box
@@ -536,38 +784,183 @@ export const AITranscriptionConfiguration = () => {
                     zIndex: 1,
                   }}
                 >
-                  <Button
-                    size="small"
-                    variant="contained"
-                    color="primary"
-                    sx={{
-                      minWidth: 0,
-                      minHeight: 24,
-                      px: 1.25,
-                      borderRadius: 999,
-                      boxShadow: "none",
-                      textTransform: "none",
-                      fontSize: 12,
-                      lineHeight: 1.2,
-                      "&:hover": {
-                        boxShadow: "none",
-                      },
-                    }}
-                    disabled={modelDownloading}
-                    onMouseDown={(event) => {
-                      event.preventDefault();
-                      event.stopPropagation();
-                    }}
-                    onClick={(event) => {
-                      event.preventDefault();
-                      event.stopPropagation();
-                      handleDownloadModel(modelValue);
-                    }}
-                  >
-                    {modelDownloading
-                      ? intl.formatMessage({ defaultMessage: "Downloading..." })
-                      : intl.formatMessage({ defaultMessage: "Download" })}
-                  </Button>
+                  <Stack direction="row" spacing={0.75} alignItems="center">
+                    {modelDownloading && (
+                      <>
+                        {compactPercent && (
+                          <Typography
+                            variant="caption"
+                            fontWeight={600}
+                            color="text.secondary"
+                            sx={{ fontVariantNumeric: "tabular-nums", mr: 0.5 }}
+                          >
+                            {compactPercent}
+                          </Typography>
+                        )}
+                        <Button
+                          size="small"
+                          variant="outlined"
+                          color="warning"
+                          startIcon={<PauseRoundedIcon sx={{ fontSize: 14 }} />}
+                          sx={{
+                            ...buttonSx,
+                            minWidth: 0,
+                            minHeight: 24,
+                            px: 1,
+                            borderRadius: 999,
+                            textTransform: "none",
+                            fontSize: 12,
+                            lineHeight: 1.2,
+                          }}
+                          onMouseDown={(event) => {
+                            event.preventDefault();
+                            event.stopPropagation();
+                          }}
+                          onClick={(event) => {
+                            event.preventDefault();
+                            event.stopPropagation();
+                            handlePauseModel(modelValue);
+                          }}
+                        >
+                          <FormattedMessage defaultMessage="Pause" />
+                        </Button>
+                        <Button
+                          size="small"
+                          variant="text"
+                          color="inherit"
+                          startIcon={<CloseRoundedIcon sx={{ fontSize: 14 }} />}
+                          sx={{
+                            ...buttonSx,
+                            minWidth: 0,
+                            minHeight: 24,
+                            px: 1,
+                            borderRadius: 999,
+                            textTransform: "none",
+                            fontSize: 12,
+                            lineHeight: 1.2,
+                            color: "text.secondary",
+                          }}
+                          onMouseDown={(event) => {
+                            event.preventDefault();
+                            event.stopPropagation();
+                          }}
+                          onClick={(event) => {
+                            event.preventDefault();
+                            event.stopPropagation();
+                            handleCancelModel(modelValue);
+                          }}
+                        >
+                          <FormattedMessage defaultMessage="Cancel" />
+                        </Button>
+                      </>
+                    )}
+
+                    {modelPaused && (
+                      <>
+                        <Typography
+                          variant="caption"
+                          fontWeight={600}
+                          color="warning.main"
+                          sx={{ fontVariantNumeric: "tabular-nums", mr: 0.5 }}
+                        >
+                          {compactPercent
+                            ? `Paused (${compactPercent})`
+                            : "Paused"}
+                        </Typography>
+                        <Button
+                          size="small"
+                          variant="contained"
+                          color="primary"
+                          startIcon={
+                            <PlayArrowRoundedIcon sx={{ fontSize: 14 }} />
+                          }
+                          sx={{
+                            ...buttonSx,
+                            minWidth: 0,
+                            minHeight: 24,
+                            px: 1,
+                            borderRadius: 999,
+                            boxShadow: "none",
+                            textTransform: "none",
+                            fontSize: 12,
+                            lineHeight: 1.2,
+                          }}
+                          onMouseDown={(event) => {
+                            event.preventDefault();
+                            event.stopPropagation();
+                          }}
+                          onClick={(event) => {
+                            event.preventDefault();
+                            event.stopPropagation();
+                            handleResumeModel(modelValue);
+                          }}
+                        >
+                          <FormattedMessage defaultMessage="Resume" />
+                        </Button>
+                        <Button
+                          size="small"
+                          variant="text"
+                          color="inherit"
+                          startIcon={<CloseRoundedIcon sx={{ fontSize: 14 }} />}
+                          sx={{
+                            ...buttonSx,
+                            minWidth: 0,
+                            minHeight: 24,
+                            px: 1,
+                            borderRadius: 999,
+                            textTransform: "none",
+                            fontSize: 12,
+                            lineHeight: 1.2,
+                            color: "text.secondary",
+                          }}
+                          onMouseDown={(event) => {
+                            event.preventDefault();
+                            event.stopPropagation();
+                          }}
+                          onClick={(event) => {
+                            event.preventDefault();
+                            event.stopPropagation();
+                            handleCancelModel(modelValue);
+                          }}
+                        >
+                          <FormattedMessage defaultMessage="Cancel" />
+                        </Button>
+                      </>
+                    )}
+
+                    {!modelDownloading && !modelPaused && (
+                      <Button
+                        size="small"
+                        variant="contained"
+                        color="primary"
+                        sx={{
+                          ...buttonSx,
+                          minWidth: 0,
+                          minHeight: 24,
+                          px: 1.25,
+                          borderRadius: 999,
+                          boxShadow: "none",
+                          textTransform: "none",
+                          fontSize: 12,
+                          lineHeight: 1.2,
+                          "&:hover": {
+                            boxShadow: "none",
+                          },
+                        }}
+                        onMouseDown={(event) => {
+                          event.preventDefault();
+                          event.stopPropagation();
+                        }}
+                        onClick={(event) => {
+                          event.preventDefault();
+                          event.stopPropagation();
+                          handleDownloadModel(modelValue);
+                        }}
+                      >
+                        <FormattedMessage defaultMessage="Download" />
+                      </Button>
+                    )}
+                  </Stack>
                 </Box>
               )}
             </FormControl>
