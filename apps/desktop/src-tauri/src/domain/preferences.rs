@@ -81,6 +81,14 @@ pub struct UserPreferences {
     pub insertion_method: Option<String>,
     #[serde(default)]
     pub typing_speed_ms: Option<i64>,
+    /// Which monitor "Reset Pill Position" re-homes the pill onto:
+    /// "current" (the monitor the pill lives on) or "cursor".
+    #[serde(default = "default_pill_reset_monitor_strategy")]
+    pub pill_reset_monitor_strategy: String,
+}
+
+fn default_pill_reset_monitor_strategy() -> String {
+    "current".to_string()
 }
 
 fn default_dictation_pill_visibility() -> String {

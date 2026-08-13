@@ -30,6 +30,8 @@ export type AgentMode = PostProcessingMode | "openclaw";
 
 export type DictationPillVisibility = "hidden" | "while_active" | "persistent";
 
+export type PillResetMonitorStrategy = "current" | "cursor";
+
 export type PullStatus = "in_progress" | "error" | "complete";
 
 export const STYLING_MODES = ["app", "manual"] as const;

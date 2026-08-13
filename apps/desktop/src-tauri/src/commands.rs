@@ -1955,12 +1955,18 @@ pub fn set_reset_pill_position_enabled(app: AppHandle, enabled: bool) -> Result<
 
 /// Send a reset-position IPC message to the native pill overlay.
 ///
-/// Clears the pill's saved position so the next tick repositions it to
-/// the default centre-bottom of the current monitor.
+/// Clears the pill's saved position so the next tick repositions it to the
+/// default centre-bottom of a monitor. `strategy` selects which monitor:
+/// `"current"` (the monitor the pill lives on, the historical default) or
+/// `"cursor"` (the monitor under the mouse).
 #[tauri::command]
 #[specta::specta]
-pub fn reset_pill_position(app: AppHandle) -> Result<(), String> {
-    crate::platform::overlay::notify_reset_position(&app)
+pub fn reset_pill_position(
+    app: AppHandle,
+    strategy: Option<String>,
+) -> Result<(), String> {
+    let strategy = strategy.unwrap_or_else(|| "current".to_string());
+    crate::platform::overlay::notify_reset_position(&app, &strategy)
 }
 
 #[tauri::command]

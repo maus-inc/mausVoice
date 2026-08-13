@@ -2,6 +2,7 @@ import {
   AgentMode,
   DictationPillVisibility,
   Nullable,
+  PillResetMonitorStrategy,
   PostProcessingMode,
   TranscriptionMode,
   UserPreferences,
@@ -53,7 +54,12 @@ type LocalUserPreferences = {
   menuBarIconHidden: boolean;
   insertionMethod: Nullable<string>;
   typingSpeedMs: Nullable<number>;
+  pillResetMonitorStrategy?: Nullable<PillResetMonitorStrategy>;
 };
+
+const normalizePillResetMonitorStrategy = (
+  strategy: Nullable<string> | undefined,
+): PillResetMonitorStrategy => (strategy === "cursor" ? "cursor" : "current");
 
 // Normalize post-processing mode for backwards compatibility
 // "ollama" and the removed "cloud" modes are no longer supported - treat them
@@ -111,6 +117,9 @@ export const fromLocalPreferences = (
   menuBarIconHidden: preferences.menuBarIconHidden ?? false,
   insertionMethod: preferences.insertionMethod ?? null,
   typingSpeedMs: preferences.typingSpeedMs ?? null,
+  pillResetMonitorStrategy: normalizePillResetMonitorStrategy(
+    preferences.pillResetMonitorStrategy,
+  ),
 });
 
 export const toLocalPreferences = (
@@ -158,6 +167,9 @@ export const toLocalPreferences = (
   menuBarIconHidden: preferences.menuBarIconHidden ?? false,
   insertionMethod: preferences.insertionMethod ?? null,
   typingSpeedMs: preferences.typingSpeedMs ?? null,
+  pillResetMonitorStrategy: normalizePillResetMonitorStrategy(
+    preferences.pillResetMonitorStrategy,
+  ),
 });
 
 export abstract class BaseUserPreferencesRepo extends BaseRepo {

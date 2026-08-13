@@ -194,11 +194,13 @@ pub fn notify_assistant_state(app: &tauri::AppHandle, payload: &str) {
     }
 }
 
-pub fn notify_reset_position(app: &tauri::AppHandle) -> Result<(), String> {
+pub fn notify_reset_position(app: &tauri::AppHandle, strategy: &str) -> Result<(), String> {
     match app.try_state::<std::sync::Arc<PillProcess>>() {
-        Some(pill) => pill
-            .send(r#"{"type":"reset_position"}"#)
-            .map_err(|err| format!("failed to reset pill position: {err}")),
+        Some(pill) => {
+            let msg = format!(r#"{{"type":"reset_position","strategy":"{strategy}"}}"#);
+            pill.send(&msg)
+                .map_err(|err| format!("failed to reset pill position: {err}"))
+        }
         None => Err("Reset position requested with no managed pill process".to_string()),
     }
 }

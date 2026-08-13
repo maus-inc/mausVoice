@@ -1,6 +1,6 @@
 use std::cell::{Cell, RefCell};
 
-use crate::ipc::{Phase, PillMessage, PillPermission, PillStreaming, Visibility};
+use crate::ipc::{Phase, PillMessage, PillPermission, PillStreaming, ResetStrategy, Visibility};
 
 use crate::constants::*;
 use crate::pill::Backend;
@@ -221,6 +221,8 @@ pub(crate) struct PillState {
     // X11 drop position, in physical root coordinates, persisted when a drag
     // ends so the toplevel stays parked until the user moves it again.
     pub(crate) has_saved_position: Cell<bool>,
+    /// Monitor strategy for the next re-home after a reset-position command.
+    pub(crate) reset_strategy: Cell<ResetStrategy>,
     pub(crate) saved_x: Cell<f64>,
     pub(crate) saved_y: Cell<f64>,
     // Set by the release handler when X11 already persisted the exact drop;

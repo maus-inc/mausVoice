@@ -43,8 +43,11 @@ pub fn notify_assistant_state(app: &tauri::AppHandle, payload: &str) {
     pill_process::notify_assistant_state(app, payload);
 }
 
-pub fn notify_reset_position(app: &tauri::AppHandle) -> Result<(), String> {
-    pill_process::notify_reset_position(app)
+pub fn notify_reset_position(
+    app: &tauri::AppHandle,
+    strategy: &str,
+) -> Result<(), String> {
+    pill_process::notify_reset_position(app, strategy)
 }
 
 fn resolve_pill_binary_path(app: &tauri::AppHandle) -> Option<std::path::PathBuf> {

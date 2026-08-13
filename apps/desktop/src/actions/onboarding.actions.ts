@@ -200,6 +200,7 @@ export const submitOnboarding = async () => {
       menuBarIconHidden: false,
       insertionMethod: null,
       typingSpeedMs: null,
+      pillResetMonitorStrategy: "current",
     };
 
     const [savedUser, savedPreferences] = await Promise.all([

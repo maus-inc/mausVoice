@@ -8,7 +8,7 @@ use gtk::glib::{self, ControlFlow};
 use gtk::prelude::*;
 
 use crate::constants::MARGIN_BOTTOM;
-use crate::ipc::{self, OutMessage};
+use crate::ipc::{self, OutMessage, ResetStrategy};
 use crate::state::{PillState, WindowMode};
 
 type XDisplay = c_void;
@@ -279,6 +279,13 @@ pub(crate) fn setup_x11_window(window: &gtk::Window, state: Rc<PillState>) {
         let center_x = (ox + pill_x + pill_w / 2.0) * surface_scale;
         let center_y = (oy + pill_y + pill_h / 2.0) * surface_scale;
 
+        // A reset with the "cursor" strategy re-homes onto the monitor under
+        // the pointer exactly once; the strategy is consumed so later ticks
+        // keep the pill where it landed instead of chasing the cursor.
+        let reset_to_cursor = !dragging
+            && !state_tick.has_saved_position.get()
+            && state_tick.reset_strategy.get() == ResetStrategy::Cursor;
+
         let (anchor_x, anchor_y) = if dragging {
             let (ax, ay) = cursor_pos();
             (ax as f64, ay as f64)
@@ -287,6 +294,10 @@ pub(crate) fn setup_x11_window(window: &gtk::Window, state: Rc<PillState>) {
                 state_tick.saved_x.get() + center_x,
                 state_tick.saved_y.get() + center_y,
             )
+        } else if reset_to_cursor {
+            state_tick.reset_strategy.set(ResetStrategy::Current);
+            let (ax, ay) = cursor_pos();
+            (ax as f64, ay as f64)
         } else {
             let prev = last_pos.get();
             (prev.0 as f64 + center_x, prev.1 as f64 + center_y)

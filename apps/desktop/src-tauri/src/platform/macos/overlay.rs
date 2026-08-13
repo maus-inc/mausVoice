@@ -5,7 +5,7 @@ use std::sync::Mutex;
 use tauri::{Emitter, Manager};
 
 use crate::domain::{OverlayPhase, PillWindowSize};
-use rust_macos_pill::ipc::{InMessage, OutMessage, Phase, Visibility};
+use rust_macos_pill::ipc::{InMessage, OutMessage, Phase, ResetStrategy, Visibility};
 
 /// Monotonic sequence number for phase messages (mirrors `pill_process.rs`);
 /// lets the pill ignore stale/duplicate phase writes.
@@ -104,10 +104,18 @@ pub fn notify_assistant_state(app: &tauri::AppHandle, payload: &str) {
     }
 }
 
-pub fn notify_reset_position(app: &tauri::AppHandle) -> Result<(), String> {
+pub fn notify_reset_position(
+    app: &tauri::AppHandle,
+    strategy: &str,
+) -> Result<(), String> {
+    let strategy = if strategy == "cursor" {
+        ResetStrategy::Cursor
+    } else {
+        ResetStrategy::Current
+    };
     match app.try_state::<std::sync::Arc<MacosPill>>() {
         Some(pill) => {
-            pill.send(InMessage::ResetPosition);
+            pill.send(InMessage::ResetPosition { strategy });
             Ok(())
         }
         None => Err("Reset position requested with no managed macOS pill".to_string()),

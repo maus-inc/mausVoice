@@ -717,7 +717,10 @@ export const AppSideEffects = () => {
   // the tray menu item's enabled state; when the user clicks "Reset Pill
   // Position" we forward the IPC message and the pill re-homes itself.
   useTauriListen<void>("tray-reset-pill-position", () => {
-    invoke("reset_pill_position").catch((error) => {
+    const strategy =
+      getMyUserPreferences(getAppState())?.pillResetMonitorStrategy ??
+      "current";
+    invoke("reset_pill_position", { strategy }).catch((error) => {
       getLogger().error(`Failed to reset pill position: ${error}`);
     });
   });

@@ -30,6 +30,21 @@ pub enum Phase {
     Paused,
 }
 
+
+/// Which monitor a reset-position re-homes the pill onto.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ResetStrategy {
+    Current,
+    Cursor,
+}
+
+impl Default for ResetStrategy {
+    fn default() -> Self {
+        ResetStrategy::Current
+    }
+}
+
 #[derive(Debug, Clone, Deserialize)]
 pub struct PillMessage {
     pub id: String,
@@ -102,7 +117,13 @@ pub enum InMessage {
         streaming: Option<PillStreaming>,
         permissions: Vec<PillPermission>,
     },
-    ResetPosition,
+    /// Clears the saved position; `strategy` picks which monitor the pill
+    /// re-homes onto ("current" = the monitor it lives on, "cursor" = the
+    /// monitor under the pointer).
+    ResetPosition {
+        #[serde(default)]
+        strategy: ResetStrategy,
+    },
     Quit,
 }
 

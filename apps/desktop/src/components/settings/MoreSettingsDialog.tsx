@@ -11,12 +11,17 @@ import {
   Switch,
   TextField,
 } from "@mui/material";
-import type { DictationPillVisibility, StylingMode } from "@maus-inc/types";
+import type {
+  DictationPillVisibility,
+  PillResetMonitorStrategy,
+  StylingMode,
+} from "@maus-inc/types";
 import { ChangeEvent, useEffect, useRef, useState } from "react";
 import { FormattedMessage, useIntl } from "react-intl";
 import {
   setDictationLimitMinutes,
   setDictationPillVisibility,
+  setPillResetMonitorStrategy,
   setIgnoreUpdateDialog,
   setIncognitoModeEnabled,
   setIncognitoModeIncludeInStats,
@@ -37,6 +42,7 @@ import {
   getMyUserPreferences,
   getTranscriptionPrefs,
 } from "../../utils/user.utils";
+import { SegmentedControl } from "../common/SegmentedControl";
 import { SettingSection } from "../common/SettingSection";
 
 export const MoreSettingsDialog = () => {
@@ -47,6 +53,7 @@ export const MoreSettingsDialog = () => {
     incognitoModeEnabled,
     incognitoIncludeInStats,
     dictationPillVisibility,
+    pillResetMonitorStrategy,
     realtimeOutputEnabled,
     stylingMode,
     canChangeStylingMode,
@@ -64,6 +71,7 @@ export const MoreSettingsDialog = () => {
       prefs?.incognitoModeEnabled ?? false,
       prefs?.incognitoModeIncludeInStats ?? false,
       getEffectivePillVisibility(prefs?.dictationPillVisibility),
+      prefs?.pillResetMonitorStrategy ?? "current",
       prefs?.realtimeOutputEnabled ?? false,
       getEffectiveStylingMode(state),
       true,
@@ -141,6 +149,12 @@ export const MoreSettingsDialog = () => {
   ) => {
     const visibility = event.target.value as DictationPillVisibility;
     void setDictationPillVisibility(visibility);
+  };
+
+  const handlePillResetMonitorStrategyChange = (
+    strategy: PillResetMonitorStrategy,
+  ) => {
+    void setPillResetMonitorStrategy(strategy);
   };
 
   const handleToggleRealtimeOutput = (event: ChangeEvent<HTMLInputElement>) => {
@@ -283,6 +297,24 @@ export const MoreSettingsDialog = () => {
                   {intl.formatMessage({ defaultMessage: "Hidden" })}
                 </MenuItem>
               </Select>
+            }
+          />
+
+          <SettingSection
+            title={<FormattedMessage defaultMessage="Reset pill position" />}
+            description={
+              <FormattedMessage defaultMessage="Choose which monitor the pill returns to when you reset its position: the monitor the pill is on, or the monitor your mouse is on." />
+            }
+            action={
+              <SegmentedControl<PillResetMonitorStrategy>
+                value={pillResetMonitorStrategy}
+                onChange={handlePillResetMonitorStrategyChange}
+                options={[
+                  { value: "current", label: "Current monitor" },
+                  { value: "cursor", label: "Cursor monitor" },
+                ]}
+                ariaLabel="Reset pill position monitor"
+              />
             }
           />
 

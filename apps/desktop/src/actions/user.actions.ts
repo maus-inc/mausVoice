@@ -2,6 +2,7 @@ import {
   type AgentMode,
   DictationPillVisibility,
   Nullable,
+  PillResetMonitorStrategy,
   StylingMode,
   User,
   UserPreferences,
@@ -106,6 +107,7 @@ export const createDefaultPreferences = (): UserPreferences => ({
   incognitoModeIncludeInStats: false,
   dictationLimitMinutes: DEFAULT_DICTATION_LIMIT_MINUTES,
   dictationPillVisibility: "while_active",
+  pillResetMonitorStrategy: "current",
   realtimeOutputEnabled: false,
   remoteOutputEnabled: false,
   remoteTargetDeviceId: null,
@@ -610,6 +612,14 @@ export const setDictationPillVisibility = async (
   await updateUserPreferences((preferences) => {
     preferences.dictationPillVisibility = visibility;
   }, "Failed to save dictation pill visibility preference. Please try again.");
+};
+
+export const setPillResetMonitorStrategy = async (
+  strategy: PillResetMonitorStrategy,
+): Promise<void> => {
+  await updateUserPreferences((preferences) => {
+    preferences.pillResetMonitorStrategy = strategy;
+  }, "Failed to save pill reset monitor strategy. Please try again.");
 };
 
 export const setDictationLimitMinutes = async (
