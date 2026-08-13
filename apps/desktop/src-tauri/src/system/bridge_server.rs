@@ -155,18 +155,18 @@ async fn handle_connection(stream: tokio::net::TcpStream, app: AppHandle) -> Res
         return write_response(&mut writer, 405, "Method Not Allowed").await;
     }
 
-    let hotkey = match path.strip_prefix("/hotkey/") {
+    let hotkey_name = match path.strip_prefix("/hotkey/") {
         Some(name) if is_valid_hotkey_name(name) => name,
         _ => return write_response(&mut writer, 404, "Not Found").await,
     };
 
     let payload = BridgeHotkeyTriggerPayload {
-        hotkey: hotkey.to_string(),
+        hotkey: hotkey_name.to_string(),
     };
 
     match app.emit(EVT_BRIDGE_HOTKEY_TRIGGER, &payload) {
         Ok(()) => {
-            log::info!("Bridge hotkey triggered: {hotkey}");
+            log::info!("Bridge hotkey triggered: {hotkey_name}");
             write_response(&mut writer, 200, "OK").await
         }
         Err(err) => {
