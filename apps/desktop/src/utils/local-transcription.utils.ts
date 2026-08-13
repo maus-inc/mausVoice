@@ -23,69 +23,74 @@ export type LocalModelOption = {
 
 export const DEFAULT_LOCAL_WHISPER_MODEL: LocalWhisperModel = "tiny";
 
+const createModelOption = (
+  value: LocalWhisperModel,
+  label: string,
+  helper: string,
+  category: LocalModelCategory,
+): LocalModelOption => ({ value, label, helper, category });
+
 export const LOCAL_MODEL_OPTIONS: LocalModelOption[] = [
-  // Fast & Non-hallucinating Local Models (Parakeet / Canary / Sherpa-ONNX)
-  {
-    value: "parakeet-ctc-0.6b",
-    label: "NVIDIA Parakeet CTC 0.6B (120 MB)",
-    helper: "Ultra-fast English dictation, zero hallucination loops",
-    category: "fast",
-  },
-  {
-    value: "parakeet-tdt-0.6b",
-    label: "NVIDIA Parakeet TDT 0.6B (240 MB)",
-    helper: "State-of-the-art English dictation speed & accuracy",
-    category: "fast",
-  },
-  {
-    value: "canary-1b",
-    label: "NVIDIA Canary 1B (1.2 GB)",
-    helper: "Multilingual STT + automatic punctuation & casing",
-    category: "fast",
-  },
-  // OpenAI Whisper Models
-  {
-    value: "tiny",
-    label: "Whisper Tiny (77 MB)",
-    helper: "Fastest, lowest accuracy",
-    category: "whisper",
-  },
-  {
-    value: "base",
-    label: "Whisper Base (148 MB)",
-    helper: "Great balance of speed and accuracy",
-    category: "whisper",
-  },
-  {
-    value: "small",
-    label: "Whisper Small (488 MB)",
-    helper: "Recommended with GPU acceleration",
-    category: "whisper",
-  },
-  {
-    value: "medium",
-    label: "Whisper Medium (1.53 GB)",
-    helper: "Balanced quality and speed",
-    category: "whisper",
-  },
-  {
-    value: "turbo",
-    label: "Whisper Large v3 Turbo (1.6 GB)",
-    helper: "Fast large model, great accuracy",
-    category: "whisper",
-  },
-  {
-    value: "large",
-    label: "Whisper Large v3 (3.1 GB)",
-    helper: "Highest accuracy, requires GPU",
-    category: "whisper",
-  },
-  {
-    value: "hindi2hinglish",
-    label: "Whisper Hindi2Hinglish Apex (595 MB)",
-    helper: "Hindi speech transcribed as Hinglish (Latin script)",
-    category: "whisper",
-  },
+  createModelOption(
+    "parakeet-ctc-0.6b",
+    "NVIDIA Parakeet CTC 0.6B (120 MB)",
+    "Ultra-fast English dictation, zero hallucination loops",
+    "fast",
+  ),
+  createModelOption(
+    "parakeet-tdt-0.6b",
+    "NVIDIA Parakeet TDT 0.6B (240 MB)",
+    "State-of-the-art English dictation speed & accuracy",
+    "fast",
+  ),
+  createModelOption(
+    "canary-1b",
+    "NVIDIA Canary 1B (1.2 GB)",
+    "Multilingual STT + automatic punctuation & casing",
+    "fast",
+  ),
+  createModelOption(
+    "tiny",
+    "Whisper Tiny (77 MB)",
+    "Fastest, lowest accuracy",
+    "whisper",
+  ),
+  createModelOption(
+    "base",
+    "Whisper Base (148 MB)",
+    "Great balance of speed and accuracy",
+    "whisper",
+  ),
+  createModelOption(
+    "small",
+    "Whisper Small (488 MB)",
+    "Recommended with GPU acceleration",
+    "whisper",
+  ),
+  createModelOption(
+    "medium",
+    "Whisper Medium (1.53 GB)",
+    "Balanced quality and speed",
+    "whisper",
+  ),
+  createModelOption(
+    "turbo",
+    "Whisper Large v3 Turbo (1.6 GB)",
+    "Fast large model, great accuracy",
+    "whisper",
+  ),
+  createModelOption(
+    "large",
+    "Whisper Large v3 (3.1 GB)",
+    "Highest accuracy, requires GPU",
+    "whisper",
+  ),
+  createModelOption(
+    "hindi2hinglish",
+    "Whisper Hindi2Hinglish Apex (595 MB)",
+    "Hindi speech transcribed as Hinglish (Latin script)",
+    "whisper",
+  ),
 ];
 
 export const LOCAL_WHISPER_MODELS: LocalWhisperModel[] =

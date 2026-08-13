@@ -170,34 +170,22 @@ const ModelStatusText = ({
   return <>{validationError}</>;
 };
 
-type ModelDownloadActionButtonsProps = {
-  model: LocalWhisperModel;
-  downloading: boolean;
-  paused: boolean;
-  selectable: boolean;
-  deleting?: boolean;
-  compactPercent?: string | null;
-  onDownload: (model: LocalWhisperModel) => void;
-  onPause: (model: LocalWhisperModel) => void;
-  onResume: (model: LocalWhisperModel) => void;
-  onCancel: (model: LocalWhisperModel) => void;
-  onDelete?: (model: LocalWhisperModel) => void;
-};
-
-const ModelDownloadActionButtons = ({
+const BusyDownloadButtons = ({
   model,
-  downloading,
   paused,
-  selectable,
-  deleting,
   compactPercent,
-  onDownload,
   onPause,
   onResume,
   onCancel,
-  onDelete,
-}: ModelDownloadActionButtonsProps) => {
-  const triggerAction = (
+}: {
+  model: LocalWhisperModel;
+  paused: boolean;
+  compactPercent?: string | null;
+  onPause: (model: LocalWhisperModel) => void;
+  onResume: (model: LocalWhisperModel) => void;
+  onCancel: (model: LocalWhisperModel) => void;
+}) => {
+  const trigger = (
     event: React.MouseEvent,
     action: (m: LocalWhisperModel) => void,
   ) => {
@@ -206,82 +194,108 @@ const ModelDownloadActionButtons = ({
     action(model);
   };
 
-  const isBusy = downloading || paused;
+  const primaryAction = paused ? onResume : onPause;
+  const badgeColor = paused ? "warning.main" : "text.secondary";
+  const badgeLabel = paused
+    ? compactPercent
+      ? `Paused (${compactPercent})`
+      : "Paused"
+    : compactPercent;
 
-  if (isBusy) {
-    const isPaused = paused;
-    return (
-      <Stack direction="row" spacing={0.75} alignItems="center">
-        {compactPercent && (
-          <Typography
-            variant="caption"
-            fontWeight={600}
-            color={isPaused ? "warning.main" : "text.secondary"}
-            sx={{ fontVariantNumeric: "tabular-nums", mr: 0.5 }}
-          >
-            {isPaused ? `Paused (${compactPercent})` : compactPercent}
-          </Typography>
-        )}
-        <Button
-          size="small"
-          variant={isPaused ? "contained" : "outlined"}
-          color={isPaused ? "primary" : "warning"}
-          startIcon={
-            isPaused ? (
-              <PlayArrowRoundedIcon sx={{ fontSize: 14 }} />
-            ) : (
-              <PauseRoundedIcon sx={{ fontSize: 14 }} />
-            )
-          }
-          sx={{
-            ...buttonSx,
-            minWidth: 0,
-            minHeight: 24,
-            px: 1,
-            borderRadius: 999,
-            textTransform: "none",
-            fontSize: 12,
-            lineHeight: 1.2,
-          }}
-          onMouseDown={(e) => {
-            e.preventDefault();
-            e.stopPropagation();
-          }}
-          onClick={(e) => triggerAction(e, isPaused ? onResume : onPause)}
+  return (
+    <Stack direction="row" spacing={0.75} alignItems="center">
+      {badgeLabel && (
+        <Typography
+          variant="caption"
+          fontWeight={600}
+          color={badgeColor}
+          sx={{ fontVariantNumeric: "tabular-nums", mr: 0.5 }}
         >
-          {isPaused ? (
-            <FormattedMessage defaultMessage="Resume" />
+          {badgeLabel}
+        </Typography>
+      )}
+      <Button
+        size="small"
+        variant={paused ? "contained" : "outlined"}
+        color={paused ? "primary" : "warning"}
+        startIcon={
+          paused ? (
+            <PlayArrowRoundedIcon sx={{ fontSize: 14 }} />
           ) : (
-            <FormattedMessage defaultMessage="Pause" />
-          )}
-        </Button>
-        <Button
-          size="small"
-          variant="text"
-          color="inherit"
-          startIcon={<CloseRoundedIcon sx={{ fontSize: 14 }} />}
-          sx={{
-            ...buttonSx,
-            minWidth: 0,
-            minHeight: 24,
-            px: 1,
-            borderRadius: 999,
-            textTransform: "none",
-            fontSize: 12,
-            lineHeight: 1.2,
-            color: "text.secondary",
-          }}
-          onMouseDown={(e) => {
-            e.preventDefault();
-            e.stopPropagation();
-          }}
-          onClick={(e) => triggerAction(e, onCancel)}
-        >
-          <FormattedMessage defaultMessage="Cancel" />
-        </Button>
-      </Stack>
-    );
-  }
+            <PauseRoundedIcon sx={{ fontSize: 14 }} />
+          )
+        }
+        sx={{
+          ...buttonSx,
+          minWidth: 0,
+          minHeight: 24,
+          px: 1,
+          borderRadius: 999,
+          textTransform: "none",
+          fontSize: 12,
+          lineHeight: 1.2,
+        }}
+        onMouseDown={(e) => {
+          e.preventDefault();
+          e.stopPropagation();
+        }}
+        onClick={(e) => trigger(e, primaryAction)}
+      >
+        {paused ? (
+          <FormattedMessage defaultMessage="Resume" />
+        ) : (
+          <FormattedMessage defaultMessage="Pause" />
+        )}
+      </Button>
+      <Button
+        size="small"
+        variant="text"
+        color="inherit"
+        startIcon={<CloseRoundedIcon sx={{ fontSize: 14 }} />}
+        sx={{
+          ...buttonSx,
+          minWidth: 0,
+          minHeight: 24,
+          px: 1,
+          borderRadius: 999,
+          textTransform: "none",
+          fontSize: 12,
+          lineHeight: 1.2,
+          color: "text.secondary",
+        }}
+        onMouseDown={(e) => {
+          e.preventDefault();
+          e.stopPropagation();
+        }}
+        onClick={(e) => trigger(e, onCancel)}
+      >
+        <FormattedMessage defaultMessage="Cancel" />
+      </Button>
+    </Stack>
+  );
+};
+
+const IdleDownloadButton = ({
+  model,
+  selectable,
+  deleting,
+  onDownload,
+  onDelete,
+}: {
+  model: LocalWhisperModel;
+  selectable: boolean;
+  deleting?: boolean;
+  onDownload: (model: LocalWhisperModel) => void;
+  onDelete?: (model: LocalWhisperModel) => void;
+}) => {
+  const trigger = (
+    event: React.MouseEvent,
+    action: (m: LocalWhisperModel) => void,
+  ) => {
+    event.preventDefault();
+    event.stopPropagation();
+    action(model);
+  };
 
   const isDestructive = selectable;
   const primaryHandler = isDestructive && onDelete ? onDelete : onDownload;
@@ -311,10 +325,61 @@ const ModelDownloadActionButtons = ({
         e.preventDefault();
         e.stopPropagation();
       }}
-      onClick={(e) => triggerAction(e, primaryHandler)}
+      onClick={(e) => trigger(e, primaryHandler)}
     >
       <ActionButtonLabel deleting={deleting} selectable={selectable} />
     </Button>
+  );
+};
+
+type ModelDownloadActionButtonsProps = {
+  model: LocalWhisperModel;
+  downloading: boolean;
+  paused: boolean;
+  selectable: boolean;
+  deleting?: boolean;
+  compactPercent?: string | null;
+  onDownload: (model: LocalWhisperModel) => void;
+  onPause: (model: LocalWhisperModel) => void;
+  onResume: (model: LocalWhisperModel) => void;
+  onCancel: (model: LocalWhisperModel) => void;
+  onDelete?: (model: LocalWhisperModel) => void;
+};
+
+const ModelDownloadActionButtons = ({
+  model,
+  downloading,
+  paused,
+  selectable,
+  deleting,
+  compactPercent,
+  onDownload,
+  onPause,
+  onResume,
+  onCancel,
+  onDelete,
+}: ModelDownloadActionButtonsProps) => {
+  if (downloading || paused) {
+    return (
+      <BusyDownloadButtons
+        model={model}
+        paused={paused}
+        compactPercent={compactPercent}
+        onPause={onPause}
+        onResume={onResume}
+        onCancel={onCancel}
+      />
+    );
+  }
+
+  return (
+    <IdleDownloadButton
+      model={model}
+      selectable={selectable}
+      deleting={deleting}
+      onDownload={onDownload}
+      onDelete={onDelete}
+    />
   );
 };
 
