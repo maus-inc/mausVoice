@@ -467,6 +467,14 @@ pub fn list_gpus() -> Vec<crate::system::gpu::GpuAdapterInfo> {
     crate::system::gpu::list_available_gpus()
 }
 
+/// Static machine capabilities (RAM, CPU cores, GPU list) used by the
+/// frontend to recommend local transcription models that fit the device.
+#[tauri::command]
+#[specta::specta]
+pub fn get_system_capabilities() -> crate::system::capabilities::SystemCapabilities {
+    crate::system::capabilities::get_system_capabilities()
+}
+
 #[tauri::command]
 #[specta::specta]
 pub fn get_monitor_at_cursor() -> Option<crate::domain::MonitorAtCursor> {

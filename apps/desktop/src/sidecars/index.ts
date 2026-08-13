@@ -1,9 +1,11 @@
+import { invoke } from "@tauri-apps/api/core";
 import {
   supportsGpuTranscriptionDevice,
   type LocalWhisperModel,
   LOCAL_WHISPER_MODELS,
 } from "../utils/local-transcription.utils";
 import { getLogger } from "../utils/log.utils";
+import { type GpuInfo } from "../types/gpu.types";
 import {
   LocalTranscriptionSidecar,
   SidecarRequestError,
@@ -16,6 +18,8 @@ import {
   type LocalSidecarTranscribeOutput,
 } from "./local-transcription.sidecar";
 import { toErrorMessage } from "./sidecar.utils";
+
+export { isSessionNotFoundError } from "./local-transcription.sidecar";
 
 export type {
   LocalSidecarDevice,
@@ -31,13 +35,46 @@ class LocalTranscriptionSidecarFacade {
   private cpuSidecar = new LocalTranscriptionSidecar("cpu");
   private gpuSidecar = new LocalTranscriptionSidecar("gpu");
   private gpuUnavailable = false;
+  private gpuDetection: Promise<boolean> | null = null;
+
+  /**
+   * Detects whether the machine actually has a GPU the transcription sidecar
+   * can use. Cached: spawning the GPU binary on machines with no GPU (the
+   * user's logs showed an empty GPU enumeration) wasted ~20s per boot on a
+   * doomed health check before falling back to CPU.
+   */
+  private async detectGpu(): Promise<boolean> {
+    this.gpuDetection ??= (async () => {
+      try {
+        const gpus = await invoke<GpuInfo[]>("list_gpus");
+        return gpus.some(
+          (info) =>
+            info.backend === "Vulkan" && info.deviceType === "DiscreteGpu",
+        );
+      } catch (error) {
+        getLogger().verbose(
+          `[local-sidecar] GPU detection failed (${toErrorMessage(error)}), assuming CPU-only`,
+        );
+        return false;
+      }
+    })();
+    return await this.gpuDetection;
+  }
+
+  private async gpuIsUsable(): Promise<boolean> {
+    return (
+      supportsGpuTranscriptionDevice() &&
+      !this.gpuUnavailable &&
+      (await this.detectGpu())
+    );
+  }
 
   async listAvailableDevices(): Promise<LocalSidecarDevice[]> {
     await this.cpuSidecar.ensureStarted();
     const cpuDevices = await this.cpuSidecar.listDevices();
     const devices = [...cpuDevices];
 
-    if (supportsGpuTranscriptionDevice() && !this.gpuUnavailable) {
+    if (await this.gpuIsUsable()) {
       try {
         await this.gpuSidecar.ensureStarted();
         const gpuDevices = await this.gpuSidecar.listDevices();
@@ -154,7 +191,7 @@ class LocalTranscriptionSidecarFacade {
   private async resolveRuntime(
     preferGpu: boolean,
   ): Promise<LocalTranscriptionSidecar> {
-    if (preferGpu && !this.gpuUnavailable) {
+    if (preferGpu && (await this.gpuIsUsable())) {
       try {
         await this.gpuSidecar.ensureStarted();
         return this.gpuSidecar;

@@ -1,4 +1,5 @@
 import CheckRoundedIcon from "@mui/icons-material/CheckRounded";
+import WarningAmberRoundedIcon from "@mui/icons-material/WarningAmberRounded";
 import {
   Box,
   Button,
@@ -32,6 +33,12 @@ import {
 } from "../../state/settings.state";
 import { useAppStore } from "../../store";
 import { CPU_DEVICE_VALUE, type TranscriptionMode } from "../../types/ai.types";
+import { useSystemCapabilities } from "../../hooks/system-capabilities.hooks";
+import {
+  formatCapabilitySummary,
+  getModelFit,
+  getRecommendedModel,
+} from "../../utils/model-recommendation.utils";
 import { getEffectiveTranscriptionMode } from "../../utils/user.utils";
 import { formatSize } from "../../utils/format.utils";
 import { type LocalSidecarDownloadSnapshot } from "../../sidecars";
@@ -118,6 +125,9 @@ export const AITranscriptionConfiguration = () => {
   const intl = useIntl();
   const transcription = useAppStore((state) => state.settings.aiTranscription);
   const effectiveMode = useAppStore(getEffectiveTranscriptionMode);
+  // Device capabilities drive the model recommendations shown in the local
+  // panel (and through the onboarding form that reuses this component).
+  const { capabilities } = useSystemCapabilities(effectiveMode === "local");
   const localTranscriptionConfig = transcription.localModelManagement;
 
   const hasSelectedDevice = transcription.availableDevices.some(
@@ -137,6 +147,17 @@ export const AITranscriptionConfiguration = () => {
     modelValue,
   );
   const showInlineModelDownloadAction = !modelSelectable;
+
+  // Fit of the currently selected model against the detected hardware.
+  const currentModelFit = capabilities
+    ? getModelFit(capabilities, modelValue)
+    : null;
+  const recommendedModel = capabilities
+    ? getRecommendedModel(capabilities)
+    : null;
+  const recommendedModelLabel =
+    MODEL_OPTIONS.find((option) => option.value === recommendedModel)?.label ??
+    recommendedModel;
 
   useEffect(() => {
     if (effectiveMode !== "local") {
@@ -372,6 +393,32 @@ export const AITranscriptionConfiguration = () => {
                               <Typography variant="body2" fontWeight={600}>
                                 {label}
                               </Typography>
+                              {(() => {
+                                const fit = capabilities
+                                  ? getModelFit(capabilities, value)
+                                  : null;
+                                if (
+                                  fit?.level !== "caution" &&
+                                  fit?.level !== "discouraged"
+                                ) {
+                                  return null;
+                                }
+                                return (
+                                  <WarningAmberRoundedIcon
+                                    fontSize="small"
+                                    titleAccess={intl.formatMessage({
+                                      defaultMessage:
+                                        "This model may not run well on this device",
+                                    })}
+                                    sx={{
+                                      color:
+                                        fit.level === "discouraged"
+                                          ? "error.main"
+                                          : "warning.main",
+                                    }}
+                                  />
+                                );
+                              })()}
                               {active && (
                                 <CheckRoundedIcon
                                   fontSize="small"
@@ -524,6 +571,51 @@ export const AITranscriptionConfiguration = () => {
                 </Box>
               )}
             </FormControl>
+
+            {capabilities && (
+              <Box
+                sx={{
+                  borderRadius: 1.5,
+                  bgcolor: "action.hover",
+                  border: 1,
+                  borderColor: "divider",
+                  px: 1.5,
+                  py: 1,
+                }}
+              >
+                <Typography
+                  variant="caption"
+                  color="text.secondary"
+                  display="block"
+                >
+                  <FormattedMessage
+                    defaultMessage="This device: {summary} · Recommended: {recommended}"
+                    values={{
+                      summary: formatCapabilitySummary(capabilities),
+                      recommended: recommendedModelLabel ?? "",
+                    }}
+                  />
+                </Typography>
+                {currentModelFit?.level === "caution" && (
+                  <Typography
+                    variant="caption"
+                    color="warning.main"
+                    display="block"
+                  >
+                    <FormattedMessage defaultMessage="This model may be slow on this device. Consider a smaller model." />
+                  </Typography>
+                )}
+                {currentModelFit?.level === "discouraged" && (
+                  <Typography
+                    variant="caption"
+                    color="error.main"
+                    display="block"
+                  >
+                    <FormattedMessage defaultMessage="This model is likely too heavy for this device. A smaller model is strongly recommended." />
+                  </Typography>
+                )}
+              </Box>
+            )}
 
             {localTranscriptionConfig.modelStatusesLoading && (
               <Stack direction="row" spacing={1} alignItems="center">

@@ -1,4 +1,5 @@
 pub mod audio_feedback;
+pub mod capabilities;
 pub mod audio_store;
 pub mod auth_session;
 pub mod bridge_server;

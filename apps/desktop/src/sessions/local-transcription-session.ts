@@ -14,6 +14,7 @@ import {
 import {
   type LocalSidecarStreamingSession,
   getLocalTranscriptionSidecarManager,
+  isSessionNotFoundError,
 } from "../sidecars";
 import { getLogger } from "../utils/log.utils";
 import {
@@ -118,11 +119,14 @@ export class LocalTranscriptionSession implements TranscriptionSession {
     } catch (error) {
       const message = this.toErrorMessage(error);
       const errorName = error instanceof Error ? error.name : typeof error;
+      const lostSession = isSessionNotFoundError(error)
+        ? " (streaming session lost on the sidecar; batch fallback will transcribe from the retained audio)"
+        : "";
       warnings.push(
-        `Local streaming transcription failed, falling back to batch mode (${message})`,
+        `Local streaming transcription failed, falling back to batch mode (${message})${lostSession}`,
       );
       getLogger().warning(
-        `[local-stream-session] finalize failed [${errorName}], falling back to batch (${message})`,
+        `[local-stream-session] finalize failed [${errorName}], falling back to batch (${message})${lostSession}`,
       );
       return await this.finalizeWithBatchFallback(audio, warnings);
     } finally {

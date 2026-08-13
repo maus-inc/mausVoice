@@ -300,6 +300,7 @@ pub fn build() -> tauri::Builder<tauri::Wry> {
             crate::commands::user_preferences_set,
             crate::commands::list_microphones,
             crate::commands::list_gpus,
+            crate::commands::get_system_capabilities,
             crate::commands::get_screen_visible_area,
             crate::commands::get_monitor_at_cursor,
             crate::commands::check_microphone_permission,

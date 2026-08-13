@@ -29,6 +29,7 @@ export abstract class BaseSidecar {
   private startupPromise: Promise<SidecarRuntime> | null = null;
   private stoppingPid: number | null = null;
   private idleTimer: ReturnType<typeof setTimeout> | null = null;
+  private activityLeaseCount = 0;
 
   constructor(protected readonly config: SidecarConfig) {}
 
@@ -105,6 +106,10 @@ export abstract class BaseSidecar {
       return;
     }
 
+    if (this.activityLeaseCount > 0) {
+      return;
+    }
+
     this.cancelIdleTimer();
     this.idleTimer = setTimeout(() => {
       this.idleTimer = null;
@@ -117,6 +122,34 @@ export abstract class BaseSidecar {
         );
       });
     }, this.config.idleDisposeMs);
+  }
+
+  /**
+   * Pins the sidecar process while at least one lease is held: the idle
+   * dispose timer is cancelled and cannot be rescheduled until every lease is
+   * released. Streaming sessions use this so a >60s speech pause can never
+   * let the idle-dispose kill the process under an open session.
+   *
+   * Returns the release function (safe to call multiple times).
+   */
+  protected beginActivityLease(): () => void {
+    this.activityLeaseCount += 1;
+    this.cancelIdleTimer();
+
+    let released = false;
+    const release = () => {
+      if (released) {
+        return;
+      }
+      released = true;
+      this.activityLeaseCount = Math.max(0, this.activityLeaseCount - 1);
+      // Re-arm the idle clock from the moment the last lease drops.
+      if (this.activityLeaseCount === 0 && this.runtime) {
+        this.markActivity();
+      }
+    };
+
+    return release;
   }
 
   private cancelIdleTimer(): void {
