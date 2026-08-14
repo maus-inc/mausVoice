@@ -3,7 +3,7 @@ import { INITIAL_APP_STATE } from "../state/app.state";
 import { setAppState } from "../store";
 import { transcribeAudio } from "./transcribe.actions";
 
-const { loggerMock } = vi.hoisted(() => ({
+const { loggerMock, failureValue } = vi.hoisted(() => ({
   loggerMock: {
     info: vi.fn(),
     warning: vi.fn(),
@@ -12,6 +12,9 @@ const { loggerMock } = vi.hoisted(() => ({
     stopwatch: vi.fn(async (_label: string, fn: () => Promise<unknown>) =>
       fn(),
     ),
+  },
+  failureValue: { current: new Error("mock groq transcription failure") } as {
+    current: unknown;
   },
 }));
 
@@ -30,7 +33,7 @@ vi.mock("../repos/transcribe-audio.repo", async (importOriginal) => {
     ...actual,
     GroqTranscribeAudioRepo: class {
       async transcribeAudio(): Promise<never> {
-        throw new Error("mock groq transcription failure");
+        throw failureValue.current;
       }
     },
   };
@@ -49,6 +52,16 @@ const staleOllamaState = () => {
     baseUrl: "http://127.0.0.1:11434",
     transcriptionModel: null,
   };
+  // The stale selection falls back to Groq; a configured Groq key must be
+  // present for the fallback to be constructed with valid credentials.
+  state.apiKeyById["groq-key"] = {
+    id: "groq-key",
+    name: "Groq",
+    provider: "groq",
+    createdAt: "2026-06-03T00:00:00.000Z",
+    keyFull: "gq-key",
+    transcriptionModel: "whisper-large-v3-turbo",
+  };
   return state;
 };
 
@@ -58,21 +71,25 @@ describe("transcribeAudio dispatch warnings on the failure path", () => {
   });
 
   afterEach(() => {
+    failureValue.current = new Error("mock groq transcription failure");
     vi.clearAllMocks();
     setAppState(structuredClone(INITIAL_APP_STATE), true);
   });
 
-  it("logs dispatch warnings before the provider call and attaches them to the thrown error", async () => {
+  it("logs dispatch warnings before the provider call and preserves the Error cause", async () => {
     setAppState(staleOllamaState(), true);
 
-    await expect(
-      transcribeAudio({
-        samples: new Float32Array(16000),
-        sampleRate: 16000,
-      }),
-    ).rejects.toThrow(
+    const error = await transcribeAudio({
+      samples: new Float32Array(16000),
+      sampleRate: 16000,
+    }).catch((e: unknown) => e);
+
+    expect(error).toBeInstanceOf(Error);
+    expect((error as Error).message).toMatch(
       /mock groq transcription failure.*No transcription implementation for provider "ollama"/s,
     );
+    // The original Error rejection is preserved verbatim as the cause.
+    expect((error as Error).cause).toBe(failureValue.current);
 
     // The warning must reach the log even though the transcription call
     // itself throws (previously it was logged only after the await).
@@ -80,6 +97,39 @@ describe("transcribeAudio dispatch warnings on the failure path", () => {
       expect.stringContaining(
         'No transcription implementation for provider "ollama"',
       ),
+    );
+  });
+
+  it("preserves non-Error rejections as the cause", async () => {
+    failureValue.current = "boom";
+    setAppState(staleOllamaState(), true);
+
+    const error = await transcribeAudio({
+      samples: new Float32Array(16000),
+      sampleRate: 16000,
+    }).catch((e: unknown) => e);
+
+    expect((error as Error).message).toMatch(
+      /boom.*No transcription implementation for provider "ollama"/s,
+    );
+    // A non-Error rejection is kept as-is (not wrapped in an Error).
+    expect((error as Error).cause).toBe("boom");
+  });
+
+  it("fails with a clear configuration error when no Groq key backs the fallback", async () => {
+    // Only the stale Ollama key exists; the dispatch has no valid fallback
+    // credentials and must not construct a Groq repo with an empty key.
+    const state = staleOllamaState();
+    delete state.apiKeyById["groq-key"];
+    setAppState(state, true);
+
+    const error = await transcribeAudio({
+      samples: new Float32Array(16000),
+      sampleRate: 16000,
+    }).catch((e: unknown) => e);
+
+    expect((error as Error).message).toMatch(
+      /No transcription implementation for provider "ollama" and no Groq API key is configured/,
     );
   });
 });

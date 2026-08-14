@@ -64,10 +64,10 @@ describe("assemblyaiTranscribeAudio", () => {
     expect(createBody).toEqual({ audio_url: UPLOAD_URL, language_code: "fr" });
   });
 
-  it("surfaces upload HTTP failures", async () => {
-    vi.spyOn(globalThis, "fetch").mockResolvedValue(
-      new Response("unauthorized", { status: 401 }),
-    );
+  it("surfaces upload HTTP failures without retrying non-transient 4xx", async () => {
+    const fetchMock = vi
+      .spyOn(globalThis, "fetch")
+      .mockResolvedValue(new Response("unauthorized", { status: 401 }));
 
     await expect(
       assemblyaiTranscribeAudio({
@@ -75,6 +75,9 @@ describe("assemblyaiTranscribeAudio", () => {
         blob: new ArrayBuffer(8),
       }),
     ).rejects.toThrow(/AssemblyAI upload failed: 401/);
+
+    // A 401 is a credentials problem; retrying cannot fix it.
+    expect(fetchMock).toHaveBeenCalledTimes(1);
   });
 
   it("surfaces a missing upload URL", async () => {
@@ -93,11 +96,13 @@ describe("assemblyaiTranscribeAudio", () => {
     ).rejects.toThrow(/no audio URL/);
   });
 
-  it("surfaces transcript-request HTTP failures", async () => {
+  it("surfaces transcript-request HTTP failures without retrying non-transient 4xx", async () => {
+    let transcriptRequestCalls = 0;
     vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
       if (String(input).endsWith("/v2/upload")) {
         return jsonResponse({ upload_url: UPLOAD_URL });
       }
+      transcriptRequestCalls++;
       return new Response("bad request", { status: 400 });
     });
 
@@ -107,6 +112,9 @@ describe("assemblyaiTranscribeAudio", () => {
         blob: new ArrayBuffer(8),
       }),
     ).rejects.toThrow(/transcript request failed: 400/);
+
+    // A 400 is a malformed request; retrying cannot fix it.
+    expect(transcriptRequestCalls).toBe(1);
   });
 
   it("surfaces transcript errors", async () => {
@@ -205,5 +213,94 @@ describe("assemblyaiTranscribeAudio", () => {
 
     expect(text).toBe("recovered");
     expect(statusCalls).toBeGreaterThanOrEqual(2);
+  });
+
+  it("honors Retry-After when retrying a 429 response", async () => {
+    let uploadCalls = 0;
+    vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
+      const url = String(input);
+      if (url.endsWith("/v2/upload")) {
+        uploadCalls++;
+        if (uploadCalls === 1) {
+          return new Response("rate limited", {
+            status: 429,
+            headers: { "retry-after": "0" },
+          });
+        }
+        return jsonResponse({ upload_url: UPLOAD_URL });
+      }
+      if (url.endsWith("/v2/transcript")) {
+        return jsonResponse({ id: "t1", status: "queued" });
+      }
+      return jsonResponse({
+        id: "t1",
+        status: "completed",
+        text: "rate recovered",
+      });
+    });
+
+    const { text } = await assemblyaiTranscribeAudio({
+      apiKey: "aa-key",
+      blob: new ArrayBuffer(8),
+    });
+
+    expect(text).toBe("rate recovered");
+    expect(uploadCalls).toBe(2);
+  });
+
+  it("aborts a status request that never settles and reports a timeout", async () => {
+    vi.spyOn(globalThis, "fetch").mockImplementation((input, init) => {
+      const url = String(input);
+      if (url.endsWith("/v2/upload")) {
+        return Promise.resolve(jsonResponse({ upload_url: UPLOAD_URL }));
+      }
+      if (url.endsWith("/v2/transcript")) {
+        return Promise.resolve(jsonResponse({ id: "t1", status: "queued" }));
+      }
+      // The status request never settles on its own; it must be aborted when
+      // the poll deadline expires.
+      return new Promise((_resolve, reject) => {
+        init?.signal?.addEventListener("abort", () => {
+          reject(new DOMException("aborted", "AbortError"));
+        });
+      });
+    });
+
+    const startedAt = Date.now();
+    await expect(
+      assemblyaiTranscribeAudio({
+        apiKey: "aa-key",
+        blob: new ArrayBuffer(8),
+        timeoutMs: 150,
+        pollIntervalMs: 20,
+      }),
+    ).rejects.toThrow(/timed out/);
+    // Must not hang beyond the configured budget.
+    expect(Date.now() - startedAt).toBeLessThan(5000);
+  });
+
+  it("rejects invalid timeout and poll-interval options before polling", async () => {
+    vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
+      const url = String(input);
+      if (url.endsWith("/v2/upload")) {
+        return jsonResponse({ upload_url: UPLOAD_URL });
+      }
+      if (url.endsWith("/v2/transcript")) {
+        return jsonResponse({ id: "t1", status: "queued" });
+      }
+      return jsonResponse({ id: "t1", status: "completed", text: "ok" });
+    });
+
+    const base = { apiKey: "aa-key", blob: new ArrayBuffer(8) };
+
+    await expect(
+      assemblyaiTranscribeAudio({ ...base, timeoutMs: 0 }),
+    ).rejects.toThrow(/timeout must be a positive finite number/);
+    await expect(
+      assemblyaiTranscribeAudio({ ...base, timeoutMs: Number.NaN }),
+    ).rejects.toThrow(/timeout must be a positive finite number/);
+    await expect(
+      assemblyaiTranscribeAudio({ ...base, pollIntervalMs: -1 }),
+    ).rejects.toThrow(/poll interval must be a positive finite number/);
   });
 });

@@ -311,6 +311,7 @@ export const getTranscribeAudioRepo = (): TranscribeAudioRepoOutput => {
 
   if (prefs.mode === "api") {
     let repo: BaseTranscribeAudioRepo;
+    let apiKeyId = prefs.apiKeyId;
 
     switch (prefs.provider) {
       case "openai":
@@ -395,12 +396,24 @@ export const getTranscribeAudioRepo = (): TranscribeAudioRepoOutput => {
         // Every provider surfaced by the transcription capability filter now
         // has an explicit branch above. Reaching here means a stale saved
         // selection for a generative-only provider (e.g. an Ollama record
-        // saved before the capability fix). Warn instead of failing silently.
+        // saved before the capability fix). Warn instead of failing silently,
+        // and only fall back to Groq when a configured Groq key exists — the
+        // stale selection's own key may be empty or belong to another provider.
         prefs.warnings.push(
           `No transcription implementation for provider "${prefs.provider}". Using the Groq repository as a fallback.`,
         );
+        const state = getAppState();
+        const groqRecord = Object.values(state.apiKeyById).find(
+          (record) => record?.provider === "groq" && Boolean(record.keyFull),
+        );
+        if (!groqRecord?.keyFull) {
+          throw new Error(
+            `No transcription implementation for provider "${prefs.provider}" and no Groq API key is configured for fallback transcription.`,
+          );
+        }
+        apiKeyId = groqRecord.id;
         repo = new GroqTranscribeAudioRepo(
-          prefs.apiKeyValue,
+          groqRecord.keyFull,
           prefs.transcriptionModel,
         );
         break;
@@ -409,7 +422,7 @@ export const getTranscribeAudioRepo = (): TranscribeAudioRepoOutput => {
 
     return {
       repo,
-      apiKeyId: prefs.apiKeyId,
+      apiKeyId,
       warnings: prefs.warnings,
     };
   }

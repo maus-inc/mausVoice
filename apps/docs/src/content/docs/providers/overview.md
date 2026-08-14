@@ -13,7 +13,7 @@ mausVoice filters credentials by task. “Available for transcription” means a
 | OpenAI            |         Yes, batch          |         Yes         | API key                                                 |
 | Aldea             |         Yes, batch          |         No          | API key                                                 |
 | AssemblyAI        | Yes, live session and batch |         No          | API key                                                 |
-| ElevenLabs        |      Yes, live session      |         No          | API key                                                 |
+| ElevenLabs        | Yes, live session and batch |         No          | API key                                                 |
 | Deepgram          |      Yes, live session      |         No          | API key                                                 |
 | OpenRouter        |             No              |         Yes         | API key                                                 |
 | Ollama            |             No              |         Yes         | Base URL; optional key                                  |

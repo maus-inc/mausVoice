@@ -1,4 +1,4 @@
-import { delayed, retry } from "@maus-inc/utilities";
+import { delayed } from "@maus-inc/utilities";
 
 export type AssemblyAITestIntegrationArgs = {
   apiKey: string;
@@ -49,32 +49,109 @@ const assemblyaiHeaders = (apiKey: string): Record<string, string> => ({
   Authorization: apiKey,
 });
 
+// Retry only transient failures: network errors, 5xx responses, and 429.
+// Other 4xx responses (bad key, invalid request) will not succeed on retry.
+const RETRYABLE_STATUS_CODES = new Set([408, 429, 500, 502, 503, 504]);
+
+const isRetryableStatus = (status: number): boolean =>
+  RETRYABLE_STATUS_CODES.has(status);
+
+const getBackoffMs = (attempt: number): number =>
+  Math.min(100 * 2 ** attempt, 5000);
+
+const getRetryDelayMs = (response: Response, attempt: number): number => {
+  const retryAfter = response.headers.get("retry-after");
+  if (retryAfter) {
+    const seconds = Number(retryAfter);
+    if (Number.isFinite(seconds) && seconds >= 0) {
+      return seconds * 1000;
+    }
+  }
+  return getBackoffMs(attempt);
+};
+
+type RequestWithRetryOptions = {
+  apiKey: string;
+  url: string;
+  method: string;
+  headers?: Record<string, string>;
+  body?: BodyInit;
+  errorLabel: string;
+  maxRetries?: number;
+  /** When set, the request is aborted once this absolute deadline passes. */
+  signal?: AbortSignal;
+  deadline?: number;
+};
+
+const requestWithRetry = async ({
+  apiKey,
+  url,
+  method,
+  headers = {},
+  body,
+  errorLabel,
+  maxRetries = 3,
+  signal,
+  deadline,
+}: RequestWithRetryOptions): Promise<Response> => {
+  for (let attempt = 0; ; attempt++) {
+    if (deadline !== undefined && Date.now() >= deadline) {
+      throw new Error(`${errorLabel}: timed out`);
+    }
+
+    let response: Response;
+    try {
+      response = await fetch(url, {
+        method,
+        headers: { ...assemblyaiHeaders(apiKey), ...headers },
+        body,
+        signal,
+      });
+    } catch (error) {
+      if (signal?.aborted) {
+        throw new Error(`${errorLabel}: timed out`);
+      }
+      // Network-level failure is transient; retry unless exhausted.
+      if (attempt >= maxRetries) {
+        throw error;
+      }
+      await delayed(getBackoffMs(attempt));
+      continue;
+    }
+
+    if (response.ok) {
+      return response;
+    }
+
+    if (!isRetryableStatus(response.status) || attempt >= maxRetries) {
+      const errorText = await response.text().catch(() => "Unknown error");
+      throw new Error(`${errorLabel}: ${response.status} - ${errorText}`);
+    }
+
+    const retryDelay = getRetryDelayMs(response, attempt);
+    await delayed(
+      deadline !== undefined
+        ? Math.min(retryDelay, Math.max(0, deadline - Date.now()))
+        : retryDelay,
+    );
+  }
+};
+
 const uploadAudio = async (
   apiKey: string,
   arrayBuffer: ArrayBuffer,
 ): Promise<string> => {
-  const { upload_url: uploadUrl } = await retry({
-    retries: 3,
-    fn: async () => {
-      const response = await fetch(`${ASSEMBLYAI_API_URL}/upload`, {
-        method: "POST",
-        headers: {
-          ...assemblyaiHeaders(apiKey),
-          "Content-Type": "application/octet-stream",
-        },
-        body: arrayBuffer,
-      });
-
-      if (!response.ok) {
-        const errorText = await response.text().catch(() => "Unknown error");
-        throw new Error(
-          `AssemblyAI upload failed: ${response.status} - ${errorText}`,
-        );
-      }
-
-      return (await response.json()) as AssemblyAIUploadResponse;
-    },
+  const response = await requestWithRetry({
+    apiKey,
+    url: `${ASSEMBLYAI_API_URL}/upload`,
+    method: "POST",
+    headers: { "Content-Type": "application/octet-stream" },
+    body: arrayBuffer,
+    errorLabel: "AssemblyAI upload failed",
   });
+
+  const { upload_url: uploadUrl } =
+    (await response.json()) as AssemblyAIUploadResponse;
 
   if (!uploadUrl) {
     throw new Error("AssemblyAI upload returned no audio URL");
@@ -95,29 +172,16 @@ const createTranscriptRequest = async (
     transcriptPayload.language_code = language;
   }
 
-  const created = await retry({
-    retries: 3,
-    fn: async () => {
-      const response = await fetch(`${ASSEMBLYAI_API_URL}/transcript`, {
-        method: "POST",
-        headers: {
-          ...assemblyaiHeaders(apiKey),
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify(transcriptPayload),
-      });
-
-      if (!response.ok) {
-        const errorText = await response.text().catch(() => "Unknown error");
-        throw new Error(
-          `AssemblyAI transcript request failed: ${response.status} - ${errorText}`,
-        );
-      }
-
-      return (await response.json()) as AssemblyAITranscriptResponse;
-    },
+  const response = await requestWithRetry({
+    apiKey,
+    url: `${ASSEMBLYAI_API_URL}/transcript`,
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(transcriptPayload),
+    errorLabel: "AssemblyAI transcript request failed",
   });
 
+  const created = (await response.json()) as AssemblyAITranscriptResponse;
   const transcriptId = created.id;
   if (!transcriptId) {
     throw new Error("AssemblyAI transcript request returned no ID");
@@ -126,59 +190,67 @@ const createTranscriptRequest = async (
   return transcriptId;
 };
 
+const validatePositiveDuration = (value: number, name: string): void => {
+  if (!Number.isFinite(value) || value <= 0) {
+    throw new Error(
+      `AssemblyAI transcription ${name} must be a positive finite number`,
+    );
+  }
+};
+
 const waitForTranscript = async (
   apiKey: string,
   transcriptId: string,
   timeoutMs: number,
   pollIntervalMs: number,
 ): Promise<string> => {
-  // 60-second segments transcribe well within this window; the deadline
-  // only guards against a transcript stuck in "queued"/"processing". Both
-  // values are tunable (see AssemblyAITranscriptionArgs) for callers whose
-  // segment duration differs.
+  validatePositiveDuration(timeoutMs, "timeout");
+  validatePositiveDuration(pollIntervalMs, "poll interval");
+
+  // 60-second segments transcribe well within this window; the deadline only
+  // guards against a transcript stuck in "queued"/"processing" or a hung
+  // status request. Both values are tunable (see AssemblyAITranscriptionArgs)
+  // for callers whose segment duration differs.
   const deadline = Date.now() + timeoutMs;
-  for (;;) {
-    const status = await retry({
-      retries: 3,
-      fn: async () => {
-        const response = await fetch(
-          `${ASSEMBLYAI_API_URL}/transcript/${transcriptId}`,
-          {
-            method: "GET",
-            headers: assemblyaiHeaders(apiKey),
-          },
-        );
+  const controller = new AbortController();
+  const abortTimer = setTimeout(() => controller.abort(), timeoutMs);
 
-        if (!response.ok) {
-          const errorText = await response.text().catch(() => "Unknown error");
-          throw new Error(
-            `AssemblyAI transcript status failed: ${response.status} - ${errorText}`,
-          );
-        }
-
-        return (await response.json()) as AssemblyAITranscriptResponse;
-      },
-    });
-
-    if (status.status === "completed") {
-      const text = status.text?.trim() ?? "";
-      if (!text) {
-        throw new Error("AssemblyAI transcription returned no text");
+  try {
+    for (;;) {
+      if (Date.now() >= deadline) {
+        throw new Error("AssemblyAI transcription timed out");
       }
-      return text;
-    }
 
-    if (status.status === "error") {
-      throw new Error(
-        `AssemblyAI transcription failed: ${status.error ?? "Unknown error"}`,
+      const response = await requestWithRetry({
+        apiKey,
+        url: `${ASSEMBLYAI_API_URL}/transcript/${transcriptId}`,
+        method: "GET",
+        errorLabel: "AssemblyAI transcript status failed",
+        signal: controller.signal,
+        deadline,
+      });
+      const status = (await response.json()) as AssemblyAITranscriptResponse;
+
+      if (status.status === "completed") {
+        const text = status.text?.trim() ?? "";
+        if (!text) {
+          throw new Error("AssemblyAI transcription returned no text");
+        }
+        return text;
+      }
+
+      if (status.status === "error") {
+        throw new Error(
+          `AssemblyAI transcription failed: ${status.error ?? "Unknown error"}`,
+        );
+      }
+
+      await delayed(
+        Math.min(pollIntervalMs, Math.max(0, deadline - Date.now())),
       );
     }
-
-    if (Date.now() > deadline) {
-      throw new Error("AssemblyAI transcription timed out");
-    }
-
-    await delayed(pollIntervalMs);
+  } finally {
+    clearTimeout(abortTimer);
   }
 };
 

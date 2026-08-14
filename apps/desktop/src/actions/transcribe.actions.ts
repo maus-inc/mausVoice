@@ -152,10 +152,12 @@ export const transcribeAudio = async ({
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
     // Keep dispatch warnings visible on the failure path: the batch session
-    // surfaces this message to the user, so append the warnings to it.
+    // surfaces this message to the user, so append the warnings to it. The
+    // original rejection is preserved verbatim as the cause, including
+    // non-Error rejections.
     throw new Error(
       warnings.length > 0 ? `${message} (${warnings.join("; ")})` : message,
-      { cause: error instanceof Error ? error : undefined },
+      { cause: error },
     );
   }
   const transcribeDuration = performance.now() - transcribeStart;

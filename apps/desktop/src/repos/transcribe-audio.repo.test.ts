@@ -475,11 +475,42 @@ describe("provider capability and transcription dispatch agreement", () => {
       baseUrl: "http://127.0.0.1:11434",
       transcriptionModel: null,
     };
+    // The fallback uses a configured Groq key, never the stale selection's
+    // (possibly empty) key, and reports that key's id to callers.
+    state.apiKeyById["groq-key"] = {
+      id: "groq-key",
+      name: "Groq",
+      provider: "groq",
+      createdAt: "2026-06-03T00:00:00.000Z",
+      keyFull: "gq-key",
+      transcriptionModel: "whisper-large-v3-turbo",
+    };
     setAppState(state, true);
 
-    const { repo, warnings } = getTranscribeAudioRepo();
+    const { repo, apiKeyId, warnings } = getTranscribeAudioRepo();
 
     expect(repo).toBeInstanceOf(GroqTranscribeAudioRepo);
+    expect(apiKeyId).toBe("groq-key");
     expect(warnings.some((warning) => warning.includes("ollama"))).toBe(true);
+  });
+
+  it("throws a configuration error when a stale selection has no Groq key to fall back to", () => {
+    const state = structuredClone(INITIAL_APP_STATE);
+    state.settings.aiTranscription.mode = "api";
+    state.settings.aiTranscription.selectedApiKeyId = "ollama-key";
+    state.apiKeyById["ollama-key"] = {
+      id: "ollama-key",
+      name: "Ollama",
+      provider: "ollama",
+      createdAt: "2026-06-03T00:00:00.000Z",
+      keyFull: null,
+      baseUrl: "http://127.0.0.1:11434",
+      transcriptionModel: null,
+    };
+    setAppState(state, true);
+
+    expect(() => getTranscribeAudioRepo()).toThrow(
+      /No transcription implementation for provider "ollama" and no Groq API key is configured/,
+    );
   });
 });
