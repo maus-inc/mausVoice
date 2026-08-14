@@ -5,6 +5,7 @@ use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 
 use crate::compute::ComputeMode;
+use crate::models::WhisperModel;
 use serde::Serialize;
 use whisper_rs::{
     FullParams, SamplingStrategy, WhisperContext, WhisperContextParameters, WhisperError,
@@ -12,6 +13,7 @@ use whisper_rs::{
 
 #[derive(Debug, Clone)]
 pub struct TranscriptionInput {
+    pub model: WhisperModel,
     pub model_path: PathBuf,
     pub samples: Vec<f32>,
     pub sample_rate: u32,
@@ -106,9 +108,21 @@ impl TranscriptionEngine {
             return Err("unable to resample audio".to_string());
         }
 
-        let model_path_str = input.model_path.to_str().unwrap_or_default();
-        if model_path_str.ends_with(".onnx") {
-            return Err("sherpa-onnx runtime is required to transcribe with ONNX models (Parakeet/Canary)".to_string());
+        // The NeMo ONNX models (Parakeet CTC / TDT, Canary) run through the
+        // real ONNX Runtime engine, which loads the graph + weights, preprocesses
+        // the audio, and decodes the model output. See `onnx_inference`.
+        if input.model.is_onnx() {
+            let device = self.resolve_device_blocking(input.device_id.as_deref())?;
+            let text = crate::onnx_inference::transcribe(
+                input.model,
+                &input.model_path,
+                &processed,
+                input.language.as_deref(),
+            )?;
+            return Ok(TranscriptionOutput {
+                text,
+                inference_device: device.name,
+            });
         }
 
         let device = self.resolve_device_blocking(input.device_id.as_deref())?;
@@ -169,12 +183,10 @@ impl TranscriptionEngine {
             .ok_or_else(|| "model path is not valid UTF-8".to_string())?;
 
         if model_path_str.ends_with(".onnx") {
-            let metadata = std::fs::metadata(model_path)
-                .map_err(|err| format!("failed to inspect model file: {err}"))?;
-            if metadata.len() == 0 {
-                return Err("model file is empty".to_string());
-            }
-            return Ok(true);
+            // Validate through the ONNX Runtime itself: loading parses the graph
+            // and weights, so synthetic / truncated files are rejected instead
+            // of being marked valid.
+            return crate::onnx_inference::validate_model(model_path);
         }
 
         let device = self.resolve_device_blocking(None)?;

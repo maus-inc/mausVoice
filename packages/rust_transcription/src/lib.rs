@@ -4,6 +4,7 @@ mod config;
 mod downloads;
 mod errors;
 mod models;
+mod onnx_inference;
 mod state;
 mod streaming_sessions;
 mod transcription;

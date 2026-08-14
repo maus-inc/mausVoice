@@ -31,6 +31,11 @@ tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter", "fmt"] }
 uuid = { version = "1", features = ["serde", "v4"] }
 whisper-rs = { version = "0.15.1", default-features = false, features = ["raw-api"] }
+# Real ONNX Runtime binding used to run the NVIDIA NeMo Parakeet (CTC/TDT) and
+# Canary models. The build fetches the prebuilt ONNX Runtime shared library
+# (see the `download-binaries` default feature); CI therefore needs network
+# access to the ONNX Runtime release assets at build time.
+ort = "2"
 
 [dev-dependencies]
 http-body-util = "0.1"
