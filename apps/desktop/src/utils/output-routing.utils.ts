@@ -97,7 +97,11 @@ export const insertLocalTranscriptOutputViaTyping = async (
   // ReentryGuard serializes simulate_type, so cancel_typing always
   // targets the one live session — no session id is needed.
   const handleCancel = () => {
-    void invoke("cancel_typing");
+    // Fire-and-forget, but never unhandled: a failed cancel must not raise
+    // an unhandled rejection on every blur/Escape.
+    void invoke("cancel_typing").catch((error: unknown) => {
+      getLogger().warning(`Failed to cancel simulated typing: ${error}`);
+    });
   };
 
   window.addEventListener("blur", handleCancel, { once: true });
