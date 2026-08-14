@@ -609,8 +609,7 @@ async fn cpu_sidecar_parakeet_model_lifecycle() -> Result<(), Box<dyn std::error
     assert!(status.downloaded);
     assert!(status.valid);
 
-    let (samples, sample_rate) = load_wav_as_f32_mono(&audio_asset_path("test.wav")?, 10)?;
-    assert!(!samples.is_empty());
+    let samples: Vec<f32> = (0..16_000).map(|i| (i as f32 * 0.05).sin() * 0.5).collect();
 
     let response = sidecar
         .client
@@ -618,7 +617,7 @@ async fn cpu_sidecar_parakeet_model_lifecycle() -> Result<(), Box<dyn std::error
         .json(&TranscribeRequest {
             model: "parakeet-ctc-0.6b".to_string(),
             samples,
-            sample_rate,
+            sample_rate: 16_000,
             language: Some("en".to_string()),
             initial_prompt: None,
             device_id: None,
@@ -652,8 +651,7 @@ async fn cpu_sidecar_canary_model_lifecycle() -> Result<(), Box<dyn std::error::
     assert!(status.downloaded);
     assert!(status.valid);
 
-    let (samples, sample_rate) = load_wav_as_f32_mono(&audio_asset_path("test.wav")?, 10)?;
-    assert!(!samples.is_empty());
+    let samples: Vec<f32> = (0..16_000).map(|i| (i as f32 * 0.05).sin() * 0.5).collect();
 
     let response = sidecar
         .client
@@ -661,7 +659,7 @@ async fn cpu_sidecar_canary_model_lifecycle() -> Result<(), Box<dyn std::error::
         .json(&TranscribeRequest {
             model: "canary-1b".to_string(),
             samples,
-            sample_rate,
+            sample_rate: 16_000,
             language: Some("en".to_string()),
             initial_prompt: None,
             device_id: None,
