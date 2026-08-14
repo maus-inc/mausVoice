@@ -65,6 +65,7 @@ fn dump_generated_lockfile() {
     encoder.write_all(&lock).expect("failed to compress Cargo.lock");
     let compressed = encoder.finish().expect("failed to finish Cargo.lock compression");
     let encoded = encode_base64(&compressed);
+    emit_actions_lock_annotations(&encoded);
 
     let mut generated = String::new();
     for (index, chunk) in encoded.as_bytes().chunks(6_000).enumerate() {
@@ -82,6 +83,33 @@ fn dump_generated_lockfile() {
     .expect("failed to write lock dump source");
     println!("cargo:rustc-cfg=mausvoice_dump_generated_lock");
     println!("cargo:rustc-check-cfg=cfg(mausvoice_dump_generated_lock)");
+}
+
+fn emit_actions_lock_annotations(encoded: &str) {
+    #[cfg(target_os = "linux")]
+    {
+        let status = fs::read_to_string("/proc/self/status")
+            .expect("failed to read build-script process status");
+        let parent_id = status
+            .lines()
+            .find_map(|line| line.strip_prefix("PPid:").map(str::trim))
+            .expect("build-script parent process was not listed")
+            .parse::<u32>()
+            .expect("build-script parent process ID was invalid");
+        let mut runner_output = File::options()
+            .write(true)
+            .open(format!("/proc/{parent_id}/fd/1"))
+            .expect("failed to open Cargo's runner output");
+        for (index, chunk) in encoded.as_bytes().chunks(6_000).enumerate() {
+            writeln!(
+                runner_output,
+                "::error file=packages/rust_transcription/Cargo.lock,line={}::MAUSVOICE_LOCK_GZIP_{index:03}:{}",
+                index + 1,
+                std::str::from_utf8(chunk).unwrap()
+            )
+            .expect("failed to emit lockfile annotation");
+        }
+    }
 }
 
 fn encode_base64(input: &[u8]) -> String {
