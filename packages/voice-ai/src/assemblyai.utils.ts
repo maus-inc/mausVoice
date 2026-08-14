@@ -65,9 +65,15 @@ const getResponseRetryDelayMs = (
 ): number => {
   const retryAfter = response.headers.get("retry-after");
   if (retryAfter) {
+    // RFC 7231 allows either delta-seconds ("120") or an HTTP-date
+    // ("Wed, 21 Oct 2015 07:28:00 GMT"); honor both forms.
     const seconds = Number(retryAfter);
     if (Number.isFinite(seconds) && seconds >= 0) {
       return seconds * 1000;
+    }
+    const retryDateMs = Date.parse(retryAfter);
+    if (Number.isFinite(retryDateMs)) {
+      return Math.max(0, retryDateMs - Date.now());
     }
   }
   return getBackoffMs(attempt);
@@ -152,6 +158,11 @@ const requestWithRetry = async ({
       const errorText = await response.text().catch(() => "Unknown error");
       throw new Error(`${errorLabel}: ${response.status} - ${errorText}`);
     }
+
+    // Drain the response body before the retry delay: an unconsumed body can
+    // keep the underlying connection from being released promptly, which
+    // under sustained rate-limiting or server errors may exhaust the pool.
+    await response.text().catch(() => undefined);
 
     await delayed(getBoundedRetryDelayMs(response, deadline, attempt));
   }

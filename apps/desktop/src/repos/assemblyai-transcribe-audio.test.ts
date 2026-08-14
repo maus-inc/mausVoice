@@ -248,6 +248,83 @@ describe("assemblyaiTranscribeAudio", () => {
     expect(uploadCalls).toBe(2);
   });
 
+  it("honors an HTTP-date Retry-After header", async () => {
+    let uploadCalls = 0;
+    vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
+      const url = String(input);
+      if (url.endsWith("/v2/upload")) {
+        uploadCalls++;
+        if (uploadCalls === 1) {
+          // RFC 7231 allows an absolute date; the retry must wait until then
+          // instead of falling back to exponential backoff.
+          const retryAt = new Date(Date.now() + 50).toUTCString();
+          return new Response("rate limited", {
+            status: 429,
+            headers: { "retry-after": retryAt },
+          });
+        }
+        return jsonResponse({ upload_url: UPLOAD_URL });
+      }
+      if (url.endsWith("/v2/transcript")) {
+        return jsonResponse({ id: "t1", status: "queued" });
+      }
+      return jsonResponse({
+        id: "t1",
+        status: "completed",
+        text: "date retried",
+      });
+    });
+
+    const { text } = await assemblyaiTranscribeAudio({
+      apiKey: "aa-key",
+      blob: new ArrayBuffer(8),
+    });
+
+    expect(text).toBe("date retried");
+    expect(uploadCalls).toBe(2);
+  });
+
+  it("drains the response body before retrying a transient failure", async () => {
+    let uploadCalls = 0;
+    let firstBodyDrained = false;
+    vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
+      const url = String(input);
+      if (url.endsWith("/v2/upload")) {
+        uploadCalls++;
+        if (uploadCalls === 1) {
+          const response = new Response("upstream blip", { status: 502 });
+          // Simulate an undici-style runtime: the connection is only released
+          // once the body is consumed. Track consumption to assert the retry
+          // path drains it.
+          const originalText = response.text.bind(response);
+          response.text = async () => {
+            firstBodyDrained = true;
+            return originalText();
+          };
+          return response;
+        }
+        return jsonResponse({ upload_url: UPLOAD_URL });
+      }
+      if (url.endsWith("/v2/transcript")) {
+        return jsonResponse({ id: "t1", status: "queued" });
+      }
+      return jsonResponse({
+        id: "t1",
+        status: "completed",
+        text: "drained retried",
+      });
+    });
+
+    const { text } = await assemblyaiTranscribeAudio({
+      apiKey: "aa-key",
+      blob: new ArrayBuffer(8),
+    });
+
+    expect(text).toBe("drained retried");
+    expect(uploadCalls).toBe(2);
+    expect(firstBodyDrained).toBe(true);
+  });
+
   it("aborts a status request that never settles and reports a timeout", async () => {
     vi.spyOn(globalThis, "fetch").mockImplementation((input, init) => {
       const url = String(input);

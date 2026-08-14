@@ -414,9 +414,12 @@ export const getTranscribeAudioRepo = (): TranscribeAudioRepoOutput => {
           `No transcription implementation for provider "${prefs.provider}". Using the Groq repository as a fallback.`,
         );
         apiKeyId = groqRecord.id;
+        // Use the Groq record's own transcription model (falling back to the
+        // Groq repository default when unset) — never the stale selection's
+        // model, which may belong to another provider and would be rejected.
         repo = new GroqTranscribeAudioRepo(
           groqRecord.keyFull,
-          prefs.transcriptionModel,
+          groqRecord.transcriptionModel ?? null,
         );
         break;
       }
