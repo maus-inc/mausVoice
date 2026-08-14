@@ -26,7 +26,7 @@ export class AsyncDataController<T> {
 
   constructor(
     private readonly sink: AsyncDataSink<T>,
-    private readonly timeoutMs: number,
+    private readonly defaultTimeoutMs: number,
   ) {}
 
   clearPendingTimeout(): void {
@@ -41,7 +41,15 @@ export class AsyncDataController<T> {
     this.clearPendingTimeout();
   }
 
-  async run(promise: () => Promise<T>): Promise<void> {
+  /**
+   * Run `promise`, guarded by `timeoutMs` (defaults to the timeout given at
+   * construction). The timeout is taken per call so a caller whose option
+   * changes is not stuck with the value it first passed.
+   */
+  async run(
+    promise: () => Promise<T>,
+    timeoutMs: number = this.defaultTimeoutMs,
+  ): Promise<void> {
     const myGeneration = ++this.generation;
     this.clearPendingTimeout();
 
@@ -53,7 +61,7 @@ export class AsyncDataController<T> {
       this.generation += 1;
       this.sink.setError("Request timed out");
       this.sink.setLoading(false);
-    }, this.timeoutMs);
+    }, timeoutMs);
 
     let settled = false;
     try {
@@ -110,12 +118,12 @@ export const useAsyncData = <T>(
   const controller = controllerRef.current;
 
   const refresh = useCallback(async () => {
-    await controller.run(promise);
-    // Intentionally omit `timeoutMs` from dep list: it's an options knob
-    // that is intended to be a constant per call-site; dynamic values
-    // should be passed via deps.
+    await controller.run(promise, timeoutMs);
+    // `timeoutMs` is part of the dep list so a changed option applies to the
+    // next load instead of being frozen at mount. The effect below still
+    // reruns on `deps` only, so changing the timeout does not refetch.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, deps);
+  }, [...deps, timeoutMs]);
 
   useEffect(() => {
     refresh();
