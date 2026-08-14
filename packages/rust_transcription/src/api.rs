@@ -181,7 +181,19 @@ async fn remove_invalid_onnx_bundle_before_download(
     }
 
     let model_path = state.model_path(model);
-    match crate::onnx_inference::validate_model_classified(model, &model_path) {
+    let model_path_for_task = model_path.clone();
+    let validation_result = tokio::task::spawn_blocking(move || {
+        crate::onnx_inference::validate_model_classified(model, &model_path_for_task)
+    })
+    .await
+    .map_err(|err| {
+        ApiError::internal(
+            "model_validation_failed",
+            format!("validation task join failed: {err}"),
+        )
+    })?;
+
+    match validation_result {
         Ok(_) => return Ok(()),
         Err(crate::onnx_inference::OnnxModelValidationError::Runtime(error)) => {
             return Err(ApiError::internal(

@@ -221,6 +221,7 @@
   "download_installer": "Download installer",
   "download_the_new_universal_app_from_the_link_below": "Download the new Universal app from the link below.",
   "downloaded": "Downloaded",
+  "downloaded_of_total": "{downloaded} of {total}",
   "downloading": "Downloading...",
   "downloading_update": "Downloading update...",
   "e_g_podcast_conference_etc": "e.g. Podcast, conference, etc.",

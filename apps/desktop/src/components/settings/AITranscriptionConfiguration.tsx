@@ -17,7 +17,7 @@ import {
   Typography,
 } from "@mui/material";
 import { useCallback, useEffect } from "react";
-import { FormattedMessage, useIntl } from "react-intl";
+import { FormattedMessage, type IntlShape, useIntl } from "react-intl";
 import {
   refreshLocalTranscriptionDevices,
   deleteLocalTranscriptionModel,
@@ -94,6 +94,7 @@ const getDownloadProgressPercent = (
 
 const formatDownloadProgress = (
   snapshot: LocalSidecarDownloadSnapshot | undefined,
+  intl: IntlShape,
 ): string | null => {
   if (!snapshot) {
     return null;
@@ -104,7 +105,15 @@ const formatDownloadProgress = (
 
   let bytesPart: string | null = null;
   if (snapshot.totalBytes != null && snapshot.totalBytes > 0) {
-    bytesPart = `${formatSize(snapshot.bytesDownloaded)} of ${formatSize(snapshot.totalBytes)}`;
+    bytesPart = intl.formatMessage(
+      {
+        defaultMessage: "{downloaded} of {total}",
+      },
+      {
+        downloaded: formatSize(snapshot.bytesDownloaded),
+        total: formatSize(snapshot.totalBytes),
+      },
+    );
   } else if (snapshot.bytesDownloaded > 0) {
     bytesPart = formatSize(snapshot.bytesDownloaded);
   }
@@ -141,15 +150,15 @@ const resolveDeviceSelectValue = (
 
 const ActionButtonLabel = ({
   deleting,
-  selectable,
+  isDestructive,
 }: {
   deleting?: boolean;
-  selectable: boolean;
+  isDestructive: boolean;
 }) => {
   if (deleting) {
     return <FormattedMessage defaultMessage="Deleting..." />;
   }
-  if (selectable) {
+  if (isDestructive) {
     return <FormattedMessage defaultMessage="Delete" />;
   }
   return <FormattedMessage defaultMessage="Download" />;
@@ -352,7 +361,7 @@ const IdleDownloadButton = ({
       }}
       onClick={(e) => handleModelClick(e, model, primaryHandler)}
     >
-      <ActionButtonLabel deleting={deleting} selectable={isDestructive} />
+      <ActionButtonLabel deleting={deleting} isDestructive={isDestructive} />
     </Button>
   );
 };
@@ -636,7 +645,7 @@ export const AITranscriptionConfiguration = () => {
       deleting,
       active,
     } = getModelRowState(option);
-    const progressLabel = formatDownloadProgress(downloadSnapshot);
+    const progressLabel = formatDownloadProgress(downloadSnapshot, intl);
     const progressPercent = getDownloadProgressPercent(
       downloadSnapshot?.progress,
     );

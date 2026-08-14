@@ -460,13 +460,8 @@ impl DownloadRegistry {
             match outcome {
                 ArtifactDownloadOutcome::Completed { bytes } => {
                     completed_bytes = completed_bytes.saturating_add(bytes);
-                    self.set_progress(
-                        job_id,
-                        generation,
-                        completed_bytes,
-                        Some(completed_bytes),
-                    )
-                    .await;
+                    self.set_progress(job_id, generation, completed_bytes, None)
+                        .await;
                 }
                 ArtifactDownloadOutcome::Paused => {
                     self.mark_paused(job_id, generation).await;

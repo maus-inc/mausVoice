@@ -341,4 +341,18 @@ mod tests {
             Some(&executable_dir.join("libonnxruntime.dylib"))
         );
     }
+
+    #[test]
+    fn non_onnx_model_is_rejected_by_inference_and_validation() {
+        let fake_path = Path::new("fake/ggml-tiny.bin");
+        assert!(transcribe(WhisperModel::Tiny, fake_path, &[0.1], None).is_err());
+        assert!(validate_model(WhisperModel::Tiny, fake_path).is_err());
+    }
+
+    #[test]
+    fn empty_samples_return_empty_string_cleanly() {
+        let fake_path = Path::new("fake/model.onnx");
+        let result = transcribe(WhisperModel::ParakeetCtc06B, fake_path, &[], None);
+        assert_eq!(result, Ok(String::new()));
+    }
 }

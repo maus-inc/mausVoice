@@ -83,11 +83,33 @@ fn provision_runtime(target: &str, library_name: &str) -> PathBuf {
     }
 
     let archive_path = cache_dir.join(asset.archive_name);
-    if !archive_path.is_file() {
+    if archive_path.is_file() {
+        if !verify_file_digest(&archive_path, asset.sha256) {
+            let _ = fs::remove_file(&archive_path);
+            download_verified(&asset, &archive_path);
+        }
+    } else {
         download_verified(&asset, &archive_path);
     }
     extract_runtime(&archive_path, asset.archive_kind, target, &runtime_path);
     runtime_path
+}
+
+fn verify_file_digest(path: &Path, expected_sha256: &str) -> bool {
+    let Ok(mut file) = File::open(path) else {
+        return false;
+    };
+    let mut hasher = Sha256::new();
+    let mut buffer = [0_u8; 64 * 1024];
+    loop {
+        match file.read(&mut buffer) {
+            Ok(0) => break,
+            Ok(count) => hasher.update(&buffer[..count]),
+            Err(_) => return false,
+        }
+    }
+    let actual = format!("{:x}", hasher.finalize());
+    actual.eq_ignore_ascii_case(expected_sha256)
 }
 
 fn download_verified(asset: &RuntimeAsset, archive_path: &Path) {
