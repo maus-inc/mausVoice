@@ -2757,6 +2757,9 @@ mod tests {
 
     #[test]
     fn cancel_typing_only_signals_a_live_session() {
+        // `CANCEL_TYPING` is process-wide and `cargo test` runs tests in
+        // parallel, so put it back the way we found it before returning.
+        let previous = CANCEL_TYPING.load(Ordering::SeqCst);
         CANCEL_TYPING.store(false, Ordering::SeqCst);
 
         // No typing session is live, so the cancel must be ignored instead
@@ -2764,9 +2767,13 @@ mod tests {
         cancel_typing().unwrap();
         assert!(!CANCEL_TYPING.load(Ordering::SeqCst));
 
-        let _session = ReentryGuard::acquire(&SIMULATE_TYPE_IN_PROGRESS).unwrap();
-        cancel_typing().unwrap();
-        assert!(CANCEL_TYPING.load(Ordering::SeqCst));
+        {
+            let _session = ReentryGuard::acquire(&SIMULATE_TYPE_IN_PROGRESS).unwrap();
+            cancel_typing().unwrap();
+            assert!(CANCEL_TYPING.load(Ordering::SeqCst));
+        }
+
+        CANCEL_TYPING.store(previous, Ordering::SeqCst);
     }
 
     #[test]
