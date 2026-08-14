@@ -49,6 +49,20 @@ const assemblyaiHeaders = (apiKey: string): Record<string, string> => ({
   Authorization: apiKey,
 });
 
+// Guarded JSON parse: a 2xx response with a non-JSON body (e.g. a proxy or
+// load-balancer HTML error page) must surface a clean, prefixed error instead
+// of an unwrapped SyntaxError escaping the caller.
+const parseJsonResponse = async <T>(
+  response: Response,
+  errorLabel: string,
+): Promise<T> => {
+  try {
+    return (await response.json()) as T;
+  } catch {
+    throw new Error(`${errorLabel}: response was not valid JSON`);
+  }
+};
+
 // Retry only transient failures: network errors, 5xx responses, and 429.
 // Other 4xx responses (bad key, invalid request) will not succeed on retry.
 const RETRYABLE_STATUS_CODES = new Set([408, 429, 500, 502, 503, 504]);
@@ -186,7 +200,10 @@ const uploadAudio = async (
   });
 
   const { upload_url: uploadUrl } =
-    (await response.json()) as AssemblyAIUploadResponse;
+    await parseJsonResponse<AssemblyAIUploadResponse>(
+      response,
+      "AssemblyAI upload failed",
+    );
 
   if (!uploadUrl) {
     throw new Error("AssemblyAI upload returned no audio URL");
@@ -220,7 +237,10 @@ const createTranscriptRequest = async (
     deadline,
   });
 
-  const created = (await response.json()) as AssemblyAITranscriptResponse;
+  const created = await parseJsonResponse<AssemblyAITranscriptResponse>(
+    response,
+    "AssemblyAI transcript request failed",
+  );
   const transcriptId = created.id;
   if (!transcriptId) {
     throw new Error("AssemblyAI transcript request returned no ID");
@@ -257,7 +277,10 @@ const waitForTranscript = async (
       signal,
       deadline,
     });
-    const status = (await response.json()) as AssemblyAITranscriptResponse;
+    const status = await parseJsonResponse<AssemblyAITranscriptResponse>(
+      response,
+      "AssemblyAI transcript status failed",
+    );
 
     if (status.status === "completed") {
       const text = status.text?.trim() ?? "";

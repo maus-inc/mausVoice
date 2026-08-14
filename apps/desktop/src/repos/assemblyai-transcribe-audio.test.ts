@@ -404,6 +404,59 @@ describe("assemblyaiTranscribeAudio", () => {
     expect(Date.now() - startedAt).toBeLessThan(5000);
   });
 
+  it("surfaces a clean error when the upload response is not JSON", async () => {
+    vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      new Response("<html>proxy error</html>", { status: 200 }),
+    );
+
+    await expect(
+      assemblyaiTranscribeAudio({
+        apiKey: "aa-key",
+        blob: new ArrayBuffer(8),
+      }),
+    ).rejects.toThrow(/AssemblyAI upload failed: response was not valid JSON/);
+  });
+
+  it("surfaces a clean error when the transcript-create response is not JSON", async () => {
+    vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
+      if (String(input).endsWith("/v2/upload")) {
+        return jsonResponse({ upload_url: UPLOAD_URL });
+      }
+      return new Response("<html>proxy error</html>", { status: 200 });
+    });
+
+    await expect(
+      assemblyaiTranscribeAudio({
+        apiKey: "aa-key",
+        blob: new ArrayBuffer(8),
+      }),
+    ).rejects.toThrow(
+      /AssemblyAI transcript request failed: response was not valid JSON/,
+    );
+  });
+
+  it("surfaces a clean error when the status response is not JSON", async () => {
+    vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
+      const url = String(input);
+      if (url.endsWith("/v2/upload")) {
+        return jsonResponse({ upload_url: UPLOAD_URL });
+      }
+      if (url.endsWith("/v2/transcript")) {
+        return jsonResponse({ id: "t1", status: "queued" });
+      }
+      return new Response("<html>proxy error</html>", { status: 200 });
+    });
+
+    await expect(
+      assemblyaiTranscribeAudio({
+        apiKey: "aa-key",
+        blob: new ArrayBuffer(8),
+      }),
+    ).rejects.toThrow(
+      /AssemblyAI transcript status failed: response was not valid JSON/,
+    );
+  });
+
   it("rejects invalid timeout and poll-interval options before any network call", async () => {
     const fetchMock = vi
       .spyOn(globalThis, "fetch")
