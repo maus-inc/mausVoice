@@ -130,6 +130,27 @@ type RequestWithRetryOptions = {
   deadline?: number;
 };
 
+// Handle a fetch-level failure (network error or abort). Throws when the
+// retries are exhausted or the request was aborted; otherwise returns the
+// delay before the next attempt.
+const handleFetchError = (
+  error: unknown,
+  signal: AbortSignal | undefined,
+  errorLabel: string,
+  attempt: number,
+  maxRetries: number,
+  deadline: number | undefined,
+): number => {
+  if (signal?.aborted) {
+    throw new Error(`${errorLabel}: timed out`);
+  }
+  if (attempt >= maxRetries) {
+    const message = error instanceof Error ? error.message : String(error);
+    throw new Error(`${errorLabel}: ${message}`);
+  }
+  return getBoundedRetryDelayMs(undefined, deadline, attempt);
+};
+
 const requestWithRetry = async ({
   apiKey,
   url,
@@ -153,15 +174,15 @@ const requestWithRetry = async ({
         signal,
       });
     } catch (error) {
-      if (signal?.aborted) {
-        throw new Error(`${errorLabel}: timed out`);
-      }
-      // Network-level failure is transient; retry unless exhausted.
-      if (attempt >= maxRetries) {
-        const message = error instanceof Error ? error.message : String(error);
-        throw new Error(`${errorLabel}: ${message}`);
-      }
-      await delayed(getBoundedRetryDelayMs(undefined, deadline, attempt));
+      const delayMs = handleFetchError(
+        error,
+        signal,
+        errorLabel,
+        attempt,
+        maxRetries,
+        deadline,
+      );
+      await delayed(delayMs);
       continue;
     }
 

@@ -244,10 +244,15 @@ export type TranscriptionPrefs =
   | ApiTranscriptionPrefs;
 
 /**
- * Providers with an implemented batch transcription route. Must stay in sync
- * with the `supportsTranscriptionModels()` flags in `getModelProviderRepo()`
- * (mirrored here to avoid a circular import); a selected key whose provider is
- * not in this set cannot be transcribed and is treated as stale.
+ * Providers with an implemented batch transcription route — i.e. parity with
+ * the `getTranscribeAudioRepo()` switch branches in `repos/index.ts` (mirrored
+ * here to avoid a circular import). This is NOT the same as the
+ * `supportsTranscriptionModels()` capability flags: Azure is always available
+ * in the transcription UI (special-cased by region in `ApiKeyList`), so
+ * `AzureModelProviderRepo.supportsTranscriptionModels()` returns `false` while
+ * `azure` still has a real dispatch branch and must stay in this set. A
+ * selected key whose provider is not in this set cannot be transcribed and is
+ * treated as stale.
  */
 const TRANSCRIPTION_CAPABLE_PROVIDERS = new Set([
   "groq",
