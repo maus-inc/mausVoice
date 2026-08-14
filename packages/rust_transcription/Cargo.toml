@@ -33,10 +33,9 @@ uuid = { version = "1", features = ["serde", "v4"] }
 whisper-rs = { version = "0.15.1", default-features = false, features = ["raw-api"] }
 # Keep the prerelease exact: Cargo's `"2"` requirement does not select a 2.0
 # prerelease and was the reason every Rust/desktop CI build failed before
-# compilation. rc.12's Linux distribution also retains Ubuntu 22.04 ABI
-# compatibility, which the desktop release runner requires.
-ort = "=2.0.0-rc.12"
-parakeet-rs = { version = "=0.3.6" }
+# compilation. Keep all model wrappers on the same ORT API release.
+ort = "=2.0.0-rc.11"
+parakeet-rs = { version = "=0.3.3" }
 canary-rs = { version = "=0.2.0" }
 
 [dev-dependencies]
