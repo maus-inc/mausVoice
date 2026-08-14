@@ -304,7 +304,7 @@ importers:
         specifier: '>=7.3.5 <8.0.0'
         version: 7.3.6(@types/node@24.12.2)(jiti@2.6.1)(lightningcss@1.32.0)(tsx@4.21.0)(yaml@2.8.3)
       vitest:
-        specifier: <4.0.0
+        specifier: '>=3.2.6 <4.0.0'
         version: 3.2.7(@types/debug@4.1.13)(@types/node@24.12.2)(jiti@2.6.1)(lightningcss@1.32.0)(tsx@4.21.0)(yaml@2.8.3)
 
   apps/docs:

@@ -2806,6 +2806,45 @@ mod tests {
     /// replaying the migration SQL. Derived independently of
     /// `USER_DATA_TABLES_TO_CLEAR`, so a new table that nobody remembered
     /// to clear still shows up here.
+    /// Remove SQL noise that would otherwise be mis-tokenized: `/* */`
+    /// block comments, single/double quoted string literals (which may
+    /// contain `;`, `--`, or `*/`), and `--` line comments. After this the
+    /// remaining text can be safely split on `;` and `--`.
+    fn strip_sql_noise(sql: &str) -> String {
+        let mut out = String::with_capacity(sql.len());
+        let mut chars = sql.chars().peekable();
+        let mut in_block_comment = false;
+        while let Some(c) = chars.next() {
+            if in_block_comment {
+                if c == '*' && chars.peek() == Some(&'/') {
+                    chars.next();
+                    in_block_comment = false;
+                }
+                continue;
+            }
+            if c == '/' && chars.peek() == Some(&'*') {
+                chars.next();
+                in_block_comment = true;
+                continue;
+            }
+            if c == '\'' || c == '"' {
+                let quote = c;
+                while let Some(q) = chars.next() {
+                    if q == quote {
+                        if chars.peek() == Some(&quote) {
+                            chars.next(); // doubled-quote escape
+                            continue;
+                        }
+                        break;
+                    }
+                }
+                continue;
+            }
+            out.push(c);
+        }
+        out
+    }
+
     fn tables_declared_by_migrations() -> std::collections::BTreeSet<String> {
         let first_word = |rest: &str| -> Option<String> {
             rest.split(|c: char| c == '(' || c.is_whitespace())
@@ -2815,10 +2854,11 @@ mod tests {
 
         let mut tables: std::collections::BTreeSet<String> = std::collections::BTreeSet::new();
         for migration in crate::db::migrations() {
-            // Drop `--` comments so they cannot look like statements, then
-            // replay statement by statement in migration order.
-            let sql = migration
-                .sql
+            // Drop block comments and string literals first (so `--` or `;`
+            // inside them can't be mistaken for statement boundaries), then
+            // strip `--` line comments, then replay statement by statement.
+            let cleaned = strip_sql_noise(migration.sql);
+            let sql = cleaned
                 .lines()
                 .map(|line| line.split("--").next().unwrap_or("").trim())
                 .collect::<Vec<_>>()
