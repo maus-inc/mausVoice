@@ -701,10 +701,26 @@ async fn download_model_and_wait(
         return Err("timed out waiting for model download to complete".into());
     }
 
-    // The progress-tracked primary is the largest artifact, so the smaller
-    // graph/tokenizer companions should normally already be complete. Allow a
-    // short finalization window before validating the full set.
-    sleep(Duration::from_secs(30)).await;
+    // The auxiliary artifacts are fetched alongside the primary download and
+    // the sidecar only reports `downloaded` once the complete artifact set is
+    // present on disk. Poll that signal instead of a hard-coded sleep so the
+    // test is not coupled to auxiliary-download timing.
+    let finalization_deadline = Instant::now() + Duration::from_secs(120);
+    while Instant::now() < finalization_deadline {
+        let status = sidecar
+            .client
+            .get(sidecar.url(&format!("/v1/models/{slug}/status?validate=false")))
+            .send()
+            .await?
+            .error_for_status()?
+            .json::<ModelStatusResponse>()
+            .await?;
+
+        if status.downloaded {
+            break;
+        }
+        sleep(Duration::from_millis(500)).await;
+    }
 
     let status = sidecar
         .client
