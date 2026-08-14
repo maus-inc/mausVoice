@@ -33,11 +33,30 @@ pub struct DownloadJobSnapshot {
     pub error: Option<String>,
 }
 
+#[derive(Debug, Clone)]
+pub struct DownloadArtifact {
+    pub url: String,
+    pub destination: PathBuf,
+}
+
+impl DownloadArtifact {
+    pub fn new(url: String, destination: PathBuf) -> Self {
+        Self { url, destination }
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum DownloadCommand {
     Run,
     Pause,
     Cancel,
+}
+
+enum ArtifactDownloadOutcome {
+    Completed { bytes: u64 },
+    Paused,
+    Canceled,
+    Obsolete,
 }
 
 #[derive(Clone)]
@@ -49,6 +68,7 @@ struct DownloadJobRecord {
     error: Option<String>,
     generation: u64,
     is_finalizing: bool,
+    artifact_paths: Vec<PathBuf>,
     control_tx: Option<watch::Sender<DownloadCommand>>,
     worker_finished_rx: Option<watch::Receiver<bool>>,
 }
@@ -79,6 +99,7 @@ impl DownloadJobRecord {
 struct DownloadStore {
     jobs: HashMap<Uuid, DownloadJobRecord>,
     active_by_model: HashMap<WhisperModel, Uuid>,
+    latest_by_model: HashMap<WhisperModel, Uuid>,
 }
 
 #[derive(Clone, Default)]
@@ -90,11 +111,18 @@ impl DownloadRegistry {
     pub async fn start_or_get_active(
         &self,
         model: WhisperModel,
-        download_url: String,
-        destination: PathBuf,
+        artifacts: Vec<DownloadArtifact>,
         client: reqwest::Client,
     ) -> Result<DownloadJobSnapshot, String> {
-        if let Some(existing_size) = existing_model_file_size(&destination).await {
+        if artifacts.is_empty() {
+            return Err("download job requires at least one artifact".to_string());
+        }
+
+        let artifact_paths = artifacts
+            .iter()
+            .map(|artifact| artifact.destination.clone())
+            .collect::<Vec<_>>();
+        if let Some(existing_size) = existing_artifact_set_size(&artifact_paths).await {
             let job_id = Uuid::new_v4();
             let mut store = self.inner.lock().await;
             let record = DownloadJobRecord {
@@ -105,11 +133,13 @@ impl DownloadRegistry {
                 error: None,
                 generation: 1,
                 is_finalizing: false,
+                artifact_paths,
                 control_tx: None,
                 worker_finished_rx: None,
             };
             let snapshot = record.to_snapshot(job_id);
             store.jobs.insert(job_id, record);
+            store.latest_by_model.insert(model, job_id);
 
             return Ok(snapshot);
         }
@@ -131,6 +161,7 @@ impl DownloadRegistry {
                         let (finished_tx, finished_rx) = watch::channel(false);
                         record.status = DownloadJobStatus::Pending;
                         record.error = None;
+                        record.artifact_paths = artifact_paths.clone();
                         record.control_tx = Some(control_tx);
                         record.worker_finished_rx = Some(finished_rx);
                         let snapshot = record.to_snapshot(existing_id);
@@ -169,12 +200,14 @@ impl DownloadRegistry {
                         error: None,
                         generation: 1,
                         is_finalizing: false,
+                        artifact_paths: artifact_paths.clone(),
                         control_tx: Some(control_tx),
                         worker_finished_rx: Some(finished_rx),
                     };
                     let snapshot = record.to_snapshot(new_job_id);
                     store.jobs.insert(new_job_id, record);
                     store.active_by_model.insert(model, new_job_id);
+                    store.latest_by_model.insert(model, new_job_id);
                     (
                         new_job_id,
                         1,
@@ -197,12 +230,14 @@ impl DownloadRegistry {
                     error: None,
                     generation: 1,
                     is_finalizing: false,
+                    artifact_paths: artifact_paths.clone(),
                     control_tx: Some(control_tx),
                     worker_finished_rx: Some(finished_rx),
                 };
                 let snapshot = record.to_snapshot(job_id);
                 store.jobs.insert(job_id, record);
                 store.active_by_model.insert(model, job_id);
+                store.latest_by_model.insert(model, job_id);
 
                 (
                     job_id,
@@ -225,8 +260,7 @@ impl DownloadRegistry {
                             job_id,
                             generation,
                             model,
-                            download_url,
-                            destination,
+                            artifacts,
                             client,
                             control_rx,
                             prev_worker_rx,
@@ -272,8 +306,12 @@ impl DownloadRegistry {
         self.pause_job(model, job_id).await
     }
 
-    pub async fn cancel_job(&self, model: WhisperModel, job_id: Uuid, destination: &PathBuf) -> Option<DownloadJobSnapshot> {
-        let (snapshot, temp_file_path) = {
+    pub async fn cancel_job(
+        &self,
+        model: WhisperModel,
+        job_id: Uuid,
+    ) -> Option<DownloadJobSnapshot> {
+        let (snapshot, temp_file_paths) = {
             let mut store = self.inner.lock().await;
             let job = store.jobs.get_mut(&job_id)?;
             if job.model != model {
@@ -292,26 +330,34 @@ impl DownloadRegistry {
             job.status = DownloadJobStatus::Canceled;
             job.control_tx = None;
             let snapshot = job.to_snapshot(job_id);
+            let temp_file_paths = job
+                .artifact_paths
+                .iter()
+                .filter_map(|destination| temporary_artifact_path(destination, job_id).ok())
+                .collect::<Vec<_>>();
             store.active_by_model.remove(&model);
-
-            let filename = destination.file_name().and_then(|name| name.to_str()).unwrap_or("model.bin");
-            let temp_path = destination.with_file_name(format!("{filename}.{job_id}.download"));
-            (snapshot, temp_path)
+            (snapshot, temp_file_paths)
         };
 
         tokio::spawn(async move {
-            let _ = tokio::fs::remove_file(temp_file_path).await;
+            for temp_file_path in temp_file_paths {
+                let validator_path = temporary_validator_path(&temp_file_path).ok();
+                let _ = tokio::fs::remove_file(temp_file_path).await;
+                if let Some(validator_path) = validator_path {
+                    let _ = tokio::fs::remove_file(validator_path).await;
+                }
+            }
         });
 
         Some(snapshot)
     }
 
-    pub async fn cancel_active(&self, model: WhisperModel, destination: &PathBuf) -> Option<DownloadJobSnapshot> {
+    pub async fn cancel_active(&self, model: WhisperModel) -> Option<DownloadJobSnapshot> {
         let job_id = {
             let store = self.inner.lock().await;
             store.active_by_model.get(&model).copied()?
         };
-        self.cancel_job(model, job_id, destination).await
+        self.cancel_job(model, job_id).await
     }
 
     pub async fn get_job(&self, model: WhisperModel, job_id: Uuid) -> Option<DownloadJobSnapshot> {
@@ -330,19 +376,32 @@ impl DownloadRegistry {
         store.snapshot(job_id)
     }
 
+    pub async fn get_latest_job(&self, model: WhisperModel) -> Option<DownloadJobSnapshot> {
+        let store = self.inner.lock().await;
+        let job_id = store.latest_by_model.get(&model).copied()?;
+        store.snapshot(job_id)
+    }
+
+    pub async fn clear_model_history(&self, model: WhisperModel) {
+        let mut store = self.inner.lock().await;
+        store.active_by_model.remove(&model);
+        store.latest_by_model.remove(&model);
+        store.jobs.retain(|_, job| job.model != model);
+    }
+
     async fn run_download_job(
         &self,
         job_id: Uuid,
         generation: u64,
         model: WhisperModel,
-        download_url: String,
-        destination: PathBuf,
+        artifacts: Vec<DownloadArtifact>,
         client: reqwest::Client,
         mut control_rx: watch::Receiver<DownloadCommand>,
         prev_worker_rx: Option<watch::Receiver<bool>>,
         finished_tx: watch::Sender<bool>,
     ) -> Result<(), String> {
-        // If there was a previous worker for this job (e.g. paused), wait for it to fully close and release the file
+        // A resumed worker waits for its predecessor to close the active
+        // artifact before opening the same partial file.
         if let Some(mut prev_rx) = prev_worker_rx {
             while !*prev_rx.borrow_and_update() {
                 if prev_rx.changed().await.is_err() {
@@ -356,8 +415,7 @@ impl DownloadRegistry {
                 job_id,
                 generation,
                 model,
-                download_url,
-                destination,
+                artifacts,
                 client,
                 &mut control_rx,
             )
@@ -372,8 +430,7 @@ impl DownloadRegistry {
         job_id: Uuid,
         generation: u64,
         model: WhisperModel,
-        download_url: String,
-        destination: PathBuf,
+        artifacts: Vec<DownloadArtifact>,
         client: reqwest::Client,
         control_rx: &mut watch::Receiver<DownloadCommand>,
     ) -> Result<(), String> {
@@ -381,85 +438,180 @@ impl DownloadRegistry {
             return Ok(());
         }
 
-        if let Some(parent) = destination.parent() {
+        let mut completed_bytes = 0_u64;
+        for artifact in artifacts {
+            let outcome = self
+                .download_artifact(
+                    job_id,
+                    generation,
+                    &artifact,
+                    &client,
+                    control_rx,
+                    completed_bytes,
+                )
+                .await
+                .map_err(|err| {
+                    format!(
+                        "artifact '{}' download failed: {err}",
+                        artifact.destination.display()
+                    )
+                })?;
+
+            match outcome {
+                ArtifactDownloadOutcome::Completed { bytes } => {
+                    completed_bytes = completed_bytes.saturating_add(bytes);
+                    self.set_progress(
+                        job_id,
+                        generation,
+                        completed_bytes,
+                        Some(completed_bytes),
+                    )
+                    .await;
+                }
+                ArtifactDownloadOutcome::Paused => {
+                    self.mark_paused(job_id, generation).await;
+                    return Ok(());
+                }
+                ArtifactDownloadOutcome::Canceled => {
+                    self.mark_canceled(job_id, generation, model).await;
+                    return Ok(());
+                }
+                ArtifactDownloadOutcome::Obsolete => return Ok(()),
+            }
+        }
+
+        // Publish completion only after every required graph, weights, and
+        // tokenizer/vocabulary artifact has been durably moved into place.
+        if !self.claim_finalization(job_id, generation).await {
+            return Ok(());
+        }
+        self.mark_completed(
+            job_id,
+            generation,
+            model,
+            completed_bytes,
+            Some(completed_bytes),
+        )
+        .await;
+        Ok(())
+    }
+
+    async fn download_artifact(
+        &self,
+        job_id: Uuid,
+        generation: u64,
+        artifact: &DownloadArtifact,
+        client: &reqwest::Client,
+        control_rx: &mut watch::Receiver<DownloadCommand>,
+        completed_before: u64,
+    ) -> Result<ArtifactDownloadOutcome, String> {
+        let command = *control_rx.borrow_and_update();
+        match command {
+            DownloadCommand::Pause => return Ok(ArtifactDownloadOutcome::Paused),
+            DownloadCommand::Cancel => return Ok(ArtifactDownloadOutcome::Canceled),
+            DownloadCommand::Run => {}
+        }
+
+        if let Some(existing_size) = existing_model_file_size(&artifact.destination).await {
+            return Ok(ArtifactDownloadOutcome::Completed {
+                bytes: existing_size,
+            });
+        }
+
+        if let Some(parent) = artifact.destination.parent() {
             tokio::fs::create_dir_all(parent)
                 .await
                 .map_err(|err| format!("failed to create model directory: {err}"))?;
         }
 
-        let filename = destination
-            .file_name()
-            .and_then(|name| name.to_str())
-            .ok_or_else(|| "invalid destination filename".to_string())?;
-
-        let temp_path = destination.with_file_name(format!("{filename}.{job_id}.download"));
-
+        let temp_path = temporary_artifact_path(&artifact.destination, job_id)?;
+        let validator_path = temporary_validator_path(&temp_path)?;
         let existing_bytes = match tokio::fs::metadata(&temp_path).await {
             Ok(metadata) if metadata.is_file() => metadata.len(),
             _ => 0,
         };
+        let existing_validator = if existing_bytes > 0 {
+            tokio::fs::read_to_string(&validator_path)
+                .await
+                .ok()
+                .map(|value| value.trim().to_string())
+                .filter(|value| !value.is_empty())
+        } else {
+            None
+        };
 
-        let mut request = client.get(&download_url);
-        if existing_bytes > 0 {
-            request = request.header(reqwest::header::RANGE, format!("bytes={existing_bytes}-"));
+        let (response, resume_is_valid) = request_artifact_response(
+            client,
+            &artifact.url,
+            existing_bytes,
+            existing_validator.as_deref(),
+        )
+        .await?;
+        let validator = response_resume_validator(&response).or_else(|| {
+            if resume_is_valid {
+                existing_validator.clone()
+            } else {
+                None
+            }
+        });
+        if let Some(validator) = validator {
+            tokio::fs::write(&validator_path, validator)
+                .await
+                .map_err(|err| format!("failed to persist download validator: {err}"))?;
+        } else {
+            let _ = tokio::fs::remove_file(&validator_path).await;
         }
 
-        let response = request
-            .send()
-            .await
-            .map_err(|err| format!("failed to request model download: {err}"))?;
-
-        let status = response.status();
-        if !status.is_success() {
-            return Err(format!(
-                "model download request failed with status {}",
-                status
-            ));
-        }
-
-        let is_partial = status == reqwest::StatusCode::PARTIAL_CONTENT;
-        let (mut downloaded, total_bytes, mut file) = if is_partial && existing_bytes > 0 {
-            let content_len = response.content_length();
-            let total = content_len.map(|len| existing_bytes + len);
+        let (mut downloaded, artifact_total, mut file) = if resume_is_valid {
+            let total = response.content_length().map(|len| existing_bytes + len);
             let file = tokio::fs::OpenOptions::new()
                 .create(true)
                 .append(true)
                 .open(&temp_path)
                 .await
-                .map_err(|err| format!("failed to open temporary model file for append: {err}"))?;
+                .map_err(|err| format!("failed to open temporary file for append: {err}"))?;
             (existing_bytes, total, file)
         } else {
             let total = response.content_length();
             let file = tokio::fs::File::create(&temp_path)
                 .await
-                .map_err(|err| format!("failed to create temporary model file: {err}"))?;
-            (0u64, total, file)
+                .map_err(|err| format!("failed to create temporary file: {err}"))?;
+            (0_u64, total, file)
         };
 
-        self.set_progress(job_id, generation, downloaded, total_bytes).await;
+        self.set_progress(
+            job_id,
+            generation,
+            completed_before.saturating_add(downloaded),
+            artifact_total.map(|total| completed_before.saturating_add(total)),
+        )
+        .await;
 
         let mut stream = response.bytes_stream();
-        let mut was_paused = false;
-        let mut was_canceled = false;
-
         loop {
             tokio::select! {
                 changed = control_rx.changed() => {
                     match changed {
-                        Ok(()) => match *control_rx.borrow() {
-                            DownloadCommand::Pause => {
-                                was_paused = true;
-                                break;
+                        Ok(()) => {
+                            let command = *control_rx.borrow_and_update();
+                            match command {
+                                DownloadCommand::Pause => {
+                                    file.flush().await
+                                        .map_err(|err| format!("failed to flush paused artifact: {err}"))?;
+                                    file.sync_all().await
+                                        .map_err(|err| format!("failed to sync paused artifact: {err}"))?;
+                                    return Ok(ArtifactDownloadOutcome::Paused);
+                                }
+                                DownloadCommand::Cancel => {
+                                    drop(file);
+                                    let _ = tokio::fs::remove_file(&temp_path).await;
+                                    let _ = tokio::fs::remove_file(&validator_path).await;
+                                    return Ok(ArtifactDownloadOutcome::Canceled);
+                                }
+                                DownloadCommand::Run => {}
                             }
-                            DownloadCommand::Cancel => {
-                                was_canceled = true;
-                                break;
-                            }
-                            DownloadCommand::Run => {}
-                        },
-                        Err(_) => {
-                            return Ok(());
                         }
+                        Err(_) => return Ok(ArtifactDownloadOutcome::Obsolete),
                     }
                 }
                 item = stream.next() => {
@@ -467,88 +619,76 @@ impl DownloadRegistry {
                         Some(Ok(chunk)) => {
                             file.write_all(&chunk)
                                 .await
-                                .map_err(|err| format!("failed to write model file: {err}"))?;
-                            downloaded += chunk.len() as u64;
-                            self.set_progress(job_id, generation, downloaded, total_bytes).await;
+                                .map_err(|err| format!("failed to write artifact: {err}"))?;
+                            downloaded = downloaded.saturating_add(chunk.len() as u64);
+                            self.set_progress(
+                                job_id,
+                                generation,
+                                completed_before.saturating_add(downloaded),
+                                artifact_total.map(|total| completed_before.saturating_add(total)),
+                            )
+                            .await;
                         }
-                        Some(Err(err)) => {
-                            return Err(format!("download stream failed: {err}"));
-                        }
+                        Some(Err(err)) => return Err(format!("stream failed: {err}")),
                         None => break,
                     }
                 }
             }
         }
 
-        if was_canceled {
-            drop(file);
-            let _ = tokio::fs::remove_file(&temp_path).await;
-            self.mark_canceled(job_id, generation, model).await;
-            return Ok(());
-        }
+        validate_downloaded_size(downloaded, artifact_total)?;
 
-        if was_paused {
-            let _ = file.flush().await;
-            let _ = file.sync_all().await;
-            drop(file);
-            self.mark_paused(job_id, generation).await;
-            return Ok(());
-        }
-
-        // Atomically claim finalization while holding the registry lock.
-        // Once claimed, pause and cancel requests will not override finalization.
-        if !self.claim_finalization(job_id, generation).await {
-            let is_canceled = {
-                let store = self.inner.lock().await;
-                store
-                    .jobs
-                    .get(&job_id)
-                    .map(|j| j.status == DownloadJobStatus::Canceled || j.generation != generation)
-                    .unwrap_or(true)
-            };
-            drop(file);
-            if is_canceled {
-                let _ = tokio::fs::remove_file(&temp_path).await;
-            }
-            return Ok(());
-        }
-
-        if let Err(err) = file.flush().await {
-            drop(file);
-            let _ = tokio::fs::remove_file(&temp_path).await;
-            let msg = format!("failed to flush model file: {err}");
-            self.mark_failed(job_id, generation, model, msg.clone()).await;
-            return Err(msg);
-        }
-        if let Err(err) = file.sync_all().await {
-            drop(file);
-            let _ = tokio::fs::remove_file(&temp_path).await;
-            let msg = format!("failed to sync model file: {err}");
-            self.mark_failed(job_id, generation, model, msg.clone()).await;
-            return Err(msg);
-        }
+        file.flush()
+            .await
+            .map_err(|err| format!("failed to flush artifact: {err}"))?;
+        file.sync_all()
+            .await
+            .map_err(|err| format!("failed to sync artifact: {err}"))?;
         drop(file);
 
-        if destination.exists() {
-            if let Err(err) = tokio::fs::remove_file(&destination).await {
-                let _ = tokio::fs::remove_file(&temp_path).await;
-                let msg = format!("failed to replace existing model file: {err}");
-                self.mark_failed(job_id, generation, model, msg.clone()).await;
-                return Err(msg);
+        // Block pause/cancel only for the short replace+rename section. The
+        // control sender stays installed for every subsequent artifact.
+        if !self.begin_artifact_finalization(job_id, generation).await {
+            let _ = tokio::fs::remove_file(&temp_path).await;
+            let _ = tokio::fs::remove_file(&validator_path).await;
+            return Ok(ArtifactDownloadOutcome::Obsolete);
+        }
+
+        if artifact.destination.exists() {
+            tokio::fs::remove_file(&artifact.destination)
+                .await
+                .map_err(|err| format!("failed to replace existing artifact: {err}"))?;
+        }
+        tokio::fs::rename(&temp_path, &artifact.destination)
+            .await
+            .map_err(|err| format!("failed to finalize artifact: {err}"))?;
+        let _ = tokio::fs::remove_file(&validator_path).await;
+        self.end_artifact_finalization(job_id, generation).await;
+
+        Ok(ArtifactDownloadOutcome::Completed { bytes: downloaded })
+    }
+
+    async fn begin_artifact_finalization(&self, job_id: Uuid, generation: u64) -> bool {
+        let mut store = self.inner.lock().await;
+        if let Some(job) = store.jobs.get_mut(&job_id) {
+            if job.generation == generation
+                && job.status == DownloadJobStatus::Running
+                && !job.is_finalizing
+            {
+                job.is_finalizing = true;
+                return true;
             }
         }
+        false
+    }
 
-        if let Err(err) = tokio::fs::rename(&temp_path, &destination).await {
-            let _ = tokio::fs::remove_file(&temp_path).await;
-            let msg = format!("failed to finalize model file: {err}");
-            self.mark_failed(job_id, generation, model, msg.clone()).await;
-            return Err(msg);
+    async fn end_artifact_finalization(&self, job_id: Uuid, generation: u64) {
+        let mut store = self.inner.lock().await;
+        if let Some(job) = store.jobs.get_mut(&job_id) {
+            if job.generation == generation && job.status == DownloadJobStatus::Running {
+                job.is_finalizing = false;
+            }
         }
-
-        self.mark_completed(job_id, generation, model, downloaded, total_bytes)
-            .await;
-
-        Ok(())
     }
 
     async fn claim_finalization(&self, job_id: Uuid, generation: u64) -> bool {
@@ -611,7 +751,11 @@ impl DownloadRegistry {
         if let Some(job) = store.jobs.get_mut(&job_id) {
             if job.generation == generation && matches!(job.status, DownloadJobStatus::Pending | DownloadJobStatus::Running) {
                 job.bytes_downloaded = downloaded;
-                job.total_bytes = total_bytes;
+                job.total_bytes = match (job.total_bytes, total_bytes) {
+                    (Some(existing), Some(incoming)) => Some(existing.max(incoming)),
+                    (Some(existing), None) => Some(existing),
+                    (None, incoming) => incoming,
+                };
             }
         }
     }
@@ -629,7 +773,11 @@ impl DownloadRegistry {
             if job.generation == generation {
                 job.status = DownloadJobStatus::Completed;
                 job.bytes_downloaded = downloaded;
-                job.total_bytes = total_bytes.or(Some(downloaded));
+                let completed_total = total_bytes.unwrap_or(downloaded).max(downloaded);
+                job.total_bytes = Some(
+                    job.total_bytes
+                        .map_or(completed_total, |existing| existing.max(completed_total)),
+                );
                 job.error = None;
                 job.is_finalizing = false;
                 job.control_tx = None;
@@ -664,6 +812,86 @@ impl DownloadStore {
     }
 }
 
+fn validate_downloaded_size(downloaded: u64, expected: Option<u64>) -> Result<(), String> {
+    if let Some(expected) = expected {
+        if downloaded != expected {
+            return Err(format!(
+                "downloaded byte count mismatch: received {downloaded}, expected {expected}"
+            ));
+        }
+    }
+    Ok(())
+}
+
+async fn request_artifact_response(
+    client: &reqwest::Client,
+    url: &str,
+    existing_bytes: u64,
+    if_range: Option<&str>,
+) -> Result<(reqwest::Response, bool), String> {
+    // Never append without a validator tied to the existing prefix. A bare
+    // byte offset cannot prove that the remote object is still the same file.
+    if let Some(if_range) = if_range.filter(|_| existing_bytes > 0) {
+        let ranged = client
+            .get(url)
+            .header(reqwest::header::RANGE, format!("bytes={existing_bytes}-"))
+            .header(reqwest::header::IF_RANGE, if_range)
+            .send()
+            .await
+            .map_err(|err| format!("request failed: {err}"))?;
+
+        if ranged.status() == reqwest::StatusCode::PARTIAL_CONTENT {
+            if content_range_start(&ranged) == Some(existing_bytes) {
+                return Ok((ranged, true));
+            }
+            // A 206 response is append-safe only when the server confirms
+            // the exact requested offset. Restart from byte zero.
+        } else if ranged.status() == reqwest::StatusCode::OK {
+            // If-Range intentionally produces 200 when the remote object
+            // changed. The caller truncates the stale temporary prefix.
+            return Ok((ranged, false));
+        } else if ranged.status() != reqwest::StatusCode::RANGE_NOT_SATISFIABLE {
+            return Err(format!("request failed with status {}", ranged.status()));
+        }
+    }
+
+    let response = client
+        .get(url)
+        .send()
+        .await
+        .map_err(|err| format!("request failed: {err}"))?;
+    if response.status() != reqwest::StatusCode::OK {
+        return Err(format!("request failed with status {}", response.status()));
+    }
+    Ok((response, false))
+}
+
+fn content_range_start(response: &reqwest::Response) -> Option<u64> {
+    let value = response
+        .headers()
+        .get(reqwest::header::CONTENT_RANGE)?
+        .to_str()
+        .ok()?
+        .strip_prefix("bytes ")?;
+    value.split_once('-')?.0.parse().ok()
+}
+
+fn response_resume_validator(response: &reqwest::Response) -> Option<String> {
+    let strong_etag = response
+        .headers()
+        .get(reqwest::header::ETAG)
+        .and_then(|value| value.to_str().ok())
+        .filter(|value| !value.starts_with("W/"));
+    strong_etag
+        .or_else(|| {
+            response
+                .headers()
+                .get(reqwest::header::LAST_MODIFIED)
+                .and_then(|value| value.to_str().ok())
+        })
+        .map(str::to_owned)
+}
+
 async fn existing_model_file_size(path: &PathBuf) -> Option<u64> {
     match tokio::fs::metadata(path).await {
         Ok(metadata) if metadata.is_file() && metadata.len() > 0 => Some(metadata.len()),
@@ -671,75 +899,35 @@ async fn existing_model_file_size(path: &PathBuf) -> Option<u64> {
     }
 }
 
-/// Stream a single auxiliary artifact (e.g. `tokens.txt`, the decoder/joiner
-/// ONNX files) straight to disk. Unlike [`DownloadRegistry`] this is not
-/// resumable and does not participate in pause/cancel — it is used to fetch the
-/// secondary files that accompany the primary ONNX model, whose download
-/// (and progress/pause/cancel) is tracked by the registry.
-pub async fn download_file_to_path(
-    client: &reqwest::Client,
-    url: &str,
-    destination: &Path,
-) -> Result<(), String> {
-    if let Some(parent) = destination.parent() {
-        tokio::fs::create_dir_all(parent)
-            .await
-            .map_err(|err| format!("failed to create model directory: {err}"))?;
+async fn existing_artifact_set_size(paths: &[PathBuf]) -> Option<u64> {
+    let mut total = 0_u64;
+    for path in paths {
+        total = total.checked_add(existing_model_file_size(path).await?)?;
     }
+    Some(total)
+}
 
+fn temporary_artifact_path(destination: &Path, job_id: Uuid) -> Result<PathBuf, String> {
     let filename = destination
         .file_name()
         .and_then(|name| name.to_str())
         .ok_or_else(|| "invalid destination filename".to_string())?;
-    let temp_path = destination.with_file_name(format!("{filename}.{}.download", Uuid::new_v4()));
+    Ok(destination.with_file_name(format!("{filename}.{job_id}.download")))
+}
 
-    let response = client
-        .get(url)
-        .send()
-        .await
-        .map_err(|err| format!("failed to request artifact download: {err}"))?;
-
-    if !response.status().is_success() {
-        return Err(format!(
-            "artifact download request failed with status {}",
-            response.status()
-        ));
-    }
-
-    let mut stream = response.bytes_stream();
-    let mut file = tokio::fs::File::create(&temp_path)
-        .await
-        .map_err(|err| format!("failed to create temporary artifact file: {err}"))?;
-
-    while let Some(chunk) = stream.next().await {
-        let chunk = chunk.map_err(|err| format!("download stream failed: {err}"))?;
-        file.write_all(&chunk)
-            .await
-            .map_err(|err| format!("failed to write artifact file: {err}"))?;
-    }
-
-    file.flush()
-        .await
-        .map_err(|err| format!("failed to flush artifact file: {err}"))?;
-    file.sync_all()
-        .await
-        .map_err(|err| format!("failed to sync artifact file: {err}"))?;
-    drop(file);
-
-    if destination.exists() {
-        let _ = tokio::fs::remove_file(destination).await;
-    }
-
-    tokio::fs::rename(&temp_path, destination)
-        .await
-        .map_err(|err| format!("failed to finalize artifact file: {err}"))?;
-
-    Ok(())
+fn temporary_validator_path(temporary_path: &Path) -> Result<PathBuf, String> {
+    let filename = temporary_path
+        .file_name()
+        .and_then(|name| name.to_str())
+        .ok_or_else(|| "invalid temporary filename".to_string())?;
+    Ok(temporary_path.with_file_name(format!("{filename}.validator")))
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use tokio::io::AsyncReadExt;
+    use tokio::sync::oneshot;
 
     #[tokio::test]
     async fn test_pause_and_resume_generation_isolation() {
@@ -757,6 +945,7 @@ mod tests {
                     error: None,
                     generation: 1,
                     is_finalizing: false,
+                    artifact_paths: Vec::new(),
                     control_tx: None,
                     worker_finished_rx: None,
                 },
@@ -797,6 +986,7 @@ mod tests {
                     error: None,
                     generation: 1,
                     is_finalizing: false,
+                    artifact_paths: Vec::new(),
                     control_tx: None,
                     worker_finished_rx: None,
                 },
@@ -812,8 +1002,7 @@ mod tests {
         assert_ne!(paused.unwrap().status, DownloadJobStatus::Paused);
 
         // Subsequent cancel should not cancel finalizing job
-        let dest = PathBuf::from("/tmp/fake-model.bin");
-        let canceled = registry.cancel_job(WhisperModel::Tiny, job_id, &dest).await;
+        let canceled = registry.cancel_job(WhisperModel::Tiny, job_id).await;
         assert_ne!(canceled.unwrap().status, DownloadJobStatus::Canceled);
 
         // Worker marks completed
@@ -825,19 +1014,32 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_cancel_job_cleans_up_temp_file() {
+    async fn test_cancel_job_cleans_up_all_bundle_temp_files() {
         let temp_dir = tempfile::tempdir().unwrap();
         let destination = temp_dir.path().join("model.bin");
+        let auxiliary_destination = temp_dir.path().join("tokens.txt");
         let registry = DownloadRegistry::default();
         let job_id = Uuid::new_v4();
 
-        let filename = destination
-            .file_name()
-            .and_then(|n| n.to_str())
-            .unwrap();
-        let temp_file = destination.with_file_name(format!("{filename}.{job_id}.download"));
+        let temp_file = temporary_artifact_path(&destination, job_id).unwrap();
+        let auxiliary_temp_file =
+            temporary_artifact_path(&auxiliary_destination, job_id).unwrap();
+        let validator_file = temporary_validator_path(&temp_file).unwrap();
+        let auxiliary_validator_file = temporary_validator_path(&auxiliary_temp_file).unwrap();
         tokio::fs::write(&temp_file, b"partial bytes").await.unwrap();
+        tokio::fs::write(&auxiliary_temp_file, b"partial tokens")
+            .await
+            .unwrap();
+        tokio::fs::write(&validator_file, b"\"model-v1\"")
+            .await
+            .unwrap();
+        tokio::fs::write(&auxiliary_validator_file, b"\"tokens-v1\"")
+            .await
+            .unwrap();
         assert!(temp_file.exists());
+        assert!(auxiliary_temp_file.exists());
+        assert!(validator_file.exists());
+        assert!(auxiliary_validator_file.exists());
 
         {
             let mut store = registry.inner.lock().await;
@@ -851,6 +1053,7 @@ mod tests {
                     error: None,
                     generation: 1,
                     is_finalizing: false,
+                    artifact_paths: vec![destination.clone(), auxiliary_destination.clone()],
                     control_tx: None,
                     worker_finished_rx: None,
                 },
@@ -858,14 +1061,15 @@ mod tests {
             store.active_by_model.insert(WhisperModel::Tiny, job_id);
         }
 
-        let canceled = registry
-            .cancel_job(WhisperModel::Tiny, job_id, &destination)
-            .await;
+        let canceled = registry.cancel_job(WhisperModel::Tiny, job_id).await;
         assert_eq!(canceled.unwrap().status, DownloadJobStatus::Canceled);
 
         // Wait for async deletion task
         tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
         assert!(!temp_file.exists());
+        assert!(!auxiliary_temp_file.exists());
+        assert!(!validator_file.exists());
+        assert!(!auxiliary_validator_file.exists());
     }
 
     #[tokio::test]
@@ -895,6 +1099,7 @@ mod tests {
                     error: None,
                     generation: 1,
                     is_finalizing: false,
+                    artifact_paths: vec![destination.clone()],
                     control_tx: None,
                     worker_finished_rx: Some(finished_rx),
                 },
@@ -910,8 +1115,10 @@ mod tests {
         let snapshot = registry
             .start_or_get_active(
                 WhisperModel::Tiny,
-                "http://127.0.0.1:9999/model.bin".to_string(),
-                destination.clone(),
+                vec![DownloadArtifact::new(
+                    "http://127.0.0.1:9999/model.bin".to_string(),
+                    destination.clone(),
+                )],
                 client,
             )
             .await
@@ -919,5 +1126,272 @@ mod tests {
 
         assert_eq!(snapshot.status, DownloadJobStatus::Pending);
         assert_eq!(snapshot.bytes_downloaded, 11);
+    }
+
+    #[tokio::test]
+    async fn bundle_job_waits_for_auxiliary_artifact() {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+            .await
+            .unwrap();
+        let address = listener.local_addr().unwrap();
+        let (accepted_tx, accepted_rx) = oneshot::channel();
+        let (release_tx, release_rx) = oneshot::channel();
+        let server = tokio::spawn(async move {
+            let (mut socket, _) = listener.accept().await.unwrap();
+            let mut request = [0_u8; 1024];
+            let _ = socket.read(&mut request).await.unwrap();
+            let _ = accepted_tx.send(());
+            let _ = release_rx.await;
+            socket
+                .write_all(b"HTTP/1.1 200 OK\r\nContent-Length: 3\r\nConnection: close\r\n\r\naux")
+                .await
+                .unwrap();
+        });
+
+        let temp_dir = tempfile::tempdir().unwrap();
+        let primary = temp_dir.path().join("encoder.onnx");
+        let auxiliary = temp_dir.path().join("vocab.txt");
+        tokio::fs::write(&primary, b"existing primary")
+            .await
+            .unwrap();
+        let registry = DownloadRegistry::default();
+        let snapshot = registry
+            .start_or_get_active(
+                WhisperModel::ParakeetTdt06B,
+                vec![
+                    DownloadArtifact::new("http://unused.invalid".to_string(), primary),
+                    DownloadArtifact::new(
+                        format!("http://{address}/vocab.txt"),
+                        auxiliary.clone(),
+                    ),
+                ],
+                reqwest::Client::new(),
+            )
+            .await
+            .unwrap();
+
+        accepted_rx.await.unwrap();
+        let running = registry
+            .get_job(WhisperModel::ParakeetTdt06B, snapshot.job_id)
+            .await
+            .unwrap();
+        assert_eq!(running.status, DownloadJobStatus::Running);
+        release_tx.send(()).unwrap();
+
+        let mut completed = false;
+        for _ in 0..100 {
+            let current = registry
+                .get_job(WhisperModel::ParakeetTdt06B, snapshot.job_id)
+                .await
+                .unwrap();
+            if current.status == DownloadJobStatus::Completed {
+                completed = true;
+                break;
+            }
+            tokio::time::sleep(tokio::time::Duration::from_millis(20)).await;
+        }
+        assert!(completed, "bundle did not complete after auxiliary finalized");
+        assert_eq!(tokio::fs::read(&auxiliary).await.unwrap(), b"aux");
+        server.await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn mismatched_content_range_restarts_without_append() {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+            .await
+            .unwrap();
+        let address = listener.local_addr().unwrap();
+        let server = tokio::spawn(async move {
+            for response in [
+                b"HTTP/1.1 206 Partial Content\r\nContent-Length: 3\r\nContent-Range: bytes 0-2/6\r\nConnection: close\r\n\r\nbad".as_slice(),
+                b"HTTP/1.1 200 OK\r\nContent-Length: 6\r\nConnection: close\r\n\r\nabcdef".as_slice(),
+            ] {
+                let (mut socket, _) = listener.accept().await.unwrap();
+                let mut request = [0_u8; 1024];
+                let size = socket.read(&mut request).await.unwrap();
+                let request = String::from_utf8_lossy(&request[..size]);
+                let request = request.to_ascii_lowercase();
+                if response.starts_with(b"HTTP/1.1 206") {
+                    assert!(request.contains("range: bytes=3-"));
+                    assert!(request.contains("if-range: \"artifact-v1\""));
+                } else {
+                    assert!(!request.contains("range:"));
+                }
+                socket.write_all(response).await.unwrap();
+            }
+        });
+
+        let (response, append) = request_artifact_response(
+            &reqwest::Client::new(),
+            &format!("http://{address}/artifact"),
+            3,
+            Some("\"artifact-v1\""),
+        )
+        .await
+        .unwrap();
+        assert!(!append);
+        assert_eq!(response.bytes().await.unwrap().as_ref(), b"abcdef");
+        server.await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn partial_download_without_validator_restarts_from_zero() {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+            .await
+            .unwrap();
+        let address = listener.local_addr().unwrap();
+        let server = tokio::spawn(async move {
+            let (mut socket, _) = listener.accept().await.unwrap();
+            let mut request = [0_u8; 1024];
+            let size = socket.read(&mut request).await.unwrap();
+            let request = String::from_utf8_lossy(&request[..size]).to_ascii_lowercase();
+            assert!(!request.contains("range:"));
+            assert!(!request.contains("if-range:"));
+            socket
+                .write_all(
+                    b"HTTP/1.1 200 OK\r\nContent-Length: 6\r\nConnection: close\r\n\r\nabcdef",
+                )
+                .await
+                .unwrap();
+        });
+
+        let (response, append) = request_artifact_response(
+            &reqwest::Client::new(),
+            &format!("http://{address}/artifact"),
+            3,
+            None,
+        )
+        .await
+        .unwrap();
+        assert!(!append);
+        assert_eq!(response.bytes().await.unwrap().as_ref(), b"abcdef");
+        server.await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn successful_status_without_artifact_body_is_rejected() {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+            .await
+            .unwrap();
+        let address = listener.local_addr().unwrap();
+        let server = tokio::spawn(async move {
+            let (mut socket, _) = listener.accept().await.unwrap();
+            let mut request = [0_u8; 1024];
+            let size = socket.read(&mut request).await.unwrap();
+            let request = String::from_utf8_lossy(&request[..size]).to_ascii_lowercase();
+            assert!(request.contains("range: bytes=3-"));
+            assert!(request.contains("if-range: \"artifact-v1\""));
+            socket
+                .write_all(b"HTTP/1.1 204 No Content\r\nConnection: close\r\n\r\n")
+                .await
+                .unwrap();
+        });
+
+        let error = request_artifact_response(
+            &reqwest::Client::new(),
+            &format!("http://{address}/artifact"),
+            3,
+            Some("\"artifact-v1\""),
+        )
+        .await
+        .unwrap_err();
+        assert!(error.contains("204"));
+        server.await.unwrap();
+    }
+
+    #[test]
+    fn final_download_size_must_match_advertised_total() {
+        assert!(validate_downloaded_size(6, Some(6)).is_ok());
+        assert!(validate_downloaded_size(5, Some(6)).is_err());
+        assert!(validate_downloaded_size(6, None).is_ok());
+    }
+
+    #[tokio::test]
+    async fn progress_total_never_decreases_between_artifacts() {
+        let registry = DownloadRegistry::default();
+        let job_id = Uuid::new_v4();
+        {
+            let mut store = registry.inner.lock().await;
+            store.jobs.insert(
+                job_id,
+                DownloadJobRecord {
+                    model: WhisperModel::Tiny,
+                    status: DownloadJobStatus::Running,
+                    bytes_downloaded: 100,
+                    total_bytes: Some(1_000),
+                    error: None,
+                    generation: 1,
+                    is_finalizing: false,
+                    artifact_paths: Vec::new(),
+                    control_tx: None,
+                    worker_finished_rx: None,
+                },
+            );
+        }
+
+        registry.set_progress(job_id, 1, 200, Some(200)).await;
+        let snapshot = registry.get_job(WhisperModel::Tiny, job_id).await.unwrap();
+        assert_eq!(snapshot.bytes_downloaded, 200);
+        assert_eq!(snapshot.total_bytes, Some(1_000));
+
+        registry
+            .mark_completed(job_id, 1, WhisperModel::Tiny, 900, Some(900))
+            .await;
+        let snapshot = registry.get_job(WhisperModel::Tiny, job_id).await.unwrap();
+        assert_eq!(snapshot.total_bytes, Some(1_000));
+    }
+
+    #[tokio::test]
+    async fn auxiliary_failure_is_reported_by_bundle_job() {
+        let temp_dir = tempfile::tempdir().unwrap();
+        let primary = temp_dir.path().join("encoder.onnx");
+        let auxiliary = temp_dir.path().join("vocab.txt");
+        tokio::fs::write(&primary, b"existing primary")
+            .await
+            .unwrap();
+
+        let registry = DownloadRegistry::default();
+        let snapshot = registry
+            .start_or_get_active(
+                WhisperModel::ParakeetTdt06B,
+                vec![
+                    DownloadArtifact::new(
+                        "http://127.0.0.1:0/already-present".to_string(),
+                        primary.clone(),
+                    ),
+                    DownloadArtifact::new(
+                        "http://127.0.0.1:0/missing-vocab".to_string(),
+                        auxiliary.clone(),
+                    ),
+                ],
+                reqwest::Client::new(),
+            )
+            .await
+            .unwrap();
+
+        assert_ne!(snapshot.status, DownloadJobStatus::Completed);
+        let mut failed = None;
+        for _ in 0..100 {
+            let current = registry
+                .get_job(WhisperModel::ParakeetTdt06B, snapshot.job_id)
+                .await
+                .unwrap();
+            if current.status == DownloadJobStatus::Failed {
+                failed = Some(current);
+                break;
+            }
+            tokio::time::sleep(tokio::time::Duration::from_millis(20)).await;
+        }
+
+        let failed = failed.expect("bundle job did not report auxiliary failure");
+        let error = failed.error.expect("failed bundle should include a diagnostic");
+        assert!(error.contains("vocab.txt"), "unexpected diagnostic: {error}");
+        let latest = registry
+            .get_latest_job(WhisperModel::ParakeetTdt06B)
+            .await
+            .expect("latest bundle job should remain observable");
+        assert_eq!(latest.status, DownloadJobStatus::Failed);
+        assert!(primary.exists());
+        assert!(!auxiliary.exists());
     }
 }

@@ -306,7 +306,8 @@ export class LocalTranscriptionSidecar extends BaseSidecar {
       }
 
       this.invalidateModelReadiness(input.model);
-      await this.downloadModelInternal(input.model);
+      const download = await this.downloadModelInternal(input.model);
+      this.assertDownloadCompleted(input.model, download);
       return await this.transcribeInternal(input);
     }
   }
@@ -542,7 +543,8 @@ export class LocalTranscriptionSidecar extends BaseSidecar {
     const currentStatus = await this.getModelStatus(model, true);
 
     if (!currentStatus.downloaded || !currentStatus.valid) {
-      await this.downloadModelInternal(model);
+      const download = await this.downloadModelInternal(model);
+      this.assertDownloadCompleted(model, download);
     }
 
     const finalStatus = await this.getModelStatus(model, true);
@@ -559,6 +561,28 @@ export class LocalTranscriptionSidecar extends BaseSidecar {
 
   private markModelReady(model: LocalWhisperModel): void {
     this.readyModels.set(model, Promise.resolve());
+  }
+
+  private assertDownloadCompleted(
+    model: LocalWhisperModel,
+    snapshot: SidecarDownloadSnapshot,
+  ): void {
+    if (snapshot.status === "paused") {
+      throw new Error(
+        `Model download is paused for '${model}' (${this.mode.toUpperCase()})`,
+      );
+    }
+    if (snapshot.status === "canceled") {
+      throw new Error(
+        `Model download was canceled for '${model}' (${this.mode.toUpperCase()})`,
+      );
+    }
+    if (snapshot.status !== "completed") {
+      throw new Error(
+        snapshot.error ||
+          `Model download did not complete for '${model}' (${this.mode.toUpperCase()})`,
+      );
+    }
   }
 
   private async downloadModelInternal(

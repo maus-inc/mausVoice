@@ -10,6 +10,7 @@ use axum::{Json, Router};
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
+use crate::downloads::DownloadArtifact;
 use crate::errors::ApiError;
 use crate::models::WhisperModel;
 use crate::state::AppState;
@@ -120,47 +121,101 @@ async fn download_model(
     Path(path): Path<ModelPath>,
 ) -> Result<Json<crate::downloads::DownloadJobSnapshot>, ApiError> {
     let model = parse_model(&path.model)?;
+    let model_download_lock = state.model_download_lock(model).await;
+    // Validation/cleanup and registry job creation must be one per-model
+    // critical section. Otherwise a concurrent request can start a worker
+    // after the active-job check but before invalid artifacts are removed.
+    let _model_download_guard = model_download_lock.lock().await;
+    if model.is_onnx() {
+        remove_invalid_onnx_bundle_before_download(&state, model).await?;
+    }
+
     let client = state.http_client.clone();
-    let models_dir = state.config.models_dir.clone();
-    let destination = state.model_path(model);
-
-    let snapshot = if model.is_onnx() {
-        // ONNX models ship as a set of files (encoder/decoder/joiner + tokens).
-        // The primary artifact is tracked by the resumable registry; the rest
-        // are fetched alongside it.
-        let artifacts = model.artifact_set();
-        let primary_url = artifacts
-            .first()
-            .map(|(_, url)| url.clone())
-            .unwrap_or_else(|| model.download_url());
-
-        let snapshot = state
-            .downloads
-            .start_or_get_active(model, primary_url, destination, client.clone())
-            .await
-            .map_err(|err| ApiError::internal("download_start_failed", err))?;
-
-        for (name, url) in &artifacts[1..] {
-            let aux_destination = models_dir.join(name);
-            let aux_client = client.clone();
-            let aux_url = url.clone();
-            tokio::spawn(async move {
-                let _ = crate::downloads::download_file_to_path(&aux_client, &aux_url, &aux_destination)
-                    .await;
-            });
-        }
-
-        snapshot
+    let artifacts = if model.is_onnx() {
+        // One registry job owns the complete model bundle. Completion is not
+        // published until every graph, weights file, and tokenizer/vocabulary
+        // artifact is durable; any artifact failure is returned by this job.
+        model
+            .artifact_set()
+            .into_iter()
+            .map(|(name, url)| {
+                DownloadArtifact::new(
+                    url,
+                    model.artifact_path(&state.config.models_dir, name),
+                )
+            })
+            .collect()
     } else {
-        let url = model.download_url();
-        state
-            .downloads
-            .start_or_get_active(model, url, destination, client)
-            .await
-            .map_err(|err| ApiError::internal("download_start_failed", err))?
+        vec![DownloadArtifact::new(
+            model.download_url(),
+            state.model_path(model),
+        )]
     };
 
+    let snapshot = state
+        .downloads
+        .start_or_get_active(model, artifacts, client)
+        .await
+        .map_err(|err| ApiError::internal("download_start_failed", err))?;
+
     Ok(Json(snapshot))
+}
+
+/// A complete bundle may still be malformed or incompatible. The download
+/// registry intentionally treats existing files as resumable artifacts, so an
+/// invalid complete bundle must be evicted before retrying; otherwise every
+/// non-empty file would be skipped and the retry would falsely complete.
+async fn remove_invalid_onnx_bundle_before_download(
+    state: &AppState,
+    model: WhisperModel,
+) -> Result<(), ApiError> {
+    // Never remove files owned by a running or paused bundle worker. A repeated
+    // download request should simply return that existing job.
+    if state.downloads.get_active_job(model).await.is_some() {
+        return Ok(());
+    }
+
+    let status = read_model_status(state, model, false).await?;
+    if !status.downloaded {
+        return Ok(());
+    }
+
+    let model_path = state.model_path(model);
+    match crate::onnx_inference::validate_model_classified(model, &model_path) {
+        Ok(_) => return Ok(()),
+        Err(crate::onnx_inference::OnnxModelValidationError::Runtime(error)) => {
+            return Err(ApiError::internal(
+                "model_validation_unavailable",
+                format!(
+                    "cannot validate '{}' without a working ONNX Runtime: {error}",
+                    model.as_slug()
+                ),
+            ));
+        }
+        Err(crate::onnx_inference::OnnxModelValidationError::Artifact(_)) => {}
+    }
+
+    crate::onnx_inference::evict_model(&model_path);
+    for (name, _) in model.artifact_set() {
+        let artifact_path = model.artifact_path(&state.config.models_dir, name);
+        match tokio::fs::remove_file(&artifact_path).await {
+            Ok(()) => {}
+            Err(err) if err.kind() == ErrorKind::NotFound => {}
+            Err(err) => {
+                return Err(ApiError::internal(
+                    "invalid_model_cleanup_failed",
+                    format!(
+                        "failed to remove invalid artifact '{}' for '{}': {err}",
+                        artifact_path.display(),
+                        model.as_slug()
+                    ),
+                ));
+            }
+        }
+        remove_partial_model_downloads(&artifact_path, model).await?;
+    }
+    state.downloads.clear_model_history(model).await;
+    Ok(())
 }
 
 async fn get_download_progress(
@@ -180,34 +235,58 @@ async fn get_download_progress(
     Ok(Json(snapshot))
 }
 
+#[derive(Clone, Copy)]
+enum ResolvedDownloadTarget {
+    Active,
+    Job(Uuid),
+}
+
+async fn dispatch_download_action(
+    state: &AppState,
+    model: WhisperModel,
+    target: ResolvedDownloadTarget,
+    action: &str,
+) -> Result<Json<crate::downloads::DownloadJobSnapshot>, ApiError> {
+    let snapshot = match (action.trim(), target) {
+        ("pause", ResolvedDownloadTarget::Active) => state.downloads.pause_active(model).await,
+        ("pause", ResolvedDownloadTarget::Job(job_id)) => {
+            state.downloads.pause_job(model, job_id).await
+        }
+        ("cancel", ResolvedDownloadTarget::Active) => state.downloads.cancel_active(model).await,
+        ("cancel", ResolvedDownloadTarget::Job(job_id)) => {
+            state.downloads.cancel_job(model, job_id).await
+        }
+        _ => {
+            return Err(ApiError::bad_request(
+                "invalid_action",
+                format!("unsupported download action '{action}'"),
+            ));
+        }
+    };
+
+    let not_found = match target {
+        ResolvedDownloadTarget::Active => {
+            format!("no active download found to {}", action.trim())
+        }
+        ResolvedDownloadTarget::Job(_) => "download job was not found".to_string(),
+    };
+    snapshot
+        .map(Json)
+        .ok_or_else(|| ApiError::not_found("download_not_found", not_found))
+}
+
 async fn handle_download_action(
     State(state): State<AppState>,
     Path(path): Path<DownloadTargetPath>,
 ) -> Result<Json<crate::downloads::DownloadJobSnapshot>, ApiError> {
     let model = parse_model(&path.model)?;
-    match path.target.trim() {
-        "pause" => {
-            let snapshot = state
-                .downloads
-                .pause_active(model)
-                .await
-                .ok_or_else(|| ApiError::not_found("download_not_found", "no active download found to pause"))?;
-            Ok(Json(snapshot))
-        }
-        "cancel" => {
-            let destination = state.model_path(model);
-            let snapshot = state
-                .downloads
-                .cancel_active(model, &destination)
-                .await
-                .ok_or_else(|| ApiError::not_found("download_not_found", "no active download found to cancel"))?;
-            Ok(Json(snapshot))
-        }
-        _ => Err(ApiError::bad_request(
-            "invalid_action",
-            format!("unsupported download action '{}'", path.target),
-        )),
-    }
+    dispatch_download_action(
+        &state,
+        model,
+        ResolvedDownloadTarget::Active,
+        &path.target,
+    )
+    .await
 }
 
 async fn handle_job_action(
@@ -217,30 +296,13 @@ async fn handle_job_action(
     let model = parse_model(&path.model)?;
     let job_id = Uuid::parse_str(path.job_id.trim())
         .map_err(|_| ApiError::bad_request("invalid_job_id", "jobId must be a valid UUID"))?;
-
-    match path.action.trim() {
-        "pause" => {
-            let snapshot = state
-                .downloads
-                .pause_job(model, job_id)
-                .await
-                .ok_or_else(|| ApiError::not_found("download_not_found", "download job was not found"))?;
-            Ok(Json(snapshot))
-        }
-        "cancel" => {
-            let destination = state.model_path(model);
-            let snapshot = state
-                .downloads
-                .cancel_job(model, job_id, &destination)
-                .await
-                .ok_or_else(|| ApiError::not_found("download_not_found", "download job was not found"))?;
-            Ok(Json(snapshot))
-        }
-        _ => Err(ApiError::bad_request(
-            "invalid_action",
-            format!("unsupported download action '{}'", path.action),
-        )),
-    }
+    dispatch_download_action(
+        &state,
+        model,
+        ResolvedDownloadTarget::Job(job_id),
+        &path.action,
+    )
+    .await
 }
 
 async fn get_model_status(
@@ -258,6 +320,8 @@ async fn delete_model(
     Path(path): Path<ModelPath>,
 ) -> Result<Json<ModelStatusResponse>, ApiError> {
     let model = parse_model(&path.model)?;
+    let model_download_lock = state.model_download_lock(model).await;
+    let _model_download_guard = model_download_lock.lock().await;
 
     if let Some(active_job) = state.downloads.get_active_job(model).await {
         if matches!(
@@ -287,15 +351,22 @@ async fn delete_model(
         }
     }
 
-    // For ONNX models, also remove the rest of the artifact set.
+    // For ONNX models, also remove the rest of the artifact set and any
+    // in-progress auxiliary fragments in the model-specific directory.
     if model.is_onnx() {
+        crate::onnx_inference::evict_model(&model_path);
         for (name, _) in model.artifact_set() {
-            let artifact_path = state.config.models_dir.join(name);
+            let artifact_path = model.artifact_path(&state.config.models_dir, name);
             let _ = tokio::fs::remove_file(&artifact_path).await;
+            remove_partial_model_downloads(&artifact_path, model).await?;
         }
+        if let Some(model_dir) = model_path.parent() {
+            let _ = tokio::fs::remove_dir(model_dir).await;
+        }
+    } else {
+        remove_partial_model_downloads(&model_path, model).await?;
     }
-
-    remove_partial_model_downloads(&model_path, model).await?;
+    state.downloads.clear_model_history(model).await;
     let status = read_model_status(&state, model, false).await?;
     Ok(Json(status))
 }
@@ -522,26 +593,31 @@ async fn ensure_model_downloaded(
     model: WhisperModel,
 ) -> Result<PathBuf, ApiError> {
     let model_path = state.model_path(model);
-    let metadata = tokio::fs::metadata(&model_path).await.map_err(|_| {
-        ApiError::not_found(
-            "model_not_downloaded",
-            format!(
-                "model '{}' is not downloaded; call /v1/models/{}/download first",
-                model.as_slug(),
-                model.as_slug()
-            ),
-        )
-    })?;
+    let required_paths = if model.is_onnx() {
+        model
+            .artifact_set()
+            .into_iter()
+            .map(|(name, _)| model.artifact_path(&state.config.models_dir, name))
+            .collect::<Vec<_>>()
+    } else {
+        vec![model_path.clone()]
+    };
 
-    if !metadata.is_file() || metadata.len() == 0 {
-        return Err(ApiError::not_found(
-            "model_not_downloaded",
-            format!(
-                "model '{}' is not downloaded; call /v1/models/{}/download first",
-                model.as_slug(),
-                model.as_slug()
-            ),
-        ));
+    for required_path in required_paths {
+        let present = tokio::fs::metadata(&required_path)
+            .await
+            .map(|metadata| metadata.is_file() && metadata.len() > 0)
+            .unwrap_or(false);
+        if !present {
+            return Err(ApiError::not_found(
+                "model_not_downloaded",
+                format!(
+                    "model '{}' is not downloaded; call /v1/models/{}/download first",
+                    model.as_slug(),
+                    model.as_slug()
+                ),
+            ));
+        }
     }
 
     Ok(model_path)
@@ -580,14 +656,29 @@ async fn read_model_status(
     let model_path = state.model_path(model);
     let metadata = tokio::fs::metadata(&model_path).await.ok();
 
-    let file_bytes = metadata.map(|meta| meta.len());
+    let file_bytes = if model.is_onnx() {
+        let mut total = 0_u64;
+        let mut found = false;
+        for (name, _) in model.artifact_set() {
+            let artifact_path = model.artifact_path(&state.config.models_dir, name);
+            if let Ok(meta) = tokio::fs::metadata(artifact_path).await {
+                if meta.is_file() {
+                    total = total.saturating_add(meta.len());
+                    found = true;
+                }
+            }
+        }
+        found.then_some(total)
+    } else {
+        metadata.as_ref().map(|meta| meta.len())
+    };
 
     let downloaded = if model.is_onnx() {
-        // An ONNX model is only "downloaded" once its complete artifact set
-        // (encoder/decoder/joiner + tokens.txt) is present on disk.
+        // An ONNX model is only "downloaded" once the complete, model-specific
+        // graph/weights/tokenizer artifact set is present on disk.
         let mut all_present = true;
         for (name, _) in model.artifact_set() {
-            let artifact_path = state.config.models_dir.join(name);
+            let artifact_path = model.artifact_path(&state.config.models_dir, name);
             match tokio::fs::metadata(&artifact_path).await {
                 Ok(meta) if meta.is_file() && meta.len() > 0 => {}
                 _ => {
@@ -605,12 +696,21 @@ async fn read_model_status(
     };
 
     if !downloaded {
+        // Preserve the latest bundle failure on the model status endpoint as
+        // well as on the job snapshot, so clients can diagnose a partial
+        // bundle even after losing the original job ID.
+        let validation_error = state
+            .downloads
+            .get_latest_job(model)
+            .await
+            .filter(|job| job.status == crate::downloads::DownloadJobStatus::Failed)
+            .and_then(|job| job.error);
         return Ok(ModelStatusResponse {
             model,
             downloaded: false,
             valid: false,
             file_bytes,
-            validation_error: None,
+            validation_error,
         });
     }
 
@@ -624,7 +724,7 @@ async fn read_model_status(
         });
     }
 
-    match state.transcriber.validate_model(model_path).await {
+    match state.transcriber.validate_model(model, model_path).await {
         Ok(valid) => Ok(ModelStatusResponse {
             model,
             downloaded: true,
@@ -684,7 +784,10 @@ async fn remove_partial_model_downloads(
             None => continue,
         };
 
-        if !file_name.starts_with(&prefix) || !file_name.ends_with(".download") {
+        if !file_name.starts_with(&prefix)
+            || !(file_name.ends_with(".download")
+                || file_name.ends_with(".download.validator"))
+        {
             continue;
         }
 
@@ -804,6 +907,61 @@ mod tests {
             .unwrap();
 
         assert_eq!(response.status(), StatusCode::OK);
+    }
+
+    #[tokio::test]
+    async fn invalid_complete_onnx_bundle_is_removed_before_retry() {
+        let state = test_state();
+        let model = WhisperModel::ParakeetCtc06B;
+        let model_dir = state.config.models_dir.join(model.as_slug());
+        tokio::fs::create_dir_all(&model_dir).await.unwrap();
+        tokio::fs::write(
+            model_dir.join("model_int8.onnx"),
+            b"not a valid ONNX graph",
+        )
+        .await
+        .unwrap();
+        tokio::fs::write(model_dir.join("model_int8.onnx_data"), b"corrupt weights")
+            .await
+            .unwrap();
+        tokio::fs::write(model_dir.join("tokenizer.json"), b"{}")
+            .await
+            .unwrap();
+
+        let invalid = read_model_status(&state, model, true).await.unwrap();
+        assert_eq!(
+            invalid.file_bytes,
+            Some(
+                b"not a valid ONNX graph".len() as u64
+                    + b"corrupt weights".len() as u64
+                    + b"{}".len() as u64
+            )
+        );
+        assert!(invalid.downloaded);
+        assert!(!invalid.valid);
+        assert!(invalid.validation_error.is_some());
+
+        remove_invalid_onnx_bundle_before_download(&state, model)
+            .await
+            .unwrap();
+        let retry_artifacts = model
+            .artifact_set()
+            .into_iter()
+            .map(|(name, _)| {
+                let destination = model.artifact_path(&state.config.models_dir, name);
+                assert!(!destination.exists(), "invalid artifact was not removed");
+                DownloadArtifact::new(
+                    format!("http://127.0.0.1:0/{name}"),
+                    destination,
+                )
+            })
+            .collect();
+        let retry = state
+            .downloads
+            .start_or_get_active(model, retry_artifacts, state.http_client.clone())
+            .await
+            .unwrap();
+        assert_eq!(retry.status, crate::downloads::DownloadJobStatus::Pending);
     }
 
     #[tokio::test]

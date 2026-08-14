@@ -67,7 +67,7 @@ jobs:
       - name: Lint Rust
         working-directory: apps/desktop/src-tauri
         env:
-          TAURI_CONFIG: '{"bundle":{"externalBin":[]}}'
+          TAURI_CONFIG: '{"bundle":{"externalBin":[],"resources":[]}}'
         run: cargo clippy -- -D warnings
       - name: Lint native pill (Windows)
         if: matrix.os == 'windows-latest'

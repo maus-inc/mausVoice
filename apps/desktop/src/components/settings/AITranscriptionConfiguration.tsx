@@ -322,8 +322,8 @@ const IdleDownloadButton = ({
   onDownload: (model: LocalWhisperModel) => void;
   onDelete?: (model: LocalWhisperModel) => void;
 }) => {
-  const isDestructive = selectable;
-  const primaryHandler = isDestructive && onDelete ? onDelete : onDownload;
+  const primaryHandler = selectable && onDelete ? onDelete : onDownload;
+  const isDestructive = primaryHandler === onDelete && !!onDelete;
 
   return (
     <Button
@@ -352,7 +352,7 @@ const IdleDownloadButton = ({
       }}
       onClick={(e) => handleModelClick(e, model, primaryHandler)}
     >
-      <ActionButtonLabel deleting={deleting} selectable={selectable} />
+      <ActionButtonLabel deleting={deleting} selectable={isDestructive} />
     </Button>
   );
 };
@@ -419,20 +419,6 @@ export const AITranscriptionConfiguration = () => {
 
   const deviceValue = resolveDeviceSelectValue(transcription);
   const modelValue = normalizeLocalWhisperModel(transcription.modelSize);
-  const modelDownloadSnapshot =
-    localTranscriptionConfig.modelDownloads[modelValue];
-  const modelDownloading = isLocalTranscriptionModelDownloadInProgress(
-    modelDownloadSnapshot,
-  );
-  const modelPaused = isLocalTranscriptionModelDownloadPaused(
-    modelDownloadSnapshot,
-  );
-  const modelSelectable = isLocalTranscriptionModelSelectable(
-    transcription,
-    modelValue,
-  );
-  const showInlineModelDownloadAction = !modelSelectable;
-
   // Fit of the currently selected model against the detected hardware.
   const currentModelFit = capabilities
     ? getModelFit(capabilities, modelValue)
@@ -440,9 +426,12 @@ export const AITranscriptionConfiguration = () => {
   const recommendedModel = capabilities
     ? getRecommendedModel(capabilities)
     : null;
-  const recommendedModelLabel =
-    LOCAL_MODEL_OPTIONS.find((option) => option.value === recommendedModel)
-      ?.label ?? recommendedModel;
+  const recommendedModelOption = LOCAL_MODEL_OPTIONS.find(
+    (option) => option.value === recommendedModel,
+  );
+  const recommendedModelLabel = recommendedModelOption
+    ? intl.formatMessage(recommendedModelOption.label)
+    : recommendedModel;
 
   useEffect(() => {
     if (effectiveMode !== "local") {
@@ -553,35 +542,116 @@ export const AITranscriptionConfiguration = () => {
     [localTranscriptionConfig.modelDeletes, modelValue],
   );
 
-  const renderModelMenuItem = (option: LocalModelOption) => {
-    const { value, label, helper } = option;
+  const getModelRowState = (option: LocalModelOption) => {
+    const value = option.value;
     const status = localTranscriptionConfig.modelStatuses[value];
     const downloadSnapshot = localTranscriptionConfig.modelDownloads[value];
-    const deleting = !!localTranscriptionConfig.modelDeletes[value];
     const downloading =
       isLocalTranscriptionModelDownloadInProgress(downloadSnapshot);
     const paused = isLocalTranscriptionModelDownloadPaused(downloadSnapshot);
-    const selectable = isLocalTranscriptionModelSelectable(
-      transcription,
+    return {
       value,
+      label: intl.formatMessage(option.label),
+      helper: intl.formatMessage(option.helper),
+      status,
+      downloadSnapshot,
+      downloading,
+      paused,
+      selectable: isLocalTranscriptionModelSelectable(transcription, value),
+      deleting: !!localTranscriptionConfig.modelDeletes[value],
+      active: modelValue === value,
+    };
+  };
+
+  const renderModelMenuItem = (option: LocalModelOption) => {
+    const {
+      value,
+      label,
+      helper,
+      status,
+      downloading,
+      paused,
+      selectable,
+      active,
+    } = getModelRowState(option);
+    const fit = capabilities ? getModelFit(capabilities, value) : null;
+    const showFitWarning =
+      fit?.level === "caution" || fit?.level === "discouraged";
+
+    return (
+      <MenuItem key={value} value={value} sx={{ ...activeRowSx, py: 1.25 }}>
+        <Box sx={{ minWidth: 0 }}>
+          <Stack direction="row" alignItems="center" spacing={0.5}>
+            <Typography variant="body2" fontWeight={600}>
+              {label}
+            </Typography>
+            {showFitWarning && (
+              <WarningAmberRoundedIcon
+                fontSize="small"
+                titleAccess={intl.formatMessage({
+                  defaultMessage: "This model may not run well on this device",
+                })}
+                sx={{
+                  color:
+                    fit?.level === "discouraged"
+                      ? "error.main"
+                      : "warning.main",
+                }}
+              />
+            )}
+            {active && (
+              <CheckRoundedIcon
+                fontSize="small"
+                sx={activeRowCheckSx}
+                titleAccess={intl.formatMessage({ defaultMessage: "Selected" })}
+              />
+            )}
+          </Stack>
+          <Typography variant="caption" color="text.secondary" display="block">
+            {helper}
+          </Typography>
+          <Typography variant="caption" color="text.secondary">
+            <ModelStatusText
+              downloading={downloading}
+              paused={paused}
+              selectable={selectable}
+              validationError={status?.validationError || null}
+            />
+          </Typography>
+        </Box>
+      </MenuItem>
     );
-    const active = modelValue === value;
+  };
+
+  const renderModelDownloadRow = (option: LocalModelOption) => {
+    const {
+      value,
+      label,
+      helper,
+      status,
+      downloadSnapshot,
+      downloading,
+      paused,
+      selectable,
+      deleting,
+      active,
+    } = getModelRowState(option);
     const progressLabel = formatDownloadProgress(downloadSnapshot);
     const progressPercent = getDownloadProgressPercent(
       downloadSnapshot?.progress,
     );
 
     return (
-      <MenuItem
+      <Box
         key={value}
-        value={value}
         sx={{
-          ...activeRowSx,
-          alignItems: "stretch",
-          py: 1.25,
+          border: 1,
+          borderColor: active ? "primary.main" : "divider",
+          borderRadius: 1.5,
+          p: 1.25,
         }}
       >
-        <Stack spacing={0.75} sx={{ width: "100%" }}>
+        <Stack spacing={0.75}>
           <Stack
             direction="row"
             justifyContent="space-between"
@@ -589,45 +659,9 @@ export const AITranscriptionConfiguration = () => {
             spacing={1.5}
           >
             <Box sx={{ minWidth: 0, flex: 1 }}>
-              <Stack direction="row" alignItems="center" spacing={0.5}>
-                <Typography variant="body2" fontWeight={600}>
-                  {label}
-                </Typography>
-                {(() => {
-                  const fit = capabilities
-                    ? getModelFit(capabilities, value)
-                    : null;
-                  if (
-                    fit?.level !== "caution" &&
-                    fit?.level !== "discouraged"
-                  ) {
-                    return null;
-                  }
-                  const warningColor =
-                    fit?.level === "discouraged"
-                      ? "error.main"
-                      : "warning.main";
-                  return (
-                    <WarningAmberRoundedIcon
-                      fontSize="small"
-                      titleAccess={intl.formatMessage({
-                        defaultMessage:
-                          "This model may not run well on this device",
-                      })}
-                      sx={{ color: warningColor }}
-                    />
-                  );
-                })()}
-                {active && (
-                  <CheckRoundedIcon
-                    fontSize="small"
-                    sx={activeRowCheckSx}
-                    titleAccess={intl.formatMessage({
-                      defaultMessage: "Selected",
-                    })}
-                  />
-                )}
-              </Stack>
+              <Typography variant="body2" fontWeight={600}>
+                {label}
+              </Typography>
               <Typography
                 variant="caption"
                 color="text.secondary"
@@ -635,11 +669,7 @@ export const AITranscriptionConfiguration = () => {
               >
                 {helper}
               </Typography>
-              <Typography
-                variant="caption"
-                color="text.secondary"
-                sx={{ fontVariantNumeric: "tabular-nums" }}
-              >
+              <Typography variant="caption" color="text.secondary">
                 <ModelStatusText
                   downloading={downloading}
                   paused={paused}
@@ -648,23 +678,20 @@ export const AITranscriptionConfiguration = () => {
                 />
               </Typography>
             </Box>
-
-            <Box sx={{ alignSelf: "center" }}>
-              <ModelDownloadActionButtons
-                model={value}
-                downloading={downloading}
-                paused={paused}
-                selectable={selectable}
-                deleting={deleting}
-                onDownload={handleDownloadModel}
-                onPause={pauseLocalTranscriptionModelDownload}
-                onResume={resumeLocalTranscriptionModelDownload}
-                onCancel={cancelLocalTranscriptionModelDownload}
-                onDelete={handleDeleteModel}
-              />
-            </Box>
+            <ModelDownloadActionButtons
+              model={value}
+              downloading={downloading}
+              paused={paused}
+              selectable={selectable}
+              deleting={deleting}
+              compactPercent={formatCompactPercent(downloadSnapshot)}
+              onDownload={handleDownloadModel}
+              onPause={pauseLocalTranscriptionModelDownload}
+              onResume={resumeLocalTranscriptionModelDownload}
+              onCancel={cancelLocalTranscriptionModelDownload}
+              onDelete={handleDeleteModel}
+            />
           </Stack>
-
           {(downloading || paused) && (
             <LinearProgress
               color={paused ? "warning" : "primary"}
@@ -675,7 +702,6 @@ export const AITranscriptionConfiguration = () => {
               sx={{ borderRadius: 999, height: 4 }}
             />
           )}
-
           {(downloading || paused) && progressLabel && (
             <Typography
               variant="caption"
@@ -688,11 +714,9 @@ export const AITranscriptionConfiguration = () => {
             </Typography>
           )}
         </Stack>
-      </MenuItem>
+      </Box>
     );
   };
-
-  const compactPercent = formatCompactPercent(modelDownloadSnapshot);
 
   return (
     <Stack spacing={3} alignItems="flex-start" sx={{ width: "100%" }}>
@@ -772,17 +796,8 @@ export const AITranscriptionConfiguration = () => {
                   const option = LOCAL_MODEL_OPTIONS.find(
                     (item) => item.value === model,
                   );
-                  return option?.label || model;
+                  return option ? intl.formatMessage(option.label) : model;
                 }}
-                sx={
-                  showInlineModelDownloadAction
-                    ? {
-                        "& .MuiSelect-select": {
-                          pr: "180px !important",
-                        },
-                      }
-                    : undefined
-                }
               >
                 <ListSubheader sx={subheaderSx}>
                   <FormattedMessage defaultMessage="NVIDIA NeMo / Sherpa-ONNX (Fast & No Hallucinations)" />
@@ -798,30 +813,14 @@ export const AITranscriptionConfiguration = () => {
                   (opt) => opt.category === "whisper",
                 ).map((opt) => renderModelMenuItem(opt))}
               </Select>
-              {showInlineModelDownloadAction && (
-                <Box
-                  sx={{
-                    position: "absolute",
-                    right: 36,
-                    top: "50%",
-                    transform: "translateY(-50%)",
-                    zIndex: 1,
-                  }}
-                >
-                  <ModelDownloadActionButtons
-                    model={modelValue}
-                    downloading={modelDownloading}
-                    paused={modelPaused}
-                    selectable={modelSelectable}
-                    compactPercent={compactPercent}
-                    onDownload={handleDownloadModel}
-                    onPause={pauseLocalTranscriptionModelDownload}
-                    onResume={resumeLocalTranscriptionModelDownload}
-                    onCancel={cancelLocalTranscriptionModelDownload}
-                  />
-                </Box>
-              )}
             </FormControl>
+
+            <Stack spacing={1.25} sx={{ width: "100%" }}>
+              <Typography variant="subtitle2">
+                <FormattedMessage defaultMessage="Model downloads" />
+              </Typography>
+              {LOCAL_MODEL_OPTIONS.map(renderModelDownloadRow)}
+            </Stack>
 
             {capabilities && (
               <Box
