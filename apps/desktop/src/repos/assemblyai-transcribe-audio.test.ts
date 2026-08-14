@@ -1,0 +1,209 @@
+import { afterEach, describe, expect, it, vi } from "vitest";
+import { assemblyaiTranscribeAudio } from "@maus-inc/voice-ai";
+
+const UPLOAD_URL = "https://cdn.assemblyai.com/upload/abc123";
+
+const jsonResponse = (body: unknown, status = 200) =>
+  new Response(JSON.stringify(body), { status });
+
+afterEach(() => {
+  vi.restoreAllMocks();
+});
+
+describe("assemblyaiTranscribeAudio", () => {
+  it("uploads raw bytes with the token header and returns the completed text", async () => {
+    let uploadInit: RequestInit | undefined;
+    vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
+      const url = String(input);
+      if (url.endsWith("/v2/upload")) {
+        uploadInit = init;
+        return jsonResponse({ upload_url: UPLOAD_URL });
+      }
+      if (url.endsWith("/v2/transcript")) {
+        return jsonResponse({ id: "t1", status: "queued" });
+      }
+      return jsonResponse({ id: "t1", status: "completed", text: "hello" });
+    });
+
+    const { text } = await assemblyaiTranscribeAudio({
+      apiKey: "aa-key",
+      blob: Buffer.from([1, 2, 3, 4]),
+    });
+
+    expect(text).toBe("hello");
+    expect(uploadInit?.method).toBe("POST");
+    expect(uploadInit?.headers).toMatchObject({
+      Authorization: "aa-key",
+      "Content-Type": "application/octet-stream",
+    });
+    // Buffer payloads are converted to a raw ArrayBuffer before upload.
+    expect(uploadInit?.body).toBeInstanceOf(ArrayBuffer);
+  });
+
+  it("sends language_code and omits language_detection for an explicit language", async () => {
+    let createBody: Record<string, unknown> | null = null;
+    vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
+      const url = String(input);
+      if (url.endsWith("/v2/upload")) {
+        return jsonResponse({ upload_url: UPLOAD_URL });
+      }
+      if (url.endsWith("/v2/transcript") && init?.method === "POST") {
+        createBody = JSON.parse(String(init.body)) as Record<string, unknown>;
+        return jsonResponse({ id: "t1", status: "queued" });
+      }
+      return jsonResponse({ id: "t1", status: "completed", text: "bonjour" });
+    });
+
+    const { text } = await assemblyaiTranscribeAudio({
+      apiKey: "aa-key",
+      blob: new ArrayBuffer(8),
+      language: "fr",
+    });
+
+    expect(text).toBe("bonjour");
+    expect(createBody).toEqual({ audio_url: UPLOAD_URL, language_code: "fr" });
+  });
+
+  it("surfaces upload HTTP failures", async () => {
+    vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      new Response("unauthorized", { status: 401 }),
+    );
+
+    await expect(
+      assemblyaiTranscribeAudio({
+        apiKey: "aa-key",
+        blob: new ArrayBuffer(8),
+      }),
+    ).rejects.toThrow(/AssemblyAI upload failed: 401/);
+  });
+
+  it("surfaces a missing upload URL", async () => {
+    vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
+      if (String(input).endsWith("/v2/upload")) {
+        return jsonResponse({});
+      }
+      return jsonResponse({}, 404);
+    });
+
+    await expect(
+      assemblyaiTranscribeAudio({
+        apiKey: "aa-key",
+        blob: new ArrayBuffer(8),
+      }),
+    ).rejects.toThrow(/no audio URL/);
+  });
+
+  it("surfaces transcript-request HTTP failures", async () => {
+    vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
+      if (String(input).endsWith("/v2/upload")) {
+        return jsonResponse({ upload_url: UPLOAD_URL });
+      }
+      return new Response("bad request", { status: 400 });
+    });
+
+    await expect(
+      assemblyaiTranscribeAudio({
+        apiKey: "aa-key",
+        blob: new ArrayBuffer(8),
+      }),
+    ).rejects.toThrow(/transcript request failed: 400/);
+  });
+
+  it("surfaces transcript errors", async () => {
+    vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
+      const url = String(input);
+      if (url.endsWith("/v2/upload")) {
+        return jsonResponse({ upload_url: UPLOAD_URL });
+      }
+      if (url.endsWith("/v2/transcript")) {
+        return jsonResponse({ id: "t1", status: "queued" });
+      }
+      return jsonResponse({
+        id: "t1",
+        status: "error",
+        error: "audio too quiet",
+      });
+    });
+
+    await expect(
+      assemblyaiTranscribeAudio({
+        apiKey: "aa-key",
+        blob: new ArrayBuffer(8),
+      }),
+    ).rejects.toThrow(/transcription failed: audio too quiet/);
+  });
+
+  it("times out when the transcript never completes", async () => {
+    vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
+      const url = String(input);
+      if (url.endsWith("/v2/upload")) {
+        return jsonResponse({ upload_url: UPLOAD_URL });
+      }
+      if (url.endsWith("/v2/transcript")) {
+        return jsonResponse({ id: "t1", status: "queued" });
+      }
+      return jsonResponse({ id: "t1", status: "queued" });
+    });
+
+    await expect(
+      assemblyaiTranscribeAudio({
+        apiKey: "aa-key",
+        blob: new ArrayBuffer(8),
+        timeoutMs: 120,
+        pollIntervalMs: 20,
+      }),
+    ).rejects.toThrow(/timed out/);
+  });
+
+  it("retries a transient upload failure", async () => {
+    let uploadCalls = 0;
+    vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
+      const url = String(input);
+      if (url.endsWith("/v2/upload")) {
+        uploadCalls++;
+        if (uploadCalls === 1) {
+          return new Response("upstream blip", { status: 502 });
+        }
+        return jsonResponse({ upload_url: UPLOAD_URL });
+      }
+      if (url.endsWith("/v2/transcript")) {
+        return jsonResponse({ id: "t1", status: "queued" });
+      }
+      return jsonResponse({ id: "t1", status: "completed", text: "retried" });
+    });
+
+    const { text } = await assemblyaiTranscribeAudio({
+      apiKey: "aa-key",
+      blob: new ArrayBuffer(8),
+    });
+
+    expect(text).toBe("retried");
+    expect(uploadCalls).toBeGreaterThanOrEqual(2);
+  });
+
+  it("retries a transient status-poll failure", async () => {
+    let statusCalls = 0;
+    vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
+      const url = String(input);
+      if (url.endsWith("/v2/upload")) {
+        return jsonResponse({ upload_url: UPLOAD_URL });
+      }
+      if (url.endsWith("/v2/transcript")) {
+        return jsonResponse({ id: "t1", status: "queued" });
+      }
+      statusCalls++;
+      if (statusCalls === 1) {
+        return new Response("upstream blip", { status: 502 });
+      }
+      return jsonResponse({ id: "t1", status: "completed", text: "recovered" });
+    });
+
+    const { text } = await assemblyaiTranscribeAudio({
+      apiKey: "aa-key",
+      blob: new ArrayBuffer(8),
+    });
+
+    expect(text).toBe("recovered");
+    expect(statusCalls).toBeGreaterThanOrEqual(2);
+  });
+});

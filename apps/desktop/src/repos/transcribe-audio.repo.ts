@@ -370,7 +370,9 @@ export class AssemblyAITranscribeAudioRepo extends BaseTranscribeAudioRepo {
   }
 
   // AssemblyAI batch transcripts accept far longer audio, but 60s keeps the
-  // retranscribe path consistent with the other batch providers.
+  // retranscribe path consistent with the other batch providers. The
+  // assemblyaiTranscribeAudio() polling budget (180s default) and 3s poll
+  // interval assume ~60s segments — revisit both together if this changes.
   protected getSegmentDurationSec(): number {
     return 60;
   }

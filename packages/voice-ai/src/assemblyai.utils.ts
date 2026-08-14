@@ -22,6 +22,10 @@ export type AssemblyAITranscriptionArgs = {
   apiKey: string;
   blob: ArrayBuffer | Buffer;
   language?: string;
+  /** Total time budget for the transcript to reach "completed" (default 180 s). */
+  timeoutMs?: number;
+  /** Delay between status polls (default 3 s). */
+  pollIntervalMs?: number;
 };
 
 export type AssemblyAITranscribeAudioOutput = {
@@ -55,6 +59,8 @@ export const assemblyaiTranscribeAudio = async ({
   apiKey,
   blob,
   language,
+  timeoutMs = 180_000,
+  pollIntervalMs = 3000,
 }: AssemblyAITranscriptionArgs): Promise<AssemblyAITranscribeAudioOutput> => {
   const arrayBuffer =
     blob instanceof ArrayBuffer ? blob : new Uint8Array(blob).buffer;
@@ -122,25 +128,32 @@ export const assemblyaiTranscribeAudio = async ({
   }
 
   // 60-second segments transcribe well within this window; the deadline
-  // only guards against a transcript stuck in "queued"/"processing".
-  const deadline = Date.now() + 180_000;
+  // only guards against a transcript stuck in "queued"/"processing". Both
+  // values are tunable (see AssemblyAITranscriptionArgs) for callers whose
+  // segment duration differs.
+  const deadline = Date.now() + timeoutMs;
   for (;;) {
-    const response = await fetch(
-      `${ASSEMBLYAI_API_URL}/transcript/${transcriptId}`,
-      {
-        method: "GET",
-        headers: assemblyaiHeaders(apiKey),
+    const status = await retry({
+      retries: 3,
+      fn: async () => {
+        const response = await fetch(
+          `${ASSEMBLYAI_API_URL}/transcript/${transcriptId}`,
+          {
+            method: "GET",
+            headers: assemblyaiHeaders(apiKey),
+          },
+        );
+
+        if (!response.ok) {
+          const errorText = await response.text().catch(() => "Unknown error");
+          throw new Error(
+            `AssemblyAI transcript status failed: ${response.status} - ${errorText}`,
+          );
+        }
+
+        return (await response.json()) as AssemblyAITranscriptResponse;
       },
-    );
-
-    if (!response.ok) {
-      const errorText = await response.text().catch(() => "Unknown error");
-      throw new Error(
-        `AssemblyAI transcript status failed: ${response.status} - ${errorText}`,
-      );
-    }
-
-    const status = (await response.json()) as AssemblyAITranscriptResponse;
+    });
 
     if (status.status === "completed") {
       const text = status.text?.trim() ?? "";
@@ -160,7 +173,7 @@ export const assemblyaiTranscribeAudio = async ({
       throw new Error("AssemblyAI transcription timed out");
     }
 
-    await delayed(3000);
+    await delayed(pollIntervalMs);
   }
 };
 
