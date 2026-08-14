@@ -37,7 +37,9 @@ whisper-rs = { version = "0.15.1", default-features = false, features = ["raw-ap
 # preprocessing/decoding implementations on top of this runtime.
 ort = "=2.0.0-rc.13"
 parakeet-rs = { version = "=0.3.7" }
-canary-rs = { version = "=0.3.0" }
+# canary-rs exposes CoreML option types from its public CPU configuration, so
+# its `coreml` feature is required even when the selected provider is CPU.
+canary-rs = { version = "=0.3.0", features = ["coreml"] }
 
 [dev-dependencies]
 http-body-util = "0.1"
