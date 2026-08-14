@@ -1,10 +1,12 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { INITIAL_APP_STATE } from "../state/app.state";
 import { setAppState } from "../store";
-import { getTranscribeAudioRepo } from ".";
+import { getModelProviderRepo, getTranscribeAudioRepo } from ".";
 import {
+  AssemblyAITranscribeAudioRepo,
   BaseTranscribeAudioRepo,
   DeepgramTranscribeAudioRepo,
+  GroqTranscribeAudioRepo,
   TranscribeAudioOutput,
   TranscribeSegmentInput,
 } from "./transcribe-audio.repo";
@@ -350,5 +352,134 @@ describe("DeepgramTranscribeAudioRepo", () => {
 
     expect(repo).toBeInstanceOf(DeepgramTranscribeAudioRepo);
     expect(apiKeyId).toBe("deepgram-key");
+  });
+});
+
+describe("AssemblyAITranscribeAudioRepo", () => {
+  it("is selected for AssemblyAI API transcription preferences", () => {
+    const state = structuredClone(INITIAL_APP_STATE);
+    state.settings.aiTranscription.mode = "api";
+    state.settings.aiTranscription.selectedApiKeyId = "assemblyai-key";
+    state.apiKeyById["assemblyai-key"] = {
+      id: "assemblyai-key",
+      name: "AssemblyAI",
+      provider: "assemblyai",
+      createdAt: "2026-06-03T00:00:00.000Z",
+      keyFull: "aa-key",
+      transcriptionModel: null,
+    };
+    setAppState(state, true);
+
+    const { repo, apiKeyId } = getTranscribeAudioRepo();
+
+    expect(repo).toBeInstanceOf(AssemblyAITranscribeAudioRepo);
+    expect(apiKeyId).toBe("assemblyai-key");
+  });
+
+  it("uploads audio, creates a transcript, and polls until completed", async () => {
+    const fetchMock = vi
+      .spyOn(globalThis, "fetch")
+      .mockImplementation(
+        async (input: string | URL | Request, init?: RequestInit) => {
+          const url = String(input);
+          const method = init?.method ?? "GET";
+
+          if (url.endsWith("/v2/upload")) {
+            return new Response(
+              JSON.stringify({
+                upload_url: "https://cdn.assemblyai.com/upload/abc123",
+              }),
+              { status: 200 },
+            );
+          }
+
+          if (url.endsWith("/v2/transcript") && method === "POST") {
+            return new Response(
+              JSON.stringify({ id: "transcript-1", status: "queued" }),
+              { status: 200 },
+            );
+          }
+
+          if (url.includes("/v2/transcript/")) {
+            return new Response(
+              JSON.stringify({
+                id: "transcript-1",
+                status: "completed",
+                text: "hello from assemblyai",
+              }),
+              { status: 200 },
+            );
+          }
+
+          return new Response("{}", { status: 404 });
+        },
+      );
+
+    const repo = new AssemblyAITranscribeAudioRepo("aa-key");
+    const result = await repo.transcribeAudio({
+      samples: createSamples(1, 16000),
+      sampleRate: 16000,
+      language: "auto",
+    });
+
+    expect(result.text).toBe("hello from assemblyai");
+    expect(result.metadata).toMatchObject({
+      inferenceDevice: "API • AssemblyAI",
+      transcriptionMode: "api",
+    });
+
+    // Upload carries the raw WAV bytes with the token header.
+    const uploadCall = fetchMock.mock.calls.find(([input]) =>
+      String(input).endsWith("/v2/upload"),
+    );
+    const [, uploadInit] = uploadCall ?? [];
+    expect(uploadInit?.headers).toMatchObject({ Authorization: "aa-key" });
+    expect(uploadInit?.method).toBe("POST");
+
+    // Auto language requests detection instead of a fixed code.
+    const createCall = fetchMock.mock.calls.find(
+      ([input, init]) =>
+        String(input).endsWith("/v2/transcript") && init?.method === "POST",
+    );
+    const [, createInit] = createCall ?? [];
+    expect(JSON.parse(String(createInit?.body))).toEqual({
+      audio_url: "https://cdn.assemblyai.com/upload/abc123",
+      language_detection: true,
+    });
+  });
+});
+
+describe("provider capability and transcription dispatch agreement", () => {
+  it("does not advertise Ollama as transcription-capable", () => {
+    // Stock Ollama exposes no speech-to-text endpoint; the capability flag
+    // must stay in sync with getTranscribeAudioRepo(), which has no Ollama
+    // branch and warns + falls back to Groq for stale selections.
+    expect(getModelProviderRepo("ollama").supportsTranscriptionModels()).toBe(
+      false,
+    );
+    expect(
+      getModelProviderRepo("assemblyai").supportsTranscriptionModels(),
+    ).toBe(true);
+  });
+
+  it("warns and falls back to Groq for a stale Ollama transcription selection", () => {
+    const state = structuredClone(INITIAL_APP_STATE);
+    state.settings.aiTranscription.mode = "api";
+    state.settings.aiTranscription.selectedApiKeyId = "ollama-key";
+    state.apiKeyById["ollama-key"] = {
+      id: "ollama-key",
+      name: "Ollama",
+      provider: "ollama",
+      createdAt: "2026-06-03T00:00:00.000Z",
+      keyFull: null,
+      baseUrl: "http://127.0.0.1:11434",
+      transcriptionModel: null,
+    };
+    setAppState(state, true);
+
+    const { repo, warnings } = getTranscribeAudioRepo();
+
+    expect(repo).toBeInstanceOf(GroqTranscribeAudioRepo);
+    expect(warnings.some((warning) => warning.includes("ollama"))).toBe(true);
   });
 });

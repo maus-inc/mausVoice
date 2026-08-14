@@ -71,6 +71,7 @@ import { BaseToneRepo, LocalToneRepo } from "./tone.repo";
 import { ToolRepo } from "./tool.repo";
 import {
   AldeaTranscribeAudioRepo,
+  AssemblyAITranscribeAudioRepo,
   AzureTranscribeAudioRepo,
   BaseTranscribeAudioRepo,
   DeepgramTranscribeAudioRepo,
@@ -316,6 +317,8 @@ export const getTranscribeAudioRepo = (): TranscribeAudioRepoOutput => {
         prefs.apiKeyValue,
         prefs.transcriptionModel,
       );
+    } else if (prefs.provider === "assemblyai") {
+      repo = new AssemblyAITranscribeAudioRepo(prefs.apiKeyValue);
     } else if (prefs.provider === "aldea") {
       repo = new AldeaTranscribeAudioRepo(prefs.apiKeyValue);
     } else if (prefs.provider === "azure") {
@@ -366,7 +369,19 @@ export const getTranscribeAudioRepo = (): TranscribeAudioRepoOutput => {
         prefs.apiKeyValue,
         prefs.transcriptionModel,
       );
+    } else if (prefs.provider === "groq") {
+      repo = new GroqTranscribeAudioRepo(
+        prefs.apiKeyValue,
+        prefs.transcriptionModel,
+      );
     } else {
+      // Every provider surfaced by the transcription capability filter now
+      // has an explicit branch above. Reaching here means a stale saved
+      // selection for a generative-only provider (e.g. an Ollama record
+      // saved before the capability fix). Warn instead of failing silently.
+      prefs.warnings.push(
+        `No transcription implementation for provider "${prefs.provider}". Using the Groq repository as a fallback.`,
+      );
       repo = new GroqTranscribeAudioRepo(
         prefs.apiKeyValue,
         prefs.transcriptionModel,

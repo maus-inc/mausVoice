@@ -27,7 +27,7 @@ xAI transcription exposes the single current model ID `grok-stt`. It posts multi
 
 AssemblyAI uses its dedicated v3 streaming WebSocket, with the API key in the connection query. It streams PCM16 audio, can emit committed segments for real-time output, and waits up to two seconds for finalization. Startup/finalization failure returns a warning and no transcript; there is no retained-audio fallback. The model-provider list is intentionally empty because the session does not expose a user model picker.
 
-AssemblyAI's test lists transcripts from `/v2/transcript`; it can succeed without exercising the streaming endpoint. Stored-audio **Retranscribe** does not have an AssemblyAI batch implementation in the current dispatcher, so choose another implemented batch provider before using that History action.
+AssemblyAI's test lists transcripts from `/v2/transcript`; it can succeed without exercising the streaming endpoint. Stored-audio **Retranscribe** now has an AssemblyAI batch implementation: the repo uploads each 60-second segment to `/v2/upload`, creates a `/v2/transcript`, and polls until completion, with language detection when the language is auto.
 
 ## Generative providers
 

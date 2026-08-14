@@ -1,3 +1,5 @@
+import { delayed, retry } from "@maus-inc/utilities";
+
 export type AssemblyAITestIntegrationArgs = {
   apiKey: string;
 };
@@ -13,6 +15,152 @@ export const assemblyaiTestIntegration = async ({
     return response.ok || response.status === 404;
   } catch {
     return false;
+  }
+};
+
+export type AssemblyAITranscriptionArgs = {
+  apiKey: string;
+  blob: ArrayBuffer | Buffer;
+  language?: string;
+};
+
+export type AssemblyAITranscribeAudioOutput = {
+  text: string;
+};
+
+const ASSEMBLYAI_API_URL = "https://api.assemblyai.com/v2";
+
+type AssemblyAIUploadResponse = {
+  upload_url?: string;
+};
+
+type AssemblyAITranscriptResponse = {
+  id?: string;
+  status?: "queued" | "processing" | "completed" | "error";
+  text?: string;
+  error?: string;
+};
+
+const assemblyaiHeaders = (apiKey: string): Record<string, string> => ({
+  Authorization: apiKey,
+});
+
+/**
+ * Batch (stored-audio) transcription via AssemblyAI's REST v2 API:
+ * upload the audio, create a transcript, then poll until it completes.
+ * Used by the retranscribe/batch path; live dictation keeps the dedicated
+ * v3 streaming WebSocket session instead.
+ */
+export const assemblyaiTranscribeAudio = async ({
+  apiKey,
+  blob,
+  language,
+}: AssemblyAITranscriptionArgs): Promise<AssemblyAITranscribeAudioOutput> => {
+  const arrayBuffer =
+    blob instanceof ArrayBuffer ? blob : new Uint8Array(blob).buffer;
+
+  const { upload_url: uploadUrl } = await retry({
+    retries: 3,
+    fn: async () => {
+      const response = await fetch(`${ASSEMBLYAI_API_URL}/upload`, {
+        method: "POST",
+        headers: {
+          ...assemblyaiHeaders(apiKey),
+          "Content-Type": "application/octet-stream",
+        },
+        body: arrayBuffer,
+      });
+
+      if (!response.ok) {
+        const errorText = await response.text().catch(() => "Unknown error");
+        throw new Error(
+          `AssemblyAI upload failed: ${response.status} - ${errorText}`,
+        );
+      }
+
+      return (await response.json()) as AssemblyAIUploadResponse;
+    },
+  });
+
+  if (!uploadUrl) {
+    throw new Error("AssemblyAI upload returned no audio URL");
+  }
+
+  const transcriptPayload: Record<string, unknown> = { audio_url: uploadUrl };
+  if (language && language !== "auto") {
+    transcriptPayload.language_code = language;
+  } else {
+    transcriptPayload.language_detection = true;
+  }
+
+  const created = await retry({
+    retries: 3,
+    fn: async () => {
+      const response = await fetch(`${ASSEMBLYAI_API_URL}/transcript`, {
+        method: "POST",
+        headers: {
+          ...assemblyaiHeaders(apiKey),
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify(transcriptPayload),
+      });
+
+      if (!response.ok) {
+        const errorText = await response.text().catch(() => "Unknown error");
+        throw new Error(
+          `AssemblyAI transcript request failed: ${response.status} - ${errorText}`,
+        );
+      }
+
+      return (await response.json()) as AssemblyAITranscriptResponse;
+    },
+  });
+
+  const transcriptId = created.id;
+  if (!transcriptId) {
+    throw new Error("AssemblyAI transcript request returned no ID");
+  }
+
+  // 60-second segments transcribe well within this window; the deadline
+  // only guards against a transcript stuck in "queued"/"processing".
+  const deadline = Date.now() + 180_000;
+  for (;;) {
+    const response = await fetch(
+      `${ASSEMBLYAI_API_URL}/transcript/${transcriptId}`,
+      {
+        method: "GET",
+        headers: assemblyaiHeaders(apiKey),
+      },
+    );
+
+    if (!response.ok) {
+      const errorText = await response.text().catch(() => "Unknown error");
+      throw new Error(
+        `AssemblyAI transcript status failed: ${response.status} - ${errorText}`,
+      );
+    }
+
+    const status = (await response.json()) as AssemblyAITranscriptResponse;
+
+    if (status.status === "completed") {
+      const text = status.text?.trim() ?? "";
+      if (!text) {
+        throw new Error("AssemblyAI transcription returned no text");
+      }
+      return { text };
+    }
+
+    if (status.status === "error") {
+      throw new Error(
+        `AssemblyAI transcription failed: ${status.error ?? "Unknown error"}`,
+      );
+    }
+
+    if (Date.now() > deadline) {
+      throw new Error("AssemblyAI transcription timed out");
+    }
+
+    await delayed(3000);
   }
 };
 
