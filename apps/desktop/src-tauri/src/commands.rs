@@ -440,13 +440,48 @@ async fn delete_audio_entries(
 
 /// True when `path` is inside the managed transcription-audio directory.
 /// Used by `clear_local_data` so a stale/absolute path cannot delete
-/// files outside the app's audio store.
+/// True when `path` resolves safely inside the managed transcription-audio
+/// directory. Uses component normalization (not raw lexical `starts_with`)
+/// so a stored path such as `<audio_dir>/../outside.wav` cannot escape the
+/// managed directory and delete an unrelated file during `clear_local_data`.
 fn is_managed_audio_path(path: &std::path::Path, audio_dir: &std::path::Path) -> bool {
-    path.starts_with(audio_dir)
+    // Resolve the candidate: an absolute `path` is taken as-is; a relative
+    // `path` is resolved against `audio_dir`.
+    let candidate = if path.is_absolute() {
+        path.to_path_buf()
+    } else {
+        audio_dir.join(path)
+    };
+
+    // Walk the components, maintaining a normalized stack. A `..` pops the
+    // top component; if it would climb above the filesystem root we reject.
+    // This collapses `..` lexically so traversal attempts cannot escape.
+    let mut stack: Vec<std::path::Component> = Vec::new();
+    for component in candidate.components() {
+        match component {
+            std::path::Component::ParentDir => {
+                // Cannot climb above the root of an absolute path.
+                if stack
+                    .last()
+                    .map(|c| matches!(c, std::path::Component::Prefix(_) | std::path::Component::RootDir))
+                    .unwrap_or(false)
+                {
+                    return false;
+                }
+                stack.pop();
+            }
+            std::path::Component::CurDir => {}
+            other => stack.push(other),
+        }
+    }
+
+    let normalized: std::path::PathBuf = stack.iter().collect();
+    normalized.starts_with(audio_dir)
 }
 
 /// Delete listed audio files that still live under `audio_dir`. Paths
-/// outside the managed directory are skipped (not an error).
+/// outside the managed directory (including traversal attempts) are skipped
+/// (not an error).
 fn delete_listed_audio_files(audio_dir: &std::path::Path, paths: &[String]) {
     for path in paths {
         let file_path = PathBuf::from(path);
@@ -2768,8 +2803,11 @@ mod tests {
         let audio_dir = std::env::temp_dir().join("mausvoice-audio-test-dir");
         let inside = audio_dir.join("clip.wav");
         let outside = std::env::temp_dir().join("not-audio").join("clip.wav");
+        // A traversal attempt must NOT escape the managed directory.
+        let traversal = audio_dir.join("..").join("escaped.wav");
         assert!(is_managed_audio_path(&inside, &audio_dir));
         assert!(!is_managed_audio_path(&outside, &audio_dir));
+        assert!(!is_managed_audio_path(&traversal, &audio_dir));
     }
 
     #[test]
