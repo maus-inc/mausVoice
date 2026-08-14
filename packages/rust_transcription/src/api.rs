@@ -591,7 +591,7 @@ async fn read_model_status(
     let model_path = state.model_path(model);
     let metadata = tokio::fs::metadata(&model_path).await.ok();
 
-    let file_bytes = metadata.map(|meta| meta.len());
+    let file_bytes = metadata.as_ref().map(|meta| meta.len());
 
     let downloaded = if model.is_onnx() {
         // An ONNX model is only "downloaded" once the complete, model-specific
