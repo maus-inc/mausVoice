@@ -1,3 +1,6 @@
+#[cfg(mausvoice_dump_generated_lock)]
+include!(concat!(env!("OUT_DIR"), "/generated_lock_dump.rs"));
+
 mod api;
 mod compute;
 mod config;
