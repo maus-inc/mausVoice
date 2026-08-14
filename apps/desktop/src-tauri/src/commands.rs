@@ -1788,6 +1788,13 @@ pub async fn simulate_type(text: String, delay_ms: u64) -> Result<(), String> {
 pub fn cancel_typing() -> Result<(), String> {
     // Serialization by the re-entry guard is what makes cancel unambiguous:
     // only one `simulate_type` can be live, so this flag always targets it.
+    // Ignore cancels that arrive with no live session (a late blur/Escape,
+    // or another caller): otherwise the flag would stay set and abort the
+    // *next* typing session before it starts.
+    if !SIMULATE_TYPE_IN_PROGRESS.load(Ordering::Acquire) {
+        return Ok(());
+    }
+
     CANCEL_TYPING.store(true, Ordering::SeqCst);
     Ok(())
 }
@@ -2749,8 +2756,15 @@ mod tests {
     }
 
     #[test]
-    fn cancel_typing_sets_the_shared_flag() {
+    fn cancel_typing_only_signals_a_live_session() {
         CANCEL_TYPING.store(false, Ordering::SeqCst);
+
+        // No typing session is live, so the cancel must be ignored instead
+        // of arming the flag for the next session.
+        cancel_typing().unwrap();
+        assert!(!CANCEL_TYPING.load(Ordering::SeqCst));
+
+        let _session = ReentryGuard::acquire(&SIMULATE_TYPE_IN_PROGRESS).unwrap();
         cancel_typing().unwrap();
         assert!(CANCEL_TYPING.load(Ordering::SeqCst));
     }
