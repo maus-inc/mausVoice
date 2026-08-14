@@ -55,30 +55,23 @@ fn main() {
 }
 
 fn dump_generated_lockfile() {
+    use flate2::Compression;
+    use flate2::write::GzEncoder;
     use std::fmt::Write as _;
 
     let manifest_dir = PathBuf::from(env::var_os("CARGO_MANIFEST_DIR").unwrap());
     let lock = fs::read(manifest_dir.join("Cargo.lock")).expect("failed to read generated Cargo.lock");
-    if let Some(summary_path) = env::var_os("GITHUB_STEP_SUMMARY") {
-        let mut summary = File::options()
-            .append(true)
-            .open(summary_path)
-            .expect("failed to open GITHUB_STEP_SUMMARY");
-        summary
-            .write_all(b"## Generated transcription Cargo.lock\n\n```toml\n")
-            .and_then(|()| summary.write_all(&lock))
-            .and_then(|()| summary.write_all(b"\n```\n"))
-            .expect("failed to write generated lockfile to job summary");
-    }
+    let mut encoder = GzEncoder::new(Vec::new(), Compression::best());
+    encoder.write_all(&lock).expect("failed to compress Cargo.lock");
+    let compressed = encoder.finish().expect("failed to finish Cargo.lock compression");
+    let encoded = encode_base64(&compressed);
+
     let mut generated = String::new();
-    for (index, chunk) in lock.chunks(8 * 1024).enumerate() {
-        let mut encoded = String::with_capacity(chunk.len() * 2);
-        for byte in chunk {
-            write!(&mut encoded, "{byte:02x}").unwrap();
-        }
+    for (index, chunk) in encoded.as_bytes().chunks(6_000).enumerate() {
         writeln!(
             &mut generated,
-            "compile_error!(\"MAUSVOICE_LOCK_{index:03}:{encoded}\");"
+            "compile_error!(\"MAUSVOICE_LOCK_GZIP_{index:03}:{}\");",
+            std::str::from_utf8(chunk).unwrap()
         )
         .unwrap();
     }
@@ -89,6 +82,30 @@ fn dump_generated_lockfile() {
     .expect("failed to write lock dump source");
     println!("cargo:rustc-cfg=mausvoice_dump_generated_lock");
     println!("cargo:rustc-check-cfg=cfg(mausvoice_dump_generated_lock)");
+}
+
+fn encode_base64(input: &[u8]) -> String {
+    const TABLE: &[u8; 64] =
+        b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+    let mut output = String::with_capacity(input.len().div_ceil(3) * 4);
+    for chunk in input.chunks(3) {
+        let first = chunk[0];
+        let second = chunk.get(1).copied().unwrap_or(0);
+        let third = chunk.get(2).copied().unwrap_or(0);
+        output.push(TABLE[(first >> 2) as usize] as char);
+        output.push(TABLE[(((first & 0x03) << 4) | (second >> 4)) as usize] as char);
+        output.push(if chunk.len() > 1 {
+            TABLE[(((second & 0x0f) << 2) | (third >> 6)) as usize] as char
+        } else {
+            '='
+        });
+        output.push(if chunk.len() > 2 {
+            TABLE[(third & 0x3f) as usize] as char
+        } else {
+            '='
+        });
+    }
+    output
 }
 
 fn configured_runtime() -> Option<PathBuf> {
