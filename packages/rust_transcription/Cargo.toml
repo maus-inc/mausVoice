@@ -33,13 +33,11 @@ uuid = { version = "1", features = ["serde", "v4"] }
 whisper-rs = { version = "0.15.1", default-features = false, features = ["raw-api"] }
 # Keep the prerelease exact: Cargo's `"2"` requirement does not select a 2.0
 # prerelease and was the reason every Rust/desktop CI build failed before
-# compilation. The model-specific crates provide the real Parakeet and Canary
-# preprocessing/decoding implementations on top of this runtime.
-ort = { version = "=2.0.0-rc.13", features = ["lax-feature-matching"] }
-parakeet-rs = { version = "=0.3.7" }
-# canary-rs exposes CoreML option types from its public CPU configuration, so
-# its `coreml` feature is required even when the selected provider is CPU.
-canary-rs = { version = "=0.3.0", features = ["coreml"] }
+# compilation. rc.12's Linux distribution also retains Ubuntu 22.04 ABI
+# compatibility, which the desktop release runner requires.
+ort = "=2.0.0-rc.12"
+parakeet-rs = { version = "=0.3.6" }
+canary-rs = { version = "=0.2.0" }
 
 [dev-dependencies]
 http-body-util = "0.1"
