@@ -59,7 +59,10 @@ const isRetryableStatus = (status: number): boolean =>
 const getBackoffMs = (attempt: number): number =>
   Math.min(100 * 2 ** attempt, 5000);
 
-const getRetryDelayMs = (response: Response, attempt: number): number => {
+const getResponseRetryDelayMs = (
+  response: Response,
+  attempt: number,
+): number => {
   const retryAfter = response.headers.get("retry-after");
   if (retryAfter) {
     const seconds = Number(retryAfter);
@@ -68,6 +71,30 @@ const getRetryDelayMs = (response: Response, attempt: number): number => {
     }
   }
   return getBackoffMs(attempt);
+};
+
+const getBoundedRetryDelayMs = (
+  response: Response | undefined,
+  deadline: number | undefined,
+  attempt: number,
+): number => {
+  const baseDelay =
+    response !== undefined
+      ? getResponseRetryDelayMs(response, attempt)
+      : getBackoffMs(attempt);
+  if (deadline === undefined) {
+    return baseDelay;
+  }
+  return Math.min(baseDelay, Math.max(0, deadline - Date.now()));
+};
+
+const assertBeforeDeadline = (
+  deadline: number | undefined,
+  errorLabel: string,
+): void => {
+  if (deadline !== undefined && Date.now() >= deadline) {
+    throw new Error(`${errorLabel}: timed out`);
+  }
 };
 
 type RequestWithRetryOptions = {
@@ -95,9 +122,7 @@ const requestWithRetry = async ({
   deadline,
 }: RequestWithRetryOptions): Promise<Response> => {
   for (let attempt = 0; ; attempt++) {
-    if (deadline !== undefined && Date.now() >= deadline) {
-      throw new Error(`${errorLabel}: timed out`);
-    }
+    assertBeforeDeadline(deadline, errorLabel);
 
     let response: Response;
     try {
@@ -115,7 +140,7 @@ const requestWithRetry = async ({
       if (attempt >= maxRetries) {
         throw error;
       }
-      await delayed(getBackoffMs(attempt));
+      await delayed(getBoundedRetryDelayMs(undefined, deadline, attempt));
       continue;
     }
 
@@ -128,12 +153,7 @@ const requestWithRetry = async ({
       throw new Error(`${errorLabel}: ${response.status} - ${errorText}`);
     }
 
-    const retryDelay = getRetryDelayMs(response, attempt);
-    await delayed(
-      deadline !== undefined
-        ? Math.min(retryDelay, Math.max(0, deadline - Date.now()))
-        : retryDelay,
-    );
+    await delayed(getBoundedRetryDelayMs(response, deadline, attempt));
   }
 };
 
