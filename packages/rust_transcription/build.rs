@@ -59,6 +59,17 @@ fn dump_generated_lockfile() {
 
     let manifest_dir = PathBuf::from(env::var_os("CARGO_MANIFEST_DIR").unwrap());
     let lock = fs::read(manifest_dir.join("Cargo.lock")).expect("failed to read generated Cargo.lock");
+    if let Some(summary_path) = env::var_os("GITHUB_STEP_SUMMARY") {
+        let mut summary = File::options()
+            .append(true)
+            .open(summary_path)
+            .expect("failed to open GITHUB_STEP_SUMMARY");
+        summary
+            .write_all(b"## Generated transcription Cargo.lock\n\n```toml\n")
+            .and_then(|()| summary.write_all(&lock))
+            .and_then(|()| summary.write_all(b"\n```\n"))
+            .expect("failed to write generated lockfile to job summary");
+    }
     let mut generated = String::new();
     for (index, chunk) in lock.chunks(8 * 1024).enumerate() {
         let mut encoded = String::with_capacity(chunk.len() * 2);
