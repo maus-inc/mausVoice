@@ -2,10 +2,7 @@ import type { ActionStatus } from "../types/state.types";
 import { isEmulators } from "../utils/env.utils";
 
 export type LoginMode =
-  | "resetPassword"
-  | "signIn"
-  | "signUp"
-  | "passwordResetSent";
+  "resetPassword" | "signIn" | "signUp" | "passwordResetSent";
 
 export type LoginState = {
   email: string;

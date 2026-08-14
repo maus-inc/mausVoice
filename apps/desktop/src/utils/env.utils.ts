@@ -27,11 +27,7 @@ export const getIsEmulators = (): boolean => {
 };
 
 export type Flavor =
-  | "emulators"
-  | "dev"
-  | "prod"
-  | "enterprise"
-  | "enterprise-dev";
+  "emulators" | "dev" | "prod" | "enterprise" | "enterprise-dev";
 export const getFlavor = (): Flavor =>
   (import.meta.env.VITE_FLAVOR ?? "emulators") as Flavor;
 
@@ -43,8 +39,7 @@ export type Platform = DesktopPlatform;
 
 export const getPlatform = (): Platform => {
   const override = import.meta.env.MAUSVOICE_DESKTOP_PLATFORM as
-    | Platform
-    | undefined;
+    Platform | undefined;
   if (override) {
     return override;
   }
