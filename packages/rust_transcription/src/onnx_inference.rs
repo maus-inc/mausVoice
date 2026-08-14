@@ -27,7 +27,7 @@ enum LoadedModel {
 // insert a cached runtime; the per-model inner lock is what serializes
 // inference for a single model, so concurrent requests for *different* models
 // do not block each other on the global cache lock.
-static MODEL_CACHE: LazyLock<Mutex<HashMap<PathBuf, Arc<Mutex<LoadedModel>>>>> =
+static MODEL_CACHE: LazyLock<Mutex<HashMap<PathBuf, Arc<Mutex<Option<LoadedModel>>>>>> =
     LazyLock::new(|| Mutex::new(HashMap::new()));
 
 /// Run genuine model inference for one of the configured ONNX models.
@@ -55,20 +55,23 @@ pub fn transcribe(
             .lock()
             .map_err(|_| "ONNX model cache lock poisoned".to_string())?;
 
-        if let Some(existing) = cache.get(&cache_key) {
-            existing.clone()
-        } else {
-            let loaded = load_model(model, model_dir)?;
-            let entry = Arc::new(Mutex::new(loaded));
-            cache.insert(cache_key, entry.clone());
-            entry
-        }
+        cache
+            .entry(cache_key)
+            .or_insert_with(|| Arc::new(Mutex::new(None)))
+            .clone()
     };
 
     let mut guard = entry
         .lock()
         .map_err(|_| "ONNX model runtime lock poisoned".to_string())?;
-    let loaded = &mut *guard;
+    if guard.is_none() {
+        // Loading is guarded only by this model's lock. A different model can
+        // load or transcribe concurrently without waiting on the cache map.
+        *guard = Some(load_model(model, model_dir)?);
+    }
+    let loaded = guard
+        .as_mut()
+        .ok_or_else(|| "ONNX model runtime failed to initialize".to_string())?;
 
     match (model, loaded) {
         (WhisperModel::ParakeetCtc06B, LoadedModel::ParakeetCtc(runtime)) => runtime

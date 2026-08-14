@@ -10,6 +10,7 @@ use axum::{Json, Router};
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
+use crate::downloads::DownloadArtifact;
 use crate::errors::ApiError;
 use crate::models::WhisperModel;
 use crate::state::AppState;
@@ -121,48 +122,32 @@ async fn download_model(
 ) -> Result<Json<crate::downloads::DownloadJobSnapshot>, ApiError> {
     let model = parse_model(&path.model)?;
     let client = state.http_client.clone();
-    let models_dir = state.config.models_dir.clone();
-    let destination = state.model_path(model);
-
-    let snapshot = if model.is_onnx() {
-        // ONNX models ship as a set of files (encoder/decoder/joiner + tokens).
-        // The primary artifact is tracked by the resumable registry; the rest
-        // are fetched alongside it.
-        let artifacts = model.artifact_set();
-        let primary_url = artifacts
-            .first()
-            .map(|(_, url)| url.clone())
-            .unwrap_or_else(|| model.download_url());
-
-        let snapshot = state
-            .downloads
-            .start_or_get_active(model, primary_url, destination, client.clone())
-            .await
-            .map_err(|err| ApiError::internal("download_start_failed", err))?;
-
-        // Any prior auxiliary failures for this model are stale once a fresh
-        // download begins; reset them so the status only reports current errors.
-        state.downloads.clear_auxiliary(model).await;
-
-        for (name, url) in &artifacts[1..] {
-            let aux_destination = model.artifact_path(&models_dir, name);
-            let aux_client = client.clone();
-            let aux_url = url.clone();
-            state
-                .downloads
-                .start_auxiliary_download(model, aux_url, aux_destination, aux_client)
-                .await;
-        }
-
-        snapshot
+    let artifacts = if model.is_onnx() {
+        // One registry job owns the complete model bundle. Completion is not
+        // published until every graph, weights file, and tokenizer/vocabulary
+        // artifact is durable; any artifact failure is returned by this job.
+        model
+            .artifact_set()
+            .into_iter()
+            .map(|(name, url)| {
+                DownloadArtifact::new(
+                    url,
+                    model.artifact_path(&state.config.models_dir, name),
+                )
+            })
+            .collect()
     } else {
-        let url = model.download_url();
-        state
-            .downloads
-            .start_or_get_active(model, url, destination, client)
-            .await
-            .map_err(|err| ApiError::internal("download_start_failed", err))?
+        vec![DownloadArtifact::new(
+            model.download_url(),
+            state.model_path(model),
+        )]
     };
+
+    let snapshot = state
+        .downloads
+        .start_or_get_active(model, artifacts, client)
+        .await
+        .map_err(|err| ApiError::internal("download_start_failed", err))?;
 
     Ok(Json(snapshot))
 }
@@ -199,10 +184,9 @@ async fn handle_download_action(
             Ok(Json(snapshot))
         }
         "cancel" => {
-            let destination = state.model_path(model);
             let snapshot = state
                 .downloads
-                .cancel_active(model, &destination)
+                .cancel_active(model)
                 .await
                 .ok_or_else(|| ApiError::not_found("download_not_found", "no active download found to cancel"))?;
             Ok(Json(snapshot))
@@ -232,10 +216,9 @@ async fn handle_job_action(
             Ok(Json(snapshot))
         }
         "cancel" => {
-            let destination = state.model_path(model);
             let snapshot = state
                 .downloads
-                .cancel_job(model, job_id, &destination)
+                .cancel_job(model, job_id)
                 .await
                 .ok_or_else(|| ApiError::not_found("download_not_found", "download job was not found"))?;
             Ok(Json(snapshot))
@@ -306,7 +289,7 @@ async fn delete_model(
     } else {
         remove_partial_model_downloads(&model_path, model).await?;
     }
-    state.downloads.clear_auxiliary(model).await;
+    state.downloads.clear_model_history(model).await;
     let status = read_model_status(&state, model, false).await?;
     Ok(Json(status))
 }
@@ -621,17 +604,15 @@ async fn read_model_status(
     };
 
     if !downloaded {
-        // Surface any auxiliary artifact download failure so a model is never
-        // left partially downloaded with no diagnostic.
-        let aux_errors = state.downloads.auxiliary_errors(model).await;
-        let validation_error = if aux_errors.is_empty() {
-            None
-        } else {
-            Some(format!(
-                "auxiliary artifact download failed: {}",
-                aux_errors.join("; ")
-            ))
-        };
+        // Preserve the latest bundle failure on the model status endpoint as
+        // well as on the job snapshot, so clients can diagnose a partial
+        // bundle even after losing the original job ID.
+        let validation_error = state
+            .downloads
+            .get_latest_job(model)
+            .await
+            .filter(|job| job.status == crate::downloads::DownloadJobStatus::Failed)
+            .and_then(|job| job.error);
         return Ok(ModelStatusResponse {
             model,
             downloaded: false,

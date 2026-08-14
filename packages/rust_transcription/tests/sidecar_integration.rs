@@ -701,27 +701,8 @@ async fn download_model_and_wait(
         return Err("timed out waiting for model download to complete".into());
     }
 
-    // The auxiliary artifacts are fetched alongside the primary download and
-    // the sidecar only reports `downloaded` once the complete artifact set is
-    // present on disk. Poll that signal instead of a hard-coded sleep so the
-    // test is not coupled to auxiliary-download timing.
-    let finalization_deadline = Instant::now() + Duration::from_secs(120);
-    while Instant::now() < finalization_deadline {
-        let status = sidecar
-            .client
-            .get(sidecar.url(&format!("/v1/models/{slug}/status?validate=false")))
-            .send()
-            .await?
-            .error_for_status()?
-            .json::<ModelStatusResponse>()
-            .await?;
-
-        if status.downloaded {
-            break;
-        }
-        sleep(Duration::from_millis(500)).await;
-    }
-
+    // A bundle job reaches Completed only after every required artifact has
+    // been flushed and finalized, so no timing-based auxiliary wait is needed.
     let status = sidecar
         .client
         .get(sidecar.url(&format!("/v1/models/{slug}/status?validate=true")))

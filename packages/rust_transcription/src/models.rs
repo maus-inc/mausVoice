@@ -129,7 +129,8 @@ impl WhisperModel {
     }
 
     /// Every file required by the model-specific runtime. The first entry is
-    /// the resumable, progress-tracked primary download.
+    /// the largest artifact; one resumable registry job tracks the complete
+    /// ordered bundle and finishes only after every entry is durable.
     pub fn artifact_set(self) -> Vec<(&'static str, String)> {
         let mut artifacts = match self {
             Self::ParakeetCtc06B => {
