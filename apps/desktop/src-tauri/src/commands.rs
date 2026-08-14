@@ -2806,15 +2806,29 @@ mod tests {
     /// replaying the migration SQL. Derived independently of
     /// `USER_DATA_TABLES_TO_CLEAR`, so a new table that nobody remembered
     /// to clear still shows up here.
-    /// Remove SQL noise that would otherwise be mis-tokenized: `/* */`
-    /// block comments, single/double quoted string literals (which may
-    /// contain `;`, `--`, or `*/`), and `--` line comments. After this the
-    /// remaining text can be safely split on `;` and `--`.
+    /// Strip SQL noise that would otherwise be mis-tokenized when the
+    /// migrations are replayed as statements:
+    /// - `/* */` block comments,
+    /// - `--` line comments (to end of line),
+    /// - single-quoted string literals (which may contain `;`, `--`, or
+    ///   `*/`), including the `''` doubled-quote escape.
+    ///
+    /// Double-quoted identifiers (table/column names in SQLite) are left
+    /// intact on purpose: they are not string literals, and stripping them
+    /// would drop a table name from the derived set.
     fn strip_sql_noise(sql: &str) -> String {
         let mut out = String::with_capacity(sql.len());
         let mut chars = sql.chars().peekable();
         let mut in_block_comment = false;
+        let mut in_line_comment = false;
         while let Some(c) = chars.next() {
+            if in_line_comment {
+                if c == '\n' {
+                    in_line_comment = false;
+                    out.push(c);
+                }
+                continue;
+            }
             if in_block_comment {
                 if c == '*' && chars.peek() == Some(&'/') {
                     chars.next();
@@ -2827,11 +2841,16 @@ mod tests {
                 in_block_comment = true;
                 continue;
             }
-            if c == '\'' || c == '"' {
-                let quote = c;
+            if c == '-' && chars.peek() == Some(&'-') {
+                chars.next();
+                in_line_comment = true;
+                continue;
+            }
+            if c == '\'' {
+                // Single-quoted string literal: skip content (incl. '' escape).
                 while let Some(q) = chars.next() {
-                    if q == quote {
-                        if chars.peek() == Some(&quote) {
+                    if q == '\'' {
+                        if chars.peek() == Some(&'\'') {
                             chars.next(); // doubled-quote escape
                             continue;
                         }
@@ -2854,13 +2873,12 @@ mod tests {
 
         let mut tables: std::collections::BTreeSet<String> = std::collections::BTreeSet::new();
         for migration in crate::db::migrations() {
-            // Drop block comments and string literals first (so `--` or `;`
-            // inside them can't be mistaken for statement boundaries), then
-            // strip `--` line comments, then replay statement by statement.
-            let cleaned = strip_sql_noise(migration.sql);
-            let sql = cleaned
+            // `strip_sql_noise` fully cleans each migration's SQL (block
+            // comments, line comments, and single-quoted string literals),
+            // so the remaining text can be replayed statement by statement.
+            let sql = strip_sql_noise(migration.sql)
                 .lines()
-                .map(|line| line.split("--").next().unwrap_or("").trim())
+                .map(|line| line.trim())
                 .collect::<Vec<_>>()
                 .join(" ");
 
