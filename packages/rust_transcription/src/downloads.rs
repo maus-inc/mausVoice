@@ -75,10 +75,29 @@ impl DownloadJobRecord {
     }
 }
 
+/// Lifecycle of a fire-and-forget auxiliary artifact download (e.g. a
+/// tokenizer, vocab, or secondary graph) that accompanies the primary model.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum AuxArtifactStatus {
+    Running,
+    Completed,
+    Failed,
+}
+
+/// Tracks the outcome of an auxiliary artifact download so a failure is
+/// observable instead of being silently discarded by the spawner.
+#[derive(Clone)]
+struct AuxArtifactRecord {
+    status: AuxArtifactStatus,
+    error: Option<String>,
+}
+
 #[derive(Default)]
 struct DownloadStore {
     jobs: HashMap<Uuid, DownloadJobRecord>,
     active_by_model: HashMap<WhisperModel, Uuid>,
+    aux_by_model: HashMap<WhisperModel, Vec<Uuid>>,
+    aux_jobs: HashMap<Uuid, AuxArtifactRecord>,
 }
 
 #[derive(Clone, Default)]
@@ -241,6 +260,88 @@ impl DownloadRegistry {
         }
 
         Ok(snapshot)
+    }
+
+    /// Fetch a small companion artifact (tokenizer, vocab, secondary graph) in
+    /// the background while keeping its outcome observable. Unlike the primary
+    /// download, auxiliary artifacts are not resumable or pausable, but a failed
+    /// fetch is recorded so the model status can surface the error.
+    pub async fn start_auxiliary_download(
+        &self,
+        model: WhisperModel,
+        url: String,
+        destination: PathBuf,
+        client: reqwest::Client,
+    ) {
+        let job_id = Uuid::new_v4();
+        {
+            let mut store = self.inner.lock().await;
+            store.aux_jobs.insert(
+                job_id,
+                AuxArtifactRecord {
+                    status: AuxArtifactStatus::Running,
+                    error: None,
+                },
+            );
+            store.aux_by_model.entry(model).or_default().push(job_id);
+        }
+
+        let registry = self.clone();
+        tokio::spawn(async move {
+            let outcome = download_file_to_path(&client, &url, &destination).await;
+            registry.record_auxiliary_outcome(job_id, outcome).await;
+        });
+    }
+
+    async fn record_auxiliary_outcome(
+        &self,
+        job_id: Uuid,
+        outcome: Result<(), String>,
+    ) {
+        let mut store = self.inner.lock().await;
+        if let Some(job) = store.aux_jobs.get_mut(&job_id) {
+            match outcome {
+                Ok(()) => job.status = AuxArtifactStatus::Completed,
+                Err(err) => {
+                    job.status = AuxArtifactStatus::Failed;
+                    job.error = Some(err);
+                }
+            }
+        }
+    }
+
+    /// Return errors for any auxiliary artifact downloads that failed for
+    /// `model`. Used by the status endpoint to surface otherwise-silent
+    /// companion download failures.
+    pub async fn auxiliary_errors(&self, model: WhisperModel) -> Vec<String> {
+        let store = self.inner.lock().await;
+        store
+            .aux_by_model
+            .get(&model)
+            .map(|ids| {
+                ids.iter()
+                    .filter_map(|id| {
+                        store.aux_jobs.get(id).and_then(|job| {
+                            if job.status == AuxArtifactStatus::Failed {
+                                job.error.clone()
+                            } else {
+                                None
+                            }
+                        })
+                    })
+                    .collect()
+            })
+            .unwrap_or_default()
+    }
+
+    /// Drop all auxiliary download tracking for `model`.
+    pub async fn clear_auxiliary(&self, model: WhisperModel) {
+        let mut store = self.inner.lock().await;
+        if let Some(ids) = store.aux_by_model.remove(&model) {
+            for id in ids {
+                store.aux_jobs.remove(&id);
+            }
+        }
     }
 
     pub async fn pause_job(&self, model: WhisperModel, job_id: Uuid) -> Option<DownloadJobSnapshot> {
