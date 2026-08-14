@@ -1349,9 +1349,10 @@ pub async fn clear_local_data(
     transaction.commit().await.map_err(|err| err.to_string())?;
 
     // After commit, delete every audio WAV on disk that the DB used to know
-    // about, then sweep orphans. Path deletion is gated by the
-    // `starts_with(audio_dir)` guard so a stale path cannot walk outside
-    // the managed directory.
+    // about, then sweep orphans. Each path goes through
+    // `resolve_managed_audio_path`, which canonicalizes the path and its
+    // parent so only files that really sit inside the managed audio
+    // directory are deleted.
     if let Ok(audio_dir) = crate::system::audio_store::audio_dir(&app) {
         delete_listed_audio_files(&audio_dir, &audio_paths);
         sweep_orphaned_wavs(&audio_dir);
