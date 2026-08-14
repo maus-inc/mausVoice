@@ -2797,22 +2797,89 @@ mod tests {
         assert!(ReentryGuard::acquire(&flag).is_ok());
     }
 
+    /// Tables that live in the schema but hold no user content, so
+    /// `clear_local_data` may skip them. Adding a name here is an explicit
+    /// privacy decision, which is the point: it cannot happen by omission.
+    const NON_USER_DATA_TABLES: &[&str] = &[];
+
+    /// Rebuild the set of tables the schema actually ends up with by
+    /// replaying the migration SQL. Derived independently of
+    /// `USER_DATA_TABLES_TO_CLEAR`, so a new table that nobody remembered
+    /// to clear still shows up here.
+    fn tables_declared_by_migrations() -> std::collections::BTreeSet<String> {
+        let first_word = |rest: &str| -> Option<String> {
+            rest.split(|c: char| c == '(' || c.is_whitespace())
+                .find(|part| !part.is_empty())
+                .map(|name| name.to_string())
+        };
+
+        let mut tables: std::collections::BTreeSet<String> = std::collections::BTreeSet::new();
+        for migration in crate::db::migrations() {
+            // Drop `--` comments so they cannot look like statements, then
+            // replay statement by statement in migration order.
+            let sql = migration
+                .sql
+                .lines()
+                .map(|line| line.split("--").next().unwrap_or("").trim())
+                .collect::<Vec<_>>()
+                .join(" ");
+
+            for raw_statement in sql.split(';') {
+                let statement = raw_statement
+                    .split_whitespace()
+                    .map(|word| word.to_ascii_lowercase())
+                    .collect::<Vec<_>>()
+                    .join(" ");
+
+                if let Some(rest) = statement
+                    .strip_prefix("create table if not exists ")
+                    .or_else(|| statement.strip_prefix("create table "))
+                {
+                    if let Some(name) = first_word(rest) {
+                        tables.insert(name);
+                    }
+                } else if let Some(rest) = statement
+                    .strip_prefix("drop table if exists ")
+                    .or_else(|| statement.strip_prefix("drop table "))
+                {
+                    if let Some(name) = first_word(rest) {
+                        tables.remove(&name);
+                    }
+                } else if let Some(rest) = statement.strip_prefix("alter table ") {
+                    if let Some((old, new)) = rest.split_once(" rename to ") {
+                        if let (Some(old), Some(new)) = (first_word(old), first_word(new)) {
+                            tables.remove(&old);
+                            tables.insert(new);
+                        }
+                    }
+                }
+            }
+        }
+        tables
+    }
+
     #[test]
     fn user_data_tables_to_clear_covers_the_privacy_set() {
-        let expected = [
-            "chat_messages",
-            "conversations",
-            "user_profiles",
-            "transcriptions",
-            "terms",
-            "hotkeys",
-            "api_keys",
-            "user_preferences",
-            "tones",
-            "app_targets",
-            "paired_remote_devices",
-        ];
-        assert_eq!(USER_DATA_TABLES_TO_CLEAR, expected);
+        let declared = tables_declared_by_migrations();
+        assert!(
+            !declared.is_empty(),
+            "no tables parsed from the migrations — the parser is broken"
+        );
+
+        for table in &declared {
+            assert!(
+                USER_DATA_TABLES_TO_CLEAR.contains(&table.as_str())
+                    || NON_USER_DATA_TABLES.contains(&table.as_str()),
+                "table `{table}` exists in the schema but clear_local_data never wipes it — a missed table is a privacy leak"
+            );
+        }
+
+        for table in USER_DATA_TABLES_TO_CLEAR {
+            assert!(
+                declared.contains(table),
+                "`{table}` is cleared but no longer exists in the schema"
+            );
+        }
     }
 
     #[test]
