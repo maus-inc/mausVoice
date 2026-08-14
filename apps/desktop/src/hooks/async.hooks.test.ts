@@ -2,137 +2,99 @@
  * Tests for the `useAsyncData` hook's core lifecycle contract: stale-promise
  * suppression, error propagation, timeout, and cleanup-on-cancel.
  *
- * We test the *logic* (generation counter + timeout clearing) directly
- * against a minimal harness that mirrors the hook's state machine, rather
- * than mounting React components — the hook's interesting behaviour is
- * ordinary JS control flow around `setState` calls, which we can verify
- * deterministically without a render harness. The real hook wires this
- * logic to React's useState/useEffect/useCallback; if you change that
- * wiring, update this harness to match.
+ * These exercise the real `AsyncDataController` the hook uses — not a
+ * reimplementation. jsdom is intentionally avoided (it previously tripped
+ * Socket's obfuscated-code scanner); the React wrapper is a thin
+ * useState/useEffect binding around this controller.
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { AsyncDataController, type AsyncDataSink } from "./async.hooks";
 
 type State<T> =
   | { kind: "loading" }
   | { kind: "success"; data: T }
   | { kind: "error"; error: string };
 
-/**
- * Returns a driver that mirrors useAsyncData's lifecycle: each refresh()
- * starts a new generation; cancel() invalidates any in-flight generation
- * (which is what the useEffect cleanup does on unmount / dep change); and
- * the 30s safety timeout fires per-call.
- */
-function createDriver<T>(factory: () => Promise<T>, timeoutMs = 30_000) {
-  let generation = 0;
-  let state: State<T> = { kind: "loading" };
-  let timer: ReturnType<typeof setTimeout> | null = null;
-
-  const isCurrent = (g: number) => generation === g;
-
-  const cancel = () => {
-    generation += 1;
-    if (timer) {
-      clearTimeout(timer);
-      timer = null;
-    }
+function createController<T>(timeoutMs = 30_000) {
+  let loading = true;
+  let error = "";
+  let data: T | null = null;
+  const sink: AsyncDataSink<T> = {
+    setLoading: (value) => {
+      loading = value;
+    },
+    setError: (value) => {
+      error = value;
+    },
+    setData: (value) => {
+      data = value;
+    },
   };
-
-  const refresh = () => {
-    const myGen = ++generation;
-    if (timer) clearTimeout(timer);
-    state = { kind: "loading" };
-    timer = setTimeout(() => {
-      if (!isCurrent(myGen)) return;
-      generation += 1;
-      state = { kind: "error", error: "Request timed out" };
-    }, timeoutMs);
-
-    return factory()
-      .then((data) => {
-        if (!isCurrent(myGen)) return;
-        state = { kind: "success", data };
-      })
-      .catch((err: unknown) => {
-        if (!isCurrent(myGen)) return;
-        state = { kind: "error", error: String(err) };
-      })
-      .finally(() => {
-        if (!isCurrent(myGen)) return;
-        if (timer) {
-          clearTimeout(timer);
-          timer = null;
-        }
-      });
-  };
-
+  const controller = new AsyncDataController(sink, timeoutMs);
   return {
-    refresh,
-    cancel,
-    getState: () => state,
-    isCurrent,
+    controller,
+    getState: (): State<T> => {
+      if (loading) return { kind: "loading" };
+      if (error) return { kind: "error", error };
+      return { kind: "success", data: data as T };
+    },
   };
 }
 
-describe("useAsyncData lifecycle (logic harness)", () => {
+describe("useAsyncData lifecycle (AsyncDataController)", () => {
   beforeEach(() => vi.useFakeTimers());
   afterEach(() => vi.useRealTimers());
 
   it("resolves and surfaces data", async () => {
-    const d = createDriver(() => Promise.resolve("hello"));
-    await d.refresh();
-    expect(d.getState()).toEqual({ kind: "success", data: "hello" });
+    const { controller, getState } = createController<string>();
+    await controller.run(() => Promise.resolve("hello"));
+    expect(getState()).toEqual({ kind: "success", data: "hello" });
   });
 
   it("surfaces thrown errors", async () => {
-    const d = createDriver(() => Promise.reject(new Error("boom")));
-    await d.refresh();
-    const s = d.getState();
+    const { controller, getState } = createController<string>();
+    await controller.run(() => Promise.reject(new Error("boom")));
+    const s = getState();
     expect(s.kind).toBe("error");
     if (s.kind === "error") expect(s.error).toContain("boom");
   });
 
   it("times out after the configured timeout", () => {
-    const d = createDriver(() => new Promise<void>(() => {}), 500);
-    void d.refresh();
-    expect(d.getState()).toEqual({ kind: "loading" });
+    const { controller, getState } = createController<void>(500);
+    void controller.run(() => new Promise<void>(() => {}));
+    expect(getState()).toEqual({ kind: "loading" });
     vi.advanceTimersByTime(600);
-    const s = d.getState();
+    const s = getState();
     expect(s.kind).toBe("error");
     if (s.kind === "error") expect(s.error).toContain("timed out");
   });
 
-  it("a later refresh supersedes an earlier promise (no stale data)", async () => {
+  it("a later run supersedes an earlier promise (no stale data)", async () => {
     let resolve1: ((v: string) => void) | null = null;
     let resolve2: ((v: string) => void) | null = null;
 
-    const d = createDriver(() => new Promise<string>((r) => (resolve1 = r)));
-    const firstPromise = d.refresh();
-
-    // Second refresh cancels the first generation (like a dep change
-    // would). Swap the factory so the new generation waits on resolve2.
-    const d2 = createDriver(() => new Promise<string>((r) => (resolve2 = r)));
-    d.cancel();
-    const secondPromise = d2.refresh();
+    const { controller, getState } = createController<string>();
+    const first = controller.run(
+      () => new Promise<string>((r) => (resolve1 = r)),
+    );
+    const second = controller.run(
+      () => new Promise<string>((r) => (resolve2 = r)),
+    );
 
     resolve2!("second");
-    await secondPromise;
-    expect(d2.getState()).toEqual({ kind: "success", data: "second" });
+    await second;
+    expect(getState()).toEqual({ kind: "success", data: "second" });
 
-    // Resolving the first (stale) promise must NOT mutate state from the
-    // cancelled driver.
     resolve1!("first-stale");
-    await firstPromise;
-    expect(d.getState().kind).toBe("loading");
+    await first;
+    expect(getState()).toEqual({ kind: "success", data: "second" });
   });
 
   it("cancel clears the safety timeout so a late timeout cannot flip state", () => {
-    const d = createDriver(() => new Promise<void>(() => {}), 500);
-    void d.refresh();
-    d.cancel();
+    const { controller, getState } = createController<void>(500);
+    void controller.run(() => new Promise<void>(() => {}));
+    controller.cancelInFlight();
     vi.advanceTimersByTime(1000);
-    // After cancel, state must stay at loading — the timeout must have
-    // been cleared and its setState gated on generation match.
-    expect(d.getState()).toEqual({ kind: "loading" });
+    expect(getState()).toEqual({ kind: "loading" });
   });
 });

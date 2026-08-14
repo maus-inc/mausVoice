@@ -22,6 +22,7 @@
     "i18n": "pnpm run i18n:extract && pnpm run i18n:sync",
     "lint:fix": "prettier --write src && oxlint --fix src",
     "lint": "prettier --check src && oxlint src",
+    "check-types": "tsc --noEmit",
     "test": "vitest run",
     "test:unit": "vitest run src",
     "test:integration": "vitest run test/integration",

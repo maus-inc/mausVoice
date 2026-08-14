@@ -10,6 +10,77 @@ import { AsyncData } from "../types/async.types";
 /** Default safety timeout for async data loads, in milliseconds. */
 const ASYNC_DATA_DEFAULT_TIMEOUT_MS = 30_000;
 
+export type AsyncDataSink<T> = {
+  setLoading: (loading: boolean) => void;
+  setError: (error: string) => void;
+  setData: (data: T) => void;
+};
+
+/**
+ * Generation + timeout state machine used by `useAsyncData`. Extracted so
+ * the real control flow can be unit-tested without mounting React.
+ */
+export class AsyncDataController<T> {
+  private generation = 0;
+  private timeout: ReturnType<typeof setTimeout> | null = null;
+
+  constructor(
+    private readonly sink: AsyncDataSink<T>,
+    private readonly defaultTimeoutMs: number,
+  ) {}
+
+  clearPendingTimeout(): void {
+    if (this.timeout) {
+      clearTimeout(this.timeout);
+      this.timeout = null;
+    }
+  }
+
+  cancelInFlight(): void {
+    this.generation += 1;
+    this.clearPendingTimeout();
+  }
+
+  /**
+   * Run `promise`, guarded by `timeoutMs` (defaults to the timeout given at
+   * construction). The timeout is taken per call so a caller whose option
+   * changes is not stuck with the value it first passed.
+   */
+  async run(
+    promise: () => Promise<T>,
+    timeoutMs: number = this.defaultTimeoutMs,
+  ): Promise<void> {
+    const myGeneration = ++this.generation;
+    this.clearPendingTimeout();
+
+    this.sink.setLoading(true);
+    this.sink.setError("");
+
+    this.timeout = setTimeout(() => {
+      if (this.generation !== myGeneration) return;
+      this.generation += 1;
+      this.sink.setError("Request timed out");
+      this.sink.setLoading(false);
+    }, timeoutMs);
+
+    let settled = false;
+    try {
+      const result = await promise();
+      if (this.generation !== myGeneration) return;
+      this.sink.setData(result);
+      settled = true;
+    } catch (err) {
+      if (this.generation !== myGeneration) return;
+      this.sink.setError(String(err));
+      settled = true;
+    }
+    if (settled && this.generation === myGeneration) {
+      this.clearPendingTimeout();
+      this.sink.setLoading(false);
+    }
+  }
+}
+
 /**
  * Load async data for a component with lifecycle safety:
  *
@@ -34,75 +105,31 @@ export const useAsyncData = <T>(
   const [error, setError] = useState("");
   const timeoutMs = opts.timeoutMs ?? ASYNC_DATA_DEFAULT_TIMEOUT_MS;
 
-  // Monotonic generation counter. Each in-flight load captures its own
-  // generation and only updates state if it still matches the latest
-  // generation at settle time. This is the standard "stale closure" fix
-  // for async effects (see e.g. the React docs on fetching with effects).
-  const generationRef = useRef(0);
-  const timeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-
-  const clearPendingTimeout = () => {
-    if (timeoutRef.current) {
-      clearTimeout(timeoutRef.current);
-      timeoutRef.current = null;
-    }
-  };
-
-  // Cancel any in-flight call without touching state. Used by cleanup
-  // and by re-entry so a newer call supersedes an older one.
-  const cancelInFlight = useCallback(() => {
-    generationRef.current += 1;
-    clearPendingTimeout();
-  }, []);
+  // `useState` setters keep a stable identity for the component's whole
+  // lifetime, so the controller can hold them directly. No sink ref — and
+  // therefore no ref write during render, which React disallows.
+  const controllerRef = useRef<AsyncDataController<T> | null>(null);
+  if (!controllerRef.current) {
+    controllerRef.current = new AsyncDataController(
+      { setLoading, setError, setData },
+      timeoutMs,
+    );
+  }
+  const controller = controllerRef.current;
 
   const refresh = useCallback(async () => {
-    const myGeneration = ++generationRef.current;
-    clearPendingTimeout();
-
-    setLoading(true);
-    setError("");
-
-    // Per-call safety timeout. Timed-out calls bump the generation so a
-    // late-resolving promise from this same call cannot resurrect state.
-    timeoutRef.current = setTimeout(() => {
-      if (generationRef.current !== myGeneration) return;
-      generationRef.current += 1;
-      setError("Request timed out");
-      setLoading(false);
-    }, timeoutMs);
-
-    let settled = false;
-    try {
-      const result = await promise();
-      if (generationRef.current !== myGeneration) return;
-      setData(result);
-      settled = true;
-    } catch (err) {
-      if (generationRef.current !== myGeneration) return;
-      setError(String(err));
-      settled = true;
-    }
-    // We only reach this point if this generation is still the active one,
-    // because both branches above return early on a stale generation. So
-    // it is safe to clear the timeout and flip loading off without any
-    // control flow inside a `finally` block.
-    if (settled && generationRef.current === myGeneration) {
-      clearPendingTimeout();
-      setLoading(false);
-    }
-    // Intentionally omit `timeoutMs` from dep list: it's an options knob
-    // that is intended to be a constant per call-site; dynamic values
-    // should be passed via deps.
+    await controller.run(promise, timeoutMs);
+    // `timeoutMs` is part of the dep list so a changed option applies to the
+    // next load instead of being frozen at mount. The effect below still
+    // reruns on `deps` only, so changing the timeout does not refetch.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, deps);
+  }, [...deps, timeoutMs]);
 
   useEffect(() => {
     refresh();
 
     return () => {
-      // Cancel: bump generation so any in-flight promise / timeout cannot
-      // mutate state after the effect tears down.
-      cancelInFlight();
+      controller.cancelInFlight();
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, deps);
