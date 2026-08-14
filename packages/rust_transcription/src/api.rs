@@ -121,6 +121,11 @@ async fn download_model(
     Path(path): Path<ModelPath>,
 ) -> Result<Json<crate::downloads::DownloadJobSnapshot>, ApiError> {
     let model = parse_model(&path.model)?;
+    let model_download_lock = state.model_download_lock(model).await;
+    // Validation/cleanup and registry job creation must be one per-model
+    // critical section. Otherwise a concurrent request can start a worker
+    // after the active-job check but before invalid artifacts are removed.
+    let _model_download_guard = model_download_lock.lock().await;
     if model.is_onnx() {
         remove_invalid_onnx_bundle_before_download(&state, model).await?;
     }
@@ -170,12 +175,26 @@ async fn remove_invalid_onnx_bundle_before_download(
         return Ok(());
     }
 
-    let status = read_model_status(state, model, true).await?;
-    if !status.downloaded || status.valid {
+    let status = read_model_status(state, model, false).await?;
+    if !status.downloaded {
         return Ok(());
     }
 
     let model_path = state.model_path(model);
+    match crate::onnx_inference::validate_model_classified(model, &model_path) {
+        Ok(_) => return Ok(()),
+        Err(crate::onnx_inference::OnnxModelValidationError::Runtime(error)) => {
+            return Err(ApiError::internal(
+                "model_validation_unavailable",
+                format!(
+                    "cannot validate '{}' without a working ONNX Runtime: {error}",
+                    model.as_slug()
+                ),
+            ));
+        }
+        Err(crate::onnx_inference::OnnxModelValidationError::Artifact(_)) => {}
+    }
+
     crate::onnx_inference::evict_model(&model_path);
     for (name, _) in model.artifact_set() {
         let artifact_path = model.artifact_path(&state.config.models_dir, name);
@@ -301,6 +320,8 @@ async fn delete_model(
     Path(path): Path<ModelPath>,
 ) -> Result<Json<ModelStatusResponse>, ApiError> {
     let model = parse_model(&path.model)?;
+    let model_download_lock = state.model_download_lock(model).await;
+    let _model_download_guard = model_download_lock.lock().await;
 
     if let Some(active_job) = state.downloads.get_active_job(model).await {
         if matches!(
@@ -763,7 +784,10 @@ async fn remove_partial_model_downloads(
             None => continue,
         };
 
-        if !file_name.starts_with(&prefix) || !file_name.ends_with(".download") {
+        if !file_name.starts_with(&prefix)
+            || !(file_name.ends_with(".download")
+                || file_name.ends_with(".download.validator"))
+        {
             continue;
         }
 

@@ -7,6 +7,7 @@
 
 use std::collections::HashMap;
 use std::env;
+use std::fmt;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, LazyLock, Mutex, OnceLock};
 
@@ -95,30 +96,59 @@ pub fn transcribe(
     }
 }
 
+#[derive(Debug)]
+pub enum OnnxModelValidationError {
+    Runtime(String),
+    Artifact(String),
+}
+
+impl fmt::Display for OnnxModelValidationError {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let message = match self {
+            Self::Runtime(message) => message,
+            Self::Artifact(message) => message,
+        };
+        formatter.write_str(message)
+    }
+}
+
 /// Validate the complete artifact set by constructing the model-specific
 /// runtime. The upstream architecture loader opens every graph through ONNX
 /// Runtime, validates tokenizer/vocabulary data, and enforces the exact model
 /// family contract.
 pub fn validate_model(model: WhisperModel, model_path: &Path) -> Result<bool, String> {
+    validate_model_classified(model, model_path).map_err(|error| error.to_string())
+}
+
+/// The repair path must distinguish an unavailable runtime from artifacts that
+/// were actually rejected. Runtime failures must never trigger deletion of a
+/// correctly downloaded multi-gigabyte bundle.
+pub fn validate_model_classified(
+    model: WhisperModel,
+    model_path: &Path,
+) -> Result<bool, OnnxModelValidationError> {
     if !model.is_onnx() {
-        return Err(format!("model '{}' is not an ONNX model", model.as_slug()));
+        return Err(OnnxModelValidationError::Artifact(format!(
+            "model '{}' is not an ONNX model",
+            model.as_slug()
+        )));
     }
 
-    ensure_onnx_runtime()?;
-    let model_dir = model_directory(model_path)?;
+    ensure_onnx_runtime().map_err(OnnxModelValidationError::Runtime)?;
+    let model_dir = model_directory(model_path).map_err(OnnxModelValidationError::Artifact)?;
     for (name, _) in model.artifact_set() {
         let artifact_path = model_dir.join(name);
         let metadata = std::fs::metadata(&artifact_path).map_err(|err| {
-            format!(
+            OnnxModelValidationError::Artifact(format!(
                 "required artifact '{}' is unavailable: {err}",
                 artifact_path.display()
-            )
+            ))
         })?;
         if !metadata.is_file() || metadata.len() == 0 {
-            return Err(format!(
+            return Err(OnnxModelValidationError::Artifact(format!(
                 "required artifact '{}' is empty or not a file",
                 artifact_path.display()
-            ));
+            )));
         }
     }
 
@@ -127,7 +157,9 @@ pub fn validate_model(model: WhisperModel, model_path: &Path) -> Result<bool, St
     // the tokenizer/vocabulary without constructing every session twice.
     // Validation loads are not cached, so a failed replacement cannot poison
     // later inference.
-    load_model(model, model_dir).map(|_| true)
+    load_model(model, model_dir)
+        .map(|_| true)
+        .map_err(OnnxModelValidationError::Artifact)
 }
 
 /// Remove a cached runtime after its files are deleted or replaced.

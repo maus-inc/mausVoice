@@ -424,10 +424,13 @@ async fn cpu_sidecar_delete_model_removes_model_and_partial_fragments(
     let sidecar = RunningSidecar::start_cpu().await?;
     let model_path = sidecar.model_path(TINY_MODEL_FILENAME);
     let partial_path = sidecar.model_path(&format!("{TINY_MODEL_FILENAME}.partial.download"));
+    let validator_path =
+        sidecar.model_path(&format!("{TINY_MODEL_FILENAME}.partial.download.validator"));
     let keep_path = sidecar.model_path(&format!("{TINY_MODEL_FILENAME}.keep"));
 
     tokio::fs::write(&model_path, b"fake model bytes").await?;
     tokio::fs::write(&partial_path, b"partial bytes").await?;
+    tokio::fs::write(&validator_path, b"\"artifact-v1\"").await?;
     tokio::fs::write(&keep_path, b"should stay").await?;
 
     let response = sidecar
@@ -445,6 +448,10 @@ async fn cpu_sidecar_delete_model_removes_model_and_partial_fragments(
     assert!(
         !partial_path.exists(),
         "expected partial model fragment to be deleted"
+    );
+    assert!(
+        !validator_path.exists(),
+        "expected partial model validator to be deleted"
     );
     assert!(keep_path.exists(), "expected unrelated file to remain");
 

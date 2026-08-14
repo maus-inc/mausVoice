@@ -341,7 +341,11 @@ impl DownloadRegistry {
 
         tokio::spawn(async move {
             for temp_file_path in temp_file_paths {
+                let validator_path = temporary_validator_path(&temp_file_path).ok();
                 let _ = tokio::fs::remove_file(temp_file_path).await;
+                if let Some(validator_path) = validator_path {
+                    let _ = tokio::fs::remove_file(validator_path).await;
+                }
             }
         });
 
@@ -521,13 +525,42 @@ impl DownloadRegistry {
         }
 
         let temp_path = temporary_artifact_path(&artifact.destination, job_id)?;
+        let validator_path = temporary_validator_path(&temp_path)?;
         let existing_bytes = match tokio::fs::metadata(&temp_path).await {
             Ok(metadata) if metadata.is_file() => metadata.len(),
             _ => 0,
         };
+        let existing_validator = if existing_bytes > 0 {
+            tokio::fs::read_to_string(&validator_path)
+                .await
+                .ok()
+                .map(|value| value.trim().to_string())
+                .filter(|value| !value.is_empty())
+        } else {
+            None
+        };
 
-        let (response, resume_is_valid) =
-            request_artifact_response(client, &artifact.url, existing_bytes).await?;
+        let (response, resume_is_valid) = request_artifact_response(
+            client,
+            &artifact.url,
+            existing_bytes,
+            existing_validator.as_deref(),
+        )
+        .await?;
+        let validator = response_resume_validator(&response).or_else(|| {
+            if resume_is_valid {
+                existing_validator.clone()
+            } else {
+                None
+            }
+        });
+        if let Some(validator) = validator {
+            tokio::fs::write(&validator_path, validator)
+                .await
+                .map_err(|err| format!("failed to persist download validator: {err}"))?;
+        } else {
+            let _ = tokio::fs::remove_file(&validator_path).await;
+        }
 
         let (mut downloaded, artifact_total, mut file) = if resume_is_valid {
             let total = response.content_length().map(|len| existing_bytes + len);
@@ -572,6 +605,7 @@ impl DownloadRegistry {
                                 DownloadCommand::Cancel => {
                                     drop(file);
                                     let _ = tokio::fs::remove_file(&temp_path).await;
+                                    let _ = tokio::fs::remove_file(&validator_path).await;
                                     return Ok(ArtifactDownloadOutcome::Canceled);
                                 }
                                 DownloadCommand::Run => {}
@@ -602,6 +636,8 @@ impl DownloadRegistry {
             }
         }
 
+        validate_downloaded_size(downloaded, artifact_total)?;
+
         file.flush()
             .await
             .map_err(|err| format!("failed to flush artifact: {err}"))?;
@@ -614,6 +650,7 @@ impl DownloadRegistry {
         // control sender stays installed for every subsequent artifact.
         if !self.begin_artifact_finalization(job_id, generation).await {
             let _ = tokio::fs::remove_file(&temp_path).await;
+            let _ = tokio::fs::remove_file(&validator_path).await;
             return Ok(ArtifactDownloadOutcome::Obsolete);
         }
 
@@ -625,6 +662,7 @@ impl DownloadRegistry {
         tokio::fs::rename(&temp_path, &artifact.destination)
             .await
             .map_err(|err| format!("failed to finalize artifact: {err}"))?;
+        let _ = tokio::fs::remove_file(&validator_path).await;
         self.end_artifact_finalization(job_id, generation).await;
 
         Ok(ArtifactDownloadOutcome::Completed { bytes: downloaded })
@@ -774,15 +812,30 @@ impl DownloadStore {
     }
 }
 
+fn validate_downloaded_size(downloaded: u64, expected: Option<u64>) -> Result<(), String> {
+    if let Some(expected) = expected {
+        if downloaded != expected {
+            return Err(format!(
+                "downloaded byte count mismatch: received {downloaded}, expected {expected}"
+            ));
+        }
+    }
+    Ok(())
+}
+
 async fn request_artifact_response(
     client: &reqwest::Client,
     url: &str,
     existing_bytes: u64,
+    if_range: Option<&str>,
 ) -> Result<(reqwest::Response, bool), String> {
-    if existing_bytes > 0 {
+    // Never append without a validator tied to the existing prefix. A bare
+    // byte offset cannot prove that the remote object is still the same file.
+    if let Some(if_range) = if_range.filter(|_| existing_bytes > 0) {
         let ranged = client
             .get(url)
             .header(reqwest::header::RANGE, format!("bytes={existing_bytes}-"))
+            .header(reqwest::header::IF_RANGE, if_range)
             .send()
             .await
             .map_err(|err| format!("request failed: {err}"))?;
@@ -791,11 +844,11 @@ async fn request_artifact_response(
             if content_range_start(&ranged) == Some(existing_bytes) {
                 return Ok((ranged, true));
             }
-            // A 206 response is append-safe only when the server confirms the
-            // exact requested offset. Drop it and restart from byte zero.
-        } else if ranged.status().is_success() {
-            // The server ignored Range and returned the complete body. The
-            // caller opens the temporary file in truncate mode.
+            // A 206 response is append-safe only when the server confirms
+            // the exact requested offset. Restart from byte zero.
+        } else if ranged.status() == reqwest::StatusCode::OK {
+            // If-Range intentionally produces 200 when the remote object
+            // changed. The caller truncates the stale temporary prefix.
             return Ok((ranged, false));
         } else if ranged.status() != reqwest::StatusCode::RANGE_NOT_SATISFIABLE {
             return Err(format!("request failed with status {}", ranged.status()));
@@ -807,7 +860,7 @@ async fn request_artifact_response(
         .send()
         .await
         .map_err(|err| format!("request failed: {err}"))?;
-    if !response.status().is_success() {
+    if response.status() != reqwest::StatusCode::OK {
         return Err(format!("request failed with status {}", response.status()));
     }
     Ok((response, false))
@@ -821,6 +874,22 @@ fn content_range_start(response: &reqwest::Response) -> Option<u64> {
         .ok()?
         .strip_prefix("bytes ")?;
     value.split_once('-')?.0.parse().ok()
+}
+
+fn response_resume_validator(response: &reqwest::Response) -> Option<String> {
+    let strong_etag = response
+        .headers()
+        .get(reqwest::header::ETAG)
+        .and_then(|value| value.to_str().ok())
+        .filter(|value| !value.starts_with("W/"));
+    strong_etag
+        .or_else(|| {
+            response
+                .headers()
+                .get(reqwest::header::LAST_MODIFIED)
+                .and_then(|value| value.to_str().ok())
+        })
+        .map(str::to_owned)
 }
 
 async fn existing_model_file_size(path: &PathBuf) -> Option<u64> {
@@ -844,6 +913,14 @@ fn temporary_artifact_path(destination: &Path, job_id: Uuid) -> Result<PathBuf, 
         .and_then(|name| name.to_str())
         .ok_or_else(|| "invalid destination filename".to_string())?;
     Ok(destination.with_file_name(format!("{filename}.{job_id}.download")))
+}
+
+fn temporary_validator_path(temporary_path: &Path) -> Result<PathBuf, String> {
+    let filename = temporary_path
+        .file_name()
+        .and_then(|name| name.to_str())
+        .ok_or_else(|| "invalid temporary filename".to_string())?;
+    Ok(temporary_path.with_file_name(format!("{filename}.validator")))
 }
 
 #[cfg(test)]
@@ -947,12 +1024,22 @@ mod tests {
         let temp_file = temporary_artifact_path(&destination, job_id).unwrap();
         let auxiliary_temp_file =
             temporary_artifact_path(&auxiliary_destination, job_id).unwrap();
+        let validator_file = temporary_validator_path(&temp_file).unwrap();
+        let auxiliary_validator_file = temporary_validator_path(&auxiliary_temp_file).unwrap();
         tokio::fs::write(&temp_file, b"partial bytes").await.unwrap();
         tokio::fs::write(&auxiliary_temp_file, b"partial tokens")
             .await
             .unwrap();
+        tokio::fs::write(&validator_file, b"\"model-v1\"")
+            .await
+            .unwrap();
+        tokio::fs::write(&auxiliary_validator_file, b"\"tokens-v1\"")
+            .await
+            .unwrap();
         assert!(temp_file.exists());
         assert!(auxiliary_temp_file.exists());
+        assert!(validator_file.exists());
+        assert!(auxiliary_validator_file.exists());
 
         {
             let mut store = registry.inner.lock().await;
@@ -981,6 +1068,8 @@ mod tests {
         tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
         assert!(!temp_file.exists());
         assert!(!auxiliary_temp_file.exists());
+        assert!(!validator_file.exists());
+        assert!(!auxiliary_validator_file.exists());
     }
 
     #[tokio::test]
@@ -1124,6 +1213,7 @@ mod tests {
                 let request = request.to_ascii_lowercase();
                 if response.starts_with(b"HTTP/1.1 206") {
                     assert!(request.contains("range: bytes=3-"));
+                    assert!(request.contains("if-range: \"artifact-v1\""));
                 } else {
                     assert!(!request.contains("range:"));
                 }
@@ -1135,12 +1225,85 @@ mod tests {
             &reqwest::Client::new(),
             &format!("http://{address}/artifact"),
             3,
+            Some("\"artifact-v1\""),
         )
         .await
         .unwrap();
         assert!(!append);
         assert_eq!(response.bytes().await.unwrap().as_ref(), b"abcdef");
         server.await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn partial_download_without_validator_restarts_from_zero() {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+            .await
+            .unwrap();
+        let address = listener.local_addr().unwrap();
+        let server = tokio::spawn(async move {
+            let (mut socket, _) = listener.accept().await.unwrap();
+            let mut request = [0_u8; 1024];
+            let size = socket.read(&mut request).await.unwrap();
+            let request = String::from_utf8_lossy(&request[..size]).to_ascii_lowercase();
+            assert!(!request.contains("range:"));
+            assert!(!request.contains("if-range:"));
+            socket
+                .write_all(
+                    b"HTTP/1.1 200 OK\r\nContent-Length: 6\r\nConnection: close\r\n\r\nabcdef",
+                )
+                .await
+                .unwrap();
+        });
+
+        let (response, append) = request_artifact_response(
+            &reqwest::Client::new(),
+            &format!("http://{address}/artifact"),
+            3,
+            None,
+        )
+        .await
+        .unwrap();
+        assert!(!append);
+        assert_eq!(response.bytes().await.unwrap().as_ref(), b"abcdef");
+        server.await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn successful_status_without_artifact_body_is_rejected() {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+            .await
+            .unwrap();
+        let address = listener.local_addr().unwrap();
+        let server = tokio::spawn(async move {
+            let (mut socket, _) = listener.accept().await.unwrap();
+            let mut request = [0_u8; 1024];
+            let size = socket.read(&mut request).await.unwrap();
+            let request = String::from_utf8_lossy(&request[..size]).to_ascii_lowercase();
+            assert!(request.contains("range: bytes=3-"));
+            assert!(request.contains("if-range: \"artifact-v1\""));
+            socket
+                .write_all(b"HTTP/1.1 204 No Content\r\nConnection: close\r\n\r\n")
+                .await
+                .unwrap();
+        });
+
+        let error = request_artifact_response(
+            &reqwest::Client::new(),
+            &format!("http://{address}/artifact"),
+            3,
+            Some("\"artifact-v1\""),
+        )
+        .await
+        .unwrap_err();
+        assert!(error.contains("204"));
+        server.await.unwrap();
+    }
+
+    #[test]
+    fn final_download_size_must_match_advertised_total() {
+        assert!(validate_downloaded_size(6, Some(6)).is_ok());
+        assert!(validate_downloaded_size(5, Some(6)).is_err());
+        assert!(validate_downloaded_size(6, None).is_ok());
     }
 
     #[tokio::test]
