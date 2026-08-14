@@ -64,4 +64,4 @@ jobs:
         run: cargo test --lib
 
       - name: Run transcription sidecar unit tests
-        run: cargo test --locked --manifest-path packages/rust_transcription/Cargo.toml --lib
+        run: cargo test --locked --manifest-path packages/rust_transcription/Cargo.toml
