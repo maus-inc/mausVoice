@@ -439,12 +439,13 @@ async fn delete_audio_entries(
 }
 
 /// Resolve `path` to the exact file to delete, or `None` when it does not
-/// live inside the managed transcription-audio directory. Uses component
-/// normalization (not raw lexical `starts_with`) so a stored path such as
-/// `<audio_dir>/../outside.wav` cannot escape the managed directory and
-/// delete an unrelated file during `clear_local_data`. Callers must delete
-/// the returned path — never the raw input — because a relative input is
-/// resolved against `audio_dir` here.
+/// live directly inside the managed transcription-audio directory. Both the
+/// candidate's parent directory and `audio_dir` are canonicalized before
+/// comparison, so a `..` traversal, an intermediate symlink, or an
+/// `audio_dir` spelled with `.`/`..` all resolve to real paths first — a
+/// lexical `starts_with` cannot do that. Callers must delete the returned
+/// path — never the raw input — because a relative input is resolved
+/// against `audio_dir` here.
 fn resolve_managed_audio_path(
     path: &std::path::Path,
     audio_dir: &std::path::Path,
@@ -457,34 +458,18 @@ fn resolve_managed_audio_path(
         audio_dir.join(path)
     };
 
-    // Walk the components, maintaining a normalized stack. A `..` pops the
-    // top component; if it would climb above the filesystem root we reject.
-    // This collapses `..` lexically so traversal attempts cannot escape.
-    let mut stack: Vec<std::path::Component> = Vec::new();
-    for component in candidate.components() {
-        match component {
-            std::path::Component::ParentDir => {
-                // Cannot climb above the root of an absolute path.
-                if stack
-                    .last()
-                    .map(|c| matches!(c, std::path::Component::Prefix(_) | std::path::Component::RootDir))
-                    .unwrap_or(false)
-                {
-                    return None;
-                }
-                stack.pop();
-            }
-            std::path::Component::CurDir => {}
-            other => stack.push(other),
-        }
+    // Managed audio is a flat directory of `<id>.wav` files, so the file
+    // must sit directly inside `audio_dir`. Canonicalize the parent only:
+    // the entry itself may be a symlink we want to unlink rather than
+    // follow, and it may already be gone.
+    let file_name = candidate.file_name()?;
+    let real_parent = std::fs::canonicalize(candidate.parent()?).ok()?;
+    let real_audio_dir = std::fs::canonicalize(audio_dir).ok()?;
+    if real_parent != real_audio_dir {
+        return None;
     }
 
-    let normalized: std::path::PathBuf = stack.iter().collect();
-    if normalized.starts_with(audio_dir) {
-        Some(normalized)
-    } else {
-        None
-    }
+    Some(real_parent.join(file_name))
 }
 
 /// Delete listed audio files that still live under `audio_dir`. Paths
@@ -2810,14 +2795,23 @@ mod tests {
 
     #[test]
     fn managed_audio_path_rejects_paths_outside_the_audio_dir() {
-        let audio_dir = std::env::temp_dir().join("mausvoice-audio-test-dir");
+        let root = std::env::temp_dir()
+            .join(format!("mausvoice-audio-guard-{}", std::process::id()));
+        let audio_dir = root.join("audio");
+        let other_dir = root.join("other");
+        std::fs::create_dir_all(&audio_dir).unwrap();
+        std::fs::create_dir_all(&other_dir).unwrap();
+        // Canonicalized because the guard returns real paths (e.g. macOS
+        // maps /tmp to /private/tmp).
+        let expected = std::fs::canonicalize(&audio_dir).unwrap().join("clip.wav");
+
         let inside = audio_dir.join("clip.wav");
-        let outside = std::env::temp_dir().join("not-audio").join("clip.wav");
+        let outside = other_dir.join("clip.wav");
         // A traversal attempt must NOT escape the managed directory.
         let traversal = audio_dir.join("..").join("escaped.wav");
         assert_eq!(
             resolve_managed_audio_path(&inside, &audio_dir),
-            Some(inside.clone())
+            Some(expected.clone())
         );
         assert_eq!(resolve_managed_audio_path(&outside, &audio_dir), None);
         assert_eq!(resolve_managed_audio_path(&traversal, &audio_dir), None);
@@ -2825,8 +2819,26 @@ mod tests {
         // against the process working directory.
         assert_eq!(
             resolve_managed_audio_path(std::path::Path::new("clip.wav"), &audio_dir),
-            Some(inside)
+            Some(expected.clone())
         );
+        // An `audio_dir` spelled with `.` still matches its own contents.
+        assert_eq!(
+            resolve_managed_audio_path(&inside, &root.join(".").join("audio")),
+            Some(expected)
+        );
+
+        #[cfg(unix)]
+        {
+            // A symlinked subdirectory must not tunnel out of audio_dir.
+            let link = audio_dir.join("link");
+            std::os::unix::fs::symlink(&other_dir, &link).unwrap();
+            assert_eq!(
+                resolve_managed_audio_path(&link.join("clip.wav"), &audio_dir),
+                None
+            );
+        }
+
+        let _ = std::fs::remove_dir_all(&root);
     }
 
     #[test]
