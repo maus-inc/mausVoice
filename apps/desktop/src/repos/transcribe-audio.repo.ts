@@ -362,7 +362,7 @@ export class AldeaTranscribeAudioRepo extends BaseTranscribeAudioRepo {
 }
 
 export class AssemblyAITranscribeAudioRepo extends BaseTranscribeAudioRepo {
-  private apiKey: string;
+  private readonly apiKey: string;
 
   constructor(apiKey: string) {
     super();
