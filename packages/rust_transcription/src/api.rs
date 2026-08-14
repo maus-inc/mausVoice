@@ -120,14 +120,45 @@ async fn download_model(
     Path(path): Path<ModelPath>,
 ) -> Result<Json<crate::downloads::DownloadJobSnapshot>, ApiError> {
     let model = parse_model(&path.model)?;
+    let client = state.http_client.clone();
+    let models_dir = state.config.models_dir.clone();
     let destination = state.model_path(model);
-    let url = model.download_url();
 
-    let snapshot = state
-        .downloads
-        .start_or_get_active(model, url, destination, state.http_client.clone())
-        .await
-        .map_err(|err| ApiError::internal("download_start_failed", err))?;
+    let snapshot = if model.is_onnx() {
+        // ONNX models ship as a set of files (encoder/decoder/joiner + tokens).
+        // The primary artifact is tracked by the resumable registry; the rest
+        // are fetched alongside it.
+        let artifacts = model.artifact_set();
+        let primary_url = artifacts
+            .first()
+            .map(|(_, url)| url.clone())
+            .unwrap_or_else(|| model.download_url());
+
+        let snapshot = state
+            .downloads
+            .start_or_get_active(model, primary_url, destination, client.clone())
+            .await
+            .map_err(|err| ApiError::internal("download_start_failed", err))?;
+
+        for (name, url) in &artifacts[1..] {
+            let aux_destination = models_dir.join(name);
+            let aux_client = client.clone();
+            let aux_url = url.clone();
+            tokio::spawn(async move {
+                let _ = crate::downloads::download_file_to_path(&aux_client, &aux_url, &aux_destination)
+                    .await;
+            });
+        }
+
+        snapshot
+    } else {
+        let url = model.download_url();
+        state
+            .downloads
+            .start_or_get_active(model, url, destination, client)
+            .await
+            .map_err(|err| ApiError::internal("download_start_failed", err))?
+    };
 
     Ok(Json(snapshot))
 }
@@ -253,6 +284,14 @@ async fn delete_model(
                 "model_delete_failed",
                 format!("failed to delete model '{}': {err}", model.as_slug()),
             ));
+        }
+    }
+
+    // For ONNX models, also remove the rest of the artifact set.
+    if model.is_onnx() {
+        for (name, _) in model.artifact_set() {
+            let artifact_path = state.config.models_dir.join(name);
+            let _ = tokio::fs::remove_file(&artifact_path).await;
         }
     }
 
@@ -521,6 +560,7 @@ async fn run_transcription_request(
     state
         .transcriber
         .transcribe(TranscriptionInput {
+            model,
             model_path,
             samples,
             sample_rate,
@@ -540,12 +580,29 @@ async fn read_model_status(
     let model_path = state.model_path(model);
     let metadata = tokio::fs::metadata(&model_path).await.ok();
 
-    let downloaded = metadata
-        .as_ref()
-        .map(|meta| meta.is_file() && meta.len() > 0)
-        .unwrap_or(false);
-
     let file_bytes = metadata.map(|meta| meta.len());
+
+    let downloaded = if model.is_onnx() {
+        // An ONNX model is only "downloaded" once its complete artifact set
+        // (encoder/decoder/joiner + tokens.txt) is present on disk.
+        let mut all_present = true;
+        for (name, _) in model.artifact_set() {
+            let artifact_path = state.config.models_dir.join(name);
+            match tokio::fs::metadata(&artifact_path).await {
+                Ok(meta) if meta.is_file() && meta.len() > 0 => {}
+                _ => {
+                    all_present = false;
+                    break;
+                }
+            }
+        }
+        all_present
+    } else {
+        metadata
+            .as_ref()
+            .map(|meta| meta.is_file() && meta.len() > 0)
+            .unwrap_or(false)
+    };
 
     if !downloaded {
         return Ok(ModelStatusResponse {

@@ -1,5 +1,5 @@
 use std::collections::HashMap;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use futures_util::StreamExt;
@@ -669,6 +669,72 @@ async fn existing_model_file_size(path: &PathBuf) -> Option<u64> {
         Ok(metadata) if metadata.is_file() && metadata.len() > 0 => Some(metadata.len()),
         _ => None,
     }
+}
+
+/// Stream a single auxiliary artifact (e.g. `tokens.txt`, the decoder/joiner
+/// ONNX files) straight to disk. Unlike [`DownloadRegistry`] this is not
+/// resumable and does not participate in pause/cancel — it is used to fetch the
+/// secondary files that accompany the primary ONNX model, whose download
+/// (and progress/pause/cancel) is tracked by the registry.
+pub async fn download_file_to_path(
+    client: &reqwest::Client,
+    url: &str,
+    destination: &Path,
+) -> Result<(), String> {
+    if let Some(parent) = destination.parent() {
+        tokio::fs::create_dir_all(parent)
+            .await
+            .map_err(|err| format!("failed to create model directory: {err}"))?;
+    }
+
+    let filename = destination
+        .file_name()
+        .and_then(|name| name.to_str())
+        .ok_or_else(|| "invalid destination filename".to_string())?;
+    let temp_path = destination.with_file_name(format!("{filename}.{}.download", Uuid::new_v4()));
+
+    let response = client
+        .get(url)
+        .send()
+        .await
+        .map_err(|err| format!("failed to request artifact download: {err}"))?;
+
+    if !response.status().is_success() {
+        return Err(format!(
+            "artifact download request failed with status {}",
+            response.status()
+        ));
+    }
+
+    let mut stream = response.bytes_stream();
+    let mut file = tokio::fs::File::create(&temp_path)
+        .await
+        .map_err(|err| format!("failed to create temporary artifact file: {err}"))?;
+
+    while let Some(chunk) = stream.next().await {
+        let chunk = chunk.map_err(|err| format!("download stream failed: {err}"))?;
+        file.write_all(&chunk)
+            .await
+            .map_err(|err| format!("failed to write artifact file: {err}"))?;
+    }
+
+    file.flush()
+        .await
+        .map_err(|err| format!("failed to flush artifact file: {err}"))?;
+    file.sync_all()
+        .await
+        .map_err(|err| format!("failed to sync artifact file: {err}"))?;
+    drop(file);
+
+    if destination.exists() {
+        let _ = tokio::fs::remove_file(destination).await;
+    }
+
+    tokio::fs::rename(&temp_path, destination)
+        .await
+        .map_err(|err| format!("failed to finalize artifact file: {err}"))?;
+
+    Ok(())
 }
 
 #[cfg(test)]
