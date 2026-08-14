@@ -32,6 +32,6 @@ impl AppState {
     }
 
     pub fn model_path(&self, model: WhisperModel) -> PathBuf {
-        self.config.models_dir.join(model.filename())
+        model.storage_path(&self.config.models_dir)
     }
 }

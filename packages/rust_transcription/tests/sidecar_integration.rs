@@ -25,6 +25,7 @@ struct HealthResponse {
 struct ModelStatusResponse {
     downloaded: bool,
     valid: bool,
+    validation_error: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -600,15 +601,18 @@ async fn cpu_sidecar_end_to_end_download_and_transcribe(
 async fn cpu_sidecar_rejects_invalid_onnx_model(
 ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     let sidecar = RunningSidecar::start_cpu().await?;
-    // Parakeet CTC artifact set = `model.int8.onnx` + `tokens.txt`. We provide a
-    // complete-but-bogus set so the "downloaded" check passes and validation is
-    // actually exercised against the (invalid) ONNX graph.
+    // Create the complete expected file set under the model-specific directory
+    // so `downloaded` is true and validation reaches ONNX Runtime. The graph is
+    // deliberately malformed; non-empty bytes must never count as a model.
+    let model_dir = sidecar.model_path("parakeet-ctc-0.6b");
+    tokio::fs::create_dir_all(&model_dir).await?;
     tokio::fs::write(
-        sidecar.model_path("model.int8.onnx"),
-        b"\x08\x07\x12\x0enemo_conformer_onnx_model_weights_and_graph_test_fixture_binary_data",
+        model_dir.join("model_int8.onnx"),
+        b"\x08\x07\x12\x0enot_a_real_onnx_graph",
     )
     .await?;
-    tokio::fs::write(sidecar.model_path("tokens.txt"), "a\nb\nc\n").await?;
+    tokio::fs::write(model_dir.join("model_int8.onnx_data"), b"fake weights").await?;
+    tokio::fs::write(model_dir.join("tokenizer.json"), b"{}").await?;
 
     let status = sidecar
         .client
@@ -627,6 +631,12 @@ async fn cpu_sidecar_rejects_invalid_onnx_model(
     assert!(status.validation_error.is_some());
 
     Ok(())
+}
+
+fn large_onnx_e2e_enabled() -> bool {
+    std::env::var("MAUSVOICE_RUN_ONNX_E2E")
+        .map(|value| matches!(value.trim(), "1" | "true" | "yes"))
+        .unwrap_or(false)
 }
 
 /// Downloads a model (primary tracked by the registry; auxiliaries fetched
@@ -686,8 +696,9 @@ async fn download_model_and_wait(
         return Err("timed out waiting for model download to complete".into());
     }
 
-    // Give the auxiliary artifacts (tokens.txt / decoder / joiner) a chance to
-    // finish downloading as well.
+    // The progress-tracked primary is the largest artifact, so the smaller
+    // graph/tokenizer companions should normally already be complete. Allow a
+    // short finalization window before validating the full set.
     sleep(Duration::from_secs(30)).await;
 
     let status = sidecar
@@ -712,6 +723,10 @@ async fn download_model_and_wait(
 #[ignore = "downloads Parakeet CTC + runs real ONNX inference against sidecar"]
 async fn cpu_sidecar_parakeet_ctc_end_to_end(
 ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+    if !large_onnx_e2e_enabled() {
+        eprintln!("skipping large ONNX e2e; set MAUSVOICE_RUN_ONNX_E2E=1 to run it");
+        return Ok(());
+    }
     let sidecar = RunningSidecar::start_cpu().await?;
     download_model_and_wait(&sidecar, "parakeet-ctc-0.6b").await?;
 
@@ -750,6 +765,10 @@ async fn cpu_sidecar_parakeet_ctc_end_to_end(
 #[ignore = "downloads Parakeet TDT + runs real ONNX inference against sidecar"]
 async fn cpu_sidecar_parakeet_tdt_end_to_end(
 ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+    if !large_onnx_e2e_enabled() {
+        eprintln!("skipping large ONNX e2e; set MAUSVOICE_RUN_ONNX_E2E=1 to run it");
+        return Ok(());
+    }
     let sidecar = RunningSidecar::start_cpu().await?;
     download_model_and_wait(&sidecar, "parakeet-tdt-0.6b").await?;
 
@@ -783,6 +802,10 @@ async fn cpu_sidecar_parakeet_tdt_end_to_end(
 #[tokio::test]
 #[ignore = "downloads Canary 1B + runs real ONNX inference against sidecar"]
 async fn cpu_sidecar_canary_end_to_end() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+    if !large_onnx_e2e_enabled() {
+        eprintln!("skipping large ONNX e2e; set MAUSVOICE_RUN_ONNX_E2E=1 to run it");
+        return Ok(());
+    }
     let sidecar = RunningSidecar::start_cpu().await?;
     download_model_and_wait(&sidecar, "canary-1b").await?;
 

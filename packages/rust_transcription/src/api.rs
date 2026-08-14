@@ -141,7 +141,7 @@ async fn download_model(
             .map_err(|err| ApiError::internal("download_start_failed", err))?;
 
         for (name, url) in &artifacts[1..] {
-            let aux_destination = models_dir.join(name);
+            let aux_destination = model.artifact_path(&models_dir, name);
             let aux_client = client.clone();
             let aux_url = url.clone();
             tokio::spawn(async move {
@@ -287,15 +287,21 @@ async fn delete_model(
         }
     }
 
-    // For ONNX models, also remove the rest of the artifact set.
+    // For ONNX models, also remove the rest of the artifact set and any
+    // in-progress auxiliary fragments in the model-specific directory.
     if model.is_onnx() {
+        crate::onnx_inference::evict_model(&model_path);
         for (name, _) in model.artifact_set() {
-            let artifact_path = state.config.models_dir.join(name);
+            let artifact_path = model.artifact_path(&state.config.models_dir, name);
             let _ = tokio::fs::remove_file(&artifact_path).await;
+            remove_partial_model_downloads(&artifact_path, model).await?;
         }
+        if let Some(model_dir) = model_path.parent() {
+            let _ = tokio::fs::remove_dir(model_dir).await;
+        }
+    } else {
+        remove_partial_model_downloads(&model_path, model).await?;
     }
-
-    remove_partial_model_downloads(&model_path, model).await?;
     let status = read_model_status(&state, model, false).await?;
     Ok(Json(status))
 }
@@ -522,26 +528,31 @@ async fn ensure_model_downloaded(
     model: WhisperModel,
 ) -> Result<PathBuf, ApiError> {
     let model_path = state.model_path(model);
-    let metadata = tokio::fs::metadata(&model_path).await.map_err(|_| {
-        ApiError::not_found(
-            "model_not_downloaded",
-            format!(
-                "model '{}' is not downloaded; call /v1/models/{}/download first",
-                model.as_slug(),
-                model.as_slug()
-            ),
-        )
-    })?;
+    let required_paths = if model.is_onnx() {
+        model
+            .artifact_set()
+            .into_iter()
+            .map(|(name, _)| model.artifact_path(&state.config.models_dir, name))
+            .collect::<Vec<_>>()
+    } else {
+        vec![model_path.clone()]
+    };
 
-    if !metadata.is_file() || metadata.len() == 0 {
-        return Err(ApiError::not_found(
-            "model_not_downloaded",
-            format!(
-                "model '{}' is not downloaded; call /v1/models/{}/download first",
-                model.as_slug(),
-                model.as_slug()
-            ),
-        ));
+    for required_path in required_paths {
+        let present = tokio::fs::metadata(&required_path)
+            .await
+            .map(|metadata| metadata.is_file() && metadata.len() > 0)
+            .unwrap_or(false);
+        if !present {
+            return Err(ApiError::not_found(
+                "model_not_downloaded",
+                format!(
+                    "model '{}' is not downloaded; call /v1/models/{}/download first",
+                    model.as_slug(),
+                    model.as_slug()
+                ),
+            ));
+        }
     }
 
     Ok(model_path)
@@ -583,11 +594,11 @@ async fn read_model_status(
     let file_bytes = metadata.map(|meta| meta.len());
 
     let downloaded = if model.is_onnx() {
-        // An ONNX model is only "downloaded" once its complete artifact set
-        // (encoder/decoder/joiner + tokens.txt) is present on disk.
+        // An ONNX model is only "downloaded" once the complete, model-specific
+        // graph/weights/tokenizer artifact set is present on disk.
         let mut all_present = true;
         for (name, _) in model.artifact_set() {
-            let artifact_path = state.config.models_dir.join(name);
+            let artifact_path = model.artifact_path(&state.config.models_dir, name);
             match tokio::fs::metadata(&artifact_path).await {
                 Ok(meta) if meta.is_file() && meta.len() > 0 => {}
                 _ => {
@@ -624,7 +635,7 @@ async fn read_model_status(
         });
     }
 
-    match state.transcriber.validate_model(model_path).await {
+    match state.transcriber.validate_model(model, model_path).await {
         Ok(valid) => Ok(ModelStatusResponse {
             model,
             downloaded: true,

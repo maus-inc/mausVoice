@@ -1,3 +1,5 @@
+use std::path::{Path, PathBuf};
+
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
@@ -43,16 +45,12 @@ pub enum WhisperModel {
     Canary1B,
 }
 
-/// The family of ONNX model served by the Sherpa-ONNX / NeMo exports. Each
-/// family needs a different decoder even though all of them run on the ONNX
-/// Runtime.
+/// The family of ONNX model. Each family needs a different decoder even though
+/// all of them execute their graphs with ONNX Runtime.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum OnnxModelKind {
-    /// NeMo FastConformer CTC (single encoder that emits logits).
     Ctc,
-    /// NeMo FastConformer TDT (encoder + decoder + joiner transducer).
     Tdt,
-    /// NeMo Canary encoder-decoder (encoder + autoregressive decoder).
     Canary,
 }
 
@@ -95,13 +93,13 @@ impl WhisperModel {
         }
     }
 
-    /// Returns `true` for the models that run on the ONNX Runtime rather than
-    /// `whisper-rs`.
     pub fn is_onnx(self) -> bool {
-        matches!(self, Self::ParakeetCtc06B | Self::ParakeetTdt06B | Self::Canary1B)
+        matches!(
+            self,
+            Self::ParakeetCtc06B | Self::ParakeetTdt06B | Self::Canary1B
+        )
     }
 
-    /// The decoder family for the ONNX models, or `None` for Whisper models.
     pub fn onnx_kind(self) -> Option<OnnxModelKind> {
         match self {
             Self::ParakeetCtc06B => Some(OnnxModelKind::Ctc),
@@ -111,9 +109,8 @@ impl WhisperModel {
         }
     }
 
-    /// The canonical on-disk filename of the *primary* artifact (the one
-    /// `state.model_path` points at). The remaining artifacts live alongside it
-    /// in the same directory and are resolved from [`WhisperModel::artifact_set`].
+    /// Filename of the progress-tracked primary artifact. ONNX artifacts are
+    /// stored beneath a model-specific directory by [`Self::storage_path`].
     pub fn filename(self) -> &'static str {
         match self {
             Self::Tiny => "ggml-tiny.bin",
@@ -123,61 +120,96 @@ impl WhisperModel {
             Self::Large => "ggml-large-v3.bin",
             Self::Turbo => "ggml-large-v3-turbo.bin",
             Self::Hindi2Hinglish => "ggml-hindi2hinglish-apex-q5_1.bin",
-            // The NeMo ONNX exports are downloaded as their native filenames so
-            // the inference engine can locate the rest of the artifact set next
-            // to the primary file by convention.
-            Self::ParakeetCtc06B => "model.int8.onnx",
-            Self::ParakeetTdt06B => "encoder.int8.onnx",
-            Self::Canary1B => "encoder.int8.onnx",
+            // Track the largest artifact so completion cannot precede its
+            // smaller graph/tokenizer companions under normal downloads.
+            Self::ParakeetCtc06B => "model_int8.onnx_data",
+            Self::ParakeetTdt06B => "encoder-model.int8.onnx",
+            Self::Canary1B => "encoder-model.int8.onnx",
         }
     }
 
-    /// Canonical sibling filenames used by the ONNX inference engine. The first
-    /// entry always matches [`WhisperModel::filename`].
-    fn artifact_filenames(self) -> &'static [&'static str] {
-        match self {
-            Self::ParakeetCtc06B => &["model.int8.onnx", "tokens.txt"],
-            Self::ParakeetTdt06B => &[
-                "encoder.int8.onnx",
-                "decoder.int8.onnx",
-                "joiner.int8.onnx",
-                "tokens.txt",
-            ],
-            Self::Canary1B => &["encoder.int8.onnx", "decoder.int8.onnx", "tokens.txt"],
-            // Whisper models ship as a single GGML file.
-            _ => &[],
-        }
-    }
-
-    /// Every file required to run this model, as `(filename, download_url)`
-    /// pairs. The primary artifact is first so the resumable download registry
-    /// can track it for progress / pause / cancel while the auxiliaries are
-    /// fetched alongside it.
+    /// Every file required by the model-specific runtime. The first entry is
+    /// the resumable, progress-tracked primary download.
     pub fn artifact_set(self) -> Vec<(&'static str, String)> {
-        let base = match self {
+        let mut artifacts = match self {
             Self::ParakeetCtc06B => {
-                "https://huggingface.co/csukuangfj/sherpa-onnx-nemo-fast-conformer-ctc-en-24500/resolve/main/"
+                let root =
+                    "https://huggingface.co/onnx-community/parakeet-ctc-0.6b-ONNX/resolve/main/";
+                vec![
+                    (
+                        "model_int8.onnx_data",
+                        format!("{root}onnx/model_int8.onnx_data"),
+                    ),
+                    ("model_int8.onnx", format!("{root}onnx/model_int8.onnx")),
+                    ("tokenizer.json", format!("{root}tokenizer.json")),
+                ]
             }
             Self::ParakeetTdt06B => {
-                "https://huggingface.co/csukuangfj/sherpa-onnx-nemo-fast-conformer-tdt-en-24500/resolve/main/"
+                let root =
+                    "https://huggingface.co/istupakov/parakeet-tdt-0.6b-v3-onnx/resolve/main/";
+                vec![
+                    (
+                        "encoder-model.int8.onnx",
+                        format!("{root}encoder-model.int8.onnx"),
+                    ),
+                    (
+                        "decoder_joint-model.int8.onnx",
+                        format!("{root}decoder_joint-model.int8.onnx"),
+                    ),
+                    ("vocab.txt", format!("{root}vocab.txt")),
+                ]
             }
             Self::Canary1B => {
-                "https://huggingface.co/csukuangfj/sherpa-onnx-nemo-canary-1b-en-de-es-fr-int8/resolve/main/"
+                let root =
+                    "https://huggingface.co/istupakov/canary-1b-v2-onnx/resolve/main/";
+                vec![
+                    (
+                        "encoder-model.int8.onnx",
+                        format!("{root}encoder-model.int8.onnx"),
+                    ),
+                    (
+                        "decoder-model.int8.onnx",
+                        format!("{root}decoder-model.int8.onnx"),
+                    ),
+                    ("vocab.txt", format!("{root}vocab.txt")),
+                ]
             }
-            _ => return Vec::new(),
+            _ => Vec::new(),
         };
 
-        self.artifact_filenames()
-            .iter()
-            .map(|name| (*name, format!("{base}{name}")))
-            .collect()
+        // Preserve the existing per-model primary URL override contract.
+        if let Some((_, primary_url)) = artifacts.first_mut() {
+            *primary_url = self.download_url();
+        }
+        artifacts
+    }
+
+    pub fn storage_path(self, models_dir: &Path) -> PathBuf {
+        if self.is_onnx() {
+            self.artifact_path(models_dir, self.filename())
+        } else {
+            models_dir.join(self.filename())
+        }
+    }
+
+    /// Resolve one ONNX artifact in an isolated model directory.
+    pub fn artifact_path(self, models_dir: &Path, filename: &str) -> PathBuf {
+        models_dir.join(self.as_slug()).join(filename)
     }
 
     pub fn download_url(self) -> String {
-        let env_var = format!(
-            "RUST_TRANSCRIPTION_MODEL_URL_{}",
-            self.as_slug().replace('-', "_").to_ascii_uppercase()
-        );
+        let env_suffix: String = self
+            .as_slug()
+            .chars()
+            .map(|ch| {
+                if ch.is_ascii_alphanumeric() {
+                    ch.to_ascii_uppercase()
+                } else {
+                    '_'
+                }
+            })
+            .collect();
+        let env_var = format!("RUST_TRANSCRIPTION_MODEL_URL_{env_suffix}");
 
         if let Ok(value) = std::env::var(env_var) {
             let trimmed = value.trim();
@@ -205,13 +237,13 @@ impl WhisperModel {
                 "https://huggingface.co/mausvoice/whisper-hindi2hinglish-apex-ggml/resolve/main/ggml-hindi2hinglish-apex-q5_1.bin"
             }
             Self::ParakeetCtc06B => {
-                "https://huggingface.co/csukuangfj/sherpa-onnx-nemo-fast-conformer-ctc-en-24500/resolve/main/model.int8.onnx"
+                "https://huggingface.co/onnx-community/parakeet-ctc-0.6b-ONNX/resolve/main/onnx/model_int8.onnx_data"
             }
             Self::ParakeetTdt06B => {
-                "https://huggingface.co/csukuangfj/sherpa-onnx-nemo-fast-conformer-tdt-en-24500/resolve/main/encoder.int8.onnx"
+                "https://huggingface.co/istupakov/parakeet-tdt-0.6b-v3-onnx/resolve/main/encoder-model.int8.onnx"
             }
             Self::Canary1B => {
-                "https://huggingface.co/csukuangfj/sherpa-onnx-nemo-canary-1b-en-de-es-fr-int8/resolve/main/encoder.int8.onnx"
+                "https://huggingface.co/istupakov/canary-1b-v2-onnx/resolve/main/encoder-model.int8.onnx"
             }
         }
         .to_string()
@@ -230,5 +262,41 @@ impl WhisperModel {
             "parakeet-tdt-0.6b",
             "canary-1b",
         ]
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn onnx_models_have_isolated_storage_paths() {
+        let root = Path::new("models");
+        let tdt = WhisperModel::ParakeetTdt06B.storage_path(root);
+        let canary = WhisperModel::Canary1B.storage_path(root);
+
+        assert_ne!(tdt, canary);
+        assert_eq!(
+            tdt,
+            root.join("parakeet-tdt-0.6b")
+                .join("encoder-model.int8.onnx")
+        );
+        assert_eq!(
+            canary,
+            root.join("canary-1b").join("encoder-model.int8.onnx")
+        );
+    }
+
+    #[test]
+    fn onnx_primary_is_first_in_artifact_set() {
+        for model in [
+            WhisperModel::ParakeetCtc06B,
+            WhisperModel::ParakeetTdt06B,
+            WhisperModel::Canary1B,
+        ] {
+            let artifacts = model.artifact_set();
+            assert_eq!(artifacts.first().map(|artifact| artifact.0), Some(model.filename()));
+            assert!(artifacts.iter().all(|(_, url)| url.starts_with("https://")));
+        }
     }
 }
