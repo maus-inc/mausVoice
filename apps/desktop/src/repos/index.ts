@@ -358,16 +358,15 @@ export const getTranscribeAudioRepo = (): TranscribeAudioRepoOutput => {
         const state = getAppState();
         const apiKeyRecord = getRec(state.apiKeyById, prefs.apiKeyId);
         const baseUrl = apiKeyRecord?.baseUrl || "http://localhost:8000";
-        const model =
-          prefs.transcriptionModel || "Systran/faster-whisper-large-v3";
-        if (!model) {
+        const configuredModel = prefs.transcriptionModel;
+        if (!configuredModel) {
           prefs.warnings.push(
             "No model configured for Speaches transcription.",
           );
         }
         repo = new SpeachesTranscribeAudioRepo(
           baseUrl,
-          model || "Systran/faster-whisper-large-v3",
+          configuredModel || "Systran/faster-whisper-large-v3",
         );
         break;
       }

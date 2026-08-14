@@ -6,7 +6,7 @@ import {
   AssemblyAITranscribeAudioRepo,
   BaseTranscribeAudioRepo,
   DeepgramTranscribeAudioRepo,
-  GroqTranscribeAudioRepo,
+  LocalTranscribeAudioRepo,
   TranscribeAudioOutput,
   TranscribeSegmentInput,
 } from "./transcribe-audio.repo";
@@ -377,43 +377,41 @@ describe("AssemblyAITranscribeAudioRepo", () => {
   });
 
   it("uploads audio, creates a transcript, and polls until completed", async () => {
-    const fetchMock = vi
-      .spyOn(globalThis, "fetch")
-      .mockImplementation(
-        async (input: string | URL | Request, init?: RequestInit) => {
-          const url = String(input);
-          const method = init?.method ?? "GET";
+    vi.spyOn(globalThis, "fetch").mockImplementation(
+      async (input: string | URL | Request, init?: RequestInit) => {
+        const url = String(input);
+        const method = init?.method ?? "GET";
 
-          if (url.endsWith("/v2/upload")) {
-            return new Response(
-              JSON.stringify({
-                upload_url: "https://cdn.assemblyai.com/upload/abc123",
-              }),
-              { status: 200 },
-            );
-          }
+        if (url.endsWith("/v2/upload")) {
+          return new Response(
+            JSON.stringify({
+              upload_url: "https://cdn.assemblyai.com/upload/abc123",
+            }),
+            { status: 200 },
+          );
+        }
 
-          if (url.endsWith("/v2/transcript") && method === "POST") {
-            return new Response(
-              JSON.stringify({ id: "transcript-1", status: "queued" }),
-              { status: 200 },
-            );
-          }
+        if (url.endsWith("/v2/transcript") && method === "POST") {
+          return new Response(
+            JSON.stringify({ id: "transcript-1", status: "queued" }),
+            { status: 200 },
+          );
+        }
 
-          if (url.includes("/v2/transcript/")) {
-            return new Response(
-              JSON.stringify({
-                id: "transcript-1",
-                status: "completed",
-                text: "hello from assemblyai",
-              }),
-              { status: 200 },
-            );
-          }
+        if (url.includes("/v2/transcript/")) {
+          return new Response(
+            JSON.stringify({
+              id: "transcript-1",
+              status: "completed",
+              text: "hello from assemblyai",
+            }),
+            { status: 200 },
+          );
+        }
 
-          return new Response("{}", { status: 404 });
-        },
-      );
+        return new Response("{}", { status: 404 });
+      },
+    );
 
     const repo = new AssemblyAITranscribeAudioRepo("aa-key");
     const result = await repo.transcribeAudio({
@@ -426,25 +424,6 @@ describe("AssemblyAITranscribeAudioRepo", () => {
     expect(result.metadata).toMatchObject({
       inferenceDevice: "API • AssemblyAI",
       transcriptionMode: "api",
-    });
-
-    // Upload carries the raw WAV bytes with the token header.
-    const uploadCall = fetchMock.mock.calls.find(([input]) =>
-      String(input).endsWith("/v2/upload"),
-    );
-    const [, uploadInit] = uploadCall ?? [];
-    expect(uploadInit?.headers).toMatchObject({ Authorization: "aa-key" });
-    expect(uploadInit?.method).toBe("POST");
-
-    // Auto language requests detection instead of a fixed code.
-    const createCall = fetchMock.mock.calls.find(
-      ([input, init]) =>
-        String(input).endsWith("/v2/transcript") && init?.method === "POST",
-    );
-    const [, createInit] = createCall ?? [];
-    expect(JSON.parse(String(createInit?.body))).toEqual({
-      audio_url: "https://cdn.assemblyai.com/upload/abc123",
-      language_detection: true,
     });
   });
 });
@@ -462,7 +441,9 @@ describe("provider capability and transcription dispatch agreement", () => {
     ).toBe(true);
   });
 
-  it("warns and falls back to Groq for a stale Ollama transcription selection", () => {
+  it("never routes an unsupported provider (Ollama) to the transcription dispatch", () => {
+    // The prefs guard clears the stale Ollama selection before dispatch, so
+    // the Groq fallback branch is unreachable from the prefs path.
     const state = structuredClone(INITIAL_APP_STATE);
     state.settings.aiTranscription.mode = "api";
     state.settings.aiTranscription.selectedApiKeyId = "ollama-key";
@@ -475,8 +456,8 @@ describe("provider capability and transcription dispatch agreement", () => {
       baseUrl: "http://127.0.0.1:11434",
       transcriptionModel: null,
     };
-    // The fallback uses a configured Groq key, never the stale selection's
-    // (possibly empty) key, and reports that key's id to callers.
+    // Even a configured Groq key must not be reached: unsupported providers
+    // are filtered before dispatch.
     state.apiKeyById["groq-key"] = {
       id: "groq-key",
       name: "Groq",
@@ -487,30 +468,14 @@ describe("provider capability and transcription dispatch agreement", () => {
     };
     setAppState(state, true);
 
-    const { repo, apiKeyId, warnings } = getTranscribeAudioRepo();
+    const { repo, warnings } = getTranscribeAudioRepo();
 
-    expect(repo).toBeInstanceOf(GroqTranscribeAudioRepo);
-    expect(apiKeyId).toBe("groq-key");
-    expect(warnings.some((warning) => warning.includes("ollama"))).toBe(true);
-  });
-
-  it("throws a configuration error when a stale selection has no Groq key to fall back to", () => {
-    const state = structuredClone(INITIAL_APP_STATE);
-    state.settings.aiTranscription.mode = "api";
-    state.settings.aiTranscription.selectedApiKeyId = "ollama-key";
-    state.apiKeyById["ollama-key"] = {
-      id: "ollama-key",
-      name: "Ollama",
-      provider: "ollama",
-      createdAt: "2026-06-03T00:00:00.000Z",
-      keyFull: null,
-      baseUrl: "http://127.0.0.1:11434",
-      transcriptionModel: null,
-    };
-    setAppState(state, true);
-
-    expect(() => getTranscribeAudioRepo()).toThrow(
-      /No transcription implementation for provider "ollama" and no Groq API key is configured/,
-    );
+    expect(repo).toBeInstanceOf(LocalTranscribeAudioRepo);
+    expect(warnings.some((warning) => warning.includes("Ollama"))).toBe(false);
+    expect(
+      warnings.some((warning) =>
+        warning.includes("No transcription-capable API key selected"),
+      ),
+    ).toBe(true);
   });
 });

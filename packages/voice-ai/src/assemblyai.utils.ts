@@ -158,7 +158,8 @@ const requestWithRetry = async ({
       }
       // Network-level failure is transient; retry unless exhausted.
       if (attempt >= maxRetries) {
-        throw error;
+        const message = error instanceof Error ? error.message : String(error);
+        throw new Error(`${errorLabel}: ${message}`);
       }
       await delayed(getBoundedRetryDelayMs(undefined, deadline, attempt));
       continue;

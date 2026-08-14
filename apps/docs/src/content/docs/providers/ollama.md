@@ -18,7 +18,7 @@ Choose a model that appears in `ollama list`, or type its exact tag. Post-proces
 
 ## Ollama is generative-only
 
-Stock Ollama exposes no speech-to-text endpoint: its OpenAI-compatible surface covers chat, completions, models, embeddings, and responses, and whisper/STT support has not shipped upstream ([ollama/ollama#13475](https://github.com/ollama/ollama/pull/13475) was declined). mausVoice therefore no longer lists Ollama under **AI transcription** — the capability filter and the dispatcher agree. For local transcription, use **Local** bundled Whisper, Speaches, or an OpenAI-compatible speech endpoint. If a saved preference still points at an Ollama transcription record from an older build, mausVoice warns and routes the batch job to the Groq repository rather than failing silently; reselect the transcription key.
+Stock Ollama exposes no speech-to-text endpoint: its OpenAI-compatible surface covers chat, completions, models, embeddings, and responses, and whisper/STT support has not shipped upstream ([ollama/ollama#13475](https://github.com/ollama/ollama/pull/13475) was declined). mausVoice therefore no longer lists Ollama under **AI transcription** — the capability filter and the dispatcher agree. For local transcription, use **Local** bundled Whisper, Speaches, or an OpenAI-compatible speech endpoint. If a saved preference still points at an Ollama transcription record from an older build, mausVoice treats it as unselected and falls back to **Local** transcription with a warning; reselect a transcription-capable key.
 
 ## Remote-server safety
 

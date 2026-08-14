@@ -284,6 +284,19 @@ describe("assemblyaiTranscribeAudio", () => {
     expect(uploadCalls).toBe(2);
   });
 
+  it("prefixes the error label when retries are exhausted on a network error", async () => {
+    vi.spyOn(globalThis, "fetch").mockRejectedValue(
+      new TypeError("fetch failed"),
+    );
+
+    await expect(
+      assemblyaiTranscribeAudio({
+        apiKey: "aa-key",
+        blob: new ArrayBuffer(8),
+      }),
+    ).rejects.toThrow(/AssemblyAI upload failed: fetch failed/);
+  });
+
   it("drains the response body before retrying a transient failure", async () => {
     let uploadCalls = 0;
     let firstBodyDrained = false;
