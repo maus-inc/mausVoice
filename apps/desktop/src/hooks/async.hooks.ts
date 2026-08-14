@@ -97,21 +97,13 @@ export const useAsyncData = <T>(
   const [error, setError] = useState("");
   const timeoutMs = opts.timeoutMs ?? ASYNC_DATA_DEFAULT_TIMEOUT_MS;
 
-  const sinkRef = useRef<AsyncDataSink<T>>({
-    setLoading,
-    setError,
-    setData,
-  });
-  sinkRef.current = { setLoading, setError, setData };
-
+  // `useState` setters keep a stable identity for the component's whole
+  // lifetime, so the controller can hold them directly. No sink ref — and
+  // therefore no ref write during render, which React disallows.
   const controllerRef = useRef<AsyncDataController<T> | null>(null);
   if (!controllerRef.current) {
     controllerRef.current = new AsyncDataController(
-      {
-        setLoading: (value) => sinkRef.current.setLoading(value),
-        setError: (value) => sinkRef.current.setError(value),
-        setData: (value) => sinkRef.current.setData(value),
-      },
+      { setLoading, setError, setData },
       timeoutMs,
     );
   }
