@@ -267,34 +267,85 @@ For safe command execution, you must:
 
 *Example Implementation:*
 ```rust
-use std::process::{Command, Stdio, Child};
-use std::time::Duration;
+// Note: `std::process::Child` has no built-in timed wait. This uses the
+// `wait-timeout` crate (`cargo add wait-timeout`), whose `ChildExt` trait
+// provides `wait_timeout()`.
 use std::io::Read;
+use std::process::{Command, Stdio};
+use std::thread;
+use std::time::Duration;
+use wait_timeout::ChildExt;
 
 pub fn execute_with_timeout(mut command: Command, timeout: Duration, max_bytes: usize) -> Result<Vec<u8>, String> {
     command.stdout(Stdio::piped());
     command.stderr(Stdio::piped());
-    
+
     let mut child = command.spawn().map_err(|e| e.to_string())?;
-    
-    // Spawn threads or read with an explicit limit to avoid OOM
-    // Ensure that if the timeout expires, we kill the child process:
+
+    // Drain stdout AND stderr on background threads *while* waiting.
+    // If the pipes are not drained concurrently, a chatty child fills the
+    // OS pipe buffer, blocks on write, and never exits — the exact
+    // pipe-buffer deadlock this section warns about.
+    let mut stdout_pipe = child.stdout.take().ok_or("missing stdout pipe")?;
+    let mut stderr_pipe = child.stderr.take().ok_or("missing stderr pipe")?;
+
+    let stdout_reader = thread::spawn(move || {
+        let mut buf = Vec::new();
+        let mut chunk = [0u8; 8192];
+        loop {
+            match stdout_pipe.read(&mut chunk) {
+                Ok(0) | Err(_) => break,
+                Ok(n) => {
+                    // Keep at most max_bytes, but keep *draining* past the
+                    // cap so the pipe never backs up.
+                    if buf.len() < max_bytes {
+                        let keep = (max_bytes - buf.len()).min(n);
+                        buf.extend_from_slice(&chunk[..keep]);
+                    }
+                }
+            }
+        }
+        buf
+    });
+    let stderr_reader = thread::spawn(move || {
+        // Drain and discard (or cap-and-keep, same as stdout) so stderr
+        // output can never wedge the child either.
+        let mut sink = [0u8; 8192];
+        while matches!(stderr_pipe.read(&mut sink), Ok(n) if n > 0) {}
+    });
+
     match child.wait_timeout(timeout) {
-        Ok(Some(status)) => {
-            // Read output within max_bytes limit
-            let mut out = Vec::new();
-            child.stdout.take().unwrap().take(max_bytes as u64).read_to_end(&mut out).ok();
+        Ok(Some(_status)) => {
+            // Normal exit: the child closed its pipe ends, so the readers
+            // hit EOF and these joins complete promptly.
+            let out = stdout_reader.join().map_err(|_| "stdout reader panicked")?;
+            let _ = stderr_reader.join();
             Ok(out)
         }
         Ok(None) => {
             // Timeout expired
             child.kill().ok();
             child.wait().ok(); // Reap to prevent zombies
+            // Do NOT join the reader threads here. `kill()` only signals the
+            // direct child — if it spawned descendants that inherited the
+            // pipe write-ends, the readers never see EOF and an unconditional
+            // `join()` blocks forever, defeating the timeout this function
+            // exists to enforce. `std::thread` has no timed join, so detach:
+            // the readers hold only the pipe handles and exit on their own
+            // once the last writer finally closes.
+            drop(stdout_reader);
+            drop(stderr_reader);
+            // For a stronger guarantee, kill the entire process tree instead
+            // of just the child: a process group + `killpg` on Unix (spawn
+            // with `setsid`/`process_group(0)`), a Job Object on Windows, or
+            // a cross-platform crate such as `command-group`.
             Err("Execution timed out".to_string())
         }
         Err(e) => {
             child.kill().ok();
             child.wait().ok();
+            drop(stdout_reader); // Same rationale as the timeout arm: detach,
+            drop(stderr_reader); // never block on a pipe that may stay open.
             Err(e.to_string())
         }
     }
@@ -317,6 +368,7 @@ Desktop security requires strict validation of files deleted during local data p
 
 #### The Hardened Architectural Pattern
 *   **Always Canonicalize Both Ends:** Resolve the parent directory of the file and the target storage folder into absolute, canonical physical paths (`std::fs::canonicalize`) before comparing them.
+*   **Reject Symlinks at the Final Component Too:** Canonicalizing the parent is not enough — if the *file itself* is a symlink placed inside `audio_dir`, following it still resolves outside the directory. Check `std::fs::symlink_metadata` on the final path and refuse symlinks outright (or canonicalize the full path and re-verify its parent).
 *   **Validate the Canonical Path, Delete the Canonical Path:** Never delete the raw string input; always operate on the normalized, canonicalized path returned by your validator helper.
 
 *Example Implementation:*
@@ -336,6 +388,7 @@ pub fn resolve_managed_audio_path(path: &Path, audio_dir: &Path) -> Option<PathB
     let parent_dir = candidate.parent()?;
 
     // Canonicalize parent and audio_dir to resolve traversals/symlinks
+    // in the *directory* portion of the path
     let real_parent = fs::canonicalize(parent_dir).ok()?;
     let real_audio_dir = fs::canonicalize(audio_dir).ok()?;
 
@@ -343,7 +396,25 @@ pub fn resolve_managed_audio_path(path: &Path, audio_dir: &Path) -> Option<PathB
         return None; // Escape or mismatch detected!
     }
 
-    Some(real_parent.join(file_name))
+    let resolved = real_parent.join(file_name);
+
+    // The final component can still be a symlink *inside* audio_dir that
+    // points outside it (e.g. clip.wav -> /etc/passwd). symlink_metadata
+    // does NOT follow links, so we can detect and reject that case.
+    // NB: don't just `.ok()?` here — that would also refuse paths that do
+    // not exist yet, silently breaking write flows where the caller is
+    // resolving a *destination* path. A missing file is fine (its parent is
+    // already verified above); only an existing symlink is refused.
+    match fs::symlink_metadata(&resolved) {
+        Ok(meta) if meta.file_type().is_symlink() => {
+            None // Symlink file inside the managed dir — refuse it
+        }
+        Ok(_) => Some(resolved),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
+            Some(resolved) // Doesn't exist yet — valid as a write destination
+        }
+        Err(_) => None, // Permission or I/O error — fail closed
+    }
 }
 ```
 
@@ -363,13 +434,14 @@ Downloading installers or model sidecars is a critical attack vector for desktop
 
 #### The Hardened Architectural Pattern
 *   **Verify Redirects on Every Single Hop:** Supply a custom redirect policy to the HTTP client that forces every single target hop (including scheme, host, and file extension) to pass the security filter.
-*   **Verify Content-Length & Stream to Disk with a Byte Counter:** Read chunks of bytes sequentially, write them to disk, and verify on every iteration that the total written bytes have not crossed the safety threshold. Reject the stream immediately if `Content-Length` is missing or exceeds the cap before the download begins.
+*   **Verify Content-Length & Stream to Disk with a Byte Counter:** Read chunks of bytes sequentially, write them to disk, and verify on every iteration that the total written bytes have not crossed the safety threshold. Reject the stream immediately if the advertised `Content-Length` exceeds the cap before the download begins. Note that `reqwest` reports `content_length() == None` not only for hostile servers but also for legitimate chunked (`Transfer-Encoding: chunked`) or transparently decompressed responses — so make "missing length" a policy decision: require it for fixed artifacts (installers, model files) served by hosts you control, but when chunked responses must be supported, allow `None` and let the streaming byte counter enforce the cap.
 
 *Example Implementation:*
 ```rust
 use reqwest::redirect::Policy;
 use std::fs::{self, File};
 use std::io::Write;
+use std::path::Path;
 
 pub async fn download_installer(url_str: &str, dest_path: &Path, max_bytes: u64) -> Result<(), String> {
     let redirect_policy = Policy::custom(move |attempt| {
@@ -391,11 +463,20 @@ pub async fn download_installer(url_str: &str, dest_path: &Path, max_bytes: u64)
 
     let mut response = client.get(url_str).send().await.map_err(|e| e.to_string())?;
     
-    // Check advertised size
-    if let Some(len) = response.content_length() {
-        if len > max_bytes {
+    // Check the advertised size BEFORE downloading: reject an oversized
+    // Content-Length up front. `content_length()` is `None` for chunked or
+    // transparently decompressed responses, not only hostile ones — this
+    // example downloads fixed installer artifacts from allow-listed hosts,
+    // so it requires a length (strictest policy). If your endpoint serves
+    // chunked responses legitimately, drop the `None` arm and rely on the
+    // per-chunk byte counter below, which enforces the cap either way
+    // (including when the server lies about the length).
+    match response.content_length() {
+        None => return Err("Server did not advertise Content-Length".to_string()),
+        Some(len) if len > max_bytes => {
             return Err("Payload exceeds maximum size limit".to_string());
         }
+        Some(_) => {}
     }
 
     let mut file = File::create(dest_path).map_err(|e| e.to_string())?;
