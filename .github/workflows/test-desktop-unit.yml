@@ -60,5 +60,5 @@ jobs:
       - name: Run Rust unit tests
         working-directory: apps/desktop/src-tauri
         env:
-          TAURI_CONFIG: '{"bundle":{"externalBin":[]}}'
+          TAURI_CONFIG: '{"bundle":{"externalBin":[],"resources":[]}}'
         run: cargo test --lib

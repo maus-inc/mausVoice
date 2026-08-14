@@ -68,6 +68,7 @@ function buildAndCopy(binaryName, gpuEnabled, options = {}) {
   const allowFailure = options.allowFailure === true;
   const cargoArgs = [
     "build",
+    "--locked",
     "--manifest-path",
     sidecarManifestPath,
     "--bin",
