@@ -48,6 +48,9 @@ jobs:
     name: Verify (lint + TS unit tests)
     runs-on: ubuntu-latest
     timeout-minutes: 20
+    # Only reads the repo: keep the write scope on the publishing jobs.
+    permissions:
+      contents: read
     steps:
       - name: Checkout source
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
@@ -74,6 +77,9 @@ jobs:
     name: Verify (Rust unit tests)
     runs-on: ubuntu-latest
     timeout-minutes: 25
+    # Only reads the repo: keep the write scope on the publishing jobs.
+    permissions:
+      contents: read
     steps:
       - name: Checkout source
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
