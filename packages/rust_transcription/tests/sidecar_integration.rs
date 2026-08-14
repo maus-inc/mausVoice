@@ -595,7 +595,7 @@ async fn cpu_sidecar_end_to_end_download_and_transcribe(
 async fn cpu_sidecar_parakeet_model_lifecycle() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     let sidecar = RunningSidecar::start_cpu().await?;
     let model_path = sidecar.model_path("sherpa-onnx-parakeet-ctc-0.6b.onnx");
-    tokio::fs::write(&model_path, b"fake onnx model bytes of valid length header test data here").await?;
+    tokio::fs::write(&model_path, b"\x08\x07\x12\x0enemo_conformer_onnx_model_weights_and_graph_test_fixture_binary_data").await?;
 
     let status = sidecar
         .client
@@ -609,13 +609,16 @@ async fn cpu_sidecar_parakeet_model_lifecycle() -> Result<(), Box<dyn std::error
     assert!(status.downloaded);
     assert!(status.valid);
 
+    let (samples, sample_rate) = load_wav_as_f32_mono(&audio_asset_path("test.wav")?, 10)?;
+    assert!(!samples.is_empty());
+
     let response = sidecar
         .client
         .post(sidecar.url("/v1/transcriptions"))
         .json(&TranscribeRequest {
             model: "parakeet-ctc-0.6b".to_string(),
-            samples: vec![0.1_f32, -0.1_f32, 0.0_f32],
-            sample_rate: 16_000,
+            samples,
+            sample_rate,
             language: Some("en".to_string()),
             initial_prompt: None,
             device_id: None,
@@ -627,6 +630,7 @@ async fn cpu_sidecar_parakeet_model_lifecycle() -> Result<(), Box<dyn std::error
         .await?;
 
     assert_eq!(response.inference_device, "CPU");
+    assert!(!response.text.trim().is_empty());
     Ok(())
 }
 
@@ -634,7 +638,7 @@ async fn cpu_sidecar_parakeet_model_lifecycle() -> Result<(), Box<dyn std::error
 async fn cpu_sidecar_canary_model_lifecycle() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     let sidecar = RunningSidecar::start_cpu().await?;
     let model_path = sidecar.model_path("sherpa-onnx-canary-1b.onnx");
-    tokio::fs::write(&model_path, b"fake canary onnx model bytes of valid length header test data here").await?;
+    tokio::fs::write(&model_path, b"\x08\x07\x12\x0ecanary_1b_onnx_model_weights_and_graph_test_fixture_binary_data").await?;
 
     let status = sidecar
         .client
@@ -648,13 +652,16 @@ async fn cpu_sidecar_canary_model_lifecycle() -> Result<(), Box<dyn std::error::
     assert!(status.downloaded);
     assert!(status.valid);
 
+    let (samples, sample_rate) = load_wav_as_f32_mono(&audio_asset_path("test.wav")?, 10)?;
+    assert!(!samples.is_empty());
+
     let response = sidecar
         .client
         .post(sidecar.url("/v1/transcriptions"))
         .json(&TranscribeRequest {
             model: "canary-1b".to_string(),
-            samples: vec![0.1_f32, -0.1_f32, 0.0_f32],
-            sample_rate: 16_000,
+            samples,
+            sample_rate,
             language: Some("en".to_string()),
             initial_prompt: None,
             device_id: None,
@@ -666,6 +673,7 @@ async fn cpu_sidecar_canary_model_lifecycle() -> Result<(), Box<dyn std::error::
         .await?;
 
     assert_eq!(response.inference_device, "CPU");
+    assert!(!response.text.trim().is_empty());
     Ok(())
 }
 
