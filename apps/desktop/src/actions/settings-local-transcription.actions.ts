@@ -161,9 +161,14 @@ export const downloadLocalTranscriptionModel = async (
       preferGpu,
       onProgress: (snapshot) => {
         produceAppState((draft) => {
-          draft.settings.aiTranscription.localModelManagement.modelDownloads[
-            model
-          ] = snapshot;
+          if (snapshot.status === "canceled") {
+            delete draft.settings.aiTranscription.localModelManagement
+              .modelDownloads[model];
+          } else {
+            draft.settings.aiTranscription.localModelManagement.modelDownloads[
+              model
+            ] = snapshot;
+          }
         });
       },
     });

@@ -14,7 +14,8 @@ const DOWNLOAD_TIMEOUT: Duration = Duration::from_secs(900);
 // Real inference can exceed the client's short control-plane timeout on
 // slower CI runners (notably Windows). Keep health, status, and error-path
 // requests fast while allowing only genuine transcription calls more time.
-const TRANSCRIPTION_TIMEOUT: Duration = Duration::from_secs(60);
+const TRANSCRIPTION_TIMEOUT: Duration = Duration::from_secs(180);
+const VALIDATION_TIMEOUT: Duration = Duration::from_secs(120);
 const TINY_MODEL_FILENAME: &str = "ggml-tiny.bin";
 
 #[derive(Debug, Deserialize)]
@@ -614,6 +615,7 @@ async fn download_model_and_wait(
     let status = sidecar
         .client
         .get(sidecar.url(&format!("/v1/models/{slug}/status?validate=true")))
+        .timeout(VALIDATION_TIMEOUT)
         .send()
         .await?
         .error_for_status()?

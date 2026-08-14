@@ -219,6 +219,7 @@ fn extract_runtime(
         ArchiveKind::Zip => extract_from_zip(archive_path, target, &temporary_path),
     };
     result.unwrap_or_else(|error| {
+        let _ = fs::remove_file(&temporary_path);
         panic!(
             "failed to extract ONNX Runtime library from '{}': {error}",
             archive_path.display()

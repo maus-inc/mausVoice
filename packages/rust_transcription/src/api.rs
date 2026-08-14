@@ -369,7 +369,19 @@ async fn delete_model(
         crate::onnx_inference::evict_model(&model_path);
         for (name, _) in model.artifact_set() {
             let artifact_path = model.artifact_path(&state.config.models_dir, name);
-            let _ = tokio::fs::remove_file(&artifact_path).await;
+            match tokio::fs::remove_file(&artifact_path).await {
+                Ok(()) => {}
+                Err(err) if err.kind() == ErrorKind::NotFound => {}
+                Err(err) => {
+                    return Err(ApiError::internal(
+                        "model_delete_failed",
+                        format!(
+                            "failed to delete companion artifact '{}': {err}",
+                            artifact_path.display()
+                        ),
+                    ));
+                }
+            }
             remove_partial_model_downloads(&artifact_path, model).await?;
         }
         if let Some(model_dir) = model_path.parent() {

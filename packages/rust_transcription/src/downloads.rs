@@ -644,8 +644,18 @@ impl DownloadRegistry {
         // Block pause/cancel only for the short replace+rename section. The
         // control sender stays installed for every subsequent artifact.
         if !self.begin_artifact_finalization(job_id, generation).await {
-            let _ = tokio::fs::remove_file(&temp_path).await;
-            let _ = tokio::fs::remove_file(&validator_path).await;
+            let is_canceled = {
+                let store = self.inner.lock().await;
+                store
+                    .jobs
+                    .get(&job_id)
+                    .map(|j| j.status == DownloadJobStatus::Canceled)
+                    .unwrap_or(false)
+            };
+            if is_canceled {
+                let _ = tokio::fs::remove_file(&temp_path).await;
+                let _ = tokio::fs::remove_file(&validator_path).await;
+            }
             return Ok(ArtifactDownloadOutcome::Obsolete);
         }
 
