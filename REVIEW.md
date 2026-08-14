@@ -316,6 +316,8 @@ pub fn execute_with_timeout(mut command: Command, timeout: Duration, max_bytes: 
 
     match child.wait_timeout(timeout) {
         Ok(Some(_status)) => {
+            // Normal exit: the child closed its pipe ends, so the readers
+            // hit EOF and these joins complete promptly.
             let out = stdout_reader.join().map_err(|_| "stdout reader panicked")?;
             let _ = stderr_reader.join();
             Ok(out)
@@ -324,15 +326,26 @@ pub fn execute_with_timeout(mut command: Command, timeout: Duration, max_bytes: 
             // Timeout expired
             child.kill().ok();
             child.wait().ok(); // Reap to prevent zombies
-            let _ = stdout_reader.join(); // Readers see EOF once the child dies
-            let _ = stderr_reader.join();
+            // Do NOT join the reader threads here. `kill()` only signals the
+            // direct child — if it spawned descendants that inherited the
+            // pipe write-ends, the readers never see EOF and an unconditional
+            // `join()` blocks forever, defeating the timeout this function
+            // exists to enforce. `std::thread` has no timed join, so detach:
+            // the readers hold only the pipe handles and exit on their own
+            // once the last writer finally closes.
+            drop(stdout_reader);
+            drop(stderr_reader);
+            // For a stronger guarantee, kill the entire process tree instead
+            // of just the child: a process group + `killpg` on Unix (spawn
+            // with `setsid`/`process_group(0)`), a Job Object on Windows, or
+            // a cross-platform crate such as `command-group`.
             Err("Execution timed out".to_string())
         }
         Err(e) => {
             child.kill().ok();
             child.wait().ok();
-            let _ = stdout_reader.join();
-            let _ = stderr_reader.join();
+            drop(stdout_reader); // Same rationale as the timeout arm: detach,
+            drop(stderr_reader); // never block on a pipe that may stay open.
             Err(e.to_string())
         }
     }
@@ -388,12 +401,20 @@ pub fn resolve_managed_audio_path(path: &Path, audio_dir: &Path) -> Option<PathB
     // The final component can still be a symlink *inside* audio_dir that
     // points outside it (e.g. clip.wav -> /etc/passwd). symlink_metadata
     // does NOT follow links, so we can detect and reject that case.
-    let meta = fs::symlink_metadata(&resolved).ok()?;
-    if meta.file_type().is_symlink() {
-        return None; // Symlink file inside the managed dir — refuse it
+    // NB: don't just `.ok()?` here — that would also refuse paths that do
+    // not exist yet, silently breaking write flows where the caller is
+    // resolving a *destination* path. A missing file is fine (its parent is
+    // already verified above); only an existing symlink is refused.
+    match fs::symlink_metadata(&resolved) {
+        Ok(meta) if meta.file_type().is_symlink() => {
+            None // Symlink file inside the managed dir — refuse it
+        }
+        Ok(_) => Some(resolved),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
+            Some(resolved) // Doesn't exist yet — valid as a write destination
+        }
+        Err(_) => None, // Permission or I/O error — fail closed
     }
-
-    Some(resolved)
 }
 ```
 
@@ -413,7 +434,7 @@ Downloading installers or model sidecars is a critical attack vector for desktop
 
 #### The Hardened Architectural Pattern
 *   **Verify Redirects on Every Single Hop:** Supply a custom redirect policy to the HTTP client that forces every single target hop (including scheme, host, and file extension) to pass the security filter.
-*   **Verify Content-Length & Stream to Disk with a Byte Counter:** Read chunks of bytes sequentially, write them to disk, and verify on every iteration that the total written bytes have not crossed the safety threshold. Reject the stream immediately if `Content-Length` is missing or exceeds the cap before the download begins.
+*   **Verify Content-Length & Stream to Disk with a Byte Counter:** Read chunks of bytes sequentially, write them to disk, and verify on every iteration that the total written bytes have not crossed the safety threshold. Reject the stream immediately if the advertised `Content-Length` exceeds the cap before the download begins. Note that `reqwest` reports `content_length() == None` not only for hostile servers but also for legitimate chunked (`Transfer-Encoding: chunked`) or transparently decompressed responses — so make "missing length" a policy decision: require it for fixed artifacts (installers, model files) served by hosts you control, but when chunked responses must be supported, allow `None` and let the streaming byte counter enforce the cap.
 
 *Example Implementation:*
 ```rust
@@ -442,9 +463,14 @@ pub async fn download_installer(url_str: &str, dest_path: &Path, max_bytes: u64)
 
     let mut response = client.get(url_str).send().await.map_err(|e| e.to_string())?;
     
-    // Check advertised size BEFORE downloading: reject when Content-Length
-    // is missing entirely, and when it exceeds the cap. (The per-chunk byte
-    // counter below still enforces the cap in case the server lies.)
+    // Check the advertised size BEFORE downloading: reject an oversized
+    // Content-Length up front. `content_length()` is `None` for chunked or
+    // transparently decompressed responses, not only hostile ones — this
+    // example downloads fixed installer artifacts from allow-listed hosts,
+    // so it requires a length (strictest policy). If your endpoint serves
+    // chunked responses legitimately, drop the `None` arm and rely on the
+    // per-chunk byte counter below, which enforces the cap either way
+    // (including when the server lies about the length).
     match response.content_length() {
         None => return Err("Server did not advertise Content-Length".to_string()),
         Some(len) if len > max_bytes => {
