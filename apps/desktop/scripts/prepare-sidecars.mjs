@@ -40,6 +40,7 @@ if (!existsSync(sidecarManifestPath)) {
 mkdirSync(tauriBinariesDir, { recursive: true });
 
 const cpuSidecarPath = buildAndCopy("rust-transcription-cpu", false);
+prepareOnnxRuntimeLibrary();
 const gpuBuildState = resolveGpuBuildState(targetTriple);
 
 if (gpuBuildState.canBuildNative) {
@@ -118,6 +119,39 @@ function buildAndCopy(binaryName, gpuEnabled, options = {}) {
   );
 
   return destinationBinaryPath;
+}
+
+function prepareOnnxRuntimeLibrary() {
+  const libraryName = onnxRuntimeLibraryName(targetTriple);
+  const sourcePath = join(
+    rustTargetDir,
+    ...(buildTarget ? [buildTarget] : []),
+    buildProfile,
+    libraryName,
+  );
+  if (!existsSync(sourcePath)) {
+    fail(
+      `Expected ONNX Runtime library was not provisioned by the sidecar build: ${sourcePath}`,
+    );
+  }
+
+  const destinationDir = join(tauriBinariesDir, "onnxruntime");
+  const destinationPath = join(destinationDir, libraryName);
+  mkdirSync(destinationDir, { recursive: true });
+  copyFileSync(sourcePath, destinationPath);
+  console.log(
+    `[sidecar] Prepared ONNX Runtime ${libraryName}: ${destinationPath}`,
+  );
+}
+
+function onnxRuntimeLibraryName(target) {
+  if (isWindowsTarget(target)) {
+    return "onnxruntime.dll";
+  }
+  if (isAppleTarget(target)) {
+    return "libonnxruntime.dylib";
+  }
+  return "libonnxruntime.so";
 }
 
 function mirrorCpuSidecarAsGpu(cpuSidecarPath) {

@@ -6,8 +6,9 @@
 //! synthetic signal property.
 
 use std::collections::HashMap;
+use std::env;
 use std::path::{Path, PathBuf};
-use std::sync::{LazyLock, Mutex};
+use std::sync::{LazyLock, Mutex, OnceLock};
 
 use canary_rs::Canary;
 use ort::session::Session;
@@ -41,6 +42,7 @@ pub fn transcribe(
         return Ok(String::new());
     }
 
+    ensure_onnx_runtime()?;
     let model_dir = model_directory(model_path)?;
     let cache_key = model_dir.to_path_buf();
     let mut cache = MODEL_CACHE
@@ -88,6 +90,7 @@ pub fn validate_model(model: WhisperModel, model_path: &Path) -> Result<bool, St
         return Err(format!("model '{}' is not an ONNX model", model.as_slug()));
     }
 
+    ensure_onnx_runtime()?;
     let model_dir = model_directory(model_path)?;
     for (name, _) in model.artifact_set() {
         if !name.ends_with(".onnx") {
@@ -118,6 +121,106 @@ pub fn evict_model(model_path: &Path) {
     };
     if let Ok(mut cache) = MODEL_CACHE.lock() {
         cache.remove(model_dir);
+    }
+}
+
+fn ensure_onnx_runtime() -> Result<(), String> {
+    static RUNTIME: OnceLock<Result<(), String>> = OnceLock::new();
+    RUNTIME
+        .get_or_init(|| {
+            let candidates = runtime_library_candidates()?;
+            let library_path = candidates
+                .iter()
+                .find(|path| path.is_file())
+                .ok_or_else(|| {
+                    let searched = candidates
+                        .iter()
+                        .map(|path| path.display().to_string())
+                        .collect::<Vec<_>>()
+                        .join(", ");
+                    format!(
+                        "ONNX Runtime dynamic library '{}' was not found; searched: {searched}",
+                        runtime_library_name()
+                    )
+                })?;
+
+            ort::init_from(library_path)
+                .map_err(|err| {
+                    format!(
+                        "failed to load ONNX Runtime from '{}': {err}",
+                        library_path.display()
+                    )
+                })?
+                .commit();
+            Ok(())
+        })
+        .clone()
+}
+
+fn runtime_library_candidates() -> Result<Vec<PathBuf>, String> {
+    let executable = env::current_exe()
+        .map_err(|err| format!("failed to locate the transcription executable: {err}"))?;
+    let executable_dir = executable.parent().ok_or_else(|| {
+        format!(
+            "transcription executable '{}' has no parent directory",
+            executable.display()
+        )
+    })?;
+
+    let mut candidates = Vec::new();
+    for variable in ["MAUSVOICE_ORT_DYLIB_PATH", "ORT_DYLIB_PATH"] {
+        if let Some(path) = env::var_os(variable).filter(|value| !value.is_empty()) {
+            candidates.push(PathBuf::from(path));
+        }
+    }
+    candidates.extend(runtime_library_candidates_from(
+        executable_dir,
+        runtime_library_name(),
+    ));
+    if let Some(path) = option_env!("MAUSVOICE_BUILD_ORT_DYLIB") {
+        candidates.push(PathBuf::from(path));
+    }
+    candidates.dedup();
+    Ok(candidates)
+}
+
+fn runtime_library_candidates_from(executable_dir: &Path, library_name: &str) -> Vec<PathBuf> {
+    [
+        executable_dir.join(library_name),
+        executable_dir.join("onnxruntime").join(library_name),
+        executable_dir
+            .join("binaries")
+            .join("onnxruntime")
+            .join(library_name),
+        executable_dir
+            .join("resources")
+            .join("binaries")
+            .join("onnxruntime")
+            .join(library_name),
+        executable_dir
+            .join("..")
+            .join("Resources")
+            .join("binaries")
+            .join("onnxruntime")
+            .join(library_name),
+        executable_dir
+            .join("..")
+            .join("resources")
+            .join("binaries")
+            .join("onnxruntime")
+            .join(library_name),
+    ]
+    .into_iter()
+    .collect()
+}
+
+fn runtime_library_name() -> &'static str {
+    if cfg!(target_os = "windows") {
+        "onnxruntime.dll"
+    } else if cfg!(target_os = "macos") {
+        "libonnxruntime.dylib"
+    } else {
+        "libonnxruntime.so"
     }
 }
 
@@ -164,5 +267,20 @@ mod tests {
         assert_eq!(normalize_language(Some("de_DE")), "de");
         assert_eq!(normalize_language(Some("auto")), "en");
         assert_eq!(normalize_language(None), "en");
+    }
+
+    #[test]
+    fn packaged_runtime_candidates_include_tauri_resource_layout() {
+        let executable_dir = Path::new("/Applications/mausVoice.app/Contents/MacOS");
+        let candidates =
+            runtime_library_candidates_from(executable_dir, "libonnxruntime.dylib");
+
+        assert!(candidates.contains(&PathBuf::from(
+            "/Applications/mausVoice.app/Contents/MacOS/../Resources/binaries/onnxruntime/libonnxruntime.dylib"
+        )));
+        assert_eq!(
+            candidates.first(),
+            Some(&executable_dir.join("libonnxruntime.dylib"))
+        );
     }
 }
