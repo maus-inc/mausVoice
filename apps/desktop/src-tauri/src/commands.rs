@@ -438,8 +438,6 @@ async fn delete_audio_entries(
     .map_err(|err| err.to_string())
 }
 
-/// True when `path` is inside the managed transcription-audio directory.
-/// Used by `clear_local_data` so a stale/absolute path cannot delete
 /// True when `path` resolves safely inside the managed transcription-audio
 /// directory. Uses component normalization (not raw lexical `starts_with`)
 /// so a stored path such as `<audio_dir>/../outside.wav` cannot escape the
