@@ -2813,9 +2813,11 @@ mod tests {
     /// - single-quoted string literals (which may contain `;`, `--`, or
     ///   `*/`), including the `''` doubled-quote escape.
     ///
-    /// Double-quoted identifiers (table/column names in SQLite) are left
-    /// intact on purpose: they are not string literals, and stripping them
-    /// would drop a table name from the derived set.
+    /// Double-quoted identifiers (table/column names in SQLite) are left in
+    /// place by this pass: they are not string literals, so unlike `'...'`
+    /// above they are not skipped. The surrounding quote characters are
+    /// trimmed later when the table name is extracted, so `"my_table"` and
+    /// `my_table` resolve to the same bare name that SQLite reports.
     fn strip_sql_noise(sql: &str) -> String {
         let mut out = String::with_capacity(sql.len());
         let mut chars = sql.chars().peekable();
@@ -2868,7 +2870,10 @@ mod tests {
         let first_word = |rest: &str| -> Option<String> {
             rest.split(|c: char| c == '(' || c.is_whitespace())
                 .find(|part| !part.is_empty())
-                .map(|name| name.to_string())
+                // Trim surrounding double quotes so a quoted identifier
+                // (`CREATE TABLE "name"`) resolves to the same bare name
+                // SQLite reports, rather than `"name"`.
+                .map(|name| name.trim_matches('"').to_string())
         };
 
         let mut tables: std::collections::BTreeSet<String> = std::collections::BTreeSet::new();

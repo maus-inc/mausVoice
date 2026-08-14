@@ -114,6 +114,9 @@ jobs:
     needs: [verify-ts, verify-rust]
     runs-on: ${{ matrix.os }}
     timeout-minutes: 60
+    # Only reads the repo: the write scope stays on the publishing jobs.
+    permissions:
+      contents: read
     strategy:
       fail-fast: false
       matrix:
