@@ -121,6 +121,10 @@ async fn download_model(
     Path(path): Path<ModelPath>,
 ) -> Result<Json<crate::downloads::DownloadJobSnapshot>, ApiError> {
     let model = parse_model(&path.model)?;
+    if model.is_onnx() {
+        remove_invalid_onnx_bundle_before_download(&state, model).await?;
+    }
+
     let client = state.http_client.clone();
     let artifacts = if model.is_onnx() {
         // One registry job owns the complete model bundle. Completion is not
@@ -150,6 +154,49 @@ async fn download_model(
         .map_err(|err| ApiError::internal("download_start_failed", err))?;
 
     Ok(Json(snapshot))
+}
+
+/// A complete bundle may still be malformed or incompatible. The download
+/// registry intentionally treats existing files as resumable artifacts, so an
+/// invalid complete bundle must be evicted before retrying; otherwise every
+/// non-empty file would be skipped and the retry would falsely complete.
+async fn remove_invalid_onnx_bundle_before_download(
+    state: &AppState,
+    model: WhisperModel,
+) -> Result<(), ApiError> {
+    // Never remove files owned by a running or paused bundle worker. A repeated
+    // download request should simply return that existing job.
+    if state.downloads.get_active_job(model).await.is_some() {
+        return Ok(());
+    }
+
+    let status = read_model_status(state, model, true).await?;
+    if !status.downloaded || status.valid {
+        return Ok(());
+    }
+
+    let model_path = state.model_path(model);
+    crate::onnx_inference::evict_model(&model_path);
+    for (name, _) in model.artifact_set() {
+        let artifact_path = model.artifact_path(&state.config.models_dir, name);
+        match tokio::fs::remove_file(&artifact_path).await {
+            Ok(()) => {}
+            Err(err) if err.kind() == ErrorKind::NotFound => {}
+            Err(err) => {
+                return Err(ApiError::internal(
+                    "invalid_model_cleanup_failed",
+                    format!(
+                        "failed to remove invalid artifact '{}' for '{}': {err}",
+                        artifact_path.display(),
+                        model.as_slug()
+                    ),
+                ));
+            }
+        }
+        remove_partial_model_downloads(&artifact_path, model).await?;
+    }
+    state.downloads.clear_model_history(model).await;
+    Ok(())
 }
 
 async fn get_download_progress(
@@ -812,6 +859,53 @@ mod tests {
             .unwrap();
 
         assert_eq!(response.status(), StatusCode::OK);
+    }
+
+    #[tokio::test]
+    async fn invalid_complete_onnx_bundle_is_removed_before_retry() {
+        let state = test_state();
+        let model = WhisperModel::ParakeetCtc06B;
+        let model_dir = state.config.models_dir.join(model.as_slug());
+        tokio::fs::create_dir_all(&model_dir).await.unwrap();
+        tokio::fs::write(
+            model_dir.join("model_int8.onnx"),
+            b"not a valid ONNX graph",
+        )
+        .await
+        .unwrap();
+        tokio::fs::write(model_dir.join("model_int8.onnx_data"), b"corrupt weights")
+            .await
+            .unwrap();
+        tokio::fs::write(model_dir.join("tokenizer.json"), b"{}")
+            .await
+            .unwrap();
+
+        let invalid = read_model_status(&state, model, true).await.unwrap();
+        assert!(invalid.downloaded);
+        assert!(!invalid.valid);
+        assert!(invalid.validation_error.is_some());
+
+        remove_invalid_onnx_bundle_before_download(&state, model)
+            .await
+            .unwrap();
+        let retry_artifacts = model
+            .artifact_set()
+            .into_iter()
+            .map(|(name, _)| {
+                let destination = model.artifact_path(&state.config.models_dir, name);
+                assert!(!destination.exists(), "invalid artifact was not removed");
+                DownloadArtifact::new(
+                    format!("http://127.0.0.1:0/{name}"),
+                    destination,
+                )
+            })
+            .collect();
+        let retry = state
+            .downloads
+            .start_or_get_active(model, retry_artifacts, state.http_client.clone())
+            .await
+            .unwrap();
+        assert_eq!(retry.status, crate::downloads::DownloadJobStatus::Pending);
     }
 
     #[tokio::test]
