@@ -160,6 +160,8 @@ const requestWithRetry = async ({
 const uploadAudio = async (
   apiKey: string,
   arrayBuffer: ArrayBuffer,
+  signal: AbortSignal,
+  deadline: number,
 ): Promise<string> => {
   const response = await requestWithRetry({
     apiKey,
@@ -168,6 +170,8 @@ const uploadAudio = async (
     headers: { "Content-Type": "application/octet-stream" },
     body: arrayBuffer,
     errorLabel: "AssemblyAI upload failed",
+    signal,
+    deadline,
   });
 
   const { upload_url: uploadUrl } =
@@ -183,7 +187,9 @@ const uploadAudio = async (
 const createTranscriptRequest = async (
   apiKey: string,
   uploadUrl: string,
-  language?: string,
+  language: string | undefined,
+  signal: AbortSignal,
+  deadline: number,
 ): Promise<string> => {
   const transcriptPayload: Record<string, unknown> = { audio_url: uploadUrl };
   if (!language || language === "auto") {
@@ -199,6 +205,8 @@ const createTranscriptRequest = async (
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(transcriptPayload),
     errorLabel: "AssemblyAI transcript request failed",
+    signal,
+    deadline,
   });
 
   const created = (await response.json()) as AssemblyAITranscriptResponse;
@@ -221,56 +229,40 @@ const validatePositiveDuration = (value: number, name: string): void => {
 const waitForTranscript = async (
   apiKey: string,
   transcriptId: string,
-  timeoutMs: number,
+  signal: AbortSignal,
+  deadline: number,
   pollIntervalMs: number,
 ): Promise<string> => {
-  validatePositiveDuration(timeoutMs, "timeout");
-  validatePositiveDuration(pollIntervalMs, "poll interval");
+  for (;;) {
+    if (Date.now() >= deadline) {
+      throw new Error("AssemblyAI transcription timed out");
+    }
 
-  // 60-second segments transcribe well within this window; the deadline only
-  // guards against a transcript stuck in "queued"/"processing" or a hung
-  // status request. Both values are tunable (see AssemblyAITranscriptionArgs)
-  // for callers whose segment duration differs.
-  const deadline = Date.now() + timeoutMs;
-  const controller = new AbortController();
-  const abortTimer = setTimeout(() => controller.abort(), timeoutMs);
+    const response = await requestWithRetry({
+      apiKey,
+      url: `${ASSEMBLYAI_API_URL}/transcript/${transcriptId}`,
+      method: "GET",
+      errorLabel: "AssemblyAI transcript status failed",
+      signal,
+      deadline,
+    });
+    const status = (await response.json()) as AssemblyAITranscriptResponse;
 
-  try {
-    for (;;) {
-      if (Date.now() >= deadline) {
-        throw new Error("AssemblyAI transcription timed out");
+    if (status.status === "completed") {
+      const text = status.text?.trim() ?? "";
+      if (!text) {
+        throw new Error("AssemblyAI transcription returned no text");
       }
+      return text;
+    }
 
-      const response = await requestWithRetry({
-        apiKey,
-        url: `${ASSEMBLYAI_API_URL}/transcript/${transcriptId}`,
-        method: "GET",
-        errorLabel: "AssemblyAI transcript status failed",
-        signal: controller.signal,
-        deadline,
-      });
-      const status = (await response.json()) as AssemblyAITranscriptResponse;
-
-      if (status.status === "completed") {
-        const text = status.text?.trim() ?? "";
-        if (!text) {
-          throw new Error("AssemblyAI transcription returned no text");
-        }
-        return text;
-      }
-
-      if (status.status === "error") {
-        throw new Error(
-          `AssemblyAI transcription failed: ${status.error ?? "Unknown error"}`,
-        );
-      }
-
-      await delayed(
-        Math.min(pollIntervalMs, Math.max(0, deadline - Date.now())),
+    if (status.status === "error") {
+      throw new Error(
+        `AssemblyAI transcription failed: ${status.error ?? "Unknown error"}`,
       );
     }
-  } finally {
-    clearTimeout(abortTimer);
+
+    await delayed(Math.min(pollIntervalMs, Math.max(0, deadline - Date.now())));
   }
 };
 
@@ -287,23 +279,47 @@ export const assemblyaiTranscribeAudio = async ({
   timeoutMs = 180_000,
   pollIntervalMs = 3000,
 }: AssemblyAITranscriptionArgs): Promise<AssemblyAITranscribeAudioOutput> => {
+  validatePositiveDuration(timeoutMs, "timeout");
+  validatePositiveDuration(pollIntervalMs, "poll interval");
+
   const arrayBuffer =
     blob instanceof ArrayBuffer ? blob : new Uint8Array(blob).buffer;
 
-  const uploadUrl = await uploadAudio(apiKey, arrayBuffer);
-  const transcriptId = await createTranscriptRequest(
-    apiKey,
-    uploadUrl,
-    language,
-  );
-  const text = await waitForTranscript(
-    apiKey,
-    transcriptId,
-    timeoutMs,
-    pollIntervalMs,
-  );
+  // One total time budget covers every phase — upload, transcript creation,
+  // and status polling — so a hung request at any hop is aborted instead of
+  // leaving the whole operation stuck. 60-second segments transcribe well
+  // within the default window; both values are tunable (see
+  // AssemblyAITranscriptionArgs) for callers whose segment duration differs.
+  const deadline = Date.now() + timeoutMs;
+  const controller = new AbortController();
+  const abortTimer = setTimeout(() => controller.abort(), timeoutMs);
 
-  return { text };
+  try {
+    const uploadUrl = await uploadAudio(
+      apiKey,
+      arrayBuffer,
+      controller.signal,
+      deadline,
+    );
+    const transcriptId = await createTranscriptRequest(
+      apiKey,
+      uploadUrl,
+      language,
+      controller.signal,
+      deadline,
+    );
+    const text = await waitForTranscript(
+      apiKey,
+      transcriptId,
+      controller.signal,
+      deadline,
+      pollIntervalMs,
+    );
+
+    return { text };
+  } finally {
+    clearTimeout(abortTimer);
+  }
 };
 
 export const convertFloat32ToPCM16 = (

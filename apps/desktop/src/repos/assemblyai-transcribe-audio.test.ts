@@ -258,7 +258,7 @@ describe("assemblyaiTranscribeAudio", () => {
         return Promise.resolve(jsonResponse({ id: "t1", status: "queued" }));
       }
       // The status request never settles on its own; it must be aborted when
-      // the poll deadline expires.
+      // the overall deadline expires.
       return new Promise((_resolve, reject) => {
         init?.signal?.addEventListener("abort", () => {
           reject(new DOMException("aborted", "AbortError"));
@@ -279,17 +279,58 @@ describe("assemblyaiTranscribeAudio", () => {
     expect(Date.now() - startedAt).toBeLessThan(5000);
   });
 
-  it("rejects invalid timeout and poll-interval options before polling", async () => {
-    vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
-      const url = String(input);
-      if (url.endsWith("/v2/upload")) {
-        return jsonResponse({ upload_url: UPLOAD_URL });
-      }
-      if (url.endsWith("/v2/transcript")) {
-        return jsonResponse({ id: "t1", status: "queued" });
-      }
-      return jsonResponse({ id: "t1", status: "completed", text: "ok" });
+  it("aborts an upload request that never settles and reports a timeout", async () => {
+    vi.spyOn(globalThis, "fetch").mockImplementation((_input, init) => {
+      // The upload never settles; it must be aborted by the shared deadline
+      // rather than hanging the whole operation.
+      return new Promise((_resolve, reject) => {
+        init?.signal?.addEventListener("abort", () => {
+          reject(new DOMException("aborted", "AbortError"));
+        });
+      });
     });
+
+    const startedAt = Date.now();
+    await expect(
+      assemblyaiTranscribeAudio({
+        apiKey: "aa-key",
+        blob: new ArrayBuffer(8),
+        timeoutMs: 150,
+        pollIntervalMs: 20,
+      }),
+    ).rejects.toThrow(/timed out/);
+    expect(Date.now() - startedAt).toBeLessThan(5000);
+  });
+
+  it("aborts a transcript-create request that never settles and reports a timeout", async () => {
+    vi.spyOn(globalThis, "fetch").mockImplementation((input, init) => {
+      if (String(input).endsWith("/v2/upload")) {
+        return Promise.resolve(jsonResponse({ upload_url: UPLOAD_URL }));
+      }
+      // The create never settles; it must be aborted by the shared deadline.
+      return new Promise((_resolve, reject) => {
+        init?.signal?.addEventListener("abort", () => {
+          reject(new DOMException("aborted", "AbortError"));
+        });
+      });
+    });
+
+    const startedAt = Date.now();
+    await expect(
+      assemblyaiTranscribeAudio({
+        apiKey: "aa-key",
+        blob: new ArrayBuffer(8),
+        timeoutMs: 150,
+        pollIntervalMs: 20,
+      }),
+    ).rejects.toThrow(/timed out/);
+    expect(Date.now() - startedAt).toBeLessThan(5000);
+  });
+
+  it("rejects invalid timeout and poll-interval options before any network call", async () => {
+    const fetchMock = vi
+      .spyOn(globalThis, "fetch")
+      .mockResolvedValue(jsonResponse({ upload_url: UPLOAD_URL }));
 
     const base = { apiKey: "aa-key", blob: new ArrayBuffer(8) };
 
@@ -302,5 +343,8 @@ describe("assemblyaiTranscribeAudio", () => {
     await expect(
       assemblyaiTranscribeAudio({ ...base, pollIntervalMs: -1 }),
     ).rejects.toThrow(/poll interval must be a positive finite number/);
+
+    // Validation happens before any request is issued.
+    expect(fetchMock).not.toHaveBeenCalled();
   });
 });
