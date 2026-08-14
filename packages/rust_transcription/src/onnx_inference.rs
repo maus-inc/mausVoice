@@ -8,7 +8,7 @@
 use std::collections::HashMap;
 use std::env;
 use std::path::{Path, PathBuf};
-use std::sync::{LazyLock, Mutex, OnceLock};
+use std::sync::{Arc, LazyLock, Mutex, OnceLock};
 
 use canary_rs::Canary;
 use ort::session::Session;
@@ -23,9 +23,11 @@ enum LoadedModel {
 }
 
 // Parakeet's inference API is mutable because ONNX Runtime sessions reuse
-// internal buffers. Serializing access also prevents two expensive model loads
-// for the same path from racing each other.
-static MODEL_CACHE: LazyLock<Mutex<HashMap<PathBuf, LoadedModel>>> =
+// internal buffers. The global lock is only held long enough to fetch or
+// insert a cached runtime; the per-model inner lock is what serializes
+// inference for a single model, so concurrent requests for *different* models
+// do not block each other on the global cache lock.
+static MODEL_CACHE: LazyLock<Mutex<HashMap<PathBuf, Arc<Mutex<LoadedModel>>>>> =
     LazyLock::new(|| Mutex::new(HashMap::new()));
 
 /// Run genuine model inference for one of the configured ONNX models.
@@ -45,18 +47,28 @@ pub fn transcribe(
     ensure_onnx_runtime()?;
     let model_dir = model_directory(model_path)?;
     let cache_key = model_dir.to_path_buf();
-    let mut cache = MODEL_CACHE
+
+    // Hold the global lock only long enough to fetch (or insert) the cached
+    // runtime, then release it so inference for other models can proceed.
+    let entry = {
+        let mut cache = MODEL_CACHE
+            .lock()
+            .map_err(|_| "ONNX model cache lock poisoned".to_string())?;
+
+        if let Some(existing) = cache.get(&cache_key) {
+            existing.clone()
+        } else {
+            let loaded = load_model(model, model_dir)?;
+            let entry = Arc::new(Mutex::new(loaded));
+            cache.insert(cache_key, entry.clone());
+            entry
+        }
+    };
+
+    let mut guard = entry
         .lock()
-        .map_err(|_| "ONNX model cache lock poisoned".to_string())?;
-
-    if !cache.contains_key(&cache_key) {
-        let loaded = load_model(model, model_dir)?;
-        cache.insert(cache_key.clone(), loaded);
-    }
-
-    let loaded = cache
-        .get_mut(&cache_key)
-        .ok_or_else(|| "ONNX model cache entry disappeared".to_string())?;
+        .map_err(|_| "ONNX model runtime lock poisoned".to_string())?;
+    let loaded = &mut *guard;
 
     match (model, loaded) {
         (WhisperModel::ParakeetCtc06B, LoadedModel::ParakeetCtc(runtime)) => runtime
