@@ -7,8 +7,12 @@ on:
     paths:
       - "apps/desktop/**"
       - "apps/windows-installer/**"
+      - "packages/**"
+      - "patches/**"
       - "package.json"
       - "pnpm-lock.yaml"
+      - "pnpm-workspace.yaml"
+      - "turbo.json"
       - ".github/workflows/build-desktop.yml"
   pull_request:
     branches:
