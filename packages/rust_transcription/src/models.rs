@@ -45,15 +45,6 @@ pub enum WhisperModel {
     Canary1B,
 }
 
-/// The family of ONNX model. Each family needs a different decoder even though
-/// all of them execute their graphs with ONNX Runtime.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum OnnxModelKind {
-    Ctc,
-    Tdt,
-    Canary,
-}
-
 impl WhisperModel {
     pub fn from_slug(value: &str) -> Option<Self> {
         match value.trim().to_ascii_lowercase().as_str() {
@@ -98,15 +89,6 @@ impl WhisperModel {
             self,
             Self::ParakeetCtc06B | Self::ParakeetTdt06B | Self::Canary1B
         )
-    }
-
-    pub fn onnx_kind(self) -> Option<OnnxModelKind> {
-        match self {
-            Self::ParakeetCtc06B => Some(OnnxModelKind::Ctc),
-            Self::ParakeetTdt06B => Some(OnnxModelKind::Tdt),
-            Self::Canary1B => Some(OnnxModelKind::Canary),
-            _ => None,
-        }
     }
 
     /// Filename of the progress-tracked primary artifact. ONNX artifacts are
@@ -297,7 +279,10 @@ mod tests {
         ] {
             let artifacts = model.artifact_set();
             assert_eq!(artifacts.first().map(|artifact| artifact.0), Some(model.filename()));
-            assert!(artifacts.iter().all(|(_, url)| url.starts_with("https://")));
+            assert!(artifacts.len() > 1);
+            assert!(artifacts[1..]
+                .iter()
+                .all(|(_, url)| url.starts_with("https://huggingface.co/")));
         }
     }
 }

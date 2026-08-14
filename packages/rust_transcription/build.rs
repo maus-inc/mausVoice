@@ -104,10 +104,17 @@ fn download_verified(asset: &RuntimeAsset, archive_path: &Path) {
         std::process::id()
     ));
 
+    let agent = ureq::Agent::new_with_config(
+        ureq::Agent::config_builder()
+            .timeout_connect(Some(Duration::from_secs(30)))
+            .timeout_recv_body(Some(Duration::from_secs(300)))
+            .build(),
+    );
     let mut last_error = String::new();
     for attempt in 1..=3 {
         let result = (|| -> Result<(), String> {
-            let mut response = ureq::get(&url)
+            let mut response = agent
+                .get(&url)
                 .call()
                 .map_err(|error| format!("request failed: {error}"))?;
             let mut reader = response
@@ -178,11 +185,12 @@ fn extract_runtime(
     destination: &Path,
 ) {
     let temporary_path = destination.with_extension(format!(
-        "{}.part",
+        "{}.{}.part",
         destination
             .extension()
             .and_then(|extension| extension.to_str())
-            .unwrap_or("library")
+            .unwrap_or("library"),
+        std::process::id()
     ));
     let result = match archive_kind {
         ArchiveKind::TarGz => extract_from_tar_gz(archive_path, target, &temporary_path),
@@ -339,13 +347,19 @@ fn cargo_target_directory() -> PathBuf {
 }
 
 fn copy_if_changed(source: &Path, destination: &Path) {
-    if destination.is_file()
-        && fs::metadata(source).and_then(|metadata| metadata.modified()).ok()
-            == fs::metadata(destination)
-                .and_then(|metadata| metadata.modified())
-                .ok()
+    if let (Ok(source_metadata), Ok(destination_metadata)) =
+        (fs::metadata(source), fs::metadata(destination))
     {
-        return;
+        if destination_metadata.is_file()
+            && source_metadata.len() == destination_metadata.len()
+            && matches!(
+                (source_metadata.modified(), destination_metadata.modified()),
+                (Ok(source_modified), Ok(destination_modified))
+                    if destination_modified >= source_modified
+            )
+        {
+            return;
+        }
     }
     if let Some(parent) = destination.parent() {
         fs::create_dir_all(parent).unwrap_or_else(|error| {

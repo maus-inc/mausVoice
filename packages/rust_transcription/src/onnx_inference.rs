@@ -11,7 +11,6 @@ use std::path::{Path, PathBuf};
 use std::sync::{Arc, LazyLock, Mutex, OnceLock};
 
 use canary_rs::Canary;
-use ort::session::Session;
 use parakeet_rs::{Parakeet, ParakeetTDT, Transcriber};
 
 use crate::models::WhisperModel;
@@ -96,10 +95,10 @@ pub fn transcribe(
     }
 }
 
-/// Validate every graph through ONNX Runtime, then construct the model-specific
-/// runtime. The second step also validates non-graph artifacts (tokenizer or
-/// vocabulary) and confirms that the graph set belongs to the selected model
-/// family.
+/// Validate the complete artifact set by constructing the model-specific
+/// runtime. The upstream architecture loader opens every graph through ONNX
+/// Runtime, validates tokenizer/vocabulary data, and enforces the exact model
+/// family contract.
 pub fn validate_model(model: WhisperModel, model_path: &Path) -> Result<bool, String> {
     if !model.is_onnx() {
         return Err(format!("model '{}' is not an ONNX model", model.as_slug()));
@@ -108,24 +107,26 @@ pub fn validate_model(model: WhisperModel, model_path: &Path) -> Result<bool, St
     ensure_onnx_runtime()?;
     let model_dir = model_directory(model_path)?;
     for (name, _) in model.artifact_set() {
-        if !name.ends_with(".onnx") {
-            continue;
+        let artifact_path = model_dir.join(name);
+        let metadata = std::fs::metadata(&artifact_path).map_err(|err| {
+            format!(
+                "required artifact '{}' is unavailable: {err}",
+                artifact_path.display()
+            )
+        })?;
+        if !metadata.is_file() || metadata.len() == 0 {
+            return Err(format!(
+                "required artifact '{}' is empty or not a file",
+                artifact_path.display()
+            ));
         }
-        let graph_path = model_dir.join(name);
-        Session::builder()
-            .map_err(|err| format!("failed to create ONNX Runtime session builder: {err}"))?
-            .commit_from_file(&graph_path)
-            .map_err(|err| {
-                format!(
-                    "ONNX Runtime rejected graph '{}': {err}",
-                    graph_path.display()
-                )
-            })?;
     }
 
-    // Loading the architecture runtime validates the tokenizer/vocabulary and
-    // all required graph names, inputs, and outputs. Do not cache validation
-    // loads: a failed or partial download must never poison the inference cache.
+    // The architecture loader is the single source of runtime validation: it
+    // opens every graph with its exact model-specific contract and validates
+    // the tokenizer/vocabulary without constructing every session twice.
+    // Validation loads are not cached, so a failed replacement cannot poison
+    // later inference.
     load_model(model, model_dir).map(|_| true)
 }
 
@@ -140,36 +141,46 @@ pub fn evict_model(model_path: &Path) {
 }
 
 fn ensure_onnx_runtime() -> Result<(), String> {
-    static RUNTIME: OnceLock<Result<(), String>> = OnceLock::new();
-    RUNTIME
-        .get_or_init(|| {
-            let candidates = runtime_library_candidates()?;
-            let library_path = candidates
-                .iter()
-                .find(|path| path.is_file())
-                .ok_or_else(|| {
-                    let searched = candidates
-                        .iter()
-                        .map(|path| path.display().to_string())
-                        .collect::<Vec<_>>()
-                        .join(", ");
-                    format!(
-                        "ONNX Runtime dynamic library '{}' was not found; searched: {searched}",
-                        runtime_library_name()
-                    )
-                })?;
+    static RUNTIME: OnceLock<()> = OnceLock::new();
+    static INIT_LOCK: Mutex<()> = Mutex::new(());
 
-            ort::init_from(library_path)
-                .map_err(|err| {
-                    format!(
-                        "failed to load ONNX Runtime from '{}': {err}",
-                        library_path.display()
-                    )
-                })?
-                .commit();
-            Ok(())
-        })
-        .clone()
+    if RUNTIME.get().is_some() {
+        return Ok(());
+    }
+
+    let _initialization = INIT_LOCK
+        .lock()
+        .map_err(|_| "ONNX Runtime initialization lock poisoned".to_string())?;
+    if RUNTIME.get().is_some() {
+        return Ok(());
+    }
+
+    let candidates = runtime_library_candidates()?;
+    let library_path = candidates
+        .iter()
+        .find(|path| path.is_file())
+        .ok_or_else(|| {
+            let searched = candidates
+                .iter()
+                .map(|path| path.display().to_string())
+                .collect::<Vec<_>>()
+                .join(", ");
+            format!(
+                "ONNX Runtime dynamic library '{}' was not found; searched: {searched}",
+                runtime_library_name()
+            )
+        })?;
+
+    ort::init_from(library_path)
+        .map_err(|err| {
+            format!(
+                "failed to load ONNX Runtime from '{}': {err}",
+                library_path.display()
+            )
+        })?
+        .commit();
+    let _ = RUNTIME.set(());
+    Ok(())
 }
 
 fn runtime_library_candidates() -> Result<Vec<PathBuf>, String> {

@@ -526,22 +526,10 @@ impl DownloadRegistry {
             _ => 0,
         };
 
-        let mut request = client.get(&artifact.url);
-        if existing_bytes > 0 {
-            request = request.header(reqwest::header::RANGE, format!("bytes={existing_bytes}-"));
-        }
+        let (response, resume_is_valid) =
+            request_artifact_response(client, &artifact.url, existing_bytes).await?;
 
-        let response = request
-            .send()
-            .await
-            .map_err(|err| format!("request failed: {err}"))?;
-        let status = response.status();
-        if !status.is_success() {
-            return Err(format!("request failed with status {status}"));
-        }
-
-        let is_partial = status == reqwest::StatusCode::PARTIAL_CONTENT;
-        let (mut downloaded, artifact_total, mut file) = if is_partial && existing_bytes > 0 {
+        let (mut downloaded, artifact_total, mut file) = if resume_is_valid {
             let total = response.content_length().map(|len| existing_bytes + len);
             let file = tokio::fs::OpenOptions::new()
                 .create(true)
@@ -725,7 +713,11 @@ impl DownloadRegistry {
         if let Some(job) = store.jobs.get_mut(&job_id) {
             if job.generation == generation && matches!(job.status, DownloadJobStatus::Pending | DownloadJobStatus::Running) {
                 job.bytes_downloaded = downloaded;
-                job.total_bytes = total_bytes;
+                job.total_bytes = match (job.total_bytes, total_bytes) {
+                    (Some(existing), Some(incoming)) => Some(existing.max(incoming)),
+                    (Some(existing), None) => Some(existing),
+                    (None, incoming) => incoming,
+                };
             }
         }
     }
@@ -743,7 +735,11 @@ impl DownloadRegistry {
             if job.generation == generation {
                 job.status = DownloadJobStatus::Completed;
                 job.bytes_downloaded = downloaded;
-                job.total_bytes = total_bytes.or(Some(downloaded));
+                let completed_total = total_bytes.unwrap_or(downloaded).max(downloaded);
+                job.total_bytes = Some(
+                    job.total_bytes
+                        .map_or(completed_total, |existing| existing.max(completed_total)),
+                );
                 job.error = None;
                 job.is_finalizing = false;
                 job.control_tx = None;
@@ -776,6 +772,55 @@ impl DownloadStore {
     fn snapshot(&self, job_id: Uuid) -> Option<DownloadJobSnapshot> {
         self.jobs.get(&job_id).map(|job| job.to_snapshot(job_id))
     }
+}
+
+async fn request_artifact_response(
+    client: &reqwest::Client,
+    url: &str,
+    existing_bytes: u64,
+) -> Result<(reqwest::Response, bool), String> {
+    if existing_bytes > 0 {
+        let ranged = client
+            .get(url)
+            .header(reqwest::header::RANGE, format!("bytes={existing_bytes}-"))
+            .send()
+            .await
+            .map_err(|err| format!("request failed: {err}"))?;
+
+        if ranged.status() == reqwest::StatusCode::PARTIAL_CONTENT {
+            if content_range_start(&ranged) == Some(existing_bytes) {
+                return Ok((ranged, true));
+            }
+            // A 206 response is append-safe only when the server confirms the
+            // exact requested offset. Drop it and restart from byte zero.
+        } else if ranged.status().is_success() {
+            // The server ignored Range and returned the complete body. The
+            // caller opens the temporary file in truncate mode.
+            return Ok((ranged, false));
+        } else if ranged.status() != reqwest::StatusCode::RANGE_NOT_SATISFIABLE {
+            return Err(format!("request failed with status {}", ranged.status()));
+        }
+    }
+
+    let response = client
+        .get(url)
+        .send()
+        .await
+        .map_err(|err| format!("request failed: {err}"))?;
+    if !response.status().is_success() {
+        return Err(format!("request failed with status {}", response.status()));
+    }
+    Ok((response, false))
+}
+
+fn content_range_start(response: &reqwest::Response) -> Option<u64> {
+    let value = response
+        .headers()
+        .get(reqwest::header::CONTENT_RANGE)?
+        .to_str()
+        .ok()?
+        .strip_prefix("bytes ")?;
+    value.split_once('-')?.0.parse().ok()
 }
 
 async fn existing_model_file_size(path: &PathBuf) -> Option<u64> {
@@ -1059,6 +1104,78 @@ mod tests {
         assert!(completed, "bundle did not complete after auxiliary finalized");
         assert_eq!(tokio::fs::read(&auxiliary).await.unwrap(), b"aux");
         server.await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn mismatched_content_range_restarts_without_append() {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+            .await
+            .unwrap();
+        let address = listener.local_addr().unwrap();
+        let server = tokio::spawn(async move {
+            for response in [
+                b"HTTP/1.1 206 Partial Content\r\nContent-Length: 3\r\nContent-Range: bytes 0-2/6\r\nConnection: close\r\n\r\nbad".as_slice(),
+                b"HTTP/1.1 200 OK\r\nContent-Length: 6\r\nConnection: close\r\n\r\nabcdef".as_slice(),
+            ] {
+                let (mut socket, _) = listener.accept().await.unwrap();
+                let mut request = [0_u8; 1024];
+                let size = socket.read(&mut request).await.unwrap();
+                let request = String::from_utf8_lossy(&request[..size]);
+                let request = request.to_ascii_lowercase();
+                if response.starts_with(b"HTTP/1.1 206") {
+                    assert!(request.contains("range: bytes=3-"));
+                } else {
+                    assert!(!request.contains("range:"));
+                }
+                socket.write_all(response).await.unwrap();
+            }
+        });
+
+        let (response, append) = request_artifact_response(
+            &reqwest::Client::new(),
+            &format!("http://{address}/artifact"),
+            3,
+        )
+        .await
+        .unwrap();
+        assert!(!append);
+        assert_eq!(response.bytes().await.unwrap().as_ref(), b"abcdef");
+        server.await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn progress_total_never_decreases_between_artifacts() {
+        let registry = DownloadRegistry::default();
+        let job_id = Uuid::new_v4();
+        {
+            let mut store = registry.inner.lock().await;
+            store.jobs.insert(
+                job_id,
+                DownloadJobRecord {
+                    model: WhisperModel::Tiny,
+                    status: DownloadJobStatus::Running,
+                    bytes_downloaded: 100,
+                    total_bytes: Some(1_000),
+                    error: None,
+                    generation: 1,
+                    is_finalizing: false,
+                    artifact_paths: Vec::new(),
+                    control_tx: None,
+                    worker_finished_rx: None,
+                },
+            );
+        }
+
+        registry.set_progress(job_id, 1, 200, Some(200)).await;
+        let snapshot = registry.get_job(WhisperModel::Tiny, job_id).await.unwrap();
+        assert_eq!(snapshot.bytes_downloaded, 200);
+        assert_eq!(snapshot.total_bytes, Some(1_000));
+
+        registry
+            .mark_completed(job_id, 1, WhisperModel::Tiny, 900, Some(900))
+            .await;
+        let snapshot = registry.get_job(WhisperModel::Tiny, job_id).await.unwrap();
+        assert_eq!(snapshot.total_bytes, Some(1_000));
     }
 
     #[tokio::test]

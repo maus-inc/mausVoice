@@ -216,33 +216,58 @@ async fn get_download_progress(
     Ok(Json(snapshot))
 }
 
+#[derive(Clone, Copy)]
+enum ResolvedDownloadTarget {
+    Active,
+    Job(Uuid),
+}
+
+async fn dispatch_download_action(
+    state: &AppState,
+    model: WhisperModel,
+    target: ResolvedDownloadTarget,
+    action: &str,
+) -> Result<Json<crate::downloads::DownloadJobSnapshot>, ApiError> {
+    let snapshot = match (action.trim(), target) {
+        ("pause", ResolvedDownloadTarget::Active) => state.downloads.pause_active(model).await,
+        ("pause", ResolvedDownloadTarget::Job(job_id)) => {
+            state.downloads.pause_job(model, job_id).await
+        }
+        ("cancel", ResolvedDownloadTarget::Active) => state.downloads.cancel_active(model).await,
+        ("cancel", ResolvedDownloadTarget::Job(job_id)) => {
+            state.downloads.cancel_job(model, job_id).await
+        }
+        _ => {
+            return Err(ApiError::bad_request(
+                "invalid_action",
+                format!("unsupported download action '{action}'"),
+            ));
+        }
+    };
+
+    let not_found = match target {
+        ResolvedDownloadTarget::Active => {
+            format!("no active download found to {}", action.trim())
+        }
+        ResolvedDownloadTarget::Job(_) => "download job was not found".to_string(),
+    };
+    snapshot
+        .map(Json)
+        .ok_or_else(|| ApiError::not_found("download_not_found", not_found))
+}
+
 async fn handle_download_action(
     State(state): State<AppState>,
     Path(path): Path<DownloadTargetPath>,
 ) -> Result<Json<crate::downloads::DownloadJobSnapshot>, ApiError> {
     let model = parse_model(&path.model)?;
-    match path.target.trim() {
-        "pause" => {
-            let snapshot = state
-                .downloads
-                .pause_active(model)
-                .await
-                .ok_or_else(|| ApiError::not_found("download_not_found", "no active download found to pause"))?;
-            Ok(Json(snapshot))
-        }
-        "cancel" => {
-            let snapshot = state
-                .downloads
-                .cancel_active(model)
-                .await
-                .ok_or_else(|| ApiError::not_found("download_not_found", "no active download found to cancel"))?;
-            Ok(Json(snapshot))
-        }
-        _ => Err(ApiError::bad_request(
-            "invalid_action",
-            format!("unsupported download action '{}'", path.target),
-        )),
-    }
+    dispatch_download_action(
+        &state,
+        model,
+        ResolvedDownloadTarget::Active,
+        &path.target,
+    )
+    .await
 }
 
 async fn handle_job_action(
@@ -252,29 +277,13 @@ async fn handle_job_action(
     let model = parse_model(&path.model)?;
     let job_id = Uuid::parse_str(path.job_id.trim())
         .map_err(|_| ApiError::bad_request("invalid_job_id", "jobId must be a valid UUID"))?;
-
-    match path.action.trim() {
-        "pause" => {
-            let snapshot = state
-                .downloads
-                .pause_job(model, job_id)
-                .await
-                .ok_or_else(|| ApiError::not_found("download_not_found", "download job was not found"))?;
-            Ok(Json(snapshot))
-        }
-        "cancel" => {
-            let snapshot = state
-                .downloads
-                .cancel_job(model, job_id)
-                .await
-                .ok_or_else(|| ApiError::not_found("download_not_found", "download job was not found"))?;
-            Ok(Json(snapshot))
-        }
-        _ => Err(ApiError::bad_request(
-            "invalid_action",
-            format!("unsupported download action '{}'", path.action),
-        )),
-    }
+    dispatch_download_action(
+        &state,
+        model,
+        ResolvedDownloadTarget::Job(job_id),
+        &path.action,
+    )
+    .await
 }
 
 async fn get_model_status(
@@ -626,7 +635,22 @@ async fn read_model_status(
     let model_path = state.model_path(model);
     let metadata = tokio::fs::metadata(&model_path).await.ok();
 
-    let file_bytes = metadata.as_ref().map(|meta| meta.len());
+    let file_bytes = if model.is_onnx() {
+        let mut total = 0_u64;
+        let mut found = false;
+        for (name, _) in model.artifact_set() {
+            let artifact_path = model.artifact_path(&state.config.models_dir, name);
+            if let Ok(meta) = tokio::fs::metadata(artifact_path).await {
+                if meta.is_file() {
+                    total = total.saturating_add(meta.len());
+                    found = true;
+                }
+            }
+        }
+        found.then_some(total)
+    } else {
+        metadata.as_ref().map(|meta| meta.len())
+    };
 
     let downloaded = if model.is_onnx() {
         // An ONNX model is only "downloaded" once the complete, model-specific
@@ -881,6 +905,14 @@ mod tests {
             .unwrap();
 
         let invalid = read_model_status(&state, model, true).await.unwrap();
+        assert_eq!(
+            invalid.file_bytes,
+            Some(
+                b"not a valid ONNX graph".len() as u64
+                    + b"corrupt weights".len() as u64
+                    + b"{}".len() as u64
+            )
+        );
         assert!(invalid.downloaded);
         assert!(!invalid.valid);
         assert!(invalid.validation_error.is_some());

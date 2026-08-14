@@ -95,10 +95,7 @@ function buildAndCopy(binaryName, gpuEnabled, options = {}) {
     return null;
   }
 
-  const sourceBinaryPath = join(
-    rustTargetDir,
-    ...(buildTarget ? [buildTarget] : []),
-    buildProfile,
+  const sourceBinaryPath = buildArtifactPath(
     `${binaryName}${executableSuffix}`,
   );
   const destinationBinaryPath = join(
@@ -122,14 +119,18 @@ function buildAndCopy(binaryName, gpuEnabled, options = {}) {
   return destinationBinaryPath;
 }
 
-function prepareOnnxRuntimeLibrary() {
-  const libraryName = onnxRuntimeLibraryName(targetTriple);
-  const sourcePath = join(
+function buildArtifactPath(fileName) {
+  return join(
     rustTargetDir,
     ...(buildTarget ? [buildTarget] : []),
     buildProfile,
-    libraryName,
+    fileName,
   );
+}
+
+function prepareOnnxRuntimeLibrary() {
+  const libraryName = onnxRuntimeLibraryName(targetTriple);
+  const sourcePath = buildArtifactPath(libraryName);
   if (!existsSync(sourcePath)) {
     fail(
       `Expected ONNX Runtime library was not provisioned by the sidecar build: ${sourcePath}`,

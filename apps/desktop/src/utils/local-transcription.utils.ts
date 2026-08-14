@@ -1,3 +1,4 @@
+import { defineMessage, type MessageDescriptor } from "react-intl";
 import { CPU_DEVICE_VALUE } from "../types/ai.types";
 
 export type LocalWhisperModel =
@@ -16,8 +17,8 @@ export type LocalModelCategory = "fast" | "whisper";
 
 export type LocalModelOption = {
   value: LocalWhisperModel;
-  label: string;
-  helper: string;
+  label: MessageDescriptor;
+  helper: MessageDescriptor;
   category: LocalModelCategory;
 };
 
@@ -37,60 +38,82 @@ export const LOCAL_WHISPER_MODELS: LocalWhisperModel[] = [
 ];
 
 type ModelMeta = {
-  label: string;
-  helper: string;
+  label: MessageDescriptor;
+  helper: MessageDescriptor;
   category: LocalModelCategory;
 };
 
 const MODEL_LOOKUP: Record<LocalWhisperModel, ModelMeta> = {
   "parakeet-ctc-0.6b": {
-    label: "NVIDIA Parakeet CTC 0.6B (120 MB)",
-    helper: "Ultra-fast English dictation, zero hallucination loops",
+    label: defineMessage({
+      defaultMessage: "NVIDIA Parakeet CTC 0.6B (613 MB)",
+    }),
+    helper: defineMessage({
+      defaultMessage: "Ultra-fast English dictation, zero hallucination loops",
+    }),
     category: "fast",
   },
   "parakeet-tdt-0.6b": {
-    label: "NVIDIA Parakeet TDT 0.6B (240 MB)",
-    helper: "State-of-the-art English dictation speed & accuracy",
+    label: defineMessage({
+      defaultMessage: "NVIDIA Parakeet TDT 0.6B (670 MB)",
+    }),
+    helper: defineMessage({
+      defaultMessage: "State-of-the-art English dictation speed & accuracy",
+    }),
     category: "fast",
   },
   "canary-1b": {
-    label: "NVIDIA Canary 1B (1.2 GB)",
-    helper: "Multilingual STT + automatic punctuation & casing",
+    label: defineMessage({ defaultMessage: "NVIDIA Canary 1B (1.03 GB)" }),
+    helper: defineMessage({
+      defaultMessage: "Multilingual STT + automatic punctuation & casing",
+    }),
     category: "fast",
   },
   tiny: {
-    label: "Whisper Tiny (77 MB)",
-    helper: "Fastest, lowest accuracy",
+    label: defineMessage({ defaultMessage: "Whisper Tiny (77 MB)" }),
+    helper: defineMessage({ defaultMessage: "Fastest, lowest accuracy" }),
     category: "whisper",
   },
   base: {
-    label: "Whisper Base (148 MB)",
-    helper: "Great balance of speed and accuracy",
+    label: defineMessage({ defaultMessage: "Whisper Base (148 MB)" }),
+    helper: defineMessage({
+      defaultMessage: "Great balance of speed and accuracy",
+    }),
     category: "whisper",
   },
   small: {
-    label: "Whisper Small (488 MB)",
-    helper: "Recommended with GPU acceleration",
+    label: defineMessage({ defaultMessage: "Whisper Small (488 MB)" }),
+    helper: defineMessage({
+      defaultMessage: "Recommended with GPU acceleration",
+    }),
     category: "whisper",
   },
   medium: {
-    label: "Whisper Medium (1.53 GB)",
-    helper: "Balanced quality and speed",
+    label: defineMessage({ defaultMessage: "Whisper Medium (1.53 GB)" }),
+    helper: defineMessage({ defaultMessage: "Balanced quality and speed" }),
     category: "whisper",
   },
   turbo: {
-    label: "Whisper Large v3 Turbo (1.6 GB)",
-    helper: "Fast large model, great accuracy",
+    label: defineMessage({
+      defaultMessage: "Whisper Large v3 Turbo (1.6 GB)",
+    }),
+    helper: defineMessage({
+      defaultMessage: "Fast large model, great accuracy",
+    }),
     category: "whisper",
   },
   large: {
-    label: "Whisper Large v3 (3.1 GB)",
-    helper: "Highest accuracy, requires GPU",
+    label: defineMessage({ defaultMessage: "Whisper Large v3 (3.1 GB)" }),
+    helper: defineMessage({ defaultMessage: "Highest accuracy, requires GPU" }),
     category: "whisper",
   },
   hindi2hinglish: {
-    label: "Whisper Hindi2Hinglish Apex (595 MB)",
-    helper: "Hindi speech transcribed as Hinglish (Latin script)",
+    label: defineMessage({
+      defaultMessage: "Whisper Hindi2Hinglish Apex (595 MB)",
+    }),
+    helper: defineMessage({
+      defaultMessage: "Hindi speech transcribed as Hinglish (Latin script)",
+    }),
     category: "whisper",
   },
 };
