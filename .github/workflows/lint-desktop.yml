@@ -1,5 +1,12 @@
 name: Lint Desktop
 on:
+  push:
+    branches:
+      - main
+    paths:
+      - "apps/desktop/**"
+      - "packages/**"
+      - ".github/workflows/lint-desktop.yml"
   pull_request:
     branches:
       - main
