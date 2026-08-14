@@ -267,34 +267,72 @@ For safe command execution, you must:
 
 *Example Implementation:*
 ```rust
-use std::process::{Command, Stdio, Child};
-use std::time::Duration;
+// Note: `std::process::Child` has no built-in timed wait. This uses the
+// `wait-timeout` crate (`cargo add wait-timeout`), whose `ChildExt` trait
+// provides `wait_timeout()`.
 use std::io::Read;
+use std::process::{Command, Stdio};
+use std::thread;
+use std::time::Duration;
+use wait_timeout::ChildExt;
 
 pub fn execute_with_timeout(mut command: Command, timeout: Duration, max_bytes: usize) -> Result<Vec<u8>, String> {
     command.stdout(Stdio::piped());
     command.stderr(Stdio::piped());
-    
+
     let mut child = command.spawn().map_err(|e| e.to_string())?;
-    
-    // Spawn threads or read with an explicit limit to avoid OOM
-    // Ensure that if the timeout expires, we kill the child process:
+
+    // Drain stdout AND stderr on background threads *while* waiting.
+    // If the pipes are not drained concurrently, a chatty child fills the
+    // OS pipe buffer, blocks on write, and never exits — the exact
+    // pipe-buffer deadlock this section warns about.
+    let mut stdout_pipe = child.stdout.take().ok_or("missing stdout pipe")?;
+    let mut stderr_pipe = child.stderr.take().ok_or("missing stderr pipe")?;
+
+    let stdout_reader = thread::spawn(move || {
+        let mut buf = Vec::new();
+        let mut chunk = [0u8; 8192];
+        loop {
+            match stdout_pipe.read(&mut chunk) {
+                Ok(0) | Err(_) => break,
+                Ok(n) => {
+                    // Keep at most max_bytes, but keep *draining* past the
+                    // cap so the pipe never backs up.
+                    if buf.len() < max_bytes {
+                        let keep = (max_bytes - buf.len()).min(n);
+                        buf.extend_from_slice(&chunk[..keep]);
+                    }
+                }
+            }
+        }
+        buf
+    });
+    let stderr_reader = thread::spawn(move || {
+        // Drain and discard (or cap-and-keep, same as stdout) so stderr
+        // output can never wedge the child either.
+        let mut sink = [0u8; 8192];
+        while matches!(stderr_pipe.read(&mut sink), Ok(n) if n > 0) {}
+    });
+
     match child.wait_timeout(timeout) {
-        Ok(Some(status)) => {
-            // Read output within max_bytes limit
-            let mut out = Vec::new();
-            child.stdout.take().unwrap().take(max_bytes as u64).read_to_end(&mut out).ok();
+        Ok(Some(_status)) => {
+            let out = stdout_reader.join().map_err(|_| "stdout reader panicked")?;
+            let _ = stderr_reader.join();
             Ok(out)
         }
         Ok(None) => {
             // Timeout expired
             child.kill().ok();
             child.wait().ok(); // Reap to prevent zombies
+            let _ = stdout_reader.join(); // Readers see EOF once the child dies
+            let _ = stderr_reader.join();
             Err("Execution timed out".to_string())
         }
         Err(e) => {
             child.kill().ok();
             child.wait().ok();
+            let _ = stdout_reader.join();
+            let _ = stderr_reader.join();
             Err(e.to_string())
         }
     }
@@ -317,6 +355,7 @@ Desktop security requires strict validation of files deleted during local data p
 
 #### The Hardened Architectural Pattern
 *   **Always Canonicalize Both Ends:** Resolve the parent directory of the file and the target storage folder into absolute, canonical physical paths (`std::fs::canonicalize`) before comparing them.
+*   **Reject Symlinks at the Final Component Too:** Canonicalizing the parent is not enough — if the *file itself* is a symlink placed inside `audio_dir`, following it still resolves outside the directory. Check `std::fs::symlink_metadata` on the final path and refuse symlinks outright (or canonicalize the full path and re-verify its parent).
 *   **Validate the Canonical Path, Delete the Canonical Path:** Never delete the raw string input; always operate on the normalized, canonicalized path returned by your validator helper.
 
 *Example Implementation:*
@@ -336,6 +375,7 @@ pub fn resolve_managed_audio_path(path: &Path, audio_dir: &Path) -> Option<PathB
     let parent_dir = candidate.parent()?;
 
     // Canonicalize parent and audio_dir to resolve traversals/symlinks
+    // in the *directory* portion of the path
     let real_parent = fs::canonicalize(parent_dir).ok()?;
     let real_audio_dir = fs::canonicalize(audio_dir).ok()?;
 
@@ -343,7 +383,17 @@ pub fn resolve_managed_audio_path(path: &Path, audio_dir: &Path) -> Option<PathB
         return None; // Escape or mismatch detected!
     }
 
-    Some(real_parent.join(file_name))
+    let resolved = real_parent.join(file_name);
+
+    // The final component can still be a symlink *inside* audio_dir that
+    // points outside it (e.g. clip.wav -> /etc/passwd). symlink_metadata
+    // does NOT follow links, so we can detect and reject that case.
+    let meta = fs::symlink_metadata(&resolved).ok()?;
+    if meta.file_type().is_symlink() {
+        return None; // Symlink file inside the managed dir — refuse it
+    }
+
+    Some(resolved)
 }
 ```
 
@@ -370,6 +420,7 @@ Downloading installers or model sidecars is a critical attack vector for desktop
 use reqwest::redirect::Policy;
 use std::fs::{self, File};
 use std::io::Write;
+use std::path::Path;
 
 pub async fn download_installer(url_str: &str, dest_path: &Path, max_bytes: u64) -> Result<(), String> {
     let redirect_policy = Policy::custom(move |attempt| {
@@ -391,11 +442,15 @@ pub async fn download_installer(url_str: &str, dest_path: &Path, max_bytes: u64)
 
     let mut response = client.get(url_str).send().await.map_err(|e| e.to_string())?;
     
-    // Check advertised size
-    if let Some(len) = response.content_length() {
-        if len > max_bytes {
+    // Check advertised size BEFORE downloading: reject when Content-Length
+    // is missing entirely, and when it exceeds the cap. (The per-chunk byte
+    // counter below still enforces the cap in case the server lies.)
+    match response.content_length() {
+        None => return Err("Server did not advertise Content-Length".to_string()),
+        Some(len) if len > max_bytes => {
             return Err("Payload exceeds maximum size limit".to_string());
         }
+        Some(_) => {}
     }
 
     let mut file = File::create(dest_path).map_err(|e| e.to_string())?;
