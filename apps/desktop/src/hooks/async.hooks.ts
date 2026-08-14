@@ -21,7 +21,7 @@ export type AsyncDataSink<T> = {
  * the real control flow can be unit-tested without mounting React.
  */
 export class AsyncDataController<T> {
-  generation = 0;
+  private generation = 0;
   private timeout: ReturnType<typeof setTimeout> | null = null;
 
   constructor(
