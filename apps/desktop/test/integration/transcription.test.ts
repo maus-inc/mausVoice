@@ -194,7 +194,9 @@ describe("Groq Transcription Integration", () => {
     );
     console.log(`Similarity: ${(similarity * 100).toFixed(2)}%`);
 
-    // Require at least 99% similarity (allows for minor ASR variations)
+    // Require at least 99% similarity (allows for minor ASR variations).
+    // Do not lower this threshold — retry the network instead of masking
+    // quality regressions.
     expect(similarity).toBeGreaterThanOrEqual(0.995);
-  }, 60000); // 60 second timeout for API calls
+  }, { timeout: 120_000, retry: 2 });
 });

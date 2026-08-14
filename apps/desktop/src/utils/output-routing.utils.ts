@@ -94,13 +94,10 @@ export const insertLocalTranscriptOutputViaTyping = async (
 ): Promise<void> => {
   const sanitized = sanitizeIndentation(text);
 
-  // Capture the session id returned by simulate_type so the blur/Escape
-  // cancel signal can target exactly this session and won't clobber a
-  // later typing session the user may have started.
-  let activeTypingId: number | null = null;
-
+  // ReentryGuard serializes simulate_type, so cancel_typing always
+  // targets the one live session — no session id is needed.
   const handleCancel = () => {
-    void invoke("cancel_typing", { typingId: activeTypingId });
+    void invoke("cancel_typing");
   };
 
   window.addEventListener("blur", handleCancel, { once: true });
@@ -112,11 +109,10 @@ export const insertLocalTranscriptOutputViaTyping = async (
   window.addEventListener("keydown", keydownHandler);
 
   try {
-    const result = (await invoke<{ typingId: number }>("simulate_type", {
+    await invoke("simulate_type", {
       text: sanitized,
       delayMs,
-    })) as { typingId: number };
-    activeTypingId = result?.typingId ?? null;
+    });
   } finally {
     window.removeEventListener("blur", handleCancel);
     window.removeEventListener("keydown", keydownHandler);
