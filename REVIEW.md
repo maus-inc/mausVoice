@@ -207,7 +207,7 @@ Audit reviews must explicitly trace and check every single one of the following 
 
 ### 2.5 Required Report Structure
 
-Audit results must conform strictly to the following five-section report hierarchy:
+Audit results must conform strictly to the following seven-section report hierarchy:
 
 ```markdown
 ## Verdict
@@ -368,7 +368,7 @@ Downloading installers or model sidecars is a critical attack vector for desktop
 *Example Implementation:*
 ```rust
 use reqwest::redirect::Policy;
-use std::fs::File;
+use std::fs::{self, File};
 use std::io::Write;
 
 pub async fn download_installer(url_str: &str, dest_path: &Path, max_bytes: u64) -> Result<(), String> {
@@ -457,7 +457,7 @@ async fn test_all_user_tables_are_cleared() {
         .unwrap()
         .into_iter()
         .map(|t| t.0)
-        .filter(|name| name != "sqlite_sequence" && name != "migrations")
+        .filter(|name| !name.starts_with("sqlite_") && name != "_sqlx_migrations")
         .collect();
 
     for table in tables {
@@ -490,7 +490,7 @@ Tauri applications communicate with the frontend using IPC (Inter-Process Commun
 `mausVoice` relies on native tray pills drawn via platform-specific window frameworks (Cocoa on macOS, Win32 on Windows, and GTK/X11 on Linux). Window coordinate and scaling calculations represent a major source of visual bugs.
 
 #### The Code Smells & Traps
-*   ** Toplevel Origin vs. Center Anchoring:** When drag-dropping the Linux X11 pill, capturing the raw window coordinates can save coordinates belonging to a transparent toplevel origin rather than the visible pill center. This can cause the pill to leap to a different screen or snap back to the primary monitor on display-crossing events.
+*   **Toplevel Origin vs. Center Anchoring:** When drag-dropping the Linux X11 pill, capturing the raw window coordinates can save coordinates belonging to a transparent toplevel origin rather than the visible pill center. This can cause the pill to leap to a different screen or snap back to the primary monitor on display-crossing events.
 *   **Exclusive Boundary Probes:** Testing coordinate containment with strict less-than operators against screen boundaries can cause fallbacks to fail on screen edges, leaving the tray pill inaccessible.
 
 #### The Hardened Architectural Pattern
@@ -599,7 +599,7 @@ export class AsyncDataController<T> {
 
   public async run(promise: () => Promise<T>, timeoutMs = this.defaultTimeoutMs): Promise<void> {
     const myGeneration = ++this.generation;
-    this.cancelInFlight(); // Cancel previous run
+    if (this.timeout) { clearTimeout(this.timeout); this.timeout = null; } // ++generation above already invalidated the previous run
 
     this.sink.setLoading(true);
     this.sink.setError("");
@@ -773,7 +773,7 @@ Build and prep scripts often evaluate environment flags (like `CI=true` or `CI=f
 *   **String Boolean Truthy Pitfalls:** Scripts often cast environment properties like `process.env.CI` directly to a boolean context. In Node.js or Python, the string `"false"` is **truthy**. As a result, running a local setup script with `CI=false` is evaluated as *running under CI*, which can cause the local build to fail catastrophically when native compilation errors occur.
 
 #### The Hardened Architectural Pattern
-*   **Explicit String Comparison:** Always evaluate string variables by doing an explicit comparison with expected values (e.g. `process.env.CI !== "false"`).
+*   **Explicit String Comparison:** Always evaluate string variables by doing an explicit comparison with expected values (e.g. `process.env.CI === "true"`).
 
 ---
 
