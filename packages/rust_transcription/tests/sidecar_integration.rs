@@ -11,6 +11,10 @@ use tokio::time::sleep;
 
 const HEALTH_TIMEOUT: Duration = Duration::from_secs(20);
 const DOWNLOAD_TIMEOUT: Duration = Duration::from_secs(900);
+// Real inference can exceed the client's short control-plane timeout on
+// slower CI runners (notably Windows). Keep health, status, and error-path
+// requests fast while allowing only genuine transcription calls more time.
+const TRANSCRIPTION_TIMEOUT: Duration = Duration::from_secs(60);
 const TINY_MODEL_FILENAME: &str = "ggml-tiny.bin";
 
 #[derive(Debug, Deserialize)]
@@ -558,6 +562,7 @@ async fn cpu_sidecar_end_to_end_download_and_transcribe(
     let transcription = sidecar
         .client
         .post(sidecar.url("/v1/transcriptions"))
+        .timeout(TRANSCRIPTION_TIMEOUT)
         .json(&TranscribeRequest {
             model: "tiny".to_string(),
             samples,
@@ -736,6 +741,7 @@ async fn cpu_sidecar_parakeet_ctc_end_to_end(
     let response = sidecar
         .client
         .post(sidecar.url("/v1/transcriptions"))
+        .timeout(TRANSCRIPTION_TIMEOUT)
         .json(&TranscribeRequest {
             model: "parakeet-ctc-0.6b".to_string(),
             samples,
@@ -778,6 +784,7 @@ async fn cpu_sidecar_parakeet_tdt_end_to_end(
     let response = sidecar
         .client
         .post(sidecar.url("/v1/transcriptions"))
+        .timeout(TRANSCRIPTION_TIMEOUT)
         .json(&TranscribeRequest {
             model: "parakeet-tdt-0.6b".to_string(),
             samples,
@@ -815,6 +822,7 @@ async fn cpu_sidecar_canary_end_to_end() -> Result<(), Box<dyn std::error::Error
     let response = sidecar
         .client
         .post(sidecar.url("/v1/transcriptions"))
+        .timeout(TRANSCRIPTION_TIMEOUT)
         .json(&TranscribeRequest {
             model: "canary-1b".to_string(),
             samples,
