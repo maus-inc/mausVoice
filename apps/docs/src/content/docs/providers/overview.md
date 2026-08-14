@@ -30,7 +30,7 @@ mausVoice filters credentials by task. “Available for transcription” means a
 
 ## Capability filter and dispatcher agreement
 
-The capability filter and the transcription dispatcher agree: every provider surfaced for transcription has an implemented route. Ollama is generative-only because stock Ollama has no speech-to-text endpoint, so it is no longer offered under **AI transcription**. AssemblyAI covers both the live streaming session and stored-audio batch (upload → transcript → poll). A stale selection for a provider without a transcription route is treated as unselected and falls back to **Local** transcription with a warning instead of failing silently.
+The capability filter and the transcription dispatcher agree: every provider surfaced for transcription has an implemented route. Ollama is intentionally generative-only — mausVoice preserves its post-processing and Assistant capabilities but does not expose speech-to-text through it (stock Ollama has no transcription endpoint), so it is not offered under **AI transcription**. AssemblyAI covers both the live streaming session and stored-audio batch (upload → transcript → poll). A stale selection for a provider without a transcription route is treated as unselected and falls back to **Local** transcription with a warning instead of failing silently.
 
 ## Selection and tests
 

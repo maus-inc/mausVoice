@@ -430,9 +430,12 @@ describe("AssemblyAITranscribeAudioRepo", () => {
 
 describe("provider capability and transcription dispatch agreement", () => {
   it("does not advertise Ollama as transcription-capable", () => {
-    // Stock Ollama exposes no speech-to-text endpoint; the capability flag
-    // must stay in sync with getTranscribeAudioRepo(), which has no Ollama
-    // branch and warns + falls back to Groq for stale selections.
+    // The capability flag is false because stock Ollama exposes no speech
+    // endpoint. The preferences guard in getTranscriptionPrefs() prevents a
+    // stale Ollama selection from ever reaching getTranscribeAudioRepo();
+    // should one still reach the dispatch (defense-in-depth), it falls back
+    // to Groq only when a configured Groq key is available, otherwise it
+    // throws a configuration error — never an unconditional fallback.
     expect(getModelProviderRepo("ollama").supportsTranscriptionModels()).toBe(
       false,
     );

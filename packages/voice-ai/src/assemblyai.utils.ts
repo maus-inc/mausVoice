@@ -204,6 +204,10 @@ const requestWithRetry = async ({
   }
 };
 
+const ASSEMBLYAI_UPLOAD_ERROR = "AssemblyAI upload failed";
+const ASSEMBLYAI_CREATE_ERROR = "AssemblyAI transcript request failed";
+const ASSEMBLYAI_STATUS_ERROR = "AssemblyAI transcript status failed";
+
 const uploadAudio = async (
   apiKey: string,
   arrayBuffer: ArrayBuffer,
@@ -216,7 +220,7 @@ const uploadAudio = async (
     method: "POST",
     headers: { "Content-Type": "application/octet-stream" },
     body: arrayBuffer,
-    errorLabel: "AssemblyAI upload failed",
+    errorLabel: ASSEMBLYAI_UPLOAD_ERROR,
     signal,
     deadline,
   });
@@ -224,7 +228,7 @@ const uploadAudio = async (
   const { upload_url: uploadUrl } =
     await parseJsonResponse<AssemblyAIUploadResponse>(
       response,
-      "AssemblyAI upload failed",
+      ASSEMBLYAI_UPLOAD_ERROR,
     );
 
   if (!uploadUrl) {
@@ -254,14 +258,14 @@ const createTranscriptRequest = async (
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(transcriptPayload),
-    errorLabel: "AssemblyAI transcript request failed",
+    errorLabel: ASSEMBLYAI_CREATE_ERROR,
     signal,
     deadline,
   });
 
   const created = await parseJsonResponse<AssemblyAITranscriptResponse>(
     response,
-    "AssemblyAI transcript request failed",
+    ASSEMBLYAI_CREATE_ERROR,
   );
   const transcriptId = created.id;
   if (!transcriptId) {
@@ -295,13 +299,13 @@ const waitForTranscript = async (
       apiKey,
       url: `${ASSEMBLYAI_API_URL}/transcript/${transcriptId}`,
       method: "GET",
-      errorLabel: "AssemblyAI transcript status failed",
+      errorLabel: ASSEMBLYAI_STATUS_ERROR,
       signal,
       deadline,
     });
     const status = await parseJsonResponse<AssemblyAITranscriptResponse>(
       response,
-      "AssemblyAI transcript status failed",
+      ASSEMBLYAI_STATUS_ERROR,
     );
 
     if (status.status === "completed") {

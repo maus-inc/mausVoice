@@ -254,7 +254,7 @@ export type TranscriptionPrefs =
  * selected key whose provider is not in this set cannot be transcribed and is
  * treated as stale.
  */
-const TRANSCRIPTION_CAPABLE_PROVIDERS = new Set([
+const TRANSCRIPTION_CAPABLE_PROVIDERS: Set<ApiKeyProvider> = new Set([
   "groq",
   "openai",
   "aldea",

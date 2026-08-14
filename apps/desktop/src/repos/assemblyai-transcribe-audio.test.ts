@@ -64,6 +64,33 @@ describe("assemblyaiTranscribeAudio", () => {
     expect(createBody).toEqual({ audio_url: UPLOAD_URL, language_code: "fr" });
   });
 
+  it("omits language_code and requests detection when language is not provided", async () => {
+    let createBody: Record<string, unknown> | null = null;
+    vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
+      const url = String(input);
+      if (url.endsWith("/v2/upload")) {
+        return jsonResponse({ upload_url: UPLOAD_URL });
+      }
+      if (url.endsWith("/v2/transcript") && init?.method === "POST") {
+        createBody = JSON.parse(String(init.body)) as Record<string, unknown>;
+        return jsonResponse({ id: "t1", status: "queued" });
+      }
+      return jsonResponse({ id: "t1", status: "completed", text: "hola" });
+    });
+
+    const { text } = await assemblyaiTranscribeAudio({
+      apiKey: "aa-key",
+      blob: new ArrayBuffer(8),
+    });
+
+    expect(text).toBe("hola");
+    expect(createBody).toEqual({
+      audio_url: UPLOAD_URL,
+      language_detection: true,
+    });
+    expect(createBody).not.toHaveProperty("language_code");
+  });
+
   it("surfaces upload HTTP failures without retrying non-transient 4xx", async () => {
     const fetchMock = vi
       .spyOn(globalThis, "fetch")
