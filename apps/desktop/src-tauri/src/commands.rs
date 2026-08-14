@@ -438,11 +438,17 @@ async fn delete_audio_entries(
     .map_err(|err| err.to_string())
 }
 
-/// True when `path` resolves safely inside the managed transcription-audio
-/// directory. Uses component normalization (not raw lexical `starts_with`)
-/// so a stored path such as `<audio_dir>/../outside.wav` cannot escape the
-/// managed directory and delete an unrelated file during `clear_local_data`.
-fn is_managed_audio_path(path: &std::path::Path, audio_dir: &std::path::Path) -> bool {
+/// Resolve `path` to the exact file to delete, or `None` when it does not
+/// live inside the managed transcription-audio directory. Uses component
+/// normalization (not raw lexical `starts_with`) so a stored path such as
+/// `<audio_dir>/../outside.wav` cannot escape the managed directory and
+/// delete an unrelated file during `clear_local_data`. Callers must delete
+/// the returned path — never the raw input — because a relative input is
+/// resolved against `audio_dir` here.
+fn resolve_managed_audio_path(
+    path: &std::path::Path,
+    audio_dir: &std::path::Path,
+) -> Option<std::path::PathBuf> {
     // Resolve the candidate: an absolute `path` is taken as-is; a relative
     // `path` is resolved against `audio_dir`.
     let candidate = if path.is_absolute() {
@@ -464,7 +470,7 @@ fn is_managed_audio_path(path: &std::path::Path, audio_dir: &std::path::Path) ->
                     .map(|c| matches!(c, std::path::Component::Prefix(_) | std::path::Component::RootDir))
                     .unwrap_or(false)
                 {
-                    return false;
+                    return None;
                 }
                 stack.pop();
             }
@@ -474,7 +480,11 @@ fn is_managed_audio_path(path: &std::path::Path, audio_dir: &std::path::Path) ->
     }
 
     let normalized: std::path::PathBuf = stack.iter().collect();
-    normalized.starts_with(audio_dir)
+    if normalized.starts_with(audio_dir) {
+        Some(normalized)
+    } else {
+        None
+    }
 }
 
 /// Delete listed audio files that still live under `audio_dir`. Paths
@@ -482,10 +492,12 @@ fn is_managed_audio_path(path: &std::path::Path, audio_dir: &std::path::Path) ->
 /// (not an error).
 fn delete_listed_audio_files(audio_dir: &std::path::Path, paths: &[String]) {
     for path in paths {
-        let file_path = PathBuf::from(path);
-        if !is_managed_audio_path(&file_path, audio_dir) {
+        // Delete the validated path, not the raw DB value: a relative entry
+        // such as `clip.wav` must resolve inside `audio_dir` rather than
+        // against the process working directory.
+        let Some(file_path) = resolve_managed_audio_path(&PathBuf::from(path), audio_dir) else {
             continue;
-        }
+        };
         if let Err(err) = std::fs::remove_file(&file_path) {
             if err.kind() != std::io::ErrorKind::NotFound {
                 log::warn!(
@@ -2803,9 +2815,18 @@ mod tests {
         let outside = std::env::temp_dir().join("not-audio").join("clip.wav");
         // A traversal attempt must NOT escape the managed directory.
         let traversal = audio_dir.join("..").join("escaped.wav");
-        assert!(is_managed_audio_path(&inside, &audio_dir));
-        assert!(!is_managed_audio_path(&outside, &audio_dir));
-        assert!(!is_managed_audio_path(&traversal, &audio_dir));
+        assert_eq!(
+            resolve_managed_audio_path(&inside, &audio_dir),
+            Some(inside.clone())
+        );
+        assert_eq!(resolve_managed_audio_path(&outside, &audio_dir), None);
+        assert_eq!(resolve_managed_audio_path(&traversal, &audio_dir), None);
+        // A relative entry must resolve inside the managed directory, never
+        // against the process working directory.
+        assert_eq!(
+            resolve_managed_audio_path(std::path::Path::new("clip.wav"), &audio_dir),
+            Some(inside)
+        );
     }
 
     #[test]
@@ -2820,10 +2841,12 @@ mod tests {
         std::fs::create_dir_all(&outside_dir).unwrap();
 
         let inside = audio_dir.join("keep-me-not.wav");
+        let relative = audio_dir.join("relative.wav");
         let orphan = audio_dir.join("orphan.wav");
         let other = audio_dir.join("notes.txt");
         let outside = outside_dir.join("do-not-delete.wav");
         std::fs::write(&inside, b"in").unwrap();
+        std::fs::write(&relative, b"rel").unwrap();
         std::fs::write(&orphan, b"or").unwrap();
         std::fs::write(&other, b"txt").unwrap();
         std::fs::write(&outside, b"out").unwrap();
@@ -2832,10 +2855,13 @@ mod tests {
             &audio_dir,
             &[
                 inside.to_string_lossy().into_owned(),
+                // A relative row must be deleted from inside `audio_dir`.
+                "relative.wav".to_string(),
                 outside.to_string_lossy().into_owned(),
             ],
         );
         assert!(!inside.exists());
+        assert!(!relative.exists());
         assert!(outside.exists());
 
         sweep_orphaned_wavs(&audio_dir);
