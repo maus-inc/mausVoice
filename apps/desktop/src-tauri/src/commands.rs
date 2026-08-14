@@ -1,5 +1,5 @@
 use std::path::PathBuf;
-use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use std::time::{SystemTime, UNIX_EPOCH};
 
@@ -40,14 +40,26 @@ impl Drop for ReentryGuard<'_> {
     }
 }
 
-/// Monotonic id for the currently-active (most recently started) typing
-/// session. The platform `type_text_into_focused_field` reads
-/// `CANCEL_TYPING`; we leave that flag as the single cancel signal, but
-/// `cancel_typing` can optionally target a specific session so cancel
-/// signals from an earlier session cannot cancel a newer one.
-static TYPING_SESSION_ID: AtomicU64 = AtomicU64::new(0);
-
+/// Shared cancel signal for the in-progress `simulate_type` call.
+/// `ReentryGuard` on `SIMULATE_TYPE_IN_PROGRESS` serializes typing, so
+/// there is never more than one live session and this flag is unambiguous.
 static CANCEL_TYPING: AtomicBool = AtomicBool::new(false);
+
+/// User-data tables wiped by `clear_local_data`. Extend this list when
+/// adding a table that stores user content — a missed table is a privacy leak.
+const USER_DATA_TABLES_TO_CLEAR: [&str; 11] = [
+    "chat_messages",
+    "conversations",
+    "user_profiles",
+    "transcriptions",
+    "terms",
+    "hotkeys",
+    "api_keys",
+    "user_preferences",
+    "tones",
+    "app_targets",
+    "paired_remote_devices",
+];
 use tauri::{AppHandle, Emitter, EventTarget, Manager, State};
 
 use crate::domain::{
@@ -424,6 +436,81 @@ async fn delete_audio_entries(
     })
     .await
     .map_err(|err| err.to_string())
+}
+
+/// Resolve `path` to the exact file to delete, or `None` when it does not
+/// live directly inside the managed transcription-audio directory. Both the
+/// candidate's parent directory and `audio_dir` are canonicalized before
+/// comparison, so a `..` traversal, an intermediate symlink, or an
+/// `audio_dir` spelled with `.`/`..` all resolve to real paths first — a
+/// lexical `starts_with` cannot do that. Callers must delete the returned
+/// path — never the raw input — because a relative input is resolved
+/// against `audio_dir` here.
+fn resolve_managed_audio_path(
+    path: &std::path::Path,
+    audio_dir: &std::path::Path,
+) -> Option<std::path::PathBuf> {
+    // Resolve the candidate: an absolute `path` is taken as-is; a relative
+    // `path` is resolved against `audio_dir`.
+    let candidate = if path.is_absolute() {
+        path.to_path_buf()
+    } else {
+        audio_dir.join(path)
+    };
+
+    // Managed audio is a flat directory of `<id>.wav` files, so the file
+    // must sit directly inside `audio_dir`. Canonicalize the parent only:
+    // the entry itself may be a symlink we want to unlink rather than
+    // follow, and it may already be gone.
+    let file_name = candidate.file_name()?;
+    let real_parent = std::fs::canonicalize(candidate.parent()?).ok()?;
+    let real_audio_dir = std::fs::canonicalize(audio_dir).ok()?;
+    if real_parent != real_audio_dir {
+        return None;
+    }
+
+    Some(real_parent.join(file_name))
+}
+
+/// Delete listed audio files that still live under `audio_dir`. Paths
+/// outside the managed directory (including traversal attempts) are skipped
+/// (not an error).
+fn delete_listed_audio_files(audio_dir: &std::path::Path, paths: &[String]) {
+    for path in paths {
+        // Delete the validated path, not the raw DB value: a relative entry
+        // such as `clip.wav` must resolve inside `audio_dir` rather than
+        // against the process working directory.
+        let Some(file_path) = resolve_managed_audio_path(&PathBuf::from(path), audio_dir) else {
+            continue;
+        };
+        if let Err(err) = std::fs::remove_file(&file_path) {
+            if err.kind() != std::io::ErrorKind::NotFound {
+                log::warn!(
+                    "Failed to delete audio file {} during clear: {err}",
+                    file_path.display()
+                );
+            }
+        }
+    }
+}
+
+/// Remove leftover `.wav` files in the managed audio directory after the
+/// DB table has been wiped (orphans from an interrupted record, etc.).
+fn sweep_orphaned_wavs(audio_dir: &std::path::Path) {
+    let Ok(entries) = std::fs::read_dir(audio_dir) else {
+        return;
+    };
+    for entry in entries.flatten() {
+        let p = entry.path();
+        if p.extension().and_then(|e| e.to_str()) == Some("wav") {
+            if let Err(err) = std::fs::remove_file(&p) {
+                log::warn!(
+                    "Failed to remove orphaned audio file {}: {err}",
+                    p.display()
+                );
+            }
+        }
+    }
 }
 
 #[tauri::command]
@@ -1234,26 +1321,13 @@ pub async fn clear_local_data(
 ) -> Result<(), String> {
     let pool = database.pool();
 
-    // Wipe every user-data table. When adding user-data tables, extend this
-    // list — the UI explicitly promises "this will delete all preferences,
-    // dictionary entries, and saved transcriptions from this device" and a
-    // missed table here is a privacy leak.
+    // Wipe every user-data table. When adding user-data tables, extend
+    // `USER_DATA_TABLES_TO_CLEAR` — the UI explicitly promises "this will
+    // delete all preferences, dictionary entries, and saved transcriptions
+    // from this device" and a missed table here is a privacy leak.
     //
     // Table names are all `&'static str` literals from this source file
     // (never user input), so `format!` is safe from SQL injection here.
-    const TABLES_TO_CLEAR: [&str; 11] = [
-        "chat_messages",
-        "conversations",
-        "user_profiles",
-        "transcriptions",
-        "terms",
-        "hotkeys",
-        "api_keys",
-        "user_preferences",
-        "tones",
-        "app_targets",
-        "paired_remote_devices",
-    ];
 
     // Collect audio file paths BEFORE wiping transcriptions so we can delete
     // them from disk after the transaction commits.
@@ -1265,7 +1339,7 @@ pub async fn clear_local_data(
     .map_err(|err| err.to_string())?;
 
     let mut transaction = pool.begin().await.map_err(|err| err.to_string())?;
-    for table in TABLES_TO_CLEAR {
+    for table in USER_DATA_TABLES_TO_CLEAR {
         let statement = format!("DELETE FROM {table}");
         sqlx::query(&statement)
             .execute(&mut *transaction)
@@ -1275,34 +1349,13 @@ pub async fn clear_local_data(
     transaction.commit().await.map_err(|err| err.to_string())?;
 
     // After commit, delete every audio WAV on disk that the DB used to know
-    // about. Use the audited start_with() guard so we cannot walk outside
-    // the managed audio directory (defense-in-depth if a stale path leaks
-    // in). Each delete failure is logged but non-fatal.
+    // about, then sweep orphans. Each path goes through
+    // `resolve_managed_audio_path`, which canonicalizes the path and its
+    // parent so only files that really sit inside the managed audio
+    // directory are deleted.
     if let Ok(audio_dir) = crate::system::audio_store::audio_dir(&app) {
-        for path in &audio_paths {
-            let file_path = PathBuf::from(path);
-            if file_path.starts_with(&audio_dir) {
-                if let Err(err) = std::fs::remove_file(&file_path) {
-                    if err.kind() != std::io::ErrorKind::NotFound {
-                        log::warn!("Failed to delete audio file {} during clear: {err}", file_path.display());
-                    }
-                }
-            }
-        }
-
-        // As a final sweep, delete any orphaned .wav files in the audio
-        // directory that are no longer referenced by the (now-empty) DB
-        // (e.g. files left over from an interrupted record).
-        if let Ok(entries) = std::fs::read_dir(&audio_dir) {
-            for entry in entries.flatten() {
-                let p = entry.path();
-                if p.extension().and_then(|e| e.to_str()) == Some("wav") {
-                    if let Err(err) = std::fs::remove_file(&p) {
-                        log::warn!("Failed to remove orphaned audio file {}: {err}", p.display());
-                    }
-                }
-            }
-        }
+        delete_listed_audio_files(&audio_dir, &audio_paths);
+        sweep_orphaned_wavs(&audio_dir);
     }
 
     if let Err(err) = sqlx::query("VACUUM").execute(&pool).await {
@@ -1695,37 +1748,20 @@ pub async fn paste(
     }
 }
 
-#[derive(serde::Serialize, specta::Type)]
-#[serde(rename_all = "camelCase")]
-pub struct SimulateTypeResponse {
-    /// Opaque session id that can be passed to `cancel_typing` to cancel
-    /// exactly this typing session without interrupting a later one.
-    pub typing_id: u64,
-}
-
 #[tauri::command]
 #[specta::specta]
-pub async fn simulate_type(text: String, delay_ms: u64) -> Result<SimulateTypeResponse, String> {
+pub async fn simulate_type(text: String, delay_ms: u64) -> Result<(), String> {
     if text.trim().is_empty() {
-        // Even on an empty text we return a fresh id so the TS side has a
-        // consistent shape; cancel against it is a harmless no-op.
-        let typing_id = TYPING_SESSION_ID.fetch_add(1, Ordering::AcqRel) + 1;
-        return Ok(SimulateTypeResponse { typing_id });
+        return Ok(());
     }
 
-    // Re-entry guard: two concurrent `simulate_type` calls would race the
-    // global CANCEL_TYPING flag and interleave keystrokes. Serialize them.
+    // Re-entry guard serializes typing: only one session can be live, so
+    // `cancel_typing` is unambiguous without a session id.
     let _type_guard = ReentryGuard::acquire(&SIMULATE_TYPE_IN_PROGRESS)
         .map_err(|_| "Simulated typing is already in progress".to_string())?;
 
-    // Allocate a fresh session id and reset the cancel flag for this run.
-    let typing_id = TYPING_SESSION_ID.fetch_add(1, Ordering::AcqRel) + 1;
     CANCEL_TYPING.store(false, Ordering::SeqCst);
 
-    // Run the platform typer on the blocking thread. It polls the global
-    // CANCEL_TYPING flag between keystrokes; session-id scoping is done at
-    // this layer (cancel_typing refuses to set the flag for stale sessions)
-    // so we don't need to change the platform backend signatures.
     let join_result = tauri::async_runtime::spawn_blocking(move || {
         crate::platform::input::type_text_into_focused_field(&text, delay_ms, &CANCEL_TYPING)
     })
@@ -1737,7 +1773,7 @@ pub async fn simulate_type(text: String, delay_ms: u64) -> Result<SimulateTypeRe
                 log::error!("Simulated typing failed: {err}");
                 return Err(err.clone());
             }
-            Ok(SimulateTypeResponse { typing_id })
+            Ok(())
         }
         Err(err) => {
             let message = format!("Simulate type task join error: {err}");
@@ -1749,21 +1785,16 @@ pub async fn simulate_type(text: String, delay_ms: u64) -> Result<SimulateTypeRe
 
 #[tauri::command]
 #[specta::specta]
-pub fn cancel_typing(typing_id: Option<u64>) -> Result<(), String> {
-    // If the caller supplies a typing id they received from `simulate_type`,
-    // only cancel if that session is still the most recent one. This
-    // prevents a stale cancel (e.g. from a blur handler on an older
-    // transcription) from killing a later typing session the user started.
-    //
-    // If no id is supplied (legacy callers), cancel the active session
-    // unconditionally for backward compatibility.
-    if let Some(id) = typing_id {
-        let current = TYPING_SESSION_ID.load(Ordering::Acquire);
-        if id != current {
-            // Stale cancel — ignore silently.
-            return Ok(());
-        }
+pub fn cancel_typing() -> Result<(), String> {
+    // Serialization by the re-entry guard is what makes cancel unambiguous:
+    // only one `simulate_type` can be live, so this flag always targets it.
+    // Ignore cancels that arrive with no live session (a late blur/Escape,
+    // or another caller): otherwise the flag would stay set and abort the
+    // *next* typing session before it starts.
+    if !SIMULATE_TYPE_IN_PROGRESS.load(Ordering::Acquire) {
+        return Ok(());
     }
+
     CANCEL_TYPING.store(true, Ordering::SeqCst);
     Ok(())
 }
@@ -2522,19 +2553,21 @@ fn validate_terminal_command_args(
     Ok((allowed, user_args.iter().map(|s| s.to_string()).collect()))
 }
 
-/// Validate a floating-window URL before navigation. Extracted from
-/// `floating_window_create` so the allow-list can be unit-tested without
-/// spinning up a Tauri window.
-#[cfg(test)]
-fn validate_floating_window_url(url: &str) -> Result<(), String> {
-    let parsed = Url::parse(url).map_err(|e| format!("Invalid URL: {e}"))?;
-    match parsed.scheme() {
+/// Validate a floating-window URL before navigation. Shared by
+/// `floating_window_create` and its unit tests so the allow-list cannot
+/// silently diverge.
+fn validate_floating_window_url(url: &Url) -> Result<(), String> {
+    match url.scheme() {
         "http" | "https" => {
-            let host = parsed.host_str().unwrap_or("");
+            let host = url.host_str().unwrap_or("");
             let is_localhost =
                 host == "localhost" || host == "127.0.0.1" || host == "[::1]";
+            // Docs-site windows are allowed to load, but they do not inherit
+            // IPC: `maus-inc.github.io` is not in the `floating-*` capability
+            // `remote.urls` list. Localhost remains the only remote host with
+            // IPC (dev tooling).
             let is_docs_site = host == "maus-inc.github.io"
-                && parsed.path().starts_with("/mausVoice/");
+                && url.path().starts_with("/mausVoice/");
             if !is_localhost && !is_docs_site {
                 return Err(format!(
                     "Floating window URL host {host:?} is not in the trusted allow-list"
@@ -2549,6 +2582,10 @@ fn validate_floating_window_url(url: &str) -> Result<(), String> {
         }
     }
     Ok(())
+}
+
+fn parse_floating_window_url(url: &str) -> Result<Url, String> {
+    Url::parse(url).map_err(|e| format!("Invalid URL: {e}"))
 }
 
 #[cfg(test)]
@@ -2677,29 +2714,30 @@ mod tests {
 
     #[test]
     fn floating_window_allows_localhost() {
-        assert!(validate_floating_window_url("http://localhost:1420/").is_ok());
-        assert!(validate_floating_window_url("http://127.0.0.1:8080/foo").is_ok());
+        assert!(validate_floating_window_url(&Url::parse("http://localhost:1420/").unwrap()).is_ok());
+        assert!(validate_floating_window_url(&Url::parse("http://127.0.0.1:8080/foo").unwrap()).is_ok());
     }
 
     #[test]
     fn floating_window_allows_docs_site() {
         assert!(validate_floating_window_url(
-            "https://maus-inc.github.io/mausVoice/welcome"
+            &Url::parse("https://maus-inc.github.io/mausVoice/welcome").unwrap()
         )
         .is_ok());
-        // GitHub Pages URL must be scoped to /mausVoice/ to avoid any
-        // other user site hosted on the same origin inheriting IPC access.
+        // GitHub Pages URL must be scoped to /mausVoice/ even though that
+        // host has no IPC capability — keep the navigation allow-list tight.
         assert!(validate_floating_window_url(
-            "https://maus-inc.github.io/other-project/"
+            &Url::parse("https://maus-inc.github.io/other-project/").unwrap()
         )
         .is_err());
     }
 
     #[test]
     fn floating_window_rejects_arbitrary_origins() {
-        assert!(validate_floating_window_url("https://evil.com/").is_err());
-        assert!(validate_floating_window_url("file:///etc/passwd").is_err());
-        assert!(validate_floating_window_url("javascript:alert(1)").is_err());
+        assert!(validate_floating_window_url(&Url::parse("https://evil.com/").unwrap()).is_err());
+        assert!(validate_floating_window_url(&Url::parse("file:///etc/passwd").unwrap()).is_err());
+        assert!(validate_floating_window_url(&Url::parse("javascript:alert(1)").unwrap()).is_err());
+        assert!(parse_floating_window_url("not a url").is_err());
     }
 
     #[test]
@@ -2715,6 +2753,312 @@ mod tests {
             "always_on_top",
             "hidden" | "persistent" | "while_active"
         ));
+    }
+
+    #[test]
+    fn cancel_typing_only_signals_a_live_session() {
+        // `CANCEL_TYPING` is process-wide and `cargo test` runs tests in
+        // parallel, so put it back the way we found it before returning.
+        let previous = CANCEL_TYPING.load(Ordering::SeqCst);
+        CANCEL_TYPING.store(false, Ordering::SeqCst);
+
+        // No typing session is live, so the cancel must be ignored instead
+        // of arming the flag for the next session.
+        cancel_typing().unwrap();
+        assert!(!CANCEL_TYPING.load(Ordering::SeqCst));
+
+        {
+            let _session = ReentryGuard::acquire(&SIMULATE_TYPE_IN_PROGRESS).unwrap();
+            cancel_typing().unwrap();
+            assert!(CANCEL_TYPING.load(Ordering::SeqCst));
+        }
+
+        CANCEL_TYPING.store(previous, Ordering::SeqCst);
+    }
+
+    #[test]
+    fn reentry_guard_rejects_a_second_acquire() {
+        let flag = AtomicBool::new(false);
+        let first = ReentryGuard::acquire(&flag).unwrap();
+        assert!(ReentryGuard::acquire(&flag).is_err());
+        drop(first);
+        assert!(ReentryGuard::acquire(&flag).is_ok());
+    }
+
+    #[test]
+    fn reentry_guard_releases_on_panic() {
+        let flag = AtomicBool::new(false);
+        let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            let _guard = ReentryGuard::acquire(&flag).unwrap();
+            panic!("boom");
+        }));
+        assert!(result.is_err());
+        assert!(!flag.load(Ordering::Acquire));
+        assert!(ReentryGuard::acquire(&flag).is_ok());
+    }
+
+    /// Tables that live in the schema but hold no user content, so
+    /// `clear_local_data` may skip them. Adding a name here is an explicit
+    /// privacy decision, which is the point: it cannot happen by omission.
+    const NON_USER_DATA_TABLES: &[&str] = &[];
+
+    /// Rebuild the set of tables the schema actually ends up with by
+    /// replaying the migration SQL. Derived independently of
+    /// `USER_DATA_TABLES_TO_CLEAR`, so a new table that nobody remembered
+    /// to clear still shows up here.
+    /// Strip SQL noise that would otherwise be mis-tokenized when the
+    /// migrations are replayed as statements:
+    /// - `/* */` block comments,
+    /// - `--` line comments (to end of line),
+    /// - single-quoted string literals (which may contain `;`, `--`, or
+    ///   `*/`), including the `''` doubled-quote escape.
+    ///
+    /// Double-quoted identifiers (table/column names in SQLite) are left in
+    /// place by this pass: they are not string literals, so unlike `'...'`
+    /// above they are not skipped. The surrounding quote characters are
+    /// trimmed later when the table name is extracted, so `"my_table"` and
+    /// `my_table` resolve to the same bare name that SQLite reports.
+    fn strip_sql_noise(sql: &str) -> String {
+        let mut out = String::with_capacity(sql.len());
+        let mut chars = sql.chars().peekable();
+        let mut in_block_comment = false;
+        let mut in_line_comment = false;
+        while let Some(c) = chars.next() {
+            if in_line_comment {
+                if c == '\n' {
+                    in_line_comment = false;
+                    out.push(c);
+                }
+                continue;
+            }
+            if in_block_comment {
+                if c == '*' && chars.peek() == Some(&'/') {
+                    chars.next();
+                    in_block_comment = false;
+                }
+                continue;
+            }
+            if c == '/' && chars.peek() == Some(&'*') {
+                chars.next();
+                in_block_comment = true;
+                continue;
+            }
+            if c == '-' && chars.peek() == Some(&'-') {
+                chars.next();
+                in_line_comment = true;
+                continue;
+            }
+            if c == '\'' {
+                // Single-quoted string literal: skip content (incl. '' escape).
+                while let Some(q) = chars.next() {
+                    if q == '\'' {
+                        if chars.peek() == Some(&'\'') {
+                            chars.next(); // doubled-quote escape
+                            continue;
+                        }
+                        break;
+                    }
+                }
+                continue;
+            }
+            out.push(c);
+        }
+        out
+    }
+
+    fn tables_declared_by_migrations() -> std::collections::BTreeSet<String> {
+        let first_word = |rest: &str| -> Option<String> {
+            rest.split(|c: char| c == '(' || c.is_whitespace())
+                .find(|part| !part.is_empty())
+                // Trim surrounding double quotes so a quoted identifier
+                // (`CREATE TABLE "name"`) resolves to the same bare name
+                // SQLite reports, rather than `"name"`.
+                .map(|name| name.trim_matches('"').to_string())
+        };
+
+        let mut tables: std::collections::BTreeSet<String> = std::collections::BTreeSet::new();
+        for migration in crate::db::migrations() {
+            // `strip_sql_noise` fully cleans each migration's SQL (block
+            // comments, line comments, and single-quoted string literals),
+            // so the remaining text can be replayed statement by statement.
+            let sql = strip_sql_noise(migration.sql)
+                .lines()
+                .map(|line| line.trim())
+                .collect::<Vec<_>>()
+                .join(" ");
+
+            for raw_statement in sql.split(';') {
+                let statement = raw_statement
+                    .split_whitespace()
+                    .map(|word| word.to_ascii_lowercase())
+                    .collect::<Vec<_>>()
+                    .join(" ");
+
+                if let Some(rest) = statement
+                    .strip_prefix("create table if not exists ")
+                    .or_else(|| statement.strip_prefix("create table "))
+                {
+                    if let Some(name) = first_word(rest) {
+                        tables.insert(name);
+                    }
+                } else if let Some(rest) = statement
+                    .strip_prefix("drop table if exists ")
+                    .or_else(|| statement.strip_prefix("drop table "))
+                {
+                    if let Some(name) = first_word(rest) {
+                        tables.remove(&name);
+                    }
+                } else if let Some(rest) = statement.strip_prefix("alter table ") {
+                    if let Some((old, new)) = rest.split_once(" rename to ") {
+                        if let (Some(old), Some(new)) = (first_word(old), first_word(new)) {
+                            tables.remove(&old);
+                            tables.insert(new);
+                        }
+                    }
+                }
+            }
+        }
+        tables
+    }
+
+    #[test]
+    fn user_data_tables_to_clear_covers_the_privacy_set() {
+        let declared = tables_declared_by_migrations();
+        assert!(
+            !declared.is_empty(),
+            "no tables parsed from the migrations — the parser is broken"
+        );
+
+        for table in &declared {
+            assert!(
+                USER_DATA_TABLES_TO_CLEAR.contains(&table.as_str())
+                    || NON_USER_DATA_TABLES.contains(&table.as_str()),
+                "table `{table}` exists in the schema but clear_local_data never wipes it — a missed table is a privacy leak"
+            );
+        }
+
+        for table in USER_DATA_TABLES_TO_CLEAR {
+            assert!(
+                declared.contains(table),
+                "`{table}` is cleared but no longer exists in the schema"
+            );
+        }
+    }
+
+    #[test]
+    fn managed_audio_path_rejects_paths_outside_the_audio_dir() {
+        let root = std::env::temp_dir()
+            .join(format!("mausvoice-audio-guard-{}", std::process::id()));
+        let audio_dir = root.join("audio");
+        let other_dir = root.join("other");
+        std::fs::create_dir_all(&audio_dir).unwrap();
+        std::fs::create_dir_all(&other_dir).unwrap();
+        // Canonicalized because the guard returns real paths (e.g. macOS
+        // maps /tmp to /private/tmp).
+        let expected = std::fs::canonicalize(&audio_dir).unwrap().join("clip.wav");
+
+        let inside = audio_dir.join("clip.wav");
+        let outside = other_dir.join("clip.wav");
+        // A traversal attempt must NOT escape the managed directory.
+        let traversal = audio_dir.join("..").join("escaped.wav");
+        assert_eq!(
+            resolve_managed_audio_path(&inside, &audio_dir),
+            Some(expected.clone())
+        );
+        assert_eq!(resolve_managed_audio_path(&outside, &audio_dir), None);
+        assert_eq!(resolve_managed_audio_path(&traversal, &audio_dir), None);
+        // A relative entry must resolve inside the managed directory, never
+        // against the process working directory.
+        assert_eq!(
+            resolve_managed_audio_path(std::path::Path::new("clip.wav"), &audio_dir),
+            Some(expected.clone())
+        );
+        // An `audio_dir` spelled with `.` still matches its own contents.
+        assert_eq!(
+            resolve_managed_audio_path(&inside, &root.join(".").join("audio")),
+            Some(expected)
+        );
+
+        #[cfg(unix)]
+        {
+            // A symlinked subdirectory must not tunnel out of audio_dir.
+            let link = audio_dir.join("link");
+            std::os::unix::fs::symlink(&other_dir, &link).unwrap();
+            assert_eq!(
+                resolve_managed_audio_path(&link.join("clip.wav"), &audio_dir),
+                None
+            );
+        }
+
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn clear_local_data_file_helpers_respect_the_audio_dir_guard() {
+        let root = std::env::temp_dir().join(format!(
+            "mausvoice-clear-local-{}",
+            std::process::id()
+        ));
+        let audio_dir = root.join("audio");
+        let outside_dir = root.join("outside");
+        std::fs::create_dir_all(&audio_dir).unwrap();
+        std::fs::create_dir_all(&outside_dir).unwrap();
+
+        let inside = audio_dir.join("keep-me-not.wav");
+        let relative = audio_dir.join("relative.wav");
+        let orphan = audio_dir.join("orphan.wav");
+        let other = audio_dir.join("notes.txt");
+        let outside = outside_dir.join("do-not-delete.wav");
+        std::fs::write(&inside, b"in").unwrap();
+        std::fs::write(&relative, b"rel").unwrap();
+        std::fs::write(&orphan, b"or").unwrap();
+        std::fs::write(&other, b"txt").unwrap();
+        std::fs::write(&outside, b"out").unwrap();
+
+        delete_listed_audio_files(
+            &audio_dir,
+            &[
+                inside.to_string_lossy().into_owned(),
+                // A relative row must be deleted from inside `audio_dir`.
+                "relative.wav".to_string(),
+                outside.to_string_lossy().into_owned(),
+            ],
+        );
+        assert!(!inside.exists());
+        assert!(!relative.exists());
+        assert!(outside.exists());
+
+        sweep_orphaned_wavs(&audio_dir);
+        assert!(!orphan.exists());
+        assert!(other.exists());
+        assert!(outside.exists());
+
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn installer_redirect_validates_each_hop_and_caps_depth() {
+        let ok = Url::parse(
+            "https://github.com/maus-inc/mausVoice/releases/download/v1/app.pkg",
+        )
+        .unwrap();
+        let evil = Url::parse("https://evil.com/app.pkg").unwrap();
+        assert!(installer_redirect_allowed(0, &ok).is_ok());
+        assert!(installer_redirect_allowed(9, &ok).is_ok());
+        assert!(installer_redirect_allowed(10, &ok).is_err());
+        assert!(installer_redirect_allowed(0, &evil).is_err());
+    }
+
+    #[test]
+    fn installer_size_cap_rejects_advertised_and_streamed_oversize() {
+        assert!(installer_content_length_ok(None).is_ok());
+        assert!(installer_content_length_ok(Some(INSTALLER_MAX_BYTES)).is_ok());
+        assert!(installer_content_length_ok(Some(INSTALLER_MAX_BYTES + 1)).is_err());
+        assert_eq!(
+            installer_account_chunk(0, INSTALLER_MAX_BYTES).unwrap(),
+            INSTALLER_MAX_BYTES
+        );
+        assert!(installer_account_chunk(INSTALLER_MAX_BYTES, 1).is_err());
     }
 
     #[test]
@@ -2878,6 +3222,36 @@ pub fn check_app_location_writable() -> Result<bool, String> {
 
 /// Maximum size we are willing to download for a `.pkg` installer.
 const INSTALLER_MAX_BYTES: u64 = 250 * 1024 * 1024;
+const INSTALLER_MAX_REDIRECTS: usize = 10;
+
+/// Decide whether a redirect hop is allowed. Applied to every hop so an
+/// allowed host cannot bounce us onto an untrusted origin.
+fn installer_redirect_allowed(previous_hops: usize, url: &Url) -> Result<(), String> {
+    if previous_hops >= INSTALLER_MAX_REDIRECTS {
+        return Err("too many redirects".to_string());
+    }
+    validate_installer_url(url)
+}
+
+/// Reject an advertised Content-Length above the streaming cap before any
+/// bytes are written.
+fn installer_content_length_ok(len: Option<u64>) -> Result<(), String> {
+    if let Some(n) = len {
+        if n > INSTALLER_MAX_BYTES {
+            return Err("Installer download exceeded 250MiB safety limit".to_string());
+        }
+    }
+    Ok(())
+}
+
+/// Accumulate a downloaded chunk against the streaming cap.
+fn installer_account_chunk(written: u64, chunk_len: u64) -> Result<u64, String> {
+    let next = written.saturating_add(chunk_len);
+    if next > INSTALLER_MAX_BYTES {
+        return Err("Installer download exceeded 250MiB safety limit".to_string());
+    }
+    Ok(next)
+}
 
 /// Validate an installer URL (scheme, host allow-list, `.pkg` path). Applied
 /// to the initial URL *and* to every redirect hop, because the redirect chain
@@ -2929,10 +3303,7 @@ pub async fn download_and_open_mac_installer(url: String) -> Result<(), String> 
     // Validate every redirect hop rather than trusting the initial URL: the
     // default policy would silently follow an allowed host to an arbitrary one.
     let redirect_policy = reqwest::redirect::Policy::custom(|attempt| {
-        if attempt.previous().len() >= 10 {
-            return attempt.error("too many redirects");
-        }
-        match validate_installer_url(attempt.url()) {
+        match installer_redirect_allowed(attempt.previous().len(), attempt.url()) {
             Ok(()) => attempt.follow(),
             Err(err) => attempt.error(err),
         }
@@ -2952,23 +3323,21 @@ pub async fn download_and_open_mac_installer(url: String) -> Result<(), String> 
     }
 
     // Reject an oversized advertised length before transferring anything.
-    if let Some(len) = response.content_length() {
-        if len > INSTALLER_MAX_BYTES {
-            return Err("Installer download exceeded 250MiB safety limit".to_string());
-        }
-    }
+    installer_content_length_ok(response.content_length())?;
 
     // Stream to disk, enforcing the cap as we go so a server that lies about
     // (or omits) Content-Length cannot exhaust memory or fill the disk.
     let mut file = std::fs::File::create(&dest).map_err(|e| e.to_string())?;
     let mut written: u64 = 0;
     while let Some(chunk) = response.chunk().await.map_err(|e| e.to_string())? {
-        written += chunk.len() as u64;
-        if written > INSTALLER_MAX_BYTES {
-            drop(file);
-            let _ = std::fs::remove_file(&dest);
-            return Err("Installer download exceeded 250MiB safety limit".to_string());
-        }
+        written = match installer_account_chunk(written, chunk.len() as u64) {
+            Ok(next) => next,
+            Err(err) => {
+                drop(file);
+                let _ = std::fs::remove_file(&dest);
+                return Err(err);
+            }
+        };
         std::io::Write::write_all(&mut file, &chunk).map_err(|e| e.to_string())?;
     }
     std::io::Write::flush(&mut file).map_err(|e| e.to_string())?;
@@ -3024,12 +3393,12 @@ pub struct FloatingWindowInfo {
 /// and returns a stable id that can be used to destroy it later.
 ///
 /// External URLs are restricted to http(s) and to a small allow-list of
-/// trusted schemes/hosts; this is the only place in the app that creates a
-/// webview pointed at a non-local origin, so any URL accepted here inherits
-/// the webview's full capability set (IPC commands, etc. via the
-/// `floating-*` window capability). We keep the allow-list small to avoid
-/// a compromised or confused caller creating a floating window on an
-/// attacker-controlled origin.
+/// trusted schemes/hosts. This is the only place in the app that creates a
+/// webview pointed at a non-local origin. Localhost loopback is the only
+/// remote host that also receives IPC (via `floating-*` `remote.urls`);
+/// the GitHub Pages docs host is allowed to load but has no IPC capability.
+/// We keep the navigation allow-list small to avoid a compromised or
+/// confused caller creating a floating window on an attacker-controlled origin.
 #[tauri::command]
 #[specta::specta]
 pub async fn floating_window_create(
@@ -3037,34 +3406,8 @@ pub async fn floating_window_create(
     app: AppHandle,
     state: State<'_, crate::state::FloatingWindowState>,
 ) -> Result<FloatingWindowInfo, String> {
-    let parsed_url = Url::parse(&args.url).map_err(|err| err.to_string())?;
-
-    match parsed_url.scheme() {
-        "http" | "https" => {
-            let host = parsed_url.host_str().unwrap_or("");
-            // Allow localhost loopback (dev tooling, in-app docs previews)
-            // and the GitHub Pages docs site. Other remote origins are
-            // rejected — they would otherwise have full IPC access via the
-            // floating-* capability.
-            let is_localhost =
-                matches!(host, "localhost" | "127.0.0.1" | "[::1]");
-            let is_docs_site = host == "maus-inc.github.io"
-                && parsed_url.path().starts_with("/mausVoice/");
-            if !is_localhost && !is_docs_site {
-                return Err(format!(
-                    "Floating window URL host {host:?} is not in the trusted allow-list"
-                ));
-            }
-        }
-        "tauri" | "asset" | "data" => {
-            // Local app / asset / data URLs are always permitted.
-        }
-        other => {
-            return Err(format!(
-                "Floating window URL scheme {other:?} is not permitted"
-            ));
-        }
-    }
+    let parsed_url = parse_floating_window_url(&args.url)?;
+    validate_floating_window_url(&parsed_url)?;
 
     let label = state.next_label();
     let title = args.title.clone().unwrap_or_else(|| "mausVoice".to_string());

@@ -53,9 +53,9 @@ async appTargetUpsert(args: AppTargetUpsertArgs) : Promise<Result<AppTarget, str
     else return { status: "error", error: e  as any };
 }
 },
-async cancelTyping(typingId?: number | null) : Promise<Result<null, string>> {
+async cancelTyping() : Promise<Result<null, string>> {
     try {
-    return { status: "ok", data: await TAURI_INVOKE("cancel_typing", { typingId: typingId ?? null }) };
+    return { status: "ok", data: await TAURI_INVOKE("cancel_typing") };
 } catch (e) {
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };
@@ -681,7 +681,7 @@ async setTrayVisible(visible: boolean) : Promise<Result<null, string>> {
     else return { status: "error", error: e  as any };
 }
 },
-async simulateType(text: string, delayMs: number) : Promise<Result<SimulateTypeResponse, string>> {
+async simulateType(text: string, delayMs: number) : Promise<Result<null, string>> {
     try {
     return { status: "ok", data: await TAURI_INVOKE("simulate_type", { text, delayMs }) };
 } catch (e) {
@@ -1101,7 +1101,6 @@ export type RemoteSenderDeliverArgs = { targetDeviceId: string; text: string; mo
 export type RemoteSenderPairArgs = { receiverDeviceId: string; receiverName: string; receiverPlatform: string; receiverAddress: string; pairingCode: string }
 export type RunTerminalCommandResponse = { stdout: string; stderr: string; exitCode: number }
 export type ScreenContextInfo = { screenContext: string | null }
-export type SimulateTypeResponse = { typingId: number }
 export type ScreenVisibleArea = { topInset: number; bottomInset: number; leftInset: number; rightInset: number }
 export type StartRecordingArgs = { preferredMicrophone: string | null }
 export type StartRecordingResponse = { sampleRate: number }
