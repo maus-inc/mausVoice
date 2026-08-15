@@ -30,6 +30,9 @@ const source = Object.fromEntries(
     ["gtkState", "packages/rust_gtk_pill/src/state.rs"],
     ["windowsState", "packages/rust_windows_pill/src/state.rs"],
     ["sharedPill", "packages/rust_pill_shared/src/lib.rs"],
+    ["macDraw", "packages/rust_macos_pill/src/draw.rs"],
+    ["gtkDraw", "packages/rust_gtk_pill/src/draw.rs"],
+    ["windowsDraw", "packages/rust_windows_pill/src/draw.rs"],
     ["integrationWorkflow", ".github/workflows/test-desktop-integration.yml"],
     ["docsWorkflow", ".github/workflows/test-docs.yml"],
     ["index", "index.html"],
@@ -129,20 +132,86 @@ describe("PR28 reset IPC execution and missing-overlay handling", () => {
 });
 
 describe("PR28 ring-alpha render-loop policy", () => {
-  it("updates ring alpha every frame and invalidates on the zero crossing", () => {
+  it("advances the ring every frame and invalidates on the zero crossing", () => {
+    // Every platform routes its per-frame ring bookkeeping through the shared
+    // policy, so their timing cannot drift apart.
     for (const pill of [source.gtkPill, source.macPill, source.windowsPill]) {
-      assert.match(pill, /update_ring_alpha/);
+      assert.match(pill, /advance_ring/);
+      assert.match(pill, /fn tick_ring/);
     }
     // GTK redraws the drawing area after updating alpha.
     assert.match(source.gtkPill, /da\.queue_draw\(\)/);
     // macOS marks the layer dirty after updating alpha.
     assert.match(source.macApp, /setNeedsDisplay:YES/);
-    // Windows must dirty the frame at the alpha zero-crossing so the final
-    // cleared ring actually repaints instead of leaving a ghost.
-    assert.match(source.windowsPill, /previous_alpha > 0\.0 && next == 0\.0/);
+    // Windows must dirty the frame when the ring AND its arm pulse finish, so
+    // the final cleared frame repaints instead of leaving a ghost.
+    assert.match(source.windowsPill, /previous_alpha > 0\.0 && anim\.alpha == 0\.0/);
+    assert.match(source.windowsPill, /was_pulsing && anim\.arm_pulse < 0\.0/);
     assert.match(source.windowsPill, /dirty\.set\(true\)/);
-    // Shared monotonic-fade policy is unit-tested in the pill crate.
+    // Shared fade policy stays unit-tested in the pill crate.
     assert.match(source.sharedPill, /ring_alpha_fades_monotonically_after_release/);
+    assert.match(source.sharedPill, /advance_ring_pins_alpha_while_held_and_fades_after/);
+  });
+
+  it("draws the ring from one continuous driver with no armed-state switch", () => {
+    // The comet envelope must seal into a uniform outline as the hold
+    // completes; a separate "armed" branch would reintroduce the visible cut
+    // between filling and armed that this design removes.
+    assert.match(source.sharedPill, /pub fn ring_envelope/);
+    assert.match(source.sharedPill, /pub fn ring_seal/);
+    assert.match(source.sharedPill, /envelope_seals_the_seam_at_completion/);
+    assert.match(source.sharedPill, /sealing_strictly_reduces_the_seam_step/);
+    // The glimmer replaces the old binary dash pattern and must stay
+    // continuous across the seam, which requires whole cycles.
+    assert.match(source.sharedPill, /pub fn ring_glimmer/);
+    assert.match(source.sharedPill, /glimmer_is_continuous_across_the_seam/);
+    assert.doesNotMatch(source.sharedPill, /ring_dash_is_on/);
+    // The head must be gone before completion so nothing is parked at the seam.
+    assert.match(source.sharedPill, /head_is_fully_gone_before_completion/);
+
+    for (const draw of [source.gtkDraw, source.macDraw, source.windowsDraw]) {
+      assert.match(draw, /ring_envelope/);
+      assert.match(draw, /ring_glimmer/);
+      assert.match(draw, /ring_head_fade/);
+      // The retired dash renderer must not linger anywhere.
+      assert.doesNotMatch(draw, /ring_dash_is_on/);
+      assert.doesNotMatch(draw, /RING_SHIMMER_ALPHA/);
+    }
+  });
+
+  it("reuses one buffer for the resampled ring instead of allocating per frame", () => {
+    assert.match(source.sharedPill, /pub fn resample_perimeter/);
+    assert.match(source.sharedPill, /resample_reuses_the_caller_buffer/);
+    for (const state of [source.gtkState, source.macState, source.windowsState]) {
+      assert.match(state, /ring_points: RefCell<Vec<\(f64, f64, f64\)>>/);
+    }
+    for (const draw of [source.gtkDraw, source.macDraw, source.windowsDraw]) {
+      assert.match(draw, /ring_points\.borrow_mut\(\)/);
+    }
+  });
+
+  it("starts inflating mid-hold so arming continues the motion", () => {
+    assert.match(source.sharedPill, /pub fn inflate_target/);
+    assert.match(source.sharedPill, /inflate_starts_midway_through_the_hold/);
+    for (const pill of [source.gtkPill, source.macPill, source.windowsPill]) {
+      assert.match(pill, /rust_pill_shared::inflate_target/);
+      // The old binary "1.0 while dragging" target is gone.
+      assert.doesNotMatch(
+        pill,
+        /let inflate_target = if state\.dragging\.get\(\) \{ 1\.0 \} else \{ 0\.0 \};/,
+      );
+    }
+  });
+
+  it("confirms the arm with a pulse that survives the ring's own alpha", () => {
+    for (const pill of [source.gtkPill, source.macPill, source.windowsPill]) {
+      assert.match(pill, /arm_pulse\.set\(0\.0\)/);
+    }
+    // Windows culls frames aggressively, so the pulse needs its own liveness
+    // check or it would be dropped mid-flight.
+    assert.match(source.windowsState, /arm_pulse\.get\(\) >= 0\.0/);
+    assert.match(source.windowsDraw, /arm_pulse\.get\(\) >= 0\.0/);
+    assert.match(source.macDraw, /arm_pulse\.get\(\) >= 0\.0/);
   });
 });
 
@@ -231,10 +300,12 @@ describe("PR28 native placement contracts", () => {
       assert.match(state, /LONG_PRESS_RING_FADE/);
     }
     for (const pill of [source.gtkPill, source.macPill, source.windowsPill]) {
-      assert.match(pill, /update_ring_alpha/);
+      // Alpha is now advanced through the shared per-frame policy, which pins
+      // it while held and eases it out after release.
+      assert.match(pill, /advance_ring/);
       assert.match(pill, /ring_release_progress/);
     }
-    assert.match(source.sharedPill, /pub fn update_ring_alpha/);
+    assert.match(source.sharedPill, /pub fn ring_alpha/);
     assert.match(source.sharedPill, /ring_alpha_is_pinned_while_held/);
     assert.match(
       source.sharedPill,

@@ -95,88 +95,401 @@ pub const DRAG_INFLATE_SCALE: f64 = 0.18;
 /// Spring stiffness for the inflate/deflate animation.
 pub const DRAG_INFLATE_STIFFNESS: f64 = 280.0;
 
+// ── Long-press ring: one continuous driver ────────────────────────────────
+//
+// The ring is a "comet" that sweeps the pill perimeter while the gesture is
+// held. Everything below is driven by a SINGLE progress value `p` in 0..=1 —
+// there is no separate "filling" and "armed" renderer to switch between, which
+// is what previously made completion look like a cut.
+//
+// Brightness at a point = `ring_envelope(..)` * `ring_glimmer(..)`:
+//   * envelope  — comet falloff behind the head, which relaxes to a flat 1.0
+//                 as the hold completes (see `ring_seal`).
+//   * glimmer   — a travelling sine that keeps the outline alive. It replaces
+//                 the old binary dash pattern, whose hard on/off edges read as
+//                 busy. Backends have no gradient-along-path primitive (Cairo
+//                 and Direct2D both lack one), so the gradient is produced by
+//                 shading evenly-resampled segments.
+
+/// Instant progress credited the moment the ramp starts, so a press reads as
+/// registered within one frame rather than after the hold delay.
+pub const RING_LEAD_IN: f64 = 0.04;
+
+/// Comet tail length at the start of the ramp, as a fraction of the perimeter.
+pub const RING_TAIL_START: f64 = 0.34;
+/// Tail length once fully relaxed, as a fraction of the perimeter. Greater
+/// than 1.0 so the trail wraps past the head instead of ending abruptly.
+pub const RING_TAIL_FULL: f64 = 1.35;
+/// Progress by which the tail has finished growing to `RING_TAIL_FULL`.
+pub const RING_TAIL_RELAX_BY: f64 = 0.62;
+/// Dimmest the trail is allowed to get behind the head.
+pub const RING_TRAIL_FLOOR: f64 = 0.14;
+
+/// Progress at which the envelope starts crossfading to a uniform outline.
+///
+/// On a closed path, distance `0` and distance `total_len` are the SAME point.
+/// A comet envelope is therefore discontinuous there — bright just behind the
+/// head, dim at the tail end — leaving a visible lump at the seam that a
+/// longer tail cannot remove. Sealing crossfades the whole envelope to 1.0 so
+/// both sides of the seam match exactly at completion.
+pub const RING_SEAL_FROM: f64 = 0.72;
+
+/// Full glimmer cycles around the perimeter.
+///
+/// MUST stay a whole number: a fractional count would not meet itself at the
+/// seam, reintroducing the discontinuity that `ring_seal` exists to remove.
+pub const RING_GLIMMER_CYCLES: f64 = 3.0;
+/// Depth of the glimmer modulation (0 = flat outline, 1 = full dark-to-bright).
+pub const RING_GLIMMER_DEPTH: f64 = 0.42;
+/// How fast the glimmer travels, as a multiplier on the waveform phase.
+pub const RING_GLIMMER_SPEED: f64 = 1.8;
+
+/// Stroke width of the ring at rest.
+pub const RING_CORE_WIDTH: f64 = 1.5;
+/// Extra stroke width added at the comet head.
+pub const RING_WIDTH_SWELL: f64 = 0.7;
+/// Brightness multiplier once the gesture is armed and dragging.
+pub const RING_ARM_LIFT: f64 = 0.32;
+
+/// Target spacing between resampled perimeter points, in pixels.
+pub const RING_SEGMENT_PX: f64 = 2.2;
+
+/// Radius of the soft comet head.
+pub const RING_HEAD_RADIUS: f64 = 13.0;
+/// Peak alpha of the comet head.
+pub const RING_HEAD_ALPHA: f64 = 0.30;
+/// Progress at which the head starts dissolving.
+pub const RING_HEAD_FADE_FROM: f64 = 0.55;
+/// How much the head expands while it dissolves.
+pub const RING_HEAD_BLOOM: f64 = 0.45;
+/// Concentric steps used to approximate the head's radial falloff.
+pub const RING_HEAD_STEPS: usize = 4;
+
+/// Duration of the arm-confirmation pulse.
+pub const RING_PULSE_DURATION: f64 = 0.5;
+/// How far the arm pulse expands beyond the ring, in pixels.
+pub const RING_PULSE_SPREAD: f64 = 10.0;
+/// Peak alpha of the arm pulse.
+pub const RING_PULSE_ALPHA: f64 = 0.34;
+/// Delay of the second, trailing pulse ring as a fraction of the duration.
+pub const RING_PULSE_ECHO_DELAY: f64 = 0.18;
+
+/// Time for the ring to reach full opacity after the hold delay.
+pub const RING_ALPHA_RISE: f64 = 0.1;
+/// Outward drift applied to the ring as it fades after release, in pixels.
+pub const RING_RELEASE_DRIFT: f64 = 1.5;
+
+/// Progress at which the pill starts inflating, before the gesture arms.
+pub const INFLATE_PRE_AT: f64 = 0.45;
+/// How much of the full inflate is reached before arming.
+pub const INFLATE_PRE_AMOUNT: f64 = 0.6;
+/// Peak scale reduction of the press anticipation dip.
+pub const PRESS_DIP: f64 = 0.03;
+/// Time constant of the press anticipation dip's decay.
+pub const PRESS_DIP_DECAY: f64 = 0.07;
+
+/// Smootherstep (Perlin's second-order smoothstep). Zero first AND second
+/// derivative at both ends, so values driven by it start and stop without a
+/// visible kink.
+pub fn smootherstep(t: f64) -> f64 {
+    let t = t.clamp(0.0, 1.0);
+    t * t * t * (t * (t * 6.0 - 15.0) + 10.0)
+}
+
+/// Cubic ease-out — fast departure, gentle settle.
+pub fn ease_out_cubic(t: f64) -> f64 {
+    let t = t.clamp(0.0, 1.0);
+    1.0 - (1.0 - t).powi(3)
+}
+
+/// Exponential ease-out, for opacity rises that must feel instant.
+pub fn ease_out_expo(t: f64) -> f64 {
+    let t = t.clamp(0.0, 1.0);
+    if t >= 1.0 {
+        1.0
+    } else {
+        1.0 - (-9.0 * t).exp2()
+    }
+}
+
+fn lerp(a: f64, b: f64, t: f64) -> f64 {
+    a + (b - a) * t
+}
+
+/// Normalised progress of the ramp portion of the hold, ignoring shaping.
+///
+/// Returns 0 until `hold_delay` so a quick click never paints a partial ring,
+/// and 1 at `duration`, when the gesture arms.
+pub fn hold_progress_raw(elapsed: f64, hold_delay: f64, duration: f64) -> f64 {
+    let span = duration - hold_delay;
+    if span <= 0.0 {
+        return if elapsed >= duration { 1.0 } else { 0.0 };
+    }
+    ((elapsed - hold_delay) / span).clamp(0.0, 1.0)
+}
+
+/// Eased hold progress: an instant lead-in so the press registers immediately,
+/// then smootherstep so the ring decelerates into completion instead of
+/// arriving at full speed.
+pub fn hold_progress(elapsed: f64, hold_delay: f64, duration: f64) -> f64 {
+    let raw = hold_progress_raw(elapsed, hold_delay, duration);
+    if raw <= 0.0 {
+        return 0.0;
+    }
+    RING_LEAD_IN + (1.0 - RING_LEAD_IN) * smootherstep(raw)
+}
+
+/// How far the envelope has crossfaded toward a uniform outline. 0 while the
+/// comet still reads as a comet, 1 at completion.
+pub fn ring_seal(progress: f64) -> f64 {
+    smootherstep((progress - RING_SEAL_FROM) / (1.0 - RING_SEAL_FROM).max(1e-3))
+}
+
+/// Comet tail length in pixels for the given progress.
+pub fn ring_tail_len(progress: f64, total_len: f64) -> f64 {
+    let relax = smootherstep(progress / RING_TAIL_RELAX_BY);
+    lerp(
+        total_len * RING_TAIL_START,
+        total_len * RING_TAIL_FULL,
+        relax,
+    )
+}
+
+/// Brightness envelope at `dist` along the perimeter.
+///
+/// `head_len` is `total_len * progress`. Behind the head the envelope falls off
+/// toward `RING_TRAIL_FLOOR`; as `progress` approaches 1 the whole curve
+/// crossfades to a flat 1.0 so the seam disappears.
+pub fn ring_envelope(dist: f64, head_len: f64, progress: f64, total_len: f64) -> f64 {
+    let tail = ring_tail_len(progress, total_len).max(1e-6);
+    let floor = lerp(0.0, RING_TRAIL_FLOOR, (progress * 3.0).clamp(0.0, 1.0));
+    let u = ((head_len - dist) / tail).clamp(0.0, 1.0);
+    let comet = (1.0 - u).powf(1.7).max(floor);
+    lerp(comet, 1.0, ring_seal(progress))
+}
+
+/// Travelling glimmer multiplier at `dist`, in `0..=1`.
+///
+/// `wave_phase` is the pill's internal waveform phase, so the outline shimmers
+/// in sync with the sine waves inside it.
+pub fn ring_glimmer(dist: f64, total_len: f64, wave_phase: f64, progress: f64) -> f64 {
+    let cycle = dist / total_len.max(1.0) * std::f64::consts::TAU * RING_GLIMMER_CYCLES;
+    let wave = 0.5 + 0.5 * (cycle - wave_phase * RING_GLIMMER_SPEED).sin();
+    let depth = RING_GLIMMER_DEPTH * lerp(0.55, 1.0, ring_seal(progress));
+    1.0 - depth + depth * wave
+}
+
+/// How far the comet head has dissolved, in `0..=1`.
+///
+/// Driven by `RING_HEAD_FADE_FROM`, but never lags the seal: once the ring has
+/// closed into a uniform outline the head must already be gone, or it would
+/// sit as a bright lump on the seam.
+fn ring_head_dissolve(progress: f64) -> f64 {
+    ring_seal(progress).max(smootherstep(
+        (progress - RING_HEAD_FADE_FROM) / (1.0 - RING_HEAD_FADE_FROM).max(1e-3),
+    ))
+}
+
+/// Alpha of the comet head. Reaches 0 before completion so nothing bright is
+/// left parked at the seam.
+pub fn ring_head_fade(progress: f64, arm_t: f64) -> f64 {
+    (1.0 - ring_head_dissolve(progress))
+        * (1.0 - arm_t.clamp(0.0, 1.0))
+        * (progress * 6.0).clamp(0.0, 1.0)
+}
+
+/// Radius of the comet head, which blooms outward as it dissolves so the head
+/// spreads into the ring rather than simply vanishing.
+pub fn ring_head_radius(progress: f64) -> f64 {
+    RING_HEAD_RADIUS * (1.0 + RING_HEAD_BLOOM * ring_head_dissolve(progress))
+}
+
+/// Inflate target for the current gesture state.
+///
+/// Inflation begins partway through the hold (`INFLATE_PRE_AT`) so the pill is
+/// already growing while the ring fills; arming then continues that motion
+/// instead of starting a new one.
+pub fn inflate_target(progress: f64, held: bool, dragging: bool) -> f64 {
+    if dragging {
+        return 1.0;
+    }
+    if !held {
+        return 0.0;
+    }
+    let t = smootherstep((progress - INFLATE_PRE_AT) / (1.0 - INFLATE_PRE_AT).max(1e-3));
+    t * INFLATE_PRE_AMOUNT
+}
+
+/// Scale reduction for the press anticipation dip. Decays quickly and is
+/// suppressed once the pill starts inflating.
+pub fn press_dip(press_elapsed: f64, inflate: f64) -> f64 {
+    if press_elapsed < 0.0 {
+        return 0.0;
+    }
+    let decay = (-press_elapsed / PRESS_DIP_DECAY).exp();
+    PRESS_DIP * decay * (1.0 - (inflate * 2.0).clamp(0.0, 1.0))
+}
+
 /// Once the press/drag ends, the long-press outline lingers only this long.
 /// While the gesture is held the outline is pinned at full alpha — it must
 /// never fade while the pill is still pressed and inflated.
 pub const LONG_PRESS_RING_FADE: f64 = 0.5;
 
-/// Advances the long-press ring alpha for one animation tick.
+/// Master ring alpha.
 ///
-/// The ring is pinned while the gesture is held and fades monotonically after
-/// release. Keeping this policy shared prevents platform renderers from
-/// drifting apart.
-pub fn update_ring_alpha(current: f64, held: bool, delta_seconds: f64) -> f64 {
+/// Rises with an exponential ease so the outline appears to arrive instantly,
+/// and leaves on an accelerating curve — exits should be quicker than entrances.
+/// `hold_elapsed` is time since the press began; `release_elapsed` is time
+/// since it ended.
+pub fn ring_alpha(held: bool, hold_elapsed: f64, release_elapsed: f64, hold_delay: f64) -> f64 {
     if held {
+        return ease_out_expo((hold_elapsed - hold_delay) / RING_ALPHA_RISE);
+    }
+    let t = (release_elapsed / LONG_PRESS_RING_FADE).clamp(0.0, 1.0);
+    if t >= 1.0 {
+        0.0
+    } else {
+        1.0 - t * t
+    }
+}
+
+/// Outward drift of the ring while it fades after release, in pixels.
+pub fn ring_release_drift(release_elapsed: f64) -> f64 {
+    RING_RELEASE_DRIFT * ease_out_cubic(release_elapsed / LONG_PRESS_RING_FADE)
+}
+
+/// Normalised progress of the arm-confirmation pulse, in `0..=1`.
+///
+/// `arm_pulse` is seconds since arming, or negative when no pulse is running;
+/// a retired pulse reports 1.0 so renderers treat it as finished.
+pub fn pulse_progress(arm_pulse: f64) -> f64 {
+    if arm_pulse < 0.0 {
         return 1.0;
     }
-
-    (current.clamp(0.0, 1.0) - delta_seconds.max(0.0) / LONG_PRESS_RING_FADE).max(0.0)
+    (arm_pulse / RING_PULSE_DURATION).clamp(0.0, 1.0)
 }
 
-// ── Long-press ring rendering passes ──────────────────────────────────────
-// Three-pass silver gradient: wide soft glow → mid-tone → thin bright core.
-// Each pass is modulated by a sine-wave shimmer that travels along the
-// perimeter in sync with the internal waveform phase, so the ring looks
-// like the sine waves inside the pill are bleeding through to the border.
+/// Resamples a perimeter polyline into evenly-spaced points, appending
+/// `(x, y, distance_along_path)` triples to `out`.
+///
+/// Per-segment shading needs uniform arc length: on the raw path the corner
+/// arcs carry most of the vertices while a long straight edge is a single
+/// segment, so a gradient evaluated per segment would band badly. Writing into
+/// a caller-owned buffer keeps this allocation-free on the render path.
+pub fn resample_perimeter(
+    path: &[(f64, f64)],
+    distances: &[f64],
+    total_len: f64,
+    step_px: f64,
+    out: &mut Vec<(f64, f64, f64)>,
+) {
+    out.clear();
+    if path.len() < 2 || total_len <= 0.0 {
+        return;
+    }
 
-/// Full sine-wave cycles around the perimeter. ~2 cycles gives a gentle
-/// shimmer without looking busy.
-pub const RING_SHIMMER_CYCLES: f64 = 2.0;
-/// Width of the soft outer glow pass.
-pub const RING_GLOW_WIDTH: f64 = 5.0;
-/// Alpha multiplier for the soft outer glow.
-pub const RING_GLOW_ALPHA: f64 = 0.15;
-/// Width of the mid-tone pass.
-pub const RING_MID_WIDTH: f64 = 3.0;
-/// Alpha multiplier for the mid-tone pass.
-pub const RING_MID_ALPHA: f64 = 0.35;
-/// Width of the bright core pass.
-pub const RING_CORE_WIDTH: f64 = 1.2;
-/// Alpha multiplier for the bright core.
-pub const RING_CORE_ALPHA: f64 = 0.85;
-/// Length (in px) over which the leading edge fades to zero.
-pub const RING_EDGE_FADE: f64 = 30.0;
-
-// ── 2-pass dash-shimmer ring (0.1.6 redesign) ─────────────────────────────
-// The old three-pass × alpha-bucket renderer is replaced by exactly two
-// stroke calls: a constant base outline plus a traveling dash shimmer. The
-// dash ranges are computed from this shared geometry (not a backend dash
-// style), so all three platforms render the same path with the same
-// quantization, and the shimmer travels in sync with the internal waveform
-// phase — the sine waves "bleeding through" to the border.
-
-/// Width of the constant base-outline pass.
-pub const RING_BASE_WIDTH: f64 = 2.5;
-/// Alpha multiplier for the base outline.
-pub const RING_BASE_ALPHA: f64 = 0.30;
-/// Width of the traveling shimmer pass.
-pub const RING_SHIMMER_WIDTH: f64 = 1.2;
-/// Alpha multiplier for the shimmer dashes.
-pub const RING_SHIMMER_ALPHA: f64 = 0.8;
-/// Fraction of each dash period that is painted ("on") for the shimmer.
-pub const RING_DASH_ON_FRACTION: f64 = 0.4;
-
-/// Length of one dash period along the perimeter:
-/// `perimeter / RING_SHIMMER_CYCLES` full on/off cycles around the ring.
-pub fn ring_dash_period(total_len: f64) -> f64 {
-    total_len.max(1.0) / RING_SHIMMER_CYCLES
+    let count = ((total_len / step_px.max(0.1)).round() as usize).max(24);
+    let mut seg = 1usize;
+    for i in 0..=count {
+        let target = (i as f64 / count as f64) * total_len;
+        while seg < distances.len() - 1 && distances[seg] < target {
+            seg += 1;
+        }
+        let d0 = distances[seg - 1];
+        let d1 = distances[seg];
+        let k = if d1 > d0 { (target - d0) / (d1 - d0) } else { 0.0 };
+        let (x0, y0) = path[seg - 1];
+        let (x1, y1) = path[seg];
+        out.push((x0 + (x1 - x0) * k, y0 + (y1 - y0) * k, target));
+    }
 }
 
-/// The traveling offset of the dash pattern, driven by the shared waveform
-/// phase so the shimmer moves in lockstep with the sine waves inside the
-/// pill. One full `TAU` of phase advances the pattern by one dash period.
-pub fn ring_dash_offset(wave_phase: f64, total_len: f64) -> f64 {
-    let period = ring_dash_period(total_len);
-    let t = (wave_phase / std::f64::consts::TAU).fract();
-    period * t
+/// One frame of ring bookkeeping, shared by all three platform renderers so
+/// their timing cannot drift apart.
+///
+/// Inputs are the raw gesture facts; outputs are the animated values the
+/// renderer reads. `held` means the ring should be lit — the long press is past
+/// its delay, or a drag is underway.
+#[derive(Debug, Clone, Copy)]
+pub struct RingTick {
+    pub held: bool,
+    pub dragging: bool,
+    pub progress: f64,
+    pub delta_seconds: f64,
 }
 
-/// True when the distance-along-perimeter `dist` falls inside the painted
-/// ("on") part of the dash cycle for the given `offset`.
-pub fn ring_dash_is_on(dist: f64, period: f64, offset: f64) -> bool {
-    let on_len = period * RING_DASH_ON_FRACTION;
-    let pos = (dist + offset).rem_euclid(period);
-    pos < on_len
+/// Mutable ring animation values advanced by [`advance_ring`].
+#[derive(Debug, Clone, Copy, Default)]
+pub struct RingAnim {
+    pub alpha: f64,
+    pub release_progress: f64,
+    pub press_elapsed: f64,
+    pub release_elapsed: f64,
+    pub arm_t: f64,
+    /// Seconds since arming; negative when no pulse is running.
+    pub arm_pulse: f64,
+}
+
+/// Time for `arm_t` to ramp in once armed.
+pub const ARM_RAMP_IN: f64 = 0.22;
+/// Time for `arm_t` to ramp back out after the drag ends.
+pub const ARM_RAMP_OUT: f64 = 0.18;
+
+/// Advances one frame of ring animation.
+///
+/// Call once per tick, before drawing. Starting a pulse is the caller's job
+/// (see [`RingAnim::arm`]) because only the gesture layer knows the exact frame
+/// the long press completed.
+pub fn advance_ring(anim: &mut RingAnim, tick: RingTick, hold_delay: f64) {
+    let dt = tick.delta_seconds.max(0.0);
+
+    if tick.held {
+        anim.press_elapsed += dt;
+        anim.release_elapsed = 0.0;
+        // Remember how far the ramp filled so a release mid-ramp fades from
+        // the level actually reached rather than snapping to a full ring.
+        anim.release_progress = if tick.dragging { 1.0 } else { tick.progress };
+    } else {
+        anim.release_elapsed += dt;
+        anim.press_elapsed = 0.0;
+    }
+
+    anim.alpha = ring_alpha(
+        tick.held,
+        anim.press_elapsed + hold_delay,
+        anim.release_elapsed,
+        hold_delay,
+    );
+
+    anim.arm_t = if tick.dragging {
+        (anim.arm_t + dt / ARM_RAMP_IN).min(1.0)
+    } else {
+        (anim.arm_t - dt / ARM_RAMP_OUT).max(0.0)
+    };
+
+    if anim.arm_pulse >= 0.0 {
+        anim.arm_pulse += dt;
+        if anim.arm_pulse > RING_PULSE_DURATION {
+            anim.arm_pulse = -1.0;
+        }
+    }
+}
+
+impl RingAnim {
+    /// Starts the arm-confirmation pulse. Call on the frame the gesture arms.
+    pub fn arm(&mut self) {
+        self.arm_pulse = 0.0;
+    }
+
+    /// True while the confirmation pulse is running.
+    pub fn pulsing(&self) -> bool {
+        self.arm_pulse >= 0.0
+    }
+
+    /// Normalised pulse progress in `0..=1`.
+    pub fn pulse_t(&self) -> f64 {
+        pulse_progress(self.arm_pulse)
+    }
 }
 
 #[cfg(test)]
@@ -228,50 +541,406 @@ mod tests {
 
     #[test]
     fn ring_alpha_is_pinned_while_held() {
-        assert_eq!(update_ring_alpha(0.2, true, 0.016), 1.0);
+        // Any point past the rise window while held is full opacity; the ring
+        // must never fade underneath an active press.
+        assert!(ring_alpha(true, 0.12 + RING_ALPHA_RISE, 0.0, 0.12) > 0.99);
+        assert!(ring_alpha(true, 5.0, 0.0, 0.12) > 0.99);
     }
 
     #[test]
     fn ring_alpha_fades_monotonically_after_release() {
-        let next = update_ring_alpha(1.0, false, 0.1);
-        assert!((next - 0.8).abs() < 1e-9);
-        assert!(update_ring_alpha(next, false, 0.1) < next);
+        let mut prev = ring_alpha(false, 0.0, 0.0, 0.12);
+        assert!((prev - 1.0).abs() < 1e-9);
+        for i in 1..=25 {
+            let next = ring_alpha(false, 0.0, LONG_PRESS_RING_FADE * i as f64 / 25.0, 0.12);
+            assert!(next < prev, "alpha rose during the fade");
+            prev = next;
+        }
     }
 
     #[test]
     fn ring_alpha_never_goes_below_zero() {
-        assert_eq!(update_ring_alpha(0.01, false, 1.0), 0.0);
-        assert_eq!(update_ring_alpha(-1.0, false, 0.0), 0.0);
+        assert_eq!(ring_alpha(false, 0.0, LONG_PRESS_RING_FADE, 0.12), 0.0);
+        assert_eq!(ring_alpha(false, 0.0, 100.0, 0.12), 0.0);
     }
 
     #[test]
-    fn dash_period_splits_perimeter_into_shimmer_cycles() {
-        let period = ring_dash_period(400.0);
-        // RING_SHIMMER_CYCLES = 2 -> one period covers half the perimeter.
-        assert!((period - 200.0).abs() < 1e-9);
+    fn pulse_progress_reports_a_retired_pulse_as_finished() {
+        assert_eq!(pulse_progress(-1.0), 1.0);
+        assert_eq!(pulse_progress(0.0), 0.0);
+        assert_eq!(pulse_progress(RING_PULSE_DURATION), 1.0);
+        // Saturates rather than overshooting.
+        assert_eq!(pulse_progress(RING_PULSE_DURATION * 3.0), 1.0);
+    }
+
+    // ── New ring model ────────────────────────────────────────────────
+
+    const HOLD_DELAY: f64 = 0.12;
+    const DURATION: f64 = 0.45;
+
+    #[test]
+    fn hold_progress_credits_a_lead_in_immediately() {
+        // Nothing before the hold delay, so a click paints no ring.
+        assert_eq!(hold_progress(0.0, HOLD_DELAY, DURATION), 0.0);
+        assert_eq!(hold_progress(HOLD_DELAY, HOLD_DELAY, DURATION), 0.0);
+        // Just past it, the lead-in is already visible.
+        let p = hold_progress(HOLD_DELAY + 0.001, HOLD_DELAY, DURATION);
+        assert!(p >= RING_LEAD_IN, "expected lead-in credit, got {p}");
     }
 
     #[test]
-    fn dash_offset_is_periodic_in_wave_phase() {
-        let total = 400.0;
-        let at_zero = ring_dash_offset(0.0, total);
-        let at_tau = ring_dash_offset(std::f64::consts::TAU, total);
-        assert!((at_zero - 0.0).abs() < 1e-9);
-        assert!(at_tau.abs() < 1e-9);
-        // Half a turn advances the pattern by half a period.
-        let half = ring_dash_offset(std::f64::consts::PI, total);
-        assert!((half - 100.0).abs() < 1e-9);
+    fn hold_progress_completes_exactly_at_duration() {
+        assert!((hold_progress(DURATION, HOLD_DELAY, DURATION) - 1.0).abs() < 1e-9);
+        assert!((hold_progress(DURATION * 4.0, HOLD_DELAY, DURATION) - 1.0).abs() < 1e-9);
     }
 
     #[test]
-    fn dash_on_ranges_follow_the_on_fraction() {
-        let period = 200.0;
-        let offset = 0.0;
-        assert!(ring_dash_is_on(10.0, period, offset));
-        // on_len = 0.4 * 200 = 80.
-        assert!(!ring_dash_is_on(90.0, period, offset));
-        assert!(ring_dash_is_on(210.0, period, offset));
-        // Offset shifts the pattern: dist 70 with offset 20 lands at 90 (off).
-        assert!(!ring_dash_is_on(70.0, period, 20.0));
+    fn hold_progress_is_monotonic() {
+        let mut prev = 0.0;
+        for i in 0..=100 {
+            let t = DURATION * i as f64 / 100.0;
+            let p = hold_progress(t, HOLD_DELAY, DURATION);
+            assert!(p >= prev - 1e-12, "regressed at t={t}: {p} < {prev}");
+            prev = p;
+        }
+    }
+
+    #[test]
+    fn hold_progress_decelerates_into_completion() {
+        // Smootherstep: the last slice of time must advance less than a slice
+        // taken mid-ramp, otherwise the ring arrives at full speed.
+        let mid = hold_progress(0.30, HOLD_DELAY, DURATION)
+            - hold_progress(0.29, HOLD_DELAY, DURATION);
+        let end = hold_progress(0.45, HOLD_DELAY, DURATION)
+            - hold_progress(0.44, HOLD_DELAY, DURATION);
+        assert!(end < mid, "expected deceleration: end {end} >= mid {mid}");
+    }
+
+    /// The bug the seal exists to fix: on a closed ring, distance 0 and
+    /// distance `total_len` are the same physical point, so an unsealed comet
+    /// envelope leaves a hard brightness step there.
+    #[test]
+    fn envelope_seals_the_seam_at_completion() {
+        let total = 1000.0;
+        let head = total;
+        let before = ring_envelope(total, head, 1.0, total);
+        let after = ring_envelope(0.0, head, 1.0, total);
+        assert!(
+            (before - after).abs() < 1e-9,
+            "seam step at completion: {before} vs {after}",
+        );
+        assert!((before - 1.0).abs() < 1e-9, "sealed ring must be uniform");
+    }
+
+    #[test]
+    fn envelope_seam_step_shrinks_monotonically_into_completion() {
+        // Measured from the point the seal has actually engaged. Just after
+        // `RING_SEAL_FROM` the tail is still growing, which nudges the step up
+        // by ~0.01 before the seal takes over; that bump is invisible because
+        // the ring is still obviously a comet there. What must hold is that
+        // once the seal is doing the work the step only ever falls, to zero.
+        let total = 1000.0;
+        let start = 0.78;
+        let mut prev = f64::INFINITY;
+        for i in 0..=40 {
+            let p = start + (1.0 - start) * i as f64 / 40.0;
+            let head = total * p;
+            let step = (ring_envelope(head, head, p, total)
+                - ring_envelope(0.0, head, p, total))
+            .abs();
+            assert!(step <= prev + 1e-9, "seam step grew at p={p}");
+            prev = step;
+        }
+        assert!(prev < 1e-9, "seam never closed, final step {prev}");
+    }
+
+    #[test]
+    fn sealing_strictly_reduces_the_seam_step() {
+        // Guards the seal itself: without it the envelope keeps a large step
+        // at the seam no matter how long the tail grows.
+        let total = 1000.0;
+        let head = total;
+        let unsealed_tail = ring_tail_len(1.0, total);
+        let u = ((head - 0.0) / unsealed_tail).clamp(0.0, 1.0);
+        let unsealed = (1.0 - u).powf(1.7).max(RING_TRAIL_FLOOR);
+        let unsealed_step = (1.0 - unsealed).abs();
+        assert!(
+            unsealed_step > 0.5,
+            "expected a large raw seam step, got {unsealed_step}",
+        );
+        let sealed_step =
+            (ring_envelope(head, head, 1.0, total) - ring_envelope(0.0, head, 1.0, total)).abs();
+        assert!(sealed_step < 1e-9, "seal failed to close the seam");
+    }
+
+    #[test]
+    fn envelope_is_brightest_at_the_head_while_filling() {
+        let total = 1000.0;
+        let p = 0.5;
+        let head = total * p;
+        let at_head = ring_envelope(head, head, p, total);
+        let behind = ring_envelope(head - 100.0, head, p, total);
+        assert!(at_head > behind, "head {at_head} not brighter than {behind}");
+    }
+
+    #[test]
+    fn envelope_never_falls_below_the_trail_floor() {
+        let total = 1000.0;
+        let p = 0.6;
+        let head = total * p;
+        for i in 0..=100 {
+            let d = total * i as f64 / 100.0;
+            let e = ring_envelope(d, head, p, total);
+            assert!(e >= 0.0 && e <= 1.0 + 1e-9, "envelope out of range: {e}");
+        }
+    }
+
+    #[test]
+    fn glimmer_is_continuous_across_the_seam() {
+        // A whole number of cycles must meet itself at the seam.
+        assert_eq!(RING_GLIMMER_CYCLES.fract(), 0.0);
+        let total = 1000.0;
+        for &phase in &[0.0, 1.0, 2.5, 4.2] {
+            let a = ring_glimmer(0.0, total, phase, 1.0);
+            let b = ring_glimmer(total, total, phase, 1.0);
+            assert!((a - b).abs() < 1e-9, "glimmer seam mismatch at phase {phase}");
+        }
+    }
+
+    #[test]
+    fn glimmer_stays_within_unit_range() {
+        let total = 1000.0;
+        for i in 0..200 {
+            let d = total * i as f64 / 200.0;
+            let g = ring_glimmer(d, total, 1.7, 0.8);
+            assert!((0.0..=1.0).contains(&g), "glimmer out of range: {g}");
+        }
+    }
+
+    #[test]
+    fn head_is_fully_gone_before_completion() {
+        assert!(ring_head_fade(1.0, 0.0).abs() < 1e-9);
+        assert!(
+            ring_head_fade(0.98, 0.0) < 0.01,
+            "head still visible near completion",
+        );
+        // And it is bright early on.
+        assert!(ring_head_fade(0.4, 0.0) > 0.5);
+    }
+
+    #[test]
+    fn head_fade_is_monotonic_after_it_starts_dissolving() {
+        let mut prev = f64::INFINITY;
+        for i in 0..=50 {
+            let p = RING_HEAD_FADE_FROM + (1.0 - RING_HEAD_FADE_FROM) * i as f64 / 50.0;
+            let f = ring_head_fade(p, 0.0);
+            assert!(f <= prev + 1e-9, "head brightened at p={p}");
+            prev = f;
+        }
+    }
+
+    #[test]
+    fn head_blooms_outward_as_it_dissolves() {
+        let early = ring_head_radius(0.5);
+        let late = ring_head_radius(1.0);
+        assert!(late > early, "head must expand while fading");
+        assert!((early - RING_HEAD_RADIUS).abs() < 1e-9);
+    }
+
+    #[test]
+    fn inflate_starts_midway_through_the_hold() {
+        assert_eq!(inflate_target(0.0, true, false), 0.0);
+        assert_eq!(inflate_target(INFLATE_PRE_AT, true, false), 0.0);
+        let mid = inflate_target(0.8, true, false);
+        assert!(mid > 0.0 && mid < 1.0, "expected partial pre-inflate, got {mid}");
+        // Arming completes it.
+        assert_eq!(inflate_target(1.0, true, true), 1.0);
+        // Not held: fully deflated.
+        assert_eq!(inflate_target(0.9, false, false), 0.0);
+    }
+
+    #[test]
+    fn pre_inflate_never_exceeds_its_cap() {
+        let full = inflate_target(1.0, true, false);
+        assert!((full - INFLATE_PRE_AMOUNT).abs() < 1e-9);
+    }
+
+    #[test]
+    fn press_dip_decays_and_yields_to_inflate() {
+        let at_press = press_dip(0.0, 0.0);
+        assert!((at_press - PRESS_DIP).abs() < 1e-9);
+        assert!(press_dip(0.2, 0.0) < at_press);
+        // Once the pill inflates the dip is suppressed.
+        assert_eq!(press_dip(0.0, 1.0), 0.0);
+    }
+
+    #[test]
+    fn ring_alpha_rises_fast_and_exits_faster_than_it_enters() {
+        // Reaches near-full within the rise window.
+        let risen = ring_alpha(true, HOLD_DELAY + RING_ALPHA_RISE, 0.0, HOLD_DELAY);
+        assert!(risen > 0.99, "alpha should be up by the rise window: {risen}");
+        // Release is an accelerating curve: the first half sheds less than the
+        // second, i.e. it lingers then drops.
+        let half = ring_alpha(false, 0.0, LONG_PRESS_RING_FADE * 0.5, HOLD_DELAY);
+        assert!((half - 0.75).abs() < 1e-9, "expected quadratic exit, got {half}");
+        assert_eq!(ring_alpha(false, 0.0, LONG_PRESS_RING_FADE, HOLD_DELAY), 0.0);
+    }
+
+    #[test]
+    fn ring_alpha_is_monotonic_while_fading() {
+        let mut prev = 1.0;
+        for i in 0..=40 {
+            let t = LONG_PRESS_RING_FADE * i as f64 / 40.0;
+            let a = ring_alpha(false, 0.0, t, HOLD_DELAY);
+            assert!(a <= prev + 1e-9, "alpha rose during fade at t={t}");
+            prev = a;
+        }
+        assert_eq!(prev, 0.0);
+    }
+
+    #[test]
+    fn release_drift_is_bounded() {
+        assert_eq!(ring_release_drift(0.0), 0.0);
+        let full = ring_release_drift(LONG_PRESS_RING_FADE);
+        assert!((full - RING_RELEASE_DRIFT).abs() < 1e-9);
+        // Saturates rather than running away.
+        assert!((ring_release_drift(10.0) - RING_RELEASE_DRIFT).abs() < 1e-9);
+    }
+
+    #[test]
+    fn resample_produces_evenly_spaced_points() {
+        let path =
+            rounded_rectangle_perimeter(0.0, 0.0, 120.0, 32.0, 16.0, RoundedRectArcSteps::Auto);
+        let (distances, total) = path_distances(&path);
+        let mut out = Vec::new();
+        resample_perimeter(&path, &distances, total, RING_SEGMENT_PX, &mut out);
+
+        assert!(out.len() > 24);
+        // First and last land on the seam.
+        assert!(out[0].2.abs() < 1e-9);
+        assert!((out.last().unwrap().2 - total).abs() < 1e-9);
+
+        // Spacing is uniform to within a hair.
+        let expected = total / (out.len() - 1) as f64;
+        for w in out.windows(2) {
+            let gap = w[1].2 - w[0].2;
+            assert!((gap - expected).abs() < 1e-9, "uneven spacing: {gap}");
+            // Points stay on the path, so the chord never exceeds the arc.
+            let chord = ((w[1].0 - w[0].0).powi(2) + (w[1].1 - w[0].1).powi(2)).sqrt();
+            assert!(chord <= gap + 1e-9);
+        }
+    }
+
+    #[test]
+    fn resample_reuses_the_caller_buffer() {
+        let path =
+            rounded_rectangle_perimeter(0.0, 0.0, 120.0, 32.0, 16.0, RoundedRectArcSteps::Auto);
+        let (distances, total) = path_distances(&path);
+        let mut out = Vec::new();
+        resample_perimeter(&path, &distances, total, RING_SEGMENT_PX, &mut out);
+        let first_len = out.len();
+        let cap = out.capacity();
+        resample_perimeter(&path, &distances, total, RING_SEGMENT_PX, &mut out);
+        assert_eq!(out.len(), first_len, "buffer must be cleared, not appended");
+        assert_eq!(out.capacity(), cap, "second pass must not reallocate");
+    }
+
+    #[test]
+    fn resample_tolerates_degenerate_input() {
+        let mut out = Vec::new();
+        resample_perimeter(&[], &[], 0.0, RING_SEGMENT_PX, &mut out);
+        assert!(out.is_empty());
+        resample_perimeter(&[(0.0, 0.0)], &[0.0], 0.0, RING_SEGMENT_PX, &mut out);
+        assert!(out.is_empty());
+    }
+
+    #[test]
+    fn easings_are_well_behaved_at_their_endpoints() {
+        for f in [
+            smootherstep as fn(f64) -> f64,
+            ease_out_cubic as fn(f64) -> f64,
+            ease_out_expo as fn(f64) -> f64,
+        ] {
+            assert!(f(0.0).abs() < 1e-9);
+            assert!((f(1.0) - 1.0).abs() < 1e-9);
+            // Clamped outside the unit interval.
+            assert!(f(-5.0).abs() < 1e-9);
+            assert!((f(5.0) - 1.0).abs() < 1e-9);
+        }
+    }
+
+    #[test]
+    fn advance_ring_pins_alpha_while_held_and_fades_after() {
+        let mut a = RingAnim { release_elapsed: LONG_PRESS_RING_FADE, ..Default::default() };
+        let hd = 0.12;
+        // Held: alpha rises to full.
+        for _ in 0..20 {
+            advance_ring(&mut a, RingTick { held: true, dragging: false, progress: 0.5, delta_seconds: 0.016 }, hd);
+        }
+        assert!(a.alpha > 0.99, "alpha should be pinned high while held: {}", a.alpha);
+        assert!((a.release_progress - 0.5).abs() < 1e-9);
+
+        // Released: fades to zero and stays there.
+        for _ in 0..60 {
+            advance_ring(&mut a, RingTick { held: false, dragging: false, progress: 0.0, delta_seconds: 0.016 }, hd);
+        }
+        assert_eq!(a.alpha, 0.0);
+    }
+
+    #[test]
+    fn advance_ring_records_the_level_reached_at_release() {
+        let mut a = RingAnim::default();
+        let hd = 0.12;
+        advance_ring(&mut a, RingTick { held: true, dragging: false, progress: 0.37, delta_seconds: 0.016 }, hd);
+        advance_ring(&mut a, RingTick { held: false, dragging: false, progress: 0.0, delta_seconds: 0.016 }, hd);
+        assert!((a.release_progress - 0.37).abs() < 1e-9, "must fade from the level reached");
+    }
+
+    #[test]
+    fn dragging_pins_release_progress_to_a_full_ring() {
+        let mut a = RingAnim::default();
+        advance_ring(&mut a, RingTick { held: true, dragging: true, progress: 0.2, delta_seconds: 0.016 }, 0.12);
+        assert_eq!(a.release_progress, 1.0);
+    }
+
+    #[test]
+    fn arm_ramps_in_while_dragging_and_out_after() {
+        let mut a = RingAnim::default();
+        let hd = 0.12;
+        for _ in 0..(ARM_RAMP_IN / 0.016) as usize + 2 {
+            advance_ring(&mut a, RingTick { held: true, dragging: true, progress: 1.0, delta_seconds: 0.016 }, hd);
+        }
+        assert_eq!(a.arm_t, 1.0);
+        for _ in 0..(ARM_RAMP_OUT / 0.016) as usize + 2 {
+            advance_ring(&mut a, RingTick { held: false, dragging: false, progress: 0.0, delta_seconds: 0.016 }, hd);
+        }
+        assert_eq!(a.arm_t, 0.0);
+    }
+
+    #[test]
+    fn arm_pulse_runs_once_and_retires() {
+        let mut a = RingAnim::default();
+        assert!(!a.pulsing());
+        a.arm();
+        assert!(a.pulsing());
+        assert_eq!(a.pulse_t(), 0.0);
+
+        let mut ticks = 0;
+        while a.pulsing() && ticks < 1000 {
+            advance_ring(&mut a, RingTick { held: true, dragging: true, progress: 1.0, delta_seconds: 0.016 }, 0.12);
+            ticks += 1;
+        }
+        assert!(ticks < 1000, "pulse never retired");
+        assert!(!a.pulsing());
+        // A retired pulse reports a finished ramp, so renderers skip it.
+        assert_eq!(a.pulse_t(), 1.0);
+    }
+
+    #[test]
+    fn advance_ring_tolerates_a_negative_delta() {
+        let mut a = RingAnim::default();
+        advance_ring(&mut a, RingTick { held: true, dragging: false, progress: 0.5, delta_seconds: -1.0 }, 0.12);
+        assert!(a.press_elapsed >= 0.0);
+        assert!((0.0..=1.0).contains(&a.alpha));
     }
 }

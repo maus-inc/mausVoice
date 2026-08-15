@@ -1,0 +1,711 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>mausVoice — long-press ring prototype v2</title>
+<style>
+  :root {
+    color-scheme: dark;
+    --bg: #0b0d12;
+    --panel: #141822;
+    --line: #232938;
+    --text: #e7ebf3;
+    --muted: #8d96ab;
+    --accent: #8fb4ff;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    background: radial-gradient(1200px 700px at 50% -10%, #1a2030 0%, var(--bg) 60%);
+    color: var(--text);
+    font: 14px/1.55 ui-sans-serif, -apple-system, "Segoe UI", Roboto, sans-serif;
+    min-height: 100vh;
+  }
+  header { padding: 26px 32px 6px; }
+  h1 { font-size: 20px; margin: 0 0 4px; letter-spacing: -0.01em; }
+  header p { margin: 0; color: var(--muted); max-width: 78ch; }
+  main {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 18px;
+    padding: 18px 32px 40px;
+    max-width: 1280px;
+  }
+  @media (max-width: 940px) { main { grid-template-columns: 1fr; } }
+  .panel { background: var(--panel); border: 1px solid var(--line); border-radius: 14px; overflow: hidden; }
+  .panel h2 {
+    font-size: 12px; text-transform: uppercase; letter-spacing: 0.08em;
+    margin: 0; padding: 11px 16px; color: var(--muted); border-bottom: 1px solid var(--line);
+  }
+  .panel h2 b { color: var(--text); font-weight: 600; letter-spacing: 0; text-transform: none; font-size: 14px; }
+  canvas {
+    display: block; width: 100%; height: 250px;
+    background: linear-gradient(0deg, #05070c, #0e121b);
+    cursor: grab; touch-action: none;
+  }
+  canvas:active { cursor: grabbing; }
+  .readout {
+    display: flex; gap: 14px; padding: 9px 16px; border-top: 1px solid var(--line);
+    color: var(--muted); font: 11.5px/1.4 ui-monospace, SFMono-Regular, Menlo, monospace; flex-wrap: wrap;
+  }
+  .readout b { color: var(--accent); font-weight: 600; }
+  .controls {
+    grid-column: 1 / -1; background: var(--panel); border: 1px solid var(--line);
+    border-radius: 14px; padding: 14px 16px 18px;
+  }
+  .bar { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; padding-bottom: 12px; }
+  .grid {
+    display: grid; grid-template-columns: repeat(auto-fit, minmax(232px, 1fr));
+    gap: 10px 22px; border-top: 1px solid var(--line); padding-top: 14px;
+  }
+  .grid h3 {
+    grid-column: 1 / -1; margin: 6px 0 -2px; font-size: 11px; letter-spacing: 0.08em;
+    text-transform: uppercase; color: #6f7a92; font-weight: 600;
+  }
+  button {
+    background: #1e2534; color: var(--text); border: 1px solid var(--line);
+    border-radius: 9px; padding: 8px 14px; font: inherit; cursor: pointer;
+  }
+  button:hover { border-color: #3a4358; }
+  button.primary { background: var(--accent); color: #0b0d12; border-color: transparent; font-weight: 600; }
+  label.field { display: grid; gap: 3px; font-size: 12px; color: var(--muted); }
+  label.field .row { display: flex; justify-content: space-between; gap: 8px; align-items: baseline; }
+  label.field .row b { color: var(--text); font-weight: 600; font-family: ui-monospace, Menlo, monospace; font-size: 11.5px; }
+  input[type=range] { width: 100%; accent-color: var(--accent); }
+  label.toggle { display: flex; align-items: center; gap: 7px; color: var(--muted); font-size: 13px; }
+  .hint { color: var(--muted); font-size: 12px; }
+  code { background: #0e121b; border: 1px solid var(--line); border-radius: 5px; padding: 1px 5px; font-size: 12px; }
+</style>
+</head>
+<body>
+<header>
+  <h1>Long-press ring — current vs. proposed v2</h1>
+  <p>
+    Press and hold either pill (or the <b>Hold</b> button / spacebar). Both panels share one gesture clock and the
+    exact geometry of <code>rust_pill_shared</code>. v2 is driven by a <b>single continuous progress value</b> —
+    there is no fill→armed state switch to see.
+  </p>
+</header>
+
+<main>
+  <section class="panel">
+    <h2><b>Current</b> — linear ramp · hard dash shimmer · linear fade</h2>
+    <canvas id="canvas-current"></canvas>
+    <div class="readout" id="readout-current"></div>
+  </section>
+
+  <section class="panel">
+    <h2><b>Proposed v2</b> — one driver · glimmer gradient · soft comet · mid-hold inflate</h2>
+    <canvas id="canvas-proposed"></canvas>
+    <div class="readout" id="readout-proposed"></div>
+  </section>
+
+  <section class="controls">
+    <div class="bar">
+      <button class="primary" id="hold">Hold (space)</button>
+      <button id="tap">Quick tap</button>
+      <button id="abort">Release mid-ramp</button>
+      <label class="toggle"><input type="checkbox" id="loop" /> Auto-loop</label>
+      <label class="toggle"><input type="checkbox" id="slowmo" /> Slow-mo 0.25×</label>
+      <label class="toggle"><input type="checkbox" id="seams" /> Show segment seams</label>
+      <span class="hint" id="status"></span>
+    </div>
+    <div class="grid" id="sliders"></div>
+  </section>
+</main>
+
+<script type="module">
+/* ═══════════════════════════════════════════════════════════════════════
+   SHIPPED. This prototype is now a tuning sandbox, not the source of truth —
+   the values below are live in `packages/rust_pill_shared/src/lib.rs`. Change
+   them here to explore, then port the numbers back to that crate (and run its
+   tests) rather than letting the two drift apart.
+   ───────────────────────────────────────────────────────────────────────
+   PORT NOTES — what moved into Rust
+   ───────────────────────────────────────────────────────────────────────
+   rust_pill_shared:
+     resample_perimeter()   evenly-spaced points
+     hold_progress()        eased ramp w/ lead-in (replaced linear)
+     ring_envelope()/ring_seal()  comet falloff that seals the seam at p=1
+     ring_glimmer()         wave-synced brightness (replaced dash on/off)
+     ring_head_fade()/ring_head_radius()  head dissolves + blooms out
+     inflate_target()       mid-hold pre-inflate
+     ring_alpha()           eased rise + accelerating release
+     advance_ring()/RingAnim  shared per-frame policy for all 3 platforms
+   Per-platform draw.rs: one loop over resampled segments + soft head + pulse.
+
+   NOT ported: corner smoothing (superellipse). cornerSmooth defaults to 0
+   here, matching the shipped circular arcs; the slider is kept for future
+   exploration but `rounded_rectangle_perimeter` has no smoothing param.
+   ═══════════════════════════════════════════════════════════════════════ */
+
+const TAU = Math.PI * 2;
+
+// ── Mirrored from the Rust crates ────────────────────────────────────────
+const LONG_PRESS_HOLD_DELAY = 0.12;
+const LONG_PRESS_DURATION   = 0.45;
+const LONG_PRESS_RING_FADE  = 0.5;
+const DRAG_INFLATE_SCALE     = 0.18;
+const DRAG_INFLATE_STIFFNESS = 280.0;
+const EXPANDED_PILL_WIDTH  = 120.0;
+const EXPANDED_PILL_HEIGHT = 32.0;
+const EXPANDED_RADIUS      = 16.0;
+const OUTLINE = [0.92, 0.95, 1.0];
+
+// Current renderer only.
+const RING_SHIMMER_CYCLES   = 2.0;
+const RING_BASE_WIDTH       = 2.5;
+const RING_BASE_ALPHA       = 0.30;
+const RING_SHIMMER_WIDTH    = 1.2;
+const RING_SHIMMER_ALPHA    = 0.8;
+const RING_DASH_ON_FRACTION = 0.4;
+
+const WAVE_CONFIGS = [
+  { frequency: 0.8,  multiplier: 1.6,  phaseOffset: 0.0,  opacity: 1.0  },
+  { frequency: 1.0,  multiplier: 1.35, phaseOffset: 0.85, opacity: 0.78 },
+  { frequency: 1.25, multiplier: 1.05, phaseOffset: 1.7,  opacity: 0.56 },
+];
+
+// ── Tunables (live sliders) ──────────────────────────────────────────────
+const T = {
+  leadIn:        { v: 0.04, min: 0,    max: 0.2,  s: 0.01, g: "Ramp",   label: "Instant lead-in" },
+  rampEase:      { v: 1.0,  min: 0,    max: 1,    s: 0.05, g: "Ramp",   label: "Ease strength (0 = linear)" },
+  alphaRise:     { v: 0.1, min: 0.02, max: 0.3,  s: 0.01, g: "Ramp",   label: "Ring fade-in (s)" },
+  releaseFade:   { v: 0.5, min: 0.1,  max: 0.7,  s: 0.02, g: "Ramp",   label: "Release fade (s)" },
+  releaseDrift:  { v: 1.5,  min: 0,    max: 10,   s: 0.5,  g: "Ramp",   label: "Release outward drift (px)" },
+
+  tailStart:     { v: 0.34, min: 0.1,  max: 0.9,  s: 0.02, g: "Comet",  label: "Tail length at start" },
+  tailRelax:     { v: 0.62, min: 0.2,  max: 1,    s: 0.02, g: "Comet",  label: "Tail→full ring by (progress)" },
+  sealFrom:      { v: 0.72, min: 0.3,  max: 1,    s: 0.02, g: "Comet",  label: "Ring seals to uniform from (progress)" },
+  floor:         { v: 0.14, min: 0,    max: 0.5,  s: 0.01, g: "Comet",  label: "Trail floor brightness" },
+  headSoft:      { v: 13.0, min: 3,    max: 22,   s: 0.5,  g: "Comet",  label: "Head softness radius (px)" },
+  headAlpha:     { v: 0.30, min: 0,    max: 0.8,  s: 0.02, g: "Comet",  label: "Head peak alpha" },
+  headFadeFrom:  { v: 0.55, min: 0.2,  max: 1,    s: 0.05, g: "Comet",  label: "Head starts dissolving at (progress)" },
+  headBloom:     { v: 0.45, min: 0,    max: 1.5,  s: 0.05, g: "Comet",  label: "Head bloom while dissolving" },
+
+  glimmerAmp:    { v: 0.42, min: 0,    max: 1,    s: 0.02, g: "Glimmer",label: "Glimmer depth" },
+  glimmerCycles: { v: 3.0,  min: 1,    max: 5,    s: 0.5,  g: "Glimmer",label: "Glimmer cycles around ring" },
+  glimmerSpeed:  { v: 1.8,  min: 0,    max: 3,    s: 0.1,  g: "Glimmer",label: "Glimmer travel speed" },
+  coreWidth:     { v: 1.5,  min: 0.8,  max: 3,    s: 0.1,  g: "Glimmer",label: "Base stroke width" },
+  widthSwell:    { v: 0.7,  min: 0,    max: 3,    s: 0.1,  g: "Glimmer",label: "Width swell at head" },
+
+  preInflateAt:  { v: 0.45, min: 0,    max: 1,    s: 0.05, g: "Body",   label: "Inflate starts at (progress)" },
+  preInflateAmt: { v: 0.6, min: 0,    max: 1,    s: 0.05, g: "Body",   label: "Pre-arm inflate amount" },
+  pressDip:      { v: 0.03, min: 0,    max: 0.06, s: 0.005,g: "Body",   label: "Press anticipation dip" },
+  cornerSmooth:  { v: 0, min: 0,    max: 1,    s: 0.05, g: "Body",   label: "Corner smoothing (squircle)" },
+  segmentPx:     { v: 2.2,  min: 1,    max: 8,    s: 0.2,  g: "Body",   label: "Resample step (px)" },
+
+  pulseDur:      { v: 0.5,  min: 0.2,  max: 1.0,  s: 0.02, g: "Arm",    label: "Arm pulse duration (s)" },
+  pulseSpread:   { v: 10.0, min: 2,    max: 24,   s: 0.5,  g: "Arm",    label: "Arm pulse spread (px)" },
+  pulseAlpha:    { v: 0.34, min: 0,    max: 0.8,  s: 0.02, g: "Arm",    label: "Arm pulse alpha" },
+  armLift:       { v: 0.32, min: 0,    max: 0.8,  s: 0.02, g: "Arm",    label: "Arm brightness lift" },
+};
+const tv = (k) => T[k].v;
+
+// ── Easing ───────────────────────────────────────────────────────────────
+const clamp01 = (x) => Math.min(1, Math.max(0, x));
+const smootherstep = (t) => t * t * t * (t * (t * 6 - 15) + 10);
+const easeOutCubic = (t) => 1 - Math.pow(1 - t, 3);
+const easeOutExpo  = (t) => (t >= 1 ? 1 : 1 - Math.pow(2, -9 * t));
+const easeInQuad   = (t) => t * t;
+const lerp = (a, b, t) => a + (b - a) * t;
+
+// ── Geometry (mirrors rust_pill_shared, + corner smoothing + resample) ───
+function roundedRectPerimeter(x, y, w, h, radius, smooth = 0, steps = 22) {
+  const r = Math.min(Math.max(radius, 0), Math.min(w, h) * 0.5);
+  // smooth = 0 → circular arc (exponent 2). smooth = 1 → squircle (exponent 4.5),
+  // which removes the curvature discontinuity where the arc meets the straight edge.
+  const e = lerp(2, 4.5, clamp01(smooth));
+  const k = 2 / e;
+  const path = [];
+  const corner = (cx, cy, sx, sy, swap) => {
+    for (let i = 1; i <= steps; i++) {
+      const a = (i / steps) * (Math.PI / 2);
+      let u = Math.pow(Math.cos(a), k);
+      let v = Math.pow(Math.sin(a), k);
+      if (swap) { const t2 = u; u = v; v = t2; }
+      path.push([cx + sx * u * r, cy + sy * v * r]);
+    }
+  };
+  path.push([x + r, y]);
+  path.push([x + w - r, y]);
+  corner(x + w - r, y + r, 1, -1, true);          // top-right
+  path.push([x + w, y + h - r]);
+  corner(x + w - r, y + h - r, 1, 1, false);      // bottom-right
+  path.push([x + r, y + h]);
+  corner(x + r, y + h - r, -1, 1, true);          // bottom-left
+  path.push([x, y + r]);
+  corner(x + r, y + r, -1, -1, false);            // top-left
+  path.push([x + r, y]);
+  return path;
+}
+
+function pathDistances(path) {
+  const d = [0];
+  for (let i = 1; i < path.length; i++) {
+    d.push(d[i - 1] + Math.hypot(path[i][0] - path[i - 1][0], path[i][1] - path[i - 1][1]));
+  }
+  return { distances: d, total: d[d.length - 1] ?? 0 };
+}
+
+// Evenly-spaced resample. Per-segment shading needs uniform arc length or the
+// long straight edges become one flat block while the corners get all the detail.
+function resample(path, distances, total, step) {
+  const n = Math.max(24, Math.round(total / step));
+  const out = new Array(n + 1);
+  let seg = 1;
+  for (let i = 0; i <= n; i++) {
+    const target = (i / n) * total;
+    while (seg < distances.length - 1 && distances[seg] < target) seg++;
+    const d0 = distances[seg - 1], d1 = distances[seg];
+    const k = d1 > d0 ? (target - d0) / (d1 - d0) : 0;
+    out[i] = [
+      path[seg - 1][0] + (path[seg][0] - path[seg - 1][0]) * k,
+      path[seg - 1][1] + (path[seg][1] - path[seg - 1][1]) * k,
+      target,
+    ];
+  }
+  return out;
+}
+
+// Current-renderer dash math.
+const ringDashPeriod = (total) => Math.max(total, 1) / RING_SHIMMER_CYCLES;
+const ringDashOffset = (phase, total) => ringDashPeriod(total) * (((phase / TAU) % 1) + 1) % 1;
+const ringDashIsOn = (dist, period, offset) =>
+  (((dist + offset) % period) + period) % period < period * RING_DASH_ON_FRACTION;
+
+function longPressProgress(elapsed) {
+  const span = LONG_PRESS_DURATION - LONG_PRESS_HOLD_DELAY;
+  if (span <= 0) return elapsed >= LONG_PRESS_DURATION ? 1 : 0;
+  return clamp01((elapsed - LONG_PRESS_HOLD_DELAY) / span);
+}
+
+// v2 ramp: instant lead-in (press reads as registered inside one frame, the
+// sub-100ms feedback rule) then smootherstep so it decelerates into arming.
+function holdProgressEased(elapsed) {
+  const raw = longPressProgress(elapsed);
+  if (raw <= 0) return 0;
+  const shaped = lerp(raw, smootherstep(raw), tv("rampEase"));
+  return tv("leadIn") + (1 - tv("leadIn")) * shaped;
+}
+
+// ── Gesture clock ────────────────────────────────────────────────────────
+const g = {
+  held: false, dragging: false,
+  elapsed: 0, pressElapsed: 0, releaseElapsed: 0,
+  ringAlpha: 0, ringReleaseProgress: 0,
+  inflate: 0, inflateVel: 0,
+  wavePhase: 0, glimmerPhase: 0,
+  armPulse: -1, armT: 0,
+  lastProgress: 0,
+};
+
+function press() {
+  if (g.held) return;
+  g.held = true; g.dragging = false;
+  g.elapsed = 0; g.pressElapsed = 0; g.armPulse = -1; g.armT = 0;
+}
+function release() {
+  if (!g.held) return;
+  g.held = false; g.dragging = false;
+  g.elapsed = 0; g.releaseElapsed = 0;
+}
+
+function tick(dt) {
+  const frameScale = dt / (1 / 60);
+  g.wavePhase = (g.wavePhase + (0.11 + 0.32 * 0.45) * frameScale) % TAU;
+  g.glimmerPhase = (g.glimmerPhase + 0.055 * tv("glimmerSpeed") * frameScale) % TAU;
+
+  if (g.held) {
+    g.elapsed += dt;
+    g.pressElapsed += dt;
+    if (!g.dragging && g.elapsed >= LONG_PRESS_DURATION) { g.dragging = true; g.armPulse = 0; }
+  }
+  if (g.armPulse >= 0) {
+    g.armPulse += dt;
+    if (g.armPulse > tv("pulseDur")) g.armPulse = -1;
+  }
+  g.armT = g.dragging ? Math.min(1, g.armT + dt / 0.22) : Math.max(0, g.armT - dt / 0.18);
+
+  const ringHeld = g.dragging || (g.held && g.elapsed > LONG_PRESS_HOLD_DELAY);
+  if (ringHeld) {
+    g.ringReleaseProgress = g.dragging ? 1 : longPressProgress(g.elapsed);
+    g.releaseElapsed = 0;
+    g.ringAlpha = 1;
+  } else {
+    g.releaseElapsed += dt;
+    g.ringAlpha = Math.max(0, g.ringAlpha - dt / LONG_PRESS_RING_FADE);
+  }
+
+  // Inflate — v2 starts it mid-hold instead of at the arm moment, so the pill
+  // is already growing while the ring fills and arming is a continuation, not
+  // a start. Same critically-damped spring as Rust's `spring_anim`.
+  const p = g.held ? holdProgressEased(g.elapsed) : 0;
+  const pre = smootherstep(clamp01((p - tv("preInflateAt")) / Math.max(1e-3, 1 - tv("preInflateAt"))))
+            * tv("preInflateAmt");
+  const target = Math.max(g.dragging ? 1 : 0, g.held ? pre : 0);
+  const damping = 2 * Math.sqrt(DRAG_INFLATE_STIFFNESS);
+  g.inflateVel += (DRAG_INFLATE_STIFFNESS * (target - g.inflate) - damping * g.inflateVel) * dt;
+  g.inflate = clamp01(g.inflate + g.inflateVel * dt);
+}
+
+// v2 master alpha: eased rise on press, eased (accelerating) exit on release.
+function proposedAlpha() {
+  const ringHeld = g.dragging || (g.held && g.elapsed > LONG_PRESS_HOLD_DELAY);
+  if (ringHeld) return easeOutExpo(clamp01((g.pressElapsed - LONG_PRESS_HOLD_DELAY) / tv("alphaRise")));
+  const t = g.releaseElapsed / tv("releaseFade");
+  return t >= 1 ? 0 : 1 - easeInQuad(t);
+}
+
+// ── Pill body ────────────────────────────────────────────────────────────
+function pillRect(cw, ch, inflate, dip = 0) {
+  const scale = (1 + inflate * DRAG_INFLATE_SCALE) * (1 - dip);
+  const w = EXPANDED_PILL_WIDTH * scale;
+  const h = EXPANDED_PILL_HEIGHT * scale;
+  return [cw / 2 - w / 2, ch / 2 - h / 2, w, h];
+}
+const pillRadius = (w, h, inflate) =>
+  Math.min(Math.min(w, h) * 0.5, EXPANDED_RADIUS * (1 + inflate * DRAG_INFLATE_SCALE));
+
+const rgba = ([r, gg, b], a) =>
+  `rgba(${Math.round(r * 255)},${Math.round(gg * 255)},${Math.round(b * 255)},${a})`;
+
+function tracePath(ctx, path) {
+  ctx.beginPath();
+  ctx.moveTo(path[0][0], path[0][1]);
+  for (let i = 1; i < path.length; i++) ctx.lineTo(path[i][0], path[i][1]);
+  ctx.closePath();
+}
+
+// Anticipation dip — the press "gives" slightly before the pill inflates.
+function pressDip() {
+  if (!g.held || tv("pressDip") <= 0) return 0;
+  return tv("pressDip") * Math.exp(-g.pressElapsed / 0.07) * (1 - clamp01(g.inflate * 2));
+}
+
+function drawPill(ctx, cw, ch, smooth, dip) {
+  const [x, y, w, h] = pillRect(cw, ch, g.inflate, dip);
+  const r = pillRadius(w, h, g.inflate);
+  ctx.save();
+  tracePath(ctx, roundedRectPerimeter(x, y, w, h, r, smooth));
+  ctx.fillStyle = "rgba(12,14,20,0.92)";
+  ctx.fill();
+  ctx.strokeStyle = "rgba(255,255,255,0.14)";
+  ctx.lineWidth = 1;
+  ctx.stroke();
+  ctx.clip();
+
+  const baseline = y + h / 2;
+  for (const cfg of WAVE_CONFIGS) {
+    const amp = Math.max(h * 0.75 * Math.min(Math.max(0.45 * cfg.multiplier, 0.03), 1.3), 1);
+    ctx.beginPath();
+    ctx.strokeStyle = `rgba(255,255,255,${cfg.opacity * 0.9})`;
+    ctx.lineWidth = 1.6; ctx.lineCap = "round";
+    const pad = h * 0.1, waveW = w - pad * 2;
+    const segments = Math.max(72, waveW / 2) | 0;
+    for (let i = 0; i <= segments; i++) {
+      const t = i / segments;
+      const px = x + pad + waveW * t;
+      const py = baseline + amp * Math.sin(cfg.frequency * t * TAU + g.wavePhase + cfg.phaseOffset);
+      i === 0 ? ctx.moveTo(px, py) : ctx.lineTo(px, py);
+    }
+    ctx.stroke();
+  }
+  ctx.restore();
+}
+
+function ringGeometry(cw, ch, smooth, dip, extraInset = 0) {
+  const [x, y, w, h] = pillRect(cw, ch, g.inflate, dip);
+  const radius = pillRadius(w, h, g.inflate);
+  const inset = 2.0 + extraInset;
+  const ox = x - inset, oy = y - inset, ow = w + inset * 2, oh = h + inset * 2;
+  const r = Math.min(radius + inset, oh / 2);
+  const path = roundedRectPerimeter(ox, oy, ow, oh, r, smooth);
+  const { distances, total } = pathDistances(path);
+  return { path, distances, total, ox, oy, ow, oh, r };
+}
+
+// ═════════════════════════════ CURRENT ═══════════════════════════════════
+function drawCurrentRing(ctx, cw, ch) {
+  const alpha = g.ringAlpha;
+  if (alpha <= 0) return { p: 0, a: 0 };
+  const progress = g.dragging ? 1
+    : (g.held && g.elapsed > 0 ? longPressProgress(g.elapsed) : g.ringReleaseProgress);
+
+  const { path, distances, total } = ringGeometry(cw, ch, 0, 0);
+  const filledLen = total * progress;
+  if (filledLen <= 0) return { p: progress, a: alpha };
+
+  const master = (0.3 + 0.5 * progress) * alpha;
+  const period = ringDashPeriod(total);
+  const offset = ringDashOffset(g.wavePhase, total);
+  const segs = [];
+  for (let i = 1; i < path.length; i++) {
+    if (distances[i - 1] >= filledLen) break;
+    const [x1, y1] = path[i - 1];
+    let [x2, y2] = path[i];
+    if (distances[i] > filledLen) {
+      const k = (filledLen - distances[i - 1]) / Math.max(1e-6, distances[i] - distances[i - 1]);
+      x2 = x1 + (x2 - x1) * k; y2 = y1 + (y2 - y1) * k;
+    }
+    segs.push([x1, y1, x2, y2, (distances[i - 1] + Math.min(distances[i], filledLen)) * 0.5]);
+  }
+
+  ctx.save();
+  ctx.lineCap = "butt";
+  ctx.beginPath();
+  for (const [x1, y1, x2, y2] of segs) { ctx.moveTo(x1, y1); ctx.lineTo(x2, y2); }
+  ctx.lineWidth = RING_BASE_WIDTH;
+  ctx.strokeStyle = rgba(OUTLINE, master * RING_BASE_ALPHA);
+  ctx.stroke();
+  ctx.beginPath();
+  for (const [x1, y1, x2, y2, mid] of segs) {
+    if (ringDashIsOn(mid, period, offset)) { ctx.moveTo(x1, y1); ctx.lineTo(x2, y2); }
+  }
+  ctx.lineWidth = RING_SHIMMER_WIDTH;
+  ctx.strokeStyle = rgba(OUTLINE, master * RING_SHIMMER_ALPHA);
+  ctx.stroke();
+  ctx.restore();
+  return { p: progress, a: alpha };
+}
+
+// ═════════════════════════════ PROPOSED v2 ═══════════════════════════════
+//
+// ONE driver. `p` (0→1) is the eased hold progress and it never hands off to a
+// different renderer: the comet's tail grows toward the full perimeter as p→1,
+// so at completion the envelope is already 1.0 everywhere and the "armed"
+// outline IS the comet, fully relaxed. Nothing switches.
+//
+// Brightness at any point = envelope(distance behind head) × glimmer(distance).
+// The glimmer is a travelling sine — a continuous gradient, not dash on/off —
+// evaluated per resampled segment, which is how you fake a path gradient on
+// backends (Cairo, Direct2D) that have no gradient-along-path primitive.
+function drawProposedRing(ctx, cw, ch, showSeams) {
+  const alpha = proposedAlpha();
+  const pulse = g.armPulse;
+  if (alpha <= 0 && pulse < 0) return { p: 0, a: 0, inf: g.inflate };
+
+  const ringHeld = g.dragging || (g.held && g.elapsed > LONG_PRESS_HOLD_DELAY);
+  const p = g.dragging ? 1 : (ringHeld ? holdProgressEased(g.elapsed) : g.ringReleaseProgress);
+
+  const smooth = tv("cornerSmooth");
+  const dip = pressDip();
+  const drift = g.held ? 0 : tv("releaseDrift") * easeOutCubic(clamp01(g.releaseElapsed / tv("releaseFade")));
+  const geo = ringGeometry(cw, ch, smooth, dip, drift);
+  const { path, distances, total } = geo;
+  const pts = resample(path, distances, total, tv("segmentPx"));
+  const headLen = total * clamp01(p);
+
+  ctx.save();
+  ctx.lineCap = "round";
+  ctx.lineJoin = "round";
+
+  // Layer 1 (ambient) — the unfilled track. Keeps the ring legible as a path
+  // being travelled rather than a line appearing from nowhere.
+  if (alpha > 0) {
+    tracePath(ctx, path);
+    ctx.lineWidth = 1.0;
+    ctx.strokeStyle = rgba(OUTLINE, 0.085 * alpha);
+    ctx.stroke();
+  }
+
+  if (alpha > 0 && headLen > 0) {
+    // Tail relaxes to the whole perimeter as the hold completes — this is the
+    // mechanism that makes fill→armed seamless.
+    const relax = smootherstep(clamp01(p / tv("tailRelax")));
+    const tail = lerp(total * tv("tailStart"), total * 1.35, relax);
+    const floor = lerp(0, tv("floor"), clamp01(p * 3));
+
+    // Seal the ring. On a closed path d=0 and d=total are the SAME point, so a
+    // comet envelope leaves a hard brightness step there (bright head meeting
+    // dim tail-end) — the lump parked at 12 o'clock. Growing the tail alone
+    // never removes it. So as the hold completes we crossfade the whole
+    // envelope toward a uniform 1.0: by p=1 the gradient is flat, the two sides
+    // of the seam are equal, and the head has nothing left to sit on.
+    const seal = smootherstep(
+      clamp01((p - tv("sealFrom")) / Math.max(1e-3, 1 - tv("sealFrom"))),
+    );
+    const lift = 1 + tv("armLift") * g.armT;
+    const gAmp = tv("glimmerAmp") * lerp(0.55, 1, relax);
+    const cycles = tv("glimmerCycles");
+    const base = tv("coreWidth");
+    const swell = tv("widthSwell");
+
+    // Layer 2 (primary) — glimmer-graded stroke. Per-segment shading; segments
+    // overlap by construction (round caps) so there is no visible seam.
+    for (let i = 1; i < pts.length; i++) {
+      const [x1, y1] = pts[i - 1];
+      const [x2, y2, d] = pts[i];
+      if (d > headLen) break;
+
+      const behind = headLen - d;
+      // Smooth exponential-ish falloff; cosine window avoids a hard tail cut.
+      const u = clamp01(behind / tail);
+      const env = lerp(Math.max(floor, Math.pow(1 - u, 1.7)), 1.0, seal);
+
+      const glim = 0.5 + 0.5 * Math.sin((d / Math.max(total, 1)) * TAU * cycles - g.glimmerPhase);
+      const shade = env * (1 - gAmp + gAmp * glim);
+      const a = clamp01(shade * lift) * alpha;
+      if (a < 0.012) continue;
+
+      ctx.beginPath();
+      ctx.moveTo(x1, y1);
+      ctx.lineTo(x2, y2);
+      ctx.lineWidth = base + swell * env * (1 - 0.35 * g.armT);
+      ctx.strokeStyle = rgba(OUTLINE, a);
+      ctx.stroke();
+
+      if (showSeams) {
+        ctx.beginPath();
+        ctx.arc(x2, y2, 0.7, 0, TAU);
+        ctx.fillStyle = "rgba(255,80,80,0.9)";
+        ctx.fill();
+      }
+    }
+
+    // Layer 3 (secondary) — the head. Soft only: concentric round-cap dots with
+    // falling alpha approximate a radial gradient without allocating a gradient
+    // object per frame (Cairo/D2D-friendly), and there is no hard white core.
+    //
+    // The head dissolves as the fill finishes: from `headFadeFrom` onward its
+    // alpha eases to zero while its radius blooms outward. A comet head that
+    // stayed lit until completion would park at the 12 o'clock seam and then
+    // blink out; instead it spreads and evaporates into the ring, so the last
+    // thing you see is an even outline with no leftover hotspot.
+    const dissolve = Math.max(
+      seal,
+      smootherstep(clamp01((p - tv("headFadeFrom")) / Math.max(1e-3, 1 - tv("headFadeFrom")))),
+    );
+    const headFade = (1 - dissolve) * (1 - g.armT) * clamp01(p * 6);
+    const hA = tv("headAlpha") * headFade * alpha;
+    if (hA > 0.004) {
+      const hi = Math.min(pts.length - 1, Math.max(1, Math.round((headLen / total) * (pts.length - 1))));
+      const [hx, hy] = pts[hi];
+      const R = tv("headSoft") * (1 + tv("headBloom") * dissolve);
+      for (let k = 4; k >= 1; k--) {
+        const rr = R * (k / 4);
+        ctx.beginPath();
+        ctx.arc(hx, hy, rr, 0, TAU);
+        ctx.fillStyle = rgba(OUTLINE, hA * Math.pow(1 - (k - 1) / 4, 2.2) * 0.5);
+        ctx.fill();
+      }
+    }
+  }
+
+  // Layer 4 — arm confirmation. An expanding halo that eases out; no flash, no
+  // pop. Paired in the real build with a haptic tick on macOS/Windows.
+  if (pulse >= 0) {
+    const t = clamp01(pulse / tv("pulseDur"));
+    for (const delay of [0, 0.18]) {
+      const tt = clamp01((t - delay) / (1 - delay));
+      if (tt <= 0) continue;
+      const e = easeOutCubic(tt);
+      const spread = tv("pulseSpread") * e;
+      const halo = roundedRectPerimeter(
+        geo.ox - spread, geo.oy - spread,
+        geo.ow + spread * 2, geo.oh + spread * 2,
+        geo.r + spread, smooth,
+      );
+      tracePath(ctx, halo);
+      ctx.lineWidth = lerp(2.2, 0.5, e);
+      ctx.strokeStyle = rgba(OUTLINE, tv("pulseAlpha") * Math.pow(1 - e, 1.8) * (delay ? 0.5 : 1));
+      ctx.stroke();
+    }
+  }
+
+  ctx.restore();
+  return { p, a: alpha, inf: g.inflate };
+}
+
+// ── Wiring ───────────────────────────────────────────────────────────────
+function setupCanvas(canvas) {
+  const ctx = canvas.getContext("2d");
+  const resize = () => {
+    const dpr = window.devicePixelRatio || 1;
+    const rect = canvas.getBoundingClientRect();
+    canvas.width = Math.round(rect.width * dpr);
+    canvas.height = Math.round(rect.height * dpr);
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  };
+  resize();
+  new ResizeObserver(resize).observe(canvas);
+  canvas.addEventListener("pointerdown", (e) => { canvas.setPointerCapture(e.pointerId); press(); });
+  for (const ev of ["pointerup", "pointercancel", "pointerleave"]) canvas.addEventListener(ev, release);
+  return ctx;
+}
+
+const ctxA = setupCanvas(document.getElementById("canvas-current"));
+const ctxB = setupCanvas(document.getElementById("canvas-proposed"));
+const outA = document.getElementById("readout-current");
+const outB = document.getElementById("readout-proposed");
+const statusEl = document.getElementById("status");
+
+const sliders = document.getElementById("sliders");
+const groups = {};
+for (const [key, cfg] of Object.entries(T)) {
+  if (!groups[cfg.g]) {
+    const h = document.createElement("h3");
+    h.textContent = cfg.g;
+    sliders.appendChild(h);
+    groups[cfg.g] = true;
+  }
+  const label = document.createElement("label");
+  label.className = "field";
+  label.innerHTML = `<span class="row"><span>${cfg.label}</span><b id="v-${key}">${cfg.v}</b></span>`;
+  const input = document.createElement("input");
+  input.type = "range"; input.min = cfg.min; input.max = cfg.max; input.step = cfg.s; input.value = cfg.v;
+  input.addEventListener("input", () => {
+    cfg.v = parseFloat(input.value);
+    document.getElementById(`v-${key}`).textContent = cfg.v;
+  });
+  label.appendChild(input);
+  sliders.appendChild(label);
+}
+
+const holdBtn = document.getElementById("hold");
+holdBtn.addEventListener("pointerdown", press);
+holdBtn.addEventListener("pointerup", release);
+holdBtn.addEventListener("pointerleave", release);
+document.getElementById("tap").addEventListener("click", () => { press(); setTimeout(release, 80); });
+document.getElementById("abort").addEventListener("click", () => { press(); setTimeout(release, 300); });
+window.addEventListener("keydown", (e) => { if (e.code === "Space" && !e.repeat) { e.preventDefault(); press(); } });
+window.addEventListener("keyup", (e) => { if (e.code === "Space") release(); });
+
+const loopEl = document.getElementById("loop");
+const slowmoEl = document.getElementById("slowmo");
+const seamsEl = document.getElementById("seams");
+let loopTimer = 0, last = performance.now();
+
+function frame(now) {
+  let dt = Math.min((now - last) / 1000, 1 / 20);
+  last = now;
+  if (slowmoEl.checked) dt *= 0.25;
+
+  if (loopEl.checked) {
+    loopTimer += dt;
+    if (!g.held && loopTimer > 0.9) { press(); loopTimer = 0; }
+    else if (g.held && loopTimer > 1.2) { release(); loopTimer = 0; }
+  }
+
+  tick(dt);
+
+  const cwA = ctxA.canvas.clientWidth, chA = ctxA.canvas.clientHeight;
+  ctxA.clearRect(0, 0, cwA, chA);
+  drawPill(ctxA, cwA, chA, 0, 0);
+  const a = drawCurrentRing(ctxA, cwA, chA);
+  outA.innerHTML = `<span>progress <b>${a.p.toFixed(2)}</b></span><span>alpha <b>${a.a.toFixed(2)}</b></span><span>inflate <b>${g.inflate.toFixed(2)}</b></span>`;
+
+  const cwB = ctxB.canvas.clientWidth, chB = ctxB.canvas.clientHeight;
+  ctxB.clearRect(0, 0, cwB, chB);
+  drawPill(ctxB, cwB, chB, tv("cornerSmooth"), pressDip());
+  const b = drawProposedRing(ctxB, cwB, chB, seamsEl.checked);
+  outB.innerHTML = `<span>progress <b>${b.p.toFixed(2)}</b></span><span>alpha <b>${b.a.toFixed(2)}</b></span><span>inflate <b>${g.inflate.toFixed(2)}</b></span><span>arm <b>${g.armT.toFixed(2)}</b></span>`;
+
+  statusEl.textContent = g.dragging ? "armed — drag state" : g.held ? "holding…" : "idle";
+  requestAnimationFrame(frame);
+}
+requestAnimationFrame(frame);
+</script>
+</body>
+</html>

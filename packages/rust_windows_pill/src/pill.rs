@@ -168,6 +168,11 @@ pub fn run(receiver: Receiver<InMessage>) {
         inflate_velocity: Cell::new(0.0),
         ring_alpha: Cell::new(0.0),
         ring_release_progress: Cell::new(0.0),
+        press_elapsed: Cell::new(0.0),
+        release_elapsed: Cell::new(LONG_PRESS_RING_FADE),
+        arm_t: Cell::new(0.0),
+        arm_pulse: Cell::new(-1.0),
+        ring_points: RefCell::new(Vec::new()),
         dirty: Cell::new(true),
     };
 
@@ -675,35 +680,18 @@ fn tick(state: &PillState, dt: f64) {
     let cancel_target = if show_controls { 1.0 } else { 0.0 };
     spring_anim(&state.cancel_t, &state.cancel_velocity, cancel_target, SPRING_STIFFNESS * 2.0, dt);
 
-    // Inflate animation: expand when dragging, contract when released.
-    let inflate_target = if state.dragging.get() { 1.0 } else { 0.0 };
+    // Inflate animation. The target ramps up partway through the hold (not at
+    // the arm moment), so the pill is already growing while the ring fills and
+    // arming continues that motion instead of starting a new one.
+    let hold_p = draw::long_press_progress(state.long_press_elapsed.get());
+    let inflate_target = rust_pill_shared::inflate_target(
+        hold_p,
+        state.long_press_active.get(),
+        state.dragging.get(),
+    );
     spring_anim(&state.inflate_t, &state.inflate_velocity, inflate_target, DRAG_INFLATE_STIFFNESS, dt);
 
-    // Long-press outline master alpha. While the gesture is held (long press
-    // past the hold delay, or dragging) the outline is pinned at full alpha —
-    // it must not fade underneath an active hold. Once released it eases out
-    // over LONG_PRESS_RING_FADE so the affordance dissolves instead of popping.
-    let ring_held = state.dragging.get()
-        || (state.long_press_active.get()
-            && state.long_press_elapsed.get() > LONG_PRESS_HOLD_DELAY);
-    if ring_held {
-        // Remember how far the ring ramp had filled so a release or cancel
-        // mid-ramp fades from that level instead of snapping to a full ring.
-        state.ring_release_progress.set(if state.dragging.get() {
-            1.0
-        } else {
-            draw::long_press_progress(state.long_press_elapsed.get())
-        });
-    }
-    let previous_alpha = state.ring_alpha.get();
-    let next = rust_pill_shared::update_ring_alpha(previous_alpha, ring_held, dt);
-    state.ring_alpha.set(next);
-    // needs_redraw() is only true while alpha > 0, so the zero crossing
-    // must dirty the frame explicitly — otherwise the final cleared frame
-    // never repaints and a faint ghost of the ring lingers.
-    if previous_alpha > 0.0 && next == 0.0 {
-        state.dirty.set(true);
-    }
+    tick_ring(state, dt);
 
     if state.should_stick.get() && state.assistant_active.get() && !state.assistant_compact.get() {
         let max_scroll = (state.content_height.get() - state.viewport_height.get()).max(0.0);
@@ -1196,6 +1184,8 @@ fn tick_long_press(state: &PillState, dt: f64) {
         // Enter drag mode directly (skip balloon pop for snappy interaction).
         state.dragging.set(true);
         state.drag_cancelled.set(false);
+        // Confirm the arm with the expanding halo, on the exact frame it fires.
+        state.arm_pulse.set(0.0);
         unsafe {
             let mut cursor = POINT::default();
             let _ = GetCursorPos(&mut cursor);
@@ -1290,6 +1280,54 @@ fn tick_drag_release_fallback(hwnd: HWND, state: &PillState) {
 }
 
 
+
+/// Advances the long-press ring for one frame.
+///
+/// All the policy lives in `rust_pill_shared::advance_ring` so the three
+/// platform renderers cannot drift apart; this only marshals `Cell` state in
+/// and out of the shared struct, plus the Windows-specific redraw bookkeeping.
+fn tick_ring(state: &PillState, dt: f64) {
+    let held = state.dragging.get()
+        || (state.long_press_active.get()
+            && state.long_press_elapsed.get() > LONG_PRESS_HOLD_DELAY);
+
+    let previous_alpha = state.ring_alpha.get();
+    let was_pulsing = state.arm_pulse.get() >= 0.0;
+
+    let mut anim = rust_pill_shared::RingAnim {
+        alpha: previous_alpha,
+        release_progress: state.ring_release_progress.get(),
+        press_elapsed: state.press_elapsed.get(),
+        release_elapsed: state.release_elapsed.get(),
+        arm_t: state.arm_t.get(),
+        arm_pulse: state.arm_pulse.get(),
+    };
+
+    rust_pill_shared::advance_ring(
+        &mut anim,
+        rust_pill_shared::RingTick {
+            held,
+            dragging: state.dragging.get(),
+            progress: draw::long_press_progress(state.long_press_elapsed.get()),
+            delta_seconds: dt,
+        },
+        LONG_PRESS_HOLD_DELAY,
+    );
+
+    state.ring_alpha.set(anim.alpha);
+    state.ring_release_progress.set(anim.release_progress);
+    state.press_elapsed.set(anim.press_elapsed);
+    state.release_elapsed.set(anim.release_elapsed);
+    state.arm_t.set(anim.arm_t);
+    state.arm_pulse.set(anim.arm_pulse);
+
+    // needs_redraw() stops reporting motion once the ring and its pulse are
+    // finished, so the frame that clears them must be dirtied explicitly —
+    // otherwise the last painted state is never erased and a ghost lingers.
+    if (previous_alpha > 0.0 && anim.alpha == 0.0) || (was_pulsing && anim.arm_pulse < 0.0) {
+        state.dirty.set(true);
+    }
+}
 
 fn spring_anim(value: &Cell<f64>, velocity: &Cell<f64>, target: f64, stiffness: f64, dt: f64) {
     let v = value.get();

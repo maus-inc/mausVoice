@@ -216,6 +216,23 @@ pub(crate) struct PillState {
     // Ring fill level captured at release; the post-release fade animates from
     // this level rather than snapping to a complete outline.
     pub(crate) ring_release_progress: Cell<f64>,
+
+    // Time since the current press began / since the last release, driving the
+    // ring's eased fade-in and fade-out.
+    pub(crate) press_elapsed: Cell<f64>,
+    pub(crate) release_elapsed: Cell<f64>,
+
+    // 0..1 arm state, ramped after the long press completes. Lifts the ring's
+    // brightness and retires the comet head.
+    pub(crate) arm_t: Cell<f64>,
+
+    // Seconds since the gesture armed, or -1 when no pulse is running. Drives
+    // the expanding confirmation halo.
+    pub(crate) arm_pulse: Cell<f64>,
+
+    // Scratch buffer for the evenly-resampled ring perimeter. Owned by the
+    // state so the render path reuses one allocation across frames.
+    pub(crate) ring_points: RefCell<Vec<(f64, f64, f64)>>,
     pub(crate) drag_cursor_x: Cell<f64>,
     pub(crate) drag_cursor_y: Cell<f64>,
     // X11 drop position, in physical root coordinates, persisted when a drag

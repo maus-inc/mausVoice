@@ -325,6 +325,42 @@ impl Gfx {
         }
     }
 
+    /// Draw many segments that each carry their own colour and width.
+    ///
+    /// Used by the long-press ring, where every segment has a different alpha.
+    /// The brush and stroke style are COM objects, so creating a pair per
+    /// segment would mean hundreds of allocations per frame; instead both are
+    /// created once and the brush colour is mutated in place.
+    pub(crate) fn draw_line_shaded(&self, segments: &[(f64, f64, f64, f64, [f64; 4], f64)]) {
+        if segments.is_empty() {
+            return;
+        }
+        let brush = self.brush([1.0, 1.0, 1.0, 1.0]);
+        let style = unsafe {
+            self.factory.CreateStrokeStyle(
+                &D2D1_STROKE_STYLE_PROPERTIES {
+                    startCap: D2D1_CAP_STYLE_ROUND,
+                    endCap: D2D1_CAP_STYLE_ROUND,
+                    lineJoin: D2D1_LINE_JOIN_ROUND,
+                    ..Default::default()
+                },
+                None,
+            ).ok()
+        };
+        unsafe {
+            for &(x1, y1, x2, y2, rgba, width) in segments {
+                brush.SetColor(&color(rgba[0], rgba[1], rgba[2], rgba[3]));
+                self.rt.DrawLine(
+                    vec2(x1, y1),
+                    vec2(x2, y2),
+                    &brush,
+                    width as f32,
+                    style.as_ref(),
+                );
+            }
+        }
+    }
+
     pub(crate) fn fill_circle(&self, cx: f64, cy: f64, r: f64, rgba: [f64; 4]) {
         let brush = self.brush(rgba);
         unsafe {

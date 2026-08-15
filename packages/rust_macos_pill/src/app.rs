@@ -696,31 +696,18 @@ fn tick(state: &PillState, window: id, dt: f64) {
     let cancel_target = if show_controls { 1.0 } else { 0.0 };
     spring_anim(&state.cancel_t, &state.cancel_velocity, cancel_target, SPRING_STIFFNESS * 2.0, dt);
 
-    // Inflate animation: expand when dragging, contract when released.
-    let inflate_target = if state.dragging.get() { 1.0 } else { 0.0 };
+    // Inflate animation. The target ramps up partway through the hold (not at
+    // the arm moment), so the pill is already growing while the ring fills and
+    // arming continues that motion instead of starting a new one.
+    let hold_p = draw::long_press_progress(state.long_press_elapsed.get());
+    let inflate_target = rust_pill_shared::inflate_target(
+        hold_p,
+        state.long_press_active.get(),
+        state.dragging.get(),
+    );
     spring_anim(&state.inflate_t, &state.inflate_velocity, inflate_target, DRAG_INFLATE_STIFFNESS, dt);
 
-    // Long-press outline master alpha. While the gesture is held (long press
-    // past the hold delay, or dragging) the outline is pinned at full alpha —
-    // it must not fade underneath an active hold. Once released it eases out
-    // over LONG_PRESS_RING_FADE so the affordance dissolves instead of popping.
-    let ring_held = state.dragging.get()
-        || (state.long_press_active.get()
-            && state.long_press_elapsed.get() > LONG_PRESS_HOLD_DELAY);
-    if ring_held {
-        // Remember how far the ring ramp had filled so a release or cancel
-        // mid-ramp fades from that level instead of snapping to a full ring.
-        state.ring_release_progress.set(if state.dragging.get() {
-            1.0
-        } else {
-            draw::long_press_progress(state.long_press_elapsed.get())
-        });
-    }
-    state.ring_alpha.set(rust_pill_shared::update_ring_alpha(
-        state.ring_alpha.get(),
-        ring_held,
-        dt,
-    ));
+    tick_ring(state, dt);
 
     // Auto-scroll to bottom
     if state.should_stick.get() && state.assistant_active.get() && !state.assistant_compact.get() {
@@ -948,6 +935,8 @@ fn tick_long_press(state: &PillState, window: id, dt: f64) {
         // Enter drag mode directly (skip balloon pop for snappy interaction).
         state.dragging.set(true);
         state.drag_cancelled.set(false);
+        // Confirm the arm with the expanding halo, on the exact frame it fires.
+        state.arm_pulse.set(0.0);
 
         // Anchor the drag to the point the user grabbed so the pill tracks the
         // cursor 1:1 instead of jumping to centre itself under the pointer.
@@ -961,6 +950,44 @@ fn tick_long_press(state: &PillState, window: id, dt: f64) {
 }
 
 
+
+/// Advances the long-press ring for one frame.
+///
+/// All the policy lives in `rust_pill_shared::advance_ring` so the three
+/// platform renderers cannot drift apart; this only marshals `Cell` state in
+/// and out of the shared struct.
+fn tick_ring(state: &PillState, dt: f64) {
+    let held = state.dragging.get()
+        || (state.long_press_active.get()
+            && state.long_press_elapsed.get() > LONG_PRESS_HOLD_DELAY);
+
+    let mut anim = rust_pill_shared::RingAnim {
+        alpha: state.ring_alpha.get(),
+        release_progress: state.ring_release_progress.get(),
+        press_elapsed: state.press_elapsed.get(),
+        release_elapsed: state.release_elapsed.get(),
+        arm_t: state.arm_t.get(),
+        arm_pulse: state.arm_pulse.get(),
+    };
+
+    rust_pill_shared::advance_ring(
+        &mut anim,
+        rust_pill_shared::RingTick {
+            held,
+            dragging: state.dragging.get(),
+            progress: draw::long_press_progress(state.long_press_elapsed.get()),
+            delta_seconds: dt,
+        },
+        LONG_PRESS_HOLD_DELAY,
+    );
+
+    state.ring_alpha.set(anim.alpha);
+    state.ring_release_progress.set(anim.release_progress);
+    state.press_elapsed.set(anim.press_elapsed);
+    state.release_elapsed.set(anim.release_elapsed);
+    state.arm_t.set(anim.arm_t);
+    state.arm_pulse.set(anim.arm_pulse);
+}
 
 fn spring_anim(value: &Cell<f64>, velocity: &Cell<f64>, target: f64, stiffness: f64, dt: f64) {
     let v = value.get();
@@ -1312,6 +1339,11 @@ unsafe fn setup(receiver: Receiver<InMessage>, embedded: bool) {
         inflate_velocity: Cell::new(0.0),
         ring_alpha: Cell::new(0.0),
         ring_release_progress: Cell::new(0.0),
+        press_elapsed: Cell::new(0.0),
+        release_elapsed: Cell::new(LONG_PRESS_RING_FADE),
+        arm_t: Cell::new(0.0),
+        arm_pulse: Cell::new(-1.0),
+        ring_points: RefCell::new(Vec::new()),
     });
 
     // Store in thread-local

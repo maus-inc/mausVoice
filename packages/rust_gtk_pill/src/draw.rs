@@ -79,7 +79,15 @@ pub(crate) fn pill_position(state: &PillState, ww: f64, wh: f64) -> (f64, f64, f
     // taller"), and anchoring to the bottom edge grows the pill upward-only;
     // scaling about the centre preserves the squircle's proportions and grows
     // it diagonally, the way a physical pill would.
-    let scale = 1.0 + inflate * DRAG_INFLATE_SCALE;
+    // A brief anticipation dip on press: the pill "gives" a little before it
+    // inflates, so the press registers physically. It decays in ~70ms and is
+    // suppressed as soon as the inflate spring takes over.
+    let dip = if state.long_press_active.get() {
+        rust_pill_shared::press_dip(state.press_elapsed.get(), inflate)
+    } else {
+        0.0
+    };
+    let scale = (1.0 + inflate * DRAG_INFLATE_SCALE) * (1.0 - dip);
     let pill_w = base_w * scale;
     let pill_h = base_h * scale;
 
@@ -188,14 +196,15 @@ fn draw_long_press_ring(
     cr: &cairo::Context, rx: f64, ry: f64, pill_w: f64, pill_h: f64, state: &PillState,
 ) {
     let alpha = state.ring_alpha.get();
-    if alpha <= 0.0 {
+    let pulsing = state.arm_pulse.get() >= 0.0;
+    if alpha <= 0.0 && !pulsing {
         return;
     }
 
-    // Full outline while dragging; mid-press it tracks the hold-progress ramp;
+    // Full outline while dragging; mid-press it tracks the eased hold ramp;
     // after release or cancel it fades from the level actually reached instead
     // of snapping to a complete outline.
-    let t = if state.dragging.get() {
+    let progress = if state.dragging.get() {
         1.0
     } else if state.long_press_active.get() {
         long_press_progress(state.long_press_elapsed.get())
@@ -204,93 +213,151 @@ fn draw_long_press_ring(
     };
     let radius = pill_radius(pill_w, pill_h, state.inflate_t.get());
 
-    // Draw an outline that traces around the pill perimeter
-    let inset = 2.0;
+    // The ring drifts outward slightly as it fades, so it dissolves away from
+    // the pill rather than collapsing onto it.
+    let drift = if state.dragging.get() || state.long_press_active.get() {
+        0.0
+    } else {
+        rust_pill_shared::ring_release_drift(state.release_elapsed.get())
+    };
+    let inset = 2.0 + drift;
     let ox = rx - inset;
     let oy = ry - inset;
     let ow = pill_w + inset * 2.0;
     let oh = pill_h + inset * 2.0;
     let r = (radius + inset).min(oh / 2.0);
 
-    // Three-pass silver gradient ring with sine-wave shimmer.
-    let master_alpha = (0.3 + 0.5 * t) * alpha;
-
     // Shared perimeter construction — identical geometry on every platform so
     // the long-press ring traces the same path across Linux/macOS/Windows.
     let path = rounded_rectangle_perimeter(ox, oy, ow, oh, r, RoundedRectArcSteps::Auto);
     let (distances, total_len) = path_distances(&path);
-    let filled_len = total_len * t;
-
-    if filled_len <= 0.0 {
-        return;
-    }
+    let head_len = total_len * progress.clamp(0.0, 1.0);
+    let wave_phase = state.wave_phase.get();
+    let arm_t = state.arm_t.get();
 
     cr.save().ok();
+    cr.set_line_cap(cairo::LineCap::Round);
+    cr.set_line_join(cairo::LineJoin::Round);
 
-    let wave_phase = state.wave_phase.get();
-
-    // Collect the filled segments once so each pass reuses them.
-    let mut segments: Vec<(f64, f64, f64, f64, f64)> = Vec::new();
-    for i in 1..path.len() {
-        if distances[i - 1] >= filled_len {
-            break;
+    // Ambient layer: the unfilled track, so the ring reads as a path being
+    // travelled rather than a line appearing out of nothing.
+    if alpha > 0.0 {
+        cr.set_line_width(1.0);
+        cr.set_source_rgba(
+            LONG_PRESS_OUTLINE_COLOR.0,
+            LONG_PRESS_OUTLINE_COLOR.1,
+            LONG_PRESS_OUTLINE_COLOR.2,
+            0.085 * alpha,
+        );
+        cr.move_to(path[0].0, path[0].1);
+        for p in path.iter().skip(1) {
+            cr.line_to(p.0, p.1);
         }
-        let (x1, y1) = path[i - 1];
-        let (mut x2, mut y2) = path[i];
-        if distances[i] > filled_len {
-            let seg = distances[i] - distances[i - 1];
-            let k = if seg > 0.0 {
-                (filled_len - distances[i - 1]) / seg
-            } else {
-                0.0
-            };
-            x2 = x1 + (x2 - x1) * k;
-            y2 = y1 + (y2 - y1) * k;
-        }
-        let mid_dist = (distances[i - 1] + distances[i].min(filled_len)) * 0.5;
-        segments.push((x1, y1, x2, y2, mid_dist));
+        let _ = cr.stroke();
     }
 
-    // 2-pass dash-shimmer ring (0.1.6 redesign): a constant base outline plus
-    // a shimmer whose dashes travel in sync with the internal waveform phase.
-    // The dash ranges come from shared geometry so all three platforms render
-    // the same pattern; the old per-segment alpha buckets are gone — exactly
-    // two stroke calls total.
-    let dash_period = ring_dash_period(total_len);
-    let dash_offset = ring_dash_offset(wave_phase, total_len);
-    cr.set_line_cap(cairo::LineCap::Butt);
+    if alpha > 0.0 && head_len > 0.0 {
+        // Primary layer: the comet. Brightness is envelope × glimmer evaluated
+        // per evenly-spaced segment — the portable stand-in for a gradient
+        // along a path, which Cairo has no primitive for.
+        let mut points = state.ring_points.borrow_mut();
+        rust_pill_shared::resample_perimeter(
+            &path,
+            &distances,
+            total_len,
+            rust_pill_shared::RING_SEGMENT_PX,
+            &mut points,
+        );
 
-    // Pass A: constant base outline over the filled perimeter.
-    let base_alpha = master_alpha * RING_BASE_ALPHA;
-    cr.set_line_width(RING_BASE_WIDTH);
-    cr.set_source_rgba(
-        LONG_PRESS_OUTLINE_COLOR.0,
-        LONG_PRESS_OUTLINE_COLOR.1,
-        LONG_PRESS_OUTLINE_COLOR.2,
-        base_alpha,
-    );
-    for &(x1, y1, x2, y2, _) in &segments {
-        cr.move_to(x1, y1);
-        cr.line_to(x2, y2);
-    }
-    let _ = cr.stroke();
-
-    // Pass B: traveling dash shimmer — only the painted ("on") dash ranges.
-    let shimmer_alpha = master_alpha * RING_SHIMMER_ALPHA;
-    cr.set_line_width(RING_SHIMMER_WIDTH);
-    cr.set_source_rgba(
-        LONG_PRESS_OUTLINE_COLOR.0,
-        LONG_PRESS_OUTLINE_COLOR.1,
-        LONG_PRESS_OUTLINE_COLOR.2,
-        shimmer_alpha,
-    );
-    for &(x1, y1, x2, y2, mid_dist) in &segments {
-        if ring_dash_is_on(mid_dist, dash_period, dash_offset) {
+        let lift = 1.0 + rust_pill_shared::RING_ARM_LIFT * arm_t;
+        for w in points.windows(2) {
+            let (x1, y1, _) = w[0];
+            let (x2, y2, d) = w[1];
+            if d > head_len {
+                break;
+            }
+            let env = rust_pill_shared::ring_envelope(d, head_len, progress, total_len);
+            let glim = rust_pill_shared::ring_glimmer(d, total_len, wave_phase, progress);
+            let a = (env * glim * lift).clamp(0.0, 1.0) * alpha;
+            if a < 0.012 {
+                continue;
+            }
+            cr.set_line_width(
+                rust_pill_shared::RING_CORE_WIDTH
+                    + rust_pill_shared::RING_WIDTH_SWELL * env * (1.0 - 0.35 * arm_t),
+            );
+            cr.set_source_rgba(
+                LONG_PRESS_OUTLINE_COLOR.0,
+                LONG_PRESS_OUTLINE_COLOR.1,
+                LONG_PRESS_OUTLINE_COLOR.2,
+                a,
+            );
             cr.move_to(x1, y1);
             cr.line_to(x2, y2);
+            let _ = cr.stroke();
+        }
+
+        // Secondary layer: the soft head. Concentric discs approximate a radial
+        // falloff without allocating a gradient every frame. It dissolves and
+        // blooms before completion so nothing bright is left at the seam.
+        let head_fade = rust_pill_shared::ring_head_fade(progress, arm_t);
+        let head_alpha = rust_pill_shared::RING_HEAD_ALPHA * head_fade * alpha;
+        if head_alpha > 0.004 && points.len() >= 2 {
+            let idx = (((head_len / total_len) * (points.len() - 1) as f64).round() as usize)
+                .clamp(1, points.len() - 1);
+            let (hx, hy, _) = points[idx];
+            let head_r = rust_pill_shared::ring_head_radius(progress);
+            let steps = rust_pill_shared::RING_HEAD_STEPS;
+            for k in (1..=steps).rev() {
+                let rr = head_r * (k as f64 / steps as f64);
+                let falloff = (1.0 - (k - 1) as f64 / steps as f64).powf(2.2);
+                cr.set_source_rgba(
+                    LONG_PRESS_OUTLINE_COLOR.0,
+                    LONG_PRESS_OUTLINE_COLOR.1,
+                    LONG_PRESS_OUTLINE_COLOR.2,
+                    head_alpha * falloff * 0.5,
+                );
+                cr.new_sub_path();
+                cr.arc(hx, hy, rr, 0.0, 2.0 * PI);
+                let _ = cr.fill();
+            }
         }
     }
-    let _ = cr.stroke();
+
+    // Confirmation layer: an expanding halo the moment the gesture arms, with a
+    // trailing echo. This is the payoff the old ring never gave.
+    if pulsing {
+        let t = rust_pill_shared::pulse_progress(state.arm_pulse.get());
+        for delay in [0.0, rust_pill_shared::RING_PULSE_ECHO_DELAY] {
+            let tt = ((t - delay) / (1.0 - delay)).clamp(0.0, 1.0);
+            if tt <= 0.0 {
+                continue;
+            }
+            let e = rust_pill_shared::ease_out_cubic(tt);
+            let spread = rust_pill_shared::RING_PULSE_SPREAD * e;
+            let halo = rounded_rectangle_perimeter(
+                ox - spread,
+                oy - spread,
+                ow + spread * 2.0,
+                oh + spread * 2.0,
+                r + spread,
+                RoundedRectArcSteps::Auto,
+            );
+            let echo = if delay > 0.0 { 0.5 } else { 1.0 };
+            cr.set_line_width(2.2 + (0.5 - 2.2) * e);
+            cr.set_source_rgba(
+                LONG_PRESS_OUTLINE_COLOR.0,
+                LONG_PRESS_OUTLINE_COLOR.1,
+                LONG_PRESS_OUTLINE_COLOR.2,
+                rust_pill_shared::RING_PULSE_ALPHA * (1.0 - e).powf(1.8) * echo,
+            );
+            cr.move_to(halo[0].0, halo[0].1);
+            for p in halo.iter().skip(1) {
+                cr.line_to(p.0, p.1);
+            }
+            let _ = cr.stroke();
+        }
+    }
 
     cr.restore().ok();
 }
@@ -1660,11 +1727,7 @@ fn draw_broadcast_transcript(cr: &cairo::Context, state: &PillState, ww: f64, wh
 /// click never renders a partially-filled outline, and reaches 1.0 exactly when
 /// the gesture arms at `LONG_PRESS_DURATION`.
 pub(crate) fn long_press_progress(elapsed: f64) -> f64 {
-    let span = LONG_PRESS_DURATION - LONG_PRESS_HOLD_DELAY;
-    if span <= 0.0 {
-        return if elapsed >= LONG_PRESS_DURATION { 1.0 } else { 0.0 };
-    }
-    ((elapsed - LONG_PRESS_HOLD_DELAY) / span).clamp(0.0, 1.0)
+    rust_pill_shared::hold_progress(elapsed, LONG_PRESS_HOLD_DELAY, LONG_PRESS_DURATION)
 }
 
 #[cfg(test)]
