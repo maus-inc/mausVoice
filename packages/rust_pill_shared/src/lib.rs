@@ -383,7 +383,7 @@ pub fn resolve_hover(probed: bool, pointer_down: bool) -> bool {
 /// `arm_pulse` is seconds since arming, or negative when no pulse is running;
 /// a retired pulse reports 1.0 so renderers treat it as finished.
 pub fn pulse_progress(arm_pulse: f64) -> f64 {
-    if arm_pulse < 0.0 {
+    if !pulse_is_running(arm_pulse) {
         return 1.0;
     }
     (arm_pulse / RING_PULSE_DURATION).clamp(0.0, 1.0)
@@ -466,7 +466,7 @@ impl Default for RingAnim {
             arm_t: 0.0,
             // Negative means "no pulse in flight"; 0.0 would mean one just
             // started.
-            arm_pulse: -1.0,
+            arm_pulse: PULSE_IDLE,
         }
     }
 }
@@ -476,11 +476,32 @@ pub const ARM_RAMP_IN: f64 = 0.22;
 /// Time for `arm_t` to ramp back out after the drag ends.
 pub const ARM_RAMP_OUT: f64 = 0.18;
 
+/// Sentinel for `arm_pulse` meaning "no confirmation pulse in flight".
+///
+/// Negative rather than zero because 0.0 is a real value: the frame the pulse
+/// starts. Use [`pulse_armed`] and [`pulse_is_running`] rather than bare
+/// comparisons, so the sentinel is named at every site.
+pub const PULSE_IDLE: f64 = -1.0;
+
+/// Starts the arm-confirmation pulse; assign the result to `arm_pulse`.
+///
+/// Free functions rather than `RingAnim` methods because the gesture layer
+/// arms the pulse from a `Cell<f64>` several frames before any `RingAnim` is
+/// materialised, so a method would be unreachable from the real call site.
+pub fn pulse_armed() -> f64 {
+    0.0
+}
+
+/// True while a confirmation pulse is running, given a raw `arm_pulse`.
+pub fn pulse_is_running(arm_pulse: f64) -> bool {
+    arm_pulse >= 0.0
+}
+
 /// Advances one frame of ring animation.
 ///
 /// Call once per tick, before drawing. Starting a pulse is the caller's job
-/// (see [`RingAnim::arm`]) because only the gesture layer knows the exact frame
-/// the long press completed.
+/// (assign [`pulse_armed()`] to `arm_pulse`) because only the gesture layer
+/// knows the exact frame the long press completed.
 pub fn advance_ring(anim: &mut RingAnim, tick: RingTick, hold_delay: f64) {
     let dt = tick.delta_seconds.max(0.0);
 
@@ -508,28 +529,11 @@ pub fn advance_ring(anim: &mut RingAnim, tick: RingTick, hold_delay: f64) {
         (anim.arm_t - dt / ARM_RAMP_OUT).max(0.0)
     };
 
-    if anim.arm_pulse >= 0.0 {
+    if pulse_is_running(anim.arm_pulse) {
         anim.arm_pulse += dt;
         if anim.arm_pulse > RING_PULSE_DURATION {
-            anim.arm_pulse = -1.0;
+            anim.arm_pulse = PULSE_IDLE;
         }
-    }
-}
-
-impl RingAnim {
-    /// Starts the arm-confirmation pulse. Call on the frame the gesture arms.
-    pub fn arm(&mut self) {
-        self.arm_pulse = 0.0;
-    }
-
-    /// True while the confirmation pulse is running.
-    pub fn pulsing(&self) -> bool {
-        self.arm_pulse >= 0.0
-    }
-
-    /// Normalised pulse progress in `0..=1`.
-    pub fn pulse_t(&self) -> f64 {
-        pulse_progress(self.arm_pulse)
     }
 }
 
@@ -964,8 +968,11 @@ mod tests {
     #[test]
     fn default_starts_idle_and_faded_out() {
         let a = RingAnim::default();
-        assert!(!a.pulsing(), "a fresh anim must not be mid-pulse");
-        assert_eq!(a.arm_pulse, -1.0);
+        assert!(
+            !pulse_is_running(a.arm_pulse),
+            "a fresh anim must not be mid-pulse",
+        );
+        assert_eq!(a.arm_pulse, PULSE_IDLE);
         // Seeded past the end of the fade, so the ring starts invisible.
         assert_eq!(a.release_elapsed, LONG_PRESS_RING_FADE);
         assert_eq!(ring_alpha(false, 0.0, a.release_elapsed, 0.12), 0.0);
@@ -974,20 +981,21 @@ mod tests {
     #[test]
     fn arm_pulse_runs_once_and_retires() {
         let mut a = RingAnim::default();
-        assert!(!a.pulsing());
-        a.arm();
-        assert!(a.pulsing());
-        assert_eq!(a.pulse_t(), 0.0);
+        assert!(!pulse_is_running(a.arm_pulse));
+
+        a.arm_pulse = pulse_armed();
+        assert!(pulse_is_running(a.arm_pulse));
+        assert_eq!(pulse_progress(a.arm_pulse), 0.0);
 
         let mut ticks = 0;
-        while a.pulsing() && ticks < 1000 {
+        while pulse_is_running(a.arm_pulse) && ticks < 1000 {
             advance_ring(&mut a, RingTick { held: true, dragging: true, progress: 1.0, delta_seconds: 0.016 }, 0.12);
             ticks += 1;
         }
         assert!(ticks < 1000, "pulse never retired");
-        assert!(!a.pulsing());
+        assert!(!pulse_is_running(a.arm_pulse));
         // A retired pulse reports a finished ramp, so renderers skip it.
-        assert_eq!(a.pulse_t(), 1.0);
+        assert_eq!(pulse_progress(a.arm_pulse), 1.0);
     }
 
     #[test]

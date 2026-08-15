@@ -981,7 +981,7 @@ fn tick_long_press(state: &PillState, window: id, dt: f64) {
         state.dragging.set(true);
         state.drag_cancelled.set(false);
         // Confirm the arm with the expanding halo, on the exact frame it fires.
-        state.arm_pulse.set(0.0);
+        state.arm_pulse.set(rust_pill_shared::pulse_armed());
 
         // Anchor the drag to the point the user grabbed so the pill tracks the
         // cursor 1:1 instead of jumping to centre itself under the pointer.
@@ -1387,7 +1387,7 @@ unsafe fn setup(receiver: Receiver<InMessage>, embedded: bool) {
         press_elapsed: Cell::new(0.0),
         release_elapsed: Cell::new(rust_pill_shared::LONG_PRESS_RING_FADE),
         arm_t: Cell::new(0.0),
-        arm_pulse: Cell::new(-1.0),
+        arm_pulse: Cell::new(rust_pill_shared::PULSE_IDLE),
         pointer_down: Cell::new(false),
         ring_points: RefCell::new(Vec::new()),
     });

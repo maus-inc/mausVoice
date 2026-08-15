@@ -181,7 +181,7 @@ pub fn run(receiver: Receiver<InMessage>) {
         press_elapsed: Cell::new(0.0),
         release_elapsed: Cell::new(rust_pill_shared::LONG_PRESS_RING_FADE),
         arm_t: Cell::new(0.0),
-        arm_pulse: Cell::new(-1.0),
+        arm_pulse: Cell::new(rust_pill_shared::PULSE_IDLE),
         pointer_down: Cell::new(false),
         ring_points: RefCell::new(Vec::new()),
         drag_cursor_x: Cell::new(0.0),
@@ -969,7 +969,7 @@ fn tick_long_press(state: &PillState) {
         state.long_press_elapsed.set(0.0);
         state.dragging.set(true);
         // Confirm the arm with the expanding halo, on the exact frame it fires.
-        state.arm_pulse.set(0.0);
+        state.arm_pulse.set(rust_pill_shared::pulse_armed());
     }
 }
 

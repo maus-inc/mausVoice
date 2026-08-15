@@ -296,7 +296,7 @@ impl PillState {
         if self.ring_alpha.get() > 0.0 { return true; }
         // The arm-confirmation halo outlives the ring's own alpha, so it needs
         // its own liveness check or the pulse would be culled mid-flight.
-        if self.arm_pulse.get() >= 0.0 { return true; }
+        if rust_pill_shared::pulse_is_running(self.arm_pulse.get()) { return true; }
         if self.arm_t.get() > 0.0 { return true; }
 
         // Assistant panel has shimmer and streaming content

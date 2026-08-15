@@ -146,7 +146,10 @@ describe("PR28 ring-alpha render-loop policy", () => {
     // Windows must dirty the frame when the ring AND its arm pulse finish, so
     // the final cleared frame repaints instead of leaving a ghost.
     assert.match(source.windowsPill, /previous_alpha > 0\.0 && anim\.alpha == 0\.0/);
-    assert.match(source.windowsPill, /was_pulsing && anim\.arm_pulse < 0\.0/);
+    assert.match(
+      source.windowsPill,
+      /was_pulsing && !rust_pill_shared::pulse_is_running\(anim\.arm_pulse\)/,
+    );
     assert.match(source.windowsPill, /dirty\.set\(true\)/);
     // Shared fade policy stays unit-tested in the pill crate.
     assert.match(source.sharedPill, /ring_alpha_fades_monotonically_after_release/);
@@ -261,13 +264,21 @@ describe("PR28 ring-alpha render-loop policy", () => {
 
   it("confirms the arm with a pulse that survives the ring's own alpha", () => {
     for (const pill of [source.gtkPill, source.macPill, source.windowsPill]) {
-      assert.match(pill, /arm_pulse\.set\(0\.0\)/);
+      assert.match(pill, /arm_pulse\.set\(rust_pill_shared::pulse_armed\(\)\)/);
+      // The idle sentinel is named, never an open-coded -1.0.
+      assert.match(pill, /arm_pulse: Cell::new\(rust_pill_shared::PULSE_IDLE\)/);
     }
+    // The sentinel is negative because 0.0 is a real value (the frame the pulse
+    // starts), so every read goes through the named predicate rather than a
+    // bare comparison that could be written backwards.
+    assert.match(source.sharedPill, /pub const PULSE_IDLE: f64 = -1\.0;/);
+    assert.match(source.sharedPill, /pub fn pulse_is_running/);
+    assert.match(source.sharedPill, /pub fn pulse_armed/);
     // Windows culls frames aggressively, so the pulse needs its own liveness
     // check or it would be dropped mid-flight.
-    assert.match(source.windowsState, /arm_pulse\.get\(\) >= 0\.0/);
-    assert.match(source.windowsDraw, /arm_pulse\.get\(\) >= 0\.0/);
-    assert.match(source.macDraw, /arm_pulse\.get\(\) >= 0\.0/);
+    for (const src of [source.windowsState, source.windowsDraw, source.macDraw, source.gtkDraw]) {
+      assert.match(src, /pulse_is_running\(/);
+    }
   });
 });
 

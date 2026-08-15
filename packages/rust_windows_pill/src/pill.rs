@@ -171,7 +171,7 @@ pub fn run(receiver: Receiver<InMessage>) {
         press_elapsed: Cell::new(0.0),
         release_elapsed: Cell::new(rust_pill_shared::LONG_PRESS_RING_FADE),
         arm_t: Cell::new(0.0),
-        arm_pulse: Cell::new(-1.0),
+        arm_pulse: Cell::new(rust_pill_shared::PULSE_IDLE),
         pointer_down: Cell::new(false),
         ring_points: RefCell::new(Vec::new()),
         dirty: Cell::new(true),
@@ -1205,7 +1205,7 @@ fn tick_long_press(state: &PillState, dt: f64) {
         state.dragging.set(true);
         state.drag_cancelled.set(false);
         // Confirm the arm with the expanding halo, on the exact frame it fires.
-        state.arm_pulse.set(0.0);
+        state.arm_pulse.set(rust_pill_shared::pulse_armed());
         unsafe {
             let mut cursor = POINT::default();
             let _ = GetCursorPos(&mut cursor);
@@ -1317,7 +1317,7 @@ fn tick_ring(state: &PillState, dt: f64) {
             && state.long_press_elapsed.get() > LONG_PRESS_HOLD_DELAY);
 
     let previous_alpha = state.ring_alpha.get();
-    let was_pulsing = state.arm_pulse.get() >= 0.0;
+    let was_pulsing = rust_pill_shared::pulse_is_running(state.arm_pulse.get());
 
     let mut anim = rust_pill_shared::RingAnim {
         alpha: previous_alpha,
@@ -1349,7 +1349,9 @@ fn tick_ring(state: &PillState, dt: f64) {
     // needs_redraw() stops reporting motion once the ring and its pulse are
     // finished, so the frame that clears them must be dirtied explicitly —
     // otherwise the last painted state is never erased and a ghost lingers.
-    if (previous_alpha > 0.0 && anim.alpha == 0.0) || (was_pulsing && anim.arm_pulse < 0.0) {
+    if (previous_alpha > 0.0 && anim.alpha == 0.0)
+        || (was_pulsing && !rust_pill_shared::pulse_is_running(anim.arm_pulse))
+    {
         state.dirty.set(true);
     }
 }

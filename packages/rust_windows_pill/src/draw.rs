@@ -57,7 +57,9 @@ pub(crate) fn draw_all(gfx: &mut Gfx, state: &PillState) {
         // Long-press outline indicator. `ring_alpha` stays pinned for the whole
         // hold and eases out after release, so the outline survives the
         // press→drag hand-off and never vanishes under an inflated pill.
-        if state.ring_alpha.get() > 0.0 || state.arm_pulse.get() >= 0.0 {
+        if state.ring_alpha.get() > 0.0
+            || rust_pill_shared::pulse_is_running(state.arm_pulse.get())
+        {
             draw_long_press_ring(gfx, state, ww, wh);
         }
 
@@ -1201,7 +1203,7 @@ fn lerp(a: f64, b: f64, t: f64) -> f64 {
 /// release), never by the press-progress ramp.
 fn draw_long_press_ring(gfx: &Gfx, state: &PillState, ww: f64, wh: f64) {
     let alpha = state.ring_alpha.get();
-    let pulsing = state.arm_pulse.get() >= 0.0;
+    let pulsing = rust_pill_shared::pulse_is_running(state.arm_pulse.get());
     if alpha <= 0.0 && !pulsing {
         return;
     }

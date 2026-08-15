@@ -196,7 +196,7 @@ fn draw_long_press_ring(
     cr: &cairo::Context, rx: f64, ry: f64, pill_w: f64, pill_h: f64, state: &PillState,
 ) {
     let alpha = state.ring_alpha.get();
-    let pulsing = state.arm_pulse.get() >= 0.0;
+    let pulsing = rust_pill_shared::pulse_is_running(state.arm_pulse.get());
     if alpha <= 0.0 && !pulsing {
         return;
     }
