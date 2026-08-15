@@ -85,6 +85,12 @@
       "chromedriver",
       "@firebase/util",
       "re2"
-    ]
+    ],
+    "peerDependencyRules": {
+      "allowedVersions": {
+        "vite": ">=6.4.3 <9.0.0",
+        "zod": ">=3.23.8 <5.0.0"
+      }
+    }
   }
 }
