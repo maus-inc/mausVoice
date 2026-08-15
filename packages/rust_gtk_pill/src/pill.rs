@@ -178,6 +178,12 @@ pub fn run(receiver: Receiver<InMessage>) {
         inflate_velocity: Cell::new(0.0),
         ring_alpha: Cell::new(0.0),
         ring_release_progress: Cell::new(0.0),
+        press_elapsed: Cell::new(0.0),
+        release_elapsed: Cell::new(rust_pill_shared::LONG_PRESS_RING_FADE),
+        arm_t: Cell::new(0.0),
+        arm_pulse: Cell::new(rust_pill_shared::PULSE_IDLE),
+        pointer_down: Cell::new(false),
+        ring_points: RefCell::new(Vec::new()),
         drag_cursor_x: Cell::new(0.0),
         drag_cursor_y: Cell::new(0.0),
         has_saved_position: Cell::new(false),
@@ -232,9 +238,26 @@ pub fn run(receiver: Receiver<InMessage>) {
     });
 
     let state_motion = state.clone();
+    let win_motion = window.clone();
     window.connect_motion_notify_event(move |_, event| {
         let (mx, my) = event.position();
-        let is_over_pill = input::is_over_pill_area(&state_motion, mx, my);
+        // A button-release event is not guaranteed to arrive (a grab can be
+        // broken by another client). The motion event carries the live button
+        // mask, so clear a stale pin before reading it. The frame tick runs the
+        // same check against the pointer device, which covers a missed release
+        // with no subsequent motion.
+        if state_motion.pointer_down.get()
+            && !event.state().contains(gdk::ModifierType::BUTTON1_MASK)
+        {
+            clear_pointer_pin(&state_motion, &win_motion);
+        }
+
+        // A held button owns the pointer, so the hit test cannot be trusted:
+        // dragging moves the window and easily outruns it.
+        let is_over_pill = rust_pill_shared::resolve_hover(
+            input::is_over_pill_area(&state_motion, mx, my),
+            state_motion.pointer_down.get(),
+        );
         let was_hovered = state_motion.hovered.get();
         if is_over_pill != was_hovered {
             state_motion.hovered.set(is_over_pill);
@@ -268,7 +291,9 @@ pub fn run(receiver: Receiver<InMessage>) {
 
     let state_leave = state.clone();
     window.connect_leave_notify_event(move |_, event| {
-        if event.mode() == gdk::CrossingMode::Normal {
+        // Dragging the pill drags its window out from under the pointer, so
+        // mid-gesture crossings are an artefact, not the user leaving.
+        if event.mode() == gdk::CrossingMode::Normal && !state_leave.pointer_down.get() {
             state_leave.hovered.set(false);
             ipc::send(&OutMessage::Hover { hovered: false });
         }
@@ -291,6 +316,7 @@ pub fn run(receiver: Receiver<InMessage>) {
         }
         if input::is_on_pill_at(&state_press, x, y) {
             state_press.x11_release_persisted.set(false);
+            state_press.pointer_down.set(true);
             state_press.long_press_active.set(true);
             state_press.long_press_elapsed.set(0.0);
             state_press.long_press_start_x.set(x);
@@ -326,24 +352,22 @@ pub fn run(receiver: Receiver<InMessage>) {
         }
         last_click.set(Some(now));
         let was_dragging = state_click.dragging.get();
-        if was_dragging && state_click.backend.get() == Backend::X11 {
-            // Persist the actual release position before clearing the drag flag;
-            // the X11 timer remains a fallback for missed release events.
-            let persisted = x11::persist_drop_position(&win_click, &state_click);
-            state_click.x11_release_persisted.set(persisted);
-        }
-        state_click.dragging.set(false);
-        state_click.long_press_active.set(false);
-        state_click.long_press_elapsed.set(0.0);
-        // Persist the Wayland draw offset so the pill stays where it was dropped.
-        // (X11 re-centers in its own reposition loop via window move.)
-        if was_dragging && state_click.backend.get() != Backend::X11 {
-            state_click.has_saved_position.set(true);
-            ipc::send(&OutMessage::PositionChanged { has_saved_position: true });
-        }
+        // End the gesture and persist the dropped position (if still dragging)
+        // through the shared teardown, so the button-release path and the
+        // frame-tick missed-release backstop cannot drift apart.
+        clear_pointer_pin(&state_click, &win_click);
         if !was_dragging {
             let (x, y) = event.position();
             input::handle_click(&state_click, x, y);
+        }
+
+        // Hover was pinned for the duration of the gesture; settle it against
+        // the cursor's real position now that the pointer is free.
+        let (rx, ry) = event.position();
+        let now_hovered = input::is_over_pill_area(&state_click, rx, ry);
+        if now_hovered != state_click.hovered.get() {
+            state_click.hovered.set(now_hovered);
+            ipc::send(&OutMessage::Hover { hovered: now_hovered });
         }
         glib::Propagation::Proceed
     });
@@ -545,6 +569,7 @@ pub fn run(receiver: Receiver<InMessage>) {
             return ControlFlow::Break;
         }
 
+        release_pointer_if_button_up(&win_tick, &state_tick);
         tick(&state_tick);
 
         // Show/hide entry for typing mode
@@ -726,6 +751,53 @@ pub fn run(receiver: Receiver<InMessage>) {
     main_loop.run();
 }
 
+/// Ends the gesture and tears down any active drag.
+///
+/// Clears the hover pin and gesture flags. If a drag was in progress, the
+/// dropped position is persisted (X11 repositions via the window; other
+/// backends keep their draw offset) so a missed release caught by the
+/// frame-tick backstop does not strand the pill at its old position.
+fn clear_pointer_pin(state: &PillState, window: &gtk::Window) {
+    if state.dragging.get() {
+        if state.backend.get() == Backend::X11 {
+            let persisted = x11::persist_drop_position(window, state);
+            state.x11_release_persisted.set(persisted);
+        } else {
+            state.has_saved_position.set(true);
+            ipc::send(&OutMessage::PositionChanged { has_saved_position: true });
+        }
+    }
+    state.dragging.set(false);
+    state.long_press_active.set(false);
+    state.long_press_elapsed.set(0.0);
+    state.pointer_down.set(false);
+}
+
+/// Frame-level backstop for a missed button release.
+///
+/// A release event can be lost outright — a grab stolen by another client, or
+/// the session locking. Polling the pointer's live modifier mask each frame
+/// means a stationary missed release still self-heals; relying on the motion
+/// handler alone would leave the pill pinned open until the pointer moved.
+fn release_pointer_if_button_up(window: &gtk::Window, state: &PillState) {
+    if !state.pointer_down.get() {
+        return;
+    }
+    let Some(gdk_window) = window.window() else {
+        return;
+    };
+    let Some(pointer) = gdk::Display::default()
+        .and_then(|d| d.default_seat())
+        .and_then(|s| s.pointer())
+    else {
+        return;
+    };
+    let (_, _, _, mask) = gdk_window.device_position(&pointer);
+    if !mask.contains(gdk::ModifierType::BUTTON1_MASK) {
+        clear_pointer_pin(state, window);
+    }
+}
+
 fn tick(state: &PillState) {
     tick_long_press(state);
     let phase = state.phase.get();
@@ -861,31 +933,18 @@ fn tick(state: &PillState) {
     let cancel_target = if show_controls { 1.0 } else { 0.0 };
     spring_anim(&state.cancel_t, &state.cancel_velocity, cancel_target, SPRING_STIFFNESS * 2.0);
 
-    // Inflate animation: expand when dragging, contract when released.
-    let inflate_target = if state.dragging.get() { 1.0 } else { 0.0 };
+    // Inflate animation. The target ramps up partway through the hold (not at
+    // the arm moment), so the pill is already growing while the ring fills and
+    // arming continues that motion instead of starting a new one.
+    let hold_p = draw::long_press_progress(state.long_press_elapsed.get());
+    let inflate_target = rust_pill_shared::inflate_target(
+        hold_p,
+        state.long_press_active.get(),
+        state.dragging.get(),
+    );
     spring_anim(&state.inflate_t, &state.inflate_velocity, inflate_target, DRAG_INFLATE_STIFFNESS);
 
-    // Long-press outline master alpha. While the gesture is held (long press
-    // past the hold delay, or dragging) the outline is pinned at full alpha —
-    // it must not fade underneath an active hold. Once released it eases out
-    // over LONG_PRESS_RING_FADE so the affordance dissolves instead of popping.
-    let ring_held = state.dragging.get()
-        || (state.long_press_active.get()
-            && state.long_press_elapsed.get() > LONG_PRESS_HOLD_DELAY);
-    if ring_held {
-        // Remember how far the ring ramp had filled so a release or cancel
-        // mid-ramp fades from that level instead of snapping to a full ring.
-        state.ring_release_progress.set(if state.dragging.get() {
-            1.0
-        } else {
-            draw::long_press_progress(state.long_press_elapsed.get())
-        });
-    }
-    state.ring_alpha.set(rust_pill_shared::update_ring_alpha(
-        state.ring_alpha.get(),
-        ring_held,
-        SPRING_DT,
-    ));
+    tick_ring(state);
 
     // Auto-scroll to bottom when new content arrives
     if state.should_stick.get() && state.assistant_active.get() && !state.assistant_compact.get() {
@@ -911,7 +970,47 @@ fn tick_long_press(state: &PillState) {
         state.long_press_active.set(false);
         state.long_press_elapsed.set(0.0);
         state.dragging.set(true);
+        // Confirm the arm with the expanding halo, on the exact frame it fires.
+        state.arm_pulse.set(rust_pill_shared::pulse_armed());
     }
+}
+
+/// Advances the long-press ring for one frame.
+///
+/// All the policy lives in `rust_pill_shared::advance_ring` so the three
+/// platform renderers cannot drift apart; this only marshals `Cell` state in
+/// and out of the shared struct.
+fn tick_ring(state: &PillState) {
+    let held = state.dragging.get()
+        || (state.long_press_active.get()
+            && state.long_press_elapsed.get() > LONG_PRESS_HOLD_DELAY);
+
+    let mut anim = rust_pill_shared::RingAnim {
+        alpha: state.ring_alpha.get(),
+        release_progress: state.ring_release_progress.get(),
+        press_elapsed: state.press_elapsed.get(),
+        release_elapsed: state.release_elapsed.get(),
+        arm_t: state.arm_t.get(),
+        arm_pulse: state.arm_pulse.get(),
+    };
+
+    rust_pill_shared::advance_ring(
+        &mut anim,
+        rust_pill_shared::RingTick {
+            held,
+            dragging: state.dragging.get(),
+            progress: draw::long_press_progress(state.long_press_elapsed.get()),
+            delta_seconds: SPRING_DT,
+        },
+        LONG_PRESS_HOLD_DELAY,
+    );
+
+    state.ring_alpha.set(anim.alpha);
+    state.ring_release_progress.set(anim.release_progress);
+    state.press_elapsed.set(anim.press_elapsed);
+    state.release_elapsed.set(anim.release_elapsed);
+    state.arm_t.set(anim.arm_t);
+    state.arm_pulse.set(anim.arm_pulse);
 }
 
 fn tick_fireworks(state: &PillState) {

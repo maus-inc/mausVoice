@@ -228,6 +228,29 @@ pub(crate) struct PillState {
     // this level rather than snapping to a complete outline.
     pub(crate) ring_release_progress: Cell<f64>,
 
+    // Time since the current press began / since the last release, driving the
+    // ring's eased fade-in and fade-out.
+    pub(crate) press_elapsed: Cell<f64>,
+    pub(crate) release_elapsed: Cell<f64>,
+
+    // 0..1 arm state, ramped after the long press completes. Lifts the ring's
+    // brightness and retires the comet head.
+    pub(crate) arm_t: Cell<f64>,
+
+    // Seconds since the gesture armed, or -1 when no pulse is running. Drives
+    // the expanding confirmation halo.
+    pub(crate) arm_pulse: Cell<f64>,
+
+    // True from press until release, regardless of whether the long press or
+    // drag survived. The move threshold cancels `long_press_active` before
+    // `dragging` arms, so neither flag alone can answer "is the button still
+    // down?" — which is what hover needs to stay pinned.
+    pub(crate) pointer_down: Cell<bool>,
+
+    // Scratch buffer for the evenly-resampled ring perimeter. Owned by the
+    // state so the render path reuses one allocation across frames.
+    pub(crate) ring_points: RefCell<Vec<(f64, f64, f64)>>,
+
     // Dirty flag — when false, the rendered output is identical to the previous
     // frame so we can skip draw + UpdateLayeredWindow entirely.
     pub(crate) dirty: Cell<bool>,
@@ -271,6 +294,10 @@ impl PillState {
         if self.long_press_active.get() { return true; }
         if self.dragging.get() { return true; }
         if self.ring_alpha.get() > 0.0 { return true; }
+        // The arm-confirmation halo outlives the ring's own alpha, so it needs
+        // its own liveness check or the pulse would be culled mid-flight.
+        if rust_pill_shared::pulse_is_running(self.arm_pulse.get()) { return true; }
+        if self.arm_t.get() > 0.0 { return true; }
 
         // Assistant panel has shimmer and streaming content
         if self.assistant_active.get() { return true; }

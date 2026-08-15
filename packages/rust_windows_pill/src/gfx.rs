@@ -46,6 +46,20 @@ fn color(r: f64, g: f64, b: f64, a: f64) -> D2D1_COLOR_F {
     D2D1_COLOR_F { r: r as f32, g: g as f32, b: b as f32, a: a as f32 }
 }
 
+/// One stroke of the long-press ring: a segment with its own colour and width.
+///
+/// A named struct rather than a tuple because every segment carries six values
+/// and `clippy::type_complexity` rightly rejects the tuple form.
+#[derive(Debug, Clone, Copy)]
+pub(crate) struct ShadedSegment {
+    pub(crate) x1: f64,
+    pub(crate) y1: f64,
+    pub(crate) x2: f64,
+    pub(crate) y2: f64,
+    pub(crate) rgba: [f64; 4],
+    pub(crate) width: f64,
+}
+
 fn vec2(x: f64, y: f64) -> Vector2 {
     Vector2 { X: x as f32, Y: y as f32 }
 }
@@ -265,19 +279,26 @@ impl Gfx {
         }
     }
 
+    /// Round-cap, round-join stroke style shared by every line draw.
+    fn round_stroke_style(&self) -> Option<ID2D1StrokeStyle> {
+        unsafe {
+            self.factory
+                .CreateStrokeStyle(
+                    &D2D1_STROKE_STYLE_PROPERTIES {
+                        startCap: D2D1_CAP_STYLE_ROUND,
+                        endCap: D2D1_CAP_STYLE_ROUND,
+                        lineJoin: D2D1_LINE_JOIN_ROUND,
+                        ..Default::default()
+                    },
+                    None,
+                )
+                .ok()
+        }
+    }
+
     pub(crate) fn draw_line(&self, x1: f64, y1: f64, x2: f64, y2: f64, rgba: [f64; 4], width: f64) {
         let brush = self.brush(rgba);
-        let style = unsafe {
-            self.factory.CreateStrokeStyle(
-                &D2D1_STROKE_STYLE_PROPERTIES {
-                    startCap: D2D1_CAP_STYLE_ROUND,
-                    endCap: D2D1_CAP_STYLE_ROUND,
-                    lineJoin: D2D1_LINE_JOIN_ROUND,
-                    ..Default::default()
-                },
-                None,
-            ).ok()
-        };
+        let style = self.round_stroke_style();
         unsafe {
             self.rt.DrawLine(
                 vec2(x1, y1),
@@ -301,17 +322,7 @@ impl Gfx {
             return;
         }
         let brush = self.brush(rgba);
-        let style = unsafe {
-            self.factory.CreateStrokeStyle(
-                &D2D1_STROKE_STYLE_PROPERTIES {
-                    startCap: D2D1_CAP_STYLE_ROUND,
-                    endCap: D2D1_CAP_STYLE_ROUND,
-                    lineJoin: D2D1_LINE_JOIN_ROUND,
-                    ..Default::default()
-                },
-                None,
-            ).ok()
-        };
+        let style = self.round_stroke_style();
         unsafe {
             for &(x1, y1, x2, y2) in segments {
                 self.rt.DrawLine(
@@ -319,6 +330,33 @@ impl Gfx {
                     vec2(x2, y2),
                     &brush,
                     width as f32,
+                    style.as_ref(),
+                );
+            }
+        }
+    }
+
+    /// Draw many segments that each carry their own colour and width.
+    ///
+    /// Used by the long-press ring, where every segment has a different alpha.
+    /// The brush and stroke style are COM objects, so creating a pair per
+    /// segment would mean hundreds of allocations per frame; instead both are
+    /// created once and the brush colour is mutated in place.
+    pub(crate) fn draw_line_shaded(&self, segments: &[ShadedSegment]) {
+        if segments.is_empty() {
+            return;
+        }
+        let brush = self.brush([1.0, 1.0, 1.0, 1.0]);
+        let style = self.round_stroke_style();
+        unsafe {
+            for seg in segments {
+                let [r, g, b, a] = seg.rgba;
+                brush.SetColor(&color(r, g, b, a));
+                self.rt.DrawLine(
+                    vec2(seg.x1, seg.y1),
+                    vec2(seg.x2, seg.y2),
+                    &brush,
+                    seg.width as f32,
                     style.as_ref(),
                 );
             }

@@ -213,16 +213,7 @@ pub(crate) const LONG_PRESS_OUTLINE_WIDTH: f64 = 2.0;
 // (Definition lives in `rust_pill_shared`; re-exported below.)
 // Ring + drag tuning constants live in `rust_pill_shared` so every platform
 // draws the long-press ring from one source of truth.
-pub(crate) use rust_pill_shared::{
-    DRAG_INFLATE_SCALE, DRAG_INFLATE_STIFFNESS,
-    RING_BASE_WIDTH, RING_BASE_ALPHA, RING_SHIMMER_WIDTH, RING_SHIMMER_ALPHA,
-    ring_dash_period, ring_dash_offset, ring_dash_is_on,
-};
-
-#[allow(dead_code)]
-pub(crate) const LONG_PRESS_RING_RADIUS: f64 = 22.0;
-#[allow(dead_code)]
-pub(crate) const LONG_PRESS_RING_STROKE: f64 = 2.5;
+pub(crate) use rust_pill_shared::{DRAG_INFLATE_SCALE, DRAG_INFLATE_STIFFNESS};
 
 
 // Particle physics constants
