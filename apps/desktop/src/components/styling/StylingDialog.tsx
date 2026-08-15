@@ -42,11 +42,19 @@ export const StylingDialog = () => {
       <DialogTitle>
         <Stack
           direction="row"
-          alignItems="center"
-          justifyContent="space-between"
+          sx={{
+            alignItems: "center",
+            justifyContent: "space-between",
+          }}
         >
           {tone?.name}
-          <Stack direction="row" spacing={0.5} alignItems="center">
+          <Stack
+            direction="row"
+            spacing={0.5}
+            sx={{
+              alignItems: "center",
+            }}
+          >
             {isGlobal && (
               <Tooltip
                 disableInteractive

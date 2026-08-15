@@ -17,14 +17,14 @@
   "devDependencies": {
     "@types/json-schema": "^7.0.15",
     "@maus-inc/typescript-config": "workspace:*",
-    "typescript": "5.9.2"
+    "typescript": "5.9.3"
   },
   "files": [
     "dist"
   ],
   "dependencies": {
     "@firemix/core": "^0.1.16",
-    "zod": "^3.25.76"
+    "zod": "^4.4.3"
   },
   "publishConfig": {
     "access": "public"

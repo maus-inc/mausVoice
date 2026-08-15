@@ -16,9 +16,7 @@ export type LoadingStreamResult = {
 };
 
 export type StreamResult<R> =
-  | SuccessStreamResult<R>
-  | ErrorStreamResult
-  | LoadingStreamResult;
+  SuccessStreamResult<R> | ErrorStreamResult | LoadingStreamResult;
 
 export function useStream<R>(
   builder: () => Promise<Observable<R>> | Observable<R>,

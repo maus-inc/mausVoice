@@ -19,7 +19,7 @@
   "devDependencies": {
     "@maus-inc/typescript-config": "workspace:*",
     "@maus-inc/voice-ai": "workspace:*",
-    "tsx": "^4.21.0",
-    "typescript": "5.9.2"
+    "tsx": "^4.23.12",
+    "typescript": "5.9.3"
   }
 }

@@ -123,9 +123,11 @@ export const ManualStylingRow = ({ id }: ManualStylingRowProps) => {
     <Stack
       direction="row"
       spacing={0.5}
-      alignItems="center"
       onClick={stopPropagation}
       onMouseDown={stopPropagation}
+      sx={{
+        alignItems: "center",
+      }}
     >
       {isGlobal && (
         <Tooltip
@@ -178,8 +180,8 @@ export const ManualStylingRow = ({ id }: ManualStylingRowProps) => {
       subtitle={
         <Typography
           variant="body2"
-          color="text.secondary"
           sx={{
+            color: "text.secondary",
             display: "-webkit-box",
             WebkitLineClamp: 2,
             WebkitBoxOrient: "vertical",

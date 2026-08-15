@@ -417,7 +417,13 @@ export const MultiDeviceDialog = () => {
                     <FormattedMessage defaultMessage="Leave blank to auto-assign a port, or set a fixed port and apply it immediately. If the receiver is running, mausVoice will restart it for you." />
                   }
                   action={
-                    <Stack direction="row" spacing={1} alignItems="center">
+                    <Stack
+                      direction="row"
+                      spacing={1}
+                      sx={{
+                        alignItems: "center",
+                      }}
+                    >
                       <TextField
                         size="small"
                         value={receiverPortDraft}
@@ -457,14 +463,24 @@ export const MultiDeviceDialog = () => {
 
                 {receiverStatus && (
                   <Stack spacing={0.5} sx={{ mt: -1 }}>
-                    <Typography variant="caption" color="text.secondary">
+                    <Typography
+                      variant="caption"
+                      sx={{
+                        color: "text.secondary",
+                      }}
+                    >
                       <FormattedMessage
                         defaultMessage="Device ID: {deviceId}"
                         values={{ deviceId: receiverStatus.deviceId }}
                       />
                     </Typography>
                     {receiverStatus.enabled && (
-                      <Typography variant="caption" color="text.secondary">
+                      <Typography
+                        variant="caption"
+                        sx={{
+                          color: "text.secondary",
+                        }}
+                      >
                         <FormattedMessage
                           defaultMessage="Connect address: {address}:{port}"
                           values={{
@@ -476,7 +492,12 @@ export const MultiDeviceDialog = () => {
                       </Typography>
                     )}
                     {receiverStatus.lastSenderDeviceId && (
-                      <Typography variant="caption" color="text.secondary">
+                      <Typography
+                        variant="caption"
+                        sx={{
+                          color: "text.secondary",
+                        }}
+                      >
                         <FormattedMessage
                           defaultMessage="Last sender: {senderId}"
                           values={{
@@ -486,7 +507,12 @@ export const MultiDeviceDialog = () => {
                       </Typography>
                     )}
                     {receiverStatus.lastDeliveryStatus && (
-                      <Typography variant="caption" color="text.secondary">
+                      <Typography
+                        variant="caption"
+                        sx={{
+                          color: "text.secondary",
+                        }}
+                      >
                         {lastDeliveryTimeLabel ? (
                           <FormattedMessage
                             defaultMessage="Last delivery: {status} at {timestamp}"
@@ -508,8 +534,10 @@ export const MultiDeviceDialog = () => {
                     {receiverStatus.lastError && (
                       <Typography
                         variant="caption"
-                        color="error.main"
-                        sx={{ wordBreak: "break-word" }}
+                        sx={{
+                          color: "error.main",
+                          wordBreak: "break-word",
+                        }}
                       >
                         <FormattedMessage
                           defaultMessage="Last error: {message}"
@@ -521,8 +549,10 @@ export const MultiDeviceDialog = () => {
                       receiverStatus.lastTargetTitle) && (
                       <Typography
                         variant="caption"
-                        color="text.secondary"
-                        sx={{ wordBreak: "break-word" }}
+                        sx={{
+                          color: "text.secondary",
+                          wordBreak: "break-word",
+                        }}
                       >
                         <FormattedMessage
                           defaultMessage="Last target: {className}{title}"
@@ -540,8 +570,10 @@ export const MultiDeviceDialog = () => {
                     {lastTargetLooksLikeMausVoice && (
                       <Typography
                         variant="caption"
-                        color="warning.main"
-                        sx={{ wordBreak: "break-word" }}
+                        sx={{
+                          color: "warning.main",
+                          wordBreak: "break-word",
+                        }}
                       >
                         <FormattedMessage defaultMessage="The last delivery targeted the mausVoice window itself. Focus the destination app on the receiver machine before sending text." />
                       </Typography>
@@ -549,13 +581,20 @@ export const MultiDeviceDialog = () => {
                     {lastTargetMissingEditableField && (
                       <Typography
                         variant="caption"
-                        color="warning.main"
-                        sx={{ wordBreak: "break-word" }}
+                        sx={{
+                          color: "warning.main",
+                          wordBreak: "break-word",
+                        }}
                       >
                         <FormattedMessage defaultMessage="The last target window was active, but no editable text field was focused. Click back into the destination text field on the receiver machine before sending text." />
                       </Typography>
                     )}
-                    <Typography variant="caption" color="text.secondary">
+                    <Typography
+                      variant="caption"
+                      sx={{
+                        color: "text.secondary",
+                      }}
+                    >
                       <FormattedMessage defaultMessage="Use Copy invite on the receiver machine, then Import invite on the sender machine. Manual trusted-device entry still works as a fallback." />
                     </Typography>
                     <Stack direction="row" spacing={1} sx={{ pt: 0.5 }}>
@@ -624,7 +663,12 @@ export const MultiDeviceDialog = () => {
 
                 {selectedRemoteTarget && (
                   <Stack spacing={0.5} sx={{ mt: -1 }}>
-                    <Typography variant="caption" color="text.secondary">
+                    <Typography
+                      variant="caption"
+                      sx={{
+                        color: "text.secondary",
+                      }}
+                    >
                       <FormattedMessage
                         defaultMessage="Active receiver: {name}"
                         values={{ name: selectedRemoteTarget.name }}
@@ -633,8 +677,10 @@ export const MultiDeviceDialog = () => {
                     {selectedRemoteTarget.lastKnownAddress && (
                       <Typography
                         variant="caption"
-                        color="text.secondary"
-                        sx={{ wordBreak: "break-word" }}
+                        sx={{
+                          color: "text.secondary",
+                          wordBreak: "break-word",
+                        }}
                       >
                         <FormattedMessage
                           defaultMessage="Receiver address: {address}"
@@ -644,7 +690,12 @@ export const MultiDeviceDialog = () => {
                         />
                       </Typography>
                     )}
-                    <Typography variant="caption" color="text.secondary">
+                    <Typography
+                      variant="caption"
+                      sx={{
+                        color: "text.secondary",
+                      }}
+                    >
                       <FormattedMessage
                         defaultMessage="Receiver device ID: {deviceId}"
                         values={{ deviceId: selectedRemoteTarget.id }}
@@ -809,7 +860,12 @@ export const MultiDeviceDialog = () => {
         </DialogTitle>
         <DialogContent dividers>
           <Stack spacing={2} sx={{ pt: 0.5 }}>
-            <Typography variant="body2" color="text.secondary">
+            <Typography
+              variant="body2"
+              sx={{
+                color: "text.secondary",
+              }}
+            >
               <FormattedMessage defaultMessage="Paste the invite copied from the receiver machine. mausVoice will trust both devices automatically." />
             </Typography>
             <TextField
@@ -885,13 +941,20 @@ const PairedDeviceRow = ({ device, onEdit }: PairedDeviceRowProps) => {
         minWidth: 0,
       }}
     >
-      <Typography variant="body2" fontWeight={600}>
+      <Typography
+        variant="body2"
+        sx={{
+          fontWeight: 600,
+        }}
+      >
         {device.name}
       </Typography>
       <Typography
         variant="caption"
-        color="text.secondary"
-        sx={{ wordBreak: "break-all" }}
+        sx={{
+          color: "text.secondary",
+          wordBreak: "break-all",
+        }}
       >
         <FormattedMessage
           defaultMessage="Device ID: {deviceId}"
@@ -901,8 +964,10 @@ const PairedDeviceRow = ({ device, onEdit }: PairedDeviceRowProps) => {
       {device.lastKnownAddress && (
         <Typography
           variant="caption"
-          color="text.secondary"
-          sx={{ wordBreak: "break-all" }}
+          sx={{
+            color: "text.secondary",
+            wordBreak: "break-all",
+          }}
         >
           <FormattedMessage
             defaultMessage="Address: {address}"
@@ -912,8 +977,10 @@ const PairedDeviceRow = ({ device, onEdit }: PairedDeviceRowProps) => {
       )}
       <Typography
         variant="caption"
-        color="text.secondary"
-        sx={{ wordBreak: "break-word" }}
+        sx={{
+          color: "text.secondary",
+          wordBreak: "break-word",
+        }}
       >
         <FormattedMessage
           defaultMessage="Role: {role} • Platform: {platform}"
@@ -922,8 +989,12 @@ const PairedDeviceRow = ({ device, onEdit }: PairedDeviceRowProps) => {
       </Typography>
       <Stack
         direction="row"
-        justifyContent="flex-end"
-        sx={{ pt: 0.5, flexWrap: "wrap", gap: 0.5 }}
+        sx={{
+          justifyContent: "flex-end",
+          pt: 0.5,
+          flexWrap: "wrap",
+          gap: 0.5,
+        }}
       >
         <Button
           size="small"

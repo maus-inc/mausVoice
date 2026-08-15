@@ -87,16 +87,18 @@ export const SignUpForm = ({ hideModeSwitch = false }: SignUpFormProps) => {
             error={!!passwordValidation}
             helperText={passwordValidation}
             size="small"
-            InputProps={{
-              endAdornment: (
-                <IconButton
-                  onClick={() => setPasswordVisible((v) => !v)}
-                  tabIndex={-1}
-                  size="small"
-                >
-                  {!passwordVisible ? <VisibilityOff /> : <Visibility />}
-                </IconButton>
-              ),
+            slotProps={{
+              input: {
+                endAdornment: (
+                  <IconButton
+                    onClick={() => setPasswordVisible((v) => !v)}
+                    tabIndex={-1}
+                    size="small"
+                  >
+                    {!passwordVisible ? <VisibilityOff /> : <Visibility />}
+                  </IconButton>
+                ),
+              },
             }}
           />
           <TextField
@@ -108,16 +110,22 @@ export const SignUpForm = ({ hideModeSwitch = false }: SignUpFormProps) => {
             error={!!confirmPasswordValidation}
             helperText={confirmPasswordValidation}
             size="small"
-            InputProps={{
-              endAdornment: (
-                <IconButton
-                  onClick={() => setConfirmPasswordVisible((v) => !v)}
-                  tabIndex={-1}
-                  size="small"
-                >
-                  {!confirmPasswordVisible ? <VisibilityOff /> : <Visibility />}
-                </IconButton>
-              ),
+            slotProps={{
+              input: {
+                endAdornment: (
+                  <IconButton
+                    onClick={() => setConfirmPasswordVisible((v) => !v)}
+                    tabIndex={-1}
+                    size="small"
+                  >
+                    {!confirmPasswordVisible ? (
+                      <VisibilityOff />
+                    ) : (
+                      <Visibility />
+                    )}
+                  </IconButton>
+                ),
+              },
             }}
           />
 

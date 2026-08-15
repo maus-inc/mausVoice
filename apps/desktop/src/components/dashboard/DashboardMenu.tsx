@@ -169,12 +169,13 @@ export const DashboardMenu = ({ onChoose }: DashboardMenuProps) => {
 
   return (
     <Stack
-      alignItems="stretch"
       sx={{
+        alignItems: "stretch",
         height: "100%",
         borderRadius: "16px",
         margin: "0.35rem",
         border: dark ? hairline.dark(0.05) : hairline.light(0.05),
+
         // Rail wash: one tier of lift at the top settling back into the canvas,
         // derived from the surface ladder rather than one-off hexes.
         background: dark

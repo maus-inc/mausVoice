@@ -23,9 +23,9 @@ function ChecklistRow({ item }: { item: ChecklistItem }) {
   return (
     <Stack
       direction="row"
-      alignItems="center"
       spacing={1.5}
       sx={{
+        alignItems: "center",
         py: 1.25,
         px: 0.5,
         borderRadius: 1,
@@ -183,27 +183,45 @@ export function GettingStartedList() {
     <Box>
       <Stack
         direction="row"
-        justifyContent="space-between"
-        alignItems="center"
-        sx={{ mb: 1 }}
+        sx={{
+          justifyContent: "space-between",
+          alignItems: "center",
+          mb: 1,
+        }}
       >
-        <Stack direction="row" alignItems="baseline" spacing={1}>
-          <Typography variant="h6" fontWeight={600}>
+        <Stack
+          direction="row"
+          spacing={1}
+          sx={{
+            alignItems: "baseline",
+          }}
+        >
+          <Typography
+            variant="h6"
+            sx={{
+              fontWeight: 600,
+            }}
+          >
             <FormattedMessage defaultMessage="Getting started" />
           </Typography>
           <Typography
             variant="caption"
-            color="text.secondary"
+            onClick={() => setDismissed(true)}
             sx={{
+              color: "text.secondary",
               cursor: "pointer",
               "&:hover": { textDecoration: "underline" },
             }}
-            onClick={() => setDismissed(true)}
           >
             <FormattedMessage defaultMessage="Skip" />
           </Typography>
         </Stack>
-        <Typography variant="body2" color="text.secondary">
+        <Typography
+          variant="body2"
+          sx={{
+            color: "text.secondary",
+          }}
+        >
           <FormattedMessage
             defaultMessage="{completed} of {total}"
             values={{ completed: completedCount, total: checklist.length }}

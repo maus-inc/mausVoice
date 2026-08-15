@@ -21,12 +21,30 @@ export function CenterMessage({ title, subtitle, action }: CenterMessageProps) {
       }}
     >
       <Container maxWidth="xs">
-        <Stack alignItems="center" spacing={2} pb={8}>
-          <Typography variant="h5" fontWeight={600} align="center">
+        <Stack
+          spacing={2}
+          sx={{
+            alignItems: "center",
+            pb: 8,
+          }}
+        >
+          <Typography
+            variant="h5"
+            align="center"
+            sx={{
+              fontWeight: 600,
+            }}
+          >
             {title}
           </Typography>
           {subtitle && (
-            <Typography variant="body1" color="text.secondary" align="center">
+            <Typography
+              variant="body1"
+              align="center"
+              sx={{
+                color: "text.secondary",
+              }}
+            >
               {subtitle}
             </Typography>
           )}

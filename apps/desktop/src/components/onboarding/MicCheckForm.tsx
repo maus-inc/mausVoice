@@ -120,11 +120,26 @@ export const MicCheckForm = () => {
 
   const form = (
     <OnboardingFormLayout back={<BackButton />} actions={<div />}>
-      <Stack spacing={2} pb={8}>
-        <Typography variant="h4" fontWeight={600}>
+      <Stack
+        spacing={2}
+        sx={{
+          pb: 8,
+        }}
+      >
+        <Typography
+          variant="h4"
+          sx={{
+            fontWeight: 600,
+          }}
+        >
           <FormattedMessage defaultMessage="Test your microphone" />
         </Typography>
-        <Typography variant="body1" color="text.secondary">
+        <Typography
+          variant="body1"
+          sx={{
+            color: "text.secondary",
+          }}
+        >
           <FormattedMessage defaultMessage="Say something and watch the waves respond to your voice." />
         </Typography>
       </Stack>
@@ -144,7 +159,12 @@ export const MicCheckForm = () => {
     >
       {showMicSelector ? (
         <>
-          <Typography variant="h6" fontWeight={600}>
+          <Typography
+            variant="h6"
+            sx={{
+              fontWeight: 600,
+            }}
+          >
             <FormattedMessage defaultMessage="Choose a different microphone" />
           </Typography>
           <MicrophoneSelector
@@ -153,7 +173,12 @@ export const MicCheckForm = () => {
               setOnboardingPreferredMicrophone(value);
             }}
           />
-          <Stack direction="row" justifyContent="flex-end">
+          <Stack
+            direction="row"
+            sx={{
+              justifyContent: "flex-end",
+            }}
+          >
             <Button
               variant="contained"
               onClick={handleMicSelected}
@@ -165,7 +190,12 @@ export const MicCheckForm = () => {
         </>
       ) : (
         <>
-          <Typography variant="h6" fontWeight={600}>
+          <Typography
+            variant="h6"
+            sx={{
+              fontWeight: 600,
+            }}
+          >
             <FormattedMessage defaultMessage="Do the waves respond to your voice?" />
           </Typography>
 
@@ -207,7 +237,13 @@ export const MicCheckForm = () => {
             </Box>
           </Box>
 
-          <Stack direction="row" spacing={2} justifyContent="flex-end">
+          <Stack
+            direction="row"
+            spacing={2}
+            sx={{
+              justifyContent: "flex-end",
+            }}
+          >
             <Button
               variant="text"
               onClick={() => void handleChangeMicrophone()}

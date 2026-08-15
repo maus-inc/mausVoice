@@ -7,10 +7,7 @@ import { SystemCapabilities } from "../types/system-capabilities.types";
  * hard-blocked, but discouraged combos get the strongest wording.
  */
 export type ModelFitLevel =
-  | "recommended"
-  | "acceptable"
-  | "caution"
-  | "discouraged";
+  "recommended" | "acceptable" | "caution" | "discouraged";
 
 const MODEL_TIER: Record<LocalWhisperModel, number> = {
   tiny: 0,

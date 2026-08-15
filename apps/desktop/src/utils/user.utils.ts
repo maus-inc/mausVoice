@@ -240,8 +240,7 @@ export type ApiTranscriptionPrefs = BaseTranscriptionPrefs & {
 };
 
 export type TranscriptionPrefs =
-  | LocalTranscriptionPrefs
-  | ApiTranscriptionPrefs;
+  LocalTranscriptionPrefs | ApiTranscriptionPrefs;
 
 /**
  * Providers with an implemented batch transcription route — i.e. parity with

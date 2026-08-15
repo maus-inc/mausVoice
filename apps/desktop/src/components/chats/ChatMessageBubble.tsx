@@ -44,7 +44,12 @@ export const ChatMessageBubble = ({ id }: ChatMessageBubbleProps) => {
   return (
     <Stack>
       <AgentActivity messageId={id} />
-      <Stack direction="row" justifyContent={isMe ? "flex-end" : "flex-start"}>
+      <Stack
+        direction="row"
+        sx={{
+          justifyContent: isMe ? "flex-end" : "flex-start",
+        }}
+      >
         <Box
           sx={{
             maxWidth: "75%",
@@ -123,8 +128,12 @@ const ToolResultBubble = ({
     <Stack
       direction="row"
       spacing={0.75}
-      alignItems="center"
-      sx={{ px: 0.5, minWidth: 0, overflow: "hidden" }}
+      sx={{
+        alignItems: "center",
+        px: 0.5,
+        minWidth: 0,
+        overflow: "hidden",
+      }}
     >
       <BuildRounded
         sx={{ fontSize: 14, color: "text.secondary", flexShrink: 0 }}

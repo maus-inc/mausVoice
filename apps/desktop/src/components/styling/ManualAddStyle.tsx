@@ -94,7 +94,14 @@ export function ManualAddStyle() {
             </Typography>
           ),
           trailing: (
-            <Stack direction="row" spacing={0.5} alignItems="center" mr={-1}>
+            <Stack
+              direction="row"
+              spacing={0.5}
+              sx={{
+                alignItems: "center",
+                mr: -1,
+              }}
+            >
               {isGlobal && (
                 <Tooltip
                   disableInteractive

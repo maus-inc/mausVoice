@@ -1,4 +1,4 @@
-import ErrorOutlineIcon from "@mui/icons-material/ErrorOutline";
+import ErrorOutlineIcon from "@mui/icons-material/ErrorOutlined";
 import {
   Autocomplete,
   Box,
@@ -76,7 +76,12 @@ export const OllamaModelPicker = ({
     return (
       <Box sx={{ display: "flex", alignItems: "center", gap: 1, py: 1 }}>
         <CircularProgress size={16} />
-        <Typography variant="body2" color="text.secondary">
+        <Typography
+          variant="body2"
+          sx={{
+            color: "text.secondary",
+          }}
+        >
           <FormattedMessage defaultMessage="Checking Ollama connection..." />
         </Typography>
       </Box>
@@ -116,7 +121,8 @@ export const OllamaModelPicker = ({
           label={<FormattedMessage defaultMessage="Model" />}
           placeholder="Select or type a model"
           slotProps={{
-            inputLabel: { ...params.InputLabelProps, shrink: true },
+            ...params.slotProps,
+            inputLabel: { ...params.slotProps.inputLabel, shrink: true },
           }}
         />
       )}

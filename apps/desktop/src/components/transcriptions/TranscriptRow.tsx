@@ -131,13 +131,27 @@ export const TranscriptionRow = ({ id }: TranscriptionRowProps) => {
     <>
       <Stack
         direction="row"
-        justifyContent="space-between"
-        alignItems="center"
-        mt={1.5}
         spacing={1}
+        sx={{
+          justifyContent: "space-between",
+          alignItems: "center",
+          mt: 1.5,
+        }}
       >
-        <Stack direction="row" alignItems="center" spacing={1} flexWrap="wrap">
-          <Typography variant="subtitle2" color="text.secondary">
+        <Stack
+          direction="row"
+          spacing={1}
+          sx={{
+            alignItems: "center",
+            flexWrap: "wrap",
+          }}
+        >
+          <Typography
+            variant="subtitle2"
+            sx={{
+              color: "text.secondary",
+            }}
+          >
             {dayjs(transcription?.createdAt).format("MMM D, YYYY h:mm A")}
           </Typography>
           {isRemoteTranscript && (

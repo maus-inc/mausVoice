@@ -25,9 +25,11 @@ export default function OnboardingPage() {
   return (
     <Stack
       direction="row"
-      alignItems="center"
-      justifyContent="center"
-      sx={{ height: "100%" }}
+      sx={{
+        alignItems: "center",
+        justifyContent: "center",
+        height: "100%",
+      }}
     >
       {currentPage === "signIn" && <SignInForm />}
       {currentPage === "personalCredentials" && <PersonalCredentialsForm />}

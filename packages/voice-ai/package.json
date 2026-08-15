@@ -12,27 +12,27 @@
   "scripts": {
     "build": "tsc",
     "dev": "tsc --watch",
-    "clean": "rm -rf dist"
+    "clean": "rm -rf dist",
+    "test": "vitest run",
+    "test:watch": "vitest"
   },
   "files": [
     "dist"
   ],
   "dependencies": {
     "@anthropic-ai/sdk": "^0.71.2",
-    "@azure/openai": "^2.0.0",
-    "@google/genai": "^1.48.0",
+    "@google/genai": "^1.52.0",
     "@maus-inc/types": "workspace:*",
     "@maus-inc/utilities": "workspace:*",
     "groq-sdk": "^0.37.0",
-    "microsoft-cognitiveservices-speech-sdk": "^1.49.0",
+    "microsoft-cognitiveservices-speech-sdk": "^1.51.0",
     "openai": "^4.104.0",
-    "wavefile": "^11.0.0",
-    "zod": "^3.25.76",
-    "zod-to-json-schema": "^3.25.2"
+    "zod": "^4.4.3"
   },
   "devDependencies": {
     "@maus-inc/typescript-config": "workspace:*",
-    "typescript": "5.9.2"
+    "typescript": "5.9.3",
+    "vitest": "^3.2.7"
   },
   "publishConfig": {
     "access": "public"

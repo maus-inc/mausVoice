@@ -40,10 +40,21 @@ export const ChooseLlmForm = () => {
     >
       <Stack spacing={3}>
         <Box>
-          <Typography variant="h4" fontWeight={600} pb={1}>
+          <Typography
+            variant="h4"
+            sx={{
+              fontWeight: 600,
+              pb: 1,
+            }}
+          >
             <FormattedMessage defaultMessage="Set up post-processing" />
           </Typography>
-          <Typography variant="body1" color="text.secondary">
+          <Typography
+            variant="body1"
+            sx={{
+              color: "text.secondary",
+            }}
+          >
             <FormattedMessage defaultMessage="Choose if mausVoice should enhance transcripts automatically after they are transcribed." />
           </Typography>
         </Box>

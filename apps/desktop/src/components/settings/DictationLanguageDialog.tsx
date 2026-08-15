@@ -61,7 +61,14 @@ const DictationLanguageRow = ({
   };
 
   return (
-    <Stack direction="row" spacing={1} alignItems="center" width="100%">
+    <Stack
+      direction="row"
+      spacing={1}
+      sx={{
+        alignItems: "center",
+        width: "100%",
+      }}
+    >
       <HotKey value={hotkeyKeys} onChange={onHotkeyChange} />
       <Box sx={{ flex: 1, minWidth: 0 }}>
         <Select
@@ -71,8 +78,10 @@ const DictationLanguageRow = ({
           variant="outlined"
           fullWidth
           MenuProps={{
-            PaperProps: {
-              style: { maxHeight: 300 },
+            slotProps: {
+              paper: {
+                style: { maxHeight: 300 },
+              },
             },
           }}
         >
@@ -256,7 +265,12 @@ export const DictationLanguageDialog = () => {
     <Dialog open={open} onClose={handleClose}>
       <DialogTitle>
         <FormattedMessage defaultMessage="Dictation language" />
-        <Typography variant="body2" color="text.secondary">
+        <Typography
+          variant="body2"
+          sx={{
+            color: "text.secondary",
+          }}
+        >
           <FormattedMessage defaultMessage="Configure multiple dictation languages with hotkeys." />
         </Typography>
       </DialogTitle>
@@ -285,7 +299,12 @@ export const DictationLanguageDialog = () => {
             onClick={handleAddLanguage}
             sx={{ alignSelf: "flex-end", py: 0.5 }}
           >
-            <Typography variant="body2" fontWeight={500}>
+            <Typography
+              variant="body2"
+              sx={{
+                fontWeight: 500,
+              }}
+            >
               <FormattedMessage defaultMessage="Add language" />
             </Typography>
           </Button>

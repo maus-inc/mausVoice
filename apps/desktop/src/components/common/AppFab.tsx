@@ -65,19 +65,37 @@ export const AppFab = ({
       <Stack
         ref={labelRef}
         direction="row"
-        alignItems="center"
         spacing={1}
-        px={2}
-        whiteSpace="nowrap"
+        sx={{
+          alignItems: "center",
+          px: 2,
+          whiteSpace: "nowrap",
+        }}
       >
         {leading && (
-          <Box component="span" display="flex">
+          <Box
+            component="span"
+            sx={{
+              display: "flex",
+            }}
+          >
             {leading}
           </Box>
         )}
-        <Box flexShrink={0}>{children}</Box>
+        <Box
+          sx={{
+            flexShrink: 0,
+          }}
+        >
+          {children}
+        </Box>
         {trailing && (
-          <Box component="span" display="flex">
+          <Box
+            component="span"
+            sx={{
+              display: "flex",
+            }}
+          >
             {trailing}
           </Box>
         )}
@@ -93,13 +111,15 @@ export type AppFabPositionProps = {
 export const AppFabPosition = ({ children }: AppFabPositionProps) => {
   return (
     <Stack
-      position="absolute"
-      bottom={32}
-      right={32}
       direction="row"
-      justifyContent="flex-end"
-      alignItems="center"
       spacing={2}
+      sx={{
+        position: "absolute",
+        bottom: 32,
+        right: 32,
+        justifyContent: "flex-end",
+        alignItems: "center",
+      }}
     >
       {children}
     </Stack>

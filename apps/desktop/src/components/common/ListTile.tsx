@@ -40,8 +40,8 @@ const HoverButton = ({
 
   return (
     <Box
-      flexShrink={0}
       sx={{
+        flexShrink: 0,
         display: "inline-flex",
         ml: left ? undefined : 1,
         mr: left ? 1 : undefined,
@@ -50,8 +50,11 @@ const HoverButton = ({
       <Typography
         variant="body2"
         component="span"
-        fontWeight="bold"
-        sx={{ display: "flex", alignItems: "center" }}
+        sx={{
+          fontWeight: "bold",
+          display: "flex",
+          alignItems: "center",
+        }}
       >
         <Box sx={{ display: hoverState ? "none" : "inline-flex" }}>{idle}</Box>
         <IconButton
@@ -172,7 +175,13 @@ export const ListTile = forwardRef<HTMLDivElement, ListTileProps>(
           disableRipple={disableRipple}
           sx={{ position: "relative", zIndex: 1 }}
         >
-          <Stack direction="row" alignItems="center" width="100%">
+          <Stack
+            direction="row"
+            sx={{
+              alignItems: "center",
+              width: "100%",
+            }}
+          >
             {Boolean(leading) && (
               <HoverButton
                 idle={leading}
@@ -182,7 +191,12 @@ export const ListTile = forwardRef<HTMLDivElement, ListTileProps>(
                 left={true}
               />
             )}
-            <Box flexGrow={1} sx={{ overflow: "hidden" }}>
+            <Box
+              sx={{
+                flexGrow: 1,
+                overflow: "hidden",
+              }}
+            >
               <ListItemText
                 primary={<OverflowTypography>{title}</OverflowTypography>}
                 secondary={subtitle}

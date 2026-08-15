@@ -73,7 +73,13 @@ export const AudioDialog = () => {
           <Typography variant="body1" sx={{ fontWeight: 600 }}>
             <FormattedMessage defaultMessage="Dim audio while dictating" />
           </Typography>
-          <Typography variant="body2" color="text.secondary" sx={{ mb: 1 }}>
+          <Typography
+            variant="body2"
+            sx={{
+              color: "text.secondary",
+              mb: 1,
+            }}
+          >
             <FormattedMessage defaultMessage="Lower system volume while recording, then restore it when done." />
           </Typography>
           <Box sx={{ display: "flex", alignItems: "center", gap: 2 }}>

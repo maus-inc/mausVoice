@@ -9,6 +9,44 @@ const localPrefsWithActiveLanguage = (
   activeDictationLanguage,
 });
 
+describe("legacy AI mode normalization", () => {
+  it("maps the removed cloud transcription mode to local", () => {
+    const loaded = fromLocalPreferences({
+      ...toLocalPreferences(createDefaultPreferences()),
+      transcriptionMode: "cloud",
+    });
+    expect(loaded.transcriptionMode).toBe("local");
+  });
+
+  it("maps the removed cloud agent mode to none", () => {
+    const loaded = fromLocalPreferences({
+      ...toLocalPreferences(createDefaultPreferences()),
+      agentMode: "cloud",
+    });
+    expect(loaded.agentMode).toBe("none");
+  });
+
+  it("maps the removed cloud post-processing mode to none", () => {
+    const loaded = fromLocalPreferences({
+      ...toLocalPreferences(createDefaultPreferences()),
+      postProcessingMode: "cloud",
+    });
+    expect(loaded.postProcessingMode).toBe("none");
+  });
+
+  it("keeps valid modes and unset modes untouched", () => {
+    const loaded = fromLocalPreferences({
+      ...toLocalPreferences(createDefaultPreferences()),
+      transcriptionMode: "api",
+      postProcessingMode: null,
+      agentMode: "openclaw",
+    });
+    expect(loaded.transcriptionMode).toBe("api");
+    expect(loaded.postProcessingMode).toBeNull();
+    expect(loaded.agentMode).toBe("openclaw");
+  });
+});
+
 describe("preferences round-trip", () => {
   it("preserves a non-primary active dictation language across load then save", () => {
     const loaded = fromLocalPreferences(localPrefsWithActiveLanguage("es"));

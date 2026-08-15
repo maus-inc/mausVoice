@@ -82,14 +82,20 @@ export const AppKeybindingsDialog = () => {
         <FormattedMessage defaultMessage="Text Insertion Options" />
       </DialogTitle>
       <DialogContent>
-        <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
+        <Typography
+          variant="body2"
+          sx={{
+            color: "text.secondary",
+            mb: 2,
+          }}
+        >
           <FormattedMessage defaultMessage="Choose how mausVoice inserts text and which paste shortcut to use when paste insertion is selected." />
         </Typography>
         <Stack
           direction="row"
-          alignItems="center"
-          justifyContent="space-between"
           sx={{
+            alignItems: "center",
+            justifyContent: "space-between",
             backgroundColor: "level1",
             mb: 2,
             borderRadius: 1,
@@ -101,7 +107,12 @@ export const AppKeybindingsDialog = () => {
             <Typography variant="body2">
               <FormattedMessage defaultMessage="Default insertion method" />
             </Typography>
-            <Typography variant="caption" color="text.secondary">
+            <Typography
+              variant="caption"
+              sx={{
+                color: "text.secondary",
+              }}
+            >
               <FormattedMessage defaultMessage="How text is inserted into applications" />
             </Typography>
           </Stack>
@@ -133,7 +144,13 @@ export const AppKeybindingsDialog = () => {
             <Typography variant="body2">
               <FormattedMessage defaultMessage="Default simulated typing speed" />
             </Typography>
-            <Stack direction="row" spacing={2} alignItems="center">
+            <Stack
+              direction="row"
+              spacing={2}
+              sx={{
+                alignItems: "center",
+              }}
+            >
               <ElasticSlider
                 value={defaultTypingSpeedMs}
                 onCommit={handleDefaultTypingSpeedCommit}
@@ -149,9 +166,9 @@ export const AppKeybindingsDialog = () => {
         {defaultInsertionMethod === "paste" && (
           <Stack
             direction="row"
-            alignItems="center"
-            justifyContent="space-between"
             sx={{
+              alignItems: "center",
+              justifyContent: "space-between",
               backgroundColor: "level1",
               mb: 2,
               borderRadius: 1,
@@ -163,7 +180,12 @@ export const AppKeybindingsDialog = () => {
               <Typography variant="body2">
                 <FormattedMessage defaultMessage="Default paste binding" />
               </Typography>
-              <Typography variant="caption" color="text.secondary">
+              <Typography
+                variant="caption"
+                sx={{
+                  color: "text.secondary",
+                }}
+              >
                 <FormattedMessage defaultMessage="Used for unregistered apps and as the default for new apps" />
               </Typography>
             </Stack>
@@ -187,20 +209,39 @@ export const AppKeybindingsDialog = () => {
           </Stack>
         )}
         {sortedTargets.length === 0 ? (
-          <Typography variant="body2" color="text.secondary" sx={{ py: 2 }}>
+          <Typography
+            variant="body2"
+            sx={{
+              color: "text.secondary",
+              py: 2,
+            }}
+          >
             <FormattedMessage defaultMessage="No apps registered yet. Start dictating in an app and it will appear here." />
           </Typography>
         ) : (
           <>
             <Stack
               direction="row"
-              justifyContent="space-between"
-              sx={{ px: 1, mb: 1 }}
+              sx={{
+                justifyContent: "space-between",
+                px: 1,
+                mb: 1,
+              }}
             >
-              <Typography variant="caption" color="text.secondary">
+              <Typography
+                variant="caption"
+                sx={{
+                  color: "text.secondary",
+                }}
+              >
                 <FormattedMessage defaultMessage="App" />
               </Typography>
-              <Typography variant="caption" color="text.secondary">
+              <Typography
+                variant="caption"
+                sx={{
+                  color: "text.secondary",
+                }}
+              >
                 <FormattedMessage defaultMessage="Insertion method" />
               </Typography>
             </Stack>
@@ -297,12 +338,20 @@ const AppKeybindingRow = ({
     <Stack
       sx={{ backgroundColor: "level1", mb: 1, borderRadius: 1, px: 1.5, py: 1 }}
     >
-      <Stack direction="row" alignItems="center" justifyContent="space-between">
+      <Stack
+        direction="row"
+        sx={{
+          alignItems: "center",
+          justifyContent: "space-between",
+        }}
+      >
         <Stack
           direction="row"
-          alignItems="center"
           spacing={1.5}
-          sx={{ minWidth: 0 }}
+          sx={{
+            alignItems: "center",
+            minWidth: 0,
+          }}
         >
           <Box
             sx={{
@@ -331,8 +380,19 @@ const AppKeybindingRow = ({
             {target.name}
           </Typography>
         </Stack>
-        <Stack alignItems="flex-end" spacing={0.5} sx={{ flexShrink: 0 }}>
-          <Typography variant="caption" color="text.secondary">
+        <Stack
+          spacing={0.5}
+          sx={{
+            alignItems: "flex-end",
+            flexShrink: 0,
+          }}
+        >
+          <Typography
+            variant="caption"
+            sx={{
+              color: "text.secondary",
+            }}
+          >
             <FormattedMessage defaultMessage="Insertion method" />
           </Typography>
           <Select
@@ -360,11 +420,18 @@ const AppKeybindingRow = ({
       {showPasteKeybind && (
         <Stack
           direction="row"
-          alignItems="center"
-          justifyContent="space-between"
-          sx={{ mt: 1 }}
+          sx={{
+            alignItems: "center",
+            justifyContent: "space-between",
+            mt: 1,
+          }}
         >
-          <Typography variant="caption" color="text.secondary">
+          <Typography
+            variant="caption"
+            sx={{
+              color: "text.secondary",
+            }}
+          >
             <FormattedMessage defaultMessage="Paste binding" />
           </Typography>
           <Select
@@ -396,15 +463,33 @@ const AppKeybindingRow = ({
         <Stack sx={{ mt: 1 }}>
           <Stack
             direction="row"
-            alignItems="center"
-            justifyContent="space-between"
-            sx={{ mb: 0.5 }}
+            sx={{
+              alignItems: "center",
+              justifyContent: "space-between",
+              mb: 0.5,
+            }}
           >
-            <Typography variant="caption" color="text.secondary">
+            <Typography
+              variant="caption"
+              sx={{
+                color: "text.secondary",
+              }}
+            >
               <FormattedMessage defaultMessage="Simulated typing speed" />
             </Typography>
-            <Stack direction="row" alignItems="center" spacing={0.5}>
-              <Typography variant="caption" color="text.secondary">
+            <Stack
+              direction="row"
+              spacing={0.5}
+              sx={{
+                alignItems: "center",
+              }}
+            >
+              <Typography
+                variant="caption"
+                sx={{
+                  color: "text.secondary",
+                }}
+              >
                 <FormattedMessage
                   defaultMessage="Use default ({speed}ms)"
                   values={{ speed: defaultTypingSpeedMs }}
@@ -418,11 +503,19 @@ const AppKeybindingRow = ({
             </Stack>
           </Stack>
           {!useDefaultTypingSpeed && (
-            <Stack direction="row" spacing={2} alignItems="center">
+            <Stack
+              direction="row"
+              spacing={2}
+              sx={{
+                alignItems: "center",
+              }}
+            >
               <Typography
                 variant="caption"
-                color="text.secondary"
-                sx={{ minWidth: 80 }}
+                sx={{
+                  color: "text.secondary",
+                  minWidth: 80,
+                }}
               >
                 <FormattedMessage defaultMessage="Speed" />
               </Typography>

@@ -35,18 +35,41 @@ export const GpuMigrationDialog = ({
             <FormattedMessage defaultMessage="The GPU version of mausVoice will no longer receive updates." />
           </Alert>
 
-          <Typography variant="body2" color="text.secondary">
+          <Typography
+            variant="body2"
+            sx={{
+              color: "text.secondary",
+            }}
+          >
             <FormattedMessage defaultMessage="Maintaining two separate apps made it harder to ship updates and created confusion about which version to use. To simplify things, we've combined them into a single Universal app that supports both CPU and GPU devices. Please switch to the Universal app to continue receiving updates." />
           </Typography>
 
           <Stack component="ol" spacing={1} sx={{ pl: 2, mb: 0 }}>
-            <Typography component="li" variant="body2" color="text.secondary">
+            <Typography
+              component="li"
+              variant="body2"
+              sx={{
+                color: "text.secondary",
+              }}
+            >
               <FormattedMessage defaultMessage="Uninstall the mausVoice GPU app." />
             </Typography>
-            <Typography component="li" variant="body2" color="text.secondary">
+            <Typography
+              component="li"
+              variant="body2"
+              sx={{
+                color: "text.secondary",
+              }}
+            >
               <FormattedMessage defaultMessage="Download the new Universal app from the link below." />
             </Typography>
-            <Typography component="li" variant="body2" color="text.secondary">
+            <Typography
+              component="li"
+              variant="body2"
+              sx={{
+                color: "text.secondary",
+              }}
+            >
               <FormattedMessage defaultMessage="Install and sign in with the same account" />
             </Typography>
           </Stack>

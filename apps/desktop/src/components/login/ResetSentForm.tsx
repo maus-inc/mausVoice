@@ -9,8 +9,18 @@ export const ResetSentForm = () => {
   };
 
   return (
-    <Stack spacing={2} alignItems="center">
-      <Typography textAlign="center" variant="body2">
+    <Stack
+      spacing={2}
+      sx={{
+        alignItems: "center",
+      }}
+    >
+      <Typography
+        variant="body2"
+        sx={{
+          textAlign: "center",
+        }}
+      >
         <FormattedMessage defaultMessage="An email has been sent to you with a link to reset your password." />
       </Typography>
       <Button size="small" startIcon={<ArrowBack />} onClick={handleClickBack}>

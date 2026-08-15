@@ -114,9 +114,9 @@ export const TitleBar = () => {
 
         <Stack
           direction="row"
-          alignItems="center"
           spacing={1}
           sx={{
+            alignItems: "center",
             position: "relative",
             zIndex: 1,
             pl: 0.5,
@@ -135,9 +135,12 @@ export const TitleBar = () => {
 
         <Stack
           direction="row"
-          alignItems="center"
           spacing={0.25}
-          sx={{ position: "relative", zIndex: 1 }}
+          sx={{
+            alignItems: "center",
+            position: "relative",
+            zIndex: 1,
+          }}
         >
           <IconButton
             size="small"

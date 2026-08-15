@@ -305,8 +305,15 @@ export const PROCESSED_TRANSCRIPTION_SCHEMA = z.object({
 });
 
 export const PROCESSED_TRANSCRIPTION_JSON_SCHEMA =
-  zodToJsonSchema(PROCESSED_TRANSCRIPTION_SCHEMA, "Schema").definitions
-    ?.Schema ?? {};
+  zodToJsonSchema(
+    // zod-to-json-schema declares its input as the zod v3-compatible
+    // `ZodSchema` type; zod v4 schemas are not structurally assignable to
+    // it even though the conversion works identically at runtime.
+    PROCESSED_TRANSCRIPTION_SCHEMA as unknown as Parameters<
+      typeof zodToJsonSchema
+    >[0],
+    "Schema",
+  ).definitions?.Schema ?? {};
 
 export const buildSystemAgentPrompt = (): string => {
   return "You are a helpful AI assistant that executes user commands. The user will dictate instructions via voice, and you will execute those instructions and return the output. Your job is to understand what the user wants and produce it. Examples: 'write a poem about cats' → write the poem; 'summarize this article' → provide the summary; 'create a shopping list' → create the list; 'draft an email to my boss' → draft the email. Always return just the requested output, ready to be pasted.";

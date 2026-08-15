@@ -31,7 +31,13 @@ export const AIPostProcessingConfiguration = () => {
   }, []);
 
   return (
-    <Stack spacing={3} alignItems="flex-start" sx={{ width: "100%" }}>
+    <Stack
+      spacing={3}
+      sx={{
+        alignItems: "flex-start",
+        width: "100%",
+      }}
+    >
       <SegmentedControl<PostProcessingMode>
         value={effectiveMode}
         onChange={handleModeChange}
@@ -45,7 +51,12 @@ export const AIPostProcessingConfiguration = () => {
 
       <AnimateSwitch activeKey={effectiveMode}>
         {effectiveMode === "none" && (
-          <Typography variant="body2" color="text.secondary">
+          <Typography
+            variant="body2"
+            sx={{
+              color: "text.secondary",
+            }}
+          >
             <FormattedMessage defaultMessage="No AI post-processing will run on new transcripts." />
           </Typography>
         )}

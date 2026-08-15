@@ -211,7 +211,12 @@ export const TranscriptionDetailsDialog = () => {
         {transcription ? (
           <Stack spacing={3}>
             <Box>
-              <Typography variant="overline" color="text.secondary">
+              <Typography
+                variant="overline"
+                sx={{
+                  color: "text.secondary",
+                }}
+              >
                 <FormattedMessage defaultMessage="Outputs" />
               </Typography>
               <Stack spacing={1.25} sx={{ mt: 1 }}>
@@ -252,7 +257,12 @@ export const TranscriptionDetailsDialog = () => {
                 <Divider />
 
                 <Box>
-                  <Typography variant="overline" color="text.secondary">
+                  <Typography
+                    variant="overline"
+                    sx={{
+                      color: "text.secondary",
+                    }}
+                  >
                     <FormattedMessage defaultMessage="Warnings" />
                   </Typography>
                   <Stack spacing={1} sx={{ mt: 1 }}>
@@ -289,26 +299,51 @@ export const TranscriptionDetailsDialog = () => {
                 <Divider />
 
                 <Box>
-                  <Typography variant="overline" color="text.secondary">
+                  <Typography
+                    variant="overline"
+                    sx={{
+                      color: "text.secondary",
+                    }}
+                  >
                     <FormattedMessage defaultMessage="Performance" />
                   </Typography>
                   <Stack spacing={1.25} sx={{ mt: 1 }}>
                     {transcriptionDurationLabel && (
                       <Box>
-                        <Typography variant="caption" color="text.secondary">
+                        <Typography
+                          variant="caption"
+                          sx={{
+                            color: "text.secondary",
+                          }}
+                        >
                           <FormattedMessage defaultMessage="Transcription Duration" />
                         </Typography>
-                        <Typography variant="body2" fontWeight={600}>
+                        <Typography
+                          variant="body2"
+                          sx={{
+                            fontWeight: 600,
+                          }}
+                        >
                           {transcriptionDurationLabel}
                         </Typography>
                       </Box>
                     )}
                     {postprocessDurationLabel && (
                       <Box>
-                        <Typography variant="caption" color="text.secondary">
+                        <Typography
+                          variant="caption"
+                          sx={{
+                            color: "text.secondary",
+                          }}
+                        >
                           <FormattedMessage defaultMessage="Post-processing Duration" />
                         </Typography>
-                        <Typography variant="body2" fontWeight={600}>
+                        <Typography
+                          variant="body2"
+                          sx={{
+                            fontWeight: 600,
+                          }}
+                        >
                           {postprocessDurationLabel}
                         </Typography>
                       </Box>
@@ -321,39 +356,84 @@ export const TranscriptionDetailsDialog = () => {
             <Divider />
 
             <Box>
-              <Typography variant="overline" color="text.secondary">
+              <Typography
+                variant="overline"
+                sx={{
+                  color: "text.secondary",
+                }}
+              >
                 <FormattedMessage defaultMessage="Transcription Step" />
               </Typography>
               <Stack spacing={1.25} sx={{ mt: 1 }}>
                 <Box>
-                  <Typography variant="caption" color="text.secondary">
+                  <Typography
+                    variant="caption"
+                    sx={{
+                      color: "text.secondary",
+                    }}
+                  >
                     <FormattedMessage defaultMessage="Mode" />
                   </Typography>
-                  <Typography variant="body2" fontWeight={600}>
+                  <Typography
+                    variant="body2"
+                    sx={{
+                      fontWeight: 600,
+                    }}
+                  >
                     {transcriptionModeLabel}
                   </Typography>
                 </Box>
                 <Box>
-                  <Typography variant="caption" color="text.secondary">
+                  <Typography
+                    variant="caption"
+                    sx={{
+                      color: "text.secondary",
+                    }}
+                  >
                     <FormattedMessage defaultMessage="Device" />
                   </Typography>
-                  <Typography variant="body2" fontWeight={600}>
+                  <Typography
+                    variant="body2"
+                    sx={{
+                      fontWeight: 600,
+                    }}
+                  >
                     {deviceLabel}
                   </Typography>
                 </Box>
                 <Box>
-                  <Typography variant="caption" color="text.secondary">
+                  <Typography
+                    variant="caption"
+                    sx={{
+                      color: "text.secondary",
+                    }}
+                  >
                     <FormattedMessage defaultMessage="Model Size" />
                   </Typography>
-                  <Typography variant="body2" fontWeight={600}>
+                  <Typography
+                    variant="body2"
+                    sx={{
+                      fontWeight: 600,
+                    }}
+                  >
                     {modelSizeLabel}
                   </Typography>
                 </Box>
                 <Box>
-                  <Typography variant="caption" color="text.secondary">
+                  <Typography
+                    variant="caption"
+                    sx={{
+                      color: "text.secondary",
+                    }}
+                  >
                     <FormattedMessage defaultMessage="API Key" />
                   </Typography>
-                  <Typography variant="body2" fontWeight={600}>
+                  <Typography
+                    variant="body2"
+                    sx={{
+                      fontWeight: 600,
+                    }}
+                  >
                     {transcriptionApiKeyLabel}
                   </Typography>
                 </Box>
@@ -371,31 +451,66 @@ export const TranscriptionDetailsDialog = () => {
             <Divider />
 
             <Box>
-              <Typography variant="overline" color="text.secondary">
+              <Typography
+                variant="overline"
+                sx={{
+                  color: "text.secondary",
+                }}
+              >
                 <FormattedMessage defaultMessage="Post-processing Step" />
               </Typography>
               <Stack spacing={1.25} sx={{ mt: 1 }}>
                 <Box>
-                  <Typography variant="caption" color="text.secondary">
+                  <Typography
+                    variant="caption"
+                    sx={{
+                      color: "text.secondary",
+                    }}
+                  >
                     <FormattedMessage defaultMessage="Mode" />
                   </Typography>
-                  <Typography variant="body2" fontWeight={600}>
+                  <Typography
+                    variant="body2"
+                    sx={{
+                      fontWeight: 600,
+                    }}
+                  >
                     {postProcessModeLabel}
                   </Typography>
                 </Box>
                 <Box>
-                  <Typography variant="caption" color="text.secondary">
+                  <Typography
+                    variant="caption"
+                    sx={{
+                      color: "text.secondary",
+                    }}
+                  >
                     <FormattedMessage defaultMessage="Processor" />
                   </Typography>
-                  <Typography variant="body2" fontWeight={600}>
+                  <Typography
+                    variant="body2"
+                    sx={{
+                      fontWeight: 600,
+                    }}
+                  >
                     {postProcessDeviceLabel}
                   </Typography>
                 </Box>
                 <Box>
-                  <Typography variant="caption" color="text.secondary">
+                  <Typography
+                    variant="caption"
+                    sx={{
+                      color: "text.secondary",
+                    }}
+                  >
                     <FormattedMessage defaultMessage="API Key" />
                   </Typography>
-                  <Typography variant="body2" fontWeight={600}>
+                  <Typography
+                    variant="body2"
+                    sx={{
+                      fontWeight: 600,
+                    }}
+                  >
                     {postProcessApiKeyLabel}
                   </Typography>
                 </Box>
@@ -411,7 +526,12 @@ export const TranscriptionDetailsDialog = () => {
             </Box>
           </Stack>
         ) : (
-          <Typography variant="body2" color="text.secondary">
+          <Typography
+            variant="body2"
+            sx={{
+              color: "text.secondary",
+            }}
+          >
             <FormattedMessage defaultMessage="Metadata unavailable for this transcription." />
           </Typography>
         )}

@@ -24,7 +24,13 @@ export const AIAgentModeConfiguration = () => {
   }, []);
 
   return (
-    <Stack spacing={3} alignItems="flex-start" sx={{ width: "100%" }}>
+    <Stack
+      spacing={3}
+      sx={{
+        alignItems: "flex-start",
+        width: "100%",
+      }}
+    >
       <SegmentedControl<AgentMode>
         value={effectiveMode}
         onChange={handleModeChange}
@@ -37,7 +43,12 @@ export const AIAgentModeConfiguration = () => {
       />
 
       {effectiveMode === "none" && (
-        <Typography variant="body2" color="text.secondary">
+        <Typography
+          variant="body2"
+          sx={{
+            color: "text.secondary",
+          }}
+        >
           <FormattedMessage defaultMessage="Assistant mode is disabled." />
         </Typography>
       )}

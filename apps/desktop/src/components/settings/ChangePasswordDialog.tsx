@@ -42,7 +42,13 @@ export const ChangePasswordDialog = () => {
   return (
     <Dialog open={open} onClose={handleClose} fullWidth maxWidth="sm">
       <DialogTitle>
-        <Typography variant="h6" component="div" fontWeight={600}>
+        <Typography
+          variant="h6"
+          component="div"
+          sx={{
+            fontWeight: 600,
+          }}
+        >
           <FormattedMessage defaultMessage="Change password" />
         </Typography>
       </DialogTitle>

@@ -438,9 +438,11 @@ export default function SettingsPage() {
                 fullWidth
                 inputProps={{ "aria-label": "Dictation language" }}
                 MenuProps={{
-                  PaperProps: {
-                    style: {
-                      maxHeight: 300,
+                  slotProps: {
+                    paper: {
+                      style: {
+                        maxHeight: 300,
+                      },
                     },
                   },
                 }}
@@ -520,7 +522,12 @@ export default function SettingsPage() {
       />
       <ListTile
         title={
-          <Stack direction="row" alignItems="center">
+          <Stack
+            direction="row"
+            sx={{
+              alignItems: "center",
+            }}
+          >
             <FormattedMessage defaultMessage="Assistant mode" />
             <Chip label="Beta" size="small" color="primary" sx={{ ml: 1 }} />
           </Stack>
@@ -648,7 +655,13 @@ export default function SettingsPage() {
   return (
     <DashboardEntryLayout>
       <Stack direction="column">
-        <Typography variant="h4" fontWeight={700} sx={{ marginBottom: 4 }}>
+        <Typography
+          variant="h4"
+          sx={{
+            fontWeight: 700,
+            marginBottom: 4,
+          }}
+        >
           <FormattedMessage defaultMessage="Settings" />
         </Typography>
         {general}
@@ -659,8 +672,11 @@ export default function SettingsPage() {
         <Box sx={{ py: 4, textAlign: "center" }}>
           <Typography
             variant="caption"
-            color="text.secondary"
-            sx={{ fontSize: "0.72rem", letterSpacing: "0.02em" }}
+            sx={{
+              color: "text.secondary",
+              fontSize: "0.72rem",
+              letterSpacing: "0.02em",
+            }}
           >
             <FormattedMessage
               defaultMessage="Engineered with love by {author}"
@@ -706,11 +722,21 @@ export default function SettingsPage() {
         </DialogTitle>
         <DialogContent dividers>
           <Stack spacing={2}>
-            <Typography variant="body2" color="text.secondary">
+            <Typography
+              variant="body2"
+              sx={{
+                color: "text.secondary",
+              }}
+            >
               <FormattedMessage defaultMessage="Store your Deepgram API key locally for fast streaming transcription. The key is encrypted before it is saved." />
             </Typography>
             {personalDeepgramApiKey?.keySuffix && (
-              <Typography variant="body2" color="text.secondary">
+              <Typography
+                variant="body2"
+                sx={{
+                  color: "text.secondary",
+                }}
+              >
                 <FormattedMessage
                   defaultMessage="Current key ends with {suffix}."
                   values={{ suffix: personalDeepgramApiKey.keySuffix }}
@@ -773,11 +799,21 @@ export default function SettingsPage() {
         </DialogTitle>
         <DialogContent dividers>
           <Stack spacing={2}>
-            <Typography variant="body2" color="text.secondary">
+            <Typography
+              variant="body2"
+              sx={{
+                color: "text.secondary",
+              }}
+            >
               <FormattedMessage defaultMessage="Store your Groq API key locally for transcription and AI post processing. The key is encrypted before it is saved." />
             </Typography>
             {personalGroqApiKey?.keySuffix && (
-              <Typography variant="body2" color="text.secondary">
+              <Typography
+                variant="body2"
+                sx={{
+                  color: "text.secondary",
+                }}
+              >
                 <FormattedMessage
                   defaultMessage="Current key ends with {suffix}."
                   values={{ suffix: personalGroqApiKey.keySuffix }}

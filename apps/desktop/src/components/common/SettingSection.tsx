@@ -18,15 +18,34 @@ export const SettingSection = ({
     <Stack
       direction="row"
       spacing={2}
-      alignItems="center"
-      justifyContent="space-between"
-      sx={sx}
+      sx={[
+        {
+          alignItems: "center",
+          justifyContent: "space-between",
+        },
+        ...(Array.isArray(sx) ? sx : [sx]),
+      ]}
     >
-      <Stack spacing={0.5} flex={1}>
-        <Typography variant="body1" fontWeight={600}>
+      <Stack
+        spacing={0.5}
+        sx={{
+          flex: 1,
+        }}
+      >
+        <Typography
+          variant="body1"
+          sx={{
+            fontWeight: 600,
+          }}
+        >
           {title}
         </Typography>
-        <Typography variant="body2" color="text.secondary">
+        <Typography
+          variant="body2"
+          sx={{
+            color: "text.secondary",
+          }}
+        >
           {description}
         </Typography>
       </Stack>

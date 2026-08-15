@@ -9,8 +9,8 @@ export default function LoginPage() {
     <Stack sx={{ p: 2, minHeight: "100%", pb: { xs: 4, md: 8 } }}>
       <Stack
         spacing={2}
-        alignItems="center"
         sx={{
+          alignItems: "center",
           m: "auto",
           width: "100%",
           maxWidth: 520,

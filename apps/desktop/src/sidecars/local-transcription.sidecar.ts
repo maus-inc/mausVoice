@@ -27,12 +27,7 @@ type SidecarDownloadSnapshot = {
   jobId: string;
   model: LocalWhisperModel;
   status:
-    | "pending"
-    | "running"
-    | "paused"
-    | "completed"
-    | "failed"
-    | "canceled";
+    "pending" | "running" | "paused" | "completed" | "failed" | "canceled";
   bytesDownloaded: number;
   totalBytes: number | null;
   progress: number | null;

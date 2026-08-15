@@ -23,7 +23,10 @@ const sidebar = [
   ["Reference", "reference"],
   ["Development", "development"],
   ["Project", "project"],
-].map(([label, directory]) => ({ label, autogenerate: { directory } }));
+].map(([label, directory]) => ({
+  label,
+  items: [{ autogenerate: { directory } }],
+}));
 
 // https://astro.build/config
 export default defineConfig({

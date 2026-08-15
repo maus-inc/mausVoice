@@ -24,9 +24,9 @@
   },
   "devDependencies": {
     "@maus-inc/typescript-config": "workspace:*",
-    "typescript": "5.9.2",
-    "vite": "^7.3.2",
-    "vitest": "^4.1.2"
+    "typescript": "5.9.3",
+    "vite": "^7.3.6",
+    "vitest": "^4.1.10"
   },
   "publishConfig": {
     "access": "public"

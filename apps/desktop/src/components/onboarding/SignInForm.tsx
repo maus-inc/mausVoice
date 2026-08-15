@@ -117,14 +117,22 @@ export const SignInForm = () => {
       <Stack spacing={2}>
         <Typography
           variant="h4"
-          fontWeight={500}
-          pb={1}
-          sx={{ fontFamily: "var(--font-display)", letterSpacing: "0.01em" }}
+          sx={{
+            fontWeight: 500,
+            pb: 1,
+            fontFamily: "var(--font-display)",
+            letterSpacing: "0.01em",
+          }}
         >
           <FormattedMessage defaultMessage="Welcome back" />
         </Typography>
 
-        <Typography variant="body1" color="text.secondary">
+        <Typography
+          variant="body1"
+          sx={{
+            color: "text.secondary",
+          }}
+        >
           <FormattedMessage
             defaultMessage="You are signed in as {email}"
             values={{ email: auth?.email }}
@@ -158,7 +166,13 @@ export const SignInForm = () => {
       }
     >
       <Stack spacing={2}>
-        <Typography variant="h4" fontWeight={600} pb={1}>
+        <Typography
+          variant="h4"
+          sx={{
+            fontWeight: 600,
+            pb: 1,
+          }}
+        >
           <FormattedMessage defaultMessage="Create your account" />
         </Typography>
 
