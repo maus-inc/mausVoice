@@ -68,6 +68,7 @@ fn main() {
         remote_sender_deliver_final_text,
         remote_sender_pair_with_receiver,
         request_accessibility_permission,
+        request_admin_relaunch,
         request_microphone_permission,
         reset_key_listener_state,
         reset_pill_position,

@@ -1,6 +1,5 @@
 use std::os::windows::ffi::OsStrExt;
 
-use tauri::Emitter;
 use windows::core::PCWSTR;
 use windows::Win32::Security::{GetTokenInformation, TokenElevation, TOKEN_ELEVATION, TOKEN_QUERY};
 use windows::Win32::System::Threading::{GetCurrentProcess, OpenProcessToken};
@@ -96,8 +95,8 @@ pub async fn run_native_setup(app: tauri::AppHandle) -> crate::platform::NativeS
 /// elevated copy. That guarantees the singleton lock is free before the
 /// elevated app starts.
 ///
-/// On UAC cancellation the app keeps running and emits `elevation-declined`
-/// so the frontend can offer "launch normally / close the app".
+/// On UAC cancellation the app keeps running and returns `Cancelled`; the
+/// caller decides whether that cancellation should be surfaced to the user.
 pub fn request_elevation_relaunch(
     app: tauri::AppHandle,
 ) -> crate::platform::NativeSetupResult {
@@ -154,9 +153,6 @@ pub fn request_elevation_relaunch(
     let last_err = unsafe { windows::Win32::Foundation::GetLastError() };
     if last_err == windows::Win32::Foundation::ERROR_CANCELLED {
         log::info!("UAC elevation declined by user; continuing unelevated");
-        if let Err(err) = app.emit("elevation-declined", ()) {
-            log::warn!("Failed to emit elevation-declined: {err}");
-        }
         return crate::platform::NativeSetupResult::Cancelled;
     }
     crate::platform::NativeSetupResult::Failed

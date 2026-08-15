@@ -1,3 +1,4 @@
+import { commands } from "@maus-inc/desktop-native-apis";
 import { getVersion } from "@tauri-apps/api/app";
 import { invoke } from "@tauri-apps/api/core";
 import { Member, Nullable, Term, User } from "@maus-inc/types";
@@ -145,6 +146,7 @@ export const AppSideEffects = () => {
   const [streamReady, setStreamReady] = useState(false);
   const [initReady, setInitReady] = useState(false);
   const authReadyRef = useRef(false);
+  const startupElevationAttemptedRef = useRef(false);
   // Tracks whether we've already notified about the current listener-failure episode, so the
   // 30s Rust slow-retry churn (failed -> connected -> failed) doesn't re-toast every cycle.
   const listenerFailureNotifiedRef = useRef(false);
@@ -243,6 +245,40 @@ export const AppSideEffects = () => {
   useEffect(() => {
     void initLogging();
   }, []);
+
+  useEffect(() => {
+    if (!prefs || startupElevationAttemptedRef.current) {
+      return;
+    }
+    startupElevationAttemptedRef.current = true;
+
+    if (getPlatform() !== "windows" || !prefs.alwaysRequestAdminOnStartup) {
+      return;
+    }
+
+    getLogger().info(
+      "Requesting administrator relaunch after frontend startup",
+    );
+    void commands
+      .requestAdminRelaunch()
+      .then((result) => {
+        getLogger().info(`Administrator relaunch result: ${result}`);
+        if (result === "cancelled") {
+          produceAppState((draft) => {
+            draft.settings.elevationDeclinedDialogOpen = true;
+          });
+        } else if (result === "failed") {
+          showErrorSnackbar(
+            intl.formatMessage({
+              defaultMessage: "Failed to restart mausVoice as administrator.",
+            }),
+          );
+        }
+      })
+      .catch((error) => {
+        showErrorSnackbar(error);
+      });
+  }, [intl, prefs]);
 
   useAsyncEffect(async () => {
     if (consumeSurfaceWindowFlag()) {

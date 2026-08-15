@@ -2047,6 +2047,21 @@ pub async fn run_native_setup(app: tauri::AppHandle) -> crate::platform::NativeS
 
 #[tauri::command]
 #[specta::specta]
+pub fn request_admin_relaunch(app: tauri::AppHandle) -> crate::platform::NativeSetupResult {
+    #[cfg(target_os = "windows")]
+    {
+        return crate::platform::windows::init::request_elevation_relaunch(app);
+    }
+
+    #[cfg(not(target_os = "windows"))]
+    {
+        let _ = app;
+        crate::platform::NativeSetupResult::Success
+    }
+}
+
+#[tauri::command]
+#[specta::specta]
 pub fn set_tray_title(app: AppHandle, title: Option<String>) -> Result<(), String> {
     // Tray titles are a macOS-only concept in AppKit (NSStatusItem.button.title).
     // Windows/Linux silently ignore them in Tauri; to keep command behaviour

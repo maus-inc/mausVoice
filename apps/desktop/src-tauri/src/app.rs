@@ -234,30 +234,6 @@ pub fn build() -> tauri::Builder<tauri::Wry> {
             app.manage(crate::state::RemoteReceiverState::new());
             app.manage(crate::state::FloatingWindowState::new());
 
-            // Admin-on-startup preference (Windows): when enabled, request UAC
-            // elevation at every launch. A decline emits `elevation-declined`
-            // so the frontend can offer "launch normally / close the app";
-            // either way startup continues.
-            #[cfg(target_os = "windows")]
-            {
-                let want_elevation = tauri::async_runtime::block_on(async {
-                    crate::db::preferences_queries::fetch_user_preferences(
-                        pool.clone(),
-                        "local-user-id",
-                    )
-                    .await
-                    .ok()
-                    .flatten()
-                    .map(|prefs| prefs.always_request_admin_on_startup)
-                    .unwrap_or(false)
-                });
-                if want_elevation {
-                    crate::platform::windows::init::request_elevation_relaunch(
-                        app.handle().clone(),
-                    );
-                }
-            }
-
             #[cfg(desktop)]
             {
                 if std::env::args().any(|arg| arg == AUTOSTART_HIDDEN_ARG) {
@@ -411,6 +387,7 @@ pub fn build() -> tauri::Builder<tauri::Wry> {
             crate::commands::enable_java_access_bridge,
             crate::commands::get_native_setup_status,
             crate::commands::run_native_setup,
+            crate::commands::request_admin_relaunch,
             crate::commands::get_keyboard_language,
             crate::commands::conversation_create,
             crate::commands::conversation_list,
