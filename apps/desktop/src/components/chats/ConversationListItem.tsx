@@ -46,10 +46,22 @@ export const ConversationListItem = ({
       sx={{ borderRadius: 1, py: 0.75, px: 1, pr: hovered ? 0.5 : 1.5 }}
     >
       <Box sx={{ overflow: "hidden", flexGrow: 1, minWidth: 0 }}>
-        <Typography variant="body2" noWrap lineHeight={1.3}>
+        <Typography
+          variant="body2"
+          noWrap
+          sx={{
+            lineHeight: 1.3,
+          }}
+        >
           {conversation.title}
         </Typography>
-        <Typography variant="caption" color="text.secondary" lineHeight={1.2}>
+        <Typography
+          variant="caption"
+          sx={{
+            color: "text.secondary",
+            lineHeight: 1.2,
+          }}
+        >
           {formatRelativeTime(intl, conversation.updatedAt)}
         </Typography>
       </Box>

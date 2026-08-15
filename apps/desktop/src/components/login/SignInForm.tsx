@@ -60,16 +60,18 @@ export const SignInForm = () => {
             value={password}
             onChange={handleChangePassword}
             size="small"
-            InputProps={{
-              endAdornment: (
-                <IconButton
-                  onClick={() => setPasswordVisible((v) => !v)}
-                  tabIndex={-1}
-                  size="small"
-                >
-                  {!passwordVisible ? <VisibilityOff /> : <Visibility />}
-                </IconButton>
-              ),
+            slotProps={{
+              input: {
+                endAdornment: (
+                  <IconButton
+                    onClick={() => setPasswordVisible((v) => !v)}
+                    tabIndex={-1}
+                    size="small"
+                  >
+                    {!passwordVisible ? <VisibilityOff /> : <Visibility />}
+                  </IconButton>
+                ),
+              },
             }}
           />
 
@@ -82,7 +84,13 @@ export const SignInForm = () => {
             <FormattedMessage defaultMessage="Log in" />
           </Button>
 
-          <Stack direction="row" justifyContent="space-between" spacing={1}>
+          <Stack
+            direction="row"
+            spacing={1}
+            sx={{
+              justifyContent: "space-between",
+            }}
+          >
             <Link component="button" onClick={handleClickReset}>
               <FormattedMessage defaultMessage="Forgot?" />
             </Link>

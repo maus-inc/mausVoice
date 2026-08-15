@@ -155,7 +155,6 @@ export const UpdateDialog = () => {
       }}
       fullWidth
       maxWidth="sm"
-      disableEscapeKeyDown={isUpdating}
       sx={{ zIndex: 9999 }}
     >
       <DialogTitle>
@@ -164,14 +163,29 @@ export const UpdateDialog = () => {
       <DialogContent>
         <Stack spacing={2} sx={{ mt: 1 }}>
           <Stack spacing={0.5}>
-            <Typography variant="body1" fontWeight={600}>
+            <Typography
+              variant="body1"
+              sx={{
+                fontWeight: 600,
+              }}
+            >
               {readyToInstallLabel}
             </Typography>
-            <Typography variant="body2" color="text.secondary">
+            <Typography
+              variant="body2"
+              sx={{
+                color: "text.secondary",
+              }}
+            >
               {currentVersionDescription}
             </Typography>
             {formattedDate && (
-              <Typography variant="caption" color="text.secondary">
+              <Typography
+                variant="caption"
+                sx={{
+                  color: "text.secondary",
+                }}
+              >
                 <FormattedMessage
                   defaultMessage="Released on {date}"
                   values={{ date: formattedDate }}
@@ -195,8 +209,19 @@ export const UpdateDialog = () => {
                 variant={percent != null ? "determinate" : "indeterminate"}
                 value={percent ?? undefined}
               />
-              <Stack direction="row" spacing={1} justifyContent="space-between">
-                <Typography variant="caption" color="text.secondary">
+              <Stack
+                direction="row"
+                spacing={1}
+                sx={{
+                  justifyContent: "space-between",
+                }}
+              >
+                <Typography
+                  variant="caption"
+                  sx={{
+                    color: "text.secondary",
+                  }}
+                >
                   {status === "installing" ? (
                     requiresManualInstall ? (
                       <FormattedMessage defaultMessage="Opening installer..." />
@@ -208,7 +233,12 @@ export const UpdateDialog = () => {
                   )}
                 </Typography>
                 {progressLabel && (
-                  <Typography variant="caption" color="text.secondary">
+                  <Typography
+                    variant="caption"
+                    sx={{
+                      color: "text.secondary",
+                    }}
+                  >
                     {progressLabel}
                     {percent != null ? ` (${percent}%)` : ""}
                   </Typography>

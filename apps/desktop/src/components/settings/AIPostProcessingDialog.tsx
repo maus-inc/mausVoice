@@ -38,8 +38,18 @@ export const AIPostProcessingDialog = () => {
         </IconButton>
       </DialogTitle>
       <DialogContent dividers>
-        <Stack spacing={3} alignItems="flex-start">
-          <Typography variant="body1" color="text.secondary">
+        <Stack
+          spacing={3}
+          sx={{
+            alignItems: "flex-start",
+          }}
+        >
+          <Typography
+            variant="body1"
+            sx={{
+              color: "text.secondary",
+            }}
+          >
             <FormattedMessage defaultMessage="Tell mausVoice how to enhance your transcripts after they are created." />
           </Typography>
 

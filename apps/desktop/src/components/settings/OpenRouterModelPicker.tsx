@@ -81,17 +81,21 @@ const ModelRow = ({
       <Box sx={{ flex: 1, minWidth: 0 }}>
         <Typography
           variant="body2"
-          fontWeight={selected ? 600 : 400}
           noWrap
-          sx={{ lineHeight: 1.3 }}
+          sx={{
+            fontWeight: selected ? 600 : 400,
+            lineHeight: 1.3,
+          }}
         >
           {model.name}
         </Typography>
         <Typography
           variant="caption"
-          color="text.secondary"
           noWrap
-          sx={{ lineHeight: 1.3 }}
+          sx={{
+            color: "text.secondary",
+            lineHeight: 1.3,
+          }}
         >
           {model.id}
         </Typography>
@@ -271,7 +275,12 @@ export const OpenRouterModelPicker = ({
         }}
       >
         <Box sx={{ minWidth: 0, flex: 1 }}>
-          <Typography variant="caption" color="text.secondary">
+          <Typography
+            variant="caption"
+            sx={{
+              color: "text.secondary",
+            }}
+          >
             <FormattedMessage defaultMessage="Model" />
           </Typography>
           <Typography variant="body2" noWrap>
@@ -302,28 +311,41 @@ export const OpenRouterModelPicker = ({
           value={searchQuery}
           onChange={handleSearchChange}
           autoFocus
-          InputProps={{
-            startAdornment: (
-              <InputAdornment position="start">
-                <SearchIcon fontSize="small" color="action" />
-              </InputAdornment>
-            ),
-            endAdornment: (
-              <InputAdornment position="end">
-                <IconButton size="small" onClick={handleCollapse} edge="end">
-                  <CloseIcon fontSize="small" />
-                </IconButton>
-              </InputAdornment>
-            ),
+          slotProps={{
+            input: {
+              startAdornment: (
+                <InputAdornment position="start">
+                  <SearchIcon fontSize="small" color="action" />
+                </InputAdornment>
+              ),
+              endAdornment: (
+                <InputAdornment position="end">
+                  <IconButton size="small" onClick={handleCollapse} edge="end">
+                    <CloseIcon fontSize="small" />
+                  </IconButton>
+                </InputAdornment>
+              ),
+            },
           }}
         />
       </Box>
 
       {/* Loading state */}
       {modelsStatus === "loading" && (
-        <Stack spacing={1} alignItems="center" sx={{ py: 4 }}>
+        <Stack
+          spacing={1}
+          sx={{
+            alignItems: "center",
+            py: 4,
+          }}
+        >
           <CircularProgress size={24} />
-          <Typography variant="body2" color="text.secondary">
+          <Typography
+            variant="body2"
+            sx={{
+              color: "text.secondary",
+            }}
+          >
             <FormattedMessage defaultMessage="Loading models..." />
           </Typography>
         </Stack>
@@ -331,7 +353,13 @@ export const OpenRouterModelPicker = ({
 
       {/* Error state */}
       {modelsStatus === "error" && (
-        <Stack spacing={1} alignItems="center" sx={{ py: 4 }}>
+        <Stack
+          spacing={1}
+          sx={{
+            alignItems: "center",
+            py: 4,
+          }}
+        >
           <Typography variant="body2" color="error">
             <FormattedMessage defaultMessage="Failed to load models" />
           </Typography>
@@ -351,15 +379,19 @@ export const OpenRouterModelPicker = ({
                     <Box sx={{ px: 1.5, pt: 1.5, pb: 0.5 }}>
                       <Typography
                         variant="caption"
-                        color="text.secondary"
-                        fontWeight={600}
+                        sx={{
+                          color: "text.secondary",
+                          fontWeight: 600,
+                        }}
                       >
                         {item.label}
                         <Typography
                           component="span"
                           variant="caption"
-                          color="text.secondary"
-                          sx={{ ml: 0.5 }}
+                          sx={{
+                            color: "text.secondary",
+                            ml: 0.5,
+                          }}
                         >
                           ({item.count})
                         </Typography>
@@ -383,7 +415,12 @@ export const OpenRouterModelPicker = ({
             />
           ) : (
             <Box sx={{ px: 1.5, py: 2 }}>
-              <Typography variant="body2" color="text.secondary">
+              <Typography
+                variant="body2"
+                sx={{
+                  color: "text.secondary",
+                }}
+              >
                 <FormattedMessage defaultMessage="No models found" />
               </Typography>
             </Box>

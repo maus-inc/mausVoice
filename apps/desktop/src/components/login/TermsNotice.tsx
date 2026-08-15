@@ -10,8 +10,8 @@ export const TermsNotice = ({ align = "center" }: TermsNoticeProps) => {
     <Typography
       variant="body2"
       color="textSecondary"
-      textAlign={align}
       sx={{
+        textAlign: align,
         maxWidth: 300,
         alignSelf: align === "center" ? "center" : "flex-start",
         fontSize: "0.75rem",

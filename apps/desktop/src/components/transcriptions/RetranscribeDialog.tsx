@@ -168,7 +168,7 @@ export const RetranscribeDialog = () => {
               onChange={(e) =>
                 setSelectedLanguage(e.target.value as DictationLanguageCode)
               }
-              MenuProps={{ PaperProps: { sx: { maxHeight: 300 } } }}
+              MenuProps={{ slotProps: { paper: { sx: { maxHeight: 300 } } } }}
             >
               {languageOptions.map(({ code, label }) => (
                 <MenuItem key={code} value={code}>

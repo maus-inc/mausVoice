@@ -44,7 +44,13 @@ export const ToolPermissionPrompt = ({
           backgroundColor: alpha(theme.palette.common.white, 0.06),
         }}
       >
-        <Stack direction="row" spacing={0.5} alignItems="center">
+        <Stack
+          direction="row"
+          spacing={0.5}
+          sx={{
+            alignItems: "center",
+          }}
+        >
           <Typography sx={{ fontSize: 13, fontWeight: 600, color: whiteHigh }}>
             {toolInfo?.description ?? permission.toolId}
           </Typography>
@@ -87,7 +93,12 @@ export const ToolPermissionPrompt = ({
   }
 
   return (
-    <Stack direction="row" justifyContent="flex-start">
+    <Stack
+      direction="row"
+      sx={{
+        justifyContent: "flex-start",
+      }}
+    >
       <Box
         sx={{
           maxWidth: "75%",
@@ -101,8 +112,19 @@ export const ToolPermissionPrompt = ({
       >
         <Stack spacing={1}>
           <Stack spacing={0.25}>
-            <Stack direction="row" spacing={0.5} alignItems="center">
-              <Typography variant="body2" fontWeight={600}>
+            <Stack
+              direction="row"
+              spacing={0.5}
+              sx={{
+                alignItems: "center",
+              }}
+            >
+              <Typography
+                variant="body2"
+                sx={{
+                  fontWeight: 600,
+                }}
+              >
                 {toolInfo?.description ?? permission.toolId}
               </Typography>
               <ToolParamsTooltip params={permission.params} />
@@ -116,14 +138,25 @@ export const ToolPermissionPrompt = ({
               )}
             </Stack>
             {reason && (
-              <Typography variant="caption" color="text.secondary">
+              <Typography
+                variant="caption"
+                sx={{
+                  color: "text.secondary",
+                }}
+              >
                 {reason}
               </Typography>
             )}
           </Stack>
 
           {isPending && (
-            <Stack direction="row" spacing={1} justifyContent="flex-start">
+            <Stack
+              direction="row"
+              spacing={1}
+              sx={{
+                justifyContent: "flex-start",
+              }}
+            >
               <Chip
                 size="small"
                 variant="outlined"

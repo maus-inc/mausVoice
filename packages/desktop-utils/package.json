@@ -20,10 +20,10 @@
   },
   "devDependencies": {
     "@tauri-apps/api": "~2.10.1",
-    "@types/react": "^19.0.0",
+    "@types/react": "^19.2.18",
     "@maus-inc/typescript-config": "workspace:*",
-    "react": "^19.2.4",
-    "typescript": "5.9.2"
+    "react": "^19.2.8",
+    "typescript": "5.9.3"
   },
   "files": [
     "dist"

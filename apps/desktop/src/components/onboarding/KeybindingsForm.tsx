@@ -124,11 +124,26 @@ export const KeybindingsForm = () => {
 
   const form = (
     <OnboardingFormLayout back={<BackButton />} actions={<div />}>
-      <Stack spacing={2} pb={8}>
-        <Typography variant="h4" fontWeight={600}>
+      <Stack
+        spacing={2}
+        sx={{
+          pb: 8,
+        }}
+      >
+        <Typography
+          variant="h4"
+          sx={{
+            fontWeight: 600,
+          }}
+        >
           <FormattedMessage defaultMessage="Test your keyboard shortcut" />
         </Typography>
-        <Typography variant="body1" color="text.secondary">
+        <Typography
+          variant="body1"
+          sx={{
+            color: "text.secondary",
+          }}
+        >
           <FormattedMessage
             defaultMessage="The {recommendedKey} key works great for most users."
             values={{
@@ -161,7 +176,12 @@ export const KeybindingsForm = () => {
         outline: "none",
       }}
     >
-      <Typography variant="h6" fontWeight={600}>
+      <Typography
+        variant="h6"
+        sx={{
+          fontWeight: 600,
+        }}
+      >
         {isListening ? (
           <FormattedMessage defaultMessage="Press your hotkey combo, then release" />
         ) : (
@@ -206,7 +226,12 @@ export const KeybindingsForm = () => {
                 justifyContent: "center",
               }}
             >
-              <Typography variant="body2" color="text.secondary">
+              <Typography
+                variant="body2"
+                sx={{
+                  color: "text.secondary",
+                }}
+              >
                 <FormattedMessage defaultMessage="Press your new key combo..." />
               </Typography>
             </Box>
@@ -216,7 +241,13 @@ export const KeybindingsForm = () => {
         )}
       </Box>
 
-      <Stack direction="row" spacing={2} justifyContent="flex-end">
+      <Stack
+        direction="row"
+        spacing={2}
+        sx={{
+          justifyContent: "flex-end",
+        }}
+      >
         <Button
           variant="text"
           onClick={handleChangeShortcut}

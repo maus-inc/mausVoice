@@ -40,10 +40,21 @@ export const ChooseTranscriptionForm = () => {
     >
       <Stack spacing={3}>
         <Box>
-          <Typography variant="h4" fontWeight={600} pb={1}>
+          <Typography
+            variant="h4"
+            sx={{
+              fontWeight: 600,
+              pb: 1,
+            }}
+          >
             <FormattedMessage defaultMessage="Set up transcription" />
           </Typography>
-          <Typography variant="body1" color="text.secondary">
+          <Typography
+            variant="body1"
+            sx={{
+              color: "text.secondary",
+            }}
+          >
             <FormattedMessage defaultMessage="Decide how mausVoice should process your recordings. Locally or through an API." />
           </Typography>
         </Box>

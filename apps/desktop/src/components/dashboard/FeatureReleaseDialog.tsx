@@ -28,7 +28,14 @@ import { HotkeySetting } from "../settings/HotkeySetting";
 
 const IntroPage = () => {
   return (
-    <Stack spacing={3} alignItems="center" textAlign="center" py={2}>
+    <Stack
+      spacing={3}
+      sx={{
+        alignItems: "center",
+        textAlign: "center",
+        py: 2,
+      }}
+    >
       <Box
         sx={{
           width: 80,
@@ -45,25 +52,67 @@ const IntroPage = () => {
       >
         <AutoAwesome sx={{ fontSize: 40, color: "white" }} />
       </Box>
-      <Stack spacing={1} alignItems="center">
-        <Stack direction="row" spacing={1} alignItems="center">
-          <Typography variant="h5" fontWeight={600}>
+      <Stack
+        spacing={1}
+        sx={{
+          alignItems: "center",
+        }}
+      >
+        <Stack
+          direction="row"
+          spacing={1}
+          sx={{
+            alignItems: "center",
+          }}
+        >
+          <Typography
+            variant="h5"
+            sx={{
+              fontWeight: 600,
+            }}
+          >
             <FormattedMessage defaultMessage="Introducing Agent Mode" />
           </Typography>
           <Chip label="Beta" size="small" color="primary" />
         </Stack>
-        <Typography variant="body1" color="text.secondary">
+        <Typography
+          variant="body1"
+          sx={{
+            color: "text.secondary",
+          }}
+        >
           <FormattedMessage defaultMessage="A powerful new way to interact with your text" />
         </Typography>
       </Stack>
-      <Stack spacing={2} textAlign="left" sx={{ maxWidth: 480 }}>
-        <Typography variant="body2" color="text.secondary">
+      <Stack
+        spacing={2}
+        sx={{
+          textAlign: "left",
+          maxWidth: 480,
+        }}
+      >
+        <Typography
+          variant="body2"
+          sx={{
+            color: "text.secondary",
+          }}
+        >
           <FormattedMessage defaultMessage="Agent Mode lets you give voice commands to write, edit, or transform text. Instead of just dictating, you can now tell the AI what you want it to do." />
         </Typography>
-        <Typography variant="body2" color="text.secondary">
+        <Typography
+          variant="body2"
+          sx={{
+            color: "text.secondary",
+          }}
+        >
           <FormattedMessage defaultMessage="Try commands like 'Write an email to Bob about the meeting' or 'Make this paragraph more formal'. Agent Mode reads what's in your text field and rewrites it based on your instructions." />
         </Typography>
-        <Typography variant="body2" color="text.secondary">
+        <Typography
+          variant="body2"
+          sx={{
+            color: "text.secondary",
+          }}
+        >
           <FormattedMessage defaultMessage="Run it multiple times to refine your text until it's perfect." />
         </Typography>
       </Stack>
@@ -73,12 +122,33 @@ const IntroPage = () => {
 
 const HotkeyPage = () => {
   return (
-    <Stack spacing={3} py={4} px={2}>
-      <Stack spacing={1} textAlign="center">
-        <Typography variant="h5" fontWeight={600}>
+    <Stack
+      spacing={3}
+      sx={{
+        py: 4,
+        px: 2,
+      }}
+    >
+      <Stack
+        spacing={1}
+        sx={{
+          textAlign: "center",
+        }}
+      >
+        <Typography
+          variant="h5"
+          sx={{
+            fontWeight: 600,
+          }}
+        >
           <FormattedMessage defaultMessage="Set Your Shortcut" />
         </Typography>
-        <Typography variant="body2" color="text.secondary">
+        <Typography
+          variant="body2"
+          sx={{
+            color: "text.secondary",
+          }}
+        >
           <FormattedMessage defaultMessage="Choose the keyboard shortcut you'll use to activate Agent Mode" />
         </Typography>
       </Stack>
@@ -138,16 +208,43 @@ const TryItPage = () => {
   );
 
   return (
-    <Stack spacing={3} py={4} px={2}>
-      <Stack spacing={1} textAlign="center">
-        <Typography variant="h5" fontWeight={600}>
+    <Stack
+      spacing={3}
+      sx={{
+        py: 4,
+        px: 2,
+      }}
+    >
+      <Stack
+        spacing={1}
+        sx={{
+          textAlign: "center",
+        }}
+      >
+        <Typography
+          variant="h5"
+          sx={{
+            fontWeight: 600,
+          }}
+        >
           <FormattedMessage defaultMessage="Give It a Try!" />
         </Typography>
-        <Typography variant="body2" color="text.secondary">
+        <Typography
+          variant="body2"
+          sx={{
+            color: "text.secondary",
+          }}
+        >
           <FormattedMessage defaultMessage="Test out Agent Mode right now" />
         </Typography>
       </Stack>
-      <Typography variant="body2" color="text.secondary" component="div">
+      <Typography
+        variant="body2"
+        component="div"
+        sx={{
+          color: "text.secondary",
+        }}
+      >
         <FormattedMessage
           defaultMessage="Press {hotkeys} and say something like 'Write an email to Bob about his shoes'."
           values={{ hotkeys }}
@@ -165,7 +262,13 @@ const TryItPage = () => {
         value={value}
         onChange={handleChange}
       />
-      <Typography variant="body2" color="text.secondary" fontStyle="italic">
+      <Typography
+        variant="body2"
+        sx={{
+          color: "text.secondary",
+          fontStyle: "italic",
+        }}
+      >
         <FormattedMessage defaultMessage="Tip: Run Agent Mode multiple times to keep refining! It remembers what's in the text box." />
       </Typography>
     </Stack>
@@ -174,19 +277,46 @@ const TryItPage = () => {
 
 const ProcessorPage = () => {
   return (
-    <Stack spacing={3} py={4} px={2}>
-      <Stack spacing={1} textAlign="center">
-        <Typography variant="h5" fontWeight={600}>
+    <Stack
+      spacing={3}
+      sx={{
+        py: 4,
+        px: 2,
+      }}
+    >
+      <Stack
+        spacing={1}
+        sx={{
+          textAlign: "center",
+        }}
+      >
+        <Typography
+          variant="h5"
+          sx={{
+            fontWeight: 600,
+          }}
+        >
           <FormattedMessage defaultMessage="Choose Your Processor" />
         </Typography>
-        <Typography variant="body2" color="text.secondary">
+        <Typography
+          variant="body2"
+          sx={{
+            color: "text.secondary",
+          }}
+        >
           <FormattedMessage defaultMessage="Select which AI provider to use for Agent Mode" />
         </Typography>
       </Stack>
       <Box sx={{ pt: 2 }}>
         <AIAgentModeConfiguration />
       </Box>
-      <Typography variant="body2" color="text.secondary" fontStyle="italic">
+      <Typography
+        variant="body2"
+        sx={{
+          color: "text.secondary",
+          fontStyle: "italic",
+        }}
+      >
         <FormattedMessage defaultMessage="Tip: Choose a stronger model for better results. Smaller or weaker models may produce lower quality output." />
       </Typography>
     </Stack>

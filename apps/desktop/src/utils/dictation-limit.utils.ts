@@ -22,9 +22,7 @@ export const normalizeDictationLimitMinutes = (
 
 export const getEffectiveDictationLimitMinutes = (
   preferences:
-    | Pick<UserPreferences, "dictationLimitMinutes">
-    | null
-    | undefined,
+    Pick<UserPreferences, "dictationLimitMinutes"> | null | undefined,
 ): number => {
   return normalizeDictationLimitMinutes(preferences?.dictationLimitMinutes);
 };

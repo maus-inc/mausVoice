@@ -24,8 +24,18 @@ export const ResetPasswordForm = () => {
   };
 
   return (
-    <Stack spacing={2} alignItems="center">
-      <Typography textAlign="center" variant="body2">
+    <Stack
+      spacing={2}
+      sx={{
+        alignItems: "center",
+      }}
+    >
+      <Typography
+        variant="body2"
+        sx={{
+          textAlign: "center",
+        }}
+      >
         <FormattedMessage defaultMessage="Enter your email and we'll send a reset link." />
       </Typography>
       <TextField

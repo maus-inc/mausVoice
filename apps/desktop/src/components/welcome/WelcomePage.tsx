@@ -42,9 +42,9 @@ export default function WelcomePage() {
     >
       <VectorField />
       <Stack
-        alignItems="center"
-        justifyContent="center"
         sx={{
+          alignItems: "center",
+          justifyContent: "center",
           position: "relative",
           zIndex: 1,
           minHeight: "100%",
@@ -55,9 +55,9 @@ export default function WelcomePage() {
       >
         <Stack
           spacing={6}
-          alignItems="center"
-          textAlign="center"
           sx={{
+            alignItems: "center",
+            textAlign: "center",
             maxWidth: 420,
             position: "relative",
             backgroundColor: theme.vars?.palette.background.default,
@@ -66,19 +66,45 @@ export default function WelcomePage() {
             p: 4,
           }}
         >
-          <Stack spacing={2} alignItems="center">
-            <Stack direction="row" alignItems="center" spacing={1}>
+          <Stack
+            spacing={2}
+            sx={{
+              alignItems: "center",
+            }}
+          >
+            <Stack
+              direction="row"
+              spacing={1}
+              sx={{
+                alignItems: "center",
+              }}
+            >
               <Logo width="4rem" height="4rem" />
-              <Typography variant="h3" fontWeight={700}>
+              <Typography
+                variant="h3"
+                sx={{
+                  fontWeight: 700,
+                }}
+              >
                 mausVoice
               </Typography>
             </Stack>
-            <Typography variant="body1" color="text.secondary">
+            <Typography
+              variant="body1"
+              sx={{
+                color: "text.secondary",
+              }}
+            >
               <FormattedMessage defaultMessage="Voice is your new keyboard." />
             </Typography>
           </Stack>
 
-          <Stack spacing={1.5} width="100%">
+          <Stack
+            spacing={1.5}
+            sx={{
+              width: "100%",
+            }}
+          >
             <Button
               variant="contained"
               size="large"

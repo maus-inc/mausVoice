@@ -38,7 +38,13 @@ const ConsoleLink = ({
     onClick={() => openUrl(url)}
     sx={{ alignSelf: "flex-start" }}
   >
-    <Stack direction="row" spacing={0.5} alignItems="center">
+    <Stack
+      direction="row"
+      spacing={0.5}
+      sx={{
+        alignItems: "center",
+      }}
+    >
       {children}
       <OpenInNew fontSize="inherit" />
     </Stack>
@@ -113,10 +119,21 @@ export const PersonalCredentialsForm = () => {
     >
       <Stack spacing={3}>
         <Box>
-          <Typography variant="h4" fontWeight={600} pb={1}>
+          <Typography
+            variant="h4"
+            sx={{
+              fontWeight: 600,
+              pb: 1,
+            }}
+          >
             <FormattedMessage defaultMessage="Connect your API keys" />
           </Typography>
-          <Typography variant="body1" color="text.secondary">
+          <Typography
+            variant="body1"
+            sx={{
+              color: "text.secondary",
+            }}
+          >
             <FormattedMessage defaultMessage="Add your Deepgram key for fast streaming transcription and your Groq key for AI post-processing. Keys are encrypted and stored locally, and you can change them any time in Settings." />
           </Typography>
         </Box>

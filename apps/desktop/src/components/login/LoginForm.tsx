@@ -70,7 +70,12 @@ export const LoginForm = ({
 
   return (
     <Stack spacing={1.5}>
-      <Typography variant="body1" fontWeight="bold">
+      <Typography
+        variant="body1"
+        sx={{
+          fontWeight: "bold",
+        }}
+      >
         {mode === "signIn" && <FormattedMessage defaultMessage="Sign in" />}
         {mode === "signUp" && <FormattedMessage defaultMessage="Sign up" />}
         {mode === "resetPassword" && (
@@ -107,7 +112,12 @@ export const LoginForm = ({
       <TermsNotice />
 
       {errorMessage && (
-        <Typography color="error" textAlign="center">
+        <Typography
+          color="error"
+          sx={{
+            textAlign: "center",
+          }}
+        >
           {errorMessage}
         </Typography>
       )}

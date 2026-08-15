@@ -76,8 +76,7 @@ export const UnlockedProForm = () => {
           />
           <MotionTypography
             variant="h4"
-            fontWeight={600}
-            pb={1}
+            sx={{ fontWeight: 600, pb: 1 }}
             {...fadeInUp}
             transition={{ delay: 0.1, duration: 0.5, ease: "easeOut" }}
           >
@@ -97,7 +96,7 @@ export const UnlockedProForm = () => {
           <MotionStack
             direction="row"
             spacing={1.5}
-            alignItems="center"
+            sx={{ alignItems: "center" }}
             {...fadeInUp}
             transition={{ delay: 0.3, duration: 0.4, ease: "easeOut" }}
           >
@@ -109,7 +108,7 @@ export const UnlockedProForm = () => {
           <MotionStack
             direction="row"
             spacing={1.5}
-            alignItems="center"
+            sx={{ alignItems: "center" }}
             {...fadeInUp}
             transition={{ delay: 0.4, duration: 0.4, ease: "easeOut" }}
           >
@@ -121,7 +120,7 @@ export const UnlockedProForm = () => {
           <MotionStack
             direction="row"
             spacing={1.5}
-            alignItems="center"
+            sx={{ alignItems: "center" }}
             {...fadeInUp}
             transition={{ delay: 0.5, duration: 0.4, ease: "easeOut" }}
           >
@@ -133,7 +132,7 @@ export const UnlockedProForm = () => {
           <MotionStack
             direction="row"
             spacing={1.5}
-            alignItems="center"
+            sx={{ alignItems: "center" }}
             {...fadeInUp}
             transition={{ delay: 0.6, duration: 0.4, ease: "easeOut" }}
           >
@@ -150,7 +149,7 @@ export const UnlockedProForm = () => {
   const rightContent = (
     <MotionStack
       direction="row"
-      alignItems="center"
+      sx={{ alignItems: "center" }}
       spacing={2}
       {...fadeIn}
       transition={{ delay: 0.2, duration: 0.6 }}
@@ -164,7 +163,7 @@ export const UnlockedProForm = () => {
       </motion.div>
       <MotionTypography
         variant="h3"
-        fontWeight={700}
+        sx={{ fontWeight: 700 }}
         initial={{ opacity: 0, x: -20 }}
         animate={{ opacity: 1, x: 0 }}
         transition={{ delay: 0.4, duration: 0.4 }}

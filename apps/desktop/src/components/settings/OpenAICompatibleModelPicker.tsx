@@ -1,4 +1,4 @@
-import ErrorOutlineIcon from "@mui/icons-material/ErrorOutline";
+import ErrorOutlineIcon from "@mui/icons-material/ErrorOutlined";
 import {
   Autocomplete,
   Box,
@@ -76,7 +76,12 @@ export const OpenAICompatibleModelPicker = ({
     return (
       <Box sx={{ display: "flex", alignItems: "center", gap: 1, py: 1 }}>
         <CircularProgress size={16} />
-        <Typography variant="body2" color="text.secondary">
+        <Typography
+          variant="body2"
+          sx={{
+            color: "text.secondary",
+          }}
+        >
           <FormattedMessage defaultMessage="Checking OpenAI-compatible connection..." />
         </Typography>
       </Box>
@@ -97,7 +102,12 @@ export const OpenAICompatibleModelPicker = ({
   if (useManualInput) {
     return (
       <Box sx={{ display: "flex", flexDirection: "column", gap: 1, py: 1 }}>
-        <Typography variant="body2" color="text.secondary">
+        <Typography
+          variant="body2"
+          sx={{
+            color: "text.secondary",
+          }}
+        >
           <FormattedMessage defaultMessage="The server doesn't support model listing. Please enter the model name manually." />
         </Typography>
         <TextField
@@ -139,7 +149,8 @@ export const OpenAICompatibleModelPicker = ({
           label={<FormattedMessage defaultMessage="Model" />}
           placeholder="Select or type a model"
           slotProps={{
-            inputLabel: { ...params.InputLabelProps, shrink: true },
+            ...params.slotProps,
+            inputLabel: { ...params.slotProps.inputLabel, shrink: true },
           }}
         />
       )}

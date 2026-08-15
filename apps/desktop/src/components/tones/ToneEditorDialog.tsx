@@ -211,7 +211,7 @@ export const ToneEditorDialog = () => {
               onChange={(event) => setName(event.target.value)}
               fullWidth
               placeholder="Casual, Formal, Business..."
-              inputProps={{ maxLength: 120 }}
+              slotProps={{ htmlInput: { maxLength: 120 } }}
             />
 
             <TextField
@@ -222,7 +222,7 @@ export const ToneEditorDialog = () => {
               rows={7}
               fullWidth
               placeholder="Make it sound like a professional but friendly email. Use jargon and fun words."
-              inputProps={{ maxLength: MAX_PROMPT_LEN }}
+              slotProps={{ htmlInput: { maxLength: MAX_PROMPT_LEN } }}
               helperText={
                 <Typography
                   variant="caption"

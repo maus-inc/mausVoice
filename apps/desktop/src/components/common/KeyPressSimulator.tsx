@@ -24,8 +24,10 @@ export const KeyPressSimulator = ({ keys }: KeyPressSimulatorProps) => {
       direction="row"
       spacing={1}
       useFlexGap
-      flexWrap="wrap"
-      justifyContent="center"
+      sx={{
+        flexWrap: "wrap",
+        justifyContent: "center",
+      }}
     >
       {keys.map((key) => {
         const displayKey = getPrettyKeyName(key);
@@ -59,9 +61,11 @@ export const KeyPressSimulator = ({ keys }: KeyPressSimulatorProps) => {
           >
             <Typography
               variant="body2"
-              fontWeight="bold"
               color={allPressed ? "success.contrastText" : "text.primary"}
-              sx={{ textTransform: "capitalize" }}
+              sx={{
+                fontWeight: "bold",
+                textTransform: "capitalize",
+              }}
             >
               {displayKey}
             </Typography>

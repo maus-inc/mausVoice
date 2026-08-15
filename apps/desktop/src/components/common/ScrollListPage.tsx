@@ -242,16 +242,28 @@ export function ScrollListPage<Item>({
                 <Stack
                   direction="row"
                   spacing={2}
-                  alignItems="flex-start"
-                  justifyContent="space-between"
+                  sx={{
+                    alignItems: "flex-start",
+                    justifyContent: "space-between",
+                  }}
                 >
-                  <Typography variant="h4" fontWeight={700}>
+                  <Typography
+                    variant="h4"
+                    sx={{
+                      fontWeight: 700,
+                    }}
+                  >
                     {title}
                   </Typography>
                   {action}
                 </Stack>
                 {subtitle ? (
-                  <Typography variant="subtitle1" color="text.secondary">
+                  <Typography
+                    variant="subtitle1"
+                    sx={{
+                      color: "text.secondary",
+                    }}
+                  >
                     {subtitle}
                   </Typography>
                 ) : null}
@@ -269,11 +281,26 @@ export function ScrollListPage<Item>({
           >
             <Container maxWidth={contentMaxWidth} sx={{ pb: 8 }}>
               {emptyState || (
-                <Stack spacing={1} alignItems="center">
-                  <Typography variant="h6" color="text.secondary">
+                <Stack
+                  spacing={1}
+                  sx={{
+                    alignItems: "center",
+                  }}
+                >
+                  <Typography
+                    variant="h6"
+                    sx={{
+                      color: "text.secondary",
+                    }}
+                  >
                     It's quiet in here
                   </Typography>
-                  <Typography variant="body2" color="text.secondary">
+                  <Typography
+                    variant="body2"
+                    sx={{
+                      color: "text.secondary",
+                    }}
+                  >
                     There are no items to display.
                   </Typography>
                 </Stack>
@@ -309,15 +336,17 @@ export function ScrollListPage<Item>({
                 <Stack
                   direction="row"
                   spacing={2}
-                  alignItems="flex-start"
-                  justifyContent="space-between"
+                  sx={{
+                    alignItems: "flex-start",
+                    justifyContent: "space-between",
+                  }}
                 >
                   <Box sx={{ height: titleHeight, flex: 1, minWidth: 0 }}>
                     <Typography
                       component="span"
                       variant="h5"
-                      fontWeight={700}
                       sx={{
+                        fontWeight: 700,
                         display: "block",
                         transformOrigin: "top left",
                         transform: `scale(calc(1 + ${titleScaleRange} * (1 - var(--p, 0))))`,
@@ -332,12 +361,14 @@ export function ScrollListPage<Item>({
                 {subtitle ? (
                   <Typography
                     variant="subtitle1"
-                    color="text.secondary"
                     sx={{
+                      color: "text.secondary",
                       opacity: "clamp(0, calc(1 - var(--p, 0) * 2), 1)",
                       transformOrigin: "top left",
+
                       transform:
                         "scale(calc(1 - 0.1 * var(--p, 0))) translateY(calc(-4px * var(--p, 0)))",
+
                       willChange: "opacity, transform",
                     }}
                   >
@@ -390,22 +421,31 @@ export function ScrollListPage<Item>({
               <Stack
                 direction="row"
                 spacing={2}
-                alignItems="flex-start"
-                justifyContent="space-between"
+                sx={{
+                  alignItems: "flex-start",
+                  justifyContent: "space-between",
+                }}
               >
                 <Typography
                   component="span"
                   ref={expandedTitleMeasureRef}
                   variant="h4"
-                  fontWeight={700}
-                  sx={{ display: "block" }}
+                  sx={{
+                    fontWeight: 700,
+                    display: "block",
+                  }}
                 >
                   {title}
                 </Typography>
                 {action}
               </Stack>
               {subtitle ? (
-                <Typography variant="subtitle1" color="text.secondary">
+                <Typography
+                  variant="subtitle1"
+                  sx={{
+                    color: "text.secondary",
+                  }}
+                >
                   {subtitle}
                 </Typography>
               ) : null}
@@ -419,15 +459,19 @@ export function ScrollListPage<Item>({
             <Stack
               direction="row"
               spacing={2}
-              alignItems="flex-start"
-              justifyContent="space-between"
+              sx={{
+                alignItems: "flex-start",
+                justifyContent: "space-between",
+              }}
             >
               <Typography
                 component="span"
                 ref={collapsedTitleMeasureRef}
                 variant="h5"
-                fontWeight={700}
-                sx={{ display: "block" }}
+                sx={{
+                  fontWeight: 700,
+                  display: "block",
+                }}
               >
                 {title}
               </Typography>

@@ -10,13 +10,26 @@ export const Stat = ({ label, value }: StatProps) => {
     <Stack
       direction="column"
       spacing={1}
-      sx={{ textAlign: "center" }}
-      alignItems="center"
+      sx={{
+        alignItems: "center",
+        textAlign: "center",
+      }}
     >
-      <Typography variant="h3" fontWeight={700}>
+      <Typography
+        variant="h3"
+        sx={{
+          fontWeight: 700,
+        }}
+      >
         {value.toLocaleString()}
       </Typography>
-      <Typography variant="body2" color="text.secondary" fontSize={20}>
+      <Typography
+        variant="body2"
+        sx={{
+          color: "text.secondary",
+          fontSize: 20,
+        }}
+      >
         {label}
       </Typography>
     </Stack>

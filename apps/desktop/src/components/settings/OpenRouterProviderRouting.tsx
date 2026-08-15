@@ -197,13 +197,21 @@ export const OpenRouterProviderRouting = ({
         />
         <Typography
           variant="body2"
-          color="text.secondary"
-          sx={{ fontWeight: 500 }}
+          sx={{
+            color: "text.secondary",
+            fontWeight: 500,
+          }}
         >
           <FormattedMessage defaultMessage="Advanced Routing" />
         </Typography>
         {summary && !expanded && (
-          <Typography variant="caption" color="text.secondary" sx={{ ml: 1 }}>
+          <Typography
+            variant="caption"
+            sx={{
+              color: "text.secondary",
+              ml: 1,
+            }}
+          >
             ({summary})
           </Typography>
         )}
@@ -223,13 +231,22 @@ export const OpenRouterProviderRouting = ({
           <Stack spacing={2.5}>
             {/* Provider Priority */}
             <Box>
-              <Typography variant="body2" fontWeight={600} sx={{ mb: 1 }}>
+              <Typography
+                variant="body2"
+                sx={{
+                  fontWeight: 600,
+                  mb: 1,
+                }}
+              >
                 <FormattedMessage defaultMessage="Provider Priority" />
               </Typography>
               <Typography
                 variant="caption"
-                color="text.secondary"
-                sx={{ mb: 1.5, display: "block" }}
+                sx={{
+                  color: "text.secondary",
+                  mb: 1.5,
+                  display: "block",
+                }}
               >
                 <FormattedMessage defaultMessage="Set preferred providers in order of priority" />
               </Typography>
@@ -320,7 +337,12 @@ export const OpenRouterProviderRouting = ({
                     <Typography variant="body2">
                       <FormattedMessage defaultMessage="Allow fallbacks" />
                     </Typography>
-                    <Typography variant="caption" color="text.secondary">
+                    <Typography
+                      variant="caption"
+                      sx={{
+                        color: "text.secondary",
+                      }}
+                    >
                       <FormattedMessage defaultMessage="Use other providers if preferred ones are unavailable" />
                     </Typography>
                   </Box>
@@ -331,7 +353,13 @@ export const OpenRouterProviderRouting = ({
 
             {/* Data Collection */}
             <Box>
-              <Typography variant="body2" fontWeight={600} sx={{ mb: 0.5 }}>
+              <Typography
+                variant="body2"
+                sx={{
+                  fontWeight: 600,
+                  mb: 0.5,
+                }}
+              >
                 <FormattedMessage defaultMessage="Data Collection" />
               </Typography>
               <RadioGroup
@@ -346,7 +374,12 @@ export const OpenRouterProviderRouting = ({
                       <Typography variant="body2">
                         <FormattedMessage defaultMessage="Allow" />
                       </Typography>
-                      <Typography variant="caption" color="text.secondary">
+                      <Typography
+                        variant="caption"
+                        sx={{
+                          color: "text.secondary",
+                        }}
+                      >
                         <FormattedMessage defaultMessage="Help improve OpenRouter" />
                       </Typography>
                     </Box>
@@ -361,7 +394,12 @@ export const OpenRouterProviderRouting = ({
                       <Typography variant="body2">
                         <FormattedMessage defaultMessage="Deny" />
                       </Typography>
-                      <Typography variant="caption" color="text.secondary">
+                      <Typography
+                        variant="caption"
+                        sx={{
+                          color: "text.secondary",
+                        }}
+                      >
                         <FormattedMessage defaultMessage="More private, no data collection" />
                       </Typography>
                     </Box>

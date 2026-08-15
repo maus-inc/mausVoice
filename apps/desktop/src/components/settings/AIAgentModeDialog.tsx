@@ -72,16 +72,30 @@ export const AIAgentModeDialog = () => {
           <FormattedMessage defaultMessage="Enable power mode?" />
         </DialogTitle>
         <DialogContent>
-          <Typography variant="body2" color="text.secondary">
+          <Typography
+            variant="body2"
+            sx={{
+              color: "text.secondary",
+            }}
+          >
             <FormattedMessage defaultMessage="Power mode allows the assistant to run terminal commands on your computer. This is powerful but inherently dangerous — commands run with your full user permissions and can modify files, install software, or access sensitive data." />
           </Typography>
-          <Typography variant="body2" color="text.secondary" sx={{ mt: 1.5 }}>
+          <Typography
+            variant="body2"
+            sx={{
+              color: "text.secondary",
+              mt: 1.5,
+            }}
+          >
             <FormattedMessage defaultMessage="This feature is very experimental. Only enable this if you know what you're doing. You will still be asked to approve each command before it runs." />
           </Typography>
           <Typography
             variant="body2"
-            color="text.secondary"
-            sx={{ mt: 1.5, fontWeight: 600 }}
+            sx={{
+              color: "text.secondary",
+              mt: 1.5,
+              fontWeight: 600,
+            }}
           >
             <FormattedMessage defaultMessage="By enabling power mode, you accept full responsibility for any actions taken by the assistant. mausVoice is not liable for any consequences resulting from commands executed on your system." />
           </Typography>
@@ -113,8 +127,18 @@ export const AIAgentModeDialog = () => {
           </IconButton>
         </DialogTitle>
         <DialogContent dividers>
-          <Stack spacing={3} alignItems="flex-start">
-            <Typography variant="body1" color="text.secondary">
+          <Stack
+            spacing={3}
+            sx={{
+              alignItems: "flex-start",
+            }}
+          >
+            <Typography
+              variant="body1"
+              sx={{
+                color: "text.secondary",
+              }}
+            >
               <FormattedMessage defaultMessage="Assistant mode follows commands you dictate instead of just cleaning up text." />
             </Typography>
 
@@ -133,15 +157,32 @@ export const AIAgentModeDialog = () => {
 
             <Stack
               direction="row"
-              justifyContent="space-between"
-              alignItems="flex-start"
-              sx={{ width: "100%" }}
+              sx={{
+                justifyContent: "space-between",
+                alignItems: "flex-start",
+                width: "100%",
+              }}
             >
-              <Stack spacing={0.5} flex={1}>
-                <Typography variant="body1" fontWeight="bold">
+              <Stack
+                spacing={0.5}
+                sx={{
+                  flex: 1,
+                }}
+              >
+                <Typography
+                  variant="body1"
+                  sx={{
+                    fontWeight: "bold",
+                  }}
+                >
                   <FormattedMessage defaultMessage="Assistant mode" />
                 </Typography>
-                <Typography variant="body2" color="text.secondary">
+                <Typography
+                  variant="body2"
+                  sx={{
+                    color: "text.secondary",
+                  }}
+                >
                   <FormattedMessage defaultMessage="Assistant mode is disabled by default. This is a new experimental feature." />
                 </Typography>
               </Stack>
@@ -153,15 +194,32 @@ export const AIAgentModeDialog = () => {
 
             <Stack
               direction="row"
-              justifyContent="space-between"
-              alignItems="flex-start"
-              sx={{ width: "100%" }}
+              sx={{
+                justifyContent: "space-between",
+                alignItems: "flex-start",
+                width: "100%",
+              }}
             >
-              <Stack spacing={0.5} flex={1}>
-                <Typography variant="body1" fontWeight="bold">
+              <Stack
+                spacing={0.5}
+                sx={{
+                  flex: 1,
+                }}
+              >
+                <Typography
+                  variant="body1"
+                  sx={{
+                    fontWeight: "bold",
+                  }}
+                >
                   <FormattedMessage defaultMessage="Power mode" />
                 </Typography>
-                <Typography variant="body2" color="text.secondary">
+                <Typography
+                  variant="body2"
+                  sx={{
+                    color: "text.secondary",
+                  }}
+                >
                   <FormattedMessage defaultMessage="Allow the assistant to run terminal commands on your behalf. This is a temporary guardrail that will be removed in a future update. Restart mausVoice to apply changes." />
                 </Typography>
               </Stack>

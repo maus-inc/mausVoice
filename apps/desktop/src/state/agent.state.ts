@@ -8,11 +8,7 @@ export type AgentToolCallState = {
 };
 
 export type AgentStatus =
-  | "idle"
-  | "calling-llm"
-  | "processing-tools"
-  | "done"
-  | "error";
+  "idle" | "calling-llm" | "processing-tools" | "done" | "error";
 
 export type AgentRunState = {
   status: AgentStatus;

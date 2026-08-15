@@ -60,7 +60,13 @@ export default function ErrorBoundary() {
         }}
         spacing={2}
       >
-        <Stack sx={{ maxWidth: 800 }} spacing={3} alignItems="center">
+        <Stack
+          spacing={3}
+          sx={{
+            alignItems: "center",
+            maxWidth: 800,
+          }}
+        >
           <ErrorContent />
           <Button variant="contained" onClick={handleGoHome}>
             <FormattedMessage defaultMessage="Return home" />

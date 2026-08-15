@@ -11,8 +11,10 @@ type AgentActivityProps = {
 const ToolCallLine = ({ tc }: { tc: StreamingToolCall }) => (
   <Typography
     variant="caption"
-    color="text.secondary"
-    sx={{ fontStyle: "italic" }}
+    sx={{
+      color: "text.secondary",
+      fontStyle: "italic",
+    }}
   >
     {tc.done ? (
       <FormattedMessage
@@ -50,13 +52,13 @@ export const AgentActivity = ({ messageId }: AgentActivityProps) => {
         <Box>
           <Typography
             variant="caption"
-            color="text.secondary"
+            onClick={() => setReasoningOpen((o) => !o)}
             sx={{
+              color: "text.secondary",
               cursor: "pointer",
               userSelect: "none",
               "&:hover": { textDecoration: "underline" },
             }}
-            onClick={() => setReasoningOpen((o) => !o)}
           >
             {isStreaming ? (
               <FormattedMessage defaultMessage="Thinking…" />
@@ -67,8 +69,8 @@ export const AgentActivity = ({ messageId }: AgentActivityProps) => {
           <Collapse in={reasoningOpen}>
             <Typography
               variant="caption"
-              color="text.secondary"
               sx={{
+                color: "text.secondary",
                 whiteSpace: "pre-wrap",
                 display: "block",
                 mt: 0.25,

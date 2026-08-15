@@ -163,10 +163,32 @@ export const HotkeySetting = ({
   };
 
   return (
-    <Stack direction="row" spacing={2} alignItems="flex-start">
-      <Stack spacing={1} flex={1}>
-        <Stack direction="row" alignItems="center" spacing={1}>
-          <Typography variant="body1" fontWeight="bold">
+    <Stack
+      direction="row"
+      spacing={2}
+      sx={{
+        alignItems: "flex-start",
+      }}
+    >
+      <Stack
+        spacing={1}
+        sx={{
+          flex: 1,
+        }}
+      >
+        <Stack
+          direction="row"
+          spacing={1}
+          sx={{
+            alignItems: "center",
+          }}
+        >
+          <Typography
+            variant="body1"
+            sx={{
+              fontWeight: "bold",
+            }}
+          >
             {title}
           </Typography>
           {hasEnabledToggle && (
@@ -174,8 +196,10 @@ export const HotkeySetting = ({
               size="small"
               checked={isEnabled}
               onChange={handleToggle}
-              inputProps={{
-                "aria-label": "Enable hotkey",
+              slotProps={{
+                input: {
+                  "aria-label": "Enable hotkey",
+                },
               }}
             />
           )}
@@ -183,8 +207,19 @@ export const HotkeySetting = ({
         <Typography variant="body2">{description}</Typography>
       </Stack>
       {isEnabled && (
-        <Stack spacing={1} alignItems="flex-end">
-          <Stack direction="row" spacing={1} alignItems="center">
+        <Stack
+          spacing={1}
+          sx={{
+            alignItems: "flex-end",
+          }}
+        >
+          <Stack
+            direction="row"
+            spacing={1}
+            sx={{
+              alignItems: "center",
+            }}
+          >
             <HotKey value={primaryValue} onChange={handlePrimaryChange} />
             {hasEnabledToggle ? (
               <IconButton
@@ -224,7 +259,9 @@ export const HotkeySetting = ({
                 key={hotkey.id}
                 direction="row"
                 spacing={1}
-                alignItems="center"
+                sx={{
+                  alignItems: "center",
+                }}
               >
                 <HotKey
                   value={hotkey.keys}
@@ -241,8 +278,11 @@ export const HotkeySetting = ({
           {hasConflict && (
             <Typography
               variant="caption"
-              color="warning.main"
-              sx={{ maxWidth: 220, textAlign: "right" }}
+              sx={{
+                color: "warning.main",
+                maxWidth: 220,
+                textAlign: "right",
+              }}
             >
               <FormattedMessage defaultMessage="This shortcut overlaps with another. One may trigger both actions." />
             </Typography>
@@ -256,7 +296,12 @@ export const HotkeySetting = ({
                 sx={{ py: 0.5 }}
                 onClick={() => saveKey()}
               >
-                <Typography variant="body2" fontWeight={500}>
+                <Typography
+                  variant="body2"
+                  sx={{
+                    fontWeight: 500,
+                  }}
+                >
                   {buttonLabel}
                 </Typography>
               </Button>

@@ -1,4 +1,4 @@
-import ErrorOutlineIcon from "@mui/icons-material/ErrorOutline";
+import ErrorOutlineIcon from "@mui/icons-material/ErrorOutlined";
 import {
   Autocomplete,
   Box,
@@ -72,7 +72,13 @@ export const GroqModelPicker = ({
 
   if (!apiKey) {
     return (
-      <Typography variant="body2" color="text.secondary" sx={{ py: 1 }}>
+      <Typography
+        variant="body2"
+        sx={{
+          color: "text.secondary",
+          py: 1,
+        }}
+      >
         <FormattedMessage defaultMessage="Add an API key to see available models" />
       </Typography>
     );
@@ -82,7 +88,12 @@ export const GroqModelPicker = ({
     return (
       <Box sx={{ display: "flex", alignItems: "center", gap: 1, py: 1 }}>
         <CircularProgress size={16} />
-        <Typography variant="body2" color="text.secondary">
+        <Typography
+          variant="body2"
+          sx={{
+            color: "text.secondary",
+          }}
+        >
           <FormattedMessage defaultMessage="Loading models..." />
         </Typography>
       </Box>
@@ -122,7 +133,8 @@ export const GroqModelPicker = ({
           label={<FormattedMessage defaultMessage="Model" />}
           placeholder="Select or type a model"
           slotProps={{
-            inputLabel: { ...params.InputLabelProps, shrink: true },
+            ...params.slotProps,
+            inputLabel: { ...params.slotProps.inputLabel, shrink: true },
           }}
         />
       )}

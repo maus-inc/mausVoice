@@ -56,7 +56,13 @@ export const A11yPermsForm = () => {
     <OnboardingFormLayout
       back={<BackButton />}
       actions={
-        <Stack direction="row" spacing={1} alignItems="center">
+        <Stack
+          direction="row"
+          spacing={1}
+          sx={{
+            alignItems: "center",
+          }}
+        >
           {/*
             Onboarding must never dead-end. If the permission state is stuck
             (declined, or a platform that reports no state at all) the user can
@@ -80,10 +86,21 @@ export const A11yPermsForm = () => {
     >
       <Stack spacing={3}>
         <Box>
-          <Typography variant="h4" fontWeight={600} pb={1}>
+          <Typography
+            variant="h4"
+            sx={{
+              fontWeight: 600,
+              pb: 1,
+            }}
+          >
             <FormattedMessage defaultMessage="Enable accessibility" />
           </Typography>
-          <Typography variant="body1" color="text.secondary">
+          <Typography
+            variant="body1"
+            sx={{
+              color: "text.secondary",
+            }}
+          >
             <FormattedMessage defaultMessage="mausVoice needs accessibility permissions to paste transcriptions into focused text fields." />
           </Typography>
         </Box>

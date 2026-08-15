@@ -39,8 +39,10 @@ export const Breadcrumb = ({ items, separator = "/" }: BreadcrumbProps) => {
           {index > 0 && (
             <Typography
               variant="body2"
-              color="text.secondary"
-              sx={{ flexShrink: 0 }}
+              sx={{
+                color: "text.secondary",
+                flexShrink: 0,
+              }}
             >
               {separator}
             </Typography>
@@ -48,9 +50,9 @@ export const Breadcrumb = ({ items, separator = "/" }: BreadcrumbProps) => {
           {index === items.length - 1 ? (
             <Typography
               variant="body2"
-              color="text.primary"
-              fontWeight={500}
               sx={{
+                color: "text.primary",
+                fontWeight: 500,
                 whiteSpace: "nowrap",
                 overflow: "hidden",
                 textOverflow: "ellipsis",
@@ -63,15 +65,16 @@ export const Breadcrumb = ({ items, separator = "/" }: BreadcrumbProps) => {
             <Link
               component="button"
               variant="body2"
-              color="text.secondary"
               onClick={() => handleClick(item)}
               sx={{
+                color: "text.secondary",
                 cursor: "pointer",
                 textDecoration: "none",
                 whiteSpace: "nowrap",
                 overflow: "hidden",
                 textOverflow: "ellipsis",
                 minWidth: 0,
+
                 "&:hover": {
                   textDecoration: "underline",
                 },

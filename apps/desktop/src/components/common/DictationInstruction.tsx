@@ -24,8 +24,20 @@ export const DictationInstruction = () => {
   }
 
   return (
-    <Stack direction="row" alignItems="center" spacing={1}>
-      <Typography variant="body2" color="text.secondary" component="div">
+    <Stack
+      direction="row"
+      spacing={1}
+      sx={{
+        alignItems: "center",
+      }}
+    >
+      <Typography
+        variant="body2"
+        component="div"
+        sx={{
+          color: "text.secondary",
+        }}
+      >
         <FormattedMessage defaultMessage="Press your hotkey to dictate anywhere" />
       </Typography>
       <HotkeyBadge

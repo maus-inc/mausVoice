@@ -218,9 +218,12 @@ const PausedStatusBadge = ({
   return (
     <Typography
       variant="caption"
-      fontWeight={600}
       color={badgeColor}
-      sx={{ fontVariantNumeric: "tabular-nums", mr: 0.5 }}
+      sx={{
+        fontWeight: 600,
+        fontVariantNumeric: "tabular-nums",
+        mr: 0.5,
+      }}
     >
       {renderBadgeText()}
     </Typography>
@@ -255,7 +258,13 @@ const BusyDownloadButtons = ({
   const primaryAction = paused ? onResume : onPause;
 
   return (
-    <Stack direction="row" spacing={0.75} alignItems="center">
+    <Stack
+      direction="row"
+      spacing={0.75}
+      sx={{
+        alignItems: "center",
+      }}
+    >
       <PausedStatusBadge paused={paused} compactPercent={compactPercent} />
       <Button
         size="small"
@@ -590,8 +599,19 @@ export const AITranscriptionConfiguration = () => {
     return (
       <MenuItem key={value} value={value} sx={{ ...activeRowSx, py: 1.25 }}>
         <Box sx={{ minWidth: 0 }}>
-          <Stack direction="row" alignItems="center" spacing={0.5}>
-            <Typography variant="body2" fontWeight={600}>
+          <Stack
+            direction="row"
+            spacing={0.5}
+            sx={{
+              alignItems: "center",
+            }}
+          >
+            <Typography
+              variant="body2"
+              sx={{
+                fontWeight: 600,
+              }}
+            >
               {label}
             </Typography>
             {showFitWarning && (
@@ -616,10 +636,21 @@ export const AITranscriptionConfiguration = () => {
               />
             )}
           </Stack>
-          <Typography variant="caption" color="text.secondary" display="block">
+          <Typography
+            variant="caption"
+            sx={{
+              color: "text.secondary",
+              display: "block",
+            }}
+          >
             {helper}
           </Typography>
-          <Typography variant="caption" color="text.secondary">
+          <Typography
+            variant="caption"
+            sx={{
+              color: "text.secondary",
+            }}
+          >
             <ModelStatusText
               downloading={downloading}
               paused={paused}
@@ -663,22 +694,36 @@ export const AITranscriptionConfiguration = () => {
         <Stack spacing={0.75}>
           <Stack
             direction="row"
-            justifyContent="space-between"
-            alignItems="flex-start"
             spacing={1.5}
+            sx={{
+              justifyContent: "space-between",
+              alignItems: "flex-start",
+            }}
           >
             <Box sx={{ minWidth: 0, flex: 1 }}>
-              <Typography variant="body2" fontWeight={600}>
+              <Typography
+                variant="body2"
+                sx={{
+                  fontWeight: 600,
+                }}
+              >
                 {label}
               </Typography>
               <Typography
                 variant="caption"
-                color="text.secondary"
-                display="block"
+                sx={{
+                  color: "text.secondary",
+                  display: "block",
+                }}
               >
                 {helper}
               </Typography>
-              <Typography variant="caption" color="text.secondary">
+              <Typography
+                variant="caption"
+                sx={{
+                  color: "text.secondary",
+                }}
+              >
                 <ModelStatusText
                   downloading={downloading}
                   paused={paused}
@@ -728,7 +773,13 @@ export const AITranscriptionConfiguration = () => {
   };
 
   return (
-    <Stack spacing={3} alignItems="flex-start" sx={{ width: "100%" }}>
+    <Stack
+      spacing={3}
+      sx={{
+        alignItems: "flex-start",
+        width: "100%",
+      }}
+    >
       <SegmentedControl<TranscriptionMode>
         value={effectiveMode}
         onChange={handleModeChange}
@@ -844,8 +895,10 @@ export const AITranscriptionConfiguration = () => {
               >
                 <Typography
                   variant="caption"
-                  color="text.secondary"
-                  display="block"
+                  sx={{
+                    color: "text.secondary",
+                    display: "block",
+                  }}
                 >
                   <FormattedMessage
                     defaultMessage="This device: {summary} · Recommended: {recommended}"
@@ -858,8 +911,10 @@ export const AITranscriptionConfiguration = () => {
                 {currentModelFit?.level === "caution" && (
                   <Typography
                     variant="caption"
-                    color="warning.main"
-                    display="block"
+                    sx={{
+                      color: "warning.main",
+                      display: "block",
+                    }}
                   >
                     <FormattedMessage defaultMessage="This model may be slow on this device. Consider a smaller model." />
                   </Typography>
@@ -867,8 +922,10 @@ export const AITranscriptionConfiguration = () => {
                 {currentModelFit?.level === "discouraged" && (
                   <Typography
                     variant="caption"
-                    color="error.main"
-                    display="block"
+                    sx={{
+                      color: "error.main",
+                      display: "block",
+                    }}
                   >
                     <FormattedMessage defaultMessage="This model is likely too heavy for this device. A smaller model is strongly recommended." />
                   </Typography>
@@ -877,9 +934,20 @@ export const AITranscriptionConfiguration = () => {
             )}
 
             {localTranscriptionConfig.modelStatusesLoading && (
-              <Stack direction="row" spacing={1} alignItems="center">
+              <Stack
+                direction="row"
+                spacing={1}
+                sx={{
+                  alignItems: "center",
+                }}
+              >
                 <CircularProgress size={14} />
-                <Typography variant="caption" color="text.secondary">
+                <Typography
+                  variant="caption"
+                  sx={{
+                    color: "text.secondary",
+                  }}
+                >
                   <FormattedMessage defaultMessage="Refreshing model status..." />
                 </Typography>
               </Stack>

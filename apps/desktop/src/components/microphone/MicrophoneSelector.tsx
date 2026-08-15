@@ -124,9 +124,11 @@ export const MicrophoneSelector = ({
           <MenuItem value={AUTO_OPTION_VALUE}>
             <Stack
               direction="row"
-              justifyContent="space-between"
-              alignItems="center"
               spacing={1}
+              sx={{
+                justifyContent: "space-between",
+                alignItems: "center",
+              }}
             >
               <Typography>
                 <FormattedMessage defaultMessage="Automatic" />
@@ -145,22 +147,45 @@ export const MicrophoneSelector = ({
               <Stack
                 direction="row"
                 spacing={2}
-                justifyContent="space-between"
-                width="100%"
+                sx={{
+                  justifyContent: "space-between",
+                  width: "100%",
+                }}
               >
-                <Box display="flex" flexDirection="column">
+                <Box
+                  sx={{
+                    display: "flex",
+                    flexDirection: "column",
+                  }}
+                >
                   <Typography>{option.label}</Typography>
                   {option.unavailable ? (
-                    <Typography variant="caption" color="warning.main">
+                    <Typography
+                      variant="caption"
+                      sx={{
+                        color: "warning.main",
+                      }}
+                    >
                       <FormattedMessage defaultMessage="Currently unavailable" />
                     </Typography>
                   ) : option.caution ? (
-                    <Typography variant="caption" color="text.secondary">
+                    <Typography
+                      variant="caption"
+                      sx={{
+                        color: "text.secondary",
+                      }}
+                    >
                       <FormattedMessage defaultMessage="May provide lower audio quality" />
                     </Typography>
                   ) : null}
                 </Box>
-                <Stack direction="row" spacing={0.75} alignItems="center">
+                <Stack
+                  direction="row"
+                  spacing={0.75}
+                  sx={{
+                    alignItems: "center",
+                  }}
+                >
                   {option.isDefault && (
                     <Chip
                       size="small"
@@ -184,7 +209,13 @@ export const MicrophoneSelector = ({
         </Select>
       </FormControl>
 
-      <Stack direction="row" spacing={1} alignItems="center">
+      <Stack
+        direction="row"
+        spacing={1}
+        sx={{
+          alignItems: "center",
+        }}
+      >
         <Button
           variant="text"
           onClick={handleRefresh}

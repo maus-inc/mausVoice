@@ -42,9 +42,11 @@ export const ShortcutsDialog = () => {
       return (
         <Stack
           direction="row"
-          justifyContent="center"
-          alignItems="center"
-          sx={{ py: 4 }}
+          sx={{
+            justifyContent: "center",
+            alignItems: "center",
+            py: 4,
+          }}
         >
           <CircularProgress size={24} />
         </Stack>

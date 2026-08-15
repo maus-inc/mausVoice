@@ -1,10 +1,5 @@
 export type UpdaterStatus =
-  | "idle"
-  | "checking"
-  | "ready"
-  | "downloading"
-  | "installing"
-  | "error";
+  "idle" | "checking" | "ready" | "downloading" | "installing" | "error";
 
 export type UpdaterState = {
   dialogOpen: boolean;
