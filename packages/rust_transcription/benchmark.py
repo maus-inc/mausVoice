@@ -12,6 +12,7 @@ import time
 import wave
 from pathlib import Path
 from urllib.error import URLError
+from urllib.parse import urlparse
 from urllib.request import Request, urlopen
 
 PACKAGE_DIR = Path(__file__).resolve().parent
@@ -20,6 +21,13 @@ DEFAULT_MODELS_DIR = PACKAGE_DIR.parent.parent / "models"
 
 CPU_PORT = 7771
 GPU_PORT = 7772
+
+
+def assert_http_url(url: str) -> None:
+    """Reject non-http(s) URLs before handing them to urllib."""
+    scheme = urlparse(url).scheme.lower()
+    if scheme not in ("http", "https"):
+        raise ValueError(f"Refusing to open non-http(s) URL: {url}")
 
 
 def load_wav(path: Path) -> tuple[list[float], int]:
@@ -67,9 +75,11 @@ def load_audio(path: Path) -> tuple[list[float], int]:
 
 def wait_for_health(port: int, timeout: float = 15.0) -> dict:
     deadline = time.time() + timeout
+    url = f"http://127.0.0.1:{port}/health"
+    assert_http_url(url)
     while time.time() < deadline:
         try:
-            with urlopen(f"http://127.0.0.1:{port}/health", timeout=2) as resp:
+            with urlopen(url, timeout=2) as resp:  # nosec B310 -- loopback URL, scheme validated by assert_http_url
                 return json.loads(resp.read())
         except (URLError, OSError):
             time.sleep(0.2)
@@ -124,8 +134,10 @@ def transcribe(port: int, samples: list[float], sample_rate: int, model: str, de
         method="POST",
     )
 
+    assert_http_url(req.full_url)
+
     start = time.time()
-    with urlopen(req, timeout=600) as resp:
+    with urlopen(req, timeout=600) as resp:  # nosec B310 -- loopback URL, scheme validated by assert_http_url
         result = json.loads(resp.read())
     result["roundTripMs"] = round((time.time() - start) * 1000)
     return result
@@ -163,7 +175,9 @@ def run_benchmark(audio_path: Path, binary_dir: Path, models_dir: Path, model: s
         print("Starting GPU sidecar...")
         proc = start_sidecar(gpu_bin, GPU_PORT, models_dir)
         try:
-            devices_resp = json.loads(urlopen(f"http://127.0.0.1:{GPU_PORT}/v1/devices").read())
+            devices_url = f"http://127.0.0.1:{GPU_PORT}/v1/devices"
+            assert_http_url(devices_url)
+            devices_resp = json.loads(urlopen(devices_url).read())  # nosec B310 -- loopback URL, scheme validated by assert_http_url
             devices = devices_resp["devices"]
             print(f"  Devices: {', '.join(d['name'] + ' (' + d['id'] + ')' for d in devices)}\n")
 

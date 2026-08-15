@@ -1,6 +1,6 @@
 import { getVersion } from "@tauri-apps/api/app";
 import { invoke } from "@tauri-apps/api/core";
-import { Member, Nullable, Term, User } from "@maus-inc/types";
+import { Member, Nullable, Term, User, UserPreferences } from "@maus-inc/types";
 import { getRec, listify } from "@maus-inc/utilities";
 import dayjs from "dayjs";
 import { isEqual } from "lodash-es";
@@ -138,6 +138,76 @@ const hotkeyGrabFingerprint = (state: AppState): string => {
     getEffectiveStylingMode(state),
     hotkeyKey,
   ].join("|");
+};
+
+const getDaysSinceOnboarded = (
+  onboardedAt: string | null | undefined,
+): number => (onboardedAt ? dayjs().diff(dayjs(onboardedAt), "day") : 0);
+
+type MixpanelProfileInput = {
+  auth: AuthUser | null;
+  member: Member | null;
+  localUser: User | null;
+  prefs: Nullable<UserPreferences>;
+  currentUserId: string | null;
+};
+
+const buildMixpanelProfile = ({
+  auth,
+  member,
+  localUser,
+  prefs,
+  currentUserId,
+}: MixpanelProfileInput) => {
+  const isPro = member?.plan === "pro";
+  const isFree = member?.plan === "free";
+  const isCommunity = !currentUserId;
+  const isTrial = member?.isOnTrial ?? false;
+  const isPaying = !isTrial && isPro;
+  const onboardedAt = localUser?.onboardedAt;
+  const daysSinceOnboarded = getDaysSinceOnboarded(onboardedAt);
+  const platform = getPlatform();
+  const locale = detectLocale();
+  const onboarded = localUser?.onboarded ?? false;
+  const planStatus = member?.plan ?? "community";
+
+  const initial = {
+    initialPlatform: platform,
+    initialLocale: locale,
+    initialCohort: CURRENT_COHORT,
+  };
+
+  const people = {
+    $email: auth?.email ?? undefined,
+    $name: auth?.displayName ?? undefined,
+    planStatus,
+    isPro,
+    isFree,
+    isCommunity,
+    isTrial,
+    isPaying,
+    onboarded,
+    onboardedAt: onboardedAt ?? undefined,
+    activeSystemCohort: CURRENT_COHORT,
+    daysSinceOnboarded,
+    pillState: getEffectivePillVisibility(prefs?.dictationPillVisibility),
+  };
+
+  const register = {
+    userId: currentUserId,
+    planStatus,
+    isPro,
+    isFree,
+    isCommunity,
+    platform,
+    locale,
+    onboarded,
+    daysSinceOnboarded,
+    activeSystemCohort: CURRENT_COHORT,
+    pillState: getEffectivePillVisibility(prefs?.dictationPillVisibility),
+  };
+
+  return { initial, people, register };
 };
 
 export const AppSideEffects = () => {
@@ -481,66 +551,25 @@ export const AppSideEffects = () => {
       mp.reset();
     }
 
-    const isPro = member?.plan === "pro";
-    const isFree = member?.plan === "free";
-    const isCommunity = !currentUserId;
-    const isTrial = member?.isOnTrial ?? false;
-    const isPaying = !isTrial && isPro;
-    const onboardedAt = localUser?.onboardedAt;
-    const daysSinceOnboarded = onboardedAt
-      ? dayjs().diff(dayjs(onboardedAt), "day")
-      : 0;
-    const platform = getPlatform();
-    const locale = detectLocale();
-    const onboarded = localUser?.onboarded ?? false;
-    const planStatus = member?.plan ?? "community";
+    const profile = buildMixpanelProfile({
+      auth,
+      member,
+      localUser,
+      prefs,
+      currentUserId,
+    });
 
     if (currentUserId && currentUserId !== prevUserId) {
       mp.identify(currentUserId);
-
       mp.people.set_once({
         $created: new Date().toISOString(),
-        initialPlatform: platform,
-        initialLocale: locale,
-        initialCohort: CURRENT_COHORT,
+        ...profile.initial,
       });
-
-      mp.register_once({
-        initialPlatform: platform,
-        initialLocale: locale,
-        initialCohort: CURRENT_COHORT,
-      });
+      mp.register_once({ ...profile.initial });
     }
 
-    mp.people.set({
-      $email: auth?.email ?? undefined,
-      $name: auth?.displayName ?? undefined,
-      planStatus,
-      isPro,
-      isFree,
-      isCommunity,
-      isTrial,
-      isPaying,
-      onboarded,
-      onboardedAt: onboardedAt ?? undefined,
-      activeSystemCohort: CURRENT_COHORT,
-      daysSinceOnboarded,
-      pillState: getEffectivePillVisibility(prefs?.dictationPillVisibility),
-    });
-
-    mp.register({
-      userId: currentUserId,
-      planStatus,
-      isPro,
-      isFree,
-      isCommunity,
-      platform,
-      locale,
-      onboarded,
-      daysSinceOnboarded,
-      activeSystemCohort: CURRENT_COHORT,
-      pillState: getEffectivePillVisibility(prefs?.dictationPillVisibility),
-    });
+    mp.people.set(profile.people);
+    mp.register(profile.register);
 
     if (versionData.state === "success") {
       mp.register({

@@ -50,6 +50,7 @@ import subprocess
 import sys
 import time
 from pathlib import Path
+from urllib.parse import urlparse
 from urllib.request import urlopen, Request
 from urllib.error import URLError
 
@@ -58,6 +59,13 @@ from dotenv import load_dotenv
 load_dotenv(Path(__file__).parent / ".env")
 
 OLLAMA_BASE = "http://localhost:11434"
+
+
+def assert_http_url(url: str) -> None:
+    """Reject non-http(s) URLs before handing them to urllib."""
+    scheme = urlparse(url).scheme.lower()
+    if scheme not in ("http", "https"):
+        raise ValueError(f"Refusing to open non-http(s) URL: {url}")
 
 OLLAMA_MODELS = {
     "gemma4": "gemma4:latest",
@@ -169,10 +177,12 @@ def run_ollama(model_tag: str, sys_prompt: str, transcript: str) -> str:
     }
 
     body = json.dumps(payload).encode()
-    req = Request(f"{OLLAMA_BASE}/api/chat", data=body, headers={"Content-Type": "application/json"})
+    url = f"{OLLAMA_BASE}/api/chat"
+    assert_http_url(url)
+    req = Request(url, data=body, headers={"Content-Type": "application/json"})
 
     try:
-        with urlopen(req, timeout=600) as resp:
+        with urlopen(req, timeout=600) as resp:  # nosec B310 -- scheme validated by assert_http_url
             data = json.loads(resp.read())
     except URLError as e:
         print(f"Error: Cannot connect to Ollama. Is it running? (ollama serve)\n{e}", file=sys.stderr)

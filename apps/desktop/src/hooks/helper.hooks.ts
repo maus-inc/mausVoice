@@ -7,6 +7,27 @@ import {
   useState,
 } from "react";
 
+// Canonical lowercase tokens for key names, mapping synonyms ("esc"/"escape",
+// "return"/"enter", "up"/"arrowup", ...) onto a single representation.
+const KEY_ALIASES: Record<string, string> = {
+  " ": "space",
+  space: "space",
+  esc: "escape",
+  escape: "escape",
+  return: "enter",
+  enter: "enter",
+  del: "delete",
+  delete: "delete",
+  arrowup: "arrowup",
+  up: "arrowup",
+  arrowdown: "arrowdown",
+  down: "arrowdown",
+  arrowleft: "arrowleft",
+  left: "arrowleft",
+  arrowright: "arrowright",
+  right: "arrowright",
+};
+
 export function usePrevious<T>(value: T): T | undefined;
 export function usePrevious<T>(value: T, initialValue: T): T;
 export function usePrevious<T>(value: T, initialValue?: T): T | undefined {
@@ -117,18 +138,8 @@ export const useKeyCombo = (args: UseKeyComboArgs = {}): boolean => {
   const pressedRef = useRef<Set<string>>(new Set());
 
   // Canonicalize to stable lowercase tokens
-  const canon = (k: string): string => {
-    const s = k.trim().toLowerCase();
-    if (s === " " || s === "space") return "space";
-    if (s === "esc" || s === "escape") return "escape";
-    if (s === "return" || s === "enter") return "enter";
-    if (s === "del" || s === "delete") return "delete";
-    if (s === "arrowup" || s === "up") return "arrowup";
-    if (s === "arrowdown" || s === "down") return "arrowdown";
-    if (s === "arrowleft" || s === "left") return "arrowleft";
-    if (s === "arrowright" || s === "right") return "arrowright";
-    return s;
-  };
+  const canon = (k: string): string =>
+    KEY_ALIASES[k.trim().toLowerCase()] ?? k.trim().toLowerCase();
 
   const isModifierKey = (k: string) =>
     k === "shift" || k === "control" || k === "alt" || k === "meta";

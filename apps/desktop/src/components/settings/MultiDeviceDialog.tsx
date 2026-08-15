@@ -16,6 +16,7 @@ import type {
   PairedRemoteDevice,
   RemoteDevicePlatform,
   RemoteDeviceRole,
+  RemoteReceiverStatus,
 } from "@maus-inc/types";
 import { ChangeEvent, useEffect, useState } from "react";
 import { FormattedMessage, useIntl } from "react-intl";
@@ -47,6 +48,398 @@ import {
 import { produceAppState, useAppStore } from "../../store";
 import { getMyUserPreferences } from "../../utils/user.utils";
 import { SettingSection } from "../common/SettingSection";
+
+const ReceiverStatusDetails = ({
+  receiverStatus,
+  onCopyInvite,
+  onImportInvite,
+}: {
+  receiverStatus: RemoteReceiverStatus;
+  onCopyInvite: () => void;
+  onImportInvite: () => void;
+}) => {
+  const lastDeliveryTimeLabel = receiverStatus.lastDeliveryAt
+    ? new Date(receiverStatus.lastDeliveryAt).toLocaleString()
+    : null;
+  const lastTargetLooksLikeMausVoice =
+    receiverStatus.lastTargetClassName === "Tauri Window";
+  const lastTargetMissingEditableField =
+    receiverStatus.lastTargetEditable === false &&
+    receiverStatus.lastDeliveryStatus === "failed";
+
+  return (
+    <Stack spacing={0.5} sx={{ mt: -1 }}>
+      <Typography
+        variant="caption"
+        sx={{
+          color: "text.secondary",
+        }}
+      >
+        <FormattedMessage
+          defaultMessage="Device ID: {deviceId}"
+          values={{ deviceId: receiverStatus.deviceId }}
+        />
+      </Typography>
+      {receiverStatus.enabled && (
+        <Typography
+          variant="caption"
+          sx={{
+            color: "text.secondary",
+          }}
+        >
+          <FormattedMessage
+            defaultMessage="Connect address: {address}:{port}"
+            values={{
+              address: receiverStatus.listenAddress ?? "127.0.0.1",
+              port: receiverStatus.port ?? "unknown",
+            }}
+          />
+        </Typography>
+      )}
+      {receiverStatus.lastSenderDeviceId && (
+        <Typography
+          variant="caption"
+          sx={{
+            color: "text.secondary",
+          }}
+        >
+          <FormattedMessage
+            defaultMessage="Last sender: {senderId}"
+            values={{ senderId: receiverStatus.lastSenderDeviceId }}
+          />
+        </Typography>
+      )}
+      {receiverStatus.lastDeliveryStatus && (
+        <Typography
+          variant="caption"
+          sx={{
+            color: "text.secondary",
+          }}
+        >
+          {lastDeliveryTimeLabel ? (
+            <FormattedMessage
+              defaultMessage="Last delivery: {status} at {timestamp}"
+              values={{
+                status: receiverStatus.lastDeliveryStatus,
+                timestamp: lastDeliveryTimeLabel,
+              }}
+            />
+          ) : (
+            <FormattedMessage
+              defaultMessage="Last delivery: {status}"
+              values={{ status: receiverStatus.lastDeliveryStatus }}
+            />
+          )}
+        </Typography>
+      )}
+      {receiverStatus.lastError && (
+        <Typography
+          variant="caption"
+          sx={{
+            color: "error.main",
+            wordBreak: "break-word",
+          }}
+        >
+          <FormattedMessage
+            defaultMessage="Last error: {message}"
+            values={{ message: receiverStatus.lastError }}
+          />
+        </Typography>
+      )}
+      {(receiverStatus.lastTargetClassName ||
+        receiverStatus.lastTargetTitle) && (
+        <Typography
+          variant="caption"
+          sx={{
+            color: "text.secondary",
+            wordBreak: "break-word",
+          }}
+        >
+          <FormattedMessage
+            defaultMessage="Last target: {className}{title}"
+            values={{
+              className: receiverStatus.lastTargetClassName ?? "unknown class",
+              title: receiverStatus.lastTargetTitle
+                ? ` (${receiverStatus.lastTargetTitle})`
+                : "",
+            }}
+          />
+        </Typography>
+      )}
+      {lastTargetLooksLikeMausVoice && (
+        <Typography
+          variant="caption"
+          sx={{
+            color: "warning.main",
+            wordBreak: "break-word",
+          }}
+        >
+          <FormattedMessage defaultMessage="The last delivery targeted the mausVoice window itself. Focus the destination app on the receiver machine before sending text." />
+        </Typography>
+      )}
+      {lastTargetMissingEditableField && (
+        <Typography
+          variant="caption"
+          sx={{
+            color: "warning.main",
+            wordBreak: "break-word",
+          }}
+        >
+          <FormattedMessage defaultMessage="The last target window was active, but no editable text field was focused. Click back into the destination text field on the receiver machine before sending text." />
+        </Typography>
+      )}
+      <Typography
+        variant="caption"
+        sx={{
+          color: "text.secondary",
+        }}
+      >
+        <FormattedMessage defaultMessage="Use Copy invite on the receiver machine, then Import invite on the sender machine. Manual trusted-device entry still works as a fallback." />
+      </Typography>
+      <Stack direction="row" spacing={1} sx={{ pt: 0.5 }}>
+        <Button
+          size="small"
+          variant="outlined"
+          onClick={onCopyInvite}
+          disabled={!receiverStatus.enabled}
+        >
+          <FormattedMessage defaultMessage="Copy invite" />
+        </Button>
+        <Button size="small" variant="outlined" onClick={onImportInvite}>
+          <FormattedMessage defaultMessage="Import invite" />
+        </Button>
+      </Stack>
+    </Stack>
+  );
+};
+
+const RemoteTargetDetails = ({
+  selectedRemoteTarget,
+}: {
+  selectedRemoteTarget: PairedRemoteDevice;
+}) => {
+  return (
+    <Stack spacing={0.5} sx={{ mt: -1 }}>
+      <Typography
+        variant="caption"
+        sx={{
+          color: "text.secondary",
+        }}
+      >
+        <FormattedMessage
+          defaultMessage="Active receiver: {name}"
+          values={{ name: selectedRemoteTarget.name }}
+        />
+      </Typography>
+      {selectedRemoteTarget.lastKnownAddress && (
+        <Typography
+          variant="caption"
+          sx={{
+            color: "text.secondary",
+            wordBreak: "break-word",
+          }}
+        >
+          <FormattedMessage
+            defaultMessage="Receiver address: {address}"
+            values={{ address: selectedRemoteTarget.lastKnownAddress }}
+          />
+        </Typography>
+      )}
+      <Typography
+        variant="caption"
+        sx={{
+          color: "text.secondary",
+        }}
+      >
+        <FormattedMessage
+          defaultMessage="Receiver device ID: {deviceId}"
+          values={{ deviceId: selectedRemoteTarget.id }}
+        />
+      </Typography>
+    </Stack>
+  );
+};
+
+const PairDeviceDialog = ({
+  open,
+  editingDeviceId,
+  pairName,
+  pairDeviceId,
+  pairAddress,
+  pairSecret,
+  pairPlatform,
+  pairRole,
+  addressLabel,
+  addressHelperText,
+  onChangeName,
+  onChangeDeviceId,
+  onChangeAddress,
+  onChangeSecret,
+  onChangePlatform,
+  onChangeRole,
+  onSave,
+  onClose,
+}: {
+  open: boolean;
+  editingDeviceId: string | null;
+  pairName: string;
+  pairDeviceId: string;
+  pairAddress: string;
+  pairSecret: string;
+  pairPlatform: RemoteDevicePlatform;
+  pairRole: RemoteDeviceRole;
+  addressLabel: string;
+  addressHelperText: string;
+  onChangeName: (value: string) => void;
+  onChangeDeviceId: (value: string) => void;
+  onChangeAddress: (value: string) => void;
+  onChangeSecret: (value: string) => void;
+  onChangePlatform: (value: RemoteDevicePlatform) => void;
+  onChangeRole: (value: RemoteDeviceRole) => void;
+  onSave: () => void;
+  onClose: () => void;
+}) => {
+  const intl = useIntl();
+  return (
+    <Dialog open={open} onClose={onClose} maxWidth="sm" fullWidth>
+      <DialogTitle>
+        {editingDeviceId ? (
+          <FormattedMessage defaultMessage="Edit trusted device" />
+        ) : (
+          <FormattedMessage defaultMessage="Add trusted device" />
+        )}
+      </DialogTitle>
+      <DialogContent dividers>
+        <Stack spacing={2} sx={{ pt: 0.5 }}>
+          <TextField
+            label={intl.formatMessage({ defaultMessage: "Device name" })}
+            value={pairName}
+            onChange={(event) => onChangeName(event.target.value)}
+            fullWidth
+          />
+          <TextField
+            label={intl.formatMessage({ defaultMessage: "Device ID" })}
+            value={pairDeviceId}
+            onChange={(event) => onChangeDeviceId(event.target.value)}
+            fullWidth
+          />
+          <Select<RemoteDeviceRole>
+            size="small"
+            value={pairRole}
+            onChange={(event) =>
+              onChangeRole(event.target.value as RemoteDeviceRole)
+            }
+            fullWidth
+          >
+            <MenuItem value="receiver">
+              {intl.formatMessage({ defaultMessage: "Receiver device" })}
+            </MenuItem>
+            <MenuItem value="sender">
+              {intl.formatMessage({ defaultMessage: "Sender device" })}
+            </MenuItem>
+          </Select>
+          <Select<RemoteDevicePlatform>
+            size="small"
+            value={pairPlatform}
+            onChange={(event) =>
+              onChangePlatform(event.target.value as RemoteDevicePlatform)
+            }
+            fullWidth
+          >
+            <MenuItem value="windows">
+              {intl.formatMessage({ defaultMessage: "Windows" })}
+            </MenuItem>
+            <MenuItem value="macos">
+              {intl.formatMessage({ defaultMessage: "macOS" })}
+            </MenuItem>
+          </Select>
+          <TextField
+            label={addressLabel}
+            helperText={addressHelperText}
+            value={pairAddress}
+            onChange={(event) => onChangeAddress(event.target.value)}
+            fullWidth
+          />
+          <TextField
+            label={intl.formatMessage({ defaultMessage: "Shared secret" })}
+            helperText={intl.formatMessage({
+              defaultMessage:
+                "Use the same secret on both the sender and receiver device records.",
+            })}
+            value={pairSecret}
+            onChange={(event) => onChangeSecret(event.target.value)}
+            fullWidth
+          />
+        </Stack>
+      </DialogContent>
+      <DialogActions>
+        <Button onClick={onClose}>
+          <FormattedMessage defaultMessage="Cancel" />
+        </Button>
+        <Button variant="contained" onClick={onSave}>
+          <FormattedMessage defaultMessage="Save" />
+        </Button>
+      </DialogActions>
+    </Dialog>
+  );
+};
+
+const ImportInviteDialog = ({
+  open,
+  inviteCodeDraft,
+  pairingBusy,
+  onChangeInviteCode,
+  onImport,
+  onClose,
+}: {
+  open: boolean;
+  inviteCodeDraft: string;
+  pairingBusy: boolean;
+  onChangeInviteCode: (value: string) => void;
+  onImport: () => void;
+  onClose: () => void;
+}) => {
+  const intl = useIntl();
+  return (
+    <Dialog open={open} onClose={onClose} maxWidth="sm" fullWidth>
+      <DialogTitle>
+        <FormattedMessage defaultMessage="Import pairing invite" />
+      </DialogTitle>
+      <DialogContent dividers>
+        <Stack spacing={2} sx={{ pt: 0.5 }}>
+          <Typography
+            variant="body2"
+            sx={{
+              color: "text.secondary",
+            }}
+          >
+            <FormattedMessage defaultMessage="Paste the invite copied from the receiver machine. mausVoice will trust both devices automatically." />
+          </Typography>
+          <TextField
+            label={intl.formatMessage({ defaultMessage: "Pairing invite" })}
+            value={inviteCodeDraft}
+            onChange={(event) => onChangeInviteCode(event.target.value)}
+            multiline
+            minRows={3}
+            fullWidth
+          />
+        </Stack>
+      </DialogContent>
+      <DialogActions>
+        <Button onClick={onClose} disabled={pairingBusy}>
+          <FormattedMessage defaultMessage="Cancel" />
+        </Button>
+        <Button
+          variant="contained"
+          onClick={onImport}
+          disabled={!inviteCodeDraft.trim() || pairingBusy}
+        >
+          <FormattedMessage defaultMessage="Pair" />
+        </Button>
+      </DialogActions>
+    </Dialog>
+  );
+};
 
 export const MultiDeviceDialog = () => {
   const intl = useIntl();
@@ -336,15 +729,6 @@ export const MultiDeviceDialog = () => {
           "Enable receiver mode so paired senders can deliver final transcript text locally.",
       });
 
-  const lastDeliveryTimeLabel = receiverStatus?.lastDeliveryAt
-    ? new Date(receiverStatus.lastDeliveryAt).toLocaleString()
-    : null;
-  const lastTargetLooksLikeMausVoice =
-    receiverStatus?.lastTargetClassName === "Tauri Window";
-  const lastTargetMissingEditableField =
-    receiverStatus?.lastTargetEditable === false &&
-    receiverStatus?.lastDeliveryStatus === "failed";
-
   const remoteTargetSummary = pairedDevices.some(
     (device) => device.role === "receiver",
   )
@@ -462,159 +846,11 @@ export const MultiDeviceDialog = () => {
                 />
 
                 {receiverStatus && (
-                  <Stack spacing={0.5} sx={{ mt: -1 }}>
-                    <Typography
-                      variant="caption"
-                      sx={{
-                        color: "text.secondary",
-                      }}
-                    >
-                      <FormattedMessage
-                        defaultMessage="Device ID: {deviceId}"
-                        values={{ deviceId: receiverStatus.deviceId }}
-                      />
-                    </Typography>
-                    {receiverStatus.enabled && (
-                      <Typography
-                        variant="caption"
-                        sx={{
-                          color: "text.secondary",
-                        }}
-                      >
-                        <FormattedMessage
-                          defaultMessage="Connect address: {address}:{port}"
-                          values={{
-                            address:
-                              receiverStatus.listenAddress ?? "127.0.0.1",
-                            port: receiverStatus.port ?? "unknown",
-                          }}
-                        />
-                      </Typography>
-                    )}
-                    {receiverStatus.lastSenderDeviceId && (
-                      <Typography
-                        variant="caption"
-                        sx={{
-                          color: "text.secondary",
-                        }}
-                      >
-                        <FormattedMessage
-                          defaultMessage="Last sender: {senderId}"
-                          values={{
-                            senderId: receiverStatus.lastSenderDeviceId,
-                          }}
-                        />
-                      </Typography>
-                    )}
-                    {receiverStatus.lastDeliveryStatus && (
-                      <Typography
-                        variant="caption"
-                        sx={{
-                          color: "text.secondary",
-                        }}
-                      >
-                        {lastDeliveryTimeLabel ? (
-                          <FormattedMessage
-                            defaultMessage="Last delivery: {status} at {timestamp}"
-                            values={{
-                              status: receiverStatus.lastDeliveryStatus,
-                              timestamp: lastDeliveryTimeLabel,
-                            }}
-                          />
-                        ) : (
-                          <FormattedMessage
-                            defaultMessage="Last delivery: {status}"
-                            values={{
-                              status: receiverStatus.lastDeliveryStatus,
-                            }}
-                          />
-                        )}
-                      </Typography>
-                    )}
-                    {receiverStatus.lastError && (
-                      <Typography
-                        variant="caption"
-                        sx={{
-                          color: "error.main",
-                          wordBreak: "break-word",
-                        }}
-                      >
-                        <FormattedMessage
-                          defaultMessage="Last error: {message}"
-                          values={{ message: receiverStatus.lastError }}
-                        />
-                      </Typography>
-                    )}
-                    {(receiverStatus.lastTargetClassName ||
-                      receiverStatus.lastTargetTitle) && (
-                      <Typography
-                        variant="caption"
-                        sx={{
-                          color: "text.secondary",
-                          wordBreak: "break-word",
-                        }}
-                      >
-                        <FormattedMessage
-                          defaultMessage="Last target: {className}{title}"
-                          values={{
-                            className:
-                              receiverStatus.lastTargetClassName ??
-                              "unknown class",
-                            title: receiverStatus.lastTargetTitle
-                              ? ` (${receiverStatus.lastTargetTitle})`
-                              : "",
-                          }}
-                        />
-                      </Typography>
-                    )}
-                    {lastTargetLooksLikeMausVoice && (
-                      <Typography
-                        variant="caption"
-                        sx={{
-                          color: "warning.main",
-                          wordBreak: "break-word",
-                        }}
-                      >
-                        <FormattedMessage defaultMessage="The last delivery targeted the mausVoice window itself. Focus the destination app on the receiver machine before sending text." />
-                      </Typography>
-                    )}
-                    {lastTargetMissingEditableField && (
-                      <Typography
-                        variant="caption"
-                        sx={{
-                          color: "warning.main",
-                          wordBreak: "break-word",
-                        }}
-                      >
-                        <FormattedMessage defaultMessage="The last target window was active, but no editable text field was focused. Click back into the destination text field on the receiver machine before sending text." />
-                      </Typography>
-                    )}
-                    <Typography
-                      variant="caption"
-                      sx={{
-                        color: "text.secondary",
-                      }}
-                    >
-                      <FormattedMessage defaultMessage="Use Copy invite on the receiver machine, then Import invite on the sender machine. Manual trusted-device entry still works as a fallback." />
-                    </Typography>
-                    <Stack direction="row" spacing={1} sx={{ pt: 0.5 }}>
-                      <Button
-                        size="small"
-                        variant="outlined"
-                        onClick={handleCopyInvite}
-                        disabled={!receiverStatus.enabled}
-                      >
-                        <FormattedMessage defaultMessage="Copy invite" />
-                      </Button>
-                      <Button
-                        size="small"
-                        variant="outlined"
-                        onClick={() => setImportDialogOpen(true)}
-                      >
-                        <FormattedMessage defaultMessage="Import invite" />
-                      </Button>
-                    </Stack>
-                  </Stack>
+                  <ReceiverStatusDetails
+                    receiverStatus={receiverStatus}
+                    onCopyInvite={handleCopyInvite}
+                    onImportInvite={() => setImportDialogOpen(true)}
+                  />
                 )}
               </>
             )}
@@ -662,46 +898,9 @@ export const MultiDeviceDialog = () => {
                 />
 
                 {selectedRemoteTarget && (
-                  <Stack spacing={0.5} sx={{ mt: -1 }}>
-                    <Typography
-                      variant="caption"
-                      sx={{
-                        color: "text.secondary",
-                      }}
-                    >
-                      <FormattedMessage
-                        defaultMessage="Active receiver: {name}"
-                        values={{ name: selectedRemoteTarget.name }}
-                      />
-                    </Typography>
-                    {selectedRemoteTarget.lastKnownAddress && (
-                      <Typography
-                        variant="caption"
-                        sx={{
-                          color: "text.secondary",
-                          wordBreak: "break-word",
-                        }}
-                      >
-                        <FormattedMessage
-                          defaultMessage="Receiver address: {address}"
-                          values={{
-                            address: selectedRemoteTarget.lastKnownAddress,
-                          }}
-                        />
-                      </Typography>
-                    )}
-                    <Typography
-                      variant="caption"
-                      sx={{
-                        color: "text.secondary",
-                      }}
-                    >
-                      <FormattedMessage
-                        defaultMessage="Receiver device ID: {deviceId}"
-                        values={{ deviceId: selectedRemoteTarget.id }}
-                      />
-                    </Typography>
-                  </Stack>
+                  <RemoteTargetDetails
+                    selectedRemoteTarget={selectedRemoteTarget}
+                  />
                 )}
 
                 <SettingSection
@@ -759,144 +958,40 @@ export const MultiDeviceDialog = () => {
         </DialogActions>
       </Dialog>
 
-      <Dialog
+      <PairDeviceDialog
         open={pairDialogOpen}
+        editingDeviceId={editingDeviceId}
+        pairName={pairName}
+        pairDeviceId={pairDeviceId}
+        pairAddress={pairAddress}
+        pairSecret={pairSecret}
+        pairPlatform={pairPlatform}
+        pairRole={pairRole}
+        addressLabel={addressLabel}
+        addressHelperText={addressHelperText}
+        onChangeName={setPairName}
+        onChangeDeviceId={setPairDeviceId}
+        onChangeAddress={setPairAddress}
+        onChangeSecret={setPairSecret}
+        onChangePlatform={setPairPlatform}
+        onChangeRole={setPairRole}
+        onSave={() => void handleSaveManualPair()}
         onClose={closePairDialog}
-        maxWidth="sm"
-        fullWidth
-      >
-        <DialogTitle>
-          {editingDeviceId ? (
-            <FormattedMessage defaultMessage="Edit trusted device" />
-          ) : (
-            <FormattedMessage defaultMessage="Add trusted device" />
-          )}
-        </DialogTitle>
-        <DialogContent dividers>
-          <Stack spacing={2} sx={{ pt: 0.5 }}>
-            <TextField
-              label={intl.formatMessage({ defaultMessage: "Device name" })}
-              value={pairName}
-              onChange={(event) => setPairName(event.target.value)}
-              fullWidth
-            />
-            <TextField
-              label={intl.formatMessage({ defaultMessage: "Device ID" })}
-              value={pairDeviceId}
-              onChange={(event) => setPairDeviceId(event.target.value)}
-              fullWidth
-            />
-            <Select<RemoteDeviceRole>
-              size="small"
-              value={pairRole}
-              onChange={(event) =>
-                setPairRole(event.target.value as RemoteDeviceRole)
-              }
-              fullWidth
-            >
-              <MenuItem value="receiver">
-                {intl.formatMessage({ defaultMessage: "Receiver device" })}
-              </MenuItem>
-              <MenuItem value="sender">
-                {intl.formatMessage({ defaultMessage: "Sender device" })}
-              </MenuItem>
-            </Select>
-            <Select<RemoteDevicePlatform>
-              size="small"
-              value={pairPlatform}
-              onChange={(event) =>
-                setPairPlatform(event.target.value as RemoteDevicePlatform)
-              }
-              fullWidth
-            >
-              <MenuItem value="windows">
-                {intl.formatMessage({ defaultMessage: "Windows" })}
-              </MenuItem>
-              <MenuItem value="macos">
-                {intl.formatMessage({ defaultMessage: "macOS" })}
-              </MenuItem>
-            </Select>
-            <TextField
-              label={addressLabel}
-              helperText={addressHelperText}
-              value={pairAddress}
-              onChange={(event) => setPairAddress(event.target.value)}
-              fullWidth
-            />
-            <TextField
-              label={intl.formatMessage({ defaultMessage: "Shared secret" })}
-              helperText={intl.formatMessage({
-                defaultMessage:
-                  "Use the same secret on both the sender and receiver device records.",
-              })}
-              value={pairSecret}
-              onChange={(event) => setPairSecret(event.target.value)}
-              fullWidth
-            />
-          </Stack>
-        </DialogContent>
-        <DialogActions>
-          <Button onClick={closePairDialog}>
-            <FormattedMessage defaultMessage="Cancel" />
-          </Button>
-          <Button variant="contained" onClick={handleSaveManualPair}>
-            <FormattedMessage defaultMessage="Save" />
-          </Button>
-        </DialogActions>
-      </Dialog>
+      />
 
-      <Dialog
+      <ImportInviteDialog
         open={importDialogOpen}
+        inviteCodeDraft={inviteCodeDraft}
+        pairingBusy={pairingBusy}
+        onChangeInviteCode={setInviteCodeDraft}
+        onImport={() => void handleImportInvite()}
         onClose={() => {
           if (!pairingBusy) {
             setImportDialogOpen(false);
+            setInviteCodeDraft("");
           }
         }}
-        maxWidth="sm"
-        fullWidth
-      >
-        <DialogTitle>
-          <FormattedMessage defaultMessage="Import pairing invite" />
-        </DialogTitle>
-        <DialogContent dividers>
-          <Stack spacing={2} sx={{ pt: 0.5 }}>
-            <Typography
-              variant="body2"
-              sx={{
-                color: "text.secondary",
-              }}
-            >
-              <FormattedMessage defaultMessage="Paste the invite copied from the receiver machine. mausVoice will trust both devices automatically." />
-            </Typography>
-            <TextField
-              label={intl.formatMessage({ defaultMessage: "Pairing invite" })}
-              value={inviteCodeDraft}
-              onChange={(event) => setInviteCodeDraft(event.target.value)}
-              multiline
-              minRows={3}
-              fullWidth
-            />
-          </Stack>
-        </DialogContent>
-        <DialogActions>
-          <Button
-            onClick={() => {
-              setImportDialogOpen(false);
-              setInviteCodeDraft("");
-            }}
-            disabled={pairingBusy}
-          >
-            <FormattedMessage defaultMessage="Cancel" />
-          </Button>
-          <Button
-            variant="contained"
-            onClick={handleImportInvite}
-            disabled={!inviteCodeDraft.trim() || pairingBusy}
-          >
-            <FormattedMessage defaultMessage="Pair" />
-          </Button>
-        </DialogActions>
-      </Dialog>
+      />
     </>
   );
 };

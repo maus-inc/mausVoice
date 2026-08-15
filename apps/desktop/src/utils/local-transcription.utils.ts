@@ -114,67 +114,44 @@ export const LOCAL_MODEL_OPTIONS: LocalModelOption[] = LOCAL_WHISPER_MODELS.map(
   }),
 );
 
+// Legacy/alternate spellings of each model id as persisted by older builds or
+// entered manually, mapped onto the canonical `LocalWhisperModel` value.
+const LOCAL_WHISPER_MODEL_ALIASES: Record<string, LocalWhisperModel> = {
+  tiny: "tiny",
+  "tiny.en": "tiny",
+  base: "base",
+  "base.en": "base",
+  small: "small",
+  "small.en": "small",
+  medium: "medium",
+  "medium.en": "medium",
+  large: "large",
+  "large-v3": "large",
+  turbo: "turbo",
+  "large-turbo": "turbo",
+  large_v3_turbo: "turbo",
+  "large-v3-turbo": "turbo",
+  "parakeet-ctc-0.6b": "parakeet-ctc-0.6b",
+  "parakeet-ctc": "parakeet-ctc-0.6b",
+  parakeet_ctc: "parakeet-ctc-0.6b",
+  "parakeet_ctc_0.6b": "parakeet-ctc-0.6b",
+  "parakeet-tdt-0.6b": "parakeet-tdt-0.6b",
+  "parakeet-tdt": "parakeet-tdt-0.6b",
+  parakeet_tdt: "parakeet-tdt-0.6b",
+  "parakeet_tdt_0.6b": "parakeet-tdt-0.6b",
+  "canary-1b": "canary-1b",
+  canary: "canary-1b",
+  canary_1b: "canary-1b",
+};
+
 export const normalizeLocalWhisperModel = (
   value: string | null | undefined,
 ): LocalWhisperModel => {
   const normalized = value?.trim().toLowerCase();
-
-  if (normalized === "tiny" || normalized === "tiny.en") {
-    return "tiny";
+  if (!normalized) {
+    return DEFAULT_LOCAL_WHISPER_MODEL;
   }
-
-  if (normalized === "base" || normalized === "base.en") {
-    return "base";
-  }
-
-  if (normalized === "small" || normalized === "small.en") {
-    return "small";
-  }
-
-  if (normalized === "medium" || normalized === "medium.en") {
-    return "medium";
-  }
-
-  if (normalized === "large" || normalized === "large-v3") {
-    return "large";
-  }
-
-  if (
-    normalized === "turbo" ||
-    normalized === "large-turbo" ||
-    normalized === "large_v3_turbo" ||
-    normalized === "large-v3-turbo"
-  ) {
-    return "turbo";
-  }
-
-  if (
-    normalized === "parakeet-ctc-0.6b" ||
-    normalized === "parakeet-ctc" ||
-    normalized === "parakeet_ctc" ||
-    normalized === "parakeet_ctc_0.6b"
-  ) {
-    return "parakeet-ctc-0.6b";
-  }
-
-  if (
-    normalized === "parakeet-tdt-0.6b" ||
-    normalized === "parakeet-tdt" ||
-    normalized === "parakeet_tdt" ||
-    normalized === "parakeet_tdt_0.6b"
-  ) {
-    return "parakeet-tdt-0.6b";
-  }
-
-  if (
-    normalized === "canary-1b" ||
-    normalized === "canary" ||
-    normalized === "canary_1b"
-  ) {
-    return "canary-1b";
-  }
-
-  return DEFAULT_LOCAL_WHISPER_MODEL;
+  return LOCAL_WHISPER_MODEL_ALIASES[normalized] ?? DEFAULT_LOCAL_WHISPER_MODEL;
 };
 
 export const isGpuPreferredTranscriptionDevice = (

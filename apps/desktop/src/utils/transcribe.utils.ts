@@ -28,35 +28,20 @@ type OverlapResult = {
 /** Threshold for considering a match "exact" (same word count, very high similarity) */
 const EXACT_MATCH_THRESHOLD = 0.9;
 
-/**
- * Finds the best overlap between two transcriptions using fuzzy string matching.
- * This handles contractions ("that's" vs "that is"), hyphens ("slow-moving" vs "slow moving"),
- * punctuation differences, and minor transcription errors.
- */
-const findOverlap = (first: string, second: string): OverlapResult => {
-  const firstWords = first.trim().split(/\s+/);
-  const secondWords = second.trim().split(/\s+/);
+type BestOverlap = {
+  i: number; // words from end of first
+  j: number; // words from start of second
+  similarity: number;
+  isExact: boolean;
+};
 
-  if (firstWords.length === 0 || secondWords.length === 0) {
-    return {
-      wordsToKeepFromFirst: firstWords.length,
-      wordsToSkipFromSecond: 0,
-    };
-  }
-
-  // Allow different limits for first and second to handle contraction expansion
-  // e.g., "I'm" (1 word) needs to match "I am" (2 words)
-  // Use higher limit (30 words) for longer audio segment overlaps
-  const maxIToCheck = Math.min(firstWords.length, 30);
-  const maxJToCheck = Math.min(secondWords.length, 30);
-
-  // Track best overlap found
-  let best: {
-    i: number; // words from end of first
-    j: number; // words from start of second
-    similarity: number;
-    isExact: boolean;
-  } | null = null;
+const findBestOverlap = (
+  firstWords: string[],
+  secondWords: string[],
+  maxIToCheck: number,
+  maxJToCheck: number,
+): BestOverlap | null => {
+  let best: BestOverlap | null = null;
 
   // For each possible overlap size
   for (let i = 1; i <= maxIToCheck; i++) {
@@ -91,55 +76,111 @@ const findOverlap = (first: string, second: string): OverlapResult => {
     }
   }
 
+  return best;
+};
+
+const findTruncatedPrefixOverlap = (
+  firstWords: string[],
+  secondWords: string[],
+): OverlapResult | null => {
   // Check if last word of first is a truncated prefix of first word of second
   // e.g., "hello wor" + "world peace" → "wor" is prefix of "world"
-  if (secondWords.length > 0) {
-    const lastWordOfFirst = normalizeText(firstWords[firstWords.length - 1]);
-    const firstWordOfSecond = normalizeText(secondWords[0]);
+  if (secondWords.length === 0) {
+    return null;
+  }
+  const lastWordOfFirst = normalizeText(firstWords[firstWords.length - 1]);
+  const firstWordOfSecond = normalizeText(secondWords[0]);
 
-    if (
-      lastWordOfFirst.length >= 2 &&
-      firstWordOfSecond.startsWith(lastWordOfFirst) &&
-      lastWordOfFirst.length < firstWordOfSecond.length
-    ) {
-      // Drop the truncated word from first, use all of second
-      return {
-        wordsToKeepFromFirst: firstWords.length - 1,
-        wordsToSkipFromSecond: 0,
-      };
+  if (
+    lastWordOfFirst.length >= 2 &&
+    firstWordOfSecond.startsWith(lastWordOfFirst) &&
+    lastWordOfFirst.length < firstWordOfSecond.length
+  ) {
+    // Drop the truncated word from first, use all of second
+    return {
+      wordsToKeepFromFirst: firstWords.length - 1,
+      wordsToSkipFromSecond: 0,
+    };
+  }
+
+  return null;
+};
+
+const findOverlapAfterDroppingLastWord = (
+  firstWords: string[],
+  secondWords: string[],
+  maxJToCheck: number,
+): OverlapResult | null => {
+  // Also check for overlap if we drop the last word (handles truncated/misheard last word)
+  const firstWithoutLast = firstWords.slice(0, -1);
+  for (let i = 1; i <= Math.min(firstWithoutLast.length, 30); i++) {
+    const endOfFirst = firstWithoutLast.slice(-i).join(" ");
+    const normalizedFirst = normalizeText(endOfFirst);
+
+    for (let j = 1; j <= maxJToCheck; j++) {
+      const startOfSecond = secondWords.slice(0, j).join(" ");
+      const normalizedSecond = normalizeText(startOfSecond);
+
+      const lengthRatio =
+        Math.min(normalizedFirst.length, normalizedSecond.length) /
+        Math.max(normalizedFirst.length, normalizedSecond.length);
+      if (lengthRatio < 0.5) continue;
+
+      const similarity = getStringSimilarity(normalizedFirst, normalizedSecond);
+
+      if (similarity >= EXACT_MATCH_THRESHOLD && i === j) {
+        // Found exact match after dropping last word - keep first without last word, skip overlap from second
+        return {
+          wordsToKeepFromFirst: firstWords.length - 1,
+          wordsToSkipFromSecond: j,
+        };
+      }
     }
   }
 
-  // Also check for overlap if we drop the last word (handles truncated/misheard last word)
-  if (!best && firstWords.length >= 2) {
-    const firstWithoutLast = firstWords.slice(0, -1);
-    for (let i = 1; i <= Math.min(firstWithoutLast.length, 30); i++) {
-      const endOfFirst = firstWithoutLast.slice(-i).join(" ");
-      const normalizedFirst = normalizeText(endOfFirst);
+  return null;
+};
 
-      for (let j = 1; j <= maxJToCheck; j++) {
-        const startOfSecond = secondWords.slice(0, j).join(" ");
-        const normalizedSecond = normalizeText(startOfSecond);
+/**
+ * Finds the best overlap between two transcriptions using fuzzy string matching.
+ * This handles contractions ("that's" vs "that is"), hyphens ("slow-moving" vs "slow moving"),
+ * punctuation differences, and minor transcription errors.
+ */
+const findOverlap = (first: string, second: string): OverlapResult => {
+  const firstWords = first.trim().split(/\s+/);
+  const secondWords = second.trim().split(/\s+/);
 
-        const lengthRatio =
-          Math.min(normalizedFirst.length, normalizedSecond.length) /
-          Math.max(normalizedFirst.length, normalizedSecond.length);
-        if (lengthRatio < 0.5) continue;
+  if (firstWords.length === 0 || secondWords.length === 0) {
+    return {
+      wordsToKeepFromFirst: firstWords.length,
+      wordsToSkipFromSecond: 0,
+    };
+  }
 
-        const similarity = getStringSimilarity(
-          normalizedFirst,
-          normalizedSecond,
-        );
+  // Allow different limits for first and second to handle contraction expansion
+  // e.g., "I'm" (1 word) needs to match "I am" (2 words)
+  // Use higher limit (30 words) for longer audio segment overlaps
+  const maxIToCheck = Math.min(firstWords.length, 30);
+  const maxJToCheck = Math.min(secondWords.length, 30);
 
-        if (similarity >= EXACT_MATCH_THRESHOLD && i === j) {
-          // Found exact match after dropping last word - keep first without last word, skip overlap from second
-          return {
-            wordsToKeepFromFirst: firstWords.length - 1,
-            wordsToSkipFromSecond: j,
-          };
-        }
-      }
-    }
+  const best = findBestOverlap(
+    firstWords,
+    secondWords,
+    maxIToCheck,
+    maxJToCheck,
+  );
+
+  const truncatedPrefix = findTruncatedPrefixOverlap(firstWords, secondWords);
+  if (truncatedPrefix) {
+    return truncatedPrefix;
+  }
+
+  const droppedLast =
+    !best && firstWords.length >= 2
+      ? findOverlapAfterDroppingLastWord(firstWords, secondWords, maxJToCheck)
+      : null;
+  if (droppedLast) {
+    return droppedLast;
   }
 
   // No overlap found - concatenate

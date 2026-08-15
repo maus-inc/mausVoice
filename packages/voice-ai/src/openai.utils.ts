@@ -11,6 +11,7 @@ import { countWords, retry } from "@maus-inc/utilities";
 import OpenAI, { toFile } from "openai";
 import type { CustomFetch } from "./types";
 import type {
+  ChatCompletionChunk,
   ChatCompletionContentPart,
   ChatCompletionMessageParam,
   ChatCompletionTool,
@@ -336,6 +337,64 @@ function toFinishReason(raw: string | null | undefined): LlmFinishReason {
   }
 }
 
+type OpenAIStreamState = {
+  toolCalls: Map<number, { id: string; name: string; arguments: string }>;
+  finishReason: LlmFinishReason;
+  promptTokens?: number;
+  completionTokens?: number;
+  modelId?: string;
+};
+
+const applyOpenAIToolCalls = (
+  choice: ChatCompletionChunk.Choice,
+  toolCalls: OpenAIStreamState["toolCalls"],
+): void => {
+  for (const tc of choice.delta?.tool_calls ?? []) {
+    const index = tc.index ?? toolCalls.size;
+    const current = toolCalls.get(index) ?? {
+      id: "",
+      name: "",
+      arguments: "",
+    };
+    if (tc.id) current.id = tc.id;
+    if (tc.function?.name) current.name = tc.function.name;
+    if (tc.function?.arguments) current.arguments += tc.function.arguments;
+    toolCalls.set(index, current);
+  }
+};
+
+const handleOpenAIChunk = (
+  chunk: ChatCompletionChunk,
+  state: OpenAIStreamState,
+): LlmStreamEvent[] => {
+  if (chunk.model) {
+    state.modelId = chunk.model;
+  }
+
+  if (chunk.usage) {
+    state.promptTokens = chunk.usage.prompt_tokens ?? undefined;
+    state.completionTokens = chunk.usage.completion_tokens ?? undefined;
+  }
+
+  const choice = chunk.choices[0];
+  if (!choice) {
+    return [];
+  }
+
+  const events: LlmStreamEvent[] = [];
+  if (choice.delta?.content) {
+    events.push({ type: "text-delta", text: choice.delta.content });
+  }
+
+  applyOpenAIToolCalls(choice, state.toolCalls);
+
+  if (choice.finish_reason) {
+    state.finishReason = toFinishReason(choice.finish_reason);
+  }
+
+  return events;
+};
+
 export async function* openaiCompatibleStreamChat(
   client: OpenAI,
   model: string,
@@ -359,51 +418,18 @@ export async function* openaiCompatibleStreamChat(
     ...extraBody,
   });
 
-  const toolCalls = new Map<
-    number,
-    { id: string; name: string; arguments: string }
-  >();
-  let finishReason: LlmFinishReason = "other";
-  let promptTokens: number | undefined;
-  let completionTokens: number | undefined;
-  let modelId: string | undefined;
+  const state: OpenAIStreamState = {
+    toolCalls: new Map(),
+    finishReason: "other",
+  };
 
   for await (const chunk of stream) {
-    if (chunk.model) {
-      modelId = chunk.model;
-    }
-
-    if (chunk.usage) {
-      promptTokens = chunk.usage.prompt_tokens ?? undefined;
-      completionTokens = chunk.usage.completion_tokens ?? undefined;
-    }
-
-    const choice = chunk.choices[0];
-    if (!choice) continue;
-
-    if (choice.delta?.content) {
-      yield { type: "text-delta", text: choice.delta.content };
-    }
-
-    for (const tc of choice.delta?.tool_calls ?? []) {
-      const index = tc.index ?? toolCalls.size;
-      const current = toolCalls.get(index) ?? {
-        id: "",
-        name: "",
-        arguments: "",
-      };
-      if (tc.id) current.id = tc.id;
-      if (tc.function?.name) current.name = tc.function.name;
-      if (tc.function?.arguments) current.arguments += tc.function.arguments;
-      toolCalls.set(index, current);
-    }
-
-    if (choice.finish_reason) {
-      finishReason = toFinishReason(choice.finish_reason);
-    }
+    yield* handleOpenAIChunk(chunk, state);
   }
 
-  for (const [, tc] of [...toolCalls.entries()].sort(([a], [b]) => a - b)) {
+  for (const [, tc] of [...state.toolCalls.entries()].sort(
+    ([a], [b]) => a - b,
+  )) {
     yield {
       type: "tool-call",
       id: tc.id,
@@ -414,12 +440,15 @@ export async function* openaiCompatibleStreamChat(
 
   yield {
     type: "finish",
-    finishReason,
+    finishReason: state.finishReason,
     usage:
-      promptTokens != null || completionTokens != null
-        ? { promptTokens, completionTokens }
+      state.promptTokens != null || state.completionTokens != null
+        ? {
+            promptTokens: state.promptTokens,
+            completionTokens: state.completionTokens,
+          }
         : undefined,
-    modelId,
+    modelId: state.modelId,
   };
 }
 

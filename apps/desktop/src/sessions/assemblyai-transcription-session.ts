@@ -1,4 +1,3 @@
-import { convertFloat32ToPCM16 } from "@maus-inc/voice-ai";
 import { getLogger } from "../utils/log.utils";
 import { listen, UnlistenFn } from "@tauri-apps/api/event";
 import {
@@ -6,6 +5,7 @@ import {
   TranscriptionSession,
   TranscriptionSessionResult,
 } from "../types/transcription-session.types";
+import { createAudioChunkPump } from "../utils/audio-chunking.utils";
 
 type AssemblyAIStreamingSession = {
   finalize: () => Promise<string>;
@@ -21,111 +21,39 @@ const startAssemblyAIStreaming = async (
     "[AssemblyAI WebSocket] Starting with sample rate:",
     sampleRate,
   );
-  const MIN_CHUNK_DURATION_MS = 50;
-  const MAX_CHUNK_DURATION_MS = 100;
-  const minSamplesPerChunk = Math.max(
-    1,
-    Math.ceil((sampleRate * MIN_CHUNK_DURATION_MS) / 1000),
-  );
-  const maxSamplesPerChunk = Math.max(
-    minSamplesPerChunk,
-    Math.ceil((sampleRate * MAX_CHUNK_DURATION_MS) / 1000),
-  );
   return new Promise((resolve, reject) => {
     let ws: WebSocket | null = null;
     let unlisten: UnlistenFn | null = null;
     let finalTranscript = "";
     let isFinalized = false;
     let receivedChunkCount = 0;
-    let sentChunkCount = 0;
-    let pendingSampleCount = 0;
-    let pendingChunks: Float32Array[] = [];
 
     let currentTurn = 0;
     let extra = "";
+
+    const pump = createAudioChunkPump({
+      sampleRate,
+      minChunkDurationMs: 50,
+      maxChunkDurationMs: 100,
+      canSend: () => !!ws && ws.readyState === WebSocket.OPEN,
+      send: (pcm16) => ws?.send(pcm16),
+      onChunkSent: (sentCount, chunkLength, durationMs, byteLength) => {
+        getLogger().info(
+          `[AssemblyAI WebSocket] Sent chunk #${sentCount} (${chunkLength} samples ~${durationMs.toFixed(1)} ms, ${byteLength} bytes)`,
+        );
+      },
+      onError: (error) => {
+        getLogger().error(
+          "[AssemblyAI WebSocket] Error sending buffered chunk:",
+          error,
+        );
+      },
+    });
 
     const getText = () => {
       return (
         finalTranscript + (extra ? (finalTranscript ? " " : "") + extra : "")
       );
-    };
-
-    const resetBuffers = () => {
-      pendingChunks = [];
-      pendingSampleCount = 0;
-    };
-
-    const drainSamples = (targetCount: number): Float32Array => {
-      if (targetCount <= 0) {
-        return new Float32Array(0);
-      }
-      const output = new Float32Array(targetCount);
-      let filled = 0;
-
-      while (filled < targetCount && pendingChunks.length > 0) {
-        const current = pendingChunks[0];
-        const remaining = targetCount - filled;
-        if (current.length <= remaining) {
-          output.set(current, filled);
-          filled += current.length;
-          pendingChunks.shift();
-        } else {
-          output.set(current.subarray(0, remaining), filled);
-          pendingChunks[0] = current.subarray(remaining);
-          filled += remaining;
-        }
-      }
-
-      pendingSampleCount = Math.max(0, pendingSampleCount - filled);
-      return filled === targetCount ? output : output.subarray(0, filled);
-    };
-
-    const flushPendingSamples = (force = false) => {
-      if (!ws || ws.readyState !== WebSocket.OPEN) {
-        return;
-      }
-
-      while (
-        pendingSampleCount >= minSamplesPerChunk ||
-        (force && pendingSampleCount > 0)
-      ) {
-        const available = pendingSampleCount;
-        let chunkSize = available;
-        if (available >= maxSamplesPerChunk) {
-          chunkSize = maxSamplesPerChunk;
-        } else if (available < minSamplesPerChunk && !force) {
-          break;
-        }
-
-        let chunk = drainSamples(chunkSize);
-        if (force && chunk.length > 0 && chunk.length < minSamplesPerChunk) {
-          const padded = new Float32Array(minSamplesPerChunk);
-          padded.set(chunk);
-          chunk = padded;
-        }
-
-        if (chunk.length === 0) {
-          break;
-        }
-
-        try {
-          const pcm16 = convertFloat32ToPCM16(chunk);
-          ws.send(pcm16);
-          sentChunkCount++;
-          if (sentChunkCount <= 3 || sentChunkCount % 10 === 0) {
-            const durationMs = (chunk.length / sampleRate) * 1000;
-            getLogger().info(
-              `[AssemblyAI WebSocket] Sent chunk #${sentChunkCount} (${chunk.length} samples ~${durationMs.toFixed(1)} ms, ${pcm16.byteLength} bytes)`,
-            );
-          }
-        } catch (error) {
-          getLogger().error(
-            "[AssemblyAI WebSocket] Error sending buffered chunk:",
-            error,
-          );
-          break;
-        }
-      }
     };
 
     const cleanup = () => {
@@ -137,7 +65,7 @@ const startAssemblyAIStreaming = async (
         ws.close();
         ws = null;
       }
-      resetBuffers();
+      pump.resetBuffers();
     };
 
     const finalize = (): Promise<string> => {
@@ -158,10 +86,10 @@ const startAssemblyAIStreaming = async (
         }
 
         isFinalized = true;
-        flushPendingSamples(true);
+        pump.flushPendingSamples(true);
         getLogger().info(
           "[AssemblyAI WebSocket] Total chunks sent:",
-          sentChunkCount,
+          pump.getSentChunkCount(),
         );
 
         if (ws && ws.readyState === WebSocket.OPEN) {
@@ -239,9 +167,8 @@ const startAssemblyAIStreaming = async (
                   event.payload.samples instanceof Float32Array
                     ? event.payload.samples
                     : Float32Array.from(event.payload.samples);
-                pendingChunks.push(typedChunk);
-                pendingSampleCount += typedChunk.length;
-                flushPendingSamples(false);
+                pump.pushSamples(typedChunk);
+                pump.flushPendingSamples();
               } catch (error) {
                 getLogger().error(
                   "[AssemblyAI WebSocket] Error sending audio chunk:",

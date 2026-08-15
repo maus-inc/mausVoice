@@ -6,9 +6,20 @@ import {
 } from "@maus-inc/types";
 import { invoke } from "@tauri-apps/api/core";
 import dayjs from "dayjs";
+import { orNull, orUndefined } from "../utils/nullable.utils";
 import { getAppState } from "../store";
 import { getMyEffectiveUserId } from "../utils/user.utils";
 import { BaseRepo } from "./base.repo";
+
+const toLocalAudio = (
+  audio: TranscriptionAudioSnapshot | null | undefined,
+): LocalTranscriptionAudio | undefined =>
+  audio
+    ? {
+        filePath: audio.filePath,
+        durationMs: audio.durationMs,
+      }
+    : undefined;
 
 type LocalTranscriptionAudio = TranscriptionAudioSnapshot;
 
@@ -51,28 +62,23 @@ const toLocalTranscription = (
   id: transcription.id,
   transcript: transcription.transcript,
   timestamp: dayjs(transcription.createdAt).valueOf(),
-  audio: transcription.audio
-    ? {
-        filePath: transcription.audio.filePath,
-        durationMs: transcription.audio.durationMs,
-      }
-    : undefined,
-  modelSize: transcription.modelSize ?? null,
-  inferenceDevice: transcription.inferenceDevice ?? null,
-  rawTranscript: transcription.rawTranscript ?? null,
-  sanitizedTranscript: transcription.sanitizedTranscript ?? null,
-  transcriptionPrompt: transcription.transcriptionPrompt ?? null,
-  postProcessPrompt: transcription.postProcessPrompt ?? null,
-  transcriptionApiKeyId: transcription.transcriptionApiKeyId ?? null,
-  postProcessApiKeyId: transcription.postProcessApiKeyId ?? null,
-  transcriptionMode: transcription.transcriptionMode ?? null,
-  postProcessMode: transcription.postProcessMode ?? null,
-  postProcessDevice: transcription.postProcessDevice ?? null,
-  transcriptionDurationMs: transcription.transcriptionDurationMs ?? null,
-  postprocessDurationMs: transcription.postprocessDurationMs ?? null,
-  warnings: transcription.warnings ?? null,
-  remoteStatus: transcription.remoteStatus ?? null,
-  remoteDeviceId: transcription.remoteDeviceId ?? null,
+  audio: toLocalAudio(transcription.audio),
+  modelSize: orNull(transcription.modelSize),
+  inferenceDevice: orNull(transcription.inferenceDevice),
+  rawTranscript: orNull(transcription.rawTranscript),
+  sanitizedTranscript: orNull(transcription.sanitizedTranscript),
+  transcriptionPrompt: orNull(transcription.transcriptionPrompt),
+  postProcessPrompt: orNull(transcription.postProcessPrompt),
+  transcriptionApiKeyId: orNull(transcription.transcriptionApiKeyId),
+  postProcessApiKeyId: orNull(transcription.postProcessApiKeyId),
+  transcriptionMode: orNull(transcription.transcriptionMode),
+  postProcessMode: orNull(transcription.postProcessMode),
+  postProcessDevice: orNull(transcription.postProcessDevice),
+  transcriptionDurationMs: orNull(transcription.transcriptionDurationMs),
+  postprocessDurationMs: orNull(transcription.postprocessDurationMs),
+  warnings: orNull(transcription.warnings),
+  remoteStatus: orNull(transcription.remoteStatus),
+  remoteDeviceId: orNull(transcription.remoteDeviceId),
 });
 
 const fromLocalTranscription = (
@@ -83,29 +89,24 @@ const fromLocalTranscription = (
   createdAt: dayjs(transcription.timestamp).toISOString(),
   createdByUserId: getMyEffectiveUserId(getAppState()),
   isDeleted: false,
-  audio: transcription.audio
-    ? {
-        filePath: transcription.audio.filePath,
-        durationMs: transcription.audio.durationMs,
-      }
-    : undefined,
-  modelSize: transcription.modelSize ?? undefined,
-  inferenceDevice: transcription.inferenceDevice ?? undefined,
-  rawTranscript: transcription.rawTranscript ?? undefined,
-  sanitizedTranscript: transcription.sanitizedTranscript ?? undefined,
-  transcriptionPrompt: transcription.transcriptionPrompt ?? undefined,
-  postProcessPrompt: transcription.postProcessPrompt ?? undefined,
-  transcriptionApiKeyId: transcription.transcriptionApiKeyId ?? undefined,
-  postProcessApiKeyId: transcription.postProcessApiKeyId ?? undefined,
-  transcriptionMode: transcription.transcriptionMode ?? undefined,
-  postProcessMode: transcription.postProcessMode ?? undefined,
-  postProcessDevice: transcription.postProcessDevice ?? undefined,
-  transcriptionDurationMs: transcription.transcriptionDurationMs ?? undefined,
-  postprocessDurationMs: transcription.postprocessDurationMs ?? undefined,
-  warnings: transcription.warnings ?? undefined,
+  audio: toLocalAudio(transcription.audio),
+  modelSize: orUndefined(transcription.modelSize),
+  inferenceDevice: orUndefined(transcription.inferenceDevice),
+  rawTranscript: orUndefined(transcription.rawTranscript),
+  sanitizedTranscript: orUndefined(transcription.sanitizedTranscript),
+  transcriptionPrompt: orUndefined(transcription.transcriptionPrompt),
+  postProcessPrompt: orUndefined(transcription.postProcessPrompt),
+  transcriptionApiKeyId: orUndefined(transcription.transcriptionApiKeyId),
+  postProcessApiKeyId: orUndefined(transcription.postProcessApiKeyId),
+  transcriptionMode: orUndefined(transcription.transcriptionMode),
+  postProcessMode: orUndefined(transcription.postProcessMode),
+  postProcessDevice: orUndefined(transcription.postProcessDevice),
+  transcriptionDurationMs: orUndefined(transcription.transcriptionDurationMs),
+  postprocessDurationMs: orUndefined(transcription.postprocessDurationMs),
+  warnings: orUndefined(transcription.warnings),
   remoteStatus:
     (transcription.remoteStatus as "sent" | "received") ?? undefined,
-  remoteDeviceId: transcription.remoteDeviceId ?? undefined,
+  remoteDeviceId: orUndefined(transcription.remoteDeviceId),
 });
 
 export abstract class BaseTranscriptionRepo extends BaseRepo {

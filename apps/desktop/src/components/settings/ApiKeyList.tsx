@@ -60,6 +60,61 @@ const getAvailableProviders = (context: ApiKeyListContext): ApiKeyProvider[] =>
       : repo.supportsGenerativeTextModels();
   });
 
+const ApiKeyFormActions = ({
+  onCancel,
+  onSave,
+  saving,
+  canSave,
+  onTest,
+  testing,
+}: {
+  onCancel: () => void;
+  onSave: () => void;
+  saving: boolean;
+  canSave: boolean;
+  onTest?: () => void;
+  testing?: boolean;
+}) => {
+  return (
+    <Box sx={{ display: "flex", gap: 1, justifyContent: "flex-end" }}>
+      {onTest && (
+        <Button
+          variant="outlined"
+          size="small"
+          onClick={onTest}
+          disabled={testing || saving}
+        >
+          {testing ? (
+            <FormattedMessage defaultMessage="Testing..." />
+          ) : (
+            <FormattedMessage defaultMessage="Test" />
+          )}
+        </Button>
+      )}
+      <Button
+        variant="outlined"
+        onClick={onCancel}
+        size="small"
+        disabled={saving}
+      >
+        <FormattedMessage defaultMessage="Cancel" />
+      </Button>
+      <Button
+        variant="contained"
+        size="small"
+        onClick={onSave}
+        disabled={!canSave || saving}
+      >
+        {saving ? (
+          <FormattedMessage defaultMessage="Saving..." />
+        ) : (
+          <FormattedMessage defaultMessage="Save" />
+        )}
+      </Button>
+    </Box>
+  );
+};
+
 type AddApiKeyCardProps = {
   onSave: (
     name: string,
@@ -184,26 +239,12 @@ const AddApiKeyCard = ({ onSave, onCancel, context }: AddApiKeyCardProps) => {
         onIncludeV1PathChange={setIncludeV1Path}
       />
       <Box sx={{ display: "flex", gap: 1, justifyContent: "flex-end" }}>
-        <Button
-          variant="outlined"
-          onClick={onCancel}
-          size="small"
-          disabled={saving}
-        >
-          <FormattedMessage defaultMessage="Cancel" />
-        </Button>
-        <Button
-          variant="contained"
-          size="small"
-          onClick={handleSave}
-          disabled={!canSave || saving}
-        >
-          {saving ? (
-            <FormattedMessage defaultMessage="Saving..." />
-          ) : (
-            <FormattedMessage defaultMessage="Save" />
-          )}
-        </Button>
+        <ApiKeyFormActions
+          onCancel={onCancel}
+          onSave={() => void handleSave()}
+          saving={saving}
+          canSave={canSave}
+        />
       </Box>
     </Paper>
   );
@@ -358,38 +399,14 @@ const EditApiKeyCard = ({
         isEditing
       />
       <Box sx={{ display: "flex", gap: 1, justifyContent: "flex-end" }}>
-        <Button
-          variant="outlined"
-          size="small"
-          onClick={handleTest}
-          disabled={testing || saving}
-        >
-          {testing ? (
-            <FormattedMessage defaultMessage="Testing..." />
-          ) : (
-            <FormattedMessage defaultMessage="Test" />
-          )}
-        </Button>
-        <Button
-          variant="outlined"
-          onClick={onCancel}
-          size="small"
-          disabled={saving}
-        >
-          <FormattedMessage defaultMessage="Cancel" />
-        </Button>
-        <Button
-          variant="contained"
-          size="small"
-          onClick={handleSave}
-          disabled={!canSave || saving}
-        >
-          {saving ? (
-            <FormattedMessage defaultMessage="Saving..." />
-          ) : (
-            <FormattedMessage defaultMessage="Save" />
-          )}
-        </Button>
+        <ApiKeyFormActions
+          onCancel={onCancel}
+          onSave={() => void handleSave()}
+          saving={saving}
+          canSave={canSave}
+          onTest={handleTest}
+          testing={testing}
+        />
       </Box>
     </Paper>
   );

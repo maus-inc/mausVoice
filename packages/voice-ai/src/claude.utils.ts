@@ -7,6 +7,7 @@ import type {
   ToolChoiceTool,
   Tool,
 } from "@anthropic-ai/sdk/resources/messages";
+import type { MessageStream } from "@anthropic-ai/sdk/lib/MessageStream";
 import { retry, countWords } from "@maus-inc/utilities";
 import type {
   JsonResponse,
@@ -14,6 +15,7 @@ import type {
   LlmFinishReason,
   LlmMessage,
   LlmStreamEvent,
+  LlmTool,
 } from "@maus-inc/types";
 
 export const CLAUDE_MODELS = [
@@ -215,63 +217,52 @@ export type ClaudeStreamChatArgs = {
   input: LlmChatInput;
 };
 
-export async function* claudeStreamChat({
-  apiKey,
-  model,
-  input,
-}: ClaudeStreamChatArgs): AsyncGenerator<LlmStreamEvent> {
-  const client = createClient(apiKey);
-  const { system, messages } = llmMessagesToClaude(input.messages);
+type PendingClaudeToolCall = {
+  id: string;
+  name: string;
+  arguments: string;
+};
 
-  const tools: Tool[] | undefined =
-    input.tools && input.tools.length > 0
-      ? input.tools.map((t) => ({
-          name: t.name,
-          description: t.description ?? "",
-          input_schema: (t.parameters ?? {
-            type: "object",
-            properties: {},
-          }) as Tool["input_schema"],
-        }))
-      : undefined;
+const toClaudeTool = (tool: LlmTool): Tool => ({
+  name: tool.name,
+  description: tool.description ?? "",
+  input_schema: (tool.parameters ?? {
+    type: "object",
+    properties: {},
+  }) as Tool["input_schema"],
+});
 
-  let toolChoice: ToolChoiceAuto | ToolChoiceAny | ToolChoiceTool | undefined;
-  if (input.toolChoice && tools) {
-    if (typeof input.toolChoice === "string") {
-      switch (input.toolChoice) {
-        case "auto":
-          toolChoice = { type: "auto" };
-          break;
-        case "required":
-          toolChoice = { type: "any" };
-          break;
-        case "none":
-          toolChoice = undefined;
-          break;
-      }
-    } else {
-      toolChoice = { type: "tool", name: input.toolChoice.name };
-    }
+const buildClaudeTools = (input: LlmChatInput): Tool[] | undefined => {
+  if (!input.tools || input.tools.length === 0) {
+    return undefined;
   }
+  return input.tools.map(toClaudeTool);
+};
 
-  const stream = client.messages.stream({
-    model,
-    max_tokens: input.maxTokens ?? 4096,
-    system,
-    messages,
-    tools,
-    tool_choice: toolChoice,
-    temperature: input.temperature,
-    top_p: input.topP,
-    stop_sequences: input.stopSequences,
-  });
+const buildClaudeToolChoice = (
+  input: LlmChatInput,
+  tools?: Tool[],
+): ToolChoiceAuto | ToolChoiceAny | ToolChoiceTool | undefined => {
+  if (!input.toolChoice || !tools) {
+    return undefined;
+  }
+  if (typeof input.toolChoice !== "string") {
+    return { type: "tool", name: input.toolChoice.name };
+  }
+  switch (input.toolChoice) {
+    case "auto":
+      return { type: "auto" };
+    case "required":
+      return { type: "any" };
+    case "none":
+      return undefined;
+  }
+};
 
-  const pendingToolCalls: Array<{
-    id: string;
-    name: string;
-    arguments: string;
-  }> = [];
-
+async function* claudeStreamEvents(
+  stream: MessageStream,
+  pendingToolCalls: PendingClaudeToolCall[],
+): AsyncGenerator<LlmStreamEvent> {
   for await (const event of stream) {
     if (
       event.type === "content_block_delta" &&
@@ -301,6 +292,32 @@ export async function* claudeStreamChat({
       });
     }
   }
+}
+
+export async function* claudeStreamChat({
+  apiKey,
+  model,
+  input,
+}: ClaudeStreamChatArgs): AsyncGenerator<LlmStreamEvent> {
+  const client = createClient(apiKey);
+  const { system, messages } = llmMessagesToClaude(input.messages);
+  const tools = buildClaudeTools(input);
+  const toolChoice = buildClaudeToolChoice(input, tools);
+
+  const stream = client.messages.stream({
+    model,
+    max_tokens: input.maxTokens ?? 4096,
+    system,
+    messages,
+    tools,
+    tool_choice: toolChoice,
+    temperature: input.temperature,
+    top_p: input.topP,
+    stop_sequences: input.stopSequences,
+  });
+
+  const pendingToolCalls: PendingClaudeToolCall[] = [];
+  yield* claudeStreamEvents(stream, pendingToolCalls);
 
   for (const tc of pendingToolCalls) {
     yield {
