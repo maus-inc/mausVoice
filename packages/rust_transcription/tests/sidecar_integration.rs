@@ -622,8 +622,12 @@ async fn download_model_and_wait(
         .json::<ModelStatusResponse>()
         .await?;
 
-    assert!(status.downloaded, "expected {slug} to be downloaded");
-    assert!(status.valid, "expected {slug} to be valid: {:?}", status.validation_error);
+    assert!(status.downloaded, "expected {} to be downloaded", slug);
+    assert!(
+        status.valid,
+        "expected {} to be valid: {:?}",
+        slug, status.validation_error
+    );
 
     Ok(())
 }
@@ -679,7 +683,8 @@ async fn run_model_end_to_end(
     assert_eq!(response.inference_device, "CPU");
     assert!(
         !response.text.trim().is_empty(),
-        "{slug} produced an empty transcript"
+        "{} produced an empty transcript",
+        slug
     );
     Ok(())
 }
