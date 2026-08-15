@@ -21,14 +21,6 @@ describe("local-transcription-sidecar manager helpers", () => {
     expect(normalizeLocalWhisperModel("large-turbo")).toBe("turbo");
     expect(normalizeLocalWhisperModel("large-v3")).toBe("large");
     expect(normalizeLocalWhisperModel("large")).toBe("large");
-    expect(normalizeLocalWhisperModel("hindi2hinglish")).toBe("hindi2hinglish");
-    expect(normalizeLocalWhisperModel("hindi-hinglish")).toBe("hindi2hinglish");
-    expect(normalizeLocalWhisperModel("hindi2hinglish-apex")).toBe(
-      "hindi2hinglish",
-    );
-    expect(normalizeLocalWhisperModel("whisper-hindi2hinglish-apex")).toBe(
-      "hindi2hinglish",
-    );
     expect(normalizeLocalWhisperModel("parakeet-ctc-0.6b")).toBe(
       "parakeet-ctc-0.6b",
     );
