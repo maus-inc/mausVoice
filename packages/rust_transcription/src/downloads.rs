@@ -1,5 +1,4 @@
 use std::collections::HashMap;
-use std::io::Read;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
@@ -12,8 +11,8 @@ use uuid::Uuid;
 
 use crate::models::WhisperModel;
 
-/// Maximum size for any downloaded model artifact. Declared and streamed byte
-/// counts above this threshold are rejected before the partial file is trusted.
+/// Largest currently-supported model artifact plus headroom. This is a hard
+/// limit, not a progress hint, and protects users from chunked responses.
 pub const MAX_MODEL_ARTIFACT_BYTES: u64 = 4 * 1024 * 1024 * 1024;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
@@ -43,34 +42,24 @@ pub struct DownloadJobSnapshot {
 pub struct DownloadArtifact {
     pub url: String,
     pub destination: PathBuf,
+    /// Hard upper bound enforced for both declared and chunked responses.
     pub max_bytes: u64,
+    /// Pinned digest for executable ONNX graphs/weights.
     pub sha256: Option<&'static str>,
 }
 
 impl DownloadArtifact {
-    /// An ordinary model artifact defaults to the 4 GiB cap and no digest.
     pub fn new(url: String, destination: PathBuf) -> Self {
-        Self {
-            url,
-            destination,
-            max_bytes: MAX_MODEL_ARTIFACT_BYTES,
-            sha256: None,
-        }
+        Self::new_verified(url, destination, MAX_MODEL_ARTIFACT_BYTES, None)
     }
 
-    /// A verified artifact pins an immutable URL and expected SHA-256 digest.
     pub fn new_verified(
         url: String,
         destination: PathBuf,
         max_bytes: u64,
-        sha256: &'static str,
+        sha256: Option<&'static str>,
     ) -> Self {
-        Self {
-            url,
-            destination,
-            max_bytes,
-            sha256: Some(sha256),
-        }
+        Self { url, destination, max_bytes, sha256 }
     }
 }
 
@@ -564,26 +553,23 @@ impl DownloadRegistry {
             None
         };
 
-        let response_result = request_artifact_response(
+        let (response, resume_is_valid) = match request_artifact_response(
             client,
             &artifact.url,
             existing_bytes,
             existing_validator.as_deref(),
             artifact.max_bytes,
         )
-        .await;
-        let (response, resume_is_valid) = match response_result {
-            Ok(value) => value,
-            Err(err) => {
-                // Any pre-stream policy rejection (including an oversized
-                // declared size) must not leave a resumable partial file or
-                // its validator behind.
-                let _ = std::fs::remove_file(&temp_path);
-                let _ = std::fs::remove_file(&validator_path);
-                return Err(format!(
-                    "artifact '{}' download failed: {err}",
-                    artifact.destination.display()
-                ));
+        .await
+        {
+            Ok(response) => response,
+            Err(error) => {
+                // A rejected advertised size must not leave a resumable
+                // partial artifact behind. Otherwise every retry preserves
+                // data from a response that violated the policy.
+                let _ = tokio::fs::remove_file(&temp_path).await;
+                let _ = tokio::fs::remove_file(&validator_path).await;
+                return Err(error);
             }
         };
         let validator = response_resume_validator(&response).or_else(|| {
@@ -602,7 +588,7 @@ impl DownloadRegistry {
         }
 
         let (mut downloaded, artifact_total, mut file) = if resume_is_valid {
-            let total = response.content_length().map(|len| existing_bytes + len);
+            let total = response.content_length().map(|len| existing_bytes.saturating_add(len));
             let file = tokio::fs::OpenOptions::new()
                 .create(true)
                 .append(true)
@@ -660,19 +646,11 @@ impl DownloadRegistry {
                                 .await
                                 .map_err(|err| format!("failed to write artifact: {err}"))?;
                             downloaded = downloaded.saturating_add(chunk.len() as u64);
-                            // Guard chunked responses that never declared a
-                            // Content-Length: reject as soon as the streamed
-                            // byte count would exceed the artifact cap and
-                            // remove the partial artifact and validator.
                             if downloaded > artifact.max_bytes {
                                 drop(file);
                                 let _ = tokio::fs::remove_file(&temp_path).await;
                                 let _ = tokio::fs::remove_file(&validator_path).await;
-                                return Err(format!(
-                                    "artifact '{}' streamed size {downloaded} exceeds maximum allowed {}",
-                                    artifact.destination.display(),
-                                    artifact.max_bytes
-                                ));
+                                return Err(format!("artifact exceeds {} byte limit", artifact.max_bytes));
                             }
                             self.set_progress(
                                 job_id,
@@ -699,28 +677,11 @@ impl DownloadRegistry {
             .map_err(|err| format!("failed to sync artifact: {err}"))?;
         drop(file);
 
-        // Verify the declared digest after the file is durably written. A
-        // mismatched artifact is removed and never renamed into place.
-        if let Some(expected_digest) = artifact.sha256 {
-            let digest = tokio::task::spawn_blocking({
-                let temp_path = temp_path.clone();
-                move || sha256_of_file(&temp_path)
-            })
-            .await
-            .map_err(|err| format!("digest task failed: {err}"))?
-            .map_err(|err| {
-                format!(
-                    "failed to compute digest for '{}': {err}",
-                    artifact.destination.display()
-                )
-            })?;
-            if digest != expected_digest {
+        if let Some(expected_sha256) = artifact.sha256 {
+            if let Err(error) = verify_file_sha256(&temp_path, expected_sha256).await {
                 let _ = tokio::fs::remove_file(&temp_path).await;
                 let _ = tokio::fs::remove_file(&validator_path).await;
-                return Err(format!(
-                    "artifact '{}' digest mismatch: expected {expected_digest}, computed {digest}",
-                    artifact.destination.display()
-                ));
+                return Err(error);
             }
         }
 
@@ -918,11 +879,11 @@ async fn request_artifact_response(
     if_range: Option<&str>,
     max_bytes: u64,
 ) -> Result<(reqwest::Response, bool), String> {
-    let mut resume_is_valid = false;
-    let mut ranged_response = None;
-
     // Never append without a validator tied to the existing prefix. A bare
     // byte offset cannot prove that the remote object is still the same file.
+    if existing_bytes > max_bytes {
+        return Err(format!("existing partial artifact exceeds {max_bytes} byte limit"));
+    }
     if let Some(if_range) = if_range.filter(|_| existing_bytes > 0) {
         let ranged = client
             .get(url)
@@ -932,72 +893,61 @@ async fn request_artifact_response(
             .await
             .map_err(|err| format!("request failed: {err}"))?;
 
-        match ranged.status() {
-            reqwest::StatusCode::PARTIAL_CONTENT => {
-                if content_range_start(&ranged) == Some(existing_bytes) {
-                    // A 206 response is append-safe only when the server
-                    // confirms the exact requested offset.
-                    resume_is_valid = true;
-                    ranged_response = Some(ranged);
-                }
-                // Otherwise restart from byte zero via the final GET below.
+        if ranged.status() == reqwest::StatusCode::PARTIAL_CONTENT {
+            if content_range_start(&ranged) == Some(existing_bytes) {
+                reject_oversized_response(&ranged, max_bytes.saturating_sub(existing_bytes))?;
+                return Ok((ranged, true));
             }
-            reqwest::StatusCode::OK => {
-                // If-Range intentionally produces 200 when the remote object
-                // changed. The caller truncates the stale temporary prefix.
-                ranged_response = Some(ranged);
-            }
-            reqwest::StatusCode::RANGE_NOT_SATISFIABLE => {}
-            other => return Err(format!("request failed with status {other}")),
+            // A 206 response is append-safe only when the server confirms
+            // the exact requested offset. Restart from byte zero.
+        } else if ranged.status() == reqwest::StatusCode::OK {
+            // If-Range intentionally produces 200 when the remote object
+            // changed. The caller truncates the stale temporary prefix.
+            reject_oversized_response(&ranged, max_bytes)?;
+            return Ok((ranged, false));
+        } else if ranged.status() != reqwest::StatusCode::RANGE_NOT_SATISFIABLE {
+            return Err(format!("request failed with status {}", ranged.status()));
         }
     }
 
-    let response = match ranged_response {
-        Some(ranged) => ranged,
-        None => client
-            .get(url)
-            .send()
-            .await
-            .map_err(|err| format!("request failed: {err}"))?,
-    };
+    let response = client
+        .get(url)
+        .send()
+        .await
+        .map_err(|err| format!("request failed: {err}"))?;
     if response.status() != reqwest::StatusCode::OK {
         return Err(format!("request failed with status {}", response.status()));
     }
-
-    // Reject a declared size that would exceed the cap before reading the
-    // body. For a ranged resume the Content-Length is the *remaining* byte
-    // count, so the existing prefix must be included in the total.
-    if let Some(declared) = response.content_length() {
-        let total = if resume_is_valid {
-            existing_bytes.saturating_add(declared)
-        } else {
-            declared
-        };
-        if total > max_bytes {
-            return Err(format!(
-                "artifact declared size {total} exceeds maximum allowed {max_bytes}"
-            ));
-        }
-    }
-
-    Ok((response, resume_is_valid))
+    reject_oversized_response(&response, max_bytes)?;
+    Ok((response, false))
 }
 
-fn sha256_of_file(path: &Path) -> Result<String, String> {
-    let mut file = std::fs::File::open(path)
-        .map_err(|err| format!("failed to open artifact for hashing: {err}"))?;
-    let mut hasher = Sha256::new();
-    let mut buffer = [0_u8; 64 * 1024];
-    loop {
-        let read = file
-            .read(&mut buffer)
-            .map_err(|err| format!("failed to read artifact for hashing: {err}"))?;
-        if read == 0 {
-            break;
-        }
-        hasher.update(&buffer[..read]);
+fn reject_oversized_response(response: &reqwest::Response, max_bytes: u64) -> Result<(), String> {
+    if response.content_length().is_some_and(|length| length > max_bytes) {
+        return Err(format!("artifact exceeds {max_bytes} byte limit"));
     }
-    Ok(format!("{:x}", hasher.finalize()))
+    Ok(())
+}
+
+async fn verify_file_sha256(path: &Path, expected: &str) -> Result<(), String> {
+    let path = path.to_path_buf();
+    let expected = expected.to_owned();
+    tokio::task::spawn_blocking(move || {
+        use std::io::Read;
+        let mut file = std::fs::File::open(&path)
+            .map_err(|err| format!("failed to reopen artifact for checksum: {err}"))?;
+        let mut hasher = Sha256::new();
+        let mut buffer = [0_u8; 64 * 1024];
+        loop {
+            let count = file.read(&mut buffer)
+                .map_err(|err| format!("failed to checksum artifact: {err}"))?;
+            if count == 0 { break; }
+            hasher.update(&buffer[..count]);
+        }
+        let actual = format!("{:x}", hasher.finalize());
+        if actual.eq_ignore_ascii_case(&expected) { Ok(()) }
+        else { Err(format!("artifact SHA-256 mismatch (expected {expected}, got {actual})")) }
+    }).await.map_err(|err| format!("checksum task failed: {err}"))?
 }
 
 fn content_range_start(response: &reqwest::Response) -> Option<u64> {
@@ -1360,7 +1310,7 @@ mod tests {
             &format!("http://{address}/artifact"),
             3,
             Some("\"artifact-v1\""),
-            u64::MAX,
+            MAX_MODEL_ARTIFACT_BYTES,
         )
         .await
         .unwrap();
@@ -1395,7 +1345,7 @@ mod tests {
             &format!("http://{address}/artifact"),
             3,
             None,
-            u64::MAX,
+            MAX_MODEL_ARTIFACT_BYTES,
         )
         .await
         .unwrap();
@@ -1428,7 +1378,7 @@ mod tests {
             &format!("http://{address}/artifact"),
             3,
             Some("\"artifact-v1\""),
-            u64::MAX,
+            MAX_MODEL_ARTIFACT_BYTES,
         )
         .await
         .unwrap_err();

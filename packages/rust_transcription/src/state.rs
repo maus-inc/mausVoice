@@ -2,6 +2,8 @@ use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::Arc;
 
+use reqwest::redirect::{Attempt, Policy};
+
 use tokio::sync::Mutex;
 
 use crate::config::SidecarConfig;
@@ -24,40 +26,7 @@ impl AppState {
     pub fn new(config: SidecarConfig) -> Result<Self, String> {
         let http_client = reqwest::Client::builder()
             .user_agent("mausvoice-rust-transcription/0.1")
-            .redirect(reqwest::redirect::Policy::custom(
-                |attempt: &reqwest::Url, previous: &[reqwest::Url]| {
-                    const ALLOWED_REDIRECT_HOSTS: [&str; 4] = [
-                        "huggingface.co",
-                        "cdn-lfs.huggingface.co",
-                        "cas-bridge.xethub.hf.co",
-                        "transfer.xethub.hf.co",
-                    ];
-                    // Never follow a redirect away from an encrypted transport.
-                    if attempt.scheme() != "https" {
-                        return Err(reqwest::Error::new(
-                            reqwest::ErrorKind::Redirect,
-                            format!("blocked insecure redirect to '{attempt}'"),
-                        ));
-                    }
-                    // Bound the redirect chain to five hops.
-                    if previous.len() > 5 {
-                        return Err(reqwest::Error::new(
-                            reqwest::ErrorKind::Redirect,
-                            "redirect chain exceeded the maximum of five hops",
-                        ));
-                    }
-                    match attempt.host_str() {
-                        Some(host) if ALLOWED_REDIRECT_HOSTS.contains(&host) => Ok(attempt.clone()),
-                        _ => Err(reqwest::Error::new(
-                            reqwest::ErrorKind::Redirect,
-                            format!(
-                                "blocked redirect to disallowed host '{}'",
-                                attempt.host_str().unwrap_or("<unknown>")
-                            ),
-                        )),
-                    }
-                },
-            ))
+            .redirect(Policy::custom(validate_model_redirect))
             .build()
             .map_err(|err| format!("failed to initialize http client: {err}"))?;
 
@@ -81,5 +50,25 @@ impl AppState {
 
     pub fn model_path(&self, model: WhisperModel) -> PathBuf {
         model.storage_path(&self.config.models_dir)
+    }
+}
+
+/// Hugging Face serves LFS objects through a small set of HTTPS CDN hosts.
+/// Do not let a compromised/misconfigured model URL pivot the sidecar to an
+/// arbitrary host or a non-TLS scheme.
+fn validate_model_redirect(attempt: &Attempt<'_>) -> reqwest::redirect::Action {
+    const MAX_REDIRECTS: usize = 5;
+    let url = attempt.url();
+    let approved_host = matches!(
+        url.host_str(),
+        Some("huggingface.co")
+            | Some("cdn-lfs.huggingface.co")
+            | Some("cas-bridge.xethub.hf.co")
+            | Some("transfer.xethub.hf.co")
+    );
+    if attempt.previous().len() >= MAX_REDIRECTS || url.scheme() != "https" || !approved_host {
+        attempt.error("model download redirect rejected by security policy")
+    } else {
+        attempt.follow()
     }
 }

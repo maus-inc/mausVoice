@@ -10,7 +10,7 @@ use axum::{Json, Router};
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
-use crate::downloads::{DownloadArtifact, MAX_MODEL_ARTIFACT_BYTES};
+use crate::downloads::DownloadArtifact;
 use crate::errors::ApiError;
 use crate::models::WhisperModel;
 use crate::state::AppState;
@@ -135,22 +135,16 @@ async fn download_model(
         // One registry job owns the complete model bundle. Completion is not
         // published until every graph, weights file, and tokenizer/vocabulary
         // artifact is durable; any artifact failure is returned by this job.
-        // Each artifact is pinned to an immutable Hugging Face revision and,
-        // for the executable graph/weights, an expected SHA-256 digest.
         model
             .artifact_set()
             .into_iter()
             .map(|(name, url, sha256)| {
-                let destination = model.artifact_path(&state.config.models_dir, name);
-                match sha256 {
-                    Some(digest) => DownloadArtifact::new_verified(
-                        url,
-                        destination,
-                        MAX_MODEL_ARTIFACT_BYTES,
-                        digest,
-                    ),
-                    None => DownloadArtifact::new(url, destination),
-                }
+                DownloadArtifact::new_verified(
+                    url,
+                    model.artifact_path(&state.config.models_dir, name),
+                    crate::downloads::MAX_MODEL_ARTIFACT_BYTES,
+                    sha256,
+                )
             })
             .collect()
     } else {
