@@ -24,6 +24,40 @@ impl AppState {
     pub fn new(config: SidecarConfig) -> Result<Self, String> {
         let http_client = reqwest::Client::builder()
             .user_agent("mausvoice-rust-transcription/0.1")
+            .redirect(reqwest::redirect::Policy::custom(
+                |attempt: &reqwest::Url, previous: &[reqwest::Url]| {
+                    const ALLOWED_REDIRECT_HOSTS: [&str; 4] = [
+                        "huggingface.co",
+                        "cdn-lfs.huggingface.co",
+                        "cas-bridge.xethub.hf.co",
+                        "transfer.xethub.hf.co",
+                    ];
+                    // Never follow a redirect away from an encrypted transport.
+                    if attempt.scheme() != "https" {
+                        return Err(reqwest::Error::new(
+                            reqwest::ErrorKind::Redirect,
+                            format!("blocked insecure redirect to '{attempt}'"),
+                        ));
+                    }
+                    // Bound the redirect chain to five hops.
+                    if previous.len() > 5 {
+                        return Err(reqwest::Error::new(
+                            reqwest::ErrorKind::Redirect,
+                            "redirect chain exceeded the maximum of five hops",
+                        ));
+                    }
+                    match attempt.host_str() {
+                        Some(host) if ALLOWED_REDIRECT_HOSTS.contains(&host) => Ok(attempt.clone()),
+                        _ => Err(reqwest::Error::new(
+                            reqwest::ErrorKind::Redirect,
+                            format!(
+                                "blocked redirect to disallowed host '{}'",
+                                attempt.host_str().unwrap_or("<unknown>")
+                            ),
+                        )),
+                    }
+                },
+            ))
             .build()
             .map_err(|err| format!("failed to initialize http client: {err}"))?;
 

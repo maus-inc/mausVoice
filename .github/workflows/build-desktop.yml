@@ -23,6 +23,14 @@ on:
     paths:
       - "apps/desktop/**"
       - "apps/windows-installer/**"
+      - "packages/**"
+      - "patches/**"
+      - "package.json"
+      - "pnpm-lock.yaml"
+      - "pnpm-workspace.yaml"
+      - "turbo.json"
+      - ".nvmrc"
+      - ".github/scripts/install-desktop-linux-deps.sh"
       - ".github/workflows/build-desktop.yml"
 
 jobs:

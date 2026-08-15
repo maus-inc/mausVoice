@@ -10,7 +10,7 @@ use axum::{Json, Router};
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
-use crate::downloads::DownloadArtifact;
+use crate::downloads::{DownloadArtifact, MAX_MODEL_ARTIFACT_BYTES};
 use crate::errors::ApiError;
 use crate::models::WhisperModel;
 use crate::state::AppState;
@@ -135,14 +135,22 @@ async fn download_model(
         // One registry job owns the complete model bundle. Completion is not
         // published until every graph, weights file, and tokenizer/vocabulary
         // artifact is durable; any artifact failure is returned by this job.
+        // Each artifact is pinned to an immutable Hugging Face revision and,
+        // for the executable graph/weights, an expected SHA-256 digest.
         model
             .artifact_set()
             .into_iter()
-            .map(|(name, url)| {
-                DownloadArtifact::new(
-                    url,
-                    model.artifact_path(&state.config.models_dir, name),
-                )
+            .map(|(name, url, sha256)| {
+                let destination = model.artifact_path(&state.config.models_dir, name);
+                match sha256 {
+                    Some(digest) => DownloadArtifact::new_verified(
+                        url,
+                        destination,
+                        MAX_MODEL_ARTIFACT_BYTES,
+                        digest,
+                    ),
+                    None => DownloadArtifact::new(url, destination),
+                }
             })
             .collect()
     } else {
@@ -208,7 +216,7 @@ async fn remove_invalid_onnx_bundle_before_download(
     }
 
     crate::onnx_inference::evict_model(&model_path);
-    for (name, _) in model.artifact_set() {
+    for (name, _, _) in model.artifact_set() {
         let artifact_path = model.artifact_path(&state.config.models_dir, name);
         match tokio::fs::remove_file(&artifact_path).await {
             Ok(()) => {}
@@ -367,7 +375,7 @@ async fn delete_model(
     // in-progress auxiliary fragments in the model-specific directory.
     if model.is_onnx() {
         crate::onnx_inference::evict_model(&model_path);
-        for (name, _) in model.artifact_set() {
+        for (name, _, _) in model.artifact_set() {
             let artifact_path = model.artifact_path(&state.config.models_dir, name);
             match tokio::fs::remove_file(&artifact_path).await {
                 Ok(()) => {}
@@ -621,7 +629,7 @@ async fn ensure_model_downloaded(
         model
             .artifact_set()
             .into_iter()
-            .map(|(name, _)| model.artifact_path(&state.config.models_dir, name))
+            .map(|(name, _, _)| model.artifact_path(&state.config.models_dir, name))
             .collect::<Vec<_>>()
     } else {
         vec![model_path.clone()]
@@ -683,7 +691,7 @@ async fn read_model_status(
     let file_bytes = if model.is_onnx() {
         let mut total = 0_u64;
         let mut found = false;
-        for (name, _) in model.artifact_set() {
+        for (name, _, _) in model.artifact_set() {
             let artifact_path = model.artifact_path(&state.config.models_dir, name);
             if let Ok(meta) = tokio::fs::metadata(artifact_path).await {
                 if meta.is_file() {
@@ -701,7 +709,7 @@ async fn read_model_status(
         // An ONNX model is only "downloaded" once the complete, model-specific
         // graph/weights/tokenizer artifact set is present on disk.
         let mut all_present = true;
-        for (name, _) in model.artifact_set() {
+        for (name, _, _) in model.artifact_set() {
             let artifact_path = model.artifact_path(&state.config.models_dir, name);
             match tokio::fs::metadata(&artifact_path).await {
                 Ok(meta) if meta.is_file() && meta.len() > 0 => {}
@@ -971,7 +979,7 @@ mod tests {
         let retry_artifacts = model
             .artifact_set()
             .into_iter()
-            .map(|(name, _)| {
+            .map(|(name, _, _)| {
                 let destination = model.artifact_path(&state.config.models_dir, name);
                 assert!(!destination.exists(), "invalid artifact was not removed");
                 DownloadArtifact::new(

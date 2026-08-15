@@ -136,7 +136,7 @@ pub fn validate_model_classified(
 
     ensure_onnx_runtime().map_err(OnnxModelValidationError::Runtime)?;
     let model_dir = model_directory(model_path).map_err(OnnxModelValidationError::Artifact)?;
-    for (name, _) in model.artifact_set() {
+    for (name, _, _) in model.artifact_set() {
         let artifact_path = model_dir.join(name);
         let metadata = std::fs::metadata(&artifact_path).map_err(|err| {
             OnnxModelValidationError::Artifact(format!(
