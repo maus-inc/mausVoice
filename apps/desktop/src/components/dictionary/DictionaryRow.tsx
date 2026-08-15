@@ -106,7 +106,14 @@ export const DictionaryRow = ({ id }: DictionaryRowProps) => {
   }
 
   return (
-    <Stack direction="row" spacing={2} alignItems="center" py={1}>
+    <Stack
+      direction="row"
+      spacing={2}
+      sx={{
+        alignItems: "center",
+        py: 1,
+      }}
+    >
       <TextField
         variant="outlined"
         size="small"

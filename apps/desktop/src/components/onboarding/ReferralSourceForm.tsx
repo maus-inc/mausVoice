@@ -100,12 +100,28 @@ export const ReferralSourceForm = () => {
         ) : undefined
       }
     >
-      <Stack spacing={3} pb={4}>
+      <Stack
+        spacing={3}
+        sx={{
+          pb: 4,
+        }}
+      >
         <Box>
-          <Typography variant="h4" fontWeight={600} pb={1}>
+          <Typography
+            variant="h4"
+            sx={{
+              fontWeight: 600,
+              pb: 1,
+            }}
+          >
             <FormattedMessage defaultMessage="How did you hear about us?" />
           </Typography>
-          <Typography variant="body1" color="text.secondary">
+          <Typography
+            variant="body1"
+            sx={{
+              color: "text.secondary",
+            }}
+          >
             <FormattedMessage defaultMessage="This is a huge help to us as we work to improve mausVoice for everyone." />
           </Typography>
         </Box>

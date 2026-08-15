@@ -7,6 +7,8 @@ type TypographyWithMoreProps = TypographyProps & {
   initiallyExpanded?: boolean;
   moreLabel?: React.ReactNode;
   lessLabel?: React.ReactNode;
+  fontSize?: number | string;
+  lineHeight?: number | string;
 };
 
 const defaultClampStyles = (maxLines: number) => ({
@@ -35,6 +37,8 @@ export function TypographyWithMore({
   moreLabel = <FormattedMessage defaultMessage="Show more" />,
   lessLabel = <FormattedMessage defaultMessage="Show less" />,
   sx,
+  fontSize,
+  lineHeight,
   ...typographyProps
 }: TypographyWithMoreProps) {
   const [expanded, setExpanded] = useState(initiallyExpanded);
@@ -144,20 +148,18 @@ export function TypographyWithMore({
         const variantStyles =
           (theme.typography as Record<string, any>)[variantKey] ??
           theme.typography.body2;
-        const fontSize =
-          typeof typographyProps.fontSize !== "undefined"
-            ? typographyProps.fontSize
-            : variantStyles.fontSize;
-        const lineHeight =
-          typeof typographyProps.lineHeight !== "undefined"
-            ? typographyProps.lineHeight
+        const fontSizeResolved =
+          typeof fontSize !== "undefined" ? fontSize : variantStyles.fontSize;
+        const lineHeightResolved =
+          typeof lineHeight !== "undefined"
+            ? lineHeight
             : (variantStyles.lineHeight ?? 1.35);
 
         return {
           px: 0,
           minWidth: 0,
-          fontSize,
-          lineHeight,
+          fontSize: fontSizeResolved,
+          lineHeight: lineHeightResolved,
           textTransform: "none",
           color: theme.vars?.palette.text.primary ?? theme.palette.text.primary,
           ...(inline

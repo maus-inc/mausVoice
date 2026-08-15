@@ -362,11 +362,13 @@ export const MoreSettingsDialog = () => {
                   onChange={handleDictationLimitChange}
                   onBlur={handleDictationLimitBlur}
                   sx={{ width: 104 }}
-                  inputProps={{
-                    min: 0,
-                    max: MAX_DICTATION_LIMIT_MINUTES,
-                    step: 1,
-                    inputMode: "numeric",
+                  slotProps={{
+                    htmlInput: {
+                      min: 0,
+                      max: MAX_DICTATION_LIMIT_MINUTES,
+                      step: 1,
+                      inputMode: "numeric",
+                    },
                   }}
                 />
               }

@@ -83,8 +83,19 @@ export const AddTermDialog = ({
           <Typography variant="h6" sx={{ flex: 1 }}>
             <FormattedMessage defaultMessage="Add term" />
           </Typography>
-          <Stack direction="row" alignItems="center" spacing={1}>
-            <Typography variant="body2" color="text.secondary">
+          <Stack
+            direction="row"
+            spacing={1}
+            sx={{
+              alignItems: "center",
+            }}
+          >
+            <Typography
+              variant="body2"
+              sx={{
+                color: "text.secondary",
+              }}
+            >
               <FormattedMessage defaultMessage="Replacement" />
             </Typography>
             <Switch
@@ -110,12 +121,19 @@ export const AddTermDialog = ({
             />
             <Stack
               direction="row"
-              alignItems="center"
               spacing={1}
-              sx={{ pl: 2 }}
+              sx={{
+                alignItems: "center",
+                pl: 2,
+              }}
             >
               <ArrowDownwardOutlined color="action" fontSize="small" />
-              <Typography variant="body2" color="text.secondary">
+              <Typography
+                variant="body2"
+                sx={{
+                  color: "text.secondary",
+                }}
+              >
                 <FormattedMessage defaultMessage="Replace with" />
               </Typography>
             </Stack>

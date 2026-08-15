@@ -132,12 +132,19 @@ export const ThemeModeToggle = () => {
         >
           <Stack
             direction="row"
-            alignItems="center"
             spacing={1.25}
-            sx={{ flex: 1 }}
+            sx={{
+              alignItems: "center",
+              flex: 1,
+            }}
           >
             <LightMode sx={{ fontSize: 16 }} />
-            <Typography variant="body2" fontWeight={500}>
+            <Typography
+              variant="body2"
+              sx={{
+                fontWeight: 500,
+              }}
+            >
               <FormattedMessage defaultMessage="Light" />
             </Typography>
           </Stack>
@@ -152,12 +159,19 @@ export const ThemeModeToggle = () => {
         >
           <Stack
             direction="row"
-            alignItems="center"
             spacing={1.25}
-            sx={{ flex: 1 }}
+            sx={{
+              alignItems: "center",
+              flex: 1,
+            }}
           >
             <DarkMode sx={{ fontSize: 16 }} />
-            <Typography variant="body2" fontWeight={500}>
+            <Typography
+              variant="body2"
+              sx={{
+                fontWeight: 500,
+              }}
+            >
               <FormattedMessage defaultMessage="Dark" />
             </Typography>
           </Stack>
@@ -172,12 +186,19 @@ export const ThemeModeToggle = () => {
         >
           <Stack
             direction="row"
-            alignItems="center"
             spacing={1.25}
-            sx={{ flex: 1 }}
+            sx={{
+              alignItems: "center",
+              flex: 1,
+            }}
           >
             <SettingsBrightness sx={{ fontSize: 16 }} />
-            <Typography variant="body2" fontWeight={500}>
+            <Typography
+              variant="body2"
+              sx={{
+                fontWeight: 500,
+              }}
+            >
               <FormattedMessage defaultMessage="System" />
             </Typography>
           </Stack>

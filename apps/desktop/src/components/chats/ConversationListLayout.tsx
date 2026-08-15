@@ -41,9 +41,13 @@ export const ConversationListLayout = ({
     >
       <Stack
         direction="row"
-        alignItems="center"
-        justifyContent="space-between"
-        sx={{ px: 2, pr: 1, pt: 1.5 }}
+        sx={{
+          alignItems: "center",
+          justifyContent: "space-between",
+          px: 2,
+          pr: 1,
+          pt: 1.5,
+        }}
       >
         <Typography variant="subtitle2">
           <FormattedMessage defaultMessage="Chats" />
@@ -66,7 +70,12 @@ export const ConversationListLayout = ({
             justifyContent: "center",
           }}
         >
-          <Typography variant="body2" color="text.secondary">
+          <Typography
+            variant="body2"
+            sx={{
+              color: "text.secondary",
+            }}
+          >
             <FormattedMessage defaultMessage="No conversations" />
           </Typography>
         </Box>

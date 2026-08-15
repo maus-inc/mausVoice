@@ -287,9 +287,11 @@ export const MicrophoneTester = ({
       <Stack
         direction={buttonLayout}
         spacing={1.5}
-        alignItems={buttonLayout === "row" ? "center" : "stretch"}
-        width="100%"
-        justifyContent={justifyButtons}
+        sx={{
+          alignItems: buttonLayout === "row" ? "center" : "stretch",
+          width: "100%",
+          justifyContent: justifyButtons,
+        }}
       >
         <LoadingButton
           variant={isTestRunning ? "outlined" : "contained"}

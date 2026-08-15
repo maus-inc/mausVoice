@@ -116,18 +116,42 @@ type InfoRowProps = {
 };
 
 const InfoRow = ({ label, value }: InfoRowProps) => (
-  <Stack direction="row" justifyContent="space-between" spacing={2}>
-    <Typography variant="body2" color="text.secondary">
+  <Stack
+    direction="row"
+    spacing={2}
+    sx={{
+      justifyContent: "space-between",
+    }}
+  >
+    <Typography
+      variant="body2"
+      sx={{
+        color: "text.secondary",
+      }}
+    >
       {label}
     </Typography>
-    <Typography variant="body2" fontWeight={500} sx={{ textAlign: "right" }}>
+    <Typography
+      variant="body2"
+      sx={{
+        fontWeight: 500,
+        textAlign: "right",
+      }}
+    >
       {value}
     </Typography>
   </Stack>
 );
 
 const SectionTitle = ({ children }: { children: React.ReactNode }) => (
-  <Typography variant="subtitle2" fontWeight={700} sx={{ pt: 2, mb: 0.5 }}>
+  <Typography
+    variant="subtitle2"
+    sx={{
+      fontWeight: 700,
+      pt: 2,
+      mb: 0.5,
+    }}
+  >
     {children}
   </Typography>
 );

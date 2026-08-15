@@ -97,10 +97,12 @@ export function ManualStylingLayout() {
       emptyState={
         <Stack
           spacing={1}
-          alignItems="flex-start"
-          width={300}
-          alignSelf="center"
-          mx="auto"
+          sx={{
+            alignItems: "flex-start",
+            width: 300,
+            alignSelf: "center",
+            mx: "auto",
+          }}
         >
           <Typography variant="h6">
             <FormattedMessage defaultMessage="No styles yet" />

@@ -18,10 +18,13 @@ export const Logo = ({
       component="img"
       src={appLogo}
       alt="mausVoice"
-      width={width}
-      height={height}
       draggable={false}
+      {...rest}
       sx={[
+        {
+          width: width,
+          height: height,
+        },
         {
           display: "block",
           objectFit: "contain",

@@ -229,8 +229,11 @@ export const AudioPlayerPill = ({
       </IconButton>
       <Typography
         variant="body2"
-        color="text.secondary"
-        sx={{ minWidth: 42, fontFeatureSettings: '"tnum"' }}
+        sx={{
+          color: "text.secondary",
+          minWidth: 42,
+          fontFeatureSettings: '"tnum"',
+        }}
       >
         {durationLabel}
       </Typography>

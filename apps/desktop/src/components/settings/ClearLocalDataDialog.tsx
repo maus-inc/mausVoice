@@ -99,8 +99,10 @@ export const ClearLocalDataDialog = () => {
                   <Typography
                     component="span"
                     variant="body2"
-                    fontWeight="bold"
-                    sx={{ fontFamily: "inherit" }}
+                    sx={{
+                      fontWeight: "bold",
+                      fontFamily: "inherit",
+                    }}
                   >
                     {CONFIRMATION_PHRASE}
                   </Typography>

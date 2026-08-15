@@ -36,9 +36,9 @@ export const BaseHeader = ({
   return (
     <Stack
       direction="row"
-      justifyContent="space-between"
-      alignItems="center"
       sx={{
+        justifyContent: "space-between",
+        alignItems: "center",
         py: 0.4,
         px: { xs: 1, sm: 1.5 },
         minHeight: 36,
@@ -90,7 +90,13 @@ export const AppHeader = () => {
   let rightContent: React.ReactNode;
   if (isOnboarded) {
     rightContent = (
-      <Stack direction="row" alignItems="center" gap={1}>
+      <Stack
+        direction="row"
+        sx={{
+          alignItems: "center",
+          gap: 1,
+        }}
+      >
         {isGpuBuild && (
           <Button
             onClick={() => setGpuMigrationDialogOpen(true)}
@@ -131,11 +137,16 @@ export const AppHeader = () => {
               >
                 {myInitials}
               </Avatar>
-              <Stack textAlign="left" spacing={0.5}>
+              <Stack
+                spacing={0.5}
+                sx={{
+                  textAlign: "left",
+                }}
+              >
                 <Typography
                   variant="subtitle1"
-                  fontWeight={500}
                   sx={{
+                    fontWeight: 500,
                     fontFamily: "var(--font-display)",
                     fontSize: "0.85rem",
                     letterSpacing: "0.01em",
@@ -162,9 +173,11 @@ export const AppHeader = () => {
   const left = (
     <Stack
       direction="row"
-      alignItems="center"
       spacing={1.25}
-      sx={{ minWidth: 0 }}
+      sx={{
+        alignItems: "center",
+        minWidth: 0,
+      }}
     >
       <SenderReceiverChip />
       {leftContent}

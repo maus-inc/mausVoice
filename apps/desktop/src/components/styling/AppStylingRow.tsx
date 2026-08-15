@@ -67,7 +67,12 @@ export const AppStylingRow = ({ id }: AppStylingRowProps) => {
           <Typography variant="subtitle2" sx={{ mb: 0.5 }}>
             <FormattedMessage defaultMessage="Paste Keybind" />
           </Typography>
-          <Typography variant="body2" color="text.secondary">
+          <Typography
+            variant="body2"
+            sx={{
+              color: "text.secondary",
+            }}
+          >
             <FormattedMessage defaultMessage="Different applications use different keyboard shortcuts for pasting. Select the keybind that works best for this app." />
           </Typography>
         </Box>
@@ -129,7 +134,13 @@ export const AppStylingRow = ({ id }: AppStylingRowProps) => {
   );
 
   const trailing = (
-    <Stack direction="row" spacing={1} alignItems="center">
+    <Stack
+      direction="row"
+      spacing={1}
+      sx={{
+        alignItems: "center",
+      }}
+    >
       <PostProcessingDisabledTooltip disabled={isPostProcessingDisabled}>
         <ToneSelect
           value={toneValue}

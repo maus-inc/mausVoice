@@ -1,6 +1,6 @@
 import AddIcon from "@mui/icons-material/Add";
 import CheckRoundedIcon from "@mui/icons-material/CheckRounded";
-import DeleteOutlineIcon from "@mui/icons-material/DeleteOutline";
+import DeleteOutlineIcon from "@mui/icons-material/DeleteOutlined";
 import EditOutlinedIcon from "@mui/icons-material/EditOutlined";
 import {
   Autocomplete,
@@ -328,7 +328,13 @@ const EditApiKeyCard = ({
         borderWidth: 1,
       }}
     >
-      <Typography variant="body2" color="text.secondary" fontWeight={500}>
+      <Typography
+        variant="body2"
+        sx={{
+          color: "text.secondary",
+          fontWeight: 500,
+        }}
+      >
         <FormattedMessage
           defaultMessage="Provider: {provider}"
           values={{ provider: config.displayName }}
@@ -544,12 +550,14 @@ const GenericModelPicker = ({
             label={<FormattedMessage defaultMessage="Model" />}
             placeholder="Select or type a model"
             slotProps={{
+              ...params.slotProps,
+
               input: {
-                ...params.InputProps,
+                ...params.slotProps.input,
                 endAdornment: (
                   <>
                     {isLoading ? <CircularProgress size={16} /> : null}
-                    {params.InputProps.endAdornment}
+                    {params.slotProps.input.endAdornment}
                   </>
                 ),
               },
@@ -615,14 +623,27 @@ const ApiKeyCard = ({
     >
       <Stack
         direction="row"
-        alignItems="center"
-        justifyContent="space-between"
-        gap={2}
-        sx={{ width: "100%" }}
+        sx={{
+          alignItems: "center",
+          justifyContent: "space-between",
+          gap: 2,
+          width: "100%",
+        }}
       >
         <Stack spacing={0.5} sx={{ flex: 1, minWidth: 0 }}>
-          <Stack direction="row" alignItems="center" gap={0.75}>
-            <Typography variant="subtitle1" fontWeight={600}>
+          <Stack
+            direction="row"
+            sx={{
+              alignItems: "center",
+              gap: 0.75,
+            }}
+          >
+            <Typography
+              variant="subtitle1"
+              sx={{
+                fontWeight: 600,
+              }}
+            >
               {apiKey.name}
             </Typography>
             {selected && (
@@ -633,11 +654,21 @@ const ApiKeyCard = ({
               />
             )}
           </Stack>
-          <Typography variant="body2" color="text.secondary">
+          <Typography
+            variant="body2"
+            sx={{
+              color: "text.secondary",
+            }}
+          >
             {config.displayName}
           </Typography>
           {apiKey.keySuffix ? (
-            <Typography variant="caption" color="text.secondary">
+            <Typography
+              variant="caption"
+              sx={{
+                color: "text.secondary",
+              }}
+            >
               <FormattedMessage
                 defaultMessage="Ends with {suffix}"
                 values={{ suffix: apiKey.keySuffix }}
@@ -645,7 +676,13 @@ const ApiKeyCard = ({
             </Typography>
           ) : null}
         </Stack>
-        <Stack direction="row" spacing={1} alignItems="center">
+        <Stack
+          direction="row"
+          spacing={1}
+          sx={{
+            alignItems: "center",
+          }}
+        >
           <Button
             variant="outlined"
             size="small"
@@ -900,20 +937,45 @@ export const ApiKeyList = ({
   );
 
   const loadingState = (
-    <Stack spacing={1} alignItems="center">
+    <Stack
+      spacing={1}
+      sx={{
+        alignItems: "center",
+      }}
+    >
       <CircularProgress size={24} />
-      <Typography variant="body2" color="text.secondary">
+      <Typography
+        variant="body2"
+        sx={{
+          color: "text.secondary",
+        }}
+      >
         <FormattedMessage defaultMessage="Loading API keys…" />
       </Typography>
     </Stack>
   );
 
   const errorState = (
-    <Stack spacing={1.5} alignItems="flex-start">
-      <Typography variant="subtitle1" fontWeight={600}>
+    <Stack
+      spacing={1.5}
+      sx={{
+        alignItems: "flex-start",
+      }}
+    >
+      <Typography
+        variant="subtitle1"
+        sx={{
+          fontWeight: 600,
+        }}
+      >
         <FormattedMessage defaultMessage="Failed to load API keys" />
       </Typography>
-      <Typography variant="body2" color="text.secondary">
+      <Typography
+        variant="body2"
+        sx={{
+          color: "text.secondary",
+        }}
+      >
         <FormattedMessage defaultMessage="We couldn't load your saved API keys. Please try again." />
       </Typography>
       <Button variant="outlined" onClick={handleRetryLoad}>
@@ -923,11 +985,26 @@ export const ApiKeyList = ({
   );
 
   const emptyState = (
-    <Stack spacing={1.5} alignItems="flex-start">
-      <Typography variant="subtitle1" fontWeight={600}>
+    <Stack
+      spacing={1.5}
+      sx={{
+        alignItems: "flex-start",
+      }}
+    >
+      <Typography
+        variant="subtitle1"
+        sx={{
+          fontWeight: 600,
+        }}
+      >
         <FormattedMessage defaultMessage="No API keys yet" />
       </Typography>
-      <Typography variant="body2" color="text.secondary">
+      <Typography
+        variant="body2"
+        sx={{
+          color: "text.secondary",
+        }}
+      >
         <FormattedMessage defaultMessage="Connect a transcription provider like Groq with your API key." />
       </Typography>
       <Button
@@ -957,7 +1034,13 @@ export const ApiKeyList = ({
       ) : shouldShowEmpty ? (
         emptyState
       ) : (
-        <Stack spacing={1.5} alignItems="stretch" sx={{ width: "100%" }}>
+        <Stack
+          spacing={1.5}
+          sx={{
+            alignItems: "stretch",
+            width: "100%",
+          }}
+        >
           {apiKeys.map((apiKey) =>
             editingApiKeyId === apiKey.id ? (
               <EditApiKeyCard
@@ -1020,14 +1103,25 @@ export const ApiKeyList = ({
               defaultMessage="Are you sure you want to delete the API key {keyName}?"
               values={{
                 keyName: (
-                  <Box component="span" fontWeight={600}>
+                  <Box
+                    component="span"
+                    sx={{
+                      fontWeight: 600,
+                    }}
+                  >
                     {apiKeyToDelete?.name ?? "this API key"}
                   </Box>
                 ),
               }}
             />
           </Typography>
-          <Typography variant="body2" color="text.secondary" sx={{ mt: 1 }}>
+          <Typography
+            variant="body2"
+            sx={{
+              color: "text.secondary",
+              mt: 1,
+            }}
+          >
             <FormattedMessage defaultMessage="Removing the key signs you out of that provider on this device." />
           </Typography>
         </DialogContent>

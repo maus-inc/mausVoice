@@ -18,7 +18,12 @@ export const TranscriptionTextBlock = ({
 
   return (
     <Box>
-      <Typography variant="caption" color="text.secondary">
+      <Typography
+        variant="caption"
+        sx={{
+          color: "text.secondary",
+        }}
+      >
         {label}
       </Typography>
       {normalized ? (
@@ -43,7 +48,12 @@ export const TranscriptionTextBlock = ({
           </Typography>
         </Box>
       ) : (
-        <Typography variant="body2" color="text.secondary">
+        <Typography
+          variant="body2"
+          sx={{
+            color: "text.secondary",
+          }}
+        >
           {placeholder ?? <FormattedMessage defaultMessage="Not provided." />}
         </Typography>
       )}

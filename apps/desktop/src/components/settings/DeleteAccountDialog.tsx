@@ -73,7 +73,14 @@ export const DeleteAccountDialog = () => {
   return (
     <Dialog open={open} onClose={handleClose} fullWidth maxWidth="sm">
       <DialogTitle>
-        <Typography variant="h6" component="div" fontWeight={600} color="error">
+        <Typography
+          variant="h6"
+          component="div"
+          color="error"
+          sx={{
+            fontWeight: 600,
+          }}
+        >
           <FormattedMessage defaultMessage="Delete account" />
         </Typography>
       </DialogTitle>

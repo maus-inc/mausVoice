@@ -227,22 +227,52 @@ ${userName}`;
       }
     >
       {stepIndex === 0 && (
-        <Stack spacing={2} pb={8}>
-          <Typography variant="h4" fontWeight={600}>
+        <Stack
+          spacing={2}
+          sx={{
+            pb: 8,
+          }}
+        >
+          <Typography
+            variant="h4"
+            sx={{
+              fontWeight: 600,
+            }}
+          >
             <FormattedMessage defaultMessage="Try out dictation" />
           </Typography>
-          <Typography variant="body1" color="text.secondary">
+          <Typography
+            variant="body1"
+            sx={{
+              color: "text.secondary",
+            }}
+          >
             <FormattedMessage defaultMessage="Press and hold your hotkey, then start talking. When you release the key, your speech will be converted to text." />
           </Typography>
           <DictationInstruction />
         </Stack>
       )}
       {stepIndex === 1 && (
-        <Stack spacing={2} pb={8}>
-          <Typography variant="h4" fontWeight={600}>
+        <Stack
+          spacing={2}
+          sx={{
+            pb: 8,
+          }}
+        >
+          <Typography
+            variant="h4"
+            sx={{
+              fontWeight: 600,
+            }}
+          >
             <FormattedMessage defaultMessage="Now try an email" />
           </Typography>
-          <Typography variant="body1" color="text.secondary">
+          <Typography
+            variant="body1"
+            sx={{
+              color: "text.secondary",
+            }}
+          >
             <FormattedMessage defaultMessage="Dictate a short email. mausVoice works great for longer-form content like messages, notes, and documents." />
           </Typography>
           <DictationInstruction />
@@ -258,7 +288,12 @@ ${userName}`;
         delay={0.7}
       >
         <TouchApp fontSize="small" />
-        <Typography variant="body2" fontWeight={500}>
+        <Typography
+          variant="body2"
+          sx={{
+            fontWeight: 500,
+          }}
+        >
           <FormattedMessage defaultMessage="Click on the text field" />
         </Typography>
       </BouncyTooltip>
@@ -266,7 +301,12 @@ ${userName}`;
         visible={isFieldFocused && !hasStartedDictating}
         delay={0.7}
       >
-        <Typography variant="body2" fontWeight={500}>
+        <Typography
+          variant="body2"
+          sx={{
+            fontWeight: 500,
+          }}
+        >
           <FormattedMessage defaultMessage="Now press and hold" />
         </Typography>
         <HotkeyBadge
@@ -277,7 +317,12 @@ ${userName}`;
             color: "primary.contrastText",
           }}
         />
-        <Typography variant="body2" fontWeight={500}>
+        <Typography
+          variant="body2"
+          sx={{
+            fontWeight: 500,
+          }}
+        >
           <FormattedMessage defaultMessage="to dictate" />
         </Typography>
       </BouncyTooltip>
@@ -309,8 +354,10 @@ ${userName}`;
         >
           <Typography
             variant="body2"
-            fontWeight={600}
-            sx={{ color: "#202124" }}
+            sx={{
+              fontWeight: 600,
+              color: "#202124",
+            }}
           >
             Notes
           </Typography>
@@ -384,8 +431,10 @@ ${userName}`;
           <Email sx={{ fontSize: 20, color: "#d93025" }} />
           <Typography
             variant="body2"
-            fontWeight={600}
-            sx={{ color: "#202124" }}
+            sx={{
+              fontWeight: 600,
+              color: "#202124",
+            }}
           >
             Email
           </Typography>
@@ -483,7 +532,14 @@ ${userName}`;
   );
 
   const stepper = (
-    <Stack direction="row" spacing={1} justifyContent="center" sx={{ mt: 2 }}>
+    <Stack
+      direction="row"
+      spacing={1}
+      sx={{
+        justifyContent: "center",
+        mt: 2,
+      }}
+    >
       {[0, 1].map((index) => (
         <Box
           key={index}

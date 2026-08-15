@@ -26,13 +26,24 @@ export const Section = ({
   const headerEnabled = !blocked;
 
   const content = (
-    <Stack mb={4}>
+    <Stack
+      sx={{
+        mb: 4,
+      }}
+    >
       <Stack
         direction="row"
-        alignItems="center"
-        sx={{ opacity: headerEnabled ? 1 : 0.3 }}
+        sx={{
+          alignItems: "center",
+          opacity: headerEnabled ? 1 : 0.3,
+        }}
       >
-        <Typography variant="h6" fontWeight="bold">
+        <Typography
+          variant="h6"
+          sx={{
+            fontWeight: "bold",
+          }}
+        >
           {title}
         </Typography>
         {isDefined(enabled) && (
@@ -46,7 +57,13 @@ export const Section = ({
       </Stack>
       <Box sx={{ opacity: fieldEnabled ? 1 : 0.3 }}>
         {description && (
-          <Typography variant="body2" color="textSecondary" mt={1}>
+          <Typography
+            variant="body2"
+            color="textSecondary"
+            sx={{
+              mt: 1,
+            }}
+          >
             {description}
           </Typography>
         )}

@@ -77,10 +77,21 @@ export const UserDetailsForm = () => {
     >
       <Stack spacing={3}>
         <Box>
-          <Typography variant="h4" fontWeight={600} pb={1}>
+          <Typography
+            variant="h4"
+            sx={{
+              fontWeight: 600,
+              pb: 1,
+            }}
+          >
             <FormattedMessage defaultMessage="Tell us about yourself" />
           </Typography>
-          <Typography variant="body1" color="text.secondary">
+          <Typography
+            variant="body1"
+            sx={{
+              color: "text.secondary",
+            }}
+          >
             <FormattedMessage defaultMessage="This information helps personalize your experience." />
           </Typography>
         </Box>
@@ -113,8 +124,11 @@ export const UserDetailsForm = () => {
                 <Typography
                   component="span"
                   variant="caption"
-                  color="text.secondary"
-                  sx={{ fontWeight: 400, fontSize: "0.7rem" }}
+                  sx={{
+                    color: "text.secondary",
+                    fontWeight: 400,
+                    fontSize: "0.7rem",
+                  }}
                 >
                   <FormattedMessage defaultMessage="(optional)" />
                 </Typography>
@@ -144,8 +158,11 @@ export const UserDetailsForm = () => {
                 <Typography
                   component="span"
                   variant="caption"
-                  color="text.secondary"
-                  sx={{ fontWeight: 400, fontSize: "0.7rem" }}
+                  sx={{
+                    color: "text.secondary",
+                    fontWeight: 400,
+                    fontSize: "0.7rem",
+                  }}
                 >
                   <FormattedMessage defaultMessage="(optional)" />
                 </Typography>

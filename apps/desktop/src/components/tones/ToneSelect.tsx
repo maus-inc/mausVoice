@@ -108,7 +108,13 @@ export const ToneSelect = ({
         }}
       >
         <MenuItem value={ADD_TONE_MENU_VALUE}>
-          <Stack direction="row" alignItems="center" spacing={1}>
+          <Stack
+            direction="row"
+            spacing={1}
+            sx={{
+              alignItems: "center",
+            }}
+          >
             <Add fontSize="small" />
             <div>
               <FormattedMessage defaultMessage="New style" />
@@ -119,9 +125,11 @@ export const ToneSelect = ({
           <MenuItem key={tone.id} value={tone.id}>
             <Stack
               direction="row"
-              alignItems="center"
-              justifyContent="space-between"
-              width="100%"
+              sx={{
+                alignItems: "center",
+                justifyContent: "space-between",
+                width: "100%",
+              }}
             >
               <div>{tone.name}</div>
               {tone.isGlobal ? (

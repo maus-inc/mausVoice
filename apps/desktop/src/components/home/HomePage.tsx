@@ -36,13 +36,30 @@ function StatCard({
   return (
     <Card sx={{ flex: 1 }}>
       <CardContent sx={{ py: 2, px: 2.5, "&:last-child": { pb: 2 } }}>
-        <Stack direction="row" alignItems="center" spacing={1} sx={{ mb: 0.5 }}>
+        <Stack
+          direction="row"
+          spacing={1}
+          sx={{
+            alignItems: "center",
+            mb: 0.5,
+          }}
+        >
           {icon}
-          <Typography variant="h5" fontWeight={700}>
+          <Typography
+            variant="h5"
+            sx={{
+              fontWeight: 700,
+            }}
+          >
             {value}
           </Typography>
         </Stack>
-        <Typography variant="body2" color="text.secondary">
+        <Typography
+          variant="body2"
+          sx={{
+            color: "text.secondary",
+          }}
+        >
           {label}
         </Typography>
       </CardContent>
@@ -78,7 +95,13 @@ export default function HomePage() {
       <HomeSideEffects />
       <Stack direction="column" spacing={4}>
         <Box>
-          <Typography variant="h4" fontWeight={500} sx={{ mb: 0.5 }}>
+          <Typography
+            variant="h4"
+            sx={{
+              fontWeight: 500,
+              mb: 0.5,
+            }}
+          >
             <FormattedMessage
               defaultMessage="Welcome back, {name}"
               values={{
@@ -133,14 +156,30 @@ export default function HomePage() {
             >
               <Card sx={{ cursor: "default" }}>
                 <CardContent sx={{ py: 2, px: 2.5, "&:last-child": { pb: 2 } }}>
-                  <Stack direction="row" alignItems="baseline" spacing={1.5}>
-                    <Typography variant="h5" fontWeight={700}>
+                  <Stack
+                    direction="row"
+                    spacing={1.5}
+                    sx={{
+                      alignItems: "baseline",
+                    }}
+                  >
+                    <Typography
+                      variant="h5"
+                      sx={{
+                        fontWeight: 700,
+                      }}
+                    >
                       <FormattedMessage
                         defaultMessage="{wpm} WPM"
                         values={{ wpm: dictationSpeed.wpm }}
                       />
                     </Typography>
-                    <Typography variant="body2" color="text.secondary">
+                    <Typography
+                      variant="body2"
+                      sx={{
+                        color: "text.secondary",
+                      }}
+                    >
                       <FormattedMessage
                         defaultMessage="{multiplier}x faster than typing"
                         values={{
@@ -158,7 +197,13 @@ export default function HomePage() {
         <GettingStartedList />
 
         <Box>
-          <Typography variant="h6" fontWeight={600} sx={{ mb: 0.5 }}>
+          <Typography
+            variant="h6"
+            sx={{
+              fontWeight: 600,
+              mb: 0.5,
+            }}
+          >
             <FormattedMessage defaultMessage="Recent transcriptions" />
           </Typography>
           {topIds.length > 0 ? (
@@ -177,7 +222,13 @@ export default function HomePage() {
               </Box>
             </>
           ) : (
-            <Typography variant="body2" color="text.secondary" sx={{ mt: 1 }}>
+            <Typography
+              variant="body2"
+              sx={{
+                color: "text.secondary",
+                mt: 1,
+              }}
+            >
               <FormattedMessage defaultMessage="No transcriptions yet." />
             </Typography>
           )}

@@ -18,9 +18,9 @@ export const CopyableCommand = ({ command }: CopyableCommandProps) => {
   return (
     <Stack
       direction="row"
-      alignItems="center"
       spacing={1}
       sx={{
+        alignItems: "center",
         p: 1.5,
         borderRadius: 1,
         bgcolor: "action.hover",

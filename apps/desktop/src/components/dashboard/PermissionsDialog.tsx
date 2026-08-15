@@ -1,5 +1,5 @@
 import {
-  CheckCircleOutline,
+  CheckCircleOutlined,
   HighlightOff,
   OpenInNew,
   PendingOutlined,
@@ -92,7 +92,7 @@ const PermissionRow = ({ kind }: { kind: PermissionKind }) => {
     if (isPermissionAuthorized(status.state)) {
       return {
         icon: (
-          <CheckCircleOutline color="success" sx={{ fontSize: ICON_SIZE }} />
+          <CheckCircleOutlined color="success" sx={{ fontSize: ICON_SIZE }} />
         ),
         color: "success.main" as const,
         chipColor: "success" as const,
@@ -140,19 +140,32 @@ const PermissionRow = ({ kind }: { kind: PermissionKind }) => {
     <Stack
       direction="row"
       spacing={2}
-      alignItems="flex-start"
-      sx={{ paddingY: 1.5 }}
+      sx={{
+        alignItems: "flex-start",
+        paddingY: 1.5,
+      }}
     >
       <Box sx={{ lineHeight: 0, color }}>{icon}</Box>
       <Stack spacing={0.5} sx={{ flex: 1 }}>
-        <Stack direction="row" spacing={1} alignItems="center">
+        <Stack
+          direction="row"
+          spacing={1}
+          sx={{
+            alignItems: "center",
+          }}
+        >
           <Typography variant="h6">{title}</Typography>
           <Chip size="small" color={chipColor} label={chipLabel} />
         </Stack>
         <Typography variant="body2" sx={{ fontWeight: 500 }}>
           {instructions}
         </Typography>
-        <Typography variant="body2" color="text.secondary">
+        <Typography
+          variant="body2"
+          sx={{
+            color: "text.secondary",
+          }}
+        >
           {getPurposeDescription(kind, intl)}
         </Typography>
         {showListenerRetry && (
@@ -267,7 +280,6 @@ export const PermissionsDialog = () => {
       onClose={handleClose}
       fullWidth
       maxWidth="sm"
-      disableEscapeKeyDown
       slotProps={{
         backdrop: {
           sx: { backdropFilter: "blur(4px)" },
