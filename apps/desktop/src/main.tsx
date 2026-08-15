@@ -5,13 +5,13 @@ import { FirebaseOptions, initializeApp } from "firebase/app";
 import mixpanel from "mixpanel-browser";
 import { connectAuthEmulator } from "firebase/auth";
 import { connectDatabaseEmulator, getDatabase } from "firebase/database";
-import React, { useEffect, useMemo } from "react";
+import React, { useMemo } from "react";
 import ReactDOM from "react-dom/client";
 import { IntlProvider } from "react-intl";
 import { AppWithLoading } from "./components/root/AppWithLoading";
 import { SnackbarEmitter } from "./components/root/SnackbarEmitter";
 import { getIntlConfig } from "./i18n";
-import { theme } from "./theme";
+import { THEME_PROVIDER_CONFIG, theme } from "./theme";
 import { createEffectiveAuth } from "./utils/auth.utils";
 import { applyDomMutationGuards } from "./utils/dom-guard.utils";
 import { getIsEmulators } from "./utils/env.utils";
@@ -100,24 +100,10 @@ type ChildrenProps = {
 const Main = ({ children }: ChildrenProps) => {
   const intlConfig = useMemo(() => getIntlConfig(), []);
 
-  // The pre-hydration script in index.html paints the launch canvas via
-  // body.boot-theme-{light,dark} classes. Clear them as soon as React mounts
-  // so MUI's CssBaseline (theme.vars.palette.level0) owns the body background
-  // from then on. Leaving the classes in place would keep an !important rule
-  // pinned to the launch-time scheme — that is what made light mode look
-  // hardcoded to dark.
-  useEffect(() => {
-    document.body.classList.remove("boot-theme-light", "boot-theme-dark");
-  }, []);
-
   return (
     <React.StrictMode>
       <IntlProvider {...intlConfig}>
-        <ThemeProvider
-          theme={theme}
-          defaultMode="system"
-          colorSchemeStorageKey="mode"
-        >
+        <ThemeProvider theme={theme} {...THEME_PROVIDER_CONFIG}>
           <CssBaseline />
           {children}
         </ThemeProvider>

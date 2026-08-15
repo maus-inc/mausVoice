@@ -5,6 +5,10 @@ import "@mui/material/Paper";
 import "@mui/material/Typography";
 
 declare module "@mui/material/styles" {
+  interface CssThemeVariables {
+    enabled: true;
+  }
+
   interface Palette {
     goldBg: string;
     goldFg: string;

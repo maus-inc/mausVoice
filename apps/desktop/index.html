@@ -11,95 +11,78 @@
       }
 
       /*
-        Pre-hydration canvas. Must stay in sync with `surfaces.*.level0` in
-        src/styles/palette.ts - React has not mounted yet, so the theme cannot
-        paint this and a mismatch shows as a colour flash on launch.
-
-        The inline script below overrides these with the persisted MUI mode
-        (localStorage "mode") before React mounts; the media query remains the
-        no-JS / no-preference fallback.
+        Pre-hydration canvas. The script below resolves the persisted mode and
+        sets the same selector MUI uses before <body> is painted. The fallback
+        colours must stay in sync with surfaces.*.level0 in src/styles/palette.ts.
+        Once MUI mounts, --app-palette-level0 supplies the runtime value.
       */
       body {
         margin: 0;
-        background-color: #0c0c0d;
+        background-color: var(--app-palette-level0, #0c0c0d);
       }
 
       @media (prefers-color-scheme: light) {
         body {
-          background-color: #f5f2ed;
+          background-color: var(--app-palette-level0, #f5f2ed);
         }
       }
 
-      /*
-        Pre-hydration boot classes. The inline script below adds one of these
-        to <body> instead of setting an inline background-color: an inline
-        style outranks the MUI CssBaseline body rule forever, which hardcoded
-        the canvas to the launch-time scheme and made runtime light-mode
-        switches appear broken. These classes are removed on mount (see
-        src/main.tsx) so the runtime theme owns the background from then on.
-      */
-      body.boot-theme-dark {
-        background-color: #0c0c0d !important;
+      html[data-mui-color-scheme="dark"] body {
+        background-color: var(--app-palette-level0, #0c0c0d);
       }
 
-      body.boot-theme-light {
-        background-color: #f5f2ed !important;
+      html[data-mui-color-scheme="light"] body {
+        background-color: var(--app-palette-level0, #f5f2ed);
       }
 
       .firebase-emulator-warning {
         display: none !important;
       }
     </style>
-  </head>
-
-  <body>
-    <div id="root"></div>
     <script>
-      // Pre-hydration theme bootstrap: read the persisted MUI mode
-      // (localStorage "mode" — ThemeProvider's colorSchemeStorageKey), resolve
-      // "system" via matchMedia, and paint the matching surfaces.level0
-      // background via a boot class so the launch canvas never flashes the
-      // wrong scheme. The class is removed on mount (src/main.tsx).
+      // Keep this key and selector aligned with THEME_MODE_STORAGE_KEY and
+      // THEME_COLOR_SCHEME_SELECTOR in src/theme.ts.
       (function () {
         var stored;
         try {
           stored = localStorage.getItem("mode");
-          if (stored === null) {
-            // One-time migration: MUI previously persisted the scheme under
-            // its own default key; the app now uses "mode" explicitly
-            // (ThemeProvider colorSchemeStorageKey). Carry the old choice
-            // over so users don't lose their theme on first launch.
-            var legacy = localStorage.getItem("mui-mode");
-            if (
-              legacy === "light" ||
-              legacy === "dark" ||
-              legacy === "system"
-            ) {
-              stored = legacy;
-              localStorage.setItem("mode", legacy);
-            }
+
+          // Releases before 0.1.6 used MUI's default key. The first light-mode
+          // fix also continued writing to that key by passing
+          // colorSchemeStorageKey instead of modeStorageKey. Prefer that latest
+          // value once, migrate it to the app key, then remove the legacy key.
+          var legacy = localStorage.getItem("mui-mode");
+          if (legacy === "light" || legacy === "dark" || legacy === "system") {
+            stored = legacy;
+            localStorage.setItem("mode", legacy);
+            localStorage.removeItem("mui-mode");
           }
         } catch {
-          // Storage can be unavailable (private mode, disabled cookies);
-          // fall back to the system preference.
           stored = null;
         }
+
         var mode =
           stored === "light" || stored === "dark" || stored === "system"
             ? stored
             : "system";
         var resolved = mode;
         if (mode === "system") {
-          var prefersLight = window.matchMedia
-            ? window.matchMedia("(prefers-color-scheme: light)").matches
-            : false;
-          resolved = prefersLight ? "light" : "dark";
+          var prefersDark = window.matchMedia
+            ? window.matchMedia("(prefers-color-scheme: dark)").matches
+            : true;
+          resolved = prefersDark ? "dark" : "light";
         }
-        document.body.classList.add(
-          resolved === "light" ? "boot-theme-light" : "boot-theme-dark",
+
+        document.documentElement.setAttribute(
+          "data-mui-color-scheme",
+          resolved,
         );
       })();
     </script>
+  </head>
+
+  <body>
+    <div id="root"></div>
     <script type="module" src="/src/main.tsx"></script>
   </body>
 </html>
