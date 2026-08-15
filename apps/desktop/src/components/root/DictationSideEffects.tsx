@@ -113,6 +113,12 @@ type RawStopResp = {
   abortMessage?: string;
 };
 
+type StoppedRecordingData = {
+  audio: StopRecordingResponse | null;
+  a11yInfo: TextFieldInfo | null;
+  appTarget: AppTarget | null;
+};
+
 const FINALIZE_TIMEOUT_MS = 90_000;
 const HANDLE_TRANSCRIPT_TIMEOUT_MS = 60_000;
 const PHASE_HEARTBEAT_INTERVAL_MS = 5_000;
@@ -382,59 +388,54 @@ export const DictationSideEffects = () => {
     ],
   );
 
+  const collectStoppedRecording =
+    useCallback(async (): Promise<StoppedRecordingData> => {
+      const stopped = await getLogger().stopwatch("stopRecording", async () => {
+        try {
+          tryPlayAudioChime("stop_recording_clip");
+          getLogger().verbose("Invoking stop_recording and fetching a11y info");
+          const [, outAudio, outA11yInfo, outAppTarget] = await Promise.all([
+            strategyRef.current?.setPhase("loading"),
+            invoke<StopRecordingResponse>("stop_recording"),
+            invoke<TextFieldInfo>("get_text_field_info").catch((error) => {
+              getLogger().verbose(`Failed to get text field info: ${error}`);
+              return null;
+            }),
+            tryRegisterCurrentAppTarget().catch((error) => {
+              getLogger().verbose(`Failed to get current app target: ${error}`);
+              return null;
+            }),
+          ]);
+          return {
+            audio: outAudio,
+            a11yInfo: outA11yInfo,
+            appTarget: outAppTarget,
+          };
+        } catch (error) {
+          getLogger().error(`Failed to stop recording: ${error}`);
+          showToast({
+            message: intl.formatMessage({
+              defaultMessage: "Failed to stop recording",
+            }),
+            toastType: "error",
+            duration: 8_000,
+          });
+          return { audio: null, a11yInfo: null, appTarget: null };
+        }
+      });
+      getLogger().verbose(
+        `Recording stopped (hasSamples=${!!stopped.audio?.samples})`,
+      );
+      return stopped;
+    }, [intl]);
+
   const stopRecordingRaw = useCallback(async (): Promise<RawStopResp> => {
     getLogger().info("Stopping recording");
     clearRecordingTimers();
     restoreSystemVolume();
 
     try {
-      const [audio, a11yInfo, appTarget] = await getLogger().stopwatch(
-        "stopRecording",
-        async () => {
-          let audio: StopRecordingResponse | null = null;
-          let a11yInfo: TextFieldInfo | null = null;
-          let appTarget: AppTarget | null = null;
-          try {
-            tryPlayAudioChime("stop_recording_clip");
-
-            getLogger().verbose(
-              "Invoking stop_recording and fetching a11y info",
-            );
-            const [, outAudio, outA11yInfo, outAppTarget] = await Promise.all([
-              strategyRef.current?.setPhase("loading"),
-              invoke<StopRecordingResponse>("stop_recording"),
-              invoke<TextFieldInfo>("get_text_field_info").catch((error) => {
-                getLogger().verbose(`Failed to get text field info: ${error}`);
-                return null;
-              }),
-              tryRegisterCurrentAppTarget().catch((error) => {
-                getLogger().verbose(
-                  `Failed to get current app target: ${error}`,
-                );
-                return null;
-              }),
-            ]);
-
-            audio = outAudio;
-            a11yInfo = outA11yInfo;
-            appTarget = outAppTarget;
-            getLogger().verbose(
-              `Recording stopped (hasSamples=${!!audio?.samples})`,
-            );
-          } catch (error) {
-            getLogger().error(`Failed to stop recording: ${error}`);
-            showToast({
-              message: intl.formatMessage({
-                defaultMessage: "Failed to stop recording",
-              }),
-              toastType: "error",
-              duration: 8_000,
-            });
-          }
-
-          return [audio, a11yInfo, appTarget];
-        },
-      );
+      const { audio, a11yInfo, appTarget } = await collectStoppedRecording();
 
       if (!audio) {
         getLogger().warning("stopRecordingRaw: no audio data received");
@@ -546,7 +547,7 @@ export const DictationSideEffects = () => {
       // timeout) must return the pill to idle.
       await sendPhaseToPill("idle");
     }
-  }, [restoreSystemVolume, sendPhaseToPill]);
+  }, [collectStoppedRecording, restoreSystemVolume, sendPhaseToPill]);
 
   const stopRecording = useCallback(async () => {
     if (isStoppingRef.current) {

@@ -38,6 +38,86 @@ export const closeRetranscribeDialog = () => {
   });
 };
 
+type ProcessAudioParams = {
+  samples: number[];
+  sampleRate: number;
+  toneId?: string | null;
+  languageCode?: string | null;
+};
+
+type ProcessedAudio = Awaited<ReturnType<typeof processAudio>>;
+
+const getReplacementRules = () =>
+  Object.values(getAppState().termById)
+    .filter((term) => term.isReplacement)
+    .map((term) => ({
+      sourceValue: term.sourceValue,
+      destinationValue: term.destinationValue,
+    }));
+
+const sanitizeImportedTranscript = (rawTranscript: string): string => {
+  const replaced = applyReplacements(rawTranscript, getReplacementRules());
+  return applySymbolConversions(replaced);
+};
+
+const processAudio = async ({
+  samples,
+  sampleRate,
+  toneId,
+  languageCode,
+}: ProcessAudioParams) => {
+  const transcribeResult = await transcribeAudio({
+    samples,
+    sampleRate,
+    dictationLanguage: languageCode ?? undefined,
+  });
+  const sanitizedTranscript = sanitizeImportedTranscript(
+    transcribeResult.rawTranscript,
+  );
+  const postProcessResult = await postProcessTranscript({
+    rawTranscript: sanitizedTranscript,
+    toneId: toneId ?? null,
+    dictationLanguage: languageCode ?? undefined,
+  });
+
+  return { transcribeResult, sanitizedTranscript, postProcessResult };
+};
+
+const updateStoredTranscription = async (
+  transcription: Transcription,
+  processed: ProcessedAudio,
+): Promise<Transcription> => {
+  const { transcribeResult, sanitizedTranscript, postProcessResult } =
+    processed;
+  const warnings = [
+    ...transcribeResult.warnings,
+    ...postProcessResult.warnings,
+  ];
+  const metadata = {
+    ...transcribeResult.metadata,
+    ...postProcessResult.metadata,
+  };
+  const finalTranscript = postProcessResult.transcript;
+  if (!finalTranscript) throw new Error("Retranscription produced no text.");
+
+  return getTranscriptionRepo().updateTranscription({
+    ...transcription,
+    transcript: finalTranscript,
+    sanitizedTranscript,
+    modelSize: metadata.modelSize ?? null,
+    inferenceDevice: metadata.inferenceDevice ?? null,
+    rawTranscript: transcribeResult.rawTranscript || finalTranscript,
+    transcriptionPrompt: metadata.transcriptionPrompt ?? null,
+    postProcessPrompt: metadata.postProcessPrompt ?? null,
+    transcriptionApiKeyId: metadata.transcriptionApiKeyId ?? null,
+    postProcessApiKeyId: metadata.postProcessApiKeyId ?? null,
+    transcriptionMode: metadata.transcriptionMode ?? null,
+    postProcessMode: metadata.postProcessMode ?? null,
+    postProcessDevice: metadata.postProcessDevice ?? null,
+    warnings: warnings.length > 0 ? warnings : null,
+  });
+};
+
 type RetranscribeTranscriptionParams = {
   transcriptionId: string;
   toneId?: string | null;
@@ -49,73 +129,21 @@ export const retranscribeTranscription = async ({
   toneId,
   languageCode,
 }: RetranscribeTranscriptionParams): Promise<void> => {
-  const state = getAppState();
-  const transcription = getRec(state.transcriptionById, transcriptionId);
+  const transcription = getRec(
+    getAppState().transcriptionById,
+    transcriptionId,
+  );
+  if (!transcription) throw new Error("Transcription not found.");
 
-  if (!transcription) {
-    throw new Error("Transcription not found.");
-  }
-
-  const repo = getTranscriptionRepo();
-  const audioData = await repo.loadTranscriptionAudio(transcriptionId);
-
-  const transcribeResult = await transcribeAudio({
+  const audioData =
+    await getTranscriptionRepo().loadTranscriptionAudio(transcriptionId);
+  const processed = await processAudio({
     samples: audioData.samples,
     sampleRate: audioData.sampleRate,
-    dictationLanguage: languageCode ?? undefined,
+    toneId,
+    languageCode,
   });
-
-  const rawTranscript = transcribeResult.rawTranscript;
-
-  const replacementRules = Object.values(state.termById)
-    .filter((term) => term.isReplacement)
-    .map((term) => ({
-      sourceValue: term.sourceValue,
-      destinationValue: term.destinationValue,
-    }));
-
-  const afterReplacements = applyReplacements(rawTranscript, replacementRules);
-  const sanitizedTranscript = applySymbolConversions(afterReplacements);
-
-  const postProcessResult = await postProcessTranscript({
-    rawTranscript: sanitizedTranscript,
-    toneId: toneId ?? null,
-    dictationLanguage: languageCode ?? undefined,
-  });
-
-  const finalTranscript = postProcessResult.transcript;
-
-  const warnings = [
-    ...transcribeResult.warnings,
-    ...postProcessResult.warnings,
-  ];
-  const metadata = {
-    ...transcribeResult.metadata,
-    ...postProcessResult.metadata,
-  };
-
-  if (!finalTranscript) {
-    throw new Error("Retranscription produced no text.");
-  }
-
-  const updatedPayload: Transcription = {
-    ...transcription,
-    transcript: finalTranscript,
-    sanitizedTranscript,
-    modelSize: metadata?.modelSize ?? null,
-    inferenceDevice: metadata?.inferenceDevice ?? null,
-    rawTranscript: rawTranscript ?? finalTranscript,
-    transcriptionPrompt: metadata?.transcriptionPrompt ?? null,
-    postProcessPrompt: metadata?.postProcessPrompt ?? null,
-    transcriptionApiKeyId: metadata?.transcriptionApiKeyId ?? null,
-    postProcessApiKeyId: metadata?.postProcessApiKeyId ?? null,
-    transcriptionMode: metadata?.transcriptionMode ?? null,
-    postProcessMode: metadata?.postProcessMode ?? null,
-    postProcessDevice: metadata?.postProcessDevice ?? null,
-    warnings: warnings.length > 0 ? warnings : null,
-  };
-
-  const updated = await repo.updateTranscription(updatedPayload);
+  const updated = await updateStoredTranscription(transcription, processed);
 
   produceAppState((draft) => {
     draft.transcriptionById[transcriptionId] = updated;
@@ -135,34 +163,15 @@ export const importAudioFile = async ({
   languageCode,
 }: ImportAudioParams): Promise<void> => {
   const audio = await getTranscriptionRepo().importAudioFile(path);
-  const transcribeResult = await transcribeAudio({
+  const processed = await processAudio({
     samples: audio.samples,
     sampleRate: audio.sampleRate,
-    dictationLanguage: languageCode ?? undefined,
+    toneId,
+    languageCode,
   });
+  const { transcribeResult, sanitizedTranscript, postProcessResult } =
+    processed;
 
-  const state = getAppState();
-  const replacementRules = Object.values(state.termById)
-    .filter((term) => term.isReplacement)
-    .map((term) => ({
-      sourceValue: term.sourceValue,
-      destinationValue: term.destinationValue,
-    }));
-  const afterReplacements = applyReplacements(
-    transcribeResult.rawTranscript,
-    replacementRules,
-  );
-  const sanitizedTranscript = applySymbolConversions(afterReplacements);
-  const postProcessResult = await postProcessTranscript({
-    rawTranscript: sanitizedTranscript,
-    toneId: toneId ?? null,
-    dictationLanguage: languageCode ?? undefined,
-  });
-
-  const warnings = [
-    ...transcribeResult.warnings,
-    ...postProcessResult.warnings,
-  ];
   await storeTranscription({
     audio: { samples: audio.samples, sampleRate: audio.sampleRate },
     rawTranscript: transcribeResult.rawTranscript || null,
@@ -170,6 +179,6 @@ export const importAudioFile = async ({
     transcript: postProcessResult.transcript || null,
     transcriptionMetadata: transcribeResult.metadata,
     postProcessMetadata: postProcessResult.metadata,
-    warnings,
+    warnings: [...transcribeResult.warnings, ...postProcessResult.warnings],
   });
 };
