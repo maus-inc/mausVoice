@@ -226,6 +226,8 @@ Models are stored in the platform-specific app data directory:
 - **macOS**: `~/Library/Application Support/mausVoice/transcription-models/`
 - **Windows**: `C:\Users\{user}\AppData\Roaming\mausVoice\transcription-models\`
 
+On startup, files from the former `models/` directory are moved into `transcription-models/` if the destination does not already contain the same filename. This keeps existing downloads available without downloading them again.
+
 Path helpers in `src-tauri/src/system/paths.rs`:
 
 ```rust

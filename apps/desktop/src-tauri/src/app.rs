@@ -197,6 +197,11 @@ pub fn build() -> tauri::Builder<tauri::Wry> {
 
             log::info!("Starting application setup...");
 
+            // Preserve GGML files from the old app-data/models location before
+            // the desktop sidecars start using app-data/transcription-models.
+            crate::system::paths::migrate_legacy_models(app.handle())
+                .map_err(|err| -> Box<dyn std::error::Error> { Box::new(err) })?;
+
             // Record the Windows elevation state once. An unelevated low-level
             // keyboard hook cannot observe input delivered to a higher-integrity
             // window (UIPI), so this is the first thing to check when a user

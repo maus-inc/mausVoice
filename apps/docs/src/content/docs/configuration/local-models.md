@@ -16,7 +16,7 @@ Choose **Settings → Processing → AI transcription → Local**. Opening this 
 | Whisper Large v3 Turbo | `turbo`  |             1.6 GB |
 | Whisper Large v3       | `large`  |             3.1 GB |
 
-The six supported files come from the `ggerganov/whisper.cpp` Hugging Face repository. The public Hindi2Hinglish Apex checkpoint is published by Oriserve at `Oriserve/Whisper-Hindi2Hinglish-Apex`, but it is a Transformers BF16 `model.safetensors` checkpoint rather than a whisper.cpp GGML `.bin` file. It is therefore not offered in Local mode until a compatible converted artifact is published. Supported files are saved in the app-data directory's `transcription-models/` child and are shared by the CPU and GPU sidecars.
+The six supported files come from the `ggerganov/whisper.cpp` Hugging Face repository. The public Hindi2Hinglish Apex checkpoint is published by Oriserve at `Oriserve/Whisper-Hindi2Hinglish-Apex`, but it is a Transformers BF16 `model.safetensors` checkpoint rather than a whisper.cpp GGML `.bin` file. It is therefore not offered in Local mode until a compatible converted artifact is published. Supported files are saved in the app-data directory's `transcription-models/` child and are shared by the CPU and GPU sidecars. Upgrades migrate files from the previous app-data `models/` directory automatically.
 
 A model is selectable only when status says both downloaded and valid. Validation loads the model through whisper.cpp, so a corrupt or incompatible file is not treated as ready. The runtime also attempts to download an active missing model automatically, but doing that at dictation start can create a long, poorly timed wait; download and verify it in Settings first.
 
