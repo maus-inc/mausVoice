@@ -1,0 +1,17 @@
+name: Temporary lockfile generator
+
+on:
+  workflow_dispatch:
+
+jobs:
+  generate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Generate transcription lockfile
+        run: cargo generate-lockfile --manifest-path packages/rust_transcription/Cargo.toml
+      - uses: actions/upload-artifact@v5
+        with:
+          name: generated-transcription-lock
+          path: packages/rust_transcription/Cargo.lock
