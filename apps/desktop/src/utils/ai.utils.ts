@@ -116,6 +116,15 @@ export const applyAiPreferences = (
   draft.settings.agentMode.openclawGatewayUrl =
     preferences.openclawGatewayUrl ?? null;
   draft.settings.agentMode.openclawToken = preferences.openclawToken ?? null;
+  draft.settings.inDictationStyleSwitchingEnabled =
+    preferences.inDictationStyleSwitchingEnabled ?? false;
+  draft.settings.hallucinationFilterEnabled =
+    preferences.hallucinationFilterEnabled ?? true;
+  draft.settings.reviewBeforeInsert = preferences.reviewBeforeInsert === true;
+  draft.settings.agentEnabledTools = preferences.agentEnabledTools ?? null;
+  draft.settings.agentMaxIterations = preferences.agentMaxIterations ?? 20;
+  draft.settings.agentPermissionTimeoutMs =
+    preferences.agentPermissionTimeoutMs ?? 60_000;
 };
 
 export function formatMessagesAsPrompt(messages: LlmMessage[]): {

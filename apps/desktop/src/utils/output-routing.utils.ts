@@ -5,6 +5,7 @@ import type {
 } from "@maus-inc/types";
 import { getIntl } from "../i18n/intl";
 import { getAppState } from "../store";
+import { reviewTextInComposer } from "./composer.utils";
 import { getLogger } from "./log.utils";
 import { sendPillFlashMessage } from "./overlay.utils";
 import { sanitizeIndentation } from "./string.utils";
@@ -43,20 +44,33 @@ export const routeTranscriptOutput = async (
     };
   }
 
+  let outputText = args.text;
+  if (prefs?.reviewBeforeInsert === true && outputText.trim()) {
+    const reviewed = await reviewTextInComposer(outputText);
+    if (reviewed === null) {
+      return { delivered: false, remote: false };
+    }
+    outputText = reviewed;
+  }
+
+  if (!outputText.trim()) {
+    return { delivered: false, remote: false };
+  }
+
   const insertionMethod =
     currentApp?.insertionMethod ?? prefs?.insertionMethod ?? "paste";
 
   const typingSpeedMs = currentApp?.typingSpeedMs ?? prefs?.typingSpeedMs ?? 5;
 
   if (insertionMethod === "type") {
-    await insertLocalTranscriptOutputViaTyping(args.text, typingSpeedMs);
+    await insertLocalTranscriptOutputViaTyping(outputText, typingSpeedMs);
   } else {
     const pasteKeybind =
       state.supportsPasteKeybinds === "global"
         ? (prefs?.pasteKeybind ?? null)
         : (currentApp?.pasteKeybind ?? prefs?.pasteKeybind ?? null);
 
-    await insertLocalTranscriptOutputViaPaste(args.text, pasteKeybind);
+    await insertLocalTranscriptOutputViaPaste(outputText, pasteKeybind);
   }
 
   return {

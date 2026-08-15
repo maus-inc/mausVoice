@@ -40,6 +40,7 @@
     },
     "updater:default",
     "process:default",
+    "dialog:default",
     {
       "identifier": "shell:allow-spawn",
       "allow": [

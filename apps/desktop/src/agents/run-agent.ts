@@ -17,6 +17,7 @@ import { getLogger } from "../utils/log.utils";
 import type { AgentTypeConfig } from "./agent-configs";
 
 const POLL_INTERVAL_MS = 500;
+const MAX_CONTEXT_MESSAGES = 80;
 const activeLoops = new Map<string, AgentLoop>();
 
 export async function runAgent(
@@ -317,8 +318,9 @@ async function executeWithPermission(
   conversationId: string,
 ) {
   const tool = createTool(info);
+  const permissionScope = `conversation:${conversationId}`;
 
-  if (tool.getAlwaysAllow(params)) {
+  if (tool.getAlwaysAllow(params, permissionScope)) {
     try {
       const result = await executeTool(info.id, params);
       return { success: true, result };
@@ -412,5 +414,17 @@ function buildConversationMessages(conversationId: string): LlmMessage[] {
     }
   }
 
-  return messages;
+  if (messages.length <= MAX_CONTEXT_MESSAGES) {
+    return messages;
+  }
+
+  // Keep the opening user request as durable memory and the newest tool/result
+  // exchange as working memory. Dropping the middle prevents long-running
+  // conversations from consuming the provider context window indefinitely.
+  const firstUserIndex = messages.findIndex(
+    (message) => message.role === "user",
+  );
+  const firstUser = firstUserIndex >= 0 ? messages[firstUserIndex] : null;
+  const tail = messages.slice(-MAX_CONTEXT_MESSAGES + (firstUser ? 1 : 0));
+  return firstUser ? [firstUser, ...tail] : tail;
 }

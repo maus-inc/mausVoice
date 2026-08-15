@@ -1,5 +1,12 @@
 import { Nullable } from "@maus-inc/types";
 
+export {
+  KNOWN_SILENCE_HALLUCINATIONS,
+  filterKnownSilenceHallucinations,
+  isKnownSilenceHallucination,
+  isNearSilentAudio,
+} from "./hallucination.utils";
+
 /**
  * Calculates the Levenshtein edit distance between two strings.
  * Returns the minimum number of single-character edits (insertions,

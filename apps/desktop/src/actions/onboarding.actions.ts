@@ -202,6 +202,12 @@ export const submitOnboarding = async () => {
       typingSpeedMs: null,
       pillResetMonitorStrategy: "current",
       alwaysRequestAdminOnStartup: false,
+      inDictationStyleSwitchingEnabled: false,
+      hallucinationFilterEnabled: true,
+      reviewBeforeInsert: null,
+      agentEnabledTools: null,
+      agentMaxIterations: 20,
+      agentPermissionTimeoutMs: 60_000,
     };
 
     const [savedUser, savedPreferences] = await Promise.all([

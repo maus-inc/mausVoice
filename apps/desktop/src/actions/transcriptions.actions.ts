@@ -6,7 +6,11 @@ import {
   applyReplacements,
   applySymbolConversions,
 } from "../utils/string.utils";
-import { postProcessTranscript, transcribeAudio } from "./transcribe.actions";
+import {
+  postProcessTranscript,
+  storeTranscription,
+  transcribeAudio,
+} from "./transcribe.actions";
 
 export const openTranscriptionDetailsDialog = (transcriptionId: string) => {
   produceAppState((draft) => {
@@ -115,5 +119,57 @@ export const retranscribeTranscription = async ({
 
   produceAppState((draft) => {
     draft.transcriptionById[transcriptionId] = updated;
+  });
+};
+
+export type ImportAudioParams = {
+  path: string;
+  toneId?: string | null;
+  languageCode?: string | null;
+};
+
+/** Import a file, decode it in Rust, then use the exact live dictation pipeline. */
+export const importAudioFile = async ({
+  path,
+  toneId,
+  languageCode,
+}: ImportAudioParams): Promise<void> => {
+  const audio = await getTranscriptionRepo().importAudioFile(path);
+  const transcribeResult = await transcribeAudio({
+    samples: audio.samples,
+    sampleRate: audio.sampleRate,
+    dictationLanguage: languageCode ?? undefined,
+  });
+
+  const state = getAppState();
+  const replacementRules = Object.values(state.termById)
+    .filter((term) => term.isReplacement)
+    .map((term) => ({
+      sourceValue: term.sourceValue,
+      destinationValue: term.destinationValue,
+    }));
+  const afterReplacements = applyReplacements(
+    transcribeResult.rawTranscript,
+    replacementRules,
+  );
+  const sanitizedTranscript = applySymbolConversions(afterReplacements);
+  const postProcessResult = await postProcessTranscript({
+    rawTranscript: sanitizedTranscript,
+    toneId: toneId ?? null,
+    dictationLanguage: languageCode ?? undefined,
+  });
+
+  const warnings = [
+    ...transcribeResult.warnings,
+    ...postProcessResult.warnings,
+  ];
+  await storeTranscription({
+    audio: { samples: audio.samples, sampleRate: audio.sampleRate },
+    rawTranscript: transcribeResult.rawTranscript || null,
+    sanitizedTranscript,
+    transcript: postProcessResult.transcript || null,
+    transcriptionMetadata: transcribeResult.metadata,
+    postProcessMetadata: postProcessResult.metadata,
+    warnings,
   });
 };

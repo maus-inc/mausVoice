@@ -16,6 +16,7 @@ import {
 import { refreshMember } from "../../actions/member.actions";
 import { dismissToast, showToast } from "../../actions/toast.actions";
 import {
+  selectToneByHotkey,
   switchWritingStyleBackward,
   switchWritingStyleForward,
 } from "../../actions/tone.actions";
@@ -27,6 +28,7 @@ import { storeTranscription } from "../../actions/transcribe.actions";
 import { recordStreak } from "../../actions/user.actions";
 import {
   useHotkeyFire,
+  useHotkeyFireMany,
   useHotkeyHold,
   useHotkeyHoldMany,
 } from "../../hooks/hotkey.hooks";
@@ -72,6 +74,8 @@ import {
   CANCEL_TRANSCRIPTION_HOTKEY,
   DICTATE_HOTKEY,
   getAdditionalLanguageEntries,
+  getHotkeyCombosForAction,
+  getSwitchToStyleEntries,
   OPEN_CHAT_HOTKEY,
   SWITCH_WRITING_STYLE_BACKWARD_HOTKEY,
   SWITCH_WRITING_STYLE_FORWARD_HOTKEY,
@@ -127,6 +131,7 @@ export const DictationSideEffects = () => {
   // Last phase actually sent to the pill; drives the idle-reconciliation
   // heartbeat and keeps duplicate idle writes out of the pipe.
   const lastPhaseSentRef = useRef<OverlayPhase | null>(null);
+  const previousStyleSwitchKeysRef = useRef<string[]>([]);
   const [isStopping, setIsStopping] = useState(false);
   const assistantModeEnabled = useAppStore(getIsAssistantModeEnabled);
 
@@ -137,8 +142,13 @@ export const DictationSideEffects = () => {
     (state) => state.activeRecordingMode !== null,
   );
   const activeRecordingMode = useAppStore((state) => state.activeRecordingMode);
+  const keysHeld = useAppStore((state) => state.keysHeld);
   const assistantInputMode = useAppStore((state) => state.assistantInputMode);
   const additionalLanguageEntries = useAppStore(getAdditionalLanguageEntries);
+  const switchToStyleEntries = useAppStore(getSwitchToStyleEntries);
+  const inDictationStyleSwitchingEnabled = useAppStore(
+    (state) => state.userPrefs?.inDictationStyleSwitchingEnabled ?? false,
+  );
   const isDictationUnlocked = useAppStore(getIsDictationUnlocked);
   const isDictationInteractable = isDictationUnlocked && !isStopping;
   const pillVisibility = useAppStore((state) =>
@@ -853,6 +863,53 @@ export const DictationSideEffects = () => {
     });
   }, [intl]);
 
+  useEffect(() => {
+    const previous = new Set(
+      previousStyleSwitchKeysRef.current.map((key) => key.toLowerCase()),
+    );
+    const current = new Set(keysHeld.map((key) => key.toLowerCase()));
+    const canSwitch =
+      inDictationStyleSwitchingEnabled &&
+      isActiveSession &&
+      activeRecordingMode === "dictate" &&
+      isManualStyling;
+
+    if (canSwitch) {
+      const dictateCombos = getHotkeyCombosForAction(
+        getAppState(),
+        DICTATE_HOTKEY,
+      );
+      const activationHeld = dictateCombos.some((combo) =>
+        combo.every((key) => current.has(key.toLowerCase())),
+      );
+      if (activationHeld) {
+        if (current.has("leftarrow") && !previous.has("leftarrow")) {
+          void switchWritingStyleBackward();
+        } else if (current.has("rightarrow") && !previous.has("rightarrow")) {
+          void switchWritingStyleForward();
+        }
+      }
+    }
+
+    previousStyleSwitchKeysRef.current = keysHeld;
+  }, [
+    activeRecordingMode,
+    inDictationStyleSwitchingEnabled,
+    isActiveSession,
+    isManualStyling,
+    keysHeld,
+  ]);
+
+  useHotkeyFireMany({
+    actions: switchToStyleEntries.map((entry) => ({
+      actionName: entry.actionName,
+      onFire: () => {
+        void selectToneByHotkey(entry.toneId);
+      },
+    })),
+    isDisabled: !isDictationUnlocked,
+  });
+
   useHotkeyFire({
     actionName: SWITCH_WRITING_STYLE_FORWARD_HOTKEY,
     isDisabled: !isActiveSession || !isManualStyling,
@@ -869,6 +926,9 @@ export const DictationSideEffects = () => {
     actionName: DICTATE_HOTKEY,
     isDisabled: !isDictationInteractable || activeRecordingMode === "agent",
     controller: dictationController,
+    // Arrow keys are an intentional in-dictation style-switch modifier and
+    // must not release hold-to-talk when pressed.
+    allowAdditionalKeys: true,
   });
 
   useHotkeyHold({
@@ -1078,6 +1138,7 @@ export const DictationSideEffects = () => {
             toolId: permission.toolId,
             params: permission.params,
             allowed: true,
+            scope: `conversation:${permission.conversationId}`,
           });
         }
       }

@@ -1,6 +1,7 @@
 import { createBrowserRouter, Outlet, RouterProvider } from "react-router-dom";
 import AppsPage from "./components/apps/AppsPage.tsx";
 import ChatsPage from "./components/chats/ChatsPage.tsx";
+import { ComposerPage } from "./components/composer/ComposerPage.tsx";
 import { PageLayout } from "./components/common/PageLayout.tsx";
 import DashboardPage from "./components/dashboard/DashboardPage.tsx";
 import DictionaryPage from "./components/dictionary/DictionaryPage.tsx";
@@ -35,6 +36,10 @@ export const browserRouter = createBrowserRouter([
       {
         index: true,
         element: <Redirect to="/dashboard" />,
+      },
+      {
+        path: "composer",
+        element: <ComposerPage />,
       },
       {
         element: (

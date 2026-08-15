@@ -19,6 +19,7 @@ import { routeTranscriptOutput } from "../utils/output-routing.utils";
 import {
   applyReplacements,
   applySymbolConversions,
+  filterKnownSilenceHallucinations,
 } from "../utils/string.utils";
 import { getToneIdToUse, VERBATIM_TONE_ID } from "../utils/tone.utils";
 import { getMyUserPreferences } from "../utils/user.utils";
@@ -91,7 +92,10 @@ export class DictationStrategy extends BaseStrategy {
       }));
 
     const afterReplacements = applyReplacements(text, replacementRules);
-    return applySymbolConversions(afterReplacements);
+    const converted = applySymbolConversions(afterReplacements);
+    return getAppState().userPrefs?.hallucinationFilterEnabled === false
+      ? converted
+      : filterKnownSilenceHallucinations(converted);
   }
 
   validateAvailability(): Nullable<StrategyValidationError> {

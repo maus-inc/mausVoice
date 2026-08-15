@@ -38,6 +38,10 @@ whisper-rs = { version = "0.15.1", default-features = false, features = ["raw-ap
 ort = { version = "=2.0.0-rc.11", default-features = false, features = ["std", "ndarray", "load-dynamic"] }
 parakeet-rs = { version = "=0.3.3", default-features = false, features = ["cpu", "load-dynamic"] }
 canary-rs = { version = "=0.2.0", default-features = false, features = ["cpu", "load-dynamic"] }
+# SenseVoice offline ASR and the optional VAD implementation used by the
+# silence gate. The crate downloads matching native libraries at build time
+# unless SHERPA_ONNX_LIB_DIR is supplied by the release build.
+sherpa-onnx = "=1.13.5"
 
 [build-dependencies]
 flate2 = "1"

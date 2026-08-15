@@ -60,11 +60,45 @@ type LocalUserPreferences = {
   typingSpeedMs: Nullable<number>;
   pillResetMonitorStrategy?: Nullable<PillResetMonitorStrategy>;
   alwaysRequestAdminOnStartup?: boolean;
+  inDictationStyleSwitchingEnabled?: boolean;
+  hallucinationFilterEnabled?: boolean;
+  reviewBeforeInsert?: Nullable<boolean>;
+  agentEnabledTools?: Nullable<string>;
+  agentMaxIterations?: number;
+  agentPermissionTimeoutMs?: number;
 };
 
 const normalizePillResetMonitorStrategy = (
   strategy: Nullable<string> | undefined,
 ): PillResetMonitorStrategy => (strategy === "cursor" ? "cursor" : "current");
+
+const normalizeAgentMaxIterations = (
+  value: number | null | undefined,
+): number => Math.min(100, Math.max(1, Math.trunc(value ?? 20)));
+
+const normalizeAgentPermissionTimeout = (
+  value: number | null | undefined,
+): number =>
+  Math.min(10 * 60_000, Math.max(5_000, Math.trunc(value ?? 60_000)));
+
+const parseAgentEnabledTools = (
+  value: Nullable<string[]> | string | undefined,
+): Nullable<string[]> => {
+  if (Array.isArray(value)) return value;
+  if (typeof value !== "string" || value.trim() === "") return null;
+  try {
+    const parsed: unknown = JSON.parse(value);
+    return Array.isArray(parsed) &&
+      parsed.every((item) => typeof item === "string")
+      ? parsed
+      : null;
+  } catch {
+    return value
+      .split(",")
+      .map((item) => item.trim())
+      .filter(Boolean);
+  }
+};
 
 // Backwards-compatibility normalization for the persisted AI modes. Older
 // builds stored modes that no longer exist ("cloud" for all three, plus
@@ -147,6 +181,17 @@ export const fromLocalPreferences = (
     preferences.pillResetMonitorStrategy,
   ),
   alwaysRequestAdminOnStartup: preferences.alwaysRequestAdminOnStartup ?? false,
+  inDictationStyleSwitchingEnabled:
+    preferences.inDictationStyleSwitchingEnabled ?? false,
+  hallucinationFilterEnabled: preferences.hallucinationFilterEnabled ?? true,
+  reviewBeforeInsert: preferences.reviewBeforeInsert ?? null,
+  agentEnabledTools: parseAgentEnabledTools(preferences.agentEnabledTools),
+  agentMaxIterations: normalizeAgentMaxIterations(
+    preferences.agentMaxIterations,
+  ),
+  agentPermissionTimeoutMs: normalizeAgentPermissionTimeout(
+    preferences.agentPermissionTimeoutMs,
+  ),
 });
 
 export const toLocalPreferences = (
@@ -198,6 +243,19 @@ export const toLocalPreferences = (
     preferences.pillResetMonitorStrategy,
   ),
   alwaysRequestAdminOnStartup: preferences.alwaysRequestAdminOnStartup ?? false,
+  inDictationStyleSwitchingEnabled:
+    preferences.inDictationStyleSwitchingEnabled ?? false,
+  hallucinationFilterEnabled: preferences.hallucinationFilterEnabled ?? true,
+  reviewBeforeInsert: preferences.reviewBeforeInsert ?? null,
+  agentEnabledTools: preferences.agentEnabledTools
+    ? JSON.stringify(preferences.agentEnabledTools)
+    : null,
+  agentMaxIterations: normalizeAgentMaxIterations(
+    preferences.agentMaxIterations,
+  ),
+  agentPermissionTimeoutMs: normalizeAgentPermissionTimeout(
+    preferences.agentPermissionTimeoutMs,
+  ),
 });
 
 export abstract class BaseUserPreferencesRepo extends BaseRepo {

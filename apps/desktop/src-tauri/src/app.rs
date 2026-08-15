@@ -127,6 +127,7 @@ pub fn build() -> tauri::Builder<tauri::Wry> {
             Some(vec![AUTOSTART_HIDDEN_ARG]),
         ))
         .plugin(tauri_plugin_process::init())
+        .plugin(tauri_plugin_dialog::init())
         .plugin(
             tauri_plugin_sql::Builder::new()
                 .add_migrations(crate::db::DB_CONNECTION, crate::db::migrations())
@@ -330,6 +331,7 @@ pub fn build() -> tauri::Builder<tauri::Wry> {
             crate::commands::transcription_delete,
             crate::commands::transcription_update,
             crate::commands::transcription_audio_load,
+            crate::commands::transcription_import_audio,
             crate::commands::purge_stale_transcription_audio,
             crate::commands::export_transcription,
             crate::commands::export_diagnostics,

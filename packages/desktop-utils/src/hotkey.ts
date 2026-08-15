@@ -5,6 +5,8 @@ type HoldAction = {
   controller: ActivationController;
   combos: string[][];
   triggerCount: number;
+  /** Keep a hold-to-talk action active when an incidental key is pressed. */
+  allowAdditionalKeys?: boolean;
 };
 
 export type UseHotkeyHoldManyArgs = {
@@ -19,6 +21,7 @@ export type UseHotkeyHoldArgs = {
   triggerCount: number;
   keysHeld: string[];
   isDisabled?: boolean;
+  allowAdditionalKeys?: boolean;
 };
 
 export type UseHotkeyFireArgs = {
@@ -51,7 +54,11 @@ export const useHotkeyHoldMany = (args: UseHotkeyHoldManyArgs): void => {
   useEffect(() => {
     const normalize = (key: string) => key.toLowerCase();
 
-    const matchesCombo = (held: string[], combo: string[]) => {
+    const matchesCombo = (
+      held: string[],
+      combo: string[],
+      allowAdditionalKeys = false,
+    ) => {
       if (combo.length === 0) {
         return false;
       }
@@ -59,7 +66,10 @@ export const useHotkeyHoldMany = (args: UseHotkeyHoldManyArgs): void => {
       const uniqueHeld = Array.from(new Set(held.map((key) => normalize(key))));
       const required = Array.from(new Set(combo.map((key) => normalize(key))));
 
-      if (uniqueHeld.length !== required.length) {
+      if (
+        uniqueHeld.length < required.length ||
+        (!allowAdditionalKeys && uniqueHeld.length !== required.length)
+      ) {
         return false;
       }
 
@@ -71,7 +81,7 @@ export const useHotkeyHoldMany = (args: UseHotkeyHoldManyArgs): void => {
       const availableCombos = action.combos;
       const wasPressed = wasPressedRef.current.get(action.controller) ?? false;
       const isPressed = availableCombos.some((combo) =>
-        matchesCombo(keysHeld, combo),
+        matchesCombo(keysHeld, combo, action.allowAdditionalKeys),
       );
 
       if (isDisabled) {

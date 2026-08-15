@@ -5,6 +5,8 @@ import {
   getToolAlwaysAllow,
   setToolAlwaysAllow,
 } from "../utils/tool-permission.utils";
+import { getAppState } from "../store";
+import { reviewTextInComposer } from "../utils/composer.utils";
 
 export class PasteTool extends BaseTool {
   constructor(info: ToolInfo) {
@@ -14,15 +16,27 @@ export class PasteTool extends BaseTool {
   async execute(
     params: Record<string, unknown>,
   ): Promise<Record<string, unknown>> {
-    await invoke("paste", { text: params.text, keybind: null });
+    const requestedText = String(params.text ?? "");
+    const text =
+      getAppState().userPrefs?.reviewBeforeInsert === true
+        ? await reviewTextInComposer(requestedText)
+        : requestedText;
+    if (text === null || !text.trim()) {
+      return { canceled: true };
+    }
+    await invoke("paste", { text, keybind: null });
     return {};
   }
 
-  getAlwaysAllow(): boolean {
-    return getToolAlwaysAllow(this.info.id);
+  getAlwaysAllow(_params: Record<string, unknown>, scope = "global"): boolean {
+    return getToolAlwaysAllow(this.info.id, scope);
   }
 
-  setAlwaysAllow(_params: Record<string, unknown>, allowed: boolean): void {
-    setToolAlwaysAllow(this.info.id, allowed);
+  setAlwaysAllow(
+    _params: Record<string, unknown>,
+    allowed: boolean,
+    scope = "global",
+  ): void {
+    setToolAlwaysAllow(this.info.id, allowed, scope);
   }
 }

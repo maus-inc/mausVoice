@@ -107,6 +107,17 @@ impl TranscriptionEngine {
             return Err("no finite samples provided".to_string());
         }
 
+        // A cheap pre-inference energy gate prevents both whisper.cpp and ONNX
+        // engines from turning a microphone floor into a fabricated sentence.
+        // sherpa-onnx also exposes VAD, but this gate is deterministic and
+        // applies before any model-specific runtime is loaded.
+        if is_near_silent(&filtered_samples, 0.008) {
+            return Ok(TranscriptionOutput {
+                text: String::new(),
+                inference_device: self.mode.as_str().to_string(),
+            });
+        }
+
         let processed = resample_to_16khz(&filtered_samples, input.sample_rate);
         if processed.is_empty() {
             return Err("unable to resample audio".to_string());
@@ -144,6 +155,11 @@ impl TranscriptionEngine {
         params.set_print_realtime(false);
         params.set_print_timestamps(false);
         params.set_no_context(true);
+        // Whisper's no-speech probability and blank suppression complement the
+        // energy gate for very quiet speech/noise at the edge of the threshold.
+        params.set_no_speech_thold(0.6);
+        params.set_suppress_blank(true);
+        params.set_suppress_nst(true);
 
         if let Some(language) = input
             .language
@@ -382,6 +398,24 @@ fn collect_transcription(state: &whisper_rs::WhisperState) -> Result<String, Str
     }
 
     Ok(transcript.trim().to_string())
+}
+
+fn is_near_silent(samples: &[f32], threshold: f32) -> bool {
+    if samples.is_empty() {
+        return true;
+    }
+
+    let mut sum_squares = 0.0_f64;
+    let mut count = 0_u64;
+    for sample in samples {
+        if sample.is_finite() {
+            let value = f64::from(*sample);
+            sum_squares += value * value;
+            count += 1;
+        }
+    }
+
+    count == 0 || (sum_squares / count as f64).sqrt() < f64::from(threshold)
 }
 
 fn resample_to_16khz(samples: &[f32], sample_rate: u32) -> Vec<f32> {

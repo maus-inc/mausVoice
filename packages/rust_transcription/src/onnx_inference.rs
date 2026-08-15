@@ -13,6 +13,7 @@ use std::sync::{Arc, LazyLock, Mutex, OnceLock};
 
 use canary_rs::Canary;
 use parakeet_rs::{Parakeet, ParakeetTDT, Transcriber};
+use sherpa_onnx::{OfflineRecognizer, OfflineRecognizerConfig, OfflineSenseVoiceModelConfig};
 
 use crate::models::WhisperModel;
 
@@ -20,6 +21,7 @@ enum LoadedModel {
     ParakeetCtc(Parakeet),
     ParakeetTdt(ParakeetTDT),
     Canary(Canary),
+    SenseVoice(OfflineRecognizer),
 }
 
 // Parakeet's inference API is mutable because ONNX Runtime sessions reuse
@@ -44,7 +46,9 @@ pub fn transcribe(
         return Ok(String::new());
     }
 
-    ensure_onnx_runtime()?;
+    if !matches!(model, WhisperModel::SenseVoice) {
+        ensure_onnx_runtime()?;
+    }
     let model_dir = model_directory(model_path)?;
     let cache_key = model_dir.to_path_buf();
 
@@ -88,6 +92,15 @@ pub fn transcribe(
                 .transcribe_samples(samples_16k, 16_000, 1, language, language)
                 .map(|result| result.text.trim().to_string())
                 .map_err(|err| format!("Canary inference failed: {err}"))
+        }
+        (WhisperModel::SenseVoice, LoadedModel::SenseVoice(recognizer)) => {
+            let stream = recognizer.create_stream();
+            stream.accept_waveform(16_000, samples_16k);
+            recognizer.decode(&stream);
+            stream
+                .get_result()
+                .map(|result| result.text.trim().to_string())
+                .ok_or_else(|| "SenseVoice did not return a recognition result".to_string())
         }
         _ => Err(format!(
             "cached ONNX runtime does not match model '{}'",
@@ -134,7 +147,9 @@ pub fn validate_model_classified(
         )));
     }
 
-    ensure_onnx_runtime().map_err(OnnxModelValidationError::Runtime)?;
+    if !matches!(model, WhisperModel::SenseVoice) {
+        ensure_onnx_runtime().map_err(OnnxModelValidationError::Runtime)?;
+    }
     let model_dir = model_directory(model_path).map_err(OnnxModelValidationError::Artifact)?;
     for (name, _) in model.artifact_set() {
         let artifact_path = model_dir.join(name);
@@ -293,6 +308,23 @@ fn load_model(model: WhisperModel, model_dir: &Path) -> Result<LoadedModel, Stri
         WhisperModel::Canary1B => Canary::from_pretrained(model_dir, None)
             .map(LoadedModel::Canary)
             .map_err(|err| format!("failed to load Canary model: {err}")),
+        WhisperModel::SenseVoice => {
+            let mut config = OfflineRecognizerConfig::default();
+            config.model_config.sense_voice = OfflineSenseVoiceModelConfig {
+                model: Some(model_dir.join("model.int8.onnx").to_string_lossy().into_owned()),
+                language: Some("auto".to_string()),
+                use_itn: true,
+            };
+            config.model_config.tokens = Some(
+                model_dir
+                    .join("tokens.txt")
+                    .to_string_lossy()
+                    .into_owned(),
+            );
+            OfflineRecognizer::create(&config)
+                .map(LoadedModel::SenseVoice)
+                .ok_or_else(|| "failed to load SenseVoice model".to_string())
+        }
         _ => Err(format!("model '{}' is not an ONNX model", model.as_slug())),
     }
 }

@@ -10,9 +10,10 @@ export type LocalWhisperModel =
   | "turbo"
   | "parakeet-ctc-0.6b"
   | "parakeet-tdt-0.6b"
-  | "canary-1b";
+  | "canary-1b"
+  | "sense-voice";
 
-export type LocalModelCategory = "fast" | "whisper";
+export type LocalModelCategory = "fast" | "whisper" | "sherpa";
 
 export type LocalModelOption = {
   value: LocalWhisperModel;
@@ -27,6 +28,7 @@ export const LOCAL_WHISPER_MODELS: LocalWhisperModel[] = [
   "parakeet-ctc-0.6b",
   "parakeet-tdt-0.6b",
   "canary-1b",
+  "sense-voice",
   "tiny",
   "base",
   "small",
@@ -66,6 +68,14 @@ const MODEL_LOOKUP: Record<LocalWhisperModel, ModelMeta> = {
       defaultMessage: "Multilingual STT + automatic punctuation & casing",
     }),
     category: "fast",
+  },
+  "sense-voice": {
+    label: defineMessage({ defaultMessage: "SenseVoice (640 MB)" }),
+    helper: defineMessage({
+      defaultMessage:
+        "Multilingual local ASR with punctuation and strong silence handling",
+    }),
+    category: "sherpa",
   },
   tiny: {
     label: defineMessage({ defaultMessage: "Whisper Tiny (77 MB)" }),
@@ -172,6 +182,14 @@ export const normalizeLocalWhisperModel = (
     normalized === "canary_1b"
   ) {
     return "canary-1b";
+  }
+
+  if (
+    normalized === "sense-voice" ||
+    normalized === "sensevoice" ||
+    normalized === "sense_voice"
+  ) {
+    return "sense-voice";
   }
 
   return DEFAULT_LOCAL_WHISPER_MODEL;

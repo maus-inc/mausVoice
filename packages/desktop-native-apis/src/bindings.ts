@@ -848,6 +848,14 @@ async transcriptionAudioLoad(id: string) : Promise<Result<TranscriptionAudioData
     else return { status: "error", error: e  as any };
 }
 },
+async transcriptionImportAudio(path: string) : Promise<Result<TranscriptionAudioData, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("transcription_import_audio", { path }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
 async transcriptionCreate(transcription: Transcription) : Promise<Result<Transcription, string>> {
     try {
     return { status: "ok", data: await TAURI_INVOKE("transcription_create", { transcription }) };
@@ -998,7 +1006,7 @@ export type AudioClip = "start_recording_clip" | "stop_recording_clip" | "alert_
 export type ChatMessage = { id: string; conversationId: string; role: string; content: string; createdAt: number; metadata: string | null }
 export type CompositorBinding = { actionName: string; keys: string[] }
 export type Conversation = { id: string; title: string; createdAt: number; updatedAt: number }
-export type CreateFloatingWindowArgs = { url: string; title: string | null; width: number | null; height: number | null; minWidth: number | null; minHeight: number | null; x: number | null; y: number | null; decorations: boolean | null; transparent: boolean | null; resizable: boolean | null; focused: boolean | null }
+export type CreateFloatingWindowArgs = { url: string; route?: string | null; title: string | null; width: number | null; height: number | null; minWidth: number | null; minHeight: number | null; x: number | null; y: number | null; decorations: boolean | null; transparent: boolean | null; resizable: boolean | null; focused: boolean | null }
 export type CurrentAppInfoResponse = { appName: string; iconBase64: string }
 export type ElementFingerprint = { automationId: string | null; className: string | null; controlType: number; name: string | null; frameworkId: string | null; childIndex: number; 
 /**
@@ -1118,7 +1126,7 @@ export type StorageUploadArgs = { path: string; data: number[] }
 export type SystemCapabilities = { ramGb: number; cpuCores: number; gpus: GpuAdapterInfo[] }
 export type Term = { id: string; createdAt: number; createdByUserId: string; sourceValue: string; destinationValue: string; isReplacement: boolean; isDeleted: boolean }
 export type TextFieldInfo = { cursorPosition: number | null; selectionLength: number | null; textContent: string | null }
-export type Tone = { id: string; name: string; promptTemplate: string; createdAt: number; sortOrder: number }
+export type Tone = { id: string; name: string; promptTemplate: string; createdAt: number; sortOrder: number; category?: string | null; outputLength?: string | null; exampleInputOutput?: string | null }
 export type Transcription = { id: string; transcript: string; timestamp: number; audio?: TranscriptionAudioSnapshot | null; modelSize?: string | null; inferenceDevice?: string | null; rawTranscript?: string | null; sanitizedTranscript?: string | null; transcriptionPrompt?: string | null; postProcessPrompt?: string | null; transcriptionApiKeyId?: string | null; postProcessApiKeyId?: string | null; transcriptionMode?: string | null; postProcessMode?: string | null; postProcessDevice?: string | null; transcriptionDurationMs?: number | null; postprocessDurationMs?: number | null; warnings?: string[] | null; remoteStatus?: string | null; remoteDeviceId?: string | null }
 export type TranscriptionAudioData = { samples: number[]; sampleRate: number }
 export type TranscriptionAudioSnapshot = { filePath: string; durationMs: number }
@@ -1134,7 +1142,7 @@ pillResetMonitorStrategy?: string;
  * Request admin elevation (UAC) on every startup. Windows-only; off by
  * default so existing behavior is unchanged.
  */
-alwaysRequestAdminOnStartup?: boolean }
+alwaysRequestAdminOnStartup?: boolean; inDictationStyleSwitchingEnabled?: boolean; hallucinationFilterEnabled?: boolean; reviewBeforeInsert?: boolean | null; agentEnabledTools?: string | null; agentMaxIterations?: number; agentPermissionTimeoutMs?: number }
 export type UserPreferencesGetArgs = { userId: string }
 
 /** tauri-specta globals **/

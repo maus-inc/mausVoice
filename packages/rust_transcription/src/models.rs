@@ -36,6 +36,12 @@ pub enum WhisperModel {
         alias = "canary_1b"
     )]
     Canary1B,
+    #[serde(
+        rename = "sense-voice",
+        alias = "sensevoice",
+        alias = "sense_voice"
+    )]
+    SenseVoice,
 }
 
 impl WhisperModel {
@@ -54,6 +60,7 @@ impl WhisperModel {
                 Some(Self::ParakeetTdt06B)
             }
             "canary-1b" | "canary" | "canary_1b" => Some(Self::Canary1B),
+            "sense-voice" | "sensevoice" | "sense_voice" => Some(Self::SenseVoice),
             _ => None,
         }
     }
@@ -69,13 +76,17 @@ impl WhisperModel {
             Self::ParakeetCtc06B => "parakeet-ctc-0.6b",
             Self::ParakeetTdt06B => "parakeet-tdt-0.6b",
             Self::Canary1B => "canary-1b",
+            Self::SenseVoice => "sense-voice",
         }
     }
 
     pub fn is_onnx(self) -> bool {
         matches!(
             self,
-            Self::ParakeetCtc06B | Self::ParakeetTdt06B | Self::Canary1B
+            Self::ParakeetCtc06B
+                | Self::ParakeetTdt06B
+                | Self::Canary1B
+                | Self::SenseVoice
         )
     }
 
@@ -94,6 +105,7 @@ impl WhisperModel {
             Self::ParakeetCtc06B => "model_int8.onnx_data",
             Self::ParakeetTdt06B => "encoder-model.int8.onnx",
             Self::Canary1B => "encoder-model.int8.onnx",
+            Self::SenseVoice => "model.int8.onnx",
         }
     }
 
@@ -142,6 +154,13 @@ impl WhisperModel {
                         format!("{root}decoder-model.int8.onnx"),
                     ),
                     ("vocab.txt", format!("{root}vocab.txt")),
+                ]
+            }
+            Self::SenseVoice => {
+                let root = "https://huggingface.co/csukuangfj/sherpa-onnx-sense-voice-zh-en-ja-ko-yue-2024-07-17-int8/resolve/main/";
+                vec![
+                    ("model.int8.onnx", format!("{root}model.int8.onnx")),
+                    ("tokens.txt", format!("{root}tokens.txt")),
                 ]
             }
             _ => Vec::new(),
@@ -212,6 +231,9 @@ impl WhisperModel {
             Self::Canary1B => {
                 "https://huggingface.co/istupakov/canary-1b-v2-onnx/resolve/main/encoder-model.int8.onnx"
             }
+            Self::SenseVoice => {
+                "https://huggingface.co/csukuangfj/sherpa-onnx-sense-voice-zh-en-ja-ko-yue-2024-07-17-int8/resolve/main/model.int8.onnx"
+            }
         }
         .to_string()
     }
@@ -227,6 +249,7 @@ impl WhisperModel {
             "parakeet-ctc-0.6b",
             "parakeet-tdt-0.6b",
             "canary-1b",
+            "sense-voice",
         ]
     }
 }

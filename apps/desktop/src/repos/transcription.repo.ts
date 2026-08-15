@@ -120,6 +120,7 @@ export abstract class BaseTranscriptionRepo extends BaseRepo {
     transcription: Transcription,
   ): Promise<Transcription>;
   abstract loadTranscriptionAudio(id: string): Promise<TranscriptionAudioData>;
+  abstract importAudioFile(path: string): Promise<TranscriptionAudioData>;
   abstract purgeStaleAudio(): Promise<string[]>;
 }
 
@@ -163,6 +164,12 @@ export class LocalTranscriptionRepo extends BaseTranscriptionRepo {
 
   async loadTranscriptionAudio(id: string): Promise<TranscriptionAudioData> {
     return invoke<TranscriptionAudioData>("transcription_audio_load", { id });
+  }
+
+  async importAudioFile(path: string): Promise<TranscriptionAudioData> {
+    return invoke<TranscriptionAudioData>("transcription_import_audio", {
+      path,
+    });
   }
 
   async purgeStaleAudio(): Promise<string[]> {

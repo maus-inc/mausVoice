@@ -35,6 +35,7 @@ import {
   PROCESSED_TRANSCRIPTION_JSON_SCHEMA,
   PROCESSED_TRANSCRIPTION_SCHEMA,
 } from "../utils/prompt.utils";
+import { filterKnownSilenceHallucinations } from "../utils/string.utils";
 import { getToneById, getToneConfig } from "../utils/tone.utils";
 import {
   getMyEffectiveUserId,
@@ -161,7 +162,17 @@ export const transcribeAudio = async ({
     );
   }
   const transcribeDuration = performance.now() - transcribeStart;
-  const rawTranscript = transcribeOutput.text.trim();
+  const decodedTranscript = transcribeOutput.text.trim();
+  const rawTranscript =
+    state.userPrefs?.hallucinationFilterEnabled === false
+      ? decodedTranscript
+      : filterKnownSilenceHallucinations(decodedTranscript);
+
+  if (decodedTranscript !== rawTranscript) {
+    getLogger().info(
+      "Removed a known silence hallucination from transcription",
+    );
+  }
 
   getLogger().info(
     `Transcription complete in ${Math.round(transcribeDuration)}ms (${rawTranscript.length} chars, mode=${transcribeOutput.metadata?.transcriptionMode ?? "unknown"})`,
