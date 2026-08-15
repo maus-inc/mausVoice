@@ -104,7 +104,13 @@ pub fn request_elevation_relaunch(
         return crate::platform::NativeSetupResult::Success;
     }
 
-    let self_exe = std::env::current_exe().unwrap_or_default();
+    let self_exe = match std::env::current_exe() {
+        Ok(path) => path,
+        Err(err) => {
+            log::error!("Cannot determine current executable path for elevation relaunch: {err}");
+            return crate::platform::NativeSetupResult::Failed;
+        }
+    };
     let parent_pid = std::process::id();
 
     // Launch the bootstrap helper with "runas" so the UAC prompt happens
@@ -254,7 +260,13 @@ fn run_elevate_helper(parent_pid: u32, rest_args: &[String]) {
         }
     }
 
-    let exe = std::env::current_exe().unwrap_or_default();
+    let exe = match std::env::current_exe() {
+        Ok(path) => path,
+        Err(err) => {
+            log::error!("Elevation helper cannot determine current executable path: {err}");
+            std::process::exit(1);
+        }
+    };
     // The helper is already elevated (launched via runas). Start the replacement
     // main app with CreateProcessW so the child inherits this elevated token.
     // ShellExecuteW("open") is NOT safe here: it can be routed through the
