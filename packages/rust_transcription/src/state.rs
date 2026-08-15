@@ -59,18 +59,39 @@ impl AppState {
 fn validate_model_redirect(attempt: Attempt<'_>) -> reqwest::redirect::Action {
     const MAX_REDIRECTS: usize = 5;
     let url = attempt.url();
-    let approved_host = matches!(
-        url.host_str(),
-        Some("huggingface.co")
-            | Some("cdn-lfs.huggingface.co")
-            | Some("cdn-lfs-us-1.hf.co")
-            | Some("cas-bridge.xethub.hf.co")
-            | Some("cas-server.xethub.hf.co")
-            | Some("transfer.xethub.hf.co")
-    );
+    // Hugging Face operates the Hub, LFS, and Xet delivery fleet beneath
+    // these registrable domains. Allow subdomains (for regional/CDN rollout)
+    // but never look-alikes such as `huggingface.co.attacker.example`.
+    let approved_host = url.host_str().is_some_and(is_hugging_face_delivery_host);
     if attempt.previous().len() >= MAX_REDIRECTS || url.scheme() != "https" || !approved_host {
         attempt.error("model download redirect rejected by security policy")
     } else {
         attempt.follow()
+    }
+}
+
+
+fn is_hugging_face_delivery_host(host: &str) -> bool {
+    host == "huggingface.co"
+        || host.ends_with(".huggingface.co")
+        || host.ends_with(".hf.co")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::is_hugging_face_delivery_host;
+
+    #[test]
+    fn model_redirect_host_allowlist_accepts_only_hugging_face_domains() {
+        for host in [
+            "huggingface.co",
+            "cdn-lfs-us-1.hf.co",
+            "cas-bridge.xethub.hf.co",
+        ] {
+            assert!(is_hugging_face_delivery_host(host));
+        }
+        for host in ["huggingface.co.attacker.example", "evil-hf.co", "example.com"] {
+            assert!(!is_hugging_face_delivery_host(host));
+        }
     }
 }
