@@ -1,934 +1,659 @@
-# mausVoice Expert Agent Review & Hardening Handbook
+# mausVoice Review & Hardening Handbook
 
-This handbook serves as a comprehensive, deep-dive reference guide for AI development agents and engineers working on the `mausVoice` repository. It synthesizes architectural patterns, system vulnerabilities, critical code smells, and validation gaps discovered across all historical pull requests—with a particular focus on the automated audits, static analysis, and regression findings raised by CodeRabbit, Kilo Code, and other automated reviewers.
+A condensed reference for agents and engineers working on `mausVoice`. It distills the architectural contracts, security boundaries, and recurring findings raised across historical PRs by automated reviewers (CodeRabbit, Kilo Code) for both the Rust (Tauri) backend and the React/TypeScript frontend.
 
-Use this guide to proactively audit your own code changes, prevent regressions in security or privacy boundaries, and understand the rigorous design contracts governing both the Rust (Tauri) backend and the React (TypeScript) frontend.
-
----
-
-## Table of Contents
-1. [CodeRabbit & Kilo Code Review Personas & Analytical Behaviors](#1-coderabbit--kilo-code-review-personas--analytical-behaviors)
-    - [1.1 CodeRabbit Persona and Assertive Audit Posture](#11-coderabbit-persona-and-assertive-audit-posture)
-    - [1.2 CodeRabbit Relational Dynamics and Suggestion Patterns](#12-coderabbit-relational-dynamics-and-suggestion-patterns)
-    - [1.3 Kilo Code (kilocode-bot) Precision-Review Behavior](#13-kilo-code-kilocode-bot-precision-review-behavior)
-2. [The Hardened Pre-Release Production Audit Protocol](#2-the-hardened-pre-release-production-audit-protocol)
-    - [2.1 Scope & Verification Contract](#21-scope--verification-contract)
-    - [2.2 Mandatory Self-Review Pass (Cause, Action, Reaction, Necessity)](#22-mandatory-self-review-pass-cause-action-reaction-necessity)
-    - [2.3 Required Verdict Format](#23-required-verdict-format)
-    - [2.4 Expanded Coverage Checklist](#24-expanded-coverage-checklist)
-    - [2.5 Required Report Structure](#25-required-report-structure)
-3. [Rust (Tauri) Backend Hardening & Deep Dive Categories](#3-rust-tauri-backend-hardening--deep-dive-categories)
-    - [3.1 Subprocess Management & Shell Execution](#31-subprocess-management--shell-execution)
-    - [3.2 File I/O, Path Normalization, and Symlink Attacks](#32-file-io-path-normalization-and-symlink-attacks)
-    - [3.3 Secure Network Streaming & Redirect Validation](#33-secure-network-streaming--redirect-validation)
-    - [3.4 Concurrency Controls, Global Atomic Flags, and Parallel Test Integrity](#34-concurrency-controls-global-atomic-flags-and-parallel-test-integrity)
-    - [3.5 SQLite & Migration Parsing Integrity](#35-sqlite--migration-parsing-integrity)
-    - [3.6 Tauri IPC Bridge, CORS, and CSP Policies](#36-tauri-ipc-bridge-cors-and-csp-policies)
-    - [3.7 Desktop-Native Pills & Multi-Platform Window Geometry](#37-desktop-native-pills--multi-platform-window-geometry)
-    - [3.8 Global Model Cache Serialization & Resource Contention](#38-global-model-cache-serialization--resource-contention)
-    - [3.9 ONNX Auxiliary Artifact Download Lifecycle](#39-onnx-auxiliary-artifact-download-lifecycle)
-4. [TypeScript & React Frontend Lifecycle Contracts](#4-typescript--react-frontend-lifecycle-contracts)
-    - [4.1 React Hooks & StrictMode Compliance](#41-react-hooks--strictmode-compliance)
-    - [4.2 Safe Async State Transitions & Race Conditions](#42-safe-async-state-transitions--race-conditions)
-    - [4.3 IPC Protocol Integration & Binding Alignment](#43-ipc-protocol-integration--binding-alignment)
-    - [4.4 Audio Input and Pulse Recording Safety](#44-audio-input-and-pulse-recording-safety)
-    - [4.5 Host Default Device Drop-off during Cache Enumeration](#45-host-default-device-drop-off-during-cache-enumeration)
-5. [CI/CD & Monorepo Dependency Orchestration](#5-cicd--monorepo-dependency-orchestration)
-    - [5.1 Turborepo Task Graph Dependency Integrity](#51-turborepo-task-graph-dependency-integrity)
-    - [5.2 Minimal-Privilege Workflow Scopes](#52-minimal-privilege-workflow-scopes)
-    - [5.3 Exact Monorepo Trigger Filters](#53-exact-monorepo-trigger-filters)
-    - [5.4 Hardened Package Resolution & Dependency Floors](#54-hardened-package-resolution--dependency-floors)
-    - [5.5 Committed Secrets & Updater Public Key Trust Anchors](#55-committed-secrets--updater-public-key-trust-anchors)
-    - [5.6 Multi-Platform Workflows and Test Execution Gaps](#56-multi-platform-workflows-and-test-execution-gaps)
-    - [5.7 Shell Context Evaluation and Boolean Cast Assumptions](#57-shell-context-evaluation-and-boolean-cast-assumptions)
-6. [The Definitive Suggestions & Nitpicks Guide](#6-the-definitive-suggestions--nitpicks-guide)
-    - [6.1 Suggestion Typology: Quality-of-Life, Defensive Coding, and Scalability](#61-suggestion-typology-quality-of-life-defensive-coding-and-scalability)
-    - [6.2 Nitpick Typology: Linters, Spacing, and Non-Functional Semantics](#62-nitpick-typology-linters-spacing-and-non-functional-semantics)
-    - [6.3 Code Quality & Linter Boundaries (Oxlint, Prettier, Clippy)](#63-code-quality--linter-boundaries-oxlint-prettier-clippy)
-7. [Universal Code Smell & Anti-Pattern Detection Checklist](#7-universal-code-smell--anti-pattern-detection-checklist)
+**Contents:** 1. Reviewer personas · 2. Pre-release audit protocol · 3. Rust backend · 4. Frontend · 5. CI/CD & monorepo · 6. Suggestions & nitpicks · 7. Anti-pattern checklist
 
 ---
 
-## 1. CodeRabbit & Kilo Code Review Personas & Analytical Behaviors
+## 1. Reviewer Personas
 
-Automated code review bots are highly specialized and use distinct personas when parsing code. Understanding their analytical behavior, how they construct reviews, and their relational dynamics allows development agents to write code that passes automated checks on the first attempt.
+### 1.1 CodeRabbit — assertive audit posture
 
-### 1.1 CodeRabbit Persona and Assertive Audit Posture
+Prioritizes functional correctness, security, edge cases, memory leaks, and concurrency over style. Traits:
 
-CodeRabbit is configured with an **Assertive Audit Posture**. This profile focuses on functional correctness, security vulnerabilities, edge-case validation, memory leaks, and concurrency bugs, while deprioritizing superficial style discussions unless they point to deeper systemic flaws.
+- **Context-aware analysis:** parses the whole PR and traces data flow (React input → IPC → Rust → SQLite/OS APIs) using AST matching (`ast-grep`) and `rg`, plus historical learnings.
+- **Edge-case assertion:** if a state is physically reachable, it will be reached. Checks bounds, buffer sizes, network failures, races.
 
-#### Key Persona Traits:
-*   **Context-Aware Static Analysis:** CodeRabbit does not inspect files in isolation. It parses the entire pull request, maps data flow across the workspace (e.g., from frontend user inputs through React hooks to Tauri's IPC layer and down to SQLite or system level APIs), and references historical learnings captured in metadata files.
-*   **Assertion on Functional Correctness:** CodeRabbit assumes that if an edge case is physically possible, a user or external input will eventually trigger it. It systematically checks for missing bounds validation, buffer sizes, unhandled network failures, and race conditions.
-*   **Incremental Code Investigation:** When a pull request is created or a review is invoked via `@coderabbitai review`, CodeRabbit executes analysis chains using AST matching (e.g., `ast-grep`) and regex scanning (`rg`) to trace symbol definitions and compare execution flow changes with the main branch.
+Finding anatomy: severity (`🔴 Critical` arbitrary write / injection / crash · `🟠 Major` bugs, leaks, races, unhandled rejections · `🟡 Minor` idioms, docs) → contextual *why* with file:line → committable diff → a `<details>` prompt scoping a minimal fix for downstream AI agents.
 
----
+### 1.2 Kilo Code (kilocode-bot) — precision review
 
-### 1.2 CodeRabbit Relational Dynamics and Suggestion Patterns
-
-CodeRabbit's review comments follow a standardized structural hierarchy designed to help human developers and AI coding agents quickly assess, understand, and apply suggestions.
-
-#### Anatomy of a CodeRabbit Finding:
-1.  **Severity Classification:**
-    *   `🔴 Critical / Blocker`: Represents severe vulnerabilities (e.g., arbitrary file write, shell injection, authentication bypass) or immediate runtime crash vectors.
-    *   `🟠 Major`: Denotes functional bugs, resource leaks (OOM, file descriptor exhaustion), concurrency races, or unhandled promise rejections.
-    *   `🟡 Minor / Suggestion`: Focuses on optimization, modern language idioms, clean architecture, or documentation/comment contradictions.
-2.  **Contextual Analysis:** CodeRabbit explicitly states *why* the code is problematic, citing concrete paths, line numbers, and the precise mechanical sequence that leads to the failure.
-3.  **Committable Diff Suggestion:** High-quality findings always include a committable diff block with precise line offsets and clean spacing, allowing developers to apply the fix with a single click.
-4.  **Prompt for AI Agents:** Every finding ends with an instruction block wrapped in a `<details>` element containing a targeted prompt for AI agents. This prompt specifies the exact target file, line boundaries, and minimal fix constraints to guide downstream LLMs in fixing the issue without causing collateral drift.
+- **Contract enforcement:** code must live up to its own comments. A doc claiming "traversal cannot escape" triggers an audit for real canonicalization; comment/code drift is a high-priority bug.
+- **Tautological test detection:** rejects tests asserting a hardcoded constant against a hardcoded copy; demands dynamic schema/runtime extraction.
+- **Resource-leak tracking:** file handles closed, workers terminated, rejections logged not swallowed.
 
 ---
 
-### 1.3 Kilo Code (kilocode-bot) Precision-Review Behavior
+## 2. Pre-Release Audit Protocol
 
-Kilo Code works as an assertive correctness reviewer with a specialized focus on security boundaries, regressions, and semantic inconsistencies. It monitors commits for security guard regressions, such as replacing robust canonicalization helpers with lexical string comparisons.
+### 2.1 Scope
+Audit the **FULL diff** against the target release branch — not just headline files — tracing each change through its complete dependency chain from UI down to filesystem and hardware.
 
-#### Analytical Strategy of Kilo Code:
-*   **Contract Enforcement:** Kilo Code strictly evaluates if the code lives up to its own written comments and contracts. For example, if a doc comment claims "traversal cannot escape the managed directory," Kilo Code will immediately audit the source to see if standard `std::fs::canonicalize` or robust parent containment filters are in place. If there is a discrepancy between the comment and the code, Kilo Code flags it as a high-priority bug.
-*   **Tautological Test Detection:** Kilo Code flags testing strategies that assert a hardcoded constant against itself (e.g., asserting a hardcoded table list matches a hardcoded constant list). It demands that tests extract system schema dynamically to verify actual runtime properties.
-*   **Resource Leak Tracking:** It meticulously monitors system resources, demanding immediate release of file handles, termination of background workers, and explicit error logging instead of silently ignoring promise rejections.
+### 2.2 Self-review gate (Cause → Action → Reaction → Necessity)
+Every candidate finding must survive all four checks, or be discarded:
 
----
+1. **Cause:** is the root cause in *this* diff, or pre-existing on base?
+2. **Action:** does the fix compile and match workspace types/idioms? Untested hand-written refactors are prohibited.
+3. **Reaction:** trace all call sites — does it break consumers or add races, contention, or CI lint errors?
+4. **Necessity:** genuine bug/security/performance issue, or style opinion?
 
-## 2. The Hardened Pre-Release Production Audit Protocol
+### 2.3 Verdict format
+`## Verdict: **Ready**` or `**Not Ready**`, plus `Confidence: **[High/Medium/Low]**`, `Mergeable: **[Yes/No]**`, `CI Verification: **[Passing/Failing/Pending]**`.
 
-This section defines the formal audit protocol that agents and engineers must execute before proposing, merging, or releasing code in the `mausVoice` repository.
+### 2.4 Coverage checklist (trace all ten; omit none)
 
-### 2.1 Scope & Verification Contract
+1. **Merge state:** conflicts, safety of automated rebase.
+2. **IPC boundary:** every new/changed `tauri::command` — payload type validation, safe integer bounds (`u64` → JS `Number` precision), array/buffer bounds, discriminated-union results instead of thrown errors.
+3. **State machine / lifecycle:** cancellation on unmount, stale-callback rejection via generation counters or tokens, re-entrancy guards on serial ops (keystroke streams), release of handles and hardware streams on teardown.
+4. **Persistence:** localStorage / app-config / SQLite — single source of truth (no drifting dual writes), migration safety, `ROLLBACK` on partial failure.
+5. **UI logic:** controlled inputs (no uncontrolled→controlled), exhaustive hook dependency arrays, explicit listener teardown, explicit pending/disabled/loading/empty/error states.
+6. **UI review:** spacing on a consistent grid; WCAG AA contrast and typography; focus rings, modal focus trapping, platform shortcuts (`Cmd` vs `Ctrl`); scoped transitions only (never `transition: all`); theme continuity with no un-themed flash.
+7. **Edge cases:** empty arrays / zero-length buffers, `null` vs `undefined` vs missing JSON fields, platform variation (`\r\n`, path layouts), boundary data (silent audio, empty prompts).
+8. **Security & sandboxing:** URL scheme validation, Tauri scope limits, `../` traversal and canonicalization guards, webview XSS.
+9. **Test coverage:** untested new behaviors and invariants.
+10. **Lint/CI:** `oxlint`, `prettier`, `clippy` clean; no new warnings.
 
-A pre-release audit must target the **FULL diff** of the pull request against the target release branch, not just the headline files or modified files. Every single change must be verified against its complete dependency chain, tracing from user interaction layers down to deep filesystem persistence and hardware streams.
-
----
-
-### 2.2 Mandatory Self-Review Pass (Cause, Action, Reaction, Necessity)
-
-Before proposing any fix or creating a review finding, agents must run the candidate change through a rigid **four-step validation gate**. If the change fails to survive all four checks, it is discarded immediately.
-
-```
-       [Candidate Audit Finding / Change]
-                       │
-                       ▼
-    ┌─────────────────────────────────────┐
-    │ 1. CAUSE:                           │
-    │ Is the root cause in THIS diff, or  │
-    │ is it pre-existing on base branch?  │
-    └──────────────────┬──────────────────┘
-                       │ Survives
-                       ▼
-    ┌─────────────────────────────────────┐
-    │ 2. ACTION:                          │
-    │ Does the proposed fix compile &     │
-    │ perfectly match project types/convs?│
-    └──────────────────┬──────────────────┘
-                       │ Survives
-                       ▼
-    ┌─────────────────────────────────────┐
-    │ 3. REACTION:                        │
-    │ Trace all call sites. Does the fix  │
-    │ break consumers or create new bugs? │
-    └──────────────────┬──────────────────┘
-                       │ Survives
-                       ▼
-    ┌─────────────────────────────────────┐
-    │ 4. NECESSITY:                       │
-    │ Is this a real bug/vulnerability,   │
-    │ or merely a style/format opinion?   │
-    └──────────────────┬──────────────────┘
-                       │ Survives
-                       ▼
-       [Approved Finding / Committable Diff]
-```
-
-#### Detailed Gate Definitions:
-1.  **Cause:** What is the actual root cause? Is the issue introduced by the new code in this PR, or is it pre-existing on the target branch? Avoid attributing legacy base defects to current PR authors unless they directly compound the regression.
-2.  **Action:** Is the proposed fix correct by construction? Does it compile? Does it match the established idioms, patterns, and typescript/rust type signatures of the workspace? Hand-written, untested refactor suggestions that fail syntax checks are strictly prohibited.
-3.  **Reaction:** What breaks if the fix is applied? Trace every call site, consumer hook, and sidecar script. Does your proposed change introduce subtle race conditions, lock contention, test failures, or linter errors in CI?
-4.  **Necessity:** Is this a genuine correctness bug, security risk, or performance blocker? If it is a style preference, does the "fix" risk introducing regression vectors? Prioritize robust system stability over subjective code styles.
+### 2.5 Report structure
+Seven sections, in order: `## Verdict` · `## Major findings` · `## Minor findings` · `## Nitpick findings` · `## UI review findings` · `## Missing important test coverage` · `## What is working correctly`. Findings use **[Severity — Title]**, `File:Line`, *The Problem:*, *The Solution:* (or *Context:* / *Details:* for minor, nitpick, UI, test, and positive entries).
 
 ---
 
-### 2.3 Required Verdict Format
+## 3. Rust (Tauri) Backend
 
-Every pre-release production audit must conclude with a clear, unambiguous verdict declaration:
+### 3.1 Subprocess management
+**Traps:** `wait_with_output()` buffers unbounded stdout/stderr into RAM (OOM); timing out without `kill()` + `wait()` leaks zombies; not draining pipes concurrently deadlocks a chatty child on a full pipe buffer; `Command::new` cannot run CMD builtins (`dir`, `echo`, `ver`) — only real executables.
+**Pattern:** drain stdout *and* stderr on background threads with an explicit byte cap (keep draining past the cap), keep the `Child` handle and kill+reap on timeout (don't unconditionally join readers afterwards — descendants may hold the pipe), and allow-list genuine binaries only.
 
-`## Verdict: **Ready**` or `## Verdict: **Not Ready**`
+### 3.2 File I/O, paths, symlinks
+**Traps:** validating a relative path against `audio_dir` but passing the *raw* input to `remove_file` resolves against CWD; `.starts_with(audio_dir)` is lexical and loses to `..` and symlinks; an un-canonicalized `audio_dir` makes every comparison fail silently.
+**Pattern:** canonicalize both the file's parent and the target directory before comparing; reject symlinks at the final component via `symlink_metadata` (but allow not-yet-existing destinations); always delete/operate on the canonical `PathBuf` your validator returns, never the raw string.
 
-#### Verdict Requirements:
-*   Must specify audit confidence level: `Confidence: **[High/Medium/Low]**`.
-*   Must state branch mergeability: `Mergeable: **[Yes/No]**`.
-*   Must detail CI verification state: `CI Verification: **[Passing/Failing/Pending]**`.
+### 3.3 Network streaming & redirects
+**Traps:** default redirect policies follow untrusted hosts; trusting `Content-Length`; unbounded writes to disk.
+**Pattern:** a custom `redirect::Policy` validating host/scheme and capping hops; reject oversized advertised lengths up front; enforce the cap again with a per-chunk byte counter and delete the partial file on breach. Treat a missing `Content-Length` as a policy choice — require it for fixed artifacts from hosts you control, allow `None` where chunked/compressed responses are legitimate.
 
----
+### 3.4 Concurrency & test integrity
+**Traps:** a process-global `CANCEL_TYPING` flag with no session key lets session A's late cancel abort session B; cargo runs tests in parallel threads, so writing shared statics randomly fails other tests.
+**Pattern:** key cancellation to a session and no-op outside an active one; in tests, wrap global access in helpers and restore prior values with a `Drop` guard.
 
-### 2.4 Expanded Coverage Checklist
+### 3.5 SQLite & migrations
+**Traps:** tautological table assertions (a hardcoded list vs. its copy) let a new table escape the privacy wipe; per-table deletes without a transaction leave partial wipes.
+**Pattern:** tests read the live schema (`sqlite_master`), subtract an explicit allow-list (`sqlite_%`, `_sqlx_migrations`), and assert every remaining table is in `USER_DATA_TABLES_TO_CLEAR`; wrap wipes in `pool.begin()`.
 
-Audit reviews must explicitly trace and check every single one of the following ten architectural vectors. **Do not omit any item.**
+### 3.6 IPC, CORS, CSP
+Keep `remote.urls` restricted to localhost loopbacks — wildcards give any loaded page (docs mirrors included) native command access. External domains stay IPC-free webviews. Keep CSP in `tauri.conf.json` synchronized with production (`script-src 'self'`), and scrub stale comments claiming IPC access the config no longer grants.
 
-1.  **Merge State:** Verify branch mergeability. Identify any active conflicts with the target branch and assess if automated rebasing is safe.
-2.  **IPC Boundary:** Review every new or modified `tauri::command` (or other bridge routing hook). Check for:
-    *   Strict payload type validation.
-    *   Safe integer boundaries (e.g. converting `u64` parameters cleanly to avoid precision losses in standard JavaScript `Number`).
-    *   Strict array/buffer bounds checking.
-    *   Discriminated Union result types to handle execution errors without throwing unhandled exceptions.
-3.  **State Machine / Lifecycle:** Audit all asynchronous execution scopes, ensuring:
-    *   Unconditional cancellation of active actions on component unmount or transition.
-    *   Rejection of stale async callbacks using monotonic generation counters or cancellation tokens.
-    *   Re-entrancy guards on serial operations (like simulated keystroke streams).
-    *   Immediate release of all system resources, event handles, or hardware streams upon component teardown.
-4.  **Persistence:** Audit all localStorage, app-config, and SQLite database writes. Check for:
-    *   Single Source of Truth (SSOT) enforcement—no dual-write paths that can drift.
-    *   Migration safety and schema coverage.
-    *   Database transaction rollbacks (`ROLLBACK`) on intermediate sequence failures.
-5.  **UI Logic:** Ensure frontend safety on:
-    *   Fully controlled React inputs (no uncontrolled-to-controlled transitions).
-    *   Exhaustive effect dependency arrays in `useEffect`, `useCallback`, and `useMemo` hooks.
-    *   Explicit teardown of DOM/window event listeners.
-    *   Explicit pending, disabled, loading, empty, and error fallback UI states.
-6.  **UI Review & Visual Consistency:** Evaluate:
-    *   **Visual Hierarchy & Spacing:** Perfect padding, margins, and layout alignments on a standard grid.
-    *   **WCAG AA Contrast & Typography:** Clear font weights, scaling, and contrast ratios on light/dark mode transitions.
-    *   **Focus & Keyboard Navigation:** Complete tab-navigation focus rings, trapping focus within modals, and platform-specific keyboard shortcuts (e.g., `Cmd` on macOS vs. `Ctrl` on Windows/Linux).
-    *   **Micro-interactions & Scoped Transitions:** No generic `transition: all` styles (which cause performance-heavy layout repaints and visual stuttering); transitions must be strictly scoped to specific properties (e.g. `transition: opacity 0.2s ease`).
-    *   **Theme Continuity:** Seamless light/dark surface transitions with zero un-themed flash frames.
-7.  **Edge Cases:** Audit code performance against:
-    *   Empty arrays or zero-length payload buffers.
-    *   Implicit `null` or `undefined` properties versus missing fields in loose JSON contexts.
-    *   Platform-specific variations (such as folder hierarchies and carriage-return `\r\n` line breaks).
-    *   Boundary data limits (e.g., processing transcription queries on empty/silent audio files, or zero-character typing prompts).
-8.  **Security & Sandboxing:** Check for:
-    *   URL protocol and scheme validation.
-    *   Tauri scope boundaries (restricting command execution permissions).
-    *   Directory traversal escapes (`../`) and canonicalization guards.
-    *   XSS injection risks inside webviews.
-9.  **Test Coverage:** Identify any gap in unit, integration, or E2E smoke tests. Highlight important new behaviors that are completely untested.
-10. **Lint/CI Compliance:** Confirm compliance with all monorepo linters (`oxlint`, `prettier` for the frontend, and `clippy` for Rust). Ensure no new warning flags are introduced.
+### 3.7 Native pills & window geometry
+Offset toplevel coordinates by half the window width/height so Linux/X11 drags match macOS and Windows center anchoring (raw origins make the pill jump monitors). Use inclusive boundary probes and place fallbacks strictly inside the screen (e.g. `max - 1.0`) so the pill never lands off-screen.
+
+### 3.8 Model cache contention
+Holding `MODEL_CACHE.lock()` across a whole inference serializes every transcription. **Acquire, clone the runtime handle, `drop(cache)`**, then run the heavy computation unlocked.
+
+### 3.9 ONNX auxiliary artifacts
+Never `let _ = tokio::spawn(...)` companion downloads (tokenizers, vocabs, configs) — dropped join handles hide failures and leave models silently half-installed. Aggregate the artifact futures and `tokio::try_join!` them before reporting ready. In tests, poll readiness instead of sleeping a fixed duration.
 
 ---
 
-### 2.5 Required Report Structure
+## 4. TypeScript & React Frontend
 
-Audit results must conform strictly to the following seven-section report hierarchy:
+### 4.1 Hooks & StrictMode
+Never assign `ref.current` or set state during render — StrictMode's double render corrupts it. A ref-guarded controller built once (`if (!ref.current) ref.current = new Controller(options)`) freezes later `options` (e.g. `timeoutMs`). Do setup in `useEffect`, and pass dynamic config as call arguments (`controller.run(promise, timeoutMs)`).
 
-```markdown
-## Verdict
-[Ready/Not Ready Verdict + Confidence + Mergeability + CI Status]
+### 4.2 Async state & races
+Two overlapping reloads can let the older response overwrite newer data; state set after unmount leaks. Use a **monotonic generation counter** in an async controller — increment on each `run()`, and bail out of every completion, error, timeout, and cleanup path whose generation no longer matches. Return a teardown from `useEffect` that increments the generation and clears timers.
 
-## Major findings
-- **[Severity — Brief Title]**  
-  `File Path:Line Number`  
-  *The Problem:* Clear description of the vulnerability or bug mechanism.  
-  *The Solution:* Committable suggestion or remediation pattern.
+### 4.3 IPC bindings
+Never hand-edit `bindings.ts` — regenerate via `scripts/bindings.sh` or the cargo build flow after changing `commands.rs`, and register every new command in the builder in `app.rs`.
 
-## Minor findings
-- **[Description]**  
-  `File Path:Line Number`  
-  *Context:* Analysis of the minor bug, optimization, or clean-code deviation.
+### 4.4 Audio input safety
+Close/pause microphone streams in `useEffect` cleanup or the OS recording indicator stays lit and handles leak. Iterate `Float32Array` PCM with built-in array methods or explicit range guards, never unchecked C-style indexing.
 
-## Nitpick findings
-- **[Stylistic Suggestion]**  
-  `File Path:Line Number`  
-  *Context:* Formatting alignment, comment drift, or linter-level style suggestions.
-
-## UI review findings
-- **[UI Defect]**  
-  `File Path:Line Number`  
-  *Context:* Spacing, WCAG AA compliance, transitions, focus state, or dark/light theme defects.
-
-## Missing important test coverage
-- **[Untested Invariant]**  
-  *Details:* Description of the unverified execution branch or boundary state.
-
-## What is working correctly
-- **[Verified Invariant]**  
-  *Details:* Positive confirmation of hardened guards, clean state-transitions, or passing suites.
-```
+### 4.5 Default device drop-off
+If the default device's display name fails to resolve, fall back to a placeholder like `"System Default"` — returning `None` strips `is_default` and the UI shows no default mic. Cache and target devices by stable hardware ID instead of re-enumerating by label on every recording toggle.
 
 ---
 
-## 3. Rust (Tauri) Backend Hardening & Deep Dive Categories
+## 5. CI/CD & Monorepo
 
-### 3.1 Subprocess Management & Shell Execution
-
-When launching commands or background processes in Rust using `std::process::Command`, there are several subtle but severe traps that can lead to memory exhaustion, process leaks, or dead code.
-
-#### The Code Smells & Traps
-1.  **Unbounded Output Buffering (`child.wait_with_output()`):**
-    Calling `wait_with_output()` collects all data written to `stdout` and `stderr` directly into memory before any truncation or processing can happen. If a subprocess runs away or outputs gigabytes of logs, it will crash the desktop app with an Out-of-Memory (OOM) error.
-2.  **Zombie and Leaked Subprocesses on Timeout:**
-    Setting a timeout on a spawned command task but returning early without terminating the child leaves the subprocess running indefinitely. If the user invokes the command repeatedly, dozens of orphaned processes will pool in the background, consuming CPU and system resources.
-3.  **Bypassing the Shell vs. Windows CMD Builtins:**
-    Excluding a generic shell (like `sh` or `cmd.exe`) is standard practice to prevent shell-injection vulnerabilities. However, running CMD builtins like `dir`, `cd`, `echo`, or `ver` via `Command::new` directly in Windows will always fail with a `NotFound` error, as they are not standalone executables.
-
-#### The Hardened Architectural Pattern
-For safe command execution, you must:
-*   Read `stdout` and `stderr` incrementally via separate threads/tasks with an explicit byte cap.
-*   Retain a handle to the `Child` and explicitly terminate (`child.kill()`) and reap (`child.wait()`) it if a timeout is reached.
-*   Only allow genuine compiled executables (like `whoami`, `where`, `hostname`, `explorer`) in the Windows allow-list, completely avoiding CMD builtins.
-
-*Example Implementation:*
-```rust
-// Note: `std::process::Child` has no built-in timed wait. This uses the
-// `wait-timeout` crate (`cargo add wait-timeout`), whose `ChildExt` trait
-// provides `wait_timeout()`.
-use std::io::Read;
-use std::process::{Command, Stdio};
-use std::thread;
-use std::time::Duration;
-use wait_timeout::ChildExt;
-
-pub fn execute_with_timeout(mut command: Command, timeout: Duration, max_bytes: usize) -> Result<Vec<u8>, String> {
-    command.stdout(Stdio::piped());
-    command.stderr(Stdio::piped());
-
-    let mut child = command.spawn().map_err(|e| e.to_string())?;
-
-    // Drain stdout AND stderr on background threads *while* waiting.
-    // If the pipes are not drained concurrently, a chatty child fills the
-    // OS pipe buffer, blocks on write, and never exits — the exact
-    // pipe-buffer deadlock this section warns about.
-    let mut stdout_pipe = child.stdout.take().ok_or("missing stdout pipe")?;
-    let mut stderr_pipe = child.stderr.take().ok_or("missing stderr pipe")?;
-
-    let stdout_reader = thread::spawn(move || {
-        let mut buf = Vec::new();
-        let mut chunk = [0u8; 8192];
-        loop {
-            match stdout_pipe.read(&mut chunk) {
-                Ok(0) | Err(_) => break,
-                Ok(n) => {
-                    // Keep at most max_bytes, but keep *draining* past the
-                    // cap so the pipe never backs up.
-                    if buf.len() < max_bytes {
-                        let keep = (max_bytes - buf.len()).min(n);
-                        buf.extend_from_slice(&chunk[..keep]);
-                    }
-                }
-            }
-        }
-        buf
-    });
-    let stderr_reader = thread::spawn(move || {
-        // Drain and discard (or cap-and-keep, same as stdout) so stderr
-        // output can never wedge the child either.
-        let mut sink = [0u8; 8192];
-        while matches!(stderr_pipe.read(&mut sink), Ok(n) if n > 0) {}
-    });
-
-    match child.wait_timeout(timeout) {
-        Ok(Some(_status)) => {
-            // Normal exit: the child closed its pipe ends, so the readers
-            // hit EOF and these joins complete promptly.
-            let out = stdout_reader.join().map_err(|_| "stdout reader panicked")?;
-            let _ = stderr_reader.join();
-            Ok(out)
-        }
-        Ok(None) => {
-            // Timeout expired
-            child.kill().ok();
-            child.wait().ok(); // Reap to prevent zombies
-            // Do NOT join the reader threads here. `kill()` only signals the
-            // direct child — if it spawned descendants that inherited the
-            // pipe write-ends, the readers never see EOF and an unconditional
-            // `join()` blocks forever, defeating the timeout this function
-            // exists to enforce. `std::thread` has no timed join, so detach:
-            // the readers hold only the pipe handles and exit on their own
-            // once the last writer finally closes.
-            drop(stdout_reader);
-            drop(stderr_reader);
-            // For a stronger guarantee, kill the entire process tree instead
-            // of just the child: a process group + `killpg` on Unix (spawn
-            // with `setsid`/`process_group(0)`), a Job Object on Windows, or
-            // a cross-platform crate such as `command-group`.
-            Err("Execution timed out".to_string())
-        }
-        Err(e) => {
-            child.kill().ok();
-            child.wait().ok();
-            drop(stdout_reader); // Same rationale as the timeout arm: detach,
-            drop(stderr_reader); // never block on a pipe that may stay open.
-            Err(e.to_string())
-        }
-    }
-}
-```
+- **5.1 Turbo graph:** `"check-types": { "dependsOn": ["^check-types"] }` yields spurious `TS2307` because dependencies were never built. Depend on `["^build"]`.
+- **5.2 Least privilege:** verification jobs (format, lint, typecheck, cargo test) get `permissions: contents: read`; write scopes only in publish/release steps.
+- **5.3 Trigger filters:** desktop `paths` filters must cover everything affecting compilation — `apps/desktop/**`, `packages/**`, `patches/**`, `package.json`, `pnpm-lock.yaml`, `pnpm-workspace.yaml`, `turbo.json`, `.nvmrc`, `.github/scripts/install-desktop-linux-deps.sh`.
+- **5.4 Dependency floors:** keep both bounds in overrides — `"vitest@<3.2.6": ">=3.2.6 <4.0.0"`. Dropping the floor permits a downgrade back into vulnerable `3.x`.
+- **5.5 Updater trust anchors:** never commit signing keys or `__UPDATER_PUBLIC_KEY__` literals (a fork could sign binaries the app auto-trusts), and never duplicate the literal across CI and setup scripts. Set `"createUpdaterArtifacts": false` publicly and inject `TAURI_UPDATER_PUBLIC_KEY` from repository secrets during the release build only.
+- **5.6 Platform symmetry:** if `rust_windows_pill` gets `cargo test`, so must `rust_macos_pill` and `rust_gtk_pill` — clippy-only coverage hides runtime bugs. Provision tools (e.g. `imagemagick`) in the platform dependency scripts, not loose inline installs without `apt-get update`.
+- **5.7 Boolean casts:** `"false"` is truthy in Node and Python, so `CI=false` reads as "in CI". Compare explicitly: `process.env.CI === "true"`.
 
 ---
 
-### 3.2 File I/O, Path Normalization, and Symlink Attacks
+## 6. Suggestions & Nitpicks
 
-Desktop security requires strict validation of files deleted during local data purges (`clear_local_data`). Raw lexical path matching is almost always broken.
+**Suggestions** (`🟡 Minor` / `🔵 Trivial`) — performance, maintainability, defensive coding: strip dead variables, imports, and ignored parameters; prefer safe option handling (`unwrap_or_default()`, `if let Some`, `?.`, `??`) over risky unwraps; adopt modern idioms (`std::mem::take`, iterator combinators over C-style loops; `async/await` over `.then` chains); avoid holding a mutex across a nested call that causes micro-contention and render delay.
 
-#### The Code Smells & Traps
-1.  **Raw Path Deletion Mismatch:**
-    Validating a relative path (like `"clip.wav"`) against `audio_dir` inside a validation function, but then handing the *unmodified raw input* to `std::fs::remove_file`, causes the deletion to resolve against the process's working directory (`CWD`) instead of the intended storage directory. This leaks user data and risks collateral file loss in the application's launch directory.
-2.  **Lexical Normalization Traversal Escapes:**
-    A simple `.starts_with(audio_dir)` check fails against directory traversals (`..`) and symlink attacks. If an attacker places a symlink inside `audio_dir` pointing to `/etc/passwd`, a lexical-only validator sees `<audio_dir>/symlink/file` as "inside" the directory, allowing arbitrary file deletion or reading when followed.
-3.  **Un-canonicalized Reference Directories:**
-    If `audio_dir` itself contains relative components (`.` or `..`) due to system-specific paths or environmental configurations, every legitimate file path comparison will fail, causing the application to silently skip cleaning up user sensitive files.
+**Nitpicks** — zero functional impact: formatting drift and stray/trailing whitespace, missing trailing newline at EOF, comments that contradict the code they describe (e.g. "throws X" after a rewrite to `Result`), and descriptive renames following monorepo casing (camelCase TS, snake_case Rust).
 
-#### The Hardened Architectural Pattern
-*   **Always Canonicalize Both Ends:** Resolve the parent directory of the file and the target storage folder into absolute, canonical physical paths (`std::fs::canonicalize`) before comparing them.
-*   **Reject Symlinks at the Final Component Too:** Canonicalizing the parent is not enough — if the *file itself* is a symlink placed inside `audio_dir`, following it still resolves outside the directory. Check `std::fs::symlink_metadata` on the final path and refuse symlinks outright (or canonicalize the full path and re-verify its parent).
-*   **Validate the Canonical Path, Delete the Canonical Path:** Never delete the raw string input; always operate on the normalized, canonicalized path returned by your validator helper.
-
-*Example Implementation:*
-```rust
-use std::path::{Path, PathBuf};
-use std::fs;
-
-pub fn resolve_managed_audio_path(path: &Path, audio_dir: &Path) -> Option<PathBuf> {
-    // Merge relative inputs into the target audio directory
-    let candidate = if path.is_absolute() {
-        path.to_path_buf()
-    } else {
-        audio_dir.join(path)
-    };
-
-    let file_name = candidate.file_name()?;
-    let parent_dir = candidate.parent()?;
-
-    // Canonicalize parent and audio_dir to resolve traversals/symlinks
-    // in the *directory* portion of the path
-    let real_parent = fs::canonicalize(parent_dir).ok()?;
-    let real_audio_dir = fs::canonicalize(audio_dir).ok()?;
-
-    if real_parent != real_audio_dir {
-        return None; // Escape or mismatch detected!
-    }
-
-    let resolved = real_parent.join(file_name);
-
-    // The final component can still be a symlink *inside* audio_dir that
-    // points outside it (e.g. clip.wav -> /etc/passwd). symlink_metadata
-    // does NOT follow links, so we can detect and reject that case.
-    // NB: don't just `.ok()?` here — that would also refuse paths that do
-    // not exist yet, silently breaking write flows where the caller is
-    // resolving a *destination* path. A missing file is fine (its parent is
-    // already verified above); only an existing symlink is refused.
-    match fs::symlink_metadata(&resolved) {
-        Ok(meta) if meta.file_type().is_symlink() => {
-            None // Symlink file inside the managed dir — refuse it
-        }
-        Ok(_) => Some(resolved),
-        Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
-            Some(resolved) // Doesn't exist yet — valid as a write destination
-        }
-        Err(_) => None, // Permission or I/O error — fail closed
-    }
-}
-```
+**Linter boundaries:** **Oxlint** scans `apps/desktop/src` per `apps/desktop/oxlint.json` via `pnpm --filter desktop run lint` (which also runs a Prettier check); **Prettier** covers TS/TSX, CSS, and Markdown through the root `format` script; **Clippy** runs `cargo clippy -- -D warnings` for the Tauri backend and each native pill crate. There is **no ESLint or Markdownlint in CI** — Markdown structure findings are readability nits, not gates. Verify proposed suggestions don't themselves break these checks.
 
 ---
 
-### 3.3 Secure Network Streaming & Redirect Validation
-
-Downloading installers or model sidecars is a critical attack vector for desktop software. Unhardened HTTP clients can be manipulated to download arbitrary malicious payloads.
-
-#### The Code Smells & Traps
-1.  **Unbounded Memory Buffering of Large Payloads:**
-    Invoking standard helpers like `response.bytes()` blocks the thread and attempts to buffer the entire file in RAM before asserting any file size limit. Download targets like macOS `.pkg` files can be hundreds of megabytes or gigabytes, leading to instant OOM crashes.
-2.  **Post-Download Validation (Too Late):**
-    Asserting file size caps after the download completes is a security anti-pattern. An attacker-controlled server can keep sending an infinite stream of junk data, filling the host disk and crashing the operating system.
-3.  **Redirect Allow-List Bypass:**
-    While the initial URL (e.g., pointing to `github.com`) might be validated and allow-listed, HTTP clients follow redirects by default. If the server redirects the client to `evil-attacker.com/malware.pkg`, the client will fetch the malicious payload and proceed to execute it.
-
-#### The Hardened Architectural Pattern
-*   **Verify Redirects on Every Single Hop:** Supply a custom redirect policy to the HTTP client that forces every single target hop (including scheme, host, and file extension) to pass the security filter.
-*   **Verify Content-Length & Stream to Disk with a Byte Counter:** Read chunks of bytes sequentially, write them to disk, and verify on every iteration that the total written bytes have not crossed the safety threshold. Reject the stream immediately if the advertised `Content-Length` exceeds the cap before the download begins. Note that `reqwest` reports `content_length() == None` not only for hostile servers but also for legitimate chunked (`Transfer-Encoding: chunked`) or transparently decompressed responses — so make "missing length" a policy decision: require it for fixed artifacts (installers, model files) served by hosts you control, but when chunked responses must be supported, allow `None` and let the streaming byte counter enforce the cap.
-
-*Example Implementation:*
-```rust
-use reqwest::redirect::Policy;
-use std::fs::{self, File};
-use std::io::Write;
-use std::path::Path;
-
-pub async fn download_installer(url_str: &str, dest_path: &Path, max_bytes: u64) -> Result<(), String> {
-    let redirect_policy = Policy::custom(move |attempt| {
-        let next_url = attempt.url();
-        if attempt.previous().len() >= 10 {
-            return attempt.error("Too many redirects");
-        }
-        // Validate next_url host/scheme here
-        if !is_host_trusted(next_url) {
-            return attempt.error("Untrusted redirect host");
-        }
-        attempt.follow()
-    });
-
-    let client = reqwest::Client::builder()
-        .redirect(redirect_policy)
-        .build()
-        .map_err(|e| e.to_string())?;
-
-    let mut response = client.get(url_str).send().await.map_err(|e| e.to_string())?;
-    
-    // Check the advertised size BEFORE downloading: reject an oversized
-    // Content-Length up front. `content_length()` is `None` for chunked or
-    // transparently decompressed responses, not only hostile ones — this
-    // example downloads fixed installer artifacts from allow-listed hosts,
-    // so it requires a length (strictest policy). If your endpoint serves
-    // chunked responses legitimately, drop the `None` arm and rely on the
-    // per-chunk byte counter below, which enforces the cap either way
-    // (including when the server lies about the length).
-    match response.content_length() {
-        None => return Err("Server did not advertise Content-Length".to_string()),
-        Some(len) if len > max_bytes => {
-            return Err("Payload exceeds maximum size limit".to_string());
-        }
-        Some(_) => {}
-    }
-
-    let mut file = File::create(dest_path).map_err(|e| e.to_string())?;
-    let mut downloaded: u64 = 0;
-
-    while let Some(chunk) = response.chunk().await.map_err(|e| e.to_string())? {
-        downloaded = downloaded.saturating_add(chunk.len() as u64);
-        if downloaded > max_bytes {
-            drop(file);
-            let _ = fs::remove_file(dest_path);
-            return Err("Payload size limit breached during download".to_string());
-        }
-        file.write_all(&chunk).map_err(|e| e.to_string())?;
-    }
-
-    Ok(())
-}
-```
-
----
-
-### 3.4 Concurrency Controls, Global Atomic Flags, and Parallel Test Integrity
-
-Desktop platforms rely on global atomic states to manage hardware-level loops (like typing-simulators or speech recorders). This demands precise synchronization.
-
-#### The Code Smells & Traps
-1.  **Unscoped Global Action Cancellation:**
-    If a typing cancel signal (`cancel_typing`) is modeled as a simple, process-global `CANCEL_TYPING` flag with no session key, triggering a cancellation near the end of session A will linger. When session B starts, it will instantly abort.
-2.  **Dirty Test Contexts in Multi-threaded Cargo Tests:**
-    Because Cargo executes tests concurrently in parallel threads within a single process, writing to shared process-global states (like `CANCEL_TYPING.store(true)`) causes other concurrent tests to fail randomly. Tests must be self-contained or carefully restore changed static states.
-
-#### The Hardened Architectural Pattern
-*   **Protect State Transitions via Local Contexts:** In unit tests, abstract atomic variables into helper functions or test structs rather than modifying global static variables directly. If global states must be tested, back up and restore their values in a `Drop` guard.
-*   **No-Op Outside Active Sessions:** Ensure that commands representing global cancels do not run unless the global state is actively marked as in-progress.
-
----
-
-### 3.5 SQLite & Migration Parsing Integrity
-
-Database operations in `mausVoice` are driven by SQLite. During local data wipes, the application commits to deleting all traces of personal user data.
-
-#### The Code Smells & Traps
-*   **Tautological Table Assertions:** Developers often write tests that assert `USER_DATA_TABLES_TO_CLEAR` matches a copy-pasted list inside their test file. This is tautological: if a developer adds a new table (e.g. `voice_profiles`) but forgets to update both lists, the test still passes, creating a privacy leak.
-*   **Transaction Silencing:** Wiping tables individually without wrapping them inside a SQL transaction (`pool.begin()`) leaves the database in an inconsistent or partially-wiped state if an intermediate deletion fails.
-
-#### The Hardened Architectural Pattern
-*   **Dynamic Migration Auditing:** Write tests that dynamically read migration files or the active SQLite schema (`sqlite_master` table), subtract an explicit public allow-list (e.g., `sqlite_sequence`), and assert that every other table is covered by the wipe statement. This creates a compiler-enforced block against un-cleared user tables.
-
-*Example Implementation:*
-```rust
-#[tokio::test]
-async fn test_all_user_tables_are_cleared() {
-    let pool = establish_test_db().await;
-    
-    // Extract actual database tables dynamically from SQLite
-    let tables: Vec<String> = sqlx::query_as::<_, (String,)>("SELECT name FROM sqlite_master WHERE type='table'")
-        .fetch_all(&pool)
-        .await
-        .unwrap()
-        .into_iter()
-        .map(|t| t.0)
-        .filter(|name| !name.starts_with("sqlite_") && name != "_sqlx_migrations")
-        .collect();
-
-    for table in tables {
-        assert!(
-            USER_DATA_TABLES_TO_CLEAR.contains(&table.as_str()),
-            "Table '{table}' is missing from USER_DATA_TABLES_TO_CLEAR! This is a potential privacy leak."
-        );
-    }
-}
-```
-
----
-
-### 3.6 Tauri IPC Bridge, CORS, and CSP Policies
-
-Tauri applications communicate with the frontend using IPC (Inter-Process Communication). Misconfigured IPC access or Content Security Policies (CSP) can allow an attacker-controlled webview to execute native shell commands.
-
-#### The Code Smells & Traps
-*   **Over-Permissive remote.urls Allow-Lists:** Adding wildcards to your `remote.urls` capabilities allows any loaded sub-page (including external documentation or documentation mirrors) to call native commands like file deletes or command execution.
-*   **Stale Comments on IPC Ownership:** Keeping comments that state "external site X has full IPC access" when the configuration file actually restricts it leads to developer confusion and incorrect security assumptions during audits.
-
-#### The Hardened Architectural Pattern
-*   **Enforce Zero-IPC for External Domains:** Limit `remote.urls` strictly to `localhost` loopbacks used for local development. External domains like GitHub Pages docs site must remain standard webviews without IPC privileges.
-*   **Unified CSP Declarations:** Synchronize Content Security Policies inside `tauri.conf.json` with the production app, ensuring that external script execution is blocked (`script-src 'self'`).
-
----
-
-### 3.7 Desktop-Native Pills & Multi-Platform Window Geometry
-
-`mausVoice` relies on native tray pills drawn via platform-specific window frameworks (Cocoa on macOS, Win32 on Windows, and GTK/X11 on Linux). Window coordinate and scaling calculations represent a major source of visual bugs.
-
-#### The Code Smells & Traps
-*   **Toplevel Origin vs. Center Anchoring:** When drag-dropping the Linux X11 pill, capturing the raw window coordinates can save coordinates belonging to a transparent toplevel origin rather than the visible pill center. This can cause the pill to leap to a different screen or snap back to the primary monitor on display-crossing events.
-*   **Exclusive Boundary Probes:** Testing coordinate containment with strict less-than operators against screen boundaries can cause fallbacks to fail on screen edges, leaving the tray pill inaccessible.
-
-#### The Hardened Architectural Pattern
-*   **Universal Center Offset calculations:** Always offset toplevel coordinates by half the window width and height, matching macOS and Windows center-anchoring methods.
-*   **Inward Boundary Anchoring:** When computing initial placement fallbacks, position the coordinate target strictly within the screen boundary (e.g. subtracting `1.0` pixel from the exclusive maximum boundary).
-
----
-
-### 3.8 Global Model Cache Serialization & Resource Contention
-
-Local AI audio transcription utilizes ONNX Runtime and Parakeet models. These models represent massive memory and CPU footprints, requiring careful global caching.
-
-#### The Code Smells & Traps
-*   **Coarse-Grained Mutex Holding:** Locking a global model cache mutex (e.g. `MODEL_CACHE.lock()`) and holding it *across the entire duration of a long-running audio inference task* serializes all local speech transcription requests. If a user tries to process an in-flight speech query and runs a separate local command, the secondary query is frozen until the first completes.
-*   **Lock Contention Under Parallel Requests:** Multiple parallel webviews or background tasks attempting to call local models simultaneously will lead to high latency and thread-pool exhaustion if locks are held past initial model retrieval.
-
-#### The Hardened Architectural Pattern
-*   **Acquire, Clone, and Drop:** Acquire the global mutex strictly to query, clone, or load the underlying model runtime handle. Drop the guard (`drop(cache)`) instantly before starting the heavy, non-blocking model computation, allowing other commands to query the cache concurrently.
-
-*Example Implementation:*
-```rust
-// HARDENED CACHE RETRIEVAL
-pub async fn transcribe_samples(samples: Vec<f32>) -> Result<String, String> {
-    let model_runtime = {
-        let mut cache = MODEL_CACHE.lock().map_err(|_| "Cache lock poisoned")?;
-        let loaded = cache.get_or_load_model()?;
-        // Clone the light Arced pointer to the runtime, not the model weights
-        loaded.runtime_handle.clone() 
-    }; // The guard is dropped here automatically
-
-    // Perform heavy inference concurrently without blocking other queries
-    model_runtime.run_inference(samples).await
-}
-```
-
----
-
-### 3.9 ONNX Auxiliary Artifact Download Lifecycle
-
-Models like Canary or Parakeet require companion files (tokenizers, vocabularies, configuration graphs). If these are managed with detached tasks, reliability breaks.
-
-#### The Code Smells & Traps
-*   **Fire-and-Forget Companion Spawns (`tokio::spawn`):** Spawning auxiliary file downloads (e.g. tokenizer configs) as background tasks and discarding their join handles (`let _ = tokio::spawn(...)`) leaves errors unhandled. If a configuration file download fails due to a network drop, the model remains partially downloaded, resulting in silent model load failures on subsequent boot-ups.
-*   **Flaky Fixed Sleep Waits in Tests:** Using a fixed time delay (e.g. `sleep(Duration::from_secs(30))`) inside integration tests to allow detached companion downloads to finish is highly brittle and causes flaky builds on slow, resource-constrained runner environments.
-
-#### The Hardened Architectural Pattern
-*   **Await the Complete Artifact Set:** Never spawn detached, un-tracked companion tasks for critical model runtime dependencies. Aggregate all artifact download futures and await them completely (`tokio::try_join!`) before reporting the model status as ready.
-*   **Test Readiness Poll Loops:** In tests, poll the actual model readiness status endpoint rather than hardcoding arbitrary sleeps.
-
----
-
-## 4. TypeScript & React Frontend Lifecycle Contracts
-
-### 4.1 React Hooks & StrictMode Compliance
-
-React's StrictMode renders components twice to detect side effects. Any hook that violates React's pure-rendering lifecycle guidelines will cause memory leaks or state drift.
-
-#### The Code Smells & Traps
-1.  **Writing to Refs During Render:**
-    Executing code like `ref.current = value` or setting states directly in the render function body is a forbidden side effect. If React aborts or rerenders the transition, your ref stores inaccurate state.
-2.  **Stale/Frozen Constants in Memoized Refs:**
-    Creating a ref-guarded controller once (`if (!ref.current) ref.current = new Controller(options)`) means that any subsequent changes to `options` are completely ignored. This silently freezes configurations like the safety timeout `timeoutMs`.
-
-#### The Hardened Architectural Pattern
-*   **Execute Ref Assignments inside Effects:** Let components render purely. Perform setup or synchronization inside a `useEffect` hook.
-*   **Stable Identity Setters, Dynamic Call parameters:** Avoid state sinks inside refs. Instead, pass dynamic configurations (like timeouts) directly as method arguments during execution (e.g., `controller.run(promise, timeoutMs)`).
-
----
-
-### 4.2 Safe Async State Transitions & Race Conditions
-
-Desktop user interactions are highly dynamic—users click things repeatedly, and network speeds fluctuate. Async hooks must guarantee that stale responses do not update UI state.
-
-#### The Code Smells & Traps
-1.  **Surfacing Stale Async Results:**
-    If a user requests a data reload and immediately clicks refresh again, two parallel network queries run. If the older request finishes *after* the newer one, it will overwrite the UI state with stale, outdated data.
-2.  **Setting State on Unmounted Components:**
-    Updating standard state hooks after a component has unmounted produces memory leaks and console warnings. 
-
-#### The Hardened Architectural Pattern
-*   **Monotonic Generation Counters:** Use an incrementing counter (`generation`) inside an async controller. On completion, only apply state updates if the generation matched the start token.
-*   **Teardown Hooks:** Return cancel/teardown handlers in `useEffect` that instantly increment the generation, discarding any pending updates.
-
-*Example Implementation:*
-```typescript
-export class AsyncDataController<T> {
-  private generation = 0;
-  private timeout: any = null;
-
-  constructor(
-    private readonly sink: {
-      setLoading: (l: boolean) => void;
-      setError: (e: string) => void;
-      setData: (d: T) => void;
-    },
-    private readonly defaultTimeoutMs: number,
-  ) {}
-
-  public cancelInFlight() {
-    this.generation++;
-    if (this.timeout) {
-      clearTimeout(this.timeout);
-      this.timeout = null;
-    }
-  }
-
-  public async run(promise: () => Promise<T>, timeoutMs = this.defaultTimeoutMs): Promise<void> {
-    const myGeneration = ++this.generation;
-    if (this.timeout) { clearTimeout(this.timeout); this.timeout = null; } // ++generation above already invalidated the previous run
-
-    this.sink.setLoading(true);
-    this.sink.setError("");
-
-    this.timeout = setTimeout(() => {
-      if (this.generation !== myGeneration) return;
-      this.generation++;
-      this.sink.setError("Request timed out");
-      this.sink.setLoading(false);
-    }, timeoutMs);
-
-    try {
-      const data = await promise();
-      if (this.generation !== myGeneration) return;
-      this.sink.setData(data);
-      this.sink.setLoading(false);
-    } catch (err) {
-      if (this.generation !== myGeneration) return;
-      this.sink.setError(String(err));
-      this.sink.setLoading(false);
-    } finally {
-      if (this.generation === myGeneration) {
-        clearTimeout(this.timeout);
-      }
-    }
-  }
-}
-```
-
----
-
-### 4.3 IPC Protocol Integration & Binding Alignment
-
-Tauri coordinates the Rust and TS runtimes through code generation (via `specta` or equivalent). If manual edits diverge from the generated bindings, the app will crash at runtime.
-
-#### Rules for Agents
-1.  **Never Manually edit `bindings.ts`:**
-    Always regenerate bindings by running `scripts/bindings.sh` or through cargo build flows when updating command signatures in `commands.rs`.
-2.  **Synchronize Commands in `app.rs`:**
-    New Tauri commands must be registered in the builder inside `app.rs`. Double check that any command added to `commands.rs` matches its registration hook.
-
----
-
-### 4.4 Audio Input and Pulse Recording Safety
-
-Audio processing loops demand safety strategies to handle raw buffers from hardware recording channels.
-
-#### The Code Smells & Traps
-*   **Un-synchronized Pulse Streams:** Failing to close or pause microphone streams upon component unmounting leaks audio handles and keeps the recording indicator active on the host OS.
-*   **C-style Buffer Index Traversal:** Manually parsing raw `Float32Array` PCM audio buffers using unchecked index traversals can cause index-out-of-bounds exceptions, terminating the recording thread.
-
-#### The Hardened Architectural Pattern
-*   **Enforce Unmount Subscriptions:** Every active audio node or microphone listener hook must hook into standard `useEffect` cleanups to terminate the recording stream.
-*   **Bounds-Guarded Buffer Iteration:** Always use built-in array methods or robust range guards when splitting or merging audio signals.
-
----
-
-### 4.5 Host Default Device Drop-off during Cache Enumeration
-
-Desktop users frequently connect or disconnect microphones. Enumerating system inputs can cause active defaults to drop off.
-
-#### The Code Smells & Traps
-*   **Silent Default Device Drops:** When the default recording device cannot resolve a display name, standard normalization loops can fall back to returning `None` for the device name. When the loop processes this, it strips out the `is_default` property from the list, causing the UI to show *no default microphone at all*.
-*   **Label-Based Cache Enumeration Costs:** Resolving the active microphone on recording start by doing a label-based search over all devices on the host forces full hardware-level enumeration on every single toggle. This introduces stuttering and delay to the audio stream initialization.
-
-#### The Hardened Architectural Pattern
-*   **Defensive Default Preservations:** If a display name query fails on the default hardware device, fallback to assigning a stable placeholder label (like `"System Default"`) rather than dropping the default indicator.
-*   **Persistent Index/ID Cache:** Cache and target microphones by stable system-level hardware IDs rather than doing dynamic string label lookups.
-
----
-
-## 5. CI/CD & Monorepo Dependency Orchestration
-
-### 5.1 Turborepo Task Graph Dependency Integrity
-
-In a monorepo setup, task definitions in `turbo.json` must be self-sufficient and accurately reflect their dependency graph.
-
-#### The Trap
-Declaring a task like `"check-types"` with `"dependsOn": ["^check-types"]` means it will only look for types inside dependent packages. If those dependent packages have not compiled their sources into `/dist` first, `tsc` will fail with spurious `TS2307` (Cannot find module) errors.
-
-#### The Fix
-Configure `check-types` to depend on built packages directly:
-```json
-"check-types": {
-  "dependsOn": ["^build"]
-}
-```
-
----
-
-### 5.2 Minimal-Privilege Workflow Scopes
-
-GitHub Actions workflows should strictly limit the permissions assigned to `GITHUB_TOKEN`.
-
-#### Rule of Thumb
-Never let standard verification tasks (like formatting, linting, typechecking, and cargo tests) run with write-access tokens. Explicitly limit job-level permissions:
-```yaml
-permissions:
-  contents: read
-```
-Only allow writing inside publishing and release deployment steps.
-
----
-
-### 5.3 Exact Monorepo Trigger Filters
-
-Monorepo CI workflows use `paths` filters to prevent running expensive builds on unrelated commits (like markdown docs). However, missing internal dependency changes will bypass CI checks.
-
-#### Standard Monorepo Workflow Filters
-Ensure that `paths` filters for the desktop build workflow include every file that impacts compilation:
-```yaml
-paths:
-  - "apps/desktop/**"
-  - "packages/**"
-  - "patches/**"
-  - "package.json"
-  - "pnpm-lock.yaml"
-  - "pnpm-workspace.yaml"
-  - "turbo.json"
-  - ".nvmrc"
-  - ".github/scripts/install-desktop-linux-deps.sh"
-```
-
----
-
-### 5.4 Hardened Package Resolution & Dependency Floors
-
-When applying lockfile overrides for security patches, avoid omitting lower-bound constraints.
-
-#### The Vulnerability
-Changing an override constraint from `"vitest@<3.2.6": ">=3.2.6 <4.0.0"` to `"vitest@<3.2.6": "<4.0.0"` removes the lower bound constraint entirely. This means a package resolution step could downgrade the package to a vulnerable version of `3.x` while satisfying the relaxed constraint. Always preserve the floor and ceiling:
-```json
-"vitest@<3.2.6": ">=3.2.6 <4.0.0"
-```
-
----
-
-### 5.5 Committed Secrets & Updater Public Key Trust Anchors
-
-Tauri apps use public/private keypairs to sign and verify application updates. Storing these public anchors inside the public repository exposes trust.
-
-#### The Code Smells & Traps
-*   **Committed Signing Keys:** Storing updater private keys or public verification key strings (`__UPDATER_PUBLIC_KEY__`) directly inside code files or repository-visible workflow configurations allows any fork to sign malicious binaries that the production app will trust and auto-update.
-*   **Drifting Key Literals:** Hardcoding public key strings in both the CI/CD files and setup scripts instead of sharing a single, centralized environment variable introduces security drift.
-
-#### The Hardened Architectural Pattern
-*   **Disable Updaters when Un-signed:** Set `"createUpdaterArtifacts": false` within public configuration branches.
-*   **Runtime Environment Injections:** Only inject the actual public signature verification key (`TAURI_UPDATER_PUBLIC_KEY`) during the restricted, runner-phase release build utilizing secured GitHub Repository Secrets.
-
----
-
-### 5.6 Multi-Platform Workflows and Test Execution Gaps
-
-Monorepos often split unit test suites by platform target. However, having asymmetrical tests across systems allows platform-specific regressions to go completely unnoticed.
-
-#### The Code Smells & Traps
-*   **Asymmetrical Crate Tests:** Frequently, only Windows crates (e.g., `rust_windows_pill`) are evaluated inside GitHub Actions via `cargo test`, while macOS (`rust_macos_pill`) and Linux (`rust_gtk_pill`) configurations are checked only with static `cargo clippy`. This allows runtime execution bugs on macOS and Linux to pass CI.
-*   **Stale Package Index Installs:** Executing inline installations of tools (like `imagemagick` for icon checking) in workflows without running a pre-requisite system index update (`apt-get update`) leads to intermittent runner crashes when standard software mirrors update their remote catalogs.
-
-#### The Hardened Architectural Pattern
-*   **Balanced Platform Checks:** For every crate that compiled under specific architecture target filters, enforce equivalent execution checks (`cargo test`) inside the central workflow file.
-*   **Unified Dependency Provisioning:** Consolidate external tool installations directly into the primary platform dependency provisioning scripts rather than running loose `apt-get` commands in separate actions.
-
----
-
-### 5.7 Shell Context Evaluation and Boolean Cast Assumptions
-
-Build and prep scripts often evaluate environment flags (like `CI=true` or `CI=false`) using native shell string matches.
-
-#### The Code Smells & Traps
-*   **String Boolean Truthy Pitfalls:** Scripts often cast environment properties like `process.env.CI` directly to a boolean context. In Node.js or Python, the string `"false"` is **truthy**. As a result, running a local setup script with `CI=false` is evaluated as *running under CI*, which can cause the local build to fail catastrophically when native compilation errors occur.
-
-#### The Hardened Architectural Pattern
-*   **Explicit String Comparison:** Always evaluate string variables by doing an explicit comparison with expected values (e.g. `process.env.CI === "true"`).
-
----
-
-## 6. The Definitive Suggestions & Nitpicks Guide
-
-Not all findings block a release, but maintainability demands clean formatting, structural standards, and modern syntax conventions. This section provides the exhaustive categorization rules for minor findings (Suggestions) and style corrections (Nitpicks).
-
-### 6.1 Suggestion Typology: Quality-of-Life, Defensive Coding, and Scalability
-
-Suggestions focus on improving performance, ensuring long-term maintainability, and defensive programming. They are classified as `🟡 Minor` or `🔵 Trivial` suggestions.
-
-#### Primary Suggestion Patterns:
-1.  **Redundant Code & Dead Variable Stripping:**
-    Unused local variables, dead imports, or parameters that are completely ignored by the function body. Stripping them keeps compiler analysis fast and the code highly readable.
-2.  **Defensive Option Parsing:**
-    Checking and resolving optional values with safe fallbacks instead of chaining risky unwraps (e.g., preferring `.unwrap_or_default()` or `if let Some` in Rust, and optional chaining `?.` with nullish coalescing `??` in TS).
-3.  **Modern Idiom Adoptions:**
-    *   **In Rust:** Using `std::mem::take` to extract state from a mutable reference, or utilizing iterator streams (`.any()`, `.map()`, `.find()`) over manual C-style `for` loops.
-    *   **In TS:** Migrating deprecated array constructors to modern ES6 features, or replacing standard `Promise.then` chaining with clean `async/await` syntax.
-4.  **Redundant Mutex holding optimization:**
-    Identifying local scopes where a thread locks a resource and immediately triggers another nested command, causing micro-contention and visual rendering delays.
-
----
-
-### 6.2 Nitpick Typology: Linters, Spacing, and Non-Functional Semantics
-
-Nitpicks are purely structural or cosmetic changes that have **zero functional impact** on execution correctness. They ensure perfect style consistency across large development teams.
-
-#### Primary Nitpick Patterns:
-1.  **Formatting Drift & Stray Newlines:**
-    Extra spaces, dangling blank lines inside blocks, trailing whitespace, or missing empty lines below Markdown headings.
-2.  **File Termination Standards:**
-    Missing a single trailing newline at the end of files, which breaks some terminal-based concatenations.
-3.  **Redundant / Drifted Comments:**
-    Comments that contradict active code changes. Old, legacy comments claiming a function "throws X" when it was rewritten to return a `Result` must be scrubbed immediately.
-4.  **Variable / Function Renaming:**
-    Stylistic renaming proposals to make identifiers more descriptive, provided they follow standard monorepo casings (camelCase for TS, snake_case for Rust).
-
----
-
-### 6.3 Code Quality & Linter Boundaries (Oxlint, Prettier, Clippy)
-
-`mausVoice` integrates specific, automated static tools that compile and enforce styling criteria before code enters staging:
-*   **Oxlint:** A fast linter that scans the desktop frontend (`apps/desktop/src`) for common JavaScript/TypeScript traps (such as variable shadowing, redundant assignments, and unused imports), using the checked-in `apps/desktop/oxlint.json`. It is run via `pnpm --filter desktop run lint` (which also runs a Prettier check).
-*   **Prettier:** Enforces code formatting consistency across TypeScript/TSX, CSS, and Markdown via the root `format` script and the desktop lint check.
-*   **Clippy:** Enforces Rust lint checks (`cargo clippy -- -D warnings`) for the Tauri backend and each native pill crate in the lint workflow.
-
-There is no ESLint or Markdownlint step in CI. If a review raises Markdown structure (blank lines around headings, a single trailing newline), treat it as a readability nit, not an enforced gate. Audit reviews must verify that proposed suggestions and nitpicks do not violate the actual linter boundaries or cause formatting test failures in CI.
-
----
-
-## 7. Universal Code Smell & Anti-Pattern Detection Checklist
+## 7. Anti-Pattern Checklist
 
 | Category | Smell / Anti-Pattern | Severity | Remediation |
 | :--- | :--- | :--- | :--- |
-| **Rust Security** | Raw string path deletions | Critical | Canonicalize and map to returned valid PathBuf |
-| **Rust Security** | Unvalidated HTTP Redirects | Critical | Custom Redirect policy verifying host, scheme, and path extension |
-| **Rust Performance** | Buffering subprocess outputs inside RAM | Major | Stream stdout/stderr using capped readers with max bytes |
-| **Rust Concurrency** | Parallel thread modification of static globals | Major | Wrap global state access or drop/backup within unit tests |
-| **Rust Security** | Over-permissive remote URLs in Tauri configs | Critical | Enforce loopback localhost bounds for IPC capability |
-| **Rust Robustness** | Tautological constants validation tests | Major | Parse schema definitions dynamically inside tests |
-| **Rust UI** | Exclusive maximum bounds in geometry calculations | Medium | Position coordinates strictly within screen bounds |
-| **Rust Concurrency** | Coarse-grained Mutex holding across long async tasks | Major | Clone/retrieve under short-scoped lock, then drop before async task |
-| **Rust Operations** | Unhandled fire-and-forget companion spawns | Major | Aggregate all auxiliary download targets and await them as a set |
-| **React Hooks** | Writing to Refs during render phase | Major | Use `useEffect` or pure state setters |
-| **React Safety** | Obsolete or cached state controllers | Major | Update on changed parameters / dependencies |
-| **React Lifecycle** | Memory leak / setting state on unmounted components | Medium | Increment generation count to discard pending re-renders |
-| **TS Hardware** | Default input drop-off during label scan | Medium | Provide system placeholders for unnamed defaults |
-| **CI / CD** | Over-privileged `GITHUB_TOKEN` scopes | Medium | Restrict jobs to `contents: read` |
-| **Turborepo** | Tautological task dependency definitions | Medium | Force dependent outputs to require `^build` |
-| **CI Security** | Committed private updater keys and public hooks | Critical | Shift signing to runtimes using secure environment secrets |
-| **CI Coverage** | Asymmetrical crate verification runs across targets | Major | Enforce symmetrical `cargo test` configurations for all platforms |
-| **Script Safety** | Casting env variables directly to Boolean states | Medium | Use explicit string comparison statements |
-| **Clean Code** | Dangling, unused variables or dead system imports | Minor | Strip unused references completely to pass Oxlint clean scans |
-| **Formatting** | Missing blank spaces around headings or EOF newlines | Nitpick | Add blank spaces and newlines for consistent Markdown formatting |
-| **Documentation** | Drifted comments contradicting active code signatures | Nitpick | Rewrite doc comments and functions to preserve semantic alignment |
-| **Performance** | Redundant device label lookups inside hardware cycles | Minor | Target devices using direct indexed queries or cached identifiers |
+| Rust Security | Raw string path deletions | Critical | Canonicalize; act on the returned `PathBuf` |
+| Rust Security | Unvalidated HTTP redirects | Critical | Custom policy verifying host, scheme, hop count |
+| Rust Security | Over-permissive `remote.urls` | Critical | Restrict IPC capability to loopback |
+| Rust Performance | Buffering subprocess output in RAM | Major | Stream via capped concurrent readers |
+| Rust Concurrency | Parallel tests mutating statics | Major | Scope access; restore in a `Drop` guard |
+| Rust Concurrency | Mutex held across long async work | Major | Clone under a short lock, drop, then run |
+| Rust Robustness | Tautological constant tests | Major | Parse the live schema in tests |
+| Rust Operations | Fire-and-forget companion spawns | Major | Aggregate and await the full artifact set |
+| Rust UI | Exclusive max bounds in geometry | Medium | Place strictly within screen bounds |
+| React Hooks | Writing refs during render | Major | Move into `useEffect` or pure setters |
+| React Safety | Stale cached controllers/config | Major | Pass dynamic params per call |
+| React Lifecycle | State set after unmount | Medium | Generation counter discards stale updates |
+| TS Hardware | Default input dropped on label scan | Medium | Placeholder label for unnamed defaults |
+| TS Performance | Label lookups each hardware cycle | Minor | Target cached, stable device IDs |
+| CI / CD | Over-privileged `GITHUB_TOKEN` | Medium | `contents: read` on verification jobs |
+| Turborepo | Tautological task dependencies | Medium | Depend on `^build` |
+| CI Security | Committed updater keys | Critical | Inject from secrets at release time |
+| CI Coverage | Asymmetrical per-platform tests | Major | Symmetrical `cargo test` on all targets |
+| Script Safety | Env vars cast to boolean | Medium | Explicit string comparison |
+| Clean Code | Dead variables and imports | Minor | Strip for a clean Oxlint pass |
+| Formatting | Missing heading blanks / EOF newline | Nitpick | Normalize Markdown formatting |
+| Documentation | Comments contradicting signatures | Nitpick | Rewrite docs to match the code |
+/home/user/mausVoice/REVIEW.md
+# mausVoice Review & Hardening Handbook
+
+Condensed reference for agents and engineers on `mausVoice`: the architectural contracts, security boundaries, and recurring findings raised across historical PRs by automated reviewers (CodeRabbit, Kilo Code) for the Rust (Tauri) backend and React/TypeScript frontend.
+
+---
+
+## 1. Reviewer Personas
+
+**CodeRabbit** runs an assertive audit posture: correctness, security, edge cases, leaks, and concurrency over style. It parses the whole PR and traces data flow (React input → IPC → Rust → SQLite/OS APIs) with AST matching (`ast-grep`) and `rg`, and assumes any physically reachable state will be reached. Findings carry a severity (`🔴 Critical` arbitrary write / injection / crash · `🟠 Major` bugs, leaks, races, unhandled rejections · `🟡 Minor` idioms, docs), a *why* with file:line, a committable diff, and a `<details>` prompt scoping a minimal fix for downstream agents.
+
+**Kilo Code** reviews for precision: code must live up to its own comments (a doc claiming "traversal cannot escape" triggers an audit for real canonicalization; drift is a high-priority bug); it rejects tautological tests that assert a hardcoded constant against its own copy, demanding dynamic schema extraction; and it tracks resource leaks — handles closed, workers terminated, rejections logged not swallowed.
+
+---
+
+## 2. Pre-Release Audit Protocol
+
+**Scope.** Audit the **FULL diff** against the target release branch — not just headline files — tracing each change through its dependency chain from UI down to filesystem and hardware.
+
+**Self-review gate.** Every candidate finding must survive four checks or be discarded: **Cause** (root cause in *this* diff, or pre-existing on base?), **Action** (does the fix compile and match workspace types/idioms? untested hand-written refactors are prohibited), **Reaction** (trace all call sites — does it break consumers or add races, contention, CI lint errors?), **Necessity** (real bug/security/performance issue, or style opinion?).
+
+**Verdict.** `## Verdict: **Ready**` or `**Not Ready**`, plus `Confidence: **[High/Medium/Low]**`, `Mergeable: **[Yes/No]**`, `CI Verification: **[Passing/Failing/Pending]**`.
+
+**Coverage checklist — trace all ten, omit none:**
+
+1. **Merge state:** conflicts; is automated rebase safe?
+2. **IPC boundary:** each new/changed `tauri::command` — payload type validation, safe integer bounds (`u64` → JS `Number` precision), array/buffer bounds, discriminated-union results instead of thrown errors.
+3. **Lifecycle:** cancellation on unmount, stale-callback rejection via generation counters/tokens, re-entrancy guards on serial ops (keystroke streams), release of handles and hardware streams on teardown.
+4. **Persistence:** localStorage / app-config / SQLite — single source of truth (no drifting dual writes), migration safety, `ROLLBACK` on partial failure.
+5. **UI logic:** controlled inputs (no uncontrolled→controlled), exhaustive hook dependency arrays, listener teardown, explicit pending/disabled/loading/empty/error states.
+6. **UI review:** grid-consistent spacing; WCAG AA contrast and typography; focus rings, modal focus trapping, platform shortcuts (`Cmd` vs `Ctrl`); scoped transitions only (never `transition: all`); theme continuity with no un-themed flash.
+7. **Edge cases:** empty arrays / zero-length buffers, `null` vs `undefined` vs missing JSON fields, platform variation (`\r\n`, path layouts), boundary data (silent audio, empty prompts).
+8. **Security:** URL scheme validation, Tauri scope limits, `../` traversal and canonicalization guards, webview XSS.
+9. **Tests:** untested new behaviors and invariants.
+10. **Lint/CI:** `oxlint`, `prettier`, `clippy` clean; no new warnings.
+
+**Report structure.** Seven sections in order: `## Verdict` · `## Major findings` · `## Minor findings` · `## Nitpick findings` · `## UI review findings` · `## Missing important test coverage` · `## What is working correctly`. Findings use **[Severity — Title]**, `File:Line`, then *The Problem:* / *The Solution:* (or *Context:* / *Details:* for the later sections).
+
+---
+
+## 3. Rust (Tauri) Backend
+
+**3.1 Subprocesses.** `wait_with_output()` buffers unbounded output into RAM (OOM); timing out without `kill()` + `wait()` leaks zombies; not draining pipes concurrently deadlocks a chatty child on a full pipe buffer; `Command::new` cannot run CMD builtins (`dir`, `echo`, `ver`). Drain stdout *and* stderr on background threads with a byte cap (keep draining past the cap), keep the `Child` handle and kill+reap on timeout — don't unconditionally join readers afterwards, since descendants may still hold the pipe — and allow-list genuine binaries only.
+
+**3.2 Paths & symlinks.** Validating a relative path against `audio_dir` but passing the *raw* input to `remove_file` resolves against CWD; `.starts_with(audio_dir)` is lexical and loses to `..` and symlinks; an un-canonicalized `audio_dir` makes every comparison silently fail. Canonicalize both the file's parent and the target directory before comparing; reject symlinks at the final component via `symlink_metadata` (while still allowing not-yet-existing destinations); always operate on the canonical `PathBuf` the validator returns, never the raw string.
+
+**3.3 Network streaming.** Use a custom `redirect::Policy` validating host/scheme and capping hops; reject an oversized advertised `Content-Length` up front; enforce the cap again with a per-chunk byte counter and delete the partial file on breach. A missing `Content-Length` is a policy choice — require it for fixed artifacts from hosts you control, allow `None` where chunked/compressed responses are legitimate.
+
+**3.4 Concurrency & tests.** A process-global `CANCEL_TYPING` with no session key lets session A's late cancel abort session B — key cancellation to a session and no-op outside an active one. Cargo runs tests in parallel threads, so mutating shared statics randomly fails other tests: wrap global access in helpers and restore prior values with a `Drop` guard.
+
+**3.5 SQLite.** Tautological table assertions (a hardcoded list vs. its copy) let a new table escape the privacy wipe. Tests should read the live schema (`sqlite_master`), subtract an explicit allow-list (`sqlite_%`, `_sqlx_migrations`), and assert every remaining table is in `USER_DATA_TABLES_TO_CLEAR`. Wrap wipes in `pool.begin()` so a partial failure rolls back.
+
+**3.6 IPC, CORS, CSP.** Keep `remote.urls` restricted to localhost loopbacks — wildcards give any loaded page (docs mirrors included) native command access. External domains stay IPC-free webviews. Keep CSP in `tauri.conf.json` synchronized with production (`script-src 'self'`), and scrub stale comments claiming IPC the config no longer grants.
+
+**3.7 Native pills & geometry.** Offset toplevel coordinates by half the window width/height so Linux/X11 drags match macOS and Windows center anchoring — raw origins make the pill jump monitors. Use inclusive boundary probes and place fallbacks strictly inside the screen (e.g. `max - 1.0`) so the pill is never off-screen.
+
+**3.8 Model cache.** Holding `MODEL_CACHE.lock()` across a whole inference serializes every transcription. Acquire, clone the runtime handle, `drop(cache)`, then run the heavy computation unlocked.
+
+**3.9 ONNX artifacts.** Never `let _ = tokio::spawn(...)` companion downloads (tokenizers, vocabs, configs) — dropped join handles hide failures and leave models silently half-installed. Aggregate the futures and `tokio::try_join!` them before reporting ready. In tests, poll readiness instead of sleeping a fixed duration.
+
+---
+
+## 4. TypeScript & React Frontend
+
+**4.1 Hooks & StrictMode.** Never assign `ref.current` or set state during render — the double render corrupts it. A ref-guarded controller built once (`if (!ref.current) ref.current = new Controller(options)`) freezes later `options` such as `timeoutMs`. Do setup in `useEffect`, and pass dynamic config as call arguments (`controller.run(promise, timeoutMs)`).
+
+**4.2 Async races.** Two overlapping reloads can let the older response overwrite newer data, and state set after unmount leaks. Use a monotonic generation counter in an async controller: increment on each `run()`, and bail out of every completion, error, timeout, and cleanup path whose generation no longer matches. Return a teardown from `useEffect` that increments the generation and clears timers.
+
+**4.3 IPC bindings.** Never hand-edit `bindings.ts` — regenerate via `scripts/bindings.sh` or the cargo build flow after changing `commands.rs`, and register every new command in the builder in `app.rs`.
+
+**4.4 Audio input.** Close or pause microphone streams in `useEffect` cleanup, or handles leak and the OS recording indicator stays lit. Iterate `Float32Array` PCM with built-in array methods or explicit range guards, never unchecked C-style indexing.
+
+**4.5 Default device drop-off.** If the default device's display name fails to resolve, fall back to a placeholder like `"System Default"`; returning `None` strips `is_default` and the UI shows no default mic. Cache and target devices by stable hardware ID instead of re-enumerating by label on every recording toggle.
+
+---
+
+## 5. CI/CD & Monorepo
+
+- **Turbo graph:** `"check-types": { "dependsOn": ["^check-types"] }` yields spurious `TS2307` because dependencies were never built. Depend on `["^build"]`.
+- **Least privilege:** verification jobs (format, lint, typecheck, cargo test) get `permissions: contents: read`; write scopes only in publish/release steps.
+- **Trigger filters:** desktop `paths` filters must cover everything affecting compilation — `apps/desktop/**`, `packages/**`, `patches/**`, `package.json`, `pnpm-lock.yaml`, `pnpm-workspace.yaml`, `turbo.json`, `.nvmrc`, `.github/scripts/install-desktop-linux-deps.sh`.
+- **Dependency floors:** keep both bounds in overrides — `"vitest@<3.2.6": ">=3.2.6 <4.0.0"`. Dropping the floor permits a downgrade back into vulnerable `3.x`.
+- **Updater trust anchors:** never commit signing keys or `__UPDATER_PUBLIC_KEY__` literals (a fork could sign binaries the app auto-trusts), and never duplicate the literal across CI and setup scripts. Set `"createUpdaterArtifacts": false` publicly and inject `TAURI_UPDATER_PUBLIC_KEY` from repository secrets during the release build only.
+- **Platform symmetry:** if `rust_windows_pill` gets `cargo test`, so must `rust_macos_pill` and `rust_gtk_pill` — clippy-only coverage hides runtime bugs. Provision tools (e.g. `imagemagick`) in the platform dependency scripts, not inline installs missing `apt-get update`.
+- **Boolean casts:** `"false"` is truthy in Node and Python, so `CI=false` reads as "in CI". Compare explicitly: `process.env.CI === "true"`.
+
+---
+
+## 6. Suggestions & Nitpicks
+
+**Suggestions** (`🟡 Minor` / `🔵 Trivial`) target performance, maintainability, and defensive coding: strip dead variables, imports, and ignored parameters; prefer safe option handling (`unwrap_or_default()`, `if let Some`, `?.`, `??`) over risky unwraps; adopt modern idioms (`std::mem::take`, iterator combinators over C-style loops, `async/await` over `.then` chains); avoid holding a mutex across a nested call that causes micro-contention and render delay.
+
+**Nitpicks** have zero functional impact: formatting drift and trailing whitespace, missing EOF newline, comments contradicting the code (e.g. "throws X" after a rewrite to `Result`), and descriptive renames following monorepo casing (camelCase TS, snake_case Rust).
+
+**Linter boundaries.** Oxlint scans `apps/desktop/src` per `apps/desktop/oxlint.json` via `pnpm --filter desktop run lint` (which also runs a Prettier check); Prettier covers TS/TSX, CSS, and Markdown through the root `format` script; Clippy runs `cargo clippy -- -D warnings` for the Tauri backend and each native pill crate. There is **no ESLint or Markdownlint in CI** — Markdown structure findings are readability nits, not gates. Verify suggestions don't themselves break these checks.
+
+---
+
+## 7. Anti-Pattern Checklist
+
+| Category | Smell | Severity | Remediation |
+| :--- | :--- | :--- | :--- |
+| Rust security | Raw string path deletion | Critical | Canonicalize; act on returned `PathBuf` |
+| Rust security | Unvalidated HTTP redirect | Critical | Policy verifying host, scheme, hop count |
+| Rust security | Over-permissive `remote.urls` | Critical | Restrict IPC capability to loopback |
+| Rust perf | Subprocess output buffered in RAM | Major | Stream via capped concurrent readers |
+| Rust concurrency | Parallel tests mutating statics | Major | Scope access; restore in a `Drop` guard |
+| Rust concurrency | Mutex held across async work | Major | Clone under a short lock, drop, then run |
+| Rust robustness | Tautological constant tests | Major | Parse the live schema in tests |
+| Rust ops | Fire-and-forget companion spawns | Major | Aggregate and await the full artifact set |
+| Rust UI | Exclusive max bounds in geometry | Medium | Place strictly within screen bounds |
+| React hooks | Writing refs during render | Major | Move into `useEffect` or pure setters |
+| React safety | Stale cached controller config | Major | Pass dynamic params per call |
+| React lifecycle | State set after unmount | Medium | Generation counter discards stale updates |
+| TS hardware | Default input dropped on label scan | Medium | Placeholder label for unnamed defaults |
+| TS perf | Label lookups each hardware cycle | Minor | Target cached, stable device IDs |
+| CI/CD | Over-privileged `GITHUB_TOKEN` | Medium | `contents: read` on verification jobs |
+| Turborepo | Tautological task dependencies | Medium | Depend on `^build` |
+| CI security | Committed updater keys | Critical | Inject from secrets at release time |
+| CI coverage | Asymmetrical per-platform tests | Major | Symmetrical `cargo test` on all targets |
+| Script safety | Env vars cast to boolean | Medium | Explicit string comparison |
+| Clean code | Dead variables and imports | Minor | Strip for a clean Oxlint pass |
+| Formatting | Missing heading blanks / EOF newline | Nitpick | Normalize Markdown formatting |
+| Docs | Comments contradicting signatures | Nitpick | Rewrite docs to match the code |
+/home/user/mausVoice/REVIEW.md
+# mausVoice Review & Hardening Handbook
+
+Condensed reference for agents and engineers on `mausVoice`: the contracts, security boundaries, and recurring review findings for the Rust (Tauri) backend and React/TypeScript frontend.
+
+---
+
+## 1. Reviewer Personas
+
+**CodeRabbit** audits for correctness, security, edge cases, leaks, and concurrency over style. It traces data flow across the whole PR (React input → IPC → Rust → SQLite/OS APIs) with `ast-grep` and `rg`, and assumes any reachable state will be reached. Findings carry a severity (`🔴 Critical` arbitrary write / injection / crash · `🟠 Major` bugs, leaks, races, unhandled rejections · `🟡 Minor` idioms, docs), a *why* with file:line, a committable diff, and a `<details>` prompt scoping a minimal fix for downstream agents.
+
+**Kilo Code** reviews for precision: code must live up to its own comments (a doc claiming "traversal cannot escape" triggers an audit for real canonicalization; drift is a high-priority bug); it rejects tautological tests asserting a hardcoded constant against its own copy; and it tracks resource leaks — handles closed, workers terminated, rejections logged not swallowed.
+
+---
+
+## 2. Pre-Release Audit Protocol
+
+**Scope.** Audit the **FULL diff** against the target release branch, tracing each change through its dependency chain from UI down to filesystem and hardware.
+
+**Self-review gate.** A finding must survive four checks or be discarded: **Cause** (root cause in *this* diff, or pre-existing?), **Action** (does the fix compile and match workspace idioms? untested hand-written refactors are prohibited), **Reaction** (trace call sites — does it break consumers or add races, contention, lint errors?), **Necessity** (real bug, or style opinion?).
+
+**Verdict.** `## Verdict: **Ready**` or `**Not Ready**`, plus `Confidence: **[High/Medium/Low]**`, `Mergeable: **[Yes/No]**`, `CI Verification: **[Passing/Failing/Pending]**`.
+
+**Coverage checklist — trace all ten, omit none:**
+
+1. **Merge state:** conflicts; is automated rebase safe?
+2. **IPC boundary:** each new/changed `tauri::command` — payload type validation, safe integer bounds (`u64` → JS `Number` precision), buffer bounds, discriminated-union results instead of thrown errors.
+3. **Lifecycle:** cancellation on unmount, stale-callback rejection via generation counters, re-entrancy guards on serial ops (keystroke streams), release of handles and hardware streams on teardown.
+4. **Persistence:** localStorage / app-config / SQLite — single source of truth (no drifting dual writes), migration safety, `ROLLBACK` on partial failure.
+5. **UI logic:** controlled inputs, exhaustive hook dependency arrays, listener teardown, explicit pending/disabled/loading/empty/error states.
+6. **UI review:** grid-consistent spacing; WCAG AA contrast and typography; focus rings, modal focus trapping, platform shortcuts (`Cmd` vs `Ctrl`); scoped transitions only (never `transition: all`); no un-themed flash.
+7. **Edge cases:** empty arrays / zero-length buffers, `null` vs `undefined` vs missing JSON fields, platform variation (`\r\n`, path layouts), boundary data (silent audio, empty prompts).
+8. **Security:** URL scheme validation, Tauri scope limits, `../` traversal and canonicalization guards, webview XSS.
+9. **Tests:** untested new behaviors and invariants.
+10. **Lint/CI:** `oxlint`, `prettier`, `clippy` clean; no new warnings.
+
+**Report structure.** Seven sections in order: `## Verdict` · `## Major findings` · `## Minor findings` · `## Nitpick findings` · `## UI review findings` · `## Missing important test coverage` · `## What is working correctly`. Findings use **[Severity — Title]**, `File:Line`, then *The Problem:* / *The Solution:* (or *Context:* / *Details:* later).
+
+---
+
+## 3. Rust (Tauri) Backend
+
+**Subprocesses.** `wait_with_output()` buffers unbounded output into RAM (OOM); timing out without `kill()` + `wait()` leaks zombies; undrained pipes deadlock a chatty child. Drain stdout *and* stderr on background threads with a byte cap (keep draining past it), keep the `Child` handle and kill+reap on timeout — don't unconditionally join readers afterwards, since descendants may hold the pipe. Allow-list genuine binaries only: `Command::new` cannot run CMD builtins (`dir`, `echo`, `ver`).
+
+**Paths & symlinks.** Validating a relative path against `audio_dir` but passing the *raw* input to `remove_file` resolves against CWD; `.starts_with(audio_dir)` is lexical and loses to `..` and symlinks; an un-canonicalized `audio_dir` makes every comparison silently fail. Canonicalize both the file's parent and the target dir before comparing; reject symlinks at the final component via `symlink_metadata` (while still allowing not-yet-existing destinations); operate on the canonical `PathBuf`, never the raw string.
+
+**Network streaming.** Use a custom `redirect::Policy` validating host/scheme and capping hops; reject an oversized advertised `Content-Length` up front; enforce the cap again with a per-chunk counter and delete the partial file on breach. A missing `Content-Length` is a policy choice — require it for fixed artifacts from hosts you control, allow `None` where chunked/compressed responses are legitimate.
+
+**Concurrency & tests.** A process-global `CANCEL_TYPING` with no session key lets session A's late cancel abort session B — key cancellation to a session and no-op outside an active one. Cargo runs tests in parallel threads, so mutating shared statics randomly fails others: wrap global access in helpers and restore prior values with a `Drop` guard.
+
+**SQLite.** Tautological table assertions (a hardcoded list vs. its copy) let a new table escape the privacy wipe. Tests should read the live schema (`sqlite_master`), subtract an explicit allow-list (`sqlite_%`, `_sqlx_migrations`), and assert every remaining table is in `USER_DATA_TABLES_TO_CLEAR`. Wrap wipes in `pool.begin()` so partial failures roll back.
+
+**IPC, CORS, CSP.** Keep `remote.urls` restricted to localhost loopbacks — wildcards give any loaded page (docs mirrors included) native command access. External domains stay IPC-free webviews. Keep CSP in `tauri.conf.json` synchronized with production (`script-src 'self'`), and scrub stale comments claiming IPC the config no longer grants.
+
+**Native pills & geometry.** Offset toplevel coordinates by half the window width/height so Linux/X11 drags match macOS and Windows center anchoring — raw origins make the pill jump monitors. Use inclusive boundary probes and place fallbacks strictly inside the screen (e.g. `max - 1.0`).
+
+**Model cache.** Holding `MODEL_CACHE.lock()` across a whole inference serializes every transcription. Acquire, clone the runtime handle, `drop(cache)`, then run the heavy computation unlocked.
+
+**ONNX artifacts.** Never `let _ = tokio::spawn(...)` companion downloads (tokenizers, vocabs, configs) — dropped join handles hide failures and leave models half-installed. Aggregate the futures and `tokio::try_join!` them before reporting ready. In tests, poll readiness instead of sleeping a fixed duration.
+
+---
+
+## 4. TypeScript & React Frontend
+
+**Hooks & StrictMode.** Never assign `ref.current` or set state during render — the double render corrupts it. A ref-guarded controller built once (`if (!ref.current) ref.current = new Controller(options)`) freezes later `options` such as `timeoutMs`. Do setup in `useEffect`, and pass dynamic config as call arguments (`controller.run(promise, timeoutMs)`).
+
+**Async races.** Overlapping reloads let an older response overwrite newer data, and state set after unmount leaks. Use a monotonic generation counter: increment on each `run()`, and bail out of every completion, error, timeout, and cleanup path whose generation no longer matches. Return a teardown from `useEffect` that increments the generation and clears timers.
+
+**IPC bindings.** Never hand-edit `bindings.ts` — regenerate via `scripts/bindings.sh` or the cargo build flow after changing `commands.rs`, and register every new command in the builder in `app.rs`.
+
+**Audio input.** Close or pause microphone streams in `useEffect` cleanup, or handles leak and the OS recording indicator stays lit. Iterate `Float32Array` PCM with built-in array methods or explicit range guards, never unchecked indexing.
+
+**Default device drop-off.** If the default device's display name fails to resolve, fall back to a placeholder like `"System Default"`; returning `None` strips `is_default` and the UI shows no default mic. Target devices by stable hardware ID instead of re-enumerating by label on every toggle.
+
+---
+
+## 5. CI/CD & Monorepo
+
+- **Turbo graph:** `"check-types": { "dependsOn": ["^check-types"] }` yields spurious `TS2307` because dependencies were never built. Depend on `["^build"]`.
+- **Least privilege:** verification jobs (format, lint, typecheck, cargo test) get `permissions: contents: read`; write scopes only in publish/release steps.
+- **Trigger filters:** desktop `paths` filters must cover everything affecting compilation — `apps/desktop/**`, `packages/**`, `patches/**`, `package.json`, `pnpm-lock.yaml`, `pnpm-workspace.yaml`, `turbo.json`, `.nvmrc`, `.github/scripts/install-desktop-linux-deps.sh`.
+- **Dependency floors:** keep both bounds in overrides — `"vitest@<3.2.6": ">=3.2.6 <4.0.0"`. Dropping the floor permits a downgrade back into vulnerable `3.x`.
+- **Updater trust anchors:** never commit signing keys or `__UPDATER_PUBLIC_KEY__` literals (a fork could sign binaries the app auto-trusts), and never duplicate the literal across CI and setup scripts. Set `"createUpdaterArtifacts": false` publicly and inject `TAURI_UPDATER_PUBLIC_KEY` from repository secrets during the release build only.
+- **Platform symmetry:** if `rust_windows_pill` gets `cargo test`, so must `rust_macos_pill` and `rust_gtk_pill` — clippy-only coverage hides runtime bugs. Provision tools (e.g. `imagemagick`) in the platform dependency scripts, not inline installs missing `apt-get update`.
+- **Boolean casts:** `"false"` is truthy in Node and Python, so `CI=false` reads as "in CI". Compare explicitly: `process.env.CI === "true"`.
+
+---
+
+## 6. Suggestions & Nitpicks
+
+**Suggestions** (`🟡 Minor` / `🔵 Trivial`) target performance and defensive coding: strip dead variables, imports, and ignored parameters; prefer safe option handling (`unwrap_or_default()`, `if let Some`, `?.`, `??`) over risky unwraps; adopt modern idioms (`std::mem::take`, iterator combinators, `async/await` over `.then` chains); avoid holding a mutex across a nested call.
+
+**Nitpicks** have zero functional impact: formatting drift and trailing whitespace, missing EOF newline, comments contradicting the code (e.g. "throws X" after a rewrite to `Result`), and descriptive renames following monorepo casing (camelCase TS, snake_case Rust).
+
+**Linter boundaries.** Oxlint scans `apps/desktop/src` per `apps/desktop/oxlint.json` via `pnpm --filter desktop run lint` (which also runs a Prettier check); Prettier covers TS/TSX, CSS, and Markdown through the root `format` script; Clippy runs `cargo clippy -- -D warnings` for the Tauri backend and each pill crate. There is **no ESLint or Markdownlint in CI** — Markdown structure findings are readability nits, not gates.
+
+---
+
+## 7. Anti-Pattern Checklist
+
+| Category         | Smell                              | Severity | Remediation                               |
+| :--------------- | :--------------------------------- | :------- | :---------------------------------------- |
+| Rust security    | Raw string path deletion           | Critical | Canonicalize; act on returned `PathBuf`   |
+| Rust security    | Unvalidated HTTP redirect          | Critical | Verify host, scheme, hop count            |
+| Rust security    | Over-permissive `remote.urls`      | Critical | Restrict IPC capability to loopback       |
+| Rust perf        | Subprocess output buffered in RAM  | Major    | Stream via capped concurrent readers      |
+| Rust concurrency | Parallel tests mutating statics    | Major    | Scope access; restore in a `Drop` guard   |
+| Rust concurrency | Mutex held across async work       | Major    | Clone under a short lock, drop, then run  |
+| Rust robustness  | Tautological constant tests        | Major    | Parse the live schema in tests            |
+| Rust ops         | Fire-and-forget companion spawns   | Major    | Aggregate and await the full artifact set |
+| Rust UI          | Exclusive max bounds in geometry   | Medium   | Place strictly within screen bounds       |
+| React hooks      | Writing refs during render         | Major    | Move into `useEffect` or pure setters     |
+| React safety     | Stale cached controller config     | Major    | Pass dynamic params per call              |
+| React lifecycle  | State set after unmount            | Medium   | Generation counter discards stale updates |
+| TS hardware      | Default input dropped on scan      | Medium   | Placeholder label for unnamed defaults    |
+| TS perf          | Label lookups each hardware cycle  | Minor    | Target cached, stable device IDs          |
+| CI/CD            | Over-privileged `GITHUB_TOKEN`     | Medium   | `contents: read` on verification jobs     |
+| Turborepo        | Tautological task dependencies     | Medium   | Depend on `^build`                        |
+| CI security      | Committed updater keys             | Critical | Inject from secrets at release time       |
+| CI coverage      | Asymmetrical per-platform tests    | Major    | Symmetrical `cargo test` on all targets   |
+| Script safety    | Env vars cast to boolean           | Medium   | Explicit string comparison                |
+| Clean code       | Dead variables and imports         | Minor    | Strip for a clean Oxlint pass             |
+| Formatting       | Missing heading blanks/EOF newline | Nitpick  | Normalize Markdown formatting             |
+| Docs             | Comments contradicting signatures  | Nitpick  | Rewrite docs to match the code            |
+/home/user/mausVoice/REVIEW.md
+# mausVoice Review & Hardening Handbook
+
+Condensed reference for agents and engineers on `mausVoice`: the contracts, security boundaries, and recurring review findings for the Rust (Tauri) backend and React/TypeScript frontend.
+
+---
+
+## 1. Reviewer Personas
+
+**CodeRabbit** audits correctness, security, edge cases, leaks, and concurrency over style. It traces data flow across the whole PR (React input → IPC → Rust → SQLite/OS APIs) and assumes any reachable state will be reached. Findings carry a severity (`🔴 Critical` arbitrary write / injection / crash · `🟠 Major` bugs, leaks, races, unhandled rejections · `🟡 Minor` idioms, docs), a *why* with file:line, a committable diff, and a `<details>` prompt scoping a minimal fix for downstream agents.
+
+**Kilo Code** reviews for precision: code must live up to its own comments (a doc claiming "traversal cannot escape" triggers an audit for real canonicalization; drift is a high-priority bug); it rejects tautological tests asserting a hardcoded constant against its own copy; it tracks resource leaks — handles closed, workers terminated, rejections logged not swallowed.
+
+---
+
+## 2. Pre-Release Audit Protocol
+
+**Scope.** Audit the **FULL diff** against the target release branch, tracing each change from UI down to filesystem and hardware.
+
+**Self-review gate.** A finding must survive four checks or be discarded: **Cause** (root cause in *this* diff, or pre-existing?), **Action** (does the fix compile and match workspace idioms? untested refactors are prohibited), **Reaction** (trace call sites — does it break consumers or add races, contention, lint errors?), **Necessity** (real bug, or style opinion?).
+
+**Verdict.** `## Verdict: **Ready**` or `**Not Ready**`, plus `Confidence: **[High/Medium/Low]**`, `Mergeable: **[Yes/No]**`, `CI Verification: **[Passing/Failing/Pending]**`.
+
+**Coverage checklist — trace all ten, omit none:**
+
+1. **Merge state:** conflicts; is automated rebase safe?
+2. **IPC boundary:** each new/changed `tauri::command` — payload validation, safe integer bounds (`u64` → JS `Number` precision), buffer bounds, discriminated-union results instead of thrown errors.
+3. **Lifecycle:** cancellation on unmount, stale-callback rejection via generation counters, re-entrancy guards on serial ops, release of handles and hardware streams on teardown.
+4. **Persistence:** localStorage / app-config / SQLite — single source of truth (no drifting dual writes), migration safety, `ROLLBACK` on partial failure.
+5. **UI logic:** controlled inputs, exhaustive hook dependency arrays, listener teardown, explicit pending/disabled/loading/empty/error states.
+6. **UI review:** grid-consistent spacing; WCAG AA contrast; focus rings, modal focus trapping, platform shortcuts (`Cmd` vs `Ctrl`); scoped transitions only (never `transition: all`); no un-themed flash.
+7. **Edge cases:** empty arrays / zero-length buffers, `null` vs `undefined` vs missing JSON fields, platform variation (`\r\n`, path layouts), boundary data (silent audio, empty prompts).
+8. **Security:** URL scheme validation, Tauri scope limits, `../` traversal and canonicalization guards, webview XSS.
+9. **Tests:** untested new behaviors and invariants.
+10. **Lint/CI:** `oxlint`, `prettier`, `clippy` clean; no new warnings.
+
+**Report structure.** Seven sections in order: `## Verdict` · `## Major findings` · `## Minor findings` · `## Nitpick findings` · `## UI review findings` · `## Missing important test coverage` · `## What is working correctly`. Findings use **[Severity — Title]**, `File:Line`, then *The Problem:* / *The Solution:* (or *Context:* / *Details:* later).
+
+---
+
+## 3. Rust (Tauri) Backend
+
+**Subprocesses.** `wait_with_output()` buffers unbounded output into RAM (OOM); timing out without `kill()` + `wait()` leaks zombies; undrained pipes deadlock a chatty child. Drain stdout *and* stderr on threads with a byte cap (keep draining past it) and kill+reap on timeout — don't unconditionally join the readers afterwards, since descendants may hold the pipe. Allow-list real binaries only: `Command::new` cannot run CMD builtins (`dir`, `echo`, `ver`).
+
+**Paths & symlinks.** Validating a relative path against `audio_dir` but passing the *raw* input to `remove_file` resolves against CWD; `.starts_with(audio_dir)` is lexical and loses to `..` and symlinks; an un-canonicalized `audio_dir` makes every comparison silently fail. Canonicalize both the file's parent and the target dir before comparing, reject symlinks at the final component via `symlink_metadata` (still allowing not-yet-existing destinations), and operate on the canonical `PathBuf`.
+
+**Network streaming.** Use a custom `redirect::Policy` validating host/scheme and capping hops; reject an oversized advertised `Content-Length` up front; enforce the cap again with a per-chunk counter and delete the partial file on breach. Missing `Content-Length` is a policy choice — require it for fixed artifacts from hosts you control, allow `None` where chunked responses are legitimate.
+
+**Concurrency & tests.** A process-global `CANCEL_TYPING` with no session key lets session A's late cancel abort session B — key cancellation to a session and no-op outside an active one. Cargo runs tests in parallel threads, so mutating shared statics randomly fails others: wrap global access in helpers and restore values with a `Drop` guard.
+
+**SQLite.** Tautological table assertions (a hardcoded list vs. its copy) let a new table escape the privacy wipe. Tests should read the live schema (`sqlite_master`), subtract an explicit allow-list (`sqlite_%`, `_sqlx_migrations`), and assert every remaining table is in `USER_DATA_TABLES_TO_CLEAR`. Wrap wipes in `pool.begin()`.
+
+**IPC, CORS, CSP.** Keep `remote.urls` restricted to localhost loopbacks — wildcards give any loaded page (docs mirrors included) native command access. External domains stay IPC-free webviews. Keep CSP in `tauri.conf.json` synced with production (`script-src 'self'`), and scrub stale comments claiming IPC the config no longer grants.
+
+**Pills & geometry.** Offset toplevel coordinates by half the window width/height so Linux/X11 drags match macOS and Windows center anchoring — raw origins make the pill jump monitors. Use inclusive boundary probes and place fallbacks strictly inside the screen (e.g. `max - 1.0`).
+
+**Model cache.** Holding `MODEL_CACHE.lock()` across a whole inference serializes every transcription. Acquire, clone the runtime handle, `drop(cache)`, then compute unlocked.
+
+**ONNX artifacts.** Never `let _ = tokio::spawn(...)` companion downloads (tokenizers, vocabs, configs) — dropped join handles hide failures and leave models half-installed. Aggregate the futures and `tokio::try_join!` them before reporting ready; in tests, poll readiness instead of a fixed sleep.
+
+---
+
+## 4. TypeScript & React Frontend
+
+**Hooks & StrictMode.** Never assign `ref.current` or set state during render — the double render corrupts it. A ref-guarded controller built once (`if (!ref.current) ref.current = new Controller(options)`) freezes later `options` such as `timeoutMs`. Set up in `useEffect`, and pass dynamic config as call arguments (`controller.run(promise, timeoutMs)`).
+
+**Async races.** Overlapping reloads let an older response overwrite newer data, and state set after unmount leaks. Use a monotonic generation counter: increment on each `run()`, and bail out of every completion, error, timeout, and cleanup path whose generation no longer matches. Return a teardown from `useEffect` that increments the generation and clears timers.
+
+**IPC bindings.** Never hand-edit `bindings.ts` — regenerate via `scripts/bindings.sh` or the cargo build flow after changing `commands.rs`, and register every new command in the builder in `app.rs`.
+
+**Audio input.** Close or pause microphone streams in `useEffect` cleanup, or handles leak and the OS recording indicator stays lit. Iterate `Float32Array` PCM with built-in array methods or range guards, never unchecked indexing.
+
+**Default device drop-off.** If the default device's name fails to resolve, fall back to a placeholder like `"System Default"`; returning `None` strips `is_default` and the UI shows no default mic. Target devices by stable hardware ID rather than re-enumerating by label on every toggle.
+
+---
+
+## 5. CI/CD & Monorepo
+
+- **Turbo graph:** `"check-types": { "dependsOn": ["^check-types"] }` yields spurious `TS2307` because dependencies were never built. Depend on `["^build"]`.
+- **Least privilege:** verification jobs (format, lint, typecheck, cargo test) get `permissions: contents: read`; write scopes only in publish/release steps.
+- **Trigger filters:** desktop `paths` filters must cover everything affecting compilation — `apps/desktop/**`, `packages/**`, `patches/**`, `package.json`, `pnpm-lock.yaml`, `pnpm-workspace.yaml`, `turbo.json`, `.nvmrc`, `.github/scripts/install-desktop-linux-deps.sh`.
+- **Dependency floors:** keep both bounds in overrides — `"vitest@<3.2.6": ">=3.2.6 <4.0.0"`. Dropping the floor permits a downgrade into vulnerable `3.x`.
+- **Updater trust anchors:** never commit signing keys or `__UPDATER_PUBLIC_KEY__` literals (a fork could sign binaries the app auto-trusts), and never duplicate the literal across CI and setup scripts. Set `"createUpdaterArtifacts": false` publicly and inject `TAURI_UPDATER_PUBLIC_KEY` from repository secrets in the release build only.
+- **Platform symmetry:** if `rust_windows_pill` gets `cargo test`, so must `rust_macos_pill` and `rust_gtk_pill` — clippy-only coverage hides runtime bugs. Provision tools (e.g. `imagemagick`) in the platform dependency scripts, not inline installs missing `apt-get update`.
+- **Boolean casts:** `"false"` is truthy in Node and Python, so `CI=false` reads as "in CI". Compare explicitly: `process.env.CI === "true"`.
+
+---
+
+## 6. Suggestions & Nitpicks
+
+**Suggestions** (`🟡 Minor` / `🔵 Trivial`) target performance and defensive coding: strip dead variables and imports; prefer safe option handling (`unwrap_or_default()`, `if let Some`, `?.`, `??`) over risky unwraps; adopt modern idioms (`std::mem::take`, iterator combinators, `async/await` over `.then` chains); avoid holding a mutex across a nested call.
+
+**Nitpicks** have zero functional impact: formatting drift and trailing whitespace, missing EOF newline, comments contradicting the code (e.g. "throws X" after a rewrite to `Result`), and descriptive renames following monorepo casing (camelCase TS, snake_case Rust).
+
+**Linter boundaries.** Oxlint scans `apps/desktop/src` per `apps/desktop/oxlint.json` via `pnpm --filter desktop run lint` (which also runs a Prettier check); Prettier covers TS/TSX, CSS, and Markdown through the root `format` script; Clippy runs `cargo clippy -- -D warnings` for the backend and each pill crate. There is **no ESLint or Markdownlint in CI** — Markdown structure findings are readability nits, not gates.
+
+---
+
+## 7. Anti-Pattern Checklist
+
+| Category         | Smell                             | Severity | Remediation                             |
+| :--------------- | :-------------------------------- | :------- | :-------------------------------------- |
+| Rust security    | Raw string path deletion          | Critical | Canonicalize; act on returned `PathBuf` |
+| Rust security    | Unvalidated HTTP redirect         | Critical | Verify host, scheme, hop count          |
+| Rust security    | Over-permissive `remote.urls`     | Critical | Restrict IPC to loopback                |
+| Rust perf        | Subprocess output buffered in RAM | Major    | Stream via capped concurrent readers    |
+| Rust concurrency | Parallel tests mutating statics   | Major    | Scope access; restore in a `Drop` guard |
+| Rust concurrency | Mutex held across async work      | Major    | Clone under a short lock, then drop     |
+| Rust robustness  | Tautological constant tests       | Major    | Parse the live schema in tests          |
+| Rust ops         | Fire-and-forget companion spawns  | Major    | Await the full artifact set             |
+| Rust UI          | Exclusive max bounds in geometry  | Medium   | Place strictly within screen bounds     |
+| React hooks      | Writing refs during render        | Major    | Move into `useEffect` or pure setters   |
+| React safety     | Stale cached controller config    | Major    | Pass dynamic params per call            |
+| React lifecycle  | State set after unmount           | Medium   | Generation counter discards stale sets  |
+| TS hardware      | Default input dropped on scan     | Medium   | Placeholder label for unnamed defaults  |
+| TS perf          | Label lookups each hardware cycle | Minor    | Target cached, stable device IDs        |
+| CI/CD            | Over-privileged `GITHUB_TOKEN`    | Medium   | `contents: read` on verification jobs   |
+| Turborepo        | Tautological task dependencies    | Medium   | Depend on `^build`                      |
+| CI security      | Committed updater keys            | Critical | Inject from secrets at release time     |
+| CI coverage      | Asymmetrical per-platform tests   | Major    | `cargo test` on all targets             |
+| Script safety    | Env vars cast to boolean          | Medium   | Explicit string comparison              |
+| Clean code       | Dead variables and imports        | Minor    | Strip for a clean Oxlint pass           |
+| Formatting       | Missing heading blanks / newline  | Nitpick  | Normalize Markdown formatting           |
+| Docs             | Comments contradicting signatures | Nitpick  | Rewrite docs to match the code          |
+/home/user/mausVoice/REVIEW.md
+# mausVoice Review & Hardening Handbook
+
+Condensed reference for agents and engineers on `mausVoice`: contracts, security boundaries, and recurring review findings for the Rust (Tauri) backend and React/TypeScript frontend.
+
+---
+
+## 1. Reviewer Personas
+
+**CodeRabbit** audits correctness, security, edge cases, leaks, and concurrency over style. It traces data flow across the whole PR (React input → IPC → Rust → SQLite/OS APIs) and assumes any reachable state will be reached. Findings carry a severity (`🔴 Critical` arbitrary write / injection / crash · `🟠 Major` bugs, leaks, races, unhandled rejections · `🟡 Minor` idioms, docs), a *why* with file:line, a committable diff, and a `<details>` prompt scoping a minimal fix for downstream agents.
+
+**Kilo Code** reviews for precision: code must live up to its own comments (a doc claiming "traversal cannot escape" triggers an audit for real canonicalization; drift is a high-priority bug); it rejects tautological tests that assert a hardcoded constant against its own copy; it tracks resource leaks — handles closed, workers terminated, rejections logged not swallowed.
+
+---
+
+## 2. Pre-Release Audit Protocol
+
+**Scope.** Audit the **FULL diff** against the target release branch, tracing each change from UI down to filesystem and hardware.
+
+**Self-review gate.** A finding must survive four checks or be discarded: **Cause** (root cause in *this* diff, or pre-existing?), **Action** (does the fix compile and match workspace idioms? untested refactors are prohibited), **Reaction** (trace call sites — does it break consumers or add races, contention, lint errors?), **Necessity** (real bug, or style opinion?).
+
+**Verdict.** `## Verdict: **Ready**` or `**Not Ready**`, plus `Confidence: **[High/Medium/Low]**`, `Mergeable: **[Yes/No]**`, `CI Verification: **[Passing/Failing/Pending]**`.
+
+**Coverage checklist — trace all ten, omit none:**
+
+1. **Merge state:** conflicts; is automated rebase safe?
+2. **IPC boundary:** payload validation, safe integer bounds (`u64` → JS `Number`), buffer bounds, discriminated-union results instead of thrown errors.
+3. **Lifecycle:** cancel on unmount, reject stale callbacks via generation counters, re-entrancy guards on serial ops, release handles and hardware streams on teardown.
+4. **Persistence:** single source of truth across localStorage / app-config / SQLite (no drifting dual writes), migration safety, `ROLLBACK` on partial failure.
+5. **UI logic:** controlled inputs, exhaustive hook deps, listener teardown, explicit pending/disabled/loading/empty/error states.
+6. **UI review:** grid-consistent spacing; WCAG AA contrast; focus rings, modal focus trapping, platform shortcuts (`Cmd` vs `Ctrl`); scoped transitions only (never `transition: all`); no un-themed flash.
+7. **Edge cases:** empty buffers, `null` vs `undefined` vs missing JSON fields, platform variation (`\r\n`, path layouts), boundary data (silent audio, empty prompts).
+8. **Security:** URL scheme validation, Tauri scope limits, `../` traversal and canonicalization guards, webview XSS.
+9. **Tests:** untested new behaviors and invariants.
+10. **Lint/CI:** `oxlint`, `prettier`, `clippy` clean; no new warnings.
+
+**Report structure.** Seven sections in order: `## Verdict` · `## Major findings` · `## Minor findings` · `## Nitpick findings` · `## UI review findings` · `## Missing important test coverage` · `## What is working correctly`. Findings use **[Severity — Title]**, `File:Line`, then *The Problem:* / *The Solution:* (or *Context:* / *Details:* later).
+
+---
+
+## 3. Rust (Tauri) Backend
+
+**Subprocesses.** `wait_with_output()` buffers unbounded output into RAM (OOM); timing out without `kill()` + `wait()` leaks zombies; undrained pipes deadlock a chatty child. Drain stdout *and* stderr on threads with a byte cap (keep draining past it) and kill+reap on timeout — don't unconditionally join readers afterwards, since descendants may hold the pipe. Allow-list real binaries only: `Command::new` cannot run CMD builtins (`dir`, `echo`, `ver`).
+
+**Paths & symlinks.** Validating a relative path against `audio_dir` but passing the *raw* input to `remove_file` resolves against CWD; `.starts_with(audio_dir)` is lexical and loses to `..` and symlinks; an un-canonicalized `audio_dir` makes every comparison silently fail. Canonicalize both the file's parent and the target dir before comparing, reject symlinks at the final component via `symlink_metadata` (still allowing not-yet-existing destinations), and operate on the canonical `PathBuf`.
+
+**Network streaming.** Use a custom `redirect::Policy` validating host/scheme and capping hops; reject an oversized advertised `Content-Length` up front; enforce the cap again with a per-chunk counter and delete the partial file on breach. Missing `Content-Length` is a policy choice — require it for fixed artifacts from hosts you control, allow `None` where chunked responses are legitimate.
+
+**Concurrency & tests.** A process-global `CANCEL_TYPING` with no session key lets session A's late cancel abort session B — key cancellation to a session and no-op outside an active one. Cargo runs tests in parallel threads, so mutating shared statics randomly fails others: wrap global access in helpers and restore values with a `Drop` guard.
+
+**SQLite.** Tautological table assertions (a hardcoded list vs. its copy) let a new table escape the privacy wipe. Tests should read the live schema (`sqlite_master`), subtract an allow-list (`sqlite_%`, `_sqlx_migrations`), and assert every remaining table is in `USER_DATA_TABLES_TO_CLEAR`. Wrap wipes in `pool.begin()`.
+
+**IPC, CORS, CSP.** Restrict `remote.urls` to localhost loopbacks — wildcards give any loaded page (docs mirrors included) native command access. External domains stay IPC-free webviews. Keep CSP in `tauri.conf.json` synced with production (`script-src 'self'`) and scrub stale comments claiming IPC the config no longer grants.
+
+**Pills & geometry.** Offset toplevel coordinates by half the window width/height so Linux/X11 drags match macOS and Windows center anchoring — raw origins make the pill jump monitors. Use inclusive boundary probes and place fallbacks strictly inside the screen (e.g. `max - 1.0`).
+
+**Model cache.** Holding `MODEL_CACHE.lock()` across a whole inference serializes every transcription. Acquire, clone the runtime handle, `drop(cache)`, then compute unlocked.
+
+**ONNX artifacts.** Never `let _ = tokio::spawn(...)` companion downloads (tokenizers, vocabs, configs) — dropped join handles hide failures and leave models half-installed. Aggregate the futures and `tokio::try_join!` them before reporting ready; in tests, poll readiness instead of a fixed sleep.
+
+---
+
+## 4. TypeScript & React Frontend
+
+**Hooks & StrictMode.** Never assign `ref.current` or set state during render — the double render corrupts it. A ref-guarded controller built once (`if (!ref.current) ref.current = new Controller(options)`) freezes later `options` such as `timeoutMs`. Set up in `useEffect` and pass dynamic config as call arguments (`controller.run(promise, timeoutMs)`).
+
+**Async races.** Overlapping reloads let an older response overwrite newer data, and state set after unmount leaks. Use a monotonic generation counter: increment on each `run()`, and bail out of every completion, error, timeout, and cleanup path whose generation no longer matches. Return a teardown from `useEffect` that increments the generation and clears timers.
+
+**IPC bindings.** Never hand-edit `bindings.ts` — regenerate via `scripts/bindings.sh` or the cargo build flow after changing `commands.rs`, and register every new command in the builder in `app.rs`.
+
+**Audio input.** Close or pause microphone streams in `useEffect` cleanup, or handles leak and the OS recording indicator stays lit. Iterate `Float32Array` PCM with built-in array methods or range guards, never unchecked indexing.
+
+**Default device drop-off.** If the default device's name fails to resolve, fall back to a placeholder like `"System Default"`; returning `None` strips `is_default` and the UI shows no default mic. Target devices by stable hardware ID rather than re-enumerating by label on every toggle.
+
+---
+
+## 5. CI/CD & Monorepo
+
+- **Turbo graph:** `"check-types": { "dependsOn": ["^check-types"] }` yields spurious `TS2307` because dependencies were never built. Depend on `["^build"]`.
+- **Least privilege:** verification jobs (format, lint, typecheck, cargo test) get `permissions: contents: read`; write scopes only in publish/release steps.
+- **Trigger filters:** desktop `paths` filters must cover everything affecting compilation — `apps/desktop/**`, `packages/**`, `patches/**`, `package.json`, `pnpm-lock.yaml`, `pnpm-workspace.yaml`, `turbo.json`, `.nvmrc`, and the Linux deps script.
+- **Dependency floors:** keep both bounds in overrides — `"vitest@<3.2.6": ">=3.2.6 <4.0.0"`. Dropping the floor permits a downgrade into vulnerable `3.x`.
+- **Updater trust anchors:** never commit signing keys or `__UPDATER_PUBLIC_KEY__` literals (a fork could sign binaries the app auto-trusts) or duplicate them across CI and setup scripts. Set `"createUpdaterArtifacts": false` publicly and inject `TAURI_UPDATER_PUBLIC_KEY` from secrets in the release build only.
+- **Platform symmetry:** if `rust_windows_pill` gets `cargo test`, so must `rust_macos_pill` and `rust_gtk_pill` — clippy-only coverage hides runtime bugs. Provision tools (e.g. `imagemagick`) in the platform dependency scripts, not inline installs missing `apt-get update`.
+- **Boolean casts:** `"false"` is truthy in Node and Python, so `CI=false` reads as "in CI". Compare explicitly: `process.env.CI === "true"`.
+
+---
+
+## 6. Suggestions & Nitpicks
+
+**Suggestions** (`🟡 Minor` / `🔵 Trivial`) target performance and defensive coding: strip dead variables and imports; prefer safe option handling (`unwrap_or_default()`, `if let Some`, `?.`, `??`) over risky unwraps; adopt modern idioms (`std::mem::take`, iterator combinators, `async/await` over `.then` chains); avoid holding a mutex across a nested call.
+
+**Nitpicks** have zero functional impact: formatting drift, missing EOF newline, comments contradicting the code (e.g. "throws X" after a rewrite to `Result`), and renames following monorepo casing (camelCase TS, snake_case Rust).
+
+**Linter boundaries.** Oxlint scans `apps/desktop/src` per `apps/desktop/oxlint.json` via `pnpm --filter desktop run lint` (which also runs a Prettier check); Prettier covers TS/TSX, CSS, and Markdown via the root `format` script; Clippy runs `cargo clippy -- -D warnings` for the backend and each pill crate. There is **no ESLint or Markdownlint in CI** — Markdown structure findings are readability nits, not gates.
+
+---
+
+## 7. Anti-Pattern Checklist
+
+| Smell                             | Severity | Remediation                             |
+| :-------------------------------- | :------- | :-------------------------------------- |
+| Raw string path deletion          | Critical | Canonicalize; act on returned `PathBuf` |
+| Unvalidated HTTP redirect         | Critical | Verify host, scheme, hop count          |
+| Over-permissive `remote.urls`     | Critical | Restrict IPC to loopback                |
+| Committed updater keys            | Critical | Inject from secrets at release time     |
+| Subprocess output buffered in RAM | Major    | Stream via capped concurrent readers    |
+| Parallel tests mutating statics   | Major    | Scope access; restore in a `Drop` guard |
+| Mutex held across async work      | Major    | Clone under a short lock, then drop     |
+| Tautological constant tests       | Major    | Parse the live schema in tests          |
+| Fire-and-forget companion spawns  | Major    | Await the full artifact set             |
+| Writing refs during render        | Major    | Move into `useEffect` or pure setters   |
+| Stale cached controller config    | Major    | Pass dynamic params per call            |
+| Asymmetrical per-platform tests   | Major    | `cargo test` on all targets             |
+| Exclusive max bounds in geometry  | Medium   | Place strictly within screen bounds     |
+| State set after unmount           | Medium   | Generation counter discards stale sets  |
+| Default input dropped on scan     | Medium   | Placeholder label for unnamed defaults  |
+| Over-privileged `GITHUB_TOKEN`    | Medium   | `contents: read` on verification jobs   |
+| Tautological task dependencies    | Medium   | Depend on `^build`                      |
+| Env vars cast to boolean          | Medium   | Explicit string comparison              |
+| Label lookups each hardware cycle | Minor    | Target cached, stable device IDs        |
+| Dead variables and imports        | Minor    | Strip for a clean Oxlint pass           |
+| Comments contradicting signatures | Nitpick  | Rewrite docs to match the code          |
