@@ -8,17 +8,21 @@
  * styling regression, and the AssemblyAI/xAI/Aldea/Azure connect-src gaps).
  *
  * Two layers of protection:
- *  1. A mechanical scan of provider sources for `https://` / `wss://` host
+ *  1. A mechanical scan of the full `apps/desktop/src` and
+ *     `packages/voice-ai/src` trees for `http(s)://` / `ws(s)://` host
  *     literals in files that use the bare browser `fetch` / `WebSocket`
  *     (files importing `@tauri-apps/plugin-http` are exempt — that fetch is
  *     routed through Rust and governed by the `http:default` capability,
- *     not the CSP).
+ *     not the CSP). Hosts that are *not* network targets (openUrl links,
+ *     iframe embeds, doc comments) must be explicitly classified in
+ *     NON_CONNECT_HOSTS with a reason — an unknown host fails the test so
+ *     the decision can never happen by omission.
  *  2. A curated list of hosts that are constructed dynamically at runtime
  *     (e.g. the Azure Speech SDK's region-prefixed websocket endpoints) and
  *     therefore never appear as literals.
  */
 import { readdirSync, readFileSync } from "node:fs";
-import { join, resolve } from "node:path";
+import { join, relative, resolve } from "node:path";
 import { describe, expect, it } from "vitest";
 
 const repoRoot = resolve(__dirname, "../../..");
@@ -31,15 +35,19 @@ const tauriConf = JSON.parse(
 ) as { app?: { security?: { csp?: string | null } } };
 
 const csp = tauriConf.app?.security?.csp ?? "";
-const connectSrcMatch = /connect-src ([^;]+);/.exec(csp);
-const connectSources = (connectSrcMatch?.[1] ?? "")
-  .split(/\s+/)
-  .filter(Boolean);
 
-/** True when `host` is allowed by a connect-src source expression list. */
-const isAllowed = (scheme: string, host: string): boolean =>
-  connectSources.some((source) => {
-    const schemeMatch = /^(https|wss|http|ws):\/\/(.+)$/.exec(source);
+const directiveSources = (directive: string): string[] => {
+  const match = new RegExp(`${directive} ([^;]+);`).exec(csp);
+  return (match?.[1] ?? "").split(/\s+/).filter(Boolean);
+};
+
+const connectSources = directiveSources("connect-src");
+const frameSources = directiveSources("frame-src");
+
+/** True when `scheme://host` is allowed by a source expression list. */
+const isAllowed = (scheme: string, host: string, sources: string[]): boolean =>
+  sources.some((source) => {
+    const schemeMatch = /^(https?|wss?):\/\/(.+)$/.exec(source);
     if (!schemeMatch) return false;
     const [, sourceScheme, sourceHostPort] = schemeMatch;
     if (sourceScheme !== scheme) return false;
@@ -50,52 +58,58 @@ const isAllowed = (scheme: string, host: string): boolean =>
     return host === sourceHost;
   });
 
-/** Hosts that appear as literals but are never contacted by the webview. */
-const NON_NETWORK_HOSTS = new Set([
-  // Sent as an HTTP-Referer header value (OpenRouter attribution), and used
-  // in docs links — never fetched by the webview itself.
-  "maus-inc.github.io",
-  // Documentation URLs inside comments.
-  "console.groq.com",
-  "schema.tauri.app",
-  // Loopback endpoints are covered by the localhost entries and are not
-  // internet hosts.
-  "localhost",
-  "127.0.0.1",
+/**
+ * Host literals that appear in scanned sources but are NOT connect-src
+ * targets. Every entry needs a reason; adding one is an explicit decision,
+ * mirroring the NON_USER_DATA_TABLES pattern in commands.rs. An unlisted,
+ * unallowed host fails the test.
+ */
+const NON_CONNECT_HOSTS = new Map<string, string>([
+  // Opened in the external browser via @tauri-apps/plugin-opener (openUrl),
+  // never fetched by the webview.
+  ["console.deepgram.com", "openUrl external-browser link"],
+  ["console.groq.com", "openUrl external-browser link / doc comment"],
+  ["maus-inc.github.io", "openUrl link + OpenRouter HTTP-Referer header value"],
+  // <iframe> embeds are governed by frame-src, asserted separately below.
+  ["www.youtube.com", "iframe embed — validated against frame-src"],
+  ["www.youtube-nocookie.com", "iframe embed — validated against frame-src"],
+  // Documentation-only strings.
+  ["firebase.google.com", "doc comment URL"],
+  ["schema.tauri.app", "JSON $schema reference"],
 ]);
 
-/** Directories scanned for provider host literals. */
-const SCAN_DIRS = [
-  "packages/voice-ai/src",
-  "apps/desktop/src/sessions",
-  "apps/desktop/src/repos",
-  "apps/desktop/src/utils",
-];
+/** Directory trees scanned for webview-fetched host literals. */
+const SCAN_ROOTS = ["apps/desktop/src", "packages/voice-ai/src"];
 
 type FoundHost = { scheme: string; host: string; file: string };
 
 const collectHosts = (): FoundHost[] => {
   const found: FoundHost[] = [];
-  for (const dir of SCAN_DIRS) {
-    const abs = resolve(repoRoot, dir);
-    for (const entry of readdirSync(abs, { withFileTypes: true })) {
+  const walk = (dir: string) => {
+    for (const entry of readdirSync(dir, { withFileTypes: true })) {
+      const abs = join(dir, entry.name);
+      if (entry.isDirectory()) {
+        walk(abs);
+        continue;
+      }
       if (!entry.isFile()) continue;
       if (!/\.(ts|tsx)$/.test(entry.name)) continue;
       if (/\.test\.(ts|tsx)$/.test(entry.name)) continue;
-      const source = readFileSync(join(abs, entry.name), "utf8");
+      const source = readFileSync(abs, "utf8");
       // plugin-http fetch goes through Rust (http:default capability); the
       // webview CSP does not apply to it.
       if (source.includes("@tauri-apps/plugin-http")) continue;
       for (const match of source.matchAll(
-        /(https|wss):\/\/([a-z0-9][a-z0-9.-]*[a-z0-9])/gi,
+        /(https?|wss?):\/\/([a-z0-9][a-z0-9.-]*[a-z0-9])/gi,
       )) {
         const scheme = match[1].toLowerCase();
         const host = match[2].toLowerCase();
-        if (NON_NETWORK_HOSTS.has(host)) continue;
-        found.push({ scheme, host, file: `${dir}/${entry.name}` });
+        if (NON_CONNECT_HOSTS.has(host)) continue;
+        found.push({ scheme, host, file: relative(repoRoot, abs) });
       }
     }
-  }
+  };
+  for (const root of SCAN_ROOTS) walk(resolve(repoRoot, root));
   return found;
 };
 
@@ -105,9 +119,9 @@ describe("production CSP connect-src covers every webview-fetched provider host"
     expect(connectSources.length).toBeGreaterThan(0);
   });
 
-  it("allows every https/wss host literal used with bare fetch/WebSocket", () => {
+  it("allows every http/https/ws/wss host literal used with bare fetch/WebSocket", () => {
     const violations = collectHosts().filter(
-      ({ scheme, host }) => !isAllowed(scheme, host),
+      ({ scheme, host }) => !isAllowed(scheme, host, connectSources),
     );
     expect(
       violations,
@@ -115,9 +129,20 @@ describe("production CSP connect-src covers every webview-fetched provider host"
         violations
           .map((v) => `  ${v.scheme}://${v.host} (${v.file})`)
           .join("\n") +
-        `\nAdd the host to connect-src, or route the call through ` +
-        `@tauri-apps/plugin-http and extend the http:default capability.`,
+        `\nAdd the host to connect-src, route the call through ` +
+        `@tauri-apps/plugin-http and extend the http:default capability, or — ` +
+        `only if it is genuinely not a connect-src target (openUrl link, ` +
+        `iframe, comment) — classify it in NON_CONNECT_HOSTS with a reason.`,
     ).toEqual([]);
+  });
+
+  it("allows iframe embed hosts via frame-src", () => {
+    for (const host of ["www.youtube.com", "www.youtube-nocookie.com"]) {
+      expect(
+        isAllowed("https", host, frameSources),
+        `https://${host} is embedded as an iframe and must be in frame-src`,
+      ).toBe(true);
+    }
   });
 
   it("allows dynamically-constructed provider endpoints", () => {
@@ -142,11 +167,41 @@ describe("production CSP connect-src covers every webview-fetched provider host"
         host: "securetoken.googleapis.com",
         why: "Firebase auth token refresh",
       },
+      {
+        scheme: "wss",
+        host: "mausvoice-prod-default-rtdb.firebaseio.com",
+        why: "Firebase RTDB websocket upgrade from the https databaseURL",
+      },
     ];
     for (const { scheme, host, why } of dynamicEndpoints) {
-      expect(isAllowed(scheme, host), `${scheme}://${host} — ${why}`).toBe(
-        true,
-      );
+      expect(
+        isAllowed(scheme, host, connectSources),
+        `${scheme}://${host} — ${why}`,
+      ).toBe(true);
     }
+  });
+
+  it("keeps NON_CONNECT_HOSTS entries honest (no stale exemptions)", () => {
+    // Every exempted host must still appear somewhere in the scanned trees;
+    // a stale entry would silently mask a future genuine fetch to that host.
+    const allSources: string[] = [];
+    const walk = (dir: string) => {
+      for (const entry of readdirSync(dir, { withFileTypes: true })) {
+        const abs = join(dir, entry.name);
+        if (entry.isDirectory()) walk(abs);
+        else if (/\.(ts|tsx)$/.test(entry.name)) {
+          allSources.push(readFileSync(abs, "utf8"));
+        }
+      }
+    };
+    for (const root of SCAN_ROOTS) walk(resolve(repoRoot, root));
+    const corpus = allSources.join("\n");
+    const stale = [...NON_CONNECT_HOSTS.keys()].filter(
+      (host) => host !== "schema.tauri.app" && !corpus.includes(host),
+    );
+    expect(
+      stale,
+      `NON_CONNECT_HOSTS entries no longer referenced anywhere — remove them:\n  ${stale.join("\n  ")}`,
+    ).toEqual([]);
   });
 });
