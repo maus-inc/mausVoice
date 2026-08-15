@@ -18,7 +18,11 @@ import { BaseRepo } from "./base.repo";
 
 type LocalUserPreferences = {
   userId: string;
-  transcriptionMode: Nullable<TranscriptionMode>;
+  // AI modes arrive as raw strings: SQLite rows written by older builds can
+  // hold values that no longer exist in the mode unions (e.g. the removed
+  // "cloud" mode), so the boundary types stay loose and the normalizers
+  // below map them onto valid values.
+  transcriptionMode: Nullable<string>;
   transcriptionApiKeyId: Nullable<string>;
   transcriptionDevice: Nullable<string>;
   transcriptionModelSize: Nullable<string>;
@@ -29,7 +33,7 @@ type LocalUserPreferences = {
   activeToneId: Nullable<string>;
   gotStartedAt: Nullable<number>;
   gpuEnumerationEnabled: boolean;
-  agentMode: Nullable<AgentMode>;
+  agentMode: Nullable<string>;
   agentModeApiKeyId: Nullable<string>;
   openclawGatewayUrl: Nullable<string>;
   openclawToken: Nullable<string>;
@@ -62,9 +66,22 @@ const normalizePillResetMonitorStrategy = (
   strategy: Nullable<string> | undefined,
 ): PillResetMonitorStrategy => (strategy === "cursor" ? "cursor" : "current");
 
-// Normalize post-processing mode for backwards compatibility
-// "ollama" and the removed "cloud" modes are no longer supported - treat them
-// as "none" (the user needs to re-add Ollama via API keys).
+// Backwards-compatibility normalization for the persisted AI modes. Older
+// builds stored modes that no longer exist ("cloud" for all three, plus
+// "ollama" for post-processing — users need to re-add Ollama via API keys).
+// Letting a stale value through here leaves the settings dialogs rendering a
+// segmented control with no matching tab and an empty body, so every invalid
+// value is mapped onto the closest valid mode.
+const normalizeTranscriptionMode = (
+  mode: Nullable<string>,
+): Nullable<TranscriptionMode> => {
+  if (!mode) return null;
+  if (mode === "local" || mode === "api") {
+    return mode;
+  }
+  return "local";
+};
+
 const normalizePostProcessingMode = (
   mode: Nullable<string>,
 ): Nullable<PostProcessingMode> => {
@@ -75,11 +92,19 @@ const normalizePostProcessingMode = (
   return "none";
 };
 
+const normalizeAgentMode = (mode: Nullable<string>): Nullable<AgentMode> => {
+  if (!mode) return null;
+  if (mode === "api" || mode === "none" || mode === "openclaw") {
+    return mode;
+  }
+  return "none";
+};
+
 export const fromLocalPreferences = (
   preferences: LocalUserPreferences,
 ): UserPreferences => ({
   userId: preferences.userId,
-  transcriptionMode: preferences.transcriptionMode,
+  transcriptionMode: normalizeTranscriptionMode(preferences.transcriptionMode),
   transcriptionApiKeyId: preferences.transcriptionApiKeyId,
   transcriptionDevice: preferences.transcriptionDevice,
   transcriptionModelSize: preferences.transcriptionModelSize,
@@ -92,7 +117,7 @@ export const fromLocalPreferences = (
   activeToneId: preferences.activeToneId,
   gotStartedAt: preferences.gotStartedAt,
   gpuEnumerationEnabled: preferences.gpuEnumerationEnabled,
-  agentMode: preferences.agentMode,
+  agentMode: normalizeAgentMode(preferences.agentMode),
   agentModeApiKeyId: preferences.agentModeApiKeyId,
   openclawGatewayUrl: preferences.openclawGatewayUrl ?? null,
   openclawToken: preferences.openclawToken ?? null,
