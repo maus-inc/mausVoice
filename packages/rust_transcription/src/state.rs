@@ -63,7 +63,9 @@ fn validate_model_redirect(attempt: Attempt<'_>) -> reqwest::redirect::Action {
         url.host_str(),
         Some("huggingface.co")
             | Some("cdn-lfs.huggingface.co")
+            | Some("cdn-lfs-us-1.hf.co")
             | Some("cas-bridge.xethub.hf.co")
+            | Some("cas-server.xethub.hf.co")
             | Some("transfer.xethub.hf.co")
     );
     if attempt.previous().len() >= MAX_REDIRECTS || url.scheme() != "https" || !approved_host {
