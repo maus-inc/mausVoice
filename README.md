@@ -39,6 +39,7 @@ Grab Your [Free Groq↗](https://console.groq.com/keys) and [Free Deepgram↗](h
 3. The transcript is cleaned up with an LLM: filler removed, punctuation and formatting in, your chosen writing style applied.
 4. The finished text lands in whatever app you're focused on.
 <br>
+
 <br>
 <br>
 <p align="center">
@@ -95,6 +96,7 @@ Then run the desktop app with the platform-specific command:
 cd apps/desktop
 pnpm dev:mac        # macOS
 pnpm dev:windows    # Windows
+pnpm dev:linux      # Linux
 ```
 
 > `pnpm dev` alone won't work. Native features need the platform-specific command above.

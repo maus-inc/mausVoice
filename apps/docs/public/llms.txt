@@ -17,7 +17,7 @@ Use the most specific page below. Local describes the speech-recognition stage o
 - Settings offers Local or API transcription and API or Off post-processing.
 - Assistant and Chats are separate workflows; neither is merely another name for dictation.
 - Incognito suppresses new local history and audio snapshots, not provider transmission.
-- Local model downloads range from Whisper Tiny (77 MB) to Large v3 (3.1 GB).
+- Local model downloads range from Whisper Tiny (77 MB) to Large v3 (3.1 GB), plus ONNX Parakeet 0.6B (613–670 MB) and Canary 1B (1.03 GB).
 - API keys are encrypted at rest with XChaCha20-Poly1305 and per-record nonces.
 
 ## Documentation pages
@@ -62,7 +62,7 @@ Use the most specific page below. Local describes the speech-recognition stage o
 
 - [Settings map](https://maus-inc.github.io/mausVoice/docs/configuration/settings-map/): Locate every top-level configuration area in the current desktop app.
 - [Transcription modes](https://maus-inc.github.io/mausVoice/docs/configuration/transcription-modes/): Choose local sidecar recognition or an API endpoint without confusing transcription and rewriting.
-- [Local model management](https://maus-inc.github.io/mausVoice/docs/configuration/local-models/): Download, validate, select, and remove the GGML models used by the local sidecar.
+- [Local model management](https://maus-inc.github.io/mausVoice/docs/configuration/local-models/): Download, validate, select, and remove the whisper.cpp GGML and ONNX Parakeet/Canary models used by the local sidecar.
 - [Choose a local model and device](https://maus-inc.github.io/mausVoice/docs/configuration/model-and-device-selection/): Evaluate local accuracy, latency, memory, language behavior, and the app's advisory hardware ratings.
 - [AI post-processing](https://maus-inc.github.io/mausVoice/docs/configuration/post-processing/): Configure the optional rewrite stage without conflating it with speech recognition.
 - [API key management](https://maus-inc.github.io/mausVoice/docs/configuration/api-keys/): Add, test, select, rotate, and remove task-specific provider credentials.
@@ -113,7 +113,7 @@ Use the most specific page below. Local describes the speech-recognition stage o
 
 - [Navigation and routes](https://maus-inc.github.io/mausVoice/docs/reference/navigation/): Map desktop sidebar destinations, guarded setup screens, dialogs, and unfinished internal routes.
 - [Default shortcuts](https://maus-inc.github.io/mausVoice/docs/reference/default-shortcuts/): Reference platform defaults, hold versus release semantics, custom actions, and Linux behavior.
-- [Local model reference](https://maus-inc.github.io/mausVoice/docs/reference/local-models/): Map local model IDs to labels, GGML filenames, download origins, and aliases.
+- [Local model reference](https://maus-inc.github.io/mausVoice/docs/reference/local-models/): Map local model IDs to labels, filenames, runtime, download origins, and aliases.
 - [Provider capability reference](https://maus-inc.github.io/mausVoice/docs/reference/providers/): Map current provider selectors, runtime dispatch, streaming sessions, local routes, and known capability mismatches.
 - [Interface languages](https://maus-inc.github.io/mausVoice/docs/reference/interface-languages/): Reference the translation catalogs, locale matching, fallback behavior, and separation from spoken language.
 - [Data locations](https://maus-inc.github.io/mausVoice/docs/reference/data-locations/): Identify the app-managed database, models, saved audio, general storage, logs, and profile boundaries.

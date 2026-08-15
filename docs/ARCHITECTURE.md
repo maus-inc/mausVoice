@@ -1,8 +1,8 @@
 # mausVoice Architecture Walkthrough
 
-A practical tour of how this repo is put together: the technology stack, the monorepo layout, the desktop app's layered design, the feature subsystems, and the customizations that make this fork a personal/local build.
+A practical tour of how this repo is put together: the technology stack, the monorepo layout, the desktop app's layered design, the feature subsystems, and the personal/local build.
 
-> This describes the **personal local build**. Where upstream behavior differs (cloud accounts, billing, enterprise SSO), it is called out as "mostly unused here."
+> As of 0.1.6 this is a **local, personal build**. The hosted mausVoice Cloud backend, billing, and enterprise SSO/gateway were removed (migrations `071_remove_cloud_modes` / `072_drop_is_enterprise`). There are no cloud or enterprise repos, gateways, or `enterprise/` directories in the tree — every repo factory resolves to a local implementation.
 
 ---
 
@@ -64,29 +64,27 @@ Turborepo + pnpm workspaces. From the repo root: `pnpm run build | lint | check-
 ```
 apps/
   desktop/             # THE app — Tauri (Rust) + React/TS frontend
-  docs/                # documentation site
-  windows-installer/   # Windows MSI installer build
+  docs/                # Astro + Starlight documentation site (authoritative docs)
+  windows-installer/   # Windows MSI/NSIS installer build
 packages/
   types/               # shared TS domain models (User, Transcription, ApiKey, Tone, ...)
-  functions/           # Firebase callable-function signatures + helpers (cloud; mostly unused here)
   voice-ai/            # audio chunking + multi-provider LLM/transcription clients
   agent/               # provider-agnostic agentic loop with tool support
   utilities/           # date/async/error helpers
   desktop-utils/       # platform detection + desktop helpers
-  desktop-native-apis/ # generated bindings to Tauri commands
-  pricing/             # pricing-plan definitions (cloud; unused here)
-  firemix/             # Firebase helpers (cloud; unused here)
-  rust_transcription/  # local Whisper sidecar (CPU/GPU REST server)
-  rust_macos_pill/     # macOS dictation overlay process
-  rust_windows_pill/   # Windows dictation overlay process
+  desktop-native-apis/ # Specta-generated bindings to Tauri commands
+  firemix/             # Firebase path helpers (peer dep; no apps/firebase service here)
+  rust_transcription/  # local transcription sidecar (whisper.cpp GGML + ONNX Parakeet/Canary; CPU/GPU HTTP server)
+  rust_macos_pill/     # macOS dictation overlay (linked in-process)
+  rust_windows_pill/   # Windows dictation overlay (subprocess)
+  rust_gtk_pill/       # Linux dictation overlay (subprocess, GTK/layer-shell)
+  rust_pill_shared/    # shared geometry/ring math for the pills
+  shared-fonts/        # Satoshi and TAN Paradiso font assets
   eslint-config/, typescript-config/  # shared tooling configs
-enterprise/
-  gateway/             # Express API gateway (enterprise; unused here)
-  admin/               # enterprise admin dashboard (unused here)
 config/, release/, scripts/, docs/
 ```
 
-**Removed in this fork:** `mobile/` (Flutter app), `packages/flutter_video_looper`, and the Rust CLI (`cli/`). Linux desktop support is retained (`src-tauri/src/platform/linux`, `packages/rust_gtk_pill`, Linux CI/packaging).
+The `mobile/` Flutter app, `packages/flutter_video_looper`, the Rust CLI (`cli/`), the hosted `packages/functions`/`packages/pricing`, and the `enterprise/` gateway/admin apps were all removed in earlier work. Linux desktop support is retained (`src-tauri/src/platform/linux`, `packages/rust_gtk_pill`, Linux CI/packaging). The Astro site under `apps/docs/` is the maintained documentation; the files at the repo-root `docs/` are looser notes and historical specs.
 
 ---
 
@@ -103,13 +101,13 @@ User / Native event
 Actions      (src/actions/*.ts)        orchestration: what should happen
       │
       ▼
-Repos        (src/repos/*.ts)          data access: local vs cloud vs enterprise
+Repos        (src/repos/*.ts)          data access: local SQLite and AI providers
       │
       ▼
 Tauri cmds   (src-tauri/src/commands.rs)  native capability surface
       │
       ▼
-SQLite  /  Whisper sidecar  /  external APIs
+SQLite  /  rust_transcription sidecar  /  external AI APIs
 ```
 
 State changes are written back into the Zustand store, and React re-renders. Rust never decides _what_ to do — it only does what TypeScript asks.
@@ -130,56 +128,54 @@ Actions are the orchestration layer. They call repos, mutate the store via `prod
 
 ### 4.4 Repos — `src/repos/`
 
-Repos abstract _where_ data lives. Each family has an abstract base plus implementations, and a selector function picks the implementation at runtime:
+Repos abstract _where_ data lives. Each family has an abstract base plus a local implementation, and the factory in `src/repos/index.ts` resolves directly to it:
 
 ```ts
 export const getAuthRepo = (): BaseAuthRepo => {
-  if (isPersonalUse()) return new PersonalAuthRepo();
-  return isEnterprise() ? new EnterpriseAuthRepo() : new CloudAuthRepo();
+  return new PersonalAuthRepo();
+};
+
+export const getUserRepo = (): BaseUserRepo => {
+  return new LocalUserRepo();
 };
 ```
 
-The selection guards live at the top of `src/repos/index.ts`:
+There are no cloud or enterprise repos in this build — `getAuthRepo`, `getUserRepo`, `getUserPreferencesRepo`, `getTranscriptionRepo`, and the rest all return their local implementations. (The flavor type still lists `enterprise` / `enterprise-dev` as legacy values, but there is no `isEnterpriseFlavor()` helper, no `getIsEnterpriseEnabled()`, and no `src/utils/enterprise.utils.ts`.)
 
-```ts
-const isEnterprise = () => getIsEnterpriseEnabled();
-const isPersonalUse = () => isPersonalUseEnabled(); // shared guard (see §6)
-```
+Main repo families:
 
-Main repo families (base / local / cloud / enterprise as applicable):
+| Family                     | Implementation                                                   | Stores / talks to            |
+| -------------------------- | ---------------------------------------------------------------- | ---------------------------- |
+| Auth                       | `PersonalAuthRepo`                                               | hardcoded local user         |
+| User / Member              | `LocalUserRepo` / `LocalMemberRepo`                              | profile, stats               |
+| Transcription (records)    | `LocalTranscriptionRepo`                                         | SQLite history               |
+| Transcribe audio (engine)  | `LocalTranscribeAudioRepo`                                       | `rust_transcription` sidecar |
+| API transcription          | Groq / Deepgram / OpenAI / Azure / AssemblyAI / ElevenLabs / ... | provider API                 |
+| Generate text (LLM)        | Groq / OpenAI / Claude / Gemini / OpenRouter / Ollama / ...      | post-processing + agent      |
+| Preferences                | `LocalUserPreferencesRepo`                                       | SQLite                       |
+| Tone (writing styles)      | `LocalToneRepo`                                                  | SQLite                       |
+| Term (dictionary)          | `LocalTermRepo`                                                  | SQLite                       |
+| ApiKey                     | `LocalApiKeyRepo`                                                | encrypted SQLite             |
+| Hotkey / AppTarget         | `LocalHotkeyRepo` / `LocalAppTargetRepo`                         | SQLite                       |
+| Conversation / ChatMessage | `LocalConversationRepo` / `LocalChatMessageRepo`                 | SQLite                       |
+| Paired remote device       | `LocalPairedRemoteDeviceRepo`                                    | SQLite                       |
 
-| Family                    | Local                      | Cloud / Enterprise           | Stores / talks to          |
-| ------------------------- | -------------------------- | ---------------------------- | -------------------------- |
-| Auth                      | `PersonalAuthRepo`         | Cloud / Enterprise           | local stub vs Firebase/SSO |
-| User                      | `LocalUserRepo`            | Cloud / Enterprise           | profile, stats             |
-| Transcription (records)   | `LocalTranscriptionRepo`   | —                            | SQLite history             |
-| Transcribe audio (engine) | `Local` (Whisper sidecar)  | Groq / OpenAI / Azure / ...  | sidecar vs provider API    |
-| Generate text (LLM)       | —                          | Cloud / Enterprise / API key | post-processing + agent    |
-| Preferences               | `LocalUserPreferencesRepo` | —                            | SQLite                     |
-| Tone (writing styles)     | `LocalToneRepo`            | Cloud / Enterprise           | SQLite / sync              |
-| Term (dictionary)         | `LocalTermRepo`            | Cloud / Enterprise           | SQLite / sync              |
-| ApiKey                    | `LocalApiKeyRepo`          | —                            | encrypted SQLite           |
-| Hotkey                    | `LocalHotkeyRepo`          | —                            | SQLite                     |
-| ChatMessage               | `LocalChatMessageRepo`     | —                            | SQLite                     |
-
-At the Tauri boundary, repos convert with `toLocalXxx()` / `fromLocalXxx()` helpers (see `repos/preferences.repo.ts` for a clear example).
-
-In this personal build the **Local/Personal** implementations are what run; Cloud and Enterprise repos exist but are not reached.
+At the Tauri boundary, repos convert with `toLocalXxx()` / `fromLocalXxx()` helpers (see `repos/preferences.repo.ts` for a clear example). Every factory in this build returns the **Local/Personal** implementation.
 
 ### 4.5 Rust side — `src-tauri/src/`
 
-| File / dir                       | Responsibility                                                                                                                                                               |
-| -------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `main.rs` / `lib.rs`             | entry point, library exports                                                                                                                                                 |
-| `app.rs`                         | Tauri builder: plugins (sql, log, autostart, updater, single-instance), window setup, **`invoke_handler` command registration**                                              |
-| `commands.rs`                    | all `#[tauri::command]` functions — the TS↔Rust API (recording, DB CRUD, API-key encryption, accessibility dumps, paste, model/GPU ops)                                      |
-| `db/mod.rs`                      | SQLite pool + migration runner                                                                                                                                               |
-| `db/migrations/NNN_*.sql`        | sequential schema migrations, run on startup; new ones are added here and registered in `db/mod.rs`                                                                          |
-| `db/*_queries.rs`                | per-domain SQL helpers                                                                                                                                                       |
-| `domain/`                        | Rust structs mirroring the TS domain models                                                                                                                                  |
-| `platform/`                      | OS-specific code: `macos/` (AXUIElement a11y, keyboard, Core Audio), `windows/` (UIAutomation, Win32 hooks, WASAPI); cross-platform `audio.rs`, `keyboard.rs`, `app_info.rs` |
-| `system/`                        | services: `crypto.rs` (API-key encryption), `gpu.rs`, `models.rs` (Whisper model download), OAuth/OIDC, `tray.rs`, remote sender/receiver, audio feedback                    |
-| `pill_process.rs` / `overlay.rs` | spawn and talk to the overlay "pill" subprocess over stdio                                                                                                                   |
+| File / dir                       | Responsibility                                                                                                                                                                                 |
+| -------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `main.rs` / `lib.rs`             | entry point, library exports                                                                                                                                                                   |
+| `app.rs`                         | Tauri builder: plugins (sql, log, autostart, updater, single-instance), window setup, **`invoke_handler` command registration**                                                                |
+| `commands.rs`                    | all `#[tauri::command]` functions — the TS↔Rust API (recording, DB CRUD, API-key encryption, accessibility dumps, paste, model/GPU ops)                                                        |
+| `db/mod.rs`                      | SQLite pool + migration runner                                                                                                                                                                 |
+| `db/migrations/NNN_*.sql`        | sequential schema migrations, run on startup; new ones are added here and registered in `db/mod.rs`                                                                                            |
+| `db/*_queries.rs`                | per-domain SQL helpers                                                                                                                                                                         |
+| `domain/`                        | Rust structs mirroring the TS domain models                                                                                                                                                    |
+| `platform/`                      | OS-specific code: `macos/` (AXUIElement a11y, keyboard, Core Audio), `windows/` (UIAutomation, Win32 hooks, WASAPI); cross-platform `audio.rs`, `keyboard.rs`, `app_info.rs`                   |
+| `system/`                        | services: `crypto.rs` (API-key encryption), `gpu.rs`, `models.rs`/`paths.rs` (Whisper model paths and on-demand download), machine identity, `tray.rs`, remote sender/receiver, audio feedback |
+| `pill_process.rs` / `overlay.rs` | spawn and talk to the overlay "pill" subprocess over stdio                                                                                                                                     |
 
 **Adding a new native capability** (per repo conventions): define the command in `commands.rs`, register it in `app.rs`'s `invoke_handler`, wrap it in a repo, and call it from an action.
 
@@ -191,7 +187,7 @@ In this personal build the **Local/Personal** implementations are what run; Clou
 
 Two paths, selected by user preferences:
 
-- **Local Whisper** — the `rust_transcription` sidecar runs a small REST server (CPU and GPU builds) that the desktop app drives via a transcription _session_ (`src/sessions/`). Models (tiny…large, turbo) are downloaded on demand; GPU acceleration uses Metal/Vulkan/DirectX.
+- **Local transcription** — the `rust_transcription` sidecar runs a small HTTP server (CPU and GPU builds) that the desktop app drives via a transcription _session_ (`src/sessions/`). It supports the whisper.cpp GGML models (tiny, base, small, medium, large-v3, large-v3-turbo) plus ONNX Parakeet 0.6B (CTC/TDT) and Canary 1B. Models are downloaded on demand into the app-data `transcription-models/` directory; GPU acceleration uses Metal/Vulkan via `wgpu`/`ort`.
 - **Cloud / API providers** — Deepgram, Groq, OpenAI, Azure, ElevenLabs, AssemblyAI, etc., each with a session in `src/sessions/`. The **personal build defaults to Deepgram** (`nova-3`), which **streams audio over a websocket during recording** so the transcript is ready almost as soon as you stop (`DeepgramTranscriptionSession`). If no Deepgram key is configured it falls back to Groq (`whisper-large-v3-turbo`, batch).
 
 The personal dictionary is injected as the Whisper `initialPrompt` to bias recognition toward your terms.
@@ -203,11 +199,12 @@ The personal dictionary is injected as the Whisper `initialPrompt` to bias recog
 After transcription, text can be cleaned up (remove filler, fix formatting) by an LLM through a Generate-Text repo. The active **writing style/tone** becomes the system prompt. Personal build default: Groq `openai/gpt-oss-20b`.
 
 ### Dictation overlay ("pill")
+
 A separate native implementation renders the floating recording indicator, one per platform: `rust_macos_pill` (macOS), `rust_windows_pill` (Windows), and `rust_gtk_pill` (Linux, GTK). macOS runs it embedded in-process over `mpsc` channels (`platform/macos/overlay.rs`); Windows and Linux spawn it as a subprocess and talk to it over stdio (`pill_process.rs`, `platform/linux/overlay.rs`). All three exchange the same `InMessage`/`OutMessage` IPC vocabulary.
 
 **Monitor selection** follows one rule on all three platforms: while the user is actively dragging, the pill's owning monitor is whichever display the cursor is currently over; once parked (drag released), the pill stays anchored to the monitor that contains its saved footprint position and does not follow the cursor across screen edges. Windows falls back to `MonitorFromPoint`'s nearest-monitor behavior, macOS looks up the screen containing the saved anchor point, and GTK/X11 combines an X11 anchor with the exact drop-position persisted from the last drag; GTK's LayerShell backend only re-homes the surface to a different output on first placement or while a drag is active.
 
-**Visible-footprint clamping** — the native window itself is a fixed, oversized transparent canvas (the pill is drawn somewhere inside it, not centered on it). Dragging and edge/monitor clamping operate on the pill's *visible footprint* inside that canvas, not the canvas bounds, so the pill can be pushed flush against a real screen edge instead of stopping short (or overshooting) by the canvas margin. Non-dictation panel modes still clamp the whole window, since the panel content fills it.
+**Visible-footprint clamping** — the native window itself is a fixed, oversized transparent canvas (the pill is drawn somewhere inside it, not centered on it). Dragging and edge/monitor clamping operate on the pill's _visible footprint_ inside that canvas, not the canvas bounds, so the pill can be pushed flush against a real screen edge instead of stopping short (or overshooting) by the canvas margin. Non-dictation panel modes still clamp the whole window, since the panel content fills it.
 
 **Reset / position IPC** — the pill IPC protocol carries `InMessage::ResetPosition` (desktop → pill: forget the saved position and re-center) and `OutMessage::PositionChanged { has_saved_position: bool }` (pill → desktop: report after a drag ends or a reset that a saved position now does/doesn't exist). The desktop relays `PositionChanged` as the `pill-position-changed` Tauri event, which the frontend uses to enable/disable the tray's **Reset Pill Position** menu item; selecting that item invokes the `reset_pill_position` command, which sends `ResetPosition` back down to the pill.
 
@@ -233,20 +230,17 @@ A provider-agnostic agent loop (`packages/agent` + `src/agents/`) drives tool ca
 
 ### Build flavors — `src/utils/env.utils.ts`
 
-`VITE_FLAVOR` selects a build flavor: `emulators` (default in dev), `dev`, `prod`, `enterprise`, `enterprise-dev`. `isEnterpriseFlavor()` is true only for the two enterprise flavors and is a reliable **build-time** signal (unlike the runtime enterprise target, which loads asynchronously).
+`VITE_FLAVOR` selects a build flavor: `emulators` (default in dev), `dev`, `prod`, and the legacy `enterprise` / `enterprise-dev` values. The enterprise flavors are not wired to any backend in this build; use the `emulators` / `dev` / `prod` flavors.
 
 ### The shared guard — `src/utils/personal-use.utils.ts`
 
-`isPersonalUseProEnabled()` returns `true` in this fork (that is the paywall/Pro-gating removal). The canonical guard combines it with both enterprise signals:
+`isPersonalUseProEnabled()` returns `true` in this build (the paywall/Pro gating is removed), and the guard is intentionally simple:
 
 ```ts
-export const isPersonalUseEnabled = (): boolean =>
-  isPersonalUseProEnabled() &&
-  !isEnterpriseFlavor() && // build-time: never personal in enterprise builds
-  !getIsEnterpriseEnabled(); // runtime: never personal once an enterprise target loads
+export const isPersonalUseEnabled = (): boolean => isPersonalUseProEnabled();
 ```
 
-**Every personal-flow decision point routes through this single guard:** repo selection (`repos/index.ts`), onboarding sign-in routing (`SignInForm.tsx`), Google sign-in (`login.actions.ts`), the mic-permission gate (`MicPermsForm.tsx`), and the Groq defaults action. This keeps "am I in personal mode?" answered in exactly one place.
+There is no enterprise flavor/runtime signal to combine here anymore. `isPersonalUseEnabled()` is the single guard used by the personal-flow decision points — onboarding sign-in routing (`components/onboarding/SignInForm.tsx`), the mic-permission gate (`MicPermsForm.tsx`), and the Groq/Deepgram defaults action. Repo factories don't consult it; they always return the local implementations.
 
 ### Local sign-in — `PersonalAuthRepo` (`src/repos/auth.repo.ts`)
 
@@ -266,7 +260,7 @@ Net effect: after you enter your keys, transcription uses Deepgram `nova-3` (str
 
 ### Top-level routing — `src/router.tsx` + `src/components/routing/Guard.tsx`
 
-Routing is modeled as a small directed graph of nodes (`welcome`, `onboarding`, `routing`, `dashboard`, `notFound`). Edges have conditions over app state (`isLoggedIn`, `isOnboarded`, `isEnterpriseFlavor`) and the guard walks to the first matching destination. Dashboard sub-routes: home, settings, transcriptions, dictionary, styling, chats, apps.
+Routing is modeled as a small directed graph of nodes (`welcome`, `onboarding`, `routing`, `dashboard`, `notFound`). Edges have conditions over app state (`isLoggedIn`, `isOnboarded`) and the guard walks to the first matching destination. Dashboard sub-routes: home, settings, transcriptions, dictionary, styling, chats, apps.
 
 ### Onboarding steps — `src/components/onboarding/`
 
@@ -278,19 +272,19 @@ signIn → personalCredentials → chooseTranscription → chooseLlm → userDet
 → unlockedPro → tutorial
 ```
 
-In personal mode the sign-in step auto-advances (local user) and routes to `personalCredentials` (the Deepgram + Groq key entry), then straight to `userDetails` — skipping `chooseTranscription`/`chooseLlm`. `didSignUpWithAccount` is **not** set, so the flow also skips the cloud "Pro trial" path (`unlockedPro` → `setAllModesToCloud`) that would otherwise overwrite your local/API-key choices. In enterprise builds the same screens route to `userDetails`/`routing` instead.
+In personal mode the sign-in step auto-advances (local user) and routes to `personalCredentials` (the Deepgram + Groq key entry), then straight to `userDetails` — skipping `chooseTranscription`/`chooseLlm`. `didSignUpWithAccount` is **not** set, so the flow also skips the cloud "Pro trial" path (`unlockedPro`) that would otherwise overwrite your local/API-key choices.
 
 ---
 
-## 8. Cloud & enterprise pieces (mostly unused here)
+## 8. What was removed (Cloud / Enterprise)
 
-The repo still contains the upstream backend integration points:
+The hosted mausVoice Cloud backend and enterprise self-hosted path were removed in 0.1.6:
 
-- `packages/functions` — Firebase callable-function signatures; cloud repos call these.
-- `enterprise/gateway` — an Express API gateway; the desktop talks to it via `invokeEnterprise()` (`src/utils/enterprise.utils.ts`) when an enterprise target is configured.
-- `packages/pricing`, `packages/firemix`, Stripe/Mixpanel deps — billing and analytics.
+- `packages/functions`, `packages/pricing`, and the `enterprise/gateway` / `enterprise/admin` apps are gone from the tree.
+- There is no `invokeEnterprise()` / `src/utils/enterprise.utils.ts`, no `getIsEnterpriseEnabled()`, and no Cloud/Enterprise auth or user repos.
+- Migrations `071_remove_cloud_modes` rewrites any stored `cloud` transcription/post-processing/agent modes to `local`/`none`, and `072_drop_is_enterprise` drops the enterprise preference column.
 
-In the personal local build none of these are reached: the guard keeps you on Local/Personal repos, and there is no account, billing, or gateway in the path.
+A few traces remain intentionally: the `Flavor` type still lists `enterprise`/`enterprise-dev`, `packages/firemix` ships Firebase path helpers with Firebase as a peer dependency, and some dependencies (Stripe, Mixpanel, Firebase) are still in the desktop manifest. They are not wired to an account, billing, or gateway in this build. The docs site's development pages describe the current, all-local layout.
 
 ---
 

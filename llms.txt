@@ -20,9 +20,10 @@ pnpm install
 cd apps/desktop
 pnpm dev:mac        # macOS
 pnpm dev:windows    # Windows
+pnpm dev:linux      # Linux
 ```
 
-Prerequisites: Node 18+, pnpm 10, Rust toolchain (Tauri v2).
+Prerequisites: Node 18+ (`.nvmrc` pins v24 for development), pnpm 10, Rust toolchain (Tauri v2).
 
 ## Architecture
 
@@ -36,11 +37,11 @@ User input / System events
         ↓
 React + Zustand state (TypeScript)
         ↓
-Repos choose local vs. remote storage
+Repos resolve local storage and AI providers
         ↓
 Tauri commands (Rust API bridge)
         ↓
-SQLite, Whisper models, or external services
+SQLite, the local transcription sidecar, or external AI services
 ```
 
 ## Repository Structure
@@ -48,11 +49,11 @@ SQLite, Whisper models, or external services
 | Path | Description |
 |---|---|
 | `apps/desktop` | Tauri desktop app (Vite + React + Zustand) |
-| `apps/desktop/src-tauri` | Rust API layer (native capabilities, SQLite, Whisper) |
-| `apps/docs` | Astro + Starlight documentation site |
+| `apps/desktop/src-tauri` | Rust API layer (native capabilities, SQLite, transcription sidecar bridge) |
+| `apps/docs` | Astro + Starlight documentation site (the maintained, authoritative docs) |
 | `apps/windows-installer` | Windows installer (Tauri) |
-| `docs` | Architecture notes, release guides, reference material |
-| `packages/*` | Shared packages: types, voice-ai, desktop-native-apis, functions, pricing, UI, utilities, config, shared-fonts, native pill crates |
+| `docs` | Loose architecture notes, release guides, and historical reference material |
+| `packages/*` | Shared packages: types, utilities, voice-ai, agent, desktop-native-apis, desktop-utils, firemix, shared-fonts, eslint-config, typescript-config, plus the native pill and `rust_transcription` sidecar crates |
 | `scripts` | Automation and helper scripts |
 | `marketing` | Marketing site assets (fonts, images, vendor scripts) |
 
@@ -67,8 +68,8 @@ SQLite, Whisper models, or external services
   XChaCha20-Poly1305. Rotatable in Settings.
 - **Personal dictionary:** Custom names, jargon, and shorthand remembered
   across sessions.
-- **Cross-platform:** Native builds for macOS (Apple silicon + Intel), Windows,
-  and Linux (APT, RPM, AppImage).
+- **Cross-platform:** Native builds for macOS (Apple silicon + Intel, universal),
+  Windows (NSIS/MSI), and Linux (`.deb` and AppImage).
 
 ## API Keys & Configuration
 
@@ -92,7 +93,8 @@ pnpm run format        # Prettier format (ts, tsx, md)
 ## State Management
 
 Single Zustand store with Immer. Actions compose pure utility functions and
-call into repos. Repos abstract local (SQLite) vs remote persistence.
+call into repos. In this build repos resolve to local SQLite storage and local
+or API-backed AI providers.
 
 ## Important Patterns
 

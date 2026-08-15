@@ -1,5 +1,28 @@
 # Local Model Integration Guide
 
+> **Status: partially outdated.** This document was written around an earlier,
+> in-process `whisper-rs` design that the app no longer uses. The current
+> local-transcription architecture is the **`packages/rust_transcription`
+> sidecar** — a separate loopback HTTP process built on whisper.cpp (GGML) and
+> ONNX Runtime (Parakeet/Canary), managed from
+> `apps/desktop/src/sidecars/`. For the accurate, maintained reference, start
+> with:
+>
+> - `apps/docs/src/content/docs/development/transcription-sidecar.md`
+> - `apps/docs/src/content/docs/configuration/local-models.md`
+> - `apps/docs/src/content/docs/reference/local-models.md`
+> - `packages/rust_transcription/src/models.rs` (the real model enum, slugs,
+>   filenames, and download URLs)
+>
+> The sections below are kept as background. Where they contradict the sidecar
+> docs (for example, "embedded in-process Whisper" or `platform/whisper.rs`),
+> the sidecar docs win. Concretely: there is no
+> `src-tauri/src/platform/whisper.rs`, no in-process `WhisperTranscriber`, and
+> no model download/transcriber initialized in `app.rs` at startup. Models are
+> stored under the app-data `transcription-models/` directory (with a one-time
+> migration from the old `models/` directory), and downloads/validation go
+> through the sidecar.
+
 This guide explains how to add a new locally-run model to the mausVoice desktop app. It covers the complete flow from UI settings to Rust inference, and explains how to adapt the patterns for different model types.
 
 ## Overview
@@ -15,7 +38,7 @@ Repository Layer (TypeScript)
        ↓
 Tauri Commands (Rust)          ─or─    External Service (Ollama, etc.)
        ↓
-Platform Layer (whisper.rs, models.rs)
+Sidecar (packages/rust_transcription)  ──  system/models.rs, system/paths.rs
 ```
 
 ## Model Integration Patterns
@@ -226,22 +249,11 @@ Models are stored in the platform-specific app data directory:
 - **macOS**: `~/Library/Application Support/mausVoice/transcription-models/`
 - **Windows**: `C:\Users\{user}\AppData\Roaming\mausVoice\transcription-models\`
 
-On startup, files from the former `models/` directory are moved into `transcription-models/` if the destination does not already contain the same filename. This keeps existing downloads available without downloading them again.
-
-Path helpers in `src-tauri/src/system/paths.rs`:
-
-```rust
-pub fn models_dir(app: &AppHandle) -> Result<PathBuf, String> {
-    let app_data = app.path().app_data_dir()?;
-    Ok(app_data.join("models"))
-}
-
-pub fn whisper_model_path(app: &AppHandle, size: WhisperModelSize) -> Result<PathBuf, String> {
-    Ok(models_dir(app)?.join(size.filename()))
-}
-```
+On startup, files from the former `models/` directory are moved into `transcription-models/` (one-time migration). The path helpers live in `src-tauri/src/system/paths.rs` (`MODELS_DIR_NAME = "transcription-models"`). The authoritative model enum (GGML whisper.cpp sizes plus ONNX Parakeet/Canary), filenames, and download URLs live in `packages/rust_transcription/src/models.rs`; downloads and validation run in the sidecar, not in the Tauri process.
 
 ## Step 3: Create the Inference Layer
+
+> **Outdated.** There is no `src-tauri/src/platform/whisper.rs` in the current tree. Inference runs in the `packages/rust_transcription` sidecar (whisper.cpp for GGML, ONNX Runtime for Parakeet/Canary), not in the Tauri process. Keep the snippet below as background for an in-process design only; see the top-of-file pointers for the real implementation.
 
 ### Location: `src-tauri/src/platform/whisper.rs`
 
@@ -337,6 +349,8 @@ In `src-tauri/src/app.rs`, add the command to the invoke handler:
 ```
 
 ## Step 5: Initialize on App Startup
+
+> **Outdated.** The app does not download a model or build an in-process transcriber at startup. Model downloads and validation happen through the sidecar on demand (from the Settings panel or when a missing model is selected). The snippet below describes the old design.
 
 ### Location: `src-tauri/src/app.rs`
 
@@ -988,24 +1002,26 @@ Is the model core functionality that must work offline?
 ### File Locations Summary
 
 **Rust (Embedded Models)**
-| Purpose | Location |
-|---------|----------|
-| Model metadata & download | `src-tauri/src/system/models.rs` |
-| Model storage paths | `src-tauri/src/system/paths.rs` |
-| Inference implementation | `src-tauri/src/platform/whisper.rs` |
-| Tauri commands | `src-tauri/src/commands.rs` |
-| App initialization | `src-tauri/src/app.rs` |
-| Child process dispatch | `src-tauri/src/main.rs` |
+
+| Purpose                   | Location                            |
+| ------------------------- | ----------------------------------- |
+| Model metadata & download | `src-tauri/src/system/models.rs`    |
+| Model storage paths       | `src-tauri/src/system/paths.rs`     |
+| Inference implementation  | `src-tauri/src/platform/whisper.rs` |
+| Tauri commands            | `src-tauri/src/commands.rs`         |
+| App initialization        | `src-tauri/src/app.rs`              |
+| Child process dispatch    | `src-tauri/src/main.rs`             |
 
 **TypeScript (All Patterns)**
-| Purpose | Location |
-|---------|----------|
-| Repository interfaces | `src/repos/*.repo.ts` |
-| Repository selection | `src/repos/index.ts` |
-| State definitions | `src/state/settings.state.ts` |
-| State actions | `src/actions/user.actions.ts` |
-| Settings UI | `src/components/settings/*.tsx` |
-| GPU hooks | `src/hooks/gpu.hooks.ts` |
+
+| Purpose               | Location                        |
+| --------------------- | ------------------------------- |
+| Repository interfaces | `src/repos/*.repo.ts`           |
+| Repository selection  | `src/repos/index.ts`            |
+| State definitions     | `src/state/settings.state.ts`   |
+| State actions         | `src/actions/user.actions.ts`   |
+| Settings UI           | `src/components/settings/*.tsx` |
+| GPU hooks             | `src/hooks/gpu.hooks.ts`        |
 
 ### Existing Implementations to Reference
 

@@ -7,13 +7,13 @@ sidebar:
 
 mausVoice resolves platform folders through Tauri; it does not hard-code one cross-platform home path.
 
-| Data                  | Resolved location                          | Notes                                                         |
-| --------------------- | ------------------------------------------ | ------------------------------------------------------------- |
-| SQLite                | `mausvoice.db` in the app config directory | May have `mausvoice.db-wal` and `mausvoice.db-shm` companions |
-| Local models          | `transcription-models/` under app data     | Managed GGML downloads shared by CPU/GPU sidecars             |
-| Saved dictation audio | `transcription-audio/` under app data      | Mono WAV snapshots linked from History                        |
-| General files         | `storage/` under app data                  | App-managed storage repository                                |
-| Logs                  | Tauri's app log directory                  | Includes runtime and startup-diagnostics logs                 |
+| Data                  | Resolved location                          | Notes                                                                                                                      |
+| --------------------- | ------------------------------------------ | -------------------------------------------------------------------------------------------------------------------------- |
+| SQLite                | `mausvoice.db` in the app config directory | May have `mausvoice.db-wal` and `mausvoice.db-shm` companions                                                              |
+| Local models          | `transcription-models/` under app data     | Managed whisper.cpp GGML and ONNX Parakeet/Canary downloads; files from the old `models/` directory are migrated here once |
+| Saved dictation audio | `transcription-audio/` under app data      | Mono WAV snapshots linked from History                                                                                     |
+| General files         | `storage/` under app data                  | App-managed storage repository                                                                                             |
+| Logs                  | Tauri's app log directory                  | Includes runtime and startup-diagnostics logs                                                                              |
 
 The exact parent differs by OS, Tauri's application identifier, and build flavor. Production uses `com.mausinc.desktop`; local development uses `com.mausinc.desktop.local`, so a dev run deliberately has a separate profile. On upgrade, files in the legacy app-data `models/` directory are moved into `transcription-models/` before the sidecars start, without overwriting files already present. The Diagnostics export includes generated diagnostics information and files from the log directory, but not the SQLite database, models, or arbitrary app-data files.
 

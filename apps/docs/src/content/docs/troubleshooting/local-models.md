@@ -9,7 +9,7 @@ Start in **Settings → Processing → AI transcription → Local**. A usable ro
 
 ## Download or validation fails
 
-Use the row's **Delete** and **Download** actions rather than renaming files. Confirm Hugging Face is reachable, security software is not quarantining the sidecar or `.bin` file, and free space exceeds the displayed size. Downloads are polled for up to 45 minutes. An interrupted partial file should be replaced through the UI.
+Use the row's **Delete** and **Download** actions rather than renaming files. Confirm the model origin is reachable, security software is not quarantining the sidecar or model artifacts (`.bin` for Whisper, `.onnx`/companion files for Parakeet/Canary), and free space exceeds the displayed size. Downloads are polled for up to 45 minutes. An interrupted partial file should be replaced through the UI.
 
 ## No device appears
 

@@ -20,19 +20,21 @@ How to cut a release. One workflow, manual dispatch, nothing else.
 
 ### 1. Bump the version (if you haven't)
 
-Version lives in three files, and they must match the release:
+Version lives in two committed files, and the release workflow injects it into a
+third at build time:
 
 - `apps/desktop/package.json`
 - `apps/desktop/src-tauri/tauri.conf.json`
-- `apps/desktop/src-tauri/tauri.prod.conf.json`
+- `apps/desktop/src-tauri/tauri.prod.conf.json` (no `version` field in the
+  repo; the "Sync release version" step writes one during the release job)
 
-The workflow also accepts a version input, but bumping the files first keeps
-the repo honest (the tag, the release title, and the built binaries should
-agree).
+The workflow also accepts a version input, but bumping the two committed files
+first keeps the repo honest (the tag, the release title, and the built binaries
+should agree).
 
 ```bash
-# after editing the three files
-git add apps/desktop/package.json apps/desktop/src-tauri/tauri.conf.json apps/desktop/src-tauri/tauri.prod.conf.json
+# after editing the two files
+git add apps/desktop/package.json apps/desktop/src-tauri/tauri.conf.json
 git commit -m "chore: bump desktop version to 0.1.3"
 git push
 ```

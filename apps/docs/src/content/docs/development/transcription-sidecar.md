@@ -16,7 +16,7 @@ cargo build --manifest-path packages/rust_transcription/Cargo.toml --release --b
 
 Routes cover health, device enumeration, model download/job status/delete/validation, one-shot transcription, and create/chunk/finalize/delete session operations. Session chunks are raw little-endian Float32 bytes. “Streaming” here means chunked transport and in-memory buffering: inference runs at finalization, after finite samples are resampled to 16 kHz. Idle session buffers older than ten minutes are evicted.
 
-Model IDs are `tiny`, `base`, `small`, `medium`, `turbo`, and `large`. URLs default to the repositories recorded in `models.rs` and can be overridden with `RUST_TRANSCRIPTION_MODEL_URL_<ID>`. The desktop passes the app-data `transcription-models/` directory to both sidecars; standalone binaries default to `./models`. Host, port, and model directory also have environment overrides. Never bind the desktop-managed service to a public interface.
+Model IDs are the six whisper.cpp sizes (`tiny`, `base`, `small`, `medium`, `turbo`, `large`) plus the ONNX Runtime models `parakeet-ctc-0.6b`, `parakeet-tdt-0.6b`, and `canary-1b` (each with a few shorter aliases). URLs default to the repositories recorded in `models.rs` and can be overridden with `RUST_TRANSCRIPTION_MODEL_URL_<ID>`. Host, port, and model directory also have environment overrides. Never bind the desktop-managed service to a public interface.
 
 Run the binary-level integration suite with:
 

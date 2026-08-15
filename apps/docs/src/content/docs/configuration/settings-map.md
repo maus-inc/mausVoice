@@ -31,4 +31,4 @@ A credential can appear in more than one task only when its provider supports th
 
 **Terms & conditions** opens the repository's AGPL license. **Input permissions** runs a platform-specific helper: uinput/udev setup on Linux, administrator-assisted input capture on Windows, and Accessibility plus Microphone requests on macOS. Windows also offers **Always run as administrator**, which takes effect on the next launch.
 
-The **Danger zone** contains **Clear local data**. It clears eight SQLite tables but is not a full uninstall or filesystem wipe; read the confirmation dialog and the [clear-local-data guide](../clear-local-data/) first.
+The **Danger zone** contains **Clear local data**. It clears eleven SQLite tables but is not a full uninstall or filesystem wipe; read the confirmation dialog and the [clear-local-data guide](../clear-local-data/) first.
