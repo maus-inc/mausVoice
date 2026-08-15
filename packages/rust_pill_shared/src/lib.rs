@@ -358,6 +358,19 @@ pub fn ring_release_drift(release_elapsed: f64) -> f64 {
     RING_RELEASE_DRIFT * ease_out_cubic(release_elapsed / LONG_PRESS_RING_FADE)
 }
 
+/// Resolves the hover flag for one pointer sample.
+///
+/// `probed` is the raw hit test of the cursor against the pill. While a press
+/// or drag owns the pointer that hit test must be ignored: the gesture has
+/// pointer capture, and dragging quickly outruns the window, so the cursor
+/// lands outside the pill's last painted rect for a frame or two. Trusting it
+/// would collapse the pill to its unhovered size mid-drag and then re-expand
+/// on release. A gesture can only begin on the pill, so while it is held the
+/// pill is by definition still under the pointer.
+pub fn resolve_hover(probed: bool, gesture_active: bool) -> bool {
+    gesture_active || probed
+}
+
 /// Normalised progress of the arm-confirmation pulse, in `0..=1`.
 ///
 /// `arm_pulse` is seconds since arming, or negative when no pulse is running;
@@ -942,5 +955,19 @@ mod tests {
         advance_ring(&mut a, RingTick { held: true, dragging: false, progress: 0.5, delta_seconds: -1.0 }, 0.12);
         assert!(a.press_elapsed >= 0.0);
         assert!((0.0..=1.0).contains(&a.alpha));
+    }
+
+    #[test]
+    fn hover_survives_a_drag_that_outruns_the_window() {
+        // The raw hit test misses while the pointer is captured, but the pill
+        // must stay hovered so it does not collapse mid-gesture.
+        assert!(resolve_hover(false, true));
+        assert!(resolve_hover(true, true));
+    }
+
+    #[test]
+    fn hover_follows_the_cursor_once_the_gesture_ends() {
+        assert!(!resolve_hover(false, false));
+        assert!(resolve_hover(true, false));
     }
 }

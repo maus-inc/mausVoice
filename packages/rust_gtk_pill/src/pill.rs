@@ -239,7 +239,14 @@ pub fn run(receiver: Receiver<InMessage>) {
     let state_motion = state.clone();
     window.connect_motion_notify_event(move |_, event| {
         let (mx, my) = event.position();
-        let is_over_pill = input::is_over_pill_area(&state_motion, mx, my);
+        // A held press or drag owns the pointer, so the hit test cannot be
+        // trusted: dragging moves the window and easily outruns it.
+        let gesture_active =
+            state_motion.dragging.get() || state_motion.long_press_active.get();
+        let is_over_pill = rust_pill_shared::resolve_hover(
+            input::is_over_pill_area(&state_motion, mx, my),
+            gesture_active,
+        );
         let was_hovered = state_motion.hovered.get();
         if is_over_pill != was_hovered {
             state_motion.hovered.set(is_over_pill);
@@ -273,7 +280,11 @@ pub fn run(receiver: Receiver<InMessage>) {
 
     let state_leave = state.clone();
     window.connect_leave_notify_event(move |_, event| {
-        if event.mode() == gdk::CrossingMode::Normal {
+        // Dragging the pill drags its window out from under the pointer, so
+        // mid-gesture crossings are an artefact, not the user leaving.
+        let gesture_active =
+            state_leave.dragging.get() || state_leave.long_press_active.get();
+        if event.mode() == gdk::CrossingMode::Normal && !gesture_active {
             state_leave.hovered.set(false);
             ipc::send(&OutMessage::Hover { hovered: false });
         }
@@ -349,6 +360,15 @@ pub fn run(receiver: Receiver<InMessage>) {
         if !was_dragging {
             let (x, y) = event.position();
             input::handle_click(&state_click, x, y);
+        }
+
+        // Hover was pinned for the duration of the gesture; settle it against
+        // the cursor's real position now that the pointer is free.
+        let (rx, ry) = event.position();
+        let now_hovered = input::is_over_pill_area(&state_click, rx, ry);
+        if now_hovered != state_click.hovered.get() {
+            state_click.hovered.set(now_hovered);
+            ipc::send(&OutMessage::Hover { hovered: now_hovered });
         }
         glib::Propagation::Proceed
     });

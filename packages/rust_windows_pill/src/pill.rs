@@ -296,6 +296,10 @@ unsafe extern "system" fn wndproc(hwnd: HWND, msg: u32, wparam: WPARAM, lparam: 
                     if !was_dragging {
                         input::handle_click(state, x, y);
                     }
+                    // Hover was pinned for the duration of the gesture; settle
+                    // it now that the pointer is free rather than waiting for
+                    // the next cursor tick.
+                    check_hover(hwnd, state);
                 }
             });
             LRESULT(0)
@@ -960,7 +964,12 @@ fn check_hover(hwnd: HWND, state: &PillState) {
         false
     };
 
-    let new_hovered = in_pill || in_tooltip || in_panel;
+    // A held press or drag owns the pointer, so the hit tests above cannot be
+    // trusted: dragging moves the window and easily outruns it, which would
+    // collapse the pill to its unhovered size mid-gesture.
+    let gesture_active = state.dragging.get() || state.long_press_active.get();
+    let new_hovered =
+        rust_pill_shared::resolve_hover(in_pill || in_tooltip || in_panel, gesture_active);
     let was_hovered = state.hovered.get();
 
     if new_hovered != was_hovered {

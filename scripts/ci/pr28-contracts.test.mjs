@@ -203,6 +203,30 @@ describe("PR28 ring-alpha render-loop policy", () => {
     }
   });
 
+  it("keeps the pill hovered while a press or drag owns the pointer", () => {
+    // Dragging moves the pill's own window, so a fast drag outruns it and the
+    // cursor hit test misses. Trusting that would collapse the pill to its
+    // unhovered size mid-gesture and re-expand it on release.
+    assert.match(source.sharedPill, /pub fn resolve_hover/);
+    assert.match(source.sharedPill, /hover_survives_a_drag_that_outruns_the_window/);
+    assert.match(source.sharedPill, /hover_follows_the_cursor_once_the_gesture_ends/);
+
+    for (const pill of [source.gtkPill, source.macPill, source.windowsPill]) {
+      assert.match(pill, /resolve_hover/);
+      assert.match(
+        pill,
+        /dragging\.get\(\) \|\| [\w.]*long_press_active\.get\(\)/,
+      );
+    }
+
+    // The pin must be released when the gesture ends, or a drag finishing away
+    // from the pill would leave it stuck open. macOS and GTK re-probe on
+    // release; Windows re-checks there and on its cursor tick.
+    assert.match(source.macApp, /update_hover\(ctx\.view, ctx\);/);
+    assert.match(source.gtkPill, /let now_hovered = input::is_over_pill_area/);
+    assert.match(source.windowsPill, /check_hover\(hwnd, state\);/);
+  });
+
   it("confirms the arm with a pulse that survives the ring's own alpha", () => {
     for (const pill of [source.gtkPill, source.macPill, source.windowsPill]) {
       assert.match(pill, /arm_pulse\.set\(0\.0\)/);

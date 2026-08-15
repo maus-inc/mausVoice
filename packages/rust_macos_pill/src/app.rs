@@ -211,6 +211,12 @@ extern "C" fn mouse_entered(_this: &Object, _sel: Sel, _event: id) {}
 
 extern "C" fn mouse_exited(_this: &Object, _sel: Sel, _event: id) {
     with_ctx(|ctx| {
+        // Dragging the pill drags its window, so the pointer routinely crosses
+        // the tracking area's edge mid-gesture. Honouring that exit would
+        // collapse the pill under the user's own drag.
+        if ctx.state.dragging.get() || ctx.state.long_press_active.get() {
+            return;
+        }
         if ctx.state.hovered.get() {
             ctx.state.hovered.set(false);
             ipc::send(&OutMessage::Hover { hovered: false });
@@ -244,6 +250,11 @@ extern "C" fn mouse_up(_this: &Object, _sel: Sel, event: id) {
                 input::handle_click(&ctx.state, view_loc.x, view_loc.y);
             }
         }
+
+        // Hover was pinned for the duration of the gesture; now that the
+        // pointer is free, settle it against the cursor's real position so a
+        // drag ending away from the pill collapses instead of staying open.
+        update_hover(ctx.view, ctx);
     });
 }
 
@@ -535,13 +546,19 @@ fn perform_tick() {
 // ── Hover detection ──────────────────────────────────────────────
 
 fn update_hover(view: id, ctx: &AppContext) {
-    let new_hovered = unsafe {
+    let probed = unsafe {
         let window: id = msg_send![view, window];
         let mouse_screen: NSPoint = msg_send![class!(NSEvent), mouseLocation];
         let mouse_win: NSPoint = msg_send![window, convertPointFromScreen:mouse_screen];
         let mouse_view: NSPoint = msg_send![view, convertPoint:mouse_win fromView:nil];
         input::is_in_hover_zone(&ctx.state, mouse_view.x, mouse_view.y)
     };
+
+    // A held press or drag owns the pointer, so the hit test above cannot be
+    // trusted until it ends.
+    let gesture_active =
+        ctx.state.dragging.get() || ctx.state.long_press_active.get();
+    let new_hovered = rust_pill_shared::resolve_hover(probed, gesture_active);
 
     let was_hovered = ctx.state.hovered.get();
     if new_hovered != was_hovered {
