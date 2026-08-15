@@ -48,17 +48,15 @@ export default defineConfig(async () => {
       {
         name: "tauri-strip-crossorigin",
         transformIndexHtml(html) {
-          // Match only real <script>/<link> opening tags (require whitespace,
-          // slash, or ">" after the tag name so <script-foo> is ignored), then
-          // drop both bare and valued crossorigin attributes. The pattern is
-          // linear (no nested quantifiers) to avoid super-linear backtracking.
+          // Strip crossorigin from real <script>/<link> opening tags only. The
+          // `(?=[\s/>])` after the tag name ignores <script-foo>, and the
+          // trailing `(?=[\s/>])` keeps attribute-like substrings (e.g.
+          // crossoriginness) untouched. One linear pattern (no nested
+          // quantifiers, no alternation) keeps SonarCloud's complexity and
+          // backtracking checks quiet.
           return html.replace(
-            /<(?:script|link)(?=[\s/>])[^>]*>/gi,
-            (tag) =>
-              tag.replace(
-                /\s+crossorigin(?:\s*=\s*(?:"[^"]*"|'[^']*'|[^\s>]+))?(?=[\s/>])/i,
-                "",
-              ),
+            /((?:<(?:script|link)(?=[\s/>])[^>]*?))\scrossorigin(=[^\s>]*)?(?=[\s/>])/gi,
+            "$1",
           );
         },
       },
