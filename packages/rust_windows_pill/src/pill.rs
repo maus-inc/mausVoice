@@ -172,6 +172,7 @@ pub fn run(receiver: Receiver<InMessage>) {
         release_elapsed: Cell::new(LONG_PRESS_RING_FADE),
         arm_t: Cell::new(0.0),
         arm_pulse: Cell::new(-1.0),
+        pointer_down: Cell::new(false),
         ring_points: RefCell::new(Vec::new()),
         dirty: Cell::new(true),
     };
@@ -270,6 +271,7 @@ unsafe extern "system" fn wndproc(hwnd: HWND, msg: u32, wparam: WPARAM, lparam: 
                     }
                     // Start long-press tracking if clicking on the pill body
                     if input::is_on_pill_at(state, x, y) {
+                        state.pointer_down.set(true);
                         state.long_press_active.set(true);
                         state.long_press_elapsed.set(0.0);
                         state.long_press_start_x.set(x);
@@ -292,6 +294,8 @@ unsafe extern "system" fn wndproc(hwnd: HWND, msg: u32, wparam: WPARAM, lparam: 
                     // Cancel any in-progress long press
                     state.long_press_active.set(false);
                     state.long_press_elapsed.set(0.0);
+                    // The button is up, so hover stops being pinned.
+                    state.pointer_down.set(false);
                     // Only fire click if the user wasn't dragging
                     if !was_dragging {
                         input::handle_click(state, x, y);
@@ -312,6 +316,8 @@ unsafe extern "system" fn wndproc(hwnd: HWND, msg: u32, wparam: WPARAM, lparam: 
                 if let Some(ref state) = *s.borrow() {
                     state.long_press_active.set(false);
                     state.long_press_elapsed.set(0.0);
+                    // The gesture is over, so hover stops being pinned.
+                    state.pointer_down.set(false);
                     // The capture is already gone, so only persist the position.
                     let _ = end_drag(hwnd, state, true);
                 }
@@ -964,12 +970,13 @@ fn check_hover(hwnd: HWND, state: &PillState) {
         false
     };
 
-    // A held press or drag owns the pointer, so the hit tests above cannot be
-    // trusted: dragging moves the window and easily outruns it, which would
-    // collapse the pill to its unhovered size mid-gesture.
-    let gesture_active = state.dragging.get() || state.long_press_active.get();
-    let new_hovered =
-        rust_pill_shared::resolve_hover(in_pill || in_tooltip || in_panel, gesture_active);
+    // A held button owns the pointer, so the hit tests above cannot be trusted:
+    // dragging moves the window and easily outruns it, which would collapse the
+    // pill to its unhovered size mid-gesture.
+    let new_hovered = rust_pill_shared::resolve_hover(
+        in_pill || in_tooltip || in_panel,
+        state.pointer_down.get(),
+    );
     let was_hovered = state.hovered.get();
 
     if new_hovered != was_hovered {
@@ -1261,7 +1268,7 @@ fn end_drag(hwnd: HWND, state: &PillState, persist_position: bool) -> bool {
 /// state each tick guarantees a released button can never leave the pill stuck
 /// to the cursor — the exact "pill keeps moving after I let go" failure.
 fn tick_drag_release_fallback(hwnd: HWND, state: &PillState) {
-    if !state.dragging.get() && !state.long_press_active.get() {
+    if !state.dragging.get() && !state.long_press_active.get() && !state.pointer_down.get() {
         return;
     }
 
@@ -1282,9 +1289,11 @@ fn tick_drag_release_fallback(hwnd: HWND, state: &PillState) {
         return;
     }
 
-    // The physical button is up, so any gesture in flight is finished.
+    // The physical button is up, so any gesture in flight is finished. This is
+    // also the backstop that releases the hover pin if a release event is lost.
     state.long_press_active.set(false);
     state.long_press_elapsed.set(0.0);
+    state.pointer_down.set(false);
     let _ = end_drag(hwnd, state, true);
 }
 

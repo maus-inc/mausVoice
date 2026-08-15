@@ -203,28 +203,60 @@ describe("PR28 ring-alpha render-loop policy", () => {
     }
   });
 
-  it("keeps the pill hovered while a press or drag owns the pointer", () => {
+  it("keeps the pill hovered while the button is held", () => {
     // Dragging moves the pill's own window, so a fast drag outruns it and the
     // cursor hit test misses. Trusting that would collapse the pill to its
     // unhovered size mid-gesture and re-expand it on release.
     assert.match(source.sharedPill, /pub fn resolve_hover/);
     assert.match(source.sharedPill, /hover_survives_a_drag_that_outruns_the_window/);
-    assert.match(source.sharedPill, /hover_follows_the_cursor_once_the_gesture_ends/);
+    assert.match(
+      source.sharedPill,
+      /hover_follows_the_cursor_once_the_button_is_released/,
+    );
 
-    for (const pill of [source.gtkPill, source.macPill, source.windowsPill]) {
-      assert.match(pill, /resolve_hover/);
-      assert.match(
+    // The gate must be `pointer_down`, NOT the gesture flags. Moving past the
+    // cancel threshold before the hold completes clears `long_press_active`
+    // without setting `dragging`, so a gesture-keyed gate drops the pin while
+    // the button is still down — the "drag across without releasing" collapse.
+    assert.match(
+      source.sharedPill,
+      /hover_holds_when_a_cancelled_long_press_becomes_a_plain_drag/,
+    );
+    assert.match(source.sharedPill, /pub fn resolve_hover\(probed: bool, pointer_down: bool\)/);
+
+    for (const [pill, state] of [
+      [source.gtkPill, source.gtkState],
+      [source.macPill, source.macState],
+      [source.windowsPill, source.windowsState],
+    ]) {
+      assert.match(state, /pointer_down: Cell<bool>/);
+      assert.match(pill, /resolve_hover\(/);
+      assert.match(pill, /pointer_down\.get\(\)/);
+      assert.match(pill, /pointer_down\.set\(true\)/);
+      assert.match(pill, /pointer_down\.set\(false\)/);
+      // A gesture-flag gate must not creep back in.
+      assert.doesNotMatch(
         pill,
-        /dragging\.get\(\) \|\| [\w.]*long_press_active\.get\(\)/,
+        /resolve_hover\([\s\S]{0,80}?gesture_active/,
       );
     }
 
-    // The pin must be released when the gesture ends, or a drag finishing away
-    // from the pill would leave it stuck open. macOS and GTK re-probe on
-    // release; Windows re-checks there and on its cursor tick.
+    // The pin must be released when the button comes up, or a drag finishing
+    // away from the pill would leave it stuck open.
     assert.match(source.macApp, /update_hover\(ctx\.view, ctx\);/);
     assert.match(source.gtkPill, /let now_hovered = input::is_over_pill_area/);
     assert.match(source.windowsPill, /check_hover\(hwnd, state\);/);
+
+    // A release event can be missed (stolen grab, locked session), so every
+    // platform polls the real button state as a backstop.
+    assert.match(source.macApp, /fn release_pointer_if_button_up/);
+    assert.match(source.macApp, /pressedMouseButtons/);
+    assert.match(source.gtkPill, /BUTTON1_MASK/);
+    assert.match(source.windowsPill, /fn tick_drag_release_fallback/);
+    assert.match(
+      source.windowsPill,
+      /!state\.dragging\.get\(\) && !state\.long_press_active\.get\(\) && !state\.pointer_down\.get\(\)/,
+    );
   });
 
   it("confirms the arm with a pulse that survives the ring's own alpha", () => {

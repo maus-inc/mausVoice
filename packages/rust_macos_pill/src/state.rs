@@ -251,6 +251,12 @@ pub(crate) struct PillState {
     // the expanding confirmation halo.
     pub(crate) arm_pulse: Cell<f64>,
 
+    // True from press until release, regardless of whether the long press or
+    // drag survived. The move threshold cancels `long_press_active` before
+    // `dragging` arms, so neither flag alone can answer "is the button still
+    // down?" — which is what hover needs to stay pinned.
+    pub(crate) pointer_down: Cell<bool>,
+
     // Scratch buffer for the evenly-resampled ring perimeter. Owned by the
     // state so the render path reuses one allocation across frames.
     pub(crate) ring_points: RefCell<Vec<(f64, f64, f64)>>,

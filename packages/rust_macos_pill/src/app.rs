@@ -185,6 +185,7 @@ extern "C" fn mouse_down(_this: &Object, _sel: Sel, event: id) {
             let view_loc = convert_point_to_view(_this as *const _ as *mut _, loc);
             // Start long-press tracking if clicking on the pill body
             if input::is_on_pill_at(&ctx.state, view_loc.x, view_loc.y) {
+                ctx.state.pointer_down.set(true);
                 ctx.state.long_press_active.set(true);
                 ctx.state.long_press_elapsed.set(0.0);
                 ctx.state.long_press_start_x.set(view_loc.x);
@@ -214,7 +215,7 @@ extern "C" fn mouse_exited(_this: &Object, _sel: Sel, _event: id) {
         // Dragging the pill drags its window, so the pointer routinely crosses
         // the tracking area's edge mid-gesture. Honouring that exit would
         // collapse the pill under the user's own drag.
-        if ctx.state.dragging.get() || ctx.state.long_press_active.get() {
+        if ctx.state.pointer_down.get() {
             return;
         }
         if ctx.state.hovered.get() {
@@ -241,6 +242,8 @@ extern "C" fn mouse_up(_this: &Object, _sel: Sel, event: id) {
         // Cancel any in-progress long press
         ctx.state.long_press_active.set(false);
         ctx.state.long_press_elapsed.set(0.0);
+        // The button is up, so hover stops being pinned.
+        ctx.state.pointer_down.set(false);
 
         // Only fire click if the user wasn't dragging
         if !was_dragging {
@@ -487,6 +490,11 @@ fn perform_tick() {
             return;
         }
 
+        // A mouseUp can be missed (another app steals the event, the session
+        // locks). Poll the real button state so a released button can never
+        // leave hover pinned open — the same backstop the Windows pill uses.
+        release_pointer_if_button_up(&ctx.state);
+
         // Compute hover from actual mouse position over pill area
         update_hover(ctx.view, ctx);
 
@@ -545,6 +553,27 @@ fn perform_tick() {
 
 // ── Hover detection ──────────────────────────────────────────────
 
+/// Clears the pointer-down pin if the physical button is no longer held.
+///
+/// `mouseUp:` is not guaranteed to arrive — another process can steal the
+/// event, or the session can lock mid-gesture. Without this backstop a lost
+/// release would pin hover open until the next click.
+fn release_pointer_if_button_up(state: &PillState) {
+    if !state.pointer_down.get() {
+        return;
+    }
+    // Bit 0 is the primary button; NSEvent reports the physical state, so this
+    // is independent of any left/right swap.
+    let buttons: u64 = unsafe { msg_send![class!(NSEvent), pressedMouseButtons] };
+    if buttons & 1 != 0 {
+        return;
+    }
+    state.pointer_down.set(false);
+    state.long_press_active.set(false);
+    state.long_press_elapsed.set(0.0);
+    state.dragging.set(false);
+}
+
 fn update_hover(view: id, ctx: &AppContext) {
     let probed = unsafe {
         let window: id = msg_send![view, window];
@@ -554,11 +583,10 @@ fn update_hover(view: id, ctx: &AppContext) {
         input::is_in_hover_zone(&ctx.state, mouse_view.x, mouse_view.y)
     };
 
-    // A held press or drag owns the pointer, so the hit test above cannot be
-    // trusted until it ends.
-    let gesture_active =
-        ctx.state.dragging.get() || ctx.state.long_press_active.get();
-    let new_hovered = rust_pill_shared::resolve_hover(probed, gesture_active);
+    // A held button owns the pointer, so the hit test above cannot be trusted
+    // until it is released.
+    let new_hovered =
+        rust_pill_shared::resolve_hover(probed, ctx.state.pointer_down.get());
 
     let was_hovered = ctx.state.hovered.get();
     if new_hovered != was_hovered {
@@ -1360,6 +1388,7 @@ unsafe fn setup(receiver: Receiver<InMessage>, embedded: bool) {
         release_elapsed: Cell::new(LONG_PRESS_RING_FADE),
         arm_t: Cell::new(0.0),
         arm_pulse: Cell::new(-1.0),
+        pointer_down: Cell::new(false),
         ring_points: RefCell::new(Vec::new()),
     });
 

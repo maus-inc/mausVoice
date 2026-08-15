@@ -182,6 +182,7 @@ pub fn run(receiver: Receiver<InMessage>) {
         release_elapsed: Cell::new(LONG_PRESS_RING_FADE),
         arm_t: Cell::new(0.0),
         arm_pulse: Cell::new(-1.0),
+        pointer_down: Cell::new(false),
         ring_points: RefCell::new(Vec::new()),
         drag_cursor_x: Cell::new(0.0),
         drag_cursor_y: Cell::new(0.0),
@@ -239,13 +240,24 @@ pub fn run(receiver: Receiver<InMessage>) {
     let state_motion = state.clone();
     window.connect_motion_notify_event(move |_, event| {
         let (mx, my) = event.position();
-        // A held press or drag owns the pointer, so the hit test cannot be
-        // trusted: dragging moves the window and easily outruns it.
-        let gesture_active =
-            state_motion.dragging.get() || state_motion.long_press_active.get();
+        // A button-release event is not guaranteed to arrive (a grab can be
+        // broken by another client). The motion event carries the live button
+        // mask, so use it to clear a stale pin before reading it — otherwise a
+        // lost release would keep hover pinned open until the next click.
+        if state_motion.pointer_down.get()
+            && !event.state().contains(gdk::ModifierType::BUTTON1_MASK)
+        {
+            state_motion.pointer_down.set(false);
+            state_motion.long_press_active.set(false);
+            state_motion.long_press_elapsed.set(0.0);
+            state_motion.dragging.set(false);
+        }
+
+        // A held button owns the pointer, so the hit test cannot be trusted:
+        // dragging moves the window and easily outruns it.
         let is_over_pill = rust_pill_shared::resolve_hover(
             input::is_over_pill_area(&state_motion, mx, my),
-            gesture_active,
+            state_motion.pointer_down.get(),
         );
         let was_hovered = state_motion.hovered.get();
         if is_over_pill != was_hovered {
@@ -282,9 +294,7 @@ pub fn run(receiver: Receiver<InMessage>) {
     window.connect_leave_notify_event(move |_, event| {
         // Dragging the pill drags its window out from under the pointer, so
         // mid-gesture crossings are an artefact, not the user leaving.
-        let gesture_active =
-            state_leave.dragging.get() || state_leave.long_press_active.get();
-        if event.mode() == gdk::CrossingMode::Normal && !gesture_active {
+        if event.mode() == gdk::CrossingMode::Normal && !state_leave.pointer_down.get() {
             state_leave.hovered.set(false);
             ipc::send(&OutMessage::Hover { hovered: false });
         }
@@ -307,6 +317,7 @@ pub fn run(receiver: Receiver<InMessage>) {
         }
         if input::is_on_pill_at(&state_press, x, y) {
             state_press.x11_release_persisted.set(false);
+            state_press.pointer_down.set(true);
             state_press.long_press_active.set(true);
             state_press.long_press_elapsed.set(0.0);
             state_press.long_press_start_x.set(x);
@@ -351,6 +362,8 @@ pub fn run(receiver: Receiver<InMessage>) {
         state_click.dragging.set(false);
         state_click.long_press_active.set(false);
         state_click.long_press_elapsed.set(0.0);
+        // The button is up, so hover stops being pinned.
+        state_click.pointer_down.set(false);
         // Persist the Wayland draw offset so the pill stays where it was dropped.
         // (X11 re-centers in its own reposition loop via window move.)
         if was_dragging && state_click.backend.get() != Backend::X11 {
