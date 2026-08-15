@@ -58,8 +58,9 @@ describe("local-transcription-sidecar manager helpers", () => {
     expect(normalizeLocalWhisperModel("canary_1b")).toBe("canary-1b");
   });
 
-  it("defaults unknown model values to tiny", () => {
+  it("defaults unknown and unavailable model values to tiny", () => {
     expect(normalizeLocalWhisperModel("unknown")).toBe("tiny");
+    expect(normalizeLocalWhisperModel("hindi2hinglish")).toBe("tiny");
     expect(normalizeLocalWhisperModel(null)).toBe("tiny");
   });
 

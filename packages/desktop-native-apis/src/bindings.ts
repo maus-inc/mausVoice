@@ -600,8 +600,13 @@ async setPhase(phase: string) : Promise<Result<null, string>> {
     else return { status: "error", error: e  as any };
 }
 },
-async setPillVisibility(visibility: string) : Promise<void> {
-    await TAURI_INVOKE("set_pill_visibility", { visibility });
+async setPillVisibility(visibility: string) : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("set_pill_visibility", { visibility }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
 },
 /**
  * Sync the tray's pill-visibility label.

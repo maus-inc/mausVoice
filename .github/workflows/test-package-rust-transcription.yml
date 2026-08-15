@@ -74,7 +74,7 @@ jobs:
         run: |
           echo "CMAKE_TOOLCHAIN_FILE=$env:GITHUB_WORKSPACE\packages\rust_transcription\cmake\windows-ci-toolchain.cmake" >> $env:GITHUB_ENV
       - name: Run non-ignored integration tests
-        run: cargo test --locked --manifest-path packages/rust_transcription/Cargo.toml --test sidecar_integration -- --nocapture --test-threads=1
+        run: cargo test --manifest-path packages/rust_transcription/Cargo.toml --test sidecar_integration -- --nocapture --test-threads=1
 
       - name: Run ignored end-to-end integration tests
-        run: cargo test --locked --manifest-path packages/rust_transcription/Cargo.toml --test sidecar_integration -- --ignored --nocapture --test-threads=1
+        run: cargo test --manifest-path packages/rust_transcription/Cargo.toml --test sidecar_integration -- --ignored --nocapture --test-threads=1

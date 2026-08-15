@@ -137,64 +137,70 @@ describe("Groq Transcription Integration", () => {
   const audioPath = resolve(assetsDir, "transcript-0.wav");
   const expectedTextPath = resolve(assetsDir, "transcript-0.txt");
 
-  it("should transcribe audio with segment splitting and merging", async () => {
-    const apiKey = getGroqApiKey();
-    const repo = new TestGroqTranscribeAudioRepo(apiKey, {
-      segmentDurationSec: 20,
-      overlapDurationSec: 8, // step = 20 - 8 = 12s, with enough overlap for quality merging
-      batchChunkCount: 2,
-    });
+  it(
+    "should transcribe audio with segment splitting and merging",
+    { timeout: 120_000, retry: 2 },
+    async () => {
+      const apiKey = getGroqApiKey();
+      const repo = new TestGroqTranscribeAudioRepo(apiKey, {
+        segmentDurationSec: 20,
+        overlapDurationSec: 8, // step = 20 - 8 = 12s, with enough overlap for quality merging
+        batchChunkCount: 2,
+      });
 
-    const wavBuffer = readFileSync(audioPath);
-    const { samples, sampleRate } = parseWavFile(wavBuffer);
+      const wavBuffer = readFileSync(audioPath);
+      const { samples, sampleRate } = parseWavFile(wavBuffer);
 
-    const result = await repo.transcribeAudio({
-      samples,
-      sampleRate,
-    });
+      const result = await repo.transcribeAudio({
+        samples,
+        sampleRate,
+      });
 
-    console.log(`Segments processed: ${repo.segmentCount}`);
-    console.log(`Transcription: ${result.text}`);
+      console.log(`Segments processed: ${repo.segmentCount}`);
+      console.log(`Transcription: ${result.text}`);
 
-    // Verify multiple segments were processed (44s audio with 15s segments, 12s step)
-    // Expected: 0-15s, 12-27s, 24-39s, 36-44s = 4 segments
-    expect(repo.segmentCount).toBe(4);
+      // Verify multiple segments were processed (44s audio with 15s segments, 12s step)
+      // Expected: 0-15s, 12-27s, 24-39s, 36-44s = 4 segments
+      expect(repo.segmentCount).toBe(4);
 
-    // Verify we got text back
-    expect(result.text).toBeTruthy();
-    expect(result.text.length).toBeGreaterThan(100);
+      // Verify we got text back
+      expect(result.text).toBeTruthy();
+      expect(result.text.length).toBeGreaterThan(100);
 
-    // Verify metadata
-    expect(result.metadata?.transcriptionMode).toBe("api");
-    expect(result.metadata?.inferenceDevice).toBe("API • Groq");
+      // Verify metadata
+      expect(result.metadata?.transcriptionMode).toBe("api");
+      expect(result.metadata?.inferenceDevice).toBe("API • Groq");
 
-    // Load expected text for comparison
-    const expectedText = readFileSync(expectedTextPath, "utf-8").trim();
+      // Load expected text for comparison
+      const expectedText = readFileSync(expectedTextPath, "utf-8").trim();
 
-    const normalizedResult = normalize(result.text);
-    const normalizedExpected = normalize(expectedText);
-    console.log(
-      `Normalized Expected (${normalizedExpected.length} chars):\n${normalizedExpected}\n`,
-    );
-    console.log(
-      `Normalized Result (${normalizedResult.length} chars):\n${normalizedResult}\n`,
-    );
+      const normalizedResult = normalize(result.text);
+      const normalizedExpected = normalize(expectedText);
+      console.log(
+        `Normalized Expected (${normalizedExpected.length} chars):\n${normalizedExpected}\n`,
+      );
+      console.log(
+        `Normalized Result (${normalizedResult.length} chars):\n${normalizedResult}\n`,
+      );
 
-    // Calculate similarity (0-1 ratio)
-    const similarity = getStringSimilarity(
-      normalizedResult,
-      normalizedExpected,
-    );
+      // Calculate similarity (0-1 ratio)
+      const similarity = getStringSimilarity(
+        normalizedResult,
+        normalizedExpected,
+      );
 
-    console.log(
-      `\nExpected (${normalizedExpected.length} chars):\n${normalizedExpected}\n`,
-    );
-    console.log(
-      `Got (${normalizedResult.length} chars):\n${normalizedResult}\n`,
-    );
-    console.log(`Similarity: ${(similarity * 100).toFixed(2)}%`);
+      console.log(
+        `\nExpected (${normalizedExpected.length} chars):\n${normalizedExpected}\n`,
+      );
+      console.log(
+        `Got (${normalizedResult.length} chars):\n${normalizedResult}\n`,
+      );
+      console.log(`Similarity: ${(similarity * 100).toFixed(2)}%`);
 
-    // Require at least 99% similarity (allows for minor ASR variations)
-    expect(similarity).toBeGreaterThanOrEqual(0.995);
-  }, 60000); // 60 second timeout for API calls
+      // Require at least 99% similarity (allows for minor ASR variations).
+      // Do not lower this threshold — retry the network instead of masking
+      // quality regressions.
+      expect(similarity).toBeGreaterThanOrEqual(0.995);
+    },
+  );
 });

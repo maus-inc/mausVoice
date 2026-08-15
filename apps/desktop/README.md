@@ -25,9 +25,17 @@ npm run dev:windows      # Windows
 
 ```bash
 npm run build            # Build frontend
-npm run lint             # ESLint
-npm run check-types      # TypeScript type checking
+npm run lint             # Prettier + oxlint
+npm run check-types      # TypeScript type checking (`tsc --noEmit`)
+npm run test:unit        # Vitest unit tests
 npm run test:webdriver   # E2E smoke tests
+```
+
+`check-types` needs workspace packages built first (`@repo/agent` in particular), otherwise `tsc` reports spurious `TS2307`/`TS7006` errors. From the repo root:
+
+```bash
+pnpm exec turbo run build --filter=desktop^...
+pnpm --filter desktop run check-types
 ```
 
 ## Project Structure

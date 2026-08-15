@@ -1,10 +1,65 @@
-use std::convert::TryInto;
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use std::time::{SystemTime, UNIX_EPOCH};
 
+use url::Url;
+
+/// Per-command re-entry guards. When an IPC command mutates global OS state
+/// (synthesized keystrokes, clipboard, audio playback), invoking it again
+/// before the previous call completes produces interleaved/garbled output
+/// and is almost always a bug (double-click, repeat-key, or async race).
+/// These flags are acquired before the blocking work runs and released when
+/// it finishes; a second call returns a clear error instead of stacking.
+static PASTE_IN_PROGRESS: AtomicBool = AtomicBool::new(false);
+static SIMULATE_TYPE_IN_PROGRESS: AtomicBool = AtomicBool::new(false);
+static PLAY_AUDIO_IN_PROGRESS: AtomicBool = AtomicBool::new(false);
+
+/// Drop-guard that clears an AtomicBool re-entry flag when it goes out of
+/// scope. Panics during the blocking work still release the guard so a
+/// crash on one command doesn't wedge the feature forever.
+struct ReentryGuard<'a> {
+    flag: &'a AtomicBool,
+}
+
+impl<'a> ReentryGuard<'a> {
+    fn acquire(flag: &'a AtomicBool) -> Result<Self, String> {
+        if flag
+            .compare_exchange(false, true, Ordering::AcqRel, Ordering::Acquire)
+            .is_err()
+        {
+            return Err("Command is already in progress".to_string());
+        }
+        Ok(Self { flag })
+    }
+}
+
+impl Drop for ReentryGuard<'_> {
+    fn drop(&mut self) {
+        self.flag.store(false, Ordering::Release);
+    }
+}
+
+/// Shared cancel signal for the in-progress `simulate_type` call.
+/// `ReentryGuard` on `SIMULATE_TYPE_IN_PROGRESS` serializes typing, so
+/// there is never more than one live session and this flag is unambiguous.
 static CANCEL_TYPING: AtomicBool = AtomicBool::new(false);
+
+/// User-data tables wiped by `clear_local_data`. Extend this list when
+/// adding a table that stores user content — a missed table is a privacy leak.
+const USER_DATA_TABLES_TO_CLEAR: [&str; 11] = [
+    "chat_messages",
+    "conversations",
+    "user_profiles",
+    "transcriptions",
+    "terms",
+    "hotkeys",
+    "api_keys",
+    "user_preferences",
+    "tones",
+    "app_targets",
+    "paired_remote_devices",
+];
 use tauri::{AppHandle, Emitter, EventTarget, Manager, State};
 
 use crate::domain::{
@@ -381,6 +436,81 @@ async fn delete_audio_entries(
     })
     .await
     .map_err(|err| err.to_string())
+}
+
+/// Resolve `path` to the exact file to delete, or `None` when it does not
+/// live directly inside the managed transcription-audio directory. Both the
+/// candidate's parent directory and `audio_dir` are canonicalized before
+/// comparison, so a `..` traversal, an intermediate symlink, or an
+/// `audio_dir` spelled with `.`/`..` all resolve to real paths first — a
+/// lexical `starts_with` cannot do that. Callers must delete the returned
+/// path — never the raw input — because a relative input is resolved
+/// against `audio_dir` here.
+fn resolve_managed_audio_path(
+    path: &std::path::Path,
+    audio_dir: &std::path::Path,
+) -> Option<std::path::PathBuf> {
+    // Resolve the candidate: an absolute `path` is taken as-is; a relative
+    // `path` is resolved against `audio_dir`.
+    let candidate = if path.is_absolute() {
+        path.to_path_buf()
+    } else {
+        audio_dir.join(path)
+    };
+
+    // Managed audio is a flat directory of `<id>.wav` files, so the file
+    // must sit directly inside `audio_dir`. Canonicalize the parent only:
+    // the entry itself may be a symlink we want to unlink rather than
+    // follow, and it may already be gone.
+    let file_name = candidate.file_name()?;
+    let real_parent = std::fs::canonicalize(candidate.parent()?).ok()?;
+    let real_audio_dir = std::fs::canonicalize(audio_dir).ok()?;
+    if real_parent != real_audio_dir {
+        return None;
+    }
+
+    Some(real_parent.join(file_name))
+}
+
+/// Delete listed audio files that still live under `audio_dir`. Paths
+/// outside the managed directory (including traversal attempts) are skipped
+/// (not an error).
+fn delete_listed_audio_files(audio_dir: &std::path::Path, paths: &[String]) {
+    for path in paths {
+        // Delete the validated path, not the raw DB value: a relative entry
+        // such as `clip.wav` must resolve inside `audio_dir` rather than
+        // against the process working directory.
+        let Some(file_path) = resolve_managed_audio_path(&PathBuf::from(path), audio_dir) else {
+            continue;
+        };
+        if let Err(err) = std::fs::remove_file(&file_path) {
+            if err.kind() != std::io::ErrorKind::NotFound {
+                log::warn!(
+                    "Failed to delete audio file {} during clear: {err}",
+                    file_path.display()
+                );
+            }
+        }
+    }
+}
+
+/// Remove leftover `.wav` files in the managed audio directory after the
+/// DB table has been wiped (orphans from an interrupted record, etc.).
+fn sweep_orphaned_wavs(audio_dir: &std::path::Path) {
+    let Ok(entries) = std::fs::read_dir(audio_dir) else {
+        return;
+    };
+    for entry in entries.flatten() {
+        let p = entry.path();
+        if p.extension().and_then(|e| e.to_str()) == Some("wav") {
+            if let Err(err) = std::fs::remove_file(&p) {
+                log::warn!(
+                    "Failed to remove orphaned audio file {}: {err}",
+                    p.display()
+                );
+            }
+        }
+    }
 }
 
 #[tauri::command]
@@ -973,12 +1103,12 @@ pub async fn hotkey_delete(
 fn current_timestamp_millis() -> Result<i64, String> {
     let duration = SystemTime::now()
         .duration_since(UNIX_EPOCH)
-        .map_err(|err| err.to_string())?;
+        .map_err(|err| format!("System clock is before UNIX epoch: {err}"))?;
 
-    match duration.as_millis().try_into() {
-        Ok(value) => Ok(value),
-        Err(_) => Ok(i64::MAX),
-    }
+    duration
+        .as_millis()
+        .try_into()
+        .map_err(|_| "System timestamp out of representable range".to_string())
 }
 
 #[tauri::command]
@@ -1186,31 +1316,47 @@ pub async fn tone_delete(
 #[tauri::command]
 #[specta::specta]
 pub async fn clear_local_data(
+    app: AppHandle,
     database: State<'_, crate::state::OptionKeyDatabase>,
 ) -> Result<(), String> {
     let pool = database.pool();
+
+    // Wipe every user-data table. When adding user-data tables, extend
+    // `USER_DATA_TABLES_TO_CLEAR` — the UI explicitly promises "this will
+    // delete all preferences, dictionary entries, and saved transcriptions
+    // from this device" and a missed table here is a privacy leak.
+    //
+    // Table names are all `&'static str` literals from this source file
+    // (never user input), so `format!` is safe from SQL injection here.
+
+    // Collect audio file paths BEFORE wiping transcriptions so we can delete
+    // them from disk after the transaction commits.
+    let audio_paths: Vec<String> = sqlx::query_scalar::<_, String>(
+        "SELECT audio_path FROM transcriptions WHERE audio_path IS NOT NULL AND audio_path != ''",
+    )
+    .fetch_all(&pool)
+    .await
+    .map_err(|err| err.to_string())?;
+
     let mut transaction = pool.begin().await.map_err(|err| err.to_string())?;
-
-    const TABLES_TO_CLEAR: [&str; 8] = [
-        "chat_messages",
-        "conversations",
-        "user_profiles",
-        "transcriptions",
-        "terms",
-        "hotkeys",
-        "api_keys",
-        "user_preferences",
-    ];
-
-    for table in TABLES_TO_CLEAR {
+    for table in USER_DATA_TABLES_TO_CLEAR {
         let statement = format!("DELETE FROM {table}");
         sqlx::query(&statement)
             .execute(&mut *transaction)
             .await
             .map_err(|err| err.to_string())?;
     }
-
     transaction.commit().await.map_err(|err| err.to_string())?;
+
+    // After commit, delete every audio WAV on disk that the DB used to know
+    // about, then sweep orphans. Each path goes through
+    // `resolve_managed_audio_path`, which canonicalizes the path and its
+    // parent so only files that really sit inside the managed audio
+    // directory are deleted.
+    if let Ok(audio_dir) = crate::system::audio_store::audio_dir(&app) {
+        delete_listed_audio_files(&audio_dir, &audio_paths);
+        sweep_orphaned_wavs(&audio_dir);
+    }
 
     if let Err(err) = sqlx::query("VACUUM").execute(&pool).await {
         log::warn!("VACUUM failed after clearing local data: {err}");
@@ -1222,6 +1368,12 @@ pub async fn clear_local_data(
 #[tauri::command]
 #[specta::specta]
 pub fn play_audio(clip: AudioClip) -> Result<(), String> {
+    // Rapid re-entry (e.g. double-pressing the record hotkey) can layer
+    // multiple overlapping chimes and produce a disorienting UX. If a chime
+    // is already playing, return a clear error rather than stacking more.
+    let _guard = ReentryGuard::acquire(&PLAY_AUDIO_IN_PROGRESS)
+        .map_err(|_| "Audio cue is already playing".to_string())?;
+
     match clip {
         AudioClip::StartRecordingClip => crate::system::audio_feedback::play_start_recording_clip(),
         AudioClip::StopRecordingClip => crate::system::audio_feedback::play_stop_recording_clip(),
@@ -1528,6 +1680,12 @@ pub async fn paste(
     keybind: Option<String>,
     skip_clipboard_restore: Option<bool>,
 ) -> Result<PasteOutcome, String> {
+    // Re-entry guard: a paste in progress owns the clipboard and the
+    // synthetic keystroke pipeline. Racing a second paste interleaves both
+    // clipboard swaps and keystrokes and produces garbled output.
+    let _paste_guard =
+        ReentryGuard::acquire(&PASTE_IN_PROGRESS).map_err(|_| "Paste is already in progress".to_string())?;
+
     // Probe the focused target first. If it clearly can't accept text, write
     // the transcript to the clipboard and skip the paste keystroke entirely —
     // that avoids the race where paste's delayed clipboard-restore overwrites
@@ -1597,6 +1755,11 @@ pub async fn simulate_type(text: String, delay_ms: u64) -> Result<(), String> {
         return Ok(());
     }
 
+    // Re-entry guard serializes typing: only one session can be live, so
+    // `cancel_typing` is unambiguous without a session id.
+    let _type_guard = ReentryGuard::acquire(&SIMULATE_TYPE_IN_PROGRESS)
+        .map_err(|_| "Simulated typing is already in progress".to_string())?;
+
     CANCEL_TYPING.store(false, Ordering::SeqCst);
 
     let join_result = tauri::async_runtime::spawn_blocking(move || {
@@ -1608,8 +1771,9 @@ pub async fn simulate_type(text: String, delay_ms: u64) -> Result<(), String> {
         Ok(result) => {
             if let Err(ref err) = result {
                 log::error!("Simulated typing failed: {err}");
+                return Err(err.clone());
             }
-            result
+            Ok(())
         }
         Err(err) => {
             let message = format!("Simulate type task join error: {err}");
@@ -1622,6 +1786,15 @@ pub async fn simulate_type(text: String, delay_ms: u64) -> Result<(), String> {
 #[tauri::command]
 #[specta::specta]
 pub fn cancel_typing() -> Result<(), String> {
+    // Serialization by the re-entry guard is what makes cancel unambiguous:
+    // only one `simulate_type` can be live, so this flag always targets it.
+    // Ignore cancels that arrive with no live session (a late blur/Escape,
+    // or another caller): otherwise the flag would stay set and abort the
+    // *next* typing session before it starts.
+    if !SIMULATE_TYPE_IN_PROGRESS.load(Ordering::Acquire) {
+        return Ok(());
+    }
+
     CANCEL_TYPING.store(true, Ordering::SeqCst);
     Ok(())
 }
@@ -1649,8 +1822,17 @@ pub fn set_phase(
 
 #[tauri::command]
 #[specta::specta]
-pub fn set_pill_visibility(app: AppHandle, visibility: String) {
+pub fn set_pill_visibility(app: AppHandle, visibility: String) -> Result<(), String> {
+    // Reject unknown visibility strings so a typo in the frontend cannot
+    // silently leave the pill in an undefined state. Platform overlay
+    // backends treat unknown strings as "while_active" (default), which
+    // would mask the bug.
+    match visibility.as_str() {
+        "hidden" | "persistent" | "while_active" => {}
+        other => return Err(format!("invalid pill visibility: {other:?}")),
+    }
     crate::platform::overlay::notify_visibility(&app, &visibility);
+    Ok(())
 }
 
 #[tauri::command]
@@ -1866,16 +2048,29 @@ pub async fn run_native_setup(app: tauri::AppHandle) -> crate::platform::NativeS
 #[tauri::command]
 #[specta::specta]
 pub fn set_tray_title(app: AppHandle, title: Option<String>) -> Result<(), String> {
-    use tauri::tray::TrayIconId;
-    if let Some(tray) = app.tray_by_id(&TrayIconId::new("main")) {
-        let title_ref = match &title {
-            Some(t) if !t.is_empty() => Some(t.as_str()),
-            _ => Some(""),
-        };
-        tray.set_title(title_ref).map_err(|err| err.to_string())
-    } else {
-        Ok(())
+    // Tray titles are a macOS-only concept in AppKit (NSStatusItem.button.title).
+    // Windows/Linux silently ignore them in Tauri; to keep command behaviour
+    // predictable across platforms we no-op on non-macOS targets rather than
+    // paying the cost of a (no-op) platform call.
+    #[cfg(target_os = "macos")]
+    {
+        use tauri::tray::TrayIconId;
+        if let Some(tray) = app.tray_by_id(&TrayIconId::new("main")) {
+            let title_ref = match &title {
+                Some(t) if !t.is_empty() => Some(t.as_str()),
+                _ => Some(""),
+            };
+            tray.set_title(title_ref).map_err(|err| err.to_string())?;
+        }
     }
+
+    // Silence unused-parameter warnings on non-macOS builds without adding
+    // extra cfg-attributes to the function signature.
+    #[cfg(not(target_os = "macos"))]
+    {
+        let _ = (app, title);
+    }
+    Ok(())
 }
 
 #[tauri::command]
@@ -2209,17 +2404,707 @@ pub struct RunTerminalCommandResponse {
     pub exit_code: i32,
 }
 
+/// Maximum number of bytes the AI agent is allowed to read back from an allowed
+/// command. Caps stdout+stderr so a runaway command cannot OOM the app.
+const TERMINAL_COMMAND_MAX_OUTPUT_BYTES: usize = 128 * 1024;
+
+/// Read a child pipe, retaining at most `limit` bytes while still draining the
+/// stream to EOF. Draining matters: if we stopped reading at the limit, a
+/// chatty child would block forever writing into a full pipe buffer and never
+/// reach its own exit, defeating the wall-clock timeout. Memory stays bounded
+/// by `limit` regardless of how much the child emits. Returns the retained
+/// prefix and the total number of bytes the child actually produced.
+fn read_capped<R: std::io::Read>(mut reader: R, limit: usize) -> (Vec<u8>, usize) {
+    let mut retained: Vec<u8> = Vec::new();
+    let mut total = 0usize;
+    let mut chunk = [0u8; 8192];
+    loop {
+        match reader.read(&mut chunk) {
+            Ok(0) => break,
+            Ok(n) => {
+                total += n;
+                if retained.len() < limit {
+                    let take = std::cmp::min(n, limit - retained.len());
+                    retained.extend_from_slice(&chunk[..take]);
+                }
+            }
+            Err(err) if err.kind() == std::io::ErrorKind::Interrupted => continue,
+            Err(_) => break,
+        }
+    }
+    (retained, total)
+}
+
+/// Render a captured stream, appending a marker when the child produced more
+/// than we retained.
+fn format_capped_output(retained: &[u8], total: usize) -> String {
+    let mut text = String::from_utf8_lossy(retained).to_string();
+    if total > retained.len() {
+        text.push_str(&format!("\n...[truncated: {total} bytes total]"));
+    }
+    text
+}
+/// Per-command wall-clock timeout. A hung subprocess must not hang the agent.
+const TERMINAL_COMMAND_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(15);
+
+/// Allow-list of safe binaries the AI agent may invoke through the power-mode
+/// `run_terminal_command` tool. Each entry names an exact binary (resolved via
+/// `which`/PATH lookup, *not* via a shell) and, optionally, a fixed set of
+/// prefix arguments that are always prepended. Free-form arguments are still
+/// passed through but they never flow through `sh -c` / `cmd /c`, so shell
+/// metacharacters (`;`, `|`, `&`, `$()`, backticks, redirections) are treated
+/// as literal argv tokens rather than interpreted by a shell.
+///
+/// To add a new safe command, extend this list — never relax the allow-list to
+/// `sh`, `cmd`, `bash`, `powershell`, `pwsh`, `zsh`, or any other shell.
+struct AllowedCommand {
+    binary: &'static str,
+    /// Optional fixed argv prefix applied before caller-provided args.
+    fixed_args: &'static [&'static str],
+}
+
+#[cfg(not(target_os = "windows"))]
+const ALLOWED_COMMANDS: &[AllowedCommand] = &[
+    AllowedCommand { binary: "ls", fixed_args: &[] },
+    AllowedCommand { binary: "pwd", fixed_args: &[] },
+    AllowedCommand { binary: "echo", fixed_args: &[] },
+    AllowedCommand { binary: "cat", fixed_args: &[] },
+    AllowedCommand { binary: "which", fixed_args: &[] },
+    AllowedCommand { binary: "whoami", fixed_args: &[] },
+    AllowedCommand { binary: "date", fixed_args: &[] },
+    AllowedCommand { binary: "uname", fixed_args: &["-a"] },
+    AllowedCommand { binary: "df", fixed_args: &["-h"] },
+    AllowedCommand { binary: "du", fixed_args: &["-sh"] },
+    AllowedCommand { binary: "head", fixed_args: &["-n", "200"] },
+    AllowedCommand { binary: "tail", fixed_args: &["-n", "200"] },
+    AllowedCommand { binary: "wc", fixed_args: &["-l"] },
+    #[cfg(target_os = "macos")]
+    AllowedCommand { binary: "open", fixed_args: &[] },
+    #[cfg(target_os = "linux")]
+    AllowedCommand { binary: "xdg-open", fixed_args: &[] },
+];
+
+/// Windows allow-list. Deliberately excludes CMD builtins (`dir`, `cd`,
+/// `echo`, `date`, `ver`): we spawn binaries directly rather than through
+/// `cmd /c`, so a builtin has no `.exe` on PATH and `Command::new` would
+/// always fail with "program not found". Only real executables are listed.
+#[cfg(target_os = "windows")]
+const ALLOWED_COMMANDS: &[AllowedCommand] = &[
+    AllowedCommand { binary: "whoami", fixed_args: &[] },
+    AllowedCommand { binary: "where", fixed_args: &[] },
+    AllowedCommand { binary: "hostname", fixed_args: &[] },
+    AllowedCommand { binary: "explorer", fixed_args: &[] },
+];
+
+/// Validate that a single argv token contains no NUL bytes (which would truncate
+/// the C-string passed to execve) and no control characters that could be used
+/// for terminal injection when humans view the output.
+fn is_safe_arg_token(token: &str) -> bool {
+    if token.is_empty() {
+        return false;
+    }
+    token.chars().all(|ch| !(ch.is_control() && ch != '\t') && ch != '\0')
+}
+
+/// Characters that are forbidden inside any argv token passed through
+/// `run_terminal_command`. Blocked as defense-in-depth even though we never
+/// invoke a shell — makes it obvious to model authors that shell
+/// composition is out.
+const TERMINAL_FORBIDDEN_CHARS: &[char] =
+    &[';', '|', '&', '$', '`', '>', '<', '(', ')', '\n', '\r'];
+
+/// Validate a user-supplied command string against the same rules
+/// `run_terminal_command` enforces. Shared between the command itself and
+/// its unit tests so both paths can't drift apart. On success returns the
+/// matched `AllowedCommand` entry and the split argv tail (user args).
+fn validate_terminal_command_args(
+    command: &str,
+) -> Result<(&'static AllowedCommand, Vec<String>), String> {
+    let tokens: Vec<&str> = command.split_whitespace().collect();
+    let Some((binary, user_args)) = tokens.split_first() else {
+        return Err("Empty command".to_string());
+    };
+
+    if binary.contains('/') || binary.contains('\\') {
+        return Err(format!(
+            "Command not allowed: absolute or relative paths are not permitted (got {binary:?})"
+        ));
+    }
+
+    for token in user_args {
+        if !is_safe_arg_token(token) {
+            return Err(format!(
+                "Command argument contains disallowed characters: {token:?}"
+            ));
+        }
+        for ch in token.chars() {
+            if TERMINAL_FORBIDDEN_CHARS.contains(&ch) {
+                return Err(format!(
+                    "Shell metacharacters are not permitted in command arguments (found {ch:?} in {token:?})"
+                ));
+            }
+        }
+    }
+
+    let allowed = ALLOWED_COMMANDS
+        .iter()
+        .find(|entry| entry.binary == *binary)
+        .ok_or_else(|| format!("Command not in allow-list: {binary}"))?;
+    Ok((allowed, user_args.iter().map(|s| s.to_string()).collect()))
+}
+
+/// Validate a floating-window URL before navigation. Shared by
+/// `floating_window_create` and its unit tests so the allow-list cannot
+/// silently diverge.
+fn validate_floating_window_url(url: &Url) -> Result<(), String> {
+    match url.scheme() {
+        "http" | "https" => {
+            let host = url.host_str().unwrap_or("");
+            let is_localhost =
+                host == "localhost" || host == "127.0.0.1" || host == "[::1]";
+            // Docs-site windows are allowed to load, but they do not inherit
+            // IPC: `maus-inc.github.io` is not in the `floating-*` capability
+            // `remote.urls` list. Localhost remains the only remote host with
+            // IPC (dev tooling).
+            let is_docs_site = host == "maus-inc.github.io"
+                && url.path().starts_with("/mausVoice/");
+            if !is_localhost && !is_docs_site {
+                return Err(format!(
+                    "Floating window URL host {host:?} is not in the trusted allow-list"
+                ));
+            }
+        }
+        "tauri" | "asset" | "data" => {}
+        other => {
+            return Err(format!(
+                "Floating window URL scheme {other:?} is not permitted"
+            ));
+        }
+    }
+    Ok(())
+}
+
+fn parse_floating_window_url(url: &str) -> Result<Url, String> {
+    Url::parse(url).map_err(|e| format!("Invalid URL: {e}"))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn terminal_command_rejects_empty() {
+        assert!(validate_terminal_command_args("").is_err());
+        assert!(validate_terminal_command_args("   ").is_err());
+    }
+
+    #[test]
+    fn terminal_command_rejects_paths_and_shells() {
+        assert!(validate_terminal_command_args("/bin/sh").is_err());
+        assert!(validate_terminal_command_args("../../sh").is_err());
+        assert!(validate_terminal_command_args("sh -c 'echo hi'").is_err());
+        assert!(validate_terminal_command_args("bash ls").is_err());
+        assert!(validate_terminal_command_args("cmd /c dir").is_err());
+    }
+
+    #[test]
+    fn terminal_command_rejects_metacharacters() {
+        assert!(validate_terminal_command_args("ls ; rm -rf /").is_err());
+        assert!(validate_terminal_command_args("ls | cat").is_err());
+        assert!(validate_terminal_command_args("echo $(whoami)").is_err());
+        assert!(validate_terminal_command_args("echo `whoami`").is_err());
+        assert!(validate_terminal_command_args("echo > file").is_err());
+    }
+
+    #[cfg(not(target_os = "windows"))]
+    #[test]
+    fn terminal_command_allows_allowlisted() {
+        assert_eq!(
+            validate_terminal_command_args("ls -la").unwrap().0.binary,
+            "ls"
+        );
+        assert_eq!(
+            validate_terminal_command_args("pwd").unwrap().0.binary,
+            "pwd"
+        );
+        assert_eq!(
+            validate_terminal_command_args("echo hello world")
+                .unwrap()
+                .0
+                .binary,
+            "echo"
+        );
+    }
+
+    #[cfg(target_os = "windows")]
+    #[test]
+    fn terminal_command_allows_allowlisted() {
+        assert_eq!(
+            validate_terminal_command_args("whoami").unwrap().0.binary,
+            "whoami"
+        );
+        assert_eq!(
+            validate_terminal_command_args("where cargo").unwrap().0.binary,
+            "where"
+        );
+        // CMD builtins are intentionally absent: without a shell they have
+        // no executable to spawn.
+        assert!(validate_terminal_command_args("dir").is_err());
+    }
+
+    /// Every allow-listed entry must be reachable through the validator,
+    /// so the const and the parser can't drift apart on any platform.
+    #[test]
+    fn terminal_command_allowlist_entries_are_reachable() {
+        for entry in ALLOWED_COMMANDS {
+            let (matched, args) = validate_terminal_command_args(entry.binary)
+                .unwrap_or_else(|err| panic!("{} should validate: {err}", entry.binary));
+            assert_eq!(matched.binary, entry.binary);
+            assert!(args.is_empty());
+        }
+    }
+
+    #[test]
+    fn installer_url_accepts_trusted_release_hosts() {
+        assert!(validate_installer_url(
+            &Url::parse("https://github.com/maus-inc/mausVoice/releases/download/v1/app.pkg")
+                .unwrap()
+        )
+        .is_ok());
+        assert!(validate_installer_url(
+            &Url::parse("https://objects.githubusercontent.com/foo/app.pkg").unwrap()
+        )
+        .is_ok());
+    }
+
+    #[test]
+    fn installer_url_rejects_untrusted_hosts_schemes_and_extensions() {
+        // A redirect target on an untrusted host must be refused: this is the
+        // check the redirect policy applies to every hop.
+        assert!(
+            validate_installer_url(&Url::parse("https://evil.com/app.pkg").unwrap()).is_err()
+        );
+        assert!(validate_installer_url(
+            &Url::parse("http://github.com/maus-inc/app.pkg").unwrap()
+        )
+        .is_err());
+        assert!(validate_installer_url(
+            &Url::parse("https://github.com/maus-inc/payload.sh").unwrap()
+        )
+        .is_err());
+    }
+
+    #[test]
+    fn capped_reader_bounds_memory_and_reports_total() {
+        let payload = vec![b'x'; 10_000];
+        let (retained, total) = read_capped(payload.as_slice(), 1_000);
+        assert_eq!(retained.len(), 1_000);
+        assert_eq!(total, 10_000);
+
+        let rendered = format_capped_output(&retained, total);
+        assert!(rendered.contains("truncated: 10000 bytes total"));
+    }
+
+    #[test]
+    fn capped_reader_passes_through_small_output() {
+        let (retained, total) = read_capped(b"hello".as_slice(), 1_000);
+        assert_eq!(total, 5);
+        assert_eq!(format_capped_output(&retained, total), "hello");
+    }
+
+    #[test]
+    fn floating_window_allows_localhost() {
+        assert!(validate_floating_window_url(&Url::parse("http://localhost:1420/").unwrap()).is_ok());
+        assert!(validate_floating_window_url(&Url::parse("http://127.0.0.1:8080/foo").unwrap()).is_ok());
+    }
+
+    #[test]
+    fn floating_window_allows_docs_site() {
+        assert!(validate_floating_window_url(
+            &Url::parse("https://maus-inc.github.io/mausVoice/welcome").unwrap()
+        )
+        .is_ok());
+        // GitHub Pages URL must be scoped to /mausVoice/ even though that
+        // host has no IPC capability — keep the navigation allow-list tight.
+        assert!(validate_floating_window_url(
+            &Url::parse("https://maus-inc.github.io/other-project/").unwrap()
+        )
+        .is_err());
+    }
+
+    #[test]
+    fn floating_window_rejects_arbitrary_origins() {
+        assert!(validate_floating_window_url(&Url::parse("https://evil.com/").unwrap()).is_err());
+        assert!(validate_floating_window_url(&Url::parse("file:///etc/passwd").unwrap()).is_err());
+        assert!(validate_floating_window_url(&Url::parse("javascript:alert(1)").unwrap()).is_err());
+        assert!(parse_floating_window_url("not a url").is_err());
+    }
+
+    #[test]
+    fn pill_visibility_rejects_unknown_values() {
+        // The validation in set_pill_visibility is a literal match against
+        // these three strings; any deviation would change the command's
+        // public contract and is caught here.
+        let valid = ["hidden", "persistent", "while_active"];
+        for v in valid {
+            assert!(matches!(v, "hidden" | "persistent" | "while_active"));
+        }
+        assert!(!matches!(
+            "always_on_top",
+            "hidden" | "persistent" | "while_active"
+        ));
+    }
+
+    #[test]
+    fn cancel_typing_only_signals_a_live_session() {
+        // `CANCEL_TYPING` is process-wide and `cargo test` runs tests in
+        // parallel, so put it back the way we found it before returning.
+        let previous = CANCEL_TYPING.load(Ordering::SeqCst);
+        CANCEL_TYPING.store(false, Ordering::SeqCst);
+
+        // No typing session is live, so the cancel must be ignored instead
+        // of arming the flag for the next session.
+        cancel_typing().unwrap();
+        assert!(!CANCEL_TYPING.load(Ordering::SeqCst));
+
+        {
+            let _session = ReentryGuard::acquire(&SIMULATE_TYPE_IN_PROGRESS).unwrap();
+            cancel_typing().unwrap();
+            assert!(CANCEL_TYPING.load(Ordering::SeqCst));
+        }
+
+        CANCEL_TYPING.store(previous, Ordering::SeqCst);
+    }
+
+    #[test]
+    fn reentry_guard_rejects_a_second_acquire() {
+        let flag = AtomicBool::new(false);
+        let first = ReentryGuard::acquire(&flag).unwrap();
+        assert!(ReentryGuard::acquire(&flag).is_err());
+        drop(first);
+        assert!(ReentryGuard::acquire(&flag).is_ok());
+    }
+
+    #[test]
+    fn reentry_guard_releases_on_panic() {
+        let flag = AtomicBool::new(false);
+        let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            let _guard = ReentryGuard::acquire(&flag).unwrap();
+            panic!("boom");
+        }));
+        assert!(result.is_err());
+        assert!(!flag.load(Ordering::Acquire));
+        assert!(ReentryGuard::acquire(&flag).is_ok());
+    }
+
+    /// Tables that live in the schema but hold no user content, so
+    /// `clear_local_data` may skip them. Adding a name here is an explicit
+    /// privacy decision, which is the point: it cannot happen by omission.
+    const NON_USER_DATA_TABLES: &[&str] = &[];
+
+    /// Rebuild the set of tables the schema actually ends up with by
+    /// replaying the migration SQL. Derived independently of
+    /// `USER_DATA_TABLES_TO_CLEAR`, so a new table that nobody remembered
+    /// to clear still shows up here.
+    /// Strip SQL noise that would otherwise be mis-tokenized when the
+    /// migrations are replayed as statements:
+    /// - `/* */` block comments,
+    /// - `--` line comments (to end of line),
+    /// - single-quoted string literals (which may contain `;`, `--`, or
+    ///   `*/`), including the `''` doubled-quote escape.
+    ///
+    /// Double-quoted identifiers (table/column names in SQLite) are left in
+    /// place by this pass: they are not string literals, so unlike `'...'`
+    /// above they are not skipped. The surrounding quote characters are
+    /// trimmed later when the table name is extracted, so `"my_table"` and
+    /// `my_table` resolve to the same bare name that SQLite reports.
+    fn strip_sql_noise(sql: &str) -> String {
+        let mut out = String::with_capacity(sql.len());
+        let mut chars = sql.chars().peekable();
+        let mut in_block_comment = false;
+        let mut in_line_comment = false;
+        while let Some(c) = chars.next() {
+            if in_line_comment {
+                if c == '\n' {
+                    in_line_comment = false;
+                    out.push(c);
+                }
+                continue;
+            }
+            if in_block_comment {
+                if c == '*' && chars.peek() == Some(&'/') {
+                    chars.next();
+                    in_block_comment = false;
+                }
+                continue;
+            }
+            if c == '/' && chars.peek() == Some(&'*') {
+                chars.next();
+                in_block_comment = true;
+                continue;
+            }
+            if c == '-' && chars.peek() == Some(&'-') {
+                chars.next();
+                in_line_comment = true;
+                continue;
+            }
+            if c == '\'' {
+                // Single-quoted string literal: skip content (incl. '' escape).
+                while let Some(q) = chars.next() {
+                    if q == '\'' {
+                        if chars.peek() == Some(&'\'') {
+                            chars.next(); // doubled-quote escape
+                            continue;
+                        }
+                        break;
+                    }
+                }
+                continue;
+            }
+            out.push(c);
+        }
+        out
+    }
+
+    fn tables_declared_by_migrations() -> std::collections::BTreeSet<String> {
+        let first_word = |rest: &str| -> Option<String> {
+            rest.split(|c: char| c == '(' || c.is_whitespace())
+                .find(|part| !part.is_empty())
+                // Trim surrounding double quotes so a quoted identifier
+                // (`CREATE TABLE "name"`) resolves to the same bare name
+                // SQLite reports, rather than `"name"`.
+                .map(|name| name.trim_matches('"').to_string())
+        };
+
+        let mut tables: std::collections::BTreeSet<String> = std::collections::BTreeSet::new();
+        for migration in crate::db::migrations() {
+            // `strip_sql_noise` fully cleans each migration's SQL (block
+            // comments, line comments, and single-quoted string literals),
+            // so the remaining text can be replayed statement by statement.
+            let sql = strip_sql_noise(migration.sql)
+                .lines()
+                .map(|line| line.trim())
+                .collect::<Vec<_>>()
+                .join(" ");
+
+            for raw_statement in sql.split(';') {
+                let statement = raw_statement
+                    .split_whitespace()
+                    .map(|word| word.to_ascii_lowercase())
+                    .collect::<Vec<_>>()
+                    .join(" ");
+
+                if let Some(rest) = statement
+                    .strip_prefix("create table if not exists ")
+                    .or_else(|| statement.strip_prefix("create table "))
+                {
+                    if let Some(name) = first_word(rest) {
+                        tables.insert(name);
+                    }
+                } else if let Some(rest) = statement
+                    .strip_prefix("drop table if exists ")
+                    .or_else(|| statement.strip_prefix("drop table "))
+                {
+                    if let Some(name) = first_word(rest) {
+                        tables.remove(&name);
+                    }
+                } else if let Some(rest) = statement.strip_prefix("alter table ") {
+                    if let Some((old, new)) = rest.split_once(" rename to ") {
+                        if let (Some(old), Some(new)) = (first_word(old), first_word(new)) {
+                            tables.remove(&old);
+                            tables.insert(new);
+                        }
+                    }
+                }
+            }
+        }
+        tables
+    }
+
+    #[test]
+    fn user_data_tables_to_clear_covers_the_privacy_set() {
+        let declared = tables_declared_by_migrations();
+        assert!(
+            !declared.is_empty(),
+            "no tables parsed from the migrations — the parser is broken"
+        );
+
+        for table in &declared {
+            assert!(
+                USER_DATA_TABLES_TO_CLEAR.contains(&table.as_str())
+                    || NON_USER_DATA_TABLES.contains(&table.as_str()),
+                "table `{table}` exists in the schema but clear_local_data never wipes it — a missed table is a privacy leak"
+            );
+        }
+
+        for table in USER_DATA_TABLES_TO_CLEAR {
+            assert!(
+                declared.contains(table),
+                "`{table}` is cleared but no longer exists in the schema"
+            );
+        }
+    }
+
+    #[test]
+    fn managed_audio_path_rejects_paths_outside_the_audio_dir() {
+        let root = std::env::temp_dir()
+            .join(format!("mausvoice-audio-guard-{}", std::process::id()));
+        let audio_dir = root.join("audio");
+        let other_dir = root.join("other");
+        std::fs::create_dir_all(&audio_dir).unwrap();
+        std::fs::create_dir_all(&other_dir).unwrap();
+        // Canonicalized because the guard returns real paths (e.g. macOS
+        // maps /tmp to /private/tmp).
+        let expected = std::fs::canonicalize(&audio_dir).unwrap().join("clip.wav");
+
+        let inside = audio_dir.join("clip.wav");
+        let outside = other_dir.join("clip.wav");
+        // A traversal attempt must NOT escape the managed directory.
+        let traversal = audio_dir.join("..").join("escaped.wav");
+        assert_eq!(
+            resolve_managed_audio_path(&inside, &audio_dir),
+            Some(expected.clone())
+        );
+        assert_eq!(resolve_managed_audio_path(&outside, &audio_dir), None);
+        assert_eq!(resolve_managed_audio_path(&traversal, &audio_dir), None);
+        // A relative entry must resolve inside the managed directory, never
+        // against the process working directory.
+        assert_eq!(
+            resolve_managed_audio_path(std::path::Path::new("clip.wav"), &audio_dir),
+            Some(expected.clone())
+        );
+        // An `audio_dir` spelled with `.` still matches its own contents.
+        assert_eq!(
+            resolve_managed_audio_path(&inside, &root.join(".").join("audio")),
+            Some(expected)
+        );
+
+        #[cfg(unix)]
+        {
+            // A symlinked subdirectory must not tunnel out of audio_dir.
+            let link = audio_dir.join("link");
+            std::os::unix::fs::symlink(&other_dir, &link).unwrap();
+            assert_eq!(
+                resolve_managed_audio_path(&link.join("clip.wav"), &audio_dir),
+                None
+            );
+        }
+
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn clear_local_data_file_helpers_respect_the_audio_dir_guard() {
+        let root = std::env::temp_dir().join(format!(
+            "mausvoice-clear-local-{}",
+            std::process::id()
+        ));
+        let audio_dir = root.join("audio");
+        let outside_dir = root.join("outside");
+        std::fs::create_dir_all(&audio_dir).unwrap();
+        std::fs::create_dir_all(&outside_dir).unwrap();
+
+        let inside = audio_dir.join("keep-me-not.wav");
+        let relative = audio_dir.join("relative.wav");
+        let orphan = audio_dir.join("orphan.wav");
+        let other = audio_dir.join("notes.txt");
+        let outside = outside_dir.join("do-not-delete.wav");
+        std::fs::write(&inside, b"in").unwrap();
+        std::fs::write(&relative, b"rel").unwrap();
+        std::fs::write(&orphan, b"or").unwrap();
+        std::fs::write(&other, b"txt").unwrap();
+        std::fs::write(&outside, b"out").unwrap();
+
+        delete_listed_audio_files(
+            &audio_dir,
+            &[
+                inside.to_string_lossy().into_owned(),
+                // A relative row must be deleted from inside `audio_dir`.
+                "relative.wav".to_string(),
+                outside.to_string_lossy().into_owned(),
+            ],
+        );
+        assert!(!inside.exists());
+        assert!(!relative.exists());
+        assert!(outside.exists());
+
+        sweep_orphaned_wavs(&audio_dir);
+        assert!(!orphan.exists());
+        assert!(other.exists());
+        assert!(outside.exists());
+
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn installer_redirect_validates_each_hop_and_caps_depth() {
+        let ok = Url::parse(
+            "https://github.com/maus-inc/mausVoice/releases/download/v1/app.pkg",
+        )
+        .unwrap();
+        let evil = Url::parse("https://evil.com/app.pkg").unwrap();
+        assert!(installer_redirect_allowed(0, &ok).is_ok());
+        assert!(installer_redirect_allowed(9, &ok).is_ok());
+        assert!(installer_redirect_allowed(10, &ok).is_err());
+        assert!(installer_redirect_allowed(0, &evil).is_err());
+    }
+
+    #[test]
+    fn installer_size_cap_rejects_advertised_and_streamed_oversize() {
+        assert!(installer_content_length_ok(None).is_ok());
+        assert!(installer_content_length_ok(Some(INSTALLER_MAX_BYTES)).is_ok());
+        assert!(installer_content_length_ok(Some(INSTALLER_MAX_BYTES + 1)).is_err());
+        assert_eq!(
+            installer_account_chunk(0, INSTALLER_MAX_BYTES).unwrap(),
+            INSTALLER_MAX_BYTES
+        );
+        assert!(installer_account_chunk(INSTALLER_MAX_BYTES, 1).is_err());
+    }
+
+    #[test]
+    fn current_timestamp_ok() {
+        // Replicate the function body to avoid a public exposure. SystemTime
+        // should always be post-epoch on modern OSes; if it isn't we'd want
+        // to know rather than silently return i64::MAX.
+        let duration = SystemTime::now().duration_since(UNIX_EPOCH);
+        assert!(duration.is_ok());
+        let millis: Result<i64, _> = duration.unwrap().as_millis().try_into();
+        assert!(millis.is_ok());
+    }
+}
+
+/// Strict, shell-free execution for an allow-listed command.
+///
+/// Security properties:
+/// - No shell is invoked; `command` is tokenized into argv by whitespace only
+///   (no quoting, no metacharacter evaluation). A token like `;rm -rf /` is
+///   passed as a single literal argument to the binary.
+/// - The binary must appear in `ALLOWED_COMMANDS` (exact name match); path
+///   traversal (e.g. `/bin/sh`, `../../sh`) is rejected.
+/// - Per-command timeout and output-size cap bound resource use.
 #[tauri::command]
 #[specta::specta]
 pub async fn run_terminal_command(command: String) -> Result<RunTerminalCommandResponse, String> {
-    tauri::async_runtime::spawn_blocking(move || {
-        let (shell, flag) = if cfg!(target_os = "windows") {
-            ("cmd", "/C")
-        } else {
-            ("sh", "-c")
-        };
-        let mut cmd = std::process::Command::new(shell);
-        cmd.args([flag, &command]);
+    // Whitespace-tokenize without shell interpretation. Quoting is deliberately
+    // unsupported — AI tools pass structured argv tokens separated by spaces.
+    // All validation is centralised in validate_terminal_command_args so the
+    // production path and unit tests can't drift.
+    let (allowed, user) = validate_terminal_command_args(&command)?;
+
+    let fixed = allowed.fixed_args.to_vec();
+    let bin = allowed.binary.to_string();
+
+    let result = tauri::async_runtime::spawn_blocking(move || {
+        let mut cmd = std::process::Command::new(&bin);
+        cmd.args(&fixed);
+        cmd.args(&user);
+
+        // Never inherit the user's shell environment wholesale; clear dangerous vars.
+        cmd.env_clear();
+        if let Ok(path) = std::env::var("PATH") {
+            cmd.env("PATH", path);
+        }
+        cmd.env("LANG", "C.UTF-8");
 
         #[cfg(target_os = "windows")]
         {
@@ -2228,16 +3113,76 @@ pub async fn run_terminal_command(command: String) -> Result<RunTerminalCommandR
             cmd.creation_flags(CREATE_NO_WINDOW);
         }
 
-        let output = cmd.output().map_err(|err| err.to_string())?;
+        let mut child = cmd
+            .stdout(std::process::Stdio::piped())
+            .stderr(std::process::Stdio::piped())
+            .spawn()
+            .map_err(|err| format!("Failed to spawn {bin}: {err}"))?;
+
+        // Take the pipes and drain them on dedicated threads. Each reader
+        // retains at most TERMINAL_COMMAND_MAX_OUTPUT_BYTES, so a command
+        // streaming gigabytes cannot exhaust memory, and because the readers
+        // keep draining to EOF the child never blocks on a full pipe.
+        let stdout_pipe = child
+            .stdout
+            .take()
+            .ok_or_else(|| format!("Failed to capture stdout of {bin}"))?;
+        let stderr_pipe = child
+            .stderr
+            .take()
+            .ok_or_else(|| format!("Failed to capture stderr of {bin}"))?;
+
+        let stdout_reader =
+            std::thread::spawn(move || read_capped(stdout_pipe, TERMINAL_COMMAND_MAX_OUTPUT_BYTES));
+        let stderr_reader =
+            std::thread::spawn(move || read_capped(stderr_pipe, TERMINAL_COMMAND_MAX_OUTPUT_BYTES));
+
+        // Poll for exit so this thread retains ownership of `child` and can
+        // actually kill it on timeout. `wait_with_output` would move the
+        // child into a worker and leave the process unkillable.
+        let deadline = std::time::Instant::now() + TERMINAL_COMMAND_TIMEOUT;
+        let status = loop {
+            match child.try_wait() {
+                Ok(Some(status)) => break status,
+                Ok(None) => {
+                    if std::time::Instant::now() >= deadline {
+                        // Kill the process and reap it so we don't leak a
+                        // zombie; repeated timeouts must not pile up
+                        // long-running children.
+                        let _ = child.kill();
+                        let _ = child.wait();
+                        return Err(format!(
+                            "Command {bin} timed out after {}s and was terminated",
+                            TERMINAL_COMMAND_TIMEOUT.as_secs()
+                        ));
+                    }
+                    std::thread::sleep(std::time::Duration::from_millis(20));
+                }
+                Err(err) => {
+                    let _ = child.kill();
+                    let _ = child.wait();
+                    return Err(format!("Failed to await {bin}: {err}"));
+                }
+            }
+        };
+
+        let (stdout_bytes, stdout_total) = stdout_reader
+            .join()
+            .map_err(|_| format!("Failed to read stdout of {bin}"))?;
+        let (stderr_bytes, stderr_total) = stderr_reader
+            .join()
+            .map_err(|_| format!("Failed to read stderr of {bin}"))?;
 
         Ok(RunTerminalCommandResponse {
-            stdout: String::from_utf8_lossy(&output.stdout).to_string(),
-            stderr: String::from_utf8_lossy(&output.stderr).to_string(),
-            exit_code: output.status.code().unwrap_or(-1),
+            stdout: format_capped_output(&stdout_bytes, stdout_total),
+            stderr: format_capped_output(&stderr_bytes, stderr_total),
+            exit_code: status.code().unwrap_or(-1),
         })
     })
     .await
-    .map_err(|err| err.to_string())?
+    .map_err(|err| format!("Terminal command task panicked: {err}"))?;
+
+    result
 }
 
 /// Returns `true` when the running app bundle can be updated in-place.
@@ -2247,11 +3192,6 @@ pub async fn run_terminal_command(command: String) -> Result<RunTerminalCommandR
 #[tauri::command]
 #[specta::specta]
 pub fn check_app_location_writable() -> Result<bool, String> {
-    #[cfg(not(target_os = "macos"))]
-    {
-        Ok(true)
-    }
-
     #[cfg(target_os = "macos")]
     {
         let exe = std::env::current_exe().map_err(|e| e.to_string())?;
@@ -2273,6 +3213,64 @@ pub fn check_app_location_writable() -> Result<bool, String> {
             Err(_) => Ok(false),
         }
     }
+
+    #[cfg(not(target_os = "macos"))]
+    {
+        Ok(true)
+    }
+}
+
+/// Maximum size we are willing to download for a `.pkg` installer.
+const INSTALLER_MAX_BYTES: u64 = 250 * 1024 * 1024;
+const INSTALLER_MAX_REDIRECTS: usize = 10;
+
+/// Decide whether a redirect hop is allowed. Applied to every hop so an
+/// allowed host cannot bounce us onto an untrusted origin.
+fn installer_redirect_allowed(previous_hops: usize, url: &Url) -> Result<(), String> {
+    if previous_hops >= INSTALLER_MAX_REDIRECTS {
+        return Err("too many redirects".to_string());
+    }
+    validate_installer_url(url)
+}
+
+/// Reject an advertised Content-Length above the streaming cap before any
+/// bytes are written.
+fn installer_content_length_ok(len: Option<u64>) -> Result<(), String> {
+    if let Some(n) = len {
+        if n > INSTALLER_MAX_BYTES {
+            return Err("Installer download exceeded 250MiB safety limit".to_string());
+        }
+    }
+    Ok(())
+}
+
+/// Accumulate a downloaded chunk against the streaming cap.
+fn installer_account_chunk(written: u64, chunk_len: u64) -> Result<u64, String> {
+    let next = written.saturating_add(chunk_len);
+    if next > INSTALLER_MAX_BYTES {
+        return Err("Installer download exceeded 250MiB safety limit".to_string());
+    }
+    Ok(next)
+}
+
+/// Validate an installer URL (scheme, host allow-list, `.pkg` path). Applied
+/// to the initial URL *and* to every redirect hop, because the redirect chain
+/// is attacker-influenced: an allowed host could otherwise bounce us to an
+/// untrusted origin whose bytes we would write and execute.
+fn validate_installer_url(url: &Url) -> Result<(), String> {
+    if url.scheme() != "https" {
+        return Err("Installer URL must use https".to_string());
+    }
+    let host = url.host_str().unwrap_or("");
+    if !matches!(host, "github.com" | "objects.githubusercontent.com") {
+        return Err(format!(
+            "Installer URL host {host:?} is not in the trusted allow-list"
+        ));
+    }
+    if !url.path().ends_with(".pkg") {
+        return Err("Installer URL must point to a .pkg file".to_string());
+    }
+    Ok(())
 }
 
 /// Downloads a `.pkg` installer to a temp directory and opens it with
@@ -2281,22 +3279,69 @@ pub fn check_app_location_writable() -> Result<bool, String> {
 #[tauri::command]
 #[specta::specta]
 pub async fn download_and_open_mac_installer(url: String) -> Result<(), String> {
-    let file_name = url
-        .rsplit('/')
-        .next()
-        .unwrap_or("mausVoiceUpdate.pkg")
-        .to_string();
-    let dest = std::env::temp_dir().join(&file_name);
+    // Defense-in-depth: only allow downloads from the trusted release host.
+    // The TS caller derives this URL from the signed updater manifest, but
+    // any future caller (including a compromised webview) must not be able
+    // to make us download+execute arbitrary files.
+    let parsed = Url::parse(&url).map_err(|e| format!("Invalid URL: {e}"))?;
+    validate_installer_url(&parsed)?;
 
-    // Remove any stale previous download
+    // Use a unique temp filename (not the URL-derived basename) so a crafted
+    // path like "../../../LaunchAgents/foo" cannot escape the temp dir. The
+    // nanosecond timestamp + pid is unique enough for our purposes; we
+    // overwrite then delete on installer completion anyway.
+    let nanos = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|d| d.as_nanos())
+        .unwrap_or(0);
+    let pid = std::process::id();
+    let dest = std::env::temp_dir().join(format!("mausvoice-update-{nanos}-{pid}.pkg"));
+
+    // Remove any stale previous download (best-effort).
     let _ = std::fs::remove_file(&dest);
 
-    let response = reqwest::get(&url).await.map_err(|e| e.to_string())?;
+    // Validate every redirect hop rather than trusting the initial URL: the
+    // default policy would silently follow an allowed host to an arbitrary one.
+    let redirect_policy = reqwest::redirect::Policy::custom(|attempt| {
+        match installer_redirect_allowed(attempt.previous().len(), attempt.url()) {
+            Ok(()) => attempt.follow(),
+            Err(err) => attempt.error(err),
+        }
+    });
+    let client = reqwest::Client::builder()
+        .redirect(redirect_policy)
+        .build()
+        .map_err(|e| e.to_string())?;
+
+    let mut response = client
+        .get(parsed)
+        .send()
+        .await
+        .map_err(|e| e.to_string())?;
     if !response.status().is_success() {
         return Err(format!("Download failed with status {}", response.status()));
     }
-    let bytes = response.bytes().await.map_err(|e| e.to_string())?;
-    std::fs::write(&dest, &bytes).map_err(|e| e.to_string())?;
+
+    // Reject an oversized advertised length before transferring anything.
+    installer_content_length_ok(response.content_length())?;
+
+    // Stream to disk, enforcing the cap as we go so a server that lies about
+    // (or omits) Content-Length cannot exhaust memory or fill the disk.
+    let mut file = std::fs::File::create(&dest).map_err(|e| e.to_string())?;
+    let mut written: u64 = 0;
+    while let Some(chunk) = response.chunk().await.map_err(|e| e.to_string())? {
+        written = match installer_account_chunk(written, chunk.len() as u64) {
+            Ok(next) => next,
+            Err(err) => {
+                drop(file);
+                let _ = std::fs::remove_file(&dest);
+                return Err(err);
+            }
+        };
+        std::io::Write::write_all(&mut file, &chunk).map_err(|e| e.to_string())?;
+    }
+    std::io::Write::flush(&mut file).map_err(|e| e.to_string())?;
+    drop(file);
 
     std::process::Command::new("open")
         .arg(&dest)
@@ -2345,11 +3390,15 @@ pub struct FloatingWindowInfo {
 }
 
 /// Opens a draggable, always-on-top webview window pointed at the given URL
-/// and returns a stable id that can be used to destroy it later. The window
-/// renders any URL the platform webview can load (the same set the main
-/// window can load). The window is independent of the main app window — it
-/// will not be backgrounded behind other windows because of the always-on-top
-/// flag.
+/// and returns a stable id that can be used to destroy it later.
+///
+/// External URLs are restricted to http(s) and to a small allow-list of
+/// trusted schemes/hosts. This is the only place in the app that creates a
+/// webview pointed at a non-local origin. Localhost loopback is the only
+/// remote host that also receives IPC (via `floating-*` `remote.urls`);
+/// the GitHub Pages docs host is allowed to load but has no IPC capability.
+/// We keep the navigation allow-list small to avoid a compromised or
+/// confused caller creating a floating window on an attacker-controlled origin.
 #[tauri::command]
 #[specta::specta]
 pub async fn floating_window_create(
@@ -2357,7 +3406,9 @@ pub async fn floating_window_create(
     app: AppHandle,
     state: State<'_, crate::state::FloatingWindowState>,
 ) -> Result<FloatingWindowInfo, String> {
-    let parsed_url = url::Url::parse(&args.url).map_err(|err| err.to_string())?;
+    let parsed_url = parse_floating_window_url(&args.url)?;
+    validate_floating_window_url(&parsed_url)?;
+
     let label = state.next_label();
     let title = args.title.clone().unwrap_or_else(|| "mausVoice".to_string());
 

@@ -8,7 +8,6 @@ export type LocalWhisperModel =
   | "medium"
   | "large"
   | "turbo"
-  | "hindi2hinglish"
   | "parakeet-ctc-0.6b"
   | "parakeet-tdt-0.6b"
   | "canary-1b";
@@ -34,7 +33,6 @@ export const LOCAL_WHISPER_MODELS: LocalWhisperModel[] = [
   "medium",
   "turbo",
   "large",
-  "hindi2hinglish",
 ];
 
 type ModelMeta = {
@@ -107,15 +105,6 @@ const MODEL_LOOKUP: Record<LocalWhisperModel, ModelMeta> = {
     helper: defineMessage({ defaultMessage: "Highest accuracy, requires GPU" }),
     category: "whisper",
   },
-  hindi2hinglish: {
-    label: defineMessage({
-      defaultMessage: "Whisper Hindi2Hinglish Apex (595 MB)",
-    }),
-    helper: defineMessage({
-      defaultMessage: "Hindi speech transcribed as Hinglish (Latin script)",
-    }),
-    category: "whisper",
-  },
 };
 
 export const LOCAL_MODEL_OPTIONS: LocalModelOption[] = LOCAL_WHISPER_MODELS.map(
@@ -157,15 +146,6 @@ export const normalizeLocalWhisperModel = (
     normalized === "large-v3-turbo"
   ) {
     return "turbo";
-  }
-
-  if (
-    normalized === "hindi2hinglish" ||
-    normalized === "hindi-hinglish" ||
-    normalized === "hindi2hinglish-apex" ||
-    normalized === "whisper-hindi2hinglish-apex"
-  ) {
-    return "hindi2hinglish";
   }
 
   if (

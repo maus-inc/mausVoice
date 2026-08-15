@@ -141,15 +141,27 @@ body {
   text-rendering: optimizeLegibility;
 }
 
-/* The Starlight masthead wraps its title in a non-translatable span. Keep a
- * stable selector first; the hashed selector is retained for the currently
- * generated component markup called out in the design brief. */
-.site-title span[translate="no"],
-span.astro-25bx3oyc[translate="no"] {
+/* The Starlight masthead title is split into a brand wordmark ("mausVoice",
+ * rendered in the decorative cursive face at a reduced size) and a suffix
+ * ("Docs", set in the normal Satoshi face). */
+.site-title .site-title-brand {
   font-family: "TAN-PARADISO", "Satoshi", sans-serif;
   font-weight: 400;
+  font-size: 0.86em;
   letter-spacing: -0.045em;
-  line-height: 0.95;
+  line-height: 1;
+  vertical-align: baseline;
+}
+
+.site-title .site-title-suffix {
+  font-family: "Satoshi", "Inter", system-ui, sans-serif;
+  font-weight: 500;
+  font-size: 0.78em;
+  letter-spacing: 0.02em;
+  line-height: 1.05;
+  color: var(--sl-color-gray-2);
+  margin-inline-start: 0.42em;
+  vertical-align: baseline;
 }
 
 /* Condensed editorial rhythm: denser than Starlight's defaults without
@@ -204,4 +216,100 @@ header,
   outline: 1px solid hsl(0 0% 40%);
   outline-offset: 3px;
   border-radius: 4px;
+}
+
+/* ------------------------------------------------------------------ *
+ * Primary action button — inner white highlight plus a soft drop shadow.
+ * ------------------------------------------------------------------ */
+.sl-link-button.primary {
+  /* On the dark (white) button the top white highlight is invisible, so a
+   * bottom inner shadow carries the bevel; on the light (black) button the
+   * top white highlight is what reads. Together they make the design visible
+   * in both themes, plus a small outer drop shadow. */
+  box-shadow:
+    inset 0 2px 0 hsl(0 0% 100% / 0.85),
+    inset 0 -2px 3px hsl(0 0% 0% / 0.22),
+    0 3px 8px hsl(0 0% 0% / 0.4);
+}
+
+/* ------------------------------------------------------------------ *
+ * Bento cards — the coloured icon chrome is scrapped in favour of 3D
+ * ASCII element decorations pinned to the card edges. Each card carries a
+ * single element in a corner, faded toward the centre; the positioning
+ * alternates across the four edges and the artwork inverts on light theme.
+ * ------------------------------------------------------------------ */
+.card-grid.stagger .card {
+  position: relative;
+  overflow: hidden;
+}
+
+.card-grid.stagger .card::before {
+  content: "";
+  position: absolute;
+  width: 220px;
+  height: 150px;
+  background-repeat: no-repeat;
+  background-size: contain;
+  background-position: center;
+  pointer-events: none;
+  opacity: 0.85;
+}
+
+/* Cube — top-left */
+.card-grid.stagger .card:nth-child(1)::before {
+  top: 0;
+  left: 0;
+  background-image: url("/mausVoice/docs/assets/cards/ascii-cube.svg");
+  -webkit-mask-image: linear-gradient(135deg, #000 0%, transparent 70%);
+  mask-image: linear-gradient(135deg, #000 0%, transparent 70%);
+}
+
+/* Pyramid — top-right */
+.card-grid.stagger .card:nth-child(2)::before {
+  top: 0;
+  right: 0;
+  background-image: url("/mausVoice/docs/assets/cards/ascii-pyramid.svg");
+  -webkit-mask-image: linear-gradient(225deg, #000 0%, transparent 70%);
+  mask-image: linear-gradient(225deg, #000 0%, transparent 70%);
+}
+
+/* Sphere — bottom-left */
+.card-grid.stagger .card:nth-child(3)::before {
+  bottom: 0;
+  left: 0;
+  background-image: url("/mausVoice/docs/assets/cards/ascii-sphere.svg");
+  -webkit-mask-image: linear-gradient(315deg, #000 0%, transparent 70%);
+  mask-image: linear-gradient(315deg, #000 0%, transparent 70%);
+}
+
+/* Diamond — bottom-right */
+.card-grid.stagger .card:nth-child(4)::before {
+  bottom: 0;
+  right: 0;
+  background-image: url("/mausVoice/docs/assets/cards/ascii-diamond.svg");
+  -webkit-mask-image: linear-gradient(45deg, #000 0%, transparent 70%);
+  mask-image: linear-gradient(45deg, #000 0%, transparent 70%);
+}
+
+/* Alternate the positioning for the trailing cards. */
+.card-grid.stagger .card:nth-child(5)::before {
+  top: 0;
+  right: 0;
+  background-image: url("/mausVoice/docs/assets/cards/ascii-pyramid.svg");
+  -webkit-mask-image: linear-gradient(225deg, #000 0%, transparent 70%);
+  mask-image: linear-gradient(225deg, #000 0%, transparent 70%);
+}
+
+.card-grid.stagger .card:nth-child(6)::before {
+  bottom: 0;
+  left: 0;
+  background-image: url("/mausVoice/docs/assets/cards/ascii-diamond.svg");
+  -webkit-mask-image: linear-gradient(315deg, #000 0%, transparent 70%);
+  mask-image: linear-gradient(315deg, #000 0%, transparent 70%);
+}
+
+/* Invert the white ASCII artwork to black on light theme. */
+:root[data-theme="light"] .card-grid.stagger .card::before {
+  filter: invert(1);
+  opacity: 0.6;
 }

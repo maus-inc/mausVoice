@@ -17,13 +17,6 @@ pub enum WhisperModel {
     )]
     Turbo,
     #[serde(
-        rename = "hindi2hinglish",
-        alias = "hindi-hinglish",
-        alias = "hindi2hinglish-apex",
-        alias = "whisper-hindi2hinglish-apex"
-    )]
-    Hindi2Hinglish,
-    #[serde(
         rename = "parakeet-ctc-0.6b",
         alias = "parakeet-ctc",
         alias = "parakeet_ctc",
@@ -54,10 +47,6 @@ impl WhisperModel {
             "medium" => Some(Self::Medium),
             "large" => Some(Self::Large),
             "turbo" | "large-turbo" | "large_v3_turbo" | "large-v3-turbo" => Some(Self::Turbo),
-            "hindi2hinglish"
-            | "hindi-hinglish"
-            | "hindi2hinglish-apex"
-            | "whisper-hindi2hinglish-apex" => Some(Self::Hindi2Hinglish),
             "parakeet-ctc-0.6b" | "parakeet-ctc" | "parakeet_ctc" | "parakeet_ctc_0.6b" => {
                 Some(Self::ParakeetCtc06B)
             }
@@ -77,7 +66,6 @@ impl WhisperModel {
             Self::Medium => "medium",
             Self::Large => "large",
             Self::Turbo => "turbo",
-            Self::Hindi2Hinglish => "hindi2hinglish",
             Self::ParakeetCtc06B => "parakeet-ctc-0.6b",
             Self::ParakeetTdt06B => "parakeet-tdt-0.6b",
             Self::Canary1B => "canary-1b",
@@ -101,7 +89,6 @@ impl WhisperModel {
             Self::Medium => "ggml-medium.bin",
             Self::Large => "ggml-large-v3.bin",
             Self::Turbo => "ggml-large-v3-turbo.bin",
-            Self::Hindi2Hinglish => "ggml-hindi2hinglish-apex-q5_1.bin",
             // Track the largest artifact so completion cannot precede its
             // smaller graph/tokenizer companions under normal downloads.
             Self::ParakeetCtc06B => "model_int8.onnx_data",
@@ -216,9 +203,6 @@ impl WhisperModel {
             Self::Turbo => {
                 "https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-large-v3-turbo.bin"
             }
-            Self::Hindi2Hinglish => {
-                "https://huggingface.co/mausvoice/whisper-hindi2hinglish-apex-ggml/resolve/main/ggml-hindi2hinglish-apex-q5_1.bin"
-            }
             Self::ParakeetCtc06B => {
                 "https://huggingface.co/onnx-community/parakeet-ctc-0.6b-ONNX/resolve/main/onnx/model_int8.onnx_data"
             }
@@ -240,7 +224,6 @@ impl WhisperModel {
             "medium",
             "large",
             "turbo",
-            "hindi2hinglish",
             "parakeet-ctc-0.6b",
             "parakeet-tdt-0.6b",
             "canary-1b",
@@ -284,5 +267,20 @@ mod tests {
                 .iter()
                 .all(|(_, url)| url.starts_with("https://huggingface.co/")));
         }
+    }
+
+    #[test]
+    fn whisper_cpp_models_have_valid_filenames() {
+        for slug in ["tiny", "base", "small", "medium", "large", "turbo"] {
+            let model = WhisperModel::from_slug(slug).expect("supported whisper slug must parse");
+            assert!(model.filename().starts_with("ggml-"));
+            assert!(model.filename().ends_with(".bin"));
+        }
+    }
+
+    #[test]
+    fn unsupported_transformers_checkpoint_is_not_exposed_as_a_ggml_model() {
+        assert_eq!(WhisperModel::from_slug("hindi2hinglish"), None);
+        assert_eq!(WhisperModel::from_slug("hindi2hinglish-apex"), None);
     }
 }
