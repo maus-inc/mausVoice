@@ -1,7 +1,7 @@
 {
   "$schema": "../gen/schemas/desktop-schema.json",
   "identifier": "default",
-  "description": "Capability for the main window and any floating-* webview spawned via floating_window_create",
+  "description": "Capability for the main window and any floating-* webview spawned via floating_window_create. The http:default scope names every known SaaS provider host for documentation, and additionally allows arbitrary http/https hosts because Ollama, OpenAI-compatible, and Speaches endpoints are user-configured base URLs (LAN boxes, reverse proxies) that cannot be enumerated statically; the webview CSP connect-src remains the strict boundary for in-page fetches.",
   "windows": ["main", "floating-*"],
   "remote": {
     "urls": [
@@ -104,7 +104,17 @@
         { "url": "https://objects.githubusercontent.com" },
         { "url": "https://objects.githubusercontent.com/**" },
         { "url": "https://*.ingest.sentry.io" },
-        { "url": "https://*.ingest.sentry.io/**" }
+        { "url": "https://*.ingest.sentry.io/**" },
+        { "url": "https://api.assemblyai.com" },
+        { "url": "https://api.assemblyai.com/**" },
+        { "url": "https://api.x.ai" },
+        { "url": "https://api.x.ai/**" },
+        { "url": "https://api.aldea.ai" },
+        { "url": "https://api.aldea.ai/**" },
+        { "url": "http://*:*" },
+        { "url": "http://*:*/**" },
+        { "url": "https://*" },
+        { "url": "https://*/**" }
       ]
     }
   ]
