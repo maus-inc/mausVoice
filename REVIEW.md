@@ -44,7 +44,7 @@ Use this guide to proactively audit your own code changes, prevent regressions i
 6. [The Definitive Suggestions & Nitpicks Guide](#6-the-definitive-suggestions--nitpicks-guide)
     - [6.1 Suggestion Typology: Quality-of-Life, Defensive Coding, and Scalability](#61-suggestion-typology-quality-of-life-defensive-coding-and-scalability)
     - [6.2 Nitpick Typology: Linters, Spacing, and Non-Functional Semantics](#62-nitpick-typology-linters-spacing-and-non-functional-semantics)
-    - [6.3 Code Quality & Linter Boundaries (Oxlint, Prettier, Markdownlint)](#63-code-quality--linter-boundaries-oxlint-prettier-markdownlint)
+    - [6.3 Code Quality & Linter Boundaries (Oxlint, Prettier, Clippy)](#63-code-quality--linter-boundaries-oxlint-prettier-clippy)
 7. [Universal Code Smell & Anti-Pattern Detection Checklist](#7-universal-code-smell--anti-pattern-detection-checklist)
 
 ---
@@ -165,7 +165,7 @@ Every pre-release production audit must conclude with a clear, unambiguous verdi
 Audit reviews must explicitly trace and check every single one of the following ten architectural vectors. **Do not omit any item.**
 
 1.  **Merge State:** Verify branch mergeability. Identify any active conflicts with the target branch and assess if automated rebasing is safe.
-2.  **IPC Boundary:** Review every single new or modified `ipcMain.handle`, `tauri::command`, or bridge routing hook. Check for:
+2.  **IPC Boundary:** Review every new or modified `tauri::command` (or other bridge routing hook). Check for:
     *   Strict payload type validation.
     *   Safe integer boundaries (e.g. converting `u64` parameters cleanly to avoid precision losses in standard JavaScript `Number`).
     *   Strict array/buffer bounds checking.
@@ -201,7 +201,7 @@ Audit reviews must explicitly trace and check every single one of the following 
     *   Directory traversal escapes (`../`) and canonicalization guards.
     *   XSS injection risks inside webviews.
 9.  **Test Coverage:** Identify any gap in unit, integration, or E2E smoke tests. Highlight important new behaviors that are completely untested.
-10. **Lint/CI Compliance:** Confirm compliance with all monorepo linters (`oxlint`, `eslint`, `prettier`, `clippy`). Ensure no new warning flags are introduced.
+10. **Lint/CI Compliance:** Confirm compliance with all monorepo linters (`oxlint`, `prettier` for the frontend, and `clippy` for Rust). Ensure no new warning flags are introduced.
 
 ---
 
@@ -885,9 +885,9 @@ Nitpicks are purely structural or cosmetic changes that have **zero functional i
 
 #### Primary Nitpick Patterns:
 1.  **Formatting Drift & Stray Newlines:**
-    Extra spaces, dangling blank lines inside blocks, trailing whitespaces, or missing empty lines below Markdown headings (e.g., `markdownlint` MD022 errors).
+    Extra spaces, dangling blank lines inside blocks, trailing whitespace, or missing empty lines below Markdown headings.
 2.  **File Termination Standards:**
-    Missing a single trailing newline at the end of files (e.g., `markdownlint` MD047 errors), which breaks some terminal-based concatenations.
+    Missing a single trailing newline at the end of files, which breaks some terminal-based concatenations.
 3.  **Redundant / Drifted Comments:**
     Comments that contradict active code changes. Old, legacy comments claiming a function "throws X" when it was rewritten to return a `Result` must be scrubbed immediately.
 4.  **Variable / Function Renaming:**
@@ -895,14 +895,14 @@ Nitpicks are purely structural or cosmetic changes that have **zero functional i
 
 ---
 
-### 6.3 Code Quality & Linter Boundaries (Oxlint, Prettier, Markdownlint)
+### 6.3 Code Quality & Linter Boundaries (Oxlint, Prettier, Clippy)
 
 `mausVoice` integrates specific, automated static tools that compile and enforce styling criteria before code enters staging:
-*   **Oxlint:** An extremely fast linter that scans the entire desktop frontend for common JavaScript/TypeScript traps (such as variable shadowing, redundant assignments, and unused imports) with zero configuration. It is run via `pnpm --filter desktop run lint`.
-*   **Prettier:** Enforces code formatting consistency (such as strict quote casings and spacing limits) across all TypeScript, CSS, and Markdown assets.
-*   **Markdownlint:** Enforces structural standards for Markdown files. It strictly checks that headings are surrounded by empty lines (MD022) and files end with a single trailing newline (MD047).
+*   **Oxlint:** A fast linter that scans the desktop frontend (`apps/desktop/src`) for common JavaScript/TypeScript traps (such as variable shadowing, redundant assignments, and unused imports), using the checked-in `apps/desktop/oxlint.json`. It is run via `pnpm --filter desktop run lint` (which also runs a Prettier check).
+*   **Prettier:** Enforces code formatting consistency across TypeScript/TSX, CSS, and Markdown via the root `format` script and the desktop lint check.
+*   **Clippy:** Enforces Rust lint checks (`cargo clippy -- -D warnings`) for the Tauri backend and each native pill crate in the lint workflow.
 
-Audit reviews must verify that proposed suggestions and nitpicks do not violate these linter boundaries or cause formatting test failures in CI.
+There is no ESLint or Markdownlint step in CI. If a review raises Markdown structure (blank lines around headings, a single trailing newline), treat it as a readability nit, not an enforced gate. Audit reviews must verify that proposed suggestions and nitpicks do not violate the actual linter boundaries or cause formatting test failures in CI.
 
 ---
 
@@ -929,6 +929,6 @@ Audit reviews must verify that proposed suggestions and nitpicks do not violate 
 | **CI Coverage** | Asymmetrical crate verification runs across targets | Major | Enforce symmetrical `cargo test` configurations for all platforms |
 | **Script Safety** | Casting env variables directly to Boolean states | Medium | Use explicit string comparison statements |
 | **Clean Code** | Dangling, unused variables or dead system imports | Minor | Strip unused references completely to pass Oxlint clean scans |
-| **Formatting** | Missing blank spaces around headings or EOF newlines | Nitpick | Add blank spaces and newlines to comply with Markdownlint checks |
+| **Formatting** | Missing blank spaces around headings or EOF newlines | Nitpick | Add blank spaces and newlines for consistent Markdown formatting |
 | **Documentation** | Drifted comments contradicting active code signatures | Nitpick | Rewrite doc comments and functions to preserve semantic alignment |
 | **Performance** | Redundant device label lookups inside hardware cycles | Minor | Target devices using direct indexed queries or cached identifiers |

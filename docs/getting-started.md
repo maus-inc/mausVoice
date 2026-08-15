@@ -4,21 +4,21 @@
 
 This is a **pnpm** workspace (`pnpm@10.11.0`) managed with Turborepo. The package manager is declared in the root `package.json` and driven by `pnpm-lock.yaml` — do not use `npm`.
 
-| Path                     | Description                                                                                                                                 |
-| ------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------- |
-| `apps/desktop`           | Tauri desktop app (Vite + React + Zustand) controlling UI, state, and business logic.                                                       |
-| `apps/desktop/src-tauri` | Rust API layer invoked from TypeScript for native capabilities, SQLite storage, and Whisper inference.                                      |
-| `apps/docs`              | Astro + Starlight documentation site.                                                                                                       |
-| `apps/windows-installer` | Windows installer (Tauri).                                                                                                                  |
-| `docs`                   | Architecture notes, release guides, and reference material.                                                                                                                                                                       |
-| `packages/*`             | Shared packages: types, voice-ai, desktop-native-apis, functions, pricing, UI, utilities, config, shared-fonts, and the native pill crates. |
-| `scripts`                | Automation and helper scripts for local development and release tasks.                                                                      |
+| Path                     | Description                                                                                                                                                                                         |
+| ------------------------ | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `apps/desktop`           | Tauri desktop app (Vite + React + Zustand) controlling UI, state, and business logic.                                                                                                               |
+| `apps/desktop/src-tauri` | Rust API layer invoked from TypeScript for native capabilities, SQLite storage, and Whisper inference.                                                                                              |
+| `apps/docs`              | Astro + Starlight documentation site.                                                                                                                                                               |
+| `apps/windows-installer` | Windows installer (Tauri).                                                                                                                                                                          |
+| `docs`                   | Architecture notes, release guides, and reference material.                                                                                                                                         |
+| `packages/*`             | Shared packages: types, utilities, voice-ai, agent, desktop-native-apis, desktop-utils, firemix, shared-fonts, eslint-config, typescript-config, and the native pill / `rust_transcription` crates. |
+| `scripts`                | Automation and helper scripts for local development and release tasks.                                                                                                                              |
 
 > The marketing site (`apps/web`) and Firebase functions (`apps/firebase`) referenced in some legacy docs are **not part of this repository**. The marketing site and its install scripts are served from `https://maus-inc.github.io/mausVoice/` externally.
 
 ## Architecture Overview
 
-The desktop app follows a TypeScript-first design: Zustand maintains a single global store, while pure utility functions in `apps/desktop/src/utils` read and mutate state. Actions compose those utilities and may call out to repositories. Repos abstract whether persistence happens locally (SQLite through Tauri commands) or remotely (Docker / external services).
+The desktop app follows a TypeScript-first design: Zustand maintains a single global store, while pure utility functions in `apps/desktop/src/utils` read and mutate state. Actions compose those utilities and may call out to repositories. In this build the repos resolve to local SQLite persistence through Tauri commands; transcription and text generation can use the local sidecar or external AI providers.
 
 ```
 User input / system events
@@ -67,6 +67,9 @@ pnpm --filter desktop run dev:mac
 
 # Windows
 pnpm --filter desktop run dev:windows
+
+# Linux
+pnpm --filter desktop run dev:linux
 ```
 
 During local development you can override platform detection by exporting `MAUSVOICE_DESKTOP_PLATFORM` (`darwin` or `win32`). The desktop dev journey defaults to the `emulators` flavor (`apps/desktop/.env.emulators`); pass `FLAVOR=dev` or `VITE_FLAVOR=dev` when you want the hosted dev project.

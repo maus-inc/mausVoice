@@ -7,7 +7,7 @@ sidebar:
 
 Open **Settings → Processing → AI transcription** and choose **Local** or **API**.
 
-**Local** starts a bundled Rust/whisper.cpp sidecar on `127.0.0.1`, uses a downloaded GGML model, and keeps speech recognition on this computer. It still needs network access while downloading a model from Hugging Face. The app sends audio chunks to the loopback sidecar during recording, but the sidecar buffers them and runs inference only at finalization—Local does not supply interim text for real-time output.
+**Local** starts a bundled Rust transcription sidecar on `127.0.0.1` and keeps speech recognition on this computer using a downloaded model — either a whisper.cpp GGML model or an ONNX Parakeet/Canary model. It still needs network access while downloading a model from its origin. The app sends audio chunks to the loopback sidecar during recording, but the sidecar buffers them and runs inference only at finalization—Local does not supply interim text for real-time output.
 
 **API** sends recorded audio to the selected key entry or endpoint. Hosted services use their own billing, retention, and data policies; a self-hosted compatible endpoint can stay on infrastructure you control. Provider behavior is not uniform: some sessions stream audio while recording, while others send retained audio in overlapping batches after release.
 

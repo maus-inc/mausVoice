@@ -1,6 +1,8 @@
 # rust_transcription
 
-Rust sidecar service for local Whisper transcription in mausVoice.
+Rust sidecar service for local speech transcription in mausVoice. It runs
+whisper.cpp GGML models (Whisper Tiny through Large v3) and ONNX Runtime models
+(NVIDIA Parakeet CTC/TDT 0.6B and Canary 1B).
 
 It exposes one REST interface for both CPU and GPU binaries:
 
@@ -15,7 +17,10 @@ It exposes one REST interface for both CPU and GPU binaries:
 - `POST /v1/transcriptions/sessions/{sessionId}/finalize`
 - `DELETE /v1/transcriptions/sessions/{sessionId}`
 
-Supported models: `tiny`, `base`, `small`, `medium`, `large`, `turbo`.
+Supported models:
+
+- Whisper (whisper.cpp / GGML): `tiny`, `base`, `small`, `medium`, `large`, `turbo`
+- NVIDIA ONNX: `parakeet-ctc-0.6b`, `parakeet-tdt-0.6b`, `canary-1b`
 
 ## Build
 

@@ -15,29 +15,32 @@ The Docker setup provides two ways to access Ollama:
 
 ### 1. Start the services
 
+The compose files live in `config/`, not the repository root. Run from the
+repository root with an explicit compose file:
+
 ```bash
 # From the repository root
-docker compose up -d
+docker compose -f config/docker-compose.yml up -d
 ```
 
 For Linux with NVIDIA GPU support:
 
 ```bash
-docker compose -f docker-compose.yml -f docker-compose.linux-gpu.yaml up -d
+docker compose -f config/docker-compose.yml -f config/docker-compose.linux-gpu.yaml up -d
 ```
 
 ### 2. Pull a model
 
 ```bash
 # Small model for quick testing (~2GB)
-docker compose exec ollama ollama pull llama3.2:1b
+docker compose -f config/docker-compose.yml exec ollama ollama pull llama3.2:1b
 
 # Larger, more capable model (~4GB)
-docker compose exec ollama ollama pull llama3.2:3b
+docker compose -f config/docker-compose.yml exec ollama ollama pull llama3.2:3b
 
 # Even larger options
-docker compose exec ollama ollama pull llama3.1:8b
-docker compose exec ollama ollama pull mistral:7b
+docker compose -f config/docker-compose.yml exec ollama ollama pull llama3.1:8b
+docker compose -f config/docker-compose.yml exec ollama ollama pull mistral:7b
 ```
 
 ### 3. Configure mausVoice
@@ -70,19 +73,19 @@ Caddy acts as a reverse proxy that validates the `Authorization: Bearer <token>`
 ### List installed models
 
 ```bash
-docker compose exec ollama ollama list
+docker compose -f config/docker-compose.yml exec ollama ollama list
 ```
 
 ### Pull a new model
 
 ```bash
-docker compose exec ollama ollama pull <model-name>
+docker compose -f config/docker-compose.yml exec ollama ollama pull <model-name>
 ```
 
 ### Remove a model
 
 ```bash
-docker compose exec ollama ollama rm <model-name>
+docker compose -f config/docker-compose.yml exec ollama ollama rm <model-name>
 ```
 
 ### Model recommendations
@@ -138,7 +141,7 @@ caddy:
 Then restart:
 
 ```bash
-docker compose down && docker compose up -d
+docker compose -f config/docker-compose.yml down && docker compose -f config/docker-compose.yml up -d
 ```
 
 ### Caddy configuration
@@ -153,37 +156,37 @@ The Caddy reverse proxy configuration is located at `config/ollama/Caddyfile`. I
 Model data is stored in a Docker volume (`ollama_data`) and persists across container restarts. To completely reset:
 
 ```bash
-docker compose down -v  # -v removes volumes
-docker compose up -d
+docker compose -f config/docker-compose.yml down -v  # -v removes volumes
+docker compose -f config/docker-compose.yml up -d
 ```
 
 ## Troubleshooting
 
 ### "Unable to connect to Ollama"
 
-1. Check if containers are running: `docker compose ps`
-2. Check logs: `docker compose logs ollama` or `docker compose logs caddy`
+1. Check if containers are running: `docker compose -f config/docker-compose.yml ps`
+2. Check logs: `docker compose -f config/docker-compose.yml logs ollama` or `docker compose -f config/docker-compose.yml logs caddy`
 3. Verify the URL and port in mausVoice settings
 4. If using port 11430, ensure the API key is set
 
 ### Model not appearing in dropdown
 
-1. Ensure the model is pulled: `docker compose exec ollama ollama list`
-2. Check Ollama logs: `docker compose logs ollama`
+1. Ensure the model is pulled: `docker compose -f config/docker-compose.yml exec ollama ollama list`
+2. Check Ollama logs: `docker compose -f config/docker-compose.yml logs ollama`
 3. Try refreshing the model picker in mausVoice
 
 ### GPU not being used (Linux)
 
 1. Ensure you're using the GPU compose file:
    ```bash
-   docker compose -f docker-compose.yml -f docker-compose.linux-gpu.yaml up -d
+   docker compose -f config/docker-compose.yml -f config/docker-compose.linux-gpu.yaml up -d
    ```
 2. Verify NVIDIA Container Toolkit is installed:
    ```bash
    nvidia-smi
    docker run --rm --gpus all nvidia/cuda:12.0-base nvidia-smi
    ```
-3. Check Ollama logs for GPU detection: `docker compose logs ollama`
+3. Check Ollama logs for GPU detection: `docker compose -f config/docker-compose.yml logs ollama`
 
 ### Slow inference on macOS
 
@@ -200,8 +203,8 @@ Then point mausVoice to `http://localhost:11434`.
 
 ```bash
 # Stop containers (keeps data)
-docker compose down
+docker compose -f config/docker-compose.yml down
 
 # Stop and remove volumes (deletes downloaded models)
-docker compose down -v
+docker compose -f config/docker-compose.yml down -v
 ```
