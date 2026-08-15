@@ -1,4 +1,3 @@
-import { commands } from "@maus-inc/desktop-native-apis";
 import { getVersion } from "@tauri-apps/api/app";
 import { invoke } from "@tauri-apps/api/core";
 import { Member, Nullable, Term, User } from "@maus-inc/types";
@@ -27,6 +26,7 @@ import {
   setRemoteOutputEnabled,
   setRemoteTargetDeviceId,
 } from "../../actions/user.actions";
+import { requestAdminRelaunch } from "../../actions/native.actions";
 import { useAsyncData, useAsyncEffect } from "../../hooks/async.hooks";
 import { useIntervalAsync, useKeyDownHandler } from "../../hooks/helper.hooks";
 import { useHotkeyFire } from "../../hooks/hotkey.hooks";
@@ -259,26 +259,8 @@ export const AppSideEffects = () => {
     getLogger().info(
       "Requesting administrator relaunch after frontend startup",
     );
-    void commands
-      .requestAdminRelaunch()
-      .then((result) => {
-        getLogger().info(`Administrator relaunch result: ${result}`);
-        if (result === "cancelled") {
-          produceAppState((draft) => {
-            draft.settings.elevationDeclinedDialogOpen = true;
-          });
-        } else if (result === "failed") {
-          showErrorSnackbar(
-            intl.formatMessage({
-              defaultMessage: "Failed to restart mausVoice as administrator.",
-            }),
-          );
-        }
-      })
-      .catch((error) => {
-        showErrorSnackbar(error);
-      });
-  }, [intl, prefs]);
+    void requestAdminRelaunch();
+  }, [prefs]);
 
   useAsyncEffect(async () => {
     if (consumeSurfaceWindowFlag()) {
