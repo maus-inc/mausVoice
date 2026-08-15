@@ -311,35 +311,42 @@ function release() {
   g.elapsed = 0; g.releaseElapsed = 0;
 }
 
-function tick(dt) {
-  const frameScale = dt / (1 / 60);
-  g.wavePhase = (g.wavePhase + (0.11 + 0.32 * 0.45) * frameScale) % TAU;
-  g.glimmerPhase = (g.glimmerPhase + 0.055 * tv("glimmerSpeed") * frameScale) % TAU;
-
+/// Advances the gesture clock and arms the drag once the hold completes.
+function tickGesture(dt) {
   if (g.held) {
     g.elapsed += dt;
     g.pressElapsed += dt;
-    if (!g.dragging && g.elapsed >= LONG_PRESS_DURATION) { g.dragging = true; g.armPulse = 0; }
+    if (!g.dragging && g.elapsed >= LONG_PRESS_DURATION) {
+      g.dragging = true;
+      g.armPulse = 0;
+    }
   }
   if (g.armPulse >= 0) {
     g.armPulse += dt;
     if (g.armPulse > tv("pulseDur")) g.armPulse = -1;
   }
-  g.armT = g.dragging ? Math.min(1, g.armT + dt / 0.22) : Math.max(0, g.armT - dt / 0.18);
+  g.armT = g.dragging
+    ? Math.min(1, g.armT + dt / 0.22)
+    : Math.max(0, g.armT - dt / 0.18);
+}
 
+/// Pins the ring while the gesture is held, fades it after release.
+function tickRingAlpha(dt) {
   const ringHeld = g.dragging || (g.held && g.elapsed > LONG_PRESS_HOLD_DELAY);
   if (ringHeld) {
     g.ringReleaseProgress = g.dragging ? 1 : longPressProgress(g.elapsed);
     g.releaseElapsed = 0;
     g.ringAlpha = 1;
-  } else {
-    g.releaseElapsed += dt;
-    g.ringAlpha = Math.max(0, g.ringAlpha - dt / LONG_PRESS_RING_FADE);
+    return;
   }
+  g.releaseElapsed += dt;
+  g.ringAlpha = Math.max(0, g.ringAlpha - dt / LONG_PRESS_RING_FADE);
+}
 
-  // Inflate — v2 starts it mid-hold instead of at the arm moment, so the pill
-  // is already growing while the ring fills and arming is a continuation, not
-  // a start. Same critically-damped spring as Rust's `spring_anim`.
+/// Inflate spring. v2 starts inflating mid-hold rather than at the arm moment,
+/// so the pill is already growing while the ring fills and arming continues
+/// that motion. Same critically-damped spring as Rust's `spring_anim`.
+function tickInflate(dt) {
   const p = g.held ? holdProgressEased(g.elapsed) : 0;
   const pre = smootherstep(clamp01((p - tv("preInflateAt")) / Math.max(1e-3, 1 - tv("preInflateAt"))))
             * tv("preInflateAmt");
@@ -347,6 +354,16 @@ function tick(dt) {
   const damping = 2 * Math.sqrt(DRAG_INFLATE_STIFFNESS);
   g.inflateVel += (DRAG_INFLATE_STIFFNESS * (target - g.inflate) - damping * g.inflateVel) * dt;
   g.inflate = clamp01(g.inflate + g.inflateVel * dt);
+}
+
+function tick(dt) {
+  const frameScale = dt / (1 / 60);
+  g.wavePhase = (g.wavePhase + (0.11 + 0.32 * 0.45) * frameScale) % TAU;
+  g.glimmerPhase = (g.glimmerPhase + 0.055 * tv("glimmerSpeed") * frameScale) % TAU;
+
+  tickGesture(dt);
+  tickRingAlpha(dt);
+  tickInflate(dt);
 }
 
 // v2 master alpha: eased rise on press, eased (accelerating) exit on release.
@@ -510,7 +527,8 @@ function ringSeal(p) {
 
 /// Layer 2 (primary) — glimmer-graded stroke. Per-segment shading; segments
 /// overlap by construction (round caps) so there is no visible seam.
-function drawRingComet(ctx, pts, total, headLen, p, alpha, seal, showSeams) {
+function drawRingComet(ctx, ring, showSeams) {
+  const { pts, total, headLen, p, alpha, seal } = ring;
   const relax = smootherstep(clamp01(p / tv("tailRelax")));
   const tail = lerp(total * tv("tailStart"), total * 1.35, relax);
   const floor = lerp(0, tv("floor"), clamp01(p * 3));
@@ -555,7 +573,8 @@ function drawRingComet(ctx, pts, total, headLen, p, alpha, seal, showSeams) {
 /// alpha eases to zero while its radius blooms outward. A head that stayed lit
 /// until completion would park at the seam and blink out; instead it spreads
 /// and evaporates into the ring.
-function drawRingHead(ctx, pts, total, headLen, p, alpha, seal) {
+function drawRingHead(ctx, ring) {
+  const { pts, total, headLen, p, alpha, seal } = ring;
   const dissolve = Math.max(
     seal,
     smootherstep(clamp01((p - tv("headFadeFrom")) / Math.max(1e-3, 1 - tv("headFadeFrom")))),
@@ -619,9 +638,9 @@ function drawProposedRing(ctx, cw, ch, showSeams) {
 
   if (alpha > 0) drawRingTrack(ctx, path, alpha);
   if (alpha > 0 && headLen > 0) {
-    const seal = ringSeal(p);
-    drawRingComet(ctx, pts, total, headLen, p, alpha, seal, showSeams);
-    drawRingHead(ctx, pts, total, headLen, p, alpha, seal);
+    const ring = { pts, total, headLen, p, alpha, seal: ringSeal(p) };
+    drawRingComet(ctx, ring, showSeams);
+    drawRingHead(ctx, ring);
   }
   if (pulse >= 0) drawArmPulse(ctx, geo, pulse, smooth);
 
