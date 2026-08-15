@@ -5,16 +5,24 @@ import { FirebaseOptions, initializeApp } from "firebase/app";
 import mixpanel from "mixpanel-browser";
 import { connectAuthEmulator } from "firebase/auth";
 import { connectDatabaseEmulator, getDatabase } from "firebase/database";
-import React, { useEffect, useMemo } from "react";
+import React, { useMemo } from "react";
 import ReactDOM from "react-dom/client";
 import { IntlProvider } from "react-intl";
 import { AppWithLoading } from "./components/root/AppWithLoading";
 import { SnackbarEmitter } from "./components/root/SnackbarEmitter";
 import { getIntlConfig } from "./i18n";
-import { theme } from "./theme";
+import { THEME_PROVIDER_CONFIG, theme } from "./theme";
 import { createEffectiveAuth } from "./utils/auth.utils";
 import { applyDomMutationGuards } from "./utils/dom-guard.utils";
 import { getIsEmulators } from "./utils/env.utils";
+import {
+  installGlobalErrorOverlay,
+  paintFatalError,
+} from "./utils/global-error-overlay.utils";
+
+// Surface any startup failure on screen instead of leaving a blank white
+// window — the bundle can fail to execute under Tauri's asset: protocol.
+installGlobalErrorOverlay();
 
 // WebView2/Chrome page tooling (e.g. translation) can reparent text nodes that
 // React owns; guard the DOM mutators before the root renders, or one such
@@ -100,24 +108,10 @@ type ChildrenProps = {
 const Main = ({ children }: ChildrenProps) => {
   const intlConfig = useMemo(() => getIntlConfig(), []);
 
-  // The pre-hydration script in index.html paints the launch canvas via
-  // body.boot-theme-{light,dark} classes. Clear them as soon as React mounts
-  // so MUI's CssBaseline (theme.vars.palette.level0) owns the body background
-  // from then on. Leaving the classes in place would keep an !important rule
-  // pinned to the launch-time scheme — that is what made light mode look
-  // hardcoded to dark.
-  useEffect(() => {
-    document.body.classList.remove("boot-theme-light", "boot-theme-dark");
-  }, []);
-
   return (
     <React.StrictMode>
       <IntlProvider {...intlConfig}>
-        <ThemeProvider
-          theme={theme}
-          defaultMode="system"
-          colorSchemeStorageKey="mode"
-        >
+        <ThemeProvider theme={theme} {...THEME_PROVIDER_CONFIG}>
           <CssBaseline />
           {children}
         </ThemeProvider>
@@ -126,9 +120,14 @@ const Main = ({ children }: ChildrenProps) => {
   );
 };
 
-root.render(
-  <Main>
-    <SnackbarEmitter />
-    <AppWithLoading />
-  </Main>,
-);
+try {
+  root.render(
+    <Main>
+      <SnackbarEmitter />
+      <AppWithLoading />
+    </Main>,
+  );
+} catch (error) {
+  paintFatalError("mausVoice failed to start", error);
+  throw error;
+}

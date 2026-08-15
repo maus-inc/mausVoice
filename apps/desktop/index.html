@@ -11,95 +11,138 @@
       }
 
       /*
-        Pre-hydration canvas. Must stay in sync with `surfaces.*.level0` in
-        src/styles/palette.ts - React has not mounted yet, so the theme cannot
-        paint this and a mismatch shows as a colour flash on launch.
-
-        The inline script below overrides these with the persisted MUI mode
-        (localStorage "mode") before React mounts; the media query remains the
-        no-JS / no-preference fallback.
+        Pre-hydration canvas. The script below resolves the persisted mode and
+        sets the same selector MUI uses before <body> is painted. The fallback
+        colours must stay in sync with surfaces.*.level0 in src/styles/palette.ts.
+        Once MUI mounts, --app-palette-level0 supplies the runtime value.
       */
       body {
         margin: 0;
-        background-color: #0c0c0d;
+        background-color: var(--app-palette-level0, #0c0c0d);
       }
 
       @media (prefers-color-scheme: light) {
         body {
-          background-color: #f5f2ed;
+          background-color: var(--app-palette-level0, #f5f2ed);
         }
       }
 
-      /*
-        Pre-hydration boot classes. The inline script below adds one of these
-        to <body> instead of setting an inline background-color: an inline
-        style outranks the MUI CssBaseline body rule forever, which hardcoded
-        the canvas to the launch-time scheme and made runtime light-mode
-        switches appear broken. These classes are removed on mount (see
-        src/main.tsx) so the runtime theme owns the background from then on.
-      */
-      body.boot-theme-dark {
-        background-color: #0c0c0d !important;
+      html[data-mui-color-scheme="dark"] body {
+        background-color: var(--app-palette-level0, #0c0c0d);
       }
 
-      body.boot-theme-light {
-        background-color: #f5f2ed !important;
+      html[data-mui-color-scheme="light"] body {
+        background-color: var(--app-palette-level0, #f5f2ed);
       }
 
       .firebase-emulator-warning {
         display: none !important;
       }
     </style>
-  </head>
-
-  <body>
-    <div id="root"></div>
     <script>
-      // Pre-hydration theme bootstrap: read the persisted MUI mode
-      // (localStorage "mode" — ThemeProvider's colorSchemeStorageKey), resolve
-      // "system" via matchMedia, and paint the matching surfaces.level0
-      // background via a boot class so the launch canvas never flashes the
-      // wrong scheme. The class is removed on mount (src/main.tsx).
+      // Keep this key and selector aligned with THEME_MODE_STORAGE_KEY and
+      // THEME_COLOR_SCHEME_SELECTOR in src/theme.ts.
       (function () {
         var stored;
         try {
-          stored = localStorage.getItem("mode");
-          if (stored === null) {
-            // One-time migration: MUI previously persisted the scheme under
-            // its own default key; the app now uses "mode" explicitly
-            // (ThemeProvider colorSchemeStorageKey). Carry the old choice
-            // over so users don't lose their theme on first launch.
-            var legacy = localStorage.getItem("mui-mode");
+          // Keep MUI's established mode key as the source of truth. The first
+          // light-mode fix read "mode" during bootstrap but set
+          // colorSchemeStorageKey instead of modeStorageKey, so some installs
+          // can have only that fallback copy. Migrate it without deleting it,
+          // preserving compatibility with both upgrades and rollbacks.
+          stored = localStorage.getItem("mui-mode");
+          if (stored !== "light" && stored !== "dark" && stored !== "system") {
+            var legacy = localStorage.getItem("mode");
             if (
               legacy === "light" ||
               legacy === "dark" ||
               legacy === "system"
             ) {
+              // Assign before persisting so a failed write keeps the valid
+              // legacy preference instead of falling back to "system".
               stored = legacy;
-              localStorage.setItem("mode", legacy);
+              try {
+                localStorage.setItem("mui-mode", legacy);
+              } catch {
+                // Best-effort migration; a persistence failure is non-fatal.
+              }
             }
           }
         } catch {
-          // Storage can be unavailable (private mode, disabled cookies);
-          // fall back to the system preference.
           stored = null;
         }
+
         var mode =
           stored === "light" || stored === "dark" || stored === "system"
             ? stored
             : "system";
         var resolved = mode;
         if (mode === "system") {
-          var prefersLight = window.matchMedia
-            ? window.matchMedia("(prefers-color-scheme: light)").matches
-            : false;
-          resolved = prefersLight ? "light" : "dark";
+          var prefersDark = window.matchMedia
+            ? window.matchMedia("(prefers-color-scheme: dark)").matches
+            : true;
+          resolved = prefersDark ? "dark" : "light";
         }
-        document.body.classList.add(
-          resolved === "light" ? "boot-theme-light" : "boot-theme-dark",
+
+        document.documentElement.dataset.muiColorScheme = resolved;
+      })();
+    </script>
+    <script data-early-error>
+      // Early resource-error safety net. Runs before any generated
+      // <link>/<script> tags, so a failed asset load under Tauri's asset:
+      // protocol paints this overlay instead of a blank window. The full
+      // handler in src/utils/global-error-overlay.utils.ts takes over once the
+      // bundle loads. Scoped to resource errors only; runtime errors after
+      // mount are handled by that module.
+      (function () {
+        var OVERLAY_ID = "maus-global-error-overlay";
+        function paint(heading, detail) {
+          var el = document.getElementById(OVERLAY_ID);
+          if (!el) {
+            el = document.createElement("div");
+            el.id = OVERLAY_ID;
+            el.style.cssText = [
+              "position:fixed",
+              "inset:0",
+              "z-index:2147483647",
+              "box-sizing:border-box",
+              "background:#0c0c0d",
+              "color:#f5f2ed",
+              "font:14px/1.6 system-ui,-apple-system,sans-serif",
+              "padding:32px",
+              "overflow:auto",
+              "white-space:pre-wrap",
+            ].join(";");
+            (document.body || document.documentElement).appendChild(el);
+          }
+          el.textContent = heading + "\n\n" + detail;
+        }
+        window.addEventListener(
+          "error",
+          function (event) {
+            var target = event.target;
+            if (
+              target instanceof HTMLScriptElement ||
+              target instanceof HTMLLinkElement
+            ) {
+              var url =
+                target instanceof HTMLScriptElement ? target.src : target.href;
+              paint(
+                "mausVoice failed to start",
+                "Failed to load resource: " +
+                  (url || "(unknown URL)") +
+                  "\n\nThe frontend asset could not be fetched. Under Tauri's asset: protocol this is usually a CORS or path issue — check the built index.html asset URLs.",
+              );
+            }
+          },
+          true,
         );
       })();
     </script>
+  </head>
+
+  <body>
+    <div id="root"></div>
     <script type="module" src="/src/main.tsx"></script>
   </body>
 </html>

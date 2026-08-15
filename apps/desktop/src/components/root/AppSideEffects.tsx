@@ -26,6 +26,7 @@ import {
   setRemoteOutputEnabled,
   setRemoteTargetDeviceId,
 } from "../../actions/user.actions";
+import { requestAdminRelaunch } from "../../actions/native.actions";
 import { useAsyncData, useAsyncEffect } from "../../hooks/async.hooks";
 import { useIntervalAsync, useKeyDownHandler } from "../../hooks/helper.hooks";
 import { useHotkeyFire } from "../../hooks/hotkey.hooks";
@@ -145,6 +146,7 @@ export const AppSideEffects = () => {
   const [streamReady, setStreamReady] = useState(false);
   const [initReady, setInitReady] = useState(false);
   const authReadyRef = useRef(false);
+  const startupElevationAttemptedRef = useRef(false);
   // Tracks whether we've already notified about the current listener-failure episode, so the
   // 30s Rust slow-retry churn (failed -> connected -> failed) doesn't re-toast every cycle.
   const listenerFailureNotifiedRef = useRef(false);
@@ -243,6 +245,22 @@ export const AppSideEffects = () => {
   useEffect(() => {
     void initLogging();
   }, []);
+
+  useEffect(() => {
+    if (!prefs || startupElevationAttemptedRef.current) {
+      return;
+    }
+    startupElevationAttemptedRef.current = true;
+
+    if (getPlatform() !== "windows" || !prefs.alwaysRequestAdminOnStartup) {
+      return;
+    }
+
+    getLogger().info(
+      "Requesting administrator relaunch after frontend startup",
+    );
+    void requestAdminRelaunch();
+  }, [prefs]);
 
   useAsyncEffect(async () => {
     if (consumeSurfaceWindowFlag()) {

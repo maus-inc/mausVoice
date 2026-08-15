@@ -34,6 +34,7 @@ import {
 } from "./generate-text.repo";
 import { BaseHotkeyRepo, LocalHotkeyRepo } from "./hotkey.repo";
 import { BaseMemberRepo, LocalMemberRepo } from "./member.repo";
+import { BaseNativeRepo, LocalNativeRepo } from "./native.repo";
 import {
   AldeaModelProviderRepo,
   AssemblyAIModelProviderRepo,
@@ -157,6 +158,10 @@ export const getChatMessageRepo = (): BaseChatMessageRepo => {
 
 export const getToolRepo = (): ToolRepo => {
   return new ToolRepo();
+};
+
+export const getNativeRepo = (): BaseNativeRepo => {
+  return new LocalNativeRepo();
 };
 
 export type GenerateTextRepoOutput = {

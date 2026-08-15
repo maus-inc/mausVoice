@@ -512,6 +512,9 @@ async requestAccessibilityPermission() : Promise<Result<PermissionStatus, string
     else return { status: "error", error: e  as any };
 }
 },
+async requestAdminRelaunch() : Promise<NativeSetupResult> {
+    return await TAURI_INVOKE("request_admin_relaunch");
+},
 async requestMicrophonePermission() : Promise<Result<PermissionStatus, string>> {
     try {
     return { status: "ok", data: await TAURI_INVOKE("request_microphone_permission") };
