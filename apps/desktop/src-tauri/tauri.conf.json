@@ -49,7 +49,7 @@
       "icons/icon.icns",
       "icons/icon.ico"
     ],
-    "resources": ["resources/*", "binaries/onnxruntime/", "binaries/*.dll"],
+    "resources": ["resources/*", "binaries/onnxruntime/"],
     "macOS": {
       "hardenedRuntime": true,
       "minimumSystemVersion": "13.3",
