@@ -18,10 +18,12 @@ const runBootstrap = ({
   storedMode,
   fallbackMode,
   systemDark,
+  setItemThrowsKey,
 }: {
   storedMode?: string;
   fallbackMode?: string;
   systemDark: boolean;
+  setItemThrowsKey?: string;
 }) => {
   const storage = new Map<string, string>();
   const dataset: Record<string, string> = {};
@@ -31,7 +33,12 @@ const runBootstrap = ({
   runInNewContext(bootstrapScript ?? "", {
     localStorage: {
       getItem: (key: string) => storage.get(key) ?? null,
-      setItem: (key: string, value: string) => storage.set(key, value),
+      setItem: (key: string, value: string) => {
+        if (setItemThrowsKey && key === setItemThrowsKey) {
+          throw new Error("quota exceeded");
+        }
+        storage.set(key, value);
+      },
       removeItem: (key: string) => storage.delete(key),
     },
     window: {
@@ -98,6 +105,16 @@ describe("theme mode configuration", () => {
     expect(appliedScheme).toBe("light");
     expect(storage.get(THEME_MODE_STORAGE_KEY)).toBe("light");
     expect(storage.get("mode")).toBe("light");
+  });
+
+  it("keeps the legacy mode when the migration write fails", () => {
+    const { appliedScheme } = runBootstrap({
+      fallbackMode: "light",
+      systemDark: true,
+      setItemThrowsKey: THEME_MODE_STORAGE_KEY,
+    });
+
+    expect(appliedScheme).toBe("light");
   });
 
   it("keeps the current MUI mode when both storage keys exist", () => {

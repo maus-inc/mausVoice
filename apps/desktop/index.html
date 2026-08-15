@@ -58,8 +58,14 @@
               legacy === "dark" ||
               legacy === "system"
             ) {
+              // Assign before persisting so a failed write keeps the valid
+              // legacy preference instead of falling back to "system".
               stored = legacy;
-              localStorage.setItem("mui-mode", legacy);
+              try {
+                localStorage.setItem("mui-mode", legacy);
+              } catch {
+                // Best-effort migration; a persistence failure is non-fatal.
+              }
             }
           }
         } catch {
@@ -79,6 +85,58 @@
         }
 
         document.documentElement.dataset.muiColorScheme = resolved;
+      })();
+    </script>
+    <script data-early-error>
+      // Early resource-error safety net. Runs before any generated
+      // <link>/<script> tags, so a failed asset load under Tauri's asset:
+      // protocol paints this overlay instead of a blank window. The full
+      // handler in src/utils/global-error-overlay.utils.ts takes over once the
+      // bundle loads. Scoped to resource errors only; runtime errors after
+      // mount are handled by that module.
+      (function () {
+        var OVERLAY_ID = "maus-global-error-overlay";
+        function paint(heading, detail) {
+          var el = document.getElementById(OVERLAY_ID);
+          if (!el) {
+            el = document.createElement("div");
+            el.id = OVERLAY_ID;
+            el.style.cssText = [
+              "position:fixed",
+              "inset:0",
+              "z-index:2147483647",
+              "box-sizing:border-box",
+              "background:#0c0c0d",
+              "color:#f5f2ed",
+              "font:14px/1.6 system-ui,-apple-system,sans-serif",
+              "padding:32px",
+              "overflow:auto",
+              "white-space:pre-wrap",
+            ].join(";");
+            (document.body || document.documentElement).appendChild(el);
+          }
+          el.textContent = heading + "\n\n" + detail;
+        }
+        window.addEventListener(
+          "error",
+          function (event) {
+            var target = event.target;
+            if (
+              target instanceof HTMLScriptElement ||
+              target instanceof HTMLLinkElement
+            ) {
+              var url =
+                target instanceof HTMLScriptElement ? target.src : target.href;
+              paint(
+                "mausVoice failed to start",
+                "Failed to load resource: " +
+                  (url || "(unknown URL)") +
+                  "\n\nThe frontend asset could not be fetched. Under Tauri's asset: protocol this is usually a CORS or path issue — check the built index.html asset URLs.",
+              );
+            }
+          },
+          true,
+        );
       })();
     </script>
   </head>

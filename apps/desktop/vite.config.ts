@@ -48,9 +48,17 @@ export default defineConfig(async () => {
       {
         name: "tauri-strip-crossorigin",
         transformIndexHtml(html) {
+          // Match only real <script>/<link> opening tags (require whitespace,
+          // slash, or ">" after the tag name so <script-foo> is ignored), then
+          // drop both bare and valued crossorigin attributes. The pattern is
+          // linear (no nested quantifiers) to avoid super-linear backtracking.
           return html.replace(
-            /(<(?:script|link)\b[^>]*?)\s+crossorigin(?=[\s>])/gi,
-            "$1",
+            /<(?:script|link)(?=[\s/>])[^>]*>/gi,
+            (tag) =>
+              tag.replace(
+                /\s+crossorigin(?:\s*=\s*(?:"[^"]*"|'[^']*'|[^\s>]+))?(?=[\s/>])/i,
+                "",
+              ),
           );
         },
       },
