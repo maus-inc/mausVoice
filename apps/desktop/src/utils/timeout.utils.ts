@@ -7,6 +7,7 @@ export const withTimeout = async <T>(
   promise: Promise<T>,
   timeoutMs: number,
   label: string,
+  onTimeout?: () => void,
 ): Promise<T> => {
   let timer: ReturnType<typeof setTimeout> | undefined;
   try {
