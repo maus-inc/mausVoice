@@ -1385,7 +1385,7 @@ unsafe fn setup(receiver: Receiver<InMessage>, embedded: bool) {
         ring_alpha: Cell::new(0.0),
         ring_release_progress: Cell::new(0.0),
         press_elapsed: Cell::new(0.0),
-        release_elapsed: Cell::new(LONG_PRESS_RING_FADE),
+        release_elapsed: Cell::new(rust_pill_shared::LONG_PRESS_RING_FADE),
         arm_t: Cell::new(0.0),
         arm_pulse: Cell::new(-1.0),
         pointer_down: Cell::new(false),
