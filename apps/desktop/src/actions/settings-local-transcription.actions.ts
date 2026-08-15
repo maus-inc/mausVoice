@@ -156,26 +156,101 @@ export const downloadLocalTranscriptionModel = async (
   const preferGpu = getPreferGpu(state);
 
   try {
-    await sidecarManager.downloadModel({
+    const finalStatus = await sidecarManager.downloadModel({
       model,
       preferGpu,
       onProgress: (snapshot) => {
         produceAppState((draft) => {
-          draft.settings.aiTranscription.localModelManagement.modelDownloads[
-            model
-          ] = snapshot;
+          if (snapshot.status === "canceled") {
+            delete draft.settings.aiTranscription.localModelManagement
+              .modelDownloads[model];
+          } else {
+            draft.settings.aiTranscription.localModelManagement.modelDownloads[
+              model
+            ] = snapshot;
+          }
         });
       },
     });
-    await refreshLocalTranscriptionModelStatuses({ showErrors: false });
+
+    if (finalStatus?.downloaded && finalStatus?.valid) {
+      produceAppState((draft) => {
+        delete draft.settings.aiTranscription.localModelManagement
+          .modelDownloads[model];
+      });
+      await refreshLocalTranscriptionModelStatuses({ showErrors: false });
+    }
   } catch (error) {
-    showErrorSnackbar(`Unable to download '${model}' model: ${error}`);
+    const current =
+      getAppState().settings.aiTranscription.localModelManagement
+        .modelDownloads[model];
+    if (current?.status !== "paused" && current?.status !== "canceled") {
+      produceAppState((draft) => {
+        delete draft.settings.aiTranscription.localModelManagement
+          .modelDownloads[model];
+      });
+      showErrorSnackbar(`Unable to download '${model}' model: ${error}`);
+    }
+  }
+};
+
+export const pauseLocalTranscriptionModelDownload = async (
+  model: LocalWhisperModel,
+): Promise<void> => {
+  const state = getAppState();
+  if (getEffectiveTranscriptionMode(state) !== "local") {
+    return;
+  }
+
+  const sidecarManager = getLocalTranscriptionSidecarManager();
+  const preferGpu = getPreferGpu(state);
+
+  try {
+    const snapshot = await sidecarManager.pauseModelDownload({
+      model,
+      preferGpu,
+    });
+    produceAppState((draft) => {
+      draft.settings.aiTranscription.localModelManagement.modelDownloads[
+        model
+      ] = snapshot;
+    });
+  } catch (error) {
+    showErrorSnackbar(`Unable to pause download for '${model}': ${error}`);
+  }
+};
+
+export const resumeLocalTranscriptionModelDownload = async (
+  model: LocalWhisperModel,
+): Promise<void> => {
+  await downloadLocalTranscriptionModel(model);
+};
+
+export const cancelLocalTranscriptionModelDownload = async (
+  model: LocalWhisperModel,
+): Promise<void> => {
+  const state = getAppState();
+  if (getEffectiveTranscriptionMode(state) !== "local") {
+    return;
+  }
+
+  const sidecarManager = getLocalTranscriptionSidecarManager();
+  const preferGpu = getPreferGpu(state);
+
+  try {
+    await sidecarManager.cancelModelDownload({
+      model,
+      preferGpu,
+    });
+  } catch (error) {
+    showErrorSnackbar(`Unable to cancel download for '${model}': ${error}`);
   } finally {
     produceAppState((draft) => {
       delete draft.settings.aiTranscription.localModelManagement.modelDownloads[
         model
       ];
     });
+    await refreshLocalTranscriptionModelStatuses({ showErrors: false });
   }
 };
 

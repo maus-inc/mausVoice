@@ -21,10 +21,38 @@ describe("local-transcription-sidecar manager helpers", () => {
     expect(normalizeLocalWhisperModel("large-turbo")).toBe("turbo");
     expect(normalizeLocalWhisperModel("large-v3")).toBe("large");
     expect(normalizeLocalWhisperModel("large")).toBe("large");
+    expect(normalizeLocalWhisperModel("parakeet-ctc-0.6b")).toBe(
+      "parakeet-ctc-0.6b",
+    );
+    expect(normalizeLocalWhisperModel("parakeet-ctc")).toBe(
+      "parakeet-ctc-0.6b",
+    );
+    expect(normalizeLocalWhisperModel("parakeet_ctc")).toBe(
+      "parakeet-ctc-0.6b",
+    );
+    expect(normalizeLocalWhisperModel("parakeet_ctc_0.6b")).toBe(
+      "parakeet-ctc-0.6b",
+    );
+    expect(normalizeLocalWhisperModel("parakeet-tdt-0.6b")).toBe(
+      "parakeet-tdt-0.6b",
+    );
+    expect(normalizeLocalWhisperModel("parakeet-tdt")).toBe(
+      "parakeet-tdt-0.6b",
+    );
+    expect(normalizeLocalWhisperModel("parakeet_tdt")).toBe(
+      "parakeet-tdt-0.6b",
+    );
+    expect(normalizeLocalWhisperModel("parakeet_tdt_0.6b")).toBe(
+      "parakeet-tdt-0.6b",
+    );
+    expect(normalizeLocalWhisperModel("canary-1b")).toBe("canary-1b");
+    expect(normalizeLocalWhisperModel("canary")).toBe("canary-1b");
+    expect(normalizeLocalWhisperModel("canary_1b")).toBe("canary-1b");
   });
 
-  it("defaults unknown model values to tiny", () => {
+  it("defaults unknown and unavailable model values to tiny", () => {
     expect(normalizeLocalWhisperModel("unknown")).toBe("tiny");
+    expect(normalizeLocalWhisperModel("hindi2hinglish")).toBe("tiny");
     expect(normalizeLocalWhisperModel(null)).toBe("tiny");
   });
 

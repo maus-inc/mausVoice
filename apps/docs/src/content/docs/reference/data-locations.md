@@ -15,7 +15,7 @@ mausVoice resolves platform folders through Tauri; it does not hard-code one cro
 | General files         | `storage/` under app data                  | App-managed storage repository                                                                                             |
 | Logs                  | Tauri's app log directory                  | Includes runtime and startup-diagnostics logs                                                                              |
 
-The exact parent differs by OS, Tauri's application identifier, and build flavor. Production uses `com.mausinc.desktop`; local development uses `com.mausinc.desktop.local`, so a dev run deliberately has a separate profile. The Diagnostics export includes generated diagnostics information and files from the log directory, but not the SQLite database, models, or arbitrary app-data files.
+The exact parent differs by OS, Tauri's application identifier, and build flavor. Production uses `com.mausinc.desktop`; local development uses `com.mausinc.desktop.local`, so a dev run deliberately has a separate profile. On upgrade, files in the legacy app-data `models/` directory are moved into `transcription-models/` before the sidecars start, without overwriting files already present. The Diagnostics export includes generated diagnostics information and files from the log directory, but not the SQLite database, models, or arbitrary app-data files.
 
 Saved audio is bounded independently of text history: the purge command retains audio metadata/files for the newest 20 records with audio and clears older audio references. Incognito sessions do not create new history/audio snapshots. Deleting a transcription also manages its associated snapshot.
 

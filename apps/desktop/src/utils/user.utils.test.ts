@@ -5,6 +5,7 @@ import {
   getActiveDictationLanguage,
   getConfiguredDictationLanguageCodes,
   getMyDictationLanguage,
+  getTranscriptionPrefs,
   LOCAL_USER_ID,
 } from "./user.utils";
 
@@ -168,5 +169,74 @@ describe("getMyDictationLanguage", () => {
       activeDictationLanguage: "primary",
     });
     expect(getMyDictationLanguage(state)).toBe("keyboard-layout");
+  });
+});
+
+describe("getTranscriptionPrefs stale-selection guard", () => {
+  it("falls back to local mode when the selected provider is not transcription-capable (Ollama)", () => {
+    const state = structuredClone(INITIAL_APP_STATE);
+    state.settings.aiTranscription.mode = "api";
+    state.settings.aiTranscription.selectedApiKeyId = "ollama-key";
+    state.apiKeyById["ollama-key"] = {
+      id: "ollama-key",
+      name: "Ollama",
+      provider: "ollama",
+      createdAt: "2026-06-03T00:00:00.000Z",
+      keyFull: null,
+      baseUrl: "http://127.0.0.1:11434",
+      transcriptionModel: null,
+    };
+
+    const prefs = getTranscriptionPrefs(state);
+
+    expect(prefs.mode).toBe("local");
+    expect(prefs.warnings).toContain(
+      "No transcription-capable API key selected.",
+    );
+  });
+
+  it("preserves a valid transcription-capable selection (Deepgram)", () => {
+    const state = structuredClone(INITIAL_APP_STATE);
+    state.settings.aiTranscription.mode = "api";
+    state.settings.aiTranscription.selectedApiKeyId = "deepgram-key";
+    state.apiKeyById["deepgram-key"] = {
+      id: "deepgram-key",
+      name: "Deepgram",
+      provider: "deepgram",
+      createdAt: "2026-06-03T00:00:00.000Z",
+      keyFull: "dg-key",
+      transcriptionModel: "nova-3",
+    };
+
+    const prefs = getTranscriptionPrefs(state);
+
+    expect(prefs.mode).toBe("api");
+    if (prefs.mode === "api") {
+      expect(prefs.provider).toBe("deepgram");
+      expect(prefs.apiKeyValue).toBe("dg-key");
+    }
+  });
+
+  it("preserves keyless transcription-capable providers (Speaches)", () => {
+    const state = structuredClone(INITIAL_APP_STATE);
+    state.settings.aiTranscription.mode = "api";
+    state.settings.aiTranscription.selectedApiKeyId = "speaches-key";
+    state.apiKeyById["speaches-key"] = {
+      id: "speaches-key",
+      name: "Speaches",
+      provider: "speaches",
+      createdAt: "2026-06-03T00:00:00.000Z",
+      keyFull: null,
+      baseUrl: "http://localhost:8000",
+      transcriptionModel: "Systran/faster-whisper-large-v3",
+    };
+
+    const prefs = getTranscriptionPrefs(state);
+
+    expect(prefs.mode).toBe("api");
+    if (prefs.mode === "api") {
+      expect(prefs.provider).toBe("speaches");
+      expect(prefs.apiKeyValue).toBe("");
+    }
   });
 });

@@ -2,6 +2,7 @@ import { Nullable } from "@maus-inc/types";
 import { batchAsync } from "@maus-inc/utilities";
 import {
   aldeaTranscribeAudio,
+  assemblyaiTranscribeAudio,
   azureTranscribeAudio,
   deepgramTranscribeAudio,
   elevenlabsTranscribeAudio,
@@ -353,6 +354,52 @@ export class AldeaTranscribeAudioRepo extends BaseTranscribeAudioRepo {
       text: transcript,
       metadata: {
         inferenceDevice: "API • Aldea",
+        modelSize: null,
+        transcriptionMode: "api",
+      },
+    };
+  }
+}
+
+export class AssemblyAITranscribeAudioRepo extends BaseTranscribeAudioRepo {
+  private readonly apiKey: string;
+
+  constructor(apiKey: string) {
+    super();
+    this.apiKey = apiKey;
+  }
+
+  // AssemblyAI batch transcripts accept far longer audio, but 60s keeps the
+  // retranscribe path consistent with the other batch providers. The
+  // assemblyaiTranscribeAudio() polling budget (180s default) and 3s poll
+  // interval assume ~60s segments — revisit both together if this changes.
+  protected getSegmentDurationSec(): number {
+    return 60;
+  }
+
+  protected getOverlapDurationSec(): number {
+    return 5;
+  }
+
+  protected getBatchChunkCount(): number {
+    return 3;
+  }
+
+  protected async transcribeSegment(
+    input: TranscribeSegmentInput,
+  ): Promise<TranscribeAudioOutput> {
+    const wavBuffer = buildWaveFile(input.samples, input.sampleRate);
+
+    const { text: transcript } = await assemblyaiTranscribeAudio({
+      apiKey: this.apiKey,
+      blob: wavBuffer,
+      language: input.language,
+    });
+
+    return {
+      text: transcript,
+      metadata: {
+        inferenceDevice: "API • AssemblyAI",
         modelSize: null,
         transcriptionMode: "api",
       },

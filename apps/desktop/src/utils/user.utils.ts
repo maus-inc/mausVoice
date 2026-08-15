@@ -243,26 +243,58 @@ export type TranscriptionPrefs =
   | LocalTranscriptionPrefs
   | ApiTranscriptionPrefs;
 
+/**
+ * Providers with an implemented batch transcription route — i.e. parity with
+ * the `getTranscribeAudioRepo()` switch branches in `repos/index.ts` (mirrored
+ * here to avoid a circular import). This is NOT the same as the
+ * `supportsTranscriptionModels()` capability flags: Azure is always available
+ * in the transcription UI (special-cased by region in `ApiKeyList`), so
+ * `AzureModelProviderRepo.supportsTranscriptionModels()` returns `false` while
+ * `azure` still has a real dispatch branch and must stay in this set. A
+ * selected key whose provider is not in this set cannot be transcribed and is
+ * treated as stale.
+ */
+const TRANSCRIPTION_CAPABLE_PROVIDERS: Set<ApiKeyProvider> = new Set([
+  "groq",
+  "openai",
+  "aldea",
+  "assemblyai",
+  "elevenlabs",
+  "deepgram",
+  "openai-compatible",
+  "azure",
+  "gemini",
+  "speaches",
+  "xai",
+]);
+
 export const getTranscriptionPrefs = (state: AppState): TranscriptionPrefs => {
   const config = state.settings.aiTranscription;
   const mode = getEffectiveTranscriptionMode(state);
-  const apiKey = getRec(state.apiKeyById, config.selectedApiKeyId)?.keyFull;
   const warnings: string[] = [];
 
   if (mode === "api") {
     const selectedApiKey = getRec(state.apiKeyById, config.selectedApiKeyId);
-    const provider = selectedApiKey?.provider;
-    const noKeyRequired =
-      provider === "speaches" ||
-      provider === "ollama" ||
-      provider === "openai-compatible";
-    if (apiKey || noKeyRequired) {
+    const provider = selectedApiKey?.provider as ApiKeyProvider | undefined;
+    // A stale selection (e.g. an Ollama key saved before Ollama lost
+    // transcription capability) must not reach the dispatch path. Treat it as
+    // if nothing were selected: fall back to local mode and warn, mirroring
+    // the no-API-key path.
+    const keylessTranscriptionProvider =
+      provider === "speaches" || provider === "openai-compatible";
+    if (
+      !selectedApiKey ||
+      !provider ||
+      !TRANSCRIPTION_CAPABLE_PROVIDERS.has(provider)
+    ) {
+      warnings.push("No transcription-capable API key selected.");
+    } else if (selectedApiKey.keyFull || keylessTranscriptionProvider) {
       return {
         mode: "api",
-        provider: provider ?? "groq",
+        provider,
         apiKeyId: config.selectedApiKeyId!,
-        apiKeyValue: apiKey ?? "",
-        transcriptionModel: selectedApiKey?.transcriptionModel ?? null,
+        apiKeyValue: selectedApiKey.keyFull ?? "",
+        transcriptionModel: selectedApiKey.transcriptionModel ?? null,
         warnings,
       };
     } else {

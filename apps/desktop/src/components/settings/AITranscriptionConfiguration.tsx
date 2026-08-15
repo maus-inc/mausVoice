@@ -1,4 +1,7 @@
 import CheckRoundedIcon from "@mui/icons-material/CheckRounded";
+import CloseRoundedIcon from "@mui/icons-material/CloseRounded";
+import PauseRoundedIcon from "@mui/icons-material/PauseRounded";
+import PlayArrowRoundedIcon from "@mui/icons-material/PlayArrowRounded";
 import WarningAmberRoundedIcon from "@mui/icons-material/WarningAmberRounded";
 import {
   Box,
@@ -7,17 +10,21 @@ import {
   FormControl,
   InputLabel,
   LinearProgress,
+  ListSubheader,
   MenuItem,
   Select,
   Stack,
   Typography,
 } from "@mui/material";
 import { useCallback, useEffect } from "react";
-import { FormattedMessage, useIntl } from "react-intl";
+import { FormattedMessage, type IntlShape, useIntl } from "react-intl";
 import {
   refreshLocalTranscriptionDevices,
   deleteLocalTranscriptionModel,
   downloadLocalTranscriptionModel,
+  pauseLocalTranscriptionModelDownload,
+  resumeLocalTranscriptionModelDownload,
+  cancelLocalTranscriptionModelDownload,
   refreshLocalTranscriptionModelStatuses,
 } from "../../actions/settings-local-transcription.actions";
 import { showErrorSnackbar } from "../../actions/app.actions";
@@ -29,7 +36,9 @@ import {
 } from "../../actions/user.actions";
 import {
   isLocalTranscriptionModelDownloadInProgress,
+  isLocalTranscriptionModelDownloadPaused,
   isLocalTranscriptionModelSelectable,
+  type SettingsTranscriptionState,
 } from "../../state/settings.state";
 import { useAppStore } from "../../store";
 import { CPU_DEVICE_VALUE, type TranscriptionMode } from "../../types/ai.types";
@@ -43,82 +52,369 @@ import { getEffectiveTranscriptionMode } from "../../utils/user.utils";
 import { formatSize } from "../../utils/format.utils";
 import { type LocalSidecarDownloadSnapshot } from "../../sidecars";
 import {
+  type LocalModelOption,
+  LOCAL_MODEL_OPTIONS,
   type LocalWhisperModel,
   normalizeLocalWhisperModel,
 } from "../../utils/local-transcription.utils";
 import { activeRowCheckSx, activeRowSx } from "../../styles/selection";
+import { duration, easeOutCubic } from "../../styles/motion";
 import { AnimateSwitch } from "../common/AnimateIn";
 import { SegmentedControl } from "../common/SegmentedControl";
 import { ApiKeyList } from "./ApiKeyList";
 
-type ModelOption = {
-  value: LocalWhisperModel;
-  label: string;
-  helper: string;
+const ease = `cubic-bezier(${easeOutCubic.join(", ")})`;
+const buttonTransition = `background-color ${duration.fast}s ${ease}, border-color ${duration.fast}s ${ease}, transform ${duration.instant}s ${ease}`;
+
+const buttonSx = {
+  transition: buttonTransition,
+  "&:active": {
+    transform: "scale(0.97)",
+  },
 };
 
-const MODEL_OPTIONS: ModelOption[] = [
-  {
-    value: "tiny",
-    label: "Whisper Tiny (77 MB)",
-    helper: "Fastest, lowest accuracy",
-  },
-  {
-    value: "base",
-    label: "Whisper Base (148 MB)",
-    helper: "Great balance of speed and accuracy",
-  },
-  {
-    value: "small",
-    label: "Whisper Small (488 MB)",
-    helper: "Recommended with GPU acceleration",
-  },
-  {
-    value: "medium",
-    label: "Whisper Medium (1.53 GB)",
-    helper: "Balanced quality and speed",
-  },
-  {
-    value: "turbo",
-    label: "Whisper Large v3 Turbo (1.6 GB)",
-    helper: "Fast large model, great accuracy",
-  },
-  {
-    value: "large",
-    label: "Whisper Large v3 (3.1 GB)",
-    helper: "Highest accuracy, requires GPU",
-  },
-  {
-    value: "hindi2hinglish",
-    label: "Whisper Hindi2Hinglish Apex (595 MB)",
-    helper: "Hindi speech transcribed as Hinglish (Latin script)",
-  },
-];
+const subheaderSx = {
+  bgcolor: "background.paper",
+  lineHeight: "28px",
+  fontWeight: 700,
+  fontSize: 11,
+  letterSpacing: "0.04em",
+  textTransform: "uppercase",
+  color: "text.secondary",
+} as const;
+
+const getDownloadProgressPercent = (
+  progress: number | null | undefined,
+): number | null => {
+  if (progress == null) {
+    return null;
+  }
+  return Math.round(Math.max(0, Math.min(1, progress)) * 100);
+};
 
 const formatDownloadProgress = (
   snapshot: LocalSidecarDownloadSnapshot | undefined,
+  intl: IntlShape,
 ): string | null => {
   if (!snapshot) {
     return null;
   }
 
-  const progressPart =
-    snapshot.progress != null
-      ? `${Math.round(Math.max(0, Math.min(1, snapshot.progress)) * 100)}%`
-      : null;
+  const percent = getDownloadProgressPercent(snapshot.progress);
+  const progressPart = percent != null ? `${percent}%` : null;
 
-  const bytesPart =
-    snapshot.totalBytes != null && snapshot.totalBytes > 0
-      ? `${formatSize(snapshot.bytesDownloaded)} of ${formatSize(snapshot.totalBytes)}`
-      : snapshot.bytesDownloaded > 0
-        ? formatSize(snapshot.bytesDownloaded)
-        : null;
+  let bytesPart: string | null = null;
+  if (snapshot.totalBytes != null && snapshot.totalBytes > 0) {
+    bytesPart = intl.formatMessage(
+      {
+        defaultMessage: "{downloaded} of {total}",
+      },
+      {
+        downloaded: formatSize(snapshot.bytesDownloaded),
+        total: formatSize(snapshot.totalBytes),
+      },
+    );
+  } else if (snapshot.bytesDownloaded > 0) {
+    bytesPart = formatSize(snapshot.bytesDownloaded);
+  }
 
   if (progressPart && bytesPart) {
     return `${progressPart} • ${bytesPart}`;
   }
 
   return progressPart || bytesPart;
+};
+
+const formatCompactPercent = (
+  snapshot: LocalSidecarDownloadSnapshot | undefined,
+): string | null => {
+  const percent = getDownloadProgressPercent(snapshot?.progress);
+  if (percent == null) {
+    return null;
+  }
+  return `${percent}%`;
+};
+
+const resolveDeviceSelectValue = (
+  transcription: SettingsTranscriptionState,
+): string => {
+  const hasSelected = transcription.availableDevices.some(
+    (device) => device.id === transcription.device,
+  );
+  if (hasSelected) {
+    return transcription.device;
+  }
+  const fallback = transcription.availableDevices[0]?.id;
+  return fallback ?? CPU_DEVICE_VALUE;
+};
+
+const ActionButtonLabel = ({
+  deleting,
+  isDestructive,
+}: {
+  deleting?: boolean;
+  isDestructive: boolean;
+}) => {
+  if (deleting) {
+    return <FormattedMessage defaultMessage="Deleting..." />;
+  }
+  if (isDestructive) {
+    return <FormattedMessage defaultMessage="Delete" />;
+  }
+  return <FormattedMessage defaultMessage="Download" />;
+};
+
+const ModelStatusText = ({
+  downloading,
+  paused,
+  selectable,
+  validationError,
+}: {
+  downloading: boolean;
+  paused: boolean;
+  selectable: boolean;
+  validationError: string | null;
+}) => {
+  if (downloading) {
+    return <FormattedMessage defaultMessage="Downloading..." />;
+  }
+  if (paused) {
+    return <FormattedMessage defaultMessage="Paused" />;
+  }
+  if (selectable) {
+    return <FormattedMessage defaultMessage="Downloaded" />;
+  }
+  return <>{validationError}</>;
+};
+
+const PausedStatusBadge = ({
+  paused,
+  compactPercent,
+}: {
+  paused: boolean;
+  compactPercent?: string | null;
+}) => {
+  if (!paused && !compactPercent) {
+    return null;
+  }
+
+  const badgeColor = paused ? "warning.main" : "text.secondary";
+
+  const renderBadgeText = () => {
+    if (!paused) {
+      return compactPercent;
+    }
+    if (compactPercent) {
+      return (
+        <FormattedMessage
+          defaultMessage="Paused ({percent})"
+          values={{ percent: compactPercent }}
+        />
+      );
+    }
+    return <FormattedMessage defaultMessage="Paused" />;
+  };
+
+  return (
+    <Typography
+      variant="caption"
+      fontWeight={600}
+      color={badgeColor}
+      sx={{ fontVariantNumeric: "tabular-nums", mr: 0.5 }}
+    >
+      {renderBadgeText()}
+    </Typography>
+  );
+};
+
+const handleModelClick = (
+  event: React.MouseEvent,
+  model: LocalWhisperModel,
+  action: (m: LocalWhisperModel) => void,
+) => {
+  event.preventDefault();
+  event.stopPropagation();
+  action(model);
+};
+
+const BusyDownloadButtons = ({
+  model,
+  paused,
+  compactPercent,
+  onPause,
+  onResume,
+  onCancel,
+}: {
+  model: LocalWhisperModel;
+  paused: boolean;
+  compactPercent?: string | null;
+  onPause: (model: LocalWhisperModel) => void;
+  onResume: (model: LocalWhisperModel) => void;
+  onCancel: (model: LocalWhisperModel) => void;
+}) => {
+  const primaryAction = paused ? onResume : onPause;
+
+  return (
+    <Stack direction="row" spacing={0.75} alignItems="center">
+      <PausedStatusBadge paused={paused} compactPercent={compactPercent} />
+      <Button
+        size="small"
+        variant={paused ? "contained" : "outlined"}
+        color={paused ? "primary" : "warning"}
+        startIcon={
+          paused ? (
+            <PlayArrowRoundedIcon sx={{ fontSize: 14 }} />
+          ) : (
+            <PauseRoundedIcon sx={{ fontSize: 14 }} />
+          )
+        }
+        sx={{
+          ...buttonSx,
+          minWidth: 0,
+          minHeight: 24,
+          px: 1,
+          borderRadius: 999,
+          textTransform: "none",
+          fontSize: 12,
+          lineHeight: 1.2,
+        }}
+        onMouseDown={(e) => {
+          e.preventDefault();
+          e.stopPropagation();
+        }}
+        onClick={(e) => handleModelClick(e, model, primaryAction)}
+      >
+        {paused ? (
+          <FormattedMessage defaultMessage="Resume" />
+        ) : (
+          <FormattedMessage defaultMessage="Pause" />
+        )}
+      </Button>
+      <Button
+        size="small"
+        variant="text"
+        color="inherit"
+        startIcon={<CloseRoundedIcon sx={{ fontSize: 14 }} />}
+        sx={{
+          ...buttonSx,
+          minWidth: 0,
+          minHeight: 24,
+          px: 1,
+          borderRadius: 999,
+          textTransform: "none",
+          fontSize: 12,
+          lineHeight: 1.2,
+          color: "text.secondary",
+        }}
+        onMouseDown={(e) => {
+          e.preventDefault();
+          e.stopPropagation();
+        }}
+        onClick={(e) => handleModelClick(e, model, onCancel)}
+      >
+        <FormattedMessage defaultMessage="Cancel" />
+      </Button>
+    </Stack>
+  );
+};
+
+const IdleDownloadButton = ({
+  model,
+  selectable,
+  deleting,
+  onDownload,
+  onDelete,
+}: {
+  model: LocalWhisperModel;
+  selectable: boolean;
+  deleting?: boolean;
+  onDownload: (model: LocalWhisperModel) => void;
+  onDelete?: (model: LocalWhisperModel) => void;
+}) => {
+  const primaryHandler = selectable && onDelete ? onDelete : onDownload;
+  const isDestructive = primaryHandler === onDelete && !!onDelete;
+
+  return (
+    <Button
+      size="small"
+      variant="contained"
+      color={isDestructive ? "error" : "primary"}
+      disabled={deleting}
+      sx={{
+        ...buttonSx,
+        minWidth: 0,
+        minHeight: 24,
+        px: 1.25,
+        borderRadius: 999,
+        boxShadow: "none",
+        textTransform: "none",
+        fontSize: 12,
+        lineHeight: 1.2,
+        alignSelf: "center",
+        "&:hover": {
+          boxShadow: "none",
+        },
+      }}
+      onMouseDown={(e) => {
+        e.preventDefault();
+        e.stopPropagation();
+      }}
+      onClick={(e) => handleModelClick(e, model, primaryHandler)}
+    >
+      <ActionButtonLabel deleting={deleting} isDestructive={isDestructive} />
+    </Button>
+  );
+};
+
+type ModelDownloadActionButtonsProps = {
+  model: LocalWhisperModel;
+  downloading: boolean;
+  paused: boolean;
+  selectable: boolean;
+  deleting?: boolean;
+  compactPercent?: string | null;
+  onDownload: (model: LocalWhisperModel) => void;
+  onPause: (model: LocalWhisperModel) => void;
+  onResume: (model: LocalWhisperModel) => void;
+  onCancel: (model: LocalWhisperModel) => void;
+  onDelete?: (model: LocalWhisperModel) => void;
+};
+
+const ModelDownloadActionButtons = ({
+  model,
+  downloading,
+  paused,
+  selectable,
+  deleting,
+  compactPercent,
+  onDownload,
+  onPause,
+  onResume,
+  onCancel,
+  onDelete,
+}: ModelDownloadActionButtonsProps) => {
+  if (downloading || paused) {
+    return (
+      <BusyDownloadButtons
+        model={model}
+        paused={paused}
+        compactPercent={compactPercent}
+        onPause={onPause}
+        onResume={onResume}
+        onCancel={onCancel}
+      />
+    );
+  }
+
+  return (
+    <IdleDownloadButton
+      model={model}
+      selectable={selectable}
+      deleting={deleting}
+      onDownload={onDownload}
+      onDelete={onDelete}
+    />
+  );
 };
 
 export const AITranscriptionConfiguration = () => {
@@ -130,24 +426,8 @@ export const AITranscriptionConfiguration = () => {
   const { capabilities } = useSystemCapabilities(effectiveMode === "local");
   const localTranscriptionConfig = transcription.localModelManagement;
 
-  const hasSelectedDevice = transcription.availableDevices.some(
-    (device) => device.id === transcription.device,
-  );
-  const deviceValue = hasSelectedDevice
-    ? transcription.device
-    : (transcription.availableDevices[0]?.id ?? CPU_DEVICE_VALUE);
+  const deviceValue = resolveDeviceSelectValue(transcription);
   const modelValue = normalizeLocalWhisperModel(transcription.modelSize);
-  const modelDownloadSnapshot =
-    localTranscriptionConfig.modelDownloads[modelValue];
-  const modelDownloading = isLocalTranscriptionModelDownloadInProgress(
-    modelDownloadSnapshot,
-  );
-  const modelSelectable = isLocalTranscriptionModelSelectable(
-    transcription,
-    modelValue,
-  );
-  const showInlineModelDownloadAction = !modelSelectable;
-
   // Fit of the currently selected model against the detected hardware.
   const currentModelFit = capabilities
     ? getModelFit(capabilities, modelValue)
@@ -155,9 +435,12 @@ export const AITranscriptionConfiguration = () => {
   const recommendedModel = capabilities
     ? getRecommendedModel(capabilities)
     : null;
-  const recommendedModelLabel =
-    MODEL_OPTIONS.find((option) => option.value === recommendedModel)?.label ??
-    recommendedModel;
+  const recommendedModelOption = LOCAL_MODEL_OPTIONS.find(
+    (option) => option.value === recommendedModel,
+  );
+  const recommendedModelLabel = recommendedModelOption
+    ? intl.formatMessage(recommendedModelOption.label)
+    : recommendedModel;
 
   useEffect(() => {
     if (effectiveMode !== "local") {
@@ -187,7 +470,7 @@ export const AITranscriptionConfiguration = () => {
       return;
     }
 
-    const fallbackModel = MODEL_OPTIONS.find((option) =>
+    const fallbackModel = LOCAL_MODEL_OPTIONS.find((option) =>
       isLocalTranscriptionModelSelectable(transcription, option.value),
     )?.value;
 
@@ -255,7 +538,7 @@ export const AITranscriptionConfiguration = () => {
           return;
         }
 
-        const fallbackModel = MODEL_OPTIONS.find(
+        const fallbackModel = LOCAL_MODEL_OPTIONS.find(
           (option) =>
             statuses[option.value]?.downloaded && statuses[option.value]?.valid,
         )?.value;
@@ -267,6 +550,182 @@ export const AITranscriptionConfiguration = () => {
     },
     [localTranscriptionConfig.modelDeletes, modelValue],
   );
+
+  const getModelRowState = (option: LocalModelOption) => {
+    const value = option.value;
+    const status = localTranscriptionConfig.modelStatuses[value];
+    const downloadSnapshot = localTranscriptionConfig.modelDownloads[value];
+    const downloading =
+      isLocalTranscriptionModelDownloadInProgress(downloadSnapshot);
+    const paused = isLocalTranscriptionModelDownloadPaused(downloadSnapshot);
+    return {
+      value,
+      label: intl.formatMessage(option.label),
+      helper: intl.formatMessage(option.helper),
+      status,
+      downloadSnapshot,
+      downloading,
+      paused,
+      selectable: isLocalTranscriptionModelSelectable(transcription, value),
+      deleting: !!localTranscriptionConfig.modelDeletes[value],
+      active: modelValue === value,
+    };
+  };
+
+  const renderModelMenuItem = (option: LocalModelOption) => {
+    const {
+      value,
+      label,
+      helper,
+      status,
+      downloading,
+      paused,
+      selectable,
+      active,
+    } = getModelRowState(option);
+    const fit = capabilities ? getModelFit(capabilities, value) : null;
+    const showFitWarning =
+      fit?.level === "caution" || fit?.level === "discouraged";
+
+    return (
+      <MenuItem key={value} value={value} sx={{ ...activeRowSx, py: 1.25 }}>
+        <Box sx={{ minWidth: 0 }}>
+          <Stack direction="row" alignItems="center" spacing={0.5}>
+            <Typography variant="body2" fontWeight={600}>
+              {label}
+            </Typography>
+            {showFitWarning && (
+              <WarningAmberRoundedIcon
+                fontSize="small"
+                titleAccess={intl.formatMessage({
+                  defaultMessage: "This model may not run well on this device",
+                })}
+                sx={{
+                  color:
+                    fit?.level === "discouraged"
+                      ? "error.main"
+                      : "warning.main",
+                }}
+              />
+            )}
+            {active && (
+              <CheckRoundedIcon
+                fontSize="small"
+                sx={activeRowCheckSx}
+                titleAccess={intl.formatMessage({ defaultMessage: "Selected" })}
+              />
+            )}
+          </Stack>
+          <Typography variant="caption" color="text.secondary" display="block">
+            {helper}
+          </Typography>
+          <Typography variant="caption" color="text.secondary">
+            <ModelStatusText
+              downloading={downloading}
+              paused={paused}
+              selectable={selectable}
+              validationError={status?.validationError || null}
+            />
+          </Typography>
+        </Box>
+      </MenuItem>
+    );
+  };
+
+  const renderModelDownloadRow = (option: LocalModelOption) => {
+    const {
+      value,
+      label,
+      helper,
+      status,
+      downloadSnapshot,
+      downloading,
+      paused,
+      selectable,
+      deleting,
+      active,
+    } = getModelRowState(option);
+    const progressLabel = formatDownloadProgress(downloadSnapshot, intl);
+    const progressPercent = getDownloadProgressPercent(
+      downloadSnapshot?.progress,
+    );
+
+    return (
+      <Box
+        key={value}
+        sx={{
+          border: 1,
+          borderColor: active ? "primary.main" : "divider",
+          borderRadius: 1.5,
+          p: 1.25,
+        }}
+      >
+        <Stack spacing={0.75}>
+          <Stack
+            direction="row"
+            justifyContent="space-between"
+            alignItems="flex-start"
+            spacing={1.5}
+          >
+            <Box sx={{ minWidth: 0, flex: 1 }}>
+              <Typography variant="body2" fontWeight={600}>
+                {label}
+              </Typography>
+              <Typography
+                variant="caption"
+                color="text.secondary"
+                display="block"
+              >
+                {helper}
+              </Typography>
+              <Typography variant="caption" color="text.secondary">
+                <ModelStatusText
+                  downloading={downloading}
+                  paused={paused}
+                  selectable={selectable}
+                  validationError={status?.validationError || null}
+                />
+              </Typography>
+            </Box>
+            <ModelDownloadActionButtons
+              model={value}
+              downloading={downloading}
+              paused={paused}
+              selectable={selectable}
+              deleting={deleting}
+              compactPercent={formatCompactPercent(downloadSnapshot)}
+              onDownload={handleDownloadModel}
+              onPause={pauseLocalTranscriptionModelDownload}
+              onResume={resumeLocalTranscriptionModelDownload}
+              onCancel={cancelLocalTranscriptionModelDownload}
+              onDelete={handleDeleteModel}
+            />
+          </Stack>
+          {(downloading || paused) && (
+            <LinearProgress
+              color={paused ? "warning" : "primary"}
+              variant={
+                progressPercent != null ? "determinate" : "indeterminate"
+              }
+              value={progressPercent ?? undefined}
+              sx={{ borderRadius: 999, height: 4 }}
+            />
+          )}
+          {(downloading || paused) && progressLabel && (
+            <Typography
+              variant="caption"
+              color={paused ? "warning.main" : "text.secondary"}
+              sx={{ fontVariantNumeric: "tabular-nums" }}
+            >
+              {paused
+                ? `${intl.formatMessage({ defaultMessage: "Paused" })} • ${progressLabel}`
+                : progressLabel}
+            </Typography>
+          )}
+        </Stack>
+      </Box>
+    );
+  };
 
   return (
     <Stack spacing={3} alignItems="flex-start" sx={{ width: "100%" }}>
@@ -313,14 +772,14 @@ export const AITranscriptionConfiguration = () => {
                   </MenuItem>
                 ) : (
                   transcription.availableDevices.map((device) => {
-                    const modeLabel =
-                      device.mode === "gpu"
-                        ? intl.formatMessage({ defaultMessage: "GPU" })
-                        : intl.formatMessage({ defaultMessage: "CPU" });
+                    const isGpu = device.mode === "gpu";
+                    const modeLabel = isGpu
+                      ? intl.formatMessage({ defaultMessage: "GPU" })
+                      : intl.formatMessage({ defaultMessage: "CPU" });
 
                     return (
                       <MenuItem key={device.id} value={device.id}>
-                        {`${modeLabel} • ${device.name}`}
+                        {device.name} ({modeLabel})
                       </MenuItem>
                     );
                   })
@@ -328,249 +787,49 @@ export const AITranscriptionConfiguration = () => {
               </Select>
             </FormControl>
 
-            <FormControl fullWidth size="small">
-              <InputLabel id="model-size-label">
-                <FormattedMessage defaultMessage="Model size" />
+            <FormControl fullWidth size="small" sx={{ position: "relative" }}>
+              <InputLabel id="transcription-model-label">
+                <FormattedMessage defaultMessage="Transcription model" />
               </InputLabel>
               <Select
-                labelId="model-size-label"
-                label={<FormattedMessage defaultMessage="Model size" />}
+                labelId="transcription-model-label"
+                label={
+                  <FormattedMessage defaultMessage="Transcription model" />
+                }
                 value={modelValue}
                 onChange={(event) =>
                   handleModelSizeChange(String(event.target.value))
                 }
                 renderValue={(value) => {
                   const model = normalizeLocalWhisperModel(String(value));
-                  const option = MODEL_OPTIONS.find(
+                  const option = LOCAL_MODEL_OPTIONS.find(
                     (item) => item.value === model,
                   );
-                  return option?.label ?? model;
+                  return option ? intl.formatMessage(option.label) : model;
                 }}
-                sx={
-                  showInlineModelDownloadAction
-                    ? {
-                        "& .MuiSelect-select": {
-                          pr: "132px !important",
-                        },
-                      }
-                    : undefined
-                }
               >
-                {MODEL_OPTIONS.map(({ value, label, helper }) => {
-                  const status = localTranscriptionConfig.modelStatuses[value];
-                  const downloadSnapshot =
-                    localTranscriptionConfig.modelDownloads[value];
-                  const downloading =
-                    isLocalTranscriptionModelDownloadInProgress(
-                      downloadSnapshot,
-                    );
-                  const deleting =
-                    !!localTranscriptionConfig.modelDeletes[value];
-                  const selectable = isLocalTranscriptionModelSelectable(
-                    transcription,
-                    value,
-                  );
-                  const progressLabel =
-                    formatDownloadProgress(downloadSnapshot);
-                  const active = value === modelValue;
+                <ListSubheader sx={subheaderSx}>
+                  <FormattedMessage defaultMessage="NVIDIA NeMo / Sherpa-ONNX (Fast & No Hallucinations)" />
+                </ListSubheader>
+                {LOCAL_MODEL_OPTIONS.filter(
+                  (opt) => opt.category === "fast",
+                ).map((opt) => renderModelMenuItem(opt))}
 
-                  return (
-                    <MenuItem key={value} value={value} sx={activeRowSx}>
-                      <Stack spacing={0.75} sx={{ width: "100%" }}>
-                        <Stack
-                          direction="row"
-                          alignItems="center"
-                          justifyContent="space-between"
-                          gap={1}
-                          sx={{ width: "100%" }}
-                        >
-                          <Box sx={{ minWidth: 0 }}>
-                            <Stack
-                              direction="row"
-                              alignItems="center"
-                              gap={0.75}
-                            >
-                              <Typography variant="body2" fontWeight={600}>
-                                {label}
-                              </Typography>
-                              {(() => {
-                                const fit = capabilities
-                                  ? getModelFit(capabilities, value)
-                                  : null;
-                                if (
-                                  fit?.level !== "caution" &&
-                                  fit?.level !== "discouraged"
-                                ) {
-                                  return null;
-                                }
-                                return (
-                                  <WarningAmberRoundedIcon
-                                    fontSize="small"
-                                    titleAccess={intl.formatMessage({
-                                      defaultMessage:
-                                        "This model may not run well on this device",
-                                    })}
-                                    sx={{
-                                      color:
-                                        fit.level === "discouraged"
-                                          ? "error.main"
-                                          : "warning.main",
-                                    }}
-                                  />
-                                );
-                              })()}
-                              {active && (
-                                <CheckRoundedIcon
-                                  fontSize="small"
-                                  sx={activeRowCheckSx}
-                                  titleAccess={intl.formatMessage({
-                                    defaultMessage: "Selected",
-                                  })}
-                                />
-                              )}
-                            </Stack>
-                            <Typography
-                              variant="caption"
-                              color="text.secondary"
-                              display="block"
-                            >
-                              {helper}
-                            </Typography>
-                            <Typography
-                              variant="caption"
-                              color="text.secondary"
-                            >
-                              {selectable
-                                ? intl.formatMessage({
-                                    defaultMessage: "Downloaded",
-                                  })
-                                : status?.validationError || null}
-                            </Typography>
-                          </Box>
-                          <Button
-                            size="small"
-                            variant="contained"
-                            color={selectable ? "error" : "primary"}
-                            disabled={downloading || deleting}
-                            sx={{
-                              minWidth: 0,
-                              minHeight: 24,
-                              px: 1.25,
-                              borderRadius: 999,
-                              boxShadow: "none",
-                              textTransform: "none",
-                              fontSize: 12,
-                              lineHeight: 1.2,
-                              alignSelf: "center",
-                              "&:hover": {
-                                boxShadow: "none",
-                              },
-                            }}
-                            onMouseDown={(event) => {
-                              event.preventDefault();
-                              event.stopPropagation();
-                            }}
-                            onClick={(event) => {
-                              event.preventDefault();
-                              event.stopPropagation();
-                              if (selectable) {
-                                handleDeleteModel(value);
-                                return;
-                              }
-                              handleDownloadModel(value);
-                            }}
-                          >
-                            {downloading
-                              ? intl.formatMessage({
-                                  defaultMessage: "Downloading...",
-                                })
-                              : deleting
-                                ? intl.formatMessage({
-                                    defaultMessage: "Deleting...",
-                                  })
-                                : selectable
-                                  ? intl.formatMessage({
-                                      defaultMessage: "Delete",
-                                    })
-                                  : intl.formatMessage({
-                                      defaultMessage: "Download",
-                                    })}
-                          </Button>
-                        </Stack>
-
-                        {downloading && (
-                          <LinearProgress
-                            variant={
-                              downloadSnapshot?.progress != null
-                                ? "determinate"
-                                : "indeterminate"
-                            }
-                            value={
-                              downloadSnapshot?.progress != null
-                                ? Math.max(
-                                    0,
-                                    Math.min(1, downloadSnapshot.progress),
-                                  ) * 100
-                                : undefined
-                            }
-                          />
-                        )}
-
-                        {downloading && progressLabel && (
-                          <Typography variant="caption" color="text.secondary">
-                            {progressLabel}
-                          </Typography>
-                        )}
-                      </Stack>
-                    </MenuItem>
-                  );
-                })}
+                <ListSubheader sx={subheaderSx}>
+                  <FormattedMessage defaultMessage="OpenAI Whisper (Multilingual GGML)" />
+                </ListSubheader>
+                {LOCAL_MODEL_OPTIONS.filter(
+                  (opt) => opt.category === "whisper",
+                ).map((opt) => renderModelMenuItem(opt))}
               </Select>
-              {showInlineModelDownloadAction && (
-                <Box
-                  sx={{
-                    position: "absolute",
-                    right: 36,
-                    top: "50%",
-                    transform: "translateY(-50%)",
-                    zIndex: 1,
-                  }}
-                >
-                  <Button
-                    size="small"
-                    variant="contained"
-                    color="primary"
-                    sx={{
-                      minWidth: 0,
-                      minHeight: 24,
-                      px: 1.25,
-                      borderRadius: 999,
-                      boxShadow: "none",
-                      textTransform: "none",
-                      fontSize: 12,
-                      lineHeight: 1.2,
-                      "&:hover": {
-                        boxShadow: "none",
-                      },
-                    }}
-                    disabled={modelDownloading}
-                    onMouseDown={(event) => {
-                      event.preventDefault();
-                      event.stopPropagation();
-                    }}
-                    onClick={(event) => {
-                      event.preventDefault();
-                      event.stopPropagation();
-                      handleDownloadModel(modelValue);
-                    }}
-                  >
-                    {modelDownloading
-                      ? intl.formatMessage({ defaultMessage: "Downloading..." })
-                      : intl.formatMessage({ defaultMessage: "Download" })}
-                  </Button>
-                </Box>
-              )}
             </FormControl>
+
+            <Stack spacing={1.25} sx={{ width: "100%" }}>
+              <Typography variant="subtitle2">
+                <FormattedMessage defaultMessage="Model downloads" />
+              </Typography>
+              {LOCAL_MODEL_OPTIONS.map(renderModelDownloadRow)}
+            </Stack>
 
             {capabilities && (
               <Box

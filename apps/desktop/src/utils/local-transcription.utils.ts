@@ -1,3 +1,4 @@
+import { defineMessage, type MessageDescriptor } from "react-intl";
 import { CPU_DEVICE_VALUE } from "../types/ai.types";
 
 export type LocalWhisperModel =
@@ -7,18 +8,111 @@ export type LocalWhisperModel =
   | "medium"
   | "large"
   | "turbo"
-  | "hindi2hinglish";
+  | "parakeet-ctc-0.6b"
+  | "parakeet-tdt-0.6b"
+  | "canary-1b";
+
+export type LocalModelCategory = "fast" | "whisper";
+
+export type LocalModelOption = {
+  value: LocalWhisperModel;
+  label: MessageDescriptor;
+  helper: MessageDescriptor;
+  category: LocalModelCategory;
+};
 
 export const DEFAULT_LOCAL_WHISPER_MODEL: LocalWhisperModel = "tiny";
+
 export const LOCAL_WHISPER_MODELS: LocalWhisperModel[] = [
+  "parakeet-ctc-0.6b",
+  "parakeet-tdt-0.6b",
+  "canary-1b",
   "tiny",
   "base",
   "small",
   "medium",
   "turbo",
   "large",
-  "hindi2hinglish",
 ];
+
+type ModelMeta = {
+  label: MessageDescriptor;
+  helper: MessageDescriptor;
+  category: LocalModelCategory;
+};
+
+const MODEL_LOOKUP: Record<LocalWhisperModel, ModelMeta> = {
+  "parakeet-ctc-0.6b": {
+    label: defineMessage({
+      defaultMessage: "NVIDIA Parakeet CTC 0.6B (613 MB)",
+    }),
+    helper: defineMessage({
+      defaultMessage: "Ultra-fast English dictation, zero hallucination loops",
+    }),
+    category: "fast",
+  },
+  "parakeet-tdt-0.6b": {
+    label: defineMessage({
+      defaultMessage: "NVIDIA Parakeet TDT 0.6B (670 MB)",
+    }),
+    helper: defineMessage({
+      defaultMessage: "State-of-the-art English dictation speed & accuracy",
+    }),
+    category: "fast",
+  },
+  "canary-1b": {
+    label: defineMessage({ defaultMessage: "NVIDIA Canary 1B (1.03 GB)" }),
+    helper: defineMessage({
+      defaultMessage: "Multilingual STT + automatic punctuation & casing",
+    }),
+    category: "fast",
+  },
+  tiny: {
+    label: defineMessage({ defaultMessage: "Whisper Tiny (77 MB)" }),
+    helper: defineMessage({ defaultMessage: "Fastest, lowest accuracy" }),
+    category: "whisper",
+  },
+  base: {
+    label: defineMessage({ defaultMessage: "Whisper Base (148 MB)" }),
+    helper: defineMessage({
+      defaultMessage: "Great balance of speed and accuracy",
+    }),
+    category: "whisper",
+  },
+  small: {
+    label: defineMessage({ defaultMessage: "Whisper Small (488 MB)" }),
+    helper: defineMessage({
+      defaultMessage: "Recommended with GPU acceleration",
+    }),
+    category: "whisper",
+  },
+  medium: {
+    label: defineMessage({ defaultMessage: "Whisper Medium (1.53 GB)" }),
+    helper: defineMessage({ defaultMessage: "Balanced quality and speed" }),
+    category: "whisper",
+  },
+  turbo: {
+    label: defineMessage({
+      defaultMessage: "Whisper Large v3 Turbo (1.6 GB)",
+    }),
+    helper: defineMessage({
+      defaultMessage: "Fast large model, great accuracy",
+    }),
+    category: "whisper",
+  },
+  large: {
+    label: defineMessage({ defaultMessage: "Whisper Large v3 (3.1 GB)" }),
+    helper: defineMessage({ defaultMessage: "Highest accuracy, requires GPU" }),
+    category: "whisper",
+  },
+};
+
+export const LOCAL_MODEL_OPTIONS: LocalModelOption[] = LOCAL_WHISPER_MODELS.map(
+  (value) => ({
+    value,
+    ...MODEL_LOOKUP[value],
+  }),
+);
 
 export const normalizeLocalWhisperModel = (
   value: string | null | undefined,
@@ -55,12 +149,29 @@ export const normalizeLocalWhisperModel = (
   }
 
   if (
-    normalized === "hindi2hinglish" ||
-    normalized === "hindi-hinglish" ||
-    normalized === "hindi2hinglish-apex" ||
-    normalized === "whisper-hindi2hinglish-apex"
+    normalized === "parakeet-ctc-0.6b" ||
+    normalized === "parakeet-ctc" ||
+    normalized === "parakeet_ctc" ||
+    normalized === "parakeet_ctc_0.6b"
   ) {
-    return "hindi2hinglish";
+    return "parakeet-ctc-0.6b";
+  }
+
+  if (
+    normalized === "parakeet-tdt-0.6b" ||
+    normalized === "parakeet-tdt" ||
+    normalized === "parakeet_tdt" ||
+    normalized === "parakeet_tdt_0.6b"
+  ) {
+    return "parakeet-tdt-0.6b";
+  }
+
+  if (
+    normalized === "canary-1b" ||
+    normalized === "canary" ||
+    normalized === "canary_1b"
+  ) {
+    return "canary-1b";
   }
 
   return DEFAULT_LOCAL_WHISPER_MODEL;

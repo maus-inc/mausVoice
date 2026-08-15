@@ -123,6 +123,8 @@ pnpm run check-types   # TypeScript type checking
 pnpm run test          # tests
 ```
 
+All documentation regarding development are [here](https://maus-inc.github.io/mausVoice/docs/development/repository-overview/)
+
 </details>
 
 ## License

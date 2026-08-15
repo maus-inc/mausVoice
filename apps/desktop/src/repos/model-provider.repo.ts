@@ -305,8 +305,14 @@ export class OllamaModelProviderRepo extends BaseModelProviderRepo {
     return true;
   }
 
+  // Stock Ollama has no speech-to-text endpoint: its OpenAI-compatible
+  // surface covers chat, completions, models, embeddings, and responses
+  // only, and whisper/STT support has not shipped upstream. Reporting
+  // transcription capability here previously let Ollama appear in the
+  // transcription selector while getTranscribeAudioRepo() had no Ollama
+  // branch. Keep it false so capability filtering and dispatch agree.
   supportsTranscriptionModels(): boolean {
-    return true;
+    return false;
   }
 
   async getGenerativeTextModels(
@@ -315,8 +321,8 @@ export class OllamaModelProviderRepo extends BaseModelProviderRepo {
     return this.fetchModels(options);
   }
 
-  async getTranscriptionModels(options: FetchModelsOptions): Promise<string[]> {
-    return this.fetchModels(options);
+  async getTranscriptionModels(): Promise<string[]> {
+    return [];
   }
 
   private async fetchModels(options: FetchModelsOptions): Promise<string[]> {

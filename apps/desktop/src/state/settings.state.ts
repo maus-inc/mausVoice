@@ -108,6 +108,12 @@ export const isLocalTranscriptionModelDownloadInProgress = (
   return snapshot?.status === "pending" || snapshot?.status === "running";
 };
 
+export const isLocalTranscriptionModelDownloadPaused = (
+  snapshot: LocalSidecarDownloadSnapshot | undefined,
+): boolean => {
+  return snapshot?.status === "paused";
+};
+
 export const isLocalTranscriptionModelSelectable = (
   transcription: SettingsTranscriptionState,
   model: LocalWhisperModel,
