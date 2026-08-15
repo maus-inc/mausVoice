@@ -15,6 +15,14 @@ import { THEME_PROVIDER_CONFIG, theme } from "./theme";
 import { createEffectiveAuth } from "./utils/auth.utils";
 import { applyDomMutationGuards } from "./utils/dom-guard.utils";
 import { getIsEmulators } from "./utils/env.utils";
+import {
+  installGlobalErrorOverlay,
+  paintFatalError,
+} from "./utils/global-error-overlay.utils";
+
+// Surface any startup failure on screen instead of leaving a blank white
+// window — the bundle can fail to execute under Tauri's asset: protocol.
+installGlobalErrorOverlay();
 
 // WebView2/Chrome page tooling (e.g. translation) can reparent text nodes that
 // React owns; guard the DOM mutators before the root renders, or one such
@@ -112,9 +120,14 @@ const Main = ({ children }: ChildrenProps) => {
   );
 };
 
-root.render(
-  <Main>
-    <SnackbarEmitter />
-    <AppWithLoading />
-  </Main>,
-);
+try {
+  root.render(
+    <Main>
+      <SnackbarEmitter />
+      <AppWithLoading />
+    </Main>,
+  );
+} catch (error) {
+  paintFatalError("mausVoice failed to start", error);
+  throw error;
+}

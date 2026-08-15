@@ -9,6 +9,11 @@ export default defineConfig(async () => {
   const { formatjsOverrideIdFn } = await import("./scripts/formatjs-id.mjs");
 
   return {
+    // Relative base so the built index.html references ./assets/* instead of
+    // /assets/*. Tauri serves the release frontend over the asset: protocol,
+    // where absolute paths + the crossorigin module attribute can fail to
+    // load — leaving a blank white window with no script execution.
+    base: "./",
     plugins: [
       react({
         babel: {
@@ -35,6 +40,16 @@ export default defineConfig(async () => {
         },
       }),
       svgr(),
+      // Tauri serves the release frontend over the asset: protocol. The
+      // `crossorigin` attribute Vite adds to module/preload tags forces a
+      // CORS-mode fetch that the asset server can reject, leaving a blank
+      // white window. Same-origin module loading does not need it.
+      {
+        name: "tauri-strip-crossorigin",
+        transformIndexHtml(html) {
+          return html.replace(/ crossorigin/g, "");
+        },
+      },
     ],
     clearScreen: false,
     build: {
