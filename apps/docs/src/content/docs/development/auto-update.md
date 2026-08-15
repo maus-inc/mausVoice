@@ -26,6 +26,20 @@ Accordingly `apps/desktop/src-tauri/tauri.conf.json` commits `createUpdaterArtif
 
 Generate a pair with `pnpm --filter desktop exec tauri signer generate -w ~/.tauri/mausvoice.key`. Keep the private key and its passphrase offline; store both halves plus the passphrase in the repository's secret store.
 
+:::caution[Windows writes the key inside the repository]
+PowerShell does not expand `~`, so on Windows that command creates a literal `~` directory **inside the working tree** — `apps/desktop/~/.tauri/mausvoice.key` — rather than in your home directory. `.gitignore` covers `*.key`, `*.key.pub`, `.tauri/`, and `**/~/` so it cannot be committed accidentally, but move it out of the repository once the secrets are set, and delete the stray `~` directory.
+
+PowerShell also rejects `<` for input redirection. Set the secrets with `-b` instead:
+
+```powershell
+gh secret set UPDATER_PRIVATE_KEY --repo maus-inc/mausVoice -b (Get-Content -Raw "path\to\mausvoice.key")
+gh secret set UPDATER_PUBLIC_KEY  --repo maus-inc/mausVoice -b (Get-Content -Raw "path\to\mausvoice.key.pub")
+gh secret set UPDATER_PRIVATE_KEY_PASSWORD --repo maus-inc/mausVoice
+```
+
+`Get-Content -Raw` matters: without it PowerShell strips the trailing newline and reflows the content, which can corrupt the stored key.
+:::
+
 If `UPDATER_PRIVATE_KEY` or `UPDATER_PUBLIC_KEY` is missing, the release job emits a warning and degrades gracefully: installers still build and publish, but unsigned, with no `.sig` files and no manifest. Nothing silently ships a build that clients would refuse or, worse, wrongly trust.
 
 ## Release flow

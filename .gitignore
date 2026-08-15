@@ -52,6 +52,15 @@ yarn-error.log*
 .DS_Store
 *.pem
 
+# Updater signing keys. These must never be committed: the private key is the
+# anchor installed copies of mausVoice trust to execute code. Tauri's
+# `signer generate -w ~/...` writes a literal "~" directory on Windows
+# (apps/desktop/~/.tauri/), so that path is covered explicitly too.
+*.key
+*.key.pub
+.tauri/
+**/~/
+
 target/
 nul
 

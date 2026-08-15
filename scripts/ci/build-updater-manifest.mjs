@@ -163,8 +163,10 @@ async function main() {
 
 // Only run when executed directly, so the tests can import the helpers.
 if (process.argv[1] && import.meta.url === `file://${process.argv[1]}`) {
-  main().catch((error) => {
+  try {
+    await main();
+  } catch (error) {
     console.error(error.message);
     process.exit(1);
-  });
+  }
 }
