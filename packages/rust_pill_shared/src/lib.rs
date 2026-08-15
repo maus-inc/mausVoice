@@ -439,7 +439,11 @@ pub struct RingTick {
 }
 
 /// Mutable ring animation values advanced by [`advance_ring`].
-#[derive(Debug, Clone, Copy, Default)]
+///
+/// [`Default`] is hand-written: two fields use non-zero sentinels, so a derived
+/// all-zeroes default would mean "a pulse is running" and "the button was
+/// released this instant", painting a phantom ring on the very first frame.
+#[derive(Debug, Clone, Copy)]
 pub struct RingAnim {
     pub alpha: f64,
     pub release_progress: f64,
@@ -448,6 +452,23 @@ pub struct RingAnim {
     pub arm_t: f64,
     /// Seconds since arming; negative when no pulse is running.
     pub arm_pulse: f64,
+}
+
+impl Default for RingAnim {
+    fn default() -> Self {
+        Self {
+            alpha: 0.0,
+            release_progress: 0.0,
+            press_elapsed: 0.0,
+            // Seed the release timer past the end of the fade so a freshly
+            // built pill starts fully faded out instead of mid-release.
+            release_elapsed: LONG_PRESS_RING_FADE,
+            arm_t: 0.0,
+            // Negative means "no pulse in flight"; 0.0 would mean one just
+            // started.
+            arm_pulse: -1.0,
+        }
+    }
 }
 
 /// Time for `arm_t` to ramp in once armed.
@@ -935,6 +956,19 @@ mod tests {
             advance_ring(&mut a, RingTick { held: false, dragging: false, progress: 0.0, delta_seconds: 0.016 }, hd);
         }
         assert_eq!(a.arm_t, 0.0);
+    }
+
+    /// Regression: `RingAnim` uses non-zero sentinels, so a derived all-zeroes
+    /// `Default` would mean "a pulse is running" and "the button was released
+    /// this instant" — painting a phantom ring on the very first frame.
+    #[test]
+    fn default_starts_idle_and_faded_out() {
+        let a = RingAnim::default();
+        assert!(!a.pulsing(), "a fresh anim must not be mid-pulse");
+        assert_eq!(a.arm_pulse, -1.0);
+        // Seeded past the end of the fade, so the ring starts invisible.
+        assert_eq!(a.release_elapsed, LONG_PRESS_RING_FADE);
+        assert_eq!(ring_alpha(false, 0.0, a.release_elapsed, 0.12), 0.0);
     }
 
     #[test]

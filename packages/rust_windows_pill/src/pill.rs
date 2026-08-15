@@ -320,6 +320,10 @@ unsafe extern "system" fn wndproc(hwnd: HWND, msg: u32, wparam: WPARAM, lparam: 
                     state.pointer_down.set(false);
                     // The capture is already gone, so only persist the position.
                     let _ = end_drag(hwnd, state, true);
+                    // Settle hover now rather than staying pinned-expanded for
+                    // up to a full cursor tick. check_hover only reads state
+                    // and Cells, so it is safe under this immutable borrow.
+                    check_hover(hwnd, state);
                 }
             });
             LRESULT(0)
@@ -1295,6 +1299,9 @@ fn tick_drag_release_fallback(hwnd: HWND, state: &PillState) {
     state.long_press_elapsed.set(0.0);
     state.pointer_down.set(false);
     let _ = end_drag(hwnd, state, true);
+    // Recompute hover against the real cursor position, so a gesture that ended
+    // without a release event does not leave the pill pinned expanded.
+    check_hover(hwnd, state);
 }
 
 

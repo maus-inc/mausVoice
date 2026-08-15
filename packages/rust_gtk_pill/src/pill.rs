@@ -242,15 +242,13 @@ pub fn run(receiver: Receiver<InMessage>) {
         let (mx, my) = event.position();
         // A button-release event is not guaranteed to arrive (a grab can be
         // broken by another client). The motion event carries the live button
-        // mask, so use it to clear a stale pin before reading it — otherwise a
-        // lost release would keep hover pinned open until the next click.
+        // mask, so clear a stale pin before reading it. The frame tick runs the
+        // same check against the pointer device, which covers a missed release
+        // with no subsequent motion.
         if state_motion.pointer_down.get()
             && !event.state().contains(gdk::ModifierType::BUTTON1_MASK)
         {
-            state_motion.pointer_down.set(false);
-            state_motion.long_press_active.set(false);
-            state_motion.long_press_elapsed.set(0.0);
-            state_motion.dragging.set(false);
+            clear_pointer_pin(&state_motion);
         }
 
         // A held button owns the pointer, so the hit test cannot be trusted:
@@ -583,6 +581,7 @@ pub fn run(receiver: Receiver<InMessage>) {
             return ControlFlow::Break;
         }
 
+        release_pointer_if_button_up(&win_tick, &state_tick);
         tick(&state_tick);
 
         // Show/hide entry for typing mode
@@ -762,6 +761,39 @@ pub fn run(receiver: Receiver<InMessage>) {
         ControlFlow::Continue
     });
     main_loop.run();
+}
+
+/// Clears the hover pin and any gesture it was holding open.
+fn clear_pointer_pin(state: &PillState) {
+    state.pointer_down.set(false);
+    state.long_press_active.set(false);
+    state.long_press_elapsed.set(0.0);
+    state.dragging.set(false);
+}
+
+/// Frame-level backstop for a missed button release.
+///
+/// A release event can be lost outright — a grab stolen by another client, or
+/// the session locking. Polling the pointer's live modifier mask each frame
+/// means a stationary missed release still self-heals; relying on the motion
+/// handler alone would leave the pill pinned open until the pointer moved.
+fn release_pointer_if_button_up(window: &gtk::Window, state: &PillState) {
+    if !state.pointer_down.get() {
+        return;
+    }
+    let Some(gdk_window) = window.window() else {
+        return;
+    };
+    let Some(pointer) = gdk::Display::default()
+        .and_then(|d| d.default_seat())
+        .and_then(|s| s.pointer())
+    else {
+        return;
+    };
+    let (_, _, _, mask) = gdk_window.device_position(&pointer);
+    if !mask.contains(gdk::ModifierType::BUTTON1_MASK) {
+        clear_pointer_pin(state);
+    }
 }
 
 fn tick(state: &PillState) {
