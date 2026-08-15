@@ -36,6 +36,10 @@ class LocalTranscriptionSidecarFacade {
   private gpuSidecar = new LocalTranscriptionSidecar("gpu");
   private gpuUnavailable = false;
   private gpuDetection: Promise<boolean> | null = null;
+  private downloadOwners = new Map<
+    LocalWhisperModel,
+    LocalTranscriptionSidecar
+  >();
 
   /**
    * Detects whether the machine actually has a GPU the transcription sidecar
@@ -121,9 +125,51 @@ class LocalTranscriptionSidecarFacade {
     model: LocalWhisperModel;
     preferGpu: boolean;
     onProgress?: (snapshot: LocalSidecarDownloadSnapshot) => void;
-  }): Promise<LocalSidecarModelStatus> {
-    const sidecar = await this.resolveRuntime(preferGpu);
-    return await sidecar.downloadModel(model, onProgress);
+  }): Promise<LocalSidecarModelStatus | null> {
+    const sidecar =
+      this.downloadOwners.get(model) ?? (await this.resolveRuntime(preferGpu));
+    this.downloadOwners.set(model, sidecar);
+
+    try {
+      const status = await sidecar.downloadModel(model, onProgress);
+      if (status) {
+        this.downloadOwners.delete(model);
+      }
+      return status;
+    } catch (error) {
+      this.downloadOwners.delete(model);
+      throw error;
+    }
+  }
+
+  async pauseModelDownload({
+    model,
+    preferGpu,
+  }: {
+    model: LocalWhisperModel;
+    preferGpu: boolean;
+  }): Promise<LocalSidecarDownloadSnapshot> {
+    const sidecar =
+      this.downloadOwners.get(model) ?? (await this.resolveRuntime(preferGpu));
+    return await sidecar.pauseDownload(model);
+  }
+
+  async cancelModelDownload({
+    model,
+    preferGpu,
+  }: {
+    model: LocalWhisperModel;
+    preferGpu: boolean;
+  }): Promise<LocalSidecarDownloadSnapshot> {
+    const sidecar =
+      this.downloadOwners.get(model) ?? (await this.resolveRuntime(preferGpu));
+    try {
+      return await sidecar.cancelDownload(model);
+    } finally {
+      this.downloadOwners.delete(model);
+      this.cpuSidecar.invalidateModelReadiness(model);
+      this.gpuSidecar.invalidateModelReadiness(model);
+    }
   }
 
   async deleteModel({

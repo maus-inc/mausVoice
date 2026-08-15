@@ -5,6 +5,7 @@ use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 
 use crate::compute::ComputeMode;
+use crate::models::WhisperModel;
 use serde::Serialize;
 use whisper_rs::{
     FullParams, SamplingStrategy, WhisperContext, WhisperContextParameters, WhisperError,
@@ -12,6 +13,7 @@ use whisper_rs::{
 
 #[derive(Debug, Clone)]
 pub struct TranscriptionInput {
+    pub model: WhisperModel,
     pub model_path: PathBuf,
     pub samples: Vec<f32>,
     pub sample_rate: u32,
@@ -72,9 +74,13 @@ impl TranscriptionEngine {
             .map_err(|err| format!("device listing task failed: {err}"))?
     }
 
-    pub async fn validate_model(&self, model_path: PathBuf) -> Result<bool, String> {
+    pub async fn validate_model(
+        &self,
+        model: WhisperModel,
+        model_path: PathBuf,
+    ) -> Result<bool, String> {
         let engine = self.clone();
-        tokio::task::spawn_blocking(move || engine.validate_model_blocking(&model_path))
+        tokio::task::spawn_blocking(move || engine.validate_model_blocking(model, &model_path))
             .await
             .map_err(|err| format!("model validation task failed: {err}"))?
     }
@@ -104,6 +110,25 @@ impl TranscriptionEngine {
         let processed = resample_to_16khz(&filtered_samples, input.sample_rate);
         if processed.is_empty() {
             return Err("unable to resample audio".to_string());
+        }
+
+        // Parakeet and Canary run through model-specific ONNX Runtime engines
+        // with their real feature extractors and decoders. The current ONNX
+        // execution provider is CPU even when this is the GPU whisper sidecar;
+        // still resolve the requested device so invalid IDs are rejected, but
+        // report the device that actually performed inference.
+        if input.model.is_onnx() {
+            let _requested_device = self.resolve_device_blocking(input.device_id.as_deref())?;
+            let text = crate::onnx_inference::transcribe(
+                input.model,
+                &input.model_path,
+                &processed,
+                input.language.as_deref(),
+            )?;
+            return Ok(TranscriptionOutput {
+                text,
+                inference_device: "CPU".to_string(),
+            });
         }
 
         let device = self.resolve_device_blocking(input.device_id.as_deref())?;
@@ -154,9 +179,20 @@ impl TranscriptionEngine {
         })
     }
 
-    fn validate_model_blocking(&self, model_path: &Path) -> Result<bool, String> {
+    fn validate_model_blocking(
+        &self,
+        model: WhisperModel,
+        model_path: &Path,
+    ) -> Result<bool, String> {
         if !model_path.exists() {
             return Ok(false);
+        }
+
+        if model.is_onnx() {
+            // Validation loads every graph through ONNX Runtime and then builds
+            // the architecture-specific runtime, rejecting malformed weights,
+            // missing tokenizers, and mismatched artifact sets.
+            return crate::onnx_inference::validate_model(model, model_path);
         }
 
         let model_path_str = model_path

@@ -15,9 +15,12 @@ export type ModelFitLevel =
 const MODEL_TIER: Record<LocalWhisperModel, number> = {
   tiny: 0,
   base: 0,
+  "parakeet-ctc-0.6b": 0,
+  "parakeet-tdt-0.6b": 1,
   small: 1,
   medium: 2,
   turbo: 2,
+  "canary-1b": 2,
   large: 3,
 };
 
@@ -27,8 +30,8 @@ const hasUsableGpu = (capabilities: SystemCapabilities | null): boolean =>
   ) ?? false;
 
 /**
- * Highest model tier the device can comfortably run: 0 = tiny/base,
- * 1 = small, 2 = medium/turbo, 3 = large. A usable GPU raises the
+ * Highest model tier the device can comfortably run: 0 = tiny/base/parakeet-ctc,
+ * 1 = small/parakeet-tdt, 2 = medium/turbo/canary, 3 = large. A usable GPU raises the
  * ceiling by one tier.
  */
 export const getDeviceModelTier = (

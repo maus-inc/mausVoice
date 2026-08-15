@@ -11,6 +11,11 @@ use tokio::time::sleep;
 
 const HEALTH_TIMEOUT: Duration = Duration::from_secs(20);
 const DOWNLOAD_TIMEOUT: Duration = Duration::from_secs(900);
+// Real inference can exceed the client's short control-plane timeout on
+// slower CI runners (notably Windows). Keep health, status, and error-path
+// requests fast while allowing only genuine transcription calls more time.
+const TRANSCRIPTION_TIMEOUT: Duration = Duration::from_secs(180);
+const VALIDATION_TIMEOUT: Duration = Duration::from_secs(120);
 const TINY_MODEL_FILENAME: &str = "ggml-tiny.bin";
 
 #[derive(Debug, Deserialize)]
@@ -25,6 +30,7 @@ struct HealthResponse {
 struct ModelStatusResponse {
     downloaded: bool,
     valid: bool,
+    validation_error: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -40,13 +46,15 @@ struct ApiErrorDetails {
     message: String,
 }
 
-#[derive(Debug, Clone, Copy, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
 #[serde(rename_all = "lowercase")]
 enum DownloadJobStatus {
     Pending,
     Running,
+    Paused,
     Completed,
     Failed,
+    Canceled,
 }
 
 #[derive(Debug, Deserialize)]
@@ -417,10 +425,13 @@ async fn cpu_sidecar_delete_model_removes_model_and_partial_fragments(
     let sidecar = RunningSidecar::start_cpu().await?;
     let model_path = sidecar.model_path(TINY_MODEL_FILENAME);
     let partial_path = sidecar.model_path(&format!("{TINY_MODEL_FILENAME}.partial.download"));
+    let validator_path =
+        sidecar.model_path(&format!("{TINY_MODEL_FILENAME}.partial.download.validator"));
     let keep_path = sidecar.model_path(&format!("{TINY_MODEL_FILENAME}.keep"));
 
     tokio::fs::write(&model_path, b"fake model bytes").await?;
     tokio::fs::write(&partial_path, b"partial bytes").await?;
+    tokio::fs::write(&validator_path, b"\"artifact-v1\"").await?;
     tokio::fs::write(&keep_path, b"should stay").await?;
 
     let response = sidecar
@@ -438,6 +449,10 @@ async fn cpu_sidecar_delete_model_removes_model_and_partial_fragments(
     assert!(
         !partial_path.exists(),
         "expected partial model fragment to be deleted"
+    );
+    assert!(
+        !validator_path.exists(),
+        "expected partial model validator to be deleted"
     );
     assert!(keep_path.exists(), "expected unrelated file to remain");
 
@@ -488,10 +503,65 @@ async fn cpu_sidecar_delete_model_rejects_while_download_is_active(
 async fn cpu_sidecar_end_to_end_download_and_transcribe(
 ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     let sidecar = RunningSidecar::start_cpu().await?;
+    run_model_end_to_end(&sidecar, "tiny").await
+}
 
+/// Regression test for the fabricated-ONNX defect: synthetic bytes that are
+/// not a valid ONNX graph must be rejected by model validation (which now runs
+/// through ONNX Runtime). Previously any non-empty file was reported valid and
+/// transcription returned tokens derived from frame energy rather than the
+/// model.
+#[tokio::test]
+async fn cpu_sidecar_rejects_invalid_onnx_model(
+) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+    let sidecar = RunningSidecar::start_cpu().await?;
+    // Create the complete expected file set under the model-specific directory
+    // so `downloaded` is true and validation reaches ONNX Runtime. The graph is
+    // deliberately malformed; non-empty bytes must never count as a model.
+    let model_dir = sidecar.model_path("parakeet-ctc-0.6b");
+    tokio::fs::create_dir_all(&model_dir).await?;
+    tokio::fs::write(
+        model_dir.join("model_int8.onnx"),
+        b"\x08\x07\x12\x0enot_a_real_onnx_graph",
+    )
+    .await?;
+    tokio::fs::write(model_dir.join("model_int8.onnx_data"), b"fake weights").await?;
+    tokio::fs::write(model_dir.join("tokenizer.json"), b"{}").await?;
+
+    let status = sidecar
+        .client
+        .get(sidecar.url("/v1/models/parakeet-ctc-0.6b/status?validate=true"))
+        .send()
+        .await?
+        .error_for_status()?
+        .json::<ModelStatusResponse>()
+        .await?;
+
+    assert!(status.downloaded, "complete artifact set should be reported downloaded");
+    assert!(
+        !status.valid,
+        "synthetic bytes must NOT be reported valid once validation runs through ONNX Runtime"
+    );
+    assert!(status.validation_error.is_some());
+
+    Ok(())
+}
+
+fn large_onnx_e2e_enabled() -> bool {
+    std::env::var("MAUSVOICE_RUN_ONNX_E2E")
+        .map(|value| matches!(value.trim(), "1" | "true" | "yes"))
+        .unwrap_or(false)
+}
+
+/// Downloads a model and blocks until the registry finalizes the complete
+/// artifact bundle.
+async fn download_model_and_wait(
+    sidecar: &RunningSidecar,
+    slug: &str,
+) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     let download = sidecar
         .client
-        .post(sidecar.url("/v1/models/tiny/download"))
+        .post(sidecar.url(&format!("/v1/models/{slug}/download")))
         .send()
         .await?
         .error_for_status()?
@@ -499,12 +569,15 @@ async fn cpu_sidecar_end_to_end_download_and_transcribe(
         .await?;
 
     let deadline = Instant::now() + DOWNLOAD_TIMEOUT;
-    let mut final_status = download.status.clone();
+    let mut final_status = download.status;
 
     while Instant::now() < deadline {
         let progress = sidecar
             .client
-            .get(sidecar.url(&format!("/v1/models/tiny/download/{}", download.job_id)))
+            .get(sidecar.url(&format!(
+                "/v1/models/{slug}/download/{}",
+                download.job_id
+            )))
             .send()
             .await?
             .error_for_status()?
@@ -524,8 +597,11 @@ async fn cpu_sidecar_end_to_end_download_and_transcribe(
                 )
                 .into())
             }
-            DownloadJobStatus::Pending | DownloadJobStatus::Running => {
+            DownloadJobStatus::Pending | DownloadJobStatus::Running | DownloadJobStatus::Paused => {
                 sleep(Duration::from_millis(500)).await;
+            }
+            DownloadJobStatus::Canceled => {
+                return Err("download was canceled unexpectedly".into());
             }
         }
     }
@@ -534,45 +610,69 @@ async fn cpu_sidecar_end_to_end_download_and_transcribe(
         return Err("timed out waiting for model download to complete".into());
     }
 
-    let model_status = sidecar
+    // A bundle job reaches Completed only after every required artifact has
+    // been flushed and finalized, so no timing-based auxiliary wait is needed.
+    let status = sidecar
         .client
-        .get(sidecar.url("/v1/models/tiny/status?validate=true"))
+        .get(sidecar.url(&format!("/v1/models/{slug}/status?validate=true")))
+        .timeout(VALIDATION_TIMEOUT)
         .send()
         .await?
         .error_for_status()?
         .json::<ModelStatusResponse>()
         .await?;
 
-    assert!(model_status.downloaded);
-    assert!(model_status.valid);
+    assert!(status.downloaded, "expected {} to be downloaded", slug);
+    assert!(
+        status.valid,
+        "expected {} to be valid: {:?}",
+        slug, status.validation_error
+    );
 
-    let (samples, sample_rate) = load_wav_as_f32_mono(&audio_asset_path("test.wav")?, 10)?;
+    Ok(())
+}
+
+async fn run_model_end_to_end(
+    sidecar: &RunningSidecar,
+    slug: &str,
+) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+    download_model_and_wait(sidecar, slug).await?;
+
+    let max_seconds = if slug == "tiny" { 10 } else { 30 };
+    let (samples, sample_rate) =
+        load_wav_as_f32_mono(&audio_asset_path("test.wav")?, max_seconds)?;
     assert!(!samples.is_empty());
 
-    let transcription = sidecar
+    let device_id = if slug == "tiny" {
+        Some(
+            sidecar
+                .client
+                .get(sidecar.url("/v1/devices"))
+                .send()
+                .await?
+                .error_for_status()?
+                .json::<DevicesResponse>()
+                .await?
+                .devices
+                .first()
+                .ok_or("missing cpu device")?
+                .id
+                .clone(),
+        )
+    } else {
+        None
+    };
+    let response = sidecar
         .client
         .post(sidecar.url("/v1/transcriptions"))
+        .timeout(TRANSCRIPTION_TIMEOUT)
         .json(&TranscribeRequest {
-            model: "tiny".to_string(),
+            model: slug.to_string(),
             samples,
             sample_rate,
             language: Some("en".to_string()),
-            initial_prompt: Some("Transcribe clearly.".to_string()),
-            device_id: Some(
-                sidecar
-                    .client
-                    .get(sidecar.url("/v1/devices"))
-                    .send()
-                    .await?
-                    .error_for_status()?
-                    .json::<DevicesResponse>()
-                    .await?
-                    .devices
-                    .first()
-                    .ok_or("missing cpu device")?
-                    .id
-                    .clone(),
-            ),
+            initial_prompt: (slug == "tiny").then(|| "Transcribe clearly.".to_string()),
+            device_id,
         })
         .send()
         .await?
@@ -580,10 +680,53 @@ async fn cpu_sidecar_end_to_end_download_and_transcribe(
         .json::<TranscribeResponse>()
         .await?;
 
-    assert!(!transcription.text.trim().is_empty());
-    assert_eq!(transcription.inference_device, "CPU");
-
+    assert_eq!(response.inference_device, "CPU");
+    assert!(
+        !response.text.trim().is_empty(),
+        "{} produced an empty transcript",
+        slug
+    );
     Ok(())
+}
+
+/// Real end-to-end test: downloads the full Parakeet CTC artifact set and runs
+/// genuine ONNX Runtime inference, requiring non-empty model output.
+#[tokio::test]
+#[ignore = "downloads Parakeet CTC + runs real ONNX inference against sidecar"]
+async fn cpu_sidecar_parakeet_ctc_end_to_end(
+) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+    if !large_onnx_e2e_enabled() {
+        eprintln!("skipping large ONNX e2e; set MAUSVOICE_RUN_ONNX_E2E=1 to run it");
+        return Ok(());
+    }
+    let sidecar = RunningSidecar::start_cpu().await?;
+    run_model_end_to_end(&sidecar, "parakeet-ctc-0.6b").await
+}
+
+/// Lifecycle/end-to-end test for Parakeet TDT (previously had no dedicated
+/// test). Downloads the encoder/decoder/joiner + tokens and runs real inference.
+#[tokio::test]
+#[ignore = "downloads Parakeet TDT + runs real ONNX inference against sidecar"]
+async fn cpu_sidecar_parakeet_tdt_end_to_end(
+) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+    if !large_onnx_e2e_enabled() {
+        eprintln!("skipping large ONNX e2e; set MAUSVOICE_RUN_ONNX_E2E=1 to run it");
+        return Ok(());
+    }
+    let sidecar = RunningSidecar::start_cpu().await?;
+    run_model_end_to_end(&sidecar, "parakeet-tdt-0.6b").await
+}
+
+/// Real end-to-end test for Canary 1B.
+#[tokio::test]
+#[ignore = "downloads Canary 1B + runs real ONNX inference against sidecar"]
+async fn cpu_sidecar_canary_end_to_end() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+    if !large_onnx_e2e_enabled() {
+        eprintln!("skipping large ONNX e2e; set MAUSVOICE_RUN_ONNX_E2E=1 to run it");
+        return Ok(());
+    }
+    let sidecar = RunningSidecar::start_cpu().await?;
+    run_model_end_to_end(&sidecar, "canary-1b").await
 }
 
 #[cfg(feature = "gpu")]

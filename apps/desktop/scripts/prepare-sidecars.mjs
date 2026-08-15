@@ -40,6 +40,7 @@ if (!existsSync(sidecarManifestPath)) {
 mkdirSync(tauriBinariesDir, { recursive: true });
 
 const cpuSidecarPath = buildAndCopy("rust-transcription-cpu", false);
+prepareOnnxRuntimeLibrary();
 const gpuBuildState = resolveGpuBuildState(targetTriple);
 
 if (gpuBuildState.canBuildNative) {
@@ -67,6 +68,7 @@ function buildAndCopy(binaryName, gpuEnabled, options = {}) {
   const allowFailure = options.allowFailure === true;
   const cargoArgs = [
     "build",
+    "--locked",
     "--manifest-path",
     sidecarManifestPath,
     "--bin",
@@ -93,10 +95,7 @@ function buildAndCopy(binaryName, gpuEnabled, options = {}) {
     return null;
   }
 
-  const sourceBinaryPath = join(
-    rustTargetDir,
-    ...(buildTarget ? [buildTarget] : []),
-    buildProfile,
+  const sourceBinaryPath = buildArtifactPath(
     `${binaryName}${executableSuffix}`,
   );
   const destinationBinaryPath = join(
@@ -118,6 +117,43 @@ function buildAndCopy(binaryName, gpuEnabled, options = {}) {
   );
 
   return destinationBinaryPath;
+}
+
+function buildArtifactPath(fileName) {
+  return join(
+    rustTargetDir,
+    ...(buildTarget ? [buildTarget] : []),
+    buildProfile,
+    fileName,
+  );
+}
+
+function prepareOnnxRuntimeLibrary() {
+  const libraryName = onnxRuntimeLibraryName(targetTriple);
+  const sourcePath = buildArtifactPath(libraryName);
+  if (!existsSync(sourcePath)) {
+    fail(
+      `Expected ONNX Runtime library was not provisioned by the sidecar build: ${sourcePath}`,
+    );
+  }
+
+  const destinationDir = join(tauriBinariesDir, "onnxruntime");
+  const destinationPath = join(destinationDir, libraryName);
+  mkdirSync(destinationDir, { recursive: true });
+  copyFileSync(sourcePath, destinationPath);
+  console.log(
+    `[sidecar] Prepared ONNX Runtime ${libraryName}: ${destinationPath}`,
+  );
+}
+
+function onnxRuntimeLibraryName(target) {
+  if (isWindowsTarget(target)) {
+    return "onnxruntime.dll";
+  }
+  if (isAppleTarget(target)) {
+    return "libonnxruntime.dylib";
+  }
+  return "libonnxruntime.so";
 }
 
 function mirrorCpuSidecarAsGpu(cpuSidecarPath) {
