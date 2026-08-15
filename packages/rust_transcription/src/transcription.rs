@@ -111,7 +111,7 @@ impl TranscriptionEngine {
         // engines from turning a microphone floor into a fabricated sentence.
         // sherpa-onnx also exposes VAD, but this gate is deterministic and
         // applies before any model-specific runtime is loaded.
-        if is_near_silent(&filtered_samples, 0.008) {
+        if is_near_silent(&filtered_samples, 0.001) {
             return Ok(TranscriptionOutput {
                 text: String::new(),
                 inference_device: self.mode.as_str().to_ascii_uppercase(),

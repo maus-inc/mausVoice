@@ -18,27 +18,11 @@ const TRANSCRIPTION_TIMEOUT: Duration = Duration::from_secs(180);
 const VALIDATION_TIMEOUT: Duration = Duration::from_secs(120);
 const TINY_MODEL_FILENAME: &str = "ggml-tiny.bin";
 
-#[test]
-fn temporary_lockfile_inspection() {
+#[tokio::test]
+#[ignore = "temporary lockfile inspection"]
+async fn temporary_lockfile_inspection() {
     let lockfile = std::fs::read_to_string("Cargo.lock").expect("Cargo.lock must exist");
-    let relevant = lockfile
-        .split("[[package]]")
-        .filter(|package| {
-            [
-                "name = \"rust_transcription\"",
-                "name = \"sherpa-onnx\"",
-                "name = \"sherpa-onnx-sys\"",
-                "name = \"bzip2\"",
-                "name = \"bzip2-sys\"",
-                "name = \"ureq\"",
-                "name = \"webpki-roots\"",
-            ]
-            .iter()
-            .any(|name| package.contains(name))
-        })
-        .collect::<Vec<_>>()
-        .join("[[package]]");
-    panic!("TEMPORARY LOCKFILE INSPECTION\\n{relevant}");
+    println!("TEMPORARY LOCKFILE INSPECTION\\n{lockfile}");
 }
 
 #[derive(Debug, Deserialize)]
