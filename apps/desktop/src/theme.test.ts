@@ -15,18 +15,18 @@ const indexHtml = readFileSync(
 const bootstrapScript = indexHtml.match(/<script>([\s\S]*?)<\/script>/)?.[1];
 
 const runBootstrap = ({
-  mode,
-  legacyMode,
+  storedMode,
+  fallbackMode,
   systemDark,
 }: {
-  mode?: string;
-  legacyMode?: string;
+  storedMode?: string;
+  fallbackMode?: string;
   systemDark: boolean;
 }) => {
   const storage = new Map<string, string>();
   const dataset: Record<string, string> = {};
-  if (mode) storage.set(THEME_MODE_STORAGE_KEY, mode);
-  if (legacyMode) storage.set("mui-mode", legacyMode);
+  if (storedMode) storage.set(THEME_MODE_STORAGE_KEY, storedMode);
+  if (fallbackMode) storage.set("mode", fallbackMode);
 
   runInNewContext(bootstrapScript ?? "", {
     localStorage: {
@@ -79,25 +79,35 @@ describe("theme mode configuration", () => {
     );
 
     expect(
-      runBootstrap({ mode: "light", systemDark: true }).appliedScheme,
+      runBootstrap({ storedMode: "light", systemDark: true }).appliedScheme,
     ).toBe("light");
     expect(
-      runBootstrap({ mode: "dark", systemDark: false }).appliedScheme,
+      runBootstrap({ storedMode: "dark", systemDark: false }).appliedScheme,
     ).toBe("dark");
     expect(
-      runBootstrap({ mode: "system", systemDark: false }).appliedScheme,
+      runBootstrap({ storedMode: "system", systemDark: false }).appliedScheme,
     ).toBe("light");
   });
 
-  it("migrates the latest mode written by the previous broken provider config", () => {
+  it("migrates the fallback key without breaking rollback compatibility", () => {
     const { appliedScheme, storage } = runBootstrap({
-      mode: "dark",
-      legacyMode: "light",
+      fallbackMode: "light",
       systemDark: true,
     });
 
     expect(appliedScheme).toBe("light");
     expect(storage.get(THEME_MODE_STORAGE_KEY)).toBe("light");
-    expect(storage.has("mui-mode")).toBe(false);
+    expect(storage.get("mode")).toBe("light");
+  });
+
+  it("keeps the current MUI mode when both storage keys exist", () => {
+    const { appliedScheme, storage } = runBootstrap({
+      storedMode: "dark",
+      fallbackMode: "light",
+      systemDark: false,
+    });
+
+    expect(appliedScheme).toBe("dark");
+    expect(storage.get(THEME_MODE_STORAGE_KEY)).toBe("dark");
   });
 });

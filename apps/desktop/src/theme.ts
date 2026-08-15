@@ -14,7 +14,7 @@ import { hairline, premiumSurface } from "./styles/shadows";
 const uiFont = '"Satoshi", system-ui, -apple-system, sans-serif';
 /** TAN-PARADISO only via CSS var(--font-display) on logo + welcome/name. */
 
-export const THEME_MODE_STORAGE_KEY = "mode";
+export const THEME_MODE_STORAGE_KEY = "mui-mode";
 export const THEME_COLOR_SCHEME_SELECTOR = "data-mui-color-scheme";
 export const THEME_PROVIDER_CONFIG = {
   defaultMode: "system",
