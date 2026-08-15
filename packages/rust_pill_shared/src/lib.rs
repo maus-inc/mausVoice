@@ -736,7 +736,7 @@ mod tests {
         for i in 0..=100 {
             let d = total * i as f64 / 100.0;
             let e = ring_envelope(d, head, p, total);
-            assert!(e >= 0.0 && e <= 1.0 + 1e-9, "envelope out of range: {e}");
+            assert!((0.0..=1.0 + 1e-9).contains(&e), "envelope out of range: {e}");
         }
     }
 
