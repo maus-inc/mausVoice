@@ -49,6 +49,7 @@ import type {
 import {
   StopRecordingResponse,
   TranscriptionSession,
+  TranscriptionSessionResult,
 } from "../../types/transcription-session.types";
 import {
   ActivationController,
@@ -117,6 +118,18 @@ type StoppedRecordingData = {
   audio: StopRecordingResponse | null;
   a11yInfo: TextFieldInfo | null;
   appTarget: AppTarget | null;
+};
+
+type RecordingWithAudio = {
+  audio: StopRecordingResponse;
+  a11yInfo: TextFieldInfo | null;
+  appTarget: AppTarget | null;
+};
+
+type FinalizedRecording = RecordingWithAudio & {
+  toneId: string | null;
+  rawTranscript: string;
+  transcribeResult: TranscriptionSessionResult;
 };
 
 const FINALIZE_TIMEOUT_MS = 90_000;
@@ -429,22 +442,12 @@ export const DictationSideEffects = () => {
       return stopped;
     }, [intl]);
 
-  const stopRecordingRaw = useCallback(async (): Promise<RawStopResp> => {
-    getLogger().info("Stopping recording");
-    clearRecordingTimers();
-    restoreSystemVolume();
-
-    try {
-      const { audio, a11yInfo, appTarget } = await collectStoppedRecording();
-
-      if (!audio) {
-        getLogger().warning("stopRecordingRaw: no audio data received");
-        return {
-          shouldContinue: false,
-          abortMessage: "No audio data received",
-        };
-      }
-
+  const finalizeRecording = useCallback(
+    async ({
+      audio,
+      a11yInfo,
+      appTarget,
+    }: RecordingWithAudio): Promise<FinalizedRecording | null> => {
       getLogger().info("Finalizing transcription session");
       trackAppUsed(appTarget?.name ?? "Unknown");
 
@@ -455,7 +458,6 @@ export const DictationSideEffects = () => {
       const toneId = getToneIdToUse(getAppState(), {
         currentAppToneId: appTarget?.toneId ?? null,
       });
-
       const transcribeResult = await withTimeout(
         sessionRef.current?.finalize(audio, {
           toneId,
@@ -468,22 +470,40 @@ export const DictationSideEffects = () => {
       getLogger().verbose(
         `Transcription result: rawTranscript=${rawTranscript ? `${rawTranscript.length} chars` : "empty"}, toneId=${toneId ?? "none"}, app=${appTarget?.name ?? "unknown"}`,
       );
-      if (!rawTranscript) {
+
+      if (!rawTranscript || !transcribeResult) {
         getLogger().warning("stopRecordingRaw: no rawTranscript from finalize");
-        return {
-          shouldContinue: false,
-        };
+        return null;
       }
 
+      return {
+        audio,
+        a11yInfo,
+        appTarget,
+        toneId,
+        rawTranscript,
+        transcribeResult,
+      };
+    },
+    [],
+  );
+
+  const processFinalizedRecording = useCallback(
+    async ({
+      audio,
+      a11yInfo,
+      appTarget,
+      toneId,
+      rawTranscript,
+      transcribeResult,
+    }: FinalizedRecording): Promise<RawStopResp> => {
       const session = sessionRef.current;
       const strategy = strategyRef.current;
       if (!session || !strategy) {
         getLogger().warning(
           `stopRecordingRaw: refs cleared (session=${!!session}, strategy=${!!strategy})`,
         );
-        return {
-          shouldContinue: false,
-        };
+        return { shouldContinue: false };
       }
 
       if (getAppState().activeRecordingMode === "agent") {
@@ -532,9 +552,36 @@ export const DictationSideEffects = () => {
       }
 
       refreshMember();
-      return {
-        shouldContinue: result.shouldContinue,
-      };
+      return { shouldContinue: result.shouldContinue };
+    },
+    [sendPhaseToPill],
+  );
+
+  const stopRecordingRaw = useCallback(async (): Promise<RawStopResp> => {
+    getLogger().info("Stopping recording");
+    clearRecordingTimers();
+    restoreSystemVolume();
+
+    try {
+      const stopped = await collectStoppedRecording();
+      if (!stopped.audio) {
+        getLogger().warning("stopRecordingRaw: no audio data received");
+        return {
+          shouldContinue: false,
+          abortMessage: "No audio data received",
+        };
+      }
+
+      const finalized = await finalizeRecording({
+        audio: stopped.audio,
+        a11yInfo: stopped.a11yInfo,
+        appTarget: stopped.appTarget,
+      });
+      if (!finalized) {
+        return { shouldContinue: false };
+      }
+
+      return await processFinalizedRecording(finalized);
     } catch (error) {
       const errorName = error instanceof Error ? ` [name=${error.name}]` : "";
       getLogger().error(`Error during stopRecording: ${error}${errorName}`);
@@ -547,7 +594,14 @@ export const DictationSideEffects = () => {
       // timeout) must return the pill to idle.
       await sendPhaseToPill("idle");
     }
-  }, [collectStoppedRecording, restoreSystemVolume, sendPhaseToPill]);
+  }, [
+    clearRecordingTimers,
+    collectStoppedRecording,
+    finalizeRecording,
+    processFinalizedRecording,
+    restoreSystemVolume,
+    sendPhaseToPill,
+  ]);
 
   const stopRecording = useCallback(async () => {
     if (isStoppingRef.current) {
