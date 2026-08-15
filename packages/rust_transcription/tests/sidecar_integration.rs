@@ -18,13 +18,6 @@ const TRANSCRIPTION_TIMEOUT: Duration = Duration::from_secs(180);
 const VALIDATION_TIMEOUT: Duration = Duration::from_secs(120);
 const TINY_MODEL_FILENAME: &str = "ggml-tiny.bin";
 
-#[tokio::test]
-#[ignore = "temporary lockfile inspection"]
-async fn temporary_lockfile_inspection() {
-    let lockfile = std::fs::read_to_string("Cargo.lock").expect("Cargo.lock must exist");
-    println!("TEMPORARY LOCKFILE INSPECTION\\n{lockfile}");
-}
-
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct HealthResponse {

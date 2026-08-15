@@ -1883,7 +1883,7 @@ dependencies = [
  "tower",
  "tracing",
  "tracing-subscriber",
- "ureq",
+ "ureq 3.4.0",
  "uuid",
  "whisper-rs",
  "zip",

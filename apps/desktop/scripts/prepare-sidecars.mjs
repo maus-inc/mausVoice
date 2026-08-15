@@ -1,7 +1,13 @@
 #!/usr/bin/env node
 
 import { spawnSync } from "node:child_process";
-import { chmodSync, copyFileSync, existsSync, mkdirSync } from "node:fs";
+import {
+  chmodSync,
+  copyFileSync,
+  existsSync,
+  mkdirSync,
+  readdirSync,
+} from "node:fs";
 import { dirname, isAbsolute, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -40,6 +46,7 @@ if (!existsSync(sidecarManifestPath)) {
 mkdirSync(tauriBinariesDir, { recursive: true });
 
 const cpuSidecarPath = buildAndCopy("rust-transcription-cpu", false);
+prepareSherpaWindowsRuntime();
 prepareOnnxRuntimeLibrary();
 const gpuBuildState = resolveGpuBuildState(targetTriple);
 
@@ -126,6 +133,29 @@ function buildArtifactPath(fileName) {
     buildProfile,
     fileName,
   );
+}
+
+function prepareSherpaWindowsRuntime() {
+  if (!isWindowsTarget(targetTriple)) {
+    return;
+  }
+
+  const profileDir = join(
+    rustTargetDir,
+    ...(buildTarget ? [buildTarget] : []),
+    buildProfile,
+  );
+  if (!existsSync(profileDir)) {
+    return;
+  }
+
+  const runtimeDlls = readdirSync(profileDir).filter((name) =>
+    name.toLowerCase().endsWith(".dll"),
+  );
+  for (const name of runtimeDlls) {
+    copyFileSync(join(profileDir, name), join(tauriBinariesDir, name));
+    console.log(`[sidecar] Prepared sherpa Windows runtime: ${name}`);
+  }
 }
 
 function prepareOnnxRuntimeLibrary() {
