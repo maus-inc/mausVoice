@@ -149,9 +149,9 @@ export function TypographyWithMore({
           (theme.typography as Record<string, any>)[variantKey] ??
           theme.typography.body2;
         const fontSizeResolved =
-          typeof fontSize !== "undefined" ? fontSize : variantStyles.fontSize;
+          fontSize !== undefined ? fontSize : variantStyles.fontSize;
         const lineHeightResolved =
-          typeof lineHeight !== "undefined"
+          lineHeight !== undefined
             ? lineHeight
             : (variantStyles.lineHeight ?? 1.35);
 
