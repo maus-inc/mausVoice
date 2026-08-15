@@ -209,11 +209,5 @@ pub(crate) const LONG_PRESS_OUTLINE_WIDTH: f64 = 2.0;
 // draws the long-press ring from one source of truth.
 pub(crate) use rust_pill_shared::{DRAG_INFLATE_SCALE, DRAG_INFLATE_STIFFNESS};
 
-// Retained for the (legacy) balloon-pop draw path which is still compiled.
-#[allow(dead_code)]
-pub(crate) const LONG_PRESS_RING_RADIUS: f64 = 22.0;
-#[allow(dead_code)]
-pub(crate) const LONG_PRESS_RING_STROKE: f64 = 2.5;
-
 
 // Particle physics constants

@@ -1392,12 +1392,14 @@ fn draw_long_press_ring(ctx: &Ctx, state: &PillState, ww: f64, wh: f64) {
             LONG_PRESS_OUTLINE_COLOR.2,
             0.085 * alpha,
         );
-        ctx.new_sub_path();
-        ctx.move_to(path[0].0, path[0].1);
-        for p in path.iter().skip(1) {
-            ctx.line_to(p.0, p.1);
+        if let Some(first) = path.first() {
+            ctx.new_sub_path();
+            ctx.move_to(first.0, first.1);
+            for p in path.iter().skip(1) {
+                ctx.line_to(p.0, p.1);
+            }
+            ctx.stroke();
         }
-        ctx.stroke();
     }
 
     if alpha > 0.0 && head_len > 0.0 {
@@ -1496,12 +1498,14 @@ fn draw_long_press_ring(ctx: &Ctx, state: &PillState, ww: f64, wh: f64) {
                 LONG_PRESS_OUTLINE_COLOR.2,
                 rust_pill_shared::RING_PULSE_ALPHA * (1.0 - e).powf(1.8) * echo,
             );
-            ctx.new_sub_path();
-            ctx.move_to(halo[0].0, halo[0].1);
-            for p in halo.iter().skip(1) {
-                ctx.line_to(p.0, p.1);
+            if let Some(first) = halo.first() {
+                ctx.new_sub_path();
+                ctx.move_to(first.0, first.1);
+                for p in halo.iter().skip(1) {
+                    ctx.line_to(p.0, p.1);
+                }
+                ctx.stroke();
             }
-            ctx.stroke();
         }
     }
 

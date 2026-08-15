@@ -270,7 +270,8 @@ function resample(path, distances, total, step) {
 
 // Current-renderer dash math.
 const ringDashPeriod = (total) => Math.max(total, 1) / RING_SHIMMER_CYCLES;
-const ringDashOffset = (phase, total) => ringDashPeriod(total) * (((phase / TAU) % 1) + 1) % 1;
+const ringDashOffset = (phase, total) =>
+  ringDashPeriod(total) * ((((phase / TAU) % 1) + 1) % 1);
 const ringDashIsOn = (dist, period, offset) =>
   (((dist + offset) % period) + period) % period < period * RING_DASH_ON_FRACTION;
 
@@ -290,20 +291,29 @@ function holdProgressEased(elapsed) {
 }
 
 // ── Gesture clock ────────────────────────────────────────────────────────
+// Sentinel for "no arm pulse running"; matches rust_pill_shared::PULSE_IDLE.
+const PULSE_IDLE = -1;
+
+// Whether the ring should be lit: dragging, or the long-press hold has
+// completed. Centralised so the lead-in rule cannot drift between call sites.
+function ringHeld() {
+  return g.dragging || (g.held && g.elapsed > LONG_PRESS_HOLD_DELAY);
+}
+
 const g = {
   held: false, dragging: false,
   elapsed: 0, pressElapsed: 0, releaseElapsed: 0,
   ringAlpha: 0, ringReleaseProgress: 0,
   inflate: 0, inflateVel: 0,
   wavePhase: 0, glimmerPhase: 0,
-  armPulse: -1, armT: 0,
+  armPulse: PULSE_IDLE, armT: 0,
   lastProgress: 0,
 };
 
 function press() {
   if (g.held) return;
   g.held = true; g.dragging = false;
-  g.elapsed = 0; g.pressElapsed = 0; g.armPulse = -1; g.armT = 0;
+  g.elapsed = 0; g.pressElapsed = 0;   g.armPulse = PULSE_IDLE; g.armT = 0;
 }
 function release() {
   if (!g.held) return;
@@ -323,7 +333,7 @@ function tickGesture(dt) {
   }
   if (g.armPulse >= 0) {
     g.armPulse += dt;
-    if (g.armPulse > tv("pulseDur")) g.armPulse = -1;
+    if (g.armPulse > tv("pulseDur"))   g.armPulse = PULSE_IDLE;
   }
   g.armT = g.dragging
     ? Math.min(1, g.armT + dt / 0.22)
@@ -332,8 +342,8 @@ function tickGesture(dt) {
 
 /// Pins the ring while the gesture is held, fades it after release.
 function tickRingAlpha(dt) {
-  const ringHeld = g.dragging || (g.held && g.elapsed > LONG_PRESS_HOLD_DELAY);
-  if (ringHeld) {
+
+  if (ringHeld()) {
     g.ringReleaseProgress = g.dragging ? 1 : longPressProgress(g.elapsed);
     g.releaseElapsed = 0;
     g.ringAlpha = 1;
@@ -368,8 +378,8 @@ function tick(dt) {
 
 // v2 master alpha: eased rise on press, eased (accelerating) exit on release.
 function proposedAlpha() {
-  const ringHeld = g.dragging || (g.held && g.elapsed > LONG_PRESS_HOLD_DELAY);
-  if (ringHeld) return easeOutExpo(clamp01((g.pressElapsed - LONG_PRESS_HOLD_DELAY) / tv("alphaRise")));
+
+  if (ringHeld()) return easeOutExpo(clamp01((g.pressElapsed - LONG_PRESS_HOLD_DELAY) / tv("alphaRise")));
   const t = g.releaseElapsed / tv("releaseFade");
   return t >= 1 ? 0 : 1 - easeInQuad(t);
 }
@@ -619,10 +629,10 @@ function drawProposedRing(ctx, cw, ch, showSeams) {
   const pulse = g.armPulse;
   if (alpha <= 0 && pulse < 0) return { p: 0, a: 0, inf: g.inflate };
 
-  const ringHeld = g.dragging || (g.held && g.elapsed > LONG_PRESS_HOLD_DELAY);
+
   let p;
   if (g.dragging) p = 1;
-  else if (ringHeld) p = holdProgressEased(g.elapsed);
+  else if (ringHeld()) p = holdProgressEased(g.elapsed);
   else p = g.ringReleaseProgress;
 
   const smooth = tv("cornerSmooth");

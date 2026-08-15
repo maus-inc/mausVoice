@@ -249,11 +249,13 @@ fn draw_long_press_ring(
             LONG_PRESS_OUTLINE_COLOR.2,
             0.085 * alpha,
         );
-        cr.move_to(path[0].0, path[0].1);
-        for p in path.iter().skip(1) {
-            cr.line_to(p.0, p.1);
+        if let Some(first) = path.first() {
+            cr.move_to(first.0, first.1);
+            for p in path.iter().skip(1) {
+                cr.line_to(p.0, p.1);
+            }
+            let _ = cr.stroke();
         }
-        let _ = cr.stroke();
     }
 
     if alpha > 0.0 && head_len > 0.0 {
@@ -325,7 +327,7 @@ fn draw_long_press_ring(
     }
 
     // Confirmation layer: an expanding halo the moment the gesture arms, with a
-    // trailing echo. This is the payoff the old ring never gave.
+    // trailing echo.
     if pulsing {
         let t = rust_pill_shared::pulse_progress(state.arm_pulse.get());
         for delay in [0.0, rust_pill_shared::RING_PULSE_ECHO_DELAY] {
@@ -351,11 +353,13 @@ fn draw_long_press_ring(
                 LONG_PRESS_OUTLINE_COLOR.2,
                 rust_pill_shared::RING_PULSE_ALPHA * (1.0 - e).powf(1.8) * echo,
             );
-            cr.move_to(halo[0].0, halo[0].1);
-            for p in halo.iter().skip(1) {
-                cr.line_to(p.0, p.1);
+            if let Some(first) = halo.first() {
+                cr.move_to(first.0, first.1);
+                for p in halo.iter().skip(1) {
+                    cr.line_to(p.0, p.1);
+                }
+                let _ = cr.stroke();
             }
-            let _ = cr.stroke();
         }
     }
 

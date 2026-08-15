@@ -279,19 +279,26 @@ impl Gfx {
         }
     }
 
+    /// Round-cap, round-join stroke style shared by every line draw.
+    fn round_stroke_style(&self) -> Option<ID2D1StrokeStyle> {
+        unsafe {
+            self.factory
+                .CreateStrokeStyle(
+                    &D2D1_STROKE_STYLE_PROPERTIES {
+                        startCap: D2D1_CAP_STYLE_ROUND,
+                        endCap: D2D1_CAP_STYLE_ROUND,
+                        lineJoin: D2D1_LINE_JOIN_ROUND,
+                        ..Default::default()
+                    },
+                    None,
+                )
+                .ok()
+        }
+    }
+
     pub(crate) fn draw_line(&self, x1: f64, y1: f64, x2: f64, y2: f64, rgba: [f64; 4], width: f64) {
         let brush = self.brush(rgba);
-        let style = unsafe {
-            self.factory.CreateStrokeStyle(
-                &D2D1_STROKE_STYLE_PROPERTIES {
-                    startCap: D2D1_CAP_STYLE_ROUND,
-                    endCap: D2D1_CAP_STYLE_ROUND,
-                    lineJoin: D2D1_LINE_JOIN_ROUND,
-                    ..Default::default()
-                },
-                None,
-            ).ok()
-        };
+        let style = self.round_stroke_style();
         unsafe {
             self.rt.DrawLine(
                 vec2(x1, y1),
@@ -315,17 +322,7 @@ impl Gfx {
             return;
         }
         let brush = self.brush(rgba);
-        let style = unsafe {
-            self.factory.CreateStrokeStyle(
-                &D2D1_STROKE_STYLE_PROPERTIES {
-                    startCap: D2D1_CAP_STYLE_ROUND,
-                    endCap: D2D1_CAP_STYLE_ROUND,
-                    lineJoin: D2D1_LINE_JOIN_ROUND,
-                    ..Default::default()
-                },
-                None,
-            ).ok()
-        };
+        let style = self.round_stroke_style();
         unsafe {
             for &(x1, y1, x2, y2) in segments {
                 self.rt.DrawLine(
@@ -350,17 +347,7 @@ impl Gfx {
             return;
         }
         let brush = self.brush([1.0, 1.0, 1.0, 1.0]);
-        let style = unsafe {
-            self.factory.CreateStrokeStyle(
-                &D2D1_STROKE_STYLE_PROPERTIES {
-                    startCap: D2D1_CAP_STYLE_ROUND,
-                    endCap: D2D1_CAP_STYLE_ROUND,
-                    lineJoin: D2D1_LINE_JOIN_ROUND,
-                    ..Default::default()
-                },
-                None,
-            ).ok()
-        };
+        let style = self.round_stroke_style();
         unsafe {
             for seg in segments {
                 let [r, g, b, a] = seg.rgba;

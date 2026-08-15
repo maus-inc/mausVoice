@@ -111,7 +111,10 @@ describe("PR28 reset IPC execution and missing-overlay handling", () => {
     );
     assert.match(
       source.gtkPill,
-      /x11::persist_drop_position\(&win_click, &state_click\)/,
+      // The X11 drop position is still persisted (now via the shared
+      // clear_pointer_pin teardown, which both the release handler and the
+      // missed-release backstop call).
+      /x11::persist_drop_position\(/,
     );
     assert.match(source.gtkPill, /x11_release_persisted\.set\(persisted\)/);
     assert.match(source.gtkX11, /pub\(crate\) fn persist_drop_position/);
@@ -186,7 +189,7 @@ describe("PR28 ring-alpha render-loop policy", () => {
     assert.match(source.sharedPill, /pub fn resample_perimeter/);
     assert.match(source.sharedPill, /resample_reuses_the_caller_buffer/);
     for (const state of [source.gtkState, source.macState, source.windowsState]) {
-      assert.match(state, /ring_points: RefCell<Vec<\(f64, f64, f64\)>>/);
+      assert.match(state, /ring_points:\s*RefCell<Vec<\(f64,\s*f64,\s*f64\)>>/);
     }
     for (const draw of [source.gtkDraw, source.macDraw, source.windowsDraw]) {
       assert.match(draw, /ring_points\.borrow_mut\(\)/);
@@ -197,11 +200,11 @@ describe("PR28 ring-alpha render-loop policy", () => {
     assert.match(source.sharedPill, /pub fn inflate_target/);
     assert.match(source.sharedPill, /inflate_starts_midway_through_the_hold/);
     for (const pill of [source.gtkPill, source.macPill, source.windowsPill]) {
-      assert.match(pill, /rust_pill_shared::inflate_target/);
+      assert.match(pill, /rust_pill_shared::inflate_target\(/);
       // The old binary "1.0 while dragging" target is gone.
       assert.doesNotMatch(
         pill,
-        /let inflate_target = if state\.dragging\.get\(\) \{ 1\.0 \} else \{ 0\.0 \};/,
+        /let inflate_target\s*=\s*if state\.dragging\.get\(\)\s*\{\s*1\.0\s*\}\s*else\s*\{\s*0\.0\s*\};/,
       );
     }
   });
@@ -225,7 +228,7 @@ describe("PR28 ring-alpha render-loop policy", () => {
       source.sharedPill,
       /hover_holds_when_a_cancelled_long_press_becomes_a_plain_drag/,
     );
-    assert.match(source.sharedPill, /pub fn resolve_hover\(probed: bool, pointer_down: bool\)/);
+    assert.match(source.sharedPill, /pub fn resolve_hover\(probed:\s*bool,\s*pointer_down:\s*bool\)/);
 
     for (const [pill, state] of [
       [source.gtkPill, source.gtkState],
@@ -240,7 +243,7 @@ describe("PR28 ring-alpha render-loop policy", () => {
       // A gesture-flag gate must not creep back in.
       assert.doesNotMatch(
         pill,
-        /resolve_hover\([\s\S]{0,80}?gesture_active/,
+        /resolve_hover\([\s\S]{0,200}?gesture_active/,
       );
     }
 
@@ -258,7 +261,7 @@ describe("PR28 ring-alpha render-loop policy", () => {
     assert.match(source.windowsPill, /fn tick_drag_release_fallback/);
     assert.match(
       source.windowsPill,
-      /!state\.dragging\.get\(\) && !state\.long_press_active\.get\(\) && !state\.pointer_down\.get\(\)/,
+      /!state\.dragging\.get\(\)\s*&&\s*!state\.long_press_active\.get\(\)\s*&&\s*!state\.pointer_down\.get\(\)/,
     );
   });
 
@@ -271,11 +274,13 @@ describe("PR28 ring-alpha render-loop policy", () => {
     // The sentinel is negative because 0.0 is a real value (the frame the pulse
     // starts), so every read goes through the named predicate rather than a
     // bare comparison that could be written backwards.
-    assert.match(source.sharedPill, /pub const PULSE_IDLE: f64 = -1\.0;/);
+    assert.match(source.sharedPill, /pub const PULSE_IDLE:\s*f64\s*=\s*-1\.0;/);
     assert.match(source.sharedPill, /pub fn pulse_is_running/);
     assert.match(source.sharedPill, /pub fn pulse_armed/);
-    // Windows culls frames aggressively, so the pulse needs its own liveness
-    // check or it would be dropped mid-flight.
+    // Every source must keep the pulse alive for its full duration, since it
+    // outlives the ring's own alpha. Each platform therefore needs a liveness
+    // check; Windows is the strictest case — it culls frames aggressively, so
+    // without its own check the pulse would be dropped mid-flight.
     for (const src of [source.windowsState, source.windowsDraw, source.macDraw, source.gtkDraw]) {
       assert.match(src, /pulse_is_running\(/);
     }

@@ -229,21 +229,10 @@ extern "C" fn mouse_up(_this: &Object, _sel: Sel, event: id) {
     with_ctx(|ctx| {
         // Track whether we were dragging (to suppress click on release)
         let was_dragging = ctx.state.dragging.get();
-        if was_dragging {
-            // Persist the window position after drag
-            let frame = unsafe { window_frame(ctx.window) };
-            ctx.state.saved_x.set(frame.origin.x);
-            ctx.state.saved_y.set(frame.origin.y);
-            ctx.state.has_saved_position.set(true);
-            ipc::send(&OutMessage::PositionChanged { has_saved_position: true });
-        }
-        // End any drag
-        ctx.state.dragging.set(false);
-        // Cancel any in-progress long press
-        ctx.state.long_press_active.set(false);
-        ctx.state.long_press_elapsed.set(0.0);
-        // The button is up, so hover stops being pinned.
-        ctx.state.pointer_down.set(false);
+        // End the gesture and persist the dropped position (if still dragging)
+        // through the shared teardown, so the mouseUp path and the frame-tick
+        // missed-release backstop cannot drift apart.
+        end_drag(ctx.state, ctx.window);
 
         // Only fire click if the user wasn't dragging
         if !was_dragging {
@@ -493,7 +482,7 @@ fn perform_tick() {
         // A mouseUp can be missed (another app steals the event, the session
         // locks). Poll the real button state so a released button can never
         // leave hover pinned open — the same backstop the Windows pill uses.
-        release_pointer_if_button_up(&ctx.state);
+        release_pointer_if_button_up(&ctx.state, ctx.window);
 
         // Compute hover from actual mouse position over pill area
         update_hover(ctx.view, ctx);
@@ -558,7 +547,31 @@ fn perform_tick() {
 /// `mouseUp:` is not guaranteed to arrive — another process can steal the
 /// event, or the session can lock mid-gesture. Without this backstop a lost
 /// release would pin hover open until the next click.
-fn release_pointer_if_button_up(state: &PillState) {
+/// Ends the gesture and tears down any active drag.
+///
+/// Persists the dropped window position when a drag was in progress, then
+/// clears the drag and gesture flags, so a missed `mouseUp:` caught by the
+/// frame-tick backstop does not strand the pill at its old position.
+fn end_drag(state: &PillState, window: id) {
+    if state.dragging.get() {
+        let frame = unsafe { window_frame(window) };
+        state.saved_x.set(frame.origin.x);
+        state.saved_y.set(frame.origin.y);
+        state.has_saved_position.set(true);
+        ipc::send(&OutMessage::PositionChanged { has_saved_position: true });
+    }
+    state.dragging.set(false);
+    state.long_press_active.set(false);
+    state.long_press_elapsed.set(0.0);
+    state.pointer_down.set(false);
+}
+
+/// Clears the pointer-down pin if the physical button is no longer held.
+///
+/// `mouseUp:` is not guaranteed to arrive — another process can steal the
+/// event, or the session can lock mid-gesture. Without this backstop a lost
+/// release would pin hover open until the next click.
+fn release_pointer_if_button_up(state: &PillState, window: id) {
     if !state.pointer_down.get() {
         return;
     }
@@ -568,10 +581,7 @@ fn release_pointer_if_button_up(state: &PillState) {
     if buttons & 1 != 0 {
         return;
     }
-    state.pointer_down.set(false);
-    state.long_press_active.set(false);
-    state.long_press_elapsed.set(0.0);
-    state.dragging.set(false);
+    end_drag(state, window);
 }
 
 fn update_hover(view: id, ctx: &AppContext) {

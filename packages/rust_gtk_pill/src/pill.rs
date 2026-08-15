@@ -238,6 +238,7 @@ pub fn run(receiver: Receiver<InMessage>) {
     });
 
     let state_motion = state.clone();
+    let win_motion = window.clone();
     window.connect_motion_notify_event(move |_, event| {
         let (mx, my) = event.position();
         // A button-release event is not guaranteed to arrive (a grab can be
@@ -248,7 +249,7 @@ pub fn run(receiver: Receiver<InMessage>) {
         if state_motion.pointer_down.get()
             && !event.state().contains(gdk::ModifierType::BUTTON1_MASK)
         {
-            clear_pointer_pin(&state_motion);
+            clear_pointer_pin(&state_motion, &win_motion);
         }
 
         // A held button owns the pointer, so the hit test cannot be trusted:
@@ -351,23 +352,10 @@ pub fn run(receiver: Receiver<InMessage>) {
         }
         last_click.set(Some(now));
         let was_dragging = state_click.dragging.get();
-        if was_dragging && state_click.backend.get() == Backend::X11 {
-            // Persist the actual release position before clearing the drag flag;
-            // the X11 timer remains a fallback for missed release events.
-            let persisted = x11::persist_drop_position(&win_click, &state_click);
-            state_click.x11_release_persisted.set(persisted);
-        }
-        state_click.dragging.set(false);
-        state_click.long_press_active.set(false);
-        state_click.long_press_elapsed.set(0.0);
-        // The button is up, so hover stops being pinned.
-        state_click.pointer_down.set(false);
-        // Persist the Wayland draw offset so the pill stays where it was dropped.
-        // (X11 re-centers in its own reposition loop via window move.)
-        if was_dragging && state_click.backend.get() != Backend::X11 {
-            state_click.has_saved_position.set(true);
-            ipc::send(&OutMessage::PositionChanged { has_saved_position: true });
-        }
+        // End the gesture and persist the dropped position (if still dragging)
+        // through the shared teardown, so the button-release path and the
+        // frame-tick missed-release backstop cannot drift apart.
+        clear_pointer_pin(&state_click, &win_click);
         if !was_dragging {
             let (x, y) = event.position();
             input::handle_click(&state_click, x, y);
@@ -763,12 +751,26 @@ pub fn run(receiver: Receiver<InMessage>) {
     main_loop.run();
 }
 
-/// Clears the hover pin and any gesture it was holding open.
-fn clear_pointer_pin(state: &PillState) {
-    state.pointer_down.set(false);
+/// Ends the gesture and tears down any active drag.
+///
+/// Clears the hover pin and gesture flags. If a drag was in progress, the
+/// dropped position is persisted (X11 repositions via the window; other
+/// backends keep their draw offset) so a missed release caught by the
+/// frame-tick backstop does not strand the pill at its old position.
+fn clear_pointer_pin(state: &PillState, window: &gtk::Window) {
+    if state.dragging.get() {
+        if state.backend.get() == Backend::X11 {
+            let persisted = x11::persist_drop_position(window, state);
+            state.x11_release_persisted.set(persisted);
+        } else {
+            state.has_saved_position.set(true);
+            ipc::send(&OutMessage::PositionChanged { has_saved_position: true });
+        }
+    }
+    state.dragging.set(false);
     state.long_press_active.set(false);
     state.long_press_elapsed.set(0.0);
-    state.dragging.set(false);
+    state.pointer_down.set(false);
 }
 
 /// Frame-level backstop for a missed button release.
@@ -792,7 +794,7 @@ fn release_pointer_if_button_up(window: &gtk::Window, state: &PillState) {
     };
     let (_, _, _, mask) = gdk_window.device_position(&pointer);
     if !mask.contains(gdk::ModifierType::BUTTON1_MASK) {
-        clear_pointer_pin(state);
+        clear_pointer_pin(state, window);
     }
 }
 
