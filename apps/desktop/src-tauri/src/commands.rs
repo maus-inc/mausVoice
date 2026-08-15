@@ -2050,7 +2050,7 @@ pub async fn run_native_setup(app: tauri::AppHandle) -> crate::platform::NativeS
 pub fn request_admin_relaunch(app: tauri::AppHandle) -> crate::platform::NativeSetupResult {
     #[cfg(target_os = "windows")]
     {
-        return crate::platform::windows::init::request_elevation_relaunch(app);
+        crate::platform::windows::init::request_elevation_relaunch(app)
     }
 
     #[cfg(not(target_os = "windows"))]
