@@ -47,7 +47,7 @@ export default defineConfig(async () => {
       {
         name: "tauri-strip-crossorigin",
         transformIndexHtml(html) {
-          return html.replace(/ crossorigin/g, "");
+          return html.replaceAll(" crossorigin", "");
         },
       },
     ],
