@@ -11,6 +11,7 @@ import {
   getTranscribeAudioRepo,
   getTranscriptionRepo,
 } from "../repos";
+import { TranscribeAudioOutput } from "../repos/transcribe-audio.repo";
 import { getAppState, produceAppState } from "../store";
 import { PostProcessingMode, TranscriptionMode } from "../types/ai.types";
 import { AudioSamples } from "../types/audio.types";
@@ -111,6 +112,13 @@ export const transcribeAudio = async ({
   } = getTranscribeAudioRepo();
   warnings.push(...transcribeWarnings);
 
+  // Dispatch warnings (e.g. a stale provider selection) must not be lost when
+  // the transcription call itself throws: log them before the network call so
+  // they always reach the log, and attach them to the thrown error below.
+  if (warnings.length > 0) {
+    getLogger().warning(`Transcription warnings: ${warnings.join("; ")}`);
+  }
+
   const dictationLanguage = dictationLanguageOverride
     ? coerceToDictationLanguage(dictationLanguageOverride)
     : await loadMyEffectiveDictationLanguage(state);
@@ -133,12 +141,25 @@ export const transcribeAudio = async ({
   );
 
   const transcribeStart = performance.now();
-  const transcribeOutput = await transcribeRepo.transcribeAudio({
-    samples,
-    sampleRate,
-    prompt: transcriptionPrompt,
-    language: whisperLanguage,
-  });
+  let transcribeOutput: TranscribeAudioOutput;
+  try {
+    transcribeOutput = await transcribeRepo.transcribeAudio({
+      samples,
+      sampleRate,
+      prompt: transcriptionPrompt,
+      language: whisperLanguage,
+    });
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    // Keep dispatch warnings visible on the failure path: the batch session
+    // surfaces this message to the user, so append the warnings to it. The
+    // original rejection is preserved verbatim as the cause, including
+    // non-Error rejections.
+    throw new Error(
+      warnings.length > 0 ? `${message} (${warnings.join("; ")})` : message,
+      { cause: error },
+    );
+  }
   const transcribeDuration = performance.now() - transcribeStart;
   const rawTranscript = transcribeOutput.text.trim();
 
@@ -156,10 +177,6 @@ export const transcribeAudio = async ({
   metadata.transcriptionApiKeyId = transcriptionApiKeyId;
   metadata.transcriptionMode =
     transcribeOutput.metadata?.transcriptionMode || null;
-
-  if (warnings.length > 0) {
-    getLogger().warning(`Transcription warnings: ${warnings.join("; ")}`);
-  }
 
   return {
     rawTranscript,

@@ -16,9 +16,9 @@ Choose a model that appears in `ollama list`, or type its exact tag. Post-proces
 
 **Test** only checks whether a request to the base URL returns an HTTP success. It does not run the selected model. Verify with a short post-processing request before depending on it.
 
-## Do not select Ollama for transcription
+## Ollama is generative-only
 
-The current settings capability filter also displays Ollama under **AI transcription**, but the actual transcription dispatcher has no Ollama speech-to-text repository. It can fall through to the Groq batch implementation instead. Treat this as an implementation mismatch: use **Local**, Speaches, an OpenAI-compatible speech endpoint, or another documented transcription provider.
+mausVoice intentionally excludes Ollama from **AI transcription**: the provider is offered for post-processing and the API-backed Assistant, but not for speech-to-text. This matches upstream reality — stock Ollama exposes no speech-to-text endpoint, its OpenAI-compatible surface covers chat, completions, models, embeddings, and responses, and whisper/STT support has not shipped upstream ([ollama/ollama#13475](https://github.com/ollama/ollama/pull/13475) was declined; verified against Ollama's current OpenAI-compat docs). The capability filter and the dispatcher agree, so Ollama no longer appears in the transcription selector. For local transcription, use **Local** bundled Whisper, Speaches, or an OpenAI-compatible speech endpoint. If a saved preference still points at an Ollama transcription record from an older build, mausVoice treats it as unselected and falls back to **Local** transcription with a warning; reselect a transcription-capable key.
 
 ## Remote-server safety
 
