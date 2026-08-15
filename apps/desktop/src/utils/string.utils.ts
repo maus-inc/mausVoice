@@ -265,7 +265,7 @@ export const applyReplacements = (
 
   while (wordIndex < wordPositions.length) {
     const startSegment = wordPositions[wordIndex];
-    segmentIndex = appendUntil(result, segments, segmentIndex, startSegment);
+    appendUntil(result, segments, segmentIndex, startSegment);
     const remainingWords = wordPositions.length - wordIndex;
     let match: ReplacementMatch | null = null;
     let span = Math.min(maxWordCount, remainingWords);

@@ -120,13 +120,10 @@ type StoppedRecordingData = {
   appTarget: AppTarget | null;
 };
 
-type RecordingWithAudio = {
+type FinalizedRecording = {
   audio: StopRecordingResponse;
   a11yInfo: TextFieldInfo | null;
   appTarget: AppTarget | null;
-};
-
-type FinalizedRecording = RecordingWithAudio & {
   toneId: string | null;
   rawTranscript: string;
   transcribeResult: TranscriptionSessionResult;
@@ -447,7 +444,11 @@ export const DictationSideEffects = () => {
       audio,
       a11yInfo,
       appTarget,
-    }: RecordingWithAudio): Promise<FinalizedRecording | null> => {
+    }: {
+      audio: StopRecordingResponse;
+      a11yInfo: TextFieldInfo | null;
+      appTarget: AppTarget | null;
+    }): Promise<FinalizedRecording | null> => {
       getLogger().info("Finalizing transcription session");
       trackAppUsed(appTarget?.name ?? "Unknown");
 
