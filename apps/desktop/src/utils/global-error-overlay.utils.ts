@@ -38,6 +38,23 @@ export const paintFatalError = (heading: string, value: unknown): void => {
   paintError(heading, describe(value));
 };
 
+// Resource load failures (<script>/<link> that fail to fetch) dispatch a
+// plain `Event`, not an `ErrorEvent`: `event.error` is null and
+// `event.message` is undefined. Their `target` is the element, so read the
+// failing URL from there to give a useful message.
+const describeWindowError = (event: ErrorEvent): string => {
+  const target = event.target as EventTarget | null;
+  if (
+    target instanceof HTMLScriptElement ||
+    target instanceof HTMLLinkElement
+  ) {
+    const url = target instanceof HTMLScriptElement ? target.src : target.href;
+    return `Failed to load resource: ${url || "(unknown URL)"}\n\nThe frontend asset could not be fetched. Under Tauri's asset: protocol this is usually a CORS or path issue — check the built index.html asset URLs.`;
+  }
+  const message = event.message ?? "";
+  return event.error != null ? describe(event.error) : message;
+};
+
 // Installed as early as possible so that any failure while the React tree
 // mounts (or before it mounts) is shown on screen instead of a blank white
 // window. The built frontend can fail to execute under Tauri's asset:
@@ -51,9 +68,7 @@ export const installGlobalErrorOverlay = (): void => {
   window.addEventListener(
     "error",
     (event) => {
-      const detail =
-        event.error != null ? describe(event.error) : event.message;
-      paintError("mausVoice failed to start", String(detail));
+      paintError("mausVoice failed to start", describeWindowError(event));
     },
     true,
   );
