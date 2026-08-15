@@ -106,7 +106,7 @@ jobs:
             build-essential pkg-config cmake clang libclang-dev \
             libgtk-3-dev "$WEBKIT_PKG" \
             libayatana-appindicator3-dev librsvg2-dev libasound2-dev libxdo-dev \
-            libgtk-layer-shell-dev
+            libgtk-layer-shell-dev xvfb
       - name: Run Rust unit tests
         working-directory: apps/desktop/src-tauri
         env:
@@ -121,8 +121,13 @@ jobs:
         run: cargo test --manifest-path packages/rust_transcription/Cargo.toml --lib
       - name: Run shared pill geometry tests
         run: cargo test --manifest-path packages/rust_pill_shared/Cargo.toml
+      # The gtk pill unit tests are pure math/state (long-press progress,
+      # control layout, cairo input regions, visibility) and never open a
+      # display, but linking libgtk on a headless runner is safest under a
+      # virtual X server — xvfb-run guarantees the gate cannot hang on a
+      # missing DISPLAY if a display-touching test is ever added.
       - name: Run Linux pill tests
-        run: cargo test --manifest-path packages/rust_gtk_pill/Cargo.toml
+        run: xvfb-run -a cargo test --manifest-path packages/rust_gtk_pill/Cargo.toml
 
   build:
     name: Build ${{ matrix.label }}
