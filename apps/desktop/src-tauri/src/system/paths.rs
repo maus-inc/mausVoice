@@ -3,7 +3,7 @@ use tauri::Manager;
 
 use super::models::WhisperModelSize;
 
-const MODELS_DIR_NAME: &str = "models";
+const MODELS_DIR_NAME: &str = "transcription-models";
 const STORAGE_DIR_NAME: &str = "storage";
 
 // Pre-rebrand values: the app identifier and database filename changed when

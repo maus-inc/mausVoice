@@ -223,8 +223,8 @@ fn download_model(url: &str, destination: &Path) -> Result<(), String> {
 
 Models are stored in the platform-specific app data directory:
 
-- **macOS**: `~/Library/Application Support/mausVoice/models/`
-- **Windows**: `C:\Users\{user}\AppData\Roaming\mausVoice\models\`
+- **macOS**: `~/Library/Application Support/mausVoice/transcription-models/`
+- **Windows**: `C:\Users\{user}\AppData\Roaming\mausVoice\transcription-models\`
 
 Path helpers in `src-tauri/src/system/paths.rs`:
 

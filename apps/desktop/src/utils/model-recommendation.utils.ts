@@ -19,7 +19,6 @@ const MODEL_TIER: Record<LocalWhisperModel, number> = {
   medium: 2,
   turbo: 2,
   large: 3,
-  hindi2hinglish: 2,
 };
 
 const hasUsableGpu = (capabilities: SystemCapabilities | null): boolean =>
@@ -29,7 +28,7 @@ const hasUsableGpu = (capabilities: SystemCapabilities | null): boolean =>
 
 /**
  * Highest model tier the device can comfortably run: 0 = tiny/base,
- * 1 = small, 2 = medium/turbo/hindi, 3 = large. A usable GPU raises the
+ * 1 = small, 2 = medium/turbo, 3 = large. A usable GPU raises the
  * ceiling by one tier.
  */
 export const getDeviceModelTier = (

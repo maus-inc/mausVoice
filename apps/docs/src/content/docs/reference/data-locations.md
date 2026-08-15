@@ -10,7 +10,7 @@ mausVoice resolves platform folders through Tauri; it does not hard-code one cro
 | Data                  | Resolved location                          | Notes                                                         |
 | --------------------- | ------------------------------------------ | ------------------------------------------------------------- |
 | SQLite                | `mausvoice.db` in the app config directory | May have `mausvoice.db-wal` and `mausvoice.db-shm` companions |
-| Local models          | `models/` under app data                   | Managed GGML downloads                                        |
+| Local models          | `transcription-models/` under app data     | Managed GGML downloads shared by CPU/GPU sidecars             |
 | Saved dictation audio | `transcription-audio/` under app data      | Mono WAV snapshots linked from History                        |
 | General files         | `storage/` under app data                  | App-managed storage repository                                |
 | Logs                  | Tauri's app log directory                  | Includes runtime and startup-diagnostics logs                 |
