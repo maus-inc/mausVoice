@@ -56,7 +56,7 @@ impl AppState {
 /// Hugging Face serves LFS objects through a small set of HTTPS CDN hosts.
 /// Do not let a compromised/misconfigured model URL pivot the sidecar to an
 /// arbitrary host or a non-TLS scheme.
-fn validate_model_redirect(attempt: &Attempt<'_>) -> reqwest::redirect::Action {
+fn validate_model_redirect(attempt: Attempt<'_>) -> reqwest::redirect::Action {
     const MAX_REDIRECTS: usize = 5;
     let url = attempt.url();
     let approved_host = matches!(
