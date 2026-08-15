@@ -1,5 +1,5 @@
 use crate::constants::*;
-use crate::gfx::Gfx;
+use crate::gfx::{Gfx, ShadedSegment};
 use crate::ipc::{Phase, PillPermission, PillStreaming};
 use crate::state::{ClickAction, ClickRegion, PillState, RocketPhase};
 use rust_pill_shared::{path_distances, rounded_rectangle_perimeter, RoundedRectArcSteps};
@@ -1272,8 +1272,7 @@ fn draw_long_press_ring(gfx: &Gfx, state: &PillState, ww: f64, wh: f64) {
         );
 
         let lift = 1.0 + rust_pill_shared::RING_ARM_LIFT * arm_t;
-        let mut shaded: Vec<(f64, f64, f64, f64, [f64; 4], f64)> =
-            Vec::with_capacity(points.len());
+        let mut shaded: Vec<ShadedSegment> = Vec::with_capacity(points.len());
         for w in points.windows(2) {
             let (x1, y1, _) = w[0];
             let (x2, y2, d) = w[1];
@@ -1286,20 +1285,20 @@ fn draw_long_press_ring(gfx: &Gfx, state: &PillState, ww: f64, wh: f64) {
             if a < 0.012 {
                 continue;
             }
-            shaded.push((
+            shaded.push(ShadedSegment {
                 x1,
                 y1,
                 x2,
                 y2,
-                [
+                rgba: [
                     LONG_PRESS_OUTLINE_COLOR.0,
                     LONG_PRESS_OUTLINE_COLOR.1,
                     LONG_PRESS_OUTLINE_COLOR.2,
                     a,
                 ],
-                rust_pill_shared::RING_CORE_WIDTH
+                width: rust_pill_shared::RING_CORE_WIDTH
                     + rust_pill_shared::RING_WIDTH_SWELL * env * (1.0 - 0.35 * arm_t),
-            ));
+            });
         }
         gfx.draw_line_shaded(&shaded);
 
