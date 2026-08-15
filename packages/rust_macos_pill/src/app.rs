@@ -232,7 +232,7 @@ extern "C" fn mouse_up(_this: &Object, _sel: Sel, event: id) {
         // End the gesture and persist the dropped position (if still dragging)
         // through the shared teardown, so the mouseUp path and the frame-tick
         // missed-release backstop cannot drift apart.
-        end_drag(ctx.state, ctx.window);
+        end_drag(&ctx.state, ctx.window);
 
         // Only fire click if the user wasn't dragging
         if !was_dragging {

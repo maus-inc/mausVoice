@@ -83,7 +83,7 @@ pub(crate) fn pill_position(state: &PillState, ww: f64, wh: f64) -> (f64, f64, f
     // inflates, so the press registers physically. It decays in ~70ms and is
     // suppressed as soon as the inflate spring takes over.
     let dip = if state.long_press_active.get() {
-        rust_pill_shared::press_dip(state.press_elapsed.get(), inflate)
+        rust_pill_shared::press_dip(state.long_press_elapsed.get(), inflate)
     } else {
         0.0
     };
