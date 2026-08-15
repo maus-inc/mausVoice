@@ -15,5 +15,8 @@ export class EndConversationTool extends BaseTool {
     _params: Record<string, unknown>,
     _allowed: boolean,
     _scope?: string,
-  ): void {}
+  ): void {
+    // End-conversation is inherently safe and never persists an allow-list decision.
+    return undefined;
+  }
 }

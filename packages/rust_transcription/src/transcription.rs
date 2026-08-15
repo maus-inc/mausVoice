@@ -114,7 +114,7 @@ impl TranscriptionEngine {
         if is_near_silent(&filtered_samples, 0.008) {
             return Ok(TranscriptionOutput {
                 text: String::new(),
-                inference_device: self.mode.as_str().to_string(),
+                inference_device: self.mode.as_str().to_ascii_uppercase(),
             });
         }
 

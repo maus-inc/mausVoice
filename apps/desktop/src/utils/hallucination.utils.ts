@@ -56,8 +56,8 @@ export const isNearSilentAudio = (
   if (!samples || samples.length === 0) return true;
   let sumSquares = 0;
   let finiteCount = 0;
-  for (let index = 0; index < samples.length; index += 1) {
-    const sample = Number(samples[index]);
+  for (const value of Array.from(samples)) {
+    const sample = Number(value);
     if (!Number.isFinite(sample)) continue;
     finiteCount += 1;
     sumSquares += sample * sample;

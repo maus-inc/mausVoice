@@ -16,12 +16,12 @@ export class PasteTool extends BaseTool {
   async execute(
     params: Record<string, unknown>,
   ): Promise<Record<string, unknown>> {
-    const requestedText = String(params.text ?? "");
+    const requestedText = typeof params.text === "string" ? params.text : "";
     const text =
       getAppState().userPrefs?.reviewBeforeInsert === true
         ? await reviewTextInComposer(requestedText)
         : requestedText;
-    if (text === null || !text.trim()) {
+    if (!text?.trim()) {
       return { canceled: true };
     }
     await invoke("paste", { text, keybind: null });
