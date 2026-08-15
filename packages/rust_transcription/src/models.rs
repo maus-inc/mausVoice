@@ -14,13 +14,6 @@ pub enum WhisperModel {
         alias = "large-v3-turbo"
     )]
     Turbo,
-    #[serde(
-        rename = "hindi2hinglish",
-        alias = "hindi-hinglish",
-        alias = "hindi2hinglish-apex",
-        alias = "whisper-hindi2hinglish-apex"
-    )]
-    Hindi2Hinglish,
 }
 
 impl WhisperModel {
@@ -32,10 +25,6 @@ impl WhisperModel {
             "medium" => Some(Self::Medium),
             "large" => Some(Self::Large),
             "turbo" | "large-turbo" | "large_v3_turbo" | "large-v3-turbo" => Some(Self::Turbo),
-            "hindi2hinglish"
-            | "hindi-hinglish"
-            | "hindi2hinglish-apex"
-            | "whisper-hindi2hinglish-apex" => Some(Self::Hindi2Hinglish),
             _ => None,
         }
     }
@@ -48,7 +37,6 @@ impl WhisperModel {
             Self::Medium => "medium",
             Self::Large => "large",
             Self::Turbo => "turbo",
-            Self::Hindi2Hinglish => "hindi2hinglish",
         }
     }
 
@@ -60,7 +48,6 @@ impl WhisperModel {
             Self::Medium => "ggml-medium.bin",
             Self::Large => "ggml-large-v3.bin",
             Self::Turbo => "ggml-large-v3-turbo.bin",
-            Self::Hindi2Hinglish => "ggml-hindi2hinglish-apex-q5_1.bin",
         }
     }
 
@@ -92,9 +79,6 @@ impl WhisperModel {
             Self::Turbo => {
                 "https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-large-v3-turbo.bin"
             }
-            Self::Hindi2Hinglish => {
-                "https://huggingface.co/mausvoice/whisper-hindi2hinglish-apex-ggml/resolve/main/ggml-hindi2hinglish-apex-q5_1.bin"
-            }
         }
         .to_string()
     }
@@ -107,7 +91,26 @@ impl WhisperModel {
             "medium",
             "large",
             "turbo",
-            "hindi2hinglish",
         ]
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::WhisperModel;
+
+    #[test]
+    fn supported_models_have_whisper_cpp_filenames() {
+        for slug in WhisperModel::supported() {
+            let model = WhisperModel::from_slug(slug).expect("supported slug must parse");
+            assert!(model.filename().starts_with("ggml-"));
+            assert!(model.filename().ends_with(".bin"));
+        }
+    }
+
+    #[test]
+    fn unsupported_transformers_checkpoint_is_not_exposed_as_a_ggml_model() {
+        assert_eq!(WhisperModel::from_slug("hindi2hinglish"), None);
+        assert_eq!(WhisperModel::from_slug("hindi2hinglish-apex"), None);
     }
 }

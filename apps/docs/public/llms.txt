@@ -17,7 +17,7 @@ Use the most specific page below. Local describes the speech-recognition stage o
 - Settings offers Local or API transcription and API or Off post-processing.
 - Assistant and Chats are separate workflows; neither is merely another name for dictation.
 - Incognito suppresses new local history and audio snapshots, not provider transmission.
-- Local model downloads range from Whisper Tiny (77 MB) to Large v3 (3.1 GB), plus Hindi2Hinglish Apex (595 MB).
+- Local model downloads range from Whisper Tiny (77 MB) to Large v3 (3.1 GB).
 - API keys are encrypted at rest with XChaCha20-Poly1305 and per-record nonces.
 
 ## Documentation pages
