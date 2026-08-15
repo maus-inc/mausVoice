@@ -47,10 +47,11 @@
         try {
           stored = localStorage.getItem("mode");
 
-          // Releases before 0.1.6 used MUI's default key. The first light-mode
-          // fix also continued writing to that key by passing
-          // colorSchemeStorageKey instead of modeStorageKey. Prefer that latest
-          // value once, migrate it to the app key, then remove the legacy key.
+          // MUI's setMode persists to modeStorageKey, whose old default was
+          // "mui-mode". The first light-mode fix configured
+          // colorSchemeStorageKey instead, which only controls per-mode scheme
+          // IDs, so setMode still wrote the latest choice to "mui-mode".
+          // Migrate that authoritative value once, then remove the legacy key.
           var legacy = localStorage.getItem("mui-mode");
           if (legacy === "light" || legacy === "dark" || legacy === "system") {
             stored = legacy;
@@ -73,10 +74,7 @@
           resolved = prefersDark ? "dark" : "light";
         }
 
-        document.documentElement.setAttribute(
-          "data-mui-color-scheme",
-          resolved,
-        );
+        document.documentElement.dataset.muiColorScheme = resolved;
       })();
     </script>
   </head>

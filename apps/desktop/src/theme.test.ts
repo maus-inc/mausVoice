@@ -24,9 +24,9 @@ const runBootstrap = ({
   systemDark: boolean;
 }) => {
   const storage = new Map<string, string>();
+  const dataset: Record<string, string> = {};
   if (mode) storage.set(THEME_MODE_STORAGE_KEY, mode);
   if (legacyMode) storage.set("mui-mode", legacyMode);
-  let appliedScheme: string | undefined;
 
   runInNewContext(bootstrapScript ?? "", {
     localStorage: {
@@ -38,15 +38,11 @@ const runBootstrap = ({
       matchMedia: () => ({ matches: systemDark }),
     },
     document: {
-      documentElement: {
-        setAttribute: (_attribute: string, value: string) => {
-          appliedScheme = value;
-        },
-      },
+      documentElement: { dataset },
     },
   });
 
-  return { appliedScheme, storage };
+  return { appliedScheme: dataset.muiColorScheme, storage };
 };
 
 describe("theme mode configuration", () => {
@@ -72,10 +68,8 @@ describe("theme mode configuration", () => {
   });
 
   it("applies the resolved scheme before the app mounts", () => {
-    expect(indexHtml).toMatch(
-      new RegExp(
-        `document\\.documentElement\\.setAttribute\\(\\s*"${THEME_COLOR_SCHEME_SELECTOR}"`,
-      ),
+    expect(indexHtml).toContain(
+      "document.documentElement.dataset.muiColorScheme = resolved",
     );
     expect(indexHtml).toContain(
       `html[${THEME_COLOR_SCHEME_SELECTOR}="light"] body`,
