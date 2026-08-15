@@ -43,11 +43,15 @@ export default defineConfig(async () => {
       // Tauri serves the release frontend over the asset: protocol. The
       // `crossorigin` attribute Vite adds to module/preload tags forces a
       // CORS-mode fetch that the asset server can reject, leaving a blank
-      // white window. Same-origin module loading does not need it.
+      // white window. Same-origin module loading does not need it. Strip it
+      // only from <script>/<link> tags so we never touch inline strings.
       {
         name: "tauri-strip-crossorigin",
         transformIndexHtml(html) {
-          return html.replaceAll(" crossorigin", "");
+          return html.replace(
+            /(<(?:script|link)\b[^>]*?)\s+crossorigin(?=[\s>])/gi,
+            "$1",
+          );
         },
       },
     ],

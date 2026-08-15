@@ -21,6 +21,7 @@ const paintError = (heading: string, detail: string): void => {
         "white-space:pre-wrap",
       ].join(";"),
     );
+    if (!document.body) return;
     document.body.appendChild(el);
   }
   el.textContent = `${heading}\n\n${detail}`;
@@ -43,10 +44,19 @@ export const paintFatalError = (heading: string, value: unknown): void => {
 // protocol (e.g. module/CORS load failures) with no visible error otherwise.
 export const installGlobalErrorOverlay = (): void => {
   if (typeof window === "undefined") return;
-  window.addEventListener("error", (event) => {
-    const detail = event.error != null ? describe(event.error) : event.message;
-    paintError("mausVoice failed to start", String(detail));
-  });
+  // Capture phase: resource load failures (a <script>/<link> that fails to
+  // fetch, e.g. a CORS rejection) fire a non-bubbling `error` event, so the
+  // bubble-phase listener would never receive them. Capture catches both
+  // those and ordinary runtime errors.
+  window.addEventListener(
+    "error",
+    (event) => {
+      const detail =
+        event.error != null ? describe(event.error) : event.message;
+      paintError("mausVoice failed to start", String(detail));
+    },
+    true,
+  );
   window.addEventListener("unhandledrejection", (event) => {
     paintError("mausVoice failed to start", describe(event.reason));
   });
