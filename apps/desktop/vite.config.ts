@@ -55,7 +55,7 @@ export default defineConfig(async () => {
           // quantifiers, no alternation) keeps SonarCloud's complexity and
           // backtracking checks quiet.
           return html.replace(
-            /((?:<(?:script|link)(?=[\s/>])[^>]*?))\scrossorigin(=[^\s>]*)?(?=[\s/>])/gi,
+            /((?:<(?:script|link)(?=[\s/>])[^>]*?))\scrossorigin( ?= ?[^\s>]*)?(?=[\s/>])/gi,
             "$1",
           );
         },
