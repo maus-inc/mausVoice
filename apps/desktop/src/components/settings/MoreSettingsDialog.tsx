@@ -44,6 +44,7 @@ import {
 } from "../../utils/user.utils";
 import { SegmentedControl } from "../common/SegmentedControl";
 import { SettingSection } from "../common/SettingSection";
+import { UpdateSettingSection } from "./UpdateSettingSection";
 
 export const MoreSettingsDialog = () => {
   const intl = useIntl();
@@ -242,6 +243,8 @@ export const MoreSettingsDialog = () => {
               }
             />
           )}
+
+          <UpdateSettingSection />
 
           <SettingSection
             title={

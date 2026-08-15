@@ -1,19 +1,43 @@
 ---
 title: "Updates and release channels"
-description: "Install newer builds safely and understand the current release workflow."
+description: "How mausVoice checks for new versions, installs them, and what to do when the built-in updater cannot."
 sidebar:
   order: 9
 ---
 
-GitHub Releases is the source of truth for public versions and platform artifacts. Releases are created by a manually dispatched workflow that builds macOS universal, Windows, and Linux packages, publishes a GitHub release, and then updates the Homebrew cask. The cask job currently runs after prereleases too, so maintainers must choose that input deliberately.
+mausVoice updates itself from GitHub Releases. The app reads a signed manifest published alongside each stable release, verifies the signature of the download against a public key compiled into the app, and only then replaces itself. An artifact that fails verification is discarded, so a tampered or mirrored download cannot be installed.
 
-Current packages are unsigned and self-built. The base Tauri configuration has no updater endpoints, while the production override still points at a legacy GitHub `latest.json` URL. The release workflow deliberately does not publish that updater manifest. In-app update indicators may exist in the interface, but do not assume the configured endpoint can deliver an update for a given build.
+## How the app checks
 
-## Upgrade safely
+The desktop app checks for updates when it starts and every six hours after that, as long as the window is not hidden. Development builds never check, because they run against a locally built bundle no release manifest describes.
 
-- Read the release notes for migration or platform warnings.
-- Close active dictations before replacing the application.
-- Install the newer package using the same method used originally. Homebrew users can run `brew upgrade --cask mausvoice-desktop`.
-- Launch the updated app and make a short test dictation.
+When a newer version exists you will see:
 
-Preferences and history are stored outside the application bundle, so replacing the executable is different from clearing local data. Still, back up important history before testing a pre-release. Treat a pre-release as an unsigned test build rather than the normal update path.
+- the update dialog, unless you turned off **Automatically show updates** or dismissed the dialog within the last three days;
+- an **Update ready** entry in the dashboard menu;
+- a badge on the menu bar / tray icon;
+- on Windows and Linux, a toast, because the tray badge is easy to miss there.
+
+## Check on demand
+
+Open **Settings → More settings → Software update**. The section shows the version you are running and when the app last checked, and the **Check now** button runs a check immediately. A manual check reports its outcome inline — _You're up to date_, the version that is available, or a connection error — and it ignores the three-day dismissal window, so it will show you an update you previously snoozed.
+
+## Installing
+
+Choose **Update** in the dialog and mausVoice downloads the new version with a progress bar, installs it, and restarts. Your preferences, history, dictionary, and API keys live outside the application bundle and are untouched.
+
+On macOS, if the app is running from a location it cannot write to — a read-only volume, a quarantined download, or a directory owned by another user — the in-place update fails. mausVoice detects this and falls back to downloading the `.pkg` installer and opening it in Installer.app; that path only ever downloads over HTTPS from `github.com`. The cleanest fix is to move mausVoice into `/Applications` and update from there.
+
+Homebrew users can also run `brew upgrade --cask mausvoice-desktop`. The tap is only ever pointed at stable releases.
+
+## Release channels
+
+There is a single stable channel. Pre-releases are published to GitHub with installers so you can download and test them deliberately, but they are never served to the updater and never pushed to the Homebrew tap, so a pre-release cannot arrive on your machine on its own. Treat a pre-release as an unsigned test build: read the notes, and back up important history before installing one.
+
+## When updating fails
+
+- **"Could not check for updates."** The app could not reach GitHub. Check your connection or a corporate proxy, then use **Check now**.
+- **The install fails on macOS.** See the read-only case above; move the app to `/Applications`.
+- **You would rather not auto-update.** Turn off **Automatically show updates** to stop the dialog appearing on its own. The app still checks in the background so the menu entry stays accurate, and nothing installs without you choosing **Update**.
+
+Downloading the newer installer from the [releases page](https://github.com/maus-inc/mausVoice/releases) and installing over the top always works as a fallback. Close any active dictation first, then launch the updated app and make a short test dictation to confirm your setup survived.

@@ -37,7 +37,7 @@
     "active": true,
     "publisher": "Owie Emmanuel",
     "targets": "all",
-    "createUpdaterArtifacts": true,
+    "createUpdaterArtifacts": false,
     "externalBin": [
       "binaries/rust-transcription-cpu",
       "binaries/rust-transcription-gpu"
@@ -69,8 +69,10 @@
       "preload": ["sqlite:mausvoice.db"]
     },
     "updater": {
-      "endpoints": [],
-      "pubkey": "__UPDATER_PUBLIC_KEY__",
+      "endpoints": [
+        "https://github.com/maus-inc/mausVoice/releases/latest/download/latest.json"
+      ],
+      "pubkey": "",
       "windows": {
         "installMode": "passive"
       }

@@ -1,0 +1,137 @@
+name: Test Docs
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - "apps/docs/**"
+      - "index.html"
+      - "marketing/**"
+      - "docs/assets/**"
+      - "sitemap.xml"
+      - "robots.txt"
+      - "llms.txt"
+      - "scripts/ci/pr28-contracts.test.mjs"
+      - "scripts/ci/pr37-contracts.test.mjs"
+      - "scripts/ci/generate-release-body.mjs"
+      - "scripts/ci/build-updater-manifest.mjs"
+      - "scripts/ci/updater-manifest.test.mjs"
+      - "pnpm-lock.yaml"
+      - ".github/workflows/test-docs.yml"
+  pull_request:
+    branches:
+      - main
+    paths:
+      - "apps/docs/**"
+      - "index.html"
+      - "marketing/**"
+      - "docs/assets/**"
+      - "sitemap.xml"
+      - "robots.txt"
+      - "llms.txt"
+      - "scripts/ci/pr28-contracts.test.mjs"
+      - "scripts/ci/pr37-contracts.test.mjs"
+      - "scripts/ci/generate-release-body.mjs"
+      - "scripts/ci/build-updater-manifest.mjs"
+      - "scripts/ci/updater-manifest.test.mjs"
+      - "pnpm-lock.yaml"
+      - ".github/workflows/test-docs.yml"
+  workflow_dispatch:
+
+jobs:
+  build:
+    name: Build Docs
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout source
+        uses: actions/checkout@v5
+      - name: Setup pnpm
+        uses: pnpm/action-setup@a8198c4bff370c8506180b035930dea56dbd5288 # v5
+      - name: Setup Node
+        uses: actions/setup-node@v5
+        with:
+          node-version-file: .nvmrc
+          cache: pnpm
+          cache-dependency-path: pnpm-lock.yaml
+      - name: Install dependencies
+        # Docs are static and do not need dependency lifecycle scripts in CI.
+        # Keeping scripts disabled also prevents install-time code execution.
+        run: pnpm install --filter docs... --frozen-lockfile --ignore-scripts
+      - name: Run PR28 contract tests
+        run: node --test scripts/ci/pr28-contracts.test.mjs
+      - name: Run updater manifest tests
+        run: node --test scripts/ci/updater-manifest.test.mjs
+      - name: Check docs types
+        run: pnpm --filter docs run check-types
+      - name: Build docs
+        run: pnpm --filter docs run build
+      - name: Verify internal docs links
+        working-directory: apps/docs
+        run: |
+          if grep -RInE '\]\(/' src/content/docs; then
+            echo 'Found a root-relative docs link that omits the /mausVoice/ base.' >&2
+            exit 1
+          fi
+      - name: Verify project-site URLs and assets
+        working-directory: apps/docs
+        run: |
+          test -f ../../docs/assets/mausvoice-banner.png
+          test -f public/assets/fonts/Satoshi-Medium.ttf
+          grep -Fq 'https://maus-inc.github.io/mausVoice/docs/getting-started/introduction/' \
+            dist/getting-started/introduction/index.html
+          grep -Fq 'https://maus-inc.github.io/mausVoice/docs/sitemap-0.xml' \
+            dist/sitemap-index.xml
+          grep -Fq 'https://maus-inc.github.io/mausVoice/docs/assets/mausvoice-banner.png' \
+            ../../index.html
+          grep -Fq 'docsBase}assets/mausvoice-banner.png' \
+            astro.config.mjs
+      - name: Assemble Pages artifact (landing page + docs + assets)
+        run: |
+          rm -rf publish
+          mkdir -p publish/docs/assets
+          cp index.html publish/index.html
+          cp apps/docs/dist/404.html publish/404.html
+          cp -r marketing publish/marketing
+          cp -r apps/docs/dist/. publish/docs/
+          cp -r docs/assets/. publish/docs/assets/
+          cp sitemap.xml robots.txt llms.txt publish/
+      - name: Smoke test assembled artifact
+        run: |
+          test -f publish/index.html
+          test -f publish/404.html
+          grep -Fq 'Wrong turn.' publish/404.html
+          test -f publish/marketing/assets/logo.png
+          test -f publish/marketing/assets/vendor/gsap.min.js
+          test -f publish/docs/getting-started/introduction/index.html
+          test -f publish/docs/assets/fonts/Satoshi-Medium.ttf
+          test -f publish/docs/assets/mausvoice-banner.png
+          test -f publish/llms.txt
+          test -f publish/docs/llms.txt
+          grep -Fq 'https://maus-inc.github.io/mausVoice/docs/getting-started/introduction/' \
+            publish/docs/getting-started/introduction/index.html
+          grep -Fq 'https://maus-inc.github.io/mausVoice/docs/sitemap-0.xml' \
+            publish/docs/sitemap-index.xml
+      - name: Upload Pages artifact
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: publish
+
+  deploy:
+    name: Deploy Docs
+    needs: build
+    if: github.ref == 'refs/heads/main' && github.event_name == 'push'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pages: write
+      id-token: write
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - name: Deploy to GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@v4

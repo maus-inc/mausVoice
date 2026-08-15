@@ -7,6 +7,7 @@ import {
   isReadOnlyFilesystemInstallError,
   relaunchApp,
 } from "@maus-inc/desktop-utils";
+import { invoke } from "@tauri-apps/api/core";
 import { getIntl } from "../i18n/intl";
 import { getAppState, produceAppState } from "../store";
 import { getPlatform } from "../utils/env.utils";
@@ -19,12 +20,34 @@ import { showToast } from "./toast.actions";
 let checkingPromise: Promise<boolean> | null = null;
 let installingPromise: Promise<void> | null = null;
 
+/**
+ * Keeps the tray badge in step with the check result. Owned by the action
+ * rather than the caller so a manual check updates the badge too, instead of
+ * leaving it stale until the next background poll.
+ */
+const syncMenuIcon = (updateAvailable: boolean): void => {
+  invoke("set_menu_icon", {
+    variant: updateAvailable ? "update" : "default",
+  }).catch((error: unknown) => {
+    console.error("Failed to update the tray icon", error);
+  });
+};
+
 const isBusy = () => {
   const { status } = getAppState().updater;
   return status === "downloading" || status === "installing";
 };
 
-export const checkForAppUpdates = async (): Promise<boolean> => {
+/**
+ * Checks the updater endpoint. Pass `{ userInitiated: true }` for a check the
+ * user asked for: it reports an explicit "up to date" result and bypasses the
+ * dismissal window, so the dialog opens even inside a snooze.
+ */
+export const checkForAppUpdates = async (
+  options: { userInitiated?: boolean } = {},
+): Promise<boolean> => {
+  const { userInitiated = false } = options;
+
   if (checkingPromise || isBusy()) {
     return checkingPromise ?? Promise.resolve(false);
   }
@@ -39,6 +62,7 @@ export const checkForAppUpdates = async (): Promise<boolean> => {
       draft.updater.downloadProgress = null;
       draft.updater.downloadedBytes = null;
       draft.updater.totalBytes = null;
+      draft.updater.upToDateConfirmed = false;
     });
 
     let update: Awaited<ReturnType<typeof checkForUpdate>>;
@@ -50,6 +74,7 @@ export const checkForAppUpdates = async (): Promise<boolean> => {
         draft.updater.status = "error";
         draft.updater.errorMessage = String(error);
         draft.updater.manualInstallerUrl = null;
+        draft.updater.lastCheckedAt = Date.now();
       });
       return false;
     }
@@ -68,7 +93,10 @@ export const checkForAppUpdates = async (): Promise<boolean> => {
         draft.updater.downloadProgress = null;
         draft.updater.downloadedBytes = null;
         draft.updater.totalBytes = null;
+        draft.updater.lastCheckedAt = Date.now();
+        draft.updater.upToDateConfirmed = userInitiated;
       });
+      syncMenuIcon(false);
       return false;
     }
 
@@ -76,10 +104,13 @@ export const checkForAppUpdates = async (): Promise<boolean> => {
     const { dialogOpen, dismissedUntil } = state.updater;
     const ignoreUpdateDialog =
       getMyUserPreferences(state)?.ignoreUpdateDialog ?? false;
+    // A user-initiated check is itself the request to see the dialog, so it
+    // ignores both the snooze window and the auto-show preference.
     const shouldAutoShowDialog =
-      !ignoreUpdateDialog &&
       !dialogOpen &&
-      (!dismissedUntil || Date.now() >= dismissedUntil);
+      (userInitiated ||
+        (!ignoreUpdateDialog &&
+          (!dismissedUntil || Date.now() >= dismissedUntil)));
 
     produceAppState((draft) => {
       draft.updater.status = "ready";
@@ -93,16 +124,20 @@ export const checkForAppUpdates = async (): Promise<boolean> => {
       draft.updater.downloadProgress = null;
       draft.updater.downloadedBytes = null;
       draft.updater.totalBytes = null;
+      draft.updater.lastCheckedAt = Date.now();
+      draft.updater.upToDateConfirmed = false;
       if (shouldAutoShowDialog) {
         draft.updater.dialogOpen = true;
       }
     });
 
+    syncMenuIcon(true);
+
     // It's hard to see the update menu icon on Windows, so show a
     // toast notification when an update is available. On macOS, the menu icon
     // is more visible and users are more accustomed to checking there for
     // updates, so we can skip the toast.
-    if (shouldAutoShowDialog && platform !== "darwin") {
+    if (shouldAutoShowDialog && !userInitiated && platform !== "darwin") {
       const intl = getIntl();
       await showToast({
         message: intl.formatMessage(
@@ -138,7 +173,7 @@ export const openUpdateDialog = async (): Promise<void> => {
     return;
   }
 
-  await checkForAppUpdates();
+  await checkForAppUpdates({ userInitiated: true });
 };
 
 const THREE_DAYS_MS = daysToMilliseconds(3);

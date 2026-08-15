@@ -113,7 +113,7 @@ Individual workspaces expose the same commands if you need a narrower scope.
 
 ## Releases & CI
 
-- Releases run through a single manual-dispatch workflow, `.github/workflows/release.yml`: enter a version, build all three platforms (macOS universal, Windows, Linux), and publish an unsigned GitHub Release with a generated body. See `RELEASE.md` for the step-by-step runbook. No channel tags or `latest.json` manifests — mausVoice ships directly from the Releases page.
+- Releases run through a single manual-dispatch workflow, `.github/workflows/release.yml`: enter a version, build all three platforms (macOS universal, Windows, Linux), and publish a GitHub Release with a generated body. Stable releases also publish a signed `latest.json` that the in-app updater reads; prereleases never do. Signing keys come from repository secrets, never from the repo. See `RELEASE.md` for the step-by-step runbook.
 - Turbo caching is configured in `turbo.json`; CI jobs call `pnpm run build`, `pnpm run lint`, and other workspace-scoped commands.
 
 ## Documentation

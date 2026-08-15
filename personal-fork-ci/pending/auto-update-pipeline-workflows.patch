@@ -1,0 +1,227 @@
+diff --git a/.github/workflows/build-desktop.yml b/.github/workflows/build-desktop.yml
+index e205535..8d7e4fc 100644
+--- a/.github/workflows/build-desktop.yml
++++ b/.github/workflows/build-desktop.yml
+@@ -148,20 +148,11 @@ jobs:
+           MACOSX_DEPLOYMENT_TARGET: "13.3"
+           CMAKE_OSX_DEPLOYMENT_TARGET: "13.3"
+           APPIMAGE_EXTRACT_AND_RUN: "1"
+-          TAURI_SIGNING_PRIVATE_KEY: "dW50cnVzdGVkIGNvbW1lbnQ6IHJzaWduIGVuY3J5cHRlZCBzZWNyZXQga2V5ClJXUlRZMEl5OVRKZlAyVDN3dlF1Wm5mbWh1MXYwV3VjRlR2SVhUY2JqdmZUUGdtM1JOMEFBQkFBQUFBQUFBQUFBQUlBQUFBQXp4N2IwQXBxS3lTQnFWeXJuMmpaeGpKdkd5VUhTeit1cklsd3dQVTJvSnkzUktQMVlrQklPQ0duQkVZSStiMEdqTDFaSWJXZW96eTdab0VyaTZMUVNuWlpjSTZTY3NpVXA0bUZVVjh3TldRNHF1Qk1CUFBqcTduS3RMQ3FwMDFQM0VjYTlWdTZQZTQ9Cg=="
+-          TAURI_CI_PUBKEY: "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IDQ2NTZFNDMzMzYyMjBCMzgKUldRNEN5STJNK1JXUmpWRDMzem12QUtjVkFxWERXanl0ZVRCWi9JOTd3bmRFRVFuQkp1QmpiN0EK"
+         working-directory: apps/desktop
+-        run: |
+-          node -e "
+-            const fs = require('fs');
+-            const p = 'src-tauri/tauri.conf.json';
+-            const c = JSON.parse(fs.readFileSync(p, 'utf8'));
+-            if (c.plugins?.updater?.pubkey === '__UPDATER_PUBLIC_KEY__') {
+-              c.plugins.updater.pubkey = process.env.TAURI_CI_PUBKEY;
+-            }
+-            fs.writeFileSync(p, JSON.stringify(c, null, 2) + '\n');
+-          "
+-          pnpm run tauri build --ci ${{ matrix.args }}
++        # This job only validates that the app compiles and bundles. It signs
++        # nothing: `createUpdaterArtifacts` is false in the committed config,
++        # so no signing key is needed and none may be committed here.
++        run: pnpm run tauri build --ci ${{ matrix.args }}
+ 
+       - name: Upload build artifacts
+         uses: actions/upload-artifact@v5
+diff --git a/.github/workflows/release.yml b/.github/workflows/release.yml
+index 65ee386..f20bbca 100644
+--- a/.github/workflows/release.yml
++++ b/.github/workflows/release.yml
+@@ -3,10 +3,15 @@ name: Release mausVoice
+ # Robust release pipeline for mausVoice desktop.
+ #
+ # Trigger: manual dispatch ("Run workflow"). This publishes a versioned
+-# GitHub Release with unsigned, self-built installers for macOS (universal),
+-# Windows, and Linux. No code signing, no notarization, no updater channel
+-# metadata — the signing key is the repo-visible throwaway CI key, so the
+-# updater must never publish latest.json.
++# GitHub Release with self-built installers for macOS (universal), Windows,
++# and Linux. There is no OS code signing or notarization.
++#
++# The updater is signed separately with the minisign keypair in the
++# UPDATER_* repository secrets. When those secrets exist and the run is not a
++# prerelease, the pipeline also publishes a signed latest.json that installed
++# copies use to update themselves. No key material is committed: the checked-in
++# Tauri config disables updater artifacts and carries an empty pubkey, and the
++# build job patches both only inside its own checkout.
+ #
+ # Typical flow:
+ #   1. Enter the version (e.g. 0.1.3) and optional release notes
+@@ -233,10 +238,11 @@ jobs:
+           node -e "
+             const fs = require('fs');
+             const version = process.env.RELEASE_VERSION;
++            // tauri.prod.conf.json is a product-name/identifier override that
++            // the build never loads, so writing a version into it did nothing.
+             const files = [
+               'apps/desktop/package.json',
+-              'apps/desktop/src-tauri/tauri.conf.json',
+-              'apps/desktop/src-tauri/tauri.prod.conf.json'
++              'apps/desktop/src-tauri/tauri.conf.json'
+             ];
+             for (const f of files) {
+               const p = JSON.parse(fs.readFileSync(f, 'utf8'));
+@@ -252,6 +258,41 @@ jobs:
+           MAUSVOICE_DESKTOP_PLATFORM: ${{ matrix.node_platform }}
+         run: pnpm exec turbo run build --filter=desktop...
+ 
++      # The updater trust anchor lives entirely in repository secrets. When
++      # UPDATER_PRIVATE_KEY is absent the build stays exactly as it was before
++      # signing existed: unsigned installers, no updater artifacts, and no
++      # manifest for clients to trust.
++      - name: Resolve updater signing mode
++        id: signing
++        shell: bash
++        env:
++          UPDATER_PRIVATE_KEY: ${{ secrets.UPDATER_PRIVATE_KEY }}
++          UPDATER_PUBLIC_KEY: ${{ secrets.UPDATER_PUBLIC_KEY }}
++        run: |
++          if [ -n "$UPDATER_PRIVATE_KEY" ] && [ -n "$UPDATER_PUBLIC_KEY" ]; then
++            echo "enabled=true" >> "$GITHUB_OUTPUT"
++            echo "Updater signing enabled."
++          else
++            echo "enabled=false" >> "$GITHUB_OUTPUT"
++            echo "::warning::UPDATER_PRIVATE_KEY/UPDATER_PUBLIC_KEY are not configured - publishing unsigned installers without an update manifest."
++          fi
++
++      - name: Enable updater artifacts for the signed build
++        if: steps.signing.outputs.enabled == 'true'
++        shell: bash
++        env:
++          UPDATER_PUBLIC_KEY: ${{ secrets.UPDATER_PUBLIC_KEY }}
++        run: |
++          node -e "
++            const fs = require('fs');
++            const p = 'apps/desktop/src-tauri/tauri.conf.json';
++            const c = JSON.parse(fs.readFileSync(p, 'utf8'));
++            c.bundle.createUpdaterArtifacts = true;
++            c.plugins.updater.pubkey = process.env.UPDATER_PUBLIC_KEY;
++            fs.writeFileSync(p, JSON.stringify(c, null, 2) + '\n');
++            console.log('Updater artifacts enabled for this build.');
++          "
++
+       - name: Build Tauri app
+         env:
+           TAURI_PLATFORM: ${{ matrix.tauri_platform }}
+@@ -259,21 +300,10 @@ jobs:
+           MAUSVOICE_REQUIRE_GPU_SIDECAR: ${{ matrix.require_gpu_sidecar && 'true' || 'false' }}
+           MACOSX_DEPLOYMENT_TARGET: "13.3"
+           CMAKE_OSX_DEPLOYMENT_TARGET: "13.3"
+-          # Throwaway signing key, unsigned build only — same one build-desktop.yml uses for CI validation.
+-          TAURI_SIGNING_PRIVATE_KEY: "dW50cnVzdGVkIGNvbW1lbnQ6IHJzaWduIGVuY3J5cHRlZCBzZWNyZXQga2V5ClJXUlRZMEl5OVRKZlAyVDN3dlF1Wm5mbWh1MXYwV3VjRlR2SVhUY2JqdmZUUGdtM1JOMEFBQkFBQUFBQUFBQUFBQUlBQUFBQXp4N2IwQXBxS3lTQnFWeXJuMmpaeGpKdkd5VUhTeit1cklsd3dQVTJvSnkzUktQMVlrQklPQ0duQkVZSStiMEdqTDFaSWJXZW96eTdab0VyaTZMUVNuWlpjSTZTY3NpVXA0bUZVVjh3TldRNHF1Qk1CUFBqcTduS3RMQ3FwMDFQM0VjYTlWdTZQZTQ9Cg=="
+-          TAURI_CI_PUBKEY: "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IDQ2NTZFNDMzMzYyMjBCMzgKUldRNEN5STJNK1JXUmpWRDMzem12QUtjVkFxWERXanl0ZVRCWi9JOTd3bmRFRVFuQkp1QmpiN0EK"
++          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.UPDATER_PRIVATE_KEY }}
++          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.UPDATER_PRIVATE_KEY_PASSWORD }}
+         working-directory: apps/desktop
+-        run: |
+-          node -e "
+-            const fs = require('fs');
+-            const p = 'src-tauri/tauri.conf.json';
+-            const c = JSON.parse(fs.readFileSync(p, 'utf8'));
+-            if (c.plugins?.updater?.pubkey === '__UPDATER_PUBLIC_KEY__') {
+-              c.plugins.updater.pubkey = process.env.TAURI_CI_PUBKEY;
+-            }
+-            fs.writeFileSync(p, JSON.stringify(c, null, 2) + '\n');
+-          "
+-          pnpm run tauri build --ci ${{ matrix.args }}
++        run: pnpm run tauri build --ci ${{ matrix.args }}
+ 
+       - name: Upload build artifacts
+         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+@@ -287,6 +317,7 @@ jobs:
+             ${{ matrix.bundle_dir }}/**/*.exe
+             ${{ matrix.bundle_dir }}/**/*.deb
+             ${{ matrix.bundle_dir }}/**/*.AppImage
++            ${{ matrix.bundle_dir }}/**/*.sig
+           if-no-files-found: warn
+           retention-days: 7
+ 
+@@ -334,6 +365,38 @@ jobs:
+           node scripts/ci/generate-release-body.mjs > "$RUNNER_TEMP/release-body.md"
+           echo "body_file=$RUNNER_TEMP/release-body.md" >> "$GITHUB_OUTPUT"
+ 
++      # A prerelease must never reach stable-channel clients, and an unsigned
++      # build has no signatures to put in a manifest. Either way: no manifest.
++      - name: Resolve updater manifest eligibility
++        id: manifest
++        shell: bash
++        env:
++          UPDATER_PUBLIC_KEY: ${{ secrets.UPDATER_PUBLIC_KEY }}
++          RELEASE_PRERELEASE: ${{ inputs.prerelease }}
++        run: |
++          if [ -z "$UPDATER_PUBLIC_KEY" ]; then
++            echo "eligible=false" >> "$GITHUB_OUTPUT"
++            echo "::warning::No updater public key configured - skipping latest.json."
++          elif [ "$RELEASE_PRERELEASE" = "true" ]; then
++            echo "eligible=false" >> "$GITHUB_OUTPUT"
++            echo "Prerelease: skipping the stable update manifest."
++          else
++            echo "eligible=true" >> "$GITHUB_OUTPUT"
++          fi
++
++      - name: Build updater manifest
++        if: steps.manifest.outputs.eligible == 'true'
++        env:
++          ARTIFACTS_DIR: dist
++          RELEASE_VERSION: ${{ inputs.version }}
++          RELEASE_TAG: ${{ steps.tag.outputs.tag_name }}
++          RELEASE_PRERELEASE: ${{ inputs.prerelease }}
++          RELEASE_NOTES: ${{ inputs.notes }}
++          OUTPUT_PATH: dist/latest.json
++        run: |
++          node scripts/ci/build-updater-manifest.mjs
++          cat dist/latest.json
++
+       - name: Publish release
+         uses: softprops/action-gh-release@3bb12739c298aeb8a4eeaf626c5b8d85266b0e65
+         # 'token' input (default: github.token) overrides GITHUB_TOKEN, so pass the
+@@ -354,10 +417,14 @@ jobs:
+             dist/**/*.exe
+             dist/**/*.deb
+             dist/**/*.AppImage
++            dist/**/*.sig
++            dist/latest.json
+ 
+   publish-cask:
+     name: Publish Homebrew cask
+     needs: publish
++    # Homebrew's stable tap must never be pointed at a pre-release build.
++    if: inputs.prerelease != true
+     runs-on: ubuntu-latest
+     permissions:
+       contents: read
+diff --git a/.github/workflows/test-docs.yml b/.github/workflows/test-docs.yml
+index 16e3678..d239355 100644
+--- a/.github/workflows/test-docs.yml
++++ b/.github/workflows/test-docs.yml
+@@ -15,6 +15,8 @@ on:
+       - "scripts/ci/pr28-contracts.test.mjs"
+       - "scripts/ci/pr37-contracts.test.mjs"
+       - "scripts/ci/generate-release-body.mjs"
++      - "scripts/ci/build-updater-manifest.mjs"
++      - "scripts/ci/updater-manifest.test.mjs"
+       - "pnpm-lock.yaml"
+       - ".github/workflows/test-docs.yml"
+   pull_request:
+@@ -31,6 +33,8 @@ on:
+       - "scripts/ci/pr28-contracts.test.mjs"
+       - "scripts/ci/pr37-contracts.test.mjs"
+       - "scripts/ci/generate-release-body.mjs"
++      - "scripts/ci/build-updater-manifest.mjs"
++      - "scripts/ci/updater-manifest.test.mjs"
+       - "pnpm-lock.yaml"
+       - ".github/workflows/test-docs.yml"
+   workflow_dispatch:
+@@ -58,6 +62,8 @@ jobs:
+         run: pnpm install --filter docs... --frozen-lockfile --ignore-scripts
+       - name: Run PR28 contract tests
+         run: node --test scripts/ci/pr28-contracts.test.mjs
++      - name: Run updater manifest tests
++        run: node --test scripts/ci/updater-manifest.test.mjs
+       - name: Check docs types
+         run: pnpm --filter docs run check-types
+       - name: Build docs
