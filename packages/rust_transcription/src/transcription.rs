@@ -423,3 +423,90 @@ fn is_near_silent(samples: &[f32], threshold: f32) -> bool {
 
     count == 0 || (sum_squares / count as f64).sqrt() < f64::from(threshold)
 }
+
+pub fn ensure_gpu_runtime_available() -> Result<(), String> {
+    #[cfg(feature = "gpu")]
+    {
+        if list_gpu_devices()?.is_empty() {
+            return Err("no GPU-capable backend detected".to_string());
+        }
+
+        return Ok(());
+    }
+
+    #[cfg(not(feature = "gpu"))]
+    {
+        Err("gpu runtime check requested but gpu feature is not enabled".to_string())
+    }
+}
+
+#[cfg(feature = "gpu")]
+fn list_gpu_devices() -> Result<Vec<ComputeDevice>, String> {
+    let mut devices = Vec::new();
+    let mut gpu_index = 0usize;
+
+    for index in 0..unsafe { whisper_rs::whisper_rs_sys::ggml_backend_dev_count() } {
+        let device = unsafe { whisper_rs::whisper_rs_sys::ggml_backend_dev_get(index) };
+        if device.is_null() {
+            continue;
+        }
+
+        let device_type = unsafe { whisper_rs::whisper_rs_sys::ggml_backend_dev_type(device) };
+        if device_type
+            != whisper_rs::whisper_rs_sys::ggml_backend_dev_type_GGML_BACKEND_DEVICE_TYPE_GPU
+        {
+            continue;
+        }
+
+        devices.push(ComputeDevice {
+            id: format!("gpu:{gpu_index}"),
+            name: describe_gpu_device(device),
+        });
+        gpu_index += 1;
+    }
+
+    Ok(devices)
+}
+
+#[cfg(feature = "gpu")]
+fn describe_gpu_device(device: whisper_rs::whisper_rs_sys::ggml_backend_dev_t) -> String {
+    let description = unsafe {
+        c_string(whisper_rs::whisper_rs_sys::ggml_backend_dev_description(device))
+    };
+    let name = unsafe { c_string(whisper_rs::whisper_rs_sys::ggml_backend_dev_name(device)) };
+    let backend = unsafe {
+        let registry = whisper_rs::whisper_rs_sys::ggml_backend_dev_backend_reg(device);
+        if registry.is_null() {
+            None
+        } else {
+            c_string(whisper_rs::whisper_rs_sys::ggml_backend_reg_name(registry))
+        }
+    };
+
+    let label = description
+        .filter(|value| !value.is_empty())
+        .or(name)
+        .unwrap_or_else(|| "GPU".to_string());
+
+    match backend {
+        Some(backend_name)
+            if !backend_name.is_empty() && !backend_name.eq_ignore_ascii_case(&label) =>
+        {
+            format!("{label} ({backend_name})")
+        }
+        _ => label,
+    }
+}
+
+#[cfg(feature = "gpu")]
+unsafe fn c_string(ptr: *const std::os::raw::c_char) -> Option<String> {
+    if ptr.is_null() {
+        return None;
+    }
+
+    CStr::from_ptr(ptr)
+        .to_str()
+        .ok()
+        .map(|value| value.trim().to_string())
+        .filter(|value| !value.is_empty())
+}
