@@ -78,6 +78,24 @@ Gaps I chose not to close, and why:
 - **Concurrency.** `checkForAppUpdates` still coalesces onto one in-flight promise and refuses to run during a download or install; the new options argument does not open a second entry path.
 - **No IPC surface change.** No `tauri::command` was added or altered, so `bindings.ts` needs no regeneration and no new capability is granted — which is why the absence of a Rust toolchain here does not leave a verification hole.
 
+## Post-review follow-ups (external reviewers)
+
+**[Minor — Manifest eligibility gate was asymmetric with the signing gate]** `.github/workflows/release.yml` — raised by Kilo Code, valid.
+
+_The Problem:_ The build job enabled signing only when **both** `UPDATER_PRIVATE_KEY` and `UPDATER_PUBLIC_KEY` were set, but the publish job's eligibility check tested only the public key. With just the public key configured, signing would be skipped (no `.sig` files produced) while `eligible` still resolved to `true`, so the manifest step would hard-fail the release instead of cleanly skipping — defeating the fail-safe degradation this design depends on.
+
+_The Solution:_ The eligibility gate now requires both keys, mirroring the build gate, with a comment stating that the two must stay in lockstep and why. Verified symmetric by parsing the workflow and comparing the `UPDATER_*` env sets of the two steps.
+
+**[Minor — New UI strings shipped untranslated]** `apps/desktop/src/i18n/locales/*.json` — raised by Kilo Code, valid.
+
+_Context:_ `i18n-sync` seeds new keys with the English source by design, so all 11 new strings landed as English placeholders in the nine non-English catalogs. This matches an existing pattern (79–86 keys per locale were already untranslated on base), but the repo does maintain real translations and ships `scripts/translate.py` for exactly this step. Since the strings are short and user-facing, they were translated directly rather than left for a later pass.
+
+Validated: ICU placeholders (`{version}`, `{timestamp}`) preserved in every locale — checked across all 725 keys, and the only 10 mismatches are pre-existing plural-syntax keys untouched by this change; key parity with `en.json` holds; and `pnpm --filter desktop i18n` reports `725 existing, 0 added` for all nine locales, confirming the official tooling retains the translations rather than resetting them. `de`/`fr` keep `Version {version}` verbatim because that is the correct rendering in both languages.
+
+**[Not a finding — CodeFactor "Complex Method" at `AppSideEffects.tsx:469-553`]**
+
+_Context:_ Reported as new on this PR. The flagged block is the Mixpanel analytics `useEffect`, which this change never touches; extracting it from both revisions shows it is byte-identical to base. It is attributed to the PR only because two lines were removed above it, shifting its range by one. Refactoring unrelated analytics code inside an updater change would violate the minimal-diff rule in `AGENTS.md`, so it is left for a dedicated change.
+
 ## Findings discarded at the self-review gate
 
 - **"Reduce the 6-hour poll further / make it configurable."** Necessity: a style and product preference, not a defect.
