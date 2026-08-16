@@ -393,8 +393,7 @@ export const processFireCombo = (args: FireComboArgs): FireComboTransition => {
       .sort((left, right) => left.localeCompare(right))
       .join("+");
   activeIds.add(id);
-  const previousState =
-    args.previousState ??
+  const previousState = args.previousState ??
     states.get(id) ?? {
       contaminated: false,
       previousExact: false,
