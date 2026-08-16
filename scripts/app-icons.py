@@ -11,22 +11,17 @@ import urllib.request
 from pathlib import Path
 from typing import Optional
 
+from urlcheck import assert_http_url
+
 ICONS_DIR = Path(__file__).parent / "icons"
-
-
-def _assert_http_url(url: str) -> None:
-    """Reject non-http(s) URLs before handing them to urllib."""
-    scheme = urllib.parse.urlparse(url).scheme.lower()
-    if scheme not in ("http", "https"):
-        raise ValueError(f"Refusing to open non-http(s) URL: {url}")
 
 
 def search_apps(term: str, limit: int = 50) -> list[dict]:
     """Search the iTunes API for apps matching a term."""
     encoded_term = urllib.parse.quote(term)
     url = f"https://itunes.apple.com/search?term={encoded_term}&entity=software&limit={limit}&country=us"
-    _assert_http_url(url)
-    with urllib.request.urlopen(url) as resp:  # nosec B310 -- scheme validated by _assert_http_url
+    assert_http_url(url)
+    with urllib.request.urlopen(url) as resp:  # nosec B310 -- scheme validated by assert_http_url
         data = json.loads(resp.read())
     return [
         {
@@ -44,8 +39,8 @@ def search_apps(term: str, limit: int = 50) -> list[dict]:
 def top_free_apps(limit: int = 50, country: str = "us") -> list[dict]:
     """Fetch top free apps from Apple's RSS feed."""
     url = f"https://rss.applemarketingtools.com/api/v2/{country}/apps/top-free/{limit}/apps.json"
-    _assert_http_url(url)
-    with urllib.request.urlopen(url) as resp:  # nosec B310 -- scheme validated by _assert_http_url
+    assert_http_url(url)
+    with urllib.request.urlopen(url) as resp:  # nosec B310 -- scheme validated by assert_http_url
         data = json.loads(resp.read())
     return [
         {
@@ -61,8 +56,8 @@ def top_free_apps(limit: int = 50, country: str = "us") -> list[dict]:
 def top_paid_apps(limit: int = 50, country: str = "us") -> list[dict]:
     """Fetch top paid apps from Apple's RSS feed."""
     url = f"https://rss.applemarketingtools.com/api/v2/{country}/apps/top-paid/{limit}/apps.json"
-    _assert_http_url(url)
-    with urllib.request.urlopen(url) as resp:  # nosec B310 -- scheme validated by _assert_http_url
+    assert_http_url(url)
+    with urllib.request.urlopen(url) as resp:  # nosec B310 -- scheme validated by assert_http_url
         data = json.loads(resp.read())
     return [
         {
@@ -78,8 +73,8 @@ def top_paid_apps(limit: int = 50, country: str = "us") -> list[dict]:
 def lookup_by_bundle_id(bundle_id: str) -> Optional[dict]:
     """Look up a specific app by bundle ID."""
     url = f"https://itunes.apple.com/lookup?bundleId={bundle_id}"
-    _assert_http_url(url)
-    with urllib.request.urlopen(url) as resp:  # nosec B310 -- scheme validated by _assert_http_url
+    assert_http_url(url)
+    with urllib.request.urlopen(url) as resp:  # nosec B310 -- scheme validated by assert_http_url
         data = json.loads(resp.read())
     results = data.get("results", [])
     if not results:
@@ -112,8 +107,8 @@ def download_icon(icon_url: str, name: str, size: int = 512) -> Path:
     ext = os.path.splitext(urllib.parse.urlparse(resized_url).path)[1] or ".png"
     filename = f"{_sanitize_filename(name)}_{size}{ext}"
     dest = ICONS_DIR / filename
-    _assert_http_url(resized_url)
-    urllib.request.urlretrieve(resized_url, dest)  # nosec B310 -- scheme validated by _assert_http_url
+    assert_http_url(resized_url)
+    urllib.request.urlretrieve(resized_url, dest)  # nosec B310 -- scheme validated by assert_http_url
     return dest
 
 

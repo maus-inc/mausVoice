@@ -20,6 +20,7 @@ import {
 } from "../../utils/assistant-mode.utils";
 import { AGENT_DICTATE_HOTKEY } from "../../utils/keyboard.utils";
 import { DialogTitleWithClose } from "../common/DialogTitleWithClose";
+import { SettingSection } from "../common/SettingSection";
 import { AIAgentModeConfiguration } from "./AIAgentModeConfiguration";
 import { HotkeySetting } from "./HotkeySetting";
 
@@ -35,20 +36,8 @@ const ToggleRow = ({
   onChange: (event: ChangeEvent<HTMLInputElement>) => void;
 }) => {
   return (
-    <Stack
-      direction="row"
-      sx={{
-        justifyContent: "space-between",
-        alignItems: "flex-start",
-        width: "100%",
-      }}
-    >
-      <Stack
-        spacing={0.5}
-        sx={{
-          flex: 1,
-        }}
-      >
+    <SettingSection
+      title={
         <Typography
           variant="body1"
           sx={{
@@ -57,17 +46,14 @@ const ToggleRow = ({
         >
           {title}
         </Typography>
-        <Typography
-          variant="body2"
-          sx={{
-            color: "text.secondary",
-          }}
-        >
-          {description}
-        </Typography>
-      </Stack>
-      <Switch checked={checked} onChange={onChange} />
-    </Stack>
+      }
+      description={description}
+      action={<Switch checked={checked} onChange={onChange} />}
+      sx={{
+        alignItems: "flex-start",
+        width: "100%",
+      }}
+    />
   );
 };
 

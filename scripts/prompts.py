@@ -50,9 +50,9 @@ import subprocess
 import sys
 import time
 from pathlib import Path
-from urllib.parse import urlparse
 from urllib.request import urlopen, Request
 from urllib.error import URLError
+from urlcheck import assert_http_url
 
 from dotenv import load_dotenv
 
@@ -60,12 +60,6 @@ load_dotenv(Path(__file__).parent / ".env")
 
 OLLAMA_BASE = "http://localhost:11434"
 
-
-def assert_http_url(url: str) -> None:
-    """Reject non-http(s) URLs before handing them to urllib."""
-    scheme = urlparse(url).scheme.lower()
-    if scheme not in ("http", "https"):
-        raise ValueError(f"Refusing to open non-http(s) URL: {url}")
 
 OLLAMA_MODELS = {
     "gemma4": "gemma4:latest",

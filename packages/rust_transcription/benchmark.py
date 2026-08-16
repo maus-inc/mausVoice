@@ -12,7 +12,6 @@ import time
 import wave
 from pathlib import Path
 from urllib.error import URLError
-from urllib.parse import urlparse
 from urllib.request import Request, urlopen
 
 PACKAGE_DIR = Path(__file__).resolve().parent
@@ -22,12 +21,9 @@ DEFAULT_MODELS_DIR = PACKAGE_DIR.parent.parent / "models"
 CPU_PORT = 7771
 GPU_PORT = 7772
 
-
-def assert_http_url(url: str) -> None:
-    """Reject non-http(s) URLs before handing them to urllib."""
-    scheme = urlparse(url).scheme.lower()
-    if scheme not in ("http", "https"):
-        raise ValueError(f"Refusing to open non-http(s) URL: {url}")
+# The shared URL validator lives under scripts/ (a sibling of packages/).
+sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "scripts"))
+from urlcheck import assert_http_url  # noqa: E402
 
 
 def load_wav(path: Path) -> tuple[list[float], int]:
