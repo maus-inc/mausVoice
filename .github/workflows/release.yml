@@ -158,6 +158,7 @@ jobs:
         shell: bash
         env:
           RELEASE_VERSION: ${{ inputs.version }}
+          INPUT_PRERELEASE: ${{ inputs.prerelease }}
         run: |
           case "$RELEASE_VERSION" in
             ''|*[!0-9A-Za-z.\-]*|.*|..*)
@@ -165,6 +166,20 @@ jobs:
               exit 1 ;;
             *) echo "Version OK: $RELEASE_VERSION" ;;
           esac
+          # The update channel is decided by GitHub's prerelease flag, not by
+          # the version string. A semver carrying a pre-release identifier
+          # (anything after the first '-', e.g. 0.2.0-rc.1) must be released
+          # with the prerelease checkbox set, and a clean version must not be.
+          # A mismatch would either ship an RC to stable clients or hide a real
+          # stable release from "latest", so fail instead of publishing.
+          VERSION_IS_PRERELEASE="false"
+          case "$RELEASE_VERSION" in
+            *-*) VERSION_IS_PRERELEASE="true" ;;
+          esac
+          if [ "$VERSION_IS_PRERELEASE" != "$INPUT_PRERELEASE" ]; then
+            echo "::error::Version '$RELEASE_VERSION' is a $([ "$VERSION_IS_PRERELEASE" = "true" ] && echo prerelease || echo stable) version, but the 'prerelease' input is $INPUT_PRERELEASE. Set the prerelease checkbox to match the version, or the release will land in the wrong update channel." >&2
+            exit 1
+          fi
 
       - name: Setup pnpm
         uses: pnpm/action-setup@b906affcce14559ad1aafd4ab0e942779e9f58b1
@@ -260,8 +275,9 @@ jobs:
 
       # The updater trust anchor lives entirely in repository secrets. When
       # UPDATER_PRIVATE_KEY is absent the build stays exactly as it was before
-      # signing existed: unsigned installers, no updater artifacts, and no
-      # manifest for clients to trust.
+      # signing existed: unsigned installers, no updater artifacts. A prerelease
+      # can still publish like that, but a stable release is blocked at the
+      # manifest-eligibility gate (clients would otherwise 404 on latest.json).
       - name: Resolve updater signing mode
         id: signing
         shell: bash
@@ -274,7 +290,7 @@ jobs:
             echo "Updater signing enabled."
           else
             echo "enabled=false" >> "$GITHUB_OUTPUT"
-            echo "::warning::UPDATER_PRIVATE_KEY/UPDATER_PUBLIC_KEY are not configured - publishing unsigned installers without an update manifest."
+            echo "::warning::UPDATER_PRIVATE_KEY/UPDATER_PUBLIC_KEY are not configured - building unsigned installers. Prereleases will publish without an update manifest; a stable release will be blocked at the manifest-eligibility gate."
           fi
 
       - name: Enable updater artifacts for the signed build
@@ -365,25 +381,44 @@ jobs:
           node scripts/ci/generate-release-body.mjs > "$RUNNER_TEMP/release-body.md"
           echo "body_file=$RUNNER_TEMP/release-body.md" >> "$GITHUB_OUTPUT"
 
-      # A prerelease must never reach stable-channel clients, and an unsigned
-      # build has no signatures to put in a manifest. Either way: no manifest.
+      # The update channel is derived from the version itself, not the
+      # dispatcher checkbox, so a prerelease can never reach stable clients and
+      # a stable release always publishes a signed manifest. GitHub marks a
+      # release "latest" from its prerelease flag alone, and clients fetch
+      # latest.json from /releases/latest/download/ — so an unsigned stable
+      # release would 404 every installed client and permanently disable
+      # updates. Require signing secrets for stable; fail closed otherwise.
       - name: Resolve updater manifest eligibility
         id: manifest
         shell: bash
         env:
           UPDATER_PRIVATE_KEY: ${{ secrets.UPDATER_PRIVATE_KEY }}
           UPDATER_PUBLIC_KEY: ${{ secrets.UPDATER_PUBLIC_KEY }}
+          RELEASE_VERSION: ${{ inputs.version }}
           RELEASE_PRERELEASE: ${{ inputs.prerelease }}
         run: |
-          if [ -z "$UPDATER_PRIVATE_KEY" ] || [ -z "$UPDATER_PUBLIC_KEY" ]; then
-            echo "eligible=false" >> "$GITHUB_OUTPUT"
-            echo "::warning::UPDATER_PRIVATE_KEY/UPDATER_PUBLIC_KEY are not configured - skipping latest.json."
-          elif [ "$RELEASE_PRERELEASE" = "true" ]; then
+          # Semver pre-release identifier (anything after the first '-').
+          VERSION_IS_PRERELEASE="false"
+          case "$RELEASE_VERSION" in
+            *-*) VERSION_IS_PRERELEASE="true" ;;
+          esac
+          # The build job already fails on a checkbox/version mismatch, but
+          # refuse here too so a manifest is never emitted for the wrong
+          # channel even if that guard regresses.
+          if [ "$VERSION_IS_PRERELEASE" != "$RELEASE_PRERELEASE" ]; then
+            echo "::error::Version '$RELEASE_VERSION' prerelease status ($VERSION_IS_PRERELEASE) disagrees with the prerelease input ($RELEASE_PRERELEASE). Refusing to emit a manifest." >&2
+            exit 1
+          fi
+          if [ "$VERSION_IS_PRERELEASE" = "true" ]; then
             echo "eligible=false" >> "$GITHUB_OUTPUT"
             echo "Prerelease: skipping the stable update manifest."
-          else
-            echo "eligible=true" >> "$GITHUB_OUTPUT"
+            exit 0
           fi
+          if [ -z "$UPDATER_PRIVATE_KEY" ] || [ -z "$UPDATER_PUBLIC_KEY" ]; then
+            echo "::error::UPDATER_PRIVATE_KEY/UPDATER_PUBLIC_KEY are not configured. A stable release must publish a signed latest.json, or installed clients will 404 and lose the ability to update. Configure the UPDATER_* secrets or run this as a prerelease." >&2
+            exit 1
+          fi
+          echo "eligible=true" >> "$GITHUB_OUTPUT"
 
       - name: Build updater manifest
         if: steps.manifest.outputs.eligible == 'true'
