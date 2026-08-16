@@ -26,9 +26,13 @@ export type AudioChunkPumpCallbacks = {
 export const combineStreamingTranscript = (
   finalTranscript: string,
   currentSegment: string,
-): string =>
-  finalTranscript +
-  (currentSegment ? (finalTranscript ? " " : "") + currentSegment : "");
+): string => {
+  if (!currentSegment) {
+    return finalTranscript;
+  }
+  const separator = finalTranscript ? " " : "";
+  return finalTranscript + separator + currentSegment;
+};
 
 /**
  * Buffers incoming float32 audio chunks and drains them in frames sized to the
