@@ -2886,6 +2886,18 @@ mod tests {
         )
         .is_ok());
         assert!(validate_installer_url(
+            &Url::parse("https://github.com/maus-inc/mausVoice/releases/download/v1/mausVoice_0.1.7_universal.dmg")
+                .unwrap()
+        )
+        .is_ok());
+        assert!(validate_installer_url(
+            &Url::parse(
+                "https://github.com/maus-inc/mausVoice/releases/download/v1/mausVoice.app.tar.gz"
+            )
+            .unwrap()
+        )
+        .is_ok());
+        assert!(validate_installer_url(
             &Url::parse("https://objects.githubusercontent.com/foo/app.pkg").unwrap()
         )
         .is_ok());
@@ -3441,9 +3453,16 @@ pub fn check_app_location_writable() -> Result<bool, String> {
     }
 }
 
-/// Maximum size we are willing to download for a `.pkg` installer.
+/// Maximum size we are willing to download for a macOS installer (`.pkg`,
+/// `.dmg`, or `.app.tar.gz`).
 const INSTALLER_MAX_BYTES: u64 = 250 * 1024 * 1024;
 const INSTALLER_MAX_REDIRECTS: usize = 10;
+
+/// Installer file extensions we are willing to download and open. Tauri v2
+/// direct-sign produces `.dmg` (and `.app.tar.gz`) for macOS; `.pkg` is kept
+/// for v1-compatible installs. The list is explicit so a future artifact type
+/// cannot be opened by accident.
+const ALLOWED_INSTALLER_EXTENSIONS: &[&str] = &[".pkg", ".dmg", ".app.tar.gz"];
 
 /// Decide whether a redirect hop is allowed. Applied to every hop so an
 /// allowed host cannot bounce us onto an untrusted origin.
@@ -3474,10 +3493,10 @@ fn installer_account_chunk(written: u64, chunk_len: u64) -> Result<u64, String> 
     Ok(next)
 }
 
-/// Validate an installer URL (scheme, host allow-list, `.pkg` path). Applied
-/// to the initial URL *and* to every redirect hop, because the redirect chain
-/// is attacker-influenced: an allowed host could otherwise bounce us to an
-/// untrusted origin whose bytes we would write and execute.
+/// Validate an installer URL (scheme, host allow-list, accepted extension).
+/// Applied to the initial URL *and* to every redirect hop, because the
+/// redirect chain is attacker-influenced: an allowed host could otherwise
+/// bounce us to an untrusted origin whose bytes we would write and execute.
 fn validate_installer_url(url: &Url) -> Result<(), String> {
     if url.scheme() != "https" {
         return Err("Installer URL must use https".to_string());
@@ -3488,8 +3507,14 @@ fn validate_installer_url(url: &Url) -> Result<(), String> {
             "Installer URL host {host:?} is not in the trusted allow-list"
         ));
     }
-    if !url.path().ends_with(".pkg") {
-        return Err("Installer URL must point to a .pkg file".to_string());
+    if !ALLOWED_INSTALLER_EXTENSIONS
+        .iter()
+        .any(|ext| url.path().ends_with(ext))
+    {
+        return Err(format!(
+            "Installer URL must point to one of {ALLOWED_INSTALLER_EXTENSIONS:?}, got {}",
+            url.path()
+        ));
     }
     Ok(())
 }
@@ -3510,13 +3535,23 @@ pub async fn download_and_open_mac_installer(url: String) -> Result<(), String> 
     // Use a unique temp filename (not the URL-derived basename) so a crafted
     // path like "../../../LaunchAgents/foo" cannot escape the temp dir. The
     // nanosecond timestamp + pid is unique enough for our purposes; we
-    // overwrite then delete on installer completion anyway.
+    // overwrite then delete on installer completion anyway. Match the temp
+    // file's extension to the downloaded artifact so `open` handles it.
+    let downloaded_ext = if parsed.path().ends_with(".app.tar.gz") {
+        ".app.tar.gz"
+    } else if parsed.path().ends_with(".dmg") {
+        ".dmg"
+    } else {
+        ".pkg"
+    };
     let nanos = SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .map(|d| d.as_nanos())
         .unwrap_or(0);
     let pid = std::process::id();
-    let dest = std::env::temp_dir().join(format!("mausvoice-update-{nanos}-{pid}.pkg"));
+    let dest = std::env::temp_dir().join(format!(
+        "mausvoice-update-{nanos}-{pid}{downloaded_ext}"
+    ));
 
     // Remove any stale previous download (best-effort).
     let _ = std::fs::remove_file(&dest);
