@@ -486,14 +486,13 @@ export const storeTranscription = async (
     showErrorSnackbar("Recording missing sample rate. Please try again.");
     return { transcription: null, wordCount: 0 };
   }
-  return 0;
-};
 
-const hasUsableAudio = (
-  rate: number | null | undefined,
-  sampleCount: number,
-): boolean =>
-  rate != null && !Number.isNaN(rate) && rate > 0 && sampleCount > 0;
+  if (rate <= 0 || sampleCount === 0) {
+    getLogger().warning(
+      `Skipping store: rate=${rate}, sampleCount=${sampleCount}`,
+    );
+    return { transcription: null, wordCount: 0 };
+  }
 
   const state = getAppState();
   const incognitoEnabled = orFalse(state.userPrefs?.incognitoModeEnabled);
@@ -545,51 +544,5 @@ const hasUsableAudio = (
   await recordUsageWords(wordsAdded);
   await purgeStaleAudioSnapshots();
 
-export const storeTranscription = async (
-  input: StoreTranscriptionInput,
-): Promise<StoreTranscriptionOutput> => {
-  getLogger().verbose("Storing transcription record");
-  const rate = input.audio.sampleRate;
-  const sampleCount = getAudioSampleCount(input.audio.samples);
-  if (!hasUsableAudio(rate, sampleCount)) {
-    if (rate == null || Number.isNaN(rate)) {
-      getLogger().error("Received audio payload without sample rate");
-      showErrorSnackbar("Recording missing sample rate. Please try again.");
-    } else {
-      getLogger().warning(
-        `Skipping store: rate=${rate}, sampleCount=${sampleCount}`,
-      );
-    }
-    return { transcription: null, wordCount: 0 };
-  }
-
-  const state = getAppState();
-  const sampleRate = rate ?? 0;
-  const wordsAdded = input.transcript ? countWords(input.transcript) : 0;
-  if (await handleIncognitoStorage(state, wordsAdded)) {
-    return { transcription: null, wordCount: wordsAdded };
-  }
-
-  const payloadSamples = Array.isArray(input.audio.samples)
-    ? input.audio.samples
-    : Array.from(input.audio.samples ?? []);
-  const transcriptionId = createId();
-  const audioSnapshot = await persistAudioSnapshot(
-    transcriptionId,
-    payloadSamples,
-    sampleRate,
-  );
-  const transcription = buildTranscription(
-    input,
-    state,
-    transcriptionId,
-    audioSnapshot,
-  );
-  const stored = await saveTranscription(transcription);
-  if (!stored) return { transcription: null, wordCount: 0 };
-
-  registerStoredTranscription(stored);
-  await updateUsageStats(wordsAdded);
-  await purgeStaleAudioSnapshots();
-  return { transcription: stored, wordCount: wordsAdded };
+  return { transcription: storedTranscription, wordCount: wordsAdded };
 };

@@ -2,8 +2,6 @@ import { Transcription } from "@maus-inc/types";
 import { getRec } from "@maus-inc/utilities";
 import { getTranscriptionRepo } from "../repos";
 import { getAppState, produceAppState } from "../store";
-import type { AppState } from "../state/app.state";
-import { orNull } from "../utils/nullable.utils";
 import {
   applyReplacements,
   applySymbolConversions,
@@ -14,61 +12,6 @@ import {
   storeTranscription,
   transcribeAudio,
 } from "./transcribe.actions";
-
-const getReplacementRules = (state: AppState): ReplacementRule[] =>
-  Object.values(state.termById)
-    .filter((term) => term.isReplacement)
-    .map((term) => ({
-      sourceValue: term.sourceValue,
-      destinationValue: term.destinationValue,
-    }));
-
-const buildRetranscriptionPayload = ({
-  transcription,
-  rawTranscript,
-  sanitizedTranscript,
-  finalTranscript,
-  metadata,
-  warnings,
-}: {
-  transcription: Transcription;
-  rawTranscript: string;
-  sanitizedTranscript: string;
-  finalTranscript: string;
-  metadata: Record<string, unknown>;
-  warnings: string[];
-}): Transcription => ({
-  ...transcription,
-  transcript: finalTranscript,
-  sanitizedTranscript,
-  modelSize: orNull(metadata?.modelSize as string | null | undefined),
-  inferenceDevice: orNull(
-    metadata?.inferenceDevice as string | null | undefined,
-  ),
-  rawTranscript: rawTranscript ?? finalTranscript,
-  transcriptionPrompt: orNull(
-    metadata?.transcriptionPrompt as string | null | undefined,
-  ),
-  postProcessPrompt: orNull(
-    metadata?.postProcessPrompt as string | null | undefined,
-  ),
-  transcriptionApiKeyId: orNull(
-    metadata?.transcriptionApiKeyId as string | null | undefined,
-  ),
-  postProcessApiKeyId: orNull(
-    metadata?.postProcessApiKeyId as string | null | undefined,
-  ),
-  transcriptionMode: orNull(
-    metadata?.transcriptionMode as Transcription["transcriptionMode"],
-  ),
-  postProcessMode: orNull(
-    metadata?.postProcessMode as Transcription["postProcessMode"],
-  ),
-  postProcessDevice: orNull(
-    metadata?.postProcessDevice as string | null | undefined,
-  ),
-  warnings: warnings.length > 0 ? warnings : null,
-});
 
 export const openTranscriptionDetailsDialog = (transcriptionId: string) => {
   produceAppState((draft) => {
@@ -105,7 +48,7 @@ type ProcessAudioParams = {
 
 type ProcessedAudio = Awaited<ReturnType<typeof processAudio>>;
 
-const getReplacementRules = () =>
+const getReplacementRules = (): ReplacementRule[] =>
   Object.values(getAppState().termById)
     .filter((term) => term.isReplacement)
     .map((term) => ({
@@ -201,40 +144,7 @@ export const retranscribeTranscription = async ({
     toneId,
     languageCode,
   });
-
-  const rawTranscript = transcribeResult.rawTranscript;
-
-  const afterReplacements = applyReplacements(
-    rawTranscript,
-    getReplacementRules(state),
-  );
-  const sanitizedTranscript = applySymbolConversions(afterReplacements);
-
-  const postProcessResult = await postProcessTranscript({
-    rawTranscript: sanitizedTranscript,
-    toneId: toneId ?? null,
-    dictationLanguage: languageCode ?? undefined,
-  });
-
-  const finalTranscript = postProcessResult.transcript;
-
-  if (!finalTranscript) {
-    throw new Error("Retranscription produced no text.");
-  }
-
-  const updatedPayload = buildRetranscriptionPayload({
-    transcription,
-    rawTranscript,
-    sanitizedTranscript,
-    finalTranscript,
-    metadata: {
-      ...transcribeResult.metadata,
-      ...postProcessResult.metadata,
-    },
-    warnings: [...transcribeResult.warnings, ...postProcessResult.warnings],
-  });
-
-  const updated = await repo.updateTranscription(updatedPayload);
+  const updated = await updateStoredTranscription(transcription, processed);
 
   produceAppState((draft) => {
     draft.transcriptionById[transcriptionId] = updated;
