@@ -1,5 +1,5 @@
 import { Autocomplete, TextField } from "@mui/material";
-import { FormattedMessage } from "react-intl";
+import { FormattedMessage, useIntl } from "react-intl";
 
 type FreeSoloModelAutocompleteProps = {
   models: string[];
@@ -19,6 +19,7 @@ export const FreeSoloModelAutocomplete = ({
   onModelSelect,
   disabled = false,
 }: FreeSoloModelAutocompleteProps) => {
+  const intl = useIntl();
   return (
     <Autocomplete
       freeSolo
@@ -39,7 +40,9 @@ export const FreeSoloModelAutocomplete = ({
         <TextField
           {...params}
           label={<FormattedMessage defaultMessage="Model" />}
-          placeholder="Select or type a model"
+          placeholder={intl.formatMessage({
+            defaultMessage: "Select or type a model",
+          })}
           slotProps={{
             ...params.slotProps,
             inputLabel: { ...params.slotProps.inputLabel, shrink: true },

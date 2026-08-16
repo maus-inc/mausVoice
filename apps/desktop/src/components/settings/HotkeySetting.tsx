@@ -96,6 +96,7 @@ const HotkeyControls = ({
             {primaryHotkey && defaultCombos.length === 0 && (
               <IconButton
                 size="small"
+                aria-label="Delete hotkey"
                 onClick={() => onDeleteHotkey(primaryHotkey.id)}
               >
                 <Close color="disabled" />
@@ -129,7 +130,11 @@ const HotkeyControls = ({
               value={hotkey.keys}
               onChange={(keys) => onUpdateHotkey(hotkey.id, keys)}
             />
-            <IconButton size="small" onClick={() => onDeleteHotkey(hotkey.id)}>
+            <IconButton
+              size="small"
+              aria-label="Delete hotkey"
+              onClick={() => onDeleteHotkey(hotkey.id)}
+            >
               <Close color="disabled" />
             </IconButton>
           </Stack>

@@ -246,6 +246,50 @@ type TutorialFieldProps = {
   onBlur: () => void;
 };
 
+type TutorialFieldSxArgs = {
+  isFieldFocused: boolean;
+  pulse: string;
+  focusBorderColor: string;
+  placeholderColor?: string;
+};
+
+// Shared demo-window field styling: white card, pulse animation until focused,
+// brand focus color, and (for the notes field) a muted placeholder.
+const tutorialFieldSx = ({
+  isFieldFocused,
+  pulse,
+  focusBorderColor,
+  placeholderColor,
+}: TutorialFieldSxArgs) => ({
+  "& .MuiOutlinedInput-root": {
+    bgcolor: "#ffffff",
+    borderRadius: 1,
+    "& fieldset": isFieldFocused
+      ? { borderColor: "#e0e0e0" }
+      : {
+          borderWidth: 2,
+          animation: `${pulse} 1.5s ease-in-out infinite`,
+        },
+    "&:hover fieldset": {
+      borderColor: isFieldFocused ? "#e0e0e0" : undefined,
+    },
+    "&.Mui-focused fieldset": {
+      borderColor: focusBorderColor,
+    },
+  },
+  "& .MuiInputBase-input": {
+    color: "#202124",
+    ...(placeholderColor
+      ? {
+          "&::placeholder": {
+            color: placeholderColor,
+            opacity: 1,
+          },
+        }
+      : {}),
+  },
+});
+
 const NotesStep = ({
   value,
   submitting,
@@ -281,31 +325,12 @@ const NotesStep = ({
         disabled={submitting}
         onFocus={onFocus}
         onBlur={onBlur}
-        sx={{
-          "& .MuiOutlinedInput-root": {
-            bgcolor: "#ffffff",
-            borderRadius: 1,
-            "& fieldset": isFieldFocused
-              ? { borderColor: "#e0e0e0" }
-              : {
-                  borderWidth: 2,
-                  animation: `${pulseNotes} 1.5s ease-in-out infinite`,
-                },
-            "&:hover fieldset": {
-              borderColor: isFieldFocused ? "#e0e0e0" : undefined,
-            },
-            "&.Mui-focused fieldset": {
-              borderColor: "var(--app-palette-blue)",
-            },
-          },
-          "& .MuiInputBase-input": {
-            color: "#202124",
-            "&::placeholder": {
-              color: "#5f6368",
-              opacity: 1,
-            },
-          },
-        }}
+        sx={tutorialFieldSx({
+          isFieldFocused,
+          pulse: pulseNotes,
+          focusBorderColor: "var(--app-palette-blue)",
+          placeholderColor: "#5f6368",
+        })}
       />
     </TutorialWindow>
   );
@@ -385,27 +410,11 @@ const EmailStep = ({
           disabled={submitting}
           onFocus={onFocus}
           onBlur={onBlur}
-          sx={{
-            "& .MuiOutlinedInput-root": {
-              bgcolor: "#ffffff",
-              borderRadius: 1,
-              "& fieldset": isFieldFocused
-                ? { borderColor: "#e0e0e0" }
-                : {
-                    borderWidth: 2,
-                    animation: `${pulseEmail} 1.5s ease-in-out infinite`,
-                  },
-              "&:hover fieldset": {
-                borderColor: isFieldFocused ? "#e0e0e0" : undefined,
-              },
-              "&.Mui-focused fieldset": {
-                borderColor: "#1a73e8",
-              },
-            },
-            "& .MuiInputBase-input": {
-              color: "#202124",
-            },
-          }}
+          sx={tutorialFieldSx({
+            isFieldFocused,
+            pulse: pulseEmail,
+            focusBorderColor: "#1a73e8",
+          })}
         />
         {value.length === 0 && (
           <Typography
@@ -507,9 +516,12 @@ const useTutorialSubmission = ({
     void init();
     return () => {
       cancelled = true;
-      setChatToneRef
+      void setChatToneRef
         .current(POLISHED_TONE_ID, submissionCompleteRef.current)
-        .then(() => {
+        .catch((error) => {
+          console.error("Failed to reset tutorial tone on unmount", error);
+        })
+        .finally(() => {
           clearLocalStorageValue("mausvoice:checklist-writing-style");
         });
       produceAppState((draft) => {

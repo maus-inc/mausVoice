@@ -45,18 +45,30 @@ const overlapScore = (
 const getLengthRatio = (first: string, second: string): number =>
   Math.min(first.length, second.length) / Math.max(first.length, second.length);
 
+// Normalized forms of the second transcription's word prefixes, indexed by
+// word count (index j holds secondWords.slice(0, j) normalized). Precomputed
+// once per overlap search so per-suffix scans only look up by j.
+const getNormalizedSecondPrefixes = (
+  secondWords: string[],
+  maxJToCheck: number,
+): string[] => {
+  const prefixes: string[] = [""];
+  for (let j = 1; j <= maxJToCheck; j++) {
+    prefixes.push(normalizeText(secondWords.slice(0, j).join(" ")));
+  }
+  return prefixes;
+};
+
 const findBestOverlapForSuffix = (
   best: BestOverlap | null,
   normalizedFirst: string,
-  secondWords: string[],
-  maxJToCheck: number,
+  normalizedSecondPrefixes: string[],
   i: number,
 ): BestOverlap | null => {
   let updated = best;
 
-  for (let j = 1; j <= maxJToCheck; j++) {
-    const startOfSecond = secondWords.slice(0, j).join(" ");
-    const normalizedSecond = normalizeText(startOfSecond);
+  for (let j = 1; j < normalizedSecondPrefixes.length; j++) {
+    const normalizedSecond = normalizedSecondPrefixes[j];
 
     // Skip if lengths are too different
     if (getLengthRatio(normalizedFirst, normalizedSecond) < 0.5) continue;
@@ -85,6 +97,10 @@ const findBestOverlap = (
   maxJToCheck: number,
 ): BestOverlap | null => {
   let best: BestOverlap | null = null;
+  const normalizedSecondPrefixes = getNormalizedSecondPrefixes(
+    secondWords,
+    maxJToCheck,
+  );
 
   // For each possible overlap size
   for (let i = 1; i <= maxIToCheck; i++) {
@@ -93,8 +109,7 @@ const findBestOverlap = (
     best = findBestOverlapForSuffix(
       best,
       normalizedFirst,
-      secondWords,
-      maxJToCheck,
+      normalizedSecondPrefixes,
       i,
     );
   }
@@ -131,13 +146,11 @@ const findTruncatedPrefixOverlap = (
 
 const findExactMatchForSuffix = (
   normalizedFirst: string,
-  secondWords: string[],
-  maxJToCheck: number,
+  normalizedSecondPrefixes: string[],
   i: number,
 ): number | null => {
-  for (let j = 1; j <= maxJToCheck; j++) {
-    const startOfSecond = secondWords.slice(0, j).join(" ");
-    const normalizedSecond = normalizeText(startOfSecond);
+  for (let j = 1; j < normalizedSecondPrefixes.length; j++) {
+    const normalizedSecond = normalizedSecondPrefixes[j];
 
     if (getLengthRatio(normalizedFirst, normalizedSecond) < 0.5) continue;
 
@@ -157,14 +170,17 @@ const findOverlapAfterDroppingLastWord = (
 ): OverlapResult | null => {
   // Also check for overlap if we drop the last word (handles truncated/misheard last word)
   const firstWithoutLast = firstWords.slice(0, -1);
+  const normalizedSecondPrefixes = getNormalizedSecondPrefixes(
+    secondWords,
+    maxJToCheck,
+  );
   for (let i = 1; i <= Math.min(firstWithoutLast.length, 30); i++) {
     const endOfFirst = firstWithoutLast.slice(-i).join(" ");
     const normalizedFirst = normalizeText(endOfFirst);
 
     const matchedJ = findExactMatchForSuffix(
       normalizedFirst,
-      secondWords,
-      maxJToCheck,
+      normalizedSecondPrefixes,
       i,
     );
     if (matchedJ != null) {

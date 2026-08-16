@@ -14,7 +14,7 @@ import {
 import { openUrl } from "@tauri-apps/plugin-opener";
 import { isReadOnlyFilesystemInstallError } from "@maus-inc/desktop-utils";
 import { useCallback, useMemo } from "react";
-import { FormattedMessage, useIntl } from "react-intl";
+import { FormattedMessage, useIntl, type IntlShape } from "react-intl";
 import Markdown from "react-markdown";
 import {
   dismissUpdateDialog,
@@ -82,11 +82,20 @@ const getDownloadPercent = (
 const getProgressLabel = (
   downloadedBytes: number | null | undefined,
   totalBytes: number | null | undefined,
+  intl: IntlShape,
 ): string | null => {
   if (downloadedBytes == null || totalBytes == null || totalBytes <= 0) {
     return null;
   }
-  return `${formatSize(downloadedBytes)} of ${formatSize(totalBytes)}`;
+  return intl.formatMessage(
+    {
+      defaultMessage: "{downloaded} of {total}",
+    },
+    {
+      downloaded: formatSize(downloadedBytes),
+      total: formatSize(totalBytes),
+    },
+  );
 };
 
 const UpdateProgress = ({
@@ -291,8 +300,8 @@ export const UpdateDialog = () => {
     [downloadProgress],
   );
   const progressLabel = useMemo(
-    () => getProgressLabel(downloadedBytes, totalBytes),
-    [downloadedBytes, totalBytes],
+    () => getProgressLabel(downloadedBytes, totalBytes, intl),
+    [downloadedBytes, totalBytes, intl],
   );
 
   const currentVersionLabel =

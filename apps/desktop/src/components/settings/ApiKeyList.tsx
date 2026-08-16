@@ -238,14 +238,12 @@ const AddApiKeyCard = ({ onSave, onCancel, context }: AddApiKeyCardProps) => {
         includeV1Path={includeV1Path}
         onIncludeV1PathChange={setIncludeV1Path}
       />
-      <Box sx={{ display: "flex", gap: 1, justifyContent: "flex-end" }}>
-        <ApiKeyFormActions
-          onCancel={onCancel}
-          onSave={() => void handleSave()}
-          saving={saving}
-          canSave={canSave}
-        />
-      </Box>
+      <ApiKeyFormActions
+        onCancel={onCancel}
+        onSave={() => void handleSave()}
+        saving={saving}
+        canSave={canSave}
+      />
     </Paper>
   );
 };
@@ -398,16 +396,14 @@ const EditApiKeyCard = ({
         onIncludeV1PathChange={setIncludeV1Path}
         isEditing
       />
-      <Box sx={{ display: "flex", gap: 1, justifyContent: "flex-end" }}>
-        <ApiKeyFormActions
-          onCancel={onCancel}
-          onSave={() => void handleSave()}
-          saving={saving}
-          canSave={canSave}
-          onTest={handleTest}
-          testing={testing}
-        />
-      </Box>
+      <ApiKeyFormActions
+        onCancel={onCancel}
+        onSave={() => void handleSave()}
+        saving={saving}
+        canSave={canSave}
+        onTest={handleTest}
+        testing={testing}
+      />
     </Paper>
   );
 };

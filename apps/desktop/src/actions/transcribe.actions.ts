@@ -335,15 +335,8 @@ export type StoreTranscriptionOutput = {
   wordCount: number;
 };
 
-const getSampleCount = (samples: unknown): number => {
-  if (Array.isArray(samples)) {
-    return samples.length;
-  }
-  if (samples && typeof (samples as { length?: number }).length === "number") {
-    return (samples as { length: number }).length;
-  }
-  return 0;
-};
+const getSampleCount = (samples: StopRecordingResponse["samples"]): number =>
+  samples ? samples.length : 0;
 
 const getWordsAdded = (transcript: string | null): number =>
   transcript ? countWords(transcript) : 0;

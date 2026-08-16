@@ -263,39 +263,19 @@ const RemoteTargetDetails = ({
 const PairDeviceDialog = ({
   open,
   editingDeviceId,
-  pairName,
-  pairDeviceId,
-  pairAddress,
-  pairSecret,
-  pairPlatform,
-  pairRole,
+  form,
   addressLabel,
   addressHelperText,
-  onChangeName,
-  onChangeDeviceId,
-  onChangeAddress,
-  onChangeSecret,
-  onChangePlatform,
-  onChangeRole,
+  onChange,
   onSave,
   onClose,
 }: {
   open: boolean;
   editingDeviceId: string | null;
-  pairName: string;
-  pairDeviceId: string;
-  pairAddress: string;
-  pairSecret: string;
-  pairPlatform: RemoteDevicePlatform;
-  pairRole: RemoteDeviceRole;
+  form: PairForm;
   addressLabel: string;
   addressHelperText: string;
-  onChangeName: (value: string) => void;
-  onChangeDeviceId: (value: string) => void;
-  onChangeAddress: (value: string) => void;
-  onChangeSecret: (value: string) => void;
-  onChangePlatform: (value: RemoteDevicePlatform) => void;
-  onChangeRole: (value: RemoteDeviceRole) => void;
+  onChange: (patch: Partial<PairForm>) => void;
   onSave: () => void;
   onClose: () => void;
 }) => {
@@ -313,21 +293,22 @@ const PairDeviceDialog = ({
         <Stack spacing={2} sx={{ pt: 0.5 }}>
           <TextField
             label={intl.formatMessage({ defaultMessage: "Device name" })}
-            value={pairName}
-            onChange={(event) => onChangeName(event.target.value)}
+            value={form.name}
+            onChange={(event) => onChange({ name: event.target.value })}
             fullWidth
           />
           <TextField
             label={intl.formatMessage({ defaultMessage: "Device ID" })}
-            value={pairDeviceId}
-            onChange={(event) => onChangeDeviceId(event.target.value)}
+            value={form.deviceId}
+            onChange={(event) => onChange({ deviceId: event.target.value })}
             fullWidth
           />
           <Select<RemoteDeviceRole>
             size="small"
-            value={pairRole}
+            value={form.role}
+            aria-label={intl.formatMessage({ defaultMessage: "Device role" })}
             onChange={(event) =>
-              onChangeRole(event.target.value as RemoteDeviceRole)
+              onChange({ role: event.target.value as RemoteDeviceRole })
             }
             fullWidth
           >
@@ -340,9 +321,14 @@ const PairDeviceDialog = ({
           </Select>
           <Select<RemoteDevicePlatform>
             size="small"
-            value={pairPlatform}
+            value={form.platform}
+            aria-label={intl.formatMessage({
+              defaultMessage: "Device platform",
+            })}
             onChange={(event) =>
-              onChangePlatform(event.target.value as RemoteDevicePlatform)
+              onChange({
+                platform: event.target.value as RemoteDevicePlatform,
+              })
             }
             fullWidth
           >
@@ -356,8 +342,8 @@ const PairDeviceDialog = ({
           <TextField
             label={addressLabel}
             helperText={addressHelperText}
-            value={pairAddress}
-            onChange={(event) => onChangeAddress(event.target.value)}
+            value={form.address}
+            onChange={(event) => onChange({ address: event.target.value })}
             fullWidth
           />
           <TextField
@@ -366,8 +352,8 @@ const PairDeviceDialog = ({
               defaultMessage:
                 "Use the same secret on both the sender and receiver device records.",
             })}
-            value={pairSecret}
-            onChange={(event) => onChangeSecret(event.target.value)}
+            value={form.secret}
+            onChange={(event) => onChange({ secret: event.target.value })}
             fullWidth
           />
         </Stack>
@@ -702,44 +688,34 @@ const useSenderSettings = ({
   };
 };
 
+type PairForm = {
+  name: string;
+  deviceId: string;
+  address: string;
+  secret: string;
+  platform: RemoteDevicePlatform;
+  role: RemoteDeviceRole;
+};
+
+const DEFAULT_PAIR_FORM: PairForm = {
+  name: "",
+  deviceId: "",
+  address: "",
+  secret: "",
+  platform: "windows",
+  role: "receiver",
+};
+
 type PairDialogState = {
   pairDialogOpen: boolean;
   editingDeviceId: string | null;
-  pairName: string;
-  pairDeviceId: string;
-  pairAddress: string;
-  pairSecret: string;
-  pairPlatform: RemoteDevicePlatform;
-  pairRole: RemoteDeviceRole;
+  form: PairForm;
   addressLabel: string;
   addressHelperText: string;
   openPairDialog: (device?: PairedRemoteDevice) => void;
   closePairDialog: () => void;
   handleSaveManualPair: () => Promise<void>;
-  setPairName: (value: string) => void;
-  setPairDeviceId: (value: string) => void;
-  setPairAddress: (value: string) => void;
-  setPairSecret: (value: string) => void;
-  setPairPlatform: (value: RemoteDevicePlatform) => void;
-  setPairRole: (value: RemoteDeviceRole) => void;
-};
-
-const resetPairForm = (
-  setEditingDeviceId: (value: string | null) => void,
-  setPairName: (value: string) => void,
-  setPairDeviceId: (value: string) => void,
-  setPairAddress: (value: string) => void,
-  setPairSecret: (value: string) => void,
-  setPairPlatform: (value: RemoteDevicePlatform) => void,
-  setPairRole: (value: RemoteDeviceRole) => void,
-) => {
-  setEditingDeviceId(null);
-  setPairName("");
-  setPairDeviceId("");
-  setPairAddress("");
-  setPairSecret("");
-  setPairPlatform("windows");
-  setPairRole("receiver");
+  updatePairForm: (patch: Partial<PairForm>) => void;
 };
 
 const usePairDialogState = (
@@ -748,56 +724,41 @@ const usePairDialogState = (
   const intl = useIntl();
   const [pairDialogOpen, setPairDialogOpen] = useState(false);
   const [editingDeviceId, setEditingDeviceId] = useState<string | null>(null);
-  const [pairName, setPairName] = useState("");
-  const [pairDeviceId, setPairDeviceId] = useState("");
-  const [pairAddress, setPairAddress] = useState("");
-  const [pairSecret, setPairSecret] = useState("");
-  const [pairPlatform, setPairPlatform] =
-    useState<RemoteDevicePlatform>("windows");
-  const [pairRole, setPairRole] = useState<RemoteDeviceRole>("receiver");
+  const [form, setForm] = useState<PairForm>(DEFAULT_PAIR_FORM);
+
+  const updatePairForm = (patch: Partial<PairForm>) => {
+    setForm((prev) => ({ ...prev, ...patch }));
+  };
 
   const openPairDialog = (device?: PairedRemoteDevice) => {
-    if (device) {
-      setEditingDeviceId(device.id);
-      setPairName(device.name);
-      setPairDeviceId(device.id);
-      setPairAddress(device.lastKnownAddress ?? "");
-      setPairSecret(device.sharedSecret);
-      setPairPlatform(device.platform);
-      setPairRole(device.role);
-    } else {
-      resetPairForm(
-        setEditingDeviceId,
-        setPairName,
-        setPairDeviceId,
-        setPairAddress,
-        setPairSecret,
-        setPairPlatform,
-        setPairRole,
-      );
-    }
+    setEditingDeviceId(device?.id ?? null);
+    setForm(
+      device
+        ? {
+            name: device.name,
+            deviceId: device.id,
+            address: device.lastKnownAddress ?? "",
+            secret: device.sharedSecret,
+            platform: device.platform,
+            role: device.role,
+          }
+        : DEFAULT_PAIR_FORM,
+    );
     setPairDialogOpen(true);
   };
 
   const closePairDialog = () => {
     setPairDialogOpen(false);
-    resetPairForm(
-      setEditingDeviceId,
-      setPairName,
-      setPairDeviceId,
-      setPairAddress,
-      setPairSecret,
-      setPairPlatform,
-      setPairRole,
-    );
+    setEditingDeviceId(null);
+    setForm(DEFAULT_PAIR_FORM);
   };
 
   const handleSaveManualPair = async () => {
-    const name = pairName.trim();
-    const deviceId = pairDeviceId.trim();
-    const address = pairAddress.trim();
-    const secret = pairSecret.trim();
-    const requiresAddress = pairRole === "receiver";
+    const name = form.name.trim();
+    const deviceId = form.deviceId.trim();
+    const address = form.address.trim();
+    const secret = form.secret.trim();
+    const requiresAddress = form.role === "receiver";
 
     if (!name || !deviceId || !secret || (requiresAddress && !address)) {
       showErrorSnackbar(
@@ -813,8 +774,8 @@ const usePairDialogState = (
       await upsertPairedRemoteDevice({
         id: deviceId,
         name,
-        platform: pairPlatform,
-        role: pairRole,
+        platform: form.platform,
+        role: form.role,
         sharedSecret: secret,
         pairedAt: existing?.pairedAt ?? new Date().toISOString(),
         lastSeenAt: null,
@@ -828,12 +789,12 @@ const usePairDialogState = (
   };
 
   const addressLabel =
-    pairRole === "sender"
+    form.role === "sender"
       ? intl.formatMessage({ defaultMessage: "Sender address (optional)" })
       : intl.formatMessage({ defaultMessage: "Receiver address" });
 
   const addressHelperText =
-    pairRole === "sender"
+    form.role === "sender"
       ? intl.formatMessage({
           defaultMessage:
             "Optional for now. Only receiver targets need an address for delivery.",
@@ -845,23 +806,13 @@ const usePairDialogState = (
   return {
     pairDialogOpen,
     editingDeviceId,
-    pairName,
-    pairDeviceId,
-    pairAddress,
-    pairSecret,
-    pairPlatform,
-    pairRole,
+    form,
     addressLabel,
     addressHelperText,
     openPairDialog,
     closePairDialog,
     handleSaveManualPair,
-    setPairName,
-    setPairDeviceId,
-    setPairAddress,
-    setPairSecret,
-    setPairPlatform,
-    setPairRole,
+    updatePairForm,
   };
 };
 
@@ -1252,20 +1203,10 @@ export const MultiDeviceDialog = () => {
       <PairDeviceDialog
         open={pair.pairDialogOpen}
         editingDeviceId={pair.editingDeviceId}
-        pairName={pair.pairName}
-        pairDeviceId={pair.pairDeviceId}
-        pairAddress={pair.pairAddress}
-        pairSecret={pair.pairSecret}
-        pairPlatform={pair.pairPlatform}
-        pairRole={pair.pairRole}
+        form={pair.form}
         addressLabel={pair.addressLabel}
         addressHelperText={pair.addressHelperText}
-        onChangeName={pair.setPairName}
-        onChangeDeviceId={pair.setPairDeviceId}
-        onChangeAddress={pair.setPairAddress}
-        onChangeSecret={pair.setPairSecret}
-        onChangePlatform={pair.setPairPlatform}
-        onChangeRole={pair.setPairRole}
+        onChange={pair.updatePairForm}
         onSave={() => void pair.handleSaveManualPair()}
         onClose={pair.closePairDialog}
       />

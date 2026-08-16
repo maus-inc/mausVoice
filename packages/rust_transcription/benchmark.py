@@ -31,6 +31,7 @@ def assert_http_url(url: str) -> None:
 
 
 def load_wav(path: Path) -> tuple[list[float], int]:
+    """Load a WAV file into mono float samples and its sample rate."""
     with wave.open(str(path), "rb") as wf:
         n_channels = wf.getnchannels()
         sampwidth = wf.getsampwidth()
@@ -57,6 +58,7 @@ def load_wav(path: Path) -> tuple[list[float], int]:
 
 
 def load_audio(path: Path) -> tuple[list[float], int]:
+    """Load an audio file (WAV, or pydub-supported formats) into mono float samples and sample rate."""
     if path.suffix.lower() == ".wav":
         return load_wav(path)
 
@@ -74,6 +76,7 @@ def load_audio(path: Path) -> tuple[list[float], int]:
 
 
 def wait_for_health(port: int, timeout: float = 15.0) -> dict:
+    """Poll the sidecar /health endpoint until it responds or the timeout expires."""
     deadline = time.time() + timeout
     url = f"http://127.0.0.1:{port}/health"
     assert_http_url(url)
@@ -87,6 +90,7 @@ def wait_for_health(port: int, timeout: float = 15.0) -> dict:
 
 
 def start_sidecar(binary: Path, port: int, models_dir: Path) -> subprocess.Popen:
+    """Launch the sidecar binary with the given port and wait for it to become healthy."""
     env = {
         **os.environ,
         "RUST_TRANSCRIPTION_HOST": "127.0.0.1",
@@ -109,6 +113,7 @@ def start_sidecar(binary: Path, port: int, models_dir: Path) -> subprocess.Popen
 
 
 def stop_sidecar(proc: subprocess.Popen):
+    """Terminate the sidecar process gracefully, killing it if it does not exit in time."""
     proc.send_signal(signal.SIGTERM)
     try:
         proc.wait(timeout=5)
@@ -118,6 +123,7 @@ def stop_sidecar(proc: subprocess.Popen):
 
 
 def transcribe(port: int, samples: list[float], sample_rate: int, model: str, device_id: str | None = None) -> dict:
+    """POST audio samples to the sidecar transcription endpoint and return the result with round-trip time."""
     payload = json.dumps({
         "model": model,
         "samples": samples,
@@ -144,6 +150,7 @@ def transcribe(port: int, samples: list[float], sample_rate: int, model: str, de
 
 
 def run_benchmark(audio_path: Path, binary_dir: Path, models_dir: Path, model: str, modes: list[str]):
+    """Run CPU/GPU transcription benchmarks over the given audio file and print a comparison."""
     print(f"Loading {audio_path.name}...")
     samples, sample_rate = load_audio(audio_path)
     duration = len(samples) / sample_rate
@@ -207,6 +214,7 @@ def run_benchmark(audio_path: Path, binary_dir: Path, models_dir: Path, model: s
 
 
 def main():
+    """Parse CLI arguments and run the benchmark."""
     parser = argparse.ArgumentParser(description="Benchmark CPU vs GPU transcription")
     parser.add_argument("audio", type=Path, help="Path to audio file (WAV, MP3, etc.)")
     parser.add_argument("--model", default="tiny", help="Whisper model name (default: tiny)")

@@ -96,6 +96,7 @@ def lookup_by_bundle_id(bundle_id: str) -> Optional[dict]:
 
 
 def _sanitize_filename(name: str) -> str:
+    """Replace characters that are invalid in filenames with underscores."""
     return re.sub(r"[^\w\-.]", "_", name).strip("_")
 
 

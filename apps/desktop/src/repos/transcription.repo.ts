@@ -11,7 +11,7 @@ import { getAppState } from "../store";
 import { getMyEffectiveUserId } from "../utils/user.utils";
 import { BaseRepo } from "./base.repo";
 
-const toLocalAudio = (
+const mapAudioSnapshot = (
   audio: TranscriptionAudioSnapshot | null | undefined,
 ): LocalTranscriptionAudio | undefined =>
   audio
@@ -62,7 +62,7 @@ const toLocalTranscription = (
   id: transcription.id,
   transcript: transcription.transcript,
   timestamp: dayjs(transcription.createdAt).valueOf(),
-  audio: toLocalAudio(transcription.audio),
+  audio: mapAudioSnapshot(transcription.audio),
   modelSize: orNull(transcription.modelSize),
   inferenceDevice: orNull(transcription.inferenceDevice),
   rawTranscript: orNull(transcription.rawTranscript),
@@ -89,7 +89,7 @@ const fromLocalTranscription = (
   createdAt: dayjs(transcription.timestamp).toISOString(),
   createdByUserId: getMyEffectiveUserId(getAppState()),
   isDeleted: false,
-  audio: toLocalAudio(transcription.audio),
+  audio: mapAudioSnapshot(transcription.audio),
   modelSize: orUndefined(transcription.modelSize),
   inferenceDevice: orUndefined(transcription.inferenceDevice),
   rawTranscript: orUndefined(transcription.rawTranscript),

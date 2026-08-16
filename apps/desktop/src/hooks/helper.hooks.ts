@@ -137,9 +137,14 @@ export const useKeyCombo = (args: UseKeyComboArgs = {}): boolean => {
   const [active, setActive] = useState(false);
   const pressedRef = useRef<Set<string>>(new Set());
 
-  // Canonicalize to stable lowercase tokens
-  const canon = (k: string): string =>
-    KEY_ALIASES[k.trim().toLowerCase()] ?? k.trim().toLowerCase();
+  // Canonicalize to stable lowercase tokens. The raw (untrimmed) key is
+  // queried first so KeyboardEvent.key values like " " (Space) resolve through
+  // the alias table; the trimmed form is the fallback for padded input.
+  const canon = (k: string): string => {
+    const raw = k.toLowerCase();
+    const trimmed = raw.trim();
+    return KEY_ALIASES[raw] ?? KEY_ALIASES[trimmed] ?? trimmed;
+  };
 
   const isModifierKey = (k: string) =>
     k === "shift" || k === "control" || k === "alt" || k === "meta";

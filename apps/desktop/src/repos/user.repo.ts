@@ -8,8 +8,19 @@ import { BaseRepo } from "./base.repo";
 const getOnboardedAt = (isOnboarded: boolean): string | null =>
   isOnboarded ? nowIso() : null;
 
-const parseActiveToneIds = (activeToneIds: string | null | undefined) =>
-  activeToneIds ? JSON.parse(activeToneIds) : null;
+const parseActiveToneIds = (
+  activeToneIds: string | null | undefined,
+): User["activeToneIds"] => {
+  if (!activeToneIds) {
+    return null;
+  }
+  try {
+    return JSON.parse(activeToneIds);
+  } catch {
+    // Malformed stored JSON must not break loading the user record.
+    return null;
+  }
+};
 
 type LocalUser = {
   id: string;

@@ -131,7 +131,7 @@ const startAssemblyAIStreaming = async (
           };
         } else {
           cleanup();
-          resolveFinalize(finalTranscript);
+          resolveFinalize(getText());
         }
       });
     };

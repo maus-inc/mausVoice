@@ -80,6 +80,7 @@ export const createStreamingFinalize = ({
         }, timeoutMs);
       } else {
         cleanup();
+        finalizeResolver = null;
         resolveFinalize(getText());
       }
     });

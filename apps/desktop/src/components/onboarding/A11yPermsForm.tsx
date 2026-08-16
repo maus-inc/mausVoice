@@ -1,4 +1,3 @@
-import { ArrowForward } from "@mui/icons-material";
 import { Box, Button, Stack } from "@mui/material";
 import { useCallback, useState } from "react";
 import { FormattedMessage } from "react-intl";
@@ -14,6 +13,7 @@ import { PermissionAccessButton } from "./PermissionAccessButton";
 import {
   BackButton,
   DualPaneLayout,
+  OnboardingContinueButton,
   OnboardingFormHeader,
   OnboardingFormLayout,
 } from "./OnboardingCommon";
@@ -76,13 +76,7 @@ export const A11yPermsForm = () => {
               <FormattedMessage defaultMessage="Skip for now" />
             </Button>
           )}
-          <Button
-            variant="contained"
-            endIcon={<ArrowForward />}
-            onClick={handleContinue}
-          >
-            <FormattedMessage defaultMessage="Continue" />
-          </Button>
+          <OnboardingContinueButton onClick={handleContinue} />
         </Stack>
       }
     >
