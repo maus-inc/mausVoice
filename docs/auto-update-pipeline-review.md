@@ -92,9 +92,13 @@ _Context:_ `i18n-sync` seeds new keys with the English source by design, so all 
 
 Validated: ICU placeholders (`{version}`, `{timestamp}`) preserved in every locale — checked across all 725 keys, and the only 10 mismatches are pre-existing plural-syntax keys untouched by this change; key parity with `en.json` holds; and `pnpm --filter desktop i18n` reports `725 existing, 0 added` for all nine locales, confirming the official tooling retains the translations rather than resetting them. `de`/`fr` keep `Version {version}` verbatim because that is the correct rendering in both languages.
 
-**[Not a finding — CodeFactor "Complex Method" at `AppSideEffects.tsx:469-553`]**
+**[Minor — CodeFactor "Complex Method" at `AppSideEffects.tsx:469-553`]** — resolved.
 
-_Context:_ Reported as new on this PR. The flagged block is the Mixpanel analytics `useEffect`, which this change never touches; extracting it from both revisions shows it is byte-identical to base. It is attributed to the PR only because two lines were removed above it, shifting its range by one. Refactoring unrelated analytics code inside an updater change would violate the minimal-diff rule in `AGENTS.md`, so it is left for a dedicated change.
+_Context:_ Reported as new on this PR, but the flagged block is the Mixpanel analytics `useEffect`, byte-identical to base; it was attributed here only because two lines were removed above it, shifting its range. Initially left alone under the minimal-diff rule, then fixed on request. The complexity is genuine regardless of provenance: roughly fifteen branch points from optional chaining and plan/trial/tenure rules were inlined in a component effect, where none of it could be tested.
+
+_The Solution:_ The derivation moved into `analytics.utils.ts` as four pure functions (`buildAnalyticsIdentity`, `buildFirstTouchProperties`, `buildPeopleProperties`, `buildSuperProperties`), leaving the effect to orchestrate only: read state, branch on identity change, emit. The helpers take the raw `member` / `localUser` / `preferences` records so the optional chaining lives in tested code rather than the component. Decision points in the effect drop from 27 to 12, and it shortens from 85 lines to 52.
+
+Because this touches analytics — where a silent regression corrupts funnels instead of failing a build — the refactor is locked by `analytics-equivalence.test.ts`, which replays the original inline derivation verbatim and asserts byte-identical payloads across all 288 combinations of plan, trial state, auth state, onboarding, and contact details, plus the records-not-yet-loaded case. `analytics.utils.test.ts` adds 11 tests for rules that previously had no coverage: a trialling pro is not paying, a signed-out user is community rather than free, tenure is zero without an onboarding date, and absent contact fields send `undefined` rather than `null` so they cannot overwrite an existing Mixpanel profile.
 
 ## Findings discarded at the self-review gate
 
