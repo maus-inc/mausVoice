@@ -1,3 +1,4 @@
+import { convertFloat32ToPCM16 } from "@maus-inc/voice-ai";
 import { listen, UnlistenFn } from "@tauri-apps/api/event";
 import { getAppState } from "../store";
 import {
@@ -28,17 +29,23 @@ const startDeepgramStreaming = async (
   let partialTranscript = "";
   let isFinalized = false;
   let receivedChunkCount = 0;
+  let sentChunkCount = 0;
 
   const pump = createAudioChunkPump({
     sampleRate,
     minChunkDurationMs: 20,
     maxChunkDurationMs: 100,
     canSend: () => !!ws && ws.readyState === WebSocket.OPEN,
-    send: (pcm16) => ws?.send(pcm16),
-    onChunkSent: (sentCount, chunkLength, durationMs, byteLength) => {
-      console.log(
-        `[Deepgram WebSocket] Sent chunk #${sentCount} (${chunkLength} samples ~${durationMs.toFixed(1)} ms, ${byteLength} bytes)`,
-      );
+    sendChunk: (chunk) => {
+      const pcm16 = convertFloat32ToPCM16(chunk);
+      ws?.send(pcm16);
+      sentChunkCount++;
+      if (sentChunkCount <= 3 || sentChunkCount % 10 === 0) {
+        const durationMs = (chunk.length / sampleRate) * 1000;
+        console.log(
+          `[Deepgram WebSocket] Sent chunk #${sentChunkCount} (${chunk.length} samples ~${durationMs.toFixed(1)} ms, ${pcm16.byteLength} bytes)`,
+        );
+      }
     },
     onError: (error) => {
       console.error(
@@ -91,10 +98,7 @@ const startDeepgramStreaming = async (
       isFinalized = true;
       finalizeResolver = resolveFinalize;
       pump.flushPendingSamples(true);
-      console.log(
-        "[Deepgram WebSocket] Total chunks sent:",
-        pump.getSentChunkCount(),
-      );
+      console.log("[Deepgram WebSocket] Total chunks sent:", sentChunkCount);
 
       if (ws && ws.readyState === WebSocket.OPEN) {
         console.log("[Deepgram WebSocket] Sending CloseStream message...");

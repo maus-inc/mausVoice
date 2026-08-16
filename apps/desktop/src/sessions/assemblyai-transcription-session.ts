@@ -30,6 +30,31 @@ const startAssemblyAIStreaming = async (
 
     let currentTurn = 0;
     let extra = "";
+    let sentChunkCount = 0;
+
+    const pump = createAudioChunkPump({
+      sampleRate,
+      minChunkDurationMs: 50,
+      maxChunkDurationMs: 100,
+      canSend: () => !!ws && ws.readyState === WebSocket.OPEN,
+      sendChunk: (chunk) => {
+        const pcm16 = convertFloat32ToPCM16(chunk);
+        ws?.send(pcm16);
+        sentChunkCount++;
+        if (sentChunkCount <= 3 || sentChunkCount % 10 === 0) {
+          const durationMs = (chunk.length / sampleRate) * 1000;
+          getLogger().info(
+            `[AssemblyAI WebSocket] Sent chunk #${sentChunkCount} (${chunk.length} samples ~${durationMs.toFixed(1)} ms, ${pcm16.byteLength} bytes)`,
+          );
+        }
+      },
+      onError: (error) => {
+        getLogger().error(
+          "[AssemblyAI WebSocket] Error sending buffered chunk:",
+          error,
+        );
+      },
+    });
 
     const pump = createAudioChunkPump({
       sampleRate,

@@ -1,10 +1,7 @@
-import { convertFloat32ToPCM16 } from "@maus-inc/voice-ai";
-
 export type AudioChunkPump = {
   pushSamples: (samples: Float32Array) => void;
   resetBuffers: () => void;
   flushPendingSamples: (force?: boolean) => void;
-  getSentChunkCount: () => number;
 };
 
 export type AudioChunkPumpCallbacks = {
@@ -12,29 +9,27 @@ export type AudioChunkPumpCallbacks = {
   minChunkDurationMs: number;
   maxChunkDurationMs: number;
   canSend: () => boolean;
-  send: (pcm16: ArrayBuffer) => void;
-  onChunkSent: (
-    sentCount: number,
-    chunkLength: number,
-    durationMs: number,
-    byteLength: number,
-  ) => void;
+  /**
+   * Called with each drained chunk ready for the wire. `isLastChunk` is true
+   * when this is the final forced flush of a finalized session, which some
+   * providers use to signal end-of-stream (e.g. ElevenLabs' commit flag).
+   */
+  sendChunk: (chunk: Float32Array, isLastChunk: boolean) => void;
   onError: (error: unknown) => void;
 };
 
 /**
- * Buffers incoming float32 audio chunks and drains them to the WebSocket in
- * PCM16 frames sized to the caller's chunk-duration window. Shared by the
- * streaming transcription sessions (AssemblyAI and Deepgram) so their
- * chunking/flushing behavior stays in one place.
+ * Buffers incoming float32 audio chunks and drains them in frames sized to the
+ * caller's chunk-duration window, delegating the actual wire format to
+ * `sendChunk`. Shared by the streaming transcription sessions (AssemblyAI,
+ * Deepgram, ElevenLabs) so their chunking/flushing behavior stays in one place.
  */
 export const createAudioChunkPump = ({
   sampleRate,
   minChunkDurationMs,
   maxChunkDurationMs,
   canSend,
-  send,
-  onChunkSent,
+  sendChunk,
   onError,
 }: AudioChunkPumpCallbacks): AudioChunkPump => {
   const minSamplesPerChunk = Math.max(
@@ -48,7 +43,6 @@ export const createAudioChunkPump = ({
 
   let pendingChunks: Float32Array[] = [];
   let pendingSampleCount = 0;
-  let sentChunkCount = 0;
 
   const resetBuffers = () => {
     pendingChunks = [];
@@ -124,18 +118,7 @@ export const createAudioChunkPump = ({
       }
 
       try {
-        const pcm16 = convertFloat32ToPCM16(chunk);
-        send(pcm16);
-        sentChunkCount++;
-        if (sentChunkCount <= 3 || sentChunkCount % 10 === 0) {
-          const durationMs = (chunk.length / sampleRate) * 1000;
-          onChunkSent(
-            sentChunkCount,
-            chunk.length,
-            durationMs,
-            pcm16.byteLength,
-          );
-        }
+        sendChunk(chunk, force && pendingSampleCount === 0);
       } catch (error) {
         onError(error);
         break;
@@ -148,7 +131,5 @@ export const createAudioChunkPump = ({
     pendingSampleCount += samples.length;
   };
 
-  const getSentChunkCount = () => sentChunkCount;
-
-  return { pushSamples, resetBuffers, flushPendingSamples, getSentChunkCount };
+  return { pushSamples, resetBuffers, flushPendingSamples };
 };
