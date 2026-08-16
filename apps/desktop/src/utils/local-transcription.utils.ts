@@ -124,45 +124,44 @@ export const LOCAL_MODEL_OPTIONS: LocalModelOption[] = LOCAL_WHISPER_MODELS.map(
   }),
 );
 
-const LOCAL_MODEL_ALIASES: Record<string, LocalWhisperModel> = {
-  tiny: "tiny",
+// Every canonical model id resolves to itself; legacy/alternate spellings as
+// persisted by older builds or entered manually map onto the canonical value.
+const CANONICAL_MODEL_ALIASES = Object.fromEntries(
+  LOCAL_WHISPER_MODELS.map((model) => [model, model]),
+) as Record<string, LocalWhisperModel>;
+
+const LEGACY_MODEL_ALIASES: Record<string, LocalWhisperModel> = {
   "tiny.en": "tiny",
-  base: "base",
   "base.en": "base",
-  small: "small",
   "small.en": "small",
-  medium: "medium",
   "medium.en": "medium",
-  large: "large",
   "large-v3": "large",
-  turbo: "turbo",
   "large-turbo": "turbo",
   large_v3_turbo: "turbo",
   "large-v3-turbo": "turbo",
-  "parakeet-ctc-0.6b": "parakeet-ctc-0.6b",
   "parakeet-ctc": "parakeet-ctc-0.6b",
   parakeet_ctc: "parakeet-ctc-0.6b",
   "parakeet_ctc_0.6b": "parakeet-ctc-0.6b",
-  "parakeet-tdt-0.6b": "parakeet-tdt-0.6b",
   "parakeet-tdt": "parakeet-tdt-0.6b",
   parakeet_tdt: "parakeet-tdt-0.6b",
   "parakeet_tdt_0.6b": "parakeet-tdt-0.6b",
-  "canary-1b": "canary-1b",
   canary: "canary-1b",
   canary_1b: "canary-1b",
-  "sense-voice": "sense-voice",
-  sensevoice: "sense-voice",
-  sense_voice: "sense-voice",
+};
+
+const LOCAL_WHISPER_MODEL_ALIASES: Record<string, LocalWhisperModel> = {
+  ...CANONICAL_MODEL_ALIASES,
+  ...LEGACY_MODEL_ALIASES,
 };
 
 export const normalizeLocalWhisperModel = (
   value: string | null | undefined,
 ): LocalWhisperModel => {
   const normalized = value?.trim().toLowerCase();
-  return (
-    (normalized ? LOCAL_MODEL_ALIASES[normalized] : undefined) ??
-    DEFAULT_LOCAL_WHISPER_MODEL
-  );
+  if (!normalized) {
+    return DEFAULT_LOCAL_WHISPER_MODEL;
+  }
+  return LOCAL_WHISPER_MODEL_ALIASES[normalized] ?? DEFAULT_LOCAL_WHISPER_MODEL;
 };
 
 export const isGpuPreferredTranscriptionDevice = (

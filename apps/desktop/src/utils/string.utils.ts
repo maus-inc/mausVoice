@@ -149,25 +149,30 @@ const countWords = (phrase: string): number => {
   return trimmed ? trimmed.split(/\s+/).length : 0;
 };
 
-type PreparedReplacement = {
+type PreparedReplacementRule = {
   rule: ReplacementRule;
   source: string;
   wordCount: number;
 };
 
-type ReplacementMatch = {
-  replacement: string;
-  endSegment: number;
+// Positions of the word segments; the odd indices in between are whitespace.
+const findWordPositions = (segments: string[]): number[] => {
+  const wordPositions: number[] = [];
+  for (let i = 0; i < segments.length; i++) {
+    const segment = segments[i];
+    if (segment && !/^\s+$/.test(segment)) {
+      wordPositions.push(i);
+    }
+  }
+  return wordPositions;
 };
 
-const getWordPositions = (segments: string[]): number[] =>
-  segments.flatMap((segment, index) =>
-    segment && !/^\s+$/.test(segment) ? [index] : [],
-  );
-
+// Rules are matched as phrases, so a rule spans as many words as its source
+// does. Longer phrases are tried first so that "New York City" wins over a
+// "New York" rule at the same position.
 const prepareReplacementRules = (
   rules: ReplacementRule[],
-): PreparedReplacement[] =>
+): PreparedReplacementRule[] =>
   rules
     .map((rule) => ({
       rule,
@@ -176,72 +181,28 @@ const prepareReplacementRules = (
     }))
     .filter((prepared) => prepared.source.length > 0);
 
-const findBestReplacement = (
-  normalizedCandidate: string,
+const findBestRuleMatch = (
+  preparedRules: PreparedReplacementRule[],
   span: number,
-  preparedRules: PreparedReplacement[],
+  normalizedCandidate: string,
 ): ReplacementRule | null => {
   let bestMatch: ReplacementRule | null = null;
   let bestSimilarity = 0;
 
   for (const prepared of preparedRules) {
     if (prepared.wordCount !== span) continue;
+
     const similarity = getStringSimilarity(
       normalizedCandidate,
       prepared.source,
     );
-    if (similarity < SIMILARITY_THRESHOLD || similarity <= bestSimilarity) {
-      continue;
+    if (similarity >= SIMILARITY_THRESHOLD && similarity > bestSimilarity) {
+      bestSimilarity = similarity;
+      bestMatch = prepared.rule;
     }
-    bestSimilarity = similarity;
-    bestMatch = prepared.rule;
   }
 
   return bestMatch;
-};
-
-const matchReplacementAt = (args: {
-  segments: string[];
-  startSegment: number;
-  endSegment: number;
-  span: number;
-  preparedRules: PreparedReplacement[];
-}): ReplacementMatch | null => {
-  const candidate = args.segments
-    .slice(args.startSegment, args.endSegment + 1)
-    .join("");
-  const { word, leadingPunctuation, trailingPunctuation } =
-    extractPunctuation(candidate);
-  if (!word) return null;
-
-  const bestMatch = findBestReplacement(
-    collapseWhitespace(word).toLowerCase(),
-    args.span,
-    args.preparedRules,
-  );
-  if (!bestMatch) return null;
-
-  const { word: destinationWord } = extractPunctuation(
-    bestMatch.destinationValue,
-  );
-  return {
-    replacement: leadingPunctuation + destinationWord + trailingPunctuation,
-    endSegment: args.endSegment,
-  };
-};
-
-const appendUntil = (
-  result: string[],
-  segments: string[],
-  start: number,
-  end: number,
-): number => {
-  let index = start;
-  while (index < end) {
-    result.push(segments[index]);
-    index++;
-  }
-  return index;
 };
 
 export const applyReplacements = (
@@ -251,8 +212,9 @@ export const applyReplacements = (
   if (rules.length === 0) return text;
 
   const segments = text.split(/(\s+)/);
-  const wordPositions = getWordPositions(segments);
+  const wordPositions = findWordPositions(segments);
   const preparedRules = prepareReplacementRules(rules);
+
   if (preparedRules.length === 0) return text;
 
   const maxWordCount = Math.max(
@@ -269,15 +231,34 @@ export const applyReplacements = (
     let match: ReplacementMatch | null = null;
     let span = Math.min(maxWordCount, remainingWords);
 
-    while (span >= 1 && !match) {
-      match = matchReplacementAt({
-        segments,
-        startSegment,
-        endSegment: wordPositions[wordIndex + span - 1],
-        span,
+    for (
+      let span = Math.min(maxWordCount, remainingWords);
+      span >= 1 && !matched;
+      span--
+    ) {
+      const endSegment = wordPositions[wordIndex + span - 1];
+      const candidate = segments.slice(startSegment, endSegment + 1).join("");
+      const { word, leadingPunctuation, trailingPunctuation } =
+        extractPunctuation(candidate);
+
+      if (!word) continue;
+
+      const normalizedCandidate = collapseWhitespace(word).toLowerCase();
+      const bestMatch = findBestRuleMatch(
         preparedRules,
-      });
-      if (!match) span--;
+        span,
+        normalizedCandidate,
+      );
+
+      if (bestMatch) {
+        const { word: destinationWord } = extractPunctuation(
+          bestMatch.destinationValue,
+        );
+        result.push(leadingPunctuation + destinationWord + trailingPunctuation);
+        segmentIndex = endSegment + 1;
+        wordIndex += span;
+        matched = true;
+      }
     }
 
     if (match) {

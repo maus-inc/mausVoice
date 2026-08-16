@@ -120,7 +120,15 @@ const IntroPage = () => {
   );
 };
 
-const HotkeyPage = () => {
+const ReleasePageLayout = ({
+  title,
+  subtitle,
+  children,
+}: {
+  title: React.ReactNode;
+  subtitle: React.ReactNode;
+  children?: React.ReactNode;
+}) => {
   return (
     <Stack
       spacing={3}
@@ -141,7 +149,7 @@ const HotkeyPage = () => {
             fontWeight: 600,
           }}
         >
-          <FormattedMessage defaultMessage="Set Your Shortcut" />
+          {title}
         </Typography>
         <Typography
           variant="body2"
@@ -149,9 +157,22 @@ const HotkeyPage = () => {
             color: "text.secondary",
           }}
         >
-          <FormattedMessage defaultMessage="Choose the keyboard shortcut you'll use to activate Agent Mode" />
+          {subtitle}
         </Typography>
       </Stack>
+      {children}
+    </Stack>
+  );
+};
+
+const HotkeyPage = () => {
+  return (
+    <ReleasePageLayout
+      title={<FormattedMessage defaultMessage="Set Your Shortcut" />}
+      subtitle={
+        <FormattedMessage defaultMessage="Choose the keyboard shortcut you'll use to activate Agent Mode" />
+      }
+    >
       <Box sx={{ pt: 2 }}>
         <HotkeySetting
           title={<FormattedMessage defaultMessage="Agent Mode shortcut" />}
@@ -162,7 +183,7 @@ const HotkeyPage = () => {
           buttonSize="medium"
         />
       </Box>
-    </Stack>
+    </ReleasePageLayout>
   );
 };
 
@@ -208,36 +229,12 @@ const TryItPage = () => {
   );
 
   return (
-    <Stack
-      spacing={3}
-      sx={{
-        py: 4,
-        px: 2,
-      }}
+    <ReleasePageLayout
+      title={<FormattedMessage defaultMessage="Give It a Try!" />}
+      subtitle={
+        <FormattedMessage defaultMessage="Test out Agent Mode right now" />
+      }
     >
-      <Stack
-        spacing={1}
-        sx={{
-          textAlign: "center",
-        }}
-      >
-        <Typography
-          variant="h5"
-          sx={{
-            fontWeight: 600,
-          }}
-        >
-          <FormattedMessage defaultMessage="Give It a Try!" />
-        </Typography>
-        <Typography
-          variant="body2"
-          sx={{
-            color: "text.secondary",
-          }}
-        >
-          <FormattedMessage defaultMessage="Test out Agent Mode right now" />
-        </Typography>
-      </Stack>
       <Typography
         variant="body2"
         component="div"
@@ -271,42 +268,18 @@ const TryItPage = () => {
       >
         <FormattedMessage defaultMessage="Tip: Run Agent Mode multiple times to keep refining! It remembers what's in the text box." />
       </Typography>
-    </Stack>
+    </ReleasePageLayout>
   );
 };
 
 const ProcessorPage = () => {
   return (
-    <Stack
-      spacing={3}
-      sx={{
-        py: 4,
-        px: 2,
-      }}
+    <ReleasePageLayout
+      title={<FormattedMessage defaultMessage="Choose Your Processor" />}
+      subtitle={
+        <FormattedMessage defaultMessage="Select which AI provider to use for Agent Mode" />
+      }
     >
-      <Stack
-        spacing={1}
-        sx={{
-          textAlign: "center",
-        }}
-      >
-        <Typography
-          variant="h5"
-          sx={{
-            fontWeight: 600,
-          }}
-        >
-          <FormattedMessage defaultMessage="Choose Your Processor" />
-        </Typography>
-        <Typography
-          variant="body2"
-          sx={{
-            color: "text.secondary",
-          }}
-        >
-          <FormattedMessage defaultMessage="Select which AI provider to use for Agent Mode" />
-        </Typography>
-      </Stack>
       <Box sx={{ pt: 2 }}>
         <AIAgentModeConfiguration />
       </Box>
@@ -319,7 +292,7 @@ const ProcessorPage = () => {
       >
         <FormattedMessage defaultMessage="Tip: Choose a stronger model for better results. Smaller or weaker models may produce lower quality output." />
       </Typography>
-    </Stack>
+    </ReleasePageLayout>
   );
 };
 

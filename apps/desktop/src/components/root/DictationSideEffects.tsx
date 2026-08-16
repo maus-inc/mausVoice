@@ -400,11 +400,20 @@ export const DictationSideEffects = () => {
     ],
   );
 
-  const collectStoppedRecording =
-    useCallback(async (): Promise<StoppedRecordingData> => {
-      const stopped = await getLogger().stopwatch("stopRecording", async () => {
+  const captureStopRecordingInfo = useCallback(async (): Promise<{
+    audio: StopRecordingResponse | null;
+    a11yInfo: TextFieldInfo | null;
+    appTarget: AppTarget | null;
+  }> => {
+    const [audio, a11yInfo, appTarget] = await getLogger().stopwatch(
+      "stopRecording",
+      async () => {
+        let audio: StopRecordingResponse | null = null;
+        let a11yInfo: TextFieldInfo | null = null;
+        let appTarget: AppTarget | null = null;
         try {
           tryPlayAudioChime("stop_recording_clip");
+
           getLogger().verbose("Invoking stop_recording and fetching a11y info");
           const [, outAudio, outA11yInfo, outAppTarget] = await Promise.all([
             strategyRef.current?.setPhase("loading"),
@@ -418,30 +427,32 @@ export const DictationSideEffects = () => {
               return null;
             }),
           ]);
-          return {
-            audio: outAudio,
-            a11yInfo: outA11yInfo,
-            appTarget: outAppTarget,
-          };
-        } catch (error) {
-          const failureMessage =
-            error instanceof Error ? error.message : String(error);
-          getLogger().error(`Failed to stop recording: ${error}`);
-          return {
-            audio: null,
-            a11yInfo: null,
-            appTarget: null,
-            failureMessage,
-          };
-        }
-      });
-      getLogger().verbose(
-        `Recording stopped (hasSamples=${!!stopped.audio?.samples})`,
-      );
-      return stopped;
-    }, []);
 
-  const finalizeRecording = useCallback(
+          audio = outAudio;
+          a11yInfo = outA11yInfo;
+          appTarget = outAppTarget;
+          getLogger().verbose(
+            `Recording stopped (hasSamples=${!!audio?.samples})`,
+          );
+        } catch (error) {
+          getLogger().error(`Failed to stop recording: ${error}`);
+          showToast({
+            message: intl.formatMessage({
+              defaultMessage: "Failed to stop recording",
+            }),
+            toastType: "error",
+            duration: 8_000,
+          });
+        }
+
+        return [audio, a11yInfo, appTarget];
+      },
+    );
+
+    return { audio, a11yInfo, appTarget };
+  }, [intl]);
+
+  const finalizeAndPostProcess = useCallback(
     async ({
       audio,
       a11yInfo,
@@ -450,7 +461,7 @@ export const DictationSideEffects = () => {
       audio: StopRecordingResponse;
       a11yInfo: TextFieldInfo | null;
       appTarget: AppTarget | null;
-    }): Promise<FinalizedRecording | null> => {
+    }): Promise<RawStopResp> => {
       getLogger().info("Finalizing transcription session");
       trackAppUsed(appTarget?.name ?? "Unknown");
 
@@ -555,7 +566,9 @@ export const DictationSideEffects = () => {
       }
 
       refreshMember();
-      return { shouldContinue: result.shouldContinue };
+      return {
+        shouldContinue: result.shouldContinue,
+      };
     },
     [sendPhaseToPill],
   );
@@ -566,25 +579,15 @@ export const DictationSideEffects = () => {
     restoreSystemVolume();
 
     try {
-      const stopped = await collectStoppedRecording();
-      if (!stopped.audio) {
+      const { audio, a11yInfo, appTarget } = await captureStopRecordingInfo();
+      if (!audio) {
         getLogger().warning("stopRecordingRaw: no audio data received");
         return {
           shouldContinue: false,
-          abortMessage: stopped.failureMessage || "No audio data received",
+          abortMessage: "No audio data received",
         };
       }
-
-      const finalized = await finalizeRecording({
-        audio: stopped.audio,
-        a11yInfo: stopped.a11yInfo,
-        appTarget: stopped.appTarget,
-      });
-      if (!finalized) {
-        return { shouldContinue: false };
-      }
-
-      return await processFinalizedRecording(finalized);
+      return await finalizeAndPostProcess({ audio, a11yInfo, appTarget });
     } catch (error) {
       const errorName = error instanceof Error ? ` [name=${error.name}]` : "";
       getLogger().error(`Error during stopRecording: ${error}${errorName}`);
@@ -598,10 +601,9 @@ export const DictationSideEffects = () => {
       await sendPhaseToPill("idle");
     }
   }, [
+    captureStopRecordingInfo,
     clearRecordingTimers,
-    collectStoppedRecording,
-    finalizeRecording,
-    processFinalizedRecording,
+    finalizeAndPostProcess,
     restoreSystemVolume,
     sendPhaseToPill,
   ]);

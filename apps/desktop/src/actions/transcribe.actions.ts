@@ -25,6 +25,7 @@ import {
   coerceToDictationLanguage,
   mapDictationLanguageToWhisperLanguage,
 } from "../utils/language.utils";
+import { orFalse, orNull } from "../utils/nullable.utils";
 import { getLogger } from "../utils/log.utils";
 import {
   buildLocalizedTranscriptionPrompt,
@@ -349,51 +350,33 @@ export type StoreTranscriptionOutput = {
   wordCount: number;
 };
 
-const getAudioSampleCount = (samples: unknown): number => {
-  if (Array.isArray(samples)) return samples.length;
-  if (samples && typeof (samples as { length?: number }).length === "number") {
-    return (samples as { length: number }).length;
+const getSampleCount = (samples: StopRecordingResponse["samples"]): number =>
+  samples ? samples.length : 0;
+
+const getWordsAdded = (transcript: string | null): number =>
+  transcript ? countWords(transcript) : 0;
+
+const recordUsageWords = async (wordsAdded: number): Promise<void> => {
+  if (wordsAdded <= 0) {
+    return;
   }
-  return 0;
-};
-
-const hasUsableAudio = (
-  rate: number | null | undefined,
-  sampleCount: number,
-): boolean =>
-  rate != null && !Number.isNaN(rate) && rate > 0 && sampleCount > 0;
-
-const handleIncognitoStorage = async (
-  state: ReturnType<typeof getAppState>,
-  wordsAdded: number,
-): Promise<boolean> => {
-  const prefs = state.userPrefs;
-  if (!prefs?.incognitoModeEnabled) return false;
-
-  const includeInStats = prefs.incognitoModeIncludeInStats;
-  getLogger().verbose(
-    `Incognito mode: skipping storage (includeInStats=${includeInStats}, words=${wordsAdded})`,
-  );
-  if (wordsAdded > 0 && includeInStats) {
-    try {
-      await addWordsToCurrentUser(wordsAdded);
-    } catch (error) {
-      console.error("Failed to update usage metrics", error);
-    }
+  try {
+    await addWordsToCurrentUser(wordsAdded);
+  } catch (error) {
+    console.error("Failed to update usage metrics", error);
   }
-  return true;
 };
 
 const persistAudioSnapshot = async (
-  id: string,
-  samples: number[],
+  transcriptionId: string,
+  samples: number[] | Float32Array,
   sampleRate: number,
 ): Promise<TranscriptionAudioSnapshot | undefined> => {
   try {
     return await invoke<TranscriptionAudioSnapshot>(
       "store_transcription_audio",
       {
-        id,
+        id: transcriptionId,
         samples,
         sampleRate,
       },
@@ -404,59 +387,67 @@ const persistAudioSnapshot = async (
   }
 };
 
-const nullable = <T>(value: T | null | undefined): T | null => value ?? null;
+const buildTranscriptionRecord = ({
+  input,
+  transcriptionId,
+  audioSnapshot,
+  transcriptionFailed,
+  createdAt,
+  createdByUserId,
+}: {
+  input: StoreTranscriptionInput;
+  transcriptionId: string;
+  audioSnapshot: TranscriptionAudioSnapshot | undefined;
+  transcriptionFailed: boolean;
+  createdAt: string;
+  createdByUserId: string;
+}): Transcription => ({
+  id: transcriptionId,
+  transcript: !transcriptionFailed
+    ? (input.transcript ?? "")
+    : "[Transcription Failed]",
+  createdAt,
+  createdByUserId,
+  isDeleted: false,
+  audio: audioSnapshot,
+  modelSize: orNull(input.transcriptionMetadata.modelSize),
+  inferenceDevice: orNull(input.transcriptionMetadata.inferenceDevice),
+  rawTranscript: input.rawTranscript ?? input.transcript ?? "",
+  sanitizedTranscript: orNull(input.sanitizedTranscript),
+  transcriptionPrompt: orNull(input.transcriptionMetadata.transcriptionPrompt),
+  postProcessPrompt: orNull(input.postProcessMetadata.postProcessPrompt),
+  transcriptionApiKeyId: orNull(
+    input.transcriptionMetadata.transcriptionApiKeyId,
+  ),
+  postProcessApiKeyId: orNull(input.postProcessMetadata.postProcessApiKeyId),
+  transcriptionMode: orNull(input.transcriptionMetadata.transcriptionMode),
+  postProcessMode: orNull(input.postProcessMetadata.postProcessMode),
+  postProcessDevice: orNull(input.postProcessMetadata.postProcessDevice),
+  transcriptionDurationMs: orNull(
+    input.transcriptionMetadata.transcriptionDurationMs,
+  ),
+  postprocessDurationMs: orNull(
+    input.postProcessMetadata.postprocessDurationMs,
+  ),
+  warnings: input.warnings.length > 0 ? input.warnings : null,
+  remoteStatus: orNull(input.remoteStatus),
+  remoteDeviceId: orNull(input.remoteDeviceId),
+});
 
-const buildTranscription = (
-  input: StoreTranscriptionInput,
-  state: ReturnType<typeof getAppState>,
-  id: string,
-  audio: TranscriptionAudioSnapshot | undefined,
-): Transcription => {
-  const failed = input.rawTranscript === null && input.warnings.length > 0;
-  return {
-    id,
-    transcript: failed
-      ? "[Transcription Failed]"
-      : (nullable(input.transcript) ?? ""),
-    createdAt: dayjs().toISOString(),
-    createdByUserId: getMyEffectiveUserId(state),
-    isDeleted: false,
-    audio,
-    modelSize: nullable(input.transcriptionMetadata.modelSize),
-    inferenceDevice: nullable(input.transcriptionMetadata.inferenceDevice),
-    rawTranscript:
-      nullable(input.rawTranscript) ?? nullable(input.transcript) ?? "",
-    sanitizedTranscript: nullable(input.sanitizedTranscript),
-    transcriptionPrompt: nullable(
-      input.transcriptionMetadata.transcriptionPrompt,
-    ),
-    postProcessPrompt: nullable(input.postProcessMetadata.postProcessPrompt),
-    transcriptionApiKeyId: nullable(
-      input.transcriptionMetadata.transcriptionApiKeyId,
-    ),
-    postProcessApiKeyId: nullable(
-      input.postProcessMetadata.postProcessApiKeyId,
-    ),
-    transcriptionMode: nullable(input.transcriptionMetadata.transcriptionMode),
-    postProcessMode: nullable(input.postProcessMetadata.postProcessMode),
-    postProcessDevice: nullable(input.postProcessMetadata.postProcessDevice),
-    transcriptionDurationMs: nullable(
-      input.transcriptionMetadata.transcriptionDurationMs,
-    ),
-    postprocessDurationMs: nullable(
-      input.postProcessMetadata.postprocessDurationMs,
-    ),
-    warnings: input.warnings.length > 0 ? input.warnings : null,
-    remoteStatus: nullable(input.remoteStatus),
-    remoteDeviceId: nullable(input.remoteDeviceId),
-  };
-};
-
-const saveTranscription = async (
+const persistTranscription = async (
   transcription: Transcription,
 ): Promise<Transcription | null> => {
   try {
-    return await getTranscriptionRepo().createTranscription(transcription);
+    const stored =
+      await getTranscriptionRepo().createTranscription(transcription);
+    produceAppState((draft) => {
+      draft.transcriptionById[stored.id] = stored;
+      const existingIds = draft.transcriptions.transcriptionIds.filter(
+        (identifier) => identifier !== stored.id,
+      );
+      draft.transcriptions.transcriptionIds = [stored.id, ...existingIds];
+    });
+    return stored;
   } catch (error) {
     console.error("Failed to store transcription", error);
     showErrorSnackbar("Unable to save transcription. Please try again.");
@@ -464,39 +455,95 @@ const saveTranscription = async (
   }
 };
 
-const registerStoredTranscription = (stored: Transcription): void => {
-  produceAppState((draft) => {
-    draft.transcriptionById[stored.id] = stored;
-    const existingIds = draft.transcriptions.transcriptionIds.filter(
-      (identifier) => identifier !== stored.id,
-    );
-    draft.transcriptions.transcriptionIds = [stored.id, ...existingIds];
-  });
-};
-
-const updateUsageStats = async (wordsAdded: number): Promise<void> => {
-  if (wordsAdded === 0) return;
-  try {
-    await addWordsToCurrentUser(wordsAdded);
-  } catch (error) {
-    console.error("Failed to update usage metrics", error);
-  }
-};
-
 const purgeStaleAudioSnapshots = async (): Promise<void> => {
   try {
     const purgedIds = await getTranscriptionRepo().purgeStaleAudio();
-    if (purgedIds.length === 0) return;
+    if (purgedIds.length === 0) {
+      return;
+    }
     produceAppState((draft) => {
       for (const purgedId of purgedIds) {
         const purged = draft.transcriptionById[purgedId];
-        if (purged) delete purged.audio;
+        if (purged) {
+          delete purged.audio;
+        }
       }
     });
   } catch (error) {
     console.error("Failed to purge stale audio snapshots", error);
   }
 };
+
+export const storeTranscription = async (
+  input: StoreTranscriptionInput,
+): Promise<StoreTranscriptionOutput> => {
+  getLogger().verbose("Storing transcription record");
+  const rate = input.audio.sampleRate;
+  const sampleCount = getSampleCount(input.audio.samples);
+
+  if (rate == null || Number.isNaN(rate)) {
+    getLogger().error("Received audio payload without sample rate");
+    showErrorSnackbar("Recording missing sample rate. Please try again.");
+    return { transcription: null, wordCount: 0 };
+  }
+  return 0;
+};
+
+const hasUsableAudio = (
+  rate: number | null | undefined,
+  sampleCount: number,
+): boolean =>
+  rate != null && !Number.isNaN(rate) && rate > 0 && sampleCount > 0;
+
+  const state = getAppState();
+  const incognitoEnabled = orFalse(state.userPrefs?.incognitoModeEnabled);
+  const includeInStats = orFalse(state.userPrefs?.incognitoModeIncludeInStats);
+  const wordsAdded = getWordsAdded(input.transcript);
+
+  if (incognitoEnabled) {
+    getLogger().verbose(
+      `Incognito mode: skipping storage (includeInStats=${includeInStats}, words=${wordsAdded})`,
+    );
+    if (wordsAdded > 0 && includeInStats) {
+      await recordUsageWords(wordsAdded);
+    }
+
+    return { transcription: null, wordCount: wordsAdded };
+  }
+
+  // Coerce the samples to an Array regardless of whether the IPC layer
+  // returned a plain Array or a typed-array-like. The rate<=0 / empty
+  // short-circuit above already guarantees this path is non-empty.
+  const payloadSamples = Array.isArray(input.audio.samples)
+    ? input.audio.samples
+    : Array.from(input.audio.samples ?? []);
+
+  const transcriptionId = createId();
+  const audioSnapshot = await persistAudioSnapshot(
+    transcriptionId,
+    payloadSamples,
+    rate,
+  );
+
+  const transcriptionFailed =
+    input.rawTranscript === null && input.warnings.length > 0;
+
+  const transcription = buildTranscriptionRecord({
+    input,
+    transcriptionId,
+    audioSnapshot,
+    transcriptionFailed,
+    createdAt: dayjs().toISOString(),
+    createdByUserId: getMyEffectiveUserId(state),
+  });
+
+  const storedTranscription = await persistTranscription(transcription);
+  if (!storedTranscription) {
+    return { transcription: null, wordCount: 0 };
+  }
+
+  await recordUsageWords(wordsAdded);
+  await purgeStaleAudioSnapshots();
 
 export const storeTranscription = async (
   input: StoreTranscriptionInput,
