@@ -20,24 +20,65 @@
 import { promises as fs } from "node:fs";
 import path from "node:path";
 
-// Tauri asks for a manifest key per target triple. macOS ships a single
-// universal bundle, so both architectures resolve to the same artifact.
-const PLATFORM_TARGETS = [
+// Tauri resolves an installer URL by `{os}-{arch}-{installer}` first and then
+// falls back to the bare `{os}-{arch}` key. The release job builds with
+// `createUpdaterArtifacts: true`, which emits a *direct-sign* bundle per
+// installer type: Windows `.msi`/`.exe`, Linux `.deb`/`.rpm`/`.AppImage`, and
+// macOS `.app.tar.gz` (the actual updater bundle) plus `.dmg`. Emitting the
+// per-installer keys *and* a bare fallback makes the manifest correct
+// regardless of which key Tauri prefers for a given platform.
+//
+// Each entry declares the filename matcher, the manifest keys it produces, and
+// (for platforms that need one) the bare fallback key. `barePrecedence`
+// decides which installer wins the bare fallback when several are present
+// (lower number wins): MSI over NSIS, AppImage over DEB over RPM.
+const INSTALLER_TYPES = [
   {
-    key: "darwin-aarch64",
-    matches: (name) => name.endsWith(".app.tar.gz"),
+    id: "mac-app",
+    match: (name) => name.endsWith(".app.tar.gz"),
+    keys: () => ["darwin-aarch64", "darwin-x86_64"],
   },
   {
-    key: "darwin-x86_64",
-    matches: (name) => name.endsWith(".app.tar.gz"),
+    id: "mac-dmg",
+    match: (name) => name.toLowerCase().endsWith(".dmg"),
+    keys: () => ["darwin-aarch64-dmg", "darwin-x86_64-dmg"],
   },
   {
-    key: "windows-x86_64",
-    matches: (name) => name.endsWith(".nsis.zip"),
+    id: "win-msi",
+    match: (name) => name.toLowerCase().endsWith(".msi"),
+    keys: () => ["windows-x86_64-msi"],
+    bare: "windows-x86_64",
+    barePrecedence: 0,
   },
   {
-    key: "linux-x86_64",
-    matches: (name) => name.toLowerCase().endsWith(".appimage"),
+    id: "win-nsis",
+    match: (name) =>
+      name.toLowerCase().endsWith(".exe") ||
+      name.toLowerCase().endsWith(".nsis.zip"),
+    keys: () => ["windows-x86_64-nsis"],
+    bare: "windows-x86_64",
+    barePrecedence: 1,
+  },
+  {
+    id: "lin-appimage",
+    match: (name) => name.toLowerCase().endsWith(".appimage"),
+    keys: () => ["linux-x86_64-appimage"],
+    bare: "linux-x86_64",
+    barePrecedence: 0,
+  },
+  {
+    id: "lin-deb",
+    match: (name) => name.toLowerCase().endsWith(".deb"),
+    keys: () => ["linux-x86_64-deb"],
+    bare: "linux-x86_64",
+    barePrecedence: 1,
+  },
+  {
+    id: "lin-rpm",
+    match: (name) => name.toLowerCase().endsWith(".rpm"),
+    keys: () => ["linux-x86_64-rpm"],
+    bare: "linux-x86_64",
+    barePrecedence: 2,
   },
 ];
 
@@ -85,10 +126,13 @@ export function buildPlatforms(files, { repository, tag }) {
   const signatures = new Set(files.filter((file) => file.endsWith(".sig")));
 
   const platforms = {};
+  // Bare fallback candidates: bareKey -> { precedence, entry }. The lowest
+  // precedence installer present wins (see INSTALLER_TYPES).
+  const bareCandidates = {};
   const missing = [];
 
-  for (const target of PLATFORM_TARGETS) {
-    const bundle = bundles.find((file) => target.matches(path.basename(file)));
+  for (const type of INSTALLER_TYPES) {
+    const bundle = bundles.find((file) => type.match(path.basename(file)));
     if (!bundle) {
       continue;
     }
@@ -99,10 +143,27 @@ export function buildPlatforms(files, { repository, tag }) {
       continue;
     }
 
-    platforms[target.key] = {
+    const entry = {
       signature: signaturePath,
       url: assetUrl(repository, tag, path.basename(bundle)),
     };
+
+    for (const key of type.keys()) {
+      platforms[key] = { ...entry };
+    }
+
+    if (type.bare) {
+      const existing = bareCandidates[type.bare];
+      if (!existing || type.barePrecedence < existing.precedence) {
+        bareCandidates[type.bare] = { precedence: type.barePrecedence, entry };
+      }
+    }
+  }
+
+  // Apply the bare fallbacks last so they never clobber a per-installer key.
+  // Copy the entry so the shared object isn't mutated by later steps.
+  for (const [bareKey, { entry }] of Object.entries(bareCandidates)) {
+    platforms[bareKey] = { ...entry };
   }
 
   if (missing.length > 0) {
@@ -145,7 +206,7 @@ async function main() {
   if (Object.keys(platforms).length === 0) {
     throw new Error(
       `No signed updater bundles found under ${artifactsRoot}. ` +
-        "Expected .app.tar.gz, .nsis.zip, or .AppImage with matching .sig files.",
+        "Expected .app.tar.gz, .dmg, .msi, .exe, .nsis.zip, .deb, .rpm, or .AppImage with matching .sig files.",
     );
   }
 

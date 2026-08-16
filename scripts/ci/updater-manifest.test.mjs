@@ -80,7 +80,6 @@ const fullySignedArtifacts = () =>
       "win-signature\n",
     "mausvoice-linux/mausVoice_0.1.7_amd64.AppImage": "linux-bundle",
     "mausvoice-linux/mausVoice_0.1.7_amd64.AppImage.sig": "linux-signature\n",
-    "mausvoice-macos/mausVoice_0.1.7_universal.dmg": "not-an-updater-bundle",
   });
 
 describe("updater manifest builder", () => {
@@ -105,12 +104,14 @@ describe("updater manifest builder", () => {
     );
 
     // Derive the expected key set from the manifest the client contract
-    // requires, rather than restating a copy of the script's own constant.
+    // requires: per-installer keys plus a bare fallback for each platform.
     assert.deepEqual(Object.keys(manifest.platforms).sort(), [
       "darwin-aarch64",
       "darwin-x86_64",
       "linux-x86_64",
+      "linux-x86_64-appimage",
       "windows-x86_64",
+      "windows-x86_64-nsis",
     ]);
 
     // Both macOS architectures resolve to the one universal bundle.
@@ -164,6 +165,124 @@ describe("updater manifest builder", () => {
     }
   });
 
+  it("emits per-installer keys for real v2 Windows artifacts (.msi + .exe)", () => {
+    // This is exactly the artifact set the direct-sign release job produces.
+    // The original builder only ever emitted a bare `windows-x86_64` from a
+    // `.nsis.zip`, so the NSIS installer was unreachable — this would have
+    // caught that 🔴 regression.
+    const artifacts = makeArtifacts({
+      "win/mausVoice_0.1.7_x64_en-US.msi": "msi-bundle",
+      "win/mausVoice_0.1.7_x64_en-US.msi.sig": "msi-signature\n",
+      "win/mausVoice_0.1.7_x64-setup.exe": "nsis-bundle",
+      "win/mausVoice_0.1.7_x64-setup.exe.sig": "nsis-signature\n",
+    });
+    const result = runScript({
+      ARTIFACTS_DIR: artifacts,
+      RELEASE_VERSION: "0.1.7",
+      RELEASE_TAG: "mausVoice-v0.1.7",
+      RELEASE_PRERELEASE: "false",
+    });
+
+    assert.ok(result.ok, `script failed: ${result.stderr}`);
+    const manifest = JSON.parse(readFileSync(result.outputPath, "utf8"));
+
+    assert.deepEqual(Object.keys(manifest.platforms).sort(), [
+      "windows-x86_64",
+      "windows-x86_64-msi",
+      "windows-x86_64-nsis",
+    ]);
+    // The bare fallback must point at the MSI (higher precedence).
+    assert.equal(
+      manifest.platforms["windows-x86_64"].signature,
+      "msi-signature",
+    );
+    assert.equal(
+      manifest.platforms["windows-x86_64-msi"].signature,
+      "msi-signature",
+    );
+    assert.equal(
+      manifest.platforms["windows-x86_64-nsis"].signature,
+      "nsis-signature",
+    );
+  });
+
+  it("emits per-installer keys for Linux .deb and .rpm", () => {
+    const artifacts = makeArtifacts({
+      "linux/mausVoice_0.1.7_amd64.AppImage": "appimage-bundle",
+      "linux/mausVoice_0.1.7_amd64.AppImage.sig": "appimage-signature\n",
+      "linux/mausVoice_0.1.7_amd64.deb": "deb-bundle",
+      "linux/mausVoice_0.1.7_amd64.deb.sig": "deb-signature\n",
+      "linux/mausVoice_0.1.7_amd64.rpm": "rpm-bundle",
+      "linux/mausVoice_0.1.7_amd64.rpm.sig": "rpm-signature\n",
+    });
+    const result = runScript({
+      ARTIFACTS_DIR: artifacts,
+      RELEASE_VERSION: "0.1.7",
+      RELEASE_TAG: "mausVoice-v0.1.7",
+      RELEASE_PRERELEASE: "false",
+    });
+
+    assert.ok(result.ok, `script failed: ${result.stderr}`);
+    const manifest = JSON.parse(readFileSync(result.outputPath, "utf8"));
+
+    assert.deepEqual(Object.keys(manifest.platforms).sort(), [
+      "linux-x86_64",
+      "linux-x86_64-appimage",
+      "linux-x86_64-deb",
+      "linux-x86_64-rpm",
+    ]);
+    assert.equal(
+      manifest.platforms["linux-x86_64-deb"].signature,
+      "deb-signature",
+    );
+    assert.equal(
+      manifest.platforms["linux-x86_64-rpm"].signature,
+      "rpm-signature",
+    );
+    assert.equal(
+      manifest.platforms["linux-x86_64-appimage"].signature,
+      "appimage-signature",
+    );
+  });
+
+  it("emits .app.tar.gz and .dmg keys for macOS", () => {
+    const artifacts = makeArtifacts({
+      "mac/mausVoice.app.tar.gz": "mac-app-bundle",
+      "mac/mausVoice.app.tar.gz.sig": "mac-app-signature\n",
+      "mac/mausVoice_0.1.7_universal.dmg": "mac-dmg-bundle",
+      "mac/mausVoice_0.1.7_universal.dmg.sig": "mac-dmg-signature\n",
+    });
+    const result = runScript({
+      ARTIFACTS_DIR: artifacts,
+      RELEASE_VERSION: "0.1.7",
+      RELEASE_TAG: "mausVoice-v0.1.7",
+      RELEASE_PRERELEASE: "false",
+    });
+
+    assert.ok(result.ok, `script failed: ${result.stderr}`);
+    const manifest = JSON.parse(readFileSync(result.outputPath, "utf8"));
+
+    assert.deepEqual(Object.keys(manifest.platforms).sort(), [
+      "darwin-aarch64",
+      "darwin-aarch64-dmg",
+      "darwin-x86_64",
+      "darwin-x86_64-dmg",
+    ]);
+    // The universal .app.tar.gz is the bare darwin key; the .dmg is separate.
+    assert.equal(
+      manifest.platforms["darwin-aarch64"].signature,
+      "mac-app-signature",
+    );
+    assert.equal(
+      manifest.platforms["darwin-aarch64-dmg"].signature,
+      "mac-dmg-signature",
+    );
+    assert.deepEqual(
+      manifest.platforms["darwin-aarch64"],
+      manifest.platforms["darwin-x86_64"],
+    );
+  });
+
   it("refuses to publish a bundle whose signature is missing", () => {
     const artifacts = makeArtifacts({
       "mac/mausVoice.app.tar.gz": "mac-bundle",
@@ -186,8 +305,8 @@ describe("updater manifest builder", () => {
 
   it("fails when no signed updater bundle exists at all", () => {
     const artifacts = makeArtifacts({
-      "mac/mausVoice_0.1.7_universal.dmg": "installer-only",
-      "linux/mausVoice_0.1.7_amd64.deb": "installer-only",
+      "mac/README.txt": "not an installer",
+      "linux/notes.md": "not an installer",
     });
 
     const result = runScript({
