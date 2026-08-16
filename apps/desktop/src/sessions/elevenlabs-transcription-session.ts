@@ -4,6 +4,7 @@ import {
   combineStreamingTranscript,
   createAudioChunkPump,
 } from "../utils/audio-chunking.utils";
+import { finalizeStreamingSession } from "../utils/streaming-session.utils";
 import {
   StopRecordingResponse,
   TranscriptionSession,
@@ -355,51 +356,11 @@ export class ElevenLabsTranscriptionSession implements TranscriptionSession {
   async finalize(
     _audio: StopRecordingResponse,
   ): Promise<TranscriptionSessionResult> {
-    if (!this.session) {
-      return {
-        rawTranscript: null,
-        metadata: {
-          inferenceDevice: "API • ElevenLabs (Streaming)",
-          transcriptionMode: "api",
-        },
-        warnings: ["ElevenLabs streaming session was not established"],
-      };
-    }
-
-    try {
-      console.log("[ElevenLabs] Finalizing streaming session...");
-      const finalizeStart = performance.now();
-      const transcript = await this.session.finalize();
-      const durationMs = Math.round(performance.now() - finalizeStart);
-
-      console.log("[ElevenLabs] Transcript timing:", { durationMs });
-      console.log(
-        "[ElevenLabs] Received transcript, length:",
-        transcript?.length ?? 0,
-      );
-
-      return {
-        rawTranscript: transcript || null,
-        metadata: {
-          inferenceDevice: "API • ElevenLabs (Streaming)",
-          transcriptionMode: "api",
-          transcriptionDurationMs: durationMs,
-        },
-        warnings: [],
-      };
-    } catch (error) {
-      console.error("[ElevenLabs] Failed to finalize session:", error);
-      return {
-        rawTranscript: null,
-        metadata: {
-          inferenceDevice: "API • ElevenLabs (Streaming)",
-          transcriptionMode: "api",
-        },
-        warnings: [
-          `ElevenLabs finalization failed: ${error instanceof Error ? error.message : "Unknown error"}`,
-        ],
-      };
-    }
+    return finalizeStreamingSession({
+      session: this.session,
+      providerLabel: "ElevenLabs",
+      log: console.log,
+    });
   }
 
   cleanup(): void {

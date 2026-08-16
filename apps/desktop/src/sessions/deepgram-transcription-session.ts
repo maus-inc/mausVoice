@@ -10,6 +10,7 @@ import {
   combineStreamingTranscript,
   createAudioChunkPump,
 } from "../utils/audio-chunking.utils";
+import { finalizeStreamingSession } from "../utils/streaming-session.utils";
 import { buildDeepgramWebSocketUrl } from "../utils/deepgram.utils";
 import { loadMyEffectiveDictationLanguage } from "../utils/user.utils";
 
@@ -282,51 +283,11 @@ export class DeepgramTranscriptionSession implements TranscriptionSession {
       await this.startupPromise;
     }
 
-    if (!this.session) {
-      return {
-        rawTranscript: null,
-        metadata: {
-          inferenceDevice: "API • Deepgram (Streaming)",
-          transcriptionMode: "api",
-        },
-        warnings: ["Deepgram streaming session was not established"],
-      };
-    }
-
-    try {
-      console.log("[Deepgram] Finalizing streaming session...");
-      const finalizeStart = performance.now();
-      const transcript = await this.session.finalize();
-      const durationMs = Math.round(performance.now() - finalizeStart);
-
-      console.log("[Deepgram] Transcript timing:", { durationMs });
-      console.log(
-        "[Deepgram] Received transcript, length:",
-        transcript?.length ?? 0,
-      );
-
-      return {
-        rawTranscript: transcript || null,
-        metadata: {
-          inferenceDevice: "API • Deepgram (Streaming)",
-          transcriptionMode: "api",
-          transcriptionDurationMs: durationMs,
-        },
-        warnings: [],
-      };
-    } catch (error) {
-      console.error("[Deepgram] Failed to finalize session:", error);
-      return {
-        rawTranscript: null,
-        metadata: {
-          inferenceDevice: "API • Deepgram (Streaming)",
-          transcriptionMode: "api",
-        },
-        warnings: [
-          `Deepgram finalization failed: ${error instanceof Error ? error.message : "Unknown error"}`,
-        ],
-      };
-    }
+    return finalizeStreamingSession({
+      session: this.session,
+      providerLabel: "Deepgram",
+      log: console.log,
+    });
   }
 
   cleanup(): void {
