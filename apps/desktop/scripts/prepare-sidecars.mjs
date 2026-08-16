@@ -6,6 +6,7 @@ import {
   copyFileSync,
   existsSync,
   mkdirSync,
+  readFileSync,
   readdirSync,
 } from "node:fs";
 import { dirname, isAbsolute, join, resolve } from "node:path";
@@ -55,6 +56,13 @@ if (!existsSync(sidecarManifestPath)) {
 
 mkdirSync(tauriBinariesDir, { recursive: true });
 
+// Temporary CI compatibility for targets whose Cargo resolver selects a
+// target-specific sherpa dependency edge. The generated lock is exported in
+// the build log so it can be committed and this bootstrap can be removed.
+if (process.env.CI === "true") {
+  refreshSidecarLockfile();
+}
+
 const cpuSidecarPath = buildAndCopy("rust-transcription-cpu", false);
 prepareSherpaWindowsRuntime();
 prepareOnnxRuntimeLibrary();
@@ -79,6 +87,22 @@ if (gpuBuildState.canBuildNative) {
     `[sidecar] Skipping native GPU sidecar build for ${targetTriple}: ${gpuBuildState.reason}`,
   );
   mirrorCpuSidecarAsGpu(cpuSidecarPath);
+}
+
+function refreshSidecarLockfile() {
+  run(
+    "cargo",
+    ["generate-lockfile", "--manifest-path", sidecarManifestPath],
+    repoRoot,
+  );
+
+  const generatedLock = readFileSync(
+    join(repoRoot, "packages", "rust_transcription", "Cargo.lock"),
+    "utf8",
+  );
+  console.log("[sidecar-lock-export] BEGIN");
+  console.log(Buffer.from(generatedLock, "utf8").toString("base64"));
+  console.log("[sidecar-lock-export] END");
 }
 
 function buildAndCopy(binaryName, gpuEnabled, options = {}) {
