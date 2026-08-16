@@ -109,3 +109,7 @@ nul
 
 # Local handoff artifact (not committed)
 HANDOFF.md
+
+# Secrets and local CI/log artifacts (must never be committed)
+.ghtoken
+/logs/
