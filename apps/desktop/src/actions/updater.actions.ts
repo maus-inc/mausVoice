@@ -18,6 +18,10 @@ import { showErrorSnackbar } from "./app.actions";
 import { showToast } from "./toast.actions";
 
 let checkingPromise: Promise<boolean> | null = null;
+// Coalesces user-initiated intent across concurrent callers: a manual check
+// that joins an in-flight background check must still open the dialog and
+// report its result, rather than being treated as another background check.
+let checkingUserInitiated = false;
 let installingPromise: Promise<void> | null = null;
 
 /**
@@ -48,10 +52,18 @@ export const checkForAppUpdates = async (
 ): Promise<boolean> => {
   const { userInitiated = false } = options;
 
-  if (checkingPromise || isBusy()) {
-    return checkingPromise ?? Promise.resolve(false);
+  if (isBusy()) {
+    return Promise.resolve(false);
   }
 
+  if (checkingPromise) {
+    // Accumulate manual intent so a user click that joins an in-flight
+    // background check still opens the dialog and reports the result.
+    checkingUserInitiated = checkingUserInitiated || userInitiated;
+    return checkingPromise;
+  }
+
+  checkingUserInitiated = userInitiated;
   const platform = getPlatform();
 
   const run = async (): Promise<boolean> => {
@@ -94,7 +106,7 @@ export const checkForAppUpdates = async (
         draft.updater.downloadedBytes = null;
         draft.updater.totalBytes = null;
         draft.updater.lastCheckedAt = Date.now();
-        draft.updater.upToDateConfirmed = userInitiated;
+        draft.updater.upToDateConfirmed = checkingUserInitiated;
       });
       syncMenuIcon(false);
       return false;
@@ -108,7 +120,7 @@ export const checkForAppUpdates = async (
     // ignores both the snooze window and the auto-show preference.
     const shouldAutoShowDialog =
       !dialogOpen &&
-      (userInitiated ||
+      (checkingUserInitiated ||
         (!ignoreUpdateDialog &&
           (!dismissedUntil || Date.now() >= dismissedUntil)));
 
@@ -137,7 +149,11 @@ export const checkForAppUpdates = async (
     // toast notification when an update is available. On macOS, the menu icon
     // is more visible and users are more accustomed to checking there for
     // updates, so we can skip the toast.
-    if (shouldAutoShowDialog && !userInitiated && platform !== "darwin") {
+    if (
+      shouldAutoShowDialog &&
+      !checkingUserInitiated &&
+      platform !== "darwin"
+    ) {
       const intl = getIntl();
       await showToast({
         message: intl.formatMessage(
@@ -161,6 +177,7 @@ export const checkForAppUpdates = async (
     return await checkingPromise;
   } finally {
     checkingPromise = null;
+    checkingUserInitiated = false;
   }
 };
 

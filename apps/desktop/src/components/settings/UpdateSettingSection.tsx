@@ -86,7 +86,7 @@ export const UpdateSettingSection = () => {
   return (
     <SettingSection
       title={<FormattedMessage defaultMessage="Software update" />}
-      description={
+      descriptionSlot={
         <Stack spacing={0.25}>
           <Typography variant="body2" sx={{ color: "text.secondary" }}>
             {versionLabel}

@@ -1,6 +1,6 @@
 ---
 title: "Auto-update pipeline"
-description: "How the updater manifest is signed and published, and how the desktop app consumes it."
+description: "How signed updater bundles are verified and published, and how the desktop app consumes their manifest."
 sidebar:
   order: 13
 ---
@@ -12,7 +12,7 @@ The updater is a code-execution channel: whatever the manifest names is download
 Tauri's updater verifies every download against a minisign public key compiled into the binary. Two properties follow:
 
 - **The private key must never be committed.** Anyone holding it can sign a build that every installed copy of mausVoice will accept and execute. It lives only in repository secrets.
-- **The public key in a build must match the key that signed the manifest.** A build carrying a throwaway key cannot install a properly signed release, and vice versa. Rotating the key means shipping a new build before the next signed release.
+- **The public key in a build must match the key that signed the updater bundles.** The manifest references those bundles, and Tauri verifies each download against the compiled-in key; the manifest itself is not signed. A build carrying a throwaway key cannot install a properly signed release, and vice versa. Rotating the key means shipping a new build before the next signed release.
 
 Accordingly `apps/desktop/src-tauri/tauri.conf.json` commits `createUpdaterArtifacts: false` and an empty `pubkey`. Development builds, CI validation builds, and forks all produce unsigned installers with no updater artifacts. Only the release workflow, and only when the secrets exist, flips both on.
 

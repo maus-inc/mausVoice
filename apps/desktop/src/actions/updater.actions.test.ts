@@ -192,4 +192,32 @@ describe("checkForAppUpdates", () => {
     expect(first).toBe(true);
     expect(second).toBe(true);
   });
+
+  it("honors a user-initiated caller that joins a pending background check", async () => {
+    // Regression: a manual "Check now" that joined an in-flight background
+    // check was treated as background itself, so an available update inside a
+    // snooze never opened the dialog. The shared result must use the combined
+    // intent of every caller.
+    let resolveCheck: ((value: typeof availableUpdate) => void) | undefined;
+    updaterMock.checkForUpdate.mockReturnValue(
+      new Promise((resolve) => {
+        resolveCheck = resolve;
+      }),
+    );
+    setAppState((state) => {
+      state.updater.dismissedUntil = Date.now() + 60_000;
+      return state;
+    });
+
+    const background = checkForAppUpdates();
+    const manual = checkForAppUpdates({ userInitiated: true });
+
+    // Let both callers settle against the shared endpoint promise.
+    resolveCheck!(availableUpdate);
+    await Promise.all([background, manual]);
+
+    expect(updaterMock.checkForUpdate).toHaveBeenCalledTimes(1);
+    expect(getAppState().updater.dialogOpen).toBe(true);
+    expect(toastMock.showToast).not.toHaveBeenCalled();
+  });
 });

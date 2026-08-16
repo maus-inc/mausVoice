@@ -107,7 +107,7 @@ Open `https://github.com/maus-inc/mausVoice/releases` and check:
 | `scripts/ci/generate-release-body.mjs`  | Produces the release description (title, What's new, Downloads, install steps) |
 | `scripts/ci/build-updater-manifest.mjs` | Builds the signed `latest.json` the app's updater reads                        |
 | `RELEASE_TOKEN` secret                  | Authorizes release creation as the maintainer                                  |
-| `UPDATER_*` secrets                     | Minisign keypair that signs updater bundles and the manifest                   |
+| `UPDATER_*` secrets                     | Minisign keypair that signs updater bundles (the manifest references them)     |
 | `docs/RELEASE.md`                       | This file. Update it when the pipeline changes.                                |
 
 ## Rules that keep the pipeline healthy
