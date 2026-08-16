@@ -698,6 +698,7 @@
   "view_all": "전체 보기",
   "view_full_prompt": "전체 프롬프트 보기",
   "view_transcription_details": "음성 인식 세부 정보 보기",
+  "voice_editing_is_not_supported_on_this_platform": "Voice editing is not supported on this platform",
   "voice_is_your_new_keyboard": "음성이 새로운 키보드입니다.",
   "warnings": "경고",
   "we_couldn_t_load_your_saved_api_keys_please_try_again": "저장된 API 키를 로드할 수 없습니다. 다시 시도해 주세요.",

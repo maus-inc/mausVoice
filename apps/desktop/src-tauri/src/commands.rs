@@ -445,6 +445,9 @@ pub async fn transcription_import_audio(path: String) -> Result<TranscriptionAud
     if path.as_os_str().is_empty() {
         return Err("No audio file was selected".to_string());
     }
+    let path = path
+        .canonicalize()
+        .map_err(|err| format!("failed to resolve audio file path '{}': {err}", path.display()))?;
 
     tauri::async_runtime::spawn_blocking(move || {
         let file = std::fs::File::open(&path)

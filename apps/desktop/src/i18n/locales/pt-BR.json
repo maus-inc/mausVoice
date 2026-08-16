@@ -698,6 +698,7 @@
   "view_all": "Ver tudo",
   "view_full_prompt": "Ver prompt completo",
   "view_transcription_details": "Ver detalhes da transcrição",
+  "voice_editing_is_not_supported_on_this_platform": "Voice editing is not supported on this platform",
   "voice_is_your_new_keyboard": "A voz é seu novo teclado.",
   "warnings": "Avisos",
   "we_couldn_t_load_your_saved_api_keys_please_try_again": "Não foi possível carregar suas chaves API salvas. Por favor, tente novamente.",

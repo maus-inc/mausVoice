@@ -97,79 +97,157 @@
           "url": "https://*.googleapis.com"
         },
         {
+          "url": "https://*.googleapis.com/**"
+        },
+        {
           "url": "https://accounts.google.com"
+        },
+        {
+          "url": "https://accounts.google.com/**"
         },
         {
           "url": "https://securetoken.googleapis.com"
         },
         {
+          "url": "https://securetoken.googleapis.com/**"
+        },
+        {
           "url": "https://identitytoolkit.googleapis.com"
+        },
+        {
+          "url": "https://identitytoolkit.googleapis.com/**"
         },
         {
           "url": "https://generativelanguage.googleapis.com"
         },
         {
+          "url": "https://generativelanguage.googleapis.com/**"
+        },
+        {
           "url": "https://*.firebaseio.com"
+        },
+        {
+          "url": "https://*.firebaseio.com/**"
         },
         {
           "url": "https://*.firebase.com"
         },
         {
+          "url": "https://*.firebase.com/**"
+        },
+        {
           "url": "https://*.firebaseapp.com"
+        },
+        {
+          "url": "https://*.firebaseapp.com/**"
         },
         {
           "url": "https://*.firebasestorage.app"
         },
         {
+          "url": "https://*.firebasestorage.app/**"
+        },
+        {
           "url": "https://api.openai.com"
+        },
+        {
+          "url": "https://api.openai.com/**"
         },
         {
           "url": "https://*.openai.azure.com"
         },
         {
+          "url": "https://*.openai.azure.com/**"
+        },
+        {
           "url": "https://api.anthropic.com"
+        },
+        {
+          "url": "https://api.anthropic.com/**"
         },
         {
           "url": "https://api.groq.com"
         },
         {
+          "url": "https://api.groq.com/**"
+        },
+        {
           "url": "https://api.cerebras.ai"
+        },
+        {
+          "url": "https://api.cerebras.ai/**"
         },
         {
           "url": "https://api.deepseek.com"
         },
         {
+          "url": "https://api.deepseek.com/**"
+        },
+        {
           "url": "https://openrouter.ai"
+        },
+        {
+          "url": "https://openrouter.ai/**"
         },
         {
           "url": "https://api.elevenlabs.io"
         },
         {
+          "url": "https://api.elevenlabs.io/**"
+        },
+        {
           "url": "https://api.deepgram.com"
+        },
+        {
+          "url": "https://api.deepgram.com/**"
         },
         {
           "url": "https://api.assemblyai.com"
         },
         {
+          "url": "https://api.assemblyai.com/**"
+        },
+        {
           "url": "https://streaming.assemblyai.com"
+        },
+        {
+          "url": "https://streaming.assemblyai.com/**"
         },
         {
           "url": "https://api.x.ai"
         },
         {
+          "url": "https://api.x.ai/**"
+        },
+        {
           "url": "https://api.aldea.ai"
+        },
+        {
+          "url": "https://api.aldea.ai/**"
         },
         {
           "url": "https://*.stt.speech.microsoft.com"
         },
         {
+          "url": "https://*.stt.speech.microsoft.com/**"
+        },
+        {
           "url": "https://*.ingest.sentry.io"
+        },
+        {
+          "url": "https://*.ingest.sentry.io/**"
         },
         {
           "url": "https://github.com"
         },
         {
+          "url": "https://github.com/**"
+        },
+        {
           "url": "https://objects.githubusercontent.com"
+        },
+        {
+          "url": "https://objects.githubusercontent.com/**"
         }
       ]
     }

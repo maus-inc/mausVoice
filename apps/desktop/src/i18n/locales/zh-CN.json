@@ -698,6 +698,7 @@
   "view_all": "查看全部",
   "view_full_prompt": "查看完整提示",
   "view_transcription_details": "查看转录详情",
+  "voice_editing_is_not_supported_on_this_platform": "Voice editing is not supported on this platform",
   "voice_is_your_new_keyboard": "语音是您的新键盘。",
   "warnings": "警告",
   "we_couldn_t_load_your_saved_api_keys_please_try_again": "无法加载已保存的 API 密钥。请重试。",
