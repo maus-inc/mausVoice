@@ -90,6 +90,9 @@ jobs:
         with:
           workspaces: |
             apps/desktop/src-tauri -> target
+            packages/rust_transcription -> packages/rust_transcription/target
+            packages/rust_pill_shared -> packages/rust_pill_shared/target
+            packages/rust_gtk_pill -> packages/rust_gtk_pill/target
           key: ubuntu-release-verify-rust
       - name: Install system dependencies
         run: |
@@ -100,14 +103,31 @@ jobs:
             WEBKIT_PKG=libwebkit2gtk-4.0-dev
           fi
           sudo apt-get install -y \
-            build-essential pkg-config cmake \
+            build-essential pkg-config cmake clang libclang-dev \
             libgtk-3-dev "$WEBKIT_PKG" \
-            libayatana-appindicator3-dev librsvg2-dev libasound2-dev libxdo-dev
+            libayatana-appindicator3-dev librsvg2-dev libasound2-dev libxdo-dev \
+            libgtk-layer-shell-dev xvfb
       - name: Run Rust unit tests
         working-directory: apps/desktop/src-tauri
         env:
           TAURI_CONFIG: '{"bundle":{"externalBin":[]}}'
         run: cargo test --lib
+      # The release gate must cover every crate that ships in the artifact,
+      # not just the Tauri backend: transcription (downloads, resume,
+      # ONNX inference plumbing) and the pill crates buildable on this runner.
+      - name: Run transcription unit tests
+        env:
+          CMAKE_TOOLCHAIN_FILE: ${{ github.workspace }}/packages/rust_transcription/cmake/linux-ci-toolchain.cmake
+        run: cargo test --manifest-path packages/rust_transcription/Cargo.toml --lib
+      - name: Run shared pill geometry tests
+        run: cargo test --manifest-path packages/rust_pill_shared/Cargo.toml
+      # The gtk pill unit tests are pure math/state (long-press progress,
+      # control layout, cairo input regions, visibility) and never open a
+      # display, but linking libgtk on a headless runner is safest under a
+      # virtual X server — xvfb-run guarantees the gate cannot hang on a
+      # missing DISPLAY if a display-touching test is ever added.
+      - name: Run Linux pill tests
+        run: xvfb-run -a cargo test --manifest-path packages/rust_gtk_pill/Cargo.toml
 
   build:
     name: Build ${{ matrix.label }}
@@ -365,6 +385,19 @@ jobs:
       - name: Checkout source
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
 
+      # The cask lives in a different repository (maus-inc/homebrew-mausvoice),
+      # which the workflow-scoped GITHUB_TOKEN can never push to. Fail here,
+      # before downloading/rendering anything, instead of 403-ing on the final
+      # `git push` with an opaque error.
+      - name: Require RELEASE_TOKEN
+        env:
+          RELEASE_TOKEN: ${{ secrets.RELEASE_TOKEN }}
+        run: |
+          if [ -z "$RELEASE_TOKEN" ]; then
+            echo "::error::secrets.RELEASE_TOKEN is not set. Publishing the Homebrew cask requires a PAT with write access to maus-inc/homebrew-mausvoice; GITHUB_TOKEN cannot push cross-repo." >&2
+            exit 1
+          fi
+
       - name: Resolve tag
         id: tag
         env:
@@ -399,7 +432,9 @@ jobs:
       - name: Publish cask to tap
         env:
           VERSION: ${{ inputs.version }}
-          TOKEN: ${{ secrets.RELEASE_TOKEN || secrets.GITHUB_TOKEN }}
+          # No GITHUB_TOKEN fallback: it cannot push to the tap repo, and the
+          # guard step above already failed fast if RELEASE_TOKEN is missing.
+          TOKEN: ${{ secrets.RELEASE_TOKEN }}
         run: |
           set -euo pipefail
           REPO_URL="https://x-access-token:${TOKEN}@github.com/maus-inc/homebrew-mausvoice.git"
