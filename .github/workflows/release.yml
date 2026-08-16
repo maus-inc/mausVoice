@@ -371,12 +371,13 @@ jobs:
         id: manifest
         shell: bash
         env:
+          UPDATER_PRIVATE_KEY: ${{ secrets.UPDATER_PRIVATE_KEY }}
           UPDATER_PUBLIC_KEY: ${{ secrets.UPDATER_PUBLIC_KEY }}
           RELEASE_PRERELEASE: ${{ inputs.prerelease }}
         run: |
-          if [ -z "$UPDATER_PUBLIC_KEY" ]; then
+          if [ -z "$UPDATER_PRIVATE_KEY" ] || [ -z "$UPDATER_PUBLIC_KEY" ]; then
             echo "eligible=false" >> "$GITHUB_OUTPUT"
-            echo "::warning::No updater public key configured - skipping latest.json."
+            echo "::warning::UPDATER_PRIVATE_KEY/UPDATER_PUBLIC_KEY are not configured - skipping latest.json."
           elif [ "$RELEASE_PRERELEASE" = "true" ]; then
             echo "eligible=false" >> "$GITHUB_OUTPUT"
             echo "Prerelease: skipping the stable update manifest."
