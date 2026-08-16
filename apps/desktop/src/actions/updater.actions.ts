@@ -53,7 +53,7 @@ export const checkForAppUpdates = async (
   const { userInitiated = false } = options;
 
   if (isBusy()) {
-    return Promise.resolve(false);
+    return false;
   }
 
   if (checkingPromise) {
