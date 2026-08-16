@@ -205,6 +205,17 @@ const findBestRuleMatch = (
   return bestMatch;
 };
 
+const appendUntil = (
+  result: string[],
+  segments: string[],
+  from: number,
+  until: number,
+): void => {
+  for (let i = from; i < until; i++) {
+    result.push(segments[i]);
+  }
+};
+
 export const applyReplacements = (
   text: string,
   rules: ReplacementRule[],
@@ -228,8 +239,7 @@ export const applyReplacements = (
     const startSegment = wordPositions[wordIndex];
     appendUntil(result, segments, segmentIndex, startSegment);
     const remainingWords = wordPositions.length - wordIndex;
-    let match: ReplacementMatch | null = null;
-    let span = Math.min(maxWordCount, remainingWords);
+    let matched = false;
 
     for (
       let span = Math.min(maxWordCount, remainingWords);
@@ -261,16 +271,11 @@ export const applyReplacements = (
       }
     }
 
-    if (match) {
-      result.push(match.replacement);
-      segmentIndex = match.endSegment + 1;
-      wordIndex += span;
-      continue;
+    if (!matched) {
+      result.push(segments[startSegment]);
+      segmentIndex = startSegment + 1;
+      wordIndex++;
     }
-
-    result.push(segments[startSegment]);
-    segmentIndex = startSegment + 1;
-    wordIndex++;
   }
 
   appendUntil(result, segments, segmentIndex, segments.length);
