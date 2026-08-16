@@ -275,7 +275,6 @@ function run(command, args, cwd, options = {}) {
   const result = spawnSync(command, args, {
     cwd,
     stdio: "inherit",
-    env: process.env,
   });
 
   if (result.status !== 0) {
