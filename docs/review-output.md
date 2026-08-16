@@ -10,7 +10,7 @@
 
 **Confidence: High**
 **Mergeable: Yes**
-**CI Verification: Passing** (verified via release+CI config updates — verify-ts + verify-rust gates, trigger filters, symmetry for all 3 platform pill tests, per-platform build workflows)
+**CI Verification: Passing** (all 14 checks passed for commit 3dae8e0 — lint, unit tests, integration tests, builds on all 3 platforms; OS-level elevation flow tests still require a Windows runner; ONNX inference unit coverage requires ONNX Runtime libraries not present in `cargo test --lib`)
 
 ---
 
@@ -26,9 +26,9 @@ None. All significant changes are well-architected, properly defensive, and cove
 
 **File:** `apps/desktop/src-tauri/tauri.conf.json`
 
-*The Problem:* The CSP is now properly set (was `null` before — a significant hardening improvement). However, the Tauri config uses `"dangerousDisableAssetCspModification": ["style-src"]`. This allows the `asset:` protocol to load style resources without CSP enforcement, which is needed for local asset styles but is a relaxation of the policy.
+*The Problem:* The CSP is now properly set (was `null` before — a significant hardening improvement). The Tauri config uses `"dangerousDisableAssetCspModification": ["style-src"]` which disables Tauri's automatic injection of CSP directives for the `asset:` protocol on the `style-src` directive only. This preserves `style-src 'self' 'unsafe-inline'` so Emotion/MUI runtime styles work correctly. The `assetProtocol.scope` (set to `$APPDATA/transcription-audio/**`) independently controls which local files the `asset:` protocol may serve — these are two separate concerns.
 
-*Context:* This is scoped to `style-src` only — it does **not** relax `script-src` or other sensitive directives. The asset protocol scope is already constrained to `$APPDATA/transcription-audio/**`. This is a pragmatic trade-off for a desktop app that needs to load local styles from asset storage. The `dangerousDisableAssetCspModification` requirement could be documented/justified in `AGENTS.md` for future maintainers.
+*Context:* This is scoped to `style-src` only — it does **not** relax `script-src` or other sensitive directives. This was documented in `AGENTS.md` (commit `7eda2ed`, with heading fix in `c6ba52c`) for future maintainers.
 
 *Recommendation:* No action needed — this is intentional for asset-loaded styles. Document the rationale briefly in the release notes.
 
@@ -42,15 +42,11 @@ None. All significant changes are well-architected, properly defensive, and cove
 
 *Recommendation:* No action needed — the dual setup gives faster PR feedback while the release gate ensures nothing slips through.
 
-### [🟡 Minor — Removed `content: read` permissions verification not present on `test-desktop-unit.yml`]
+### [🟡 Minor — `test-desktop-unit.yml` permissions — resolved]
 
 **File:** `.github/workflows/test-desktop-unit.yml`
 
-*The Problem:* The release workflow's `verify-ts` correctly uses `permissions: contents: read`, but the standalone `test-desktop-unit.yml` does not specify permissions (defaulting to write access).
-
-*Context:* REVIEW.md (section 5.2) says "verification jobs get `permissions: contents: read`; write scopes only in publish/release steps." The standalone workflow is less security-hardened.
-
-*Recommendation:* Add `permissions: contents: read` to the `test-desktop-unit.yml` workflow for least-privilege consistency.
+*Status:* ✅ **Resolved** — both `ts-unit-tests` and `rust-unit-tests` jobs now have `permissions: contents: read`. This was applied by `kiloconnect[bot]` in commit `c6ba52c`. No further action needed.
 
 ---
 
@@ -64,13 +60,11 @@ None. All significant changes are well-architected, properly defensive, and cove
 
 *Context:* This pattern matches the pre-existing code and the comments document the safety rationale. The `USER_DATA_TABLES_TO_CLEAR` array grew from 8 to 11 entries, and the PR added a migration comment noting the gap in migration numbering. No change needed.
 
-### [Nitpick — `unwrap_or_default` for self_exe in elevated launch]
+### [Nitpick — `current_exe` error handling — resolved]
 
-**File:** `apps/desktop/src-tauri/src/platform/windows/init.rs` line ~128
+**File:** `apps/desktop/src-tauri/src/platform/windows/init.rs`
 
-*The Problem:* `let self_exe = std::env::current_exe().unwrap_or_default();` — if `current_exe()` fails (extremely rare on Windows but possible in constrained environments like a service), `PathBuf::default()` is empty, and `ShellExecuteW` with an empty path will just display an error dialog. The prior behavior was `unwrap_or_default()` too, so this is not a regression.
-
-*Context:* This was extracted into a reusable `request_elevation_relaunch` function (good refactoring). The edge case is extremely unlikely and the failure is user-visible (UAC error dialog) rather than silent.
+*Status:* ✅ **Resolved** — both `request_elevation_relaunch` and `run_elevate_helper` now use `match` + `log::error!` + early return/exit when `std::env::current_exe()` fails, instead of the historical `unwrap_or_default()` which silently passed an empty path. The `request_elevation_relaunch` function returns `NativeSetupResult::Failed`, while `run_elevate_helper` logs the error and calls `std::process::exit(1)`. This was applied in commit `7eda2ed`. No further action needed.
 
 ---
 
