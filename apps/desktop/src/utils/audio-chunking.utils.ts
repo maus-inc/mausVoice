@@ -143,7 +143,10 @@ export const createAudioChunkPump = ({
   };
 
   const pushSamples = (samples: Float32Array) => {
-    pendingChunks.push(samples);
+    // Copy on push so the pending queue owns its buffers. drainSamples keeps
+    // subarray views into these chunks; without the copy a caller that reuses
+    // its source buffer could mutate audio we have not yet sent.
+    pendingChunks.push(samples.slice());
     pendingSampleCount += samples.length;
   };
 
