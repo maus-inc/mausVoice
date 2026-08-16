@@ -2,7 +2,7 @@ import { Add, CancelOutlined, Close, RestartAlt } from "@mui/icons-material";
 import { Button, IconButton, Stack, Switch, Typography } from "@mui/material";
 import type { Hotkey } from "@maus-inc/types";
 import type { ReactNode } from "react";
-import { FormattedMessage } from "react-intl";
+import { FormattedMessage, useIntl } from "react-intl";
 import { showErrorSnackbar } from "../../actions/app.actions";
 import { getHotkeyRepo } from "../../repos";
 import { produceAppState, useAppStore } from "../../store";
@@ -68,6 +68,7 @@ const HotkeyControls = ({
   onDisable: () => void;
   onAdd: () => void;
 }) => {
+  const intl = useIntl();
   return (
     <Stack
       spacing={1}
@@ -87,7 +88,7 @@ const HotkeyControls = ({
           <IconButton
             size="small"
             onClick={onDisable}
-            aria-label="Disable hotkey"
+            aria-label={intl.formatMessage({ defaultMessage: "Disable hotkey" })}
           >
             <CancelOutlined color="disabled" />
           </IconButton>
@@ -96,7 +97,7 @@ const HotkeyControls = ({
             {primaryHotkey && defaultCombos.length === 0 && (
               <IconButton
                 size="small"
-                aria-label="Delete hotkey"
+                aria-label={intl.formatMessage({ defaultMessage: "Delete hotkey" })}
                 onClick={() => onDeleteHotkey(primaryHotkey.id)}
               >
                 <Close color="disabled" />
@@ -107,7 +108,9 @@ const HotkeyControls = ({
               !isPrimaryUsingDefault && (
                 <IconButton
                   size="small"
-                  aria-label="Revert to default hotkey"
+                  aria-label={intl.formatMessage({
+                    defaultMessage: "Revert to default hotkey",
+                  })}
                   onClick={onRevertPrimary}
                 >
                   <RestartAlt color="disabled" />
@@ -132,7 +135,7 @@ const HotkeyControls = ({
             />
             <IconButton
               size="small"
-              aria-label="Delete hotkey"
+              aria-label={intl.formatMessage({ defaultMessage: "Delete hotkey" })}
               onClick={() => onDeleteHotkey(hotkey.id)}
             >
               <Close color="disabled" />
