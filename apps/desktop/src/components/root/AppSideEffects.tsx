@@ -1,5 +1,6 @@
 import { getVersion } from "@tauri-apps/api/app";
 import { invoke } from "@tauri-apps/api/core";
+import { getCurrentWindow } from "@tauri-apps/api/window";
 import { Member, Nullable, Term, User, UserPreferences } from "@maus-inc/types";
 import { getRec, listify } from "@maus-inc/utilities";
 import { isEqual } from "lodash-es";
@@ -215,6 +216,10 @@ const buildMixpanelProfile = ({
 
 export const AppSideEffects = () => {
   const intl = useIntl();
+  // The composer popout is a separate webview that loads the same SPA. The
+  // main window is the only surface that owns dictation input, so it is the
+  // only window that should track held keys for the dictation pipeline.
+  const isMainWindow = getCurrentWindow().label === "main";
   const [authReady, setAuthReady] = useState(false);
   const [streamReady, setStreamReady] = useState(false);
   const [initReady, setInitReady] = useState(false);
@@ -381,6 +386,12 @@ export const AppSideEffects = () => {
   );
 
   useTauriListen<KeysHeldPayload>("keys_held", (payload) => {
+    // Only the main window owns dictation input; ignore held-key updates in
+    // the composer popout (and any other webview) so its SPA copy can't drive
+    // a duplicate dictation/style-switch pipeline.
+    if (!isMainWindow) {
+      return;
+    }
     const existing = getAppState().keysHeld;
     if (isEqual(existing, payload.keys)) {
       return;

@@ -1,4 +1,5 @@
 import { invoke } from "@tauri-apps/api/core";
+import { getCurrentWindow } from "@tauri-apps/api/window";
 import { AppTarget } from "@maus-inc/types";
 import { delayed } from "@maus-inc/utilities";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
@@ -138,6 +139,12 @@ const IN_DICTATION_STYLE_KEYS = ["LeftArrow", "RightArrow"];
 export const DictationSideEffects = () => {
   const intl = useIntl();
 
+  // The composer popout is a separate webview that loads the same SPA. Dictation
+  // is owned by the main window only — in any other window the dictation
+  // hotkeys, held-key style switching, and click-to-dictate pipeline must stay
+  // inert so we never run two dictation sessions at once.
+  const isMainWindow = getCurrentWindow().label === "main";
+
   const strategyRef = useRef<BaseStrategy | null>(null);
   const sessionRef = useRef<TranscriptionSession | null>(null);
   const preDictationVolumeRef = useRef<number | null>(null);
@@ -150,6 +157,10 @@ export const DictationSideEffects = () => {
   // heartbeat and keeps duplicate idle writes out of the pipe.
   const lastPhaseSentRef = useRef<OverlayPhase | null>(null);
   const previousStyleSwitchKeysRef = useRef<string[]>([]);
+  // Tone (writing style) active when the current segment started. Used to
+  // retag the finalized segment so a mid-utterance style switch doesn't
+  // mislabel it with the latest style instead of the one that was spoken.
+  const segmentStartToneIdRef = useRef<string | null>(null);
   const [isStopping, setIsStopping] = useState(false);
   const assistantModeEnabled = useAppStore(getIsAssistantModeEnabled);
 
@@ -469,9 +480,18 @@ export const DictationSideEffects = () => {
         saveManualStyleForApp(appTarget);
       }
 
-      const toneId = getToneIdToUse(getAppState(), {
-        currentAppToneId: appTarget?.toneId ?? null,
-      });
+      // Retag with the writing style that was active when the segment started,
+      // not the live style — a mid-utterance style switch must not relabel an
+      // already-spoken segment with the new style. Manual-mode switches are the
+      // common mid-recording change; automatic mode keys off the focused app
+      // target, which is captured at stop and does not change mid-utterance.
+      const stylingMode = getEffectiveStylingMode(getAppState());
+      const toneId =
+        stylingMode === "manual"
+          ? segmentStartToneIdRef.current
+          : getToneIdToUse(getAppState(), {
+              currentAppToneId: appTarget?.toneId ?? null,
+            });
       const transcribeResult = await withTimeout(
         sessionRef.current?.finalize(audio, {
           toneId,
@@ -715,6 +735,13 @@ export const DictationSideEffects = () => {
         draft.dictationLanguageOverride = language;
       });
 
+      // Snapshot the active writing style at segment start so the finalized
+      // segment is retagged with the style that was actually dictated, even if
+      // the user switches styles mid-utterance.
+      segmentStartToneIdRef.current = getToneIdToUse(getAppState(), {
+        currentAppToneId: null,
+      });
+
       let strategy: BaseStrategy | null = strategyRef.current ?? null;
       if (!strategy) {
         if (mode === "agent") {
@@ -929,6 +956,7 @@ export const DictationSideEffects = () => {
     );
     const current = new Set(keysHeld.map((key) => key.toLowerCase()));
     const canSwitch =
+      isMainWindow &&
       inDictationStyleSwitchingEnabled &&
       isActiveSession &&
       activeRecordingMode === "dictate" &&
@@ -967,24 +995,27 @@ export const DictationSideEffects = () => {
         void selectToneByHotkey(entry.toneId);
       },
     })),
-    isDisabled: !isDictationUnlocked,
+    isDisabled: !isDictationUnlocked || !isMainWindow,
   });
 
   useHotkeyFire({
     actionName: SWITCH_WRITING_STYLE_FORWARD_HOTKEY,
-    isDisabled: !isActiveSession || !isManualStyling,
+    isDisabled: !isActiveSession || !isManualStyling || !isMainWindow,
     onFire: handleSwitchWritingStyleForward,
   });
 
   useHotkeyFire({
     actionName: SWITCH_WRITING_STYLE_BACKWARD_HOTKEY,
-    isDisabled: !isActiveSession || !isManualStyling,
+    isDisabled: !isActiveSession || !isManualStyling || !isMainWindow,
     onFire: handleSwitchWritingStyleBackward,
   });
 
   useHotkeyHold({
     actionName: DICTATE_HOTKEY,
-    isDisabled: !isDictationInteractable || activeRecordingMode === "agent",
+    isDisabled:
+      !isDictationInteractable ||
+      activeRecordingMode === "agent" ||
+      !isMainWindow,
     controller: dictationController,
     // Only the two style-switch arrows may be held in addition to the
     // activation key, and only after dictation is already active. This keeps
@@ -1002,18 +1033,20 @@ export const DictationSideEffects = () => {
     isDisabled:
       !isDictationInteractable ||
       !assistantModeEnabled ||
-      activeRecordingMode === "dictate",
+      activeRecordingMode === "dictate" ||
+      !isMainWindow,
     controller: agentController,
   });
 
   useHotkeyFire({
     actionName: CANCEL_TRANSCRIPTION_HOTKEY,
-    isDisabled: !isActiveSession,
+    isDisabled: !isActiveSession || !isMainWindow,
     onFire: promptCancelTranscription,
   });
 
   useHotkeyHoldMany({
-    isDisabled: !isDictationInteractable || activeRecordingMode === "agent",
+    isDisabled:
+      !isDictationInteractable || activeRecordingMode === "agent" || !isMainWindow,
     actions: additionalLanguageControllers,
   });
 
@@ -1096,7 +1129,7 @@ export const DictationSideEffects = () => {
 
   useHotkeyFire({
     actionName: OPEN_CHAT_HOTKEY,
-    isDisabled: !isActiveSession,
+    isDisabled: !isActiveSession || !isMainWindow,
     onFire: openPillConversation,
   });
 
@@ -1174,13 +1207,13 @@ export const DictationSideEffects = () => {
   });
 
   useTauriListen<void>("on-click-dictate", () => {
-    if (isDictationInteractable) {
+    if (isMainWindow && isDictationInteractable) {
       debouncedToggle("dictation", dictationController);
     }
   });
 
   useTauriListen<void>("on-click-agent-talk", () => {
-    if (isDictationInteractable) {
+    if (isMainWindow && isDictationInteractable) {
       debouncedToggle("agent", agentController);
     }
   });
