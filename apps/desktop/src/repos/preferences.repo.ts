@@ -64,7 +64,12 @@ type LocalUserPreferences = {
   inDictationStyleSwitchingEnabled?: boolean;
   hallucinationFilterEnabled?: boolean;
   reviewBeforeInsert?: Nullable<boolean>;
-  agentEnabledTools?: Nullable<string>;
+  // Contract: `null` (the persisted default) means "follow the tool registry's
+  // per-tool enablement"; an empty list `[]` is an *explicit* deny-all the user
+  // chose and must never be coerced into enabling tools; a non-empty list is the
+  // explicit allow-set. Do not migrate `null` to an allow-list of every tool id,
+  // or a user's explicit `[]` would be silently overwritten.
+  agentEnabledTools?: Nullable<string[]>;
   agentMaxIterations?: number;
   agentPermissionTimeoutMs?: number;
 };

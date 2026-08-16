@@ -15,8 +15,12 @@ const getConfiguredMaxIterations = (): number =>
 
 const getRegistryEnablement = (toolId: string): boolean => {
   const configured = getAppState().userPrefs?.agentEnabledTools;
-  // Null is the persisted "use registry defaults" sentinel. An empty list is
-  // an explicit deny-all selection and must not silently re-enable tools.
+  // Contract for `agentEnabledTools`:
+  //   - `null` / undefined  -> follow the tool registry's per-tool default (enabled).
+  //   - `[]`                -> explicit deny-all the user chose; never re-enable.
+  //   - `[ids]`             -> explicit allow-set.
+  // The empty-list branch intentionally does NOT fall back to "all enabled",
+  // so an explicit deny-all can never be silently overridden by a migration.
   return configured === null || configured === undefined
     ? true
     : configured.includes(toolId);

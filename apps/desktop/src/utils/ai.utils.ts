@@ -159,6 +159,9 @@ const applyFeaturePreferences = (
     true,
   );
   draft.settings.reviewBeforeInsert = preferences.reviewBeforeInsert === true;
+  // `preferenceOr` preserves an explicit `[]` (deny-all) because `[] ?? null`
+  // is `[]`, and defaults to `null` ("follow registry defaults") rather than
+  // to an allow-list. Never migrate `null` into an all-tools list here.
   draft.settings.agentEnabledTools = preferenceOr(
     preferences.agentEnabledTools,
     null,
