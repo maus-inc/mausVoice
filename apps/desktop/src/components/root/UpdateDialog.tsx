@@ -286,8 +286,14 @@ export const UpdateDialog = () => {
     [releaseDate],
   );
 
-  const percent = getDownloadPercent(downloadProgress);
-  const progressLabel = getProgressLabel(downloadedBytes, totalBytes);
+  const percent = useMemo(
+    () => getDownloadPercent(downloadProgress),
+    [downloadProgress],
+  );
+  const progressLabel = useMemo(
+    () => getProgressLabel(downloadedBytes, totalBytes),
+    [downloadedBytes, totalBytes],
+  );
 
   const currentVersionLabel =
     currentVersion ??

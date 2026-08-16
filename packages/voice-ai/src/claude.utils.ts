@@ -7,7 +7,6 @@ import type {
   ToolChoiceTool,
   Tool,
 } from "@anthropic-ai/sdk/resources/messages";
-import type { MessageStream } from "@anthropic-ai/sdk/lib/MessageStream";
 import { retry, countWords } from "@maus-inc/utilities";
 import type {
   JsonResponse,
@@ -17,6 +16,10 @@ import type {
   LlmStreamEvent,
   LlmTool,
 } from "@maus-inc/types";
+
+// The SDK does not re-export MessageStream from its root, so derive the type
+// from the client's stream() method instead of a deep subpath import.
+type MessageStream = ReturnType<Anthropic["messages"]["stream"]>;
 
 export const CLAUDE_MODELS = [
   "claude-opus-4-5-20251101",

@@ -235,8 +235,10 @@ const evaluateComboRelease = ({
       continue;
     }
 
+    // Combo ids must be canonical: keys are already lowercased ASCII, so an
+    // explicit "en" collation keeps the ordering locale-independent.
     const comboId = Array.from(requiredSet)
-      .sort((a, b) => a.localeCompare(b))
+      .sort((a, b) => a.localeCompare(b, "en"))
       .join("+");
     activeComboIds.add(comboId);
 
