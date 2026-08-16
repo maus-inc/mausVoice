@@ -463,65 +463,6 @@ export const DictationSideEffects = () => {
     return { audio, a11yInfo, appTarget };
   }, [intl]);
 
-  const finalizeAndPostProcess = useCallback(
-    async ({
-      audio,
-      a11yInfo,
-      appTarget,
-    }: {
-      audio: StopRecordingResponse;
-      a11yInfo: TextFieldInfo | null;
-      appTarget: AppTarget | null;
-    }): Promise<RawStopResp> => {
-      getLogger().info("Finalizing transcription session");
-      trackAppUsed(appTarget?.name ?? "Unknown");
-
-      if (appTarget) {
-        saveManualStyleForApp(appTarget);
-      }
-
-      // Retag with the writing style that was active when the segment started,
-      // not the live style — a mid-utterance style switch must not relabel an
-      // already-spoken segment with the new style. Manual-mode switches are the
-      // common mid-recording change; automatic mode keys off the focused app
-      // target, which is captured at stop and does not change mid-utterance.
-      const stylingMode = getEffectiveStylingMode(getAppState());
-      const toneId =
-        stylingMode === "manual"
-          ? segmentStartToneIdRef.current
-          : getToneIdToUse(getAppState(), {
-              currentAppToneId: appTarget?.toneId ?? null,
-            });
-      const transcribeResult = await withTimeout(
-        sessionRef.current?.finalize(audio, {
-          toneId,
-          a11yInfo,
-        }) ?? Promise.resolve(undefined),
-        FINALIZE_TIMEOUT_MS,
-        "Transcription finalize",
-      );
-      const rawTranscript = transcribeResult?.rawTranscript;
-      getLogger().verbose(
-        `Transcription result: rawTranscript=${rawTranscript ? `${rawTranscript.length} chars` : "empty"}, toneId=${toneId ?? "none"}, app=${appTarget?.name ?? "unknown"}`,
-      );
-
-      if (!rawTranscript || !transcribeResult) {
-        getLogger().warning("stopRecordingRaw: no rawTranscript from finalize");
-        return null;
-      }
-
-      return {
-        audio,
-        a11yInfo,
-        appTarget,
-        toneId,
-        rawTranscript,
-        transcribeResult,
-      };
-    },
-    [],
-  );
-
   const processFinalizedRecording = useCallback(
     async ({
       audio,
@@ -591,6 +532,65 @@ export const DictationSideEffects = () => {
       };
     },
     [sendPhaseToPill],
+  );
+
+  const finalizeAndPostProcess = useCallback(
+    async ({
+      audio,
+      a11yInfo,
+      appTarget,
+    }: {
+      audio: StopRecordingResponse;
+      a11yInfo: TextFieldInfo | null;
+      appTarget: AppTarget | null;
+    }): Promise<RawStopResp> => {
+      getLogger().info("Finalizing transcription session");
+      trackAppUsed(appTarget?.name ?? "Unknown");
+
+      if (appTarget) {
+        saveManualStyleForApp(appTarget);
+      }
+
+      // Retag with the writing style that was active when the segment started,
+      // not the live style — a mid-utterance style switch must not relabel an
+      // already-spoken segment with the new style. Manual-mode switches are the
+      // common mid-recording change; automatic mode keys off the focused app
+      // target, which is captured at stop and does not change mid-utterance.
+      const stylingMode = getEffectiveStylingMode(getAppState());
+      const toneId =
+        stylingMode === "manual"
+          ? segmentStartToneIdRef.current
+          : getToneIdToUse(getAppState(), {
+              currentAppToneId: appTarget?.toneId ?? null,
+            });
+      const transcribeResult = await withTimeout(
+        sessionRef.current?.finalize(audio, {
+          toneId,
+          a11yInfo,
+        }) ?? Promise.resolve(undefined),
+        FINALIZE_TIMEOUT_MS,
+        "Transcription finalize",
+      );
+      const rawTranscript = transcribeResult?.rawTranscript;
+      getLogger().verbose(
+        `Transcription result: rawTranscript=${rawTranscript ? `${rawTranscript.length} chars` : "empty"}, toneId=${toneId ?? "none"}, app=${appTarget?.name ?? "unknown"}`,
+      );
+
+      if (!rawTranscript || !transcribeResult) {
+        getLogger().warning("stopRecordingRaw: no rawTranscript from finalize");
+        return { shouldContinue: false };
+      }
+
+      return processFinalizedRecording({
+        audio,
+        a11yInfo,
+        appTarget,
+        toneId,
+        rawTranscript,
+        transcribeResult,
+      });
+    },
+    [processFinalizedRecording],
   );
 
   const stopRecordingRaw = useCallback(async (): Promise<RawStopResp> => {
