@@ -21,25 +21,27 @@ export const encodeComposerText = (text: string): string => {
   const bytes = new TextEncoder().encode(text);
   let binary = "";
   for (let offset = 0; offset < bytes.length; offset += BASE64_CHUNK_SIZE) {
-    binary += String.fromCharCode(
+    binary += String.fromCodePoint(
       ...bytes.subarray(offset, offset + BASE64_CHUNK_SIZE),
     );
   }
 
-  return btoa(binary)
-    .replace(/\+/g, "-")
-    .replace(/\//g, "_")
-    .replace(/=+$/u, "");
+  let encoded = btoa(binary).replaceAll("+", "-").replaceAll("/", "_");
+  while (encoded.endsWith("=")) {
+    encoded = encoded.slice(0, -1);
+  }
+  return encoded;
 };
 
 /** Decode the URL-safe transcript payload used by the local composer route. */
 export const decodeComposerText = (encoded: string): string => {
   try {
-    const padded = encoded.replace(/-/g, "+").replace(/_/g, "/");
+    const padded = encoded.replaceAll("-", "+").replaceAll("_", "/");
     const base64 = padded + "=".repeat((4 - (padded.length % 4)) % 4);
     const binary = atob(base64);
-    const bytes = Uint8Array.from(binary, (character) =>
-      character.charCodeAt(0),
+    const bytes = Uint8Array.from(
+      binary,
+      (character) => character.codePointAt(0) ?? 0,
     );
     return new TextDecoder().decode(bytes);
   } catch {

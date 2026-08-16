@@ -390,73 +390,91 @@ type ConversationMessageBlock = {
   messages: LlmMessage[];
 };
 
+type ResolvedConversationBlock = ConversationMessageBlock & {
+  nextIndex: number;
+};
+
+const textOnlyAssistantMessage = (
+  message: Extract<LlmMessage, { role: "assistant" }>,
+): LlmMessage => ({
+  role: "assistant",
+  content: message.content || undefined,
+});
+
 /**
- * Group assistant tool calls with all of their tool results before trimming.
+ * Resolve one assistant message and its following tool results as one block.
  * Providers require each tool call to have a matching result in the same
  * request; a positional slice can otherwise start with an orphaned result or
  * end after the assistant tool-call message.
  */
+const resolveConversationBlock = (
+  messages: LlmMessage[],
+  startIndex: number,
+): ResolvedConversationBlock => {
+  const message = messages[startIndex];
+  if (message.role !== "assistant" || !Array.isArray(message.toolCalls)) {
+    return { startIndex, messages: [message], nextIndex: startIndex + 1 };
+  }
+
+  const callIds = message.toolCalls.map((call) => call.id);
+  const hasValidToolCalls =
+    callIds.length > 0 &&
+    callIds.every((id) => typeof id === "string" && id.length > 0) &&
+    new Set(callIds).size === callIds.length;
+  if (!hasValidToolCalls) {
+    return {
+      startIndex,
+      messages: [message],
+      nextIndex: startIndex + 1,
+    };
+  }
+
+  const expected = new Set(callIds);
+  const toolResults: LlmMessage[] = [];
+  const seen = new Set<string>();
+  let nextIndex = startIndex + 1;
+  while (nextIndex < messages.length) {
+    const next = messages[nextIndex];
+    if (next.role !== "tool" || !expected.has(next.toolCallId)) break;
+    if (seen.has(next.toolCallId)) break;
+    seen.add(next.toolCallId);
+    toolResults.push(next);
+    nextIndex += 1;
+  }
+
+  if (seen.size === expected.size) {
+    return {
+      startIndex,
+      messages: [message, ...toolResults],
+      nextIndex,
+    };
+  }
+
+  // A persisted conversation can be interrupted between the assistant
+  // response and a tool result. Keep its text, but strip incomplete tool
+  // calls rather than sending an invalid partial exchange.
+  return {
+    startIndex,
+    messages: [textOnlyAssistantMessage(message)],
+    nextIndex: startIndex + 1,
+  };
+};
+
 const groupConversationMessages = (
   messages: LlmMessage[],
 ): ConversationMessageBlock[] => {
   const blocks: ConversationMessageBlock[] = [];
+  let index = 0;
 
-  for (let index = 0; index < messages.length; index++) {
-    const message = messages[index];
-    if (message.role === "tool") {
-      // Orphaned tool results cannot be sent to an LLM provider safely.
+  while (index < messages.length) {
+    if (messages[index].role === "tool") {
+      index += 1;
       continue;
     }
 
-    const toolCalls =
-      message.role === "assistant" && Array.isArray(message.toolCalls)
-        ? message.toolCalls
-        : [];
-    const callIds = toolCalls.map((call) => call.id);
-    const hasValidToolCalls =
-      callIds.length > 0 &&
-      callIds.every((id) => typeof id === "string" && id.length > 0) &&
-      new Set(callIds).size === callIds.length;
-
-    if (!hasValidToolCalls) {
-      blocks.push({ startIndex: index, messages: [message] });
-      continue;
-    }
-
-    const expected = new Set(callIds);
-    const toolResults: LlmMessage[] = [];
-    const seen = new Set<string>();
-    let nextIndex = index + 1;
-    while (nextIndex < messages.length) {
-      const next = messages[nextIndex];
-      if (next.role !== "tool" || !expected.has(next.toolCallId)) break;
-      if (seen.has(next.toolCallId)) break;
-      seen.add(next.toolCallId);
-      toolResults.push(next);
-      nextIndex++;
-    }
-
-    if (seen.size === expected.size) {
-      blocks.push({
-        startIndex: index,
-        messages: [message, ...toolResults],
-      });
-      index = nextIndex - 1;
-      continue;
-    }
-
-    // A persisted conversation can be interrupted between the assistant
-    // response and a tool result. Keep its text, but strip incomplete tool
-    // calls rather than sending an invalid partial exchange.
-    blocks.push({
-      startIndex: index,
-      messages: [
-        {
-          role: "assistant",
-          content: message.content || undefined,
-        },
-      ],
-    });
+    const block = resolveConversationBlock(messages, index);
+    blocks.push({ startIndex: block.startIndex, messages: block.messages });
+    index = block.nextIndex;
   }
 
   return blocks;
