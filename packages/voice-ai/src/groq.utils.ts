@@ -114,6 +114,7 @@ export type GroqGenerateTextArgs = {
   prompt: string;
   imageUrls?: string[];
   jsonResponse?: JsonResponse;
+  signal?: AbortSignal;
 };
 
 export type GroqGenerateResponseOutput = {
@@ -128,9 +129,10 @@ export const groqGenerateTextResponse = async ({
   prompt,
   imageUrls = [],
   jsonResponse,
+  signal,
 }: GroqGenerateTextArgs): Promise<GroqGenerateResponseOutput> => {
   return retry({
-    retries: 3,
+    retries: signal ? 1 : 3,
     fn: async () => {
       const client = createClient(apiKey);
 
@@ -166,7 +168,7 @@ export const groqGenerateTextResponse = async ({
               }
             : { type: "json_object" }
           : undefined,
-      });
+      }, { signal });
 
       console.log("groq llm usage:", response.usage);
       if (!response.choices || response.choices.length === 0) {

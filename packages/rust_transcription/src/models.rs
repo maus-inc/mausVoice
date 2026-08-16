@@ -97,60 +97,37 @@ impl WhisperModel {
         }
     }
 
-    /// Every file required by the model-specific runtime. The first entry is
-    /// the largest artifact; one resumable registry job tracks the complete
-    /// ordered bundle and finishes only after every entry is durable.
-    pub fn artifact_set(self) -> Vec<(&'static str, String)> {
-        let mut artifacts = match self {
+    /// Every file required by the model-specific runtime. ONNX artifacts are
+    /// pinned to immutable Hugging Face revisions; executable graph/weight
+    /// files additionally carry the upstream LFS SHA-256 digest.
+    pub fn artifact_set(self) -> Vec<(&'static str, String, Option<&'static str>)> {
+        let artifacts = match self {
             Self::ParakeetCtc06B => {
-                let root =
-                    "https://huggingface.co/onnx-community/parakeet-ctc-0.6b-ONNX/resolve/main/";
+                let root = "https://huggingface.co/onnx-community/parakeet-ctc-0.6b-ONNX/resolve/7df2cab7aed886b8b7f80d68a8214007e4847601/";
                 vec![
-                    (
-                        "model_int8.onnx_data",
-                        format!("{root}onnx/model_int8.onnx_data"),
-                    ),
-                    ("model_int8.onnx", format!("{root}onnx/model_int8.onnx")),
-                    ("tokenizer.json", format!("{root}tokenizer.json")),
+                    ("model_int8.onnx_data", format!("{root}onnx/model_int8.onnx_data"), Some("136207926beb9b3bc0779d7a96c179013f51b292c320e96ae7a341ef62ab53d9")),
+                    ("model_int8.onnx", format!("{root}onnx/model_int8.onnx"), Some("4de804b59b7b839ca21b97b5e506e558a859301d9a231a537e43c8f521037348")),
+                    ("tokenizer.json", format!("{root}tokenizer.json"), None),
                 ]
             }
             Self::ParakeetTdt06B => {
-                let root =
-                    "https://huggingface.co/istupakov/parakeet-tdt-0.6b-v3-onnx/resolve/main/";
+                let root = "https://huggingface.co/istupakov/parakeet-tdt-0.6b-v3-onnx/resolve/8f23f0c03c8761650bdb5b40aaf3e40d2c15f1ce/";
                 vec![
-                    (
-                        "encoder-model.int8.onnx",
-                        format!("{root}encoder-model.int8.onnx"),
-                    ),
-                    (
-                        "decoder_joint-model.int8.onnx",
-                        format!("{root}decoder_joint-model.int8.onnx"),
-                    ),
-                    ("vocab.txt", format!("{root}vocab.txt")),
+                    ("encoder-model.int8.onnx", format!("{root}encoder-model.int8.onnx"), Some("6139d2fa7e1b086097b277c7149725edbab89cc7c7ae64b23c741be4055aff09")),
+                    ("decoder_joint-model.int8.onnx", format!("{root}decoder_joint-model.int8.onnx"), Some("eea7483ee3d1a30375daedc8ed83e3960c91b098812127a0d99d1c8977667a70")),
+                    ("vocab.txt", format!("{root}vocab.txt"), None),
                 ]
             }
             Self::Canary1B => {
-                let root =
-                    "https://huggingface.co/istupakov/canary-1b-v2-onnx/resolve/main/";
+                let root = "https://huggingface.co/istupakov/canary-1b-v2-onnx/resolve/5ebc1520cef7b6b318b3526ad17adbfe00bc1bfc/";
                 vec![
-                    (
-                        "encoder-model.int8.onnx",
-                        format!("{root}encoder-model.int8.onnx"),
-                    ),
-                    (
-                        "decoder-model.int8.onnx",
-                        format!("{root}decoder-model.int8.onnx"),
-                    ),
-                    ("vocab.txt", format!("{root}vocab.txt")),
+                    ("encoder-model.int8.onnx", format!("{root}encoder-model.int8.onnx"), Some("6d96e9945898e5ace48f4efecd459ca1df81859730be27b8af6b197639403ee1")),
+                    ("decoder-model.int8.onnx", format!("{root}decoder-model.int8.onnx"), Some("52d83aa7aad41fbbe4f9dfcd341d784735a6eb4c6eb0d3290fc27a0d8ac39abf")),
+                    ("vocab.txt", format!("{root}vocab.txt"), None),
                 ]
             }
             _ => Vec::new(),
         };
-
-        // Preserve the existing per-model primary URL override contract.
-        if let Some((_, primary_url)) = artifacts.first_mut() {
-            *primary_url = self.download_url();
-        }
         artifacts
     }
 
@@ -263,9 +240,13 @@ mod tests {
             let artifacts = model.artifact_set();
             assert_eq!(artifacts.first().map(|artifact| artifact.0), Some(model.filename()));
             assert!(artifacts.len() > 1);
-            assert!(artifacts[1..]
+            assert!(artifacts.iter().all(|(_, url, _)| {
+                url.starts_with("https://huggingface.co/") && !url.contains("/resolve/main/")
+            }));
+            assert!(artifacts
                 .iter()
-                .all(|(_, url)| url.starts_with("https://huggingface.co/")));
+                .take(2)
+                .all(|(_, _, sha256)| sha256.is_some()));
         }
     }
 
