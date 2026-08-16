@@ -20,6 +20,8 @@ jobs:
   ts-unit-tests:
     name: Desktop TS Unit Tests
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
     steps:
       - name: Checkout source
         uses: actions/checkout@v5
@@ -42,6 +44,8 @@ jobs:
   rust-unit-tests:
     name: Desktop Rust Unit Tests
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
     steps:
       - name: Checkout source
         uses: actions/checkout@v5

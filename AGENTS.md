@@ -32,6 +32,12 @@
 
 - Build on Windows with `pnpm run tauri:build`.
 
+**Tauri CSP & security notes**
+
+- `tauri.conf.json` has a restrictive CSP (`script-src 'self'` with no `unsafe-inline` or `unsafe-eval`). The `dangerousDisableAssetCspModification: ["style-src"]` setting disables Tauri's automatic injection of CSP directives for the `asset:` protocol on the `style-src` directive only. This preserves `style-src 'self' 'unsafe-inline'` so Emotion/MUI runtime styles work correctly. The `assetProtocol.scope` (set to `$APPDATA/transcription-audio/**`) independently controls which local files the `asset:` protocol may serve — these are two separate concerns. This does NOT relax `script-src` or other sensitive directives. Do NOT expand the `dangerousDisableAssetCspModification` array beyond `["style-src"]` without explicit security review.
+- `remote.urls` in capabilities is restricted to localhost loopbacks. External API domains (OpenAI, Anthropic, Groq, Deepgram, etc.) are allowlisted in the `http:default` permission set, NOT in `remote.urls` — they are reachable via the webview's own fetch() but cannot access IPC commands. Keep this distinction when adding new providers.
+- CSP `connect-src` mirrors the same external API allowlist; both lists must be kept in sync when adding/removing providers. The `img-src` and `frame-src` directives are scoped to known-safe origins (avatar hosts, YouTube embeds). Never add a wildcard (`*`) to any CSP directive.
+
 ** Important scripts **
 
 - `pnpm gen:bindings` — regenerate `packages/desktop-native-apis/src/bindings.ts` from the Specta-facing Rust commands after changing `#[tauri::command]` signatures or exposed types.
