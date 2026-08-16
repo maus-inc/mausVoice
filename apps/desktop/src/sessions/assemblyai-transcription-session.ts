@@ -1,3 +1,4 @@
+import { convertFloat32ToPCM16 } from "@maus-inc/voice-ai";
 import { getLogger } from "../utils/log.utils";
 import { listen, UnlistenFn } from "@tauri-apps/api/event";
 import {
@@ -5,7 +6,10 @@ import {
   TranscriptionSession,
   TranscriptionSessionResult,
 } from "../types/transcription-session.types";
-import { createAudioChunkPump } from "../utils/audio-chunking.utils";
+import {
+  combineStreamingTranscript,
+  createAudioChunkPump,
+} from "../utils/audio-chunking.utils";
 
 type AssemblyAIStreamingSession = {
   finalize: () => Promise<string>;
@@ -56,30 +60,7 @@ const startAssemblyAIStreaming = async (
       },
     });
 
-    const pump = createAudioChunkPump({
-      sampleRate,
-      minChunkDurationMs: 50,
-      maxChunkDurationMs: 100,
-      canSend: () => !!ws && ws.readyState === WebSocket.OPEN,
-      send: (pcm16) => ws?.send(pcm16),
-      onChunkSent: (sentCount, chunkLength, durationMs, byteLength) => {
-        getLogger().info(
-          `[AssemblyAI WebSocket] Sent chunk #${sentCount} (${chunkLength} samples ~${durationMs.toFixed(1)} ms, ${byteLength} bytes)`,
-        );
-      },
-      onError: (error) => {
-        getLogger().error(
-          "[AssemblyAI WebSocket] Error sending buffered chunk:",
-          error,
-        );
-      },
-    });
-
-    const getText = () => {
-      return (
-        finalTranscript + (extra ? (finalTranscript ? " " : "") + extra : "")
-      );
-    };
+    const getText = () => combineStreamingTranscript(finalTranscript, extra);
 
     const cleanup = () => {
       if (unlisten) {
@@ -114,7 +95,7 @@ const startAssemblyAIStreaming = async (
         pump.flushPendingSamples(true);
         getLogger().info(
           "[AssemblyAI WebSocket] Total chunks sent:",
-          pump.getSentChunkCount(),
+          sentChunkCount,
         );
 
         if (ws && ws.readyState === WebSocket.OPEN) {

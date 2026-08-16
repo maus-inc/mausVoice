@@ -6,7 +6,10 @@ import {
   TranscriptionSession,
   TranscriptionSessionResult,
 } from "../types/transcription-session.types";
-import { createAudioChunkPump } from "../utils/audio-chunking.utils";
+import {
+  combineStreamingTranscript,
+  createAudioChunkPump,
+} from "../utils/audio-chunking.utils";
 import { buildDeepgramWebSocketUrl } from "../utils/deepgram.utils";
 import { loadMyEffectiveDictationLanguage } from "../utils/user.utils";
 
@@ -55,14 +58,8 @@ const startDeepgramStreaming = async (
     },
   });
 
-  const getText = () => {
-    return (
-      finalTranscript +
-      (partialTranscript
-        ? (finalTranscript ? " " : "") + partialTranscript
-        : "")
-    );
-  };
+  const getText = () =>
+    combineStreamingTranscript(finalTranscript, partialTranscript);
 
   const cleanup = () => {
     if (unlisten) {

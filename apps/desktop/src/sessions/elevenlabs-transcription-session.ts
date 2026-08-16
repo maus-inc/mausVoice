@@ -1,6 +1,9 @@
 import { convertFloat32ToBase64PCM16 } from "@maus-inc/voice-ai";
 import { listen, UnlistenFn } from "@tauri-apps/api/event";
-import { createAudioChunkPump } from "../utils/audio-chunking.utils";
+import {
+  combineStreamingTranscript,
+  createAudioChunkPump,
+} from "../utils/audio-chunking.utils";
 import {
   StopRecordingResponse,
   TranscriptionSession,
@@ -129,14 +132,8 @@ const startElevenLabsStreaming = async (
       },
     });
 
-    const getText = () => {
-      return (
-        finalTranscript +
-        (partialTranscript
-          ? (finalTranscript ? " " : "") + partialTranscript
-          : "")
-      );
-    };
+    const getText = () =>
+      combineStreamingTranscript(finalTranscript, partialTranscript);
 
     const cleanup = () => {
       if (unlisten) {
