@@ -35,6 +35,49 @@ type BestOverlap = {
   isExact: boolean;
 };
 
+// Prefer: longer overlaps (j), then exact matches, then higher similarity.
+const overlapScore = (
+  j: number,
+  isExact: boolean,
+  similarity: number,
+): number => j * 10 + (isExact ? 5 : 0) + similarity;
+
+const getLengthRatio = (first: string, second: string): number =>
+  Math.min(first.length, second.length) / Math.max(first.length, second.length);
+
+const findBestOverlapForSuffix = (
+  best: BestOverlap | null,
+  normalizedFirst: string,
+  secondWords: string[],
+  maxJToCheck: number,
+  i: number,
+): BestOverlap | null => {
+  let updated = best;
+
+  for (let j = 1; j <= maxJToCheck; j++) {
+    const startOfSecond = secondWords.slice(0, j).join(" ");
+    const normalizedSecond = normalizeText(startOfSecond);
+
+    // Skip if lengths are too different
+    if (getLengthRatio(normalizedFirst, normalizedSecond) < 0.5) continue;
+
+    const similarity = getStringSimilarity(normalizedFirst, normalizedSecond);
+    if (similarity < SIMILARITY_THRESHOLD) continue;
+
+    const isExact = i === j && similarity >= EXACT_MATCH_THRESHOLD;
+    const score = overlapScore(j, isExact, similarity);
+    const bestScore = updated
+      ? overlapScore(updated.j, updated.isExact, updated.similarity)
+      : 0;
+
+    if (!updated || score > bestScore) {
+      updated = { i, j, similarity, isExact };
+    }
+  }
+
+  return updated;
+};
+
 const findBestOverlap = (
   firstWords: string[],
   secondWords: string[],
@@ -47,33 +90,13 @@ const findBestOverlap = (
   for (let i = 1; i <= maxIToCheck; i++) {
     const endOfFirst = firstWords.slice(-i).join(" ");
     const normalizedFirst = normalizeText(endOfFirst);
-
-    for (let j = 1; j <= maxJToCheck; j++) {
-      const startOfSecond = secondWords.slice(0, j).join(" ");
-      const normalizedSecond = normalizeText(startOfSecond);
-
-      // Skip if lengths are too different
-      const lengthRatio =
-        Math.min(normalizedFirst.length, normalizedSecond.length) /
-        Math.max(normalizedFirst.length, normalizedSecond.length);
-      if (lengthRatio < 0.5) continue;
-
-      const similarity = getStringSimilarity(normalizedFirst, normalizedSecond);
-
-      if (similarity >= SIMILARITY_THRESHOLD) {
-        const isExact = i === j && similarity >= EXACT_MATCH_THRESHOLD;
-
-        // Prefer: longer overlaps (j), then exact matches, then higher similarity
-        const score = j * 10 + (isExact ? 5 : 0) + similarity;
-        const bestScore = best
-          ? best.j * 10 + (best.isExact ? 5 : 0) + best.similarity
-          : 0;
-
-        if (!best || score > bestScore) {
-          best = { i, j, similarity, isExact };
-        }
-      }
-    }
+    best = findBestOverlapForSuffix(
+      best,
+      normalizedFirst,
+      secondWords,
+      maxJToCheck,
+      i,
+    );
   }
 
   return best;
@@ -106,6 +129,27 @@ const findTruncatedPrefixOverlap = (
   return null;
 };
 
+const findExactMatchForSuffix = (
+  normalizedFirst: string,
+  secondWords: string[],
+  maxJToCheck: number,
+  i: number,
+): number | null => {
+  for (let j = 1; j <= maxJToCheck; j++) {
+    const startOfSecond = secondWords.slice(0, j).join(" ");
+    const normalizedSecond = normalizeText(startOfSecond);
+
+    if (getLengthRatio(normalizedFirst, normalizedSecond) < 0.5) continue;
+
+    const similarity = getStringSimilarity(normalizedFirst, normalizedSecond);
+    if (similarity >= EXACT_MATCH_THRESHOLD && i === j) {
+      return j;
+    }
+  }
+
+  return null;
+};
+
 const findOverlapAfterDroppingLastWord = (
   firstWords: string[],
   secondWords: string[],
@@ -117,24 +161,18 @@ const findOverlapAfterDroppingLastWord = (
     const endOfFirst = firstWithoutLast.slice(-i).join(" ");
     const normalizedFirst = normalizeText(endOfFirst);
 
-    for (let j = 1; j <= maxJToCheck; j++) {
-      const startOfSecond = secondWords.slice(0, j).join(" ");
-      const normalizedSecond = normalizeText(startOfSecond);
-
-      const lengthRatio =
-        Math.min(normalizedFirst.length, normalizedSecond.length) /
-        Math.max(normalizedFirst.length, normalizedSecond.length);
-      if (lengthRatio < 0.5) continue;
-
-      const similarity = getStringSimilarity(normalizedFirst, normalizedSecond);
-
-      if (similarity >= EXACT_MATCH_THRESHOLD && i === j) {
-        // Found exact match after dropping last word - keep first without last word, skip overlap from second
-        return {
-          wordsToKeepFromFirst: firstWords.length - 1,
-          wordsToSkipFromSecond: j,
-        };
-      }
+    const matchedJ = findExactMatchForSuffix(
+      normalizedFirst,
+      secondWords,
+      maxJToCheck,
+      i,
+    );
+    if (matchedJ != null) {
+      // Found exact match after dropping last word - keep first without last word, skip overlap from second
+      return {
+        wordsToKeepFromFirst: firstWords.length - 1,
+        wordsToSkipFromSecond: matchedJ,
+      };
     }
   }
 

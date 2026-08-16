@@ -235,7 +235,9 @@ const evaluateComboRelease = ({
       continue;
     }
 
-    const comboId = Array.from(requiredSet).sort().join("+");
+    const comboId = Array.from(requiredSet)
+      .sort((a, b) => a.localeCompare(b))
+      .join("+");
     activeComboIds.add(comboId);
 
     const comboState = comboStates.get(comboId) ?? { contaminated: false };

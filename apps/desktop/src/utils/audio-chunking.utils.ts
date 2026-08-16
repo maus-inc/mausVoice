@@ -80,30 +80,45 @@ export const createAudioChunkPump = ({
     return filled === targetCount ? output : output.subarray(0, filled);
   };
 
+  const shouldDrain = (force: boolean) =>
+    pendingSampleCount >= minSamplesPerChunk ||
+    (force && pendingSampleCount > 0);
+
+  const computeChunkSize = (force: boolean): number | null => {
+    const available = pendingSampleCount;
+    if (available >= maxSamplesPerChunk) {
+      return maxSamplesPerChunk;
+    }
+    if (available < minSamplesPerChunk && !force) {
+      return null;
+    }
+    return available;
+  };
+
+  const padChunkIfNeeded = (
+    chunk: Float32Array,
+    force: boolean,
+  ): Float32Array => {
+    if (force && chunk.length > 0 && chunk.length < minSamplesPerChunk) {
+      const padded = new Float32Array(minSamplesPerChunk);
+      padded.set(chunk);
+      return padded;
+    }
+    return chunk;
+  };
+
   const flushPendingSamples = (force = false) => {
     if (!canSend()) {
       return;
     }
 
-    while (
-      pendingSampleCount >= minSamplesPerChunk ||
-      (force && pendingSampleCount > 0)
-    ) {
-      const available = pendingSampleCount;
-      let chunkSize = available;
-      if (available >= maxSamplesPerChunk) {
-        chunkSize = maxSamplesPerChunk;
-      } else if (available < minSamplesPerChunk && !force) {
+    while (shouldDrain(force)) {
+      const chunkSize = computeChunkSize(force);
+      if (chunkSize == null) {
         break;
       }
 
-      let chunk = drainSamples(chunkSize);
-      if (force && chunk.length > 0 && chunk.length < minSamplesPerChunk) {
-        const padded = new Float32Array(minSamplesPerChunk);
-        padded.set(chunk);
-        chunk = padded;
-      }
-
+      const chunk = padChunkIfNeeded(drainSamples(chunkSize), force);
       if (chunk.length === 0) {
         break;
       }
