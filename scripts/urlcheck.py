@@ -14,3 +14,28 @@ def assert_http_url(url: str) -> None:
     scheme = urlparse(url).scheme.lower()
     if scheme not in ("http", "https"):
         raise ValueError(f"Refusing to open non-http(s) URL: {url}")
+
+
+if __name__ == "__main__":
+    # Minimal self-test for the scheme allow-list.
+    allowed = [
+        "http://127.0.0.1:1/x",
+        "https://example.com",
+    ]
+    rejected = [
+        "file:///etc/passwd",
+        "ftp://x",
+    ]
+
+    for url in allowed:
+        assert_http_url(url)
+
+    for url in rejected:
+        try:
+            assert_http_url(url)
+        except ValueError:
+            pass
+        else:
+            raise AssertionError(f"Expected ValueError for non-http(s) URL: {url}")
+
+    print("ok")
