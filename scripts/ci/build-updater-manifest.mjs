@@ -120,6 +120,12 @@ async function main() {
   const version = process.env.RELEASE_VERSION ?? "";
   const tag = process.env.RELEASE_TAG ?? "";
   const notes = process.env.RELEASE_NOTES ?? "";
+  // GitHub Actions always sets GITHUB_REPOSITORY, so the fallback only applies
+  // to local runs and fixture tests. It is intentionally the upstream repo
+  // because shipped clients resolve latest.json from maus-inc/mausVoice — but
+  // note the limitation: a fork running this script outside Actions would emit
+  // download URLs pointing at upstream releases, not its own. Set
+  // GITHUB_REPOSITORY explicitly when building a fork's manifest by hand.
   const repository = process.env.GITHUB_REPOSITORY ?? "maus-inc/mausVoice";
   const outputPath = path.resolve(process.env.OUTPUT_PATH ?? "latest.json");
 

@@ -9,8 +9,12 @@ How to cut a release. One workflow, manual dispatch, nothing else.
 - The **updater** is signed separately, with a minisign key held in repository
   secrets. Nothing key-shaped is committed: the checked-in Tauri config ships
   `createUpdaterArtifacts: false` and an empty `pubkey`, and the build job
-  enables both only when the secrets exist. Without them the run still
-  succeeds and simply publishes installers with no `latest.json`.
+  enables both only when the secrets exist. Without them the pipeline **fails
+  closed for a stable release**: the publish job's manifest-eligibility gate
+  errors out rather than publish a release with no `latest.json`, because
+  clients fetch it from `releases/latest/download/` and would 404 forever. A
+  prerelease is the one case that still publishes unsigned installers with no
+  manifest.
 - Releases are authored by **your account** (`Owie6789`), not
   `github-actions[bot]`, because the `RELEASE_TOKEN` secret holds your PAT.
   If that secret is ever missing, the workflow falls back to
@@ -82,10 +86,11 @@ Open `https://github.com/maus-inc/mausVoice/releases` and check:
 - Release body has a **What's new** section, a **Downloads** table, and
   install notes
 - Prerelease checkbox matches what you set
-- For a stable release with signing configured: `latest.json` is attached and
+- For a stable release: `latest.json` is attached and
   lists `darwin-aarch64`, `darwin-x86_64`, `windows-x86_64`, and
-  `linux-x86_64`, each alongside its `.sig`. For a prerelease, `latest.json`
-  must be **absent**.
+  `linux-x86_64`, each alongside its `.sig` (the run cannot reach this point
+  without signing configured). For a prerelease, `latest.json` must be
+  **absent**.
 - Confirm an older installed build offers and installs the update.
 
 ## Troubleshooting
@@ -98,6 +103,7 @@ Open `https://github.com/maus-inc/mausVoice/releases` and check:
 | Tag already exists                                  | You're releasing a version that was already tagged. Pick a new version or delete the old tag (only if you're sure).                                                                   |
 | No Linux `.AppImage`                                | The matrix bundles `deb,appimage`; if AppImage packaging fails the whole Linux job fails. Check log for linuxdeploy errors.                                                           |
 | Body looks wrong                                    | `scripts/ci/generate-release-body.mjs` builds the release description. You can run it locally with `ARTIFACTS_DIR=... RELEASE_TAG=...` etc. to preview.                               |
+| Publish fails: `UPDATER_*` "are not configured"     | Expected fail-closed gate: a stable release must ship a signed `latest.json`. Set the `UPDATER_*` secrets and rerun, or release it as a prerelease.                                   |
 
 ## How the pieces fit
 

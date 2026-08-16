@@ -40,16 +40,17 @@ gh secret set UPDATER_PRIVATE_KEY_PASSWORD --repo maus-inc/mausVoice
 `Get-Content -Raw` matters: without it PowerShell strips the trailing newline and reflows the content, which can corrupt the stored key.
 :::
 
-If `UPDATER_PRIVATE_KEY` or `UPDATER_PUBLIC_KEY` is missing, the release job emits a warning and degrades gracefully: installers still build and publish, but unsigned, with no `.sig` files and no manifest. Nothing silently ships a build that clients would refuse or, worse, wrongly trust.
+If `UPDATER_PRIVATE_KEY` or `UPDATER_PUBLIC_KEY` is missing, the build job emits a warning and builds unsigned installers with no `.sig` files and no manifest. Publishing then depends on the channel, and a **stable release fails closed**: the manifest-eligibility gate in the publish job errors out (`::error::`, non-zero exit) before anything is uploaded, because clients resolve `latest.json` from `releases/latest/download/` and a stable release without it would 404 every installed copy and permanently disable updates. A prerelease is the one case that degrades gracefully — it publishes the unsigned installers and deliberately skips the manifest. Nothing silently ships a build that clients would refuse or, worse, wrongly trust.
 
 ## Release flow
 
 1. **Resolve signing mode.** The build job checks for both key secrets and records `enabled=true|false`.
 2. **Enable updater artifacts.** Only when signing is enabled: `createUpdaterArtifacts` is set to `true` and the real `pubkey` is patched into the config inside the build checkout. The edit is never committed.
 3. **Build.** Each platform runs `tauri build`, producing installers plus, when signing is on, the updater bundles (`.app.tar.gz`, `.nsis.zip`, `.AppImage`) and a detached `.sig` beside each.
-4. **Build the manifest.** After artifacts are downloaded, `scripts/ci/build-updater-manifest.mjs` pairs every updater bundle with its signature and writes `latest.json`.
-5. **Publish.** `latest.json` and the `.sig` files are uploaded as release assets alongside the installers.
-6. **Homebrew.** The cask job runs for stable releases only.
+4. **Resolve manifest eligibility.** The publish job derives the channel from the version itself. A version whose prerelease identifier disagrees with the workflow's prerelease input fails the job; a prerelease skips the manifest; a stable release missing the signing secrets fails closed rather than publish without `latest.json`.
+5. **Build the manifest.** After artifacts are downloaded, `scripts/ci/build-updater-manifest.mjs` pairs every updater bundle with its signature and writes `latest.json`.
+6. **Publish.** `latest.json` and the `.sig` files are uploaded as release assets alongside the installers.
+7. **Homebrew.** The cask job runs for stable releases only.
 
 The app resolves the manifest from `https://github.com/maus-inc/mausVoice/releases/latest/download/latest.json`. GitHub's `releases/latest` always points at the newest **non-prerelease** release, so the endpoint is stable across versions and a pre-release cannot become the update target.
 
