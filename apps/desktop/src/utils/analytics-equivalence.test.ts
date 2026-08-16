@@ -144,7 +144,8 @@ describe("analytics extraction is behaviour-preserving", () => {
       }
     }
 
-    // 4 plans x 4 trial states x 2 auth states x 3 onboardings x 3 contacts
+    // 4 plans x 4 trial states x 2 user (signed-in/out) states
+    //   x 3 onboardings x 3 contacts
     expect(cases).toBe(288);
   });
 
