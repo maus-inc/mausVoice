@@ -9,7 +9,7 @@ import {
 
 // Canonical lowercase tokens for key names, mapping synonyms ("esc"/"escape",
 // "return"/"enter", "up"/"arrowup", ...) onto a single representation.
-const KEY_ALIASES: Record<string, string> = {
+export const KEY_ALIASES: Record<string, string> = {
   " ": "space",
   space: "space",
   esc: "escape",
@@ -26,6 +26,18 @@ const KEY_ALIASES: Record<string, string> = {
   left: "arrowleft",
   arrowright: "arrowright",
   right: "arrowright",
+};
+
+/**
+ * Canonicalizes a key token to a stable lowercase representation. The raw
+ * (untrimmed) key is queried first so KeyboardEvent.key values like " "
+ * (Space) resolve through the alias table; the trimmed form is the fallback
+ * for padded input.
+ */
+export const canonicalizeKey = (k: string): string => {
+  const raw = k.toLowerCase();
+  const trimmed = raw.trim();
+  return KEY_ALIASES[raw] ?? KEY_ALIASES[trimmed] ?? trimmed;
 };
 
 export function usePrevious<T>(value: T): T | undefined;
@@ -140,11 +152,7 @@ export const useKeyCombo = (args: UseKeyComboArgs = {}): boolean => {
   // Canonicalize to stable lowercase tokens. The raw (untrimmed) key is
   // queried first so KeyboardEvent.key values like " " (Space) resolve through
   // the alias table; the trimmed form is the fallback for padded input.
-  const canon = (k: string): string => {
-    const raw = k.toLowerCase();
-    const trimmed = raw.trim();
-    return KEY_ALIASES[raw] ?? KEY_ALIASES[trimmed] ?? trimmed;
-  };
+  const canon = canonicalizeKey;
 
   const isModifierKey = (k: string) =>
     k === "shift" || k === "control" || k === "alt" || k === "meta";
