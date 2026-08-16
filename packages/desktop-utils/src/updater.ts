@@ -135,7 +135,9 @@ export const buildManualMacInstallerUrl = (
     return null;
   }
 
-  const fileName = `mausVoice_${version}_universal.pkg`;
+  // Tauri v2 direct-sign produces a `.dmg` (and `.app.tar.gz`) for macOS, never
+  // a `.pkg`. Point the manual-install fallback at the universal `.dmg`.
+  const fileName = `mausVoice_${version}_universal.dmg`;
   return `${GITHUB_RELEASE_DOWNLOAD_BASE}/${encodeURIComponent(releaseTag)}/${encodeURIComponent(fileName)}`;
 };
 
@@ -257,7 +259,7 @@ export const installAvailableUpdate = async (
 };
 
 /**
- * Downloads a `.pkg` installer to a temp directory and opens it via macOS
+ * Downloads a `.dmg` installer to a temp directory and opens it via macOS
  * Installer.app. Used as a fallback when the in-place updater cannot write
  * to the app's install location.
  */
