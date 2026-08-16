@@ -57,11 +57,15 @@ export default function TranscriptionsPage() {
   const prevImportDialogOpen = useRef(false);
   useEffect(() => {
     if (importDialogOpen && !prevImportDialogOpen.current) {
-      setSelectedToneId(tones[0]?.id ?? null);
-      setSelectedLanguage(defaultLanguage as DictationLanguageCode);
+      const state = useAppStore.getState();
+      const openTones = getSortedToneIds(state)
+        .map((id) => getRec(state.toneById, id))
+        .filter((tone): tone is Tone => Boolean(tone));
+      setSelectedToneId(openTones[0]?.id ?? null);
+      setSelectedLanguage(getMyDictationLanguage(state) as DictationLanguageCode);
     }
     prevImportDialogOpen.current = importDialogOpen;
-  }, [defaultLanguage, importDialogOpen, tones]);
+  }, [importDialogOpen]);
 
   const handleImport = async () => {
     const selected = await openFileDialog({

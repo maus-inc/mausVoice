@@ -5,6 +5,12 @@ type HoldAction = {
   controller: ActivationController;
   combos: string[][];
   triggerCount: number;
+  /**
+   * Keys that may be held in addition to the required combo without
+   * invalidating the match. Used for hold-to-talk tolerance (e.g. the
+   * in-dictation style-switch arrows held alongside the activation key).
+   */
+  allowedAdditionalKeys?: string[];
 };
 
 export type UseHotkeyHoldManyArgs = {
@@ -51,27 +57,42 @@ export const useHotkeyHoldMany = (args: UseHotkeyHoldManyArgs): void => {
   useEffect(() => {
     const normalize = (key: string) => key.toLowerCase();
 
-    const matchesCombo = (held: string[], combo: string[]) => {
+    const matchesCombo = (
+      held: string[],
+      combo: string[],
+      allowedAdditionalKeys?: string[],
+    ) => {
       if (combo.length === 0) {
         return false;
       }
 
       const uniqueHeld = Array.from(new Set(held.map((key) => normalize(key))));
       const required = Array.from(new Set(combo.map((key) => normalize(key))));
-
-      if (uniqueHeld.length !== required.length) {
-        return false;
-      }
+      const requiredSet = new Set(required);
+      const allowed = new Set(
+        (allowedAdditionalKeys ?? []).map((key) => normalize(key)),
+      );
 
       const heldSet = new Set(uniqueHeld);
-      return required.every((key) => heldSet.has(key));
+      // Every required key must be held.
+      if (!required.every((key) => heldSet.has(key))) {
+        return false;
+      }
+      // Every held key must be either required or explicitly allowed; any other
+      // extra key (e.g. Fn+any-key) invalidates the hold-to-talk gesture.
+      for (const key of uniqueHeld) {
+        if (!requiredSet.has(key) && !allowed.has(key)) {
+          return false;
+        }
+      }
+      return true;
     };
 
     for (const action of actions) {
       const availableCombos = action.combos;
       const wasPressed = wasPressedRef.current.get(action.controller) ?? false;
       const isPressed = availableCombos.some((combo) =>
-        matchesCombo(keysHeld, combo),
+        matchesCombo(keysHeld, combo, action.allowedAdditionalKeys),
       );
 
       if (isDisabled) {

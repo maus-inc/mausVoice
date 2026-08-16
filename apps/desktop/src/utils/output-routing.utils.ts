@@ -48,8 +48,11 @@ const deliverRemoteOutput = async (
 const reviewOutputText = async (
   text: string,
   prefs: OutputContext["prefs"],
+  skipReview?: boolean,
 ): Promise<string | null> => {
-  if (prefs?.reviewBeforeInsert !== true || !text.trim()) return text;
+  if (skipReview || prefs?.reviewBeforeInsert !== true || !text.trim()) {
+    return text;
+  }
   return reviewTextInComposer(text);
 };
 
@@ -87,7 +90,7 @@ export const routeTranscriptOutput = async (
     return deliverRemoteOutput(args, prefs);
   }
 
-  const outputText = await reviewOutputText(args.text, prefs);
+  const outputText = await reviewOutputText(args.text, prefs, args.skipReview);
   if (!outputText?.trim()) return { delivered: false, remote: false };
 
   await insertLocalOutput(context, outputText);
