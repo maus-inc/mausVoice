@@ -499,20 +499,17 @@ pub async fn transcription_import_audio(
     }
 
     // Bound concurrent decodes so a flood of imports can't multiply the
-    // already-large per-decode memory ceiling.
-    if IMPORT_IN_FLIGHT
-        .compare_exchange(
-            false,
-            true,
-            std::sync::atomic::Ordering::SeqCst,
-            std::sync::atomic::Ordering::SeqCst,
-        )
-        .is_err()
-    {
-        return Err(
-            "An audio import is already in progress. Please wait for it to finish.".to_string(),
-        );
-    }
+    // already-large per-decode memory ceiling. The ReentryGuard releases the
+    // flag on every exit path — including a dropped caller future — so a
+    // disconnected client can't wedge imports permanently (import DoS).
+    let _import_guard = match ReentryGuard::acquire(&IMPORT_IN_FLIGHT) {
+        Ok(guard) => guard,
+        Err(_) => {
+            return Err(
+                "An audio import is already in progress. Please wait for it to finish.".to_string(),
+            );
+        }
+    };
 
     let result = tauri::async_runtime::spawn_blocking(move || {
         let file = std::fs::File::open(&path)
@@ -592,7 +589,6 @@ pub async fn transcription_import_audio(
     })
     .await
     .map_err(|err| format!("audio import task failed: {err}"));
-    IMPORT_IN_FLIGHT.store(false, std::sync::atomic::Ordering::SeqCst);
     result?
 }
 

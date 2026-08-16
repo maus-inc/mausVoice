@@ -148,15 +148,6 @@ const normalizeAgentMode = (mode: Nullable<string>): Nullable<AgentMode> => {
   return "none";
 };
 
-const nullableValue = <T>(value: T | null | undefined): T | null =>
-  value ?? null;
-
-const booleanValue = (value: boolean | null | undefined): boolean =>
-  value ?? false;
-
-const valueOr = <T>(value: T | null | undefined, fallback: T): T =>
-  value ?? fallback;
-
 const jsonValue = (value: string[] | null | undefined): string | null =>
   value ? JSON.stringify(value) : null;
 
@@ -165,20 +156,18 @@ export const fromLocalPreferences = (
 ): UserPreferences => ({
   userId: preferences.userId,
   transcriptionMode: normalizeTranscriptionMode(preferences.transcriptionMode),
-  transcriptionApiKeyId: nullableValue(preferences.transcriptionApiKeyId),
-  transcriptionDevice: nullableValue(preferences.transcriptionDevice),
-  transcriptionModelSize: nullableValue(preferences.transcriptionModelSize),
+  transcriptionApiKeyId: orNull(preferences.transcriptionApiKeyId),
+  transcriptionDevice: orNull(preferences.transcriptionDevice),
+  transcriptionModelSize: orNull(preferences.transcriptionModelSize),
   postProcessingMode: normalizePostProcessingMode(
     preferences.postProcessingMode,
   ),
-  postProcessingApiKeyId: nullableValue(preferences.postProcessingApiKeyId),
-  postProcessingOllamaUrl: nullableValue(preferences.postProcessingOllamaUrl),
-  postProcessingOllamaModel: nullableValue(
-    preferences.postProcessingOllamaModel,
-  ),
-  activeToneId: nullableValue(preferences.activeToneId),
-  gotStartedAt: nullableValue(preferences.gotStartedAt),
-  gpuEnumerationEnabled: booleanValue(preferences.gpuEnumerationEnabled),
+  postProcessingApiKeyId: orNull(preferences.postProcessingApiKeyId),
+  postProcessingOllamaUrl: orNull(preferences.postProcessingOllamaUrl),
+  postProcessingOllamaModel: orNull(preferences.postProcessingOllamaModel),
+  activeToneId: orNull(preferences.activeToneId),
+  gotStartedAt: orNull(preferences.gotStartedAt),
+  gpuEnumerationEnabled: orFalse(preferences.gpuEnumerationEnabled),
   agentMode: normalizeAgentMode(preferences.agentMode),
   agentModeApiKeyId: preferences.agentModeApiKeyId,
   openclawGatewayUrl: orNull(preferences.openclawGatewayUrl),
@@ -212,7 +201,7 @@ export const fromLocalPreferences = (
   inDictationStyleSwitchingEnabled: orFalse(
     preferences.inDictationStyleSwitchingEnabled,
   ),
-  hallucinationFilterEnabled: valueOr(
+  hallucinationFilterEnabled: orValue(
     preferences.hallucinationFilterEnabled,
     true,
   ),
@@ -280,7 +269,7 @@ export const toLocalPreferences = (
   inDictationStyleSwitchingEnabled:
     preferences.inDictationStyleSwitchingEnabled,
   hallucinationFilterEnabled: preferences.hallucinationFilterEnabled,
-  reviewBeforeInsert: nullableValue(preferences.reviewBeforeInsert),
+  reviewBeforeInsert: orNull(preferences.reviewBeforeInsert),
   agentEnabledTools: jsonValue(preferences.agentEnabledTools),
   agentMaxIterations: normalizeAgentMaxIterations(
     preferences.agentMaxIterations,

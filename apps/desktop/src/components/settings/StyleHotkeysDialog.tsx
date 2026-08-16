@@ -72,8 +72,8 @@ export const StyleHotkeysDialog = () => {
         const left = new Set(filled[i].keys.map((key) => key.toLowerCase()));
         const right = new Set(filled[j].keys.map((key) => key.toLowerCase()));
         if (
-          [...left].every((key) => right.has(key)) ||
-          [...right].every((key) => left.has(key))
+          left.size === right.size &&
+          [...left].every((key) => right.has(key))
         ) {
           return true;
         }
