@@ -397,6 +397,10 @@ async fn delete_model(
     Ok(Json(status))
 }
 
+fn default_hallucination_filter_enabled() -> bool {
+    true
+}
+
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct TranscribeRequest {
@@ -406,6 +410,8 @@ struct TranscribeRequest {
     language: Option<String>,
     initial_prompt: Option<String>,
     device_id: Option<String>,
+    #[serde(default = "default_hallucination_filter_enabled")]
+    hallucination_filter_enabled: bool,
 }
 
 #[derive(Debug, Deserialize)]
@@ -416,6 +422,8 @@ struct CreateTranscriptionSessionRequest {
     language: Option<String>,
     initial_prompt: Option<String>,
     device_id: Option<String>,
+    #[serde(default = "default_hallucination_filter_enabled")]
+    hallucination_filter_enabled: bool,
 }
 
 #[derive(Debug, Deserialize)]
@@ -467,6 +475,7 @@ async fn transcribe(
         request.language,
         request.initial_prompt,
         request.device_id,
+        request.hallucination_filter_enabled,
     )
     .await?;
 
@@ -493,6 +502,7 @@ async fn create_transcription_session(
                 language: request.language,
                 initial_prompt: request.initial_prompt,
                 device_id: request.device_id,
+                hallucination_filter_enabled: request.hallucination_filter_enabled,
             },
         )
         .await;
@@ -553,6 +563,7 @@ async fn finalize_transcription_session(
         session.language,
         session.initial_prompt,
         session.device_id,
+        session.hallucination_filter_enabled,
     )
     .await?;
 
@@ -658,6 +669,7 @@ async fn run_transcription_request(
     language: Option<String>,
     initial_prompt: Option<String>,
     device_id: Option<String>,
+    hallucination_filter_enabled: bool,
 ) -> Result<crate::transcription::TranscriptionOutput, ApiError> {
     state
         .transcriber
@@ -669,6 +681,7 @@ async fn run_transcription_request(
             language,
             initial_prompt,
             device_id,
+            hallucination_filter_enabled,
         })
         .await
         .map_err(|error| map_transcription_error(model, error))

@@ -10,9 +10,10 @@ export type LocalWhisperModel =
   | "turbo"
   | "parakeet-ctc-0.6b"
   | "parakeet-tdt-0.6b"
-  | "canary-1b";
+  | "canary-1b"
+  | "sense-voice";
 
-export type LocalModelCategory = "fast" | "whisper";
+export type LocalModelCategory = "fast" | "whisper" | "sherpa";
 
 export type LocalModelOption = {
   value: LocalWhisperModel;
@@ -27,6 +28,7 @@ export const LOCAL_WHISPER_MODELS: LocalWhisperModel[] = [
   "parakeet-ctc-0.6b",
   "parakeet-tdt-0.6b",
   "canary-1b",
+  "sense-voice",
   "tiny",
   "base",
   "small",
@@ -66,6 +68,14 @@ const MODEL_LOOKUP: Record<LocalWhisperModel, ModelMeta> = {
       defaultMessage: "Multilingual STT + automatic punctuation & casing",
     }),
     category: "fast",
+  },
+  "sense-voice": {
+    label: defineMessage({ defaultMessage: "SenseVoice (640 MB)" }),
+    helper: defineMessage({
+      defaultMessage:
+        "Multilingual local ASR with punctuation and strong silence handling",
+    }),
+    category: "sherpa",
   },
   tiny: {
     label: defineMessage({ defaultMessage: "Whisper Tiny (77 MB)" }),
@@ -114,67 +124,45 @@ export const LOCAL_MODEL_OPTIONS: LocalModelOption[] = LOCAL_WHISPER_MODELS.map(
   }),
 );
 
+const LOCAL_MODEL_ALIASES: Record<string, LocalWhisperModel> = {
+  tiny: "tiny",
+  "tiny.en": "tiny",
+  base: "base",
+  "base.en": "base",
+  small: "small",
+  "small.en": "small",
+  medium: "medium",
+  "medium.en": "medium",
+  large: "large",
+  "large-v3": "large",
+  turbo: "turbo",
+  "large-turbo": "turbo",
+  large_v3_turbo: "turbo",
+  "large-v3-turbo": "turbo",
+  "parakeet-ctc-0.6b": "parakeet-ctc-0.6b",
+  "parakeet-ctc": "parakeet-ctc-0.6b",
+  parakeet_ctc: "parakeet-ctc-0.6b",
+  "parakeet_ctc_0.6b": "parakeet-ctc-0.6b",
+  "parakeet-tdt-0.6b": "parakeet-tdt-0.6b",
+  "parakeet-tdt": "parakeet-tdt-0.6b",
+  parakeet_tdt: "parakeet-tdt-0.6b",
+  "parakeet_tdt_0.6b": "parakeet-tdt-0.6b",
+  "canary-1b": "canary-1b",
+  canary: "canary-1b",
+  canary_1b: "canary-1b",
+  "sense-voice": "sense-voice",
+  sensevoice: "sense-voice",
+  sense_voice: "sense-voice",
+};
+
 export const normalizeLocalWhisperModel = (
   value: string | null | undefined,
 ): LocalWhisperModel => {
   const normalized = value?.trim().toLowerCase();
-
-  if (normalized === "tiny" || normalized === "tiny.en") {
-    return "tiny";
-  }
-
-  if (normalized === "base" || normalized === "base.en") {
-    return "base";
-  }
-
-  if (normalized === "small" || normalized === "small.en") {
-    return "small";
-  }
-
-  if (normalized === "medium" || normalized === "medium.en") {
-    return "medium";
-  }
-
-  if (normalized === "large" || normalized === "large-v3") {
-    return "large";
-  }
-
-  if (
-    normalized === "turbo" ||
-    normalized === "large-turbo" ||
-    normalized === "large_v3_turbo" ||
-    normalized === "large-v3-turbo"
-  ) {
-    return "turbo";
-  }
-
-  if (
-    normalized === "parakeet-ctc-0.6b" ||
-    normalized === "parakeet-ctc" ||
-    normalized === "parakeet_ctc" ||
-    normalized === "parakeet_ctc_0.6b"
-  ) {
-    return "parakeet-ctc-0.6b";
-  }
-
-  if (
-    normalized === "parakeet-tdt-0.6b" ||
-    normalized === "parakeet-tdt" ||
-    normalized === "parakeet_tdt" ||
-    normalized === "parakeet_tdt_0.6b"
-  ) {
-    return "parakeet-tdt-0.6b";
-  }
-
-  if (
-    normalized === "canary-1b" ||
-    normalized === "canary" ||
-    normalized === "canary_1b"
-  ) {
-    return "canary-1b";
-  }
-
-  return DEFAULT_LOCAL_WHISPER_MODEL;
+  return (
+    (normalized ? LOCAL_MODEL_ALIASES[normalized] : undefined) ??
+    DEFAULT_LOCAL_WHISPER_MODEL
+  );
 };
 
 export const isGpuPreferredTranscriptionDevice = (

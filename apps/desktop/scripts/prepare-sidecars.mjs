@@ -1,7 +1,13 @@
 #!/usr/bin/env node
 
 import { spawnSync } from "node:child_process";
-import { chmodSync, copyFileSync, existsSync, mkdirSync } from "node:fs";
+import {
+  chmodSync,
+  copyFileSync,
+  existsSync,
+  mkdirSync,
+  readdirSync,
+} from "node:fs";
 import { dirname, isAbsolute, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -22,6 +28,16 @@ const rustTargetDir = cargoTargetDirOverride
   : join(repoRoot, "packages", "rust_transcription", "target");
 const tauriBinariesDir = join(desktopDir, "src-tauri", "binaries");
 
+// These are the runtime DLLs shipped by sherpa-onnx's Windows shared build.
+// Never copy arbitrary DLLs from Cargo's profile directory into the app
+// bundle: build tools and unrelated native dependencies may be present there.
+const WINDOWS_SHERPA_RUNTIME_DLLS = new Set([
+  "onnxruntime.dll",
+  "onnxruntime_providers_shared.dll",
+  "sherpa-onnx-c-api.dll",
+  "sherpa-onnx-cxx-api.dll",
+]);
+
 const buildTarget =
   process.env.CARGO_BUILD_TARGET?.trim() ||
   process.env.TAURI_ENV_TARGET_TRIPLE?.trim() ||
@@ -40,6 +56,7 @@ if (!existsSync(sidecarManifestPath)) {
 mkdirSync(tauriBinariesDir, { recursive: true });
 
 const cpuSidecarPath = buildAndCopy("rust-transcription-cpu", false);
+prepareSherpaWindowsRuntime();
 prepareOnnxRuntimeLibrary();
 const gpuBuildState = resolveGpuBuildState(targetTriple);
 
@@ -128,6 +145,31 @@ function buildArtifactPath(fileName) {
   );
 }
 
+function prepareSherpaWindowsRuntime() {
+  if (!isWindowsTarget(targetTriple)) {
+    return;
+  }
+
+  const profileDir = join(
+    rustTargetDir,
+    ...(buildTarget ? [buildTarget] : []),
+    buildProfile,
+  );
+  if (!existsSync(profileDir)) {
+    return;
+  }
+
+  const runtimeDlls = readdirSync(profileDir).filter((name) =>
+    WINDOWS_SHERPA_RUNTIME_DLLS.has(name.toLowerCase()),
+  );
+  for (const name of runtimeDlls) {
+    const destinationDir = join(tauriBinariesDir, "onnxruntime");
+    mkdirSync(destinationDir, { recursive: true });
+    copyFileSync(join(profileDir, name), join(destinationDir, name));
+    console.log(`[sidecar] Prepared sherpa Windows runtime: ${name}`);
+  }
+}
+
 function prepareOnnxRuntimeLibrary() {
   const libraryName = onnxRuntimeLibraryName(targetTriple);
   const sourcePath = buildArtifactPath(libraryName);
@@ -176,7 +218,6 @@ function run(command, args, cwd, options = {}) {
   const result = spawnSync(command, args, {
     cwd,
     stdio: "inherit",
-    env: process.env,
   });
 
   if (result.status !== 0) {

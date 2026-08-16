@@ -77,6 +77,7 @@ export type LocalSidecarTranscribeInput = {
   initialPrompt?: string;
   preferGpu: boolean;
   deviceId?: string;
+  hallucinationFilterEnabled?: boolean;
 };
 
 export type LocalSidecarStreamingSessionInput = Omit<
@@ -487,6 +488,7 @@ export class LocalTranscriptionSidecar extends BaseSidecar {
     language?: string;
     initialPrompt?: string;
     deviceId?: string;
+    hallucinationFilterEnabled: boolean;
   } {
     const normalizedDeviceId = input.deviceId?.trim().toLowerCase();
     const deviceId =
@@ -504,6 +506,7 @@ export class LocalTranscriptionSidecar extends BaseSidecar {
       language: input.language === "auto" ? undefined : input.language,
       initialPrompt: input.initialPrompt,
       deviceId,
+      hallucinationFilterEnabled: input.hallucinationFilterEnabled !== false,
     };
   }
 

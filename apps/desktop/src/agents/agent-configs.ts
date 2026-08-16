@@ -1,11 +1,25 @@
 import type { ToolInfo } from "@maus-inc/types";
 import { getAppState } from "../store";
+import { normalizeAgentMaxIterations } from "../repos/preferences.repo";
+import { getToolRegistryEntry } from "../tools";
 
 export type AgentTypeConfig = {
   agentType: string;
   systemPrompt: string;
   getToolFilter: (conversationId: string) => (info: ToolInfo) => boolean;
   maxIterations: number;
+};
+
+const getConfiguredMaxIterations = (): number =>
+  normalizeAgentMaxIterations(getAppState().userPrefs?.agentMaxIterations);
+
+const getRegistryEnablement = (toolId: string): boolean => {
+  const configured = getAppState().userPrefs?.agentEnabledTools;
+  // Null is the persisted "use registry defaults" sentinel. An empty list is
+  // an explicit deny-all selection and must not silently re-enable tools.
+  return configured === null || configured === undefined
+    ? true
+    : configured.includes(toolId);
 };
 
 export const CHAT_AGENT_CONFIG: AgentTypeConfig = {
@@ -19,7 +33,24 @@ export const CHAT_AGENT_CONFIG: AgentTypeConfig = {
   ].join(" "),
   getToolFilter: (conversationId) => {
     const isPill = getAppState().pillConversationId === conversationId;
-    return (t) => (isPill ? t.scope !== "chat" : t.scope !== "pill");
+    return (tool) => {
+      const registryEntry = getToolRegistryEntry(tool.id);
+      if (!registryEntry) return false;
+      const scope = tool.scope ?? registryEntry.scope;
+      const inScope = isPill ? scope !== "chat" : scope !== "pill";
+      return inScope && getRegistryEnablement(tool.id);
+    };
   },
-  maxIterations: 20,
+  get maxIterations() {
+    return getConfiguredMaxIterations();
+  },
 };
+
+/** Registry-backed configs leave room for specialized agents without adding
+ * another switch statement in the run loop. */
+export const AGENT_TYPE_CONFIGS: Readonly<Record<string, AgentTypeConfig>> = {
+  chat: CHAT_AGENT_CONFIG,
+};
+
+export const getAgentTypeConfig = (agentType = "chat"): AgentTypeConfig =>
+  AGENT_TYPE_CONFIGS[agentType] ?? CHAT_AGENT_CONFIG;

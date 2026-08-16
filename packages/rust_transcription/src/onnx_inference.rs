@@ -13,6 +13,7 @@ use std::sync::{Arc, LazyLock, Mutex, OnceLock};
 
 use canary_rs::Canary;
 use parakeet_rs::{Parakeet, ParakeetTDT, Transcriber};
+use sherpa_onnx::{OfflineRecognizer, OfflineRecognizerConfig, OfflineSenseVoiceModelConfig};
 
 use crate::models::WhisperModel;
 
@@ -20,6 +21,7 @@ enum LoadedModel {
     ParakeetCtc(Parakeet),
     ParakeetTdt(ParakeetTDT),
     Canary(Canary),
+    SenseVoice(OfflineRecognizer),
 }
 
 // Parakeet's inference API is mutable because ONNX Runtime sessions reuse
@@ -27,7 +29,7 @@ enum LoadedModel {
 // insert a cached runtime; the per-model inner lock is what serializes
 // inference for a single model, so concurrent requests for *different* models
 // do not block each other on the global cache lock.
-static MODEL_CACHE: LazyLock<Mutex<HashMap<PathBuf, Arc<Mutex<Option<LoadedModel>>>>>> =
+static MODEL_CACHE: LazyLock<Mutex<HashMap<(PathBuf, String), Arc<Mutex<Option<LoadedModel>>>>>> =
     LazyLock::new(|| Mutex::new(HashMap::new()));
 
 /// Run genuine model inference for one of the configured ONNX models.
@@ -44,9 +46,16 @@ pub fn transcribe(
         return Ok(String::new());
     }
 
-    ensure_onnx_runtime()?;
+    if !uses_sherpa_onnx_runtime(model) {
+        ensure_onnx_runtime()?;
+    }
     let model_dir = model_directory(model_path)?;
-    let cache_key = model_dir.to_path_buf();
+    let language_key = if model == WhisperModel::SenseVoice {
+        normalize_sense_voice_language(language).to_string()
+    } else {
+        String::new()
+    };
+    let cache_key = (model_dir.to_path_buf(), language_key);
 
     // Hold the global lock only long enough to fetch (or insert) the cached
     // runtime, then release it so inference for other models can proceed.
@@ -67,7 +76,7 @@ pub fn transcribe(
     if guard.is_none() {
         // Loading is guarded only by this model's lock. A different model can
         // load or transcribe concurrently without waiting on the cache map.
-        *guard = Some(load_model(model, model_dir)?);
+        *guard = Some(load_model(model, model_dir, language)?);
     }
     let loaded = guard
         .as_mut()
@@ -88,6 +97,15 @@ pub fn transcribe(
                 .transcribe_samples(samples_16k, 16_000, 1, language, language)
                 .map(|result| result.text.trim().to_string())
                 .map_err(|err| format!("Canary inference failed: {err}"))
+        }
+        (WhisperModel::SenseVoice, LoadedModel::SenseVoice(recognizer)) => {
+            let stream = recognizer.create_stream();
+            stream.accept_waveform(16_000, samples_16k);
+            recognizer.decode(&stream);
+            stream
+                .get_result()
+                .map(|result| result.text.trim().to_string())
+                .ok_or_else(|| "SenseVoice did not return a recognition result".to_string())
         }
         _ => Err(format!(
             "cached ONNX runtime does not match model '{}'",
@@ -134,7 +152,9 @@ pub fn validate_model_classified(
         )));
     }
 
-    ensure_onnx_runtime().map_err(OnnxModelValidationError::Runtime)?;
+    if !uses_sherpa_onnx_runtime(model) {
+        ensure_onnx_runtime().map_err(OnnxModelValidationError::Runtime)?;
+    }
     let model_dir = model_directory(model_path).map_err(OnnxModelValidationError::Artifact)?;
     for (name, _, _) in model.artifact_set() {
         let artifact_path = model_dir.join(name);
@@ -157,7 +177,7 @@ pub fn validate_model_classified(
     // the tokenizer/vocabulary without constructing every session twice.
     // Validation loads are not cached, so a failed replacement cannot poison
     // later inference.
-    load_model(model, model_dir)
+    load_model(model, model_dir, None)
         .map(|_| true)
         .map_err(OnnxModelValidationError::Artifact)
 }
@@ -168,7 +188,7 @@ pub fn evict_model(model_path: &Path) {
         return;
     };
     if let Ok(mut cache) = MODEL_CACHE.lock() {
-        cache.remove(model_dir);
+        cache.retain(|(cached_dir, _), _| cached_dir.as_path() != model_dir);
     }
 }
 
@@ -282,7 +302,35 @@ fn runtime_library_name() -> &'static str {
     }
 }
 
-fn load_model(model: WhisperModel, model_dir: &Path) -> Result<LoadedModel, String> {
+fn uses_sherpa_onnx_runtime(model: WhisperModel) -> bool {
+    // sherpa-onnx supplies and initializes its own ONNX Runtime for SenseVoice;
+    // it must not go through the ort dynamic-library initializer.
+    model == WhisperModel::SenseVoice
+}
+
+fn normalize_sense_voice_language(language: Option<&str>) -> String {
+    let language = language
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .unwrap_or("auto");
+    let language = language
+        .split(|character| character == '-' || character == '_')
+        .next()
+        .unwrap_or(language)
+        .to_ascii_lowercase();
+    let is_supported = matches!(language.as_str(), "zh" | "en" | "ja" | "ko" | "yue");
+    if is_supported {
+        language
+    } else {
+        "auto".to_string()
+    }
+}
+
+fn load_model(
+    model: WhisperModel,
+    model_dir: &Path,
+    language: Option<&str>,
+) -> Result<LoadedModel, String> {
     match model {
         WhisperModel::ParakeetCtc06B => Parakeet::from_pretrained(model_dir, None)
             .map(LoadedModel::ParakeetCtc)
@@ -293,6 +341,23 @@ fn load_model(model: WhisperModel, model_dir: &Path) -> Result<LoadedModel, Stri
         WhisperModel::Canary1B => Canary::from_pretrained(model_dir, None)
             .map(LoadedModel::Canary)
             .map_err(|err| format!("failed to load Canary model: {err}")),
+        WhisperModel::SenseVoice => {
+            let mut config = OfflineRecognizerConfig::default();
+            config.model_config.sense_voice = OfflineSenseVoiceModelConfig {
+                model: Some(model_dir.join("model.int8.onnx").to_string_lossy().into_owned()),
+                language: Some(normalize_sense_voice_language(language).to_string()),
+                use_itn: true,
+            };
+            config.model_config.tokens = Some(
+                model_dir
+                    .join("tokens.txt")
+                    .to_string_lossy()
+                    .into_owned(),
+            );
+            OfflineRecognizer::create(&config)
+                .map(LoadedModel::SenseVoice)
+                .ok_or_else(|| "failed to load SenseVoice model".to_string())
+        }
         _ => Err(format!("model '{}' is not an ONNX model", model.as_slug())),
     }
 }

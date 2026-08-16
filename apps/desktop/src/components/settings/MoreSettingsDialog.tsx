@@ -24,6 +24,9 @@ import {
   setPillResetMonitorStrategy,
   setIgnoreUpdateDialog,
   setIncognitoModeEnabled,
+  setInDictationStyleSwitchingEnabled,
+  setHallucinationFilterEnabled,
+  setReviewBeforeInsert,
   setIncognitoModeIncludeInStats,
   setMenuBarIconHidden,
   setRealtimeOutputEnabled,
@@ -62,6 +65,9 @@ export const MoreSettingsDialog = () => {
     disablePillRewards,
     disableAutoStyleLoading,
     menuBarIconHidden,
+    inDictationStyleSwitchingEnabled,
+    hallucinationFilterEnabled,
+    reviewBeforeInsert,
   ] = useAppStore((state) => {
     const prefs = getMyUserPreferences(state);
     const transcriptionPrefs = getTranscriptionPrefs(state);
@@ -80,6 +86,9 @@ export const MoreSettingsDialog = () => {
       state.local.disablePillRewards,
       state.local.disableAutoStyleLoading ?? false,
       prefs?.menuBarIconHidden ?? false,
+      prefs?.inDictationStyleSwitchingEnabled ?? false,
+      prefs?.hallucinationFilterEnabled ?? true,
+      prefs?.reviewBeforeInsert ?? false,
     ] as const;
   });
   const [dictationLimitInput, setDictationLimitInput] = useState(
@@ -159,6 +168,24 @@ export const MoreSettingsDialog = () => {
 
   const handleToggleRealtimeOutput = (event: ChangeEvent<HTMLInputElement>) => {
     void setRealtimeOutputEnabled(event.target.checked);
+  };
+
+  const handleToggleInDictationStyleSwitching = (
+    event: ChangeEvent<HTMLInputElement>,
+  ) => {
+    void setInDictationStyleSwitchingEnabled(event.target.checked);
+  };
+
+  const handleToggleHallucinationFilter = (
+    event: ChangeEvent<HTMLInputElement>,
+  ) => {
+    void setHallucinationFilterEnabled(event.target.checked);
+  };
+
+  const handleToggleReviewBeforeInsert = (
+    event: ChangeEvent<HTMLInputElement>,
+  ) => {
+    void setReviewBeforeInsert(event.target.checked);
   };
 
   const handleToggleDisablePillRewards = (
@@ -328,6 +355,52 @@ export const MoreSettingsDialog = () => {
                 edge="end"
                 checked={realtimeOutputEnabled}
                 onChange={handleToggleRealtimeOutput}
+              />
+            }
+          />
+
+          <SettingSection
+            title={<FormattedMessage defaultMessage="Review before insert" />}
+            description={
+              <FormattedMessage defaultMessage="Open an editable composer so you can review or change dictated text before it is inserted." />
+            }
+            action={
+              <Switch
+                edge="end"
+                checked={reviewBeforeInsert}
+                onChange={handleToggleReviewBeforeInsert}
+              />
+            }
+          />
+
+          <SettingSection
+            title={
+              <FormattedMessage defaultMessage="Silence hallucination filter" />
+            }
+            description={
+              <FormattedMessage defaultMessage="Discard common fabricated phrases produced when the microphone hears silence or noise." />
+            }
+            action={
+              <Switch
+                edge="end"
+                checked={hallucinationFilterEnabled}
+                onChange={handleToggleHallucinationFilter}
+              />
+            }
+          />
+
+          <SettingSection
+            title={
+              <FormattedMessage defaultMessage="Switch style while dictating" />
+            }
+            description={
+              <FormattedMessage defaultMessage="Hold the dictate activation key and press Left or Right Arrow to cycle active styles." />
+            }
+            action={
+              <Switch
+                edge="end"
+                checked={inDictationStyleSwitchingEnabled}
+                onChange={handleToggleInDictationStyleSwitching}
               />
             }
           />

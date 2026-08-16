@@ -39,6 +39,17 @@ whisper-rs = { version = "0.15.1", default-features = false, features = ["raw-ap
 ort = { version = "=2.0.0-rc.11", default-features = false, features = ["std", "ndarray", "load-dynamic"] }
 parakeet-rs = { version = "=0.3.3", default-features = false, features = ["cpu", "load-dynamic"] }
 canary-rs = { version = "=0.2.0", default-features = false, features = ["cpu", "load-dynamic"] }
+# SenseVoice offline ASR and the optional VAD implementation used by the
+# silence gate. The crate downloads matching native libraries at build time
+# unless SHERPA_ONNX_LIB_DIR is supplied by the release build.
+[target.'cfg(not(target_os = "windows"))'.dependencies]
+sherpa-onnx = { version = "=1.13.5", default-features = false, features = ["static"] }
+
+[target.'cfg(target_os = "windows")'.dependencies]
+# The shipped Windows sherpa archive is built with the static MSVC runtime
+# (/MT), while whisper-rs uses the dynamic runtime (/MD). Use sherpa's shared
+# archive on Windows to avoid mixing CRT models in one linker invocation.
+sherpa-onnx = { version = "=1.13.5", default-features = false, features = ["shared"] }
 
 [build-dependencies]
 flate2 = "1"

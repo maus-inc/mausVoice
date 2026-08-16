@@ -5,6 +5,8 @@ type HoldAction = {
   controller: ActivationController;
   combos: string[][];
   triggerCount: number;
+  /** Keep a hold-to-talk action active for these incidental keys only. */
+  allowedAdditionalKeys?: string[];
 };
 
 export type UseHotkeyHoldManyArgs = {
@@ -19,6 +21,7 @@ export type UseHotkeyHoldArgs = {
   triggerCount: number;
   keysHeld: string[];
   isDisabled?: boolean;
+  allowedAdditionalKeys?: string[];
 };
 
 export type UseHotkeyFireArgs = {
@@ -51,15 +54,27 @@ export const useHotkeyHoldMany = (args: UseHotkeyHoldManyArgs): void => {
   useEffect(() => {
     const normalize = (key: string) => key.toLowerCase();
 
-    const matchesCombo = (held: string[], combo: string[]) => {
+    const matchesCombo = (
+      held: string[],
+      combo: string[],
+      allowedAdditionalKeys: string[] = [],
+    ) => {
       if (combo.length === 0) {
         return false;
       }
 
       const uniqueHeld = Array.from(new Set(held.map((key) => normalize(key))));
       const required = Array.from(new Set(combo.map((key) => normalize(key))));
+      const allowedAdditional = new Set(
+        allowedAdditionalKeys.map((key) => normalize(key)),
+      );
+      const requiredSet = new Set(required);
+      const additionalHeld = uniqueHeld.filter((key) => !requiredSet.has(key));
 
-      if (uniqueHeld.length !== required.length) {
+      if (
+        uniqueHeld.length < required.length ||
+        !additionalHeld.every((key) => allowedAdditional.has(key))
+      ) {
         return false;
       }
 
@@ -71,7 +86,7 @@ export const useHotkeyHoldMany = (args: UseHotkeyHoldManyArgs): void => {
       const availableCombos = action.combos;
       const wasPressed = wasPressedRef.current.get(action.controller) ?? false;
       const isPressed = availableCombos.some((combo) =>
-        matchesCombo(keysHeld, combo),
+        matchesCombo(keysHeld, combo, action.allowedAdditionalKeys),
       );
 
       if (isDisabled) {
@@ -144,15 +159,97 @@ export const useHotkeyHold = (args: UseHotkeyHoldArgs): void => {
         controller: args.controller,
         combos: args.combos,
         triggerCount: args.triggerCount,
+        allowedAdditionalKeys: args.allowedAdditionalKeys,
       },
     ],
-    [args.controller, args.combos, args.triggerCount],
+    [
+      args.controller,
+      args.combos,
+      args.triggerCount,
+      args.allowedAdditionalKeys,
+    ],
   );
   useHotkeyHoldMany({
     actions,
     keysHeld: args.keysHeld,
     isDisabled: args.isDisabled,
   });
+};
+
+export type FireComboState = {
+  contaminated: boolean;
+  previousExact: boolean;
+};
+
+export type FireComboTransition = {
+  state: FireComboState;
+  shouldFire: boolean;
+};
+
+export type FireComboArgs = {
+  combo: string[];
+  previous: Set<string>;
+  current: Set<string>;
+  wasDisabled: boolean;
+  states: Map<string, FireComboState>;
+  activeIds: Set<string>;
+  stateKey?: string;
+  previousState?: FireComboState;
+};
+
+const normalizedKeys = (keys: string[]): Set<string> =>
+  new Set(keys.map((key) => key.toLowerCase()));
+
+/** Process one combo without mutating the caller's previous state object. */
+export const processFireCombo = (args: FireComboArgs): FireComboTransition => {
+  const { combo, previous, current, wasDisabled, states, activeIds } = args;
+  if (combo.length === 0) {
+    return {
+      state: { contaminated: false, previousExact: false },
+      shouldFire: false,
+    };
+  }
+
+  const required = normalizedKeys(combo);
+  if (required.size === 0) {
+    return {
+      state: { contaminated: false, previousExact: false },
+      shouldFire: false,
+    };
+  }
+
+  const id =
+    args.stateKey ??
+    Array.from(required)
+      .sort((left, right) => left.localeCompare(right))
+      .join("+");
+  activeIds.add(id);
+  const previousState = args.previousState ??
+    states.get(id) ?? {
+      contaminated: false,
+      previousExact: false,
+    };
+  const previousIncludesAll = Array.from(required).every((key) =>
+    previous.has(key),
+  );
+  const currentIncludesAll = Array.from(required).every((key) =>
+    current.has(key),
+  );
+  const previousExact = previousIncludesAll && previous.size === required.size;
+  const currentExact = currentIncludesAll && current.size === required.size;
+  let contaminated = previousState.contaminated;
+
+  if (wasDisabled && currentIncludesAll) contaminated = true;
+  if (!previousIncludesAll && currentIncludesAll) contaminated = false;
+  if (currentIncludesAll && !currentExact) contaminated = true;
+
+  const shouldFire =
+    previousExact && !currentExact && !currentIncludesAll && !contaminated;
+
+  if (!currentIncludesAll) contaminated = false;
+  const state = { contaminated, previousExact: currentExact };
+  states.set(id, state);
+  return { state, shouldFire };
 };
 
 /**
@@ -164,9 +261,7 @@ export const useHotkeyFire = (args: UseHotkeyFireArgs): void => {
   const { combos, triggerCount, keysHeld, onFire } = args;
 
   const previousKeysHeldRef = useRef<string[]>([]);
-  const comboStateRef = useRef<Map<string, { contaminated: boolean }>>(
-    new Map(),
-  );
+  const comboStateRef = useRef<Map<string, FireComboState>>(new Map());
   const wasDisabledRef = useRef(false);
 
   useEffect(() => {
@@ -176,91 +271,28 @@ export const useHotkeyFire = (args: UseHotkeyFireArgs): void => {
       wasDisabledRef.current = true;
       return;
     }
-    const wasDisabled = wasDisabledRef.current;
-    wasDisabledRef.current = false;
 
-    const normalize = (key: string) => key.toLowerCase();
-    const toNormalizedSet = (keys: string[]) =>
-      new Set(keys.map((key) => normalize(key)));
-    const getComboId = (requiredKeys: Set<string>) =>
-      Array.from(requiredKeys).sort().join("+");
-
-    const previousSet = toNormalizedSet(previousKeysHeldRef.current);
-    const currentSet = toNormalizedSet(keysHeld);
-    const activeComboIds = new Set<string>();
-
+    const previous = normalizedKeys(previousKeysHeldRef.current);
+    const current = normalizedKeys(keysHeld);
+    const activeIds = new Set<string>();
     let shouldFire = false;
     for (const combo of combos) {
-      if (combo.length === 0) {
-        continue;
-      }
-
-      const requiredSet = toNormalizedSet(combo);
-      if (requiredSet.size === 0) {
-        continue;
-      }
-
-      const comboId = getComboId(requiredSet);
-      activeComboIds.add(comboId);
-
-      const comboState = comboStateRef.current.get(comboId) ?? {
-        contaminated: false,
-      };
-
-      const previousIncludesAll = Array.from(requiredSet).every((key) =>
-        previousSet.has(key),
-      );
-      const currentIncludesAll = Array.from(requiredSet).every((key) =>
-        currentSet.has(key),
-      );
-
-      const previousExact =
-        previousIncludesAll && previousSet.size === requiredSet.size;
-      const currentExact =
-        currentIncludesAll && currentSet.size === requiredSet.size;
-
-      if (wasDisabled && currentIncludesAll) {
-        comboState.contaminated = true;
-      }
-
-      if (!previousIncludesAll && currentIncludesAll) {
-        comboState.contaminated = false;
-      }
-
-      if (currentIncludesAll && !currentExact) {
-        comboState.contaminated = true;
-      }
-
-      if (
-        previousExact &&
-        !currentExact &&
-        !currentIncludesAll &&
-        !comboState.contaminated
-      ) {
-        shouldFire = true;
-      }
-
-      if (!currentIncludesAll) {
-        comboState.contaminated = false;
-      }
-
-      comboStateRef.current.set(comboId, comboState);
-
-      if (shouldFire) {
-        break;
-      }
+      const transition = processFireCombo({
+        combo,
+        previous,
+        current,
+        wasDisabled: wasDisabledRef.current,
+        states: comboStateRef.current,
+        activeIds,
+      });
+      shouldFire = transition.shouldFire || shouldFire;
     }
 
+    wasDisabledRef.current = false;
     for (const comboId of comboStateRef.current.keys()) {
-      if (!activeComboIds.has(comboId)) {
-        comboStateRef.current.delete(comboId);
-      }
+      if (!activeIds.has(comboId)) comboStateRef.current.delete(comboId);
     }
-
-    if (shouldFire) {
-      onFire?.();
-    }
-
+    if (shouldFire) onFire?.();
     previousKeysHeldRef.current = keysHeld;
   }, [keysHeld, combos, isDisabled, onFire]);
 

@@ -1,3 +1,4 @@
+use std::io::BufReader;
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
@@ -68,9 +69,13 @@ use crate::domain::{
     EVT_REC_LEVEL,
 };
 use crate::platform::{ChunkCallback, LevelCallback};
+
+#[path = "../../../../packages/rust_transcription/src/audio.rs"]
+mod shared_audio;
 use crate::system::crypto::{protect_api_key, reveal_api_key};
 use crate::system::StorageRepo;
 use sqlx::Row;
+use rodio::Source;
 
 use crate::platform::input::paste_text_into_focused_field as platform_paste_text;
 
@@ -407,12 +412,132 @@ pub struct UserPreferencesGetArgs {
 }
 
 const MAX_RETAINED_TRANSCRIPTION_AUDIO: usize = 20;
+const MAX_AUDIO_IMPORT_FILE_BYTES: u64 = 100 * 1024 * 1024;
+const MAX_AUDIO_IMPORT_DURATION_SECONDS: u64 = 5 * 60;
+const MAX_AUDIO_IMPORT_OUTPUT_SAMPLES: usize =
+    16_000 * MAX_AUDIO_IMPORT_DURATION_SECONDS as usize;
+// Keep one absolute memory ceiling for pathological sample rates while the
+// normal limit below is derived from the file's actual rate and channel count.
+const MAX_AUDIO_IMPORT_DECODED_MEMORY_BYTES: usize = 128 * 1024 * 1024;
+const MAX_AUDIO_IMPORT_ABSOLUTE_DECODED_SAMPLES: usize =
+    MAX_AUDIO_IMPORT_DECODED_MEMORY_BYTES / std::mem::size_of::<f32>();
 
 #[derive(serde::Serialize, specta::Type)]
 #[serde(rename_all = "camelCase")]
 pub struct TranscriptionAudioData {
+    /// Little-endian signed 16-bit mono PCM. Keeping the IPC payload binary
+    /// avoids expanding every sample into a JSON number.
+    pub pcm16_le: Vec<u8>,
+    pub sample_rate: u32,
+}
+
+#[derive(serde::Serialize, specta::Type)]
+#[serde(rename_all = "camelCase")]
+pub struct TranscriptionAudioSamplesData {
     pub samples: Vec<f32>,
     pub sample_rate: u32,
+}
+
+#[tauri::command]
+#[specta::specta]
+pub async fn transcription_import_audio(path: String) -> Result<TranscriptionAudioData, String> {
+    let path = PathBuf::from(path.trim());
+    if path.as_os_str().is_empty() {
+        return Err("No audio file was selected".to_string());
+    }
+
+    tauri::async_runtime::spawn_blocking(move || {
+        let file = std::fs::File::open(&path)
+            .map_err(|err| format!("failed to open audio file '{}': {err}", path.display()))?;
+        let file_bytes = file
+            .metadata()
+            .map_err(|err| format!("failed to inspect audio file '{}': {err}", path.display()))?
+            .len();
+        if file_bytes > MAX_AUDIO_IMPORT_FILE_BYTES {
+            return Err(format!(
+                "The selected audio file is too large (maximum is {} MiB)",
+                MAX_AUDIO_IMPORT_FILE_BYTES / (1024 * 1024)
+            ));
+        }
+
+        let decoder = rodio::Decoder::new(BufReader::new(file))
+            .map_err(|err| format!("failed to decode audio file '{}': {err}", path.display()))?;
+        let source_rate = decoder.sample_rate();
+        let channels = decoder.channels().max(1) as usize;
+        if source_rate == 0 {
+            return Err("The selected audio file contains no usable samples".to_string());
+        }
+
+        // The decoded stream is interleaved, so derive its duration limit from
+        // the source rate and channel count rather than multiplying the
+        // 16 kHz mono output cap by a fixed factor. This accepts ordinary
+        // 44.1/48 kHz stereo recordings while retaining an absolute memory
+        // ceiling for unusual high-rate files.
+        let duration_sample_limit = (source_rate as usize)
+            .saturating_mul(channels)
+            .saturating_mul(MAX_AUDIO_IMPORT_DURATION_SECONDS as usize);
+        let max_decoded_samples = duration_sample_limit
+            .clamp(1, MAX_AUDIO_IMPORT_ABSOLUTE_DECODED_SAMPLES);
+        let memory_limited = duration_sample_limit > max_decoded_samples;
+        let decoded: Vec<f32> = decoder
+            .convert_samples::<f32>()
+            .take(max_decoded_samples.saturating_add(1))
+            .collect();
+
+        if decoded.len() > max_decoded_samples {
+            let reason = if memory_limited {
+                "the decoded audio exceeds the safe memory limit"
+            } else {
+                "the audio exceeds the duration limit"
+            };
+            return Err(format!(
+                "The selected audio file cannot be imported because {reason}"
+            ));
+        }
+        if decoded.is_empty() {
+            return Err("The selected audio file contains no usable samples".to_string());
+        }
+
+        let mono = if channels == 1 {
+            decoded
+        } else {
+            decoded
+                .chunks(channels)
+                .map(|frame| frame.iter().copied().sum::<f32>() / frame.len() as f32)
+                .collect()
+        };
+        let samples = shared_audio::resample_to_rate(&mono, source_rate, 16_000);
+        if samples.is_empty() {
+            return Err("Unable to convert the selected audio to 16 kHz mono".to_string());
+        }
+        if samples.len() > MAX_AUDIO_IMPORT_OUTPUT_SAMPLES {
+            return Err(format!(
+                "The selected audio file exceeds the {} minute import limit",
+                MAX_AUDIO_IMPORT_DURATION_SECONDS / 60
+            ));
+        }
+
+        Ok(TranscriptionAudioData {
+            pcm16_le: encode_pcm16_le(&samples),
+            sample_rate: 16_000,
+        })
+    })
+    .await
+    .map_err(|err| format!("audio import task failed: {err}"))?
+}
+
+fn encode_pcm16_le(samples: &[f32]) -> Vec<u8> {
+    let mut bytes = Vec::with_capacity(samples.len().saturating_mul(2));
+    for sample in samples {
+        let clamped = sample.clamp(-1.0, 1.0);
+        let value = if clamped < 0.0 {
+            (clamped * 0x8000 as f32) as i16
+        } else {
+            (clamped * 0x7fff as f32) as i16
+        };
+        bytes.extend_from_slice(&value.to_le_bytes());
+    }
+    bytes
 }
 
 async fn delete_audio_entries(
@@ -845,7 +970,7 @@ pub async fn transcription_audio_load(
     app: AppHandle,
     id: String,
     database: State<'_, crate::state::OptionKeyDatabase>,
-) -> Result<TranscriptionAudioData, String> {
+) -> Result<TranscriptionAudioSamplesData, String> {
     let pool = database.pool();
 
     let audio_path: Option<String> = sqlx::query_scalar(
@@ -875,7 +1000,7 @@ pub async fn transcription_audio_load(
     .await
     .map_err(|err| err.to_string())??;
 
-    Ok(TranscriptionAudioData {
+    Ok(TranscriptionAudioSamplesData {
         samples,
         sample_rate,
     })
@@ -2603,6 +2728,61 @@ fn parse_floating_window_url(url: &str) -> Result<Url, String> {
     Url::parse(url).map_err(|e| format!("Invalid URL: {e}"))
 }
 
+fn hex_value(value: u8) -> Option<u8> {
+    match value {
+        b'0'..=b'9' => Some(value - b'0'),
+        b'a'..=b'f' => Some(value - b'a' + 10),
+        b'A'..=b'F' => Some(value - b'A' + 10),
+        _ => None,
+    }
+}
+
+fn percent_decode_route_path(path: &str) -> Result<String, String> {
+    let bytes = path.as_bytes();
+    let mut decoded = Vec::with_capacity(bytes.len());
+    let mut index = 0;
+    while index < bytes.len() {
+        if bytes[index] == b'%' {
+            let high = bytes
+                .get(index + 1)
+                .and_then(|value| hex_value(*value))
+                .ok_or_else(|| "Floating app route has invalid percent encoding".to_string())?;
+            let low = bytes
+                .get(index + 2)
+                .and_then(|value| hex_value(*value))
+                .ok_or_else(|| "Floating app route has invalid percent encoding".to_string())?;
+            decoded.push((high << 4) | low);
+            index += 3;
+        } else {
+            decoded.push(bytes[index]);
+            index += 1;
+        }
+    }
+    String::from_utf8(decoded)
+        .map_err(|_| "Floating app route path is not valid UTF-8".to_string())
+}
+
+/// Validate only the path portion of a local app route. Query values are
+/// opaque user data; rejecting `..` anywhere in the full route would reject
+/// legitimate transcript text such as "Wait... what?".
+fn validate_local_app_route(route: &str) -> Result<(), String> {
+    let path = route.split(['?', '#']).next().unwrap_or(route);
+    let decoded_path = percent_decode_route_path(path)?;
+    let has_parent_segment = decoded_path.split('/').any(|segment| segment == "..");
+
+    if decoded_path.is_empty()
+        || decoded_path.starts_with('/')
+        || decoded_path.contains('\\')
+        || has_parent_segment
+    {
+        return Err(
+            "Floating app routes must be relative and cannot contain path traversal".to_string(),
+        );
+    }
+
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -2731,6 +2911,13 @@ mod tests {
     fn floating_window_allows_localhost() {
         assert!(validate_floating_window_url(&Url::parse("http://localhost:1420/").unwrap()).is_ok());
         assert!(validate_floating_window_url(&Url::parse("http://127.0.0.1:8080/foo").unwrap()).is_ok());
+    }
+
+    #[test]
+    fn local_app_route_allows_dots_in_query_data() {
+        assert!(validate_local_app_route("composer?text=Wait...%20what%3F").is_ok());
+        assert!(validate_local_app_route("composer/../settings").is_err());
+        assert!(validate_local_app_route("composer/%2e%2e/settings").is_err());
     }
 
     #[test]
@@ -3383,6 +3570,10 @@ pub fn set_system_volume(volume: f64) -> Result<(), String> {
 #[serde(rename_all = "camelCase")]
 pub struct CreateFloatingWindowArgs {
     pub url: String,
+    /// When set, load a local app route instead of an external URL. This is
+    /// used by the composer so it never depends on localhost or a network
+    /// origin.
+    pub route: Option<String>,
     pub title: Option<String>,
     pub width: Option<f64>,
     pub height: Option<f64>,
@@ -3396,6 +3587,47 @@ pub struct CreateFloatingWindowArgs {
     pub focused: Option<bool>,
 }
 
+#[tauri::command]
+#[specta::specta]
+pub fn composer_register_text(
+    request_id: String,
+    text: String,
+    state: State<'_, crate::state::FloatingWindowState>,
+) -> Result<(), String> {
+    let request_id = request_id.trim().to_string();
+    if request_id.is_empty() {
+        return Err("composer request id must not be empty".to_string());
+    }
+    state.register_composer_text(request_id, text)
+}
+
+#[tauri::command]
+#[specta::specta]
+pub fn composer_peek_text(
+    request_id: String,
+    state: State<'_, crate::state::FloatingWindowState>,
+) -> Result<Option<String>, String> {
+    state.peek_composer_text(request_id.trim())
+}
+
+#[tauri::command]
+#[specta::specta]
+pub fn composer_take_text(
+    request_id: String,
+    state: State<'_, crate::state::FloatingWindowState>,
+) -> Result<Option<String>, String> {
+    state.take_composer_text(request_id.trim())
+}
+
+#[tauri::command]
+#[specta::specta]
+pub fn composer_discard_text(
+    request_id: String,
+    state: State<'_, crate::state::FloatingWindowState>,
+) -> Result<(), String> {
+    state.discard_composer_text(request_id.trim())
+}
+
 #[derive(serde::Serialize, specta::Type, Clone, Debug)]
 #[serde(rename_all = "camelCase")]
 pub struct FloatingWindowInfo {
@@ -3405,7 +3637,8 @@ pub struct FloatingWindowInfo {
 }
 
 /// Opens a draggable, always-on-top webview window pointed at the given URL
-/// and returns a stable id that can be used to destroy it later.
+/// or a trusted local app route and returns a stable id that can be used to
+/// destroy it later.
 ///
 /// External URLs are restricted to http(s) and to a small allow-list of
 /// trusted schemes/hosts. This is the only place in the app that creates a
@@ -3421,16 +3654,29 @@ pub async fn floating_window_create(
     app: AppHandle,
     state: State<'_, crate::state::FloatingWindowState>,
 ) -> Result<FloatingWindowInfo, String> {
-    let parsed_url = parse_floating_window_url(&args.url)?;
-    validate_floating_window_url(&parsed_url)?;
-
     let label = state.next_label();
     let title = args.title.clone().unwrap_or_else(|| "mausVoice".to_string());
+    let (webview_url, reported_url) = if let Some(route) = args
+        .route
+        .as_deref()
+        .map(str::trim)
+        .filter(|route| !route.is_empty())
+    {
+        validate_local_app_route(route)?;
+        (
+            tauri::WebviewUrl::App(route.into()),
+            format!("app://{route}"),
+        )
+    } else {
+        let parsed_url = parse_floating_window_url(&args.url)?;
+        validate_floating_window_url(&parsed_url)?;
+        (tauri::WebviewUrl::External(parsed_url), args.url.clone())
+    };
 
     let mut builder = tauri::WebviewWindowBuilder::new(
         &app,
         label.clone(),
-        tauri::WebviewUrl::External(parsed_url),
+        webview_url,
     )
     .title(title.clone())
     .always_on_top(true)
@@ -3457,7 +3703,7 @@ pub async fn floating_window_create(
 
     Ok(FloatingWindowInfo {
         id: label,
-        url: args.url,
+        url: reported_url,
         title,
     })
 }

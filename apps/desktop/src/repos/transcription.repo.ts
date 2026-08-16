@@ -40,6 +40,39 @@ export type TranscriptionAudioData = {
   sampleRate: number;
 };
 
+type NativeImportedAudioData = {
+  pcm16Le: number[] | Uint8Array | ArrayBuffer;
+  sampleRate: number;
+};
+
+export type ImportedTranscriptionAudioData = {
+  samples: Float32Array;
+  sampleRate: number;
+};
+
+const decodePcm16Le = (
+  payload: number[] | Uint8Array | ArrayBuffer,
+): Float32Array => {
+  let bytes: Uint8Array;
+  if (payload instanceof ArrayBuffer) {
+    bytes = new Uint8Array(payload);
+  } else if (payload instanceof Uint8Array) {
+    bytes = payload;
+  } else {
+    bytes = Uint8Array.from(payload);
+  }
+  if (bytes.byteLength % 2 !== 0) {
+    throw new Error("Imported audio returned an invalid PCM payload.");
+  }
+
+  const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
+  const samples = new Float32Array(bytes.byteLength / 2);
+  for (let index = 0; index < samples.length; index += 1) {
+    samples[index] = view.getInt16(index * 2, true) / 0x8000;
+  }
+  return samples;
+};
+
 export type ListTranscriptionsParams = {
   limit?: number;
   offset?: number;
@@ -120,6 +153,9 @@ export abstract class BaseTranscriptionRepo extends BaseRepo {
     transcription: Transcription,
   ): Promise<Transcription>;
   abstract loadTranscriptionAudio(id: string): Promise<TranscriptionAudioData>;
+  abstract importAudioFile(
+    path: string,
+  ): Promise<ImportedTranscriptionAudioData>;
   abstract purgeStaleAudio(): Promise<string[]>;
 }
 
@@ -163,6 +199,17 @@ export class LocalTranscriptionRepo extends BaseTranscriptionRepo {
 
   async loadTranscriptionAudio(id: string): Promise<TranscriptionAudioData> {
     return invoke<TranscriptionAudioData>("transcription_audio_load", { id });
+  }
+
+  async importAudioFile(path: string): Promise<ImportedTranscriptionAudioData> {
+    const payload = await invoke<NativeImportedAudioData>(
+      "transcription_import_audio",
+      { path },
+    );
+    return {
+      samples: decodePcm16Le(payload.pcm16Le),
+      sampleRate: payload.sampleRate,
+    };
   }
 
   async purgeStaleAudio(): Promise<string[]> {

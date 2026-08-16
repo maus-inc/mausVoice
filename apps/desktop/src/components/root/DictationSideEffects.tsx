@@ -16,6 +16,7 @@ import {
 import { refreshMember } from "../../actions/member.actions";
 import { dismissToast, showToast } from "../../actions/toast.actions";
 import {
+  selectToneByHotkey,
   switchWritingStyleBackward,
   switchWritingStyleForward,
 } from "../../actions/tone.actions";
@@ -27,6 +28,7 @@ import { storeTranscription } from "../../actions/transcribe.actions";
 import { recordStreak } from "../../actions/user.actions";
 import {
   useHotkeyFire,
+  useHotkeyFireMany,
   useHotkeyHold,
   useHotkeyHoldMany,
 } from "../../hooks/hotkey.hooks";
@@ -47,6 +49,7 @@ import type {
 import {
   StopRecordingResponse,
   TranscriptionSession,
+  TranscriptionSessionResult,
 } from "../../types/transcription-session.types";
 import {
   ActivationController,
@@ -72,6 +75,8 @@ import {
   CANCEL_TRANSCRIPTION_HOTKEY,
   DICTATE_HOTKEY,
   getAdditionalLanguageEntries,
+  getHotkeyCombosForAction,
+  getSwitchToStyleEntries,
   OPEN_CHAT_HOTKEY,
   SWITCH_WRITING_STYLE_BACKWARD_HOTKEY,
   SWITCH_WRITING_STYLE_FORWARD_HOTKEY,
@@ -109,9 +114,26 @@ type RawStopResp = {
   abortMessage?: string;
 };
 
+type StoppedRecordingData = {
+  audio: StopRecordingResponse | null;
+  a11yInfo: TextFieldInfo | null;
+  appTarget: AppTarget | null;
+  failureMessage?: string;
+};
+
+type FinalizedRecording = {
+  audio: StopRecordingResponse;
+  a11yInfo: TextFieldInfo | null;
+  appTarget: AppTarget | null;
+  toneId: string | null;
+  rawTranscript: string;
+  transcribeResult: TranscriptionSessionResult;
+};
+
 const FINALIZE_TIMEOUT_MS = 90_000;
 const HANDLE_TRANSCRIPT_TIMEOUT_MS = 60_000;
 const PHASE_HEARTBEAT_INTERVAL_MS = 5_000;
+const IN_DICTATION_STYLE_KEYS = ["LeftArrow", "RightArrow"];
 
 export const DictationSideEffects = () => {
   const intl = useIntl();
@@ -127,6 +149,7 @@ export const DictationSideEffects = () => {
   // Last phase actually sent to the pill; drives the idle-reconciliation
   // heartbeat and keeps duplicate idle writes out of the pipe.
   const lastPhaseSentRef = useRef<OverlayPhase | null>(null);
+  const previousStyleSwitchKeysRef = useRef<string[]>([]);
   const [isStopping, setIsStopping] = useState(false);
   const assistantModeEnabled = useAppStore(getIsAssistantModeEnabled);
 
@@ -137,8 +160,13 @@ export const DictationSideEffects = () => {
     (state) => state.activeRecordingMode !== null,
   );
   const activeRecordingMode = useAppStore((state) => state.activeRecordingMode);
+  const keysHeld = useAppStore((state) => state.keysHeld);
   const assistantInputMode = useAppStore((state) => state.assistantInputMode);
   const additionalLanguageEntries = useAppStore(getAdditionalLanguageEntries);
+  const switchToStyleEntries = useAppStore(getSwitchToStyleEntries);
+  const inDictationStyleSwitchingEnabled = useAppStore(
+    (state) => state.userPrefs?.inDictationStyleSwitchingEnabled ?? false,
+  );
   const isDictationUnlocked = useAppStore(getIsDictationUnlocked);
   const isDictationInteractable = isDictationUnlocked && !isStopping;
   const pillVisibility = useAppStore((state) =>
@@ -372,68 +400,57 @@ export const DictationSideEffects = () => {
     ],
   );
 
-  const stopRecordingRaw = useCallback(async (): Promise<RawStopResp> => {
-    getLogger().info("Stopping recording");
-    clearRecordingTimers();
-    restoreSystemVolume();
-
-    try {
-      const [audio, a11yInfo, appTarget] = await getLogger().stopwatch(
-        "stopRecording",
-        async () => {
-          let audio: StopRecordingResponse | null = null;
-          let a11yInfo: TextFieldInfo | null = null;
-          let appTarget: AppTarget | null = null;
-          try {
-            tryPlayAudioChime("stop_recording_clip");
-
-            getLogger().verbose(
-              "Invoking stop_recording and fetching a11y info",
-            );
-            const [, outAudio, outA11yInfo, outAppTarget] = await Promise.all([
-              strategyRef.current?.setPhase("loading"),
-              invoke<StopRecordingResponse>("stop_recording"),
-              invoke<TextFieldInfo>("get_text_field_info").catch((error) => {
-                getLogger().verbose(`Failed to get text field info: ${error}`);
-                return null;
-              }),
-              tryRegisterCurrentAppTarget().catch((error) => {
-                getLogger().verbose(
-                  `Failed to get current app target: ${error}`,
-                );
-                return null;
-              }),
-            ]);
-
-            audio = outAudio;
-            a11yInfo = outA11yInfo;
-            appTarget = outAppTarget;
-            getLogger().verbose(
-              `Recording stopped (hasSamples=${!!audio?.samples})`,
-            );
-          } catch (error) {
-            getLogger().error(`Failed to stop recording: ${error}`);
-            showToast({
-              message: intl.formatMessage({
-                defaultMessage: "Failed to stop recording",
-              }),
-              toastType: "error",
-              duration: 8_000,
-            });
-          }
-
-          return [audio, a11yInfo, appTarget];
-        },
+  const collectStoppedRecording =
+    useCallback(async (): Promise<StoppedRecordingData> => {
+      const stopped = await getLogger().stopwatch("stopRecording", async () => {
+        try {
+          tryPlayAudioChime("stop_recording_clip");
+          getLogger().verbose("Invoking stop_recording and fetching a11y info");
+          const [, outAudio, outA11yInfo, outAppTarget] = await Promise.all([
+            strategyRef.current?.setPhase("loading"),
+            invoke<StopRecordingResponse>("stop_recording"),
+            invoke<TextFieldInfo>("get_text_field_info").catch((error) => {
+              getLogger().verbose(`Failed to get text field info: ${error}`);
+              return null;
+            }),
+            tryRegisterCurrentAppTarget().catch((error) => {
+              getLogger().verbose(`Failed to get current app target: ${error}`);
+              return null;
+            }),
+          ]);
+          return {
+            audio: outAudio,
+            a11yInfo: outA11yInfo,
+            appTarget: outAppTarget,
+          };
+        } catch (error) {
+          const failureMessage =
+            error instanceof Error ? error.message : String(error);
+          getLogger().error(`Failed to stop recording: ${error}`);
+          return {
+            audio: null,
+            a11yInfo: null,
+            appTarget: null,
+            failureMessage,
+          };
+        }
+      });
+      getLogger().verbose(
+        `Recording stopped (hasSamples=${!!stopped.audio?.samples})`,
       );
+      return stopped;
+    }, []);
 
-      if (!audio) {
-        getLogger().warning("stopRecordingRaw: no audio data received");
-        return {
-          shouldContinue: false,
-          abortMessage: "No audio data received",
-        };
-      }
-
+  const finalizeRecording = useCallback(
+    async ({
+      audio,
+      a11yInfo,
+      appTarget,
+    }: {
+      audio: StopRecordingResponse;
+      a11yInfo: TextFieldInfo | null;
+      appTarget: AppTarget | null;
+    }): Promise<FinalizedRecording | null> => {
       getLogger().info("Finalizing transcription session");
       trackAppUsed(appTarget?.name ?? "Unknown");
 
@@ -444,7 +461,6 @@ export const DictationSideEffects = () => {
       const toneId = getToneIdToUse(getAppState(), {
         currentAppToneId: appTarget?.toneId ?? null,
       });
-
       const transcribeResult = await withTimeout(
         sessionRef.current?.finalize(audio, {
           toneId,
@@ -457,22 +473,40 @@ export const DictationSideEffects = () => {
       getLogger().verbose(
         `Transcription result: rawTranscript=${rawTranscript ? `${rawTranscript.length} chars` : "empty"}, toneId=${toneId ?? "none"}, app=${appTarget?.name ?? "unknown"}`,
       );
-      if (!rawTranscript) {
+
+      if (!rawTranscript || !transcribeResult) {
         getLogger().warning("stopRecordingRaw: no rawTranscript from finalize");
-        return {
-          shouldContinue: false,
-        };
+        return null;
       }
 
+      return {
+        audio,
+        a11yInfo,
+        appTarget,
+        toneId,
+        rawTranscript,
+        transcribeResult,
+      };
+    },
+    [],
+  );
+
+  const processFinalizedRecording = useCallback(
+    async ({
+      audio,
+      a11yInfo,
+      appTarget,
+      toneId,
+      rawTranscript,
+      transcribeResult,
+    }: FinalizedRecording): Promise<RawStopResp> => {
       const session = sessionRef.current;
       const strategy = strategyRef.current;
       if (!session || !strategy) {
         getLogger().warning(
           `stopRecordingRaw: refs cleared (session=${!!session}, strategy=${!!strategy})`,
         );
-        return {
-          shouldContinue: false,
-        };
+        return { shouldContinue: false };
       }
 
       if (getAppState().activeRecordingMode === "agent") {
@@ -521,9 +555,36 @@ export const DictationSideEffects = () => {
       }
 
       refreshMember();
-      return {
-        shouldContinue: result.shouldContinue,
-      };
+      return { shouldContinue: result.shouldContinue };
+    },
+    [sendPhaseToPill],
+  );
+
+  const stopRecordingRaw = useCallback(async (): Promise<RawStopResp> => {
+    getLogger().info("Stopping recording");
+    clearRecordingTimers();
+    restoreSystemVolume();
+
+    try {
+      const stopped = await collectStoppedRecording();
+      if (!stopped.audio) {
+        getLogger().warning("stopRecordingRaw: no audio data received");
+        return {
+          shouldContinue: false,
+          abortMessage: stopped.failureMessage || "No audio data received",
+        };
+      }
+
+      const finalized = await finalizeRecording({
+        audio: stopped.audio,
+        a11yInfo: stopped.a11yInfo,
+        appTarget: stopped.appTarget,
+      });
+      if (!finalized) {
+        return { shouldContinue: false };
+      }
+
+      return await processFinalizedRecording(finalized);
     } catch (error) {
       const errorName = error instanceof Error ? ` [name=${error.name}]` : "";
       getLogger().error(`Error during stopRecording: ${error}${errorName}`);
@@ -536,7 +597,14 @@ export const DictationSideEffects = () => {
       // timeout) must return the pill to idle.
       await sendPhaseToPill("idle");
     }
-  }, [restoreSystemVolume, sendPhaseToPill]);
+  }, [
+    clearRecordingTimers,
+    collectStoppedRecording,
+    finalizeRecording,
+    processFinalizedRecording,
+    restoreSystemVolume,
+    sendPhaseToPill,
+  ]);
 
   const stopRecording = useCallback(async () => {
     if (isStoppingRef.current) {
@@ -853,6 +921,53 @@ export const DictationSideEffects = () => {
     });
   }, [intl]);
 
+  useEffect(() => {
+    const previous = new Set(
+      previousStyleSwitchKeysRef.current.map((key) => key.toLowerCase()),
+    );
+    const current = new Set(keysHeld.map((key) => key.toLowerCase()));
+    const canSwitch =
+      inDictationStyleSwitchingEnabled &&
+      isActiveSession &&
+      activeRecordingMode === "dictate" &&
+      isManualStyling;
+
+    if (canSwitch) {
+      const dictateCombos = getHotkeyCombosForAction(
+        getAppState(),
+        DICTATE_HOTKEY,
+      );
+      const activationHeld = dictateCombos.some((combo) =>
+        combo.every((key) => current.has(key.toLowerCase())),
+      );
+      if (activationHeld) {
+        if (current.has("leftarrow") && !previous.has("leftarrow")) {
+          void switchWritingStyleBackward();
+        } else if (current.has("rightarrow") && !previous.has("rightarrow")) {
+          void switchWritingStyleForward();
+        }
+      }
+    }
+
+    previousStyleSwitchKeysRef.current = keysHeld;
+  }, [
+    activeRecordingMode,
+    inDictationStyleSwitchingEnabled,
+    isActiveSession,
+    isManualStyling,
+    keysHeld,
+  ]);
+
+  useHotkeyFireMany({
+    actions: switchToStyleEntries.map((entry) => ({
+      actionName: entry.actionName,
+      onFire: () => {
+        void selectToneByHotkey(entry.toneId);
+      },
+    })),
+    isDisabled: !isDictationUnlocked,
+  });
+
   useHotkeyFire({
     actionName: SWITCH_WRITING_STYLE_FORWARD_HOTKEY,
     isDisabled: !isActiveSession || !isManualStyling,
@@ -869,6 +984,15 @@ export const DictationSideEffects = () => {
     actionName: DICTATE_HOTKEY,
     isDisabled: !isDictationInteractable || activeRecordingMode === "agent",
     controller: dictationController,
+    // Only the two style-switch arrows may be held in addition to the
+    // activation key, and only after dictation is already active. This keeps
+    // Fn+any-key from becoming an accidental hold-to-talk gesture.
+    allowedAdditionalKeys:
+      inDictationStyleSwitchingEnabled &&
+      isManualStyling &&
+      activeRecordingMode === "dictate"
+        ? IN_DICTATION_STYLE_KEYS
+        : undefined,
   });
 
   useHotkeyHold({
@@ -1078,6 +1202,7 @@ export const DictationSideEffects = () => {
             toolId: permission.toolId,
             params: permission.params,
             allowed: true,
+            scope: `conversation:${permission.conversationId}`,
           });
         }
       }

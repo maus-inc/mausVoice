@@ -867,6 +867,13 @@ export const AITranscriptionConfiguration = () => {
                 ).map((opt) => renderModelMenuItem(opt))}
 
                 <ListSubheader sx={subheaderSx}>
+                  <FormattedMessage defaultMessage="SenseVoice (Multilingual)" />
+                </ListSubheader>
+                {LOCAL_MODEL_OPTIONS.filter(
+                  (opt) => opt.category === "sherpa",
+                ).map((opt) => renderModelMenuItem(opt))}
+
+                <ListSubheader sx={subheaderSx}>
                   <FormattedMessage defaultMessage="OpenAI Whisper (Multilingual GGML)" />
                 </ListSubheader>
                 {LOCAL_MODEL_OPTIONS.filter(

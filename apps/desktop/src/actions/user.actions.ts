@@ -120,6 +120,12 @@ export const createDefaultPreferences = (): UserPreferences => ({
   menuBarIconHidden: false,
   insertionMethod: null,
   typingSpeedMs: null,
+  inDictationStyleSwitchingEnabled: false,
+  hallucinationFilterEnabled: true,
+  reviewBeforeInsert: null,
+  agentEnabledTools: null,
+  agentMaxIterations: 20,
+  agentPermissionTimeoutMs: 60_000,
 });
 
 export const updateUserPreferences = async (
@@ -691,6 +697,59 @@ export const setDictationAudioDim = async (value: number): Promise<void> => {
   await updateUserPreferences((preferences) => {
     preferences.dictationAudioDim = Math.max(0, Math.min(1, value));
   }, "Failed to save audio dim preference. Please try again.");
+};
+
+export const setInDictationStyleSwitchingEnabled = async (
+  enabled: boolean,
+): Promise<void> => {
+  await updateUserPreferences((preferences) => {
+    preferences.inDictationStyleSwitchingEnabled = enabled;
+  }, "Failed to save in-dictation style switching preference. Please try again.");
+};
+
+export const setHallucinationFilterEnabled = async (
+  enabled: boolean,
+): Promise<void> => {
+  await updateUserPreferences((preferences) => {
+    preferences.hallucinationFilterEnabled = enabled;
+  }, "Failed to save silence filtering preference. Please try again.");
+};
+
+export const setReviewBeforeInsert = async (
+  enabled: boolean,
+): Promise<void> => {
+  await updateUserPreferences((preferences) => {
+    preferences.reviewBeforeInsert = enabled;
+  }, "Failed to save review-before-insert preference. Please try again.");
+};
+
+export const setAgentEnabledTools = async (
+  toolIds: string[] | null,
+): Promise<void> => {
+  await updateUserPreferences((preferences) => {
+    preferences.agentEnabledTools = toolIds;
+  }, "Failed to save enabled agent tools. Please try again.");
+};
+
+export const setAgentMaxIterations = async (
+  iterations: number,
+): Promise<void> => {
+  const normalized = Math.min(100, Math.max(1, Math.trunc(iterations)));
+  await updateUserPreferences((preferences) => {
+    preferences.agentMaxIterations = normalized;
+  }, "Failed to save agent iteration limit. Please try again.");
+};
+
+export const setAgentPermissionTimeoutMs = async (
+  timeoutMs: number,
+): Promise<void> => {
+  const normalized = Math.min(
+    10 * 60_000,
+    Math.max(5_000, Math.trunc(timeoutMs)),
+  );
+  await updateUserPreferences((preferences) => {
+    preferences.agentPermissionTimeoutMs = normalized;
+  }, "Failed to save agent permission timeout. Please try again.");
 };
 
 export const setStylingMode = async (

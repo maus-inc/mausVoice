@@ -71,7 +71,7 @@ const IntroPage = () => {
               fontWeight: 600,
             }}
           >
-            <FormattedMessage defaultMessage="Introducing Agent Mode" />
+            <FormattedMessage defaultMessage="A more powerful mausVoice" />
           </Typography>
           <Chip label="Beta" size="small" color="primary" />
         </Stack>
@@ -81,7 +81,7 @@ const IntroPage = () => {
             color: "text.secondary",
           }}
         >
-          <FormattedMessage defaultMessage="A powerful new way to interact with your text" />
+          <FormattedMessage defaultMessage="New styles, local transcription, audio import, and a reviewable composer" />
         </Typography>
       </Stack>
       <Stack
@@ -97,7 +97,7 @@ const IntroPage = () => {
             color: "text.secondary",
           }}
         >
-          <FormattedMessage defaultMessage="Agent Mode lets you give voice commands to write, edit, or transform text. Instead of just dictating, you can now tell the AI what you want it to do." />
+          <FormattedMessage defaultMessage="Choose Prompt, Bullets, Concise, or Notes styles, bind a shortcut to any style, and cycle active styles with the activation key plus arrow keys." />
         </Typography>
         <Typography
           variant="body2"
@@ -105,7 +105,7 @@ const IntroPage = () => {
             color: "text.secondary",
           }}
         >
-          <FormattedMessage defaultMessage="Try commands like 'Write an email to Bob about the meeting' or 'Make this paragraph more formal'. Agent Mode reads what's in your text field and rewrites it based on your instructions." />
+          <FormattedMessage defaultMessage="SenseVoice adds fast multilingual local transcription with punctuation, while the silence filter reduces fabricated text from quiet audio. You can also import recordings from your History page." />
         </Typography>
         <Typography
           variant="body2"
@@ -113,7 +113,7 @@ const IntroPage = () => {
             color: "text.secondary",
           }}
         >
-          <FormattedMessage defaultMessage="Run it multiple times to refine your text until it's perfect." />
+          <FormattedMessage defaultMessage="Turn on Review before insert to edit dictated text in a composer, use voice Edit Mode for transformations, and configure which Agent Mode tools may run." />
         </Typography>
       </Stack>
     </Stack>

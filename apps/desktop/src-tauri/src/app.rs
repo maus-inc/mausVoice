@@ -127,6 +127,7 @@ pub fn build() -> tauri::Builder<tauri::Wry> {
             Some(vec![AUTOSTART_HIDDEN_ARG]),
         ))
         .plugin(tauri_plugin_process::init())
+        .plugin(tauri_plugin_dialog::init())
         .plugin(
             tauri_plugin_sql::Builder::new()
                 .add_migrations(crate::db::DB_CONNECTION, crate::db::migrations())
@@ -330,6 +331,7 @@ pub fn build() -> tauri::Builder<tauri::Wry> {
             crate::commands::transcription_delete,
             crate::commands::transcription_update,
             crate::commands::transcription_audio_load,
+            crate::commands::transcription_import_audio,
             crate::commands::purge_stale_transcription_audio,
             crate::commands::export_transcription,
             crate::commands::export_diagnostics,
@@ -401,6 +403,10 @@ pub fn build() -> tauri::Builder<tauri::Wry> {
             crate::commands::download_and_open_mac_installer,
             crate::commands::get_system_volume,
             crate::commands::set_system_volume,
+            crate::commands::composer_register_text,
+            crate::commands::composer_peek_text,
+            crate::commands::composer_take_text,
+            crate::commands::composer_discard_text,
             crate::commands::floating_window_create,
             crate::commands::floating_window_destroy,
             crate::commands::floating_window_list,

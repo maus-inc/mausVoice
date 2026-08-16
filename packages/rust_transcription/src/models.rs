@@ -36,6 +36,12 @@ pub enum WhisperModel {
         alias = "canary_1b"
     )]
     Canary1B,
+    #[serde(
+        rename = "sense-voice",
+        alias = "sensevoice",
+        alias = "sense_voice"
+    )]
+    SenseVoice,
 }
 
 impl WhisperModel {
@@ -54,6 +60,7 @@ impl WhisperModel {
                 Some(Self::ParakeetTdt06B)
             }
             "canary-1b" | "canary" | "canary_1b" => Some(Self::Canary1B),
+            "sense-voice" | "sensevoice" | "sense_voice" => Some(Self::SenseVoice),
             _ => None,
         }
     }
@@ -69,13 +76,17 @@ impl WhisperModel {
             Self::ParakeetCtc06B => "parakeet-ctc-0.6b",
             Self::ParakeetTdt06B => "parakeet-tdt-0.6b",
             Self::Canary1B => "canary-1b",
+            Self::SenseVoice => "sense-voice",
         }
     }
 
     pub fn is_onnx(self) -> bool {
         matches!(
             self,
-            Self::ParakeetCtc06B | Self::ParakeetTdt06B | Self::Canary1B
+            Self::ParakeetCtc06B
+                | Self::ParakeetTdt06B
+                | Self::Canary1B
+                | Self::SenseVoice
         )
     }
 
@@ -94,6 +105,7 @@ impl WhisperModel {
             Self::ParakeetCtc06B => "model_int8.onnx_data",
             Self::ParakeetTdt06B => "encoder-model.int8.onnx",
             Self::Canary1B => "encoder-model.int8.onnx",
+            Self::SenseVoice => "model.int8.onnx",
         }
     }
 
@@ -124,6 +136,13 @@ impl WhisperModel {
                     ("encoder-model.int8.onnx", format!("{root}encoder-model.int8.onnx"), Some("6d96e9945898e5ace48f4efecd459ca1df81859730be27b8af6b197639403ee1")),
                     ("decoder-model.int8.onnx", format!("{root}decoder-model.int8.onnx"), Some("52d83aa7aad41fbbe4f9dfcd341d784735a6eb4c6eb0d3290fc27a0d8ac39abf")),
                     ("vocab.txt", format!("{root}vocab.txt"), None),
+                ]
+            }
+            Self::SenseVoice => {
+                let root = "https://huggingface.co/csukuangfj/sherpa-onnx-sense-voice-zh-en-ja-ko-yue-2024-07-17-int8/resolve/main/";
+                vec![
+                    ("model.int8.onnx", format!("{root}model.int8.onnx")),
+                    ("tokens.txt", format!("{root}tokens.txt")),
                 ]
             }
             _ => Vec::new(),
@@ -189,6 +208,9 @@ impl WhisperModel {
             Self::Canary1B => {
                 "https://huggingface.co/istupakov/canary-1b-v2-onnx/resolve/main/encoder-model.int8.onnx"
             }
+            Self::SenseVoice => {
+                "https://huggingface.co/csukuangfj/sherpa-onnx-sense-voice-zh-en-ja-ko-yue-2024-07-17-int8/resolve/main/model.int8.onnx"
+            }
         }
         .to_string()
     }
@@ -204,6 +226,7 @@ impl WhisperModel {
             "parakeet-ctc-0.6b",
             "parakeet-tdt-0.6b",
             "canary-1b",
+            "sense-voice",
         ]
     }
 }
@@ -232,13 +255,19 @@ mod tests {
 
     #[test]
     fn onnx_primary_is_first_in_artifact_set() {
-        for model in [
-            WhisperModel::ParakeetCtc06B,
-            WhisperModel::ParakeetTdt06B,
-            WhisperModel::Canary1B,
-        ] {
+        let onnx_models: Vec<WhisperModel> = WhisperModel::supported()
+            .iter()
+            .filter_map(|slug| WhisperModel::from_slug(slug))
+            .filter(|model| model.is_onnx())
+            .collect();
+        assert!(!onnx_models.is_empty());
+
+        for model in onnx_models {
             let artifacts = model.artifact_set();
-            assert_eq!(artifacts.first().map(|artifact| artifact.0), Some(model.filename()));
+            assert_eq!(
+                artifacts.first().map(|artifact| artifact.0),
+                Some(model.filename())
+            );
             assert!(artifacts.len() > 1);
             assert!(artifacts.iter().all(|(_, url, _)| {
                 url.starts_with("https://huggingface.co/") && !url.contains("/resolve/main/")

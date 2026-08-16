@@ -43,6 +43,7 @@ type TranscriptionOptionsPayload = {
   model: LocalWhisperModel;
   preferGpu: boolean;
   deviceId?: string;
+  hallucinationFilterEnabled: boolean;
 };
 
 export type TranscribeAudioMetadata = {
@@ -189,6 +190,8 @@ export class LocalTranscribeAudioRepo extends BaseTranscribeAudioRepo {
       model: normalizeLocalWhisperModel(modelSize || DEFAULT_MODEL_SIZE),
       preferGpu: isGpuPreferredTranscriptionDevice(device),
       deviceId: getTranscriptionSidecarDeviceId(device),
+      hallucinationFilterEnabled:
+        state.userPrefs?.hallucinationFilterEnabled !== false,
     };
   }
 
@@ -205,6 +208,7 @@ export class LocalTranscribeAudioRepo extends BaseTranscribeAudioRepo {
       initialPrompt: input.prompt ?? undefined,
       language: input.language,
       deviceId: options.deviceId,
+      hallucinationFilterEnabled: options.hallucinationFilterEnabled,
     });
 
     return {
