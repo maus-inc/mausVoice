@@ -55,6 +55,17 @@ export const ComposerPage = () => {
   const [isListening, setIsListening] = useState(false);
   const recognitionRef = useRef<SpeechRecognitionLike | null>(null);
 
+  // Voice Edit Mode relies on the webview's SpeechRecognition API, which only
+  // exists on Chromium-based webviews. Feature-detect once so we can disable
+  // the mic button with a clear message instead of silently no-op'ing (or
+  // crashing when `toggleVoiceInstruction` can't construct a recognizer).
+  const speechRecognitionSupported = useMemo(() => {
+    const speechWindow = window as SpeechWindow;
+    return Boolean(
+      speechWindow.SpeechRecognition || speechWindow.webkitSpeechRecognition,
+    );
+  }, []);
+
   useEffect(() => {
     let active = true;
     void invoke<string | null>("composer_peek_text", { requestId })
@@ -204,7 +215,14 @@ export const ComposerPage = () => {
               aria-label={intl.formatMessage({
                 defaultMessage: "Dictate edit instruction",
               })}
-              disabled={isEditing}
+              disabled={isEditing || !speechRecognitionSupported}
+              title={
+                speechRecognitionSupported
+                  ? undefined
+                  : intl.formatMessage({
+                      defaultMessage: "Voice editing is not supported on this platform",
+                    })
+              }
             >
               <MicIcon />
             </IconButton>
@@ -221,6 +239,11 @@ export const ComposerPage = () => {
               )}
             </Button>
           </Stack>
+          {!speechRecognitionSupported && (
+            <Typography variant="caption" color="text.secondary">
+              <FormattedMessage defaultMessage="Voice editing is not supported on this platform." />
+            </Typography>
+          )}
           <Stack
             direction="row"
             spacing={1}
