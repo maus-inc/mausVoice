@@ -1620,4 +1620,37 @@ mod tests {
             .unwrap();
         assert_ne!(snapshot.status, DownloadJobStatus::Completed);
     }
+
+    /// A typo'd digest constant is a permanent, unrecoverable download failure
+    /// (the artifact can never verify). Refetching upstream needs network access
+    /// CI cannot rely on, so at minimum every pinned digest must be a plausible
+    /// SHA-256: exactly 64 hexadecimal characters.
+    #[test]
+    fn pinned_artifact_digests_are_well_formed_sha256() {
+        let mut pinned_digests = 0_usize;
+        for slug in WhisperModel::supported() {
+            let Some(model) = WhisperModel::from_slug(slug) else {
+                continue;
+            };
+            for (name, _, sha256) in model.artifact_set() {
+                let Some(digest) = sha256 else {
+                    continue;
+                };
+                assert_eq!(
+                    digest.len(),
+                    64,
+                    "pinned digest for '{name}' must be 64 hex characters: '{digest}'"
+                );
+                assert!(
+                    digest.chars().all(|character| character.is_ascii_hexdigit()),
+                    "pinned digest for '{name}' must be hexadecimal: '{digest}'"
+                );
+                pinned_digests += 1;
+            }
+        }
+        assert!(
+            pinned_digests > 0,
+            "at least one artifact must carry a pinned SHA-256 digest"
+        );
+    }
 }
