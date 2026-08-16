@@ -27,9 +27,6 @@ const rustTargetDir = cargoTargetDirOverride
     : resolve(repoRoot, cargoTargetDirOverride)
   : join(repoRoot, "packages", "rust_transcription", "target");
 const tauriBinariesDir = join(desktopDir, "src-tauri", "binaries");
-const tauriTargetDir = cargoTargetDirOverride
-  ? resolve(repoRoot, cargoTargetDirOverride)
-  : join(desktopDir, "src-tauri", "target");
 
 // These are the runtime DLLs shipped by sherpa-onnx's Windows shared build.
 // Never copy arbitrary DLLs from Cargo's profile directory into the app
@@ -58,13 +55,6 @@ if (!existsSync(sidecarManifestPath)) {
 
 mkdirSync(tauriBinariesDir, { recursive: true });
 
-// Temporary CI compatibility for targets whose Cargo resolver selects a
-// target-specific sherpa dependency edge. The generated lock is exported in
-// the build log so it can be committed and this bootstrap can be removed.
-if (process.env.CI === "true") {
-  refreshSidecarLockfile();
-}
-
 const cpuSidecarPath = buildAndCopy("rust-transcription-cpu", false);
 prepareSherpaWindowsRuntime();
 prepareOnnxRuntimeLibrary();
@@ -89,43 +79,6 @@ if (gpuBuildState.canBuildNative) {
     `[sidecar] Skipping native GPU sidecar build for ${targetTriple}: ${gpuBuildState.reason}`,
   );
   mirrorCpuSidecarAsGpu(cpuSidecarPath);
-}
-
-function refreshSidecarLockfile() {
-  run(
-    "cargo",
-    ["generate-lockfile", "--manifest-path", sidecarManifestPath],
-    repoRoot,
-  );
-
-  const lockPath = join(
-    repoRoot,
-    "packages",
-    "rust_transcription",
-    "Cargo.lock",
-  );
-  const lockDiff = spawnSync(
-    "git",
-    ["diff", "--unified=0", "--", "packages/rust_transcription/Cargo.lock"],
-    { cwd: repoRoot, encoding: "utf8" },
-  ).stdout;
-  console.log("[sidecar-lock-diff] BEGIN");
-  console.log(lockDiff || "(no diff)");
-  console.log("[sidecar-lock-diff] END");
-
-  const targetSegments = buildTarget ? [buildTarget] : [];
-  const bundleDir = join(
-    tauriTargetDir,
-    ...targetSegments,
-    buildProfile,
-    "bundle",
-  );
-  const artifactExtension = getLockArtifactExtension(targetTriple);
-  mkdirSync(bundleDir, { recursive: true });
-  copyFileSync(
-    lockPath,
-    join(bundleDir, `generated-sidecar-lock.${artifactExtension}`),
-  );
 }
 
 function buildAndCopy(binaryName, gpuEnabled, options = {}) {
@@ -243,16 +196,6 @@ function onnxRuntimeLibraryName(target) {
     return "libonnxruntime.dylib";
   }
   return "libonnxruntime.so";
-}
-
-function getLockArtifactExtension(target) {
-  if (isWindowsTarget(target)) {
-    return "exe";
-  }
-  if (isAppleTarget(target)) {
-    return "app.tar.gz";
-  }
-  return "deb";
 }
 
 function mirrorCpuSidecarAsGpu(cpuSidecarPath) {
