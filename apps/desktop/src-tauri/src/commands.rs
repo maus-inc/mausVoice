@@ -411,11 +411,13 @@ pub struct UserPreferencesGetArgs {
 const MAX_RETAINED_TRANSCRIPTION_AUDIO: usize = 20;
 const MAX_AUDIO_IMPORT_FILE_BYTES: u64 = 100 * 1024 * 1024;
 const MAX_AUDIO_IMPORT_DURATION_SECONDS: u64 = 5 * 60;
-const MAX_AUDIO_IMPORT_OUTPUT_SAMPLES: usize = 16_000 * MAX_AUDIO_IMPORT_DURATION_SECONDS as usize;
-// Bound the decoded/interleaved allocation as well as the resampled output.
-// High-rate or multi-channel files otherwise multiply memory before the
-// duration limit can be checked.
-const MAX_AUDIO_IMPORT_DECODED_SAMPLES: usize = MAX_AUDIO_IMPORT_OUTPUT_SAMPLES * 4;
+const MAX_AUDIO_IMPORT_OUTPUT_SAMPLES: usize =
+    16_000 * MAX_AUDIO_IMPORT_DURATION_SECONDS as usize;
+// Keep one absolute memory ceiling for pathological sample rates while the
+// normal limit below is derived from the file's actual rate and channel count.
+const MAX_AUDIO_IMPORT_DECODED_MEMORY_BYTES: usize = 128 * 1024 * 1024;
+const MAX_AUDIO_IMPORT_ABSOLUTE_DECODED_SAMPLES: usize =
+    MAX_AUDIO_IMPORT_DECODED_MEMORY_BYTES / std::mem::size_of::<f32>();
 
 #[derive(serde::Serialize, specta::Type)]
 #[serde(rename_all = "camelCase")]
@@ -450,18 +452,38 @@ pub async fn transcription_import_audio(path: String) -> Result<TranscriptionAud
             .map_err(|err| format!("failed to decode audio file '{}': {err}", path.display()))?;
         let source_rate = decoder.sample_rate();
         let channels = decoder.channels().max(1) as usize;
+        if source_rate == 0 {
+            return Err("The selected audio file contains no usable samples".to_string());
+        }
+
+        // The decoded stream is interleaved, so derive its duration limit from
+        // the source rate and channel count rather than multiplying the
+        // 16 kHz mono output cap by a fixed factor. This accepts ordinary
+        // 44.1/48 kHz stereo recordings while retaining an absolute memory
+        // ceiling for unusual high-rate files.
+        let duration_sample_limit = (source_rate as usize)
+            .saturating_mul(channels)
+            .saturating_mul(MAX_AUDIO_IMPORT_DURATION_SECONDS as usize);
+        let max_decoded_samples = duration_sample_limit
+            .min(MAX_AUDIO_IMPORT_ABSOLUTE_DECODED_SAMPLES)
+            .max(1);
+        let memory_limited = duration_sample_limit > max_decoded_samples;
         let decoded: Vec<f32> = decoder
             .convert_samples::<f32>()
-            .take(MAX_AUDIO_IMPORT_DECODED_SAMPLES + 1)
+            .take(max_decoded_samples.saturating_add(1))
             .collect();
 
-        if decoded.len() > MAX_AUDIO_IMPORT_DECODED_SAMPLES {
+        if decoded.len() > max_decoded_samples {
+            let reason = if memory_limited {
+                "the decoded audio exceeds the safe memory limit"
+            } else {
+                "the audio exceeds the duration limit"
+            };
             return Err(format!(
-                "The selected audio file exceeds the {} minute import limit",
-                MAX_AUDIO_IMPORT_DURATION_SECONDS / 60
+                "The selected audio file cannot be imported because {reason}"
             ));
         }
-        if decoded.is_empty() || source_rate == 0 {
+        if decoded.is_empty() {
             return Err("The selected audio file contains no usable samples".to_string());
         }
 
