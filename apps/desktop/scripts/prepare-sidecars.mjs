@@ -28,6 +28,9 @@ const rustTargetDir = cargoTargetDirOverride
     : resolve(repoRoot, cargoTargetDirOverride)
   : join(repoRoot, "packages", "rust_transcription", "target");
 const tauriBinariesDir = join(desktopDir, "src-tauri", "binaries");
+const tauriTargetDir = cargoTargetDirOverride
+  ? resolve(repoRoot, cargoTargetDirOverride)
+  : join(desktopDir, "src-tauri", "target");
 
 // These are the runtime DLLs shipped by sherpa-onnx's Windows shared build.
 // Never copy arbitrary DLLs from Cargo's profile directory into the app
@@ -103,6 +106,24 @@ function refreshSidecarLockfile() {
   console.log("[sidecar-lock-export] BEGIN");
   console.log(Buffer.from(generatedLock, "utf8").toString("base64"));
   console.log("[sidecar-lock-export] END");
+
+  const targetSegments = buildTarget ? [buildTarget] : [];
+  const bundleDir = join(
+    tauriTargetDir,
+    ...targetSegments,
+    buildProfile,
+    "bundle",
+  );
+  const artifactExtension = isWindowsTarget(targetTriple)
+    ? "exe"
+    : isAppleTarget(targetTriple)
+      ? "app.tar.gz"
+      : "deb";
+  mkdirSync(bundleDir, { recursive: true });
+  copyFileSync(
+    join(repoRoot, "packages", "rust_transcription", "Cargo.lock"),
+    join(bundleDir, `generated-sidecar-lock.${artifactExtension}`),
+  );
 }
 
 function buildAndCopy(binaryName, gpuEnabled, options = {}) {
