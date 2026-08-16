@@ -75,15 +75,6 @@ impl FloatingWindowState {
         Ok(pending.get(request_id).map(|(text, _)| text.clone()))
     }
 
-    pub fn take_composer_text(&self, request_id: &str) -> Result<Option<String>, String> {
-        let mut pending = self
-            .pending_composer_text
-            .lock()
-            .map_err(|_| "composer text state lock poisoned".to_string())?;
-        Self::prune_expired(&mut pending);
-        Ok(pending.remove(request_id).map(|(text, _)| text))
-    }
-
     pub fn discard_composer_text(&self, request_id: &str) -> Result<(), String> {
         let mut pending = self
             .pending_composer_text
