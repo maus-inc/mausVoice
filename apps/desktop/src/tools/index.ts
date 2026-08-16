@@ -92,7 +92,7 @@ export const TOOL_REGISTRY: ReadonlyMap<string, ToolRegistryEntry> = new Map<
         return staticInfo(
           "run_terminal_command",
           "Run a read-only terminal command",
-          "Execute a restricted allow-listed terminal command without a shell (no sh/cmd/bash, pipes, redirection, or shell metacharacters) and return its output. " +
+          "Execute a restricted allow-listed terminal command without a shell (no sh/cmd/bash, pipes, redirection, or shell metacharacters) and return its output. Each command has a 15-second timeout and output is capped at 128 KiB. " +
             `Allowed binaries on this platform: ${getAllowedTerminalBinaries().join(", ")}. ` +
             "Use this for read-only inspection only.",
           {

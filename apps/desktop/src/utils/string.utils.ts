@@ -4,7 +4,6 @@ export {
   KNOWN_SILENCE_HALLUCINATIONS,
   filterKnownSilenceHallucinations,
   isKnownSilenceHallucination,
-  isNearSilentAudio,
 } from "./hallucination.utils";
 
 /**

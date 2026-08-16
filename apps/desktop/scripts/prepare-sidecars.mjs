@@ -28,6 +28,16 @@ const rustTargetDir = cargoTargetDirOverride
   : join(repoRoot, "packages", "rust_transcription", "target");
 const tauriBinariesDir = join(desktopDir, "src-tauri", "binaries");
 
+// These are the runtime DLLs shipped by sherpa-onnx's Windows shared build.
+// Never copy arbitrary DLLs from Cargo's profile directory into the app
+// bundle: build tools and unrelated native dependencies may be present there.
+const WINDOWS_SHERPA_RUNTIME_DLLS = new Set([
+  "onnxruntime.dll",
+  "onnxruntime_providers_shared.dll",
+  "sherpa-onnx-c-api.dll",
+  "sherpa-onnx-cxx-api.dll",
+]);
+
 const buildTarget =
   process.env.CARGO_BUILD_TARGET?.trim() ||
   process.env.TAURI_ENV_TARGET_TRIPLE?.trim() ||
@@ -44,14 +54,6 @@ if (!existsSync(sidecarManifestPath)) {
 }
 
 mkdirSync(tauriBinariesDir, { recursive: true });
-
-// The sidecar manifest has target-specific native dependencies: Windows uses
-// sherpa's shared archive while Unix targets use the static archive. Cargo's
-// lockfile does not encode feature selection for those target branches, so a
-// CI build refreshes the graph before the reproducible --locked compile.
-if (process.env.CI === "true") {
-  refreshSidecarLockfile();
-}
 
 const cpuSidecarPath = buildAndCopy("rust-transcription-cpu", false);
 prepareSherpaWindowsRuntime();
@@ -77,14 +79,6 @@ if (gpuBuildState.canBuildNative) {
     `[sidecar] Skipping native GPU sidecar build for ${targetTriple}: ${gpuBuildState.reason}`,
   );
   mirrorCpuSidecarAsGpu(cpuSidecarPath);
-}
-
-function refreshSidecarLockfile() {
-  run(
-    "cargo",
-    ["generate-lockfile", "--manifest-path", sidecarManifestPath],
-    repoRoot,
-  );
 }
 
 function buildAndCopy(binaryName, gpuEnabled, options = {}) {
@@ -166,7 +160,7 @@ function prepareSherpaWindowsRuntime() {
   }
 
   const runtimeDlls = readdirSync(profileDir).filter((name) =>
-    name.toLowerCase().endsWith(".dll"),
+    WINDOWS_SHERPA_RUNTIME_DLLS.has(name.toLowerCase()),
   );
   for (const name of runtimeDlls) {
     const destinationDir = join(tauriBinariesDir, "onnxruntime");

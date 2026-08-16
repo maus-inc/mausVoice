@@ -726,8 +726,9 @@ export const setReviewBeforeInsert = async (
 export const setAgentEnabledTools = async (
   toolIds: string[] | null,
 ): Promise<void> => {
+  const normalizedToolIds = toolIds && toolIds.length > 0 ? toolIds : null;
   await updateUserPreferences((preferences) => {
-    preferences.agentEnabledTools = toolIds;
+    preferences.agentEnabledTools = normalizedToolIds;
   }, "Failed to save enabled agent tools. Please try again.");
 };
 

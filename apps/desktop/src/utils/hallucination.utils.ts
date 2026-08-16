@@ -10,9 +10,6 @@ export const KNOWN_SILENCE_HALLUCINATIONS = [
   "(silence)",
   "thank you for watching",
   "thanks for watching",
-  "thank you",
-  "you",
-  "the end",
   "字幕由amara.org社区提供",
   "ご視聴ありがとうございました",
 ] as const;
@@ -46,22 +43,4 @@ export const filterKnownSilenceHallucinations = (text: string): string => {
     .split(/(?<=[.!?。！？])\s+|\n+/u)
     .filter((part) => !isKnownSilenceHallucination(part));
   return kept.join(" ").replace(/\s+/g, " ").trim();
-};
-
-/** Simple RMS gate shared by imported and live audio callers. */
-export const isNearSilentAudio = (
-  samples: ArrayLike<number> | null | undefined,
-  threshold = 0.008,
-): boolean => {
-  if (!samples || samples.length === 0) return true;
-  let sumSquares = 0;
-  let finiteCount = 0;
-  for (const value of Array.from(samples)) {
-    const sample = Number(value);
-    if (!Number.isFinite(sample)) continue;
-    finiteCount += 1;
-    sumSquares += sample * sample;
-  }
-  if (finiteCount === 0) return true;
-  return Math.sqrt(sumSquares / finiteCount) < threshold;
 };

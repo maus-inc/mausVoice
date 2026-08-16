@@ -84,19 +84,24 @@ const normalizeAgentPermissionTimeout = (
 const parseAgentEnabledTools = (
   value: Nullable<string[]> | string | undefined,
 ): Nullable<string[]> => {
-  if (Array.isArray(value)) return value;
+  const normalize = (tools: string[]): Nullable<string[]> =>
+    tools.length > 0 ? tools : null;
+
+  if (Array.isArray(value)) return normalize(value);
   if (typeof value !== "string" || value.trim() === "") return null;
   try {
     const parsed: unknown = JSON.parse(value);
     return Array.isArray(parsed) &&
       parsed.every((item) => typeof item === "string")
-      ? parsed
+      ? normalize(parsed)
       : null;
   } catch {
-    return value
-      .split(",")
-      .map((item) => item.trim())
-      .filter(Boolean);
+    return normalize(
+      value
+        .split(",")
+        .map((item) => item.trim())
+        .filter(Boolean),
+    );
   }
 };
 

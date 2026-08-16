@@ -2,7 +2,6 @@ import { describe, expect, it } from "vitest";
 import {
   filterKnownSilenceHallucinations,
   isKnownSilenceHallucination,
-  isNearSilentAudio,
 } from "./hallucination.utils";
 
 describe("silence hallucination filtering", () => {
@@ -19,8 +18,8 @@ describe("silence hallucination filtering", () => {
     ).toContain("Thank you for watching the demo");
   });
 
-  it("detects near-silent samples by RMS", () => {
-    expect(isNearSilentAudio(new Float32Array([0, 0, 0]))).toBe(true);
-    expect(isNearSilentAudio(new Float32Array([0.2, -0.2, 0.1]))).toBe(false);
+  it("preserves short genuine sentences that resemble old silence entries", () => {
+    expect(filterKnownSilenceHallucinations("You.")).toBe("You.");
+    expect(filterKnownSilenceHallucinations("The end.")).toBe("The end.");
   });
 });

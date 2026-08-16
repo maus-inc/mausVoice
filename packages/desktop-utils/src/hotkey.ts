@@ -5,8 +5,8 @@ type HoldAction = {
   controller: ActivationController;
   combos: string[][];
   triggerCount: number;
-  /** Keep a hold-to-talk action active when an incidental key is pressed. */
-  allowAdditionalKeys?: boolean;
+  /** Keep a hold-to-talk action active for these incidental keys only. */
+  allowedAdditionalKeys?: string[];
 };
 
 export type UseHotkeyHoldManyArgs = {
@@ -21,7 +21,7 @@ export type UseHotkeyHoldArgs = {
   triggerCount: number;
   keysHeld: string[];
   isDisabled?: boolean;
-  allowAdditionalKeys?: boolean;
+  allowedAdditionalKeys?: string[];
 };
 
 export type UseHotkeyFireArgs = {
@@ -57,7 +57,7 @@ export const useHotkeyHoldMany = (args: UseHotkeyHoldManyArgs): void => {
     const matchesCombo = (
       held: string[],
       combo: string[],
-      allowAdditionalKeys = false,
+      allowedAdditionalKeys: string[] = [],
     ) => {
       if (combo.length === 0) {
         return false;
@@ -65,10 +65,17 @@ export const useHotkeyHoldMany = (args: UseHotkeyHoldManyArgs): void => {
 
       const uniqueHeld = Array.from(new Set(held.map((key) => normalize(key))));
       const required = Array.from(new Set(combo.map((key) => normalize(key))));
+      const allowedAdditional = new Set(
+        allowedAdditionalKeys.map((key) => normalize(key)),
+      );
+      const requiredSet = new Set(required);
+      const additionalHeld = uniqueHeld.filter(
+        (key) => !requiredSet.has(key),
+      );
 
       if (
         uniqueHeld.length < required.length ||
-        (!allowAdditionalKeys && uniqueHeld.length !== required.length)
+        !additionalHeld.every((key) => allowedAdditional.has(key))
       ) {
         return false;
       }
@@ -81,7 +88,7 @@ export const useHotkeyHoldMany = (args: UseHotkeyHoldManyArgs): void => {
       const availableCombos = action.combos;
       const wasPressed = wasPressedRef.current.get(action.controller) ?? false;
       const isPressed = availableCombos.some((combo) =>
-        matchesCombo(keysHeld, combo, action.allowAdditionalKeys),
+        matchesCombo(keysHeld, combo, action.allowedAdditionalKeys),
       );
 
       if (isDisabled) {

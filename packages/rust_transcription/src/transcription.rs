@@ -11,6 +11,8 @@ use whisper_rs::{
     FullParams, SamplingStrategy, WhisperContext, WhisperContextParameters, WhisperError,
 };
 
+const SILENCE_RMS_THRESHOLD: f32 = 0.0025;
+
 #[derive(Debug, Clone)]
 pub struct TranscriptionInput {
     pub model: WhisperModel,
@@ -20,6 +22,7 @@ pub struct TranscriptionInput {
     pub language: Option<String>,
     pub initial_prompt: Option<String>,
     pub device_id: Option<String>,
+    pub hallucination_filter_enabled: bool,
 }
 
 #[derive(Debug, Clone)]
@@ -107,11 +110,14 @@ impl TranscriptionEngine {
             return Err("no finite samples provided".to_string());
         }
 
-        // A cheap pre-inference energy gate prevents both whisper.cpp and ONNX
-        // engines from turning a microphone floor into a fabricated sentence.
-        // sherpa-onnx also exposes VAD, but this gate is deterministic and
-        // applies before any model-specific runtime is loaded.
-        if is_near_silent(&filtered_samples, 0.001) {
+        // A preference-controlled pre-inference energy gate prevents both
+        // whisper.cpp and ONNX engines from turning a microphone floor into a
+        // fabricated sentence. sherpa-onnx also exposes VAD, but this gate is
+        // deterministic and applies before any model-specific runtime is
+        // loaded.
+        if input.hallucination_filter_enabled
+            && is_near_silent(&filtered_samples, SILENCE_RMS_THRESHOLD)
+        {
             return Ok(TranscriptionOutput {
                 text: String::new(),
                 inference_device: self.mode.as_str().to_ascii_uppercase(),

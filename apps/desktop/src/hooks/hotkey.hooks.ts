@@ -11,7 +11,7 @@ import { getHotkeyCombosForAction } from "../utils/keyboard.utils";
 type HoldAction = {
   actionName: string;
   controller: ActivationController;
-  allowAdditionalKeys?: boolean;
+  allowedAdditionalKeys?: string[];
 };
 
 type HotkeyHoldArgs = HoldAction & { isDisabled?: boolean };
@@ -22,10 +22,10 @@ export const useHotkeyHold = (args: HotkeyHoldArgs) => {
       {
         actionName: args.actionName,
         controller: args.controller,
-        allowAdditionalKeys: args.allowAdditionalKeys,
+        allowedAdditionalKeys: args.allowedAdditionalKeys,
       },
     ],
-    [args.actionName, args.controller, args.allowAdditionalKeys],
+    [args.actionName, args.controller, args.allowedAdditionalKeys],
   );
   useHotkeyHoldMany({ actions, isDisabled: args.isDisabled });
 };
@@ -57,7 +57,7 @@ export const useHotkeyHoldMany = (args: {
         controller: action.controller,
         combos: combosByAction[action.actionName] ?? [],
         triggerCount: hotkeyTriggers[action.actionName] ?? 0,
-        allowAdditionalKeys: action.allowAdditionalKeys,
+        allowedAdditionalKeys: action.allowedAdditionalKeys,
       })),
     [args.actions, combosByAction, hotkeyTriggers],
   );

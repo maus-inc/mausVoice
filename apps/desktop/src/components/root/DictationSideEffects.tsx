@@ -132,6 +132,7 @@ type FinalizedRecording = {
 const FINALIZE_TIMEOUT_MS = 90_000;
 const HANDLE_TRANSCRIPT_TIMEOUT_MS = 60_000;
 const PHASE_HEARTBEAT_INTERVAL_MS = 5_000;
+const IN_DICTATION_STYLE_KEYS = ["LeftArrow", "RightArrow"];
 
 export const DictationSideEffects = () => {
   const intl = useIntl();
@@ -982,9 +983,15 @@ export const DictationSideEffects = () => {
     actionName: DICTATE_HOTKEY,
     isDisabled: !isDictationInteractable || activeRecordingMode === "agent",
     controller: dictationController,
-    // Arrow keys are an intentional in-dictation style-switch modifier and
-    // must not release hold-to-talk when pressed.
-    allowAdditionalKeys: true,
+    // Only the two style-switch arrows may be held in addition to the
+    // activation key, and only after dictation is already active. This keeps
+    // Fn+any-key from becoming an accidental hold-to-talk gesture.
+    allowedAdditionalKeys:
+      inDictationStyleSwitchingEnabled &&
+      isManualStyling &&
+      activeRecordingMode === "dictate"
+        ? IN_DICTATION_STYLE_KEYS
+        : undefined,
   });
 
   useHotkeyHold({

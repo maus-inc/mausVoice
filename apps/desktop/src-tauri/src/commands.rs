@@ -409,6 +409,13 @@ pub struct UserPreferencesGetArgs {
 }
 
 const MAX_RETAINED_TRANSCRIPTION_AUDIO: usize = 20;
+const MAX_AUDIO_IMPORT_FILE_BYTES: u64 = 100 * 1024 * 1024;
+const MAX_AUDIO_IMPORT_DURATION_SECONDS: u64 = 5 * 60;
+const MAX_AUDIO_IMPORT_OUTPUT_SAMPLES: usize = 16_000 * MAX_AUDIO_IMPORT_DURATION_SECONDS as usize;
+// Bound the decoded/interleaved allocation as well as the resampled output.
+// High-rate or multi-channel files otherwise multiply memory before the
+// duration limit can be checked.
+const MAX_AUDIO_IMPORT_DECODED_SAMPLES: usize = MAX_AUDIO_IMPORT_OUTPUT_SAMPLES * 4;
 
 #[derive(serde::Serialize, specta::Type)]
 #[serde(rename_all = "camelCase")]
@@ -428,12 +435,32 @@ pub async fn transcription_import_audio(path: String) -> Result<TranscriptionAud
     tauri::async_runtime::spawn_blocking(move || {
         let file = std::fs::File::open(&path)
             .map_err(|err| format!("failed to open audio file '{}': {err}", path.display()))?;
+        let file_bytes = file
+            .metadata()
+            .map_err(|err| format!("failed to inspect audio file '{}': {err}", path.display()))?
+            .len();
+        if file_bytes > MAX_AUDIO_IMPORT_FILE_BYTES {
+            return Err(format!(
+                "The selected audio file is too large (maximum is {} MiB)",
+                MAX_AUDIO_IMPORT_FILE_BYTES / (1024 * 1024)
+            ));
+        }
+
         let decoder = rodio::Decoder::new(BufReader::new(file))
             .map_err(|err| format!("failed to decode audio file '{}': {err}", path.display()))?;
         let source_rate = decoder.sample_rate();
         let channels = decoder.channels().max(1) as usize;
-        let decoded: Vec<f32> = decoder.convert_samples::<f32>().collect();
+        let decoded: Vec<f32> = decoder
+            .convert_samples::<f32>()
+            .take(MAX_AUDIO_IMPORT_DECODED_SAMPLES + 1)
+            .collect();
 
+        if decoded.len() > MAX_AUDIO_IMPORT_DECODED_SAMPLES {
+            return Err(format!(
+                "The selected audio file exceeds the {} minute import limit",
+                MAX_AUDIO_IMPORT_DURATION_SECONDS / 60
+            ));
+        }
         if decoded.is_empty() || source_rate == 0 {
             return Err("The selected audio file contains no usable samples".to_string());
         }
@@ -449,6 +476,12 @@ pub async fn transcription_import_audio(path: String) -> Result<TranscriptionAud
         let samples = resample_audio_samples(&mono, source_rate, 16_000);
         if samples.is_empty() {
             return Err("Unable to convert the selected audio to 16 kHz mono".to_string());
+        }
+        if samples.len() > MAX_AUDIO_IMPORT_OUTPUT_SAMPLES {
+            return Err(format!(
+                "The selected audio file exceeds the {} minute import limit",
+                MAX_AUDIO_IMPORT_DURATION_SECONDS / 60
+            ));
         }
 
         Ok(TranscriptionAudioData {
@@ -2672,6 +2705,24 @@ fn parse_floating_window_url(url: &str) -> Result<Url, String> {
     Url::parse(url).map_err(|e| format!("Invalid URL: {e}"))
 }
 
+/// Validate only the path portion of a local app route. Query values are
+/// opaque user data; rejecting `..` anywhere in the full route would reject
+/// legitimate transcript text such as "Wait... what?".
+fn validate_local_app_route(route: &str) -> Result<(), String> {
+    let path = route.split(['?', '#']).next().unwrap_or(route);
+    let has_parent_segment = path.split('/').any(|segment| {
+        segment == ".." || segment.to_ascii_lowercase().contains("%2e")
+    });
+
+    if path.is_empty() || path.starts_with('/') || path.contains('\\') || has_parent_segment {
+        return Err(
+            "Floating app routes must be relative and cannot contain path traversal".to_string(),
+        );
+    }
+
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -2800,6 +2851,13 @@ mod tests {
     fn floating_window_allows_localhost() {
         assert!(validate_floating_window_url(&Url::parse("http://localhost:1420/").unwrap()).is_ok());
         assert!(validate_floating_window_url(&Url::parse("http://127.0.0.1:8080/foo").unwrap()).is_ok());
+    }
+
+    #[test]
+    fn local_app_route_allows_dots_in_query_data() {
+        assert!(validate_local_app_route("composer?text=Wait...%20what%3F").is_ok());
+        assert!(validate_local_app_route("composer/../settings").is_err());
+        assert!(validate_local_app_route("composer/%2e%2e/settings").is_err());
     }
 
     #[test]
@@ -3503,9 +3561,7 @@ pub async fn floating_window_create(
         .map(str::trim)
         .filter(|route| !route.is_empty())
     {
-        if route.starts_with('/') || route.contains("..") {
-            return Err("Floating app routes must be relative and cannot contain '..'".to_string());
-        }
+        validate_local_app_route(route)?;
         (
             tauri::WebviewUrl::App(route.into()),
             format!("app://{route}"),

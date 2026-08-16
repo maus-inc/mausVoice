@@ -14,6 +14,7 @@ import { getCurrentWindow } from "@tauri-apps/api/window";
 import { useMemo, useRef, useState } from "react";
 import { FormattedMessage } from "react-intl";
 import { applyVoiceEditInstruction } from "../../actions/composer.actions";
+import { decodeComposerText } from "../../utils/composer.utils";
 
 type SpeechRecognitionLike = {
   lang: string;
@@ -46,7 +47,10 @@ const closeComposerWindow = async () => {
 export const ComposerPage = () => {
   const params = useMemo(() => new URLSearchParams(window.location.search), []);
   const requestId = params.get("requestId") ?? "";
-  const [text, setText] = useState(params.get("text") ?? "");
+  const initialText = params.has("text64")
+    ? decodeComposerText(params.get("text64") ?? "")
+    : (params.get("text") ?? "");
+  const [text, setText] = useState(initialText);
   const [instruction, setInstruction] = useState("");
   const [isEditing, setIsEditing] = useState(false);
   const [editError, setEditError] = useState<string | null>(null);

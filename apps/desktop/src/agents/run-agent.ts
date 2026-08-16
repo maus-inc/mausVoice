@@ -385,6 +385,128 @@ async function pollForPermission(
   }
 }
 
+type ConversationMessageBlock = {
+  startIndex: number;
+  messages: LlmMessage[];
+};
+
+/**
+ * Group assistant tool calls with all of their tool results before trimming.
+ * Providers require each tool call to have a matching result in the same
+ * request; a positional slice can otherwise start with an orphaned result or
+ * end after the assistant tool-call message.
+ */
+const groupConversationMessages = (
+  messages: LlmMessage[],
+): ConversationMessageBlock[] => {
+  const blocks: ConversationMessageBlock[] = [];
+
+  for (let index = 0; index < messages.length; index++) {
+    const message = messages[index];
+    if (message.role === "tool") {
+      // Orphaned tool results cannot be sent to an LLM provider safely.
+      continue;
+    }
+
+    const toolCalls =
+      message.role === "assistant" && Array.isArray(message.toolCalls)
+        ? message.toolCalls
+        : [];
+    const callIds = toolCalls.map((call) => call.id);
+    const hasValidToolCalls =
+      callIds.length > 0 &&
+      callIds.every((id) => typeof id === "string" && id.length > 0) &&
+      new Set(callIds).size === callIds.length;
+
+    if (!hasValidToolCalls) {
+      blocks.push({ startIndex: index, messages: [message] });
+      continue;
+    }
+
+    const expected = new Set(callIds);
+    const toolResults: LlmMessage[] = [];
+    const seen = new Set<string>();
+    let nextIndex = index + 1;
+    while (nextIndex < messages.length) {
+      const next = messages[nextIndex];
+      if (next.role !== "tool" || !expected.has(next.toolCallId)) break;
+      if (seen.has(next.toolCallId)) break;
+      seen.add(next.toolCallId);
+      toolResults.push(next);
+      nextIndex++;
+    }
+
+    if (seen.size === expected.size) {
+      blocks.push({
+        startIndex: index,
+        messages: [message, ...toolResults],
+      });
+      index = nextIndex - 1;
+      continue;
+    }
+
+    // A persisted conversation can be interrupted between the assistant
+    // response and a tool result. Keep its text, but strip incomplete tool
+    // calls rather than sending an invalid partial exchange.
+    blocks.push({
+      startIndex: index,
+      messages: [
+        {
+          role: "assistant",
+          content: message.content || undefined,
+        },
+      ],
+    });
+  }
+
+  return blocks;
+};
+
+const trimConversationBlocks = (
+  blocks: ConversationMessageBlock[],
+): LlmMessage[] => {
+  const totalMessages = blocks.reduce(
+    (total, block) => total + block.messages.length,
+    0,
+  );
+  if (totalMessages <= MAX_CONTEXT_MESSAGES) {
+    return blocks.flatMap((block) => block.messages);
+  }
+
+  const selected = new Set<number>();
+  let remaining = MAX_CONTEXT_MESSAGES;
+  const firstUserIndex = blocks.findIndex((block) =>
+    block.messages.some((message) => message.role === "user"),
+  );
+
+  if (firstUserIndex >= 0) {
+    const firstUserBlock = blocks[firstUserIndex];
+    selected.add(firstUserIndex);
+    remaining -= firstUserBlock.messages.length;
+  }
+
+  for (let index = blocks.length - 1; index >= 0; index--) {
+    if (selected.has(index)) continue;
+    const blockSize = blocks[index].messages.length;
+    if (blockSize > remaining) continue;
+    selected.add(index);
+    remaining -= blockSize;
+    if (remaining === 0) break;
+  }
+
+  // Keep at least the newest complete block when a future block is larger
+  // than the nominal budget. This preserves protocol validity over a strict
+  // message count, and normal agent iterations are bounded well below 80.
+  if (selected.size === 0 && blocks.length > 0) {
+    selected.add(blocks.length - 1);
+  }
+
+  return blocks
+    .filter((_, index) => selected.has(index))
+    .sort((left, right) => left.startIndex - right.startIndex)
+    .flatMap((block) => block.messages);
+};
+
 function buildConversationMessages(conversationId: string): LlmMessage[] {
   const state = getAppState();
   const messageIds = state.chatMessageIdsByConversationId[conversationId] ?? [];
@@ -396,14 +518,19 @@ function buildConversationMessages(conversationId: string): LlmMessage[] {
 
     const metadata = msg.metadata as Record<string, unknown> | null;
 
-    if (metadata?.type === "tool-result") {
+    if (
+      metadata?.type === "tool-result" &&
+      typeof metadata.toolCallId === "string"
+    ) {
       messages.push({
         role: "tool",
-        toolCallId: metadata.toolCallId as string,
+        toolCallId: metadata.toolCallId,
         content: msg.content,
       });
     } else if (msg.role === "assistant") {
-      const toolCalls = metadata?.toolCalls as LlmToolCall[] | undefined;
+      const toolCalls = Array.isArray(metadata?.toolCalls)
+        ? (metadata.toolCalls as LlmToolCall[])
+        : undefined;
       messages.push({
         role: "assistant",
         content: msg.content || undefined,
@@ -414,17 +541,5 @@ function buildConversationMessages(conversationId: string): LlmMessage[] {
     }
   }
 
-  if (messages.length <= MAX_CONTEXT_MESSAGES) {
-    return messages;
-  }
-
-  // Keep the opening user request as durable memory and the newest tool/result
-  // exchange as working memory. Dropping the middle prevents long-running
-  // conversations from consuming the provider context window indefinitely.
-  const firstUserIndex = messages.findIndex(
-    (message) => message.role === "user",
-  );
-  const firstUser = firstUserIndex >= 0 ? messages[firstUserIndex] : null;
-  const tail = messages.slice(-MAX_CONTEXT_MESSAGES + (firstUser ? 1 : 0));
-  return firstUser ? [firstUser, ...tail] : tail;
+  return trimConversationBlocks(groupConversationMessages(messages));
 }
