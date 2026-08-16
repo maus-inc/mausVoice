@@ -53,12 +53,14 @@ export type ImportedTranscriptionAudioData = {
 const decodePcm16Le = (
   payload: number[] | Uint8Array | ArrayBuffer,
 ): Float32Array => {
-  const bytes =
-    payload instanceof ArrayBuffer
-      ? new Uint8Array(payload)
-      : payload instanceof Uint8Array
-        ? payload
-        : Uint8Array.from(payload);
+  let bytes: Uint8Array;
+  if (payload instanceof ArrayBuffer) {
+    bytes = new Uint8Array(payload);
+  } else if (payload instanceof Uint8Array) {
+    bytes = payload;
+  } else {
+    bytes = Uint8Array.from(payload);
+  }
   if (bytes.byteLength % 2 !== 0) {
     throw new Error("Imported audio returned an invalid PCM payload.");
   }
