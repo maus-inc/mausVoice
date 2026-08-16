@@ -85,7 +85,11 @@ export default function TranscriptionsPage() {
       });
     } catch (error) {
       showErrorSnackbar(
-        error instanceof Error ? error.message : "Unable to import audio file.",
+        error instanceof Error
+          ? error.message
+          : intl.formatMessage({
+              defaultMessage: "Unable to import audio file.",
+            }),
       );
     } finally {
       setIsImporting(false);

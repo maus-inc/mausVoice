@@ -13,7 +13,7 @@ import {
 } from "@mui/material";
 import { Tone } from "@maus-inc/types";
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { FormattedMessage } from "react-intl";
+import { FormattedMessage, useIntl } from "react-intl";
 import { setAppTargetTone } from "../../actions/app-target.actions";
 import {
   closeToneEditorDialog,
@@ -27,6 +27,7 @@ import { ConfirmDialog } from "../common/ConfirmDialog";
 const MAX_PROMPT_LEN = 8000;
 
 export const ToneEditorDialog = () => {
+  const intl = useIntl();
   const toneEditor = useAppStore((state) => state.toneEditor);
   const toneById = useAppStore((state) => state.toneById);
 
@@ -244,7 +245,9 @@ export const ToneEditorDialog = () => {
               value={name}
               onChange={(event) => setName(event.target.value)}
               fullWidth
-              placeholder="Casual, Formal, Business..."
+              placeholder={intl.formatMessage({
+                defaultMessage: "Casual, Formal, Business...",
+              })}
               slotProps={{ htmlInput: { maxLength: 120 } }}
             />
 
@@ -254,7 +257,9 @@ export const ToneEditorDialog = () => {
                 value={category}
                 onChange={(event) => setCategory(event.target.value)}
                 fullWidth
-                placeholder="Writing, notes, developer..."
+                placeholder={intl.formatMessage({
+                  defaultMessage: "Writing, notes, developer...",
+                })}
                 slotProps={{ htmlInput: { maxLength: 80 } }}
               />
               <TextField
@@ -262,7 +267,9 @@ export const ToneEditorDialog = () => {
                 value={outputLength}
                 onChange={(event) => setOutputLength(event.target.value)}
                 fullWidth
-                placeholder="1–3 sentences"
+                placeholder={intl.formatMessage({
+                  defaultMessage: "1–3 sentences",
+                })}
                 slotProps={{ htmlInput: { maxLength: 120 } }}
               />
             </Stack>
@@ -276,7 +283,9 @@ export const ToneEditorDialog = () => {
               multiline
               rows={3}
               fullWidth
-              placeholder="Input: ... Output: ..."
+              placeholder={intl.formatMessage({
+                defaultMessage: "Input: ... Output: ...",
+              })}
               slotProps={{ htmlInput: { maxLength: 1200 } }}
             />
 
@@ -287,7 +296,10 @@ export const ToneEditorDialog = () => {
               multiline
               rows={7}
               fullWidth
-              placeholder="Make it sound like a professional but friendly email. Use jargon and fun words."
+              placeholder={intl.formatMessage({
+                defaultMessage:
+                  "Make it sound like a professional but friendly email. Use jargon and fun words.",
+              })}
               slotProps={{ htmlInput: { maxLength: MAX_PROMPT_LEN } }}
               helperText={
                 <Typography

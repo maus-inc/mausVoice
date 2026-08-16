@@ -1,5 +1,7 @@
 import {
   ActivationController,
+  processFireCombo,
+  type FireComboState,
   useHotkeyFire as useHotkeyFireGeneric,
   useHotkeyHoldMany as useHotkeyHoldManyGeneric,
 } from "@maus-inc/desktop-utils";
@@ -105,72 +107,49 @@ type FireManyAction = {
   onFire: () => void;
 };
 
-type ComboState = { contaminated: boolean; previousExact: boolean };
-
-type ComboTransition = {
-  state: ComboState;
-  shouldFire: boolean;
-};
-
-const updateComboTransition = (
-  state: ComboState,
-  required: Set<string>,
-  previous: Set<string>,
-  current: Set<string>,
-): ComboTransition => {
-  const previousIncludesAll = [...required].every((key) => previous.has(key));
-  const currentIncludesAll = [...required].every((key) => current.has(key));
-  const currentExact = currentIncludesAll && current.size === required.size;
-  const shouldFire =
-    state.previousExact && !currentIncludesAll && !state.contaminated;
-
-  if (!previousIncludesAll && currentIncludesAll) {
-    state.contaminated = false;
-  }
-  if (currentIncludesAll && !currentExact) {
-    state.contaminated = true;
-  }
-  state.previousExact = currentExact;
-  if (!currentIncludesAll) {
-    state.contaminated = false;
-  }
-
-  return { state, shouldFire };
-};
-
 const processFireManyAction = (args: {
   action: FireManyAction;
   state: AppState;
   previous: Set<string>;
   current: Set<string>;
+  wasDisabled: boolean;
   activeIds: Set<string>;
-  comboStates: Map<string, ComboState>;
-}): void => {
-  const { action, state, previous, current, activeIds, comboStates } = args;
-  const normalize = (key: string) => key.toLowerCase();
+  comboStates: Map<string, FireComboState>;
+}): boolean => {
+  const {
+    action,
+    state,
+    previous,
+    current,
+    wasDisabled,
+    activeIds,
+    comboStates,
+  } = args;
   const combos = getHotkeyCombosForAction(state, action.actionName);
+  let shouldFire = false;
 
   for (const combo of combos) {
-    const required = new Set(combo.map(normalize));
+    const required = new Set(combo.map((key) => key.toLowerCase()));
     if (required.size === 0) continue;
 
     const id = `${action.actionName}:${[...required]
       .sort((left, right) => left.localeCompare(right))
       .join("+")}`;
-    activeIds.add(id);
-    const comboState = comboStates.get(id) ?? {
-      contaminated: false,
-      previousExact: false,
-    };
-    const transition = updateComboTransition(
-      comboState,
-      required,
+    const transition = processFireCombo({
+      combo,
       previous,
       current,
-    );
+      wasDisabled,
+      states: comboStates,
+      activeIds,
+      stateKey: id,
+      previousState: comboStates.get(id),
+    });
     comboStates.set(id, transition.state);
-    if (transition.shouldFire) action.onFire();
+    shouldFire = transition.shouldFire || shouldFire;
   }
+
+  return shouldFire;
 };
 
 const processBridgeTriggers = (
@@ -198,9 +177,8 @@ export const useHotkeyFireMany = (args: {
   const hotkeyTriggers = useAppStore((state) => state.hotkeyTriggers);
   const isRecordingHotkey = useAppStore((state) => state.isRecordingHotkey);
   const previousKeysRef = useRef<string[]>([]);
-  const comboStateRef = useRef(
-    new Map<string, { contaminated: boolean; previousExact: boolean }>(),
-  );
+  const comboStateRef = useRef(new Map<string, FireComboState>());
+  const wasDisabledRef = useRef(false);
   const previousTriggersRef = useRef<Record<string, number>>({});
 
   const actionsByName = useMemo(
@@ -218,15 +196,18 @@ export const useHotkeyFireMany = (args: {
 
     if (!disabled) {
       for (const action of args.actions) {
-        processFireManyAction({
+        const shouldFire = processFireManyAction({
           action,
           state,
           previous,
           current,
+          wasDisabled: wasDisabledRef.current,
           activeIds,
           comboStates: comboStateRef.current,
         });
+        if (shouldFire) action.onFire();
       }
+      wasDisabledRef.current = false;
       processBridgeTriggers(
         hotkeyTriggers,
         previousTriggersRef.current,
@@ -234,6 +215,7 @@ export const useHotkeyFireMany = (args: {
       );
     } else {
       comboStateRef.current.clear();
+      wasDisabledRef.current = true;
     }
 
     for (const id of comboStateRef.current.keys()) {

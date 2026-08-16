@@ -72,9 +72,15 @@ const normalizePillResetMonitorStrategy = (
   strategy: Nullable<string> | undefined,
 ): PillResetMonitorStrategy => (strategy === "cursor" ? "cursor" : "current");
 
-const normalizeAgentMaxIterations = (
+export const normalizeAgentMaxIterations = (
   value: number | null | undefined,
-): number => Math.min(100, Math.max(1, Math.trunc(value ?? 20)));
+): number => {
+  const normalized =
+    typeof value === "number" && Number.isFinite(value)
+      ? Math.trunc(value)
+      : 20;
+  return Math.min(100, Math.max(1, normalized));
+};
 
 const normalizeAgentPermissionTimeout = (
   value: number | null | undefined,
@@ -84,24 +90,19 @@ const normalizeAgentPermissionTimeout = (
 const parseAgentEnabledTools = (
   value: Nullable<string[]> | string | undefined,
 ): Nullable<string[]> => {
-  const normalize = (tools: string[]): Nullable<string[]> =>
-    tools.length > 0 ? tools : null;
-
-  if (Array.isArray(value)) return normalize(value);
+  if (Array.isArray(value)) return value;
   if (typeof value !== "string" || value.trim() === "") return null;
   try {
     const parsed: unknown = JSON.parse(value);
     return Array.isArray(parsed) &&
       parsed.every((item) => typeof item === "string")
-      ? normalize(parsed)
+      ? parsed
       : null;
   } catch {
-    return normalize(
-      value
-        .split(",")
-        .map((item) => item.trim())
-        .filter(Boolean),
-    );
+    return value
+      .split(",")
+      .map((item) => item.trim())
+      .filter(Boolean);
   }
 };
 

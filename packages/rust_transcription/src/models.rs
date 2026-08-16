@@ -278,13 +278,19 @@ mod tests {
 
     #[test]
     fn onnx_primary_is_first_in_artifact_set() {
-        for model in [
-            WhisperModel::ParakeetCtc06B,
-            WhisperModel::ParakeetTdt06B,
-            WhisperModel::Canary1B,
-        ] {
+        let onnx_models: Vec<WhisperModel> = WhisperModel::supported()
+            .iter()
+            .filter_map(|slug| WhisperModel::from_slug(slug))
+            .filter(|model| model.is_onnx())
+            .collect();
+        assert!(!onnx_models.is_empty());
+
+        for model in onnx_models {
             let artifacts = model.artifact_set();
-            assert_eq!(artifacts.first().map(|artifact| artifact.0), Some(model.filename()));
+            assert_eq!(
+                artifacts.first().map(|artifact| artifact.0),
+                Some(model.filename())
+            );
             assert!(artifacts.len() > 1);
             assert!(artifacts[1..]
                 .iter()

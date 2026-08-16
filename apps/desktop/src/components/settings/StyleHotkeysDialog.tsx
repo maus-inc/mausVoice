@@ -96,16 +96,26 @@ export const StyleHotkeysDialog = () => {
           hotkey.actionName.startsWith(SWITCH_TO_STYLE_HOTKEY_PREFIX),
         )
         .map((hotkey) => hotkey.id);
+      const existingIdByActionName = new Map(
+        Object.values(state.hotkeyById)
+          .filter((hotkey) =>
+            hotkey.actionName.startsWith(SWITCH_TO_STYLE_HOTKEY_PREFIX),
+          )
+          .map((hotkey) => [hotkey.actionName, hotkey.id]),
+      );
       const next = rows
         .filter((row) => row.keys.length > 0)
         .map((row): Hotkey => ({
-          id:
-            Object.values(state.hotkeyById).find(
-              (hotkey) => hotkey.actionName === row.actionName,
-            )?.id ?? createId(),
+          id: existingIdByActionName.get(row.actionName) ?? createId(),
           actionName: row.actionName,
           keys: row.keys,
         }));
+      const previousHotkeyById = { ...state.hotkeyById };
+      const previousHotkeyIds = [...state.settings.hotkeyIds];
+
+      const repo = getHotkeyRepo();
+      await Promise.all(oldIds.map((id) => repo.deleteHotkey(id)));
+      await Promise.all(next.map((hotkey) => repo.saveHotkey(hotkey)));
 
       produceAppState((draft) => {
         for (const id of oldIds) {
@@ -122,10 +132,15 @@ export const StyleHotkeysDialog = () => {
         }
       });
 
-      const repo = getHotkeyRepo();
-      await Promise.all(oldIds.map((id) => repo.deleteHotkey(id)));
-      await Promise.all(next.map((hotkey) => repo.saveHotkey(hotkey)));
-      await syncHotkeyCombosToNative();
+      try {
+        await syncHotkeyCombosToNative();
+      } catch (error) {
+        produceAppState((draft) => {
+          draft.hotkeyById = previousHotkeyById;
+          draft.settings.hotkeyIds = previousHotkeyIds;
+        });
+        throw error;
+      }
       close();
     } catch (error) {
       showErrorSnackbar(error);

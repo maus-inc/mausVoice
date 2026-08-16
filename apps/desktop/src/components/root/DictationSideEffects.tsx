@@ -118,6 +118,7 @@ type StoppedRecordingData = {
   audio: StopRecordingResponse | null;
   a11yInfo: TextFieldInfo | null;
   appTarget: AppTarget | null;
+  failureMessage?: string;
 };
 
 type FinalizedRecording = {
@@ -423,22 +424,22 @@ export const DictationSideEffects = () => {
             appTarget: outAppTarget,
           };
         } catch (error) {
+          const failureMessage =
+            error instanceof Error ? error.message : String(error);
           getLogger().error(`Failed to stop recording: ${error}`);
-          showToast({
-            message: intl.formatMessage({
-              defaultMessage: "Failed to stop recording",
-            }),
-            toastType: "error",
-            duration: 8_000,
-          });
-          return { audio: null, a11yInfo: null, appTarget: null };
+          return {
+            audio: null,
+            a11yInfo: null,
+            appTarget: null,
+            failureMessage,
+          };
         }
       });
       getLogger().verbose(
         `Recording stopped (hasSamples=${!!stopped.audio?.samples})`,
       );
       return stopped;
-    }, [intl]);
+    }, []);
 
   const finalizeRecording = useCallback(
     async ({
@@ -570,7 +571,7 @@ export const DictationSideEffects = () => {
         getLogger().warning("stopRecordingRaw: no audio data received");
         return {
           shouldContinue: false,
-          abortMessage: "No audio data received",
+          abortMessage: stopped.failureMessage || "No audio data received",
         };
       }
 

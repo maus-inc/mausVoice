@@ -115,7 +115,10 @@ export const AIAgentModeConfiguration = () => {
                 sx={{ alignItems: "center", justifyContent: "space-between" }}
               >
                 <Stack sx={{ minWidth: 0 }}>
-                  <Typography variant="body2">
+                  <Typography
+                    id={`agent-tool-label-${toolInfo.id}`}
+                    variant="body2"
+                  >
                     {toolInfo.description}
                   </Typography>
                   <Typography variant="caption" color="text.secondary">
@@ -125,6 +128,9 @@ export const AIAgentModeConfiguration = () => {
                 <Switch
                   size="small"
                   checked={isToolEnabled(toolInfo.id)}
+                  inputProps={{
+                    "aria-labelledby": `agent-tool-label-${toolInfo.id}`,
+                  }}
                   onChange={(event) =>
                     handleToolToggle(toolInfo.id, event.target.checked)
                   }

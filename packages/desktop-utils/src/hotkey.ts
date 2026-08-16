@@ -69,9 +69,7 @@ export const useHotkeyHoldMany = (args: UseHotkeyHoldManyArgs): void => {
         allowedAdditionalKeys.map((key) => normalize(key)),
       );
       const requiredSet = new Set(required);
-      const additionalHeld = uniqueHeld.filter(
-        (key) => !requiredSet.has(key),
-      );
+      const additionalHeld = uniqueHeld.filter((key) => !requiredSet.has(key));
 
       if (
         uniqueHeld.length < required.length ||
@@ -161,9 +159,15 @@ export const useHotkeyHold = (args: UseHotkeyHoldArgs): void => {
         controller: args.controller,
         combos: args.combos,
         triggerCount: args.triggerCount,
+        allowedAdditionalKeys: args.allowedAdditionalKeys,
       },
     ],
-    [args.controller, args.combos, args.triggerCount],
+    [
+      args.controller,
+      args.combos,
+      args.triggerCount,
+      args.allowedAdditionalKeys,
+    ],
   );
   useHotkeyHoldMany({
     actions,
@@ -172,32 +176,59 @@ export const useHotkeyHold = (args: UseHotkeyHoldArgs): void => {
   });
 };
 
-type FireComboState = { contaminated: boolean };
+export type FireComboState = {
+  contaminated: boolean;
+  previousExact: boolean;
+};
 
-type FireComboArgs = {
+export type FireComboTransition = {
+  state: FireComboState;
+  shouldFire: boolean;
+};
+
+export type FireComboArgs = {
   combo: string[];
   previous: Set<string>;
   current: Set<string>;
   wasDisabled: boolean;
   states: Map<string, FireComboState>;
   activeIds: Set<string>;
+  stateKey?: string;
+  previousState?: FireComboState;
 };
 
 const normalizedKeys = (keys: string[]): Set<string> =>
   new Set(keys.map((key) => key.toLowerCase()));
 
-const processFireCombo = (args: FireComboArgs): boolean => {
+/** Process one combo without mutating the caller's previous state object. */
+export const processFireCombo = (args: FireComboArgs): FireComboTransition => {
   const { combo, previous, current, wasDisabled, states, activeIds } = args;
-  if (combo.length === 0) return false;
+  if (combo.length === 0) {
+    return {
+      state: { contaminated: false, previousExact: false },
+      shouldFire: false,
+    };
+  }
 
   const required = normalizedKeys(combo);
-  if (required.size === 0) return false;
+  if (required.size === 0) {
+    return {
+      state: { contaminated: false, previousExact: false },
+      shouldFire: false,
+    };
+  }
 
-  const id = Array.from(required)
-    .sort((left, right) => left.localeCompare(right))
-    .join("+");
+  const id =
+    args.stateKey ??
+    Array.from(required)
+      .sort((left, right) => left.localeCompare(right))
+      .join("+");
   activeIds.add(id);
-  const state = states.get(id) ?? { contaminated: false };
+  const previousState = args.previousState ??
+    states.get(id) ?? {
+      contaminated: false,
+      previousExact: false,
+    };
   const previousIncludesAll = Array.from(required).every((key) =>
     previous.has(key),
   );
@@ -206,20 +237,19 @@ const processFireCombo = (args: FireComboArgs): boolean => {
   );
   const previousExact = previousIncludesAll && previous.size === required.size;
   const currentExact = currentIncludesAll && current.size === required.size;
+  let contaminated = previousState.contaminated;
 
-  if (wasDisabled && currentIncludesAll) state.contaminated = true;
-  if (!previousIncludesAll && currentIncludesAll) state.contaminated = false;
-  if (currentIncludesAll && !currentExact) state.contaminated = true;
+  if (wasDisabled && currentIncludesAll) contaminated = true;
+  if (!previousIncludesAll && currentIncludesAll) contaminated = false;
+  if (currentIncludesAll && !currentExact) contaminated = true;
 
   const shouldFire =
-    previousExact &&
-    !currentExact &&
-    !currentIncludesAll &&
-    !state.contaminated;
+    previousExact && !currentExact && !currentIncludesAll && !contaminated;
 
-  if (!currentIncludesAll) state.contaminated = false;
+  if (!currentIncludesAll) contaminated = false;
+  const state = { contaminated, previousExact: currentExact };
   states.set(id, state);
-  return shouldFire;
+  return { state, shouldFire };
 };
 
 /**
@@ -231,9 +261,7 @@ export const useHotkeyFire = (args: UseHotkeyFireArgs): void => {
   const { combos, triggerCount, keysHeld, onFire } = args;
 
   const previousKeysHeldRef = useRef<string[]>([]);
-  const comboStateRef = useRef<Map<string, { contaminated: boolean }>>(
-    new Map(),
-  );
+  const comboStateRef = useRef<Map<string, FireComboState>>(new Map());
   const wasDisabledRef = useRef(false);
 
   useEffect(() => {
@@ -247,16 +275,18 @@ export const useHotkeyFire = (args: UseHotkeyFireArgs): void => {
     const previous = normalizedKeys(previousKeysHeldRef.current);
     const current = normalizedKeys(keysHeld);
     const activeIds = new Set<string>();
-    const shouldFire = combos.some((combo) =>
-      processFireCombo({
+    let shouldFire = false;
+    for (const combo of combos) {
+      const transition = processFireCombo({
         combo,
         previous,
         current,
         wasDisabled: wasDisabledRef.current,
         states: comboStateRef.current,
         activeIds,
-      }),
-    );
+      });
+      shouldFire = transition.shouldFire || shouldFire;
+    }
 
     wasDisabledRef.current = false;
     for (const comboId of comboStateRef.current.keys()) {

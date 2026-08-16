@@ -840,7 +840,7 @@ async toneUpsert(tone: Tone) : Promise<Result<Tone, string>> {
     else return { status: "error", error: e  as any };
 }
 },
-async transcriptionAudioLoad(id: string) : Promise<Result<TranscriptionAudioData, string>> {
+async transcriptionAudioLoad(id: string) : Promise<Result<TranscriptionAudioSamplesData, string>> {
     try {
     return { status: "ok", data: await TAURI_INVOKE("transcription_audio_load", { id }) };
 } catch (e) {
@@ -1129,6 +1129,7 @@ export type TextFieldInfo = { cursorPosition: number | null; selectionLength: nu
 export type Tone = { id: string; name: string; promptTemplate: string; createdAt: number; sortOrder: number; category?: string | null; outputLength?: string | null; exampleInputOutput?: string | null }
 export type Transcription = { id: string; transcript: string; timestamp: number; audio?: TranscriptionAudioSnapshot | null; modelSize?: string | null; inferenceDevice?: string | null; rawTranscript?: string | null; sanitizedTranscript?: string | null; transcriptionPrompt?: string | null; postProcessPrompt?: string | null; transcriptionApiKeyId?: string | null; postProcessApiKeyId?: string | null; transcriptionMode?: string | null; postProcessMode?: string | null; postProcessDevice?: string | null; transcriptionDurationMs?: number | null; postprocessDurationMs?: number | null; warnings?: string[] | null; remoteStatus?: string | null; remoteDeviceId?: string | null }
 export type TranscriptionAudioData = { samples: number[]; sampleRate: number }
+export type TranscriptionAudioSamplesData = { samples: number[]; sampleRate: number }
 export type TranscriptionAudioSnapshot = { filePath: string; durationMs: number }
 export type TrayLanguageMenuItem = { code: string; label: string; checked: boolean }
 export type User = { id: string; name: string; bio: string; company?: string | null; title?: string | null; onboarded: boolean; preferredMicrophone?: string | null; preferredLanguage?: string | null; wordsThisMonth?: number; wordsThisMonthMonth?: string | null; wordsTotal?: number; playInteractionChime?: boolean; hasFinishedTutorial?: boolean; hasMigratedPreferredMicrophone?: boolean; cohort?: string | null; stylingMode?: string | null; selectedToneId?: string | null; activeToneIds?: string | null; streak?: number | null; streakRecordedAt?: string | null; referralSource?: string | null }

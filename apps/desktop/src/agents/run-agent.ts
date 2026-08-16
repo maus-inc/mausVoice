@@ -394,6 +394,18 @@ type ResolvedConversationBlock = ConversationMessageBlock & {
   nextIndex: number;
 };
 
+const isValidPersistedToolCall = (value: unknown): value is LlmToolCall => {
+  if (!value || typeof value !== "object") return false;
+  const call = value as Record<string, unknown>;
+  return (
+    typeof call.id === "string" &&
+    call.id.length > 0 &&
+    typeof call.name === "string" &&
+    call.name.length > 0 &&
+    typeof call.arguments === "string"
+  );
+};
+
 const textOnlyAssistantMessage = (
   message: Extract<LlmMessage, { role: "assistant" }>,
 ): LlmMessage => ({
@@ -416,15 +428,22 @@ const resolveConversationBlock = (
     return { startIndex, messages: [message], nextIndex: startIndex + 1 };
   }
 
-  const callIds = message.toolCalls.map((call) => call.id);
   const hasValidToolCalls =
-    callIds.length > 0 &&
-    callIds.every((id) => typeof id === "string" && id.length > 0) &&
-    new Set(callIds).size === callIds.length;
+    message.toolCalls.length > 0 &&
+    message.toolCalls.every(isValidPersistedToolCall);
   if (!hasValidToolCalls) {
     return {
       startIndex,
-      messages: [message],
+      messages: [textOnlyAssistantMessage(message)],
+      nextIndex: startIndex + 1,
+    };
+  }
+
+  const callIds = message.toolCalls.map((call) => call.id);
+  if (new Set(callIds).size !== callIds.length) {
+    return {
+      startIndex,
+      messages: [textOnlyAssistantMessage(message)],
       nextIndex: startIndex + 1,
     };
   }
@@ -503,20 +522,23 @@ const trimConversationBlocks = (
     remaining -= firstUserBlock.messages.length;
   }
 
+  let selectedRecentBlock = false;
   for (let index = blocks.length - 1; index >= 0; index--) {
     if (selected.has(index)) continue;
     const blockSize = blocks[index].messages.length;
     if (blockSize > remaining) continue;
     selected.add(index);
+    selectedRecentBlock = true;
     remaining -= blockSize;
     if (remaining === 0) break;
   }
 
   // Keep at least the newest complete block when a future block is larger
-  // than the nominal budget. This preserves protocol validity over a strict
-  // message count, and normal agent iterations are bounded well below 80.
-  if (selected.size === 0 && blocks.length > 0) {
-    selected.add(blocks.length - 1);
+  // than the nominal budget or none of the recent blocks fit. This preserves
+  // protocol validity over a strict message count.
+  const newestIndex = blocks.length - 1;
+  if (!selectedRecentBlock && newestIndex >= 0 && !selected.has(newestIndex)) {
+    selected.add(newestIndex);
   }
 
   return blocks
@@ -546,9 +568,12 @@ function buildConversationMessages(conversationId: string): LlmMessage[] {
         content: msg.content,
       });
     } else if (msg.role === "assistant") {
-      const toolCalls = Array.isArray(metadata?.toolCalls)
-        ? (metadata.toolCalls as LlmToolCall[])
-        : undefined;
+      const persistedToolCalls = metadata?.toolCalls;
+      const toolCalls =
+        Array.isArray(persistedToolCalls) &&
+        persistedToolCalls.every(isValidPersistedToolCall)
+          ? persistedToolCalls
+          : undefined;
       messages.push({
         role: "assistant",
         content: msg.content || undefined,

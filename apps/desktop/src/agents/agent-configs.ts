@@ -1,5 +1,6 @@
 import type { ToolInfo } from "@maus-inc/types";
 import { getAppState } from "../store";
+import { normalizeAgentMaxIterations } from "../repos/preferences.repo";
 import { getToolRegistryEntry } from "../tools";
 
 export type AgentTypeConfig = {
@@ -9,22 +10,16 @@ export type AgentTypeConfig = {
   maxIterations: number;
 };
 
-const DEFAULT_MAX_ITERATIONS = 20;
-
-const getConfiguredMaxIterations = (): number => {
-  const value = getAppState().userPrefs?.agentMaxIterations;
-  return Math.min(
-    100,
-    Math.max(1, Math.trunc(value ?? DEFAULT_MAX_ITERATIONS)),
-  );
-};
+const getConfiguredMaxIterations = (): number =>
+  normalizeAgentMaxIterations(getAppState().userPrefs?.agentMaxIterations);
 
 const getRegistryEnablement = (toolId: string): boolean => {
   const configured = getAppState().userPrefs?.agentEnabledTools;
-  // Null is the persisted "use registry defaults" sentinel. Treat an empty
-  // list the same way so a stale/partially migrated preference cannot silently
-  // remove every tool from Agent Mode.
-  return !configured || configured.length === 0 || configured.includes(toolId);
+  // Null is the persisted "use registry defaults" sentinel. An empty list is
+  // an explicit deny-all selection and must not silently re-enable tools.
+  return configured === null || configured === undefined
+    ? true
+    : configured.includes(toolId);
 };
 
 export const CHAT_AGENT_CONFIG: AgentTypeConfig = {

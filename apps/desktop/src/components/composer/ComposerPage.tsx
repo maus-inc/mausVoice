@@ -9,12 +9,12 @@ import {
   TextField,
   Typography,
 } from "@mui/material";
+import { invoke } from "@tauri-apps/api/core";
 import { emit } from "@tauri-apps/api/event";
 import { getCurrentWindow } from "@tauri-apps/api/window";
-import { useMemo, useRef, useState } from "react";
-import { FormattedMessage } from "react-intl";
+import { useEffect, useMemo, useRef, useState } from "react";
+import { FormattedMessage, useIntl } from "react-intl";
 import { applyVoiceEditInstruction } from "../../actions/composer.actions";
-import { decodeComposerText } from "../../utils/composer.utils";
 
 type SpeechRecognitionLike = {
   lang: string;
@@ -45,25 +45,46 @@ const closeComposerWindow = async () => {
 };
 
 export const ComposerPage = () => {
+  const intl = useIntl();
   const params = useMemo(() => new URLSearchParams(window.location.search), []);
   const requestId = params.get("requestId") ?? "";
-  const initialText = params.has("text64")
-    ? decodeComposerText(params.get("text64") ?? "")
-    : (params.get("text") ?? "");
-  const [text, setText] = useState(initialText);
+  const [text, setText] = useState("");
   const [instruction, setInstruction] = useState("");
   const [isEditing, setIsEditing] = useState(false);
   const [editError, setEditError] = useState<string | null>(null);
   const [isListening, setIsListening] = useState(false);
   const recognitionRef = useRef<SpeechRecognitionLike | null>(null);
 
+  useEffect(() => {
+    let active = true;
+    void invoke<string | null>("composer_take_text", { requestId })
+      .then((initialText) => {
+        if (active) setText(initialText ?? "");
+      })
+      .catch(() => {
+        if (active) {
+          setEditError(
+            intl.formatMessage({
+              defaultMessage: "Unable to load transcript.",
+            }),
+          );
+        }
+      });
+    return () => {
+      active = false;
+    };
+  }, [intl, requestId]);
+
   const finish = async (accepted: boolean) => {
-    await emit("composer-result", {
-      requestId,
-      accepted,
-      text: accepted ? text : "",
-    });
-    await closeComposerWindow();
+    try {
+      await emit("composer-result", {
+        requestId,
+        accepted,
+        text: accepted ? text : "",
+      });
+    } finally {
+      await closeComposerWindow();
+    }
   };
 
   const applyEdit = async () => {
@@ -75,7 +96,11 @@ export const ComposerPage = () => {
       if (edited) setText(edited);
       setInstruction("");
     } catch (error) {
-      setEditError(error instanceof Error ? error.message : "Edit failed.");
+      setEditError(
+        error instanceof Error
+          ? error.message
+          : intl.formatMessage({ defaultMessage: "Edit failed." }),
+      );
     } finally {
       setIsEditing(false);
     }
@@ -150,7 +175,7 @@ export const ComposerPage = () => {
             fullWidth
             value={text}
             onChange={(event) => setText(event.target.value)}
-            aria-label="Transcript"
+            aria-label={intl.formatMessage({ defaultMessage: "Transcript" })}
           />
           {editError && (
             <Typography variant="caption" color="error">
@@ -162,7 +187,9 @@ export const ComposerPage = () => {
               fullWidth
               size="small"
               label={<FormattedMessage defaultMessage="Voice Edit Mode" />}
-              placeholder={"Make this shorter or turn it into bullets"}
+              placeholder={intl.formatMessage({
+                defaultMessage: "Make this shorter or turn it into bullets",
+              })}
               value={instruction}
               onChange={(event) => setInstruction(event.target.value)}
               onKeyDown={(event) => {
@@ -174,7 +201,9 @@ export const ComposerPage = () => {
             <IconButton
               color={isListening ? "error" : "primary"}
               onClick={toggleVoiceInstruction}
-              aria-label="Dictate edit instruction"
+              aria-label={intl.formatMessage({
+                defaultMessage: "Dictate edit instruction",
+              })}
               disabled={isEditing}
             >
               <MicIcon />

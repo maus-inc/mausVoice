@@ -39,7 +39,7 @@ export const closeRetranscribeDialog = () => {
 };
 
 type ProcessAudioParams = {
-  samples: number[];
+  samples: number[] | Float32Array;
   sampleRate: number;
   toneId?: string | null;
   languageCode?: string | null;

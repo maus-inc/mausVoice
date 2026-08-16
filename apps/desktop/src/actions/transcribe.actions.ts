@@ -61,7 +61,10 @@ export type TranscribeAudioMetadata = {
 };
 
 export type TranscribeAudioResult = {
+  /** Exact provider output before replacements or hallucination filtering. */
   rawTranscript: string;
+  /** Text used by post-processing and output routing. */
+  sanitizedTranscript: string;
   warnings: string[];
   metadata: TranscribeAudioMetadata;
 };
@@ -162,20 +165,20 @@ export const transcribeAudio = async ({
     );
   }
   const transcribeDuration = performance.now() - transcribeStart;
-  const decodedTranscript = transcribeOutput.text.trim();
-  const rawTranscript =
+  const rawTranscript = transcribeOutput.text.trim();
+  const sanitizedTranscript =
     state.userPrefs?.hallucinationFilterEnabled === false
-      ? decodedTranscript
-      : filterKnownSilenceHallucinations(decodedTranscript);
+      ? rawTranscript
+      : filterKnownSilenceHallucinations(rawTranscript);
 
-  if (decodedTranscript !== rawTranscript) {
+  if (rawTranscript !== sanitizedTranscript) {
     getLogger().info(
       "Removed a known silence hallucination from transcription",
     );
   }
 
   getLogger().info(
-    `Transcription complete in ${Math.round(transcribeDuration)}ms (${rawTranscript.length} chars, mode=${transcribeOutput.metadata?.transcriptionMode ?? "unknown"})`,
+    `Transcription complete in ${Math.round(transcribeDuration)}ms (${rawTranscript.length} raw chars, ${sanitizedTranscript.length} sanitized chars, mode=${transcribeOutput.metadata?.transcriptionMode ?? "unknown"})`,
   );
 
   metadata.modelSize =
@@ -191,6 +194,7 @@ export const transcribeAudio = async ({
 
   return {
     rawTranscript,
+    sanitizedTranscript,
     warnings: dedup(warnings),
     metadata,
   };

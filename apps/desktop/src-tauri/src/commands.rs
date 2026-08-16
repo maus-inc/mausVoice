@@ -69,6 +69,9 @@ use crate::domain::{
     EVT_REC_LEVEL,
 };
 use crate::platform::{ChunkCallback, LevelCallback};
+
+#[path = "../../../../packages/rust_transcription/src/audio.rs"]
+mod shared_audio;
 use crate::system::crypto::{protect_api_key, reveal_api_key};
 use crate::system::StorageRepo;
 use sqlx::Row;
@@ -422,6 +425,15 @@ const MAX_AUDIO_IMPORT_ABSOLUTE_DECODED_SAMPLES: usize =
 #[derive(serde::Serialize, specta::Type)]
 #[serde(rename_all = "camelCase")]
 pub struct TranscriptionAudioData {
+    /// Little-endian signed 16-bit mono PCM. Keeping the IPC payload binary
+    /// avoids expanding every sample into a JSON number.
+    pub samples: Vec<u8>,
+    pub sample_rate: u32,
+}
+
+#[derive(serde::Serialize, specta::Type)]
+#[serde(rename_all = "camelCase")]
+pub struct TranscriptionAudioSamplesData {
     pub samples: Vec<f32>,
     pub sample_rate: u32,
 }
@@ -494,7 +506,7 @@ pub async fn transcription_import_audio(path: String) -> Result<TranscriptionAud
                 .map(|frame| frame.iter().copied().sum::<f32>() / frame.len() as f32)
                 .collect()
         };
-        let samples = resample_audio_samples(&mono, source_rate, 16_000);
+        let samples = shared_audio::resample_to_rate(&mono, source_rate, 16_000);
         if samples.is_empty() {
             return Err("Unable to convert the selected audio to 16 kHz mono".to_string());
         }
@@ -506,7 +518,7 @@ pub async fn transcription_import_audio(path: String) -> Result<TranscriptionAud
         }
 
         Ok(TranscriptionAudioData {
-            samples,
+            samples: encode_pcm16_le(&samples),
             sample_rate: 16_000,
         })
     })
@@ -514,28 +526,18 @@ pub async fn transcription_import_audio(path: String) -> Result<TranscriptionAud
     .map_err(|err| format!("audio import task failed: {err}"))?
 }
 
-fn resample_audio_samples(samples: &[f32], source_rate: u32, target_rate: u32) -> Vec<f32> {
-    if samples.is_empty() || source_rate == 0 || target_rate == 0 {
-        return Vec::new();
+fn encode_pcm16_le(samples: &[f32]) -> Vec<u8> {
+    let mut bytes = Vec::with_capacity(samples.len().saturating_mul(2));
+    for sample in samples {
+        let clamped = sample.clamp(-1.0, 1.0);
+        let value = if clamped < 0.0 {
+            (clamped * 0x8000 as f32) as i16
+        } else {
+            (clamped * 0x7fff as f32) as i16
+        };
+        bytes.extend_from_slice(&value.to_le_bytes());
     }
-    if source_rate == target_rate {
-        return samples.to_vec();
-    }
-
-    let ratio = target_rate as f64 / source_rate as f64;
-    let output_len = ((samples.len() as f64) * ratio).ceil().max(1.0) as usize;
-    (0..output_len)
-        .map(|index| {
-            let source_position = index as f64 / ratio;
-            let lower = source_position.floor() as usize;
-            let fraction = source_position - lower as f64;
-            if lower + 1 < samples.len() {
-                samples[lower] + (samples[lower + 1] - samples[lower]) * fraction as f32
-            } else {
-                samples[samples.len() - 1]
-            }
-        })
-        .collect()
+    bytes
 }
 
 async fn delete_audio_entries(
@@ -968,7 +970,7 @@ pub async fn transcription_audio_load(
     app: AppHandle,
     id: String,
     database: State<'_, crate::state::OptionKeyDatabase>,
-) -> Result<TranscriptionAudioData, String> {
+) -> Result<TranscriptionAudioSamplesData, String> {
     let pool = database.pool();
 
     let audio_path: Option<String> = sqlx::query_scalar(
@@ -998,7 +1000,7 @@ pub async fn transcription_audio_load(
     .await
     .map_err(|err| err.to_string())??;
 
-    Ok(TranscriptionAudioData {
+    Ok(TranscriptionAudioSamplesData {
         samples,
         sample_rate,
     })
@@ -2726,16 +2728,53 @@ fn parse_floating_window_url(url: &str) -> Result<Url, String> {
     Url::parse(url).map_err(|e| format!("Invalid URL: {e}"))
 }
 
+fn hex_value(value: u8) -> Option<u8> {
+    match value {
+        b'0'..=b'9' => Some(value - b'0'),
+        b'a'..=b'f' => Some(value - b'a' + 10),
+        b'A'..=b'F' => Some(value - b'A' + 10),
+        _ => None,
+    }
+}
+
+fn percent_decode_route_path(path: &str) -> Result<String, String> {
+    let bytes = path.as_bytes();
+    let mut decoded = Vec::with_capacity(bytes.len());
+    let mut index = 0;
+    while index < bytes.len() {
+        if bytes[index] == b'%' {
+            let high = bytes
+                .get(index + 1)
+                .and_then(|value| hex_value(*value))
+                .ok_or_else(|| "Floating app route has invalid percent encoding".to_string())?;
+            let low = bytes
+                .get(index + 2)
+                .and_then(|value| hex_value(*value))
+                .ok_or_else(|| "Floating app route has invalid percent encoding".to_string())?;
+            decoded.push((high << 4) | low);
+            index += 3;
+        } else {
+            decoded.push(bytes[index]);
+            index += 1;
+        }
+    }
+    String::from_utf8(decoded)
+        .map_err(|_| "Floating app route path is not valid UTF-8".to_string())
+}
+
 /// Validate only the path portion of a local app route. Query values are
 /// opaque user data; rejecting `..` anywhere in the full route would reject
 /// legitimate transcript text such as "Wait... what?".
 fn validate_local_app_route(route: &str) -> Result<(), String> {
     let path = route.split(['?', '#']).next().unwrap_or(route);
-    let has_parent_segment = path.split('/').any(|segment| {
-        segment == ".." || segment.to_ascii_lowercase().contains("%2e")
-    });
+    let decoded_path = percent_decode_route_path(path)?;
+    let has_parent_segment = decoded_path.split('/').any(|segment| segment == "..");
 
-    if path.is_empty() || path.starts_with('/') || path.contains('\\') || has_parent_segment {
+    if decoded_path.is_empty()
+        || decoded_path.starts_with('/')
+        || decoded_path.contains('\\')
+        || has_parent_segment
+    {
         return Err(
             "Floating app routes must be relative and cannot contain path traversal".to_string(),
         );
@@ -3546,6 +3585,37 @@ pub struct CreateFloatingWindowArgs {
     pub transparent: Option<bool>,
     pub resizable: Option<bool>,
     pub focused: Option<bool>,
+}
+
+#[tauri::command]
+#[specta::specta]
+pub fn composer_register_text(
+    request_id: String,
+    text: String,
+    state: State<'_, crate::state::FloatingWindowState>,
+) -> Result<(), String> {
+    if request_id.trim().is_empty() {
+        return Err("composer request id must not be empty".to_string());
+    }
+    state.register_composer_text(request_id, text)
+}
+
+#[tauri::command]
+#[specta::specta]
+pub fn composer_take_text(
+    request_id: String,
+    state: State<'_, crate::state::FloatingWindowState>,
+) -> Result<Option<String>, String> {
+    state.take_composer_text(request_id.trim())
+}
+
+#[tauri::command]
+#[specta::specta]
+pub fn composer_discard_text(
+    request_id: String,
+    state: State<'_, crate::state::FloatingWindowState>,
+) -> Result<(), String> {
+    state.discard_composer_text(request_id.trim())
 }
 
 #[derive(serde::Serialize, specta::Type, Clone, Debug)]
