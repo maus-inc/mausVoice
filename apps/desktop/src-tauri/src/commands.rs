@@ -2651,12 +2651,12 @@ fn is_safe_arg_token(token: &str) -> bool {
 /// Characters that are forbidden inside any argv token passed through
 /// `run_terminal_command`. Blocked as defense-in-depth even though we never
 /// invoke a shell — makes it obvious to model authors that shell
-/// composition is out. `/` is forbidden so an allow-listed reader (e.g. a
-/// hypothetical `cat`) cannot reach arbitrary filesystem paths like
-/// `/etc/passwd` or `~/.ssh/id_rsa`, and `..` path traversal is caught by the
-/// substring check below.
+/// composition is out. `/` and `\` are forbidden so an allow-listed reader
+/// (e.g. a hypothetical `cat`) cannot reach arbitrary filesystem paths like
+/// `/etc/passwd`, `C:\Users\…`, or `~/.ssh/id_rsa`, and `..` path traversal is
+/// caught by the substring check below.
 const TERMINAL_FORBIDDEN_CHARS: &[char] =
-    &[';', '|', '&', '$', '`', '>', '<', '(', ')', '/', '\n', '\r'];
+    &[';', '|', '&', '$', '`', '>', '<', '(', ')', '/', '\\', '\n', '\r'];
 
 /// Validate a user-supplied command string against the same rules
 /// `run_terminal_command` enforces. Shared between the command itself and

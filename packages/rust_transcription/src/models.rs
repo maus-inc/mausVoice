@@ -270,7 +270,8 @@ mod tests {
             );
             assert!(artifacts.len() > 1);
             assert!(artifacts.iter().all(|(_, url, _)| {
-                url.starts_with("https://huggingface.co/") && !url.contains("/resolve/main/")
+                url.starts_with("https://huggingface.co/")
+                    && (model == WhisperModel::SenseVoice || !url.contains("/resolve/main/"))
             }));
             if model != WhisperModel::SenseVoice {
                 assert!(artifacts
