@@ -4,7 +4,10 @@ import {
   combineStreamingTranscript,
   createAudioChunkPump,
 } from "../utils/audio-chunking.utils";
-import { finalizeStreamingSession } from "../utils/streaming-session.utils";
+import {
+  createStreamingFinalize,
+  finalizeStreamingSession,
+} from "../utils/streaming-session.utils";
 import {
   StopRecordingResponse,
   TranscriptionSession,
@@ -148,69 +151,26 @@ const startElevenLabsStreaming = async (
       pump.resetBuffers();
     };
 
-    let finalizeResolver: ((text: string) => void) | null = null;
-    let finalizeTimeout: ReturnType<typeof setTimeout> | null = null;
-
-    const finalize = (): Promise<string> => {
-      return new Promise((resolveFinalize) => {
-        console.log(
-          "[ElevenLabs WebSocket] Finalize called, isFinalized:",
-          isFinalized,
-          "ws state:",
-          ws?.readyState,
-        );
-        if (isFinalized) {
-          console.log(
-            "[ElevenLabs WebSocket] Already finalized, returning transcript",
-          );
-          resolveFinalize(getText());
-          return;
-        }
-
-        isFinalized = true;
-        finalizeResolver = resolveFinalize;
-
-        pump.flushPendingSamples(true);
+    const streamingFinalize = createStreamingFinalize({
+      logPrefix: "[ElevenLabs WebSocket]",
+      timeoutMs: 6000,
+      getText,
+      getIsFinalized: () => isFinalized,
+      setIsFinalized: (value) => {
+        isFinalized = value;
+      },
+      flushPendingSamples: (force) => pump.flushPendingSamples(force),
+      logTotalChunks: () =>
         console.log(
           "[ElevenLabs WebSocket] Total chunks sent:",
           sentChunkCount,
           "- waiting for final transcript...",
-        );
-
-        if (ws && ws.readyState === WebSocket.OPEN) {
-          finalizeTimeout = setTimeout(() => {
-            console.log(
-              "[ElevenLabs WebSocket] Timeout waiting for final transcript, length:",
-              getText().length,
-            );
-            cleanup();
-            if (finalizeResolver) {
-              finalizeResolver(getText());
-              finalizeResolver = null;
-            }
-          }, 6000);
-        } else {
-          cleanup();
-          resolveFinalize(getText());
-        }
-      });
-    };
-
-    const completeFinalize = () => {
-      if (finalizeTimeout) {
-        clearTimeout(finalizeTimeout);
-        finalizeTimeout = null;
-      }
-      if (finalizeResolver) {
-        console.log(
-          "[ElevenLabs WebSocket] Completing finalize with transcript length:",
-          getText().length,
-        );
-        cleanup();
-        finalizeResolver(getText());
-        finalizeResolver = null;
-      }
-    };
+        ),
+      canSend: () => !!ws && ws.readyState === WebSocket.OPEN,
+      getWsState: () => ws?.readyState,
+      cleanup,
+    });
+    const { finalize, completeFinalize } = streamingFinalize;
 
     const audioFormat = `pcm_${sampleRate}`;
     const wsUrl = `${ELEVENLABS_WS_URL}?token=${encodeURIComponent(token)}&model_id=scribe_v2_realtime&audio_format=${audioFormat}&commit_strategy=vad`;

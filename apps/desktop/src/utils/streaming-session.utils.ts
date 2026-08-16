@@ -1,5 +1,110 @@
 import { TranscriptionSessionResult } from "../types/transcription-session.types";
 
+export type StreamingFinalize = {
+  finalize: () => Promise<string>;
+  completeFinalize: () => void;
+  hasPendingFinalize: () => boolean;
+};
+
+export type StreamingFinalizeOptions = {
+  logPrefix: string;
+  timeoutMs: number;
+  getText: () => string;
+  getIsFinalized: () => boolean;
+  setIsFinalized: (value: boolean) => void;
+  flushPendingSamples: (force: boolean) => void;
+  logTotalChunks: () => void;
+  canSend: () => boolean;
+  getWsState: () => number | undefined;
+  /** Optional wire-level termination signal (e.g. Deepgram's CloseStream). */
+  sendTermination?: () => void;
+  cleanup: () => void;
+};
+
+/**
+ * Finalize protocol shared by the streaming sessions: flush the buffered
+ * audio, optionally signal end-of-stream, then wait (bounded by `timeoutMs`)
+ * for the provider's final transcript. `completeFinalize` is invoked by the
+ * provider's message handler when the final transcript arrives early.
+ */
+export const createStreamingFinalize = ({
+  logPrefix,
+  timeoutMs,
+  getText,
+  getIsFinalized,
+  setIsFinalized,
+  flushPendingSamples,
+  logTotalChunks,
+  canSend,
+  getWsState,
+  sendTermination,
+  cleanup,
+}: StreamingFinalizeOptions): StreamingFinalize => {
+  let finalizeResolver: ((text: string) => void) | null = null;
+  let finalizeTimeout: ReturnType<typeof setTimeout> | null = null;
+
+  const finalize = (): Promise<string> =>
+    new Promise((resolveFinalize) => {
+      console.log(
+        `${logPrefix} Finalize called, isFinalized:`,
+        getIsFinalized(),
+        "ws state:",
+        getWsState(),
+      );
+      if (getIsFinalized()) {
+        console.log(`${logPrefix} Already finalized, returning transcript`);
+        resolveFinalize(getText());
+        return;
+      }
+
+      setIsFinalized(true);
+      finalizeResolver = resolveFinalize;
+      flushPendingSamples(true);
+      logTotalChunks();
+
+      if (canSend()) {
+        if (sendTermination) {
+          console.log(`${logPrefix} Sending termination message...`);
+          sendTermination();
+        }
+        finalizeTimeout = setTimeout(() => {
+          console.log(
+            `${logPrefix} Timeout reached, finalizing with transcript length:`,
+            getText().length,
+          );
+          cleanup();
+          if (finalizeResolver) {
+            finalizeResolver(getText());
+            finalizeResolver = null;
+          }
+        }, timeoutMs);
+      } else {
+        cleanup();
+        resolveFinalize(getText());
+      }
+    });
+
+  const completeFinalize = () => {
+    if (finalizeTimeout) {
+      clearTimeout(finalizeTimeout);
+      finalizeTimeout = null;
+    }
+    if (finalizeResolver) {
+      console.log(
+        `${logPrefix} Completing finalize with transcript length:`,
+        getText().length,
+      );
+      cleanup();
+      finalizeResolver(getText());
+      finalizeResolver = null;
+    }
+  };
+
+  const hasPendingFinalize = () => finalizeResolver != null;
+
+  return { finalize, completeFinalize, hasPendingFinalize };
+};
+
 /**
  * Result returned when the streaming session never got established, e.g. the
  * WebSocket failed before the session object was created.

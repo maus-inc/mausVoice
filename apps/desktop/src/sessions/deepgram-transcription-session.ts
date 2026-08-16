@@ -10,7 +10,10 @@ import {
   combineStreamingTranscript,
   createAudioChunkPump,
 } from "../utils/audio-chunking.utils";
-import { finalizeStreamingSession } from "../utils/streaming-session.utils";
+import {
+  createStreamingFinalize,
+  finalizeStreamingSession,
+} from "../utils/streaming-session.utils";
 import { buildDeepgramWebSocketUrl } from "../utils/deepgram.utils";
 import { loadMyEffectiveDictationLanguage } from "../utils/user.utils";
 
@@ -74,67 +77,23 @@ const startDeepgramStreaming = async (
     pump.resetBuffers();
   };
 
-  let finalizeResolver: ((text: string) => void) | null = null;
-  let finalizeTimeout: ReturnType<typeof setTimeout> | null = null;
-
-  const finalize = (): Promise<string> => {
-    return new Promise((resolveFinalize) => {
-      console.log(
-        "[Deepgram WebSocket] Finalize called, isFinalized:",
-        isFinalized,
-        "ws state:",
-        ws?.readyState,
-      );
-      if (isFinalized) {
-        console.log(
-          "[Deepgram WebSocket] Already finalized, returning transcript",
-        );
-        resolveFinalize(getText());
-        return;
-      }
-
-      isFinalized = true;
-      finalizeResolver = resolveFinalize;
-      pump.flushPendingSamples(true);
-      console.log("[Deepgram WebSocket] Total chunks sent:", sentChunkCount);
-
-      if (ws && ws.readyState === WebSocket.OPEN) {
-        console.log("[Deepgram WebSocket] Sending CloseStream message...");
-        ws.send(JSON.stringify({ type: "CloseStream" }));
-
-        finalizeTimeout = setTimeout(() => {
-          console.log(
-            "[Deepgram WebSocket] Timeout reached, finalizing with transcript length:",
-            getText().length,
-          );
-          cleanup();
-          if (finalizeResolver) {
-            finalizeResolver(getText());
-            finalizeResolver = null;
-          }
-        }, 3000);
-      } else {
-        cleanup();
-        resolveFinalize(getText());
-      }
-    });
-  };
-
-  const completeFinalize = () => {
-    if (finalizeTimeout) {
-      clearTimeout(finalizeTimeout);
-      finalizeTimeout = null;
-    }
-    if (finalizeResolver) {
-      console.log(
-        "[Deepgram WebSocket] Completing finalize with transcript length:",
-        getText().length,
-      );
-      cleanup();
-      finalizeResolver(getText());
-      finalizeResolver = null;
-    }
-  };
+  const streamingFinalize = createStreamingFinalize({
+    logPrefix: "[Deepgram WebSocket]",
+    timeoutMs: 3000,
+    getText,
+    getIsFinalized: () => isFinalized,
+    setIsFinalized: (value) => {
+      isFinalized = value;
+    },
+    flushPendingSamples: (force) => pump.flushPendingSamples(force),
+    logTotalChunks: () =>
+      console.log("[Deepgram WebSocket] Total chunks sent:", sentChunkCount),
+    canSend: () => !!ws && ws.readyState === WebSocket.OPEN,
+    getWsState: () => ws?.readyState,
+    sendTermination: () => ws?.send(JSON.stringify({ type: "CloseStream" })),
+    cleanup,
+  });
+  const { finalize, completeFinalize } = streamingFinalize;
 
   // Start listening for audio chunks IMMEDIATELY, before the WebSocket connects.
   // This buffers audio so nothing is lost during the connection handshake.
@@ -229,7 +188,7 @@ const startDeepgramStreaming = async (
         code: event.code,
         reason: event.reason,
       });
-      if (isFinalized && finalizeResolver) {
+      if (isFinalized && streamingFinalize.hasPendingFinalize()) {
         completeFinalize();
       }
       cleanup();
