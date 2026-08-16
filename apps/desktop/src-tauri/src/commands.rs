@@ -438,23 +438,88 @@ pub struct TranscriptionAudioSamplesData {
     pub sample_rate: u32,
 }
 
+static IMPORT_IN_FLIGHT: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
 #[tauri::command]
 #[specta::specta]
-pub async fn transcription_import_audio(path: String) -> Result<TranscriptionAudioData, String> {
+pub async fn transcription_import_audio(
+    app: tauri::AppHandle,
+    path: String,
+) -> Result<TranscriptionAudioData, String> {
     let path = PathBuf::from(path.trim());
     if path.as_os_str().is_empty() {
         return Err("No audio file was selected".to_string());
     }
     let path = path
         .canonicalize()
-        .map_err(|err| format!("failed to resolve audio file path '{}': {err}", path.display()))?;
+        .map_err(|_| "Unable to resolve the selected audio file.".to_string())?;
 
-    tauri::async_runtime::spawn_blocking(move || {
+    // Confine imports to well-known user directories and the app's audio
+    // store so this command cannot be used as a file-read oracle over the
+    // whole filesystem (e.g. reading `~/.ssh/id_rsa`). The home directory
+    // itself is intentionally excluded so sensitive dot-directories stay out
+    // of reach; only common media/download sub-directories are allowed.
+    let home_dir = app.path().home_dir().ok();
+    let mut allowed: Vec<PathBuf> = Vec::new();
+    if let Some(home) = home_dir {
+        for subdir in [
+            "Music",
+            "Downloads",
+            "Documents",
+            "Desktop",
+            "Pictures",
+            "Videos",
+            "Movies",
+            "Public",
+        ] {
+            allowed.push(home.join(subdir));
+        }
+    }
+    for dir in [
+        app.path().document_dir().ok(),
+        app.path().download_dir().ok(),
+        app.path().desktop_dir().ok(),
+        app.path().picture_dir().ok(),
+        app.path().temp_dir().ok(),
+        crate::system::audio_store::audio_dir(&app).ok(),
+    ]
+    .into_iter()
+    .flatten()
+    {
+        allowed.push(dir);
+    }
+    let allowed_roots: Vec<PathBuf> = allowed
+        .into_iter()
+        .filter_map(|root| std::fs::canonicalize(&root).ok())
+        .collect();
+    if !allowed_roots.iter().any(|root| path.starts_with(root)) {
+        return Err(
+            "The selected file is outside the allowed import locations.".to_string(),
+        );
+    }
+
+    // Bound concurrent decodes so a flood of imports can't multiply the
+    // already-large per-decode memory ceiling.
+    if IMPORT_IN_FLIGHT
+        .compare_exchange(
+            false,
+            true,
+            std::sync::atomic::Ordering::SeqCst,
+            std::sync::atomic::Ordering::SeqCst,
+        )
+        .is_err()
+    {
+        return Err(
+            "An audio import is already in progress. Please wait for it to finish.".to_string(),
+        );
+    }
+
+    let result = tauri::async_runtime::spawn_blocking(move || {
         let file = std::fs::File::open(&path)
-            .map_err(|err| format!("failed to open audio file '{}': {err}", path.display()))?;
+            .map_err(|_| "Unable to open the selected audio file.".to_string())?;
         let file_bytes = file
             .metadata()
-            .map_err(|err| format!("failed to inspect audio file '{}': {err}", path.display()))?
+            .map_err(|_| "Unable to inspect the selected audio file.".to_string())?
             .len();
         if file_bytes > MAX_AUDIO_IMPORT_FILE_BYTES {
             return Err(format!(
@@ -464,7 +529,7 @@ pub async fn transcription_import_audio(path: String) -> Result<TranscriptionAud
         }
 
         let decoder = rodio::Decoder::new(BufReader::new(file))
-            .map_err(|err| format!("failed to decode audio file '{}': {err}", path.display()))?;
+            .map_err(|_| "Unable to decode the selected audio file.".to_string())?;
         let source_rate = decoder.sample_rate();
         let channels = decoder.channels().max(1) as usize;
         if source_rate == 0 {
@@ -526,7 +591,9 @@ pub async fn transcription_import_audio(path: String) -> Result<TranscriptionAud
         })
     })
     .await
-    .map_err(|err| format!("audio import task failed: {err}"))?
+    .map_err(|err| format!("audio import task failed: {err}"));
+    IMPORT_IN_FLIGHT.store(false, std::sync::atomic::Ordering::SeqCst);
+    result?
 }
 
 fn encode_pcm16_le(samples: &[f32]) -> Vec<u8> {

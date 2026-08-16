@@ -10,8 +10,6 @@ export const KNOWN_SILENCE_HALLUCINATIONS = [
   "(silence)",
   "thank you for watching",
   "thanks for watching",
-  "字幕由amara.org社区提供",
-  "ご視聴ありがとうございました",
 ] as const;
 
 const normalizeHallucinationText = (text: string): string =>

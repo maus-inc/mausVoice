@@ -13,7 +13,7 @@ import {
 import { open as openFileDialog } from "@tauri-apps/plugin-dialog";
 import type { Tone } from "@maus-inc/types";
 import { getRec } from "@maus-inc/utilities";
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { FormattedMessage, useIntl } from "react-intl";
 import { showErrorSnackbar } from "../../actions/app.actions";
 import { importAudioFile } from "../../actions/transcriptions.actions";
@@ -54,11 +54,13 @@ export default function TranscriptionsPage() {
     useState<DictationLanguageCode>(defaultLanguage as DictationLanguageCode);
   const [isImporting, setIsImporting] = useState(false);
 
+  const prevImportDialogOpen = useRef(false);
   useEffect(() => {
-    if (importDialogOpen) {
+    if (importDialogOpen && !prevImportDialogOpen.current) {
       setSelectedToneId(tones[0]?.id ?? null);
       setSelectedLanguage(defaultLanguage as DictationLanguageCode);
     }
+    prevImportDialogOpen.current = importDialogOpen;
   }, [defaultLanguage, importDialogOpen, tones]);
 
   const handleImport = async () => {
@@ -69,7 +71,7 @@ export default function TranscriptionsPage() {
       filters: [
         {
           name: intl.formatMessage({ defaultMessage: "Audio" }),
-          extensions: ["wav", "mp3", "m4a", "flac", "ogg", "webm", "aac"],
+          extensions: ["wav", "mp3", "flac", "ogg"],
         },
       ],
     });
