@@ -57,7 +57,7 @@ export const ComposerPage = () => {
 
   useEffect(() => {
     let active = true;
-    void invoke<string | null>("composer_take_text", { requestId })
+    void invoke<string | null>("composer_peek_text", { requestId })
       .then((initialText) => {
         if (active) setText(initialText ?? "");
       })

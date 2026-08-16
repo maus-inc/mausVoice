@@ -404,6 +404,7 @@ pub fn build() -> tauri::Builder<tauri::Wry> {
             crate::commands::get_system_volume,
             crate::commands::set_system_volume,
             crate::commands::composer_register_text,
+            crate::commands::composer_peek_text,
             crate::commands::composer_take_text,
             crate::commands::composer_discard_text,
             crate::commands::floating_window_create,

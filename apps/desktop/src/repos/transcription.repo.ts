@@ -41,7 +41,7 @@ export type TranscriptionAudioData = {
 };
 
 type NativeImportedAudioData = {
-  samples: number[] | Uint8Array | ArrayBuffer;
+  pcm16Le: number[] | Uint8Array | ArrayBuffer;
   sampleRate: number;
 };
 
@@ -207,7 +207,7 @@ export class LocalTranscriptionRepo extends BaseTranscriptionRepo {
       { path },
     );
     return {
-      samples: decodePcm16Le(payload.samples),
+      samples: decodePcm16Le(payload.pcm16Le),
       sampleRate: payload.sampleRate,
     };
   }

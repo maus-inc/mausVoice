@@ -99,10 +99,11 @@ const parseAgentEnabledTools = (
       ? parsed
       : null;
   } catch {
-    return value
+    const parsed = value
       .split(",")
       .map((item) => item.trim())
       .filter(Boolean);
+    return parsed.length > 0 ? parsed : null;
   }
 };
 

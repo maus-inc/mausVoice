@@ -427,7 +427,7 @@ const MAX_AUDIO_IMPORT_ABSOLUTE_DECODED_SAMPLES: usize =
 pub struct TranscriptionAudioData {
     /// Little-endian signed 16-bit mono PCM. Keeping the IPC payload binary
     /// avoids expanding every sample into a JSON number.
-    pub samples: Vec<u8>,
+    pub pcm16_le: Vec<u8>,
     pub sample_rate: u32,
 }
 
@@ -518,7 +518,7 @@ pub async fn transcription_import_audio(path: String) -> Result<TranscriptionAud
         }
 
         Ok(TranscriptionAudioData {
-            samples: encode_pcm16_le(&samples),
+            pcm16_le: encode_pcm16_le(&samples),
             sample_rate: 16_000,
         })
     })
@@ -3594,10 +3594,20 @@ pub fn composer_register_text(
     text: String,
     state: State<'_, crate::state::FloatingWindowState>,
 ) -> Result<(), String> {
-    if request_id.trim().is_empty() {
+    let request_id = request_id.trim().to_string();
+    if request_id.is_empty() {
         return Err("composer request id must not be empty".to_string());
     }
     state.register_composer_text(request_id, text)
+}
+
+#[tauri::command]
+#[specta::specta]
+pub fn composer_peek_text(
+    request_id: String,
+    state: State<'_, crate::state::FloatingWindowState>,
+) -> Result<Option<String>, String> {
+    state.peek_composer_text(request_id.trim())
 }
 
 #[tauri::command]
