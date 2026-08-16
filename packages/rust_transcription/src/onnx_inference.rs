@@ -207,23 +207,12 @@ fn ensure_onnx_runtime() -> Result<(), String> {
         return Ok(());
     }
 
-    let candidates = runtime_library_candidates()?;
-    let library_path = candidates
-        .iter()
-        .find(|path| path.is_file())
-        .ok_or_else(|| {
-            let searched = candidates
-                .iter()
-                .map(|path| path.display().to_string())
-                .collect::<Vec<_>>()
-                .join(", ");
-            format!(
-                "ONNX Runtime dynamic library '{}' was not found; searched: {searched}",
-                runtime_library_name()
-            )
-        })?;
+    // Resolve *and* integrity-check the shared library before handing it to the
+    // dynamic loader, so a missing or truncated runtime reports an actionable
+    // diagnostic instead of an opaque loader failure.
+    let library_path = verify_ort_runtime().map_err(|error| error.to_string())?;
 
-    ort::init_from(library_path)
+    ort::init_from(&library_path)
         .map_err(|err| {
             format!(
                 "failed to load ONNX Runtime from '{}': {err}",
@@ -233,6 +222,61 @@ fn ensure_onnx_runtime() -> Result<(), String> {
         .commit();
     let _ = RUNTIME.set(());
     Ok(())
+}
+
+/// The ONNX Runtime shared library could not be resolved to a usable file.
+#[derive(Debug)]
+pub struct OrtRuntimeError {
+    message: String,
+}
+
+impl OrtRuntimeError {
+    fn new(message: String) -> Self {
+        Self { message }
+    }
+}
+
+impl fmt::Display for OrtRuntimeError {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter.write_str(&self.message)
+    }
+}
+
+impl std::error::Error for OrtRuntimeError {}
+
+/// Resolve the ONNX Runtime dynamic library and confirm it is actually usable.
+///
+/// The library is taken from `MAUSVOICE_ORT_DYLIB_PATH`/`ORT_DYLIB_PATH` or the
+/// bundled sidecar layout. Presence alone is not enough: a zero-byte or
+/// non-regular file (a failed download, an interrupted install, or an empty
+/// placeholder committed by a packaging step) must fail here with a message the
+/// user can act on rather than surfacing later as a cryptic load error.
+pub fn verify_ort_runtime() -> Result<PathBuf, OrtRuntimeError> {
+    let candidates = runtime_library_candidates().map_err(OrtRuntimeError::new)?;
+    verify_ort_runtime_candidates(&candidates)
+}
+
+fn verify_ort_runtime_candidates(candidates: &[PathBuf]) -> Result<PathBuf, OrtRuntimeError> {
+    let mut rejected = Vec::new();
+    for candidate in candidates {
+        match std::fs::metadata(candidate) {
+            Ok(metadata) if metadata.is_file() && metadata.len() > 0 => {
+                return Ok(candidate.clone())
+            }
+            Ok(metadata) if metadata.is_file() => {
+                rejected.push(format!("{} (empty file)", candidate.display()))
+            }
+            Ok(_) => rejected.push(format!("{} (not a regular file)", candidate.display())),
+            Err(err) => rejected.push(format!("{} ({err})", candidate.display())),
+        }
+    }
+
+    Err(OrtRuntimeError::new(format!(
+        "ONNX Runtime library '{}' not found or unusable; install the bundled sidecar \
+         or set MAUSVOICE_ORT_DYLIB_PATH to a valid ONNX Runtime library. Checked: {}",
+        runtime_library_name(),
+        rejected.join(", ")
+    )))
 }
 
 fn runtime_library_candidates() -> Result<Vec<PathBuf>, String> {
@@ -331,6 +375,14 @@ fn load_model(
     model_dir: &Path,
     language: Option<&str>,
 ) -> Result<LoadedModel, String> {
+    // Activation is the last point before ONNX Runtime sessions are created.
+    // Gate it on the runtime check so a missing or broken library is reported
+    // as such instead of as a malformed model bundle. sherpa-onnx links its own
+    // runtime and must not be validated against the `ort` dynamic library.
+    if !uses_sherpa_onnx_runtime(model) {
+        ensure_onnx_runtime()?;
+    }
+
     match model {
         WhisperModel::ParakeetCtc06B => Parakeet::from_pretrained(model_dir, None)
             .map(LoadedModel::ParakeetCtc)
@@ -419,5 +471,29 @@ mod tests {
         let fake_path = Path::new("fake/model.onnx");
         let result = transcribe(WhisperModel::ParakeetCtc06B, fake_path, &[], None);
         assert_eq!(result, Ok(String::new()));
+    }
+
+    #[test]
+    fn ort_runtime_verification_rejects_missing_and_empty_libraries() {
+        let temp_dir = tempfile::tempdir().unwrap();
+        let missing = temp_dir.path().join(runtime_library_name());
+        let error = verify_ort_runtime_candidates(&[missing.clone()])
+            .expect_err("a missing runtime library must be rejected");
+        let message = error.to_string();
+        assert!(message.contains("MAUSVOICE_ORT_DYLIB_PATH"), "{message}");
+        assert!(message.contains(&missing.display().to_string()), "{message}");
+
+        let empty = temp_dir.path().join("empty-onnxruntime");
+        std::fs::write(&empty, b"").unwrap();
+        let error = verify_ort_runtime_candidates(&[empty.clone()])
+            .expect_err("a zero-byte runtime library must be rejected");
+        assert!(error.to_string().contains("empty file"), "{error}");
+
+        let usable = temp_dir.path().join("usable-onnxruntime");
+        std::fs::write(&usable, b"not a real library, but non-empty").unwrap();
+        assert_eq!(
+            verify_ort_runtime_candidates(&[missing, empty, usable.clone()]).unwrap(),
+            usable
+        );
     }
 }
