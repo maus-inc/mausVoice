@@ -465,8 +465,7 @@ pub async fn transcription_import_audio(path: String) -> Result<TranscriptionAud
             .saturating_mul(channels)
             .saturating_mul(MAX_AUDIO_IMPORT_DURATION_SECONDS as usize);
         let max_decoded_samples = duration_sample_limit
-            .min(MAX_AUDIO_IMPORT_ABSOLUTE_DECODED_SAMPLES)
-            .max(1);
+            .clamp(1, MAX_AUDIO_IMPORT_ABSOLUTE_DECODED_SAMPLES);
         let memory_limited = duration_sample_limit > max_decoded_samples;
         let decoded: Vec<f32> = decoder
             .convert_samples::<f32>()
