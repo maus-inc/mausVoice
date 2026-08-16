@@ -1,0 +1,665 @@
+﻿2026-08-16T20:16:03.3141170Z Current runner version: '2.336.0'
+2026-08-16T20:16:03.3156200Z ##[group]Runner Image Provisioner
+2026-08-16T20:16:03.3156740Z Hosted Compute Agent
+2026-08-16T20:16:03.3157110Z Version: 20260624.560
+2026-08-16T20:16:03.3157520Z Commit: 925d229a51159bc391ae97e54a2dd1fe20af789d
+2026-08-16T20:16:03.3157980Z Build Date: 2026-06-24T18:26:47Z
+2026-08-16T20:16:03.3158430Z Worker ID: {a8a5b45b-036a-44de-9992-3f02dc49aa2f}
+2026-08-16T20:16:03.3158900Z Azure Region: westus
+2026-08-16T20:16:03.3159270Z ##[endgroup]
+2026-08-16T20:16:03.3160200Z ##[group]Operating System
+2026-08-16T20:16:03.3160600Z macOS
+2026-08-16T20:16:03.3160920Z 14.8.7
+2026-08-16T20:16:03.3161430Z 23J520
+2026-08-16T20:16:03.3161760Z ##[endgroup]
+2026-08-16T20:16:03.3162120Z ##[group]Runner Image
+2026-08-16T20:16:03.3162490Z Image: macos-14-arm64
+2026-08-16T20:16:03.3162940Z Version: 20260629.0180.1
+2026-08-16T20:16:03.3163770Z Included Software: https://github.com/actions/runner-images/blob/macos-14-arm64/20260629.0180/images/macos/macos-14-arm64-Readme.md
+2026-08-16T20:16:03.3164780Z Image Release: https://github.com/actions/runner-images/releases/tag/macos-14-arm64%2F20260629.0180
+2026-08-16T20:16:03.3165440Z ##[endgroup]
+2026-08-16T20:16:03.3166220Z ##[group]GITHUB_TOKEN Permissions
+2026-08-16T20:16:03.3167200Z Contents: read
+2026-08-16T20:16:03.3167550Z Metadata: read
+2026-08-16T20:16:03.3167910Z ##[endgroup]
+2026-08-16T20:16:03.3169220Z Secret source: Actions
+2026-08-16T20:16:03.3169880Z Prepare workflow directory
+2026-08-16T20:16:03.3383510Z Prepare all required actions
+2026-08-16T20:16:03.3420940Z Getting action download info
+2026-08-16T20:16:03.7555220Z Download action repository 'actions/checkout@11d5960a326750d5838078e36cf38b85af677262' (SHA:11d5960a326750d5838078e36cf38b85af677262)
+2026-08-16T20:16:04.3659820Z Download action repository 'pnpm/action-setup@a8198c4bff370c8506180b035930dea56dbd5288' (SHA:a8198c4bff370c8506180b035930dea56dbd5288)
+2026-08-16T20:16:04.7623280Z Download action repository 'actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020' (SHA:49933ea5288caeca8642d1e84afbd3f7d6820020)
+2026-08-16T20:16:04.8569340Z Download action repository 'oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6' (SHA:0c5077e51419868618aeaa5fe8019c62421857d6)
+2026-08-16T20:16:05.2240140Z Download action repository 'dtolnay/rust-toolchain@4360b52568e2003a75bf9bc1d59f33a8e3fc893c' (SHA:4360b52568e2003a75bf9bc1d59f33a8e3fc893c)
+2026-08-16T20:16:05.5216650Z Download action repository 'Swatinem/rust-cache@49a0bdc70d2e1b713ca9e2869b211fcce03d3c1c' (SHA:49a0bdc70d2e1b713ca9e2869b211fcce03d3c1c)
+2026-08-16T20:16:05.8932020Z Download action repository 'actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02' (SHA:ea165f8d65b6e75b540449e92b4886f43607fa02)
+2026-08-16T20:16:06.1813310Z Complete job name: Build Desktop (macOS)
+2026-08-16T20:16:06.2409780Z Node 20 is being deprecated. This workflow is running with Node 24 by default. If you need to temporarily use Node 20, you can set the ACTIONS_ALLOW_USE_UNSECURE_NODE_VERSION=true environment variable. For more information see: https://github.blog/changelog/2025-09-19-deprecation-of-node-20-on-github-actions-runners/
+2026-08-16T20:16:06.2417060Z ##[group]Run actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+2026-08-16T20:16:06.2417870Z with:
+2026-08-16T20:16:06.2418300Z   repository: maus-inc/mausVoice
+2026-08-16T20:16:06.2422920Z   token: ***
+2026-08-16T20:16:06.2423340Z   ssh-strict: true
+2026-08-16T20:16:06.2423770Z   ssh-user: git
+2026-08-16T20:16:06.2424190Z   persist-credentials: true
+2026-08-16T20:16:06.2424680Z   clean: true
+2026-08-16T20:16:06.2425190Z   sparse-checkout-cone-mode: true
+2026-08-16T20:16:06.2425710Z   fetch-depth: 1
+2026-08-16T20:16:06.2426150Z   fetch-tags: false
+2026-08-16T20:16:06.2426590Z   show-progress: true
+2026-08-16T20:16:06.2427060Z   lfs: false
+2026-08-16T20:16:06.2427470Z   submodules: false
+2026-08-16T20:16:06.2427920Z   set-safe-directory: true
+2026-08-16T20:16:06.2428420Z   allow-unsafe-pr-checkout: false
+2026-08-16T20:16:06.2429050Z ##[endgroup]
+2026-08-16T20:16:06.6117150Z Syncing repository: maus-inc/mausVoice
+2026-08-16T20:16:06.6118940Z ##[group]Getting Git version info
+2026-08-16T20:16:06.6119690Z Working directory is '/Users/runner/work/mausVoice/mausVoice'
+2026-08-16T20:16:06.6120740Z [command]/opt/homebrew/bin/git version
+2026-08-16T20:16:06.6373120Z git version 2.54.0
+2026-08-16T20:16:06.6389280Z ##[endgroup]
+2026-08-16T20:16:06.6395610Z Copying '/Users/runner/.gitconfig' to '/Users/runner/work/_temp/ad321a5e-dc90-4918-a307-0c16e4cd6cbd/.gitconfig'
+2026-08-16T20:16:06.6399980Z Temporarily overriding HOME='/Users/runner/work/_temp/ad321a5e-dc90-4918-a307-0c16e4cd6cbd' before making global git config changes
+2026-08-16T20:16:06.6406040Z Adding repository directory to the temporary git global config as a safe directory
+2026-08-16T20:16:06.6415770Z [command]/opt/homebrew/bin/git config --global --add safe.directory /Users/runner/work/mausVoice/mausVoice
+2026-08-16T20:16:06.6508840Z Deleting the contents of '/Users/runner/work/mausVoice/mausVoice'
+2026-08-16T20:16:06.6526870Z ##[group]Initializing the repository
+2026-08-16T20:16:06.6530810Z [command]/opt/homebrew/bin/git init /Users/runner/work/mausVoice/mausVoice
+2026-08-16T20:16:06.6685060Z hint: Using 'master' as the name for the initial branch. This default branch name
+2026-08-16T20:16:06.6686590Z hint: will change to "main" in Git 3.0. To configure the initial branch name
+2026-08-16T20:16:06.6688770Z hint: to use in all of your new repositories, which will suppress this warning,
+2026-08-16T20:16:06.6690480Z hint: call:
+2026-08-16T20:16:06.6692350Z hint:
+2026-08-16T20:16:06.6693050Z hint: 	git config --global init.defaultBranch <name>
+2026-08-16T20:16:06.6694690Z hint:
+2026-08-16T20:16:06.6695460Z hint: Names commonly chosen instead of 'master' are 'main', 'trunk' and
+2026-08-16T20:16:06.6696640Z hint: 'development'. The just-created branch can be renamed via this command:
+2026-08-16T20:16:06.6697540Z hint:
+2026-08-16T20:16:06.6698060Z hint: 	git branch -m <name>
+2026-08-16T20:16:06.6698670Z hint:
+2026-08-16T20:16:06.6699430Z hint: Disable this message with "git config set advice.defaultBranchName false"
+2026-08-16T20:16:06.6700770Z Initialized empty Git repository in /Users/runner/work/mausVoice/mausVoice/.git/
+2026-08-16T20:16:06.6703940Z [command]/opt/homebrew/bin/git remote add origin https://github.com/maus-inc/mausVoice
+2026-08-16T20:16:06.6753000Z ##[endgroup]
+2026-08-16T20:16:06.6781930Z ##[group]Disabling automatic garbage collection
+2026-08-16T20:16:06.6836350Z [command]/opt/homebrew/bin/git config --local gc.auto 0
+2026-08-16T20:16:06.6841680Z ##[endgroup]
+2026-08-16T20:16:06.6844400Z ##[group]Setting up auth
+2026-08-16T20:16:06.6845950Z [command]/opt/homebrew/bin/git config --local --name-only --get-regexp core\.sshCommand
+2026-08-16T20:16:06.6853040Z [command]/opt/homebrew/bin/git submodule foreach --recursive sh -c "git config --local --name-only --get-regexp 'core\.sshCommand' && git config --local --unset-all 'core.sshCommand' || :"
+2026-08-16T20:16:06.7515370Z [command]/opt/homebrew/bin/git config --local --name-only --get-regexp http\.https\:\/\/github\.com\/\.extraheader
+2026-08-16T20:16:06.7605280Z [command]/opt/homebrew/bin/git submodule foreach --recursive sh -c "git config --local --name-only --get-regexp 'http\.https\:\/\/github\.com\/\.extraheader' && git config --local --unset-all 'http.https://github.com/.extraheader' || :"
+2026-08-16T20:16:06.8099880Z [command]/opt/homebrew/bin/git config --local --name-only --get-regexp ^includeIf\.gitdir:
+2026-08-16T20:16:06.8139420Z [command]/opt/homebrew/bin/git submodule foreach --recursive git config --local --show-origin --name-only --get-regexp remote.origin.url
+2026-08-16T20:16:06.8654860Z [command]/opt/homebrew/bin/git config --local http.https://github.com/.extraheader AUTHORIZATION: basic ***
+2026-08-16T20:16:06.8724780Z ##[endgroup]
+2026-08-16T20:16:06.8727490Z ##[group]Fetching the repository
+2026-08-16T20:16:06.8766860Z [command]/opt/homebrew/bin/git -c protocol.version=2 fetch --no-tags --prune --no-recurse-submodules --depth=1 origin +2eebd3efa297aa9edbe6b47c17723e07eb180e49:refs/remotes/pull/63/merge
+2026-08-16T20:16:07.9280080Z From https://github.com/maus-inc/mausVoice
+2026-08-16T20:16:07.9280990Z  * [new ref]         2eebd3efa297aa9edbe6b47c17723e07eb180e49 -> pull/63/merge
+2026-08-16T20:16:07.9351490Z ##[endgroup]
+2026-08-16T20:16:07.9352480Z ##[group]Determining the checkout info
+2026-08-16T20:16:07.9353090Z ##[endgroup]
+2026-08-16T20:16:07.9353510Z [command]/opt/homebrew/bin/git sparse-checkout disable
+2026-08-16T20:16:07.9414440Z [command]/opt/homebrew/bin/git config --local --unset-all extensions.worktreeConfig
+2026-08-16T20:16:07.9462250Z ##[group]Checking out the ref
+2026-08-16T20:16:07.9464450Z [command]/opt/homebrew/bin/git checkout --progress --force refs/remotes/pull/63/merge
+2026-08-16T20:16:08.1980230Z HEAD is now at 2eebd3e Merge d239fea27389dabba0fd831c5afd2fda3cfbad50 into 244d29530934d236453551a1846e4e89fc1f5249
+2026-08-16T20:16:08.1994230Z ##[endgroup]
+2026-08-16T20:16:08.2063570Z [command]/opt/homebrew/bin/git log -1 --format=%H
+2026-08-16T20:16:08.2124090Z 2eebd3efa297aa9edbe6b47c17723e07eb180e49
+2026-08-16T20:16:08.2311260Z ##[group]Run pnpm/action-setup@a8198c4bff370c8506180b035930dea56dbd5288
+2026-08-16T20:16:08.2311880Z with:
+2026-08-16T20:16:08.2312250Z   dest: ~/setup-pnpm
+2026-08-16T20:16:08.2312640Z   run_install: null
+2026-08-16T20:16:08.2313030Z   cache: false
+2026-08-16T20:16:08.2313420Z   cache_dependency_path: pnpm-lock.yaml
+2026-08-16T20:16:08.2313880Z   package_json_file: package.json
+2026-08-16T20:16:08.2314300Z   standalone: false
+2026-08-16T20:16:08.2314670Z ##[endgroup]
+2026-08-16T20:16:08.3470590Z ##[group]Running self-installer...
+2026-08-16T20:16:08.7264710Z (node:9414) [DEP0169] DeprecationWarning: `url.parse()` behavior is not standardized and prone to errors that have security implications. Use the WHATWG URL API instead. CVEs are not issued for `url.parse()` vulnerabilities.
+2026-08-16T20:16:08.7367900Z (Use `node --trace-deprecation ...` to show where the warning was created)
+2026-08-16T20:16:08.8525420Z Progress: resolved 1, reused 0, downloaded 0, added 0
+2026-08-16T20:16:08.8631580Z Packages: +1
+2026-08-16T20:16:08.8733200Z +
+2026-08-16T20:16:09.5508650Z Progress: resolved 1, reused 0, downloaded 1, added 1, done
+2026-08-16T20:16:09.6646610Z 
+2026-08-16T20:16:09.6747670Z dependencies:
+2026-08-16T20:16:09.6849670Z + pnpm 10.34.5 (11.22.0 is available)
+2026-08-16T20:16:09.6905260Z 
+2026-08-16T20:16:09.6941010Z Done in 1.2s
+2026-08-16T20:16:09.6983050Z ##[endgroup]
+2026-08-16T20:16:09.7003320Z Installation Completed!
+2026-08-16T20:16:09.7118690Z Node 20 is being deprecated. This workflow is running with Node 24 by default. If you need to temporarily use Node 20, you can set the ACTIONS_ALLOW_USE_UNSECURE_NODE_VERSION=true environment variable. For more information see: https://github.blog/changelog/2025-09-19-deprecation-of-node-20-on-github-actions-runners/
+2026-08-16T20:16:09.7119800Z ##[group]Run actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+2026-08-16T20:16:09.7120250Z with:
+2026-08-16T20:16:09.7120480Z   node-version-file: .nvmrc
+2026-08-16T20:16:09.7120710Z   cache: pnpm
+2026-08-16T20:16:09.7120890Z   cache-dependency-path: pnpm-lock.yaml
+
+2026-08-16T20:16:09.7121180Z   always-auth: false
+2026-08-16T20:16:09.7121400Z   check-latest: false
+2026-08-16T20:16:09.7133750Z   token: ***
+2026-08-16T20:16:09.7133960Z env:
+2026-08-16T20:16:09.7134150Z   PNPM_HOME: /Users/runner/setup-pnpm/node_modules/.bin
+2026-08-16T20:16:09.7134410Z ##[endgroup]
+2026-08-16T20:16:09.8322670Z Node version file is not JSON file
+2026-08-16T20:16:09.8323300Z Resolved .nvmrc as 24
+2026-08-16T20:16:09.8388420Z Found in cache @ /Users/runner/hostedtoolcache/node/24.18.0/arm64
+2026-08-16T20:16:09.8391110Z (node:9440) [DEP0040] DeprecationWarning: The `punycode` module is deprecated. Please use a userland alternative instead.
+2026-08-16T20:16:09.8392210Z (Use `node --trace-deprecation ...` to show where the warning was created)
+2026-08-16T20:16:09.8392830Z ##[group]Environment details
+2026-08-16T20:16:10.2147870Z node: v24.18.0
+2026-08-16T20:16:10.2148360Z npm: 11.16.0
+2026-08-16T20:16:10.2148740Z yarn: 1.22.22
+2026-08-16T20:16:10.2149410Z ##[endgroup]
+2026-08-16T20:16:10.2161910Z [command]/Users/runner/setup-pnpm/node_modules/.bin/pnpm store path --silent
+2026-08-16T20:16:10.5423990Z /Users/runner/setup-pnpm/node_modules/.bin/store/v10
+2026-08-16T20:16:10.8429090Z (node:9440) [DEP0169] DeprecationWarning: `url.parse()` behavior is not standardized and prone to errors that have security implications. Use the WHATWG URL API instead. CVEs are not issued for `url.parse()` vulnerabilities.
+2026-08-16T20:16:10.8702410Z Cache hit for: node-cache-macOS-arm64-pnpm-fc9cfdd371cd222d0fcb10c5ce9046faef1c10699756df9f80ceb51c01fa4d03
+2026-08-16T20:16:12.1223910Z Received 0 of 266917711 (0.0%), 0.0 MBs/sec
+2026-08-16T20:16:13.1184160Z Received 92274688 of 266917711 (34.6%), 43.8 MBs/sec
+2026-08-16T20:16:14.1137840Z Received 167772160 of 266917711 (62.9%), 53.2 MBs/sec
+2026-08-16T20:16:15.1120640Z Received 260046848 of 266917711 (97.4%), 61.8 MBs/sec
+2026-08-16T20:16:15.1769600Z Received 266917711 of 266917711 (100.0%), 62.4 MBs/sec
+2026-08-16T20:16:15.1776650Z Cache Size: ~255 MB (266917711 B)
+2026-08-16T20:16:15.1824360Z [command]/opt/homebrew/bin/gtar -xf /Users/runner/work/_temp/301c2db8-8577-4b22-9d2a-87920388c4c0/cache.tzst -P -C /Users/runner/work/mausVoice/mausVoice --delay-directory-restore --use-compress-program unzstd
+2026-08-16T20:16:26.3066490Z Cache restored successfully
+2026-08-16T20:16:26.3106850Z Cache restored from key: node-cache-macOS-arm64-pnpm-fc9cfdd371cd222d0fcb10c5ce9046faef1c10699756df9f80ceb51c01fa4d03
+2026-08-16T20:16:26.3316780Z ##[group]Run oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6
+2026-08-16T20:16:26.3317290Z with:
+2026-08-16T20:16:26.3317620Z   bun-version: 1.3.6
+2026-08-16T20:16:26.3317900Z   no-cache: false
+2026-08-16T20:16:26.3319920Z   token: ***
+2026-08-16T20:16:26.3320150Z env:
+2026-08-16T20:16:26.3320460Z   PNPM_HOME: /Users/runner/setup-pnpm/node_modules/.bin
+2026-08-16T20:16:26.3320810Z ##[endgroup]
+2026-08-16T20:16:26.7228780Z Downloading a new version of Bun: https://github.com/oven-sh/bun/releases/download/bun-v1.3.6/bun-darwin-aarch64.zip
+2026-08-16T20:16:27.0709770Z [command]/usr/bin/unzip -o -q /Users/runner/work/_temp/5745dae9-2bd8-410f-ae2b-22f040a7a66e.zip
+2026-08-16T20:16:27.4853390Z [command]/Users/runner/.bun/bin/bun --revision
+2026-08-16T20:16:27.4984420Z 1.3.6+d530ed993
+2026-08-16T20:16:27.5198190Z ##[group]Run dtolnay/rust-toolchain@4360b52568e2003a75bf9bc1d59f33a8e3fc893c
+2026-08-16T20:16:27.5199480Z with:
+2026-08-16T20:16:27.5199720Z   targets: aarch64-apple-darwin,x86_64-apple-darwin
+2026-08-16T20:16:27.5200000Z   toolchain: stable
+2026-08-16T20:16:27.5200170Z env:
+2026-08-16T20:16:27.5200540Z   PNPM_HOME: /Users/runner/setup-pnpm/node_modules/.bin
+2026-08-16T20:16:27.5200840Z ##[endgroup]
+2026-08-16T20:16:27.5264220Z ##[start-action display=Parse toolchain version;id=__dtolnay_rust-toolchain.parse]
+2026-08-16T20:16:27.5316970Z ##[group]Run if [[ -z $toolchain ]]; then
+2026-08-16T20:16:27.5317430Z [36;1mif [[ -z $toolchain ]]; then[0m
+2026-08-16T20:16:27.5317930Z [36;1m  # GitHub does not enforce `required: true` inputs itself. https://github.com/actions/runner/issues/1070[0m
+2026-08-16T20:16:27.5318880Z [36;1m  echo "'toolchain' is a required input" >&2[0m
+2026-08-16T20:16:27.5319150Z [36;1m  exit 1[0m
+2026-08-16T20:16:27.5319510Z [36;1melif [[ $toolchain =~ ^stable' '[0-9]+' '(year|month|week|day)s?' 'ago$ ]]; then[0m
+2026-08-16T20:16:27.5319920Z [36;1m  if [[ macOS == macOS ]]; then[0m
+2026-08-16T20:16:27.5320420Z [36;1m    echo "toolchain=1.$((($(date -v-$(sed 's/stable \([0-9]*\) \(.\).*/\1\2/' <<< $toolchain) +%s)/60/60/24-16569)/7/6))" >> $GITHUB_OUTPUT[0m
+2026-08-16T20:16:27.5320870Z [36;1m  else[0m
+2026-08-16T20:16:27.5321190Z [36;1m    echo "toolchain=1.$((($(date --date "${toolchain#stable }" +%s)/60/60/24-16569)/7/6))" >> $GITHUB_OUTPUT[0m
+2026-08-16T20:16:27.5321630Z [36;1m  fi[0m
+2026-08-16T20:16:27.5321910Z [36;1melif [[ $toolchain =~ ^stable' 'minus' '[0-9]+' 'releases?$ ]]; then[0m
+2026-08-16T20:16:27.5329580Z [36;1m  echo "toolchain=1.$((($(date +%s)/60/60/24-16569)/7/6-${toolchain//[^0-9]/}))" >> $GITHUB_OUTPUT[0m
+2026-08-16T20:16:27.5330050Z [36;1melif [[ $toolchain =~ ^1\.[0-9]+$ ]]; then[0m
+2026-08-16T20:16:27.5330790Z [36;1m  echo "toolchain=1.$((i=${toolchain#1.}, c=($(date +%s)/60/60/24-16569)/7/6, i+9*i*(10*i<=c)+90*i*(100*i<=c)))" >> $GITHUB_OUTPUT[0m
+2026-08-16T20:16:27.5331310Z [36;1melse[0m
+2026-08-16T20:16:27.5331560Z [36;1m  echo "toolchain=$toolchain" >> $GITHUB_OUTPUT[0m
+2026-08-16T20:16:27.5331920Z [36;1mfi[0m
+2026-08-16T20:16:27.5526010Z shell: /bin/bash --noprofile --norc -e -o pipefail {0}
+2026-08-16T20:16:27.5526290Z env:
+2026-08-16T20:16:27.5526520Z   PNPM_HOME: /Users/runner/setup-pnpm/node_modules/.bin
+2026-08-16T20:16:27.5526810Z   toolchain: stable
+2026-08-16T20:16:27.5526960Z ##[endgroup]
+2026-08-16T20:16:27.5982530Z ##[end-action id=__dtolnay_rust-toolchain.parse;outcome=success;conclusion=success;duration_ms=71]
+2026-08-16T20:16:27.5989720Z ##[start-action display=Construct rustup command line;id=__dtolnay_rust-toolchain.flags]
+2026-08-16T20:16:27.6008260Z ##[group]Run echo "targets=$(for t in ${targets//,/ }; do echo -n ' --target' $t; done)" >> $GITHUB_OUTPUT
+2026-08-16T20:16:27.6008890Z [36;1mecho "targets=$(for t in ${targets//,/ }; do echo -n ' --target' $t; done)" >> $GITHUB_OUTPUT[0m
+2026-08-16T20:16:27.6009520Z [36;1mecho "components=$(for c in ${components//,/ }; do echo -n ' --component' $c; done)" >> $GITHUB_OUTPUT[0m
+2026-08-16T20:16:27.6009940Z [36;1mecho "downgrade=" >> $GITHUB_OUTPUT[0m
+2026-08-16T20:16:27.6069550Z shell: /bin/bash --noprofile --norc -e -o pipefail {0}
+2026-08-16T20:16:27.6069820Z env:
+2026-08-16T20:16:27.6070030Z   PNPM_HOME: /Users/runner/setup-pnpm/node_modules/.bin
+2026-08-16T20:16:27.6070350Z   targets: aarch64-apple-darwin,x86_64-apple-darwin
+2026-08-16T20:16:27.6070600Z   components: 
+2026-08-16T20:16:27.6070750Z ##[endgroup]
+2026-08-16T20:16:27.6435610Z ##[end-action id=__dtolnay_rust-toolchain.flags;outcome=success;conclusion=success;duration_ms=44]
+2026-08-16T20:16:27.6438270Z ##[start-action display=Set $CARGO_HOME;id=__dtolnay_rust-toolchain.__run]
+2026-08-16T20:16:27.6457700Z ##[group]Run echo CARGO_HOME=${CARGO_HOME:-"$HOME/.cargo"} >> $GITHUB_ENV
+2026-08-16T20:16:27.6458120Z [36;1mecho CARGO_HOME=${CARGO_HOME:-"$HOME/.cargo"} >> $GITHUB_ENV[0m
+2026-08-16T20:16:27.6515410Z shell: /bin/bash --noprofile --norc -e -o pipefail {0}
+2026-08-16T20:16:27.6515720Z env:
+2026-08-16T20:16:27.6515930Z   PNPM_HOME: /Users/runner/setup-pnpm/node_modules/.bin
+2026-08-16T20:16:27.6516170Z ##[endgroup]
+2026-08-16T20:16:27.6869930Z ##[end-action id=__dtolnay_rust-toolchain.__run;outcome=success;conclusion=success;duration_ms=43]
+2026-08-16T20:16:27.6872950Z ##[start-action display=Install rustup if needed;id=__dtolnay_rust-toolchain.__run_2]
+2026-08-16T20:16:27.6898240Z ##[group]Run if ! command -v rustup &>/dev/null; then
+2026-08-16T20:16:27.6898550Z [36;1mif ! command -v rustup &>/dev/null; then[0m
+2026-08-16T20:16:27.6899220Z [36;1m  curl --proto '=https' --tlsv1.2 --retry 10 --retry-connrefused --location --silent --show-error --fail https://sh.rustup.rs | sh -s -- --default-toolchain none -y[0m
+2026-08-16T20:16:27.6899800Z [36;1m  echo "$CARGO_HOME/bin" >> $GITHUB_PATH[0m
+2026-08-16T20:16:27.6900100Z [36;1mfi[0m
+2026-08-16T20:16:27.6958910Z shell: /bin/bash --noprofile --norc -e -o pipefail {0}
+2026-08-16T20:16:27.6959200Z env:
+2026-08-16T20:16:27.6959420Z   PNPM_HOME: /Users/runner/setup-pnpm/node_modules/.bin
+2026-08-16T20:16:27.6959730Z   CARGO_HOME: /Users/runner/.cargo
+2026-08-16T20:16:27.6959940Z ##[endgroup]
+2026-08-16T20:16:27.7319170Z ##[end-action id=__dtolnay_rust-toolchain.__run_2;outcome=success;conclusion=success;duration_ms=44]
+2026-08-16T20:16:27.7321990Z ##[start-action display=Install rustup if needed on windows;id=__dtolnay_rust-toolchain.__run_3]
+2026-08-16T20:16:27.7328950Z ##[end-action id=__dtolnay_rust-toolchain.__run_3;outcome=skipped;conclusion=skipped;duration_ms=0]
+2026-08-16T20:16:27.7338520Z ##[start-action display=rustup toolchain install stable;id=__dtolnay_rust-toolchain.__run_4]
+2026-08-16T20:16:27.7355940Z ##[group]Run rustup toolchain install stable --target aarch64-apple-darwin --target x86_64-apple-darwin --profile minimal --no-self-update
+2026-08-16T20:16:27.7356780Z [36;1mrustup toolchain install stable --target aarch64-apple-darwin --target x86_64-apple-darwin --profile minimal --no-self-update[0m
+2026-08-16T20:16:27.7415000Z shell: /bin/bash --noprofile --norc -e -o pipefail {0}
+2026-08-16T20:16:27.7415290Z env:
+2026-08-16T20:16:27.7415510Z   PNPM_HOME: /Users/runner/setup-pnpm/node_modules/.bin
+2026-08-16T20:16:27.7415780Z   CARGO_HOME: /Users/runner/.cargo
+2026-08-16T20:16:27.7415990Z   RUSTUP_PERMIT_COPY_RENAME: 1
+2026-08-16T20:16:27.7416180Z ##[endgroup]
+2026-08-16T20:16:28.0325200Z info: syncing channel updates for stable-aarch64-apple-darwin
+2026-08-16T20:16:28.1501230Z info: latest update on 2026-07-16 for version 1.97.1 (8bab26f4f 2026-07-14)
+2026-08-16T20:16:28.1608680Z info: removing previous version of component clippy
+2026-08-16T20:16:28.1637690Z info: removing previous version of component rustfmt
+2026-08-16T20:16:28.1655970Z info: removing previous version of component cargo
+2026-08-16T20:16:28.1723290Z info: removing previous version of component rust-std
+2026-08-16T20:16:28.1811500Z info: removing previous version of component rustc
+2026-08-16T20:16:28.1896740Z info: downloading 6 components
+2026-08-16T20:16:37.4307750Z 
+2026-08-16T20:16:37.4537150Z info: self-update is disabled for this build of rustup
+2026-08-16T20:16:37.4537860Z   stable-aarch64-apple-darwin updated - rustc 1.97.1 (8bab26f4f 2026-07-14) (from rustc 1.96.0 (ac68faa20 2026-05-25))
+2026-08-16T20:16:37.4538240Z 
+2026-08-16T20:16:37.4538650Z info: any updates to rustup will need to be fetched with your system package manager
+2026-08-16T20:16:37.4611430Z ##[end-action id=__dtolnay_rust-toolchain.__run_4;outcome=success;conclusion=success;duration_ms=9727]
+2026-08-16T20:16:37.4616250Z ##[start-action display=rustup default stable;id=__dtolnay_rust-toolchain.__run_5]
+2026-08-16T20:16:37.4633780Z ##[group]Run rustup default stable
+2026-08-16T20:16:37.4634110Z [36;1mrustup default stable[0m
+2026-08-16T20:16:37.4797980Z shell: /bin/bash --noprofile --norc -e -o pipefail {0}
+2026-08-16T20:16:37.4798240Z env:
+2026-08-16T20:16:37.4799890Z   PNPM_HOME: /Users/runner/setup-pnpm/node_modules/.bin
+2026-08-16T20:16:37.4800290Z   CARGO_HOME: /Users/runner/.cargo
+2026-08-16T20:16:37.4800510Z ##[endgroup]
+2026-08-16T20:16:37.5198170Z info: using existing install for stable-aarch64-apple-darwin
+2026-08-16T20:16:37.5224100Z info: default toolchain set to stable-aarch64-apple-darwin
+2026-08-16T20:16:37.5224430Z 
+2026-08-16T20:16:37.5303410Z   stable-aarch64-apple-darwin unchanged - rustc 1.97.1 (8bab26f4f 2026-07-14)
+2026-08-16T20:16:37.5303790Z 
+2026-08-16T20:16:37.5319710Z ##[end-action id=__dtolnay_rust-toolchain.__run_5;outcome=success;conclusion=success;duration_ms=70]
+2026-08-16T20:16:37.5322680Z ##[start-action display=Create cachekey;id=__dtolnay_rust-toolchain.rustc-version]
+2026-08-16T20:16:37.5352610Z ##[group]Run DATE=$(rustc +stable --version --verbose | sed -ne 's/^commit-date: \(20[0-9][0-9]\)-\([01][0-9]\)-\([0-3][0-9]\)$/\1\2\3/p')
+2026-08-16T20:16:37.5353420Z [36;1mDATE=$(rustc +stable --version --verbose | sed -ne 's/^commit-date: \(20[0-9][0-9]\)-\([01][0-9]\)-\([0-3][0-9]\)$/\1\2\3/p')[0m
+2026-08-16T20:16:37.5353920Z [36;1mHASH=$(rustc +stable --version --verbose | sed -ne 's/^commit-hash: //p')[0m
+2026-08-16T20:16:37.5354330Z [36;1mecho "cachekey=$(echo $DATE$HASH | head -c12)" >> $GITHUB_OUTPUT[0m
+2026-08-16T20:16:37.5403730Z shell: /bin/bash --noprofile --norc -e -o pipefail {0}
+2026-08-16T20:16:37.5404000Z env:
+2026-08-16T20:16:37.5404210Z   PNPM_HOME: /Users/runner/setup-pnpm/node_modules/.bin
+2026-08-16T20:16:37.5404460Z   CARGO_HOME: /Users/runner/.cargo
+2026-08-16T20:16:37.5404660Z ##[endgroup]
+2026-08-16T20:16:37.6100700Z ##[end-action id=__dtolnay_rust-toolchain.rustc-version;outcome=success;conclusion=success;duration_ms=77]
+2026-08-16T20:16:37.6105220Z ##[start-action display=Disable incremental compilation;id=__dtolnay_rust-toolchain.__run_6]
+2026-08-16T20:16:37.6122170Z ##[group]Run if [ -z "${CARGO_INCREMENTAL+set}" ]; then
+2026-08-16T20:16:37.6122530Z [36;1mif [ -z "${CARGO_INCREMENTAL+set}" ]; then[0m
+2026-08-16T20:16:37.6122910Z [36;1m  echo CARGO_INCREMENTAL=0 >> $GITHUB_ENV[0m
+2026-08-16T20:16:37.6123180Z [36;1mfi[0m
+2026-08-16T20:16:37.6180800Z shell: /bin/bash --noprofile --norc -e -o pipefail {0}
+2026-08-16T20:16:37.6181070Z env:
+2026-08-16T20:16:37.6181270Z   PNPM_HOME: /Users/runner/setup-pnpm/node_modules/.bin
+2026-08-16T20:16:37.6181530Z   CARGO_HOME: /Users/runner/.cargo
+2026-08-16T20:16:37.6181780Z ##[endgroup]
+2026-08-16T20:16:37.6466800Z ##[end-action id=__dtolnay_rust-toolchain.__run_6;outcome=success;conclusion=success;duration_ms=36]
+2026-08-16T20:16:37.6469170Z ##[start-action display=Enable colors in Cargo output;id=__dtolnay_rust-toolchain.__run_7]
+2026-08-16T20:16:37.6485080Z ##[group]Run if [ -z "${CARGO_TERM_COLOR+set}" ]; then
+2026-08-16T20:16:37.6485410Z [36;1mif [ -z "${CARGO_TERM_COLOR+set}" ]; then[0m
+2026-08-16T20:16:37.6485760Z [36;1m  echo CARGO_TERM_COLOR=always >> $GITHUB_ENV[0m
+2026-08-16T20:16:37.6486030Z [36;1mfi[0m
+2026-08-16T20:16:37.6547390Z shell: /bin/bash --noprofile --norc -e -o pipefail {0}
+2026-08-16T20:16:37.6547650Z env:
+2026-08-16T20:16:37.6547830Z   PNPM_HOME: /Users/runner/setup-pnpm/node_modules/.bin
+2026-08-16T20:16:37.6548090Z   CARGO_HOME: /Users/runner/.cargo
+2026-08-16T20:16:37.6548290Z   CARGO_INCREMENTAL: 0
+2026-08-16T20:16:37.6548450Z ##[endgroup]
+2026-08-16T20:16:37.6833490Z ##[end-action id=__dtolnay_rust-toolchain.__run_7;outcome=success;conclusion=success;duration_ms=36]
+2026-08-16T20:16:37.6836150Z ##[start-action display=Enable Cargo sparse registry;id=__dtolnay_rust-toolchain.__run_8]
+2026-08-16T20:16:37.6868010Z ##[group]Run # implemented in 1.66, stabilized in 1.68, made default in 1.70
+2026-08-16T20:16:37.6868530Z [36;1m# implemented in 1.66, stabilized in 1.68, made default in 1.70[0m
+2026-08-16T20:16:37.6869100Z [36;1mif [ -z "${CARGO_REGISTRIES_CRATES_IO_PROTOCOL+set}" -o -f "/Users/runner/work/_temp"/.implicit_cargo_registries_crates_io_protocol ]; then[0m
+2026-08-16T20:16:37.6869990Z [36;1m  if rustc +stable --version --verbose | grep -q '^release: 1\.6[89]\.'; then[0m
+2026-08-16T20:16:37.6870590Z [36;1m    touch "/Users/runner/work/_temp"/.implicit_cargo_registries_crates_io_protocol || true[0m
+2026-08-16T20:16:37.6871040Z [36;1m    echo CARGO_REGISTRIES_CRATES_IO_PROTOCOL=sparse >> $GITHUB_ENV[0m
+2026-08-16T20:16:37.6871450Z [36;1m  elif rustc +stable --version --verbose | grep -q '^release: 1\.6[67]\.'; then[0m
+2026-08-16T20:16:37.6871900Z [36;1m    touch "/Users/runner/work/_temp"/.implicit_cargo_registries_crates_io_protocol || true[0m
+2026-08-16T20:16:37.6872330Z [36;1m    echo CARGO_REGISTRIES_CRATES_IO_PROTOCOL=git >> $GITHUB_ENV[0m
+2026-08-16T20:16:37.6872620Z [36;1m  fi[0m
+2026-08-16T20:16:37.6872750Z [36;1mfi[0m
+2026-08-16T20:16:37.6925430Z shell: /bin/bash --noprofile --norc -e -o pipefail {0}
+2026-08-16T20:16:37.6925690Z env:
+2026-08-16T20:16:37.6925880Z   PNPM_HOME: /Users/runner/setup-pnpm/node_modules/.bin
+2026-08-16T20:16:37.6926140Z   CARGO_HOME: /Users/runner/.cargo
+2026-08-16T20:16:37.6926330Z   CARGO_INCREMENTAL: 0
+2026-08-16T20:16:37.6926510Z   CARGO_TERM_COLOR: always
+2026-08-16T20:16:37.6926680Z ##[endgroup]
+2026-08-16T20:16:37.7539730Z ##[end-action id=__dtolnay_rust-toolchain.__run_8;outcome=success;conclusion=success;duration_ms=70]
+2026-08-16T20:16:37.7542320Z ##[start-action display=Work around spurious network errors in curl 8.0;id=__dtolnay_rust-toolchain.__run_9]
+2026-08-16T20:16:37.7563900Z ##[group]Run # https://rust-lang.zulipchat.com/#narrow/stream/246057-t-cargo/topic/timeout.20investigation
+2026-08-16T20:16:37.7564510Z [36;1m# https://rust-lang.zulipchat.com/#narrow/stream/246057-t-cargo/topic/timeout.20investigation[0m
+2026-08-16T20:16:37.7565250Z [36;1mif rustc +stable --version --verbose | grep -q '^release: 1\.7[01]\.'; then[0m
+2026-08-16T20:16:37.7565630Z [36;1m  echo CARGO_HTTP_MULTIPLEXING=false >> $GITHUB_ENV[0m
+2026-08-16T20:16:37.7565870Z [36;1mfi[0m
+2026-08-16T20:16:37.7614980Z shell: /bin/bash --noprofile --norc -e -o pipefail {0}
+2026-08-16T20:16:37.7615230Z env:
+2026-08-16T20:16:37.7615480Z   PNPM_HOME: /Users/runner/setup-pnpm/node_modules/.bin
+2026-08-16T20:16:37.7615750Z   CARGO_HOME: /Users/runner/.cargo
+2026-08-16T20:16:37.7615950Z   CARGO_INCREMENTAL: 0
+2026-08-16T20:16:37.7616120Z   CARGO_TERM_COLOR: always
+2026-08-16T20:16:37.7616290Z ##[endgroup]
+2026-08-16T20:16:37.8089540Z ##[end-action id=__dtolnay_rust-toolchain.__run_9;outcome=success;conclusion=success;duration_ms=54]
+2026-08-16T20:16:37.8093490Z ##[start-action display=rustc +stable --version --verbose;id=__dtolnay_rust-toolchain.__run_10]
+2026-08-16T20:16:37.8109690Z ##[group]Run rustc +stable --version --verbose
+2026-08-16T20:16:37.8110020Z [36;1mrustc +stable --version --verbose[0m
+2026-08-16T20:16:37.8158660Z shell: /bin/bash --noprofile --norc -e -o pipefail {0}
+2026-08-16T20:16:37.8158910Z env:
+2026-08-16T20:16:37.8159110Z   PNPM_HOME: /Users/runner/setup-pnpm/node_modules/.bin
+2026-08-16T20:16:37.8159370Z   CARGO_HOME: /Users/runner/.cargo
+2026-08-16T20:16:37.8159580Z   CARGO_INCREMENTAL: 0
+2026-08-16T20:16:37.8159840Z   CARGO_TERM_COLOR: always
+2026-08-16T20:16:37.8160020Z ##[endgroup]
+2026-08-16T20:16:37.8602770Z rustc 1.97.1 (8bab26f4f 2026-07-14)
+2026-08-16T20:16:37.8603280Z binary: rustc
+2026-08-16T20:16:37.8603650Z commit-hash: 8bab26f4f68e0e26f0bb7960be334d5b520ea452
+2026-08-16T20:16:37.8603990Z commit-date: 2026-07-14
+2026-08-16T20:16:37.8604260Z host: aarch64-apple-darwin
+2026-08-16T20:16:37.8604590Z release: 1.97.1
+2026-08-16T20:16:37.8607320Z LLVM version: 22.1.6
+2026-08-16T20:16:37.8620830Z ##[end-action id=__dtolnay_rust-toolchain.__run_10;outcome=success;conclusion=success;duration_ms=52]
+2026-08-16T20:16:37.8681640Z ##[group]Run rustup target add aarch64-apple-darwin
+2026-08-16T20:16:37.8682180Z [36;1mrustup target add aarch64-apple-darwin[0m
+2026-08-16T20:16:37.8682510Z [36;1mrustup target add x86_64-apple-darwin[0m
+2026-08-16T20:16:37.8739860Z shell: /bin/bash -e {0}
+2026-08-16T20:16:37.8740060Z env:
+2026-08-16T20:16:37.8740300Z   PNPM_HOME: /Users/runner/setup-pnpm/node_modules/.bin
+2026-08-16T20:16:37.8740560Z   CARGO_HOME: /Users/runner/.cargo
+2026-08-16T20:16:37.8740770Z   CARGO_INCREMENTAL: 0
+2026-08-16T20:16:37.8740940Z   CARGO_TERM_COLOR: always
+2026-08-16T20:16:37.8741140Z ##[endgroup]
+2026-08-16T20:16:37.9376530Z info: component rust-std is up to date
+2026-08-16T20:16:37.9757760Z info: component rust-std for target x86_64-apple-darwin is up to date
+2026-08-16T20:16:37.9838940Z ##[group]Run Swatinem/rust-cache@49a0bdc70d2e1b713ca9e2869b211fcce03d3c1c
+2026-08-16T20:16:37.9839330Z with:
+2026-08-16T20:16:37.9839520Z   workspaces: apps/desktop/src-tauri -> target
+
+2026-08-16T20:16:37.9839810Z   prefix-key: v0-rust
+2026-08-16T20:16:37.9839980Z   add-job-id-key: true
+2026-08-16T20:16:37.9840170Z   add-rust-environment-hash-key: true
+2026-08-16T20:16:37.9840410Z   cache-targets: true
+2026-08-16T20:16:37.9840730Z   cache-all-crates: false
+2026-08-16T20:16:37.9840970Z   cache-workspace-crates: false
+2026-08-16T20:16:37.9841150Z   save-if: true
+2026-08-16T20:16:37.9841350Z   cache-provider: github
+2026-08-16T20:16:37.9841510Z   cache-bin: true
+2026-08-16T20:16:37.9841670Z   lookup-only: false
+2026-08-16T20:16:37.9841830Z   cmd-format: {0}
+2026-08-16T20:16:37.9841980Z env:
+2026-08-16T20:16:37.9842160Z   PNPM_HOME: /Users/runner/setup-pnpm/node_modules/.bin
+2026-08-16T20:16:37.9842480Z   CARGO_HOME: /Users/runner/.cargo
+2026-08-16T20:16:37.9842750Z   CARGO_INCREMENTAL: 0
+2026-08-16T20:16:37.9842930Z   CARGO_TERM_COLOR: always
+2026-08-16T20:16:37.9843120Z ##[endgroup]
+2026-08-16T20:16:38.2579220Z ##[group]Cache Configuration
+2026-08-16T20:16:38.2592850Z Cache Provider:
+2026-08-16T20:16:38.2603320Z     github
+2026-08-16T20:16:38.2610240Z Workspaces:
+2026-08-16T20:16:38.2624740Z     /Users/runner/work/mausVoice/mausVoice/apps/desktop/src-tauri
+2026-08-16T20:16:38.2640470Z Cache Paths:
+2026-08-16T20:16:38.2640730Z     /Users/runner/.cargo/bin
+2026-08-16T20:16:38.2640990Z     /Users/runner/.cargo/.crates.toml
+2026-08-16T20:16:38.2641260Z     /Users/runner/.cargo/.crates2.json
+2026-08-16T20:16:38.2641540Z     /Users/runner/.cargo/registry
+2026-08-16T20:16:38.2641770Z     /Users/runner/.cargo/git
+2026-08-16T20:16:38.2642130Z     /Users/runner/work/mausVoice/mausVoice/apps/desktop/src-tauri/target
+2026-08-16T20:16:38.2642470Z Restore Key:
+2026-08-16T20:16:38.2642680Z     v0-rust-build-Darwin-arm64-f9b08cb2
+2026-08-16T20:16:38.2642940Z Cache Key:
+2026-08-16T20:16:38.2643200Z     v0-rust-build-Darwin-arm64-f9b08cb2-91a185e5
+2026-08-16T20:16:38.2643440Z .. Prefix:
+2026-08-16T20:16:38.2643640Z   - v0-rust-build-Darwin-arm64
+2026-08-16T20:16:38.2643870Z .. Environment considered:
+2026-08-16T20:16:38.2644060Z   - Rust Versions:
+2026-08-16T20:16:38.2644400Z     - 1.97.1 aarch64-apple-darwin 8bab26f4f68e0e26f0bb7960be334d5b520ea452
+2026-08-16T20:16:38.2644700Z   - CARGO_HOME
+2026-08-16T20:16:38.2644860Z   - CARGO_INCREMENTAL
+2026-08-16T20:16:38.2645060Z   - CARGO_TERM_COLOR
+2026-08-16T20:16:38.2645260Z .. Lockfiles considered:
+2026-08-16T20:16:38.2645640Z   - /Users/runner/work/mausVoice/mausVoice/apps/desktop/src-tauri/Cargo.lock
+2026-08-16T20:16:38.2646150Z   - /Users/runner/work/mausVoice/mausVoice/apps/desktop/src-tauri/Cargo.toml
+2026-08-16T20:16:38.2646740Z ##[endgroup]
+2026-08-16T20:16:38.2646860Z 
+2026-08-16T20:16:38.2646960Z ... Restoring cache ...
+2026-08-16T20:16:38.5433070Z No cache found.
+2026-08-16T20:16:38.5476820Z ##[group]Run echo "CMAKE_TOOLCHAIN_FILE=${GITHUB_WORKSPACE}/packages/rust_transcription/cmake/macos-ci-toolchain.cmake" >> "$GITHUB_ENV"
+2026-08-16T20:16:38.5477670Z [36;1mecho "CMAKE_TOOLCHAIN_FILE=${GITHUB_WORKSPACE}/packages/rust_transcription/cmake/macos-ci-toolchain.cmake" >> "$GITHUB_ENV"[0m
+2026-08-16T20:16:38.5529770Z shell: /bin/bash -e {0}
+2026-08-16T20:16:38.5530030Z env:
+2026-08-16T20:16:38.5530270Z   PNPM_HOME: /Users/runner/setup-pnpm/node_modules/.bin
+2026-08-16T20:16:38.5530590Z   CARGO_HOME: /Users/runner/.cargo
+2026-08-16T20:16:38.5530780Z   CARGO_INCREMENTAL: 0
+2026-08-16T20:16:38.5530950Z   CARGO_TERM_COLOR: always
+2026-08-16T20:16:38.5531120Z   CACHE_ON_FAILURE: false
+2026-08-16T20:16:38.5531290Z ##[endgroup]
+2026-08-16T20:16:38.5874870Z ##[group]Run pnpm install --frozen-lockfile
+2026-08-16T20:16:38.5875210Z [36;1mpnpm install --frozen-lockfile[0m
+2026-08-16T20:16:38.5932450Z shell: /bin/bash -e {0}
+2026-08-16T20:16:38.5932660Z env:
+2026-08-16T20:16:38.5932870Z   PNPM_HOME: /Users/runner/setup-pnpm/node_modules/.bin
+2026-08-16T20:16:38.5933150Z   CARGO_HOME: /Users/runner/.cargo
+2026-08-16T20:16:38.5933370Z   CARGO_INCREMENTAL: 0
+2026-08-16T20:16:38.5933540Z   CARGO_TERM_COLOR: always
+2026-08-16T20:16:38.5933710Z   CACHE_ON_FAILURE: false
+2026-08-16T20:16:38.5934140Z   CMAKE_TOOLCHAIN_FILE: /Users/runner/work/mausVoice/mausVoice/packages/rust_transcription/cmake/macos-ci-toolchain.cmake
+2026-08-16T20:16:38.5934630Z ##[endgroup]
+2026-08-16T20:16:38.8710360Z Scope: all 13 workspace projects
+2026-08-16T20:16:38.9235390Z Lockfile is up to date, resolution step is skipped
+2026-08-16T20:16:39.0131020Z Progress: resolved 1, reused 0, downloaded 0, added 0
+2026-08-16T20:16:39.1265030Z Packages: +1432
+2026-08-16T20:16:39.1265870Z ++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
+2026-08-16T20:16:40.0132120Z Progress: resolved 1432, reused 1351, downloaded 0, added 0
+2026-08-16T20:16:41.0159040Z Progress: resolved 1432, reused 1427, downloaded 0, added 110
+2026-08-16T20:16:42.0181490Z Progress: resolved 1432, reused 1427, downloaded 0, added 178
+2026-08-16T20:16:43.0200540Z Progress: resolved 1432, reused 1427, downloaded 0, added 212
+2026-08-16T20:16:44.0323910Z Progress: resolved 1432, reused 1427, downloaded 0, added 282
+2026-08-16T20:16:45.0358110Z Progress: resolved 1432, reused 1427, downloaded 0, added 350
+2026-08-16T20:16:46.0350100Z Progress: resolved 1432, reused 1427, downloaded 0, added 468
+2026-08-16T20:16:47.0393560Z Progress: resolved 1432, reused 1427, downloaded 0, added 559
+2026-08-16T20:16:48.0405180Z Progress: resolved 1432, reused 1427, downloaded 0, added 641
+2026-08-16T20:16:49.0423330Z Progress: resolved 1432, reused 1427, downloaded 0, added 879
+2026-08-16T20:16:50.0520180Z Progress: resolved 1432, reused 1427, downloaded 0, added 993
+2026-08-16T20:16:51.0447080Z Progress: resolved 1432, reused 1427, downloaded 0, added 1110
+2026-08-16T20:16:52.0456540Z Progress: resolved 1432, reused 1427, downloaded 0, added 1293
+2026-08-16T20:16:53.0465530Z Progress: resolved 1432, reused 1427, downloaded 0, added 1431
+2026-08-16T20:16:53.1575390Z Progress: resolved 1432, reused 1427, downloaded 0, added 1432, done
+2026-08-16T20:16:54.0570230Z 
+2026-08-16T20:16:54.0570790Z devDependencies:
+2026-08-16T20:16:54.0571160Z + prettier 3.9.6
+2026-08-16T20:16:54.0571440Z + turbo 2.10.9
+2026-08-16T20:16:54.0571650Z 
+2026-08-16T20:16:54.1089920Z ╭ Warning ─────────────────────────────────────────────────────────────────────╮
+2026-08-16T20:16:54.1090620Z │                                                                              │
+2026-08-16T20:16:54.1091280Z │   Ignored build scripts: @google/genai@1.52.0, edgedriver@6.3.0,             │
+2026-08-16T20:16:54.1092110Z │   geckodriver@6.1.1.                                                         │
+2026-08-16T20:16:54.1092770Z │   Run "pnpm approve-builds" to pick which dependencies should be allowed     │
+2026-08-16T20:16:54.1093400Z │   to run scripts.                                                            │
+2026-08-16T20:16:54.1093840Z │                                                                              │
+2026-08-16T20:16:54.1094290Z ╰──────────────────────────────────────────────────────────────────────────────╯
+2026-08-16T20:16:54.1172000Z Done in 15.4s using pnpm v10.34.5
+2026-08-16T20:16:54.1382130Z ##[group]Run pnpm exec turbo run build --filter=desktop... --verbosity=2 --continue 
+2026-08-16T20:16:54.1382620Z [36;1mpnpm exec turbo run build --filter=desktop... --verbosity=2 --continue [0m
+2026-08-16T20:16:54.2800110Z shell: /bin/bash -e {0}
+2026-08-16T20:16:54.2800330Z env:
+2026-08-16T20:16:54.2800550Z   PNPM_HOME: /Users/runner/setup-pnpm/node_modules/.bin
+2026-08-16T20:16:54.2800820Z   CARGO_HOME: /Users/runner/.cargo
+2026-08-16T20:16:54.2801020Z   CARGO_INCREMENTAL: 0
+2026-08-16T20:16:54.2801190Z   CARGO_TERM_COLOR: always
+2026-08-16T20:16:54.2801360Z   CACHE_ON_FAILURE: false
+2026-08-16T20:16:54.2801790Z   CMAKE_TOOLCHAIN_FILE: /Users/runner/work/mausVoice/mausVoice/packages/rust_transcription/cmake/macos-ci-toolchain.cmake
+2026-08-16T20:16:54.2802220Z   TAURI_PLATFORM: macos
+2026-08-16T20:16:54.2802440Z   MAUSVOICE_DESKTOP_PLATFORM: darwin
+2026-08-16T20:16:54.2802650Z   NODE_OPTIONS: 
+2026-08-16T20:16:54.2802790Z ##[endgroup]
+2026-08-16T20:16:54.5785760Z 2026-08-16T20:16:54.575+0000 [DEBUG] turborepo_shim::run: Global turbo version: 2.10.9
+2026-08-16T20:16:54.5939990Z 2026-08-16T20:16:54.593+0000 [DEBUG] turborepo_shim::run: Repository Root: /Users/runner/work/mausVoice/mausVoice
+2026-08-16T20:16:54.5941100Z 2026-08-16T20:16:54.593+0000 [DEBUG] turborepo_shim::local_turbo_state: No local turbo binary found at: /Users/runner/work/mausVoice/mausVoice/node_modules/@turbo/darwin-arm64/bin/turbo
+2026-08-16T20:16:54.5942300Z 2026-08-16T20:16:54.593+0000 [DEBUG] turborepo_shim::local_turbo_state: No local turbo binary found at: /Users/runner/work/mausVoice/mausVoice/node_modules/turbo-darwin-arm64/bin/turbo
+2026-08-16T20:16:54.5943550Z 2026-08-16T20:16:54.594+0000 [DEBUG] turborepo_shim::local_turbo_state: No local turbo binary found at: /Users/runner/work/mausVoice/mausVoice/node_modules/turbo/node_modules/@turbo/darwin-arm64/bin/turbo
+2026-08-16T20:16:54.5944870Z 2026-08-16T20:16:54.594+0000 [DEBUG] turborepo_shim::local_turbo_state: No local turbo binary found at: /Users/runner/work/mausVoice/mausVoice/node_modules/turbo/node_modules/turbo-darwin-arm64/bin/turbo
+2026-08-16T20:16:54.5946710Z 2026-08-16T20:16:54.594+0000 [DEBUG] turborepo_shim::local_turbo_state: Local turbo path: /Users/runner/work/mausVoice/mausVoice/node_modules/.pnpm/@turbo+darwin-arm64@2.10.9/node_modules/@turbo/darwin-arm64/bin/turbo
+2026-08-16T20:16:54.5947720Z 2026-08-16T20:16:54.594+0000 [DEBUG] turborepo_shim::local_turbo_state: Local turbo version: 2.10.9
+2026-08-16T20:16:54.6015270Z 2026-08-16T20:16:54.601+0000 [DEBUG] turborepo_shim::run: Currently running turbo is local turbo.
+2026-08-16T20:16:54.6015700Z initializing rayon global pool
+2026-08-16T20:16:54.6087290Z 
+2026-08-16T20:16:54.6087710Z Attention:
+2026-08-16T20:16:54.6088270Z Turborepo now collects completely anonymous telemetry regarding usage.
+2026-08-16T20:16:54.6088830Z This information is used to shape the Turborepo roadmap and prioritize features.
+2026-08-16T20:16:54.6089620Z You can learn more, including how to opt-out if you'd not like to participate in this anonymous program, by visiting the following URL:
+2026-08-16T20:16:54.6090190Z https://turborepo.dev/docs/telemetry
+2026-08-16T20:16:54.6090390Z 
+2026-08-16T20:16:54.6103590Z 2026-08-16T20:16:54.610+0000 [DEBUG] turborepo_config: Worktree detection: current=/Users/runner/work/mausVoice/mausVoice, main=/Users/runner/work/mausVoice/mausVoice, is_linked=false
+2026-08-16T20:16:54.6104880Z 2026-08-16T20:16:54.610+0000 [DEBUG] turborepo_config: Using local cache (main worktree): .turbo/cache
+2026-08-16T20:16:54.6105790Z 2026-08-16T20:16:54.610+0000 [DEBUG] turborepo_lib::opts: Opts::new cache_dir_result: path=.turbo/cache, is_shared_worktree=false
+2026-08-16T20:16:54.6106680Z 2026-08-16T20:16:54.610+0000 [DEBUG] turborepo_lib::opts: CacheOpts created with cache_dir=.turbo/cache
+2026-08-16T20:16:54.7265180Z 
+2026-08-16T20:16:54.7275420Z 2026-08-16T20:16:54.726+0000 [DEBUG] turborepo_task_hash: file hash deduplication
+2026-08-16T20:16:54.7277930Z    • Packages in scope: @maus-inc/desktop-native-apis, @maus-inc/desktop-utils, @maus-inc/types, @maus-inc/typescript-config, @maus-inc/utilities, @maus-inc/voice-ai, @repo/agent, desktop
+2026-08-16T20:16:54.7300750Z 2026-08-16T20:16:54.726+0000 [DEBUG] turborepo_task_hash::global_hash: global hash env vars ["MAUSVOICE_DESKTOP_PLATFORM", "TAURI_PLATFORM"]
+2026-08-16T20:16:54.7301450Z    • Running build in 8 packages
+2026-08-16T20:16:54.7302350Z    • Remote caching disabled
+2026-08-16T20:16:54.7304140Z 
+2026-08-16T20:16:54.7309700Z 2026-08-16T20:16:54.730+0000 [DEBUG] turborepo_lib::run: running visitor
+2026-08-16T20:16:54.7317040Z 2026-08-16T20:16:54.731+0000 [DEBUG] turborepo_task_hash: auto detected framework for @maus-inc/utilities
+2026-08-16T20:16:54.7317940Z 2026-08-16T20:16:54.731+0000 [DEBUG] turborepo_task_hash: framework: vite, env_prefix: ["VITE_*"]
+2026-08-16T20:16:54.7322360Z 2026-08-16T20:16:54.731+0000 [DEBUG] turborepo_task_hash: TURBO_CI_VENDOR_ENV_KEY not present; no env vars excluded
+2026-08-16T20:16:54.7323720Z 2026-08-16T20:16:54.731+0000 [DEBUG] turborepo_task_hash: auto detected framework for desktop
+2026-08-16T20:16:54.7329510Z 2026-08-16T20:16:54.731+0000 [DEBUG] turborepo_task_hash: framework: vite, env_prefix: ["VITE_*"]
+2026-08-16T20:16:54.7330300Z 2026-08-16T20:16:54.731+0000 [DEBUG] turborepo_task_hash: TURBO_CI_VENDOR_ENV_KEY not present; no env vars excluded
+2026-08-16T20:16:54.7331270Z 2026-08-16T20:16:54.732+0000 [DEBUG] turborepo_lib::task_graph::visitor: task @maus-inc/typescript-config#build hash is 0e6618ce4ece8978
+2026-08-16T20:16:54.7332280Z 2026-08-16T20:16:54.733+0000 [DEBUG] turborepo_lib::task_graph::visitor: task @maus-inc/types#build hash is 2659a388f6565e32
+2026-08-16T20:16:54.7334040Z 2026-08-16T20:16:54.733+0000 [DEBUG] turborepo_lib::task_graph::visitor: task @maus-inc/desktop-native-apis#build hash is 14f023cdb652db17
+2026-08-16T20:16:54.7334990Z 2026-08-16T20:16:54.733+0000 [DEBUG] turborepo_lib::task_graph::visitor: task @maus-inc/desktop-utils#build hash is c4ba2f7cce03c77d
+2026-08-16T20:16:54.7348160Z 2026-08-16T20:16:54.734+0000 [DEBUG] turborepo_process::child: waiting for task: Some(10626)
+2026-08-16T20:16:54.7352860Z 2026-08-16T20:16:54.734+0000 [DEBUG] turborepo_process::child: waiting for task: Some(10627)
+2026-08-16T20:16:54.7359050Z 2026-08-16T20:16:54.735+0000 [DEBUG] turborepo_process::child: waiting for task: Some(10628)
+2026-08-16T20:16:56.1067140Z 2026-08-16T20:16:56.102+0000 [DEBUG] turborepo_process::child::state: child process exited normally
+2026-08-16T20:16:56.1067850Z ##[group]@maus-inc/desktop-native-apis:build
+2026-08-16T20:16:56.1169850Z 2026-08-16T20:16:56.102+0000 [DEBUG] turborepo_process::child: child process stopped
+2026-08-16T20:16:56.1170370Z cache miss, executing 14f023cdb652db17
+2026-08-16T20:16:56.1320860Z 2026-08-16T20:16:56.102+0000 [DEBUG] turborepo_run_cache: caching outputs: outputs: TaskOutputs { inclusions: ["packages/desktop-native-apis/.next/**", "packages/desktop-native-apis/.turbo/turbo-build.log", "packages/desktop-native-apis/dist/**", "packages/desktop-native-apis/lib/**"], exclusions: ["packages/desktop-native-apis/.next/cache/**"] }
+2026-08-16T20:16:56.1321880Z 
+2026-08-16T20:16:56.1343330Z > @maus-inc/desktop-native-apis@0.3.25 build /Users/runner/work/mausVoice/mausVoice/packages/desktop-native-apis
+2026-08-16T20:16:56.1343830Z > tsc
+2026-08-16T20:16:56.1343970Z 
+2026-08-16T20:16:56.1344400Z ##[endgroup]
+2026-08-16T20:16:56.2168020Z 2026-08-16T20:16:56.214+0000 [DEBUG] turborepo_process::child::state: child process exited normally
+2026-08-16T20:16:56.2168770Z ##[group]@maus-inc/desktop-utils:build
+2026-08-16T20:16:56.2270160Z 2026-08-16T20:16:56.214+0000 [DEBUG] turborepo_process::child: child process stopped
+2026-08-16T20:16:56.2270610Z cache miss, executing c4ba2f7cce03c77d
+2026-08-16T20:16:56.2373890Z 2026-08-16T20:16:56.214+0000 [DEBUG] turborepo_run_cache: caching outputs: outputs: TaskOutputs { inclusions: ["packages/desktop-utils/.next/**", "packages/desktop-utils/.turbo/turbo-build.log", "packages/desktop-utils/dist/**", "packages/desktop-utils/lib/**"], exclusions: ["packages/desktop-utils/.next/cache/**"] }
+2026-08-16T20:16:56.2374850Z 
+2026-08-16T20:16:56.2491410Z > @maus-inc/desktop-utils@0.3.25 build /Users/runner/work/mausVoice/mausVoice/packages/desktop-utils
+2026-08-16T20:16:56.2592550Z > tsc
+2026-08-16T20:16:56.2608220Z 
+2026-08-16T20:16:56.2608710Z ##[endgroup]
+2026-08-16T20:16:56.5051170Z 2026-08-16T20:16:56.504+0000 [DEBUG] turborepo_process::child::state: child process exited normally
+2026-08-16T20:16:56.5051850Z ##[group]@maus-inc/types:build
+2026-08-16T20:16:56.5153260Z 2026-08-16T20:16:56.504+0000 [DEBUG] turborepo_process::child: child process stopped
+2026-08-16T20:16:56.5153730Z cache miss, executing 2659a388f6565e32
+2026-08-16T20:16:56.5255760Z 2026-08-16T20:16:56.504+0000 [DEBUG] turborepo_run_cache: caching outputs: outputs: TaskOutputs { inclusions: ["packages/types/.next/**", "packages/types/.turbo/turbo-build.log", "packages/types/dist/**", "packages/types/lib/**"], exclusions: ["packages/types/.next/cache/**"] }
+2026-08-16T20:16:56.5256640Z 
+2026-08-16T20:16:56.5358040Z 2026-08-16T20:16:56.505+0000 [DEBUG] turborepo_lib::task_graph::visitor: task @maus-inc/utilities#build hash is faf635efbec7df2f
+2026-08-16T20:16:56.5358770Z > @maus-inc/types@0.3.25 build /Users/runner/work/mausVoice/mausVoice/packages/types
+2026-08-16T20:16:56.5460670Z 2026-08-16T20:16:56.507+0000 [DEBUG] turborepo_process::child: waiting for task: Some(10737)
+2026-08-16T20:16:56.5461080Z > tsc
+2026-08-16T20:16:56.5560490Z 
+2026-08-16T20:16:56.5661570Z ##[endgroup]
+2026-08-16T20:16:57.2018880Z 2026-08-16T20:16:57.201+0000 [DEBUG] turborepo_process::child::state: child process exited normally
+2026-08-16T20:16:57.2019690Z ##[group]@maus-inc/utilities:build
+2026-08-16T20:16:57.2020010Z cache miss, executing faf635efbec7df2f
+2026-08-16T20:16:57.2119890Z 2026-08-16T20:16:57.201+0000 [DEBUG] turborepo_process::child: child process stopped
+2026-08-16T20:16:57.2120360Z 
+2026-08-16T20:16:57.2162080Z 2026-08-16T20:16:57.201+0000 [DEBUG] turborepo_run_cache: caching outputs: outputs: TaskOutputs { inclusions: ["packages/utilities/.next/**", "packages/utilities/.turbo/turbo-build.log", "packages/utilities/dist/**", "packages/utilities/lib/**"], exclusions: ["packages/utilities/.next/cache/**"] }
+2026-08-16T20:16:57.2166630Z > @maus-inc/utilities@0.3.25 build /Users/runner/work/mausVoice/mausVoice/packages/utilities
+2026-08-16T20:16:57.2167640Z 2026-08-16T20:16:57.202+0000 [DEBUG] turborepo_lib::task_graph::visitor: task @maus-inc/voice-ai#build hash is 575501147bda5bc8
+2026-08-16T20:16:57.2168340Z 2026-08-16T20:16:57.203+0000 [DEBUG] turborepo_process::child: waiting for task: Some(10774)
+2026-08-16T20:16:57.2168680Z > tsc
+2026-08-16T20:16:57.2168760Z 
+2026-08-16T20:16:57.2169010Z ##[endgroup]
+2026-08-16T20:16:58.5618060Z 2026-08-16T20:16:58.561+0000 [DEBUG] turborepo_process::child::state: child process exited normally
+2026-08-16T20:16:58.5719070Z 2026-08-16T20:16:58.561+0000 [DEBUG] turborepo_process::child: child process stopped
+2026-08-16T20:16:58.5719770Z ##[group]@maus-inc/voice-ai:build
+2026-08-16T20:16:58.5720130Z cache miss, executing 575501147bda5bc8
+2026-08-16T20:16:58.5820920Z 2026-08-16T20:16:58.561+0000 [DEBUG] turborepo_run_cache: caching outputs: outputs: TaskOutputs { inclusions: ["packages/voice-ai/.next/**", "packages/voice-ai/.turbo/turbo-build.log", "packages/voice-ai/dist/**", "packages/voice-ai/lib/**"], exclusions: ["packages/voice-ai/.next/cache/**"] }
+2026-08-16T20:16:58.5821790Z 
+2026-08-16T20:16:58.5822140Z > @maus-inc/voice-ai@0.3.25 build /Users/runner/work/mausVoice/mausVoice/packages/voice-ai
+2026-08-16T20:16:58.5822460Z > tsc
+2026-08-16T20:16:58.5822550Z 
+2026-08-16T20:16:58.5822810Z ##[endgroup]
+2026-08-16T20:16:58.5876480Z 2026-08-16T20:16:58.562+0000 [DEBUG] turborepo_lib::task_graph::visitor: task @repo/agent#build hash is 3f10b91476b6aaa3
+2026-08-16T20:16:58.5877370Z 2026-08-16T20:16:58.564+0000 [DEBUG] turborepo_process::child: waiting for task: Some(10818)
+2026-08-16T20:16:59.2215840Z 2026-08-16T20:16:59.221+0000 [DEBUG] turborepo_process::child::state: child process exited normally
+2026-08-16T20:16:59.2216690Z ##[group]@repo/agent:build
+2026-08-16T20:16:59.2315710Z 2026-08-16T20:16:59.221+0000 [DEBUG] turborepo_process::child: child process stopped
+2026-08-16T20:16:59.2316220Z cache miss, executing 3f10b91476b6aaa3
+2026-08-16T20:16:59.2321060Z 2026-08-16T20:16:59.221+0000 [DEBUG] turborepo_run_cache: caching outputs: outputs: TaskOutputs { inclusions: ["packages/agent/.next/**", "packages/agent/.turbo/turbo-build.log", "packages/agent/dist/**", "packages/agent/lib/**"], exclusions: ["packages/agent/.next/cache/**"] }
+2026-08-16T20:16:59.2322310Z 2026-08-16T20:16:59.222+0000 [DEBUG] turborepo_lib::task_graph::visitor: task desktop#build hash is 9206f5dbe24effaa
+2026-08-16T20:16:59.2323000Z 2026-08-16T20:16:59.223+0000 [DEBUG] turborepo_process::child: waiting for task: Some(10857)
+2026-08-16T20:16:59.2323290Z 
+2026-08-16T20:16:59.2323650Z > @repo/agent@0.3.25 build /Users/runner/work/mausVoice/mausVoice/packages/agent
+2026-08-16T20:16:59.2324140Z > tsc
+2026-08-16T20:16:59.2324370Z 
+2026-08-16T20:16:59.2324780Z ##[endgroup]
+2026-08-16T20:17:05.8059250Z 2026-08-16T20:17:05.805+0000 [DEBUG] turborepo_process::child::state: child process exited normally
+2026-08-16T20:17:05.8059970Z 2026-08-16T20:17:05.805+0000 [DEBUG] turborepo_process::child: child process stopped
+2026-08-16T20:17:05.8060800Z 2026-08-16T20:17:05.805+0000 [DEBUG] turborepo_process::child::child_io: child process failed, skipping reading stdout/stderr
+2026-08-16T20:17:05.8061520Z [;31mdesktop:build[;0m
+2026-08-16T20:17:05.8061780Z cache miss, executing 9206f5dbe24effaa
+2026-08-16T20:17:05.8061930Z 
+2026-08-16T20:17:05.8062200Z > desktop@0.1.6 build /Users/runner/work/mausVoice/mausVoice/apps/desktop
+2026-08-16T20:17:05.8062610Z > tsc && node scripts/run-vite-with-flavor.mjs build
+2026-08-16T20:17:05.8062820Z 
+2026-08-16T20:17:05.8077830Z ##[error]src/components/root/AppSideEffects.tsx(4,40): error TS6133: 'UserPreferences' is declared but its value is never read.
+2026-08-16T20:17:05.8083430Z ##[error]src/components/root/DictationSideEffects.tsx(118,6): error TS6196: 'StoppedRecordingData' is declared but never used.
+2026-08-16T20:17:05.8085200Z ##[error]src/hooks/hotkey.hooks.ts(3,3): error TS2305: Module '"@maus-inc/desktop-utils"' has no exported member 'processFireCombo'.
+2026-08-16T20:17:05.8086520Z ##[error]src/hooks/hotkey.hooks.ts(4,8): error TS2305: Module '"@maus-inc/desktop-utils"' has no exported member 'FireComboState'.
+2026-08-16T20:17:05.8087880Z ##[error]src/repos/preferences.repo.ts(91,7): error TS6133: 'normalizeAgentPermissionTimeout' is declared but its value is never read.
+2026-08-16T20:17:05.8089160Z ##[error]src/repos/preferences.repo.ts(96,7): error TS6133: 'parseAgentEnabledTools' is declared but its value is never read.
+2026-08-16T20:17:05.8090290Z ##[error]src/repos/preferences.repo.ts(156,7): error TS6133: 'valueOr' is declared but its value is never read.
+2026-08-16T20:17:05.8091550Z ##[error]src/repos/preferences.repo.ts(159,7): error TS6133: 'jsonValue' is declared but its value is never read.
+2026-08-16T20:17:05.8095230Z ##[error]src/repos/preferences.repo.ts(164,24): error TS2740: Type '{ userId: string; transcriptionMode: Nullable<TranscriptionMode>; transcriptionApiKeyId: string | null; transcriptionDevice: string | null; transcriptionModelSize: string | null; ... 30 more ...; alwaysRequestAdminOnStartup: boolean; }' is missing the following properties from type 'UserPreferences': inDictationStyleSwitchingEnabled, hallucinationFilterEnabled, reviewBeforeInsert, agentEnabledTools, and 2 more.
+2026-08-16T20:17:05.8097440Z  ELIFECYCLE  Command failed with exit code 2.
+2026-08-16T20:17:05.8097990Z desktop#build:  WARNING  command finished with error, but continuing...
+2026-08-16T20:17:05.8098710Z 2026-08-16T20:17:05.806+0000 [DEBUG] turborepo_lib::run: visitor completed, calculating exit code
+2026-08-16T20:17:05.8108250Z ##[error]command (/Users/runner/work/mausVoice/mausVoice/apps/desktop) /Users/runner/setup-pnpm/node_modules/.bin/pnpm run build exited (2)
+2026-08-16T20:17:05.8110270Z desktop#build:  ERROR  command (/Users/runner/work/mausVoice/mausVoice/apps/desktop) /Users/runner/setup-pnpm/node_modules/.bin/pnpm run build exited (2)
+2026-08-16T20:17:05.8111390Z 2026-08-16T20:17:05.806+0000 [DEBUG] turborepo_process: waiting for 7 processes to exit
+2026-08-16T20:17:05.8112390Z 2026-08-16T20:17:05.807+0000 [DEBUG] turborepo_lib::run: visitor.finish() completed, run cleanup done
+2026-08-16T20:17:05.8113110Z 2026-08-16T20:17:05.809+0000 [DEBUG] turborepo_process: waiting for 0 processes to exit
+2026-08-16T20:17:05.8113660Z 2026-08-16T20:17:05.809+0000 [DEBUG] turborepo_lib::run: Child processes stopped
+2026-08-16T20:17:05.8113960Z 
+2026-08-16T20:17:05.8114090Z  Tasks:    6 successful, 7 total
+2026-08-16T20:17:05.8114360Z Cached:    0 cached, 7 total
+2026-08-16T20:17:05.8114540Z   Time:    11.195s 
+2026-08-16T20:17:05.8114740Z Failed:    desktop#build
+2026-08-16T20:17:05.8114860Z 
+2026-08-16T20:17:05.8114980Z  ERROR  run failed: command  exited (2)
+2026-08-16T20:17:05.8115410Z 2026-08-16T20:17:05.810+0000 [DEBUG] turborepo_telemetry: telemetry handle closed
+2026-08-16T20:17:05.8196360Z ##[error]Process completed with exit code 2.
+2026-08-16T20:17:05.8282750Z Post job cleanup.
+2026-08-16T20:17:06.1720700Z Pruning is unnecessary.
+2026-08-16T20:17:06.1848680Z Node 20 is being deprecated. This workflow is running with Node 24 by default. If you need to temporarily use Node 20, you can set the ACTIONS_ALLOW_USE_UNSECURE_NODE_VERSION=true environment variable. For more information see: https://github.blog/changelog/2025-09-19-deprecation-of-node-20-on-github-actions-runners/
+2026-08-16T20:17:06.1849630Z Post job cleanup.
+2026-08-16T20:17:06.2700930Z [command]/opt/homebrew/bin/git version
+2026-08-16T20:17:06.2752710Z git version 2.54.0
+2026-08-16T20:17:06.2776460Z Copying '/Users/runner/.gitconfig' to '/Users/runner/work/_temp/a69b5ab3-4732-48ba-a1fd-0f21ac07b0a2/.gitconfig'
+2026-08-16T20:17:06.2782970Z Temporarily overriding HOME='/Users/runner/work/_temp/a69b5ab3-4732-48ba-a1fd-0f21ac07b0a2' before making global git config changes
+2026-08-16T20:17:06.2784160Z Adding repository directory to the temporary git global config as a safe directory
+2026-08-16T20:17:06.2786640Z [command]/opt/homebrew/bin/git config --global --add safe.directory /Users/runner/work/mausVoice/mausVoice
+2026-08-16T20:17:06.2857120Z [command]/opt/homebrew/bin/git config --local --name-only --get-regexp core\.sshCommand
+2026-08-16T20:17:06.2899630Z [command]/opt/homebrew/bin/git submodule foreach --recursive sh -c "git config --local --name-only --get-regexp 'core\.sshCommand' && git config --local --unset-all 'core.sshCommand' || :"
+2026-08-16T20:17:06.3450470Z fatal: No url found for submodule path '.review-pr59' in .gitmodules
+2026-08-16T20:17:06.3469180Z ##[warning]The process '/opt/homebrew/bin/git' failed with exit code 128
+2026-08-16T20:17:06.3541240Z Cleaning up orphan processes
+2026-08-16T20:17:06.7487510Z ##[warning]Node.js 20 is deprecated. The following actions target Node.js 20 but are being forced to run on Node.js 24: actions/checkout@11d5960a326750d5838078e36cf38b85af677262, actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020. For more information see: https://github.blog/changelog/2025-09-19-deprecation-of-node-20-on-github-actions-runners/

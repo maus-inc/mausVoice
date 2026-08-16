@@ -323,3 +323,80 @@ export const useHotkeyFire = (args: UseHotkeyFireArgs): void => {
     prevTriggerCountRef.current = triggerCount;
   }, [triggerCount, isDisabled, onFire]);
 };
+
+const normalizedKeys = (keys: string[]): Set<string> =>
+  new Set(keys.map((key) => key.toLowerCase()));
+
+export type FireComboState = {
+  contaminated: boolean;
+  previousExact: boolean;
+};
+
+export type FireComboTransition = {
+  state: FireComboState;
+  shouldFire: boolean;
+};
+
+export type FireComboArgs = {
+  combo: string[];
+  previous: Set<string>;
+  current: Set<string>;
+  wasDisabled: boolean;
+  states: Map<string, FireComboState>;
+  activeIds: Set<string>;
+  stateKey?: string;
+  previousState?: FireComboState;
+};
+
+/** Process one combo without mutating the caller's previous state object. */
+export const processFireCombo = (args: FireComboArgs): FireComboTransition => {
+  const { combo, previous, current, wasDisabled, states, activeIds } = args;
+  if (combo.length === 0) {
+    return {
+      state: { contaminated: false, previousExact: false },
+      shouldFire: false,
+    };
+  }
+
+  const required = normalizedKeys(combo);
+  if (required.size === 0) {
+    return {
+      state: { contaminated: false, previousExact: false },
+      shouldFire: false,
+    };
+  }
+
+  const id =
+    args.stateKey ??
+    Array.from(required)
+      .sort((left, right) => left.localeCompare(right))
+      .join("+");
+  activeIds.add(id);
+  const previousState =
+    args.previousState ??
+    states.get(id) ?? {
+      contaminated: false,
+      previousExact: false,
+    };
+  const previousIncludesAll = Array.from(required).every((key) =>
+    previous.has(key),
+  );
+  const currentIncludesAll = Array.from(required).every((key) =>
+    current.has(key),
+  );
+  const previousExact = previousIncludesAll && previous.size === required.size;
+  const currentExact = currentIncludesAll && current.size === required.size;
+  let contaminated = previousState.contaminated;
+
+  if (wasDisabled && currentIncludesAll) contaminated = true;
+  if (!previousIncludesAll && currentIncludesAll) contaminated = false;
+  if (currentIncludesAll && !currentExact) contaminated = true;
+
+  const shouldFire =
+    previousExact && !currentExact && !currentIncludesAll && !contaminated;
+
+  if (!currentIncludesAll) contaminated = false;
+  const state = { contaminated, previousExact: currentExact };
+  states.set(id, state);
+  return { state, shouldFire };
+};

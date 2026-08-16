@@ -1,0 +1,688 @@
+diff --git a/.github/workflows/build-desktop.yml b/.github/workflows/build-desktop.yml
+index e205535bc..c5593e0f1 100644
+--- a/.github/workflows/build-desktop.yml
++++ b/.github/workflows/build-desktop.yml
+@@ -23,6 +23,14 @@ on:
+     paths:
+       - "apps/desktop/**"
+       - "apps/windows-installer/**"
++      - "packages/**"
++      - "patches/**"
++      - "package.json"
++      - "pnpm-lock.yaml"
++      - "pnpm-workspace.yaml"
++      - "turbo.json"
++      - ".nvmrc"
++      - ".github/scripts/install-desktop-linux-deps.sh"
+       - ".github/workflows/build-desktop.yml"
+ 
+ jobs:
+diff --git a/apps/desktop/src/repos/generate-text.repo.ts b/apps/desktop/src/repos/generate-text.repo.ts
+index 0c9ac43d1..39d2d63d8 100644
+--- a/apps/desktop/src/repos/generate-text.repo.ts
++++ b/apps/desktop/src/repos/generate-text.repo.ts
+@@ -39,6 +39,7 @@ export type GenerateTextInput = {
+   system?: Nullable<string>;
+   prompt: string;
+   jsonResponse?: JsonResponse;
++  signal?: AbortSignal;
+ };
+ 
+ export type GenerateTextMetadata = {
+@@ -89,9 +90,10 @@ export class GroqGenerateTextRepo extends BaseGenerateTextRepo {
+         prompt: input.prompt,
+         system: input.system ?? undefined,
+         jsonResponse: input.jsonResponse,
++        signal: input.signal,
+       });
+     } catch (error) {
+-      if (this.model === this.fallbackModel) {
++      if (input.signal?.aborted || this.model === this.fallbackModel) {
+         throw error;
+       }
+ 
+@@ -101,6 +103,7 @@ export class GroqGenerateTextRepo extends BaseGenerateTextRepo {
+         prompt: input.prompt,
+         system: input.system ?? undefined,
+         jsonResponse: input.jsonResponse,
++        signal: input.signal,
+       });
+     }
+   }
+diff --git a/apps/desktop/src/utils/timeout.utils.ts b/apps/desktop/src/utils/timeout.utils.ts
+index 930db9724..0289fd02f 100644
+--- a/apps/desktop/src/utils/timeout.utils.ts
++++ b/apps/desktop/src/utils/timeout.utils.ts
+@@ -1,22 +1,23 @@
+ /**
+  * Races `promise` against a timeout so a hung network/LLM/native call can
+- * never leave the UI in a permanent loading state. The wrapped promise is
+- * not cancelled — its eventual result is discarded.
++ * never leave the UI in a permanent loading state. `onTimeout` can cancel
++ * an underlying operation such as a fetch through an AbortController.
+  */
+ export const withTimeout = async <T>(
+   promise: Promise<T>,
+   timeoutMs: number,
+   label: string,
++  onTimeout?: () => void,
+ ): Promise<T> => {
+   let timer: ReturnType<typeof setTimeout> | undefined;
+   try {
+     return await Promise.race([
+       promise,
+       new Promise<never>((_, reject) => {
+-        timer = setTimeout(
+-          () => reject(new Error(`${label} timed out after ${timeoutMs}ms`)),
+-          timeoutMs,
+-        );
++        timer = setTimeout(() => {
++          onTimeout?.();
++          reject(new Error(`${label} timed out after ${timeoutMs}ms`));
++        }, timeoutMs);
+       }),
+     ]);
+   } finally {
+diff --git a/apps/desktop/test/helpers/eval.utils.ts b/apps/desktop/test/helpers/eval.utils.ts
+index 8d89ebe70..f965ad324 100644
+--- a/apps/desktop/test/helpers/eval.utils.ts
++++ b/apps/desktop/test/helpers/eval.utils.ts
+@@ -97,12 +97,14 @@ export const postProcess = async ({
+   language = "en",
+   userName = "Thomas Gundan",
+   repo,
++  signal,
+ }: {
+   tone: ToneConfig;
+   transcription: string;
+   language?: string;
+   userName?: string;
+   repo?: BaseGenerateTextRepo;
++  signal?: AbortSignal;
+ }): Promise<string> => {
+   const promptInput: PostProcessingPromptInput = {
+     transcript: transcription,
+@@ -116,6 +118,7 @@ export const postProcess = async ({
+   const output = await (repo ?? getGroqGentextRepo()).generateText({
+     system: ppSystem,
+     prompt: ppPrompt,
++    signal,
+     jsonResponse: {
+       name: "transcription_cleaning",
+       description: "JSON response with the processed transcription",
+diff --git a/apps/desktop/test/integration/post-processing-stability.test.ts b/apps/desktop/test/integration/post-processing-stability.test.ts
+index 5d898c0f9..b51ad7ce3 100644
+--- a/apps/desktop/test/integration/post-processing-stability.test.ts
++++ b/apps/desktop/test/integration/post-processing-stability.test.ts
+@@ -4,6 +4,7 @@ import {
+   getWritingStyle,
+   postProcess,
+ } from "../helpers/eval.utils";
++import { withTimeout } from "../../src/utils/timeout.utils";
+ 
+ vi.setConfig({ testTimeout: 30000 });
+ 
+@@ -30,7 +31,7 @@ const isTransientProviderError = (err: unknown): boolean => {
+   const msg = err instanceof Error ? err.message : String(err);
+   return (
+     /\b429\b|rate[-_ ]?limit/i.test(msg) ||
+-    /json_validate_failed|max completion tokens reached/i.test(msg)
++    /json_validate_failed|max completion tokens reached|timed out after/i.test(msg)
+   );
+ };
+ 
+@@ -41,12 +42,19 @@ test(
+     let succeededAtLeastOnce = false;
+     for (let i = 0; i < 3; i++) {
+       try {
+-        const result = await postProcess({
+-          repo,
+-          tone: getWritingStyle("default"),
+-          transcription:
+-            "Hey, I need you to make it so on the settings page you see that manage subscription button. That should only show up if you're not on trial. Like, it should only show up if you're truly on the pro plan and not a trial. I think there's some utilities that you can use for that. Use your utilities, remember utilities, I believe. So yeah, that should only show up if you're on trial. If you're on trial, I still want to show up with an upgrade button, but I want it to be basically, let me say pay for pro. So you pay for pro, you come up with the vocabulary for that, but it's technically still on pro plan. What I want to do is basically, yeah, so if you're on pro plan, you're still on trial, so what I want it to do is you can click a button, and it should be in the header, and it should be on the settings page, replacing a manage subscription button. And what you should do is when you click on it, it should basically take you to the payment flow where you're going to convert to a real Pro account, you need to update this tribe services. Now come back. To accommodate this tribe service when you subscribe needs to says on trial to false and it only needs to mark your trial as it basically. You're effectively finishing your trial and converting to a real pro user. And yeah, so basically just like a way to get it out of a trial and convert over to a real pro user. I need you to come up with a vocabulary for that.",
+-        });
++        const controller = new AbortController();
++        const result = await withTimeout(
++          postProcess({
++            repo,
++            signal: controller.signal,
++            tone: getWritingStyle("default"),
++            transcription:
++              "Hey, I need you to make it so on the settings page you see that manage subscription button. That should only show up if you're not on trial. Like, it should only show up if you're truly on the pro plan and not a trial. I think there's some utilities that you can use for that. Use your utilities, remember utilities, I believe. So yeah, that should only show up if you're on trial. If you're on trial, I still want to show up with an upgrade button, but I want it to be basically, let me say pay for pro. So you pay for pro, you come up with the vocabulary for that, but it's technically still on pro plan. What I want to do is basically, yeah, so if you're on pro plan, you're still on trial, so what I want it to do is you can click a button, and it should be in the header, and it should be on the settings page, replacing a manage subscription button. And what you should do is when you click on it, it should basically take you to the payment flow where you're going to convert to a real Pro account, you need to update this tribe services. Now come back. To accommodate this tribe service when you subscribe needs to says on trial to false and it only needs to mark your trial as it basically. You're effectively finishing your trial and converting to a real pro user. And yeah, so basically just like a way to get it out of a trial and convert over to a real pro user. I need you to come up with a vocabulary for that.",
++          }),
++          45_000,
++          "Groq post-processing stability request",
++          () => controller.abort(),
++        );
+         expect(result).toBeTruthy();
+         succeededAtLeastOnce = true;
+       } catch (err) {
+diff --git a/apps/docs/src/content/docs/development/transcription-sidecar.md b/apps/docs/src/content/docs/development/transcription-sidecar.md
+index b598bc117..4b43a2c4a 100644
+--- a/apps/docs/src/content/docs/development/transcription-sidecar.md
++++ b/apps/docs/src/content/docs/development/transcription-sidecar.md
+@@ -16,7 +16,7 @@ cargo build --manifest-path packages/rust_transcription/Cargo.toml --release --b
+ 
+ Routes cover health, device enumeration, model download/job status/delete/validation, one-shot transcription, and create/chunk/finalize/delete session operations. Session chunks are raw little-endian Float32 bytes. “Streaming” here means chunked transport and in-memory buffering: inference runs at finalization, after finite samples are resampled to 16 kHz. Idle session buffers older than ten minutes are evicted.
+ 
+-Model IDs are the six whisper.cpp sizes (`tiny`, `base`, `small`, `medium`, `turbo`, `large`) plus the ONNX Runtime models `parakeet-ctc-0.6b`, `parakeet-tdt-0.6b`, and `canary-1b` (each with a few shorter aliases). URLs default to the repositories recorded in `models.rs` and can be overridden with `RUST_TRANSCRIPTION_MODEL_URL_<ID>`. Host, port, and model directory also have environment overrides. Never bind the desktop-managed service to a public interface.
++Model IDs are the six whisper.cpp sizes (`tiny`, `base`, `small`, `medium`, `turbo`, `large`) plus the ONNX Runtime models `parakeet-ctc-0.6b`, `parakeet-tdt-0.6b`, and `canary-1b` (each with a few shorter aliases). Whisper URLs default to the repositories recorded in `models.rs` and can be overridden with `RUST_TRANSCRIPTION_MODEL_URL_<ID>`. ONNX artifact URLs are pinned to immutable revisions and verified where upstream SHA-256 digests are available; they intentionally cannot be overridden at runtime. Host, port, and model directory also have environment overrides. Never bind the desktop-managed service to a public interface.
+ 
+ Run the binary-level integration suite with:
+ 
+diff --git a/apps/docs/src/content/docs/reference/local-models.md b/apps/docs/src/content/docs/reference/local-models.md
+index 065a62fbb..69799bc12 100644
+--- a/apps/docs/src/content/docs/reference/local-models.md
++++ b/apps/docs/src/content/docs/reference/local-models.md
+@@ -17,7 +17,7 @@ sidebar:
+ | `turbo`             | Whisper Large v3 Turbo   | whisper.cpp  | `ggml-large-v3-turbo.bin`                                                     |           1.6 GB |
+ | `large`             | Whisper Large v3         | whisper.cpp  | `ggml-large-v3.bin`                                                           |           3.1 GB |
+ 
+-Whisper files download from `ggerganov/whisper.cpp` on Hugging Face into the app-data `transcription-models/` directory. Parakeet and Canary download into per-model subdirectories there; each may include an encoder plus companion tokenizer/config artifacts. The NVIDIA checkpoints are quantized INT8 ONNX builds. The upstream `Oriserve/Whisper-Hindi2Hinglish-Apex` checkpoint is not included because it publishes Transformers BF16 `model.safetensors`, which the sidecar cannot load. Development builds can override each supported URL with `RUST_TRANSCRIPTION_MODEL_URL_<UPPERCASE_ID>`.
++Whisper files download from `ggerganov/whisper.cpp` on Hugging Face into the app-data `transcription-models/` directory. Parakeet and Canary download into per-model subdirectories there; each may include an encoder plus companion tokenizer/config artifacts. The NVIDIA checkpoints are quantized INT8 ONNX builds. The upstream `Oriserve/Whisper-Hindi2Hinglish-Apex` checkpoint is not included because it publishes Transformers BF16 `model.safetensors`, which the sidecar cannot load. Development builds can override Whisper URLs with `RUST_TRANSCRIPTION_MODEL_URL_<UPPERCASE_ID>`; ONNX artifact URLs are deliberately pinned and not runtime-overridable.
+ 
+ Desktop normalization accepts older `.en` names for Tiny through Medium, `large-v3`, and several Large v3 Turbo spellings. Unknown saved values normalize to Tiny. Device IDs normalize to `cpu`, `cpu:<index>`, `gpu`, or `gpu:<index>`; legacy hyphenated IDs are converted, and an unrecognized value falls back to CPU.
+ 
+diff --git a/packages/rust_transcription/Cargo.toml b/packages/rust_transcription/Cargo.toml
+index 48e7a2899..72ba67b59 100644
+--- a/packages/rust_transcription/Cargo.toml
++++ b/packages/rust_transcription/Cargo.toml
+@@ -26,6 +26,7 @@ futures-util = "0.3"
+ reqwest = { version = "0.12", default-features = false, features = ["rustls-tls", "stream", "json"] }
+ serde = { version = "1", features = ["derive"] }
+ serde_json = "1"
++sha2 = "0.10"
+ tokio = { version = "1", features = ["fs", "macros", "net", "rt-multi-thread", "sync", "time"] }
+ tracing = "0.1"
+ tracing-subscriber = { version = "0.3", features = ["env-filter", "fmt"] }
+diff --git a/packages/rust_transcription/src/api.rs b/packages/rust_transcription/src/api.rs
+index 23e3e70b7..e34ebf63c 100644
+--- a/packages/rust_transcription/src/api.rs
++++ b/packages/rust_transcription/src/api.rs
+@@ -138,10 +138,12 @@ async fn download_model(
+         model
+             .artifact_set()
+             .into_iter()
+-            .map(|(name, url)| {
+-                DownloadArtifact::new(
++            .map(|(name, url, sha256)| {
++                DownloadArtifact::new_verified(
+                     url,
+                     model.artifact_path(&state.config.models_dir, name),
++                    crate::downloads::MAX_MODEL_ARTIFACT_BYTES,
++                    sha256,
+                 )
+             })
+             .collect()
+@@ -208,7 +210,7 @@ async fn remove_invalid_onnx_bundle_before_download(
+     }
+ 
+     crate::onnx_inference::evict_model(&model_path);
+-    for (name, _) in model.artifact_set() {
++    for (name, _, _) in model.artifact_set() {
+         let artifact_path = model.artifact_path(&state.config.models_dir, name);
+         match tokio::fs::remove_file(&artifact_path).await {
+             Ok(()) => {}
+@@ -367,7 +369,7 @@ async fn delete_model(
+     // in-progress auxiliary fragments in the model-specific directory.
+     if model.is_onnx() {
+         crate::onnx_inference::evict_model(&model_path);
+-        for (name, _) in model.artifact_set() {
++        for (name, _, _) in model.artifact_set() {
+             let artifact_path = model.artifact_path(&state.config.models_dir, name);
+             match tokio::fs::remove_file(&artifact_path).await {
+                 Ok(()) => {}
+@@ -621,7 +623,7 @@ async fn ensure_model_downloaded(
+         model
+             .artifact_set()
+             .into_iter()
+-            .map(|(name, _)| model.artifact_path(&state.config.models_dir, name))
++            .map(|(name, _, _)| model.artifact_path(&state.config.models_dir, name))
+             .collect::<Vec<_>>()
+     } else {
+         vec![model_path.clone()]
+@@ -683,7 +685,7 @@ async fn read_model_status(
+     let file_bytes = if model.is_onnx() {
+         let mut total = 0_u64;
+         let mut found = false;
+-        for (name, _) in model.artifact_set() {
++        for (name, _, _) in model.artifact_set() {
+             let artifact_path = model.artifact_path(&state.config.models_dir, name);
+             if let Ok(meta) = tokio::fs::metadata(artifact_path).await {
+                 if meta.is_file() {
+@@ -701,7 +703,7 @@ async fn read_model_status(
+         // An ONNX model is only "downloaded" once the complete, model-specific
+         // graph/weights/tokenizer artifact set is present on disk.
+         let mut all_present = true;
+-        for (name, _) in model.artifact_set() {
++        for (name, _, _) in model.artifact_set() {
+             let artifact_path = model.artifact_path(&state.config.models_dir, name);
+             match tokio::fs::metadata(&artifact_path).await {
+                 Ok(meta) if meta.is_file() && meta.len() > 0 => {}
+@@ -971,7 +973,7 @@ mod tests {
+         let retry_artifacts = model
+             .artifact_set()
+             .into_iter()
+-            .map(|(name, _)| {
++            .map(|(name, _, _)| {
+                 let destination = model.artifact_path(&state.config.models_dir, name);
+                 assert!(!destination.exists(), "invalid artifact was not removed");
+                 DownloadArtifact::new(
+diff --git a/packages/rust_transcription/src/downloads.rs b/packages/rust_transcription/src/downloads.rs
+index cf1eb7b78..d6c49eeb0 100644
+--- a/packages/rust_transcription/src/downloads.rs
++++ b/packages/rust_transcription/src/downloads.rs
+@@ -4,12 +4,17 @@ use std::sync::Arc;
+ 
+ use futures_util::StreamExt;
+ use serde::Serialize;
++use sha2::{Digest, Sha256};
+ use tokio::io::AsyncWriteExt;
+ use tokio::sync::{watch, Mutex};
+ use uuid::Uuid;
+ 
+ use crate::models::WhisperModel;
+ 
++/// Largest currently-supported model artifact plus headroom. This is a hard
++/// limit, not a progress hint, and protects users from chunked responses.
++pub const MAX_MODEL_ARTIFACT_BYTES: u64 = 4 * 1024 * 1024 * 1024;
++
+ #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+ #[serde(rename_all = "lowercase")]
+ pub enum DownloadJobStatus {
+@@ -37,11 +42,24 @@ pub struct DownloadJobSnapshot {
+ pub struct DownloadArtifact {
+     pub url: String,
+     pub destination: PathBuf,
++    /// Hard upper bound enforced for both declared and chunked responses.
++    pub max_bytes: u64,
++    /// Pinned digest for executable ONNX graphs/weights.
++    pub sha256: Option<&'static str>,
+ }
+ 
+ impl DownloadArtifact {
+     pub fn new(url: String, destination: PathBuf) -> Self {
+-        Self { url, destination }
++        Self::new_verified(url, destination, MAX_MODEL_ARTIFACT_BYTES, None)
++    }
++
++    pub fn new_verified(
++        url: String,
++        destination: PathBuf,
++        max_bytes: u64,
++        sha256: Option<&'static str>,
++    ) -> Self {
++        Self { url, destination, max_bytes, sha256 }
+     }
+ }
+ 
+@@ -535,13 +553,25 @@ impl DownloadRegistry {
+             None
+         };
+ 
+-        let (response, resume_is_valid) = request_artifact_response(
++        let (response, resume_is_valid) = match request_artifact_response(
+             client,
+             &artifact.url,
+             existing_bytes,
+             existing_validator.as_deref(),
++            artifact.max_bytes,
+         )
+-        .await?;
++        .await
++        {
++            Ok(response) => response,
++            Err(error) => {
++                // A rejected advertised size must not leave a resumable
++                // partial artifact behind. Otherwise every retry preserves
++                // data from a response that violated the policy.
++                let _ = tokio::fs::remove_file(&temp_path).await;
++                let _ = tokio::fs::remove_file(&validator_path).await;
++                return Err(error);
++            }
++        };
+         let validator = response_resume_validator(&response).or_else(|| {
+             if resume_is_valid {
+                 existing_validator.clone()
+@@ -558,7 +588,7 @@ impl DownloadRegistry {
+         }
+ 
+         let (mut downloaded, artifact_total, mut file) = if resume_is_valid {
+-            let total = response.content_length().map(|len| existing_bytes + len);
++            let total = response.content_length().map(|len| existing_bytes.saturating_add(len));
+             let file = tokio::fs::OpenOptions::new()
+                 .create(true)
+                 .append(true)
+@@ -616,6 +646,12 @@ impl DownloadRegistry {
+                                 .await
+                                 .map_err(|err| format!("failed to write artifact: {err}"))?;
+                             downloaded = downloaded.saturating_add(chunk.len() as u64);
++                            if downloaded > artifact.max_bytes {
++                                drop(file);
++                                let _ = tokio::fs::remove_file(&temp_path).await;
++                                let _ = tokio::fs::remove_file(&validator_path).await;
++                                return Err(format!("artifact exceeds {} byte limit", artifact.max_bytes));
++                            }
+                             self.set_progress(
+                                 job_id,
+                                 generation,
+@@ -641,6 +677,14 @@ impl DownloadRegistry {
+             .map_err(|err| format!("failed to sync artifact: {err}"))?;
+         drop(file);
+ 
++        if let Some(expected_sha256) = artifact.sha256 {
++            if let Err(error) = verify_file_sha256(&temp_path, expected_sha256).await {
++                let _ = tokio::fs::remove_file(&temp_path).await;
++                let _ = tokio::fs::remove_file(&validator_path).await;
++                return Err(error);
++            }
++        }
++
+         // Block pause/cancel only for the short replace+rename section. The
+         // control sender stays installed for every subsequent artifact.
+         if !self.begin_artifact_finalization(job_id, generation).await {
+@@ -833,9 +877,13 @@ async fn request_artifact_response(
+     url: &str,
+     existing_bytes: u64,
+     if_range: Option<&str>,
++    max_bytes: u64,
+ ) -> Result<(reqwest::Response, bool), String> {
+     // Never append without a validator tied to the existing prefix. A bare
+     // byte offset cannot prove that the remote object is still the same file.
++    if existing_bytes > max_bytes {
++        return Err(format!("existing partial artifact exceeds {max_bytes} byte limit"));
++    }
+     if let Some(if_range) = if_range.filter(|_| existing_bytes > 0) {
+         let ranged = client
+             .get(url)
+@@ -847,6 +895,7 @@ async fn request_artifact_response(
+ 
+         if ranged.status() == reqwest::StatusCode::PARTIAL_CONTENT {
+             if content_range_start(&ranged) == Some(existing_bytes) {
++                reject_oversized_response(&ranged, max_bytes.saturating_sub(existing_bytes))?;
+                 return Ok((ranged, true));
+             }
+             // A 206 response is append-safe only when the server confirms
+@@ -854,6 +903,7 @@ async fn request_artifact_response(
+         } else if ranged.status() == reqwest::StatusCode::OK {
+             // If-Range intentionally produces 200 when the remote object
+             // changed. The caller truncates the stale temporary prefix.
++            reject_oversized_response(&ranged, max_bytes)?;
+             return Ok((ranged, false));
+         } else if ranged.status() != reqwest::StatusCode::RANGE_NOT_SATISFIABLE {
+             return Err(format!("request failed with status {}", ranged.status()));
+@@ -868,9 +918,38 @@ async fn request_artifact_response(
+     if response.status() != reqwest::StatusCode::OK {
+         return Err(format!("request failed with status {}", response.status()));
+     }
++    reject_oversized_response(&response, max_bytes)?;
+     Ok((response, false))
+ }
+ 
++fn reject_oversized_response(response: &reqwest::Response, max_bytes: u64) -> Result<(), String> {
++    if response.content_length().is_some_and(|length| length > max_bytes) {
++        return Err(format!("artifact exceeds {max_bytes} byte limit"));
++    }
++    Ok(())
++}
++
++async fn verify_file_sha256(path: &Path, expected: &str) -> Result<(), String> {
++    let path = path.to_path_buf();
++    let expected = expected.to_owned();
++    tokio::task::spawn_blocking(move || {
++        use std::io::Read;
++        let mut file = std::fs::File::open(&path)
++            .map_err(|err| format!("failed to reopen artifact for checksum: {err}"))?;
++        let mut hasher = Sha256::new();
++        let mut buffer = [0_u8; 64 * 1024];
++        loop {
++            let count = file.read(&mut buffer)
++                .map_err(|err| format!("failed to checksum artifact: {err}"))?;
++            if count == 0 { break; }
++            hasher.update(&buffer[..count]);
++        }
++        let actual = format!("{:x}", hasher.finalize());
++        if actual.eq_ignore_ascii_case(&expected) { Ok(()) }
++        else { Err(format!("artifact SHA-256 mismatch (expected {expected}, got {actual})")) }
++    }).await.map_err(|err| format!("checksum task failed: {err}"))?
++}
++
+ fn content_range_start(response: &reqwest::Response) -> Option<u64> {
+     let value = response
+         .headers()
+@@ -1231,6 +1310,7 @@ mod tests {
+             &format!("http://{address}/artifact"),
+             3,
+             Some("\"artifact-v1\""),
++            MAX_MODEL_ARTIFACT_BYTES,
+         )
+         .await
+         .unwrap();
+@@ -1265,6 +1345,7 @@ mod tests {
+             &format!("http://{address}/artifact"),
+             3,
+             None,
++            MAX_MODEL_ARTIFACT_BYTES,
+         )
+         .await
+         .unwrap();
+@@ -1297,6 +1378,7 @@ mod tests {
+             &format!("http://{address}/artifact"),
+             3,
+             Some("\"artifact-v1\""),
++            MAX_MODEL_ARTIFACT_BYTES,
+         )
+         .await
+         .unwrap_err();
+diff --git a/packages/rust_transcription/src/models.rs b/packages/rust_transcription/src/models.rs
+index 1905a26bc..e95a73e8d 100644
+--- a/packages/rust_transcription/src/models.rs
++++ b/packages/rust_transcription/src/models.rs
+@@ -97,60 +97,37 @@ impl WhisperModel {
+         }
+     }
+ 
+-    /// Every file required by the model-specific runtime. The first entry is
+-    /// the largest artifact; one resumable registry job tracks the complete
+-    /// ordered bundle and finishes only after every entry is durable.
+-    pub fn artifact_set(self) -> Vec<(&'static str, String)> {
+-        let mut artifacts = match self {
++    /// Every file required by the model-specific runtime. ONNX artifacts are
++    /// pinned to immutable Hugging Face revisions; executable graph/weight
++    /// files additionally carry the upstream LFS SHA-256 digest.
++    pub fn artifact_set(self) -> Vec<(&'static str, String, Option<&'static str>)> {
++        let artifacts = match self {
+             Self::ParakeetCtc06B => {
+-                let root =
+-                    "https://huggingface.co/onnx-community/parakeet-ctc-0.6b-ONNX/resolve/main/";
++                let root = "https://huggingface.co/onnx-community/parakeet-ctc-0.6b-ONNX/resolve/7df2cab7aed886b8b7f80d68a8214007e4847601/";
+                 vec![
+-                    (
+-                        "model_int8.onnx_data",
+-                        format!("{root}onnx/model_int8.onnx_data"),
+-                    ),
+-                    ("model_int8.onnx", format!("{root}onnx/model_int8.onnx")),
+-                    ("tokenizer.json", format!("{root}tokenizer.json")),
++                    ("model_int8.onnx_data", format!("{root}onnx/model_int8.onnx_data"), Some("136207926beb9b3bc0779d7a96c179013f51b292c320e96ae7a341ef62ab53d9")),
++                    ("model_int8.onnx", format!("{root}onnx/model_int8.onnx"), Some("4de804b59b7b839ca21b97b5e506e558a859301d9a231a537e43c8f521037348")),
++                    ("tokenizer.json", format!("{root}tokenizer.json"), None),
+                 ]
+             }
+             Self::ParakeetTdt06B => {
+-                let root =
+-                    "https://huggingface.co/istupakov/parakeet-tdt-0.6b-v3-onnx/resolve/main/";
++                let root = "https://huggingface.co/istupakov/parakeet-tdt-0.6b-v3-onnx/resolve/8f23f0c03c8761650bdb5b40aaf3e40d2c15f1ce/";
+                 vec![
+-                    (
+-                        "encoder-model.int8.onnx",
+-                        format!("{root}encoder-model.int8.onnx"),
+-                    ),
+-                    (
+-                        "decoder_joint-model.int8.onnx",
+-                        format!("{root}decoder_joint-model.int8.onnx"),
+-                    ),
+-                    ("vocab.txt", format!("{root}vocab.txt")),
++                    ("encoder-model.int8.onnx", format!("{root}encoder-model.int8.onnx"), Some("6139d2fa7e1b086097b277c7149725edbab89cc7c7ae64b23c741be4055aff09")),
++                    ("decoder_joint-model.int8.onnx", format!("{root}decoder_joint-model.int8.onnx"), Some("eea7483ee3d1a30375daedc8ed83e3960c91b098812127a0d99d1c8977667a70")),
++                    ("vocab.txt", format!("{root}vocab.txt"), None),
+                 ]
+             }
+             Self::Canary1B => {
+-                let root =
+-                    "https://huggingface.co/istupakov/canary-1b-v2-onnx/resolve/main/";
++                let root = "https://huggingface.co/istupakov/canary-1b-v2-onnx/resolve/5ebc1520cef7b6b318b3526ad17adbfe00bc1bfc/";
+                 vec![
+-                    (
+-                        "encoder-model.int8.onnx",
+-                        format!("{root}encoder-model.int8.onnx"),
+-                    ),
+-                    (
+-                        "decoder-model.int8.onnx",
+-                        format!("{root}decoder-model.int8.onnx"),
+-                    ),
+-                    ("vocab.txt", format!("{root}vocab.txt")),
++                    ("encoder-model.int8.onnx", format!("{root}encoder-model.int8.onnx"), Some("6d96e9945898e5ace48f4efecd459ca1df81859730be27b8af6b197639403ee1")),
++                    ("decoder-model.int8.onnx", format!("{root}decoder-model.int8.onnx"), Some("52d83aa7aad41fbbe4f9dfcd341d784735a6eb4c6eb0d3290fc27a0d8ac39abf")),
++                    ("vocab.txt", format!("{root}vocab.txt"), None),
+                 ]
+             }
+             _ => Vec::new(),
+         };
+-
+-        // Preserve the existing per-model primary URL override contract.
+-        if let Some((_, primary_url)) = artifacts.first_mut() {
+-            *primary_url = self.download_url();
+-        }
+         artifacts
+     }
+ 
+@@ -263,9 +240,13 @@ mod tests {
+             let artifacts = model.artifact_set();
+             assert_eq!(artifacts.first().map(|artifact| artifact.0), Some(model.filename()));
+             assert!(artifacts.len() > 1);
+-            assert!(artifacts[1..]
++            assert!(artifacts.iter().all(|(_, url, _)| {
++                url.starts_with("https://huggingface.co/") && !url.contains("/resolve/main/")
++            }));
++            assert!(artifacts
+                 .iter()
+-                .all(|(_, url)| url.starts_with("https://huggingface.co/")));
++                .take(2)
++                .all(|(_, _, sha256)| sha256.is_some()));
+         }
+     }
+ 
+diff --git a/packages/rust_transcription/src/onnx_inference.rs b/packages/rust_transcription/src/onnx_inference.rs
+index 197bbaf79..ca1b5a3fe 100644
+--- a/packages/rust_transcription/src/onnx_inference.rs
++++ b/packages/rust_transcription/src/onnx_inference.rs
+@@ -136,7 +136,7 @@ pub fn validate_model_classified(
+ 
+     ensure_onnx_runtime().map_err(OnnxModelValidationError::Runtime)?;
+     let model_dir = model_directory(model_path).map_err(OnnxModelValidationError::Artifact)?;
+-    for (name, _) in model.artifact_set() {
++    for (name, _, _) in model.artifact_set() {
+         let artifact_path = model_dir.join(name);
+         let metadata = std::fs::metadata(&artifact_path).map_err(|err| {
+             OnnxModelValidationError::Artifact(format!(
+diff --git a/packages/rust_transcription/src/state.rs b/packages/rust_transcription/src/state.rs
+index be49701f5..df7aa3bd0 100644
+--- a/packages/rust_transcription/src/state.rs
++++ b/packages/rust_transcription/src/state.rs
+@@ -2,6 +2,8 @@ use std::collections::HashMap;
+ use std::path::PathBuf;
+ use std::sync::Arc;
+ 
++use reqwest::redirect::{Attempt, Policy};
++
+ use tokio::sync::Mutex;
+ 
+ use crate::config::SidecarConfig;
+@@ -24,6 +26,7 @@ impl AppState {
+     pub fn new(config: SidecarConfig) -> Result<Self, String> {
+         let http_client = reqwest::Client::builder()
+             .user_agent("mausvoice-rust-transcription/0.1")
++            .redirect(Policy::custom(validate_model_redirect))
+             .build()
+             .map_err(|err| format!("failed to initialize http client: {err}"))?;
+ 
+@@ -49,3 +52,46 @@ impl AppState {
+         model.storage_path(&self.config.models_dir)
+     }
+ }
++
++/// Hugging Face serves LFS objects through a small set of HTTPS CDN hosts.
++/// Do not let a compromised/misconfigured model URL pivot the sidecar to an
++/// arbitrary host or a non-TLS scheme.
++fn validate_model_redirect(attempt: Attempt<'_>) -> reqwest::redirect::Action {
++    const MAX_REDIRECTS: usize = 5;
++    let url = attempt.url();
++    // Hugging Face operates the Hub, LFS, and Xet delivery fleet beneath
++    // these registrable domains. Allow subdomains (for regional/CDN rollout)
++    // but never look-alikes such as `huggingface.co.attacker.example`.
++    let approved_host = url.host_str().is_some_and(is_hugging_face_delivery_host);
++    if attempt.previous().len() >= MAX_REDIRECTS || url.scheme() != "https" || !approved_host {
++        attempt.error("model download redirect rejected by security policy")
++    } else {
++        attempt.follow()
++    }
++}
++
++
++fn is_hugging_face_delivery_host(host: &str) -> bool {
++    host == "huggingface.co"
++        || host.ends_with(".huggingface.co")
++        || host.ends_with(".hf.co")
++}
++
++#[cfg(test)]
++mod tests {
++    use super::is_hugging_face_delivery_host;
++
++    #[test]
++    fn model_redirect_host_allowlist_accepts_only_hugging_face_domains() {
++        for host in [
++            "huggingface.co",
++            "cdn-lfs-us-1.hf.co",
++            "cas-bridge.xethub.hf.co",
++        ] {
++            assert!(is_hugging_face_delivery_host(host));
++        }
++        for host in ["huggingface.co.attacker.example", "evil-hf.co", "example.com"] {
++            assert!(!is_hugging_face_delivery_host(host));
++        }
++    }
++}
+diff --git a/packages/voice-ai/src/groq.utils.ts b/packages/voice-ai/src/groq.utils.ts
+index 3247d1966..6894b02d3 100644
+--- a/packages/voice-ai/src/groq.utils.ts
++++ b/packages/voice-ai/src/groq.utils.ts
+@@ -114,6 +114,7 @@ export type GroqGenerateTextArgs = {
+   prompt: string;
+   imageUrls?: string[];
+   jsonResponse?: JsonResponse;
++  signal?: AbortSignal;
+ };
+ 
+ export type GroqGenerateResponseOutput = {
+@@ -128,9 +129,10 @@ export const groqGenerateTextResponse = async ({
+   prompt,
+   imageUrls = [],
+   jsonResponse,
++  signal,
+ }: GroqGenerateTextArgs): Promise<GroqGenerateResponseOutput> => {
+   return retry({
+-    retries: 3,
++    retries: signal ? 1 : 3,
+     fn: async () => {
+       const client = createClient(apiKey);
+ 
+@@ -166,7 +168,7 @@ export const groqGenerateTextResponse = async ({
+               }
+             : { type: "json_object" }
+           : undefined,
+-      });
++      }, { signal });
+ 
+       console.log("groq llm usage:", response.usage);
+       if (!response.choices || response.choices.length === 0) {

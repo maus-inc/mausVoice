@@ -115,13 +115,6 @@ type RawStopResp = {
   abortMessage?: string;
 };
 
-type StoppedRecordingData = {
-  audio: StopRecordingResponse | null;
-  a11yInfo: TextFieldInfo | null;
-  appTarget: AppTarget | null;
-  failureMessage?: string;
-};
-
 type FinalizedRecording = {
   audio: StopRecordingResponse;
   a11yInfo: TextFieldInfo | null;

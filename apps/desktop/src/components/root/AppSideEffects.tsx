@@ -1,7 +1,7 @@
 import { getVersion } from "@tauri-apps/api/app";
 import { invoke } from "@tauri-apps/api/core";
 import { getCurrentWindow } from "@tauri-apps/api/window";
-import { Member, Nullable, Term, User, UserPreferences } from "@maus-inc/types";
+import { Member, Nullable, Term, User } from "@maus-inc/types";
 import { getRec, listify } from "@maus-inc/utilities";
 import { isEqual } from "lodash-es";
 import { useCallback, useEffect, useRef, useState } from "react";

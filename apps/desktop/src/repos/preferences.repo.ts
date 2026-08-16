@@ -208,6 +208,16 @@ export const fromLocalPreferences = (
     preferences.pillResetMonitorStrategy,
   ),
   alwaysRequestAdminOnStartup: orFalse(preferences.alwaysRequestAdminOnStartup),
+  inDictationStyleSwitchingEnabled: orFalse(
+    preferences.inDictationStyleSwitchingEnabled,
+  ),
+  hallucinationFilterEnabled: valueOr(preferences.hallucinationFilterEnabled, true),
+  reviewBeforeInsert: orNull(preferences.reviewBeforeInsert),
+  agentEnabledTools: parseAgentEnabledTools(preferences.agentEnabledTools),
+  agentMaxIterations: normalizeAgentMaxIterations(preferences.agentMaxIterations),
+  agentPermissionTimeoutMs: normalizeAgentPermissionTimeout(
+    preferences.agentPermissionTimeoutMs,
+  ),
 });
 
 export const toLocalPreferences = (
@@ -261,6 +271,14 @@ export const toLocalPreferences = (
     preferences.pillResetMonitorStrategy,
   ),
   alwaysRequestAdminOnStartup: orFalse(preferences.alwaysRequestAdminOnStartup),
+  inDictationStyleSwitchingEnabled: preferences.inDictationStyleSwitchingEnabled,
+  hallucinationFilterEnabled: preferences.hallucinationFilterEnabled,
+  reviewBeforeInsert: nullableValue(preferences.reviewBeforeInsert),
+  agentEnabledTools: jsonValue(preferences.agentEnabledTools),
+  agentMaxIterations: normalizeAgentMaxIterations(preferences.agentMaxIterations),
+  agentPermissionTimeoutMs: normalizeAgentPermissionTimeout(
+    preferences.agentPermissionTimeoutMs,
+  ),
 });
 
 export abstract class BaseUserPreferencesRepo extends BaseRepo {
