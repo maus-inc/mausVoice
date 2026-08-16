@@ -8,31 +8,37 @@
  * styling regression, and the AssemblyAI/xAI/Aldea/Azure connect-src gaps).
  *
  * Two layers of protection:
- *  1. A mechanical scan of the full `apps/desktop/src` and
- *     `packages/voice-ai/src` trees for `http(s)://` / `ws(s)://` host
- *     literals in files that use the bare browser `fetch` / `WebSocket`
- *     (files importing `@tauri-apps/plugin-http` are exempt — that fetch is
- *     routed through Rust and governed by the `http:default` capability,
- *     not the CSP). Hosts that are *not* network targets (openUrl links,
- *     iframe embeds, doc comments) must be explicitly classified in
- *     NON_CONNECT_HOSTS with a reason — an unknown host fails the test so
- *     the decision can never happen by omission.
+ *  1. A mechanical scan of `apps/desktop/src` plus every workspace package's
+ *     `src` tree (globbed from `packages`, never hardcoded, so coverage
+ *     cannot silently shrink when a package is added) for `http(s)://` /
+ *     `ws(s)://` host literals.
+ *     Literals passed to a `@tauri-apps/plugin-http` call are exempt *per
+ *     call site* — that request is executed by Rust and governed by the
+ *     `http:default` capability, not the CSP — while bare `fetch` /
+ *     `WebSocket` literals in the same file are still collected. Hosts that
+ *     are *not* network targets (openUrl links, iframe embeds, doc comments)
+ *     must be explicitly classified in NON_CONNECT_HOSTS (or, when they only
+ *     live outside the scanned sources, KNOWN_NON_SOURCE_REFS) with a
+ *     reason — an unknown host fails the test so the decision can never
+ *     happen by omission.
  *  2. A curated list of hosts that are constructed dynamically at runtime
  *     (e.g. the Azure Speech SDK's region-prefixed websocket endpoints) and
  *     therefore never appear as literals.
  */
-import { readdirSync, readFileSync } from "node:fs";
+import { existsSync, readdirSync, readFileSync } from "node:fs";
 import { join, relative, resolve } from "node:path";
 import { describe, expect, it } from "vitest";
 
 const repoRoot = resolve(__dirname, "../../..");
 
-const tauriConf = JSON.parse(
-  readFileSync(
-    resolve(repoRoot, "apps/desktop/src-tauri/tauri.conf.json"),
-    "utf8",
-  ),
-) as { app?: { security?: { csp?: string | null } } };
+const tauriConfRaw = readFileSync(
+  resolve(repoRoot, "apps/desktop/src-tauri/tauri.conf.json"),
+  "utf8",
+);
+
+const tauriConf = JSON.parse(tauriConfRaw) as {
+  app?: { security?: { csp?: string | null } };
+};
 
 const csp = tauriConf.app?.security?.csp ?? "";
 
@@ -72,19 +78,45 @@ const NON_CONNECT_HOSTS = new Map<string, string>([
   ["maus-inc.github.io", "openUrl link + OpenRouter HTTP-Referer header value"],
   // <iframe> embeds are governed by frame-src, asserted separately below.
   ["www.youtube.com", "iframe embed — validated against frame-src"],
-  ["www.youtube-nocookie.com", "iframe embed — validated against frame-src"],
   // Documentation-only strings.
   ["firebase.google.com", "doc comment URL"],
-  ["schema.tauri.app", "JSON $schema reference"],
+]);
+
+/**
+ * Exempt hosts that are referenced only from files the source scan never
+ * reads (Tauri config, JSON `$schema` keys), so the staleness check below
+ * validates them against `tauri.conf.json` instead of the scanned trees.
+ * Same contract as NON_CONNECT_HOSTS: every entry needs a reason, and a
+ * no-longer-referenced entry fails the test.
+ */
+const KNOWN_NON_SOURCE_REFS = new Map<string, string>([
+  ["schema.tauri.app", "JSON $schema reference in tauri.conf.json"],
+  [
+    "www.youtube-nocookie.com",
+    "frame-src entry in tauri.conf.json — validated against frame-src below",
+  ],
+]);
+
+/** Every host exempt from the connect-src requirement, with its reason. */
+const EXEMPT_HOSTS = new Map<string, string>([
+  ...NON_CONNECT_HOSTS,
+  ...KNOWN_NON_SOURCE_REFS,
 ]);
 
 /** Directory trees scanned for webview-fetched host literals. */
-const SCAN_ROOTS = ["apps/desktop/src", "packages/voice-ai/src"];
+const SCAN_ROOTS = [
+  "apps/desktop/src",
+  // Globbed, not hardcoded: every workspace package the desktop bundle can
+  // pull in is scanned, so adding a package cannot shrink coverage silently.
+  ...readdirSync(resolve(repoRoot, "packages"), { withFileTypes: true })
+    .filter((entry) => entry.isDirectory())
+    .map((entry) => join("packages", entry.name, "src"))
+    .filter((dir) => existsSync(resolve(repoRoot, dir))),
+];
 
-type FoundHost = { scheme: string; host: string; file: string };
-
-const collectHosts = (): FoundHost[] => {
-  const found: FoundHost[] = [];
+/** Absolute paths of the non-test TS/TSX files covered by the scan. */
+const scannedFiles = (): string[] => {
+  const files: string[] = [];
   const walk = (dir: string) => {
     for (const entry of readdirSync(dir, { withFileTypes: true })) {
       const abs = join(dir, entry.name);
@@ -94,22 +126,84 @@ const collectHosts = (): FoundHost[] => {
       }
       if (!entry.isFile()) continue;
       if (!/\.(ts|tsx)$/.test(entry.name)) continue;
+      // Test files are excluded so this file's own exemption literals cannot
+      // vouch for themselves in the staleness check below.
       if (/\.test\.(ts|tsx)$/.test(entry.name)) continue;
-      const source = readFileSync(abs, "utf8");
-      // plugin-http fetch goes through Rust (http:default capability); the
-      // webview CSP does not apply to it.
-      if (source.includes("@tauri-apps/plugin-http")) continue;
-      for (const match of source.matchAll(
-        /(https?|wss?):\/\/([a-z0-9][a-z0-9.-]*[a-z0-9])/gi,
-      )) {
-        const scheme = match[1].toLowerCase();
-        const host = match[2].toLowerCase();
-        if (NON_CONNECT_HOSTS.has(host)) continue;
-        found.push({ scheme, host, file: relative(repoRoot, abs) });
-      }
+      files.push(abs);
     }
   };
   for (const root of SCAN_ROOTS) walk(resolve(repoRoot, root));
+  return files;
+};
+
+/** Local binding names `@tauri-apps/plugin-http` is imported under. */
+const pluginHttpBindings = (source: string): string[] => {
+  const bindings: string[] = [];
+  for (const match of source.matchAll(
+    /import\s*\{([^}]*)\}\s*from\s*["']@tauri-apps\/plugin-http["']/g,
+  )) {
+    for (const specifier of match[1].split(",")) {
+      const [imported, alias] = specifier.trim().split(/\s+as\s+/);
+      const local = (alias ?? imported).trim();
+      if (local) bindings.push(local);
+    }
+  }
+  return bindings;
+};
+
+/**
+ * Character ranges spanning the argument list of every plugin-http call in
+ * `source`. Requests made there are executed by Rust under the `http:default`
+ * capability, so the CSP does not apply to them — but only to *those*
+ * arguments, which is why the exemption is a range and not the whole file.
+ * The paren scan is naive about parens inside string literals; a range cut
+ * short only widens what gets checked, which is the safe direction.
+ */
+const pluginHttpArgumentRanges = (source: string): [number, number][] => {
+  const ranges: [number, number][] = [];
+  for (const binding of pluginHttpBindings(source)) {
+    const calls = new RegExp(
+      `\\b${binding.replace(/\W/g, "\\$&")}\\s*\\(`,
+      "g",
+    );
+    for (const call of source.matchAll(calls)) {
+      const open = (call.index ?? 0) + call[0].length - 1;
+      let depth = 0;
+      for (let i = open; i < source.length; i += 1) {
+        if (source[i] === "(") depth += 1;
+        else if (source[i] === ")") {
+          depth -= 1;
+          if (depth === 0) {
+            ranges.push([open, i]);
+            break;
+          }
+        }
+      }
+    }
+  }
+  return ranges;
+};
+
+type FoundHost = { scheme: string; host: string; file: string };
+
+const collectHosts = (): FoundHost[] => {
+  const found: FoundHost[] = [];
+  for (const abs of scannedFiles()) {
+    const source = readFileSync(abs, "utf8");
+    const pluginHttpArgs = pluginHttpArgumentRanges(source);
+    for (const match of source.matchAll(
+      /(https?|wss?):\/\/([a-z0-9][a-z0-9.-]*[a-z0-9])/gi,
+    )) {
+      const index = match.index ?? 0;
+      if (pluginHttpArgs.some(([start, end]) => index > start && index < end)) {
+        continue;
+      }
+      const scheme = match[1].toLowerCase();
+      const host = match[2].toLowerCase();
+      if (EXEMPT_HOSTS.has(host)) continue;
+      found.push({ scheme, host, file: relative(repoRoot, abs) });
+    }
+  }
   return found;
 };
 
@@ -132,7 +226,8 @@ describe("production CSP connect-src covers every webview-fetched provider host"
         `\nAdd the host to connect-src, route the call through ` +
         `@tauri-apps/plugin-http and extend the http:default capability, or — ` +
         `only if it is genuinely not a connect-src target (openUrl link, ` +
-        `iframe, comment) — classify it in NON_CONNECT_HOSTS with a reason.`,
+        `iframe, comment) — classify it in NON_CONNECT_HOSTS (or ` +
+        `KNOWN_NON_SOURCE_REFS) with a reason.`,
     ).toEqual([]);
   });
 
@@ -181,27 +276,28 @@ describe("production CSP connect-src covers every webview-fetched provider host"
     }
   });
 
-  it("keeps NON_CONNECT_HOSTS entries honest (no stale exemptions)", () => {
-    // Every exempted host must still appear somewhere in the scanned trees;
-    // a stale entry would silently mask a future genuine fetch to that host.
-    const allSources: string[] = [];
-    const walk = (dir: string) => {
-      for (const entry of readdirSync(dir, { withFileTypes: true })) {
-        const abs = join(dir, entry.name);
-        if (entry.isDirectory()) walk(abs);
-        else if (/\.(ts|tsx)$/.test(entry.name)) {
-          allSources.push(readFileSync(abs, "utf8"));
-        }
-      }
-    };
-    for (const root of SCAN_ROOTS) walk(resolve(repoRoot, root));
-    const corpus = allSources.join("\n");
+  it("keeps host exemptions honest (no stale entries)", () => {
+    // Every exempted host must still be referenced where its reason claims:
+    // NON_CONNECT_HOSTS in the scanned (non-test) sources, and
+    // KNOWN_NON_SOURCE_REFS in tauri.conf.json. A stale entry would silently
+    // mask a future genuine fetch to that host.
+    const corpus = scannedFiles()
+      .map((abs) => readFileSync(abs, "utf8"))
+      .join("\n");
     const stale = [...NON_CONNECT_HOSTS.keys()].filter(
-      (host) => host !== "schema.tauri.app" && !corpus.includes(host),
+      (host) => !corpus.includes(host),
     );
     expect(
       stale,
-      `NON_CONNECT_HOSTS entries no longer referenced anywhere — remove them:\n  ${stale.join("\n  ")}`,
+      `NON_CONNECT_HOSTS entries no longer referenced in the scanned sources — remove them (or move them to KNOWN_NON_SOURCE_REFS):\n  ${stale.join("\n  ")}`,
+    ).toEqual([]);
+
+    const staleNonSource = [...KNOWN_NON_SOURCE_REFS.keys()].filter(
+      (host) => !tauriConfRaw.includes(host),
+    );
+    expect(
+      staleNonSource,
+      `KNOWN_NON_SOURCE_REFS entries no longer referenced in tauri.conf.json — remove them:\n  ${staleNonSource.join("\n  ")}`,
     ).toEqual([]);
   });
 });
