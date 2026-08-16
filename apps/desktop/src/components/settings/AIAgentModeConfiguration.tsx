@@ -128,8 +128,10 @@ export const AIAgentModeConfiguration = () => {
                 <Switch
                   size="small"
                   checked={isToolEnabled(toolInfo.id)}
-                  inputProps={{
-                    "aria-labelledby": `agent-tool-label-${toolInfo.id}`,
+                  slotProps={{
+                    input: {
+                      "aria-labelledby": `agent-tool-label-${toolInfo.id}`,
+                    },
                   }}
                   onChange={(event) =>
                     handleToolToggle(toolInfo.id, event.target.checked)
