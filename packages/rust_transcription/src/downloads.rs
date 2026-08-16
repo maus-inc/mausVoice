@@ -140,7 +140,11 @@ impl DownloadRegistry {
             .iter()
             .map(|artifact| artifact.destination.clone())
             .collect::<Vec<_>>();
-        if let Some(existing_size) = existing_artifact_set_size(&artifact_paths).await {
+        // A bundle already on disk is only reported as completed when every
+        // artifact still satisfies the current integrity policy (size cap plus
+        // the pinned digest). Files written by an older build under mutable
+        // `resolve/main/` URLs are therefore re-verified instead of trusted.
+        if let Some(existing_size) = admitted_artifact_set_size(&artifacts).await {
             let job_id = Uuid::new_v4();
             let mut store = self.inner.lock().await;
             let record = DownloadJobRecord {
@@ -525,10 +529,16 @@ impl DownloadRegistry {
             DownloadCommand::Run => {}
         }
 
-        if let Some(existing_size) = existing_model_file_size(&artifact.destination).await {
-            return Ok(ArtifactDownloadOutcome::Completed {
-                bytes: existing_size,
-            });
+        // An artifact that is already present is a shortcut, never an exemption:
+        // it must pass exactly the size + SHA-256 gate enforced on a fresh
+        // download. Anything else is discarded and re-fetched.
+        if existing_model_file_size(&artifact.destination).await.is_some() {
+            if let Some(existing_size) = admitted_artifact_size(artifact).await {
+                return Ok(ArtifactDownloadOutcome::Completed {
+                    bytes: existing_size,
+                });
+            }
+            discard_rejected_artifact(&artifact.destination, Some(job_id)).await;
         }
 
         if let Some(parent) = artifact.destination.parent() {
@@ -976,19 +986,79 @@ fn response_resume_validator(response: &reqwest::Response) -> Option<String> {
         .map(str::to_owned)
 }
 
-async fn existing_model_file_size(path: &PathBuf) -> Option<u64> {
+async fn existing_model_file_size(path: &Path) -> Option<u64> {
     match tokio::fs::metadata(path).await {
         Ok(metadata) if metadata.is_file() && metadata.len() > 0 => Some(metadata.len()),
         _ => None,
     }
 }
 
-async fn existing_artifact_set_size(paths: &[PathBuf]) -> Option<u64> {
-    let mut total = 0_u64;
-    for path in paths {
-        total = total.checked_add(existing_model_file_size(path).await?)?;
+/// Admission gate for an artifact that is already present on disk.
+///
+/// Returns `true` only when the existing file satisfies the same policy the
+/// fresh-download path enforces: it is within `max_bytes` **and**, when a digest
+/// is pinned, its SHA-256 matches. Without this gate an artifact fetched by an
+/// older build (mutable `resolve/main/` URL, no digest policy) would be trusted
+/// forever and would silently bypass the pinning trust boundary.
+async fn artifact_admitted(destination: &Path, max_bytes: u64, sha256: Option<&str>) -> bool {
+    let Some(size) = existing_model_file_size(destination).await else {
+        return false;
+    };
+    if size > max_bytes {
+        return false;
     }
-    Some(total)
+    match sha256 {
+        Some(expected) => verify_file_sha256(destination, expected).await.is_ok(),
+        None => true,
+    }
+}
+
+/// Size of a pre-existing artifact that passed the admission gate.
+async fn admitted_artifact_size(artifact: &DownloadArtifact) -> Option<u64> {
+    let size = existing_model_file_size(&artifact.destination).await?;
+    if artifact_admitted(&artifact.destination, artifact.max_bytes, artifact.sha256).await {
+        Some(size)
+    } else {
+        None
+    }
+}
+
+/// Total size of a complete artifact set, but only when **every** artifact
+/// passes the admission gate. Rejected files are removed so the download path
+/// cannot mistake them for completed artifacts; artifacts that passed the gate
+/// are preserved so a partially valid bundle is not re-downloaded in full.
+async fn admitted_artifact_set_size(artifacts: &[DownloadArtifact]) -> Option<u64> {
+    let mut total = Some(0_u64);
+    for artifact in artifacts {
+        match admitted_artifact_size(artifact).await {
+            Some(size) => {
+                total = total.and_then(|sum| sum.checked_add(size));
+            }
+            None => {
+                // Missing, oversized, or digest-mismatched. Removal is a no-op
+                // for an artifact that was simply never downloaded.
+                discard_rejected_artifact(&artifact.destination, None).await;
+                total = None;
+            }
+        }
+    }
+    total
+}
+
+/// Delete an artifact that failed the admission gate, plus the job-scoped
+/// partial download and resume validator when the caller owns a job. The
+/// artifact is then re-downloaded from byte zero under the current policy.
+async fn discard_rejected_artifact(destination: &Path, job_id: Option<Uuid>) {
+    let _ = tokio::fs::remove_file(destination).await;
+    let Some(job_id) = job_id else {
+        return;
+    };
+    if let Ok(temp_path) = temporary_artifact_path(destination, job_id) {
+        if let Ok(validator_path) = temporary_validator_path(&temp_path) {
+            let _ = tokio::fs::remove_file(validator_path).await;
+        }
+        let _ = tokio::fs::remove_file(temp_path).await;
+    }
 }
 
 fn temporary_artifact_path(destination: &Path, job_id: Uuid) -> Result<PathBuf, String> {
@@ -1480,5 +1550,69 @@ mod tests {
         assert_eq!(latest.status, DownloadJobStatus::Failed);
         assert!(primary.exists());
         assert!(!auxiliary.exists());
+    }
+
+    #[tokio::test]
+    async fn pre_existing_artifact_must_pass_size_and_digest_gate() {
+        let temp_dir = tempfile::tempdir().unwrap();
+        let destination = temp_dir.path().join("model.int8.onnx");
+        let bytes = b"pre-existing artifact bytes";
+        tokio::fs::write(&destination, bytes).await.unwrap();
+        let digest = format!("{:x}", Sha256::digest(bytes));
+
+        // Matching digest and size within the cap is the only admitted case.
+        assert!(artifact_admitted(&destination, 1_024, Some(&digest)).await);
+        assert!(artifact_admitted(&destination, 1_024, None).await);
+        // Digest mismatch: a file downloaded before the pinning policy existed.
+        assert!(!artifact_admitted(&destination, 1_024, Some(&"a".repeat(64))).await);
+        // Oversized relative to the per-artifact cap.
+        assert!(!artifact_admitted(&destination, 4, None).await);
+        // Missing files are never admitted.
+        assert!(
+            !artifact_admitted(&temp_dir.path().join("absent.onnx"), 1_024, None).await
+        );
+    }
+
+    #[tokio::test]
+    async fn pre_existing_bundle_with_wrong_digest_is_rejected_and_removed() {
+        let temp_dir = tempfile::tempdir().unwrap();
+        let pinned = temp_dir.path().join("encoder-model.int8.onnx");
+        let unpinned = temp_dir.path().join("vocab.txt");
+        tokio::fs::write(&pinned, b"legacy unverified graph")
+            .await
+            .unwrap();
+        tokio::fs::write(&unpinned, b"legacy vocabulary")
+            .await
+            .unwrap();
+
+        let artifacts = vec![
+            DownloadArtifact::new_verified(
+                "http://127.0.0.1:0/encoder-model.int8.onnx".to_string(),
+                pinned.clone(),
+                MAX_MODEL_ARTIFACT_BYTES,
+                Some("0000000000000000000000000000000000000000000000000000000000000000"),
+            ),
+            DownloadArtifact::new(
+                "http://127.0.0.1:0/vocab.txt".to_string(),
+                unpinned.clone(),
+            ),
+        ];
+        assert_eq!(admitted_artifact_set_size(&artifacts).await, None);
+        // The digest-mismatched artifact is dropped so it is re-downloaded, and
+        // the artifact that passed the gate is preserved.
+        assert!(!pinned.exists());
+        assert!(unpinned.exists());
+
+        // The registry must not publish the stale bundle as completed either.
+        let registry = DownloadRegistry::default();
+        let snapshot = registry
+            .start_or_get_active(
+                WhisperModel::ParakeetTdt06B,
+                artifacts,
+                reqwest::Client::new(),
+            )
+            .await
+            .unwrap();
+        assert_ne!(snapshot.status, DownloadJobStatus::Completed);
     }
 }
