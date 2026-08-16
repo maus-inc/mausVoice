@@ -5,7 +5,7 @@ sidebar:
   order: 9
 ---
 
-mausVoice updates itself from GitHub Releases. The app reads a signed manifest published alongside each stable release, verifies the signature of the download against a public key compiled into the app, and only then replaces itself. An artifact that fails verification is discarded, so a tampered or mirrored download cannot be installed.
+mausVoice updates itself from GitHub Releases. The app reads a manifest published alongside each stable release; the manifest references signed updater downloads, and mausVoice verifies each download's signature against a public key compiled into the app before replacing itself. An artifact that fails verification is discarded, so a tampered or mirrored download cannot be installed.
 
 ## How the app checks
 
@@ -32,7 +32,7 @@ Homebrew users can also run `brew upgrade --cask mausvoice-desktop`. The tap is 
 
 ## Release channels
 
-There is a single stable channel. Pre-releases are published to GitHub with installers so you can download and test them deliberately, but they are never served to the updater and never pushed to the Homebrew tap, so a pre-release cannot arrive on your machine on its own. Treat a pre-release as an unsigned test build: read the notes, and back up important history before installing one.
+There is a single stable channel. Pre-releases are published to GitHub with installers so you can download and test them deliberately, but they are never served to the updater and never pushed to the Homebrew tap, so a pre-release cannot arrive on your machine on its own. A pre-release build is not OS-code-signed (no Apple notary, no Windows codesign), even when the updater bundles it references are signed: read the notes, and back up important history before installing one.
 
 ## When updating fails
 

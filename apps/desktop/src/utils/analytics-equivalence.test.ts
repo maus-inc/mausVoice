@@ -6,6 +6,7 @@ import {
   buildPeopleProperties,
   buildSuperProperties,
   CURRENT_COHORT,
+  type AnalyticsIdentitySources,
 } from "./analytics.utils";
 import { getEffectivePillVisibility } from "./user.utils";
 
@@ -15,14 +16,18 @@ import { getEffectivePillVisibility } from "./user.utils";
 // combination of plan, trial, auth, and onboarding state. If a future change
 // alters what we send to Mixpanel, this fails loudly rather than silently
 // corrupting a funnel.
-type Inputs = {
+//
+// The identity-source shapes are derived from the production
+// `AnalyticsIdentitySources` type so this tracks the real builder contract.
+// The only test-specific pieces are the legacy `currentUserId`/`prefs` field
+// names (the production builder calls them `userId`/`preferences`) and the
+// local auth contact.
+type Inputs = Pick<AnalyticsIdentitySources, "platform" | "locale"> & {
   currentUserId: string | null;
-  member: { plan?: "free" | "pro" | null; isOnTrial?: boolean | null } | null;
-  localUser: { onboarded?: boolean | null; onboardedAt?: string | null } | null;
-  prefs: { dictationPillVisibility?: string | null } | null;
+  member: AnalyticsIdentitySources["member"];
+  localUser: AnalyticsIdentitySources["localUser"];
+  prefs: AnalyticsIdentitySources["preferences"];
   auth: { email?: string | null; displayName?: string | null } | null;
-  platform: string;
-  locale: string;
 };
 
 const original = ({

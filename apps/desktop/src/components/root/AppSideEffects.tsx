@@ -121,10 +121,6 @@ const AUTH_READY_TIMEOUT_MS = 4_000;
 // Cadence of the background update poll.
 const UPDATE_CHECK_INTERVAL_MS = hoursToMilliseconds(6);
 
-// 10 minutes
-
-// 60 seconds
-
 /**
  * Fingerprint of every state input that decides which combos the native
  * listener grabs (the combo maps themselves plus everything `isActionGrabbable`
