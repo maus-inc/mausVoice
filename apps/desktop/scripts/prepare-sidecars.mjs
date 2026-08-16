@@ -6,7 +6,6 @@ import {
   copyFileSync,
   existsSync,
   mkdirSync,
-  readFileSync,
   readdirSync,
 } from "node:fs";
 import { dirname, isAbsolute, join, resolve } from "node:path";
@@ -99,13 +98,20 @@ function refreshSidecarLockfile() {
     repoRoot,
   );
 
-  const generatedLock = readFileSync(
-    join(repoRoot, "packages", "rust_transcription", "Cargo.lock"),
-    "utf8",
+  const lockPath = join(
+    repoRoot,
+    "packages",
+    "rust_transcription",
+    "Cargo.lock",
   );
-  console.log("[sidecar-lock-export] BEGIN");
-  console.log(Buffer.from(generatedLock, "utf8").toString("base64"));
-  console.log("[sidecar-lock-export] END");
+  const lockDiff = spawnSync(
+    "git",
+    ["diff", "--unified=0", "--", "packages/rust_transcription/Cargo.lock"],
+    { cwd: repoRoot, encoding: "utf8" },
+  ).stdout;
+  console.log("[sidecar-lock-diff] BEGIN");
+  console.log(lockDiff || "(no diff)");
+  console.log("[sidecar-lock-diff] END");
 
   const targetSegments = buildTarget ? [buildTarget] : [];
   const bundleDir = join(
@@ -117,7 +123,7 @@ function refreshSidecarLockfile() {
   const artifactExtension = getLockArtifactExtension(targetTriple);
   mkdirSync(bundleDir, { recursive: true });
   copyFileSync(
-    join(repoRoot, "packages", "rust_transcription", "Cargo.lock"),
+    lockPath,
     join(bundleDir, `generated-sidecar-lock.${artifactExtension}`),
   );
 }
