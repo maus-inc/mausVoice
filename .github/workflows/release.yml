@@ -275,9 +275,10 @@ jobs:
 
       # The updater trust anchor lives entirely in repository secrets. When
       # UPDATER_PRIVATE_KEY is absent the build stays exactly as it was before
-      # signing existed: unsigned installers, no updater artifacts. A prerelease
-      # can still publish like that, but a stable release is blocked at the
-      # manifest-eligibility gate (clients would otherwise 404 on latest.json).
+      # signing existed: unsigned installers, no updater artifacts. The publish
+      # job then degrades to the documented fail-safe — unsigned installers with
+      # no latest.json — for both prereleases and stable releases, so forks and
+      # CI can still cut a release without the secrets configured.
       - name: Resolve updater signing mode
         id: signing
         shell: bash
@@ -290,7 +291,7 @@ jobs:
             echo "Updater signing enabled."
           else
             echo "enabled=false" >> "$GITHUB_OUTPUT"
-            echo "::warning::UPDATER_PRIVATE_KEY/UPDATER_PUBLIC_KEY are not configured - building unsigned installers. Prereleases will publish without an update manifest; a stable release will be blocked at the manifest-eligibility gate."
+            echo "::warning::UPDATER_PRIVATE_KEY/UPDATER_PUBLIC_KEY are not configured - building unsigned installers. The publish job will skip latest.json (fail-safe), so clients will not receive updates until a signed release is published."
           fi
 
       - name: Enable updater artifacts for the signed build
@@ -382,12 +383,12 @@ jobs:
           echo "body_file=$RUNNER_TEMP/release-body.md" >> "$GITHUB_OUTPUT"
 
       # The update channel is derived from the version itself, not the
-      # dispatcher checkbox, so a prerelease can never reach stable clients and
-      # a stable release always publishes a signed manifest. GitHub marks a
-      # release "latest" from its prerelease flag alone, and clients fetch
-      # latest.json from /releases/latest/download/ — so an unsigned stable
-      # release would 404 every installed client and permanently disable
-      # updates. Require signing secrets for stable; fail closed otherwise.
+      # dispatcher checkbox, so a prerelease can never reach stable clients.
+      # When the UPDATER_* signing secrets are absent the run degrades to the
+      # documented fail-safe: unsigned installers are published but no
+      # latest.json is emitted, so clients simply see "no update" until a
+      # signed release ships. This keeps forks and CI that run a stable release
+      # without the secrets working, rather than hard-failing the publish.
       - name: Resolve updater manifest eligibility
         id: manifest
         shell: bash
@@ -415,8 +416,14 @@ jobs:
             exit 0
           fi
           if [ -z "$UPDATER_PRIVATE_KEY" ] || [ -z "$UPDATER_PUBLIC_KEY" ]; then
-            echo "::error::UPDATER_PRIVATE_KEY/UPDATER_PUBLIC_KEY are not configured. A stable release must publish a signed latest.json, or installed clients will 404 and lose the ability to update. Configure the UPDATER_* secrets or run this as a prerelease." >&2
-            exit 1
+            # Fail-safe: without the signing secrets we cannot publish a signed
+            # manifest. A stable release still publishes unsigned installers, but
+            # no latest.json — matching the pre-PR "no updater channel" behaviour.
+            # Clients pointing at /releases/latest/download/latest.json will find
+            # no update until a signed release is published.
+            echo "eligible=false" >> "$GITHUB_OUTPUT"
+            echo "::warning::UPDATER_PRIVATE_KEY/UPDATER_PUBLIC_KEY are not configured - publishing unsigned installers without a signed latest.json. Clients will not receive updates until a signed release is published."
+            exit 0
           fi
           echo "eligible=true" >> "$GITHUB_OUTPUT"
 
