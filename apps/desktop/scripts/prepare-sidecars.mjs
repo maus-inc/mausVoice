@@ -114,11 +114,7 @@ function refreshSidecarLockfile() {
     buildProfile,
     "bundle",
   );
-  const artifactExtension = isWindowsTarget(targetTriple)
-    ? "exe"
-    : isAppleTarget(targetTriple)
-      ? "app.tar.gz"
-      : "deb";
+  const artifactExtension = getLockArtifactExtension(targetTriple);
   mkdirSync(bundleDir, { recursive: true });
   copyFileSync(
     join(repoRoot, "packages", "rust_transcription", "Cargo.lock"),
@@ -241,6 +237,16 @@ function onnxRuntimeLibraryName(target) {
     return "libonnxruntime.dylib";
   }
   return "libonnxruntime.so";
+}
+
+function getLockArtifactExtension(target) {
+  if (isWindowsTarget(target)) {
+    return "exe";
+  }
+  if (isAppleTarget(target)) {
+    return "app.tar.gz";
+  }
+  return "deb";
 }
 
 function mirrorCpuSidecarAsGpu(cpuSidecarPath) {
