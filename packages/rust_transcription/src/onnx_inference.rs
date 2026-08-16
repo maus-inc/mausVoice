@@ -318,9 +318,11 @@ fn normalize_sense_voice_language(language: Option<&str>) -> String {
         .next()
         .unwrap_or(language)
         .to_ascii_lowercase();
-    match language.as_str() {
-        "zh" | "en" | "ja" | "ko" | "yue" => language,
-        _ => "auto".to_string(),
+    let is_supported = matches!(language.as_str(), "zh" | "en" | "ja" | "ko" | "yue");
+    if is_supported {
+        language
+    } else {
+        "auto".to_string()
     }
 }
 
