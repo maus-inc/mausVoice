@@ -652,16 +652,21 @@ impl DownloadRegistry {
                 item = stream.next() => {
                     match item {
                         Some(Ok(chunk)) => {
-                            file.write_all(&chunk)
-                                .await
-                                .map_err(|err| format!("failed to write artifact: {err}"))?;
-                            downloaded = downloaded.saturating_add(chunk.len() as u64);
-                            if downloaded > artifact.max_bytes {
+                            // Enforce the cap *before* writing so an oversized
+                            // chunk is never buffered to disk. Incrementing
+                            // after `write_all` would flush the whole chunk
+                            // first and only detect the breach afterwards.
+                            let next = downloaded.saturating_add(chunk.len() as u64);
+                            if next > artifact.max_bytes {
                                 drop(file);
                                 let _ = tokio::fs::remove_file(&temp_path).await;
                                 let _ = tokio::fs::remove_file(&validator_path).await;
                                 return Err(format!("artifact exceeds {} byte limit", artifact.max_bytes));
                             }
+                            file.write_all(&chunk)
+                                .await
+                                .map_err(|err| format!("failed to write artifact: {err}"))?;
+                            downloaded = next;
                             self.set_progress(
                                 job_id,
                                 generation,
