@@ -130,10 +130,12 @@ export const finalizeStreamingSession = async ({
   session,
   providerLabel,
   log,
+  logError = console.error,
 }: {
-  session: { finalize: () => Promise<string>; cleanup: () => void } | null;
+  session: { finalize: () => Promise<string> } | null;
   providerLabel: string;
   log: typeof console.log;
+  logError?: (message: string, ...args: unknown[]) => void;
 }): Promise<TranscriptionSessionResult> => {
   if (!session) {
     return sessionMissingResult(providerLabel);
@@ -161,7 +163,7 @@ export const finalizeStreamingSession = async ({
       warnings: [],
     };
   } catch (error) {
-    log(`[${providerLabel}] Failed to finalize session:`, error);
+    logError(`[${providerLabel}] Failed to finalize session:`, error);
     return {
       rawTranscript: null,
       metadata: {
