@@ -58,7 +58,7 @@ const relaunch = async (): Promise<void> => {
 };
 
 const GITHUB_RELEASE_DOWNLOAD_BASE =
-  "https://github.com/mausvoice/mausvoice/releases/download";
+  "https://github.com/maus-inc/mausVoice/releases/download";
 const RELEASE_TAG_REGEX = /\/releases\/download\/([^/]+)\//;
 
 export type AvailableUpdateInfo = {

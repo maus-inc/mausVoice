@@ -4,7 +4,6 @@ export type UpdaterStatus =
 export type UpdaterState = {
   dialogOpen: boolean;
   status: UpdaterStatus;
-  lastUpdateVersion: string | null;
   currentVersion: string | null;
   availableVersion: string | null;
   releaseDate: string | null;
@@ -16,12 +15,17 @@ export type UpdaterState = {
   downloadProgress: number | null;
   errorMessage: string | null;
   dismissedUntil: number | null;
+  lastCheckedAt: number | null;
+  /**
+   * True once a user-initiated check completed and found nothing. Cleared by
+   * the next check so the "You're up to date" confirmation does not linger.
+   */
+  upToDateConfirmed: boolean;
 };
 
 export const INITIAL_UPDATER_STATE: UpdaterState = {
   dialogOpen: false,
   status: "idle",
-  lastUpdateVersion: null,
   currentVersion: null,
   availableVersion: null,
   releaseDate: null,
@@ -33,4 +37,6 @@ export const INITIAL_UPDATER_STATE: UpdaterState = {
   downloadProgress: null,
   errorMessage: null,
   dismissedUntil: null,
+  lastCheckedAt: null,
+  upToDateConfirmed: false,
 };

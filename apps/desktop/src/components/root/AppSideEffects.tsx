@@ -2,7 +2,6 @@ import { getVersion } from "@tauri-apps/api/app";
 import { invoke } from "@tauri-apps/api/core";
 import { Member, Nullable, Term, User, UserPreferences } from "@maus-inc/types";
 import { getRec, listify } from "@maus-inc/utilities";
-import dayjs from "dayjs";
 import { isEqual } from "lodash-es";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useIntl } from "react-intl";
@@ -16,7 +15,6 @@ import {
 import { handleRemoteFinalTextReceived } from "../../actions/remote-transcript.actions";
 import {
   checkForAppUpdates,
-  dismissUpdateDialog,
   installAvailableUpdate,
 } from "../../actions/updater.actions";
 import {
@@ -51,7 +49,13 @@ import {
 import { getAppState, produceAppState, useAppStore } from "../../store";
 import { AuthUser } from "../../types/auth.types";
 import { OverlayPhase } from "../../types/overlay.types";
-import { CURRENT_COHORT, getMixpanel } from "../../utils/analytics.utils";
+import {
+  buildAnalyticsIdentity,
+  buildFirstTouchProperties,
+  buildPeopleProperties,
+  buildSuperProperties,
+  getMixpanel,
+} from "../../utils/analytics.utils";
 import { registerMembers, registerUsers } from "../../utils/app.utils";
 import { getIsDevMode } from "../../utils/env.utils";
 import { createId } from "../../utils/id.utils";
@@ -63,7 +67,7 @@ import { getLogger, initLogging } from "../../utils/log.utils";
 import { sendPillFlashMessage } from "../../utils/overlay.utils";
 import { isPermissionAuthorized } from "../../utils/permission.utils";
 import { getPlatform } from "../../utils/platform.utils";
-import { minutesToMilliseconds } from "../../utils/time.utils";
+import { hoursToMilliseconds } from "../../utils/time.utils";
 import { buildTrayLanguageMenuModel } from "../../utils/tray-language.utils";
 import {
   getLocalizedPillMenuLabel,
@@ -114,9 +118,8 @@ type RemoteFinalTextReceivedPayload = {
 // Timeout for Firebase Auth initialization.
 const AUTH_READY_TIMEOUT_MS = 4_000;
 
-// 10 minutes
-
-// 60 seconds
+// Cadence of the background update poll.
+const UPDATE_CHECK_INTERVAL_MS = hoursToMilliseconds(6);
 
 /**
  * Fingerprint of every state input that decides which combos the native
@@ -220,7 +223,6 @@ export const AppSideEffects = () => {
   // Tracks whether we've already notified about the current listener-failure episode, so the
   // 30s Rust slow-retry churn (failed -> connected -> failed) doesn't re-toast every cycle.
   const listenerFailureNotifiedRef = useRef(false);
-  const updateInitializedRef = useRef(false);
   const versionData = useAsyncData(getVersion, []);
   const userId = useAppStore((state) => state.auth?.uid ?? "");
   const initialized = useAppStore((state) => state.initialized);
@@ -551,25 +553,33 @@ export const AppSideEffects = () => {
       mp.reset();
     }
 
-    const profile = buildMixpanelProfile({
-      auth,
+    const identity = buildAnalyticsIdentity({
+      userId: currentUserId,
       member,
       localUser,
-      prefs,
-      currentUserId,
+      preferences: prefs,
+      platform: getPlatform(),
+      locale: detectLocale(),
     });
 
     if (currentUserId && currentUserId !== prevUserId) {
       mp.identify(currentUserId);
+      const firstTouch = buildFirstTouchProperties(identity);
       mp.people.set_once({
         $created: new Date().toISOString(),
-        ...profile.initial,
+        ...firstTouch,
       });
-      mp.register_once({ ...profile.initial });
+      mp.register_once(firstTouch);
     }
 
-    mp.people.set(profile.people);
-    mp.register(profile.register);
+    mp.people.set(
+      buildPeopleProperties(identity, {
+        email: auth?.email,
+        displayName: auth?.displayName,
+      }),
+    );
+
+    mp.register(buildSuperProperties(identity));
 
     if (versionData.state === "success") {
       mp.register({
@@ -642,22 +652,19 @@ export const AppSideEffects = () => {
     },
   });
 
-  // check for app updates every minute
-  useIntervalAsync(
-    minutesToMilliseconds(1),
-    async () => {
-      if (!updateInitializedRef.current) {
-        dismissUpdateDialog();
-        updateInitializedRef.current = true;
-      }
+  // Background update poll. Releases land a few times a year, so a slow
+  // cadence is plenty; the Settings "Check now" button covers impatience.
+  useIntervalAsync(UPDATE_CHECK_INTERVAL_MS, async () => {
+    // Dev builds run against an unsigned local bundle the updater endpoint
+    // knows nothing about, so a check can only ever produce noise.
+    if (getIsDevMode()) {
+      return;
+    }
 
-      const available = await checkForAppUpdates();
-      invoke("set_menu_icon", {
-        variant: available ? "update" : "default",
-      }).catch(console.error);
-    },
-    [],
-  );
+    // The action syncs the tray badge itself, so a manual check from Settings
+    // updates it too rather than waiting for the next poll.
+    await checkForAppUpdates();
+  }, []);
 
   useToastAction(async (payload) => {
     if (payload.action === "open_agent_settings") {
