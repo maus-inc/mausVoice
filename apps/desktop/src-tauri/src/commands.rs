@@ -2608,7 +2608,6 @@ const ALLOWED_COMMANDS: &[AllowedCommand] = &[
     AllowedCommand { binary: "ls", fixed_args: &[] },
     AllowedCommand { binary: "pwd", fixed_args: &[] },
     AllowedCommand { binary: "echo", fixed_args: &[] },
-    AllowedCommand { binary: "cat", fixed_args: &[] },
     AllowedCommand { binary: "which", fixed_args: &[] },
     AllowedCommand { binary: "whoami", fixed_args: &[] },
     AllowedCommand { binary: "date", fixed_args: &[] },
@@ -2649,9 +2648,12 @@ fn is_safe_arg_token(token: &str) -> bool {
 /// Characters that are forbidden inside any argv token passed through
 /// `run_terminal_command`. Blocked as defense-in-depth even though we never
 /// invoke a shell — makes it obvious to model authors that shell
-/// composition is out.
+/// composition is out. `/` is forbidden so an allow-listed reader (e.g. a
+/// hypothetical `cat`) cannot reach arbitrary filesystem paths like
+/// `/etc/passwd` or `~/.ssh/id_rsa`, and `..` path traversal is caught by the
+/// substring check below.
 const TERMINAL_FORBIDDEN_CHARS: &[char] =
-    &[';', '|', '&', '$', '`', '>', '<', '(', ')', '\n', '\r'];
+    &[';', '|', '&', '$', '`', '>', '<', '(', ')', '/', '\n', '\r'];
 
 /// Validate a user-supplied command string against the same rules
 /// `run_terminal_command` enforces. Shared between the command itself and
@@ -2683,6 +2685,11 @@ fn validate_terminal_command_args(
                     "Shell metacharacters are not permitted in command arguments (found {ch:?} in {token:?})"
                 ));
             }
+        }
+        if token.contains("..") {
+            return Err(format!(
+                "Path traversal (..) is not permitted in command arguments (found in {token:?})"
+            ));
         }
     }
 
@@ -2809,6 +2816,18 @@ mod tests {
         assert!(validate_terminal_command_args("echo $(whoami)").is_err());
         assert!(validate_terminal_command_args("echo `whoami`").is_err());
         assert!(validate_terminal_command_args("echo > file").is_err());
+    }
+
+    #[test]
+    fn terminal_command_rejects_path_traversal_in_args() {
+        // Even with an allow-listed binary, path separators and `..` in
+        // arguments must be refused so a reader cannot reach arbitrary files.
+        assert!(validate_terminal_command_args("ls /etc/passwd").is_err());
+        assert!(validate_terminal_command_args("echo /etc/passwd").is_err());
+        assert!(validate_terminal_command_args("cat /etc/passwd").is_err());
+        assert!(validate_terminal_command_args("echo ../../secrets").is_err());
+        assert!(validate_terminal_command_args("echo ..").is_err());
+        assert!(validate_terminal_command_args("ls ~/.ssh/id_rsa").is_err());
     }
 
     #[cfg(not(target_os = "windows"))]
@@ -3608,15 +3627,6 @@ pub fn composer_peek_text(
     state: State<'_, crate::state::FloatingWindowState>,
 ) -> Result<Option<String>, String> {
     state.peek_composer_text(request_id.trim())
-}
-
-#[tauri::command]
-#[specta::specta]
-pub fn composer_take_text(
-    request_id: String,
-    state: State<'_, crate::state::FloatingWindowState>,
-) -> Result<Option<String>, String> {
-    state.take_composer_text(request_id.trim())
 }
 
 #[tauri::command]
