@@ -22,7 +22,7 @@ import {
   filterKnownSilenceHallucinations,
 } from "../utils/string.utils";
 import { getToneIdToUse, VERBATIM_TONE_ID } from "../utils/tone.utils";
-import { getMyUserPreferences } from "../utils/user.utils";
+import { getMyDictationLanguage, getMyUserPreferences } from "../utils/user.utils";
 import { BaseStrategy } from "./base.strategy";
 
 export class DictationStrategy extends BaseStrategy {
@@ -95,7 +95,10 @@ export class DictationStrategy extends BaseStrategy {
     const converted = applySymbolConversions(afterReplacements);
     return getAppState().userPrefs?.hallucinationFilterEnabled === false
       ? converted
-      : filterKnownSilenceHallucinations(converted);
+      : filterKnownSilenceHallucinations(
+          converted,
+          getMyDictationLanguage(getAppState()),
+        );
   }
 
   validateAvailability(): Nullable<StrategyValidationError> {

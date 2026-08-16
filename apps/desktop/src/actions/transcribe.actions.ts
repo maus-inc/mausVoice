@@ -170,7 +170,7 @@ export const transcribeAudio = async ({
   const sanitizedTranscript =
     state.userPrefs?.hallucinationFilterEnabled === false
       ? rawTranscript
-      : filterKnownSilenceHallucinations(rawTranscript);
+      : filterKnownSilenceHallucinations(rawTranscript, dictationLanguage);
 
   if (rawTranscript !== sanitizedTranscript) {
     getLogger().info(

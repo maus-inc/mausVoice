@@ -22,6 +22,15 @@ const normalizeHallucinationText = (text: string): string =>
     .replace(/\s+/g, " ")
     .trim();
 
+const isEnglishLanguage = (language: string): boolean => {
+  const normalized = language.toLowerCase().trim();
+  return (
+    normalized === "en" ||
+    normalized === "english" ||
+    normalized.startsWith("en-")
+  );
+};
+
 /** Return true when a decoded result is a known silence-only hallucination. */
 export const isKnownSilenceHallucination = (text: string): boolean => {
   const normalized = normalizeHallucinationText(text);
@@ -34,9 +43,21 @@ export const isKnownSilenceHallucination = (text: string): boolean => {
  * Remove known hallucination-only lines while preserving surrounding speech.
  * A phrase is removed only when it is a complete line/sentence, never when it
  * appears inside a longer sentence.
+ *
+ * The `KNOWN_SILENCE_HALLUCINATIONS` list is tuned for English. Passing a
+ * non-English `language` disables the filter for that transcription so the
+ * phrases can't be stripped out of genuine speech in other languages. When
+ * callers can't supply a language (legacy paths or tests) the historical
+ * always-filter behavior is preserved by omitting the argument.
  */
-export const filterKnownSilenceHallucinations = (text: string): string => {
+export const filterKnownSilenceHallucinations = (
+  text: string,
+  language?: string,
+): string => {
   if (!text.trim()) return "";
+  if (language !== undefined && !isEnglishLanguage(language)) {
+    return text;
+  }
   if (isKnownSilenceHallucination(text)) return "";
 
   const kept = text
