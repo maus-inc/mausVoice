@@ -23,6 +23,14 @@ on:
     paths:
       - "apps/desktop/**"
       - "apps/windows-installer/**"
+      - "packages/**"
+      - "patches/**"
+      - "package.json"
+      - "pnpm-lock.yaml"
+      - "pnpm-workspace.yaml"
+      - "turbo.json"
+      - ".nvmrc"
+      - ".github/scripts/install-desktop-linux-deps.sh"
       - ".github/workflows/build-desktop.yml"
 
 jobs:
@@ -30,6 +38,8 @@ jobs:
     name: Build Desktop (${{ matrix.label }})
     runs-on: ${{ matrix.os }}
     timeout-minutes: 35
+    permissions:
+      contents: read
     strategy:
       fail-fast: false
       matrix:
@@ -60,13 +70,13 @@ jobs:
             require_gpu_sidecar: false
     steps:
       - name: Checkout source
-        uses: actions/checkout@v5
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v5
 
       - name: Setup pnpm
         uses: pnpm/action-setup@a8198c4bff370c8506180b035930dea56dbd5288 # v5
 
       - name: Setup Node
-        uses: actions/setup-node@v5
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v5
         with:
           node-version-file: .nvmrc
           cache: pnpm
@@ -155,7 +165,7 @@ jobs:
         run: pnpm run tauri build --ci ${{ matrix.args }}
 
       - name: Upload build artifacts
-        uses: actions/upload-artifact@v5
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v5
         with:
           name: mausvoice-${{ matrix.tauri_platform }}
           path: |
