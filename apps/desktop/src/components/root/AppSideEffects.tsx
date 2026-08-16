@@ -2,7 +2,6 @@ import { getVersion } from "@tauri-apps/api/app";
 import { invoke } from "@tauri-apps/api/core";
 import { Member, Nullable, Term, User } from "@maus-inc/types";
 import { getRec, listify } from "@maus-inc/utilities";
-import dayjs from "dayjs";
 import { isEqual } from "lodash-es";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useIntl } from "react-intl";
@@ -50,7 +49,13 @@ import {
 import { getAppState, produceAppState, useAppStore } from "../../store";
 import { AuthUser } from "../../types/auth.types";
 import { OverlayPhase } from "../../types/overlay.types";
-import { CURRENT_COHORT, getMixpanel } from "../../utils/analytics.utils";
+import {
+  buildAnalyticsIdentity,
+  buildFirstTouchProperties,
+  buildPeopleProperties,
+  buildSuperProperties,
+  getMixpanel,
+} from "../../utils/analytics.utils";
 import { registerMembers, registerUsers } from "../../utils/app.utils";
 import { getIsDevMode } from "../../utils/env.utils";
 import { createId } from "../../utils/id.utils";
@@ -482,66 +487,33 @@ export const AppSideEffects = () => {
       mp.reset();
     }
 
-    const isPro = member?.plan === "pro";
-    const isFree = member?.plan === "free";
-    const isCommunity = !currentUserId;
-    const isTrial = member?.isOnTrial ?? false;
-    const isPaying = !isTrial && isPro;
-    const onboardedAt = localUser?.onboardedAt;
-    const daysSinceOnboarded = onboardedAt
-      ? dayjs().diff(dayjs(onboardedAt), "day")
-      : 0;
-    const platform = getPlatform();
-    const locale = detectLocale();
-    const onboarded = localUser?.onboarded ?? false;
-    const planStatus = member?.plan ?? "community";
+    const identity = buildAnalyticsIdentity({
+      userId: currentUserId,
+      member,
+      localUser,
+      preferences: prefs,
+      platform: getPlatform(),
+      locale: detectLocale(),
+    });
 
     if (currentUserId && currentUserId !== prevUserId) {
       mp.identify(currentUserId);
-
+      const firstTouch = buildFirstTouchProperties(identity);
       mp.people.set_once({
         $created: new Date().toISOString(),
-        initialPlatform: platform,
-        initialLocale: locale,
-        initialCohort: CURRENT_COHORT,
+        ...firstTouch,
       });
-
-      mp.register_once({
-        initialPlatform: platform,
-        initialLocale: locale,
-        initialCohort: CURRENT_COHORT,
-      });
+      mp.register_once(firstTouch);
     }
 
-    mp.people.set({
-      $email: auth?.email ?? undefined,
-      $name: auth?.displayName ?? undefined,
-      planStatus,
-      isPro,
-      isFree,
-      isCommunity,
-      isTrial,
-      isPaying,
-      onboarded,
-      onboardedAt: onboardedAt ?? undefined,
-      activeSystemCohort: CURRENT_COHORT,
-      daysSinceOnboarded,
-      pillState: getEffectivePillVisibility(prefs?.dictationPillVisibility),
-    });
+    mp.people.set(
+      buildPeopleProperties(identity, {
+        email: auth?.email,
+        displayName: auth?.displayName,
+      }),
+    );
 
-    mp.register({
-      userId: currentUserId,
-      planStatus,
-      isPro,
-      isFree,
-      isCommunity,
-      platform,
-      locale,
-      onboarded,
-      daysSinceOnboarded,
-      activeSystemCohort: CURRENT_COHORT,
-      pillState: getEffectivePillVisibility(prefs?.dictationPillVisibility),
-    });
+    mp.register(buildSuperProperties(identity));
 
     if (versionData.state === "success") {
       mp.register({
