@@ -68,8 +68,9 @@ type LocalUserPreferences = {
   // per-tool enablement"; an empty list `[]` is an *explicit* deny-all the user
   // chose and must never be coerced into enabling tools; a non-empty list is the
   // explicit allow-set. Do not migrate `null` to an allow-list of every tool id,
-  // or a user's explicit `[]` would be silently overwritten.
-  agentEnabledTools?: Nullable<string[]>;
+  // or a user's explicit `[]` would be silently overwritten. Persisted as a
+  // JSON-encoded string (see `parseAgentEnabledTools` / `jsonValue`).
+  agentEnabledTools?: Nullable<string>;
   agentMaxIterations?: number;
   agentPermissionTimeoutMs?: number;
 };
@@ -211,10 +212,15 @@ export const fromLocalPreferences = (
   inDictationStyleSwitchingEnabled: orFalse(
     preferences.inDictationStyleSwitchingEnabled,
   ),
-  hallucinationFilterEnabled: valueOr(preferences.hallucinationFilterEnabled, true),
+  hallucinationFilterEnabled: valueOr(
+    preferences.hallucinationFilterEnabled,
+    true,
+  ),
   reviewBeforeInsert: orNull(preferences.reviewBeforeInsert),
   agentEnabledTools: parseAgentEnabledTools(preferences.agentEnabledTools),
-  agentMaxIterations: normalizeAgentMaxIterations(preferences.agentMaxIterations),
+  agentMaxIterations: normalizeAgentMaxIterations(
+    preferences.agentMaxIterations,
+  ),
   agentPermissionTimeoutMs: normalizeAgentPermissionTimeout(
     preferences.agentPermissionTimeoutMs,
   ),
@@ -271,11 +277,14 @@ export const toLocalPreferences = (
     preferences.pillResetMonitorStrategy,
   ),
   alwaysRequestAdminOnStartup: orFalse(preferences.alwaysRequestAdminOnStartup),
-  inDictationStyleSwitchingEnabled: preferences.inDictationStyleSwitchingEnabled,
+  inDictationStyleSwitchingEnabled:
+    preferences.inDictationStyleSwitchingEnabled,
   hallucinationFilterEnabled: preferences.hallucinationFilterEnabled,
   reviewBeforeInsert: nullableValue(preferences.reviewBeforeInsert),
   agentEnabledTools: jsonValue(preferences.agentEnabledTools),
-  agentMaxIterations: normalizeAgentMaxIterations(preferences.agentMaxIterations),
+  agentMaxIterations: normalizeAgentMaxIterations(
+    preferences.agentMaxIterations,
+  ),
   agentPermissionTimeoutMs: normalizeAgentPermissionTimeout(
     preferences.agentPermissionTimeoutMs,
   ),

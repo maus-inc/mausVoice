@@ -24,7 +24,7 @@ if __name__ == "__main__":
     ]
     rejected = [
         "file:///etc/passwd",
-        "ftp://x",
+        "ssh://x",
     ]
 
     for url in allowed:

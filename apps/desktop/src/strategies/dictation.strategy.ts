@@ -22,7 +22,10 @@ import {
   filterKnownSilenceHallucinations,
 } from "../utils/string.utils";
 import { getToneIdToUse, VERBATIM_TONE_ID } from "../utils/tone.utils";
-import { getMyDictationLanguage, getMyUserPreferences } from "../utils/user.utils";
+import {
+  getMyDictationLanguage,
+  getMyUserPreferences,
+} from "../utils/user.utils";
 import { BaseStrategy } from "./base.strategy";
 
 export class DictationStrategy extends BaseStrategy {

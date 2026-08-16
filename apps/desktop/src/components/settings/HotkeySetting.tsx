@@ -88,7 +88,9 @@ const HotkeyControls = ({
           <IconButton
             size="small"
             onClick={onDisable}
-            aria-label={intl.formatMessage({ defaultMessage: "Disable hotkey" })}
+            aria-label={intl.formatMessage({
+              defaultMessage: "Disable hotkey",
+            })}
           >
             <CancelOutlined color="disabled" />
           </IconButton>
@@ -97,7 +99,9 @@ const HotkeyControls = ({
             {primaryHotkey && defaultCombos.length === 0 && (
               <IconButton
                 size="small"
-                aria-label={intl.formatMessage({ defaultMessage: "Delete hotkey" })}
+                aria-label={intl.formatMessage({
+                  defaultMessage: "Delete hotkey",
+                })}
                 onClick={() => onDeleteHotkey(primaryHotkey.id)}
               >
                 <Close color="disabled" />
@@ -135,7 +139,9 @@ const HotkeyControls = ({
             />
             <IconButton
               size="small"
-              aria-label={intl.formatMessage({ defaultMessage: "Delete hotkey" })}
+              aria-label={intl.formatMessage({
+                defaultMessage: "Delete hotkey",
+              })}
               onClick={() => onDeleteHotkey(hotkey.id)}
             >
               <Close color="disabled" />

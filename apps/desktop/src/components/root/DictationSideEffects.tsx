@@ -1039,7 +1039,9 @@ export const DictationSideEffects = () => {
 
   useHotkeyHoldMany({
     isDisabled:
-      !isDictationInteractable || activeRecordingMode === "agent" || !isMainWindow,
+      !isDictationInteractable ||
+      activeRecordingMode === "agent" ||
+      !isMainWindow,
     actions: additionalLanguageControllers,
   });
 

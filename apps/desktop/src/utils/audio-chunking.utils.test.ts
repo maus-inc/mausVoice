@@ -1,12 +1,14 @@
 import { describe, expect, it, vi } from "vitest";
 import { createAudioChunkPump } from "./audio-chunking.utils";
 
-const buildPump = (overrides: Partial<{
-  sampleRate: number;
-  minChunkDurationMs: number;
-  maxChunkDurationMs: number;
-  canSend: () => boolean;
-}> = {}) => {
+const buildPump = (
+  overrides: Partial<{
+    sampleRate: number;
+    minChunkDurationMs: number;
+    maxChunkDurationMs: number;
+    canSend: () => boolean;
+  }> = {},
+) => {
   const sent: Array<{ chunk: Float32Array; isLastChunk: boolean }> = [];
   const onError = vi.fn();
   const pump = createAudioChunkPump({
@@ -28,7 +30,7 @@ describe("createAudioChunkPump", () => {
     pump.flushPendingSamples(false);
 
     expect(sent).toHaveLength(1);
-    expect(sent[0].chunk.length).toBe(1600);
+    expect(sent[0].chunk).toHaveLength(1600);
     expect(sent[0].isLastChunk).toBe(false);
   });
 
@@ -47,7 +49,7 @@ describe("createAudioChunkPump", () => {
     pump.flushPendingSamples(true);
 
     expect(sent).toHaveLength(1);
-    expect(sent[0].chunk.length).toBe(1600);
+    expect(sent[0].chunk).toHaveLength(1600);
     expect(sent[0].isLastChunk).toBe(true);
   });
 
@@ -65,13 +67,13 @@ describe("createAudioChunkPump", () => {
     pump.flushPendingSamples(false);
 
     expect(sent).toHaveLength(2);
-    expect(sent[0].chunk.length).toBe(16000);
-    expect(sent[1].chunk.length).toBe(16000);
+    expect(sent[0].chunk).toHaveLength(16000);
+    expect(sent[1].chunk).toHaveLength(16000);
     expect(sent.every((s) => s.isLastChunk === false)).toBe(true);
 
     pump.flushPendingSamples(true);
     expect(sent).toHaveLength(3);
-    expect(sent[2].chunk.length).toBe(1600);
+    expect(sent[2].chunk).toHaveLength(1600);
     expect(sent[2].isLastChunk).toBe(true);
   });
 });

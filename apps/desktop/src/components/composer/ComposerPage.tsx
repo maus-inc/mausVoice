@@ -220,7 +220,8 @@ export const ComposerPage = () => {
                 speechRecognitionSupported
                   ? undefined
                   : intl.formatMessage({
-                      defaultMessage: "Voice editing is not supported on this platform",
+                      defaultMessage:
+                        "Voice editing is not supported on this platform",
                     })
               }
             >
