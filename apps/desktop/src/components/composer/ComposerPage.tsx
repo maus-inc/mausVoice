@@ -17,7 +17,7 @@ import { FormattedMessage, useIntl } from "react-intl";
 import { applyVoiceEditInstruction } from "../../actions/composer.actions";
 import { transcribeAudio } from "../../actions/transcribe.actions";
 import { getTranscribeAudioRepo, getGenerateTextRepo } from "../../repos";
-import { getAppState, produceAppState } from "../../store";
+import { getAppState, produceAppState, useAppStore } from "../../store";
 import { getLogger } from "../../utils/log.utils";
 import { getMyPreferredMicrophone } from "../../utils/user.utils";
 import {
@@ -50,7 +50,8 @@ export const ComposerPage = () => {
   // Voice Edit Mode relies on the webview's SpeechRecognition API, which only
   // exists on Chromium-based webviews. Feature-detect once so we can disable
   // the mic button with a clear message instead of silently no-op'ing (or
-  // crashing when `toggleVoiceInstruction` can't construct a recognizer).
+  // crashing when `toggleVoiceInstruction` can't construct a recognizer). This
+  // is constant for the webview's lifetime, so capturing it by value is safe.
   const speechRecognitionSupported = useMemo(() => {
     const speechWindow = window as SpeechWindow;
     return Boolean(
@@ -58,12 +59,15 @@ export const ComposerPage = () => {
     );
   }, []);
 
-  // Prefer routing the spoken instruction through the configured mausVoice
-  // transcription provider (the same provider selection dictation uses). This
-  // is available whenever a transcription repo can be resolved from the active
-  // preferences. We probe it once up front (mirroring how the rest of the app
-  // selects a provider) and fall back to the webview's SpeechRecognition only
-  // when the configured provider cannot be used on this platform.
+  // The composer is a fresh webview whose store starts empty and is populated
+  // asynchronously by RootSideEffects (preferences + API keys). Subscribe to the
+  // slices that drive provider resolution so availability stays live and the UI
+  // enables Voice Edit once data loads, instead of freezing the empty first
+  // render.
+  const aiTranscription = useAppStore((s) => s.settings.aiTranscription);
+  const apiKeyById = useAppStore((s) => s.apiKeyById);
+  const userPrefs = useAppStore((s) => s.userPrefs);
+
   const canUseConfiguredProvider = useMemo(() => {
     try {
       getTranscribeAudioRepo();
@@ -71,18 +75,15 @@ export const ComposerPage = () => {
     } catch {
       return false;
     }
-  }, []);
+  }, [aiTranscription, apiKeyById]);
 
-  // Voice Edit Mode applies an edit with a text-generation provider, so the
-  // whole feature is only meaningful when one is configured. Probe once up
-  // front (mirroring how the rest of the app selects a provider).
   const hasGenerationProvider = useMemo(() => {
     try {
       return Boolean(getGenerateTextRepo().repo);
     } catch {
       return false;
     }
-  }, []);
+  }, [userPrefs, apiKeyById]);
 
   // The feature is available when a generation provider is configured and a
   // capture path exists (the configured transcription provider or the
@@ -100,20 +101,26 @@ export const ComposerPage = () => {
         defaultMessage: "Voice editing is not supported on this platform",
       });
 
-  // Captured as a live ref (not a frozen string) so a locale change while the
-  // composer is open updates the recorder's unsupported message instead of
-  // leaving a stale one from first construction.
+  // Held in a ref and refreshed in an effect (never during render) so a locale
+  // change while the composer is open updates the recorder's unsupported
+  // message without a render-phase ref write.
   const unsupportedMessageRef = useRef(
     intl.formatMessage({
       defaultMessage: "Voice editing is not supported on this platform",
     }),
   );
-  unsupportedMessageRef.current = intl.formatMessage({
-    defaultMessage: "Voice editing is not supported on this platform",
-  });
+  useEffect(() => {
+    unsupportedMessageRef.current = intl.formatMessage({
+      defaultMessage: "Voice editing is not supported on this platform",
+    });
+  }, [intl]);
 
-  if (recorderRef.current === null) {
-    recorderRef.current = new VoiceInstructionRecorder({
+  // Construct the recorder in an effect (not during render) so StrictMode's
+  // double render cannot leave a discarded, undisposed instance. Provider
+  // availability is re-probed on every start via canUseProvider, so the recorder
+  // never freezes a stale first-render capability.
+  useEffect(() => {
+    const recorder = new VoiceInstructionRecorder({
       invoke,
       transcribe: async ({ samples, sampleRate }) => {
         const result = await transcribeAudio({ samples, sampleRate });
@@ -129,7 +136,14 @@ export const ComposerPage = () => {
         return Ctor ? new Ctor() : null;
       },
       getLang: () => document.documentElement.lang || "en-US",
-      canUseProvider: canUseConfiguredProvider,
+      canUseProvider: () => {
+        try {
+          getTranscribeAudioRepo();
+          return true;
+        } catch {
+          return false;
+        }
+      },
       speechRecognitionSupported,
       unsupportedMessage: () => unsupportedMessageRef.current,
       onListeningChange: setIsListening,
@@ -142,7 +156,12 @@ export const ComposerPage = () => {
         }),
       logger: getLogger(),
     });
-  }
+    recorderRef.current = recorder;
+    return () => {
+      recorder.dispose();
+      recorderRef.current = null;
+    };
+  }, [speechRecognitionSupported]);
 
   useEffect(() => {
     let active = true;
@@ -163,14 +182,6 @@ export const ComposerPage = () => {
       active = false;
     };
   }, [intl, requestId]);
-
-  // Release any active microphone path if the composer window closes
-  // mid-recording so we never leave audio capture running (webview lifecycle).
-  useEffect(() => {
-    return () => {
-      recorderRef.current?.dispose();
-    };
-  }, []);
 
   const finish = async (accepted: boolean) => {
     recorderRef.current?.dispose();

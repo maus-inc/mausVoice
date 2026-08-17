@@ -112,7 +112,27 @@ describe("openaiCompatibleTranscribeAudio", () => {
         blob: new ArrayBuffer(8),
         ext: "wav",
       }),
-    ).rejects.toThrow(/401/);
+    ).rejects.toThrow(/401 - .*Unauthorized/);
+
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+
+  it("preserves the server error body for a 5xx failure", async () => {
+    fetchMock.mockResolvedValue(
+      new Response(
+        JSON.stringify({ error: "Service Unavailable - try again later" }),
+        { status: 503 },
+      ),
+    );
+
+    await expect(
+      openaiCompatibleTranscribeAudio({
+        baseUrl: "https://example.com/v1",
+        model: "whisper-1",
+        blob: new ArrayBuffer(8),
+        ext: "wav",
+      }),
+    ).rejects.toThrow(/503 - .*Service Unavailable/);
 
     expect(fetchMock).toHaveBeenCalledTimes(1);
   });

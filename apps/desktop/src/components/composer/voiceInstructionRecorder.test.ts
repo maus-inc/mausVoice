@@ -1,4 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
+import type { StopRecordingResponse } from "../../types/transcription-session.types";
 import {
   VoiceInstructionRecorder,
   type SpeechRecognitionLike,
@@ -63,7 +64,7 @@ const baseDeps = (
     getPreferredMicrophone: () => null,
     createSpeechRecognition: () => fake,
     getLang: () => "en-US",
-    canUseProvider: true,
+    canUseProvider: () => true,
     speechRecognitionSupported: true,
     unsupportedMessage: () => "unsupported",
     onListeningChange: vi.fn(),
@@ -205,7 +206,7 @@ describe("VoiceInstructionRecorder", () => {
 
   it("reports an error and stays idle when no capture path is available", async () => {
     const deps = baseDeps({
-      canUseProvider: false,
+      canUseProvider: () => false,
       speechRecognitionSupported: false,
       createSpeechRecognition: () => null,
     });
@@ -232,5 +233,51 @@ describe("VoiceInstructionRecorder", () => {
     await recorder.toggle();
     fake.emitResult("make this shorter");
     expect(deps.onTranscript).toHaveBeenCalledWith("make this shorter");
+  });
+
+  it("serializes a second toggle while stopping and issues a single stop_recording", async () => {
+    const stopDeferred = deferred<StopRecordingResponse>();
+    const deps = baseDeps({
+      invoke: vi.fn((cmd) => {
+        if (cmd === "start_recording") return Promise.resolve(undefined);
+        if (cmd === "stop_recording") return stopDeferred.promise;
+        return Promise.resolve(undefined);
+      }),
+    });
+    const recorder = new VoiceInstructionRecorder(deps);
+
+    await recorder.toggle();
+    const first = recorder.toggle();
+    const second = recorder.toggle();
+    stopDeferred.resolve({ samples: [0, 1], sampleRate: 16000 });
+    await Promise.all([first, second]);
+
+    const stops = (deps.invoke as ReturnType<typeof vi.fn>).mock.calls.filter(
+      (call) => call[0] === "stop_recording",
+    );
+    expect(stops).toHaveLength(1);
+    expect(recorder.getState()).toBe("idle");
+  });
+
+  it("does not fire callbacks after dispose during pending transcription", async () => {
+    const stopDeferred = deferred<StopRecordingResponse>();
+    const deps = baseDeps({
+      invoke: vi.fn((cmd) => {
+        if (cmd === "start_recording") return Promise.resolve(undefined);
+        if (cmd === "stop_recording") return stopDeferred.promise;
+        return Promise.resolve(undefined);
+      }),
+    });
+    const recorder = new VoiceInstructionRecorder(deps);
+
+    await recorder.toggle();
+    const stopPromise = recorder.toggle();
+    recorder.dispose();
+    stopDeferred.resolve({ samples: [0, 1], sampleRate: 16000 });
+    await stopPromise;
+
+    expect(deps.onTranscript).not.toHaveBeenCalled();
+    expect(deps.onResetLevels).not.toHaveBeenCalled();
+    expect(recorder.getState()).toBe("idle");
   });
 });

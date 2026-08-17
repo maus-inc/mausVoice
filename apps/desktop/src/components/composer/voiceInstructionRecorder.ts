@@ -28,7 +28,7 @@ export type VoiceInstructionRecorderDeps = {
   getPreferredMicrophone: () => string | null;
   createSpeechRecognition: () => SpeechRecognitionLike | null;
   getLang: () => string;
-  canUseProvider: boolean;
+  canUseProvider: () => boolean;
   speechRecognitionSupported: boolean;
   unsupportedMessage: () => string;
   onListeningChange: (listening: boolean) => void;
@@ -43,16 +43,19 @@ export type VoiceInstructionRecorderDeps = {
  * the provider-recording, provider-transcription, browser-recording, and idle
  * states can never get out of sync with the UI's listening flag.
  *
- * Key invariant: when provider transcription fails and we fall back to the
- * browser recognizer, we must NOT reset the listening flag to idle — the
- * browser recognizer keeps running and owns the listening state until its
- * `onend`/`onerror` fires. Stopping native recording and the browser
- * recognizer on dispose/unmount guarantees no microphone is left active.
+ * Concurrency: a single `toggle` transition (start or stop) runs at a time via
+ * `busy`. Every async operation carries an `opGen` token; `dispose` advances
+ * the token so any in-flight start/stop/transcription completes as a no-op
+ * instead of firing callbacks on an unmounted component. A `stopInFlight` flag
+ * guarantees `stop_recording` is issued at most once per recording.
  */
 export class VoiceInstructionRecorder {
   private state: VoiceRecorderState = "idle";
   private recognition: SpeechRecognitionLike | null = null;
   private busy = false;
+  private disposed = false;
+  private opGen = 0;
+  private stopInFlight = false;
 
   constructor(private readonly deps: VoiceInstructionRecorderDeps) {}
 
@@ -61,29 +64,35 @@ export class VoiceInstructionRecorder {
   }
 
   async toggle(): Promise<void> {
-    if (this.busy) return;
-    if (this.state !== "idle") {
-      await this.stop();
-      return;
-    }
+    if (this.busy || this.disposed) return;
     this.busy = true;
+    const gen = ++this.opGen;
     try {
-      await this.start();
+      if (this.state === "idle") {
+        await this.start(gen);
+      } else {
+        await this.stop(gen);
+      }
     } finally {
-      this.busy = false;
+      if (gen === this.opGen && !this.disposed) {
+        this.busy = false;
+      }
     }
   }
 
-  private async start(): Promise<void> {
-    if (this.deps.canUseProvider) {
+  private async start(gen: number): Promise<void> {
+    if (this.deps.canUseProvider()) {
       try {
         await this.deps.invoke("start_recording", {
           args: {
             preferredMicrophone: this.deps.getPreferredMicrophone() ?? null,
           },
         });
+        // Set state synchronously so dispose() observes the live native
+        // recording even if it runs before the gen check below.
         this.state = "provider";
         this.deps.onListeningChange(true);
+        if (gen !== this.opGen || this.disposed) return;
         return;
       } catch (error) {
         this.deps.logger.warning(
@@ -93,29 +102,33 @@ export class VoiceInstructionRecorder {
     }
 
     if (this.deps.speechRecognitionSupported) {
-      this.startBrowser();
+      this.startBrowser(gen);
       return;
     }
 
     this.deps.onError(this.deps.unsupportedMessage());
   }
 
-  private startBrowser(): void {
+  private startBrowser(gen: number): void {
     const recognition = this.deps.createSpeechRecognition();
     if (!recognition) return;
 
     recognition.lang = this.deps.getLang();
     recognition.interimResults = false;
     recognition.maxAlternatives = 1;
+    const alive = () => gen === this.opGen && !this.disposed;
     recognition.onresult = (event) => {
+      if (!alive()) return;
       const first = event.results[0]?.[0]?.transcript;
       if (first) this.deps.onTranscript(`${first}`.trim());
     };
     recognition.onend = () => {
+      if (!alive()) return;
       this.recognition = null;
       this.setIdle();
     };
     recognition.onerror = () => {
+      if (!alive()) return;
       this.recognition = null;
       this.setIdle();
     };
@@ -126,15 +139,18 @@ export class VoiceInstructionRecorder {
     recognition.start();
   }
 
-  private async stop(): Promise<void> {
+  private async stop(gen: number): Promise<void> {
     if (this.state === "browser") {
       this.recognition?.stop();
       this.recognition = null;
+      if (gen === this.opGen && !this.disposed) {
+        this.setIdle();
+      }
       return;
     }
 
     if (this.state === "provider") {
-      await this.stopProviderRecording();
+      await this.stopProviderRecording(gen);
     }
   }
 
@@ -143,8 +159,9 @@ export class VoiceInstructionRecorder {
    * If transcription fell back to the browser recognizer, that recognizer owns
    * the listening state, so we only return to idle on the genuine paths.
    */
-  private async stopProviderRecording(): Promise<void> {
-    const transcript = await this.transcribeProviderRecording();
+  private async stopProviderRecording(gen: number): Promise<void> {
+    const transcript = await this.transcribeProviderRecording(gen);
+    if (gen !== this.opGen || this.disposed) return;
     if (transcript) {
       this.deps.onTranscript(transcript);
     }
@@ -154,26 +171,37 @@ export class VoiceInstructionRecorder {
     }
   }
 
-  private async transcribeProviderRecording(): Promise<string | null> {
+  private async transcribeProviderRecording(
+    gen: number,
+  ): Promise<string | null> {
+    if (this.stopInFlight) return null;
+    this.stopInFlight = true;
     try {
-      const response = (await this.deps.invoke(
-        "stop_recording",
-      )) as StopRecordingResponse;
-      return await this.transcribeProviderResponse(response);
-    } catch (error) {
-      this.deps.logger.warning(
-        `Voice Edit Mode: provider transcription failed (${error})`,
-      );
-      if (this.deps.speechRecognitionSupported) {
-        this.startBrowser();
+      try {
+        const response = (await this.deps.invoke(
+          "stop_recording",
+        )) as StopRecordingResponse;
+        if (gen !== this.opGen || this.disposed) return null;
+        return await this.transcribeProviderResponse(gen, response);
+      } catch (error) {
+        if (gen !== this.opGen || this.disposed) return null;
+        this.deps.logger.warning(
+          `Voice Edit Mode: provider transcription failed (${error})`,
+        );
+        if (this.deps.speechRecognitionSupported) {
+          this.startBrowser(gen);
+          return null;
+        }
+        this.deps.onError(this.deps.unsupportedMessage());
         return null;
       }
-      this.deps.onError(this.deps.unsupportedMessage());
-      return null;
+    } finally {
+      this.stopInFlight = false;
     }
   }
 
   private async transcribeProviderResponse(
+    gen: number,
     response: StopRecordingResponse,
   ): Promise<string | null> {
     const samples =
@@ -187,6 +215,7 @@ export class VoiceInstructionRecorder {
     const transcript = (
       await this.deps.transcribe({ samples, sampleRate })
     ).trim();
+    if (gen !== this.opGen || this.disposed) return null;
     return transcript || null;
   }
 
@@ -196,13 +225,20 @@ export class VoiceInstructionRecorder {
     this.deps.onListeningChange(false);
   }
 
-  /** Stop every active microphone path. Safe to call repeatedly (unmount/Cancel/Insert). */
+  /**
+   * Stop every active microphone path. Safe to call repeatedly. Any in-flight
+   * operation is invalidated via `opGen`, so its deferred callbacks become
+   * no-ops instead of firing after unmount.
+   */
   dispose(): void {
+    if (this.disposed) return;
+    this.disposed = true;
+    this.opGen++;
     if (this.recognition) {
       this.recognition.stop();
       this.recognition = null;
     }
-    if (this.state === "provider") {
+    if (this.state === "provider" && !this.stopInFlight) {
       void this.deps.invoke("stop_recording").catch(() => undefined);
     }
     if (this.state !== "idle") {

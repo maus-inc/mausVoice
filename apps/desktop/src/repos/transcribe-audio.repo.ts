@@ -61,6 +61,12 @@ export type TranscribeAudioInput = {
   sampleRate: number;
   prompt?: Nullable<string>;
   language?: string;
+  /**
+   * When false, the probability-gated silence handling is skipped entirely so
+   * the raw provider transcript is preserved EXACTLY, for both single- and
+   * multi-chunk audio. Defaults to true when omitted.
+   */
+  hallucinationFilterEnabled?: boolean;
 };
 
 export type TranscribeAudioOutput = {
@@ -162,8 +168,11 @@ export abstract class BaseTranscribeAudioRepo extends BaseRepo {
     // so audio longer than one provider segment still benefits from the
     // probability-gated silence handling that single-segment audio gets in the
     // action layer. Chunks without verbose segments fall back to their raw text.
+    // When the user disables the filter, merge every raw chunk text unchanged so
+    // the off switch preserves the provider transcript for long audio too.
+    const filterEnabled = input.hallucinationFilterEnabled ?? true;
     const transcriptionTexts = results.map((r) => {
-      const gated = gateSilentSegments(r.segments);
+      const gated = filterEnabled ? gateSilentSegments(r.segments) : null;
       return gated ?? r.text;
     });
     const mergedText = mergeTranscriptions(transcriptionTexts);

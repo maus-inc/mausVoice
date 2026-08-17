@@ -103,9 +103,9 @@ if (!gitleaks) {
 
 const tmp = mkdtempSync(resolve(tmpdir(), "gitleaks-hist-"));
 try {
-  const run = (args, opts = {}) =>
+  const gitleaksRun = (args, opts = {}) =>
     execFileSync(gitleaks, args, { cwd: tmp, ...opts });
-  const git = (...args) => run(["git", ...args]);
+  const git = (...args) => execFileSync("git", args, { cwd: tmp });
 
   git("init", "-q");
   git("config", "user.email", "test@example.com");
@@ -124,7 +124,7 @@ try {
   // History scan MUST fail (catch the deleted secret in commit A).
   let historyCaught = false;
   try {
-    run(["detect", "--source", ".", "-c", configPath], { cwd: tmp });
+    gitleaksRun(["detect", "--source", ".", "-c", configPath], { cwd: tmp });
   } catch (e) {
     historyCaught = e.status !== 0;
   }
@@ -140,7 +140,7 @@ try {
   // exactly why --no-git was insufficient and history scanning is required.
   let cleanTreePassed = false;
   try {
-    run(["detect", "--no-git", "--source", tmp, "-c", configPath], {
+    gitleaksRun(["detect", "--no-git", "--source", tmp, "-c", configPath], {
       cwd: tmp,
     });
     cleanTreePassed = true;

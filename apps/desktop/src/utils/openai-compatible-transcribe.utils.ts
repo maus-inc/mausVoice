@@ -67,26 +67,34 @@ export const openaiCompatibleTranscribeAudio = async ({
       headers,
     });
 
-  const isUnsupportedFormat = async (response: Response): Promise<boolean> => {
-    if (response.status < 400 || response.status >= 500) return false;
-    const errorText = await response.text().catch(() => "");
-    return /response[_\s-]?format|verbose_json|unsupported/i.test(errorText);
-  };
+  // A Response body is a single-use stream: read it at most once and pass the
+  // text around rather than re-reading after the degradation logic consumes it.
+  const readError = async (response: Response): Promise<string> =>
+    response.ok ? "" : (await response.text().catch(() => "")).trim();
+
+  const isUnsupportedFormat = (status: number, body: string): boolean =>
+    status >= 400 &&
+    status < 500 &&
+    /response[_\s-]?format|verbose_json|unsupported/i.test(body);
 
   // Prefer verbose_json (keeps the silence gate); degrade to json, then to no
   // response_format, only on an unsupported-format 4xx.
   let finalResponse = await send("verbose_json");
-  if (await isUnsupportedFormat(finalResponse)) {
+  let errorBody = await readError(finalResponse);
+  if (isUnsupportedFormat(finalResponse.status, errorBody)) {
     finalResponse = await send("json");
+    errorBody = await readError(finalResponse);
   }
-  if (await isUnsupportedFormat(finalResponse)) {
+  if (isUnsupportedFormat(finalResponse.status, errorBody)) {
     finalResponse = await send(null);
+    errorBody = await readError(finalResponse);
   }
 
   if (!finalResponse.ok) {
-    const errorText = await finalResponse.text().catch(() => "Unknown error");
     throw new Error(
-      `OpenAI Compatible transcription failed: ${finalResponse.status} - ${errorText}`,
+      `OpenAI Compatible transcription failed: ${finalResponse.status} - ${
+        errorBody || "Unknown error"
+      }`,
     );
   }
 

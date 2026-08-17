@@ -481,7 +481,6 @@ pub async fn transcription_import_audio(
         app.path().download_dir().ok(),
         app.path().desktop_dir().ok(),
         app.path().picture_dir().ok(),
-        app.path().temp_dir().ok(),
         crate::system::audio_store::audio_dir(&app).ok(),
     ]
     .into_iter()

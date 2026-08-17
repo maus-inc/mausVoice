@@ -153,6 +153,8 @@ export const transcribeAudio = async ({
       sampleRate,
       prompt: transcriptionPrompt,
       language: whisperLanguage,
+      hallucinationFilterEnabled:
+        state.userPrefs?.hallucinationFilterEnabled !== false,
     });
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
