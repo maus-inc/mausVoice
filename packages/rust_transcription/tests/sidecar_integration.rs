@@ -911,7 +911,7 @@ async fn start_slow_download_server(
 }
 
 fn encode_f32le_samples(values: &[f32]) -> Vec<u8> {
-    let mut bytes = Vec::with_capacity(values.len() * std::mem::size_of::<f32>());
+    let mut bytes = Vec::with_capacity(std::mem::size_of_val(values));
     for value in values {
         bytes.extend_from_slice(&value.to_le_bytes());
     }

@@ -358,7 +358,7 @@ fn normalize_sense_voice_language(language: Option<&str>) -> String {
         .filter(|value| !value.is_empty())
         .unwrap_or("auto");
     let language = language
-        .split(|character| character == '-' || character == '_')
+        .split(['-', '_'])
         .next()
         .unwrap_or(language)
         .to_ascii_lowercase();
@@ -428,7 +428,7 @@ fn normalize_language(language: Option<&str>) -> &str {
     language
         .map(str::trim)
         .filter(|value| !value.is_empty() && !value.eq_ignore_ascii_case("auto"))
-        .and_then(|value| value.split(|ch| ch == '-' || ch == '_').next())
+        .and_then(|value| value.split(['-', '_']).next())
         .filter(|value| !value.is_empty())
         .unwrap_or("en")
 }
@@ -477,7 +477,7 @@ mod tests {
     fn ort_runtime_verification_rejects_missing_and_empty_libraries() {
         let temp_dir = tempfile::tempdir().unwrap();
         let missing = temp_dir.path().join(runtime_library_name());
-        let error = verify_ort_runtime_candidates(&[missing.clone()])
+        let error = verify_ort_runtime_candidates(std::slice::from_ref(&missing))
             .expect_err("a missing runtime library must be rejected");
         let message = error.to_string();
         assert!(message.contains("MAUSVOICE_ORT_DYLIB_PATH"), "{message}");
@@ -488,7 +488,7 @@ mod tests {
 
         let empty = temp_dir.path().join("empty-onnxruntime");
         std::fs::write(&empty, b"").unwrap();
-        let error = verify_ort_runtime_candidates(&[empty.clone()])
+        let error = verify_ort_runtime_candidates(std::slice::from_ref(&empty))
             .expect_err("a zero-byte runtime library must be rejected");
         assert!(error.to_string().contains("empty file"), "{error}");
 

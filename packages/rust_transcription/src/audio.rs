@@ -42,10 +42,8 @@ pub fn resample_to_rate(samples: &[f32], source_rate: u32, target_rate: u32) -> 
     // allocator. Callers should validate earlier; this is the last line of
     // defense against a header requesting an absurd rate that would allocate
     // hundreds of gigabytes.
-    if source_rate < MIN_SAMPLE_RATE
-        || source_rate > MAX_SAMPLE_RATE
-        || target_rate < MIN_SAMPLE_RATE
-        || target_rate > MAX_SAMPLE_RATE
+    if !(MIN_SAMPLE_RATE..=MAX_SAMPLE_RATE).contains(&source_rate)
+        || !(MIN_SAMPLE_RATE..=MAX_SAMPLE_RATE).contains(&target_rate)
     {
         return samples.to_vec();
     }

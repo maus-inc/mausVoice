@@ -601,7 +601,7 @@ fn decode_f32le_samples(bytes: &[u8]) -> Result<Vec<f32>, ApiError> {
         return Ok(Vec::new());
     }
 
-    if bytes.len() % std::mem::size_of::<f32>() != 0 {
+    if !bytes.len().is_multiple_of(std::mem::size_of::<f32>()) {
         return Err(ApiError::bad_request(
             "invalid_audio_chunk",
             "audio chunk byte length must be a multiple of 4",

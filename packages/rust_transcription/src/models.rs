@@ -314,7 +314,7 @@ mod tests {
             // including SenseVoice (no longer exempt).
             assert!(artifacts
                 .first()
-                .map_or(false, |(_, _, sha256)| sha256.is_some()));
+                .is_some_and(|(_, _, sha256)| sha256.is_some()));
         }
     }
 
