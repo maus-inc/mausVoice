@@ -202,7 +202,7 @@ impl WhisperModel {
 
     /// Resolve the download URL, optionally overridden by an environment variable.
     /// The variable name is derived from `as_slug()` mapped to uppercase
-    /// alphanumeric with every other character replaced by `_`.
+    /// alphanumeric with every non-alphanumeric character replaced by `_`.
     /// Example: `sense-voice` -> `RUST_TRANSCRIPTION_MODEL_URL_SENSE_VOICE`.
     pub fn download_url(self) -> String {
         let env_suffix: String = self
