@@ -5,7 +5,9 @@ const never = () => new Promise<never>(() => {});
 
 describe("withTimeout", () => {
   it("resolves with the wrapped value when it settles first", async () => {
-    await expect(withTimeout(Promise.resolve(42), 1000, "ok")).resolves.toBe(42);
+    await expect(withTimeout(Promise.resolve(42), 1000, "ok")).resolves.toBe(
+      42,
+    );
   });
 
   it("rejects with a timeout error when the wrapped promise hangs", async () => {
@@ -26,9 +28,9 @@ describe("withTimeout", () => {
     const onTimeout = vi.fn(() => {
       throw new Error("cleanup boom");
     });
-    await expect(
-      withTimeout(never(), 10, "throwy", onTimeout),
-    ).rejects.toThrow("throwy timed out after 10ms");
+    await expect(withTimeout(never(), 10, "throwy", onTimeout)).rejects.toThrow(
+      "throwy timed out after 10ms",
+    );
     expect(onTimeout).toHaveBeenCalledOnce();
   });
 });

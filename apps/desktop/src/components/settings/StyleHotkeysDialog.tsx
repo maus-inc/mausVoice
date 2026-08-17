@@ -113,13 +113,16 @@ export const StyleHotkeysDialog = () => {
       const saved = await repo.replaceStyleHotkeys(prefix, next);
 
       produceAppState((draft) => {
-        for (const id of Object.keys(draft.hotkeyById)) {
-          if (draft.hotkeyById[id]?.actionName.startsWith(prefix)) {
-            delete draft.hotkeyById[id];
-          }
+        const oldStyleIds = new Set(
+          Object.values(draft.hotkeyById)
+            .filter((hotkey) => hotkey.actionName.startsWith(prefix))
+            .map((hotkey) => hotkey.id),
+        );
+        for (const id of oldStyleIds) {
+          delete draft.hotkeyById[id];
         }
         draft.settings.hotkeyIds = draft.settings.hotkeyIds.filter(
-          (id) => !draft.hotkeyById[id]?.actionName.startsWith(prefix),
+          (id) => !oldStyleIds.has(id),
         );
         registerHotkeys(draft, saved);
         for (const hotkey of saved) {

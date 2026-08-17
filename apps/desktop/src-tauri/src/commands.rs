@@ -3370,6 +3370,25 @@ mod tests {
     }
 
     #[test]
+    fn installer_redirect_allows_opaque_cdn_path() {
+        // GitHub's release-asset CDN returns an opaque UUID path; the real
+        // filename is carried in the signed query parameters. The validator must
+        // accept this normal redirect rather than demanding a path extension.
+        let cdn = Url::parse(
+            "https://release-assets.githubusercontent.com/github-production-release-asset/1234/\
+             abcdef-1234-5678?response-content-disposition=attachment%3Bfilename%3DmausVoice_1.0.0_universal.dmg",
+        )
+        .unwrap();
+        assert!(installer_redirect_allowed(1, &cdn).is_ok());
+        // A non-GitHub host must still be rejected even with a dmg-looking query.
+        let bad = Url::parse(
+            "https://evil-cdn.example.com/uuid?response-content-disposition=attachment%3Bfilename%3DmausVoice_1.0.0_universal.dmg",
+        )
+        .unwrap();
+        assert!(installer_redirect_allowed(1, &bad).is_err());
+    }
+
+    #[test]
     fn installer_size_cap_rejects_advertised_and_streamed_oversize() {
         assert!(installer_content_length_ok(None).is_ok());
         assert!(installer_content_length_ok(Some(INSTALLER_MAX_BYTES)).is_ok());
@@ -3634,9 +3653,14 @@ fn validate_installer_url(url: &Url) -> Result<(), String> {
             "Installer URL host {host:?} is not in the trusted allow-list"
         ));
     }
-    if !ALLOWED_INSTALLER_EXTENSIONS
-        .iter()
-        .any(|ext| url.path().ends_with(ext))
+    // GitHub's release-asset CDN answers an opaque path whose real filename
+    // lives in the signed query parameters, so an extension check would reject
+    // every legitimate redirect. Every other allowed host keeps its
+    // path-based extension requirement.
+    if host != "release-assets.githubusercontent.com"
+        && !ALLOWED_INSTALLER_EXTENSIONS
+            .iter()
+            .any(|ext| url.path().ends_with(ext))
     {
         return Err(format!(
             "Installer URL must point to one of {ALLOWED_INSTALLER_EXTENSIONS:?}, got {}",

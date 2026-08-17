@@ -31,7 +31,9 @@ const isTransientProviderError = (err: unknown): boolean => {
   const msg = err instanceof Error ? err.message : String(err);
   return (
     /\b429\b|rate[-_ ]?limit/i.test(msg) ||
-    /json_validate_failed|max completion tokens reached|timed out after/i.test(msg)
+    /json_validate_failed|max completion tokens reached|timed out after/i.test(
+      msg,
+    )
   );
 };
 

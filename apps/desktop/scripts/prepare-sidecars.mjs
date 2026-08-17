@@ -38,6 +38,13 @@ const WINDOWS_SHERPA_RUNTIME_DLLS = new Set([
   "sherpa-onnx-cxx-api.dll",
 ]);
 
+// The essential subset the sidecar imports directly. A missing entry here means
+// the sidecar cannot start, so packaging fails closed on any of these.
+const REQUIRED_SHERPA_RUNTIME_DLLS = new Set([
+  "onnxruntime.dll",
+  "sherpa-onnx-c-api.dll",
+]);
+
 const buildTarget =
   process.env.CARGO_BUILD_TARGET?.trim() ||
   process.env.TAURI_ENV_TARGET_TRIPLE?.trim() ||
@@ -163,22 +170,26 @@ function prepareSherpaWindowsRuntime() {
     WINDOWS_SHERPA_RUNTIME_DLLS.has(name.toLowerCase()),
   );
 
-  // Fail closed: if the shared sherpa-onnx build produced none of the expected
-  // runtime DLLs, the sidecar would silently fail to start on Windows (exit
-  // before main()/before announcing its bound port). Surface it at build time.
-  if (runtimeDlls.length === 0) {
+  // Fail closed: the shared sherpa-onnx build must produce the DLLs the sidecar
+  // actually imports. If even the essential subset is absent the sidecar would
+  // exit before main()/before announcing its bound port, so surface it as a
+  // hard build error rather than a warning.
+  const missingRequired = [...REQUIRED_SHERPA_RUNTIME_DLLS].filter(
+    (name) => !runtimeDlls.includes(name.toLowerCase()),
+  );
+  if (missingRequired.length > 0) {
     fail(
-      `Sherpa-onnx Windows shared build produced none of the expected ` +
-        `runtime DLLs (${[...WINDOWS_SHERPA_RUNTIME_DLLS].join(", ")}) in ${profileDir}`,
+      `Sherpa-onnx Windows runtime is missing required DLLs: ${missingRequired.join(", ")} ` +
+        `(found: ${runtimeDlls.join(", ") || "none"}) in ${profileDir}`,
     );
   }
 
-  const missing = [...WINDOWS_SHERPA_RUNTIME_DLLS].filter(
+  const missingOptional = [...WINDOWS_SHERPA_RUNTIME_DLLS].filter(
     (name) => !runtimeDlls.includes(name.toLowerCase()),
   );
-  if (missing.length > 0) {
+  if (missingOptional.length > 0) {
     console.warn(
-      `[sidecar] Sherpa Windows runtime may be incomplete; missing: ${missing.join(", ")}`,
+      `[sidecar] Sherpa Windows runtime may be incomplete; missing: ${missingOptional.join(", ")}`,
     );
   }
 

@@ -1,6 +1,23 @@
 use std::collections::HashMap;
 use std::f32::consts::PI;
-use std::sync::{Mutex, OnceLock};
+use std::sync::{Arc, Mutex, OnceLock};
+
+/// Supported audio sample-rate range. Rates outside this band are rejected
+/// before resampling: they indicate corrupt/attacker-controlled headers or
+/// unsupported hardware, and allowing them through lets the polyphase table
+/// allocator request hundreds of gigabytes.
+const MIN_SAMPLE_RATE: u32 = 8_000;
+const MAX_SAMPLE_RATE: u32 = 384_000;
+
+/// Hard cap on polyphase coefficients per table. Legitimate rate pairs need
+/// well under one hundred thousand; anything above this cannot be a real
+/// resampling ratio and would allocate an unsafe amount of memory.
+const MAX_POLYPHASE_COEFFICIENTS: u64 = 2_000_000;
+
+/// Bound on the number of distinct rate pairs cached for the process lifetime.
+/// A handful of real hardware rates exercise this; an unbounded cache would let
+/// repeated imports of distinct (but valid) rates grow memory without limit.
+const MAX_TABLE_CACHE_ENTRIES: usize = 64;
 
 /// Resample mono audio with a windowed-sinc low-pass filter. Downsampling
 /// needs to remove content above the target Nyquist frequency; linear
@@ -21,7 +38,24 @@ pub fn resample_to_rate(samples: &[f32], source_rate: u32, target_rate: u32) -> 
         return samples.to_vec();
     }
 
-    let table = get_table(source_rate, target_rate);
+    // Defensive guard: untrusted/unsupported rates must never reach the table
+    // allocator. Callers should validate earlier; this is the last line of
+    // defense against a header requesting an absurd rate that would allocate
+    // hundreds of gigabytes.
+    if source_rate < MIN_SAMPLE_RATE
+        || source_rate > MAX_SAMPLE_RATE
+        || target_rate < MIN_SAMPLE_RATE
+        || target_rate > MAX_SAMPLE_RATE
+    {
+        return samples.to_vec();
+    }
+
+    let table = match get_table(source_rate, target_rate) {
+        Some(table) => table,
+        // Table build refused (exceeded resource limits); copy rather than
+        // allocate unbounded memory.
+        None => return samples.to_vec(),
+    };
     let ratio = target_rate as f64 / source_rate as f64;
     let output_len = ((samples.len() as f64) * ratio).ceil().max(1.0) as usize;
     let mut output = Vec::with_capacity(output_len);
@@ -36,18 +70,21 @@ pub fn resample_to_rate(samples: &[f32], source_rate: u32, target_rate: u32) -> 
         let coeffs = &table.phase_tables[phase];
 
         let mut weighted_sum = 0.0_f32;
-        let mut any = false;
+        let mut applied_weight_sum = 0.0_f32;
         for (k, &weight) in (-table.radius..=table.radius).zip(coeffs.iter()) {
             let source_index = n0 + k;
             if source_index < 0 || source_index >= samples.len() as isize {
                 continue;
             }
             weighted_sum += samples[source_index as usize] * weight;
-            any = true;
+            applied_weight_sum += weight;
         }
 
-        if any {
-            output.push(weighted_sum);
+        // Out-of-range edge taps were skipped; renormalize by the weight
+        // actually applied so a constant signal stays constant at the clip
+        // boundaries instead of being attenuated.
+        if applied_weight_sum.abs() > f32::EPSILON {
+            output.push(weighted_sum / applied_weight_sum);
         } else {
             let source_index = (center.floor() as usize).min(samples.len() - 1);
             output.push(samples[source_index]);
@@ -80,14 +117,20 @@ struct PolyphaseTable {
 }
 
 /// Build the polyphase coefficient table for a rate pair. This is the only
-/// place trigonometric functions run.
-fn build_polyphase_table(source_rate: u32, target_rate: u32) -> PolyphaseTable {
+/// place trigonometric functions run. Returns `None` when the requested ratio
+/// would allocate more than `MAX_POLYPHASE_COEFFICIENTS` coefficients.
+fn build_polyphase_table(source_rate: u32, target_rate: u32) -> Option<PolyphaseTable> {
     let g = gcd(source_rate, target_rate).max(1);
     let up = target_rate / g;
     let down = source_rate / g;
     let source_ratio = (source_rate as f64 / target_rate as f64).max(1.0);
     let cutoff = (0.5 / source_ratio * 0.95) as f32;
     let radius = (8.0 * source_ratio).ceil() as isize;
+    let coeffs_per_phase = (2 * radius + 1) as u64;
+    // Reject ratios that would allocate an unsafe number of coefficients.
+    if up as u64 * coeffs_per_phase > MAX_POLYPHASE_COEFFICIENTS {
+        return None;
+    }
 
     let mut phase_tables = Vec::with_capacity(up as usize);
     for phase in 0..up {
@@ -119,25 +162,30 @@ fn build_polyphase_table(source_rate: u32, target_rate: u32) -> PolyphaseTable {
         phase_tables.push(coeffs);
     }
 
-    PolyphaseTable {
+    Some(PolyphaseTable {
         up,
         down,
         radius,
         phase_tables,
-    }
+    })
 }
 
-static TABLE_CACHE: OnceLock<Mutex<HashMap<(u32, u32), PolyphaseTable>>> = OnceLock::new();
+static TABLE_CACHE: OnceLock<Mutex<HashMap<(u32, u32), Arc<PolyphaseTable>>>> = OnceLock::new();
 
-fn get_table(source_rate: u32, target_rate: u32) -> PolyphaseTable {
+fn get_table(source_rate: u32, target_rate: u32) -> Option<Arc<PolyphaseTable>> {
     let cache = TABLE_CACHE.get_or_init(|| Mutex::new(HashMap::new()));
     let mut guard = cache.lock().unwrap();
     if let Some(table) = guard.get(&(source_rate, target_rate)) {
-        return table.clone();
+        return Some(Arc::clone(table));
     }
-    let table = build_polyphase_table(source_rate, target_rate);
-    guard.insert((source_rate, target_rate), table.clone());
-    table
+    let table = build_polyphase_table(source_rate, target_rate)?;
+    let shared = Arc::new(table);
+    // Bound the cache so repeated imports of distinct valid rates cannot grow
+    // process memory without limit.
+    if guard.len() < MAX_TABLE_CACHE_ENTRIES {
+        guard.insert((source_rate, target_rate), Arc::clone(&shared));
+    }
+    Some(shared)
 }
 
 #[cfg(test)]
@@ -185,5 +233,61 @@ mod tests {
             elapsed.as_millis() < 2_000,
             "resampling 5min/48k took {elapsed:?}"
         );
+    }
+
+    #[test]
+    fn resampling_preserves_constant_signal_at_first_and_last_sample() {
+        for &(src, dst) in &[(48_000, 16_000), (44_100, 16_000), (16_000, 48_000)] {
+            let samples = vec![0.5; src];
+            let output = resample_to_rate(&samples, src, dst);
+            assert_eq!(output.len(), dst);
+            let first = output[0];
+            let last = output[output.len() - 1];
+            assert!(
+                (first - 0.5).abs() < 0.02 && (last - 0.5).abs() < 0.02,
+                "boundary drift for {src}->{dst}: first={first}, last={last}"
+            );
+        }
+    }
+
+    #[test]
+    fn resampling_handles_one_sample_input() {
+        let output = resample_to_rate(&[1.0], 16_000, 48_000);
+        assert_eq!(output.len(), 3);
+        assert!(output.iter().all(|s| s.is_finite()));
+    }
+
+    #[test]
+    fn resampling_ordinary_rate_within_range_resamples() {
+        // 44_101 Hz is a valid hardware-adjacent rate and must resample.
+        let samples = vec![0.25; 44_101];
+        let output = resample_to_rate(&samples, 44_101, 16_000);
+        assert_eq!(output.len(), 16_000);
+    }
+
+    #[test]
+    fn resampling_rejects_unsupported_rates_without_oom() {
+        // Rates outside the supported band must not allocate unbounded memory.
+        for &rate in &[192_001u32, 1_000_000, u32::MAX] {
+            let samples = vec![0.0_f32; 16];
+            let output = resample_to_rate(&samples, rate, 16_000);
+            assert_eq!(
+                output.len(),
+                samples.len(),
+                "out-of-range rate must pass through unchanged"
+            );
+            assert!(output.iter().all(|s| s.is_finite()));
+        }
+    }
+
+    #[test]
+    fn resampling_cache_stays_bounded_under_distinct_rates() {
+        // Many distinct valid rates must not panic or grow memory unbounded.
+        for base in 8_000..8_200 {
+            let samples = vec![0.0_f32; 1_000];
+            let output = resample_to_rate(&samples, base, 16_000);
+            assert!(!output.is_empty());
+            assert!(output.iter().all(|s| s.is_finite()));
+        }
     }
 }

@@ -53,6 +53,7 @@ fn main() {
         get_text_field_info,
         hotkey_delete,
         hotkey_list,
+        hotkey_replace_style_hotkeys,
         hotkey_save,
         list_gpus,
         list_microphones,

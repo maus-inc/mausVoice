@@ -152,23 +152,26 @@ export const groqGenerateTextResponse = async ({
       userParts.push({ type: "text", text: prompt });
       messages.push({ role: "user", content: userParts });
 
-      const response = await client.chat.completions.create({
-        messages,
-        model,
-        max_completion_tokens: 5000,
-        response_format: jsonResponse
-          ? JSON_SCHEMA_SUPPORTED_MODELS.has(model)
-            ? {
-                type: "json_schema",
-                json_schema: {
-                  name: jsonResponse.name,
-                  description: jsonResponse.description,
-                  schema: jsonResponse.schema,
-                },
-              }
-            : { type: "json_object" }
-          : undefined,
-      }, { signal });
+      const response = await client.chat.completions.create(
+        {
+          messages,
+          model,
+          max_completion_tokens: 5000,
+          response_format: jsonResponse
+            ? JSON_SCHEMA_SUPPORTED_MODELS.has(model)
+              ? {
+                  type: "json_schema",
+                  json_schema: {
+                    name: jsonResponse.name,
+                    description: jsonResponse.description,
+                    schema: jsonResponse.schema,
+                  },
+                }
+              : { type: "json_object" }
+            : undefined,
+        },
+        { signal },
+      );
 
       console.log("groq llm usage:", response.usage);
       if (!response.choices || response.choices.length === 0) {
