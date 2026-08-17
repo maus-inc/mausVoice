@@ -24,6 +24,11 @@
  *  2. A curated list of hosts that are constructed dynamically at runtime
  *     (e.g. the Azure Speech SDK's region-prefixed websocket endpoints) and
  *     therefore never appear as literals.
+ *
+ *  This file is the authoritative *connect-src* contract. The companion
+ *  `src/__tests__/csp-capability.contract.test.ts` is the authoritative
+ *  *http:default capability* contract (the Rust-side mirror: hosts routed
+ *  through @tauri-apps/plugin-http are governed there, not by connect-src).
  */
 import { existsSync, readdirSync, readFileSync } from "node:fs";
 import { join, relative, resolve } from "node:path";

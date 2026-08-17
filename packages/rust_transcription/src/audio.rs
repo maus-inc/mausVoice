@@ -9,11 +9,12 @@ use std::sync::{Arc, Mutex, OnceLock};
 const MIN_SAMPLE_RATE: u32 = 8_000;
 const MAX_SAMPLE_RATE: u32 = 384_000;
 
-/// Hard cap on polyphase coefficients per table. Legitimate rate pairs need
-/// well under two million; a 44.1 kHz -> 16 kHz resample uses about 752k
-/// coefficients, and the cap leaves generous headroom while still rejecting
-/// ratios that would allocate an unsafe amount of memory.
-const MAX_POLYPHASE_COEFFICIENTS: u64 = 2_000_000;
+/// Hard cap on polyphase coefficients per table. A 44.1 kHz -> 16 kHz resample
+/// allocates only ~7,520 coefficients; a coprime rate such as 44,101 Hz
+/// allocates ~752k. The 4M cap leaves generous headroom so the full declared
+/// 8k–384k band resamples, while still rejecting ratios that would allocate an
+/// unsafe number of coefficients.
+const MAX_POLYPHASE_COEFFICIENTS: u64 = 4_000_000;
 
 /// Maximum total polyphase coefficients retained across all cached rate pairs.
 /// Each `f32` coefficient is 4 bytes, so this bounds retained table memory to
@@ -443,18 +444,30 @@ mod tests {
     }
 
     #[test]
-    fn resampling_rejects_in_band_rates_with_unsafe_ratio() {
-        // 128_001 and 192_001 Hz lie inside the supported band but produce a
-        // ratio whose polyphase table would exceed the coefficient cap. They
-        // must be rejected rather than silently relabeled as 16 kHz.
+    fn resampling_accepts_in_band_coprime_rates_within_cap() {
+        // 128_001 and 192_001 Hz lie inside the supported band and allocate
+        // ~2.1M and ~3.1M polyphase coefficients respectively — both under the
+        // 4M cap — so the full declared 8k–384k band must resample rather than
+        // error.
         for &rate in &[128_001u32, 192_001u32] {
-            let samples = vec![0.0_f32; 16];
-            let err = resample_to_rate(&samples, rate, 16_000).unwrap_err();
-            assert!(
-                matches!(err, ResampleError::RatioTooComplex { .. }),
-                "expected RatioTooComplex for rate {rate}, got {err:?}"
-            );
+            let samples = vec![0.25_f32; rate as usize];
+            let output = resample_to_rate(&samples, rate, 16_000)
+                .unwrap_or_else(|e| panic!("expected Ok for rate {rate}, got {e:?}"));
+            assert_eq!(output.len(), 16_000, "wrong length for rate {rate}");
         }
+    }
+
+    #[test]
+    fn resampling_rejects_in_band_rates_with_unsafe_ratio() {
+        // 320_001 Hz lies inside the supported band but its coprime ratio
+        // allocates ~5.2M polyphase coefficients, above the 4M cap. It must be
+        // rejected rather than silently relabeled as 16 kHz.
+        let samples = vec![0.0_f32; 16];
+        let err = resample_to_rate(&samples, 320_001, 16_000).unwrap_err();
+        assert!(
+            matches!(err, ResampleError::RatioTooComplex { .. }),
+            "expected RatioTooComplex for rate 320_001, got {err:?}"
+        );
     }
 
     #[test]

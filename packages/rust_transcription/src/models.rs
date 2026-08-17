@@ -115,7 +115,7 @@ impl WhisperModel {
     const SENSEVOICE_DOWNLOAD_URL: &str =
         "https://huggingface.co/csukuangfj/sherpa-onnx-sense-voice-zh-en-ja-ko-yue-int8-2025-09-09/resolve/355f4d4884d8afd08aef04b9007a8556d7b463b2/model.int8.onnx";
     pub fn artifact_set(self) -> Vec<(&'static str, String, Option<&'static str>)> {
-        let artifacts = match self {
+        match self {
             Self::ParakeetCtc06B => {
                 let root = "https://huggingface.co/onnx-community/parakeet-ctc-0.6b-ONNX/resolve/7df2cab7aed886b8b7f80d68a8214007e4847601/";
                 vec![
@@ -183,8 +183,7 @@ impl WhisperModel {
                 ]
             }
             _ => Vec::new(),
-        };
-        artifacts
+        }
     }
 
     pub fn storage_path(self, models_dir: &Path) -> PathBuf {

@@ -441,6 +441,13 @@ pub struct TranscriptionAudioSamplesData {
 
 static IMPORT_IN_FLIGHT: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
 
+/// Returns true when `path` lives at or under any of `allowed_roots`. Used by
+/// `transcription_import_audio` to confine imports to well-known user
+/// directories so the command cannot be used as a filesystem read oracle.
+fn is_path_within_allowed_roots(path: &std::path::Path, allowed_roots: &[PathBuf]) -> bool {
+    allowed_roots.iter().any(|root| path.starts_with(root))
+}
+
 #[tauri::command]
 #[specta::specta]
 pub async fn transcription_import_audio(
@@ -492,7 +499,7 @@ pub async fn transcription_import_audio(
         .into_iter()
         .filter_map(|root| std::fs::canonicalize(&root).ok())
         .collect();
-    if !allowed_roots.iter().any(|root| path.starts_with(root)) {
+    if !is_path_within_allowed_roots(&path, &allowed_roots) {
         return Err(
             "The selected file is outside the allowed import locations.".to_string(),
         );
@@ -700,11 +707,35 @@ fn resolve_managed_audio_path_for_read(
         return None;
     }
 
+    // Capture the device/inode identity of the validated path. We reopen and
+    // confirm the opened handle refers to the *same* inode, so a local
+    // swap/replace of the resolved file between validation and open cannot make
+    // us read an unrelated file.
+    #[cfg(unix)]
+    let validated_identity = {
+        use std::os::unix::fs::MetadataExt;
+        let meta = std::fs::metadata(&real_path).ok()?;
+        (meta.dev(), meta.ino())
+    };
+
     // Open the validated file here so validation and the read are bound to the
     // same handle, closing the time-of-check/time-of-use race where the file
     // could be swapped for a symlink pointing outside `audio_dir` between this
     // check and the later open/read.
-    std::fs::File::open(&real_path).ok()
+    let file = std::fs::File::open(&real_path).ok()?;
+
+    // Confirm the opened handle still matches the validated inode. Any swap
+    // that occurred after validation but before open is detected here.
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::MetadataExt;
+        let opened = file.metadata().ok()?;
+        if opened.dev() != validated_identity.0 || opened.ino() != validated_identity.1 {
+            return None;
+        }
+    }
+
+    Some(file)
 }
 
 /// Delete listed audio files that still live under `audio_dir`. Paths
@@ -3435,6 +3466,43 @@ mod tests {
     }
 
     #[test]
+    fn managed_audio_read_returns_usable_handle_for_regular_file() {
+        let root = std::env::temp_dir()
+            .join(format!("mausvoice-audio-read-handle-{}", std::process::id()));
+        let audio_dir = root.join("audio");
+        std::fs::create_dir_all(&audio_dir).unwrap();
+        let real = audio_dir.join("real.wav");
+        std::fs::write(&real, b"readable-bytes").unwrap();
+
+        // The read helper must return a handle to the *validated* file whose
+        // bytes match what was on disk.
+        let file = resolve_managed_audio_path_for_read(&real, &audio_dir);
+        assert!(file.is_some());
+        let mut buf = String::new();
+        use std::io::Read;
+        file.unwrap().read_to_string(&mut buf).unwrap();
+        assert_eq!(buf, "readable-bytes");
+
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn import_path_is_rejected_outside_allowed_roots() {
+        // Mirrors the confinement check in `transcription_import_audio`: a path
+        // outside the allowed import roots must be rejected so the command
+        // cannot be used as a filesystem read oracle.
+        let tmp = std::env::temp_dir()
+            .join(format!("mausvoice-import-confine-{}", std::process::id()));
+        let allowed = vec![tmp.join("allowed")];
+        std::fs::create_dir_all(&allowed[0]).unwrap();
+        let inside = allowed[0].join("clip.wav");
+        let outside = tmp.join("outside.wav");
+        assert!(is_path_within_allowed_roots(&inside, &allowed));
+        assert!(!is_path_within_allowed_roots(&outside, &allowed));
+        let _ = std::fs::remove_dir_all(&tmp);
+    }
+
+    #[test]
     fn clear_local_data_file_helpers_respect_the_audio_dir_guard() {
         let root = std::env::temp_dir().join(format!(
             "mausvoice-clear-local-{}",
@@ -3808,6 +3876,18 @@ fn validate_signature_url(url: &Url) -> Result<(), String> {
             "Signature URL host {host:?} is not in the trusted allow-list"
         ));
     }
+    // Redirect hops back to github.com must stay within the trusted release
+    // path. The CDN hosts (objects/release-assets.githubusercontent.com) answer
+    // opaque paths that legitimately do not contain the repo namespace, and the
+    // final minisign verification is fail-closed, so their paths are not
+    // constrained — but a hop returning to github.com must not escape the
+    // trusted repository.
+    if host == "github.com" && !url.path().starts_with(TRUSTED_RELEASE_PATH_PREFIX) {
+        return Err(format!(
+            "Signature redirect must stay within the trusted release path {TRUSTED_RELEASE_PATH_PREFIX:?}, got {}",
+            url.path()
+        ));
+    }
     if host != "release-assets.githubusercontent.com"
         && !ALLOWED_SIGNATURE_EXTENSIONS
             .iter()
@@ -3989,6 +4069,18 @@ fn validate_installer_url(url: &Url) -> Result<(), String> {
     ) {
         return Err(format!(
             "Installer URL host {host:?} is not in the trusted allow-list"
+        ));
+    }
+    // Redirect hops back to github.com must stay within the trusted release
+    // path. The CDN hosts (objects/release-assets.githubusercontent.com) answer
+    // opaque paths that legitimately do not contain the repo namespace, and the
+    // final minisign verification is fail-closed, so their paths are not
+    // constrained — but a hop returning to github.com must not escape the
+    // trusted repository.
+    if host == "github.com" && !url.path().starts_with(TRUSTED_RELEASE_PATH_PREFIX) {
+        return Err(format!(
+            "Installer redirect must stay within the trusted release path {TRUSTED_RELEASE_PATH_PREFIX:?}, got {}",
+            url.path()
         ));
     }
     // GitHub's release-asset CDN answers an opaque path whose real filename
@@ -4354,6 +4446,44 @@ mod installer_url_tests {
             &Url::parse("https://evil.example.com/x.dmg").unwrap()
         )
         .is_err());
+    }
+
+    #[test]
+    fn redirect_hop_rejects_github_com_path_outside_trusted_repo() {
+        // A redirect hop back to github.com must not escape the trusted
+        // repository namespace even though the host itself is on the
+        // allow-list. The CDN hosts answer opaque paths and are not
+        // path-constrained, but a github.com hop must retain the repo prefix.
+        assert!(validate_installer_url(
+            &Url::parse("https://github.com/evil/repo/releases/download/v1/x.dmg").unwrap()
+        )
+        .is_err());
+
+        // A github.com hop that stays within the trusted repo is still allowed.
+        assert!(validate_installer_url(
+            &Url::parse(
+                "https://github.com/maus-inc/mausVoice/releases/download/v1/app.pkg"
+            )
+            .unwrap()
+        )
+        .is_ok());
+    }
+
+    #[test]
+    fn signature_redirect_rejects_github_com_path_outside_trusted_repo() {
+        assert!(signature_redirect_allowed(
+            1,
+            &Url::parse("https://github.com/evil/repo/releases/download/v1/x.sig").unwrap()
+        )
+        .is_err());
+        assert!(signature_redirect_allowed(
+            1,
+            &Url::parse(
+                "https://github.com/maus-inc/mausVoice/releases/download/v1/x.sig"
+            )
+            .unwrap()
+        )
+        .is_ok());
     }
 
     #[test]

@@ -187,19 +187,6 @@ export const ComposerPage = () => {
     };
   }, [intl, requestId]);
 
-  // Esc cancels the composer, matching the window close-request path which is
-  // already wired to Cancel (composer.utils.ts). This completes the keyboard
-  // loop opened by the auto-focused transcript field and Cmd/Ctrl+Enter to apply.
-  useEffect(() => {
-    const onKeyDown = (event: KeyboardEvent) => {
-      if (event.key === "Escape") {
-        void finish(false);
-      }
-    };
-    window.addEventListener("keydown", onKeyDown);
-    return () => window.removeEventListener("keydown", onKeyDown);
-  }, [finish]);
-
   const finish = async (accepted: boolean) => {
     recorderRef.current?.dispose();
     try {
@@ -212,6 +199,21 @@ export const ComposerPage = () => {
       await closeComposerWindow();
     }
   };
+
+  // Esc cancels the composer, matching the window close-request path which is
+  // already wired to Cancel (composer.utils.ts). This completes the keyboard
+  // loop opened by the auto-focused transcript field and Cmd/Ctrl+Enter to apply.
+  // `finish` is declared above this effect so its dependency array does not read
+  // a `const` that is still in the temporal dead zone during render.
+  useEffect(() => {
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape") {
+        void finish(false);
+      }
+    };
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  }, [finish]);
 
   const applyEdit = async () => {
     if (!instruction.trim() || !text.trim() || isEditing) return;
