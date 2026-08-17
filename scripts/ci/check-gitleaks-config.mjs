@@ -41,7 +41,7 @@ if (allowlist.includes(PREAMBLE_B64)) {
       "and would be EXEMPTED from scanning. Move it to a [[rules]] detector.",
   );
 }
-if (allowlist.includes("\\.github/workflows/")) {
+if (allowlist.includes(String.raw`\.github/workflows/`)) {
   fail(
     "gitleaks.toml: workflows are globally allowlisted, so a literal updater " +
       "key committed in a workflow would evade scanning.",
@@ -59,13 +59,11 @@ if (!rules.includes(PREAMBLE_B64)) {
 
 // 3. Extract the rule regex and prove it fires on a fixture containing the
 //    preamble (i.e. real Gitleaks would exit non-zero on such a file).
-const ruleMatch = rules.match(/regex\s*=\s*'''?(.*?)'''?/);
+const ruleMatch = rules.match(/regex\s*=\s*'''?([^']*)'''?/);
 if (!ruleMatch) {
   fail("gitleaks.toml: could not parse the [[rules]] regex value.");
 }
-let pattern = ruleMatch[1];
-// Tolerate a leading/trailing "'" artifact from the triple-quote parse.
-pattern = pattern.replace(/^'+|'+$/g, "");
+const pattern = ruleMatch[1].trim();
 
 let re;
 try {
