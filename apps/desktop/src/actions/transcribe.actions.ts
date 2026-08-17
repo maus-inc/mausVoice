@@ -36,8 +36,7 @@ import {
   PROCESSED_TRANSCRIPTION_JSON_SCHEMA,
   PROCESSED_TRANSCRIPTION_SCHEMA,
 } from "../utils/prompt.utils";
-import { filterKnownSilenceHallucinations } from "../utils/string.utils";
-import { gateSilentSegments } from "../utils/hallucination.utils";
+import { applyHallucinationFiltering } from "../utils/hallucination.utils";
 import { getToneById, getToneConfig } from "../utils/tone.utils";
 import {
   getMyEffectiveUserId,
@@ -168,23 +167,23 @@ export const transcribeAudio = async ({
   }
   const transcribeDuration = performance.now() - transcribeStart;
   const rawTranscript = transcribeOutput.text.trim();
-  // Hallucination mitigation is phrase-based here (plus an RMS gate applied
-  // before inference for local transcription). Issue #54's probability gate is
-  // implemented below: cloud providers now request `verbose_json` and
-  // `gateSilentSegments` drops segments whose `no_speech_prob` is near-certain
-  // silence (>= 0.9). That gate returns null when the provider didn't return
-  // segments, in which case we fall back to the exact provider text and the
-  // behavior is unchanged. Successful speech is never altered.
-  const gatedTranscript = gateSilentSegments(transcribeOutput.segments);
-  const transcriptForFiltering = gatedTranscript ?? rawTranscript;
+  // Hallucination mitigation: when the user disables the filter we preserve the
+  // raw provider transcript EXACTLY (no probability gating, no phrase
+  // filtering). Otherwise we drop near-certain-silence segments via
+  // `gateSilentSegments` and filter known silence phrases. Long audio that is
+  // split into multiple provider chunks is gated per-chunk in the repo before
+  // merging, so `transcribeOutput.segments` here covers the single-segment case
+  // (and is undefined, triggering a fall back to the raw text, when the
+  // provider returned no verbose segments).
+  const hallucinationFilterEnabled =
+    state.userPrefs?.hallucinationFilterEnabled !== false;
 
-  const sanitizedTranscript =
-    state.userPrefs?.hallucinationFilterEnabled === false
-      ? transcriptForFiltering
-      : filterKnownSilenceHallucinations(
-          transcriptForFiltering,
-          dictationLanguage,
-        );
+  const sanitizedTranscript = applyHallucinationFiltering(
+    rawTranscript,
+    transcribeOutput.segments,
+    dictationLanguage,
+    hallucinationFilterEnabled,
+  );
 
   if (rawTranscript !== sanitizedTranscript) {
     getLogger().info(

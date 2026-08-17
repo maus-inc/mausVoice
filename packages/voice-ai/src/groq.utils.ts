@@ -11,6 +11,12 @@ import {
 } from "groq-sdk/resources/chat/completions";
 import OpenAI from "openai";
 import { openaiCompatibleStreamChat } from "./openai.utils";
+import {
+  contentToString,
+  runSdkTranscription,
+  TranscriptionSegment,
+  TranscribeAudioOutput,
+} from "./transcription.utils";
 
 export const GENERATE_TEXT_MODELS = [
   "moonshotai/kimi-k2-instruct-0905",
@@ -34,28 +40,6 @@ export const TRANSCRIPTION_MODELS = [
 ] as const;
 export type TranscriptionModel = (typeof TRANSCRIPTION_MODELS)[number];
 
-const contentToString = (
-  content: string | ChatCompletionContentPart[] | null | undefined,
-): string => {
-  if (!content) {
-    return "";
-  }
-
-  if (typeof content === "string") {
-    return content;
-  }
-
-  return content
-    .map((part) => {
-      if (part.type === "text") {
-        return part.text ?? "";
-      }
-      return "";
-    })
-    .join("")
-    .trim();
-};
-
 const createClient = (apiKey: string) => {
   // `dangerouslyAllowBrowser` is needed because this runs on a desktop tauri app.
   // The Tauri app doesn't run in a web browser and encyrpts API keys locally, so this
@@ -72,16 +56,8 @@ export type GroqTranscriptionArgs = {
   language?: string;
 };
 
-export type GroqTranscriptionSegment = {
-  text: string;
-  noSpeechProb?: number;
-};
-
-export type GroqTranscribeAudioOutput = {
-  text: string;
-  wordsUsed: number;
-  segments?: GroqTranscriptionSegment[];
-};
+export type GroqTranscriptionSegment = TranscriptionSegment;
+export type GroqTranscribeAudioOutput = TranscribeAudioOutput;
 
 export const groqTranscribeAudio = async ({
   apiKey,
@@ -91,49 +67,25 @@ export const groqTranscribeAudio = async ({
   prompt,
   language,
 }: GroqTranscriptionArgs): Promise<GroqTranscribeAudioOutput> => {
-  return retry({
-    retries: 3,
-    fn: async () => {
-      const client = createClient(apiKey);
-
-      const file = await toFile(blob, `audio.${ext}`);
-      const response = await client.audio.transcriptions.create({
-        file,
-        model,
-        prompt,
-        language: language && language !== "auto" ? language : undefined,
-        // Request verbose output so `segments[].no_speech_prob` is returned,
-        // enabling issue #54's probability-gated silence handling. Providers
-        // that don't support this simply ignore it and return plain `text`, so
-        // the defensive parse below keeps the existing behavior.
-        response_format: "verbose_json",
-      });
-
-      // The SDK types `create` as a union; request verbose_json and read the
-      // fields defensively so non-verbose responses still work.
-      const verbose = response as unknown as {
-        text?: string;
-        segments?: Array<{ text?: string; no_speech_prob?: number }>;
-      };
-
-      if (!verbose.text) {
-        throw new Error("Transcription failed");
-      }
-
-      const segments = verbose.segments
-        ? verbose.segments.map((segment) => ({
-            text: segment.text ?? "",
-            noSpeechProb: segment.no_speech_prob,
-          }))
-        : undefined;
-
-      return {
-        text: verbose.text,
-        wordsUsed: countWords(verbose.text),
-        segments,
-      };
+  const client = createClient(apiKey);
+  const file = await toFile(blob, `audio.${ext}`);
+  return runSdkTranscription(
+    (body) =>
+      client.audio.transcriptions.create(
+        body as unknown as Parameters<
+          typeof client.audio.transcriptions.create
+        >[0],
+      ),
+    {
+      file,
+      model,
+      prompt,
+      language,
+      // Groq Whisper models support `verbose_json`, so `segments[].no_speech_prob`
+      // is returned for issue #54's probability-gated silence handling.
+      response_format: "verbose_json",
     },
-  });
+  );
 };
 
 export type GroqGenerateTextArgs = {

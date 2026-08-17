@@ -32,7 +32,10 @@ import {
 } from "../utils/local-transcription.utils";
 import { getLogger } from "../utils/log.utils";
 import { openaiCompatibleTranscribeAudio } from "../utils/openai-compatible-transcribe.utils";
-import { type TranscriptionSegment } from "../utils/hallucination.utils";
+import {
+  gateSilentSegments,
+  type TranscriptionSegment,
+} from "../utils/hallucination.utils";
 import { speachesTranscribeAudio } from "../utils/speaches.utils";
 import {
   mergeTranscriptions,
@@ -155,8 +158,14 @@ export abstract class BaseTranscribeAudioRepo extends BaseRepo {
       transcriptionTasks,
     );
 
-    // Merge transcription texts
-    const transcriptionTexts = results.map((r) => r.text);
+    // Gate each provider chunk by its `no_speech_prob` segments BEFORE merging,
+    // so audio longer than one provider segment still benefits from the
+    // probability-gated silence handling that single-segment audio gets in the
+    // action layer. Chunks without verbose segments fall back to their raw text.
+    const transcriptionTexts = results.map((r) => {
+      const gated = gateSilentSegments(r.segments);
+      return gated ?? r.text;
+    });
     const mergedText = mergeTranscriptions(transcriptionTexts);
 
     // Use metadata from first result (all segments use same provider/device)

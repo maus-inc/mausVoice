@@ -16,32 +16,18 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { FormattedMessage, useIntl } from "react-intl";
 import { applyVoiceEditInstruction } from "../../actions/composer.actions";
 import { transcribeAudio } from "../../actions/transcribe.actions";
-import { getTranscribeAudioRepo } from "../../repos";
+import { getTranscribeAudioRepo, getGenerateTextRepo } from "../../repos";
 import { getAppState, produceAppState } from "../../store";
 import { getLogger } from "../../utils/log.utils";
 import { getMyPreferredMicrophone } from "../../utils/user.utils";
-import type { StopRecordingResponse } from "../../types/transcription-session.types";
-
-type SpeechRecognitionLike = {
-  lang: string;
-  interimResults: boolean;
-  maxAlternatives: number;
-  onresult:
-    | ((event: {
-        results: ArrayLike<ArrayLike<{ transcript: string }>>;
-      }) => void)
-    | null;
-  onerror: (() => void) | null;
-  onend: (() => void) | null;
-  start: () => void;
-  stop: () => void;
-};
-
-type SpeechRecognitionConstructor = new () => SpeechRecognitionLike;
+import {
+  VoiceInstructionRecorder,
+  type SpeechRecognitionLike,
+} from "./voiceInstructionRecorder";
 
 type SpeechWindow = Window & {
-  SpeechRecognition?: SpeechRecognitionConstructor;
-  webkitSpeechRecognition?: SpeechRecognitionConstructor;
+  SpeechRecognition?: new () => SpeechRecognitionLike;
+  webkitSpeechRecognition?: new () => SpeechRecognitionLike;
 };
 
 const closeComposerWindow = async () => {
@@ -59,8 +45,7 @@ export const ComposerPage = () => {
   const [isEditing, setIsEditing] = useState(false);
   const [editError, setEditError] = useState<string | null>(null);
   const [isListening, setIsListening] = useState(false);
-  const recognitionRef = useRef<SpeechRecognitionLike | null>(null);
-  const providerRecordingRef = useRef(false);
+  const recorderRef = useRef<VoiceInstructionRecorder | null>(null);
 
   // Voice Edit Mode relies on the webview's SpeechRecognition API, which only
   // exists on Chromium-based webviews. Feature-detect once so we can disable
@@ -88,10 +73,64 @@ export const ComposerPage = () => {
     }
   }, []);
 
-  // The mic is usable if either the configured provider path or the browser's
-  // SpeechRecognition (webview-supported) fallback is available.
+  // Voice Edit Mode applies an edit with a text-generation provider, so the
+  // whole feature is only meaningful when one is configured. Probe once up
+  // front (mirroring how the rest of the app selects a provider).
+  const hasGenerationProvider = useMemo(() => {
+    try {
+      return Boolean(getGenerateTextRepo().repo);
+    } catch {
+      return false;
+    }
+  }, []);
+
+  // The feature is available when a generation provider is configured and a
+  // capture path exists (the configured transcription provider or the
+  // webview's SpeechRecognition fallback).
   const voiceInstructionSupported =
-    speechRecognitionSupported || canUseConfiguredProvider;
+    hasGenerationProvider &&
+    (speechRecognitionSupported || canUseConfiguredProvider);
+
+  const unsupportedReason = !hasGenerationProvider
+    ? intl.formatMessage({
+        defaultMessage: "Configure a text-generation provider to use Voice Edit Mode.",
+      })
+    : intl.formatMessage({
+        defaultMessage: "Voice editing is not supported on this platform",
+      });
+
+  if (recorderRef.current === null) {
+    recorderRef.current = new VoiceInstructionRecorder({
+      invoke,
+      transcribe: async ({ samples, sampleRate }) => {
+        const result = await transcribeAudio({ samples, sampleRate });
+        return result.sanitizedTranscript.trim();
+      },
+      getPreferredMicrophone: () =>
+        getMyPreferredMicrophone(getAppState()) ?? null,
+      createSpeechRecognition: () => {
+        const speechWindow = window as SpeechWindow;
+        const Ctor =
+          speechWindow.SpeechRecognition ?? speechWindow.webkitSpeechRecognition;
+        return Ctor ? new Ctor() : null;
+      },
+      getLang: () => document.documentElement.lang || "en-US",
+      canUseProvider: canUseConfiguredProvider,
+      speechRecognitionSupported,
+      unsupportedMessage: intl.formatMessage({
+        defaultMessage: "Voice editing is not supported on this platform",
+      }),
+      onListeningChange: setIsListening,
+      onTranscript: (spoken) =>
+        setInstruction((current) => `${current} ${spoken}`.trim()),
+      onError: setEditError,
+      onResetLevels: () =>
+        produceAppState((draft) => {
+          draft.audioLevels = [];
+        }),
+      logger: getLogger(),
+    });
+  }
 
   useEffect(() => {
     let active = true;
@@ -113,18 +152,16 @@ export const ComposerPage = () => {
     };
   }, [intl, requestId]);
 
-  // Release the native recorder if the composer window closes mid-recording
-  // so we never leave the global audio capture running (webview lifecycle).
+  // Release any active microphone path if the composer window closes
+  // mid-recording so we never leave audio capture running (webview lifecycle).
   useEffect(() => {
     return () => {
-      if (providerRecordingRef.current) {
-        providerRecordingRef.current = false;
-        void invoke("stop_recording").catch(() => undefined);
-      }
+      recorderRef.current?.dispose();
     };
   }, []);
 
   const finish = async (accepted: boolean) => {
+    recorderRef.current?.dispose();
     try {
       await emit("composer-result", {
         requestId,
@@ -155,124 +192,8 @@ export const ComposerPage = () => {
     }
   };
 
-  const startBrowserSpeechRecognition = () => {
-    const SpeechRecognition =
-      (window as SpeechWindow).SpeechRecognition ??
-      (window as SpeechWindow).webkitSpeechRecognition;
-    if (!SpeechRecognition) return;
-
-    const recognition = new SpeechRecognition();
-    recognition.lang = document.documentElement.lang || "en-US";
-    recognition.interimResults = false;
-    recognition.maxAlternatives = 1;
-    recognition.onresult = (event) => {
-      const first = event.results[0]?.[0]?.transcript;
-      if (first) setInstruction((current) => `${current} ${first}`.trim());
-    };
-    recognition.onend = () => {
-      recognitionRef.current = null;
-      setIsListening(false);
-    };
-    recognition.onerror = () => {
-      recognitionRef.current = null;
-      setIsListening(false);
-    };
-    recognitionRef.current = recognition;
-    setIsListening(true);
-    recognition.start();
-  };
-
-  // Primary path: capture audio natively and route it through the configured
-  // mausVoice transcription provider. Reuses `transcribeAudio`, which applies
-  // the exact same provider-selection logic dictation uses (local Whisper/ONNX
-  // or a cloud provider such as Groq), so the spoken instruction is
-  // transcribed by the user's selected engine.
-  const startProviderRecording = async (): Promise<boolean> => {
-    try {
-      await invoke("start_recording", {
-        args: {
-          preferredMicrophone: getMyPreferredMicrophone(getAppState()) ?? null,
-        },
-      });
-      providerRecordingRef.current = true;
-      setIsListening(true);
-      return true;
-    } catch (error) {
-      getLogger().warning(
-        `Voice Edit Mode: configured provider recording unavailable, falling back to browser speech recognition (${error})`,
-      );
-      return false;
-    }
-  };
-
-  const stopProviderRecording = async () => {
-    try {
-      const response = await invoke<StopRecordingResponse>("stop_recording");
-      const samples =
-        response.samples instanceof Float32Array
-          ? Array.from(response.samples)
-          : response.samples;
-      const sampleRate = response.sampleRate ?? 0;
-      if (samples && samples.length > 0 && sampleRate > 0) {
-        const result = await transcribeAudio({ samples, sampleRate });
-        const transcript = result.sanitizedTranscript.trim();
-        if (transcript) {
-          setInstruction((current) => `${current} ${transcript}`.trim());
-        }
-      }
-    } catch (error) {
-      getLogger().warning(
-        `Voice Edit Mode: provider transcription failed (${error})`,
-      );
-      // Graceful fallback to the browser SpeechRecognition path when the
-      // webview supports it (mirrors the existing feature detection).
-      if (speechRecognitionSupported) {
-        startBrowserSpeechRecognition();
-      } else {
-        setEditError(
-          intl.formatMessage({
-            defaultMessage: "Voice editing is not supported on this platform",
-          }),
-        );
-      }
-    } finally {
-      setIsListening(false);
-      produceAppState((draft) => {
-        draft.audioLevels = [];
-      });
-    }
-  };
-
-  const toggleVoiceInstruction = async () => {
-    if (isListening) {
-      if (recognitionRef.current) {
-        recognitionRef.current.stop();
-      } else if (providerRecordingRef.current) {
-        providerRecordingRef.current = false;
-        void stopProviderRecording();
-      }
-      return;
-    }
-
-    // Primary: use the configured transcription provider when one can be
-    // resolved from the active preferences.
-    if (canUseConfiguredProvider) {
-      if (await startProviderRecording()) {
-        return;
-      }
-    }
-
-    // Fallback: browser SpeechRecognition, only when the webview supports it.
-    if (speechRecognitionSupported) {
-      startBrowserSpeechRecognition();
-      return;
-    }
-
-    setEditError(
-      intl.formatMessage({
-        defaultMessage: "Voice editing is not supported on this platform",
-      }),
-    );
+  const toggleVoiceInstruction = () => {
+    void recorderRef.current?.toggle();
   };
 
   return (
@@ -341,21 +262,14 @@ export const ComposerPage = () => {
                 defaultMessage: "Dictate edit instruction",
               })}
               disabled={isEditing || !voiceInstructionSupported}
-              title={
-                voiceInstructionSupported
-                  ? undefined
-                  : intl.formatMessage({
-                      defaultMessage:
-                        "Voice editing is not supported on this platform",
-                    })
-              }
+              title={voiceInstructionSupported ? undefined : unsupportedReason}
             >
               <MicIcon />
             </IconButton>
             <Button
               variant="outlined"
               onClick={() => void applyEdit()}
-              disabled={!instruction.trim() || isEditing}
+              disabled={!instruction.trim() || isEditing || !hasGenerationProvider}
               sx={{ whiteSpace: "nowrap", minHeight: 40 }}
             >
               {isEditing ? (
@@ -367,7 +281,7 @@ export const ComposerPage = () => {
           </Stack>
           {!voiceInstructionSupported && (
             <Typography variant="caption" color="text.secondary">
-              <FormattedMessage defaultMessage="Voice editing is not supported on this platform." />
+              {unsupportedReason}
             </Typography>
           )}
           <Stack

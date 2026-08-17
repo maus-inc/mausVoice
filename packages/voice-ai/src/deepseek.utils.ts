@@ -10,33 +10,12 @@ import type {
   LlmStreamEvent,
 } from "@maus-inc/types";
 import { openaiCompatibleStreamChat } from "./openai.utils";
+import { contentToString } from "./transcription.utils";
 
 export const DEEPSEEK_MODELS = ["deepseek-chat", "deepseek-reasoner"] as const;
 export type DeepseekModel = (typeof DEEPSEEK_MODELS)[number];
 
 const DEEPSEEK_BASE_URL = "https://api.deepseek.com";
-
-const contentToString = (
-  content: string | ChatCompletionContentPart[] | null | undefined,
-): string => {
-  if (!content) {
-    return "";
-  }
-
-  if (typeof content === "string") {
-    return content;
-  }
-
-  return content
-    .map((part) => {
-      if (part.type === "text") {
-        return part.text ?? "";
-      }
-      return "";
-    })
-    .join("")
-    .trim();
-};
 
 const createClient = (apiKey: string) => {
   return new OpenAI({

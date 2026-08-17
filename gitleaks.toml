@@ -13,6 +13,13 @@ paths = [
   # preamble constant. NOT a broad workflow exemption.
   '''gitleaks\.toml''',
   '''scripts/ci/check-gitleaks-config\.mjs''',
+  # Build / dependency directories — excluded from scanning so history and
+  # working-tree scans do not flag vendored or generated artifacts. These were
+  # previously path-glob lines in .gitleaksignore, which Gitleaks does not
+  # honor (it expects fingerprints there, not globs).
+  '''(^|/)node_modules/''',
+  '''(^|/)dist/''',
+  '''(^|/)target/''',
 ]
 regexes = [
   '''pk_live_.*''',

@@ -1,6 +1,6 @@
-node_modules/
-dist/
-target/
-**/node_modules/
-**/dist/
-**/target/
+# This file is used as a Gitleaks *baseline* (fingerprint allowlist). Entries
+# MUST be finding FINGERPRINTS, e.g. `<ruleID>:<commit>:<email>:<path>:<line>`
+# — NOT path globs. Path-based exclusions now live in gitleaks.toml under
+# [allowlist].paths (node_modules / dist / target), which Gitleaks actually
+# honors. Leave this file empty (or with fingerprints only) so it does not
+# silently mask real findings.

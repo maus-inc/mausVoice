@@ -62,18 +62,14 @@ export const reviewTextInComposer = async (
             focused: true,
           };
 
-          // Open the composer near the pill when the pill window is available;
-          // otherwise let the OS choose a (centered) position.
-          try {
-            const pill = await WebviewWindow.getByLabel("pill");
-            if (pill) {
-              const pos = await pill.outerPosition();
-              args.x = Math.max(0, pos.x + 24);
-              args.y = Math.max(0, pos.y);
-            }
-          } catch {
-            // Pill unavailable (e.g. headless context) — keep OS-chosen position.
-          }
+          // The composer is a Tauri webview window, but the dictation pill is a
+          // separate native process (not a WebviewWindow), so there is no
+          // "pill" window label to query for its position. The only pill signal
+          // the desktop app receives is a `pill-position-changed` event
+          // carrying a boolean `hasSavedPosition` — no coordinates — so we
+          // cannot anchor the composer to the pill. Fall back to the OS-chosen
+          // (centered) position instead of calling getByLabel("pill"), which
+          // always returns null and would silently no-op.
 
           const created = await invoke<{ id: string }>(
             "floating_window_create",

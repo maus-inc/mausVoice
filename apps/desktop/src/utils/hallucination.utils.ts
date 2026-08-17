@@ -10,15 +10,33 @@ export const KNOWN_SILENCE_HALLUCINATIONS = [
   "(silence)",
   "thank you for watching",
   "thanks for watching",
-  // Cloud transcription (e.g. Groq) sometimes fabricates a subtitle credit and
-  // a closing sign-off on silent audio; see issue #54 / voquill#446. Both the
-  // bare phrase and the trailing-period variant are listed for clarity even
-  // though `normalizeHallucinationText` strips terminal punctuation, so they
-  // collapse to the same normalized form.
+  // Cloud transcription (e.g. Groq) sometimes fabricates a subtitle credit on
+  // silent audio; see issue #54 / voquill#446. Both the bare phrase and the
+  // trailing-period variant are listed for clarity even though
+  // `normalizeHallucinationText` strips terminal punctuation, so they collapse
+  // to the same normalized form.
   "subtitles by the amara.org community",
   "subtitles by the amara.org community.",
-  "best regards.",
 ] as const;
+
+/**
+ * Subtitle/Amara credit hallucinations. When one of these is present, a nearby
+ * fabricated sign-off (see SILENCE_HALLUCINATION_COMPANIONS) is almost
+ * certainly part of the same hallucinated artifact and is safe to drop.
+ */
+export const SUBTITLE_HALLUCINATION_PHRASES = [
+  "subtitles by the amara.org community",
+  "subtitles by the amara.org community.",
+] as const;
+
+/**
+ * Phrases that look like genuine content on their own but are fabricated by
+ * cloud models alongside the Amara/subtitle hallucination. They are only
+ * stripped when a SUBTITLE_HALLUCINATION_PHRASES entry is also present (or when
+ * the whole segment is dropped by probability gating), so a real dictated
+ * "Best regards." email sign-off survives.
+ */
+export const SILENCE_HALLUCINATION_COMPANIONS = ["best regards."] as const;
 
 const normalizeHallucinationText = (text: string): string =>
   text
@@ -45,6 +63,20 @@ export const isKnownSilenceHallucination = (text: string): boolean => {
   );
 };
 
+const isSubtitleHallucination = (part: string): boolean => {
+  const normalized = normalizeHallucinationText(part);
+  return (SUBTITLE_HALLUCINATION_PHRASES as readonly string[]).some(
+    (phrase) => normalized === normalizeHallucinationText(phrase),
+  );
+};
+
+const isSilenceCompanion = (part: string): boolean => {
+  const normalized = normalizeHallucinationText(part);
+  return (SILENCE_HALLUCINATION_COMPANIONS as readonly string[]).some(
+    (phrase) => normalized === normalizeHallucinationText(phrase),
+  );
+};
+
 /**
  * Remove known hallucination-only lines while preserving surrounding speech.
  * A phrase is removed only when it is a complete line/sentence, never when it
@@ -66,10 +98,43 @@ export const filterKnownSilenceHallucinations = (
   }
   if (isKnownSilenceHallucination(text)) return "";
 
-  const kept = text
-    .split(/(?<=[.!?。！？])\s+|\n+/u)
-    .filter((part) => !isKnownSilenceHallucination(part));
+  const parts = text.split(/(?<=[.!?。！？])\s+|\n+/u);
+  // A fabricated sign-off (e.g. "Best regards.") only accompanies the
+  // Amara/subtitle credit, so strip it only when that credit is also present.
+  const subtitlePresent = parts.some(isSubtitleHallucination);
+
+  const kept = parts.filter((part) => {
+    if (isKnownSilenceHallucination(part)) return false;
+    if (subtitlePresent && isSilenceCompanion(part)) return false;
+    return true;
+  });
   return kept.join(" ").replace(/\s+/g, " ").trim();
+};
+
+/**
+ * Apply the full hallucination-mitigation pipeline to a provider result.
+ *
+ * When `filterEnabled` is false the raw transcript is returned EXACTLY — no
+ * probability gating and no phrase filtering — so the user's off-switch
+ * preserves content verbatim. Otherwise near-certain-silence segments are
+ * dropped (probability gate) and known silence phrases are filtered from the
+ * remainder.
+ */
+export const applyHallucinationFiltering = (
+  rawTranscript: string,
+  segments: TranscriptionSegment[] | undefined | null,
+  language: string | undefined,
+  filterEnabled: boolean,
+): string => {
+  if (!filterEnabled) {
+    return rawTranscript;
+  }
+  const gated = gateSilentSegments(segments);
+  const transcriptForFiltering = gated ?? rawTranscript;
+  return filterKnownSilenceHallucinations(
+    transcriptForFiltering,
+    language,
+  );
 };
 
 /**

@@ -10,6 +10,12 @@ import type {
 import { countWords, retry } from "@maus-inc/utilities";
 import OpenAI, { toFile } from "openai";
 import type { CustomFetch } from "./types";
+import {
+  contentToString,
+  runSdkTranscription,
+  TranscriptionSegment,
+  TranscribeAudioOutput,
+} from "./transcription.utils";
 import type {
   ChatCompletionChunk,
   ChatCompletionContentPart,
@@ -37,28 +43,6 @@ export const OPENAI_TRANSCRIPTION_MODELS = [
 export type OpenAITranscriptionModel =
   (typeof OPENAI_TRANSCRIPTION_MODELS)[number];
 
-const contentToString = (
-  content: string | ChatCompletionContentPart[] | null | undefined,
-): string => {
-  if (!content) {
-    return "";
-  }
-
-  if (typeof content === "string") {
-    return content;
-  }
-
-  return content
-    .map((part) => {
-      if (part.type === "text") {
-        return part.text ?? "";
-      }
-      return "";
-    })
-    .join("")
-    .trim();
-};
-
 const createClient = (
   apiKey: string,
   baseUrl?: string,
@@ -84,16 +68,32 @@ export type OpenAITranscriptionArgs = {
   language?: string;
 };
 
-export type OpenAITranscriptionSegment = {
-  text: string;
-  noSpeechProb?: number;
-};
+/**
+ * OpenAI transcription models that support `verbose_json` and return the
+ * detailed per-segment `no_speech_prob` used by downstream hallucination
+ * gating (issue #54). Models here keep `verbose_json`.
+ */
+const VERBOSE_JSON_TRANSCRIPTION_MODELS = ["whisper-1"] as const;
 
-export type OpenAITranscribeAudioOutput = {
-  text: string;
-  wordsUsed: number;
-  segments?: OpenAITranscriptionSegment[];
-};
+/**
+ * Pick the `response_format` for an OpenAI transcription request.
+ *
+ * `whisper-1` keeps `verbose_json` so `segments[].no_speech_prob` is returned
+ * for probability-gated silence handling. The newer `gpt-4o-transcribe` and
+ * `gpt-4o-mini-transcribe` models do NOT support `verbose_json` — they reject
+ * it with a deterministic HTTP 400 — and only accept `json` / `text`. Sending
+ * `verbose_json` to them previously caused a 400 that the generic retry wrapper
+ * repeated three times.
+ */
+const getTranscriptionResponseFormat = (
+  model: OpenAITranscriptionModel,
+): "verbose_json" | "json" =>
+  (VERBOSE_JSON_TRANSCRIPTION_MODELS as readonly string[]).includes(model)
+    ? "verbose_json"
+    : "json";
+
+export type OpenAITranscriptionSegment = TranscriptionSegment;
+export type OpenAITranscribeAudioOutput = TranscribeAudioOutput;
 
 export const openaiTranscribeAudio = async ({
   apiKey,
@@ -103,49 +103,26 @@ export const openaiTranscribeAudio = async ({
   prompt,
   language,
 }: OpenAITranscriptionArgs): Promise<OpenAITranscribeAudioOutput> => {
-  return retry({
-    retries: 3,
-    fn: async () => {
-      const client = createClient(apiKey);
-
-      const file = await toFile(blob, `audio.${ext}`);
-      const response = await client.audio.transcriptions.create({
-        file,
-        model,
-        prompt,
-        language: language && language !== "auto" ? language : undefined,
-        // Request verbose output so `segments[].no_speech_prob` is returned,
-        // enabling issue #54's probability-gated silence handling. Providers
-        // that don't support this simply ignore it and return plain `text`, so
-        // the defensive parse below keeps the existing behavior.
-        response_format: "verbose_json",
-      });
-
-      // The SDK types `create` as a union; request verbose_json and read the
-      // fields defensively so non-verbose responses still work.
-      const verbose = response as unknown as {
-        text?: string;
-        segments?: Array<{ text?: string; no_speech_prob?: number }>;
-      };
-
-      if (!verbose.text) {
-        throw new Error("Transcription failed");
-      }
-
-      const segments = verbose.segments
-        ? verbose.segments.map((segment) => ({
-            text: segment.text ?? "",
-            noSpeechProb: segment.no_speech_prob,
-          }))
-        : undefined;
-
-      return {
-        text: verbose.text,
-        wordsUsed: countWords(verbose.text),
-        segments,
-      };
+  const client = createClient(apiKey);
+  const file = await toFile(blob, `audio.${ext}`);
+  return runSdkTranscription(
+    (body) =>
+      client.audio.transcriptions.create(
+        body as unknown as Parameters<
+          typeof client.audio.transcriptions.create
+        >[0],
+      ),
+    {
+      file,
+      model,
+      prompt,
+      language,
+      // `whisper-1` keeps `verbose_json` so `segments[].no_speech_prob` is
+      // returned; `gpt-4o-transcribe` / `gpt-4o-mini-transcribe` reject
+      // `verbose_json` (HTTP 400) and use `json` instead.
+      response_format: getTranscriptionResponseFormat(model),
     },
-  });
+  );
 };
 
 export type OpenAIGenerateTextArgs = {
