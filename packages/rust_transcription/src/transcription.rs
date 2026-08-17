@@ -124,7 +124,8 @@ impl TranscriptionEngine {
             });
         }
 
-        let processed = crate::audio::resample_to_rate(&filtered_samples, input.sample_rate, 16_000);
+        let processed =
+            crate::audio::resample_to_rate(&filtered_samples, input.sample_rate, 16_000);
         if processed.is_empty() {
             return Err("unable to resample audio".to_string());
         }
@@ -471,7 +472,9 @@ fn list_gpu_devices() -> Result<Vec<ComputeDevice>, String> {
 #[cfg(feature = "gpu")]
 fn describe_gpu_device(device: whisper_rs::whisper_rs_sys::ggml_backend_dev_t) -> String {
     let description = unsafe {
-        c_string(whisper_rs::whisper_rs_sys::ggml_backend_dev_description(device))
+        c_string(whisper_rs::whisper_rs_sys::ggml_backend_dev_description(
+            device,
+        ))
     };
     let name = unsafe { c_string(whisper_rs::whisper_rs_sys::ggml_backend_dev_name(device)) };
     let backend = unsafe {

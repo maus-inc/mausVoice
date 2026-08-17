@@ -87,6 +87,7 @@ __pycache__/
 *.py[cod]
 
 target/
+.toolchain/
 nul
 
 *.exe

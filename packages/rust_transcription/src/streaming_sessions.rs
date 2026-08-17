@@ -181,8 +181,7 @@ mod tests {
                     device_id: None,
                     hallucination_filter_enabled: true,
                     samples: Vec::new(),
-                    last_activity: Instant::now()
-                        - (SESSION_IDLE_TTL + Duration::from_secs(1)),
+                    last_activity: Instant::now() - (SESSION_IDLE_TTL + Duration::from_secs(1)),
                 },
             );
         }

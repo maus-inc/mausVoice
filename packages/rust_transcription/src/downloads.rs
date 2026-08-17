@@ -59,7 +59,12 @@ impl DownloadArtifact {
         max_bytes: u64,
         sha256: Option<&'static str>,
     ) -> Self {
-        Self { url, destination, max_bytes, sha256 }
+        Self {
+            url,
+            destination,
+            max_bytes,
+            sha256,
+        }
     }
 }
 
@@ -199,15 +204,7 @@ impl DownloadRegistry {
                     } else {
                         let generation = record.generation;
                         let existing = record.to_snapshot(existing_id);
-                        (
-                            existing_id,
-                            generation,
-                            existing,
-                            None,
-                            None,
-                            None,
-                            false,
-                        )
+                        (existing_id, generation, existing, None, None, None, false)
                     }
                 } else {
                     store.active_by_model.remove(&model);
@@ -299,7 +296,11 @@ impl DownloadRegistry {
         Ok(snapshot)
     }
 
-    pub async fn pause_job(&self, model: WhisperModel, job_id: Uuid) -> Option<DownloadJobSnapshot> {
+    pub async fn pause_job(
+        &self,
+        model: WhisperModel,
+        job_id: Uuid,
+    ) -> Option<DownloadJobSnapshot> {
         let mut store = self.inner.lock().await;
         let job = store.jobs.get_mut(&job_id)?;
         if job.model != model {
@@ -310,7 +311,10 @@ impl DownloadRegistry {
             return Some(job.to_snapshot(job_id));
         }
 
-        if matches!(job.status, DownloadJobStatus::Running | DownloadJobStatus::Pending) {
+        if matches!(
+            job.status,
+            DownloadJobStatus::Running | DownloadJobStatus::Pending
+        ) {
             if let Some(control_tx) = &job.control_tx {
                 let _ = control_tx.send(DownloadCommand::Pause);
             }
@@ -532,7 +536,10 @@ impl DownloadRegistry {
         // An artifact that is already present is a shortcut, never an exemption:
         // it must pass exactly the size + SHA-256 gate enforced on a fresh
         // download. Anything else is discarded and re-fetched.
-        if existing_model_file_size(&artifact.destination).await.is_some() {
+        if existing_model_file_size(&artifact.destination)
+            .await
+            .is_some()
+        {
             if let Some(existing_size) = admitted_artifact_size(artifact).await {
                 return Ok(ArtifactDownloadOutcome::Completed {
                     bytes: existing_size,
@@ -598,7 +605,9 @@ impl DownloadRegistry {
         }
 
         let (mut downloaded, artifact_total, mut file) = if resume_is_valid {
-            let total = response.content_length().map(|len| existing_bytes.saturating_add(len));
+            let total = response
+                .content_length()
+                .map(|len| existing_bytes.saturating_add(len));
             let file = tokio::fs::OpenOptions::new()
                 .create(true)
                 .append(true)
@@ -759,7 +768,10 @@ impl DownloadRegistry {
         let mut store = self.inner.lock().await;
         if let Some(job) = store.jobs.get_mut(&job_id) {
             if job.generation == generation
-                && matches!(job.status, DownloadJobStatus::Pending | DownloadJobStatus::Running)
+                && matches!(
+                    job.status,
+                    DownloadJobStatus::Pending | DownloadJobStatus::Running
+                )
                 && !job.is_finalizing
             {
                 job.is_finalizing = true;
@@ -773,7 +785,12 @@ impl DownloadRegistry {
     async fn mark_running(&self, job_id: Uuid, generation: u64) -> bool {
         let mut store = self.inner.lock().await;
         if let Some(job) = store.jobs.get_mut(&job_id) {
-            if job.generation == generation && matches!(job.status, DownloadJobStatus::Pending | DownloadJobStatus::Running) {
+            if job.generation == generation
+                && matches!(
+                    job.status,
+                    DownloadJobStatus::Pending | DownloadJobStatus::Running
+                )
+            {
                 job.status = DownloadJobStatus::Running;
                 job.error = None;
                 return true;
@@ -813,7 +830,12 @@ impl DownloadRegistry {
     ) {
         let mut store = self.inner.lock().await;
         if let Some(job) = store.jobs.get_mut(&job_id) {
-            if job.generation == generation && matches!(job.status, DownloadJobStatus::Pending | DownloadJobStatus::Running) {
+            if job.generation == generation
+                && matches!(
+                    job.status,
+                    DownloadJobStatus::Pending | DownloadJobStatus::Running
+                )
+            {
                 job.bytes_downloaded = downloaded;
                 job.total_bytes = match (job.total_bytes, total_bytes) {
                     (Some(existing), Some(incoming)) => Some(existing.max(incoming)),
@@ -897,7 +919,9 @@ async fn request_artifact_response(
     // Never append without a validator tied to the existing prefix. A bare
     // byte offset cannot prove that the remote object is still the same file.
     if existing_bytes > max_bytes {
-        return Err(format!("existing partial artifact exceeds {max_bytes} byte limit"));
+        return Err(format!(
+            "existing partial artifact exceeds {max_bytes} byte limit"
+        ));
     }
     if let Some(if_range) = if_range.filter(|_| existing_bytes > 0) {
         let ranged = client
@@ -938,7 +962,10 @@ async fn request_artifact_response(
 }
 
 fn reject_oversized_response(response: &reqwest::Response, max_bytes: u64) -> Result<(), String> {
-    if response.content_length().is_some_and(|length| length > max_bytes) {
+    if response
+        .content_length()
+        .is_some_and(|length| length > max_bytes)
+    {
         return Err(format!("artifact exceeds {max_bytes} byte limit"));
     }
     Ok(())
@@ -954,15 +981,25 @@ async fn verify_file_sha256(path: &Path, expected: &str) -> Result<(), String> {
         let mut hasher = Sha256::new();
         let mut buffer = [0_u8; 64 * 1024];
         loop {
-            let count = file.read(&mut buffer)
+            let count = file
+                .read(&mut buffer)
                 .map_err(|err| format!("failed to checksum artifact: {err}"))?;
-            if count == 0 { break; }
+            if count == 0 {
+                break;
+            }
             hasher.update(&buffer[..count]);
         }
         let actual = format!("{:x}", hasher.finalize());
-        if actual.eq_ignore_ascii_case(&expected) { Ok(()) }
-        else { Err(format!("artifact SHA-256 mismatch (expected {expected}, got {actual})")) }
-    }).await.map_err(|err| format!("checksum task failed: {err}"))?
+        if actual.eq_ignore_ascii_case(&expected) {
+            Ok(())
+        } else {
+            Err(format!(
+                "artifact SHA-256 mismatch (expected {expected}, got {actual})"
+            ))
+        }
+    })
+    .await
+    .map_err(|err| format!("checksum task failed: {err}"))?
 }
 
 fn content_range_start(response: &reqwest::Response) -> Option<u64> {
@@ -1181,11 +1218,12 @@ mod tests {
         let job_id = Uuid::new_v4();
 
         let temp_file = temporary_artifact_path(&destination, job_id).unwrap();
-        let auxiliary_temp_file =
-            temporary_artifact_path(&auxiliary_destination, job_id).unwrap();
+        let auxiliary_temp_file = temporary_artifact_path(&auxiliary_destination, job_id).unwrap();
         let validator_file = temporary_validator_path(&temp_file).unwrap();
         let auxiliary_validator_file = temporary_validator_path(&auxiliary_temp_file).unwrap();
-        tokio::fs::write(&temp_file, b"partial bytes").await.unwrap();
+        tokio::fs::write(&temp_file, b"partial bytes")
+            .await
+            .unwrap();
         tokio::fs::write(&auxiliary_temp_file, b"partial tokens")
             .await
             .unwrap();
@@ -1238,10 +1276,7 @@ mod tests {
         let registry = DownloadRegistry::default();
         let job_id = Uuid::new_v4();
 
-        let filename = destination
-            .file_name()
-            .and_then(|n| n.to_str())
-            .unwrap();
+        let filename = destination.file_name().and_then(|n| n.to_str()).unwrap();
         let temp_file = destination.with_file_name(format!("{filename}.{job_id}.download"));
         tokio::fs::write(&temp_file, b"first-chunk").await.unwrap();
 
@@ -1289,9 +1324,7 @@ mod tests {
 
     #[tokio::test]
     async fn bundle_job_waits_for_auxiliary_artifact() {
-        let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
-            .await
-            .unwrap();
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
         let address = listener.local_addr().unwrap();
         let (accepted_tx, accepted_rx) = oneshot::channel();
         let (release_tx, release_rx) = oneshot::channel();
@@ -1319,10 +1352,7 @@ mod tests {
                 WhisperModel::ParakeetTdt06B,
                 vec![
                     DownloadArtifact::new("http://unused.invalid".to_string(), primary),
-                    DownloadArtifact::new(
-                        format!("http://{address}/vocab.txt"),
-                        auxiliary.clone(),
-                    ),
+                    DownloadArtifact::new(format!("http://{address}/vocab.txt"), auxiliary.clone()),
                 ],
                 reqwest::Client::new(),
             )
@@ -1349,16 +1379,17 @@ mod tests {
             }
             tokio::time::sleep(tokio::time::Duration::from_millis(20)).await;
         }
-        assert!(completed, "bundle did not complete after auxiliary finalized");
+        assert!(
+            completed,
+            "bundle did not complete after auxiliary finalized"
+        );
         assert_eq!(tokio::fs::read(&auxiliary).await.unwrap(), b"aux");
         server.await.unwrap();
     }
 
     #[tokio::test]
     async fn mismatched_content_range_restarts_without_append() {
-        let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
-            .await
-            .unwrap();
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
         let address = listener.local_addr().unwrap();
         let server = tokio::spawn(async move {
             for response in [
@@ -1396,9 +1427,7 @@ mod tests {
 
     #[tokio::test]
     async fn partial_download_without_validator_restarts_from_zero() {
-        let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
-            .await
-            .unwrap();
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
         let address = listener.local_addr().unwrap();
         let server = tokio::spawn(async move {
             let (mut socket, _) = listener.accept().await.unwrap();
@@ -1431,9 +1460,7 @@ mod tests {
 
     #[tokio::test]
     async fn successful_status_without_artifact_body_is_rejected() {
-        let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
-            .await
-            .unwrap();
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
         let address = listener.local_addr().unwrap();
         let server = tokio::spawn(async move {
             let (mut socket, _) = listener.accept().await.unwrap();
@@ -1546,8 +1573,13 @@ mod tests {
         }
 
         let failed = failed.expect("bundle job did not report auxiliary failure");
-        let error = failed.error.expect("failed bundle should include a diagnostic");
-        assert!(error.contains("vocab.txt"), "unexpected diagnostic: {error}");
+        let error = failed
+            .error
+            .expect("failed bundle should include a diagnostic");
+        assert!(
+            error.contains("vocab.txt"),
+            "unexpected diagnostic: {error}"
+        );
         let latest = registry
             .get_latest_job(WhisperModel::ParakeetTdt06B)
             .await
@@ -1573,9 +1605,7 @@ mod tests {
         // Oversized relative to the per-artifact cap.
         assert!(!artifact_admitted(&destination, 4, None).await);
         // Missing files are never admitted.
-        assert!(
-            !artifact_admitted(&temp_dir.path().join("absent.onnx"), 1_024, None).await
-        );
+        assert!(!artifact_admitted(&temp_dir.path().join("absent.onnx"), 1_024, None).await);
     }
 
     #[tokio::test]
@@ -1597,10 +1627,7 @@ mod tests {
                 MAX_MODEL_ARTIFACT_BYTES,
                 Some("0000000000000000000000000000000000000000000000000000000000000000"),
             ),
-            DownloadArtifact::new(
-                "http://127.0.0.1:0/vocab.txt".to_string(),
-                unpinned.clone(),
-            ),
+            DownloadArtifact::new("http://127.0.0.1:0/vocab.txt".to_string(), unpinned.clone()),
         ];
         assert_eq!(admitted_artifact_set_size(&artifacts).await, None);
         // The digest-mismatched artifact is dropped so it is re-downloaded, and
@@ -1642,7 +1669,9 @@ mod tests {
                     "pinned digest for '{name}' must be 64 hex characters: '{digest}'"
                 );
                 assert!(
-                    digest.chars().all(|character| character.is_ascii_hexdigit()),
+                    digest
+                        .chars()
+                        .all(|character| character.is_ascii_hexdigit()),
                     "pinned digest for '{name}' must be hexadecimal: '{digest}'"
                 );
                 pinned_digests += 1;

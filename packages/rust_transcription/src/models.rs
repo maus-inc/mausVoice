@@ -30,17 +30,9 @@ pub enum WhisperModel {
         alias = "parakeet_tdt_0.6b"
     )]
     ParakeetTdt06B,
-    #[serde(
-        rename = "canary-1b",
-        alias = "canary",
-        alias = "canary_1b"
-    )]
+    #[serde(rename = "canary-1b", alias = "canary", alias = "canary_1b")]
     Canary1B,
-    #[serde(
-        rename = "sense-voice",
-        alias = "sensevoice",
-        alias = "sense_voice"
-    )]
+    #[serde(rename = "sense-voice", alias = "sensevoice", alias = "sense_voice")]
     SenseVoice,
 }
 
@@ -83,10 +75,7 @@ impl WhisperModel {
     pub fn is_onnx(self) -> bool {
         matches!(
             self,
-            Self::ParakeetCtc06B
-                | Self::ParakeetTdt06B
-                | Self::Canary1B
-                | Self::SenseVoice
+            Self::ParakeetCtc06B | Self::ParakeetTdt06B | Self::Canary1B | Self::SenseVoice
         )
     }
 
@@ -120,7 +109,8 @@ impl WhisperModel {
     //   model.int8.onnx SHA-256 12ca1a2ae7ecf3e0019ef2822307ee0b5cadc9196569e379b4c4026f8205276d
     // SENSEVOICE_REVISION and SENSEVOICE_DOWNLOAD_URL must stay in sync.
     const SENSEVOICE_REVISION: &str = "355f4d4884d8afd08aef04b9007a8556d7b463b2";
-    const SENSEVOICE_MODEL_SHA256: &str = "12ca1a2ae7ecf3e0019ef2822307ee0b5cadc9196569e379b4c4026f8205276d";
+    const SENSEVOICE_MODEL_SHA256: &str =
+        "12ca1a2ae7ecf3e0019ef2822307ee0b5cadc9196569e379b4c4026f8205276d";
     const SENSEVOICE_TOKENS_SHA256: Option<&str> = None;
     const SENSEVOICE_DOWNLOAD_URL: &str =
         "https://huggingface.co/csukuangfj/sherpa-onnx-sense-voice-zh-en-ja-ko-yue-int8-2025-09-09/resolve/355f4d4884d8afd08aef04b9007a8556d7b463b2/model.int8.onnx";
@@ -129,24 +119,48 @@ impl WhisperModel {
             Self::ParakeetCtc06B => {
                 let root = "https://huggingface.co/onnx-community/parakeet-ctc-0.6b-ONNX/resolve/7df2cab7aed886b8b7f80d68a8214007e4847601/";
                 vec![
-                    ("model_int8.onnx_data", format!("{root}onnx/model_int8.onnx_data"), Some("136207926beb9b3bc0779d7a96c179013f51b292c320e96ae7a341ef62ab53d9")),
-                    ("model_int8.onnx", format!("{root}onnx/model_int8.onnx"), Some("4de804b59b7b839ca21b97b5e506e558a859301d9a231a537e43c8f521037348")),
+                    (
+                        "model_int8.onnx_data",
+                        format!("{root}onnx/model_int8.onnx_data"),
+                        Some("136207926beb9b3bc0779d7a96c179013f51b292c320e96ae7a341ef62ab53d9"),
+                    ),
+                    (
+                        "model_int8.onnx",
+                        format!("{root}onnx/model_int8.onnx"),
+                        Some("4de804b59b7b839ca21b97b5e506e558a859301d9a231a537e43c8f521037348"),
+                    ),
                     ("tokenizer.json", format!("{root}tokenizer.json"), None),
                 ]
             }
             Self::ParakeetTdt06B => {
                 let root = "https://huggingface.co/istupakov/parakeet-tdt-0.6b-v3-onnx/resolve/8f23f0c03c8761650bdb5b40aaf3e40d2c15f1ce/";
                 vec![
-                    ("encoder-model.int8.onnx", format!("{root}encoder-model.int8.onnx"), Some("6139d2fa7e1b086097b277c7149725edbab89cc7c7ae64b23c741be4055aff09")),
-                    ("decoder_joint-model.int8.onnx", format!("{root}decoder_joint-model.int8.onnx"), Some("eea7483ee3d1a30375daedc8ed83e3960c91b098812127a0d99d1c8977667a70")),
+                    (
+                        "encoder-model.int8.onnx",
+                        format!("{root}encoder-model.int8.onnx"),
+                        Some("6139d2fa7e1b086097b277c7149725edbab89cc7c7ae64b23c741be4055aff09"),
+                    ),
+                    (
+                        "decoder_joint-model.int8.onnx",
+                        format!("{root}decoder_joint-model.int8.onnx"),
+                        Some("eea7483ee3d1a30375daedc8ed83e3960c91b098812127a0d99d1c8977667a70"),
+                    ),
                     ("vocab.txt", format!("{root}vocab.txt"), None),
                 ]
             }
             Self::Canary1B => {
                 let root = "https://huggingface.co/istupakov/canary-1b-v2-onnx/resolve/5ebc1520cef7b6b318b3526ad17adbfe00bc1bfc/";
                 vec![
-                    ("encoder-model.int8.onnx", format!("{root}encoder-model.int8.onnx"), Some("6d96e9945898e5ace48f4efecd459ca1df81859730be27b8af6b197639403ee1")),
-                    ("decoder-model.int8.onnx", format!("{root}decoder-model.int8.onnx"), Some("52d83aa7aad41fbbe4f9dfcd341d784735a6eb4c6eb0d3290fc27a0d8ac39abf")),
+                    (
+                        "encoder-model.int8.onnx",
+                        format!("{root}encoder-model.int8.onnx"),
+                        Some("6d96e9945898e5ace48f4efecd459ca1df81859730be27b8af6b197639403ee1"),
+                    ),
+                    (
+                        "decoder-model.int8.onnx",
+                        format!("{root}decoder-model.int8.onnx"),
+                        Some("52d83aa7aad41fbbe4f9dfcd341d784735a6eb4c6eb0d3290fc27a0d8ac39abf"),
+                    ),
                     ("vocab.txt", format!("{root}vocab.txt"), None),
                 ]
             }
@@ -294,8 +308,7 @@ mod tests {
             );
             assert!(artifacts.len() > 1);
             assert!(artifacts.iter().all(|(_, url, _)| {
-                url.starts_with("https://huggingface.co/")
-                    && !url.contains("/resolve/main/")
+                url.starts_with("https://huggingface.co/") && !url.contains("/resolve/main/")
             }));
             // The primary executable graph must always be digest-pinned,
             // including SenseVoice (no longer exempt).
@@ -313,25 +326,26 @@ mod tests {
         assert!(artifacts
             .iter()
             .all(|(_, url, _)| !url.contains("/resolve/main/")));
-        assert!(artifacts
-            .iter()
-            .all(|(_, url, _)| !url.contains("REPLACE")));
+        assert!(artifacts.iter().all(|(_, url, _)| !url.contains("REPLACE")));
         // The executable graph must carry a verified digest.
         let (_, _, digest) = &artifacts[0];
         let digest = digest.expect("SenseVoice primary graph must be digest-pinned");
         // The pinned revision must be an immutable 40-char commit SHA, not a
         // placeholder or the mutable `main` branch.
         assert_eq!(
-            SENSEVOICE_REVISION.len(),
+            WhisperModel::SENSEVOICE_REVISION.len(),
             40,
             "SenseVoice must pin an immutable 40-char commit SHA, not a placeholder"
         );
         assert!(
-            SENSEVOICE_REVISION.chars().all(|c| c.is_ascii_hexdigit()),
+            WhisperModel::SENSEVOICE_REVISION
+                .chars()
+                .all(|c| c.is_ascii_hexdigit()),
             "SenseVoice revision must be a hexadecimal commit SHA"
         );
         assert!(
-            !SENSEVOICE_REVISION.contains("REPLACE") && SENSEVOICE_REVISION != "main",
+            !WhisperModel::SENSEVOICE_REVISION.contains("REPLACE")
+                && WhisperModel::SENSEVOICE_REVISION != "main",
             "SenseVoice revision must not be a placeholder or `main`"
         );
         // The digest must be a 64-char SHA-256.
@@ -346,7 +360,9 @@ mod tests {
         );
         // The primary download URL must also be revision-pinned.
         assert!(
-            !WhisperModel::SenseVoice.download_url().contains("/resolve/main/"),
+            !WhisperModel::SenseVoice
+                .download_url()
+                .contains("/resolve/main/"),
             "SenseVoice download URL must not use the mutable main branch"
         );
     }

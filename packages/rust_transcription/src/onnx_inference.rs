@@ -396,16 +396,17 @@ fn load_model(
         WhisperModel::SenseVoice => {
             let mut config = OfflineRecognizerConfig::default();
             config.model_config.sense_voice = OfflineSenseVoiceModelConfig {
-                model: Some(model_dir.join("model.int8.onnx").to_string_lossy().into_owned()),
+                model: Some(
+                    model_dir
+                        .join("model.int8.onnx")
+                        .to_string_lossy()
+                        .into_owned(),
+                ),
                 language: Some(normalize_sense_voice_language(language).to_string()),
                 use_itn: true,
             };
-            config.model_config.tokens = Some(
-                model_dir
-                    .join("tokens.txt")
-                    .to_string_lossy()
-                    .into_owned(),
-            );
+            config.model_config.tokens =
+                Some(model_dir.join("tokens.txt").to_string_lossy().into_owned());
             OfflineRecognizer::create(&config)
                 .map(LoadedModel::SenseVoice)
                 .ok_or_else(|| "failed to load SenseVoice model".to_string())
@@ -447,8 +448,7 @@ mod tests {
     #[test]
     fn packaged_runtime_candidates_include_tauri_resource_layout() {
         let executable_dir = Path::new("/Applications/mausVoice.app/Contents/MacOS");
-        let candidates =
-            runtime_library_candidates_from(executable_dir, "libonnxruntime.dylib");
+        let candidates = runtime_library_candidates_from(executable_dir, "libonnxruntime.dylib");
 
         assert!(candidates.contains(&PathBuf::from(
             "/Applications/mausVoice.app/Contents/MacOS/../Resources/binaries/onnxruntime/libonnxruntime.dylib"
@@ -481,7 +481,10 @@ mod tests {
             .expect_err("a missing runtime library must be rejected");
         let message = error.to_string();
         assert!(message.contains("MAUSVOICE_ORT_DYLIB_PATH"), "{message}");
-        assert!(message.contains(&missing.display().to_string()), "{message}");
+        assert!(
+            message.contains(&missing.display().to_string()),
+            "{message}"
+        );
 
         let empty = temp_dir.path().join("empty-onnxruntime");
         std::fs::write(&empty, b"").unwrap();

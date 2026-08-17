@@ -70,11 +70,8 @@ fn validate_model_redirect(attempt: Attempt<'_>) -> reqwest::redirect::Action {
     }
 }
 
-
 fn is_hugging_face_delivery_host(host: &str) -> bool {
-    host == "huggingface.co"
-        || host.ends_with(".huggingface.co")
-        || host.ends_with(".hf.co")
+    host == "huggingface.co" || host.ends_with(".huggingface.co") || host.ends_with(".hf.co")
 }
 
 #[cfg(test)]
@@ -90,7 +87,11 @@ mod tests {
         ] {
             assert!(is_hugging_face_delivery_host(host));
         }
-        for host in ["huggingface.co.attacker.example", "evil-hf.co", "example.com"] {
+        for host in [
+            "huggingface.co.attacker.example",
+            "evil-hf.co",
+            "example.com",
+        ] {
             assert!(!is_hugging_face_delivery_host(host));
         }
     }
