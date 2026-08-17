@@ -11,6 +11,17 @@ use uuid::Uuid;
 
 use crate::models::WhisperModel;
 
+struct DownloadJobParams {
+    job_id: Uuid,
+    generation: u64,
+    model: WhisperModel,
+    artifacts: Vec<DownloadArtifact>,
+    client: reqwest::Client,
+    control_rx: watch::Receiver<DownloadCommand>,
+    prev_worker_rx: Option<watch::Receiver<bool>>,
+    finished_tx: watch::Sender<bool>,
+}
+
 /// Largest currently-supported model artifact plus headroom. This is a hard
 /// limit, not a progress hint, and protects users from chunked responses.
 pub const MAX_MODEL_ARTIFACT_BYTES: u64 = 4 * 1024 * 1024 * 1024;
@@ -275,7 +286,7 @@ impl DownloadRegistry {
                 let registry = self.clone();
                 tokio::spawn(async move {
                     if let Err(err) = registry
-                        .run_download_job(
+                        .run_download_job(DownloadJobParams {
                             job_id,
                             generation,
                             model,
@@ -284,7 +295,7 @@ impl DownloadRegistry {
                             control_rx,
                             prev_worker_rx,
                             finished_tx,
-                        )
+                        })
                         .await
                     {
                         registry.mark_failed(job_id, generation, model, err).await;
@@ -415,17 +426,17 @@ impl DownloadRegistry {
         store.jobs.retain(|_, job| job.model != model);
     }
 
-    async fn run_download_job(
-        &self,
-        job_id: Uuid,
-        generation: u64,
-        model: WhisperModel,
-        artifacts: Vec<DownloadArtifact>,
-        client: reqwest::Client,
-        mut control_rx: watch::Receiver<DownloadCommand>,
-        prev_worker_rx: Option<watch::Receiver<bool>>,
-        finished_tx: watch::Sender<bool>,
-    ) -> Result<(), String> {
+    async fn run_download_job(&self, params: DownloadJobParams) -> Result<(), String> {
+        let DownloadJobParams {
+            job_id,
+            generation,
+            model,
+            artifacts,
+            client,
+            mut control_rx,
+            prev_worker_rx,
+            finished_tx,
+        } = params;
         // A resumed worker waits for its predecessor to close the active
         // artifact before opening the same partial file.
         if let Some(mut prev_rx) = prev_worker_rx {

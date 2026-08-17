@@ -75,7 +75,7 @@ pub async fn replace_hotkeys_by_prefix(
     let mut tx = pool.begin().await?;
     sqlx::query("DELETE FROM hotkeys WHERE action_name LIKE ?1 ESCAPE '\\'")
         .bind(pattern)
-        .execute(&mut tx)
+        .execute(&mut *tx)
         .await?;
     for hotkey in hotkeys {
         let keys_json = serialize_keys(&hotkey.keys)?;
@@ -85,7 +85,7 @@ pub async fn replace_hotkeys_by_prefix(
         .bind(&hotkey.id)
         .bind(&hotkey.action_name)
         .bind(keys_json)
-        .execute(&mut tx)
+        .execute(&mut *tx)
         .await?;
     }
     tx.commit().await?;

@@ -168,7 +168,9 @@ fn build_polyphase_table(source_rate: u32, target_rate: u32) -> Option<Polyphase
     })
 }
 
-static TABLE_CACHE: OnceLock<Mutex<HashMap<(u32, u32), Arc<PolyphaseTable>>>> = OnceLock::new();
+type PolyphaseTableCache = OnceLock<Mutex<HashMap<(u32, u32), Arc<PolyphaseTable>>>>;
+
+static TABLE_CACHE: PolyphaseTableCache = OnceLock::new();
 
 fn get_table(source_rate: u32, target_rate: u32) -> Option<Arc<PolyphaseTable>> {
     let cache = TABLE_CACHE.get_or_init(|| Mutex::new(HashMap::new()));

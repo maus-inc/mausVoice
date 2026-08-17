@@ -460,17 +460,17 @@ async fn transcribe(
     let model_path = ensure_model_downloaded(&state, request.model).await?;
 
     let started = Instant::now();
-    let output = run_transcription_request(
-        &state,
-        request.model,
+    let output = run_transcription_request(TranscriptionRequestParams {
+        state: &state,
+        model: request.model,
         model_path,
-        request.samples,
-        request.sample_rate,
-        request.language,
-        request.initial_prompt,
-        request.device_id,
-        request.hallucination_filter_enabled,
-    )
+        samples: request.samples,
+        sample_rate: request.sample_rate,
+        language: request.language,
+        initial_prompt: request.initial_prompt,
+        device_id: request.device_id,
+        hallucination_filter_enabled: request.hallucination_filter_enabled,
+    })
     .await?;
 
     Ok(Json(TranscribeResponse {
@@ -548,17 +548,17 @@ async fn finalize_transcription_session(
 
     let model_path = ensure_model_downloaded(&state, session.model).await?;
     let started = Instant::now();
-    let output = run_transcription_request(
-        &state,
-        session.model,
+    let output = run_transcription_request(TranscriptionRequestParams {
+        state: &state,
+        model: session.model,
         model_path,
-        session.samples,
-        session.sample_rate,
-        session.language,
-        session.initial_prompt,
-        session.device_id,
-        session.hallucination_filter_enabled,
-    )
+        samples: session.samples,
+        sample_rate: session.sample_rate,
+        language: session.language,
+        initial_prompt: session.initial_prompt,
+        device_id: session.device_id,
+        hallucination_filter_enabled: session.hallucination_filter_enabled,
+    })
     .await?;
 
     Ok(Json(TranscribeResponse {
@@ -654,8 +654,8 @@ async fn ensure_model_downloaded(
     Ok(model_path)
 }
 
-async fn run_transcription_request(
-    state: &AppState,
+struct TranscriptionRequestParams<'a> {
+    state: &'a AppState,
     model: WhisperModel,
     model_path: PathBuf,
     samples: Vec<f32>,
@@ -664,7 +664,22 @@ async fn run_transcription_request(
     initial_prompt: Option<String>,
     device_id: Option<String>,
     hallucination_filter_enabled: bool,
+}
+
+async fn run_transcription_request(
+    params: TranscriptionRequestParams<'_>,
 ) -> Result<crate::transcription::TranscriptionOutput, ApiError> {
+    let TranscriptionRequestParams {
+        state,
+        model,
+        model_path,
+        samples,
+        sample_rate,
+        language,
+        initial_prompt,
+        device_id,
+        hallucination_filter_enabled,
+    } = params;
     state
         .transcriber
         .transcribe(TranscriptionInput {

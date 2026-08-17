@@ -3716,6 +3716,7 @@ dependencies = [
  "libpulse-binding",
  "libpulse-simple-binding",
  "log",
+ "minisign-verify",
  "objc",
  "once_cell",
  "rand 0.8.5",

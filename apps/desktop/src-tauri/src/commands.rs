@@ -4130,7 +4130,7 @@ pub async fn floating_window_list(app: AppHandle) -> Result<Vec<FloatingWindowIn
 }
 
 #[cfg(test)]
-mod tests {
+mod installer_url_tests {
     use super::*;
 
     #[test]

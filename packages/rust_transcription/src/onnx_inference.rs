@@ -18,7 +18,7 @@ use sherpa_onnx::{OfflineRecognizer, OfflineRecognizerConfig, OfflineSenseVoiceM
 use crate::models::WhisperModel;
 
 enum LoadedModel {
-    ParakeetCtc(Parakeet),
+    ParakeetCtc(Box<Parakeet>),
     ParakeetTdt(ParakeetTDT),
     Canary(Canary),
     SenseVoice(OfflineRecognizer),
@@ -29,8 +29,9 @@ enum LoadedModel {
 // insert a cached runtime; the per-model inner lock is what serializes
 // inference for a single model, so concurrent requests for *different* models
 // do not block each other on the global cache lock.
-static MODEL_CACHE: LazyLock<Mutex<HashMap<(PathBuf, String), Arc<Mutex<Option<LoadedModel>>>>>> =
-    LazyLock::new(|| Mutex::new(HashMap::new()));
+type ModelCache = LazyLock<Mutex<HashMap<(PathBuf, String), Arc<Mutex<Option<LoadedModel>>>>>>;
+
+static MODEL_CACHE: ModelCache = LazyLock::new(|| Mutex::new(HashMap::new()));
 
 /// Run genuine model inference for one of the configured ONNX models.
 pub fn transcribe(
@@ -385,7 +386,7 @@ fn load_model(
 
     match model {
         WhisperModel::ParakeetCtc06B => Parakeet::from_pretrained(model_dir, None)
-            .map(LoadedModel::ParakeetCtc)
+            .map(|model| LoadedModel::ParakeetCtc(Box::new(model)))
             .map_err(|err| format!("failed to load Parakeet CTC model: {err}")),
         WhisperModel::ParakeetTdt06B => ParakeetTDT::from_pretrained(model_dir, None)
             .map(LoadedModel::ParakeetTdt)
