@@ -24,7 +24,7 @@
     "lint": "prettier --check src && oxlint src",
     "check-types": "tsc --noEmit",
     "test": "vitest run",
-    "test:unit": "vitest run src",
+    "test:unit": "vitest run src scripts",
     "test:integration": "vitest run test/integration",
     "test:evals": "vitest run test/evals"
   },

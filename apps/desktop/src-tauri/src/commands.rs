@@ -670,6 +670,40 @@ fn resolve_managed_audio_path(
     Some(real_parent.join(file_name))
 }
 
+/// Resolve `path` to the exact file to read, or `None` when it does not live
+/// directly inside the managed transcription-audio directory. This is the read
+/// counterpart to `resolve_managed_audio_path`: the delete helper must *not*
+/// follow the final entry (so a symlink can be unlinked), but a read must
+/// prove the final entry stays inside `audio_dir` even after following
+/// symlinks. We canonicalize the whole candidate, so a final-position symlink
+/// such as `audio/clip.wav -> /outside/secret.wav` resolves outside
+/// `audio_dir` and is rejected rather than leaking the outside file's bytes.
+fn resolve_managed_audio_path_for_read(
+    path: &std::path::Path,
+    audio_dir: &std::path::Path,
+) -> Option<std::path::PathBuf> {
+    let candidate = if path.is_absolute() {
+        path.to_path_buf()
+    } else {
+        audio_dir.join(path)
+    };
+
+    // Canonicalize the entire candidate (following a final symlink) and verify
+    // it resolves to a regular file whose parent is exactly the canonical
+    // managed audio directory.
+    let real_path = std::fs::canonicalize(&candidate).ok()?;
+    if !std::fs::metadata(&real_path).ok()?.is_file() {
+        return None;
+    }
+    let real_parent = real_path.parent()?;
+    let real_audio_dir = std::fs::canonicalize(audio_dir).ok()?;
+    if real_parent != real_audio_dir {
+        return None;
+    }
+
+    Some(real_path)
+}
+
 /// Delete listed audio files that still live under `audio_dir`. Paths
 /// outside the managed directory (including traversal attempts) are skipped
 /// (not an error).
@@ -1062,7 +1096,7 @@ pub async fn transcription_audio_load(
     let audio_dir = crate::system::audio_store::audio_dir(&app).map_err(|err| err.to_string())?;
     let audio_path_buf = PathBuf::from(&audio_path);
 
-    let audio_path_buf = match resolve_managed_audio_path(&audio_path_buf, &audio_dir) {
+    let audio_path_buf = match resolve_managed_audio_path_for_read(&audio_path_buf, &audio_dir) {
         Some(resolved) => resolved,
         None => return Err("Audio snapshot path is outside the managed directory".to_string()),
     };
@@ -1143,9 +1177,8 @@ pub async fn export_transcription(
         }
 
         if let Some(ref audio_path_str) = audio_path {
-            let audio_path_buf = PathBuf::from(audio_path_str);
-            if let Some(audio_path_buf) =
-                resolve_managed_audio_path(&audio_path_buf, &audio_dir).filter(|p| p.exists())
+            let path_buf = PathBuf::from(audio_path_str);
+            if let Some(audio_path_buf) = resolve_managed_audio_path_for_read(&path_buf, &audio_dir)
             {
                 let audio_data = std::fs::read(&audio_path_buf)
                     .map_err(|err| format!("Failed to read audio: {err}"))?;
@@ -3313,6 +3346,38 @@ mod tests {
                 resolve_managed_audio_path(&link.join("clip.wav"), &audio_dir),
                 None
             );
+        }
+
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn managed_audio_read_rejects_final_symlink_escape() {
+        let root = std::env::temp_dir()
+            .join(format!("mausvoice-audio-read-{}", std::process::id()));
+        let audio_dir = root.join("audio");
+        let outside_dir = root.join("outside");
+        std::fs::create_dir_all(&audio_dir).unwrap();
+        std::fs::create_dir_all(&outside_dir).unwrap();
+        let secret = outside_dir.join("secret.wav");
+        std::fs::write(&secret, b"TOP SECRET").unwrap();
+
+        #[cfg(unix)]
+        {
+            // A final-entry symlink pointing outside must be rejected for
+            // reads: canonicalizing the whole path follows the symlink and
+            // lands outside audio_dir, so the bytes are never leaked.
+            let link = audio_dir.join("clip.wav");
+            std::os::unix::fs::symlink(&secret, &link).unwrap();
+            assert_eq!(
+                resolve_managed_audio_path_for_read(&link, &audio_dir),
+                None
+            );
+
+            // A regular file inside audio_dir is still accepted.
+            let real = audio_dir.join("real.wav");
+            std::fs::write(&real, b"ok").unwrap();
+            assert!(resolve_managed_audio_path_for_read(&real, &audio_dir).is_some());
         }
 
         let _ = std::fs::remove_dir_all(&root);

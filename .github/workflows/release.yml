@@ -347,26 +347,30 @@ jobs:
         # detached `.dmg.sig`, so sign it explicitly with the same updater
         # private key. The resulting `.dmg.sig` is picked up by the existing
         # `**/*.sig` upload/publish globs and the updater manifest builder.
+        #
+        # `matrix.bundle_dir` is repository-root-relative, so it is resolved
+        # against $GITHUB_WORKSPACE (NOT the desktop package dir). The signer is
+        # invoked through the locked Tauri CLI via `pnpm --filter desktop exec`
+        # so the absolute DMG path works regardless of the working directory.
         if: matrix.os == 'macos-14' && steps.signing.outputs.enabled == 'true'
         env:
           UPDATER_PRIVATE_KEY: ${{ secrets.UPDATER_PRIVATE_KEY }}
           UPDATER_PRIVATE_KEY_PASSWORD: ${{ secrets.UPDATER_PRIVATE_KEY_PASSWORD }}
         shell: bash
-        working-directory: apps/desktop
         run: |
           set -euo pipefail
-          DMG=$(find "${{ matrix.bundle_dir }}" -name '*.dmg' | head -n1)
+          DMG=$(find "$GITHUB_WORKSPACE/${{ matrix.bundle_dir }}" -name '*.dmg' | head -n1)
           if [ -z "$DMG" ]; then
             echo "::error::No macOS DMG found under ${{ matrix.bundle_dir }} to sign" >&2
             exit 1
           fi
           echo "Signing $DMG with the updater private key"
-          pnpm tauri signer sign \
+          pnpm --filter desktop exec tauri signer sign \
             --private-key "$UPDATER_PRIVATE_KEY" \
             ${UPDATER_PRIVATE_KEY_PASSWORD:+--password "$UPDATER_PRIVATE_KEY_PASSWORD"} \
             "$DMG"
           if [ ! -f "$DMG.sig" ]; then
-            echo "::error::DMG signature was not produced" >&2
+            echo "::error::DMG signature was not produced at $DMG.sig" >&2
             exit 1
           fi
 
@@ -437,6 +441,14 @@ jobs:
       # latest.json from /releases/latest/download/ — so an unsigned stable
       # release would 404 every installed client and permanently disable
       # updates. Require signing secrets for stable; fail closed otherwise.
+      #
+      # This fail-closed policy intentionally SUPERSEDES PR #59's final commit
+      # (248ca2c, "restore graceful fail-safe skip for stable release without
+      # UPDATER_* secrets"). PR #63 deliberately does not import that commit: an
+      # unsigned stable release would break every installed client's updater,
+      # so we refuse to publish rather than skip signing. The five-PR superfix
+      # therefore contains PRs #55/#57/#58/#60 in full plus PR #59 up to
+      # 9cd6912; #59's final commit is intentionally omitted, not an oversight.
       - name: Resolve updater manifest eligibility
         id: manifest
         shell: bash

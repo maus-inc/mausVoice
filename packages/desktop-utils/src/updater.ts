@@ -175,7 +175,11 @@ export const buildManualMacInstallerSignatureUrl = (
         continue;
       }
       const sigUrl = platform.dmgSignatureUrl;
-      if (typeof sigUrl === "string" && sigUrl.length > 0 && sigUrl === expected) {
+      if (
+        typeof sigUrl === "string" &&
+        sigUrl.length > 0 &&
+        sigUrl === expected
+      ) {
         return sigUrl;
       }
     }
