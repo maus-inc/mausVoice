@@ -31,13 +31,16 @@ export const openaiCompatibleTranscribeAudio = async ({
 }: OpenAICompatibleTranscriptionArgs): Promise<OpenAICompatibleTranscribeAudioOutput> => {
   const url = baseUrl.replace(/\/$/, "");
 
-  // Arbitrary user-configured servers vary widely. We default to `json` (the
-  // safest, most broadly supported format) rather than `verbose_json`, which
-  // strict servers reject with a 4xx "unsupported format" error. When that
-  // happens we retry once WITHOUT `response_format` instead of failing the
-  // whole transcription. Servers that do return verbose segments still get
-  // `no_speech_prob` parsed below when they accept the `json` request.
-  const buildBody = (includeResponseFormat: boolean): FormData => {
+  // Arbitrary user-configured OpenAI-compatible servers vary widely. We prefer
+  // `verbose_json` so capable servers return `segments[].no_speech_prob` and
+  // preserve issue #54's probability-gated silence handling. Strict servers
+  // that reject `verbose_json` with an unsupported-format 4xx degrade to
+  // `json`, then to no `response_format` at all — never repeating the same
+  // deterministic 4xx. We never default to `json`, which would silently disable
+  // the silence gate for servers that DO support `verbose_json`.
+  const buildBody = (
+    format: "verbose_json" | "json" | null,
+  ): FormData => {
     const formData = new FormData();
     const file = new Blob([blob], { type: `audio/${ext}` });
     formData.append("file", file, `audio.${ext}`);
@@ -48,8 +51,8 @@ export const openaiCompatibleTranscribeAudio = async ({
     if (language && language !== "auto") {
       formData.append("language", language);
     }
-    if (includeResponseFormat) {
-      formData.append("response_format", "json");
+    if (format) {
+      formData.append("response_format", format);
     }
     return formData;
   };
@@ -59,28 +62,27 @@ export const openaiCompatibleTranscribeAudio = async ({
     headers["Authorization"] = `Bearer ${apiKey}`;
   }
 
-  const send = (includeResponseFormat: boolean) =>
+  const send = (format: "verbose_json" | "json" | null) =>
     fetch(`${url}/audio/transcriptions`, {
       method: "POST",
-      body: buildBody(includeResponseFormat),
+      body: buildBody(format),
       headers,
     });
 
-  const response = await send(true);
-  let finalResponse = response;
-  if (!response.ok) {
-    const errorText = await response
-      .text()
-      .catch(() => "");
-    const isUnsupportedFormatError =
-      response.status >= 400 &&
-      response.status < 500 &&
-      /response[_\s-]?format|verbose_json|unsupported/i.test(errorText);
-    if (isUnsupportedFormatError) {
-      // Retry once without `response_format` rather than repeating the same
-      // deterministic 4xx three times.
-      finalResponse = await send(false);
-    }
+  const isUnsupportedFormat = async (response: Response): Promise<boolean> => {
+    if (response.status < 400 || response.status >= 500) return false;
+    const errorText = await response.text().catch(() => "");
+    return /response[_\s-]?format|verbose_json|unsupported/i.test(errorText);
+  };
+
+  // Prefer verbose_json (keeps the silence gate); degrade to json, then to no
+  // response_format, only on an unsupported-format 4xx.
+  let finalResponse = await send("verbose_json");
+  if (await isUnsupportedFormat(finalResponse)) {
+    finalResponse = await send("json");
+  }
+  if (await isUnsupportedFormat(finalResponse)) {
+    finalResponse = await send(null);
   }
 
   if (!finalResponse.ok) {

@@ -13,6 +13,11 @@ paths = [
   # preamble constant. NOT a broad workflow exemption.
   '''gitleaks\.toml''',
   '''scripts/ci/check-gitleaks-config\.mjs''',
+  # This integration test deliberately embeds a hardcoded minisign updater key
+  # to validate the detection rule above. It is a test fixture, not a secret,
+  # so the tree/working-tree scan must skip it (history scanning still applies
+  # to real commits via the scan workflow's add-then-delete coverage).
+  '''(^|/)scripts/ci/test-secret-history-scan\.mjs''',
   # Build / dependency directories — excluded from scanning so history and
   # working-tree scans do not flag vendored or generated artifacts. These were
   # previously path-glob lines in .gitleaksignore, which Gitleaks does not

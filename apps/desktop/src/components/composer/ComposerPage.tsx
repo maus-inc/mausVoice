@@ -99,6 +99,18 @@ export const ComposerPage = () => {
         defaultMessage: "Voice editing is not supported on this platform",
       });
 
+  // Captured as a live ref (not a frozen string) so a locale change while the
+  // composer is open updates the recorder's unsupported message instead of
+  // leaving a stale one from first construction.
+  const unsupportedMessageRef = useRef(
+    intl.formatMessage({
+      defaultMessage: "Voice editing is not supported on this platform",
+    }),
+  );
+  unsupportedMessageRef.current = intl.formatMessage({
+    defaultMessage: "Voice editing is not supported on this platform",
+  });
+
   if (recorderRef.current === null) {
     recorderRef.current = new VoiceInstructionRecorder({
       invoke,
@@ -117,9 +129,7 @@ export const ComposerPage = () => {
       getLang: () => document.documentElement.lang || "en-US",
       canUseProvider: canUseConfiguredProvider,
       speechRecognitionSupported,
-      unsupportedMessage: intl.formatMessage({
-        defaultMessage: "Voice editing is not supported on this platform",
-      }),
+      unsupportedMessage: () => unsupportedMessageRef.current,
       onListeningChange: setIsListening,
       onTranscript: (spoken) =>
         setInstruction((current) => `${current} ${spoken}`.trim()),

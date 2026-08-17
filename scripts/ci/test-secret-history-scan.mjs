@@ -18,9 +18,8 @@
 import { execFileSync } from "node:child_process";
 import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { resolve } from "node:path";
+import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
-import { dirname } from "node:path";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const repoRoot = resolve(__dirname, "..", "..");
@@ -80,10 +79,14 @@ console.log(
 );
 
 // ---- Phase 2: live add-then-delete history scan (requires `gitleaks`) ----
+// Gitleaks is installed to a fixed, non-writable location by the CI workflow
+// (see .github/workflows/secret-scan.yml). Use an absolute path so the binary
+// is never resolved through a possibly-attacker-controlled PATH (S4036).
+const GITLEAKS_BIN = "/usr/local/bin/gitleaks";
 let gitleaks;
 try {
-  execFileSync("gitleaks", ["version"]);
-  gitleaks = "gitleaks";
+  execFileSync(GITLEAKS_BIN, ["version"]);
+  gitleaks = GITLEAKS_BIN;
 } catch {
   gitleaks = null;
 }

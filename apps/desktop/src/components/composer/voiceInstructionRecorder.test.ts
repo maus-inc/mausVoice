@@ -65,7 +65,7 @@ const baseDeps = (
     getLang: () => "en-US",
     canUseProvider: true,
     speechRecognitionSupported: true,
-    unsupportedMessage: "unsupported",
+    unsupportedMessage: () => "unsupported",
     onListeningChange: vi.fn(),
     onTranscript: vi.fn(),
     onError: vi.fn(),

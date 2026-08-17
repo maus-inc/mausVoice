@@ -16,7 +16,7 @@ describe("openaiCompatibleTranscribeAudio", () => {
     fetchMock.mockReset();
   });
 
-  it("defaults to response_format=json (not verbose_json)", async () => {
+  it("prefers verbose_json so capable servers return no_speech_prob segments", async () => {
     fetchMock.mockResolvedValue(makeResponse({ text: "hello world" }));
 
     const result = await openaiCompatibleTranscribeAudio({
@@ -29,10 +29,10 @@ describe("openaiCompatibleTranscribeAudio", () => {
     expect(result.text).toBe("hello world");
     const [, init] = fetchMock.mock.calls[0] ?? [];
     const body = init?.body as FormData;
-    expect(body.get("response_format")).toBe("json");
+    expect(body.get("response_format")).toBe("verbose_json");
   });
 
-  it("retries once without response_format when the server rejects the format", async () => {
+  it("falls back to json when the server rejects verbose_json with a 4xx", async () => {
     fetchMock
       .mockResolvedValueOnce(
         new Response(
@@ -52,8 +52,45 @@ describe("openaiCompatibleTranscribeAudio", () => {
     expect(fetchMock).toHaveBeenCalledTimes(2);
     const [, firstInit] = fetchMock.mock.calls[0] ?? [];
     const [, secondInit] = fetchMock.mock.calls[1] ?? [];
-    expect((firstInit?.body as FormData).get("response_format")).toBe("json");
-    expect((secondInit?.body as FormData).get("response_format")).toBeNull();
+    expect((firstInit?.body as FormData).get("response_format")).toBe(
+      "verbose_json",
+    );
+    expect((secondInit?.body as FormData).get("response_format")).toBe("json");
+    expect(result.text).toBe("recovered text");
+  });
+
+  it("falls back to no response_format when json is also rejected", async () => {
+    fetchMock
+      .mockResolvedValueOnce(
+        new Response(
+          JSON.stringify({ error: "Invalid response_format verbose_json" }),
+          { status: 400 },
+        ),
+      )
+      .mockResolvedValueOnce(
+        new Response(JSON.stringify({ error: "Invalid response_format json" }), {
+          status: 400,
+        }),
+      )
+      .mockResolvedValueOnce(makeResponse({ text: "recovered text" }));
+
+    const result = await openaiCompatibleTranscribeAudio({
+      baseUrl: "https://example.com/v1",
+      model: "whisper-1",
+      blob: new ArrayBuffer(8),
+      ext: "wav",
+    });
+
+    expect(fetchMock).toHaveBeenCalledTimes(3);
+    expect(
+      (fetchMock.mock.calls[0]?.[1]?.body as FormData).get("response_format"),
+    ).toBe("verbose_json");
+    expect(
+      (fetchMock.mock.calls[1]?.[1]?.body as FormData).get("response_format"),
+    ).toBe("json");
+    expect(
+      (fetchMock.mock.calls[2]?.[1]?.body as FormData).get("response_format"),
+    ).toBeNull();
     expect(result.text).toBe("recovered text");
   });
 

@@ -33,7 +33,7 @@ export type VoiceInstructionRecorderDeps = {
   getLang: () => string;
   canUseProvider: boolean;
   speechRecognitionSupported: boolean;
-  unsupportedMessage: string;
+  unsupportedMessage: () => string;
   onListeningChange: (listening: boolean) => void;
   onTranscript: (text: string) => void;
   onError: (message: string) => void;
@@ -98,7 +98,7 @@ export class VoiceInstructionRecorder {
       return;
     }
 
-    this.deps.onError(this.deps.unsupportedMessage);
+    this.deps.onError(this.deps.unsupportedMessage());
   }
 
   private startBrowser(): void {
@@ -135,42 +135,60 @@ export class VoiceInstructionRecorder {
     }
 
     if (this.state === "provider") {
-      let fellBackToBrowser = false;
-      try {
-        const response = (await this.deps.invoke(
-          "stop_recording",
-        )) as StopRecordingResponse;
-        const samples =
-          response.samples instanceof Float32Array
-            ? Array.from(response.samples)
-            : response.samples;
-        const sampleRate = response.sampleRate ?? 0;
-        if (samples && samples.length > 0 && sampleRate > 0) {
-          const transcript = (
-            await this.deps.transcribe({ samples, sampleRate })
-          ).trim();
-          if (transcript) this.deps.onTranscript(transcript);
-        }
-      } catch (error) {
-        this.deps.logger.warning(
-          `Voice Edit Mode: provider transcription failed (${error})`,
-        );
-        if (this.deps.speechRecognitionSupported) {
-          this.startBrowser();
-          fellBackToBrowser = true;
-        } else {
-          this.deps.onError(this.deps.unsupportedMessage);
-        }
-      } finally {
-        this.deps.onResetLevels();
-      }
-
-      // When we fell back to the browser recognizer it now owns the listening
-      // state; only return to idle on the genuine success/error paths.
-      if (!fellBackToBrowser) {
-        this.setIdle();
-      }
+      await this.stopProviderRecording();
     }
+  }
+
+  /**
+   * Stop native provider recording, deliver its transcript, then reset levels.
+   * If transcription fell back to the browser recognizer, that recognizer owns
+   * the listening state, so we only return to idle on the genuine paths.
+   */
+  private async stopProviderRecording(): Promise<void> {
+    const transcript = await this.transcribeProviderRecording();
+    if (transcript) {
+      this.deps.onTranscript(transcript);
+    }
+    this.deps.onResetLevels();
+    if (this.state !== "browser") {
+      this.setIdle();
+    }
+  }
+
+  private async transcribeProviderRecording(): Promise<string | null> {
+    try {
+      const response = (await this.deps.invoke(
+        "stop_recording",
+      )) as StopRecordingResponse;
+      return await this.transcribeProviderResponse(response);
+    } catch (error) {
+      this.deps.logger.warning(
+        `Voice Edit Mode: provider transcription failed (${error})`,
+      );
+      if (this.deps.speechRecognitionSupported) {
+        this.startBrowser();
+        return null;
+      }
+      this.deps.onError(this.deps.unsupportedMessage());
+      return null;
+    }
+  }
+
+  private async transcribeProviderResponse(
+    response: StopRecordingResponse,
+  ): Promise<string | null> {
+    const samples =
+      response.samples instanceof Float32Array
+        ? Array.from(response.samples)
+        : response.samples;
+    const sampleRate = response.sampleRate ?? 0;
+    if (!samples || samples.length === 0 || sampleRate <= 0) {
+      return null;
+    }
+    const transcript = (
+      await this.deps.transcribe({ samples, sampleRate })
+    ).trim();
+    return transcript || null;
   }
 
   private setIdle(): void {
