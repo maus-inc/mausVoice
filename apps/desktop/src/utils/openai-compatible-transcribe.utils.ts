@@ -38,9 +38,7 @@ export const openaiCompatibleTranscribeAudio = async ({
   // `json`, then to no `response_format` at all — never repeating the same
   // deterministic 4xx. We never default to `json`, which would silently disable
   // the silence gate for servers that DO support `verbose_json`.
-  const buildBody = (
-    format: "verbose_json" | "json" | null,
-  ): FormData => {
+  const buildBody = (format: "verbose_json" | "json" | null): FormData => {
     const formData = new FormData();
     const file = new Blob([blob], { type: `audio/${ext}` });
     formData.append("file", file, `audio.${ext}`);
@@ -86,9 +84,7 @@ export const openaiCompatibleTranscribeAudio = async ({
   }
 
   if (!finalResponse.ok) {
-    const errorText = await finalResponse
-      .text()
-      .catch(() => "Unknown error");
+    const errorText = await finalResponse.text().catch(() => "Unknown error");
     throw new Error(
       `OpenAI Compatible transcription failed: ${finalResponse.status} - ${errorText}`,
     );

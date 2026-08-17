@@ -20,10 +20,7 @@ export type SpeechRecognitionLike = {
 export type SpeechRecognitionConstructor = new () => SpeechRecognitionLike;
 
 export type VoiceInstructionRecorderDeps = {
-  invoke: (
-    cmd: string,
-    args?: Record<string, unknown>,
-  ) => Promise<unknown>;
+  invoke: (cmd: string, args?: Record<string, unknown>) => Promise<unknown>;
   transcribe: (audio: {
     samples: number[];
     sampleRate: number;
@@ -81,7 +78,9 @@ export class VoiceInstructionRecorder {
     if (this.deps.canUseProvider) {
       try {
         await this.deps.invoke("start_recording", {
-          args: { preferredMicrophone: this.deps.getPreferredMicrophone() ?? null },
+          args: {
+            preferredMicrophone: this.deps.getPreferredMicrophone() ?? null,
+          },
         });
         this.state = "provider";
         this.deps.onListeningChange(true);
@@ -204,9 +203,7 @@ export class VoiceInstructionRecorder {
       this.recognition = null;
     }
     if (this.state === "provider") {
-      void this.deps
-        .invoke("stop_recording")
-        .catch(() => undefined);
+      void this.deps.invoke("stop_recording").catch(() => undefined);
     }
     if (this.state !== "idle") {
       this.setIdle();

@@ -50,12 +50,12 @@ describe("openaiCompatibleTranscribeAudio", () => {
     });
 
     expect(fetchMock).toHaveBeenCalledTimes(2);
-    const [, firstInit] = fetchMock.mock.calls[0] ?? [];
-    const [, secondInit] = fetchMock.mock.calls[1] ?? [];
-    expect((firstInit?.body as FormData).get("response_format")).toBe(
+    const [, firstInit] = fetchMock.mock.calls[0]!;
+    const [, secondInit] = fetchMock.mock.calls[1]!;
+    expect((firstInit!.body as FormData).get("response_format")).toBe(
       "verbose_json",
     );
-    expect((secondInit?.body as FormData).get("response_format")).toBe("json");
+    expect((secondInit!.body as FormData).get("response_format")).toBe("json");
     expect(result.text).toBe("recovered text");
   });
 
@@ -68,9 +68,12 @@ describe("openaiCompatibleTranscribeAudio", () => {
         ),
       )
       .mockResolvedValueOnce(
-        new Response(JSON.stringify({ error: "Invalid response_format json" }), {
-          status: 400,
-        }),
+        new Response(
+          JSON.stringify({ error: "Invalid response_format json" }),
+          {
+            status: 400,
+          },
+        ),
       )
       .mockResolvedValueOnce(makeResponse({ text: "recovered text" }));
 
@@ -83,13 +86,13 @@ describe("openaiCompatibleTranscribeAudio", () => {
 
     expect(fetchMock).toHaveBeenCalledTimes(3);
     expect(
-      (fetchMock.mock.calls[0]?.[1]?.body as FormData).get("response_format"),
+      (fetchMock.mock.calls[0]![1]!.body as FormData).get("response_format"),
     ).toBe("verbose_json");
     expect(
-      (fetchMock.mock.calls[1]?.[1]?.body as FormData).get("response_format"),
+      (fetchMock.mock.calls[1]![1]!.body as FormData).get("response_format"),
     ).toBe("json");
     expect(
-      (fetchMock.mock.calls[2]?.[1]?.body as FormData).get("response_format"),
+      (fetchMock.mock.calls[2]![1]!.body as FormData).get("response_format"),
     ).toBeNull();
     expect(result.text).toBe("recovered text");
   });

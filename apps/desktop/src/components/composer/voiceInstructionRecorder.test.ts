@@ -102,7 +102,8 @@ describe("VoiceInstructionRecorder", () => {
   it("falls back to browser recognition when provider recording fails", async () => {
     const deps = baseDeps({
       invoke: vi.fn((cmd) => {
-        if (cmd === "start_recording") return Promise.reject(new Error("no mic"));
+        if (cmd === "start_recording")
+          return Promise.reject(new Error("no mic"));
         return Promise.resolve(undefined);
       }),
     });
