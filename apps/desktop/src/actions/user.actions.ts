@@ -754,7 +754,9 @@ export const setAgentToolEnabled = (
     } else {
       next.delete(toolId);
     }
-    const allEnabled = toolInfos.every((toolInfo) => next.has(toolInfo.id));
+    const allEnabled =
+      toolInfos.length > 0 &&
+      toolInfos.every((toolInfo) => next.has(toolInfo.id));
     preferences.agentEnabledTools = allEnabled ? null : [...next];
   }, "Failed to save enabled agent tools. Please try again.");
 
