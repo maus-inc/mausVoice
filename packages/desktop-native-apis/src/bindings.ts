@@ -554,6 +554,23 @@ export const commands = {
       else return { status: "error", error: e as any };
     }
   },
+  async hotkeyReplaceStyleHotkeys(
+    prefix: string,
+    hotkeys: Hotkey[],
+  ): Promise<Result<Hotkey[], string>> {
+    try {
+      return {
+        status: "ok",
+        data: await TAURI_INVOKE("hotkey_replace_style_hotkeys", {
+          prefix,
+          hotkeys,
+        }),
+      };
+    } catch (e) {
+      if (e instanceof Error) throw e;
+      else return { status: "error", error: e as any };
+    }
+  },
   async listGpus(): Promise<GpuAdapterInfo[]> {
     return await TAURI_INVOKE("list_gpus");
   },

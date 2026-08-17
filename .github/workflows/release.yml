@@ -341,6 +341,35 @@ jobs:
         working-directory: apps/desktop
         run: pnpm run tauri build --ci ${{ matrix.args }}
 
+      - name: Sign macOS DMG for manual updater
+        # Tauri's updater only signs `.app.tar.gz` -> `.app.tar.gz.sig`. The
+        # manual-installer fallback verifies the standalone DMG against a
+        # detached `.dmg.sig`, so sign it explicitly with the same updater
+        # private key. The resulting `.dmg.sig` is picked up by the existing
+        # `**/*.sig` upload/publish globs and the updater manifest builder.
+        if: matrix.os == 'macos-14' && steps.signing.outputs.enabled == 'true'
+        env:
+          UPDATER_PRIVATE_KEY: ${{ secrets.UPDATER_PRIVATE_KEY }}
+          UPDATER_PRIVATE_KEY_PASSWORD: ${{ secrets.UPDATER_PRIVATE_KEY_PASSWORD }}
+        shell: bash
+        working-directory: apps/desktop
+        run: |
+          set -euo pipefail
+          DMG=$(find "${{ matrix.bundle_dir }}" -name '*.dmg' | head -n1)
+          if [ -z "$DMG" ]; then
+            echo "::error::No macOS DMG found under ${{ matrix.bundle_dir }} to sign" >&2
+            exit 1
+          fi
+          echo "Signing $DMG with the updater private key"
+          pnpm tauri signer sign \
+            --key "$UPDATER_PRIVATE_KEY" \
+            ${UPDATER_PRIVATE_KEY_PASSWORD:+--password "$UPDATER_PRIVATE_KEY_PASSWORD"} \
+            --path "$DMG"
+          if [ ! -f "$DMG.sig" ]; then
+            echo "::error::DMG signature was not produced" >&2
+            exit 1
+          fi
+
       - name: Upload build artifacts
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:

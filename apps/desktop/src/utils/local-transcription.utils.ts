@@ -70,10 +70,10 @@ const MODEL_LOOKUP: Record<LocalWhisperModel, ModelMeta> = {
     category: "fast",
   },
   "sense-voice": {
-    label: defineMessage({ defaultMessage: "SenseVoice (640 MB)" }),
+    label: defineMessage({ defaultMessage: "SenseVoice (226 MB)" }),
     helper: defineMessage({
       defaultMessage:
-        "Multilingual local ASR with punctuation and strong silence handling",
+        "Multilingual local ASR with strong silence handling (no punctuation)",
     }),
     category: "sherpa",
   },

@@ -499,10 +499,12 @@ pub async fn transcription_import_audio(
         );
     }
 
-    // Open the validated file immediately (before any await) so the decode
-    // below operates on the same inode that passed validation. Re-opening the
-    // path later inside the blocking task would reintroduce a TOCTOU window
-    // where an attacker could swap an allowed ancestor for an arbitrary file.
+    // Open the validated path here (before any await) to narrow the TOCTOU
+    // window between validation and decode. This does not guarantee the opened
+    // file is the exact inode that `canonicalize` validated, but it avoids
+    // re-resolving the path after the blocking decode, and the single-flight
+    // guard below serializes concurrent imports so a rejected request cannot
+    // open files first.
     let file = std::fs::File::open(&path)
         .map_err(|_| "Unable to open the selected audio file.".to_string())?;
 
@@ -577,10 +579,9 @@ pub async fn transcription_import_audio(
                 .map(|frame| frame.iter().copied().sum::<f32>() / frame.len() as f32)
                 .collect()
         };
-        let samples = shared_audio::resample_to_rate(&mono, source_rate, 16_000);
-        if samples.is_empty() {
-            return Err("Unable to convert the selected audio to 16 kHz mono".to_string());
-        }
+        let samples = shared_audio::resample_to_rate(&mono, source_rate, 16_000).map_err(|err| {
+            format!("Unable to convert the selected audio to 16 kHz mono: {err}")
+        })?;
         if samples.len() > MAX_AUDIO_IMPORT_OUTPUT_SAMPLES {
             return Err(format!(
                 "The selected audio file exceeds the {} minute import limit",
@@ -3402,6 +3403,18 @@ mod tests {
     }
 
     #[test]
+    fn signature_size_cap_rejects_advertised_and_streamed_oversize() {
+        assert!(signature_content_length_ok(None).is_ok());
+        assert!(signature_content_length_ok(Some(SIGNATURE_MAX_BYTES)).is_ok());
+        assert!(signature_content_length_ok(Some(SIGNATURE_MAX_BYTES + 1)).is_err());
+        assert_eq!(
+            signature_account_chunk(0, SIGNATURE_MAX_BYTES).unwrap(),
+            SIGNATURE_MAX_BYTES
+        );
+        assert!(signature_account_chunk(SIGNATURE_MAX_BYTES, 1).is_err());
+    }
+
+    #[test]
     fn current_timestamp_ok() {
         // Replicate the function body to avoid a public exposure. SystemTime
         // should always be post-epoch on modern OSes; if it isn't we'd want
@@ -3600,6 +3613,32 @@ fn installer_account_chunk(written: u64, chunk_len: u64) -> Result<u64, String> 
     Ok(next)
 }
 
+/// A detached minisign signature is only a few hundred bytes. Reusing the
+/// installer's 250 MiB cap here would let a malicious or malformed response
+/// without a `Content-Length` consume the full cap before being rejected, so
+/// the signature download enforces a tight dedicated limit instead.
+const SIGNATURE_MAX_BYTES: u64 = 16 * 1024;
+
+/// Reject an advertised Content-Length above the signature cap before any bytes
+/// are read.
+fn signature_content_length_ok(len: Option<u64>) -> Result<(), String> {
+    if let Some(n) = len {
+        if n > SIGNATURE_MAX_BYTES {
+            return Err("Installer signature exceeded 16KiB safety limit".to_string());
+        }
+    }
+    Ok(())
+}
+
+/// Accumulate a downloaded signature chunk against the signature cap.
+fn signature_account_chunk(written: u64, chunk_len: u64) -> Result<u64, String> {
+    let next = written.saturating_add(chunk_len);
+    if next > SIGNATURE_MAX_BYTES {
+        return Err("Installer signature exceeded 16KiB safety limit".to_string());
+    }
+    Ok(next)
+}
+
 /// Extensions accepted for the detached signature artifact.
 const ALLOWED_SIGNATURE_EXTENSIONS: &[&str] = &[".sig"];
 
@@ -3696,7 +3735,8 @@ fn updater_public_key_text(app: &AppHandle) -> Result<String, String> {
 
 /// Download the detached `.sig` (minisign text format) for an installer,
 /// validating every redirect hop against the trusted allow-list and enforcing
-/// the same streaming size cap as the installer download.
+/// a tight dedicated size cap (a signature is only a few hundred bytes, so it
+/// must not reuse the installer's 250 MiB streaming budget).
 async fn download_installer_signature(signature_url: &str) -> Result<Vec<u8>, String> {
     let parsed = Url::parse(signature_url).map_err(|e| format!("Invalid signature URL: {e}"))?;
     validate_initial_signature_url(&parsed)?;
@@ -3723,12 +3763,12 @@ async fn download_installer_signature(signature_url: &str) -> Result<Vec<u8>, St
             response.status()
         ));
     }
-    installer_content_length_ok(response.content_length())?;
+    signature_content_length_ok(response.content_length())?;
 
     let mut sig = Vec::new();
     let mut written: u64 = 0;
     while let Some(chunk) = response.chunk().await.map_err(|e| e.to_string())? {
-        written = installer_account_chunk(written, chunk.len() as u64)?;
+        written = signature_account_chunk(written, chunk.len() as u64)?;
         sig.extend_from_slice(&chunk);
     }
     Ok(sig)
@@ -3764,10 +3804,18 @@ async fn verify_installer_signature(
     }
     let public_key_text = updater_public_key_text(app)?;
     let sig_bytes = download_installer_signature(signature_url).await?;
-    let signature_text = std::str::from_utf8(&sig_bytes)
+    let signature_text = String::from_utf8(sig_bytes)
         .map_err(|e| format!("Installer signature is not valid UTF-8: {e}"))?;
-    let data = std::fs::read(dmg_path).map_err(|e| e.to_string())?;
-    verify_minisign_data(&public_key_text, &data, signature_text)
+    // Reading the whole installer and verifying its signature are CPU- and
+    // memory-bound; move them off the async runtime so unrelated IPC/native
+    // work is not stalled by a 250 MiB read + verification.
+    let dmg_path = dmg_path.to_path_buf();
+    tauri::async_runtime::spawn_blocking(move || {
+        let data = std::fs::read(&dmg_path).map_err(|e| e.to_string())?;
+        verify_minisign_data(&public_key_text, &data, &signature_text)
+    })
+    .await
+    .map_err(|e| format!("installer verification task failed: {e}"))?
 }
 
 /// Only mausVoice release assets from this exact repository path may be used
@@ -3841,7 +3889,7 @@ fn validate_installer_url(url: &Url) -> Result<(), String> {
     Ok(())
 }
 
-/// Downloads a `.pkg` installer to a temp directory and opens it with
+/// Downloads a `.dmg` installer to a temp directory and opens it with
 /// macOS Installer.app. This is used as a fallback when the normal in-place
 /// updater cannot write to the app's install location.
 #[tauri::command]
@@ -3860,15 +3908,16 @@ pub async fn download_and_open_mac_installer(
 
     // Use a unique temp filename (not the URL-derived basename) so a crafted
     // path like "../../../LaunchAgents/foo" cannot escape the temp dir. The
-    // nanosecond timestamp + pid is unique enough for our purposes; we
-    // overwrite then delete on installer completion anyway. Match the temp
-    // file's extension to the downloaded artifact so `open` handles it.
+    // nanosecond timestamp + pid is unique enough for our purposes; we delete
+    // the temp file on any verification failure, and the launched installer keeps
+    // its own copy. Match the temp file's extension to the downloaded artifact
+    // so `open` handles it.
     let downloaded_ext = if parsed.path().ends_with(".app.tar.gz") {
         ".app.tar.gz"
     } else if parsed.path().ends_with(".dmg") {
         ".dmg"
     } else {
-        ".pkg"
+        ".dmg"
     };
     let nanos = SystemTime::now()
         .duration_since(UNIX_EPOCH)

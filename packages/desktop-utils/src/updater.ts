@@ -157,6 +157,17 @@ export const buildManualMacInstallerSignatureUrl = (
   rawJson: Record<string, unknown>,
   dmgUrl: string | null,
 ): string | null => {
+  if (!dmgUrl) {
+    return null;
+  }
+  // The detached signature must sit next to the installer under the same release
+  // directory. We only accept a URL that is exactly `${dmgUrl}.sig`, so a
+  // signature published for a different platform or asset cannot be used to
+  // verify this DMG. A `dmgSignatureUrl` published in the manifest is honored
+  // only when it names the expected artifact; otherwise we derive it from the
+  // DMG URL. The Rust command independently validates the URL against the
+  // trusted release host before downloading.
+  const expected = `${dmgUrl}.sig`;
   const platforms = rawJson.platforms;
   if (isRecord(platforms)) {
     for (const platform of Object.values(platforms)) {
@@ -164,17 +175,12 @@ export const buildManualMacInstallerSignatureUrl = (
         continue;
       }
       const sigUrl = platform.dmgSignatureUrl;
-      if (typeof sigUrl === "string" && sigUrl.length > 0) {
+      if (typeof sigUrl === "string" && sigUrl.length > 0 && sigUrl === expected) {
         return sigUrl;
       }
     }
   }
-
-  if (dmgUrl) {
-    return `${dmgUrl}.sig`;
-  }
-
-  return null;
+  return expected;
 };
 
 /**

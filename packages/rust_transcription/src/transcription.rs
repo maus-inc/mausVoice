@@ -124,11 +124,8 @@ impl TranscriptionEngine {
             });
         }
 
-        let processed =
-            crate::audio::resample_to_rate(&filtered_samples, input.sample_rate, 16_000);
-        if processed.is_empty() {
-            return Err("unable to resample audio".to_string());
-        }
+        let processed = crate::audio::resample_to_rate(&filtered_samples, input.sample_rate, 16_000)
+            .map_err(|err| format!("unable to resample audio: {err}"))?;
 
         // Parakeet and Canary run through model-specific ONNX Runtime engines
         // with their real feature extractors and decoders. The current ONNX

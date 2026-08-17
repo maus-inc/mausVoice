@@ -166,16 +166,20 @@ function prepareSherpaWindowsRuntime() {
     return;
   }
 
-  const runtimeDlls = readdirSync(profileDir).filter((name) =>
-    WINDOWS_SHERPA_RUNTIME_DLLS.has(name.toLowerCase()),
-  );
+  // Normalize to lower-case so the case-insensitive comparison below cannot be
+  // defeated by an on-disk casing (e.g. `OnnxRuntime.dll`) that differs from the
+  // required lowercase name.
+  const runtimeDlls = readdirSync(profileDir)
+    .filter((name) => WINDOWS_SHERPA_RUNTIME_DLLS.has(name.toLowerCase()))
+    .map((name) => name.toLowerCase());
 
   // Fail closed: the shared sherpa-onnx build must produce the DLLs the sidecar
   // actually imports. If even the essential subset is absent the sidecar would
   // exit before main()/before announcing its bound port, so surface it as a
   // hard build error rather than a warning.
+  const foundDlls = new Set(runtimeDlls);
   const missingRequired = [...REQUIRED_SHERPA_RUNTIME_DLLS].filter(
-    (name) => !runtimeDlls.includes(name.toLowerCase()),
+    (name) => !foundDlls.has(name.toLowerCase()),
   );
   if (missingRequired.length > 0) {
     fail(
@@ -185,7 +189,7 @@ function prepareSherpaWindowsRuntime() {
   }
 
   const missingOptional = [...WINDOWS_SHERPA_RUNTIME_DLLS].filter(
-    (name) => !runtimeDlls.includes(name.toLowerCase()),
+    (name) => !foundDlls.has(name.toLowerCase()),
   );
   if (missingOptional.length > 0) {
     console.warn(
