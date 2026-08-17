@@ -13,7 +13,7 @@ import {
 } from "@mui/material";
 import type { Hotkey } from "@maus-inc/types";
 import { useEffect, useMemo, useState } from "react";
-import { FormattedMessage } from "react-intl";
+import { FormattedMessage, useIntl } from "react-intl";
 import { showErrorSnackbar } from "../../actions/app.actions";
 import { getHotkeyRepo } from "../../repos";
 import { produceAppState, useAppStore } from "../../store";
@@ -43,7 +43,9 @@ export const StyleHotkeysDialog = () => {
       .sort((a, b) => a.sortOrder - b.sortOrder),
   );
   const hotkeyById = useAppStore((state) => state.hotkeyById);
+  const intl = useIntl();
   const [rows, setRows] = useState<StyleHotkeyRow[]>([]);
+  const [isSaving, setIsSaving] = useState(false);
 
   useEffect(() => {
     if (!open) return;
@@ -89,18 +91,14 @@ export const StyleHotkeysDialog = () => {
   };
 
   const save = async () => {
+    if (isSaving) return;
+    setIsSaving(true);
     try {
       const state = useAppStore.getState();
-      const oldIds = Object.values(state.hotkeyById)
-        .filter((hotkey) =>
-          hotkey.actionName.startsWith(SWITCH_TO_STYLE_HOTKEY_PREFIX),
-        )
-        .map((hotkey) => hotkey.id);
+      const prefix = SWITCH_TO_STYLE_HOTKEY_PREFIX;
       const existingIdByActionName = new Map(
         Object.values(state.hotkeyById)
-          .filter((hotkey) =>
-            hotkey.actionName.startsWith(SWITCH_TO_STYLE_HOTKEY_PREFIX),
-          )
+          .filter((hotkey) => hotkey.actionName.startsWith(prefix))
           .map((hotkey) => [hotkey.actionName, hotkey.id]),
       );
       const next = rows
@@ -110,22 +108,21 @@ export const StyleHotkeysDialog = () => {
           actionName: row.actionName,
           keys: row.keys,
         }));
-      const previousHotkeyById = { ...state.hotkeyById };
-      const previousHotkeyIds = [...state.settings.hotkeyIds];
 
       const repo = getHotkeyRepo();
-      await Promise.all(oldIds.map((id) => repo.deleteHotkey(id)));
-      await Promise.all(next.map((hotkey) => repo.saveHotkey(hotkey)));
+      const saved = await repo.replaceStyleHotkeys(prefix, next);
 
       produceAppState((draft) => {
-        for (const id of oldIds) {
-          delete draft.hotkeyById[id];
-          draft.settings.hotkeyIds = draft.settings.hotkeyIds.filter(
-            (hotkeyId) => hotkeyId !== id,
-          );
+        for (const id of Object.keys(draft.hotkeyById)) {
+          if (draft.hotkeyById[id]?.actionName.startsWith(prefix)) {
+            delete draft.hotkeyById[id];
+          }
         }
-        registerHotkeys(draft, next);
-        for (const hotkey of next) {
+        draft.settings.hotkeyIds = draft.settings.hotkeyIds.filter(
+          (id) => !draft.hotkeyById[id]?.actionName.startsWith(prefix),
+        );
+        registerHotkeys(draft, saved);
+        for (const hotkey of saved) {
           if (!draft.settings.hotkeyIds.includes(hotkey.id)) {
             draft.settings.hotkeyIds.push(hotkey.id);
           }
@@ -135,20 +132,27 @@ export const StyleHotkeysDialog = () => {
       try {
         await syncHotkeyCombosToNative();
       } catch (error) {
-        produceAppState((draft) => {
-          draft.hotkeyById = previousHotkeyById;
-          draft.settings.hotkeyIds = previousHotkeyIds;
-        });
-        throw error;
+        // The database replacement already committed in a single transaction,
+        // so only the in-memory native sync failed. Surface the error and let
+        // the user retry instead of silently reverting SQLite to a stale state.
+        showErrorSnackbar(error);
+        return;
       }
       close();
     } catch (error) {
       showErrorSnackbar(error);
+    } finally {
+      setIsSaving(false);
     }
   };
 
   return (
-    <Dialog open={open} onClose={close} maxWidth="sm" fullWidth>
+    <Dialog
+      open={open}
+      onClose={isSaving ? undefined : close}
+      maxWidth="sm"
+      fullWidth
+    >
       <DialogTitle>
         <FormattedMessage defaultMessage="Style hotkeys" />
         <Typography variant="body2" color="text.secondary" sx={{ mt: 0.5 }}>
@@ -187,7 +191,9 @@ export const StyleHotkeysDialog = () => {
               {row.keys.length > 0 && (
                 <IconButton
                   size="small"
-                  aria-label="Clear style hotkey"
+                  aria-label={intl.formatMessage({
+                    defaultMessage: "Clear style hotkey",
+                  })}
                   onClick={() =>
                     setRows((current) =>
                       current.map((candidate) =>
@@ -206,10 +212,14 @@ export const StyleHotkeysDialog = () => {
         </Stack>
       </DialogContent>
       <DialogActions>
-        <Button onClick={close}>
+        <Button onClick={close} disabled={isSaving}>
           <FormattedMessage defaultMessage="Cancel" />
         </Button>
-        <Button variant="contained" onClick={() => void save()}>
+        <Button
+          variant="contained"
+          onClick={() => void save()}
+          disabled={isSaving}
+        >
           <FormattedMessage defaultMessage="Save" />
         </Button>
       </DialogActions>

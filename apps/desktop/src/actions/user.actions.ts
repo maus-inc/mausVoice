@@ -128,43 +128,59 @@ export const createDefaultPreferences = (): UserPreferences => ({
   agentPermissionTimeoutMs: 60_000,
 });
 
-export const updateUserPreferences = async (
+// Serializes preference mutations so overlapping tool toggles or numeric edits
+// cannot read a stale snapshot and clobber each other's change. Each task reads
+// the latest committed preferences when it actually runs.
+let prefsMutationChain: Promise<unknown> = Promise.resolve();
+const enqueuePrefsMutation = <T>(task: () => Promise<T>): Promise<T> => {
+  const run = prefsMutationChain.then(task, task);
+  prefsMutationChain = run.then(
+    () => undefined,
+    () => undefined,
+  );
+  return run;
+};
+
+export const updateUserPreferences = (
   updateCallback: (preferences: UserPreferences) => void,
   saveErrorMessage = "Failed to save AI preferences. Please try again.",
-): Promise<void> => {
-  const state = getAppState();
-  const myUserId = getMyEffectiveUserId(state);
+): Promise<void> =>
+  enqueuePrefsMutation(async () => {
+    const state = getAppState();
+    const myUserId = getMyEffectiveUserId(state);
 
-  let existing = getMyUserPreferences(state);
-  if (!existing) {
+    let existing = getMyUserPreferences(state);
+    if (!existing) {
+      try {
+        existing = await getUserPreferencesRepo().getUserPreferences();
+      } catch (error) {
+        getLogger().error(
+          `Failed to load existing preferences before update: ${error}`,
+        );
+        showErrorSnackbar(saveErrorMessage);
+        throw error;
+      }
+    }
+
+    const safeExisting = existing ?? createDefaultPreferences();
+    // The mutation runs when this task reaches the front of the queue, so it
+    // always derives from the most recently committed preferences.
+    const payload: UserPreferences = { ...safeExisting, userId: myUserId };
+    updateCallback(payload);
+
     try {
-      existing = await getUserPreferencesRepo().getUserPreferences();
+      getLogger().verbose(`Saving user preferences (userId=${myUserId})`);
+      const saved = await getUserPreferencesRepo().setUserPreferences(payload);
+      produceAppState((draft) => {
+        setUserPreferences(draft, saved);
+      });
+      getLogger().verbose("User preferences saved successfully");
     } catch (error) {
-      getLogger().error(
-        `Failed to load existing preferences before update: ${error}`,
-      );
+      getLogger().error(`Failed to update user preferences: ${error}`);
       showErrorSnackbar(saveErrorMessage);
       throw error;
     }
-  }
-
-  const safeExisting = existing ?? createDefaultPreferences();
-  const payload: UserPreferences = { ...safeExisting, userId: myUserId };
-  updateCallback(payload);
-
-  try {
-    getLogger().verbose(`Saving user preferences (userId=${myUserId})`);
-    const saved = await getUserPreferencesRepo().setUserPreferences(payload);
-    produceAppState((draft) => {
-      setUserPreferences(draft, saved);
-    });
-    getLogger().verbose("User preferences saved successfully");
-  } catch (error) {
-    getLogger().error(`Failed to update user preferences: ${error}`);
-    showErrorSnackbar(saveErrorMessage);
-    throw error;
-  }
-};
+  });
 
 const getCurrentUsageMonth = (): string => {
   const now = new Date();
@@ -730,6 +746,24 @@ export const setAgentEnabledTools = async (
     preferences.agentEnabledTools = toolIds;
   }, "Failed to save enabled agent tools. Please try again.");
 };
+
+export const setAgentToolEnabled = (
+  toolId: string,
+  enabled: boolean,
+): Promise<void> =>
+  updateUserPreferences((preferences) => {
+    const toolInfos = Object.values(getAppState().toolInfoById);
+    const current =
+      preferences.agentEnabledTools ?? toolInfos.map((toolInfo) => toolInfo.id);
+    const next = new Set(current);
+    if (enabled) {
+      next.add(toolId);
+    } else {
+      next.delete(toolId);
+    }
+    const allEnabled = toolInfos.every((toolInfo) => next.has(toolInfo.id));
+    preferences.agentEnabledTools = allEnabled ? null : [...next];
+  }, "Failed to save enabled agent tools. Please try again.");
 
 export const setAgentMaxIterations = async (
   iterations: number,

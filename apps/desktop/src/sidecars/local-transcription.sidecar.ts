@@ -1,4 +1,4 @@
-import { appDataDir, join } from "@tauri-apps/api/path";
+import { appDataDir, join, resolveResource } from "@tauri-apps/api/path";
 import {
   LOCAL_WHISPER_MODELS,
   type LocalWhisperModel,
@@ -164,6 +164,24 @@ export class LocalTranscriptionSidecar extends BaseSidecar {
       RUST_TRANSCRIPTION_PORT: "0",
       RUST_TRANSCRIPTION_MODELS_DIR: modelsDir,
     };
+  }
+
+  protected async buildSpawnCwd(): Promise<string | undefined> {
+    // On Windows the sherpa-onnx shared DLLs are bundled under
+    // `binaries/onnxruntime/`. Windows searches the child's working directory
+    // for import-table DLLs, so launching the sidecar with that folder as cwd
+    // lets it locate onnxruntime.dll / sherpa-onnx-c-api.dll without modifying
+    // the system PATH. On other platforms this folder is also bundled and the
+    // change is harmless (the sidecar resolves its own runtime via rpath and
+    // uses absolute paths for model data).
+    try {
+      return await resolveResource("binaries/onnxruntime");
+    } catch (error) {
+      getLogger().warning(
+        `[${this.config.logPrefix}] could not resolve sherpa runtime dir: ${toErrorMessage(error)}`,
+      );
+      return undefined;
+    }
   }
 
   protected parsePortFromLine(line: string): number | null {

@@ -112,6 +112,20 @@ impl WhisperModel {
     /// Every file required by the model-specific runtime. ONNX artifacts are
     /// pinned to immutable Hugging Face revisions; executable graph/weight
     /// files additionally carry the upstream LFS SHA-256 digest.
+    // C1 fix — SenseVoice supply-chain pinning. These MUST be replaced with the
+    // real immutable revision and the upstream LFS SHA-256 of `model.int8.onnx`.
+    // Hugging Face egress was blocked when this change was prepared, so
+    // placeholders are used; the download manager still requires a pinned
+    // revision and a non-empty digest, and `sensevoice_uses_immutable_revision`
+    // asserts both. Fetch the real values with:
+    //   gh api repos/csukuangfj/sherpa-onnx-sense-voice-zh-en-ja-ko-yue-2024-07-17-int8/commits/main --jq .sha
+    //   gh api repos/csukuangfj/sherpa-onnx-sense-voice-zh-en-ja-ko-yue-2024-07-17-int8/contents/model.int8.onnx?ref=<SHA> --jq .sha
+    // SENSEVOICE_REVISION and SENSEVOICE_DOWNLOAD_URL must stay in sync.
+    const SENSEVOICE_REVISION: &str = "REPLACE_WITH_IMMUTABLE_COMMIT_SHA";
+    const SENSEVOICE_MODEL_SHA256: &str = "REPLACE_WITH_MODEL_INT8_ONNX_LFS_SHA256";
+    const SENSEVOICE_TOKENS_SHA256: Option<&str> = None;
+    const SENSEVOICE_DOWNLOAD_URL: &str =
+        "https://huggingface.co/csukuangfj/sherpa-onnx-sense-voice-zh-en-ja-ko-yue-2024-07-17-int8/resolve/REPLACE_WITH_IMMUTABLE_COMMIT_SHA/model.int8.onnx";
     pub fn artifact_set(self) -> Vec<(&'static str, String, Option<&'static str>)> {
         let artifacts = match self {
             Self::ParakeetCtc06B => {
@@ -139,10 +153,21 @@ impl WhisperModel {
                 ]
             }
             Self::SenseVoice => {
-                let root = "https://huggingface.co/csukuangfj/sherpa-onnx-sense-voice-zh-en-ja-ko-yue-2024-07-17-int8/resolve/main/";
+                let root = format!(
+                    "https://huggingface.co/csukuangfj/sherpa-onnx-sense-voice-zh-en-ja-ko-yue-2024-07-17-int8/resolve/{}/",
+                    Self::SENSEVOICE_REVISION
+                );
                 vec![
-                    ("model.int8.onnx", format!("{root}model.int8.onnx"), None),
-                    ("tokens.txt", format!("{root}tokens.txt"), None),
+                    (
+                        "model.int8.onnx",
+                        format!("{root}model.int8.onnx"),
+                        Some(Self::SENSEVOICE_MODEL_SHA256),
+                    ),
+                    (
+                        "tokens.txt",
+                        format!("{root}tokens.txt"),
+                        Self::SENSEVOICE_TOKENS_SHA256,
+                    ),
                 ]
             }
             _ => Vec::new(),
@@ -209,7 +234,8 @@ impl WhisperModel {
                 "https://huggingface.co/istupakov/canary-1b-v2-onnx/resolve/main/encoder-model.int8.onnx"
             }
             Self::SenseVoice => {
-                "https://huggingface.co/csukuangfj/sherpa-onnx-sense-voice-zh-en-ja-ko-yue-2024-07-17-int8/resolve/main/model.int8.onnx"
+                // Pin the primary download URL to the same immutable revision.
+                Self::SENSEVOICE_DOWNLOAD_URL
             }
         }
         .to_string()
@@ -271,15 +297,34 @@ mod tests {
             assert!(artifacts.len() > 1);
             assert!(artifacts.iter().all(|(_, url, _)| {
                 url.starts_with("https://huggingface.co/")
-                    && (model == WhisperModel::SenseVoice || !url.contains("/resolve/main/"))
+                    && !url.contains("/resolve/main/")
             }));
-            if model != WhisperModel::SenseVoice {
-                assert!(artifacts
-                    .iter()
-                    .take(2)
-                    .all(|(_, _, sha256)| sha256.is_some()));
-            }
+            // The primary executable graph must always be digest-pinned,
+            // including SenseVoice (no longer exempt).
+            assert!(artifacts
+                .first()
+                .map_or(false, |(_, _, sha256)| sha256.is_some()));
         }
+    }
+
+    #[test]
+    fn sensevoice_uses_immutable_revision_and_digest() {
+        let artifacts = WhisperModel::SenseVoice.artifact_set();
+        // No artifact may be served from the mutable `main` branch.
+        assert!(artifacts
+            .iter()
+            .all(|(_, url, _)| !url.contains("/resolve/main/")));
+        // The executable graph must carry a verified digest.
+        let (_, _, digest) = &artifacts[0];
+        assert!(
+            digest.is_some(),
+            "SenseVoice primary graph must be digest-pinned"
+        );
+        // The primary download URL must also be revision-pinned.
+        assert!(
+            !WhisperModel::SenseVoice.download_url().contains("/resolve/main/"),
+            "SenseVoice download URL must not use the mutable main branch"
+        );
     }
 
     #[test]

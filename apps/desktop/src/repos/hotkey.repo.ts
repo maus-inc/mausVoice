@@ -6,6 +6,10 @@ export abstract class BaseHotkeyRepo extends BaseRepo {
   abstract listHotkeys(): Promise<Hotkey[]>;
   abstract saveHotkey(hotkey: Hotkey): Promise<Hotkey>;
   abstract deleteHotkey(id: string): Promise<void>;
+  abstract replaceStyleHotkeys(
+    prefix: string,
+    hotkeys: Hotkey[],
+  ): Promise<Hotkey[]>;
 }
 
 export class LocalHotkeyRepo extends BaseHotkeyRepo {
@@ -19,5 +23,15 @@ export class LocalHotkeyRepo extends BaseHotkeyRepo {
 
   async deleteHotkey(id: string): Promise<void> {
     await invoke<void>("hotkey_delete", { id });
+  }
+
+  async replaceStyleHotkeys(
+    prefix: string,
+    hotkeys: Hotkey[],
+  ): Promise<Hotkey[]> {
+    return invoke<Hotkey[]>("hotkey_replace_style_hotkeys", {
+      prefix,
+      hotkeys,
+    });
   }
 }

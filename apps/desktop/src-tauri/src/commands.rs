@@ -498,6 +498,13 @@ pub async fn transcription_import_audio(
         );
     }
 
+    // Open the validated file immediately (before any await) so the decode
+    // below operates on the same inode that passed validation. Re-opening the
+    // path later inside the blocking task would reintroduce a TOCTOU window
+    // where an attacker could swap an allowed ancestor for an arbitrary file.
+    let file = std::fs::File::open(&path)
+        .map_err(|_| "Unable to open the selected audio file.".to_string())?;
+
     // Bound concurrent decodes so a flood of imports can't multiply the
     // already-large per-decode memory ceiling. The ReentryGuard releases the
     // flag on every exit path — including a dropped caller future — so a
@@ -512,8 +519,6 @@ pub async fn transcription_import_audio(
     };
 
     let result = tauri::async_runtime::spawn_blocking(move || {
-        let file = std::fs::File::open(&path)
-            .map_err(|_| "Unable to open the selected audio file.".to_string())?;
         let file_bytes = file
             .metadata()
             .map_err(|_| "Unable to inspect the selected audio file.".to_string())?
@@ -1289,6 +1294,22 @@ pub async fn hotkey_delete(
     crate::db::hotkey_queries::delete_hotkey(database.pool(), &id)
         .await
         .map_err(|err| err.to_string())
+}
+
+#[tauri::command]
+#[specta::specta]
+pub async fn hotkey_replace_style_hotkeys(
+    prefix: String,
+    hotkeys: Vec<crate::domain::Hotkey>,
+    database: State<'_, crate::state::OptionKeyDatabase>,
+) -> Result<Vec<crate::domain::Hotkey>, String> {
+    crate::db::hotkey_queries::replace_hotkeys_by_prefix(
+        database.pool(),
+        &prefix,
+        &hotkeys,
+    )
+    .await
+    .map_err(|err| err.to_string())
 }
 
 fn current_timestamp_millis() -> Result<i64, String> {
@@ -3559,16 +3580,56 @@ fn installer_account_chunk(written: u64, chunk_len: u64) -> Result<u64, String> 
     Ok(next)
 }
 
+/// Only mausVoice release assets from this exact repository path may be used
+/// as a manual installer source. A renderer with IPC access must not be able
+/// to make us download and open a release asset from an arbitrary repository.
+const TRUSTED_RELEASE_PATH_PREFIX: &str = "/maus-inc/mausVoice/releases/download/";
+
+/// Validate the *initial* installer URL: it must come from the trusted GitHub
+/// repository's release download path. Redirect hops are validated separately
+/// (host + extension only) because a legitimate asset is served from GitHub's
+/// CDN after a normal `302`.
+fn validate_initial_installer_url(url: &Url) -> Result<(), String> {
+    if url.scheme() != "https" {
+        return Err("Installer URL must use https".to_string());
+    }
+    if url.host_str() != Some("github.com") {
+        return Err(format!(
+            "Manual installer must come from github.com, got {:?}",
+            url.host_str()
+        ));
+    }
+    if !url.path().starts_with(TRUSTED_RELEASE_PATH_PREFIX) {
+        return Err(format!(
+            "Manual installer must be a maus-inc/mausVoice release asset: {}",
+            url.path()
+        ));
+    }
+    if !ALLOWED_INSTALLER_EXTENSIONS
+        .iter()
+        .any(|ext| url.path().ends_with(ext))
+    {
+        return Err(format!(
+            "Installer URL must point to one of {ALLOWED_INSTALLER_EXTENSIONS:?}, got {}",
+            url.path()
+        ));
+    }
+    Ok(())
+}
+
 /// Validate an installer URL (scheme, host allow-list, accepted extension).
-/// Applied to the initial URL *and* to every redirect hop, because the
-/// redirect chain is attacker-influenced: an allowed host could otherwise
-/// bounce us to an untrusted origin whose bytes we would write and execute.
+/// Applied to every *redirect* hop, because the redirect chain is
+/// attacker-influenced: an allowed host could otherwise bounce us to an
+/// untrusted origin whose bytes we would write and execute.
 fn validate_installer_url(url: &Url) -> Result<(), String> {
     if url.scheme() != "https" {
         return Err("Installer URL must use https".to_string());
     }
     let host = url.host_str().unwrap_or("");
-    if !matches!(host, "github.com" | "objects.githubusercontent.com") {
+    if !matches!(
+        host,
+        "github.com" | "objects.githubusercontent.com" | "release-assets.githubusercontent.com"
+    ) {
         return Err(format!(
             "Installer URL host {host:?} is not in the trusted allow-list"
         ));
@@ -3596,7 +3657,7 @@ pub async fn download_and_open_mac_installer(url: String) -> Result<(), String> 
     // any future caller (including a compromised webview) must not be able
     // to make us download+execute arbitrary files.
     let parsed = Url::parse(&url).map_err(|e| format!("Invalid URL: {e}"))?;
-    validate_installer_url(&parsed)?;
+    validate_initial_installer_url(&parsed)?;
 
     // Use a unique temp filename (not the URL-derived basename) so a crafted
     // path like "../../../LaunchAgents/foo" cannot escape the temp dir. The
@@ -3660,9 +3721,16 @@ pub async fn download_and_open_mac_installer(url: String) -> Result<(), String> 
                 return Err(err);
             }
         };
-        std::io::Write::write_all(&mut file, &chunk).map_err(|e| e.to_string())?;
+        if let Err(err) = std::io::Write::write_all(&mut file, &chunk) {
+            drop(file);
+            let _ = std::fs::remove_file(&dest);
+            return Err(err.to_string());
+        }
     }
-    std::io::Write::flush(&mut file).map_err(|e| e.to_string())?;
+    if let Err(err) = std::io::Write::flush(&mut file) {
+        let _ = std::fs::remove_file(&dest);
+        return Err(err.to_string());
+    }
     drop(file);
 
     std::process::Command::new("open")
@@ -3851,4 +3919,66 @@ pub async fn floating_window_list(app: AppHandle) -> Result<Vec<FloatingWindowIn
         });
     }
     Ok(out)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn initial_installer_url_requires_trusted_repo_path() {
+        // The exact URL the TS layer builds for the macOS manual fallback.
+        assert!(validate_initial_installer_url(
+            &Url::parse(
+                "https://github.com/maus-inc/mausVoice/releases/download/v0.1.5/mausVoice_0.1.5_universal.dmg"
+            )
+            .unwrap()
+        )
+        .is_ok());
+
+        // A release asset from a *different* repository must be rejected.
+        assert!(validate_initial_installer_url(
+            &Url::parse(
+                "https://github.com/evil/repo/releases/download/v1/x.dmg"
+            )
+            .unwrap()
+        )
+        .is_err());
+
+        // The redirect CDN host is not a valid *initial* URL.
+        assert!(validate_initial_installer_url(
+            &Url::parse(
+                "https://release-assets.githubusercontent.com/maus-inc/mausVoice/releases/download/v0.1.5/x.dmg"
+            )
+            .unwrap()
+        )
+        .is_err());
+
+        // Non-installer extensions are rejected.
+        assert!(validate_initial_installer_url(
+            &Url::parse(
+                "https://github.com/maus-inc/mausVoice/releases/download/v0.1.5/notes.txt"
+            )
+            .unwrap()
+        )
+        .is_err());
+    }
+
+    #[test]
+    fn redirect_hop_allows_github_cdn() {
+        // The normal GitHub `302` to its release-asset CDN must be permitted.
+        assert!(validate_installer_url(
+            &Url::parse(
+                "https://release-assets.githubusercontent.com/maus-inc/mausVoice/releases/download/v0.1.5/mausVoice_0.1.5_universal.dmg"
+            )
+            .unwrap()
+        )
+        .is_ok());
+
+        // An untrusted host in the redirect chain is rejected.
+        assert!(validate_installer_url(
+            &Url::parse("https://evil.example.com/x.dmg").unwrap()
+        )
+        .is_err());
+    }
 }

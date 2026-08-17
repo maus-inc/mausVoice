@@ -57,3 +57,38 @@ pub async fn delete_hotkey(pool: SqlitePool, id: &str) -> Result<(), sqlx::Error
 
     Ok(())
 }
+
+/// Replaces every hotkey whose `action_name` starts with `prefix` with
+/// `hotkeys` inside a single SQLite transaction, so a failed insert cannot
+/// leave the previous shortcuts partially deleted.
+pub async fn replace_hotkeys_by_prefix(
+    pool: SqlitePool,
+    prefix: &str,
+    hotkeys: &[Hotkey],
+) -> Result<Vec<Hotkey>, sqlx::Error> {
+    let escaped_prefix: String = prefix
+        .replace('\\', "\\\\")
+        .replace('%', "\\%")
+        .replace('_', "\\_");
+    let pattern = format!("{escaped_prefix}%");
+
+    let mut tx = pool.begin().await?;
+    sqlx::query("DELETE FROM hotkeys WHERE action_name LIKE ?1 ESCAPE '\\'")
+        .bind(pattern)
+        .execute(&mut tx)
+        .await?;
+    for hotkey in hotkeys {
+        let keys_json = serialize_keys(&hotkey.keys)?;
+        sqlx::query(
+            "INSERT INTO hotkeys (id, action_name, keys) VALUES (?1, ?2, ?3)",
+        )
+        .bind(&hotkey.id)
+        .bind(&hotkey.action_name)
+        .bind(keys_json)
+        .execute(&mut tx)
+        .await?;
+    }
+    tx.commit().await?;
+
+    Ok(hotkeys.to_vec())
+}

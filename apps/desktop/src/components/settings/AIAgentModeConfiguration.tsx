@@ -1,10 +1,10 @@
 import { Stack, Switch, TextField, Typography } from "@mui/material";
-import { useCallback } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { FormattedMessage } from "react-intl";
 import {
-  setAgentEnabledTools,
   setAgentMaxIterations,
   setAgentPermissionTimeoutMs,
+  setAgentToolEnabled,
   setPreferredAgentMode,
   setPreferredAgentModeApiKeyId,
 } from "../../actions/user.actions";
@@ -25,6 +25,22 @@ export const AIAgentModeConfiguration = () => {
       state.userPrefs?.agentPermissionTimeoutMs ?? 60_000,
     ]);
 
+  // Local drafts for the numeric fields so we persist on blur/Enter instead of
+  // firing a preferences write on every keystroke, which could complete out of
+  // order and fight the controlled value while the user is still typing.
+  const [maxIterationsDraft, setMaxIterationsDraft] = useState(
+    String(maxIterations),
+  );
+  const [timeoutDraft, setTimeoutDraft] = useState(
+    String(Math.round(permissionTimeoutMs / 1000)),
+  );
+  useEffect(() => {
+    setMaxIterationsDraft(String(maxIterations));
+  }, [maxIterations]);
+  useEffect(() => {
+    setTimeoutDraft(String(Math.round(permissionTimeoutMs / 1000)));
+  }, [permissionTimeoutMs]);
+
   const handleModeChange = useCallback((mode: AgentMode) => {
     void setPreferredAgentMode(mode);
   }, []);
@@ -37,13 +53,20 @@ export const AIAgentModeConfiguration = () => {
     enabledTools === null || enabledTools.includes(toolId);
 
   const handleToolToggle = (toolId: string, enabled: boolean) => {
-    const next = new Set(
-      enabledTools ?? toolInfos.map((toolInfo) => toolInfo.id),
-    );
-    if (enabled) next.add(toolId);
-    else next.delete(toolId);
-    const allEnabled = toolInfos.every((toolInfo) => next.has(toolInfo.id));
-    void setAgentEnabledTools(allEnabled ? null : [...next]);
+    // Derives the new allow-set from the latest preferences inside a serialized
+    // mutation, so rapid toggles cannot clobber one another.
+    void setAgentToolEnabled(toolId, enabled);
+  };
+
+  const commitMaxIterations = () => {
+    const value = Number(maxIterationsDraft);
+    if (Number.isFinite(value)) void setAgentMaxIterations(value);
+    else setMaxIterationsDraft(String(maxIterations));
+  };
+  const commitTimeout = () => {
+    const value = Number(timeoutDraft);
+    if (Number.isFinite(value)) void setAgentPermissionTimeoutMs(value * 1000);
+    else setTimeoutDraft(String(Math.round(permissionTimeoutMs / 1000)));
   };
 
   return (
@@ -76,10 +99,11 @@ export const AIAgentModeConfiguration = () => {
             size="small"
             type="number"
             label={<FormattedMessage defaultMessage="Maximum iterations" />}
-            value={maxIterations}
-            onChange={(event) => {
-              const value = Number(event.target.value);
-              if (Number.isFinite(value)) void setAgentMaxIterations(value);
+            value={maxIterationsDraft}
+            onChange={(event) => setMaxIterationsDraft(event.target.value)}
+            onBlur={commitMaxIterations}
+            onKeyDown={(event) => {
+              if (event.key === "Enter") event.currentTarget.blur();
             }}
             slotProps={{ htmlInput: { min: 1, max: 100, step: 1 } }}
             helperText={
@@ -92,12 +116,11 @@ export const AIAgentModeConfiguration = () => {
             label={
               <FormattedMessage defaultMessage="Permission timeout (seconds)" />
             }
-            value={Math.round(permissionTimeoutMs / 1000)}
-            onChange={(event) => {
-              const value = Number(event.target.value);
-              if (Number.isFinite(value)) {
-                void setAgentPermissionTimeoutMs(value * 1000);
-              }
+            value={timeoutDraft}
+            onChange={(event) => setTimeoutDraft(event.target.value)}
+            onBlur={commitTimeout}
+            onKeyDown={(event) => {
+              if (event.key === "Enter") event.currentTarget.blur();
             }}
             slotProps={{ htmlInput: { min: 5, max: 600, step: 1 } }}
             helperText={

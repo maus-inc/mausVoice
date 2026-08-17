@@ -162,6 +162,26 @@ function prepareSherpaWindowsRuntime() {
   const runtimeDlls = readdirSync(profileDir).filter((name) =>
     WINDOWS_SHERPA_RUNTIME_DLLS.has(name.toLowerCase()),
   );
+
+  // Fail closed: if the shared sherpa-onnx build produced none of the expected
+  // runtime DLLs, the sidecar would silently fail to start on Windows (exit
+  // before main()/before announcing its bound port). Surface it at build time.
+  if (runtimeDlls.length === 0) {
+    fail(
+      `Sherpa-onnx Windows shared build produced none of the expected ` +
+        `runtime DLLs (${[...WINDOWS_SHERPA_RUNTIME_DLLS].join(", ")}) in ${profileDir}`,
+    );
+  }
+
+  const missing = [...WINDOWS_SHERPA_RUNTIME_DLLS].filter(
+    (name) => !runtimeDlls.includes(name.toLowerCase()),
+  );
+  if (missing.length > 0) {
+    console.warn(
+      `[sidecar] Sherpa Windows runtime may be incomplete; missing: ${missing.join(", ")}`,
+    );
+  }
+
   for (const name of runtimeDlls) {
     const destinationDir = join(tauriBinariesDir, "onnxruntime");
     mkdirSync(destinationDir, { recursive: true });

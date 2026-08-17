@@ -15,7 +15,12 @@ export const withTimeout = async <T>(
       promise,
       new Promise<never>((_, reject) => {
         timer = setTimeout(() => {
-          onTimeout?.();
+          try {
+            onTimeout?.();
+          } catch (error) {
+            // The timeout must still fire even if the cancellation hook throws.
+            console.error(`withTimeout(${label}): onTimeout threw`, error);
+          }
           reject(new Error(`${label} timed out after ${timeoutMs}ms`));
         }, timeoutMs);
       }),

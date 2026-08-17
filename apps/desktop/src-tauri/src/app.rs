@@ -342,6 +342,7 @@ pub fn build() -> tauri::Builder<tauri::Wry> {
             crate::commands::hotkey_list,
             crate::commands::hotkey_save,
             crate::commands::hotkey_delete,
+            crate::commands::hotkey_replace_style_hotkeys,
             crate::commands::set_tray_title,
             crate::commands::set_menu_icon,
             crate::commands::set_tray_language_menu,
