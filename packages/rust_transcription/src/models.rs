@@ -310,15 +310,41 @@ mod tests {
     #[test]
     fn sensevoice_uses_immutable_revision_and_digest() {
         let artifacts = WhisperModel::SenseVoice.artifact_set();
-        // No artifact may be served from the mutable `main` branch.
+        // No artifact may be served from the mutable `main` branch, and no
+        // placeholder text may survive.
         assert!(artifacts
             .iter()
             .all(|(_, url, _)| !url.contains("/resolve/main/")));
+        assert!(artifacts
+            .iter()
+            .all(|(_, url, _)| !url.contains("REPLACE")));
         // The executable graph must carry a verified digest.
         let (_, _, digest) = &artifacts[0];
+        let digest = digest.expect("SenseVoice primary graph must be digest-pinned");
+        // The pinned revision must be an immutable 40-char commit SHA, not a
+        // placeholder or the mutable `main` branch.
+        assert_eq!(
+            SENSEVOICE_REVISION.len(),
+            40,
+            "SenseVoice must pin an immutable 40-char commit SHA, not a placeholder"
+        );
         assert!(
-            digest.is_some(),
-            "SenseVoice primary graph must be digest-pinned"
+            SENSEVOICE_REVISION.chars().all(|c| c.is_ascii_hexdigit()),
+            "SenseVoice revision must be a hexadecimal commit SHA"
+        );
+        assert!(
+            !SENSEVOICE_REVISION.contains("REPLACE") && SENSEVOICE_REVISION != "main",
+            "SenseVoice revision must not be a placeholder or `main`"
+        );
+        // The digest must be a 64-char SHA-256.
+        assert_eq!(
+            digest.len(),
+            64,
+            "SenseVoice digest must be a 64-char SHA-256, not a placeholder"
+        );
+        assert!(
+            digest.chars().all(|c| c.is_ascii_hexdigit()),
+            "SenseVoice digest must be a hexadecimal SHA-256"
         );
         // The primary download URL must also be revision-pinned.
         assert!(
