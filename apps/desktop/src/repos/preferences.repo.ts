@@ -13,7 +13,7 @@ import {
   normalizeDictationLimitMinutes,
 } from "../utils/dictation-limit.utils";
 import { PRIMARY_LANGUAGE_SENTINEL } from "../utils/language.utils";
-import { orFalse, orNull, orValue } from "../utils/nullable.utils";
+import { orFalse, orNull, orTrue, orValue } from "../utils/nullable.utils";
 import { getEffectivePillVisibility, LOCAL_USER_ID } from "../utils/user.utils";
 import { BaseRepo } from "./base.repo";
 
@@ -201,10 +201,7 @@ export const fromLocalPreferences = (
   inDictationStyleSwitchingEnabled: orFalse(
     preferences.inDictationStyleSwitchingEnabled,
   ),
-  hallucinationFilterEnabled: orValue(
-    preferences.hallucinationFilterEnabled,
-    true,
-  ),
+  hallucinationFilterEnabled: orTrue(preferences.hallucinationFilterEnabled),
   reviewBeforeInsert: orNull(preferences.reviewBeforeInsert),
   agentEnabledTools: parseAgentEnabledTools(preferences.agentEnabledTools),
   agentMaxIterations: normalizeAgentMaxIterations(

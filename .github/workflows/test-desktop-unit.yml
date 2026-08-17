@@ -41,6 +41,30 @@ jobs:
       - name: Run desktop unit tests
         run: pnpm --filter desktop run test:unit
 
+  voice-ai-unit-tests:
+    name: Voice-AI Package Unit Tests
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout source
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v5
+      - name: Setup pnpm
+        uses: pnpm/action-setup@a8198c4bff370c8506180b035930dea56dbd5288 # v5
+      - name: Setup Node
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v5
+        with:
+          node-version-file: .nvmrc
+          cache: pnpm
+          cache-dependency-path: |
+            pnpm-lock.yaml
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile --ignore-scripts
+      - name: Build dependencies
+        run: pnpm exec turbo run build --filter=@maus-inc/voice-ai^... --verbosity=2 --continue
+      - name: Run voice-ai unit tests
+        run: pnpm --filter @maus-inc/voice-ai run test
+
   i18n-sync:
     name: Desktop i18n Catalog Sync
     runs-on: ubuntu-latest

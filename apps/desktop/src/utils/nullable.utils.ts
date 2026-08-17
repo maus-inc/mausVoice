@@ -12,5 +12,8 @@ export const orUndefined = <T>(value: T | null | undefined): T | undefined =>
 export const orFalse = (value: boolean | null | undefined): boolean =>
   value ?? false;
 
+export const orTrue = (value: boolean | null | undefined): boolean =>
+  value ?? true;
+
 export const orValue = <T>(value: T | null | undefined, fallback: T): T =>
   value ?? fallback;

@@ -3,6 +3,9 @@
  * room noise or silence. Keep this list intentionally conservative: filtering
  * is applied before post-processing and should never rewrite a real sentence.
  */
+// English-only list: `applyHallucinationFiltering` short-circuits and returns the
+// text unchanged for any non-English `language`, so a non-English phrase added here
+// would be dead code (never reached). Keep additions English.
 export const KNOWN_SILENCE_HALLUCINATIONS = [
   "[blank_audio]",
   "[blank audio]",

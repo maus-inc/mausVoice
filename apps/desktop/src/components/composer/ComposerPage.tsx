@@ -92,14 +92,18 @@ export const ComposerPage = () => {
     hasGenerationProvider &&
     (speechRecognitionSupported || canUseConfiguredProvider);
 
-  const unsupportedReason = !hasGenerationProvider
-    ? intl.formatMessage({
-        defaultMessage:
-          "Configure a text-generation provider to use Voice Edit Mode.",
-      })
-    : intl.formatMessage({
-        defaultMessage: "Voice editing is not supported on this platform",
-      });
+  // Single discriminant for why Voice Edit dictation is unavailable, so the mic
+  // button and its caption always report the same cause.
+  const disabledReason = !voiceInstructionSupported
+    ? !hasGenerationProvider
+      ? intl.formatMessage({
+          defaultMessage:
+            "Configure a text-generation provider to use Voice Edit Mode.",
+        })
+      : intl.formatMessage({
+          defaultMessage: "Voice editing is not supported on this platform",
+        })
+    : null;
 
   // Held in a ref and refreshed in an effect (never during render) so a locale
   // change while the composer is open updates the recorder's unsupported
@@ -182,6 +186,19 @@ export const ComposerPage = () => {
       active = false;
     };
   }, [intl, requestId]);
+
+  // Esc cancels the composer, matching the window close-request path which is
+  // already wired to Cancel (composer.utils.ts). This completes the keyboard
+  // loop opened by the auto-focused transcript field and Cmd/Ctrl+Enter to apply.
+  useEffect(() => {
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape") {
+        void finish(false);
+      }
+    };
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  }, [finish]);
 
   const finish = async (accepted: boolean) => {
     recorderRef.current?.dispose();
@@ -285,7 +302,7 @@ export const ComposerPage = () => {
                 defaultMessage: "Dictate edit instruction",
               })}
               disabled={isEditing || !voiceInstructionSupported}
-              title={voiceInstructionSupported ? undefined : unsupportedReason}
+              title={disabledReason ?? undefined}
             >
               <MicIcon />
             </IconButton>
@@ -304,9 +321,9 @@ export const ComposerPage = () => {
               )}
             </Button>
           </Stack>
-          {!voiceInstructionSupported && (
+          {disabledReason && (
             <Typography variant="caption" color="text.secondary">
-              {unsupportedReason}
+              {disabledReason}
             </Typography>
           )}
           <Stack
