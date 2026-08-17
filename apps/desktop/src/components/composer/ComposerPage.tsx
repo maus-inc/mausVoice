@@ -93,7 +93,8 @@ export const ComposerPage = () => {
 
   const unsupportedReason = !hasGenerationProvider
     ? intl.formatMessage({
-        defaultMessage: "Configure a text-generation provider to use Voice Edit Mode.",
+        defaultMessage:
+          "Configure a text-generation provider to use Voice Edit Mode.",
       })
     : intl.formatMessage({
         defaultMessage: "Voice editing is not supported on this platform",
@@ -123,7 +124,8 @@ export const ComposerPage = () => {
       createSpeechRecognition: () => {
         const speechWindow = window as SpeechWindow;
         const Ctor =
-          speechWindow.SpeechRecognition ?? speechWindow.webkitSpeechRecognition;
+          speechWindow.SpeechRecognition ??
+          speechWindow.webkitSpeechRecognition;
         return Ctor ? new Ctor() : null;
       },
       getLang: () => document.documentElement.lang || "en-US",
@@ -279,7 +281,9 @@ export const ComposerPage = () => {
             <Button
               variant="outlined"
               onClick={() => void applyEdit()}
-              disabled={!instruction.trim() || isEditing || !hasGenerationProvider}
+              disabled={
+                !instruction.trim() || isEditing || !hasGenerationProvider
+              }
               sx={{ whiteSpace: "nowrap", minHeight: 40 }}
             >
               {isEditing ? (

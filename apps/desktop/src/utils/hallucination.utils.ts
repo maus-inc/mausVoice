@@ -131,10 +131,7 @@ export const applyHallucinationFiltering = (
   }
   const gated = gateSilentSegments(segments);
   const transcriptForFiltering = gated ?? rawTranscript;
-  return filterKnownSilenceHallucinations(
-    transcriptForFiltering,
-    language,
-  );
+  return filterKnownSilenceHallucinations(transcriptForFiltering, language);
 };
 
 /**
