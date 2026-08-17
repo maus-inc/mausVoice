@@ -112,20 +112,18 @@ impl WhisperModel {
     /// Every file required by the model-specific runtime. ONNX artifacts are
     /// pinned to immutable Hugging Face revisions; executable graph/weight
     /// files additionally carry the upstream LFS SHA-256 digest.
-    // C1 fix — SenseVoice supply-chain pinning. These MUST be replaced with the
-    // real immutable revision and the upstream LFS SHA-256 of `model.int8.onnx`.
-    // Hugging Face egress was blocked when this change was prepared, so
-    // placeholders are used; the download manager still requires a pinned
-    // revision and a non-empty digest, and `sensevoice_uses_immutable_revision`
-    // asserts both. Fetch the real values with:
-    //   gh api repos/csukuangfj/sherpa-onnx-sense-voice-zh-en-ja-ko-yue-2024-07-17-int8/commits/main --jq .sha
-    //   gh api repos/csukuangfj/sherpa-onnx-sense-voice-zh-en-ja-ko-yue-2024-07-17-int8/contents/model.int8.onnx?ref=<SHA> --jq .sha
+    // C1 fix — SenseVoice supply-chain pinning. Artifacts are pinned to an
+    // immutable Hugging Face revision; the executable graph additionally carries
+    // the upstream SHA-256 digest so downloads are verified against tampering.
+    // Source: csukuangfj/sherpa-onnx-sense-voice-zh-en-ja-ko-yue-int8-2025-09-09
+    //   revision 355f4d4884d8afd08aef04b9007a8556d7b463b2 (main)
+    //   model.int8.onnx SHA-256 12ca1a2ae7ecf3e0019ef2822307ee0b5cadc9196569e379b4c4026f8205276d
     // SENSEVOICE_REVISION and SENSEVOICE_DOWNLOAD_URL must stay in sync.
-    const SENSEVOICE_REVISION: &str = "REPLACE_WITH_IMMUTABLE_COMMIT_SHA";
-    const SENSEVOICE_MODEL_SHA256: &str = "REPLACE_WITH_MODEL_INT8_ONNX_LFS_SHA256";
+    const SENSEVOICE_REVISION: &str = "355f4d4884d8afd08aef04b9007a8556d7b463b2";
+    const SENSEVOICE_MODEL_SHA256: &str = "12ca1a2ae7ecf3e0019ef2822307ee0b5cadc9196569e379b4c4026f8205276d";
     const SENSEVOICE_TOKENS_SHA256: Option<&str> = None;
     const SENSEVOICE_DOWNLOAD_URL: &str =
-        "https://huggingface.co/csukuangfj/sherpa-onnx-sense-voice-zh-en-ja-ko-yue-2024-07-17-int8/resolve/REPLACE_WITH_IMMUTABLE_COMMIT_SHA/model.int8.onnx";
+        "https://huggingface.co/csukuangfj/sherpa-onnx-sense-voice-zh-en-ja-ko-yue-int8-2025-09-09/resolve/355f4d4884d8afd08aef04b9007a8556d7b463b2/model.int8.onnx";
     pub fn artifact_set(self) -> Vec<(&'static str, String, Option<&'static str>)> {
         let artifacts = match self {
             Self::ParakeetCtc06B => {
@@ -154,7 +152,7 @@ impl WhisperModel {
             }
             Self::SenseVoice => {
                 let root = format!(
-                    "https://huggingface.co/csukuangfj/sherpa-onnx-sense-voice-zh-en-ja-ko-yue-2024-07-17-int8/resolve/{}/",
+                    "https://huggingface.co/csukuangfj/sherpa-onnx-sense-voice-zh-en-ja-ko-yue-int8-2025-09-09/resolve/{}/",
                     Self::SENSEVOICE_REVISION
                 );
                 vec![
