@@ -50,6 +50,10 @@ rodio = "0.17"
 wgpu = "0.20"
 hound = "3.5"
 base64 = "0.21"
+# Minisign (ed25519) detached-signature verification for the macOS manual
+# installer fallback. Mirrors the scheme `tauri-plugin-updater` already uses
+# to verify in-place updates.
+minisign-verify = "0.2"
 ferrous-focus = { git = "https://github.com/MichaelWGibson/ferrous-focus" }
 image = { version = "0.25.2", default-features = false, features = ["jpeg"] }
 rand = "0.8"

@@ -4,6 +4,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use std::time::{SystemTime, UNIX_EPOCH};
 
+use base64::Engine;
 use url::Url;
 
 /// Per-command re-entry guards. When an IPC command mutates global OS state
@@ -3599,6 +3600,176 @@ fn installer_account_chunk(written: u64, chunk_len: u64) -> Result<u64, String> 
     Ok(next)
 }
 
+/// Extensions accepted for the detached signature artifact.
+const ALLOWED_SIGNATURE_EXTENSIONS: &[&str] = &[".sig"];
+
+/// Validate the *initial* signature URL: it must come from the trusted GitHub
+/// repository's release download path and name a `.sig` file. Redirect hops are
+/// validated separately (host + extension only) for the same reasons as
+/// `validate_initial_installer_url`.
+fn validate_initial_signature_url(url: &Url) -> Result<(), String> {
+    if url.scheme() != "https" {
+        return Err("Signature URL must use https".to_string());
+    }
+    if url.host_str() != Some("github.com") {
+        return Err(format!(
+            "Installer signature must come from github.com, got {:?}",
+            url.host_str()
+        ));
+    }
+    if !url.path().starts_with(TRUSTED_RELEASE_PATH_PREFIX) {
+        return Err(format!(
+            "Installer signature must be a maus-inc/mausVoice release asset: {}",
+            url.path()
+        ));
+    }
+    if !ALLOWED_SIGNATURE_EXTENSIONS
+        .iter()
+        .any(|ext| url.path().ends_with(ext))
+    {
+        return Err(format!(
+            "Signature URL must point to a .sig file, got {}",
+            url.path()
+        ));
+    }
+    Ok(())
+}
+
+/// Validate a signature URL (scheme, host allow-list, accepted extension).
+/// Applied to every *redirect* hop, mirroring `validate_installer_url`.
+fn validate_signature_url(url: &Url) -> Result<(), String> {
+    if url.scheme() != "https" {
+        return Err("Signature URL must use https".to_string());
+    }
+    let host = url.host_str().unwrap_or("");
+    if !matches!(
+        host,
+        "github.com" | "objects.githubusercontent.com" | "release-assets.githubusercontent.com"
+    ) {
+        return Err(format!(
+            "Signature URL host {host:?} is not in the trusted allow-list"
+        ));
+    }
+    if host != "release-assets.githubusercontent.com"
+        && !ALLOWED_SIGNATURE_EXTENSIONS
+            .iter()
+            .any(|ext| url.path().ends_with(ext))
+    {
+        return Err(format!(
+            "Signature URL must point to a .sig file, got {}",
+            url.path()
+        ));
+    }
+    Ok(())
+}
+
+/// Decide whether a signature redirect hop is allowed.
+fn signature_redirect_allowed(previous_hops: usize, url: &Url) -> Result<(), String> {
+    if previous_hops >= INSTALLER_MAX_REDIRECTS {
+        return Err("too many redirects".to_string());
+    }
+    validate_signature_url(url)
+}
+
+/// Resolve the embedded updater public key (minisign text, base64-encoded in
+/// the compiled Tauri config) from the running app. The release build injects
+/// the real key from a secret; dev/test builds intentionally keep it empty so
+/// an unsigned build cannot silently trust anything.
+fn updater_public_key_text(app: &AppHandle) -> Result<String, String> {
+    let raw = app
+        .config()
+        .plugins
+        .0
+        .get("updater")
+        .and_then(|v| v.get("pubkey"))
+        .and_then(|v| v.as_str())
+        .ok_or_else(|| "Updater public key is not configured".to_string())?;
+    if raw.is_empty() {
+        return Err("Updater public key is not configured".to_string());
+    }
+    let decoded = base64::engine::general_purpose::STANDARD
+        .decode(raw)
+        .map_err(|e| format!("Failed to decode updater public key: {e}"))?;
+    String::from_utf8(decoded)
+        .map_err(|e| format!("Updater public key is not valid UTF-8: {e}"))
+}
+
+/// Download the detached `.sig` (minisign text format) for an installer,
+/// validating every redirect hop against the trusted allow-list and enforcing
+/// the same streaming size cap as the installer download.
+async fn download_installer_signature(signature_url: &str) -> Result<Vec<u8>, String> {
+    let parsed = Url::parse(signature_url).map_err(|e| format!("Invalid signature URL: {e}"))?;
+    validate_initial_signature_url(&parsed)?;
+
+    let redirect_policy = reqwest::redirect::Policy::custom(|attempt| {
+        match signature_redirect_allowed(attempt.previous().len(), attempt.url()) {
+            Ok(()) => attempt.follow(),
+            Err(err) => attempt.error(err),
+        }
+    });
+    let client = reqwest::Client::builder()
+        .redirect(redirect_policy)
+        .build()
+        .map_err(|e| e.to_string())?;
+
+    let mut response = client
+        .get(parsed)
+        .send()
+        .await
+        .map_err(|e| e.to_string())?;
+    if !response.status().is_success() {
+        return Err(format!(
+            "Signature download failed with status {}",
+            response.status()
+        ));
+    }
+    installer_content_length_ok(response.content_length())?;
+
+    let mut sig = Vec::new();
+    let mut written: u64 = 0;
+    while let Some(chunk) = response.chunk().await.map_err(|e| e.to_string())? {
+        written = installer_account_chunk(written, chunk.len() as u64)?;
+        sig.extend_from_slice(&chunk);
+    }
+    Ok(sig)
+}
+
+/// Verify `data` against a minisign detached signature using the embedded
+/// updater public key. Returns `Ok(())` only when the signature is valid.
+fn verify_minisign_data(
+    public_key_text: &str,
+    data: &[u8],
+    signature_text: &str,
+) -> Result<(), String> {
+    let public_key = minisign_verify::PublicKey::decode(public_key_text)
+        .map_err(|e| format!("Failed to parse updater public key: {e}"))?;
+    let signature = minisign_verify::Signature::decode(signature_text)
+        .map_err(|e| format!("Failed to parse installer signature: {e}"))?;
+    public_key
+        .verify(data, &signature, true)
+        .map_err(|e| format!("Installer signature verification failed: {e}"))?;
+    Ok(())
+}
+
+/// Download and verify the detached signature for the already-downloaded
+/// installer at `dmg_path`. On any failure the caller must delete the temp
+/// file; this function never opens or executes anything.
+async fn verify_installer_signature(
+    app: &AppHandle,
+    dmg_path: &std::path::Path,
+    signature_url: &str,
+) -> Result<(), String> {
+    if signature_url.is_empty() {
+        return Err("No installer signature provided; refusing to open unverified installer".to_string());
+    }
+    let public_key_text = updater_public_key_text(app)?;
+    let sig_bytes = download_installer_signature(signature_url).await?;
+    let signature_text = std::str::from_utf8(&sig_bytes)
+        .map_err(|e| format!("Installer signature is not valid UTF-8: {e}"))?;
+    let data = std::fs::read(dmg_path).map_err(|e| e.to_string())?;
+    verify_minisign_data(&public_key_text, &data, signature_text)
+}
+
 /// Only mausVoice release assets from this exact repository path may be used
 /// as a manual installer source. A renderer with IPC access must not be able
 /// to make us download and open a release asset from an arbitrary repository.
@@ -3675,7 +3846,11 @@ fn validate_installer_url(url: &Url) -> Result<(), String> {
 /// updater cannot write to the app's install location.
 #[tauri::command]
 #[specta::specta]
-pub async fn download_and_open_mac_installer(url: String) -> Result<(), String> {
+pub async fn download_and_open_mac_installer(
+    app: AppHandle,
+    url: String,
+    signature_url: String,
+) -> Result<(), String> {
     // Defense-in-depth: only allow downloads from the trusted release host.
     // The TS caller derives this URL from the signed updater manifest, but
     // any future caller (including a compromised webview) must not be able
@@ -3756,6 +3931,15 @@ pub async fn download_and_open_mac_installer(url: String) -> Result<(), String> 
         return Err(err.to_string());
     }
     drop(file);
+
+    // Verify the downloaded DMG against its detached minisign signature
+    // BEFORE opening it. On any failure (missing/invalid key, missing or
+    // bad signature, mismatched bytes) we delete the temp file and abort so
+    // an unverified installer is never handed to `open`.
+    if let Err(err) = verify_installer_signature(&app, &dest, &signature_url).await {
+        let _ = std::fs::remove_file(&dest);
+        return Err(err);
+    }
 
     std::process::Command::new("open")
         .arg(&dest)
@@ -4004,5 +4188,81 @@ mod tests {
             &Url::parse("https://evil.example.com/x.dmg").unwrap()
         )
         .is_err());
+    }
+
+    #[test]
+    fn signature_url_requires_trusted_repo_and_sig_extension() {
+        // The detached `.dmg.sig` for the macOS manual fallback.
+        assert!(validate_initial_signature_url(
+            &Url::parse(
+                "https://github.com/maus-inc/mausVoice/releases/download/v0.1.5/mausVoice_0.1.5_universal.dmg.sig"
+            )
+            .unwrap()
+        )
+        .is_ok());
+
+        // A non-signature extension is rejected.
+        assert!(validate_initial_signature_url(
+            &Url::parse(
+                "https://github.com/maus-inc/mausVoice/releases/download/v0.1.5/mausVoice_0.1.5_universal.dmg"
+            )
+            .unwrap()
+        )
+        .is_err());
+
+        // A release asset from a *different* repository is rejected.
+        assert!(validate_initial_signature_url(
+            &Url::parse("https://github.com/evil/repo/releases/download/v1/x.sig")
+                .unwrap()
+        )
+        .is_err());
+
+        // The redirect CDN host is not a valid *initial* signature URL.
+        assert!(validate_initial_signature_url(
+            &Url::parse(
+                "https://release-assets.githubusercontent.com/maus-inc/mausVoice/releases/download/v0.1.5/x.sig"
+            )
+            .unwrap()
+        )
+        .is_err());
+    }
+
+    #[test]
+    fn signature_redirect_allows_github_cdn() {
+        assert!(signature_redirect_allowed(
+            1,
+            &Url::parse(
+                "https://release-assets.githubusercontent.com/maus-inc/mausVoice/releases/download/v0.1.5/mausVoice_0.1.5_universal.dmg.sig"
+            )
+            .unwrap()
+        )
+        .is_ok());
+
+        // An untrusted host in the redirect chain is rejected.
+        assert!(signature_redirect_allowed(
+            1,
+            &Url::parse("https://evil.example.com/x.sig").unwrap()
+        )
+        .is_err());
+    }
+
+    #[test]
+    fn minisign_signature_accepts_valid_and_rejects_invalid() {
+        // Known minisign test vector: public key + signature over "test".
+        let public_key = "untrusted comment: minisign public key ABCDEF\n\
+RWQf6LRCGA9i53mlYecO4IzT51TGPpvWucNSCh1CBM0QTaLn73Y7GFO3";
+        let signature = "untrusted comment: signature from minisign secret key\n\
+RUQf6LRCGA9i559r3g7V1qNyJDApGip8MfqcadIgT9CuhV3EMhHoN1mGTkUidF/z7SrlQgXdy8ofjb7bNJJylDOocrCo8KLzZwo=\n\
+trusted comment: timestamp:1633700835\tfile:test\tprehashed\n\
+wLMDjy9FLAuxZ3q4NlEvkgtyhrr0gtTu6KC4KBJdITbbOeAi1zBIYo0v4iTgt8jJpIidRJnp94ABQkJAgAooBQ==";
+
+        // Valid signature verifies.
+        assert!(verify_minisign_data(public_key, b"test", signature).is_ok());
+        // A tampered payload must fail verification.
+        assert!(verify_minisign_data(public_key, b"tampered", signature).is_err());
+        // A different payload must fail verification.
+        assert!(verify_minisign_data(public_key, b"other", signature).is_err());
+        // A malformed signature must fail to parse.
+        assert!(verify_minisign_data(public_key, b"test", "not-a-signature").is_err());
     }
 }

@@ -71,6 +71,7 @@ export const checkForAppUpdates = async (
       draft.updater.status = "checking";
       draft.updater.errorMessage = null;
       draft.updater.manualInstallerUrl = null;
+      draft.updater.manualInstallerSignatureUrl = null;
       draft.updater.downloadProgress = null;
       draft.updater.downloadedBytes = null;
       draft.updater.totalBytes = null;
@@ -86,6 +87,7 @@ export const checkForAppUpdates = async (
         draft.updater.status = "error";
         draft.updater.errorMessage = String(error);
         draft.updater.manualInstallerUrl = null;
+        draft.updater.manualInstallerSignatureUrl = null;
         draft.updater.lastCheckedAt = Date.now();
       });
       return false;
@@ -100,6 +102,7 @@ export const checkForAppUpdates = async (
         draft.updater.releaseDate = null;
         draft.updater.releaseNotes = null;
         draft.updater.manualInstallerUrl = null;
+        draft.updater.manualInstallerSignatureUrl = null;
         draft.updater.requiresManualInstall = false;
         draft.updater.errorMessage = null;
         draft.updater.downloadProgress = null;
@@ -131,6 +134,8 @@ export const checkForAppUpdates = async (
       draft.updater.releaseDate = update.releaseDate;
       draft.updater.releaseNotes = update.releaseNotes;
       draft.updater.manualInstallerUrl = update.manualInstallerUrl;
+      draft.updater.manualInstallerSignatureUrl =
+        update.manualInstallerSignatureUrl;
       draft.updater.requiresManualInstall = update.requiresManualInstall;
       draft.updater.errorMessage = null;
       draft.updater.downloadProgress = null;
@@ -203,8 +208,9 @@ export const dismissUpdateDialog = (duration = THREE_DAYS_MS): void => {
 };
 
 const installViaPkgInstaller = async (): Promise<boolean> => {
-  const { manualInstallerUrl } = getAppState().updater;
-  if (!manualInstallerUrl) {
+  const { manualInstallerUrl, manualInstallerSignatureUrl } =
+    getAppState().updater;
+  if (!manualInstallerUrl || !manualInstallerSignatureUrl) {
     showErrorSnackbar("No installer package available for this version.");
     return false;
   }
@@ -219,7 +225,10 @@ const installViaPkgInstaller = async (): Promise<boolean> => {
   });
 
   try {
-    await downloadAndOpenMacInstaller(manualInstallerUrl);
+    await downloadAndOpenMacInstaller(
+      manualInstallerUrl,
+      manualInstallerSignatureUrl,
+    );
   } catch (error) {
     console.error("Failed to download or open pkg installer", error);
     produceAppState((draft) => {

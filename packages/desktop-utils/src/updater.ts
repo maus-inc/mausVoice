@@ -67,6 +67,7 @@ export type AvailableUpdateInfo = {
   releaseDate: string | null;
   releaseNotes: string | null;
   manualInstallerUrl: string | null;
+  manualInstallerSignatureUrl: string | null;
   requiresManualInstall: boolean;
 };
 
@@ -142,6 +143,41 @@ export const buildManualMacInstallerUrl = (
 };
 
 /**
+ * Resolves the detached-signature URL for the macOS manual installer. The
+ * Rust command verifies the downloaded `.dmg` against this `.sig` (minisign /
+ * ed25519, the same scheme the in-place updater uses) before opening it.
+ *
+ * Preferred source is a `dmgSignatureUrl` published alongside the installer in
+ * the updater manifest; otherwise we fall back to the natural artifact name
+ * (the `.dmg.sig` sitting next to the `.dmg` in the same release directory).
+ * Returns `null` when no signature can be located — the Rust command then
+ * refuses to open an unverified installer.
+ */
+export const buildManualMacInstallerSignatureUrl = (
+  rawJson: Record<string, unknown>,
+  dmgUrl: string | null,
+): string | null => {
+  const platforms = rawJson.platforms;
+  if (isRecord(platforms)) {
+    for (const platform of Object.values(platforms)) {
+      if (!isRecord(platform)) {
+        continue;
+      }
+      const sigUrl = platform.dmgSignatureUrl;
+      if (typeof sigUrl === "string" && sigUrl.length > 0) {
+        return sigUrl;
+      }
+    }
+  }
+
+  if (dmgUrl) {
+    return `${dmgUrl}.sig`;
+  }
+
+  return null;
+};
+
+/**
  * Probes the app install directory for writability via the
  * `check_app_location_writable` Tauri command. Non-macOS always returns
  * `true`. Probe failures are swallowed and default to `true` so a flaky
@@ -189,15 +225,22 @@ export const checkForUpdate = async (
   const requiresManualInstall =
     platform === "darwin" ? !(await checkAppLocationWritable(platform)) : false;
 
+  const manualInstallerUrl =
+    platform === "darwin"
+      ? buildManualMacInstallerUrl(update.version, update.rawJson)
+      : null;
+  const manualInstallerSignatureUrl =
+    platform === "darwin"
+      ? buildManualMacInstallerSignatureUrl(update.rawJson, manualInstallerUrl)
+      : null;
+
   return {
     currentVersion: update.currentVersion,
     version: update.version,
     releaseDate: update.date ?? null,
     releaseNotes: update.body ?? null,
-    manualInstallerUrl:
-      platform === "darwin"
-        ? buildManualMacInstallerUrl(update.version, update.rawJson)
-        : null,
+    manualInstallerUrl,
+    manualInstallerSignatureUrl,
     requiresManualInstall,
   };
 };
@@ -261,12 +304,15 @@ export const installAvailableUpdate = async (
 /**
  * Downloads a `.dmg` installer to a temp directory and opens it via macOS
  * Installer.app. Used as a fallback when the in-place updater cannot write
- * to the app's install location.
+ * to the app's install location. The Rust command verifies the downloaded
+ * DMG against `signatureUrl` (minisign/ed25519) before opening it and refuses
+ * to open an unverified or missing-signature installer.
  */
 export const downloadAndOpenMacInstaller = async (
   url: string,
+  signatureUrl: string,
 ): Promise<void> => {
-  await invoke("download_and_open_mac_installer", { url });
+  await invoke("download_and_open_mac_installer", { url, signatureUrl });
 };
 
 /** Relaunches the app via Tauri's process plugin. */

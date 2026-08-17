@@ -487,7 +487,10 @@ const useTutorialSubmission = ({
   const submissionCompleteRef = useRef(false);
   const [initializing, setInitializing] = useState(true);
   const setChatToneRef = useRef(setChatTone);
-  setChatToneRef.current = setChatTone;
+
+  useEffect(() => {
+    setChatToneRef.current = setChatTone;
+  }, [setChatTone]);
 
   useEffect(() => {
     let cancelled = false;
@@ -546,7 +549,10 @@ const useTutorialDictationStart = ({
   onStarted: () => void;
 }) => {
   const onStartedRef = useRef(onStarted);
-  onStartedRef.current = onStarted;
+
+  useEffect(() => {
+    onStartedRef.current = onStarted;
+  }, [onStarted]);
 
   useEffect(() => {
     if (primaryHotkey.length === 0) {
@@ -577,7 +583,10 @@ const useTutorialToneSync = ({
   setChatTone: (toneId: string, force?: boolean) => Promise<void>;
 }) => {
   const setChatToneRef = useRef(setChatTone);
-  setChatToneRef.current = setChatTone;
+
+  useEffect(() => {
+    setChatToneRef.current = setChatTone;
+  }, [setChatTone]);
 
   useEffect(() => {
     if (!userExists) {
