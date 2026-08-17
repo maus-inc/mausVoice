@@ -1,3 +1,12 @@
+# Detect a committed Tauri/Minisign (rsign) updater private key.
+# The secret-key base64 preamble decodes to "untrusted comment: rsign
+# encrypted secret key" (dW50cnVzdGVkIGNvbW1lbnQ6IHJzaWdu...).
+[[rules]]
+id = "tauri-minisign-updater-private-key"
+description = "Tauri/Minisign (rsign) updater private key"
+regex = '''(?i)dW50cnVzdGVkIGNvbW1lbnQ6IHJzaWdu'''
+keywords = ["dW50cnVzdGVkIGNvbW1lbnQ6IHJzaWdu"]
+
 [allowlist]
 description = "Public/non-secret values"
 paths = [
@@ -13,12 +22,14 @@ paths = [
   '''config/docker-compose\.yml''',
   '''enterprise/docker-compose\.yml''',
 
-  # GitHub Actions workflow (references ${{ secrets.* }}, not actual values)
-  '''\.github/workflows/.*\.yml''',
-
   # Documentation examples
   '''docs/.*\.md''',
 ]
 regexes = [
   '''pk_live_.*''',
+  # Tauri/Minisign PUBLIC key (base64 "untrusted comment: minisign public key").
+  # Intentionally committed (updater pubkey + CI validation); not a secret.
+  # NOTE: the public-key preamble (minisign) is distinct from the private-key
+  # preamble (rsign) caught by the rule above, so this does not suppress it.
+  '''dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaW4''',
 ]

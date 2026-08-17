@@ -25,6 +25,9 @@ on:
       - "apps/windows-installer/**"
       - ".github/workflows/build-desktop.yml"
 
+permissions:
+  contents: read
+
 jobs:
   build:
     name: Build Desktop (${{ matrix.label }})

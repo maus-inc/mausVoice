@@ -29,6 +29,10 @@ on:
       - "patches/**"
       - "scripts/generate-app-icons.mjs"
       - ".github/workflows/lint-desktop.yml"
+
+permissions:
+  contents: read
+
 jobs:
   lint:
     name: Lint Desktop (${{ matrix.label }})
