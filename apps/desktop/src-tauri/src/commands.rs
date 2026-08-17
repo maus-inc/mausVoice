@@ -3917,8 +3917,6 @@ pub async fn download_and_open_mac_installer(
     // so `open` handles it.
     let downloaded_ext = if parsed.path().ends_with(".app.tar.gz") {
         ".app.tar.gz"
-    } else if parsed.path().ends_with(".dmg") {
-        ".dmg"
     } else {
         ".dmg"
     };

@@ -70,7 +70,7 @@ pub fn resample_to_rate(
     // Build (or fetch a cached) table. A `None` here means the ratio would
     // exceed the coefficient budget — return an explicit error rather than
     // relabeling source-rate audio as the target rate.
-    let table = get_table(source_rate, target_rate).ok_or_else(|| ResampleError::RatioTooComplex {
+    let table = get_table(source_rate, target_rate).ok_or(ResampleError::RatioTooComplex {
         source_rate,
         target_rate,
     })?;
