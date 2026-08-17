@@ -79,10 +79,10 @@ console.log(
 );
 
 // ---- Phase 2: live add-then-delete history scan (requires `gitleaks`) ----
-// Gitleaks is installed to a fixed, non-writable location by the CI workflow
-// (see .github/workflows/secret-scan.yml). Use an absolute path so the binary
-// is never resolved through a possibly-attacker-controlled PATH (S4036).
+// Gitleaks and git are invoked via absolute paths so neither binary is ever
+// resolved through a possibly-attacker-controlled PATH (S4036).
 const GITLEAKS_BIN = "/usr/local/bin/gitleaks";
+const GIT_BIN = "/usr/bin/git";
 let gitleaks;
 try {
   execFileSync(GITLEAKS_BIN, ["version"]);
@@ -105,7 +105,7 @@ const tmp = mkdtempSync(resolve(tmpdir(), "gitleaks-hist-"));
 try {
   const gitleaksRun = (args, opts = {}) =>
     execFileSync(gitleaks, args, { cwd: tmp, ...opts });
-  const git = (...args) => execFileSync("git", args, { cwd: tmp });
+  const git = (...args) => execFileSync(GIT_BIN, args, { cwd: tmp });
 
   git("init", "-q");
   git("config", "user.email", "test@example.com");
