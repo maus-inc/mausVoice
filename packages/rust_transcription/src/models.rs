@@ -101,7 +101,7 @@ impl WhisperModel {
     /// Every file required by the model-specific runtime. ONNX artifacts are
     /// pinned to immutable Hugging Face revisions; executable graph/weight
     /// files additionally carry the upstream LFS SHA-256 digest.
-    // C1 fix — SenseVoice supply-chain pinning. Artifacts are pinned to an
+    // PR #63 (#55 integration) — SenseVoice supply-chain pinning. Artifacts are pinned to an
     // immutable Hugging Face revision; the executable graph additionally carries
     // the upstream SHA-256 digest so downloads are verified against tampering.
     // Source: csukuangfj/sherpa-onnx-sense-voice-zh-en-ja-ko-yue-int8-2025-09-09
@@ -200,6 +200,10 @@ impl WhisperModel {
         models_dir.join(self.as_slug()).join(filename)
     }
 
+    /// Resolve the download URL, optionally overridden by an environment variable.
+    /// The variable name is derived from `as_slug()` mapped to uppercase
+    /// alphanumeric with every other character replaced by `_`.
+    /// Example: `sense-voice` -> `RUST_TRANSCRIPTION_MODEL_URL_SENSE_VOICE`.
     pub fn download_url(self) -> String {
         let env_suffix: String = self
             .as_slug()

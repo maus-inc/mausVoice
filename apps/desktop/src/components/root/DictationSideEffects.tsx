@@ -974,6 +974,9 @@ export const DictationSideEffects = () => {
 
     previousStyleSwitchKeysRef.current = keysHeld;
   }, [
+    // `previousStyleSwitchKeysRef` is intentionally excluded: it is a
+    // mutation-based snapshot of the prior `keysHeld` updated at the end of this
+    // effect, so including it would trigger a render loop.
     activeRecordingMode,
     inDictationStyleSwitchingEnabled,
     isActiveSession,
