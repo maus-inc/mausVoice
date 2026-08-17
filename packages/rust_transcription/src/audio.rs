@@ -40,9 +40,9 @@ const MAX_TABLE_CACHE_ENTRIES: usize = 64;
 /// for every tap of every sample — hundreds of millions of trig ops for a few
 /// minutes of audio).
 ///
-/// Failure is an explicit [`ResampleError`]: callers must never treat the
-/// returned buffer as `target_rate` audio if this returns `Err`, because the
-/// source samples are returned unchanged on the error paths.
+/// Failure is an explicit [`ResampleError`]: on `Err` this returns no buffer
+/// at all, so callers must retain the original source samples separately and
+/// must not relabel them as `target_rate` audio.
 pub fn resample_to_rate(
     samples: &[f32],
     source_rate: u32,
@@ -276,16 +276,21 @@ fn touch(order: &mut Vec<(u32, u32)>, key: &(u32, u32)) {
 fn get_table(source_rate: u32, target_rate: u32) -> Option<Arc<PolyphaseTable>> {
     // Fast path: return a cached table without rebuilding. The lock is released
     // before any table generation so concurrent callers are not serialized.
-    if let Some(entry) = {
+    let cached = {
         let cache = TABLE_CACHE.get_or_init(|| Mutex::new(TableCache::new()));
         let mut guard = cache.lock().unwrap();
-        if let Some(entry) = guard.map.get(&(source_rate, target_rate)) {
+        // Clone the cached table out of the immutable `guard.map` borrow so the
+        // borrow ends here; only then may we mutate the LRU ordering.
+        let cloned = guard
+            .map
+            .get(&(source_rate, target_rate))
+            .map(|entry| Arc::clone(&entry.table));
+        if cloned.is_some() {
             touch(&mut guard.order, &(source_rate, target_rate));
-            Some(Arc::clone(&entry.table))
-        } else {
-            None
         }
-    } {
+        cloned
+    };
+    if let Some(entry) = cached {
         return Some(entry);
     }
 

@@ -1062,9 +1062,10 @@ pub async fn transcription_audio_load(
     let audio_dir = crate::system::audio_store::audio_dir(&app).map_err(|err| err.to_string())?;
     let audio_path_buf = PathBuf::from(&audio_path);
 
-    if !audio_path_buf.starts_with(&audio_dir) {
-        return Err("Audio snapshot path is outside the managed directory".to_string());
-    }
+    let audio_path_buf = match resolve_managed_audio_path(&audio_path_buf, &audio_dir) {
+        Some(resolved) => resolved,
+        None => return Err("Audio snapshot path is outside the managed directory".to_string()),
+    };
 
     let (samples, sample_rate) = tauri::async_runtime::spawn_blocking(move || {
         crate::system::audio_store::load_audio_samples(&audio_path_buf)
@@ -1143,7 +1144,9 @@ pub async fn export_transcription(
 
         if let Some(ref audio_path_str) = audio_path {
             let audio_path_buf = PathBuf::from(audio_path_str);
-            if audio_path_buf.starts_with(&audio_dir) && audio_path_buf.exists() {
+            if let Some(audio_path_buf) =
+                resolve_managed_audio_path(&audio_path_buf, &audio_dir).filter(|p| p.exists())
+            {
                 let audio_data = std::fs::read(&audio_path_buf)
                     .map_err(|err| format!("Failed to read audio: {err}"))?;
                 zip.start_file("audio.wav", options)

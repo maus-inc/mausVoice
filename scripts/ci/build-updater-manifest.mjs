@@ -23,15 +23,22 @@ import path from "node:path";
 // Tauri resolves an installer URL by `{os}-{arch}-{installer}` first and then
 // falls back to the bare `{os}-{arch}` key. The release job builds with
 // `createUpdaterArtifacts: true`, which emits a *direct-sign* bundle per
-// installer type: Windows `.msi`/`.exe`, Linux `.deb`/`.rpm`/`.AppImage`, and
-// macOS `.app.tar.gz` (the actual updater bundle) plus `.dmg`. Emitting the
-// per-installer keys *and* a bare fallback makes the manifest correct
-// regardless of which key Tauri prefers for a given platform.
+// updater artifact type: Windows `.msi`/`.exe`/`.nsis.zip`, Linux `.AppImage`,
+// and macOS `.app.tar.gz` (the actual updater bundle) plus `.dmg`. The `.dmg`
+// is signed explicitly by the release job; the others are signed by Tauri's
+// updater. Emitting the per-installer keys *and* a bare fallback makes the
+// manifest correct regardless of which key Tauri prefers for a given platform.
+//
+// `.deb`/`.rpm` are intentionally NOT listed here: Tauri v2 does not produce
+// detached `.sig` files for them, so they must not appear as updater bundles
+// in `latest.json` (doing so would make manifest generation reject the release
+// for a missing `.deb.sig`). They are still built and published as ordinary
+// release installers via the upload step.
 //
 // Each entry declares the filename matcher, the manifest keys it produces, and
 // (for platforms that need one) the bare fallback key. `barePrecedence`
 // decides which installer wins the bare fallback when several are present
-// (lower number wins): MSI over NSIS, AppImage over DEB over RPM.
+// (lower number wins): MSI over NSIS, AppImage for Linux.
 const INSTALLER_TYPES = [
   {
     id: "mac-app",
@@ -65,20 +72,6 @@ const INSTALLER_TYPES = [
     keys: () => ["linux-x86_64-appimage"],
     bare: "linux-x86_64",
     barePrecedence: 0,
-  },
-  {
-    id: "lin-deb",
-    match: (name) => name.toLowerCase().endsWith(".deb"),
-    keys: () => ["linux-x86_64-deb"],
-    bare: "linux-x86_64",
-    barePrecedence: 1,
-  },
-  {
-    id: "lin-rpm",
-    match: (name) => name.toLowerCase().endsWith(".rpm"),
-    keys: () => ["linux-x86_64-rpm"],
-    bare: "linux-x86_64",
-    barePrecedence: 2,
   },
 ];
 

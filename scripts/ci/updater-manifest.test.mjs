@@ -206,14 +206,17 @@ describe("updater manifest builder", () => {
     );
   });
 
-  it("emits per-installer keys for Linux .deb and .rpm", () => {
+  it("publishes the signed Linux AppImage and ignores unsigned .deb/.rpm", () => {
+    // Tauri v2 direct-signs the AppImage but does NOT emit a `.sig` for
+    // `.deb`/`.rpm`. Those are ordinary release installers and must not be
+    // placed in the updater manifest (which would otherwise reject the release
+    // for a missing `.deb.sig`). The manifest must succeed and only contain
+    // the AppImage-derived keys.
     const artifacts = makeArtifacts({
       "linux/mausVoice_0.1.7_amd64.AppImage": "appimage-bundle",
       "linux/mausVoice_0.1.7_amd64.AppImage.sig": "appimage-signature\n",
       "linux/mausVoice_0.1.7_amd64.deb": "deb-bundle",
-      "linux/mausVoice_0.1.7_amd64.deb.sig": "deb-signature\n",
       "linux/mausVoice_0.1.7_amd64.rpm": "rpm-bundle",
-      "linux/mausVoice_0.1.7_amd64.rpm.sig": "rpm-signature\n",
     });
     const result = runScript({
       ARTIFACTS_DIR: artifacts,
@@ -228,20 +231,18 @@ describe("updater manifest builder", () => {
     assert.deepEqual(Object.keys(manifest.platforms).sort(), [
       "linux-x86_64",
       "linux-x86_64-appimage",
-      "linux-x86_64-deb",
-      "linux-x86_64-rpm",
     ]);
-    assert.equal(
-      manifest.platforms["linux-x86_64-deb"].signature,
-      "deb-signature",
-    );
-    assert.equal(
-      manifest.platforms["linux-x86_64-rpm"].signature,
-      "rpm-signature",
-    );
     assert.equal(
       manifest.platforms["linux-x86_64-appimage"].signature,
       "appimage-signature",
+    );
+    assert.ok(
+      !("linux-x86_64-deb" in manifest.platforms),
+      "unsigned .deb must not appear as an updater bundle",
+    );
+    assert.ok(
+      !("linux-x86_64-rpm" in manifest.platforms),
+      "unsigned .rpm must not appear as an updater bundle",
     );
   });
 
