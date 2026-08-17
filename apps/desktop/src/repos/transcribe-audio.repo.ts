@@ -32,6 +32,7 @@ import {
 } from "../utils/local-transcription.utils";
 import { getLogger } from "../utils/log.utils";
 import { openaiCompatibleTranscribeAudio } from "../utils/openai-compatible-transcribe.utils";
+import { type TranscriptionSegment } from "../utils/hallucination.utils";
 import { speachesTranscribeAudio } from "../utils/speaches.utils";
 import {
   mergeTranscriptions,
@@ -62,6 +63,8 @@ export type TranscribeAudioInput = {
 export type TranscribeAudioOutput = {
   text: string;
   metadata?: Nullable<TranscribeAudioMetadata>;
+  /** Verbose Whisper segments (with `no_speech_prob`) when the provider returns them. */
+  segments?: TranscriptionSegment[];
 };
 
 export type TranscribeSegmentInput = {
@@ -251,7 +254,7 @@ export class GroqTranscribeAudioRepo extends BaseTranscribeAudioRepo {
   ): Promise<TranscribeAudioOutput> {
     const wavBuffer = buildWaveFile(input.samples, input.sampleRate);
 
-    const { text: transcript } = await groqTranscribeAudio({
+    const { text: transcript, segments } = await groqTranscribeAudio({
       apiKey: this.groqApiKey,
       model: this.model,
       blob: wavBuffer,
@@ -262,6 +265,10 @@ export class GroqTranscribeAudioRepo extends BaseTranscribeAudioRepo {
 
     return {
       text: transcript,
+      segments: segments?.map((segment) => ({
+        text: segment.text,
+        noSpeechProb: segment.noSpeechProb,
+      })),
       metadata: {
         inferenceDevice: "API • Groq",
         modelSize: this.model,
@@ -300,7 +307,7 @@ export class OpenAITranscribeAudioRepo extends BaseTranscribeAudioRepo {
   ): Promise<TranscribeAudioOutput> {
     const wavBuffer = buildWaveFile(input.samples, input.sampleRate);
 
-    const { text: transcript } = await openaiTranscribeAudio({
+    const { text: transcript, segments } = await openaiTranscribeAudio({
       apiKey: this.openaiApiKey,
       model: this.model,
       blob: wavBuffer,
@@ -311,6 +318,10 @@ export class OpenAITranscribeAudioRepo extends BaseTranscribeAudioRepo {
 
     return {
       text: transcript,
+      segments: segments?.map((segment) => ({
+        text: segment.text,
+        noSpeechProb: segment.noSpeechProb,
+      })),
       metadata: {
         inferenceDevice: "API • OpenAI",
         modelSize: this.model,
@@ -717,18 +728,23 @@ export class OpenAICompatibleTranscribeAudioRepo extends BaseTranscribeAudioRepo
   ): Promise<TranscribeAudioOutput> {
     const wavBuffer = buildWaveFile(input.samples, input.sampleRate);
 
-    const { text: transcript } = await openaiCompatibleTranscribeAudio({
-      baseUrl: this.baseUrl,
-      model: this.model,
-      apiKey: this.apiKey,
-      blob: wavBuffer,
-      ext: "wav",
-      prompt: input.prompt ?? undefined,
-      language: input.language,
-    });
+    const { text: transcript, segments } =
+      await openaiCompatibleTranscribeAudio({
+        baseUrl: this.baseUrl,
+        model: this.model,
+        apiKey: this.apiKey,
+        blob: wavBuffer,
+        ext: "wav",
+        prompt: input.prompt ?? undefined,
+        language: input.language,
+      });
 
     return {
       text: transcript,
+      segments: segments?.map((segment) => ({
+        text: segment.text,
+        noSpeechProb: segment.noSpeechProb,
+      })),
       metadata: {
         inferenceDevice: "API • OpenAI Compatible",
         modelSize: this.model,

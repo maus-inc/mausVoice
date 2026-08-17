@@ -35,7 +35,7 @@ jobs:
           cache-dependency-path: |
             pnpm-lock.yaml
       - name: Install dependencies
-        run: pnpm install --frozen-lockfile
+        run: pnpm install --frozen-lockfile --ignore-scripts
       - name: Build dependencies
         run: pnpm exec turbo run build --filter=desktop^... --verbosity=2 --continue
       - name: Run desktop unit tests
@@ -59,7 +59,7 @@ jobs:
           cache-dependency-path: |
             pnpm-lock.yaml
       - name: Install dependencies
-        run: pnpm install --frozen-lockfile
+        run: pnpm install --frozen-lockfile --ignore-scripts
       - name: Sync i18n catalogs
         run: pnpm --filter desktop i18n
       - name: Verify catalogs are in sync

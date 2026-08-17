@@ -72,9 +72,15 @@ export type GroqTranscriptionArgs = {
   language?: string;
 };
 
+export type GroqTranscriptionSegment = {
+  text: string;
+  noSpeechProb?: number;
+};
+
 export type GroqTranscribeAudioOutput = {
   text: string;
   wordsUsed: number;
+  segments?: GroqTranscriptionSegment[];
 };
 
 export const groqTranscribeAudio = async ({
@@ -96,13 +102,36 @@ export const groqTranscribeAudio = async ({
         model,
         prompt,
         language: language && language !== "auto" ? language : undefined,
+        // Request verbose output so `segments[].no_speech_prob` is returned,
+        // enabling issue #54's probability-gated silence handling. Providers
+        // that don't support this simply ignore it and return plain `text`, so
+        // the defensive parse below keeps the existing behavior.
+        response_format: "verbose_json",
       });
 
-      if (!response.text) {
+      // The SDK types `create` as a union; request verbose_json and read the
+      // fields defensively so non-verbose responses still work.
+      const verbose = response as unknown as {
+        text?: string;
+        segments?: Array<{ text?: string; no_speech_prob?: number }>;
+      };
+
+      if (!verbose.text) {
         throw new Error("Transcription failed");
       }
 
-      return { text: response.text, wordsUsed: countWords(response.text) };
+      const segments = verbose.segments
+        ? verbose.segments.map((segment) => ({
+            text: segment.text ?? "",
+            noSpeechProb: segment.no_speech_prob,
+          }))
+        : undefined;
+
+      return {
+        text: verbose.text,
+        wordsUsed: countWords(verbose.text),
+        segments,
+      };
     },
   });
 };

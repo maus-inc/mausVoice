@@ -37,6 +37,7 @@ import {
   PROCESSED_TRANSCRIPTION_SCHEMA,
 } from "../utils/prompt.utils";
 import { filterKnownSilenceHallucinations } from "../utils/string.utils";
+import { gateSilentSegments } from "../utils/hallucination.utils";
 import { getToneById, getToneConfig } from "../utils/tone.utils";
 import {
   getMyEffectiveUserId,
@@ -168,15 +169,22 @@ export const transcribeAudio = async ({
   const transcribeDuration = performance.now() - transcribeStart;
   const rawTranscript = transcribeOutput.text.trim();
   // Hallucination mitigation is phrase-based here (plus an RMS gate applied
-  // before inference for local transcription). The probability-gated behavior
-  // described by issue #54 -- requesting `verbose_json` from Groq and dropping
-  // segments whose `segments[].no_speech_prob` exceeds a threshold -- is NOT
-  // implemented: the cloud request never asks for verbose output, so no
-  // per-segment probabilities are available on this path.
+  // before inference for local transcription). Issue #54's probability gate is
+  // implemented below: cloud providers now request `verbose_json` and
+  // `gateSilentSegments` drops segments whose `no_speech_prob` is near-certain
+  // silence (>= 0.9). That gate returns null when the provider didn't return
+  // segments, in which case we fall back to the exact provider text and the
+  // behavior is unchanged. Successful speech is never altered.
+  const gatedTranscript = gateSilentSegments(transcribeOutput.segments);
+  const transcriptForFiltering = gatedTranscript ?? rawTranscript;
+
   const sanitizedTranscript =
     state.userPrefs?.hallucinationFilterEnabled === false
-      ? rawTranscript
-      : filterKnownSilenceHallucinations(rawTranscript, dictationLanguage);
+      ? transcriptForFiltering
+      : filterKnownSilenceHallucinations(
+          transcriptForFiltering,
+          dictationLanguage,
+        );
 
   if (rawTranscript !== sanitizedTranscript) {
     getLogger().info(

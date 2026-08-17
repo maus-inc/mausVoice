@@ -10,8 +10,14 @@ export type OpenAICompatibleTranscriptionArgs = {
   language?: string;
 };
 
+export type OpenAICompatibleTranscriptionSegment = {
+  text: string;
+  noSpeechProb?: number;
+};
+
 export type OpenAICompatibleTranscribeAudioOutput = {
   text: string;
+  segments?: OpenAICompatibleTranscriptionSegment[];
 };
 
 export const openaiCompatibleTranscribeAudio = async ({
@@ -35,6 +41,11 @@ export const openaiCompatibleTranscribeAudio = async ({
   if (language && language !== "auto") {
     formData.append("language", language);
   }
+  // Request verbose output so `segments[].no_speech_prob` is returned, enabling
+  // issue #54's probability-gated silence handling. Endpoints that don't
+  // support it simply ignore the field and return plain `text`, so the defensive
+  // parse below keeps the existing behavior.
+  formData.append("response_format", "verbose_json");
 
   const headers: Record<string, string> = {};
   if (apiKey) {
@@ -54,11 +65,21 @@ export const openaiCompatibleTranscribeAudio = async ({
     );
   }
 
-  const data = (await response.json()) as { text?: string };
+  const data = (await response.json()) as {
+    text?: string;
+    segments?: Array<{ text?: string; no_speech_prob?: number }>;
+  };
 
   if (!data.text) {
     throw new Error("Transcription failed: no text in response");
   }
 
-  return { text: data.text };
+  const segments = data.segments
+    ? data.segments.map((segment) => ({
+        text: segment.text ?? "",
+        noSpeechProb: segment.no_speech_prob,
+      }))
+    : undefined;
+
+  return { text: data.text, segments };
 };

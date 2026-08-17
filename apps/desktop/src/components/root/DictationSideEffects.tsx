@@ -956,6 +956,13 @@ export const DictationSideEffects = () => {
       isManualStyling;
 
     if (canSwitch) {
+      // Per-style hold-shortcut dictation: dictation is started/held via the
+      // activation key (DICTATE_HOTKEY) and the two arrow keys are whitelisted
+      // as additional held keys (see `allowedAdditionalKeys` on the
+      // DICTATE_HOTKEY useHotkeyHold below). While dictation is active and the
+      // activation key is held, pressing Left/Right cycles the writing style —
+      // so the segment that begins (or continues) after a switch is dictated
+      // with the newly-selected style.
       const dictateCombos = getHotkeyCombosForAction(
         getAppState(),
         DICTATE_HOTKEY,

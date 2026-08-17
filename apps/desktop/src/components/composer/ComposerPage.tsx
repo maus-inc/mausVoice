@@ -15,6 +15,12 @@ import { getCurrentWindow } from "@tauri-apps/api/window";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { FormattedMessage, useIntl } from "react-intl";
 import { applyVoiceEditInstruction } from "../../actions/composer.actions";
+import { transcribeAudio } from "../../actions/transcribe.actions";
+import { getTranscribeAudioRepo } from "../../repos";
+import { getAppState, produceAppState } from "../../store";
+import { getLogger } from "../../utils/log.utils";
+import { getMyPreferredMicrophone } from "../../utils/user.utils";
+import type { StopRecordingResponse } from "../../types/transcription-session.types";
 
 type SpeechRecognitionLike = {
   lang: string;
@@ -54,6 +60,7 @@ export const ComposerPage = () => {
   const [editError, setEditError] = useState<string | null>(null);
   const [isListening, setIsListening] = useState(false);
   const recognitionRef = useRef<SpeechRecognitionLike | null>(null);
+  const providerRecordingRef = useRef(false);
 
   // Voice Edit Mode relies on the webview's SpeechRecognition API, which only
   // exists on Chromium-based webviews. Feature-detect once so we can disable
@@ -65,6 +72,26 @@ export const ComposerPage = () => {
       speechWindow.SpeechRecognition || speechWindow.webkitSpeechRecognition,
     );
   }, []);
+
+  // Prefer routing the spoken instruction through the configured mausVoice
+  // transcription provider (the same provider selection dictation uses). This
+  // is available whenever a transcription repo can be resolved from the active
+  // preferences. We probe it once up front (mirroring how the rest of the app
+  // selects a provider) and fall back to the webview's SpeechRecognition only
+  // when the configured provider cannot be used on this platform.
+  const canUseConfiguredProvider = useMemo(() => {
+    try {
+      getTranscribeAudioRepo();
+      return true;
+    } catch {
+      return false;
+    }
+  }, []);
+
+  // The mic is usable if either the configured provider path or the browser's
+  // SpeechRecognition (webview-supported) fallback is available.
+  const voiceInstructionSupported =
+    speechRecognitionSupported || canUseConfiguredProvider;
 
   useEffect(() => {
     let active = true;
@@ -85,6 +112,17 @@ export const ComposerPage = () => {
       active = false;
     };
   }, [intl, requestId]);
+
+  // Release the native recorder if the composer window closes mid-recording
+  // so we never leave the global audio capture running (webview lifecycle).
+  useEffect(() => {
+    return () => {
+      if (providerRecordingRef.current) {
+        providerRecordingRef.current = false;
+        void invoke("stop_recording").catch(() => undefined);
+      }
+    };
+  }, []);
 
   const finish = async (accepted: boolean) => {
     try {
@@ -117,13 +155,7 @@ export const ComposerPage = () => {
     }
   };
 
-  const toggleVoiceInstruction = () => {
-    if (isListening) {
-      recognitionRef.current?.stop();
-      setIsListening(false);
-      return;
-    }
-
+  const startBrowserSpeechRecognition = () => {
     const SpeechRecognition =
       (window as SpeechWindow).SpeechRecognition ??
       (window as SpeechWindow).webkitSpeechRecognition;
@@ -148,6 +180,99 @@ export const ComposerPage = () => {
     recognitionRef.current = recognition;
     setIsListening(true);
     recognition.start();
+  };
+
+  // Primary path: capture audio natively and route it through the configured
+  // mausVoice transcription provider. Reuses `transcribeAudio`, which applies
+  // the exact same provider-selection logic dictation uses (local Whisper/ONNX
+  // or a cloud provider such as Groq), so the spoken instruction is
+  // transcribed by the user's selected engine.
+  const startProviderRecording = async (): Promise<boolean> => {
+    try {
+      await invoke("start_recording", {
+        args: {
+          preferredMicrophone: getMyPreferredMicrophone(getAppState()) ?? null,
+        },
+      });
+      providerRecordingRef.current = true;
+      setIsListening(true);
+      return true;
+    } catch (error) {
+      getLogger().warning(
+        `Voice Edit Mode: configured provider recording unavailable, falling back to browser speech recognition (${error})`,
+      );
+      return false;
+    }
+  };
+
+  const stopProviderRecording = async () => {
+    try {
+      const response = await invoke<StopRecordingResponse>("stop_recording");
+      const samples =
+        response.samples instanceof Float32Array
+          ? Array.from(response.samples)
+          : response.samples;
+      const sampleRate = response.sampleRate ?? 0;
+      if (samples && samples.length > 0 && sampleRate > 0) {
+        const result = await transcribeAudio({ samples, sampleRate });
+        const transcript = result.sanitizedTranscript.trim();
+        if (transcript) {
+          setInstruction((current) => `${current} ${transcript}`.trim());
+        }
+      }
+    } catch (error) {
+      getLogger().warning(
+        `Voice Edit Mode: provider transcription failed (${error})`,
+      );
+      // Graceful fallback to the browser SpeechRecognition path when the
+      // webview supports it (mirrors the existing feature detection).
+      if (speechRecognitionSupported) {
+        startBrowserSpeechRecognition();
+      } else {
+        setEditError(
+          intl.formatMessage({
+            defaultMessage: "Voice editing is not supported on this platform",
+          }),
+        );
+      }
+    } finally {
+      setIsListening(false);
+      produceAppState((draft) => {
+        draft.audioLevels = [];
+      });
+    }
+  };
+
+  const toggleVoiceInstruction = async () => {
+    if (isListening) {
+      if (recognitionRef.current) {
+        recognitionRef.current.stop();
+      } else if (providerRecordingRef.current) {
+        providerRecordingRef.current = false;
+        void stopProviderRecording();
+      }
+      return;
+    }
+
+    // Primary: use the configured transcription provider when one can be
+    // resolved from the active preferences.
+    if (canUseConfiguredProvider) {
+      if (await startProviderRecording()) {
+        return;
+      }
+    }
+
+    // Fallback: browser SpeechRecognition, only when the webview supports it.
+    if (speechRecognitionSupported) {
+      startBrowserSpeechRecognition();
+      return;
+    }
+
+    setEditError(
+      intl.formatMessage({
+        defaultMessage: "Voice editing is not supported on this platform",
+      }),
+    );
   };
 
   return (
@@ -215,9 +340,9 @@ export const ComposerPage = () => {
               aria-label={intl.formatMessage({
                 defaultMessage: "Dictate edit instruction",
               })}
-              disabled={isEditing || !speechRecognitionSupported}
+              disabled={isEditing || !voiceInstructionSupported}
               title={
-                speechRecognitionSupported
+                voiceInstructionSupported
                   ? undefined
                   : intl.formatMessage({
                       defaultMessage:
@@ -240,7 +365,7 @@ export const ComposerPage = () => {
               )}
             </Button>
           </Stack>
-          {!speechRecognitionSupported && (
+          {!voiceInstructionSupported && (
             <Typography variant="caption" color="text.secondary">
               <FormattedMessage defaultMessage="Voice editing is not supported on this platform." />
             </Typography>

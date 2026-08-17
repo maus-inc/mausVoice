@@ -1659,6 +1659,105 @@ mod tests {
         assert_ne!(snapshot.status, DownloadJobStatus::Completed);
     }
 
+    #[tokio::test]
+    async fn oversized_content_length_is_rejected_before_download() {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let address = listener.local_addr().unwrap();
+        let server = tokio::spawn(async move {
+            let (mut socket, _) = listener.accept().await.unwrap();
+            let mut request = [0_u8; 1024];
+            let _ = socket.read(&mut request).await.unwrap();
+            socket
+                .write_all(
+                    b"HTTP/1.1 200 OK\r\nContent-Length: 9999999999\r\nConnection: close\r\n\r\n",
+                )
+                .await
+                .unwrap();
+        });
+
+        let error = request_artifact_response(
+            &reqwest::Client::new(),
+            &format!("http://{address}/artifact"),
+            0,
+            None,
+            100,
+        )
+        .await
+        .unwrap_err();
+        assert!(
+            error.contains("exceeds 100 byte limit"),
+            "unexpected error: {error}"
+        );
+        server.await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn chunk_cap_breach_deletes_partial_download_file() {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let address = listener.local_addr().unwrap();
+        let server = tokio::spawn(async move {
+            let (mut socket, _) = listener.accept().await.unwrap();
+            let mut request = [0_u8; 1024];
+            let _ = socket.read(&mut request).await.unwrap();
+            // No Content-Length and Connection: close, so reqwest reads until
+            // EOF; the 6-byte body exceeds the 4-byte artifact cap and must
+            // trigger a chunk-cap breach.
+            socket
+                .write_all(b"HTTP/1.1 200 OK\r\nConnection: close\r\n\r\nTOOBIG")
+                .await
+                .unwrap();
+        });
+
+        let temp_dir = tempfile::tempdir().unwrap();
+        let destination = temp_dir.path().join("model.bin");
+        let artifact = DownloadArtifact::new_verified(
+            format!("http://{address}/model.bin"),
+            destination.clone(),
+            4,
+            None,
+        );
+
+        let registry = DownloadRegistry::default();
+        let snapshot = registry
+            .start_or_get_active(
+                WhisperModel::Tiny,
+                vec![artifact],
+                reqwest::Client::new(),
+            )
+            .await
+            .unwrap();
+
+        let mut failed = None;
+        for _ in 0..100 {
+            let current = registry
+                .get_job(WhisperModel::Tiny, snapshot.job_id)
+                .await
+                .unwrap();
+            if current.status == DownloadJobStatus::Failed {
+                failed = Some(current);
+                break;
+            }
+            tokio::time::sleep(tokio::time::Duration::from_millis(20)).await;
+        }
+
+        let failed = failed.expect("chunk cap breach should fail the job");
+        assert!(
+            failed
+                .error
+                .as_ref()
+                .map(|err| err.contains("exceeds 4 byte limit"))
+                .unwrap_or(false),
+            "unexpected diagnostic: {:?}",
+            failed.error
+        );
+
+        // The partial temp file must be removed on the cap breach so a retry
+        // cannot resume from poisoned data.
+        let temp_file = temporary_artifact_path(&destination, snapshot.job_id).unwrap();
+        assert!(!temp_file.exists());
+        server.await.unwrap();
+    }
+
     /// A typo'd digest constant is a permanent, unrecoverable download failure
     /// (the artifact can never verify). Refetching upstream needs network access
     /// CI cannot rely on, so at minimum every pinned digest must be a plausible

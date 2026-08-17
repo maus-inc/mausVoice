@@ -1100,7 +1100,7 @@ pub async fn transcription_audio_load(
     let audio_dir = crate::system::audio_store::audio_dir(&app).map_err(|err| err.to_string())?;
     let audio_path_buf = PathBuf::from(&audio_path);
 
-    let audio_file = match resolve_managed_audio_path_for_read(&audio_path_buf, &audio_dir) {
+    let mut audio_file = match resolve_managed_audio_path_for_read(&audio_path_buf, &audio_dir) {
         Some(file) => file,
         None => return Err("Audio snapshot path is outside the managed directory".to_string()),
     };
@@ -3011,6 +3011,52 @@ mod tests {
     }
 
     #[test]
+    fn terminal_command_rejects_binary_with_embedded_space() {
+        // A binary name that contains a space can never match an allow-list
+        // entry (entries are single, space-free tokens), so it is rejected
+        // rather than silently collapsing into a different command.
+        assert!(validate_terminal_command_args("\"ls -rf\"").is_err());
+        assert!(validate_terminal_command_args("my binary").is_err());
+    }
+
+    #[test]
+    fn terminal_command_accepts_allowed_command_with_empty_args() {
+        // An allow-listed binary with no user-supplied arguments is accepted
+        // and reports an empty argv tail.
+        let (allowed, args) = validate_terminal_command_args("ls").unwrap();
+        assert_eq!(allowed.binary, "ls");
+        assert!(args.is_empty());
+    }
+
+    #[cfg(not(target_os = "windows"))]
+    #[tokio::test]
+    async fn terminal_command_runs_ls_without_path_in_environment() {
+        // Serialize env mutation so it cannot race any other test.
+        static PATH_GUARD: std::sync::Mutex<()> = std::sync::Mutex::new(());
+        let _guard = PATH_GUARD.lock().unwrap();
+
+        let original = std::env::var("PATH").ok();
+        // Simulate a process environment that has no PATH at all.
+        std::env::remove_var("PATH");
+
+        let result = run_terminal_command("ls".to_string()).await;
+
+        // Restore the environment for any subsequent code.
+        match original {
+            Some(value) => std::env::set_var("PATH", value),
+            None => std::env::remove_var("PATH"),
+        }
+        drop(_guard);
+
+        // `cmd.env_clear()` drops PATH from the child, but the OS default
+        // search path still resolves `ls`, so the command must succeed rather
+        // than fail to spawn with a missing-PATH error.
+        let response = result.expect("ls should run even without a PATH env var");
+        assert_eq!(response.exit_code, 0);
+        assert!(!response.stdout.is_empty());
+    }
+
+    #[test]
     fn installer_url_accepts_trusted_release_hosts() {
         assert!(validate_installer_url(
             &Url::parse("https://github.com/maus-inc/mausVoice/releases/download/v1/app.pkg")
@@ -3376,9 +3422,8 @@ mod tests {
             // lands outside audio_dir, so the bytes are never leaked.
             let link = audio_dir.join("clip.wav");
             std::os::unix::fs::symlink(&secret, &link).unwrap();
-            assert_eq!(
-                resolve_managed_audio_path_for_read(&link, &audio_dir),
-                None
+            assert!(
+                resolve_managed_audio_path_for_read(&link, &audio_dir).is_none()
             );
 
             // A regular file inside audio_dir is still accepted.
