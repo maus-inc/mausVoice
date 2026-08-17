@@ -33,6 +33,11 @@ on:
       - ".github/scripts/install-desktop-linux-deps.sh"
       - ".github/workflows/build-desktop.yml"
 
+# Least privilege: this workflow only compiles and bundles; it never writes to
+# the repository or publishes releases.
+permissions:
+  contents: read
+
 jobs:
   build:
     name: Build Desktop (${{ matrix.label }})

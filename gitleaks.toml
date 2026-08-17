@@ -21,4 +21,8 @@ paths = [
 ]
 regexes = [
   '''pk_live_.*''',
+  # Tauri/Minisign updater private-key preamble (base64 of
+  # "untrusted comment: rsign"). A committed updater signing key lets a fork
+  # forge trusted auto-updates, so fail CI if one is ever committed.
+  '''dW50cnVzdGVkIGNvbW1lbnQ6IHJzaWdu''',
 ]

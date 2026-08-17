@@ -28,6 +28,7 @@ import {
   supportsGpuTranscriptionDevice,
 } from "../utils/local-transcription.utils";
 import { getLogger } from "../utils/log.utils";
+import { createMutationQueue } from "../utils/mutation-queue";
 import { sendPillFireworks, sendPillFlame } from "../utils/overlay.utils";
 import {
   getMyEffectiveUserId,
@@ -131,15 +132,7 @@ export const createDefaultPreferences = (): UserPreferences => ({
 // Serializes preference mutations so overlapping tool toggles or numeric edits
 // cannot read a stale snapshot and clobber each other's change. Each task reads
 // the latest committed preferences when it actually runs.
-let prefsMutationChain: Promise<unknown> = Promise.resolve();
-const enqueuePrefsMutation = <T>(task: () => Promise<T>): Promise<T> => {
-  const run = prefsMutationChain.then(task, task);
-  prefsMutationChain = run.then(
-    () => undefined,
-    () => undefined,
-  );
-  return run;
-};
+const { enqueue: enqueuePrefsMutation } = createMutationQueue();
 
 export const updateUserPreferences = (
   updateCallback: (preferences: UserPreferences) => void,

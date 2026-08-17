@@ -10,6 +10,7 @@ import {
 } from "node:fs";
 import { dirname, isAbsolute, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
+import { validateSherpaRuntimeDlls } from "./sidecar-runtime-dlls.mjs";
 
 const scriptDir = dirname(fileURLToPath(import.meta.url));
 const desktopDir = resolve(scriptDir, "..");
@@ -177,10 +178,12 @@ function prepareSherpaWindowsRuntime() {
   // actually imports. If even the essential subset is absent the sidecar would
   // exit before main()/before announcing its bound port, so surface it as a
   // hard build error rather than a warning.
-  const foundDlls = new Set(runtimeDlls);
-  const missingRequired = [...REQUIRED_SHERPA_RUNTIME_DLLS].filter(
-    (name) => !foundDlls.has(name.toLowerCase()),
+  const { missingRequired, missingOptional } = validateSherpaRuntimeDlls(
+    runtimeDlls,
+    REQUIRED_SHERPA_RUNTIME_DLLS,
+    WINDOWS_SHERPA_RUNTIME_DLLS,
   );
+
   if (missingRequired.length > 0) {
     fail(
       `Sherpa-onnx Windows runtime is missing required DLLs: ${missingRequired.join(", ")} ` +
@@ -188,9 +191,6 @@ function prepareSherpaWindowsRuntime() {
     );
   }
 
-  const missingOptional = [...WINDOWS_SHERPA_RUNTIME_DLLS].filter(
-    (name) => !foundDlls.has(name.toLowerCase()),
-  );
   if (missingOptional.length > 0) {
     console.warn(
       `[sidecar] Sherpa Windows runtime may be incomplete; missing: ${missingOptional.join(", ")}`,

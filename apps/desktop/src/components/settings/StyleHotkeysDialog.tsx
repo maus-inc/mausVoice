@@ -17,7 +17,7 @@ import { FormattedMessage, useIntl } from "react-intl";
 import { showErrorSnackbar } from "../../actions/app.actions";
 import { getHotkeyRepo } from "../../repos";
 import { produceAppState, useAppStore } from "../../store";
-import { registerHotkeys } from "../../utils/app.utils";
+import { applyReplacedStyleHotkeys } from "../../utils/style-hotkey";
 import { createId } from "../../utils/id.utils";
 import {
   getHotkeyCombosForAction,
@@ -113,23 +113,7 @@ export const StyleHotkeysDialog = () => {
       const saved = await repo.replaceStyleHotkeys(prefix, next);
 
       produceAppState((draft) => {
-        const oldStyleIds = new Set(
-          Object.values(draft.hotkeyById)
-            .filter((hotkey) => hotkey.actionName.startsWith(prefix))
-            .map((hotkey) => hotkey.id),
-        );
-        for (const id of oldStyleIds) {
-          delete draft.hotkeyById[id];
-        }
-        draft.settings.hotkeyIds = draft.settings.hotkeyIds.filter(
-          (id) => !oldStyleIds.has(id),
-        );
-        registerHotkeys(draft, saved);
-        for (const hotkey of saved) {
-          if (!draft.settings.hotkeyIds.includes(hotkey.id)) {
-            draft.settings.hotkeyIds.push(hotkey.id);
-          }
-        }
+        applyReplacedStyleHotkeys(draft, prefix, saved);
       });
 
       try {

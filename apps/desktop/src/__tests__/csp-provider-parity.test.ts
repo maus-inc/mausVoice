@@ -4,7 +4,9 @@ import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
 
 const here = dirname(fileURLToPath(import.meta.url));
-const desktopRoot = resolve(here, "..");
+// `here` is <repo>/apps/desktop/src/__tests__, so the desktop app root is two
+// levels up (src/__tests__ -> src -> apps/desktop) and the repo root two more.
+const desktopRoot = resolve(here, "..", "..");
 const repoRoot = resolve(desktopRoot, "..", "..");
 
 function readJson(relPath: string): unknown {
@@ -16,7 +18,8 @@ function collectFiles(dir: string, acc: string[] = []): string[] {
     const full = join(dir, entry);
     const st = statSync(full);
     if (st.isDirectory()) {
-      if (entry === "node_modules" || entry === "dist" || entry === ".git") continue;
+      if (entry === "node_modules" || entry === "dist" || entry === ".git")
+        continue;
       collectFiles(full, acc);
     } else if (entry.endsWith(".ts") || entry.endsWith(".tsx")) {
       acc.push(full);
@@ -34,7 +37,8 @@ function connectSrcHosts(): Set<string> {
   const hosts = new Set<string>();
   for (const token of match[1].split(/\s+/)) {
     if (token.startsWith("https://")) hosts.add(token);
-    else if (token.startsWith("wss://")) hosts.add(token.replace("wss://", "https://"));
+    else if (token.startsWith("wss://"))
+      hosts.add(token.replace("wss://", "https://"));
   }
   return hosts;
 }
@@ -42,8 +46,7 @@ function connectSrcHosts(): Set<string> {
 function capabilityHosts(): Set<string> {
   const caps = readJson("src-tauri/capabilities/default.json") as {
     permissions: Array<
-      | string
-      | { identifier: string; allow?: Array<{ url: string }> }
+      string | { identifier: string; allow?: Array<{ url: string }> }
     >;
   };
   const hosts = new Set<string>();
@@ -83,12 +86,17 @@ describe("CSP / provider host parity", () => {
 
   it("every api.* host used by a provider is allowed by connect-src", () => {
     const missing = [...apiHosts].filter((h) => !connect.has(h));
-    expect(missing, `Missing from connect-src: ${missing.join(", ")}`).toEqual([]);
+    expect(missing, `Missing from connect-src: ${missing.join(", ")}`).toEqual(
+      [],
+    );
   });
 
   it("every api.* host used by a provider is allowed by the http:default capability", () => {
     const missing = [...apiHosts].filter((h) => !capability.has(h));
-    expect(missing, `Missing from http:default capability: ${missing.join(", ")}`).toEqual([]);
+    expect(
+      missing,
+      `Missing from http:default capability: ${missing.join(", ")}`,
+    ).toEqual([]);
   });
 
   it("the batch transcription providers are explicitly enumerated", () => {
@@ -98,7 +106,10 @@ describe("CSP / provider host parity", () => {
       "https://api.aldea.ai",
     ]) {
       expect(connect.has(host), `${host} must be in connect-src`).toBe(true);
-      expect(capability.has(host), `${host} must be in http:default capability`).toBe(true);
+      expect(
+        capability.has(host),
+        `${host} must be in http:default capability`,
+      ).toBe(true);
     }
   });
 });
