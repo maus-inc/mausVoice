@@ -167,6 +167,12 @@ export const transcribeAudio = async ({
   }
   const transcribeDuration = performance.now() - transcribeStart;
   const rawTranscript = transcribeOutput.text.trim();
+  // Hallucination mitigation is phrase-based here (plus an RMS gate applied
+  // before inference for local transcription). The probability-gated behavior
+  // described by issue #54 -- requesting `verbose_json` from Groq and dropping
+  // segments whose `segments[].no_speech_prob` exceeds a threshold -- is NOT
+  // implemented: the cloud request never asks for verbose output, so no
+  // per-segment probabilities are available on this path.
   const sanitizedTranscript =
     state.userPrefs?.hallucinationFilterEnabled === false
       ? rawTranscript

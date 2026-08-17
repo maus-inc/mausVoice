@@ -105,7 +105,7 @@ const IntroPage = () => {
             color: "text.secondary",
           }}
         >
-          <FormattedMessage defaultMessage="SenseVoice adds fast multilingual local transcription with punctuation, while the silence filter reduces fabricated text from quiet audio. You can also import recordings from your History page." />
+          <FormattedMessage defaultMessage="SenseVoice adds fast multilingual local transcription without punctuation, while the silence filter reduces fabricated text from quiet audio. You can also import recordings from your History page." />
         </Typography>
         <Typography
           variant="body2"

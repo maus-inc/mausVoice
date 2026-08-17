@@ -681,7 +681,7 @@ fn resolve_managed_audio_path(
 fn resolve_managed_audio_path_for_read(
     path: &std::path::Path,
     audio_dir: &std::path::Path,
-) -> Option<std::path::PathBuf> {
+) -> Option<std::fs::File> {
     let candidate = if path.is_absolute() {
         path.to_path_buf()
     } else {
@@ -701,7 +701,11 @@ fn resolve_managed_audio_path_for_read(
         return None;
     }
 
-    Some(real_path)
+    // Open the validated file here so validation and the read are bound to the
+    // same handle, closing the time-of-check/time-of-use race where the file
+    // could be swapped for a symlink pointing outside `audio_dir` between this
+    // check and the later open/read.
+    std::fs::File::open(&real_path).ok()
 }
 
 /// Delete listed audio files that still live under `audio_dir`. Paths
@@ -1096,13 +1100,13 @@ pub async fn transcription_audio_load(
     let audio_dir = crate::system::audio_store::audio_dir(&app).map_err(|err| err.to_string())?;
     let audio_path_buf = PathBuf::from(&audio_path);
 
-    let audio_path_buf = match resolve_managed_audio_path_for_read(&audio_path_buf, &audio_dir) {
-        Some(resolved) => resolved,
+    let audio_file = match resolve_managed_audio_path_for_read(&audio_path_buf, &audio_dir) {
+        Some(file) => file,
         None => return Err("Audio snapshot path is outside the managed directory".to_string()),
     };
 
     let (samples, sample_rate) = tauri::async_runtime::spawn_blocking(move || {
-        crate::system::audio_store::load_audio_samples(&audio_path_buf)
+        crate::system::audio_store::load_audio_samples(&mut audio_file)
             .map_err(|err| err.to_string())
     })
     .await
@@ -1153,6 +1157,7 @@ pub async fn export_transcription(
     let audio_dir = crate::system::audio_store::audio_dir(&app).map_err(|err| err.to_string())?;
 
     tauri::async_runtime::spawn_blocking(move || {
+        use std::io::Read;
         use std::io::Write;
         use zip::write::SimpleFileOptions;
 
@@ -1178,9 +1183,11 @@ pub async fn export_transcription(
 
         if let Some(ref audio_path_str) = audio_path {
             let path_buf = PathBuf::from(audio_path_str);
-            if let Some(audio_path_buf) = resolve_managed_audio_path_for_read(&path_buf, &audio_dir)
+            if let Some(mut audio_file) = resolve_managed_audio_path_for_read(&path_buf, &audio_dir)
             {
-                let audio_data = std::fs::read(&audio_path_buf)
+                let mut audio_data = Vec::new();
+                audio_file
+                    .read_to_end(&mut audio_data)
                     .map_err(|err| format!("Failed to read audio: {err}"))?;
                 zip.start_file("audio.wav", options)
                     .map_err(|err| err.to_string())?;

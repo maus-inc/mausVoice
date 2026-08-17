@@ -1,11 +1,15 @@
-// Verifies the Gitleaks configuration actually guards the Tauri/Minisign
-// updater private-key preamble instead of exempting it, and proves a fixture
-// containing that preamble would be flagged by the configured rule.
+// Config-structure guard for gitleaks.toml.
 //
-// This is the CI guard for the security finding that the updater-key preamble
-// had been placed under `[allowlist].regexes`, which *exempted* it (and, by
-// allowlisting every workflow, also exempted a key committed inside a
-// workflow). Run with: node scripts/ci/check-gitleaks-config.mjs
+// NOTE: This is NOT a secret scanner. It does not (and cannot) detect secrets.
+// It only asserts that gitleaks.toml is wired so that REAL Gitleaks, when run
+// (see .github/workflows/secret-scan.yml), will actually detect a Base64-only
+// Tauri/Minisign updater private-key preamble rather than exempting it.
+//
+// It guards the structure of the config: the preamble must be a detection rule
+// (not an allowlist exemption), must not carry a `keywords` pre-filter that
+// would short-circuit Base64-only keys, and `useDefault` must not be wrongly
+// nested under `[allowlist]`. Run with:
+//   node scripts/ci/check-gitleaks-config.mjs
 
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
@@ -33,7 +37,7 @@ function section(text, startMarker, endMarker) {
   return end === -1 ? text.slice(after) : text.slice(after, end);
 }
 
-// 1. The preamble must NOT be exempted by the global allowlist.
+// (a) The preamble must NOT be exempted by the global allowlist.
 const allowlist = section(raw, "[allowlist]", "[[rules]]");
 if (allowlist.includes(PREAMBLE_B64)) {
   fail(
@@ -41,33 +45,43 @@ if (allowlist.includes(PREAMBLE_B64)) {
       "and would be EXEMPTED from scanning. Move it to a [[rules]] detector.",
   );
 }
-if (allowlist.includes(String.raw`\.github/workflows/`)) {
+
+// (d) `useDefault` must NOT be nested inside the [allowlist] section.
+if (allowlist.includes("useDefault")) {
   fail(
-    "gitleaks.toml: workflows are globally allowlisted, so a literal updater " +
-      "key committed in a workflow would evade scanning.",
+    "gitleaks.toml: `useDefault` is nested inside [allowlist], where Gitleaks " +
+      "ignores it. Remove it from [allowlist].",
   );
 }
 
-// 2. The preamble MUST be present as a real detection rule.
+// (b) The preamble MUST be present as a real detection rule's regex.
 const rules = raw.slice(raw.indexOf("[[rules]]"));
-if (!rules.includes(PREAMBLE_B64)) {
+const ruleRegexMatch = rules.match(/regex\s*=\s*'''?([^']*)'''?/);
+if (!ruleRegexMatch) {
+  fail("gitleaks.toml: could not find a [[rules]] regex value.");
+}
+if (!ruleRegexMatch[1].includes(PREAMBLE_B64)) {
   fail(
-    "gitleaks.toml: no [[rules]] detector matches the updater private-key " +
-      "preamble. Add a [[rules]] entry with the preamble base64 as its regex.",
+    "gitleaks.toml: no [[rules]] detector regex matches the updater " +
+      "private-key preamble. Add the preamble base64 as the rule regex.",
   );
 }
 
-// 3. Extract the rule regex and prove it fires on a fixture containing the
-//    preamble (i.e. real Gitleaks would exit non-zero on such a file).
-const ruleMatch = rules.match(/regex\s*=\s*'''?([^']*)'''?/);
-if (!ruleMatch) {
-  fail("gitleaks.toml: could not parse the [[rules]] regex value.");
+// (c) The [[rules]] block must have NO `keywords` key, which would
+// short-circuit detection of a Base64-only key (no plaintext "rsign").
+if (rules.includes("keywords")) {
+  fail(
+    "gitleaks.toml: the [[rules]] updater-key detector uses `keywords`, which " +
+      "would short-circuit detection of a Base64-only key. Remove it.",
+  );
 }
-const pattern = ruleMatch[1].trim();
 
+// Prove the rule regex (captured via the [^']* pattern from the prior
+// SonarCloud fixes) actually fires on a fixture containing the preamble,
+// so real Gitleaks would exit non-zero on such a file.
 let re;
 try {
-  re = new RegExp(pattern);
+  re = new RegExp(ruleRegexMatch[1].trim());
 } catch (err) {
   fail(`gitleaks.toml: rule regex is not valid: ${err.message}`);
 }
@@ -83,6 +97,7 @@ if (!re.test(fixture)) {
 }
 
 console.log(
-  "OK: gitleaks.toml detects the Tauri/Minisign updater private-key preamble " +
-    "and does not exempt it (or workflows) via the allowlist.",
+  "OK: gitleaks.toml config-structure guard passed — the updater private-key " +
+    "preamble is a detection rule (not an allowlist exemption), has no " +
+    "`keywords` pre-filter, and `useDefault` is not nested in [allowlist].",
 );

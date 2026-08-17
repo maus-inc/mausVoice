@@ -199,7 +199,7 @@ async function main() {
   if (Object.keys(platforms).length === 0) {
     throw new Error(
       `No signed updater bundles found under ${artifactsRoot}. ` +
-        "Expected .app.tar.gz, .dmg, .msi, .exe, .nsis.zip, .deb, .rpm, or .AppImage with matching .sig files.",
+        "Expected at least one supported signed bundle (.app.tar.gz, .msi, .exe, .AppImage, or .dmg) with a matching .sig; DEB/RPM are not part of the updater payload.",
     );
   }
 

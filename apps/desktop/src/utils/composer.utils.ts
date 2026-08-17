@@ -47,25 +47,37 @@ export const reviewTextInComposer = async (
             },
           );
 
-          const created = await invoke<{ id: string }>(
-            "floating_window_create",
-            {
-              args: {
-                url: "about:blank",
-                route,
-                title: getIntl().formatMessage({
-                  defaultMessage: "Review transcript",
-                }),
-                width: 560,
-                height: 420,
-                minWidth: 360,
-                minHeight: 280,
-                decorations: true,
-                resizable: true,
-                focused: true,
-              },
-            },
-          );
+          const args: Record<string, unknown> = {
+            url: "about:blank",
+            route,
+            title: getIntl().formatMessage({
+              defaultMessage: "Review transcript",
+            }),
+            width: 560,
+            height: 420,
+            minWidth: 360,
+            minHeight: 280,
+            decorations: true,
+            resizable: true,
+            focused: true,
+          };
+
+          // Open the composer near the pill when the pill window is available;
+          // otherwise let the OS choose a (centered) position.
+          try {
+            const pill = WebviewWindow.getByLabel("pill");
+            if (pill) {
+              const pos = await pill.outerPosition();
+              args.x = Math.max(0, pos.x + 24);
+              args.y = Math.max(0, pos.y);
+            }
+          } catch {
+            // Pill unavailable (e.g. headless context) — keep OS-chosen position.
+          }
+
+          const created = await invoke<{ id: string }>("floating_window_create", {
+            args,
+          });
           windowId = created.id;
 
           // A user closing the popout is a Cancel decision. Without this

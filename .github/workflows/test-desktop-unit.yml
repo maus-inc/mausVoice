@@ -41,6 +41,34 @@ jobs:
       - name: Run desktop unit tests
         run: pnpm --filter desktop run test:unit
 
+  i18n-sync:
+    name: Desktop i18n Catalog Sync
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout source
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v5
+      - name: Setup pnpm
+        uses: pnpm/action-setup@a8198c4bff370c8506180b035930dea56dbd5288 # v5
+      - name: Setup Node
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v5
+        with:
+          node-version-file: .nvmrc
+          cache: pnpm
+          cache-dependency-path: |
+            pnpm-lock.yaml
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+      - name: Sync i18n catalogs
+        run: pnpm --filter desktop i18n
+      - name: Verify catalogs are in sync
+        run: |
+          if ! git diff --exit-code -- apps/desktop/src/i18n/locales; then
+            echo "::error::Locale catalogs are out of sync. Run 'pnpm --filter desktop i18n' and commit the result."
+            exit 1
+          fi
+
   rust-unit-tests:
     name: Desktop Rust Unit Tests
     runs-on: ubuntu-latest

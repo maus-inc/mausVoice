@@ -22,4 +22,36 @@ describe("silence hallucination filtering", () => {
     expect(filterKnownSilenceHallucinations("You.")).toBe("You.");
     expect(filterKnownSilenceHallucinations("The end.")).toBe("The end.");
   });
+
+  it("strips the cloud subtitle credit and its fabricated sign-off", () => {
+    expect(
+      filterKnownSilenceHallucinations("Subtitles by the Amara.org community"),
+    ).toBe("");
+    expect(
+      filterKnownSilenceHallucinations("Subtitles by the Amara.org community."),
+    ).toBe("");
+    expect(
+      filterKnownSilenceHallucinations(
+        "Ship the fix today. Subtitles by the Amara.org community.\nBest regards.",
+      ),
+    ).toBe("Ship the fix today.");
+  });
+
+  it("keeps a sign-off that is part of a real sentence", () => {
+    expect(filterKnownSilenceHallucinations("Best regards, Alice")).toBe(
+      "Best regards, Alice",
+    );
+    expect(
+      filterKnownSilenceHallucinations("Send my best regards to the team."),
+    ).toBe("Send my best regards to the team.");
+  });
+
+  it("leaves cloud hallucinations alone for non-English dictation", () => {
+    expect(
+      filterKnownSilenceHallucinations(
+        "Subtitles by the Amara.org community.",
+        "de",
+      ),
+    ).toBe("Subtitles by the Amara.org community.");
+  });
 });

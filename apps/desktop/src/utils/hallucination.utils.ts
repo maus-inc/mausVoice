@@ -10,6 +10,14 @@ export const KNOWN_SILENCE_HALLUCINATIONS = [
   "(silence)",
   "thank you for watching",
   "thanks for watching",
+  // Cloud transcription (e.g. Groq) sometimes fabricates a subtitle credit and
+  // a closing sign-off on silent audio; see issue #54 / voquill#446. Both the
+  // bare phrase and the trailing-period variant are listed for clarity even
+  // though `normalizeHallucinationText` strips terminal punctuation, so they
+  // collapse to the same normalized form.
+  "subtitles by the amara.org community",
+  "subtitles by the amara.org community.",
+  "best regards.",
 ] as const;
 
 const normalizeHallucinationText = (text: string): string =>
