@@ -205,7 +205,9 @@ describe("BaseTranscribeAudioRepo", () => {
       const result = await repo.transcribeAudio({ samples, sampleRate });
 
       expect(result.text).not.toContain("[BLANK_AUDIO]");
-      expect(result.text).toBe("The cat sat still. A dog ran home. Birds flew away.");
+      expect(result.text).toBe(
+        "The cat sat still. A dog ran home. Birds flew away.",
+      );
     });
 
     it("preserves segment text when the provider returns no verbose segments", async () => {
