@@ -15,7 +15,6 @@ export const CANCEL_TRANSCRIPTION_HOTKEY = "cancel-transcription";
 export const OPEN_CHAT_HOTKEY = "open-chat";
 export const ADD_TO_DICTIONARY_HOTKEY = "add-to-dictionary";
 export const ADDITIONAL_LANGUAGE_HOTKEY_PREFIX = "additional-language:";
-export const SWITCH_TO_STYLE_HOTKEY_PREFIX = "switch-to-style:";
 
 type CompositorBinding = {
   actionName: string;
@@ -33,8 +32,7 @@ const STATIC_COMPOSITOR_TRIGGER_ACTIONS = [
 
 const isCompositorTriggerAction = (actionName: string): boolean =>
   STATIC_COMPOSITOR_TRIGGER_ACTIONS.includes(actionName) ||
-  actionName.startsWith(ADDITIONAL_LANGUAGE_HOTKEY_PREFIX) ||
-  actionName.startsWith(SWITCH_TO_STYLE_HOTKEY_PREFIX);
+  actionName.startsWith(ADDITIONAL_LANGUAGE_HOTKEY_PREFIX);
 
 export const getAdditionalLanguageActionName = (language: string): string =>
   `${ADDITIONAL_LANGUAGE_HOTKEY_PREFIX}${language}`;
@@ -49,41 +47,6 @@ export const getAdditionalLanguageCode = (
   const raw = actionName.slice(ADDITIONAL_LANGUAGE_HOTKEY_PREFIX.length);
   return raw.length > 0 ? raw : null;
 };
-
-export const getSwitchToStyleActionName = (toneId: string): string =>
-  `${SWITCH_TO_STYLE_HOTKEY_PREFIX}${toneId}`;
-
-export const getSwitchToStyleToneId = (actionName: string): string | null => {
-  if (!actionName.startsWith(SWITCH_TO_STYLE_HOTKEY_PREFIX)) {
-    return null;
-  }
-
-  const raw = actionName.slice(SWITCH_TO_STYLE_HOTKEY_PREFIX.length);
-  return raw.length > 0 ? raw : null;
-};
-
-export type SwitchToStyleEntry = {
-  actionName: string;
-  toneId: string;
-  toneName: string;
-  hotkeyCombos: string[][];
-};
-
-export const getSwitchToStyleEntries = (
-  state: AppState,
-): SwitchToStyleEntry[] =>
-  Object.values(state.toneById)
-    .filter((tone) => !tone.isDeprecated)
-    .sort((a, b) => a.sortOrder - b.sortOrder)
-    .map((tone) => ({
-      actionName: getSwitchToStyleActionName(tone.id),
-      toneId: tone.id,
-      toneName: tone.name,
-      hotkeyCombos: getHotkeyCombosForAction(
-        state,
-        getSwitchToStyleActionName(tone.id),
-      ),
-    }));
 
 export const isHoldActionHotkey = (actionName: string): boolean => {
   return (

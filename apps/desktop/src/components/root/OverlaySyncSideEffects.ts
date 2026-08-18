@@ -1,5 +1,4 @@
 import { invoke } from "@tauri-apps/api/core";
-import { getCurrentWindow } from "@tauri-apps/api/window";
 import type { ChatMessage, ToolPermission } from "@maus-inc/types";
 import { isEqual } from "lodash-es";
 import { useEffect, useRef } from "react";
@@ -149,12 +148,6 @@ const useNativePillAssistantSync = () => {
   const prevRef = useRef<NativePillSyncState | null>(null);
 
   useEffect(() => {
-    // Only the main window owns the assistant pill. The composer popout is a
-    // separate webview with its own empty store, so pushing its (likely empty)
-    // assistant state to native would blank or reset the live pill.
-    if (getCurrentWindow().label !== "main") {
-      return;
-    }
     if (prevRef.current !== null && isEqual(prevRef.current, state)) {
       return;
     }

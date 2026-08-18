@@ -1,11 +1,5 @@
 import { Nullable } from "@maus-inc/types";
 
-export {
-  KNOWN_SILENCE_HALLUCINATIONS,
-  filterKnownSilenceHallucinations,
-  isKnownSilenceHallucination,
-} from "./hallucination.utils";
-
 /**
  * Calculates the Levenshtein edit distance between two strings.
  * Returns the minimum number of single-character edits (insertions,
@@ -149,73 +143,6 @@ const countWords = (phrase: string): number => {
   return trimmed ? trimmed.split(/\s+/).length : 0;
 };
 
-type PreparedReplacementRule = {
-  rule: ReplacementRule;
-  source: string;
-  wordCount: number;
-};
-
-// Positions of the word segments; the odd indices in between are whitespace.
-const findWordPositions = (segments: string[]): number[] => {
-  const wordPositions: number[] = [];
-  for (let i = 0; i < segments.length; i++) {
-    const segment = segments[i];
-    if (segment && !/^\s+$/.test(segment)) {
-      wordPositions.push(i);
-    }
-  }
-  return wordPositions;
-};
-
-// Rules are matched as phrases, so a rule spans as many words as its source
-// does. Longer phrases are tried first so that "New York City" wins over a
-// "New York" rule at the same position.
-const prepareReplacementRules = (
-  rules: ReplacementRule[],
-): PreparedReplacementRule[] =>
-  rules
-    .map((rule) => ({
-      rule,
-      source: normalizePhrase(rule.sourceValue).toLowerCase(),
-      wordCount: countWords(rule.sourceValue),
-    }))
-    .filter((prepared) => prepared.source.length > 0);
-
-const findBestRuleMatch = (
-  preparedRules: PreparedReplacementRule[],
-  span: number,
-  normalizedCandidate: string,
-): ReplacementRule | null => {
-  let bestMatch: ReplacementRule | null = null;
-  let bestSimilarity = 0;
-
-  for (const prepared of preparedRules) {
-    if (prepared.wordCount !== span) continue;
-
-    const similarity = getStringSimilarity(
-      normalizedCandidate,
-      prepared.source,
-    );
-    if (similarity >= SIMILARITY_THRESHOLD && similarity > bestSimilarity) {
-      bestSimilarity = similarity;
-      bestMatch = prepared.rule;
-    }
-  }
-
-  return bestMatch;
-};
-
-const appendUntil = (
-  result: string[],
-  segments: string[],
-  from: number,
-  until: number,
-): void => {
-  for (let i = from; i < until; i++) {
-    result.push(segments[i]);
-  }
-};
-
 export const applyReplacements = (
   text: string,
   rules: ReplacementRule[],
@@ -223,21 +150,46 @@ export const applyReplacements = (
   if (rules.length === 0) return text;
 
   const segments = text.split(/(\s+)/);
-  const wordPositions = findWordPositions(segments);
-  const preparedRules = prepareReplacementRules(rules);
+
+  // Positions of the word segments; the odd indices in between are whitespace.
+  const wordPositions: number[] = [];
+  for (let i = 0; i < segments.length; i++) {
+    const segment = segments[i];
+    if (segment && !/^\s+$/.test(segment)) {
+      wordPositions.push(i);
+    }
+  }
+
+  // Rules are matched as phrases, so a rule spans as many words as its source
+  // does. Longer phrases are tried first so that "New York City" wins over a
+  // "New York" rule at the same position.
+  const preparedRules = rules
+    .map((rule) => ({
+      rule,
+      source: normalizePhrase(rule.sourceValue).toLowerCase(),
+      wordCount: countWords(rule.sourceValue),
+    }))
+    .filter((prepared) => prepared.source.length > 0);
 
   if (preparedRules.length === 0) return text;
 
   const maxWordCount = Math.max(
     ...preparedRules.map((prepared) => prepared.wordCount),
   );
+
   const result: string[] = [];
   let segmentIndex = 0;
   let wordIndex = 0;
 
   while (wordIndex < wordPositions.length) {
     const startSegment = wordPositions[wordIndex];
-    appendUntil(result, segments, segmentIndex, startSegment);
+
+    // Emit whitespace (and anything else) preceding this word untouched.
+    while (segmentIndex < startSegment) {
+      result.push(segments[segmentIndex]);
+      segmentIndex++;
+    }
+
     const remainingWords = wordPositions.length - wordIndex;
     let matched = false;
 
@@ -254,11 +206,22 @@ export const applyReplacements = (
       if (!word) continue;
 
       const normalizedCandidate = collapseWhitespace(word).toLowerCase();
-      const bestMatch = findBestRuleMatch(
-        preparedRules,
-        span,
-        normalizedCandidate,
-      );
+
+      let bestMatch: ReplacementRule | null = null;
+      let bestSimilarity = 0;
+
+      for (const prepared of preparedRules) {
+        if (prepared.wordCount !== span) continue;
+
+        const similarity = getStringSimilarity(
+          normalizedCandidate,
+          prepared.source,
+        );
+        if (similarity >= SIMILARITY_THRESHOLD && similarity > bestSimilarity) {
+          bestSimilarity = similarity;
+          bestMatch = prepared.rule;
+        }
+      }
 
       if (bestMatch) {
         const { word: destinationWord } = extractPunctuation(
@@ -278,6 +241,11 @@ export const applyReplacements = (
     }
   }
 
-  appendUntil(result, segments, segmentIndex, segments.length);
+  // Emit any trailing whitespace.
+  while (segmentIndex < segments.length) {
+    result.push(segments[segmentIndex]);
+    segmentIndex++;
+  }
+
   return result.join("");
 };

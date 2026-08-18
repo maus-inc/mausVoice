@@ -71,7 +71,7 @@ const IntroPage = () => {
               fontWeight: 600,
             }}
           >
-            <FormattedMessage defaultMessage="A more powerful mausVoice" />
+            <FormattedMessage defaultMessage="Introducing Agent Mode" />
           </Typography>
           <Chip label="Beta" size="small" color="primary" />
         </Stack>
@@ -81,7 +81,7 @@ const IntroPage = () => {
             color: "text.secondary",
           }}
         >
-          <FormattedMessage defaultMessage="New styles, local transcription, audio import, and a reviewable composer" />
+          <FormattedMessage defaultMessage="A powerful new way to interact with your text" />
         </Typography>
       </Stack>
       <Stack
@@ -97,7 +97,7 @@ const IntroPage = () => {
             color: "text.secondary",
           }}
         >
-          <FormattedMessage defaultMessage="Choose Prompt, Bullets, Concise, or Notes styles, bind a shortcut to any style, and cycle active styles with the activation key plus arrow keys." />
+          <FormattedMessage defaultMessage="Agent Mode lets you give voice commands to write, edit, or transform text. Instead of just dictating, you can now tell the AI what you want it to do." />
         </Typography>
         <Typography
           variant="body2"
@@ -105,7 +105,7 @@ const IntroPage = () => {
             color: "text.secondary",
           }}
         >
-          <FormattedMessage defaultMessage="SenseVoice adds fast multilingual local transcription without punctuation, while the silence filter reduces fabricated text from quiet audio. You can also import recordings from your History page." />
+          <FormattedMessage defaultMessage="Try commands like 'Write an email to Bob about the meeting' or 'Make this paragraph more formal'. Agent Mode reads what's in your text field and rewrites it based on your instructions." />
         </Typography>
         <Typography
           variant="body2"
@@ -113,22 +113,14 @@ const IntroPage = () => {
             color: "text.secondary",
           }}
         >
-          <FormattedMessage defaultMessage="Turn on Review before insert to edit dictated text in a composer, use voice Edit Mode for transformations, and configure which Agent Mode tools may run." />
+          <FormattedMessage defaultMessage="Run it multiple times to refine your text until it's perfect." />
         </Typography>
       </Stack>
     </Stack>
   );
 };
 
-const ReleasePageLayout = ({
-  title,
-  subtitle,
-  children,
-}: {
-  title: React.ReactNode;
-  subtitle: React.ReactNode;
-  children?: React.ReactNode;
-}) => {
+const HotkeyPage = () => {
   return (
     <Stack
       spacing={3}
@@ -149,7 +141,7 @@ const ReleasePageLayout = ({
             fontWeight: 600,
           }}
         >
-          {title}
+          <FormattedMessage defaultMessage="Set Your Shortcut" />
         </Typography>
         <Typography
           variant="body2"
@@ -157,22 +149,9 @@ const ReleasePageLayout = ({
             color: "text.secondary",
           }}
         >
-          {subtitle}
+          <FormattedMessage defaultMessage="Choose the keyboard shortcut you'll use to activate Agent Mode" />
         </Typography>
       </Stack>
-      {children}
-    </Stack>
-  );
-};
-
-const HotkeyPage = () => {
-  return (
-    <ReleasePageLayout
-      title={<FormattedMessage defaultMessage="Set Your Shortcut" />}
-      subtitle={
-        <FormattedMessage defaultMessage="Choose the keyboard shortcut you'll use to activate Agent Mode" />
-      }
-    >
       <Box sx={{ pt: 2 }}>
         <HotkeySetting
           title={<FormattedMessage defaultMessage="Agent Mode shortcut" />}
@@ -183,7 +162,7 @@ const HotkeyPage = () => {
           buttonSize="medium"
         />
       </Box>
-    </ReleasePageLayout>
+    </Stack>
   );
 };
 
@@ -229,12 +208,36 @@ const TryItPage = () => {
   );
 
   return (
-    <ReleasePageLayout
-      title={<FormattedMessage defaultMessage="Give It a Try!" />}
-      subtitle={
-        <FormattedMessage defaultMessage="Test out Agent Mode right now" />
-      }
+    <Stack
+      spacing={3}
+      sx={{
+        py: 4,
+        px: 2,
+      }}
     >
+      <Stack
+        spacing={1}
+        sx={{
+          textAlign: "center",
+        }}
+      >
+        <Typography
+          variant="h5"
+          sx={{
+            fontWeight: 600,
+          }}
+        >
+          <FormattedMessage defaultMessage="Give It a Try!" />
+        </Typography>
+        <Typography
+          variant="body2"
+          sx={{
+            color: "text.secondary",
+          }}
+        >
+          <FormattedMessage defaultMessage="Test out Agent Mode right now" />
+        </Typography>
+      </Stack>
       <Typography
         variant="body2"
         component="div"
@@ -268,18 +271,42 @@ const TryItPage = () => {
       >
         <FormattedMessage defaultMessage="Tip: Run Agent Mode multiple times to keep refining! It remembers what's in the text box." />
       </Typography>
-    </ReleasePageLayout>
+    </Stack>
   );
 };
 
 const ProcessorPage = () => {
   return (
-    <ReleasePageLayout
-      title={<FormattedMessage defaultMessage="Choose Your Processor" />}
-      subtitle={
-        <FormattedMessage defaultMessage="Select which AI provider to use for Agent Mode" />
-      }
+    <Stack
+      spacing={3}
+      sx={{
+        py: 4,
+        px: 2,
+      }}
     >
+      <Stack
+        spacing={1}
+        sx={{
+          textAlign: "center",
+        }}
+      >
+        <Typography
+          variant="h5"
+          sx={{
+            fontWeight: 600,
+          }}
+        >
+          <FormattedMessage defaultMessage="Choose Your Processor" />
+        </Typography>
+        <Typography
+          variant="body2"
+          sx={{
+            color: "text.secondary",
+          }}
+        >
+          <FormattedMessage defaultMessage="Select which AI provider to use for Agent Mode" />
+        </Typography>
+      </Stack>
       <Box sx={{ pt: 2 }}>
         <AIAgentModeConfiguration />
       </Box>
@@ -292,7 +319,7 @@ const ProcessorPage = () => {
       >
         <FormattedMessage defaultMessage="Tip: Choose a stronger model for better results. Smaller or weaker models may produce lower quality output." />
       </Typography>
-    </ReleasePageLayout>
+    </Stack>
   );
 };
 

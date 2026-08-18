@@ -11,7 +11,7 @@ use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, MutexGuard, OnceLock};
 use std::thread::{self, JoinHandle};
 use std::time::{Duration, Instant, SystemTime};
-use tauri::{AppHandle, Emitter};
+use tauri::{AppHandle, Emitter, EventTarget};
 
 use serde::{Deserialize, Serialize};
 use strum::IntoEnumIterator;
@@ -84,13 +84,7 @@ impl KeyEventEmitter {
     }
 
     fn emit(&self, payload: KeysHeldPayload) {
-        // Scope the broadcast to the main window only. The composer popout is a
-        // separate webview that loads the same SPA; if it received `keys_held`
-        // it would run its own dictation/style-switch pipeline in parallel with
-        // the main window, producing duplicate dictation. The main window is
-        // the only surface that owns dictation input. A raw label string is the
-        // canonical `EventTarget::Window` form (see `emit_to("main", ...)`).
-        if let Err(err) = self.app.emit_to("main", EVT_KEYS_HELD, payload) {
+        if let Err(err) = self.app.emit_to(EventTarget::any(), EVT_KEYS_HELD, payload) {
             log::error!("Failed to emit keys-held event: {err}");
         }
     }

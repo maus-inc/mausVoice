@@ -23,7 +23,6 @@ tauri = { version = "=2.10.3", features = ["protocol-asset", "tray-icon", "image
 tauri-plugin-log = "2"
 log = "0.4"
 tauri-plugin-autostart = "2"
-tauri-plugin-dialog = "=2.4.2"
 tauri-plugin-single-instance = "2"
 tauri-plugin-opener = "2"
 serde = { version = "1", features = ["derive"] }
@@ -50,10 +49,6 @@ rodio = "0.17"
 wgpu = "0.20"
 hound = "3.5"
 base64 = "0.21"
-# Minisign (ed25519) detached-signature verification for the macOS manual
-# installer fallback. Mirrors the scheme `tauri-plugin-updater` already uses
-# to verify in-place updates.
-minisign-verify = "0.2"
 ferrous-focus = { git = "https://github.com/MichaelWGibson/ferrous-focus" }
 image = { version = "0.25.2", default-features = false, features = ["jpeg"] }
 rand = "0.8"
@@ -65,7 +60,7 @@ dotenvy = "0.15"
 chrono = "0.4"
 tokio = { version = "1", features = ["time", "net", "io-util", "sync"] }
 hostname = "0.4"
-rfd = { version = "0.15", default-features = false, features = ["gtk3"] }
+rfd = "0.15"
 zip = { version = "2", default-features = false, features = ["deflate"] }
 regex = "1"
 once_cell = "1"

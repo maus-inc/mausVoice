@@ -7,14 +7,10 @@ export abstract class BaseTool {
 
   abstract execute(params: Record<string, unknown>): Promise<ToolResult>;
 
-  abstract getAlwaysAllow(
-    params: Record<string, unknown>,
-    scope?: string,
-  ): boolean;
+  abstract getAlwaysAllow(params: Record<string, unknown>): boolean;
 
   abstract setAlwaysAllow(
     params: Record<string, unknown>,
     allowed: boolean,
-    scope?: string,
   ): void;
 }

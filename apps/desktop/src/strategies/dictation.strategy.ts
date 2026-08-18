@@ -19,13 +19,9 @@ import { routeTranscriptOutput } from "../utils/output-routing.utils";
 import {
   applyReplacements,
   applySymbolConversions,
-  filterKnownSilenceHallucinations,
 } from "../utils/string.utils";
 import { getToneIdToUse, VERBATIM_TONE_ID } from "../utils/tone.utils";
-import {
-  getMyDictationLanguage,
-  getMyUserPreferences,
-} from "../utils/user.utils";
+import { getMyUserPreferences } from "../utils/user.utils";
 import { BaseStrategy } from "./base.strategy";
 
 export class DictationStrategy extends BaseStrategy {
@@ -78,7 +74,6 @@ export class DictationStrategy extends BaseStrategy {
           text: textToPaste,
           mode: "dictation",
           currentAppId: this.currentAppId,
-          skipReview: true,
         });
       } catch (error) {
         getLogger().error(`Failed to paste interim segment: ${error}`);
@@ -96,13 +91,7 @@ export class DictationStrategy extends BaseStrategy {
       }));
 
     const afterReplacements = applyReplacements(text, replacementRules);
-    const converted = applySymbolConversions(afterReplacements);
-    return getAppState().userPrefs?.hallucinationFilterEnabled === false
-      ? converted
-      : filterKnownSilenceHallucinations(
-          converted,
-          getMyDictationLanguage(getAppState()),
-        );
+    return applySymbolConversions(afterReplacements);
   }
 
   validateAvailability(): Nullable<StrategyValidationError> {

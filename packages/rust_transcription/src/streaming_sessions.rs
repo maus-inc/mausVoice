@@ -23,7 +23,6 @@ pub struct BufferedTranscriptionSession {
     pub language: Option<String>,
     pub initial_prompt: Option<String>,
     pub device_id: Option<String>,
-    pub hallucination_filter_enabled: bool,
     pub samples: Vec<f32>,
     /// Last time the session was created or received samples. Drives TTL
     /// eviction; deliberately not refreshed by reads until the buffer is taken.
@@ -37,7 +36,6 @@ pub struct BufferedTranscriptionSessionInput {
     pub language: Option<String>,
     pub initial_prompt: Option<String>,
     pub device_id: Option<String>,
-    pub hallucination_filter_enabled: bool,
 }
 
 #[derive(Default)]
@@ -86,7 +84,6 @@ impl TranscriptionSessionRegistry {
             language: input.language,
             initial_prompt: input.initial_prompt,
             device_id: input.device_id,
-            hallucination_filter_enabled: input.hallucination_filter_enabled,
             samples: Vec::new(),
             last_activity: Instant::now(),
         };
@@ -159,7 +156,6 @@ mod tests {
             language: None,
             initial_prompt: None,
             device_id: None,
-            hallucination_filter_enabled: true,
         }
     }
 
@@ -179,9 +175,9 @@ mod tests {
                     language: None,
                     initial_prompt: None,
                     device_id: None,
-                    hallucination_filter_enabled: true,
                     samples: Vec::new(),
-                    last_activity: Instant::now() - (SESSION_IDLE_TTL + Duration::from_secs(1)),
+                    last_activity: Instant::now()
+                        - (SESSION_IDLE_TTL + Duration::from_secs(1)),
                 },
             );
         }

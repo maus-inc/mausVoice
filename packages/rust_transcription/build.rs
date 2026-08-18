@@ -31,8 +31,8 @@ fn main() {
 
     let target = env::var("TARGET").expect("Cargo did not provide TARGET");
     let library_name = runtime_library_name(&target);
-    let runtime_path =
-        configured_runtime().unwrap_or_else(|| provision_runtime(&target, library_name));
+    let runtime_path = configured_runtime()
+        .unwrap_or_else(|| provision_runtime(&target, library_name));
 
     // Keep a copy beside normal binaries and test executables. This makes the
     // standalone sidecar useful outside the Tauri bundle and gives Cargo tests

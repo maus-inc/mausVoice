@@ -88,101 +88,34 @@ export const parsePostProcessingJson = (raw: string): unknown => {
   throw new Error("Could not parse or repair LLM JSON output");
 };
 
-const preferenceOr = <T>(value: T | null | undefined, fallback: T): T =>
-  value ?? fallback;
-
-const applyTranscriptionPreferences = (
-  draft: AppState,
-  preferences: UserPreferences,
-): void => {
-  draft.settings.aiTranscription.mode = preferenceOr(
-    preferences.transcriptionMode,
-    null,
-  );
-  draft.settings.aiTranscription.selectedApiKeyId = preferenceOr(
-    preferences.transcriptionApiKeyId,
-    null,
-  );
-  const normalizedDevice = normalizeTranscriptionDevice(
-    preferenceOr(preferences.transcriptionDevice, CPU_DEVICE_VALUE),
-  );
-  draft.settings.aiTranscription.device = normalizedDevice;
-  draft.settings.aiTranscription.modelSize = preferenceOr(
-    preferences.transcriptionModelSize,
-    DEFAULT_MODEL_SIZE,
-  );
-  const gpuEnabled = preferenceOr(
-    preferences.gpuEnumerationEnabled,
-    isGpuPreferredTranscriptionDevice(normalizedDevice),
-  );
-  draft.settings.aiTranscription.gpuEnumerationEnabled =
-    supportsGpuTranscriptionDevice() && gpuEnabled;
-};
-
-const applyGenerativePreferences = (
-  draft: AppState,
-  preferences: UserPreferences,
-): void => {
-  draft.settings.aiPostProcessing.mode = preferenceOr(
-    preferences.postProcessingMode,
-    null,
-  );
-  draft.settings.aiPostProcessing.selectedApiKeyId = preferenceOr(
-    preferences.postProcessingApiKeyId,
-    null,
-  );
-  draft.settings.agentMode.mode = preferenceOr(preferences.agentMode, null);
-  draft.settings.agentMode.selectedApiKeyId = preferenceOr(
-    preferences.agentModeApiKeyId,
-    null,
-  );
-  draft.settings.agentMode.openclawGatewayUrl = preferenceOr(
-    preferences.openclawGatewayUrl,
-    null,
-  );
-  draft.settings.agentMode.openclawToken = preferenceOr(
-    preferences.openclawToken,
-    null,
-  );
-};
-
-const applyFeaturePreferences = (
-  draft: AppState,
-  preferences: UserPreferences,
-): void => {
-  draft.settings.inDictationStyleSwitchingEnabled = preferenceOr(
-    preferences.inDictationStyleSwitchingEnabled,
-    false,
-  );
-  draft.settings.hallucinationFilterEnabled = preferenceOr(
-    preferences.hallucinationFilterEnabled,
-    true,
-  );
-  draft.settings.reviewBeforeInsert = preferences.reviewBeforeInsert === true;
-  // `preferenceOr` preserves an explicit `[]` (deny-all) because `[] ?? null`
-  // is `[]`, and defaults to `null` ("follow registry defaults") rather than
-  // to an allow-list. Never migrate `null` into an all-tools list here.
-  draft.settings.agentEnabledTools = preferenceOr(
-    preferences.agentEnabledTools,
-    null,
-  );
-  draft.settings.agentMaxIterations = preferenceOr(
-    preferences.agentMaxIterations,
-    20,
-  );
-  draft.settings.agentPermissionTimeoutMs = preferenceOr(
-    preferences.agentPermissionTimeoutMs,
-    60_000,
-  );
-};
-
 export const applyAiPreferences = (
   draft: AppState,
   preferences: UserPreferences,
 ): void => {
-  applyTranscriptionPreferences(draft, preferences);
-  applyGenerativePreferences(draft, preferences);
-  applyFeaturePreferences(draft, preferences);
+  draft.settings.aiTranscription.mode = preferences.transcriptionMode ?? null;
+  draft.settings.aiTranscription.selectedApiKeyId =
+    preferences.transcriptionApiKeyId ?? null;
+  const normalizedDevice = normalizeTranscriptionDevice(
+    preferences.transcriptionDevice ?? CPU_DEVICE_VALUE,
+  );
+  draft.settings.aiTranscription.device = normalizedDevice;
+  draft.settings.aiTranscription.modelSize =
+    preferences.transcriptionModelSize ?? DEFAULT_MODEL_SIZE;
+  draft.settings.aiTranscription.gpuEnumerationEnabled =
+    supportsGpuTranscriptionDevice() &&
+    (preferences.gpuEnumerationEnabled ??
+      isGpuPreferredTranscriptionDevice(normalizedDevice));
+
+  draft.settings.aiPostProcessing.mode = preferences.postProcessingMode ?? null;
+  draft.settings.aiPostProcessing.selectedApiKeyId =
+    preferences.postProcessingApiKeyId ?? null;
+
+  draft.settings.agentMode.mode = preferences.agentMode ?? null;
+  draft.settings.agentMode.selectedApiKeyId =
+    preferences.agentModeApiKeyId ?? null;
+  draft.settings.agentMode.openclawGatewayUrl =
+    preferences.openclawGatewayUrl ?? null;
+  draft.settings.agentMode.openclawToken = preferences.openclawToken ?? null;
 };
 
 export function formatMessagesAsPrompt(messages: LlmMessage[]): {

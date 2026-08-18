@@ -17,7 +17,6 @@ import { getLogger } from "../utils/log.utils";
 import type { AgentTypeConfig } from "./agent-configs";
 
 const POLL_INTERVAL_MS = 500;
-const MAX_CONTEXT_MESSAGES = 80;
 const activeLoops = new Map<string, AgentLoop>();
 
 export async function runAgent(
@@ -318,9 +317,8 @@ async function executeWithPermission(
   conversationId: string,
 ) {
   const tool = createTool(info);
-  const permissionScope = `conversation:${conversationId}`;
 
-  if (tool.getAlwaysAllow(params, permissionScope)) {
+  if (tool.getAlwaysAllow(params)) {
     try {
       const result = await executeTool(info.id, params);
       return { success: true, result };
@@ -385,168 +383,6 @@ async function pollForPermission(
   }
 }
 
-type ConversationMessageBlock = {
-  startIndex: number;
-  messages: LlmMessage[];
-};
-
-type ResolvedConversationBlock = ConversationMessageBlock & {
-  nextIndex: number;
-};
-
-const isValidPersistedToolCall = (value: unknown): value is LlmToolCall => {
-  if (!value || typeof value !== "object") return false;
-  const call = value as Record<string, unknown>;
-  return (
-    typeof call.id === "string" &&
-    call.id.length > 0 &&
-    typeof call.name === "string" &&
-    call.name.length > 0 &&
-    typeof call.arguments === "string"
-  );
-};
-
-const textOnlyAssistantMessage = (
-  message: Extract<LlmMessage, { role: "assistant" }>,
-): LlmMessage => ({
-  role: "assistant",
-  content: message.content || undefined,
-});
-
-/**
- * Resolve one assistant message and its following tool results as one block.
- * Providers require each tool call to have a matching result in the same
- * request; a positional slice can otherwise start with an orphaned result or
- * end after the assistant tool-call message.
- */
-const resolveConversationBlock = (
-  messages: LlmMessage[],
-  startIndex: number,
-): ResolvedConversationBlock => {
-  const message = messages[startIndex];
-  if (message.role !== "assistant" || !Array.isArray(message.toolCalls)) {
-    return { startIndex, messages: [message], nextIndex: startIndex + 1 };
-  }
-
-  const hasValidToolCalls =
-    message.toolCalls.length > 0 &&
-    message.toolCalls.every(isValidPersistedToolCall);
-  if (!hasValidToolCalls) {
-    return {
-      startIndex,
-      messages: [textOnlyAssistantMessage(message)],
-      nextIndex: startIndex + 1,
-    };
-  }
-
-  const callIds = message.toolCalls.map((call) => call.id);
-  if (new Set(callIds).size !== callIds.length) {
-    return {
-      startIndex,
-      messages: [textOnlyAssistantMessage(message)],
-      nextIndex: startIndex + 1,
-    };
-  }
-
-  const expected = new Set(callIds);
-  const toolResults: LlmMessage[] = [];
-  const seen = new Set<string>();
-  let nextIndex = startIndex + 1;
-  while (nextIndex < messages.length) {
-    const next = messages[nextIndex];
-    if (next.role !== "tool" || !expected.has(next.toolCallId)) break;
-    if (seen.has(next.toolCallId)) break;
-    seen.add(next.toolCallId);
-    toolResults.push(next);
-    nextIndex += 1;
-  }
-
-  if (seen.size === expected.size) {
-    return {
-      startIndex,
-      messages: [message, ...toolResults],
-      nextIndex,
-    };
-  }
-
-  // A persisted conversation can be interrupted between the assistant
-  // response and a tool result. Keep its text, but strip incomplete tool
-  // calls rather than sending an invalid partial exchange.
-  return {
-    startIndex,
-    messages: [textOnlyAssistantMessage(message)],
-    nextIndex: startIndex + 1,
-  };
-};
-
-const groupConversationMessages = (
-  messages: LlmMessage[],
-): ConversationMessageBlock[] => {
-  const blocks: ConversationMessageBlock[] = [];
-  let index = 0;
-
-  while (index < messages.length) {
-    if (messages[index].role === "tool") {
-      index += 1;
-      continue;
-    }
-
-    const block = resolveConversationBlock(messages, index);
-    blocks.push({ startIndex: block.startIndex, messages: block.messages });
-    index = block.nextIndex;
-  }
-
-  return blocks;
-};
-
-const trimConversationBlocks = (
-  blocks: ConversationMessageBlock[],
-): LlmMessage[] => {
-  const totalMessages = blocks.reduce(
-    (total, block) => total + block.messages.length,
-    0,
-  );
-  if (totalMessages <= MAX_CONTEXT_MESSAGES) {
-    return blocks.flatMap((block) => block.messages);
-  }
-
-  const selected = new Set<number>();
-  let remaining = MAX_CONTEXT_MESSAGES;
-  const firstUserIndex = blocks.findIndex((block) =>
-    block.messages.some((message) => message.role === "user"),
-  );
-
-  if (firstUserIndex >= 0) {
-    const firstUserBlock = blocks[firstUserIndex];
-    selected.add(firstUserIndex);
-    remaining -= firstUserBlock.messages.length;
-  }
-
-  let selectedRecentBlock = false;
-  for (let index = blocks.length - 1; index >= 0; index--) {
-    if (selected.has(index)) continue;
-    const blockSize = blocks[index].messages.length;
-    if (blockSize > remaining) continue;
-    selected.add(index);
-    selectedRecentBlock = true;
-    remaining -= blockSize;
-    if (remaining === 0) break;
-  }
-
-  // Keep at least the newest complete block when a future block is larger
-  // than the nominal budget or none of the recent blocks fit. This preserves
-  // protocol validity over a strict message count.
-  const newestIndex = blocks.length - 1;
-  if (!selectedRecentBlock && newestIndex >= 0 && !selected.has(newestIndex)) {
-    selected.add(newestIndex);
-  }
-
-  return blocks
-    .filter((_, index) => selected.has(index))
-    .sort((left, right) => left.startIndex - right.startIndex)
-    .flatMap((block) => block.messages);
-};
-
 function buildConversationMessages(conversationId: string): LlmMessage[] {
   const state = getAppState();
   const messageIds = state.chatMessageIdsByConversationId[conversationId] ?? [];
@@ -558,22 +394,14 @@ function buildConversationMessages(conversationId: string): LlmMessage[] {
 
     const metadata = msg.metadata as Record<string, unknown> | null;
 
-    if (
-      metadata?.type === "tool-result" &&
-      typeof metadata.toolCallId === "string"
-    ) {
+    if (metadata?.type === "tool-result") {
       messages.push({
         role: "tool",
-        toolCallId: metadata.toolCallId,
+        toolCallId: metadata.toolCallId as string,
         content: msg.content,
       });
     } else if (msg.role === "assistant") {
-      const persistedToolCalls = metadata?.toolCalls;
-      const toolCalls =
-        Array.isArray(persistedToolCalls) &&
-        persistedToolCalls.every(isValidPersistedToolCall)
-          ? persistedToolCalls
-          : undefined;
+      const toolCalls = metadata?.toolCalls as LlmToolCall[] | undefined;
       messages.push({
         role: "assistant",
         content: msg.content || undefined,
@@ -584,5 +412,5 @@ function buildConversationMessages(conversationId: string): LlmMessage[] {
     }
   }
 
-  return trimConversationBlocks(groupConversationMessages(messages));
+  return messages;
 }

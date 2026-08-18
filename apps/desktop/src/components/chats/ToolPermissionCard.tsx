@@ -20,7 +20,6 @@ export const ToolPermissionCard = ({ permission }: ToolPermissionCardProps) => {
           toolId: permission.toolId,
           params: permission.params,
           allowed: true,
-          scope: `conversation:${permission.conversationId}`,
         });
         resolveToolPermission(permission.id, "allowed");
       }}

@@ -14,12 +14,7 @@ import type {
   LlmFinishReason,
   LlmMessage,
   LlmStreamEvent,
-  LlmTool,
 } from "@maus-inc/types";
-
-// The SDK does not re-export MessageStream from its root, so derive the type
-// from the client's stream() method instead of a deep subpath import.
-type MessageStream = ReturnType<Anthropic["messages"]["stream"]>;
 
 export const CLAUDE_MODELS = [
   "claude-opus-4-5-20251101",
@@ -220,52 +215,63 @@ export type ClaudeStreamChatArgs = {
   input: LlmChatInput;
 };
 
-type PendingClaudeToolCall = {
-  id: string;
-  name: string;
-  arguments: string;
-};
+export async function* claudeStreamChat({
+  apiKey,
+  model,
+  input,
+}: ClaudeStreamChatArgs): AsyncGenerator<LlmStreamEvent> {
+  const client = createClient(apiKey);
+  const { system, messages } = llmMessagesToClaude(input.messages);
 
-const toClaudeTool = (tool: LlmTool): Tool => ({
-  name: tool.name,
-  description: tool.description ?? "",
-  input_schema: (tool.parameters ?? {
-    type: "object",
-    properties: {},
-  }) as Tool["input_schema"],
-});
+  const tools: Tool[] | undefined =
+    input.tools && input.tools.length > 0
+      ? input.tools.map((t) => ({
+          name: t.name,
+          description: t.description ?? "",
+          input_schema: (t.parameters ?? {
+            type: "object",
+            properties: {},
+          }) as Tool["input_schema"],
+        }))
+      : undefined;
 
-const buildClaudeTools = (input: LlmChatInput): Tool[] | undefined => {
-  if (!input.tools || input.tools.length === 0) {
-    return undefined;
+  let toolChoice: ToolChoiceAuto | ToolChoiceAny | ToolChoiceTool | undefined;
+  if (input.toolChoice && tools) {
+    if (typeof input.toolChoice === "string") {
+      switch (input.toolChoice) {
+        case "auto":
+          toolChoice = { type: "auto" };
+          break;
+        case "required":
+          toolChoice = { type: "any" };
+          break;
+        case "none":
+          toolChoice = undefined;
+          break;
+      }
+    } else {
+      toolChoice = { type: "tool", name: input.toolChoice.name };
+    }
   }
-  return input.tools.map(toClaudeTool);
-};
 
-const buildClaudeToolChoice = (
-  input: LlmChatInput,
-  tools?: Tool[],
-): ToolChoiceAuto | ToolChoiceAny | ToolChoiceTool | undefined => {
-  if (!input.toolChoice || !tools) {
-    return undefined;
-  }
-  if (typeof input.toolChoice !== "string") {
-    return { type: "tool", name: input.toolChoice.name };
-  }
-  switch (input.toolChoice) {
-    case "auto":
-      return { type: "auto" };
-    case "required":
-      return { type: "any" };
-    case "none":
-      return undefined;
-  }
-};
+  const stream = client.messages.stream({
+    model,
+    max_tokens: input.maxTokens ?? 4096,
+    system,
+    messages,
+    tools,
+    tool_choice: toolChoice,
+    temperature: input.temperature,
+    top_p: input.topP,
+    stop_sequences: input.stopSequences,
+  });
 
-async function* claudeStreamEvents(
-  stream: MessageStream,
-  pendingToolCalls: PendingClaudeToolCall[],
-): AsyncGenerator<LlmStreamEvent> {
+  const pendingToolCalls: Array<{
+    id: string;
+    name: string;
+    arguments: string;
+  }> = [];
+
   for await (const event of stream) {
     if (
       event.type === "content_block_delta" &&
@@ -295,32 +301,6 @@ async function* claudeStreamEvents(
       });
     }
   }
-}
-
-export async function* claudeStreamChat({
-  apiKey,
-  model,
-  input,
-}: ClaudeStreamChatArgs): AsyncGenerator<LlmStreamEvent> {
-  const client = createClient(apiKey);
-  const { system, messages } = llmMessagesToClaude(input.messages);
-  const tools = buildClaudeTools(input);
-  const toolChoice = buildClaudeToolChoice(input, tools);
-
-  const stream = client.messages.stream({
-    model,
-    max_tokens: input.maxTokens ?? 4096,
-    system,
-    messages,
-    tools,
-    tool_choice: toolChoice,
-    temperature: input.temperature,
-    top_p: input.topP,
-    stop_sequences: input.stopSequences,
-  });
-
-  const pendingToolCalls: PendingClaudeToolCall[] = [];
-  yield* claudeStreamEvents(stream, pendingToolCalls);
 
   for (const tc of pendingToolCalls) {
     yield {

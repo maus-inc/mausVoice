@@ -133,6 +133,7 @@ export const getActiveDictationLanguage = (state: AppState): string => {
 };
 
 export const getMyDictationLanguage = (state: AppState): string => {
+  // TODO: We should pass the dictation language into the processors instead of overriding
   const override = state.dictationLanguageOverride;
   if (override) {
     return override;

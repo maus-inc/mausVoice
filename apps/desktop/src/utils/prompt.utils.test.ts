@@ -26,21 +26,6 @@ describe("buildSystemPostProcessingTonePrompt", () => {
     expect(result).toContain("English");
   });
 
-  it("appends structured style guidance when it is present", () => {
-    const result = buildSystemPostProcessingTonePrompt(
-      makeInput({
-        kind: "style",
-        stylePrompt: "Condense the transcript",
-        category: "prompt",
-        outputLength: "1-3 sentences",
-        exampleInputOutput: "Input: rambling. Output: concise.",
-      }),
-    );
-    expect(result).toContain("Category: prompt");
-    expect(result).toContain("Output length: 1-3 sentences");
-    expect(result).toContain("Example input/output");
-  });
-
   it("returns custom system prompt for template config", () => {
     const result = buildSystemPostProcessingTonePrompt(
       makeInput({

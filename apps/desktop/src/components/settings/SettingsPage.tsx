@@ -296,12 +296,6 @@ export default function SettingsPage() {
     });
   };
 
-  const openStyleHotkeysDialog = () => {
-    produceAppState((draft) => {
-      draft.settings.styleHotkeysDialogOpen = true;
-    });
-  };
-
   const openMoreSettingsDialog = () => {
     produceAppState((draft) => {
       draft.settings.moreSettingsDialogOpen = true;
@@ -353,11 +347,6 @@ export default function SettingsPage() {
         title={<FormattedMessage defaultMessage="Diagnostics" />}
         leading={<TroubleshootOutlined />}
         onClick={openDiagnosticsDialog}
-      />
-      <ListTile
-        title={<FormattedMessage defaultMessage="Style hotkeys" />}
-        leading={<KeyOutlined />}
-        onClick={openStyleHotkeysDialog}
       />
       <ListTile
         title={<FormattedMessage defaultMessage="Text insertion options" />}

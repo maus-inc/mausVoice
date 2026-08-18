@@ -1,14 +1,16 @@
+import CloseIcon from "@mui/icons-material/Close";
 import {
   Button,
   Dialog,
   DialogActions,
   DialogContent,
+  DialogTitle,
+  IconButton,
   Stack,
   Typography,
 } from "@mui/material";
 import { FormattedMessage } from "react-intl";
 import { produceAppState, useAppStore } from "../../store";
-import { DialogTitleWithClose } from "../common/DialogTitleWithClose";
 import { AIPostProcessingConfiguration } from "./AIPostProcessingConfiguration";
 
 export const AIPostProcessingDialog = () => {
@@ -24,9 +26,17 @@ export const AIPostProcessingDialog = () => {
 
   return (
     <Dialog open={open} onClose={handleClose} maxWidth="sm" fullWidth>
-      <DialogTitleWithClose onClose={handleClose}>
+      <DialogTitle sx={{ display: "flex", alignItems: "center" }}>
         <FormattedMessage defaultMessage="AI post processing" />
-      </DialogTitleWithClose>
+        <IconButton
+          onClick={handleClose}
+          size="small"
+          sx={{ ml: "auto" }}
+          aria-label="Close"
+        >
+          <CloseIcon fontSize="small" />
+        </IconButton>
+      </DialogTitle>
       <DialogContent dividers>
         <Stack
           spacing={3}

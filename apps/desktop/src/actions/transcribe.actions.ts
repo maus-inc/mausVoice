@@ -25,7 +25,6 @@ import {
   coerceToDictationLanguage,
   mapDictationLanguageToWhisperLanguage,
 } from "../utils/language.utils";
-import { orFalse, orNull } from "../utils/nullable.utils";
 import { getLogger } from "../utils/log.utils";
 import {
   buildLocalizedTranscriptionPrompt,
@@ -36,7 +35,6 @@ import {
   PROCESSED_TRANSCRIPTION_JSON_SCHEMA,
   PROCESSED_TRANSCRIPTION_SCHEMA,
 } from "../utils/prompt.utils";
-import { applyHallucinationFiltering } from "../utils/hallucination.utils";
 import { getToneById, getToneConfig } from "../utils/tone.utils";
 import {
   getMyEffectiveUserId,
@@ -62,10 +60,7 @@ export type TranscribeAudioMetadata = {
 };
 
 export type TranscribeAudioResult = {
-  /** Exact provider output before replacements or hallucination filtering. */
   rawTranscript: string;
-  /** Text used by post-processing and output routing. */
-  sanitizedTranscript: string;
   warnings: string[];
   metadata: TranscribeAudioMetadata;
 };
@@ -153,8 +148,6 @@ export const transcribeAudio = async ({
       sampleRate,
       prompt: transcriptionPrompt,
       language: whisperLanguage,
-      hallucinationFilterEnabled:
-        state.userPrefs?.hallucinationFilterEnabled !== false,
     });
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
@@ -169,32 +162,9 @@ export const transcribeAudio = async ({
   }
   const transcribeDuration = performance.now() - transcribeStart;
   const rawTranscript = transcribeOutput.text.trim();
-  // Hallucination mitigation: when the user disables the filter we preserve the
-  // raw provider transcript EXACTLY (no probability gating, no phrase
-  // filtering). Otherwise we drop near-certain-silence segments via
-  // `gateSilentSegments` and filter known silence phrases. Long audio that is
-  // split into multiple provider chunks is gated per-chunk in the repo before
-  // merging, so `transcribeOutput.segments` here covers the single-segment case
-  // (and is undefined, triggering a fall back to the raw text, when the
-  // provider returned no verbose segments).
-  const hallucinationFilterEnabled =
-    state.userPrefs?.hallucinationFilterEnabled !== false;
-
-  const sanitizedTranscript = applyHallucinationFiltering(
-    rawTranscript,
-    transcribeOutput.segments,
-    dictationLanguage,
-    hallucinationFilterEnabled,
-  );
-
-  if (rawTranscript !== sanitizedTranscript) {
-    getLogger().info(
-      "Removed a known silence hallucination from transcription",
-    );
-  }
 
   getLogger().info(
-    `Transcription complete in ${Math.round(transcribeDuration)}ms (${rawTranscript.length} raw chars, ${sanitizedTranscript.length} sanitized chars, mode=${transcribeOutput.metadata?.transcriptionMode ?? "unknown"})`,
+    `Transcription complete in ${Math.round(transcribeDuration)}ms (${rawTranscript.length} chars, mode=${transcribeOutput.metadata?.transcriptionMode ?? "unknown"})`,
   );
 
   metadata.modelSize =
@@ -210,7 +180,6 @@ export const transcribeAudio = async ({
 
   return {
     rawTranscript,
-    sanitizedTranscript,
     warnings: dedup(warnings),
     metadata,
   };
@@ -365,136 +334,27 @@ export type StoreTranscriptionOutput = {
   wordCount: number;
 };
 
-const getSampleCount = (samples: StopRecordingResponse["samples"]): number =>
-  samples ? samples.length : 0;
-
-const getWordsAdded = (transcript: string | null): number =>
-  transcript ? countWords(transcript) : 0;
-
-const recordUsageWords = async (wordsAdded: number): Promise<void> => {
-  if (wordsAdded <= 0) {
-    return;
-  }
-  try {
-    await addWordsToCurrentUser(wordsAdded);
-  } catch (error) {
-    console.error("Failed to update usage metrics", error);
-  }
-};
-
-const persistAudioSnapshot = async (
-  transcriptionId: string,
-  samples: number[] | Float32Array,
-  sampleRate: number,
-): Promise<TranscriptionAudioSnapshot | undefined> => {
-  try {
-    return await invoke<TranscriptionAudioSnapshot>(
-      "store_transcription_audio",
-      {
-        id: transcriptionId,
-        samples,
-        sampleRate,
-      },
-    );
-  } catch (error) {
-    console.error("Failed to persist audio snapshot", error);
-    return undefined;
-  }
-};
-
-const buildTranscriptionRecord = ({
-  input,
-  transcriptionId,
-  audioSnapshot,
-  transcriptionFailed,
-  createdAt,
-  createdByUserId,
-}: {
-  input: StoreTranscriptionInput;
-  transcriptionId: string;
-  audioSnapshot: TranscriptionAudioSnapshot | undefined;
-  transcriptionFailed: boolean;
-  createdAt: string;
-  createdByUserId: string;
-}): Transcription => ({
-  id: transcriptionId,
-  transcript: !transcriptionFailed
-    ? (input.transcript ?? "")
-    : "[Transcription Failed]",
-  createdAt,
-  createdByUserId,
-  isDeleted: false,
-  audio: audioSnapshot,
-  modelSize: orNull(input.transcriptionMetadata.modelSize),
-  inferenceDevice: orNull(input.transcriptionMetadata.inferenceDevice),
-  rawTranscript: input.rawTranscript ?? input.transcript ?? "",
-  sanitizedTranscript: orNull(input.sanitizedTranscript),
-  transcriptionPrompt: orNull(input.transcriptionMetadata.transcriptionPrompt),
-  postProcessPrompt: orNull(input.postProcessMetadata.postProcessPrompt),
-  transcriptionApiKeyId: orNull(
-    input.transcriptionMetadata.transcriptionApiKeyId,
-  ),
-  postProcessApiKeyId: orNull(input.postProcessMetadata.postProcessApiKeyId),
-  transcriptionMode: orNull(input.transcriptionMetadata.transcriptionMode),
-  postProcessMode: orNull(input.postProcessMetadata.postProcessMode),
-  postProcessDevice: orNull(input.postProcessMetadata.postProcessDevice),
-  transcriptionDurationMs: orNull(
-    input.transcriptionMetadata.transcriptionDurationMs,
-  ),
-  postprocessDurationMs: orNull(
-    input.postProcessMetadata.postprocessDurationMs,
-  ),
-  warnings: input.warnings.length > 0 ? input.warnings : null,
-  remoteStatus: orNull(input.remoteStatus),
-  remoteDeviceId: orNull(input.remoteDeviceId),
-});
-
-const persistTranscription = async (
-  transcription: Transcription,
-): Promise<Transcription | null> => {
-  try {
-    const stored =
-      await getTranscriptionRepo().createTranscription(transcription);
-    produceAppState((draft) => {
-      draft.transcriptionById[stored.id] = stored;
-      const existingIds = draft.transcriptions.transcriptionIds.filter(
-        (identifier) => identifier !== stored.id,
-      );
-      draft.transcriptions.transcriptionIds = [stored.id, ...existingIds];
-    });
-    return stored;
-  } catch (error) {
-    console.error("Failed to store transcription", error);
-    showErrorSnackbar("Unable to save transcription. Please try again.");
-    return null;
-  }
-};
-
-const purgeStaleAudioSnapshots = async (): Promise<void> => {
-  try {
-    const purgedIds = await getTranscriptionRepo().purgeStaleAudio();
-    if (purgedIds.length === 0) {
-      return;
-    }
-    produceAppState((draft) => {
-      for (const purgedId of purgedIds) {
-        const purged = draft.transcriptionById[purgedId];
-        if (purged) {
-          delete purged.audio;
-        }
-      }
-    });
-  } catch (error) {
-    console.error("Failed to purge stale audio snapshots", error);
-  }
-};
-
 export const storeTranscription = async (
   input: StoreTranscriptionInput,
 ): Promise<StoreTranscriptionOutput> => {
   getLogger().verbose("Storing transcription record");
   const rate = input.audio.sampleRate;
-  const sampleCount = getSampleCount(input.audio.samples);
+
+  const sampleCount = (() => {
+    const samples = input.audio.samples as unknown;
+    if (Array.isArray(samples)) {
+      return samples.length;
+    }
+
+    if (
+      samples &&
+      typeof (samples as { length?: number }).length === "number"
+    ) {
+      return (samples as { length: number }).length;
+    }
+
+    return 0;
+  })();
 
   if (rate == null || Number.isNaN(rate)) {
     getLogger().error("Received audio payload without sample rate");
@@ -510,16 +370,20 @@ export const storeTranscription = async (
   }
 
   const state = getAppState();
-  const incognitoEnabled = orFalse(state.userPrefs?.incognitoModeEnabled);
-  const includeInStats = orFalse(state.userPrefs?.incognitoModeIncludeInStats);
-  const wordsAdded = getWordsAdded(input.transcript);
+  const incognitoEnabled = state.userPrefs?.incognitoModeEnabled ?? false;
+  const includeInStats = state.userPrefs?.incognitoModeIncludeInStats ?? false;
+  const wordsAdded = input.transcript ? countWords(input.transcript) : 0;
 
   if (incognitoEnabled) {
     getLogger().verbose(
       `Incognito mode: skipping storage (includeInStats=${includeInStats}, words=${wordsAdded})`,
     );
     if (wordsAdded > 0 && includeInStats) {
-      await recordUsageWords(wordsAdded);
+      try {
+        await addWordsToCurrentUser(wordsAdded);
+      } catch (error) {
+        console.error("Failed to update usage metrics", error);
+      }
     }
 
     return { transcription: null, wordCount: wordsAdded };
@@ -533,31 +397,102 @@ export const storeTranscription = async (
     : Array.from(input.audio.samples ?? []);
 
   const transcriptionId = createId();
-  const audioSnapshot = await persistAudioSnapshot(
-    transcriptionId,
-    payloadSamples,
-    rate,
-  );
+
+  let audioSnapshot: TranscriptionAudioSnapshot | undefined;
+  if (!incognitoEnabled) {
+    try {
+      audioSnapshot = await invoke<TranscriptionAudioSnapshot>(
+        "store_transcription_audio",
+        {
+          id: transcriptionId,
+          samples: payloadSamples,
+          sampleRate: rate,
+        },
+      );
+    } catch (error) {
+      console.error("Failed to persist audio snapshot", error);
+    }
+  }
 
   const transcriptionFailed =
     input.rawTranscript === null && input.warnings.length > 0;
 
-  const transcription = buildTranscriptionRecord({
-    input,
-    transcriptionId,
-    audioSnapshot,
-    transcriptionFailed,
+  const transcription: Transcription = {
+    id: transcriptionId,
+    transcript: !transcriptionFailed
+      ? (input.transcript ?? "")
+      : "[Transcription Failed]",
     createdAt: dayjs().toISOString(),
     createdByUserId: getMyEffectiveUserId(state),
-  });
+    isDeleted: false,
+    audio: audioSnapshot,
+    modelSize: input.transcriptionMetadata.modelSize ?? null,
+    inferenceDevice: input.transcriptionMetadata.inferenceDevice ?? null,
+    rawTranscript: input.rawTranscript ?? input.transcript ?? "",
+    sanitizedTranscript: input.sanitizedTranscript ?? null,
+    transcriptionPrompt:
+      input.transcriptionMetadata.transcriptionPrompt ?? null,
+    postProcessPrompt: input.postProcessMetadata.postProcessPrompt ?? null,
+    transcriptionApiKeyId:
+      input.transcriptionMetadata.transcriptionApiKeyId ?? null,
+    postProcessApiKeyId: input.postProcessMetadata.postProcessApiKeyId ?? null,
+    transcriptionMode: input.transcriptionMetadata.transcriptionMode ?? null,
+    postProcessMode: input.postProcessMetadata.postProcessMode ?? null,
+    postProcessDevice: input.postProcessMetadata.postProcessDevice ?? null,
+    transcriptionDurationMs:
+      input.transcriptionMetadata.transcriptionDurationMs ?? null,
+    postprocessDurationMs:
+      input.postProcessMetadata.postprocessDurationMs ?? null,
+    warnings: input.warnings.length > 0 ? input.warnings : null,
+    remoteStatus: input.remoteStatus ?? null,
+    remoteDeviceId: input.remoteDeviceId ?? null,
+  };
 
-  const storedTranscription = await persistTranscription(transcription);
-  if (!storedTranscription) {
+  let storedTranscription: Transcription;
+
+  try {
+    storedTranscription =
+      await getTranscriptionRepo().createTranscription(transcription);
+  } catch (error) {
+    console.error("Failed to store transcription", error);
+    showErrorSnackbar("Unable to save transcription. Please try again.");
     return { transcription: null, wordCount: 0 };
   }
 
-  await recordUsageWords(wordsAdded);
-  await purgeStaleAudioSnapshots();
+  produceAppState((draft) => {
+    draft.transcriptionById[storedTranscription.id] = storedTranscription;
+    const existingIds = draft.transcriptions.transcriptionIds.filter(
+      (identifier) => identifier !== storedTranscription.id,
+    );
+    draft.transcriptions.transcriptionIds = [
+      storedTranscription.id,
+      ...existingIds,
+    ];
+  });
+
+  if (wordsAdded > 0) {
+    try {
+      await addWordsToCurrentUser(wordsAdded);
+    } catch (error) {
+      console.error("Failed to update usage metrics", error);
+    }
+  }
+
+  try {
+    const purgedIds = await getTranscriptionRepo().purgeStaleAudio();
+    if (purgedIds.length > 0) {
+      produceAppState((draft) => {
+        for (const purgedId of purgedIds) {
+          const purged = draft.transcriptionById[purgedId];
+          if (purged) {
+            delete purged.audio;
+          }
+        }
+      });
+    }
+  } catch (error) {
+    console.error("Failed to purge stale audio snapshots", error);
+  }
 
   return { transcription: storedTranscription, wordCount: wordsAdded };
 };

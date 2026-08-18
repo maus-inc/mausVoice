@@ -15,8 +15,6 @@ on:
       - "scripts/ci/pr28-contracts.test.mjs"
       - "scripts/ci/pr37-contracts.test.mjs"
       - "scripts/ci/generate-release-body.mjs"
-      - "scripts/ci/build-updater-manifest.mjs"
-      - "scripts/ci/updater-manifest.test.mjs"
       - "pnpm-lock.yaml"
       - ".github/workflows/test-docs.yml"
   pull_request:
@@ -33,8 +31,6 @@ on:
       - "scripts/ci/pr28-contracts.test.mjs"
       - "scripts/ci/pr37-contracts.test.mjs"
       - "scripts/ci/generate-release-body.mjs"
-      - "scripts/ci/build-updater-manifest.mjs"
-      - "scripts/ci/updater-manifest.test.mjs"
       - "pnpm-lock.yaml"
       - ".github/workflows/test-docs.yml"
   workflow_dispatch:
@@ -62,8 +58,6 @@ jobs:
         run: pnpm install --filter docs... --frozen-lockfile --ignore-scripts
       - name: Run PR28 contract tests
         run: node --test scripts/ci/pr28-contracts.test.mjs
-      - name: Run updater manifest tests
-        run: node --test scripts/ci/updater-manifest.test.mjs
       - name: Check docs types
         run: pnpm --filter docs run check-types
       - name: Build docs

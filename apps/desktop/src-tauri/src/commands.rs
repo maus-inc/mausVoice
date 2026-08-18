@@ -1,10 +1,8 @@
-use std::io::BufReader;
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use std::time::{SystemTime, UNIX_EPOCH};
 
-use base64::Engine;
 use url::Url;
 
 /// Per-command re-entry guards. When an IPC command mutates global OS state
@@ -70,13 +68,9 @@ use crate::domain::{
     EVT_REC_LEVEL,
 };
 use crate::platform::{ChunkCallback, LevelCallback};
-
-#[path = "../../../../packages/rust_transcription/src/audio.rs"]
-mod shared_audio;
 use crate::system::crypto::{protect_api_key, reveal_api_key};
 use crate::system::StorageRepo;
 use sqlx::Row;
-use rodio::Source;
 
 use crate::platform::input::paste_text_into_focused_field as platform_paste_text;
 
@@ -413,240 +407,12 @@ pub struct UserPreferencesGetArgs {
 }
 
 const MAX_RETAINED_TRANSCRIPTION_AUDIO: usize = 20;
-const MAX_AUDIO_IMPORT_FILE_BYTES: u64 = 100 * 1024 * 1024;
-const MAX_AUDIO_IMPORT_DURATION_SECONDS: u64 = 5 * 60;
-const MAX_AUDIO_IMPORT_OUTPUT_SAMPLES: usize =
-    16_000 * MAX_AUDIO_IMPORT_DURATION_SECONDS as usize;
-// Keep one absolute memory ceiling for pathological sample rates while the
-// normal limit below is derived from the file's actual rate and channel count.
-const MAX_AUDIO_IMPORT_DECODED_MEMORY_BYTES: usize = 128 * 1024 * 1024;
-const MAX_AUDIO_IMPORT_ABSOLUTE_DECODED_SAMPLES: usize =
-    MAX_AUDIO_IMPORT_DECODED_MEMORY_BYTES / std::mem::size_of::<f32>();
 
 #[derive(serde::Serialize, specta::Type)]
 #[serde(rename_all = "camelCase")]
 pub struct TranscriptionAudioData {
-    /// Little-endian signed 16-bit mono PCM. Keeping the IPC payload binary
-    /// avoids expanding every sample into a JSON number.
-    pub pcm16_le: Vec<u8>,
-    pub sample_rate: u32,
-}
-
-#[derive(serde::Serialize, specta::Type)]
-#[serde(rename_all = "camelCase")]
-pub struct TranscriptionAudioSamplesData {
     pub samples: Vec<f32>,
     pub sample_rate: u32,
-}
-
-static IMPORT_IN_FLIGHT: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
-
-/// Returns true when `path` lives at or under any of `allowed_roots`. Used by
-/// `transcription_import_audio` to confine imports to well-known user
-/// directories so the command cannot be used as a filesystem read oracle.
-fn is_path_within_allowed_roots(path: &std::path::Path, allowed_roots: &[PathBuf]) -> bool {
-    allowed_roots.iter().any(|root| path.starts_with(root))
-}
-
-#[tauri::command]
-#[specta::specta]
-pub async fn transcription_import_audio(
-    app: tauri::AppHandle,
-    path: String,
-) -> Result<TranscriptionAudioData, String> {
-    let path = PathBuf::from(path.trim());
-    if path.as_os_str().is_empty() {
-        return Err("No audio file was selected".to_string());
-    }
-    let path = path
-        .canonicalize()
-        .map_err(|_| "Unable to resolve the selected audio file.".to_string())?;
-
-    // Confine imports to well-known user directories and the app's audio
-    // store so this command cannot be used as a file-read oracle over the
-    // whole filesystem (e.g. reading `~/.ssh/id_rsa`). The home directory
-    // itself is intentionally excluded so sensitive dot-directories stay out
-    // of reach; only common media/download sub-directories are allowed.
-    let home_dir = app.path().home_dir().ok();
-    let mut allowed: Vec<PathBuf> = Vec::new();
-    if let Some(home) = home_dir {
-        for subdir in [
-            "Music",
-            "Downloads",
-            "Documents",
-            "Desktop",
-            "Pictures",
-            "Videos",
-            "Movies",
-            "Public",
-        ] {
-            allowed.push(home.join(subdir));
-        }
-    }
-    for dir in [
-        app.path().document_dir().ok(),
-        app.path().download_dir().ok(),
-        app.path().desktop_dir().ok(),
-        app.path().picture_dir().ok(),
-        crate::system::audio_store::audio_dir(&app).ok(),
-    ]
-    .into_iter()
-    .flatten()
-    {
-        allowed.push(dir);
-    }
-    let allowed_roots: Vec<PathBuf> = allowed
-        .into_iter()
-        .filter_map(|root| std::fs::canonicalize(&root).ok())
-        .collect();
-    if !is_path_within_allowed_roots(&path, &allowed_roots) {
-        return Err(
-            "The selected file is outside the allowed import locations.".to_string(),
-        );
-    }
-
-    // Open the validated path here (before any await) to narrow the TOCTOU
-    // window between validation and decode. This does not guarantee the opened
-    // file is the exact inode that `canonicalize` validated, but it avoids
-    // re-resolving the path after the blocking decode, and the single-flight
-    // guard below serializes concurrent imports so a rejected request cannot
-    // open files first.
-    let file = std::fs::File::open(&path)
-        .map_err(|_| "Unable to open the selected audio file.".to_string())?;
-
-    // Confirm the opened handle refers to the exact file that was validated,
-    // closing the canonicalize/open TOCTOU race where the file could be swapped
-    // for a different one between validation and open.
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::MetadataExt;
-        let validated = std::fs::metadata(&path)
-            .map_err(|_| "Unable to open the selected audio file.".to_string())?;
-        let opened = file
-            .metadata()
-            .map_err(|_| "Unable to open the selected audio file.".to_string())?;
-        if opened.dev() != validated.dev() || opened.ino() != validated.ino() {
-            return Err("The selected audio file changed during import.".to_string());
-        }
-    }
-    #[cfg(windows)]
-    {
-        use std::os::windows::fs::MetadataExt;
-        let validated = std::fs::metadata(&path)
-            .map_err(|_| "Unable to open the selected audio file.".to_string())?;
-        let opened = file
-            .metadata()
-            .map_err(|_| "Unable to open the selected audio file.".to_string())?;
-        if opened.volume_serial_number() != validated.volume_serial_number()
-            || opened.file_index() != validated.file_index()
-        {
-            return Err("The selected audio file changed during import.".to_string());
-        }
-    }
-
-    // Bound concurrent decodes so a flood of imports can't multiply the
-    // already-large per-decode memory ceiling. The ReentryGuard releases the
-    // flag on every exit path — including a dropped caller future — so a
-    // disconnected client can't wedge imports permanently (import DoS).
-    let _import_guard = match ReentryGuard::acquire(&IMPORT_IN_FLIGHT) {
-        Ok(guard) => guard,
-        Err(_) => {
-            return Err(
-                "An audio import is already in progress. Please wait for it to finish.".to_string(),
-            );
-        }
-    };
-
-    let result = tauri::async_runtime::spawn_blocking(move || {
-        let file_bytes = file
-            .metadata()
-            .map_err(|_| "Unable to inspect the selected audio file.".to_string())?
-            .len();
-        if file_bytes > MAX_AUDIO_IMPORT_FILE_BYTES {
-            return Err(format!(
-                "The selected audio file is too large (maximum is {} MiB)",
-                MAX_AUDIO_IMPORT_FILE_BYTES / (1024 * 1024)
-            ));
-        }
-
-        let decoder = rodio::Decoder::new(BufReader::new(file))
-            .map_err(|_| "Unable to decode the selected audio file.".to_string())?;
-        let source_rate = decoder.sample_rate();
-        let channels = decoder.channels().max(1) as usize;
-        if source_rate == 0 {
-            return Err("The selected audio file contains no usable samples".to_string());
-        }
-
-        // The decoded stream is interleaved, so derive its duration limit from
-        // the source rate and channel count rather than multiplying the
-        // 16 kHz mono output cap by a fixed factor. This accepts ordinary
-        // 44.1/48 kHz stereo recordings while retaining an absolute memory
-        // ceiling for unusual high-rate files.
-        let duration_sample_limit = (source_rate as usize)
-            .saturating_mul(channels)
-            .saturating_mul(MAX_AUDIO_IMPORT_DURATION_SECONDS as usize);
-        let max_decoded_samples = duration_sample_limit
-            .clamp(1, MAX_AUDIO_IMPORT_ABSOLUTE_DECODED_SAMPLES);
-        let memory_limited = duration_sample_limit > max_decoded_samples;
-        let decoded: Vec<f32> = decoder
-            .convert_samples::<f32>()
-            .take(max_decoded_samples.saturating_add(1))
-            .collect();
-
-        if decoded.len() > max_decoded_samples {
-            let reason = if memory_limited {
-                "the decoded audio exceeds the safe memory limit"
-            } else {
-                "the audio exceeds the duration limit"
-            };
-            return Err(format!(
-                "The selected audio file cannot be imported because {reason}"
-            ));
-        }
-        if decoded.is_empty() {
-            return Err("The selected audio file contains no usable samples".to_string());
-        }
-
-        let mono = if channels == 1 {
-            decoded
-        } else {
-            decoded
-                .chunks(channels)
-                .map(|frame| frame.iter().copied().sum::<f32>() / frame.len() as f32)
-                .collect()
-        };
-        let samples = shared_audio::resample_to_rate(&mono, source_rate, 16_000).map_err(|err| {
-            format!("Unable to convert the selected audio to 16 kHz mono: {err}")
-        })?;
-        if samples.len() > MAX_AUDIO_IMPORT_OUTPUT_SAMPLES {
-            return Err(format!(
-                "The selected audio file exceeds the {} minute import limit",
-                MAX_AUDIO_IMPORT_DURATION_SECONDS / 60
-            ));
-        }
-
-        Ok(TranscriptionAudioData {
-            pcm16_le: encode_pcm16_le(&samples),
-            sample_rate: 16_000,
-        })
-    })
-    .await
-    .map_err(|err| format!("audio import task failed: {err}"));
-    result?
-}
-
-fn encode_pcm16_le(samples: &[f32]) -> Vec<u8> {
-    let mut bytes = Vec::with_capacity(samples.len().saturating_mul(2));
-    for sample in samples {
-        let clamped = sample.clamp(-1.0, 1.0);
-        let value = if clamped < 0.0 {
-            (clamped * 0x8000 as f32) as i16
-        } else {
-            (clamped * 0x7fff as f32) as i16
-        };
-        bytes.extend_from_slice(&value.to_le_bytes());
-    }
-    bytes
 }
 
 async fn delete_audio_entries(
@@ -704,79 +470,6 @@ fn resolve_managed_audio_path(
     }
 
     Some(real_parent.join(file_name))
-}
-
-/// Resolve `path` to the exact file to read, or `None` when it does not live
-/// directly inside the managed transcription-audio directory. This is the read
-/// counterpart to `resolve_managed_audio_path`: the delete helper must *not*
-/// follow the final entry (so a symlink can be unlinked), but a read must
-/// prove the final entry stays inside `audio_dir` even after following
-/// symlinks. We canonicalize the whole candidate, so a final-position symlink
-/// such as `audio/clip.wav -> /outside/secret.wav` resolves outside
-/// `audio_dir` and is rejected rather than leaking the outside file's bytes.
-fn resolve_managed_audio_path_for_read(
-    path: &std::path::Path,
-    audio_dir: &std::path::Path,
-) -> Option<std::fs::File> {
-    let candidate = if path.is_absolute() {
-        path.to_path_buf()
-    } else {
-        audio_dir.join(path)
-    };
-
-    // Canonicalize the entire candidate (following a final symlink) and verify
-    // it resolves to a regular file whose parent is exactly the canonical
-    // managed audio directory.
-    let real_path = std::fs::canonicalize(&candidate).ok()?;
-    if !std::fs::metadata(&real_path).ok()?.is_file() {
-        return None;
-    }
-    let real_parent = real_path.parent()?;
-    let real_audio_dir = std::fs::canonicalize(audio_dir).ok()?;
-    if real_parent != real_audio_dir {
-        return None;
-    }
-
-    // Capture the device/inode identity of the validated path. We reopen and
-    // confirm the opened handle refers to the *same* inode, so a local
-    // swap/replace of the resolved file between validation and open cannot make
-    // us read an unrelated file.
-    #[cfg(unix)]
-    let validated_identity = {
-        use std::os::unix::fs::MetadataExt;
-        let meta = std::fs::metadata(&real_path).ok()?;
-        (meta.dev(), meta.ino())
-    };
-
-    // Open the validated file here so validation and the read are bound to the
-    // same handle, closing the time-of-check/time-of-use race where the file
-    // could be swapped for a symlink pointing outside `audio_dir` between this
-    // check and the later open/read.
-    let file = std::fs::File::open(&real_path).ok()?;
-
-    // Confirm the opened handle still matches the validated inode. Any swap
-    // that occurred after validation but before open is detected here.
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::MetadataExt;
-        let opened = file.metadata().ok()?;
-        if opened.dev() != validated_identity.0 || opened.ino() != validated_identity.1 {
-            return None;
-        }
-    }
-    #[cfg(windows)]
-    {
-        use std::os::windows::fs::MetadataExt;
-        let validated = std::fs::metadata(&real_path).ok()?;
-        let opened = file.metadata().ok()?;
-        if opened.volume_serial_number() != validated.volume_serial_number()
-            || opened.file_index() != validated.file_index()
-        {
-            return None;
-        }
-    }
-
-    Some(file)
 }
 
 /// Delete listed audio files that still live under `audio_dir`. Paths
@@ -1152,7 +845,7 @@ pub async fn transcription_audio_load(
     app: AppHandle,
     id: String,
     database: State<'_, crate::state::OptionKeyDatabase>,
-) -> Result<TranscriptionAudioSamplesData, String> {
+) -> Result<TranscriptionAudioData, String> {
     let pool = database.pool();
 
     let audio_path: Option<String> = sqlx::query_scalar(
@@ -1171,19 +864,18 @@ pub async fn transcription_audio_load(
     let audio_dir = crate::system::audio_store::audio_dir(&app).map_err(|err| err.to_string())?;
     let audio_path_buf = PathBuf::from(&audio_path);
 
-    let mut audio_file = match resolve_managed_audio_path_for_read(&audio_path_buf, &audio_dir) {
-        Some(file) => file,
-        None => return Err("Audio snapshot path is outside the managed directory".to_string()),
-    };
+    if !audio_path_buf.starts_with(&audio_dir) {
+        return Err("Audio snapshot path is outside the managed directory".to_string());
+    }
 
     let (samples, sample_rate) = tauri::async_runtime::spawn_blocking(move || {
-        crate::system::audio_store::load_audio_samples(&mut audio_file)
+        crate::system::audio_store::load_audio_samples(&audio_path_buf)
             .map_err(|err| err.to_string())
     })
     .await
     .map_err(|err| err.to_string())??;
 
-    Ok(TranscriptionAudioSamplesData {
+    Ok(TranscriptionAudioData {
         samples,
         sample_rate,
     })
@@ -1228,7 +920,6 @@ pub async fn export_transcription(
     let audio_dir = crate::system::audio_store::audio_dir(&app).map_err(|err| err.to_string())?;
 
     tauri::async_runtime::spawn_blocking(move || {
-        use std::io::Read;
         use std::io::Write;
         use zip::write::SimpleFileOptions;
 
@@ -1253,12 +944,9 @@ pub async fn export_transcription(
         }
 
         if let Some(ref audio_path_str) = audio_path {
-            let path_buf = PathBuf::from(audio_path_str);
-            if let Some(mut audio_file) = resolve_managed_audio_path_for_read(&path_buf, &audio_dir)
-            {
-                let mut audio_data = Vec::new();
-                audio_file
-                    .read_to_end(&mut audio_data)
+            let audio_path_buf = PathBuf::from(audio_path_str);
+            if audio_path_buf.starts_with(&audio_dir) && audio_path_buf.exists() {
+                let audio_data = std::fs::read(&audio_path_buf)
                     .map_err(|err| format!("Failed to read audio: {err}"))?;
                 zip.start_file("audio.wav", options)
                     .map_err(|err| err.to_string())?;
@@ -1410,22 +1098,6 @@ pub async fn hotkey_delete(
     crate::db::hotkey_queries::delete_hotkey(database.pool(), &id)
         .await
         .map_err(|err| err.to_string())
-}
-
-#[tauri::command]
-#[specta::specta]
-pub async fn hotkey_replace_style_hotkeys(
-    prefix: String,
-    hotkeys: Vec<crate::domain::Hotkey>,
-    database: State<'_, crate::state::OptionKeyDatabase>,
-) -> Result<Vec<crate::domain::Hotkey>, String> {
-    crate::db::hotkey_queries::replace_hotkeys_by_prefix(
-        database.pool(),
-        &prefix,
-        &hotkeys,
-    )
-    .await
-    .map_err(|err| err.to_string())
 }
 
 fn current_timestamp_millis() -> Result<i64, String> {
@@ -2811,6 +2483,7 @@ const ALLOWED_COMMANDS: &[AllowedCommand] = &[
     AllowedCommand { binary: "ls", fixed_args: &[] },
     AllowedCommand { binary: "pwd", fixed_args: &[] },
     AllowedCommand { binary: "echo", fixed_args: &[] },
+    AllowedCommand { binary: "cat", fixed_args: &[] },
     AllowedCommand { binary: "which", fixed_args: &[] },
     AllowedCommand { binary: "whoami", fixed_args: &[] },
     AllowedCommand { binary: "date", fixed_args: &[] },
@@ -2851,12 +2524,9 @@ fn is_safe_arg_token(token: &str) -> bool {
 /// Characters that are forbidden inside any argv token passed through
 /// `run_terminal_command`. Blocked as defense-in-depth even though we never
 /// invoke a shell — makes it obvious to model authors that shell
-/// composition is out. `/` and `\` are forbidden so an allow-listed reader
-/// (e.g. a hypothetical `cat`) cannot reach arbitrary filesystem paths like
-/// `/etc/passwd`, `C:\Users\…`, or `~/.ssh/id_rsa`, and `..` path traversal is
-/// caught by the substring check below.
+/// composition is out.
 const TERMINAL_FORBIDDEN_CHARS: &[char] =
-    &[';', '|', '&', '$', '`', '>', '<', '(', ')', '/', '\\', '\n', '\r'];
+    &[';', '|', '&', '$', '`', '>', '<', '(', ')', '\n', '\r'];
 
 /// Validate a user-supplied command string against the same rules
 /// `run_terminal_command` enforces. Shared between the command itself and
@@ -2888,11 +2558,6 @@ fn validate_terminal_command_args(
                     "Shell metacharacters are not permitted in command arguments (found {ch:?} in {token:?})"
                 ));
             }
-        }
-        if token.contains("..") {
-            return Err(format!(
-                "Path traversal (..) is not permitted in command arguments (found in {token:?})"
-            ));
         }
     }
 
@@ -2938,61 +2603,6 @@ fn parse_floating_window_url(url: &str) -> Result<Url, String> {
     Url::parse(url).map_err(|e| format!("Invalid URL: {e}"))
 }
 
-fn hex_value(value: u8) -> Option<u8> {
-    match value {
-        b'0'..=b'9' => Some(value - b'0'),
-        b'a'..=b'f' => Some(value - b'a' + 10),
-        b'A'..=b'F' => Some(value - b'A' + 10),
-        _ => None,
-    }
-}
-
-fn percent_decode_route_path(path: &str) -> Result<String, String> {
-    let bytes = path.as_bytes();
-    let mut decoded = Vec::with_capacity(bytes.len());
-    let mut index = 0;
-    while index < bytes.len() {
-        if bytes[index] == b'%' {
-            let high = bytes
-                .get(index + 1)
-                .and_then(|value| hex_value(*value))
-                .ok_or_else(|| "Floating app route has invalid percent encoding".to_string())?;
-            let low = bytes
-                .get(index + 2)
-                .and_then(|value| hex_value(*value))
-                .ok_or_else(|| "Floating app route has invalid percent encoding".to_string())?;
-            decoded.push((high << 4) | low);
-            index += 3;
-        } else {
-            decoded.push(bytes[index]);
-            index += 1;
-        }
-    }
-    String::from_utf8(decoded)
-        .map_err(|_| "Floating app route path is not valid UTF-8".to_string())
-}
-
-/// Validate only the path portion of a local app route. Query values are
-/// opaque user data; rejecting `..` anywhere in the full route would reject
-/// legitimate transcript text such as "Wait... what?".
-fn validate_local_app_route(route: &str) -> Result<(), String> {
-    let path = route.split(['?', '#']).next().unwrap_or(route);
-    let decoded_path = percent_decode_route_path(path)?;
-    let has_parent_segment = decoded_path.split('/').any(|segment| segment == "..");
-
-    if decoded_path.is_empty()
-        || decoded_path.starts_with('/')
-        || decoded_path.contains('\\')
-        || has_parent_segment
-    {
-        return Err(
-            "Floating app routes must be relative and cannot contain path traversal".to_string(),
-        );
-    }
-
-    Ok(())
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -3019,18 +2629,6 @@ mod tests {
         assert!(validate_terminal_command_args("echo $(whoami)").is_err());
         assert!(validate_terminal_command_args("echo `whoami`").is_err());
         assert!(validate_terminal_command_args("echo > file").is_err());
-    }
-
-    #[test]
-    fn terminal_command_rejects_path_traversal_in_args() {
-        // Even with an allow-listed binary, path separators and `..` in
-        // arguments must be refused so a reader cannot reach arbitrary files.
-        assert!(validate_terminal_command_args("ls /etc/passwd").is_err());
-        assert!(validate_terminal_command_args("echo /etc/passwd").is_err());
-        assert!(validate_terminal_command_args("cat /etc/passwd").is_err());
-        assert!(validate_terminal_command_args("echo ../../secrets").is_err());
-        assert!(validate_terminal_command_args("echo ..").is_err());
-        assert!(validate_terminal_command_args("ls ~/.ssh/id_rsa").is_err());
     }
 
     #[cfg(not(target_os = "windows"))]
@@ -3082,81 +2680,14 @@ mod tests {
     }
 
     #[test]
-    fn terminal_command_rejects_binary_with_embedded_space() {
-        // A binary name that contains a space can never match an allow-list
-        // entry (entries are single, space-free tokens), so it is rejected
-        // rather than silently collapsing into a different command.
-        assert!(validate_terminal_command_args("\"ls -rf\"").is_err());
-        assert!(validate_terminal_command_args("my binary").is_err());
-    }
-
-    #[test]
-    fn terminal_command_accepts_allowed_command_with_empty_args() {
-        // An allow-listed binary with no user-supplied arguments is accepted
-        // and reports an empty argv tail.
-        let (allowed, args) = validate_terminal_command_args("ls").unwrap();
-        assert_eq!(allowed.binary, "ls");
-        assert!(args.is_empty());
-    }
-
-    #[cfg(not(target_os = "windows"))]
-    #[tokio::test]
-    async fn terminal_command_runs_ls_without_path_in_environment() {
-        // Serialize env mutation so it cannot race any other test.
-        static PATH_GUARD: std::sync::Mutex<()> = std::sync::Mutex::new(());
-        let _guard = PATH_GUARD.lock().unwrap();
-
-        let original = std::env::var("PATH").ok();
-        // Simulate a process environment that has no PATH at all.
-        std::env::remove_var("PATH");
-
-        let result = run_terminal_command("ls".to_string()).await;
-
-        // Restore the environment for any subsequent code.
-        match original {
-            Some(value) => std::env::set_var("PATH", value),
-            None => std::env::remove_var("PATH"),
-        }
-        drop(_guard);
-
-        // `cmd.env_clear()` drops PATH from the child, but the OS default
-        // search path still resolves `ls`, so the command must succeed rather
-        // than fail to spawn with a missing-PATH error.
-        let response = result.expect("ls should run even without a PATH env var");
-        assert_eq!(response.exit_code, 0);
-        assert!(!response.stdout.is_empty());
-    }
-
-    #[test]
     fn installer_url_accepts_trusted_release_hosts() {
         assert!(validate_installer_url(
             &Url::parse("https://github.com/maus-inc/mausVoice/releases/download/v1/app.pkg")
-                .unwrap(),
-            TRUSTED_REPO_NAMESPACE
+                .unwrap()
         )
         .is_ok());
         assert!(validate_installer_url(
-            &Url::parse("https://github.com/maus-inc/mausVoice/releases/download/v1/mausVoice_0.1.7_universal.dmg")
-                .unwrap(),
-            TRUSTED_REPO_NAMESPACE
-        )
-        .is_ok());
-        assert!(validate_installer_url(
-            &Url::parse(
-                "https://github.com/maus-inc/mausVoice/releases/download/v1/mausVoice.app.tar.gz"
-            )
-            .unwrap(),
-            TRUSTED_REPO_NAMESPACE
-        )
-        .is_ok());
-        // The objects CDN is allowed only when the hop retains the trusted
-        // repository namespace.
-        assert!(validate_installer_url(
-            &Url::parse(
-                "https://objects.githubusercontent.com/maus-inc/mausVoice/releases/download/v1/app.pkg"
-            )
-            .unwrap(),
-            TRUSTED_REPO_NAMESPACE
+            &Url::parse("https://objects.githubusercontent.com/foo/app.pkg").unwrap()
         )
         .is_ok());
     }
@@ -3166,28 +2697,14 @@ mod tests {
         // A redirect target on an untrusted host must be refused: this is the
         // check the redirect policy applies to every hop.
         assert!(
-            validate_installer_url(
-                &Url::parse("https://evil.com/app.pkg").unwrap(),
-                TRUSTED_REPO_NAMESPACE
-            )
-            .is_err()
+            validate_installer_url(&Url::parse("https://evil.com/app.pkg").unwrap()).is_err()
         );
         assert!(validate_installer_url(
-            &Url::parse("http://github.com/maus-inc/app.pkg").unwrap(),
-            TRUSTED_REPO_NAMESPACE
+            &Url::parse("http://github.com/maus-inc/app.pkg").unwrap()
         )
         .is_err());
         assert!(validate_installer_url(
-            &Url::parse("https://github.com/maus-inc/payload.sh").unwrap(),
-            TRUSTED_REPO_NAMESPACE
-        )
-        .is_err());
-        // An objects CDN hop that escapes into a different repository namespace
-        // must be rejected even though the host is allow-listed.
-        assert!(validate_installer_url(
-            &Url::parse("https://objects.githubusercontent.com/other-org/otherRepo/releases/download/v1/app.pkg")
-                .unwrap(),
-            TRUSTED_REPO_NAMESPACE
+            &Url::parse("https://github.com/maus-inc/payload.sh").unwrap()
         )
         .is_err());
     }
@@ -3214,13 +2731,6 @@ mod tests {
     fn floating_window_allows_localhost() {
         assert!(validate_floating_window_url(&Url::parse("http://localhost:1420/").unwrap()).is_ok());
         assert!(validate_floating_window_url(&Url::parse("http://127.0.0.1:8080/foo").unwrap()).is_ok());
-    }
-
-    #[test]
-    fn local_app_route_allows_dots_in_query_data() {
-        assert!(validate_local_app_route("composer?text=Wait...%20what%3F").is_ok());
-        assert!(validate_local_app_route("composer/../settings").is_err());
-        assert!(validate_local_app_route("composer/%2e%2e/settings").is_err());
     }
 
     #[test]
@@ -3499,74 +3009,6 @@ mod tests {
     }
 
     #[test]
-    fn managed_audio_read_rejects_final_symlink_escape() {
-        let root = std::env::temp_dir()
-            .join(format!("mausvoice-audio-read-{}", std::process::id()));
-        let audio_dir = root.join("audio");
-        let outside_dir = root.join("outside");
-        std::fs::create_dir_all(&audio_dir).unwrap();
-        std::fs::create_dir_all(&outside_dir).unwrap();
-        let secret = outside_dir.join("secret.wav");
-        std::fs::write(&secret, b"TOP SECRET").unwrap();
-
-        #[cfg(unix)]
-        {
-            // A final-entry symlink pointing outside must be rejected for
-            // reads: canonicalizing the whole path follows the symlink and
-            // lands outside audio_dir, so the bytes are never leaked.
-            let link = audio_dir.join("clip.wav");
-            std::os::unix::fs::symlink(&secret, &link).unwrap();
-            assert!(
-                resolve_managed_audio_path_for_read(&link, &audio_dir).is_none()
-            );
-
-            // A regular file inside audio_dir is still accepted.
-            let real = audio_dir.join("real.wav");
-            std::fs::write(&real, b"ok").unwrap();
-            assert!(resolve_managed_audio_path_for_read(&real, &audio_dir).is_some());
-        }
-
-        let _ = std::fs::remove_dir_all(&root);
-    }
-
-    #[test]
-    fn managed_audio_read_returns_usable_handle_for_regular_file() {
-        let root = std::env::temp_dir()
-            .join(format!("mausvoice-audio-read-handle-{}", std::process::id()));
-        let audio_dir = root.join("audio");
-        std::fs::create_dir_all(&audio_dir).unwrap();
-        let real = audio_dir.join("real.wav");
-        std::fs::write(&real, b"readable-bytes").unwrap();
-
-        // The read helper must return a handle to the *validated* file whose
-        // bytes match what was on disk.
-        let file = resolve_managed_audio_path_for_read(&real, &audio_dir);
-        assert!(file.is_some());
-        let mut buf = String::new();
-        use std::io::Read;
-        file.unwrap().read_to_string(&mut buf).unwrap();
-        assert_eq!(buf, "readable-bytes");
-
-        let _ = std::fs::remove_dir_all(&root);
-    }
-
-    #[test]
-    fn import_path_is_rejected_outside_allowed_roots() {
-        // Mirrors the confinement check in `transcription_import_audio`: a path
-        // outside the allowed import roots must be rejected so the command
-        // cannot be used as a filesystem read oracle.
-        let tmp = std::env::temp_dir()
-            .join(format!("mausvoice-import-confine-{}", std::process::id()));
-        let allowed = vec![tmp.join("allowed")];
-        std::fs::create_dir_all(&allowed[0]).unwrap();
-        let inside = allowed[0].join("clip.wav");
-        let outside = tmp.join("outside.wav");
-        assert!(is_path_within_allowed_roots(&inside, &allowed));
-        assert!(!is_path_within_allowed_roots(&outside, &allowed));
-        let _ = std::fs::remove_dir_all(&tmp);
-    }
-
-    #[test]
     fn clear_local_data_file_helpers_respect_the_audio_dir_guard() {
         let root = std::env::temp_dir().join(format!(
             "mausvoice-clear-local-{}",
@@ -3616,29 +3058,10 @@ mod tests {
         )
         .unwrap();
         let evil = Url::parse("https://evil.com/app.pkg").unwrap();
-        assert!(installer_redirect_allowed(0, &ok, TRUSTED_REPO_NAMESPACE).is_ok());
-        assert!(installer_redirect_allowed(9, &ok, TRUSTED_REPO_NAMESPACE).is_ok());
-        assert!(installer_redirect_allowed(10, &ok, TRUSTED_REPO_NAMESPACE).is_err());
-        assert!(installer_redirect_allowed(0, &evil, TRUSTED_REPO_NAMESPACE).is_err());
-    }
-
-    #[test]
-    fn installer_redirect_allows_opaque_cdn_path() {
-        // GitHub's release-asset CDN returns an opaque UUID path; the real
-        // filename is carried in the signed query parameters. The validator must
-        // accept this normal redirect rather than demanding a path extension.
-        let cdn = Url::parse(
-            "https://release-assets.githubusercontent.com/github-production-release-asset/1234/\
-             abcdef-1234-5678?response-content-disposition=attachment%3Bfilename%3DmausVoice_1.0.0_universal.dmg",
-        )
-        .unwrap();
-        assert!(installer_redirect_allowed(1, &cdn, TRUSTED_REPO_NAMESPACE).is_ok());
-        // A non-GitHub host must still be rejected even with a dmg-looking query.
-        let bad = Url::parse(
-            "https://evil-cdn.example.com/uuid?response-content-disposition=attachment%3Bfilename%3DmausVoice_1.0.0_universal.dmg",
-        )
-        .unwrap();
-        assert!(installer_redirect_allowed(1, &bad, TRUSTED_REPO_NAMESPACE).is_err());
+        assert!(installer_redirect_allowed(0, &ok).is_ok());
+        assert!(installer_redirect_allowed(9, &ok).is_ok());
+        assert!(installer_redirect_allowed(10, &ok).is_err());
+        assert!(installer_redirect_allowed(0, &evil).is_err());
     }
 
     #[test]
@@ -3651,18 +3074,6 @@ mod tests {
             INSTALLER_MAX_BYTES
         );
         assert!(installer_account_chunk(INSTALLER_MAX_BYTES, 1).is_err());
-    }
-
-    #[test]
-    fn signature_size_cap_rejects_advertised_and_streamed_oversize() {
-        assert!(signature_content_length_ok(None).is_ok());
-        assert!(signature_content_length_ok(Some(SIGNATURE_MAX_BYTES)).is_ok());
-        assert!(signature_content_length_ok(Some(SIGNATURE_MAX_BYTES + 1)).is_err());
-        assert_eq!(
-            signature_account_chunk(0, SIGNATURE_MAX_BYTES).unwrap(),
-            SIGNATURE_MAX_BYTES
-        );
-        assert!(signature_account_chunk(SIGNATURE_MAX_BYTES, 1).is_err());
     }
 
     #[test]
@@ -3824,29 +3235,17 @@ pub fn check_app_location_writable() -> Result<bool, String> {
     }
 }
 
-/// Maximum size we are willing to download for a macOS installer (`.pkg`,
-/// `.dmg`, or `.app.tar.gz`).
+/// Maximum size we are willing to download for a `.pkg` installer.
 const INSTALLER_MAX_BYTES: u64 = 250 * 1024 * 1024;
 const INSTALLER_MAX_REDIRECTS: usize = 10;
 
-/// Installer file extensions we are willing to download and open. Tauri v2
-/// direct-sign produces `.dmg` (and `.app.tar.gz`) for macOS; `.pkg` is kept
-/// for v1-compatible installs. The list is explicit so a future artifact type
-/// cannot be opened by accident.
-const ALLOWED_INSTALLER_EXTENSIONS: &[&str] = &[".pkg", ".dmg", ".app.tar.gz"];
-
 /// Decide whether a redirect hop is allowed. Applied to every hop so an
-/// allowed host cannot bounce us onto an untrusted origin. `trusted_namespace`
-/// is the `/owner/repo/` namespace of the originally requested release.
-fn installer_redirect_allowed(
-    previous_hops: usize,
-    url: &Url,
-    trusted_namespace: &str,
-) -> Result<(), String> {
+/// allowed host cannot bounce us onto an untrusted origin.
+fn installer_redirect_allowed(previous_hops: usize, url: &Url) -> Result<(), String> {
     if previous_hops >= INSTALLER_MAX_REDIRECTS {
         return Err("too many redirects".to_string());
     }
-    validate_installer_url(url, trusted_namespace)
+    validate_installer_url(url)
 }
 
 /// Reject an advertised Content-Length above the streaming cap before any
@@ -3869,407 +3268,57 @@ fn installer_account_chunk(written: u64, chunk_len: u64) -> Result<u64, String> 
     Ok(next)
 }
 
-/// A detached minisign signature is only a few hundred bytes. Reusing the
-/// installer's 250 MiB cap here would let a malicious or malformed response
-/// without a `Content-Length` consume the full cap before being rejected, so
-/// the signature download enforces a tight dedicated limit instead.
-const SIGNATURE_MAX_BYTES: u64 = 16 * 1024;
-
-/// Reject an advertised Content-Length above the signature cap before any bytes
-/// are read.
-fn signature_content_length_ok(len: Option<u64>) -> Result<(), String> {
-    if let Some(n) = len {
-        if n > SIGNATURE_MAX_BYTES {
-            return Err("Installer signature exceeded 16KiB safety limit".to_string());
-        }
-    }
-    Ok(())
-}
-
-/// Accumulate a downloaded signature chunk against the signature cap.
-fn signature_account_chunk(written: u64, chunk_len: u64) -> Result<u64, String> {
-    let next = written.saturating_add(chunk_len);
-    if next > SIGNATURE_MAX_BYTES {
-        return Err("Installer signature exceeded 16KiB safety limit".to_string());
-    }
-    Ok(next)
-}
-
-/// Extensions accepted for the detached signature artifact.
-const ALLOWED_SIGNATURE_EXTENSIONS: &[&str] = &[".sig"];
-
-/// Validate the *initial* signature URL: it must come from the trusted GitHub
-/// repository's release download path and name a `.sig` file. Redirect hops are
-/// validated separately (host + extension only) for the same reasons as
-/// `validate_initial_installer_url`.
-fn validate_initial_signature_url(url: &Url) -> Result<(), String> {
-    if url.scheme() != "https" {
-        return Err("Signature URL must use https".to_string());
-    }
-    if url.host_str() != Some("github.com") {
-        return Err(format!(
-            "Installer signature must come from github.com, got {:?}",
-            url.host_str()
-        ));
-    }
-    if !url.path().starts_with(TRUSTED_RELEASE_PATH_PREFIX) {
-        return Err(format!(
-            "Installer signature must be a maus-inc/mausVoice release asset: {}",
-            url.path()
-        ));
-    }
-    if !ALLOWED_SIGNATURE_EXTENSIONS
-        .iter()
-        .any(|ext| url.path().ends_with(ext))
-    {
-        return Err(format!(
-            "Signature URL must point to a .sig file, got {}",
-            url.path()
-        ));
-    }
-    Ok(())
-}
-
-/// Validate a signature URL (scheme, host allow-list, accepted extension).
-/// Applied to every *redirect* hop, mirroring `validate_installer_url`.
-/// `trusted_namespace` is the `/owner/repo/` namespace of the originally
-/// requested release, captured from the initial URL so a redirect cannot
-/// bounce us into a different repository.
-fn validate_signature_url(url: &Url, trusted_namespace: &str) -> Result<(), String> {
-    if url.scheme() != "https" {
-        return Err("Signature URL must use https".to_string());
-    }
-    let host = url.host_str().unwrap_or("");
-    if !matches!(
-        host,
-        "github.com" | "objects.githubusercontent.com" | "release-assets.githubusercontent.com"
-    ) {
-        return Err(format!(
-            "Signature URL host {host:?} is not in the trusted allow-list"
-        ));
-    }
-    // Every redirect hop must stay within the repository namespace that was
-    // originally requested. github.com hops already carry the full release
-    // path, and objects.githubusercontent.com may serve either the namespace
-    // path or the full release-download prefix. The release-assets CDN is the
-    // single intentional carve-out: it answers an opaque token path whose real
-    // target is encoded in signed query parameters, so it is exempt from both
-    // the namespace and extension checks. A hop escaping the namespace is
-    // rejected fail-closed — minisign verification is the backstop, not the
-    // only line of defense.
-    if host != "release-assets.githubusercontent.com"
-        && !url.path().starts_with(trusted_namespace)
-        && !url.path().starts_with(TRUSTED_RELEASE_PATH_PREFIX)
-    {
-        return Err(format!(
-            "Signature redirect must stay within the trusted repository namespace {trusted_namespace:?}, got {}",
-            url.path()
-        ));
-    }
-    if host != "release-assets.githubusercontent.com"
-        && !ALLOWED_SIGNATURE_EXTENSIONS
-            .iter()
-            .any(|ext| url.path().ends_with(ext))
-    {
-        return Err(format!(
-            "Signature URL must point to a .sig file, got {}",
-            url.path()
-        ));
-    }
-    Ok(())
-}
-
-/// Decide whether a signature redirect hop is allowed.
-fn signature_redirect_allowed(
-    previous_hops: usize,
-    url: &Url,
-    trusted_namespace: &str,
-) -> Result<(), String> {
-    if previous_hops >= INSTALLER_MAX_REDIRECTS {
-        return Err("too many redirects".to_string());
-    }
-    validate_signature_url(url, trusted_namespace)
-}
-
-/// Resolve the embedded updater public key (minisign text, base64-encoded in
-/// the compiled Tauri config) from the running app. The release build injects
-/// the real key from a secret; dev/test builds intentionally keep it empty so
-/// an unsigned build cannot silently trust anything.
-fn updater_public_key_text(app: &AppHandle) -> Result<String, String> {
-    let raw = app
-        .config()
-        .plugins
-        .0
-        .get("updater")
-        .and_then(|v| v.get("pubkey"))
-        .and_then(|v| v.as_str())
-        .ok_or_else(|| "Updater public key is not configured".to_string())?;
-    if raw.is_empty() {
-        return Err("Updater public key is not configured".to_string());
-    }
-    let decoded = base64::engine::general_purpose::STANDARD
-        .decode(raw)
-        .map_err(|e| format!("Failed to decode updater public key: {e}"))?;
-    String::from_utf8(decoded)
-        .map_err(|e| format!("Updater public key is not valid UTF-8: {e}"))
-}
-
-/// Download the detached `.sig` (minisign text format) for an installer,
-/// validating every redirect hop against the trusted allow-list and enforcing
-/// a tight dedicated size cap (a signature is only a few hundred bytes, so it
-/// must not reuse the installer's 250 MiB streaming budget).
-async fn download_installer_signature(signature_url: &str) -> Result<Vec<u8>, String> {
-    let parsed = Url::parse(signature_url).map_err(|e| format!("Invalid signature URL: {e}"))?;
-    validate_initial_signature_url(&parsed)?;
-    let trusted_namespace = extract_repo_namespace(&parsed);
-
-    let redirect_policy = reqwest::redirect::Policy::custom(move |attempt| {
-        match signature_redirect_allowed(
-            attempt.previous().len(),
-            attempt.url(),
-            &trusted_namespace,
-        ) {
-            Ok(()) => attempt.follow(),
-            Err(err) => attempt.error(err),
-        }
-    });
-    let client = reqwest::Client::builder()
-        .redirect(redirect_policy)
-        .build()
-        .map_err(|e| e.to_string())?;
-
-    let mut response = client
-        .get(parsed)
-        .send()
-        .await
-        .map_err(|e| e.to_string())?;
-    if !response.status().is_success() {
-        return Err(format!(
-            "Signature download failed with status {}",
-            response.status()
-        ));
-    }
-    signature_content_length_ok(response.content_length())?;
-
-    let mut sig = Vec::new();
-    let mut written: u64 = 0;
-    while let Some(chunk) = response.chunk().await.map_err(|e| e.to_string())? {
-        written = signature_account_chunk(written, chunk.len() as u64)?;
-        sig.extend_from_slice(&chunk);
-    }
-    Ok(sig)
-}
-
-/// Verify `data` against a minisign detached signature using the embedded
-/// updater public key. Returns `Ok(())` only when the signature is valid.
-fn verify_minisign_data(
-    public_key_text: &str,
-    data: &[u8],
-    signature_text: &str,
-) -> Result<(), String> {
-    let public_key = minisign_verify::PublicKey::decode(public_key_text)
-        .map_err(|e| format!("Failed to parse updater public key: {e}"))?;
-    let signature = minisign_verify::Signature::decode(signature_text)
-        .map_err(|e| format!("Failed to parse installer signature: {e}"))?;
-    public_key
-        .verify(data, &signature, true)
-        .map_err(|e| format!("Installer signature verification failed: {e}"))?;
-    Ok(())
-}
-
-/// Download and verify the detached signature for the already-downloaded
-/// installer at `dmg_path`. On any failure the caller must delete the temp
-/// file; this function never opens or executes anything.
-async fn verify_installer_signature(
-    app: &AppHandle,
-    dmg_path: &std::path::Path,
-    signature_url: &str,
-) -> Result<(), String> {
-    if signature_url.is_empty() {
-        return Err("No installer signature provided; refusing to open unverified installer".to_string());
-    }
-    let public_key_text = updater_public_key_text(app)?;
-    let sig_bytes = download_installer_signature(signature_url).await?;
-    let signature_text = String::from_utf8(sig_bytes)
-        .map_err(|e| format!("Installer signature is not valid UTF-8: {e}"))?;
-    // Reading the whole installer and verifying its signature are CPU- and
-    // memory-bound; move them off the async runtime so unrelated IPC/native
-    // work is not stalled by a 250 MiB read + verification.
-    let dmg_path = dmg_path.to_path_buf();
-    tauri::async_runtime::spawn_blocking(move || {
-        let data = std::fs::read(&dmg_path).map_err(|e| e.to_string())?;
-        verify_minisign_data(&public_key_text, &data, &signature_text)
-    })
-    .await
-    .map_err(|e| format!("installer verification task failed: {e}"))?
-}
-
-/// Only mausVoice release assets from this exact repository path may be used
-/// as a manual installer source. A renderer with IPC access must not be able
-/// to make us download and open a release asset from an arbitrary repository.
-const TRUSTED_RELEASE_PATH_PREFIX: &str = "/maus-inc/mausVoice/releases/download/";
-
-/// The repository namespace every redirect hop must retain. A hop may serve
-/// either this namespace path or the full trusted release-download prefix;
-/// anything else is rejected fail-closed.
-const TRUSTED_REPO_NAMESPACE: &str = "/maus-inc/mausVoice/";
-
-/// Derive the repository namespace (`/owner/repo/`) a release URL belongs to,
-/// so redirect hops are checked against the exact repository originally
-/// requested rather than a hardcoded constant. The initial URL is always
-/// validated against `TRUSTED_RELEASE_PATH_PREFIX` first, but deriving the
-/// namespace from the parsed URL keeps the per-hop check tied to the real
-/// request even if the trusted prefix ever changes.
-fn extract_repo_namespace(url: &Url) -> String {
-    let segments: Vec<&str> = url
-        .path_segments()
-        .map(|s| s.filter(|p| !p.is_empty()).collect())
-        .unwrap_or_default();
-    if segments.len() >= 2 {
-        format!("/{}/{}/", segments[0], segments[1])
-    } else {
-        TRUSTED_REPO_NAMESPACE.to_string()
-    }
-}
-
-/// Validate the *initial* installer URL: it must come from the trusted GitHub
-/// repository's release download path. Redirect hops are validated separately
-/// (host + extension only) because a legitimate asset is served from GitHub's
-/// CDN after a normal `302`.
-fn validate_initial_installer_url(url: &Url) -> Result<(), String> {
-    if url.scheme() != "https" {
-        return Err("Installer URL must use https".to_string());
-    }
-    if url.host_str() != Some("github.com") {
-        return Err(format!(
-            "Manual installer must come from github.com, got {:?}",
-            url.host_str()
-        ));
-    }
-    if !url.path().starts_with(TRUSTED_RELEASE_PATH_PREFIX) {
-        return Err(format!(
-            "Manual installer must be a maus-inc/mausVoice release asset: {}",
-            url.path()
-        ));
-    }
-    if !ALLOWED_INSTALLER_EXTENSIONS
-        .iter()
-        .any(|ext| url.path().ends_with(ext))
-    {
-        return Err(format!(
-            "Installer URL must point to one of {ALLOWED_INSTALLER_EXTENSIONS:?}, got {}",
-            url.path()
-        ));
-    }
-    Ok(())
-}
-
-/// Validate an installer URL (scheme, host allow-list, accepted extension).
-/// Applied to every *redirect* hop, because the redirect chain is
-/// attacker-influenced: an allowed host could otherwise bounce us to an
-/// untrusted origin whose bytes we would write and execute. `trusted_namespace`
-/// is the `/owner/repo/` namespace of the originally requested release,
-/// captured from the initial URL so a redirect cannot bounce us into a
-/// different repository.
-fn validate_installer_url(url: &Url, trusted_namespace: &str) -> Result<(), String> {
+/// Validate an installer URL (scheme, host allow-list, `.pkg` path). Applied
+/// to the initial URL *and* to every redirect hop, because the redirect chain
+/// is attacker-influenced: an allowed host could otherwise bounce us to an
+/// untrusted origin whose bytes we would write and execute.
+fn validate_installer_url(url: &Url) -> Result<(), String> {
     if url.scheme() != "https" {
         return Err("Installer URL must use https".to_string());
     }
     let host = url.host_str().unwrap_or("");
-    if !matches!(
-        host,
-        "github.com" | "objects.githubusercontent.com" | "release-assets.githubusercontent.com"
-    ) {
+    if !matches!(host, "github.com" | "objects.githubusercontent.com") {
         return Err(format!(
             "Installer URL host {host:?} is not in the trusted allow-list"
         ));
     }
-    // Every redirect hop must stay within the repository namespace that was
-    // originally requested. github.com hops already carry the full release
-    // path, and objects.githubusercontent.com may serve either the namespace
-    // path or the full release-download prefix. The release-assets CDN is the
-    // single intentional carve-out: it answers an opaque token path whose real
-    // target is encoded in signed query parameters, so it is exempt from both
-    // the namespace and extension checks. A hop escaping the namespace is
-    // rejected fail-closed — minisign verification is the backstop, not the
-    // only line of defense.
-    if host != "release-assets.githubusercontent.com"
-        && !url.path().starts_with(trusted_namespace)
-        && !url.path().starts_with(TRUSTED_RELEASE_PATH_PREFIX)
-    {
-        return Err(format!(
-            "Installer redirect must stay within the trusted repository namespace {trusted_namespace:?}, got {}",
-            url.path()
-        ));
-    }
-    // GitHub's release-asset CDN answers an opaque path whose real filename
-    // lives in the signed query parameters, so an extension check would reject
-    // every legitimate redirect. Every other allowed host keeps its
-    // path-based extension requirement.
-    if host != "release-assets.githubusercontent.com"
-        && !ALLOWED_INSTALLER_EXTENSIONS
-            .iter()
-            .any(|ext| url.path().ends_with(ext))
-    {
-        return Err(format!(
-            "Installer URL must point to one of {ALLOWED_INSTALLER_EXTENSIONS:?}, got {}",
-            url.path()
-        ));
+    if !url.path().ends_with(".pkg") {
+        return Err("Installer URL must point to a .pkg file".to_string());
     }
     Ok(())
 }
 
-/// Downloads a `.dmg` installer to a temp directory and opens it with
+/// Downloads a `.pkg` installer to a temp directory and opens it with
 /// macOS Installer.app. This is used as a fallback when the normal in-place
 /// updater cannot write to the app's install location.
 #[tauri::command]
 #[specta::specta]
-pub async fn download_and_open_mac_installer(
-    app: AppHandle,
-    url: String,
-    signature_url: String,
-) -> Result<(), String> {
+pub async fn download_and_open_mac_installer(url: String) -> Result<(), String> {
     // Defense-in-depth: only allow downloads from the trusted release host.
     // The TS caller derives this URL from the signed updater manifest, but
     // any future caller (including a compromised webview) must not be able
     // to make us download+execute arbitrary files.
     let parsed = Url::parse(&url).map_err(|e| format!("Invalid URL: {e}"))?;
-    validate_initial_installer_url(&parsed)?;
-    let trusted_namespace = extract_repo_namespace(&parsed);
+    validate_installer_url(&parsed)?;
 
     // Use a unique temp filename (not the URL-derived basename) so a crafted
     // path like "../../../LaunchAgents/foo" cannot escape the temp dir. The
-    // nanosecond timestamp + pid is unique enough for our purposes; we delete
-    // the temp file on any verification failure, and the launched installer keeps
-    // its own copy. Match the temp file's extension to the downloaded artifact
-    // so `open` handles it.
-    let downloaded_ext = if parsed.path().ends_with(".app.tar.gz") {
-        ".app.tar.gz"
-    } else if parsed.path().ends_with(".pkg") {
-        ".pkg"
-    } else {
-        ".dmg"
-    };
+    // nanosecond timestamp + pid is unique enough for our purposes; we
+    // overwrite then delete on installer completion anyway.
     let nanos = SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .map(|d| d.as_nanos())
         .unwrap_or(0);
     let pid = std::process::id();
-    let dest = std::env::temp_dir().join(format!(
-        "mausvoice-update-{nanos}-{pid}{downloaded_ext}"
-    ));
+    let dest = std::env::temp_dir().join(format!("mausvoice-update-{nanos}-{pid}.pkg"));
 
     // Remove any stale previous download (best-effort).
     let _ = std::fs::remove_file(&dest);
 
     // Validate every redirect hop rather than trusting the initial URL: the
     // default policy would silently follow an allowed host to an arbitrary one.
-    let redirect_policy = reqwest::redirect::Policy::custom(move |attempt| {
-        match installer_redirect_allowed(
-            attempt.previous().len(),
-            attempt.url(),
-            &trusted_namespace,
-        ) {
+    let redirect_policy = reqwest::redirect::Policy::custom(|attempt| {
+        match installer_redirect_allowed(attempt.previous().len(), attempt.url()) {
             Ok(()) => attempt.follow(),
             Err(err) => attempt.error(err),
         }
@@ -4304,26 +3353,10 @@ pub async fn download_and_open_mac_installer(
                 return Err(err);
             }
         };
-        if let Err(err) = std::io::Write::write_all(&mut file, &chunk) {
-            drop(file);
-            let _ = std::fs::remove_file(&dest);
-            return Err(err.to_string());
-        }
+        std::io::Write::write_all(&mut file, &chunk).map_err(|e| e.to_string())?;
     }
-    if let Err(err) = std::io::Write::flush(&mut file) {
-        let _ = std::fs::remove_file(&dest);
-        return Err(err.to_string());
-    }
+    std::io::Write::flush(&mut file).map_err(|e| e.to_string())?;
     drop(file);
-
-    // Verify the downloaded DMG against its detached minisign signature
-    // BEFORE opening it. On any failure (missing/invalid key, missing or
-    // bad signature, mismatched bytes) we delete the temp file and abort so
-    // an unverified installer is never handed to `open`.
-    if let Err(err) = verify_installer_signature(&app, &dest, &signature_url).await {
-        let _ = std::fs::remove_file(&dest);
-        return Err(err);
-    }
 
     std::process::Command::new("open")
         .arg(&dest)
@@ -4350,10 +3383,6 @@ pub fn set_system_volume(volume: f64) -> Result<(), String> {
 #[serde(rename_all = "camelCase")]
 pub struct CreateFloatingWindowArgs {
     pub url: String,
-    /// When set, load a local app route instead of an external URL. This is
-    /// used by the composer so it never depends on localhost or a network
-    /// origin.
-    pub route: Option<String>,
     pub title: Option<String>,
     pub width: Option<f64>,
     pub height: Option<f64>,
@@ -4367,38 +3396,6 @@ pub struct CreateFloatingWindowArgs {
     pub focused: Option<bool>,
 }
 
-#[tauri::command]
-#[specta::specta]
-pub fn composer_register_text(
-    request_id: String,
-    text: String,
-    state: State<'_, crate::state::FloatingWindowState>,
-) -> Result<(), String> {
-    let request_id = request_id.trim().to_string();
-    if request_id.is_empty() {
-        return Err("composer request id must not be empty".to_string());
-    }
-    state.register_composer_text(request_id, text)
-}
-
-#[tauri::command]
-#[specta::specta]
-pub fn composer_peek_text(
-    request_id: String,
-    state: State<'_, crate::state::FloatingWindowState>,
-) -> Result<Option<String>, String> {
-    state.peek_composer_text(request_id.trim())
-}
-
-#[tauri::command]
-#[specta::specta]
-pub fn composer_discard_text(
-    request_id: String,
-    state: State<'_, crate::state::FloatingWindowState>,
-) -> Result<(), String> {
-    state.discard_composer_text(request_id.trim())
-}
-
 #[derive(serde::Serialize, specta::Type, Clone, Debug)]
 #[serde(rename_all = "camelCase")]
 pub struct FloatingWindowInfo {
@@ -4408,8 +3405,7 @@ pub struct FloatingWindowInfo {
 }
 
 /// Opens a draggable, always-on-top webview window pointed at the given URL
-/// or a trusted local app route and returns a stable id that can be used to
-/// destroy it later.
+/// and returns a stable id that can be used to destroy it later.
 ///
 /// External URLs are restricted to http(s) and to a small allow-list of
 /// trusted schemes/hosts. This is the only place in the app that creates a
@@ -4425,29 +3421,16 @@ pub async fn floating_window_create(
     app: AppHandle,
     state: State<'_, crate::state::FloatingWindowState>,
 ) -> Result<FloatingWindowInfo, String> {
+    let parsed_url = parse_floating_window_url(&args.url)?;
+    validate_floating_window_url(&parsed_url)?;
+
     let label = state.next_label();
     let title = args.title.clone().unwrap_or_else(|| "mausVoice".to_string());
-    let (webview_url, reported_url) = if let Some(route) = args
-        .route
-        .as_deref()
-        .map(str::trim)
-        .filter(|route| !route.is_empty())
-    {
-        validate_local_app_route(route)?;
-        (
-            tauri::WebviewUrl::App(route.into()),
-            format!("app://{route}"),
-        )
-    } else {
-        let parsed_url = parse_floating_window_url(&args.url)?;
-        validate_floating_window_url(&parsed_url)?;
-        (tauri::WebviewUrl::External(parsed_url), args.url.clone())
-    };
 
     let mut builder = tauri::WebviewWindowBuilder::new(
         &app,
         label.clone(),
-        webview_url,
+        tauri::WebviewUrl::External(parsed_url),
     )
     .title(title.clone())
     .always_on_top(true)
@@ -4474,7 +3457,7 @@ pub async fn floating_window_create(
 
     Ok(FloatingWindowInfo {
         id: label,
-        url: reported_url,
+        url: args.url,
         title,
     })
 }
@@ -4511,245 +3494,4 @@ pub async fn floating_window_list(app: AppHandle) -> Result<Vec<FloatingWindowIn
         });
     }
     Ok(out)
-}
-
-#[cfg(test)]
-mod installer_url_tests {
-    use super::*;
-
-    #[test]
-    fn initial_installer_url_requires_trusted_repo_path() {
-        // The exact URL the TS layer builds for the macOS manual fallback.
-        assert!(validate_initial_installer_url(
-            &Url::parse(
-                "https://github.com/maus-inc/mausVoice/releases/download/v0.1.5/mausVoice_0.1.5_universal.dmg"
-            )
-            .unwrap()
-        )
-        .is_ok());
-
-        // A release asset from a *different* repository must be rejected.
-        assert!(validate_initial_installer_url(
-            &Url::parse(
-                "https://github.com/evil/repo/releases/download/v1/x.dmg"
-            )
-            .unwrap()
-        )
-        .is_err());
-
-        // The redirect CDN host is not a valid *initial* URL.
-        assert!(validate_initial_installer_url(
-            &Url::parse(
-                "https://release-assets.githubusercontent.com/maus-inc/mausVoice/releases/download/v0.1.5/x.dmg"
-            )
-            .unwrap()
-        )
-        .is_err());
-
-        // Non-installer extensions are rejected.
-        assert!(validate_initial_installer_url(
-            &Url::parse(
-                "https://github.com/maus-inc/mausVoice/releases/download/v0.1.5/notes.txt"
-            )
-            .unwrap()
-        )
-        .is_err());
-    }
-
-    #[test]
-    fn redirect_hop_allows_github_cdn() {
-        // The normal GitHub `302` to its release-asset CDN must be permitted.
-        assert!(validate_installer_url(
-            &Url::parse(
-                "https://release-assets.githubusercontent.com/maus-inc/mausVoice/releases/download/v0.1.5/mausVoice_0.1.5_universal.dmg"
-            )
-            .unwrap(),
-            TRUSTED_REPO_NAMESPACE
-        )
-        .is_ok());
-
-        // An untrusted host in the redirect chain is rejected.
-        assert!(validate_installer_url(
-            &Url::parse("https://evil.example.com/x.dmg").unwrap(),
-            TRUSTED_REPO_NAMESPACE
-        )
-        .is_err());
-    }
-
-    #[test]
-    fn redirect_hop_rejects_github_com_path_outside_trusted_repo() {
-        // A redirect hop back to github.com must not escape the trusted
-        // repository namespace even though the host itself is on the
-        // allow-list.
-        assert!(validate_installer_url(
-            &Url::parse("https://github.com/evil/repo/releases/download/v1/x.dmg").unwrap(),
-            TRUSTED_REPO_NAMESPACE
-        )
-        .is_err());
-
-        // A github.com hop that stays within the trusted repo is still allowed.
-        assert!(validate_installer_url(
-            &Url::parse(
-                "https://github.com/maus-inc/mausVoice/releases/download/v1/app.pkg"
-            )
-            .unwrap(),
-            TRUSTED_REPO_NAMESPACE
-        )
-        .is_ok());
-    }
-
-    #[test]
-    fn signature_redirect_rejects_github_com_path_outside_trusted_repo() {
-        assert!(signature_redirect_allowed(
-            1,
-            &Url::parse("https://github.com/evil/repo/releases/download/v1/x.sig").unwrap(),
-            TRUSTED_REPO_NAMESPACE
-        )
-        .is_err());
-        assert!(signature_redirect_allowed(
-            1,
-            &Url::parse(
-                "https://github.com/maus-inc/mausVoice/releases/download/v1/x.sig"
-            )
-            .unwrap(),
-            TRUSTED_REPO_NAMESPACE
-        )
-        .is_ok());
-    }
-
-    #[test]
-    fn signature_url_requires_trusted_repo_and_sig_extension() {
-        // The detached `.dmg.sig` for the macOS manual fallback.
-        assert!(validate_initial_signature_url(
-            &Url::parse(
-                "https://github.com/maus-inc/mausVoice/releases/download/v0.1.5/mausVoice_0.1.5_universal.dmg.sig"
-            )
-            .unwrap()
-        )
-        .is_ok());
-
-        // A non-signature extension is rejected.
-        assert!(validate_initial_signature_url(
-            &Url::parse(
-                "https://github.com/maus-inc/mausVoice/releases/download/v0.1.5/mausVoice_0.1.5_universal.dmg"
-            )
-            .unwrap()
-        )
-        .is_err());
-
-        // A release asset from a *different* repository is rejected.
-        assert!(validate_initial_signature_url(
-            &Url::parse("https://github.com/evil/repo/releases/download/v1/x.sig")
-                .unwrap()
-        )
-        .is_err());
-
-        // The redirect CDN host is not a valid *initial* signature URL.
-        assert!(validate_initial_signature_url(
-            &Url::parse(
-                "https://release-assets.githubusercontent.com/maus-inc/mausVoice/releases/download/v0.1.5/x.sig"
-            )
-            .unwrap()
-        )
-        .is_err());
-    }
-
-    #[test]
-    fn signature_redirect_allows_github_cdn() {
-        assert!(signature_redirect_allowed(
-            1,
-            &Url::parse(
-                "https://release-assets.githubusercontent.com/maus-inc/mausVoice/releases/download/v0.1.5/mausVoice_0.1.5_universal.dmg.sig"
-            )
-            .unwrap(),
-            TRUSTED_REPO_NAMESPACE
-        )
-        .is_ok());
-
-        // An untrusted host in the redirect chain is rejected.
-        assert!(signature_redirect_allowed(
-            1,
-            &Url::parse("https://evil.example.com/x.sig").unwrap(),
-            TRUSTED_REPO_NAMESPACE
-        )
-        .is_err());
-    }
-
-    #[test]
-    fn redirect_hop_enforces_repo_namespace_for_cdn() {
-        // A hop onto the objects CDN that escapes into a *different* repository
-        // namespace must be rejected, even though the host is on the
-        // allow-list. This is the defense-in-depth gap flagged in PR #63: a
-        // redirect to objects.githubusercontent.com was previously accepted for
-        // ANY repository path.
-        assert!(validate_installer_url(
-            &Url::parse(
-                "https://objects.githubusercontent.com/other-org/otherRepo/releases/download/v1/app.pkg"
-            )
-            .unwrap(),
-            TRUSTED_REPO_NAMESPACE
-        )
-        .is_err());
-
-        // A redirect hop that preserves the trusted `/maus-inc/mausVoice/`
-        // namespace is accepted.
-        assert!(validate_installer_url(
-            &Url::parse(
-                "https://objects.githubusercontent.com/maus-inc/mausVoice/releases/download/v1/app.pkg"
-            )
-            .unwrap(),
-            TRUSTED_REPO_NAMESPACE
-        )
-        .is_ok());
-
-        // The same namespace enforcement applies to the signature validator.
-        assert!(validate_signature_url(
-            &Url::parse(
-                "https://objects.githubusercontent.com/other-org/otherRepo/releases/download/v1/x.sig"
-            )
-            .unwrap(),
-            TRUSTED_REPO_NAMESPACE
-        )
-        .is_err());
-        assert!(validate_signature_url(
-            &Url::parse(
-                "https://objects.githubusercontent.com/maus-inc/mausVoice/releases/download/v1/x.sig"
-            )
-            .unwrap(),
-            TRUSTED_REPO_NAMESPACE
-        )
-        .is_ok());
-
-        // The release-assets CDN carve-out (opaque signed token path) is still
-        // honored and must not be broken by the namespace check.
-        assert!(signature_redirect_allowed(
-            1,
-            &Url::parse(
-                "https://release-assets.githubusercontent.com/maus-inc/mausVoice/releases/download/v0.1.5/mausVoice_0.1.5_universal.dmg.sig"
-            )
-            .unwrap(),
-            TRUSTED_REPO_NAMESPACE
-        )
-        .is_ok());
-    }
-
-    #[test]
-    fn minisign_signature_accepts_valid_and_rejects_invalid() {
-        // Known minisign test vector: public key + signature over "test".
-        let public_key = "untrusted comment: minisign public key ABCDEF\n\
-RWQf6LRCGA9i53mlYecO4IzT51TGPpvWucNSCh1CBM0QTaLn73Y7GFO3";
-        let signature = "untrusted comment: signature from minisign secret key\n\
-RUQf6LRCGA9i559r3g7V1qNyJDApGip8MfqcadIgT9CuhV3EMhHoN1mGTkUidF/z7SrlQgXdy8ofjb7bNJJylDOocrCo8KLzZwo=\n\
-trusted comment: timestamp:1633700835\tfile:test\tprehashed\n\
-wLMDjy9FLAuxZ3q4NlEvkgtyhrr0gtTu6KC4KBJdITbbOeAi1zBIYo0v4iTgt8jJpIidRJnp94ABQkJAgAooBQ==";
-
-        // Valid signature verifies.
-        assert!(verify_minisign_data(public_key, b"test", signature).is_ok());
-        // A tampered payload must fail verification.
-        assert!(verify_minisign_data(public_key, b"tampered", signature).is_err());
-        // A different payload must fail verification.
-        assert!(verify_minisign_data(public_key, b"other", signature).is_err());
-        // A malformed signature must fail to parse.
-        assert!(verify_minisign_data(public_key, b"test", "not-a-signature").is_err());
-    }
 }

@@ -187,49 +187,6 @@ const ModelStatusText = ({
   return <>{validationError}</>;
 };
 
-type ModelMetaTextProps = {
-  helper: string;
-  downloading: boolean;
-  paused: boolean;
-  selectable: boolean;
-  validationError: string | null;
-};
-
-const ModelMetaText = ({
-  helper,
-  downloading,
-  paused,
-  selectable,
-  validationError,
-}: ModelMetaTextProps) => {
-  return (
-    <>
-      <Typography
-        variant="caption"
-        sx={{
-          color: "text.secondary",
-          display: "block",
-        }}
-      >
-        {helper}
-      </Typography>
-      <Typography
-        variant="caption"
-        sx={{
-          color: "text.secondary",
-        }}
-      >
-        <ModelStatusText
-          downloading={downloading}
-          paused={paused}
-          selectable={selectable}
-          validationError={validationError}
-        />
-      </Typography>
-    </>
-  );
-};
-
 const PausedStatusBadge = ({
   paused,
   compactPercent,
@@ -679,13 +636,28 @@ export const AITranscriptionConfiguration = () => {
               />
             )}
           </Stack>
-          <ModelMetaText
-            helper={helper}
-            downloading={downloading}
-            paused={paused}
-            selectable={selectable}
-            validationError={status?.validationError || null}
-          />
+          <Typography
+            variant="caption"
+            sx={{
+              color: "text.secondary",
+              display: "block",
+            }}
+          >
+            {helper}
+          </Typography>
+          <Typography
+            variant="caption"
+            sx={{
+              color: "text.secondary",
+            }}
+          >
+            <ModelStatusText
+              downloading={downloading}
+              paused={paused}
+              selectable={selectable}
+              validationError={status?.validationError || null}
+            />
+          </Typography>
         </Box>
       </MenuItem>
     );
@@ -737,13 +709,28 @@ export const AITranscriptionConfiguration = () => {
               >
                 {label}
               </Typography>
-              <ModelMetaText
-                helper={helper}
-                downloading={downloading}
-                paused={paused}
-                selectable={selectable}
-                validationError={status?.validationError || null}
-              />
+              <Typography
+                variant="caption"
+                sx={{
+                  color: "text.secondary",
+                  display: "block",
+                }}
+              >
+                {helper}
+              </Typography>
+              <Typography
+                variant="caption"
+                sx={{
+                  color: "text.secondary",
+                }}
+              >
+                <ModelStatusText
+                  downloading={downloading}
+                  paused={paused}
+                  selectable={selectable}
+                  validationError={status?.validationError || null}
+                />
+              </Typography>
             </Box>
             <ModelDownloadActionButtons
               model={value}
@@ -877,13 +864,6 @@ export const AITranscriptionConfiguration = () => {
                 </ListSubheader>
                 {LOCAL_MODEL_OPTIONS.filter(
                   (opt) => opt.category === "fast",
-                ).map((opt) => renderModelMenuItem(opt))}
-
-                <ListSubheader sx={subheaderSx}>
-                  <FormattedMessage defaultMessage="SenseVoice (Multilingual)" />
-                </ListSubheader>
-                {LOCAL_MODEL_OPTIONS.filter(
-                  (opt) => opt.category === "sherpa",
                 ).map((opt) => renderModelMenuItem(opt))}
 
                 <ListSubheader sx={subheaderSx}>

@@ -8,10 +8,4 @@ pub struct Tone {
     pub prompt_template: String,
     pub created_at: i64,
     pub sort_order: i32,
-    #[serde(default)]
-    pub category: Option<String>,
-    #[serde(default)]
-    pub output_length: Option<String>,
-    #[serde(default)]
-    pub example_input_output: Option<String>,
 }
