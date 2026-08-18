@@ -17,5 +17,6 @@ describe("isEnglishSanitizeLanguage", () => {
     expect(isEnglishSanitizeLanguage("auto")).toBe(false);
     expect(isEnglishSanitizeLanguage("de")).toBe(false);
     expect(isEnglishSanitizeLanguage("fr")).toBe(false);
+    expect(isEnglishSanitizeLanguage("keyboard-layout")).toBe(false);
   });
 });
