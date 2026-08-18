@@ -88,12 +88,11 @@
       })();
     </script>
     <script data-early-error>
-      // Early resource-error safety net. Runs before any generated
-      // <link>/<script> tags, so a failed asset load under Tauri's asset:
-      // protocol paints this overlay instead of a blank window. The full
-      // handler in src/utils/global-error-overlay.utils.ts takes over once the
-      // bundle loads. Scoped to resource errors only; runtime errors after
-      // mount are handled by that module.
+      // Early error safety net. Runs before any generated <link>/<script>
+      // tags, so a failed asset load or a vendor-chunk throw under Tauri's
+      // asset: protocol paints this overlay instead of a blank window. The
+      // full handler in src/utils/global-error-overlay.utils.ts takes over
+      // once the bundle loads.
       (function () {
         var OVERLAY_ID = "maus-global-error-overlay";
         function paint(heading, detail) {
@@ -117,6 +116,12 @@
           }
           el.textContent = heading + "\n\n" + detail;
         }
+        function detailFromError(error, fallback) {
+          if (error && error.stack) return error.stack;
+          if (error && error.message) return error.message;
+          if (fallback) return fallback;
+          return String(error || "Unknown error");
+        }
         window.addEventListener(
           "error",
           function (event) {
@@ -133,10 +138,26 @@
                   (url || "(unknown URL)") +
                   "\n\nThe frontend asset could not be fetched. Under Tauri's asset: protocol this is usually a CORS or path issue — check the built index.html asset URLs.",
               );
+              return;
+            }
+            // Module-evaluation failures (e.g. a vendor chunk throwing
+            // `Cannot read properties of undefined (reading 'Fragment')`)
+            // fire here before the React overlay installer runs.
+            if (event.error || event.message) {
+              paint(
+                "mausVoice failed to start",
+                detailFromError(event.error, event.message),
+              );
             }
           },
           true,
         );
+        window.addEventListener("unhandledrejection", function (event) {
+          paint(
+            "mausVoice failed to start",
+            detailFromError(event.reason, ""),
+          );
+        });
       })();
     </script>
   </head>

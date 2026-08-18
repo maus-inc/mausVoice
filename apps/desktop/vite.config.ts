@@ -1,6 +1,7 @@
 import { defineConfig } from "vite";
 import react from "@vitejs/plugin-react";
 import svgr from "vite-plugin-svgr";
+import { vendorManualChunk } from "./scripts/vendor-manual-chunk.mjs";
 
 const host = process.env.TAURI_DEV_HOST;
 
@@ -65,34 +66,11 @@ export default defineConfig(async () => {
     build: {
       rollupOptions: {
         output: {
-          // Split the heavy vendors out of the app bundle so the initial chunk
-          // stays lean and vendor updates don't invalidate the app chunk.
-          manualChunks(id) {
-            if (!id.includes("node_modules")) return undefined;
-            if (
-              id.includes("/react/") ||
-              id.includes("/react-dom/") ||
-              id.includes("/scheduler/") ||
-              id.includes("/react-is/")
-            ) {
-              return "react";
-            }
-            if (id.includes("/@mui/")) return "mui";
-            if (id.includes("/framer-motion/")) return "motion";
-            if (id.includes("/firebase/")) return "firebase";
-            if (id.includes("/lodash-es/")) return "lodash";
-            if (id.includes("/rxjs/")) return "rxjs";
-            if (
-              id.includes("/react-intl/") ||
-              id.includes("/@formatjs/") ||
-              id.includes("/intl-messageformat")
-            ) {
-              return "intl";
-            }
-            if (id.includes("/react-router")) return "router";
-            if (id.includes("/@tauri-apps/")) return "tauri";
-            return undefined;
-          },
+          // Split heavy vendors out of the app bundle. React-family packages
+          // that read React at module-init time stay in the React chunk —
+          // a dedicated intl chunk crashed startup with
+          // `Cannot read properties of undefined (reading 'Fragment')`.
+          manualChunks: vendorManualChunk,
         },
       },
     },
