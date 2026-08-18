@@ -71,10 +71,13 @@ vi.mock("../../store", () => ({
 
 import { ComposerPage } from "./ComposerPage";
 
-globalThis.IS_REACT_ACT_ENVIRONMENT = true;
+(
+  globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }
+).IS_REACT_ACT_ENVIRONMENT = true;
 
 describe("ComposerPage VoiceInstructionRecorder lifecycle", () => {
   let container: HTMLDivElement;
+  let root: ReturnType<typeof createRoot> | null = null;
 
   beforeEach(() => {
     constructCount = 0;
@@ -85,16 +88,16 @@ describe("ComposerPage VoiceInstructionRecorder lifecycle", () => {
 
   afterEach(() => {
     act(() => {
-      createRoot(container).unmount();
+      root?.unmount();
     });
+    root = null;
     container.remove();
   });
 
   it("builds exactly one live recorder under StrictMode (no render-phase leak)", async () => {
     await act(async () => {
-      createRoot(container).render(
-        createElement(StrictMode, null, createElement(ComposerPage)),
-      );
+      root = createRoot(container);
+      root.render(createElement(StrictMode, null, createElement(ComposerPage)));
     });
     // Let the StrictMode mount → cleanup → remount cycle and microtasks settle.
     await act(async () => {

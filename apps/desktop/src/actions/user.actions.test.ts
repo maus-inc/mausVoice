@@ -1,10 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { INITIAL_APP_STATE } from "../state/app.state";
 import { getAppState, setAppState } from "../store";
-import {
-  createDefaultPreferences,
-  setAgentToolEnabled,
-} from "./user.actions";
+import { createDefaultPreferences, setAgentToolEnabled } from "./user.actions";
 import type { ToolInfo } from "@maus-inc/types";
 
 const { loggerMock, prefsRepoMock } = vi.hoisted(() => {
@@ -68,7 +65,9 @@ describe("setAgentToolEnabled empty-registry guard", () => {
 
   it("collapses to null (follow registry defaults) when every known tool is enabled", async () => {
     setAppState({
-      toolInfoById: { run_terminal_command: minimalToolInfo("run_terminal_command") },
+      toolInfoById: {
+        run_terminal_command: minimalToolInfo("run_terminal_command"),
+      },
       userPrefs: {
         ...createDefaultPreferences(),
         agentEnabledTools: null,
