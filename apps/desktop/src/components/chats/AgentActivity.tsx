@@ -38,22 +38,24 @@ export const AgentActivity = ({ messageId }: AgentActivityProps) => {
   const streaming = useAppStore((s) => s.streamingMessageById[messageId]);
   const [isOpen, setIsOpen] = useState(true);
   const [duration, setDuration] = useState(0);
-  const [startTime, setStartTime] = useState<number | null>(null);
+  const startTimeRef = useRef<number | null>(null);
   const [hasAutoClosed, setHasAutoClosed] = useState(false);
 
   const isStreaming = streaming?.isStreaming ?? false;
 
   useEffect(() => {
     if (isStreaming) {
-      if (startTime === null) {
-        setStartTime(Date.now());
+      if (startTimeRef.current === null) {
+        startTimeRef.current = Date.now();
         setIsOpen(true);
       }
-    } else if (startTime !== null) {
-      setDuration(Math.max(1, Math.ceil((Date.now() - startTime) / 1000)));
-      setStartTime(null);
+    } else if (startTimeRef.current !== null) {
+      setDuration(
+        Math.max(1, Math.ceil((Date.now() - startTimeRef.current) / 1000)),
+      );
+      startTimeRef.current = null;
     }
-  }, [isStreaming, startTime]);
+  }, [isStreaming]);
 
   useEffect(() => {
     if (!isStreaming && isOpen && !hasAutoClosed && duration > 0) {
@@ -101,7 +103,10 @@ export const AgentActivity = ({ messageId }: AgentActivityProps) => {
           >
             <Typography variant="caption" sx={{ color: "inherit" }}>
               {isStreaming || duration === 0 ? (
-                <FormattedMessage defaultMessage="Thinking…" />
+                <FormattedMessage
+                  id="thinking_ellipsis"
+                  defaultMessage="Thinking…"
+                />
               ) : (
                 <FormattedMessage
                   defaultMessage="Thought for {seconds} seconds"

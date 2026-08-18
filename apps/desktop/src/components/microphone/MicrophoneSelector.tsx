@@ -17,6 +17,7 @@ import { Nullable } from "@maus-inc/types";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { FormattedMessage } from "react-intl";
 import { commands } from "@maus-inc/desktop-native-apis";
+import { subscribeDeviceChange } from "../../utils/device-change.utils";
 
 const AUTO_OPTION_VALUE = "__microphone_auto__";
 
@@ -80,16 +81,12 @@ export const MicrophoneSelector = ({
   }, [loadDevices, microphones]);
 
   useEffect(() => {
-    if (microphones || typeof navigator === "undefined" || !navigator.mediaDevices) {
+    if (microphones || typeof navigator === "undefined") {
       return;
     }
-    const onDeviceChange = () => {
+    return subscribeDeviceChange(navigator.mediaDevices, () => {
       void loadDevices();
-    };
-    navigator.mediaDevices.addEventListener("devicechange", onDeviceChange);
-    return () => {
-      navigator.mediaDevices.removeEventListener("devicechange", onDeviceChange);
-    };
+    });
   }, [loadDevices, microphones]);
 
   const selectValue = value ?? AUTO_OPTION_VALUE;

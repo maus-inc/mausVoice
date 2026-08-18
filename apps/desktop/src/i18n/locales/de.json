@@ -658,7 +658,7 @@
   "the_user_has_dictated_the_following_command_transcript_execu": "Der Benutzer hat den folgenden Befehl diktiert: ------- {transcript} ------- Führe diesen Befehl aus und liefere die Ausgabe in {languageName}. Anweisungen: - Wenn der Benutzer dich bittet, etwas zu schreiben, zu erstellen, zu entwerfen oder zu verfassen → erzeuge diesen Inhalt - Wenn der Benutzer dich bittet, etwas zusammenzufassen, zu analysieren oder zu erklären → liefere die Zusammenfassung/Analyse/Erklärung - Wenn der Benutzer dich bittet, etwas zu transformieren oder umzuschreiben → wende die Transformation an - Wenn der Benutzer eine Aussage ohne klaren Befehl macht → bereinige sie und stelle sie klar dar Gib NUR die angeforderte Ausgabe zurück, sonst nichts. Die Ausgabe wird direkt in die Anwendung des Benutzers eingefügt.",
   "theme_mode": "Design: {mode}",
   "theme_settings": "Design-Einstellungen",
-  "thinking": "Thinking…",
+  "thinking": "Thinking",
   "this_action_cannot_be_undone_all_your_data_will_be_permanent": "Diese Aktion kann nicht rückgängig gemacht werden. Alle Ihre Daten werden dauerhaft gelöscht.",
   "this_action_permanently_removes_local_data": "Diese Aktion entfernt dauerhaft lokale Daten",
   "this_device_summary_recommended_recommended": "Dieses Gerät: {summary} · Empfohlen: {recommended}",
@@ -785,5 +785,7 @@
   "you_re_currently_on_version_version_the_app_will_restart_aft": "Sie verwenden derzeit Version {version}. Die App wird nach Abschluss des Updates neu gestartet.",
   "you_re_up_to_date": "Du bist auf dem neuesten Stand.",
   "your_azure_openai_resource_endpoint_url": "URL des Azure OpenAI-Ressourcenendpunkts",
-  "your_operating_system_is_preventing_mausvoice_from_modifying": "Ihr Betriebssystem verhindert, dass mausVoice Dateien an seinem aktuellen Installationsort ändert. Verwenden Sie die Download-Schaltfläche, um den neuesten Installer zu erhalten, und führen Sie ihn dann aus, um das Update manuell abzuschließen."
+  "your_operating_system_is_preventing_mausvoice_from_modifying": "Ihr Betriebssystem verhindert, dass mausVoice Dateien an seinem aktuellen Installationsort ändert. Verwenden Sie die Download-Schaltfläche, um den neuesten Installer zu erhalten, und führen Sie ihn dann aus, um das Update manuell abzuschließen.",
+  "thinking_ellipsis": "Thinking…",
+  "unable_to_undo_delete": "Unable to undo delete."
 }

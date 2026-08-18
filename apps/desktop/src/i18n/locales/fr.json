@@ -658,7 +658,7 @@
   "the_user_has_dictated_the_following_command_transcript_execu": "L'utilisateur a dicté la commande suivante : ------- {transcript} ------- Exécutez cette commande et fournissez le résultat en {languageName}. Instructions : - Si l'utilisateur vous demande d'écrire, de créer, de rédiger ou de composer quelque chose → produisez ce contenu - Si l'utilisateur vous demande de résumer, d'analyser ou d'expliquer quelque chose → fournissez le résumé/l'analyse/l'explication - Si l'utilisateur vous demande de transformer ou de réécrire quelque chose → appliquez la transformation - Si l'utilisateur fournit une déclaration sans commande claire → nettoyez-la et présentez-la clairement Renvoyez UNIQUEMENT le résultat demandé, rien d'autre. Le résultat sera collé directement dans l'application de l'utilisateur.",
   "theme_mode": "Thème : {mode}",
   "theme_settings": "Paramètres du thème",
-  "thinking": "Thinking…",
+  "thinking": "Thinking",
   "this_action_cannot_be_undone_all_your_data_will_be_permanent": "Cette action ne peut pas être annulée. Toutes vos données seront définitivement supprimées.",
   "this_action_permanently_removes_local_data": "Cette action supprime définitivement les données locales",
   "this_device_summary_recommended_recommended": "Cet appareil : {summary} · Recommandé : {recommended}",
@@ -785,5 +785,7 @@
   "you_re_currently_on_version_version_the_app_will_restart_aft": "Vous utilisez actuellement la version {version}. L'application redémarrera une fois la mise à jour terminée.",
   "you_re_up_to_date": "Tu es à jour.",
   "your_azure_openai_resource_endpoint_url": "URL du point de terminaison de votre ressource Azure OpenAI",
-  "your_operating_system_is_preventing_mausvoice_from_modifying": "Votre système d'exploitation empêche mausVoice de modifier les fichiers à son emplacement d'installation actuel. Utilisez le bouton de téléchargement pour obtenir le dernier installateur, puis exécutez‑le pour terminer la mise à jour manuellement."
+  "your_operating_system_is_preventing_mausvoice_from_modifying": "Votre système d'exploitation empêche mausVoice de modifier les fichiers à son emplacement d'installation actuel. Utilisez le bouton de téléchargement pour obtenir le dernier installateur, puis exécutez‑le pour terminer la mise à jour manuellement.",
+  "thinking_ellipsis": "Thinking…",
+  "unable_to_undo_delete": "Unable to undo delete."
 }

@@ -658,7 +658,7 @@
   "the_user_has_dictated_the_following_command_transcript_execu": "L'utente ha dettato il seguente comando: ------- {transcript} ------- Esegui questo comando e fornisci l'output in {languageName}. Istruzioni: - Se l'utente ti chiede di scrivere, creare, abbozzare o comporre qualcosa → produci quel contenuto - Se l'utente ti chiede di riassumere, analizzare o spiegare qualcosa → fornisci il riassunto/l'analisi/spiegazione - Se l'utente ti chiede di trasformare o riscrivere qualcosa → applica la trasformazione - Se l'utente fornisce un'affermazione senza un comando chiaro → sistemala e presentala in modo chiaro Restituisci SOLO l'output richiesto, nient'altro. L'output verrà incollato direttamente nell'applicazione dell'utente.",
   "theme_mode": "Tema: {mode}",
   "theme_settings": "Impostazioni tema",
-  "thinking": "Thinking…",
+  "thinking": "Thinking",
   "this_action_cannot_be_undone_all_your_data_will_be_permanent": "Questa azione non può essere annullata. Tutti i tuoi dati verranno eliminati permanentemente.",
   "this_action_permanently_removes_local_data": "Questa azione rimuove permanentemente i dati locali",
   "this_device_summary_recommended_recommended": "Questo dispositivo: {summary} · Consigliato: {recommended}",
@@ -785,5 +785,7 @@
   "you_re_currently_on_version_version_the_app_will_restart_aft": "Stai usando la versione {version}. L'app si riavvierà dopo che l'aggiornamento sarà completato.",
   "you_re_up_to_date": "Sei aggiornato.",
   "your_azure_openai_resource_endpoint_url": "URL dell'endpoint della tua risorsa Azure OpenAI",
-  "your_operating_system_is_preventing_mausvoice_from_modifying": "Il tuo sistema operativo sta impedendo a mausVoice di modificare i file nella sua attuale posizione di installazione. Usa il pulsante di download per ottenere l'ultima versione dell'installer, quindi eseguilo per completare l'aggiornamento manualmente."
+  "your_operating_system_is_preventing_mausvoice_from_modifying": "Il tuo sistema operativo sta impedendo a mausVoice di modificare i file nella sua attuale posizione di installazione. Usa il pulsante di download per ottenere l'ultima versione dell'installer, quindi eseguilo per completare l'aggiornamento manualmente.",
+  "thinking_ellipsis": "Thinking…",
+  "unable_to_undo_delete": "Unable to undo delete."
 }

@@ -195,10 +195,17 @@ export const playWebAudio = async (
     }
   };
 
-  const offset = clampPlaybackProgress(startProgress) * buffer.duration;
+  const startRatio = clampPlaybackProgress(startProgress);
+  if (buffer.duration <= 0 || startRatio >= 1) {
+    onProgress(1);
+    stopActivePlayback("ended");
+    return;
+  }
+
+  const offset = startRatio * buffer.duration;
   playback.offsetSeconds = offset;
   playback.startTime = context.currentTime;
-  onProgress(clampPlaybackProgress(startProgress));
+  onProgress(startRatio);
   source.start(0, offset);
   armTick(playback);
 };

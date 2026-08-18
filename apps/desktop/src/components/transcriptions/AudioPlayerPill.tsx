@@ -213,6 +213,10 @@ export const AudioPlayerPill = ({
     return Math.min(Math.max(ratio, 0), 1);
   }, []);
 
+  const previewSeek = useCallback((ratio: number) => {
+    setPlaybackProgress(ratio);
+  }, []);
+
   const commitSeek = useCallback((ratio: number) => {
     setPlaybackProgress(ratio);
     if (isPlayingRef.current) {
@@ -225,23 +229,32 @@ export const AudioPlayerPill = ({
       if (disabled) return;
       event.preventDefault();
       const next = getProgressFromClientX(event.clientX);
-      if (next != null) commitSeek(next);
+      if (next != null) previewSeek(next);
 
       const handleMove = (moveEvent: PointerEvent) => {
         const ratio = getProgressFromClientX(moveEvent.clientX);
-        if (ratio != null) commitSeek(ratio);
+        if (ratio != null) previewSeek(ratio);
       };
-      const handleUp = () => {
+      const handleUp = (upEvent: PointerEvent) => {
         window.removeEventListener("pointermove", handleMove);
         window.removeEventListener("pointerup", handleUp);
         pointerCleanupRef.current = null;
+        const ratio = getProgressFromClientX(upEvent.clientX);
+        if (ratio != null) {
+          commitSeek(ratio);
+        } else {
+          commitSeek(playbackProgressRef.current);
+        }
       };
       pointerCleanupRef.current?.();
       window.addEventListener("pointermove", handleMove);
       window.addEventListener("pointerup", handleUp, { once: true });
-      pointerCleanupRef.current = handleUp;
+      pointerCleanupRef.current = () => {
+        window.removeEventListener("pointermove", handleMove);
+        window.removeEventListener("pointerup", handleUp);
+      };
     },
-    [disabled, getProgressFromClientX, commitSeek],
+    [disabled, getProgressFromClientX, previewSeek, commitSeek],
   );
 
   return (
@@ -301,9 +314,11 @@ export const AudioPlayerPill = ({
             event.preventDefault();
             void handlePlaybackToggle();
           } else if (event.key === "ArrowRight") {
-            setPlaybackProgress((p) => Math.min(1, p + 0.05));
+            event.preventDefault();
+            commitSeek(Math.min(1, playbackProgressRef.current + 0.05));
           } else if (event.key === "ArrowLeft") {
-            setPlaybackProgress((p) => Math.max(0, p - 0.05));
+            event.preventDefault();
+            commitSeek(Math.max(0, playbackProgressRef.current - 0.05));
           }
         }}
         sx={{

@@ -658,7 +658,7 @@
   "the_user_has_dictated_the_following_command_transcript_execu": "El usuario ha dictado el siguiente comando: ------- {transcript} ------- Ejecuta este comando y proporciona la salida en {languageName}. Instrucciones: - Si el usuario te pide escribir, crear, redactar o componer algo → produce ese contenido - Si el usuario te pide resumir, analizar o explicar algo → proporciona el resumen/análisis/explicación - Si el usuario te pide transformar o reescribir algo → aplica la transformación - Si el usuario proporciona una frase sin un comando claro → ordénala y preséntala con claridad Devuelve SOLO la salida solicitada, nada más. La salida se pegará directamente en la aplicación del usuario.",
   "theme_mode": "Tema: {mode}",
   "theme_settings": "Configuración del tema",
-  "thinking": "Thinking…",
+  "thinking": "Thinking",
   "this_action_cannot_be_undone_all_your_data_will_be_permanent": "Esta acción no se puede deshacer. Todos tus datos se eliminarán permanentemente.",
   "this_action_permanently_removes_local_data": "Esta acción elimina permanentemente los datos locales",
   "this_device_summary_recommended_recommended": "Este dispositivo: {summary} · Recomendado: {recommended}",
@@ -785,5 +785,7 @@
   "you_re_currently_on_version_version_the_app_will_restart_aft": "Actualmente usas la versión {version}. La aplicación se reiniciará cuando termine la actualización.",
   "you_re_up_to_date": "Estás al día.",
   "your_azure_openai_resource_endpoint_url": "URL del endpoint de tu recurso Azure OpenAI",
-  "your_operating_system_is_preventing_mausvoice_from_modifying": "Su sistema operativo está impidiendo que mausVoice modifique los archivos en su ubicación de instalación actual. Use el botón de descarga para obtener el instalador más reciente y, a continuación, ejecútelo para completar la actualización manualmente."
+  "your_operating_system_is_preventing_mausvoice_from_modifying": "Su sistema operativo está impidiendo que mausVoice modifique los archivos en su ubicación de instalación actual. Use el botón de descarga para obtener el instalador más reciente y, a continuación, ejecútelo para completar la actualización manualmente.",
+  "thinking_ellipsis": "Thinking…",
+  "unable_to_undo_delete": "Unable to undo delete."
 }

@@ -658,7 +658,7 @@
   "the_user_has_dictated_the_following_command_transcript_execu": "The user has dictated the following command: ------- {transcript} ------- Execute this command and provide the output in {languageName}. Instructions: - If the user asks you to write, create, draft, or compose something → produce that content - If the user asks you to summarize, analyze, or explain something → provide the summary/analysis/explanation - If the user asks you to transform or rewrite something → apply the transformation - If the user provides a statement without a clear command → clean it up and present it clearly Return ONLY the requested output, nothing else. The output will be pasted directly into the user's application.",
   "theme_mode": "Theme: {mode}",
   "theme_settings": "Theme settings",
-  "thinking": "Thinking…",
+  "thinking": "Thinking",
   "this_action_cannot_be_undone_all_your_data_will_be_permanent": "This action cannot be undone. All your data will be permanently deleted.",
   "this_action_permanently_removes_local_data": "This action permanently removes local data",
   "this_device_summary_recommended_recommended": "This device: {summary} · Recommended: {recommended}",
@@ -785,5 +785,7 @@
   "you_re_currently_on_version_version_the_app_will_restart_aft": "You're currently on version {version}. The app will restart after the update finishes.",
   "you_re_up_to_date": "You're up to date.",
   "your_azure_openai_resource_endpoint_url": "Your Azure OpenAI resource endpoint URL",
-  "your_operating_system_is_preventing_mausvoice_from_modifying": "Your operating system is preventing mausVoice from modifying files in its current install location. Use the download button to get the latest installer, then run it to complete the update manually."
+  "your_operating_system_is_preventing_mausvoice_from_modifying": "Your operating system is preventing mausVoice from modifying files in its current install location. Use the download button to get the latest installer, then run it to complete the update manually.",
+  "thinking_ellipsis": "Thinking…",
+  "unable_to_undo_delete": "Unable to undo delete."
 }

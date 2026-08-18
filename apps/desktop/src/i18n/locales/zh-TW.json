@@ -658,7 +658,7 @@
   "the_user_has_dictated_the_following_command_transcript_execu": "使用者已口述以下指令：------- {transcript} ------- 請執行此指令，並以 {languageName} 提供輸出。指示：- 若使用者要求撰寫、建立、草擬或創作某物 → 產生該內容 - 若使用者要求總結、分析或解釋某物 → 提供摘要／分析／解釋 - 若使用者要求轉換或重寫某物 → 套用該轉換 - 若使用者提供陳述但無明確指令 → 整理清楚後呈現 僅回傳所要求的輸出，不要有其他內容。該輸出將直接貼到使用者的應用程式中。",
   "theme_mode": "主題：{mode}",
   "theme_settings": "主題設定",
-  "thinking": "Thinking…",
+  "thinking": "Thinking",
   "this_action_cannot_be_undone_all_your_data_will_be_permanent": "此操作無法復原。您的所有資料將被永久刪除。",
   "this_action_permanently_removes_local_data": "此操作會永久移除本機資料",
   "this_device_summary_recommended_recommended": "此裝置：{summary} · 建議：{recommended}",
@@ -785,5 +785,7 @@
   "you_re_currently_on_version_version_the_app_will_restart_aft": "您目前使用的是版本 {version}。應用程式將在更新完成後重新啟動。",
   "you_re_up_to_date": "您已是最新版本。",
   "your_azure_openai_resource_endpoint_url": "您的 Azure OpenAI 資源端點網址",
-  "your_operating_system_is_preventing_mausvoice_from_modifying": "您的作業系統正阻止 mausVoice 修改其目前安裝位置的檔案。請使用下載按鈕取得最新的安裝程式，然後執行它以手動完成更新。"
+  "your_operating_system_is_preventing_mausvoice_from_modifying": "您的作業系統正阻止 mausVoice 修改其目前安裝位置的檔案。請使用下載按鈕取得最新的安裝程式，然後執行它以手動完成更新。",
+  "thinking_ellipsis": "Thinking…",
+  "unable_to_undo_delete": "Unable to undo delete."
 }

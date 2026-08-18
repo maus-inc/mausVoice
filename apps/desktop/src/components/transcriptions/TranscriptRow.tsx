@@ -21,13 +21,16 @@ import { invoke } from "@tauri-apps/api/core";
 import { useCallback, useMemo } from "react";
 import { useIntl } from "react-intl";
 import { showErrorSnackbar, showSnackbar } from "../../actions/app.actions";
+import {
+  scheduleTranscriptionDelete,
+  undoTranscriptionDelete,
+} from "../../utils/pending-transcription-delete";
 import { sendTextToActiveRemoteTarget } from "../../actions/remote-output.actions";
 import {
   openRetranscribeDialog,
   openTranscriptionDetailsDialog,
 } from "../../actions/transcriptions.actions";
-import { getTranscriptionRepo } from "../../repos";
-import { produceAppState, useAppStore } from "../../store";
+import { useAppStore } from "../../store";
 import { getActiveRemoteTarget } from "../../utils/device.utils";
 import { TypographyWithMore } from "../common/TypographyWithMore";
 import { AudioPlayerPill } from "./AudioPlayerPill";
@@ -85,50 +88,32 @@ export const TranscriptionRow = ({ id }: TranscriptionRowProps) => {
   );
 
   const handleDeleteTranscript = useCallback(
-    async (id: string) => {
-      try {
-        const snapshot = transcription;
-        produceAppState((draft) => {
-          delete draft.transcriptionById[id];
-          draft.transcriptions.transcriptionIds =
-            draft.transcriptions.transcriptionIds.filter(
-              (transcriptionId) => transcriptionId !== id,
-            );
-        });
-        await getTranscriptionRepo().deleteTranscription(id);
-        showSnackbar(
-          intl.formatMessage({ defaultMessage: "Delete successful" }),
-          {
-            mode: "success",
-            action: snapshot
-              ? {
-                  label: intl.formatMessage({ defaultMessage: "Undo" }),
-                  onClick: () => {
-                    void getTranscriptionRepo()
-                      .createTranscription(snapshot)
-                      .then((restored) => {
-                        produceAppState((draft) => {
-                          draft.transcriptionById[restored.id] = restored;
-                          if (
-                            !draft.transcriptions.transcriptionIds.includes(
-                              restored.id,
-                            )
-                          ) {
-                            draft.transcriptions.transcriptionIds.unshift(
-                              restored.id,
-                            );
-                          }
-                        });
-                      })
-                      .catch((error) => showErrorSnackbar(error));
-                  },
-                }
-              : undefined,
-          },
-        );
-      } catch (error) {
-        showErrorSnackbar(error);
+    (targetId: string) => {
+      const snapshot = transcription;
+      if (!snapshot) {
+        return;
       }
+      const undoWindowMs = 5000;
+      scheduleTranscriptionDelete(snapshot, undoWindowMs);
+      showSnackbar(
+        intl.formatMessage({ defaultMessage: "Delete successful" }),
+        {
+          mode: "success",
+          duration: undoWindowMs,
+          action: {
+            label: intl.formatMessage({ defaultMessage: "Undo" }),
+            onClick: () => {
+              if (!undoTranscriptionDelete(targetId)) {
+                showErrorSnackbar(
+                  intl.formatMessage({
+                    defaultMessage: "Unable to undo delete.",
+                  }),
+                );
+              }
+            },
+          },
+        },
+      );
     },
     [intl, transcription],
   );
