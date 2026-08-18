@@ -1,5 +1,7 @@
 # Settings map
 
+> Maintained page: [Settings map](https://maus-inc.github.io/mausVoice/docs/configuration/settings-map/).
+
 - **AI transcription → Local model**: Whisper, Parakeet, Canary, or SenseVoice.
 - **Style hotkeys**: one optional global shortcut per writing style.
 - **More settings → Switch style while dictating**: activation key plus Left/Right Arrow cycling, opt-in.

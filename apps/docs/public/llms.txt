@@ -14,6 +14,8 @@ Use the most specific page below. Local describes the speech-recognition stage o
 
 ## Core facts
 
+- Architecture: Rust is the API; TypeScript (Zustand) is the Brain. Agent crate is `@repo/agent`.
+- Node for development is `.nvmrc` v24 (`engines.node` >= 20), not “18 only”.
 - Settings offers Local or API transcription and API or Off post-processing.
 - Assistant and Chats are separate workflows; neither is merely another name for dictation.
 - Incognito suppresses new local history and audio snapshots, not provider transmission.

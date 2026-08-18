@@ -123,7 +123,7 @@ pnpm run check-types   # TypeScript type checking
 pnpm run test          # tests
 ```
 
-All documentation regarding development are [here](https://maus-inc.github.io/mausVoice/docs/development/repository-overview/)
+Authoritative docs: [mausVoice Documentation](https://maus-inc.github.io/mausVoice/docs/) — architecture is under [Desktop architecture](https://maus-inc.github.io/mausVoice/docs/development/architecture/). Agent package name is `@repo/agent`.
 
 </details>
 

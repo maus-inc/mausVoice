@@ -1,101 +1,45 @@
 # Windows Installer Bootstrapper
 
-A modern, sleek installer UI for mausVoice on Windows. This bootstrapper wraps the NSIS installer with a beautiful custom interface.
+Tauri wrapper around the desktop NSIS setup. It extracts the bundled `mausVoice_Setup.exe` and runs it silently (`/S`), then can launch `mausVoice.exe`.
 
-## How It Works
+Authoritative notes: [Repository overview](https://maus-inc.github.io/mausVoice/docs/development/repository-overview/) and `apps/windows-installer/`.
 
-1. User downloads and runs `mausVoice-Installer.exe` (the bootstrapper)
-2. Bootstrapper shows a modern UI with the mausVoice logo and progress bar
-3. It extracts and runs the bundled NSIS installer silently (`/S` flag)
-4. Once complete, user can launch mausVoice directly from the installer
+## Prerequisites
 
-## Build Process
+- Node from repo `.nvmrc` (v24); `engines.node` `>=20`
+- **pnpm 10.11.0** (workspace package `@maus-inc/windows-installer`, currently `0.1.6`)
+- Rust + Tauri CLI via the workspace (`pnpm --filter @maus-inc/windows-installer`, not a global npm CLI)
 
-### Prerequisites
+## Build
 
-- Node.js 18+
-- Rust toolchain
-- Tauri CLI (`npm install -g @tauri-apps/cli`)
-
-### Step 1: Build the Main Desktop App
-
-First, build the main mausVoice NSIS installer:
+1. Build the main desktop NSIS installer from the repo root / `apps/desktop` (sidecars first):
 
 ```bash
-cd apps/desktop
-npm run tauri build -- --target x86_64-pc-windows-msvc
+pnpm --filter desktop tauri -- build --target x86_64-pc-windows-msvc
 ```
 
-This produces `mausVoice_0.1.0_x64-setup.exe` in `src-tauri/target/release/bundle/nsis/`.
+This writes `mausVoice_*-setup.exe` under `apps/desktop/src-tauri/target/release/bundle/nsis/` (or `CARGO_TARGET_DIR` if CI set one).
 
-### Step 2: Bundle the NSIS Installer
-
-Copy the NSIS installer to the bootstrapper's resources:
+2. Copy it into the bootstrapper:
 
 ```bash
 cp apps/desktop/src-tauri/target/release/bundle/nsis/mausVoice_*-setup.exe \
    apps/windows-installer/src-tauri/installer/mausVoice_Setup.exe
 ```
 
-### Step 3: Build the Bootstrapper
+3. Build the bootstrapper:
 
 ```bash
-cd apps/windows-installer
-npm install
-npm run tauri build
+pnpm --filter @maus-inc/windows-installer tauri:build
 ```
 
-This produces `mausVoice Installer_0.1.0_x64-setup.exe` - the final distributable.
+Window is 480×320, non-resizable, always-on-top, undecorated (`src-tauri/tauri.conf.json`).
 
-## CI Integration
+## CI
 
-Add these steps to your GitHub Actions workflow:
-
-```yaml
-# After building the main desktop app...
-- name: Build Windows Bootstrapper
-  if: matrix.platform == 'windows-latest'
-  run: |
-    # Copy NSIS installer to bootstrapper resources
-    cp apps/desktop/src-tauri/target/release/bundle/nsis/mausVoice_*-setup.exe \
-       apps/windows-installer/src-tauri/installer/mausVoice_Setup.exe
-
-    # Build bootstrapper
-    cd apps/windows-installer
-    npm install
-    npm run tauri build
-
-    # The final installer is at:
-    # apps/windows-installer/src-tauri/target/release/bundle/nsis/
-```
-
-## Customization
-
-### UI Theming
-
-Edit `src/styles.css` to customize colors:
-
-```css
-:root {
-  --bg-primary: #0a0a0f; /* Main background */
-  --accent: #6366f1; /* Progress bar, buttons */
-  --success: #22c55e; /* Completion state */
-}
-```
-
-### Window Size
-
-Edit `src-tauri/tauri.conf.json`:
-
-```json
-"windows": [{
-  "width": 480,
-  "height": 320
-}]
-```
+Use **pnpm** with the frozen lockfile, same as the rest of the monorepo. Do not `npm install` inside `apps/windows-installer`.
 
 ## Notes
 
-- The bootstrapper is ~5-8MB (Tauri + WebView2)
-- WebView2 is bundled as an offline installer for reliability
-- Updates still work normally via Tauri's updater (the bootstrapper is only for first install)
+- WebView2 is bundled as an offline installer.
+- First-install UX only; later updates use the desktop updater, not this wrapper.

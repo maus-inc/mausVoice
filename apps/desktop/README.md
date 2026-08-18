@@ -1,110 +1,113 @@
 # mausVoice Desktop
 
-Cross-platform voice-to-text desktop application built with Tauri 2 (Rust + TypeScript/React).
+Cross-platform voice-to-text desktop app (Tauri 2: Rust API + TypeScript/React brain).
 
-## Development
+Authoritative docs: [Desktop architecture](https://maus-inc.github.io/mausVoice/docs/development/architecture/) and [Development setup](https://maus-inc.github.io/mausVoice/docs/development/setup/).
 
-### Prerequisites
+## Prerequisites
 
-- Node.js 18+
-- Rust 1.77+
-- Platform-specific dependencies (see [Tauri prerequisites](https://v2.tauri.app/start/prerequisites/))
+- **Node.js from repo `.nvmrc` (v24).** Root `engines.node` is `>=20`.
+- **pnpm 10.11.0** (do not use npm for workspace scripts).
+- **Rust** stable (Tauri v2; 1.77+ historical floor) and **CMake** (whisper-rs).
+- Platform tools: Xcode CLT (macOS), VS Build Tools (Windows). Linux deps: `.github/scripts/install-desktop-linux-deps.sh`.
 
-### Running Locally
-
-Use platform-specific commands (required for native features):
-
-```bash
-npm run dev:mac          # macOS
-npm run dev:windows      # Windows
-```
-
-> **Note:** Do not use `npm run dev` directly—use the platform-specific commands above.
-
-### Build & Quality
+From the **repository root**:
 
 ```bash
-npm run build            # Build frontend
-npm run lint             # Prettier + oxlint
-npm run check-types      # TypeScript type checking (`tsc --noEmit`)
-npm run test:unit        # Vitest unit tests
-npm run test:webdriver   # E2E smoke tests
+pnpm install
 ```
 
-`check-types` needs workspace packages built first (`@repo/agent` in particular), otherwise `tsc` reports spurious `TS2307`/`TS7006` errors. From the repo root:
+macOS toolchain check: `./scripts/setup-macos.sh`.
+
+## Running locally
+
+Native features need the platform command (sets `TAURI_PLATFORM`, prepares sidecars):
+
+```bash
+# from repo root
+pnpm --filter desktop dev:mac
+pnpm --filter desktop dev:windows
+pnpm --filter desktop dev:linux
+```
+
+Or from this directory: `pnpm dev:mac` / `dev:windows` / `dev:linux`.
+
+Do not use bare `pnpm dev` / `npm run dev` for native work. Generic `pnpm dev` only runs the platform-selection helper.
+
+Local flavor uses identifier `com.mausinc.desktop.local` via `src-tauri/tauri.local.conf.json`.
+
+## Build & quality
+
+From repo root:
 
 ```bash
 pnpm exec turbo run build --filter=desktop^...
 pnpm --filter desktop run check-types
+pnpm --filter desktop lint
+pnpm --filter desktop test:unit
+pnpm --filter desktop test:integration
+pnpm --filter desktop test:evals
 ```
 
-## Project Structure
+`check-types` needs workspace packages (`@repo/agent`, `@maus-inc/*`) built first.
+
+`pnpm --filter desktop build` is the Vite/TS frontend only. Packaged native builds go through `pnpm tauri` / the OS-specific Tauri build after sidecars exist.
+
+## Project structure
 
 ```
 src/
-├── actions/         # Business logic orchestration
-├── components/      # React components
-├── hooks/           # Reusable React hooks
-├── repos/           # Data access (local SQLite / cloud Firebase)
-├── state/           # Zustand state slices
-├── types/           # TypeScript types
-└── utils/           # Pure utility functions
+├── actions/         # Business-logic orchestration
+├── components/      # React UI
+├── hooks/           # Store / React hooks
+├── repos/           # Local SQLite + AI provider access
+├── sessions/        # Live transcription transports
+├── sidecars/        # rust_transcription process leases
+├── state/           # Zustand slices
+├── store/           # Combined store
+├── strategies/      # Dictation behavior
+├── tools/           # Assistant tools
+└── utils/           # Pure helpers (prompts, tones, strings)
 
 src-tauri/
 └── src/
-    ├── commands.rs  # Tauri commands (TypeScript ↔ Rust bridge)
-    ├── app.rs       # Application setup
+    ├── commands.rs  # Tauri commands (TS ↔ Rust)
+    ├── app.rs       # Plugin / invoke_handler setup
     ├── db/          # SQLite migrations and queries
     ├── domain/      # Rust domain models
-    ├── platform/    # Platform-specific code (audio, keyboard, whisper)
-    └── system/      # System utilities (models, GPU, tray)
+    ├── platform/    # macOS / Windows / Linux
+    └── system/      # Crypto, paths, GPU, tray, remote I/O
 ```
 
 ## Architecture
 
-**"Rust is the API, TypeScript is the Brain"**
+**Rust is the API, TypeScript is the Brain.** Zustand + Immer is the single store. Repos in this build resolve to local SQLite and local or API-backed providers — there is no hosted cloud backend.
 
-- All business logic lives in TypeScript
-- Rust provides capabilities (audio recording, transcription, system APIs)
-- Zustand is the single source of truth for state
+Personal defaults: Deepgram `nova-3` streaming when a Deepgram key exists; Groq `whisper-large-v3-turbo` as batch fallback. Post-processing is a separate API/Off switch (Groq default `openai/gpt-oss-20b`). Local Whisper/ONNX does **not** turn cleanup off.
 
-## Environment Variables
+Keys are entered in Settings / onboarding and stored with XChaCha20-Poly1305. Nothing is baked into the binary.
 
-| Variable                     | Description                                                                          |
-| ---------------------------- | ------------------------------------------------------------------------------------ |
-| `VITE_FLAVOR`                | Environment: `dev`, `prod`, `emulators` (default), `enterprise`, or `enterprise-dev` |
-| `VITE_USE_EMULATORS`         | Connect to Firebase emulators                                                        |
-| `MAUSVOICE_ENABLE_DEVTOOLS`  | Open dev tools on startup                                                            |
-| `MAUSVOICE_DESKTOP_PLATFORM` | Override platform detection                                                          |
+## Environment variables
+
+| Variable | Description |
+| --- | --- |
+| `VITE_FLAVOR` | `emulators` (dev default), `dev`, `prod`. `enterprise` / `enterprise-dev` are leftover flavor names, not live backends. |
+| `MAUSVOICE_ENABLE_DEVTOOLS` | Open webview devtools on startup |
+| `MAUSVOICE_DESKTOP_PLATFORM` | Override platform detection for Node scripts |
+| `TAURI_PLATFORM` | Set by `dev:mac` / `dev:windows` / `dev:linux` |
+| `TAURI_DEV_CONFIG` | Alternate Tauri config |
+| `MAUSVOICE_API_KEY_SECRET` | Optional explicit at-rest key secret |
 
 ## Internationalization
 
-Uses [react-intl](https://formatjs.io/docs/react-intl/) with auto-generated message IDs.
+react-intl with auto-generated message IDs. Never pass an `id` prop.
 
 ```bash
-npm run i18n:extract     # Extract messages to en.json
-npm run i18n:sync        # Sync to other locales
+pnpm --filter desktop i18n          # extract + sync
+pnpm --filter desktop i18n:extract
+pnpm --filter desktop i18n:sync
 ```
 
-### Adding Translations
+## Bindings
 
-1. Use `<FormattedMessage defaultMessage="..." />` in components
-2. Run `npm run i18n:extract` to update `src/i18n/locales/en.json`
-3. Run `npm run i18n:sync` to propagate keys to other locales
-4. Add translations to each locale file
-
-## Testing
-
-```bash
-# Install tauri-driver (one-time)
-cargo install tauri-driver
-
-# Run E2E tests
-npm run test:webdriver
-```
-
-## IDE Setup
-
-- [VS Code](https://code.visualstudio.com/)
-- [Tauri extension](https://marketplace.visualstudio.com/items?itemName=tauri-apps.tauri-vscode)
-- [rust-analyzer](https://marketplace.visualstudio.com/items?itemName=rust-lang.rust-analyzer)
+After changing `#[tauri::command]` signatures: from repo root `pnpm gen:bindings` (Specta → `packages/desktop-native-apis`; collector is `src-tauri/examples/gen_bindings.rs`).

@@ -19,3 +19,17 @@ Startup opens an SQLx pool with at most five connections, registers plugin-SQL m
 Base `tauri.conf.json` identifies `com.mausinc.desktop`, builds an 1100×700 frameless window with an 800×600 minimum, bundles CPU/GPU transcription sidecars, and scopes the asset protocol to `$APPDATA/transcription-audio/**`. It declares a single updater endpoint resolving to the latest stable release's `latest.json`, with `createUpdaterArtifacts` disabled and an empty `pubkey` so no trust anchor is committed; the release workflow injects the real key and enables artifacts from secrets. The `tauri.dev.conf.json` and `tauri.prod.conf.json` overrides now only set product name and identifier.
 
 Return structured errors across invokes and treat a missing sidecar/pill as a recoverable runtime condition where possible. Keep capability JSON and filesystem/shell scope narrow. After changing Specta-exposed commands or types, run `pnpm gen:bindings` from the root and inspect `packages/desktop-native-apis/src/bindings.ts` rather than editing generated declarations by hand.
+
+## Command registration
+
+1. Add `#[tauri::command]` and `#[specta::specta]` in `commands.rs`.
+2. Register the command in `app.rs` `invoke_handler`.
+3. Add it to `collect_commands!` in `examples/gen_bindings.rs`.
+4. Run `pnpm gen:bindings`.
+5. Call the generated wrapper from a repo, then an action — not from a raw UI handler.
+
+Typical domains: `start_recording` / `stop_recording` / `list_microphones`, `paste` / `simulate_type`, `transcription_*`, `user_*`, `api_key_*` (encrypt before persist).
+
+## Security reminder
+
+External provider hosts belong in CSP `connect-src` and `http:default`, **not** `remote.urls`. `remote.urls` stays localhost-only so those origins cannot invoke IPC. Never add `*` to CSP.

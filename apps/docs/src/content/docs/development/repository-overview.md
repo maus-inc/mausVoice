@@ -7,6 +7,21 @@ sidebar:
 
 mausVoice is a pnpm 10.11.0/Turborepo workspace whose root package is marked private. It contains a Tauri desktop product, static web properties, reusable TypeScript packages, and standalone Rust binaries.
 
+| Path | Purpose |
+| --- | --- |
+| `apps/desktop` | Main Tauri app (React + Zustand) |
+| `apps/desktop/src-tauri` | Rust API, SQLite migrations, platform code |
+| `apps/docs` | Authoritative Astro/Starlight docs |
+| `apps/windows-installer` | Tauri wrapper around the Windows NSIS setup |
+| `packages/types` | Zod schemas and shared types |
+| `packages/utilities` | Shared TypeScript helpers |
+| `packages/voice-ai` | Provider HTTP/WebSocket clients |
+| `packages/agent` (`@repo/agent`) | Tool-calling agent loop |
+| `packages/desktop-native-apis` | Specta-generated Tauri bindings |
+| `packages/rust_transcription` | Local Whisper/ONNX sidecar |
+
+Root scripts: `pnpm run build`, `lint`, `check-types`, `test`, `format`, `gen:bindings`. Internal deps use `workspace:*`.
+
 ## Applications and sites
 
 - `apps/desktop/` contains the React 19/Vite frontend and its Tauri 2 backend in `src-tauri/`. Its scripts build the local transcription and native-pill sidecars before Tauri development or packaging.
