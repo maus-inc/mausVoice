@@ -14,6 +14,7 @@ type PendingDelete = {
 const pendingById = new Map<string, PendingDelete>();
 /** Timer + in-flight IPC. Written to localStorage so quit cannot drop deletes. */
 const queuedIds = new Set<string>();
+let hasResumed = false;
 
 const writeQueuedIds = (): void => {
   if (typeof localStorage === "undefined") {
@@ -101,6 +102,9 @@ export const undoTranscriptionDelete = (id: string): boolean => {
 };
 
 export const flushPendingTranscriptionDeletes = (): void => {
+  if (!hasResumed) {
+    return;
+  }
   writeQueuedIds();
   for (const [id, pending] of pendingById) {
     clearTimeout(pending.timer);
@@ -111,6 +115,7 @@ export const flushPendingTranscriptionDeletes = (): void => {
 
 /** Next launch: finish deletes whose IPC never completed on quit. */
 export const resumePendingTranscriptionDeletes = (): void => {
+  hasResumed = true;
   if (typeof localStorage === "undefined") {
     return;
   }
