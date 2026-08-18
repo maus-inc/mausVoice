@@ -168,9 +168,15 @@ export const ComposerPage = () => {
     return () => {
       recorder.dispose();
       recorderRef.current = null;
-      mountedRef.current = false;
     };
   }, [speechRecognitionSupported]);
+
+  useEffect(() => {
+    mountedRef.current = true;
+    return () => {
+      mountedRef.current = false;
+    };
+  }, []);
 
   useEffect(() => {
     let active = true;
