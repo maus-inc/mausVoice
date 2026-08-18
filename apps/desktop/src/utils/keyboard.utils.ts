@@ -269,7 +269,7 @@ let syncQueue: Promise<void> = Promise.resolve();
 export const syncHotkeyCombosToNative = (): Promise<void> => {
   const run = syncQueue.then(() => syncHotkeyCombosToNativeNow());
   syncQueue = run.catch(() => undefined);
-  return run;
+  return syncQueue;
 };
 
 const collectActionNames = (state: AppState): Set<string> => {
