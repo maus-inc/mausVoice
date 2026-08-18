@@ -20,7 +20,7 @@ describe("sanitizeTranscriptText", () => {
     ).toBe("#ship\nthanks");
   });
 
-  it("strips a silence hallucination after commands", () => {
+  it("strips a silence hallucination before spoken commands", () => {
     expect(
       sanitizeTranscriptText({
         rawTranscript: "Thank you for watching.",

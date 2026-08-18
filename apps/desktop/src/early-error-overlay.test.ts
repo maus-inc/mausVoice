@@ -107,6 +107,17 @@ describe("early error overlay", () => {
     const overlay = nodes.get("maus-global-error-overlay");
     expect(overlay?.textContent).toContain("Failed to load resource");
     expect(overlay?.textContent).toContain(script.src);
+
+    const link = new HTMLLinkElement();
+    link.href = "asset://localhost/assets/styles.css";
+
+    listeners.error[0]({
+      target: link,
+    });
+
+    const overlayAfterLink = nodes.get("maus-global-error-overlay");
+    expect(overlayAfterLink?.textContent).toContain("Failed to load resource");
+    expect(overlayAfterLink?.textContent).toContain(link.href);
   });
 
   it("paints unhandled promise rejections instead of leaving a blank window", () => {

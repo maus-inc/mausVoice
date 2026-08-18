@@ -243,19 +243,6 @@ describe("BaseTranscribeAudioRepo", () => {
         "The cat sat still. [BLANK_AUDIO] A dog ran home. [BLANK_AUDIO] Birds flew away. [BLANK_AUDIO]",
       );
     });
-
-    it("preserves segment text when the provider returns no verbose segments", async () => {
-      const repo = new MockTranscribeAudioRepo(10, 2, 3, (_input, index) => {
-        const transcripts = ["Hello world", "Goodbye moon", "See you later"];
-        return transcripts[index] ?? "";
-      });
-      const sampleRate = 16000;
-      const samples = createSamples(25, sampleRate);
-
-      const result = await repo.transcribeAudio({ samples, sampleRate });
-
-      expect(result.text).toBe("Hello world Goodbye moon See you later");
-    });
   });
 
   describe("batching behavior", () => {

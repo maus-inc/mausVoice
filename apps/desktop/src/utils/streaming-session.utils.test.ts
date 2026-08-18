@@ -6,6 +6,7 @@ type BuilderArgs = {
   canSend?: boolean;
   text?: string;
   sendTermination?: boolean;
+  finalized?: boolean;
 };
 
 const buildFinalize = (args: BuilderArgs = {}) => {
@@ -13,7 +14,7 @@ const buildFinalize = (args: BuilderArgs = {}) => {
   const canSend = args.canSend ?? true;
   const sendTermination = args.sendTermination ?? false;
   let text = args.text ?? "transcript";
-  let finalized = false;
+  let finalized = args.finalized ?? false;
   let cleanedUp = false;
   const termination = vi.fn();
 
@@ -55,9 +56,11 @@ describe("createStreamingFinalize", () => {
   });
 
   it("returns the existing transcript immediately when already finalized", async () => {
-    const { finalize } = buildFinalize();
+    const { finalize, isCleanedUp } = buildFinalize({ finalized: true });
 
     await expect(finalize.finalize()).resolves.toBe("transcript");
+    expect(isCleanedUp()).toBe(false);
+    expect(finalize.hasPendingFinalize()).toBe(false);
   });
 
   it("completeFinalize resolves the pending finalize early and only once", async () => {
