@@ -624,22 +624,21 @@ async fn ensure_model_downloaded(
     model: WhisperModel,
 ) -> Result<PathBuf, ApiError> {
     let model_path = state.model_path(model);
+    // Presence-only on the inference path. SHA-256 is verified at
+    // download/admission (`DownloadArtifact::new_verified`) so each request
+    // stays O(1) after the model is already on disk. Do not reintroduce
+    // request-time digest scans here.
     let required_paths = if model.is_onnx() {
         model
             .artifact_set()
             .into_iter()
-            .map(|(name, _, sha256)| {
-                (
-                    model.artifact_path(&state.config.models_dir, name),
-                    sha256,
-                )
-            })
+            .map(|(name, _, _digest)| model.artifact_path(&state.config.models_dir, name))
             .collect::<Vec<_>>()
     } else {
-        vec![(model_path.clone(), None)]
+        vec![model_path.clone()]
     };
 
-    for (required_path, expected_sha256) in required_paths {
+    for required_path in required_paths {
         let present = tokio::fs::metadata(&required_path)
             .await
             .map(|metadata| metadata.is_file() && metadata.len() > 0)
@@ -654,13 +653,6 @@ async fn ensure_model_downloaded(
                 ),
             ));
         }
-        // Re-verify the pinned digest on the inference path. A graph/weights
-        // file swapped or tampered with after the verified download would
-        // otherwise be transcribed without complaint.
-        // Digest verification is performed on download/admission, not on every
-        // transcription request, so inference stays O(1) after the model is
-        // already on disk.
-        let _ = expected_sha256;
     }
 
     Ok(model_path)
