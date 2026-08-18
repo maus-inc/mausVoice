@@ -13,6 +13,7 @@ import {
   normalizeDictationLimitMinutes,
 } from "../utils/dictation-limit.utils";
 import { PRIMARY_LANGUAGE_SENTINEL } from "../utils/language.utils";
+import { orFalse, orNull, orTrue, orValue } from "../utils/nullable.utils";
 import { getEffectivePillVisibility, LOCAL_USER_ID } from "../utils/user.utils";
 import { BaseRepo } from "./base.repo";
 
@@ -60,13 +61,59 @@ type LocalUserPreferences = {
   typingSpeedMs: Nullable<number>;
   pillResetMonitorStrategy?: Nullable<PillResetMonitorStrategy>;
   alwaysRequestAdminOnStartup?: boolean;
-  spokenCommandsEnabled?: boolean;
+  inDictationStyleSwitchingEnabled?: boolean;
   hallucinationFilterEnabled?: boolean;
+  reviewBeforeInsert?: Nullable<boolean>;
+  // Contract: `null` (the persisted default) means "follow the tool registry's
+  // per-tool enablement"; an empty list `[]` is an *explicit* deny-all the user
+  // chose and must never be coerced into enabling tools; a non-empty list is the
+  // explicit allow-set. Do not migrate `null` to an allow-list of every tool id,
+  // or a user's explicit `[]` would be silently overwritten. Persisted as a
+  // JSON-encoded string (see `parseAgentEnabledTools` / `jsonValue`).
+  agentEnabledTools?: Nullable<string>;
+  agentMaxIterations?: number;
+  agentPermissionTimeoutMs?: number;
+  spokenCommandsEnabled?: boolean;
 };
 
 const normalizePillResetMonitorStrategy = (
   strategy: Nullable<string> | undefined,
 ): PillResetMonitorStrategy => (strategy === "cursor" ? "cursor" : "current");
+
+export const normalizeAgentMaxIterations = (
+  value: number | null | undefined,
+): number => {
+  const normalized =
+    typeof value === "number" && Number.isFinite(value)
+      ? Math.trunc(value)
+      : 20;
+  return Math.min(100, Math.max(1, normalized));
+};
+
+const normalizeAgentPermissionTimeout = (
+  value: number | null | undefined,
+): number =>
+  Math.min(10 * 60_000, Math.max(5_000, Math.trunc(value ?? 60_000)));
+
+const parseAgentEnabledTools = (
+  value: Nullable<string[]> | string | undefined,
+): Nullable<string[]> => {
+  if (Array.isArray(value)) return value;
+  if (typeof value !== "string" || value.trim() === "") return null;
+  try {
+    const parsed: unknown = JSON.parse(value);
+    return Array.isArray(parsed) &&
+      parsed.every((item) => typeof item === "string")
+      ? parsed
+      : null;
+  } catch {
+    const parsed = value
+      .split(",")
+      .map((item) => item.trim())
+      .filter(Boolean);
+    return parsed.length > 0 ? parsed : null;
+  }
+};
 
 // Backwards-compatibility normalization for the persisted AI modes. Older
 // builds stored modes that no longer exist ("cloud" for all three, plus
@@ -102,110 +149,134 @@ const normalizeAgentMode = (mode: Nullable<string>): Nullable<AgentMode> => {
   return "none";
 };
 
+const jsonValue = (value: string[] | null | undefined): string | null =>
+  value ? JSON.stringify(value) : null;
+
 export const fromLocalPreferences = (
   preferences: LocalUserPreferences,
 ): UserPreferences => ({
   userId: preferences.userId,
   transcriptionMode: normalizeTranscriptionMode(preferences.transcriptionMode),
-  transcriptionApiKeyId: preferences.transcriptionApiKeyId,
-  transcriptionDevice: preferences.transcriptionDevice,
-  transcriptionModelSize: preferences.transcriptionModelSize,
+  transcriptionApiKeyId: orNull(preferences.transcriptionApiKeyId),
+  transcriptionDevice: orNull(preferences.transcriptionDevice),
+  transcriptionModelSize: orNull(preferences.transcriptionModelSize),
   postProcessingMode: normalizePostProcessingMode(
     preferences.postProcessingMode,
   ),
-  postProcessingApiKeyId: preferences.postProcessingApiKeyId,
-  postProcessingOllamaUrl: preferences.postProcessingOllamaUrl,
-  postProcessingOllamaModel: preferences.postProcessingOllamaModel,
-  activeToneId: preferences.activeToneId,
-  gotStartedAt: preferences.gotStartedAt,
-  gpuEnumerationEnabled: preferences.gpuEnumerationEnabled,
+  postProcessingApiKeyId: orNull(preferences.postProcessingApiKeyId),
+  postProcessingOllamaUrl: orNull(preferences.postProcessingOllamaUrl),
+  postProcessingOllamaModel: orNull(preferences.postProcessingOllamaModel),
+  activeToneId: orNull(preferences.activeToneId),
+  gotStartedAt: orNull(preferences.gotStartedAt),
+  gpuEnumerationEnabled: orFalse(preferences.gpuEnumerationEnabled),
   agentMode: normalizeAgentMode(preferences.agentMode),
   agentModeApiKeyId: preferences.agentModeApiKeyId,
-  openclawGatewayUrl: preferences.openclawGatewayUrl ?? null,
-  openclawToken: preferences.openclawToken ?? null,
+  openclawGatewayUrl: orNull(preferences.openclawGatewayUrl),
+  openclawToken: orNull(preferences.openclawToken),
   lastSeenFeature: preferences.lastSeenFeature,
-  activeDictationLanguage: preferences.activeDictationLanguage ?? null,
-  preferredMicrophone: preferences.preferredMicrophone ?? null,
-  ignoreUpdateDialog: preferences.ignoreUpdateDialog ?? false,
-  incognitoModeEnabled: preferences.incognitoModeEnabled ?? false,
-  incognitoModeIncludeInStats: preferences.incognitoModeIncludeInStats ?? false,
+  activeDictationLanguage: orNull(preferences.activeDictationLanguage),
+  preferredMicrophone: orNull(preferences.preferredMicrophone),
+  ignoreUpdateDialog: orFalse(preferences.ignoreUpdateDialog),
+  incognitoModeEnabled: orFalse(preferences.incognitoModeEnabled),
+  incognitoModeIncludeInStats: orFalse(preferences.incognitoModeIncludeInStats),
   dictationLimitMinutes: normalizeDictationLimitMinutes(
     preferences.dictationLimitMinutes,
   ),
   dictationPillVisibility: getEffectivePillVisibility(
     preferences.dictationPillVisibility,
   ),
-  realtimeOutputEnabled: preferences.realtimeOutputEnabled ?? false,
-  remoteOutputEnabled: preferences.remoteOutputEnabled ?? false,
-  remoteTargetDeviceId: preferences.remoteTargetDeviceId ?? null,
-  remoteReceiverPort: preferences.remoteReceiverPort ?? null,
-  remoteReceiverAutoStart: preferences.remoteReceiverAutoStart ?? false,
-  dictationAudioDim: preferences.dictationAudioDim ?? 1.0,
-  pasteKeybind: preferences.pasteKeybind ?? null,
-  menuBarIconHidden: preferences.menuBarIconHidden ?? false,
-  insertionMethod: preferences.insertionMethod ?? null,
-  typingSpeedMs: preferences.typingSpeedMs ?? null,
+  realtimeOutputEnabled: orFalse(preferences.realtimeOutputEnabled),
+  remoteOutputEnabled: orFalse(preferences.remoteOutputEnabled),
+  remoteTargetDeviceId: orNull(preferences.remoteTargetDeviceId),
+  remoteReceiverPort: orNull(preferences.remoteReceiverPort),
+  remoteReceiverAutoStart: orFalse(preferences.remoteReceiverAutoStart),
+  dictationAudioDim: orValue(preferences.dictationAudioDim, 1.0),
+  pasteKeybind: orNull(preferences.pasteKeybind),
+  menuBarIconHidden: orFalse(preferences.menuBarIconHidden),
+  insertionMethod: orNull(preferences.insertionMethod),
+  typingSpeedMs: orNull(preferences.typingSpeedMs),
   pillResetMonitorStrategy: normalizePillResetMonitorStrategy(
     preferences.pillResetMonitorStrategy,
   ),
-  alwaysRequestAdminOnStartup: preferences.alwaysRequestAdminOnStartup ?? false,
-  spokenCommandsEnabled: preferences.spokenCommandsEnabled ?? true,
-  // Optional until PR #63 076 lands; never persist on this branch's Rust struct.
-  hallucinationFilterEnabled: preferences.hallucinationFilterEnabled ?? true,
+  alwaysRequestAdminOnStartup: orFalse(preferences.alwaysRequestAdminOnStartup),
+  inDictationStyleSwitchingEnabled: orFalse(
+    preferences.inDictationStyleSwitchingEnabled,
+  ),
+  hallucinationFilterEnabled: orTrue(preferences.hallucinationFilterEnabled),
+  reviewBeforeInsert: orNull(preferences.reviewBeforeInsert),
+  agentEnabledTools: parseAgentEnabledTools(preferences.agentEnabledTools),
+  agentMaxIterations: normalizeAgentMaxIterations(
+    preferences.agentMaxIterations,
+  ),
+  agentPermissionTimeoutMs: normalizeAgentPermissionTimeout(
+    preferences.agentPermissionTimeoutMs,
+  ),
+  spokenCommandsEnabled: orTrue(preferences.spokenCommandsEnabled),
 });
 
 export const toLocalPreferences = (
   preferences: UserPreferences,
 ): LocalUserPreferences => ({
   userId: LOCAL_USER_ID,
-  transcriptionMode: preferences.transcriptionMode ?? null,
-  transcriptionApiKeyId: preferences.transcriptionApiKeyId ?? null,
-  transcriptionDevice: preferences.transcriptionDevice ?? null,
-  transcriptionModelSize: preferences.transcriptionModelSize ?? null,
-  postProcessingMode: preferences.postProcessingMode ?? null,
-  postProcessingApiKeyId: preferences.postProcessingApiKeyId ?? null,
-  postProcessingOllamaUrl: preferences.postProcessingOllamaUrl ?? null,
-  postProcessingOllamaModel: preferences.postProcessingOllamaModel ?? null,
-  activeToneId: preferences.activeToneId ?? null,
-  gotStartedAt: preferences.gotStartedAt ?? null,
+  transcriptionMode: orNull(preferences.transcriptionMode),
+  transcriptionApiKeyId: orNull(preferences.transcriptionApiKeyId),
+  transcriptionDevice: orNull(preferences.transcriptionDevice),
+  transcriptionModelSize: orNull(preferences.transcriptionModelSize),
+  postProcessingMode: orNull(preferences.postProcessingMode),
+  postProcessingApiKeyId: orNull(preferences.postProcessingApiKeyId),
+  postProcessingOllamaUrl: orNull(preferences.postProcessingOllamaUrl),
+  postProcessingOllamaModel: orNull(preferences.postProcessingOllamaModel),
+  activeToneId: orNull(preferences.activeToneId),
+  gotStartedAt: orNull(preferences.gotStartedAt),
   gpuEnumerationEnabled: preferences.gpuEnumerationEnabled,
-  agentMode: preferences.agentMode ?? null,
-  agentModeApiKeyId: preferences.agentModeApiKeyId ?? null,
-  openclawGatewayUrl: preferences.openclawGatewayUrl ?? null,
-  openclawToken: preferences.openclawToken ?? null,
-  lastSeenFeature: preferences.lastSeenFeature ?? null,
+  agentMode: orNull(preferences.agentMode),
+  agentModeApiKeyId: orNull(preferences.agentModeApiKeyId),
+  openclawGatewayUrl: orNull(preferences.openclawGatewayUrl),
+  openclawToken: orNull(preferences.openclawToken),
+  lastSeenFeature: orNull(preferences.lastSeenFeature),
   languageSwitchEnabled: false,
   secondaryDictationLanguage: null,
-  activeDictationLanguage:
-    preferences.activeDictationLanguage ?? PRIMARY_LANGUAGE_SENTINEL,
-  preferredMicrophone: preferences.preferredMicrophone ?? null,
-  ignoreUpdateDialog: preferences.ignoreUpdateDialog ?? false,
-  incognitoModeEnabled: preferences.incognitoModeEnabled ?? false,
-  incognitoModeIncludeInStats: preferences.incognitoModeIncludeInStats ?? false,
+  activeDictationLanguage: orValue(
+    preferences.activeDictationLanguage,
+    PRIMARY_LANGUAGE_SENTINEL,
+  ),
+  preferredMicrophone: orNull(preferences.preferredMicrophone),
+  ignoreUpdateDialog: orFalse(preferences.ignoreUpdateDialog),
+  incognitoModeEnabled: orFalse(preferences.incognitoModeEnabled),
+  incognitoModeIncludeInStats: orFalse(preferences.incognitoModeIncludeInStats),
   dictationLimitMinutes: normalizeDictationLimitMinutes(
-    preferences.dictationLimitMinutes ?? DEFAULT_DICTATION_LIMIT_MINUTES,
+    orValue(preferences.dictationLimitMinutes, DEFAULT_DICTATION_LIMIT_MINUTES),
   ),
   dictationPillVisibility: getEffectivePillVisibility(
     preferences.dictationPillVisibility,
   ),
-  realtimeOutputEnabled: preferences.realtimeOutputEnabled ?? false,
-  remoteOutputEnabled: preferences.remoteOutputEnabled ?? false,
-  remoteTargetDeviceId: preferences.remoteTargetDeviceId ?? null,
-  remoteReceiverPort: preferences.remoteReceiverPort ?? null,
-  remoteReceiverAutoStart: preferences.remoteReceiverAutoStart ?? false,
-  dictationAudioDim: preferences.dictationAudioDim ?? 1.0,
-  pasteKeybind: preferences.pasteKeybind ?? null,
+  realtimeOutputEnabled: orFalse(preferences.realtimeOutputEnabled),
+  remoteOutputEnabled: orFalse(preferences.remoteOutputEnabled),
+  remoteTargetDeviceId: orNull(preferences.remoteTargetDeviceId),
+  remoteReceiverPort: orNull(preferences.remoteReceiverPort),
+  remoteReceiverAutoStart: orFalse(preferences.remoteReceiverAutoStart),
+  dictationAudioDim: orValue(preferences.dictationAudioDim, 1.0),
+  pasteKeybind: orNull(preferences.pasteKeybind),
   useNewBackend: true,
-  menuBarIconHidden: preferences.menuBarIconHidden ?? false,
-  insertionMethod: preferences.insertionMethod ?? null,
-  typingSpeedMs: preferences.typingSpeedMs ?? null,
+  menuBarIconHidden: orFalse(preferences.menuBarIconHidden),
+  insertionMethod: orNull(preferences.insertionMethod),
+  typingSpeedMs: orNull(preferences.typingSpeedMs),
   pillResetMonitorStrategy: normalizePillResetMonitorStrategy(
     preferences.pillResetMonitorStrategy,
   ),
-  alwaysRequestAdminOnStartup: preferences.alwaysRequestAdminOnStartup ?? false,
-  spokenCommandsEnabled: preferences.spokenCommandsEnabled ?? true,
-  // Do not send hallucinationFilterEnabled: this branch's Rust struct
-  // has no column. Callers still default the in-memory flag to true.
+  alwaysRequestAdminOnStartup: orFalse(preferences.alwaysRequestAdminOnStartup),
+  inDictationStyleSwitchingEnabled:
+    preferences.inDictationStyleSwitchingEnabled,
+  hallucinationFilterEnabled: preferences.hallucinationFilterEnabled,
+  reviewBeforeInsert: orNull(preferences.reviewBeforeInsert),
+  agentEnabledTools: jsonValue(preferences.agentEnabledTools),
+  agentMaxIterations: normalizeAgentMaxIterations(
+    preferences.agentMaxIterations,
+  ),
+  agentPermissionTimeoutMs: normalizeAgentPermissionTimeout(
+    preferences.agentPermissionTimeoutMs,
+  ),
+  spokenCommandsEnabled: orTrue(preferences.spokenCommandsEnabled),
 });
 
 export abstract class BaseUserPreferencesRepo extends BaseRepo {

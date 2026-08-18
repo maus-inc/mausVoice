@@ -1,24 +1,36 @@
 [allowlist]
 description = "Public/non-secret values"
 paths = [
-  # Firebase client config (public by design, protected by security rules)
   '''apps/desktop/\.env\.(dev|emulators|prod)''',
   '''apps/desktop/src/main\.tsx''',
-
-  # Test files with mock/dummy API keys
   '''apps/desktop/test/.*\.test\.ts''',
   '''enterprise/gateway/test/.*\.test\.ts''',
-
-  # Docker compose config values (local dev, not real secrets)
   '''config/docker-compose\.yml''',
   '''enterprise/docker-compose\.yml''',
-
-  # GitHub Actions workflow (references ${{ secrets.* }}, not actual values)
-  '''\.github/workflows/.*\.yml''',
-
-  # Documentation examples
   '''docs/.*\.md''',
+  # Narrow exemptions so scanning the whole repo does not self-detect the
+  # detector definition or the config-structure guard that contains the
+  # preamble constant. NOT a broad workflow exemption.
+  '''gitleaks\.toml''',
+  '''scripts/ci/check-gitleaks-config\.mjs''',
+  # This integration test deliberately embeds a hardcoded minisign updater key
+  # to validate the detection rule above. It is a test fixture, not a secret,
+  # so the tree/working-tree scan must skip it (history scanning still applies
+  # to real commits via the scan workflow's add-then-delete coverage).
+  '''(^|/)scripts/ci/test-secret-history-scan\.mjs''',
+  # Build / dependency directories — excluded from scanning so history and
+  # working-tree scans do not flag vendored or generated artifacts. These were
+  # previously path-glob lines in .gitleaksignore, which Gitleaks does not
+  # honor (it expects fingerprints there, not globs).
+  '''(^|/)node_modules/''',
+  '''(^|/)dist/''',
+  '''(^|/)target/''',
 ]
 regexes = [
   '''pk_live_.*''',
 ]
+
+[[rules]]
+id = "tauri-minisign-updater-private-key"
+description = "Tauri/Minisign updater private signing key ('untrusted comment: rsign'). A committed updater signing key lets a fork forge trusted auto-updates, so it must never be committed."
+regex = '''dW50cnVzdGVkIGNvbW1lbnQ6IHJzaWdu'''

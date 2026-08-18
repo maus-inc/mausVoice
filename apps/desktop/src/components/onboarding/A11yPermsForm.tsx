@@ -1,5 +1,4 @@
-import { ArrowForward, Check, OpenInNew } from "@mui/icons-material";
-import { Box, Button, Stack, Typography } from "@mui/material";
+import { Box, Button, Stack } from "@mui/material";
 import { useCallback, useState } from "react";
 import { FormattedMessage } from "react-intl";
 import { goToOnboardingPage } from "../../actions/onboarding.actions";
@@ -10,9 +9,12 @@ import {
   isPermissionAuthorized,
   requestAccessibilityPermission,
 } from "../../utils/permission.utils";
+import { PermissionAccessButton } from "./PermissionAccessButton";
 import {
   BackButton,
   DualPaneLayout,
+  OnboardingContinueButton,
+  OnboardingFormHeader,
   OnboardingFormLayout,
 } from "./OnboardingCommon";
 
@@ -74,58 +76,23 @@ export const A11yPermsForm = () => {
               <FormattedMessage defaultMessage="Skip for now" />
             </Button>
           )}
-          <Button
-            variant="contained"
-            endIcon={<ArrowForward />}
-            onClick={handleContinue}
-          >
-            <FormattedMessage defaultMessage="Continue" />
-          </Button>
+          <OnboardingContinueButton onClick={handleContinue} />
         </Stack>
       }
     >
       <Stack spacing={3}>
-        <Box>
-          <Typography
-            variant="h4"
-            sx={{
-              fontWeight: 600,
-              pb: 1,
-            }}
-          >
-            <FormattedMessage defaultMessage="Enable accessibility" />
-          </Typography>
-          <Typography
-            variant="body1"
-            sx={{
-              color: "text.secondary",
-            }}
-          >
+        <OnboardingFormHeader
+          title={<FormattedMessage defaultMessage="Enable accessibility" />}
+          subtitle={
             <FormattedMessage defaultMessage="mausVoice needs accessibility permissions to paste transcriptions into focused text fields." />
-          </Typography>
-        </Box>
+          }
+        />
 
-        {isAuthorized ? (
-          <Button
-            variant="outlined"
-            color="success"
-            startIcon={<Check />}
-            disabled
-            sx={{ alignSelf: "flex-start" }}
-          >
-            <FormattedMessage defaultMessage="Access granted" />
-          </Button>
-        ) : (
-          <Button
-            variant="outlined"
-            onClick={() => void handleAllow()}
-            disabled={requesting}
-            endIcon={<OpenInNew />}
-            sx={{ alignSelf: "flex-start" }}
-          >
-            <FormattedMessage defaultMessage="Allow access" />
-          </Button>
-        )}
+        <PermissionAccessButton
+          isAuthorized={isAuthorized}
+          requesting={requesting}
+          onAllow={() => void handleAllow()}
+        />
       </Stack>
     </OnboardingFormLayout>
   );

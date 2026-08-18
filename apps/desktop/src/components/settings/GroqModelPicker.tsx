@@ -1,14 +1,9 @@
 import ErrorOutlineIcon from "@mui/icons-material/ErrorOutlined";
-import {
-  Autocomplete,
-  Box,
-  CircularProgress,
-  TextField,
-  Typography,
-} from "@mui/material";
+import { Box, CircularProgress, Typography } from "@mui/material";
 import { fetch } from "@tauri-apps/plugin-http";
 import { useCallback, useEffect, useState } from "react";
 import { FormattedMessage } from "react-intl";
+import { FreeSoloModelAutocomplete } from "./FreeSoloModelAutocomplete";
 
 const GROQ_MODELS_URL = "https://api.groq.com/openai/v1/models";
 
@@ -112,32 +107,11 @@ export const GroqModelPicker = ({
   }
 
   return (
-    <Autocomplete
-      freeSolo
-      options={models}
-      value={selectedModel ?? ""}
-      onChange={(_event, newValue) => {
-        onModelSelect(newValue || null);
-      }}
-      onInputChange={(_event, newInputValue, reason) => {
-        if (reason === "input") {
-          onModelSelect(newInputValue || null);
-        }
-      }}
+    <FreeSoloModelAutocomplete
+      models={models}
+      selectedModel={selectedModel}
+      onModelSelect={onModelSelect}
       disabled={disabled || !isAvailable}
-      size="small"
-      fullWidth
-      renderInput={(params) => (
-        <TextField
-          {...params}
-          label={<FormattedMessage defaultMessage="Model" />}
-          placeholder="Select or type a model"
-          slotProps={{
-            ...params.slotProps,
-            inputLabel: { ...params.slotProps.inputLabel, shrink: true },
-          }}
-        />
-      )}
     />
   );
 };

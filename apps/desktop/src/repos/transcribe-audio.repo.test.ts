@@ -10,6 +10,7 @@ import {
   TranscribeAudioOutput,
   TranscribeSegmentInput,
 } from "./transcribe-audio.repo";
+import { type TranscriptionSegment } from "../utils/hallucination.utils";
 
 /**
  * Mock implementation that tracks calls and returns predictable text
@@ -28,6 +29,10 @@ class MockTranscribeAudioRepo extends BaseTranscribeAudioRepo {
       input: TranscribeSegmentInput,
       index: number,
     ) => string,
+    private segmentGenerator?: (
+      input: TranscribeSegmentInput,
+      index: number,
+    ) => TranscriptionSegment[] | undefined,
   ) {
     super();
   }
@@ -66,8 +71,13 @@ class MockTranscribeAudioRepo extends BaseTranscribeAudioRepo {
       ? this.transcriptGenerator(input, index)
       : `segment ${index}`;
 
+    const segments = this.segmentGenerator
+      ? this.segmentGenerator(input, index)
+      : undefined;
+
     return {
       text,
+      segments,
       metadata: {
         inferenceDevice: "Mock Device",
         modelSize: "mock",
@@ -157,6 +167,84 @@ describe("BaseTranscribeAudioRepo", () => {
     });
 
     it("should concatenate when no overlap is detected", async () => {
+      const repo = new MockTranscribeAudioRepo(10, 2, 3, (_input, index) => {
+        const transcripts = ["Hello world", "Goodbye moon", "See you later"];
+        return transcripts[index] ?? "";
+      });
+      const sampleRate = 16000;
+      const samples = createSamples(25, sampleRate);
+
+      const result = await repo.transcribeAudio({ samples, sampleRate });
+
+      expect(result.text).toBe("Hello world Goodbye moon See you later");
+    });
+
+    it("applies probability-gated silence handling to each chunk before merging long audio", async () => {
+      // Each chunk returns one real segment plus a near-certain-silence
+      // segment (no_speech_prob >= 0.9). The repo must drop the silent segment
+      // per-chunk (not just for single-segment audio) before overlap-merging,
+      // so long recordings still get the probability gate.
+      const chunkTexts = [
+        "The cat sat still.",
+        "A dog ran home.",
+        "Birds flew away.",
+      ];
+      const repo = new MockTranscribeAudioRepo(
+        10,
+        2,
+        3,
+        (_input, index) => chunkTexts[index] ?? "",
+        (_input, index) => [
+          { text: chunkTexts[index] ?? "", noSpeechProb: 0.1 },
+          { text: "[BLANK_AUDIO]", noSpeechProb: 0.99 },
+        ],
+      );
+      const sampleRate = 16000;
+      const samples = createSamples(25, sampleRate);
+
+      const result = await repo.transcribeAudio({ samples, sampleRate });
+
+      expect(result.text).not.toContain("[BLANK_AUDIO]");
+      expect(result.text).toBe(
+        "The cat sat still. A dog ran home. Birds flew away.",
+      );
+    });
+
+    it("preserves each chunk's raw text when hallucination filtering is disabled on long audio", async () => {
+      // Mirrors the enabled-path test above but with the off switch on: every
+      // chunk still has a near-certain-silence segment, but the repo must merge
+      // raw chunk text unchanged so the off switch works for multi-chunk audio.
+      const chunkTexts = [
+        "The cat sat still.",
+        "A dog ran home.",
+        "Birds flew away.",
+      ];
+      const repo = new MockTranscribeAudioRepo(
+        10,
+        2,
+        3,
+        (_input, index) => `${chunkTexts[index] ?? ""} [BLANK_AUDIO]`,
+        (_input, index) => [
+          { text: chunkTexts[index] ?? "", noSpeechProb: 0.1 },
+          { text: "[BLANK_AUDIO]", noSpeechProb: 0.99 },
+        ],
+      );
+      const sampleRate = 16000;
+      const samples = createSamples(25, sampleRate);
+
+      const result = await repo.transcribeAudio({
+        samples,
+        sampleRate,
+        hallucinationFilterEnabled: false,
+      });
+
+      expect(result.text).toContain("[BLANK_AUDIO]");
+      expect(result.text).toBe(
+        "The cat sat still. [BLANK_AUDIO] A dog ran home. [BLANK_AUDIO] Birds flew away. [BLANK_AUDIO]",
+      );
+    });
+
+    it("preserves segment text when the provider returns no verbose segments", async () => {
       const repo = new MockTranscribeAudioRepo(10, 2, 3, (_input, index) => {
         const transcripts = ["Hello world", "Goodbye moon", "See you later"];
         return transcripts[index] ?? "";

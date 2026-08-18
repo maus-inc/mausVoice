@@ -97,12 +97,14 @@ export const postProcess = async ({
   language = "en",
   userName = "Thomas Gundan",
   repo,
+  signal,
 }: {
   tone: ToneConfig;
   transcription: string;
   language?: string;
   userName?: string;
   repo?: BaseGenerateTextRepo;
+  signal?: AbortSignal;
 }): Promise<string> => {
   const promptInput: PostProcessingPromptInput = {
     transcript: transcription,
@@ -116,6 +118,7 @@ export const postProcess = async ({
   const output = await (repo ?? getGroqGentextRepo()).generateText({
     system: ppSystem,
     prompt: ppPrompt,
+    signal,
     jsonResponse: {
       name: "transcription_cleaning",
       description: "JSON response with the processed transcription",

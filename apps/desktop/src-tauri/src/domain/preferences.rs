@@ -88,9 +88,33 @@ pub struct UserPreferences {
     /// default so existing behavior is unchanged.
     #[serde(default)]
     pub always_request_admin_on_startup: bool,
+    #[serde(default)]
+    pub in_dictation_style_switching_enabled: bool,
+    #[serde(default = "default_hallucination_filter_enabled")]
+    pub hallucination_filter_enabled: bool,
+    #[serde(default)]
+    pub review_before_insert: Option<bool>,
+    #[serde(default)]
+    pub agent_enabled_tools: Option<String>,
+    #[serde(default = "default_agent_max_iterations")]
+    pub agent_max_iterations: i64,
+    #[serde(default = "default_agent_permission_timeout_ms")]
+    pub agent_permission_timeout_ms: i64,
     /// Deterministic spoken formatting / scratch-that. Default on.
     #[serde(default = "default_true")]
     pub spoken_commands_enabled: bool,
+}
+
+fn default_hallucination_filter_enabled() -> bool {
+    true
+}
+
+fn default_agent_max_iterations() -> i64 {
+    20
+}
+
+fn default_agent_permission_timeout_ms() -> i64 {
+    60_000
 }
 
 fn default_pill_reset_monitor_strategy() -> String {

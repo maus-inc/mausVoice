@@ -3,10 +3,15 @@ name: Release mausVoice
 # Robust release pipeline for mausVoice desktop.
 #
 # Trigger: manual dispatch ("Run workflow"). This publishes a versioned
-# GitHub Release with unsigned, self-built installers for macOS (universal),
-# Windows, and Linux. No code signing, no notarization, no updater channel
-# metadata — the signing key is the repo-visible throwaway CI key, so the
-# updater must never publish latest.json.
+# GitHub Release with self-built installers for macOS (universal), Windows,
+# and Linux. There is no OS code signing or notarization.
+#
+# The updater is signed separately with the minisign keypair in the
+# UPDATER_* repository secrets. When those secrets exist and the run is not a
+# prerelease, the pipeline also publishes a signed latest.json that installed
+# copies use to update themselves. No key material is committed: the checked-in
+# Tauri config disables updater artifacts and carries an empty pubkey, and the
+# build job patches both only inside its own checkout.
 #
 # Typical flow:
 #   1. Enter the version (e.g. 0.1.3) and optional release notes
@@ -90,6 +95,9 @@ jobs:
         with:
           workspaces: |
             apps/desktop/src-tauri -> target
+            packages/rust_transcription -> packages/rust_transcription/target
+            packages/rust_pill_shared -> packages/rust_pill_shared/target
+            packages/rust_gtk_pill -> packages/rust_gtk_pill/target
           key: ubuntu-release-verify-rust
       - name: Install system dependencies
         run: |
@@ -100,14 +108,31 @@ jobs:
             WEBKIT_PKG=libwebkit2gtk-4.0-dev
           fi
           sudo apt-get install -y \
-            build-essential pkg-config cmake \
+            build-essential pkg-config cmake clang libclang-dev \
             libgtk-3-dev "$WEBKIT_PKG" \
-            libayatana-appindicator3-dev librsvg2-dev libasound2-dev libxdo-dev
+            libayatana-appindicator3-dev librsvg2-dev libasound2-dev libxdo-dev \
+            libgtk-layer-shell-dev xvfb
       - name: Run Rust unit tests
         working-directory: apps/desktop/src-tauri
         env:
           TAURI_CONFIG: '{"bundle":{"externalBin":[]}}'
         run: cargo test --lib
+      # The release gate must cover every crate that ships in the artifact,
+      # not just the Tauri backend: transcription (downloads, resume,
+      # ONNX inference plumbing) and the pill crates buildable on this runner.
+      - name: Run transcription unit tests
+        env:
+          CMAKE_TOOLCHAIN_FILE: ${{ github.workspace }}/packages/rust_transcription/cmake/linux-ci-toolchain.cmake
+        run: cargo test --manifest-path packages/rust_transcription/Cargo.toml --lib
+      - name: Run shared pill geometry tests
+        run: cargo test --manifest-path packages/rust_pill_shared/Cargo.toml
+      # The gtk pill unit tests are pure math/state (long-press progress,
+      # control layout, cairo input regions, visibility) and never open a
+      # display, but linking libgtk on a headless runner is safest under a
+      # virtual X server — xvfb-run guarantees the gate cannot hang on a
+      # missing DISPLAY if a display-touching test is ever added.
+      - name: Run Linux pill tests
+        run: xvfb-run -a cargo test --manifest-path packages/rust_gtk_pill/Cargo.toml
 
   build:
     name: Build ${{ matrix.label }}
@@ -153,6 +178,7 @@ jobs:
         shell: bash
         env:
           RELEASE_VERSION: ${{ inputs.version }}
+          INPUT_PRERELEASE: ${{ inputs.prerelease }}
         run: |
           case "$RELEASE_VERSION" in
             ''|*[!0-9A-Za-z.\-]*|.*|..*)
@@ -160,6 +186,20 @@ jobs:
               exit 1 ;;
             *) echo "Version OK: $RELEASE_VERSION" ;;
           esac
+          # The update channel is decided by GitHub's prerelease flag, not by
+          # the version string. A semver carrying a pre-release identifier
+          # (anything after the first '-', e.g. 0.2.0-rc.1) must be released
+          # with the prerelease checkbox set, and a clean version must not be.
+          # A mismatch would either ship an RC to stable clients or hide a real
+          # stable release from "latest", so fail instead of publishing.
+          VERSION_IS_PRERELEASE="false"
+          case "$RELEASE_VERSION" in
+            *-*) VERSION_IS_PRERELEASE="true" ;;
+          esac
+          if [ "$VERSION_IS_PRERELEASE" != "$INPUT_PRERELEASE" ]; then
+            echo "::error::Version '$RELEASE_VERSION' is a $([ "$VERSION_IS_PRERELEASE" = "true" ] && echo prerelease || echo stable) version, but the 'prerelease' input is $INPUT_PRERELEASE. Set the prerelease checkbox to match the version, or the release will land in the wrong update channel." >&2
+            exit 1
+          fi
 
       - name: Setup pnpm
         uses: pnpm/action-setup@b906affcce14559ad1aafd4ab0e942779e9f58b1
@@ -233,10 +273,11 @@ jobs:
           node -e "
             const fs = require('fs');
             const version = process.env.RELEASE_VERSION;
+            // tauri.prod.conf.json is a product-name/identifier override that
+            // the build never loads, so writing a version into it did nothing.
             const files = [
               'apps/desktop/package.json',
-              'apps/desktop/src-tauri/tauri.conf.json',
-              'apps/desktop/src-tauri/tauri.prod.conf.json'
+              'apps/desktop/src-tauri/tauri.conf.json'
             ];
             for (const f of files) {
               const p = JSON.parse(fs.readFileSync(f, 'utf8'));
@@ -252,6 +293,42 @@ jobs:
           MAUSVOICE_DESKTOP_PLATFORM: ${{ matrix.node_platform }}
         run: pnpm exec turbo run build --filter=desktop...
 
+      # The updater trust anchor lives entirely in repository secrets. When
+      # UPDATER_PRIVATE_KEY is absent the build stays exactly as it was before
+      # signing existed: unsigned installers, no updater artifacts. A prerelease
+      # can still publish like that, but a stable release is blocked at the
+      # manifest-eligibility gate (clients would otherwise 404 on latest.json).
+      - name: Resolve updater signing mode
+        id: signing
+        shell: bash
+        env:
+          UPDATER_PRIVATE_KEY: ${{ secrets.UPDATER_PRIVATE_KEY }}
+          UPDATER_PUBLIC_KEY: ${{ secrets.UPDATER_PUBLIC_KEY }}
+        run: |
+          if [ -n "$UPDATER_PRIVATE_KEY" ] && [ -n "$UPDATER_PUBLIC_KEY" ]; then
+            echo "enabled=true" >> "$GITHUB_OUTPUT"
+            echo "Updater signing enabled."
+          else
+            echo "enabled=false" >> "$GITHUB_OUTPUT"
+            echo "::warning::UPDATER_PRIVATE_KEY/UPDATER_PUBLIC_KEY are not configured - building unsigned installers. Prereleases will publish without an update manifest; a stable release will be blocked at the manifest-eligibility gate."
+          fi
+
+      - name: Enable updater artifacts for the signed build
+        if: steps.signing.outputs.enabled == 'true'
+        shell: bash
+        env:
+          UPDATER_PUBLIC_KEY: ${{ secrets.UPDATER_PUBLIC_KEY }}
+        run: |
+          node -e "
+            const fs = require('fs');
+            const p = 'apps/desktop/src-tauri/tauri.conf.json';
+            const c = JSON.parse(fs.readFileSync(p, 'utf8'));
+            c.bundle.createUpdaterArtifacts = true;
+            c.plugins.updater.pubkey = process.env.UPDATER_PUBLIC_KEY;
+            fs.writeFileSync(p, JSON.stringify(c, null, 2) + '\n');
+            console.log('Updater artifacts enabled for this build.');
+          "
+
       - name: Build Tauri app
         env:
           TAURI_PLATFORM: ${{ matrix.tauri_platform }}
@@ -259,21 +336,43 @@ jobs:
           MAUSVOICE_REQUIRE_GPU_SIDECAR: ${{ matrix.require_gpu_sidecar && 'true' || 'false' }}
           MACOSX_DEPLOYMENT_TARGET: "13.3"
           CMAKE_OSX_DEPLOYMENT_TARGET: "13.3"
-          # Throwaway signing key, unsigned build only — same one build-desktop.yml uses for CI validation.
-          TAURI_SIGNING_PRIVATE_KEY: "dW50cnVzdGVkIGNvbW1lbnQ6IHJzaWduIGVuY3J5cHRlZCBzZWNyZXQga2V5ClJXUlRZMEl5OVRKZlAyVDN3dlF1Wm5mbWh1MXYwV3VjRlR2SVhUY2JqdmZUUGdtM1JOMEFBQkFBQUFBQUFBQUFBQUlBQUFBQXp4N2IwQXBxS3lTQnFWeXJuMmpaeGpKdkd5VUhTeit1cklsd3dQVTJvSnkzUktQMVlrQklPQ0duQkVZSStiMEdqTDFaSWJXZW96eTdab0VyaTZMUVNuWlpjSTZTY3NpVXA0bUZVVjh3TldRNHF1Qk1CUFBqcTduS3RMQ3FwMDFQM0VjYTlWdTZQZTQ9Cg=="
-          TAURI_CI_PUBKEY: "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IDQ2NTZFNDMzMzYyMjBCMzgKUldRNEN5STJNK1JXUmpWRDMzem12QUtjVkFxWERXanl0ZVRCWi9JOTd3bmRFRVFuQkp1QmpiN0EK"
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.UPDATER_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.UPDATER_PRIVATE_KEY_PASSWORD }}
         working-directory: apps/desktop
+        run: pnpm run tauri build --ci ${{ matrix.args }}
+
+      - name: Sign macOS DMG for manual updater
+        # Tauri's updater only signs `.app.tar.gz` -> `.app.tar.gz.sig`. The
+        # manual-installer fallback verifies the standalone DMG against a
+        # detached `.dmg.sig`, so sign it explicitly with the same updater
+        # private key. The resulting `.dmg.sig` is picked up by the existing
+        # `**/*.sig` upload/publish globs and the updater manifest builder.
+        #
+        # `matrix.bundle_dir` is repository-root-relative, so it is resolved
+        # against $GITHUB_WORKSPACE (NOT the desktop package dir). The signer is
+        # invoked through the locked Tauri CLI via `pnpm --filter desktop exec`
+        # so the absolute DMG path works regardless of the working directory.
+        if: matrix.os == 'macos-14' && steps.signing.outputs.enabled == 'true'
+        env:
+          UPDATER_PRIVATE_KEY: ${{ secrets.UPDATER_PRIVATE_KEY }}
+          UPDATER_PRIVATE_KEY_PASSWORD: ${{ secrets.UPDATER_PRIVATE_KEY_PASSWORD }}
+        shell: bash
         run: |
-          node -e "
-            const fs = require('fs');
-            const p = 'src-tauri/tauri.conf.json';
-            const c = JSON.parse(fs.readFileSync(p, 'utf8'));
-            if (c.plugins?.updater?.pubkey === '__UPDATER_PUBLIC_KEY__') {
-              c.plugins.updater.pubkey = process.env.TAURI_CI_PUBKEY;
-            }
-            fs.writeFileSync(p, JSON.stringify(c, null, 2) + '\n');
-          "
-          pnpm run tauri build --ci ${{ matrix.args }}
+          set -euo pipefail
+          DMG=$(find "$GITHUB_WORKSPACE/${{ matrix.bundle_dir }}" -name '*.dmg' | head -n1)
+          if [ -z "$DMG" ]; then
+            echo "::error::No macOS DMG found under ${{ matrix.bundle_dir }} to sign" >&2
+            exit 1
+          fi
+          echo "Signing $DMG with the updater private key"
+          pnpm --filter desktop exec tauri signer sign \
+            --private-key "$UPDATER_PRIVATE_KEY" \
+            ${UPDATER_PRIVATE_KEY_PASSWORD:+--password "$UPDATER_PRIVATE_KEY_PASSWORD"} \
+            "$DMG"
+          if [ ! -f "$DMG.sig" ]; then
+            echo "::error::DMG signature was not produced at $DMG.sig" >&2
+            exit 1
+          fi
 
       - name: Upload build artifacts
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
@@ -287,6 +386,7 @@ jobs:
             ${{ matrix.bundle_dir }}/**/*.exe
             ${{ matrix.bundle_dir }}/**/*.deb
             ${{ matrix.bundle_dir }}/**/*.AppImage
+            ${{ matrix.bundle_dir }}/**/*.sig
           if-no-files-found: warn
           retention-days: 7
 
@@ -334,6 +434,66 @@ jobs:
           node scripts/ci/generate-release-body.mjs > "$RUNNER_TEMP/release-body.md"
           echo "body_file=$RUNNER_TEMP/release-body.md" >> "$GITHUB_OUTPUT"
 
+      # The update channel is derived from the version itself, not the
+      # dispatcher checkbox, so a prerelease can never reach stable clients and
+      # a stable release always publishes a signed manifest. GitHub marks a
+      # release "latest" from its prerelease flag alone, and clients fetch
+      # latest.json from /releases/latest/download/ — so an unsigned stable
+      # release would 404 every installed client and permanently disable
+      # updates. Require signing secrets for stable; fail closed otherwise.
+      #
+      # This fail-closed policy intentionally SUPERSEDES PR #59's final commit
+      # (248ca2c, "restore graceful fail-safe skip for stable release without
+      # UPDATER_* secrets"). PR #63 deliberately does not import that commit: an
+      # unsigned stable release would break every installed client's updater,
+      # so we refuse to publish rather than skip signing. The five-PR superfix
+      # therefore contains PRs #55/#57/#58/#60 in full plus PR #59 up to
+      # 9cd6912; #59's final commit is intentionally omitted, not an oversight.
+      - name: Resolve updater manifest eligibility
+        id: manifest
+        shell: bash
+        env:
+          UPDATER_PRIVATE_KEY: ${{ secrets.UPDATER_PRIVATE_KEY }}
+          UPDATER_PUBLIC_KEY: ${{ secrets.UPDATER_PUBLIC_KEY }}
+          RELEASE_VERSION: ${{ inputs.version }}
+          RELEASE_PRERELEASE: ${{ inputs.prerelease }}
+        run: |
+          # Semver pre-release identifier (anything after the first '-').
+          VERSION_IS_PRERELEASE="false"
+          case "$RELEASE_VERSION" in
+            *-*) VERSION_IS_PRERELEASE="true" ;;
+          esac
+          # The build job already fails on a checkbox/version mismatch, but
+          # refuse here too so a manifest is never emitted for the wrong
+          # channel even if that guard regresses.
+          if [ "$VERSION_IS_PRERELEASE" != "$RELEASE_PRERELEASE" ]; then
+            echo "::error::Version '$RELEASE_VERSION' prerelease status ($VERSION_IS_PRERELEASE) disagrees with the prerelease input ($RELEASE_PRERELEASE). Refusing to emit a manifest." >&2
+            exit 1
+          fi
+          if [ "$VERSION_IS_PRERELEASE" = "true" ]; then
+            echo "eligible=false" >> "$GITHUB_OUTPUT"
+            echo "Prerelease: skipping the stable update manifest."
+            exit 0
+          fi
+          if [ -z "$UPDATER_PRIVATE_KEY" ] || [ -z "$UPDATER_PUBLIC_KEY" ]; then
+            echo "::error::UPDATER_PRIVATE_KEY/UPDATER_PUBLIC_KEY are not configured. A stable release must publish a signed latest.json, or installed clients will 404 and lose the ability to update. Configure the UPDATER_* secrets or run this as a prerelease." >&2
+            exit 1
+          fi
+          echo "eligible=true" >> "$GITHUB_OUTPUT"
+
+      - name: Build updater manifest
+        if: steps.manifest.outputs.eligible == 'true'
+        env:
+          ARTIFACTS_DIR: dist
+          RELEASE_VERSION: ${{ inputs.version }}
+          RELEASE_TAG: ${{ steps.tag.outputs.tag_name }}
+          RELEASE_PRERELEASE: ${{ inputs.prerelease }}
+          RELEASE_NOTES: ${{ inputs.notes }}
+          OUTPUT_PATH: dist/latest.json
+        run: |
+          node scripts/ci/build-updater-manifest.mjs
+          cat dist/latest.json
+
       - name: Publish release
         uses: softprops/action-gh-release@3bb12739c298aeb8a4eeaf626c5b8d85266b0e65
         # 'token' input (default: github.token) overrides GITHUB_TOKEN, so pass the
@@ -354,16 +514,33 @@ jobs:
             dist/**/*.exe
             dist/**/*.deb
             dist/**/*.AppImage
+            dist/**/*.sig
+            dist/latest.json
 
   publish-cask:
     name: Publish Homebrew cask
     needs: publish
+    # Homebrew's stable tap must never be pointed at a pre-release build.
+    if: inputs.prerelease != true
     runs-on: ubuntu-latest
     permissions:
       contents: read
     steps:
       - name: Checkout source
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+
+      # The cask lives in a different repository (maus-inc/homebrew-mausvoice),
+      # which the workflow-scoped GITHUB_TOKEN can never push to. Fail here,
+      # before downloading/rendering anything, instead of 403-ing on the final
+      # `git push` with an opaque error.
+      - name: Require RELEASE_TOKEN
+        env:
+          RELEASE_TOKEN: ${{ secrets.RELEASE_TOKEN }}
+        run: |
+          if [ -z "$RELEASE_TOKEN" ]; then
+            echo "::error::secrets.RELEASE_TOKEN is not set. Publishing the Homebrew cask requires a PAT with write access to maus-inc/homebrew-mausvoice; GITHUB_TOKEN cannot push cross-repo." >&2
+            exit 1
+          fi
 
       - name: Resolve tag
         id: tag
@@ -399,7 +576,9 @@ jobs:
       - name: Publish cask to tap
         env:
           VERSION: ${{ inputs.version }}
-          TOKEN: ${{ secrets.RELEASE_TOKEN || secrets.GITHUB_TOKEN }}
+          # No GITHUB_TOKEN fallback: it cannot push to the tap repo, and the
+          # guard step above already failed fast if RELEASE_TOKEN is missing.
+          TOKEN: ${{ secrets.RELEASE_TOKEN }}
         run: |
           set -euo pipefail
           REPO_URL="https://x-access-token:${TOKEN}@github.com/maus-inc/homebrew-mausvoice.git"

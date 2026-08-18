@@ -4,11 +4,10 @@ import { isEnglishSanitizeLanguage } from "./sanitize-language.utils";
  * Common phrases emitted by Whisper-like models when the input contains only
  * room noise or silence. Keep this list intentionally conservative: filtering
  * is applied before post-processing and should never rewrite a real sentence.
- *
- * Phrase filter is what the live sanitize path uses. gateSilentSegments is
- * available when a provider supplies verbose_json segments; this branch's
- * sanitize pipeline does not invent those segments.
  */
+// English-only list: `applyHallucinationFiltering` short-circuits and returns the
+// text unchanged for any non-English `language`, so a non-English phrase added here
+// would be dead code (never reached). Keep additions English.
 export const KNOWN_SILENCE_HALLUCINATIONS = [
   "[blank_audio]",
   "[blank audio]",
@@ -16,15 +15,32 @@ export const KNOWN_SILENCE_HALLUCINATIONS = [
   "(silence)",
   "thank you for watching",
   "thanks for watching",
+  // Cloud transcription (e.g. Groq) sometimes fabricates a subtitle credit on
+  // silent audio; see issue #54 / voquill#446. Both the bare phrase and the
+  // trailing-period variant are listed for clarity even though
+  // `normalizeHallucinationText` strips terminal punctuation, so they collapse
+  // to the same normalized form.
   "subtitles by the amara.org community",
   "subtitles by the amara.org community.",
 ] as const;
 
+/**
+ * Subtitle/Amara credit hallucinations. When one of these is present, a nearby
+ * fabricated sign-off (see SILENCE_HALLUCINATION_COMPANIONS) is almost
+ * certainly part of the same hallucinated artifact and is safe to drop.
+ */
 export const SUBTITLE_HALLUCINATION_PHRASES = [
   "subtitles by the amara.org community",
   "subtitles by the amara.org community.",
 ] as const;
 
+/**
+ * Phrases that look like genuine content on their own but are fabricated by
+ * cloud models alongside the Amara/subtitle hallucination. They are only
+ * stripped when a SUBTITLE_HALLUCINATION_PHRASES entry is also present (or when
+ * the whole segment is dropped by probability gating), so a real dictated
+ * "Best regards." email sign-off survives.
+ */
 export const SILENCE_HALLUCINATION_COMPANIONS = ["best regards."] as const;
 
 const normalizeHallucinationText = (text: string): string =>
@@ -62,7 +78,7 @@ const isSilenceCompanion = (part: string): boolean => {
  * appears inside a longer sentence.
  *
  * Non-English `language` disables the filter. Omitting `language` keeps the
- * historical always-filter behavior (PR #63 contract).
+ * historical always-filter behavior.
  */
 export const filterKnownSilenceHallucinations = (
   text: string,
@@ -93,13 +109,54 @@ export const filterKnownSilenceHallucinations = (
   return keptLines.join("\n");
 };
 
+/**
+ * Apply the full hallucination-mitigation pipeline to a provider result.
+ *
+ * When `filterEnabled` is false the raw transcript is returned EXACTLY — no
+ * probability gating and no phrase filtering — so the user's off-switch
+ * preserves content verbatim. Otherwise near-certain-silence segments are
+ * dropped (probability gate) and known silence phrases are filtered from the
+ * remainder.
+ */
+export const applyHallucinationFiltering = (
+  rawTranscript: string,
+  segments: TranscriptionSegment[] | undefined | null,
+  language: string | undefined,
+  filterEnabled: boolean,
+): string => {
+  if (!filterEnabled) {
+    return rawTranscript;
+  }
+  const gated = gateSilentSegments(segments);
+  const transcriptForFiltering = gated ?? rawTranscript;
+  return filterKnownSilenceHallucinations(transcriptForFiltering, language);
+};
+
+/**
+ * A single Whisper segment as returned by a `verbose_json` transcription.
+ * `noSpeechProb` is the model's estimate that the segment contains no speech.
+ */
 export type TranscriptionSegment = {
   text: string;
   noSpeechProb?: number;
 };
 
+/**
+ * Segments whose `no_speech_prob` meets or exceeds this are treated as
+ * near-certain silence and dropped. The 0.9 threshold is deliberately
+ * conservative so only clearly-silent segments are removed; genuine speech
+ * (even quiet speech) is preserved verbatim. This mirrors the local RMS energy
+ * gate that runs before inference for on-device transcription.
+ */
 export const NO_SPEECH_PROB_THRESHOLD = 0.9;
 
+/**
+ * Drop clearly-silent segments from a `verbose_json` response and concatenate
+ * the remainder. Returns null (not "") when no segments are supplied so callers
+ * can fall back to the exact provider text — providers that don't return
+ * `verbose_json` output (e.g. some OpenAI-compatible endpoints) simply bypass
+ * this gate.
+ */
 export const gateSilentSegments = (
   segments: TranscriptionSegment[] | undefined | null,
 ): string | null => {
@@ -116,18 +173,4 @@ export const gateSilentSegments = (
     .join(" ")
     .replace(/\s+/g, " ")
     .trim();
-};
-
-export const applyHallucinationFiltering = (
-  rawTranscript: string,
-  segments: TranscriptionSegment[] | undefined | null,
-  language: string | undefined,
-  filterEnabled: boolean,
-): string => {
-  if (!filterEnabled) {
-    return rawTranscript;
-  }
-  const gated = gateSilentSegments(segments);
-  const transcriptForFiltering = gated ?? rawTranscript;
-  return filterKnownSilenceHallucinations(transcriptForFiltering, language);
 };
