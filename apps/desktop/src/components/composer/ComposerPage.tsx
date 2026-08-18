@@ -12,7 +12,14 @@ import {
 import { invoke } from "@tauri-apps/api/core";
 import { emit } from "@tauri-apps/api/event";
 import { getCurrentWindow } from "@tauri-apps/api/window";
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import {
+  useCallback,
+  useEffect,
+  useId,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
 import { FormattedMessage, useIntl } from "react-intl";
 import { applyVoiceEditInstruction } from "../../actions/composer.actions";
 import { transcribeAudio } from "../../actions/transcribe.actions";
@@ -38,6 +45,7 @@ const closeComposerWindow = async () => {
 
 export const ComposerPage = () => {
   const intl = useIntl();
+  const disabledReasonId = useId();
   const params = useMemo(() => new URLSearchParams(window.location.search), []);
   const requestId = params.get("requestId") ?? "";
   const [text, setText] = useState("");
@@ -321,6 +329,7 @@ export const ComposerPage = () => {
               })}
               disabled={isEditing || !voiceInstructionSupported}
               title={disabledReason ?? undefined}
+              aria-describedby={disabledReason ? disabledReasonId : undefined}
             >
               <MicIcon />
             </IconButton>
@@ -340,7 +349,11 @@ export const ComposerPage = () => {
             </Button>
           </Stack>
           {disabledReason && (
-            <Typography variant="caption" color="text.secondary">
+            <Typography
+              id={disabledReasonId}
+              variant="caption"
+              color="text.secondary"
+            >
               {disabledReason}
             </Typography>
           )}

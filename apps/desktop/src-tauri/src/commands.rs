@@ -439,11 +439,33 @@ pub struct TranscriptionAudioSamplesData {
     pub sample_rate: u32,
 }
 
+const MAX_PRIVATE_HTTP_REQUEST_BYTES: usize = 128 * 1024 * 1024;
+const MAX_PRIVATE_HTTP_RESPONSE_BYTES: u64 = 32 * 1024 * 1024;
+const MAX_PRIVATE_HTTP_REDIRECTS: usize = 5;
+
+#[derive(serde::Deserialize, specta::Type)]
+#[serde(rename_all = "camelCase")]
+pub struct PrivateHttpRequest {
+    pub url: String,
+    pub method: String,
+    pub headers: std::collections::HashMap<String, String>,
+    pub body: Option<Vec<u8>>,
+}
+
+#[derive(serde::Serialize, specta::Type)]
+#[serde(rename_all = "camelCase")]
+pub struct PrivateHttpResponse {
+    pub status: u16,
+    pub headers: std::collections::HashMap<String, String>,
+    pub body: Vec<u8>,
+}
+
 static IMPORT_IN_FLIGHT: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
 
-/// Returns true when `path` lives at or under any of `allowed_roots`. Used by
-/// `transcription_import_audio` to confine imports to well-known user
-/// directories so the command cannot be used as a filesystem read oracle.
+/// Returns true when `path` lives at or under any of `allowed_roots`. The
+/// Rust-owned import picker is the authorization boundary; this additional
+/// confinement keeps sensitive home-directory dotfiles out of scope even after
+/// an accidental or malicious picker-path substitution.
 fn is_path_within_allowed_roots(path: &std::path::Path, allowed_roots: &[PathBuf]) -> bool {
     allowed_roots.iter().any(|root| path.starts_with(root))
 }
@@ -472,17 +494,195 @@ fn windows_file_identity(file: &std::fs::File) -> Option<(u32, u64)> {
     Some((info.dwVolumeSerialNumber, file_index))
 }
 
+/// Validate a user-configured plaintext endpoint without confusing hostname
+/// prefix globs (for example `10.evil.example`) with RFC1918 address ranges.
+/// Link-local addresses are deliberately excluded to keep cloud metadata
+/// services such as 169.254.169.254 unreachable.
+fn validate_private_http_url(url: &Url) -> Result<(), String> {
+    if url.scheme() != "http" {
+        return Err("Private-network requests must use http".to_string());
+    }
+    if !url.username().is_empty() || url.password().is_some() {
+        return Err("Private-network URLs must not contain credentials".to_string());
+    }
+
+    let allowed = match url.host() {
+        Some(url::Host::Domain(domain)) => {
+            let domain = domain.to_ascii_lowercase();
+            domain == "localhost"
+                || (domain.ends_with(".local")
+                    && domain.len() > ".local".len()
+                    && !domain.contains(".."))
+        }
+        Some(url::Host::Ipv4(address)) => address.is_loopback() || address.is_private(),
+        Some(url::Host::Ipv6(address)) => {
+            if let Some(mapped) = address.to_ipv4_mapped() {
+                mapped.is_loopback() || mapped.is_private()
+            } else {
+                address.is_loopback() || (address.segments()[0] & 0xfe00) == 0xfc00
+            }
+        }
+        None => false,
+    };
+
+    if !allowed {
+        return Err(format!(
+            "Private-network URL host is not loopback, RFC1918, unique-local IPv6, or .local: {}",
+            url.host_str().unwrap_or("<missing>")
+        ));
+    }
+    Ok(())
+}
+
+#[tauri::command]
+#[specta::specta]
+pub async fn private_http_request(
+    request: PrivateHttpRequest,
+) -> Result<PrivateHttpResponse, String> {
+    if request.body.as_ref().is_some_and(|body| body.len() > MAX_PRIVATE_HTTP_REQUEST_BYTES) {
+        return Err(format!(
+            "Private-network request body exceeds the {} MiB limit",
+            MAX_PRIVATE_HTTP_REQUEST_BYTES / (1024 * 1024)
+        ));
+    }
+
+    let initial_url = Url::parse(&request.url)
+        .map_err(|_| "Private-network request URL is invalid".to_string())?;
+    validate_private_http_url(&initial_url)?;
+
+    tauri::async_runtime::spawn_blocking(move || {
+        use std::io::Read;
+
+        let client = reqwest::blocking::Client::builder()
+            // Connect directly so an environment proxy cannot turn an allowed
+            // private URL into a request delivered to an arbitrary public host.
+            .no_proxy()
+            .timeout(std::time::Duration::from_secs(10 * 60))
+            .redirect(reqwest::redirect::Policy::custom(|attempt| {
+                if attempt.previous().len() >= MAX_PRIVATE_HTTP_REDIRECTS {
+                    return attempt.error("Private-network request exceeded the redirect limit");
+                }
+                match validate_private_http_url(attempt.url()) {
+                    Ok(()) => attempt.follow(),
+                    Err(error) => attempt.error(error),
+                }
+            }))
+            .build()
+            .map_err(|_| "Unable to initialize the private-network client".to_string())?;
+
+        let method = reqwest::Method::from_bytes(request.method.trim().as_bytes())
+            .map_err(|_| "Private-network request method is invalid".to_string())?;
+        if ![
+            reqwest::Method::GET,
+            reqwest::Method::POST,
+            reqwest::Method::PUT,
+            reqwest::Method::PATCH,
+            reqwest::Method::DELETE,
+            reqwest::Method::HEAD,
+        ]
+        .contains(&method)
+        {
+            return Err("Private-network request method is not allowed".to_string());
+        }
+
+        let mut builder = client.request(method, initial_url);
+        for (name, value) in request.headers {
+            let normalized = name.trim().to_ascii_lowercase();
+            if matches!(
+                normalized.as_str(),
+                "host"
+                    | "content-length"
+                    | "connection"
+                    | "proxy-authorization"
+                    | "proxy-connection"
+                    | "transfer-encoding"
+                    | "upgrade"
+            ) {
+                continue;
+            }
+            let name = reqwest::header::HeaderName::from_bytes(normalized.as_bytes())
+                .map_err(|_| "Private-network request contains an invalid header".to_string())?;
+            let value = reqwest::header::HeaderValue::from_str(&value)
+                .map_err(|_| "Private-network request contains an invalid header".to_string())?;
+            builder = builder.header(name, value);
+        }
+        if let Some(body) = request.body {
+            builder = builder.body(body);
+        }
+
+        let response = builder
+            .send()
+            .map_err(|_| "Private-network request failed".to_string())?;
+        if response
+            .content_length()
+            .is_some_and(|length| length > MAX_PRIVATE_HTTP_RESPONSE_BYTES)
+        {
+            return Err(format!(
+                "Private-network response exceeds the {} MiB limit",
+                MAX_PRIVATE_HTTP_RESPONSE_BYTES / (1024 * 1024)
+            ));
+        }
+
+        let status = response.status().as_u16();
+        let headers = response
+            .headers()
+            .iter()
+            .filter_map(|(name, value)| {
+                value
+                    .to_str()
+                    .ok()
+                    .map(|value| (name.as_str().to_string(), value.to_string()))
+            })
+            .collect();
+        let mut body = Vec::new();
+        response
+            .take(MAX_PRIVATE_HTTP_RESPONSE_BYTES + 1)
+            .read_to_end(&mut body)
+            .map_err(|_| "Unable to read the private-network response".to_string())?;
+        if body.len() as u64 > MAX_PRIVATE_HTTP_RESPONSE_BYTES {
+            return Err(format!(
+                "Private-network response exceeds the {} MiB limit",
+                MAX_PRIVATE_HTTP_RESPONSE_BYTES / (1024 * 1024)
+            ));
+        }
+
+        Ok(PrivateHttpResponse {
+            status,
+            headers,
+            body,
+        })
+    })
+    .await
+    .map_err(|err| format!("private-network request task failed: {err}"))?
+}
+
 #[tauri::command]
 #[specta::specta]
 pub async fn transcription_import_audio(
     app: tauri::AppHandle,
-    path: String,
-) -> Result<TranscriptionAudioData, String> {
-    let path = PathBuf::from(path.trim());
-    if path.as_os_str().is_empty() {
-        return Err("No audio file was selected".to_string());
-    }
-    let path = path
+) -> Result<Option<TranscriptionAudioData>, String> {
+    // Acquire before opening the native picker. The renderer receives neither
+    // a path argument nor a reusable authorization token: only a path returned
+    // directly by this Rust-owned OS dialog can reach the decoder. This closes
+    // the remaining renderer-to-Documents file-read surface.
+    let _import_guard = match ReentryGuard::acquire(&IMPORT_IN_FLIGHT) {
+        Ok(guard) => guard,
+        Err(_) => {
+            return Err(
+                "An audio import is already in progress. Please wait for it to finish.".to_string(),
+            );
+        }
+    };
+    let selection = rfd::AsyncFileDialog::new()
+        .set_title("Choose audio file")
+        .add_filter("Audio", &["wav", "mp3", "flac", "ogg"])
+        .pick_file()
+        .await;
+    let Some(selection) = selection else {
+        return Ok(None);
+    };
+    let path = selection
+        .path()
         .canonicalize()
         .map_err(|_| "Unable to resolve the selected audio file.".to_string())?;
 
@@ -529,11 +729,9 @@ pub async fn transcription_import_audio(
         );
     }
 
-    // Open the validated path here (before any await) to narrow the TOCTOU
-    // window between validation and decode. This does not guarantee the opened
-    // file is the exact inode that `canonicalize` validated, but it avoids
-    // re-resolving the path after the blocking decode, and the single-flight
-    // guard below serializes concurrent imports so a rejected request cannot
+    // Open the validated path here (before the blocking-task await) to narrow
+    // the TOCTOU window between validation and decode. The single-flight guard
+    // was acquired before the dialog so rejected concurrent requests cannot
     // open files first.
     #[cfg(unix)]
     let validated = std::fs::metadata(&path)
@@ -567,19 +765,6 @@ pub async fn transcription_import_audio(
             return Err("The selected audio file changed during import.".to_string());
         }
     }
-
-    // Bound concurrent decodes so a flood of imports can't multiply the
-    // already-large per-decode memory ceiling. The ReentryGuard releases the
-    // flag on every exit path — including a dropped caller future — so a
-    // disconnected client can't wedge imports permanently (import DoS).
-    let _import_guard = match ReentryGuard::acquire(&IMPORT_IN_FLIGHT) {
-        Ok(guard) => guard,
-        Err(_) => {
-            return Err(
-                "An audio import is already in progress. Please wait for it to finish.".to_string(),
-            );
-        }
-    };
 
     let result = tauri::async_runtime::spawn_blocking(move || {
         let file_bytes = file
@@ -656,7 +841,7 @@ pub async fn transcription_import_audio(
     })
     .await
     .map_err(|err| format!("audio import task failed: {err}"));
-    result?
+    result?.map(Some)
 }
 
 fn encode_pcm16_le(samples: &[f32]) -> Vec<u8> {
@@ -3112,6 +3297,7 @@ mod tests {
         assert!(validate_terminal_command_args("my binary").is_err());
     }
 
+    #[cfg(not(target_os = "windows"))]
     #[test]
     fn terminal_command_accepts_allowed_command_with_empty_args() {
         // An allow-listed binary with no user-supplied arguments is accepted
@@ -3573,18 +3759,68 @@ mod tests {
     }
 
     #[test]
+    fn private_http_url_accepts_only_private_or_local_hosts() {
+        for accepted in [
+            "http://localhost:11434/api/tags",
+            "http://127.0.0.1:8000/health",
+            "http://10.0.0.5:11434/api/tags",
+            "http://172.16.5.4:8080/v1/models",
+            "http://172.31.255.254:8080/v1/models",
+            "http://192.168.1.20:8000/health",
+            "http://speaker.local:8000/health",
+            "http://[::1]:8000/health",
+            "http://[fd00::1]:8000/health",
+        ] {
+            let url = Url::parse(accepted).unwrap();
+            assert!(
+                validate_private_http_url(&url).is_ok(),
+                "expected private URL to be accepted: {accepted}"
+            );
+        }
+    }
+
+    #[test]
+    fn private_http_url_rejects_hostname_globs_public_hosts_and_imds() {
+        for rejected in [
+            "http://10.evil.example:443/",
+            "http://192.168.attacker.example:443/",
+            "http://169.254.169.254/latest/meta-data/",
+            "http://[fe80::1]/",
+            "http://8.8.8.8/",
+            "http://example.com/",
+            "https://10.0.0.5/",
+            "http://user:password@127.0.0.1/",
+        ] {
+            let url = Url::parse(rejected).unwrap();
+            assert!(
+                validate_private_http_url(&url).is_err(),
+                "expected URL to be rejected: {rejected}"
+            );
+        }
+    }
+
+    #[test]
     fn import_path_is_rejected_outside_allowed_roots() {
-        // Mirrors the confinement check in `transcription_import_audio`: a path
-        // outside the allowed import roots must be rejected so the command
-        // cannot be used as a filesystem read oracle.
+        // Mirrors the defense-in-depth confinement after the Rust-owned picker:
+        // canonical ~/Documents content is accepted, while the home directory
+        // itself (and therefore ~/.ssh) is not an allowed root.
         let tmp = std::env::temp_dir()
             .join(format!("mausvoice-import-confine-{}", std::process::id()));
-        let allowed = vec![tmp.join("allowed")];
-        std::fs::create_dir_all(&allowed[0]).unwrap();
-        let inside = allowed[0].join("clip.wav");
-        let outside = tmp.join("outside.wav");
-        assert!(is_path_within_allowed_roots(&inside, &allowed));
-        assert!(!is_path_within_allowed_roots(&outside, &allowed));
+        let home = tmp.join("home");
+        let documents = home.join("Documents");
+        std::fs::create_dir_all(&documents).unwrap();
+        let inside = documents.join("clip.wav");
+        let sensitive = home.join(".ssh").join("id_rsa");
+        std::fs::write(&inside, b"audio").unwrap();
+
+        let canonical_home = home.canonicalize().unwrap();
+        let canonical_documents = documents.canonicalize().unwrap();
+        let canonical_inside = inside.canonicalize().unwrap();
+        let allowed = vec![canonical_documents];
+
+        assert!(is_path_within_allowed_roots(&canonical_inside, &allowed));
+        assert!(!is_path_within_allowed_roots(&canonical_home, &allowed));
+        assert!(!is_path_within_allowed_roots(&sensitive, &allowed));
         let _ = std::fs::remove_dir_all(&tmp);
     }
 

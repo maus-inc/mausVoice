@@ -591,14 +591,14 @@ export function useSupportedDiscreteGpus(active: boolean) {
 
 ## Alternative: External Service Integration (Ollama Pattern)
 
-If you don't need to embed the model in Rust, you can integrate with an external service like Ollama. This is simpler and more flexible.
+If you don't need to embed the model in Rust, you can integrate with an external service like Ollama. This is simpler and more flexible. Always use `secureFetch` for user-configured endpoints: curated HTTPS hosts stay in `plugin-http`, while plaintext endpoints are parsed and restricted by Rust to loopback, RFC1918/unique-local IPs, or `.local` on every redirect. Do not add CIDR-looking hostname globs such as `http://10.*` to the capability.
 
 ### Step A: Create the Repository
 
 Location: `src/repos/my-local-service.repo.ts`
 
 ```typescript
-import { fetch } from "@tauri-apps/plugin-http";
+import { secureFetch as fetch } from "../utils/secure-fetch.utils";
 import { BaseRepo } from "./base.repo";
 
 export abstract class BaseMyServiceRepo extends BaseRepo {

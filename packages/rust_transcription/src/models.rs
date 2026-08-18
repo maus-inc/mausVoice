@@ -107,11 +107,13 @@ impl WhisperModel {
     // Source: csukuangfj/sherpa-onnx-sense-voice-zh-en-ja-ko-yue-int8-2025-09-09
     //   revision 355f4d4884d8afd08aef04b9007a8556d7b463b2 (main)
     //   model.int8.onnx SHA-256 12ca1a2ae7ecf3e0019ef2822307ee0b5cadc9196569e379b4c4026f8205276d
+    //   tokens.txt SHA-256 f449eb28dc567533d7fa59be34e2abca8784f771850c78a47fb731a31429a1dc
     // SENSEVOICE_REVISION and SENSEVOICE_DOWNLOAD_URL must stay in sync.
     const SENSEVOICE_REVISION: &str = "355f4d4884d8afd08aef04b9007a8556d7b463b2";
     const SENSEVOICE_MODEL_SHA256: &str =
         "12ca1a2ae7ecf3e0019ef2822307ee0b5cadc9196569e379b4c4026f8205276d";
-    const SENSEVOICE_TOKENS_SHA256: Option<&str> = None;
+    const SENSEVOICE_TOKENS_SHA256: &str =
+        "f449eb28dc567533d7fa59be34e2abca8784f771850c78a47fb731a31429a1dc";
     const SENSEVOICE_DOWNLOAD_URL: &str =
         "https://huggingface.co/csukuangfj/sherpa-onnx-sense-voice-zh-en-ja-ko-yue-int8-2025-09-09/resolve/355f4d4884d8afd08aef04b9007a8556d7b463b2/model.int8.onnx";
     pub fn artifact_set(self) -> Vec<(&'static str, String, Option<&'static str>)> {
@@ -178,7 +180,7 @@ impl WhisperModel {
                     (
                         "tokens.txt",
                         format!("{root}tokens.txt"),
-                        Self::SENSEVOICE_TOKENS_SHA256,
+                        Some(Self::SENSEVOICE_TOKENS_SHA256),
                     ),
                 ]
             }
@@ -328,37 +330,6 @@ mod tests {
     }
 
     #[test]
-    fn arena_print_immutable_companion_digests() {
-        use sha2::{Digest, Sha256};
-
-        for (name, url) in [
-            (
-                "sensevoice-tokens.txt",
-                "https://huggingface.co/csukuangfj/sherpa-onnx-sense-voice-zh-en-ja-ko-yue-int8-2025-09-09/resolve/355f4d4884d8afd08aef04b9007a8556d7b463b2/tokens.txt",
-            ),
-            (
-                "parakeet-ctc-tokenizer.json",
-                "https://huggingface.co/onnx-community/parakeet-ctc-0.6b-ONNX/resolve/7df2cab7aed886b8b7f80d68a8214007e4847601/tokenizer.json",
-            ),
-            (
-                "parakeet-tdt-vocab.txt",
-                "https://huggingface.co/istupakov/parakeet-tdt-0.6b-v3-onnx/resolve/8f23f0c03c8761650bdb5b40aaf3e40d2c15f1ce/vocab.txt",
-            ),
-            (
-                "canary-vocab.txt",
-                "https://huggingface.co/istupakov/canary-1b-v2-onnx/resolve/5ebc1520cef7b6b318b3526ad17adbfe00bc1bfc/vocab.txt",
-            ),
-        ] {
-            let output = std::process::Command::new("curl")
-                .args(["-fsSL", url])
-                .output()
-                .unwrap_or_else(|error| panic!("curl failed for {name}: {error}"));
-            assert!(output.status.success(), "curl failed for {name}");
-            eprintln!("ARENA_HASH {name} {:x}", Sha256::digest(output.stdout));
-        }
-    }
-
-    #[test]
     fn sensevoice_uses_immutable_revision_and_digest() {
         let artifacts = WhisperModel::SenseVoice.artifact_set();
         // No artifact may be served from the mutable `main` branch, and no
@@ -397,6 +368,12 @@ mod tests {
         assert!(
             digest.chars().all(|c| c.is_ascii_hexdigit()),
             "SenseVoice digest must be a hexadecimal SHA-256"
+        );
+        // The vocabulary affects token-to-text decoding and must not be
+        // indefinitely admitted merely because it is non-empty.
+        assert!(
+            artifacts.iter().all(|(_, _, sha256)| sha256.is_some()),
+            "every SenseVoice runtime artifact, including tokens.txt, must be digest-pinned"
         );
         // The primary download URL must also be revision-pinned.
         assert!(

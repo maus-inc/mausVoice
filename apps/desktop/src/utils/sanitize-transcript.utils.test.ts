@@ -20,6 +20,16 @@ describe("sanitizeTranscriptText", () => {
     ).toBe("#ship\nthanks");
   });
 
+  it("keeps default-on spoken commands active for auto-detect dictation", () => {
+    expect(
+      sanitizeTranscriptText({
+        rawTranscript: "hello new line world",
+        replacementRules: [],
+        language: "auto",
+      }),
+    ).toBe("hello\nworld");
+  });
+
   it("strips a silence hallucination before spoken commands", () => {
     expect(
       sanitizeTranscriptText({

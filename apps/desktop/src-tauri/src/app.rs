@@ -323,6 +323,7 @@ pub fn build() -> tauri::Builder<tauri::Wry> {
             crate::commands::surface_main_window,
             crate::commands::set_pill_window_size,
             crate::commands::paste,
+            crate::commands::private_http_request,
             crate::commands::simulate_type,
             crate::commands::cancel_typing,
             crate::commands::copy_to_clipboard,

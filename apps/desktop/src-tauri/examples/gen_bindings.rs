@@ -62,6 +62,7 @@ fn main() {
         paired_remote_device_list,
         paired_remote_device_upsert,
         paste,
+        private_http_request,
         pause_recording,
         play_audio,
         purge_stale_transcription_audio,

@@ -4,13 +4,19 @@ import { isEnglishSanitizeLanguage } from "./sanitize-language.utils";
  * Deterministic spoken formatting commands.
  *
  * Pipeline: after replacements and the hallucination strip, before
- * hashtag/pound conversions. English-only via isEnglishSanitizeLanguage —
- * "primary" / "auto" sentinels are not English. Isolated "scratch that"
- * drops the previous sentence. Abbreviations such as "Dr." are not
- * sentence boundaries. Only "scratch that" undoes speech.
+ * hashtag/pound conversions. Explicit non-English languages are left alone.
+ * Auto-detect applies the English command grammar because commands only match
+ * exact English word sequences; otherwise the default-on feature would become
+ * a silent no-op for the first-class `auto` setting. Isolated "scratch that"
+ * drops the previous sentence. Abbreviations such as "Dr." are not sentence
+ * boundaries. Only "scratch that" undoes speech.
  */
 
-export const isEnglishSpokenCommandLanguage = isEnglishSanitizeLanguage;
+export const isEnglishSpokenCommandLanguage = (
+  language: string | undefined,
+): boolean =>
+  language?.trim().toLowerCase() === "auto" ||
+  isEnglishSanitizeLanguage(language);
 
 type InsertCommand = {
   kind: "insert";

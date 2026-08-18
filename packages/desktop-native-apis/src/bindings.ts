@@ -638,6 +638,19 @@ export const commands = {
       else return { status: "error", error: e as any };
     }
   },
+  async privateHttpRequest(
+    request: PrivateHttpRequest,
+  ): Promise<Result<PrivateHttpResponse, string>> {
+    try {
+      return {
+        status: "ok",
+        data: await TAURI_INVOKE("private_http_request", { request }),
+      };
+    } catch (e) {
+      if (e instanceof Error) throw e;
+      else return { status: "error", error: e as any };
+    }
+  },
   async pauseRecording(): Promise<Result<null, string>> {
     try {
       return { status: "ok", data: await TAURI_INVOKE("pause_recording") };
@@ -1191,13 +1204,13 @@ export const commands = {
       else return { status: "error", error: e as any };
     }
   },
-  async transcriptionImportAudio(
-    path: string,
-  ): Promise<Result<TranscriptionAudioData, string>> {
+  async transcriptionImportAudio(): Promise<
+    Result<TranscriptionAudioData | null, string>
+  > {
     try {
       return {
         status: "ok",
-        data: await TAURI_INVOKE("transcription_import_audio", { path }),
+        data: await TAURI_INVOKE("transcription_import_audio"),
       };
     } catch (e) {
       if (e instanceof Error) throw e;
@@ -1791,6 +1804,17 @@ export type Transcription = {
   warnings?: string[] | null;
   remoteStatus?: string | null;
   remoteDeviceId?: string | null;
+};
+export type PrivateHttpRequest = {
+  url: string;
+  method: string;
+  headers: Record<string, string>;
+  body: number[] | null;
+};
+export type PrivateHttpResponse = {
+  status: number;
+  headers: Record<string, string>;
+  body: number[];
 };
 export type TranscriptionAudioData = { pcm16Le: number[]; sampleRate: number };
 export type TranscriptionAudioSamplesData = {

@@ -1,4 +1,4 @@
-import { fetch } from "@tauri-apps/plugin-http";
+import { secureFetch as fetch } from "./secure-fetch.utils";
 
 export type OpenAICompatibleTranscriptionArgs = {
   baseUrl: string;
