@@ -572,7 +572,7 @@
   "streak_celebrations": "Streak-Feiern",
   "streak_day_streak": "{streak} Tage am Stück! 🎉",
   "streak_days_incredible": "{streak} Tage! Unglaublich! 🌟",
-  "stream_dictation_text_as_you_speak_instead_of_pasting_all_at": "Streamen Sie den Diktattext, während Sie sprechen, anstatt ihn nach dem Anhalten komplett einzufügen. Gilt nur für den Verbatim‑Modus mit unterstützten Anbietern.",
+  "stream_dictation_text_as_you_speak_instead_of_pasting_all_at": "Gibt diktierten Text während des Sprechens aus statt alles auf einmal nach dem Stopp. Gilt nur für den Verbatim-Modus mit ausgeschalteten Sprachbefehlen und einem unterstützten Anbieter.",
   "style": "Stil",
   "styles": "Stile",
   "styling_mode": "Designmodus",
@@ -713,6 +713,6 @@
   "you_re_currently_on_version_version_the_app_will_restart_aft": "Sie verwenden derzeit Version {version}. Die App wird nach Abschluss des Updates neu gestartet.",
   "your_azure_openai_resource_endpoint_url": "URL des Azure OpenAI-Ressourcenendpunkts",
   "your_operating_system_is_preventing_mausvoice_from_modifying": "Ihr Betriebssystem verhindert, dass mausVoice Dateien an seinem aktuellen Installationsort ändert. Verwenden Sie die Download-Schaltfläche, um den neuesten Installer zu erhalten, und führen Sie ihn dann aus, um das Update manuell abzuschließen.",
-  "spoken_commands": "Spoken commands",
-  "turn_phrases_like_new_line_comma_and_scratch_that_into_formatt": "Turn phrases like \"new line\", \"comma\", and \"scratch that\" into formatting, even in Verbatim. English dictation only."
+  "spoken_commands": "Sprachbefehle",
+  "turn_phrases_like_new_line_comma_and_scratch_that_into_forma": "Wandelt Phrasen wie \"new line\", \"comma\" und \"scratch that\" in Formatierung um, auch im Verbatim-Modus. Nur bei englischer Diktation."
 }

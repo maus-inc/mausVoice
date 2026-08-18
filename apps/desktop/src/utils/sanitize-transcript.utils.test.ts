@@ -40,6 +40,20 @@ describe("sanitizeTranscriptText", () => {
     ).toBe("hello new line world");
   });
 
+  it("drops silent verbose_json segments when they are supplied", () => {
+    expect(
+      sanitizeTranscriptText({
+        rawTranscript: "Some speech. [BLANK_AUDIO]",
+        replacementRules: [],
+        language: "en",
+        segments: [
+          { text: "Some speech.", noSpeechProb: 0.1 },
+          { text: "[BLANK_AUDIO]", noSpeechProb: 0.99 },
+        ],
+      }),
+    ).toBe("Some speech.");
+  });
+
   it("skips structural commands when asked", () => {
     expect(
       sanitizeTranscriptText({

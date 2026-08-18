@@ -342,7 +342,7 @@ export const MoreSettingsDialog = () => {
           <SettingSection
             title={<FormattedMessage defaultMessage="Real-time output" />}
             description={
-              <FormattedMessage defaultMessage="Stream dictation text as you speak instead of pasting all at once when you stop. Only applies to Verbatim mode with supported providers." />
+              <FormattedMessage defaultMessage="Stream dictation text as you speak instead of pasting all at once when you stop. Only applies to Verbatim mode with spoken commands off and a supported provider." />
             }
             action={
               <Switch

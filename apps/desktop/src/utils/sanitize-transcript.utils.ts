@@ -1,4 +1,7 @@
-import { applyHallucinationFiltering } from "./hallucination.utils";
+import {
+  applyHallucinationFiltering,
+  type TranscriptionSegment,
+} from "./hallucination.utils";
 import { applySpokenCommands } from "./spoken-commands.utils";
 import {
   applyReplacements,
@@ -33,11 +36,12 @@ export const sanitizeTranscriptText = ({
   spokenCommandsEnabled = true,
   hallucinationFilterEnabled = true,
   skipStructuralCommands = false,
+  segments = null,
 }: SanitizeTranscriptOptions): string => {
   const afterReplacements = applyReplacements(rawTranscript, replacementRules);
   const afterHallucination = applyHallucinationFiltering(
     afterReplacements,
-    null,
+    segments,
     language,
     hallucinationFilterEnabled,
   );

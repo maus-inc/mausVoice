@@ -1137,6 +1137,8 @@ pillResetMonitorStrategy?: string;
 alwaysRequestAdminOnStartup?: boolean;
 /**
  * Deterministic spoken formatting / scratch-that. Default on.
+ * Keep in sync with Rust UserPreferences; regenerate via
+ * `pnpm gen:bindings` when cargo is available.
  */
 spokenCommandsEnabled?: boolean }
 export type UserPreferencesGetArgs = { userId: string }

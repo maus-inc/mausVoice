@@ -355,7 +355,10 @@ export const applySpokenCommands = (
           continue;
         }
         if (
-          predecessorBlocked(tokens.slice(0, index), command.blockedPredecessors)
+          predecessorBlocked(
+            tokens.slice(0, index),
+            command.blockedPredecessors,
+          )
         ) {
           continue;
         }
