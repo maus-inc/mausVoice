@@ -3011,11 +3011,10 @@ fn percent_decode_route_path(path: &str) -> Result<String, String> {
         }
     }
     if decoded.contains('%') {
-        let base_msg = "Floating app route has excessive percent encoding".to_string();
         if let Some(err) = last_error {
-            return Err(format!("{base_msg}: {err}"));
+            return Err(err);
         }
-        return Err(base_msg);
+        return Err("Floating app route has excessive percent encoding".to_string());
     }
     Ok(decoded)
 }
