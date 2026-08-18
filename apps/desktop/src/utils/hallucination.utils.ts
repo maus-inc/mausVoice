@@ -103,7 +103,10 @@ export const filterKnownSilenceHallucinations = (
         if (subtitlePresent && isSilenceCompanion(part)) return false;
         return true;
       });
-      return kept.join(" ").replace(/[ \t]+/g, " ").trim();
+      return kept
+        .join(" ")
+        .replace(/[ \t]+/g, " ")
+        .trim();
     })
     .filter((line) => line.length > 0);
   return keptLines.join("\n");

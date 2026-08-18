@@ -55,10 +55,7 @@ describe("silence hallucination filtering", () => {
       ),
     ).toBe("Subtitles by the Amara.org community.");
     expect(
-      filterKnownSilenceHallucinations(
-        "Thank you for watching.",
-        "auto",
-      ),
+      filterKnownSilenceHallucinations("Thank you for watching.", "auto"),
     ).toBe("Thank you for watching.");
   });
 

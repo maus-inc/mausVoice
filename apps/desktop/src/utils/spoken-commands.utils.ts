@@ -39,7 +39,10 @@ const COMMANDS: SpokenCommand[] = [
   { kind: "scratch", words: ["scratch", "that"] },
   insert(["new", "paragraph"], "\n\n", { structural: true }),
   insert(["next", "paragraph"], "\n\n", { structural: true }),
-  insert(["new", "line"], "\n", { structural: true, blockedFollowers: [["of"]] }),
+  insert(["new", "line"], "\n", {
+    structural: true,
+    blockedFollowers: [["of"]],
+  }),
   insert(["next", "line"], "\n", {
     structural: true,
     blockedFollowers: [["of"]],
@@ -241,7 +244,9 @@ const ABBREVIATION_STOPS = new Set([
 ]);
 
 const isAbbreviationStop = (text: string, stopIndex: number): boolean => {
-  const word = lastNonWhitespaceWord(text.slice(0, stopIndex + 1)).toLowerCase();
+  const word = lastNonWhitespaceWord(
+    text.slice(0, stopIndex + 1),
+  ).toLowerCase();
   if (word.length === 2 && isAsciiAlnum(word[0] ?? "") && word[1] === ".") {
     return true;
   }
@@ -405,7 +410,10 @@ export const applySpokenCommands = (
 
   const skipStructural = options?.skipStructuralCommands === true;
   const parsed = parsePreservingWhitespace(text);
-  if (parsed.words.length === 0 || !containsSpokenCommand(parsed.words, skipStructural)) {
+  if (
+    parsed.words.length === 0 ||
+    !containsSpokenCommand(parsed.words, skipStructural)
+  ) {
     return text;
   }
 
