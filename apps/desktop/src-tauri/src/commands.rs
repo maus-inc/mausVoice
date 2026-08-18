@@ -780,6 +780,11 @@ fn resolve_managed_audio_path_for_read(
     }
     #[cfg(windows)]
     {
+        // Windows requires a file handle to retrieve file identity (volume serial
+        // + file index) via GetFileInformationByHandle. Reopening the resolved
+        // path is necessary because Windows provides no API to obtain file
+        // identity from a path alone. This ensures the TOCTOU check compares the
+        // actual opened file with the current target at the resolved path.
         let resolved_file = std::fs::File::open(&opened_path).ok()?;
         let opened_id = windows_file_identity(&file)?;
         let resolved_id = windows_file_identity(&resolved_file)?;
@@ -2989,6 +2994,7 @@ fn percent_decode_route_path(path: &str) -> Result<String, String> {
     // fully decoded path so double-encoded traversal cannot become dangerous
     // only after this check. Bound nesting to reject pathological input.
     let mut decoded = path.to_string();
+    let mut last_error: Option<String> = None;
     for iteration in 0..4 {
         match percent_decode_route_path_once(&decoded) {
             Ok(next) => {
@@ -2997,14 +3003,19 @@ fn percent_decode_route_path(path: &str) -> Result<String, String> {
                 }
                 decoded = next;
             }
-            Err(_) if iteration > 0 => {
+            Err(e) if iteration > 0 => {
+                last_error = Some(e);
                 break;
             }
             Err(e) => return Err(e),
         }
     }
     if decoded.contains('%') {
-        return Err("Floating app route has excessive percent encoding".to_string());
+        let base_msg = "Floating app route has excessive percent encoding".to_string();
+        if let Some(err) = last_error {
+            return Err(format!("{base_msg}: {err}"));
+        }
+        return Err(base_msg);
     }
     Ok(decoded)
 }
