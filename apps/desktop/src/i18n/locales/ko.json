@@ -120,7 +120,6 @@
   "checking_ollama_connection": "Ollama 연결 확인 중...",
   "checking_openai_compatible_connection": "OpenAI 호환 연결 확인 중...",
   "choose_a_different_microphone": "다른 마이크를 선택하세요",
-  "choose_audio_file": "Choose audio file",
   "choose_different_writing_styles_to_change_how_you_sound_whil": "다양한 글쓰기 스타일을 선택하여 어조를 바꾸세요. 받아쓰기 중에 {hotkey}를 눌러 스타일을 전환할 수 있습니다.",
   "choose_different_writing_styles_to_change_how_you_sound_you": "다른 작문 스타일을 선택하여 당신의 어투를 바꿔보세요. 또한 <link>핫키를 설정</link>하여 받아쓰는 동안 스타일을 전환할 수 있습니다.",
   "choose_file": "Choose file",

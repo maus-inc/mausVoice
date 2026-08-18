@@ -120,7 +120,6 @@
   "checking_ollama_connection": "Verificando conexión de Ollama...",
   "checking_openai_compatible_connection": "Comprobando la conexión compatible con OpenAI...",
   "choose_a_different_microphone": "Selecciona un micrófono diferente",
-  "choose_audio_file": "Choose audio file",
   "choose_different_writing_styles_to_change_how_you_sound_whil": "Elige diferentes estilos de escritura para cambiar cómo suenas. Mientras dictas, pulsa {hotkey} para alternar entre ellos.",
   "choose_different_writing_styles_to_change_how_you_sound_you": "Elige diferentes estilos de escritura para cambiar cómo suenas. También puedes <link>configurar teclas rápidas</link> para alternar entre ellos mientras dictas.",
   "choose_file": "Choose file",

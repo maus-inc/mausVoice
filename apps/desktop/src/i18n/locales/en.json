@@ -120,7 +120,6 @@
   "checking_ollama_connection": "Checking Ollama connection...",
   "checking_openai_compatible_connection": "Checking OpenAI-compatible connection...",
   "choose_a_different_microphone": "Choose a different microphone",
-  "choose_audio_file": "Choose audio file",
   "choose_different_writing_styles_to_change_how_you_sound_whil": "Choose different writing styles to change how you sound. While dictating, press {hotkey} to cycle between them.",
   "choose_different_writing_styles_to_change_how_you_sound_you": "Choose different writing styles to change how you sound. You can also <link>set up hotkeys</link> to cycle between them while dictating.",
   "choose_file": "Choose file",
