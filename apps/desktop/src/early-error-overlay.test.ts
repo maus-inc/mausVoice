@@ -120,6 +120,8 @@ describe("early error overlay", () => {
 
     const overlay = nodes.get("maus-global-error-overlay");
     expect(overlay?.textContent).toContain("mausVoice failed to start");
-    expect(overlay?.textContent).toContain("async init rejected before React mounted");
+    expect(overlay?.textContent).toContain(
+      "async init rejected before React mounted",
+    );
   });
 });
