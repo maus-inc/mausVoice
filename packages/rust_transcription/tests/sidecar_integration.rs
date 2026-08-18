@@ -3,6 +3,7 @@ use std::process::{Child, Command, Stdio};
 use std::time::{Duration, Instant};
 
 use reqwest::{Client, StatusCode};
+use rust_transcription::WhisperModel;
 use serde::{Deserialize, Serialize};
 use tempfile::TempDir;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
@@ -17,6 +18,35 @@ const DOWNLOAD_TIMEOUT: Duration = Duration::from_secs(900);
 const TRANSCRIPTION_TIMEOUT: Duration = Duration::from_secs(180);
 const VALIDATION_TIMEOUT: Duration = Duration::from_secs(120);
 const TINY_MODEL_FILENAME: &str = "ggml-tiny.bin";
+
+#[test]
+fn onnx_models_pin_every_runtime_artifact_digest() {
+    for slug in WhisperModel::supported() {
+        let Some(model) = WhisperModel::from_slug(slug) else {
+            continue;
+        };
+        if !model.is_onnx() {
+            continue;
+        }
+
+        let artifacts = model.artifact_set();
+        assert!(artifacts.len() > 1, "{model:?} must have companion files");
+        for (name, _, digest) in artifacts {
+            let digest = digest.unwrap_or_else(|| {
+                panic!("{model:?} runtime artifact {name} must be digest-pinned")
+            });
+            assert_eq!(
+                digest.len(),
+                64,
+                "{model:?} runtime artifact {name} must use SHA-256"
+            );
+            assert!(
+                digest.bytes().all(|byte| byte.is_ascii_hexdigit()),
+                "{model:?} runtime artifact {name} digest must be hexadecimal"
+            );
+        }
+    }
+}
 
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
