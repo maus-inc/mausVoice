@@ -45,8 +45,8 @@ pnpm exec turbo run build --filter=desktop^...
 pnpm --filter desktop run check-types
 pnpm --filter desktop lint
 pnpm --filter desktop test:unit
-pnpm --filter desktop test:integration
-pnpm --filter desktop test:evals   # requires GROQ_API_KEY; see .env.local.example
+pnpm --filter desktop test:integration  # requires GROQ_API_KEY; see .env.local.example
+pnpm --filter desktop test:evals        # requires GROQ_API_KEY; see .env.local.example
 ```
 
 `check-types` needs workspace packages (`@repo/agent`, `@maus-inc/*`) built first.
