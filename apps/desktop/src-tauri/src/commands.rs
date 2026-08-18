@@ -462,6 +462,8 @@ fn windows_file_identity(file: &std::fs::File) -> Option<(u32, u64)> {
     use std::os::windows::io::AsRawHandle;
     let handle = windows::Win32::Foundation::HANDLE(file.as_raw_handle());
     let mut info = windows::Win32::Storage::FileSystem::BY_HANDLE_FILE_INFORMATION::default();
+    // SAFETY: `handle` is a valid, borrowed file handle for the lifetime of the
+    // call, and `info` is a valid out-parameter we own.
     unsafe {
         windows::Win32::Storage::FileSystem::GetFileInformationByHandle(handle, &mut info).ok()?;
     }
