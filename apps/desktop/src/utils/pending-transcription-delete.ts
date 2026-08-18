@@ -60,8 +60,15 @@ const invokeDelete = (id: string, snapshot?: Transcription): void => {
     .catch((error) => {
       if (snapshot) {
         restoreInStore(snapshot);
+        showErrorSnackbar(error);
+        return;
       }
-      showErrorSnackbar(error);
+      queuedIds.delete(id);
+      try {
+        writeQueuedIds();
+      } catch {
+        // keep retrying next launch if persist still fails
+      }
     });
 };
 
@@ -82,9 +89,9 @@ export const scheduleTranscriptionDelete = (
   if (existing) {
     clearTimeout(existing.timer);
   }
-  removeFromStore(snapshot.id);
   queuedIds.add(snapshot.id);
   writeQueuedIds();
+  removeFromStore(snapshot.id);
   const timer = setTimeout(() => commitDelete(snapshot.id), delayMs);
   pendingById.set(snapshot.id, { snapshot, timer });
 };

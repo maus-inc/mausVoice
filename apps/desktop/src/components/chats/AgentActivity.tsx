@@ -103,10 +103,7 @@ export const AgentActivity = ({ messageId }: AgentActivityProps) => {
           >
             <Typography variant="caption" sx={{ color: "inherit" }}>
               {isStreaming || duration === 0 ? (
-                <FormattedMessage
-                  id="thinking_ellipsis"
-                  defaultMessage="Thinking…"
-                />
+                <FormattedMessage id="thinking" defaultMessage="Thinking…" />
               ) : (
                 <FormattedMessage
                   defaultMessage="Thought for {seconds} seconds"

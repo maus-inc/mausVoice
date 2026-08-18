@@ -45,6 +45,7 @@ export const AudioPlayerPill = ({
   const playbackProgressRef = useRef(0);
   const transcriptionIdRef = useRef(transcriptionId);
   const isDraggingRef = useRef(false);
+  const progressAtDragStartRef = useRef(0);
 
   useEffect(() => {
     isPlayingRef.current = isPlaying;
@@ -232,6 +233,7 @@ export const AudioPlayerPill = ({
       if (disabled) return;
       event.preventDefault();
       isDraggingRef.current = true;
+      progressAtDragStartRef.current = playbackProgressRef.current;
       const next = getProgressFromClientX(event.clientX);
       if (next != null) previewSeek(next);
 
@@ -258,7 +260,7 @@ export const AudioPlayerPill = ({
         window.removeEventListener("pointercancel", handleCancel);
         pointerCleanupRef.current = null;
         isDraggingRef.current = false;
-        commitSeek(playbackProgressRef.current);
+        setPlaybackProgress(progressAtDragStartRef.current);
       };
       pointerCleanupRef.current?.();
       window.addEventListener("pointermove", handleMove);

@@ -122,6 +122,12 @@ export const stopActivePlayback = (reason: PlaybackStopReason): void => {
     // no-op
   }
 
+  try {
+    current.source.disconnect();
+  } catch {
+    // no-op
+  }
+
   current.context.close().catch(() => undefined);
   current.onStop(reason);
 };
@@ -138,6 +144,7 @@ export const seekPlayback = (progress: number): boolean => {
   try {
     playback.source.onended = null;
     playback.source.stop();
+    playback.source.disconnect();
   } catch {
     // source already stopped
   }
