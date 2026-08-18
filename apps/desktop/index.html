@@ -159,6 +159,11 @@
         // paint this fatal "failed to start" overlay over a working app.
         // The root-children guard below is a fallback for the window between
         // handler registration and the TS installer running.
+        // NOTE: the property name below is duplicated in the global Window
+        // declaration in src/vite-env.d.ts (and consumed by
+        // src/utils/global-error-overlay.utils.ts). This inline script runs
+        // pre-bundle, so it cannot import a shared constant — when renaming,
+        // update all three places together.
         window.__mausVoiceEarlyUnhandledRejection = function (event) {
           if (
             document.getElementById("root") &&
