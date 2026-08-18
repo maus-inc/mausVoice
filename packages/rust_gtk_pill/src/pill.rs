@@ -756,19 +756,12 @@ pub fn run(receiver: Receiver<InMessage>) {
     main_loop.run();
 }
 
-/// Ends the gesture and tears down any active drag.
-///
-/// Clears the hover pin and gesture flags. If a drag was in progress, the
-/// dropped position is persisted (X11 repositions via the window; other
-/// backends keep their draw offset) so a missed release caught by the
-/// frame-tick backstop does not strand the pill at its old position.
-
 /// Builds the pill window rect and the work area of the monitor it lives on,
 /// for the desktop to anchor the composer next to the real pill. On X11 the
 /// pill has a true saved position, so both are reported; on Wayland (where the
 /// layer-shell compositor owns placement and there is no queryable absolute
 /// position) only the monitor is reported and the rect is omitted.
-fn pill_geometry(window: &gtk::Window, state: &PillState) -> (Option<Rect>, Option<Rect>) {
+pub(crate) fn pill_geometry(window: &gtk::Window, state: &PillState) -> (Option<Rect>, Option<Rect>) {
     let (w, h) = window.size();
     let display = window.display();
     let monitor = display
@@ -800,6 +793,12 @@ fn pill_geometry(window: &gtk::Window, state: &PillState) -> (Option<Rect>, Opti
     (rect, monitor_rect)
 }
 
+/// Ends the gesture and tears down any active drag.
+///
+/// Clears the hover pin and gesture flags. If a drag was in progress, the
+/// dropped position is persisted (X11 repositions via the window; other
+/// backends keep their draw offset) so a missed release caught by the
+/// frame-tick backstop does not strand the pill at its old position.
 fn clear_pointer_pin(state: &PillState, window: &gtk::Window) {
     if state.dragging.get() {
         if state.backend.get() == Backend::X11 {

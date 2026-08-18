@@ -176,12 +176,9 @@ mod tests {
     fn expired_entry_is_removed_without_a_composer_operation() {
         let state = FloatingWindowState::new();
         register_expired(&state, "old", "secret dictated text");
-        // Before pruning, the entry is still present (mirrors the window between
-        // a force-close and the next reaper tick).
-        assert_eq!(
-            state.peek_composer_text("old").unwrap(),
-            Some("secret dictated text".into())
-        );
+        // Peeking an expired entry prunes it on read (the incognito backstop),
+        // so it is never handed back to the frontend.
+        assert_eq!(state.peek_composer_text("old").unwrap(), None);
         // The background reaper (or prune_expired_now) deletes it once the TTL
         // lapses, with no register/peek/discard call from the frontend.
         state.prune_expired_now();

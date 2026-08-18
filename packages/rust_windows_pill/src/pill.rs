@@ -1259,12 +1259,12 @@ fn current_pill_geometry(hwnd: HWND) -> (Rect, Option<Rect>) {
         };
         let monitor = {
             let mon = MonitorFromWindow(hwnd, MONITOR_DEFAULTTONEAREST);
-            if mon.is_null() {
+            if mon == HMONITOR::default() {
                 None
             } else {
                 let mut mi: MONITORINFO = std::mem::zeroed();
                 mi.cbSize = std::mem::size_of::<MONITORINFO>() as u32;
-                (GetMonitorInfoW(mon, &mut mi).is_ok()).then(|| Rect {
+                (GetMonitorInfoW(mon, &mut mi).as_bool()).then(|| Rect {
                     x: mi.rcWork.left as f64,
                     y: mi.rcWork.top as f64,
                     width: (mi.rcWork.right - mi.rcWork.left) as f64,

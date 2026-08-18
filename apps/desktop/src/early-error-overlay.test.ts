@@ -108,4 +108,18 @@ describe("early error overlay", () => {
     expect(overlay?.textContent).toContain("Failed to load resource");
     expect(overlay?.textContent).toContain(script.src);
   });
+
+  it("paints unhandled promise rejections instead of leaving a blank window", () => {
+    const { nodes, listeners } = installEarlyOverlay();
+    const reason = new Error("async init rejected before React mounted");
+    reason.stack = `${reason.message}\n    at main.tsx:10:1`;
+
+    listeners.unhandledrejection[0]({
+      reason,
+    });
+
+    const overlay = nodes.get("maus-global-error-overlay");
+    expect(overlay?.textContent).toContain("mausVoice failed to start");
+    expect(overlay?.textContent).toContain("async init rejected before React mounted");
+  });
 });

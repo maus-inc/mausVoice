@@ -486,7 +486,7 @@ fn perform_tick() {
                 InMessage::ResetPosition { strategy } => {
                     ctx.state.has_saved_position.set(false);
                     ctx.state.reset_strategy.set(strategy);
-                    let (rect, monitor) = pill_geometry(ctx.window);
+                    let (rect, monitor) = unsafe { pill_geometry(ctx.window) };
                     ipc::send(&OutMessage::PositionChanged {
                         has_saved_position: false,
                         rect: Some(rect),
@@ -591,7 +591,7 @@ fn end_drag(state: &PillState, window: id) {
         state.saved_x.set(frame.origin.x);
         state.saved_y.set(frame.origin.y);
         state.has_saved_position.set(true);
-        let (rect, monitor) = pill_geometry(window);
+        let (rect, monitor) = unsafe { pill_geometry(window) };
         ipc::send(&OutMessage::PositionChanged {
             has_saved_position: true,
             rect: Some(rect),
