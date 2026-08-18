@@ -4,6 +4,17 @@ use std::sync::mpsc::Sender;
 
 use serde::{Deserialize, Serialize};
 
+/// Axis-aligned screen rectangle in logical pixels. The macOS pill flips
+/// AppKit's bottom-up (y-up) frames into this top-left, y-down space before
+/// emitting, so the values match what Tauri expects for window placement.
+#[derive(Debug, Clone, Copy, Serialize)]
+pub struct Rect {
+    pub x: f64,
+    pub y: f64,
+    pub width: f64,
+    pub height: f64,
+}
+
 thread_local! {
     static OUT_SENDER: RefCell<Option<Sender<OutMessage>>> = const { RefCell::new(None) };
 }
@@ -143,7 +154,11 @@ pub enum OutMessage {
     PauseDictation,
     ResumeDictation,
     ToastAction { action: String },
-    PositionChanged { has_saved_position: bool },
+    PositionChanged {
+        has_saved_position: bool,
+        rect: Option<Rect>,
+        monitor: Option<Rect>,
+    },
 }
 
 pub fn send(msg: &OutMessage) {

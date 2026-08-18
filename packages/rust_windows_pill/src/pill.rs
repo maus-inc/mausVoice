@@ -13,7 +13,7 @@ use crate::constants::*;
 use crate::draw;
 use crate::gfx::Gfx;
 use crate::input;
-use crate::ipc::{self, InMessage, OutMessage, Phase, ResetStrategy, Visibility};
+use crate::ipc::{self, InMessage, OutMessage, Phase, Rect, ResetStrategy, Visibility};
 use crate::state;
 use crate::state::{ClickAction, PillState, Rocket, RocketPhase, Spark, WindowMode};
 
@@ -559,7 +559,13 @@ fn process_message(msg: InMessage, state: &PillState, _hwnd: HWND) {
             state.has_saved_position.set(false);
             state.reset_strategy.set(strategy);
             state.dirty.set(true);
-            ipc::send(&OutMessage::PositionChanged { has_saved_position: false });
+            let hwnd = HWND_CELL.with(|c| c.get());
+            let (rect, monitor) = current_pill_geometry(hwnd);
+            ipc::send(&OutMessage::PositionChanged {
+                has_saved_position: false,
+                rect: Some(rect),
+                monitor,
+            });
         }
         InMessage::Quit => {
             QUIT.with(|q| q.set(true));
@@ -1237,6 +1243,39 @@ fn tick_long_press(state: &PillState, dt: f64) {
 ///
 /// Every drag must end through this function so the capture is always
 /// released — a leaked capture would swallow mouse input system-wide.
+
+/// Reads the pill window's screen rect and the work area of the monitor it
+/// lives on, so the desktop can anchor the composer next to the real pill
+/// instead of relying on OS-centred placement.
+fn current_pill_geometry(hwnd: HWND) -> (Rect, Option<Rect>) {
+    unsafe {
+        let mut wr = RECT::default();
+        let _ = GetWindowRect(hwnd, &mut wr);
+        let rect = Rect {
+            x: wr.left as f64,
+            y: wr.top as f64,
+            width: (wr.right - wr.left) as f64,
+            height: (wr.bottom - wr.top) as f64,
+        };
+        let monitor = {
+            let mon = MonitorFromWindow(hwnd, MONITOR_DEFAULTTONEAREST);
+            if mon.is_null() {
+                None
+            } else {
+                let mut mi: MONITORINFO = std::mem::zeroed();
+                mi.cbSize = std::mem::size_of::<MONITORINFO>() as u32;
+                (GetMonitorInfoW(mon, &mut mi).is_ok()).then(|| Rect {
+                    x: mi.rcWork.left as f64,
+                    y: mi.rcWork.top as f64,
+                    width: (mi.rcWork.right - mi.rcWork.left) as f64,
+                    height: (mi.rcWork.bottom - mi.rcWork.top) as f64,
+                })
+            }
+        };
+        (rect, monitor)
+    }
+}
+
 fn end_drag(hwnd: HWND, state: &PillState, persist_position: bool) -> bool {
     let was_dragging = state.dragging.get();
 
@@ -1249,7 +1288,12 @@ fn end_drag(hwnd: HWND, state: &PillState, persist_position: bool) -> bool {
         state.saved_x.set(rect.left);
         state.saved_y.set(rect.top);
         state.has_saved_position.set(true);
-        ipc::send(&OutMessage::PositionChanged { has_saved_position: true });
+        let (win_rect, monitor) = current_pill_geometry(hwnd);
+        ipc::send(&OutMessage::PositionChanged {
+            has_saved_position: true,
+            rect: Some(win_rect),
+            monitor,
+        });
     }
 
     state.dragging.set(false);

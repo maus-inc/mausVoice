@@ -87,8 +87,11 @@ pub(crate) fn persist_drop_position(
     state.saved_x.set(drop_x as f64);
     state.saved_y.set(drop_y as f64);
     state.has_saved_position.set(true);
+    let (rect, monitor) = crate::pill_geometry(window, state);
     ipc::send(&OutMessage::PositionChanged {
         has_saved_position: true,
+        rect,
+        monitor,
     });
     true
 }
@@ -248,7 +251,12 @@ pub(crate) fn setup_x11_window(window: &gtk::Window, state: Rc<PillState>) {
             state_tick.saved_x.set(dx as f64);
             state_tick.saved_y.set(dy as f64);
             state_tick.has_saved_position.set(true);
-            ipc::send(&OutMessage::PositionChanged { has_saved_position: true });
+            let (rect, monitor) = crate::pill_geometry(&win_tick, &state_tick);
+            ipc::send(&OutMessage::PositionChanged {
+                has_saved_position: true,
+                rect,
+                monitor,
+            });
         }
         was_dragging.set(dragging);
 

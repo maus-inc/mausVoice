@@ -5,7 +5,7 @@ use std::sync::Mutex;
 use tauri::{Emitter, Manager};
 
 use crate::domain::{OverlayPhase, PillWindowSize};
-use rust_macos_pill::ipc::{InMessage, OutMessage, Phase, ResetStrategy, Visibility};
+use rust_macos_pill::ipc::{InMessage, OutMessage, Phase, Rect, ResetStrategy, Visibility};
 
 /// Monotonic sequence number for phase messages (mirrors `pill_process.rs`);
 /// lets the pill ignore stale/duplicate phase writes.
@@ -183,8 +183,18 @@ fn start_out_reader(app: tauri::AppHandle, rx: mpsc::Receiver<OutMessage>) {
                     let _ = app.emit_to("main", "toast-action", payload);
                 }
                 OutMessage::Hover { .. } => {}
-                OutMessage::PositionChanged { has_saved_position } => {
-                    let payload = serde_json::json!({ "hasSavedPosition": has_saved_position });
+                OutMessage::PositionChanged { has_saved_position, rect, monitor } => {
+                    let rect_json = rect.map(|r| {
+                        serde_json::json!({ "x": r.x, "y": r.y, "width": r.width, "height": r.height })
+                    });
+                    let monitor_json = monitor.map(|m| {
+                        serde_json::json!({ "x": m.x, "y": m.y, "width": m.width, "height": m.height })
+                    });
+                    let payload = serde_json::json!({
+                        "hasSavedPosition": has_saved_position,
+                        "rect": rect_json,
+                        "monitor": monitor_json,
+                    });
                     let _ = app.emit_to("main", "pill-position-changed", payload);
                 }
             }
