@@ -514,6 +514,36 @@ pub async fn transcription_import_audio(
     let file = std::fs::File::open(&path)
         .map_err(|_| "Unable to open the selected audio file.".to_string())?;
 
+    // Confirm the opened handle refers to the exact file that was validated,
+    // closing the canonicalize/open TOCTOU race where the file could be swapped
+    // for a different one between validation and open.
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::MetadataExt;
+        let validated = std::fs::metadata(&path)
+            .map_err(|_| "Unable to open the selected audio file.".to_string())?;
+        let opened = file
+            .metadata()
+            .map_err(|_| "Unable to open the selected audio file.".to_string())?;
+        if opened.dev() != validated.dev() || opened.ino() != validated.ino() {
+            return Err("The selected audio file changed during import.".to_string());
+        }
+    }
+    #[cfg(windows)]
+    {
+        use std::os::windows::fs::MetadataExt;
+        let validated = std::fs::metadata(&path)
+            .map_err(|_| "Unable to open the selected audio file.".to_string())?;
+        let opened = file
+            .metadata()
+            .map_err(|_| "Unable to open the selected audio file.".to_string())?;
+        if opened.volume_serial_number() != validated.volume_serial_number()
+            || opened.file_index() != validated.file_index()
+        {
+            return Err("The selected audio file changed during import.".to_string());
+        }
+    }
+
     // Bound concurrent decodes so a flood of imports can't multiply the
     // already-large per-decode memory ceiling. The ReentryGuard releases the
     // flag on every exit path — including a dropped caller future — so a
@@ -731,6 +761,17 @@ fn resolve_managed_audio_path_for_read(
         use std::os::unix::fs::MetadataExt;
         let opened = file.metadata().ok()?;
         if opened.dev() != validated_identity.0 || opened.ino() != validated_identity.1 {
+            return None;
+        }
+    }
+    #[cfg(windows)]
+    {
+        use std::os::windows::fs::MetadataExt;
+        let validated = std::fs::metadata(&real_path).ok()?;
+        let opened = file.metadata().ok()?;
+        if opened.volume_serial_number() != validated.volume_serial_number()
+            || opened.file_index() != validated.file_index()
+        {
             return None;
         }
     }
@@ -4204,6 +4245,8 @@ pub async fn download_and_open_mac_installer(
     // so `open` handles it.
     let downloaded_ext = if parsed.path().ends_with(".app.tar.gz") {
         ".app.tar.gz"
+    } else if parsed.path().ends_with(".pkg") {
+        ".pkg"
     } else {
         ".dmg"
     };

@@ -1,7 +1,7 @@
 use std::collections::HashMap;
 use std::sync::{
     atomic::{AtomicU64, Ordering},
-    Mutex,
+    Arc, Mutex,
 };
 use std::time::{Duration, Instant};
 
@@ -15,12 +15,17 @@ const MAX_PENDING_COMPOSER_TEXT_BYTES: usize = 2 * 1024 * 1024;
 // discards on every normal close, so this is only a backstop for the kill edge
 // case.
 const PENDING_COMPOSER_TEXT_TTL: Duration = Duration::from_secs(60);
+// How often the background reaper wakes to expire stale pending text even when
+// no composer operation occurs (see `new`).
+const PENDING_COMPOSER_TEXT_REAPER_INTERVAL: Duration = Duration::from_secs(30);
 
 type PendingComposerText = (String, Instant);
 
 pub struct FloatingWindowState {
     counter: AtomicU64,
-    pending_composer_text: Mutex<HashMap<String, PendingComposerText>>,
+    // Held in its own `Arc` so the background reaper thread keeps the map alive
+    // (and keeps expiring entries) independently of this struct's lifetime.
+    pending_composer_text: Arc<Mutex<HashMap<String, PendingComposerText>>>,
 }
 
 impl Default for FloatingWindowState {
@@ -31,9 +36,22 @@ impl Default for FloatingWindowState {
 
 impl FloatingWindowState {
     pub fn new() -> Self {
+        let pending = Arc::new(Mutex::new(HashMap::new()));
+        let reaper_pending = pending.clone();
+        // Background reaper: guarantees the sixty-second retention actually
+        // deletes dictated text even if the composer is force-closed and no
+        // later register/peek ever runs. Runs for the process lifetime.
+        std::thread::spawn(move || {
+            loop {
+                std::thread::sleep(PENDING_COMPOSER_TEXT_REAPER_INTERVAL);
+                if let Ok(mut map) = reaper_pending.lock() {
+                    Self::prune_expired(&mut map);
+                }
+            }
+        });
         Self {
             counter: AtomicU64::new(1),
-            pending_composer_text: Mutex::new(HashMap::new()),
+            pending_composer_text: pending,
         }
     }
 
@@ -89,6 +107,15 @@ impl FloatingWindowState {
         pending.remove(request_id);
         Ok(())
     }
+
+    /// Runs the same expiration pass the background reaper runs. Exposed so the
+    /// reaper's behavior is observable in tests without sleeping for the reaper
+    /// interval.
+    pub fn prune_expired_now(&self) {
+        if let Ok(mut pending) = self.pending_composer_text.lock() {
+            Self::prune_expired(&mut pending);
+        }
+    }
 }
 
 #[cfg(test)]
@@ -132,5 +159,32 @@ mod tests {
             .is_ok());
         assert_eq!(state.peek_composer_text("e0").unwrap(), None);
         assert_eq!(state.peek_composer_text("eNew").unwrap(), Some("v".into()));
+    }
+
+    fn register_expired(state: &FloatingWindowState, request_id: &str, text: &str) {
+        let mut pending = state.pending_composer_text.lock().unwrap();
+        pending.insert(
+            request_id.to_string(),
+            (
+                text.to_string(),
+                Instant::now() - PENDING_COMPOSER_TEXT_TTL - Duration::from_secs(1),
+            ),
+        );
+    }
+
+    #[test]
+    fn expired_entry_is_removed_without_a_composer_operation() {
+        let state = FloatingWindowState::new();
+        register_expired(&state, "old", "secret dictated text");
+        // Before pruning, the entry is still present (mirrors the window between
+        // a force-close and the next reaper tick).
+        assert_eq!(
+            state.peek_composer_text("old").unwrap(),
+            Some("secret dictated text".into())
+        );
+        // The background reaper (or prune_expired_now) deletes it once the TTL
+        // lapses, with no register/peek/discard call from the frontend.
+        state.prune_expired_now();
+        assert_eq!(state.peek_composer_text("old").unwrap(), None);
     }
 }
