@@ -426,6 +426,6 @@ export const applySpokenCommands = (
 
   // Only strip spaces this function inserted before a newline. Do not collapse
   // user-authored space runs (code, aligned columns, monospaced text).
-  const body = output.join("").replace(/[ \t]+\n/g, "\n");
+  const body = stripSpacesBeforeNewlines(output.join(""));
   return `${leading}${body}${trailing}`;
 };
