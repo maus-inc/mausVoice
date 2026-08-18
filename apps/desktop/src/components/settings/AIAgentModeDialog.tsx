@@ -37,16 +37,7 @@ const ToggleRow = ({
 }) => {
   return (
     <SettingSection
-      title={
-        <Typography
-          variant="body1"
-          sx={{
-            fontWeight: "bold",
-          }}
-        >
-          {title}
-        </Typography>
-      }
+      title={title}
       description={description}
       action={<Switch checked={checked} onChange={onChange} />}
       sx={{

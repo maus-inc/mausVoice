@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
 import {
+  copyFileSync,
   mkdtempSync,
   mkdirSync,
   readFileSync,
@@ -9,12 +10,13 @@ import {
 } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
-import { fileURLToPath } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
 import { after, describe, it } from "node:test";
 
 import {
   assetUrl,
   buildPlatforms,
+  isDirectInvocation,
   isPrerelease,
 } from "./build-updater-manifest.mjs";
 
@@ -36,14 +38,14 @@ const makeArtifacts = (files) => {
   return root;
 };
 
-const runScript = (env) => {
+const runScript = (env, scriptPath = script) => {
   const outputPath = join(
     mkdtempSync(join(tmpdir(), "mausvoice-manifest-")),
     "latest.json",
   );
   tempDirs.push(dirname(outputPath));
   try {
-    const stdout = execFileSync(process.execPath, [script], {
+    const stdout = execFileSync(process.execPath, [scriptPath], {
       cwd: repoRoot,
       encoding: "utf8",
       env: {
@@ -132,6 +134,29 @@ describe("updater manifest builder", () => {
       manifest.platforms["linux-x86_64"].signature,
       "linux-signature",
     );
+  });
+
+  it("runs directly from a script path containing spaces", () => {
+    const scriptDir = mkdtempSync(join(tmpdir(), "mausvoice updater script "));
+    tempDirs.push(scriptDir);
+    const spacedScript = join(scriptDir, "build updater manifest.mjs");
+    copyFileSync(script, spacedScript);
+
+    const artifacts = fullySignedArtifacts();
+    const result = runScript(
+      {
+        ARTIFACTS_DIR: artifacts,
+        RELEASE_VERSION: "0.1.7",
+        RELEASE_TAG: "mausVoice-v0.1.7",
+        RELEASE_PRERELEASE: "false",
+      },
+      spacedScript,
+    );
+
+    assert.ok(result.ok, `script failed: ${result.stderr}`);
+    const manifest = JSON.parse(readFileSync(result.outputPath, "utf8"));
+    assert.equal(manifest.version, "0.1.7");
+    assert.ok(Object.keys(manifest.platforms).length > 0);
   });
 
   it("points every platform at the release tag on the real repository", () => {
@@ -349,6 +374,29 @@ describe("updater manifest builder", () => {
 });
 
 describe("updater manifest helpers", () => {
+  it("recognizes encoded spaces and Windows drive-letter invocation paths", () => {
+    const nativePath = join(
+      tmpdir(),
+      "mausVoice updater",
+      "build updater manifest.mjs",
+    );
+    assert.equal(
+      isDirectInvocation(pathToFileURL(nativePath).href, nativePath),
+      true,
+    );
+
+    const windowsPath = String.raw`C:\Program Files\mausVoice\build updater manifest.mjs`;
+    assert.equal(
+      isDirectInvocation(
+        "file:///C:/Program%20Files/mausVoice/build%20updater%20manifest.mjs",
+        windowsPath,
+        true,
+      ),
+      true,
+    );
+    assert.equal(isDirectInvocation(import.meta.url, undefined), false);
+  });
+
   it('treats only the literal string "true" as a prerelease', () => {
     // "false" is truthy in Node, which is exactly the trap this guards.
     assert.equal(isPrerelease("true"), true);
