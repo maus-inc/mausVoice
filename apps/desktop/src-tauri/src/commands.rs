@@ -415,6 +415,243 @@ pub struct TranscriptionAudioData {
     pub sample_rate: u32,
 }
 
+<<<<<<< ours
+=======
+static IMPORT_IN_FLIGHT: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+/// Returns true when `path` lives at or under any of `allowed_roots`. Used by
+/// `transcription_import_audio` to confine imports to well-known user
+/// directories so the command cannot be used as a filesystem read oracle.
+fn is_path_within_allowed_roots(path: &std::path::Path, allowed_roots: &[PathBuf]) -> bool {
+    allowed_roots.iter().any(|root| path.starts_with(root))
+}
+
+/// Stable Windows file identity: the volume serial number paired with the
+/// 64-bit file index. Used to detect a TOCTOU swap of a validated file for a
+/// different one between the path check and the open/read.
+///
+/// `std::os::windows::fs::MetadataExt::{volume_serial_number,file_index}` would
+/// be the natural source, but those methods are gated behind the nightly-only
+/// `windows_by_handle` feature and break the stable-toolchain Windows build.
+/// `GetFileInformationByHandle` exposes the same identity through the stable
+/// `windows` crate, so we read it from the live file handle instead.
+#[cfg(windows)]
+fn windows_file_identity(file: &std::fs::File) -> Option<(u32, u64)> {
+    use std::os::windows::io::AsRawHandle;
+    let handle = windows::Win32::Foundation::HANDLE(file.as_raw_handle());
+    let mut info = windows::Win32::Storage::FileSystem::BY_HANDLE_FILE_INFORMATION::default();
+    // SAFETY: `handle` is a valid, borrowed file handle for the lifetime of the
+    // call, and `info` is a valid out-parameter we own.
+    unsafe {
+        windows::Win32::Storage::FileSystem::GetFileInformationByHandle(handle, &mut info).ok()?;
+    }
+    let file_index =
+        ((info.nFileIndexHigh as u64) << 32) | (info.nFileIndexLow as u64);
+    Some((info.dwVolumeSerialNumber, file_index))
+}
+
+#[tauri::command]
+#[specta::specta]
+pub async fn transcription_import_audio(
+    app: tauri::AppHandle,
+    path: String,
+) -> Result<TranscriptionAudioData, String> {
+    let path = PathBuf::from(path.trim());
+    if path.as_os_str().is_empty() {
+        return Err("No audio file was selected".to_string());
+    }
+    let path = path
+        .canonicalize()
+        .map_err(|_| "Unable to resolve the selected audio file.".to_string())?;
+
+    // Confine imports to well-known user directories and the app's audio
+    // store so this command cannot be used as a file-read oracle over the
+    // whole filesystem (e.g. reading `~/.ssh/id_rsa`). The home directory
+    // itself is intentionally excluded so sensitive dot-directories stay out
+    // of reach; only common media/download sub-directories are allowed.
+    let home_dir = app.path().home_dir().ok();
+    let mut allowed: Vec<PathBuf> = Vec::new();
+    if let Some(home) = home_dir {
+        for subdir in [
+            "Music",
+            "Downloads",
+            "Documents",
+            "Desktop",
+            "Pictures",
+            "Videos",
+            "Movies",
+            "Public",
+        ] {
+            allowed.push(home.join(subdir));
+        }
+    }
+    for dir in [
+        app.path().document_dir().ok(),
+        app.path().download_dir().ok(),
+        app.path().desktop_dir().ok(),
+        app.path().picture_dir().ok(),
+        crate::system::audio_store::audio_dir(&app).ok(),
+    ]
+    .into_iter()
+    .flatten()
+    {
+        allowed.push(dir);
+    }
+    let allowed_roots: Vec<PathBuf> = allowed
+        .into_iter()
+        .filter_map(|root| std::fs::canonicalize(&root).ok())
+        .collect();
+    if !is_path_within_allowed_roots(&path, &allowed_roots) {
+        return Err(
+            "The selected file is outside the allowed import locations.".to_string(),
+        );
+    }
+
+    // Open the validated path here (before any await) to narrow the TOCTOU
+    // window between validation and decode. This does not guarantee the opened
+    // file is the exact inode that `canonicalize` validated, but it avoids
+    // re-resolving the path after the blocking decode, and the single-flight
+    // guard below serializes concurrent imports so a rejected request cannot
+    // open files first.
+    #[cfg(unix)]
+    let validated = std::fs::metadata(&path)
+        .map_err(|_| "Unable to open the selected audio file.".to_string())?;
+    #[cfg(windows)]
+    let validated_id = {
+        let validated_file = std::fs::File::open(&path)
+            .map_err(|_| "Unable to open the selected audio file.".to_string())?;
+        windows_file_identity(&validated_file)
+            .ok_or_else(|| "Unable to open the selected audio file.".to_string())?
+    };
+
+    let file = std::fs::File::open(&path)
+        .map_err(|_| "Unable to open the selected audio file.".to_string())?;
+
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::MetadataExt;
+        let opened = file
+            .metadata()
+            .map_err(|_| "Unable to open the selected audio file.".to_string())?;
+        if opened.dev() != validated.dev() || opened.ino() != validated.ino() {
+            return Err("The selected audio file changed during import.".to_string());
+        }
+    }
+    #[cfg(windows)]
+    {
+        let opened_id = windows_file_identity(&file)
+            .ok_or_else(|| "Unable to open the selected audio file.".to_string())?;
+        if opened_id != validated_id {
+            return Err("The selected audio file changed during import.".to_string());
+        }
+    }
+
+    // Bound concurrent decodes so a flood of imports can't multiply the
+    // already-large per-decode memory ceiling. The ReentryGuard releases the
+    // flag on every exit path — including a dropped caller future — so a
+    // disconnected client can't wedge imports permanently (import DoS).
+    let _import_guard = match ReentryGuard::acquire(&IMPORT_IN_FLIGHT) {
+        Ok(guard) => guard,
+        Err(_) => {
+            return Err(
+                "An audio import is already in progress. Please wait for it to finish.".to_string(),
+            );
+        }
+    };
+
+    let result = tauri::async_runtime::spawn_blocking(move || {
+        let file_bytes = file
+            .metadata()
+            .map_err(|_| "Unable to inspect the selected audio file.".to_string())?
+            .len();
+        if file_bytes > MAX_AUDIO_IMPORT_FILE_BYTES {
+            return Err(format!(
+                "The selected audio file is too large (maximum is {} MiB)",
+                MAX_AUDIO_IMPORT_FILE_BYTES / (1024 * 1024)
+            ));
+        }
+
+        let decoder = rodio::Decoder::new(BufReader::new(file))
+            .map_err(|_| "Unable to decode the selected audio file.".to_string())?;
+        let source_rate = decoder.sample_rate();
+        let channels = decoder.channels().max(1) as usize;
+        if source_rate == 0 {
+            return Err("The selected audio file contains no usable samples".to_string());
+        }
+
+        // The decoded stream is interleaved, so derive its duration limit from
+        // the source rate and channel count rather than multiplying the
+        // 16 kHz mono output cap by a fixed factor. This accepts ordinary
+        // 44.1/48 kHz stereo recordings while retaining an absolute memory
+        // ceiling for unusual high-rate files.
+        let duration_sample_limit = (source_rate as usize)
+            .saturating_mul(channels)
+            .saturating_mul(MAX_AUDIO_IMPORT_DURATION_SECONDS as usize);
+        let max_decoded_samples = duration_sample_limit
+            .clamp(1, MAX_AUDIO_IMPORT_ABSOLUTE_DECODED_SAMPLES);
+        let memory_limited = duration_sample_limit > max_decoded_samples;
+        let decoded: Vec<f32> = decoder
+            .convert_samples::<f32>()
+            .take(max_decoded_samples.saturating_add(1))
+            .collect();
+
+        if decoded.len() > max_decoded_samples {
+            let reason = if memory_limited {
+                "the decoded audio exceeds the safe memory limit"
+            } else {
+                "the audio exceeds the duration limit"
+            };
+            return Err(format!(
+                "The selected audio file cannot be imported because {reason}"
+            ));
+        }
+        if decoded.is_empty() {
+            return Err("The selected audio file contains no usable samples".to_string());
+        }
+
+        let mono = if channels == 1 {
+            decoded
+        } else {
+            decoded
+                .chunks(channels)
+                .map(|frame| frame.iter().copied().sum::<f32>() / frame.len() as f32)
+                .collect()
+        };
+        let samples = shared_audio::resample_to_rate(&mono, source_rate, 16_000).map_err(|err| {
+            format!("Unable to convert the selected audio to 16 kHz mono: {err}")
+        })?;
+        if samples.len() > MAX_AUDIO_IMPORT_OUTPUT_SAMPLES {
+            return Err(format!(
+                "The selected audio file exceeds the {} minute import limit",
+                MAX_AUDIO_IMPORT_DURATION_SECONDS / 60
+            ));
+        }
+
+        Ok(TranscriptionAudioData {
+            pcm16_le: encode_pcm16_le(&samples),
+            sample_rate: 16_000,
+        })
+    })
+    .await
+    .map_err(|err| format!("audio import task failed: {err}"));
+    result?
+}
+
+fn encode_pcm16_le(samples: &[f32]) -> Vec<u8> {
+    let mut bytes = Vec::with_capacity(samples.len().saturating_mul(2));
+    for sample in samples {
+        let clamped = sample.clamp(-1.0, 1.0);
+        let value = if clamped < 0.0 {
+            (clamped * 0x8000 as f32) as i16
+        } else {
+            (clamped * 0x7fff as f32) as i16
+        };
+        bytes.extend_from_slice(&value.to_le_bytes());
+    }
+    bytes
+}
+
+>>>>>>> theirs
 async fn delete_audio_entries(
     app: AppHandle,
     entries: Vec<(String, String)>,
@@ -472,6 +709,80 @@ fn resolve_managed_audio_path(
     Some(real_parent.join(file_name))
 }
 
+<<<<<<< ours
+=======
+/// Resolve `path` to the exact file to read, or `None` when it does not live
+/// directly inside the managed transcription-audio directory. This is the read
+/// counterpart to `resolve_managed_audio_path`: the delete helper must *not*
+/// follow the final entry (so a symlink can be unlinked), but a read must
+/// prove the final entry stays inside `audio_dir` even after following
+/// symlinks. We canonicalize the whole candidate, so a final-position symlink
+/// such as `audio/clip.wav -> /outside/secret.wav` resolves outside
+/// `audio_dir` and is rejected rather than leaking the outside file's bytes.
+fn resolve_managed_audio_path_for_read(
+    path: &std::path::Path,
+    audio_dir: &std::path::Path,
+) -> Option<std::fs::File> {
+    let candidate = if path.is_absolute() {
+        path.to_path_buf()
+    } else {
+        audio_dir.join(path)
+    };
+
+    // Canonicalize the entire candidate (following a final symlink) and verify
+    // it resolves to a regular file whose parent is exactly the canonical
+    // managed audio directory.
+    let real_path = std::fs::canonicalize(&candidate).ok()?;
+    if !std::fs::metadata(&real_path).ok()?.is_file() {
+        return None;
+    }
+    let real_parent = real_path.parent()?;
+    let real_audio_dir = std::fs::canonicalize(audio_dir).ok()?;
+    if real_parent != real_audio_dir {
+        return None;
+    }
+
+    // Capture the device/inode identity of the validated path. We reopen and
+    // confirm the opened handle refers to the *same* inode, so a local
+    // swap/replace of the resolved file between validation and open cannot make
+    // us read an unrelated file.
+    #[cfg(unix)]
+    let validated_identity = {
+        use std::os::unix::fs::MetadataExt;
+        let meta = std::fs::metadata(&real_path).ok()?;
+        (meta.dev(), meta.ino())
+    };
+
+    // Open the validated file here so validation and the read are bound to the
+    // same handle, closing the time-of-check/time-of-use race where the file
+    // could be swapped for a symlink pointing outside `audio_dir` between this
+    // check and the later open/read.
+    let file = std::fs::File::open(&real_path).ok()?;
+
+    // Confirm the opened handle still matches the validated inode. Any swap
+    // that occurred after validation but before open is detected here.
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::MetadataExt;
+        let opened = file.metadata().ok()?;
+        if opened.dev() != validated_identity.0 || opened.ino() != validated_identity.1 {
+            return None;
+        }
+    }
+    #[cfg(windows)]
+    {
+        let validated_file = std::fs::File::open(&real_path).ok()?;
+        let validated_id = windows_file_identity(&validated_file)?;
+        let opened_id = windows_file_identity(&file)?;
+        if opened_id != validated_id {
+            return None;
+        }
+    }
+
+    Some(file)
+}
+
+>>>>>>> theirs
 /// Delete listed audio files that still live under `audio_dir`. Paths
 /// outside the managed directory (including traversal attempts) are skipped
 /// (not an error).
