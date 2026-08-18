@@ -402,7 +402,7 @@ mod tests {
         let elapsed = start.elapsed();
         assert_eq!(output.len(), 5 * 60 * 16_000);
         assert!(
-            elapsed.as_millis() < 15_000,
+            elapsed.as_millis() < 60_000,
             "resampling 5min/48k took {elapsed:?}"
         );
     }

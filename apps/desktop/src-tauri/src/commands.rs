@@ -2927,8 +2927,9 @@ fn validate_floating_window_url(url: &Url) -> Result<(), String> {
     match url.scheme() {
         "http" | "https" => {
             let host = url.host_str().unwrap_or("");
+            // url::Url::host_str() returns IPv6 literals without brackets.
             let is_localhost =
-                host == "localhost" || host == "127.0.0.1" || host == "[::1]";
+                host == "localhost" || host == "127.0.0.1" || host == "::1";
             // Docs-site windows are allowed to load, but they do not inherit
             // IPC: `maus-inc.github.io` is not in the `floating-*` capability
             // `remote.urls` list. Localhost remains the only remote host with
@@ -3147,8 +3148,12 @@ mod tests {
     fn terminal_command_accepts_allowed_command_with_empty_args() {
         // An allow-listed binary with no user-supplied arguments is accepted
         // and reports an empty argv tail.
-        let (allowed, args) = validate_terminal_command_args("ls").unwrap();
-        assert_eq!(allowed.binary, "ls");
+        #[cfg(not(target_os = "windows"))]
+        let binary = "ls";
+        #[cfg(target_os = "windows")]
+        let binary = "whoami";
+        let (allowed, args) = validate_terminal_command_args(binary).unwrap();
+        assert_eq!(allowed.binary, binary);
         assert!(args.is_empty());
     }
 
@@ -3275,6 +3280,18 @@ mod tests {
         assert!(validate_local_app_route("composer/../settings").is_err());
         assert!(validate_local_app_route("composer/%2e%2e/settings").is_err());
         assert!(validate_local_app_route("composer/%252e%252e%252fsettings").is_err());
+        // A leftover bare `%` after the first successful decode is a terminal
+        // value, not another encoding round.
+        assert!(validate_local_app_route("composer/100%done").is_ok());
+        assert!(percent_decode_route_path("composer/100%done").is_ok());
+    }
+
+    #[test]
+    fn floating_window_treats_ipv6_loopback_as_localhost() {
+        assert!(validate_floating_window_url(
+            &Url::parse("http://[::1]:1420/").unwrap()
+        )
+        .is_ok());
     }
 
     #[test]
