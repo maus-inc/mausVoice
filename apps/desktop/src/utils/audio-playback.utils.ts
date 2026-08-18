@@ -35,13 +35,68 @@ export type ActiveWebAudioPlayback = {
   transcriptionId: string;
   context: AudioContext;
   source: AudioBufferSourceNode;
+  buffer: AudioBuffer;
   rafId: number | null;
   startTime: number;
+  offsetSeconds: number;
   durationSeconds: number;
+  onProgress: (progress: number) => void;
   onStop: (reason: PlaybackStopReason) => void;
 };
 
 export let activePlayback: ActiveWebAudioPlayback | null = null;
+
+const elapsedRatio = (playback: ActiveWebAudioPlayback): number => {
+  const elapsed =
+    playback.context.currentTime - playback.startTime + playback.offsetSeconds;
+  if (playback.durationSeconds <= 0) {
+    return 0;
+  }
+  return Math.min(Math.max(elapsed / playback.durationSeconds, 0), 1);
+};
+
+export const clampPlaybackProgress = (progress: number): number =>
+  Math.min(Math.max(progress, 0), 1);
+
+const armTick = (playback: ActiveWebAudioPlayback): void => {
+  const tick = () => {
+    if (activePlayback !== playback) {
+      return;
+    }
+
+    const ratio = elapsedRatio(playback);
+    playback.onProgress(ratio);
+
+    if (ratio >= 1) {
+      return;
+    }
+
+    playback.rafId = window.requestAnimationFrame(tick);
+  };
+
+  if (playback.rafId !== null) {
+    window.cancelAnimationFrame(playback.rafId);
+  }
+  playback.rafId = window.requestAnimationFrame(tick);
+};
+
+const startSourceAt = (
+  playback: ActiveWebAudioPlayback,
+  offsetSeconds: number,
+): void => {
+  const source = playback.context.createBufferSource();
+  source.buffer = playback.buffer;
+  source.connect(playback.context.destination);
+  source.onended = () => {
+    if (activePlayback === playback) {
+      stopActivePlayback("ended");
+    }
+  };
+  playback.source = source;
+  playback.offsetSeconds = offsetSeconds;
+  playback.startTime = playback.context.currentTime;
+  source.start(0, offsetSeconds);
+};
 
 export const stopActivePlayback = (reason: PlaybackStopReason): void => {
   const current = activePlayback;
@@ -71,11 +126,34 @@ export const stopActivePlayback = (reason: PlaybackStopReason): void => {
   current.onStop(reason);
 };
 
+export const seekPlayback = (progress: number): boolean => {
+  const playback = activePlayback;
+  if (!playback || playback.durationSeconds <= 0) {
+    return false;
+  }
+
+  const ratio = clampPlaybackProgress(progress);
+  const offsetSeconds = ratio * playback.durationSeconds;
+
+  try {
+    playback.source.onended = null;
+    playback.source.stop();
+  } catch {
+    // source already stopped
+  }
+
+  startSourceAt(playback, offsetSeconds);
+  playback.onProgress(ratio);
+  armTick(playback);
+  return true;
+};
+
 export const playWebAudio = async (
   transcriptionId: string,
   data: { samples: number[]; sampleRate: number },
   onProgress: (progress: number) => void,
   onStop: (reason: PlaybackStopReason) => void,
+  startProgress = 0,
 ): Promise<void> => {
   stopActivePlayback("replaced");
 
@@ -101,40 +179,28 @@ export const playWebAudio = async (
     transcriptionId,
     context,
     source,
+    buffer,
     rafId: null,
     startTime: context.currentTime,
+    offsetSeconds: 0,
     durationSeconds: buffer.duration,
+    onProgress,
     onStop,
   };
   activePlayback = playback;
 
-  const tick = () => {
-    if (activePlayback !== playback) {
-      return;
-    }
-
-    const elapsed = playback.context.currentTime - playback.startTime;
-    const ratio =
-      playback.durationSeconds > 0
-        ? Math.min(Math.max(elapsed / playback.durationSeconds, 0), 1)
-        : 0;
-    onProgress(ratio);
-
-    if (ratio >= 1) {
-      return;
-    }
-
-    playback.rafId = window.requestAnimationFrame(tick);
-  };
-
   source.onended = () => {
-    stopActivePlayback("ended");
+    if (activePlayback === playback) {
+      stopActivePlayback("ended");
+    }
   };
 
-  onProgress(0);
+  const offset = clampPlaybackProgress(startProgress) * buffer.duration;
+  playback.offsetSeconds = offset;
   playback.startTime = context.currentTime;
-  source.start();
-  playback.rafId = window.requestAnimationFrame(tick);
+  onProgress(clampPlaybackProgress(startProgress));
+  source.start(0, offset);
+  armTick(playback);
 };
 
 export const buildWaveformOutline = (

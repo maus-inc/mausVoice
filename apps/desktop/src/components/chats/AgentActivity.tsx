@@ -4,7 +4,7 @@
  */
 import { Box, Stack, Typography } from "@mui/material";
 import { ChevronDown } from "lucide-react";
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { FormattedMessage } from "react-intl";
 import type { StreamingToolCall } from "../../state/app.state";
 import { useAppStore } from "../../store";
@@ -16,11 +16,20 @@ type AgentActivityProps = {
 const AUTO_CLOSE_DELAY = 1000;
 
 const ToolCallLine = ({ tc }: { tc: StreamingToolCall }) => (
-  <Typography variant="caption" sx={{ color: "text.secondary", fontStyle: "italic" }}>
+  <Typography
+    variant="caption"
+    sx={{ color: "text.secondary", fontStyle: "italic" }}
+  >
     {tc.done ? (
-      <FormattedMessage defaultMessage="Used {toolName}" values={{ toolName: tc.toolName }} />
+      <FormattedMessage
+        defaultMessage="Used {toolName}"
+        values={{ toolName: tc.toolName }}
+      />
     ) : (
-      <FormattedMessage defaultMessage="Using {toolName}…" values={{ toolName: tc.toolName }} />
+      <FormattedMessage
+        defaultMessage="Using {toolName}…"
+        values={{ toolName: tc.toolName }}
+      />
     )}
   </Typography>
 );

@@ -4,17 +4,22 @@ import { useAppStore } from "../../store";
 import { SonnerToaster } from "./SonnerToaster";
 
 /**
- * Keeps the zustand `showSnackbar()` API and routes each increment to sonner.
+ * Route each snackbarCounter increment to sonner. Depend only on the counter
+ * so message/mode/action identity changes cannot double-fire (StrictMode +
+ * function-valued actions).
  */
 export const SnackbarEmitter = () => {
   const snackbarCounter = useAppStore((state) => state.snackbarCounter);
-  const snackbarMessage = useAppStore((state) => state.snackbarMessage);
-  const snackbarDuration = useAppStore((state) => state.snackbarDuration);
-  const snackbarMode = useAppStore((state) => state.snackbarMode);
-  const snackbarAction = useAppStore((state) => state.snackbarAction);
 
   useEffect(() => {
-    if (snackbarCounter <= 0 || !snackbarMessage) {
+    if (snackbarCounter <= 0) {
+      return;
+    }
+
+    const { snackbarMessage, snackbarDuration, snackbarMode, snackbarAction } =
+      useAppStore.getState();
+
+    if (!snackbarMessage) {
       return;
     }
 
@@ -35,13 +40,7 @@ export const SnackbarEmitter = () => {
     } else {
       toast(snackbarMessage, opts);
     }
-  }, [
-    snackbarCounter,
-    snackbarMessage,
-    snackbarDuration,
-    snackbarMode,
-    snackbarAction,
-  ]);
+  }, [snackbarCounter]);
 
   return <SonnerToaster />;
 };

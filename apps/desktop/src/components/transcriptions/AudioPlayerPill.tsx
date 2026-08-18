@@ -13,6 +13,7 @@ import {
   MIN_COMPUTED_BAR_COUNT,
   MIN_WAVEFORM_BAR_VALUE,
   playWebAudio,
+  seekPlayback,
   stopActivePlayback,
   WAVEFORM_BAR_GAP,
   WAVEFORM_BAR_MAX_WIDTH,
@@ -38,13 +39,19 @@ export const AudioPlayerPill = ({
   const [playbackProgress, setPlaybackProgress] = useState(0);
   const [waveformWidth, setWaveformWidth] = useState(0);
   const waveformContainerRef = useRef<HTMLDivElement | null>(null);
+  const pointerCleanupRef = useRef<(() => void) | null>(null);
   const playbackNonceRef = useRef(0);
   const isPlayingRef = useRef(false);
+  const playbackProgressRef = useRef(0);
   const transcriptionIdRef = useRef(transcriptionId);
 
   useEffect(() => {
     isPlayingRef.current = isPlaying;
   }, [isPlaying]);
+
+  useEffect(() => {
+    playbackProgressRef.current = playbackProgress;
+  }, [playbackProgress]);
 
   useEffect(() => {
     transcriptionIdRef.current = transcriptionId;
@@ -107,6 +114,8 @@ export const AudioPlayerPill = ({
 
   useEffect(() => {
     return () => {
+      pointerCleanupRef.current?.();
+      pointerCleanupRef.current = null;
       if (activePlayback?.transcriptionId === transcriptionIdRef.current) {
         stopActivePlayback("stopped");
       }
@@ -180,6 +189,7 @@ export const AudioPlayerPill = ({
             setPlaybackProgress(0);
           }
         },
+        playbackProgressRef.current,
       );
     } catch (error) {
       console.error("Failed to toggle audio playback", error);
@@ -203,25 +213,35 @@ export const AudioPlayerPill = ({
     return Math.min(Math.max(ratio, 0), 1);
   }, []);
 
+  const commitSeek = useCallback((ratio: number) => {
+    setPlaybackProgress(ratio);
+    if (isPlayingRef.current) {
+      seekPlayback(ratio);
+    }
+  }, []);
+
   const handlePointerDown = useCallback(
     (event: React.PointerEvent<HTMLDivElement>) => {
       if (disabled) return;
       event.preventDefault();
       const next = getProgressFromClientX(event.clientX);
-      if (next != null) setPlaybackProgress(next);
+      if (next != null) commitSeek(next);
 
       const handleMove = (moveEvent: PointerEvent) => {
         const ratio = getProgressFromClientX(moveEvent.clientX);
-        if (ratio != null) setPlaybackProgress(ratio);
+        if (ratio != null) commitSeek(ratio);
       };
       const handleUp = () => {
         window.removeEventListener("pointermove", handleMove);
         window.removeEventListener("pointerup", handleUp);
+        pointerCleanupRef.current = null;
       };
+      pointerCleanupRef.current?.();
       window.addEventListener("pointermove", handleMove);
       window.addEventListener("pointerup", handleUp, { once: true });
+      pointerCleanupRef.current = handleUp;
     },
-    [disabled, getProgressFromClientX],
+    [disabled, getProgressFromClientX, commitSeek],
   );
 
   return (

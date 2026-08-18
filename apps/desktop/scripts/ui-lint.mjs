@@ -45,10 +45,7 @@ function scan(rel, text) {
       if (blues.length) failures.push(`${rel}: leftover hue-blue ${blues.join(",")}`);
     }
   }
-  if (
-    /borderRadius:\s*["']\d+px["']/.test(text) &&
-    !["components/common/AppStepper.tsx", "components/onboarding/A11yPermsForm.tsx", "components/onboarding/MicPermsForm.tsx"].includes(rel)
-  ) {
+  if (/borderRadius:\s*["']\d+px["']/.test(text)) {
     failures.push(`${rel}: pixel borderRadius literal`);
   }
   if (/\.format\(\s*["']MMM /.test(text)) {

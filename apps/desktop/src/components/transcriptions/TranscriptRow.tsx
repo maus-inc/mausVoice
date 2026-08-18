@@ -1,4 +1,12 @@
-import { CheckCircle, Copy, Download, Info, RotateCcw, Send, Trash2 } from "lucide-react";
+import {
+  CheckCircle,
+  Copy,
+  Download,
+  Info,
+  RotateCcw,
+  Send,
+  Trash2,
+} from "lucide-react";
 import {
   Chip,
   CircularProgress,
@@ -79,6 +87,7 @@ export const TranscriptionRow = ({ id }: TranscriptionRowProps) => {
   const handleDeleteTranscript = useCallback(
     async (id: string) => {
       try {
+        const snapshot = transcription;
         produceAppState((draft) => {
           delete draft.transcriptionById[id];
           draft.transcriptions.transcriptionIds =
@@ -89,13 +98,39 @@ export const TranscriptionRow = ({ id }: TranscriptionRowProps) => {
         await getTranscriptionRepo().deleteTranscription(id);
         showSnackbar(
           intl.formatMessage({ defaultMessage: "Delete successful" }),
-          { mode: "success" },
+          {
+            mode: "success",
+            action: snapshot
+              ? {
+                  label: intl.formatMessage({ defaultMessage: "Undo" }),
+                  onClick: () => {
+                    void getTranscriptionRepo()
+                      .createTranscription(snapshot)
+                      .then((restored) => {
+                        produceAppState((draft) => {
+                          draft.transcriptionById[restored.id] = restored;
+                          if (
+                            !draft.transcriptions.transcriptionIds.includes(
+                              restored.id,
+                            )
+                          ) {
+                            draft.transcriptions.transcriptionIds.unshift(
+                              restored.id,
+                            );
+                          }
+                        });
+                      })
+                      .catch((error) => showErrorSnackbar(error));
+                  },
+                }
+              : undefined,
+          },
         );
       } catch (error) {
         showErrorSnackbar(error);
       }
     },
-    [intl],
+    [intl, transcription],
   );
 
   const handleExport = useCallback(async () => {

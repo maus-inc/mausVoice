@@ -2,6 +2,7 @@ import {
   Alert,
   Box,
   Button,
+  CircularProgress,
   Dialog,
   DialogActions,
   DialogContent,
@@ -20,6 +21,7 @@ export const DeleteAccountDialog = () => {
   const open = useAppStore((state) => state.settings.deleteAccountDialog);
   const userEmail = useAppStore((state) => state.auth?.email);
   const [confirmationEmail, setConfirmationEmail] = useState("");
+  const [busy, setBusy] = useState(false);
 
   const isDeleteEnabled = confirmationEmail === userEmail && userEmail;
 
@@ -36,6 +38,7 @@ export const DeleteAccountDialog = () => {
     }
 
     try {
+      setBusy(true);
       await getAuthRepo().deleteMyAccount();
 
       // Tear down long-running native subsystems before wiping data so
@@ -63,6 +66,8 @@ export const DeleteAccountDialog = () => {
       showSnackbar(
         "An error occurred while attempting to delete your account. Please try again later.",
       );
+    } finally {
+      setBusy(false);
     }
   };
 
@@ -132,16 +137,20 @@ export const DeleteAccountDialog = () => {
         />
       </DialogContent>
       <DialogActions>
-        <Button onClick={handleClose} variant="text">
+        <Button onClick={handleClose} variant="text" disabled={busy}>
           <FormattedMessage defaultMessage="Cancel" />
         </Button>
         <Button
-          onClick={handleSubmit}
+          onClick={() => void handleSubmit()}
           variant="contained"
           color="error"
-          disabled={!isDeleteEnabled}
+          disabled={!isDeleteEnabled || busy}
         >
-          <FormattedMessage defaultMessage="Delete account" />
+          {busy ? (
+            <CircularProgress size={16} color="inherit" />
+          ) : (
+            <FormattedMessage defaultMessage="Delete account" />
+          )}
         </Button>
       </DialogActions>
     </Dialog>

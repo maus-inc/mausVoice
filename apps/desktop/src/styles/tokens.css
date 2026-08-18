@@ -1,6 +1,6 @@
 /**
- * Mechanical parity file for the Rust pill crates.
- * Keep in lockstep with src/styles/palette.ts — do not invent hexes here.
+ * Web-side token dump kept in lockstep with src/styles/palette.ts.
+ * Rust pill crates do not consume this file yet — do not invent hexes here.
  */
 :root {
   --mv-surface-light-0: #f5f2ed;

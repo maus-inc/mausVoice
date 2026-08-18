@@ -11,7 +11,7 @@ import {
   Stack,
   type SxProps,
 } from "@mui/material";
-import { useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { ListTile } from "./ListTile";
 
 export type MenuPopoverCallbackArgs = {
@@ -80,6 +80,14 @@ const MenuPopoverSubMenuItem = ({
     hideTimerRef.current = window.setTimeout(() => setSubmenuOpen(false), 80);
   };
 
+  useEffect(() => {
+    return () => {
+      if (hideTimerRef.current) {
+        window.clearTimeout(hideTimerRef.current);
+      }
+    };
+  }, []);
+
   return (
     <>
       <div
@@ -92,7 +100,11 @@ const MenuPopoverSubMenuItem = ({
           aria-expanded={submenuOpen}
           onClick={openSubmenu}
           onKeyDown={(event) => {
-            if (event.key === "Enter" || event.key === " " || event.key === "ArrowRight") {
+            if (
+              event.key === "Enter" ||
+              event.key === " " ||
+              event.key === "ArrowRight"
+            ) {
               event.preventDefault();
               openSubmenu();
             }

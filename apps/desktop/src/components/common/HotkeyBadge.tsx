@@ -10,18 +10,19 @@ type HotkeyBadgeProps = {
 };
 
 export const HotkeyBadge = ({ keys, onClick, sx }: HotkeyBadgeProps) => {
+  const comboLabel = keys.map(getPrettyKeyName).join(" + ");
+
   return (
     <Stack
       direction="row"
       spacing={0.5}
+      aria-label={comboLabel}
+      role={onClick ? "button" : "group"}
+      onClick={onClick}
       sx={{ display: "inline-flex", alignItems: "center", ...sx }}
     >
       {keys.map((key, index) => (
-        <Keycap
-          key={`${key}-${index}`}
-          onClick={onClick}
-          aria-label={keys.map(getPrettyKeyName).join(" + ")}
-        >
+        <Keycap key={`${key}-${index}`} tabIndex={-1} aria-hidden>
           {getPrettyKeyName(key)}
         </Keycap>
       ))}

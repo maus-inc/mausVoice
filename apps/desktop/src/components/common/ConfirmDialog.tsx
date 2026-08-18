@@ -1,6 +1,7 @@
 import {
   Button,
   ButtonProps,
+  CircularProgress,
   Dialog,
   DialogActions,
   DialogContent,
@@ -38,13 +39,23 @@ export const ConfirmDialog = ({
   busy,
 }: ConfirmDialogProps) => {
   return (
-    <Dialog open={isOpen} onClose={busy ? undefined : onCancel} maxWidth="xs" fullWidth>
+    <Dialog
+      open={isOpen}
+      onClose={busy ? undefined : onCancel}
+      maxWidth="xs"
+      fullWidth
+    >
       <DialogTitle>{title}</DialogTitle>
       <DialogContent dividers>
         <DialogContentText>{content}</DialogContentText>
       </DialogContent>
       <DialogActions sx={{ px: 3, pb: 2 }}>
-        <Button variant="text" onClick={onCancel} disabled={busy} {...cancelButtonProps}>
+        <Button
+          variant="text"
+          onClick={onCancel}
+          disabled={busy}
+          {...cancelButtonProps}
+        >
           {cancelLabel ?? <FormattedMessage defaultMessage="Cancel" />}
         </Button>
         <Button
@@ -54,7 +65,11 @@ export const ConfirmDialog = ({
           disabled={busy}
           {...confirmButtonProps}
         >
-          {confirmLabel ?? <FormattedMessage defaultMessage="Confirm" />}
+          {busy ? (
+            <CircularProgress size={16} color="inherit" />
+          ) : (
+            (confirmLabel ?? <FormattedMessage defaultMessage="Confirm" />)
+          )}
         </Button>
       </DialogActions>
     </Dialog>
