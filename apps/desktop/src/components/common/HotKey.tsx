@@ -19,10 +19,10 @@ type HotKeyProps = {
 // Under RM we also skip attaching the animation so the border stays static brand.
 const pulseBorder = keyframes`
   0%, 100% {
-    border-color: color-mix(in srgb, var(--app-palette-blue) 50%, transparent);
+    border-color: color-mix(in srgb, var(--app-palette-chrome) 50%, transparent);
   }
   50% {
-    border-color: var(--app-palette-blue);
+    border-color: var(--app-palette-chrome);
   }
 `;
 

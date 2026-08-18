@@ -48,10 +48,10 @@ export const theme = createTheme({
         goldFg: "rgb(104, 48, 9)",
         goldBg: "rgba(255, 193, 7, 0.6)",
         shadow: ink(0.12),
-        blue: accent.light.main,
-        blueHover: inkSolid.raised,
-        blueActive: inkSolid.pressed,
-        onBlue: surfaces.light.level1,
+        chrome: accent.light.main,
+        chromeHover: inkSolid.raised,
+        chromeActive: inkSolid.pressed,
+        onChrome: surfaces.light.level1,
         dangerHover: "rgba(232, 77, 77, 0.92)",
 
         ...surfaces.light,
@@ -72,10 +72,10 @@ export const theme = createTheme({
         goldFg: "#FFD700",
         goldBg: "rgba(255, 215, 0, 0.2)",
         shadow: darkInk(0.5),
-        blue: accent.dark.main,
-        blueHover: chalkSolid.raised,
-        blueActive: chalkSolid.pressed,
-        onBlue: surfaces.dark.level0,
+        chrome: accent.dark.main,
+        chromeHover: chalkSolid.raised,
+        chromeActive: chalkSolid.pressed,
+        onChrome: surfaces.dark.level0,
         dangerHover: "rgba(232, 77, 77, 0.92)",
 
         ...surfaces.dark,
@@ -508,10 +508,10 @@ export const theme = createTheme({
           },
         },
         {
-          props: { variant: "blue" },
+          props: { variant: "chrome" },
           style: ({ theme }) => ({
-            backgroundColor: theme.vars.palette.blue,
-            color: theme.vars.palette.onBlue,
+            backgroundColor: theme.vars.palette.chrome,
+            color: theme.vars.palette.onChrome,
             boxShadow: `
               inset 0 1px 0 ${highlight(0.28)},
               inset 0 2px 0 ${highlight(0.1)},
@@ -525,11 +525,11 @@ export const theme = createTheme({
               `,
             }),
             "&:hover": {
-              backgroundColor: theme.vars.palette.blueHover,
+              backgroundColor: theme.vars.palette.chromeHover,
               transform: "translateY(-1px)",
             },
             "&:active": {
-              backgroundColor: theme.vars.palette.blueActive,
+              backgroundColor: theme.vars.palette.chromeActive,
               transform: "scale(0.98) translateY(0)",
             },
           }),

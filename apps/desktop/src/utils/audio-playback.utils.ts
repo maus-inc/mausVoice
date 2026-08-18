@@ -210,6 +210,7 @@ export const playWebAudio = async (
   armTick(playback);
 };
 
+/** Deterministic decorative bars — not PCM peaks. Same seed → same silhouette. */
 export const buildWaveformOutline = (
   seedKey: string,
   durationMs?: number | null,

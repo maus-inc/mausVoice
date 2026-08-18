@@ -202,7 +202,7 @@ export const AudioPlayerPill = ({
 
   const durationLabel = formatDuration(durationMs);
 
-  /** elevenlabs-ui/ui/scrub-bar.tsx — getTimeFromClientX + window pointer listeners */
+  /** Scrub mapping from client X (same idea as elevenlabs-ui scrub-bar). Bars are a seeded silhouette, not live PCM. */
   const getProgressFromClientX = useCallback((clientX: number) => {
     const track = waveformContainerRef.current;
     if (!track) return null;

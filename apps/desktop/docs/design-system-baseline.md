@@ -7,9 +7,9 @@ two never drift apart.
 
 ## Colour
 
-- **One accent: blue.** `palette.blue` (`#1b8af8` light / `#3198ff` dark).
-  Reserved for primary actions, current selection, state indicators and
-  switches. Never decoration.
+- **One accent: silver/ink chrome.** `palette.chrome` (`#6B6760` light /
+  `#C4C0B8` dark). Focus rings, selection wash, sliders. Switches use
+  ink/chalk, not this metal. Never hue-blue. Never decoration.
 - **Never hard-code a mode-specific colour.** Use a palette token
   (`theme.vars.palette.*`, or `var(--app-palette-*)` inside `keyframes` and
   other strings that cannot see the theme object).
@@ -28,8 +28,8 @@ two never drift apart.
 Everything interactive ships all of: default, hover, **focus-visible**, active,
 disabled, and loading where relevant.
 
-- Focus ring: designed and brand-tinted — `2px solid rgba(27, 138, 248, 0.7)`,
-  `outline-offset: 2`. Never rely on the browser default.
+- Focus ring: designed and chrome-tinted — `2px solid` silver/ink at ~70%
+  (`accent` RGB), `outline-offset: 2`. Never rely on the browser default.
 - Press feedback: `transform: scale(0.94–0.98)` (or an inset press).
 - Hover on a bare icon button also lifts the foreground to `text.primary`;
   colour alone is never the only affordance.

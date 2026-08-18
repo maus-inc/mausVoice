@@ -13,10 +13,10 @@ declare module "@mui/material/styles" {
     goldBg: string;
     goldFg: string;
     shadow: string;
-    blue: string;
-    blueHover: string;
-    blueActive: string;
-    onBlue: string;
+    chrome: string;
+    chromeHover: string;
+    chromeActive: string;
+    onChrome: string;
     dangerHover: string;
 
     level0: string;
@@ -28,10 +28,10 @@ declare module "@mui/material/styles" {
     goldBg?: string;
     goldFg?: string;
     shadow?: string;
-    blue?: string;
-    blueHover?: string;
-    blueActive?: string;
-    onBlue?: string;
+    chrome?: string;
+    chromeHover?: string;
+    chromeActive?: string;
+    onChrome?: string;
     dangerHover?: string;
 
     level0?: string;
