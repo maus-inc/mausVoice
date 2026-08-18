@@ -23,11 +23,13 @@ Grab Your [Free Groq↗](https://console.groq.com/keys) and [Free Deepgram↗](h
 **New to mausVoice, tuning a provider, or building from source? Visit the complete [mausVoice Documentation](https://maus-inc.github.io/mausVoice/docs/).** It covers platform setup, daily dictation, every configuration area, provider behavior, privacy and local data, troubleshooting, and the repository architecture.
 
 <p align="center">
-  <a href="https://maus-inc.github.io/mausVoice/docs/"><strong>Read the docs →</strong></a>
+  <a href="https://maus-inc.github.io/mausVoice/docs/"> 
+  <img src="docs/assets/readthedocsbtn.png" alt="mausVoice readthedocs button" width="320" />
+  </a>
 </p>
 
 <p align="center">
-  <img src="docs/assets/home-page.png" alt="mausVoice home" width="720" />
+  <img src="docs/assets/home-page.png" alt="mausVoice home" width="750" />
 </p>
 
 **mausVoice** is a desktop app that turns your voice into text anywhere you can type. Hold a global shortcut, speak, and release: mausVoice transcribes locally or through your chosen provider, optionally applies an **LLM** writing style, and sends the result to the field in focus.
