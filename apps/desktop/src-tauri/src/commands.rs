@@ -2865,8 +2865,8 @@ fn is_safe_arg_token(token: &str) -> bool {
 /// invoke a shell — makes it obvious to model authors that shell
 /// composition is out. `/` and `\` are forbidden so an allow-listed reader
 /// (e.g. a hypothetical `cat`) cannot reach arbitrary filesystem paths like
-/// `/etc/passwd`, `C:\Users\…`, or `~/.ssh/id_rsa`, and `..` path traversal is
-/// caught by the substring check below.
+/// `/etc/passwd`, `C:\Users\…`, or `~/.ssh/id_rsa`. A standalone `..` token
+/// is explicitly rejected; the `/` guard prevents traversal sequences.
 const TERMINAL_FORBIDDEN_CHARS: &[char] =
     &[';', '|', '&', '$', '`', '>', '<', '(', ')', '/', '\\', '\n', '\r'];
 
@@ -2901,7 +2901,7 @@ fn validate_terminal_command_args(
                 ));
             }
         }
-        if *token == ".." {
+        if token == ".." {
             return Err(format!(
                 "Path traversal (..) is not permitted in command arguments (found in {token:?})"
             ));
@@ -2998,7 +2998,7 @@ fn percent_decode_route_path(path: &str) -> Result<String, String> {
                 decoded = next;
             }
             Err(_) if iteration > 0 => {
-                return Ok(decoded);
+                break;
             }
             Err(e) => return Err(e),
         }
