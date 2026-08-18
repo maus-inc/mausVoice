@@ -3,7 +3,10 @@ import { getRec } from "@maus-inc/utilities";
 import { getTranscriptionRepo } from "../repos";
 import { getAppState, produceAppState } from "../store";
 import { sanitizeTranscriptText } from "../utils/sanitize-transcript.utils";
-import { getActiveDictationLanguage, getMyUserPreferences } from "../utils/user.utils";
+import {
+  getMyDictationLanguage,
+  getMyUserPreferences,
+} from "../utils/user.utils";
 import { postProcessTranscript, transcribeAudio } from "./transcribe.actions";
 
 export const openTranscriptionDetailsDialog = (transcriptionId: string) => {

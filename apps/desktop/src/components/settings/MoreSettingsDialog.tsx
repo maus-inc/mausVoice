@@ -328,7 +328,7 @@ export const MoreSettingsDialog = () => {
           <SettingSection
             title={<FormattedMessage defaultMessage="Spoken commands" />}
             description={
-              <FormattedMessage defaultMessage="Turn phrases like “new line”, “comma”, and “scratch that” into formatting, even in Verbatim. English dictation only." />
+              <FormattedMessage defaultMessage='Turn phrases like "new line", "comma", and "scratch that" into formatting, even in Verbatim. English dictation only.' />
             }
             action={
               <Switch

@@ -712,5 +712,7 @@
   "you_may_need_to_reload_your_compositor_for_changes_to_take_e": "변경 사항을 적용하려면 컴포지터를 다시 로드해야 할 수 있습니다.",
   "you_re_currently_on_version_version_the_app_will_restart_aft": "현재 버전 {version}을(를) 사용 중입니다. 업데이트가 완료되면 앱이 다시 시작됩니다.",
   "your_azure_openai_resource_endpoint_url": "Azure OpenAI 리소스 엔드포인트 URL",
-  "your_operating_system_is_preventing_mausvoice_from_modifying": "운영 체제가 현재 설치 위치에서 mausVoice이 파일을 수정하는 것을 방지하고 있습니다. 다운로드 버튼을 사용하여 최신 설치 프로그램을 받은 뒤, 실행하여 수동으로 업데이트를 완료하십시오."
+  "your_operating_system_is_preventing_mausvoice_from_modifying": "운영 체제가 현재 설치 위치에서 mausVoice이 파일을 수정하는 것을 방지하고 있습니다. 다운로드 버튼을 사용하여 최신 설치 프로그램을 받은 뒤, 실행하여 수동으로 업데이트를 완료하십시오.",
+  "spoken_commands": "Spoken commands",
+  "turn_phrases_like_new_line_comma_and_scratch_that_into_formatt": "Turn phrases like \"new line\", \"comma\", and \"scratch that\" into formatting, even in Verbatim. English dictation only."
 }

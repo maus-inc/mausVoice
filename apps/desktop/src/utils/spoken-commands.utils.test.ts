@@ -78,4 +78,35 @@ describe("applySpokenCommands", () => {
   it("handles trailing punctuation on the command word", () => {
     expect(applySpokenCommands("hello comma, world")).toBe("hello, world");
   });
+
+  it("does not treat delete that or undo that as commands", () => {
+    expect(applySpokenCommands("please delete that file")).toBe(
+      "please delete that file",
+    );
+    expect(applySpokenCommands("undo that change")).toBe("undo that change");
+  });
+
+  it("does not treat Dr. as a sentence boundary for scratch that", () => {
+    expect(applySpokenCommands("See Dr. Smith scratch that")).toBe("");
+  });
+
+  it("does not rewrite English commands for non-English or sentinels", () => {
+    expect(applySpokenCommands("hello new line world", "primary")).toBe(
+      "hello new line world",
+    );
+    expect(applySpokenCommands("hello new line world", "auto")).toBe(
+      "hello new line world",
+    );
+    expect(applySpokenCommands("hello new line world", "de")).toBe(
+      "hello new line world",
+    );
+  });
+
+  it("skips scratch and newlines on interim chunks", () => {
+    expect(
+      applySpokenCommands("hello new line scratch that", "en", {
+        skipStructuralCommands: true,
+      }),
+    ).toBe("hello new line scratch that");
+  });
 });

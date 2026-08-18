@@ -1,36 +1,23 @@
+import { isEnglishSanitizeLanguage } from "./sanitize-language.utils";
+
 /**
  * Deterministic spoken formatting commands.
  *
- * Runs after dictionary replacements and before symbol conversions / LLM
- * cleanup so Verbatim still gets "new line" and "scratch that". English-only
- * (same gate as PR #63 hallucination filter) — command phrases are English.
- *
- * Protected collocations ("new line of credit", "Oxford comma") are never
- * rewritten. "scratch that" drops the previous sentence (or the whole take
- * if there is no sentence boundary).
+ * Pipeline: after replacements and the hallucination strip, before
+ * hashtag/pound conversions. English-only via isEnglishSanitizeLanguage —
+ * "primary" / "auto" sentinels are not English. Isolated "scratch that"
+ * drops the previous sentence. Abbreviations such as "Dr." are not
+ * sentence boundaries. Only "scratch that" undoes speech.
  */
 
-export const isEnglishSpokenCommandLanguage = (
-  language: string | undefined,
-): boolean => {
-  if (language === undefined) {
-    return true;
-  }
-  const normalized = language.toLowerCase().trim();
-  return (
-    normalized === "en" ||
-    normalized === "english" ||
-    normalized === "auto" ||
-    normalized === "primary" ||
-    normalized.startsWith("en-")
-  );
-};
+export const isEnglishSpokenCommandLanguage = isEnglishSanitizeLanguage;
 
 type InsertCommand = {
   kind: "insert";
   words: string[];
   value: string;
   attachLeft?: boolean;
+  structural?: boolean;
   blockedFollowers?: string[][];
   blockedPredecessors?: string[][];
 };
@@ -44,39 +31,43 @@ type SpokenCommand = InsertCommand | ScratchCommand;
 
 const COMMANDS: SpokenCommand[] = [
   { kind: "scratch", words: ["scratch", "that"] },
-  { kind: "scratch", words: ["delete", "that"] },
-  { kind: "scratch", words: ["undo", "that"] },
   {
     kind: "insert",
     words: ["new", "paragraph"],
     value: "\n\n",
+    structural: true,
   },
   {
     kind: "insert",
     words: ["next", "paragraph"],
     value: "\n\n",
+    structural: true,
   },
   {
     kind: "insert",
     words: ["new", "line"],
     value: "\n",
+    structural: true,
     blockedFollowers: [["of"]],
   },
   {
     kind: "insert",
     words: ["next", "line"],
     value: "\n",
+    structural: true,
     blockedFollowers: [["of"]],
   },
   {
     kind: "insert",
     words: ["line", "break"],
     value: "\n",
+    structural: true,
   },
   {
     kind: "insert",
     words: ["newline"],
     value: "\n",
+    structural: true,
     blockedFollowers: [["of"]],
   },
   {
@@ -211,7 +202,9 @@ const wordsMatch = (actual: string[], expected: string[]): boolean => {
   if (actual.length !== expected.length) {
     return false;
   }
-  return actual.every((token, index) => stripEdgePunctuation(token) === expected[index]);
+  return actual.every(
+    (token, index) => stripEdgePunctuation(token) === expected[index],
+  );
 };
 
 const followerBlocked = (
@@ -248,6 +241,33 @@ const trimTrailingSpace = (parts: string[]): void => {
   }
 };
 
+const isAbbreviationStop = (text: string, stopIndex: number): boolean => {
+  const before = text.slice(0, stopIndex + 1);
+  const word = before.match(/(\S+)$/)?.[1] ?? "";
+  if (/^[A-Za-z]\.$/.test(word)) {
+    return true;
+  }
+  return /^(dr|mr|mrs|ms|prof|sr|jr|vs|etc|inc|ltd|st|ave|e\.g|i\.e|u\.s|u\.k)\.$/i.test(
+    word,
+  );
+};
+
+const lastSentenceBoundary = (text: string): number => {
+  for (let index = text.length - 1; index >= 0; index -= 1) {
+    const char = text[index];
+    if (char === "\n") {
+      return index;
+    }
+    if (char === "." || char === "!" || char === "?") {
+      if (char === "." && isAbbreviationStop(text, index)) {
+        continue;
+      }
+      return index;
+    }
+  }
+  return -1;
+};
+
 const applyScratch = (parts: string[]): void => {
   trimTrailingSpace(parts);
   const joined = parts.join("");
@@ -259,15 +279,7 @@ const applyScratch = (parts: string[]): void => {
   const withoutTrailingStop = joined
     .replace(/[.!?]+$/u, "")
     .replace(/[ \t]+$/u, "");
-  const boundary = Math.max(
-    withoutTrailingStop.lastIndexOf("\n"),
-    withoutTrailingStop.lastIndexOf(". "),
-    withoutTrailingStop.lastIndexOf("! "),
-    withoutTrailingStop.lastIndexOf("? "),
-    withoutTrailingStop.lastIndexOf("."),
-    withoutTrailingStop.lastIndexOf("!"),
-    withoutTrailingStop.lastIndexOf("?"),
-  );
+  const boundary = lastSentenceBoundary(withoutTrailingStop);
 
   if (boundary < 0) {
     parts.length = 0;
@@ -275,16 +287,23 @@ const applyScratch = (parts: string[]): void => {
   }
 
   const keepThrough = boundary + 1;
-  const kept = withoutTrailingStop.slice(0, keepThrough).replace(/[ \t]+$/u, "");
+  const kept = withoutTrailingStop
+    .slice(0, keepThrough)
+    .replace(/[ \t]+$/u, "");
   parts.length = 0;
   if (kept) {
     parts.push(kept);
   }
 };
 
+export type ApplySpokenCommandsOptions = {
+  skipStructuralCommands?: boolean;
+};
+
 export const applySpokenCommands = (
   text: string,
   language?: string,
+  options?: ApplySpokenCommandsOptions,
 ): string => {
   if (!text.trim()) {
     return text;
@@ -293,6 +312,7 @@ export const applySpokenCommands = (
     return text;
   }
 
+  const skipStructural = options?.skipStructuralCommands === true;
   const tokens = tokenizeWords(text);
   if (tokens.length === 0) {
     return text;
@@ -327,7 +347,13 @@ export const applySpokenCommands = (
       if (!wordsMatch(slice, command.words)) {
         continue;
       }
+      if (command.kind === "scratch" && skipStructural) {
+        continue;
+      }
       if (command.kind === "insert") {
+        if (skipStructural && command.structural) {
+          continue;
+        }
         if (
           predecessorBlocked(tokens.slice(0, index), command.blockedPredecessors)
         ) {
@@ -379,6 +405,9 @@ export const applySpokenCommands = (
     index += matchedLength;
   }
 
-  const body = output.join("").replace(/[ \t]+\n/g, "\n").replace(/ +/g, " ");
+  const body = output
+    .join("")
+    .replace(/[ \t]+\n/g, "\n")
+    .replace(/ +/g, " ");
   return `${leading}${body}${trailing}`;
 };

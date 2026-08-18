@@ -12,6 +12,8 @@ export type SanitizeTranscriptOptions = {
   language?: string;
   spokenCommandsEnabled?: boolean;
   hallucinationFilterEnabled?: boolean;
+  /** Skip scratch-that and newline/paragraph (realtime interim chunks). */
+  skipStructuralCommands?: boolean;
 };
 
 /**
@@ -30,6 +32,7 @@ export const sanitizeTranscriptText = ({
   language,
   spokenCommandsEnabled = true,
   hallucinationFilterEnabled = true,
+  skipStructuralCommands = false,
 }: SanitizeTranscriptOptions): string => {
   const afterReplacements = applyReplacements(rawTranscript, replacementRules);
   const afterHallucination = applyHallucinationFiltering(
@@ -39,7 +42,9 @@ export const sanitizeTranscriptText = ({
     hallucinationFilterEnabled,
   );
   const afterCommands = spokenCommandsEnabled
-    ? applySpokenCommands(afterHallucination, language)
+    ? applySpokenCommands(afterHallucination, language, {
+        skipStructuralCommands,
+      })
     : afterHallucination;
   return applySymbolConversions(afterCommands);
 };

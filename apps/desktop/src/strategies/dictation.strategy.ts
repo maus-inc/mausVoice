@@ -19,7 +19,7 @@ import { routeTranscriptOutput } from "../utils/output-routing.utils";
 import { sanitizeTranscriptText } from "../utils/sanitize-transcript.utils";
 import { getToneIdToUse, VERBATIM_TONE_ID } from "../utils/tone.utils";
 import {
-  getActiveDictationLanguage,
+  getMyDictationLanguage,
   getMyUserPreferences,
 } from "../utils/user.utils";
 import { BaseStrategy } from "./base.strategy";
@@ -56,7 +56,7 @@ export class DictationStrategy extends BaseStrategy {
       return;
     }
 
-    const sanitized = this.sanitizeTranscript(segment);
+    const sanitized = this.sanitizeTranscript(segment, { interim: true });
     if (!sanitized) {
       return;
     }
@@ -66,7 +66,7 @@ export class DictationStrategy extends BaseStrategy {
 
     this.pasteQueue = this.pasteQueue.then(async () => {
       const text = sanitized;
-      const textToPaste = text + " ";
+      const textToPaste = text.endsWith("\n") ? text : `${text} `;
       this.streamedProcessedText += (isFirst ? "" : " ") + text;
 
       try {
@@ -81,7 +81,10 @@ export class DictationStrategy extends BaseStrategy {
     });
   }
 
-  private sanitizeTranscript(text: string): string | null {
+  private sanitizeTranscript(
+    text: string,
+    opts?: { interim?: boolean },
+  ): string | null {
     const state = getAppState();
     const prefs = getMyUserPreferences(state);
     const replacementRules = Object.values(state.termById)
@@ -94,9 +97,10 @@ export class DictationStrategy extends BaseStrategy {
     const sanitized = sanitizeTranscriptText({
       rawTranscript: text,
       replacementRules,
-      language: getActiveDictationLanguage(state),
+      language: getMyDictationLanguage(state),
       spokenCommandsEnabled: prefs?.spokenCommandsEnabled ?? true,
       hallucinationFilterEnabled: true,
+      skipStructuralCommands: opts?.interim === true,
     });
     return sanitized.trim() ? sanitized : null;
   }

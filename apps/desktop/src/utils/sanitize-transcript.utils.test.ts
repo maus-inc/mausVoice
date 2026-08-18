@@ -40,6 +40,17 @@ describe("sanitizeTranscriptText", () => {
     ).toBe("hello new line world");
   });
 
+  it("skips structural commands when asked", () => {
+    expect(
+      sanitizeTranscriptText({
+        rawTranscript: "hello new line world",
+        replacementRules: [],
+        language: "en",
+        skipStructuralCommands: true,
+      }),
+    ).toBe("hello new line world");
+  });
+
   it("can disable the hallucination filter", () => {
     expect(
       sanitizeTranscriptText({

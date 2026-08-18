@@ -1,12 +1,13 @@
+import { isEnglishSanitizeLanguage } from "./sanitize-language.utils";
+
 /**
  * Common phrases emitted by Whisper-like models when the input contains only
  * room noise or silence. Keep this list intentionally conservative: filtering
  * is applied before post-processing and should never rewrite a real sentence.
  *
- * Planned against PR #63 (`fix/superfix-review-findings`): same English-only
- * gate, same Amara companion rule, same `noSpeechProb` threshold. This branch
- * does not add `hallucinationFilterEnabled` to SQLite — 076 on that PR already
- * owns the column. Callers default the filter to on so behavior matches 63.
+ * Phrase filter is what the live sanitize path uses. gateSilentSegments is
+ * available when a provider supplies verbose_json segments; this branch's
+ * sanitize pipeline does not invent those segments.
  */
 export const KNOWN_SILENCE_HALLUCINATIONS = [
   "[blank_audio]",
@@ -33,15 +34,6 @@ const normalizeHallucinationText = (text: string): string =>
     .replace(/[.!?,;:。！？，、]+/g, "")
     .replace(/\s+/g, " ")
     .trim();
-
-const isEnglishLanguage = (language: string): boolean => {
-  const normalized = language.toLowerCase().trim();
-  return (
-    normalized === "en" ||
-    normalized === "english" ||
-    normalized.startsWith("en-")
-  );
-};
 
 export const isKnownSilenceHallucination = (text: string): boolean => {
   const normalized = normalizeHallucinationText(text);
@@ -77,7 +69,7 @@ export const filterKnownSilenceHallucinations = (
   language?: string,
 ): string => {
   if (!text.trim()) return "";
-  if (language !== undefined && !isEnglishLanguage(language)) {
+  if (language !== undefined && !isEnglishSanitizeLanguage(language)) {
     return text;
   }
   if (isKnownSilenceHallucination(text)) return "";

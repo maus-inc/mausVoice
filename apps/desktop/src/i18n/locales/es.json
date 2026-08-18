@@ -712,5 +712,7 @@
   "you_may_need_to_reload_your_compositor_for_changes_to_take_e": "Es posible que necesites recargar tu compositor para que los cambios surtan efecto.",
   "you_re_currently_on_version_version_the_app_will_restart_aft": "Actualmente usas la versión {version}. La aplicación se reiniciará cuando termine la actualización.",
   "your_azure_openai_resource_endpoint_url": "URL del endpoint de tu recurso Azure OpenAI",
-  "your_operating_system_is_preventing_mausvoice_from_modifying": "Su sistema operativo está impidiendo que mausVoice modifique los archivos en su ubicación de instalación actual. Use el botón de descarga para obtener el instalador más reciente y, a continuación, ejecútelo para completar la actualización manualmente."
+  "your_operating_system_is_preventing_mausvoice_from_modifying": "Su sistema operativo está impidiendo que mausVoice modifique los archivos en su ubicación de instalación actual. Use el botón de descarga para obtener el instalador más reciente y, a continuación, ejecútelo para completar la actualización manualmente.",
+  "spoken_commands": "Spoken commands",
+  "turn_phrases_like_new_line_comma_and_scratch_that_into_formatt": "Turn phrases like \"new line\", \"comma\", and \"scratch that\" into formatting, even in Verbatim. English dictation only."
 }

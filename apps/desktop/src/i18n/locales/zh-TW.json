@@ -712,5 +712,7 @@
   "you_may_need_to_reload_your_compositor_for_changes_to_take_e": "您可能需要重新載入您的合成器，以使更改生效。",
   "you_re_currently_on_version_version_the_app_will_restart_aft": "您目前使用的是版本 {version}。應用程式將在更新完成後重新啟動。",
   "your_azure_openai_resource_endpoint_url": "您的 Azure OpenAI 資源端點網址",
-  "your_operating_system_is_preventing_mausvoice_from_modifying": "您的作業系統正阻止 mausVoice 修改其目前安裝位置的檔案。請使用下載按鈕取得最新的安裝程式，然後執行它以手動完成更新。"
+  "your_operating_system_is_preventing_mausvoice_from_modifying": "您的作業系統正阻止 mausVoice 修改其目前安裝位置的檔案。請使用下載按鈕取得最新的安裝程式，然後執行它以手動完成更新。",
+  "spoken_commands": "Spoken commands",
+  "turn_phrases_like_new_line_comma_and_scratch_that_into_formatt": "Turn phrases like \"new line\", \"comma\", and \"scratch that\" into formatting, even in Verbatim. English dictation only."
 }

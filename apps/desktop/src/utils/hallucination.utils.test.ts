@@ -47,6 +47,21 @@ describe("silence hallucination filtering", () => {
     ).toBe("Send my best regards to the team.");
   });
 
+  it("leaves cloud hallucinations alone for sentinels and non-English", () => {
+    expect(
+      filterKnownSilenceHallucinations(
+        "Subtitles by the Amara.org community.",
+        "primary",
+      ),
+    ).toBe("Subtitles by the Amara.org community.");
+    expect(
+      filterKnownSilenceHallucinations(
+        "Thank you for watching.",
+        "auto",
+      ),
+    ).toBe("Thank you for watching.");
+  });
+
   it("leaves cloud hallucinations alone for non-English dictation", () => {
     expect(
       filterKnownSilenceHallucinations(

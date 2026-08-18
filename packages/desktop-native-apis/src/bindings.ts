@@ -1134,7 +1134,11 @@ pillResetMonitorStrategy?: string;
  * Request admin elevation (UAC) on every startup. Windows-only; off by
  * default so existing behavior is unchanged.
  */
-alwaysRequestAdminOnStartup?: boolean }
+alwaysRequestAdminOnStartup?: boolean;
+/**
+ * Deterministic spoken formatting / scratch-that. Default on.
+ */
+spokenCommandsEnabled?: boolean }
 export type UserPreferencesGetArgs = { userId: string }
 
 /** tauri-specta globals **/
