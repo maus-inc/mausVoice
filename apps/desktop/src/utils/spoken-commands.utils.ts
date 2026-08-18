@@ -78,15 +78,50 @@ const COMMANDS_BY_LENGTH = [...COMMANDS].sort(
   (left, right) => right.words.length - left.words.length,
 );
 
+const isAsciiAlnum = (char: string): boolean =>
+  (char >= "0" && char <= "9") ||
+  (char >= "A" && char <= "Z") ||
+  (char >= "a" && char <= "z");
+
+const isHorizontalSpace = (char: string): boolean =>
+  char === " " || char === "\t";
+
+const isWhitespaceChar = (char: string): boolean =>
+  isHorizontalSpace(char) || char === "\n" || char === "\r";
+
+const isSentenceStop = (char: string): boolean =>
+  char === "." || char === "!" || char === "?";
+
 const tokenizeWords = (text: string): string[] => {
-  return text
-    .trim()
-    .split(/\s+/)
-    .filter((token) => token.length > 0);
+  const tokens: string[] = [];
+  let current = "";
+  for (const char of text) {
+    if (isWhitespaceChar(char)) {
+      if (current) {
+        tokens.push(current);
+        current = "";
+      }
+    } else {
+      current += char;
+    }
+  }
+  if (current) {
+    tokens.push(current);
+  }
+  return tokens;
 };
 
-const stripEdgePunctuation = (token: string): string =>
-  token.replace(/^[^A-Za-z0-9]+|[^A-Za-z0-9]+$/g, "").toLowerCase();
+const stripEdgePunctuation = (token: string): string => {
+  let start = 0;
+  let end = token.length;
+  while (start < end && !isAsciiAlnum(token[start] ?? "")) {
+    start += 1;
+  }
+  while (end > start && !isAsciiAlnum(token[end - 1] ?? "")) {
+    end -= 1;
+  }
+  return token.slice(start, end).toLowerCase();
+};
 
 const wordsMatch = (actual: string[], expected: string[]): boolean => {
   if (actual.length !== expected.length) {
@@ -117,29 +152,69 @@ const predecessorBlocked = (
     return false;
   }
   return blockedPredecessors.some((predecessor) => {
-    const start = previous.length - predecessor.length;
-    if (start < 0) {
+    if (predecessor.length > previous.length) {
       return false;
     }
-    return wordsMatch(previous.slice(start), predecessor);
+    return wordsMatch(previous.slice(-predecessor.length), predecessor);
   });
 };
 
+const isWhitespaceOnly = (value: string): boolean => {
+  if (!value) {
+    return false;
+  }
+  for (const char of value) {
+    if (!isWhitespaceChar(char)) {
+      return false;
+    }
+  }
+  return true;
+};
+
 const trimTrailingSpace = (parts: string[]): void => {
-  while (parts.length > 0 && /^\s+$/.test(parts[parts.length - 1] ?? "")) {
+  while (parts.length > 0 && isWhitespaceOnly(parts.at(-1) ?? "")) {
     parts.pop();
   }
 };
 
+const lastNonWhitespaceWord = (text: string): string => {
+  let end = text.length;
+  while (end > 0 && isWhitespaceChar(text[end - 1] ?? "")) {
+    end -= 1;
+  }
+  let start = end;
+  while (start > 0 && !isWhitespaceChar(text[start - 1] ?? "")) {
+    start -= 1;
+  }
+  return text.slice(start, end);
+};
+
+const ABBREVIATION_STOPS = new Set([
+  "dr.",
+  "mr.",
+  "mrs.",
+  "ms.",
+  "prof.",
+  "sr.",
+  "jr.",
+  "vs.",
+  "etc.",
+  "inc.",
+  "ltd.",
+  "st.",
+  "ave.",
+  "e.g.",
+  "i.e.",
+  "u.s.",
+  "u.k.",
+]);
+
 const isAbbreviationStop = (text: string, stopIndex: number): boolean => {
-  const before = text.slice(0, stopIndex + 1);
-  const word = before.match(/(\S+)$/)?.[1] ?? "";
-  if (/^[A-Za-z]\.$/.test(word)) {
+  const word = lastNonWhitespaceWord(text.slice(0, stopIndex + 1)).toLowerCase();
+  if (word.length === 2 && isAsciiAlnum(word[0] ?? "") && word[1] === ".") {
     return true;
   }
-  return /^(dr|mr|mrs|ms|prof|sr|jr|vs|etc|inc|ltd|st|ave|e\.g|i\.e|u\.s|u\.k)\.$/i.test(
-    word,
-  );
+  return ABBREVIATION_STOPS.has(word);
 };
 
 const lastSentenceBoundary = (text: string): number => {
@@ -158,6 +233,22 @@ const lastSentenceBoundary = (text: string): number => {
   return -1;
 };
 
+const trimHorizontalSpaceEnd = (text: string): string => {
+  let end = text.length;
+  while (end > 0 && isHorizontalSpace(text[end - 1] ?? "")) {
+    end -= 1;
+  }
+  return text.slice(0, end);
+};
+
+const trimTrailingStops = (text: string): string => {
+  let end = text.length;
+  while (end > 0 && isSentenceStop(text[end - 1] ?? "")) {
+    end -= 1;
+  }
+  return text.slice(0, end);
+};
+
 const applyScratch = (parts: string[]): void => {
   trimTrailingSpace(parts);
   const joined = parts.join("");
@@ -166,9 +257,7 @@ const applyScratch = (parts: string[]): void => {
     return;
   }
 
-  const withoutTrailingStop = joined
-    .replace(/[.!?]+$/u, "")
-    .replace(/[ \t]+$/u, "");
+  const withoutTrailingStop = trimHorizontalSpaceEnd(trimTrailingStops(joined));
   const boundary = lastSentenceBoundary(withoutTrailingStop);
 
   if (boundary < 0) {
@@ -176,10 +265,9 @@ const applyScratch = (parts: string[]): void => {
     return;
   }
 
-  const keepThrough = boundary + 1;
-  const kept = withoutTrailingStop
-    .slice(0, keepThrough)
-    .replace(/[ \t]+$/u, "");
+  const kept = trimHorizontalSpaceEnd(
+    withoutTrailingStop.slice(0, boundary + 1),
+  );
   parts.length = 0;
   if (kept) {
     parts.push(kept);
@@ -188,6 +276,25 @@ const applyScratch = (parts: string[]): void => {
 
 export type ApplySpokenCommandsOptions = {
   skipStructuralCommands?: boolean;
+};
+
+const commandApplies = (
+  command: SpokenCommand,
+  tokens: string[],
+  index: number,
+  span: number,
+  skipStructural: boolean,
+): boolean => {
+  if (command.kind === "scratch") {
+    return !skipStructural;
+  }
+  if (skipStructural && command.structural) {
+    return false;
+  }
+  if (predecessorBlocked(tokens.slice(0, index), command.blockedPredecessors)) {
+    return false;
+  }
+  return !followerBlocked(tokens.slice(index + span), command.blockedFollowers);
 };
 
 const matchCommandAt = (
@@ -203,21 +310,7 @@ const matchCommandAt = (
     if (!wordsMatch(tokens.slice(index, index + span), command.words)) {
       continue;
     }
-    if (command.kind === "scratch") {
-      if (skipStructural) {
-        continue;
-      }
-      return { command, length: span };
-    }
-    if (skipStructural && command.structural) {
-      continue;
-    }
-    if (
-      predecessorBlocked(tokens.slice(0, index), command.blockedPredecessors)
-    ) {
-      continue;
-    }
-    if (followerBlocked(tokens.slice(index + span), command.blockedFollowers)) {
+    if (!commandApplies(command, tokens, index, span, skipStructural)) {
       continue;
     }
     return { command, length: span };
@@ -226,11 +319,13 @@ const matchCommandAt = (
 };
 
 const shouldInsertPendingSpace = (output: string[]): boolean => {
-  if (output.length === 0) {
-    return false;
-  }
-  const last = output[output.length - 1] ?? "";
-  return !last.endsWith("\n") && !last.endsWith("(") && last !== '"';
+  const last = output.at(-1) ?? "";
+  return (
+    last.length > 0 &&
+    !last.endsWith("\n") &&
+    !last.endsWith("(") &&
+    last !== '"'
+  );
 };
 
 const applyInsertCommand = (
@@ -255,6 +350,34 @@ const applyInsertCommand = (
   return command.value !== "(" && command.value !== '"';
 };
 
+const takeEdgeWhitespace = (text: string, edge: "start" | "end"): string => {
+  if (edge === "start") {
+    let index = 0;
+    while (index < text.length && isWhitespaceChar(text[index] ?? "")) {
+      index += 1;
+    }
+    return text.slice(0, index);
+  }
+  let index = text.length;
+  while (index > 0 && isWhitespaceChar(text[index - 1] ?? "")) {
+    index -= 1;
+  }
+  return text.slice(index);
+};
+
+const stripSpacesBeforeNewlines = (text: string): string => {
+  let result = "";
+  for (const char of text) {
+    if (char === "\n") {
+      while (result.endsWith(" ") || result.endsWith("\t")) {
+        result = result.slice(0, -1);
+      }
+    }
+    result += char;
+  }
+  return result;
+};
+
 export const applySpokenCommands = (
   text: string,
   language?: string,
@@ -270,8 +393,8 @@ export const applySpokenCommands = (
     return text;
   }
 
-  const leading = text.match(/^\s*/)?.[0] ?? "";
-  const trailing = text.match(/\s*$/)?.[0] ?? "";
+  const leading = takeEdgeWhitespace(text, "start");
+  const trailing = takeEdgeWhitespace(text, "end");
   const output: string[] = [];
   let index = 0;
   let pendingSpace = false;
