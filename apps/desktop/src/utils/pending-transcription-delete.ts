@@ -63,12 +63,9 @@ const invokeDelete = (id: string, snapshot?: Transcription): void => {
         showErrorSnackbar(error);
         return;
       }
-      queuedIds.delete(id);
-      try {
-        writeQueuedIds();
-      } catch {
-        // keep retrying next launch if persist still fails
-      }
+      // Resume path has no snapshot: leave `id` in queuedIds so the next
+      // launch retries. Do not toast — a missing row plus a launch-time
+      // snackbar would spam every start.
     });
 };
 
