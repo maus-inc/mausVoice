@@ -1,5 +1,4 @@
-import { Box, Link, Typography } from "@mui/material";
-import { Fragment } from "react";
+import { Breadcrumbs, Link, Typography } from "@mui/material";
 import { useNavigate } from "react-router-dom";
 
 export type BreadcrumbItem = {
@@ -25,66 +24,46 @@ export const Breadcrumb = ({ items, separator = "/" }: BreadcrumbProps) => {
   };
 
   return (
-    <Box
-      sx={{
-        display: "flex",
-        alignItems: "center",
-        gap: 0.5,
-        px: 2,
-        minWidth: 0,
-      }}
+    <Breadcrumbs
+      aria-label="breadcrumb"
+      maxItems={3}
+      separator={separator}
+      sx={{ px: 2, minWidth: 0 }}
     >
-      {items.map((item, index) => (
-        <Fragment key={index}>
-          {index > 0 && (
-            <Typography
-              variant="body2"
-              sx={{
-                color: "text.secondary",
-                flexShrink: 0,
-              }}
-            >
-              {separator}
-            </Typography>
-          )}
-          {index === items.length - 1 ? (
-            <Typography
-              variant="body2"
-              sx={{
-                color: "text.primary",
-                fontWeight: 500,
-                whiteSpace: "nowrap",
-                overflow: "hidden",
-                textOverflow: "ellipsis",
-                minWidth: 0,
-              }}
-            >
-              {item.label}
-            </Typography>
-          ) : (
-            <Link
-              component="button"
-              variant="body2"
-              onClick={() => handleClick(item)}
-              sx={{
-                color: "text.secondary",
-                cursor: "pointer",
-                textDecoration: "none",
-                whiteSpace: "nowrap",
-                overflow: "hidden",
-                textOverflow: "ellipsis",
-                minWidth: 0,
-
-                "&:hover": {
-                  textDecoration: "underline",
-                },
-              }}
-            >
-              {item.label}
-            </Link>
-          )}
-        </Fragment>
-      ))}
-    </Box>
+      {items.map((item, index) =>
+        index === items.length - 1 ? (
+          <Typography
+            key={index}
+            variant="body2"
+            aria-current="page"
+            sx={{
+              color: "text.primary",
+              fontWeight: 500,
+              whiteSpace: "nowrap",
+              overflow: "hidden",
+              textOverflow: "ellipsis",
+            }}
+          >
+            {item.label}
+          </Typography>
+        ) : (
+          <Link
+            key={index}
+            component="button"
+            variant="body2"
+            onClick={() => handleClick(item)}
+            sx={{
+              color: "text.secondary",
+              cursor: "pointer",
+              textDecoration: "none",
+              whiteSpace: "nowrap",
+              "&:hover": { textDecoration: "underline" },
+            }}
+          >
+            {item.label}
+          </Link>
+        ),
+      )}
+    </Breadcrumbs>
   );
 };

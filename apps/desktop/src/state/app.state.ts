@@ -126,6 +126,7 @@ export type AppState = {
   snackbarMode: SnackbarMode;
   snackbarDuration: number;
   snackbarTransitionDuration?: number;
+  snackbarAction?: { label: string; onClick: () => void };
 
   overlayCursor: Nullable<Vector2>;
   hotkeyTriggers: Record<string, number>;

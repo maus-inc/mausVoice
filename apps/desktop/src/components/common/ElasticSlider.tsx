@@ -55,7 +55,7 @@ export const ElasticSlider = ({
   const [dragValue, setDragValue] = useState(value);
   const draggingRef = useRef(false);
 
-  const blue = theme.vars?.palette.blue ?? theme.palette.blue;
+  const accentFill = theme.vars?.palette.primary.main ?? theme.palette.primary.main;
   const rail = theme.vars?.palette.level3 ?? theme.palette.level3;
 
   useEffect(() => {
@@ -114,27 +114,27 @@ export const ElasticSlider = ({
             height: 4,
             borderRadius: 99,
             border: "none",
-            backgroundColor: blue,
+            backgroundColor: accentFill,
             transition: "height 160ms cubic-bezier(0.23, 1, 0.32, 1)",
           },
           "& .MuiSlider-thumb": {
             width: 16,
             height: 16,
-            backgroundColor: "#FFFFFF",
-            border: `2px solid ${blue}`,
-            boxShadow: "0 1px 3px rgba(0, 0, 0, 0.25)",
+            backgroundColor: theme.vars?.palette.level1,
+            border: `2px solid ${accentFill}`,
+            boxShadow: "0 1px 3px rgba(26, 23, 18, 0.18)",
             transition:
               "transform 160ms cubic-bezier(0.23, 1, 0.32, 1), box-shadow 160ms cubic-bezier(0.23, 1, 0.32, 1)",
             "&:hover": {
               transform: "scale(1.15)",
-              boxShadow: `0 1px 4px rgba(0, 0, 0, 0.3), 0 0 0 6px color-mix(in srgb, ${blue} 14%, transparent)`,
+              boxShadow: `0 1px 4px rgba(26, 23, 18, 0.22), 0 0 0 6px color-mix(in srgb, ${accentFill} 14%, transparent)`,
             },
             "&.Mui-active": {
               transform: "scale(1.25)",
-              boxShadow: `0 1px 4px rgba(0, 0, 0, 0.3), 0 0 0 8px color-mix(in srgb, ${blue} 18%, transparent)`,
+              boxShadow: `0 1px 4px rgba(26, 23, 18, 0.22), 0 0 0 8px color-mix(in srgb, ${accentFill} 18%, transparent)`,
             },
             "&.Mui-focusVisible": {
-              boxShadow: `0 0 0 3px color-mix(in srgb, ${blue} 40%, transparent)`,
+              boxShadow: `0 0 0 3px color-mix(in srgb, ${accentFill} 40%, transparent)`,
             },
           },
           "&:hover .MuiSlider-rail, &:hover .MuiSlider-track": {

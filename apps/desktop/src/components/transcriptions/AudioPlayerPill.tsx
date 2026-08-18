@@ -1,6 +1,5 @@
-import PauseRoundedIcon from "@mui/icons-material/PauseRounded";
-import PlayArrowRoundedIcon from "@mui/icons-material/PlayArrowRounded";
 import { Box, IconButton, Typography } from "@mui/material";
+import { Pause, Play } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useIntl } from "react-intl";
 import { showErrorSnackbar } from "../../actions/app.actions";
@@ -222,9 +221,9 @@ export const AudioPlayerPill = ({
         sx={{ p: 0.5 }}
       >
         {isPlaying ? (
-          <PauseRoundedIcon fontSize="small" />
+          <Pause size={16} strokeWidth={1.9} />
         ) : (
-          <PlayArrowRoundedIcon fontSize="small" />
+          <Play size={16} strokeWidth={1.9} />
         )}
       </IconButton>
       <Typography
@@ -239,6 +238,19 @@ export const AudioPlayerPill = ({
       </Typography>
       <Box
         ref={waveformContainerRef}
+        role="slider"
+        tabIndex={disabled ? -1 : 0}
+        aria-valuemin={0}
+        aria-valuemax={100}
+        aria-valuenow={Math.round(progressPercent)}
+        aria-label={intl.formatMessage({ defaultMessage: "Playback position" })}
+        onKeyDown={(event) => {
+          if (event.key === "ArrowRight") {
+            setPlaybackProgress((p) => Math.min(1, p + 0.05));
+          } else if (event.key === "ArrowLeft") {
+            setPlaybackProgress((p) => Math.max(0, p - 0.05));
+          }
+        }}
         sx={{
           display: "flex",
           alignItems: "center",
@@ -262,12 +274,13 @@ export const AudioPlayerPill = ({
               position: "absolute",
               top: 0,
               bottom: 0,
-              left: `${progressPercent}%`,
+              left: 0,
               right: 0,
               backgroundColor:
                 theme.vars?.palette.level1 ?? theme.palette.background.paper,
               opacity: 0.5,
-              transition: "left 140ms linear",
+              transform: `translateX(${progressPercent}%)`,
+              transition: "transform 140ms linear",
             })}
           />
         </Box>

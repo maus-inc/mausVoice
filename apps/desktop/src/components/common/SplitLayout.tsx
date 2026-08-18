@@ -45,11 +45,14 @@ export const SplitLayout = ({ weights, children }: SplitLayoutProps) => {
               overflow: "hidden",
               display: "flex",
               flexDirection: "column",
-              transition: "width 300ms ease",
+              flexGrow: pct,
+              flexBasis: 0,
+              transition:
+                "flex-grow 180ms cubic-bezier(0.23, 1, 0.32, 1)",
             }}
             onTransitionEnd={(e) => {
               if (
-                e.propertyName === "width" &&
+                (e.propertyName === "flex-grow" || e.propertyName === "width") &&
                 w === 0 &&
                 (e.target as HTMLElement).getBoundingClientRect().width === 0
               ) {

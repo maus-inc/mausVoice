@@ -17,6 +17,7 @@ declare module "@mui/material/styles" {
     blueHover: string;
     blueActive: string;
     onBlue: string;
+    dangerHover: string;
 
     level0: string;
     level1: string;
@@ -31,6 +32,7 @@ declare module "@mui/material/styles" {
     blueHover?: string;
     blueActive?: string;
     onBlue?: string;
+    dangerHover?: string;
 
     level0?: string;
     level1?: string;

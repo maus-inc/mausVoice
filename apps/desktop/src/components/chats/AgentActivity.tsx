@@ -1,5 +1,6 @@
-import { Box, Collapse, Stack, Typography } from "@mui/material";
-import { useState } from "react";
+import { Box, ButtonBase, Stack, Typography } from "@mui/material";
+import { ChevronRight } from "lucide-react";
+import { useEffect, useRef, useState } from "react";
 import { FormattedMessage } from "react-intl";
 import type { StreamingToolCall } from "../../state/app.state";
 import { useAppStore } from "../../store";
@@ -9,23 +10,11 @@ type AgentActivityProps = {
 };
 
 const ToolCallLine = ({ tc }: { tc: StreamingToolCall }) => (
-  <Typography
-    variant="caption"
-    sx={{
-      color: "text.secondary",
-      fontStyle: "italic",
-    }}
-  >
+  <Typography variant="caption" sx={{ color: "text.secondary", fontStyle: "italic" }}>
     {tc.done ? (
-      <FormattedMessage
-        defaultMessage="Used {toolName}"
-        values={{ toolName: tc.toolName }}
-      />
+      <FormattedMessage defaultMessage="Used {toolName}" values={{ toolName: tc.toolName }} />
     ) : (
-      <FormattedMessage
-        defaultMessage="Using {toolName}…"
-        values={{ toolName: tc.toolName }}
-      />
+      <FormattedMessage defaultMessage="Using {toolName}…" values={{ toolName: tc.toolName }} />
     )}
   </Typography>
 );
@@ -33,6 +22,24 @@ const ToolCallLine = ({ tc }: { tc: StreamingToolCall }) => (
 export const AgentActivity = ({ messageId }: AgentActivityProps) => {
   const streaming = useAppStore((s) => s.streamingMessageById[messageId]);
   const [reasoningOpen, setReasoningOpen] = useState(false);
+  const startedAtRef = useRef<number | null>(null);
+  const [elapsedSec, setElapsedSec] = useState(0);
+
+  useEffect(() => {
+    if (!streaming) {
+      return;
+    }
+    if (streaming.isStreaming && startedAtRef.current == null) {
+      startedAtRef.current = Date.now();
+      setReasoningOpen(true);
+    }
+    if (!streaming.isStreaming && startedAtRef.current != null) {
+      setElapsedSec(Math.max(1, Math.round((Date.now() - startedAtRef.current) / 1000)));
+      const t = window.setTimeout(() => setReasoningOpen(false), 1000);
+      return () => window.clearTimeout(t);
+    }
+  }, [streaming]);
+
   if (!streaming) {
     return null;
   }
@@ -50,40 +57,66 @@ export const AgentActivity = ({ messageId }: AgentActivityProps) => {
       ))}
       {reasoning.length > 0 && (
         <Box>
-          <Typography
-            variant="caption"
+          <ButtonBase
             onClick={() => setReasoningOpen((o) => !o)}
+            aria-expanded={reasoningOpen}
             sx={{
+              display: "inline-flex",
+              alignItems: "center",
+              gap: 0.5,
               color: "text.secondary",
-              cursor: "pointer",
-              userSelect: "none",
-              "&:hover": { textDecoration: "underline" },
+              borderRadius: 0.5,
+              px: 0.25,
             }}
           >
-            {isStreaming ? (
-              <FormattedMessage defaultMessage="Thinking…" />
-            ) : (
-              <FormattedMessage defaultMessage="Thought process" />
-            )}
-          </Typography>
-          <Collapse in={reasoningOpen}>
+            <ChevronRight
+              size={14}
+              strokeWidth={1.9}
+              style={{
+                transform: reasoningOpen ? "rotate(90deg)" : "rotate(0deg)",
+                transition: "transform 200ms cubic-bezier(0.23, 1, 0.32, 1)",
+              }}
+            />
+            <Typography variant="caption" sx={{ color: "inherit" }}>
+              {isStreaming ? (
+                <FormattedMessage defaultMessage="Thinking…" />
+              ) : elapsedSec > 0 ? (
+                <FormattedMessage
+                  defaultMessage="Thought for {seconds} seconds"
+                  values={{ seconds: elapsedSec }}
+                />
+              ) : (
+                <FormattedMessage defaultMessage="Thought process" />
+              )}
+            </Typography>
+          </ButtonBase>
+          <Box
+            sx={{
+              display: "grid",
+              gridTemplateRows: reasoningOpen ? "1fr" : "0fr",
+              transition: "grid-template-rows 180ms cubic-bezier(0.23, 1, 0.32, 1)",
+              "@media (prefers-reduced-motion: reduce)": {
+                transition: "none",
+              },
+            }}
+          >
             <Typography
               variant="caption"
               sx={{
+                overflow: "hidden",
                 color: "text.secondary",
                 whiteSpace: "pre-wrap",
                 display: "block",
                 mt: 0.25,
                 pl: 1,
-                borderLeft: 2,
+                borderLeft: 1,
                 borderColor: "divider",
                 maxHeight: 200,
-                overflow: "auto",
               }}
             >
               {reasoning}
             </Typography>
-          </Collapse>
+          </Box>
         </Box>
       )}
     </Stack>

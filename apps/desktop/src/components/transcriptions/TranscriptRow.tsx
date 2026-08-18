@@ -1,10 +1,4 @@
-import ContentCopyRoundedIcon from "@mui/icons-material/ContentCopyRounded";
-import CheckCircleRoundedIcon from "@mui/icons-material/CheckCircleRounded";
-import DeleteOutlineRoundedIcon from "@mui/icons-material/DeleteOutlineRounded";
-import FileDownloadOutlinedIcon from "@mui/icons-material/FileDownloadOutlined";
-import InfoOutlinedIcon from "@mui/icons-material/InfoOutlined";
-import ReplayRoundedIcon from "@mui/icons-material/ReplayRounded";
-import SendRoundedIcon from "@mui/icons-material/SendRounded";
+import { CheckCircle, Copy, Download, Info, RotateCcw, Send, Trash2 } from "lucide-react";
 import {
   Chip,
   CircularProgress,
@@ -16,7 +10,6 @@ import {
 } from "@mui/material";
 import { getRec } from "@maus-inc/utilities";
 import { invoke } from "@tauri-apps/api/core";
-import dayjs from "dayjs";
 import { useCallback, useMemo } from "react";
 import { useIntl } from "react-intl";
 import { showErrorSnackbar, showSnackbar } from "../../actions/app.actions";
@@ -152,7 +145,12 @@ export const TranscriptionRow = ({ id }: TranscriptionRowProps) => {
               color: "text.secondary",
             }}
           >
-            {dayjs(transcription?.createdAt).format("MMM D, YYYY h:mm A")}
+            {transcription?.createdAt
+              ? new Intl.DateTimeFormat(undefined, {
+                  dateStyle: "medium",
+                  timeStyle: "short",
+                }).format(new Date(transcription.createdAt))
+              : ""}
           </Typography>
           {isRemoteTranscript && (
             <Chip
@@ -184,7 +182,7 @@ export const TranscriptionRow = ({ id }: TranscriptionRowProps) => {
               size="small"
               color={hasMetadata ? "primary" : "default"}
             >
-              <InfoOutlinedIcon fontSize="small" />
+              <Info size={16} strokeWidth={1.9} />
             </IconButton>
           </Tooltip>
           <Tooltip
@@ -200,7 +198,7 @@ export const TranscriptionRow = ({ id }: TranscriptionRowProps) => {
               }
               size="small"
             >
-              <ContentCopyRoundedIcon fontSize="small" />
+              <Copy size={16} strokeWidth={1.9} />
             </IconButton>
           </Tooltip>
           <Tooltip
@@ -214,7 +212,7 @@ export const TranscriptionRow = ({ id }: TranscriptionRowProps) => {
               onClick={() => handleDeleteTranscript(id)}
               size="small"
             >
-              <DeleteOutlineRoundedIcon fontSize="small" />
+              <Trash2 size={16} strokeWidth={1.9} />
             </IconButton>
           </Tooltip>
           {!isRemoteTranscript && activeRemoteTarget && (
@@ -233,7 +231,7 @@ export const TranscriptionRow = ({ id }: TranscriptionRowProps) => {
                 onClick={handleSendToReceiver}
                 size="small"
               >
-                <SendRoundedIcon fontSize="small" />
+                <Send size={16} strokeWidth={1.9} />
               </IconButton>
             </Tooltip>
           )}
@@ -267,9 +265,9 @@ export const TranscriptionRow = ({ id }: TranscriptionRowProps) => {
                   {isRetranscribing ? (
                     <CircularProgress size={18} color="inherit" />
                   ) : didRetranscribe ? (
-                    <CheckCircleRoundedIcon color="success" fontSize="small" />
+                    <CheckCircle size={16} strokeWidth={1.9} />
                   ) : (
-                    <ReplayRoundedIcon fontSize="small" />
+                    <RotateCcw size={16} strokeWidth={1.9} />
                   )}
                 </IconButton>
               </Tooltip>
@@ -287,7 +285,7 @@ export const TranscriptionRow = ({ id }: TranscriptionRowProps) => {
                   onClick={handleExport}
                   sx={{ p: 0.5 }}
                 >
-                  <FileDownloadOutlinedIcon fontSize="small" />
+                  <Download size={16} strokeWidth={1.9} />
                 </IconButton>
               </Tooltip>
             </>

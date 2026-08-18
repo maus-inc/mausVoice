@@ -1,0 +1,20 @@
+/**
+ * Mechanical parity file for the Rust pill crates.
+ * Keep in lockstep with src/styles/palette.ts — do not invent hexes here.
+ */
+:root {
+  --mv-surface-light-0: #f5f2ed;
+  --mv-surface-light-1: #fdfbf8;
+  --mv-surface-light-2: #ece8e1;
+  --mv-surface-light-3: #e0dbd2;
+  --mv-surface-dark-0: #0c0c0d;
+  --mv-surface-dark-1: #161617;
+  --mv-surface-dark-2: #1f1f21;
+  --mv-surface-dark-3: #2a2a2c;
+  --mv-ink: #1a1712;
+  --mv-accent-light: #6b6760;
+  --mv-accent-dark: #c4c0b8;
+  --mv-danger-hover: rgba(232, 77, 77, 0.92);
+  --mv-overlay-on-dark-text: rgba(242, 241, 238, 0.92);
+  --mv-radius: 14px;
+}

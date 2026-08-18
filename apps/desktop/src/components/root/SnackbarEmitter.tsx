@@ -1,68 +1,47 @@
-import CloseIcon from "@mui/icons-material/Close";
-import { IconButton, Snackbar, useTheme } from "@mui/material";
-import { useEffect, useState } from "react";
+import { useEffect } from "react";
+import { toast } from "sonner";
 import { useAppStore } from "../../store";
+import { SonnerToaster } from "./SonnerToaster";
 
+/**
+ * Keeps the zustand `showSnackbar()` API and routes each increment to sonner.
+ */
 export const SnackbarEmitter = () => {
   const snackbarCounter = useAppStore((state) => state.snackbarCounter);
   const snackbarMessage = useAppStore((state) => state.snackbarMessage);
   const snackbarDuration = useAppStore((state) => state.snackbarDuration);
-  const snackbarTransitionDuration = useAppStore(
-    (state) => state.snackbarTransitionDuration,
-  );
   const snackbarMode = useAppStore((state) => state.snackbarMode);
-  const theme = useTheme();
-  const [open, setOpen] = useState(false);
+  const snackbarAction = useAppStore((state) => state.snackbarAction);
 
-  const handleClose = (_: unknown, reason?: string) => {
-    if (reason === "clickaway") {
+  useEffect(() => {
+    if (snackbarCounter <= 0 || !snackbarMessage) {
       return;
     }
 
-    setOpen(false);
-  };
+    const opts = {
+      duration: snackbarDuration,
+      action: snackbarAction
+        ? {
+            label: snackbarAction.label,
+            onClick: snackbarAction.onClick,
+          }
+        : undefined,
+    };
 
-  useEffect(() => {
-    if (snackbarCounter > 0) {
-      setOpen(true);
+    if (snackbarMode === "error") {
+      toast.error(snackbarMessage, opts);
+    } else if (snackbarMode === "success") {
+      toast.success(snackbarMessage, opts);
+    } else {
+      toast(snackbarMessage, opts);
     }
-  }, [snackbarCounter]);
+  }, [
+    snackbarCounter,
+    snackbarMessage,
+    snackbarDuration,
+    snackbarMode,
+    snackbarAction,
+  ]);
 
-  let backgroundColor: string;
-  if (snackbarMode === "error") {
-    backgroundColor = theme.palette.error.main;
-  } else if (snackbarMode === "success") {
-    backgroundColor = theme.palette.success.main;
-  } else {
-    backgroundColor = theme.palette.primary.main;
-  }
-
-  return (
-    <Snackbar
-      key={snackbarCounter}
-      open={open}
-      transitionDuration={snackbarTransitionDuration}
-      autoHideDuration={snackbarDuration}
-      onClose={handleClose}
-      message={<span style={{ color: "#fff" }}>{snackbarMessage}</span>}
-      anchorOrigin={{ vertical: "bottom", horizontal: "center" }}
-      action={
-        <IconButton
-          size="small"
-          aria-label="close"
-          color="inherit"
-          onClick={() => setOpen(false)}
-        >
-          <CloseIcon fontSize="small" style={{ color: "#fff" }} />
-        </IconButton>
-      }
-      slotProps={{
-        content: {
-          style: {
-            backgroundColor,
-          },
-        },
-      }}
-    />
-  );
+  return <SonnerToaster />;
 };

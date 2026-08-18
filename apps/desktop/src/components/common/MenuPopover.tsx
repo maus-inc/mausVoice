@@ -65,7 +65,6 @@ const MenuPopoverSubMenuItem = ({
   close,
 }: MenuPopoverSubMenuItemProps) => {
   const [submenuOpen, setSubmenuOpen] = useState(false);
-  const [coords, setCoords] = useState({ top: 0, left: 0 });
   const buttonRef = useRef<HTMLDivElement>(null);
   const hideTimerRef = useRef<number | null>(null);
 
@@ -74,15 +73,11 @@ const MenuPopoverSubMenuItem = ({
       window.clearTimeout(hideTimerRef.current);
       hideTimerRef.current = null;
     }
-    if (buttonRef.current) {
-      const rect = buttonRef.current.getBoundingClientRect();
-      setCoords({ top: rect.top, left: rect.right });
-    }
     setSubmenuOpen(true);
   };
 
   const closeSubmenu = (): void => {
-    setSubmenuOpen(false);
+    hideTimerRef.current = window.setTimeout(() => setSubmenuOpen(false), 80);
   };
 
   return (
@@ -92,35 +87,45 @@ const MenuPopoverSubMenuItem = ({
         onMouseEnter={openSubmenu}
         onMouseLeave={closeSubmenu}
       >
-        <ListItemButton>
+        <ListItemButton
+          aria-haspopup="menu"
+          aria-expanded={submenuOpen}
+          onClick={openSubmenu}
+          onKeyDown={(event) => {
+            if (event.key === "Enter" || event.key === " " || event.key === "ArrowRight") {
+              event.preventDefault();
+              openSubmenu();
+            }
+          }}
+        >
           {item.leading && <ListItemIcon>{item.leading}</ListItemIcon>}
           <ListItemText primary={item.title} />
           {item.trailing}
         </ListItemButton>
       </div>
-      {submenuOpen && (
-        <Box
-          onMouseEnter={openSubmenu}
-          onMouseLeave={closeSubmenu}
-          sx={{
-            position: "fixed",
-            top: coords.top,
-            left: coords.left,
-            zIndex: 1300,
-            backgroundColor: "background.paper",
-            overflow: "hidden",
-            borderRadius: (t) => t.shape.borderRadius,
-          }}
-        >
-          <Stack>
-            {item.children.map((child, index) => (
-              <Box key={index} role="menuitem">
-                <MenuPopoverItemRend item={child} close={close} />
-              </Box>
-            ))}
-          </Stack>
-        </Box>
-      )}
+      <Popover
+        open={submenuOpen}
+        anchorEl={buttonRef.current}
+        onClose={() => setSubmenuOpen(false)}
+        anchorOrigin={{ vertical: "top", horizontal: "right" }}
+        transformOrigin={{ vertical: "top", horizontal: "left" }}
+        disableRestoreFocus
+        slotProps={{
+          paper: {
+            onMouseEnter: openSubmenu,
+            onMouseLeave: closeSubmenu,
+            role: "menu",
+          },
+        }}
+      >
+        <Stack>
+          {item.children.map((child, index) => (
+            <Box key={index} role="menuitem">
+              <MenuPopoverItemRend item={child} close={close} />
+            </Box>
+          ))}
+        </Stack>
+      </Popover>
     </>
   );
 };
@@ -208,7 +213,7 @@ export const MenuPopover = ({
       }
       {...rest}
     >
-      <Stack sx={sx}>
+      <Stack sx={sx} role="menu">
         {items.map((item, index) => (
           <Box key={index} role="menuitem">
             <MenuPopoverItemRend item={item} close={onClose} />

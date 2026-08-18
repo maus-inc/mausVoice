@@ -49,9 +49,10 @@ export const theme = createTheme({
         goldBg: "rgba(255, 193, 7, 0.6)",
         shadow: ink(0.12),
         blue: accent.light.main,
-        blueHover: "#1a7cd4ff",
-        blueActive: "#166bbf",
-        onBlue: text.dark.primary,
+        blueHover: inkSolid.raised,
+        blueActive: inkSolid.pressed,
+        onBlue: surfaces.light.level1,
+        dangerHover: "rgba(232, 77, 77, 0.92)",
 
         ...surfaces.light,
       },
@@ -72,9 +73,10 @@ export const theme = createTheme({
         goldBg: "rgba(255, 215, 0, 0.2)",
         shadow: darkInk(0.5),
         blue: accent.dark.main,
-        blueHover: "#2787e6ff",
-        blueActive: "#1f76cc",
-        onBlue: text.dark.primary,
+        blueHover: chalkSolid.raised,
+        blueActive: chalkSolid.pressed,
+        onBlue: surfaces.dark.level0,
+        dangerHover: "rgba(232, 77, 77, 0.92)",
 
         ...surfaces.dark,
       },
@@ -276,16 +278,34 @@ export const theme = createTheme({
         },
         switchBase: ({ theme }) => ({
           "&.Mui-checked": {
-            color: theme.vars.palette.blue,
+            color: inkSolid.base,
             "& + .MuiSwitch-track": {
-              backgroundColor: theme.vars.palette.blue,
+              backgroundColor: inkSolid.base,
+              opacity: 1,
             },
           },
+          ...theme.applyStyles("dark", {
+            "&.Mui-checked": {
+              color: surfaces.dark.level0,
+              "& + .MuiSwitch-track": {
+                backgroundColor: chalkSolid.base,
+                opacity: 1,
+              },
+            },
+          }),
         }),
         track: ({ theme }) => ({
+          backgroundColor: theme.vars.palette.level3,
+          opacity: 1,
           ".Mui-checked.Mui-checked + &": {
-            backgroundColor: theme.vars.palette.blue,
+            backgroundColor: inkSolid.base,
+            opacity: 1,
           },
+          ...theme.applyStyles("dark", {
+            ".Mui-checked.Mui-checked + &": {
+              backgroundColor: chalkSolid.base,
+            },
+          }),
         }),
       },
     },

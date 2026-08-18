@@ -169,8 +169,8 @@ export const TitleBar = () => {
             sx={{
               ...controlSx,
               "&:hover": {
-                backgroundColor: "rgba(232, 77, 77, 0.92)",
-                color: "#fff",
+                backgroundColor: "dangerHover",
+                color: "error.contrastText",
               },
             }}
           >

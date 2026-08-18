@@ -79,6 +79,19 @@ export const MicrophoneSelector = ({
     }
   }, [loadDevices, microphones]);
 
+  useEffect(() => {
+    if (microphones || typeof navigator === "undefined" || !navigator.mediaDevices) {
+      return;
+    }
+    const onDeviceChange = () => {
+      void loadDevices();
+    };
+    navigator.mediaDevices.addEventListener("devicechange", onDeviceChange);
+    return () => {
+      navigator.mediaDevices.removeEventListener("devicechange", onDeviceChange);
+    };
+  }, [loadDevices, microphones]);
+
   const selectValue = value ?? AUTO_OPTION_VALUE;
 
   const options = useMemo(() => {

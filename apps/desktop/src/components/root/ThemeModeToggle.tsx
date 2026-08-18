@@ -1,9 +1,4 @@
-import {
-  Check,
-  DarkMode,
-  LightMode,
-  SettingsBrightness,
-} from "@mui/icons-material";
+import { Check } from "lucide-react";
 import {
   IconButton,
   Menu,
@@ -138,7 +133,7 @@ export const ThemeModeToggle = () => {
               flex: 1,
             }}
           >
-            <LightMode sx={{ fontSize: 16 }} />
+            <Sun size={16} strokeWidth={1.9} />
             <Typography
               variant="body2"
               sx={{
@@ -149,7 +144,7 @@ export const ThemeModeToggle = () => {
             </Typography>
           </Stack>
           {activeChoice === "light" && (
-            <Check sx={{ fontSize: 16, color: "text.secondary" }} />
+            <Check size={16} strokeWidth={1.9} />
           )}
         </MenuItem>
         <MenuItem
@@ -165,7 +160,7 @@ export const ThemeModeToggle = () => {
               flex: 1,
             }}
           >
-            <DarkMode sx={{ fontSize: 16 }} />
+            <Moon size={16} strokeWidth={1.9} />
             <Typography
               variant="body2"
               sx={{
@@ -176,7 +171,7 @@ export const ThemeModeToggle = () => {
             </Typography>
           </Stack>
           {activeChoice === "dark" && (
-            <Check sx={{ fontSize: 16, color: "text.secondary" }} />
+            <Check size={16} strokeWidth={1.9} />
           )}
         </MenuItem>
         <MenuItem
@@ -192,7 +187,7 @@ export const ThemeModeToggle = () => {
               flex: 1,
             }}
           >
-            <SettingsBrightness sx={{ fontSize: 16 }} />
+            <Monitor size={16} strokeWidth={1.9} />
             <Typography
               variant="body2"
               sx={{
@@ -203,7 +198,7 @@ export const ThemeModeToggle = () => {
             </Typography>
           </Stack>
           {activeChoice === "system" && (
-            <Check sx={{ fontSize: 16, color: "text.secondary" }} />
+            <Check size={16} strokeWidth={1.9} />
           )}
         </MenuItem>
       </Menu>
