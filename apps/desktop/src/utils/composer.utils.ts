@@ -70,12 +70,27 @@ export const computeComposerRect = (
   const chosen =
     candidates.find((c) => fitsOnMonitor(c.x, c.y)) ?? candidates[0];
 
-  const clampedX = Math.min(
-    Math.max(chosen.x, monitorLeft),
+  // Clamp the chosen origin fully inside the monitor. When the composer is
+  // wider/taller than the monitor, the upper bound falls below the lower bound;
+  // in that case anchor the origin at the monitor's left/top edge so the window
+  // is never placed with its origin off-screen (see handbook 3.7).
+  const clampInside = (
+    value: number,
+    min: number,
+    maxExclusive: number,
+  ): number => {
+    const upper = maxExclusive < min ? min : maxExclusive;
+    return Math.min(Math.max(value, min), upper);
+  };
+
+  const clampedX = clampInside(
+    chosen.x,
+    monitorLeft,
     monitorRight - composerWidth,
   );
-  const clampedY = Math.min(
-    Math.max(chosen.y, monitorTop),
+  const clampedY = clampInside(
+    chosen.y,
+    monitorTop,
     monitorBottom - composerHeight,
   );
 
