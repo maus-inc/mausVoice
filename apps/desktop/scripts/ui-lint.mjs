@@ -39,9 +39,9 @@ function scan(rel, text) {
   if (!allowHex.has(rel) && !rel.startsWith("styles/")) {
     const hex = text.match(/#[0-9a-fA-F]{3,8}\b/g);
     if (hex) {
-      const filtered = hex.filter((h) => !["#fff", "#FFF", "#000"].includes(h));
-      // still flag leftover hue-blue
-      const blues = hex.filter((h) => /#1b8af8|#3198ff|#1a7cd4|#2787e6/i.test(h));
+      const blues = hex.filter((h) =>
+        /#1b8af8|#3198ff|#1a7cd4|#2787e6/i.test(h),
+      );
       if (blues.length) failures.push(`${rel}: leftover hue-blue ${blues.join(",")}`);
     }
   }

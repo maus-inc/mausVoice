@@ -102,12 +102,10 @@ export const undoTranscriptionDelete = (id: string): boolean => {
 
 export const flushPendingTranscriptionDeletes = (): void => {
   writeQueuedIds();
-  for (const id of [...pendingById.keys()]) {
-    const pending = pendingById.get(id);
-    if (pending) {
-      clearTimeout(pending.timer);
-    }
-    commitDelete(id);
+  for (const [id, pending] of pendingById) {
+    clearTimeout(pending.timer);
+    pendingById.delete(id);
+    invokeDelete(id, pending.snapshot);
   }
 };
 

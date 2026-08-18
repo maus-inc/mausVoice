@@ -4,9 +4,9 @@
  * Adapted only for cssVarPrefix "app" (theme.vars always present).
  */
 import GlobalStyles from "@mui/material/GlobalStyles";
-import { Toaster, toast } from "sonner";
+import { Toaster } from "sonner";
 
-export { toast };
+export { toast } from "sonner";
 
 export const SonnerToaster = () => {
   return (

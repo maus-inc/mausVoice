@@ -30,10 +30,11 @@ export const Breadcrumb = ({ items, separator = "/" }: BreadcrumbProps) => {
       separator={separator}
       sx={{ px: 2, minWidth: 0 }}
     >
-      {items.map((item, index) =>
-        index === items.length - 1 ? (
+      {items.map((item, index) => {
+        const itemKey = `${item.href ?? ""}:${item.label}`;
+        return index === items.length - 1 ? (
           <Typography
-            key={index}
+            key={itemKey}
             variant="body2"
             aria-current="page"
             sx={{
@@ -48,7 +49,7 @@ export const Breadcrumb = ({ items, separator = "/" }: BreadcrumbProps) => {
           </Typography>
         ) : (
           <Link
-            key={index}
+            key={itemKey}
             component="button"
             variant="body2"
             onClick={() => handleClick(item)}
@@ -62,8 +63,8 @@ export const Breadcrumb = ({ items, separator = "/" }: BreadcrumbProps) => {
           >
             {item.label}
           </Link>
-        ),
-      )}
+        );
+      })}
     </Breadcrumbs>
   );
 };
