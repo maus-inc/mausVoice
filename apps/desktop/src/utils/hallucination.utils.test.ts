@@ -96,6 +96,16 @@ describe("applyHallucinationFiltering", () => {
     expect(applyHallucinationFiltering(raw, segments, "en", false)).toBe(raw);
   });
 
+  it("does not drop high noSpeechProb segments for non-English dictation", () => {
+    const raw = "Some speech. [BLANK_AUDIO]";
+    const segments = [
+      { text: "Some speech.", noSpeechProb: 0.1 },
+      { text: "[BLANK_AUDIO]", noSpeechProb: 0.99 },
+    ];
+    expect(applyHallucinationFiltering(raw, segments, "de", true)).toBe(raw);
+    expect(applyHallucinationFiltering(raw, segments, "auto", true)).toBe(raw);
+  });
+
   it("drops near-certain-silence segments when the filter is enabled", () => {
     const raw = "Some speech. [BLANK_AUDIO]";
     const segments = [

@@ -300,15 +300,77 @@ export type ApplySpokenCommandsOptions = {
   skipStructuralCommands?: boolean;
 };
 
+const matchCommandAt = (
+  tokens: string[],
+  index: number,
+  skipStructural: boolean,
+): { command: SpokenCommand; length: number } | null => {
+  for (const command of COMMANDS_BY_LENGTH) {
+    const span = command.words.length;
+    if (index + span > tokens.length) {
+      continue;
+    }
+    if (!wordsMatch(tokens.slice(index, index + span), command.words)) {
+      continue;
+    }
+    if (command.kind === "scratch") {
+      if (skipStructural) {
+        continue;
+      }
+      return { command, length: span };
+    }
+    if (skipStructural && command.structural) {
+      continue;
+    }
+    if (
+      predecessorBlocked(tokens.slice(0, index), command.blockedPredecessors)
+    ) {
+      continue;
+    }
+    if (followerBlocked(tokens.slice(index + span), command.blockedFollowers)) {
+      continue;
+    }
+    return { command, length: span };
+  }
+  return null;
+};
+
+const shouldInsertPendingSpace = (output: string[]): boolean => {
+  if (output.length === 0) {
+    return false;
+  }
+  const last = output[output.length - 1] ?? "";
+  return !last.endsWith("\n") && !last.endsWith("(") && last !== '"';
+};
+
+const applyInsertCommand = (
+  output: string[],
+  command: InsertCommand,
+  pendingSpace: boolean,
+): boolean => {
+  if (command.attachLeft) {
+    trimTrailingSpace(output);
+    output.push(command.value);
+    return true;
+  }
+  if (command.value.startsWith("\n")) {
+    trimTrailingSpace(output);
+    output.push(command.value);
+    return false;
+  }
+  if (pendingSpace && shouldInsertPendingSpace(output)) {
+    output.push(" ");
+  }
+  output.push(command.value);
+  return command.value !== "(" && command.value !== '"';
+};
+
 export const applySpokenCommands = (
   text: string,
   language?: string,
   options?: ApplySpokenCommandsOptions,
 ): string => {
-  if (!text.trim()) {
-    return text;
-  }
-  if (!isEnglishSpokenCommandLanguage(language)) {
+  if (!text.trim() || !isEnglishSpokenCommandLanguage(language)) {
     return text;
   }
 
@@ -324,93 +386,33 @@ export const applySpokenCommands = (
   let index = 0;
   let pendingSpace = false;
 
-  const flushSpace = () => {
-    if (pendingSpace && output.length > 0) {
-      const last = output[output.length - 1] ?? "";
-      if (!last.endsWith("\n") && !last.endsWith("(") && last !== '"') {
+  while (index < tokens.length) {
+    const matched = matchCommandAt(tokens, index, skipStructural);
+    if (!matched) {
+      if (pendingSpace && shouldInsertPendingSpace(output)) {
         output.push(" ");
       }
-    }
-    pendingSpace = false;
-  };
-
-  while (index < tokens.length) {
-    let matched: SpokenCommand | null = null;
-    let matchedLength = 0;
-
-    for (const command of COMMANDS_BY_LENGTH) {
-      const span = command.words.length;
-      if (index + span > tokens.length) {
-        continue;
-      }
-      const slice = tokens.slice(index, index + span);
-      if (!wordsMatch(slice, command.words)) {
-        continue;
-      }
-      if (command.kind === "scratch" && skipStructural) {
-        continue;
-      }
-      if (command.kind === "insert") {
-        if (skipStructural && command.structural) {
-          continue;
-        }
-        if (
-          predecessorBlocked(
-            tokens.slice(0, index),
-            command.blockedPredecessors,
-          )
-        ) {
-          continue;
-        }
-        if (
-          followerBlocked(tokens.slice(index + span), command.blockedFollowers)
-        ) {
-          continue;
-        }
-      }
-      matched = command;
-      matchedLength = span;
-      break;
-    }
-
-    if (!matched) {
-      flushSpace();
       output.push(tokens[index] ?? "");
       pendingSpace = true;
       index += 1;
       continue;
     }
 
-    if (matched.kind === "scratch") {
+    if (matched.command.kind === "scratch") {
       applyScratch(output);
       pendingSpace = output.length > 0;
-      index += matchedLength;
-      continue;
-    }
-
-    if (matched.attachLeft) {
-      trimTrailingSpace(output);
-      output.push(matched.value);
-      pendingSpace = true;
-    } else if (matched.value.startsWith("\n")) {
-      trimTrailingSpace(output);
-      output.push(matched.value);
-      pendingSpace = false;
-    } else if (matched.value === "(" || matched.value === '"') {
-      flushSpace();
-      output.push(matched.value);
-      pendingSpace = false;
     } else {
-      flushSpace();
-      output.push(matched.value);
-      pendingSpace = true;
+      pendingSpace = applyInsertCommand(
+        output,
+        matched.command,
+        pendingSpace,
+      );
     }
-    index += matchedLength;
+    index += matched.length;
   }
 
-  const body = output
-    .join("")
-    .replace(/[ \t]+\n/g, "\n")
-    .replace(/ +/g, " ");
+  // Only strip spaces this function inserted before a newline. Do not collapse
+  // user-authored space runs (code, aligned columns, monospaced text).
+  const body = output.join("").replace(/[ \t]+\n/g, "\n");
   return `${leading}${body}${trailing}`;
 };

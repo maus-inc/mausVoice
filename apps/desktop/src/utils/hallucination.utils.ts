@@ -127,7 +127,7 @@ export const applyHallucinationFiltering = (
   if (!filterEnabled) {
     return rawTranscript;
   }
-  const gated = gateSilentSegments(segments);
+  const gated = gateSilentSegments(segments, language);
   const transcriptForFiltering = gated ?? rawTranscript;
   return filterKnownSilenceHallucinations(transcriptForFiltering, language);
 };
@@ -156,11 +156,19 @@ export const NO_SPEECH_PROB_THRESHOLD = 0.9;
  * can fall back to the exact provider text — providers that don't return
  * `verbose_json` output (e.g. some OpenAI-compatible endpoints) simply bypass
  * this gate.
+ *
+ * Same English gate as phrase filtering: a defined non-English / sentinel
+ * `language` returns null so the raw transcript is kept. Omitting `language`
+ * keeps the historical always-gate behavior.
  */
 export const gateSilentSegments = (
   segments: TranscriptionSegment[] | undefined | null,
+  language?: string,
 ): string | null => {
   if (!segments || segments.length === 0) {
+    return null;
+  }
+  if (language !== undefined && !isEnglishSanitizeLanguage(language)) {
     return null;
   }
   return segments

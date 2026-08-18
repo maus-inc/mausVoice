@@ -102,6 +102,10 @@ describe("applySpokenCommands", () => {
     );
   });
 
+  it("preserves leading and trailing whitespace", () => {
+    expect(applySpokenCommands("  hello world  ")).toBe("  hello world  ");
+  });
+
   it("skips scratch and newlines on interim chunks", () => {
     expect(
       applySpokenCommands("hello new line scratch that", "en", {
