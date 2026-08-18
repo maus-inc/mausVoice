@@ -44,7 +44,7 @@ declare module "@mui/material/styles" {
 declare module "@mui/material/Button" {
   interface ButtonPropsVariantOverrides {
     flat: true;
-    blue: true;
+    chrome: true;
   }
 }
 declare module "@mui/material/Card" {

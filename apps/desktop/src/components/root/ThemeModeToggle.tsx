@@ -1,4 +1,4 @@
-import { Check } from "lucide-react";
+import { Check, Monitor, Moon, Sun } from "lucide-react";
 import {
   IconButton,
   Menu,
@@ -7,8 +7,12 @@ import {
   Typography,
   useColorScheme,
 } from "@mui/material";
-import { Moon, Sun, Monitor } from "lucide";
-import type { IconNode } from "lucide";
+import {
+  Monitor as MonitorNode,
+  Moon as MoonNode,
+  Sun as SunNode,
+  type IconNode,
+} from "lucide";
 import { MorphIcon } from "morphicons/react";
 import { useCallback, useMemo, useState } from "react";
 import { FormattedMessage, useIntl } from "react-intl";
@@ -16,9 +20,9 @@ import { FormattedMessage, useIntl } from "react-intl";
 type ThemeChoice = "light" | "dark" | "system";
 
 function getMorphIcon(choice: ThemeChoice): IconNode {
-  if (choice === "dark") return Moon;
-  if (choice === "light") return Sun;
-  return Monitor;
+  if (choice === "dark") return MoonNode;
+  if (choice === "light") return SunNode;
+  return MonitorNode;
 }
 
 const menuItemSx = {
