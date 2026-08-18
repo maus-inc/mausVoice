@@ -1239,12 +1239,6 @@ fn tick_long_press(state: &PillState, dt: f64) {
     }
 }
 
-/// Terminate an in-progress drag, persist the drop position and release the
-/// pointer capture. Safe to call when no drag is active.
-///
-/// Every drag must end through this function so the capture is always
-/// released — a leaked capture would swallow mouse input system-wide.
-
 /// Reads the pill window's screen rect and the work area of the monitor it
 /// lives on, so the desktop can anchor the composer next to the real pill
 /// instead of relying on OS-centred placement.
@@ -1277,6 +1271,11 @@ fn current_pill_geometry(hwnd: HWND) -> (Rect, Option<Rect>) {
     }
 }
 
+/// Terminate an in-progress drag, persist the drop position and release the
+/// pointer capture. Safe to call when no drag is active.
+///
+/// Every drag must end through this function so the capture is always
+/// released — a leaked capture would swallow mouse input system-wide.
 fn end_drag(hwnd: HWND, state: &PillState, persist_position: bool) -> bool {
     let was_dragging = state.dragging.get();
 

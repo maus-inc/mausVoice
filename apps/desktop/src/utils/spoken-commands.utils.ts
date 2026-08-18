@@ -81,6 +81,12 @@ const COMMANDS_BY_LENGTH = [...COMMANDS].sort(
   (left, right) => right.words.length - left.words.length,
 );
 
+// ASCII-only by design: the spoken-command pipeline is English-gated
+// (isEnglishSanitizeLanguage), so command tokens are always ASCII and any
+// non-ASCII neighbour (accented letters, full-width punctuation outside the
+// covered 。！？ set) is treated as an edge to strip during matching. If the
+// pipeline ever goes multilingual, normalize Unicode alphanumerics here
+// instead of widening this predicate.
 const isAsciiAlnum = (char: string): boolean =>
   (char >= "0" && char <= "9") ||
   (char >= "A" && char <= "Z") ||

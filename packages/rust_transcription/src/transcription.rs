@@ -118,12 +118,18 @@ impl TranscriptionEngine {
         if input.hallucination_filter_enabled
             && is_near_silent(&filtered_samples, SILENCE_RMS_THRESHOLD)
         {
-            let _requested_device =
-                self.resolve_device_blocking(input.device_id.as_deref())?;
+            // Tolerate device-resolution failures here: this branch returns an
+            // empty transcript without running inference, so a transient
+            // enumeration failure (common for ONNX/sherpa runtimes) or an
+            // unresolvable device_id must not turn a should-be-empty result
+            // into a hard error. The non-silent paths below still resolve the
+            // device strictly and reject invalid IDs before real inference.
             let inference_device = if input.model.is_onnx() {
                 "CPU".to_string()
             } else {
-                _requested_device.name
+                self.resolve_device_blocking(input.device_id.as_deref())
+                    .map(|device| device.name)
+                    .unwrap_or_else(|_| self.mode.as_str().to_ascii_uppercase())
             };
             return Ok(TranscriptionOutput {
                 text: String::new(),
