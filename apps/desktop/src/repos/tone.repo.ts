@@ -10,6 +10,9 @@ type LocalTone = {
   promptTemplate: string;
   createdAt: number;
   sortOrder: number;
+  category?: string | null;
+  outputLength?: string | null;
+  exampleInputOutput?: string | null;
 };
 
 const fromLocalTone = (tone: LocalTone): Tone => ({
@@ -19,6 +22,9 @@ const fromLocalTone = (tone: LocalTone): Tone => ({
   isSystem: false,
   createdAt: tone.createdAt,
   sortOrder: tone.sortOrder,
+  category: tone.category ?? undefined,
+  outputLength: tone.outputLength ?? undefined,
+  exampleInputOutput: tone.exampleInputOutput ?? undefined,
 });
 
 const toLocalTone = (tone: Tone): LocalTone => ({
@@ -27,6 +33,9 @@ const toLocalTone = (tone: Tone): LocalTone => ({
   promptTemplate: tone.promptTemplate,
   createdAt: tone.createdAt,
   sortOrder: tone.sortOrder,
+  category: tone.category ?? null,
+  outputLength: tone.outputLength ?? null,
+  exampleInputOutput: tone.exampleInputOutput ?? null,
 });
 
 const getSystemToneById = (id: string): Tone | undefined =>

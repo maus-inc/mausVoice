@@ -1,15 +1,10 @@
 import ErrorOutlineIcon from "@mui/icons-material/ErrorOutlined";
-import {
-  Autocomplete,
-  Box,
-  CircularProgress,
-  TextField,
-  Typography,
-} from "@mui/material";
+import { Box, CircularProgress, Typography } from "@mui/material";
 import { useCallback, useEffect, useState } from "react";
 import { FormattedMessage } from "react-intl";
 import { OllamaRepo, OpenAICompatibleRepo } from "../../repos/ollama.repo";
 import { OLLAMA_DEFAULT_URL } from "../../utils/ollama.utils";
+import { FreeSoloModelAutocomplete } from "./FreeSoloModelAutocomplete";
 
 type OllamaModelPickerProps = {
   baseUrl: string | null;
@@ -100,32 +95,11 @@ export const OllamaModelPicker = ({
   }
 
   return (
-    <Autocomplete
-      freeSolo
-      options={models}
-      value={selectedModel ?? ""}
-      onChange={(_event, newValue) => {
-        onModelSelect(newValue || null);
-      }}
-      onInputChange={(_event, newInputValue, reason) => {
-        if (reason === "input") {
-          onModelSelect(newInputValue || null);
-        }
-      }}
+    <FreeSoloModelAutocomplete
+      models={models}
+      selectedModel={selectedModel}
+      onModelSelect={onModelSelect}
       disabled={disabled || !isAvailable}
-      size="small"
-      fullWidth
-      renderInput={(params) => (
-        <TextField
-          {...params}
-          label={<FormattedMessage defaultMessage="Model" />}
-          placeholder="Select or type a model"
-          slotProps={{
-            ...params.slotProps,
-            inputLabel: { ...params.slotProps.inputLabel, shrink: true },
-          }}
-        />
-      )}
     />
   );
 };

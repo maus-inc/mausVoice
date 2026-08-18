@@ -39,6 +39,7 @@ export type GenerateTextInput = {
   system?: Nullable<string>;
   prompt: string;
   jsonResponse?: JsonResponse;
+  signal?: AbortSignal;
 };
 
 export type GenerateTextMetadata = {
@@ -89,9 +90,10 @@ export class GroqGenerateTextRepo extends BaseGenerateTextRepo {
         prompt: input.prompt,
         system: input.system ?? undefined,
         jsonResponse: input.jsonResponse,
+        signal: input.signal,
       });
     } catch (error) {
-      if (this.model === this.fallbackModel) {
+      if (input.signal?.aborted || this.model === this.fallbackModel) {
         throw error;
       }
 
@@ -101,6 +103,7 @@ export class GroqGenerateTextRepo extends BaseGenerateTextRepo {
         prompt: input.prompt,
         system: input.system ?? undefined,
         jsonResponse: input.jsonResponse,
+        signal: input.signal,
       });
     }
   }

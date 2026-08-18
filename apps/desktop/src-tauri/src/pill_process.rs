@@ -366,7 +366,21 @@ fn start_stdout_reader(app: tauri::AppHandle, reader: std::io::BufReader<ChildSt
                                 .get("has_saved_position")
                                 .and_then(|v| v.as_bool())
                                 .unwrap_or(false);
-                            let payload = serde_json::json!({ "hasSavedPosition": has_saved });
+                            // Forward any real pill + monitor geometry the sidecar
+                            // emits (when present) so the composer can anchor next
+                            // to the actual pill instead of falling back to OS
+                            // placement. Absent fields serialize to null and the
+                            // TypeScript consumer treats them as "unknown".
+                            let rect = val.get("rect").cloned().filter(|v| v.is_object());
+                            let monitor = val
+                                .get("monitor")
+                                .cloned()
+                                .filter(|v| v.is_object());
+                            let payload = serde_json::json!({
+                                "hasSavedPosition": has_saved,
+                                "rect": rect,
+                                "monitor": monitor,
+                            });
                             let _ = app.emit_to("main", "pill-position-changed", payload);
                         }
                     }

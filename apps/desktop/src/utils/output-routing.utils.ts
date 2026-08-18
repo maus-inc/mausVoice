@@ -5,6 +5,7 @@ import type {
 } from "@maus-inc/types";
 import { getIntl } from "../i18n/intl";
 import { getAppState } from "../store";
+import { reviewTextInComposer } from "./composer.utils";
 import { getLogger } from "./log.utils";
 import { sendPillFlashMessage } from "./overlay.utils";
 import { sanitizeIndentation } from "./string.utils";
@@ -12,57 +13,88 @@ import { getMyUserPreferences } from "./user.utils";
 
 type PasteOutcome = "pasted" | "copied_to_clipboard";
 
+type OutputContext = {
+  state: ReturnType<typeof getAppState>;
+  prefs: ReturnType<typeof getMyUserPreferences>;
+  currentApp: ReturnType<typeof getAppState>["appTargetById"][string] | null;
+};
+
+const getOutputContext = (args: RouteTranscriptOutputArgs): OutputContext => {
+  const state = getAppState();
+  return {
+    state,
+    prefs: getMyUserPreferences(state),
+    currentApp: args.currentAppId
+      ? (state.appTargetById[args.currentAppId] ?? null)
+      : null,
+  };
+};
+
+const deliverRemoteOutput = async (
+  args: RouteTranscriptOutputArgs,
+  prefs: NonNullable<OutputContext["prefs"]>,
+): Promise<RouteTranscriptOutputResult> => {
+  if (!args.text.trim()) return { delivered: false, remote: true };
+  await invoke<void>("remote_sender_deliver_final_text", {
+    args: {
+      targetDeviceId: prefs.remoteTargetDeviceId,
+      text: args.text,
+      mode: args.mode,
+    },
+  });
+  return { delivered: true, remote: true };
+};
+
+const reviewOutputText = async (
+  text: string,
+  prefs: OutputContext["prefs"],
+  skipReview?: boolean,
+): Promise<string | null> => {
+  if (skipReview || prefs?.reviewBeforeInsert !== true || !text.trim()) {
+    return text;
+  }
+  return reviewTextInComposer(text);
+};
+
+const insertLocalOutput = async (
+  context: OutputContext,
+  text: string,
+): Promise<void> => {
+  const insertionMethod =
+    context.currentApp?.insertionMethod ??
+    context.prefs?.insertionMethod ??
+    "paste";
+  if (insertionMethod === "type") {
+    const typingSpeedMs =
+      context.currentApp?.typingSpeedMs ?? context.prefs?.typingSpeedMs ?? 5;
+    await insertLocalTranscriptOutputViaTyping(text, typingSpeedMs);
+    return;
+  }
+
+  const pasteKeybind =
+    context.state.supportsPasteKeybinds === "global"
+      ? (context.prefs?.pasteKeybind ?? null)
+      : (context.currentApp?.pasteKeybind ??
+        context.prefs?.pasteKeybind ??
+        null);
+  await insertLocalTranscriptOutputViaPaste(text, pasteKeybind);
+};
+
 export const routeTranscriptOutput = async (
   args: RouteTranscriptOutputArgs,
 ): Promise<RouteTranscriptOutputResult> => {
-  const state = getAppState();
-  const prefs = getMyUserPreferences(state);
-  const currentApp = args.currentAppId
-    ? (state.appTargetById[args.currentAppId] ?? null)
-    : null;
+  const context = getOutputContext(args);
+  const { prefs } = context;
 
   if (prefs?.remoteOutputEnabled && prefs.remoteTargetDeviceId) {
-    if (!args.text.trim()) {
-      return {
-        delivered: false,
-        remote: true,
-      };
-    }
-
-    await invoke<void>("remote_sender_deliver_final_text", {
-      args: {
-        targetDeviceId: prefs.remoteTargetDeviceId,
-        text: args.text,
-        mode: args.mode,
-      },
-    });
-
-    return {
-      delivered: true,
-      remote: true,
-    };
+    return deliverRemoteOutput(args, prefs);
   }
 
-  const insertionMethod =
-    currentApp?.insertionMethod ?? prefs?.insertionMethod ?? "paste";
+  const outputText = await reviewOutputText(args.text, prefs, args.skipReview);
+  if (!outputText?.trim()) return { delivered: false, remote: false };
 
-  const typingSpeedMs = currentApp?.typingSpeedMs ?? prefs?.typingSpeedMs ?? 5;
-
-  if (insertionMethod === "type") {
-    await insertLocalTranscriptOutputViaTyping(args.text, typingSpeedMs);
-  } else {
-    const pasteKeybind =
-      state.supportsPasteKeybinds === "global"
-        ? (prefs?.pasteKeybind ?? null)
-        : (currentApp?.pasteKeybind ?? prefs?.pasteKeybind ?? null);
-
-    await insertLocalTranscriptOutputViaPaste(args.text, pasteKeybind);
-  }
-
-  return {
-    delivered: true,
-    remote: false,
-  };
+  await insertLocalOutput(context, outputText);
+  return { delivered: true, remote: false };
 };
 
 export const insertLocalTranscriptOutputViaPaste = async (

@@ -1,4 +1,5 @@
 import { invoke } from "@tauri-apps/api/core";
+import { getCurrentWindow } from "@tauri-apps/api/window";
 import { AppTarget } from "@maus-inc/types";
 import { delayed } from "@maus-inc/utilities";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
@@ -16,6 +17,7 @@ import {
 import { refreshMember } from "../../actions/member.actions";
 import { dismissToast, showToast } from "../../actions/toast.actions";
 import {
+  selectToneByHotkey,
   switchWritingStyleBackward,
   switchWritingStyleForward,
 } from "../../actions/tone.actions";
@@ -27,6 +29,7 @@ import { storeTranscription } from "../../actions/transcribe.actions";
 import { recordStreak } from "../../actions/user.actions";
 import {
   useHotkeyFire,
+  useHotkeyFireMany,
   useHotkeyHold,
   useHotkeyHoldMany,
 } from "../../hooks/hotkey.hooks";
@@ -47,6 +50,7 @@ import type {
 import {
   StopRecordingResponse,
   TranscriptionSession,
+  TranscriptionSessionResult,
 } from "../../types/transcription-session.types";
 import {
   ActivationController,
@@ -72,6 +76,8 @@ import {
   CANCEL_TRANSCRIPTION_HOTKEY,
   DICTATE_HOTKEY,
   getAdditionalLanguageEntries,
+  getHotkeyCombosForAction,
+  getSwitchToStyleEntries,
   OPEN_CHAT_HOTKEY,
   SWITCH_WRITING_STYLE_BACKWARD_HOTKEY,
   SWITCH_WRITING_STYLE_FORWARD_HOTKEY,
@@ -109,12 +115,28 @@ type RawStopResp = {
   abortMessage?: string;
 };
 
+type FinalizedRecording = {
+  audio: StopRecordingResponse;
+  a11yInfo: TextFieldInfo | null;
+  appTarget: AppTarget | null;
+  toneId: string | null;
+  rawTranscript: string;
+  transcribeResult: TranscriptionSessionResult;
+};
+
 const FINALIZE_TIMEOUT_MS = 90_000;
 const HANDLE_TRANSCRIPT_TIMEOUT_MS = 60_000;
 const PHASE_HEARTBEAT_INTERVAL_MS = 5_000;
+const IN_DICTATION_STYLE_KEYS = ["LeftArrow", "RightArrow"];
 
 export const DictationSideEffects = () => {
   const intl = useIntl();
+
+  // The composer popout is a separate webview that loads the same SPA. Dictation
+  // is owned by the main window only — in any other window the dictation
+  // hotkeys, held-key style switching, and click-to-dictate pipeline must stay
+  // inert so we never run two dictation sessions at once.
+  const isMainWindow = getCurrentWindow().label === "main";
 
   const strategyRef = useRef<BaseStrategy | null>(null);
   const sessionRef = useRef<TranscriptionSession | null>(null);
@@ -127,6 +149,11 @@ export const DictationSideEffects = () => {
   // Last phase actually sent to the pill; drives the idle-reconciliation
   // heartbeat and keeps duplicate idle writes out of the pipe.
   const lastPhaseSentRef = useRef<OverlayPhase | null>(null);
+  const previousStyleSwitchKeysRef = useRef<string[]>([]);
+  // Tone (writing style) active when the current segment started. Used to
+  // retag the finalized segment so a mid-utterance style switch doesn't
+  // mislabel it with the latest style instead of the one that was spoken.
+  const segmentStartToneIdRef = useRef<string | null>(null);
   const [isStopping, setIsStopping] = useState(false);
   const assistantModeEnabled = useAppStore(getIsAssistantModeEnabled);
 
@@ -137,8 +164,13 @@ export const DictationSideEffects = () => {
     (state) => state.activeRecordingMode !== null,
   );
   const activeRecordingMode = useAppStore((state) => state.activeRecordingMode);
+  const keysHeld = useAppStore((state) => state.keysHeld);
   const assistantInputMode = useAppStore((state) => state.assistantInputMode);
   const additionalLanguageEntries = useAppStore(getAdditionalLanguageEntries);
+  const switchToStyleEntries = useAppStore(getSwitchToStyleEntries);
+  const inDictationStyleSwitchingEnabled = useAppStore(
+    (state) => state.userPrefs?.inDictationStyleSwitchingEnabled ?? false,
+  );
   const isDictationUnlocked = useAppStore(getIsDictationUnlocked);
   const isDictationInteractable = isDictationUnlocked && !isStopping;
   const pillVisibility = useAppStore((state) =>
@@ -305,6 +337,7 @@ export const DictationSideEffects = () => {
   // Idle-reconciliation heartbeat: if nothing is recording and the pill was
   // not last told to idle, re-send idle so a dropped phase IPC self-heals.
   useEffect(() => {
+    if (!isMainWindow) return;
     const interval = setInterval(() => {
       const state = getAppState();
       if (state.activeRecordingMode !== null) {
@@ -372,107 +405,74 @@ export const DictationSideEffects = () => {
     ],
   );
 
-  const stopRecordingRaw = useCallback(async (): Promise<RawStopResp> => {
-    getLogger().info("Stopping recording");
-    clearRecordingTimers();
-    restoreSystemVolume();
+  const captureStopRecordingInfo = useCallback(async (): Promise<{
+    audio: StopRecordingResponse | null;
+    a11yInfo: TextFieldInfo | null;
+    appTarget: AppTarget | null;
+  }> => {
+    const [audio, a11yInfo, appTarget] = await getLogger().stopwatch(
+      "stopRecording",
+      async () => {
+        let audio: StopRecordingResponse | null = null;
+        let a11yInfo: TextFieldInfo | null = null;
+        let appTarget: AppTarget | null = null;
+        try {
+          tryPlayAudioChime("stop_recording_clip");
 
-    try {
-      const [audio, a11yInfo, appTarget] = await getLogger().stopwatch(
-        "stopRecording",
-        async () => {
-          let audio: StopRecordingResponse | null = null;
-          let a11yInfo: TextFieldInfo | null = null;
-          let appTarget: AppTarget | null = null;
-          try {
-            tryPlayAudioChime("stop_recording_clip");
+          getLogger().verbose("Invoking stop_recording and fetching a11y info");
+          const [, outAudio, outA11yInfo, outAppTarget] = await Promise.all([
+            strategyRef.current?.setPhase("loading"),
+            invoke<StopRecordingResponse>("stop_recording"),
+            invoke<TextFieldInfo>("get_text_field_info").catch((error) => {
+              getLogger().verbose(`Failed to get text field info: ${error}`);
+              return null;
+            }),
+            tryRegisterCurrentAppTarget().catch((error) => {
+              getLogger().verbose(`Failed to get current app target: ${error}`);
+              return null;
+            }),
+          ]);
 
-            getLogger().verbose(
-              "Invoking stop_recording and fetching a11y info",
-            );
-            const [, outAudio, outA11yInfo, outAppTarget] = await Promise.all([
-              strategyRef.current?.setPhase("loading"),
-              invoke<StopRecordingResponse>("stop_recording"),
-              invoke<TextFieldInfo>("get_text_field_info").catch((error) => {
-                getLogger().verbose(`Failed to get text field info: ${error}`);
-                return null;
-              }),
-              tryRegisterCurrentAppTarget().catch((error) => {
-                getLogger().verbose(
-                  `Failed to get current app target: ${error}`,
-                );
-                return null;
-              }),
-            ]);
+          audio = outAudio;
+          a11yInfo = outA11yInfo;
+          appTarget = outAppTarget;
+          getLogger().verbose(
+            `Recording stopped (hasSamples=${!!audio?.samples})`,
+          );
+        } catch (error) {
+          getLogger().error(`Failed to stop recording: ${error}`);
+          showToast({
+            message: intl.formatMessage({
+              defaultMessage: "Failed to stop recording",
+            }),
+            toastType: "error",
+            duration: 8_000,
+          });
+        }
 
-            audio = outAudio;
-            a11yInfo = outA11yInfo;
-            appTarget = outAppTarget;
-            getLogger().verbose(
-              `Recording stopped (hasSamples=${!!audio?.samples})`,
-            );
-          } catch (error) {
-            getLogger().error(`Failed to stop recording: ${error}`);
-            showToast({
-              message: intl.formatMessage({
-                defaultMessage: "Failed to stop recording",
-              }),
-              toastType: "error",
-              duration: 8_000,
-            });
-          }
+        return [audio, a11yInfo, appTarget];
+      },
+    );
 
-          return [audio, a11yInfo, appTarget];
-        },
-      );
+    return { audio, a11yInfo, appTarget };
+  }, [intl]);
 
-      if (!audio) {
-        getLogger().warning("stopRecordingRaw: no audio data received");
-        return {
-          shouldContinue: false,
-          abortMessage: "No audio data received",
-        };
-      }
-
-      getLogger().info("Finalizing transcription session");
-      trackAppUsed(appTarget?.name ?? "Unknown");
-
-      if (appTarget) {
-        saveManualStyleForApp(appTarget);
-      }
-
-      const toneId = getToneIdToUse(getAppState(), {
-        currentAppToneId: appTarget?.toneId ?? null,
-      });
-
-      const transcribeResult = await withTimeout(
-        sessionRef.current?.finalize(audio, {
-          toneId,
-          a11yInfo,
-        }) ?? Promise.resolve(undefined),
-        FINALIZE_TIMEOUT_MS,
-        "Transcription finalize",
-      );
-      const rawTranscript = transcribeResult?.rawTranscript;
-      getLogger().verbose(
-        `Transcription result: rawTranscript=${rawTranscript ? `${rawTranscript.length} chars` : "empty"}, toneId=${toneId ?? "none"}, app=${appTarget?.name ?? "unknown"}`,
-      );
-      if (!rawTranscript) {
-        getLogger().warning("stopRecordingRaw: no rawTranscript from finalize");
-        return {
-          shouldContinue: false,
-        };
-      }
-
+  const processFinalizedRecording = useCallback(
+    async ({
+      audio,
+      a11yInfo,
+      appTarget,
+      toneId,
+      rawTranscript,
+      transcribeResult,
+    }: FinalizedRecording): Promise<RawStopResp> => {
       const session = sessionRef.current;
       const strategy = strategyRef.current;
       if (!session || !strategy) {
         getLogger().warning(
           `stopRecordingRaw: refs cleared (session=${!!session}, strategy=${!!strategy})`,
         );
-        return {
-          shouldContinue: false,
-        };
+        return { shouldContinue: false };
       }
 
       if (getAppState().activeRecordingMode === "agent") {
@@ -524,6 +524,84 @@ export const DictationSideEffects = () => {
       return {
         shouldContinue: result.shouldContinue,
       };
+    },
+    [sendPhaseToPill],
+  );
+
+  const finalizeAndPostProcess = useCallback(
+    async ({
+      audio,
+      a11yInfo,
+      appTarget,
+    }: {
+      audio: StopRecordingResponse;
+      a11yInfo: TextFieldInfo | null;
+      appTarget: AppTarget | null;
+    }): Promise<RawStopResp> => {
+      getLogger().info("Finalizing transcription session");
+      trackAppUsed(appTarget?.name ?? "Unknown");
+
+      if (appTarget) {
+        saveManualStyleForApp(appTarget);
+      }
+
+      // Retag with the writing style that was active when the segment started,
+      // not the live style — a mid-utterance style switch must not relabel an
+      // already-spoken segment with the new style. Manual-mode switches are the
+      // common mid-recording change; automatic mode keys off the focused app
+      // target, which is captured at stop and does not change mid-utterance.
+      const stylingMode = getEffectiveStylingMode(getAppState());
+      const toneId =
+        stylingMode === "manual"
+          ? segmentStartToneIdRef.current
+          : getToneIdToUse(getAppState(), {
+              currentAppToneId: appTarget?.toneId ?? null,
+            });
+      const transcribeResult = await withTimeout(
+        sessionRef.current?.finalize(audio, {
+          toneId,
+          a11yInfo,
+        }) ?? Promise.resolve(undefined),
+        FINALIZE_TIMEOUT_MS,
+        "Transcription finalize",
+      );
+      const rawTranscript = transcribeResult?.rawTranscript;
+      getLogger().verbose(
+        `Transcription result: rawTranscript=${rawTranscript ? `${rawTranscript.length} chars` : "empty"}, toneId=${toneId ?? "none"}, app=${appTarget?.name ?? "unknown"}`,
+      );
+
+      if (!rawTranscript || !transcribeResult) {
+        getLogger().warning("stopRecordingRaw: no rawTranscript from finalize");
+        return { shouldContinue: false };
+      }
+
+      return processFinalizedRecording({
+        audio,
+        a11yInfo,
+        appTarget,
+        toneId,
+        rawTranscript,
+        transcribeResult,
+      });
+    },
+    [processFinalizedRecording],
+  );
+
+  const stopRecordingRaw = useCallback(async (): Promise<RawStopResp> => {
+    getLogger().info("Stopping recording");
+    clearRecordingTimers();
+    restoreSystemVolume();
+
+    try {
+      const { audio, a11yInfo, appTarget } = await captureStopRecordingInfo();
+      if (!audio) {
+        getLogger().warning("stopRecordingRaw: no audio data received");
+        return {
+          shouldContinue: false,
+          abortMessage: "No audio data received",
+        };
+      }
+      return await finalizeAndPostProcess({ audio, a11yInfo, appTarget });
     } catch (error) {
       const errorName = error instanceof Error ? ` [name=${error.name}]` : "";
       getLogger().error(`Error during stopRecording: ${error}${errorName}`);
@@ -536,7 +614,13 @@ export const DictationSideEffects = () => {
       // timeout) must return the pill to idle.
       await sendPhaseToPill("idle");
     }
-  }, [restoreSystemVolume, sendPhaseToPill]);
+  }, [
+    captureStopRecordingInfo,
+    clearRecordingTimers,
+    finalizeAndPostProcess,
+    restoreSystemVolume,
+    sendPhaseToPill,
+  ]);
 
   const stopRecording = useCallback(async () => {
     if (isStoppingRef.current) {
@@ -643,6 +727,13 @@ export const DictationSideEffects = () => {
       produceAppState((draft) => {
         draft.activeRecordingMode = mode;
         draft.dictationLanguageOverride = language;
+      });
+
+      // Snapshot the active writing style at segment start so the finalized
+      // segment is retagged with the style that was actually dictated, even if
+      // the user switches styles mid-utterance.
+      segmentStartToneIdRef.current = getToneIdToUse(getAppState(), {
+        currentAppToneId: null,
       });
 
       let strategy: BaseStrategy | null = strategyRef.current ?? null;
@@ -770,6 +861,7 @@ export const DictationSideEffects = () => {
       dimSystemVolume,
       hardResetHotkeyState,
       intl,
+      startRecordingTimers,
     ],
   );
 
@@ -853,22 +945,92 @@ export const DictationSideEffects = () => {
     });
   }, [intl]);
 
+  useEffect(() => {
+    const previous = new Set(
+      previousStyleSwitchKeysRef.current.map((key) => key.toLowerCase()),
+    );
+    const current = new Set(keysHeld.map((key) => key.toLowerCase()));
+    const canSwitch =
+      isMainWindow &&
+      inDictationStyleSwitchingEnabled &&
+      isActiveSession &&
+      activeRecordingMode === "dictate" &&
+      isManualStyling;
+
+    if (canSwitch) {
+      // Per-style hold-shortcut dictation: dictation is started/held via the
+      // activation key (DICTATE_HOTKEY) and the two arrow keys are whitelisted
+      // as additional held keys (see `allowedAdditionalKeys` on the
+      // DICTATE_HOTKEY useHotkeyHold below). While dictation is active and the
+      // activation key is held, pressing Left/Right cycles the writing style —
+      // so the segment that begins (or continues) after a switch is dictated
+      // with the newly-selected style.
+      const dictateCombos = getHotkeyCombosForAction(
+        getAppState(),
+        DICTATE_HOTKEY,
+      );
+      const activationHeld = dictateCombos.some((combo) =>
+        combo.every((key) => current.has(key.toLowerCase())),
+      );
+      if (activationHeld) {
+        if (current.has("leftarrow") && !previous.has("leftarrow")) {
+          void switchWritingStyleBackward();
+        } else if (current.has("rightarrow") && !previous.has("rightarrow")) {
+          void switchWritingStyleForward();
+        }
+      }
+    }
+
+    previousStyleSwitchKeysRef.current = keysHeld;
+  }, [
+    // `previousStyleSwitchKeysRef` is intentionally excluded: it is a
+    // mutation-based snapshot of the prior `keysHeld` updated at the end of this
+    // effect, so including it would trigger a render loop.
+    activeRecordingMode,
+    inDictationStyleSwitchingEnabled,
+    isActiveSession,
+    isManualStyling,
+    keysHeld,
+  ]);
+
+  useHotkeyFireMany({
+    actions: switchToStyleEntries.map((entry) => ({
+      actionName: entry.actionName,
+      onFire: () => {
+        void selectToneByHotkey(entry.toneId);
+      },
+    })),
+    isDisabled: !isDictationUnlocked || !isMainWindow,
+  });
+
   useHotkeyFire({
     actionName: SWITCH_WRITING_STYLE_FORWARD_HOTKEY,
-    isDisabled: !isActiveSession || !isManualStyling,
+    isDisabled: !isActiveSession || !isManualStyling || !isMainWindow,
     onFire: handleSwitchWritingStyleForward,
   });
 
   useHotkeyFire({
     actionName: SWITCH_WRITING_STYLE_BACKWARD_HOTKEY,
-    isDisabled: !isActiveSession || !isManualStyling,
+    isDisabled: !isActiveSession || !isManualStyling || !isMainWindow,
     onFire: handleSwitchWritingStyleBackward,
   });
 
   useHotkeyHold({
     actionName: DICTATE_HOTKEY,
-    isDisabled: !isDictationInteractable || activeRecordingMode === "agent",
+    isDisabled:
+      !isDictationInteractable ||
+      activeRecordingMode === "agent" ||
+      !isMainWindow,
     controller: dictationController,
+    // Only the two style-switch arrows may be held in addition to the
+    // activation key, and only after dictation is already active. This keeps
+    // Fn+any-key from becoming an accidental hold-to-talk gesture.
+    allowedAdditionalKeys:
+      inDictationStyleSwitchingEnabled &&
+      isManualStyling &&
+      activeRecordingMode === "dictate"
+        ? IN_DICTATION_STYLE_KEYS
+        : undefined,
   });
 
   useHotkeyHold({
@@ -876,18 +1038,22 @@ export const DictationSideEffects = () => {
     isDisabled:
       !isDictationInteractable ||
       !assistantModeEnabled ||
-      activeRecordingMode === "dictate",
+      activeRecordingMode === "dictate" ||
+      !isMainWindow,
     controller: agentController,
   });
 
   useHotkeyFire({
     actionName: CANCEL_TRANSCRIPTION_HOTKEY,
-    isDisabled: !isActiveSession,
+    isDisabled: !isActiveSession || !isMainWindow,
     onFire: promptCancelTranscription,
   });
 
   useHotkeyHoldMany({
-    isDisabled: !isDictationInteractable || activeRecordingMode === "agent",
+    isDisabled:
+      !isDictationInteractable ||
+      activeRecordingMode === "agent" ||
+      !isMainWindow,
     actions: additionalLanguageControllers,
   });
 
@@ -910,10 +1076,12 @@ export const DictationSideEffects = () => {
   );
 
   useTauriListen<void>("assistant-mode-close", async () => {
+    if (!isMainWindow) return;
     await abortRecording();
   });
 
   useTauriListen<void>("assistant-enable-type-mode", async () => {
+    if (!isMainWindow) return;
     getLogger().info("Switching to type mode");
 
     // Stop the microphone/transcription without tearing down the assistant panel
@@ -936,6 +1104,7 @@ export const DictationSideEffects = () => {
   useTauriListen<{ text: string }>(
     "assistant-typed-message",
     async (payload) => {
+      if (!isMainWindow) return;
       const { text } = payload;
       if (!text.trim()) return;
 
@@ -965,12 +1134,15 @@ export const DictationSideEffects = () => {
 
   useTauriListen<{ conversationId: string }>(
     "open-pill-conversation",
-    (payload) => openPillConversation(payload.conversationId),
+    (payload) => {
+      if (!isMainWindow) return;
+      openPillConversation(payload.conversationId);
+    },
   );
 
   useHotkeyFire({
     actionName: OPEN_CHAT_HOTKEY,
-    isDisabled: !isActiveSession,
+    isDisabled: !isActiveSession || !isMainWindow,
     onFire: openPillConversation,
   });
 
@@ -1030,46 +1202,53 @@ export const DictationSideEffects = () => {
   }, [intl, startRecordingTimers]);
 
   useTauriListen<void>("cancel-dictation", () => {
+    if (!isMainWindow) return;
     abortRecording();
   });
 
   useTauriListen<void>("pause-dictation", () => {
+    if (!isMainWindow) return;
     void pauseDictation();
   });
 
   useTauriListen<void>("resume-dictation", () => {
+    if (!isMainWindow) return;
     void resumeDictation();
   });
 
   useToastAction(async (payload) => {
     if (payload.action === "confirm_cancel_transcription") {
+      if (!isMainWindow) return;
       await abortRecording();
     }
   });
 
   useTauriListen<void>("on-click-dictate", () => {
-    if (isDictationInteractable) {
+    if (isMainWindow && isDictationInteractable) {
       debouncedToggle("dictation", dictationController);
     }
   });
 
   useTauriListen<void>("on-click-agent-talk", () => {
-    if (isDictationInteractable) {
+    if (isMainWindow && isDictationInteractable) {
       debouncedToggle("agent", agentController);
     }
   });
 
   useTauriListen<void>("tone-switch-forward", () => {
+    if (!isMainWindow) return;
     switchWritingStyleForward();
   });
 
   useTauriListen<void>("tone-switch-backward", () => {
+    if (!isMainWindow) return;
     switchWritingStyleBackward();
   });
 
   useTauriListen<OverlayResolvePermissionPayload>(
     "overlay-resolve-permission",
     (payload) => {
+      if (!isMainWindow) return;
       if (payload.alwaysAllow) {
         const permission =
           getAppState().toolPermissionById[payload.permissionId];
@@ -1078,6 +1257,7 @@ export const DictationSideEffects = () => {
             toolId: permission.toolId,
             params: permission.params,
             allowed: true,
+            scope: `conversation:${permission.conversationId}`,
           });
         }
       }
@@ -1086,6 +1266,7 @@ export const DictationSideEffects = () => {
   );
 
   useEffect(() => {
+    if (!isMainWindow) return;
     invoke("set_pill_visibility", { visibility: pillVisibility }).catch(
       console.error,
     );
@@ -1103,6 +1284,7 @@ export const DictationSideEffects = () => {
   });
 
   useEffect(() => {
+    if (!isMainWindow) return;
     let size: string;
     if (activeRecordingMode !== "agent") {
       size = "dictation";
@@ -1127,6 +1309,7 @@ export const DictationSideEffects = () => {
   });
 
   useEffect(() => {
+    if (!isMainWindow) return;
     invoke("notify_pill_style_info", {
       count: pillStyleCount,
       name: pillStyleName,

@@ -18,7 +18,7 @@ use crate::constants::*;
 use crate::draw;
 use crate::gfx::{self, Ctx};
 use crate::input;
-use crate::ipc::{self, InMessage, OutMessage, Phase, ResetStrategy, Visibility};
+use crate::ipc::{self, InMessage, OutMessage, Phase, Rect, ResetStrategy, Visibility};
 
 // ── Safe wrappers around common Cocoa FFI patterns ─────────────────────
 // Issue #4: These reduce the blast radius of unsafe blocks by encapsulating
@@ -53,6 +53,34 @@ unsafe fn screens() -> id {
 /// Returns the visible frame of a screen.
 unsafe fn screen_visible_frame(screen: id) -> NSRect {
     msg_send![screen, visibleFrame]
+}
+
+/// Converts an AppKit (bottom-left origin, y-up) rectangle into the top-left,
+/// y-down coordinate space Tauri uses for window positions. `primary_top` is
+/// the AppKit y of the primary screen's top edge, so windows on screens above
+/// the primary correctly come out with negative y values.
+unsafe fn to_top_down(rect: NSRect, primary_top: f64) -> Rect {
+    Rect {
+        x: rect.origin.x,
+        y: primary_top - (rect.origin.y + rect.size.height),
+        width: rect.size.width,
+        height: rect.size.height,
+    }
+}
+
+/// Reads the pill window's screen rect and the visible frame of the monitor it
+/// lives on, already flipped into Tauri's top-down coordinate space, so the
+/// desktop can anchor the composer next to the real pill.
+unsafe fn pill_geometry(window: id) -> (Rect, Rect) {
+    let frame = window_frame(window);
+    let screen: id = msg_send![window, screen];
+    let primary_screens = screens();
+    let primary: id = msg_send![primary_screens, objectAtIndex: 0usize];
+    let pf: NSRect = msg_send![primary, frame];
+    let primary_top = pf.origin.y + pf.size.height;
+    let rect = to_top_down(frame, primary_top);
+    let monitor = to_top_down(screen_visible_frame(screen), primary_top);
+    (rect, monitor)
 }
 
 use crate::state::{FlameTongue, PillState, Rocket, RocketPhase, Spark, WindowMode};
@@ -458,7 +486,12 @@ fn perform_tick() {
                 InMessage::ResetPosition { strategy } => {
                     ctx.state.has_saved_position.set(false);
                     ctx.state.reset_strategy.set(strategy);
-                    ipc::send(&OutMessage::PositionChanged { has_saved_position: false });
+                    let (rect, monitor) = pill_geometry(ctx.window);
+                    ipc::send(&OutMessage::PositionChanged {
+                        has_saved_position: false,
+                        rect: Some(rect),
+                        monitor: Some(monitor),
+                    });
                 }
                 InMessage::Quit => {
                     ctx.quit.set(true);
@@ -558,7 +591,12 @@ fn end_drag(state: &PillState, window: id) {
         state.saved_x.set(frame.origin.x);
         state.saved_y.set(frame.origin.y);
         state.has_saved_position.set(true);
-        ipc::send(&OutMessage::PositionChanged { has_saved_position: true });
+        let (rect, monitor) = pill_geometry(window);
+        ipc::send(&OutMessage::PositionChanged {
+            has_saved_position: true,
+            rect: Some(rect),
+            monitor: Some(monitor),
+        });
     }
     state.dragging.set(false);
     state.long_press_active.set(false);

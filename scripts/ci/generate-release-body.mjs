@@ -59,28 +59,28 @@ async function collectFiles(dir) {
 
 function classify(fileName) {
   const lower = fileName.toLowerCase();
-  const ext = path.extname(lower);
-  if (
-    lower.includes("setup") ||
-    lower.includes("installer") ||
-    ext === ".exe"
-  ) {
+  // Detached minisign signatures are never downloadable installers — skip
+  // them so a `mausVoice_x.x.x_x64-setup.exe.sig` isn't offered as a Windows
+  // installer download.
+  if (lower.endsWith(".sig")) return null;
+  if (lower.endsWith(".app.tar.gz"))
+    return { platform: "macOS", kind: "app", label: "macOS app archive" };
+  if (lower.endsWith(".dmg"))
+    return { platform: "macOS", kind: "dmg", label: "macOS DMG (.dmg)" };
+  if (lower.endsWith(".exe"))
     return {
       platform: "Windows",
       kind: "installer",
       label: "Windows installer (.exe)",
     };
-  }
-  if (ext === ".msi")
+  if (lower.endsWith(".msi"))
     return { platform: "Windows", kind: "msi", label: "Windows MSI (.msi)" };
-  if (ext === ".appimage")
+  if (lower.endsWith(".appimage"))
     return { platform: "Linux", kind: "appimage", label: "Linux AppImage" };
-  if (ext === ".deb")
+  if (lower.endsWith(".deb"))
     return { platform: "Linux", kind: "deb", label: "Linux DEB (.deb)" };
-  if (lower.endsWith(".app.tar.gz"))
-    return { platform: "macOS", kind: "app", label: "macOS app archive" };
-  if (ext === ".dmg")
-    return { platform: "macOS", kind: "dmg", label: "macOS DMG (.dmg)" };
+  if (lower.endsWith(".rpm"))
+    return { platform: "Linux", kind: "rpm", label: "Linux RPM (.rpm)" };
   return null;
 }
 
@@ -168,6 +168,9 @@ const linDeb = downloads.find(
 const linAppImage = downloads.find(
   (d) => d.platform === "Linux" && d.kind === "appimage",
 );
+const linRpm = downloads.find(
+  (d) => d.platform === "Linux" && d.kind === "rpm",
+);
 
 let notes = customNotes.trim();
 if (!notes) notes = (await autoNotes()) ?? "";
@@ -205,12 +208,12 @@ const downloadChips = [
         ),
       ]
     : []),
-  ...(linDeb || linAppImage
+  ...(linDeb || linAppImage || linRpm
     ? [
         logoChip(
           "linux",
           "Download mausVoice for Linux",
-          assetUrl((linAppImage ?? linDeb).basename),
+          assetUrl((linAppImage ?? linDeb ?? linRpm).basename),
         ),
       ]
     : []),
@@ -253,9 +256,9 @@ const body = [
   ...(win
     ? [`| Windows | ${markdownLink(win.basename, assetUrl(win.basename))} |`]
     : []),
-  ...(linDeb || linAppImage
+  ...(linDeb || linAppImage || linRpm
     ? [
-        `| Linux | ${[linDeb, linAppImage]
+        `| Linux | ${[linDeb, linAppImage, linRpm]
           .filter(Boolean)
           .map((d) => markdownLink(d.basename, assetUrl(d.basename)))
           .join(" · ")} |`,

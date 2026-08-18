@@ -32,6 +32,10 @@ import {
 } from "../utils/local-transcription.utils";
 import { getLogger } from "../utils/log.utils";
 import { openaiCompatibleTranscribeAudio } from "../utils/openai-compatible-transcribe.utils";
+import {
+  gateSilentSegments,
+  type TranscriptionSegment,
+} from "../utils/hallucination.utils";
 import { speachesTranscribeAudio } from "../utils/speaches.utils";
 import {
   mergeTranscriptions,
@@ -43,6 +47,7 @@ type TranscriptionOptionsPayload = {
   model: LocalWhisperModel;
   preferGpu: boolean;
   deviceId?: string;
+  hallucinationFilterEnabled: boolean;
 };
 
 export type TranscribeAudioMetadata = {
@@ -56,11 +61,19 @@ export type TranscribeAudioInput = {
   sampleRate: number;
   prompt?: Nullable<string>;
   language?: string;
+  /**
+   * When false, the probability-gated silence handling is skipped entirely so
+   * the raw provider transcript is preserved EXACTLY, for both single- and
+   * multi-chunk audio. Defaults to true when omitted.
+   */
+  hallucinationFilterEnabled?: boolean;
 };
 
 export type TranscribeAudioOutput = {
   text: string;
   metadata?: Nullable<TranscribeAudioMetadata>;
+  /** Verbose Whisper segments (with `no_speech_prob`) when the provider returns them. */
+  segments?: TranscriptionSegment[];
 };
 
 export type TranscribeSegmentInput = {
@@ -151,8 +164,17 @@ export abstract class BaseTranscribeAudioRepo extends BaseRepo {
       transcriptionTasks,
     );
 
-    // Merge transcription texts
-    const transcriptionTexts = results.map((r) => r.text);
+    // Gate each provider chunk by its `no_speech_prob` segments BEFORE merging,
+    // so audio longer than one provider segment still benefits from the
+    // probability-gated silence handling that single-segment audio gets in the
+    // action layer. Chunks without verbose segments fall back to their raw text.
+    // When the user disables the filter, merge every raw chunk text unchanged so
+    // the off switch preserves the provider transcript for long audio too.
+    const filterEnabled = input.hallucinationFilterEnabled ?? true;
+    const transcriptionTexts = results.map((r) => {
+      const gated = filterEnabled ? gateSilentSegments(r.segments) : null;
+      return gated ?? r.text;
+    });
     const mergedText = mergeTranscriptions(transcriptionTexts);
 
     // Use metadata from first result (all segments use same provider/device)
@@ -189,6 +211,8 @@ export class LocalTranscribeAudioRepo extends BaseTranscribeAudioRepo {
       model: normalizeLocalWhisperModel(modelSize || DEFAULT_MODEL_SIZE),
       preferGpu: isGpuPreferredTranscriptionDevice(device),
       deviceId: getTranscriptionSidecarDeviceId(device),
+      hallucinationFilterEnabled:
+        state.userPrefs?.hallucinationFilterEnabled !== false,
     };
   }
 
@@ -205,6 +229,7 @@ export class LocalTranscribeAudioRepo extends BaseTranscribeAudioRepo {
       initialPrompt: input.prompt ?? undefined,
       language: input.language,
       deviceId: options.deviceId,
+      hallucinationFilterEnabled: options.hallucinationFilterEnabled,
     });
 
     return {
@@ -247,7 +272,7 @@ export class GroqTranscribeAudioRepo extends BaseTranscribeAudioRepo {
   ): Promise<TranscribeAudioOutput> {
     const wavBuffer = buildWaveFile(input.samples, input.sampleRate);
 
-    const { text: transcript } = await groqTranscribeAudio({
+    const { text: transcript, segments } = await groqTranscribeAudio({
       apiKey: this.groqApiKey,
       model: this.model,
       blob: wavBuffer,
@@ -258,6 +283,10 @@ export class GroqTranscribeAudioRepo extends BaseTranscribeAudioRepo {
 
     return {
       text: transcript,
+      segments: segments?.map((segment) => ({
+        text: segment.text,
+        noSpeechProb: segment.noSpeechProb,
+      })),
       metadata: {
         inferenceDevice: "API • Groq",
         modelSize: this.model,
@@ -296,7 +325,7 @@ export class OpenAITranscribeAudioRepo extends BaseTranscribeAudioRepo {
   ): Promise<TranscribeAudioOutput> {
     const wavBuffer = buildWaveFile(input.samples, input.sampleRate);
 
-    const { text: transcript } = await openaiTranscribeAudio({
+    const { text: transcript, segments } = await openaiTranscribeAudio({
       apiKey: this.openaiApiKey,
       model: this.model,
       blob: wavBuffer,
@@ -307,6 +336,10 @@ export class OpenAITranscribeAudioRepo extends BaseTranscribeAudioRepo {
 
     return {
       text: transcript,
+      segments: segments?.map((segment) => ({
+        text: segment.text,
+        noSpeechProb: segment.noSpeechProb,
+      })),
       metadata: {
         inferenceDevice: "API • OpenAI",
         modelSize: this.model,
@@ -713,18 +746,23 @@ export class OpenAICompatibleTranscribeAudioRepo extends BaseTranscribeAudioRepo
   ): Promise<TranscribeAudioOutput> {
     const wavBuffer = buildWaveFile(input.samples, input.sampleRate);
 
-    const { text: transcript } = await openaiCompatibleTranscribeAudio({
-      baseUrl: this.baseUrl,
-      model: this.model,
-      apiKey: this.apiKey,
-      blob: wavBuffer,
-      ext: "wav",
-      prompt: input.prompt ?? undefined,
-      language: input.language,
-    });
+    const { text: transcript, segments } =
+      await openaiCompatibleTranscribeAudio({
+        baseUrl: this.baseUrl,
+        model: this.model,
+        apiKey: this.apiKey,
+        blob: wavBuffer,
+        ext: "wav",
+        prompt: input.prompt ?? undefined,
+        language: input.language,
+      });
 
     return {
       text: transcript,
+      segments: segments?.map((segment) => ({
+        text: segment.text,
+        noSpeechProb: segment.noSpeechProb,
+      })),
       metadata: {
         inferenceDevice: "API • OpenAI Compatible",
         modelSize: this.model,

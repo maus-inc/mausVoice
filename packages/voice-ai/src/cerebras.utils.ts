@@ -10,6 +10,7 @@ import type {
   LlmStreamEvent,
 } from "@maus-inc/types";
 import { openaiCompatibleStreamChat } from "./openai.utils";
+import { contentToString } from "./transcription.utils";
 
 export const CEREBRAS_MODELS = [
   "zai-glm-4.7",
@@ -20,28 +21,6 @@ export const CEREBRAS_MODELS = [
 export type CerebrasModel = (typeof CEREBRAS_MODELS)[number];
 
 const CEREBRAS_BASE_URL = "https://api.cerebras.ai/v1";
-
-const contentToString = (
-  content: string | ChatCompletionContentPart[] | null | undefined,
-): string => {
-  if (!content) {
-    return "";
-  }
-
-  if (typeof content === "string") {
-    return content;
-  }
-
-  return content
-    .map((part) => {
-      if (part.type === "text") {
-        return part.text ?? "";
-      }
-      return "";
-    })
-    .join("")
-    .trim();
-};
 
 const createClient = (apiKey: string) => {
   return new OpenAI({

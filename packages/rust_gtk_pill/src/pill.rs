@@ -9,7 +9,7 @@ use gtk::prelude::*;
 use gtk_layer_shell::LayerShell;
 
 use crate::constants::*;
-use crate::ipc::{self, InMessage, OutMessage, Phase, ResetStrategy, Visibility};
+use crate::ipc::{self, InMessage, OutMessage, Phase, Rect, ResetStrategy, Visibility};
 use crate::state::{FlameTongue, PillState, Rocket, RocketPhase, Spark, WindowMode};
 use crate::{draw, input, x11};
 
@@ -557,7 +557,12 @@ pub fn run(receiver: Receiver<InMessage>) {
                     state_tick.drag_draw_offset_y.set(0.0);
                     state_tick.has_saved_position.set(false);
                     state_tick.reset_strategy.set(strategy);
-                    ipc::send(&OutMessage::PositionChanged { has_saved_position: false });
+                    let (rect, monitor) = pill_geometry(&win_tick, &state_tick);
+                    ipc::send(&OutMessage::PositionChanged {
+                        has_saved_position: false,
+                        rect,
+                        monitor,
+                    });
                 }
                 InMessage::Quit => {
                     quit_tick.set(true);
@@ -757,6 +762,44 @@ pub fn run(receiver: Receiver<InMessage>) {
 /// dropped position is persisted (X11 repositions via the window; other
 /// backends keep their draw offset) so a missed release caught by the
 /// frame-tick backstop does not strand the pill at its old position.
+
+/// Builds the pill window rect and the work area of the monitor it lives on,
+/// for the desktop to anchor the composer next to the real pill. On X11 the
+/// pill has a true saved position, so both are reported; on Wayland (where the
+/// layer-shell compositor owns placement and there is no queryable absolute
+/// position) only the monitor is reported and the rect is omitted.
+fn pill_geometry(window: &gtk::Window, state: &PillState) -> (Option<Rect>, Option<Rect>) {
+    let (w, h) = window.size();
+    let display = window.display();
+    let monitor = display
+        .monitor_at_point(
+            (state.saved_x.get() + w as f64 / 2.0) as i32,
+            (state.saved_y.get() + h as f64 / 2.0) as i32,
+        )
+        .or_else(|| display.primary_monitor())
+        .or_else(|| display.monitor(0));
+    let monitor_rect = monitor.map(|m| {
+        let g = m.workarea();
+        Rect {
+            x: g.x() as f64,
+            y: g.y() as f64,
+            width: g.width() as f64,
+            height: g.height() as f64,
+        }
+    });
+    let rect = if state.has_saved_position.get() && state.backend.get() == Backend::X11 {
+        Some(Rect {
+            x: state.saved_x.get(),
+            y: state.saved_y.get(),
+            width: w as f64,
+            height: h as f64,
+        })
+    } else {
+        None
+    };
+    (rect, monitor_rect)
+}
+
 fn clear_pointer_pin(state: &PillState, window: &gtk::Window) {
     if state.dragging.get() {
         if state.backend.get() == Backend::X11 {
@@ -764,7 +807,12 @@ fn clear_pointer_pin(state: &PillState, window: &gtk::Window) {
             state.x11_release_persisted.set(persisted);
         } else {
             state.has_saved_position.set(true);
-            ipc::send(&OutMessage::PositionChanged { has_saved_position: true });
+            let (rect, monitor) = pill_geometry(window, state);
+            ipc::send(&OutMessage::PositionChanged {
+                has_saved_position: true,
+                rect,
+                monitor,
+            });
         }
     }
     state.dragging.set(false);

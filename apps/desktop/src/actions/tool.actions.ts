@@ -48,7 +48,7 @@ export const resolveToolPermission = (
   });
 };
 
-const PERMISSION_TIMEOUT_MS = 60_000;
+const DEFAULT_PERMISSION_TIMEOUT_MS = 60_000;
 
 export const getToolPermissionStatus = (
   permissionId: string,
@@ -59,7 +59,9 @@ export const getToolPermissionStatus = (
 
   if (
     permission.status === "pending" &&
-    Date.now() - permission.createdAt >= PERMISSION_TIMEOUT_MS
+    Date.now() - permission.createdAt >=
+      (state.userPrefs?.agentPermissionTimeoutMs ??
+        DEFAULT_PERMISSION_TIMEOUT_MS)
   ) {
     resolveToolPermission(permissionId, "denied");
     return { status: "denied" };
@@ -102,10 +104,11 @@ export const setToolAlwaysAllow = (opts: {
   toolId: string;
   params: Record<string, unknown>;
   allowed: boolean;
+  scope?: string;
 }): void => {
   const state = getAppState();
   const toolInfo = state.toolInfoById[opts.toolId];
   if (!toolInfo) return;
   const tool = createTool(toolInfo);
-  tool.setAlwaysAllow(opts.params, opts.allowed);
+  tool.setAlwaysAllow(opts.params, opts.allowed, opts.scope);
 };

@@ -1,7 +1,7 @@
 {
   "$schema": "../gen/schemas/desktop-schema.json",
   "identifier": "default",
-  "description": "Capability for the main window and any floating-* webview spawned via floating_window_create",
+  "description": "Capability for the main window and any floating-* webview spawned via floating_window_create. The webview CSP connect-src stays the strict allow-list for in-page fetches; the http:default scope below only governs plugin-http calls (webview fetch routed through Rust, which the CSP cannot see). Note that remote.urls is a different key and must stay loopback-only: it decides which remote origins may call native commands at all.",
   "windows": ["main", "floating-*"],
   "remote": {
     "urls": [
@@ -40,6 +40,7 @@
     },
     "updater:default",
     "process:default",
+    "dialog:default",
     {
       "identifier": "shell:allow-spawn",
       "allow": [
@@ -60,51 +61,194 @@
     "shell:allow-stdin-write",
     {
       "identifier": "http:default",
+      "description": "Scope for plugin-http (webview fetch executed in Rust). http://*:* stays a wildcard on purpose: Ollama, Speaches and OpenAI-compatible endpoints are user-configured base URLs (LAN boxes, reverse proxies, arbitrary ports) that cannot be enumerated at build time. Hosted SaaS providers CAN be enumerated, so https is a curated allow-list mirroring the security.csp connect-src hosts in tauri.conf.json rather than https://* — a wildcard there would let injected page script exfiltrate to any TLS host through Rust, sidestepping the CSP entirely. Tauri rewrites an empty pathname to `*` (see tauri-plugin-http scope tests), so one entry per host covers every path and query. Adding a provider means adding it here AND to connect-src; the csp-connect-src contract test guards the other direction. Accepted tradeoff: a self-hosted endpoint fronted by TLS on an unlisted host is rejected here (plain http on any host:port still works) and has to be added to both lists.",
       "allow": [
-        { "url": "http://localhost" },
-        { "url": "http://localhost/**" },
-        { "url": "http://localhost:*" },
-        { "url": "http://localhost:*/**" },
-        { "url": "http://127.0.0.1" },
-        { "url": "http://127.0.0.1/**" },
-        { "url": "http://127.0.0.1:*" },
-        { "url": "http://127.0.0.1:*/**" },
-        { "url": "https://*.googleapis.com" },
-        { "url": "https://*.googleapis.com/**" },
-        { "url": "https://accounts.google.com" },
-        { "url": "https://accounts.google.com/**" },
-        { "url": "https://*.firebaseio.com" },
-        { "url": "https://*.firebaseio.com/**" },
-        { "url": "https://*.firebase.com" },
-        { "url": "https://*.firebase.com/**" },
-        { "url": "https://*.firebaseapp.com" },
-        { "url": "https://*.firebaseapp.com/**" },
-        { "url": "https://*.firebasestorage.app" },
-        { "url": "https://*.firebasestorage.app/**" },
-        { "url": "https://api.openai.com" },
-        { "url": "https://api.openai.com/**" },
-        { "url": "https://*.openai.azure.com" },
-        { "url": "https://*.openai.azure.com/**" },
-        { "url": "https://api.anthropic.com" },
-        { "url": "https://api.anthropic.com/**" },
-        { "url": "https://api.groq.com" },
-        { "url": "https://api.groq.com/**" },
-        { "url": "https://api.cerebras.ai" },
-        { "url": "https://api.cerebras.ai/**" },
-        { "url": "https://api.deepseek.com" },
-        { "url": "https://api.deepseek.com/**" },
-        { "url": "https://openrouter.ai" },
-        { "url": "https://openrouter.ai/**" },
-        { "url": "https://api.elevenlabs.io" },
-        { "url": "https://api.elevenlabs.io/**" },
-        { "url": "https://api.deepgram.com" },
-        { "url": "https://api.deepgram.com/**" },
-        { "url": "https://github.com" },
-        { "url": "https://github.com/**" },
-        { "url": "https://objects.githubusercontent.com" },
-        { "url": "https://objects.githubusercontent.com/**" },
-        { "url": "https://*.ingest.sentry.io" },
-        { "url": "https://*.ingest.sentry.io/**" }
+        {
+          "url": "http://localhost"
+        },
+        {
+          "url": "http://localhost/**"
+        },
+        {
+          "url": "http://localhost:*"
+        },
+        {
+          "url": "http://localhost:*/**"
+        },
+        {
+          "url": "http://127.0.0.1"
+        },
+        {
+          "url": "http://127.0.0.1/**"
+        },
+        {
+          "url": "http://127.0.0.1:*"
+        },
+        {
+          "url": "http://127.0.0.1:*/**"
+        },
+        {
+          "url": "http://*:*"
+        },
+        {
+          "url": "http://*:*/**"
+        },
+        {
+          "url": "https://*.googleapis.com"
+        },
+        {
+          "url": "https://*.googleapis.com/**"
+        },
+        {
+          "url": "https://accounts.google.com"
+        },
+        {
+          "url": "https://accounts.google.com/**"
+        },
+        {
+          "url": "https://securetoken.googleapis.com"
+        },
+        {
+          "url": "https://securetoken.googleapis.com/**"
+        },
+        {
+          "url": "https://identitytoolkit.googleapis.com"
+        },
+        {
+          "url": "https://identitytoolkit.googleapis.com/**"
+        },
+        {
+          "url": "https://generativelanguage.googleapis.com"
+        },
+        {
+          "url": "https://generativelanguage.googleapis.com/**"
+        },
+        {
+          "url": "https://*.firebaseio.com"
+        },
+        {
+          "url": "https://*.firebaseio.com/**"
+        },
+        {
+          "url": "https://*.firebase.com"
+        },
+        {
+          "url": "https://*.firebase.com/**"
+        },
+        {
+          "url": "https://*.firebaseapp.com"
+        },
+        {
+          "url": "https://*.firebaseapp.com/**"
+        },
+        {
+          "url": "https://*.firebasestorage.app"
+        },
+        {
+          "url": "https://*.firebasestorage.app/**"
+        },
+        {
+          "url": "https://api.openai.com"
+        },
+        {
+          "url": "https://api.openai.com/**"
+        },
+        {
+          "url": "https://*.openai.azure.com"
+        },
+        {
+          "url": "https://*.openai.azure.com/**"
+        },
+        {
+          "url": "https://api.anthropic.com"
+        },
+        {
+          "url": "https://api.anthropic.com/**"
+        },
+        {
+          "url": "https://api.groq.com"
+        },
+        {
+          "url": "https://api.groq.com/**"
+        },
+        {
+          "url": "https://api.cerebras.ai"
+        },
+        {
+          "url": "https://api.cerebras.ai/**"
+        },
+        {
+          "url": "https://api.deepseek.com"
+        },
+        {
+          "url": "https://api.deepseek.com/**"
+        },
+        {
+          "url": "https://openrouter.ai"
+        },
+        {
+          "url": "https://openrouter.ai/**"
+        },
+        {
+          "url": "https://api.elevenlabs.io"
+        },
+        {
+          "url": "https://api.elevenlabs.io/**"
+        },
+        {
+          "url": "https://api.deepgram.com"
+        },
+        {
+          "url": "https://api.deepgram.com/**"
+        },
+        {
+          "url": "https://api.assemblyai.com"
+        },
+        {
+          "url": "https://api.assemblyai.com/**"
+        },
+        {
+          "url": "https://streaming.assemblyai.com"
+        },
+        {
+          "url": "https://streaming.assemblyai.com/**"
+        },
+        {
+          "url": "https://api.x.ai"
+        },
+        {
+          "url": "https://api.x.ai/**"
+        },
+        {
+          "url": "https://api.aldea.ai"
+        },
+        {
+          "url": "https://api.aldea.ai/**"
+        },
+        {
+          "url": "https://*.stt.speech.microsoft.com"
+        },
+        {
+          "url": "https://*.stt.speech.microsoft.com/**"
+        },
+        {
+          "url": "https://*.ingest.sentry.io"
+        },
+        {
+          "url": "https://*.ingest.sentry.io/**"
+        },
+        {
+          "url": "https://github.com"
+        },
+        {
+          "url": "https://github.com/**"
+        },
+        {
+          "url": "https://objects.githubusercontent.com"
+        },
+        {
+          "url": "https://objects.githubusercontent.com/**"
+        }
       ]
     }
   ]

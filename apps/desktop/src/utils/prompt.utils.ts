@@ -112,17 +112,40 @@ const getStylePrompt = (input: PostProcessingPromptInput): string => {
   return "Clean up the provided transcript";
 };
 
+const appendStructuredStyleGuidance = (
+  prompt: string,
+  tone: ToneConfig,
+): string => {
+  const fields = [
+    tone.category && `Category: ${tone.category}`,
+    tone.outputLength && `Output length: ${tone.outputLength}`,
+    tone.exampleInputOutput &&
+      `Example input/output: ${tone.exampleInputOutput}`,
+  ].filter((field): field is string => Boolean(field));
+
+  // Keep the exact legacy prompt when no structured fields were supplied.
+  if (fields.length === 0) {
+    return prompt;
+  }
+
+  return `${prompt}\n\nAdditional style guidance:\n${fields.join("\n")}`;
+};
+
 export const buildSystemPostProcessingTonePrompt = (
   input: PostProcessingPromptInput,
 ): string => {
   if (input.tone.kind === "template" && input.tone.systemPromptTemplate) {
-    return applyTemplateVars(
+    const systemPrompt = applyTemplateVars(
       input.tone.systemPromptTemplate,
       buildPostProcessingTemplateVars(input),
     );
+    return appendStructuredStyleGuidance(systemPrompt, input.tone);
   }
 
-  const stylePrompt = getStylePrompt(input);
+  const stylePrompt = appendStructuredStyleGuidance(
+    getStylePrompt(input),
+    input.tone,
+  );
   const languageName = getDisplayNameForLanguage(input.dictationLanguage);
   const fullPrompt = `
 ${stylePrompt}
