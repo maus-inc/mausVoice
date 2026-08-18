@@ -113,7 +113,11 @@ windows = { version = "0.61.3", features = [
 ] }
 
 [lints.rust]
-unexpected_cfgs = { level = "warn", check-cfg = ["cfg(feature, values(\"cargo-clippy\"))"] }
+unexpected_cfgs = { level = "allow", check-cfg = [
+  "cfg(feature, values(\"cargo-clippy\"))",
+  "cfg(desktop)",
+  "cfg(mobile)",
+] }
 
 [patch.crates-io]
 block = { path = "../../../patches/block-0.1.6" }
