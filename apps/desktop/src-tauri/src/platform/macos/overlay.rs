@@ -5,7 +5,7 @@ use std::sync::Mutex;
 use tauri::{Emitter, Manager};
 
 use crate::domain::{OverlayPhase, PillWindowSize};
-use rust_macos_pill::ipc::{InMessage, OutMessage, Phase, Rect, ResetStrategy, Visibility};
+use rust_macos_pill::ipc::{InMessage, OutMessage, Phase, ResetStrategy, Visibility};
 
 /// Monotonic sequence number for phase messages (mirrors `pill_process.rs`);
 /// lets the pill ignore stale/duplicate phase writes.

@@ -448,6 +448,28 @@ fn is_path_within_allowed_roots(path: &std::path::Path, allowed_roots: &[PathBuf
     allowed_roots.iter().any(|root| path.starts_with(root))
 }
 
+/// Stable Windows file identity: the volume serial number paired with the
+/// 64-bit file index. Used to detect a TOCTOU swap of a validated file for a
+/// different one between the path check and the open/read.
+///
+/// `std::os::windows::fs::MetadataExt::{volume_serial_number,file_index}` would
+/// be the natural source, but those methods are gated behind the nightly-only
+/// `windows_by_handle` feature and break the stable-toolchain Windows build.
+/// `GetFileInformationByHandle` exposes the same identity through the stable
+/// `windows` crate, so we read it from the live file handle instead.
+#[cfg(windows)]
+fn windows_file_identity(file: &std::fs::File) -> Option<(u32, u64)> {
+    use std::os::windows::io::AsRawHandle;
+    let handle = windows::Win32::Foundation::HANDLE(file.as_raw_handle());
+    let mut info = windows::Win32::Storage::FileSystem::BY_HANDLE_FILE_INFORMATION::default();
+    unsafe {
+        windows::Win32::Storage::FileSystem::GetFileInformationByHandle(handle, &mut info).ok()?;
+    }
+    let file_index =
+        ((info.nFileIndexHigh as u64) << 32) | (info.nFileIndexLow as u64);
+    Some((info.dwVolumeSerialNumber, file_index))
+}
+
 #[tauri::command]
 #[specta::specta]
 pub async fn transcription_import_audio(
@@ -531,15 +553,13 @@ pub async fn transcription_import_audio(
     }
     #[cfg(windows)]
     {
-        use std::os::windows::fs::MetadataExt;
-        let validated = std::fs::metadata(&path)
+        let validated_file = std::fs::File::open(&path)
             .map_err(|_| "Unable to open the selected audio file.".to_string())?;
-        let opened = file
-            .metadata()
-            .map_err(|_| "Unable to open the selected audio file.".to_string())?;
-        if opened.volume_serial_number() != validated.volume_serial_number()
-            || opened.file_index() != validated.file_index()
-        {
+        let validated_id = windows_file_identity(&validated_file)
+            .ok_or_else(|| "Unable to open the selected audio file.".to_string())?;
+        let opened_id = windows_file_identity(&file)
+            .ok_or_else(|| "Unable to open the selected audio file.".to_string())?;
+        if opened_id != validated_id {
             return Err("The selected audio file changed during import.".to_string());
         }
     }
@@ -766,12 +786,10 @@ fn resolve_managed_audio_path_for_read(
     }
     #[cfg(windows)]
     {
-        use std::os::windows::fs::MetadataExt;
-        let validated = std::fs::metadata(&real_path).ok()?;
-        let opened = file.metadata().ok()?;
-        if opened.volume_serial_number() != validated.volume_serial_number()
-            || opened.file_index() != validated.file_index()
-        {
+        let validated_file = std::fs::File::open(&real_path)?;
+        let validated_id = windows_file_identity(&validated_file)?;
+        let opened_id = windows_file_identity(&file)?;
+        if opened_id != validated_id {
             return None;
         }
     }
