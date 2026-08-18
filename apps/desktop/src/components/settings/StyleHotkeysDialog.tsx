@@ -37,10 +37,13 @@ type StyleHotkeyRow = {
 /** Assign one optional global shortcut to each writing style. */
 export const StyleHotkeysDialog = () => {
   const open = useAppStore((state) => state.settings.styleHotkeysDialogOpen);
-  const tones = useAppStore((state) =>
-    Object.values(state.toneById)
-      .filter((tone) => !tone.isDeprecated)
-      .sort((a, b) => a.sortOrder - b.sortOrder),
+  const toneById = useAppStore((state) => state.toneById);
+  const tones = useMemo(
+    () =>
+      Object.values(toneById)
+        .filter((tone) => !tone.isDeprecated)
+        .sort((a, b) => a.sortOrder - b.sortOrder),
+    [toneById],
   );
   const hotkeyById = useAppStore((state) => state.hotkeyById);
   const intl = useIntl();
@@ -62,10 +65,9 @@ export const StyleHotkeysDialog = () => {
         };
       }),
     );
-    // Rebuild rows when the dialog opens or persisted shortcuts change. The tone
-    // list itself is derived from store state and is intentionally not a
-    // dependency because the selector returns a fresh sorted array.
-  }, [open, hotkeyById]);
+    // Rebuild rows when the dialog opens, persisted shortcuts change, or the
+    // available tone list changes while the dialog is open.
+  }, [open, hotkeyById, tones]);
 
   const hasConflict = useMemo(() => {
     const filled = rows.filter((row) => row.keys.length > 0);

@@ -355,7 +355,7 @@ export const ComposerPage = () => {
             <Button
               variant="contained"
               onClick={() => void finish(true)}
-              disabled={!text.trim()}
+              disabled={isEditing || !text.trim()}
             >
               <FormattedMessage defaultMessage="Insert" />
             </Button>
