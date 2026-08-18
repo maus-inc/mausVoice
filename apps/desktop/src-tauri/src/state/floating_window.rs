@@ -77,7 +77,8 @@ impl FloatingWindowState {
             .lock()
             .map_err(|_| "composer text state lock poisoned".to_string())?;
         Self::prune_expired(&mut pending);
-        if pending.len() >= MAX_PENDING_COMPOSER_TEXT {
+        let replacing_existing = pending.contains_key(&request_id);
+        if !replacing_existing && pending.len() >= MAX_PENDING_COMPOSER_TEXT {
             if let Some(oldest_id) = pending
                 .iter()
                 .min_by_key(|(_, (_, created_at))| *created_at)

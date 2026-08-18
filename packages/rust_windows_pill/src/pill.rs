@@ -560,6 +560,7 @@ fn process_message(msg: InMessage, state: &PillState, _hwnd: HWND) {
             state.reset_strategy.set(strategy);
             state.dirty.set(true);
             let hwnd = HWND_CELL.with(|c| c.get());
+            reposition_to_cursor_monitor(hwnd, state);
             let (rect, monitor) = current_pill_geometry(hwnd);
             ipc::send(&OutMessage::PositionChanged {
                 has_saved_position: false,

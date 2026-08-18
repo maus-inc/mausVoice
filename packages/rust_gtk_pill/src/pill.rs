@@ -764,11 +764,15 @@ pub fn run(receiver: Receiver<InMessage>) {
 pub(crate) fn pill_geometry(window: &gtk::Window, state: &PillState) -> (Option<Rect>, Option<Rect>) {
     let (w, h) = window.size();
     let display = window.display();
-    let monitor = display
-        .monitor_at_point(
-            (state.saved_x.get() + w as f64 / 2.0) as i32,
-            (state.saved_y.get() + h as f64 / 2.0) as i32,
-        )
+    let monitor = window
+        .window()
+        .and_then(|gdk_win| display.monitor_at_window(&gdk_win))
+        .or_else(|| {
+            display.monitor_at_point(
+                (state.saved_x.get() + w as f64 / 2.0) as i32,
+                (state.saved_y.get() + h as f64 / 2.0) as i32,
+            )
+        })
         .or_else(|| display.primary_monitor())
         .or_else(|| display.monitor(0));
     let monitor_rect = monitor.map(|m| {

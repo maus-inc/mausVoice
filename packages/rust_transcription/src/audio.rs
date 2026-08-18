@@ -51,8 +51,14 @@ pub fn resample_to_rate(
     source_rate: u32,
     target_rate: u32,
 ) -> Result<Vec<f32>, ResampleError> {
-    if samples.is_empty() || source_rate == 0 || target_rate == 0 {
+    if samples.is_empty() {
         return Ok(Vec::new());
+    }
+    if source_rate == 0 || target_rate == 0 {
+        return Err(ResampleError::UnsupportedRate {
+            source_rate,
+            target_rate,
+        });
     }
     if source_rate == target_rate {
         return Ok(samples.to_vec());

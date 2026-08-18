@@ -56,9 +56,14 @@ if (allowlist.includes("useDefault")) {
 
 // (b) The preamble MUST be present as a real detection rule's regex.
 const rules = raw.slice(raw.indexOf("[[rules]]"));
-const ruleRegexMatch = rules.match(/regex\s*=\s*'''?([^']*)'''?/);
+const updaterRuleMatch = rules.match(
+  /id\s*=\s*"tauri-minisign-updater-private-key"[\s\S]*?regex\s*=\s*'''?([^']*)'''?/,
+);
+const ruleRegexMatch = updaterRuleMatch;
 if (!ruleRegexMatch) {
-  fail("gitleaks.toml: could not find a [[rules]] regex value.");
+  fail(
+    "gitleaks.toml: could not find regex for id tauri-minisign-updater-private-key.",
+  );
 }
 if (!ruleRegexMatch[1].includes(PREAMBLE_B64)) {
   fail(

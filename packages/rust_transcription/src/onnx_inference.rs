@@ -180,7 +180,16 @@ pub fn validate_model_classified(
     // later inference.
     load_model(model, model_dir, None)
         .map(|_| true)
-        .map_err(OnnxModelValidationError::Artifact)
+        .map_err(|message| {
+            // SenseVoice load failures are typically sherpa-onnx/runtime
+            // environment issues. Classifying them as Artifact would delete a
+            // valid local model bundle during cleanup.
+            if uses_sherpa_onnx_runtime(model) {
+                OnnxModelValidationError::Runtime(message)
+            } else {
+                OnnxModelValidationError::Artifact(message)
+            }
+        })
 }
 
 /// Remove a cached runtime after its files are deleted or replaced.

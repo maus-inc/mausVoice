@@ -122,6 +122,7 @@ export const createAudioChunkPump = ({
       return;
     }
 
+    let sentTerminal = false;
     while (shouldDrain(force)) {
       const chunkSize = computeChunkSize(force);
       if (chunkSize == null) {
@@ -134,10 +135,22 @@ export const createAudioChunkPump = ({
       }
 
       try {
-        sendChunk(chunk, force && pendingSampleCount === 0);
+        const isLastChunk = force && pendingSampleCount === 0;
+        sendChunk(chunk, isLastChunk);
+        sentTerminal = isLastChunk;
       } catch (error) {
         onError(error);
         break;
+      }
+    }
+
+    // Providers such as ElevenLabs map isLastChunk to commit. A forced flush
+    // with an empty buffer must still emit a terminal signal.
+    if (force && !sentTerminal) {
+      try {
+        sendChunk(new Float32Array(0), true);
+      } catch (error) {
+        onError(error);
       }
     }
   };

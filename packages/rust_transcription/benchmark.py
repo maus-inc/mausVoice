@@ -180,7 +180,8 @@ def run_benchmark(audio_path: Path, binary_dir: Path, models_dir: Path, model: s
         try:
             devices_url = f"http://127.0.0.1:{GPU_PORT}/v1/devices"
             assert_http_url(devices_url)
-            devices_resp = json.loads(urlopen(devices_url).read())  # nosec B310 -- loopback URL, scheme validated by assert_http_url
+            with urlopen(devices_url, timeout=5) as devices_fh:  # nosec B310 -- loopback URL, scheme validated by assert_http_url
+                devices_resp = json.loads(devices_fh.read())
             devices = devices_resp["devices"]
             print(f"  Devices: {', '.join(d['name'] + ' (' + d['id'] + ')' for d in devices)}\n")
 

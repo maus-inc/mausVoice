@@ -729,13 +729,6 @@ export const DictationSideEffects = () => {
         draft.dictationLanguageOverride = language;
       });
 
-      // Snapshot the active writing style at segment start so the finalized
-      // segment is retagged with the style that was actually dictated, even if
-      // the user switches styles mid-utterance.
-      segmentStartToneIdRef.current = getToneIdToUse(getAppState(), {
-        currentAppToneId: null,
-      });
-
       let strategy: BaseStrategy | null = strategyRef.current ?? null;
       if (!strategy) {
         if (mode === "agent") {
@@ -759,8 +752,14 @@ export const DictationSideEffects = () => {
         !state.onboarding.dictationOverrideEnabled &&
         !state.local.disableAutoStyleLoading
       ) {
-        loadManualStyleForCurrentApp();
+        await loadManualStyleForCurrentApp();
       }
+
+      // Snapshot after app-based style load so the first segment is tagged
+      // with the style that will actually be used, not the previous one.
+      segmentStartToneIdRef.current = getToneIdToUse(getAppState(), {
+        currentAppToneId: null,
+      });
 
       const preferredMicrophone = getMyPreferredMicrophone(state);
       const transcriptPrefs = getTranscriptionPrefs(state);

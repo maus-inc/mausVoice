@@ -103,7 +103,8 @@ export class DictationStrategy extends BaseStrategy {
       hallucinationFilterEnabled: prefs?.hallucinationFilterEnabled ?? true,
       skipStructuralCommands: opts?.interim === true,
     });
-    return sanitized.trim() ? sanitized : null;
+    // Preserve structural whitespace such as "\n" from spoken "new line".
+    return /^[ \t]*$/.test(sanitized) ? null : sanitized;
   }
 
   validateAvailability(): Nullable<StrategyValidationError> {

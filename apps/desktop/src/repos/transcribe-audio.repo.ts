@@ -185,7 +185,8 @@ export abstract class BaseTranscribeAudioRepo extends BaseRepo {
     return {
       text: mergedText,
       metadata,
-      segments: results.flatMap((result) => result.segments ?? []),
+      // Do not flatten overlapping chunk segments: a later join would undo
+      // mergeTranscriptions() and reintroduce duplicated overlap words.
     };
   }
 }

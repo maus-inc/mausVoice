@@ -59,11 +59,19 @@ export const AIAgentModeConfiguration = () => {
   };
 
   const commitMaxIterations = () => {
+    if (maxIterationsDraft.trim() === "") {
+      setMaxIterationsDraft(String(maxIterations));
+      return;
+    }
     const value = Number(maxIterationsDraft);
     if (Number.isFinite(value)) void setAgentMaxIterations(value);
     else setMaxIterationsDraft(String(maxIterations));
   };
   const commitTimeout = () => {
+    if (timeoutDraft.trim() === "") {
+      setTimeoutDraft(String(Math.round(permissionTimeoutMs / 1000)));
+      return;
+    }
     const value = Number(timeoutDraft);
     if (Number.isFinite(value)) void setAgentPermissionTimeoutMs(value * 1000);
     else setTimeoutDraft(String(Math.round(permissionTimeoutMs / 1000)));

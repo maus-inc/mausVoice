@@ -229,7 +229,7 @@ export const ComposerPage = () => {
     setEditError(null);
     try {
       const edited = await applyVoiceEditInstruction({ text, instruction });
-      if (mountedRef.current && edited) setText(edited);
+      if (mountedRef.current && edited !== undefined) setText(edited);
       setInstruction("");
     } catch (error) {
       if (mountedRef.current) {

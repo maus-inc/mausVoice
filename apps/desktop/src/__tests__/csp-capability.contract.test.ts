@@ -73,13 +73,12 @@ function sourceApiHosts(): Set<string> {
 const apiHosts = sourceApiHosts();
 
 describe("http:default capability contract", () => {
-  it("exposes http://*:* for user-configured base URLs", () => {
-    // Self-hosted/Ollama/OpenAI-compatible endpoints are user-configured
-    // (LAN boxes, reverse proxies, arbitrary ports) and cannot be enumerated
-    // at build time, so http must stay a wildcard.
-    expect(allowUrls, "http:default capability must exist").toContain(
-      "http://*:*",
-    );
+  it("restricts plaintext HTTP to loopback/LAN/self-hosted ranges", () => {
+    expect(allowUrls).not.toContain("http://*:*");
+    expect(allowUrls).toContain("http://10.*:*");
+    expect(allowUrls).toContain("http://192.168.*:*");
+    expect(allowUrls).toContain("http://172.16.*:*");
+    expect(allowUrls).toContain("http://*.local:*");
   });
 
   it("does not allow https://* (hosted SaaS stays a curated allow-list)", () => {

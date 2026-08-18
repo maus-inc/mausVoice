@@ -139,9 +139,18 @@ export class VoiceInstructionRecorder {
     };
 
     this.recognition = recognition;
+    try {
+      recognition.start();
+    } catch (error) {
+      this.recognition = null;
+      this.deps.logger.warning(
+        `Voice Edit Mode: browser speech recognition failed to start (${error})`,
+      );
+      this.deps.onError(this.deps.unsupportedMessage());
+      return;
+    }
     this.state = "browser";
     this.deps.onListeningChange(true);
-    recognition.start();
   }
 
   private async stop(gen: number): Promise<void> {

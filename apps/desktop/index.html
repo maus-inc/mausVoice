@@ -153,6 +153,9 @@
           true,
         );
         window.addEventListener("unhandledrejection", function (event) {
+          if (document.getElementById("root") && document.getElementById("root").childNodes.length) {
+            return;
+          }
           paint(
             "mausVoice failed to start",
             detailFromError(event.reason, ""),
