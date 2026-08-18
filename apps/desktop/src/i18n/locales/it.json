@@ -624,7 +624,7 @@
   "streak_celebrations": "Celebrazioni della serie",
   "streak_day_streak": "{streak} giorni di streak! 🎉",
   "streak_days_incredible": "{streak} giorni! Incredibile! 🌟",
-  "stream_dictation_text_as_you_speak_instead_of_pasting_all_at": "Trasmetti in streaming il testo dettato mentre parli, invece di incollarlo tutto in una volta quando ti fermi. Si applica solo alla modalità Verbatim con i provider supportati.",
+  "stream_dictation_text_as_you_speak_instead_of_pasting_all_at": "Inserisce il testo durante la dettatura invece di incollarlo tutto alla fine. Solo Verbatim e un provider supportato. La punteggiatura vale in tempo reale. Scratch-that e new-line si applicano alla trascrizione salvata al rilascio e non riscrivono il testo già inserito.",
   "style": "Stile",
   "style_hotkeys": "Style hotkeys",
   "styles": "Stili",
@@ -777,5 +777,7 @@
   "you_re_currently_on_version_version_the_app_will_restart_aft": "Stai usando la versione {version}. L'app si riavvierà dopo che l'aggiornamento sarà completato.",
   "you_re_up_to_date": "Sei aggiornato.",
   "your_azure_openai_resource_endpoint_url": "URL dell'endpoint della tua risorsa Azure OpenAI",
-  "your_operating_system_is_preventing_mausvoice_from_modifying": "Il tuo sistema operativo sta impedendo a mausVoice di modificare i file nella sua attuale posizione di installazione. Usa il pulsante di download per ottenere l'ultima versione dell'installer, quindi eseguilo per completare l'aggiornamento manualmente."
+  "your_operating_system_is_preventing_mausvoice_from_modifying": "Il tuo sistema operativo sta impedendo a mausVoice di modificare i file nella sua attuale posizione di installazione. Usa il pulsante di download per ottenere l'ultima versione dell'installer, quindi eseguilo per completare l'aggiornamento manualmente.",
+  "spoken_commands": "Comandi vocali",
+  "turn_phrases_like_new_line_comma_and_scratch_that_into_forma": "Trasforma frasi come \"new line\", \"comma\" e \"scratch that\" in formattazione, anche in Verbatim. Serve una lingua di dettatura inglese: Auto non applica questi comandi."
 }

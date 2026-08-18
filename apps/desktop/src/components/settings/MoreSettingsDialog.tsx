@@ -22,6 +22,7 @@ import {
   setDictationLimitMinutes,
   setDictationPillVisibility,
   setPillResetMonitorStrategy,
+  setSpokenCommandsEnabled,
   setIgnoreUpdateDialog,
   setIncognitoModeEnabled,
   setInDictationStyleSwitchingEnabled,
@@ -66,6 +67,7 @@ export const MoreSettingsDialog = () => {
     disablePillRewards,
     disableAutoStyleLoading,
     menuBarIconHidden,
+    spokenCommandsEnabled,
     inDictationStyleSwitchingEnabled,
     hallucinationFilterEnabled,
     reviewBeforeInsert,
@@ -87,6 +89,7 @@ export const MoreSettingsDialog = () => {
       state.local.disablePillRewards,
       state.local.disableAutoStyleLoading ?? false,
       prefs?.menuBarIconHidden ?? false,
+      prefs?.spokenCommandsEnabled ?? true,
       prefs?.inDictationStyleSwitchingEnabled ?? false,
       prefs?.hallucinationFilterEnabled ?? true,
       prefs?.reviewBeforeInsert ?? false,
@@ -169,6 +172,10 @@ export const MoreSettingsDialog = () => {
 
   const handleToggleRealtimeOutput = (event: ChangeEvent<HTMLInputElement>) => {
     void setRealtimeOutputEnabled(event.target.checked);
+  };
+
+  const handleToggleSpokenCommands = (event: ChangeEvent<HTMLInputElement>) => {
+    void setSpokenCommandsEnabled(event.target.checked);
   };
 
   const handleToggleInDictationStyleSwitching = (
@@ -349,9 +356,23 @@ export const MoreSettingsDialog = () => {
           />
 
           <SettingSection
+            title={<FormattedMessage defaultMessage="Spoken commands" />}
+            description={
+              <FormattedMessage defaultMessage='Turn phrases like "new line", "comma", and "scratch that" into formatting, even in Verbatim. Requires an English dictation language — Auto does not apply these commands.' />
+            }
+            action={
+              <Switch
+                edge="end"
+                checked={spokenCommandsEnabled}
+                onChange={handleToggleSpokenCommands}
+              />
+            }
+          />
+
+          <SettingSection
             title={<FormattedMessage defaultMessage="Real-time output" />}
             description={
-              <FormattedMessage defaultMessage="Stream dictation text as you speak instead of pasting all at once when you stop. Only applies to Verbatim mode with supported providers." />
+              <FormattedMessage defaultMessage="Stream dictation text as you speak instead of pasting all at once when you stop. Verbatim and a supported provider only. Punctuation commands apply live. Scratch-that and new-line apply to the saved transcript on release — they cannot rewrite text already streamed into the app." />
             }
             action={
               <Switch

@@ -16,11 +16,7 @@ import type {
 } from "../types/strategy.types";
 import { getLogger } from "../utils/log.utils";
 import { routeTranscriptOutput } from "../utils/output-routing.utils";
-import {
-  applyReplacements,
-  applySymbolConversions,
-  filterKnownSilenceHallucinations,
-} from "../utils/string.utils";
+import { sanitizeTranscriptText } from "../utils/sanitize-transcript.utils";
 import { getToneIdToUse, VERBATIM_TONE_ID } from "../utils/tone.utils";
 import {
   getMyDictationLanguage,
@@ -53,14 +49,14 @@ export class DictationStrategy extends BaseStrategy {
   handleInterimSegment(segment: string): void {
     const state = getAppState();
 
-    const realtimeEnabled =
-      getMyUserPreferences(state)?.realtimeOutputEnabled ?? false;
+    const prefs = getMyUserPreferences(state);
+    const realtimeEnabled = prefs?.realtimeOutputEnabled ?? false;
     const toneId = getToneIdToUse(state);
     if (!realtimeEnabled || toneId !== VERBATIM_TONE_ID) {
       return;
     }
 
-    const sanitized = this.sanitizeTranscript(segment);
+    const sanitized = this.sanitizeTranscript(segment, { interim: true });
     if (!sanitized) {
       return;
     }
@@ -70,7 +66,7 @@ export class DictationStrategy extends BaseStrategy {
 
     this.pasteQueue = this.pasteQueue.then(async () => {
       const text = sanitized;
-      const textToPaste = text + " ";
+      const textToPaste = text.endsWith("\n") ? text : `${text} `;
       this.streamedProcessedText += (isFirst ? "" : " ") + text;
 
       try {
@@ -86,8 +82,12 @@ export class DictationStrategy extends BaseStrategy {
     });
   }
 
-  private sanitizeTranscript(text: string): string | null {
+  private sanitizeTranscript(
+    text: string,
+    opts?: { interim?: boolean },
+  ): string | null {
     const state = getAppState();
+    const prefs = getMyUserPreferences(state);
     const replacementRules = Object.values(state.termById)
       .filter((term) => term.isReplacement)
       .map((term) => ({
@@ -95,14 +95,15 @@ export class DictationStrategy extends BaseStrategy {
         destinationValue: term.destinationValue,
       }));
 
-    const afterReplacements = applyReplacements(text, replacementRules);
-    const converted = applySymbolConversions(afterReplacements);
-    return getAppState().userPrefs?.hallucinationFilterEnabled === false
-      ? converted
-      : filterKnownSilenceHallucinations(
-          converted,
-          getMyDictationLanguage(getAppState()),
-        );
+    const sanitized = sanitizeTranscriptText({
+      rawTranscript: text,
+      replacementRules,
+      language: getMyDictationLanguage(state),
+      spokenCommandsEnabled: prefs?.spokenCommandsEnabled ?? true,
+      hallucinationFilterEnabled: prefs?.hallucinationFilterEnabled ?? true,
+      skipStructuralCommands: opts?.interim === true,
+    });
+    return sanitized.trim() ? sanitized : null;
   }
 
   validateAvailability(): Nullable<StrategyValidationError> {
@@ -136,7 +137,11 @@ export class DictationStrategy extends BaseStrategy {
 
     await this.pasteQueue;
 
-    const transcript = this.streamedProcessedText || sanitizedTranscript;
+    // Interim paste already hit the focused app without structural commands
+    // (chunk-safe). The saved transcript uses the full sanitize so scratch /
+    // new-line are recorded. We do not rewrite already-streamed keystrokes.
+    const transcript =
+      (sanitizedTranscript ?? this.streamedProcessedText) ?? null;
     getLogger().verbose(
       `Streaming dictation complete (${this.streamedSegmentCount} segments)`,
     );

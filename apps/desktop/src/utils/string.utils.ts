@@ -216,6 +216,40 @@ const appendUntil = (
   }
 };
 
+const tryReplaceSpan = (
+  preparedRules: PreparedReplacementRule[],
+  segments: string[],
+  wordPositions: number[],
+  wordIndex: number,
+  startSegment: number,
+  span: number,
+): { text: string; nextSegmentIndex: number } | null => {
+  const endSegment = wordPositions[wordIndex + span - 1];
+  const candidate = segments.slice(startSegment, endSegment + 1).join("");
+  const { word, leadingPunctuation, trailingPunctuation } =
+    extractPunctuation(candidate);
+  if (!word) {
+    return null;
+  }
+
+  const bestMatch = findBestRuleMatch(
+    preparedRules,
+    span,
+    collapseWhitespace(word).toLowerCase(),
+  );
+  if (!bestMatch) {
+    return null;
+  }
+
+  const { word: destinationWord } = extractPunctuation(
+    bestMatch.destinationValue,
+  );
+  return {
+    text: leadingPunctuation + destinationWord + trailingPunctuation,
+    nextSegmentIndex: endSegment + 1,
+  };
+};
+
 export const applyReplacements = (
   text: string,
   rules: ReplacementRule[],
@@ -239,42 +273,31 @@ export const applyReplacements = (
     const startSegment = wordPositions[wordIndex];
     appendUntil(result, segments, segmentIndex, startSegment);
     const remainingWords = wordPositions.length - wordIndex;
-    let matched = false;
+    let matchedSpan = 0;
 
-    for (
-      let span = Math.min(maxWordCount, remainingWords);
-      span >= 1 && !matched;
-      span--
-    ) {
-      const endSegment = wordPositions[wordIndex + span - 1];
-      const candidate = segments.slice(startSegment, endSegment + 1).join("");
-      const { word, leadingPunctuation, trailingPunctuation } =
-        extractPunctuation(candidate);
-
-      if (!word) continue;
-
-      const normalizedCandidate = collapseWhitespace(word).toLowerCase();
-      const bestMatch = findBestRuleMatch(
+    for (let span = Math.min(maxWordCount, remainingWords); span >= 1; span--) {
+      const replacement = tryReplaceSpan(
         preparedRules,
+        segments,
+        wordPositions,
+        wordIndex,
+        startSegment,
         span,
-        normalizedCandidate,
       );
-
-      if (bestMatch) {
-        const { word: destinationWord } = extractPunctuation(
-          bestMatch.destinationValue,
-        );
-        result.push(leadingPunctuation + destinationWord + trailingPunctuation);
-        segmentIndex = endSegment + 1;
-        wordIndex += span;
-        matched = true;
+      if (replacement) {
+        result.push(replacement.text);
+        segmentIndex = replacement.nextSegmentIndex;
+        matchedSpan = span;
+        break;
       }
     }
 
-    if (!matched) {
+    if (matchedSpan === 0) {
       result.push(segments[startSegment]);
       segmentIndex = startSegment + 1;
       wordIndex++;
+    } else {
+      wordIndex += matchedSpan;
     }
   }
 

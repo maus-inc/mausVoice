@@ -1,3 +1,5 @@
+import { isEnglishSanitizeLanguage } from "./sanitize-language.utils";
+
 /**
  * Common phrases emitted by Whisper-like models when the input contains only
  * room noise or silence. Keep this list intentionally conservative: filtering
@@ -49,16 +51,6 @@ const normalizeHallucinationText = (text: string): string =>
     .replace(/\s+/g, " ")
     .trim();
 
-const isEnglishLanguage = (language: string): boolean => {
-  const normalized = language.toLowerCase().trim();
-  return (
-    normalized === "en" ||
-    normalized === "english" ||
-    normalized.startsWith("en-")
-  );
-};
-
-/** Return true when a decoded result is a known silence-only hallucination. */
 export const isKnownSilenceHallucination = (text: string): boolean => {
   const normalized = normalizeHallucinationText(text);
   return KNOWN_SILENCE_HALLUCINATIONS.some(
@@ -85,33 +77,36 @@ const isSilenceCompanion = (part: string): boolean => {
  * A phrase is removed only when it is a complete line/sentence, never when it
  * appears inside a longer sentence.
  *
- * The `KNOWN_SILENCE_HALLUCINATIONS` list is tuned for English. Passing a
- * non-English `language` disables the filter for that transcription so the
- * phrases can't be stripped out of genuine speech in other languages. When
- * callers can't supply a language (legacy paths or tests) the historical
- * always-filter behavior is preserved by omitting the argument.
+ * Non-English `language` disables the filter. Omitting `language` keeps the
+ * historical always-filter behavior.
  */
 export const filterKnownSilenceHallucinations = (
   text: string,
   language?: string,
 ): string => {
   if (!text.trim()) return "";
-  if (language !== undefined && !isEnglishLanguage(language)) {
+  if (language !== undefined && !isEnglishSanitizeLanguage(language)) {
     return text;
   }
   if (isKnownSilenceHallucination(text)) return "";
 
-  const parts = text.split(/(?<=[.!?。！？])\s+|\n+/u);
-  // A fabricated sign-off (e.g. "Best regards.") only accompanies the
-  // Amara/subtitle credit, so strip it only when that credit is also present.
-  const subtitlePresent = parts.some(isSubtitleHallucination);
+  const lines = text.split(/\n+/);
+  const subtitlePresent = lines.some((line) =>
+    line.split(/(?<=[.!?。！？])\s+/u).some(isSubtitleHallucination),
+  );
 
-  const kept = parts.filter((part) => {
-    if (isKnownSilenceHallucination(part)) return false;
-    if (subtitlePresent && isSilenceCompanion(part)) return false;
-    return true;
-  });
-  return kept.join(" ").replace(/\s+/g, " ").trim();
+  const keptLines = lines
+    .map((line) => {
+      const parts = line.split(/(?<=[.!?。！？])\s+/u);
+      const kept = parts.filter((part) => {
+        if (isKnownSilenceHallucination(part)) return false;
+        if (subtitlePresent && isSilenceCompanion(part)) return false;
+        return true;
+      });
+      return kept.join(" ").replace(/[ \t]+/g, " ").trim();
+    })
+    .filter((line) => line.length > 0);
+  return keptLines.join("\n");
 };
 
 /**
@@ -132,7 +127,7 @@ export const applyHallucinationFiltering = (
   if (!filterEnabled) {
     return rawTranscript;
   }
-  const gated = gateSilentSegments(segments);
+  const gated = gateSilentSegments(segments, language);
   const transcriptForFiltering = gated ?? rawTranscript;
   return filterKnownSilenceHallucinations(transcriptForFiltering, language);
 };
@@ -161,11 +156,19 @@ export const NO_SPEECH_PROB_THRESHOLD = 0.9;
  * can fall back to the exact provider text — providers that don't return
  * `verbose_json` output (e.g. some OpenAI-compatible endpoints) simply bypass
  * this gate.
+ *
+ * Same English gate as phrase filtering: a defined non-English / sentinel
+ * `language` returns null so the raw transcript is kept. Omitting `language`
+ * keeps the historical always-gate behavior.
  */
 export const gateSilentSegments = (
   segments: TranscriptionSegment[] | undefined | null,
+  language?: string,
 ): string | null => {
   if (!segments || segments.length === 0) {
+    return null;
+  }
+  if (language !== undefined && !isEnglishSanitizeLanguage(language)) {
     return null;
   }
   return segments

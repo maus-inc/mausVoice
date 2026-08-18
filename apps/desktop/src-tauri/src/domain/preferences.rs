@@ -100,6 +100,9 @@ pub struct UserPreferences {
     pub agent_max_iterations: i64,
     #[serde(default = "default_agent_permission_timeout_ms")]
     pub agent_permission_timeout_ms: i64,
+    /// Deterministic spoken formatting / scratch-that. Default on.
+    #[serde(default = "default_true")]
+    pub spoken_commands_enabled: bool,
 }
 
 fn default_hallucination_filter_enabled() -> bool {
@@ -128,4 +131,8 @@ fn default_dictation_limit_minutes() -> i64 {
 
 fn default_dictation_audio_dim() -> f64 {
     1.0
+}
+
+fn default_true() -> bool {
+    true
 }

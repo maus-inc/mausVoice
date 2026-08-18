@@ -36,7 +36,10 @@ import {
   PROCESSED_TRANSCRIPTION_JSON_SCHEMA,
   PROCESSED_TRANSCRIPTION_SCHEMA,
 } from "../utils/prompt.utils";
-import { applyHallucinationFiltering } from "../utils/hallucination.utils";
+import {
+  applyHallucinationFiltering,
+  type TranscriptionSegment,
+} from "../utils/hallucination.utils";
 import { getToneById, getToneConfig } from "../utils/tone.utils";
 import {
   getMyEffectiveUserId,
@@ -68,6 +71,7 @@ export type TranscribeAudioResult = {
   sanitizedTranscript: string;
   warnings: string[];
   metadata: TranscribeAudioMetadata;
+  segments?: TranscriptionSegment[] | null;
 };
 
 export type PostProcessInput = {
@@ -213,6 +217,7 @@ export const transcribeAudio = async ({
     sanitizedTranscript,
     warnings: dedup(warnings),
     metadata,
+    segments: transcribeOutput.segments ?? null,
   };
 };
 

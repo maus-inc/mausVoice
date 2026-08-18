@@ -73,6 +73,7 @@ type LocalUserPreferences = {
   agentEnabledTools?: Nullable<string>;
   agentMaxIterations?: number;
   agentPermissionTimeoutMs?: number;
+  spokenCommandsEnabled?: boolean;
 };
 
 const normalizePillResetMonitorStrategy = (
@@ -151,10 +152,7 @@ const normalizeAgentMode = (mode: Nullable<string>): Nullable<AgentMode> => {
 const jsonValue = (value: string[] | null | undefined): string | null =>
   value ? JSON.stringify(value) : null;
 
-export const fromLocalPreferences = (
-  preferences: LocalUserPreferences,
-): UserPreferences => ({
-  userId: preferences.userId,
+const fromLocalAiPreferences = (preferences: LocalUserPreferences) => ({
   transcriptionMode: normalizeTranscriptionMode(preferences.transcriptionMode),
   transcriptionApiKeyId: orNull(preferences.transcriptionApiKeyId),
   transcriptionDevice: orNull(preferences.transcriptionDevice),
@@ -166,12 +164,15 @@ export const fromLocalPreferences = (
   postProcessingOllamaUrl: orNull(preferences.postProcessingOllamaUrl),
   postProcessingOllamaModel: orNull(preferences.postProcessingOllamaModel),
   activeToneId: orNull(preferences.activeToneId),
-  gotStartedAt: orNull(preferences.gotStartedAt),
   gpuEnumerationEnabled: orFalse(preferences.gpuEnumerationEnabled),
   agentMode: normalizeAgentMode(preferences.agentMode),
   agentModeApiKeyId: preferences.agentModeApiKeyId,
   openclawGatewayUrl: orNull(preferences.openclawGatewayUrl),
   openclawToken: orNull(preferences.openclawToken),
+});
+
+const fromLocalOutputPreferences = (preferences: LocalUserPreferences) => ({
+  gotStartedAt: orNull(preferences.gotStartedAt),
   lastSeenFeature: preferences.lastSeenFeature,
   activeDictationLanguage: orNull(preferences.activeDictationLanguage),
   preferredMicrophone: orNull(preferences.preferredMicrophone),
@@ -198,6 +199,9 @@ export const fromLocalPreferences = (
     preferences.pillResetMonitorStrategy,
   ),
   alwaysRequestAdminOnStartup: orFalse(preferences.alwaysRequestAdminOnStartup),
+});
+
+const fromLocalFeaturePreferences = (preferences: LocalUserPreferences) => ({
   inDictationStyleSwitchingEnabled: orFalse(
     preferences.inDictationStyleSwitchingEnabled,
   ),
@@ -210,12 +214,19 @@ export const fromLocalPreferences = (
   agentPermissionTimeoutMs: normalizeAgentPermissionTimeout(
     preferences.agentPermissionTimeoutMs,
   ),
+  spokenCommandsEnabled: orTrue(preferences.spokenCommandsEnabled),
 });
 
-export const toLocalPreferences = (
-  preferences: UserPreferences,
-): LocalUserPreferences => ({
-  userId: LOCAL_USER_ID,
+export const fromLocalPreferences = (
+  preferences: LocalUserPreferences,
+): UserPreferences => ({
+  userId: preferences.userId,
+  ...fromLocalAiPreferences(preferences),
+  ...fromLocalOutputPreferences(preferences),
+  ...fromLocalFeaturePreferences(preferences),
+});
+
+const toLocalAiPreferences = (preferences: UserPreferences) => ({
   transcriptionMode: orNull(preferences.transcriptionMode),
   transcriptionApiKeyId: orNull(preferences.transcriptionApiKeyId),
   transcriptionDevice: orNull(preferences.transcriptionDevice),
@@ -232,6 +243,9 @@ export const toLocalPreferences = (
   openclawGatewayUrl: orNull(preferences.openclawGatewayUrl),
   openclawToken: orNull(preferences.openclawToken),
   lastSeenFeature: orNull(preferences.lastSeenFeature),
+});
+
+const toLocalOutputPreferences = (preferences: UserPreferences) => ({
   languageSwitchEnabled: false,
   secondaryDictationLanguage: null,
   activeDictationLanguage: orValue(
@@ -263,6 +277,9 @@ export const toLocalPreferences = (
     preferences.pillResetMonitorStrategy,
   ),
   alwaysRequestAdminOnStartup: orFalse(preferences.alwaysRequestAdminOnStartup),
+});
+
+const toLocalFeaturePreferences = (preferences: UserPreferences) => ({
   inDictationStyleSwitchingEnabled:
     preferences.inDictationStyleSwitchingEnabled,
   hallucinationFilterEnabled: preferences.hallucinationFilterEnabled,
@@ -274,6 +291,16 @@ export const toLocalPreferences = (
   agentPermissionTimeoutMs: normalizeAgentPermissionTimeout(
     preferences.agentPermissionTimeoutMs,
   ),
+  spokenCommandsEnabled: orTrue(preferences.spokenCommandsEnabled),
+});
+
+export const toLocalPreferences = (
+  preferences: UserPreferences,
+): LocalUserPreferences => ({
+  userId: LOCAL_USER_ID,
+  ...toLocalAiPreferences(preferences),
+  ...toLocalOutputPreferences(preferences),
+  ...toLocalFeaturePreferences(preferences),
 });
 
 export abstract class BaseUserPreferencesRepo extends BaseRepo {

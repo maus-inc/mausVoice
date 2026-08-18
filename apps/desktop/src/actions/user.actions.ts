@@ -111,6 +111,7 @@ export const createDefaultPreferences = (): UserPreferences => ({
   pillResetMonitorStrategy: "current",
 
   alwaysRequestAdminOnStartup: false,
+  spokenCommandsEnabled: true,
   realtimeOutputEnabled: false,
   remoteOutputEnabled: false,
   remoteTargetDeviceId: null,
@@ -645,6 +646,14 @@ export const setAlwaysRequestAdminOnStartup = async (
   await updateUserPreferences((preferences) => {
     preferences.alwaysRequestAdminOnStartup = enabled;
   }, "Failed to save admin on startup preference. Please try again.");
+};
+
+export const setSpokenCommandsEnabled = async (
+  enabled: boolean,
+): Promise<void> => {
+  await updateUserPreferences((preferences) => {
+    preferences.spokenCommandsEnabled = enabled;
+  }, "Failed to save spoken commands preference. Please try again.");
 };
 
 export const setDictationLimitMinutes = async (

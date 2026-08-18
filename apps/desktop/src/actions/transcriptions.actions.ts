@@ -2,11 +2,12 @@ import { Transcription } from "@maus-inc/types";
 import { getRec } from "@maus-inc/utilities";
 import { getTranscriptionRepo } from "../repos";
 import { getAppState, produceAppState } from "../store";
+import { sanitizeTranscriptText } from "../utils/sanitize-transcript.utils";
+import type { ReplacementRule } from "../utils/string.utils";
 import {
-  applyReplacements,
-  applySymbolConversions,
-  type ReplacementRule,
-} from "../utils/string.utils";
+  getMyDictationLanguage,
+  getMyUserPreferences,
+} from "../utils/user.utils";
 import {
   postProcessTranscript,
   storeTranscription,
@@ -56,9 +57,19 @@ const getReplacementRules = (): ReplacementRule[] =>
       destinationValue: term.destinationValue,
     }));
 
-const sanitizeImportedTranscript = (rawTranscript: string): string => {
-  const replaced = applyReplacements(rawTranscript, getReplacementRules());
-  return applySymbolConversions(replaced);
+const sanitizeImportedTranscript = (
+  rawTranscript: string,
+  languageCode?: string | null,
+): string => {
+  const state = getAppState();
+  const prefs = getMyUserPreferences(state);
+  return sanitizeTranscriptText({
+    rawTranscript,
+    replacementRules: getReplacementRules(),
+    language: languageCode ?? getMyDictationLanguage(state),
+    spokenCommandsEnabled: prefs?.spokenCommandsEnabled ?? true,
+    hallucinationFilterEnabled: prefs?.hallucinationFilterEnabled ?? true,
+  });
 };
 
 const processAudio = async ({
@@ -73,7 +84,8 @@ const processAudio = async ({
     dictationLanguage: languageCode ?? undefined,
   });
   const sanitizedTranscript = sanitizeImportedTranscript(
-    transcribeResult.sanitizedTranscript,
+    transcribeResult.rawTranscript,
+    languageCode,
   );
   const postProcessResult = await postProcessTranscript({
     rawTranscript: sanitizedTranscript,

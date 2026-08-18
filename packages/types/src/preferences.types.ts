@@ -56,6 +56,8 @@ export type UserPreferences = {
   agentMaxIterations: number;
   /** Time allowed for a user permission response. */
   agentPermissionTimeoutMs: number;
+  /** Deterministic "new line" / "scratch that" commands. Default on. */
+  spokenCommandsEnabled: boolean;
 
   // deprecated
 };

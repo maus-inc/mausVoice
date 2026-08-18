@@ -147,6 +147,8 @@ pub const TONE_STRUCTURED_FIELDS_MIGRATION_SQL: &str =
     include_str!("migrations/075_tone_structured_fields.sql");
 pub const FEATURE_PREFERENCES_MIGRATION_SQL: &str =
     include_str!("migrations/076_feature_preferences.sql");
+pub const SPOKEN_COMMANDS_MIGRATION_SQL: &str =
+    include_str!("migrations/077_spoken_commands_enabled.sql");
 
 pub fn migrations() -> Vec<tauri_plugin_sql::Migration> {
     vec![
@@ -592,6 +594,12 @@ pub fn migrations() -> Vec<tauri_plugin_sql::Migration> {
             version: 76,
             description: "add_feature_preferences",
             sql: FEATURE_PREFERENCES_MIGRATION_SQL,
+            kind: tauri_plugin_sql::MigrationKind::Up,
+        },
+        tauri_plugin_sql::Migration {
+            version: 77,
+            description: "add_spoken_commands_enabled",
+            sql: SPOKEN_COMMANDS_MIGRATION_SQL,
             kind: tauri_plugin_sql::MigrationKind::Up,
         },
     ]

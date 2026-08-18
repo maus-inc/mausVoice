@@ -208,6 +208,7 @@ export const submitOnboarding = async () => {
       agentEnabledTools: null,
       agentMaxIterations: 20,
       agentPermissionTimeoutMs: 60_000,
+      spokenCommandsEnabled: true,
     };
 
     const [savedUser, savedPreferences] = await Promise.all([
