@@ -3,12 +3,31 @@ import { getTranscriptionRepo } from "../repos";
 import { produceAppState } from "../store";
 import { showErrorSnackbar } from "../actions/app.actions";
 
+export const PENDING_DELETE_STORAGE_KEY =
+  "mausvoice.pending-transcription-deletes";
+
 type PendingDelete = {
   snapshot: Transcription;
   timer: ReturnType<typeof setTimeout>;
 };
 
 const pendingById = new Map<string, PendingDelete>();
+/** Timer + in-flight IPC. Written to localStorage so quit cannot drop deletes. */
+const queuedIds = new Set<string>();
+
+const writeQueuedIds = (): void => {
+  if (typeof localStorage === "undefined") {
+    return;
+  }
+  if (queuedIds.size === 0) {
+    localStorage.removeItem(PENDING_DELETE_STORAGE_KEY);
+    return;
+  }
+  localStorage.setItem(
+    PENDING_DELETE_STORAGE_KEY,
+    JSON.stringify([...queuedIds]),
+  );
+};
 
 const restoreInStore = (snapshot: Transcription): void => {
   produceAppState((draft) => {
@@ -29,18 +48,28 @@ const removeFromStore = (id: string): void => {
   });
 };
 
+const invokeDelete = (id: string, snapshot?: Transcription): void => {
+  void getTranscriptionRepo()
+    .deleteTranscription(id)
+    .then(() => {
+      queuedIds.delete(id);
+      writeQueuedIds();
+    })
+    .catch((error) => {
+      if (snapshot) {
+        restoreInStore(snapshot);
+      }
+      showErrorSnackbar(error);
+    });
+};
+
 const commitDelete = (id: string): void => {
   const pending = pendingById.get(id);
   pendingById.delete(id);
   if (!pending) {
     return;
   }
-  void getTranscriptionRepo()
-    .deleteTranscription(id)
-    .catch((error) => {
-      restoreInStore(pending.snapshot);
-      showErrorSnackbar(error);
-    });
+  invokeDelete(id, pending.snapshot);
 };
 
 export const scheduleTranscriptionDelete = (
@@ -52,6 +81,8 @@ export const scheduleTranscriptionDelete = (
     clearTimeout(existing.timer);
   }
   removeFromStore(snapshot.id);
+  queuedIds.add(snapshot.id);
+  writeQueuedIds();
   const timer = setTimeout(() => commitDelete(snapshot.id), delayMs);
   pendingById.set(snapshot.id, { snapshot, timer });
 };
@@ -63,11 +94,14 @@ export const undoTranscriptionDelete = (id: string): boolean => {
   }
   clearTimeout(pending.timer);
   pendingById.delete(id);
+  queuedIds.delete(id);
+  writeQueuedIds();
   restoreInStore(pending.snapshot);
   return true;
 };
 
 export const flushPendingTranscriptionDeletes = (): void => {
+  writeQueuedIds();
   for (const id of [...pendingById.keys()]) {
     const pending = pendingById.get(id);
     if (pending) {
@@ -75,4 +109,29 @@ export const flushPendingTranscriptionDeletes = (): void => {
     }
     commitDelete(id);
   }
+};
+
+/** Next launch: finish deletes whose IPC never completed on quit. */
+export const resumePendingTranscriptionDeletes = (): void => {
+  if (typeof localStorage === "undefined") {
+    return;
+  }
+  let stored: string[] = [];
+  try {
+    const raw = localStorage.getItem(PENDING_DELETE_STORAGE_KEY);
+    const parsed = raw ? (JSON.parse(raw) as unknown) : [];
+    stored = Array.isArray(parsed)
+      ? parsed.filter((id): id is string => typeof id === "string")
+      : [];
+  } catch {
+    return;
+  }
+  for (const id of stored) {
+    queuedIds.add(id);
+    if (pendingById.has(id)) {
+      continue;
+    }
+    invokeDelete(id);
+  }
+  writeQueuedIds();
 };

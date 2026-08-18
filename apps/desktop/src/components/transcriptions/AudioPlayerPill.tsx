@@ -119,7 +119,6 @@ export const AudioPlayerPill = ({
       if (activePlayback?.transcriptionId === transcriptionIdRef.current) {
         stopActivePlayback("stopped");
       }
-      setPlaybackProgress(0);
     };
   }, []);
 

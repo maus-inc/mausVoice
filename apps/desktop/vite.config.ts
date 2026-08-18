@@ -62,6 +62,9 @@ export default defineConfig(async () => {
         },
       },
     ],
+    resolve: {
+      conditions: ["development", "import", "module", "browser", "default"],
+    },
     clearScreen: false,
     build: {
       rollupOptions: {

@@ -71,7 +71,7 @@ The two schemes have their own temperature rather than being inversions of each 
 - Destructive actions ship UNDO. Max 4 visible; group repeats.
 
 ## Recording state machine (pill + composer)
-- States: idle | recording | preview. Documented here; no `voiceUiState.ts` module yet.
+- States: idle | recording | preview. Documented here; no dedicated state module.
 - Overlay actions are buttons (keyboard + focus-visible); never mouse-down-only.
 
 ## Icons

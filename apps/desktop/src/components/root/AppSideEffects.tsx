@@ -82,6 +82,7 @@ import {
   getMyUserPreferences,
   LOCAL_USER_ID,
 } from "../../utils/user.utils";
+import { resumePendingTranscriptionDeletes } from "../../utils/pending-transcription-delete";
 import {
   consumeSurfaceWindowFlag,
   surfaceMainWindow,
@@ -487,6 +488,7 @@ export const AppSideEffects = () => {
       produceAppState((draft) => {
         draft.initialized = true;
       });
+      resumePendingTranscriptionDeletes();
     }
   }, [streamReady, initReady, initialized]);
 
