@@ -66,6 +66,9 @@ export class DictationStrategy extends BaseStrategy {
 
     this.pasteQueue = this.pasteQueue.then(async () => {
       const text = sanitized;
+      // Interim sanitize skips structural commands, so this rarely ends with
+      // "\n"; keep the branch for replacement/symbol output that already
+      // includes a trailing newline.
       const textToPaste = text.endsWith("\n") ? text : `${text} `;
       this.streamedProcessedText += (isFirst ? "" : " ") + text;
 
