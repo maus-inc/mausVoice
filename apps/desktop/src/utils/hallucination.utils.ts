@@ -74,15 +74,23 @@ export const filterKnownSilenceHallucinations = (
   }
   if (isKnownSilenceHallucination(text)) return "";
 
-  const parts = text.split(/(?<=[.!?。！？])\s+|\n+/u);
-  const subtitlePresent = parts.some(isSubtitleHallucination);
+  const lines = text.split(/\n+/);
+  const subtitlePresent = lines.some((line) =>
+    line.split(/(?<=[.!?。！？])\s+/u).some(isSubtitleHallucination),
+  );
 
-  const kept = parts.filter((part) => {
-    if (isKnownSilenceHallucination(part)) return false;
-    if (subtitlePresent && isSilenceCompanion(part)) return false;
-    return true;
-  });
-  return kept.join(" ").replace(/\s+/g, " ").trim();
+  const keptLines = lines
+    .map((line) => {
+      const parts = line.split(/(?<=[.!?。！？])\s+/u);
+      const kept = parts.filter((part) => {
+        if (isKnownSilenceHallucination(part)) return false;
+        if (subtitlePresent && isSilenceCompanion(part)) return false;
+        return true;
+      });
+      return kept.join(" ").replace(/[ \t]+/g, " ").trim();
+    })
+    .filter((line) => line.length > 0);
+  return keptLines.join("\n");
 };
 
 export type TranscriptionSegment = {

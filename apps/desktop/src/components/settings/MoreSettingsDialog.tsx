@@ -328,7 +328,7 @@ export const MoreSettingsDialog = () => {
           <SettingSection
             title={<FormattedMessage defaultMessage="Spoken commands" />}
             description={
-              <FormattedMessage defaultMessage='Turn phrases like "new line", "comma", and "scratch that" into formatting, even in Verbatim. English dictation only.' />
+              <FormattedMessage defaultMessage='Turn phrases like "new line", "comma", and "scratch that" into formatting, even in Verbatim. Requires an English dictation language — Auto does not apply these commands.' />
             }
             action={
               <Switch
@@ -342,7 +342,7 @@ export const MoreSettingsDialog = () => {
           <SettingSection
             title={<FormattedMessage defaultMessage="Real-time output" />}
             description={
-              <FormattedMessage defaultMessage="Stream dictation text as you speak instead of pasting all at once when you stop. Verbatim and a supported provider only. Scratch-that and new-line apply when you release." />
+              <FormattedMessage defaultMessage="Stream dictation text as you speak instead of pasting all at once when you stop. Verbatim and a supported provider only. Punctuation commands apply live. Scratch-that and new-line apply to the saved transcript on release — they cannot rewrite text already streamed into the app." />
             }
             action={
               <Switch

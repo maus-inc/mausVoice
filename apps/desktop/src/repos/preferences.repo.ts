@@ -150,6 +150,7 @@ export const fromLocalPreferences = (
   ),
   alwaysRequestAdminOnStartup: preferences.alwaysRequestAdminOnStartup ?? false,
   spokenCommandsEnabled: preferences.spokenCommandsEnabled ?? true,
+  // Optional until PR #63 076 lands; never persist on this branch's Rust struct.
   hallucinationFilterEnabled: preferences.hallucinationFilterEnabled ?? true,
 });
 
@@ -203,7 +204,8 @@ export const toLocalPreferences = (
   ),
   alwaysRequestAdminOnStartup: preferences.alwaysRequestAdminOnStartup ?? false,
   spokenCommandsEnabled: preferences.spokenCommandsEnabled ?? true,
-  hallucinationFilterEnabled: preferences.hallucinationFilterEnabled ?? true,
+  // Do not send hallucinationFilterEnabled: this branch's Rust struct
+  // has no column. Callers still default the in-memory flag to true.
 });
 
 export abstract class BaseUserPreferencesRepo extends BaseRepo {

@@ -54,6 +54,22 @@ describe("sanitizeTranscriptText", () => {
     ).toBe("Some speech.");
   });
 
+  it("prefers the fully sanitized transcript over streamed interim text", () => {
+    const streamed = sanitizeTranscriptText({
+      rawTranscript: "First sentence. Second scratch that",
+      replacementRules: [],
+      language: "en",
+      skipStructuralCommands: true,
+    });
+    const finalized = sanitizeTranscriptText({
+      rawTranscript: "First sentence. Second scratch that",
+      replacementRules: [],
+      language: "en",
+    });
+    expect(streamed).toBe("First sentence. Second scratch that");
+    expect(finalized).toBe("First sentence.");
+  });
+
   it("skips structural commands when asked", () => {
     expect(
       sanitizeTranscriptText({

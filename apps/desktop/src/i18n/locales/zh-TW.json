@@ -572,7 +572,7 @@
   "streak_celebrations": "連續紀錄慶祝",
   "streak_day_streak": "{streak} 天連續！ 🎉",
   "streak_days_incredible": "{streak} 天！令人難以置信！🌟",
-  "stream_dictation_text_as_you_speak_instead_of_pasting_all_at": "邊說邊插入文字，而不是停下後一次貼上。僅限逐字模式與支援的供應商。scratch-that 與 new-line 在放開時生效。",
+  "stream_dictation_text_as_you_speak_instead_of_pasting_all_at": "邊說邊插入文字，而不是停下後一次貼上。僅限逐字模式與支援的供應商。標點指令即時生效。scratch-that 與 new-line 在放開時套用到已儲存的逐字稿，不會改寫已插入應用程式的文字。",
   "style": "樣式",
   "styles": "樣式",
   "styling_mode": "樣式模式",
@@ -714,5 +714,5 @@
   "your_azure_openai_resource_endpoint_url": "您的 Azure OpenAI 資源端點網址",
   "your_operating_system_is_preventing_mausvoice_from_modifying": "您的作業系統正阻止 mausVoice 修改其目前安裝位置的檔案。請使用下載按鈕取得最新的安裝程式，然後執行它以手動完成更新。",
   "spoken_commands": "語音命令",
-  "turn_phrases_like_new_line_comma_and_scratch_that_into_forma": "將 “new line”、“comma”、“scratch that” 等片語轉成格式，即使在逐字模式下也有效。僅限英語聽寫。"
+  "turn_phrases_like_new_line_comma_and_scratch_that_into_forma": "將 “new line”、“comma”、“scratch that” 等片語轉成格式，即使在逐字模式下也有效。需將聽寫語言設為英語；自動偵測不會套用這些指令。"
 }

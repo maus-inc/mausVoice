@@ -136,7 +136,11 @@ export class DictationStrategy extends BaseStrategy {
 
     await this.pasteQueue;
 
-    const transcript = this.streamedProcessedText || sanitizedTranscript;
+    // Interim paste already hit the focused app without structural commands
+    // (chunk-safe). The saved transcript uses the full sanitize so scratch /
+    // new-line are recorded. We do not rewrite already-streamed keystrokes.
+    const transcript =
+      sanitizedTranscript ?? this.streamedProcessedText || null;
     getLogger().verbose(
       `Streaming dictation complete (${this.streamedSegmentCount} segments)`,
     );

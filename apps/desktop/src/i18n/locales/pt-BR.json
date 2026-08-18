@@ -572,7 +572,7 @@
   "streak_celebrations": "Celebrações de sequência",
   "streak_day_streak": "{streak} dia de sequência! 🎉",
   "streak_days_incredible": "{streak} dias! Incrível! 🌟",
-  "stream_dictation_text_as_you_speak_instead_of_pasting_all_at": "Insere o texto enquanto você fala em vez de colar tudo ao parar. Apenas Verbatim e um provedor compatível. Scratch-that e new-line valem ao soltar.",
+  "stream_dictation_text_as_you_speak_instead_of_pasting_all_at": "Insere o texto enquanto você fala em vez de colar tudo ao parar. Apenas Verbatim e um provedor compatível. A pontuação vale ao vivo. Scratch-that e new-line valem na transcrição salva ao soltar — não reescrevem o texto já inserido.",
   "style": "Estilo",
   "styles": "Estilos",
   "styling_mode": "Modo de estilo",
@@ -714,5 +714,5 @@
   "your_azure_openai_resource_endpoint_url": "URL do endpoint do seu recurso Azure OpenAI",
   "your_operating_system_is_preventing_mausvoice_from_modifying": "O seu sistema operacional está impedindo o mausVoice de modificar arquivos no local de instalação atual. Use o botão de download para obter o instalador mais recente e, em seguida, execute‑o para concluir a atualização manualmente.",
   "spoken_commands": "Comandos falados",
-  "turn_phrases_like_new_line_comma_and_scratch_that_into_forma": "Converte frases como \"new line\", \"comma\" e \"scratch that\" em formatação, mesmo em Verbatim. Apenas ditado em inglês."
+  "turn_phrases_like_new_line_comma_and_scratch_that_into_forma": "Converte frases como \"new line\", \"comma\" e \"scratch that\" em formatação, mesmo em Verbatim. Exige um idioma de ditado em inglês — Auto não aplica esses comandos."
 }

@@ -71,6 +71,14 @@ describe("silence hallucination filtering", () => {
     ).toBe("Subtitles by the Amara.org community.");
   });
 
+  it("preserves paragraph breaks around a stripped hallucination line", () => {
+    expect(
+      filterKnownSilenceHallucinations(
+        "Ship the fix today.\nThank you for watching.\nNext paragraph.",
+      ),
+    ).toBe("Ship the fix today.\nNext paragraph.");
+  });
+
   it("keeps a standalone genuine sign-off without an Amara credit", () => {
     expect(
       filterKnownSilenceHallucinations("Please review the doc. Best regards."),

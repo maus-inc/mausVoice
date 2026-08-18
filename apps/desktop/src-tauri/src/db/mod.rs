@@ -144,7 +144,7 @@ pub const PILL_RESET_MONITOR_STRATEGY_MIGRATION_SQL: &str =
 pub const ALWAYS_REQUEST_ADMIN_ON_STARTUP_MIGRATION_SQL: &str =
     include_str!("migrations/074_always_request_admin_on_startup.sql");
 pub const SPOKEN_COMMANDS_MIGRATION_SQL: &str =
-    include_str!("migrations/077_spoken_commands_enabled.sql");
+    include_str!("migrations/075_spoken_commands_enabled.sql");
 
 pub fn migrations() -> Vec<tauri_plugin_sql::Migration> {
     vec![
@@ -581,7 +581,7 @@ pub fn migrations() -> Vec<tauri_plugin_sql::Migration> {
             kind: tauri_plugin_sql::MigrationKind::Up,
         },
         tauri_plugin_sql::Migration {
-            version: 77,
+            version: 75,
             description: "add_spoken_commands_enabled",
             sql: SPOKEN_COMMANDS_MIGRATION_SQL,
             kind: tauri_plugin_sql::MigrationKind::Up,
