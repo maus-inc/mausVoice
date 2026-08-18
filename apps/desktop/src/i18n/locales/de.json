@@ -572,7 +572,7 @@
   "streak_celebrations": "Streak-Feiern",
   "streak_day_streak": "{streak} Tage am Stück! 🎉",
   "streak_days_incredible": "{streak} Tage! Unglaublich! 🌟",
-  "stream_dictation_text_as_you_speak_instead_of_pasting_all_at": "Gibt diktierten Text während des Sprechens aus statt alles auf einmal nach dem Stopp. Gilt nur für den Verbatim-Modus mit ausgeschalteten Sprachbefehlen und einem unterstützten Anbieter.",
+  "stream_dictation_text_as_you_speak_instead_of_pasting_all_at": "Gibt diktierten Text während des Sprechens aus statt alles auf einmal nach dem Stopp. Nur Verbatim und ein unterstützter Anbieter. Scratch-that und new-line gelten beim Loslassen.",
   "style": "Stil",
   "styles": "Stile",
   "styling_mode": "Designmodus",

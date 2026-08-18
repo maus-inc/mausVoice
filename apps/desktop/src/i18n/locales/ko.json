@@ -572,7 +572,7 @@
   "streak_celebrations": "연속 축하",
   "streak_day_streak": "{streak}일 연속! 🎉",
   "streak_days_incredible": "{streak}일! 대단해요! 🌟",
-  "stream_dictation_text_as_you_speak_instead_of_pasting_all_at": "멈추면 한 번에 붙여 넣는 대신 말하는 동안 받아쓰기 텍스트를 넣습니다. 음성 명령이 꺼진 Verbatim 모드와 지원 공급자에서만 적용됩니다.",
+  "stream_dictation_text_as_you_speak_instead_of_pasting_all_at": "멈추면 한 번에 붙여 넣는 대신 말하는 동안 받아쓰기 텍스트를 넣습니다. Verbatim과 지원 공급자에서만 적용됩니다. scratch-that과 new-line은 키를 놓을 때 적용됩니다.",
   "style": "스타일",
   "styles": "스타일",
   "styling_mode": "스타일 모드",

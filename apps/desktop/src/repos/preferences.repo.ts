@@ -61,6 +61,7 @@ type LocalUserPreferences = {
   pillResetMonitorStrategy?: Nullable<PillResetMonitorStrategy>;
   alwaysRequestAdminOnStartup?: boolean;
   spokenCommandsEnabled?: boolean;
+  hallucinationFilterEnabled?: boolean;
 };
 
 const normalizePillResetMonitorStrategy = (
@@ -149,6 +150,7 @@ export const fromLocalPreferences = (
   ),
   alwaysRequestAdminOnStartup: preferences.alwaysRequestAdminOnStartup ?? false,
   spokenCommandsEnabled: preferences.spokenCommandsEnabled ?? true,
+  hallucinationFilterEnabled: preferences.hallucinationFilterEnabled ?? true,
 });
 
 export const toLocalPreferences = (
@@ -201,6 +203,7 @@ export const toLocalPreferences = (
   ),
   alwaysRequestAdminOnStartup: preferences.alwaysRequestAdminOnStartup ?? false,
   spokenCommandsEnabled: preferences.spokenCommandsEnabled ?? true,
+  hallucinationFilterEnabled: preferences.hallucinationFilterEnabled ?? true,
 });
 
 export abstract class BaseUserPreferencesRepo extends BaseRepo {

@@ -17,6 +17,8 @@ export type SanitizeTranscriptOptions = {
   hallucinationFilterEnabled?: boolean;
   /** Skip scratch-that and newline/paragraph (realtime interim chunks). */
   skipStructuralCommands?: boolean;
+  /** Provider verbose_json segments; enables the noSpeechProb gate when present. */
+  segments?: TranscriptionSegment[] | null;
 };
 
 /**

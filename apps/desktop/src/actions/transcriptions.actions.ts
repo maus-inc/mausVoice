@@ -75,9 +75,10 @@ export const retranscribeTranscription = async ({
   const sanitizedTranscript = sanitizeTranscriptText({
     rawTranscript,
     replacementRules,
-    language: languageCode ?? getActiveDictationLanguage(state),
+    language: languageCode ?? getMyDictationLanguage(state),
     spokenCommandsEnabled: prefs?.spokenCommandsEnabled ?? true,
-    hallucinationFilterEnabled: true,
+    hallucinationFilterEnabled: prefs?.hallucinationFilterEnabled ?? true,
+    segments: transcribeResult.segments ?? null,
   });
 
   const postProcessResult = await postProcessTranscript({

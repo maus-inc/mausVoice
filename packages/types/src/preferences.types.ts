@@ -46,6 +46,11 @@ export type UserPreferences = {
   alwaysRequestAdminOnStartup: boolean;
   /** Deterministic "new line" / "scratch that" commands. Default on. */
   spokenCommandsEnabled: boolean;
+  /**
+   * Optional until PR #63 migration 076 lands. Callers default to true.
+   * Unknown to this branch's Rust struct; serde ignores it on write.
+   */
+  hallucinationFilterEnabled?: boolean;
 
   // deprecated
 };

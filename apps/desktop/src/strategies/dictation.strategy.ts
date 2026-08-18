@@ -55,11 +55,6 @@ export class DictationStrategy extends BaseStrategy {
     if (!realtimeEnabled || toneId !== VERBATIM_TONE_ID) {
       return;
     }
-    // Spoken commands only apply to the full take. Skip interim paste so
-    // handleTranscript uses the bulk path and inserts once after sanitize.
-    if (prefs?.spokenCommandsEnabled ?? true) {
-      return;
-    }
 
     const sanitized = this.sanitizeTranscript(segment, { interim: true });
     if (!sanitized) {
@@ -104,7 +99,7 @@ export class DictationStrategy extends BaseStrategy {
       replacementRules,
       language: getMyDictationLanguage(state),
       spokenCommandsEnabled: prefs?.spokenCommandsEnabled ?? true,
-      hallucinationFilterEnabled: true,
+      hallucinationFilterEnabled: prefs?.hallucinationFilterEnabled ?? true,
       skipStructuralCommands: opts?.interim === true,
     });
     return sanitized.trim() ? sanitized : null;

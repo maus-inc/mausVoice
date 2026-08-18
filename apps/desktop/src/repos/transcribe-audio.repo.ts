@@ -61,6 +61,7 @@ export type TranscribeAudioInput = {
 export type TranscribeAudioOutput = {
   text: string;
   metadata?: Nullable<TranscribeAudioMetadata>;
+  segments?: Array<{ text: string; noSpeechProb?: number }> | null;
 };
 
 export type TranscribeSegmentInput = {
@@ -161,6 +162,7 @@ export abstract class BaseTranscribeAudioRepo extends BaseRepo {
     return {
       text: mergedText,
       metadata,
+      segments: results.flatMap((result) => result.segments ?? []),
     };
   }
 }

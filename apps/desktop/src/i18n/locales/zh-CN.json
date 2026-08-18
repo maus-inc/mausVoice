@@ -572,7 +572,7 @@
   "streak_celebrations": "连胜庆祝",
   "streak_day_streak": "{streak} 天连胜！ 🎉",
   "streak_days_incredible": "{streak} 天！太棒了！ 🌟",
-  "stream_dictation_text_as_you_speak_instead_of_pasting_all_at": "边说边插入文本，而不是停下来后一次粘贴。仅在关闭语音命令的逐字模式且使用受支持的提供商时有效。",
+  "stream_dictation_text_as_you_speak_instead_of_pasting_all_at": "边说边插入文本，而不是停下来后一次粘贴。仅限逐字模式和受支持的提供商。scratch-that 与 new-line 在松开时生效。",
   "style": "样式",
   "styles": "风格",
   "styling_mode": "风格模式",

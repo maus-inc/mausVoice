@@ -63,6 +63,7 @@ export type TranscribeAudioResult = {
   rawTranscript: string;
   warnings: string[];
   metadata: TranscribeAudioMetadata;
+  segments?: Array<{ text: string; noSpeechProb?: number }> | null;
 };
 
 export type PostProcessInput = {
@@ -182,6 +183,7 @@ export const transcribeAudio = async ({
     rawTranscript,
     warnings: dedup(warnings),
     metadata,
+    segments: transcribeOutput.segments ?? null,
   };
 };
 

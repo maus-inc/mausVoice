@@ -572,7 +572,7 @@
   "streak_celebrations": "Celebraciones de racha",
   "streak_day_streak": "¡{streak} día de racha! 🎉",
   "streak_days_incredible": "{streak} días! ¡Increíble! 🌟",
-  "stream_dictation_text_as_you_speak_instead_of_pasting_all_at": "Muestra el texto dictado mientras hablas en lugar de pegarlo todo al parar. Solo aplica al modo Verbatim con los comandos hablados desactivados y un proveedor compatible.",
+  "stream_dictation_text_as_you_speak_instead_of_pasting_all_at": "Muestra el texto dictado mientras hablas en lugar de pegarlo todo al parar. Solo Verbatim y un proveedor compatible. Scratch-that y new-line se aplican al soltar.",
   "style": "Estilo",
   "styles": "Estilos",
   "styling_mode": "Modo de estilo",
