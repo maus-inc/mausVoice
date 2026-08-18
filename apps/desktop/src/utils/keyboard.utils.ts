@@ -263,13 +263,17 @@ const isActionGrabbable = (state: AppState, actionName: string): boolean => {
 // a stale combo set. Chaining each run onto the previous one (and reading the
 // store when the run actually starts, not when it was requested) guarantees
 // the last applied set is always the latest state. A failed run must not
-// break the chain, hence the trailing catch.
+// break the chain for later callers, hence the separate caught `syncQueue`.
+// The returned promise is the run itself (NOT `syncQueue`): callers like
+// AppSideEffects, hotkey.actions and StyleHotkeysDialog deliberately catch
+// rejections to surface native-grab failures — returning the caught queue
+// value would silently swallow them.
 let syncQueue: Promise<void> = Promise.resolve();
 
 export const syncHotkeyCombosToNative = (): Promise<void> => {
   const run = syncQueue.then(() => syncHotkeyCombosToNativeNow());
   syncQueue = run.catch(() => undefined);
-  return syncQueue;
+  return run;
 };
 
 const collectActionNames = (state: AppState): Set<string> => {

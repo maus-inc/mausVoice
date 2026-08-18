@@ -54,6 +54,22 @@ describe("sanitizeTranscriptText", () => {
     ).toBe("Some speech.");
   });
 
+  it("applies user dictionary replacements even when verbose segments gate the text", () => {
+    expect(
+      sanitizeTranscriptText({
+        rawTranscript: "k8s comma world",
+        replacementRules: [
+          { sourceValue: "k8s", destinationValue: "Kubernetes" },
+        ],
+        language: "en",
+        segments: [
+          { text: "k8s", noSpeechProb: 0.05 },
+          { text: "comma world", noSpeechProb: 0.05 },
+        ],
+      }),
+    ).toBe("Kubernetes, world");
+  });
+
   it("prefers the fully sanitized transcript over streamed interim text", () => {
     const streamed = sanitizeTranscriptText({
       rawTranscript: "First sentence. Second scratch that",

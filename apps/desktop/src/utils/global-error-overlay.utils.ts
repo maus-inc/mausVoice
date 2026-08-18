@@ -61,6 +61,16 @@ const describeWindowError = (event: ErrorEvent): string => {
 // protocol (e.g. module/CORS load failures) with no visible error otherwise.
 export const installGlobalErrorOverlay = (): void => {
   if (typeof window === "undefined") return;
+  // Detach the inline pre-bundle handler from index.html: from here on this
+  // installer owns error surfacing. Leaving the early listener attached would
+  // duplicate every unhandledrejection and paint the fatal "failed to start"
+  // overlay over a running app. The property type comes from the global
+  // `Window` declaration in vite-env.d.ts.
+  const earlyHandler = window.__mausVoiceEarlyUnhandledRejection;
+  if (earlyHandler) {
+    window.removeEventListener("unhandledrejection", earlyHandler);
+    delete window.__mausVoiceEarlyUnhandledRejection;
+  }
   // Capture phase: resource load failures (a <script>/<link> that fails to
   // fetch, e.g. a CORS rejection) fire a non-bubbling `error` event, so the
   // bubble-phase listener would never receive them. Capture catches both

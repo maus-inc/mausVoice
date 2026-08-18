@@ -32,6 +32,11 @@ describe("applySpokenCommands", () => {
     );
   });
 
+  it("keeps an explicit newline inserted before attach-left punctuation", () => {
+    expect(applySpokenCommands("new line comma")).toBe("\n,");
+    expect(applySpokenCommands("open paren new line close paren")).toBe("(\n)");
+  });
+
   it("does not rewrite protected collocations", () => {
     expect(applySpokenCommands("a new line of credit")).toBe(
       "a new line of credit",

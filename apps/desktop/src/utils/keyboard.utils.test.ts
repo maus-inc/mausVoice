@@ -104,7 +104,11 @@ describe("syncHotkeyCombosToNative", () => {
       return Promise.resolve(undefined);
     });
 
-    await syncHotkeyCombosToNative();
+    // The failure must reach this caller (run rejects), not be swallowed by
+    // the queue-keeping catch.
+    await expect(syncHotkeyCombosToNative()).rejects.toThrow(
+      "native bridge down",
+    );
     setHotkeyCombo(["ControlLeft", "KeyP"]);
     await syncHotkeyCombosToNative();
 
