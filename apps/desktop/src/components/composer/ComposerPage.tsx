@@ -168,9 +168,15 @@ export const ComposerPage = () => {
     return () => {
       recorder.dispose();
       recorderRef.current = null;
-      mountedRef.current = false;
     };
   }, [speechRecognitionSupported]);
+
+  useEffect(() => {
+    mountedRef.current = true;
+    return () => {
+      mountedRef.current = false;
+    };
+  }, []);
 
   useEffect(() => {
     let active = true;
@@ -229,7 +235,7 @@ export const ComposerPage = () => {
     setEditError(null);
     try {
       const edited = await applyVoiceEditInstruction({ text, instruction });
-      if (mountedRef.current && edited) setText(edited);
+      if (mountedRef.current && edited !== undefined) setText(edited);
       setInstruction("");
     } catch (error) {
       if (mountedRef.current) {

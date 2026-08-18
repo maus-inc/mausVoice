@@ -87,6 +87,18 @@ export class AgentStrategy extends BaseStrategy {
               rawTranscript,
               getMyDictationLanguage(getAppState()),
             );
+      if (!sanitizedTranscript.trim()) {
+        getLogger().info(
+          "Skipping empty chat message after hallucination filtering",
+        );
+        return {
+          shouldContinue: false,
+          transcript: null,
+          sanitizedTranscript: null,
+          postProcessMetadata: {},
+          postProcessWarnings: [],
+        };
+      }
       getLogger().info(
         `Sending chat message (${sanitizedTranscript.length} chars)`,
       );

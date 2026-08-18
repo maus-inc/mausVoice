@@ -130,6 +130,8 @@ export const applyHallucinationFiltering = (
   if (!filterEnabled) {
     return rawTranscript;
   }
+  // Prefer the caller-supplied (already overlap-merged) transcript whenever
+  // segments are absent. When segments exist they belong to a single chunk.
   const gated = gateSilentSegments(segments, language);
   const transcriptForFiltering = gated ?? rawTranscript;
   return filterKnownSilenceHallucinations(transcriptForFiltering, language);

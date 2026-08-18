@@ -254,7 +254,8 @@ impl WhisperModel {
                 // Pin the primary download URL to the same immutable revision.
                 Self::SENSEVOICE_DOWNLOAD_URL
             }
-            _ => {
+            // ONNX companions are fetched via `artifact_set()`, not this URL.
+            Self::ParakeetCtc06B | Self::ParakeetTdt06B | Self::Canary1B => {
                 return String::new();
             }
         }

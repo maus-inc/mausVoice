@@ -533,17 +533,26 @@ pub async fn transcription_import_audio(
     // re-resolving the path after the blocking decode, and the single-flight
     // guard below serializes concurrent imports so a rejected request cannot
     // open files first.
+    #[cfg(unix)]
+    let validated = {
+        use std::os::unix::fs::MetadataExt;
+        std::fs::metadata(&path)
+            .map_err(|_| "Unable to open the selected audio file.".to_string())?
+    };
+    #[cfg(windows)]
+    let validated_id = {
+        let validated_file = std::fs::File::open(&path)
+            .map_err(|_| "Unable to open the selected audio file.".to_string())?;
+        windows_file_identity(&validated_file)
+            .ok_or_else(|| "Unable to open the selected audio file.".to_string())?
+    };
+
     let file = std::fs::File::open(&path)
         .map_err(|_| "Unable to open the selected audio file.".to_string())?;
 
-    // Confirm the opened handle refers to the exact file that was validated,
-    // closing the canonicalize/open TOCTOU race where the file could be swapped
-    // for a different one between validation and open.
     #[cfg(unix)]
     {
         use std::os::unix::fs::MetadataExt;
-        let validated = std::fs::metadata(&path)
-            .map_err(|_| "Unable to open the selected audio file.".to_string())?;
         let opened = file
             .metadata()
             .map_err(|_| "Unable to open the selected audio file.".to_string())?;
@@ -553,10 +562,6 @@ pub async fn transcription_import_audio(
     }
     #[cfg(windows)]
     {
-        let validated_file = std::fs::File::open(&path)
-            .map_err(|_| "Unable to open the selected audio file.".to_string())?;
-        let validated_id = windows_file_identity(&validated_file)
-            .ok_or_else(|| "Unable to open the selected audio file.".to_string())?;
         let opened_id = windows_file_identity(&file)
             .ok_or_else(|| "Unable to open the selected audio file.".to_string())?;
         if opened_id != validated_id {

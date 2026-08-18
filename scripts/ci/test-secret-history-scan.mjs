@@ -81,14 +81,21 @@ console.log(
 // ---- Phase 2: live add-then-delete history scan (requires `gitleaks`) ----
 // Gitleaks and git are invoked via absolute paths so neither binary is ever
 // resolved through a possibly-attacker-controlled PATH (S4036).
-const GITLEAKS_BIN = "/usr/local/bin/gitleaks";
+const GITLEAKS_CANDIDATES = [
+  "/usr/local/bin/gitleaks",
+  "/usr/bin/gitleaks",
+  "/opt/homebrew/bin/gitleaks",
+];
 const GIT_BIN = "/usr/bin/git";
-let gitleaks;
-try {
-  execFileSync(GITLEAKS_BIN, ["version"]);
-  gitleaks = GITLEAKS_BIN;
-} catch {
-  gitleaks = null;
+let gitleaks = null;
+for (const candidate of GITLEAKS_CANDIDATES) {
+  try {
+    execFileSync(candidate, ["version"]);
+    gitleaks = candidate;
+    break;
+  } catch {
+    // try the next allowlisted absolute path
+  }
 }
 if (!gitleaks) {
   console.log(
@@ -126,7 +133,13 @@ try {
   try {
     gitleaksRun(["detect", "--source", ".", "-c", configPath], { cwd: tmp });
   } catch (e) {
-    historyCaught = e.status !== 0;
+    if (e.status === 1) {
+      historyCaught = true;
+    } else {
+      fail(
+        `LIVE ERROR: gitleaks detect failed operationally (exit ${e.status ?? "unknown"}): ${e.message}`,
+      );
+    }
   }
   if (!historyCaught)
     fail(

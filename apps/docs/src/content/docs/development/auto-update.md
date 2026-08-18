@@ -56,7 +56,7 @@ The app resolves the manifest from `https://github.com/maus-inc/mausVoice/releas
 
 ## The manifest builder
 
-`scripts/ci/build-updater-manifest.mjs` maps bundles onto the target triples Tauri asks for: `darwin-aarch64` and `darwin-x86_64` both resolve to the single universal `.app.tar.gz`, `windows-x86_64` to the NSIS `.nsis.zip`, and `linux-x86_64` to the `.AppImage`. Each entry carries the contents of the corresponding `.sig` and a download URL against the release tag.
+`scripts/ci/build-updater-manifest.mjs` maps bundles onto the target triples Tauri asks for: `darwin-aarch64` and `darwin-x86_64` both resolve to the single universal `.app.tar.gz`, the bare `windows-x86_64` key prefers the MSI installer (NSIS is published under the installer-specific `windows-x86_64-nsis` key), and `linux-x86_64` to the `.AppImage`. Each entry carries the contents of the corresponding `.sig` and a download URL against the release tag.
 
 Two refusals are deliberate:
 

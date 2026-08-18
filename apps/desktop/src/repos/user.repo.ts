@@ -15,7 +15,11 @@ const parseActiveToneIds = (
     return null;
   }
   try {
-    return JSON.parse(activeToneIds);
+    const parsed: unknown = JSON.parse(activeToneIds);
+    if (!Array.isArray(parsed) || parsed.some((id) => typeof id !== "string")) {
+      return null;
+    }
+    return parsed;
   } catch {
     // Malformed stored JSON must not break loading the user record.
     return null;

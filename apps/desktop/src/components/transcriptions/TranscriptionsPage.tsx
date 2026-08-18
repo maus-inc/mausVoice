@@ -50,8 +50,13 @@ export default function TranscriptionsPage() {
   );
   const [importDialogOpen, setImportDialogOpen] = useState(false);
   const [selectedToneId, setSelectedToneId] = useState<string | null>(null);
+  const resolveImportLanguage = (language: string): DictationLanguageCode =>
+    language === "keyboard-layout"
+      ? AUTO_LANGUAGE
+      : (language as DictationLanguageCode);
+
   const [selectedLanguage, setSelectedLanguage] =
-    useState<DictationLanguageCode>(defaultLanguage as DictationLanguageCode);
+    useState<DictationLanguageCode>(resolveImportLanguage(defaultLanguage));
   const [isImporting, setIsImporting] = useState(false);
 
   const prevImportDialogOpen = useRef(false);
@@ -62,9 +67,7 @@ export default function TranscriptionsPage() {
         .map((id) => getRec(state.toneById, id))
         .find((tone): tone is Tone => Boolean(tone));
       setSelectedToneId(firstTone?.id ?? null);
-      setSelectedLanguage(
-        getMyDictationLanguage(state) as DictationLanguageCode,
-      );
+      setSelectedLanguage(resolveImportLanguage(getMyDictationLanguage(state)));
     }
     prevImportDialogOpen.current = importDialogOpen;
   }, [importDialogOpen]);

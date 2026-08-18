@@ -118,9 +118,16 @@ impl TranscriptionEngine {
         if input.hallucination_filter_enabled
             && is_near_silent(&filtered_samples, SILENCE_RMS_THRESHOLD)
         {
+            let _requested_device =
+                self.resolve_device_blocking(input.device_id.as_deref())?;
+            let inference_device = if input.model.is_onnx() {
+                "CPU".to_string()
+            } else {
+                _requested_device.name
+            };
             return Ok(TranscriptionOutput {
                 text: String::new(),
-                inference_device: self.mode.as_str().to_ascii_uppercase(),
+                inference_device,
             });
         }
 

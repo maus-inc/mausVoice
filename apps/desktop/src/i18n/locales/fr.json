@@ -166,7 +166,7 @@
   "copy_invite": "Copier l'invitation",
   "copy_secret": "Copier le secret",
   "copy_transcript": "Copier la transcription",
-  "could_not_check_for_updates_check_your_connection_and_try_ag": "Could not check for updates. Check your connection and try again.",
+  "could_not_check_for_updates_check_your_connection_and_try_ag": "Impossible de rechercher des mises à jour. Vérifiez votre connexion et réessayez.",
   "could_not_resume_dictation": "Impossible de reprendre la dictée",
   "count_count_plural_one_transcription_other_transcriptions": "{count} {count, plural, one {transcription} other {transcriptions}}",
   "cpu": "CPU",

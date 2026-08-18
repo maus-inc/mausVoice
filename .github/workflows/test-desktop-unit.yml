@@ -92,6 +92,11 @@ jobs:
             echo "::error::Locale catalogs are out of sync. Run 'pnpm --filter desktop i18n' and commit the result."
             exit 1
           fi
+          untracked=$(git ls-files --others --exclude-standard -- apps/desktop/src/i18n/locales)
+          if [ -n "$untracked" ]; then
+            echo "::error::Untracked locale files must be committed: $untracked"
+            exit 1
+          fi
 
   rust-unit-tests:
     name: Desktop Rust Unit Tests

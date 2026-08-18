@@ -61,7 +61,7 @@
     "shell:allow-stdin-write",
     {
       "identifier": "http:default",
-      "description": "Scope for plugin-http (webview fetch executed in Rust). http://*:* stays a wildcard on purpose: Ollama, Speaches and OpenAI-compatible endpoints are user-configured base URLs (LAN boxes, reverse proxies, arbitrary ports) that cannot be enumerated at build time. Hosted SaaS providers CAN be enumerated, so https is a curated allow-list mirroring the security.csp connect-src hosts in tauri.conf.json rather than https://* — a wildcard there would let injected page script exfiltrate to any TLS host through Rust, sidestepping the CSP entirely. Tauri rewrites an empty pathname to `*` (see tauri-plugin-http scope tests), so one entry per host covers every path and query. Adding a provider means adding it here AND to connect-src; the csp-connect-src contract test guards the other direction. Accepted tradeoff: a self-hosted endpoint fronted by TLS on an unlisted host is rejected here (plain http on any host:port still works) and has to be added to both lists.",
+      "description": "Scope for plugin-http (webview fetch executed in Rust). Plain HTTP is limited to loopback, RFC1918, link-local, and *.local so user-configured LAN/self-hosted endpoints (Ollama, Speaches, OpenAI-compatible) still work without granting a global http://*:* exfiltration path. Hosted SaaS providers CAN be enumerated, so https is a curated allow-list mirroring the security.csp connect-src hosts in tauri.conf.json rather than https://* — a wildcard there would let injected page script exfiltrate to any TLS host through Rust, sidestepping the CSP entirely. Tauri rewrites an empty pathname to `*` (see tauri-plugin-http scope tests), so one entry per host covers every path and query. Adding a provider means adding it here AND to connect-src; the csp-connect-src contract test guards the other direction.",
       "allow": [
         {
           "url": "http://localhost"
@@ -88,10 +88,124 @@
           "url": "http://127.0.0.1:*/**"
         },
         {
-          "url": "http://*:*"
+          "url": "http://10.*:*"
         },
         {
-          "url": "http://*:*/**"
+          "url": "http://10.*:*/**"
+        },
+        {
+          "url": "http://192.168.*:*"
+        },
+        {
+          "url": "http://192.168.*:*/**"
+        },
+        {
+          "url": "http://172.16.*:*"
+        },
+        {
+          "url": "http://172.16.*:*/**"
+        },
+        {
+          "url": "http://172.17.*:*"
+        },
+        {
+          "url": "http://172.17.*:*/**"
+        },
+        {
+          "url": "http://172.18.*:*"
+        },
+        {
+          "url": "http://172.18.*:*/**"
+        },
+        {
+          "url": "http://172.19.*:*"
+        },
+        {
+          "url": "http://172.19.*:*/**"
+        },
+        {
+          "url": "http://172.20.*:*"
+        },
+        {
+          "url": "http://172.20.*:*/**"
+        },
+        {
+          "url": "http://172.21.*:*"
+        },
+        {
+          "url": "http://172.21.*:*/**"
+        },
+        {
+          "url": "http://172.22.*:*"
+        },
+        {
+          "url": "http://172.22.*:*/**"
+        },
+        {
+          "url": "http://172.23.*:*"
+        },
+        {
+          "url": "http://172.23.*:*/**"
+        },
+        {
+          "url": "http://172.24.*:*"
+        },
+        {
+          "url": "http://172.24.*:*/**"
+        },
+        {
+          "url": "http://172.25.*:*"
+        },
+        {
+          "url": "http://172.25.*:*/**"
+        },
+        {
+          "url": "http://172.26.*:*"
+        },
+        {
+          "url": "http://172.26.*:*/**"
+        },
+        {
+          "url": "http://172.27.*:*"
+        },
+        {
+          "url": "http://172.27.*:*/**"
+        },
+        {
+          "url": "http://172.28.*:*"
+        },
+        {
+          "url": "http://172.28.*:*/**"
+        },
+        {
+          "url": "http://172.29.*:*"
+        },
+        {
+          "url": "http://172.29.*:*/**"
+        },
+        {
+          "url": "http://172.30.*:*"
+        },
+        {
+          "url": "http://172.30.*:*/**"
+        },
+        {
+          "url": "http://172.31.*:*"
+        },
+        {
+          "url": "http://172.31.*:*/**"
+        },
+        {
+          "url": "http://169.254.*:*"
+        },
+        {
+          "url": "http://169.254.*:*/**"
+        },
+        {
+          "url": "http://*.local:*"
+        },
+        {
+          "url": "http://*.local:*/**"
         },
         {
           "url": "https://*.googleapis.com"

@@ -748,6 +748,9 @@ ${userName}`;
           <TutorialStepper
             stepIndex={stepIndex}
             onSelect={(index) => {
+              if (index === stepIndex) {
+                return;
+              }
               setStepIndex(index);
               setDictationValue("");
               setHasStartedDictating(false);

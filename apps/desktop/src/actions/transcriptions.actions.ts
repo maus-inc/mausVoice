@@ -84,7 +84,7 @@ const processAudio = async ({
     dictationLanguage: languageCode ?? undefined,
   });
   const sanitizedTranscript = sanitizeImportedTranscript(
-    transcribeResult.rawTranscript,
+    transcribeResult.sanitizedTranscript,
     languageCode,
   );
   const postProcessResult = await postProcessTranscript({

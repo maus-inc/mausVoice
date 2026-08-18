@@ -16,7 +16,7 @@ Tracing the flow end to end (`AppSideEffects` → `updater.actions` → `desktop
 
 **Channel:** stable only. Prereleases publish installers but never a manifest, so the updater cannot pull a pre-release onto a stable user.
 
-**Trust anchor:** no key material in the repository. `tauri.conf.json` ships `createUpdaterArtifacts: false` and an empty `pubkey`; the release workflow reads `UPDATER_PRIVATE_KEY` / `UPDATER_PRIVATE_KEY_PASSWORD` / `UPDATER_PUBLIC_KEY` from repository secrets, maps the private key onto `TAURI_SIGNING_PRIVATE_KEY` for Tauri, and patches `UPDATER_PUBLIC_KEY` into `plugins.updater.pubkey` for that build only. With no secrets configured the pipeline degrades to exactly today's behaviour: unsigned installers, no manifest, no updater artifacts.
+**Trust anchor:** no key material in the repository. `tauri.conf.json` ships `createUpdaterArtifacts: false` and an empty `pubkey`; the release workflow reads `UPDATER_PRIVATE_KEY` / `UPDATER_PRIVATE_KEY_PASSWORD` / `UPDATER_PUBLIC_KEY` from repository secrets, maps the private key onto `TAURI_SIGNING_PRIVATE_KEY` for Tauri, and patches `UPDATER_PUBLIC_KEY` into `plugins.updater.pubkey` for that build only. Stable publish is fail-closed: missing updater secrets must fail the job rather than ship unsigned. Only prereleases may skip manifest generation.
 
 **Endpoint:** `https://github.com/maus-inc/mausVoice/releases/latest/download/latest.json`, declared once in the base config. `releases/latest/download` always resolves to the newest non-prerelease release, so the manifest URL is stable and needs no per-release tag rewriting.
 

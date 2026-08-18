@@ -336,17 +336,9 @@ const syncHotkeyCombosToNativeNow = async (): Promise<void> => {
     }
   }
 
-  try {
-    await invoke("sync_hotkey_combos", { combos });
-  } catch (err) {
-    console.error("Failed to sync hotkey combos to native", err);
-  }
+  await invoke("sync_hotkey_combos", { combos });
 
   if (state.hotkeyStrategy === "bridge") {
-    try {
-      await invoke("sync_compositor_hotkeys", { bindings: compositorBindings });
-    } catch (err) {
-      console.error("Failed to sync compositor hotkeys", err);
-    }
+    await invoke("sync_compositor_hotkeys", { bindings: compositorBindings });
   }
 };

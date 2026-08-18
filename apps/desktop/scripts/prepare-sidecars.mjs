@@ -167,12 +167,11 @@ function prepareSherpaWindowsRuntime() {
     return;
   }
 
-  // Normalize to lower-case so the case-insensitive comparison below cannot be
-  // defeated by an on-disk casing (e.g. `OnnxRuntime.dll`) that differs from the
-  // required lowercase name.
-  const runtimeDlls = readdirSync(profileDir)
-    .filter((name) => WINDOWS_SHERPA_RUNTIME_DLLS.has(name.toLowerCase()))
-    .map((name) => name.toLowerCase());
+  // Keep on-disk names for copy (Windows filesystems may use OnnxRuntime.dll)
+  // and compare required names case-insensitively in validateSherpaRuntimeDlls.
+  const runtimeDlls = readdirSync(profileDir).filter((name) =>
+    WINDOWS_SHERPA_RUNTIME_DLLS.has(name.toLowerCase()),
+  );
 
   // Fail closed: the shared sherpa-onnx build must produce the DLLs the sidecar
   // actually imports. If even the essential subset is absent the sidecar would
@@ -200,7 +199,11 @@ function prepareSherpaWindowsRuntime() {
   for (const name of runtimeDlls) {
     const destinationDir = join(tauriBinariesDir, "onnxruntime");
     mkdirSync(destinationDir, { recursive: true });
-    copyFileSync(join(profileDir, name), join(destinationDir, name));
+    // Always emit the canonical lowercase name the sidecar loader looks up.
+    copyFileSync(
+      join(profileDir, name),
+      join(destinationDir, name.toLowerCase()),
+    );
     console.log(`[sidecar] Prepared sherpa Windows runtime: ${name}`);
   }
 }

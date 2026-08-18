@@ -161,7 +161,9 @@ export const normalizeLocalWhisperModel = (
   if (!normalized) {
     return DEFAULT_LOCAL_WHISPER_MODEL;
   }
-  return LOCAL_WHISPER_MODEL_ALIASES[normalized] ?? DEFAULT_LOCAL_WHISPER_MODEL;
+  return Object.hasOwn(LOCAL_WHISPER_MODEL_ALIASES, normalized)
+    ? LOCAL_WHISPER_MODEL_ALIASES[normalized]
+    : DEFAULT_LOCAL_WHISPER_MODEL;
 };
 
 export const isGpuPreferredTranscriptionDevice = (

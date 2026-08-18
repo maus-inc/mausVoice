@@ -49,7 +49,7 @@ jobs:
             require_gpu_sidecar: false
           - label: Linux
             os: ubuntu-22.04
-            args: "--bundles deb"
+            args: "--bundles deb,appimage"
             rust_targets: ""
             tauri_platform: linux
             node_platform: linux

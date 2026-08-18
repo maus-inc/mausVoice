@@ -40,10 +40,14 @@ export const sanitizeTranscriptText = ({
   skipStructuralCommands = false,
   segments = null,
 }: SanitizeTranscriptOptions): string => {
+  const replacedSegments = segments?.map((segment) => ({
+    ...segment,
+    text: applyReplacements(segment.text, replacementRules),
+  }));
   const afterReplacements = applyReplacements(rawTranscript, replacementRules);
   const afterHallucination = applyHallucinationFiltering(
     afterReplacements,
-    segments,
+    replacedSegments,
     language,
     hallucinationFilterEnabled,
   );

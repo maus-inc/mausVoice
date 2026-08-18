@@ -193,12 +193,12 @@ const predecessorBlocked = (
   });
 };
 
-const isWhitespaceOnly = (value: string): boolean => {
+const isHorizontalWhitespaceOnly = (value: string): boolean => {
   if (!value) {
     return false;
   }
   for (const char of value) {
-    if (!isWhitespaceChar(char)) {
+    if (!isHorizontalSpace(char)) {
       return false;
     }
   }
@@ -206,7 +206,7 @@ const isWhitespaceOnly = (value: string): boolean => {
 };
 
 const trimTrailingSpace = (parts: string[]): void => {
-  while (parts.length > 0 && isWhitespaceOnly(parts.at(-1) ?? "")) {
+  while (parts.length > 0 && isHorizontalWhitespaceOnly(parts.at(-1) ?? "")) {
     parts.pop();
   }
 };
@@ -247,7 +247,12 @@ const isAbbreviationStop = (text: string, stopIndex: number): boolean => {
   const word = lastNonWhitespaceWord(
     text.slice(0, stopIndex + 1),
   ).toLowerCase();
-  if (word.length === 2 && isAsciiAlnum(word[0] ?? "") && word[1] === ".") {
+  if (
+    word.length === 2 &&
+    word[0] >= "a" &&
+    word[0] <= "z" &&
+    word[1] === "."
+  ) {
     return true;
   }
   return ABBREVIATION_STOPS.has(word);
@@ -375,11 +380,10 @@ const shouldDropFollowingGap = (command: SpokenCommand): boolean => {
   if (command.kind === "scratch") {
     return true;
   }
-  return (
-    command.value.startsWith("\n") ||
-    command.value === "(" ||
-    command.value === '"'
-  );
+  if (command.value.startsWith("\n") || command.value === "(") {
+    return true;
+  }
+  return command.value === '"' && !command.attachLeft;
 };
 
 const applyMatchedCommand = (

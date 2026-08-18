@@ -184,6 +184,8 @@ export const transcribeAudio = async ({
   const hallucinationFilterEnabled =
     state.userPrefs?.hallucinationFilterEnabled !== false;
 
+  // Multi-chunk audio already gated and overlap-merged in the repo. Passing
+  // flattened segments here would rebuild text and reintroduce overlap dupes.
   const sanitizedTranscript = applyHallucinationFiltering(
     rawTranscript,
     transcribeOutput.segments,
