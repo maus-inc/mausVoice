@@ -271,6 +271,7 @@
   "failed_to_load_api_keys": "Falha ao carregar chaves API",
   "failed_to_load_models": "Falha ao carregar modelos",
   "failed_to_restart_mausvoice_as_administrator": "Falha ao reiniciar o mausVoice como administrador.",
+  "failed_to_schedule_delete": "Failed to schedule delete.",
   "failed_to_stop_recording": "Falha ao parar a gravação",
   "fast_large_model_great_accuracy": "Modelo grande e rápido, excelente precisão",
   "fastest_lowest_accuracy": "Mais rápido, menor precisão",

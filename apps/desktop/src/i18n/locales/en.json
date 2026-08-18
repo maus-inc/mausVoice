@@ -271,6 +271,7 @@
   "failed_to_load_api_keys": "Failed to load API keys",
   "failed_to_load_models": "Failed to load models",
   "failed_to_restart_mausvoice_as_administrator": "Failed to restart mausVoice as administrator.",
+  "failed_to_schedule_delete": "Failed to schedule delete.",
   "failed_to_stop_recording": "Failed to stop recording",
   "fast_large_model_great_accuracy": "Fast large model, great accuracy",
   "fastest_lowest_accuracy": "Fastest, lowest accuracy",
