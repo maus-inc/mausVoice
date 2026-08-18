@@ -3041,713 +3041,6 @@ fn validate_local_app_route(route: &str) -> Result<(), String> {
     Ok(())
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn terminal_command_rejects_empty() {
-        assert!(validate_terminal_command_args("").is_err());
-        assert!(validate_terminal_command_args("   ").is_err());
-    }
-
-    #[test]
-    fn terminal_command_allows_benign_double_dots_inside_a_token() {
-        assert!(validate_terminal_command_args("echo file..txt").is_ok());
-        assert!(validate_terminal_command_args("echo ..").is_err());
-    }
-
-    #[test]
-    fn terminal_command_rejects_paths_and_shells() {
-        assert!(validate_terminal_command_args("/bin/sh").is_err());
-        assert!(validate_terminal_command_args("../../sh").is_err());
-        assert!(validate_terminal_command_args("sh -c 'echo hi'").is_err());
-        assert!(validate_terminal_command_args("bash ls").is_err());
-        assert!(validate_terminal_command_args("cmd /c dir").is_err());
-    }
-
-    #[test]
-    fn terminal_command_rejects_metacharacters() {
-        assert!(validate_terminal_command_args("ls ; rm -rf /").is_err());
-        assert!(validate_terminal_command_args("ls | cat").is_err());
-        assert!(validate_terminal_command_args("echo $(whoami)").is_err());
-        assert!(validate_terminal_command_args("echo `whoami`").is_err());
-        assert!(validate_terminal_command_args("echo > file").is_err());
-    }
-
-    #[test]
-    fn terminal_command_rejects_path_traversal_in_args() {
-        // Even with an allow-listed binary, path separators and `..` in
-        // arguments must be refused so a reader cannot reach arbitrary files.
-        assert!(validate_terminal_command_args("ls /etc/passwd").is_err());
-        assert!(validate_terminal_command_args("echo /etc/passwd").is_err());
-        assert!(validate_terminal_command_args("cat /etc/passwd").is_err());
-        assert!(validate_terminal_command_args("echo ../../secrets").is_err());
-        assert!(validate_terminal_command_args("echo ..").is_err());
-        assert!(validate_terminal_command_args("ls ~/.ssh/id_rsa").is_err());
-    }
-
-    #[cfg(not(target_os = "windows"))]
-    #[test]
-    fn terminal_command_allows_allowlisted() {
-        assert_eq!(
-            validate_terminal_command_args("ls -la").unwrap().0.binary,
-            "ls"
-        );
-        assert_eq!(
-            validate_terminal_command_args("pwd").unwrap().0.binary,
-            "pwd"
-        );
-        assert_eq!(
-            validate_terminal_command_args("echo hello world")
-                .unwrap()
-                .0
-                .binary,
-            "echo"
-        );
-    }
-
-    #[cfg(target_os = "windows")]
-    #[test]
-    fn terminal_command_allows_allowlisted() {
-        assert_eq!(
-            validate_terminal_command_args("whoami").unwrap().0.binary,
-            "whoami"
-        );
-        assert_eq!(
-            validate_terminal_command_args("where cargo").unwrap().0.binary,
-            "where"
-        );
-        // CMD builtins are intentionally absent: without a shell they have
-        // no executable to spawn.
-        assert!(validate_terminal_command_args("dir").is_err());
-    }
-
-    /// Every allow-listed entry must be reachable through the validator,
-    /// so the const and the parser can't drift apart on any platform.
-    #[test]
-    fn terminal_command_allowlist_entries_are_reachable() {
-        for entry in ALLOWED_COMMANDS {
-            let (matched, args) = validate_terminal_command_args(entry.binary)
-                .unwrap_or_else(|err| panic!("{} should validate: {err}", entry.binary));
-            assert_eq!(matched.binary, entry.binary);
-            assert!(args.is_empty());
-        }
-    }
-
-    #[test]
-    fn terminal_command_rejects_binary_with_embedded_space() {
-        // A binary name that contains a space can never match an allow-list
-        // entry (entries are single, space-free tokens), so it is rejected
-        // rather than silently collapsing into a different command.
-        assert!(validate_terminal_command_args("\"ls -rf\"").is_err());
-        assert!(validate_terminal_command_args("my binary").is_err());
-    }
-
-    #[test]
-    fn terminal_command_accepts_allowed_command_with_empty_args() {
-        // An allow-listed binary with no user-supplied arguments is accepted
-        // and reports an empty argv tail.
-        #[cfg(not(target_os = "windows"))]
-        let binary = "ls";
-        #[cfg(target_os = "windows")]
-        let binary = "whoami";
-        let (allowed, args) = validate_terminal_command_args(binary).unwrap();
-        assert_eq!(allowed.binary, binary);
-        assert!(args.is_empty());
-    }
-
-    #[cfg(not(target_os = "windows"))]
-    #[tokio::test]
-    async fn terminal_command_runs_ls_without_path_in_environment() {
-        // Serialize env mutation so it cannot race any other test.
-        static PATH_GUARD: std::sync::Mutex<()> = std::sync::Mutex::new(());
-        let _guard = PATH_GUARD.lock().unwrap();
-
-        let original = std::env::var("PATH").ok();
-        // Simulate a process environment that has no PATH at all.
-        std::env::remove_var("PATH");
-
-        let result = run_terminal_command("ls".to_string()).await;
-
-        // Restore the environment for any subsequent code.
-        match original {
-            Some(value) => std::env::set_var("PATH", value),
-            None => std::env::remove_var("PATH"),
-        }
-        drop(_guard);
-
-        // `cmd.env_clear()` drops PATH from the child, but the OS default
-        // search path still resolves `ls`, so the command must succeed rather
-        // than fail to spawn with a missing-PATH error.
-        let response = result.expect("ls should run even without a PATH env var");
-        assert_eq!(response.exit_code, 0);
-        assert!(!response.stdout.is_empty());
-    }
-
-    #[test]
-    fn installer_url_accepts_trusted_release_hosts() {
-        assert!(validate_installer_url(
-            &Url::parse("https://github.com/maus-inc/mausVoice/releases/download/v1/app.pkg")
-                .unwrap(),
-            TRUSTED_REPO_NAMESPACE
-        )
-        .is_ok());
-        assert!(validate_installer_url(
-            &Url::parse("https://github.com/maus-inc/mausVoice/releases/download/v1/mausVoice_0.1.7_universal.dmg")
-                .unwrap(),
-            TRUSTED_REPO_NAMESPACE
-        )
-        .is_ok());
-        assert!(validate_installer_url(
-            &Url::parse(
-                "https://github.com/maus-inc/mausVoice/releases/download/v1/mausVoice.app.tar.gz"
-            )
-            .unwrap(),
-            TRUSTED_REPO_NAMESPACE
-        )
-        .is_ok());
-        // The objects CDN is allowed only when the hop retains the trusted
-        // repository namespace.
-        assert!(validate_installer_url(
-            &Url::parse(
-                "https://objects.githubusercontent.com/maus-inc/mausVoice/releases/download/v1/app.pkg"
-            )
-            .unwrap(),
-            TRUSTED_REPO_NAMESPACE
-        )
-        .is_ok());
-    }
-
-    #[test]
-    fn installer_url_rejects_untrusted_hosts_schemes_and_extensions() {
-        // A redirect target on an untrusted host must be refused: this is the
-        // check the redirect policy applies to every hop.
-        assert!(
-            validate_installer_url(
-                &Url::parse("https://evil.com/app.pkg").unwrap(),
-                TRUSTED_REPO_NAMESPACE
-            )
-            .is_err()
-        );
-        assert!(validate_installer_url(
-            &Url::parse("http://github.com/maus-inc/app.pkg").unwrap(),
-            TRUSTED_REPO_NAMESPACE
-        )
-        .is_err());
-        assert!(validate_installer_url(
-            &Url::parse("https://github.com/maus-inc/payload.sh").unwrap(),
-            TRUSTED_REPO_NAMESPACE
-        )
-        .is_err());
-        // An objects CDN hop that escapes into a different repository namespace
-        // must be rejected even though the host is allow-listed.
-        assert!(validate_installer_url(
-            &Url::parse("https://objects.githubusercontent.com/other-org/otherRepo/releases/download/v1/app.pkg")
-                .unwrap(),
-            TRUSTED_REPO_NAMESPACE
-        )
-        .is_err());
-    }
-
-    #[test]
-    fn capped_reader_bounds_memory_and_reports_total() {
-        let payload = vec![b'x'; 10_000];
-        let (retained, total) = read_capped(payload.as_slice(), 1_000);
-        assert_eq!(retained.len(), 1_000);
-        assert_eq!(total, 10_000);
-
-        let rendered = format_capped_output(&retained, total);
-        assert!(rendered.contains("truncated: 10000 bytes total"));
-    }
-
-    #[test]
-    fn capped_reader_passes_through_small_output() {
-        let (retained, total) = read_capped(b"hello".as_slice(), 1_000);
-        assert_eq!(total, 5);
-        assert_eq!(format_capped_output(&retained, total), "hello");
-    }
-
-    #[test]
-    fn floating_window_allows_localhost() {
-        assert!(validate_floating_window_url(&Url::parse("http://localhost:1420/").unwrap()).is_ok());
-        assert!(validate_floating_window_url(&Url::parse("http://127.0.0.1:8080/foo").unwrap()).is_ok());
-    }
-
-    #[test]
-    fn local_app_route_allows_dots_in_query_data() {
-        assert!(validate_local_app_route("composer?text=Wait...%20what%3F").is_ok());
-        assert!(validate_local_app_route("composer/../settings").is_err());
-        assert!(validate_local_app_route("composer/%2e%2e/settings").is_err());
-        assert!(validate_local_app_route("composer/%252e%252e%252fsettings").is_err());
-        // A leftover bare `%` after the first successful decode is a terminal
-        // value, not another encoding round.
-        assert!(validate_local_app_route("composer/100%done").is_ok());
-        assert!(percent_decode_route_path("composer/100%done").is_ok());
-    }
-
-    #[test]
-    fn floating_window_treats_ipv6_loopback_as_localhost() {
-        assert!(validate_floating_window_url(
-            &Url::parse("http://[::1]:1420/").unwrap()
-        )
-        .is_ok());
-    }
-
-    #[test]
-    fn floating_window_allows_docs_site() {
-        assert!(validate_floating_window_url(
-            &Url::parse("https://maus-inc.github.io/mausVoice/welcome").unwrap()
-        )
-        .is_ok());
-        // GitHub Pages URL must be scoped to /mausVoice/ even though that
-        // host has no IPC capability — keep the navigation allow-list tight.
-        assert!(validate_floating_window_url(
-            &Url::parse("https://maus-inc.github.io/other-project/").unwrap()
-        )
-        .is_err());
-    }
-
-    #[test]
-    fn floating_window_rejects_arbitrary_origins() {
-        assert!(validate_floating_window_url(&Url::parse("https://evil.com/").unwrap()).is_err());
-        assert!(validate_floating_window_url(&Url::parse("file:///etc/passwd").unwrap()).is_err());
-        assert!(validate_floating_window_url(&Url::parse("javascript:alert(1)").unwrap()).is_err());
-        assert!(parse_floating_window_url("not a url").is_err());
-    }
-
-    #[test]
-    fn pill_visibility_rejects_unknown_values() {
-        // The validation in set_pill_visibility is a literal match against
-        // these three strings; any deviation would change the command's
-        // public contract and is caught here.
-        let valid = ["hidden", "persistent", "while_active"];
-        for v in valid {
-            assert!(matches!(v, "hidden" | "persistent" | "while_active"));
-        }
-        assert!(!matches!(
-            "always_on_top",
-            "hidden" | "persistent" | "while_active"
-        ));
-    }
-
-    #[test]
-    fn cancel_typing_only_signals_a_live_session() {
-        // `CANCEL_TYPING` is process-wide and `cargo test` runs tests in
-        // parallel, so put it back the way we found it before returning.
-        let previous = CANCEL_TYPING.load(Ordering::SeqCst);
-        CANCEL_TYPING.store(false, Ordering::SeqCst);
-
-        // No typing session is live, so the cancel must be ignored instead
-        // of arming the flag for the next session.
-        cancel_typing().unwrap();
-        assert!(!CANCEL_TYPING.load(Ordering::SeqCst));
-
-        {
-            let _session = ReentryGuard::acquire(&SIMULATE_TYPE_IN_PROGRESS).unwrap();
-            cancel_typing().unwrap();
-            assert!(CANCEL_TYPING.load(Ordering::SeqCst));
-        }
-
-        CANCEL_TYPING.store(previous, Ordering::SeqCst);
-    }
-
-    #[test]
-    fn reentry_guard_rejects_a_second_acquire() {
-        let flag = AtomicBool::new(false);
-        let first = ReentryGuard::acquire(&flag).unwrap();
-        assert!(ReentryGuard::acquire(&flag).is_err());
-        drop(first);
-        assert!(ReentryGuard::acquire(&flag).is_ok());
-    }
-
-    #[test]
-    fn reentry_guard_releases_on_panic() {
-        let flag = AtomicBool::new(false);
-        let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-            let _guard = ReentryGuard::acquire(&flag).unwrap();
-            panic!("boom");
-        }));
-        assert!(result.is_err());
-        assert!(!flag.load(Ordering::Acquire));
-        assert!(ReentryGuard::acquire(&flag).is_ok());
-    }
-
-    /// Tables that live in the schema but hold no user content, so
-    /// `clear_local_data` may skip them. Adding a name here is an explicit
-    /// privacy decision, which is the point: it cannot happen by omission.
-    const NON_USER_DATA_TABLES: &[&str] = &[];
-
-    /// Rebuild the set of tables the schema actually ends up with by
-    /// replaying the migration SQL. Derived independently of
-    /// `USER_DATA_TABLES_TO_CLEAR`, so a new table that nobody remembered
-    /// to clear still shows up here.
-    /// Strip SQL noise that would otherwise be mis-tokenized when the
-    /// migrations are replayed as statements:
-    /// - `/* */` block comments,
-    /// - `--` line comments (to end of line),
-    /// - single-quoted string literals (which may contain `;`, `--`, or
-    ///   `*/`), including the `''` doubled-quote escape.
-    ///
-    /// Double-quoted identifiers (table/column names in SQLite) are left in
-    /// place by this pass: they are not string literals, so unlike `'...'`
-    /// above they are not skipped. The surrounding quote characters are
-    /// trimmed later when the table name is extracted, so `"my_table"` and
-    /// `my_table` resolve to the same bare name that SQLite reports.
-    fn strip_sql_noise(sql: &str) -> String {
-        let mut out = String::with_capacity(sql.len());
-        let mut chars = sql.chars().peekable();
-        let mut in_block_comment = false;
-        let mut in_line_comment = false;
-        while let Some(c) = chars.next() {
-            if in_line_comment {
-                if c == '\n' {
-                    in_line_comment = false;
-                    out.push(c);
-                }
-                continue;
-            }
-            if in_block_comment {
-                if c == '*' && chars.peek() == Some(&'/') {
-                    chars.next();
-                    in_block_comment = false;
-                }
-                continue;
-            }
-            if c == '/' && chars.peek() == Some(&'*') {
-                chars.next();
-                in_block_comment = true;
-                continue;
-            }
-            if c == '-' && chars.peek() == Some(&'-') {
-                chars.next();
-                in_line_comment = true;
-                continue;
-            }
-            if c == '\'' {
-                // Single-quoted string literal: skip content (incl. '' escape).
-                while let Some(q) = chars.next() {
-                    if q == '\'' {
-                        if chars.peek() == Some(&'\'') {
-                            chars.next(); // doubled-quote escape
-                            continue;
-                        }
-                        break;
-                    }
-                }
-                continue;
-            }
-            out.push(c);
-        }
-        out
-    }
-
-    fn tables_declared_by_migrations() -> std::collections::BTreeSet<String> {
-        let first_word = |rest: &str| -> Option<String> {
-            rest.split(|c: char| c == '(' || c.is_whitespace())
-                .find(|part| !part.is_empty())
-                // Trim surrounding double quotes so a quoted identifier
-                // (`CREATE TABLE "name"`) resolves to the same bare name
-                // SQLite reports, rather than `"name"`.
-                .map(|name| name.trim_matches('"').to_string())
-        };
-
-        let mut tables: std::collections::BTreeSet<String> = std::collections::BTreeSet::new();
-        for migration in crate::db::migrations() {
-            // `strip_sql_noise` fully cleans each migration's SQL (block
-            // comments, line comments, and single-quoted string literals),
-            // so the remaining text can be replayed statement by statement.
-            let sql = strip_sql_noise(migration.sql)
-                .lines()
-                .map(|line| line.trim())
-                .collect::<Vec<_>>()
-                .join(" ");
-
-            for raw_statement in sql.split(';') {
-                let statement = raw_statement
-                    .split_whitespace()
-                    .map(|word| word.to_ascii_lowercase())
-                    .collect::<Vec<_>>()
-                    .join(" ");
-
-                if let Some(rest) = statement
-                    .strip_prefix("create table if not exists ")
-                    .or_else(|| statement.strip_prefix("create table "))
-                {
-                    if let Some(name) = first_word(rest) {
-                        tables.insert(name);
-                    }
-                } else if let Some(rest) = statement
-                    .strip_prefix("drop table if exists ")
-                    .or_else(|| statement.strip_prefix("drop table "))
-                {
-                    if let Some(name) = first_word(rest) {
-                        tables.remove(&name);
-                    }
-                } else if let Some(rest) = statement.strip_prefix("alter table ") {
-                    if let Some((old, new)) = rest.split_once(" rename to ") {
-                        if let (Some(old), Some(new)) = (first_word(old), first_word(new)) {
-                            tables.remove(&old);
-                            tables.insert(new);
-                        }
-                    }
-                }
-            }
-        }
-        tables
-    }
-
-    #[test]
-    fn user_data_tables_to_clear_covers_the_privacy_set() {
-        let declared = tables_declared_by_migrations();
-        assert!(
-            !declared.is_empty(),
-            "no tables parsed from the migrations — the parser is broken"
-        );
-
-        for table in &declared {
-            assert!(
-                USER_DATA_TABLES_TO_CLEAR.contains(&table.as_str())
-                    || NON_USER_DATA_TABLES.contains(&table.as_str()),
-                "table `{table}` exists in the schema but clear_local_data never wipes it — a missed table is a privacy leak"
-            );
-        }
-
-        for table in USER_DATA_TABLES_TO_CLEAR {
-            assert!(
-                declared.contains(table),
-                "`{table}` is cleared but no longer exists in the schema"
-            );
-        }
-    }
-
-    #[test]
-    fn managed_audio_path_rejects_paths_outside_the_audio_dir() {
-        let root = std::env::temp_dir()
-            .join(format!("mausvoice-audio-guard-{}", std::process::id()));
-        let audio_dir = root.join("audio");
-        let other_dir = root.join("other");
-        std::fs::create_dir_all(&audio_dir).unwrap();
-        std::fs::create_dir_all(&other_dir).unwrap();
-        // Canonicalized because the guard returns real paths (e.g. macOS
-        // maps /tmp to /private/tmp).
-        let expected = std::fs::canonicalize(&audio_dir).unwrap().join("clip.wav");
-
-        let inside = audio_dir.join("clip.wav");
-        let outside = other_dir.join("clip.wav");
-        // A traversal attempt must NOT escape the managed directory.
-        let traversal = audio_dir.join("..").join("escaped.wav");
-        assert_eq!(
-            resolve_managed_audio_path(&inside, &audio_dir),
-            Some(expected.clone())
-        );
-        assert_eq!(resolve_managed_audio_path(&outside, &audio_dir), None);
-        assert_eq!(resolve_managed_audio_path(&traversal, &audio_dir), None);
-        // A relative entry must resolve inside the managed directory, never
-        // against the process working directory.
-        assert_eq!(
-            resolve_managed_audio_path(std::path::Path::new("clip.wav"), &audio_dir),
-            Some(expected.clone())
-        );
-        // An `audio_dir` spelled with `.` still matches its own contents.
-        assert_eq!(
-            resolve_managed_audio_path(&inside, &root.join(".").join("audio")),
-            Some(expected)
-        );
-
-        #[cfg(unix)]
-        {
-            // A symlinked subdirectory must not tunnel out of audio_dir.
-            let link = audio_dir.join("link");
-            std::os::unix::fs::symlink(&other_dir, &link).unwrap();
-            assert_eq!(
-                resolve_managed_audio_path(&link.join("clip.wav"), &audio_dir),
-                None
-            );
-        }
-
-        let _ = std::fs::remove_dir_all(&root);
-    }
-
-    #[test]
-    fn managed_audio_read_rejects_final_symlink_escape() {
-        let root = std::env::temp_dir()
-            .join(format!("mausvoice-audio-read-{}", std::process::id()));
-        let audio_dir = root.join("audio");
-        let outside_dir = root.join("outside");
-        std::fs::create_dir_all(&audio_dir).unwrap();
-        std::fs::create_dir_all(&outside_dir).unwrap();
-        let secret = outside_dir.join("secret.wav");
-        std::fs::write(&secret, b"TOP SECRET").unwrap();
-
-        #[cfg(unix)]
-        {
-            // A final-entry symlink pointing outside must be rejected for
-            // reads: canonicalizing the whole path follows the symlink and
-            // lands outside audio_dir, so the bytes are never leaked.
-            let link = audio_dir.join("clip.wav");
-            std::os::unix::fs::symlink(&secret, &link).unwrap();
-            assert!(
-                resolve_managed_audio_path_for_read(&link, &audio_dir).is_none()
-            );
-
-            // A regular file inside audio_dir is still accepted.
-            let real = audio_dir.join("real.wav");
-            std::fs::write(&real, b"ok").unwrap();
-            assert!(resolve_managed_audio_path_for_read(&real, &audio_dir).is_some());
-        }
-
-        let _ = std::fs::remove_dir_all(&root);
-    }
-
-    #[test]
-    fn managed_audio_read_returns_usable_handle_for_regular_file() {
-        let root = std::env::temp_dir()
-            .join(format!("mausvoice-audio-read-handle-{}", std::process::id()));
-        let audio_dir = root.join("audio");
-        std::fs::create_dir_all(&audio_dir).unwrap();
-        let real = audio_dir.join("real.wav");
-        std::fs::write(&real, b"readable-bytes").unwrap();
-
-        // The read helper must return a handle to the *validated* file whose
-        // bytes match what was on disk.
-        let file = resolve_managed_audio_path_for_read(&real, &audio_dir);
-        assert!(file.is_some());
-        let mut buf = String::new();
-        use std::io::Read;
-        file.unwrap().read_to_string(&mut buf).unwrap();
-        assert_eq!(buf, "readable-bytes");
-
-        let _ = std::fs::remove_dir_all(&root);
-    }
-
-    #[test]
-    fn import_path_is_rejected_outside_allowed_roots() {
-        // Mirrors the confinement check in `transcription_import_audio`: a path
-        // outside the allowed import roots must be rejected so the command
-        // cannot be used as a filesystem read oracle.
-        let tmp = std::env::temp_dir()
-            .join(format!("mausvoice-import-confine-{}", std::process::id()));
-        let allowed = vec![tmp.join("allowed")];
-        std::fs::create_dir_all(&allowed[0]).unwrap();
-        let inside = allowed[0].join("clip.wav");
-        let outside = tmp.join("outside.wav");
-        assert!(is_path_within_allowed_roots(&inside, &allowed));
-        assert!(!is_path_within_allowed_roots(&outside, &allowed));
-        let _ = std::fs::remove_dir_all(&tmp);
-    }
-
-    #[test]
-    fn clear_local_data_file_helpers_respect_the_audio_dir_guard() {
-        let root = std::env::temp_dir().join(format!(
-            "mausvoice-clear-local-{}",
-            std::process::id()
-        ));
-        let audio_dir = root.join("audio");
-        let outside_dir = root.join("outside");
-        std::fs::create_dir_all(&audio_dir).unwrap();
-        std::fs::create_dir_all(&outside_dir).unwrap();
-
-        let inside = audio_dir.join("keep-me-not.wav");
-        let relative = audio_dir.join("relative.wav");
-        let orphan = audio_dir.join("orphan.wav");
-        let other = audio_dir.join("notes.txt");
-        let outside = outside_dir.join("do-not-delete.wav");
-        std::fs::write(&inside, b"in").unwrap();
-        std::fs::write(&relative, b"rel").unwrap();
-        std::fs::write(&orphan, b"or").unwrap();
-        std::fs::write(&other, b"txt").unwrap();
-        std::fs::write(&outside, b"out").unwrap();
-
-        delete_listed_audio_files(
-            &audio_dir,
-            &[
-                inside.to_string_lossy().into_owned(),
-                // A relative row must be deleted from inside `audio_dir`.
-                "relative.wav".to_string(),
-                outside.to_string_lossy().into_owned(),
-            ],
-        );
-        assert!(!inside.exists());
-        assert!(!relative.exists());
-        assert!(outside.exists());
-
-        sweep_orphaned_wavs(&audio_dir);
-        assert!(!orphan.exists());
-        assert!(other.exists());
-        assert!(outside.exists());
-
-        let _ = std::fs::remove_dir_all(&root);
-    }
-
-    #[test]
-    fn installer_redirect_validates_each_hop_and_caps_depth() {
-        let ok = Url::parse(
-            "https://github.com/maus-inc/mausVoice/releases/download/v1/app.pkg",
-        )
-        .unwrap();
-        let evil = Url::parse("https://evil.com/app.pkg").unwrap();
-        assert!(installer_redirect_allowed(0, &ok, TRUSTED_REPO_NAMESPACE).is_ok());
-        assert!(installer_redirect_allowed(9, &ok, TRUSTED_REPO_NAMESPACE).is_ok());
-        assert!(installer_redirect_allowed(10, &ok, TRUSTED_REPO_NAMESPACE).is_err());
-        assert!(installer_redirect_allowed(0, &evil, TRUSTED_REPO_NAMESPACE).is_err());
-    }
-
-    #[test]
-    fn installer_redirect_allows_opaque_cdn_path() {
-        // GitHub's release-asset CDN returns an opaque UUID path; the real
-        // filename is carried in the signed query parameters. The validator must
-        // accept this normal redirect rather than demanding a path extension.
-        let cdn = Url::parse(
-            "https://release-assets.githubusercontent.com/github-production-release-asset/1234/\
-             abcdef-1234-5678?response-content-disposition=attachment%3Bfilename%3DmausVoice_1.0.0_universal.dmg",
-        )
-        .unwrap();
-        assert!(installer_redirect_allowed(1, &cdn, TRUSTED_REPO_NAMESPACE).is_ok());
-        // A non-GitHub host must still be rejected even with a dmg-looking query.
-        let bad = Url::parse(
-            "https://evil-cdn.example.com/uuid?response-content-disposition=attachment%3Bfilename%3DmausVoice_1.0.0_universal.dmg",
-        )
-        .unwrap();
-        assert!(installer_redirect_allowed(1, &bad, TRUSTED_REPO_NAMESPACE).is_err());
-    }
-
-    #[test]
-    fn installer_size_cap_rejects_advertised_and_streamed_oversize() {
-        assert!(installer_content_length_ok(None).is_ok());
-        assert!(installer_content_length_ok(Some(INSTALLER_MAX_BYTES)).is_ok());
-        assert!(installer_content_length_ok(Some(INSTALLER_MAX_BYTES + 1)).is_err());
-        assert_eq!(
-            installer_account_chunk(0, INSTALLER_MAX_BYTES).unwrap(),
-            INSTALLER_MAX_BYTES
-        );
-        assert!(installer_account_chunk(INSTALLER_MAX_BYTES, 1).is_err());
-    }
-
-    #[test]
-    fn signature_size_cap_rejects_advertised_and_streamed_oversize() {
-        assert!(signature_content_length_ok(None).is_ok());
-        assert!(signature_content_length_ok(Some(SIGNATURE_MAX_BYTES)).is_ok());
-        assert!(signature_content_length_ok(Some(SIGNATURE_MAX_BYTES + 1)).is_err());
-        assert_eq!(
-            signature_account_chunk(0, SIGNATURE_MAX_BYTES).unwrap(),
-            SIGNATURE_MAX_BYTES
-        );
-        assert!(signature_account_chunk(SIGNATURE_MAX_BYTES, 1).is_err());
-    }
-
-    #[test]
-    fn current_timestamp_ok() {
-        // Replicate the function body to avoid a public exposure. SystemTime
-        // should always be post-epoch on modern OSes; if it isn't we'd want
-        // to know rather than silently return i64::MAX.
-        let duration = SystemTime::now().duration_since(UNIX_EPOCH);
-        assert!(duration.is_ok());
-        let millis: Result<i64, _> = duration.unwrap().as_millis().try_into();
-        assert!(millis.is_ok());
-    }
-}
-
 /// Strict, shell-free execution for an allow-listed command.
 ///
 /// Security properties:
@@ -4582,6 +3875,722 @@ pub async fn floating_window_list(app: AppHandle) -> Result<Vec<FloatingWindowIn
         });
     }
     Ok(out)
+}
+
+
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn terminal_command_rejects_empty() {
+        assert!(validate_terminal_command_args("").is_err());
+        assert!(validate_terminal_command_args("   ").is_err());
+    }
+
+    #[test]
+    fn terminal_command_allows_benign_double_dots_inside_a_token() {
+        assert!(validate_terminal_command_args("echo file..txt").is_ok());
+        assert!(validate_terminal_command_args("echo ..").is_err());
+    }
+
+    #[test]
+    fn terminal_command_rejects_paths_and_shells() {
+        assert!(validate_terminal_command_args("/bin/sh").is_err());
+        assert!(validate_terminal_command_args("../../sh").is_err());
+        assert!(validate_terminal_command_args("sh -c 'echo hi'").is_err());
+        assert!(validate_terminal_command_args("bash ls").is_err());
+        assert!(validate_terminal_command_args("cmd /c dir").is_err());
+    }
+
+    #[test]
+    fn terminal_command_rejects_metacharacters() {
+        assert!(validate_terminal_command_args("ls ; rm -rf /").is_err());
+        assert!(validate_terminal_command_args("ls | cat").is_err());
+        assert!(validate_terminal_command_args("echo $(whoami)").is_err());
+        assert!(validate_terminal_command_args("echo `whoami`").is_err());
+        assert!(validate_terminal_command_args("echo > file").is_err());
+    }
+
+    #[test]
+    fn terminal_command_rejects_path_traversal_in_args() {
+        // Even with an allow-listed binary, path separators and `..` in
+        // arguments must be refused so a reader cannot reach arbitrary files.
+        assert!(validate_terminal_command_args("ls /etc/passwd").is_err());
+        assert!(validate_terminal_command_args("echo /etc/passwd").is_err());
+        assert!(validate_terminal_command_args("cat /etc/passwd").is_err());
+        assert!(validate_terminal_command_args("echo ../../secrets").is_err());
+        assert!(validate_terminal_command_args("echo ..").is_err());
+        assert!(validate_terminal_command_args("ls ~/.ssh/id_rsa").is_err());
+    }
+
+    #[cfg(not(target_os = "windows"))]
+    #[test]
+    fn terminal_command_allows_allowlisted() {
+        assert_eq!(
+            validate_terminal_command_args("ls -la").unwrap().0.binary,
+            "ls"
+        );
+        assert_eq!(
+            validate_terminal_command_args("pwd").unwrap().0.binary,
+            "pwd"
+        );
+        assert_eq!(
+            validate_terminal_command_args("echo hello world")
+                .unwrap()
+                .0
+                .binary,
+            "echo"
+        );
+    }
+
+    #[cfg(target_os = "windows")]
+    #[test]
+    fn terminal_command_allows_allowlisted() {
+        assert_eq!(
+            validate_terminal_command_args("whoami").unwrap().0.binary,
+            "whoami"
+        );
+        assert_eq!(
+            validate_terminal_command_args("where cargo").unwrap().0.binary,
+            "where"
+        );
+        // CMD builtins are intentionally absent: without a shell they have
+        // no executable to spawn.
+        assert!(validate_terminal_command_args("dir").is_err());
+    }
+
+    /// Every allow-listed entry must be reachable through the validator,
+    /// so the const and the parser can't drift apart on any platform.
+    #[test]
+    fn terminal_command_allowlist_entries_are_reachable() {
+        for entry in ALLOWED_COMMANDS {
+            let (matched, args) = validate_terminal_command_args(entry.binary)
+                .unwrap_or_else(|err| panic!("{} should validate: {err}", entry.binary));
+            assert_eq!(matched.binary, entry.binary);
+            assert!(args.is_empty());
+        }
+    }
+
+    #[test]
+    fn terminal_command_rejects_binary_with_embedded_space() {
+        // A binary name that contains a space can never match an allow-list
+        // entry (entries are single, space-free tokens), so it is rejected
+        // rather than silently collapsing into a different command.
+        assert!(validate_terminal_command_args("\"ls -rf\"").is_err());
+        assert!(validate_terminal_command_args("my binary").is_err());
+    }
+
+    #[test]
+    fn terminal_command_accepts_allowed_command_with_empty_args() {
+        // An allow-listed binary with no user-supplied arguments is accepted
+        // and reports an empty argv tail.
+        #[cfg(not(target_os = "windows"))]
+        let binary = "ls";
+        #[cfg(target_os = "windows")]
+        let binary = "whoami";
+        let (allowed, args) = validate_terminal_command_args(binary).unwrap();
+        assert_eq!(allowed.binary, binary);
+        assert!(args.is_empty());
+    }
+
+    #[cfg(not(target_os = "windows"))]
+    #[tokio::test]
+    async fn terminal_command_runs_ls_without_path_in_environment() {
+        // Serialize env mutation so it cannot race any other test.
+        static PATH_GUARD: std::sync::Mutex<()> = std::sync::Mutex::new(());
+        let _guard = PATH_GUARD.lock().unwrap();
+
+        let original = std::env::var("PATH").ok();
+        // Simulate a process environment that has no PATH at all.
+        // `set_var`/`remove_var` are unsafe since 1.87.
+        #[allow(unused_unsafe)]
+        unsafe {
+            std::env::remove_var("PATH");
+        }
+
+        let result = run_terminal_command("ls".to_string()).await;
+
+        // Restore the environment for any subsequent code.
+        #[allow(unused_unsafe)]
+        unsafe {
+            match original {
+                Some(value) => std::env::set_var("PATH", value),
+                None => std::env::remove_var("PATH"),
+            }
+        }
+        drop(_guard);
+
+        // `cmd.env_clear()` drops PATH from the child, but the OS default
+        // search path still resolves `ls`, so the command must succeed rather
+        // than fail to spawn with a missing-PATH error.
+        let response = result.expect("ls should run even without a PATH env var");
+        assert_eq!(response.exit_code, 0);
+        assert!(!response.stdout.is_empty());
+    }
+
+    #[test]
+    fn installer_url_accepts_trusted_release_hosts() {
+        assert!(validate_installer_url(
+            &Url::parse("https://github.com/maus-inc/mausVoice/releases/download/v1/app.pkg")
+                .unwrap(),
+            TRUSTED_REPO_NAMESPACE
+        )
+        .is_ok());
+        assert!(validate_installer_url(
+            &Url::parse("https://github.com/maus-inc/mausVoice/releases/download/v1/mausVoice_0.1.7_universal.dmg")
+                .unwrap(),
+            TRUSTED_REPO_NAMESPACE
+        )
+        .is_ok());
+        assert!(validate_installer_url(
+            &Url::parse(
+                "https://github.com/maus-inc/mausVoice/releases/download/v1/mausVoice.app.tar.gz"
+            )
+            .unwrap(),
+            TRUSTED_REPO_NAMESPACE
+        )
+        .is_ok());
+        // The objects CDN is allowed only when the hop retains the trusted
+        // repository namespace.
+        assert!(validate_installer_url(
+            &Url::parse(
+                "https://objects.githubusercontent.com/maus-inc/mausVoice/releases/download/v1/app.pkg"
+            )
+            .unwrap(),
+            TRUSTED_REPO_NAMESPACE
+        )
+        .is_ok());
+    }
+
+    #[test]
+    fn installer_url_rejects_untrusted_hosts_schemes_and_extensions() {
+        // A redirect target on an untrusted host must be refused: this is the
+        // check the redirect policy applies to every hop.
+        assert!(
+            validate_installer_url(
+                &Url::parse("https://evil.com/app.pkg").unwrap(),
+                TRUSTED_REPO_NAMESPACE
+            )
+            .is_err()
+        );
+        assert!(validate_installer_url(
+            &Url::parse("http://github.com/maus-inc/app.pkg").unwrap(),
+            TRUSTED_REPO_NAMESPACE
+        )
+        .is_err());
+        assert!(validate_installer_url(
+            &Url::parse("https://github.com/maus-inc/payload.sh").unwrap(),
+            TRUSTED_REPO_NAMESPACE
+        )
+        .is_err());
+        // An objects CDN hop that escapes into a different repository namespace
+        // must be rejected even though the host is allow-listed.
+        assert!(validate_installer_url(
+            &Url::parse("https://objects.githubusercontent.com/other-org/otherRepo/releases/download/v1/app.pkg")
+                .unwrap(),
+            TRUSTED_REPO_NAMESPACE
+        )
+        .is_err());
+    }
+
+    #[test]
+    fn capped_reader_bounds_memory_and_reports_total() {
+        let payload = vec![b'x'; 10_000];
+        let (retained, total) = read_capped(payload.as_slice(), 1_000);
+        assert_eq!(retained.len(), 1_000);
+        assert_eq!(total, 10_000);
+
+        let rendered = format_capped_output(&retained, total);
+        assert!(rendered.contains("truncated: 10000 bytes total"));
+    }
+
+    #[test]
+    fn capped_reader_passes_through_small_output() {
+        let (retained, total) = read_capped(b"hello".as_slice(), 1_000);
+        assert_eq!(total, 5);
+        assert_eq!(format_capped_output(&retained, total), "hello");
+    }
+
+    #[test]
+    fn floating_window_allows_localhost() {
+        assert!(validate_floating_window_url(&Url::parse("http://localhost:1420/").unwrap()).is_ok());
+        assert!(validate_floating_window_url(&Url::parse("http://127.0.0.1:8080/foo").unwrap()).is_ok());
+    }
+
+    #[test]
+    fn local_app_route_allows_dots_in_query_data() {
+        assert!(validate_local_app_route("composer?text=Wait...%20what%3F").is_ok());
+        assert!(validate_local_app_route("composer/../settings").is_err());
+        assert!(validate_local_app_route("composer/%2e%2e/settings").is_err());
+        assert!(validate_local_app_route("composer/%252e%252e%252fsettings").is_err());
+        // A leftover bare `%` after the first successful decode is a terminal
+        // value, not another encoding round.
+        assert!(validate_local_app_route("composer/100%done").is_ok());
+        assert!(percent_decode_route_path("composer/100%done").is_ok());
+    }
+
+    #[test]
+    fn floating_window_treats_ipv6_loopback_as_localhost() {
+        assert!(validate_floating_window_url(
+            &Url::parse("http://[::1]:1420/").unwrap()
+        )
+        .is_ok());
+    }
+
+    #[test]
+    fn floating_window_allows_docs_site() {
+        assert!(validate_floating_window_url(
+            &Url::parse("https://maus-inc.github.io/mausVoice/welcome").unwrap()
+        )
+        .is_ok());
+        // GitHub Pages URL must be scoped to /mausVoice/ even though that
+        // host has no IPC capability — keep the navigation allow-list tight.
+        assert!(validate_floating_window_url(
+            &Url::parse("https://maus-inc.github.io/other-project/").unwrap()
+        )
+        .is_err());
+    }
+
+    #[test]
+    fn floating_window_rejects_arbitrary_origins() {
+        assert!(validate_floating_window_url(&Url::parse("https://evil.com/").unwrap()).is_err());
+        assert!(validate_floating_window_url(&Url::parse("file:///etc/passwd").unwrap()).is_err());
+        assert!(validate_floating_window_url(&Url::parse("javascript:alert(1)").unwrap()).is_err());
+        assert!(parse_floating_window_url("not a url").is_err());
+    }
+
+    #[test]
+    fn pill_visibility_rejects_unknown_values() {
+        // The validation in set_pill_visibility is a literal match against
+        // these three strings; any deviation would change the command's
+        // public contract and is caught here.
+        let valid = ["hidden", "persistent", "while_active"];
+        for v in valid {
+            assert!(matches!(v, "hidden" | "persistent" | "while_active"));
+        }
+        assert!(!matches!(
+            "always_on_top",
+            "hidden" | "persistent" | "while_active"
+        ));
+    }
+
+    #[test]
+    fn cancel_typing_only_signals_a_live_session() {
+        // `CANCEL_TYPING` is process-wide and `cargo test` runs tests in
+        // parallel, so put it back the way we found it before returning.
+        let previous = CANCEL_TYPING.load(Ordering::SeqCst);
+        CANCEL_TYPING.store(false, Ordering::SeqCst);
+
+        // No typing session is live, so the cancel must be ignored instead
+        // of arming the flag for the next session.
+        cancel_typing().unwrap();
+        assert!(!CANCEL_TYPING.load(Ordering::SeqCst));
+
+        {
+            let _session = ReentryGuard::acquire(&SIMULATE_TYPE_IN_PROGRESS).unwrap();
+            cancel_typing().unwrap();
+            assert!(CANCEL_TYPING.load(Ordering::SeqCst));
+        }
+
+        CANCEL_TYPING.store(previous, Ordering::SeqCst);
+    }
+
+    #[test]
+    fn reentry_guard_rejects_a_second_acquire() {
+        let flag = AtomicBool::new(false);
+        let first = ReentryGuard::acquire(&flag).unwrap();
+        assert!(ReentryGuard::acquire(&flag).is_err());
+        drop(first);
+        assert!(ReentryGuard::acquire(&flag).is_ok());
+    }
+
+    #[test]
+    fn reentry_guard_releases_on_panic() {
+        let flag = AtomicBool::new(false);
+        let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            let _guard = ReentryGuard::acquire(&flag).unwrap();
+            panic!("boom");
+        }));
+        assert!(result.is_err());
+        assert!(!flag.load(Ordering::Acquire));
+        assert!(ReentryGuard::acquire(&flag).is_ok());
+    }
+
+    /// Tables that live in the schema but hold no user content, so
+    /// `clear_local_data` may skip them. Adding a name here is an explicit
+    /// privacy decision, which is the point: it cannot happen by omission.
+    const NON_USER_DATA_TABLES: &[&str] = &[];
+
+    /// Rebuild the set of tables the schema actually ends up with by
+    /// replaying the migration SQL. Derived independently of
+    /// `USER_DATA_TABLES_TO_CLEAR`, so a new table that nobody remembered
+    /// to clear still shows up here.
+    /// Strip SQL noise that would otherwise be mis-tokenized when the
+    /// migrations are replayed as statements:
+    /// - `/* */` block comments,
+    /// - `--` line comments (to end of line),
+    /// - single-quoted string literals (which may contain `;`, `--`, or
+    ///   `*/`), including the `''` doubled-quote escape.
+    ///
+    /// Double-quoted identifiers (table/column names in SQLite) are left in
+    /// place by this pass: they are not string literals, so unlike `'...'`
+    /// above they are not skipped. The surrounding quote characters are
+    /// trimmed later when the table name is extracted, so `"my_table"` and
+    /// `my_table` resolve to the same bare name that SQLite reports.
+    fn strip_sql_noise(sql: &str) -> String {
+        let mut out = String::with_capacity(sql.len());
+        let mut chars = sql.chars().peekable();
+        let mut in_block_comment = false;
+        let mut in_line_comment = false;
+        while let Some(c) = chars.next() {
+            if in_line_comment {
+                if c == '\n' {
+                    in_line_comment = false;
+                    out.push(c);
+                }
+                continue;
+            }
+            if in_block_comment {
+                if c == '*' && chars.peek() == Some(&'/') {
+                    chars.next();
+                    in_block_comment = false;
+                }
+                continue;
+            }
+            if c == '/' && chars.peek() == Some(&'*') {
+                chars.next();
+                in_block_comment = true;
+                continue;
+            }
+            if c == '-' && chars.peek() == Some(&'-') {
+                chars.next();
+                in_line_comment = true;
+                continue;
+            }
+            if c == '\'' {
+                // Single-quoted string literal: skip content (incl. '' escape).
+                while let Some(q) = chars.next() {
+                    if q == '\'' {
+                        if chars.peek() == Some(&'\'') {
+                            chars.next(); // doubled-quote escape
+                            continue;
+                        }
+                        break;
+                    }
+                }
+                continue;
+            }
+            out.push(c);
+        }
+        out
+    }
+
+    fn tables_declared_by_migrations() -> std::collections::BTreeSet<String> {
+        let first_word = |rest: &str| -> Option<String> {
+            rest.split(|c: char| c == '(' || c.is_whitespace())
+                .find(|part| !part.is_empty())
+                // Trim surrounding double quotes so a quoted identifier
+                // (`CREATE TABLE "name"`) resolves to the same bare name
+                // SQLite reports, rather than `"name"`.
+                .map(|name| name.trim_matches('"').to_string())
+        };
+
+        let mut tables: std::collections::BTreeSet<String> = std::collections::BTreeSet::new();
+        for migration in crate::db::migrations() {
+            // `strip_sql_noise` fully cleans each migration's SQL (block
+            // comments, line comments, and single-quoted string literals),
+            // so the remaining text can be replayed statement by statement.
+            let sql = strip_sql_noise(migration.sql)
+                .lines()
+                .map(|line| line.trim())
+                .collect::<Vec<_>>()
+                .join(" ");
+
+            for raw_statement in sql.split(';') {
+                let statement = raw_statement
+                    .split_whitespace()
+                    .map(|word| word.to_ascii_lowercase())
+                    .collect::<Vec<_>>()
+                    .join(" ");
+
+                if let Some(rest) = statement
+                    .strip_prefix("create table if not exists ")
+                    .or_else(|| statement.strip_prefix("create table "))
+                {
+                    if let Some(name) = first_word(rest) {
+                        tables.insert(name);
+                    }
+                } else if let Some(rest) = statement
+                    .strip_prefix("drop table if exists ")
+                    .or_else(|| statement.strip_prefix("drop table "))
+                {
+                    if let Some(name) = first_word(rest) {
+                        tables.remove(&name);
+                    }
+                } else if let Some(rest) = statement.strip_prefix("alter table ") {
+                    if let Some((old, new)) = rest.split_once(" rename to ") {
+                        if let (Some(old), Some(new)) = (first_word(old), first_word(new)) {
+                            tables.remove(&old);
+                            tables.insert(new);
+                        }
+                    }
+                }
+            }
+        }
+        tables
+    }
+
+    #[test]
+    fn user_data_tables_to_clear_covers_the_privacy_set() {
+        let declared = tables_declared_by_migrations();
+        assert!(
+            !declared.is_empty(),
+            "no tables parsed from the migrations — the parser is broken"
+        );
+
+        for table in &declared {
+            assert!(
+                USER_DATA_TABLES_TO_CLEAR.contains(&table.as_str())
+                    || NON_USER_DATA_TABLES.contains(&table.as_str()),
+                "table `{table}` exists in the schema but clear_local_data never wipes it — a missed table is a privacy leak"
+            );
+        }
+
+        for table in USER_DATA_TABLES_TO_CLEAR {
+            assert!(
+                declared.contains(table),
+                "`{table}` is cleared but no longer exists in the schema"
+            );
+        }
+    }
+
+    #[test]
+    fn managed_audio_path_rejects_paths_outside_the_audio_dir() {
+        let root = std::env::temp_dir()
+            .join(format!("mausvoice-audio-guard-{}", std::process::id()));
+        let audio_dir = root.join("audio");
+        let other_dir = root.join("other");
+        std::fs::create_dir_all(&audio_dir).unwrap();
+        std::fs::create_dir_all(&other_dir).unwrap();
+        // Canonicalized because the guard returns real paths (e.g. macOS
+        // maps /tmp to /private/tmp).
+        let expected = std::fs::canonicalize(&audio_dir).unwrap().join("clip.wav");
+
+        let inside = audio_dir.join("clip.wav");
+        let outside = other_dir.join("clip.wav");
+        // A traversal attempt must NOT escape the managed directory.
+        let traversal = audio_dir.join("..").join("escaped.wav");
+        assert_eq!(
+            resolve_managed_audio_path(&inside, &audio_dir),
+            Some(expected.clone())
+        );
+        assert_eq!(resolve_managed_audio_path(&outside, &audio_dir), None);
+        assert_eq!(resolve_managed_audio_path(&traversal, &audio_dir), None);
+        // A relative entry must resolve inside the managed directory, never
+        // against the process working directory.
+        assert_eq!(
+            resolve_managed_audio_path(std::path::Path::new("clip.wav"), &audio_dir),
+            Some(expected.clone())
+        );
+        // An `audio_dir` spelled with `.` still matches its own contents.
+        assert_eq!(
+            resolve_managed_audio_path(&inside, &root.join(".").join("audio")),
+            Some(expected)
+        );
+
+        #[cfg(unix)]
+        {
+            // A symlinked subdirectory must not tunnel out of audio_dir.
+            let link = audio_dir.join("link");
+            std::os::unix::fs::symlink(&other_dir, &link).unwrap();
+            assert_eq!(
+                resolve_managed_audio_path(&link.join("clip.wav"), &audio_dir),
+                None
+            );
+        }
+
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn managed_audio_read_rejects_final_symlink_escape() {
+        let root = std::env::temp_dir()
+            .join(format!("mausvoice-audio-read-{}", std::process::id()));
+        let audio_dir = root.join("audio");
+        let outside_dir = root.join("outside");
+        std::fs::create_dir_all(&audio_dir).unwrap();
+        std::fs::create_dir_all(&outside_dir).unwrap();
+        let secret = outside_dir.join("secret.wav");
+        std::fs::write(&secret, b"TOP SECRET").unwrap();
+
+        #[cfg(unix)]
+        {
+            // A final-entry symlink pointing outside must be rejected for
+            // reads: canonicalizing the whole path follows the symlink and
+            // lands outside audio_dir, so the bytes are never leaked.
+            let link = audio_dir.join("clip.wav");
+            std::os::unix::fs::symlink(&secret, &link).unwrap();
+            assert!(
+                resolve_managed_audio_path_for_read(&link, &audio_dir).is_none()
+            );
+
+            // A regular file inside audio_dir is still accepted.
+            let real = audio_dir.join("real.wav");
+            std::fs::write(&real, b"ok").unwrap();
+            assert!(resolve_managed_audio_path_for_read(&real, &audio_dir).is_some());
+        }
+
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn managed_audio_read_returns_usable_handle_for_regular_file() {
+        let root = std::env::temp_dir()
+            .join(format!("mausvoice-audio-read-handle-{}", std::process::id()));
+        let audio_dir = root.join("audio");
+        std::fs::create_dir_all(&audio_dir).unwrap();
+        let real = audio_dir.join("real.wav");
+        std::fs::write(&real, b"readable-bytes").unwrap();
+
+        // The read helper must return a handle to the *validated* file whose
+        // bytes match what was on disk.
+        let file = resolve_managed_audio_path_for_read(&real, &audio_dir);
+        assert!(file.is_some());
+        let mut buf = String::new();
+        use std::io::Read;
+        file.unwrap().read_to_string(&mut buf).unwrap();
+        assert_eq!(buf, "readable-bytes");
+
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn import_path_is_rejected_outside_allowed_roots() {
+        // Mirrors the confinement check in `transcription_import_audio`: a path
+        // outside the allowed import roots must be rejected so the command
+        // cannot be used as a filesystem read oracle.
+        let tmp = std::env::temp_dir()
+            .join(format!("mausvoice-import-confine-{}", std::process::id()));
+        let allowed = vec![tmp.join("allowed")];
+        std::fs::create_dir_all(&allowed[0]).unwrap();
+        let inside = allowed[0].join("clip.wav");
+        let outside = tmp.join("outside.wav");
+        assert!(is_path_within_allowed_roots(&inside, &allowed));
+        assert!(!is_path_within_allowed_roots(&outside, &allowed));
+        let _ = std::fs::remove_dir_all(&tmp);
+    }
+
+    #[test]
+    fn clear_local_data_file_helpers_respect_the_audio_dir_guard() {
+        let root = std::env::temp_dir().join(format!(
+            "mausvoice-clear-local-{}",
+            std::process::id()
+        ));
+        let audio_dir = root.join("audio");
+        let outside_dir = root.join("outside");
+        std::fs::create_dir_all(&audio_dir).unwrap();
+        std::fs::create_dir_all(&outside_dir).unwrap();
+
+        let inside = audio_dir.join("keep-me-not.wav");
+        let relative = audio_dir.join("relative.wav");
+        let orphan = audio_dir.join("orphan.wav");
+        let other = audio_dir.join("notes.txt");
+        let outside = outside_dir.join("do-not-delete.wav");
+        std::fs::write(&inside, b"in").unwrap();
+        std::fs::write(&relative, b"rel").unwrap();
+        std::fs::write(&orphan, b"or").unwrap();
+        std::fs::write(&other, b"txt").unwrap();
+        std::fs::write(&outside, b"out").unwrap();
+
+        delete_listed_audio_files(
+            &audio_dir,
+            &[
+                inside.to_string_lossy().into_owned(),
+                // A relative row must be deleted from inside `audio_dir`.
+                "relative.wav".to_string(),
+                outside.to_string_lossy().into_owned(),
+            ],
+        );
+        assert!(!inside.exists());
+        assert!(!relative.exists());
+        assert!(outside.exists());
+
+        sweep_orphaned_wavs(&audio_dir);
+        assert!(!orphan.exists());
+        assert!(other.exists());
+        assert!(outside.exists());
+
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn installer_redirect_validates_each_hop_and_caps_depth() {
+        let ok = Url::parse(
+            "https://github.com/maus-inc/mausVoice/releases/download/v1/app.pkg",
+        )
+        .unwrap();
+        let evil = Url::parse("https://evil.com/app.pkg").unwrap();
+        assert!(installer_redirect_allowed(0, &ok, TRUSTED_REPO_NAMESPACE).is_ok());
+        assert!(installer_redirect_allowed(9, &ok, TRUSTED_REPO_NAMESPACE).is_ok());
+        assert!(installer_redirect_allowed(10, &ok, TRUSTED_REPO_NAMESPACE).is_err());
+        assert!(installer_redirect_allowed(0, &evil, TRUSTED_REPO_NAMESPACE).is_err());
+    }
+
+    #[test]
+    fn installer_redirect_allows_opaque_cdn_path() {
+        // GitHub's release-asset CDN returns an opaque UUID path; the real
+        // filename is carried in the signed query parameters. The validator must
+        // accept this normal redirect rather than demanding a path extension.
+        let cdn = Url::parse(
+            "https://release-assets.githubusercontent.com/github-production-release-asset/1234/\
+             abcdef-1234-5678?response-content-disposition=attachment%3Bfilename%3DmausVoice_1.0.0_universal.dmg",
+        )
+        .unwrap();
+        assert!(installer_redirect_allowed(1, &cdn, TRUSTED_REPO_NAMESPACE).is_ok());
+        // A non-GitHub host must still be rejected even with a dmg-looking query.
+        let bad = Url::parse(
+            "https://evil-cdn.example.com/uuid?response-content-disposition=attachment%3Bfilename%3DmausVoice_1.0.0_universal.dmg",
+        )
+        .unwrap();
+        assert!(installer_redirect_allowed(1, &bad, TRUSTED_REPO_NAMESPACE).is_err());
+    }
+
+    #[test]
+    fn installer_size_cap_rejects_advertised_and_streamed_oversize() {
+        assert!(installer_content_length_ok(None).is_ok());
+        assert!(installer_content_length_ok(Some(INSTALLER_MAX_BYTES)).is_ok());
+        assert!(installer_content_length_ok(Some(INSTALLER_MAX_BYTES + 1)).is_err());
+        assert_eq!(
+            installer_account_chunk(0, INSTALLER_MAX_BYTES).unwrap(),
+            INSTALLER_MAX_BYTES
+        );
+        assert!(installer_account_chunk(INSTALLER_MAX_BYTES, 1).is_err());
+    }
+
+    #[test]
+    fn signature_size_cap_rejects_advertised_and_streamed_oversize() {
+        assert!(signature_content_length_ok(None).is_ok());
+        assert!(signature_content_length_ok(Some(SIGNATURE_MAX_BYTES)).is_ok());
+        assert!(signature_content_length_ok(Some(SIGNATURE_MAX_BYTES + 1)).is_err());
+        assert_eq!(
+            signature_account_chunk(0, SIGNATURE_MAX_BYTES).unwrap(),
+            SIGNATURE_MAX_BYTES
+        );
+        assert!(signature_account_chunk(SIGNATURE_MAX_BYTES, 1).is_err());
+    }
+
+    #[test]
+    fn current_timestamp_ok() {
+        // Replicate the function body to avoid a public exposure. SystemTime
+        // should always be post-epoch on modern OSes; if it isn't we'd want
+        // to know rather than silently return i64::MAX.
+        let duration = SystemTime::now().duration_since(UNIX_EPOCH);
+        assert!(duration.is_ok());
+        let millis: Result<i64, _> = duration.unwrap().as_millis().try_into();
+        assert!(millis.is_ok());
+    }
 }
 
 #[cfg(test)]

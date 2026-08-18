@@ -40,7 +40,11 @@ pub fn install_embedded_satoshi() {
         }
         // SAFETY: single-threaded at startup before GTK font use.
         unsafe {
-            std::env::set_var("FONTCONFIG_PATH", paths.join(":"));
+            // SAFETY: font setup runs on the GTK thread before workers start.
+            #[allow(unused_unsafe)]
+            unsafe {
+                std::env::set_var("FONTCONFIG_PATH", paths.join(":"));
+            }
         }
         path
     });
