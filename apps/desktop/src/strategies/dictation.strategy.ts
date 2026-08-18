@@ -16,12 +16,12 @@ import type {
 } from "../types/strategy.types";
 import { getLogger } from "../utils/log.utils";
 import { routeTranscriptOutput } from "../utils/output-routing.utils";
-import {
-  applyReplacements,
-  applySymbolConversions,
-} from "../utils/string.utils";
+import { sanitizeTranscriptText } from "../utils/sanitize-transcript.utils";
 import { getToneIdToUse, VERBATIM_TONE_ID } from "../utils/tone.utils";
-import { getMyUserPreferences } from "../utils/user.utils";
+import {
+  getActiveDictationLanguage,
+  getMyUserPreferences,
+} from "../utils/user.utils";
 import { BaseStrategy } from "./base.strategy";
 
 export class DictationStrategy extends BaseStrategy {
@@ -83,6 +83,7 @@ export class DictationStrategy extends BaseStrategy {
 
   private sanitizeTranscript(text: string): string | null {
     const state = getAppState();
+    const prefs = getMyUserPreferences(state);
     const replacementRules = Object.values(state.termById)
       .filter((term) => term.isReplacement)
       .map((term) => ({
@@ -90,8 +91,14 @@ export class DictationStrategy extends BaseStrategy {
         destinationValue: term.destinationValue,
       }));
 
-    const afterReplacements = applyReplacements(text, replacementRules);
-    return applySymbolConversions(afterReplacements);
+    const sanitized = sanitizeTranscriptText({
+      rawTranscript: text,
+      replacementRules,
+      language: getActiveDictationLanguage(state),
+      spokenCommandsEnabled: prefs?.spokenCommandsEnabled ?? true,
+      hallucinationFilterEnabled: true,
+    });
+    return sanitized.trim() ? sanitized : null;
   }
 
   validateAvailability(): Nullable<StrategyValidationError> {

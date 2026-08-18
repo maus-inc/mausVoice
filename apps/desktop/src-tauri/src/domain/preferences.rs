@@ -88,6 +88,9 @@ pub struct UserPreferences {
     /// default so existing behavior is unchanged.
     #[serde(default)]
     pub always_request_admin_on_startup: bool,
+    /// Deterministic spoken formatting / scratch-that. Default on.
+    #[serde(default = "default_true")]
+    pub spoken_commands_enabled: bool,
 }
 
 fn default_pill_reset_monitor_strategy() -> String {
@@ -104,4 +107,8 @@ fn default_dictation_limit_minutes() -> i64 {
 
 fn default_dictation_audio_dim() -> f64 {
     1.0
+}
+
+fn default_true() -> bool {
+    true
 }

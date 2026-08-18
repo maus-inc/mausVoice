@@ -2,10 +2,8 @@ import { Transcription } from "@maus-inc/types";
 import { getRec } from "@maus-inc/utilities";
 import { getTranscriptionRepo } from "../repos";
 import { getAppState, produceAppState } from "../store";
-import {
-  applyReplacements,
-  applySymbolConversions,
-} from "../utils/string.utils";
+import { sanitizeTranscriptText } from "../utils/sanitize-transcript.utils";
+import { getActiveDictationLanguage, getMyUserPreferences } from "../utils/user.utils";
 import { postProcessTranscript, transcribeAudio } from "./transcribe.actions";
 
 export const openTranscriptionDetailsDialog = (transcriptionId: string) => {
@@ -62,6 +60,7 @@ export const retranscribeTranscription = async ({
   });
 
   const rawTranscript = transcribeResult.rawTranscript;
+  const prefs = getMyUserPreferences(state);
 
   const replacementRules = Object.values(state.termById)
     .filter((term) => term.isReplacement)
@@ -70,8 +69,13 @@ export const retranscribeTranscription = async ({
       destinationValue: term.destinationValue,
     }));
 
-  const afterReplacements = applyReplacements(rawTranscript, replacementRules);
-  const sanitizedTranscript = applySymbolConversions(afterReplacements);
+  const sanitizedTranscript = sanitizeTranscriptText({
+    rawTranscript,
+    replacementRules,
+    language: languageCode ?? getActiveDictationLanguage(state),
+    spokenCommandsEnabled: prefs?.spokenCommandsEnabled ?? true,
+    hallucinationFilterEnabled: true,
+  });
 
   const postProcessResult = await postProcessTranscript({
     rawTranscript: sanitizedTranscript,

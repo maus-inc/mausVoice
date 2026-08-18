@@ -44,6 +44,8 @@ export type UserPreferences = {
   typingSpeedMs: Nullable<number>;
   pillResetMonitorStrategy: PillResetMonitorStrategy;
   alwaysRequestAdminOnStartup: boolean;
+  /** Deterministic "new line" / "scratch that" commands. Default on. */
+  spokenCommandsEnabled: boolean;
 
   // deprecated
 };

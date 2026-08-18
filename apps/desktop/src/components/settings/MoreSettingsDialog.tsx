@@ -22,6 +22,7 @@ import {
   setDictationLimitMinutes,
   setDictationPillVisibility,
   setPillResetMonitorStrategy,
+  setSpokenCommandsEnabled,
   setIgnoreUpdateDialog,
   setIncognitoModeEnabled,
   setIncognitoModeIncludeInStats,
@@ -62,6 +63,7 @@ export const MoreSettingsDialog = () => {
     disablePillRewards,
     disableAutoStyleLoading,
     menuBarIconHidden,
+    spokenCommandsEnabled,
   ] = useAppStore((state) => {
     const prefs = getMyUserPreferences(state);
     const transcriptionPrefs = getTranscriptionPrefs(state);
@@ -80,6 +82,7 @@ export const MoreSettingsDialog = () => {
       state.local.disablePillRewards,
       state.local.disableAutoStyleLoading ?? false,
       prefs?.menuBarIconHidden ?? false,
+      prefs?.spokenCommandsEnabled ?? true,
     ] as const;
   });
   const [dictationLimitInput, setDictationLimitInput] = useState(
@@ -159,6 +162,10 @@ export const MoreSettingsDialog = () => {
 
   const handleToggleRealtimeOutput = (event: ChangeEvent<HTMLInputElement>) => {
     void setRealtimeOutputEnabled(event.target.checked);
+  };
+
+  const handleToggleSpokenCommands = (event: ChangeEvent<HTMLInputElement>) => {
+    void setSpokenCommandsEnabled(event.target.checked);
   };
 
   const handleToggleDisablePillRewards = (
@@ -314,6 +321,20 @@ export const MoreSettingsDialog = () => {
                   { value: "cursor", label: "Cursor monitor" },
                 ]}
                 ariaLabel="Reset pill position monitor"
+              />
+            }
+          />
+
+          <SettingSection
+            title={<FormattedMessage defaultMessage="Spoken commands" />}
+            description={
+              <FormattedMessage defaultMessage="Turn phrases like “new line”, “comma”, and “scratch that” into formatting, even in Verbatim. English dictation only." />
+            }
+            action={
+              <Switch
+                edge="end"
+                checked={spokenCommandsEnabled}
+                onChange={handleToggleSpokenCommands}
               />
             }
           />
