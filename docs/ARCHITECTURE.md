@@ -1,5 +1,7 @@
 # mausVoice Architecture Walkthrough
 
+> Authoritative, maintained pages: [`apps/docs` Desktop architecture](../apps/docs/src/content/docs/development/architecture.md) and https://maus-inc.github.io/mausVoice/docs/development/architecture/. Prefer those if this historical walkthrough disagrees.
+
 A practical tour of how this repo is put together: the technology stack, the monorepo layout, the desktop app's layered design, the feature subsystems, and the personal/local build.
 
 > As of 0.1.6 this is a **local, personal build**. The hosted mausVoice Cloud backend, billing, and enterprise SSO/gateway were removed (migrations `071_remove_cloud_modes` / `072_drop_is_enterprise`). There are no cloud or enterprise repos, gateways, or `enterprise/` directories in the tree — every repo factory resolves to a local implementation.
