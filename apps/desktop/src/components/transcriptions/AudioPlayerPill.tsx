@@ -193,6 +193,37 @@ export const AudioPlayerPill = ({
 
   const durationLabel = formatDuration(durationMs);
 
+  /** elevenlabs-ui/ui/scrub-bar.tsx — getTimeFromClientX + window pointer listeners */
+  const getProgressFromClientX = useCallback((clientX: number) => {
+    const track = waveformContainerRef.current;
+    if (!track) return null;
+    const rect = track.getBoundingClientRect();
+    if (rect.width <= 0) return null;
+    const ratio = (clientX - rect.left) / rect.width;
+    return Math.min(Math.max(ratio, 0), 1);
+  }, []);
+
+  const handlePointerDown = useCallback(
+    (event: React.PointerEvent<HTMLDivElement>) => {
+      if (disabled) return;
+      event.preventDefault();
+      const next = getProgressFromClientX(event.clientX);
+      if (next != null) setPlaybackProgress(next);
+
+      const handleMove = (moveEvent: PointerEvent) => {
+        const ratio = getProgressFromClientX(moveEvent.clientX);
+        if (ratio != null) setPlaybackProgress(ratio);
+      };
+      const handleUp = () => {
+        window.removeEventListener("pointermove", handleMove);
+        window.removeEventListener("pointerup", handleUp);
+      };
+      window.addEventListener("pointermove", handleMove);
+      window.addEventListener("pointerup", handleUp, { once: true });
+    },
+    [disabled, getProgressFromClientX],
+  );
+
   return (
     <Box
       sx={{
@@ -244,8 +275,12 @@ export const AudioPlayerPill = ({
         aria-valuemax={100}
         aria-valuenow={Math.round(progressPercent)}
         aria-label={intl.formatMessage({ defaultMessage: "Playback position" })}
+        onPointerDown={handlePointerDown}
         onKeyDown={(event) => {
-          if (event.key === "ArrowRight") {
+          if (event.key === " ") {
+            event.preventDefault();
+            void handlePlaybackToggle();
+          } else if (event.key === "ArrowRight") {
             setPlaybackProgress((p) => Math.min(1, p + 0.05));
           } else if (event.key === "ArrowLeft") {
             setPlaybackProgress((p) => Math.max(0, p - 0.05));
@@ -260,6 +295,9 @@ export const AudioPlayerPill = ({
           mx: 0.5,
           position: "relative",
           overflow: "hidden",
+          cursor: "pointer",
+          touchAction: "none",
+          userSelect: "none",
         }}
       >
         <Box

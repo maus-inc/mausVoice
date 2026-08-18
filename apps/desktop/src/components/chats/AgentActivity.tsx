@@ -1,6 +1,10 @@
-import { Box, ButtonBase, Stack, Typography } from "@mui/material";
-import { ChevronRight } from "lucide-react";
-import { useEffect, useRef, useState } from "react";
+/**
+ * Pattern from siriwatknp/mui-treasury ai-reasoning.tsx:
+ * button trigger, duration tracking, auto-open while streaming, auto-close 1s after.
+ */
+import { Box, Stack, Typography } from "@mui/material";
+import { ChevronDown } from "lucide-react";
+import { useEffect, useState } from "react";
 import { FormattedMessage } from "react-intl";
 import type { StreamingToolCall } from "../../state/app.state";
 import { useAppStore } from "../../store";
@@ -8,6 +12,8 @@ import { useAppStore } from "../../store";
 type AgentActivityProps = {
   messageId: string;
 };
+
+const AUTO_CLOSE_DELAY = 1000;
 
 const ToolCallLine = ({ tc }: { tc: StreamingToolCall }) => (
   <Typography variant="caption" sx={{ color: "text.secondary", fontStyle: "italic" }}>
@@ -21,32 +27,41 @@ const ToolCallLine = ({ tc }: { tc: StreamingToolCall }) => (
 
 export const AgentActivity = ({ messageId }: AgentActivityProps) => {
   const streaming = useAppStore((s) => s.streamingMessageById[messageId]);
-  const [reasoningOpen, setReasoningOpen] = useState(false);
-  const startedAtRef = useRef<number | null>(null);
-  const [elapsedSec, setElapsedSec] = useState(0);
+  const [isOpen, setIsOpen] = useState(true);
+  const [duration, setDuration] = useState(0);
+  const [startTime, setStartTime] = useState<number | null>(null);
+  const [hasAutoClosed, setHasAutoClosed] = useState(false);
+
+  const isStreaming = streaming?.isStreaming ?? false;
 
   useEffect(() => {
-    if (!streaming) {
-      return;
+    if (isStreaming) {
+      if (startTime === null) {
+        setStartTime(Date.now());
+        setIsOpen(true);
+      }
+    } else if (startTime !== null) {
+      setDuration(Math.max(1, Math.ceil((Date.now() - startTime) / 1000)));
+      setStartTime(null);
     }
-    if (streaming.isStreaming && startedAtRef.current == null) {
-      startedAtRef.current = Date.now();
-      setReasoningOpen(true);
+  }, [isStreaming, startTime]);
+
+  useEffect(() => {
+    if (!isStreaming && isOpen && !hasAutoClosed && duration > 0) {
+      const timer = window.setTimeout(() => {
+        setIsOpen(false);
+        setHasAutoClosed(true);
+      }, AUTO_CLOSE_DELAY);
+      return () => window.clearTimeout(timer);
     }
-    if (!streaming.isStreaming && startedAtRef.current != null) {
-      setElapsedSec(Math.max(1, Math.round((Date.now() - startedAtRef.current) / 1000)));
-      const t = window.setTimeout(() => setReasoningOpen(false), 1000);
-      return () => window.clearTimeout(t);
-    }
-  }, [streaming]);
+  }, [isStreaming, isOpen, hasAutoClosed, duration]);
 
   if (!streaming) {
     return null;
   }
 
-  const { toolCalls, reasoning, isStreaming } = streaming;
-  const hasActivity = toolCalls.length > 0 || reasoning.length > 0;
-  if (!hasActivity) {
+  const { toolCalls, reasoning } = streaming;
+  if (toolCalls.length === 0 && reasoning.length === 0) {
     return null;
   }
 
@@ -57,66 +72,61 @@ export const AgentActivity = ({ messageId }: AgentActivityProps) => {
       ))}
       {reasoning.length > 0 && (
         <Box>
-          <ButtonBase
-            onClick={() => setReasoningOpen((o) => !o)}
-            aria-expanded={reasoningOpen}
+          <Box
+            component="button"
+            type="button"
+            onClick={() => setIsOpen((o) => !o)}
+            aria-expanded={isOpen}
             sx={{
-              display: "inline-flex",
+              display: "flex",
               alignItems: "center",
-              gap: 0.5,
+              gap: 1,
               color: "text.secondary",
-              borderRadius: 0.5,
-              px: 0.25,
+              fontSize: "0.875rem",
+              border: "none",
+              background: "transparent",
+              cursor: "pointer",
+              p: 0,
+              "&:hover": { color: "text.primary" },
             }}
           >
-            <ChevronRight
-              size={14}
-              strokeWidth={1.9}
-              style={{
-                transform: reasoningOpen ? "rotate(90deg)" : "rotate(0deg)",
-                transition: "transform 200ms cubic-bezier(0.23, 1, 0.32, 1)",
-              }}
-            />
             <Typography variant="caption" sx={{ color: "inherit" }}>
-              {isStreaming ? (
+              {isStreaming || duration === 0 ? (
                 <FormattedMessage defaultMessage="Thinking…" />
-              ) : elapsedSec > 0 ? (
+              ) : (
                 <FormattedMessage
                   defaultMessage="Thought for {seconds} seconds"
-                  values={{ seconds: elapsedSec }}
+                  values={{ seconds: duration }}
                 />
-              ) : (
-                <FormattedMessage defaultMessage="Thought process" />
               )}
             </Typography>
-          </ButtonBase>
-          <Box
-            sx={{
-              display: "grid",
-              gridTemplateRows: reasoningOpen ? "1fr" : "0fr",
-              transition: "grid-template-rows 180ms cubic-bezier(0.23, 1, 0.32, 1)",
-              "@media (prefers-reduced-motion: reduce)": {
-                transition: "none",
-              },
-            }}
-          >
+            <ChevronDown
+              size={16}
+              strokeWidth={1.9}
+              style={{
+                transform: isOpen ? "rotate(180deg)" : "rotate(0deg)",
+                transition: "transform 200ms",
+              }}
+            />
+          </Box>
+          {isOpen && (
             <Typography
               variant="caption"
               sx={{
-                overflow: "hidden",
+                mt: 1,
                 color: "text.secondary",
                 whiteSpace: "pre-wrap",
                 display: "block",
-                mt: 0.25,
                 pl: 1,
                 borderLeft: 1,
                 borderColor: "divider",
                 maxHeight: 200,
+                overflow: "auto",
               }}
             >
               {reasoning}
             </Typography>
-          </Box>
+          )}
         </Box>
       )}
     </Stack>
