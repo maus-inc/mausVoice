@@ -58,6 +58,7 @@ import {
   getMixpanel,
 } from "../../utils/analytics.utils";
 import { registerMembers, registerUsers } from "../../utils/app.utils";
+import { setPillGeometry } from "../../utils/composer.utils";
 import { getIsDevMode } from "../../utils/env.utils";
 import { createId } from "../../utils/id.utils";
 import {
@@ -720,18 +721,20 @@ export const AppSideEffects = () => {
     });
   });
 
-  useTauriListen<{ hasSavedPosition: boolean }>(
-    "pill-position-changed",
-    (event) => {
-      invoke("set_reset_pill_position_enabled", {
-        enabled: event.hasSavedPosition,
-      }).catch((error) => {
-        getLogger().error(
-          `Failed to update reset-pill-position menu state: ${error}`,
-        );
-      });
-    },
-  );
+  useTauriListen<{
+    hasSavedPosition: boolean;
+    rect?: { x: number; y: number; width: number; height: number };
+    monitor?: { x: number; y: number; width: number; height: number };
+  }>("pill-position-changed", (event) => {
+    setPillGeometry(event.rect ?? null, event.monitor ?? null);
+    invoke("set_reset_pill_position_enabled", {
+      enabled: event.hasSavedPosition,
+    }).catch((error) => {
+      getLogger().error(
+        `Failed to update reset-pill-position menu state: ${error}`,
+      );
+    });
+  });
 
   return null;
 };

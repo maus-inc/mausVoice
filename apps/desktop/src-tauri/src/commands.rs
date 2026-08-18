@@ -3090,23 +3090,32 @@ mod tests {
     fn installer_url_accepts_trusted_release_hosts() {
         assert!(validate_installer_url(
             &Url::parse("https://github.com/maus-inc/mausVoice/releases/download/v1/app.pkg")
-                .unwrap()
+                .unwrap(),
+            TRUSTED_REPO_NAMESPACE
         )
         .is_ok());
         assert!(validate_installer_url(
             &Url::parse("https://github.com/maus-inc/mausVoice/releases/download/v1/mausVoice_0.1.7_universal.dmg")
-                .unwrap()
+                .unwrap(),
+            TRUSTED_REPO_NAMESPACE
         )
         .is_ok());
         assert!(validate_installer_url(
             &Url::parse(
                 "https://github.com/maus-inc/mausVoice/releases/download/v1/mausVoice.app.tar.gz"
             )
-            .unwrap()
+            .unwrap(),
+            TRUSTED_REPO_NAMESPACE
         )
         .is_ok());
+        // The objects CDN is allowed only when the hop retains the trusted
+        // repository namespace.
         assert!(validate_installer_url(
-            &Url::parse("https://objects.githubusercontent.com/foo/app.pkg").unwrap()
+            &Url::parse(
+                "https://objects.githubusercontent.com/maus-inc/mausVoice/releases/download/v1/app.pkg"
+            )
+            .unwrap(),
+            TRUSTED_REPO_NAMESPACE
         )
         .is_ok());
     }
@@ -3116,14 +3125,28 @@ mod tests {
         // A redirect target on an untrusted host must be refused: this is the
         // check the redirect policy applies to every hop.
         assert!(
-            validate_installer_url(&Url::parse("https://evil.com/app.pkg").unwrap()).is_err()
+            validate_installer_url(
+                &Url::parse("https://evil.com/app.pkg").unwrap(),
+                TRUSTED_REPO_NAMESPACE
+            )
+            .is_err()
         );
         assert!(validate_installer_url(
-            &Url::parse("http://github.com/maus-inc/app.pkg").unwrap()
+            &Url::parse("http://github.com/maus-inc/app.pkg").unwrap(),
+            TRUSTED_REPO_NAMESPACE
         )
         .is_err());
         assert!(validate_installer_url(
-            &Url::parse("https://github.com/maus-inc/payload.sh").unwrap()
+            &Url::parse("https://github.com/maus-inc/payload.sh").unwrap(),
+            TRUSTED_REPO_NAMESPACE
+        )
+        .is_err());
+        // An objects CDN hop that escapes into a different repository namespace
+        // must be rejected even though the host is allow-listed.
+        assert!(validate_installer_url(
+            &Url::parse("https://objects.githubusercontent.com/other-org/otherRepo/releases/download/v1/app.pkg")
+                .unwrap(),
+            TRUSTED_REPO_NAMESPACE
         )
         .is_err());
     }
@@ -3552,10 +3575,10 @@ mod tests {
         )
         .unwrap();
         let evil = Url::parse("https://evil.com/app.pkg").unwrap();
-        assert!(installer_redirect_allowed(0, &ok).is_ok());
-        assert!(installer_redirect_allowed(9, &ok).is_ok());
-        assert!(installer_redirect_allowed(10, &ok).is_err());
-        assert!(installer_redirect_allowed(0, &evil).is_err());
+        assert!(installer_redirect_allowed(0, &ok, TRUSTED_REPO_NAMESPACE).is_ok());
+        assert!(installer_redirect_allowed(9, &ok, TRUSTED_REPO_NAMESPACE).is_ok());
+        assert!(installer_redirect_allowed(10, &ok, TRUSTED_REPO_NAMESPACE).is_err());
+        assert!(installer_redirect_allowed(0, &evil, TRUSTED_REPO_NAMESPACE).is_err());
     }
 
     #[test]
@@ -3568,13 +3591,13 @@ mod tests {
              abcdef-1234-5678?response-content-disposition=attachment%3Bfilename%3DmausVoice_1.0.0_universal.dmg",
         )
         .unwrap();
-        assert!(installer_redirect_allowed(1, &cdn).is_ok());
+        assert!(installer_redirect_allowed(1, &cdn, TRUSTED_REPO_NAMESPACE).is_ok());
         // A non-GitHub host must still be rejected even with a dmg-looking query.
         let bad = Url::parse(
             "https://evil-cdn.example.com/uuid?response-content-disposition=attachment%3Bfilename%3DmausVoice_1.0.0_universal.dmg",
         )
         .unwrap();
-        assert!(installer_redirect_allowed(1, &bad).is_err());
+        assert!(installer_redirect_allowed(1, &bad, TRUSTED_REPO_NAMESPACE).is_err());
     }
 
     #[test]
@@ -3772,12 +3795,17 @@ const INSTALLER_MAX_REDIRECTS: usize = 10;
 const ALLOWED_INSTALLER_EXTENSIONS: &[&str] = &[".pkg", ".dmg", ".app.tar.gz"];
 
 /// Decide whether a redirect hop is allowed. Applied to every hop so an
-/// allowed host cannot bounce us onto an untrusted origin.
-fn installer_redirect_allowed(previous_hops: usize, url: &Url) -> Result<(), String> {
+/// allowed host cannot bounce us onto an untrusted origin. `trusted_namespace`
+/// is the `/owner/repo/` namespace of the originally requested release.
+fn installer_redirect_allowed(
+    previous_hops: usize,
+    url: &Url,
+    trusted_namespace: &str,
+) -> Result<(), String> {
     if previous_hops >= INSTALLER_MAX_REDIRECTS {
         return Err("too many redirects".to_string());
     }
-    validate_installer_url(url)
+    validate_installer_url(url, trusted_namespace)
 }
 
 /// Reject an advertised Content-Length above the streaming cap before any
@@ -3863,7 +3891,10 @@ fn validate_initial_signature_url(url: &Url) -> Result<(), String> {
 
 /// Validate a signature URL (scheme, host allow-list, accepted extension).
 /// Applied to every *redirect* hop, mirroring `validate_installer_url`.
-fn validate_signature_url(url: &Url) -> Result<(), String> {
+/// `trusted_namespace` is the `/owner/repo/` namespace of the originally
+/// requested release, captured from the initial URL so a redirect cannot
+/// bounce us into a different repository.
+fn validate_signature_url(url: &Url, trusted_namespace: &str) -> Result<(), String> {
     if url.scheme() != "https" {
         return Err("Signature URL must use https".to_string());
     }
@@ -3876,15 +3907,21 @@ fn validate_signature_url(url: &Url) -> Result<(), String> {
             "Signature URL host {host:?} is not in the trusted allow-list"
         ));
     }
-    // Redirect hops back to github.com must stay within the trusted release
-    // path. The CDN hosts (objects/release-assets.githubusercontent.com) answer
-    // opaque paths that legitimately do not contain the repo namespace, and the
-    // final minisign verification is fail-closed, so their paths are not
-    // constrained — but a hop returning to github.com must not escape the
-    // trusted repository.
-    if host == "github.com" && !url.path().starts_with(TRUSTED_RELEASE_PATH_PREFIX) {
+    // Every redirect hop must stay within the repository namespace that was
+    // originally requested. github.com hops already carry the full release
+    // path, and objects.githubusercontent.com may serve either the namespace
+    // path or the full release-download prefix. The release-assets CDN is the
+    // single intentional carve-out: it answers an opaque token path whose real
+    // target is encoded in signed query parameters, so it is exempt from both
+    // the namespace and extension checks. A hop escaping the namespace is
+    // rejected fail-closed — minisign verification is the backstop, not the
+    // only line of defense.
+    if host != "release-assets.githubusercontent.com"
+        && !url.path().starts_with(trusted_namespace)
+        && !url.path().starts_with(TRUSTED_RELEASE_PATH_PREFIX)
+    {
         return Err(format!(
-            "Signature redirect must stay within the trusted release path {TRUSTED_RELEASE_PATH_PREFIX:?}, got {}",
+            "Signature redirect must stay within the trusted repository namespace {trusted_namespace:?}, got {}",
             url.path()
         ));
     }
@@ -3902,11 +3939,15 @@ fn validate_signature_url(url: &Url) -> Result<(), String> {
 }
 
 /// Decide whether a signature redirect hop is allowed.
-fn signature_redirect_allowed(previous_hops: usize, url: &Url) -> Result<(), String> {
+fn signature_redirect_allowed(
+    previous_hops: usize,
+    url: &Url,
+    trusted_namespace: &str,
+) -> Result<(), String> {
     if previous_hops >= INSTALLER_MAX_REDIRECTS {
         return Err("too many redirects".to_string());
     }
-    validate_signature_url(url)
+    validate_signature_url(url, trusted_namespace)
 }
 
 /// Resolve the embedded updater public key (minisign text, base64-encoded in
@@ -3939,9 +3980,14 @@ fn updater_public_key_text(app: &AppHandle) -> Result<String, String> {
 async fn download_installer_signature(signature_url: &str) -> Result<Vec<u8>, String> {
     let parsed = Url::parse(signature_url).map_err(|e| format!("Invalid signature URL: {e}"))?;
     validate_initial_signature_url(&parsed)?;
+    let trusted_namespace = extract_repo_namespace(&parsed);
 
-    let redirect_policy = reqwest::redirect::Policy::custom(|attempt| {
-        match signature_redirect_allowed(attempt.previous().len(), attempt.url()) {
+    let redirect_policy = reqwest::redirect::Policy::custom(move |attempt| {
+        match signature_redirect_allowed(
+            attempt.previous().len(),
+            attempt.url(),
+            &trusted_namespace,
+        ) {
             Ok(()) => attempt.follow(),
             Err(err) => attempt.error(err),
         }
@@ -4022,6 +4068,29 @@ async fn verify_installer_signature(
 /// to make us download and open a release asset from an arbitrary repository.
 const TRUSTED_RELEASE_PATH_PREFIX: &str = "/maus-inc/mausVoice/releases/download/";
 
+/// The repository namespace every redirect hop must retain. A hop may serve
+/// either this namespace path or the full trusted release-download prefix;
+/// anything else is rejected fail-closed.
+const TRUSTED_REPO_NAMESPACE: &str = "/maus-inc/mausVoice/";
+
+/// Derive the repository namespace (`/owner/repo/`) a release URL belongs to,
+/// so redirect hops are checked against the exact repository originally
+/// requested rather than a hardcoded constant. The initial URL is always
+/// validated against `TRUSTED_RELEASE_PATH_PREFIX` first, but deriving the
+/// namespace from the parsed URL keeps the per-hop check tied to the real
+/// request even if the trusted prefix ever changes.
+fn extract_repo_namespace(url: &Url) -> String {
+    let segments: Vec<&str> = url
+        .path_segments()
+        .map(|s| s.filter(|p| !p.is_empty()).collect())
+        .unwrap_or_default();
+    if segments.len() >= 2 {
+        format!("/{}/{}/", segments[0], segments[1])
+    } else {
+        TRUSTED_REPO_NAMESPACE.to_string()
+    }
+}
+
 /// Validate the *initial* installer URL: it must come from the trusted GitHub
 /// repository's release download path. Redirect hops are validated separately
 /// (host + extension only) because a legitimate asset is served from GitHub's
@@ -4057,8 +4126,11 @@ fn validate_initial_installer_url(url: &Url) -> Result<(), String> {
 /// Validate an installer URL (scheme, host allow-list, accepted extension).
 /// Applied to every *redirect* hop, because the redirect chain is
 /// attacker-influenced: an allowed host could otherwise bounce us to an
-/// untrusted origin whose bytes we would write and execute.
-fn validate_installer_url(url: &Url) -> Result<(), String> {
+/// untrusted origin whose bytes we would write and execute. `trusted_namespace`
+/// is the `/owner/repo/` namespace of the originally requested release,
+/// captured from the initial URL so a redirect cannot bounce us into a
+/// different repository.
+fn validate_installer_url(url: &Url, trusted_namespace: &str) -> Result<(), String> {
     if url.scheme() != "https" {
         return Err("Installer URL must use https".to_string());
     }
@@ -4071,15 +4143,21 @@ fn validate_installer_url(url: &Url) -> Result<(), String> {
             "Installer URL host {host:?} is not in the trusted allow-list"
         ));
     }
-    // Redirect hops back to github.com must stay within the trusted release
-    // path. The CDN hosts (objects/release-assets.githubusercontent.com) answer
-    // opaque paths that legitimately do not contain the repo namespace, and the
-    // final minisign verification is fail-closed, so their paths are not
-    // constrained — but a hop returning to github.com must not escape the
-    // trusted repository.
-    if host == "github.com" && !url.path().starts_with(TRUSTED_RELEASE_PATH_PREFIX) {
+    // Every redirect hop must stay within the repository namespace that was
+    // originally requested. github.com hops already carry the full release
+    // path, and objects.githubusercontent.com may serve either the namespace
+    // path or the full release-download prefix. The release-assets CDN is the
+    // single intentional carve-out: it answers an opaque token path whose real
+    // target is encoded in signed query parameters, so it is exempt from both
+    // the namespace and extension checks. A hop escaping the namespace is
+    // rejected fail-closed — minisign verification is the backstop, not the
+    // only line of defense.
+    if host != "release-assets.githubusercontent.com"
+        && !url.path().starts_with(trusted_namespace)
+        && !url.path().starts_with(TRUSTED_RELEASE_PATH_PREFIX)
+    {
         return Err(format!(
-            "Installer redirect must stay within the trusted release path {TRUSTED_RELEASE_PATH_PREFIX:?}, got {}",
+            "Installer redirect must stay within the trusted repository namespace {trusted_namespace:?}, got {}",
             url.path()
         ));
     }
@@ -4116,6 +4194,7 @@ pub async fn download_and_open_mac_installer(
     // to make us download+execute arbitrary files.
     let parsed = Url::parse(&url).map_err(|e| format!("Invalid URL: {e}"))?;
     validate_initial_installer_url(&parsed)?;
+    let trusted_namespace = extract_repo_namespace(&parsed);
 
     // Use a unique temp filename (not the URL-derived basename) so a crafted
     // path like "../../../LaunchAgents/foo" cannot escape the temp dir. The
@@ -4142,8 +4221,12 @@ pub async fn download_and_open_mac_installer(
 
     // Validate every redirect hop rather than trusting the initial URL: the
     // default policy would silently follow an allowed host to an arbitrary one.
-    let redirect_policy = reqwest::redirect::Policy::custom(|attempt| {
-        match installer_redirect_allowed(attempt.previous().len(), attempt.url()) {
+    let redirect_policy = reqwest::redirect::Policy::custom(move |attempt| {
+        match installer_redirect_allowed(
+            attempt.previous().len(),
+            attempt.url(),
+            &trusted_namespace,
+        ) {
             Ok(()) => attempt.follow(),
             Err(err) => attempt.error(err),
         }
@@ -4437,13 +4520,15 @@ mod installer_url_tests {
             &Url::parse(
                 "https://release-assets.githubusercontent.com/maus-inc/mausVoice/releases/download/v0.1.5/mausVoice_0.1.5_universal.dmg"
             )
-            .unwrap()
+            .unwrap(),
+            TRUSTED_REPO_NAMESPACE
         )
         .is_ok());
 
         // An untrusted host in the redirect chain is rejected.
         assert!(validate_installer_url(
-            &Url::parse("https://evil.example.com/x.dmg").unwrap()
+            &Url::parse("https://evil.example.com/x.dmg").unwrap(),
+            TRUSTED_REPO_NAMESPACE
         )
         .is_err());
     }
@@ -4452,10 +4537,10 @@ mod installer_url_tests {
     fn redirect_hop_rejects_github_com_path_outside_trusted_repo() {
         // A redirect hop back to github.com must not escape the trusted
         // repository namespace even though the host itself is on the
-        // allow-list. The CDN hosts answer opaque paths and are not
-        // path-constrained, but a github.com hop must retain the repo prefix.
+        // allow-list.
         assert!(validate_installer_url(
-            &Url::parse("https://github.com/evil/repo/releases/download/v1/x.dmg").unwrap()
+            &Url::parse("https://github.com/evil/repo/releases/download/v1/x.dmg").unwrap(),
+            TRUSTED_REPO_NAMESPACE
         )
         .is_err());
 
@@ -4464,7 +4549,8 @@ mod installer_url_tests {
             &Url::parse(
                 "https://github.com/maus-inc/mausVoice/releases/download/v1/app.pkg"
             )
-            .unwrap()
+            .unwrap(),
+            TRUSTED_REPO_NAMESPACE
         )
         .is_ok());
     }
@@ -4473,7 +4559,8 @@ mod installer_url_tests {
     fn signature_redirect_rejects_github_com_path_outside_trusted_repo() {
         assert!(signature_redirect_allowed(
             1,
-            &Url::parse("https://github.com/evil/repo/releases/download/v1/x.sig").unwrap()
+            &Url::parse("https://github.com/evil/repo/releases/download/v1/x.sig").unwrap(),
+            TRUSTED_REPO_NAMESPACE
         )
         .is_err());
         assert!(signature_redirect_allowed(
@@ -4481,7 +4568,8 @@ mod installer_url_tests {
             &Url::parse(
                 "https://github.com/maus-inc/mausVoice/releases/download/v1/x.sig"
             )
-            .unwrap()
+            .unwrap(),
+            TRUSTED_REPO_NAMESPACE
         )
         .is_ok());
     }
@@ -4530,16 +4618,76 @@ mod installer_url_tests {
             &Url::parse(
                 "https://release-assets.githubusercontent.com/maus-inc/mausVoice/releases/download/v0.1.5/mausVoice_0.1.5_universal.dmg.sig"
             )
-            .unwrap()
+            .unwrap(),
+            TRUSTED_REPO_NAMESPACE
         )
         .is_ok());
 
         // An untrusted host in the redirect chain is rejected.
         assert!(signature_redirect_allowed(
             1,
-            &Url::parse("https://evil.example.com/x.sig").unwrap()
+            &Url::parse("https://evil.example.com/x.sig").unwrap(),
+            TRUSTED_REPO_NAMESPACE
         )
         .is_err());
+    }
+
+    #[test]
+    fn redirect_hop_enforces_repo_namespace_for_cdn() {
+        // A hop onto the objects CDN that escapes into a *different* repository
+        // namespace must be rejected, even though the host is on the
+        // allow-list. This is the defense-in-depth gap flagged in PR #63: a
+        // redirect to objects.githubusercontent.com was previously accepted for
+        // ANY repository path.
+        assert!(validate_installer_url(
+            &Url::parse(
+                "https://objects.githubusercontent.com/other-org/otherRepo/releases/download/v1/app.pkg"
+            )
+            .unwrap(),
+            TRUSTED_REPO_NAMESPACE
+        )
+        .is_err());
+
+        // A redirect hop that preserves the trusted `/maus-inc/mausVoice/`
+        // namespace is accepted.
+        assert!(validate_installer_url(
+            &Url::parse(
+                "https://objects.githubusercontent.com/maus-inc/mausVoice/releases/download/v1/app.pkg"
+            )
+            .unwrap(),
+            TRUSTED_REPO_NAMESPACE
+        )
+        .is_ok());
+
+        // The same namespace enforcement applies to the signature validator.
+        assert!(validate_signature_url(
+            &Url::parse(
+                "https://objects.githubusercontent.com/other-org/otherRepo/releases/download/v1/x.sig"
+            )
+            .unwrap(),
+            TRUSTED_REPO_NAMESPACE
+        )
+        .is_err());
+        assert!(validate_signature_url(
+            &Url::parse(
+                "https://objects.githubusercontent.com/maus-inc/mausVoice/releases/download/v1/x.sig"
+            )
+            .unwrap(),
+            TRUSTED_REPO_NAMESPACE
+        )
+        .is_ok());
+
+        // The release-assets CDN carve-out (opaque signed token path) is still
+        // honored and must not be broken by the namespace check.
+        assert!(signature_redirect_allowed(
+            1,
+            &Url::parse(
+                "https://release-assets.githubusercontent.com/maus-inc/mausVoice/releases/download/v0.1.5/mausVoice_0.1.5_universal.dmg.sig"
+            )
+            .unwrap(),
+            TRUSTED_REPO_NAMESPACE
+        )
+        .is_ok());
     }
 
     #[test]

@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { StrictMode, createElement } from "react";
-import { act } from "react-dom/test-utils";
+import { act } from "react";
 import { createRoot } from "react-dom/client";
 
 // Tracks VoiceInstructionRecorder construction/disposal so we can prove the
@@ -48,8 +48,18 @@ vi.mock("../../actions/transcribe.actions", () => ({
   transcribeAudio: vi.fn().mockResolvedValue({ sanitizedTranscript: "" }),
 }));
 vi.mock("../../repos", () => ({
-  getTranscribeAudioRepo: () => ({ repo: {} }),
-  getGenerateTextRepo: () => ({ repo: {} }),
+  getTranscribeAudioRepo: () => {
+    if (!fakeState.settings?.aiTranscription?.enabled) {
+      throw new Error("No transcription provider configured");
+    }
+    return { repo: {} };
+  },
+  getGenerateTextRepo: () => {
+    if (!fakeState.userPrefs?.hasProvider) {
+      throw new Error("No generation provider configured");
+    }
+    return { repo: {} };
+  },
 }));
 vi.mock("../../utils/log.utils", () => ({
   getLogger: () => ({ warning: vi.fn() }),
@@ -58,10 +68,10 @@ vi.mock("../../utils/user.utils", () => ({
   getMyPreferredMicrophone: () => null,
 }));
 
-const fakeState = {
-  settings: { aiTranscription: {} },
+let fakeState = {
+  settings: { aiTranscription: { enabled: false } },
   apiKeyById: {},
-  userPrefs: {},
+  userPrefs: { hasProvider: false },
 };
 vi.mock("../../store", () => ({
   useAppStore: (selector: (s: unknown) => unknown) => selector(fakeState),
@@ -113,5 +123,76 @@ describe("ComposerPage VoiceInstructionRecorder lifecycle", () => {
     expect(constructCount).toBeGreaterThanOrEqual(1);
     expect(disposeCount).toBeGreaterThanOrEqual(1);
     expect(constructCount - disposeCount).toBe(1);
+  });
+});
+
+describe("ComposerPage VoiceInstructionRecorder hydration", () => {
+  let container: HTMLDivElement;
+  let root: ReturnType<typeof createRoot> | null = null;
+
+  const micButton = () =>
+    container.querySelector<HTMLButtonElement>(
+      'button[aria-label="Dictate edit instruction"]',
+    );
+
+  beforeEach(() => {
+    constructCount = 0;
+    disposeCount = 0;
+    // Fresh empty store: no generation provider and no capture path, so Voice
+    // Edit Mode is unavailable until async RootSideEffects populate the store.
+    fakeState = {
+      settings: { aiTranscription: { enabled: false } },
+      apiKeyById: {},
+      userPrefs: { hasProvider: false },
+    };
+    container = document.createElement("div");
+    document.body.appendChild(container);
+  });
+
+  afterEach(() => {
+    act(() => {
+      root?.unmount();
+    });
+    root = null;
+    container.remove();
+  });
+
+  it("enables the mic after the store hydrates without recreating the recorder", async () => {
+    await act(async () => {
+      root = createRoot(container);
+      root.render(createElement(StrictMode, null, createElement(ComposerPage)));
+    });
+    await act(async () => {
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    // Initially the store is empty, so the mic must be disabled.
+    const before = micButton();
+    expect(before).not.toBeNull();
+    expect(before?.disabled).toBe(true);
+    const constructsBeforeHydration = constructCount;
+
+    // Simulate RootSideEffects hydrating the store with a generation provider
+    // and a transcription capture path.
+    fakeState = {
+      settings: { aiTranscription: { enabled: true } },
+      apiKeyById: {},
+      userPrefs: { hasProvider: true },
+    };
+    await act(async () => {
+      root?.render(
+        createElement(StrictMode, null, createElement(ComposerPage)),
+      );
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    // The mic becomes enabled purely from the reactive store update.
+    const after = micButton();
+    expect(after?.disabled).toBe(false);
+    // No new recorder was constructed (and thus no window was reopened) by the
+    // hydration re-render — availability is derived live from the store.
+    expect(constructCount).toBe(constructsBeforeHydration);
   });
 });

@@ -280,4 +280,68 @@ describe("VoiceInstructionRecorder", () => {
     expect(deps.onResetLevels).not.toHaveBeenCalled();
     expect(recorder.getState()).toBe("idle");
   });
+
+  it("does not fire onTranscript/onError after dispose while transcribe is pending", async () => {
+    const stopDeferred = deferred<StopRecordingResponse>();
+    const transcribeDeferred = deferred<string>();
+    const deps = baseDeps({
+      invoke: vi.fn((cmd) => {
+        if (cmd === "start_recording") return Promise.resolve(undefined);
+        if (cmd === "stop_recording") return stopDeferred.promise;
+        return Promise.resolve(undefined);
+      }),
+      transcribe: vi.fn().mockReturnValue(transcribeDeferred.promise),
+    });
+    const recorder = new VoiceInstructionRecorder(deps);
+
+    await recorder.toggle();
+    const stopPromise = recorder.toggle();
+    recorder.dispose();
+    // Stop resolves, transcribe is still in flight and resolves after dispose.
+    stopDeferred.resolve({ samples: [0, 1], sampleRate: 16000 });
+    transcribeDeferred.resolve("late transcript");
+    await stopPromise;
+    // Let any stray continuation settle.
+    await Promise.resolve();
+
+    expect(deps.onTranscript).not.toHaveBeenCalled();
+    expect(deps.onResetLevels).not.toHaveBeenCalled();
+    expect(deps.onError).not.toHaveBeenCalled();
+  });
+
+  it("does not fall back to browser recognition after dispose when transcribe rejects", async () => {
+    const stopDeferred = deferred<StopRecordingResponse>();
+    const transcribeDeferred = deferred<string>();
+    const fake = new FakeRecognition();
+    const deps = baseDeps({
+      createSpeechRecognition: () => fake,
+      invoke: vi.fn((cmd) => {
+        if (cmd === "start_recording") return Promise.resolve(undefined);
+        if (cmd === "stop_recording") return stopDeferred.promise;
+        return Promise.resolve(undefined);
+      }),
+      transcribe: vi.fn().mockReturnValue(transcribeDeferred.promise),
+    });
+    const recorder = new VoiceInstructionRecorder(deps);
+
+    await recorder.toggle();
+    const stopPromise = recorder.toggle();
+    // Resolve stop_recording but do NOT dispose yet, so the recorder proceeds to
+    // invoke transcribe() and attach its await handler.
+    stopDeferred.resolve({ samples: [0, 1], sampleRate: 16000 });
+    // Allow the stop → transcribe continuation to run, so transcribe() is invoked
+    // (and its rejection will be consumed by the recorder's await) before we
+    // dispose and reject. Disposing earlier would bail before transcribe, leaving
+    // the rejection unhandled.
+    await Promise.resolve();
+    recorder.dispose();
+    transcribeDeferred.reject(new Error("transcribe failed"));
+    await stopPromise;
+    // Let the rejection continuation settle.
+    await Promise.resolve();
+
+    expect(fake.started).toBe(false);
+    expect(deps.onError).not.toHaveBeenCalled();
+    expect(deps.logger.warning).not.toHaveBeenCalled();
+  });
 });
