@@ -29,159 +29,49 @@ type ScratchCommand = {
 
 type SpokenCommand = InsertCommand | ScratchCommand;
 
+const insert = (
+  words: string[],
+  value: string,
+  extras?: Omit<InsertCommand, "kind" | "words" | "value">,
+): InsertCommand => ({ kind: "insert", words, value, ...extras });
+
 const COMMANDS: SpokenCommand[] = [
   { kind: "scratch", words: ["scratch", "that"] },
-  {
-    kind: "insert",
-    words: ["new", "paragraph"],
-    value: "\n\n",
-    structural: true,
-  },
-  {
-    kind: "insert",
-    words: ["next", "paragraph"],
-    value: "\n\n",
-    structural: true,
-  },
-  {
-    kind: "insert",
-    words: ["new", "line"],
-    value: "\n",
+  insert(["new", "paragraph"], "\n\n", { structural: true }),
+  insert(["next", "paragraph"], "\n\n", { structural: true }),
+  insert(["new", "line"], "\n", { structural: true, blockedFollowers: [["of"]] }),
+  insert(["next", "line"], "\n", {
     structural: true,
     blockedFollowers: [["of"]],
-  },
-  {
-    kind: "insert",
-    words: ["next", "line"],
-    value: "\n",
-    structural: true,
-    blockedFollowers: [["of"]],
-  },
-  {
-    kind: "insert",
-    words: ["line", "break"],
-    value: "\n",
-    structural: true,
-  },
-  {
-    kind: "insert",
-    words: ["newline"],
-    value: "\n",
-    structural: true,
-    blockedFollowers: [["of"]],
-  },
-  {
-    kind: "insert",
-    words: ["question", "mark"],
-    value: "?",
-    attachLeft: true,
-  },
-  {
-    kind: "insert",
-    words: ["exclamation", "mark"],
-    value: "!",
-    attachLeft: true,
-  },
-  {
-    kind: "insert",
-    words: ["exclamation", "point"],
-    value: "!",
-    attachLeft: true,
-  },
-  {
-    kind: "insert",
-    words: ["full", "stop"],
-    value: ".",
-    attachLeft: true,
-  },
-  {
-    kind: "insert",
-    words: ["open", "parenthesis"],
-    value: "(",
-  },
-  {
-    kind: "insert",
-    words: ["close", "parenthesis"],
-    value: ")",
-    attachLeft: true,
-  },
-  {
-    kind: "insert",
-    words: ["left", "parenthesis"],
-    value: "(",
-  },
-  {
-    kind: "insert",
-    words: ["right", "parenthesis"],
-    value: ")",
-    attachLeft: true,
-  },
-  {
-    kind: "insert",
-    words: ["open", "paren"],
-    value: "(",
-  },
-  {
-    kind: "insert",
-    words: ["close", "paren"],
-    value: ")",
-    attachLeft: true,
-  },
-  {
-    kind: "insert",
-    words: ["open", "quote"],
-    value: '"',
-  },
-  {
-    kind: "insert",
-    words: ["close", "quote"],
-    value: '"',
-    attachLeft: true,
-  },
-  {
-    kind: "insert",
-    words: ["open", "quotes"],
-    value: '"',
-  },
-  {
-    kind: "insert",
-    words: ["close", "quotes"],
-    value: '"',
-    attachLeft: true,
-  },
-  {
-    kind: "insert",
-    words: ["dot", "dot", "dot"],
-    value: "...",
-  },
-  {
-    kind: "insert",
-    words: ["comma"],
-    value: ",",
+  }),
+  insert(["line", "break"], "\n", { structural: true }),
+  insert(["newline"], "\n", { structural: true, blockedFollowers: [["of"]] }),
+  insert(["question", "mark"], "?", { attachLeft: true }),
+  insert(["exclamation", "mark"], "!", { attachLeft: true }),
+  insert(["exclamation", "point"], "!", { attachLeft: true }),
+  insert(["full", "stop"], ".", { attachLeft: true }),
+  insert(["open", "parenthesis"], "("),
+  insert(["close", "parenthesis"], ")", { attachLeft: true }),
+  insert(["left", "parenthesis"], "("),
+  insert(["right", "parenthesis"], ")", { attachLeft: true }),
+  insert(["open", "paren"], "("),
+  insert(["close", "paren"], ")", { attachLeft: true }),
+  insert(["open", "quote"], '"'),
+  insert(["close", "quote"], '"', { attachLeft: true }),
+  insert(["open", "quotes"], '"'),
+  insert(["close", "quotes"], '"', { attachLeft: true }),
+  insert(["dot", "dot", "dot"], "..."),
+  insert(["comma"], ",", {
     attachLeft: true,
     blockedPredecessors: [["oxford"], ["inverted"], ["serial"]],
-  },
-  {
-    kind: "insert",
-    words: ["period"],
-    value: ".",
+  }),
+  insert(["period"], ".", {
     attachLeft: true,
     blockedFollowers: [["of"], ["in"], ["piece"]],
     blockedPredecessors: [["time"], ["trial"], ["grace"]],
-  },
-  {
-    kind: "insert",
-    words: ["colon"],
-    value: ":",
-    attachLeft: true,
-    blockedFollowers: [["cancer"]],
-  },
-  {
-    kind: "insert",
-    words: ["semicolon"],
-    value: ";",
-    attachLeft: true,
-  },
+  }),
+  insert(["colon"], ":", { attachLeft: true, blockedFollowers: [["cancer"]] }),
+  insert(["semicolon"], ";", { attachLeft: true }),
 ];
 
 const COMMANDS_BY_LENGTH = [...COMMANDS].sort(
