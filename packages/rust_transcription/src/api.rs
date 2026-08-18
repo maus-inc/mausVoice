@@ -11,6 +11,7 @@ use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
 use crate::downloads::DownloadArtifact;
+use crate::downloads::verify_file_sha256;
 use crate::errors::ApiError;
 use crate::models::WhisperModel;
 use crate::state::AppState;
@@ -628,13 +629,18 @@ async fn ensure_model_downloaded(
         model
             .artifact_set()
             .into_iter()
-            .map(|(name, _, _)| model.artifact_path(&state.config.models_dir, name))
+            .map(|(name, _, sha256)| {
+                (
+                    model.artifact_path(&state.config.models_dir, name),
+                    sha256,
+                )
+            })
             .collect::<Vec<_>>()
     } else {
-        vec![model_path.clone()]
+        vec![(model_path.clone(), None)]
     };
 
-    for required_path in required_paths {
+    for (required_path, expected_sha256) in required_paths {
         let present = tokio::fs::metadata(&required_path)
             .await
             .map(|metadata| metadata.is_file() && metadata.len() > 0)
@@ -648,6 +654,14 @@ async fn ensure_model_downloaded(
                     model.as_slug()
                 ),
             ));
+        }
+        // Re-verify the pinned digest on the inference path. A graph/weights
+        // file swapped or tampered with after the verified download would
+        // otherwise be transcribed without complaint.
+        if let Some(expected) = expected_sha256 {
+            if let Err(error) = verify_file_sha256(&required_path, expected).await {
+                return Err(ApiError::bad_request("model_digest_mismatch", error));
+            }
         }
     }
 

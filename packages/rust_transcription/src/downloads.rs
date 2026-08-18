@@ -982,7 +982,7 @@ fn reject_oversized_response(response: &reqwest::Response, max_bytes: u64) -> Re
     Ok(())
 }
 
-async fn verify_file_sha256(path: &Path, expected: &str) -> Result<(), String> {
+pub(crate) async fn verify_file_sha256(path: &Path, expected: &str) -> Result<(), String> {
     let path = path.to_path_buf();
     let expected = expected.to_owned();
     tokio::task::spawn_blocking(move || {

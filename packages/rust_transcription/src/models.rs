@@ -225,6 +225,12 @@ impl WhisperModel {
         }
 
         match self {
+            // Whisper.cpp ggml binaries are fetched from the project's mutable
+            // default branch. Upstream publishes them without a per-blob
+            // immutable revision or digest, so — unlike the ONNX artifacts —
+            // they are not supply-chain pinned. Pinning requires the exact
+            // whisper.cpp commit that hosts each blob, which is tracked
+            // separately; see the review notes on PR #63.
             Self::Tiny => "https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-tiny.bin",
             Self::Base => "https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-base.bin",
             Self::Small => {
@@ -239,18 +245,17 @@ impl WhisperModel {
             Self::Turbo => {
                 "https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-large-v3-turbo.bin"
             }
-            Self::ParakeetCtc06B => {
-                "https://huggingface.co/onnx-community/parakeet-ctc-0.6b-ONNX/resolve/main/onnx/model_int8.onnx_data"
-            }
-            Self::ParakeetTdt06B => {
-                "https://huggingface.co/istupakov/parakeet-tdt-0.6b-v3-onnx/resolve/main/encoder-model.int8.onnx"
-            }
-            Self::Canary1B => {
-                "https://huggingface.co/istupakov/canary-1b-v2-onnx/resolve/main/encoder-model.int8.onnx"
-            }
+            // ONNX models are downloaded through `artifact_set()`, which pins
+            // each artifact to an immutable Hugging Face revision and verifies
+            // its digest, so they intentionally have no `download_url` arm: the
+            // mutable `/resolve/main/` ONNX URLs would be incorrect to expose
+            // here.
             Self::SenseVoice => {
                 // Pin the primary download URL to the same immutable revision.
                 Self::SENSEVOICE_DOWNLOAD_URL
+            }
+            _ => {
+                return String::new();
             }
         }
         .to_string()

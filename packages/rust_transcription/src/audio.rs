@@ -11,9 +11,11 @@ const MAX_SAMPLE_RATE: u32 = 384_000;
 
 /// Hard cap on polyphase coefficients per table. A 44.1 kHz -> 16 kHz resample
 /// allocates only ~7,520 coefficients; a coprime rate such as 44,101 Hz
-/// allocates ~752k. The 4M cap leaves generous headroom so the full declared
-/// 8k–384k band resamples, while still rejecting ratios that would allocate an
-/// unsafe number of coefficients.
+/// allocates ~752k. The 4M cap leaves generous headroom for the common rates
+/// inside the declared 8k–384k band, while still rejecting ratios that would
+/// allocate an unsafe number of coefficients. Note this is an additional
+/// constraint beyond the sample-rate band: some in-band coprime rates (e.g.
+/// 320,001 Hz) still exceed the cap and are rejected.
 const MAX_POLYPHASE_COEFFICIENTS: u64 = 4_000_000;
 
 /// Maximum total polyphase coefficients retained across all cached rate pairs.
