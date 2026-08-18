@@ -655,7 +655,7 @@
   "the_user_has_dictated_the_following_command_transcript_execu": "사용자가 다음 명령을 받아썼습니다: ------- {transcript} ------- 이 명령을 실행하고 {languageName}으로 출력을 제공하세요. 지침: - 사용자가 무언가를 쓰기, 만들기, 초안 작성하기, 또는 구성하기를 요청하면 → 해당 내용을 생성하세요 - 사용자가 무언가를 요약하거나, 분석하거나, 설명하기를 요청하면 → 요약/분석/설명을 제공하세요 - 사용자가 무언가를 변환하거나 다시 쓰기를 요청하면 → 변환을 적용하세요 - 사용자가 명확한 명령 없이 진술을 제공하면 → 정리하여 명확하게 제시하세요 요청된 출력만 제공하세요, 그 외에는 아무것도 하지 마세요. 출력은 사용자의 애플리케이션에 직접 붙여넣어집니다.",
   "theme_mode": "테마: {mode}",
   "theme_settings": "테마 설정",
-  "thinking": "Thinking…",
+  "thinking": "생각 중",
   "this_action_cannot_be_undone_all_your_data_will_be_permanent": "이 작업은 취소할 수 없습니다. 모든 데이터가 영구적으로 삭제됩니다.",
   "this_action_permanently_removes_local_data": "이 작업은 로컬 데이터를 영구적으로 제거합니다",
   "this_device_summary_recommended_recommended": "이 기기: {summary} · 권장: {recommended}",

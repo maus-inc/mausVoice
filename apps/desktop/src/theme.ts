@@ -277,7 +277,7 @@ export const theme = createTheme({
           },
         },
         switchBase: ({ theme }) => ({
-          "&.Mui-checked": {
+          "&.Mui-checked:not(.Mui-disabled)": {
             color: inkSolid.base,
             "& + .MuiSwitch-track": {
               backgroundColor: inkSolid.base,
@@ -285,7 +285,7 @@ export const theme = createTheme({
             },
           },
           ...theme.applyStyles("dark", {
-            "&.Mui-checked": {
+            "&.Mui-checked:not(.Mui-disabled)": {
               color: surfaces.dark.level0,
               "& + .MuiSwitch-track": {
                 backgroundColor: chalkSolid.base,
@@ -297,12 +297,12 @@ export const theme = createTheme({
         track: ({ theme }) => ({
           backgroundColor: theme.vars.palette.level3,
           opacity: 1,
-          ".Mui-checked.Mui-checked + &": {
+          ".Mui-checked:not(.Mui-disabled) + &": {
             backgroundColor: inkSolid.base,
             opacity: 1,
           },
           ...theme.applyStyles("dark", {
-            ".Mui-checked.Mui-checked + &": {
+            ".Mui-checked:not(.Mui-disabled) + &": {
               backgroundColor: chalkSolid.base,
             },
           }),

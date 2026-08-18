@@ -655,7 +655,7 @@
   "the_user_has_dictated_the_following_command_transcript_execu": "用户口述了以下命令：------- {transcript} ------- 请执行此命令，并以 {languageName} 提供输出。说明： - 如果用户要求您撰写、创建、起草或编写内容 → 生成该内容 - 如果用户要求您总结、分析或解释内容 → 提供总结/分析/解释 - 如果用户要求您转换或重写内容 → 应用该转换 - 如果用户给出了没有清晰命令的陈述 → 整理并清晰地呈现它 仅返回所请求的输出，不要返回其他内容。输出将直接粘贴到用户的应用程序中。",
   "theme_mode": "主题：{mode}",
   "theme_settings": "主题设置",
-  "thinking": "Thinking…",
+  "thinking": "思考中",
   "this_action_cannot_be_undone_all_your_data_will_be_permanent": "此操作无法撤销。您的所有数据将被永久删除。",
   "this_action_permanently_removes_local_data": "此操作会永久移除本地数据",
   "this_device_summary_recommended_recommended": "此设备：{summary} · 推荐：{recommended}",

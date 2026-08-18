@@ -56,7 +56,7 @@ const elapsedRatio = (playback: ActiveWebAudioPlayback): number => {
 };
 
 export const clampPlaybackProgress = (progress: number): number =>
-  Math.min(Math.max(progress, 0), 1);
+  Number.isFinite(progress) ? Math.min(Math.max(progress, 0), 1) : 0;
 
 const armTick = (playback: ActiveWebAudioPlayback): void => {
   const tick = () => {

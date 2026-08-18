@@ -655,7 +655,7 @@
   "the_user_has_dictated_the_following_command_transcript_execu": "O utilizador ditou o seguinte comando: ------- {transcript} ------- Execute este comando e forneça o resultado em {languageName}. Instruções: - Se o utilizador pedir para escrever, criar, redigir ou compor algo → produza esse conteúdo - Se o utilizador pedir para resumir, analisar ou explicar algo → forneça o resumo/análise/explicação - Se o utilizador pedir para transformar ou reescrever algo → aplique a transformação - Se o utilizador fornecer uma afirmação sem um comando claro → limpe-a e apresente-a de forma clara Devolve APENAS o resultado pedido, nada mais. O resultado será colado diretamente na aplicação do utilizador.",
   "theme_mode": "Tema: {mode}",
   "theme_settings": "Definições de tema",
-  "thinking": "Thinking…",
+  "thinking": "Pensando…",
   "this_action_cannot_be_undone_all_your_data_will_be_permanent": "Esta ação não pode ser desfeita. Todos os seus dados serão excluídos permanentemente.",
   "this_action_permanently_removes_local_data": "Esta ação remove permanentemente dados locais",
   "this_device_summary_recommended_recommended": "Este dispositivo: {summary} · Recomendado: {recommended}",

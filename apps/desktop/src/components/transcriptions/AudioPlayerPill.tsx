@@ -242,6 +242,7 @@ export const AudioPlayerPill = ({
       const handleUp = (upEvent: PointerEvent) => {
         window.removeEventListener("pointermove", handleMove);
         window.removeEventListener("pointerup", handleUp);
+        window.removeEventListener("pointercancel", handleCancel);
         pointerCleanupRef.current = null;
         isDraggingRef.current = false;
         const ratio = getProgressFromClientX(upEvent.clientX);
@@ -251,12 +252,22 @@ export const AudioPlayerPill = ({
           commitSeek(playbackProgressRef.current);
         }
       };
+      const handleCancel = () => {
+        window.removeEventListener("pointermove", handleMove);
+        window.removeEventListener("pointerup", handleUp);
+        window.removeEventListener("pointercancel", handleCancel);
+        pointerCleanupRef.current = null;
+        isDraggingRef.current = false;
+        commitSeek(playbackProgressRef.current);
+      };
       pointerCleanupRef.current?.();
       window.addEventListener("pointermove", handleMove);
       window.addEventListener("pointerup", handleUp, { once: true });
+      window.addEventListener("pointercancel", handleCancel, { once: true });
       pointerCleanupRef.current = () => {
         window.removeEventListener("pointermove", handleMove);
         window.removeEventListener("pointerup", handleUp);
+        window.removeEventListener("pointercancel", handleCancel);
       };
     },
     [disabled, getProgressFromClientX, previewSeek, commitSeek],

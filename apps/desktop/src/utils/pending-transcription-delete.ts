@@ -55,6 +55,7 @@ const invokeDelete = (id: string, snapshot?: Transcription): void => {
     .then(() => {
       queuedIds.delete(id);
       writeQueuedIds();
+      removeFromStore(id);
     })
     .catch((error) => {
       if (snapshot) {

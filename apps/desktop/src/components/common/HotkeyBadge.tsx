@@ -35,7 +35,12 @@ export const HotkeyBadge = ({ keys, onClick, sx }: HotkeyBadgeProps) => {
       }}
     >
       {keys.map((key, index) => (
-        <Keycap key={`${key}-${index}`} tabIndex={-1} aria-hidden>
+        <Keycap
+          key={`${key}-${index}`}
+          component={onClick ? "span" : undefined}
+          tabIndex={-1}
+          aria-hidden
+        >
           {getPrettyKeyName(key)}
         </Keycap>
       ))}
