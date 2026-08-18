@@ -354,6 +354,46 @@ const applyTightInsert = (output: string[], value: string): void => {
   output.push(value);
 };
 
+const containsSpokenCommand = (
+  words: string[],
+  skipStructural: boolean,
+): boolean => {
+  for (let probe = 0; probe < words.length; probe += 1) {
+    if (matchCommandAt(words, probe, skipStructural)) {
+      return true;
+    }
+  }
+  return false;
+};
+
+const shouldDropFollowingGap = (command: SpokenCommand): boolean => {
+  if (command.kind === "scratch") {
+    return true;
+  }
+  return (
+    command.value.startsWith("\n") ||
+    command.value === "(" ||
+    command.value === '"'
+  );
+};
+
+const applyMatchedCommand = (
+  output: string[],
+  command: SpokenCommand,
+  emitOriginalGap: () => void,
+): void => {
+  if (command.kind === "scratch") {
+    applyScratch(output);
+    return;
+  }
+  if (command.attachLeft || command.value.startsWith("\n")) {
+    applyTightInsert(output, command.value);
+    return;
+  }
+  emitOriginalGap();
+  output.push(command.value);
+};
+
 export const applySpokenCommands = (
   text: string,
   language?: string,
@@ -365,18 +405,7 @@ export const applySpokenCommands = (
 
   const skipStructural = options?.skipStructuralCommands === true;
   const parsed = parsePreservingWhitespace(text);
-  if (parsed.words.length === 0) {
-    return text;
-  }
-
-  let sawCommand = false;
-  for (let probe = 0; probe < parsed.words.length; probe += 1) {
-    if (matchCommandAt(parsed.words, probe, skipStructural)) {
-      sawCommand = true;
-      break;
-    }
-  }
-  if (!sawCommand) {
+  if (parsed.words.length === 0 || !containsSpokenCommand(parsed.words, skipStructural)) {
     return text;
   }
 
@@ -401,29 +430,10 @@ export const applySpokenCommands = (
       continue;
     }
 
-    if (matched.command.kind === "scratch") {
-      applyScratch(output);
-      pendingOriginalGap = null;
-    } else if (
-      matched.command.attachLeft ||
-      matched.command.value.startsWith("\n")
-    ) {
-      applyTightInsert(output, matched.command.value);
-    } else {
-      emitOriginalGap();
-      output.push(matched.command.value);
-    }
-
-    pendingOriginalGap = parsed.gaps[index + matched.length - 1] ?? null;
-    if (
-      matched.command.kind === "scratch" ||
-      (matched.command.kind === "insert" &&
-        (matched.command.value.startsWith("\n") ||
-          matched.command.value === "(" ||
-          matched.command.value === '"'))
-    ) {
-      pendingOriginalGap = null;
-    }
+    applyMatchedCommand(output, matched.command, emitOriginalGap);
+    pendingOriginalGap = shouldDropFollowingGap(matched.command)
+      ? null
+      : (parsed.gaps[index + matched.length - 1] ?? null);
     index += matched.length;
   }
 
