@@ -106,6 +106,17 @@ describe("applySpokenCommands", () => {
     expect(applySpokenCommands("  hello world  ")).toBe("  hello world  ");
   });
 
+  it("leaves aligned or tabbed text unchanged when no command matches", () => {
+    expect(applySpokenCommands("const  x\t=\t1")).toBe("const  x\t=\t1");
+    expect(applySpokenCommands("col1   col2\n  indented")).toBe(
+      "col1   col2\n  indented",
+    );
+  });
+
+  it("keeps original gaps around a matched command", () => {
+    expect(applySpokenCommands("hello  comma  world")).toBe("hello,  world");
+  });
+
   it("skips scratch and newlines on interim chunks", () => {
     expect(
       applySpokenCommands("hello new line scratch that", "en", {

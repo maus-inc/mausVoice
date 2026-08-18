@@ -92,23 +92,54 @@ const isWhitespaceChar = (char: string): boolean =>
 const isSentenceStop = (char: string): boolean =>
   char === "." || char === "!" || char === "?";
 
-const tokenizeWords = (text: string): string[] => {
-  const tokens: string[] = [];
-  let current = "";
+type ParsedSpeech = {
+  leading: string;
+  words: string[];
+  /** `gaps[i]` is the original whitespace between `words[i]` and `words[i + 1]`. */
+  gaps: string[];
+  trailing: string;
+};
+
+const parsePreservingWhitespace = (text: string): ParsedSpeech => {
+  const words: string[] = [];
+  const gaps: string[] = [];
+  let leading = "";
+  let trailing = "";
+  let currentWord = "";
+  let currentGap = "";
+  let seenWord = false;
+
+  const flushWord = () => {
+    if (!currentWord) {
+      return;
+    }
+    if (seenWord) {
+      gaps.push(currentGap);
+    } else {
+      leading = currentGap;
+    }
+    words.push(currentWord);
+    currentWord = "";
+    currentGap = "";
+    seenWord = true;
+  };
+
   for (const char of text) {
     if (isWhitespaceChar(char)) {
-      if (current) {
-        tokens.push(current);
-        current = "";
+      if (currentWord) {
+        flushWord();
       }
+      currentGap += char;
     } else {
-      current += char;
+      currentWord += char;
     }
   }
-  if (current) {
-    tokens.push(current);
+  if (currentWord) {
+    flushWord();
   }
-  return tokens;
+  trailing = currentGap;
+
+  return { leading, words, gaps, trailing };
 };
 
 const stripEdgePunctuation = (token: string): string => {
@@ -318,64 +349,9 @@ const matchCommandAt = (
   return null;
 };
 
-const shouldInsertPendingSpace = (output: string[]): boolean => {
-  const last = output.at(-1) ?? "";
-  return (
-    last.length > 0 &&
-    !last.endsWith("\n") &&
-    !last.endsWith("(") &&
-    last !== '"'
-  );
-};
-
-const applyInsertCommand = (
-  output: string[],
-  command: InsertCommand,
-  pendingSpace: boolean,
-): boolean => {
-  if (command.attachLeft) {
-    trimTrailingSpace(output);
-    output.push(command.value);
-    return true;
-  }
-  if (command.value.startsWith("\n")) {
-    trimTrailingSpace(output);
-    output.push(command.value);
-    return false;
-  }
-  if (pendingSpace && shouldInsertPendingSpace(output)) {
-    output.push(" ");
-  }
-  output.push(command.value);
-  return command.value !== "(" && command.value !== '"';
-};
-
-const takeEdgeWhitespace = (text: string, edge: "start" | "end"): string => {
-  if (edge === "start") {
-    let index = 0;
-    while (index < text.length && isWhitespaceChar(text[index] ?? "")) {
-      index += 1;
-    }
-    return text.slice(0, index);
-  }
-  let index = text.length;
-  while (index > 0 && isWhitespaceChar(text[index - 1] ?? "")) {
-    index -= 1;
-  }
-  return text.slice(index);
-};
-
-const stripSpacesBeforeNewlines = (text: string): string => {
-  let result = "";
-  for (const char of text) {
-    if (char === "\n") {
-      while (result.endsWith(" ") || result.endsWith("\t")) {
-        result = result.slice(0, -1);
-      }
-    }
-    result += char;
-  }
-  return result;
+const applyTightInsert = (output: string[], value: string): void => {
+  trimTrailingSpace(output);
+  output.push(value);
 };
 
 export const applySpokenCommands = (
@@ -388,44 +364,69 @@ export const applySpokenCommands = (
   }
 
   const skipStructural = options?.skipStructuralCommands === true;
-  const tokens = tokenizeWords(text);
-  if (tokens.length === 0) {
+  const parsed = parsePreservingWhitespace(text);
+  if (parsed.words.length === 0) {
     return text;
   }
 
-  const leading = takeEdgeWhitespace(text, "start");
-  const trailing = takeEdgeWhitespace(text, "end");
+  let sawCommand = false;
+  for (let probe = 0; probe < parsed.words.length; probe += 1) {
+    if (matchCommandAt(parsed.words, probe, skipStructural)) {
+      sawCommand = true;
+      break;
+    }
+  }
+  if (!sawCommand) {
+    return text;
+  }
+
   const output: string[] = [];
   let index = 0;
-  let pendingSpace = false;
+  let pendingOriginalGap: string | null = null;
 
-  while (index < tokens.length) {
-    const matched = matchCommandAt(tokens, index, skipStructural);
+  const emitOriginalGap = () => {
+    if (pendingOriginalGap) {
+      output.push(pendingOriginalGap);
+    }
+    pendingOriginalGap = null;
+  };
+
+  while (index < parsed.words.length) {
+    const matched = matchCommandAt(parsed.words, index, skipStructural);
     if (!matched) {
-      if (pendingSpace && shouldInsertPendingSpace(output)) {
-        output.push(" ");
-      }
-      output.push(tokens[index] ?? "");
-      pendingSpace = true;
+      emitOriginalGap();
+      output.push(parsed.words[index] ?? "");
+      pendingOriginalGap = parsed.gaps[index] ?? null;
       index += 1;
       continue;
     }
 
     if (matched.command.kind === "scratch") {
       applyScratch(output);
-      pendingSpace = output.length > 0;
+      pendingOriginalGap = null;
+    } else if (
+      matched.command.attachLeft ||
+      matched.command.value.startsWith("\n")
+    ) {
+      applyTightInsert(output, matched.command.value);
     } else {
-      pendingSpace = applyInsertCommand(
-        output,
-        matched.command,
-        pendingSpace,
-      );
+      emitOriginalGap();
+      output.push(matched.command.value);
+    }
+
+    pendingOriginalGap = parsed.gaps[index + matched.length - 1] ?? null;
+    if (
+      matched.command.kind === "scratch" ||
+      (matched.command.kind === "insert" &&
+        (matched.command.value.startsWith("\n") ||
+          matched.command.value === "(" ||
+          matched.command.value === '"'))
+    ) {
+      pendingOriginalGap = null;
     }
     index += matched.length;
   }
 
-  // Only strip spaces this function inserted before a newline. Do not collapse
-  // user-authored space runs (code, aligned columns, monospaced text).
-  const body = stripSpacesBeforeNewlines(output.join(""));
-  return `${leading}${body}${trailing}`;
+  emitOriginalGap();
+  return `${parsed.leading}${output.join("")}${parsed.trailing}`;
 };
