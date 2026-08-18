@@ -62,15 +62,9 @@ pub async fn upsert_user_preferences(
              insertion_method,
              typing_speed_ms,
              pill_reset_monitor_strategy,
-             always_request_admin_on_startup,
-             in_dictation_style_switching_enabled,
-             hallucination_filter_enabled,
-             review_before_insert,
-             agent_enabled_tools,
-             agent_max_iterations,
-             agent_permission_timeout_ms
+             always_request_admin_on_startup
          )
-            VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20, ?21, ?22, ?23, ?24, ?25, ?26, ?27, ?28, ?29, ?30, ?31, ?32, ?33, ?34, ?35, ?36, ?37, ?38, ?39, ?40, ?41, ?42, ?43, ?44, ?45, ?46)
+            VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20, ?21, ?22, ?23, ?24, ?25, ?26, ?27, ?28, ?29, ?30, ?31, ?32, ?33, ?34, ?35, ?36, ?37, ?38, ?39, ?40)
          ON CONFLICT(user_id) DO UPDATE SET
             transcription_mode = excluded.transcription_mode,
             transcription_api_key_id = excluded.transcription_api_key_id,
@@ -110,13 +104,7 @@ pub async fn upsert_user_preferences(
             insertion_method = excluded.insertion_method,
             typing_speed_ms = excluded.typing_speed_ms,
             pill_reset_monitor_strategy = excluded.pill_reset_monitor_strategy,
-            always_request_admin_on_startup = excluded.always_request_admin_on_startup,
-            in_dictation_style_switching_enabled = excluded.in_dictation_style_switching_enabled,
-            hallucination_filter_enabled = excluded.hallucination_filter_enabled,
-            review_before_insert = excluded.review_before_insert,
-            agent_enabled_tools = excluded.agent_enabled_tools,
-            agent_max_iterations = excluded.agent_max_iterations,
-            agent_permission_timeout_ms = excluded.agent_permission_timeout_ms",
+            always_request_admin_on_startup = excluded.always_request_admin_on_startup",
     )
     .bind(&preferences.user_id)
     .bind(&preferences.transcription_mode)
@@ -158,12 +146,6 @@ pub async fn upsert_user_preferences(
     .bind(preferences.typing_speed_ms)
     .bind(&preferences.pill_reset_monitor_strategy)
     .bind(preferences.always_request_admin_on_startup)
-    .bind(preferences.in_dictation_style_switching_enabled)
-    .bind(preferences.hallucination_filter_enabled)
-    .bind(preferences.review_before_insert)
-    .bind(&preferences.agent_enabled_tools)
-    .bind(preferences.agent_max_iterations)
-    .bind(preferences.agent_permission_timeout_ms)
     .execute(&pool)
     .await?;
 
@@ -215,13 +197,7 @@ pub async fn fetch_user_preferences(
             insertion_method,
             typing_speed_ms,
             pill_reset_monitor_strategy,
-            always_request_admin_on_startup,
-            in_dictation_style_switching_enabled,
-            hallucination_filter_enabled,
-            review_before_insert,
-            agent_enabled_tools,
-            agent_max_iterations,
-            agent_permission_timeout_ms
+            always_request_admin_on_startup
          FROM user_preferences
          WHERE user_id = ?1
          LIMIT 1",
@@ -359,28 +335,6 @@ pub async fn fetch_user_preferences(
             .try_get::<i64, _>("always_request_admin_on_startup")
             .map(|v| v != 0)
             .unwrap_or(false),
-        in_dictation_style_switching_enabled: row
-            .try_get::<i64, _>("in_dictation_style_switching_enabled")
-            .map(|v| v != 0)
-            .unwrap_or(false),
-        hallucination_filter_enabled: row
-            .try_get::<i64, _>("hallucination_filter_enabled")
-            .map(|v| v != 0)
-            .unwrap_or(true),
-        review_before_insert: row
-            .try_get::<Option<i64>, _>("review_before_insert")
-            .ok()
-            .flatten()
-            .map(|v| v != 0),
-        agent_enabled_tools: row
-            .try_get::<Option<String>, _>("agent_enabled_tools")
-            .unwrap_or(None),
-        agent_max_iterations: row
-            .try_get::<i64, _>("agent_max_iterations")
-            .unwrap_or(20),
-        agent_permission_timeout_ms: row
-            .try_get::<i64, _>("agent_permission_timeout_ms")
-            .unwrap_or(60_000),
     });
 
     Ok(preferences)

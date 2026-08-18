@@ -10,14 +10,7 @@ import type {
 import { countWords, retry } from "@maus-inc/utilities";
 import OpenAI, { toFile } from "openai";
 import type { CustomFetch } from "./types";
-import {
-  contentToString,
-  runSdkTranscription,
-  TranscriptionSegment,
-  TranscribeAudioOutput,
-} from "./transcription.utils";
 import type {
-  ChatCompletionChunk,
   ChatCompletionContentPart,
   ChatCompletionMessageParam,
   ChatCompletionTool,
@@ -42,6 +35,28 @@ export const OPENAI_TRANSCRIPTION_MODELS = [
 ] as const;
 export type OpenAITranscriptionModel =
   (typeof OPENAI_TRANSCRIPTION_MODELS)[number];
+
+const contentToString = (
+  content: string | ChatCompletionContentPart[] | null | undefined,
+): string => {
+  if (!content) {
+    return "";
+  }
+
+  if (typeof content === "string") {
+    return content;
+  }
+
+  return content
+    .map((part) => {
+      if (part.type === "text") {
+        return part.text ?? "";
+      }
+      return "";
+    })
+    .join("")
+    .trim();
+};
 
 const createClient = (
   apiKey: string,
@@ -68,32 +83,10 @@ export type OpenAITranscriptionArgs = {
   language?: string;
 };
 
-/**
- * OpenAI transcription models that support `verbose_json` and return the
- * detailed per-segment `no_speech_prob` used by downstream hallucination
- * gating (issue #54). Models here keep `verbose_json`.
- */
-const VERBOSE_JSON_TRANSCRIPTION_MODELS = ["whisper-1"] as const;
-
-/**
- * Pick the `response_format` for an OpenAI transcription request.
- *
- * `whisper-1` keeps `verbose_json` so `segments[].no_speech_prob` is returned
- * for probability-gated silence handling. The newer `gpt-4o-transcribe` and
- * `gpt-4o-mini-transcribe` models do NOT support `verbose_json` — they reject
- * it with a deterministic HTTP 400 — and only accept `json` / `text`. Sending
- * `verbose_json` to them previously caused a 400 that the generic retry wrapper
- * repeated three times.
- */
-const getTranscriptionResponseFormat = (
-  model: OpenAITranscriptionModel,
-): "verbose_json" | "json" =>
-  (VERBOSE_JSON_TRANSCRIPTION_MODELS as readonly string[]).includes(model)
-    ? "verbose_json"
-    : "json";
-
-export type OpenAITranscriptionSegment = TranscriptionSegment;
-export type OpenAITranscribeAudioOutput = TranscribeAudioOutput;
+export type OpenAITranscribeAudioOutput = {
+  text: string;
+  wordsUsed: number;
+};
 
 export const openaiTranscribeAudio = async ({
   apiKey,
@@ -103,26 +96,26 @@ export const openaiTranscribeAudio = async ({
   prompt,
   language,
 }: OpenAITranscriptionArgs): Promise<OpenAITranscribeAudioOutput> => {
-  const client = createClient(apiKey);
-  const file = await toFile(blob, `audio.${ext}`);
-  return runSdkTranscription(
-    (body) =>
-      client.audio.transcriptions.create(
-        body as unknown as Parameters<
-          typeof client.audio.transcriptions.create
-        >[0],
-      ),
-    {
-      file,
-      model,
-      prompt,
-      language,
-      // `whisper-1` keeps `verbose_json` so `segments[].no_speech_prob` is
-      // returned; `gpt-4o-transcribe` / `gpt-4o-mini-transcribe` reject
-      // `verbose_json` (HTTP 400) and use `json` instead.
-      response_format: getTranscriptionResponseFormat(model),
+  return retry({
+    retries: 3,
+    fn: async () => {
+      const client = createClient(apiKey);
+
+      const file = await toFile(blob, `audio.${ext}`);
+      const response = await client.audio.transcriptions.create({
+        file,
+        model,
+        prompt,
+        language: language && language !== "auto" ? language : undefined,
+      });
+
+      if (!response.text) {
+        throw new Error("Transcription failed");
+      }
+
+      return { text: response.text, wordsUsed: countWords(response.text) };
     },
-  );
+  });
 };
 
 export type OpenAIGenerateTextArgs = {
@@ -343,64 +336,6 @@ function toFinishReason(raw: string | null | undefined): LlmFinishReason {
   }
 }
 
-type OpenAIStreamState = {
-  toolCalls: Map<number, { id: string; name: string; arguments: string }>;
-  finishReason: LlmFinishReason;
-  promptTokens?: number;
-  completionTokens?: number;
-  modelId?: string;
-};
-
-const applyOpenAIToolCalls = (
-  choice: ChatCompletionChunk.Choice,
-  toolCalls: OpenAIStreamState["toolCalls"],
-): void => {
-  for (const tc of choice.delta?.tool_calls ?? []) {
-    const index = tc.index ?? toolCalls.size;
-    const current = toolCalls.get(index) ?? {
-      id: "",
-      name: "",
-      arguments: "",
-    };
-    if (tc.id) current.id = tc.id;
-    if (tc.function?.name) current.name = tc.function.name;
-    if (tc.function?.arguments) current.arguments += tc.function.arguments;
-    toolCalls.set(index, current);
-  }
-};
-
-const handleOpenAIChunk = (
-  chunk: ChatCompletionChunk,
-  state: OpenAIStreamState,
-): LlmStreamEvent[] => {
-  if (chunk.model) {
-    state.modelId = chunk.model;
-  }
-
-  if (chunk.usage) {
-    state.promptTokens = chunk.usage.prompt_tokens ?? undefined;
-    state.completionTokens = chunk.usage.completion_tokens ?? undefined;
-  }
-
-  const choice = chunk.choices[0];
-  if (!choice) {
-    return [];
-  }
-
-  const events: LlmStreamEvent[] = [];
-  if (choice.delta?.content) {
-    events.push({ type: "text-delta", text: choice.delta.content });
-  }
-
-  applyOpenAIToolCalls(choice, state.toolCalls);
-
-  if (choice.finish_reason) {
-    state.finishReason = toFinishReason(choice.finish_reason);
-  }
-
-  return events;
-};
-
 export async function* openaiCompatibleStreamChat(
   client: OpenAI,
   model: string,
@@ -424,18 +359,51 @@ export async function* openaiCompatibleStreamChat(
     ...extraBody,
   });
 
-  const state: OpenAIStreamState = {
-    toolCalls: new Map(),
-    finishReason: "other",
-  };
+  const toolCalls = new Map<
+    number,
+    { id: string; name: string; arguments: string }
+  >();
+  let finishReason: LlmFinishReason = "other";
+  let promptTokens: number | undefined;
+  let completionTokens: number | undefined;
+  let modelId: string | undefined;
 
   for await (const chunk of stream) {
-    yield* handleOpenAIChunk(chunk, state);
+    if (chunk.model) {
+      modelId = chunk.model;
+    }
+
+    if (chunk.usage) {
+      promptTokens = chunk.usage.prompt_tokens ?? undefined;
+      completionTokens = chunk.usage.completion_tokens ?? undefined;
+    }
+
+    const choice = chunk.choices[0];
+    if (!choice) continue;
+
+    if (choice.delta?.content) {
+      yield { type: "text-delta", text: choice.delta.content };
+    }
+
+    for (const tc of choice.delta?.tool_calls ?? []) {
+      const index = tc.index ?? toolCalls.size;
+      const current = toolCalls.get(index) ?? {
+        id: "",
+        name: "",
+        arguments: "",
+      };
+      if (tc.id) current.id = tc.id;
+      if (tc.function?.name) current.name = tc.function.name;
+      if (tc.function?.arguments) current.arguments += tc.function.arguments;
+      toolCalls.set(index, current);
+    }
+
+    if (choice.finish_reason) {
+      finishReason = toFinishReason(choice.finish_reason);
+    }
   }
 
-  for (const [, tc] of [...state.toolCalls.entries()].sort(
-    ([a], [b]) => a - b,
-  )) {
+  for (const [, tc] of [...toolCalls.entries()].sort(([a], [b]) => a - b)) {
     yield {
       type: "tool-call",
       id: tc.id,
@@ -446,15 +414,12 @@ export async function* openaiCompatibleStreamChat(
 
   yield {
     type: "finish",
-    finishReason: state.finishReason,
+    finishReason,
     usage:
-      state.promptTokens != null || state.completionTokens != null
-        ? {
-            promptTokens: state.promptTokens,
-            completionTokens: state.completionTokens,
-          }
+      promptTokens != null || completionTokens != null
+        ? { promptTokens, completionTokens }
         : undefined,
-    modelId: state.modelId,
+    modelId,
   };
 }
 

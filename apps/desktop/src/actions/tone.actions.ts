@@ -162,11 +162,6 @@ const cycleWritingStyle = async (direction: 1 | -1): Promise<void> => {
 export const switchWritingStyleForward = () => cycleWritingStyle(1);
 export const switchWritingStyleBackward = () => cycleWritingStyle(-1);
 
-/** Select a style from a dynamic global style shortcut. */
-export const selectToneByHotkey = async (toneId: string): Promise<void> => {
-  await setSelectedToneId(toneId);
-};
-
 export const closeToneEditorDialog = (): void => {
   produceAppState((draft) => {
     draft.toneEditor.open = false;

@@ -54,12 +54,6 @@ export type RouteTranscriptOutputArgs = {
   text: string;
   mode: "dictation";
   currentAppId: Nullable<string>;
-  /**
-   * When true, the text is delivered without routing through the
-   * review-before-insert composer. Used for streaming interim segments, which
-   * must never spawn a blocking review popout on every token.
-   */
-  skipReview?: boolean;
 };
 
 export type RouteTranscriptOutputResult = {

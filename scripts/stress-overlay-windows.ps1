@@ -99,11 +99,11 @@ function Get-CrashMatches {
         return @()
     }
 
-    $logMatches = foreach ($logFile in $recentLogs) {
+    $matches = foreach ($logFile in $recentLogs) {
         Select-String -Path $logFile.FullName -Pattern $patterns -SimpleMatch
     }
 
-    return @($logMatches)
+    return @($matches)
 }
 
 $branchName = "unknown"
@@ -112,7 +112,6 @@ try {
     $branchName = (git rev-parse --abbrev-ref HEAD).Trim()
     $commitSha = (git rev-parse --short HEAD).Trim()
 } catch {
-    Write-Verbose "Failed to read git metadata: $($_.Exception.Message)"
 }
 
 $logDir = $null

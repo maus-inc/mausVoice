@@ -13,7 +13,6 @@ import {
   buildLocalizedTranscriptionPrompt,
   collectDictionaryEntries,
 } from "../utils/prompt.utils";
-import { finalizeStreamingSession } from "../utils/streaming-session.utils";
 import { loadMyEffectiveDictationLanguage } from "../utils/user.utils";
 
 export class AzureTranscriptionSession implements TranscriptionSession {
@@ -87,11 +86,51 @@ export class AzureTranscriptionSession implements TranscriptionSession {
   async finalize(
     _audio: StopRecordingResponse,
   ): Promise<TranscriptionSessionResult> {
-    return finalizeStreamingSession({
-      session: this.session,
-      providerLabel: "Azure",
-      log: console.log,
-    });
+    if (!this.session) {
+      return {
+        rawTranscript: null,
+        metadata: {
+          inferenceDevice: "API • Azure (Streaming)",
+          transcriptionMode: "api",
+        },
+        warnings: ["Azure streaming session was not established"],
+      };
+    }
+
+    try {
+      console.log("[Azure] Finalizing streaming session...");
+      const finalizeStart = performance.now();
+      const transcript = await this.session.finalize();
+      const durationMs = Math.round(performance.now() - finalizeStart);
+
+      console.log("[Azure] Transcript timing:", { durationMs });
+      console.log(
+        "[Azure] Received transcript, length:",
+        transcript?.length ?? 0,
+      );
+
+      return {
+        rawTranscript: transcript || null,
+        metadata: {
+          inferenceDevice: "API • Azure (Streaming)",
+          transcriptionMode: "api",
+          transcriptionDurationMs: durationMs,
+        },
+        warnings: [],
+      };
+    } catch (error) {
+      console.error("[Azure] Failed to finalize session:", error);
+      return {
+        rawTranscript: null,
+        metadata: {
+          inferenceDevice: "API • Azure (Streaming)",
+          transcriptionMode: "api",
+        },
+        warnings: [
+          `Azure finalization failed: ${error instanceof Error ? error.message : "Unknown error"}`,
+        ],
+      };
+    }
   }
 
   cleanup(): void {

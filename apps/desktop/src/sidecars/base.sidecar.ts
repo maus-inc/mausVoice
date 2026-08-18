@@ -160,11 +160,6 @@ export abstract class BaseSidecar {
   }
 
   protected abstract buildSpawnEnv(): Promise<Record<string, string>>;
-  /** Optional working directory for the spawned sidecar. Used on Windows to
-   * point the child's DLL search at the bundled sherpa-onnx runtime folder. */
-  protected async buildSpawnCwd(): Promise<string | undefined> {
-    return undefined;
-  }
   protected abstract parsePortFromLine(line: string): number | null;
   protected abstract handleStdoutLine(
     line: string,
@@ -179,7 +174,6 @@ export abstract class BaseSidecar {
     this.onStarting();
 
     const env = await this.buildSpawnEnv();
-    const cwd = await this.buildSpawnCwd();
     const ready = createDeferred<number>();
     const pendingStdoutLines: string[] = [];
     let stdoutBuffer = "";
@@ -192,7 +186,7 @@ export abstract class BaseSidecar {
 
     child = await spawnShellSidecar({
       program: this.config.binaryName,
-      options: { env, ...(cwd ? { cwd } : {}) },
+      options: { env },
       onStdout: (chunk) => {
         stdoutBuffer += chunk;
         const lines = stdoutBuffer.split(/\r?\n/);

@@ -1,14 +1,6 @@
 import { convertFloat32ToBase64PCM16 } from "@maus-inc/voice-ai";
 import { listen, UnlistenFn } from "@tauri-apps/api/event";
 import {
-  combineStreamingTranscript,
-  createAudioChunkPump,
-} from "../utils/audio-chunking.utils";
-import {
-  createStreamingFinalize,
-  finalizeStreamingSession,
-} from "../utils/streaming-session.utils";
-import {
   StopRecordingResponse,
   TranscriptionSession,
   TranscriptionSessionResult,
@@ -97,6 +89,17 @@ const startElevenLabsStreaming = async (
 
   console.log("[ElevenLabs WebSocket] Starting with sample rate:", sampleRate);
 
+  const MIN_CHUNK_DURATION_MS = 20;
+  const MAX_CHUNK_DURATION_MS = 100;
+  const minSamplesPerChunk = Math.max(
+    1,
+    Math.ceil((sampleRate * MIN_CHUNK_DURATION_MS) / 1000),
+  );
+  const maxSamplesPerChunk = Math.max(
+    minSamplesPerChunk,
+    Math.ceil((sampleRate * MAX_CHUNK_DURATION_MS) / 1000),
+  );
+
   const token = await getElevenLabsToken(apiKey);
   console.log("[ElevenLabs WebSocket] Got single-use token");
 
@@ -108,21 +111,62 @@ const startElevenLabsStreaming = async (
     let isFinalized = false;
     let receivedChunkCount = 0;
     let sentChunkCount = 0;
+    let pendingSampleCount = 0;
+    let pendingChunks: Float32Array[] = [];
 
-    const pump = createAudioChunkPump({
-      sampleRate,
-      minChunkDurationMs: 20,
-      maxChunkDurationMs: 100,
-      canSend: () => !!ws && ws.readyState === WebSocket.OPEN,
-      sendChunk: (chunk, isLastChunk) => {
+    const getText = () => {
+      return (
+        finalTranscript +
+        (partialTranscript
+          ? (finalTranscript ? " " : "") + partialTranscript
+          : "")
+      );
+    };
+
+    const resetBuffers = () => {
+      pendingChunks = [];
+      pendingSampleCount = 0;
+    };
+
+    const drainSamples = (targetCount: number): Float32Array => {
+      if (targetCount <= 0) {
+        return new Float32Array(0);
+      }
+      const output = new Float32Array(targetCount);
+      let filled = 0;
+
+      while (filled < targetCount && pendingChunks.length > 0) {
+        const current = pendingChunks[0];
+        const remaining = targetCount - filled;
+        if (current.length <= remaining) {
+          output.set(current, filled);
+          filled += current.length;
+          pendingChunks.shift();
+        } else {
+          output.set(current.subarray(0, remaining), filled);
+          pendingChunks[0] = current.subarray(remaining);
+          filled += remaining;
+        }
+      }
+
+      pendingSampleCount = Math.max(0, pendingSampleCount - filled);
+      return filled === targetCount ? output : output.subarray(0, filled);
+    };
+
+    const sendAudioChunk = (chunk: Float32Array, commit: boolean) => {
+      if (!ws || ws.readyState !== WebSocket.OPEN) {
+        return;
+      }
+
+      try {
         const base64Audio = convertFloat32ToBase64PCM16(chunk);
         const message = JSON.stringify({
           message_type: "input_audio_chunk",
           audio_base_64: base64Audio,
-          commit: isLastChunk,
+          commit,
           sample_rate: sampleRate,
         });
-        ws?.send(message);
+        ws.send(message);
         sentChunkCount++;
         if (sentChunkCount <= 3 || sentChunkCount % 10 === 0) {
           const durationMs = (chunk.length / sampleRate) * 1000;
@@ -130,14 +174,43 @@ const startElevenLabsStreaming = async (
             `[ElevenLabs WebSocket] Sent chunk #${sentChunkCount} (${chunk.length} samples ~${durationMs.toFixed(1)} ms)`,
           );
         }
-      },
-      onError: (error) => {
+      } catch (error) {
         console.error("[ElevenLabs WebSocket] Error sending chunk:", error);
-      },
-    });
+      }
+    };
 
-    const getText = () =>
-      combineStreamingTranscript(finalTranscript, partialTranscript);
+    const flushPendingSamples = (force = false) => {
+      if (!ws || ws.readyState !== WebSocket.OPEN) {
+        return;
+      }
+
+      while (
+        pendingSampleCount >= minSamplesPerChunk ||
+        (force && pendingSampleCount > 0)
+      ) {
+        const available = pendingSampleCount;
+        let chunkSize = available;
+        if (available >= maxSamplesPerChunk) {
+          chunkSize = maxSamplesPerChunk;
+        } else if (available < minSamplesPerChunk && !force) {
+          break;
+        }
+
+        let chunk = drainSamples(chunkSize);
+        if (force && chunk.length > 0 && chunk.length < minSamplesPerChunk) {
+          const padded = new Float32Array(minSamplesPerChunk);
+          padded.set(chunk);
+          chunk = padded;
+        }
+
+        if (chunk.length === 0) {
+          break;
+        }
+
+        const isLastChunk = force && pendingSampleCount === 0;
+        sendAudioChunk(chunk, isLastChunk);
+      }
+    };
 
     const cleanup = () => {
       if (unlisten) {
@@ -148,29 +221,72 @@ const startElevenLabsStreaming = async (
         ws.close();
         ws = null;
       }
-      pump.resetBuffers();
+      resetBuffers();
     };
 
-    const streamingFinalize = createStreamingFinalize({
-      logPrefix: "[ElevenLabs WebSocket]",
-      timeoutMs: 6000,
-      getText,
-      getIsFinalized: () => isFinalized,
-      setIsFinalized: (value) => {
-        isFinalized = value;
-      },
-      flushPendingSamples: (force) => pump.flushPendingSamples(force),
-      logTotalChunks: () =>
+    let finalizeResolver: ((text: string) => void) | null = null;
+    let finalizeTimeout: ReturnType<typeof setTimeout> | null = null;
+
+    const finalize = (): Promise<string> => {
+      return new Promise((resolveFinalize) => {
+        console.log(
+          "[ElevenLabs WebSocket] Finalize called, isFinalized:",
+          isFinalized,
+          "ws state:",
+          ws?.readyState,
+        );
+        if (isFinalized) {
+          console.log(
+            "[ElevenLabs WebSocket] Already finalized, returning transcript",
+          );
+          resolveFinalize(getText());
+          return;
+        }
+
+        isFinalized = true;
+        finalizeResolver = resolveFinalize;
+
+        flushPendingSamples(true);
         console.log(
           "[ElevenLabs WebSocket] Total chunks sent:",
           sentChunkCount,
           "- waiting for final transcript...",
-        ),
-      canSend: () => !!ws && ws.readyState === WebSocket.OPEN,
-      getWsState: () => ws?.readyState,
-      cleanup,
-    });
-    const { finalize, completeFinalize } = streamingFinalize;
+        );
+
+        if (ws && ws.readyState === WebSocket.OPEN) {
+          finalizeTimeout = setTimeout(() => {
+            console.log(
+              "[ElevenLabs WebSocket] Timeout waiting for final transcript, length:",
+              getText().length,
+            );
+            cleanup();
+            if (finalizeResolver) {
+              finalizeResolver(getText());
+              finalizeResolver = null;
+            }
+          }, 6000);
+        } else {
+          cleanup();
+          resolveFinalize(getText());
+        }
+      });
+    };
+
+    const completeFinalize = () => {
+      if (finalizeTimeout) {
+        clearTimeout(finalizeTimeout);
+        finalizeTimeout = null;
+      }
+      if (finalizeResolver) {
+        console.log(
+          "[ElevenLabs WebSocket] Completing finalize with transcript length:",
+          getText().length,
+        );
+        cleanup();
+        finalizeResolver(getText());
+        finalizeResolver = null;
+      }
+    };
 
     const audioFormat = `pcm_${sampleRate}`;
     const wsUrl = `${ELEVENLABS_WS_URL}?token=${encodeURIComponent(token)}&model_id=scribe_v2_realtime&audio_format=${audioFormat}&commit_strategy=vad`;
@@ -206,8 +322,9 @@ const startElevenLabsStreaming = async (
                 const typedChunk = needsResample
                   ? resampleAudio(rawChunk, inputSampleRate, sampleRate)
                   : rawChunk;
-                pump.pushSamples(typedChunk);
-                pump.flushPendingSamples();
+                pendingChunks.push(typedChunk);
+                pendingSampleCount += typedChunk.length;
+                flushPendingSamples(false);
               } catch (error) {
                 console.error(
                   "[ElevenLabs WebSocket] Error sending audio chunk:",
@@ -316,11 +433,51 @@ export class ElevenLabsTranscriptionSession implements TranscriptionSession {
   async finalize(
     _audio: StopRecordingResponse,
   ): Promise<TranscriptionSessionResult> {
-    return finalizeStreamingSession({
-      session: this.session,
-      providerLabel: "ElevenLabs",
-      log: console.log,
-    });
+    if (!this.session) {
+      return {
+        rawTranscript: null,
+        metadata: {
+          inferenceDevice: "API • ElevenLabs (Streaming)",
+          transcriptionMode: "api",
+        },
+        warnings: ["ElevenLabs streaming session was not established"],
+      };
+    }
+
+    try {
+      console.log("[ElevenLabs] Finalizing streaming session...");
+      const finalizeStart = performance.now();
+      const transcript = await this.session.finalize();
+      const durationMs = Math.round(performance.now() - finalizeStart);
+
+      console.log("[ElevenLabs] Transcript timing:", { durationMs });
+      console.log(
+        "[ElevenLabs] Received transcript, length:",
+        transcript?.length ?? 0,
+      );
+
+      return {
+        rawTranscript: transcript || null,
+        metadata: {
+          inferenceDevice: "API • ElevenLabs (Streaming)",
+          transcriptionMode: "api",
+          transcriptionDurationMs: durationMs,
+        },
+        warnings: [],
+      };
+    } catch (error) {
+      console.error("[ElevenLabs] Failed to finalize session:", error);
+      return {
+        rawTranscript: null,
+        metadata: {
+          inferenceDevice: "API • ElevenLabs (Streaming)",
+          transcriptionMode: "api",
+        },
+        warnings: [
+          `ElevenLabs finalization failed: ${error instanceof Error ? error.message : "Unknown error"}`,
+        ],
+      };
+    }
   }
 
   cleanup(): void {

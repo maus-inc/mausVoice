@@ -25,7 +25,7 @@
       }
     ],
     "security": {
-      "csp": "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' asset: https://asset.localhost data: blob: https://*.googleusercontent.com https://*.ytimg.com https://*.google.com https://*.gravatar.com; media-src 'self' asset: https://asset.localhost blob:; connect-src 'self' ipc: http://ipc: http://localhost:* http://127.0.0.1:* ws://localhost:* ws://127.0.0.1:* https://*.googleapis.com https://accounts.google.com https://*.firebaseio.com https://*.firebase.com wss://*.firebaseio.com https://*.firebaseapp.com https://*.firebasestorage.app https://securetoken.googleapis.com https://identitytoolkit.googleapis.com https://generativelanguage.googleapis.com https://api.openai.com https://*.openai.azure.com https://api.anthropic.com https://api.groq.com https://api.cerebras.ai https://api.deepseek.com https://openrouter.ai https://api.elevenlabs.io wss://api.elevenlabs.io https://api.deepgram.com wss://api.deepgram.com https://api.assemblyai.com https://streaming.assemblyai.com wss://streaming.assemblyai.com https://api.x.ai https://api.aldea.ai https://*.stt.speech.microsoft.com wss://*.stt.speech.microsoft.com https://*.ingest.sentry.io https://github.com https://objects.githubusercontent.com; frame-src https://www.youtube-nocookie.com https://www.youtube.com https://youtube.com; font-src 'self' data: blob:; object-src 'none'; base-uri 'self'; form-action 'self'; frame-ancestors 'none';",
+      "csp": "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' asset: https://asset: data: blob: https://*.googleusercontent.com https://*.ytimg.com https://*.google.com https://*.gravatar.com; media-src 'self' asset: https://asset: blob:; connect-src 'self' ipc: http://ipc: http://localhost:* http://127.0.0.1:* ws://localhost:* ws://127.0.0.1:* https://*.googleapis.com https://accounts.google.com https://*.firebaseio.com https://*.firebase.com wss://*.firebaseio.com https://*.firebaseapp.com https://*.firebasestorage.app https://securetoken.googleapis.com https://identitytoolkit.googleapis.com https://generativelanguage.googleapis.com https://api.openai.com https://*.openai.azure.com https://api.anthropic.com https://api.groq.com https://api.cerebras.ai https://api.deepseek.com https://openrouter.ai https://api.elevenlabs.io wss://api.elevenlabs.io https://api.deepgram.com wss://api.deepgram.com https://streaming.assemblyai.com wss://streaming.assemblyai.com https://*.ingest.sentry.io https://github.com https://objects.githubusercontent.com; frame-src https://www.youtube-nocookie.com https://www.youtube.com https://youtube.com; font-src 'self' data: blob:; object-src 'none'; base-uri 'self'; form-action 'self'; frame-ancestors 'none';",
       "dangerousDisableAssetCspModification": ["style-src"],
       "assetProtocol": {
         "enable": true,
@@ -37,7 +37,7 @@
     "active": true,
     "publisher": "Owie Emmanuel",
     "targets": "all",
-    "createUpdaterArtifacts": false,
+    "createUpdaterArtifacts": true,
     "externalBin": [
       "binaries/rust-transcription-cpu",
       "binaries/rust-transcription-gpu"
@@ -69,10 +69,8 @@
       "preload": ["sqlite:mausvoice.db"]
     },
     "updater": {
-      "endpoints": [
-        "https://github.com/maus-inc/mausVoice/releases/latest/download/latest.json"
-      ],
-      "pubkey": "",
+      "endpoints": [],
+      "pubkey": "__UPDATER_PUBLIC_KEY__",
       "windows": {
         "installMode": "passive"
       }

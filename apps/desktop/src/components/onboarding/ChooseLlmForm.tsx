@@ -1,4 +1,5 @@
-import { Box, Stack } from "@mui/material";
+import { ArrowForward } from "@mui/icons-material";
+import { Box, Button, Stack, Typography } from "@mui/material";
 import { FormattedMessage } from "react-intl";
 import { goToOnboardingPage } from "../../actions/onboarding.actions";
 import { useAppStore } from "../../store";
@@ -8,8 +9,6 @@ import { AIPostProcessingConfiguration } from "../settings/AIPostProcessingConfi
 import {
   BackButton,
   DualPaneLayout,
-  OnboardingContinueButton,
-  OnboardingFormHeader,
   OnboardingFormLayout,
 } from "./OnboardingCommon";
 
@@ -29,19 +28,36 @@ export const ChooseLlmForm = () => {
     <OnboardingFormLayout
       back={<BackButton />}
       actions={
-        <OnboardingContinueButton
+        <Button
+          variant="contained"
+          endIcon={<ArrowForward />}
           onClick={handleContinue}
           disabled={!canContinue}
-        />
+        >
+          <FormattedMessage defaultMessage="Continue" />
+        </Button>
       }
     >
       <Stack spacing={3}>
-        <OnboardingFormHeader
-          title={<FormattedMessage defaultMessage="Set up post-processing" />}
-          subtitle={
+        <Box>
+          <Typography
+            variant="h4"
+            sx={{
+              fontWeight: 600,
+              pb: 1,
+            }}
+          >
+            <FormattedMessage defaultMessage="Set up post-processing" />
+          </Typography>
+          <Typography
+            variant="body1"
+            sx={{
+              color: "text.secondary",
+            }}
+          >
             <FormattedMessage defaultMessage="Choose if mausVoice should enhance transcripts automatically after they are transcribed." />
-          }
-        />
+          </Typography>
+        </Box>
 
         <AIPostProcessingConfiguration />
       </Stack>

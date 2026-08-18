@@ -537,10 +537,7 @@ async fn cpu_sidecar_rejects_invalid_onnx_model(
         .json::<ModelStatusResponse>()
         .await?;
 
-    assert!(
-        status.downloaded,
-        "complete artifact set should be reported downloaded"
-    );
+    assert!(status.downloaded, "complete artifact set should be reported downloaded");
     assert!(
         !status.valid,
         "synthetic bytes must NOT be reported valid once validation runs through ONNX Runtime"
@@ -577,7 +574,10 @@ async fn download_model_and_wait(
     while Instant::now() < deadline {
         let progress = sidecar
             .client
-            .get(sidecar.url(&format!("/v1/models/{slug}/download/{}", download.job_id)))
+            .get(sidecar.url(&format!(
+                "/v1/models/{slug}/download/{}",
+                download.job_id
+            )))
             .send()
             .await?
             .error_for_status()?
@@ -639,7 +639,8 @@ async fn run_model_end_to_end(
     download_model_and_wait(sidecar, slug).await?;
 
     let max_seconds = if slug == "tiny" { 10 } else { 30 };
-    let (samples, sample_rate) = load_wav_as_f32_mono(&audio_asset_path("test.wav")?, max_seconds)?;
+    let (samples, sample_rate) =
+        load_wav_as_f32_mono(&audio_asset_path("test.wav")?, max_seconds)?;
     assert!(!samples.is_empty());
 
     let device_id = if slug == "tiny" {
@@ -795,7 +796,8 @@ async fn read_announced_port(
                 Ok(0) => break, // EOF
                 Ok(_) => {
                     if !announced {
-                        if let Some(captured) = line.strip_prefix("RUST_TRANSCRIPTION_BOUND_PORT=")
+                        if let Some(captured) =
+                            line.strip_prefix("RUST_TRANSCRIPTION_BOUND_PORT=")
                         {
                             if let Ok(port) = captured.trim().parse::<u16>() {
                                 announced = true;
@@ -911,7 +913,7 @@ async fn start_slow_download_server(
 }
 
 fn encode_f32le_samples(values: &[f32]) -> Vec<u8> {
-    let mut bytes = Vec::with_capacity(std::mem::size_of_val(values));
+    let mut bytes = Vec::with_capacity(values.len() * std::mem::size_of::<f32>());
     for value in values {
         bytes.extend_from_slice(&value.to_le_bytes());
     }

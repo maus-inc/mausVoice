@@ -3,17 +3,6 @@ use std::sync::mpsc::Sender;
 
 use serde::{Deserialize, Serialize};
 
-/// Axis-aligned screen rectangle in logical pixels, top-left origin, y-down —
-/// the same space Tauri uses for window placement on Linux. The desktop anchors
-/// the composer next to the pill using `rect` (the pill window) and `monitor`.
-#[derive(Debug, Clone, Copy, Serialize)]
-pub struct Rect {
-    pub x: f64,
-    pub y: f64,
-    pub width: f64,
-    pub height: f64,
-}
-
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum Visibility {
@@ -144,11 +133,7 @@ pub enum OutMessage {
     PauseDictation,
     ResumeDictation,
     ToastAction { action: String },
-    PositionChanged {
-        has_saved_position: bool,
-        rect: Option<Rect>,
-        monitor: Option<Rect>,
-    },
+    PositionChanged { has_saved_position: bool },
 }
 
 pub fn send(msg: &OutMessage) {

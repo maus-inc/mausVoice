@@ -105,8 +105,8 @@ pub fn delete_audio_file(app: &tauri::AppHandle, file_path: &Path) -> io::Result
     }
 }
 
-pub fn load_audio_samples(file: &mut std::fs::File) -> io::Result<(Vec<f32>, u32)> {
-    let mut reader = WavReader::new(file).map_err(map_hound_error)?;
+pub fn load_audio_samples(path: &Path) -> io::Result<(Vec<f32>, u32)> {
+    let mut reader = WavReader::open(path).map_err(map_hound_error)?;
     let spec = reader.spec();
 
     if spec.sample_rate == 0 {

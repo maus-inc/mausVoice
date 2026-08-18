@@ -1,12 +1,5 @@
-import { ArrowBack, ArrowForward } from "@mui/icons-material";
-import {
-  Box,
-  Button,
-  Stack,
-  SxProps,
-  Typography,
-  useColorScheme,
-} from "@mui/material";
+import { ArrowBack } from "@mui/icons-material";
+import { Box, Button, Stack, SxProps, useColorScheme } from "@mui/material";
 import { FormattedMessage } from "react-intl";
 import { useNavigate } from "react-router-dom";
 import { goBackOnboardingPage } from "../../actions/onboarding.actions";
@@ -42,55 +35,6 @@ export type OnboardingFormLayoutProps = {
   back?: React.ReactNode;
   children?: React.ReactNode;
   actions?: React.ReactNode;
-};
-
-export const OnboardingContinueButton = ({
-  onClick,
-  disabled,
-}: {
-  onClick: () => void;
-  disabled?: boolean;
-}) => {
-  return (
-    <Button
-      variant="contained"
-      endIcon={<ArrowForward />}
-      onClick={onClick}
-      disabled={disabled}
-    >
-      <FormattedMessage defaultMessage="Continue" />
-    </Button>
-  );
-};
-
-export const OnboardingFormHeader = ({
-  title,
-  subtitle,
-}: {
-  title: React.ReactNode;
-  subtitle: React.ReactNode;
-}) => {
-  return (
-    <Box>
-      <Typography
-        variant="h4"
-        sx={{
-          fontWeight: 600,
-          pb: 1,
-        }}
-      >
-        {title}
-      </Typography>
-      <Typography
-        variant="body1"
-        sx={{
-          color: "text.secondary",
-        }}
-      >
-        {subtitle}
-      </Typography>
-    </Box>
-  );
 };
 
 export const OnboardingFormLayout = ({

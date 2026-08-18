@@ -58,7 +58,7 @@ const relaunch = async (): Promise<void> => {
 };
 
 const GITHUB_RELEASE_DOWNLOAD_BASE =
-  "https://github.com/maus-inc/mausVoice/releases/download";
+  "https://github.com/mausvoice/mausvoice/releases/download";
 const RELEASE_TAG_REGEX = /\/releases\/download\/([^/]+)\//;
 
 export type AvailableUpdateInfo = {
@@ -67,7 +67,6 @@ export type AvailableUpdateInfo = {
   releaseDate: string | null;
   releaseNotes: string | null;
   manualInstallerUrl: string | null;
-  manualInstallerSignatureUrl: string | null;
   requiresManualInstall: boolean;
 };
 
@@ -136,55 +135,8 @@ export const buildManualMacInstallerUrl = (
     return null;
   }
 
-  // Tauri v2 direct-sign produces a `.dmg` (and `.app.tar.gz`) for macOS, never
-  // a `.pkg`. Point the manual-install fallback at the universal `.dmg`.
-  const fileName = `mausVoice_${version}_universal.dmg`;
+  const fileName = `mausVoice_${version}_universal.pkg`;
   return `${GITHUB_RELEASE_DOWNLOAD_BASE}/${encodeURIComponent(releaseTag)}/${encodeURIComponent(fileName)}`;
-};
-
-/**
- * Resolves the detached-signature URL for the macOS manual installer. The
- * Rust command verifies the downloaded `.dmg` against this `.sig` (minisign /
- * ed25519, the same scheme the in-place updater uses) before opening it.
- *
- * Preferred source is a `dmgSignatureUrl` published alongside the installer in
- * the updater manifest; otherwise we fall back to the natural artifact name
- * (the `.dmg.sig` sitting next to the `.dmg` in the same release directory).
- * Returns `null` when no signature can be located — the Rust command then
- * refuses to open an unverified installer.
- */
-export const buildManualMacInstallerSignatureUrl = (
-  rawJson: Record<string, unknown>,
-  dmgUrl: string | null,
-): string | null => {
-  if (!dmgUrl) {
-    return null;
-  }
-  // The detached signature must sit next to the installer under the same release
-  // directory. We only accept a URL that is exactly `${dmgUrl}.sig`, so a
-  // signature published for a different platform or asset cannot be used to
-  // verify this DMG. A `dmgSignatureUrl` published in the manifest is honored
-  // only when it names the expected artifact; otherwise we derive it from the
-  // DMG URL. The Rust command independently validates the URL against the
-  // trusted release host before downloading.
-  const expected = `${dmgUrl}.sig`;
-  const platforms = rawJson.platforms;
-  if (isRecord(platforms)) {
-    for (const platform of Object.values(platforms)) {
-      if (!isRecord(platform)) {
-        continue;
-      }
-      const sigUrl = platform.dmgSignatureUrl;
-      if (
-        typeof sigUrl === "string" &&
-        sigUrl.length > 0 &&
-        sigUrl === expected
-      ) {
-        return sigUrl;
-      }
-    }
-  }
-  return expected;
 };
 
 /**
@@ -235,22 +187,15 @@ export const checkForUpdate = async (
   const requiresManualInstall =
     platform === "darwin" ? !(await checkAppLocationWritable(platform)) : false;
 
-  const manualInstallerUrl =
-    platform === "darwin"
-      ? buildManualMacInstallerUrl(update.version, update.rawJson)
-      : null;
-  const manualInstallerSignatureUrl =
-    platform === "darwin"
-      ? buildManualMacInstallerSignatureUrl(update.rawJson, manualInstallerUrl)
-      : null;
-
   return {
     currentVersion: update.currentVersion,
     version: update.version,
     releaseDate: update.date ?? null,
     releaseNotes: update.body ?? null,
-    manualInstallerUrl,
-    manualInstallerSignatureUrl,
+    manualInstallerUrl:
+      platform === "darwin"
+        ? buildManualMacInstallerUrl(update.version, update.rawJson)
+        : null,
     requiresManualInstall,
   };
 };
@@ -312,17 +257,14 @@ export const installAvailableUpdate = async (
 };
 
 /**
- * Downloads a `.dmg` installer to a temp directory and opens it via macOS
+ * Downloads a `.pkg` installer to a temp directory and opens it via macOS
  * Installer.app. Used as a fallback when the in-place updater cannot write
- * to the app's install location. The Rust command verifies the downloaded
- * DMG against `signatureUrl` (minisign/ed25519) before opening it and refuses
- * to open an unverified or missing-signature installer.
+ * to the app's install location.
  */
 export const downloadAndOpenMacInstaller = async (
   url: string,
-  signatureUrl: string,
 ): Promise<void> => {
-  await invoke("download_and_open_mac_installer", { url, signatureUrl });
+  await invoke("download_and_open_mac_installer", { url });
 };
 
 /** Relaunches the app via Tauri's process plugin. */

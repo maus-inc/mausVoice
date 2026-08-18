@@ -10,10 +10,6 @@ export const VERBATIM_TONE_ID = "verbatim";
 export const EMAIL_TONE_ID = "email";
 export const CHAT_TONE_ID = "chat";
 export const FORMAL_TONE_ID = "formal";
-export const PROMPT_TONE_ID = "prompt";
-export const BULLETS_TONE_ID = "bullets";
-export const CONCISE_TONE_ID = "concise";
-export const NOTES_TONE_ID = "notes";
 
 export const getDefaultSystemTones = (): Tone[] => {
   const intl = getIntl();
@@ -144,79 +140,6 @@ Do NOT use em-dash symbols (—) in your response.
       createdAt: 0,
       sortOrder: 4,
     },
-    {
-      id: PROMPT_TONE_ID,
-      name: intl.formatMessage({ defaultMessage: "Prompt" }),
-      description: intl.formatMessage({
-        defaultMessage:
-          "Turn a rambling dictation into a concise, intent-preserving prompt.",
-      }),
-      promptTemplate: `
-Condense the speaker's rambling or fragmented dictation into a concise, self-contained prompt.
-Preserve the speaker's intent, constraints, important names, numbers, and requested action.
-Return one to three sentences. Do not invent details, add a greeting, or explain the edits.
-If the input is already concise, make only the smallest necessary cleanup.
-Do NOT use em-dash symbols (—) in your response.
-      `.trim(),
-      category: "prompt",
-      outputLength: "1–3 sentences",
-      exampleInputOutput:
-        "Input: I need, um, a short email to the team about moving tomorrow's meeting to Friday. Output: Write a short email to the team explaining that tomorrow's meeting is moving to Friday.",
-      isSystem: true,
-      createdAt: 0,
-      sortOrder: 5,
-    },
-    {
-      id: BULLETS_TONE_ID,
-      name: intl.formatMessage({ defaultMessage: "Bullets" }),
-      description: intl.formatMessage({
-        defaultMessage: "Organize the dictation into clear, scannable bullets.",
-      }),
-      promptTemplate: `
-Rewrite the transcript as a clear bulleted list.
-Keep every meaningful idea and preserve the speaker's intent. Use nested bullets only when they clarify structure.
-Remove filler, repetitions, and false starts. Do not add facts or an introductory sentence.
-      `.trim(),
-      category: "formatting",
-      outputLength: "one bullet per idea",
-      isSystem: true,
-      createdAt: 0,
-      sortOrder: 6,
-    },
-    {
-      id: CONCISE_TONE_ID,
-      name: intl.formatMessage({ defaultMessage: "Concise" }),
-      description: intl.formatMessage({
-        defaultMessage: "Say the same thing with fewer, sharper words.",
-      }),
-      promptTemplate: `
-Rewrite the transcript to be direct and concise while preserving all important meaning and intent.
-Remove filler, repetition, hedging, and unnecessary words. Do not omit decisions, requirements, or qualifiers.
-Do not add information or change the speaker's tone more than necessary.
-      `.trim(),
-      category: "writing",
-      outputLength: "as short as possible without losing meaning",
-      isSystem: true,
-      createdAt: 0,
-      sortOrder: 7,
-    },
-    {
-      id: NOTES_TONE_ID,
-      name: intl.formatMessage({ defaultMessage: "Notes" }),
-      description: intl.formatMessage({
-        defaultMessage: "Capture organized notes, decisions, and next steps.",
-      }),
-      promptTemplate: `
-Turn the transcript into useful notes.
-Group related ideas, preserve decisions and important details, and include action items when the speaker states them.
-Use short headings or bullets when helpful. Never invent a decision or task that was not dictated.
-      `.trim(),
-      category: "notes",
-      outputLength: "compact structured notes",
-      isSystem: true,
-      createdAt: 0,
-      sortOrder: 8,
-    },
     ...getDeprecatedSystemTones(),
   ];
 };
@@ -323,17 +246,11 @@ export type TemplateToneConfig = {
   kind: "template";
   promptTemplate: string;
   systemPromptTemplate?: string;
-  category?: string;
-  outputLength?: string;
-  exampleInputOutput?: string;
 };
 
 export type StyleToneConfig = {
   kind: "style";
   stylePrompt: string;
-  category?: string;
-  outputLength?: string;
-  exampleInputOutput?: string;
 };
 
 export type ToneConfig = TemplateToneConfig | StyleToneConfig;
@@ -344,18 +261,12 @@ const toneToConfig = (tone: Tone): ToneConfig => {
       kind: "template",
       promptTemplate: tone.promptTemplate,
       systemPromptTemplate: tone.systemPromptTemplate,
-      category: tone.category,
-      outputLength: tone.outputLength,
-      exampleInputOutput: tone.exampleInputOutput,
     };
   }
 
   return {
     kind: "style",
     stylePrompt: tone.promptTemplate,
-    category: tone.category,
-    outputLength: tone.outputLength,
-    exampleInputOutput: tone.exampleInputOutput,
   };
 };
 

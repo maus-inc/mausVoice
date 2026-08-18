@@ -77,19 +77,12 @@ export type SettingsState = {
   moreSettingsDialogOpen: boolean;
   multiDeviceDialogOpen: boolean;
   dictationLanguageDialogOpen: boolean;
-  styleHotkeysDialogOpen: boolean;
   appKeybindingsDialogOpen: boolean;
   elevationDeclinedDialogOpen: boolean;
   diagnosticsDialogOpen: boolean;
   aiTranscription: SettingsTranscriptionState;
   aiPostProcessing: SettingsGenerativeState;
   agentMode: SettingsAgentModeState;
-  inDictationStyleSwitchingEnabled: boolean;
-  hallucinationFilterEnabled: boolean;
-  reviewBeforeInsert: boolean;
-  agentEnabledTools: string[] | null;
-  agentMaxIterations: number;
-  agentPermissionTimeoutMs: number;
   apiKeys: SettingsApiKey[];
   apiKeysStatus: ActionStatus;
   hotkeyIds: string[];
@@ -143,7 +136,6 @@ export const INITIAL_SETTINGS_STATE: SettingsState = {
   moreSettingsDialogOpen: false,
   multiDeviceDialogOpen: false,
   dictationLanguageDialogOpen: false,
-  styleHotkeysDialogOpen: false,
   appKeybindingsDialogOpen: false,
   elevationDeclinedDialogOpen: false,
   diagnosticsDialogOpen: false,
@@ -173,12 +165,6 @@ export const INITIAL_SETTINGS_STATE: SettingsState = {
     openclawGatewayUrl: null,
     openclawToken: null,
   },
-  inDictationStyleSwitchingEnabled: false,
-  hallucinationFilterEnabled: true,
-  reviewBeforeInsert: false,
-  agentEnabledTools: null,
-  agentMaxIterations: 20,
-  agentPermissionTimeoutMs: 60_000,
   apiKeys: [],
   apiKeysStatus: "idle",
   hotkeyIds: [],

@@ -6,7 +6,6 @@ import { AudioDialog } from "../settings/AudioDialog";
 import { ClearLocalDataDialog } from "../settings/ClearLocalDataDialog";
 import { DeleteAccountDialog } from "../settings/DeleteAccountDialog";
 import { DictationLanguageDialog } from "../settings/DictationLanguageDialog";
-import { StyleHotkeysDialog } from "../settings/StyleHotkeysDialog";
 import { DiagnosticsDialog } from "../settings/DiagnosticsDialog";
 import { ElevationDeclinedDialog } from "./ElevationDeclinedDialog";
 import { MicrophoneDialog } from "../settings/MicrophoneDialog";
@@ -34,7 +33,6 @@ export const RootDialogs = () => {
       <MoreSettingsDialog />
       <MultiDeviceDialog />
       <DictationLanguageDialog />
-      <StyleHotkeysDialog />
       <AppKeybindingsDialog />
       <DiagnosticsDialog />
       <ElevationDeclinedDialog />

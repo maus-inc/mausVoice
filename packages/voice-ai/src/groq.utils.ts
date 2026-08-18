@@ -11,12 +11,6 @@ import {
 } from "groq-sdk/resources/chat/completions";
 import OpenAI from "openai";
 import { openaiCompatibleStreamChat } from "./openai.utils";
-import {
-  contentToString,
-  runSdkTranscription,
-  TranscriptionSegment,
-  TranscribeAudioOutput,
-} from "./transcription.utils";
 
 export const GENERATE_TEXT_MODELS = [
   "moonshotai/kimi-k2-instruct-0905",
@@ -40,6 +34,28 @@ export const TRANSCRIPTION_MODELS = [
 ] as const;
 export type TranscriptionModel = (typeof TRANSCRIPTION_MODELS)[number];
 
+const contentToString = (
+  content: string | ChatCompletionContentPart[] | null | undefined,
+): string => {
+  if (!content) {
+    return "";
+  }
+
+  if (typeof content === "string") {
+    return content;
+  }
+
+  return content
+    .map((part) => {
+      if (part.type === "text") {
+        return part.text ?? "";
+      }
+      return "";
+    })
+    .join("")
+    .trim();
+};
+
 const createClient = (apiKey: string) => {
   // `dangerouslyAllowBrowser` is needed because this runs on a desktop tauri app.
   // The Tauri app doesn't run in a web browser and encyrpts API keys locally, so this
@@ -56,8 +72,10 @@ export type GroqTranscriptionArgs = {
   language?: string;
 };
 
-export type GroqTranscriptionSegment = TranscriptionSegment;
-export type GroqTranscribeAudioOutput = TranscribeAudioOutput;
+export type GroqTranscribeAudioOutput = {
+  text: string;
+  wordsUsed: number;
+};
 
 export const groqTranscribeAudio = async ({
   apiKey,
@@ -67,25 +85,26 @@ export const groqTranscribeAudio = async ({
   prompt,
   language,
 }: GroqTranscriptionArgs): Promise<GroqTranscribeAudioOutput> => {
-  const client = createClient(apiKey);
-  const file = await toFile(blob, `audio.${ext}`);
-  return runSdkTranscription(
-    (body) =>
-      client.audio.transcriptions.create(
-        body as unknown as Parameters<
-          typeof client.audio.transcriptions.create
-        >[0],
-      ),
-    {
-      file,
-      model,
-      prompt,
-      language,
-      // Groq Whisper models support `verbose_json`, so `segments[].no_speech_prob`
-      // is returned for issue #54's probability-gated silence handling.
-      response_format: "verbose_json",
+  return retry({
+    retries: 3,
+    fn: async () => {
+      const client = createClient(apiKey);
+
+      const file = await toFile(blob, `audio.${ext}`);
+      const response = await client.audio.transcriptions.create({
+        file,
+        model,
+        prompt,
+        language: language && language !== "auto" ? language : undefined,
+      });
+
+      if (!response.text) {
+        throw new Error("Transcription failed");
+      }
+
+      return { text: response.text, wordsUsed: countWords(response.text) };
     },
-  );
+  });
 };
 
 export type GroqGenerateTextArgs = {
@@ -95,7 +114,6 @@ export type GroqGenerateTextArgs = {
   prompt: string;
   imageUrls?: string[];
   jsonResponse?: JsonResponse;
-  signal?: AbortSignal;
 };
 
 export type GroqGenerateResponseOutput = {
@@ -110,10 +128,9 @@ export const groqGenerateTextResponse = async ({
   prompt,
   imageUrls = [],
   jsonResponse,
-  signal,
 }: GroqGenerateTextArgs): Promise<GroqGenerateResponseOutput> => {
   return retry({
-    retries: signal ? 1 : 3,
+    retries: 3,
     fn: async () => {
       const client = createClient(apiKey);
 
@@ -133,26 +150,23 @@ export const groqGenerateTextResponse = async ({
       userParts.push({ type: "text", text: prompt });
       messages.push({ role: "user", content: userParts });
 
-      const response = await client.chat.completions.create(
-        {
-          messages,
-          model,
-          max_completion_tokens: 5000,
-          response_format: jsonResponse
-            ? JSON_SCHEMA_SUPPORTED_MODELS.has(model)
-              ? {
-                  type: "json_schema",
-                  json_schema: {
-                    name: jsonResponse.name,
-                    description: jsonResponse.description,
-                    schema: jsonResponse.schema,
-                  },
-                }
-              : { type: "json_object" }
-            : undefined,
-        },
-        { signal },
-      );
+      const response = await client.chat.completions.create({
+        messages,
+        model,
+        max_completion_tokens: 5000,
+        response_format: jsonResponse
+          ? JSON_SCHEMA_SUPPORTED_MODELS.has(model)
+            ? {
+                type: "json_schema",
+                json_schema: {
+                  name: jsonResponse.name,
+                  description: jsonResponse.description,
+                  schema: jsonResponse.schema,
+                },
+              }
+            : { type: "json_object" }
+          : undefined,
+      });
 
       console.log("groq llm usage:", response.usage);
       if (!response.choices || response.choices.length === 0) {
