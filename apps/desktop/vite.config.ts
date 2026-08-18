@@ -82,12 +82,22 @@ export default defineConfig(async () => {
             if (id.includes("/firebase/")) return "firebase";
             if (id.includes("/lodash-es/")) return "lodash";
             if (id.includes("/rxjs/")) return "rxjs";
+            // react-intl / @formatjs import from react (Fragment, createContext…)
+            // — splitting them into a separate `intl` chunk creates a
+            // circular `react <-> intl` chunk graph. At runtime the ES
+            // module namespace for one side is still uninitialised, so
+            // `import { Fragment }` evaluates to `undefined`:
+            //   intl-Bo580dMd.js:22 Uncaught TypeError: Cannot read
+            //   properties of undefined (reading 'Fragment')
+            // Keep them in the same `react` chunk as react itself so the
+            // module graph stays acyclic. The separate `intl` chunk is
+            // disabled until the vendor graph is acyclic.
             if (
               id.includes("/react-intl/") ||
               id.includes("/@formatjs/") ||
               id.includes("/intl-messageformat")
             ) {
-              return "intl";
+              return "react";
             }
             if (id.includes("/react-router")) return "router";
             if (id.includes("/@tauri-apps/")) return "tauri";
