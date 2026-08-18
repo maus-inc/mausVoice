@@ -12,7 +12,7 @@ import {
 import { invoke } from "@tauri-apps/api/core";
 import { emit } from "@tauri-apps/api/event";
 import { getCurrentWindow } from "@tauri-apps/api/window";
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { FormattedMessage, useIntl } from "react-intl";
 import { applyVoiceEditInstruction } from "../../actions/composer.actions";
 import { transcribeAudio } from "../../actions/transcribe.actions";
@@ -46,6 +46,9 @@ export const ComposerPage = () => {
   const [editError, setEditError] = useState<string | null>(null);
   const [isListening, setIsListening] = useState(false);
   const recorderRef = useRef<VoiceInstructionRecorder | null>(null);
+  // Tracks mount state so async edit work cannot setState after the composer
+  // window is torn down (Esc / Cancel / unmount during a network round-trip).
+  const mountedRef = useRef(true);
 
   // Voice Edit Mode relies on the webview's SpeechRecognition API, which only
   // exists on Chromium-based webviews. Feature-detect once so we can disable
@@ -92,8 +95,6 @@ export const ComposerPage = () => {
     hasGenerationProvider &&
     (speechRecognitionSupported || canUseConfiguredProvider);
 
-  // Single discriminant for why Voice Edit dictation is unavailable, so the mic
-  // button and its caption always report the same cause.
   // Single discriminant for why Voice Edit dictation is unavailable, so the mic
   // button and its caption always report the same cause.
   let disabledReason: string | null = null;
@@ -167,6 +168,7 @@ export const ComposerPage = () => {
     return () => {
       recorder.dispose();
       recorderRef.current = null;
+      mountedRef.current = false;
     };
   }, [speechRecognitionSupported]);
 
@@ -190,18 +192,21 @@ export const ComposerPage = () => {
     };
   }, [intl, requestId]);
 
-  const finish = async (accepted: boolean) => {
-    recorderRef.current?.dispose();
-    try {
-      await emit("composer-result", {
-        requestId,
-        accepted,
-        text: accepted ? text : "",
-      });
-    } finally {
-      await closeComposerWindow();
-    }
-  };
+  const finish = useCallback(
+    async (accepted: boolean) => {
+      recorderRef.current?.dispose();
+      try {
+        await emit("composer-result", {
+          requestId,
+          accepted,
+          text: accepted ? text : "",
+        });
+      } finally {
+        await closeComposerWindow();
+      }
+    },
+    [requestId, text],
+  );
 
   // Esc cancels the composer, matching the window close-request path which is
   // already wired to Cancel (composer.utils.ts). This completes the keyboard
@@ -224,16 +229,18 @@ export const ComposerPage = () => {
     setEditError(null);
     try {
       const edited = await applyVoiceEditInstruction({ text, instruction });
-      if (edited) setText(edited);
+      if (mountedRef.current && edited) setText(edited);
       setInstruction("");
     } catch (error) {
-      setEditError(
-        error instanceof Error
-          ? error.message
-          : intl.formatMessage({ defaultMessage: "Edit failed." }),
-      );
+      if (mountedRef.current) {
+        setEditError(
+          error instanceof Error
+            ? error.message
+            : intl.formatMessage({ defaultMessage: "Edit failed." }),
+        );
+      }
     } finally {
-      setIsEditing(false);
+      if (mountedRef.current) setIsEditing(false);
     }
   };
 
