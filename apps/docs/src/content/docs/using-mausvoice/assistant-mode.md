@@ -35,7 +35,7 @@ The built-in tool set can read the focused field and surrounding screen context,
 
 ## Power mode
 
-Power mode adds the `run_terminal_command` tool. On Windows it invokes the proposed string through `cmd /C`; on macOS and Linux it uses `sh -c`. Commands run with the mausVoice process's full user permissions and are not placed in a sandbox. They can read or change files, start programs, install software when permissions allow, and expose information through their output.
+Power mode adds the `run_terminal_command` tool. Commands are strictly validated against a curated allow-list of safe binaries (such as `ls`, `pwd`, `echo`, `which`, `whoami`, `hostname`, `explorer`) and executed directly, without shell expansion (`sh -c` / `cmd /C`). Binary inspection commands like `cat` are excluded from the allow-list. Every supplied argument is also checked: `/`, `\`, and `..` are rejected. Consequently, absolute paths and paths into subdirectories or parent directories are not allowed, even for non-sensitive locations. Commands may use bare names in their default working directory and other non-path arguments, but cannot be directed to an arbitrary location. These limits prevent an allowed reader from being directed to arbitrary files. Commands run with the mausVoice process's full user permissions.
 
 Enabling power mode requires a warning confirmation, and the dialog asks you to restart mausVoice before relying on the change. Keep it off unless the task genuinely needs shell access. Never approve a command you do not understand, and avoid **Always allow** for terminal execution. Turning the switch off and restarting removes the terminal tool from the assistant, but previously remembered always-allow storage is a separate setting.
 

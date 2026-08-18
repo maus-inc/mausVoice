@@ -12,10 +12,10 @@ Open **Settings** from the bottom of the left navigation rail. The page uses sec
 - **Start on system startup** toggles operating-system auto-launch.
 - **Microphone** selects a capture device.
 - **Audio** controls the start/stop interaction chime and system-playback dim level during recording.
-- **Hotkey shortcuts** configures hold-to-dictate, cancel, open chat, add-to-dictionary, Assistant, and manual-style actions. Conditional actions appear only when their feature is active.
+- **Hotkey shortcuts** configures hold-to-dictate, cancel, open chat, add-to-dictionary, Assistant, manual-style actions, and global shortcuts per writing style. Conditional actions appear only when their feature is active.
 - **Diagnostics** shows platform paths and exports a support bundle.
 - **Text insertion options** chooses paste or simulated typing globally and per detected application.
-- **More settings** contains Incognito, update prompts, menu-bar visibility, pill behavior, real-time output, limits, styling mode, celebrations, and multi-device output.
+- **More settings** contains Incognito, update prompts, menu-bar visibility, pill behavior, real-time output, limits, styling mode, celebrations, multi-device output, in-dictation style switching, silence hallucination filter, review before insert, and spoken commands.
 
 ## Processing
 
