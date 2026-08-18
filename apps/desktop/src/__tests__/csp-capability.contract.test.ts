@@ -51,12 +51,12 @@ function collectFiles(dir: string, acc: string[] = []): string[] {
   return acc;
 }
 
-/** Every `https://api.*` host literal in the provider source trees. */
+/** Every `https://api.*` host literal in desktop and workspace-package sources. */
 function sourceApiHosts(): Set<string> {
-  const roots = [
-    resolve(repoRoot, "packages/voice-ai/src"),
-    resolve(desktopRoot, "src/sessions"),
-  ];
+  const packageRoots = readdirSync(resolve(repoRoot, "packages"))
+    .map((entry) => resolve(repoRoot, "packages", entry, "src"))
+    .filter((root) => statSync(root, { throwIfNoEntry: false })?.isDirectory());
+  const roots = [resolve(desktopRoot, "src"), ...packageRoots];
   const hosts = new Set<string>();
   const apiRe = /https:\/\/api\.[a-z0-9.-]+/g;
   for (const root of roots) {

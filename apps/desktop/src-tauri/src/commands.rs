@@ -529,25 +529,18 @@ pub async fn transcription_import_audio(
         );
     }
 
-    // Open the validated path here (before any await) to narrow the TOCTOU
-    // window between validation and decode. This does not guarantee the opened
-    // file is the exact inode that `canonicalize` validated, but it avoids
-    // re-resolving the path after the blocking decode, and the single-flight
-    // guard below serializes concurrent imports so a rejected request cannot
-    // open files first.
-    #[cfg(unix)]
-    let validated = std::fs::metadata(&path)
-        .map_err(|_| "Unable to open the selected audio file.".to_string())?;
-    #[cfg(windows)]
-    let validated_id = {
-        let validated_file = std::fs::File::open(&path)
-            .map_err(|_| "Unable to open the selected audio file.".to_string())?;
-        windows_file_identity(&validated_file)
-            .ok_or_else(|| "Unable to open the selected audio file.".to_string())?
-    };
-
+    // Open first, then re-resolve and revalidate the path against the opened
+    // handle. If an attacker swaps the entry before open, the post-open
+    // canonical path exposes the new target and confinement rejects it. If it
+    // changes between canonicalization and metadata lookup, the identity check
+    // rejects it. Changes after this point cannot redirect the already-open fd.
     let file = std::fs::File::open(&path)
         .map_err(|_| "Unable to open the selected audio file.".to_string())?;
+    let opened_path = std::fs::canonicalize(&path)
+        .map_err(|_| "The selected audio file changed during import.".to_string())?;
+    if !is_path_within_allowed_roots(&opened_path, &allowed_roots) {
+        return Err("The selected file is outside the allowed import locations.".to_string());
+    }
 
     #[cfg(unix)]
     {
@@ -555,15 +548,21 @@ pub async fn transcription_import_audio(
         let opened = file
             .metadata()
             .map_err(|_| "Unable to open the selected audio file.".to_string())?;
-        if opened.dev() != validated.dev() || opened.ino() != validated.ino() {
+        let resolved = std::fs::metadata(&opened_path)
+            .map_err(|_| "The selected audio file changed during import.".to_string())?;
+        if opened.dev() != resolved.dev() || opened.ino() != resolved.ino() {
             return Err("The selected audio file changed during import.".to_string());
         }
     }
     #[cfg(windows)]
     {
+        let resolved_file = std::fs::File::open(&opened_path)
+            .map_err(|_| "The selected audio file changed during import.".to_string())?;
         let opened_id = windows_file_identity(&file)
             .ok_or_else(|| "Unable to open the selected audio file.".to_string())?;
-        if opened_id != validated_id {
+        let resolved_id = windows_file_identity(&resolved_file)
+            .ok_or_else(|| "The selected audio file changed during import.".to_string())?;
+        if opened_id != resolved_id {
             return Err("The selected audio file changed during import.".to_string());
         }
     }
@@ -761,39 +760,30 @@ fn resolve_managed_audio_path_for_read(
         return None;
     }
 
-    // Capture the device/inode identity of the validated path. We reopen and
-    // confirm the opened handle refers to the *same* inode, so a local
-    // swap/replace of the resolved file between validation and open cannot make
-    // us read an unrelated file.
-    #[cfg(unix)]
-    let validated_identity = {
-        use std::os::unix::fs::MetadataExt;
-        let meta = std::fs::metadata(&real_path).ok()?;
-        (meta.dev(), meta.ino())
-    };
-
-    // Open the validated file here so validation and the read are bound to the
-    // same handle, closing the time-of-check/time-of-use race where the file
-    // could be swapped for a symlink pointing outside `audio_dir` between this
-    // check and the later open/read.
+    // Open first, then resolve the entry again. This binds confinement to the
+    // target actually opened rather than to a pre-open canonicalization that a
+    // symlink swap could invalidate.
     let file = std::fs::File::open(&real_path).ok()?;
+    let opened_path = std::fs::canonicalize(&real_path).ok()?;
+    if opened_path.parent()? != real_audio_dir {
+        return None;
+    }
 
-    // Confirm the opened handle still matches the validated inode. Any swap
-    // that occurred after validation but before open is detected here.
     #[cfg(unix)]
     {
         use std::os::unix::fs::MetadataExt;
         let opened = file.metadata().ok()?;
-        if opened.dev() != validated_identity.0 || opened.ino() != validated_identity.1 {
+        let resolved = std::fs::metadata(&opened_path).ok()?;
+        if opened.dev() != resolved.dev() || opened.ino() != resolved.ino() {
             return None;
         }
     }
     #[cfg(windows)]
     {
-        let validated_file = std::fs::File::open(&real_path).ok()?;
-        let validated_id = windows_file_identity(&validated_file)?;
+        let resolved_file = std::fs::File::open(&opened_path).ok()?;
         let opened_id = windows_file_identity(&file)?;
-        if opened_id != validated_id {
+        let resolved_id = windows_file_identity(&resolved_file)?;
+        if opened_id != resolved_id {
             return None;
         }
     }
@@ -2911,7 +2901,7 @@ fn validate_terminal_command_args(
                 ));
             }
         }
-        if token.contains("..") {
+        if *token == ".." {
             return Err(format!(
                 "Path traversal (..) is not permitted in command arguments (found in {token:?})"
             ));
@@ -2969,7 +2959,7 @@ fn hex_value(value: u8) -> Option<u8> {
     }
 }
 
-fn percent_decode_route_path(path: &str) -> Result<String, String> {
+fn percent_decode_route_path_once(path: &str) -> Result<String, String> {
     let bytes = path.as_bytes();
     let mut decoded = Vec::with_capacity(bytes.len());
     let mut index = 0;
@@ -2992,6 +2982,24 @@ fn percent_decode_route_path(path: &str) -> Result<String, String> {
     }
     String::from_utf8(decoded)
         .map_err(|_| "Floating app route path is not valid UTF-8".to_string())
+}
+
+fn percent_decode_route_path(path: &str) -> Result<String, String> {
+    // Webview/runtime layers may decode a route more than once. Validate the
+    // fully decoded path so double-encoded traversal cannot become dangerous
+    // only after this check. Bound nesting to reject pathological input.
+    let mut decoded = path.to_string();
+    for _ in 0..4 {
+        let next = percent_decode_route_path_once(&decoded)?;
+        if next == decoded {
+            return Ok(decoded);
+        }
+        decoded = next;
+    }
+    if decoded.contains('%') {
+        return Err("Floating app route has excessive percent encoding".to_string());
+    }
+    Ok(decoded)
 }
 
 /// Validate only the path portion of a local app route. Query values are
@@ -3023,6 +3031,12 @@ mod tests {
     fn terminal_command_rejects_empty() {
         assert!(validate_terminal_command_args("").is_err());
         assert!(validate_terminal_command_args("   ").is_err());
+    }
+
+    #[test]
+    fn terminal_command_allows_benign_double_dots_inside_a_token() {
+        assert!(validate_terminal_command_args("echo file..txt").is_ok());
+        assert!(validate_terminal_command_args("echo ..").is_err());
     }
 
     #[test]
@@ -3243,6 +3257,7 @@ mod tests {
         assert!(validate_local_app_route("composer?text=Wait...%20what%3F").is_ok());
         assert!(validate_local_app_route("composer/../settings").is_err());
         assert!(validate_local_app_route("composer/%2e%2e/settings").is_err());
+        assert!(validate_local_app_route("composer/%252e%252e%252fsettings").is_err());
     }
 
     #[test]
