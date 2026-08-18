@@ -7,7 +7,7 @@ sidebar:
 
 SQLite SQL files live in `apps/desktop/src-tauri/src/db/migrations/`, but filenames alone do not register them. `db/mod.rs` must `include_str!` the file and add a `tauri_plugin_sql::Migration` with a unique version, stable description, SQL constant, and `Up` kind. Tauri installs that migration list for `sqlite:mausvoice.db` during startup; Rust query modules also access an SQLx pool.
 
-The historical numbering is intentionally irregular. `000_schema.sql` is registered as version 1, `021` is absent, and the current sequence jumps from `068` to `071`. Files `058` and `059` share a stem, but 59 is a compatibility no-op with its own description. Do not rename, renumber, reorder, or rewrite an applied migration to make the directory look cleaner.
+The historical numbering is intentionally irregular. `000_schema.sql` is registered as version 1, `021` is absent, and the current sequence extends through `077` (with recent additions `075_tone_structured_fields.sql`, `076_feature_preferences.sql`, and `077_spoken_commands_enabled.sql`). Files `058` and `059` share a stem, but 59 is a compatibility no-op with its own description. Do not rename, renumber, reorder, or rewrite an applied migration to make the directory look cleaner.
 
 A durable preference change usually needs all of these:
 
