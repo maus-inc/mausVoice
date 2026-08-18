@@ -34,7 +34,7 @@ When spoken commands are enabled, mausVoice recognizes the following phrases:
 | `"open quote"` or `"open quotes"` | Inserts an opening double quote (`"`). |
 | `"close quote"` or `"close quotes"` | Inserts a closing double quote (`"`). |
 
-Punctuation is attached to the preceding word. The spacing that follows a recognized phrase is otherwise preserved from the transcription.
+Commas, periods, colons, semicolons, question marks, exclamation marks, and closing parentheses or quotes are attached to the preceding word; their following spacing is preserved. An ellipsis preserves its surrounding transcription spacing. Line and paragraph breaks, as well as opening parentheses and quotes, absorb the following spacing so that the next dictated word starts immediately after the inserted character or break.
 
 ## Matching behavior
 
