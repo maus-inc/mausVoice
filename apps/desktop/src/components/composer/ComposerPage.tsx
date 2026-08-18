@@ -94,16 +94,19 @@ export const ComposerPage = () => {
 
   // Single discriminant for why Voice Edit dictation is unavailable, so the mic
   // button and its caption always report the same cause.
-  const disabledReason = !voiceInstructionSupported
-    ? !hasGenerationProvider
+  // Single discriminant for why Voice Edit dictation is unavailable, so the mic
+  // button and its caption always report the same cause.
+  let disabledReason: string | null = null;
+  if (!voiceInstructionSupported) {
+    disabledReason = !hasGenerationProvider
       ? intl.formatMessage({
           defaultMessage:
             "Configure a text-generation provider to use Voice Edit Mode.",
         })
       : intl.formatMessage({
           defaultMessage: "Voice editing is not supported on this platform",
-        })
-    : null;
+        });
+  }
 
   // Held in a ref and refreshed in an effect (never during render) so a locale
   // change while the composer is open updates the recorder's unsupported
