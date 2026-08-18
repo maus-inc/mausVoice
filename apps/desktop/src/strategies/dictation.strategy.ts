@@ -49,10 +49,15 @@ export class DictationStrategy extends BaseStrategy {
   handleInterimSegment(segment: string): void {
     const state = getAppState();
 
-    const realtimeEnabled =
-      getMyUserPreferences(state)?.realtimeOutputEnabled ?? false;
+    const prefs = getMyUserPreferences(state);
+    const realtimeEnabled = prefs?.realtimeOutputEnabled ?? false;
     const toneId = getToneIdToUse(state);
     if (!realtimeEnabled || toneId !== VERBATIM_TONE_ID) {
+      return;
+    }
+    // Spoken commands only apply to the full take. Skip interim paste so
+    // handleTranscript uses the bulk path and inserts once after sanitize.
+    if (prefs?.spokenCommandsEnabled ?? true) {
       return;
     }
 
