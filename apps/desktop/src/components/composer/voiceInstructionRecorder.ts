@@ -88,11 +88,16 @@ export class VoiceInstructionRecorder {
             preferredMicrophone: this.deps.getPreferredMicrophone() ?? null,
           },
         });
-        // Set state synchronously so dispose() observes the live native
-        // recording even if it runs before the gen check below.
+        // The native recorder is now genuinely open. If `dispose` (or another
+        // toggle) ran while we awaited mic init, release the recorder instead
+        // of notifying the UI it is listening — otherwise the OS recording
+        // indicator stays on behind a closed composer.
+        if (gen !== this.opGen || this.disposed) {
+          void this.deps.invoke("stop_recording").catch(() => undefined);
+          return;
+        }
         this.state = "provider";
         this.deps.onListeningChange(true);
-        if (gen !== this.opGen || this.disposed) return;
         return;
       } catch (error) {
         this.deps.logger.warning(

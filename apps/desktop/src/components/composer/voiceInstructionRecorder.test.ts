@@ -344,4 +344,54 @@ describe("VoiceInstructionRecorder", () => {
     expect(deps.onError).not.toHaveBeenCalled();
     expect(deps.logger.warning).not.toHaveBeenCalled();
   });
+
+  it("issues stop_recording when disposed while start_recording is pending", async () => {
+    const startDeferred = deferred<unknown>();
+    const deps = baseDeps({
+      invoke: vi.fn((cmd) => {
+        if (cmd === "start_recording") return startDeferred.promise;
+        return Promise.resolve(undefined);
+      }),
+    });
+    const recorder = new VoiceInstructionRecorder(deps);
+
+    const togglePromise = recorder.toggle();
+    // Dispose before the mic-open await resolves.
+    recorder.dispose();
+    expect(recorder.getState()).toBe("idle");
+
+    startDeferred.resolve(undefined);
+    await togglePromise;
+
+    // The recorder must release the native mic instead of leaving it open.
+    expect(deps.invoke).toHaveBeenCalledWith("stop_recording");
+    expect(recorder.getState()).toBe("idle");
+    // No UI notification that listening started, no transcript delivered.
+    expect(deps.onListeningChange).not.toHaveBeenCalled();
+    expect(deps.onTranscript).not.toHaveBeenCalled();
+    expect(deps.onError).not.toHaveBeenCalled();
+  });
+
+  it("does not start after dispose even when start_recording resolves", async () => {
+    const startDeferred = deferred<unknown>();
+    const deps = baseDeps({
+      invoke: vi.fn((cmd) => {
+        if (cmd === "start_recording") return startDeferred.promise;
+        return Promise.resolve(undefined);
+      }),
+    });
+    const recorder = new VoiceInstructionRecorder(deps);
+
+    const togglePromise = recorder.toggle();
+    recorder.dispose();
+    startDeferred.resolve(undefined);
+    await togglePromise;
+
+    expect(recorder.getState()).toBe("idle");
+    // A later toggle is a no-op because the recorder is disposed.
+    await recorder.toggle();
+    // Exactly start_recording + the cleanup stop_recording were issued.
+    expect(deps.invoke).toHaveBeenCalledTimes(2);
+    expect(recorder.getState()).toBe("idle");
+  });
 });
