@@ -59,15 +59,13 @@ const invokeDelete = (id: string, snapshot?: Transcription): void => {
     })
     .catch((error) => {
       if (snapshot) {
-        restoreInStore(snapshot);
-        showErrorSnackbar(error);
-      if (snapshot) {
         queuedIds.delete(id);
         writeQueuedIds();
         restoreInStore(snapshot);
         showErrorSnackbar(error);
         return;
       }
+      // Resume path has no snapshot: leave `id` in queuedIds so the next
       // launch retries. Do not toast — a missing row plus a launch-time
       // snackbar would spam every start.
     });
