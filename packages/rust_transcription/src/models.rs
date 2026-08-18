@@ -328,6 +328,37 @@ mod tests {
     }
 
     #[test]
+    fn arena_print_immutable_companion_digests() {
+        use sha2::{Digest, Sha256};
+
+        for (name, url) in [
+            (
+                "sensevoice-tokens.txt",
+                "https://huggingface.co/csukuangfj/sherpa-onnx-sense-voice-zh-en-ja-ko-yue-int8-2025-09-09/resolve/355f4d4884d8afd08aef04b9007a8556d7b463b2/tokens.txt",
+            ),
+            (
+                "parakeet-ctc-tokenizer.json",
+                "https://huggingface.co/onnx-community/parakeet-ctc-0.6b-ONNX/resolve/7df2cab7aed886b8b7f80d68a8214007e4847601/tokenizer.json",
+            ),
+            (
+                "parakeet-tdt-vocab.txt",
+                "https://huggingface.co/istupakov/parakeet-tdt-0.6b-v3-onnx/resolve/8f23f0c03c8761650bdb5b40aaf3e40d2c15f1ce/vocab.txt",
+            ),
+            (
+                "canary-vocab.txt",
+                "https://huggingface.co/istupakov/canary-1b-v2-onnx/resolve/5ebc1520cef7b6b318b3526ad17adbfe00bc1bfc/vocab.txt",
+            ),
+        ] {
+            let output = std::process::Command::new("curl")
+                .args(["-fsSL", url])
+                .output()
+                .unwrap_or_else(|error| panic!("curl failed for {name}: {error}"));
+            assert!(output.status.success(), "curl failed for {name}");
+            eprintln!("ARENA_HASH {name} {:x}", Sha256::digest(output.stdout));
+        }
+    }
+
+    #[test]
     fn sensevoice_uses_immutable_revision_and_digest() {
         let artifacts = WhisperModel::SenseVoice.artifact_set();
         // No artifact may be served from the mutable `main` branch, and no
