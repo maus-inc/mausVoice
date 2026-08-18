@@ -337,6 +337,7 @@ export const DictationSideEffects = () => {
   // Idle-reconciliation heartbeat: if nothing is recording and the pill was
   // not last told to idle, re-send idle so a dropped phase IPC self-heals.
   useEffect(() => {
+    if (!isMainWindow) return;
     const interval = setInterval(() => {
       const state = getAppState();
       if (state.activeRecordingMode !== null) {
@@ -860,6 +861,7 @@ export const DictationSideEffects = () => {
       dimSystemVolume,
       hardResetHotkeyState,
       intl,
+      startRecordingTimers,
     ],
   );
 
@@ -1074,10 +1076,12 @@ export const DictationSideEffects = () => {
   );
 
   useTauriListen<void>("assistant-mode-close", async () => {
+    if (!isMainWindow) return;
     await abortRecording();
   });
 
   useTauriListen<void>("assistant-enable-type-mode", async () => {
+    if (!isMainWindow) return;
     getLogger().info("Switching to type mode");
 
     // Stop the microphone/transcription without tearing down the assistant panel
@@ -1100,6 +1104,7 @@ export const DictationSideEffects = () => {
   useTauriListen<{ text: string }>(
     "assistant-typed-message",
     async (payload) => {
+      if (!isMainWindow) return;
       const { text } = payload;
       if (!text.trim()) return;
 
@@ -1129,7 +1134,10 @@ export const DictationSideEffects = () => {
 
   useTauriListen<{ conversationId: string }>(
     "open-pill-conversation",
-    (payload) => openPillConversation(payload.conversationId),
+    (payload) => {
+      if (!isMainWindow) return;
+      openPillConversation(payload.conversationId);
+    },
   );
 
   useHotkeyFire({
@@ -1194,19 +1202,23 @@ export const DictationSideEffects = () => {
   }, [intl, startRecordingTimers]);
 
   useTauriListen<void>("cancel-dictation", () => {
+    if (!isMainWindow) return;
     abortRecording();
   });
 
   useTauriListen<void>("pause-dictation", () => {
+    if (!isMainWindow) return;
     void pauseDictation();
   });
 
   useTauriListen<void>("resume-dictation", () => {
+    if (!isMainWindow) return;
     void resumeDictation();
   });
 
   useToastAction(async (payload) => {
     if (payload.action === "confirm_cancel_transcription") {
+      if (!isMainWindow) return;
       await abortRecording();
     }
   });
@@ -1224,16 +1236,19 @@ export const DictationSideEffects = () => {
   });
 
   useTauriListen<void>("tone-switch-forward", () => {
+    if (!isMainWindow) return;
     switchWritingStyleForward();
   });
 
   useTauriListen<void>("tone-switch-backward", () => {
+    if (!isMainWindow) return;
     switchWritingStyleBackward();
   });
 
   useTauriListen<OverlayResolvePermissionPayload>(
     "overlay-resolve-permission",
     (payload) => {
+      if (!isMainWindow) return;
       if (payload.alwaysAllow) {
         const permission =
           getAppState().toolPermissionById[payload.permissionId];
@@ -1251,6 +1266,7 @@ export const DictationSideEffects = () => {
   );
 
   useEffect(() => {
+    if (!isMainWindow) return;
     invoke("set_pill_visibility", { visibility: pillVisibility }).catch(
       console.error,
     );
@@ -1268,6 +1284,7 @@ export const DictationSideEffects = () => {
   });
 
   useEffect(() => {
+    if (!isMainWindow) return;
     let size: string;
     if (activeRecordingMode !== "agent") {
       size = "dictation";
@@ -1292,6 +1309,7 @@ export const DictationSideEffects = () => {
   });
 
   useEffect(() => {
+    if (!isMainWindow) return;
     invoke("notify_pill_style_info", {
       count: pillStyleCount,
       name: pillStyleName,

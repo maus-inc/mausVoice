@@ -193,6 +193,10 @@ export const AppSideEffects = () => {
     if (hotkeyStrategy !== "listener") {
       return;
     }
+    // Only the main window owns the global key grab.
+    if (!isMainWindow) {
+      return;
+    }
 
     if (keyPermAuthorized) {
       getLogger().info(
@@ -226,6 +230,10 @@ export const AppSideEffects = () => {
   // of the sync never runs half-configured, and re-runs whenever any
   // grab-relevant input changes — regardless of data load order.
   useEffect(() => {
+    // Native hotkey grab sync is owned by the main window only.
+    if (!isMainWindow) {
+      return;
+    }
     const push = () => {
       if (getAppState().hotkeyStrategy) {
         // syncHotkeyCombosToNative rejects if the native grab fails to install
@@ -375,6 +383,11 @@ export const AppSideEffects = () => {
   useTauriListen<RemoteFinalTextReceivedPayload>(
     "remote_final_text_received",
     async (payload) => {
+      // Inserting the remote transcript is a window-global action; only the
+      // main window must perform it to avoid double-insertion from a popout.
+      if (!isMainWindow) {
+        return;
+      }
       await handleRemoteFinalTextReceived(payload);
       await refreshRemoteReceiverStatus().catch(() => undefined);
     },
@@ -567,7 +580,7 @@ export const AppSideEffects = () => {
 
   useHotkeyFire({
     actionName: ADD_TO_DICTIONARY_HOTKEY,
-    isDisabled: false,
+    isDisabled: !isMainWindow,
     onFire: handleAddToDictionary,
   });
 
@@ -620,11 +633,13 @@ export const AppSideEffects = () => {
   });
 
   useTauriListen<void>("tray-install-update", () => {
+    if (!isMainWindow) return;
     surfaceMainWindow();
     installAvailableUpdate();
   });
 
   useTauriListen<void>("tray-copy-last-transcript", async () => {
+    if (!isMainWindow) return;
     const [latest] = await getTranscriptionRepo().listTranscriptions({
       limit: 1,
     });
@@ -635,6 +650,7 @@ export const AppSideEffects = () => {
 
   const menuBarIconHidden = prefs?.menuBarIconHidden ?? false;
   useEffect(() => {
+    if (!isMainWindow) return;
     invoke("set_tray_visible", { visible: !menuBarIconHidden }).catch(
       console.error,
     );
@@ -647,12 +663,14 @@ export const AppSideEffects = () => {
     JSON.stringify(buildTrayLanguageMenuModel(state)),
   );
   useEffect(() => {
+    if (!isMainWindow) return;
     invoke("set_tray_language_menu", {
       items: JSON.parse(trayLanguageMenuKey),
     }).catch(console.error);
   }, [trayLanguageMenuKey]);
 
   useTauriListen<string>("tray-set-dictation-language", (code) => {
+    if (!isMainWindow) return;
     setActiveDictationLanguage(code).catch(console.error);
   });
 
@@ -679,6 +697,7 @@ export const AppSideEffects = () => {
   // Label follows the persisted preference: startup hydration, tray clicks and
   // Settings edits all flow through here, so the tray cannot drift.
   useEffect(() => {
+    if (!isMainWindow) return;
     const label = getLocalizedPillMenuLabel(effectivePillVisibility, intl);
     invoke("set_pill_visibility_menu_state", {
       label,
@@ -686,6 +705,7 @@ export const AppSideEffects = () => {
   }, [effectivePillVisibility, intl]);
 
   useTauriListen<void>("tray-toggle-pill-visibility", () => {
+    if (!isMainWindow) return;
     pillVisibilityQueueRef.current = pillVisibilityQueueRef.current
       .then(async () => {
         const current = pillVisibilityRef.current;
@@ -713,6 +733,7 @@ export const AppSideEffects = () => {
   // the tray menu item's enabled state; when the user clicks "Reset Pill
   // Position" we forward the IPC message and the pill re-homes itself.
   useTauriListen<void>("tray-reset-pill-position", () => {
+    if (!isMainWindow) return;
     const strategy =
       getMyUserPreferences(getAppState())?.pillResetMonitorStrategy ??
       "current";
@@ -726,6 +747,8 @@ export const AppSideEffects = () => {
     rect?: { x: number; y: number; width: number; height: number };
     monitor?: { x: number; y: number; width: number; height: number };
   }>("pill-position-changed", (event) => {
+    // Pill geometry and tray menu belong to the main window's pill.
+    if (!isMainWindow) return;
     setPillGeometry(event.rect ?? null, event.monitor ?? null);
     invoke("set_reset_pill_position_enabled", {
       enabled: event.hasSavedPosition,
