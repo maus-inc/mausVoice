@@ -12,12 +12,8 @@ export const SnackbarEmitter = () => {
   const snackbarCounter = useAppStore((state) => state.snackbarCounter);
 
   useEffect(() => {
-    const {
-      snackbarMessage,
-      snackbarDuration,
-      snackbarMode,
-      snackbarAction,
-    } = useAppStore.getState();
+    const { snackbarMessage, snackbarDuration, snackbarMode, snackbarAction } =
+      useAppStore.getState();
     emitSnackbarIfNew({
       snackbarCounter,
       snackbarMessage,

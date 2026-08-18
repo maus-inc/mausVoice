@@ -55,7 +55,8 @@ export const ElasticSlider = ({
   const [dragValue, setDragValue] = useState(value);
   const draggingRef = useRef(false);
 
-  const accentFill = theme.vars?.palette.primary.main ?? theme.palette.primary.main;
+  const accentFill =
+    theme.vars?.palette.primary.main ?? theme.palette.primary.main;
   const rail = theme.vars?.palette.level3 ?? theme.palette.level3;
 
   useEffect(() => {
@@ -120,7 +121,7 @@ export const ElasticSlider = ({
           "& .MuiSlider-thumb": {
             width: 16,
             height: 16,
-            backgroundColor: theme.vars?.palette.level1,
+            backgroundColor: theme.vars?.palette.level1 ?? theme.palette.level1,
             border: `2px solid ${accentFill}`,
             boxShadow: "0 1px 3px rgba(26, 23, 18, 0.18)",
             transition:

@@ -31,7 +31,7 @@ export const Breadcrumb = ({ items, separator = "/" }: BreadcrumbProps) => {
       sx={{ px: 2, minWidth: 0 }}
     >
       {items.map((item, index) => {
-        const itemKey = `${item.href ?? ""}:${item.label}`;
+        const itemKey = `${index}:${item.href ?? ""}:${item.label}`;
         return index === items.length - 1 ? (
           <Typography
             key={itemKey}
@@ -58,6 +58,8 @@ export const Breadcrumb = ({ items, separator = "/" }: BreadcrumbProps) => {
               cursor: "pointer",
               textDecoration: "none",
               whiteSpace: "nowrap",
+              overflow: "hidden",
+              textOverflow: "ellipsis",
               "&:hover": { textDecoration: "underline" },
             }}
           >

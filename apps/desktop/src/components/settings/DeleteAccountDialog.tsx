@@ -76,7 +76,12 @@ export const DeleteAccountDialog = () => {
   };
 
   return (
-    <Dialog open={open} onClose={handleClose} fullWidth maxWidth="sm">
+    <Dialog
+      open={open}
+      onClose={busy ? undefined : handleClose}
+      fullWidth
+      maxWidth="sm"
+    >
       <DialogTitle>
         <Typography
           variant="h6"

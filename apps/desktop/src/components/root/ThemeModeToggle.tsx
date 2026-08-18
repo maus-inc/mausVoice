@@ -147,9 +147,7 @@ export const ThemeModeToggle = () => {
               <FormattedMessage defaultMessage="Light" />
             </Typography>
           </Stack>
-          {activeChoice === "light" && (
-            <Check size={16} strokeWidth={1.9} />
-          )}
+          {activeChoice === "light" && <Check size={16} strokeWidth={1.9} />}
         </MenuItem>
         <MenuItem
           onClick={() => handleSelect("dark")}
@@ -174,9 +172,7 @@ export const ThemeModeToggle = () => {
               <FormattedMessage defaultMessage="Dark" />
             </Typography>
           </Stack>
-          {activeChoice === "dark" && (
-            <Check size={16} strokeWidth={1.9} />
-          )}
+          {activeChoice === "dark" && <Check size={16} strokeWidth={1.9} />}
         </MenuItem>
         <MenuItem
           onClick={() => handleSelect("system")}
@@ -201,9 +197,7 @@ export const ThemeModeToggle = () => {
               <FormattedMessage defaultMessage="System" />
             </Typography>
           </Stack>
-          {activeChoice === "system" && (
-            <Check size={16} strokeWidth={1.9} />
-          )}
+          {activeChoice === "system" && <Check size={16} strokeWidth={1.9} />}
         </MenuItem>
       </Menu>
     </>

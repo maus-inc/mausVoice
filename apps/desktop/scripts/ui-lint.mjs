@@ -33,10 +33,10 @@ function walk(dir) {
 }
 
 function scan(rel, text) {
-  if (text.includes("transition: \"all") || text.includes("transition: 'all")) {
+  if (/transition:\s*["']?all["']?/.test(text)) {
     failures.push(`${rel}: transition: all`);
   }
-  if (!allowHex.has(rel) && !rel.startsWith("styles/")) {
+  if (!allowHex.has(rel)) {
     const hex = text.match(/#[0-9a-fA-F]{3,8}\b/g);
     if (hex) {
       const blues = hex.filter((h) =>

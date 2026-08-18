@@ -46,7 +46,6 @@ export const AppFab = ({
       sx={{
         minWidth: labelWidth,
         overflow: "hidden",
-        clipPath: "inset(0)",
         border: isOutline ? "1px solid currentColor" : "none",
         backgroundColor: isOutline ? "background.paper" : "primary.main",
         color: isOutline ? "primary.main" : "primary.contrastText",

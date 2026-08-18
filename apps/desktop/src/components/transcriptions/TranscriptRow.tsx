@@ -94,7 +94,16 @@ export const TranscriptionRow = ({ id }: TranscriptionRowProps) => {
         return;
       }
       const undoWindowMs = 5000;
-      scheduleTranscriptionDelete(snapshot, undoWindowMs);
+      try {
+        scheduleTranscriptionDelete(snapshot, undoWindowMs);
+      } catch {
+        showErrorSnackbar(
+          intl.formatMessage({
+            defaultMessage: "Failed to schedule delete.",
+          }),
+        );
+        return;
+      }
       showSnackbar(
         intl.formatMessage({ defaultMessage: "Delete successful" }),
         {

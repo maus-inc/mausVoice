@@ -1,8 +1,5 @@
 import { describe, expect, it } from "vitest";
-import {
-  clampPlaybackProgress,
-  formatDuration,
-} from "./audio-playback.utils";
+import { clampPlaybackProgress, formatDuration } from "./audio-playback.utils";
 
 describe("start progress clamp", () => {
   it("treats 1 as ended, not a source offset", () => {

@@ -488,9 +488,11 @@ export const AppSideEffects = () => {
       produceAppState((draft) => {
         draft.initialized = true;
       });
-      resumePendingTranscriptionDeletes();
+      if (isMainWindow) {
+        resumePendingTranscriptionDeletes();
+      }
     }
-  }, [streamReady, initReady, initialized]);
+  }, [streamReady, initReady, initialized, isMainWindow]);
 
   const auth = useAppStore((state) => state.auth);
   const prevUserIdRef = useRef<string | null>(null);

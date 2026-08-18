@@ -4,6 +4,7 @@
  * Sized down for in-row badges (min 22 vs demo 64).
  */
 import ButtonBase, { type ButtonBaseProps } from "@mui/material/ButtonBase";
+import { darkInk, highlight, ink } from "../../styles/palette";
 
 export type KeycapProps = Omit<ButtonBaseProps, "disableRipple">;
 
@@ -32,21 +33,21 @@ export function Keycap({ sx, children, ...props }: KeycapProps) {
           },
           backgroundColor: theme.vars.palette.level1,
           boxShadow: [
-            "inset 0 1px 0 rgba(255,255,255,0.7)",
-            "inset 0 -2px 0 rgba(26,23,18,0.1)",
-            "0 1px 0 rgba(26,23,18,0.06)",
+            `inset 0 1px 0 ${highlight(0.7)}`,
+            `inset 0 -2px 0 ${ink(0.1)}`,
+            `0 1px 0 ${ink(0.06)}`,
           ].join(", "),
           "&:active": {
             transform: "translateY(2px)",
             boxShadow: [
-              "inset 0 1px 0 rgba(255,255,255,0.7)",
-              "inset 0 -1px 0 rgba(26,23,18,0.1)",
+              `inset 0 1px 0 ${highlight(0.7)}`,
+              `inset 0 -1px 0 ${ink(0.1)}`,
             ].join(", "),
           },
           ...theme.applyStyles("dark", {
             boxShadow: [
-              "inset 0 1px 0 rgba(255,255,255,0.08)",
-              "inset 0 -2px 0 rgba(0,0,0,0.45)",
+              `inset 0 1px 0 ${highlight(0.08)}`,
+              `inset 0 -2px 0 ${darkInk(0.45)}`,
             ].join(", "),
             "&:active": {
               transform: "translateY(2px)",

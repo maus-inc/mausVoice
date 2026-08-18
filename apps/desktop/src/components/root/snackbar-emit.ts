@@ -24,11 +24,12 @@ export const emitSnackbarIfNew = (payload: SnackbarEmitPayload): boolean => {
   if (lastEmittedSnackbarCounter === snackbarCounter) {
     return false;
   }
-  lastEmittedSnackbarCounter = snackbarCounter;
 
   if (!snackbarMessage) {
     return false;
   }
+
+  lastEmittedSnackbarCounter = snackbarCounter;
 
   const opts = {
     duration: payload.snackbarDuration,

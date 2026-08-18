@@ -137,7 +137,12 @@ const ToolResultBubble = ({
         overflow: "hidden",
       }}
     >
-      <Wrench size={14} strokeWidth={1.9} style={{ flexShrink: 0, opacity: 0.7 }} />
+      <Wrench
+        size={14}
+        strokeWidth={1.9}
+        style={{ flexShrink: 0 }}
+        color="var(--mui-palette-text-secondary)"
+      />
       <OverflowTypography
         variant="caption"
         color="text.secondary"

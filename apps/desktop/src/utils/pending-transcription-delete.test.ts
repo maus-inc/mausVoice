@@ -64,9 +64,8 @@ describe("pending transcription delete", () => {
 
   it("commits delete after the window", async () => {
     vi.useFakeTimers();
-    const { scheduleTranscriptionDelete } = await import(
-      "./pending-transcription-delete"
-    );
+    const { scheduleTranscriptionDelete } =
+      await import("./pending-transcription-delete");
 
     scheduleTranscriptionDelete(snapshot as never, 5000);
     await vi.advanceTimersByTimeAsync(5000);
@@ -74,10 +73,8 @@ describe("pending transcription delete", () => {
   });
 
   it("persists queued ids so resume can finish a dropped flush", async () => {
-    const {
-      PENDING_DELETE_STORAGE_KEY,
-      resumePendingTranscriptionDeletes,
-    } = await import("./pending-transcription-delete");
+    const { PENDING_DELETE_STORAGE_KEY, resumePendingTranscriptionDeletes } =
+      await import("./pending-transcription-delete");
 
     memory.set(PENDING_DELETE_STORAGE_KEY, JSON.stringify(["t1"]));
     resumePendingTranscriptionDeletes();

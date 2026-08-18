@@ -53,8 +53,8 @@ export const ConfirmDialog = ({
         <Button
           variant="text"
           onClick={onCancel}
-          disabled={busy}
           {...cancelButtonProps}
+          disabled={busy || cancelButtonProps?.disabled}
         >
           {cancelLabel ?? <FormattedMessage defaultMessage="Cancel" />}
         </Button>
@@ -62,8 +62,8 @@ export const ConfirmDialog = ({
           variant="contained"
           color={destructive ? "error" : "primary"}
           onClick={onConfirm}
-          disabled={busy}
           {...confirmButtonProps}
+          disabled={busy || confirmButtonProps?.disabled}
         >
           {busy ? (
             <CircularProgress size={16} color="inherit" />

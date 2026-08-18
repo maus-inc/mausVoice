@@ -44,6 +44,7 @@ export const AudioPlayerPill = ({
   const isPlayingRef = useRef(false);
   const playbackProgressRef = useRef(0);
   const transcriptionIdRef = useRef(transcriptionId);
+  const isDraggingRef = useRef(false);
 
   useEffect(() => {
     isPlayingRef.current = isPlaying;
@@ -175,7 +176,10 @@ export const AudioPlayerPill = ({
         transcriptionId,
         audioData,
         (progress) => {
-          if (transcriptionIdRef.current === transcriptionId) {
+          if (
+            transcriptionIdRef.current === transcriptionId &&
+            !isDraggingRef.current
+          ) {
             setPlaybackProgress(progress);
           }
         },
@@ -227,6 +231,7 @@ export const AudioPlayerPill = ({
     (event: React.PointerEvent<HTMLDivElement>) => {
       if (disabled) return;
       event.preventDefault();
+      isDraggingRef.current = true;
       const next = getProgressFromClientX(event.clientX);
       if (next != null) previewSeek(next);
 
@@ -238,6 +243,7 @@ export const AudioPlayerPill = ({
         window.removeEventListener("pointermove", handleMove);
         window.removeEventListener("pointerup", handleUp);
         pointerCleanupRef.current = null;
+        isDraggingRef.current = false;
         const ratio = getProgressFromClientX(upEvent.clientX);
         if (ratio != null) {
           commitSeek(ratio);
@@ -309,6 +315,7 @@ export const AudioPlayerPill = ({
         aria-label={intl.formatMessage({ defaultMessage: "Playback position" })}
         onPointerDown={handlePointerDown}
         onKeyDown={(event) => {
+          if (disabled) return;
           if (event.key === " ") {
             event.preventDefault();
             void handlePlaybackToggle();

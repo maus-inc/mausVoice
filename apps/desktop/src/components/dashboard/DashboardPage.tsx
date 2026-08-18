@@ -56,9 +56,7 @@ export default function DashboardPage() {
           <Box
             component={motion.div}
             key={location.pathname}
-            initial={
-              reduceMotion ? false : { opacity: 0, y: 8 }
-            }
+            initial={reduceMotion ? false : { opacity: 0, y: 8 }}
             animate={{ opacity: 1, y: 0 }}
             transition={{ duration: 0.18, ease: easeOutQuint }}
             // Flat: the route content owns its own surfaces (cards, rows), so

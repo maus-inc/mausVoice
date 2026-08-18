@@ -37,7 +37,10 @@ export const ToolPermissionPrompt = ({
         }}
       >
         <Stack direction="row" spacing={0.5} sx={{ alignItems: "center" }}>
-          <Typography variant="body2" sx={{ fontWeight: 600, color: overlayOnDark.text }}>
+          <Typography
+            variant="body2"
+            sx={{ fontWeight: 600, color: overlayOnDark.text }}
+          >
             {toolInfo?.description ?? permission.toolId}
           </Typography>
           <ToolParamsTooltip
@@ -47,12 +50,19 @@ export const ToolPermissionPrompt = ({
           />
         </Stack>
         {reason && (
-          <Typography variant="caption" sx={{ color: overlayOnDark.muted, mt: 0.25 }}>
+          <Typography
+            variant="caption"
+            sx={{ color: overlayOnDark.muted, mt: 0.25 }}
+          >
             {reason}
           </Typography>
         )}
         {isPending && (
-          <Stack direction="row" spacing={1} sx={{ justifyContent: "flex-end", mt: 0.75 }}>
+          <Stack
+            direction="row"
+            spacing={1}
+            sx={{ justifyContent: "flex-end", mt: 0.75 }}
+          >
             <Button
               size="small"
               variant="text"
@@ -122,11 +132,25 @@ export const ToolPermissionPrompt = ({
           </Stack>
 
           {isPending && (
-            <Stack direction="row" spacing={1} sx={{ justifyContent: "flex-start" }}>
-              <Button size="small" variant="text" onClick={onDeny} startIcon={<X size={16} strokeWidth={1.9} />}>
+            <Stack
+              direction="row"
+              spacing={1}
+              sx={{ justifyContent: "flex-start" }}
+            >
+              <Button
+                size="small"
+                variant="text"
+                onClick={onDeny}
+                startIcon={<X size={16} strokeWidth={1.9} />}
+              >
                 <FormattedMessage defaultMessage="Deny" />
               </Button>
-              <Button size="small" variant="contained" onClick={onAllow} startIcon={<Check size={16} strokeWidth={1.9} />}>
+              <Button
+                size="small"
+                variant="contained"
+                onClick={onAllow}
+                startIcon={<Check size={16} strokeWidth={1.9} />}
+              >
                 <FormattedMessage defaultMessage="Allow" />
               </Button>
               <Button

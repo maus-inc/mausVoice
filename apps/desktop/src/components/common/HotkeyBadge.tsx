@@ -14,12 +14,25 @@ export const HotkeyBadge = ({ keys, onClick, sx }: HotkeyBadgeProps) => {
 
   return (
     <Stack
+      component={onClick ? "button" : "div"}
       direction="row"
       spacing={0.5}
       aria-label={comboLabel}
-      role={onClick ? "button" : "group"}
+      role={onClick ? undefined : "group"}
       onClick={onClick}
-      sx={{ display: "inline-flex", alignItems: "center", ...sx }}
+      sx={{
+        display: "inline-flex",
+        alignItems: "center",
+        ...(onClick
+          ? {
+              border: "none",
+              background: "none",
+              padding: 0,
+              cursor: "pointer",
+            }
+          : {}),
+        ...sx,
+      }}
     >
       {keys.map((key, index) => (
         <Keycap key={`${key}-${index}`} tabIndex={-1} aria-hidden>
