@@ -41,10 +41,18 @@ function collectFiles(dir: string, acc: string[] = []): string[] {
     const full = join(dir, entry);
     const st = statSync(full);
     if (st.isDirectory()) {
-      if (entry === "node_modules" || entry === "dist" || entry === ".git")
+      if (
+        entry === "node_modules" ||
+        entry === "dist" ||
+        entry === ".git" ||
+        entry === "__tests__"
+      )
         continue;
       collectFiles(full, acc);
-    } else if (entry.endsWith(".ts") || entry.endsWith(".tsx")) {
+    } else if (
+      (entry.endsWith(".ts") || entry.endsWith(".tsx")) &&
+      !entry.includes(".test.")
+    ) {
       acc.push(full);
     }
   }

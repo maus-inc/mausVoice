@@ -83,9 +83,9 @@ pub(crate) fn validate_model_download_url(value: &str) -> Result<(), String> {
         .host_str()
         .ok_or_else(|| "model download URL has no host".to_string())?;
     let approved_https = url.scheme() == "https" && is_hugging_face_delivery_host(host);
-    let debug_loopback = cfg!(debug_assertions)
+    let debug_loopback = (cfg!(debug_assertions) || cfg!(test))
         && url.scheme() == "http"
-        && matches!(host, "localhost" | "127.0.0.1" | "::1");
+        && matches!(host, "localhost" | "127.0.0.1" | "::1" | "[::1]");
     if approved_https || debug_loopback {
         Ok(())
     } else {

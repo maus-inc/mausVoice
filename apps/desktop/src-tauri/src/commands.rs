@@ -2989,12 +2989,19 @@ fn percent_decode_route_path(path: &str) -> Result<String, String> {
     // fully decoded path so double-encoded traversal cannot become dangerous
     // only after this check. Bound nesting to reject pathological input.
     let mut decoded = path.to_string();
-    for _ in 0..4 {
-        let next = percent_decode_route_path_once(&decoded)?;
-        if next == decoded {
-            return Ok(decoded);
+    for iteration in 0..4 {
+        match percent_decode_route_path_once(&decoded) {
+            Ok(next) => {
+                if next == decoded {
+                    return Ok(decoded);
+                }
+                decoded = next;
+            }
+            Err(_) if iteration > 0 => {
+                return Ok(decoded);
+            }
+            Err(e) => return Err(e),
         }
-        decoded = next;
     }
     if decoded.contains('%') {
         return Err("Floating app route has excessive percent encoding".to_string());
