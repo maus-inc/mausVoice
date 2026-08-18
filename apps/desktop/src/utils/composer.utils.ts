@@ -79,7 +79,7 @@ export const computeComposerRect = (
     min: number,
     maxExclusive: number,
   ): number => {
-    const upper = maxExclusive < min ? min : maxExclusive;
+    const upper = Math.max(min, maxExclusive);
     return Math.min(Math.max(value, min), upper);
   };
 
