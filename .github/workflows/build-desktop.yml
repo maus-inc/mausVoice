@@ -2,8 +2,6 @@ name: Build Desktop
 
 on:
   push:
-    branches:
-      - main
     paths:
       - "apps/desktop/**"
       - "apps/windows-installer/**"
@@ -15,11 +13,6 @@ on:
       - "turbo.json"
       - ".nvmrc"
       - ".github/scripts/install-desktop-linux-deps.sh"
-      - ".github/workflows/build-desktop.yml"
-  pull_request:
-    paths:
-      - "apps/desktop/**"
-      - "apps/windows-installer/**"
       - ".github/workflows/build-desktop.yml"
 
 # Least privilege: this workflow only compiles and bundles; it never writes to
