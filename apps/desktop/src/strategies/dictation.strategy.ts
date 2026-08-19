@@ -85,7 +85,7 @@ export class DictationStrategy extends BaseStrategy {
    * so it never races an in-flight interim segment.
    */
   checkAndDrainBacklog(): Promise<void> {
-    return (this.pasteQueue = this.pasteQueue.then(async () => {
+    const promise = this.pasteQueue.then(async () => {
       const backlogLen = getAppState().dictationBacklog.length;
       if (backlogLen === 0 && !this.backlogActive) {
         return;
@@ -100,7 +100,9 @@ export class DictationStrategy extends BaseStrategy {
         }
         this.backlogActive = false;
       }
-    }));
+    });
+    this.pasteQueue = promise;
+    return promise;
   }
 
   handleInterimSegment(segment: string): void {
