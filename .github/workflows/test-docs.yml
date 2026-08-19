@@ -2,22 +2,6 @@ name: Test Docs
 
 on:
   push:
-    branches:
-      - main
-    paths:
-      - "apps/docs/**"
-      - "index.html"
-      - "marketing/**"
-      - "docs/assets/**"
-      - "sitemap.xml"
-      - "robots.txt"
-      - "llms.txt"
-      - "scripts/ci/pr28-contracts.test.mjs"
-      - "scripts/ci/pr37-contracts.test.mjs"
-      - "scripts/ci/generate-release-body.mjs"
-      - "pnpm-lock.yaml"
-      - ".github/workflows/test-docs.yml"
-  pull_request:
     paths:
       - "apps/docs/**"
       - "index.html"
