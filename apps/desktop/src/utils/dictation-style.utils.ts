@@ -125,3 +125,44 @@ export const getEffectiveToneIdAtFinalize = (
   }
   return args.toneIdAtStop ?? args.toneIdAtStart ?? args.liveSelectedToneId;
 };
+
+/**
+ * Per-utterance tone snapshots. Seed at recording start, overwrite stop
+ * when stop is initiated, clear on abort / type-mode / stop teardown.
+ */
+export type UtteranceToneSnapshotStore = {
+  seed: (toneId: string | null) => void;
+  snapshotAtStop: (toneId: string | null) => void;
+  clear: () => void;
+  read: () => { start: string | null; stop: string | null };
+};
+
+export const createUtteranceToneSnapshots = (): UtteranceToneSnapshotStore => {
+  let start: string | null = null;
+  let stop: string | null = null;
+  return {
+    seed(toneId) {
+      start = toneId;
+      stop = toneId;
+    },
+    snapshotAtStop(toneId) {
+      stop = toneId;
+    },
+    clear() {
+      start = null;
+      stop = null;
+    },
+    read() {
+      return { start, stop };
+    },
+  };
+};
+
+/** True when every key of any combo is currently held (keys already lowercased). */
+export const isActivationComboHeld = (
+  combos: string[][],
+  keysHeldLower: Set<string>,
+): boolean =>
+  combos.some((combo) =>
+    combo.every((key) => keysHeldLower.has(key.toLowerCase())),
+  );

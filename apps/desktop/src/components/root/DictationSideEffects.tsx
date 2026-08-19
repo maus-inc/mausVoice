@@ -66,7 +66,9 @@ import {
   shouldEnableDictationLimit,
 } from "../../utils/dictation-limit.utils";
 import {
+  createUtteranceToneSnapshots,
   getEffectiveToneIdAtFinalize,
+  isActivationComboHeld,
   resolveInDictationArrowStyleSwitch,
   resolveNewlyPressedDictationArrow,
 } from "../../utils/dictation-style.utils";
@@ -155,12 +157,7 @@ export const DictationSideEffects = () => {
   // heartbeat and keeps duplicate idle writes out of the pipe.
   const lastPhaseSentRef = useRef<OverlayPhase | null>(null);
   const previousStyleSwitchKeysRef = useRef<string[]>([]);
-  // Manual-mode tone snapshotted when stop is initiated. Mid-utterance
-  // switches that already wrote `selectedToneId` are included; a switch
-  // that arrives after this snapshot loses for the current utterance.
-  const toneIdAtStopRef = useRef<string | null>(null);
-  // Fallback if stop races ahead of the snapshot (start just wrote it).
-  const toneIdAtStartRef = useRef<string | null>(null);
+  const utteranceTonesRef = useRef(createUtteranceToneSnapshots());
   const [isStopping, setIsStopping] = useState(false);
   const assistantModeEnabled = useAppStore(getIsAssistantModeEnabled);
 
@@ -177,6 +174,9 @@ export const DictationSideEffects = () => {
   const switchToStyleEntries = useAppStore(getSwitchToStyleEntries);
   const inDictationStyleSwitchingEnabled = useAppStore(
     (state) => state.userPrefs?.inDictationStyleSwitchingEnabled ?? false,
+  );
+  const dictateCombos = useAppStore((state) =>
+    getHotkeyCombosForAction(state, DICTATE_HOTKEY),
   );
   const isDictationUnlocked = useAppStore(getIsDictationUnlocked);
   const isDictationInteractable = isDictationUnlocked && !isStopping;
@@ -294,8 +294,7 @@ export const DictationSideEffects = () => {
   }, []);
 
   const clearUtteranceToneSnapshots = useCallback(() => {
-    toneIdAtStartRef.current = null;
-    toneIdAtStopRef.current = null;
+    utteranceTonesRef.current.clear();
   }, []);
 
   const clearRecordingState = useCallback(() => {
@@ -585,10 +584,11 @@ export const DictationSideEffects = () => {
       // back to the live selection when the app has none. Streamed
       // interim text is never restyled here —
       // DictationStrategy skips post-processing once segments are inserted.
+      const utteranceTones = utteranceTonesRef.current.read();
       const toneId = getEffectiveToneIdAtFinalize({
         stylingMode: getEffectiveStylingMode(getAppState()),
-        toneIdAtStart: toneIdAtStartRef.current,
-        toneIdAtStop: toneIdAtStopRef.current,
+        toneIdAtStart: utteranceTones.start,
+        toneIdAtStop: utteranceTones.stop,
         liveSelectedToneId: getManuallySelectedToneId(getAppState()),
         appTargetToneId: appTarget?.toneId ?? null,
       });
@@ -676,9 +676,11 @@ export const DictationSideEffects = () => {
     // Lock the utterance tone now. Switches that already wrote selectedToneId
     // are included; switches that arrive during capture/finalize lose for
     // this utterance (they still update the selection for the next one).
-    toneIdAtStopRef.current = getToneIdToUse(getAppState(), {
-      currentAppToneId: null,
-    });
+    utteranceTonesRef.current.snapshotAtStop(
+      getToneIdToUse(getAppState(), {
+        currentAppToneId: null,
+      }),
+    );
     try {
       const res = await stopRecordingRaw().catch((error) => {
         getLogger().error(
@@ -803,13 +805,13 @@ export const DictationSideEffects = () => {
       }
 
       // Seed both snapshots after app-based style load. Stop overwrites
-      // `toneIdAtStopRef` with the live selection so a mid-utterance switch
+      // the stop snapshot with the live selection so a mid-utterance switch
       // is what finalize actually applies.
-      const startToneId = getToneIdToUse(getAppState(), {
-        currentAppToneId: null,
-      });
-      toneIdAtStartRef.current = startToneId;
-      toneIdAtStopRef.current = startToneId;
+      utteranceTonesRef.current.seed(
+        getToneIdToUse(getAppState(), {
+          currentAppToneId: null,
+        }),
+      );
 
       const preferredMicrophone = getMyPreferredMicrophone(state);
       const transcriptPrefs = getTranscriptionPrefs(state);
@@ -1001,19 +1003,10 @@ export const DictationSideEffects = () => {
       previousStyleSwitchKeysRef.current.map((key) => key.toLowerCase()),
     );
     const current = new Set(keysHeld.map((key) => key.toLowerCase()));
-    // Per-style hold-shortcut dictation: dictation is started/held via the
-    // activation key (DICTATE_HOTKEY) and the two arrow keys are whitelisted
-    // as additional held keys (see `allowedAdditionalKeys` on the
-    // DICTATE_HOTKEY useHotkeyHold below). While dictation is active and the
-    // activation key is held, pressing Left/Right cycles the writing style
-    // through the same transition as the pill and style hotkeys.
-    const dictateCombos = getHotkeyCombosForAction(
-      getAppState(),
-      DICTATE_HOTKEY,
-    );
-    const activationHeld = dictateCombos.some((combo) =>
-      combo.every((key) => current.has(key.toLowerCase())),
-    );
+    // Combos are subscribed via `dictateCombos` so we don't rebuild them
+    // on every keysHeld change. While dictation is active and the
+    // activation key is held, Left/Right cycles the writing style.
+    const activationHeld = isActivationComboHeld(dictateCombos, current);
     const newlyPressed = resolveNewlyPressedDictationArrow(current, previous);
     const arrowDirection = resolveInDictationArrowStyleSwitch({
       enabled: inDictationStyleSwitchingEnabled,
@@ -1036,6 +1029,7 @@ export const DictationSideEffects = () => {
     // mutation-based snapshot of the prior `keysHeld` updated at the end of this
     // effect, so including it would trigger a render loop.
     activeRecordingMode,
+    dictateCombos,
     inDictationStyleSwitchingEnabled,
     isActiveSession,
     isMainWindow,

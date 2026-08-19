@@ -1,6 +1,8 @@
 import { describe, expect, it } from "vitest";
 import {
+  createUtteranceToneSnapshots,
   getEffectiveToneIdAtFinalize,
+  isActivationComboHeld,
   resolveInDictationArrowStyleSwitch,
   resolveNewlyPressedDictationArrow,
   toWritingStyleTransition,
@@ -215,5 +217,40 @@ describe("resolveInDictationArrowStyleSwitch", () => {
         isManualStyling: false,
       }),
     ).toBeNull();
+  });
+});
+
+describe("createUtteranceToneSnapshots", () => {
+  it("seeds start and stop together, then overwrites only stop", () => {
+    const store = createUtteranceToneSnapshots();
+    store.seed(START);
+    expect(store.read()).toEqual({ start: START, stop: START });
+    store.snapshotAtStop(SWITCHED);
+    expect(store.read()).toEqual({ start: START, stop: SWITCHED });
+  });
+
+  it("clears both snapshots on teardown", () => {
+    const store = createUtteranceToneSnapshots();
+    store.seed(START);
+    store.snapshotAtStop(SWITCHED);
+    store.clear();
+    expect(store.read()).toEqual({ start: null, stop: null });
+  });
+});
+
+describe("isActivationComboHeld", () => {
+  it("is true when every key of a combo is held", () => {
+    expect(
+      isActivationComboHeld(
+        [["Fn"], ["Control", "Shift"]],
+        new Set(["control", "shift"]),
+      ),
+    ).toBe(true);
+  });
+
+  it("is false when no combo is fully held", () => {
+    expect(
+      isActivationComboHeld([["Control", "Shift"]], new Set(["control"])),
+    ).toBe(false);
   });
 });
