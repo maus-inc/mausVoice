@@ -317,6 +317,7 @@ export const ComposerPage = () => {
               onChange={(event) => setInstruction(event.target.value)}
               onKeyDown={(event) => {
                 if (event.key === "Enter" && (event.metaKey || event.ctrlKey)) {
+                  event.preventDefault();
                   void applyEdit();
                 }
               }}

@@ -455,9 +455,15 @@ export const applySpokenCommands = (
     }
 
     applyMatchedCommand(output, matched.command, emitOriginalGap);
-    pendingOriginalGap = shouldDropFollowingGap(matched.command)
-      ? null
-      : (parsed.gaps[index + matched.length - 1] ?? null);
+    const followingGap = parsed.gaps[index + matched.length - 1] ?? null;
+    if (matched.command.kind === "scratch") {
+      // Keep the gap after a partial scratch so the next word stays separated.
+      pendingOriginalGap = output.length === 0 ? null : followingGap;
+    } else {
+      pendingOriginalGap = shouldDropFollowingGap(matched.command)
+        ? null
+        : followingGap;
+    }
     index += matched.length;
   }
 

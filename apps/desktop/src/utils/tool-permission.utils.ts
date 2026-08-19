@@ -32,8 +32,9 @@ export const setToolAlwaysAllow = (
     storage.setItem(key, "true");
   } else {
     storage.removeItem(key);
-    if (scope === "global") {
-      storage.removeItem(`${TOOL_ALWAYS_ALLOW_PREFIX}${toolId}`);
-    }
+    // Legacy unscoped keys predate per-conversation grants. Always drop
+    // them on revoke so a leftover `tool_always_allow:<id>` cannot keep
+    // auto-executing after the new scoped path says no.
+    storage.removeItem(`${TOOL_ALWAYS_ALLOW_PREFIX}${toolId}`);
   }
 };

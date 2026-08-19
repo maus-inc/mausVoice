@@ -7,7 +7,7 @@ Authoritative notes: [Repository overview](https://maus-inc.github.io/mausVoice/
 ## Prerequisites
 
 - Node from repo `.nvmrc` (v24); `engines.node` `>=20`
-- **pnpm 10.11.0** (workspace package `@maus-inc/windows-installer`, currently `0.1.6`)
+- **pnpm 10.34.5** (workspace package `@maus-inc/windows-installer`, currently `0.1.6`)
 - Rust + Tauri CLI via the workspace (`pnpm --filter @maus-inc/windows-installer`, not a global npm CLI)
 
 ## Build

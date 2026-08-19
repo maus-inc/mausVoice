@@ -7,7 +7,7 @@ sidebar:
 
 The recording/Assistant pill is implemented natively three times: Cocoa in `rust_macos_pill`, Direct2D/DirectWrite in `rust_windows_pill`, and GTK/layer-shell in `rust_gtk_pill`. TypeScript `OverlaySyncSideEffects` watches Zustand and invokes Tauri to push assistant/recording payloads (`active`, `input_mode`, `compact`, `messages`, `streaming`, `permissions`).
 
-Waveform constants (shared across native crates) include `LEVEL_SMOOTHING` 0.18, `WAVE_BASE_PHASE_STEP` 0.11, `MAX_AMPLITUDE` 1.3, `STROKE_WIDTH` 1.6. Long-press drag arm is ~0.45s with an 8px move threshold. Dictation surface is about 200×86; Assistant compact/expanded sizes are larger (see crate `constants.rs`).
+Waveform values (`LEVEL_SMOOTHING` 0.18, `WAVE_BASE_PHASE_STEP` 0.11, `MAX_AMPLITUDE` 1.3, `STROKE_WIDTH` 1.6) are duplicated matching copies in each platform crate, not shared constants. Long-press drag arm is ~0.45s with an 8px move threshold. Dictation surface is about 200×86; Assistant compact/expanded sizes are larger (see crate `constants.rs`).
 
 The integration boundary differs by OS. macOS links the pill crate into Tauri and exchanges typed `InMessage`/`OutMessage` values over Rust channels. Windows and Linux spawn packaged pill binaries, wait up to 30 seconds for a ready message, then exchange newline-delimited JSON over stdin/stdout. `apps/desktop/src-tauri/src/pill_process.rs` retries a failed write once and turns pill output into Tauri events.
 

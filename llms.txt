@@ -11,7 +11,7 @@
 - **Repository:** https://github.com/maus-inc/mausVoice
 - **License:** AGPLv3
 - **Maintainer:** Owie Emmanuel (https://github.com/Owie6789)
-- **Package Manager:** pnpm@10.11.0 (Turborepo monorepo)
+- **Package Manager:** pnpm@10.34.5 (Turborepo monorepo)
 
 ## Quickstart
 
@@ -23,7 +23,7 @@ pnpm dev:windows    # Windows
 pnpm dev:linux      # Linux
 ```
 
-Prerequisites: Node from `.nvmrc` (v24; `engines.node` is `>=20`), pnpm 10.11.0, Rust toolchain (Tauri v2), CMake for whisper-rs.
+Prerequisites: Node from `.nvmrc` (v24; `engines.node` is `>=20`), pnpm 10.34.5, Rust toolchain (Tauri v2), CMake for whisper-rs.
 
 ## Architecture
 

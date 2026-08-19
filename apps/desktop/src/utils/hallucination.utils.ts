@@ -90,25 +90,34 @@ export const filterKnownSilenceHallucinations = (
   }
   if (isKnownSilenceHallucination(text)) return "";
 
-  const lines = text.split(/\n+/);
+  const lines = text.split("\n");
   const subtitlePresent = lines.some((line) =>
     line.split(/(?<=[.!?。！？])\s+/u).some(isSubtitleHallucination),
   );
 
-  const keptLines = lines
-    .map((line) => {
-      const parts = line.split(/(?<=[.!?。！？])\s+/u);
-      const kept = parts.filter((part) => {
-        if (isKnownSilenceHallucination(part)) return false;
-        if (subtitlePresent && isSilenceCompanion(part)) return false;
-        return true;
-      });
-      return kept
-        .join(" ")
-        .replace(/[ \t]+/g, " ")
-        .trim();
-    })
-    .filter((line) => line.length > 0);
+  let changed = false;
+  const keptLines: string[] = [];
+  for (const line of lines) {
+    const parts = line.split(/(?<=[.!?。！？])\s+/u);
+    const kept = parts.filter((part) => {
+      if (isKnownSilenceHallucination(part)) return false;
+      if (subtitlePresent && isSilenceCompanion(part)) return false;
+      return true;
+    });
+    if (kept.length === parts.length) {
+      keptLines.push(line);
+      continue;
+    }
+    changed = true;
+    const rebuilt = kept
+      .join(" ")
+      .replace(/[ \t]+/g, " ")
+      .trim();
+    if (rebuilt.length > 0) {
+      keptLines.push(rebuilt);
+    }
+  }
+  if (!changed) return text;
   return keptLines.join("\n");
 };
 
@@ -176,12 +185,17 @@ export const gateSilentSegments = (
   if (!segments || segments.length === 0) {
     return null;
   }
-  return segments
-    .filter(
-      (segment) =>
-        segment.noSpeechProb == null ||
-        segment.noSpeechProb < NO_SPEECH_PROB_THRESHOLD,
-    )
+  const kept = segments.filter(
+    (segment) =>
+      segment.noSpeechProb == null ||
+      segment.noSpeechProb < NO_SPEECH_PROB_THRESHOLD,
+  );
+  // Nothing gated — keep the provider transcript (and its spacing) instead
+  // of rebuilding with a single-space join.
+  if (kept.length === segments.length) {
+    return null;
+  }
+  return kept
     .map((segment) => segment.text)
     .join(" ")
     .replace(/\s+/g, " ")

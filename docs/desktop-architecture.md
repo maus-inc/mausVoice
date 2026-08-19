@@ -18,12 +18,8 @@ The desktop app is [Tauri](https://tauri.app/) v2: Rust native capabilities + Ty
 User / native event
         ↓
 TypeScript actions + Zustand
-        ↓
-Repos (local SQLite / voice-ai / sidecar)
-        ↓
-Tauri commands (Rust)
-        ↓
-SQLite, rust_transcription, or provider HTTP/WS
+        ├─ provider sessions (browser WebSocket / @maus-inc/voice-ai HTTP)
+        └─ local persistence + sidecar (Tauri commands → SQLite / rust_transcription)
         ↓
 optional replacements + LLM cleanup
         ↓

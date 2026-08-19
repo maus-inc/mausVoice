@@ -7,7 +7,7 @@ sidebar:
 
 Root `build`, `lint`, `check-types`, and `test` commands use Turbo and run only tasks defined by each workspace. `check-types` and `test:evals` depend on `^build` so compiled package `dist/` exists first.
 
-Eval tests (`test:evals`) score LLM cleanup against styles (Polished/Default, Email, Chat, Formal, Verbatim) and multilingual cases. They are not a substitute for unit tests. Integration transcription tests split long WAV fixtures into overlapping segments and compare merged text to a gold transcript. For desktop changes, use the more explicit scripts:
+Eval tests (`test:evals`) score LLM cleanup against styles (Polished/Default, Email, Chat, Formal) and multilingual cases. They do not currently assert Verbatim. They are not a substitute for unit tests. Integration transcription tests split long WAV fixtures into overlapping segments and compare merged text to a gold transcript. For desktop changes, use the more explicit scripts:
 
 ```bash
 pnpm --filter desktop lint
