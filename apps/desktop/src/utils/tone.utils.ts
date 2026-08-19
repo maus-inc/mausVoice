@@ -164,7 +164,7 @@ Do NOT use em-dash symbols (—) in your response.
       category: "prompt",
       outputLength: "1–3 sentences",
       exampleInputOutput: [
-        "Input: I need, um, a short email to the team about moving tomorrow's meeting to Friday.\nOutput: Write a short email to the team explaining that tomorrow's meeting is moving to Friday.",
+        "Input: Hey so, um, can you summarize the key points of this Q3 report? Like under one page, and, uh, I need it by tomorrow morning.\nOutput: Summarize the key points of this Q3 report in under one page by tomorrow morning.",
         "Input: Fix the prompt style, it, uh, just gives a message that says to write a prompt instead of, you know, actually writing the prompt.\nOutput: Fix the Prompt style so it returns the finished, optimized prompt itself instead of a message that says to write a prompt.",
       ].join("\n\n"),
       isSystem: true,
