@@ -2457,6 +2457,18 @@ pub fn set_register_app_label(app: AppHandle, app_name: Option<String>) -> Resul
     crate::system::tray::set_register_app_label(&app, app_name)
 }
 
+/// Set the localized dashboard action labels and sync the tray item to the
+/// main window's actual visibility.
+#[tauri::command]
+#[specta::specta]
+pub fn set_dashboard_menu_labels(
+    app: AppHandle,
+    open_label: String,
+    hide_label: String,
+) -> Result<(), String> {
+    crate::system::tray::set_dashboard_menu_labels(&app, open_label, hide_label)
+}
+
 /// Sync the tray's pill-visibility label.
 ///
 /// Presentation only — the frontend owns the preference, resolves the localized

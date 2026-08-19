@@ -38,7 +38,7 @@ pub enum MenuIconVariant {
 }
 
 use crate::domain::EVT_REGISTER_CURRENT_APP;
-use std::sync::OnceLock;
+use std::sync::{Mutex, OnceLock};
 use tauri::menu::{MenuItem, Submenu};
 
 pub const EVT_INSTALL_UPDATE: &str = "tray-install-update";
@@ -48,17 +48,38 @@ pub const EVT_TOGGLE_PILL_VISIBILITY: &str = "tray-toggle-pill-visibility";
 pub const EVT_RESET_PILL_POSITION: &str = "tray-reset-pill-position";
 
 const TRAY_LANGUAGE_ITEM_PREFIX: &str = "tray-lang:";
+const DASHBOARD_MENU_ID: &str = "open-dashboard";
 const PILL_VISIBILITY_MENU_ID: &str = "toggle-pill-visibility";
 const RESET_PILL_POSITION_MENU_ID: &str = "reset-pill-position";
+
+const DASHBOARD_MENU_LABEL_OPEN: &str = "Open Dashboard";
+const DASHBOARD_MENU_LABEL_HIDE: &str = "Hide Dashboard";
 
 /// Label shown when clicking will hide the pill (effective `persistent` or
 /// `while_active`). Also the pre-hydration default, so the first click always
 /// has a defined meaning.
 const PILL_MENU_LABEL_HIDE: &str = "Hide Pill";
 
+#[derive(Clone)]
+struct DashboardMenuLabels {
+    open: String,
+    hide: String,
+}
+
+impl Default for DashboardMenuLabels {
+    fn default() -> Self {
+        Self {
+            open: DASHBOARD_MENU_LABEL_OPEN.to_string(),
+            hide: DASHBOARD_MENU_LABEL_HIDE.to_string(),
+        }
+    }
+}
+
 static UPDATE_MENU_ITEM: OnceLock<MenuItem<tauri::Wry>> = OnceLock::new();
 static REGISTER_MENU_ITEM: OnceLock<MenuItem<tauri::Wry>> = OnceLock::new();
 static LANGUAGE_SUBMENU: OnceLock<Submenu<tauri::Wry>> = OnceLock::new();
+static DASHBOARD_MENU_ITEM: OnceLock<MenuItem<tauri::Wry>> = OnceLock::new();
+static DASHBOARD_MENU_LABELS: OnceLock<Mutex<DashboardMenuLabels>> = OnceLock::new();
 static PILL_VISIBILITY_MENU_ITEM: OnceLock<MenuItem<tauri::Wry>> = OnceLock::new();
 static RESET_PILL_POSITION_MENU_ITEM: OnceLock<MenuItem<tauri::Wry>> = OnceLock::new();
 
@@ -70,6 +91,53 @@ pub struct TrayLanguageMenuItem {
     pub checked: bool,
 }
 
+fn is_dashboard_visible(window: &tauri::WebviewWindow) -> Result<bool, String> {
+    let visible = window.is_visible().map_err(|err| err.to_string())?;
+    let minimized = window.is_minimized().map_err(|err| err.to_string())?;
+    Ok(visible && !minimized)
+}
+
+fn set_dashboard_menu_visibility(visible: bool) -> Result<(), String> {
+    let item = DASHBOARD_MENU_ITEM
+        .get()
+        .ok_or("Dashboard menu item not initialized")?;
+    let labels = DASHBOARD_MENU_LABELS
+        .get_or_init(|| Mutex::new(DashboardMenuLabels::default()))
+        .lock()
+        .map_err(|_| "Dashboard menu labels lock poisoned")?
+        .clone();
+
+    item.set_text(if visible { labels.hide } else { labels.open })
+        .map_err(|err| err.to_string())
+}
+
+fn sync_dashboard_menu_state(app: &tauri::AppHandle) -> Result<(), String> {
+    use tauri::Manager;
+
+    let window = app
+        .get_webview_window("main")
+        .ok_or("Main window not found")?;
+    set_dashboard_menu_visibility(is_dashboard_visible(&window)?)
+}
+
+fn hide_dashboard(window: &tauri::WebviewWindow) -> Result<(), String> {
+    window.hide().map_err(|err| err.to_string())?;
+
+    #[cfg(target_os = "windows")]
+    {
+        use tauri::Manager;
+
+        crate::platform::window::keep_webview_active(window.app_handle(), "main");
+        crate::platform::window::set_webview_keepalive(true);
+    }
+    #[cfg(target_os = "macos")]
+    {
+        crate::platform::macos::dock::hide_dock_icon().map_err(|err| err.to_string())?;
+    }
+
+    Ok(())
+}
+
 #[cfg(desktop)]
 pub fn setup_tray(app: &mut tauri::App) -> tauri::Result<()> {
     use tauri::image::Image;
@@ -77,7 +145,44 @@ pub fn setup_tray(app: &mut tauri::App) -> tauri::Result<()> {
     use tauri::tray::TrayIconBuilder;
     use tauri::{Emitter, Manager};
 
-    let open_item = MenuItem::with_id(app, "open-dashboard", "Open Dashboard", true, None::<&str>)?;
+    let dashboard_visible = app
+        .get_webview_window("main")
+        .and_then(|window| is_dashboard_visible(&window).ok())
+        .unwrap_or(false);
+    let dashboard_item = MenuItem::with_id(
+        app,
+        DASHBOARD_MENU_ID,
+        if dashboard_visible {
+            DASHBOARD_MENU_LABEL_HIDE
+        } else {
+            DASHBOARD_MENU_LABEL_OPEN
+        },
+        true,
+        None::<&str>,
+    )?;
+    let _ = DASHBOARD_MENU_ITEM.set(dashboard_item.clone());
+
+    if let Some(main_window) = app.get_webview_window("main") {
+        let app_handle = app.handle().clone();
+        main_window.on_window_event(move |event| {
+            let result = match event {
+                // The app-level close handler always turns a main-window close
+                // request into hide-to-tray. Update immediately, before a
+                // platform can suspend the hidden webview.
+                tauri::WindowEvent::CloseRequested { .. } => {
+                    set_dashboard_menu_visibility(false)
+                }
+                tauri::WindowEvent::Focused(_) | tauri::WindowEvent::Resized(_) => {
+                    sync_dashboard_menu_state(&app_handle)
+                }
+                _ => Ok(()),
+            };
+            if let Err(err) = result {
+                log::error!("Failed to sync dashboard tray label from window event: {err}");
+            }
+        });
+    }
+
     let copy_last_transcript_item = MenuItem::with_id(
         app,
         "copy-last-transcript",
@@ -121,7 +226,7 @@ pub fn setup_tray(app: &mut tauri::App) -> tauri::Result<()> {
     let quit_item = MenuItem::with_id(app, "quit-mausvoice", "Quit mausVoice", true, None::<&str>)?;
 
     let menu = MenuBuilder::new(app)
-        .item(&open_item)
+        .item(&dashboard_item)
         .item(&pill_visibility_item)
         .item(&reset_pill_position_item)
         .item(&copy_last_transcript_item)
@@ -140,9 +245,21 @@ pub fn setup_tray(app: &mut tauri::App) -> tauri::Result<()> {
         .tooltip("mausVoice")
         .icon(tray_icon_image)
         .on_menu_event(|app, event| match event.id().as_ref() {
-            "open-dashboard" => {
+            DASHBOARD_MENU_ID => {
                 if let Some(window) = app.get_webview_window("main") {
-                    let _ = crate::platform::window::surface_main_window(&window);
+                    let result = is_dashboard_visible(&window).and_then(|visible| {
+                        if visible {
+                            hide_dashboard(&window)
+                        } else {
+                            crate::platform::window::surface_main_window(&window)
+                        }
+                    });
+                    if let Err(err) = result {
+                        log::error!("Failed to toggle dashboard visibility: {err}");
+                    }
+                    if let Err(err) = sync_dashboard_menu_state(app) {
+                        log::error!("Failed to sync dashboard tray label: {err}");
+                    }
                 }
             }
             "copy-last-transcript" => {
@@ -233,6 +350,28 @@ pub fn set_register_app_label(_app: &tauri::AppHandle, app_name: Option<String>)
         _ => "Register current app".to_string(),
     };
     item.set_text(label).map_err(|err| err.to_string())
+}
+
+pub fn set_dashboard_menu_labels(
+    app: &tauri::AppHandle,
+    open_label: String,
+    hide_label: String,
+) -> Result<(), String> {
+    if open_label.trim().is_empty() || hide_label.trim().is_empty() {
+        return Err("Dashboard menu labels cannot be empty".to_string());
+    }
+
+    let mut labels = DASHBOARD_MENU_LABELS
+        .get_or_init(|| Mutex::new(DashboardMenuLabels::default()))
+        .lock()
+        .map_err(|_| "Dashboard menu labels lock poisoned")?;
+    *labels = DashboardMenuLabels {
+        open: open_label,
+        hide: hide_label,
+    };
+    drop(labels);
+
+    sync_dashboard_menu_state(app)
 }
 
 /// Update the pill-visibility item's label.

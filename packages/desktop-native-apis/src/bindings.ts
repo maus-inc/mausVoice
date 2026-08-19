@@ -844,6 +844,27 @@ export const commands = {
       else return { status: "error", error: e as any };
     }
   },
+  /**
+   * Set the localized dashboard action labels and sync the tray item to the
+   * main window's actual visibility.
+   */
+  async setDashboardMenuLabels(
+    openLabel: string,
+    hideLabel: string,
+  ): Promise<Result<null, string>> {
+    try {
+      return {
+        status: "ok",
+        data: await TAURI_INVOKE("set_dashboard_menu_labels", {
+          openLabel,
+          hideLabel,
+        }),
+      };
+    } catch (e) {
+      if (e instanceof Error) throw e;
+      else return { status: "error", error: e as any };
+    }
+  },
   async setMenuIcon(variant: MenuIconVariant): Promise<Result<null, string>> {
     try {
       return {

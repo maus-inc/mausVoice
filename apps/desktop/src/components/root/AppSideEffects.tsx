@@ -70,6 +70,7 @@ import { sendPillFlashMessage } from "../../utils/overlay.utils";
 import { isPermissionAuthorized } from "../../utils/permission.utils";
 import { getPlatform } from "../../utils/platform.utils";
 import { hoursToMilliseconds } from "../../utils/time.utils";
+import { getLocalizedDashboardMenuLabels } from "../../utils/tray-dashboard-visibility.utils";
 import { buildTrayLanguageMenuModel } from "../../utils/tray-language.utils";
 import {
   getLocalizedPillMenuLabel,
@@ -673,6 +674,39 @@ export const AppSideEffects = () => {
     if (!isMainWindow) return;
     setActiveDictationLanguage(code).catch(console.error);
   });
+
+  // The native command reads the real window state; these events only trigger
+  // a debounced re-sync after OS-driven minimize, close-to-tray, and surface
+  // transitions. Rust retains both localized labels so a tray click can update
+  // the item synchronously without waiting for the webview.
+  useEffect(() => {
+    if (!isMainWindow) return;
+
+    const appWindow = getCurrentWindow();
+    const labels = getLocalizedDashboardMenuLabels(intl);
+    let timeoutId: ReturnType<typeof setTimeout> | undefined;
+
+    const sync = () => {
+      clearTimeout(timeoutId);
+      timeoutId = setTimeout(() => {
+        invoke("set_dashboard_menu_labels", labels).catch(console.error);
+      }, 50);
+    };
+
+    sync();
+    const listeners = Promise.all([
+      appWindow.onFocusChanged(sync),
+      appWindow.onResized(sync),
+      appWindow.onCloseRequested(sync),
+    ]);
+
+    return () => {
+      clearTimeout(timeoutId);
+      void listeners.then((unlisteners) => {
+        unlisteners.forEach((unlisten) => unlisten());
+      });
+    };
+  }, [intl]);
 
   // ── Tray pill-visibility toggle ────────────────────────────────────────────
   // One menu item whose label states the action it performs. The persisted
