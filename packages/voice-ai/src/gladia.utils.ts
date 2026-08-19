@@ -702,7 +702,7 @@ const getFullTranscript = (transcription: Record<string, unknown>): string => {
     return "";
   }
   if (typeof fullTranscript !== "string") {
-    throw new Error("Gladia returned a malformed full transcript.");
+    throw new TypeError("Gladia returned a malformed full transcript.");
   }
   return fullTranscript.trim();
 };
@@ -715,12 +715,14 @@ const getUtteranceTranscript = (
     return "";
   }
   if (!Array.isArray(utterances)) {
-    throw new Error("Gladia returned malformed transcript utterances.");
+    throw new TypeError("Gladia returned malformed transcript utterances.");
   }
   return utterances
     .map((utterance) => {
       if (!isRecord(utterance) || typeof utterance.text !== "string") {
-        throw new Error("Gladia returned a malformed transcript utterance.");
+        throw new TypeError(
+          "Gladia returned a malformed transcript utterance.",
+        );
       }
       return utterance.text.trim();
     })
