@@ -64,10 +64,10 @@ const logModelDiscoveryResponseFailure = (
   response: Response,
 ): void => {
   const statusText = response.statusText.trim();
-  logModelDiscoveryFailure(
-    provider,
-    `HTTP ${response.status}${statusText ? ` ${statusText}` : ""}`,
-  );
+  const reason = [`HTTP ${response.status}`, statusText]
+    .filter(Boolean)
+    .join(" ");
+  logModelDiscoveryFailure(provider, reason);
 };
 
 async function fetchOpenAICompatibleModels(
