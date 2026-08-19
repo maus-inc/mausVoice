@@ -64,10 +64,6 @@ export class DictationStrategy extends BaseStrategy {
     return this.streamedSegmentCount > 0;
   }
 
-  get hasBacklog(): boolean {
-    return this.backlogActive;
-  }
-
   private getActiveRemoteTargetDeviceId(): string | null {
     const prefs = getMyUserPreferences(getAppState());
     if (!prefs?.remoteOutputEnabled || !prefs.remoteTargetDeviceId) {

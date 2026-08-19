@@ -99,6 +99,7 @@ import {
   getMyUserPreferences,
   getTranscriptionPrefs,
 } from "../../utils/user.utils";
+import { hasDictationBacklog } from "../../utils/output-routing.utils";
 import { surfaceMainWindow } from "../../utils/window.utils";
 
 type StartRecordingResponse = {
@@ -367,7 +368,7 @@ export const DictationSideEffects = () => {
       // Use the actual backlog length rather than the strategy's internal
       // backlogActive flag, so segments remaining in the Zustand backlog
       // are always drained even if the flag desyncs.
-      if (getAppState().dictationBacklog.length === 0) return;
+      if (!hasDictationBacklog()) return;
       (strategy as DictationStrategy).checkAndDrainBacklog()
         .catch((error: unknown) => {
           getLogger().warning(`Backlog drain poll failed: ${error}`);
