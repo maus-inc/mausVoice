@@ -40,6 +40,7 @@ import {
   getMemberRepo,
   getTermRepo,
   getTranscriptionRepo,
+  getUserPreferencesRepo,
   getUserRepo,
 } from "../../repos";
 import {
@@ -264,21 +265,74 @@ export const AppSideEffects = () => {
     void initLogging();
   }, []);
 
-  useEffect(() => {
-    if (!prefs || startupElevationAttemptedRef.current) {
+  // Windows "Always run as administrator" pre-flight.
+  //
+  // Runs at the earliest moment the webview can talk to Rust: read only the
+  // alwaysRequestAdminOnStartup bit from SQLite (no auth, no Mixpanel, no
+  // dashboard), show the loading surface, then either relaunch elevated or
+  // open ElevationDeclinedDialog. Full app init is gated on
+  // settings.elevationStartupPending so the heavy path never races UAC.
+  //
+  // The decision stays in TypeScript (Brain); Rust only provides
+  // request_admin_relaunch / quit_app. Relaunch is never invoked from Tauri
+  // setup() — see startup-elevation.test.ts.
+  useAsyncEffect(async () => {
+    if (startupElevationAttemptedRef.current) {
       return;
     }
     startupElevationAttemptedRef.current = true;
 
-    if (getPlatform() !== "windows" || !prefs.alwaysRequestAdminOnStartup) {
+    const releaseElevationGate = () => {
+      produceAppState((draft) => {
+        draft.settings.elevationStartupPending = false;
+      });
+    };
+
+    // Non-main webviews (composer popout) never own elevation; clear the gate.
+    if (!isMainWindow || getPlatform() !== "windows") {
+      releaseElevationGate();
+      return;
+    }
+
+    let wantsAdmin = false;
+    try {
+      const stored = await getUserPreferencesRepo().getUserPreferences();
+      wantsAdmin = stored?.alwaysRequestAdminOnStartup === true;
+      // Seed the store early so later init sees a consistent prefs snapshot
+      // without waiting on auth. refreshCurrentUser will overwrite if needed.
+      if (stored) {
+        produceAppState((draft) => {
+          draft.userPrefs = stored;
+        });
+      }
+    } catch (error) {
+      getLogger().warning(
+        `Failed to read admin-on-startup preference; continuing without elevation: ${error}`,
+      );
+      releaseElevationGate();
+      return;
+    }
+
+    if (!wantsAdmin) {
+      releaseElevationGate();
       return;
     }
 
     getLogger().info(
-      "Requesting administrator relaunch after frontend startup",
+      "Requesting administrator relaunch before full app startup",
     );
-    void requestAdminRelaunch();
-  }, [prefs]);
+    const result = await requestAdminRelaunch();
+    // On UAC accept the process is exiting (require-restart / app.exit). Keep
+    // the gate closed so we don't flash the dashboard in the dying process.
+    // On cancel the decline dialog stays open and holds the gate until the
+    // user chooses Launch normally (releases) or Close mausVoice (quit_app).
+    if (result === "cancelled" || result === "require-restart") {
+      return;
+    }
+    // success (already elevated / no-op), failed, or null (invoke error):
+    // proceed with normal unelevated startup.
+    releaseElevationGate();
+  }, []);
 
   useAsyncEffect(async () => {
     if (consumeSurfaceWindowFlag()) {
@@ -295,6 +349,10 @@ export const AppSideEffects = () => {
       draft.initialized = false;
     });
   };
+
+  const elevationStartupPending = useAppStore(
+    (state) => state.settings.elevationStartupPending,
+  );
 
   useTauriListen<OverlayPhasePayload>("overlay_phase", (payload) => {
     produceAppState((draft) => {
@@ -395,7 +453,14 @@ export const AppSideEffects = () => {
     },
   );
 
+  // Auth and the rest of full-app init stay behind the elevation gate so a
+  // declined-or-pending UAC never pays for Firebase / Mixpanel / remote
+  // receiver setup on the unelevated helper surface.
   useEffect(() => {
+    if (elevationStartupPending) {
+      return;
+    }
+
     authReadyRef.current = false;
 
     const timeoutId = setTimeout(() => {
@@ -417,11 +482,11 @@ export const AppSideEffects = () => {
       clearTimeout(timeoutId);
       unsubscribe();
     };
-  }, []);
+  }, [elevationStartupPending]);
 
   useStreamWithSideEffects({
     builder: (): Observable<StreamRet> => {
-      if (!authReady) {
+      if (elevationStartupPending || !authReady) {
         return of(null);
       }
 
@@ -443,6 +508,9 @@ export const AppSideEffects = () => {
       ]);
     },
     onSuccess: (results) => {
+      if (elevationStartupPending) {
+        return;
+      }
       setStreamReady(true);
       if (results === null) {
         return;
@@ -454,43 +522,46 @@ export const AppSideEffects = () => {
         registerMembers(draft, listify(members));
       });
     },
-    dependencies: [userId, authReady],
+    dependencies: [userId, authReady, elevationStartupPending],
   });
 
   useAsyncEffect(async () => {
-    if (authReady) {
-      await refreshCurrentUser();
-      setInitReady(true);
+    if (elevationStartupPending || !authReady) {
+      return;
     }
-  }, [authReady]);
+    await refreshCurrentUser();
+    setInitReady(true);
+  }, [authReady, elevationStartupPending]);
 
   useAsyncEffect(async () => {
-    if (initReady) {
-      await loadPairedRemoteDevices();
-      await refreshRemoteReceiverStatus();
-      const prefs = getMyUserPreferences(getAppState());
-      if (
-        prefs?.remoteTargetDeviceId &&
-        !getAppState().pairedRemoteDeviceById[prefs.remoteTargetDeviceId]
-      ) {
-        await setRemoteTargetDeviceId(null);
-        await setRemoteOutputEnabled(false);
-      }
-      const receiverStatus = getAppState().remoteReceiverStatus;
-      if (prefs?.remoteReceiverAutoStart && !receiverStatus?.enabled) {
-        await startRemoteReceiver(prefs.remoteReceiverPort ?? null);
-      }
+    if (elevationStartupPending || !initReady) {
+      return;
     }
-  }, [initReady]);
+    await loadPairedRemoteDevices();
+    await refreshRemoteReceiverStatus();
+    const prefs = getMyUserPreferences(getAppState());
+    if (
+      prefs?.remoteTargetDeviceId &&
+      !getAppState().pairedRemoteDeviceById[prefs.remoteTargetDeviceId]
+    ) {
+      await setRemoteTargetDeviceId(null);
+      await setRemoteOutputEnabled(false);
+    }
+    const receiverStatus = getAppState().remoteReceiverStatus;
+    if (prefs?.remoteReceiverAutoStart && !receiverStatus?.enabled) {
+      await startRemoteReceiver(prefs.remoteReceiverPort ?? null);
+    }
+  }, [initReady, elevationStartupPending]);
 
   useEffect(() => {
-    if (streamReady && initReady && !initialized) {
-      getLogger().info("App fully initialized");
-      produceAppState((draft) => {
-        draft.initialized = true;
-      });
+    if (elevationStartupPending || !streamReady || !initReady || initialized) {
+      return;
     }
-  }, [streamReady, initReady, initialized]);
+    getLogger().info("App fully initialized");
+    produceAppState((draft) => {
+      draft.initialized = true;
+    });
+  }, [streamReady, initReady, initialized, elevationStartupPending]);
 
   const auth = useAppStore((state) => state.auth);
   const prevUserIdRef = useRef<string | null>(null);

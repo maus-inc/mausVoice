@@ -665,6 +665,16 @@ export const commands = {
       else return { status: "error", error: e as any };
     }
   },
+  /**
+   * Fully terminates the application process (including the tray icon).
+   *
+   * Distinct from the main-window close path, which only hides to tray.
+   * Used by the elevation-declined dialog's "Close mausVoice" action and any
+   * other UI that must actually quit rather than background the app.
+   */
+  async quitApp(): Promise<void> {
+    await TAURI_INVOKE("quit_app");
+  },
   async readAccessibilityFieldValues(
     fields: FieldValueRequest[],
   ): Promise<Result<FieldValueResult[], string>> {
