@@ -172,9 +172,7 @@ export abstract class BaseTranscribeAudioRepo extends BaseRepo {
     // the off switch preserves the provider transcript for long audio too.
     const filterEnabled = input.hallucinationFilterEnabled ?? true;
     const transcriptionTexts = results.map((r) => {
-      const gated = filterEnabled
-        ? gateSilentSegments(r.segments, input.language)
-        : null;
+      const gated = filterEnabled ? gateSilentSegments(r.segments) : null;
       return gated ?? r.text;
     });
     const mergedText = mergeTranscriptions(transcriptionTexts);

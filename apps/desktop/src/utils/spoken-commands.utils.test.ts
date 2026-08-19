@@ -101,11 +101,11 @@ describe("applySpokenCommands", () => {
     expect(applySpokenCommands("See Dr. Smith scratch that")).toBe("");
   });
 
-  it("does not rewrite English commands for non-English or sentinels", () => {
-    expect(applySpokenCommands("hello new line world", "primary")).toBe(
-      "hello new line world",
-    );
+  it("applies English commands for auto but not explicit non-English languages", () => {
     expect(applySpokenCommands("hello new line world", "auto")).toBe(
+      "hello\nworld",
+    );
+    expect(applySpokenCommands("hello new line world", "primary")).toBe(
       "hello new line world",
     );
     expect(applySpokenCommands("hello new line world", "de")).toBe(

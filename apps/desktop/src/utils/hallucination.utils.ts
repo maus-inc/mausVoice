@@ -141,7 +141,11 @@ export const applyHallucinationFiltering = (
   }
   // Prefer the caller-supplied (already overlap-merged) transcript whenever
   // segments are absent. When segments exist they belong to a single chunk.
-  const gated = gateSilentSegments(segments, language);
+  // noSpeechProb is a model confidence, not a language-specific phrase.
+  // Always apply it when verbose segments are present — including for the
+  // reachable `auto` language sentinel. Only the known-phrase filter below is
+  // English-gated.
+  const gated = gateSilentSegments(segments);
   const transcriptForFiltering = gated ?? rawTranscript;
   return filterKnownSilenceHallucinations(transcriptForFiltering, language);
 };
@@ -171,18 +175,14 @@ export const NO_SPEECH_PROB_THRESHOLD = 0.9;
  * `verbose_json` output (e.g. some OpenAI-compatible endpoints) simply bypass
  * this gate.
  *
- * Same English gate as phrase filtering: a defined non-English / sentinel
- * `language` returns null so the raw transcript is kept. Omitting `language`
- * keeps the historical always-gate behavior.
+ * The probability is model metadata and is language-agnostic. Do not gate it
+ * on a BCP-47 language or on sentinels such as `auto`; language gating belongs
+ * only to the conservative known-phrase filter.
  */
 export const gateSilentSegments = (
   segments: TranscriptionSegment[] | undefined | null,
-  language?: string,
 ): string | null => {
   if (!segments || segments.length === 0) {
-    return null;
-  }
-  if (language !== undefined && !isEnglishSanitizeLanguage(language)) {
     return null;
   }
   const kept = segments.filter(

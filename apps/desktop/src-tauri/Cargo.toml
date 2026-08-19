@@ -40,7 +40,7 @@ tauri-plugin-shell = "2"
 tauri-plugin-window-state = "2"
 sqlx = { version = "0.8", default-features = false, features = ["runtime-tokio-rustls", "sqlite"] }
 thiserror = "1"
-reqwest = { version = "0.12", default-features = false, features = ["blocking", "json", "rustls-tls-native-roots"] }
+reqwest = { version = "0.12", default-features = false, features = ["blocking", "json", "rustls-tls-native-roots", "stream"] }
 cpal = "0.15"
 tauri-plugin-os = "2.3.1"
 # Local fork that restores macOS event taps disabled by the OS.
@@ -63,7 +63,7 @@ url = "2"
 jsonwebtoken = "9"
 dotenvy = "0.15"
 chrono = "0.4"
-tokio = { version = "1", features = ["time", "net", "io-util", "sync"] }
+tokio = { version = "1", features = ["time", "net", "io-util", "sync", "macros"] }
 hostname = "0.4"
 zip = { version = "2", default-features = false, features = ["deflate"] }
 regex = "1"

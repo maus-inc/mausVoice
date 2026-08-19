@@ -439,11 +439,144 @@ pub struct TranscriptionAudioSamplesData {
     pub sample_rate: u32,
 }
 
+const MAX_PRIVATE_HTTP_REQUEST_BYTES: usize = 128 * 1024 * 1024;
+const MAX_PRIVATE_HTTP_RESPONSE_BYTES: u64 = 32 * 1024 * 1024;
+const MAX_PRIVATE_HTTP_REDIRECTS: usize = 5;
+const MAX_PRIVATE_HTTP_ACTIVE_REQUESTS: usize = 1_024;
+const MAX_PRIVATE_HTTP_PRESTART_CANCELLATIONS: usize = 256;
+const PRIVATE_HTTP_PRESTART_CANCELLATION_TTL: std::time::Duration =
+    std::time::Duration::from_secs(30);
+const PRIVATE_HTTP_CANCELLED_ERROR: &str = "Private-network request was cancelled";
+
+#[derive(serde::Deserialize, specta::Type)]
+#[serde(rename_all = "camelCase")]
+pub struct PrivateHttpRequest {
+    pub request_id: String,
+    pub url: String,
+    pub method: String,
+    pub headers: std::collections::HashMap<String, String>,
+    pub body: Option<Vec<u8>>,
+}
+
+#[derive(serde::Serialize, specta::Type)]
+#[serde(rename_all = "camelCase")]
+pub struct PrivateHttpResponse {
+    pub status: u16,
+    pub headers: std::collections::HashMap<String, String>,
+    pub body: Vec<u8>,
+}
+
 static IMPORT_IN_FLIGHT: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
 
-/// Returns true when `path` lives at or under any of `allowed_roots`. Used by
-/// `transcription_import_audio` to confine imports to well-known user
-/// directories so the command cannot be used as a filesystem read oracle.
+enum PrivateHttpCancellationState {
+    Active {
+        registration_id: u64,
+        sender: tokio::sync::oneshot::Sender<()>,
+    },
+    CancelledBeforeStart(std::time::Instant),
+}
+
+static NEXT_PRIVATE_HTTP_REGISTRATION_ID: std::sync::atomic::AtomicU64 =
+    std::sync::atomic::AtomicU64::new(1);
+static PRIVATE_HTTP_CANCELLATIONS: once_cell::sync::Lazy<
+    std::sync::Mutex<std::collections::HashMap<String, PrivateHttpCancellationState>>,
+> = once_cell::sync::Lazy::new(|| std::sync::Mutex::new(std::collections::HashMap::new()));
+
+fn prune_private_http_prestart_cancellations(
+    requests: &mut std::collections::HashMap<String, PrivateHttpCancellationState>,
+) {
+    requests.retain(|_, state| match state {
+        PrivateHttpCancellationState::Active { .. } => true,
+        PrivateHttpCancellationState::CancelledBeforeStart(created_at) => {
+            created_at.elapsed() <= PRIVATE_HTTP_PRESTART_CANCELLATION_TTL
+        }
+    });
+}
+
+struct PrivateHttpCancellationGuard {
+    request_id: String,
+    registration_id: u64,
+}
+
+impl PrivateHttpCancellationGuard {
+    fn register(request_id: String) -> Result<(Self, tokio::sync::oneshot::Receiver<()>), String> {
+        if !is_valid_private_http_request_id(&request_id) {
+            return Err("Private-network request ID is invalid".to_string());
+        }
+
+        let (sender, receiver) = tokio::sync::oneshot::channel();
+        let mut requests = PRIVATE_HTTP_CANCELLATIONS
+            .lock()
+            .map_err(|_| "Private-network cancellation registry is unavailable".to_string())?;
+        prune_private_http_prestart_cancellations(&mut requests);
+        if matches!(
+            requests.get(&request_id),
+            Some(PrivateHttpCancellationState::CancelledBeforeStart(_))
+        ) {
+            requests.remove(&request_id);
+            return Err(PRIVATE_HTTP_CANCELLED_ERROR.to_string());
+        }
+        if requests.contains_key(&request_id) {
+            return Err("Private-network request ID is already in use".to_string());
+        }
+        let active_requests = requests
+            .values()
+            .filter(|state| matches!(state, PrivateHttpCancellationState::Active { .. }))
+            .count();
+        if active_requests >= MAX_PRIVATE_HTTP_ACTIVE_REQUESTS {
+            return Err("Too many private-network requests are in progress".to_string());
+        }
+        let registration_id = NEXT_PRIVATE_HTTP_REGISTRATION_ID.fetch_add(1, Ordering::Relaxed);
+        requests.insert(
+            request_id.clone(),
+            PrivateHttpCancellationState::Active {
+                registration_id,
+                sender,
+            },
+        );
+        Ok((
+            Self {
+                request_id,
+                registration_id,
+            },
+            receiver,
+        ))
+    }
+}
+
+impl Drop for PrivateHttpCancellationGuard {
+    fn drop(&mut self) {
+        if let Ok(mut requests) = PRIVATE_HTTP_CANCELLATIONS.lock() {
+            let owns_registration = matches!(
+                requests.get(&self.request_id),
+                Some(PrivateHttpCancellationState::Active {
+                    registration_id,
+                    ..
+                }) if *registration_id == self.registration_id
+            );
+            if owns_registration {
+                requests.remove(&self.request_id);
+            }
+        }
+    }
+}
+
+fn is_valid_private_http_request_id(request_id: &str) -> bool {
+    let bytes = request_id.as_bytes();
+    bytes.len() == 36
+        && bytes.iter().enumerate().all(|(index, byte)| {
+            if matches!(index, 8 | 13 | 18 | 23) {
+                *byte == b'-'
+            } else {
+                byte.is_ascii_hexdigit()
+            }
+        })
+}
+
+/// Returns true when `path` lives at or under any of `allowed_roots`. The
+/// Rust-owned import picker is the authorization boundary; this additional
+/// confinement keeps sensitive home-directory dotfiles out of scope even after
+/// an accidental or malicious picker-path substitution.
 fn is_path_within_allowed_roots(path: &std::path::Path, allowed_roots: &[PathBuf]) -> bool {
     allowed_roots.iter().any(|root| path.starts_with(root))
 }
@@ -472,17 +605,279 @@ fn windows_file_identity(file: &std::fs::File) -> Option<(u32, u64)> {
     Some((info.dwVolumeSerialNumber, file_index))
 }
 
+fn is_rfc1918_ipv4(address: std::net::Ipv4Addr) -> bool {
+    let [first, second, _, _] = address.octets();
+    first == 10 || (first == 172 && (16..=31).contains(&second)) || (first == 192 && second == 168)
+}
+
+/// Validate a user-configured plaintext endpoint without confusing hostname
+/// prefix globs (for example `10.evil.example`) with RFC1918 address ranges.
+/// Link-local addresses are deliberately excluded to keep cloud metadata
+/// services such as 169.254.169.254 unreachable.
+fn validate_private_http_url(url: &Url) -> Result<(), String> {
+    if url.scheme() != "http" {
+        return Err("Private-network requests must use http".to_string());
+    }
+    if !url.username().is_empty() || url.password().is_some() {
+        return Err("Private-network URLs must not contain credentials".to_string());
+    }
+
+    let allowed = match url.host() {
+        Some(url::Host::Domain(domain)) => {
+            let domain = domain.to_ascii_lowercase();
+            domain == "localhost"
+                || (domain.ends_with(".local")
+                    && domain.len() > ".local".len()
+                    && !domain.contains(".."))
+        }
+        Some(url::Host::Ipv4(address)) => address.is_loopback() || is_rfc1918_ipv4(address),
+        Some(url::Host::Ipv6(address)) => {
+            if let Some(mapped) = address.to_ipv4_mapped() {
+                mapped.is_loopback() || is_rfc1918_ipv4(mapped)
+            } else {
+                address.is_loopback() || (address.segments()[0] & 0xfe00) == 0xfc00
+            }
+        }
+        None => false,
+    };
+
+    if !allowed {
+        return Err(format!(
+            "Private-network URL host is not loopback, RFC1918, unique-local IPv6, or .local: {}",
+            url.host_str().unwrap_or("<missing>")
+        ));
+    }
+    Ok(())
+}
+
+#[tauri::command]
+#[specta::specta]
+pub fn cancel_private_http_request(request_id: String) -> Result<bool, String> {
+    if !is_valid_private_http_request_id(&request_id) {
+        return Err("Private-network request ID is invalid".to_string());
+    }
+
+    let mut requests = PRIVATE_HTTP_CANCELLATIONS
+        .lock()
+        .map_err(|_| "Private-network cancellation registry is unavailable".to_string())?;
+    prune_private_http_prestart_cancellations(&mut requests);
+    match requests.remove(&request_id) {
+        Some(PrivateHttpCancellationState::Active { sender, .. }) => {
+            // Removing frees active capacity immediately. The guard carries a
+            // unique registration ID, so its later cleanup cannot remove a new
+            // request that reuses this renderer-generated request ID.
+            Ok(sender.send(()).is_ok())
+        }
+        Some(marker @ PrivateHttpCancellationState::CancelledBeforeStart(_)) => {
+            requests.insert(request_id, marker);
+            Ok(false)
+        }
+        None => {
+            // IPC messages can race: remember an abort that arrives before the
+            // async request command is first polled. Pre-start markers have a
+            // separate cap and never consume active-request capacity. At the
+            // cap, evict the oldest marker so the latest abort remains reliable.
+            let prestart_cancellations = requests
+                .values()
+                .filter(|state| {
+                    matches!(state, PrivateHttpCancellationState::CancelledBeforeStart(_))
+                })
+                .count();
+            if prestart_cancellations >= MAX_PRIVATE_HTTP_PRESTART_CANCELLATIONS {
+                let oldest = requests
+                    .iter()
+                    .filter_map(|(request_id, state)| match state {
+                        PrivateHttpCancellationState::CancelledBeforeStart(created_at) => {
+                            Some((request_id.clone(), *created_at))
+                        }
+                        PrivateHttpCancellationState::Active { .. } => None,
+                    })
+                    .min_by_key(|(_, created_at)| *created_at)
+                    .map(|(request_id, _)| request_id);
+                if let Some(oldest) = oldest {
+                    requests.remove(&oldest);
+                }
+            }
+            requests.insert(
+                request_id,
+                PrivateHttpCancellationState::CancelledBeforeStart(std::time::Instant::now()),
+            );
+            Ok(false)
+        }
+    }
+}
+
+#[tauri::command]
+#[specta::specta]
+pub async fn private_http_request(
+    request: PrivateHttpRequest,
+) -> Result<PrivateHttpResponse, String> {
+    // Register before validation or any await so an abort IPC that wins the
+    // command-scheduling race is consumed before networking can begin.
+    let (_cancellation_guard, mut cancellation) =
+        PrivateHttpCancellationGuard::register(request.request_id.clone())?;
+
+    if request
+        .body
+        .as_ref()
+        .is_some_and(|body| body.len() > MAX_PRIVATE_HTTP_REQUEST_BYTES)
+    {
+        return Err(format!(
+            "Private-network request body exceeds the {} MiB limit",
+            MAX_PRIVATE_HTTP_REQUEST_BYTES / (1024 * 1024)
+        ));
+    }
+
+    let initial_url = Url::parse(&request.url)
+        .map_err(|_| "Private-network request URL is invalid".to_string())?;
+    validate_private_http_url(&initial_url)?;
+
+    let client = reqwest::Client::builder()
+        // Connect directly so an environment proxy cannot turn an allowed
+        // private URL into a request delivered to an arbitrary public host.
+        .no_proxy()
+        .timeout(std::time::Duration::from_secs(10 * 60))
+        .redirect(reqwest::redirect::Policy::custom(|attempt| {
+            if attempt.previous().len() >= MAX_PRIVATE_HTTP_REDIRECTS {
+                return attempt.error("Private-network request exceeded the redirect limit");
+            }
+            match validate_private_http_url(attempt.url()) {
+                Ok(()) => attempt.follow(),
+                Err(error) => attempt.error(error),
+            }
+        }))
+        .build()
+        .map_err(|_| "Unable to initialize the private-network client".to_string())?;
+
+    let method = reqwest::Method::from_bytes(request.method.trim().as_bytes())
+        .map_err(|_| "Private-network request method is invalid".to_string())?;
+    if ![
+        reqwest::Method::GET,
+        reqwest::Method::POST,
+        reqwest::Method::PUT,
+        reqwest::Method::PATCH,
+        reqwest::Method::DELETE,
+        reqwest::Method::HEAD,
+    ]
+    .contains(&method)
+    {
+        return Err("Private-network request method is not allowed".to_string());
+    }
+
+    let mut builder = client.request(method, initial_url);
+    for (name, value) in request.headers {
+        let normalized = name.trim().to_ascii_lowercase();
+        if matches!(
+            normalized.as_str(),
+            "host"
+                | "content-length"
+                | "connection"
+                | "proxy-authorization"
+                | "proxy-connection"
+                | "transfer-encoding"
+                | "upgrade"
+        ) {
+            continue;
+        }
+        let name = reqwest::header::HeaderName::from_bytes(normalized.as_bytes())
+            .map_err(|_| "Private-network request contains an invalid header".to_string())?;
+        let value = reqwest::header::HeaderValue::from_str(&value)
+            .map_err(|_| "Private-network request contains an invalid header".to_string())?;
+        builder = builder.header(name, value);
+    }
+    if let Some(body) = request.body {
+        builder = builder.body(body);
+    }
+
+    let mut response = tokio::select! {
+        _ = &mut cancellation => return Err(PRIVATE_HTTP_CANCELLED_ERROR.to_string()),
+        result = builder.send() => result
+            .map_err(|_| "Private-network request failed".to_string())?,
+    };
+    if response
+        .content_length()
+        .is_some_and(|length| length > MAX_PRIVATE_HTTP_RESPONSE_BYTES)
+    {
+        return Err(format!(
+            "Private-network response exceeds the {} MiB limit",
+            MAX_PRIVATE_HTTP_RESPONSE_BYTES / (1024 * 1024)
+        ));
+    }
+
+    let status = response.status().as_u16();
+    let headers = response
+        .headers()
+        .iter()
+        .filter_map(|(name, value)| {
+            value
+                .to_str()
+                .ok()
+                .map(|value| (name.as_str().to_string(), value.to_string()))
+        })
+        .collect();
+    let initial_capacity = response
+        .content_length()
+        .unwrap_or_default()
+        .min(MAX_PRIVATE_HTTP_RESPONSE_BYTES) as usize;
+    let mut body = Vec::with_capacity(initial_capacity);
+    loop {
+        let chunk = tokio::select! {
+            _ = &mut cancellation => {
+                return Err(PRIVATE_HTTP_CANCELLED_ERROR.to_string());
+            }
+            result = response.chunk() => result
+                .map_err(|_| "Unable to read the private-network response".to_string())?,
+        };
+        let Some(chunk) = chunk else {
+            break;
+        };
+        if body
+            .len()
+            .checked_add(chunk.len())
+            .is_none_or(|length| length > MAX_PRIVATE_HTTP_RESPONSE_BYTES as usize)
+        {
+            return Err(format!(
+                "Private-network response exceeds the {} MiB limit",
+                MAX_PRIVATE_HTTP_RESPONSE_BYTES / (1024 * 1024)
+            ));
+        }
+        body.extend_from_slice(&chunk);
+    }
+
+    Ok(PrivateHttpResponse {
+        status,
+        headers,
+        body,
+    })
+}
+
 #[tauri::command]
 #[specta::specta]
 pub async fn transcription_import_audio(
     app: tauri::AppHandle,
-    path: String,
-) -> Result<TranscriptionAudioData, String> {
-    let path = PathBuf::from(path.trim());
-    if path.as_os_str().is_empty() {
-        return Err("No audio file was selected".to_string());
-    }
-    let path = path
+) -> Result<Option<TranscriptionAudioData>, String> {
+    // Acquire before opening the native picker. The renderer receives neither
+    // a path argument nor a reusable authorization token: only a path returned
+    // directly by this Rust-owned OS dialog can reach the decoder. This closes
+    // the remaining renderer-to-Documents file-read surface.
+    let _import_guard = match ReentryGuard::acquire(&IMPORT_IN_FLIGHT) {
+        Ok(guard) => guard,
+        Err(_) => {
+            return Err(
+                "An audio import is already in progress. Please wait for it to finish.".to_string(),
+            );
+        }
+    };
+    let selection = rfd::AsyncFileDialog::new()
+        .set_title("Choose audio file")
+        .add_filter("Audio", &["wav", "mp3", "flac", "ogg"])
+        .pick_file()
+        .await;
+    let Some(selection) = selection else {
+        return Ok(None);
+    };
+    let path = selection
+        .path()
         .canonicalize()
         .map_err(|_| "Unable to resolve the selected audio file.".to_string())?;
 
@@ -567,19 +962,6 @@ pub async fn transcription_import_audio(
         }
     }
 
-    // Bound concurrent decodes so a flood of imports can't multiply the
-    // already-large per-decode memory ceiling. The ReentryGuard releases the
-    // flag on every exit path — including a dropped caller future — so a
-    // disconnected client can't wedge imports permanently (import DoS).
-    let _import_guard = match ReentryGuard::acquire(&IMPORT_IN_FLIGHT) {
-        Ok(guard) => guard,
-        Err(_) => {
-            return Err(
-                "An audio import is already in progress. Please wait for it to finish.".to_string(),
-            );
-        }
-    };
-
     let result = tauri::async_runtime::spawn_blocking(move || {
         let file_bytes = file
             .metadata()
@@ -655,7 +1037,7 @@ pub async fn transcription_import_audio(
     })
     .await
     .map_err(|err| format!("audio import task failed: {err}"));
-    result?
+    result?.map(Some)
 }
 
 fn encode_pcm16_le(samples: &[f32]) -> Vec<u8> {
@@ -3899,6 +4281,9 @@ pub async fn floating_window_list(app: AppHandle) -> Result<Vec<FloatingWindowIn
 mod tests {
     use super::*;
 
+    static PRIVATE_HTTP_CANCELLATION_TEST_LOCK: once_cell::sync::Lazy<tokio::sync::Mutex<()>> =
+        once_cell::sync::Lazy::new(|| tokio::sync::Mutex::new(()));
+
     #[test]
     fn terminal_command_rejects_empty() {
         assert!(validate_terminal_command_args("").is_err());
@@ -4480,6 +4865,180 @@ mod tests {
         assert_eq!(buf, "readable-bytes");
 
         let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn private_http_url_accepts_only_private_or_local_hosts() {
+        for accepted in [
+            "http://localhost:11434/api/tags",
+            "http://127.0.0.1:8000/health",
+            "http://10.0.0.5:11434/api/tags",
+            "http://172.16.5.4:8080/v1/models",
+            "http://172.31.255.254:8080/v1/models",
+            "http://192.168.1.20:8000/health",
+            "http://speaker.local:8000/health",
+            "http://[::1]:8000/health",
+            "http://[fd00::1]:8000/health",
+        ] {
+            let url = Url::parse(accepted).unwrap();
+            assert!(
+                validate_private_http_url(&url).is_ok(),
+                "expected private URL to be accepted: {accepted}"
+            );
+        }
+    }
+
+    #[test]
+    fn private_http_url_rejects_hostname_globs_public_hosts_and_imds() {
+        for rejected in [
+            "http://10.evil.example:443/",
+            "http://192.168.attacker.example:443/",
+            "http://100.64.0.1/",
+            "http://100.127.255.254/",
+            "http://[::ffff:100.64.0.1]/",
+            "http://169.254.169.254/latest/meta-data/",
+            "http://[fe80::1]/",
+            "http://8.8.8.8/",
+            "http://example.com/",
+            "https://10.0.0.5/",
+            "http://user:password@127.0.0.1/",
+        ] {
+            let url = Url::parse(rejected).unwrap();
+            assert!(
+                validate_private_http_url(&url).is_err(),
+                "expected URL to be rejected: {rejected}"
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn private_http_cancellation_is_preserved_when_abort_arrives_first() {
+        let _test_guard = PRIVATE_HTTP_CANCELLATION_TEST_LOCK.lock().await;
+        let request_id = "00000000-0000-4000-8000-000000000000".to_string();
+        assert!(!cancel_private_http_request(request_id.clone()).unwrap());
+
+        let result = private_http_request(PrivateHttpRequest {
+            request_id: request_id.clone(),
+            url: "http://127.0.0.1:1/never-started".to_string(),
+            method: "GET".to_string(),
+            headers: std::collections::HashMap::new(),
+            body: None,
+        })
+        .await;
+        match result {
+            Err(error) => assert_eq!(error, PRIVATE_HTTP_CANCELLED_ERROR),
+            Ok(_) => panic!("a pre-cancelled private request unexpectedly started"),
+        }
+        assert!(!PRIVATE_HTTP_CANCELLATIONS
+            .lock()
+            .unwrap()
+            .contains_key(&request_id));
+    }
+
+    #[tokio::test]
+    async fn private_http_prestart_cancellations_have_separate_bounded_capacity() {
+        let _test_guard = PRIVATE_HTTP_CANCELLATION_TEST_LOCK.lock().await;
+        let prestart_ids: Vec<String> = (0..=MAX_PRIVATE_HTTP_PRESTART_CANCELLATIONS)
+            .map(|index| format!("{index:08x}-0000-4000-8000-000000000099"))
+            .collect();
+        for request_id in &prestart_ids {
+            assert!(!cancel_private_http_request(request_id.clone()).unwrap());
+        }
+
+        let active_ids: Vec<String> = (0..MAX_PRIVATE_HTTP_ACTIVE_REQUESTS)
+            .map(|index| format!("{index:08x}-0000-4000-8000-000000000098"))
+            .collect();
+        let mut active_registrations = Vec::with_capacity(MAX_PRIVATE_HTTP_ACTIVE_REQUESTS);
+        for request_id in &active_ids {
+            active_registrations.push(
+                PrivateHttpCancellationGuard::register(request_id.clone())
+                    .expect("pre-start markers must not consume active-request capacity"),
+            );
+        }
+        match PrivateHttpCancellationGuard::register(
+            "fffffffe-0000-4000-8000-000000000097".to_string(),
+        ) {
+            Err(error) => assert_eq!(error, "Too many private-network requests are in progress"),
+            Ok(_) => panic!("the active private-request limit was not enforced"),
+        }
+
+        // Cancellation must free active capacity immediately even though the
+        // old guard has not unwound yet.
+        assert!(cancel_private_http_request(active_ids[0].clone()).unwrap());
+        let (replacement_guard, _replacement_receiver) = PrivateHttpCancellationGuard::register(
+            "ffffffff-0000-4000-8000-000000000097".to_string(),
+        )
+        .expect("a cancelled request must release its active-capacity slot");
+
+        let prestart_count = PRIVATE_HTTP_CANCELLATIONS
+            .lock()
+            .unwrap()
+            .values()
+            .filter(|state| matches!(state, PrivateHttpCancellationState::CancelledBeforeStart(_)))
+            .count();
+        assert!(prestart_count <= MAX_PRIVATE_HTTP_PRESTART_CANCELLATIONS);
+
+        drop(replacement_guard);
+        drop(active_registrations);
+        let mut requests = PRIVATE_HTTP_CANCELLATIONS.lock().unwrap();
+        for request_id in prestart_ids {
+            requests.remove(&request_id);
+        }
+    }
+
+    #[tokio::test]
+    async fn private_http_request_cancellation_stops_the_rust_operation() {
+        let _test_guard = PRIVATE_HTTP_CANCELLATION_TEST_LOCK.lock().await;
+        let listener = tokio::net::TcpListener::bind(("127.0.0.1", 0))
+            .await
+            .unwrap();
+        let address = listener.local_addr().unwrap();
+        let (accepted_sender, accepted_receiver) = tokio::sync::oneshot::channel();
+        let server = tokio::spawn(async move {
+            let (_socket, _) = listener.accept().await.unwrap();
+            let _ = accepted_sender.send(());
+            tokio::time::sleep(std::time::Duration::from_secs(30)).await;
+        });
+
+        let request_id = "00000000-0000-4000-8000-000000000001".to_string();
+        let request = tokio::spawn(private_http_request(PrivateHttpRequest {
+            request_id: request_id.clone(),
+            url: format!("http://{address}/slow"),
+            method: "GET".to_string(),
+            headers: std::collections::HashMap::new(),
+            body: None,
+        }));
+        tokio::time::timeout(std::time::Duration::from_secs(2), accepted_receiver)
+            .await
+            .expect("the local server should accept the request")
+            .expect("the acceptance signal should be delivered");
+
+        assert!(cancel_private_http_request(request_id.clone()).unwrap());
+        let (replacement_guard, replacement_cancellation) =
+            PrivateHttpCancellationGuard::register(request_id.clone())
+                .expect("a cancelled request ID may be safely reused");
+        let result = tokio::time::timeout(std::time::Duration::from_secs(2), request)
+            .await
+            .expect("the cancelled request must not wait for the client timeout")
+            .expect("the private request task should not panic");
+        match result {
+            Err(error) => assert_eq!(error, "Private-network request was cancelled"),
+            Ok(_) => panic!("the cancelled private request unexpectedly succeeded"),
+        }
+
+        // The old request's guard has now dropped. Its registration token must
+        // not remove the replacement registration that reused the same ID.
+        assert!(cancel_private_http_request(request_id.clone()).unwrap());
+        replacement_cancellation
+            .await
+            .expect("the replacement request should receive its cancellation");
+        drop(replacement_guard);
+        assert!(!cancel_private_http_request(request_id.clone()).unwrap());
+        PRIVATE_HTTP_CANCELLATIONS
+            .lock()
+            .unwrap()
+            .remove(&request_id);
+        server.abort();
     }
 
     #[test]

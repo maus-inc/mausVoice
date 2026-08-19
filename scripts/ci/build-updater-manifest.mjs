@@ -19,6 +19,7 @@
 
 import { promises as fs } from "node:fs";
 import path from "node:path";
+import { pathToFileURL } from "node:url";
 
 // Tauri resolves an installer URL by `{os}-{arch}-{installer}` first and then
 // falls back to the bare `{os}-{arch}` key. The release job builds with
@@ -221,8 +222,22 @@ async function main() {
   );
 }
 
+// Convert the command path through Node's URL API rather than concatenating a
+// `file://` string. The latter mis-encodes spaces and produces invalid URLs for
+// drive-letter paths on Windows, causing direct invocations to silently skip.
+export function isDirectInvocation(
+  moduleUrl,
+  scriptPath,
+  windows = process.platform === "win32",
+) {
+  return (
+    Boolean(scriptPath) &&
+    moduleUrl === pathToFileURL(scriptPath, { windows }).href
+  );
+}
+
 // Only run when executed directly, so the tests can import the helpers.
-if (process.argv[1] && import.meta.url === `file://${process.argv[1]}`) {
+if (isDirectInvocation(import.meta.url, process.argv[1])) {
   try {
     await main();
   } catch (error) {

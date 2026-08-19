@@ -31,7 +31,7 @@ import {
   openrouterGenerateTextResponse,
   openrouterStreamChat,
 } from "@maus-inc/voice-ai";
-import { fetch as tauriFetch } from "@tauri-apps/plugin-http";
+import { secureFetch as tauriFetch } from "../utils/secure-fetch.utils";
 import { PostProcessingMode } from "../types/ai.types";
 import { BaseRepo } from "./base.repo";
 
