@@ -1,8 +1,6 @@
 import { Box } from "@mui/material";
-import {
-  isReadyForFullApp,
-  shouldMountPostElevationSideEffects,
-} from "../../actions/elevation.actions";
+import { isReadyForFullApp } from "../../actions/elevation.actions";
+import { useElevationStartupReady } from "../../hooks/elevation.hooks";
 import Router from "../../router";
 import { useAppStore } from "../../store";
 import { AppSideEffects } from "./AppSideEffects";
@@ -20,21 +18,15 @@ export const AppWithLoading = () => {
   // Hold the full app (auth, dashboard, dictation) behind the Windows
   // elevation pre-flight. Cleared immediately on non-Windows / once the UAC
   // decision is resolved (including "Launch normally").
-  const elevationStartupPending = useAppStore(
-    (state) => state.settings.elevationStartupPending,
-  );
-
-  const readyForApp = isReadyForFullApp({
-    initialized,
-    elevationStartupPending,
-  });
+  const elevationReady = useElevationStartupReady();
+  const readyForApp = isReadyForFullApp(initialized, elevationReady);
 
   return (
     <>
       {/* Elevation gate runs inside AppSideEffects; always mount it. */}
       <AppSideEffects />
       <ElevationDeclinedDialog />
-      {shouldMountPostElevationSideEffects(elevationStartupPending) && (
+      {elevationReady && (
         <>
           {hotkeyStrategy === "bridge" && <KeyPressSideEffects />}
           <UpdateDialog />

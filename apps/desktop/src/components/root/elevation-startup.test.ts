@@ -4,8 +4,9 @@
  */
 import { describe, expect, it } from "vitest";
 import {
+  canRunPostElevationInit,
+  isElevationStartupReady,
   isReadyForFullApp,
-  shouldMountPostElevationSideEffects,
   shouldReleaseElevationGateAfterRelaunch,
   shouldRunStartupElevation,
 } from "../../actions/elevation.actions";
@@ -17,21 +18,14 @@ describe("elevation startup gate", () => {
     expect(INITIAL_SETTINGS_STATE.elevationDeclinedDialogOpen).toBe(false);
   });
 
-  it("holds the router and heavy side-effects behind elevationStartupPending", () => {
-    expect(
-      isReadyForFullApp({
-        initialized: true,
-        elevationStartupPending: true,
-      }),
-    ).toBe(false);
-    expect(shouldMountPostElevationSideEffects(true)).toBe(false);
-    expect(
-      isReadyForFullApp({
-        initialized: true,
-        elevationStartupPending: false,
-      }),
-    ).toBe(true);
-    expect(shouldMountPostElevationSideEffects(false)).toBe(true);
+  it("holds the router and heavy side-effects behind the elevation gate", () => {
+    expect(isElevationStartupReady(true)).toBe(false);
+    expect(canRunPostElevationInit(false)).toBe(false);
+    expect(isReadyForFullApp(true, false)).toBe(false);
+
+    expect(isElevationStartupReady(false)).toBe(true);
+    expect(canRunPostElevationInit(true)).toBe(true);
+    expect(isReadyForFullApp(true, true)).toBe(true);
   });
 
   it("runs the elevation pre-flight only on the Windows main window", () => {

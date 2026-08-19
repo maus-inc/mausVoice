@@ -31,12 +31,13 @@ vi.mock("./native.actions", () => ({
 vi.mock("../utils/log.utils", () => ({ getLogger: () => loggerMock }));
 
 const {
+  canRunPostElevationInit,
+  isElevationStartupReady,
   isReadyForFullApp,
   launchNormallyAfterElevationDecline,
   quitAfterElevationDecline,
   releaseElevationStartupGate,
   runStartupElevationPreflight,
-  shouldMountPostElevationSideEffects,
   shouldReleaseElevationGateAfterRelaunch,
   shouldRunStartupElevation,
 } = await import("./elevation.actions");
@@ -121,36 +122,20 @@ describe("elevation gate policy", () => {
     expect(shouldReleaseElevationGateAfterRelaunch(null)).toBe(true);
   });
 
-  it("keeps the router behind both initialized and the elevation gate", () => {
-    expect(
-      isReadyForFullApp({
-        initialized: false,
-        elevationStartupPending: true,
-      }),
-    ).toBe(false);
-    expect(
-      isReadyForFullApp({
-        initialized: true,
-        elevationStartupPending: true,
-      }),
-    ).toBe(false);
-    expect(
-      isReadyForFullApp({
-        initialized: false,
-        elevationStartupPending: false,
-      }),
-    ).toBe(false);
-    expect(
-      isReadyForFullApp({
-        initialized: true,
-        elevationStartupPending: false,
-      }),
-    ).toBe(true);
+  it("treats a released gate as the single elevation-readiness signal", () => {
+    expect(isElevationStartupReady(true)).toBe(false);
+    expect(isElevationStartupReady(false)).toBe(true);
+    expect(canRunPostElevationInit(false)).toBe(false);
+    expect(canRunPostElevationInit(true)).toBe(true);
+    expect(canRunPostElevationInit(true, true, false)).toBe(false);
+    expect(canRunPostElevationInit(true, true, true)).toBe(true);
   });
 
-  it("mounts heavy side-effects only after the gate is released", () => {
-    expect(shouldMountPostElevationSideEffects(true)).toBe(false);
-    expect(shouldMountPostElevationSideEffects(false)).toBe(true);
+  it("keeps the router behind both initialized and the elevation gate", () => {
+    expect(isReadyForFullApp(false, false)).toBe(false);
+    expect(isReadyForFullApp(true, false)).toBe(false);
+    expect(isReadyForFullApp(false, true)).toBe(false);
+    expect(isReadyForFullApp(true, true)).toBe(true);
   });
 });
 

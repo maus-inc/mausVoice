@@ -45,14 +45,24 @@ export const shouldReleaseElevationGateAfterRelaunch = (
   result: NativeSetupResult | null,
 ): boolean => result !== "cancelled" && result !== "require-restart";
 
-export const isReadyForFullApp = (opts: {
-  initialized: boolean;
-  elevationStartupPending: boolean;
-}): boolean => opts.initialized && !opts.elevationStartupPending;
-
-export const shouldMountPostElevationSideEffects = (
+/** True once the Windows elevation pre-flight has released the startup gate. */
+export const isElevationStartupReady = (
   elevationStartupPending: boolean,
 ): boolean => !elevationStartupPending;
+
+/**
+ * Single predicate for every post-gate init step (auth, streams, receivers,
+ * final `initialized`, router). Extra prerequisites stay local to the step.
+ */
+export const canRunPostElevationInit = (
+  elevationReady: boolean,
+  ...prerequisites: boolean[]
+): boolean => elevationReady && prerequisites.every(Boolean);
+
+export const isReadyForFullApp = (
+  initialized: boolean,
+  elevationReady: boolean,
+): boolean => canRunPostElevationInit(elevationReady, initialized);
 
 /**
  * Windows "Always run as administrator" pre-flight.

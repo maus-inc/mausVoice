@@ -9,7 +9,10 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { useIntl } from "react-intl";
 import { combineLatest, from, Observable, of } from "rxjs";
 import { showErrorSnackbar, showSnackbar } from "../../actions/app.actions";
-import { runStartupElevationPreflight } from "../../actions/elevation.actions";
+import {
+  canRunPostElevationInit,
+  runStartupElevationPreflight,
+} from "../../actions/elevation.actions";
 import { loadPairedRemoteDevices } from "../../actions/paired-remote-device.actions";
 import {
   refreshRemoteReceiverStatus,
@@ -28,6 +31,7 @@ import {
   setRemoteTargetDeviceId,
 } from "../../actions/user.actions";
 import { useAsyncData, useAsyncEffect } from "../../hooks/async.hooks";
+import { useElevationStartupReady } from "../../hooks/elevation.hooks";
 import { useIntervalAsync, useKeyDownHandler } from "../../hooks/helper.hooks";
 import { useHotkeyFire } from "../../hooks/hotkey.hooks";
 import { useStreamWithSideEffects } from "../../hooks/stream.hooks";
@@ -295,9 +299,7 @@ export const AppSideEffects = () => {
     });
   };
 
-  const elevationStartupPending = useAppStore(
-    (state) => state.settings.elevationStartupPending,
-  );
+  const elevationReady = useElevationStartupReady();
 
   useTauriListen<OverlayPhasePayload>("overlay_phase", (payload) => {
     produceAppState((draft) => {
@@ -402,7 +404,7 @@ export const AppSideEffects = () => {
   // declined-or-pending UAC never pays for Firebase / Mixpanel / remote
   // receiver setup on the unelevated helper surface.
   useEffect(() => {
-    if (elevationStartupPending) {
+    if (!canRunPostElevationInit(elevationReady)) {
       return;
     }
 
@@ -427,11 +429,11 @@ export const AppSideEffects = () => {
       clearTimeout(timeoutId);
       unsubscribe();
     };
-  }, [elevationStartupPending]);
+  }, [elevationReady]);
 
   useStreamWithSideEffects({
     builder: (): Observable<StreamRet> => {
-      if (elevationStartupPending || !authReady) {
+      if (!canRunPostElevationInit(elevationReady, authReady)) {
         return of(null);
       }
 
@@ -453,7 +455,7 @@ export const AppSideEffects = () => {
       ]);
     },
     onSuccess: (results) => {
-      if (elevationStartupPending) {
+      if (!canRunPostElevationInit(elevationReady)) {
         return;
       }
       setStreamReady(true);
@@ -467,19 +469,19 @@ export const AppSideEffects = () => {
         registerMembers(draft, listify(members));
       });
     },
-    dependencies: [userId, authReady, elevationStartupPending],
+    dependencies: [userId, authReady, elevationReady],
   });
 
   useAsyncEffect(async () => {
-    if (elevationStartupPending || !authReady) {
+    if (!canRunPostElevationInit(elevationReady, authReady)) {
       return;
     }
     await refreshCurrentUser();
     setInitReady(true);
-  }, [authReady, elevationStartupPending]);
+  }, [authReady, elevationReady]);
 
   useAsyncEffect(async () => {
-    if (elevationStartupPending || !initReady) {
+    if (!canRunPostElevationInit(elevationReady, initReady)) {
       return;
     }
     await loadPairedRemoteDevices();
@@ -496,17 +498,20 @@ export const AppSideEffects = () => {
     if (prefs?.remoteReceiverAutoStart && !receiverStatus?.enabled) {
       await startRemoteReceiver(prefs.remoteReceiverPort ?? null);
     }
-  }, [initReady, elevationStartupPending]);
+  }, [initReady, elevationReady]);
 
   useEffect(() => {
-    if (elevationStartupPending || !streamReady || !initReady || initialized) {
+    if (
+      !canRunPostElevationInit(elevationReady, streamReady, initReady) ||
+      initialized
+    ) {
       return;
     }
     getLogger().info("App fully initialized");
     produceAppState((draft) => {
       draft.initialized = true;
     });
-  }, [streamReady, initReady, initialized, elevationStartupPending]);
+  }, [streamReady, initReady, initialized, elevationReady]);
 
   const auth = useAppStore((state) => state.auth);
   const prevUserIdRef = useRef<string | null>(null);
