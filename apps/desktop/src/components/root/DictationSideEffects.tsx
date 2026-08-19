@@ -581,16 +581,15 @@ export const DictationSideEffects = () => {
       // mid-utterance switch (pill / hotkey / Left-Right) applies to the
       // output being produced, not just the pill label. A switch that
       // arrives after stop has snapshotted the tone loses for this
-      // utterance. Automatic mode still keys off the app target captured
-      // at stop. Streamed interim text is never restyled here —
+      // utterance. Automatic mode prefers the app-target tone and falls
+      // back to the live selection when the app has none. Streamed
+      // interim text is never restyled here —
       // DictationStrategy skips post-processing once segments are inserted.
       const toneId = getEffectiveToneIdAtFinalize({
         stylingMode: getEffectiveStylingMode(getAppState()),
         toneIdAtStart: toneIdAtStartRef.current,
         toneIdAtStop: toneIdAtStopRef.current,
-        liveSelectedToneId: getToneIdToUse(getAppState(), {
-          currentAppToneId: null,
-        }),
+        liveSelectedToneId: getManuallySelectedToneId(getAppState()),
         appTargetToneId: appTarget?.toneId ?? null,
       });
       const transcribeResult = await withTimeout(

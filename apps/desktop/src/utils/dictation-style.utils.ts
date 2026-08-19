@@ -82,12 +82,13 @@ export const resolveInDictationArrowStyleSwitch = (args: {
  * - If both snapshots are missing (teardown/start race), fall back to the
  *   live selection so finalize never drops a known tone on the floor.
  *
- * Automatic mode uses the app-target tone captured at stop and ignores
- * manual switches. Manual mode never consults `appTargetToneId`: that
- * value is the automatic-mode assignment and must not override an
- * explicit (or missing) manual selection. Styling mode is read at
- * finalize, so a mid-session toggle to automatic picks up the app tone
- * via the automatic branch, not via a manual fallback.
+ * Automatic mode prefers the app-target tone captured at stop. If the
+ * focused app has no assigned tone, fall back to `liveSelectedToneId` so
+ * finalize still has a concrete style (labeling and post-processing both
+ * assume one). Manual mode never consults `appTargetToneId`: that value
+ * is the automatic-mode assignment and must not override an explicit
+ * manual selection. Styling mode is read at finalize, so a mid-session
+ * toggle to automatic picks up the app tone via the automatic branch.
  *
  * Already-inserted realtime text is never restyled here: streamed sessions
  * skip post-processing in DictationStrategy, and a mid-stream switch
@@ -100,8 +101,9 @@ export type FinalizeToneArgs = {
   /** Manual selection snapshotted when stop was initiated. */
   toneIdAtStop: string | null;
   /**
-   * Live selection at the moment we ask. Used only when both snapshots
-   * are null; a post-stop switch must not override a frozen snapshot.
+   * Live selection at the moment we ask.
+   * Manual: last-resort fallback when both snapshots are missing.
+   * Automatic: last-resort fallback when the app has no assigned tone.
    */
   liveSelectedToneId: string | null;
   /** App-target tone captured at stop. Automatic mode only. */
@@ -113,13 +115,13 @@ export type FinalizeToneArgs = {
  *
  * Manual: `toneIdAtStop ?? toneIdAtStart ?? liveSelectedToneId`.
  * Never `appTargetToneId` — that belongs only to automatic mode.
- * Automatic: `appTargetToneId`.
+ * Automatic: `appTargetToneId ?? liveSelectedToneId`.
  */
 export const getEffectiveToneIdAtFinalize = (
   args: FinalizeToneArgs,
 ): string | null => {
   if (args.stylingMode !== "manual") {
-    return args.appTargetToneId;
+    return args.appTargetToneId ?? args.liveSelectedToneId;
   }
   return args.toneIdAtStop ?? args.toneIdAtStart ?? args.liveSelectedToneId;
 };

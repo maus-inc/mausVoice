@@ -71,6 +71,18 @@ describe("getEffectiveToneIdAtFinalize", () => {
     ).toBe(APP_TARGET);
   });
 
+  it("falls back to the live selection in automatic mode when the app has no tone", () => {
+    expect(
+      getEffectiveToneIdAtFinalize({
+        stylingMode: "app",
+        toneIdAtStart: START,
+        toneIdAtStop: SWITCHED,
+        liveSelectedToneId: SWITCHED,
+        appTargetToneId: null,
+      }),
+    ).toBe(SWITCHED);
+  });
+
   it("falls back to the start-time tone when the stop snapshot is missing", () => {
     expect(
       getEffectiveToneIdAtFinalize(
