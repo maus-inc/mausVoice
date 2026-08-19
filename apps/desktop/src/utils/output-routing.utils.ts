@@ -163,7 +163,7 @@ export const insertLocalTranscriptOutputViaTyping = async (
 
 /** Return a snapshot of the current dictation backlog. */
 export const getDictationBacklog = (): string[] => {
-  return getAppState().dictationBacklog;
+  return [...getAppState().dictationBacklog];
 };
 
 /** True when the backlog is non-empty. */
@@ -234,14 +234,16 @@ export const drainDictationBacklog = async (
     return { delivered: false, copiedToClipboard: false };
   }
 
-  // Build the combined text: backlog segments joined with spaces, then the
-  // new segment. Segments are defensively trimmed to avoid inconsistent
-  // spacing if callers store trailing whitespace or newlines.
-  const segments = [...snap.segments].map((s) => s.trim());
+  // Build the combined text: backlog segments joined with spaces (same
+  // separator used by the live path when it accumulates streamedText).
+  // Then apply the same trailing-space/newline logic as handleInterimSegment
+  // so the backlog text behaves identically to live segments.
+  const segments = [...snap.segments];
   if (newSegment?.trim()) {
     segments.push(newSegment.trim());
   }
-  const combinedText = segments.join(" ");
+  const raw = segments.join(" ");
+  const combinedText = raw.endsWith("\n") ? raw : `${raw} `;
 
   // Check nonce BEFORE delivery — if the session already advanced, this
   // backlog belongs to a prior session and must not be delivered.

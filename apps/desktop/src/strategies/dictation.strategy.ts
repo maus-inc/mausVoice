@@ -43,7 +43,8 @@ async function checkFocusedPasteTarget(): Promise<
       "check_focused_paste_target",
     );
     return state;
-  } catch {
+  } catch (error) {
+    getLogger().warning(`check_focused_paste_target failed: ${error}`);
     return "unknown";
   }
 }

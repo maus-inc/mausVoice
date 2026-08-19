@@ -361,13 +361,10 @@ export const DictationSideEffects = () => {
   // This covers the case where the user clicks an input while not speaking
   // (no interim segment fires to trigger the drain).
   useEffect(() => {
-    if (!isMainWindow) return;
+    if (!isMainWindow || !isActiveSession) return;
     const interval = setInterval(() => {
       const strategy = strategyRef.current;
       if (!strategy || !("checkAndDrainBacklog" in strategy)) return;
-      // Use the actual backlog length rather than the strategy's internal
-      // backlogActive flag, so segments remaining in the Zustand backlog
-      // are always drained even if the flag desyncs.
       if (!hasDictationBacklog()) return;
       (strategy as DictationStrategy).checkAndDrainBacklog()
         .catch((error: unknown) => {
@@ -375,7 +372,7 @@ export const DictationSideEffects = () => {
         });
     }, BACKLOG_DRAIN_POLL_MS);
     return () => clearInterval(interval);
-  }, [isMainWindow]);
+  }, [isMainWindow, isActiveSession]);
 
   const abortRecording = useCallback(
     async (message?: AbortMessage) => {
