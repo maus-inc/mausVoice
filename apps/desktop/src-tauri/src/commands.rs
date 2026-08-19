@@ -469,13 +469,15 @@ pub struct PrivateHttpResponse {
 static IMPORT_IN_FLIGHT: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
 
 enum PrivateHttpCancellationState {
-    // Keep the entry after sending cancellation so this request ID remains
-    // reserved until its owning guard drops. Otherwise a new request could
-    // reuse the ID and be removed by the old guard's cleanup.
-    Active(Option<tokio::sync::oneshot::Sender<()>>),
+    Active {
+        registration_id: u64,
+        sender: tokio::sync::oneshot::Sender<()>,
+    },
     CancelledBeforeStart(std::time::Instant),
 }
 
+static NEXT_PRIVATE_HTTP_REGISTRATION_ID: std::sync::atomic::AtomicU64 =
+    std::sync::atomic::AtomicU64::new(1);
 static PRIVATE_HTTP_CANCELLATIONS: once_cell::sync::Lazy<
     std::sync::Mutex<std::collections::HashMap<String, PrivateHttpCancellationState>>,
 > = once_cell::sync::Lazy::new(|| std::sync::Mutex::new(std::collections::HashMap::new()));
@@ -484,7 +486,7 @@ fn prune_private_http_prestart_cancellations(
     requests: &mut std::collections::HashMap<String, PrivateHttpCancellationState>,
 ) {
     requests.retain(|_, state| match state {
-        PrivateHttpCancellationState::Active(_) => true,
+        PrivateHttpCancellationState::Active { .. } => true,
         PrivateHttpCancellationState::CancelledBeforeStart(created_at) => {
             created_at.elapsed() <= PRIVATE_HTTP_PRESTART_CANCELLATION_TTL
         }
@@ -493,6 +495,7 @@ fn prune_private_http_prestart_cancellations(
 
 struct PrivateHttpCancellationGuard {
     request_id: String,
+    registration_id: u64,
 }
 
 impl PrivateHttpCancellationGuard {
@@ -518,23 +521,42 @@ impl PrivateHttpCancellationGuard {
         }
         let active_requests = requests
             .values()
-            .filter(|state| matches!(state, PrivateHttpCancellationState::Active(_)))
+            .filter(|state| matches!(state, PrivateHttpCancellationState::Active { .. }))
             .count();
         if active_requests >= MAX_PRIVATE_HTTP_ACTIVE_REQUESTS {
             return Err("Too many private-network requests are in progress".to_string());
         }
+        let registration_id = NEXT_PRIVATE_HTTP_REGISTRATION_ID.fetch_add(1, Ordering::Relaxed);
         requests.insert(
             request_id.clone(),
-            PrivateHttpCancellationState::Active(Some(sender)),
+            PrivateHttpCancellationState::Active {
+                registration_id,
+                sender,
+            },
         );
-        Ok((Self { request_id }, receiver))
+        Ok((
+            Self {
+                request_id,
+                registration_id,
+            },
+            receiver,
+        ))
     }
 }
 
 impl Drop for PrivateHttpCancellationGuard {
     fn drop(&mut self) {
         if let Ok(mut requests) = PRIVATE_HTTP_CANCELLATIONS.lock() {
-            requests.remove(&self.request_id);
+            let owns_registration = matches!(
+                requests.get(&self.request_id),
+                Some(PrivateHttpCancellationState::Active {
+                    registration_id,
+                    ..
+                }) if *registration_id == self.registration_id
+            );
+            if owns_registration {
+                requests.remove(&self.request_id);
+            }
         }
     }
 }
@@ -639,14 +661,17 @@ pub fn cancel_private_http_request(request_id: String) -> Result<bool, String> {
         .lock()
         .map_err(|_| "Private-network cancellation registry is unavailable".to_string())?;
     prune_private_http_prestart_cancellations(&mut requests);
-    match requests.get_mut(&request_id) {
-        Some(PrivateHttpCancellationState::Active(sender)) => {
-            // Taking the sender signals at most once while retaining the map
-            // entry as an ID reservation until the request guard is dropped.
-            let sender = sender.take();
-            Ok(sender.is_some_and(|sender| sender.send(()).is_ok()))
+    match requests.remove(&request_id) {
+        Some(PrivateHttpCancellationState::Active { sender, .. }) => {
+            // Removing frees active capacity immediately. The guard carries a
+            // unique registration ID, so its later cleanup cannot remove a new
+            // request that reuses this renderer-generated request ID.
+            Ok(sender.send(()).is_ok())
         }
-        Some(PrivateHttpCancellationState::CancelledBeforeStart(_)) => Ok(false),
+        Some(marker @ PrivateHttpCancellationState::CancelledBeforeStart(_)) => {
+            requests.insert(request_id, marker);
+            Ok(false)
+        }
         None => {
             // IPC messages can race: remember an abort that arrives before the
             // async request command is first polled. Pre-start markers have a
@@ -665,7 +690,7 @@ pub fn cancel_private_http_request(request_id: String) -> Result<bool, String> {
                         PrivateHttpCancellationState::CancelledBeforeStart(created_at) => {
                             Some((request_id.clone(), *created_at))
                         }
-                        PrivateHttpCancellationState::Active(_) => None,
+                        PrivateHttpCancellationState::Active { .. } => None,
                     })
                     .min_by_key(|(_, created_at)| *created_at)
                     .map(|(request_id, _)| request_id);
@@ -3401,6 +3426,9 @@ fn validate_local_app_route(route: &str) -> Result<(), String> {
 mod tests {
     use super::*;
 
+    static PRIVATE_HTTP_CANCELLATION_TEST_LOCK: once_cell::sync::Lazy<tokio::sync::Mutex<()>> =
+        once_cell::sync::Lazy::new(|| tokio::sync::Mutex::new(()));
+
     #[test]
     fn terminal_command_rejects_empty() {
         assert!(validate_terminal_command_args("").is_err());
@@ -4008,6 +4036,7 @@ mod tests {
 
     #[tokio::test]
     async fn private_http_cancellation_is_preserved_when_abort_arrives_first() {
+        let _test_guard = PRIVATE_HTTP_CANCELLATION_TEST_LOCK.lock().await;
         let request_id = "00000000-0000-4000-8000-000000000000".to_string();
         assert!(!cancel_private_http_request(request_id.clone()).unwrap());
 
@@ -4029,17 +4058,41 @@ mod tests {
             .contains_key(&request_id));
     }
 
-    #[test]
-    fn private_http_prestart_cancellations_have_separate_bounded_capacity() {
-        let request_ids: Vec<String> = (0..=MAX_PRIVATE_HTTP_PRESTART_CANCELLATIONS)
+    #[tokio::test]
+    async fn private_http_prestart_cancellations_have_separate_bounded_capacity() {
+        let _test_guard = PRIVATE_HTTP_CANCELLATION_TEST_LOCK.lock().await;
+        let prestart_ids: Vec<String> = (0..=MAX_PRIVATE_HTTP_PRESTART_CANCELLATIONS)
             .map(|index| format!("{index:08x}-0000-4000-8000-000000000099"))
             .collect();
-        for request_id in &request_ids {
+        for request_id in &prestart_ids {
             assert!(!cancel_private_http_request(request_id.clone()).unwrap());
         }
 
-        let active_id = "ffffffff-0000-4000-8000-000000000099".to_string();
-        let (active_guard, _receiver) = PrivateHttpCancellationGuard::register(active_id).unwrap();
+        let active_ids: Vec<String> = (0..MAX_PRIVATE_HTTP_ACTIVE_REQUESTS)
+            .map(|index| format!("{index:08x}-0000-4000-8000-000000000098"))
+            .collect();
+        let mut active_registrations = Vec::with_capacity(MAX_PRIVATE_HTTP_ACTIVE_REQUESTS);
+        for request_id in &active_ids {
+            active_registrations.push(
+                PrivateHttpCancellationGuard::register(request_id.clone())
+                    .expect("pre-start markers must not consume active-request capacity"),
+            );
+        }
+        match PrivateHttpCancellationGuard::register(
+            "fffffffe-0000-4000-8000-000000000097".to_string(),
+        ) {
+            Err(error) => assert_eq!(error, "Too many private-network requests are in progress"),
+            Ok(_) => panic!("the active private-request limit was not enforced"),
+        }
+
+        // Cancellation must free active capacity immediately even though the
+        // old guard has not unwound yet.
+        assert!(cancel_private_http_request(active_ids[0].clone()).unwrap());
+        let (replacement_guard, _replacement_receiver) = PrivateHttpCancellationGuard::register(
+            "ffffffff-0000-4000-8000-000000000097".to_string(),
+        )
+        .expect("a cancelled request must release its active-capacity slot");
+
         let prestart_count = PRIVATE_HTTP_CANCELLATIONS
             .lock()
             .unwrap()
@@ -4047,16 +4100,18 @@ mod tests {
             .filter(|state| matches!(state, PrivateHttpCancellationState::CancelledBeforeStart(_)))
             .count();
         assert!(prestart_count <= MAX_PRIVATE_HTTP_PRESTART_CANCELLATIONS);
-        drop(active_guard);
 
+        drop(replacement_guard);
+        drop(active_registrations);
         let mut requests = PRIVATE_HTTP_CANCELLATIONS.lock().unwrap();
-        for request_id in request_ids {
+        for request_id in prestart_ids {
             requests.remove(&request_id);
         }
     }
 
     #[tokio::test]
     async fn private_http_request_cancellation_stops_the_rust_operation() {
+        let _test_guard = PRIVATE_HTTP_CANCELLATION_TEST_LOCK.lock().await;
         let listener = tokio::net::TcpListener::bind(("127.0.0.1", 0))
             .await
             .unwrap();
@@ -4082,13 +4137,9 @@ mod tests {
             .expect("the acceptance signal should be delivered");
 
         assert!(cancel_private_http_request(request_id.clone()).unwrap());
-        match PrivateHttpCancellationGuard::register(request_id.clone()) {
-            Err(error) => assert_eq!(
-                error, "Private-network request ID is already in use",
-                "a cancelled request must reserve its ID until guard cleanup"
-            ),
-            Ok(_) => panic!("a live cancelled request ID was reused"),
-        }
+        let (replacement_guard, replacement_cancellation) =
+            PrivateHttpCancellationGuard::register(request_id.clone())
+                .expect("a cancelled request ID may be safely reused");
         let result = tokio::time::timeout(std::time::Duration::from_secs(2), request)
             .await
             .expect("the cancelled request must not wait for the client timeout")
@@ -4097,7 +4148,19 @@ mod tests {
             Err(error) => assert_eq!(error, "Private-network request was cancelled"),
             Ok(_) => panic!("the cancelled private request unexpectedly succeeded"),
         }
-        assert!(!cancel_private_http_request(request_id).unwrap());
+
+        // The old request's guard has now dropped. Its registration token must
+        // not remove the replacement registration that reused the same ID.
+        assert!(cancel_private_http_request(request_id.clone()).unwrap());
+        replacement_cancellation
+            .await
+            .expect("the replacement request should receive its cancellation");
+        drop(replacement_guard);
+        assert!(!cancel_private_http_request(request_id.clone()).unwrap());
+        PRIVATE_HTTP_CANCELLATIONS
+            .lock()
+            .unwrap()
+            .remove(&request_id);
         server.abort();
     }
 
