@@ -3020,7 +3020,12 @@ fn percent_decode_route_path(path: &str) -> Result<String, String> {
         if let Some(err) = last_error {
             return Err(err);
         }
-        return Err("Floating app route has excessive percent encoding".to_string());
+        let still_encoded = decoded.as_bytes().windows(3).any(|w| {
+            w[0] == b'%' && hex_value(w[1]).is_some() && hex_value(w[2]).is_some()
+        });
+        if still_encoded {
+            return Err("Floating app route has excessive percent encoding".to_string());
+        }
     }
     Ok(decoded)
 }
