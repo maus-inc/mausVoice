@@ -99,6 +99,7 @@ import {
   getMyUserPreferences,
   getTranscriptionPrefs,
 } from "../../utils/user.utils";
+import { hasDictationBacklog } from "../../utils/output-routing.utils";
 import { surfaceMainWindow } from "../../utils/window.utils";
 
 type StartRecordingResponse = {
@@ -127,6 +128,9 @@ type FinalizedRecording = {
 const FINALIZE_TIMEOUT_MS = 90_000;
 const HANDLE_TRANSCRIPT_TIMEOUT_MS = 60_000;
 const PHASE_HEARTBEAT_INTERVAL_MS = 5_000;
+/** Dictation backlog poll interval: how often to check whether the user
+ *  has focused an editable target so accumulated backlog can be drained. */
+const BACKLOG_DRAIN_POLL_MS = 1_000;
 const IN_DICTATION_STYLE_KEYS = ["LeftArrow", "RightArrow"];
 
 export const DictationSideEffects = () => {
@@ -350,6 +354,25 @@ export const DictationSideEffects = () => {
     }, PHASE_HEARTBEAT_INTERVAL_MS);
     return () => clearInterval(interval);
   }, [sendPhaseToPill]);
+
+  // Dictation backlog drain poll: while a session is active and there is a
+  // non-empty backlog, periodically probe whether the user has focused an
+  // editable target.  When they have, drain the full backlog once.
+  // This covers the case where the user clicks an input while not speaking
+  // (no interim segment fires to trigger the drain).
+  useEffect(() => {
+    if (!isMainWindow || !isActiveSession) return;
+    const interval = setInterval(() => {
+      const strategy = strategyRef.current;
+      if (!(strategy instanceof DictationStrategy)) return;
+      if (!hasDictationBacklog()) return;
+      strategy.checkAndDrainBacklog()
+        .catch((error: unknown) => {
+          getLogger().warning(`Backlog drain poll failed: ${error}`);
+        });
+    }, BACKLOG_DRAIN_POLL_MS);
+    return () => clearInterval(interval);
+  }, [isMainWindow, isActiveSession]);
 
   const abortRecording = useCallback(
     async (message?: AbortMessage) => {
