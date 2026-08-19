@@ -172,11 +172,8 @@ fn start_out_reader(app: tauri::AppHandle, rx: mpsc::Receiver<OutMessage>) {
                     let _ = app.emit_to("main", "overlay-resolve-permission", payload);
                 }
                 OutMessage::StyleSwitch { direction } => {
-                    if direction == "forward" {
-                        let _ = app.emit_to("main", "tone-switch-forward", ());
-                    } else if direction == "backward" {
-                        let _ = app.emit_to("main", "tone-switch-backward", ());
-                    }
+                    let direction = direction.to_ascii_lowercase();
+                    crate::pill_process::emit_pill_style_switch(&app, &direction);
                 }
                 OutMessage::ToastAction { action } => {
                     let payload = serde_json::json!({ "action": action });

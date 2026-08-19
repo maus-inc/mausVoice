@@ -17,9 +17,13 @@ import {
 import { refreshMember } from "../../actions/member.actions";
 import { dismissToast, showToast } from "../../actions/toast.actions";
 import {
+  handlePillStyleSwitch,
+  PILL_STYLE_SWITCH_BACKWARD_EVENT,
+  PILL_STYLE_SWITCH_FORWARD_EVENT,
   selectToneByHotkey,
   switchWritingStyleBackward,
   switchWritingStyleForward,
+  syncPillStyleInfo,
 } from "../../actions/tone.actions";
 import {
   resolveToolPermission,
@@ -366,10 +370,9 @@ export const DictationSideEffects = () => {
       const strategy = strategyRef.current;
       if (!(strategy instanceof DictationStrategy)) return;
       if (!hasDictationBacklog()) return;
-      strategy.checkAndDrainBacklog()
-        .catch((error: unknown) => {
-          getLogger().warning(`Backlog drain poll failed: ${error}`);
-        });
+      strategy.checkAndDrainBacklog().catch((error: unknown) => {
+        getLogger().warning(`Backlog drain poll failed: ${error}`);
+      });
     }, BACKLOG_DRAIN_POLL_MS);
     return () => clearInterval(interval);
   }, [isMainWindow, isActiveSession]);
@@ -1257,14 +1260,14 @@ export const DictationSideEffects = () => {
     }
   });
 
-  useTauriListen<void>("tone-switch-forward", () => {
+  useTauriListen<void>(PILL_STYLE_SWITCH_FORWARD_EVENT, async () => {
     if (!isMainWindow) return;
-    switchWritingStyleForward();
+    await handlePillStyleSwitch("forward");
   });
 
-  useTauriListen<void>("tone-switch-backward", () => {
+  useTauriListen<void>(PILL_STYLE_SWITCH_BACKWARD_EVENT, async () => {
     if (!isMainWindow) return;
-    switchWritingStyleBackward();
+    await handlePillStyleSwitch("backward");
   });
 
   useTauriListen<OverlayResolvePermissionPayload>(
@@ -1332,10 +1335,7 @@ export const DictationSideEffects = () => {
 
   useEffect(() => {
     if (!isMainWindow) return;
-    invoke("notify_pill_style_info", {
-      count: pillStyleCount,
-      name: pillStyleName,
-    }).catch(console.error);
+    void syncPillStyleInfo();
   }, [pillStyleCount, pillStyleName]);
 
   return null;
