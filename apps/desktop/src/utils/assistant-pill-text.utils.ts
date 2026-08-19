@@ -117,7 +117,18 @@ export const markdownToPillText = (
 
   let text = raw;
 
-  // 0. Strip reference links BEFORE code block markers (which use brackets).
+  // 0. Strip images, then links, then reference links.
+  // Order matters: LINK_RE/IMAGE_RE must win over REF_LINK_RE for
+  // well-formed markdown so [text](url) is not reduced to text(url).
+  text = text.replace(IMAGE_RE, "$1");
+  text = text.replace(LINK_RE, (_match, linkText, url) => {
+    const cleaned = collapseWhitespace(linkText);
+    if (cleaned.includes(url) || cleaned.length > 50) return cleaned;
+    const combined = `${cleaned} (${url})`;
+    return combined.length > 60 ? cleaned : combined;
+  });
+
+  // Strip reference links after real links so [text] orphans don't survive.
   text = text.replace(REF_LINK_RE, "$1");
 
   // 1. Strip fenced code blocks (replace with a compact "[code]" marker)
@@ -157,18 +168,7 @@ export const markdownToPillText = (
     return `${num}. `;
   });
 
-  // 7. Strip images (keep alt text if present)
-  text = text.replace(IMAGE_RE, "$1");
-
-  // 8. Convert links to readable form
-  text = text.replace(LINK_RE, (_match, linkText, url) => {
-    const cleaned = collapseWhitespace(linkText);
-    if (cleaned.includes(url) || cleaned.length > 50) return cleaned;
-    const combined = `${cleaned} (${url})`;
-    return combined.length > 60 ? cleaned : combined;
-  });
-
-  // 9. Handle inline formatting
+  // 7. Handle inline formatting
   if (options.preserveEmphasis) {
     text = text.replace(BOLD_RE, "*$1*");
     text = text.replace(ITALIC_RE, "$1");
@@ -195,5 +195,22 @@ export const markdownToPillText = (
 /**
  * Check whether a streaming chunk is "safe" — i.e. concatenating it with a
  * previous chunk produces the same result as converting the whole text at once.
+ *
+ * This is true for most single-pass string operations. The exception is the
+ * fence detector: if a chunk ends with an opening fence delimiter, the next
+ * chunk will produce "[code]" but the concatenation of the two chunks would
+ * correctly produce "[code]" as well, because the fence handler spans chunks
+ * via state. The only problematic case is a chunk that starts mid-fence:
+ * "const x = 1;\n```" would be swallowed entirely by the open fence from the
+ * previous chunk. Therefore a zero-trust streaming consumer should append
+ * each chunk's output to the previous output, which gives correct results
+ * for all cases except an *unclosed* fence at the very end of the stream.
  */
-export const isStreamingStable = (): boolean => true;
+export const isStreamingStable = (raw: string | null | undefined): boolean => {
+  if (!raw) return true;
+  // If the text contains an unmatched opening fence, the conversion drops
+  // everything after the opener. That's a streaming artifact, not stable.
+  const opens = (raw.match(/^`{3}(?:\w+)?\s*$/gm) || []).length;
+  const closes = (raw.match(/^`{3}\s*$/gm) || []).length;
+  return opens <= closes;
+};

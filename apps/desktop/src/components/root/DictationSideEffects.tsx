@@ -104,6 +104,7 @@ import {
 } from "../../utils/user.utils";
 import { hasDictationBacklog } from "../../utils/output-routing.utils";
 import { surfaceMainWindow } from "../../utils/window.utils";
+import { resetHotkeyFilter } from "../../utils/hotkey-filter.utils";
 
 type StartRecordingResponse = {
   sampleRate: number;
@@ -320,6 +321,7 @@ export const DictationSideEffects = () => {
     invoke("reset_key_listener_state").catch((error) =>
       getLogger().verbose(`Failed to reset key listener state: ${error}`),
     );
+    resetHotkeyFilter();
   }, [additionalLanguageControllers, agentController, dictationController]);
 
   /**

@@ -82,7 +82,7 @@ import {
   getNextPillVisibility,
   getPillMenuLabel,
 } from "../../utils/tray-pill-visibility.utils";
-import { evaluateHotkeyTrigger, releaseHotkey } from "../../utils/hotkey-filter.utils";
+import { evaluateHotkeyTrigger } from "../../utils/hotkey-filter.utils";
 import {
   getEffectivePillVisibility,
   getIsDictationUnlocked,
@@ -357,14 +357,6 @@ export const AppSideEffects = () => {
     const existing = getAppState().keysHeld;
     if (isEqual(existing, payload.keys)) {
       return;
-    }
-
-    // A21: When keys are released (keysHeld goes from non-empty to empty),
-    // notify the hotkey filter so release-before-refire tracking is accurate.
-    if (existing.length > 0 && payload.keys.length === 0) {
-      for (const key of existing) {
-        releaseHotkey(key);
-      }
     }
 
     produceAppState((draft) => {

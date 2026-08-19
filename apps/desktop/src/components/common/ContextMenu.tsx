@@ -466,47 +466,52 @@ export const ContextMenuProvider = ({
     [],
   );
 
-  // Global right-click handler for unhandled areas
+  // Global right-click handler - suppress default on ALL elements
   useEffect(() => {
     const handleGlobalContextMenu = (e: MouseEvent) => {
-      // Let registered surfaces handle their own right-clicks via their
-      // own onContextMenu. This global handler only catches unhandled ones.
-      // If a surface handled it, preventDefault was already called.
-      // For truly unhandled areas, show a basic default menu.
+      // Always prevent the default webview context menu
+      e.preventDefault();
       const target = e.target as HTMLElement;
       const isInput =
         target.tagName === "INPUT" ||
         target.tagName === "TEXTAREA" ||
         target.isContentEditable;
 
+      const isMac = typeof navigator !== "undefined" && /Mac/.test(navigator.platform);
+      const modKey = isMac ? "\u2318" : "Ctrl";
+
       if (isInput) {
-        // For text inputs, only suppress default and offer clipboard actions
-        e.preventDefault();
-        const hasSelection = window.getSelection()?.toString().length ?? 0 > 0;
+        const hasSelection = (window.getSelection()?.toString().length ?? 0) > 0;
         ctxMenu.handleContextMenu(e as unknown as React.MouseEvent, [
           {
             label: "Cut",
             disabled: !hasSelection,
             onClick: () => {
+              navigator.clipboard.writeText(window.getSelection()?.toString() ?? "").catch(() => {});
               document.execCommand("cut");
             },
-            accelerator: "Ctrl+X",
+            accelerator: modKey + "+X",
           },
           {
             label: "Copy",
             disabled: !hasSelection,
             onClick: () => {
-              document.execCommand("copy");
+              navigator.clipboard.writeText(window.getSelection()?.toString() ?? "").catch(() => {});
             },
-            accelerator: "Ctrl+C",
+            accelerator: modKey + "+C",
           },
           { kind: "divider" },
           {
             label: "Paste",
             onClick: () => {
-              document.execCommand("paste");
+              navigator.clipboard.readText().then(t => {
+                const el = document.activeElement as HTMLElement;
+                if (el && (el.tagName === "INPUT" || el.tagName === "TEXTAREA" || el.isContentEditable)) {
+                  document.execCommand("insertText", false, t);
+                }
+              }).catch(() => {});
             },
-            accelerator: "Ctrl+V",
+            accelerator: modKey + "+V",
           },
           { kind: "divider" },
           {
@@ -514,7 +519,7 @@ export const ContextMenuProvider = ({
             onClick: () => {
               document.execCommand("selectAll");
             },
-            accelerator: "Ctrl+A",
+            accelerator: modKey + "+A",
           },
         ]);
       }

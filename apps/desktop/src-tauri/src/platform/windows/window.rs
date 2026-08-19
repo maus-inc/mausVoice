@@ -70,6 +70,11 @@ pub fn hide_main_window(window: &WebviewWindow) -> Result<(), String> {
 }
 
 pub fn surface_main_window(window: &WebviewWindow) -> Result<(), String> {
+    // A12: Stop the WebView2 keepalive poke once the window is visible again.
+    // hide_main_window sets it true; surface must clear it so the 500 ms
+    // background thread does not run indefinitely after first hide-to-tray.
+    set_webview_keepalive(false);
+
     let window_for_handle = window.clone();
     let (tx, rx) = mpsc::channel();
 
