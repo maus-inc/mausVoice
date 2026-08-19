@@ -93,6 +93,19 @@ describe("getEffectiveToneIdAtFinalize", () => {
       ),
     ).toBe(SWITCHED);
   });
+
+  it("does not fall back to the app-target tone in manual mode", () => {
+    expect(
+      getEffectiveToneIdAtFinalize(
+        manual({
+          toneIdAtStart: null,
+          toneIdAtStop: null,
+          liveSelectedToneId: null,
+          appTargetToneId: APP_TARGET,
+        }),
+      ),
+    ).toBeNull();
+  });
 });
 
 describe("toWritingStyleTransition", () => {

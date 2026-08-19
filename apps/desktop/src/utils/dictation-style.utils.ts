@@ -83,7 +83,11 @@ export const resolveInDictationArrowStyleSwitch = (args: {
  *   live selection so finalize never drops a known tone on the floor.
  *
  * Automatic mode uses the app-target tone captured at stop and ignores
- * manual switches.
+ * manual switches. Manual mode never consults `appTargetToneId`: that
+ * value is the automatic-mode assignment and must not override an
+ * explicit (or missing) manual selection. Styling mode is read at
+ * finalize, so a mid-session toggle to automatic picks up the app tone
+ * via the automatic branch, not via a manual fallback.
  *
  * Already-inserted realtime text is never restyled here: streamed sessions
  * skip post-processing in DictationStrategy, and a mid-stream switch
@@ -108,6 +112,7 @@ export type FinalizeToneArgs = {
  * Tone used for the FINAL post-processed output of the current utterance.
  *
  * Manual: `toneIdAtStop ?? toneIdAtStart ?? liveSelectedToneId`.
+ * Never `appTargetToneId` — that belongs only to automatic mode.
  * Automatic: `appTargetToneId`.
  */
 export const getEffectiveToneIdAtFinalize = (

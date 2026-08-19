@@ -130,4 +130,14 @@ describe("writing style switch channels share one state transition", () => {
     await selectToneByHotkey("chat");
     expect(selectedToneId()).toBe("chat");
   });
+
+  it("applies the in-memory selection before the persist promise settles", () => {
+    setSelectedToneIdMock.mockReturnValue(new Promise(() => undefined));
+    const pending = applyInDictationStyleSwitch({
+      channel: "hotkey",
+      toneId: "chat",
+    });
+    expect(selectedToneId()).toBe("chat");
+    void pending;
+  });
 });
