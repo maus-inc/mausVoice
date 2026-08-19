@@ -2976,16 +2976,19 @@ fn percent_decode_route_path_once(path: &str) -> Result<String, String> {
     let mut index = 0;
     while index < bytes.len() {
         if bytes[index] == b'%' {
-            let high = bytes
-                .get(index + 1)
-                .and_then(|value| hex_value(*value))
-                .ok_or_else(|| "Floating app route has invalid percent encoding".to_string())?;
-            let low = bytes
-                .get(index + 2)
-                .and_then(|value| hex_value(*value))
-                .ok_or_else(|| "Floating app route has invalid percent encoding".to_string())?;
-            decoded.push((high << 4) | low);
-            index += 3;
+            let high = bytes.get(index + 1).and_then(|value| hex_value(*value));
+            let low = bytes.get(index + 2).and_then(|value| hex_value(*value));
+            match (high, low) {
+                (Some(h), Some(l)) => {
+                    decoded.push((h << 4) | l);
+                    index += 3;
+                }
+                _ => {
+                    // Leftover bare `%` (e.g. "100%done") is a literal.
+                    decoded.push(b'%');
+                    index += 1;
+                }
+            }
         } else {
             decoded.push(bytes[index]);
             index += 1;
