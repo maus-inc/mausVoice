@@ -411,4 +411,14 @@ describe("attachScrollListCollapse", () => {
     expect(scroller.getAttribute(COLLAPSING_ATTR)).toBe("true");
     session.disconnect();
   });
+
+  it("increments generation on each measure so a caller can skip a redundant refresh", () => {
+    const scroller = createScroller(0);
+    const session = attach({ scroller });
+
+    expect(session.generation).toBe(1);
+    session.refresh();
+    expect(session.generation).toBe(2);
+    session.disconnect();
+  });
 });

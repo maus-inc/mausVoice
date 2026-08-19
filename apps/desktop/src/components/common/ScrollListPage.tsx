@@ -71,6 +71,7 @@ export function ScrollListPage<Item>({
     INITIAL_HEADER_METRICS,
   );
   const collapseRef = useRef<ScrollListCollapseHandle | null>(null);
+  const lastMeasureGenerationRef = useRef(0);
   const hasItems = items.length > 0;
   const hasResizeObserver = typeof ResizeObserver !== "undefined";
 
@@ -125,13 +126,21 @@ export function ScrollListPage<Item>({
     };
   }, [hasItems]);
 
-  // No ResizeObserver: re-measure after each commit so title/action/width
-  // changes still update collapse geometry without rebinding the scroll listener.
+  // No ResizeObserver: re-measure after commits that attach did not already
+  // measure (prop/content changes). Skip if attach or a window-resize
+  // listener just ran measure — otherwise mount and resize double-read.
   useLayoutEffect(() => {
     if (hasResizeObserver) {
       return;
     }
-    collapseRef.current?.refresh();
+    const handle = collapseRef.current;
+    if (!handle) {
+      return;
+    }
+    if (handle.generation === lastMeasureGenerationRef.current) {
+      handle.refresh();
+    }
+    lastMeasureGenerationRef.current = handle.generation;
   });
 
   const handleLoadMore = useCallback(() => {

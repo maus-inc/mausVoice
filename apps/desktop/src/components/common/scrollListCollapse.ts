@@ -61,6 +61,8 @@ export type AttachScrollListCollapseOptions = {
 export type ScrollListCollapseHandle = {
   disconnect: () => void;
   refresh: () => void;
+  /** Increments on every measure so callers can skip a redundant refresh. */
+  readonly generation: number;
 };
 
 /**
@@ -226,6 +228,7 @@ export function attachScrollListCollapse({
   let measureFrame = 0;
   let hasScrollFrame = false;
   let hasMeasureFrame = false;
+  let generation = 0;
 
   const writeProgress = () => {
     const progress = collapseProgress(
@@ -249,6 +252,7 @@ export function attachScrollListCollapse({
   };
 
   const measure = () => {
+    generation += 1;
     const metrics = readMetrics();
     collapseDistance = metrics.collapseDistance;
     onMetrics(metrics);
@@ -310,6 +314,9 @@ export function attachScrollListCollapse({
 
   return {
     refresh: measure,
+    get generation() {
+      return generation;
+    },
     disconnect: () => {
       scroller.removeEventListener("scroll", handleScroll);
       mediaQuery?.removeEventListener("change", handleMotionChange);
