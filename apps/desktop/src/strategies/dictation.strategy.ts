@@ -15,7 +15,13 @@ import type {
   StrategyValidationError,
 } from "../types/strategy.types";
 import { getLogger } from "../utils/log.utils";
-import { routeTranscriptOutput } from "../utils/output-routing.utils";
+import {
+  routeTranscriptOutput,
+  appendToDictationBacklog,
+  clearDictationBacklog,
+  drainDictationBacklog,
+  incrementDictationBacklogNonce,
+} from "../utils/output-routing.utils";
 import { sanitizeTranscriptText } from "../utils/sanitize-transcript.utils";
 import { getToneIdToUse, VERBATIM_TONE_ID } from "../utils/tone.utils";
 import {
@@ -24,11 +30,31 @@ import {
 } from "../utils/user.utils";
 import { BaseStrategy } from "./base.strategy";
 
+/**
+ * Thin wrapper around the Tauri `check_focused_paste_target` command.
+ * Returns the target state without any side effects.
+ */
+async function checkFocusedPasteTarget(): Promise<
+  "editable" | "not_editable" | "unknown"
+> {
+  try {
+    const state = await invoke<"editable" | "not_editable" | "unknown">(
+      "check_focused_paste_target",
+    );
+    return state;
+  } catch {
+    return "unknown";
+  }
+}
+
 export class DictationStrategy extends BaseStrategy {
   private streamedSegmentCount = 0;
   private streamedProcessedText = "";
   private pasteQueue: Promise<void> = Promise.resolve();
   private currentAppId: string | null = null;
+  /** True when the last known paste target was NOT editable, meaning
+   *  segments are being backlogged instead of pasted live. */
+  private backlogActive = false;
 
   shouldStoreTranscript(): boolean {
     return true;
@@ -38,12 +64,44 @@ export class DictationStrategy extends BaseStrategy {
     return this.streamedSegmentCount > 0;
   }
 
+  get hasBacklog(): boolean {
+    return this.backlogActive;
+  }
+
   private getActiveRemoteTargetDeviceId(): string | null {
     const prefs = getMyUserPreferences(getAppState());
     if (!prefs?.remoteOutputEnabled || !prefs.remoteTargetDeviceId) {
       return null;
     }
     return prefs.remoteTargetDeviceId;
+  }
+
+  /**
+   * Check whether the currently focused element is editable, drain the
+   * backlog if one exists and the target is now editable, and return the
+   * paste-target state for the caller.
+   *
+   * Safe to call from outside (e.g. DictationSideEffects polling interval).
+   * The operation is serialised on `this.pasteQueue` so it never races an
+   * in-flight interim segment.
+   */
+  checkAndDrainBacklog(): void {
+    this.pasteQueue = this.pasteQueue.then(async () => {
+      const backlogLen = getAppState().dictationBacklog.length;
+      if (backlogLen === 0 && !this.backlogActive) {
+        return;
+      }
+
+      const state = await checkFocusedPasteTarget();
+      if (state === "editable" || state === "unknown") {
+        // Target is now editable (or we can't tell — try paste anyway).
+        if (backlogLen > 0) {
+          await drainDictationBacklog();
+          this.streamedProcessedText += " ";
+        }
+        this.backlogActive = false;
+      }
+    });
   }
 
   handleInterimSegment(segment: string): void {
@@ -72,6 +130,44 @@ export class DictationStrategy extends BaseStrategy {
       const textToPaste = text.endsWith("\n") ? text : `${text} `;
       this.streamedProcessedText += (isFirst ? "" : " ") + text;
 
+      // Remote mode bypasses the backlog altogether.
+      if (prefs?.remoteOutputEnabled && prefs.remoteTargetDeviceId) {
+        try {
+          await routeTranscriptOutput({
+            text: textToPaste,
+            mode: "dictation",
+            currentAppId: this.currentAppId,
+            skipReview: true,
+          });
+        } catch (error) {
+          getLogger().error(
+            `Failed to remote-deliver interim segment: ${error}`,
+          );
+        }
+        return;
+      }
+
+      // -- Backlog-aware routing ---------------------------------------------
+      const target = await checkFocusedPasteTarget();
+
+      if (target === "not_editable") {
+        // No editable target: accumulate, don't paste, don't flash.
+        this.backlogActive = true;
+        appendToDictationBacklog(text);
+        return;
+      }
+
+      // Target is editable (or unknown -- optimistically try to paste).
+      // Drain any accumulated backlog first, then paste the current segment.
+      if (getAppState().dictationBacklog.length > 0) {
+        await drainDictationBacklog(text);
+        this.streamedProcessedText += " ";
+        this.backlogActive = false;
+        return;
+      }
+
+      // No backlog -- paste this segment live as before.
+      this.backlogActive = false;
       try {
         await routeTranscriptOutput({
           text: textToPaste,
@@ -126,7 +222,9 @@ export class DictationStrategy extends BaseStrategy {
   }
 
   async onBeforeStart(): Promise<void> {
-    // load asyncronously, non-blocking
+    // Initialize session backlog state and load app target
+    clearDictationBacklog();
+    incrementDictationBacklogNonce();
     this.loadAppTarget();
   }
 
@@ -140,6 +238,14 @@ export class DictationStrategy extends BaseStrategy {
     const sanitizedTranscript = this.sanitizeTranscript(args.rawTranscript);
 
     await this.pasteQueue;
+
+    // Drain any remaining backlog before the transcript is finalized.
+    if (getAppState().dictationBacklog.length > 0) {
+      getLogger().info(
+        `Draining ${getAppState().dictationBacklog.length} backlog segment(s) on finalize`,
+      );
+      await drainDictationBacklog();
+    }
 
     // Interim paste already hit the focused app without structural commands
     // (chunk-safe). The saved transcript uses the full sanitize so scratch /
@@ -262,5 +368,7 @@ export class DictationStrategy extends BaseStrategy {
     this.streamedSegmentCount = 0;
     this.streamedProcessedText = "";
     this.currentAppId = null;
+    this.backlogActive = false;
+    clearDictationBacklog();
   }
 }

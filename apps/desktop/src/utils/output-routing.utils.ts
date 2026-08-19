@@ -4,7 +4,7 @@ import type {
   RouteTranscriptOutputResult,
 } from "@maus-inc/types";
 import { getIntl } from "../i18n/intl";
-import { getAppState } from "../store";
+import { getAppState, produceAppState } from "../store";
 import { reviewTextInComposer } from "./composer.utils";
 import { getLogger } from "./log.utils";
 import { sendPillFlashMessage } from "./overlay.utils";
@@ -59,6 +59,7 @@ const reviewOutputText = async (
 const insertLocalOutput = async (
   context: OutputContext,
   text: string,
+  suppressFlashOnClipboard?: boolean,
 ): Promise<void> => {
   const insertionMethod =
     context.currentApp?.insertionMethod ??
@@ -77,7 +78,11 @@ const insertLocalOutput = async (
       : (context.currentApp?.pasteKeybind ??
         context.prefs?.pasteKeybind ??
         null);
-  await insertLocalTranscriptOutputViaPaste(text, pasteKeybind);
+  await insertLocalTranscriptOutputViaPaste(
+    text,
+    pasteKeybind,
+    suppressFlashOnClipboard,
+  );
 };
 
 export const routeTranscriptOutput = async (
@@ -100,6 +105,7 @@ export const routeTranscriptOutput = async (
 export const insertLocalTranscriptOutputViaPaste = async (
   text: string,
   keybind: string | null,
+  suppressClipboardFlash?: boolean,
 ): Promise<void> => {
   const sanitized = sanitizeIndentation(text);
 
@@ -112,11 +118,13 @@ export const insertLocalTranscriptOutputViaPaste = async (
     getLogger().info(
       "Focused element was not editable, transcription copied to clipboard",
     );
-    sendPillFlashMessage(
-      getIntl().formatMessage({
-        defaultMessage: "Transcript copied to clipboard",
-      }),
-    );
+    if (!suppressClipboardFlash) {
+      sendPillFlashMessage(
+        getIntl().formatMessage({
+          defaultMessage: "Transcript copied to clipboard",
+        }),
+      );
+    }
   }
 };
 
@@ -153,4 +161,105 @@ export const insertLocalTranscriptOutputViaTyping = async (
     window.removeEventListener("blur", handleCancel);
     window.removeEventListener("keydown", keydownHandler);
   }
+};
+
+// ──────────────────────────────────────────────────────────────────────────────
+// Dictation backlog state management
+// ──────────────────────────────────────────────────────────────────────────────
+
+/** Return a snapshot of the current dictation backlog. */
+export const getDictationBacklog = (): string[] => {
+  return getAppState().dictationBacklog;
+};
+
+/** True when the backlog is non-empty. */
+export const hasDictationBacklog = (): boolean => {
+  return getAppState().dictationBacklog.length > 0;
+};
+
+/** Append a segment to the backlog. No side effects. */
+export const appendToDictationBacklog = (text: string): void => {
+  produceAppState((draft) => {
+    draft.dictationBacklog.push(text);
+  });
+};
+
+/** Clear the backlog (call at session start). */
+export const clearDictationBacklog = (): void => {
+  produceAppState((draft) => {
+    draft.dictationBacklog = [];
+  });
+};
+
+/**
+ * Increment the session nonce so stale backlog data from a previous
+ * session is identifiable.
+ */
+export const incrementDictationBacklogNonce = (): void => {
+  produceAppState((draft) => {
+    draft.dictationBacklogNonce += 1;
+  });
+};
+
+/**
+ * Snapshot of backlog + session nonce. Consumers compare the nonce against
+ * the current value before acting on old data (e.g. a queued drain that
+ * completed after a new session started).
+ */
+type BacklogSnapshot = { segments: string[]; nonce: number };
+
+const takeBacklogSnapshot = (): BacklogSnapshot => {
+  const { dictationBacklog, dictationBacklogNonce } = getAppState();
+  return { segments: [...dictationBacklog], nonce: dictationBacklogNonce };
+};
+
+/**
+ * Drain the dictation backlog (and optionally a newSegment) into the
+ * currently focused field via the standard output-routing pipeline.
+ *
+ * - If an editable target is focused: paste and return `{ delivered: true }`.
+ * - If NOT editable: single clipboard write + single pill flash, return
+ *   `{ delivered: false, copiedToClipboard: true }`.
+ * - Empty backlog + no newSegment → no-op.
+ *
+ * Option `prefs` is attached to avoid a stale re-read of user preferences
+ * if they changed mid-dictation (e.g. insertionMethod switch). Omit to
+ * re-read fresh from state.
+ *
+ * The backlog is CLEARED on successful delivery. If the drain fails, the
+ * backlog is preserved so the user doesn't lose text.
+ */
+export const drainDictationBacklog = async (
+  newSegment?: string,
+): Promise<{ delivered: boolean; copiedToClipboard: boolean }> => {
+  const snap = takeBacklogSnapshot();
+  if (snap.segments.length === 0 && !newSegment?.trim()) {
+    return { delivered: false, copiedToClipboard: false };
+  }
+
+  // Build the combined text: backlog segments joined with spaces, then the
+  // new segment. The trailing space from each backlog segment's storage
+  // is normalized by the join.
+  const segments = [...snap.segments];
+  if (newSegment?.trim()) {
+    segments.push(newSegment.trim());
+  }
+  const combinedText = segments.join(" ");
+
+  // Deliver the combined backlog text via the standard paste pipeline.
+  // suppressFlashOnClipboard=false so the ONE permitted pill flash
+  // happens when the backlog is delivered to a non-editable target.
+  await insertLocalTranscriptOutputViaPaste(combinedText, null, false);
+
+  // Snapshot after paste to confirm we're still in the same session.
+  const currentNonce = getAppState().dictationBacklogNonce;
+  if (currentNonce !== snap.nonce) {
+    // A new session started — don't clear backlog from a prior session.
+    return { delivered: true, copiedToClipboard: false };
+  }
+
+  // Clear the backlog on successful delivery.
+  clearDictationBacklog();
+
+  return { delivered: true, copiedToClipboard: false };
 };
