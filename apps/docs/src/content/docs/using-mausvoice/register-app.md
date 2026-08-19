@@ -12,7 +12,7 @@ Registering an app captures the currently focused application as an **app target
 When you register, mausVoice asks the operating system for the **foreground application** at that instant and creates or updates a single entry for it:
 
 - **Detection** identifies the app by its display name, preferring the name shown in the window title and falling back to the executable name when needed. The name is normalized into a stable identifier so "Google Chrome" and "google-chrome" resolve to the same target.
-- **Storage** saves the target locally on this device — its display name, creation time, chosen writing style, insertion preferences, and a small rendered copy of the app icon. If the system cannot provide an icon, mausVoice stores a generated placeholder instead, so every target has an image.
+- **Storage** saves the target locally on this device — its display name, creation time, chosen writing style, insertion preferences, and a small rendered copy of the app icon. When the system provides an icon it is rendered to a small image and saved locally; when it cannot, the native layer supplies a generated placeholder that is saved instead. Icon saving is best-effort — if the storage upload fails, the target is still created but without an image.
 - **Effect** makes the app appear in **Writing Styles** and in **Settings → General → Text insertion options**. Once a target exists you can customize it per app:
   - **Writing style** — which style post-processing uses when that app is focused.
   - **Insertion method** — whether text is delivered by clipboard paste or simulated typing.
@@ -27,9 +27,9 @@ You rarely need to register by hand. mausVoice also registers on its own:
 
 1. **During dictation** — each ordinary dictation ensures the current target exists before choosing a style, so simply dictating into a new app registers it.
 2. **Tray label preview** — after detection the tray menu updates to **Register current app [AppName]** so you can see what the next manual registration would capture.
-3. **Icon refresh** — if an existing target is missing its icon, the next dictation fetches and saves it.
+3. **Icon refresh** — if an existing target has no image at all (storage upload previously failed), the next dictation tries again to fetch and save it. A stored placeholder counts as an image and is not replaced automatically.
 
-If the app already exists and already has an icon, automatic registration does not create duplicate data; it simply reuses the existing entry.
+If the app already exists and already has an image — real icon or placeholder — automatic registration does not create duplicate data; it simply reuses the existing entry.
 
 ## How to register manually
 
@@ -78,11 +78,13 @@ These settings are independent. A style can be set without touching insertion, a
 
 **Wrong app was registered.** Focus is sampled at the instant detection runs. If you switched windows too quickly — or an overlay, launcher, or the mausVoice window itself was foreground — the sampled name may not be the one you intended. Focus the intended app, wait a moment, then choose **Register current app** again without clicking anything else. The tray label **Register current app [Name]** shows what will be registered before you click.
 
-**App not detected / shows "Unknown application".** Detection is best-effort. Elevated (admin/root) windows, remote-desktop viewers, sandboxed or Wayland sessions, and unusual window managers can hide the focused app. Fix: run mausVoice at the same privilege level as the target (see [Permissions](../../getting-started/permissions/) and [Linux / Wayland](../../troubleshooting/linux-wayland/)) and keep the destination focused through the release of the dictation shortcut.
+**App not detected / shows "Unknown application".** Detection is best-effort. Two different failure modes exist:
+  - **"Unknown application" row created** — detection succeeded but the system returned no usable name, so mausVoice creates a target literally named "Unknown application".
+  - **No row created / registration silently fails** — permission, unsupported platform, or timeout errors reject the detection call, so no target is created and no user-visible fallback appears. Check the logs and try again. Fix for both: run mausVoice at the same privilege level as the target (see [Permissions](../../getting-started/permissions/) and [Linux / Wayland](../../troubleshooting/linux-wayland/)) and keep the destination focused through the release of the dictation shortcut.
 
 **Similar names create separate rows.** Variants such as "Chrome" vs "Chrome Beta", a browser PWA, or different packaged builds normalize to different entries. Assign the style to the exact name shown in Writing Styles.
 
-**Icon missing or generic.** This is cosmetic. If an icon could not be fetched, mausVoice stores a placeholder gradient instead. A later dictation will try again to fetch the real icon when the app is focused.
+**Icon missing or generic.** This is cosmetic. A generic gradient means the system did not provide an icon and the placeholder was stored successfully — that placeholder is treated as a valid image and will not be replaced automatically. A completely missing image means the image upload failed; in that case the next dictation will try again.
 
 **Row not appearing after registration.** Verify the list is sorted alphabetically. If you registered while mausVoice held focus, the sampled name may have been "mausVoice" itself. Refocus the intended app and register again with mausVoice in the background.
 
@@ -103,5 +105,5 @@ Implementation details that are useful for contributors but not needed for every
 
 - **Platform detection** uses native APIs per OS (macOS via the workspace's frontmost application; Windows/Linux via the focused-window tracker). Title parsing prefers text after the last ` — `, ` – `, or ` - ` separator before falling back to the process name.
 - **Identifier normalization** lowercases the name, replaces non-alphanumeric runs with `_`, and trims underscores. Empty results receive a generated `app_target_…` identifier.
-- **Icon handling** renders the OS icon to a small PNG (base64 over IPC) and uploads it to per-user app storage. Failures fall back to a generated gradient placeholder, so storage never silently skips the icon.
-- **Error handling** for detection failures maps to user-visible "Unknown application" and best-effort retry rather than surfacing low-level OS errors.
+- **Icon handling** renders the OS icon to a small PNG (base64 over IPC) and uploads it to per-user app storage. The native layer always supplies either a real icon or a generated gradient placeholder, but the upload to storage is best-effort — if it fails the target is persisted without an image and a later dictation will retry. Once any image (real or placeholder) is stored, future dictations do not replace it.
+- **Error handling** — a successful capture with no usable name yields an "Unknown application" target; permission, unsupported, or timeout failures reject the call with no target created and no user-visible fallback, and are logged for debugging.
