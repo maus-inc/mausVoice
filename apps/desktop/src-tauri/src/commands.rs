@@ -442,6 +442,10 @@ pub struct TranscriptionAudioSamplesData {
 const MAX_PRIVATE_HTTP_REQUEST_BYTES: usize = 128 * 1024 * 1024;
 const MAX_PRIVATE_HTTP_RESPONSE_BYTES: u64 = 32 * 1024 * 1024;
 const MAX_PRIVATE_HTTP_REDIRECTS: usize = 5;
+const MAX_PRIVATE_HTTP_CANCELLATIONS: usize = 1_024;
+const PRIVATE_HTTP_PRESTART_CANCELLATION_TTL: std::time::Duration =
+    std::time::Duration::from_secs(30);
+const PRIVATE_HTTP_CANCELLED_ERROR: &str = "Private-network request was cancelled";
 
 #[derive(serde::Deserialize, specta::Type)]
 #[serde(rename_all = "camelCase")]
@@ -463,9 +467,25 @@ pub struct PrivateHttpResponse {
 
 static IMPORT_IN_FLIGHT: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
 
+enum PrivateHttpCancellationState {
+    Active(tokio::sync::oneshot::Sender<()>),
+    CancelledBeforeStart(std::time::Instant),
+}
+
 static PRIVATE_HTTP_CANCELLATIONS: once_cell::sync::Lazy<
-    std::sync::Mutex<std::collections::HashMap<String, tokio::sync::oneshot::Sender<()>>>,
+    std::sync::Mutex<std::collections::HashMap<String, PrivateHttpCancellationState>>,
 > = once_cell::sync::Lazy::new(|| std::sync::Mutex::new(std::collections::HashMap::new()));
+
+fn prune_private_http_prestart_cancellations(
+    requests: &mut std::collections::HashMap<String, PrivateHttpCancellationState>,
+) {
+    requests.retain(|_, state| match state {
+        PrivateHttpCancellationState::Active(_) => true,
+        PrivateHttpCancellationState::CancelledBeforeStart(created_at) => {
+            created_at.elapsed() <= PRIVATE_HTTP_PRESTART_CANCELLATION_TTL
+        }
+    });
+}
 
 struct PrivateHttpCancellationGuard {
     request_id: String,
@@ -481,10 +501,24 @@ impl PrivateHttpCancellationGuard {
         let mut requests = PRIVATE_HTTP_CANCELLATIONS
             .lock()
             .map_err(|_| "Private-network cancellation registry is unavailable".to_string())?;
+        prune_private_http_prestart_cancellations(&mut requests);
+        if matches!(
+            requests.get(&request_id),
+            Some(PrivateHttpCancellationState::CancelledBeforeStart(_))
+        ) {
+            requests.remove(&request_id);
+            return Err(PRIVATE_HTTP_CANCELLED_ERROR.to_string());
+        }
         if requests.contains_key(&request_id) {
             return Err("Private-network request ID is already in use".to_string());
         }
-        requests.insert(request_id.clone(), sender);
+        if requests.len() >= MAX_PRIVATE_HTTP_CANCELLATIONS {
+            return Err("Too many private-network requests are in progress".to_string());
+        }
+        requests.insert(
+            request_id.clone(),
+            PrivateHttpCancellationState::Active(sender),
+        );
         Ok((Self { request_id }, receiver))
     }
 }
@@ -543,9 +577,7 @@ fn windows_file_identity(file: &std::fs::File) -> Option<(u32, u64)> {
 
 fn is_rfc1918_ipv4(address: std::net::Ipv4Addr) -> bool {
     let [first, second, _, _] = address.octets();
-    first == 10
-        || (first == 172 && (16..=31).contains(&second))
-        || (first == 192 && second == 168)
+    first == 10 || (first == 172 && (16..=31).contains(&second)) || (first == 192 && second == 168)
 }
 
 /// Validate a user-configured plaintext endpoint without confusing hostname
@@ -595,10 +627,33 @@ pub fn cancel_private_http_request(request_id: String) -> Result<bool, String> {
         return Err("Private-network request ID is invalid".to_string());
     }
 
-    let sender = PRIVATE_HTTP_CANCELLATIONS
+    let mut requests = PRIVATE_HTTP_CANCELLATIONS
         .lock()
-        .map_err(|_| "Private-network cancellation registry is unavailable".to_string())?
-        .remove(&request_id);
+        .map_err(|_| "Private-network cancellation registry is unavailable".to_string())?;
+    prune_private_http_prestart_cancellations(&mut requests);
+    if matches!(
+        requests.get(&request_id),
+        Some(PrivateHttpCancellationState::CancelledBeforeStart(_))
+    ) {
+        return Ok(false);
+    }
+
+    let sender = match requests.remove(&request_id) {
+        Some(PrivateHttpCancellationState::Active(sender)) => Some(sender),
+        Some(PrivateHttpCancellationState::CancelledBeforeStart(_)) => unreachable!(),
+        None => {
+            // IPC messages can race: remember an abort that arrives before the
+            // async request command is first polled. The fixed cap prevents
+            // malformed renderer calls from growing this registry without bound.
+            if requests.len() < MAX_PRIVATE_HTTP_CANCELLATIONS {
+                requests.insert(
+                    request_id,
+                    PrivateHttpCancellationState::CancelledBeforeStart(std::time::Instant::now()),
+                );
+            }
+            None
+        }
+    };
     Ok(sender.is_some_and(|sender| sender.send(()).is_ok()))
 }
 
@@ -607,7 +662,16 @@ pub fn cancel_private_http_request(request_id: String) -> Result<bool, String> {
 pub async fn private_http_request(
     request: PrivateHttpRequest,
 ) -> Result<PrivateHttpResponse, String> {
-    if request.body.as_ref().is_some_and(|body| body.len() > MAX_PRIVATE_HTTP_REQUEST_BYTES) {
+    // Register before validation or any await so an abort IPC that wins the
+    // command-scheduling race is consumed before networking can begin.
+    let (_cancellation_guard, mut cancellation) =
+        PrivateHttpCancellationGuard::register(request.request_id.clone())?;
+
+    if request
+        .body
+        .as_ref()
+        .is_some_and(|body| body.len() > MAX_PRIVATE_HTTP_REQUEST_BYTES)
+    {
         return Err(format!(
             "Private-network request body exceeds the {} MiB limit",
             MAX_PRIVATE_HTTP_REQUEST_BYTES / (1024 * 1024)
@@ -617,8 +681,6 @@ pub async fn private_http_request(
     let initial_url = Url::parse(&request.url)
         .map_err(|_| "Private-network request URL is invalid".to_string())?;
     validate_private_http_url(&initial_url)?;
-    let (_cancellation_guard, mut cancellation) =
-        PrivateHttpCancellationGuard::register(request.request_id.clone())?;
 
     let client = reqwest::Client::builder()
         // Connect directly so an environment proxy cannot turn an allowed
@@ -678,7 +740,7 @@ pub async fn private_http_request(
     }
 
     let mut response = tokio::select! {
-        _ = &mut cancellation => return Err("Private-network request was cancelled".to_string()),
+        _ = &mut cancellation => return Err(PRIVATE_HTTP_CANCELLED_ERROR.to_string()),
         result = builder.send() => result
             .map_err(|_| "Private-network request failed".to_string())?,
     };
@@ -711,7 +773,7 @@ pub async fn private_http_request(
     loop {
         let chunk = tokio::select! {
             _ = &mut cancellation => {
-                return Err("Private-network request was cancelled".to_string());
+                return Err(PRIVATE_HTTP_CANCELLED_ERROR.to_string());
             }
             result = response.chunk() => result
                 .map_err(|_| "Unable to read the private-network response".to_string())?,
@@ -3917,6 +3979,29 @@ mod tests {
                 "expected URL to be rejected: {rejected}"
             );
         }
+    }
+
+    #[tokio::test]
+    async fn private_http_cancellation_is_preserved_when_abort_arrives_first() {
+        let request_id = "00000000-0000-4000-8000-000000000000".to_string();
+        assert!(!cancel_private_http_request(request_id.clone()).unwrap());
+
+        let result = private_http_request(PrivateHttpRequest {
+            request_id: request_id.clone(),
+            url: "http://127.0.0.1:1/never-started".to_string(),
+            method: "GET".to_string(),
+            headers: std::collections::HashMap::new(),
+            body: None,
+        })
+        .await;
+        match result {
+            Err(error) => assert_eq!(error, PRIVATE_HTTP_CANCELLED_ERROR),
+            Ok(_) => panic!("a pre-cancelled private request unexpectedly started"),
+        }
+        assert!(!PRIVATE_HTTP_CANCELLATIONS
+            .lock()
+            .unwrap()
+            .contains_key(&request_id));
     }
 
     #[tokio::test]

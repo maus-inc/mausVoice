@@ -56,6 +56,18 @@ describe("secureFetch", () => {
     await expect(response.json()).resolves.toEqual({ models: [] });
   });
 
+  it("does not start a native request for an already-aborted signal", async () => {
+    const controller = new AbortController();
+    controller.abort();
+
+    await expect(
+      secureFetch("http://127.0.0.1:11434/api/tags", {
+        signal: controller.signal,
+      }),
+    ).rejects.toMatchObject({ name: "AbortError" });
+    expect(invokeMock).not.toHaveBeenCalled();
+  });
+
   it("cancels the underlying Rust request when its signal aborts", async () => {
     let finishRequest!: (response: PrivateHttpResponseFixture) => void;
     const rustRequest = new Promise<PrivateHttpResponseFixture>((resolve) => {
