@@ -57,6 +57,7 @@ const installEarlyOverlay = (
           tagName: tag,
           style: { cssText: "" },
           textContent: "",
+          childNodes: [] as unknown[],
         };
         return new Proxy(el, {
           set(target, prop, value) {
