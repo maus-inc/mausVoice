@@ -5,7 +5,7 @@ sidebar:
   order: 10
 ---
 
-Application targets are local records keyed from the detected foreground application's name. A target can hold a writing style and, separately, text-insertion overrides. Dictating in an app normally registers or refreshes its record automatically; you can also focus an app and choose **Register current app** from the mausVoice tray/menu-bar menu.
+Application targets are local records keyed from the detected foreground application's name. A target can hold a writing style and, separately, text-insertion overrides. Dictating in an app normally registers or refreshes its record automatically; you can also focus an app and choose **Register current app** from the mausVoice tray/menu-bar menu. See [Register App](./register-app/) for the full registration flow, detection details, and troubleshooting.
 
 ## Based on app mode
 
