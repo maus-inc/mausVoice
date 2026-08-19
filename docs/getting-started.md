@@ -4,7 +4,7 @@
 
 ## Monorepo
 
-**pnpm 10.11.0** + Turborepo. Do not use npm for workspace scripts.
+**pnpm 10.34.5** + Turborepo. Do not use npm for workspace scripts.
 
 | Path | Description |
 | --- | --- |
@@ -26,7 +26,7 @@ See [desktop architecture](https://maus-inc.github.io/mausVoice/docs/development
 ## Prerequisites
 
 - Node from **`.nvmrc` (v24)**; `engines.node` is `>=20`
-- pnpm 10.11.0
+- pnpm 10.34.5
 - Rust + CMake
 - Tauri OS prerequisites. Windows: `powershell -ExecutionPolicy Bypass -File apps/desktop/scripts/setup-windows.ps1` (`-EnableGpu` for Vulkan). macOS: `./scripts/setup-macos.sh`
 

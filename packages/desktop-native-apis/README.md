@@ -61,7 +61,7 @@ pnpm gen:bindings
 ./scripts/bindings.sh
 ```
 
-Both delegate to `scripts/bindings.sh`, which runs the `gen_bindings` Rust binary at `apps/desktop/src-tauri/src/bin/gen_bindings.rs`. That binary walks every annotated command and emits `packages/desktop-native-apis/src/bindings.ts`. After regenerating, rebuild the package:
+Both delegate to `scripts/bindings.sh`, which runs the Cargo example at `apps/desktop/src-tauri/examples/gen_bindings.rs`. That example walks every annotated command and emits `packages/desktop-native-apis/src/bindings.ts`. After regenerating, rebuild the package:
 
 ```bash
 pnpm --filter @maus-inc/desktop-native-apis build

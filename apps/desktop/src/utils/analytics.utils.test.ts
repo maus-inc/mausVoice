@@ -71,6 +71,14 @@ describe("buildAnalyticsIdentity", () => {
     expect(identity.daysSinceOnboarded).toBe(0);
   });
 
+  it("defaults tenure to zero when onboardedAt is unparseable", () => {
+    const identity = buildAnalyticsIdentity(
+      sources({ localUser: { onboardedAt: "not-a-date" } }),
+    );
+
+    expect(identity.daysSinceOnboarded).toBe(0);
+  });
+
   it("measures tenure in whole days from the onboarding date", () => {
     const tenDaysAgo = new Date(
       Date.now() - 10 * 24 * 60 * 60 * 1000,

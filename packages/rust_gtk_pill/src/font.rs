@@ -38,7 +38,9 @@ pub fn install_embedded_satoshi() {
         if let Some(p) = prev {
             paths.push(p.to_string_lossy().into_owned());
         }
-        // SAFETY: single-threaded at startup before GTK font use.
+        // SAFETY: font setup runs on the GTK thread before workers start.
+        // `set_var` is unsafe since 1.87; older rustc still treats it as safe.
+        #[allow(unused_unsafe)]
         unsafe {
             std::env::set_var("FONTCONFIG_PATH", paths.join(":"));
         }

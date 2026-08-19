@@ -106,6 +106,10 @@ export class VoiceInstructionRecorder {
       }
     }
 
+    if (gen !== this.opGen || this.disposed) {
+      return;
+    }
+
     if (this.deps.speechRecognitionSupported) {
       this.startBrowser(gen);
       return;

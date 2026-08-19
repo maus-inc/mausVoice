@@ -187,9 +187,9 @@ export const importAudioFile = async ({
 
   await storeTranscription({
     audio: { samples: audio.samples, sampleRate: audio.sampleRate },
-    rawTranscript: transcribeResult.rawTranscript || null,
+    rawTranscript: transcribeResult.rawTranscript ?? null,
     sanitizedTranscript,
-    transcript: postProcessResult.transcript || null,
+    transcript: postProcessResult.transcript ?? null,
     transcriptionMetadata: transcribeResult.metadata,
     postProcessMetadata: postProcessResult.metadata,
     warnings: [...transcribeResult.warnings, ...postProcessResult.warnings],

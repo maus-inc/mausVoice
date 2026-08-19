@@ -763,14 +763,18 @@ pub fn run(receiver: Receiver<InMessage>) {
 /// position) only the monitor is reported and the rect is omitted.
 pub(crate) fn pill_geometry(window: &gtk::Window, state: &PillState) -> (Option<Rect>, Option<Rect>) {
     let (w, h) = window.size();
+    let scale = window
+        .window()
+        .map(|gdk_win| gdk_win.scale_factor() as f64)
+        .unwrap_or(1.0);
     let display = window.display();
     let monitor = window
         .window()
         .and_then(|gdk_win| display.monitor_at_window(&gdk_win))
         .or_else(|| {
             display.monitor_at_point(
-                (state.saved_x.get() + w as f64 / 2.0) as i32,
-                (state.saved_y.get() + h as f64 / 2.0) as i32,
+                (state.saved_x.get() + (w as f64 / 2.0) * scale) as i32,
+                (state.saved_y.get() + (h as f64 / 2.0) * scale) as i32,
             )
         })
         .or_else(|| display.primary_monitor())
@@ -788,8 +792,8 @@ pub(crate) fn pill_geometry(window: &gtk::Window, state: &PillState) -> (Option<
         Some(Rect {
             x: state.saved_x.get(),
             y: state.saved_y.get(),
-            width: w as f64,
-            height: h as f64,
+            width: w as f64 * scale,
+            height: h as f64 * scale,
         })
     } else {
         None
