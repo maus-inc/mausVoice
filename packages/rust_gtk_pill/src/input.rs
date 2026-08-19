@@ -77,7 +77,14 @@ pub(crate) fn is_on_pill_at(state: &PillState, x: f64, y: f64) -> bool {
     false
 }
 
-pub(crate) fn handle_click(state: &PillState, x: f64, y: f64) {
+pub(crate) /// A23: Dispatch haptic/audio feedback to the desktop process.
+fn send_haptic(kind: &str) {
+    ipc::send(&OutMessage::HapticFeedback {
+        kind: kind.to_string(),
+    });
+}
+
+fn handle_click(state: &PillState, x: f64, y: f64) {
     let (ox, oy) = state.content_offset();
     let x = x - ox;
     let y = y - oy;
@@ -94,9 +101,11 @@ pub(crate) fn handle_click(state: &PillState, x: f64, y: f64) {
                     }
                 }
                 ClickAction::StyleForward => {
+                    send_haptic("deep");
                     ipc::send(&OutMessage::StyleSwitch { direction: "forward".to_string() });
                 }
                 ClickAction::StyleBackward => {
+                    send_haptic("deep");
                     ipc::send(&OutMessage::StyleSwitch { direction: "backward".to_string() });
                 }
                 ClickAction::AssistantClose => {
@@ -112,6 +121,7 @@ pub(crate) fn handle_click(state: &PillState, x: f64, y: f64) {
                     ipc::send(&OutMessage::EnableTypeMode);
                 }
                 ClickAction::CancelDictation => {
+                    send_haptic("deep");
                     ipc::send(&OutMessage::CancelDictation);
                 }
                 ClickAction::PauseDictation => {

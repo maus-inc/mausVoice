@@ -361,6 +361,17 @@ fn start_stdout_reader(app: tauri::AppHandle, reader: std::io::BufReader<ChildSt
                                 let _ = app.emit_to("main", "toast-action", payload);
                             }
                         }
+                    } else if line.contains("\"haptic_feedback\"") {
+                        // A23: Thock haptics - play audio feedback for pill gestures.
+                        if let Ok(val) =
+                            serde_json::from_str::<serde_json::Value>(&line)
+                        {
+                            if let Some(kind) =
+                                val.get("kind").and_then(|v| v.as_str())
+                            {
+                                crate::system::audio_feedback::play_thock(kind);
+                            }
+                        }
                     } else if line.contains("\"position_changed\"") {
                         if let Ok(val) = serde_json::from_str::<serde_json::Value>(&line) {
                             let has_saved = val

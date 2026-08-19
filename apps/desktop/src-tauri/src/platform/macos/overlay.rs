@@ -185,6 +185,9 @@ fn start_out_reader(app: tauri::AppHandle, rx: mpsc::Receiver<OutMessage>) {
                     let payload = serde_json::json!({ "action": action });
                     let _ = app.emit_to("main", "toast-action", payload);
                 }
+                OutMessage::HapticFeedback { kind } => {
+                    crate::system::audio_feedback::play_thock(&kind);
+                }
                 OutMessage::Hover { .. } => {}
                 OutMessage::PositionChanged { has_saved_position, rect, monitor } => {
                     let rect_json = rect.map(|r| {

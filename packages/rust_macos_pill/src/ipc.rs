@@ -159,6 +159,9 @@ pub enum OutMessage {
         rect: Option<Rect>,
         monitor: Option<Rect>,
     },
+    /// Haptic/audio feedback request for the desktop process.
+    /// `kind` values: "press", "deep", "release".
+    HapticFeedback { kind: String },
 }
 
 pub fn send(msg: &OutMessage) {

@@ -14,6 +14,21 @@ static STOP_RECORDING_CLIP: &[u8] = include_bytes!(concat!(
     "/assets/audio/stop-recording.wav"
 ));
 
+static THOCK_PRESS_CLIP: &[u8] = include_bytes!(concat!(
+    env!("CARGO_MANIFEST_DIR"),
+    "/assets/audio/thock-press.wav"
+));
+
+static THOCK_DEEP_CLIP: &[u8] = include_bytes!(concat!(
+    env!("CARGO_MANIFEST_DIR"),
+    "/assets/audio/thock-deep.wav"
+));
+
+static THOCK_RELEASE_CLIP: &[u8] = include_bytes!(concat!(
+    env!("CARGO_MANIFEST_DIR"),
+    "/assets/audio/thock-release.wav"
+));
+
 static ALERT_MACOS_CLIP: &[u8] = include_bytes!(concat!(
     env!("CARGO_MANIFEST_DIR"),
     "/assets/audio/alert-macos.wav"
@@ -109,6 +124,33 @@ pub fn play_alert_windows_10_clip() {
 
 pub fn play_alert_windows_11_clip() {
     play_clip(ALERT_WINDOWS_11_CLIP);
+}
+
+/// Thock haptic feedback (short low-frequency pulses for pill interactions).
+pub fn play_thock_press() {
+    play_clip(THOCK_PRESS_CLIP);
+}
+
+pub fn play_thock_deep() {
+    play_clip(THOCK_DEEP_CLIP);
+}
+
+pub fn play_thock_release() {
+    play_clip(THOCK_RELEASE_CLIP);
+}
+
+/// Play a thock clip by kind string ("press", "deep", "release").
+/// Returns true if the kind was recognised.
+pub fn play_thock(kind: &str) -> bool {
+    match kind {
+        "press" => { play_thock_press(); true }
+        "deep" => { play_thock_deep(); true }
+        "release" => { play_thock_release(); true }
+        _ => {
+            log::warn!("Unknown thock kind: {kind}");
+            false
+        }
+    }
 }
 
 fn play_clip(bytes: &'static [u8]) {

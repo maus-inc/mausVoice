@@ -48,8 +48,7 @@ export const StyleHotkeysDialog = () => {
         .sort((a, b) => a.sortOrder - b.sortOrder),
     [toneById],
   );
-const hotkeyById = useAppStore((state) => state.hotkeyById);
-  const postProcessingEnabled = useAppStore(isPostProcessingEnabled);
+const postProcessingEnabled = useAppStore(isPostProcessingEnabled);
   const intl = useIntl();
   const [rows, setRows] = useState<StyleHotkeyRow[]>([]);
   const [isSaving, setIsSaving] = useState(false);
