@@ -1,4 +1,5 @@
 import {
+  ASSEMBLYAI_TRANSCRIPTION_MODELS,
   AZURE_OPENAI_MODELS,
   CEREBRAS_MODELS,
   CLAUDE_MODELS,
@@ -454,7 +455,7 @@ export class AssemblyAIModelProviderRepo extends BaseModelProviderRepo {
   }
 
   async getTranscriptionModels(): Promise<string[]> {
-    return [];
+    return [...ASSEMBLYAI_TRANSCRIPTION_MODELS];
   }
 }
 

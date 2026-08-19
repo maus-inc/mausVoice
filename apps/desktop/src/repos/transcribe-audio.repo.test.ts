@@ -488,7 +488,7 @@ describe("AssemblyAITranscribeAudioRepo", () => {
       },
     );
 
-    const repo = new AssemblyAITranscribeAudioRepo("aa-key");
+    const repo = new AssemblyAITranscribeAudioRepo("aa-key", null);
     const result = await repo.transcribeAudio({
       samples: createSamples(1, 16000),
       sampleRate: 16000,
@@ -498,6 +498,107 @@ describe("AssemblyAITranscribeAudioRepo", () => {
     expect(result.text).toBe("hello from assemblyai");
     expect(result.metadata).toMatchObject({
       inferenceDevice: "API • AssemblyAI",
+      transcriptionMode: "api",
+    });
+  });
+
+  it("passes the configured speech model through and reports it in metadata", async () => {
+    let createBody: Record<string, unknown> | null = null;
+    vi.spyOn(globalThis, "fetch").mockImplementation(
+      async (input: string | URL | Request, init?: RequestInit) => {
+        const url = String(input);
+        const method = init?.method ?? "GET";
+
+        if (url.endsWith("/v2/upload")) {
+          return new Response(
+            JSON.stringify({
+              upload_url: "https://cdn.assemblyai.com/upload/abc123",
+            }),
+            { status: 200 },
+          );
+        }
+
+        if (url.endsWith("/v2/transcript") && method === "POST") {
+          createBody = JSON.parse(String(init?.body)) as Record<
+            string,
+            unknown
+          >;
+          return new Response(
+            JSON.stringify({ id: "transcript-1", status: "queued" }),
+            { status: 200 },
+          );
+        }
+
+        return new Response(
+          JSON.stringify({
+            id: "transcript-1",
+            status: "completed",
+            text: "model aware transcript",
+          }),
+          { status: 200 },
+        );
+      },
+    );
+
+    const repo = new AssemblyAITranscribeAudioRepo("aa-key", "universal-2");
+    const result = await repo.transcribeAudio({
+      samples: createSamples(1, 16000),
+      sampleRate: 16000,
+    });
+
+    expect(createBody).toMatchObject({
+      speech_models: ["universal-2"],
+      language_detection: true,
+    });
+    expect(result.metadata).toMatchObject({
+      inferenceDevice: "API • AssemblyAI",
+      modelSize: "universal-2",
+      transcriptionMode: "api",
+    });
+  });
+
+  it("reports the migrated successor of a legacy model in metadata", async () => {
+    vi.spyOn(globalThis, "fetch").mockImplementation(
+      async (input: string | URL | Request, init?: RequestInit) => {
+        const url = String(input);
+        const method = init?.method ?? "GET";
+
+        if (url.endsWith("/v2/upload")) {
+          return new Response(
+            JSON.stringify({
+              upload_url: "https://cdn.assemblyai.com/upload/abc123",
+            }),
+            { status: 200 },
+          );
+        }
+
+        if (url.endsWith("/v2/transcript") && method === "POST") {
+          return new Response(
+            JSON.stringify({ id: "transcript-1", status: "queued" }),
+            { status: 200 },
+          );
+        }
+
+        return new Response(
+          JSON.stringify({
+            id: "transcript-1",
+            status: "completed",
+            text: "legacy migrated",
+          }),
+          { status: 200 },
+        );
+      },
+    );
+
+    const repo = new AssemblyAITranscribeAudioRepo("aa-key", "best");
+    const result = await repo.transcribeAudio({
+      samples: createSamples(1, 16000),
+      sampleRate: 16000,
+    });
+
+    expect(result.metadata).toMatchObject({
+      inferenceDevice: "API • AssemblyAI",
+      modelSize: "universal-3-5-pro",
       transcriptionMode: "api",
     });
   });

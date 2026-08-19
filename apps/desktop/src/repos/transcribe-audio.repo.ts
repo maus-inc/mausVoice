@@ -9,6 +9,7 @@ import {
   geminiTranscribeAudio,
   GeminiTranscriptionModel,
   groqTranscribeAudio,
+  normalizeAssemblyAISpeechModel,
   openaiTranscribeAudio,
   OpenAITranscriptionModel,
   TranscriptionModel,
@@ -400,10 +401,12 @@ export class AldeaTranscribeAudioRepo extends BaseTranscribeAudioRepo {
 
 export class AssemblyAITranscribeAudioRepo extends BaseTranscribeAudioRepo {
   private readonly apiKey: string;
+  private readonly model: string | null;
 
-  constructor(apiKey: string) {
+  constructor(apiKey: string, model: string | null) {
     super();
     this.apiKey = apiKey;
+    this.model = model;
   }
 
   // AssemblyAI batch transcripts accept far longer audio, but 60s keeps the
@@ -429,6 +432,7 @@ export class AssemblyAITranscribeAudioRepo extends BaseTranscribeAudioRepo {
 
     const { text: transcript } = await assemblyaiTranscribeAudio({
       apiKey: this.apiKey,
+      model: this.model,
       blob: wavBuffer,
       language: input.language,
     });
@@ -437,7 +441,7 @@ export class AssemblyAITranscribeAudioRepo extends BaseTranscribeAudioRepo {
       text: transcript,
       metadata: {
         inferenceDevice: "API • AssemblyAI",
-        modelSize: null,
+        modelSize: normalizeAssemblyAISpeechModel(this.model) ?? null,
         transcriptionMode: "api",
       },
     };
