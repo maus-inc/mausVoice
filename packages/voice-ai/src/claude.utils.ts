@@ -23,28 +23,12 @@ import type { CustomFetch } from "./types";
 type MessageStream = ReturnType<Anthropic["messages"]["stream"]>;
 
 export const CLAUDE_MODELS = [
-  "claude-opus-4-5-20251101",
-  "claude-opus-4-5",
-  "claude-3-7-sonnet-latest",
-  "claude-3-7-sonnet-20250219",
-  "claude-3-5-haiku-latest",
-  "claude-3-5-haiku-20241022",
+  "claude-sonnet-5",
   "claude-haiku-4-5",
-  "claude-haiku-4-5-20251001",
-  "claude-sonnet-4-20250514",
-  "claude-sonnet-4-0",
-  "claude-4-sonnet-20250514",
-  "claude-sonnet-4-5",
-  "claude-sonnet-4-5-20250929",
-  "claude-opus-4-0",
-  "claude-opus-4-20250514",
-  "claude-4-opus-20250514",
-  "claude-opus-4-1-20250805",
-  "claude-3-opus-latest",
-  "claude-3-opus-20240229",
-  "claude-3-haiku-20240307",
+  "claude-opus-5",
+  "claude-fable-5",
 ] as const;
-export type ClaudeModel = (typeof CLAUDE_MODELS)[number];
+export type ClaudeModel = string;
 
 const createClient = (apiKey: string, customFetch?: CustomFetch) => {
   return new Anthropic({
@@ -70,7 +54,7 @@ export type ClaudeGenerateResponseOutput = {
 
 export const claudeGenerateTextResponse = async ({
   apiKey,
-  model = "claude-sonnet-4-20250514",
+  model = "claude-sonnet-5",
   system,
   prompt,
   jsonResponse,

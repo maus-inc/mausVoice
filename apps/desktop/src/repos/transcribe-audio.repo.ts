@@ -15,7 +15,6 @@ import {
   OpenAITranscriptionModel,
   TranscriptionModel,
   xaiTranscribeAudio,
-  XaiTranscriptionModel,
 } from "@maus-inc/voice-ai";
 import { getAppState } from "../store";
 import { DEFAULT_MODEL_SIZE, TranscriptionMode } from "../types/ai.types";
@@ -317,7 +316,7 @@ export class OpenAITranscribeAudioRepo extends BaseTranscribeAudioRepo {
   constructor(apiKey: string, model: string | null) {
     super();
     this.openaiApiKey = apiKey;
-    this.model = (model as OpenAITranscriptionModel) ?? "whisper-1";
+    this.model = model ?? "gpt-transcribe";
   }
 
   // OpenAI has 25MB limit, 60s segments are well within that
@@ -411,10 +410,12 @@ export class AldeaTranscribeAudioRepo extends BaseTranscribeAudioRepo {
 
 export class AssemblyAITranscribeAudioRepo extends BaseTranscribeAudioRepo {
   private readonly apiKey: string;
+  private readonly customFetch: typeof secureFetch;
 
-  constructor(apiKey: string) {
+  constructor(apiKey: string, customFetch: typeof secureFetch = secureFetch) {
     super();
     this.apiKey = apiKey;
+    this.customFetch = customFetch;
   }
 
   // AssemblyAI batch transcripts accept far longer audio, but 60s keeps the
@@ -442,6 +443,7 @@ export class AssemblyAITranscribeAudioRepo extends BaseTranscribeAudioRepo {
       apiKey: this.apiKey,
       blob: wavBuffer,
       language: input.language,
+      customFetch: this.customFetch,
     });
 
     return {
@@ -485,6 +487,7 @@ export class ElevenLabsTranscribeAudioRepo extends BaseTranscribeAudioRepo {
       blob: wavBuffer,
       ext: "wav",
       language: input.language,
+      customFetch: secureFetch,
     });
 
     return {
@@ -501,11 +504,17 @@ export class ElevenLabsTranscribeAudioRepo extends BaseTranscribeAudioRepo {
 export class DeepgramTranscribeAudioRepo extends BaseTranscribeAudioRepo {
   private apiKey: string;
   private model: string;
+  private customFetch: typeof secureFetch;
 
-  constructor(apiKey: string, model: string | null) {
+  constructor(
+    apiKey: string,
+    model: string | null,
+    customFetch: typeof secureFetch = secureFetch,
+  ) {
     super();
     this.apiKey = apiKey;
     this.model = model ?? "nova-3";
+    this.customFetch = customFetch;
   }
 
   protected getSegmentDurationSec(): number {
@@ -531,6 +540,7 @@ export class DeepgramTranscribeAudioRepo extends BaseTranscribeAudioRepo {
       blob: wavBuffer,
       ext: "wav",
       language: input.language,
+      customFetch: this.customFetch,
     });
 
     return {
@@ -598,12 +608,10 @@ export class GladiaTranscribeAudioRepo extends BaseTranscribeAudioRepo {
 
 export class XaiTranscribeAudioRepo extends BaseTranscribeAudioRepo {
   private apiKey: string;
-  private model: XaiTranscriptionModel;
 
-  constructor(apiKey: string, model: string | null) {
+  constructor(apiKey: string) {
     super();
     this.apiKey = apiKey;
-    this.model = (model as XaiTranscriptionModel) ?? "grok-stt";
   }
 
   protected getSegmentDurationSec(): number {
@@ -625,17 +633,17 @@ export class XaiTranscribeAudioRepo extends BaseTranscribeAudioRepo {
 
     const { text: transcript } = await xaiTranscribeAudio({
       apiKey: this.apiKey,
-      model: this.model,
       blob: wavBuffer,
       ext: "wav",
       language: input.language,
+      customFetch: secureFetch,
     });
 
     return {
       text: transcript,
       metadata: {
         inferenceDevice: "API • Grok",
-        modelSize: this.model,
+        modelSize: "xAI Speech to Text",
         transcriptionMode: "api",
       },
     };
@@ -697,7 +705,7 @@ export class GeminiTranscribeAudioRepo extends BaseTranscribeAudioRepo {
   constructor(apiKey: string, model: string | null) {
     super();
     this.geminiApiKey = apiKey;
-    this.model = (model as GeminiTranscriptionModel) ?? "gemini-2.5-flash";
+    this.model = model ?? "gemini-3.7-flash";
   }
 
   protected getSegmentDurationSec(): number {

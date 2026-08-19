@@ -466,10 +466,7 @@ export const getTranscribeAudioRepo = (): TranscribeAudioRepoOutput => {
         );
         break;
       case "xai":
-        repo = new XaiTranscribeAudioRepo(
-          prefs.apiKeyValue,
-          prefs.transcriptionModel,
-        );
+        repo = new XaiTranscribeAudioRepo(prefs.apiKeyValue);
         break;
       case "groq":
         repo = new GroqTranscribeAudioRepo(

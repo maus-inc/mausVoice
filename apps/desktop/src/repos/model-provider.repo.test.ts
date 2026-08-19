@@ -9,8 +9,11 @@ vi.mock("@tauri-apps/api/core", () => ({ invoke: invokeMock }));
 vi.mock("@tauri-apps/plugin-http", () => ({ fetch: pluginFetchMock }));
 
 import {
+  GeminiModelProviderRepo,
   GroqModelProviderRepo,
   OpenAICompatibleModelProviderRepo,
+  OpenAIModelProviderRepo,
+  XaiModelProviderRepo,
 } from "./model-provider.repo";
 
 describe("provider model discovery", () => {
@@ -48,6 +51,70 @@ describe("provider model discovery", () => {
         headers: { Authorization: "Bearer gsk_test" },
       }),
     );
+  });
+
+  it("accepts current Gemini text models while excluding specialized catalogs", async () => {
+    pluginFetchMock.mockImplementation(() =>
+      Promise.resolve(
+        new Response(
+          JSON.stringify({
+            models: [
+              {
+                name: "models/gemini-future-flash",
+                supportedGenerationMethods: ["generateContent"],
+              },
+              {
+                name: "models/gemini-future-flash-image",
+                supportedGenerationMethods: ["generateContent"],
+              },
+              {
+                name: "models/gemini-embedding-future",
+                supportedGenerationMethods: ["embedContent"],
+              },
+            ],
+          }),
+        ),
+      ),
+    );
+    const repo = new GeminiModelProviderRepo();
+
+    await expect(
+      repo.getGenerativeTextModels({ apiKey: "gemini-key" }),
+    ).resolves.toEqual(["gemini-future-flash"]);
+    await expect(
+      repo.getTranscriptionModels({ apiKey: "gemini-key" }),
+    ).resolves.toEqual(["gemini-future-flash"]);
+  });
+
+  it("separates OpenAI chat and file-transcription models", async () => {
+    pluginFetchMock.mockImplementation(() =>
+      Promise.resolve(
+        new Response(
+          JSON.stringify({
+            data: [
+              { id: "gpt-5.7-luna" },
+              { id: "gpt-image-2" },
+              { id: "gpt-live-transcribe" },
+              { id: "gpt-transcribe" },
+            ],
+          }),
+        ),
+      ),
+    );
+    const repo = new OpenAIModelProviderRepo();
+
+    await expect(
+      repo.getGenerativeTextModels({ apiKey: "openai-key" }),
+    ).resolves.toEqual(["gpt-5.7-luna"]);
+    await expect(
+      repo.getTranscriptionModels({ apiKey: "openai-key" }),
+    ).resolves.toEqual(["gpt-transcribe"]);
+  });
+
+  it("does not show a fake model selector for xAI's dedicated STT route", async () => {
+    await expect(
+      new XaiModelProviderRepo().getTranscriptionModels(),
+    ).resolves.toEqual([]);
   });
 
   it("fetches a saved custom catalog while preserving its path prefix", async () => {

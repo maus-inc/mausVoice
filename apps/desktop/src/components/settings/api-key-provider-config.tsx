@@ -109,16 +109,28 @@ const STANDARD_PROVIDERS: Record<
       openrouterTestIntegration({ apiKey, customFetch: secureFetch }),
   },
   aldea: { displayName: "Aldea", testFn: aldeaTestIntegration },
-  assemblyai: { displayName: "AssemblyAI", testFn: assemblyaiTestIntegration },
+  assemblyai: {
+    displayName: "AssemblyAI",
+    testFn: ({ apiKey }) =>
+      assemblyaiTestIntegration({ apiKey, customFetch: secureFetch }),
+  },
   deepgram: { displayName: "Deepgram", testFn: deepgramTestIntegration },
   gladia: { displayName: "Gladia", testFn: gladiaTestIntegration },
-  elevenlabs: { displayName: "ElevenLabs", testFn: elevenlabsTestIntegration },
+  elevenlabs: {
+    displayName: "ElevenLabs",
+    testFn: ({ apiKey }) =>
+      elevenlabsTestIntegration({ apiKey, customFetch: secureFetch }),
+  },
   deepseek: {
     displayName: "DeepSeek",
     testFn: ({ apiKey }) =>
       deepseekTestIntegration({ apiKey, customFetch: secureFetch }),
   },
-  gemini: { displayName: "Gemini", testFn: geminiTestIntegration },
+  gemini: {
+    displayName: "Gemini",
+    testFn: ({ apiKey }) =>
+      geminiTestIntegration({ apiKey, customFetch: secureFetch }),
+  },
   claude: {
     displayName: "Claude",
     testFn: ({ apiKey }) =>
@@ -129,7 +141,11 @@ const STANDARD_PROVIDERS: Record<
     testFn: ({ apiKey }) =>
       cerebrasTestIntegration({ apiKey, customFetch: secureFetch }),
   },
-  xai: { displayName: "xAI Grok", testFn: xaiTestIntegration },
+  xai: {
+    displayName: "xAI Grok",
+    testFn: ({ apiKey }) =>
+      xaiTestIntegration({ apiKey, customFetch: secureFetch }),
+  },
 };
 
 function buildStandardConfig(provider: string): ProviderFormConfig {

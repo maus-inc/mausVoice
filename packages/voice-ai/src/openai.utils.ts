@@ -24,24 +24,21 @@ import type {
 } from "openai/resources/chat/completions";
 
 export const OPENAI_GENERATE_TEXT_MODELS = [
-  "gpt-4o",
   "gpt-4o-mini",
-  "gpt-4-turbo",
-  "gpt-3.5-turbo",
-  "gpt-5.2",
-  "gpt-5.3",
-  "gpt-5.4",
+  "gpt-5.6-luna",
+  "gpt-5.6-terra",
+  "gpt-5.6-sol",
+  "gpt-5-mini",
 ] as const;
-export type OpenAIGenerateTextModel =
-  (typeof OPENAI_GENERATE_TEXT_MODELS)[number];
+export type OpenAIGenerateTextModel = string;
 
 export const OPENAI_TRANSCRIPTION_MODELS = [
-  "whisper-1",
+  "gpt-transcribe",
   "gpt-4o-transcribe",
   "gpt-4o-mini-transcribe",
+  "whisper-1",
 ] as const;
-export type OpenAITranscriptionModel =
-  (typeof OPENAI_TRANSCRIPTION_MODELS)[number];
+export type OpenAITranscriptionModel = string;
 
 const createClient = (
   apiKey: string,
@@ -98,7 +95,7 @@ export type OpenAITranscribeAudioOutput = TranscribeAudioOutput;
 
 export const openaiTranscribeAudio = async ({
   apiKey,
-  model = "whisper-1",
+  model = "gpt-transcribe",
   blob,
   ext,
   prompt,

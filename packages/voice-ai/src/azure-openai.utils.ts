@@ -107,11 +107,7 @@ export const azureOpenAITestIntegration = async ({
   customFetch,
 }: AzureOpenAITestIntegrationArgs): Promise<boolean> => {
   const client = createClient(apiKey, endpoint, customFetch);
-  await client.chat.completions.create({
-    messages: [{ role: "user", content: "test" }],
-    model: "gpt-4o-mini",
-    max_completion_tokens: 5,
-  });
+  await client.models.list();
   return true;
 };
 
