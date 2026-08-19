@@ -172,10 +172,13 @@ fn start_out_reader(app: tauri::AppHandle, rx: mpsc::Receiver<OutMessage>) {
                     let _ = app.emit_to("main", "overlay-resolve-permission", payload);
                 }
                 OutMessage::StyleSwitch { direction } => {
-                    if direction == "forward" {
-                        let _ = app.emit_to("main", "tone-switch-forward", ());
-                    } else if direction == "backward" {
-                        let _ = app.emit_to("main", "tone-switch-backward", ());
+                    match crate::pill_process::PillStyleSwitchDirection::parse(&direction) {
+                        Some(direction) => {
+                            crate::pill_process::emit_pill_style_switch(&app, direction);
+                        }
+                        None => {
+                            log::warn!("Ignoring unknown pill style-switch direction: {direction}");
+                        }
                     }
                 }
                 OutMessage::ToastAction { action } => {
