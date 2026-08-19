@@ -14,7 +14,7 @@ import { getMyUserName } from "./user.utils";
 
 const sanitizeGlossaryValue = (value: string): string =>
   // oxlint-disable-next-line no-control-regex
-  value.replace(/\0/g, "").replace(/\s+/g, " ").trim();
+  value.replaceAll("\0", "").replace(/\s+/g, " ").trim();
 
 export const collectDictionaryEntries = (
   state: AppState,
@@ -82,7 +82,7 @@ function applyTemplateVars(
 ): string {
   let result = template;
   for (const [name, value] of vars) {
-    result = result.replace(new RegExp(`<${name}\\/>`, "g"), value);
+    result = result.replace(new RegExp(String.raw`<${name}\/>`, "g"), value);
   }
   return result;
 }

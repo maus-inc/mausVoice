@@ -26,9 +26,19 @@ export const unwrapNestedLlmResponse = <T extends Record<string, unknown>>(
 
 export const extractJsonFromMarkdown = (text: string): string => {
   // Try to extract JSON from markdown code blocks
-  const jsonBlockMatch = text.match(/```(?:json)?\s*\n?([\s\S]*?)\n?```/);
-  if (jsonBlockMatch) {
-    return jsonBlockMatch[1].trim();
+  const fenceStart = text.indexOf("```");
+  if (fenceStart !== -1) {
+    let bodyStart = fenceStart + 3;
+    if (text.startsWith("json", bodyStart)) {
+      bodyStart += 4;
+    }
+    while (bodyStart < text.length && /\s/.test(text[bodyStart]!)) {
+      bodyStart += 1;
+    }
+    const fenceEnd = text.indexOf("```", bodyStart);
+    if (fenceEnd !== -1) {
+      return text.slice(bodyStart, fenceEnd).trim();
+    }
   }
 
   // Try to extract JSON from inline code blocks (only if content looks like JSON)
@@ -127,14 +137,17 @@ export function formatMessagesAsPrompt(messages: LlmMessage[]): {
 
   if (nonSystemMessages.length <= 1) {
     const lastMsg = nonSystemMessages[0];
+    let prompt: string;
+    if (lastMsg?.role === "user") {
+      prompt = lastMsg.content;
+    } else if (lastMsg?.role === "assistant") {
+      prompt = lastMsg.content ?? "";
+    } else {
+      prompt = "";
+    }
     return {
       system: systemMsg?.content,
-      prompt:
-        lastMsg?.role === "user"
-          ? lastMsg.content
-          : lastMsg?.role === "assistant"
-            ? (lastMsg.content ?? "")
-            : "",
+      prompt,
     };
   }
 

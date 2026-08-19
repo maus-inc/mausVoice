@@ -1,4 +1,5 @@
 import { countWords, retry } from "@maus-inc/utilities";
+import { createAudioFormData } from "./shared.utils";
 
 const XAI_BASE_URL = "https://api.x.ai/v1";
 
@@ -56,11 +57,7 @@ export const xaiTranscribeAudio = async ({
   return retry({
     retries: 3,
     fn: async () => {
-      const formData = new FormData();
-      const bodyData =
-        blob instanceof ArrayBuffer ? blob : (blob.buffer as ArrayBuffer);
-      const audioBlob = new Blob([bodyData], { type: `audio/${ext}` });
-      formData.append("file", audioBlob, `audio.${ext}`);
+      const formData = createAudioFormData(blob, ext);
       formData.append("model", model);
       formData.append("format", "json");
       if (language && language !== "auto") {

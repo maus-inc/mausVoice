@@ -130,6 +130,55 @@ const ModelRow = ({
   );
 };
 
+type ModelListItemActions = {
+  selectedModelId: string | null;
+  onSelect: (id: string) => void;
+  onToggleFavorite: (id: string) => void;
+};
+
+const renderModelListItem = (
+  item: ListItem,
+  actions: ModelListItemActions,
+): React.ReactNode => {
+  if (item.type === "header") {
+    return (
+      <Box sx={{ px: 1.5, pt: 1.5, pb: 0.5 }}>
+        <Typography
+          variant="caption"
+          sx={{
+            color: "text.secondary",
+            fontWeight: 600,
+          }}
+        >
+          {item.label}
+          <Typography
+            component="span"
+            variant="caption"
+            sx={{
+              color: "text.secondary",
+              ml: 0.5,
+            }}
+          >
+            ({item.count})
+          </Typography>
+        </Typography>
+      </Box>
+    );
+  }
+  if (item.type === "divider") {
+    return <Divider sx={{ my: 1 }} />;
+  }
+  return (
+    <ModelRow
+      model={item.model}
+      selected={actions.selectedModelId === item.model.id}
+      isFavorite={item.isFavorite}
+      onSelect={() => actions.onSelect(item.model.id)}
+      onToggleFavorite={() => actions.onToggleFavorite(item.model.id)}
+    />
+  );
+};
+
 export const OpenRouterModelPicker = ({
   apiKeyId,
   selectedModel,
@@ -373,45 +422,13 @@ export const OpenRouterModelPicker = ({
             <Virtuoso
               style={{ height: "100%" }}
               data={listItems}
-              itemContent={(_index, item) => {
-                if (item.type === "header") {
-                  return (
-                    <Box sx={{ px: 1.5, pt: 1.5, pb: 0.5 }}>
-                      <Typography
-                        variant="caption"
-                        sx={{
-                          color: "text.secondary",
-                          fontWeight: 600,
-                        }}
-                      >
-                        {item.label}
-                        <Typography
-                          component="span"
-                          variant="caption"
-                          sx={{
-                            color: "text.secondary",
-                            ml: 0.5,
-                          }}
-                        >
-                          ({item.count})
-                        </Typography>
-                      </Typography>
-                    </Box>
-                  );
-                }
-                if (item.type === "divider") {
-                  return <Divider sx={{ my: 1 }} />;
-                }
-                return (
-                  <ModelRow
-                    model={item.model}
-                    selected={selectedModel === item.model.id}
-                    isFavorite={item.isFavorite}
-                    onSelect={() => handleModelSelect(item.model.id)}
-                    onToggleFavorite={() => handleToggleFavorite(item.model.id)}
-                  />
-                );
-              }}
+              itemContent={(_index, item) =>
+                renderModelListItem(item, {
+                  selectedModelId: selectedModel,
+                  onSelect: handleModelSelect,
+                  onToggleFavorite: handleToggleFavorite,
+                })
+              }
             />
           ) : (
             <Box sx={{ px: 1.5, py: 2 }}>

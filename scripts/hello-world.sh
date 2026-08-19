@@ -12,6 +12,7 @@ for term in foot alacritty kitty wezterm gnome-terminal konsole xterm; do
       gnome-terminal) exec gnome-terminal -- bash -c 'echo "Hello, World!"; read -rp "Press Enter to close..."' ;;
       konsole)        exec konsole -e bash -c 'echo "Hello, World!"; read -rp "Press Enter to close..."' ;;
       xterm)          exec xterm -e bash -c 'echo "Hello, World!"; read -rp "Press Enter to close..."' ;;
+      *)              echo "Unsupported terminal: $term" >&2 ;;
     esac
   fi
 done

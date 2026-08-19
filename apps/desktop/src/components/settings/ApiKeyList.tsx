@@ -740,8 +740,7 @@ const ApiKeyCard = ({
   );
 };
 
-const generateApiKeyId = () =>
-  `${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
+const generateApiKeyId = () => `${Date.now()}-${crypto.randomUUID()}`;
 
 export const ApiKeyList = ({
   selectedApiKeyId,
@@ -1025,69 +1024,81 @@ export const ApiKeyList = ({
     !shouldShowLoading &&
     !shouldShowError;
 
+  let listContent: React.ReactNode;
+  if (shouldShowLoading) {
+    listContent = loadingState;
+  } else if (shouldShowError) {
+    listContent = errorState;
+  } else if (shouldShowEmpty) {
+    listContent = emptyState;
+  } else {
+    listContent = (
+      <Stack
+        spacing={1.5}
+        sx={{
+          alignItems: "stretch",
+          width: "100%",
+        }}
+      >
+        {apiKeys.map((apiKey) =>
+          editingApiKeyId === apiKey.id ? (
+            <EditApiKeyCard
+              key={apiKey.id}
+              apiKey={apiKey}
+              onSave={(payload) => handleEditApiKey(apiKey.id, payload)}
+              onCancel={() => setEditingApiKeyId(null)}
+              onTest={(overrides) => handleTestEditingApiKey(apiKey, overrides)}
+              testing={testingApiKeyId === apiKey.id}
+              context={context}
+            />
+          ) : (
+            <ApiKeyCard
+              key={apiKey.id}
+              apiKey={apiKey}
+              selected={selectedApiKeyId === apiKey.id}
+              onSelect={() => onChange(apiKey.id)}
+              onTest={() => handleTestApiKey(apiKey)}
+              onEdit={() => setEditingApiKeyId(apiKey.id)}
+              testing={testingApiKeyId === apiKey.id}
+              onDelete={() => handleRequestDelete(apiKey)}
+              deleting={deletingApiKeyId === apiKey.id}
+              onModelChange={(model) => handleModelChange(apiKey.id, model)}
+              context={context}
+            />
+          ),
+        )}
+      </Stack>
+    );
+  }
+
+  let addKeySection: React.ReactNode;
+  if (showAddCard) {
+    addKeySection = (
+      <AddApiKeyCard
+        onSave={handleAddApiKey}
+        onCancel={() => setShowAddCard(false)}
+        context={context}
+      />
+    );
+  } else if (apiKeys.length > 0 || shouldShowError) {
+    addKeySection = (
+      <Button
+        variant="outlined"
+        startIcon={<AddIcon />}
+        onClick={() => setShowAddCard(true)}
+        sx={{ alignSelf: "flex-start" }}
+      >
+        <FormattedMessage defaultMessage="Add another key" />
+      </Button>
+    );
+  } else {
+    addKeySection = null;
+  }
+
   return (
     <Stack spacing={1} sx={{ width: "100%" }}>
-      {shouldShowLoading ? (
-        loadingState
-      ) : shouldShowError ? (
-        errorState
-      ) : shouldShowEmpty ? (
-        emptyState
-      ) : (
-        <Stack
-          spacing={1.5}
-          sx={{
-            alignItems: "stretch",
-            width: "100%",
-          }}
-        >
-          {apiKeys.map((apiKey) =>
-            editingApiKeyId === apiKey.id ? (
-              <EditApiKeyCard
-                key={apiKey.id}
-                apiKey={apiKey}
-                onSave={(payload) => handleEditApiKey(apiKey.id, payload)}
-                onCancel={() => setEditingApiKeyId(null)}
-                onTest={(overrides) =>
-                  handleTestEditingApiKey(apiKey, overrides)
-                }
-                testing={testingApiKeyId === apiKey.id}
-                context={context}
-              />
-            ) : (
-              <ApiKeyCard
-                key={apiKey.id}
-                apiKey={apiKey}
-                selected={selectedApiKeyId === apiKey.id}
-                onSelect={() => onChange(apiKey.id)}
-                onTest={() => handleTestApiKey(apiKey)}
-                onEdit={() => setEditingApiKeyId(apiKey.id)}
-                testing={testingApiKeyId === apiKey.id}
-                onDelete={() => handleRequestDelete(apiKey)}
-                deleting={deletingApiKeyId === apiKey.id}
-                onModelChange={(model) => handleModelChange(apiKey.id, model)}
-                context={context}
-              />
-            ),
-          )}
-        </Stack>
-      )}
-      {showAddCard ? (
-        <AddApiKeyCard
-          onSave={handleAddApiKey}
-          onCancel={() => setShowAddCard(false)}
-          context={context}
-        />
-      ) : apiKeys.length > 0 || shouldShowError ? (
-        <Button
-          variant="outlined"
-          startIcon={<AddIcon />}
-          onClick={() => setShowAddCard(true)}
-          sx={{ alignSelf: "flex-start" }}
-        >
-          <FormattedMessage defaultMessage="Add another key" />
-        </Button>
-      ) : null}
+      {listContent}
+      {addKeySection}
       <Dialog
         open={apiKeyToDelete !== null}
         onClose={handleCloseDeleteDialog}

@@ -37,6 +37,16 @@ type BouncyTooltipProps = {
   delay?: number;
 };
 
+const getTooltipJustifyContent = (align: string): string => {
+  if (align === "left") {
+    return "flex-start";
+  }
+  if (align === "right") {
+    return "flex-end";
+  }
+  return "center";
+};
+
 export const BouncyTooltip = ({
   visible,
   children,
@@ -77,12 +87,7 @@ export const BouncyTooltip = ({
         left: 0,
         right: 0,
         display: "flex",
-        justifyContent:
-          align === "left"
-            ? "flex-start"
-            : align === "right"
-              ? "flex-end"
-              : "center",
+        justifyContent: getTooltipJustifyContent(align),
         opacity: !visible && !hasBeenVisible.current ? 0 : undefined,
         animation: getAnimation(),
         pointerEvents: visible ? "auto" : "none",

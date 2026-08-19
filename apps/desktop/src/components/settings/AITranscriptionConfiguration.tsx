@@ -50,7 +50,7 @@ import {
 } from "../../utils/model-recommendation.utils";
 import { getEffectiveTranscriptionMode } from "../../utils/user.utils";
 import { formatSize } from "../../utils/format.utils";
-import { type LocalSidecarDownloadSnapshot } from "../../sidecars";
+import { type SidecarDownloadSnapshot } from "../../sidecars";
 import {
   type LocalModelOption,
   LOCAL_MODEL_OPTIONS,
@@ -93,7 +93,7 @@ const getDownloadProgressPercent = (
 };
 
 const formatDownloadProgress = (
-  snapshot: LocalSidecarDownloadSnapshot | undefined,
+  snapshot: SidecarDownloadSnapshot | undefined,
   intl: IntlShape,
 ): string | null => {
   if (!snapshot) {
@@ -126,7 +126,7 @@ const formatDownloadProgress = (
 };
 
 const formatCompactPercent = (
-  snapshot: LocalSidecarDownloadSnapshot | undefined,
+  snapshot: SidecarDownloadSnapshot | undefined,
 ): string | null => {
   const percent = getDownloadProgressPercent(snapshot?.progress);
   if (percent == null) {

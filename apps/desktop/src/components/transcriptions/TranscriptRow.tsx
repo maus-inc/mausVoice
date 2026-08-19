@@ -58,11 +58,20 @@ export const TranscriptionRow = ({ id }: TranscriptionRowProps) => {
   const activeRemoteTarget = useAppStore(getActiveRemoteTarget);
   const isRemoteTranscript = transcription?.remoteStatus === "received";
   const isSentToRemote = transcription?.remoteStatus === "sent";
-  const retranscribeTooltip = isRetranscribing
-    ? intl.formatMessage({ defaultMessage: "Retranscribing audio clip" })
-    : didRetranscribe
-      ? intl.formatMessage({ defaultMessage: "Retranscribed audio clip" })
-      : intl.formatMessage({ defaultMessage: "Retranscribe audio clip" });
+  let retranscribeTooltip: string;
+  if (isRetranscribing) {
+    retranscribeTooltip = intl.formatMessage({
+      defaultMessage: "Retranscribing audio clip",
+    });
+  } else if (didRetranscribe) {
+    retranscribeTooltip = intl.formatMessage({
+      defaultMessage: "Retranscribed audio clip",
+    });
+  } else {
+    retranscribeTooltip = intl.formatMessage({
+      defaultMessage: "Retranscribe audio clip",
+    });
+  }
 
   const handleDetailsOpen = useCallback(() => {
     openTranscriptionDetailsDialog(id);
@@ -126,6 +135,17 @@ export const TranscriptionRow = ({ id }: TranscriptionRowProps) => {
       showErrorSnackbar(error);
     }
   }, [transcription?.transcript]);
+
+  let retranscribeActionIcon: React.ReactNode;
+  if (isRetranscribing) {
+    retranscribeActionIcon = <CircularProgress size={18} color="inherit" />;
+  } else if (didRetranscribe) {
+    retranscribeActionIcon = (
+      <CheckCircleRoundedIcon color="success" fontSize="small" />
+    );
+  } else {
+    retranscribeActionIcon = <ReplayRoundedIcon fontSize="small" />;
+  }
 
   return (
     <>
@@ -264,13 +284,7 @@ export const TranscriptionRow = ({ id }: TranscriptionRowProps) => {
                   disabled={isRetranscribing}
                   sx={{ p: 0.5 }}
                 >
-                  {isRetranscribing ? (
-                    <CircularProgress size={18} color="inherit" />
-                  ) : didRetranscribe ? (
-                    <CheckCircleRoundedIcon color="success" fontSize="small" />
-                  ) : (
-                    <ReplayRoundedIcon fontSize="small" />
-                  )}
+                  {retranscribeActionIcon}
                 </IconButton>
               </Tooltip>
               <Tooltip

@@ -73,11 +73,17 @@ export class BatchTranscriptionSession implements TranscriptionSession {
     }
   }
 
-  cleanup(): void {}
+  cleanup(): void {
+    // Batch sessions hold no streaming resources to release.
+    return;
+  }
 
   supportsStreaming(): boolean {
     return false;
   }
 
-  setInterimResultCallback(): void {}
+  setInterimResultCallback(): void {
+    // Batch sessions never emit interim results.
+    return;
+  }
 }

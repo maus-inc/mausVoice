@@ -41,6 +41,15 @@ const languageOptions = (
 
 const SUCCESS_VISIBLE_DELAY_MS = 900;
 
+const removeRetranscriptionSuccessId = (transcriptionId: string): void => {
+  produceAppState((draft) => {
+    draft.transcriptions.retranscriptionSuccessIds =
+      draft.transcriptions.retranscriptionSuccessIds.filter(
+        (id) => id !== transcriptionId,
+      );
+  });
+};
+
 export const RetranscribeDialog = () => {
   const intl = useIntl();
 
@@ -120,14 +129,10 @@ export const RetranscribeDialog = () => {
         }
       });
       if (didSucceed) {
-        window.setTimeout(() => {
-          produceAppState((draft) => {
-            draft.transcriptions.retranscriptionSuccessIds =
-              draft.transcriptions.retranscriptionSuccessIds.filter(
-                (id) => id !== transcriptionId,
-              );
-          });
-        }, SUCCESS_VISIBLE_DELAY_MS);
+        window.setTimeout(
+          () => removeRetranscriptionSuccessId(transcriptionId),
+          SUCCESS_VISIBLE_DELAY_MS,
+        );
       }
     }
   }, [transcriptionId, selectedToneId, selectedLanguage, intl]);

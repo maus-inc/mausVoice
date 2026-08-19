@@ -41,7 +41,10 @@ export type ActiveWebAudioPlayback = {
   onStop: (reason: PlaybackStopReason) => void;
 };
 
-export let activePlayback: ActiveWebAudioPlayback | null = null;
+let activePlayback: ActiveWebAudioPlayback | null = null;
+
+export const getActivePlayback = (): ActiveWebAudioPlayback | null =>
+  activePlayback;
 
 export const stopActivePlayback = (reason: PlaybackStopReason): void => {
   const current = activePlayback;
@@ -150,7 +153,7 @@ export const buildWaveformOutline = (
   const stringSeed = seedKey
     .split("")
     .reduce(
-      (accumulator, character) => accumulator + character.charCodeAt(0),
+      (accumulator, character) => accumulator + (character.codePointAt(0) ?? 0),
       0,
     );
   const combinedSeed = stringSeed * 31 + durationSeed * 17 || 1;

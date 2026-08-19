@@ -462,8 +462,8 @@ describe("splitAudioTranscription", () => {
       // 5 sec audio, 4 sec segments, 2 sec step
       // Segment 1: 0-4s, Segment 2: 2-5s (truncated)
       expect(result).toHaveLength(2);
-      expect(result[0].length).toBe(sampleRate * 4); // Full 4 seconds
-      expect(result[1].length).toBe(sampleRate * 3); // 3 seconds (2-5s)
+      expect(result[0]).toHaveLength(sampleRate * 4); // Full 4 seconds
+      expect(result[1]).toHaveLength(sampleRate * 3); // 3 seconds (2-5s)
     });
   });
 
@@ -519,7 +519,7 @@ describe("splitAudioTranscription", () => {
       });
 
       expect(result).toHaveLength(1);
-      expect(result[0].length).toBe(0);
+      expect(result[0]).toHaveLength(0);
     });
   });
 
@@ -565,10 +565,10 @@ describe("splitAudioTranscription", () => {
       // Step = 10 - 3 = 7 seconds
       // Segments: 0-10, 7-17, 14-24, 21-30 (truncated)
       expect(result).toHaveLength(4);
-      expect(result[0].length).toBe(sampleRate * 10);
-      expect(result[1].length).toBe(sampleRate * 10);
-      expect(result[2].length).toBe(sampleRate * 10);
-      expect(result[3].length).toBe(sampleRate * 9); // 21-30 = 9 seconds
+      expect(result[0]).toHaveLength(sampleRate * 10);
+      expect(result[1]).toHaveLength(sampleRate * 10);
+      expect(result[2]).toHaveLength(sampleRate * 10);
+      expect(result[3]).toHaveLength(sampleRate * 9); // 21-30 = 9 seconds
     });
 
     it("should correctly split 60 seconds of audio with 4s segments and 2s overlap", () => {

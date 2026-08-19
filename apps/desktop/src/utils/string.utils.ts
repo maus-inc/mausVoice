@@ -98,6 +98,8 @@ export const applySymbolConversions = (text: string): string => {
 
 const SIMILARITY_THRESHOLD = 0.95;
 
+const isLetterOrNumber = (char: string): boolean => /[\p{L}\p{N}]/u.test(char);
+
 const extractPunctuation = (
   word: string,
 ): {
@@ -105,14 +107,29 @@ const extractPunctuation = (
   leadingPunctuation: string;
   trailingPunctuation: string;
 } => {
-  const leadingMatch = word.match(/^([^\p{L}\p{N}]*)/u);
+  const leadingMatch = /^([^\p{L}\p{N}]*)/u.exec(word);
   const leadingPunctuation = leadingMatch?.[1] ?? "";
 
   const afterLeading = word.slice(leadingPunctuation.length);
 
-  const trailingMatch = afterLeading.match(/('s)?([^\p{L}\p{N}]*)$/iu);
-  const possessiveSuffix = trailingMatch?.[1] ?? "";
-  const trailingPunctuation = possessiveSuffix + (trailingMatch?.[2] ?? "");
+  let suffixLength = 0;
+  while (
+    suffixLength < afterLeading.length &&
+    !isLetterOrNumber(afterLeading[afterLeading.length - 1 - suffixLength]!)
+  ) {
+    suffixLength += 1;
+  }
+
+  const possessiveStart = afterLeading.length - suffixLength - 2;
+  const hasPossessiveSuffix =
+    possessiveStart >= 0 &&
+    afterLeading.slice(possessiveStart, possessiveStart + 2).toLowerCase() ===
+      "'s";
+  const trailingPunctuation = afterLeading.slice(
+    possessiveStart >= 0 && hasPossessiveSuffix
+      ? possessiveStart
+      : afterLeading.length - suffixLength,
+  );
 
   const wordOnly = afterLeading.slice(
     0,
@@ -143,6 +160,88 @@ const countWords = (phrase: string): number => {
   return trimmed ? trimmed.split(/\s+/).length : 0;
 };
 
+type PreparedReplacementRule = {
+  rule: ReplacementRule;
+  source: string;
+  wordCount: number;
+};
+
+const prepareReplacementRules = (
+  rules: ReplacementRule[],
+): PreparedReplacementRule[] =>
+  rules
+    .map((rule) => ({
+      rule,
+      source: normalizePhrase(rule.sourceValue).toLowerCase(),
+      wordCount: countWords(rule.sourceValue),
+    }))
+    .filter((prepared) => prepared.source.length > 0);
+
+const findRuleMatch = (
+  preparedRules: PreparedReplacementRule[],
+  span: number,
+  normalizedCandidate: string,
+): ReplacementRule | null => {
+  let bestMatch: ReplacementRule | null = null;
+  let bestSimilarity = 0;
+
+  for (const prepared of preparedRules) {
+    if (prepared.wordCount !== span) continue;
+
+    const similarity = getStringSimilarity(
+      normalizedCandidate,
+      prepared.source,
+    );
+    if (similarity >= SIMILARITY_THRESHOLD && similarity > bestSimilarity) {
+      bestSimilarity = similarity;
+      bestMatch = prepared.rule;
+    }
+  }
+
+  return bestMatch;
+};
+
+type SpanMatch = {
+  endSegment: number;
+  span: number;
+  replacement: string;
+};
+
+const findSpanMatch = (
+  segments: string[],
+  wordPositions: number[],
+  preparedRules: PreparedReplacementRule[],
+  startSegment: number,
+  wordIndex: number,
+  maxWordCount: number,
+): SpanMatch | null => {
+  const remainingWords = wordPositions.length - wordIndex;
+  for (let span = Math.min(maxWordCount, remainingWords); span >= 1; span--) {
+    const endSegment = wordPositions[wordIndex + span - 1];
+    const candidate = segments.slice(startSegment, endSegment + 1).join("");
+    const { word, leadingPunctuation, trailingPunctuation } =
+      extractPunctuation(candidate);
+
+    if (!word) continue;
+
+    const normalizedCandidate = collapseWhitespace(word).toLowerCase();
+    const bestMatch = findRuleMatch(preparedRules, span, normalizedCandidate);
+
+    if (bestMatch) {
+      const { word: destinationWord } = extractPunctuation(
+        bestMatch.destinationValue,
+      );
+      return {
+        endSegment,
+        span,
+        replacement: leadingPunctuation + destinationWord + trailingPunctuation,
+      };
+    }
+  }
+
+  return null;
+};
+
 export const applyReplacements = (
   text: string,
   rules: ReplacementRule[],
@@ -163,14 +262,7 @@ export const applyReplacements = (
   // Rules are matched as phrases, so a rule spans as many words as its source
   // does. Longer phrases are tried first so that "New York City" wins over a
   // "New York" rule at the same position.
-  const preparedRules = rules
-    .map((rule) => ({
-      rule,
-      source: normalizePhrase(rule.sourceValue).toLowerCase(),
-      wordCount: countWords(rule.sourceValue),
-    }))
-    .filter((prepared) => prepared.source.length > 0);
-
+  const preparedRules = prepareReplacementRules(rules);
   if (preparedRules.length === 0) return text;
 
   const maxWordCount = Math.max(
@@ -190,51 +282,20 @@ export const applyReplacements = (
       segmentIndex++;
     }
 
-    const remainingWords = wordPositions.length - wordIndex;
-    let matched = false;
+    const match = findSpanMatch(
+      segments,
+      wordPositions,
+      preparedRules,
+      startSegment,
+      wordIndex,
+      maxWordCount,
+    );
 
-    for (
-      let span = Math.min(maxWordCount, remainingWords);
-      span >= 1 && !matched;
-      span--
-    ) {
-      const endSegment = wordPositions[wordIndex + span - 1];
-      const candidate = segments.slice(startSegment, endSegment + 1).join("");
-      const { word, leadingPunctuation, trailingPunctuation } =
-        extractPunctuation(candidate);
-
-      if (!word) continue;
-
-      const normalizedCandidate = collapseWhitespace(word).toLowerCase();
-
-      let bestMatch: ReplacementRule | null = null;
-      let bestSimilarity = 0;
-
-      for (const prepared of preparedRules) {
-        if (prepared.wordCount !== span) continue;
-
-        const similarity = getStringSimilarity(
-          normalizedCandidate,
-          prepared.source,
-        );
-        if (similarity >= SIMILARITY_THRESHOLD && similarity > bestSimilarity) {
-          bestSimilarity = similarity;
-          bestMatch = prepared.rule;
-        }
-      }
-
-      if (bestMatch) {
-        const { word: destinationWord } = extractPunctuation(
-          bestMatch.destinationValue,
-        );
-        result.push(leadingPunctuation + destinationWord + trailingPunctuation);
-        segmentIndex = endSegment + 1;
-        wordIndex += span;
-        matched = true;
-      }
-    }
-
-    if (!matched) {
+    if (match) {
+      result.push(match.replacement);
+      segmentIndex = match.endSegment + 1;
+      wordIndex += match.span;
+    } else {
       result.push(segments[startSegment]);
       segmentIndex = startSegment + 1;
       wordIndex++;

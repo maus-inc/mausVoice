@@ -1,4 +1,9 @@
 import { convertFloat32ToBase64PCM16 } from "@maus-inc/voice-ai";
+import {
+  buildTranscriptText,
+  computeChunkBounds,
+  createAudioBufferController,
+} from "./streaming-audio-buffer";
 import { listen, UnlistenFn } from "@tauri-apps/api/event";
 import {
   StopRecordingResponse,
@@ -89,15 +94,10 @@ const startElevenLabsStreaming = async (
 
   console.log("[ElevenLabs WebSocket] Starting with sample rate:", sampleRate);
 
-  const MIN_CHUNK_DURATION_MS = 20;
-  const MAX_CHUNK_DURATION_MS = 100;
-  const minSamplesPerChunk = Math.max(
-    1,
-    Math.ceil((sampleRate * MIN_CHUNK_DURATION_MS) / 1000),
-  );
-  const maxSamplesPerChunk = Math.max(
-    minSamplesPerChunk,
-    Math.ceil((sampleRate * MAX_CHUNK_DURATION_MS) / 1000),
+  const { minSamplesPerChunk, maxSamplesPerChunk } = computeChunkBounds(
+    sampleRate,
+    20,
+    100,
   );
 
   const token = await getElevenLabsToken(apiKey);
@@ -111,50 +111,18 @@ const startElevenLabsStreaming = async (
     let isFinalized = false;
     let receivedChunkCount = 0;
     let sentChunkCount = 0;
-    let pendingSampleCount = 0;
-    let pendingChunks: Float32Array[] = [];
+    const audioBuffer = createAudioBufferController();
 
-    const getText = () => {
-      return (
-        finalTranscript +
-        (partialTranscript
-          ? (finalTranscript ? " " : "") + partialTranscript
-          : "")
-      );
-    };
+    const getText = () =>
+      buildTranscriptText(finalTranscript, partialTranscript);
 
-    const resetBuffers = () => {
-      pendingChunks = [];
-      pendingSampleCount = 0;
-    };
+    const resetBuffers = () => audioBuffer.reset();
 
-    const drainSamples = (targetCount: number): Float32Array => {
-      if (targetCount <= 0) {
-        return new Float32Array(0);
-      }
-      const output = new Float32Array(targetCount);
-      let filled = 0;
-
-      while (filled < targetCount && pendingChunks.length > 0) {
-        const current = pendingChunks[0];
-        const remaining = targetCount - filled;
-        if (current.length <= remaining) {
-          output.set(current, filled);
-          filled += current.length;
-          pendingChunks.shift();
-        } else {
-          output.set(current.subarray(0, remaining), filled);
-          pendingChunks[0] = current.subarray(remaining);
-          filled += remaining;
-        }
-      }
-
-      pendingSampleCount = Math.max(0, pendingSampleCount - filled);
-      return filled === targetCount ? output : output.subarray(0, filled);
-    };
+    const drainSamples = (targetCount: number): Float32Array =>
+      audioBuffer.drainSamples(targetCount);
 
     const sendAudioChunk = (chunk: Float32Array, commit: boolean) => {
-      if (!ws || ws.readyState !== WebSocket.OPEN) {
+      if (ws?.readyState !== WebSocket.OPEN) {
         return;
       }
 
@@ -185,10 +153,10 @@ const startElevenLabsStreaming = async (
       }
 
       while (
-        pendingSampleCount >= minSamplesPerChunk ||
-        (force && pendingSampleCount > 0)
+        audioBuffer.getPendingSampleCount() >= minSamplesPerChunk ||
+        (force && audioBuffer.getPendingSampleCount() > 0)
       ) {
-        const available = pendingSampleCount;
+        const available = audioBuffer.getPendingSampleCount();
         let chunkSize = available;
         if (available >= maxSamplesPerChunk) {
           chunkSize = maxSamplesPerChunk;
@@ -207,7 +175,7 @@ const startElevenLabsStreaming = async (
           break;
         }
 
-        const isLastChunk = force && pendingSampleCount === 0;
+        const isLastChunk = force && audioBuffer.getPendingSampleCount() === 0;
         sendAudioChunk(chunk, isLastChunk);
       }
     };
@@ -228,6 +196,18 @@ const startElevenLabsStreaming = async (
     let finalizeTimeout: ReturnType<typeof setTimeout> | null = null;
 
     const finalize = (): Promise<string> => {
+      const handleFinalizeTimeout = () => {
+        console.log(
+          "[ElevenLabs WebSocket] Timeout waiting for final transcript, length:",
+          getText().length,
+        );
+        cleanup();
+        if (finalizeResolver) {
+          finalizeResolver(getText());
+          finalizeResolver = null;
+        }
+      };
+
       return new Promise((resolveFinalize) => {
         console.log(
           "[ElevenLabs WebSocket] Finalize called, isFinalized:",
@@ -253,18 +233,8 @@ const startElevenLabsStreaming = async (
           "- waiting for final transcript...",
         );
 
-        if (ws && ws.readyState === WebSocket.OPEN) {
-          finalizeTimeout = setTimeout(() => {
-            console.log(
-              "[ElevenLabs WebSocket] Timeout waiting for final transcript, length:",
-              getText().length,
-            );
-            cleanup();
-            if (finalizeResolver) {
-              finalizeResolver(getText());
-              finalizeResolver = null;
-            }
-          }, 6000);
+        if (ws?.readyState === WebSocket.OPEN) {
+          finalizeTimeout = setTimeout(handleFinalizeTimeout, 6000);
         } else {
           cleanup();
           resolveFinalize(getText());
@@ -313,7 +283,7 @@ const startElevenLabsStreaming = async (
                 event.payload.samples.length,
               );
             }
-            if (ws && ws.readyState === WebSocket.OPEN && !isFinalized) {
+            if (ws?.readyState === WebSocket.OPEN && !isFinalized) {
               try {
                 const rawChunk =
                   event.payload.samples instanceof Float32Array
@@ -322,8 +292,7 @@ const startElevenLabsStreaming = async (
                 const typedChunk = needsResample
                   ? resampleAudio(rawChunk, inputSampleRate, sampleRate)
                   : rawChunk;
-                pendingChunks.push(typedChunk);
-                pendingSampleCount += typedChunk.length;
+                audioBuffer.pushSamples(typedChunk);
                 flushPendingSamples(false);
               } catch (error) {
                 console.error(
@@ -401,7 +370,7 @@ const startElevenLabsStreaming = async (
 
 export class ElevenLabsTranscriptionSession implements TranscriptionSession {
   private session: ElevenLabsStreamingSession | null = null;
-  private apiKey: string;
+  private readonly apiKey: string;
   private interimCallback: ((segment: string) => void) | null = null;
 
   constructor(apiKey: string) {

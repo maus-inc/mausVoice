@@ -1,15 +1,20 @@
-import { execSync } from "child_process";
-import { readdir, readFile, writeFile } from "fs/promises";
-import path from "path";
-import { fileURLToPath } from "url";
+import { spawnSync } from "node:child_process";
+import { readdir, readFile, writeFile } from "node:fs/promises";
+import path from "node:path";
+import { fileURLToPath } from "node:url";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const desktopRoot = path.resolve(__dirname, "..");
 const localesDir = path.join(desktopRoot, "src", "i18n", "locales");
 const englishLocalePath = path.join(localesDir, "en.json");
 
-const formatjsCommand =
-  'npx --no-install formatjs extract "src/**/*.{ts,tsx}" --ignore "src/**/*.d.ts" --out-file src/i18n/locales/en.json --format ./scripts/formatjs-formatter.mjs --id-interpolation-pattern "[sha1:contenthash:base64:6]"';
+const formatjsBin = path.join(
+  desktopRoot,
+  "node_modules",
+  ".bin",
+  process.platform === "win32" ? "formatjs.cmd" : "formatjs",
+);
+const formatjsCommand = `"${formatjsBin}" extract "src/**/*.{ts,tsx}" --ignore "src/**/*.d.ts" --out-file src/i18n/locales/en.json --format ./scripts/formatjs-formatter.mjs --id-interpolation-pattern "[sha1:contenthash:base64:6]"`;
 
 async function readJson(filePath) {
   const content = await readFile(filePath, "utf8");
@@ -50,10 +55,13 @@ async function pruneLocaleFile(localePath, keys) {
 
 async function main() {
   const beforeSnapshot = await readJson(englishLocalePath);
-  execSync(formatjsCommand, {
+  const extractResult = spawnSync(formatjsBin, formatjsArgs, {
     cwd: desktopRoot,
     stdio: "inherit",
   });
+  if (extractResult.status !== 0) {
+    throw new Error(`formatjs extract failed with status ${extractResult.status}`);
+  }
   const afterSnapshot = await readJson(englishLocalePath);
   const changedKeys = computeChangedKeys(beforeSnapshot, afterSnapshot);
   if (changedKeys.length === 0) {

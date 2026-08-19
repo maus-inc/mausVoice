@@ -36,27 +36,28 @@ export const getIsOnTrial = (state: AppState): boolean => {
 
 const TRIAL_DURATION_MS = TRIAL_DURATION_DAYS * 24 * 60 * 60 * 1000;
 
-export const getTrialDaysRemaining = (state: AppState): number | null => {
+const getTrialMsRemaining = (state: AppState): number | null => {
   const member = getMyMember(state);
   if (!member?.isOnTrial || !member.trialEndsAt) {
     return null;
   }
 
-  const now = Date.now();
-  const endsAt = new Date(member.trialEndsAt).getTime();
-  const msRemaining = endsAt - now;
+  return new Date(member.trialEndsAt).getTime() - Date.now();
+};
+
+export const getTrialDaysRemaining = (state: AppState): number | null => {
+  const msRemaining = getTrialMsRemaining(state);
+  if (msRemaining === null) {
+    return null;
+  }
   return Math.max(0, Math.ceil(msRemaining / (1000 * 60 * 60 * 24)));
 };
 
 export const getTrialProgress = (state: AppState): number | null => {
-  const member = getMyMember(state);
-  if (!member?.isOnTrial || !member.trialEndsAt) {
+  const msRemaining = getTrialMsRemaining(state);
+  if (msRemaining === null) {
     return null;
   }
-
-  const now = Date.now();
-  const endsAt = new Date(member.trialEndsAt).getTime();
-  const msRemaining = endsAt - now;
   return Math.max(0, Math.min(1, msRemaining / TRIAL_DURATION_MS));
 };
 

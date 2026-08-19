@@ -64,7 +64,7 @@ export const deleteTone = async (id: string): Promise<void> => {
 
     // Sync preferences if we cleared the active tone
     const prefs = getAppState().userPrefs;
-    if (prefs && prefs.activeToneId === null) {
+    if (prefs?.activeToneId === null) {
       await getUserPreferencesRepo().setUserPreferences(prefs);
     }
 

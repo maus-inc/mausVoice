@@ -1,4 +1,5 @@
 import { retry, countWords } from "@maus-inc/utilities";
+import { createAudioFormData } from "./shared.utils";
 
 export type ElevenLabsTestIntegrationArgs = {
   apiKey: string;
@@ -43,11 +44,7 @@ export const elevenlabsTranscribeAudio = async ({
   return retry({
     retries: 3,
     fn: async () => {
-      const formData = new FormData();
-      const bodyData =
-        blob instanceof ArrayBuffer ? blob : (blob.buffer as ArrayBuffer);
-      const audioBlob = new Blob([bodyData], { type: `audio/${ext}` });
-      formData.append("file", audioBlob, `audio.${ext}`);
+      const formData = createAudioFormData(blob, ext);
       formData.append("model_id", "scribe_v1");
       if (language && language !== "auto") {
         formData.append("language_code", language);
@@ -101,8 +98,8 @@ export const convertFloat32ToBase64PCM16 = (
 
   const bytes = new Uint8Array(buffer);
   let binary = "";
-  for (let i = 0; i < bytes.length; i++) {
-    binary += String.fromCharCode(bytes[i]!);
+  for (const byte of bytes) {
+    binary += String.fromCodePoint(byte);
   }
 
   return btoa(binary);

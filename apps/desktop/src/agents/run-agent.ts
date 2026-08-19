@@ -1,5 +1,5 @@
 import { AgentLoop } from "@repo/agent";
-import type { AgentLlmProvider, AgentTool } from "@repo/agent";
+import type { AgentEvent, AgentLlmProvider, AgentTool } from "@repo/agent";
 import type { LlmMessage, LlmToolCall, ToolInfo } from "@maus-inc/types";
 import { delayed } from "@maus-inc/utilities";
 import { createChatMessage } from "../actions/chat.actions";
@@ -18,6 +18,11 @@ import type { AgentTypeConfig } from "./agent-configs";
 
 const POLL_INTERVAL_MS = 500;
 const activeLoops = new Map<string, AgentLoop>();
+
+const findAgentToolCall = (
+  toolCalls: Array<{ toolCallId: string; status: string; result?: unknown }>,
+  toolCallId: string,
+) => toolCalls.find((t) => t.toolCallId === toolCallId);
 
 export async function runAgent(
   conversationId: string,
@@ -50,174 +55,192 @@ export async function runAgent(
   let toolCallIndex = 0;
   const toolCallReasons = new Map<string, string>();
 
+  const handleIterationStart = async (
+    event: Extract<AgentEvent, { type: "iteration-start" }>,
+  ) => {
+    if (currentMessageId) {
+      await finalizeAssistantMessage(
+        currentMessageId,
+        iterationText,
+        iterationToolCalls,
+      );
+    }
+
+    currentMessageId = crypto.randomUUID();
+    iterationText = "";
+    iterationToolCalls = [];
+    toolCallIndex = 0;
+
+    produceAppState((draft) => {
+      modifyAgentState({
+        draft,
+        conversationId,
+        modify: (s) => {
+          s.iteration = event.iteration;
+          s.status = "calling-llm";
+          s.toolCalls = [];
+          s.currentToolIndex = 0;
+        },
+      });
+
+      draft.chatMessageById[currentMessageId!] = {
+        id: currentMessageId!,
+        conversationId,
+        role: "assistant",
+        content: "",
+        createdAt: new Date().toISOString(),
+        metadata: null,
+      };
+      const ids = draft.chatMessageIdsByConversationId[conversationId] ?? [];
+      ids.push(currentMessageId!);
+      draft.chatMessageIdsByConversationId[conversationId] = ids;
+
+      draft.streamingMessageById[currentMessageId!] = {
+        toolCalls: [],
+        reasoning: "",
+        isStreaming: true,
+      };
+    });
+  };
+
+  const handleTextDelta = (
+    event: Extract<AgentEvent, { type: "text-delta" }>,
+  ) => {
+    iterationText += event.text;
+    produceAppState((draft) => {
+      if (currentMessageId) {
+        const msg = draft.chatMessageById[currentMessageId];
+        if (msg) msg.content += event.text;
+      }
+    });
+  };
+
+  const handleToolCallStart = (
+    event: Extract<AgentEvent, { type: "tool-call-start" }>,
+  ) => {
+    iterationToolCalls.push({
+      id: event.toolCallId,
+      name: event.toolName,
+      arguments: JSON.stringify(event.args),
+    });
+    if (event.args.reason) {
+      toolCallReasons.set(event.toolCallId, event.args.reason as string);
+    }
+    produceAppState((draft) => {
+      if (currentMessageId) {
+        const streaming = draft.streamingMessageById[currentMessageId];
+        if (streaming) {
+          streaming.isStreaming = false;
+          streaming.toolCalls.push({
+            toolCallId: event.toolCallId,
+            toolName: event.toolName,
+            done: false,
+          });
+        }
+      }
+      modifyAgentState({
+        draft,
+        conversationId,
+        modify: (s) => {
+          s.status = "processing-tools";
+          s.currentToolIndex = toolCallIndex;
+          s.toolCalls.push({
+            toolCallId: event.toolCallId,
+            toolName: event.toolName,
+            params: event.args,
+            status: "pending",
+          });
+        },
+      });
+    });
+  };
+
+  const handleToolCallResult = async (
+    event: Extract<AgentEvent, { type: "tool-call-result" }>,
+  ) => {
+    toolCallIndex++;
+    const reason = toolCallReasons.get(event.toolCallId);
+    await createChatMessage({
+      id: crypto.randomUUID(),
+      conversationId,
+      role: "system",
+      content: event.result,
+      createdAt: new Date().toISOString(),
+      metadata: {
+        type: "tool-result",
+        toolCallId: event.toolCallId,
+        toolName: event.toolName,
+        ...(reason && { reason }),
+      },
+    });
+    produceAppState((draft) => {
+      if (currentMessageId) {
+        const streaming = draft.streamingMessageById[currentMessageId];
+        if (streaming) {
+          const tc = streaming.toolCalls.find(
+            (t) => t.toolCallId === event.toolCallId,
+          );
+          if (tc) tc.done = true;
+        }
+      }
+      modifyAgentState({
+        draft,
+        conversationId,
+        modify: (s) => {
+          const tc = findAgentToolCall(s.toolCalls, event.toolCallId);
+          if (tc) {
+            tc.status = event.isError ? "denied" : "done";
+            tc.result = { text: event.result };
+          }
+        },
+      });
+    });
+
+    if (event.toolName === "end_conversation") {
+      loop.abort();
+    }
+  };
+
+  const handleFinish = async (
+    event: Extract<AgentEvent, { type: "finish" }>,
+  ) => {
+    if (currentMessageId) {
+      await finalizeAssistantMessage(
+        currentMessageId,
+        iterationText,
+        iterationToolCalls,
+      );
+    }
+    produceAppState((draft) => {
+      modifyAgentState({
+        draft,
+        conversationId,
+        modify: (s) => {
+          s.status = event.reason === "error" ? "error" : "done";
+          if (event.error) s.error = event.error;
+        },
+      });
+    });
+  };
+
   try {
     for await (const event of loop.run(messages)) {
       switch (event.type) {
-        case "iteration-start": {
-          if (currentMessageId) {
-            await finalizeAssistantMessage(
-              currentMessageId,
-              iterationText,
-              iterationToolCalls,
-            );
-          }
-
-          currentMessageId = crypto.randomUUID();
-          iterationText = "";
-          iterationToolCalls = [];
-          toolCallIndex = 0;
-
-          produceAppState((draft) => {
-            modifyAgentState({
-              draft,
-              conversationId,
-              modify: (s) => {
-                s.iteration = event.iteration;
-                s.status = "calling-llm";
-                s.toolCalls = [];
-                s.currentToolIndex = 0;
-              },
-            });
-
-            draft.chatMessageById[currentMessageId!] = {
-              id: currentMessageId!,
-              conversationId,
-              role: "assistant",
-              content: "",
-              createdAt: new Date().toISOString(),
-              metadata: null,
-            };
-            const ids =
-              draft.chatMessageIdsByConversationId[conversationId] ?? [];
-            ids.push(currentMessageId!);
-            draft.chatMessageIdsByConversationId[conversationId] = ids;
-
-            draft.streamingMessageById[currentMessageId!] = {
-              toolCalls: [],
-              reasoning: "",
-              isStreaming: true,
-            };
-          });
+        case "iteration-start":
+          await handleIterationStart(event);
           break;
-        }
-
-        case "text-delta": {
-          iterationText += event.text;
-          produceAppState((draft) => {
-            if (currentMessageId) {
-              const msg = draft.chatMessageById[currentMessageId];
-              if (msg) msg.content += event.text;
-            }
-          });
+        case "text-delta":
+          handleTextDelta(event);
           break;
-        }
-
-        case "tool-call-start": {
-          iterationToolCalls.push({
-            id: event.toolCallId,
-            name: event.toolName,
-            arguments: JSON.stringify(event.args),
-          });
-          if (event.args.reason) {
-            toolCallReasons.set(event.toolCallId, event.args.reason as string);
-          }
-          produceAppState((draft) => {
-            if (currentMessageId) {
-              const streaming = draft.streamingMessageById[currentMessageId];
-              if (streaming) {
-                streaming.isStreaming = false;
-                streaming.toolCalls.push({
-                  toolCallId: event.toolCallId,
-                  toolName: event.toolName,
-                  done: false,
-                });
-              }
-            }
-            modifyAgentState({
-              draft,
-              conversationId,
-              modify: (s) => {
-                s.status = "processing-tools";
-                s.currentToolIndex = toolCallIndex;
-                s.toolCalls.push({
-                  toolCallId: event.toolCallId,
-                  toolName: event.toolName,
-                  params: event.args,
-                  status: "pending",
-                });
-              },
-            });
-          });
+        case "tool-call-start":
+          handleToolCallStart(event);
           break;
-        }
-
-        case "tool-call-result": {
-          toolCallIndex++;
-          const reason = toolCallReasons.get(event.toolCallId);
-          await createChatMessage({
-            id: crypto.randomUUID(),
-            conversationId,
-            role: "system",
-            content: event.result,
-            createdAt: new Date().toISOString(),
-            metadata: {
-              type: "tool-result",
-              toolCallId: event.toolCallId,
-              toolName: event.toolName,
-              ...(reason && { reason }),
-            },
-          });
-          produceAppState((draft) => {
-            if (currentMessageId) {
-              const streaming = draft.streamingMessageById[currentMessageId];
-              if (streaming) {
-                const tc = streaming.toolCalls.find(
-                  (t) => t.toolCallId === event.toolCallId,
-                );
-                if (tc) tc.done = true;
-              }
-            }
-            modifyAgentState({
-              draft,
-              conversationId,
-              modify: (s) => {
-                const tc = s.toolCalls.find(
-                  (t) => t.toolCallId === event.toolCallId,
-                );
-                if (tc) {
-                  tc.status = event.isError ? "denied" : "done";
-                  tc.result = { text: event.result };
-                }
-              },
-            });
-          });
-
-          if (event.toolName === "end_conversation") {
-            loop.abort();
-          }
+        case "tool-call-result":
+          await handleToolCallResult(event);
           break;
-        }
-
-        case "finish": {
-          if (currentMessageId) {
-            await finalizeAssistantMessage(
-              currentMessageId,
-              iterationText,
-              iterationToolCalls,
-            );
-          }
-          produceAppState((draft) => {
-            modifyAgentState({
-              draft,
-              conversationId,
-              modify: (s) => {
-                s.status = event.reason === "error" ? "error" : "done";
-                if (event.error) s.error = event.error;
-              },
-            });
-          });
+        case "finish":
+          await handleFinish(event);
           break;
-        }
       }
     }
   } catch (error) {
@@ -342,7 +365,7 @@ async function executeWithPermission(
       draft,
       conversationId,
       modify: (s) => {
-        const tc = s.toolCalls[s.toolCalls.length - 1];
+        const tc = s.toolCalls.at(-1);
         if (tc) {
           tc.permissionId = permissionId;
           tc.status = "awaiting-permission";

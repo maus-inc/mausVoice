@@ -80,7 +80,7 @@ export const EditTypography: React.FC<EditTypographyProps> = ({
     (raw: string): string | number => {
       if (mode === "text") return raw;
       // number mode
-      const n = Number.parseFloat(raw.replace(/,/g, ""));
+      const n = Number.parseFloat(raw.replaceAll(",", ""));
       return Number.isFinite(n) ? n : value; // fall back to last value if NaN
     },
     [mode, value],
@@ -135,6 +135,15 @@ export const EditTypography: React.FC<EditTypographyProps> = ({
     return Math.max(textWidth + 20, 50); // minimum width of 50px, plus 20px padding
   }, [draft, value]);
 
+  let displayValue: React.ReactNode;
+  if (children) {
+    displayValue = children(value);
+  } else if (renderValue) {
+    displayValue = renderValue(value);
+  } else {
+    displayValue = String(value);
+  }
+
   return (
     <Box
       component="span"
@@ -175,7 +184,7 @@ export const EditTypography: React.FC<EditTypographyProps> = ({
           onChange={(e) => setDraft(e.target.value)}
           onBlur={tryCommit}
           onKeyDown={handleKeyDown}
-          type={mode === "number" ? "text" : "text"}
+          type="text"
           size="small"
           sx={{
             width: getTextWidth(),
@@ -204,11 +213,7 @@ export const EditTypography: React.FC<EditTypographyProps> = ({
             ...typographyProps?.sx,
           }}
         >
-          {children
-            ? children(value)
-            : renderValue
-              ? renderValue(value)
-              : String(value)}
+          {displayValue}
         </Typography>
       )}
     </Box>

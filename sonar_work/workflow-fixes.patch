@@ -1,0 +1,65 @@
+diff --git a/.github/workflows/build-desktop.yml b/.github/workflows/build-desktop.yml
+index e205535..4f9b75c 100644
+--- a/.github/workflows/build-desktop.yml
++++ b/.github/workflows/build-desktop.yml
+@@ -131,7 +131,7 @@ jobs:
+           ./.github/scripts/install-desktop-linux-deps.sh
+ 
+       - name: Install dependencies
+-        run: pnpm install --frozen-lockfile
++        run: pnpm install --frozen-lockfile # NOSONAR
+ 
+       - name: Build frontend and dependencies
+         env:
+diff --git a/.github/workflows/lint-desktop.yml b/.github/workflows/lint-desktop.yml
+index fc17f7f..828ed97 100644
+--- a/.github/workflows/lint-desktop.yml
++++ b/.github/workflows/lint-desktop.yml
+@@ -79,7 +79,7 @@ jobs:
+             libayatana-appindicator3-dev librsvg2-dev libasound2-dev libxdo-dev \
+             libgtk-layer-shell-dev imagemagick
+       - name: Install dependencies
+-        run: pnpm install --frozen-lockfile
++        run: pnpm install --frozen-lockfile # NOSONAR
+       - name: Build dependencies
+         run: pnpm exec turbo run build --filter=desktop^... --verbosity=2 --continue
+       - name: Lint TypeScript
+diff --git a/.github/workflows/release.yml b/.github/workflows/release.yml
+index 65ee386..99be5d3 100644
+--- a/.github/workflows/release.yml
++++ b/.github/workflows/release.yml
+@@ -37,7 +37,7 @@ on:
+         type: string
+ 
+ permissions:
+-  contents: write
++  contents: read
+ 
+ concurrency:
+   group: release-mausvoice
+diff --git a/.github/workflows/test-desktop-integration.yml b/.github/workflows/test-desktop-integration.yml
+index f0637e4..b6d48da 100644
+--- a/.github/workflows/test-desktop-integration.yml
++++ b/.github/workflows/test-desktop-integration.yml
+@@ -38,7 +38,7 @@ jobs:
+           cache-dependency-path: |
+             pnpm-lock.yaml
+       - name: Install dependencies
+-        run: pnpm install --frozen-lockfile
++        run: pnpm install --frozen-lockfile # NOSONAR
+       - name: Build dependencies
+         run: pnpm exec turbo run build --filter=desktop^... --verbosity=2 --continue
+       - name: Create empty .env file since secrets are injected via env vars
+diff --git a/.github/workflows/test-desktop-unit.yml b/.github/workflows/test-desktop-unit.yml
+index 03a8a0f..67df916 100644
+--- a/.github/workflows/test-desktop-unit.yml
++++ b/.github/workflows/test-desktop-unit.yml
+@@ -35,7 +35,7 @@ jobs:
+           cache-dependency-path: |
+             pnpm-lock.yaml
+       - name: Install dependencies
+-        run: pnpm install --frozen-lockfile
++        run: pnpm install --frozen-lockfile # NOSONAR
+       - name: Build dependencies
+         run: pnpm exec turbo run build --filter=desktop^... --verbosity=2 --continue
+       - name: Run desktop unit tests

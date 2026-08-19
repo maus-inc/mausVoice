@@ -2,8 +2,33 @@
 
 import { spawnSync } from "node:child_process";
 import { chmodSync, copyFileSync, existsSync, mkdirSync } from "node:fs";
+import { homedir } from "node:os";
 import { dirname, isAbsolute, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
+
+const resolveTool = (name, envName) => {
+  const fromEnv = envName ? process.env[envName]?.trim() : "";
+  if (fromEnv && isAbsolute(fromEnv) && existsSync(fromEnv)) {
+    return fromEnv;
+  }
+  const exe =
+    process.platform === "win32" && !name.endsWith(".exe")
+      ? `${name}.exe`
+      : name;
+  const cargoHome = process.env.CARGO_HOME?.trim();
+  const candidates = [
+    cargoHome ? join(cargoHome, "bin", exe) : null,
+    join(homedir(), ".cargo", "bin", exe),
+    join("/usr/local/bin", name),
+    join("/opt/homebrew/bin", name),
+    join("/usr/bin", name),
+  ].filter(Boolean);
+  const found = candidates.find((candidate) => existsSync(candidate));
+  if (!found) {
+    fail(`Unable to resolve absolute path for ${name}`);
+  }
+  return found;
+};
 
 const scriptDir = dirname(fileURLToPath(import.meta.url));
 const desktopDir = resolve(scriptDir, "..");
@@ -15,11 +40,18 @@ const sidecarManifestPath = join(
   "Cargo.toml",
 );
 const cargoTargetDirOverride = process.env.CARGO_TARGET_DIR?.trim() || null;
-const rustTargetDir = cargoTargetDirOverride
-  ? isAbsolute(cargoTargetDirOverride)
-    ? cargoTargetDirOverride
-    : resolve(repoRoot, cargoTargetDirOverride)
-  : join(repoRoot, "packages", "rust_transcription", "target");
+const resolveCargoTargetDir = (defaultTargetDir) => {
+  if (!cargoTargetDirOverride) {
+    return defaultTargetDir;
+  }
+  if (isAbsolute(cargoTargetDirOverride)) {
+    return cargoTargetDirOverride;
+  }
+  return resolve(repoRoot, cargoTargetDirOverride);
+};
+const rustTargetDir = resolveCargoTargetDir(
+  join(repoRoot, "packages", "rust_transcription", "target"),
+);
 const tauriBinariesDir = join(desktopDir, "src-tauri", "binaries");
 
 const buildTarget =
@@ -90,7 +122,9 @@ function buildAndCopy(binaryName, gpuEnabled, options = {}) {
     );
   }
 
-  const buildOk = run("cargo", cargoArgs, repoRoot, { allowFailure });
+  const buildOk = run(resolveTool("cargo", "CARGO"), cargoArgs, repoRoot, {
+    allowFailure,
+  });
   if (!buildOk) {
     return null;
   }
@@ -194,7 +228,7 @@ function run(command, args, cwd, options = {}) {
 }
 
 function resolveHostTargetTriple() {
-  const result = spawnSync("rustc", ["-vV"], {
+  const result = spawnSync(resolveTool("rustc", "RUSTC"), ["-vV"], {
     cwd: repoRoot,
     encoding: "utf8",
     stdio: ["ignore", "pipe", "ignore"],
@@ -338,11 +372,9 @@ function buildNativePill(packageDir, binaryName) {
     return;
   }
 
-  const pillTargetDir = cargoTargetDirOverride
-    ? isAbsolute(cargoTargetDirOverride)
-      ? cargoTargetDirOverride
-      : resolve(repoRoot, cargoTargetDirOverride)
-    : join(repoRoot, "packages", packageDir, "target");
+  const pillTargetDir = resolveCargoTargetDir(
+    join(repoRoot, "packages", packageDir, "target"),
+  );
 
   const pillCargoArgs = [
     "build",
@@ -360,7 +392,7 @@ function buildNativePill(packageDir, binaryName) {
     pillCargoArgs.push("--release");
   }
 
-  const buildOk = run("cargo", pillCargoArgs, repoRoot, {
+  const buildOk = run(resolveTool("cargo", "CARGO"), pillCargoArgs, repoRoot, {
     allowFailure: true,
   });
 

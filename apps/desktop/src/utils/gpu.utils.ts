@@ -12,22 +12,20 @@ export const loadDiscreteGpus = async (): Promise<GpuInfo[]> => {
     return cachedDiscreteGpus;
   }
 
-  if (!loadingDiscreteGpus) {
-    loadingDiscreteGpus = invoke<GpuInfo[]>("list_gpus")
-      .then((gpuList) => {
-        const discrete = gpuList.filter(filterDiscreteGpus);
-        cachedDiscreteGpus = discrete;
-        return discrete;
-      })
-      .catch((error) => {
-        console.error("Failed to load GPU descriptors", error);
-        cachedDiscreteGpus = [];
-        return [];
-      })
-      .finally(() => {
-        loadingDiscreteGpus = null;
-      });
-  }
+  loadingDiscreteGpus ??= invoke<GpuInfo[]>("list_gpus")
+    .then((gpuList) => {
+      const discrete = gpuList.filter(filterDiscreteGpus);
+      cachedDiscreteGpus = discrete;
+      return discrete;
+    })
+    .catch((error) => {
+      console.error("Failed to load GPU descriptors", error);
+      cachedDiscreteGpus = [];
+      return [];
+    })
+    .finally(() => {
+      loadingDiscreteGpus = null;
+    });
 
   return loadingDiscreteGpus;
 };

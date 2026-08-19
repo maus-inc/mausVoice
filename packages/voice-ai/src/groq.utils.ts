@@ -4,9 +4,13 @@ import type {
   LlmStreamEvent,
 } from "@maus-inc/types";
 import { countWords, retry } from "@maus-inc/utilities";
-import Groq, { toFile } from "groq-sdk/index";
 import {
-  ChatCompletionContentPart,
+  contentToString,
+  buildChatMessages,
+  transcribeWithOpenAICompatClient,
+} from "./shared.utils";
+import Groq from "groq-sdk/index";
+import {
   ChatCompletionMessageParam,
 } from "groq-sdk/resources/chat/completions";
 import OpenAI from "openai";
@@ -28,33 +32,39 @@ const JSON_SCHEMA_SUPPORTED_MODELS = new Set<string>([
   "openai/gpt-oss-120b",
 ]);
 
+const buildResponseFormat = (
+  jsonResponse: JsonResponse | null,
+  model: string,
+): {
+  type: "json_schema";
+  json_schema: {
+    name: string;
+    description?: string;
+    schema: Record<string, unknown>;
+  };
+} | { type: "json_object" } | undefined => {
+  if (!jsonResponse) {
+    return undefined;
+  }
+  if (JSON_SCHEMA_SUPPORTED_MODELS.has(model)) {
+    return {
+      type: "json_schema",
+      json_schema: {
+        name: jsonResponse.name,
+        description: jsonResponse.description,
+        schema: jsonResponse.schema,
+      },
+    };
+  }
+  return { type: "json_object" };
+};
+
 export const TRANSCRIPTION_MODELS = [
   "whisper-large-v3-turbo",
   "whisper-large-v3",
 ] as const;
 export type TranscriptionModel = (typeof TRANSCRIPTION_MODELS)[number];
 
-const contentToString = (
-  content: string | ChatCompletionContentPart[] | null | undefined,
-): string => {
-  if (!content) {
-    return "";
-  }
-
-  if (typeof content === "string") {
-    return content;
-  }
-
-  return content
-    .map((part) => {
-      if (part.type === "text") {
-        return part.text ?? "";
-      }
-      return "";
-    })
-    .join("")
-    .trim();
-};
 
 const createClient = (apiKey: string) => {
   // `dangerouslyAllowBrowser` is needed because this runs on a desktop tauri app.
@@ -90,19 +100,14 @@ export const groqTranscribeAudio = async ({
     fn: async () => {
       const client = createClient(apiKey);
 
-      const file = await toFile(blob, `audio.${ext}`);
-      const response = await client.audio.transcriptions.create({
-        file,
+      const text = await transcribeWithOpenAICompatClient(client, {
+        blob,
+        ext,
         model,
         prompt,
-        language: language && language !== "auto" ? language : undefined,
+        language,
       });
-
-      if (!response.text) {
-        throw new Error("Transcription failed");
-      }
-
-      return { text: response.text, wordsUsed: countWords(response.text) };
+      return { text, wordsUsed: countWords(text) };
     },
   });
 };
@@ -134,38 +139,17 @@ export const groqGenerateTextResponse = async ({
     fn: async () => {
       const client = createClient(apiKey);
 
-      const messages: ChatCompletionMessageParam[] = [];
-      if (system) {
-        messages.push({ role: "system", content: system });
-      }
-
-      const userParts: ChatCompletionContentPart[] = [];
-      for (const url of imageUrls) {
-        userParts.push({
-          type: "image_url",
-          image_url: { url },
-        });
-      }
-
-      userParts.push({ type: "text", text: prompt });
-      messages.push({ role: "user", content: userParts });
+      const messages = buildChatMessages({
+        system,
+        prompt,
+        imageUrls,
+      }) as unknown as ChatCompletionMessageParam[];
 
       const response = await client.chat.completions.create({
         messages,
         model,
         max_completion_tokens: 5000,
-        response_format: jsonResponse
-          ? JSON_SCHEMA_SUPPORTED_MODELS.has(model)
-            ? {
-                type: "json_schema",
-                json_schema: {
-                  name: jsonResponse.name,
-                  description: jsonResponse.description,
-                  schema: jsonResponse.schema,
-                },
-              }
-            : { type: "json_object" }
-          : undefined,
+        response_format: buildResponseFormat(jsonResponse ?? null, model),
       });
 
       console.log("groq llm usage:", response.usage);
