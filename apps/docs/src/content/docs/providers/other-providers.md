@@ -31,6 +31,6 @@ AssemblyAI's test lists transcripts from `/v2/transcript`; it can succeed withou
 
 ## Generative providers
 
-**DeepSeek** and **Cerebras** appear in post-processing and Assistant lists, not transcription. DeepSeek defaults to `deepseek-chat`, calls its OpenAI-compatible chat endpoint, and tests by listing models. Cerebras defaults to `zai-glm-4.7`, uses its chat-completions endpoint, and tests by listing models. Neither form currently includes a custom base URL or model picker; a saved explicit model, when present, overrides the default.
+**DeepSeek** and **Cerebras** appear in post-processing and Assistant lists, not transcription. DeepSeek defaults to `deepseek-chat`, calls its OpenAI-compatible chat endpoint, and tests by listing models. Cerebras defaults to `gpt-oss-120b`, uses its chat-completions endpoint, and tests by listing models. Its live model picker queries Cerebras rather than relying on the fallback catalog; the fallback contains the current public `gpt-oss-120b` and `gemma-4-31b` IDs. A model returned by the provider remains usable even when it was released after this mausVoice build.
 
 All hosted routes send task data off-device and remain subject to provider billing, retention, model access, limits, and policies. Test with short non-sensitive content before relying on a route, and never include an API key in diagnostics.

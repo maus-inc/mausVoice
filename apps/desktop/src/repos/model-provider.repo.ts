@@ -6,10 +6,19 @@ import {
   DEEPSEEK_MODELS,
   GEMINI_GENERATE_TEXT_MODELS,
   GEMINI_TRANSCRIPTION_MODELS,
+  GENERATE_TEXT_MODELS,
+  TRANSCRIPTION_MODELS,
   XAI_TRANSCRIPTION_MODELS,
 } from "@maus-inc/voice-ai";
-import { secureFetch as fetch } from "../utils/secure-fetch.utils";
+import {
+  createOpenAICompatibleFetch,
+  secureFetch as fetch,
+} from "../utils/secure-fetch.utils";
 import { getOllamaHeaders } from "../utils/ollama.utils";
+import {
+  appendOpenAICompatiblePath,
+  buildOpenAICompatibleUrl,
+} from "../utils/openai-compatible.utils";
 import { BaseRepo } from "./base.repo";
 
 type OpenAIListResponse = {
@@ -22,7 +31,9 @@ type GeminiListResponse = {
 
 export type FetchModelsOptions = {
   apiKey?: string;
+  apiKeyId?: string;
   baseUrl?: string;
+  includeV1Path?: boolean | null;
 };
 
 export abstract class BaseModelProviderRepo extends BaseRepo {
@@ -40,15 +51,19 @@ async function fetchOpenAICompatibleModels(
   url: string,
   apiKey: string,
 ): Promise<string[]> {
-  const response = await fetch(url, {
-    headers: { Authorization: `Bearer ${apiKey}` },
-  });
-  if (!response.ok) return [];
-  const payload = (await response.json()) as OpenAIListResponse;
-  return (payload.data ?? [])
-    .map((m) => (m.id ?? "").trim())
-    .filter(Boolean)
-    .sort();
+  try {
+    const response = await fetch(url, {
+      headers: { Authorization: `Bearer ${apiKey}` },
+    });
+    if (!response.ok) return [];
+    const payload = (await response.json()) as OpenAIListResponse;
+    return (payload.data ?? [])
+      .map((m) => (m.id ?? "").trim())
+      .filter(Boolean)
+      .sort();
+  } catch {
+    return [];
+  }
 }
 
 function isWhisperModel(modelId: string): boolean {
@@ -90,12 +105,14 @@ export class GroqModelProviderRepo extends BaseModelProviderRepo {
     options: FetchModelsOptions,
   ): Promise<string[]> {
     const fetched = await this.fetchModels(options);
-    return fetched.filter((m) => !isWhisperModel(m));
+    const models = fetched.filter((m) => !isWhisperModel(m));
+    return models.length > 0 ? models : [...GENERATE_TEXT_MODELS];
   }
 
   async getTranscriptionModels(options: FetchModelsOptions): Promise<string[]> {
     const fetched = await this.fetchModels(options);
-    return fetched.filter(isWhisperModel);
+    const models = fetched.filter(isWhisperModel);
+    return models.length > 0 ? models : [...TRANSCRIPTION_MODELS];
   }
 }
 
@@ -360,10 +377,16 @@ export class OpenAICompatibleModelProviderRepo extends BaseModelProviderRepo {
   }
 
   private async fetchModels(options: FetchModelsOptions): Promise<string[]> {
-    if (!options.baseUrl) return [];
-    const response = await fetch(new URL("/v1/models", options.baseUrl).href, {
-      headers: getOllamaHeaders(options.apiKey),
-    });
+    if (!options.baseUrl || !options.apiKeyId) return [];
+    const apiBaseUrl = buildOpenAICompatibleUrl(
+      options.baseUrl,
+      options.includeV1Path,
+    );
+    const customFetch = createOpenAICompatibleFetch(options.apiKeyId);
+    const response = await customFetch(
+      appendOpenAICompatiblePath(apiBaseUrl, "models"),
+      { headers: getOllamaHeaders(options.apiKey) },
+    );
     if (!response.ok) return [];
     const payload = (await response.json()) as OpenAIListResponse;
     return (payload.data ?? [])

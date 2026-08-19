@@ -1,4 +1,4 @@
-import { secureFetch as fetch } from "./secure-fetch.utils";
+import { secureFetch } from "./secure-fetch.utils";
 
 export type OpenAICompatibleTranscriptionArgs = {
   baseUrl: string;
@@ -8,6 +8,7 @@ export type OpenAICompatibleTranscriptionArgs = {
   ext: string;
   prompt?: string;
   language?: string;
+  customFetch?: typeof secureFetch;
 };
 
 export type OpenAICompatibleTranscriptionSegment = {
@@ -28,6 +29,7 @@ export const openaiCompatibleTranscribeAudio = async ({
   ext,
   prompt,
   language,
+  customFetch = secureFetch,
 }: OpenAICompatibleTranscriptionArgs): Promise<OpenAICompatibleTranscribeAudioOutput> => {
   const url = baseUrl.replace(/\/$/, "");
 
@@ -61,7 +63,7 @@ export const openaiCompatibleTranscribeAudio = async ({
   }
 
   const send = (format: "verbose_json" | "json" | null) =>
-    fetch(`${url}/audio/transcriptions`, {
+    customFetch(`${url}/audio/transcriptions`, {
       method: "POST",
       body: buildBody(format),
       headers,

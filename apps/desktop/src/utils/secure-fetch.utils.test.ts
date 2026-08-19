@@ -8,7 +8,7 @@ const { invokeMock, pluginFetchMock } = vi.hoisted(() => ({
 vi.mock("@tauri-apps/api/core", () => ({ invoke: invokeMock }));
 vi.mock("@tauri-apps/plugin-http", () => ({ fetch: pluginFetchMock }));
 
-import { secureFetch } from "./secure-fetch.utils";
+import { createOpenAICompatibleFetch, secureFetch } from "./secure-fetch.utils";
 
 describe("secureFetch", () => {
   beforeEach(() => {
@@ -54,6 +54,33 @@ describe("secureFetch", () => {
     });
     expect(response.status).toBe(200);
     await expect(response.json()).resolves.toEqual({ models: [] });
+  });
+
+  it("routes saved hosted OpenAI-compatible endpoints through the authorized command", async () => {
+    invokeMock.mockResolvedValue({
+      status: 200,
+      headers: { "content-type": "application/json" },
+      body: Array.from(new TextEncoder().encode('{"data":[]}')),
+    });
+
+    const customFetch = createOpenAICompatibleFetch("custom-key-id");
+    const response = await customFetch(
+      "https://llm.example.com/proxy/openai/v1/models",
+      { headers: { Authorization: "Bearer secret" } },
+    );
+
+    expect(pluginFetchMock).not.toHaveBeenCalled();
+    expect(invokeMock).toHaveBeenCalledWith("openai_compatible_http_request", {
+      apiKeyId: "custom-key-id",
+      request: {
+        requestId: expect.any(String),
+        url: "https://llm.example.com/proxy/openai/v1/models",
+        method: "GET",
+        headers: { authorization: "Bearer secret" },
+        body: null,
+      },
+    });
+    expect(response.status).toBe(200);
   });
 
   it("does not start a native request for an already-aborted signal", async () => {

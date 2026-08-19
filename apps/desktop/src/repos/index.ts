@@ -204,8 +204,13 @@ const buildOpenAICompatibleGenerateTextRepo = (
   getLogger().verbose(
     `Configuring OpenAI Compatible repo with baseUrl=${fullUrl} and model=${model}`,
   );
-  if (model) {
-    return new OpenAICompatibleGenerateTextRepo(fullUrl, model, providerApiKey);
+  if (model && apiKeyRecord) {
+    return new OpenAICompatibleGenerateTextRepo(
+      apiKeyRecord.id,
+      fullUrl,
+      model,
+      providerApiKey,
+    );
   }
   prefs.warnings.push(
     "No model configured for OpenAI Compatible post-processing.",
@@ -411,7 +416,13 @@ export const getTranscribeAudioRepo = (): TranscribeAudioRepoOutput => {
         const providerApiKey = apiKeyRecord?.keyFull || undefined;
         const includeV1Path = apiKeyRecord?.includeV1Path;
         const fullUrl = buildOpenAICompatibleUrl(baseUrl, includeV1Path);
+        if (!apiKeyRecord) {
+          throw new Error(
+            "OpenAI-compatible endpoint configuration is missing.",
+          );
+        }
         repo = new OpenAICompatibleTranscribeAudioRepo(
+          apiKeyRecord.id,
           fullUrl,
           model,
           providerApiKey,
