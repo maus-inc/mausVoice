@@ -125,3 +125,55 @@ export const hairline = {
   light: (alpha = 0.06) => `1px solid ${ink(alpha)}`,
   dark: (alpha = 0.06) => `1px solid ${highlight(alpha)}`,
 } as const;
+
+/** One layer of a box-shadow token. */
+export type ShadowLayer = {
+  inset: boolean;
+  offsetX: number;
+  offsetY: number;
+  blur: number;
+  spread: number;
+  r: number;
+  g: number;
+  b: number;
+  alpha: number;
+  color: string;
+};
+
+const SHADOW_LAYER_RE =
+  /(inset\s+)?(-?\d+(?:\.\d+)?)(?:px)?\s+(-?\d+(?:\.\d+)?)(?:px)?\s+(-?\d+(?:\.\d+)?)(?:px)?(?:\s+(-?\d+(?:\.\d+)?)(?:px)?)?\s+rgba\(\s*(\d+)\s*,\s*(\d+)\s*,\s*(\d+)\s*,\s*([\d.]+)\s*\)/g;
+
+/**
+ * Parses a shadow token into its layers. The token format is deliberately
+ * constrained to `rgba()` colors: anything the parser cannot fully consume
+ * raises, so tuning a token into an unsupported syntax (hex, `var()`,
+ * `color-mix`…) fails loudly in tests instead of silently dropping layers.
+ */
+export const parseShadowLayers = (token: string): ShadowLayer[] => {
+  const layers: ShadowLayer[] = [];
+  for (const match of token.matchAll(SHADOW_LAYER_RE)) {
+    const r = Number(match[6]);
+    const g = Number(match[7]);
+    const b = Number(match[8]);
+    const alpha = Number(match[9]);
+    layers.push({
+      inset: match[1] !== undefined,
+      offsetX: Number(match[2]),
+      offsetY: Number(match[3]),
+      blur: Number(match[4]),
+      spread: Number(match[5] ?? 0),
+      r,
+      g,
+      b,
+      alpha,
+      color: `rgba(${r}, ${g}, ${b}, ${alpha})`,
+    });
+  }
+  const unconsumed = token.replace(SHADOW_LAYER_RE, "").replace(/[\s,]+/g, "");
+  if (unconsumed) {
+    throw new Error(
+      `Unsupported shadow token format (only rgba() layers are supported): "${token.trim()}"`,
+    );
+  }
+  return layers;
+};
