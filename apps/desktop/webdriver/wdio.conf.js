@@ -1,9 +1,9 @@
-import os from 'node:os';
-import fs from 'node:fs';
-import http from 'node:http';
-import path from 'node:path';
-import { spawn, spawnSync } from 'node:child_process';
-import { fileURLToPath } from 'node:url';
+import os from 'os';
+import fs from 'fs';
+import http from 'http';
+import path from 'path';
+import { spawn, spawnSync } from 'child_process';
+import { fileURLToPath } from 'url';
 import chromedriver from 'chromedriver';
 import { preview as createPreviewServer } from 'vite';
 
@@ -17,7 +17,6 @@ let closingChromeDriver = false;
 
 const projectRoot = path.resolve(__dirname, '..');
 const isMac = process.platform === 'darwin';
-const npmCommand = process.platform === 'win32' ? 'npm.cmd' : 'npm';
 const previewPort = Number(process.env.WDIO_PREVIEW_PORT ?? 4173);
 const isHeadless = process.env.WDIO_HEADLESS !== 'false';
 const driverPort = isMac ? Number(process.env.WDIO_CHROMEDRIVER_PORT ?? 9515) : 4444;
@@ -286,9 +285,10 @@ export const config = {
     : undefined,
   onPrepare: async () => {
     if (isMac) {
-      spawnSync(npmCommand, ['run', 'build'], {
+      spawnSync('npm', ['run', 'build'], {
         cwd: projectRoot,
         stdio: 'inherit',
+        shell: true,
       });
 
       await startChromeDriver();
@@ -296,9 +296,10 @@ export const config = {
       return;
     }
 
-    spawnSync(npmCommand, ['run', 'tauri', 'build', '--', '--debug', '--no-bundle'], {
+    spawnSync('npm', ['run', 'tauri', 'build', '--', '--debug', '--no-bundle'], {
       cwd: projectRoot,
       stdio: 'inherit',
+      shell: true,
     });
 
     ensureBinaryExists(resolveTauriBinary());

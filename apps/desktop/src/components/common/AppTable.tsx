@@ -30,46 +30,19 @@ const DefaultRow = React.forwardRef<HTMLDivElement, DivRowProps>(
 );
 
 export interface AppTableProps<T> {
-  readonly rows: T[];
-  readonly columns: ColumnDef<T>[];
-  readonly sx?: SxProps;
-  readonly RowComponent?: React.ForwardRefExoticComponent<
+  rows: T[];
+  columns: ColumnDef<T>[];
+  height?: number;
+  sx?: SxProps;
+  RowComponent?: React.ForwardRefExoticComponent<
     React.PropsWithoutRef<DivRowProps> & React.RefAttributes<HTMLDivElement>
   >;
-  readonly footer?: React.ReactNode;
-  readonly defaultSortColumnIndex?: number;
-  readonly defaultSortDirection?: SortDirection;
+  footer?: React.ReactNode;
+  defaultSortColumnIndex?: number;
+  defaultSortDirection?: SortDirection;
 }
 
 type SortDirection = "asc" | "desc";
-
-const VirtuosoScroller = React.forwardRef<
-  HTMLDivElement,
-  React.HTMLAttributes<HTMLDivElement>
->((props, ref) => <TableContainer component={Paper} ref={ref} {...props} />);
-
-const VirtuosoTable = (props: React.HTMLAttributes<HTMLDivElement>) => (
-  <MuiTable
-    {...props}
-    component="div"
-    sx={{ borderCollapse: "separate", tableLayout: "fixed" }}
-  />
-);
-
-const VirtuosoTableHead = React.forwardRef<
-  HTMLDivElement,
-  React.HTMLAttributes<HTMLDivElement>
->((props, ref) => <MuiTableHead ref={ref} component="div" {...props} />);
-
-const VirtuosoTableBody = React.forwardRef<
-  HTMLDivElement,
-  React.HTMLAttributes<HTMLDivElement>
->((props, ref) => <MuiTableBody ref={ref} component="div" {...props} />);
-
-const VirtuosoTableFooter = React.forwardRef<
-  HTMLDivElement,
-  React.HTMLAttributes<HTMLDivElement>
->((props, ref) => <MuiTableFooter ref={ref} component="div" {...props} />);
 
 export function AppTable<T>({
   rows,
@@ -120,24 +93,50 @@ export function AppTable<T>({
     return `calc((100% - ${fixedWidth}px) * ${ratio})`;
   });
 
-  const columnKeys = React.useMemo(
-    () => columns.map((_, idx) => `column-${idx}`),
-    [columns],
-  );
-
   const VirtuosoComponents: TableComponents<T> = React.useMemo(
     () => ({
-      Scroller: VirtuosoScroller as any,
-      Table: VirtuosoTable as any,
-      TableHead: VirtuosoTableHead as any,
-      TableBody: VirtuosoTableBody as any,
+      Scroller: React.forwardRef<
+        HTMLDivElement,
+        React.HTMLAttributes<HTMLDivElement>
+      >((props, ref) => (
+        <TableContainer component={Paper} ref={ref} {...props} />
+      )) as any,
+
+      Table: (props) => (
+        <MuiTable
+          {...props}
+          component="div"
+          sx={{ borderCollapse: "separate", tableLayout: "fixed" }}
+        />
+      ),
+
+      TableHead: React.forwardRef<
+        HTMLDivElement,
+        React.HTMLAttributes<HTMLDivElement>
+      >((props, ref) => (
+        <MuiTableHead ref={ref} component="div" {...props} />
+      )) as any,
+
+      TableBody: React.forwardRef<
+        HTMLDivElement,
+        React.HTMLAttributes<HTMLDivElement>
+      >((props, ref) => (
+        <MuiTableBody ref={ref} component="div" {...props} />
+      )) as any,
+
       TableRow: (RowComponent ?? DefaultRow) as any,
-      TableFooter: VirtuosoTableFooter as any,
+
+      TableFooter: React.forwardRef<
+        HTMLDivElement,
+        React.HTMLAttributes<HTMLDivElement>
+      >((props, ref) => (
+        <MuiTableFooter ref={ref} component="div" {...props} />
+      )) as any,
     }),
     [RowComponent],
   );
 
-  const renderFixedHeader = () => (
+  const FixedHeaderContent = () => (
     <MuiTableRow component="div">
       {columns.map((col, idx) => {
         const sortable = Boolean(col.getSortKey);
@@ -146,7 +145,7 @@ export function AppTable<T>({
           typeof col.header === "function" ? col.header() : col.header;
         return (
           <TableCell
-            key={columnKeys[idx]}
+            key={idx}
             variant="head"
             component="div"
             sx={{
@@ -173,30 +172,28 @@ export function AppTable<T>({
     </MuiTableRow>
   );
 
-  const renderRow = (_: number, row: T) => (
+  const RowContent = (_: number, row: T) => (
     <>
       {columns.map((col, idx) => (
-        <TableCell
-          component="div"
-          key={columnKeys[idx]}
-          sx={{ width: colWidths[idx] }}
-        >
+        <TableCell component="div" key={idx} sx={{ width: colWidths[idx] }}>
           {col.cell(row)}
         </TableCell>
       ))}
     </>
   );
 
-  const renderFixedFooter = () => footer;
+  const FixedFooterContent = React.useCallback(() => {
+    return footer;
+  }, [footer]);
 
   return (
     <Paper sx={sx}>
       <TableVirtuoso
         data={sortedRows}
         components={VirtuosoComponents}
-        fixedHeaderContent={renderFixedHeader}
-        itemContent={renderRow}
-        fixedFooterContent={(footer ? renderFixedFooter : undefined) as any}
+        fixedHeaderContent={FixedHeaderContent}
+        itemContent={RowContent}
+        fixedFooterContent={(footer ? FixedFooterContent : undefined) as any}
       />
     </Paper>
   );

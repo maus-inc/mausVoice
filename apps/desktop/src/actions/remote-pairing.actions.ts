@@ -35,22 +35,19 @@ const encodeBase64Url = (value: string): string => {
   const bytes = new TextEncoder().encode(value);
   let binary = "";
   for (const byte of bytes) {
-    binary += String.fromCodePoint(byte);
+    binary += String.fromCharCode(byte);
   }
-  const base64 = btoa(binary);
-  let paddingStart = base64.length;
-  while (paddingStart > 0 && base64[paddingStart - 1] === "=") {
-    paddingStart -= 1;
-  }
-  const withoutPadding = base64.slice(0, paddingStart);
-  return withoutPadding.replaceAll("+", "-").replaceAll("/", "_");
+  return btoa(binary)
+    .replace(/\+/g, "-")
+    .replace(/\//g, "_")
+    .replace(/=+$/g, "");
 };
 
 const decodeBase64Url = (value: string): string => {
-  const normalized = value.replaceAll("-", "+").replaceAll("_", "/");
+  const normalized = value.replace(/-/g, "+").replace(/_/g, "/");
   const padded = normalized.padEnd(Math.ceil(normalized.length / 4) * 4, "=");
   const binary = atob(padded);
-  const bytes = Uint8Array.from(binary, (char) => char.codePointAt(0) ?? 0);
+  const bytes = Uint8Array.from(binary, (char) => char.charCodeAt(0));
   return new TextDecoder().decode(bytes);
 };
 

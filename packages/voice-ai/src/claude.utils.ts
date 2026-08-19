@@ -1,7 +1,5 @@
 import Anthropic from "@anthropic-ai/sdk";
-import { parseToolArguments } from "./shared.utils";
 import type {
-  MessageStreamEvent,
   ContentBlockParam,
   MessageParam,
   ToolChoiceAuto,
@@ -89,7 +87,7 @@ export const claudeGenerateTextResponse = async ({
       console.log("claude llm usage:", response.usage);
 
       const textBlock = response.content.find((block) => block.type === "text");
-      if (textBlock?.type !== "text") {
+      if (!textBlock || textBlock.type !== "text") {
         throw new Error("No text response from Claude");
       }
 
@@ -127,7 +125,7 @@ export const claudeTestIntegration = async ({
   });
 
   const textBlock = response.content.find((block) => block.type === "text");
-  if (textBlock?.type !== "text") {
+  if (!textBlock || textBlock.type !== "text") {
     throw new Error("No text response from Claude");
   }
 
@@ -137,24 +135,6 @@ export const claudeTestIntegration = async ({
 // ============================================================================
 // Streaming Chat
 // ============================================================================
-
-const buildAssistantContent = (
-  msg: Extract<LlmMessage, { role: "assistant" }>,
-): ContentBlockParam[] => {
-  const content: ContentBlockParam[] = [];
-  if (msg.content) {
-    content.push({ type: "text", text: msg.content });
-  }
-  for (const tc of msg.toolCalls ?? []) {
-    content.push({
-      type: "tool_use",
-      id: tc.id,
-      name: tc.name,
-      input: parseToolArguments(tc.arguments),
-    });
-  }
-  return content;
-};
 
 function llmMessagesToClaude(messages: LlmMessage[]): {
   system: string | undefined;
@@ -175,7 +155,24 @@ function llmMessagesToClaude(messages: LlmMessage[]): {
     }
 
     if (msg.role === "assistant") {
-      const content = buildAssistantContent(msg);
+      const content: ContentBlockParam[] = [];
+      if (msg.content) {
+        content.push({ type: "text", text: msg.content });
+      }
+      for (const tc of msg.toolCalls ?? []) {
+        let parsedInput: Record<string, unknown>;
+        try {
+          parsedInput = JSON.parse(tc.arguments) as Record<string, unknown>;
+        } catch {
+          parsedInput = {};
+        }
+        content.push({
+          type: "tool_use",
+          id: tc.id,
+          name: tc.name,
+          input: parsedInput,
+        });
+      }
       if (content.length > 0) {
         out.push({ role: "assistant", content });
       }
@@ -212,73 +209,6 @@ function claudeFinishReason(raw: string | null | undefined): LlmFinishReason {
   }
 }
 
-const resolveToolChoice = (
-  toolChoice: LlmChatInput["toolChoice"],
-  tools: Tool[] | undefined,
-): ToolChoiceAuto | ToolChoiceAny | ToolChoiceTool | undefined => {
-  if (!toolChoice || !tools) {
-    return undefined;
-  }
-  if (typeof toolChoice === "string") {
-    if (toolChoice === "auto") {
-      return { type: "auto" };
-    }
-    if (toolChoice === "required") {
-      return { type: "any" };
-    }
-    return undefined;
-  }
-  return { type: "tool", name: toolChoice.name };
-};
-
-const buildClaudeTools = (
-  tools: LlmChatInput["tools"],
-): Tool[] | undefined => {
-  if (!tools || tools.length === 0) {
-    return undefined;
-  }
-  return tools.map((t) => ({
-    name: t.name,
-    description: t.description ?? "",
-    input_schema: (t.parameters ?? {
-      type: "object",
-      properties: {},
-    }) as Tool["input_schema"],
-  }));
-};
-
-const handleClaudeStreamEvent = (
-  event: MessageStreamEvent,
-  pendingToolCalls: Array<{ id: string; name: string; arguments: string }>,
-): LlmStreamEvent[] => {
-  if (event.type !== "content_block_delta") {
-    if (
-      event.type === "content_block_start" &&
-      event.content_block.type === "tool_use"
-    ) {
-      pendingToolCalls.push({
-        id: event.content_block.id,
-        name: event.content_block.name,
-        arguments: "",
-      });
-    }
-    return [];
-  }
-
-  if (event.delta.type === "text_delta") {
-    return [{ type: "text-delta", text: event.delta.text }];
-  }
-
-  if (event.delta.type === "input_json_delta") {
-    const last = pendingToolCalls.at(-1);
-    if (last) {
-      last.arguments += event.delta.partial_json;
-    }
-  }
-
-  return [];
-};
-
 export type ClaudeStreamChatArgs = {
   apiKey: string;
   model: string;
@@ -293,9 +223,36 @@ export async function* claudeStreamChat({
   const client = createClient(apiKey);
   const { system, messages } = llmMessagesToClaude(input.messages);
 
-  const tools = buildClaudeTools(input.tools);
+  const tools: Tool[] | undefined =
+    input.tools && input.tools.length > 0
+      ? input.tools.map((t) => ({
+          name: t.name,
+          description: t.description ?? "",
+          input_schema: (t.parameters ?? {
+            type: "object",
+            properties: {},
+          }) as Tool["input_schema"],
+        }))
+      : undefined;
 
-  const toolChoice = resolveToolChoice(input.toolChoice, tools);
+  let toolChoice: ToolChoiceAuto | ToolChoiceAny | ToolChoiceTool | undefined;
+  if (input.toolChoice && tools) {
+    if (typeof input.toolChoice === "string") {
+      switch (input.toolChoice) {
+        case "auto":
+          toolChoice = { type: "auto" };
+          break;
+        case "required":
+          toolChoice = { type: "any" };
+          break;
+        case "none":
+          toolChoice = undefined;
+          break;
+      }
+    } else {
+      toolChoice = { type: "tool", name: input.toolChoice.name };
+    }
+  }
 
   const stream = client.messages.stream({
     model,
@@ -316,9 +273,32 @@ export async function* claudeStreamChat({
   }> = [];
 
   for await (const event of stream) {
-    const events = handleClaudeStreamEvent(event, pendingToolCalls);
-    for (const streamEvent of events) {
-      yield streamEvent;
+    if (
+      event.type === "content_block_delta" &&
+      event.delta.type === "text_delta"
+    ) {
+      yield { type: "text-delta", text: event.delta.text };
+    }
+
+    if (
+      event.type === "content_block_delta" &&
+      event.delta.type === "input_json_delta"
+    ) {
+      const last = pendingToolCalls[pendingToolCalls.length - 1];
+      if (last) {
+        last.arguments += event.delta.partial_json;
+      }
+    }
+
+    if (
+      event.type === "content_block_start" &&
+      event.content_block.type === "tool_use"
+    ) {
+      pendingToolCalls.push({
+        id: event.content_block.id,
+        name: event.content_block.name,
+        arguments: "",
+      });
     }
   }
 

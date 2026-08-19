@@ -1,6 +1,6 @@
 export class Perlin {
-  private readonly permutation: number[];
-  private readonly p: number[];
+  private permutation: number[];
+  private p: number[];
 
   constructor() {
     this.permutation = [
@@ -39,14 +39,7 @@ export class Perlin {
   grad(hash: number, x: number, y: number, z: number) {
     const h = hash & 15;
     const u = h < 8 ? x : y;
-    let v: number;
-    if (h < 4) {
-      v = y;
-    } else if (h === 12 || h === 14) {
-      v = x;
-    } else {
-      v = z;
-    }
+    const v = h < 4 ? y : h === 12 || h === 14 ? x : z;
     return (h & 1 ? -u : u) + (h & 2 ? -v : v);
   }
 

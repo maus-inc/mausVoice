@@ -56,7 +56,7 @@ export function TypographyWithMore({
 
     const hiddenNode = hiddenTypographyRef.current;
     const computedStyles = window.getComputedStyle(hiddenNode);
-    const lineHeight = Number.parseFloat(computedStyles.lineHeight || "0");
+    const lineHeight = parseFloat(computedStyles.lineHeight || "0");
 
     if (!Number.isFinite(lineHeight) || lineHeight <= 0) {
       setIsOverflowing(false);

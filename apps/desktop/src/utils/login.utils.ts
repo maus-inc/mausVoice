@@ -1,24 +1,11 @@
 import { getIntl } from "../i18n/intl";
 import type { AppState } from "../state/app.state";
 
-const isValidEmailShape = (email: string): boolean => {
-  const atIndex = email.lastIndexOf("@");
-  if (atIndex <= 0 || atIndex === email.length - 1) {
-    return false;
-  }
-  const localPart = email.slice(0, atIndex);
-  const domainPart = email.slice(atIndex + 1);
-  const dotIndex = domainPart.lastIndexOf(".");
-  if (dotIndex <= 0 || dotIndex === domainPart.length - 1) {
-    return false;
-  }
-  return !/[\s@]/.test(localPart) && !/[\s@]/.test(domainPart);
-};
-
 export const validateEmail = (state: AppState): string | null => {
   const email = state.login.email;
 
-  if (!isValidEmailShape(email)) {
+  const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+  if (!emailRegex.test(email)) {
     return getIntl().formatMessage({
       defaultMessage: "Invalid email address",
     });

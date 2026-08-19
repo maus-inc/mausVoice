@@ -218,41 +218,9 @@ export class LocalTranscribeAudioRepo extends BaseTranscribeAudioRepo {
   }
 }
 
-type AudioRepoTranscribeConfig = {
-  inferenceDevice: string;
-};
-
-const transcribeSegmentWithOpenAICompat = async (
-  transcribe: (segment: {
-    blob: ArrayBuffer;
-    ext: string;
-    prompt?: string;
-    language?: string;
-  }) => Promise<{ text: string }>,
-  input: TranscribeSegmentInput,
-  config: AudioRepoTranscribeConfig,
-  model: string,
-): Promise<TranscribeAudioOutput> => {
-  const wavBuffer = buildWaveFile(input.samples, input.sampleRate);
-  const { text: transcript } = await transcribe({
-    blob: wavBuffer,
-    ext: "wav",
-    prompt: input.prompt ?? undefined,
-    language: input.language,
-  });
-  return {
-    text: transcript,
-    metadata: {
-      inferenceDevice: config.inferenceDevice,
-      modelSize: model,
-      transcriptionMode: "api",
-    },
-  };
-};
-
 export class GroqTranscribeAudioRepo extends BaseTranscribeAudioRepo {
-  private readonly groqApiKey: string;
-  private readonly model: TranscriptionModel;
+  private groqApiKey: string;
+  private model: TranscriptionModel;
 
   constructor(apiKey: string, model: string | null) {
     super();
@@ -277,26 +245,31 @@ export class GroqTranscribeAudioRepo extends BaseTranscribeAudioRepo {
   protected async transcribeSegment(
     input: TranscribeSegmentInput,
   ): Promise<TranscribeAudioOutput> {
-    return transcribeSegmentWithOpenAICompat(
-      (segment) =>
-        groqTranscribeAudio({
-          apiKey: this.groqApiKey,
-          model: this.model,
-          blob: segment.blob,
-          ext: segment.ext,
-          prompt: segment.prompt ?? undefined,
-          language: segment.language,
-        }),
-      input,
-      { inferenceDevice: "API • Groq" },
-      this.model,
-    );
+    const wavBuffer = buildWaveFile(input.samples, input.sampleRate);
+
+    const { text: transcript } = await groqTranscribeAudio({
+      apiKey: this.groqApiKey,
+      model: this.model,
+      blob: wavBuffer,
+      ext: "wav",
+      prompt: input.prompt ?? undefined,
+      language: input.language,
+    });
+
+    return {
+      text: transcript,
+      metadata: {
+        inferenceDevice: "API • Groq",
+        modelSize: this.model,
+        transcriptionMode: "api",
+      },
+    };
   }
 }
 
 export class OpenAITranscribeAudioRepo extends BaseTranscribeAudioRepo {
-  private readonly openaiApiKey: string;
-  private readonly model: OpenAITranscriptionModel;
+  private openaiApiKey: string;
+  private model: OpenAITranscriptionModel;
 
   constructor(apiKey: string, model: string | null) {
     super();
@@ -321,25 +294,30 @@ export class OpenAITranscribeAudioRepo extends BaseTranscribeAudioRepo {
   protected async transcribeSegment(
     input: TranscribeSegmentInput,
   ): Promise<TranscribeAudioOutput> {
-    return transcribeSegmentWithOpenAICompat(
-      (segment) =>
-        openaiTranscribeAudio({
-          apiKey: this.openaiApiKey,
-          model: this.model,
-          blob: segment.blob,
-          ext: segment.ext,
-          prompt: segment.prompt ?? undefined,
-          language: segment.language,
-        }),
-      input,
-      { inferenceDevice: "API • OpenAI" },
-      this.model,
-    );
+    const wavBuffer = buildWaveFile(input.samples, input.sampleRate);
+
+    const { text: transcript } = await openaiTranscribeAudio({
+      apiKey: this.openaiApiKey,
+      model: this.model,
+      blob: wavBuffer,
+      ext: "wav",
+      prompt: input.prompt ?? undefined,
+      language: input.language,
+    });
+
+    return {
+      text: transcript,
+      metadata: {
+        inferenceDevice: "API • OpenAI",
+        modelSize: this.model,
+        transcriptionMode: "api",
+      },
+    };
   }
 }
 
 export class AldeaTranscribeAudioRepo extends BaseTranscribeAudioRepo {
-  private readonly aldeaApiKey: string;
+  private aldeaApiKey: string;
 
   constructor(apiKey: string) {
     super();
@@ -430,7 +408,7 @@ export class AssemblyAITranscribeAudioRepo extends BaseTranscribeAudioRepo {
 }
 
 export class ElevenLabsTranscribeAudioRepo extends BaseTranscribeAudioRepo {
-  private readonly apiKey: string;
+  private apiKey: string;
 
   constructor(apiKey: string) {
     super();
@@ -473,8 +451,8 @@ export class ElevenLabsTranscribeAudioRepo extends BaseTranscribeAudioRepo {
 }
 
 export class DeepgramTranscribeAudioRepo extends BaseTranscribeAudioRepo {
-  private readonly apiKey: string;
-  private readonly model: string;
+  private apiKey: string;
+  private model: string;
 
   constructor(apiKey: string, model: string | null) {
     super();
@@ -519,8 +497,8 @@ export class DeepgramTranscribeAudioRepo extends BaseTranscribeAudioRepo {
 }
 
 export class XaiTranscribeAudioRepo extends BaseTranscribeAudioRepo {
-  private readonly apiKey: string;
-  private readonly model: XaiTranscriptionModel;
+  private apiKey: string;
+  private model: XaiTranscriptionModel;
 
   constructor(apiKey: string, model: string | null) {
     super();
@@ -565,8 +543,8 @@ export class XaiTranscribeAudioRepo extends BaseTranscribeAudioRepo {
 }
 
 export class AzureTranscribeAudioRepo extends BaseTranscribeAudioRepo {
-  private readonly azureSubscriptionKey: string;
-  private readonly azureRegion: string;
+  private azureSubscriptionKey: string;
+  private azureRegion: string;
 
   constructor(subscriptionKey: string, region: string) {
     super();
@@ -613,8 +591,8 @@ export class AzureTranscribeAudioRepo extends BaseTranscribeAudioRepo {
 }
 
 export class GeminiTranscribeAudioRepo extends BaseTranscribeAudioRepo {
-  private readonly geminiApiKey: string;
-  private readonly model: GeminiTranscriptionModel;
+  private geminiApiKey: string;
+  private model: GeminiTranscriptionModel;
 
   constructor(apiKey: string, model: string | null) {
     super();
@@ -660,8 +638,8 @@ export class GeminiTranscribeAudioRepo extends BaseTranscribeAudioRepo {
 }
 
 export class SpeachesTranscribeAudioRepo extends BaseTranscribeAudioRepo {
-  private readonly baseUrl: string;
-  private readonly model: string;
+  private baseUrl: string;
+  private model: string;
 
   constructor(baseUrl: string, model: string) {
     super();
@@ -707,9 +685,9 @@ export class SpeachesTranscribeAudioRepo extends BaseTranscribeAudioRepo {
 }
 
 export class OpenAICompatibleTranscribeAudioRepo extends BaseTranscribeAudioRepo {
-  private readonly baseUrl: string;
-  private readonly model: string;
-  private readonly apiKey?: string;
+  private baseUrl: string;
+  private model: string;
+  private apiKey?: string;
 
   constructor(baseUrl: string, model: string, apiKey?: string) {
     super();

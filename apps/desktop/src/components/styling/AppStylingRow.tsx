@@ -23,22 +23,6 @@ export type AppStylingRowProps = {
   id: string;
 };
 
-const renderPasteKeybindMenu = () => (
-  <Box sx={{ px: 2, py: 1.5, maxWidth: 280 }}>
-    <Typography variant="subtitle2" sx={{ mb: 0.5 }}>
-      <FormattedMessage defaultMessage="Paste Keybind" />
-    </Typography>
-    <Typography
-      variant="body2"
-      sx={{
-        color: "text.secondary",
-      }}
-    >
-      <FormattedMessage defaultMessage="Different applications use different keyboard shortcuts for pasting. Select the keybind that works best for this app." />
-    </Typography>
-  </Box>
-);
-
 export const AppStylingRow = ({ id }: AppStylingRowProps) => {
   const intl = useIntl();
   const target = useAppStore((state) => getRec(state.appTargetById, id));
@@ -78,7 +62,21 @@ export const AppStylingRow = ({ id }: AppStylingRowProps) => {
   const pasteKeybindMenuItems: MenuPopoverItem[] = [
     {
       kind: "genericItem",
-      builder: renderPasteKeybindMenu,
+      builder: () => (
+        <Box sx={{ px: 2, py: 1.5, maxWidth: 280 }}>
+          <Typography variant="subtitle2" sx={{ mb: 0.5 }}>
+            <FormattedMessage defaultMessage="Paste Keybind" />
+          </Typography>
+          <Typography
+            variant="body2"
+            sx={{
+              color: "text.secondary",
+            }}
+          >
+            <FormattedMessage defaultMessage="Different applications use different keyboard shortcuts for pasting. Select the keybind that works best for this app." />
+          </Typography>
+        </Box>
+      ),
     },
     { kind: "divider" },
     {

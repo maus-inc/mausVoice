@@ -1,15 +1,38 @@
-import { Transcription } from "@maus-inc/types";
+import {
+  PostProcessingMode,
+  Transcription,
+  TranscriptionAudioSnapshot,
+  TranscriptionMode,
+} from "@maus-inc/types";
 import { invoke } from "@tauri-apps/api/core";
 import dayjs from "dayjs";
 import { getAppState } from "../store";
 import { getMyEffectiveUserId } from "../utils/user.utils";
 import { BaseRepo } from "./base.repo";
 
-type LocalTranscription = Omit<
-  Transcription,
-  "createdAt" | "createdByUserId" | "isDeleted"
-> & {
+type LocalTranscriptionAudio = TranscriptionAudioSnapshot;
+
+type LocalTranscription = {
+  id: string;
+  transcript: string;
   timestamp: number;
+  audio?: LocalTranscriptionAudio | null;
+  modelSize?: string | null;
+  inferenceDevice?: string | null;
+  rawTranscript?: string | null;
+  sanitizedTranscript?: string | null;
+  transcriptionPrompt?: string | null;
+  postProcessPrompt?: string | null;
+  transcriptionApiKeyId?: string | null;
+  postProcessApiKeyId?: string | null;
+  transcriptionMode?: TranscriptionMode | null;
+  postProcessMode?: PostProcessingMode | null;
+  postProcessDevice?: string | null;
+  transcriptionDurationMs?: number | null;
+  postprocessDurationMs?: number | null;
+  warnings?: string[] | null;
+  remoteStatus?: string | null;
+  remoteDeviceId?: string | null;
 };
 
 export type TranscriptionAudioData = {

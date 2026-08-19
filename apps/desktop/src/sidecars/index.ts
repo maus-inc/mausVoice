@@ -10,8 +10,8 @@ import {
   LocalTranscriptionSidecar,
   SidecarRequestError,
   type LocalSidecarDevice,
-  type SidecarDownloadSnapshot,
-  type SidecarModelStatusResponse,
+  type LocalSidecarDownloadSnapshot,
+  type LocalSidecarModelStatus,
   type LocalSidecarStreamingSession,
   type LocalSidecarStreamingSessionInput,
   type LocalSidecarTranscribeInput,
@@ -23,20 +23,20 @@ export { isSessionNotFoundError } from "./local-transcription.sidecar";
 
 export type {
   LocalSidecarDevice,
-  SidecarDownloadSnapshot,
-  SidecarModelStatusResponse,
+  LocalSidecarDownloadSnapshot,
+  LocalSidecarModelStatus,
   LocalSidecarStreamingSession,
   LocalSidecarStreamingSessionInput,
   LocalSidecarTranscribeInput,
   LocalSidecarTranscribeOutput,
 } from "./local-transcription.sidecar";
 
-export class LocalTranscriptionSidecarFacade {
-  private readonly cpuSidecar = new LocalTranscriptionSidecar("cpu");
-  private readonly gpuSidecar = new LocalTranscriptionSidecar("gpu");
+class LocalTranscriptionSidecarFacade {
+  private cpuSidecar = new LocalTranscriptionSidecar("cpu");
+  private gpuSidecar = new LocalTranscriptionSidecar("gpu");
   private gpuUnavailable = false;
   private gpuDetection: Promise<boolean> | null = null;
-  private readonly downloadOwners = new Map<
+  private downloadOwners = new Map<
     LocalWhisperModel,
     LocalTranscriptionSidecar
   >();
@@ -99,7 +99,7 @@ export class LocalTranscriptionSidecarFacade {
     preferGpu: boolean;
     validate?: boolean;
     models?: LocalWhisperModel[];
-  }): Promise<Record<LocalWhisperModel, SidecarModelStatusResponse>> {
+  }): Promise<Record<LocalWhisperModel, LocalSidecarModelStatus>> {
     const sidecar = await this.resolveRuntime(preferGpu);
     return await sidecar.listModelStatuses(models, validate);
   }
@@ -112,7 +112,7 @@ export class LocalTranscriptionSidecarFacade {
     model: LocalWhisperModel;
     preferGpu: boolean;
     validate?: boolean;
-  }): Promise<SidecarModelStatusResponse> {
+  }): Promise<LocalSidecarModelStatus> {
     const sidecar = await this.resolveRuntime(preferGpu);
     return await sidecar.getModelStatus(model, validate);
   }
@@ -124,8 +124,8 @@ export class LocalTranscriptionSidecarFacade {
   }: {
     model: LocalWhisperModel;
     preferGpu: boolean;
-    onProgress?: (snapshot: SidecarDownloadSnapshot) => void;
-  }): Promise<SidecarModelStatusResponse | null> {
+    onProgress?: (snapshot: LocalSidecarDownloadSnapshot) => void;
+  }): Promise<LocalSidecarModelStatus | null> {
     const sidecar =
       this.downloadOwners.get(model) ?? (await this.resolveRuntime(preferGpu));
     this.downloadOwners.set(model, sidecar);
@@ -148,7 +148,7 @@ export class LocalTranscriptionSidecarFacade {
   }: {
     model: LocalWhisperModel;
     preferGpu: boolean;
-  }): Promise<SidecarDownloadSnapshot> {
+  }): Promise<LocalSidecarDownloadSnapshot> {
     const sidecar =
       this.downloadOwners.get(model) ?? (await this.resolveRuntime(preferGpu));
     return await sidecar.pauseDownload(model);
@@ -160,7 +160,7 @@ export class LocalTranscriptionSidecarFacade {
   }: {
     model: LocalWhisperModel;
     preferGpu: boolean;
-  }): Promise<SidecarDownloadSnapshot> {
+  }): Promise<LocalSidecarDownloadSnapshot> {
     const sidecar =
       this.downloadOwners.get(model) ?? (await this.resolveRuntime(preferGpu));
     try {
@@ -178,7 +178,7 @@ export class LocalTranscriptionSidecarFacade {
   }: {
     model: LocalWhisperModel;
     preferGpu: boolean;
-  }): Promise<SidecarModelStatusResponse> {
+  }): Promise<LocalSidecarModelStatus> {
     const sidecar = await this.resolveRuntime(preferGpu);
     const result = await sidecar.deleteModel(model);
     this.cpuSidecar.invalidateModelReadiness(model);

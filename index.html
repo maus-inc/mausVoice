@@ -1454,10 +1454,10 @@ section { scroll-margin-top: 96px; }
 
   /* ---------- Lenis smooth scroll + GSAP staggered reveals ---------- */
 
-  var gsapReady = window.gsap !== undefined && window.ScrollTrigger !== undefined;
+  var gsapReady = typeof window.gsap !== "undefined" && typeof window.ScrollTrigger !== "undefined";
   var smoothScroll = !reduceMotion && gsapReady && typeof Lenis !== "undefined";
 
-  function initSmoothScroll() {
+  if (smoothScroll) {
     gsap.registerPlugin(ScrollTrigger);
 
     var lenis = new Lenis({ lerp: 0.12, smoothWheel: true });
@@ -1541,15 +1541,11 @@ section { scroll-margin-top: 96px; }
     }
   }
 
-  if (smoothScroll) {
-    initSmoothScroll();
-  }
-
   /* ---------- fadeUp + words reveals ----------
      GSAP/Lenis own the reveals when smooth scroll is active; the
      IntersectionObserver path is the fallback otherwise. ---------- */
 
-  function initFallbackReveals() {
+  if (!smoothScroll) {
     var fades = Array.prototype.slice.call(document.querySelectorAll(".fade-up"));
 
     if (reduceMotion || !supportsIO) {
@@ -1589,10 +1585,6 @@ section { scroll-margin-top: 96px; }
         io.observe(el);
       });
     }
-  }
-
-  if (!smoothScroll) {
-    initFallbackReveals();
   }
 
   /* ---------- Recording pill engine ---------------------------------
@@ -1720,12 +1712,11 @@ section { scroll-margin-top: 96px; }
 
     function drawOutgoing() {
       var runOut = CW - (PILL_X + PILL_W);
-      var y;
       if (runOut > 8) {
         ctx.beginPath();
         for (var x = PILL_X + PILL_W; x <= CW; x += 3) {
           var t = (x - (PILL_X + PILL_W)) / runOut;
-          y = BASELINE + 7 * Math.sin(state.phase + t * TAU * 1.1);
+          var y = BASELINE + 7 * Math.sin(state.phase + t * TAU * 1.1);
           if (x === PILL_X + PILL_W) ctx.moveTo(x, y);
           else ctx.lineTo(x, y);
         }
@@ -1740,18 +1731,18 @@ section { scroll-margin-top: 96px; }
         var w = words[i];
         w.x += w.speed;
         w.t += 0.022;
-        var wy = BASELINE + 7 * Math.sin(w.t * 1.3 + w.x * 0.008);
+        var y = BASELINE + 7 * Math.sin(w.t * 1.3 + w.x * 0.008);
         var a = 1;
         if (w.x < PILL_X + PILL_W + 14) a = Math.min(a, (w.x - (PILL_X + PILL_W)) / 14);
         if (w.x > CW - 70) a = Math.min(a, (CW - w.x) / 70);
         if (a <= 0 || w.x > CW + 20) { words.splice(i, 1); continue; }
         ctx.fillStyle = "rgba(255, 255, 255, " + a.toFixed(3) + ")";
-        ctx.fillText(w.text, w.x, wy);
+        ctx.fillText(w.text, w.x, y);
       }
 
       if (performance.now() > nextWord) {
         words.push({
-          text: TRANSCRIPT[Math.trunc(rand() * TRANSCRIPT.length)],
+          text: TRANSCRIPT[(rand() * TRANSCRIPT.length) | 0],
           x: PILL_X + PILL_W + 2,
           t: 0,
           speed: 1.7 + rand() * 0.9,
@@ -1848,31 +1839,30 @@ section { scroll-margin-top: 96px; }
       }
     }
 
-    function drawStaticFrame() {
+    if (reducePillMotion) {
       // static frame: pill at a mid level (+ strings and one word on stage)
       drawPill(0.45);
-      if (!fullStage) return;
-      var sRun = PILL_X;
-      for (var line of IN_LINES) {
-        ctx.beginPath();
-        for (var x = 0; x <= sRun; x += 3) {
-          var t = x / sRun;
-          var center = BASELINE + (line.startY - BASELINE) * (1 - easeInOut(t));
-          var sy = center + line.amp * (1 - t) * (1 - t) * Math.sin(line.freq * t * TAU + 1.2);
-          if (x === 0) ctx.moveTo(x, sy);
-          else ctx.lineTo(x, sy);
+      if (fullStage) {
+        var sRun = PILL_X;
+        for (var line of IN_LINES) {
+          ctx.beginPath();
+          for (var x = 0; x <= sRun; x += 3) {
+            var t = x / sRun;
+            var center = BASELINE + (line.startY - BASELINE) * (1 - easeInOut(t));
+            var y = center + line.amp * (1 - t) * (1 - t) * Math.sin(line.freq * t * TAU + 1.2);
+            if (x === 0) ctx.moveTo(x, y);
+            else ctx.lineTo(x, y);
+          }
+          ctx.strokeStyle = "rgba(255, 255, 255, " + line.opacity + ")";
+          ctx.lineWidth = STROKE_WIDTH;
+          ctx.stroke();
         }
-        ctx.strokeStyle = "rgba(255, 255, 255, " + line.opacity + ")";
-        ctx.lineWidth = STROKE_WIDTH;
-        ctx.stroke();
+        ctx.font = "500 13px 'JetBrains Mono', ui-monospace, monospace";
+        ctx.textBaseline = "middle";
+        ctx.fillStyle = "rgba(255, 255, 255, 0.8)";
+        ctx.fillText("hello", PILL_X + PILL_W + 8, BASELINE);
       }
-      ctx.font = "500 13px 'JetBrains Mono', ui-monospace, monospace";
-      ctx.textBaseline = "middle";
-      ctx.fillStyle = "rgba(255, 255, 255, 0.8)";
-      ctx.fillText("hello", PILL_X + PILL_W + 8, BASELINE);
-    }
-
-    function startPillAnimation() {
+    } else {
       // Off-screen gating: only run the rAF loop while the canvas is
       // visible. Hidden canvases burn main-thread frames for nothing.
       var rafId = 0;
@@ -1910,12 +1900,6 @@ section { scroll-margin-top: 96px; }
       } else {
         start();
       }
-    }
-
-    if (reducePillMotion) {
-      drawStaticFrame();
-    } else {
-      startPillAnimation();
     }
   }
 

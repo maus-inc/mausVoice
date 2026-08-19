@@ -11,8 +11,5 @@ export class EndConversationTool extends BaseTool {
     return true;
   }
 
-  setAlwaysAllow(_params: Record<string, unknown>, _allowed: boolean): void {
-    // This tool is always allowed, so the setting is intentionally ignored.
-    return;
-  }
+  setAlwaysAllow(): void {}
 }

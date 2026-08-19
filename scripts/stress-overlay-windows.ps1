@@ -58,10 +58,10 @@ function Get-LogDirForFlavor {
                 }
             }
         } |
-        Where-Object { $null -ne $_ } |
+        Where-Object { $_ -ne $null } |
         Sort-Object LastWriteUtc -Descending
 
-    if ($null -eq $candidates) {
+    if (-not $candidates) {
         throw "No mausVoice log directory found under %LOCALAPPDATA%."
     }
 
@@ -99,11 +99,11 @@ function Get-CrashMatches {
         return @()
     }
 
-    $logMatches = foreach ($logFile in $recentLogs) {
+    $matches = foreach ($logFile in $recentLogs) {
         Select-String -Path $logFile.FullName -Pattern $patterns -SimpleMatch
     }
 
-    return @($logMatches)
+    return @($matches)
 }
 
 $branchName = "unknown"
@@ -112,7 +112,6 @@ try {
     $branchName = (git rev-parse --abbrev-ref HEAD).Trim()
     $commitSha = (git rev-parse --short HEAD).Trim()
 } catch {
-    Write-Warning "Unable to read git revision info: $($_.Exception.Message)"
 }
 
 $logDir = $null

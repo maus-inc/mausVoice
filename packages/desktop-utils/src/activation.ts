@@ -126,8 +126,10 @@ export class ActivationController {
       } else {
         this._isLocked = true;
       }
-    } else if (!this._isLocked) {
-      this.doDeactivate();
+    } else {
+      if (!this._isLocked) {
+        this.doDeactivate();
+      }
     }
   }
 

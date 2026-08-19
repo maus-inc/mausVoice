@@ -192,23 +192,10 @@ export const TranscriptionDetailsDialog = () => {
     if (!transcription?.warnings) {
       return [];
     }
-    return [
-      ...new Set(
-        transcription.warnings
-          .map((warning) => warning.trim())
-          .filter((warning) => warning.length > 0),
-      ),
-    ];
+    return transcription.warnings
+      .map((warning) => warning.trim())
+      .filter((warning) => warning.length > 0);
   }, [transcription?.warnings]);
-
-  let retranscribeButtonIcon: React.ReactNode;
-  if (isRetranscribing) {
-    retranscribeButtonIcon = <CircularProgress size={16} color="inherit" />;
-  } else if (didRetranscribe) {
-    retranscribeButtonIcon = <CheckCircleRoundedIcon color="success" />;
-  } else {
-    retranscribeButtonIcon = <ReplayRoundedIcon />;
-  }
 
   return (
     <Dialog
@@ -279,9 +266,9 @@ export const TranscriptionDetailsDialog = () => {
                     <FormattedMessage defaultMessage="Warnings" />
                   </Typography>
                   <Stack spacing={1} sx={{ mt: 1 }}>
-                    {warnings.map((warning) => (
+                    {warnings.map((warning, index) => (
                       <Box
-                        key={warning}
+                        key={`warning-${index}`}
                         sx={(theme) => ({
                           p: 1,
                           borderRadius: 1,
@@ -551,7 +538,15 @@ export const TranscriptionDetailsDialog = () => {
       </DialogContent>
       <DialogActions>
         <Button
-          startIcon={retranscribeButtonIcon}
+          startIcon={
+            isRetranscribing ? (
+              <CircularProgress size={16} color="inherit" />
+            ) : didRetranscribe ? (
+              <CheckCircleRoundedIcon color="success" />
+            ) : (
+              <ReplayRoundedIcon />
+            )
+          }
           onClick={() => {
             if (transcription?.id) {
               closeTranscriptionDetailsDialog();

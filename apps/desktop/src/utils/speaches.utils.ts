@@ -1,5 +1,4 @@
 import { fetch } from "@tauri-apps/plugin-http";
-import { postTranscriptionRequest } from "@maus-inc/voice-ai";
 
 export const SPEACHES_DEFAULT_URL = "http://localhost:8000";
 export const SPEACHES_DEFAULT_MODEL = "Systran/faster-whisper-large-v3";
@@ -53,15 +52,35 @@ export const speachesTranscribeAudio = async ({
   language,
 }: SpeachesTranscriptionArgs): Promise<SpeachesTranscribeAudioOutput> => {
   const url = baseUrl.replace(/\/$/, "");
-  const text = await postTranscriptionRequest({
-    url: `${url}/v1/audio/transcriptions`,
-    blob,
-    ext,
-    model,
-    prompt,
-    language,
-    label: "Speaches",
-    fetchImpl: fetch,
+
+  const formData = new FormData();
+  const file = new Blob([blob], { type: `audio/${ext}` });
+  formData.append("file", file, `audio.${ext}`);
+  formData.append("model", model);
+  if (prompt) {
+    formData.append("prompt", prompt);
+  }
+  if (language && language !== "auto") {
+    formData.append("language", language);
+  }
+
+  const response = await fetch(`${url}/v1/audio/transcriptions`, {
+    method: "POST",
+    body: formData,
   });
-  return { text };
+
+  if (!response.ok) {
+    const errorText = await response.text().catch(() => "Unknown error");
+    throw new Error(
+      `Speaches transcription failed: ${response.status} - ${errorText}`,
+    );
+  }
+
+  const data = (await response.json()) as { text?: string };
+
+  if (!data.text) {
+    throw new Error("Transcription failed: no text in response");
+  }
+
+  return { text: data.text };
 };

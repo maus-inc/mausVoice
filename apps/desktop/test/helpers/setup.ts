@@ -1,5 +1,5 @@
 import { config } from "dotenv";
-import { resolve } from "node:path";
+import { resolve } from "path";
 
 config({ path: resolve(__dirname, ".env") });
 

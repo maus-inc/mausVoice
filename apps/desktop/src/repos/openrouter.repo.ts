@@ -12,7 +12,7 @@ export abstract class BaseOpenRouterRepo extends BaseRepo {
 }
 
 export class OpenRouterRepo extends BaseOpenRouterRepo {
-  private readonly apiKey: string;
+  private apiKey: string;
 
   constructor(apiKey: string) {
     super();

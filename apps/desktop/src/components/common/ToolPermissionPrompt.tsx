@@ -4,7 +4,7 @@ import {
   DoneAllRounded,
 } from "@mui/icons-material";
 import { Box, Chip, Stack, Typography } from "@mui/material";
-import { alpha, useTheme, type Theme } from "@mui/material/styles";
+import { alpha, useTheme } from "@mui/material/styles";
 import type { ToolPermission } from "@maus-inc/types";
 import { FormattedMessage } from "react-intl";
 import { useAppStore } from "../../store";
@@ -16,20 +16,6 @@ type ToolPermissionPromptProps = {
   onAllow: () => void;
   onDeny: () => void;
   onAlwaysAllow: () => void;
-};
-
-const getPromptBorder = (
-  bordered: boolean,
-  filled: boolean,
-  theme: Theme,
-): string => {
-  if (bordered) {
-    return `1px solid ${alpha(theme.palette.common.white, 0.2)}`;
-  }
-  if (filled) {
-    return `1px solid ${theme.palette.common.white}`;
-  }
-  return "none";
 };
 
 export const ToolPermissionPrompt = ({
@@ -234,7 +220,11 @@ const OverlayButton = ({
         fontWeight: 500,
         color: filled ? theme.palette.common.black : (color ?? whiteMid),
         backgroundColor: filled ? theme.palette.common.white : "transparent",
-        border: getPromptBorder(Boolean(bordered), Boolean(filled), theme),
+        border: bordered
+          ? `1px solid ${alpha(theme.palette.common.white, 0.2)}`
+          : filled
+            ? `1px solid ${theme.palette.common.white}`
+            : "none",
         borderRadius: 1,
         cursor: "pointer",
         "&:hover": {

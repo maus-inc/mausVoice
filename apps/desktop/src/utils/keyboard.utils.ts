@@ -21,17 +21,17 @@ type CompositorBinding = {
   keys: string[];
 };
 
-const STATIC_COMPOSITOR_TRIGGER_ACTIONS = new Set([
+const STATIC_COMPOSITOR_TRIGGER_ACTIONS = [
   DICTATE_HOTKEY,
   AGENT_DICTATE_HOTKEY,
   SWITCH_WRITING_STYLE_FORWARD_HOTKEY,
   SWITCH_WRITING_STYLE_BACKWARD_HOTKEY,
   CANCEL_TRANSCRIPTION_HOTKEY,
   ADD_TO_DICTIONARY_HOTKEY,
-]);
+];
 
 const isCompositorTriggerAction = (actionName: string): boolean =>
-  STATIC_COMPOSITOR_TRIGGER_ACTIONS.has(actionName) ||
+  STATIC_COMPOSITOR_TRIGGER_ACTIONS.includes(actionName) ||
   actionName.startsWith(ADDITIONAL_LANGUAGE_HOTKEY_PREFIX);
 
 export const getAdditionalLanguageActionName = (language: string): string =>
@@ -72,43 +72,36 @@ export const isModifierOnlyCombo = (combo: string[]): boolean => {
   return combo.length > 0 && combo.every((key) => isModifierLikeKey(key));
 };
 
-const ARROW_KEY_NAMES: Record<string, string> = {
-  LeftArrow: "←",
-  RightArrow: "→",
-  UpArrow: "↑",
-  DownArrow: "↓",
-};
-
-const MODIFIER_KEY_LABELS: Record<string, { macos: string; other: string }> = {
-  meta: { macos: "⌘", other: "⊞" },
-  control: { macos: "⌃", other: "Ctrl" },
-  shift: { macos: "⇧", other: "Shift" },
-  alt: { macos: "⌥", other: "Alt" },
-  option: { macos: "⌥", other: "Alt" },
-};
-
 export const getPrettyKeyName = (key: string): string => {
   const lower = key.toLowerCase();
   if (lower.startsWith("key")) {
     return key.slice(3).toUpperCase();
   }
 
+  if (lower.startsWith("meta")) {
+    return getPlatform() === "macos" ? "⌘" : "⊞";
+  }
+
+  if (lower.startsWith("control")) {
+    return getPlatform() === "macos" ? "⌃" : "Ctrl";
+  }
+
+  if (lower.startsWith("shift")) {
+    return getPlatform() === "macos" ? "⇧" : "Shift";
+  }
+
+  if (lower.startsWith("alt") || lower.startsWith("option")) {
+    return getPlatform() === "macos" ? "⌥" : "Alt";
+  }
+
   if (lower.startsWith("function")) {
     return "Fn";
   }
 
-  const arrowLabel = ARROW_KEY_NAMES[key];
-  if (arrowLabel) {
-    return arrowLabel;
-  }
-
-  const modifierPrefix = Object.keys(MODIFIER_KEY_LABELS).find((prefix) =>
-    lower.startsWith(prefix),
-  );
-  if (modifierPrefix) {
-    const labels = MODIFIER_KEY_LABELS[modifierPrefix]!;
-    return getPlatform() === "macos" ? labels.macos : labels.other;
-  }
+  if (key === "LeftArrow") return "←";
+  if (key === "RightArrow") return "→";
+  if (key === "UpArrow") return "↑";
+  if (key === "DownArrow") return "↓";
 
   return key;
 };
@@ -181,8 +174,10 @@ export const getAdditionalLanguageEntries = (
   state: AppState,
 ): AdditionalLanguageEntry[] => {
   return Object.values(state.hotkeyById)
-    .filter((hotkey) =>
-      hotkey?.actionName.startsWith(ADDITIONAL_LANGUAGE_HOTKEY_PREFIX),
+    .filter(
+      (hotkey) =>
+        hotkey &&
+        hotkey.actionName.startsWith(ADDITIONAL_LANGUAGE_HOTKEY_PREFIX),
     )
     .map((hotkey) => {
       const language = getAdditionalLanguageCode(hotkey.actionName);

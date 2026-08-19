@@ -29,9 +29,9 @@ function StatCard({
   label,
   icon,
 }: {
-  readonly value: string;
-  readonly label: string;
-  readonly icon?: React.ReactNode;
+  value: string;
+  label: string;
+  icon?: React.ReactNode;
 }) {
   return (
     <Card sx={{ flex: 1 }}>

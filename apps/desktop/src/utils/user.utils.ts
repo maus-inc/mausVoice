@@ -133,7 +133,7 @@ export const getActiveDictationLanguage = (state: AppState): string => {
 };
 
 export const getMyDictationLanguage = (state: AppState): string => {
-  // The dictation language is passed to processors through this override.
+  // TODO: We should pass the dictation language into the processors instead of overriding
   const override = state.dictationLanguageOverride;
   if (override) {
     return override;
@@ -452,8 +452,9 @@ export const getDictationSpeed = (state: AppState): DictationSpeed | null => {
   for (const id of ids) {
     const t = getRec(state.transcriptionById, id);
     if (
-      !t?.audio?.durationMs ||
-      (t.audio.durationMs ?? 0) <= 0 ||
+      !t ||
+      !t.audio?.durationMs ||
+      t.audio.durationMs <= 0 ||
       !t.transcript
     ) {
       continue;

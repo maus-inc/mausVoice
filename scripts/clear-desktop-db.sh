@@ -25,7 +25,7 @@ resolve_config_dir() {
       printf "%s\n" "${XDG_CONFIG_HOME:-${HOME}/.config}/${IDENTIFIER}"
       ;;
     CYGWIN*|MINGW*|MSYS*)
-      if [[ -z "${APPDATA:-}" ]]; then
+      if [ -z "${APPDATA:-}" ]; then
         echo "APPDATA is not set; cannot locate database." >&2
         exit 1
       fi
@@ -51,14 +51,14 @@ main() {
 
   for suffix in "" "-wal" "-shm"; do
     local target="${db_path}${suffix}"
-    if [[ -f "${target}" ]]; then
+    if [ -f "${target}" ]; then
       rm -- "${target}"
       echo "Removed ${target}"
       removed=1
     fi
   done
 
-  if [[ "${removed}" -eq 0 ]]; then
+  if [ "${removed}" -eq 0 ]; then
     echo "No database files found under ${config_dir}"
   else
     echo "mausVoice desktop SQLite data cleared."
