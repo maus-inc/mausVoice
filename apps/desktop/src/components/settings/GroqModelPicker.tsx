@@ -55,7 +55,7 @@ export const GroqModelPicker = ({
       const fetched = (payload.data ?? [])
         .map((m) => (m.id ?? "").trim())
         .filter(Boolean)
-        .sort((a, b) => a.localeCompare(b));
+        .sort();
       setModels(fetched);
     } catch (error) {
       console.error("Failed to fetch Groq models", error);

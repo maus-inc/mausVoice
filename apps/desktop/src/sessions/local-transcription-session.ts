@@ -149,10 +149,7 @@ export class LocalTranscriptionSession implements TranscriptionSession {
     return false;
   }
 
-  setInterimResultCallback(): void {
-    // Local sessions never emit interim results.
-    return;
-  }
+  setInterimResultCallback(): void {}
 
   private async finalizeWithBatchFallback(
     audio: StopRecordingResponse,

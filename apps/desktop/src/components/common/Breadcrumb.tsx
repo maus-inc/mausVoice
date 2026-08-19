@@ -2,18 +2,6 @@ import { Box, Link, Typography } from "@mui/material";
 import { Fragment } from "react";
 import { useNavigate } from "react-router-dom";
 
-const breadcrumbItemKeys = new WeakMap<object, string>();
-let breadcrumbItemKeyCounter = 0;
-const getBreadcrumbItemKey = (item: object): string => {
-  let key = breadcrumbItemKeys.get(item);
-  if (key === undefined) {
-    key = `breadcrumb-item-${breadcrumbItemKeyCounter}`;
-    breadcrumbItemKeyCounter += 1;
-    breadcrumbItemKeys.set(item, key);
-  }
-  return key;
-};
-
 export type BreadcrumbItem = {
   label: string;
   href?: string;
@@ -47,7 +35,7 @@ export const Breadcrumb = ({ items, separator = "/" }: BreadcrumbProps) => {
       }}
     >
       {items.map((item, index) => (
-        <Fragment key={getBreadcrumbItemKey(item)}>
+        <Fragment key={index}>
           {index > 0 && (
             <Typography
               variant="body2"

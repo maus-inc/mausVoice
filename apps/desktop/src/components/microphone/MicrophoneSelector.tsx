@@ -142,78 +142,70 @@ export const MicrophoneSelector = ({
             </Stack>
           </MenuItem>
           <Divider sx={{ my: 0.5 }} />
-          {options.map((option) => {
-            let optionAvailabilityNote: React.ReactNode = null;
-            if (option.unavailable) {
-              optionAvailabilityNote = (
-                <Typography
-                  variant="caption"
+          {options.map((option) => (
+            <MenuItem key={option.value} value={option.value}>
+              <Stack
+                direction="row"
+                spacing={2}
+                sx={{
+                  justifyContent: "space-between",
+                  width: "100%",
+                }}
+              >
+                <Box
                   sx={{
-                    color: "warning.main",
+                    display: "flex",
+                    flexDirection: "column",
                   }}
                 >
-                  <FormattedMessage defaultMessage="Currently unavailable" />
-                </Typography>
-              );
-            } else if (option.caution) {
-              optionAvailabilityNote = (
-                <Typography
-                  variant="caption"
-                  sx={{
-                    color: "text.secondary",
-                  }}
-                >
-                  <FormattedMessage defaultMessage="May provide lower audio quality" />
-                </Typography>
-              );
-            }
-            return (
-              <MenuItem key={option.value} value={option.value}>
+                  <Typography>{option.label}</Typography>
+                  {option.unavailable ? (
+                    <Typography
+                      variant="caption"
+                      sx={{
+                        color: "warning.main",
+                      }}
+                    >
+                      <FormattedMessage defaultMessage="Currently unavailable" />
+                    </Typography>
+                  ) : option.caution ? (
+                    <Typography
+                      variant="caption"
+                      sx={{
+                        color: "text.secondary",
+                      }}
+                    >
+                      <FormattedMessage defaultMessage="May provide lower audio quality" />
+                    </Typography>
+                  ) : null}
+                </Box>
                 <Stack
                   direction="row"
-                  spacing={2}
+                  spacing={0.75}
                   sx={{
-                    justifyContent: "space-between",
-                    width: "100%",
+                    alignItems: "center",
                   }}
                 >
-                  <Box
-                    sx={{
-                      display: "flex",
-                      flexDirection: "column",
-                    }}
-                  >
-                    <Typography>{option.label}</Typography>
-                    {optionAvailabilityNote}
-                  </Box>
-                  <Stack
-                    direction="row"
-                    spacing={0.75}
-                    sx={{
-                      alignItems: "center",
-                    }}
-                  >
-                    {option.isDefault && (
-                      <Chip
-                        size="small"
-                        label={<FormattedMessage defaultMessage="Default" />}
-                        color="primary"
-                        variant="outlined"
-                      />
-                    )}
-                    {option.caution && !option.unavailable && (
-                      <Chip
-                        size="small"
-                        label={<FormattedMessage defaultMessage="Caution" />}
-                        color="warning"
-                        variant="outlined"
-                      />
-                    )}
-                  </Stack>
+                  {option.isDefault && (
+                    <Chip
+                      size="small"
+                      label={<FormattedMessage defaultMessage="Default" />}
+                      color="primary"
+                      variant="outlined"
+                    />
+                  )}
+                  {option.caution && !option.unavailable && (
+                    <Chip
+                      size="small"
+                      label={<FormattedMessage defaultMessage="Caution" />}
+                      color="warning"
+                      variant="outlined"
+                    />
+                  )}
                 </Stack>
-              </MenuItem>
-            );
-          })}
+              </Stack>
+            </MenuItem>
+          ))}
         </Select>
       </FormControl>
 

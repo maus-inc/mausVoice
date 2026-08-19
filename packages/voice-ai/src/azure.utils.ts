@@ -107,19 +107,6 @@ const mapToAzureLocale = (language?: string): string => {
   return languageMap[trimmedLanguage] || "en-US";
 };
 
-const buildSpeechConfig = (
-  subscriptionKey: string,
-  region: string,
-  language?: string,
-): sdk.SpeechConfig => {
-  const speechConfig = sdk.SpeechConfig.fromSubscription(
-    subscriptionKey.trim(),
-    region.trim(),
-  );
-  speechConfig.speechRecognitionLanguage = mapToAzureLocale(language);
-  return speechConfig;
-};
-
 export const azureTranscribeAudio = async ({
   subscriptionKey,
   region,
@@ -128,7 +115,15 @@ export const azureTranscribeAudio = async ({
   prompt,
 }: AzureTranscriptionArgs): Promise<AzureTranscribeAudioOutput> => {
   return new Promise((resolve, reject) => {
-    const speechConfig = buildSpeechConfig(subscriptionKey, region, language);
+    const azureLocale = mapToAzureLocale(language);
+    const trimmedRegion = region.trim();
+    const trimmedKey = subscriptionKey.trim();
+
+    const speechConfig = sdk.SpeechConfig.fromSubscription(
+      trimmedKey,
+      trimmedRegion,
+    );
+    speechConfig.speechRecognitionLanguage = azureLocale;
 
     const audioBuffer =
       blob instanceof ArrayBuffer ? blob : (blob.buffer as ArrayBuffer);
@@ -230,7 +225,15 @@ export const createAzureStreamingSession = async ({
   prompt,
 }: CreateAzureStreamingSessionArgs): Promise<AzureStreamingSession> => {
   return new Promise((resolve, reject) => {
-    const speechConfig = buildSpeechConfig(subscriptionKey, region, language);
+    const azureLocale = mapToAzureLocale(language);
+    const trimmedRegion = region.trim();
+    const trimmedKey = subscriptionKey.trim();
+
+    const speechConfig = sdk.SpeechConfig.fromSubscription(
+      trimmedKey,
+      trimmedRegion,
+    );
+    speechConfig.speechRecognitionLanguage = azureLocale;
 
     const audioFormat = sdk.AudioStreamFormat.getWaveFormatPCM(
       sampleRate,
@@ -287,97 +290,83 @@ export const createAzureStreamingSession = async ({
       console.log("[Azure Streaming] Session stopped");
     };
 
-    const writeAudioChunk = (chunk: Float32Array) => {
-      if (isFinalized) {
-        console.warn(
-          "[Azure Streaming] Attempted to write chunk after finalization",
-        );
-        return;
-      }
-
-      const pcm16Buffer = new ArrayBuffer(chunk.length * 2);
-      const pcm16View = new Int16Array(pcm16Buffer);
-
-      for (let i = 0; i < chunk.length; i++) {
-        const s = Math.max(-1, Math.min(1, chunk[i] ?? 0));
-        pcm16View[i] = s < 0 ? s * 0x8000 : s * 0x7fff;
-      }
-
-      pushStream.write(pcm16Buffer);
-    };
-
-    let finalizeResolver: ((text: string) => void) | null = null;
-    let finalizeTimeout: ReturnType<typeof setTimeout> | null = null;
-
-    const handleFinalizeTimeout = () => {
-      console.log(
-        "[Azure Streaming] Timeout reached, finalizing with transcript length:",
-        fullTranscript.length,
-      );
-      recognizer.close();
-      finalizeResolver?.(fullTranscript);
-    };
-
-    const handleRecognitionStopped = () => {
-      if (finalizeTimeout) {
-        clearTimeout(finalizeTimeout);
-        finalizeTimeout = null;
-      }
-      console.log(
-        "[Azure Streaming] Recognition stopped, final transcript length:",
-        fullTranscript.length,
-      );
-      recognizer.close();
-      finalizeResolver?.(fullTranscript);
-    };
-
-    const handleRecognitionStopError = (error: unknown) => {
-      if (finalizeTimeout) {
-        clearTimeout(finalizeTimeout);
-        finalizeTimeout = null;
-      }
-      console.error(
-        "[Azure Streaming] Error stopping recognition:",
-        error,
-      );
-      recognizer.close();
-      finalizeResolver?.(fullTranscript);
-    };
-
-    const finalize = (): Promise<string> => {
-      return new Promise((resolveFinalize) => {
-        if (isFinalized) {
-          console.log(
-            "[Azure Streaming] Already finalized, returning transcript",
-          );
-          resolveFinalize(fullTranscript);
-          return;
-        }
-
-        isFinalized = true;
-        console.log("[Azure Streaming] Finalizing session...");
-
-        pushStream.close();
-
-        finalizeResolver = resolveFinalize;
-        finalizeTimeout = setTimeout(handleFinalizeTimeout, 2000);
-        recognizer.stopContinuousRecognitionAsync(
-          handleRecognitionStopped,
-          handleRecognitionStopError,
-        );
-      });
-    };
-
-    const cleanup = () => {
-      if (!isFinalized) {
-        pushStream.close();
-        recognizer.close();
-      }
-    };
-
     recognizer.startContinuousRecognitionAsync(
       () => {
         console.log("[Azure Streaming] Continuous recognition started");
+
+        const writeAudioChunk = (chunk: Float32Array) => {
+          if (isFinalized) {
+            console.warn(
+              "[Azure Streaming] Attempted to write chunk after finalization",
+            );
+            return;
+          }
+
+          const pcm16Buffer = new ArrayBuffer(chunk.length * 2);
+          const pcm16View = new Int16Array(pcm16Buffer);
+
+          for (let i = 0; i < chunk.length; i++) {
+            const s = Math.max(-1, Math.min(1, chunk[i] ?? 0));
+            pcm16View[i] = s < 0 ? s * 0x8000 : s * 0x7fff;
+          }
+
+          pushStream.write(pcm16Buffer);
+        };
+
+        const finalize = (): Promise<string> => {
+          return new Promise((resolveFinalize) => {
+            if (isFinalized) {
+              console.log(
+                "[Azure Streaming] Already finalized, returning transcript",
+              );
+              resolveFinalize(fullTranscript);
+              return;
+            }
+
+            isFinalized = true;
+            console.log("[Azure Streaming] Finalizing session...");
+
+            pushStream.close();
+
+            const timeout = setTimeout(() => {
+              console.log(
+                "[Azure Streaming] Timeout reached, finalizing with transcript length:",
+                fullTranscript.length,
+              );
+              recognizer.close();
+              resolveFinalize(fullTranscript);
+            }, 2000);
+
+            recognizer.stopContinuousRecognitionAsync(
+              () => {
+                clearTimeout(timeout);
+                console.log(
+                  "[Azure Streaming] Recognition stopped, final transcript length:",
+                  fullTranscript.length,
+                );
+                recognizer.close();
+                resolveFinalize(fullTranscript);
+              },
+              (error) => {
+                clearTimeout(timeout);
+                console.error(
+                  "[Azure Streaming] Error stopping recognition:",
+                  error,
+                );
+                recognizer.close();
+                resolveFinalize(fullTranscript);
+              },
+            );
+          });
+        };
+
+        const cleanup = () => {
+          if (!isFinalized) {
+            pushStream.close();
+            recognizer.close();
+          }
+        };
+
         resolve({
           writeAudioChunk,
           finalize,

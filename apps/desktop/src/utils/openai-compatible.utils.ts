@@ -4,11 +4,7 @@ export const normalizeOpenAICompatibleBaseUrl = (
   baseUrl?: string | null,
 ): string => {
   const candidate = baseUrl?.trim() || OPENAI_COMPATIBLE_DEFAULT_URL;
-  let end = candidate.length;
-  while (end > 0 && candidate[end - 1] === "/") {
-    end -= 1;
-  }
-  return candidate.slice(0, end);
+  return candidate.replace(/\/+$/, "");
 };
 
 export const buildOpenAICompatibleUrl = (

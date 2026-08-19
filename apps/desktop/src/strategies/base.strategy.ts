@@ -7,6 +7,8 @@ import type {
 } from "../types/strategy.types";
 
 export abstract class BaseStrategy {
+  constructor() {}
+
   abstract validateAvailability(): Nullable<StrategyValidationError>;
   abstract onBeforeStart(): Promise<void>;
   abstract setPhase(phase: OverlayPhase): Promise<void>;
@@ -17,8 +19,5 @@ export abstract class BaseStrategy {
 
   abstract cleanup(): Promise<void>;
 
-  handleInterimSegment(_segment: string): void {
-    // Strategies that don't emit interim segments intentionally leave this empty.
-    return;
-  }
+  handleInterimSegment(_segment: string): void {}
 }

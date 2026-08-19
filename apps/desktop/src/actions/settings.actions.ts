@@ -1,7 +1,19 @@
 import { disable, enable, isEnabled } from "@tauri-apps/plugin-autostart";
-import { isTauriEnvironment } from "../sidecars/sidecar.utils";
 import { produceAppState, getAppState } from "../store";
 import { showErrorSnackbar } from "./app.actions";
+
+const isTauriEnvironment = (): boolean => {
+  if (typeof window === "undefined") {
+    return false;
+  }
+
+  const tauriWindow = window as typeof window & Record<string, unknown>;
+  return (
+    "__TAURI_INTERNALS__" in tauriWindow ||
+    "__TAURI__" in tauriWindow ||
+    "__TAURI_IPC__" in tauriWindow
+  );
+};
 
 export const syncAutoLaunchSetting = async (): Promise<void> => {
   if (!isTauriEnvironment()) {

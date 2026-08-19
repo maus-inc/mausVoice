@@ -6,19 +6,6 @@ export type KeyPressSimulatorProps = {
   keys: string[];
 };
 
-const getKeyBackgroundColor = (
-  allPressed: boolean,
-  isPressed: boolean,
-): string => {
-  if (allPressed) {
-    return "success.main";
-  }
-  if (isPressed) {
-    return "level2";
-  }
-  return "level1";
-};
-
 export const KeyPressSimulator = ({ keys }: KeyPressSimulatorProps) => {
   const theme = useTheme();
   const pressBools = useAppStore((state) => {
@@ -56,7 +43,11 @@ export const KeyPressSimulator = ({ keys }: KeyPressSimulatorProps) => {
               display: "flex",
               alignItems: "center",
               justifyContent: "center",
-              bgcolor: getKeyBackgroundColor(allPressed, isPressed),
+              bgcolor: allPressed
+                ? "success.main"
+                : isPressed
+                  ? "level2"
+                  : "level1",
               border: "1px solid",
               borderColor: allPressed ? "success.dark" : "level3",
               borderRadius: 1,

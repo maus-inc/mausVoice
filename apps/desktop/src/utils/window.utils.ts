@@ -19,13 +19,18 @@ const getLocalStorage = (): Storage | null => {
 };
 
 export const surfaceMainWindow = async (): Promise<void> => {
-  surfaceWindowPromise ??= invoke<void>("surface_main_window")
-    .catch(async (error) => {
-      console.error("Failed to surface main window via native command", error);
-    })
-    .finally(() => {
-      surfaceWindowPromise = null;
-    });
+  if (!surfaceWindowPromise) {
+    surfaceWindowPromise = invoke<void>("surface_main_window")
+      .catch(async (error) => {
+        console.error(
+          "Failed to surface main window via native command",
+          error,
+        );
+      })
+      .finally(() => {
+        surfaceWindowPromise = null;
+      });
+  }
 
   await surfaceWindowPromise;
 };

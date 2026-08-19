@@ -320,11 +320,8 @@ export const DictationSideEffects = () => {
 
   const abortRecording = useCallback(
     async (message?: AbortMessage) => {
-      const abortReason = message
-        ? `, reason=${String(message.body).slice(0, 120)}`
-        : "";
       getLogger().info(
-        `Aborting recording (hasSession=${!!sessionRef.current}, hasStrategy=${!!strategyRef.current}${abortReason})`,
+        `Aborting recording (hasSession=${!!sessionRef.current}, hasStrategy=${!!strategyRef.current}${message ? `, reason=${String(message.body).slice(0, 120)}` : ""})`,
       );
       clearRecordingTimers();
       clearCancelPromptTimer();
@@ -457,11 +454,8 @@ export const DictationSideEffects = () => {
         "Transcription finalize",
       );
       const rawTranscript = transcribeResult?.rawTranscript;
-      const transcriptSize = rawTranscript
-        ? `${rawTranscript.length} chars`
-        : "empty";
       getLogger().verbose(
-        `Transcription result: rawTranscript=${transcriptSize}, toneId=${toneId ?? "none"}, app=${appTarget?.name ?? "unknown"}`,
+        `Transcription result: rawTranscript=${rawTranscript ? `${rawTranscript.length} chars` : "empty"}, toneId=${toneId ?? "none"}, app=${appTarget?.name ?? "unknown"}`,
       );
       if (!rawTranscript) {
         getLogger().warning("stopRecordingRaw: no rawTranscript from finalize");
@@ -507,9 +501,8 @@ export const DictationSideEffects = () => {
       const sanitizedTranscript = result.sanitizedTranscript;
       const postProcessMetadata = result.postProcessMetadata;
       const postProcessWarnings = result.postProcessWarnings;
-      const processedSize = transcript ? `${transcript.length} chars` : "empty";
       getLogger().verbose(
-        `Post-processing complete: transcript=${processedSize}, warnings=${postProcessWarnings.length}`,
+        `Post-processing complete: transcript=${transcript ? `${transcript.length} chars` : "empty"}, warnings=${postProcessWarnings.length}`,
       );
 
       if (strategy.shouldStoreTranscript()) {
@@ -561,12 +554,8 @@ export const DictationSideEffects = () => {
     setIsStopping(true);
     try {
       const res = await stopRecordingRaw().catch((error) => {
-        const errorDetails =
-          error instanceof Error
-            ? ` [name=${error.name}, stack=${error.stack}]`
-            : "";
         getLogger().error(
-          `Error during stopRecording: ${error}${errorDetails}`,
+          `Error during stopRecording: ${error}${error instanceof Error ? ` [name=${error.name}, stack=${error.stack}]` : ""}`,
         );
         return {
           shouldContinue: false,

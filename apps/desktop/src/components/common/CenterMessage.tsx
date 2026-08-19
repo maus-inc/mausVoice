@@ -2,9 +2,9 @@ import { Box, Container, Stack, Typography } from "@mui/material";
 import { type ReactNode } from "react";
 
 export type CenterMessageProps = {
-  readonly title: ReactNode;
-  readonly subtitle?: ReactNode;
-  readonly action?: ReactNode;
+  title: ReactNode;
+  subtitle?: ReactNode;
+  action?: ReactNode;
 };
 
 export function CenterMessage({ title, subtitle, action }: CenterMessageProps) {

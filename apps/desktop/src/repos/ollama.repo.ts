@@ -8,8 +8,8 @@ export abstract class BaseOllamaRepo extends BaseRepo {
 }
 
 export class OllamaRepo extends BaseOllamaRepo {
-  private readonly ollamaUrl: string;
-  private readonly apiKey?: string;
+  private ollamaUrl: string;
+  private apiKey?: string;
 
   constructor(ollamaUrl: string, apiKey?: string) {
     super();
@@ -53,8 +53,8 @@ export class OllamaRepo extends BaseOllamaRepo {
 }
 
 export class OpenAICompatibleRepo extends BaseOllamaRepo {
-  private readonly baseUrl: string;
-  private readonly apiKey?: string;
+  private baseUrl: string;
+  private apiKey?: string;
 
   constructor(baseUrl: string, apiKey?: string) {
     super();

@@ -17,8 +17,8 @@ import { loadMyEffectiveDictationLanguage } from "../utils/user.utils";
 
 export class AzureTranscriptionSession implements TranscriptionSession {
   private session: AzureStreamingSession | null = null;
-  private readonly subscriptionKey: string;
-  private readonly region: string;
+  private subscriptionKey: string;
+  private region: string;
   private unlisten: UnlistenFn | null = null;
   private receivedChunkCount = 0;
 
@@ -148,8 +148,5 @@ export class AzureTranscriptionSession implements TranscriptionSession {
     return false;
   }
 
-  setInterimResultCallback(): void {
-    // Azure sessions never emit interim results.
-    return;
-  }
+  setInterimResultCallback(): void {}
 }

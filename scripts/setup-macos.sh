@@ -18,8 +18,7 @@ warn()  { echo -e "${YELLOW}[WARN]${NC} $*"; }
 error() { echo -e "${RED}[ERROR]${NC} $*" >&2; }
 
 command_exists() {
-  local cmd="$1"
-  command -v "$cmd" >/dev/null 2>&1
+  command -v "$1" >/dev/null 2>&1
 }
 
 ERRORS=()
@@ -48,7 +47,7 @@ if command_exists brew; then
   ok "Homebrew found."
 else
   info "Installing Homebrew..."
-  /bin/bash -c "$(curl -fsSL --proto '=https' --tlsv1.2 https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"
+  /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"
   if [[ -f /opt/homebrew/bin/brew ]]; then
     eval "$(/opt/homebrew/bin/brew shellenv)"
   elif [[ -f /usr/local/bin/brew ]]; then
@@ -154,8 +153,7 @@ echo ""
 info "All prerequisites satisfied. Installing dependencies..."
 
 # --- pnpm install ---
-pnpm install --ignore-scripts
-pnpm rebuild esbuild sharp protobufjs
+pnpm install
 
 # --- Build all packages ---
 info "Building all packages..."

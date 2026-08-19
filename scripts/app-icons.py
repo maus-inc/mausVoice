@@ -90,7 +90,7 @@ def _sanitize_filename(name: str) -> str:
 
 def _resize_icon_url(url: str, size: int) -> str:
     """Rewrite an Apple CDN icon URL to request a specific pixel size."""
-    return re.sub(r"\d+x\d+(bb\.?)", f"{size}x{size}\\1", url)
+    return re.sub(r"\d+x\d+(bb|bb\.)", f"{size}x{size}\\1", url)
 
 
 def download_icon(icon_url: str, name: str, size: int = 512) -> Path:

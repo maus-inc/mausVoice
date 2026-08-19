@@ -1,6 +1,5 @@
 import type { PullStatus } from "./common.types";
 import z from "zod";
-import { providerInputZod } from "./common.types";
 
 export type LlmProvider = {
   id: string;
@@ -25,4 +24,14 @@ export type LlmProviderInput = {
   tier: number;
 };
 
-export const LlmProviderInputZod = providerInputZod satisfies z.ZodType<LlmProviderInput>;
+export const LlmProviderInputZod = z
+  .object({
+    id: z.string().optional(),
+    provider: z.string(),
+    name: z.string(),
+    url: z.string(),
+    apiKey: z.string().default(""),
+    model: z.string(),
+    tier: z.number().int(),
+  })
+  .strict() satisfies z.ZodType<LlmProviderInput>;

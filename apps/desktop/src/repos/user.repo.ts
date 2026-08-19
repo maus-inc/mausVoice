@@ -30,7 +30,10 @@ type LocalUser = {
 const fromLocalUser = (localUser: LocalUser): User => {
   const bio = localUser.bio;
   const isOnboarded = localUser.onboarded;
-  const playInteractionChime = localUser.playInteractionChime ?? true;
+  const playInteractionChime =
+    localUser.playInteractionChime == null
+      ? true
+      : localUser.playInteractionChime;
 
   return {
     id: localUser.id,

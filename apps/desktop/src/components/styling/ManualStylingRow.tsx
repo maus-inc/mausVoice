@@ -28,7 +28,8 @@ import {
 // Replace - and other symbols with a period. No newlines.
 const formatPromptForPreview = (prompt: string) => {
   return prompt
-    .replaceAll("\n", ". ")
+    .split("\n")
+    .join(". ")
     .replace(/[\n\r]+/g, " ")
     .replace(/[-–—]+/g, "")
     .replace(/\s+/g, " ")

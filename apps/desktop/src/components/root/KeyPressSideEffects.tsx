@@ -65,9 +65,7 @@ export const KeyPressSideEffects = () => {
 
   useEffect(() => {
     const emitKeysHeld = () => {
-      const keys = Array.from(pressedRef.current).sort((a, b) =>
-        a.localeCompare(b),
-      );
+      const keys = Array.from(pressedRef.current).sort();
       const existing = getAppState().keysHeld;
       if (!isEqual(existing, keys)) {
         produceAppState((draft) => {

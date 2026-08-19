@@ -29,7 +29,7 @@ export const matchSupportedLocale = (value?: string | null): Locale | null => {
     return null;
   }
 
-  const cleaned = value.replaceAll("_", "-");
+  const cleaned = value.replace(/_/g, "-");
 
   // First check if the full locale (with region) is supported
   if (SUPPORTED_LOCALES.includes(cleaned as Locale)) {

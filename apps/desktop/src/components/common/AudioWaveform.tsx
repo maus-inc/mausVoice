@@ -131,7 +131,7 @@ export const AudioWaveform = ({
 
     const sum = levels.reduce((acc, value) => acc + value, 0);
     const average = sum / levels.length;
-    const peak = levels.reduce((acc, value) => Math.max(acc, value), 0);
+    const peak = levels.reduce((acc, value) => (value > acc ? value : acc), 0);
     const combined = Math.min(1, average * 0.9 + peak * 0.85);
     const boosted = Math.min(1, Math.sqrt(combined) * 1.35);
 
@@ -198,7 +198,8 @@ export const AudioWaveform = ({
         if (!path) {
           return;
         }
-        const config = WAVE_CONFIG[index] ?? WAVE_CONFIG.at(-1);
+        const config =
+          WAVE_CONFIG[index] ?? WAVE_CONFIG[WAVE_CONFIG.length - 1];
         const amplitudeFactor = Math.min(
           MAX_AMPLITUDE,
           Math.max(MIN_AMPLITUDE, level * config.multiplier),

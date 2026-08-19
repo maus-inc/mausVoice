@@ -3,11 +3,9 @@ import {
   Type,
   type Content,
   type FunctionDeclaration,
-  type GenerateContentResponse,
   type Part,
 } from "@google/genai";
 import { retry, countWords } from "@maus-inc/utilities";
-import { parseToolArguments } from "./shared.utils";
 import type {
   JsonResponse,
   LlmChatInput,
@@ -109,8 +107,8 @@ export const geminiTranscribeAudio = async ({
 
       const bytes = new Uint8Array(blob);
       let binary = "";
-      for (const byte of bytes) {
-        binary += String.fromCodePoint(byte);
+      for (let i = 0; i < bytes.length; i++) {
+        binary += String.fromCharCode(bytes[i]!);
       }
       const base64Audio = btoa(binary);
 
@@ -236,21 +234,6 @@ export const geminiTestIntegration = async ({
 // Streaming Chat
 // ============================================================================
 
-const buildModelParts = (
-  msg: Extract<LlmMessage, { role: "assistant" }>,
-): Part[] => {
-  const parts: Part[] = [];
-  if (msg.content) {
-    parts.push({ text: msg.content });
-  }
-  for (const tc of msg.toolCalls ?? []) {
-    parts.push({
-      functionCall: { name: tc.name, args: parseToolArguments(tc.arguments) },
-    });
-  }
-  return parts;
-};
-
 function llmMessagesToGemini(messages: LlmMessage[]): {
   systemInstruction: string | undefined;
   contents: Content[];
@@ -270,7 +253,21 @@ function llmMessagesToGemini(messages: LlmMessage[]): {
     }
 
     if (msg.role === "assistant") {
-      const parts = buildModelParts(msg);
+      const parts: Part[] = [];
+      if (msg.content) {
+        parts.push({ text: msg.content });
+      }
+      for (const tc of msg.toolCalls ?? []) {
+        let parsedArgs: Record<string, unknown>;
+        try {
+          parsedArgs = JSON.parse(tc.arguments) as Record<string, unknown>;
+        } catch {
+          parsedArgs = {};
+        }
+        parts.push({
+          functionCall: { name: tc.name, args: parsedArgs },
+        });
+      }
       if (parts.length > 0) {
         contents.push({ role: "model", parts });
       }
@@ -308,74 +305,6 @@ function geminiFinishReason(raw: string | undefined): LlmFinishReason {
   }
 }
 
-const buildFunctionDeclarations = (
-  tools: LlmChatInput["tools"],
-): FunctionDeclaration[] | undefined => {
-  if (!tools || tools.length === 0) {
-    return undefined;
-  }
-  return tools.map((t) => ({
-    name: t.name,
-    description: t.description,
-    parameters: t.parameters
-      ? convertJsonSchemaToGeminiSchema(t.parameters as Record<string, unknown>)
-      : undefined,
-  }));
-};
-
-type GeminiChunkState = {
-  pendingToolCalls: Array<{ id: string; name: string; arguments: string }>;
-  toolCallCounter: number;
-  finishReason: LlmFinishReason;
-  promptTokens: number | undefined;
-  completionTokens: number | undefined;
-};
-
-const handleGeminiChunk = (
-  chunk: GenerateContentResponse,
-  state: GeminiChunkState,
-): LlmStreamEvent[] => {
-  const candidate = chunk.candidates?.[0];
-  if (!candidate) {
-    return [];
-  }
-
-  const events: LlmStreamEvent[] = [];
-  for (const part of candidate.content?.parts ?? []) {
-    if (part.text) {
-      events.push({ type: "text-delta", text: part.text });
-    }
-
-    if (part.functionCall) {
-      state.pendingToolCalls.push({
-        id: `gemini-tc-${state.toolCallCounter++}`,
-        name: part.functionCall.name ?? "",
-        arguments: JSON.stringify(part.functionCall.args ?? {}),
-      });
-    }
-  }
-
-  if (candidate.finishReason) {
-    state.finishReason = geminiFinishReason(candidate.finishReason as string);
-  }
-
-  if (chunk.usageMetadata) {
-    state.promptTokens = chunk.usageMetadata.promptTokenCount ?? undefined;
-    state.completionTokens =
-      chunk.usageMetadata.candidatesTokenCount ?? undefined;
-  }
-
-  return events;
-};
-
-const buildUsage = (
-  promptTokens: number | undefined,
-  completionTokens: number | undefined,
-): { promptTokens: number | undefined; completionTokens: number | undefined } | undefined =>
-  promptTokens != null || completionTokens != null
-    ? { promptTokens, completionTokens }
-    : undefined;
-
 export type GeminiStreamChatArgs = {
   apiKey: string;
   model: string;
@@ -390,7 +319,18 @@ export async function* geminiStreamChat({
   const client = createClient(apiKey);
   const { systemInstruction, contents } = llmMessagesToGemini(input.messages);
 
-  const tools = buildFunctionDeclarations(input.tools);
+  const tools: FunctionDeclaration[] | undefined =
+    input.tools && input.tools.length > 0
+      ? input.tools.map((t) => ({
+          name: t.name,
+          description: t.description,
+          parameters: t.parameters
+            ? convertJsonSchemaToGeminiSchema(
+                t.parameters as Record<string, unknown>,
+              )
+            : undefined,
+        }))
+      : undefined;
 
   const stream = await client.models.generateContentStream({
     model,
@@ -418,15 +358,30 @@ export async function* geminiStreamChat({
   let toolCallCounter = 0;
 
   for await (const chunk of stream) {
-    const events = handleGeminiChunk(chunk, {
-      pendingToolCalls,
-      toolCallCounter,
-      finishReason,
-      promptTokens,
-      completionTokens,
-    });
-    for (const event of events) {
-      yield event;
+    const candidate = chunk.candidates?.[0];
+    if (!candidate) continue;
+
+    for (const part of candidate.content?.parts ?? []) {
+      if (part.text) {
+        yield { type: "text-delta", text: part.text };
+      }
+
+      if (part.functionCall) {
+        pendingToolCalls.push({
+          id: `gemini-tc-${toolCallCounter++}`,
+          name: part.functionCall.name ?? "",
+          arguments: JSON.stringify(part.functionCall.args ?? {}),
+        });
+      }
+    }
+
+    if (candidate.finishReason) {
+      finishReason = geminiFinishReason(candidate.finishReason as string);
+    }
+
+    if (chunk.usageMetadata) {
+      promptTokens = chunk.usageMetadata.promptTokenCount ?? undefined;
+      completionTokens = chunk.usageMetadata.candidatesTokenCount ?? undefined;
     }
   }
 
@@ -442,6 +397,9 @@ export async function* geminiStreamChat({
   yield {
     type: "finish",
     finishReason,
-    usage: buildUsage(promptTokens, completionTokens),
+    usage:
+      promptTokens != null || completionTokens != null
+        ? { promptTokens, completionTokens }
+        : undefined,
   };
 }

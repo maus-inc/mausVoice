@@ -162,34 +162,6 @@ export const KeybindingsForm = () => {
     setIsListening(false);
   };
 
-  let keyComboPreview: React.ReactNode;
-  if (isListening) {
-    keyComboPreview =
-      keysHeld.length > 0 ? (
-        <KeyPressSimulator keys={keysHeld} />
-      ) : (
-        <Box
-          sx={{
-            height: 48,
-            display: "flex",
-            alignItems: "center",
-            justifyContent: "center",
-          }}
-        >
-          <Typography
-            variant="body2"
-            sx={{
-              color: "text.secondary",
-            }}
-          >
-            <FormattedMessage defaultMessage="Press your new key combo..." />
-          </Typography>
-        </Box>
-      );
-  } else {
-    keyComboPreview = <KeyPressSimulator keys={currentKeys} />;
-  }
-
   const rightContent = (
     <Stack
       ref={boxRef}
@@ -242,7 +214,31 @@ export const KeybindingsForm = () => {
           },
         }}
       >
-        {keyComboPreview}
+        {isListening ? (
+          keysHeld.length > 0 ? (
+            <KeyPressSimulator keys={keysHeld} />
+          ) : (
+            <Box
+              sx={{
+                height: 48,
+                display: "flex",
+                alignItems: "center",
+                justifyContent: "center",
+              }}
+            >
+              <Typography
+                variant="body2"
+                sx={{
+                  color: "text.secondary",
+                }}
+              >
+                <FormattedMessage defaultMessage="Press your new key combo..." />
+              </Typography>
+            </Box>
+          )
+        ) : (
+          <KeyPressSimulator keys={currentKeys} />
+        )}
       </Box>
 
       <Stack

@@ -21,7 +21,6 @@ for pkg in "$SCRIPT_DIR"/*/package.json; do
     major) major=$((major + 1)); minor=0; patch=0 ;;
     minor) minor=$((minor + 1)); patch=0 ;;
     patch) patch=$((patch + 1)) ;;
-    *) echo "Unsupported bump type: $BUMP_TYPE" >&2; exit 1 ;;
   esac
 
   new_version="$major.$minor.$patch"

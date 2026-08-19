@@ -6,8 +6,8 @@ import {
 } from "@maus-inc/types";
 import type {
   LocalSidecarDevice,
-  SidecarDownloadSnapshot,
-  SidecarModelStatusResponse,
+  LocalSidecarDownloadSnapshot,
+  LocalSidecarModelStatus,
 } from "../sidecars";
 import {
   LOCAL_WHISPER_MODELS,
@@ -28,14 +28,16 @@ export type SettingsApiKey = ApiKey;
 
 export type LocalTranscriptionModelStatusMap = Record<
   LocalWhisperModel,
-  SidecarModelStatusResponse | null
+  LocalSidecarModelStatus | null
 >;
 
 export type LocalTranscriptionModelManagementState = {
   modelStatuses: LocalTranscriptionModelStatusMap;
   modelStatusesLoading: boolean;
   modelStatusesLoaded: boolean;
-  modelDownloads: Partial<Record<LocalWhisperModel, SidecarDownloadSnapshot>>;
+  modelDownloads: Partial<
+    Record<LocalWhisperModel, LocalSidecarDownloadSnapshot>
+  >;
   modelDeletes: Partial<Record<LocalWhisperModel, boolean>>;
 };
 
@@ -101,13 +103,13 @@ export const createEmptyLocalTranscriptionModelStatusMap =
     ) as LocalTranscriptionModelStatusMap;
 
 export const isLocalTranscriptionModelDownloadInProgress = (
-  snapshot: SidecarDownloadSnapshot | undefined,
+  snapshot: LocalSidecarDownloadSnapshot | undefined,
 ): boolean => {
   return snapshot?.status === "pending" || snapshot?.status === "running";
 };
 
 export const isLocalTranscriptionModelDownloadPaused = (
-  snapshot: SidecarDownloadSnapshot | undefined,
+  snapshot: LocalSidecarDownloadSnapshot | undefined,
 ): boolean => {
   return snapshot?.status === "paused";
 };

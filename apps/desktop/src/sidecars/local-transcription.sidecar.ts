@@ -15,7 +15,7 @@ type SidecarHealthResponse = {
   mode: string;
 };
 
-export type SidecarModelStatusResponse = {
+type SidecarModelStatusResponse = {
   model: LocalWhisperModel;
   downloaded: boolean;
   valid: boolean;
@@ -23,7 +23,7 @@ export type SidecarModelStatusResponse = {
   validationError: string | null;
 };
 
-export type SidecarDownloadSnapshot = {
+type SidecarDownloadSnapshot = {
   jobId: string;
   model: LocalWhisperModel;
   status:
@@ -63,6 +63,8 @@ type SidecarDevicesResponse = {
   devices: SidecarDeviceResponse[];
 };
 
+export type LocalSidecarModelStatus = SidecarModelStatusResponse;
+export type LocalSidecarDownloadSnapshot = SidecarDownloadSnapshot;
 export type LocalSidecarDevice = SidecarDeviceResponse & {
   mode: SidecarMode;
 };
@@ -130,7 +132,7 @@ export const isSessionNotFoundError = (error: unknown): boolean =>
 
 export class LocalTranscriptionSidecar extends BaseSidecar {
   readonly mode: SidecarMode;
-  private readonly readyModels = new Map<string, Promise<void>>();
+  private readyModels = new Map<string, Promise<void>>();
   private modelsDirPromise: Promise<string> | null = null;
 
   constructor(mode: SidecarMode) {
@@ -197,7 +199,7 @@ export class LocalTranscriptionSidecar extends BaseSidecar {
   async getModelStatus(
     model: LocalWhisperModel,
     validate = true,
-  ): Promise<SidecarModelStatusResponse> {
+  ): Promise<LocalSidecarModelStatus> {
     return await this.requestJson<SidecarModelStatusResponse>(
       `/v1/models/${model}/status?validate=${validate ? "true" : "false"}`,
     );
@@ -206,7 +208,7 @@ export class LocalTranscriptionSidecar extends BaseSidecar {
   async listModelStatuses(
     models: LocalWhisperModel[] = LOCAL_WHISPER_MODELS,
     validate = true,
-  ): Promise<Record<LocalWhisperModel, SidecarModelStatusResponse>> {
+  ): Promise<Record<LocalWhisperModel, LocalSidecarModelStatus>> {
     const statuses = await Promise.all(
       models.map(async (model) => {
         const status = await this.getModelStatus(model, validate);
@@ -214,7 +216,7 @@ export class LocalTranscriptionSidecar extends BaseSidecar {
       }),
     );
 
-    const map = {} as Record<LocalWhisperModel, SidecarModelStatusResponse>;
+    const map = {} as Record<LocalWhisperModel, LocalSidecarModelStatus>;
     for (const [model, status] of statuses) {
       map[model] = status;
     }
@@ -237,8 +239,8 @@ export class LocalTranscriptionSidecar extends BaseSidecar {
 
   async downloadModel(
     model: LocalWhisperModel,
-    onProgress?: (snapshot: SidecarDownloadSnapshot) => void,
-  ): Promise<SidecarModelStatusResponse | null> {
+    onProgress?: (snapshot: LocalSidecarDownloadSnapshot) => void,
+  ): Promise<LocalSidecarModelStatus | null> {
     const result = await this.downloadModelInternal(model, onProgress);
     if (result.status === "paused" || result.status === "canceled") {
       return null;
@@ -258,7 +260,7 @@ export class LocalTranscriptionSidecar extends BaseSidecar {
 
   async pauseDownload(
     model: LocalWhisperModel,
-  ): Promise<SidecarDownloadSnapshot> {
+  ): Promise<LocalSidecarDownloadSnapshot> {
     return await this.requestJson<SidecarDownloadSnapshot>(
       `/v1/models/${model}/download/pause`,
       { method: "POST" },
@@ -267,7 +269,7 @@ export class LocalTranscriptionSidecar extends BaseSidecar {
 
   async cancelDownload(
     model: LocalWhisperModel,
-  ): Promise<SidecarDownloadSnapshot> {
+  ): Promise<LocalSidecarDownloadSnapshot> {
     const result = await this.requestJson<SidecarDownloadSnapshot>(
       `/v1/models/${model}/download/cancel`,
       { method: "POST" },
@@ -278,7 +280,7 @@ export class LocalTranscriptionSidecar extends BaseSidecar {
 
   async deleteModel(
     model: LocalWhisperModel,
-  ): Promise<SidecarModelStatusResponse> {
+  ): Promise<LocalSidecarModelStatus> {
     const status = await this.requestJson<SidecarModelStatusResponse>(
       `/v1/models/${model}`,
       { method: "DELETE" },
@@ -487,16 +489,14 @@ export class LocalTranscriptionSidecar extends BaseSidecar {
     deviceId?: string;
   } {
     const normalizedDeviceId = input.deviceId?.trim().toLowerCase();
-    let deviceId: string | undefined;
-    if (this.mode === "gpu") {
-      deviceId = normalizedDeviceId?.startsWith("gpu:")
-        ? normalizedDeviceId
-        : undefined;
-    } else {
-      deviceId = normalizedDeviceId?.startsWith("cpu:")
-        ? normalizedDeviceId
-        : undefined;
-    }
+    const deviceId =
+      this.mode === "gpu"
+        ? normalizedDeviceId?.startsWith("gpu:")
+          ? normalizedDeviceId
+          : undefined
+        : normalizedDeviceId?.startsWith("cpu:")
+          ? normalizedDeviceId
+          : undefined;
 
     return {
       model: input.model,
@@ -582,7 +582,7 @@ export class LocalTranscriptionSidecar extends BaseSidecar {
 
   private async downloadModelInternal(
     model: LocalWhisperModel,
-    onProgress?: (snapshot: SidecarDownloadSnapshot) => void,
+    onProgress?: (snapshot: LocalSidecarDownloadSnapshot) => void,
   ): Promise<SidecarDownloadSnapshot> {
     const job = await this.requestJson<SidecarDownloadSnapshot>(
       `/v1/models/${model}/download`,
@@ -783,9 +783,11 @@ export class LocalTranscriptionSidecar extends BaseSidecar {
   }
 
   private async resolveModelsDir(): Promise<string> {
-    this.modelsDirPromise ??= appDataDir().then(
-      async (baseDir) => await join(baseDir, "transcription-models"),
-    );
+    if (!this.modelsDirPromise) {
+      this.modelsDirPromise = appDataDir().then(
+        async (baseDir) => await join(baseDir, "transcription-models"),
+      );
+    }
     return await this.modelsDirPromise;
   }
 }

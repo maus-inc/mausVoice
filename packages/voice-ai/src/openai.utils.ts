@@ -8,14 +8,10 @@ import type {
   LlmToolChoice,
 } from "@maus-inc/types";
 import { countWords, retry } from "@maus-inc/utilities";
-import {
-  contentToString,
-  buildChatMessages,
-  transcribeWithOpenAICompatClient,
-} from "./shared.utils";
-import OpenAI from "openai";
+import OpenAI, { toFile } from "openai";
 import type { CustomFetch } from "./types";
 import type {
+  ChatCompletionContentPart,
   ChatCompletionMessageParam,
   ChatCompletionTool,
 } from "openai/resources/chat/completions";
@@ -40,6 +36,27 @@ export const OPENAI_TRANSCRIPTION_MODELS = [
 export type OpenAITranscriptionModel =
   (typeof OPENAI_TRANSCRIPTION_MODELS)[number];
 
+const contentToString = (
+  content: string | ChatCompletionContentPart[] | null | undefined,
+): string => {
+  if (!content) {
+    return "";
+  }
+
+  if (typeof content === "string") {
+    return content;
+  }
+
+  return content
+    .map((part) => {
+      if (part.type === "text") {
+        return part.text ?? "";
+      }
+      return "";
+    })
+    .join("")
+    .trim();
+};
 
 const createClient = (
   apiKey: string,
@@ -84,14 +101,19 @@ export const openaiTranscribeAudio = async ({
     fn: async () => {
       const client = createClient(apiKey);
 
-      const text = await transcribeWithOpenAICompatClient(client, {
-        blob,
-        ext,
+      const file = await toFile(blob, `audio.${ext}`);
+      const response = await client.audio.transcriptions.create({
+        file,
         model,
         prompt,
-        language,
+        language: language && language !== "auto" ? language : undefined,
       });
-      return { text, wordsUsed: countWords(text) };
+
+      if (!response.text) {
+        throw new Error("Transcription failed");
+      }
+
+      return { text: response.text, wordsUsed: countWords(response.text) };
     },
   });
 };
@@ -127,7 +149,21 @@ export const openaiGenerateTextResponse = async ({
     fn: async () => {
       const client = createClient(apiKey, baseUrl, customFetch);
 
-      const messages = buildChatMessages({ system, prompt, imageUrls });
+      const messages: ChatCompletionMessageParam[] = [];
+      if (system) {
+        messages.push({ role: "system", content: system });
+      }
+
+      const userParts: ChatCompletionContentPart[] = [];
+      for (const url of imageUrls) {
+        userParts.push({
+          type: "image_url",
+          image_url: { url },
+        });
+      }
+
+      userParts.push({ type: "text", text: prompt });
+      messages.push({ role: "user", content: userParts });
 
       const response = await client.chat.completions.create({
         messages,
@@ -300,28 +336,6 @@ function toFinishReason(raw: string | null | undefined): LlmFinishReason {
   }
 }
 
-const accumulateToolCalls = (
-  toolCalls: Map<number, { id: string; name: string; arguments: string }>,
-  deltas: Array<{
-    index?: number;
-    id?: string | null;
-    function?: { name?: string | null; arguments?: string | null };
-  }>,
-): void => {
-  for (const tc of deltas) {
-    const index = tc.index ?? toolCalls.size;
-    const current = toolCalls.get(index) ?? {
-      id: "",
-      name: "",
-      arguments: "",
-    };
-    if (tc.id) current.id = tc.id;
-    if (tc.function?.name) current.name = tc.function.name;
-    if (tc.function?.arguments) current.arguments += tc.function.arguments;
-    toolCalls.set(index, current);
-  }
-};
-
 export async function* openaiCompatibleStreamChat(
   client: OpenAI,
   model: string,
@@ -371,7 +385,18 @@ export async function* openaiCompatibleStreamChat(
       yield { type: "text-delta", text: choice.delta.content };
     }
 
-    accumulateToolCalls(toolCalls, choice.delta?.tool_calls ?? []);
+    for (const tc of choice.delta?.tool_calls ?? []) {
+      const index = tc.index ?? toolCalls.size;
+      const current = toolCalls.get(index) ?? {
+        id: "",
+        name: "",
+        arguments: "",
+      };
+      if (tc.id) current.id = tc.id;
+      if (tc.function?.name) current.name = tc.function.name;
+      if (tc.function?.arguments) current.arguments += tc.function.arguments;
+      toolCalls.set(index, current);
+    }
 
     if (choice.finish_reason) {
       finishReason = toFinishReason(choice.finish_reason);

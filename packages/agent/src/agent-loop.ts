@@ -7,7 +7,7 @@ import type {
 import type { AgentConfig, AgentEvent } from "./types";
 
 export class AgentLoop {
-  private readonly config: AgentConfig;
+  private config: AgentConfig;
   private aborted = false;
 
   constructor(config: AgentConfig) {
@@ -33,10 +33,78 @@ export class AgentLoop {
         return;
       }
 
-      const status = yield* this.runIteration(history, i);
-      if (status === "stop") {
+      yield { type: "iteration-start", iteration: i };
+
+      const input = this.buildInput(history);
+      let content = "";
+      const toolCalls: LlmToolCall[] = [];
+
+      try {
+        for await (const event of this.config.provider.streamChat(input)) {
+          if (this.aborted) break;
+
+          if (event.type === "text-delta") {
+            content += event.text;
+            yield { type: "text-delta", text: event.text };
+          }
+
+          if (event.type === "tool-call") {
+            toolCalls.push({
+              id: event.id,
+              name: event.name,
+              arguments: event.arguments,
+            });
+          }
+
+          if (event.type === "error") {
+            yield {
+              type: "finish",
+              reason: "error",
+              text: "",
+              messages: history,
+              error: event.error,
+            };
+            return;
+          }
+        }
+      } catch (err) {
+        yield {
+          type: "finish",
+          reason: "error",
+          text: "",
+          messages: history,
+          error: err instanceof Error ? err.message : String(err),
+        };
         return;
       }
+
+      if (this.aborted) {
+        yield {
+          type: "finish",
+          reason: "aborted",
+          text: "",
+          messages: history,
+        };
+        return;
+      }
+
+      history.push({
+        role: "assistant",
+        content: content || undefined,
+        toolCalls: toolCalls.length > 0 ? toolCalls : undefined,
+      });
+
+      if (toolCalls.length === 0) {
+        yield {
+          type: "finish",
+          reason: "stop",
+          text: content,
+          messages: history,
+        };
+        return;
+      }
+
+      yield* this.processToolCalls(history, toolCalls);
     }
 
     yield {
@@ -45,97 +113,6 @@ export class AgentLoop {
       text: "",
       messages: history,
     };
-  }
-
-  private async *runIteration(
-    history: LlmMessage[],
-    iteration: number,
-  ): AsyncGenerator<AgentEvent, "continue" | "stop"> {
-    yield { type: "iteration-start", iteration };
-    if (this.aborted) {
-      return "stop";
-    }
-
-    const result = yield* this.consumeStream(history, this.buildInput(history));
-    if (result.error) {
-      yield {
-        type: "finish",
-        reason: "error",
-        text: "",
-        messages: history,
-        error: result.error,
-      };
-      return "stop";
-    }
-
-    if (this.aborted) {
-      yield {
-        type: "finish",
-        reason: "aborted",
-        text: "",
-        messages: history,
-      };
-      return "stop";
-    }
-
-    history.push({
-      role: "assistant",
-      content: result.content || undefined,
-      toolCalls: result.toolCalls.length > 0 ? result.toolCalls : undefined,
-    });
-
-    if (result.toolCalls.length === 0) {
-      yield {
-        type: "finish",
-        reason: "stop",
-        text: result.content,
-        messages: history,
-      };
-      return "stop";
-    }
-
-    yield* this.processToolCalls(history, result.toolCalls);
-    return "continue";
-  }
-
-  private async *consumeStream(
-    history: LlmMessage[],
-    input: LlmChatInput,
-  ): AsyncGenerator<
-    AgentEvent,
-    { content: string; toolCalls: LlmToolCall[]; error?: string }
-  > {
-    let content = "";
-    const toolCalls: LlmToolCall[] = [];
-
-    try {
-      for await (const event of this.config.provider.streamChat(input)) {
-        if (this.aborted) {
-          return { content, toolCalls };
-        }
-
-        if (event.type === "text-delta") {
-          content += event.text;
-          yield { type: "text-delta", text: event.text };
-        } else if (event.type === "tool-call") {
-          toolCalls.push({
-            id: event.id,
-            name: event.name,
-            arguments: event.arguments,
-          });
-        } else if (event.type === "error") {
-          return { content, toolCalls, error: event.error };
-        }
-      }
-    } catch (err) {
-      return {
-        content,
-        toolCalls,
-        error: err instanceof Error ? err.message : String(err),
-      };
-    }
-
-    return { content, toolCalls };
   }
 
   private buildInput(history: LlmMessage[]): LlmChatInput {
@@ -210,14 +187,11 @@ export class AgentLoop {
         reason: (reason as string) ?? "",
       });
 
-      let resultStr: string;
-      if (!output.success) {
-        resultStr = output.failureReason ?? "Tool execution failed";
-      } else if (typeof output.result === "string") {
-        resultStr = output.result;
-      } else {
-        resultStr = JSON.stringify(output.result ?? {});
-      }
+      const resultStr = output.success
+        ? typeof output.result === "string"
+          ? output.result
+          : JSON.stringify(output.result ?? {})
+        : (output.failureReason ?? "Tool execution failed");
 
       history.push({ role: "tool", toolCallId: tc.id, content: resultStr });
       yield {

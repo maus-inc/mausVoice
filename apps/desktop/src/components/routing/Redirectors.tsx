@@ -1,8 +1,8 @@
 import { Navigate, useSearchParams } from "react-router-dom";
 
 export type RedirectProps = {
-  readonly to: string;
-  readonly state?: unknown;
+  to: string;
+  state?: unknown;
 };
 
 export function Redirect({ to, state }: RedirectProps) {
