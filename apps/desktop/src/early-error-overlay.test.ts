@@ -135,4 +135,15 @@ describe("early error overlay", () => {
       "async init rejected before React mounted",
     );
   });
+
+  it("does not paint over a mounted #root on unhandledrejection", () => {
+    const { nodes, listeners } = installEarlyOverlay([
+      { id: "root", childNodes: [{ textContent: "app" }] },
+    ]);
+    const reason = new Error("post-mount rejection");
+
+    listeners.unhandledrejection[0]({ reason });
+
+    expect(nodes.get("maus-global-error-overlay")).toBeUndefined();
+  });
 });
