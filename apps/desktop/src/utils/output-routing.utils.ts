@@ -106,7 +106,7 @@ export const insertLocalTranscriptOutputViaPaste = async (
   text: string,
   keybind: string | null,
   suppressClipboardFlash?: boolean,
-): Promise<void> => {
+): Promise<PasteOutcome> => {
   const sanitized = sanitizeIndentation(text);
 
   const outcome = await invoke<PasteOutcome>("paste", {
@@ -126,6 +126,8 @@ export const insertLocalTranscriptOutputViaPaste = async (
       );
     }
   }
+
+  return outcome;
 };
 
 export const insertLocalTranscriptOutputViaTyping = async (
@@ -215,16 +217,14 @@ const takeBacklogSnapshot = (): BacklogSnapshot => {
 
 /**
  * Drain the dictation backlog (and optionally a newSegment) into the
- * currently focused field via the standard output-routing pipeline.
+ * currently focused field via the standard paste pipeline.
  *
- * - If an editable target is focused: paste and return `{ delivered: true }`.
+ * - If an editable target is focused: paste and return
+ *   `{ delivered: true, copiedToClipboard: false }`.
  * - If NOT editable: single clipboard write + single pill flash, return
- *   `{ delivered: false, copiedToClipboard: true }`.
- * - Empty backlog + no newSegment → no-op.
- *
- * Option `prefs` is attached to avoid a stale re-read of user preferences
- * if they changed mid-dictation (e.g. insertionMethod switch). Omit to
- * re-read fresh from state.
+ *   `{ delivered: true, copiedToClipboard: true }`.
+ * - Empty backlog + no newSegment → return
+ *   `{ delivered: false, copiedToClipboard: false }`.
  *
  * The backlog is CLEARED on successful delivery. If the drain fails, the
  * backlog is preserved so the user doesn't lose text.
@@ -249,7 +249,9 @@ export const drainDictationBacklog = async (
   // Deliver the combined backlog text via the standard paste pipeline.
   // suppressFlashOnClipboard=false so the ONE permitted pill flash
   // happens when the backlog is delivered to a non-editable target.
-  await insertLocalTranscriptOutputViaPaste(combinedText, null, false);
+  const pasteOutcome = await insertLocalTranscriptOutputViaPaste(
+    combinedText, null, false,
+  );
 
   // Snapshot after paste to confirm we're still in the same session.
   const currentNonce = getAppState().dictationBacklogNonce;
@@ -261,5 +263,8 @@ export const drainDictationBacklog = async (
   // Clear the backlog on successful delivery.
   clearDictationBacklog();
 
-  return { delivered: true, copiedToClipboard: false };
+  return {
+    delivered: true,
+    copiedToClipboard: pasteOutcome === "copied_to_clipboard",
+  };
 };

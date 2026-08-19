@@ -366,7 +366,10 @@ export const DictationSideEffects = () => {
       if (!strategy || !("checkAndDrainBacklog" in strategy)) return;
       const hasBacklog = (strategy as DictationStrategy).hasBacklog;
       if (!hasBacklog) return;
-      void (strategy as DictationStrategy).checkAndDrainBacklog();
+      (strategy as DictationStrategy).checkAndDrainBacklog()
+        .catch((error: unknown) => {
+          getLogger().warning(`Backlog drain poll failed: ${error}`);
+        })
     }, BACKLOG_DRAIN_POLL_MS);
     return () => clearInterval(interval);
   }, [isMainWindow]);
