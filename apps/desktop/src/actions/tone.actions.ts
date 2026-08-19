@@ -5,6 +5,10 @@ import { ToneEditorMode } from "../state/tone-editor.state";
 import { getAppState, produceAppState } from "../store";
 import { registerTones } from "../utils/app.utils";
 import {
+  toWritingStyleTransition,
+  type WritingStyleSwitchRequest,
+} from "../utils/dictation-style.utils";
+import {
   getActiveManualToneIds,
   getManuallySelectedToneId,
   getToneById,
@@ -132,6 +136,18 @@ export const openToneEditorDialog = (options: {
   });
 };
 
+/**
+ * Single state transition for every writing-style switch channel (pill
+ * chevrons, Left/Right while holding dictate, cycle hotkeys, and
+ * switch-to-style hotkeys). All of them write `user.selectedToneId` here so
+ * the pill label and the tone used at finalize can never drift.
+ */
+export const applyWritingStyleSelection = async (
+  toneId: string,
+): Promise<void> => {
+  await setSelectedToneId(toneId);
+};
+
 const cycleWritingStyle = async (direction: 1 | -1): Promise<void> => {
   const state = getAppState();
   const activeIds = getActiveManualToneIds(state);
@@ -156,7 +172,7 @@ const cycleWritingStyle = async (direction: 1 | -1): Promise<void> => {
   const nextIndex =
     (currentIndex + direction + activeIds.length) % activeIds.length;
   const nextId = activeIds[nextIndex];
-  await setSelectedToneId(nextId);
+  await applyWritingStyleSelection(nextId);
 };
 
 export const switchWritingStyleForward = () => cycleWritingStyle(1);
@@ -164,7 +180,27 @@ export const switchWritingStyleBackward = () => cycleWritingStyle(-1);
 
 /** Select a style from a dynamic global style shortcut. */
 export const selectToneByHotkey = async (toneId: string): Promise<void> => {
-  await setSelectedToneId(toneId);
+  await applyWritingStyleSelection(toneId);
+};
+
+/**
+ * Shared entry point for every in-dictation style-switch channel. Pill,
+ * arrows, and hotkeys must call this (not a private state slot) so they
+ * cannot diverge.
+ */
+export const applyInDictationStyleSwitch = async (
+  request: WritingStyleSwitchRequest,
+): Promise<void> => {
+  const transition = toWritingStyleTransition(request);
+  if (transition.kind === "select") {
+    await selectToneByHotkey(transition.toneId);
+    return;
+  }
+  if (transition.direction === 1) {
+    await switchWritingStyleForward();
+    return;
+  }
+  await switchWritingStyleBackward();
 };
 
 export const closeToneEditorDialog = (): void => {
