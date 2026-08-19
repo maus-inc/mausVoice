@@ -110,6 +110,7 @@ describe("header geometry", () => {
 type MockScroller = CollapseScroller & {
   emitScroll: () => void;
   getProperty: (name: string) => string | undefined;
+  getAttribute: (name: string) => string | undefined;
   listenerCount: () => number;
   isCollapsing: () => boolean;
 };
@@ -117,7 +118,7 @@ type MockScroller = CollapseScroller & {
 const createScroller = (scrollTop = 0): MockScroller => {
   const listeners = new Set<() => void>();
   const props = new Map<string, string>();
-  const attrs = new Set<string>();
+  const attrs = new Map<string, string>();
 
   return {
     scrollTop,
@@ -132,14 +133,11 @@ const createScroller = (scrollTop = 0): MockScroller => {
     removeEventListener: (_type, listener) => {
       listeners.delete(listener);
     },
-    toggleAttribute: (name, force) => {
-      const on = force ?? !attrs.has(name);
-      if (on) {
-        attrs.add(name);
-      } else {
-        attrs.delete(name);
-      }
-      return on;
+    setAttribute: (name, value) => {
+      attrs.set(name, value);
+    },
+    removeAttribute: (name) => {
+      attrs.delete(name);
     },
     emitScroll: () => {
       for (const listener of listeners) {
@@ -147,8 +145,9 @@ const createScroller = (scrollTop = 0): MockScroller => {
       }
     },
     getProperty: (name) => props.get(name),
+    getAttribute: (name) => attrs.get(name),
     listenerCount: () => listeners.size,
-    isCollapsing: () => attrs.has(COLLAPSING_ATTR),
+    isCollapsing: () => attrs.get(COLLAPSING_ATTR) === "true",
   };
 };
 
@@ -257,11 +256,13 @@ describe("attachScrollListCollapse", () => {
     const cleanup = attach({ scroller });
 
     expect(scroller.getProperty("--p")).toBe("0.5");
+    expect(scroller.getAttribute(COLLAPSING_ATTR)).toBe("true");
     expect(scroller.isCollapsing()).toBe(true);
 
     scroller.scrollTop = 400;
     scroller.emitScroll();
     expect(scroller.getProperty("--p")).toBe("1");
+    expect(scroller.getAttribute(COLLAPSING_ATTR)).toBeUndefined();
     expect(scroller.isCollapsing()).toBe(false);
 
     scroller.scrollTop = 0;
@@ -269,7 +270,7 @@ describe("attachScrollListCollapse", () => {
     expect(scroller.getProperty("--p")).toBe("0");
     expect(scroller.isCollapsing()).toBe(false);
 
-    cleanup();
+    cleanup.disconnect();
   });
 
   it("observes only the measure clones and detaches listeners on cleanup", () => {
@@ -285,7 +286,7 @@ describe("attachScrollListCollapse", () => {
     expect(scroller.listenerCount()).toBe(1);
     expect(mediaQuery.listenerCount()).toBe(1);
 
-    cleanup();
+    cleanup.disconnect();
 
     expect(MockResizeObserver.instances[0]!.disconnected).toBe(true);
     expect(MockResizeObserver.live).toBe(0);
@@ -307,7 +308,7 @@ describe("attachScrollListCollapse", () => {
         },
       });
       scroller.emitScroll();
-      cleanup();
+      cleanup.disconnect();
     }
 
     expect(latest).toEqual(sampleMetrics());
@@ -339,7 +340,7 @@ describe("attachScrollListCollapse", () => {
 
     // Item-list mutation: same collapse geometry, new attach (what a careless
     // items.length effect would do). Progress must not reset or escape [0, 1].
-    first();
+    first.disconnect();
     const second = attachScrollListCollapse({
       scroller,
       measureElements: [],
@@ -354,7 +355,7 @@ describe("attachScrollListCollapse", () => {
     scroller.scrollTop = 40;
     scroller.emitScroll();
     recorded.push(scroller.getProperty("--p") ?? "");
-    second();
+    second.disconnect();
 
     expect(recorded.every((value) => value === "0.5")).toBe(true);
     const heightBefore = headerHeightPx(metrics, 0.5);
@@ -375,6 +376,39 @@ describe("attachScrollListCollapse", () => {
     expect(scroller.getProperty("--p")).toBe("1");
     mediaQuery.setMatches(false);
     expect(scroller.getProperty("--p")).toBe("0.5");
-    cleanup();
+    cleanup.disconnect();
+  });
+
+  it("re-measures through refresh when ResizeObserver is unavailable", () => {
+    const scroller = createScroller(40);
+    let metrics = sampleMetrics();
+    const recorded: HeaderMetrics[] = [];
+    const session = attachScrollListCollapse({
+      scroller,
+      measureElements: [],
+      readMetrics: () => metrics,
+      onMetrics: (next) => {
+        recorded.push(next);
+      },
+      mediaQuery: null,
+      resizeObserver: null,
+      requestFrame: syncFrame,
+      cancelFrame: () => undefined,
+    });
+
+    expect(scroller.getProperty("--p")).toBe("0.5");
+    expect(recorded).toHaveLength(1);
+
+    metrics = measureHeaderMetrics({
+      ...SAMPLE_RECTS,
+      expandedHeader: 180,
+    });
+    session.refresh();
+
+    expect(recorded).toHaveLength(2);
+    expect(recorded[1]?.collapseDistance).toBe(120);
+    expect(Number(scroller.getProperty("--p"))).toBeCloseTo(40 / 120);
+    expect(scroller.getAttribute(COLLAPSING_ATTR)).toBe("true");
+    session.disconnect();
   });
 });

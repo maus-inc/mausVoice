@@ -18,6 +18,7 @@ import {
 import { FormattedMessage } from "react-intl";
 import {
   COLLAPSE_ANIM_ATTR,
+  COLLAPSING_ATTR,
   INITIAL_HEADER_METRICS,
   attachScrollListCollapse,
   collapseSpacerExpr,
@@ -27,6 +28,7 @@ import {
   titleHeightExpr,
   titleScaleRange,
   type HeaderMetrics,
+  type ScrollListCollapseHandle,
 } from "./scrollListCollapse";
 
 export type ScrollListPageProps<Item> = {
@@ -68,10 +70,13 @@ export function ScrollListPage<Item>({
   const [headerMetrics, setHeaderMetrics] = useState<HeaderMetrics>(
     INITIAL_HEADER_METRICS,
   );
+  const collapseRef = useRef<ScrollListCollapseHandle | null>(null);
   const hasItems = items.length > 0;
+  const hasResizeObserver = typeof ResizeObserver !== "undefined";
 
   useLayoutEffect(() => {
     if (!hasItems) {
+      collapseRef.current = null;
       return;
     }
 
@@ -90,7 +95,7 @@ export function ScrollListPage<Item>({
       return;
     }
 
-    return attachScrollListCollapse({
+    const handle = attachScrollListCollapse({
       scroller,
       measureElements: [
         expandedHeader,
@@ -111,7 +116,23 @@ export function ScrollListPage<Item>({
         );
       },
     });
+    collapseRef.current = handle;
+    return () => {
+      handle.disconnect();
+      if (collapseRef.current === handle) {
+        collapseRef.current = null;
+      }
+    };
   }, [hasItems]);
+
+  // No ResizeObserver: re-measure after each commit so title/action/width
+  // changes still update collapse geometry without rebinding the scroll listener.
+  useLayoutEffect(() => {
+    if (hasResizeObserver) {
+      return;
+    }
+    collapseRef.current?.refresh();
+  });
 
   const handleLoadMore = useCallback(() => {
     onLoadMore?.();
@@ -227,8 +248,10 @@ export function ScrollListPage<Item>({
             overflowY: "auto",
             overflowX: "hidden",
             overscrollBehavior: "contain",
-            overflowAnchor: "none",
-            [`&[data-collapsing="true"] [${COLLAPSE_ANIM_ATTR}]`]: {
+            [`&[${COLLAPSING_ATTR}]`]: {
+              overflowAnchor: "none",
+            },
+            [`&[${COLLAPSING_ATTR}] [${COLLAPSE_ANIM_ATTR}]`]: {
               willChange: "transform, opacity",
             },
           }}
@@ -243,6 +266,7 @@ export function ScrollListPage<Item>({
               zIndex: theme.zIndex.appBar,
               height: headerHeight,
               overflow: "hidden",
+              overflowAnchor: "none",
             })}
           >
             <Container maxWidth={headerMaxWidth} sx={{ pt: 1, pb: 4 }}>
@@ -319,6 +343,7 @@ export function ScrollListPage<Item>({
                 height: collapseSpacer,
                 flexShrink: 0,
                 pointerEvents: "none",
+                overflowAnchor: "none",
               }}
             />
           ) : null}

@@ -28,7 +28,8 @@ export type CollapseScroller = {
     options?: { passive?: boolean },
   ) => void;
   removeEventListener: (type: "scroll", listener: () => void) => void;
-  toggleAttribute: (qualifiedName: string, force?: boolean) => boolean;
+  setAttribute: (qualifiedName: string, value: string) => void;
+  removeAttribute: (qualifiedName: string) => void;
 };
 
 export type CollapseMediaQuery = {
@@ -51,9 +52,15 @@ export type AttachScrollListCollapseOptions = {
   onMetrics: (metrics: HeaderMetrics) => void;
   prefersReducedMotion?: () => boolean;
   mediaQuery?: CollapseMediaQuery | null;
-  resizeObserver?: ResizeObserverCtor;
+  /** Pass `null` to skip ResizeObserver (tests / no-RO fallback). */
+  resizeObserver?: ResizeObserverCtor | null;
   requestFrame?: (callback: FrameRequestCallback) => number;
   cancelFrame?: (handle: number) => void;
+};
+
+export type ScrollListCollapseHandle = {
+  disconnect: () => void;
+  refresh: () => void;
 };
 
 /**
@@ -192,7 +199,7 @@ export function attachScrollListCollapse({
   resizeObserver,
   requestFrame = globalThis.requestAnimationFrame.bind(globalThis),
   cancelFrame = globalThis.cancelAnimationFrame.bind(globalThis),
-}: AttachScrollListCollapseOptions): () => void {
+}: AttachScrollListCollapseOptions): ScrollListCollapseHandle {
   const mediaQuery = resolveMediaQuery(mediaQueryOption);
   const prefersReducedMotion =
     prefersReducedMotionOption ?? (() => mediaQuery?.matches ?? false);
@@ -218,7 +225,11 @@ export function attachScrollListCollapse({
     }
     if (lastCollapsing !== collapsing) {
       lastCollapsing = collapsing;
-      scroller.toggleAttribute(COLLAPSING_ATTR, collapsing);
+      if (collapsing) {
+        scroller.setAttribute(COLLAPSING_ATTR, "true");
+      } else {
+        scroller.removeAttribute(COLLAPSING_ATTR);
+      }
     }
   };
 
@@ -262,30 +273,45 @@ export function attachScrollListCollapse({
   mediaQuery?.addEventListener("change", handleMotionChange);
 
   const ResizeObserverImpl =
-    resizeObserver ??
-    (typeof globalThis.ResizeObserver === "undefined"
+    resizeObserver === null
       ? undefined
-      : globalThis.ResizeObserver);
+      : (resizeObserver ??
+        (typeof globalThis.ResizeObserver === "undefined"
+          ? undefined
+          : globalThis.ResizeObserver));
 
   let observer: ResizeObserverLike | null = null;
-  if (ResizeObserverImpl) {
-    observer = new ResizeObserverImpl(scheduleMeasure);
-    for (const element of measureElements) {
-      if (element) {
-        observer.observe(element);
+  const removeWindowResize = (() => {
+    if (ResizeObserverImpl) {
+      observer = new ResizeObserverImpl(scheduleMeasure);
+      for (const element of measureElements) {
+        if (element) {
+          observer.observe(element);
+        }
       }
+      return undefined;
     }
-  }
+    if (typeof globalThis.addEventListener !== "function") {
+      return undefined;
+    }
+    const onResize = () => scheduleMeasure();
+    globalThis.addEventListener("resize", onResize);
+    return () => globalThis.removeEventListener("resize", onResize);
+  })();
 
-  return () => {
-    scroller.removeEventListener("scroll", handleScroll);
-    mediaQuery?.removeEventListener("change", handleMotionChange);
-    observer?.disconnect();
-    if (hasScrollFrame) {
-      cancelFrame(scrollFrame);
-    }
-    if (hasMeasureFrame) {
-      cancelFrame(measureFrame);
-    }
+  return {
+    refresh: measure,
+    disconnect: () => {
+      scroller.removeEventListener("scroll", handleScroll);
+      mediaQuery?.removeEventListener("change", handleMotionChange);
+      observer?.disconnect();
+      removeWindowResize?.();
+      if (hasScrollFrame) {
+        cancelFrame(scrollFrame);
+      }
+      if (hasMeasureFrame) {
+        cancelFrame(measureFrame);
+      }
+    },
   };
 }
