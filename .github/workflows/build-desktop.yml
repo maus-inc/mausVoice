@@ -2,8 +2,6 @@ name: Build Desktop
 
 on:
   push:
-    branches:
-      - main
     paths:
       - "apps/desktop/**"
       - "apps/windows-installer/**"
@@ -30,7 +28,7 @@ permissions:
 # Run every stacked PR independently, but cancel superseded runs for the same
 # PR (or the same branch for push/manual events) to avoid consuming runner slots.
 concurrency:
-  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  group: ${{ github.workflow }}-${{ github.head_ref || github.ref_name }}
   cancel-in-progress: true
 
 jobs:
