@@ -25,6 +25,7 @@ import {
   type DictationLanguageCode,
   ORDERED_DICTATION_LANGUAGES,
 } from "../../utils/language.utils";
+import { isPostProcessingEnabled } from "../../utils/post-processing.utils";
 import { getSortedToneIds } from "../../utils/tone.utils";
 import { getMyDictationLanguage } from "../../utils/user.utils";
 
@@ -61,6 +62,7 @@ export const RetranscribeDialog = () => {
   });
 
   const defaultLanguage = useAppStore((state) => getMyDictationLanguage(state));
+  const postProcessingEnabled = useAppStore(isPostProcessingEnabled);
 
   const [selectedToneId, setSelectedToneId] = useState<string | null>(null);
   const [selectedLanguage, setSelectedLanguage] =
@@ -83,10 +85,16 @@ export const RetranscribeDialog = () => {
     closeRetranscribeDialog();
     void retranscribeTranscription({
       transcriptionId,
-      toneId: selectedToneId,
+      toneId: postProcessingEnabled ? selectedToneId : null,
       languageCode: selectedLanguage,
     });
-  }, [transcriptionId, selectedToneId, selectedLanguage, isRetranscribing]);
+  }, [
+    transcriptionId,
+    selectedToneId,
+    selectedLanguage,
+    isRetranscribing,
+    postProcessingEnabled,
+  ]);
 
   return (
     <Dialog open={open} onClose={handleClose} maxWidth="xs" fullWidth>
@@ -95,25 +103,27 @@ export const RetranscribeDialog = () => {
       </DialogTitle>
       <DialogContent>
         <Stack spacing={2.5} sx={{ mt: 1 }}>
-          <FormControl fullWidth size="small">
-            <InputLabel>
-              <FormattedMessage defaultMessage="Style" />
-            </InputLabel>
-            <Select
-              label={intl.formatMessage({ defaultMessage: "Style" })}
-              value={selectedToneId ?? ""}
-              onChange={(e) => {
-                const value = e.target.value;
-                setSelectedToneId(value || null);
-              }}
-            >
-              {tones.map((tone) => (
-                <MenuItem key={tone.id} value={tone.id}>
-                  {tone.name}
-                </MenuItem>
-              ))}
-            </Select>
-          </FormControl>
+          {postProcessingEnabled && (
+            <FormControl fullWidth size="small">
+              <InputLabel>
+                <FormattedMessage defaultMessage="Style" />
+              </InputLabel>
+              <Select
+                label={intl.formatMessage({ defaultMessage: "Style" })}
+                value={selectedToneId ?? ""}
+                onChange={(e) => {
+                  const value = e.target.value;
+                  setSelectedToneId(value || null);
+                }}
+              >
+                {tones.map((tone) => (
+                  <MenuItem key={tone.id} value={tone.id}>
+                    {tone.name}
+                  </MenuItem>
+                ))}
+              </Select>
+            </FormControl>
+          )}
           <FormControl fullWidth size="small">
             <InputLabel>
               <FormattedMessage defaultMessage="Language" />

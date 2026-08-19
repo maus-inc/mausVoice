@@ -19,13 +19,16 @@ import { getHotkeyRepo } from "../../repos";
 import { produceAppState, useAppStore } from "../../store";
 import { applyReplacedStyleHotkeys } from "../../utils/style-hotkey";
 import { createId } from "../../utils/id.utils";
+import { isPostProcessingEnabled } from "../../utils/post-processing.utils";
 import {
   getHotkeyCombosForAction,
+  getPrettyKeyName,
   getSwitchToStyleActionName,
   SWITCH_TO_STYLE_HOTKEY_PREFIX,
   syncHotkeyCombosToNative,
 } from "../../utils/keyboard.utils";
 import { HotKey } from "../common/HotKey";
+import { PostProcessingDisabledTooltip } from "../styling/PostProcessingDisabledTooltip";
 
 type StyleHotkeyRow = {
   toneId: string;
@@ -46,6 +49,7 @@ export const StyleHotkeysDialog = () => {
     [toneById],
   );
   const hotkeyById = useAppStore((state) => state.hotkeyById);
+  const postProcessingEnabled = useAppStore(isPostProcessingEnabled);
   const intl = useIntl();
   const [rows, setRows] = useState<StyleHotkeyRow[]>([]);
   const [isSaving, setIsSaving] = useState(false);
@@ -68,6 +72,14 @@ export const StyleHotkeysDialog = () => {
     // Rebuild rows when the dialog opens, persisted shortcuts change, or the
     // available tone list changes while the dialog is open.
   }, [open, hotkeyById, tones]);
+
+  useEffect(() => {
+    if (open && !postProcessingEnabled) {
+      produceAppState((draft) => {
+        draft.isRecordingHotkey = false;
+      });
+    }
+  }, [open, postProcessingEnabled]);
 
   const hasConflict = useMemo(() => {
     const filled = rows.filter((row) => row.keys.length > 0);
@@ -93,7 +105,7 @@ export const StyleHotkeysDialog = () => {
   };
 
   const save = async () => {
-    if (isSaving) return;
+    if (isSaving || !postProcessingEnabled) return;
     setIsSaving(true);
     try {
       const state = useAppStore.getState();
@@ -150,7 +162,7 @@ export const StyleHotkeysDialog = () => {
       </DialogTitle>
       <DialogContent dividers>
         <Stack spacing={1.25}>
-          {hasConflict && (
+          {postProcessingEnabled && hasConflict && (
             <Alert severity="warning" variant="outlined">
               <FormattedMessage defaultMessage="Some style shortcuts overlap and may be difficult to trigger." />
             </Alert>
@@ -162,22 +174,38 @@ export const StyleHotkeysDialog = () => {
               spacing={1.5}
               sx={{ alignItems: "center" }}
             >
-              <HotKey
-                value={row.keys}
-                onChange={(keys) =>
-                  setRows((current) =>
-                    current.map((candidate) =>
-                      candidate.toneId === row.toneId
-                        ? { ...candidate, keys }
-                        : candidate,
-                    ),
-                  )
-                }
-              />
+              {postProcessingEnabled ? (
+                <HotKey
+                  value={row.keys}
+                  onChange={(keys) =>
+                    setRows((current) =>
+                      current.map((candidate) =>
+                        candidate.toneId === row.toneId
+                          ? { ...candidate, keys }
+                          : candidate,
+                      ),
+                    )
+                  }
+                />
+              ) : (
+                <PostProcessingDisabledTooltip disabled>
+                  <Button
+                    variant="outlined"
+                    disabled
+                    sx={{ width: 200, height: 40, textTransform: "none" }}
+                  >
+                    {row.keys.length > 0 ? (
+                      row.keys.map(getPrettyKeyName).join(" + ")
+                    ) : (
+                      <FormattedMessage defaultMessage="Set hotkey" />
+                    )}
+                  </Button>
+                </PostProcessingDisabledTooltip>
+              )}
               <Box sx={{ flex: 1, minWidth: 0 }}>
                 <Typography variant="body2">{row.toneName}</Typography>
               </Box>
-              {row.keys.length > 0 && (
+              {postProcessingEnabled && row.keys.length > 0 && (
                 <IconButton
                   size="small"
                   aria-label={intl.formatMessage({
@@ -207,7 +235,7 @@ export const StyleHotkeysDialog = () => {
         <Button
           variant="contained"
           onClick={() => void save()}
-          disabled={isSaving}
+          disabled={isSaving || !postProcessingEnabled}
         >
           <FormattedMessage defaultMessage="Save" />
         </Button>
