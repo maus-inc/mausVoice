@@ -80,6 +80,22 @@ const isFenceLine = (tl: string): boolean => {
 
 type ScanResult = { out: string; next: number } | null;
 
+type ScanHandler = (input: string, close: number, inner: string) => ScanResult;
+
+/** Try each handler in order; return the first that applies. */
+const dispatchScan = (
+  handlers: ScanHandler[],
+  input: string,
+  close: number,
+  inner: string,
+): ScanResult => {
+  for (const handler of handlers) {
+    const result = handler(input, close, inner);
+    if (result) return result;
+  }
+  return null;
+};
+
 /** ![alt](url) -> alt text. */
 const scanImage = (input: string, close: number, inner: string): ScanResult => {
   if (input[close + 1] !== "(") return null;
@@ -140,16 +156,10 @@ const stripLinkSyntax = (input: string): string => {
     }
     const inner = input.slice(open + 1, close);
 
-    const handlers: Array<(s: string, c: number, inner: string) => ScanResult> =
-      isImage ? [scanImage] : [scanLink, scanRefLink];
-    let handled: ScanResult = null;
-    for (const handler of handlers) {
-      const result = handler(input, close, inner);
-      if (result) {
-        handled = result;
-        break;
-      }
-    }
+    const handlers: ScanHandler[] = isImage
+      ? [scanImage]
+      : [scanLink, scanRefLink];
+    const handled = dispatchScan(handlers, input, close, inner);
     if (handled) {
       out += handled.out;
       i = handled.next;
@@ -231,12 +241,26 @@ export const markdownToPillText = (
   // 5. Convert unordered list markers to bullet symbol
   text = text.replace(/^\s*[-*+]\s+/gm, "\u2022 ");
 
-  // 6. Convert ordered list markers to plain numbers
-  text = text.replace(/^[ \t]*\d+\.\s+/gm, (match) => {
-    // NOSONAR: anchored, disjoint tokens
-    const num = match.trim().split(".")[0];
-    return `${num}. `;
-  });
+  // 6. Convert ordered list markers ("1. item") to plain numbers with a
+  // manual scanner (no regex). "1.  item" -> "1. item".
+  text = text
+    .split("\n")
+    .map((line) => {
+      let j = 0;
+      while (j < line.length && (line[j] === " " || line[j] === "\t")) j += 1;
+      const digitStart = j;
+      while (j < line.length && line[j] >= "0" && line[j] <= "9") j += 1;
+      if (j === digitStart) return line;
+      if (line[j] !== ".") return line;
+      const digitEnd = j;
+      j += 1;
+      const spaceStart = j;
+      while (j < line.length && (line[j] === " " || line[j] === "\t")) j += 1;
+      if (j === spaceStart) return line;
+      const numberText = line.slice(digitStart, digitEnd);
+      return `${numberText}. ` + line.slice(j);
+    })
+    .join("\n");
 
   // 7. Handle inline formatting
   if (options.preserveEmphasis) {

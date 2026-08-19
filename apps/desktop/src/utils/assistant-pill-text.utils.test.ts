@@ -32,6 +32,14 @@ describe("markdownToPillText", () => {
     expect(markdownToPillText("see [docs]")).toBe("see docs");
   });
 
+  it("converts ordered list markers with a manual scanner", () => {
+    const input = ["1. first", "2.  second", "  3. third"].join(NL);
+    const result = markdownToPillText(input);
+    expect(result).toContain("1. first");
+    expect(result).toContain("2. second");
+    expect(result).toContain("3. third");
+  });
+
   it("handles empty input", () => {
     expect(markdownToPillText("")).toBe("");
     expect(markdownToPillText(null)).toBe("");
