@@ -64,6 +64,12 @@ describe("applySpokenCommands", () => {
     );
   });
 
+  it("keeps the space after a partial scratch", () => {
+    expect(
+      applySpokenCommands("First sentence. Second scratch that more"),
+    ).toBe("First sentence. more");
+  });
+
   it("stacks scratch that", () => {
     expect(applySpokenCommands("one two scratch that scratch that")).toBe("");
   });

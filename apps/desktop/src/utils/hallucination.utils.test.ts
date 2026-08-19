@@ -68,6 +68,12 @@ describe("silence hallucination filtering", () => {
     ).toBe("Subtitles by the Amara.org community.");
   });
 
+  it("does not collapse blank lines or indentation when nothing is filtered", () => {
+    expect(filterKnownSilenceHallucinations("Hello\n\n  indented")).toBe(
+      "Hello\n\n  indented",
+    );
+  });
+
   it("preserves paragraph breaks around a stripped hallucination line", () => {
     expect(
       filterKnownSilenceHallucinations(

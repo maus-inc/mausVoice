@@ -1436,6 +1436,9 @@ pub async fn hotkey_replace_style_hotkeys(
     hotkeys: Vec<crate::domain::Hotkey>,
     database: State<'_, crate::state::OptionKeyDatabase>,
 ) -> Result<Vec<crate::domain::Hotkey>, String> {
+    if prefix.is_empty() {
+        return Err("hotkey prefix must not be empty".to_string());
+    }
     crate::db::hotkey_queries::replace_hotkeys_by_prefix(
         database.pool(),
         &prefix,
