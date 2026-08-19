@@ -17,23 +17,27 @@ on:
       - "scripts/ci/generate-release-body.mjs"
       - "pnpm-lock.yaml"
       - ".github/workflows/test-docs.yml"
-  pull_request:
-    branches:
-      - main
-    paths:
-      - "apps/docs/**"
-      - "index.html"
-      - "marketing/**"
-      - "docs/assets/**"
-      - "sitemap.xml"
-      - "robots.txt"
-      - "llms.txt"
-      - "scripts/ci/pr28-contracts.test.mjs"
-      - "scripts/ci/pr37-contracts.test.mjs"
-      - "scripts/ci/generate-release-body.mjs"
-      - "pnpm-lock.yaml"
-      - ".github/workflows/test-docs.yml"
-  workflow_dispatch:
+   pull_request:
+     paths:
+       - "apps/docs/**"
+       - "index.html"
+       - "marketing/**"
+       - "docs/assets/**"
+       - "sitemap.xml"
+       - "robots.txt"
+       - "llms.txt"
+       - "scripts/ci/pr28-contracts.test.mjs"
+       - "scripts/ci/pr37-contracts.test.mjs"
+       - "scripts/ci/generate-release-body.mjs"
+       - "pnpm-lock.yaml"
+       - ".github/workflows/test-docs.yml"
+   workflow_dispatch:
+
+# Run every stacked PR independently, but cancel superseded runs for the same
+# PR (or the same branch for push/manual events) to avoid consuming runner slots.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
 
 jobs:
   build:
