@@ -1,7 +1,7 @@
 import { invoke } from "@tauri-apps/api/core";
 import { getAppState } from "../store";
 import { AudioSamples } from "../types/audio.types";
-import { isMacOS, isWindows11 } from "./env.utils";
+import { isMacOS, resolveIsWindows11 } from "./env.utils";
 import { getMyUser } from "./user.utils";
 
 const writeString = (view: DataView, offset: number, text: string) => {
@@ -75,17 +75,16 @@ export function tryPlayAudioChime(clip: AudioClip): void {
   invoke<void>("play_audio", { clip }).catch(console.error);
 }
 
-function getAlertClip(): AudioClip {
+async function getAlertClip(): Promise<AudioClip> {
   if (isMacOS()) {
     return "alert_macos_clip";
   }
-  if (isWindows11()) {
+  if (await resolveIsWindows11()) {
     return "alert_windows_11_clip";
   }
   return "alert_windows_10_clip";
 }
 
 export function playAlertSound(): void {
-  const clip = getAlertClip();
-  tryPlayAudioChime(clip);
+  void getAlertClip().then(tryPlayAudioChime);
 }

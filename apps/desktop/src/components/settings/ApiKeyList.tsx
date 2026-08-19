@@ -740,7 +740,8 @@ const ApiKeyCard = ({
   );
 };
 
-const generateApiKeyId = () => `${Date.now()}-${crypto.randomUUID()}`;
+const generateApiKeyId = () =>
+  `${Date.now()}-${crypto.randomUUID?.() ?? Math.random().toString(36).slice(2)}`;
 
 export const ApiKeyList = ({
   selectedApiKeyId,

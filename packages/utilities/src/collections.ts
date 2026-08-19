@@ -5,7 +5,14 @@ export function getRec<K extends number | string, V>(
 ): V | undefined {
   const missingKey = key === null || key === undefined;
   const inner = map ?? ({} as Record<K, V>);
-  return missingKey ? fallback : (inner[key] ?? fallback);
+  if (missingKey) {
+    return fallback;
+  }
+  const value = inner[key];
+  if (value === undefined) {
+    return fallback;
+  }
+  return value;
 }
 
 export const listify = <T>(values?: T | T[] | null): T[] => {

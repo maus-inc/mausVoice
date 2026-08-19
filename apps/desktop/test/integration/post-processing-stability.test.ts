@@ -33,12 +33,14 @@ const isTransientProviderError = (err: unknown): boolean => {
   return (
     /\b429\b|rate[-_ ]?limit/i.test(msg) ||
     /json_validate_failed|max completion tokens reached/i.test(msg) ||
-    /timed?\s*out|ETIMEDOUT|ECONNRESET|fetch failed|network/i.test(msg)
+    /timed?\s*out|ETIMEDOUT|ECONNRESET|ENOTFOUND|fetch failed/i.test(msg)
   );
 };
 
 const withTimeout = async <T>(promise: Promise<T>, ms: number): Promise<T> => {
   let timer: ReturnType<typeof setTimeout> | undefined;
+  // Prevent an abandoned in-flight request from becoming an unhandled rejection.
+  void promise.catch(() => {});
   try {
     return await Promise.race([
       promise,

@@ -21,6 +21,7 @@ from dotenv import load_dotenv
 from groq import Groq
 
 SCRIPT_DIR = Path(__file__).parent
+REPO_ROOT = SCRIPT_DIR.parent
 load_dotenv(SCRIPT_DIR / ".env")
 
 APP_CONFIGS = {
@@ -97,10 +98,14 @@ def parse_ts_translations(path: Path) -> dict[str, str]:
 
 
 def _validate_locale_ts_path(path: Path) -> Path:
-    """Ensure the target is a .ts file inside a locales directory."""
+    """Ensure the target is a .ts file inside a locales directory under the repo."""
     resolved = path.expanduser().resolve()
     if resolved.suffix != ".ts" or resolved.parent.name != "locales":
         raise ValueError(f"Refusing to write outside locales dir: {resolved}")
+    try:
+        resolved.relative_to(REPO_ROOT)
+    except ValueError as exc:
+        raise ValueError(f"Refusing to write outside the repository: {resolved}") from exc
     return resolved
 
 
