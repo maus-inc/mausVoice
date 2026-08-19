@@ -139,9 +139,54 @@ pub fn play_thock_release() {
     play_clip(THOCK_RELEASE_CLIP);
 }
 
+use std::sync::atomic::{AtomicBool, Ordering};
+
+/// Whether the user has enabled interaction chimes. Set from the frontend
+/// via the playInteractionChime preference. When false, thock playback is
+/// skipped entirely.
+pub static INTERACTION_CHIME_ENABLED: AtomicBool = AtomicBool::new(true);
+
+/// Set the interaction chime preference from the frontend.
+pub fn set_interaction_chime_enabled(enabled: bool) {
+    INTERACTION_CHIME_ENABLED.store(enabled, Ordering::Relaxed);
+}
+
+/// Simple token-bucket rate limiter for thock sounds. Drops requests that
+/// arrive within 100 ms of the last one, preventing spam from rapid chevron
+/// clicks without blocking the warm audio thread.
+mod thock_limiter {
+    use std::sync::atomic::{AtomicU64, Ordering};
+    use std::time::{SystemTime, UNIX_EPOCH};
+
+    const THROTTLE_MS: u64 = 100;
+
+    static LAST_THOCK_MS: AtomicU64 = AtomicU64::new(0);
+
+    pub fn should_throttle() -> bool {
+        let now = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_millis() as u64;
+        let last = LAST_THOCK_MS.load(Ordering::Relaxed);
+        if now - last < THROTTLE_MS {
+            return true;
+        }
+        LAST_THOCK_MS.store(now, Ordering::Relaxed);
+        false
+    }
+}
+
 /// Play a thock clip by kind string ("press", "deep", "release").
 /// Returns true if the kind was recognised.
+/// Respects the interaction chime preference and rate-limits to
+/// prevent spam from rapid chevron clicks.
 pub fn play_thock(kind: &str) -> bool {
+    if !INTERACTION_CHIME_ENABLED.load(Ordering::Relaxed) {
+        return false;
+    }
+    if thock_limiter::should_throttle() {
+        return false;
+    }
     match kind {
         "press" => { play_thock_press(); true }
         "deep" => { play_thock_deep(); true }

@@ -35,7 +35,7 @@ const FENCE_CHARS = new Set<number>([0x60, 0x7e]);
 
 /** Bold / italic markers. */
 const BOLD_RE = /\*\*(.+?)\*\*/g;
-const ITALIC_RE = /(?:^|[^*])\*(?!\*)(.+?)(?<!\*)\*(?!\*)/g;
+const ITALIC_RE = /(?:^|\s)\*(?!\*)([^*\n]+?)\*(?!\*)(?=\s|$)/g;
 const STRIKETHROUGH_RE = /~~(.+?)~~/g;
 
 /** Inline code backtick fences. */

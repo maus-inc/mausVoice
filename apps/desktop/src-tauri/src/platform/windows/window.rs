@@ -70,11 +70,6 @@ pub fn hide_main_window(window: &WebviewWindow) -> Result<(), String> {
 }
 
 pub fn surface_main_window(window: &WebviewWindow) -> Result<(), String> {
-    // A12: Stop the WebView2 keepalive poke once the window is visible again.
-    // hide_main_window sets it true; surface must clear it so the 500 ms
-    // background thread does not run indefinitely after first hide-to-tray.
-    set_webview_keepalive(false);
-
     let window_for_handle = window.clone();
     let (tx, rx) = mpsc::channel();
 
@@ -117,6 +112,12 @@ pub fn surface_main_window(window: &WebviewWindow) -> Result<(), String> {
                 if let Err(err) = window_for_handle.set_focus() {
                     log::error!("Failed to focus window: {err}");
                 }
+
+                // A12: Clear the WebView2 keepalive only after the window is
+                // confirmed visible. If any of the show/unminimize/set_focus
+                // calls fail, the window may still be hidden — keep the
+                // keepalive active so background JS keeps running.
+                set_webview_keepalive(false);
 
                 Ok(())
             })();

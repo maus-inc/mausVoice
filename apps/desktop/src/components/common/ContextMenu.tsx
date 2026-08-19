@@ -408,6 +408,17 @@ export const useContextMenu = (): UseContextMenuReturn => {
 
   const renderMenu = useCallback(() => {
     if (!state) return null;
+    // Wrap each item's onClick so the menu always closes after activation.
+    const wrappedItems = state.items.map((item) => {
+      if (item.kind === "divider") return item;
+      return {
+        ...item,
+        onClick: () => {
+          item.onClick();
+          closeMenu();
+        },
+      };
+    });
     return (
       <Box
         sx={{
@@ -417,10 +428,10 @@ export const useContextMenu = (): UseContextMenuReturn => {
           zIndex: 1400,
         }}
       >
-        <ContextMenu items={state.items} />
+        <ContextMenu items={wrappedItems} />
       </Box>
     );
-  }, [state]);
+  }, [state, closeMenu]);
 
   return { handleContextMenu, renderMenu, closeMenu };
 };

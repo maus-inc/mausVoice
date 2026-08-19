@@ -154,8 +154,12 @@ pub fn build() -> tauri::Builder<tauri::Wry> {
                     let _ = window
                         .app_handle()
                         .save_window_state(StateFlags::SIZE);
-                    if let Err(err) = crate::platform::window::hide_main_window(window) {
-                        log::error!("Failed to hide main window: {err}");
+                    // Use the webview window for hide_main_window (which
+                    // needs &WebviewWindow, not &Window from on_window_event).
+                    if let Some(main_ww) = window.app_handle().get_webview_window("main") {
+                        if let Err(err) = crate::platform::window::hide_main_window(&main_ww) {
+                            log::error!("Failed to hide main window: {err}");
+                        }
                     }
                 }
                 // On Windows, WebView2 automatically freezes JS execution when the
