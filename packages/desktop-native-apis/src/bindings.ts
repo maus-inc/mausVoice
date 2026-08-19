@@ -69,6 +69,19 @@ export const commands = {
       else return { status: "error", error: e as any };
     }
   },
+  async cancelPrivateHttpRequest(
+    requestId: string,
+  ): Promise<Result<boolean, string>> {
+    try {
+      return {
+        status: "ok",
+        data: await TAURI_INVOKE("cancel_private_http_request", { requestId }),
+      };
+    } catch (e) {
+      if (e instanceof Error) throw e;
+      else return { status: "error", error: e as any };
+    }
+  },
   async cancelTyping(): Promise<Result<null, string>> {
     try {
       return { status: "ok", data: await TAURI_INVOKE("cancel_typing") };
@@ -1806,6 +1819,7 @@ export type Transcription = {
   remoteDeviceId?: string | null;
 };
 export type PrivateHttpRequest = {
+  requestId: string;
   url: string;
   method: string;
   headers: Record<string, string>;

@@ -325,6 +325,7 @@ pub fn build() -> tauri::Builder<tauri::Wry> {
             crate::commands::paste,
             crate::commands::private_http_request,
             crate::commands::simulate_type,
+            crate::commands::cancel_private_http_request,
             crate::commands::cancel_typing,
             crate::commands::copy_to_clipboard,
             crate::commands::transcription_create,

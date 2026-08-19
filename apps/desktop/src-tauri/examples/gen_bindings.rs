@@ -10,6 +10,7 @@ fn main() {
         api_key_update,
         app_target_list,
         app_target_upsert,
+        cancel_private_http_request,
         cancel_typing,
         chat_message_create,
         chat_message_delete_many,

@@ -446,6 +446,7 @@ const MAX_PRIVATE_HTTP_REDIRECTS: usize = 5;
 #[derive(serde::Deserialize, specta::Type)]
 #[serde(rename_all = "camelCase")]
 pub struct PrivateHttpRequest {
+    pub request_id: String,
     pub url: String,
     pub method: String,
     pub headers: std::collections::HashMap<String, String>,
@@ -461,6 +462,52 @@ pub struct PrivateHttpResponse {
 }
 
 static IMPORT_IN_FLIGHT: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+static PRIVATE_HTTP_CANCELLATIONS: once_cell::sync::Lazy<
+    std::sync::Mutex<std::collections::HashMap<String, tokio::sync::oneshot::Sender<()>>>,
+> = once_cell::sync::Lazy::new(|| std::sync::Mutex::new(std::collections::HashMap::new()));
+
+struct PrivateHttpCancellationGuard {
+    request_id: String,
+}
+
+impl PrivateHttpCancellationGuard {
+    fn register(request_id: String) -> Result<(Self, tokio::sync::oneshot::Receiver<()>), String> {
+        if !is_valid_private_http_request_id(&request_id) {
+            return Err("Private-network request ID is invalid".to_string());
+        }
+
+        let (sender, receiver) = tokio::sync::oneshot::channel();
+        let mut requests = PRIVATE_HTTP_CANCELLATIONS
+            .lock()
+            .map_err(|_| "Private-network cancellation registry is unavailable".to_string())?;
+        if requests.contains_key(&request_id) {
+            return Err("Private-network request ID is already in use".to_string());
+        }
+        requests.insert(request_id.clone(), sender);
+        Ok((Self { request_id }, receiver))
+    }
+}
+
+impl Drop for PrivateHttpCancellationGuard {
+    fn drop(&mut self) {
+        if let Ok(mut requests) = PRIVATE_HTTP_CANCELLATIONS.lock() {
+            requests.remove(&self.request_id);
+        }
+    }
+}
+
+fn is_valid_private_http_request_id(request_id: &str) -> bool {
+    let bytes = request_id.as_bytes();
+    bytes.len() == 36
+        && bytes.iter().enumerate().all(|(index, byte)| {
+            if matches!(index, 8 | 13 | 18 | 23) {
+                *byte == b'-'
+            } else {
+                byte.is_ascii_hexdigit()
+            }
+        })
+}
 
 /// Returns true when `path` lives at or under any of `allowed_roots`. The
 /// Rust-owned import picker is the authorization boundary; this additional
@@ -494,6 +541,13 @@ fn windows_file_identity(file: &std::fs::File) -> Option<(u32, u64)> {
     Some((info.dwVolumeSerialNumber, file_index))
 }
 
+fn is_rfc1918_ipv4(address: std::net::Ipv4Addr) -> bool {
+    let [first, second, _, _] = address.octets();
+    first == 10
+        || (first == 172 && (16..=31).contains(&second))
+        || (first == 192 && second == 168)
+}
+
 /// Validate a user-configured plaintext endpoint without confusing hostname
 /// prefix globs (for example `10.evil.example`) with RFC1918 address ranges.
 /// Link-local addresses are deliberately excluded to keep cloud metadata
@@ -514,10 +568,10 @@ fn validate_private_http_url(url: &Url) -> Result<(), String> {
                     && domain.len() > ".local".len()
                     && !domain.contains(".."))
         }
-        Some(url::Host::Ipv4(address)) => address.is_loopback() || address.is_private(),
+        Some(url::Host::Ipv4(address)) => address.is_loopback() || is_rfc1918_ipv4(address),
         Some(url::Host::Ipv6(address)) => {
             if let Some(mapped) = address.to_ipv4_mapped() {
-                mapped.is_loopback() || mapped.is_private()
+                mapped.is_loopback() || is_rfc1918_ipv4(mapped)
             } else {
                 address.is_loopback() || (address.segments()[0] & 0xfe00) == 0xfc00
             }
@@ -536,6 +590,20 @@ fn validate_private_http_url(url: &Url) -> Result<(), String> {
 
 #[tauri::command]
 #[specta::specta]
+pub fn cancel_private_http_request(request_id: String) -> Result<bool, String> {
+    if !is_valid_private_http_request_id(&request_id) {
+        return Err("Private-network request ID is invalid".to_string());
+    }
+
+    let sender = PRIVATE_HTTP_CANCELLATIONS
+        .lock()
+        .map_err(|_| "Private-network cancellation registry is unavailable".to_string())?
+        .remove(&request_id);
+    Ok(sender.is_some_and(|sender| sender.send(()).is_ok()))
+}
+
+#[tauri::command]
+#[specta::specta]
 pub async fn private_http_request(
     request: PrivateHttpRequest,
 ) -> Result<PrivateHttpResponse, String> {
@@ -549,111 +617,126 @@ pub async fn private_http_request(
     let initial_url = Url::parse(&request.url)
         .map_err(|_| "Private-network request URL is invalid".to_string())?;
     validate_private_http_url(&initial_url)?;
+    let (_cancellation_guard, mut cancellation) =
+        PrivateHttpCancellationGuard::register(request.request_id.clone())?;
 
-    tauri::async_runtime::spawn_blocking(move || {
-        use std::io::Read;
-
-        let client = reqwest::blocking::Client::builder()
-            // Connect directly so an environment proxy cannot turn an allowed
-            // private URL into a request delivered to an arbitrary public host.
-            .no_proxy()
-            .timeout(std::time::Duration::from_secs(10 * 60))
-            .redirect(reqwest::redirect::Policy::custom(|attempt| {
-                if attempt.previous().len() >= MAX_PRIVATE_HTTP_REDIRECTS {
-                    return attempt.error("Private-network request exceeded the redirect limit");
-                }
-                match validate_private_http_url(attempt.url()) {
-                    Ok(()) => attempt.follow(),
-                    Err(error) => attempt.error(error),
-                }
-            }))
-            .build()
-            .map_err(|_| "Unable to initialize the private-network client".to_string())?;
-
-        let method = reqwest::Method::from_bytes(request.method.trim().as_bytes())
-            .map_err(|_| "Private-network request method is invalid".to_string())?;
-        if ![
-            reqwest::Method::GET,
-            reqwest::Method::POST,
-            reqwest::Method::PUT,
-            reqwest::Method::PATCH,
-            reqwest::Method::DELETE,
-            reqwest::Method::HEAD,
-        ]
-        .contains(&method)
-        {
-            return Err("Private-network request method is not allowed".to_string());
-        }
-
-        let mut builder = client.request(method, initial_url);
-        for (name, value) in request.headers {
-            let normalized = name.trim().to_ascii_lowercase();
-            if matches!(
-                normalized.as_str(),
-                "host"
-                    | "content-length"
-                    | "connection"
-                    | "proxy-authorization"
-                    | "proxy-connection"
-                    | "transfer-encoding"
-                    | "upgrade"
-            ) {
-                continue;
+    let client = reqwest::Client::builder()
+        // Connect directly so an environment proxy cannot turn an allowed
+        // private URL into a request delivered to an arbitrary public host.
+        .no_proxy()
+        .timeout(std::time::Duration::from_secs(10 * 60))
+        .redirect(reqwest::redirect::Policy::custom(|attempt| {
+            if attempt.previous().len() >= MAX_PRIVATE_HTTP_REDIRECTS {
+                return attempt.error("Private-network request exceeded the redirect limit");
             }
-            let name = reqwest::header::HeaderName::from_bytes(normalized.as_bytes())
-                .map_err(|_| "Private-network request contains an invalid header".to_string())?;
-            let value = reqwest::header::HeaderValue::from_str(&value)
-                .map_err(|_| "Private-network request contains an invalid header".to_string())?;
-            builder = builder.header(name, value);
-        }
-        if let Some(body) = request.body {
-            builder = builder.body(body);
-        }
+            match validate_private_http_url(attempt.url()) {
+                Ok(()) => attempt.follow(),
+                Err(error) => attempt.error(error),
+            }
+        }))
+        .build()
+        .map_err(|_| "Unable to initialize the private-network client".to_string())?;
 
-        let response = builder
-            .send()
-            .map_err(|_| "Private-network request failed".to_string())?;
-        if response
-            .content_length()
-            .is_some_and(|length| length > MAX_PRIVATE_HTTP_RESPONSE_BYTES)
+    let method = reqwest::Method::from_bytes(request.method.trim().as_bytes())
+        .map_err(|_| "Private-network request method is invalid".to_string())?;
+    if ![
+        reqwest::Method::GET,
+        reqwest::Method::POST,
+        reqwest::Method::PUT,
+        reqwest::Method::PATCH,
+        reqwest::Method::DELETE,
+        reqwest::Method::HEAD,
+    ]
+    .contains(&method)
+    {
+        return Err("Private-network request method is not allowed".to_string());
+    }
+
+    let mut builder = client.request(method, initial_url);
+    for (name, value) in request.headers {
+        let normalized = name.trim().to_ascii_lowercase();
+        if matches!(
+            normalized.as_str(),
+            "host"
+                | "content-length"
+                | "connection"
+                | "proxy-authorization"
+                | "proxy-connection"
+                | "transfer-encoding"
+                | "upgrade"
+        ) {
+            continue;
+        }
+        let name = reqwest::header::HeaderName::from_bytes(normalized.as_bytes())
+            .map_err(|_| "Private-network request contains an invalid header".to_string())?;
+        let value = reqwest::header::HeaderValue::from_str(&value)
+            .map_err(|_| "Private-network request contains an invalid header".to_string())?;
+        builder = builder.header(name, value);
+    }
+    if let Some(body) = request.body {
+        builder = builder.body(body);
+    }
+
+    let mut response = tokio::select! {
+        _ = &mut cancellation => return Err("Private-network request was cancelled".to_string()),
+        result = builder.send() => result
+            .map_err(|_| "Private-network request failed".to_string())?,
+    };
+    if response
+        .content_length()
+        .is_some_and(|length| length > MAX_PRIVATE_HTTP_RESPONSE_BYTES)
+    {
+        return Err(format!(
+            "Private-network response exceeds the {} MiB limit",
+            MAX_PRIVATE_HTTP_RESPONSE_BYTES / (1024 * 1024)
+        ));
+    }
+
+    let status = response.status().as_u16();
+    let headers = response
+        .headers()
+        .iter()
+        .filter_map(|(name, value)| {
+            value
+                .to_str()
+                .ok()
+                .map(|value| (name.as_str().to_string(), value.to_string()))
+        })
+        .collect();
+    let initial_capacity = response
+        .content_length()
+        .unwrap_or_default()
+        .min(MAX_PRIVATE_HTTP_RESPONSE_BYTES) as usize;
+    let mut body = Vec::with_capacity(initial_capacity);
+    loop {
+        let chunk = tokio::select! {
+            _ = &mut cancellation => {
+                return Err("Private-network request was cancelled".to_string());
+            }
+            result = response.chunk() => result
+                .map_err(|_| "Unable to read the private-network response".to_string())?,
+        };
+        let Some(chunk) = chunk else {
+            break;
+        };
+        if body
+            .len()
+            .checked_add(chunk.len())
+            .is_none_or(|length| length > MAX_PRIVATE_HTTP_RESPONSE_BYTES as usize)
         {
             return Err(format!(
                 "Private-network response exceeds the {} MiB limit",
                 MAX_PRIVATE_HTTP_RESPONSE_BYTES / (1024 * 1024)
             ));
         }
+        body.extend_from_slice(&chunk);
+    }
 
-        let status = response.status().as_u16();
-        let headers = response
-            .headers()
-            .iter()
-            .filter_map(|(name, value)| {
-                value
-                    .to_str()
-                    .ok()
-                    .map(|value| (name.as_str().to_string(), value.to_string()))
-            })
-            .collect();
-        let mut body = Vec::new();
-        response
-            .take(MAX_PRIVATE_HTTP_RESPONSE_BYTES + 1)
-            .read_to_end(&mut body)
-            .map_err(|_| "Unable to read the private-network response".to_string())?;
-        if body.len() as u64 > MAX_PRIVATE_HTTP_RESPONSE_BYTES {
-            return Err(format!(
-                "Private-network response exceeds the {} MiB limit",
-                MAX_PRIVATE_HTTP_RESPONSE_BYTES / (1024 * 1024)
-            ));
-        }
-
-        Ok(PrivateHttpResponse {
-            status,
-            headers,
-            body,
-        })
+    Ok(PrivateHttpResponse {
+        status,
+        headers,
+        body,
     })
-    .await
-    .map_err(|err| format!("private-network request task failed: {err}"))?
 }
 
 #[tauri::command]
@@ -3818,6 +3901,9 @@ mod tests {
         for rejected in [
             "http://10.evil.example:443/",
             "http://192.168.attacker.example:443/",
+            "http://100.64.0.1/",
+            "http://100.127.255.254/",
+            "http://[::ffff:100.64.0.1]/",
             "http://169.254.169.254/latest/meta-data/",
             "http://[fe80::1]/",
             "http://8.8.8.8/",
@@ -3831,6 +3917,45 @@ mod tests {
                 "expected URL to be rejected: {rejected}"
             );
         }
+    }
+
+    #[tokio::test]
+    async fn private_http_request_cancellation_stops_the_rust_operation() {
+        let listener = tokio::net::TcpListener::bind(("127.0.0.1", 0))
+            .await
+            .unwrap();
+        let address = listener.local_addr().unwrap();
+        let (accepted_sender, accepted_receiver) = tokio::sync::oneshot::channel();
+        let server = tokio::spawn(async move {
+            let (_socket, _) = listener.accept().await.unwrap();
+            let _ = accepted_sender.send(());
+            tokio::time::sleep(std::time::Duration::from_secs(30)).await;
+        });
+
+        let request_id = "00000000-0000-4000-8000-000000000001".to_string();
+        let request = tokio::spawn(private_http_request(PrivateHttpRequest {
+            request_id: request_id.clone(),
+            url: format!("http://{address}/slow"),
+            method: "GET".to_string(),
+            headers: std::collections::HashMap::new(),
+            body: None,
+        }));
+        tokio::time::timeout(std::time::Duration::from_secs(2), accepted_receiver)
+            .await
+            .expect("the local server should accept the request")
+            .expect("the acceptance signal should be delivered");
+
+        assert!(cancel_private_http_request(request_id.clone()).unwrap());
+        let result = tokio::time::timeout(std::time::Duration::from_secs(2), request)
+            .await
+            .expect("the cancelled request must not wait for the client timeout")
+            .expect("the private request task should not panic");
+        match result {
+            Err(error) => assert_eq!(error, "Private-network request was cancelled"),
+            Ok(_) => panic!("the cancelled private request unexpectedly succeeded"),
+        }
+        assert!(!cancel_private_http_request(request_id).unwrap());
+        server.abort();
     }
 
     #[test]
