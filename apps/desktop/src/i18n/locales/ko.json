@@ -753,6 +753,7 @@
   "welcome_back": "다시 오신 것을 환영합니다",
   "welcome_back_name": "다시 오신 것을 환영합니다, {name}",
   "what_s_new": "새로운 소식",
+  "when_enabled_mausvoice_appends_v1_to_the_base_url_unless_it": "When enabled, mausVoice appends /v1 to the Base URL unless it already ends in /v1. Disable it for servers that expose /models and /chat/completions directly at the entered Base URL.",
   "when_enabled_mausvoice_will_not_save_transcription_history_o": "활성화하면 mausVoice은 전사 기록이나 오디오 스냅샷을 저장하지 않습니다.",
   "when_enabled_mausvoice_will_start_the_multi_device_receiver": "활성화하면, mausVoice은 저장된 수신 포트를 사용하여 시작 시 멀티 디바이스 수신기를 자동으로 시작합니다.",
   "while_active": "활성 중",

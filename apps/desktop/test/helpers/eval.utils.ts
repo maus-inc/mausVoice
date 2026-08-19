@@ -39,7 +39,9 @@ export function getGroqGentextRepo(
   model = "openai/gpt-oss-120b",
 ): BaseGenerateTextRepo {
   const apiKey = getGroqApiKey();
-  return new GroqGenerateTextRepo(apiKey, model);
+  // Integration tests run in Node, so use the Groq SDK's Node transport.
+  // Production construction defaults to the Tauri-native secure transport.
+  return new GroqGenerateTextRepo(apiKey, model, null);
 }
 
 export async function runEval({

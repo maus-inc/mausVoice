@@ -753,6 +753,7 @@
   "welcome_back": "歡迎回來",
   "welcome_back_name": "歡迎回來，{name}",
   "what_s_new": "最新消息",
+  "when_enabled_mausvoice_appends_v1_to_the_base_url_unless_it": "When enabled, mausVoice appends /v1 to the Base URL unless it already ends in /v1. Disable it for servers that expose /models and /chat/completions directly at the entered Base URL.",
   "when_enabled_mausvoice_will_not_save_transcription_history_o": "啟用後，mausVoice 不會儲存轉錄歷史或音訊快照。",
   "when_enabled_mausvoice_will_start_the_multi_device_receiver": "啟用後，mausVoice 會在啟動時自動使用已儲存的接收埠啟動多裝置接收器。",
   "while_active": "啟用時",

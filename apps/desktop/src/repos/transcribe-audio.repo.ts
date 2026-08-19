@@ -4,6 +4,7 @@ import {
   aldeaTranscribeAudio,
   assemblyaiTranscribeAudio,
   azureTranscribeAudio,
+  type CustomFetch,
   deepgramTranscribeAudio,
   elevenlabsTranscribeAudio,
   geminiTranscribeAudio,
@@ -251,11 +252,17 @@ export class LocalTranscribeAudioRepo extends BaseTranscribeAudioRepo {
 export class GroqTranscribeAudioRepo extends BaseTranscribeAudioRepo {
   private groqApiKey: string;
   private model: TranscriptionModel;
+  private customFetch?: CustomFetch;
 
-  constructor(apiKey: string, model: string | null) {
+  constructor(
+    apiKey: string,
+    model: string | null,
+    customFetch: CustomFetch | null = secureFetch,
+  ) {
     super();
     this.groqApiKey = apiKey;
     this.model = (model as TranscriptionModel) ?? "whisper-large-v3-turbo";
+    this.customFetch = customFetch ?? undefined;
   }
 
   // Groq has 25MB limit, 60s segments are well within that
@@ -284,7 +291,7 @@ export class GroqTranscribeAudioRepo extends BaseTranscribeAudioRepo {
       ext: "wav",
       prompt: input.prompt ?? undefined,
       language: input.language,
-      customFetch: secureFetch,
+      customFetch: this.customFetch,
     });
 
     return {

@@ -14,6 +14,7 @@ import {
   cerebrasGenerateTextResponse,
   cerebrasStreamChat,
   CerebrasModel,
+  type CustomFetch,
   deepseekGenerateTextResponse,
   deepseekStreamChat,
   DeepseekModel,
@@ -63,11 +64,17 @@ export class GroqGenerateTextRepo extends BaseGenerateTextRepo {
   private groqApiKey: string;
   private model: GenerateTextModel;
   private fallbackModel: GenerateTextModel = "openai/gpt-oss-120b";
+  private customFetch?: CustomFetch;
 
-  constructor(apiKey: string, model: string | null) {
+  constructor(
+    apiKey: string,
+    model: string | null,
+    customFetch: CustomFetch | null = tauriFetch,
+  ) {
     super();
     this.groqApiKey = apiKey;
     this.model = model ?? "openai/gpt-oss-20b";
+    this.customFetch = customFetch ?? undefined;
   }
 
   async generateText(input: GenerateTextInput): Promise<GenerateTextOutput> {
@@ -91,7 +98,7 @@ export class GroqGenerateTextRepo extends BaseGenerateTextRepo {
         system: input.system ?? undefined,
         jsonResponse: input.jsonResponse,
         signal: input.signal,
-        customFetch: tauriFetch,
+        customFetch: this.customFetch,
       });
     } catch (error) {
       if (input.signal?.aborted || this.model === this.fallbackModel) {
@@ -105,7 +112,7 @@ export class GroqGenerateTextRepo extends BaseGenerateTextRepo {
         system: input.system ?? undefined,
         jsonResponse: input.jsonResponse,
         signal: input.signal,
-        customFetch: tauriFetch,
+        customFetch: this.customFetch,
       });
     }
   }
@@ -115,7 +122,7 @@ export class GroqGenerateTextRepo extends BaseGenerateTextRepo {
       apiKey: this.groqApiKey,
       model: this.model,
       input,
-      customFetch: tauriFetch,
+      customFetch: this.customFetch,
     });
   }
 }

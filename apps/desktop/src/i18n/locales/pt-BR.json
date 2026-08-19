@@ -753,6 +753,7 @@
   "welcome_back": "Bem-vindo de volta",
   "welcome_back_name": "Bem-vindo de volta, {name}",
   "what_s_new": "O que há de novo",
+  "when_enabled_mausvoice_appends_v1_to_the_base_url_unless_it": "When enabled, mausVoice appends /v1 to the Base URL unless it already ends in /v1. Disable it for servers that expose /models and /chat/completions directly at the entered Base URL.",
   "when_enabled_mausvoice_will_not_save_transcription_history_o": "Quando ativado, o mausVoice não salvará o histórico de transcrições nem capturas de áudio.",
   "when_enabled_mausvoice_will_start_the_multi_device_receiver": "Quando ativado, o mausVoice iniciará o receptor de múltiplos dispositivos automaticamente ao iniciar, usando a porta do receptor salva.",
   "while_active": "Enquanto ativo",
