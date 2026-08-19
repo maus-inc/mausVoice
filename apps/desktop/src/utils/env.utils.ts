@@ -50,6 +50,8 @@ export const getPlatform = (): Platform => {
 export const isMacOS = (): boolean => getPlatform() === "darwin";
 export const isWindows = (): boolean => getPlatform() === "win32";
 
+const WIN11_MIN_BUILD = 22000;
+
 const getWindowsBuildNumber = (userAgent: string): number | null => {
   const match = /Windows NT 10\.0.*build[:/\s]*(\d+)/i.exec(userAgent);
   return match ? Number.parseInt(match[1], 10) : null;
@@ -60,16 +62,18 @@ export const isWindows10 = (): boolean => {
     return false;
   }
 
+  if (isWindows11()) {
+    return false;
+  }
+
   const userAgent = navigator.userAgent;
   const build = getWindowsBuildNumber(userAgent);
   if (build !== null) {
-    return build < 22000;
+    return build < WIN11_MIN_BUILD;
   }
 
   return userAgent.includes("Windows NT 10.0");
 };
-
-const WIN11_MIN_BUILD = 22000;
 
 type NavigatorUAData = {
   platformVersion?: string;
@@ -78,32 +82,20 @@ type NavigatorUAData = {
   ) => Promise<{ uaFullVersion?: string; platformVersion?: string }>;
 };
 
-let cachedUaChWin11: boolean | null = null;
-
-const readCachedPlatformVersion = (): string | undefined => {
-  const uaData = (navigator as Navigator & { userAgentData?: NavigatorUAData })
+const getNavigatorUAData = (): NavigatorUAData | undefined => {
+  if (typeof navigator === "undefined") {
+    return undefined;
+  }
+  return (navigator as Navigator & { userAgentData?: NavigatorUAData })
     .userAgentData;
-  if (typeof uaData?.platformVersion === "string") {
-    return uaData.platformVersion;
-  }
-  if (uaData?.getHighEntropyValues && cachedUaChWin11 === null) {
-    void uaData
-      .getHighEntropyValues(["uaFullVersion", "platformVersion"])
-      .then((values) => {
-        const major = Number.parseInt(
-          (values.platformVersion ?? "").split(".")[0] ?? "",
-          10,
-        );
-        cachedUaChWin11 = Number.isFinite(major) ? major >= 13 : null;
-      })
-      .catch(() => {
-        cachedUaChWin11 = false;
-      });
-  }
-  return undefined;
 };
 
-export const isWindows11 = (): boolean => {
+const win11FromPlatformVersion = (platformVersion: string): boolean | null => {
+  const major = Number.parseInt(platformVersion.split(".")[0] ?? "", 10);
+  return Number.isFinite(major) ? major >= 13 : null;
+};
+
+const detectWindows11Sync = (): boolean | null => {
   if (!isWindows()) {
     return false;
   }
@@ -113,15 +105,69 @@ export const isWindows11 = (): boolean => {
     return build >= WIN11_MIN_BUILD;
   }
 
-  const platformVersion = readCachedPlatformVersion();
-  if (platformVersion) {
-    const major = Number.parseInt(platformVersion.split(".")[0] ?? "", 10);
-    return Number.isFinite(major) && major >= 13;
+  const uaData = getNavigatorUAData();
+  if (typeof uaData?.platformVersion === "string") {
+    const fromHint = win11FromPlatformVersion(uaData.platformVersion);
+    if (fromHint !== null) {
+      return fromHint;
+    }
   }
 
-  if (cachedUaChWin11 !== null) {
-    return cachedUaChWin11;
+  if (/Windows 11/i.test(navigator.userAgent)) {
+    return true;
   }
 
-  return /Windows 11/i.test(navigator.userAgent);
+  return null;
+};
+
+let cachedUaChWin11: boolean | null = null;
+let uaChLookup: Promise<boolean | null> | undefined;
+
+const lookupWindows11ViaUaCh = (): Promise<boolean | null> => {
+  if (uaChLookup) {
+    return uaChLookup;
+  }
+
+  const uaData = getNavigatorUAData();
+  if (!uaData?.getHighEntropyValues) {
+    uaChLookup = Promise.resolve(null);
+    return uaChLookup;
+  }
+
+  uaChLookup = uaData
+    .getHighEntropyValues(["uaFullVersion", "platformVersion"])
+    .then((values) => {
+      if (values.platformVersion) {
+        return win11FromPlatformVersion(values.platformVersion);
+      }
+      return null;
+    })
+    .catch(() => null)
+    .then((result) => {
+      cachedUaChWin11 = result;
+      return result;
+    });
+
+  return uaChLookup;
+};
+
+if (typeof navigator !== "undefined") {
+  void lookupWindows11ViaUaCh();
+}
+
+export const isWindows11 = (): boolean => {
+  const sync = detectWindows11Sync();
+  if (sync !== null) {
+    return sync;
+  }
+  return cachedUaChWin11 === true;
+};
+
+export const resolveIsWindows11 = async (): Promise<boolean> => {
+  const sync = detectWindows11Sync();
+  if (sync !== null) {
+    return sync;
+  }
+  const fromUaCh = cachedUaChWin11 ?? (await lookupWindows11ViaUaCh());
+  return fromUaCh === true;
 };
