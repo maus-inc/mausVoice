@@ -151,9 +151,9 @@ pub fn set_interaction_chime_enabled(enabled: bool) {
     INTERACTION_CHIME_ENABLED.store(enabled, Ordering::Relaxed);
 }
 
-/// Simple token-bucket rate limiter for thock sounds. Drops requests that
-/// arrive within 100 ms of the last one, preventing spam from rapid chevron
-/// clicks without blocking the warm audio thread.
+/// Minimum-interval gate for thock sounds. Drops requests that arrive
+/// within 100 ms of the last accepted clip, preventing spam from rapid
+/// chevron clicks without blocking the warm audio thread.
 mod thock_limiter {
     use std::sync::atomic::{AtomicU64, Ordering};
     use std::time::{SystemTime, UNIX_EPOCH};
@@ -168,7 +168,7 @@ mod thock_limiter {
             .unwrap_or_default()
             .as_millis() as u64;
         let last = LAST_THOCK_MS.load(Ordering::Relaxed);
-        if now - last < THROTTLE_MS {
+        if now.saturating_sub(last) < THROTTLE_MS {
             return true;
         }
         LAST_THOCK_MS.store(now, Ordering::Relaxed);

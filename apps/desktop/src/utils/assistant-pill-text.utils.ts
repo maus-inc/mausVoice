@@ -35,11 +35,10 @@ const FENCE_CHARS = new Set<number>([0x60, 0x7e]);
 
 /** Bold / italic markers. */
 const BOLD_RE = /\*\*(.+?)\*\*/g;
-// Non-consuming boundaries: lookbehind/lookahead for start-or-space and
-// end-or-space so the surrounding whitespace is preserved ("hello *world*"
-// stays "hello world", never "helloworld") while `*word*.` inside a word is
-// left alone (e.g. "is*not*" is not treated as emphasis).
-const ITALIC_RE = /(?<!\S)\*(?!\*)([^*\n]+?)\*(?!\*)(?!\S)/g;
+// Zero-width word/asterisk boundaries so surrounding characters are not
+// consumed ("hello *world* today" stays spaced) while *emphasized*. and
+// (*emphasized*) still match. Intra-word stars like is*not* stay literal.
+const ITALIC_RE = /(?<![\w*])\*(?!\*)([^*\n]+?)\*(?!\*)(?![\w*])/g;
 const STRIKETHROUGH_RE = /~~([^~\n]+?)~~/g;
 
 /** Inline code backtick fences. */
@@ -147,8 +146,12 @@ const stripLinkSyntax = (input: string): string => {
       i += 1;
       continue;
     }
-    const isImage = input[i + 1] === "!";
-    const open = isImage ? i + 1 : i;
+    const isImage = i > 0 && input[i - 1] === "!";
+    const open = i;
+    if (isImage) {
+      // Drop the leading '!' that precedes markdown images.
+      out = out.slice(0, -1);
+    }
     const close = input.indexOf("]", open + 1);
     if (close < 0) {
       out += input.slice(i);
