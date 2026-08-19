@@ -46,7 +46,7 @@ export const ElevationDeclinedDialog = () => {
             color: "text.secondary",
           }}
         >
-          <FormattedMessage defaultMessage="Windows declined the administrator prompt. mausVoice will keep running without administrator privileges — input capture may not work in apps that run as administrator." />
+          <FormattedMessage defaultMessage="Windows declined the administrator prompt. mausVoice will keep running without administrator privileges; input capture may not work in apps that run as administrator." />
         </Typography>
       </DialogContent>
       <DialogActions>
