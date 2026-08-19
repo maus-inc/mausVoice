@@ -270,99 +270,105 @@ fn draw_long_press_ring(
             rust_pill_shared::RING_SEGMENT_PX,
             &mut points,
         );
-        let head_idx = rust_pill_shared::ring_head_index(head_len, total_len, points.len());
 
-        // Shadow layer: a soft dark halo behind the silver ring so it stays
-        // readable on light backdrops. Cairo has no cheap blur on the render
-        // path, so the ring path is stroked several times with growing widths
-        // and shrinking alphas — the passes sum to a falloff that is darkest
-        // right under the ring and gone within a few pixels. The arc follows
-        // the comet's filled length (growing with the hold) and fades with
-        // `alpha` on release; the alphas are low enough that dark backdrops
-        // are unaffected.
-        for &(width, layer_alpha) in rust_pill_shared::RING_SHADOW_LAYERS {
-            cr.set_line_width(width);
-            cr.set_source_rgba(0.0, 0.0, 0.0, layer_alpha * alpha);
-            cr.move_to(points[0].0, points[0].1);
-            for p in &points[1..=head_idx] {
-                cr.line_to(p.0, p.1);
+        // Degenerate geometry cannot occur with the shared perimeter (this
+        // block is only entered when `head_len > 0`), but the shadow slice
+        // and head placement below must never index an empty buffer.
+        if points.len() >= 2 {
+            let head_idx = rust_pill_shared::ring_head_index(head_len, total_len, points.len());
+            let head_fade = rust_pill_shared::ring_head_fade(progress, arm_t);
+
+            // Shadow layer: a soft dark halo behind the silver ring so it stays
+            // readable on light backdrops. Cairo has no cheap blur on the
+            // render path, so the ring path is stroked several times with
+            // growing widths and shrinking alphas — the passes sum to a
+            // falloff that is darkest right under the ring and gone within a
+            // few pixels. The arc follows the comet's filled length (growing
+            // with the hold) and fades with `alpha` on release; the alphas are
+            // low enough that dark backdrops are unaffected.
+            for &(width, layer_alpha) in rust_pill_shared::RING_SHADOW_LAYERS {
+                cr.set_line_width(width);
+                cr.set_source_rgba(0.0, 0.0, 0.0, layer_alpha * alpha);
+                cr.move_to(points[0].0, points[0].1);
+                for p in &points[1..=head_idx] {
+                    cr.line_to(p.0, p.1);
+                }
+                let _ = cr.stroke();
             }
-            let _ = cr.stroke();
-        }
 
-        // Dark underlay beneath the comet head so the soft silver blob also
-        // separates from a light backdrop; mirrors the head's disc shading.
-        let head_fade = rust_pill_shared::ring_head_fade(progress, arm_t);
-        if head_fade > 0.004 {
-            let (hx, hy, _) = points[head_idx];
-            let head_r = rust_pill_shared::ring_head_radius(progress);
-            for k in (1..=rust_pill_shared::RING_HEAD_STEPS).rev() {
-                let rr = head_r * (k as f64 / rust_pill_shared::RING_HEAD_STEPS as f64);
-                let falloff = (1.0 - (k - 1) as f64 / rust_pill_shared::RING_HEAD_STEPS as f64)
-                    .powf(2.2);
-                cr.set_source_rgba(
-                    0.0,
-                    0.0,
-                    0.0,
-                    rust_pill_shared::RING_SHADOW_HEAD_ALPHA * head_fade * alpha * falloff * 0.5,
+            // Dark underlay beneath the comet head so the soft silver blob
+            // also separates from a light backdrop; mirrors the head's disc
+            // shading.
+            if head_fade > rust_pill_shared::RING_HEAD_FADE_CUTOFF {
+                let (hx, hy, _) = points[head_idx];
+                let head_r = rust_pill_shared::ring_head_radius(progress);
+                let steps = rust_pill_shared::RING_HEAD_STEPS;
+                for k in (1..=steps).rev() {
+                    let (radius_frac, falloff) = rust_pill_shared::ring_head_disc(k, steps);
+                    let underlay_alpha = rust_pill_shared::RING_SHADOW_HEAD_ALPHA
+                        * head_fade
+                        * alpha
+                        * falloff
+                        * rust_pill_shared::RING_HEAD_DISC_ALPHA_SCALE;
+                    cr.set_source_rgba(0.0, 0.0, 0.0, underlay_alpha);
+                    cr.new_sub_path();
+                    cr.arc(hx, hy, head_r * radius_frac, 0.0, 2.0 * PI);
+                    let _ = cr.fill();
+                }
+            }
+
+            // Primary layer: the comet. Brightness is envelope × glimmer
+            // evaluated per evenly-spaced segment — the portable stand-in for
+            // a gradient along a path, which Cairo has no primitive for.
+            let lift = 1.0 + rust_pill_shared::RING_ARM_LIFT * arm_t;
+            for w in points.windows(2) {
+                let (x1, y1, _) = w[0];
+                let (x2, y2, d) = w[1];
+                if d > head_len {
+                    break;
+                }
+                let env = rust_pill_shared::ring_envelope(d, head_len, progress, total_len);
+                let glim = rust_pill_shared::ring_glimmer(d, total_len, wave_phase, progress);
+                let a = (env * glim * lift).clamp(0.0, 1.0) * alpha;
+                if a < 0.012 {
+                    continue;
+                }
+                cr.set_line_width(
+                    rust_pill_shared::RING_CORE_WIDTH
+                        + rust_pill_shared::RING_WIDTH_SWELL * env * (1.0 - 0.35 * arm_t),
                 );
-                cr.new_sub_path();
-                cr.arc(hx, hy, rr, 0.0, 2.0 * PI);
-                let _ = cr.fill();
-            }
-        }
-
-        // Primary layer: the comet. Brightness is envelope × glimmer evaluated
-        // per evenly-spaced segment — the portable stand-in for a gradient
-        // along a path, which Cairo has no primitive for.
-        let lift = 1.0 + rust_pill_shared::RING_ARM_LIFT * arm_t;
-        for w in points.windows(2) {
-            let (x1, y1, _) = w[0];
-            let (x2, y2, d) = w[1];
-            if d > head_len {
-                break;
-            }
-            let env = rust_pill_shared::ring_envelope(d, head_len, progress, total_len);
-            let glim = rust_pill_shared::ring_glimmer(d, total_len, wave_phase, progress);
-            let a = (env * glim * lift).clamp(0.0, 1.0) * alpha;
-            if a < 0.012 {
-                continue;
-            }
-            cr.set_line_width(
-                rust_pill_shared::RING_CORE_WIDTH
-                    + rust_pill_shared::RING_WIDTH_SWELL * env * (1.0 - 0.35 * arm_t),
-            );
-            cr.set_source_rgba(
-                LONG_PRESS_OUTLINE_COLOR.0,
-                LONG_PRESS_OUTLINE_COLOR.1,
-                LONG_PRESS_OUTLINE_COLOR.2,
-                a,
-            );
-            cr.move_to(x1, y1);
-            cr.line_to(x2, y2);
-            let _ = cr.stroke();
-        }
-
-        // Secondary layer: the soft head. Concentric discs approximate a radial
-        // falloff without allocating a gradient every frame. It dissolves and
-        // blooms before completion so nothing bright is left at the seam.
-        let head_alpha = rust_pill_shared::RING_HEAD_ALPHA * head_fade * alpha;
-        if head_alpha > 0.004 && points.len() >= 2 {
-            let (hx, hy, _) = points[head_idx];
-            let head_r = rust_pill_shared::ring_head_radius(progress);
-            let steps = rust_pill_shared::RING_HEAD_STEPS;
-            for k in (1..=steps).rev() {
-                let rr = head_r * (k as f64 / steps as f64);
-                let falloff = (1.0 - (k - 1) as f64 / steps as f64).powf(2.2);
                 cr.set_source_rgba(
                     LONG_PRESS_OUTLINE_COLOR.0,
                     LONG_PRESS_OUTLINE_COLOR.1,
                     LONG_PRESS_OUTLINE_COLOR.2,
-                    head_alpha * falloff * 0.5,
+                    a,
                 );
-                cr.new_sub_path();
-                cr.arc(hx, hy, rr, 0.0, 2.0 * PI);
-                let _ = cr.fill();
+                cr.move_to(x1, y1);
+                cr.line_to(x2, y2);
+                let _ = cr.stroke();
+            }
+
+            // Secondary layer: the soft head. Concentric discs approximate a
+            // radial falloff without allocating a gradient every frame. It
+            // dissolves and blooms before completion so nothing bright is left
+            // at the seam.
+            let head_alpha = rust_pill_shared::RING_HEAD_ALPHA * head_fade * alpha;
+            if head_alpha > rust_pill_shared::RING_HEAD_FADE_CUTOFF {
+                let (hx, hy, _) = points[head_idx];
+                let head_r = rust_pill_shared::ring_head_radius(progress);
+                let steps = rust_pill_shared::RING_HEAD_STEPS;
+                for k in (1..=steps).rev() {
+                    let (radius_frac, falloff) = rust_pill_shared::ring_head_disc(k, steps);
+                    cr.set_source_rgba(
+                        LONG_PRESS_OUTLINE_COLOR.0,
+                        LONG_PRESS_OUTLINE_COLOR.1,
+                        LONG_PRESS_OUTLINE_COLOR.2,
+                        head_alpha * falloff * rust_pill_shared::RING_HEAD_DISC_ALPHA_SCALE,
+                    );
+                    cr.new_sub_path();
+                    cr.arc(hx, hy, head_r * radius_frac, 0.0, 2.0 * PI);
+                    let _ = cr.fill();
+                }
             }
         }
     }

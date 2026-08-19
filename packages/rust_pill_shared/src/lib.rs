@@ -211,6 +211,19 @@ pub const RING_HEAD_FADE_FROM: f64 = 0.55;
 pub const RING_HEAD_BLOOM: f64 = 0.45;
 /// Concentric steps used to approximate the head's radial falloff.
 pub const RING_HEAD_STEPS: usize = 4;
+/// Minimum head visibility at which the head's discs are painted.
+///
+/// Applied to both the raw head fade and the fully-scaled head alpha. The
+/// value is roughly one 8-bit alpha step (1/255 ≈ 0.0039): below it the
+/// concentric discs would only contribute sub-perceptual ghosts.
+pub const RING_HEAD_FADE_CUTOFF: f64 = 0.004;
+/// Exponent of the concentric-disc alpha falloff: `falloff = (1 - (k-1)/steps)^exp`,
+/// so the outermost disc is dimmest and the innermost is full brightness.
+pub const RING_HEAD_FALLOFF_EXP: f64 = 2.2;
+/// Alpha scale applied to every head disc. The discs are drawn at half the
+/// layer alpha so the stack of overlapping discs sums to roughly the layer's
+/// intended brightness instead of overshooting it.
+pub const RING_HEAD_DISC_ALPHA_SCALE: f64 = 0.5;
 
 /// Duration of the arm-confirmation pulse.
 pub const RING_PULSE_DURATION: f64 = 0.5;
@@ -351,6 +364,20 @@ pub fn ring_head_radius(progress: f64) -> f64 {
     RING_HEAD_RADIUS * (1.0 + RING_HEAD_BLOOM * ring_head_dissolve(progress))
 }
 
+/// Radius fraction and alpha falloff of one concentric head disc.
+///
+/// Discs are numbered `1..=steps` from the inside out (`k = steps` is the
+/// outermost). Returns `(radius_frac, falloff)`: `radius_frac` grows with `k`
+/// so discs stack outward from the head centre, while `falloff` shrinks with
+/// `k` so brightness falls off toward the rim.
+pub fn ring_head_disc(k: usize, steps: usize) -> (f64, f64) {
+    let steps = steps.max(1);
+    let k = k.clamp(1, steps);
+    let radius_frac = k as f64 / steps as f64;
+    let falloff = (1.0 - (k - 1) as f64 / steps as f64).powf(RING_HEAD_FALLOFF_EXP);
+    (radius_frac, falloff)
+}
+
 // ── Long-press ring shadow ────────────────────────────────────
 /// Soft dark halo behind the silver ring so it stays readable on light
 /// backdrops. The renderers have no blur primitive on the render path, so the
@@ -371,16 +398,24 @@ pub const RING_SHADOW_LAYERS: &[(f64, f64)] = &[
 /// a light backdrop.
 pub const RING_SHADOW_HEAD_ALPHA: f64 = 0.06;
 
+/// Guard against dividing by a zero path length when normalising `head_len`
+/// against `total_len` in [`ring_head_index`]. A degenerate perimeter would
+/// otherwise produce `NaN` and poison the index; the value is tiny relative to
+/// any real pixel distance, so it can never shift the selected point.
+pub const RING_PATH_LEN_EPSILON: f64 = 1e-9;
+
 /// Index of the resampled perimeter point nearest `head_len`.
 ///
 /// Shared by the comet-head disc and the shadow arc so the two can never
 /// drift apart; the renderers previously repeated this placement inline.
+/// Returns `0` for degenerate input (`point_count < 2`); callers must treat
+/// that as "no perimeter to place a head on".
 pub fn ring_head_index(head_len: f64, total_len: f64, point_count: usize) -> usize {
     if point_count < 2 {
         return 0;
     }
-    (((head_len / total_len.max(1e-9)) * (point_count - 1) as f64).round() as usize)
-        .clamp(1, point_count - 1)
+    let frac = head_len / total_len.max(RING_PATH_LEN_EPSILON);
+    ((frac * (point_count - 1) as f64).round() as usize).clamp(1, point_count - 1)
 }
 
 /// Inflate target for the current gesture state.
@@ -906,6 +941,48 @@ mod tests {
     fn ring_head_index_handles_degenerate_input() {
         assert_eq!(ring_head_index(50.0, 100.0, 0), 0);
         assert_eq!(ring_head_index(50.0, 100.0, 1), 0);
+        // A zero path length must not produce NaN.
+        assert_eq!(ring_head_index(0.0, 0.0, 10), 1);
+        assert_eq!(ring_head_index(5.0, 0.0, 10), 1);
+    }
+
+    #[test]
+    fn ring_head_disc_fractions_and_falloff() {
+        let steps = RING_HEAD_STEPS;
+        let mut prev_radius = f64::INFINITY;
+        let mut prev_falloff = 0.0;
+        for k in 1..=steps {
+            let (radius_frac, falloff) = ring_head_disc(k, steps);
+            assert!((0.0..=1.0).contains(&radius_frac), "radius out of range: {radius_frac}");
+            assert!((0.0..=1.0).contains(&falloff), "falloff out of range: {falloff}");
+            assert!(radius_frac < prev_radius, "disc radius must shrink inward");
+            assert!(falloff > prev_falloff, "falloff must brighten inward");
+            prev_radius = radius_frac;
+            prev_falloff = falloff;
+        }
+        // Innermost disc is unattenuated; the outermost carries the exponent.
+        assert_eq!(ring_head_disc(1, steps).1, 1.0);
+        let (_, outer) = ring_head_disc(steps, steps);
+        assert!((outer - (1.0 / steps as f64).powf(RING_HEAD_FALLOFF_EXP)).abs() < 1e-12);
+    }
+
+    #[test]
+    fn ring_head_disc_clamps_its_inputs() {
+        assert_eq!(ring_head_disc(0, 4), ring_head_disc(1, 4));
+        assert_eq!(ring_head_disc(9, 4), ring_head_disc(4, 4));
+        // Zero steps collapses to a single full-radius, full-alpha disc.
+        assert_eq!(ring_head_disc(1, 0), (1.0, 1.0));
+    }
+
+    #[test]
+    fn head_draw_cutoff_is_below_perception() {
+        // Roughly one 8-bit alpha step (1/255 ≈ 0.0039): below it a disc
+        // would contribute less than a single alpha step and is not worth
+        // painting.
+        assert!(RING_HEAD_FADE_CUTOFF > 0.0);
+        assert!(RING_HEAD_FADE_CUTOFF <= 1.0 / 255.0 * 1.5);
+        // The path-length guard must stay far below any real pixel distance.
+        assert!(RING_PATH_LEN_EPSILON > 0.0 && RING_PATH_LEN_EPSILON < 1e-3);
     }
 
     #[test]
