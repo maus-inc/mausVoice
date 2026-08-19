@@ -11,7 +11,7 @@ on:
     paths:
       - "packages/rust_transcription/**"
       - ".github/workflows/test-package-rust-transcription.yml"
-   workflow_dispatch:
+  workflow_dispatch:
 
 # Run every stacked PR independently, but cancel superseded runs for the same
 # PR (or the same branch for push/manual events) to avoid consuming runner slots.
