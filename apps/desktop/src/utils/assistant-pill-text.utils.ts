@@ -238,8 +238,22 @@ export const markdownToPillText = (
   // 4. Strip blockquote markers
   text = text.replace(BLOCKQUOTE_RE, "");
 
-  // 5. Convert unordered list markers to bullet symbol
-  text = text.replace(/^\s*[-*+]\s+/gm, "\u2022 ");
+  // 5. Convert unordered list markers ("- item") to bullet symbols with a
+  // manual scanner (no regex). "  - item" -> "• item".
+  text = text
+    .split("\n")
+    .map((line) => {
+      let j = 0;
+      while (j < line.length && (line[j] === " " || line[j] === "\t")) j += 1;
+      const marker = line[j];
+      if (marker !== "-" && marker !== "*" && marker !== "+") return line;
+      const spaceStart = j + 1;
+      let k = spaceStart;
+      while (k < line.length && (line[k] === " " || line[k] === "\t")) k += 1;
+      if (k === spaceStart) return line;
+      return "\u2022 " + line.slice(k);
+    })
+    .join("\n");
 
   // 6. Convert ordered list markers ("1. item") to plain numbers with a
   // manual scanner (no regex). "1.  item" -> "1. item".
