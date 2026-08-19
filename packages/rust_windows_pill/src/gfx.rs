@@ -374,16 +374,26 @@ impl Gfx {
         if points.len() < 2 {
             return;
         }
-        let brush = self.brush(rgba);
         unsafe {
-            let geom = self.factory.CreatePathGeometry().unwrap();
-            let sink = geom.Open().unwrap();
+            // Geometry creation talks to the D2D factory and the sink must be
+            // closed before the geometry can be drawn. Both can fail for real
+            // reasons (device loss, resource exhaustion) on a path that runs
+            // every frame while the ring is held, so failures skip this pass
+            // instead of panicking: one missing shadow layer is invisible,
+            // a panic would take the whole overlay down.
+            let Ok(geom) = self.factory.CreatePathGeometry() else { return };
+            let Ok(sink) = geom.Open() else { return };
             sink.BeginFigure(vec2(points[0].0, points[0].1), D2D1_FIGURE_BEGIN_HOLLOW);
             for &(x, y, _) in &points[1..] {
                 sink.AddLine(vec2(x, y));
             }
             sink.EndFigure(D2D1_FIGURE_END_OPEN);
-            sink.Close().ok();
+            if sink.Close().is_err() {
+                // An unclosed sink leaves the geometry unusable — drawing it
+                // would be a no-op at best.
+                return;
+            }
+            let brush = self.brush(rgba);
             self.rt.DrawGeometry(&geom, &brush, width as f32, self.round_stroke_style().as_ref());
         }
     }

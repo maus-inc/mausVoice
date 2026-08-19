@@ -949,17 +949,24 @@ mod tests {
     #[test]
     fn ring_head_disc_fractions_and_falloff() {
         let steps = RING_HEAD_STEPS;
-        let mut prev_radius = f64::INFINITY;
-        let mut prev_falloff = 0.0;
+        // Discs are numbered 1..=steps from the inside out, so walking `k`
+        // upward walks outward from the head centre: the radius grows with
+        // every step while the falloff dims, which is the same statement as
+        // "brightness increases inward".
+        let mut prev_radius = 0.0;
+        let mut prev_falloff = f64::INFINITY;
         for k in 1..=steps {
             let (radius_frac, falloff) = ring_head_disc(k, steps);
             assert!((0.0..=1.0).contains(&radius_frac), "radius out of range: {radius_frac}");
             assert!((0.0..=1.0).contains(&falloff), "falloff out of range: {falloff}");
-            assert!(radius_frac < prev_radius, "disc radius must shrink inward");
-            assert!(falloff > prev_falloff, "falloff must brighten inward");
+            assert!(radius_frac > prev_radius, "disc radius must grow outward at k={k}");
+            assert!(falloff < prev_falloff, "falloff must dim outward at k={k}");
             prev_radius = radius_frac;
             prev_falloff = falloff;
         }
+        // The outermost disc spans the whole head radius, so the stack covers
+        // the head exactly rather than stopping short of the rim.
+        assert_eq!(ring_head_disc(steps, steps).0, 1.0);
         // Innermost disc is unattenuated; the outermost carries the exponent.
         assert_eq!(ring_head_disc(1, steps).1, 1.0);
         let (_, outer) = ring_head_disc(steps, steps);
