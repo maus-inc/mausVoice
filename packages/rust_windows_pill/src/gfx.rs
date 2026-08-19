@@ -363,6 +363,31 @@ impl Gfx {
         }
     }
 
+    /// Stroke an open polyline as a single path, in one colour and width.
+    ///
+    /// Accepts the `(x, y, dist)` triples produced by `resample_perimeter` so
+    /// callers can pass a sub-range without reallocating. Used by the
+    /// long-press ring shadow, where each of the layered passes shares one
+    /// colour and width: a single `DrawGeometry` per pass is far cheaper than
+    /// per-segment `DrawLine` calls.
+    pub(crate) fn stroke_polyline(&self, points: &[(f64, f64, f64)], rgba: [f64; 4], width: f64) {
+        if points.len() < 2 {
+            return;
+        }
+        let brush = self.brush(rgba);
+        unsafe {
+            let geom = self.factory.CreatePathGeometry().unwrap();
+            let sink = geom.Open().unwrap();
+            sink.BeginFigure(vec2(points[0].0, points[0].1), D2D1_FIGURE_BEGIN_HOLLOW);
+            for &(x, y, _) in &points[1..] {
+                sink.AddLine(vec2(x, y));
+            }
+            sink.EndFigure(D2D1_FIGURE_END_OPEN);
+            sink.Close().ok();
+            self.rt.DrawGeometry(&geom, &brush, width as f32, self.round_stroke_style().as_ref());
+        }
+    }
+
     pub(crate) fn fill_circle(&self, cx: f64, cy: f64, r: f64, rgba: [f64; 4]) {
         let brush = self.brush(rgba);
         unsafe {

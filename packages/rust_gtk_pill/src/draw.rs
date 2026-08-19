@@ -259,9 +259,9 @@ fn draw_long_press_ring(
     }
 
     if alpha > 0.0 && head_len > 0.0 {
-        // Primary layer: the comet. Brightness is envelope × glimmer evaluated
-        // per evenly-spaced segment — the portable stand-in for a gradient
-        // along a path, which Cairo has no primitive for.
+        // One resampled perimeter drives the shadow, the comet and the head,
+        // so the layers can never drift apart and no geometry is built more
+        // than once per frame.
         let mut points = state.ring_points.borrow_mut();
         rust_pill_shared::resample_perimeter(
             &path,
@@ -270,7 +270,51 @@ fn draw_long_press_ring(
             rust_pill_shared::RING_SEGMENT_PX,
             &mut points,
         );
+        let head_idx = rust_pill_shared::ring_head_index(head_len, total_len, points.len());
 
+        // Shadow layer: a soft dark halo behind the silver ring so it stays
+        // readable on light backdrops. Cairo has no cheap blur on the render
+        // path, so the ring path is stroked several times with growing widths
+        // and shrinking alphas — the passes sum to a falloff that is darkest
+        // right under the ring and gone within a few pixels. The arc follows
+        // the comet's filled length (growing with the hold) and fades with
+        // `alpha` on release; the alphas are low enough that dark backdrops
+        // are unaffected.
+        for &(width, layer_alpha) in rust_pill_shared::RING_SHADOW_LAYERS {
+            cr.set_line_width(width);
+            cr.set_source_rgba(0.0, 0.0, 0.0, layer_alpha * alpha);
+            cr.move_to(points[0].0, points[0].1);
+            for p in &points[1..=head_idx] {
+                cr.line_to(p.0, p.1);
+            }
+            let _ = cr.stroke();
+        }
+
+        // Dark underlay beneath the comet head so the soft silver blob also
+        // separates from a light backdrop; mirrors the head's disc shading.
+        let head_fade = rust_pill_shared::ring_head_fade(progress, arm_t);
+        if head_fade > 0.004 {
+            let (hx, hy, _) = points[head_idx];
+            let head_r = rust_pill_shared::ring_head_radius(progress);
+            for k in (1..=rust_pill_shared::RING_HEAD_STEPS).rev() {
+                let rr = head_r * (k as f64 / rust_pill_shared::RING_HEAD_STEPS as f64);
+                let falloff = (1.0 - (k - 1) as f64 / rust_pill_shared::RING_HEAD_STEPS as f64)
+                    .powf(2.2);
+                cr.set_source_rgba(
+                    0.0,
+                    0.0,
+                    0.0,
+                    rust_pill_shared::RING_SHADOW_HEAD_ALPHA * head_fade * alpha * falloff * 0.5,
+                );
+                cr.new_sub_path();
+                cr.arc(hx, hy, rr, 0.0, 2.0 * PI);
+                let _ = cr.fill();
+            }
+        }
+
+        // Primary layer: the comet. Brightness is envelope × glimmer evaluated
+        // per evenly-spaced segment — the portable stand-in for a gradient
+        // along a path, which Cairo has no primitive for.
         let lift = 1.0 + rust_pill_shared::RING_ARM_LIFT * arm_t;
         for w in points.windows(2) {
             let (x1, y1, _) = w[0];
@@ -302,12 +346,9 @@ fn draw_long_press_ring(
         // Secondary layer: the soft head. Concentric discs approximate a radial
         // falloff without allocating a gradient every frame. It dissolves and
         // blooms before completion so nothing bright is left at the seam.
-        let head_fade = rust_pill_shared::ring_head_fade(progress, arm_t);
         let head_alpha = rust_pill_shared::RING_HEAD_ALPHA * head_fade * alpha;
         if head_alpha > 0.004 && points.len() >= 2 {
-            let idx = (((head_len / total_len) * (points.len() - 1) as f64).round() as usize)
-                .clamp(1, points.len() - 1);
-            let (hx, hy, _) = points[idx];
+            let (hx, hy, _) = points[head_idx];
             let head_r = rust_pill_shared::ring_head_radius(progress);
             let steps = rust_pill_shared::RING_HEAD_STEPS;
             for k in (1..=steps).rev() {

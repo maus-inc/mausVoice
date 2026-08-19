@@ -351,6 +351,38 @@ pub fn ring_head_radius(progress: f64) -> f64 {
     RING_HEAD_RADIUS * (1.0 + RING_HEAD_BLOOM * ring_head_dissolve(progress))
 }
 
+// ── Long-press ring shadow ────────────────────────────────────
+/// Soft dark halo behind the silver ring so it stays readable on light
+/// backdrops. The renderers have no blur primitive on the render path, so the
+/// halo is approximated with layered strokes over the ring path: each entry
+/// is a `(stroke width, alpha)` pass. Widths grow while alphas shrink, so the
+/// passes sum to a falloff that is darkest exactly under the ring and gone
+/// within a few pixels; the combined alpha is kept low enough that dark
+/// backdrops are unaffected.
+pub const RING_SHADOW_LAYERS: &[(f64, f64)] = &[
+    (2.0, 0.07),
+    (4.0, 0.05),
+    (6.0, 0.035),
+    (8.0, 0.02),
+];
+
+/// Per-disc alpha of the dark underlay beneath the comet head. It mirrors the
+/// head's concentric-disc shading so the soft silver blob also separates from
+/// a light backdrop.
+pub const RING_SHADOW_HEAD_ALPHA: f64 = 0.06;
+
+/// Index of the resampled perimeter point nearest `head_len`.
+///
+/// Shared by the comet-head disc and the shadow arc so the two can never
+/// drift apart; the renderers previously repeated this placement inline.
+pub fn ring_head_index(head_len: f64, total_len: f64, point_count: usize) -> usize {
+    if point_count < 2 {
+        return 0;
+    }
+    (((head_len / total_len.max(1e-9)) * (point_count - 1) as f64).round() as usize)
+        .clamp(1, point_count - 1)
+}
+
 /// Inflate target for the current gesture state.
 ///
 /// Inflation begins partway through the hold (`INFLATE_PRE_AT`) so the pill is
@@ -837,6 +869,62 @@ mod tests {
         let late = ring_head_radius(1.0);
         assert!(late > early, "head must expand while fading");
         assert!((early - RING_HEAD_RADIUS).abs() < 1e-9);
+    }
+
+    #[test]
+    fn ring_head_index_lands_within_one_segment_of_head_len() {
+        let path =
+            rounded_rectangle_perimeter(0.0, 0.0, 120.0, 32.0, 16.0, RoundedRectArcSteps::Auto);
+        let (distances, total) = path_distances(&path);
+        let mut pts = Vec::new();
+        resample_perimeter(&path, &distances, total, RING_SEGMENT_PX, &mut pts);
+        for p in [0.1, 0.3, 0.5, 0.8, 1.0] {
+            let head_len = total * p;
+            let idx = ring_head_index(head_len, total, pts.len());
+            assert!(
+                (pts[idx].2 - head_len).abs() <= RING_SEGMENT_PX + 1e-9,
+                "head point {idx} is {}px from head_len {head_len}",
+                (pts[idx].2 - head_len).abs(),
+            );
+        }
+    }
+
+    #[test]
+    fn ring_head_index_is_bounded_and_monotonic() {
+        // Clamps into the valid range, including the seam point at full ring.
+        assert_eq!(ring_head_index(0.0, 100.0, 10), 1);
+        assert_eq!(ring_head_index(100.0, 100.0, 10), 9);
+        let mut prev = 0usize;
+        for i in 0..=20 {
+            let idx = ring_head_index(100.0 * i as f64 / 20.0, 100.0, 10);
+            assert!(idx >= prev, "head index regressed at {i}");
+            prev = idx;
+        }
+    }
+
+    #[test]
+    fn ring_head_index_handles_degenerate_input() {
+        assert_eq!(ring_head_index(50.0, 100.0, 0), 0);
+        assert_eq!(ring_head_index(50.0, 100.0, 1), 0);
+    }
+
+    #[test]
+    fn shadow_layers_fall_off_outward() {
+        // Widths grow and alphas shrink monotonically, so the passes sum to a
+        // halo that is strongest at the ring and fades outward.
+        let mut prev_w = 0.0;
+        let mut prev_a = f64::INFINITY;
+        let mut total = 0.0;
+        for &(w, a) in RING_SHADOW_LAYERS {
+            assert!(w > prev_w, "layer widths must grow");
+            assert!(a < prev_a, "layer alphas must shrink");
+            assert!((0.0..=1.0).contains(&a), "layer alpha out of range: {a}");
+            prev_w = w;
+            prev_a = a;
+            total += a;
+        }
+        // Combined alpha stays low so dark backdrops remain unaffected.
+        assert!(total < 0.3, "combined shadow alpha too strong: {total}");
     }
 
     #[test]
