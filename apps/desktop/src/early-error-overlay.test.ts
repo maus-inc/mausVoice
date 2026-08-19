@@ -19,7 +19,11 @@ class HTMLLinkElement {
 }
 
 const installEarlyOverlay = (
-  seed: Array<{ id: string; textContent?: string; childNodes?: unknown[] }> = [],
+  seed: Array<{
+    id: string;
+    textContent?: string;
+    childNodes?: unknown[];
+  }> = [],
 ) => {
   const nodes = new Map<
     string,
