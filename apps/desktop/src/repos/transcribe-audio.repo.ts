@@ -8,6 +8,8 @@ import {
   elevenlabsTranscribeAudio,
   geminiTranscribeAudio,
   GeminiTranscriptionModel,
+  gladiaTranscribeAudio,
+  type GladiaCustomizations,
   groqTranscribeAudio,
   openaiTranscribeAudio,
   OpenAITranscriptionModel,
@@ -18,11 +20,7 @@ import {
 import { getAppState } from "../store";
 import { DEFAULT_MODEL_SIZE, TranscriptionMode } from "../types/ai.types";
 import { AudioSamples } from "../types/audio.types";
-import {
-  buildWaveFile,
-  ensureFloat32Array,
-  normalizeSamples,
-} from "../utils/audio.utils";
+import { buildWaveFile } from "../utils/audio.utils";
 import { getLocalTranscriptionSidecarManager } from "../sidecars";
 import {
   getTranscriptionSidecarDeviceId,
@@ -72,6 +70,7 @@ export type TranscribeAudioInput = {
 export type TranscribeAudioOutput = {
   text: string;
   metadata?: Nullable<TranscribeAudioMetadata>;
+  warnings?: string[];
   /** Verbose Whisper segments (with `no_speech_prob`) when the provider returns them. */
   segments?: TranscriptionSegment[];
 };
@@ -117,8 +116,13 @@ export abstract class BaseTranscribeAudioRepo extends BaseRepo {
   async transcribeAudio(
     input: TranscribeAudioInput,
   ): Promise<TranscribeAudioOutput> {
-    const normalizedSamples = normalizeSamples(input.samples);
-    const floatSamples = ensureFloat32Array(normalizedSamples);
+    // Keep one defensive Float32 copy without routing typed input through a
+    // temporary number[]; hour-long provider chunks make that extra allocation
+    // prohibitively expensive.
+    const floatSamples =
+      input.samples instanceof Float32Array
+        ? input.samples.slice()
+        : Float32Array.from(input.samples ?? []);
 
     if (floatSamples.length === 0) {
       return { text: "", metadata: null };
@@ -183,6 +187,9 @@ export abstract class BaseTranscribeAudioRepo extends BaseRepo {
     return {
       text: mergedText,
       metadata,
+      warnings: Array.from(
+        new Set(results.flatMap((result) => result.warnings ?? [])),
+      ),
       // Do not flatten overlapping chunk segments: a later join would undo
       // mergeTranscriptions() and reintroduce duplicated overlap words.
     };
@@ -525,6 +532,58 @@ export class DeepgramTranscribeAudioRepo extends BaseTranscribeAudioRepo {
       metadata: {
         inferenceDevice: "API • Deepgram",
         modelSize: this.model,
+        transcriptionMode: "api",
+      },
+    };
+  }
+}
+
+export class GladiaTranscribeAudioRepo extends BaseTranscribeAudioRepo {
+  private readonly apiKey: string;
+  private readonly model: string;
+  private readonly customizations: GladiaCustomizations;
+
+  constructor(
+    apiKey: string,
+    model: string | null,
+    customizations: GladiaCustomizations,
+  ) {
+    super();
+    this.apiKey = apiKey;
+    this.model = model ?? "solaria-1";
+    this.customizations = customizations;
+  }
+
+  protected getSegmentDurationSec(): number {
+    return 60 * 60;
+  }
+
+  protected getOverlapDurationSec(): number {
+    return 5;
+  }
+
+  protected getBatchChunkCount(): number {
+    return 3;
+  }
+
+  protected async transcribeSegment(
+    input: TranscribeSegmentInput,
+  ): Promise<TranscribeAudioOutput> {
+    const wavBuffer = buildWaveFile(input.samples, input.sampleRate);
+    const { text, warnings } = await gladiaTranscribeAudio({
+      apiKey: this.apiKey,
+      model: this.model,
+      blob: wavBuffer,
+      language: input.language ?? "auto",
+      customizations: this.customizations,
+    });
+
+    return {
+      text,
+      warnings,
+      metadata: {
+        inferenceDevice: "API • Gladia",
+        modelSize: "solaria-1",
         transcriptionMode: "api",
       },
     };

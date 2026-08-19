@@ -172,6 +172,7 @@ export const transcribeAudio = async ({
     );
   }
   const transcribeDuration = performance.now() - transcribeStart;
+  warnings.push(...(transcribeOutput.warnings ?? []));
   const rawTranscript = transcribeOutput.text.trim();
   // Hallucination mitigation: when the user disables the filter we preserve the
   // raw provider transcript EXACTLY (no probability gating, no phrase

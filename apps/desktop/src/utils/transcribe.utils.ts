@@ -351,7 +351,10 @@ export const splitAudioTranscription = (args: {
 
   for (let start = 0; start < samples.length; start += stepSamples) {
     const end = Math.min(start + segmentSamples, samples.length);
-    segments.push(samples.slice(start, end));
+    // Segments are read-only inputs to provider tasks. Views avoid eagerly
+    // duplicating every overlapping segment, which is especially important
+    // for providers that accept hour-long chunks.
+    segments.push(samples.subarray(start, end));
 
     if (end === samples.length) {
       break;

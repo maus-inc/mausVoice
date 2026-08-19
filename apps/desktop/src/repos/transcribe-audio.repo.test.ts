@@ -6,6 +6,7 @@ import {
   AssemblyAITranscribeAudioRepo,
   BaseTranscribeAudioRepo,
   DeepgramTranscribeAudioRepo,
+  GladiaTranscribeAudioRepo,
   LocalTranscribeAudioRepo,
   TranscribeAudioOutput,
   TranscribeSegmentInput,
@@ -427,6 +428,53 @@ describe("DeepgramTranscribeAudioRepo", () => {
 
     expect(repo).toBeInstanceOf(DeepgramTranscribeAudioRepo);
     expect(apiKeyId).toBe("deepgram-key");
+  });
+});
+
+describe("GladiaTranscribeAudioRepo", () => {
+  it("is selected with Gladia's supported model", () => {
+    const state = structuredClone(INITIAL_APP_STATE);
+    state.settings.aiTranscription.mode = "api";
+    state.settings.aiTranscription.selectedApiKeyId = "gladia-key";
+    state.apiKeyById["gladia-key"] = {
+      id: "gladia-key",
+      name: "Gladia",
+      provider: "gladia",
+      createdAt: "2026-08-19T00:00:00.000Z",
+      keyFull: "gladia-secret",
+      transcriptionModel: "solaria-1",
+    };
+    setAppState(state, true);
+
+    const { repo, apiKeyId } = getTranscribeAudioRepo();
+
+    expect(repo).toBeInstanceOf(GladiaTranscribeAudioRepo);
+    expect(apiKeyId).toBe("gladia-key");
+    expect(getModelProviderRepo("gladia").supportsTranscriptionModels()).toBe(
+      true,
+    );
+  });
+
+  it("uses 60-minute chunks, five-second overlap, and concurrency three", () => {
+    class InspectableGladiaRepo extends GladiaTranscribeAudioRepo {
+      getChunkingConfiguration() {
+        return {
+          duration: this.getSegmentDurationSec(),
+          overlap: this.getOverlapDurationSec(),
+          concurrency: this.getBatchChunkCount(),
+        };
+      }
+    }
+
+    const repo = new InspectableGladiaRepo("key", "solaria-1", {
+      vocabulary: [],
+      spellingDictionary: {},
+    });
+    expect(repo.getChunkingConfiguration()).toEqual({
+      duration: 3600,
+      overlap: 5,
+      concurrency: 3,
+    });
   });
 });
 

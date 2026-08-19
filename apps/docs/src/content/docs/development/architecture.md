@@ -61,7 +61,7 @@ Local transcription **does not** imply post-processing is off. Review both task 
 
 ## Frontend layers
 
-`apps/desktop/src/actions/` performs stateful operations. `strategies/dictation.strategy.ts` handles dictation processing choices, while `components/root/DictationSideEffects.tsx` connects global events, the recorder, session lifecycle, timers, and output. `sessions/` separates dedicated AssemblyAI, Azure, Deepgram, ElevenLabs, and Local lifecycles from retained-audio batch transcription.
+`apps/desktop/src/actions/` performs stateful operations. `strategies/dictation.strategy.ts` handles dictation processing choices, while `components/root/DictationSideEffects.tsx` connects global events, the recorder, session lifecycle, timers, and output. `sessions/` separates dedicated AssemblyAI, Azure, Deepgram, ElevenLabs, Gladia, and Local lifecycles from retained-audio batch transcription.
 
 ```mermaid
 flowchart TD
