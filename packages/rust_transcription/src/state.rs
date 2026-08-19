@@ -74,9 +74,28 @@ fn is_hugging_face_delivery_host(host: &str) -> bool {
     host == "huggingface.co" || host.ends_with(".huggingface.co") || host.ends_with(".hf.co")
 }
 
+/// Apply the redirect policy to the initial URL too; reqwest only invokes a
+/// redirect policy after receiving a 3xx response. Debug builds retain
+/// loopback HTTP support for sidecar integration tests and local development.
+pub(crate) fn validate_model_download_url(value: &str) -> Result<(), String> {
+    let url = reqwest::Url::parse(value).map_err(|_| "model download URL is invalid".to_string())?;
+    let host = url
+        .host_str()
+        .ok_or_else(|| "model download URL has no host".to_string())?;
+    let approved_https = url.scheme() == "https" && is_hugging_face_delivery_host(host);
+    let debug_loopback = (cfg!(debug_assertions) || cfg!(test))
+        && url.scheme() == "http"
+        && matches!(host, "localhost" | "127.0.0.1" | "::1");
+    if approved_https || debug_loopback {
+        Ok(())
+    } else {
+        Err("model download URL rejected by security policy".to_string())
+    }
+}
+
 #[cfg(test)]
 mod tests {
-    use super::is_hugging_face_delivery_host;
+    use super::{is_hugging_face_delivery_host, validate_model_download_url};
 
     #[test]
     fn model_redirect_host_allowlist_accepts_only_hugging_face_domains() {
@@ -94,5 +113,15 @@ mod tests {
         ] {
             assert!(!is_hugging_face_delivery_host(host));
         }
+    }
+
+    #[test]
+    fn initial_model_url_uses_the_same_https_host_policy() {
+        assert!(validate_model_download_url(
+            "https://huggingface.co/ggerganov/whisper.cpp/model.bin"
+        )
+        .is_ok());
+        assert!(validate_model_download_url("http://huggingface.co/model.bin").is_err());
+        assert!(validate_model_download_url("https://example.com/model.bin").is_err());
     }
 }

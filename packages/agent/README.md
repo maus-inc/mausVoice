@@ -1,6 +1,13 @@
 # @repo/agent
 
-Provider-agnostic agentic loop with tool support.
+Provider-agnostic agentic loop with tool support. This is the package name
+used by `apps/desktop` (`workspace:*`). It is **not** `@maus-inc/agent`.
+
+Desktop Assistant tools (`read_accessibility_context`, `paste_text`,
+`grab_screenshot`, `execute_terminal_command`) live in the desktop app and are
+wired into this loop. Power-mode terminal commands require explicit approval.
+
+See [Assistant mode](https://maus-inc.github.io/mausVoice/docs/using-mausvoice/assistant-mode/).
 
 ## Usage
 

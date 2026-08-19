@@ -5,7 +5,7 @@ sidebar:
   order: 6
 ---
 
-`packages/rust_transcription` builds `rust-transcription-cpu` and feature-gated `rust-transcription-gpu`. The desktop launches them on ephemeral loopback ports, although standalone defaults are `127.0.0.1:7771` for CPU and `:7772` for GPU.
+`packages/rust_transcription` is a standalone Axum service (`whisper-rs`, `ort`, `tokio`). It builds `rust-transcription-cpu` and feature-gated `rust-transcription-gpu` (Metal on macOS, Vulkan on Linux/Windows). The desktop launches them on ephemeral loopback ports, although standalone defaults are `127.0.0.1:7771` for CPU and `:7772` for GPU (`RUST_TRANSCRIPTION_HOST` / `PORT` / `MODELS_DIR`).
 
 ```bash
 cargo build --manifest-path packages/rust_transcription/Cargo.toml --release --bin rust-transcription-cpu

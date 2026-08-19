@@ -32,7 +32,7 @@ describe("vendorManualChunk", () => {
   it("does not emit a separate intl chunk", () => {
     expect(
       vendorManualChunk("/repo/node_modules/intl-messageformat/lib/index.js"),
-    ).not.toBe("intl");
+    ).toBe("react");
   });
 
   it("leaves app source unchunked and still splits unrelated vendors", () => {

@@ -41,22 +41,30 @@ function collectFiles(dir: string, acc: string[] = []): string[] {
     const full = join(dir, entry);
     const st = statSync(full);
     if (st.isDirectory()) {
-      if (entry === "node_modules" || entry === "dist" || entry === ".git")
+      if (
+        entry === "node_modules" ||
+        entry === "dist" ||
+        entry === ".git" ||
+        entry === "__tests__"
+      )
         continue;
       collectFiles(full, acc);
-    } else if (entry.endsWith(".ts") || entry.endsWith(".tsx")) {
+    } else if (
+      (entry.endsWith(".ts") || entry.endsWith(".tsx")) &&
+      !entry.includes(".test.")
+    ) {
       acc.push(full);
     }
   }
   return acc;
 }
 
-/** Every `https://api.*` host literal in the provider source trees. */
+/** Every `https://api.*` host literal in desktop and workspace-package sources. */
 function sourceApiHosts(): Set<string> {
-  const roots = [
-    resolve(repoRoot, "packages/voice-ai/src"),
-    resolve(desktopRoot, "src/sessions"),
-  ];
+  const packageRoots = readdirSync(resolve(repoRoot, "packages"))
+    .map((entry) => resolve(repoRoot, "packages", entry, "src"))
+    .filter((root) => statSync(root, { throwIfNoEntry: false })?.isDirectory());
+  const roots = [resolve(desktopRoot, "src"), ...packageRoots];
   const hosts = new Set<string>();
   const apiRe = /https:\/\/api\.[a-z0-9.-]+/g;
   for (const root of roots) {

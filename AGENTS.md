@@ -10,7 +10,7 @@
 ** Repository structure **
 
 - This is a Turborepo monorepo. Root-level: `pnpm run build`, `pnpm run lint`, `pnpm run check-types`, `pnpm run test`.
-- Shared packages live in `packages/` (types, utilities, voice-ai, agent, desktop-utils, desktop-native-apis, firemix, shared-fonts, eslint-config, typescript-config, and the native pill/transcription Rust crates). After modifying a built TypeScript package, rebuild it before downstream consumers can see changes.
+- Shared packages live in `packages/` (`@maus-inc/types`, `@maus-inc/utilities`, `@maus-inc/voice-ai`, **`@repo/agent`**, `@maus-inc/desktop-utils`, `@maus-inc/desktop-native-apis`, firemix, shared-fonts, eslint-config, typescript-config, and the native pill/transcription Rust crates). After modifying a built TypeScript package, rebuild it before downstream consumers can see changes. Dev Node is `.nvmrc` **v24** (`engines` `>=20`).
 - Use `<FormattedMessage defaultMessage="..." />` or `useIntl()` for i18n — never pass an `id` prop.
 
 ** `apps/desktop` — Tauri desktop app (Rust + TypeScript/React) **

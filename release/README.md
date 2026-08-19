@@ -1,40 +1,27 @@
 # Releases
 
-| Branch       | Channel      | Eligible components                                                     |
-| ------------ | ------------ | ----------------------------------------------------------------------- |
-| `main`       | `dev`        | desktop, desktop `enterprise-dev`, enterprise admin, enterprise gateway |
-| `prod`       | `prod`       | desktop, docs                                                           |
-| `enterprise` | `enterprise` | Desktop, enterprise admin, enterprise gateway                           |
+> **Maintained runbook:** [Release process](https://maus-inc.github.io/mausVoice/docs/development/releases/) and `docs/RELEASE.md`.
 
-Pushing to any of these branches runs
-[`release.yml`](../.github/workflows/release.yml). Its path filters detect
-changes to `apps/desktop/`, `apps/windows-installer/`, `apps/docs/`,
-`enterprise/admin/`, `enterprise/gateway/`, and `packages/`, then invoke the
-eligible component workflows.
+This tree does **not** ship enterprise admin/gateway apps. `enterprise/` is gone. Flavor names `enterprise` / `enterprise-dev` may still appear in types; they are not release channels.
 
-## Release notes
+Releases are a **manual** `.github/workflows/release.yml` dispatch (version, prerelease, notes, optional tag `mausVoice-v{version}`).
 
-- `prod.txt` — desktop release notes shipped to the `dev` and `prod` channels.
-- `enterprise.txt` — desktop release notes shipped to the `enterprise` and
-  `enterprise-dev` channels.
+| What ships | Notes |
+| --- | --- |
+| Desktop | macOS universal, Windows, Linux `.deb` + AppImage |
+| Docs / Pages | Separate docs workflow; not an enterprise channel |
+| Homebrew cask | Stable releases only → `maus-inc/homebrew-mausvoice` |
 
-## Promote dev → prod
+Path filters watch `apps/desktop/`, `apps/windows-installer/`, `apps/docs/`, and `packages/`.
 
-[![Promote to prod](https://img.shields.io/badge/%E2%86%92%20Open%20promotion%20PR-prod%20%E2%86%90%20main-2ea44f?style=for-the-badge&logo=github)](https://github.com/maus-inc/mausVoice/compare/prod...main?expand=1)
+## Notes files
 
-## Promote dev → enterprise
+- `prod.txt` — desktop release notes for the public GitHub Release body when used.
 
-[![Promote to enterprise](https://img.shields.io/badge/%E2%86%92%20Open%20promotion%20PR-enterprise%20%E2%86%90%20main-5a2ea4?style=for-the-badge&logo=github)](https://github.com/maus-inc/mausVoice/compare/enterprise...main?expand=1)
+There is no live `enterprise.txt` channel.
 
-Clicking opens a pre-filled PR comparing `main` against the target branch
-(that's what's about to ship). Review the diff, title it (e.g.
-`Release 2026-04-19`), and merge. Merging auto-releases the changed
-components on that channel.
+## Signing
 
-## Rollback
+OS binaries are unsigned. The **updater** uses minisign secrets (`UPDATER_*`). Stable releases without those secrets fail closed (no unsigned `latest.json`). Prereleases skip the manifest.
 
-```bash
-git push --force-with-lease origin <old-sha>:prod        # or :enterprise
-```
-
-Re-releases whatever components differ between the bad and good SHAs.
+Do not force-push production tags casually. Rollback is a new release or a documented tag move — see `docs/RELEASE.md`.

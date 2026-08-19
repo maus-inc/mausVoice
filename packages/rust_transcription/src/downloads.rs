@@ -581,6 +581,7 @@ impl DownloadRegistry {
             None
         };
 
+        crate::state::validate_model_download_url(&artifact.url)?;
         let (response, resume_is_valid) = match request_artifact_response(
             client,
             &artifact.url,

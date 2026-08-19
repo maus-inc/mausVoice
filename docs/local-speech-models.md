@@ -1,6 +1,8 @@
 # Local speech models
 
-mausVoice supports Whisper GGML models and local ONNX engines including NVIDIA Parakeet, Canary, and **SenseVoice**.
+> Maintained pages: [Local model management](https://maus-inc.github.io/mausVoice/docs/configuration/local-models/) and [Local model reference](https://maus-inc.github.io/mausVoice/docs/reference/local-models/).
+
+mausVoice supports Whisper GGML models and local ONNX engines including NVIDIA Parakeet, Canary, and **SenseVoice** (`sense-voice` in `packages/rust_transcription`).
 
 ## SenseVoice
 
