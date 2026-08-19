@@ -106,9 +106,13 @@ export const buildAnalyticsIdentity = (
     isPaying: !isTrial && isPro,
     onboarded: localUser?.onboarded ?? false,
     onboardedAt: onboardedAt ?? undefined,
-    daysSinceOnboarded: onboardedAt
-      ? dayjs().diff(dayjs(onboardedAt), "day")
-      : 0,
+    daysSinceOnboarded: (() => {
+      if (!onboardedAt) return 0;
+      const parsed = dayjs(onboardedAt);
+      if (!parsed.isValid()) return 0;
+      const days = dayjs().diff(parsed, "day");
+      return Number.isFinite(days) ? days : 0;
+    })(),
     pillState: getEffectivePillVisibility(
       sources.preferences?.dictationPillVisibility,
     ),

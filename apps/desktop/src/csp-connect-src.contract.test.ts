@@ -228,8 +228,9 @@ describe("production CSP connect-src covers every webview-fetched provider host"
         violations
           .map((v) => `  ${v.scheme}://${v.host} (${v.file})`)
           .join("\n") +
-        `\nAdd the host to connect-src, route the call through ` +
-        `@tauri-apps/plugin-http and extend the http:default capability, or — ` +
+        `\nAdd a hosted HTTPS provider to connect-src and the curated ` +
+        `http:default capability; route user-configured private HTTP through ` +
+        `secureFetch/private_http_request instead of a capability hostname glob; or — ` +
         `only if it is genuinely not a connect-src target (openUrl link, ` +
         `iframe, comment) — classify it in NON_CONNECT_HOSTS (or ` +
         `KNOWN_NON_SOURCE_REFS) with a reason.`,

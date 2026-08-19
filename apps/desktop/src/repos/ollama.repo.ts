@@ -1,4 +1,4 @@
-import { fetch } from "@tauri-apps/plugin-http";
+import { secureFetch as fetch } from "../utils/secure-fetch.utils";
 import { getOllamaHeaders } from "../utils/ollama.utils";
 import { BaseRepo } from "./base.repo";
 

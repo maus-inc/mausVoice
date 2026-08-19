@@ -87,7 +87,13 @@ export const routeTranscriptOutput = async (
   const { prefs } = context;
 
   if (prefs?.remoteOutputEnabled && prefs.remoteTargetDeviceId) {
-    return deliverRemoteOutput(args, prefs);
+    const outputText = await reviewOutputText(
+      args.text,
+      prefs,
+      args.skipReview,
+    );
+    if (!outputText?.trim()) return { delivered: false, remote: true };
+    return deliverRemoteOutput({ ...args, text: outputText }, prefs);
   }
 
   const outputText = await reviewOutputText(args.text, prefs, args.skipReview);

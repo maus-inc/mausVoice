@@ -1,10 +1,8 @@
 /**
- * English gate for deterministic sanitize steps (spoken commands +
- * silence-hallucination filter).
- *
- * Sentinels ("primary", "auto") are NOT English. Callers must pass a
- * resolved BCP-47 (e.g. getMyDictationLanguage), never the stored
- * activeDictationLanguage sentinel.
+ * Strict English gate for language-specific sanitize steps such as the known
+ * silence-phrase filter. Sentinels ("primary", "auto") are not BCP-47 English.
+ * Spoken commands layer its documented `auto` policy on top of this helper;
+ * the language-agnostic noSpeechProb gate does not call it at all.
  */
 export const isEnglishSanitizeLanguage = (
   language: string | undefined,

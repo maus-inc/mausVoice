@@ -154,9 +154,7 @@ export abstract class BaseTranscriptionRepo extends BaseRepo {
     transcription: Transcription,
   ): Promise<Transcription>;
   abstract loadTranscriptionAudio(id: string): Promise<TranscriptionAudioData>;
-  abstract importAudioFile(
-    path: string,
-  ): Promise<ImportedTranscriptionAudioData>;
+  abstract importAudioFile(): Promise<ImportedTranscriptionAudioData | null>;
   abstract purgeStaleAudio(): Promise<string[]>;
 }
 
@@ -202,11 +200,14 @@ export class LocalTranscriptionRepo extends BaseTranscriptionRepo {
     return invoke<TranscriptionAudioData>("transcription_audio_load", { id });
   }
 
-  async importAudioFile(path: string): Promise<ImportedTranscriptionAudioData> {
-    const payload = await invoke<NativeImportedAudioData>(
+  async importAudioFile(): Promise<ImportedTranscriptionAudioData | null> {
+    // The native command owns the OS picker. Accepting a renderer-provided path
+    // here would turn IPC into a reusable reader for every file under the
+    // allowed roots instead of a one-shot, user-authorized selection.
+    const payload = await invoke<NativeImportedAudioData | null>(
       "transcription_import_audio",
-      { path },
     );
+    if (!payload) return null;
     return {
       samples: decodePcm16Le(payload.pcm16Le),
       sampleRate: payload.sampleRate,

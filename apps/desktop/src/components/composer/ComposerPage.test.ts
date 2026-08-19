@@ -171,6 +171,11 @@ describe("ComposerPage VoiceInstructionRecorder hydration", () => {
     const before = micButton();
     expect(before).not.toBeNull();
     expect(before?.disabled).toBe(true);
+    const reasonId = before?.getAttribute("aria-describedby");
+    expect(reasonId).toBeTruthy();
+    expect(document.getElementById(reasonId ?? "")?.textContent).toContain(
+      "Configure a text-generation provider",
+    );
     const constructsBeforeHydration = constructCount;
 
     // Simulate RootSideEffects hydrating the store with a generation provider

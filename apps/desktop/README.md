@@ -7,7 +7,7 @@ Authoritative docs: [Desktop architecture](https://maus-inc.github.io/mausVoice/
 ## Prerequisites
 
 - **Node.js from repo `.nvmrc` (v24).** Root `engines.node` is `>=20`.
-- **pnpm 10.11.0** (do not use npm for workspace scripts).
+- **pnpm 10.34.5** (do not use npm for workspace scripts).
 - **Rust** stable (Tauri v2; 1.77+ historical floor) and **CMake** (whisper-rs).
 - Platform tools: Xcode CLT (macOS), VS Build Tools (Windows). Linux deps: `.github/scripts/install-desktop-linux-deps.sh`.
 
@@ -45,13 +45,13 @@ pnpm exec turbo run build --filter=desktop^...
 pnpm --filter desktop run check-types
 pnpm --filter desktop lint
 pnpm --filter desktop test:unit
-pnpm --filter desktop test:integration
-pnpm --filter desktop test:evals
+pnpm --filter desktop test:integration  # requires GROQ_API_KEY; see .env.local.example
+pnpm --filter desktop test:evals        # requires GROQ_API_KEY; see .env.local.example
 ```
 
 `check-types` needs workspace packages (`@repo/agent`, `@maus-inc/*`) built first.
 
-`pnpm --filter desktop build` is the Vite/TS frontend only. Packaged native builds go through `pnpm tauri` / the OS-specific Tauri build after sidecars exist.
+`pnpm --filter desktop build` is the Vite/TS frontend only. Packaged native builds go through `pnpm --filter desktop tauri build` / the OS-specific Tauri build after sidecars exist.
 
 ## Project structure
 

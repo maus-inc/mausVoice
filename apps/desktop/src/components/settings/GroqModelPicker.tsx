@@ -1,6 +1,6 @@
 import ErrorOutlineIcon from "@mui/icons-material/ErrorOutlined";
 import { Box, CircularProgress, Typography } from "@mui/material";
-import { fetch } from "@tauri-apps/plugin-http";
+import { secureFetch as fetch } from "../../utils/secure-fetch.utils";
 import { useCallback, useEffect, useState } from "react";
 import { FormattedMessage } from "react-intl";
 import { FreeSoloModelAutocomplete } from "./FreeSoloModelAutocomplete";

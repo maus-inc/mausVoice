@@ -18,8 +18,19 @@ class HTMLLinkElement {
   href = "";
 }
 
-const installEarlyOverlay = () => {
-  const nodes = new Map<string, { id: string; textContent: string }>();
+type MockElement = {
+  id: string;
+  textContent: string;
+  childNodes: unknown[];
+};
+
+const installEarlyOverlay = (rootChildren: unknown[] = []) => {
+  const nodes = new Map<string, MockElement>();
+  nodes.set("root", {
+    id: "root",
+    textContent: "",
+    childNodes: rootChildren,
+  });
   const listeners: Record<string, Array<(event: unknown) => void>> = {
     error: [],
     unhandledrejection: [],
@@ -45,6 +56,7 @@ const installEarlyOverlay = () => {
           tagName: tag,
           style: { cssText: "" },
           textContent: "",
+          childNodes: [] as unknown[],
         };
         return new Proxy(el, {
           set(target, prop, value) {
@@ -134,5 +146,16 @@ describe("early error overlay", () => {
     expect(overlay?.textContent).toContain(
       "async init rejected before React mounted",
     );
+  });
+
+  it("does not paint a fatal rejection overlay after React has mounted", () => {
+    const { nodes, listeners } = installEarlyOverlay([{}]);
+
+    listeners.unhandledrejection[0]({
+      reason: new Error("post-mount rejection"),
+    });
+
+    expect(nodes.has("maus-global-error-overlay")).toBe(false);
+    expect(nodes.get("root")?.childNodes).toHaveLength(1);
   });
 });

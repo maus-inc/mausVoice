@@ -99,19 +99,21 @@ impl WhisperModel {
     }
 
     /// Every file required by the model-specific runtime. ONNX artifacts are
-    /// pinned to immutable Hugging Face revisions; executable graph/weight
-    /// files additionally carry the upstream LFS SHA-256 digest.
+    /// pinned to immutable Hugging Face revisions and every downloaded byte,
+    /// including tokenizer/vocabulary companions, carries a SHA-256 digest.
     // PR #63 (#55 integration) — SenseVoice supply-chain pinning. Artifacts are pinned to an
-    // immutable Hugging Face revision; the executable graph additionally carries
-    // the upstream SHA-256 digest so downloads are verified against tampering.
+    // immutable Hugging Face revision and every runtime file carries a SHA-256
+    // digest so downloads are verified against tampering.
     // Source: csukuangfj/sherpa-onnx-sense-voice-zh-en-ja-ko-yue-int8-2025-09-09
     //   revision 355f4d4884d8afd08aef04b9007a8556d7b463b2 (main)
     //   model.int8.onnx SHA-256 12ca1a2ae7ecf3e0019ef2822307ee0b5cadc9196569e379b4c4026f8205276d
+    //   tokens.txt SHA-256 f449eb28dc567533d7fa59be34e2abca8784f771850c78a47fb731a31429a1dc
     // SENSEVOICE_REVISION and SENSEVOICE_DOWNLOAD_URL must stay in sync.
     const SENSEVOICE_REVISION: &str = "355f4d4884d8afd08aef04b9007a8556d7b463b2";
     const SENSEVOICE_MODEL_SHA256: &str =
         "12ca1a2ae7ecf3e0019ef2822307ee0b5cadc9196569e379b4c4026f8205276d";
-    const SENSEVOICE_TOKENS_SHA256: Option<&str> = None;
+    const SENSEVOICE_TOKENS_SHA256: &str =
+        "f449eb28dc567533d7fa59be34e2abca8784f771850c78a47fb731a31429a1dc";
     const SENSEVOICE_DOWNLOAD_URL: &str =
         "https://huggingface.co/csukuangfj/sherpa-onnx-sense-voice-zh-en-ja-ko-yue-int8-2025-09-09/resolve/355f4d4884d8afd08aef04b9007a8556d7b463b2/model.int8.onnx";
     pub fn artifact_set(self) -> Vec<(&'static str, String, Option<&'static str>)> {
@@ -129,7 +131,11 @@ impl WhisperModel {
                         format!("{root}onnx/model_int8.onnx"),
                         Some("4de804b59b7b839ca21b97b5e506e558a859301d9a231a537e43c8f521037348"),
                     ),
-                    ("tokenizer.json", format!("{root}tokenizer.json"), None),
+                    (
+                        "tokenizer.json",
+                        format!("{root}tokenizer.json"),
+                        Some("f3f1dd45c3889ed2b5bf67180caf05f51d7d7e4948c20e5f24d8c24df9cc47aa"),
+                    ),
                 ]
             }
             Self::ParakeetTdt06B => {
@@ -145,7 +151,11 @@ impl WhisperModel {
                         format!("{root}decoder_joint-model.int8.onnx"),
                         Some("eea7483ee3d1a30375daedc8ed83e3960c91b098812127a0d99d1c8977667a70"),
                     ),
-                    ("vocab.txt", format!("{root}vocab.txt"), None),
+                    (
+                        "vocab.txt",
+                        format!("{root}vocab.txt"),
+                        Some("d58544679ea4bc6ac563d1f545eb7d474bd6cfa467f0a6e2c1dc1c7d37e3c35d"),
+                    ),
                 ]
             }
             Self::Canary1B => {
@@ -161,7 +171,11 @@ impl WhisperModel {
                         format!("{root}decoder-model.int8.onnx"),
                         Some("52d83aa7aad41fbbe4f9dfcd341d784735a6eb4c6eb0d3290fc27a0d8ac39abf"),
                     ),
-                    ("vocab.txt", format!("{root}vocab.txt"), None),
+                    (
+                        "vocab.txt",
+                        format!("{root}vocab.txt"),
+                        Some("2c9efe6104fd29522ea27ce0e3aef5d37c690af4e5a4232e643e23ca403ffea3"),
+                    ),
                 ]
             }
             Self::SenseVoice => {
@@ -178,7 +192,7 @@ impl WhisperModel {
                     (
                         "tokens.txt",
                         format!("{root}tokens.txt"),
-                        Self::SENSEVOICE_TOKENS_SHA256,
+                        Some(Self::SENSEVOICE_TOKENS_SHA256),
                     ),
                 ]
             }
@@ -319,11 +333,12 @@ mod tests {
             assert!(artifacts.iter().all(|(_, url, _)| {
                 url.starts_with("https://huggingface.co/") && !url.contains("/resolve/main/")
             }));
-            // The primary executable graph must always be digest-pinned,
-            // including SenseVoice (no longer exempt).
-            assert!(artifacts
-                .first()
-                .is_some_and(|(_, _, sha256)| sha256.is_some()));
+            // Every runtime artifact affects inference or decoding, so model
+            // graphs and tokenizer/vocabulary companions must all be pinned.
+            assert!(
+                artifacts.iter().all(|(_, _, sha256)| sha256.is_some()),
+                "every ONNX runtime artifact for {model:?} must be digest-pinned"
+            );
         }
     }
 
@@ -366,6 +381,12 @@ mod tests {
         assert!(
             digest.chars().all(|c| c.is_ascii_hexdigit()),
             "SenseVoice digest must be a hexadecimal SHA-256"
+        );
+        // The vocabulary affects token-to-text decoding and must not be
+        // indefinitely admitted merely because it is non-empty.
+        assert!(
+            artifacts.iter().all(|(_, _, sha256)| sha256.is_some()),
+            "every SenseVoice runtime artifact, including tokens.txt, must be digest-pinned"
         );
         // The primary download URL must also be revision-pinned.
         assert!(

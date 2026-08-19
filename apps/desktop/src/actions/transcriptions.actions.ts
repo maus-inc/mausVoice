@@ -312,18 +312,21 @@ export const retranscribeTranscription = async (
 };
 
 export type ImportAudioParams = {
-  path: string;
   toneId?: string | null;
   languageCode?: string | null;
 };
 
-/** Import a file, decode it in Rust, then use the exact live dictation pipeline. */
+/**
+ * Ask Rust to select/decode a file, then use the exact live dictation pipeline.
+ * Returns false when the native picker is cancelled so the UI can retain its
+ * pending Style/Language selections.
+ */
 export const importAudioFile = async ({
-  path,
   toneId,
   languageCode,
-}: ImportAudioParams): Promise<void> => {
-  const audio = await getTranscriptionRepo().importAudioFile(path);
+}: ImportAudioParams): Promise<boolean> => {
+  const audio = await getTranscriptionRepo().importAudioFile();
+  if (!audio) return false;
   const processed = await processAudio({
     samples: audio.samples,
     sampleRate: audio.sampleRate,
@@ -335,11 +338,12 @@ export const importAudioFile = async ({
 
   await storeTranscription({
     audio: { samples: audio.samples, sampleRate: audio.sampleRate },
-    rawTranscript: transcribeResult.rawTranscript || null,
+    rawTranscript: transcribeResult.rawTranscript ?? null,
     sanitizedTranscript,
-    transcript: postProcessResult.transcript || null,
+    transcript: postProcessResult.transcript ?? null,
     transcriptionMetadata: transcribeResult.metadata,
     postProcessMetadata: postProcessResult.metadata,
     warnings: [...transcribeResult.warnings, ...postProcessResult.warnings],
   });
+  return true;
 };

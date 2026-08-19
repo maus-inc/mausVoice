@@ -12,11 +12,11 @@ Releases are a **manual** `.github/workflows/release.yml` dispatch (version, pre
 | Docs / Pages | Separate docs workflow; not an enterprise channel |
 | Homebrew cask | Stable releases only → `maus-inc/homebrew-mausvoice` |
 
-Path filters watch `apps/desktop/`, `apps/windows-installer/`, `apps/docs/`, and `packages/`.
+The release workflow is `workflow_dispatch` only (no path filters). Build workspaces are `apps/desktop/`, `apps/windows-installer/`, `apps/docs/`, and `packages/`.
 
 ## Notes files
 
-- `prod.txt` — desktop release notes for the public GitHub Release body when used.
+- `prod.txt` — optional manual notes. The workflow does not read this file into the GitHub Release body; paste or attach notes when dispatching.
 
 There is no live `enterprise.txt` channel.
 

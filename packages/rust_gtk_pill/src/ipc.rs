@@ -3,9 +3,11 @@ use std::sync::mpsc::Sender;
 
 use serde::{Deserialize, Serialize};
 
-/// Axis-aligned screen rectangle in logical pixels, top-left origin, y-down —
-/// the same space Tauri uses for window placement on Linux. The desktop anchors
-/// the composer next to the pill using `rect` (the pill window) and `monitor`.
+/// Axis-aligned screen rectangle, top-left origin, y-down. Each platform's
+/// pill reports it in its own window-position space — physical pixels on
+/// Windows and X11 Linux, points on macOS — and the pill `rect` and its
+/// `monitor` are always in the same space, which is what the desktop's
+/// composer anchoring relies on.
 #[derive(Debug, Clone, Copy, Serialize)]
 pub struct Rect {
     pub x: f64,

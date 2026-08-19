@@ -121,7 +121,6 @@
   "checking_ollama_connection": "Verificando conexão do Ollama...",
   "checking_openai_compatible_connection": "A verificar ligação compatível com OpenAI...",
   "choose_a_different_microphone": "Escolha um microfone diferente",
-  "choose_audio_file": "Choose audio file",
   "choose_different_writing_styles_to_change_how_you_sound_whil": "Escolha diferentes estilos de escrita para mudar o seu tom. Ao ditar, prima {hotkey} para alternar entre eles.",
   "choose_different_writing_styles_to_change_how_you_sound_you": "Escolha diferentes estilos de escrita para mudar a forma como soa. Também pode <link>configurar teclas de atalho</link> para alternar entre eles enquanto dita.",
   "choose_file": "Choose file",

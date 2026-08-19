@@ -48,7 +48,7 @@ export const StyleHotkeysDialog = () => {
         .sort((a, b) => a.sortOrder - b.sortOrder),
     [toneById],
   );
-  const hotkeyById = useAppStore((state) => state.hotkeyById);
+const hotkeyById = useAppStore((state) => state.hotkeyById);
   const postProcessingEnabled = useAppStore(isPostProcessingEnabled);
   const intl = useIntl();
   const [rows, setRows] = useState<StyleHotkeyRow[]>([]);
@@ -69,9 +69,10 @@ export const StyleHotkeysDialog = () => {
         };
       }),
     );
-    // Rebuild rows when the dialog opens, persisted shortcuts change, or the
-    // available tone list changes while the dialog is open.
-  }, [open, hotkeyById, tones]);
+    // Snapshot persisted shortcuts when the dialog opens or the tone list
+    // changes. Do not depend on `hotkeyById`: unrelated store writes would
+    // wipe in-progress edits.
+  }, [open, tones]);
 
   useEffect(() => {
     if (open && !postProcessingEnabled) {
