@@ -45,18 +45,6 @@ const STRIKETHROUGH_RE = /~~([^~\n]+?)~~/g;
 /** Inline code backtick fences. */
 const INLINE_CODE_RE = /`([^`\n]+)`/g;
 
-/** Markdown links: [text](url). */
-const LINK_RE = /\[([^\]\n]+)\]\(([^)\n]+)\)/g;
-
-/** Markdown images: ![alt](url). */
-const IMAGE_RE = /!\[([^\]\n]*)\]\(([^)\n]+)\)/g;
-
-/** Reference-style link brackets: [text] or [text][label]. */
-// Split into two non-nested replacements to avoid Sonar's backtracking
-// flag on the optional group; [text][label] must win over bare [text].
-const REF_LINK_PAIR_RE = /\[([^\]]+)\]\[([^\]]*)\]/g;
-const REF_LINK_BARE_RE = /\[([^\]]+)\]/g;
-
 // ── Helpers ───────────────────────────────────────────────────────────────
 
 const ELLIPSIS = "\u2026";
@@ -88,6 +76,81 @@ const isFenceLine = (tl: string): boolean => {
   }
   const rest = tl.slice(3).trim();
   return rest === "" || /^\w+$/.test(rest);
+};
+
+/**
+ * Strip markdown images/links/reference-links with a hand-rolled scanner
+ * (no regex, so no backtracking). Scans left to right for '[' and resolves:
+ *   ![alt](url)  -> alt text
+ *   [text](url)  -> "text (url)" when short, else text
+ *   [text][label]-> text
+ *   [text]       -> text
+ */
+const stripLinkSyntax = (input: string): string => {
+  let out = "";
+  let i = 0;
+  while (i < input.length) {
+    if (input[i] !== "[") {
+      out += input[i];
+      i += 1;
+      continue;
+    }
+    const isImage = input[i + 1] === "!";
+    const open = isImage ? i + 1 : i;
+    const close = input.indexOf("]", open + 1);
+    if (close < 0) {
+      out += input.slice(i);
+      break;
+    }
+    const inner = input.slice(open + 1, close);
+
+    if (isImage) {
+      // ![alt](url) -> alt
+      if (input[close + 1] === "(") {
+        const endParen = input.indexOf(")", close + 2);
+        if (endParen >= 0) {
+          out += inner;
+          i = endParen + 1;
+          continue;
+        }
+      }
+      out += input.slice(i, close + 1);
+      i = close + 1;
+      continue;
+    }
+
+    // [text](url) -> "text (url)" when short
+    if (input[close + 1] === "(") {
+      const endParen = input.indexOf(")", close + 2);
+      if (endParen >= 0) {
+        const url = input.slice(close + 2, endParen);
+        const cleaned = collapseWhitespace(inner);
+        if (cleaned.includes(url) || cleaned.length > 50) {
+          out += cleaned;
+        } else {
+          const combined = `${cleaned} (${url})`;
+          out += combined.length > 60 ? cleaned : combined;
+        }
+        i = endParen + 1;
+        continue;
+      }
+    }
+
+    // [text][label] -> text
+    if (input[close + 1] === "[") {
+      const endLabel = input.indexOf("]", close + 2);
+      if (endLabel >= 0) {
+        out += inner;
+        i = endLabel + 1;
+        continue;
+      }
+    }
+
+    // bare [text] -> text
+    out += inner;
+    i = close + 1;
+  }
+  return out;
 };
 
 // ── Pipeline ──────────────────────────────────────────────────────────────
@@ -123,20 +186,10 @@ export const markdownToPillText = (
 
   let text = raw;
 
-  // 0. Strip images, then links, then reference links.
-  // Order matters: LINK_RE/IMAGE_RE must win over REF_LINK_RE for
-  // well-formed markdown so [text](url) is not reduced to text(url).
-  text = text.replace(IMAGE_RE, "$1");
-  text = text.replace(LINK_RE, (_match, linkText, url) => {
-    const cleaned = collapseWhitespace(linkText);
-    if (cleaned.includes(url) || cleaned.length > 50) return cleaned;
-    const combined = `${cleaned} (${url})`;
-    return combined.length > 60 ? cleaned : combined;
-  });
-
-  // Strip reference links after real links so [text] orphans don't survive.
-  text = text.replace(REF_LINK_PAIR_RE, "$1");
-  text = text.replace(REF_LINK_BARE_RE, "$1");
+  // 0. Strip images, then links, then reference links with a hand-rolled
+  // scanner (no regex, so Sonar's backtracking rules don't apply). Images
+  // and real links win over bare [text] reference brackets.
+  text = stripLinkSyntax(text);
 
   // 1. Strip fenced code blocks (replace with a compact "[code]" marker)
   const lines = text.split("\n");
@@ -170,6 +223,8 @@ export const markdownToPillText = (
   text = text.replace(/^\s*[-*+]\s+/gm, "\u2022 ");
 
   // 6. Convert ordered list markers to plain numbers
+  // NOSONAR: anchored, disjoint tokens ([ \t]* and \s+ are separated by
+  // \d+\.), so scanning is linear.
   text = text.replace(/^[ \t]*\d+\.\s+/gm, (match) => {
     const num = match.trim().split(".")[0];
     return `${num}. `;

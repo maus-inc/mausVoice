@@ -516,8 +516,7 @@ export const ContextMenuProvider = ({
             disabled: !hasSelection,
             onClick: () => {
               void navigator.clipboard.writeText(selection?.toString() ?? "");
-              // NOSONAR: no non-deprecated API exists for the Cut command.
-              document.execCommand("cut");
+              document.execCommand("cut"); // NOSONAR: no non-deprecated API for Cut
             },
             accelerator: modKey + "+X",
           },
@@ -543,8 +542,7 @@ export const ContextMenuProvider = ({
           {
             label: "Select All",
             onClick: () => {
-              // NOSONAR: no non-deprecated API exists for Select All.
-              document.execCommand("selectAll");
+              document.execCommand("selectAll"); // NOSONAR: no non-deprecated API for Select All
             },
             accelerator: modKey + "+A",
           },

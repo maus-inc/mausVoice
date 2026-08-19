@@ -17,10 +17,10 @@ interface Replacement {
 
 const replacements: Replacement[] = [
   // Em‑dashes → comma or space (context‑dependent).
-  // NOSONAR: \s* around a fixed literal is at most O(n) ambiguity for a
-  // fixed replacement; the two quantifiers cannot nest.
-  { pattern: /\s*—\s*/g, replace: ", " },
-  { pattern: /\s*–\s*/g, replace: " – " },
+  // \s* around a fixed literal is at most O(n) ambiguity for a fixed
+  // replacement; the two quantifiers cannot nest.
+  { pattern: /\s*—\s*/g, replace: ", " }, // NOSONAR: linear whitespace split
+  { pattern: /\s*–\s*/g, replace: " – " }, // NOSONAR: linear whitespace split
 
   // Common slop phrases (whole‑word, case‑insensitive where applicable)
   { pattern: /\bdelve\b/gi, replace: "explore" },
