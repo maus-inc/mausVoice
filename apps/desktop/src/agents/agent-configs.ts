@@ -2,6 +2,7 @@ import type { ToolInfo } from "@maus-inc/types";
 import { getAppState } from "../store";
 import { normalizeAgentMaxIterations } from "../repos/preferences.repo";
 import { getToolRegistryEntry } from "../tools";
+import { HUMANIZE_SKILL_TEXT } from "../utils/humanize.utils";
 
 export type AgentTypeConfig = {
   agentType: string;
@@ -34,6 +35,9 @@ export const CHAT_AGENT_CONFIG: AgentTypeConfig = {
     "When the user refers to something on their screen, read the context using your tools — don't ask them to paste it.",
     "After completing a task, deliver the result using the appropriate tool (e.g. paste text into their field) and respond concisely.",
     "Iteratively solve larger tasks, break them down into smaller steps and use your tools to complete each step, delivering results as you go.",
+    // A19: load the shared humanize skill so agent output is slop-free at the
+    // source (the post-hoc scrubber in run-agent.ts is the safety net).
+    HUMANIZE_SKILL_TEXT,
   ].join(" "),
   getToolFilter: (conversationId) => {
     const isPill = getAppState().pillConversationId === conversationId;

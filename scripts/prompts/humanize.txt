@@ -1,3 +1,7 @@
+<!-- NOTE: this is the standalone mirror of `HUMANIZE_SKILL_TEXT` in
+     apps/desktop/src/utils/humanize.utils.ts (the runtime source of truth,
+     loaded into the agent + post-processing prompts). Keep the two in sync. -->
+
 # Humanize Skill — Remove AI slop from LLM output
 
 Apply the following rules to make the text sound natural and human-written,

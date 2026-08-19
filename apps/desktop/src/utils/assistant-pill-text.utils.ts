@@ -7,9 +7,14 @@
  * ```fences```, `-` bullets, or raw links.
  *
  * DESIGN DECISIONS
- * - Greedy-but-idempotent: each chunk is processed independently so streaming
- *   never shows a half-rendered fence or dangling bullet. The output of the full
- *   text equals the concatenation of chunk outputs for the same boundary.
+ * - Streaming-safe by re-processing: the converter is a single-pass scanner
+ *   with no cross-call state (the fence `inFence` flag is per-invocation), so
+ *   partial/streaming input never leaks a half-rendered fence or dangling
+ *   bullet *into a single call's output*. It is NOT a chunk-append primitive:
+ *   concatenating the outputs of arbitrary chunk boundaries can differ from
+ *   converting the whole text (e.g. a link, code fence, or emphasis marker
+ *   spanning a chunk boundary). The consumer therefore re-converts the full
+ *   accumulated message on every sync — see OverlaySyncSideEffects.
  * - Locale-independent: no hardcoded English beyond universal symbols.
  * - Links: rendered as "text (url)" only when the link text and URL differ
  *   meaningfully AND the combined length stays under one line (~60 chars).
@@ -301,27 +306,4 @@ export const markdownToPillText = (
   }
 
   return text;
-};
-
-/**
- * Check whether a streaming chunk is "safe" — i.e. concatenating it with a
- * previous chunk produces the same result as converting the whole text at once.
- *
- * This is true for most single-pass string operations. The exception is the
- * fence detector: if a chunk ends with an opening fence delimiter, the next
- * chunk will produce "[code]" but the concatenation of the two chunks would
- * correctly produce "[code]" as well, because the fence handler spans chunks
- * via state. The only problematic case is a chunk that starts mid-fence:
- * "const x = 1;\n```" would be swallowed entirely by the open fence from the
- * previous chunk. Therefore a zero-trust streaming consumer should append
- * each chunk's output to the previous output, which gives correct results
- * for all cases except an *unclosed* fence at the very end of the stream.
- */
-export const isStreamingStable = (raw: string | null | undefined): boolean => {
-  if (!raw) return true;
-  // If the text contains an unmatched opening fence, the conversion drops
-  // everything after the opener. That's a streaming artifact, not stable.
-  const opens = (raw.match(/^`{3}(?:\w+)?\s*$/gm) || []).length;
-  const closes = (raw.match(/^`{3}\s*$/gm) || []).length;
-  return opens <= closes;
 };

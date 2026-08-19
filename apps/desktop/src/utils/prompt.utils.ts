@@ -11,6 +11,7 @@ import {
 } from "./language.utils";
 import { ToneConfig } from "./tone.utils";
 import { getMyUserName } from "./user.utils";
+import { HUMANIZE_SKILL_TEXT } from "./humanize.utils";
 
 const sanitizeGlossaryValue = (value: string): string =>
   // oxlint-disable-next-line no-control-regex
@@ -305,14 +306,23 @@ export const buildPostProcessingPrompt = (
   input: PostProcessingPromptInput,
 ): string => {
   const { transcript, tone } = input;
+  // A19: append the shared humanize skill to every post-processing prompt so
+  // styled dictation output is de-slopped at generation time (the scrubber in
+  // run-agent.ts is the post-hoc safety net).
+  const withHumanizeSkill = (base: string): string =>
+    `${base.trim()}\n\n${HUMANIZE_SKILL_TEXT}`;
+
   if (tone.kind === "template") {
-    return applyTemplateVars(
-      tone.promptTemplate,
-      buildPostProcessingTemplateVars(input),
+    return withHumanizeSkill(
+      applyTemplateVars(
+        tone.promptTemplate,
+        buildPostProcessingTemplateVars(input),
+      ),
     );
   }
 
-  return `
+  return withHumanizeSkill(
+    `
 Here is the transcript:
 
 <transcript>
@@ -320,7 +330,8 @@ ${transcript}
 </transcript>
 
 Process the transcript according to the instructions.
-`.trim();
+`,
+  );
 };
 
 export const PROCESSED_TRANSCRIPTION_SCHEMA = z.object({

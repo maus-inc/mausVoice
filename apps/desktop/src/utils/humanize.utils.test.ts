@@ -70,3 +70,17 @@ describe("humanizeScrub", () => {
     expect(humanizeScrub(input)).toBe(input);
   });
 });
+
+describe("humanizeScrub slop-word variants", () => {
+  it("handles 'utilize' inflections case-insensitively", () => {
+    expect(humanizeScrub("Utilizes the tool")).toBe("uses the tool");
+    expect(humanizeScrub("UTILIZED the tool")).toBe("used the tool");
+    expect(humanizeScrub("utilizing the tool")).toBe("using the tool");
+    expect(humanizeScrub("Utilize the tool")).toBe("use the tool");
+  });
+
+  it("leaves en-dashes (range separators) untouched", () => {
+    // En-dash (U+2013) is a legitimate range/compound separator, not AI slop.
+    expect(humanizeScrub("1–3 sentences")).toBe("1–3 sentences");
+  });
+});

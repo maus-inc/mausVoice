@@ -68,6 +68,7 @@ import { getIsDevMode } from "../../utils/env.utils";
 import { createId } from "../../utils/id.utils";
 import {
   ADD_TO_DICTIONARY_HOTKEY,
+  getStyleSwitchActionNamesForKey,
   syncHotkeyCombosToNative,
 } from "../../utils/keyboard.utils";
 import { getLogger, initLogging } from "../../utils/log.utils";
@@ -374,12 +375,23 @@ export const AppSideEffects = () => {
       return;
     }
 
-    // A21: When ALL keys are released, clear the hotkey filter's held-action
-    // set so style-switch actions can fire again on the next press.
-    if (existing.length > 0 && payload.keys.length === 0) {
-      // Release all held style actions - when all physical keys are up,
-      // no style action can be physically held anymore.
-      releaseHotkey("__all__");
+    // A21: Release a style-switch action's "held" state when its physical key
+    // is released. Releasing only when ALL keys are up would never fire during
+    // hold-to-talk dictation (the dictate key stays held), wedging style
+    // switching after the first press.
+    const releasedKeys = existing.filter(
+      (key) =>
+        !payload.keys.some((held) => held.toLowerCase() === key.toLowerCase()),
+    );
+    if (releasedKeys.length > 0) {
+      for (const key of releasedKeys) {
+        for (const actionName of getStyleSwitchActionNamesForKey(
+          getAppState(),
+          key,
+        )) {
+          releaseHotkey(actionName);
+        }
+      }
     }
 
     produceAppState((draft) => {
