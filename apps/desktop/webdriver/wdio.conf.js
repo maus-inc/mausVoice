@@ -25,7 +25,14 @@ const resolveNpmCommand = () => {
       return candidate;
     }
   }
-  throw new Error(`Unable to resolve npm next to ${process.execPath}`);
+  const fromPath = spawnSync(process.platform === 'win32' ? 'where' : 'which', ['npm'], {
+    encoding: 'utf8',
+  });
+  const pathHit = fromPath.stdout?.split(/\r?\n/).map((line) => line.trim()).find(Boolean);
+  if (fromPath.status === 0 && pathHit && fs.existsSync(pathHit)) {
+    return pathHit;
+  }
+  throw new Error(`Unable to resolve npm next to ${process.execPath} or on PATH`);
 };
 const npmCommand = resolveNpmCommand();
 const previewPort = Number(process.env.WDIO_PREVIEW_PORT ?? 4173);

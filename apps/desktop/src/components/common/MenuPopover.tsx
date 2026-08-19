@@ -113,8 +113,8 @@ const MenuPopoverSubMenuItem = ({
           }}
         >
           <Stack>
-            {item.children.map((child) => (
-              <Box key={getMenuItemKey(child)} role="menuitem">
+            {item.children.map((child, index) => (
+              <Box key={getMenuItemKey(child, index)} role="menuitem">
                 <MenuPopoverItemRend item={child} close={close} />
               </Box>
             ))}
@@ -169,16 +169,15 @@ type MenuPopoverProps = {
 
 type SharedProps = Omit<MenuPopoverProps, "open" | "anchorEl" | "onClose">;
 
-const menuItemKeys = new WeakMap<object, string>();
-let menuItemKeyCounter = 0;
-const getMenuItemKey = (item: object): string => {
-  let key = menuItemKeys.get(item);
-  if (key === undefined) {
-    key = `menu-item-${menuItemKeyCounter}`;
-    menuItemKeyCounter += 1;
-    menuItemKeys.set(item, key);
+const getMenuItemKey = (item: MenuPopoverItem, index: number): string => {
+  if (item.kind === "listItem" || item.kind === "subMenu") {
+    const label =
+      typeof item.title === "string" || typeof item.title === "number"
+        ? String(item.title)
+        : "";
+    return `${item.kind}-${index}-${label}`;
   }
-  return key;
+  return `${item.kind}-${index}`;
 };
 
 export const MenuPopover = ({
@@ -221,8 +220,8 @@ export const MenuPopover = ({
       {...rest}
     >
       <Stack sx={sx}>
-        {items.map((item) => (
-          <Box key={getMenuItemKey(item)} role="menuitem">
+        {items.map((item, index) => (
+          <Box key={getMenuItemKey(item, index)} role="menuitem">
             <MenuPopoverItemRend item={item} close={onClose} />
           </Box>
         ))}

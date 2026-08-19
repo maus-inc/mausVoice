@@ -407,30 +407,22 @@ export async function* geminiStreamChat({
     },
   });
 
-  const pendingToolCalls: Array<{
-    id: string;
-    name: string;
-    arguments: string;
-  }> = [];
-  let finishReason: LlmFinishReason = "other";
-  let promptTokens: number | undefined;
-  let completionTokens: number | undefined;
-  let toolCallCounter = 0;
+  const state: GeminiChunkState = {
+    pendingToolCalls: [],
+    toolCallCounter: 0,
+    finishReason: "other",
+    promptTokens: undefined,
+    completionTokens: undefined,
+  };
 
   for await (const chunk of stream) {
-    const events = handleGeminiChunk(chunk, {
-      pendingToolCalls,
-      toolCallCounter,
-      finishReason,
-      promptTokens,
-      completionTokens,
-    });
+    const events = handleGeminiChunk(chunk, state);
     for (const event of events) {
       yield event;
     }
   }
 
-  for (const tc of pendingToolCalls) {
+  for (const tc of state.pendingToolCalls) {
     yield {
       type: "tool-call",
       id: tc.id,
@@ -441,7 +433,7 @@ export async function* geminiStreamChat({
 
   yield {
     type: "finish",
-    finishReason,
-    usage: buildUsage(promptTokens, completionTokens),
+    finishReason: state.finishReason,
+    usage: buildUsage(state.promptTokens, state.completionTokens),
   };
 }

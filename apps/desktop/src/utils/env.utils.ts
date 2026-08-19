@@ -69,11 +69,59 @@ export const isWindows10 = (): boolean => {
   return userAgent.includes("Windows NT 10.0");
 };
 
+const WIN11_MIN_BUILD = 22000;
+
+type NavigatorUAData = {
+  platformVersion?: string;
+  getHighEntropyValues?: (
+    hints: string[],
+  ) => Promise<{ uaFullVersion?: string; platformVersion?: string }>;
+};
+
+let cachedUaChWin11: boolean | null = null;
+
+const readCachedPlatformVersion = (): string | undefined => {
+  const uaData = (navigator as Navigator & { userAgentData?: NavigatorUAData })
+    .userAgentData;
+  if (typeof uaData?.platformVersion === "string") {
+    return uaData.platformVersion;
+  }
+  if (uaData?.getHighEntropyValues && cachedUaChWin11 === null) {
+    void uaData
+      .getHighEntropyValues(["uaFullVersion", "platformVersion"])
+      .then((values) => {
+        const major = Number.parseInt(
+          (values.platformVersion ?? "").split(".")[0] ?? "",
+          10,
+        );
+        cachedUaChWin11 = Number.isFinite(major) ? major >= 13 : null;
+      })
+      .catch(() => {
+        cachedUaChWin11 = false;
+      });
+  }
+  return undefined;
+};
+
 export const isWindows11 = (): boolean => {
   if (!isWindows()) {
     return false;
   }
 
   const build = getWindowsBuildNumber(navigator.userAgent);
-  return build !== null && build >= 22000;
+  if (build !== null) {
+    return build >= WIN11_MIN_BUILD;
+  }
+
+  const platformVersion = readCachedPlatformVersion();
+  if (platformVersion) {
+    const major = Number.parseInt(platformVersion.split(".")[0] ?? "", 10);
+    return Number.isFinite(major) && major >= 13;
+  }
+
+  if (cachedUaChWin11 !== null) {
+    return cachedUaChWin11;
+  }
+
+  return /Windows 11/i.test(navigator.userAgent);
 };

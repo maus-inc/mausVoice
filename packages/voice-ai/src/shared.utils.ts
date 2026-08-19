@@ -108,7 +108,7 @@ export const createAudioFormData = (
           blob.buffer as ArrayBuffer,
           blob.byteOffset,
           blob.byteLength,
-        ).buffer;
+        ).slice().buffer;
   const audioBlob = new Blob([bodyData], { type: `audio/${ext}` });
   const formData = new FormData();
   formData.append("file", audioBlob, `audio.${ext}`);
