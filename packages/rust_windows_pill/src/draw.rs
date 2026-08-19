@@ -161,7 +161,7 @@ fn draw_pill(gfx: &mut Gfx, state: &PillState, ww: f64, wh: f64) {
             draw_loading(gfx, rx, ry, pill_w, pill_h, expand_t, state);
         }
         Phase::Idle if expand_t > 0.5 && (state.hovered.get() || state.assistant_active.get()) => {
-            draw_idle_label(gfx, rx, ry, pill_w, pill_h, expand_t);
+            draw_idle_label(gfx, rx, ry, pill_w, pill_h, expand_t, state);
         }
         _ => {}
     }
@@ -274,9 +274,39 @@ fn draw_loading(
     draw_edge_gradient(gfx, rx, ry, pill_w, pill_h, expand_t, state);
 }
 
-fn draw_idle_label(gfx: &Gfx, rx: f64, ry: f64, pill_w: f64, pill_h: f64, expand_t: f64) {
-    gfx.draw_text_centered("Click to dictate", rx, ry, pill_w, pill_h,
-        12.0, true, [1.0, 1.0, 1.0, 0.55 * expand_t]);
+fn draw_idle_label(gfx: &Gfx, rx: f64, ry: f64, pill_w: f64, pill_h: f64, expand_t: f64, state: &PillState) {
+    let drag_t = state.drag_label_t.get();
+    let (alpha_idle, alpha_drag) = rust_pill_shared::label_crossfade_alpha(drag_t, expand_t);
+
+    // Normalize baseline to pill vertical center (same concept as macOS/GTK base_y)
+    let base_y = ry + pill_h / 2.0;
+    let (y_idle_target, y_drag_target) = rust_pill_shared::label_slide_y(base_y, drag_t);
+
+    if alpha_idle > rust_pill_shared::LABEL_ALPHA_CUTOFF {
+        gfx.draw_text_centered(
+            rust_pill_shared::LABEL_IDLE_TEXT,
+            rx,
+            y_idle_target - pill_h / 2.0,
+            pill_w,
+            pill_h,
+            12.0,
+            false,
+            [1.0, 1.0, 1.0, alpha_idle],
+        );
+    }
+
+    if alpha_drag > rust_pill_shared::LABEL_ALPHA_CUTOFF {
+        gfx.draw_text_centered(
+            rust_pill_shared::LABEL_DRAG_TEXT,
+            rx,
+            y_drag_target - pill_h / 2.0,
+            pill_w,
+            pill_h,
+            12.0,
+            false,
+            [1.0, 1.0, 1.0, alpha_drag],
+        );
+    }
 }
 
 // ── Tooltip (dictation style selector) ────────────────────────────
@@ -319,7 +349,7 @@ fn draw_tooltip(gfx: &Gfx, state: &PillState, ww: f64, pill_area_top: f64) {
     let text_area_right = tooltip_rx + tooltip_w - padding_h - chevron_area;
     let text_area_w = text_area_right - text_area_left;
     gfx.draw_text_centered(&style_name, text_area_left, tooltip_ry, text_area_w, TOOLTIP_HEIGHT,
-        13.0, true, [1.0, 1.0, 1.0, 0.95 * alpha]);
+        13.0, false, [1.0, 1.0, 1.0, 0.95 * alpha]);
 
     // Click regions
     let mid_x = tooltip_rx + tooltip_w / 2.0;

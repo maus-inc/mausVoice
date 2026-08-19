@@ -174,7 +174,7 @@ fn draw_pill(cr: &cairo::Context, state: &PillState, ww: f64, wh: f64) {
             draw_loading(cr, rx, ry, pill_w, pill_h, radius, expand_t, state);
         }
         Phase::Idle if expand_t > 0.5 && (state.hovered.get() || state.assistant_active.get()) => {
-            draw_idle_label(cr, rx, ry, pill_w, pill_h, expand_t);
+            draw_idle_label(cr, rx, ry, pill_w, pill_h, expand_t, state);
         }
         _ => {}
     }
@@ -536,16 +536,34 @@ fn draw_paused_bar(
     cr.restore().ok();
 }
 
-fn draw_idle_label(cr: &cairo::Context, rx: f64, ry: f64, pill_w: f64, pill_h: f64, expand_t: f64) {
-    cr.set_source_rgba(1.0, 1.0, 1.0, 0.55 * expand_t);
-    cr.select_font_face("Satoshi", cairo::FontSlant::Normal, cairo::FontWeight::Bold);
+fn draw_idle_label(cr: &cairo::Context, rx: f64, ry: f64, pill_w: f64, pill_h: f64, expand_t: f64, state: &PillState) {
+    cr.select_font_face("Satoshi", cairo::FontSlant::Normal, cairo::FontWeight::Normal);
     cr.set_font_size(12.0);
-    let text = "Click to dictate";
-    let extents = cr.text_extents(text).unwrap();
-    let tx = rx + (pill_w - extents.width()) / 2.0 - extents.x_bearing();
-    let ty = ry + (pill_h - extents.height()) / 2.0 - extents.y_bearing();
-    cr.move_to(tx, ty);
-    let _ = cr.show_text(text);
+
+    let drag_t = state.drag_label_t.get();
+    let text_idle = rust_pill_shared::LABEL_IDLE_TEXT;
+    let text_drag = rust_pill_shared::LABEL_DRAG_TEXT;
+
+    let ext_idle = cr.text_extents(text_idle).unwrap();
+    let ext_drag = cr.text_extents(text_drag).unwrap();
+    let base_y = ry + (pill_h - ext_idle.height()) / 2.0 - ext_idle.y_bearing();
+
+    let (alpha_idle, alpha_drag) = rust_pill_shared::label_crossfade_alpha(drag_t, expand_t);
+    let (y_idle, y_drag) = rust_pill_shared::label_slide_y(base_y, drag_t);
+
+    if alpha_idle > rust_pill_shared::LABEL_ALPHA_CUTOFF {
+        cr.set_source_rgba(1.0, 1.0, 1.0, alpha_idle);
+        let tx = rx + (pill_w - ext_idle.width()) / 2.0 - ext_idle.x_bearing();
+        cr.move_to(tx, y_idle);
+        let _ = cr.show_text(text_idle);
+    }
+
+    if alpha_drag > rust_pill_shared::LABEL_ALPHA_CUTOFF {
+        cr.set_source_rgba(1.0, 1.0, 1.0, alpha_drag);
+        let tx = rx + (pill_w - ext_drag.width()) / 2.0 - ext_drag.x_bearing();
+        cr.move_to(tx, y_drag);
+        let _ = cr.show_text(text_drag);
+    }
 }
 
 // ── Tooltip (dictation style selector) ────────────────────────────
@@ -607,7 +625,7 @@ fn draw_tooltip(cr: &cairo::Context, state: &PillState, ww: f64, wh: f64) {
         return;
     }
 
-    cr.select_font_face("Satoshi", cairo::FontSlant::Normal, cairo::FontWeight::Bold);
+    cr.select_font_face("Satoshi", cairo::FontSlant::Normal, cairo::FontWeight::Normal);
     cr.set_font_size(12.0);
     let text_extents = cr.text_extents(&style_name).unwrap();
     let text_w = text_extents.width().clamp(20.0, 100.0);
@@ -659,7 +677,7 @@ fn draw_tooltip(cr: &cairo::Context, state: &PillState, ww: f64, wh: f64) {
 
     // Style name text
     cr.set_source_rgba(1.0, 1.0, 1.0, 0.9 * alpha);
-    cr.select_font_face("Satoshi", cairo::FontSlant::Normal, cairo::FontWeight::Bold);
+    cr.select_font_face("Satoshi", cairo::FontSlant::Normal, cairo::FontWeight::Normal);
     cr.set_font_size(11.0);
     let text_area_left = tooltip_rx + padding_h + chevron_area;
     let text_area_right = tooltip_rx + tooltip_w - padding_h - chevron_area;

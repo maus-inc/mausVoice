@@ -95,6 +95,53 @@ pub const DRAG_INFLATE_SCALE: f64 = 0.18;
 /// Spring stiffness for the inflate/deflate animation.
 pub const DRAG_INFLATE_STIFFNESS: f64 = 280.0;
 
+// ── Idle/drag label crossfade (shared by all pill renderers) ──────────────
+/// Base alpha multiplier for the idle label (before expand_t and drag_t).
+pub const LABEL_BASE_ALPHA: f64 = 0.55;
+/// Vertical slide offset for the crossfade in pixels.
+pub const LABEL_SLIDE_OFFSET: f64 = 2.0;
+/// Alpha cutoff below which a label is not drawn (avoids pointless draws).
+pub const LABEL_ALPHA_CUTOFF: f64 = 0.01;
+
+/// Idle label text shown when not dragging.
+pub const LABEL_IDLE_TEXT: &str = "Click to dictate";
+/// Label text shown when dragging (or held for drag).
+pub const LABEL_DRAG_TEXT: &str = "Drag To Move";
+
+/// Independent stiffness for the label crossfade spring (tunable separately
+/// from DRAG_INFLATE_STIFFNESS so label feel can evolve independently).
+pub const LABEL_SPRING_STIFFNESS: f64 = 280.0;
+
+/// Crossfade alphas for the idle / drag pair given drag progress and expand.
+pub fn label_crossfade_alpha(drag_t: f64, expand_t: f64) -> (f64, f64) {
+    let drag_t = drag_t.clamp(0.0, 1.0);
+    let expand_t = expand_t.clamp(0.0, 1.0);
+    (
+        LABEL_BASE_ALPHA * expand_t * (1.0 - drag_t),
+        LABEL_BASE_ALPHA * expand_t * drag_t,
+    )
+}
+
+/// Vertical slide Y positions for the two labels, given a base Y and drag_t.
+pub fn label_slide_y(base_y: f64, drag_t: f64) -> (f64, f64) {
+    let drag_t = drag_t.clamp(0.0, 1.0);
+    (
+        base_y - LABEL_SLIDE_OFFSET * drag_t,
+        base_y + LABEL_SLIDE_OFFSET * (1.0 - drag_t),
+    )
+}
+
+/// Shared font-registration failure log.
+///
+/// Strategy: draw-time critical paths (macOS NSFont, Windows DirectWrite
+/// text format) must not fall back silently — they log via this helper and
+/// then panic. Setup paths (GTK fontconfig, Windows collection refresh)
+/// log here without panicking, because failure at install is visible at draw
+/// and must be loud, but does not need to abort the process immediately.
+pub fn log_font_error(msg: &str) {
+    eprintln!("[mausVoice-font] {}", msg);
+}
+
 // ── Long-press ring: one continuous driver ────────────────────────────────
 //
 // The ring is a "comet" that sweeps the pill perimeter while the gesture is
