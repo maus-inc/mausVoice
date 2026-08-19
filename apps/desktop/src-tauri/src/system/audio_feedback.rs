@@ -162,17 +162,62 @@ mod thock_limiter {
 
     static LAST_THOCK_MS: AtomicU64 = AtomicU64::new(0);
 
+    /// Pure decision: true when `now_ms` is within THROTTLE_MS of the last
+    /// accepted timestamp. On accept, records `now_ms` and returns false.
+    fn should_throttle_at(now_ms: u64) -> bool {
+        let last = LAST_THOCK_MS.load(Ordering::Relaxed);
+        if now_ms.saturating_sub(last) < THROTTLE_MS {
+            return true;
+        }
+        LAST_THOCK_MS.store(now_ms, Ordering::Relaxed);
+        false
+    }
+
     pub fn should_throttle() -> bool {
         let now = SystemTime::now()
             .duration_since(UNIX_EPOCH)
             .unwrap_or_default()
             .as_millis() as u64;
-        let last = LAST_THOCK_MS.load(Ordering::Relaxed);
-        if now.saturating_sub(last) < THROTTLE_MS {
-            return true;
+        should_throttle_at(now)
+    }
+
+    #[cfg(test)]
+    mod tests {
+        use super::*;
+
+        fn reset() {
+            LAST_THOCK_MS.store(0, Ordering::Relaxed);
         }
-        LAST_THOCK_MS.store(now, Ordering::Relaxed);
-        false
+
+        #[test]
+        fn first_thock_is_not_throttled() {
+            reset();
+            assert!(!should_throttle_at(1_000));
+        }
+
+        #[test]
+        fn within_window_is_throttled() {
+            reset();
+            assert!(!should_throttle_at(1_000)); // accept at t=1000
+            assert!(should_throttle_at(1_050)); // 50ms later -> throttled
+            assert!(should_throttle_at(1_099)); // 99ms later -> throttled
+        }
+
+        #[test]
+        fn at_or_past_window_is_reenabled() {
+            reset();
+            assert!(!should_throttle_at(1_000));
+            assert!(!should_throttle_at(1_100)); // exactly 100ms -> accept
+            assert!(!should_throttle_at(1_250)); // past window -> accept
+        }
+
+        #[test]
+        fn clock_skew_backwards_is_safe() {
+            reset();
+            assert!(!should_throttle_at(2_000));
+            // `saturating_sub` must not panic or un-throttle on a backwards clock.
+            assert!(should_throttle_at(1_900)); // 1900 - 2000 saturates to 0 < 100
+        }
     }
 }
 

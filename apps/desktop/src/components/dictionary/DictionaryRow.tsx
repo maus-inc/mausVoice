@@ -3,11 +3,18 @@ import DeleteOutlineRoundedIcon from "@mui/icons-material/DeleteOutlineRounded";
 import { PublicOutlined } from "@mui/icons-material";
 import { IconButton, Stack, TextField, Tooltip } from "@mui/material";
 import { getRec } from "@maus-inc/utilities";
-import { useCallback, useEffect, useState, type ChangeEvent } from "react";
+import {
+  useCallback,
+  useEffect,
+  useMemo,
+  useState,
+  type ChangeEvent,
+} from "react";
 import { FormattedMessage, useIntl } from "react-intl";
 import { showErrorSnackbar } from "../../actions/app.actions";
 import { getTermRepo } from "../../repos";
 import { getAppState, produceAppState, useAppStore } from "../../store";
+import { useContextMenu, type ContextMenuItem } from "../common/ContextMenu";
 
 export type DictionaryRowProps = {
   id: string;
@@ -101,77 +108,102 @@ export const DictionaryRow = ({ id }: DictionaryRowProps) => {
     }
   }, [id, term]);
 
+  const ctxMenu = useContextMenu();
+
+  const contextMenuItems = useMemo<ContextMenuItem[]>(
+    () => [
+      {
+        label: intl.formatMessage({ defaultMessage: "Delete" }),
+        danger: true,
+        onClick: handleDelete,
+      },
+    ],
+    [handleDelete, intl],
+  );
+
   if (!term) {
     return null;
   }
 
   return (
-    <Stack
-      direction="row"
-      spacing={2}
-      sx={{
-        alignItems: "center",
-        py: 1,
-      }}
-    >
-      <TextField
-        variant="outlined"
-        size="small"
-        placeholder={
-          isReplacement
-            ? intl.formatMessage({ defaultMessage: "Original" })
-            : intl.formatMessage({ defaultMessage: "Glossary term" })
+    <>
+      {ctxMenu.renderMenu()}
+      <Stack
+        direction="row"
+        spacing={2}
+        onContextMenu={(e) =>
+          ctxMenu.handleContextMenu(
+            e.nativeEvent,
+            contextMenuItems,
+            "dictionary",
+          )
         }
-        value={sourceValue}
-        onChange={handleFieldChange("source")}
-        onBlur={handleCommit}
-        disabled={isGlobal}
-        sx={{ flex: 1 }}
-        error={!isGlobal && sourceValue.trim() === ""}
-      />
-      {isReplacement ? (
-        <>
-          <ArrowForwardRoundedIcon color="action" fontSize="small" />
-          <TextField
-            variant="outlined"
-            size="small"
-            placeholder={intl.formatMessage({ defaultMessage: "Replacement" })}
-            value={destinationValue}
-            onChange={handleFieldChange("destination")}
-            onBlur={handleCommit}
-            disabled={isGlobal}
-            multiline
-            minRows={1}
-            sx={{ flex: 1, "& textarea": { lineHeight: 1.5 } }}
-            error={!isGlobal && destinationValue.trim() === ""}
-          />
-        </>
-      ) : null}
-      {isGlobal ? (
-        <Tooltip
-          disableInteractive
-          title={
-            <FormattedMessage defaultMessage="This term is managed by your organization." />
-          }
-        >
-          <span>
-            <IconButton size="small" disabled>
-              <PublicOutlined fontSize="small" />
-            </IconButton>
-          </span>
-        </Tooltip>
-      ) : (
-        <IconButton
-          aria-label={intl.formatMessage(
-            { defaultMessage: "Delete dictionary item {term}" },
-            { term: term.sourceValue },
-          )}
-          onClick={handleDelete}
+        sx={{
+          alignItems: "center",
+          py: 1,
+        }}
+      >
+        <TextField
+          variant="outlined"
           size="small"
-        >
-          <DeleteOutlineRoundedIcon fontSize="small" />
-        </IconButton>
-      )}
-    </Stack>
+          placeholder={
+            isReplacement
+              ? intl.formatMessage({ defaultMessage: "Original" })
+              : intl.formatMessage({ defaultMessage: "Glossary term" })
+          }
+          value={sourceValue}
+          onChange={handleFieldChange("source")}
+          onBlur={handleCommit}
+          disabled={isGlobal}
+          sx={{ flex: 1 }}
+          error={!isGlobal && sourceValue.trim() === ""}
+        />
+        {isReplacement ? (
+          <>
+            <ArrowForwardRoundedIcon color="action" fontSize="small" />
+            <TextField
+              variant="outlined"
+              size="small"
+              placeholder={intl.formatMessage({
+                defaultMessage: "Replacement",
+              })}
+              value={destinationValue}
+              onChange={handleFieldChange("destination")}
+              onBlur={handleCommit}
+              disabled={isGlobal}
+              multiline
+              minRows={1}
+              sx={{ flex: 1, "& textarea": { lineHeight: 1.5 } }}
+              error={!isGlobal && destinationValue.trim() === ""}
+            />
+          </>
+        ) : null}
+        {isGlobal ? (
+          <Tooltip
+            disableInteractive
+            title={
+              <FormattedMessage defaultMessage="This term is managed by your organization." />
+            }
+          >
+            <span>
+              <IconButton size="small" disabled>
+                <PublicOutlined fontSize="small" />
+              </IconButton>
+            </span>
+          </Tooltip>
+        ) : (
+          <IconButton
+            aria-label={intl.formatMessage(
+              { defaultMessage: "Delete dictionary item {term}" },
+              { term: term.sourceValue },
+            )}
+            onClick={handleDelete}
+            size="small"
+          >
+            <DeleteOutlineRoundedIcon fontSize="small" />
+          </IconButton>
+        )}
+      </Stack>
+    </>
   );
 };

@@ -7,6 +7,8 @@ import type { Transcription } from "@maus-inc/types";
 import { INITIAL_APP_STATE } from "../../state/app.state";
 import { produceAppState, setAppState } from "../../store";
 
+const h = vi.hoisted(() => ({ deleteTranscription: vi.fn() }));
+
 vi.mock("@tauri-apps/api/core", async (importOriginal) => {
   const actual = await importOriginal<typeof import("@tauri-apps/api/core")>();
   return {
@@ -21,7 +23,7 @@ vi.mock("../../actions/remote-output.actions", () => ({
 
 vi.mock("../../repos", () => ({
   getTranscriptionRepo: () => ({
-    deleteTranscription: vi.fn(),
+    deleteTranscription: h.deleteTranscription,
   }),
 }));
 
@@ -189,5 +191,81 @@ describe("TranscriptionRow retranscribe button states", () => {
     expect(
       button?.querySelector('[data-testid="ReplayRoundedIcon"]'),
     ).not.toBeNull();
+  });
+});
+
+describe("TranscriptionRow context menu", () => {
+  let container: HTMLDivElement;
+  let root: ReturnType<typeof createRoot> | null = null;
+
+  beforeEach(() => {
+    resetState();
+    seedRow();
+    container = document.createElement("div");
+    document.body.appendChild(container);
+    stubMatchMedia(false);
+  });
+
+  afterEach(() => {
+    act(() => {
+      root?.unmount();
+    });
+    root = null;
+    container.remove();
+    resetState();
+  });
+
+  const openMenu = async () => {
+    root = await renderRow(container);
+    const row = container.querySelector<HTMLElement>("div");
+    const event = new MouseEvent("contextmenu", {
+      bubbles: true,
+      cancelable: true,
+      clientX: 50,
+      clientY: 50,
+    });
+    act(() => {
+      row?.dispatchEvent(event);
+    });
+    return document.querySelector('[role="menu"]');
+  };
+
+  const menuLabels = (menu: Element | null): string[] =>
+    Array.from(menu?.querySelectorAll('[role="menuitem"]') ?? []).map(
+      (el) => el.textContent ?? "",
+    );
+
+  it("opens a context menu with common verbs first and Delete last", async () => {
+    const menu = await openMenu();
+    expect(menu).not.toBeNull();
+    expect(menuLabels(menu)).toEqual([
+      "Copy text",
+      "Copy ID",
+      "Open details",
+      "Retranscribe",
+      "Delete",
+    ]);
+    // Divider sits between Retranscribe and Delete.
+    expect(menu?.querySelector("hr")).not.toBeNull();
+    const items = menu?.querySelectorAll('[role="menuitem"]') ?? [];
+    expect(items[items.length - 1].textContent).toBe("Delete");
+  });
+
+  it("deletes the transcription when the Delete item is clicked", async () => {
+    const menu = await openMenu();
+    const deleteItem = Array.from(
+      menu?.querySelectorAll('[role="menuitem"]') ?? [],
+    ).find((el) => el.textContent === "Delete") as HTMLElement | undefined;
+    expect(deleteItem).toBeTruthy();
+
+    await act(async () => {
+      deleteItem?.click();
+    });
+
+    const repo = await import("../../repos");
+    expect(
+      repo.getTranscriptionRepo().deleteTranscription,
+    ).toHaveBeenCalledWith("row-1");
+    expect(document.querySelector('[role="menu"]')).toBeNull();
   });
 });
