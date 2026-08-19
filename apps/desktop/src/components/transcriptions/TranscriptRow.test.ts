@@ -70,6 +70,23 @@ const seedRow = () => {
   });
 };
 
+const stubMatchMedia = (matches: boolean) => {
+  Object.defineProperty(window, "matchMedia", {
+    writable: true,
+    configurable: true,
+    value: (query: string) => ({
+      matches,
+      media: query,
+      onchange: null,
+      addListener: () => {},
+      removeListener: () => {},
+      addEventListener: () => {},
+      removeEventListener: () => {},
+      dispatchEvent: () => false,
+    }),
+  });
+};
+
 const renderRow = async (container: HTMLElement) => {
   const root = createRoot(container);
   await act(async () => {
@@ -98,20 +115,7 @@ describe("TranscriptionRow retranscribe button states", () => {
     seedRow();
     container = document.createElement("div");
     document.body.appendChild(container);
-    Object.defineProperty(window, "matchMedia", {
-      writable: true,
-      configurable: true,
-      value: (query: string) => ({
-        matches: false,
-        media: query,
-        onchange: null,
-        addListener: () => {},
-        removeListener: () => {},
-        addEventListener: () => {},
-        removeEventListener: () => {},
-        dispatchEvent: () => false,
-      }),
-    });
+    stubMatchMedia(false);
   });
 
   afterEach(() => {
@@ -137,6 +141,26 @@ describe("TranscriptionRow retranscribe button states", () => {
       "Retranscribing audio clip",
     );
     expect(button?.querySelector(".MuiCircularProgress-root")).not.toBeNull();
+    expect(
+      button?.querySelector('[data-testid="HourglassEmptyRoundedIcon"]'),
+    ).toBeNull();
+  });
+
+  it("renders a static hourglass instead of a spinner when motion is reduced", async () => {
+    stubMatchMedia(true);
+    produceAppState((draft) => {
+      draft.transcriptions.retranscribingIds.push("row-1");
+    });
+    root = await renderRow(container);
+
+    const button = retranscribeButton(container);
+    expect(button).not.toBeNull();
+    expect(button?.disabled).toBe(true);
+    expect(button?.getAttribute("aria-busy")).toBe("true");
+    expect(button?.querySelector(".MuiCircularProgress-root")).toBeNull();
+    expect(
+      button?.querySelector('[data-testid="HourglassEmptyRoundedIcon"]'),
+    ).not.toBeNull();
   });
 
   it("renders a checkmark while the row is in the completed set", async () => {

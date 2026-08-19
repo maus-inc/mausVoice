@@ -2,6 +2,7 @@ import ContentCopyRoundedIcon from "@mui/icons-material/ContentCopyRounded";
 import CheckCircleRoundedIcon from "@mui/icons-material/CheckCircleRounded";
 import DeleteOutlineRoundedIcon from "@mui/icons-material/DeleteOutlineRounded";
 import FileDownloadOutlinedIcon from "@mui/icons-material/FileDownloadOutlined";
+import HourglassEmptyRoundedIcon from "@mui/icons-material/HourglassEmptyRounded";
 import InfoOutlinedIcon from "@mui/icons-material/InfoOutlined";
 import ReplayRoundedIcon from "@mui/icons-material/ReplayRounded";
 import SendRoundedIcon from "@mui/icons-material/SendRounded";
@@ -268,15 +269,18 @@ export const TranscriptionRow = ({ id }: TranscriptionRowProps) => {
                     sx={{ p: 0.5 }}
                   >
                     {isRetranscribing ? (
-                      <CircularProgress
-                        size={18}
-                        color="inherit"
-                        variant={
-                          prefersReducedMotion ? "determinate" : "indeterminate"
-                        }
-                        value={prefersReducedMotion ? 70 : undefined}
-                        aria-hidden
-                      />
+                      prefersReducedMotion ? (
+                        <HourglassEmptyRoundedIcon
+                          fontSize="small"
+                          aria-hidden
+                        />
+                      ) : (
+                        <CircularProgress
+                          size={18}
+                          color="inherit"
+                          aria-hidden
+                        />
+                      )
                     ) : didRetranscribe ? (
                       <CheckCircleRoundedIcon
                         color="success"

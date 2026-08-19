@@ -128,10 +128,11 @@ describe("retranscribeTranscription feedback", () => {
     });
     expect(getAppState().transcriptions.retranscribingIds).toEqual(["a"]);
     expect(showSnackbar).toHaveBeenCalledWith("Retranscribing audio clip", {
-      duration: 15 * 60 * 1000,
+      duration: 2 * 60 * 1000,
     });
     expect(showPersistentToast).toHaveBeenCalledWith(
       "Retranscribing audio clip",
+      2 * 60 * 1000,
     );
 
     await done;

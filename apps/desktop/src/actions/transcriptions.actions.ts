@@ -154,7 +154,7 @@ type RetranscribeTranscriptionParams = {
   languageCode?: string | null;
 };
 
-const RETRANSCRIBE_LOADING_SNACKBAR_MS = 15 * 60 * 1000;
+const RETRANSCRIBE_LOADING_SNACKBAR_MS = 2 * 60 * 1000;
 
 const retranscribeGenerationById = new Map<string, number>();
 
@@ -168,6 +168,25 @@ const isCurrentRetranscribeGeneration = (
   transcriptionId: string,
   generation: number,
 ): boolean => retranscribeGenerationById.get(transcriptionId) === generation;
+
+const releaseRetranscribeGeneration = (
+  transcriptionId: string,
+  generation: number,
+): void => {
+  if (retranscribeGenerationById.get(transcriptionId) === generation) {
+    retranscribeGenerationById.delete(transcriptionId);
+  }
+};
+
+const ignoreToastFailure = (error: unknown): void => {
+  console.error("Retranscribe toast failed", error);
+};
+
+const runToast = (work: Promise<void>): void => {
+  void work.catch(ignoreToastFailure);
+};
+
+let ownsRetranscribeNativeToast = false;
 
 const retranscribeFeedbackCopy = () => {
   const intl = getIntl();
@@ -187,13 +206,15 @@ const retranscribeFeedbackCopy = () => {
 const showRetranscribeLoadingFeedback = () => {
   const { loading } = retranscribeFeedbackCopy();
   showSnackbar(loading, { duration: RETRANSCRIBE_LOADING_SNACKBAR_MS });
-  void showPersistentToast(loading);
+  ownsRetranscribeNativeToast = true;
+  runToast(showPersistentToast(loading, RETRANSCRIBE_LOADING_SNACKBAR_MS));
 };
 
 const showRetranscribeSuccessFeedback = () => {
   const { complete } = retranscribeFeedbackCopy();
   showSnackbar(complete, { mode: "success" });
-  void showCompletionToast(complete);
+  ownsRetranscribeNativeToast = true;
+  runToast(showCompletionToast(complete));
 };
 
 const syncRetranscribeFeedback = (event: "success" | "error") => {
@@ -205,7 +226,11 @@ const syncRetranscribeFeedback = (event: "success" | "error") => {
     showRetranscribeSuccessFeedback();
     return;
   }
-  void dismissToast();
+  if (!ownsRetranscribeNativeToast) {
+    return;
+  }
+  ownsRetranscribeNativeToast = false;
+  runToast(dismissToast());
 };
 
 const performRetranscribe = async ({
@@ -268,6 +293,7 @@ export const retranscribeTranscription = async (
       produceAppState((draft) => {
         clearRetranscribeSuccess(draft.transcriptions, transcriptionId);
       });
+      releaseRetranscribeGeneration(transcriptionId, generation);
     }, RETRANSCRIPTION_SUCCESS_VISIBLE_MS);
   } catch (error) {
     if (!isCurrentRetranscribeGeneration(transcriptionId, generation)) {
@@ -281,6 +307,7 @@ export const retranscribeTranscription = async (
     const message = error instanceof Error ? error.message : failed;
     showErrorSnackbar(message || failed);
     syncRetranscribeFeedback("error");
+    releaseRetranscribeGeneration(transcriptionId, generation);
   }
 };
 
