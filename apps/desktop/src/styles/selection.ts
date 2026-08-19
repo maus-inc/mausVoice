@@ -26,20 +26,19 @@ import { duration, easeOutCubic } from "./motion";
  *   the original dark-mode bug.
  * - MUI emits a `[data-mui-color-scheme="dark"]` override for outlined Paper
  *   that resets the `border` shorthand after sx, so the border alone cannot
- *   carry the selection signal in dark mode. The `0 0 0 1px` ring lives in
- *   box-shadow, which no override touches, and keeps the outline crisp on top
- *   of the card's own border in both schemes.
+ *   carry the selection signal in dark mode. The ring lives in box-shadow,
+ *   which no override touches, and keeps the outline crisp on top of the
+ *   card's own border in both schemes.
  *
- * Selected hover keeps the stroke instead of reverting to the resting border;
- * the global `:focus-visible` outline in the theme still handles keyboard
- * focus and is left untouched.
+ * Hover is intentionally left to the consumer (ApiKeyCard owns it in a single
+ * place), so this stays a pure selected-state declaration; the global
+ * `:focus-visible` outline in the theme still handles keyboard focus.
+ *
+ * @param ringWidth thickness of the outline ring in px (default 1).
  */
-export const selectedOutlineSx = (theme: Theme) => ({
+export const selectedOutlineSx = (theme: Theme, ringWidth = 1) => ({
   borderColor: "text.primary",
-  boxShadow: `0 0 0 1px ${theme.vars.palette.text.primary}`,
-  "&:hover": {
-    borderColor: "text.primary",
-  },
+  boxShadow: `0 0 0 ${ringWidth}px ${theme.vars.palette.text.primary}`,
 });
 
 /** Width of the rail that marks the active row. */

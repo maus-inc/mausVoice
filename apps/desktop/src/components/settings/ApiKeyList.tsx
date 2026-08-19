@@ -629,15 +629,18 @@ const ApiKeyCard = ({
           borderWidth: 1,
           cursor: "pointer",
           transition: "border-color 0.2s ease, box-shadow 0.2s ease",
+          // Hover lives here, in one place: a selected card keeps its stroke
+          // (never reverts to an invisible state), an unselected card lights
+          // up with the active border colour.
           ":hover": {
-            borderColor: "action.active",
+            borderColor: selected ? "text.primary" : "action.active",
           },
           display: "flex",
           flexDirection: "column",
           gap: 2,
           width: "100%",
         },
-        selected && ((theme) => selectedOutlineSx(theme)),
+        selected && selectedOutlineSx,
       ]}
     >
       <Stack

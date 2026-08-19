@@ -42,6 +42,13 @@ describe("selectedOutlineSx", () => {
     );
   });
 
+  it("supports a custom ring width", () => {
+    const style = selectedOutlineSx(theme, 2);
+    expect(style.boxShadow).toContain(
+      `0 0 0 2px var(--app-palette-text-primary, ${text.light.primary})`,
+    );
+  });
+
   it("keeps the ring visible against the card background in both schemes", () => {
     // The stroke token flips per scheme: dark ink in light mode, light text
     // in dark mode — never the raw primary color. (These are the same tokens
@@ -56,10 +63,5 @@ describe("selectedOutlineSx", () => {
     // WCAG non-text contrast: >= 3:1 for UI component boundaries.
     expect(contrastRatio(lightStroke, lightCard)).toBeGreaterThanOrEqual(3);
     expect(contrastRatio(darkStroke, darkCard)).toBeGreaterThanOrEqual(3);
-  });
-
-  it("keeps the selected stroke on hover instead of reverting to the resting border", () => {
-    const style = selectedOutlineSx(theme);
-    expect(style["&:hover"]?.borderColor).toBe("text.primary");
   });
 });
