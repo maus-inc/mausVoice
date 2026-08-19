@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   getEffectiveToneIdAtFinalize,
   resolveInDictationArrowStyleSwitch,
+  resolveNewlyPressedDictationArrow,
   toWritingStyleTransition,
   type FinalizeToneArgs,
 } from "./dictation-style.utils";
@@ -115,6 +116,29 @@ describe("toWritingStyleTransition", () => {
     expect(
       toWritingStyleTransition({ channel: "hotkey", toneId: SWITCHED }),
     ).toEqual({ kind: "select", toneId: SWITCHED });
+  });
+});
+
+describe("resolveNewlyPressedDictationArrow", () => {
+  it("returns LeftArrow when left just went down", () => {
+    expect(
+      resolveNewlyPressedDictationArrow(new Set(["leftarrow"]), new Set()),
+    ).toBe("LeftArrow");
+  });
+
+  it("returns RightArrow when right just went down", () => {
+    expect(
+      resolveNewlyPressedDictationArrow(new Set(["rightarrow"]), new Set()),
+    ).toBe("RightArrow");
+  });
+
+  it("returns null when the arrow was already held", () => {
+    expect(
+      resolveNewlyPressedDictationArrow(
+        new Set(["leftarrow"]),
+        new Set(["leftarrow"]),
+      ),
+    ).toBeNull();
   });
 });
 

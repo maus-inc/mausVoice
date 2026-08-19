@@ -28,6 +28,23 @@ export const toWritingStyleTransition = (
 export type InDictationArrow = "LeftArrow" | "RightArrow";
 
 /**
+ * First arrow that just went down. Keys in both sets are already lowercased.
+ * Left wins if both edges fire in the same update (they should not).
+ */
+export const resolveNewlyPressedDictationArrow = (
+  current: Set<string>,
+  previous: Set<string>,
+): InDictationArrow | null => {
+  if (current.has("leftarrow") && !previous.has("leftarrow")) {
+    return "LeftArrow";
+  }
+  if (current.has("rightarrow") && !previous.has("rightarrow")) {
+    return "RightArrow";
+  }
+  return null;
+};
+
+/**
  * Decides whether a Left/Right press while the dictate key is held should
  * cycle the writing style. Returns the cycle direction, or null when the
  * press must be ignored.

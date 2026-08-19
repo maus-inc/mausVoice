@@ -68,7 +68,7 @@ import {
 import {
   getEffectiveToneIdAtFinalize,
   resolveInDictationArrowStyleSwitch,
-  type InDictationArrow,
+  resolveNewlyPressedDictationArrow,
 } from "../../utils/dictation-style.utils";
 import { getEffectiveStylingMode } from "../../utils/feature.utils";
 import { createId } from "../../utils/id.utils";
@@ -1013,12 +1013,7 @@ export const DictationSideEffects = () => {
     const activationHeld = dictateCombos.some((combo) =>
       combo.every((key) => current.has(key.toLowerCase())),
     );
-    const newlyPressed: InDictationArrow | null =
-      current.has("leftarrow") && !previous.has("leftarrow")
-        ? "LeftArrow"
-        : current.has("rightarrow") && !previous.has("rightarrow")
-          ? "RightArrow"
-          : null;
+    const newlyPressed = resolveNewlyPressedDictationArrow(current, previous);
     const arrowDirection = resolveInDictationArrowStyleSwitch({
       enabled: inDictationStyleSwitchingEnabled,
       isMainWindow,
