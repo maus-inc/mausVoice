@@ -17,9 +17,6 @@ on:
       - ".github/scripts/install-desktop-linux-deps.sh"
       - ".github/workflows/build-desktop.yml"
   pull_request:
-    branches:
-      - main
-      - linting
     paths:
       - "apps/desktop/**"
       - "apps/windows-installer/**"
@@ -32,6 +29,12 @@ on:
       - ".nvmrc"
       - ".github/scripts/install-desktop-linux-deps.sh"
       - ".github/workflows/build-desktop.yml"
+
+# Run every stacked PR independently, but cancel superseded runs for the same
+# PR (or the same branch for push/manual events) to avoid consuming runner slots.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
 
 jobs:
   build:
