@@ -184,6 +184,21 @@ function resolveMediaQuery(
   return globalThis.matchMedia(reducedMotionQuery);
 }
 
+function resolveResizeObserver(
+  provided: ResizeObserverCtor | null | undefined,
+): ResizeObserverCtor | undefined {
+  if (provided === null) {
+    return undefined;
+  }
+  if (provided) {
+    return provided;
+  }
+  if (globalThis.ResizeObserver === undefined) {
+    return undefined;
+  }
+  return globalThis.ResizeObserver;
+}
+
 /**
  * Single owner of `--p`. Measures geometry only from hidden clones (passed as
  * `measureElements`) and never observes the scroller, so header-height changes
@@ -272,13 +287,7 @@ export function attachScrollListCollapse({
   scroller.addEventListener("scroll", handleScroll, { passive: true });
   mediaQuery?.addEventListener("change", handleMotionChange);
 
-  const ResizeObserverImpl =
-    resizeObserver === null
-      ? undefined
-      : (resizeObserver ??
-        (typeof globalThis.ResizeObserver === "undefined"
-          ? undefined
-          : globalThis.ResizeObserver));
+  const ResizeObserverImpl = resolveResizeObserver(resizeObserver);
 
   let observer: ResizeObserverLike | null = null;
   const removeWindowResize = (() => {
