@@ -58,8 +58,7 @@ const ELLIPSIS = "\u2026";
  * Collapse repeated whitespace (including newlines) to a single space,
  * then trim.
  */
-const collapseWhitespace = (s: string): string =>
-  s.replace(/\s+/g, " ").trim();
+const collapseWhitespace = (s: string): string => s.replace(/\s+/g, " ").trim();
 
 /**
  * Clamp a string to `maxLen` characters, breaking at the last word boundary

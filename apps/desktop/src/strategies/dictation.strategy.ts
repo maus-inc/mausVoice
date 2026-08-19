@@ -83,7 +83,9 @@ export class DictationStrategy extends BaseStrategy {
    * happens, so the two callers (checkAndDrainBacklog,
    * handleInterimSegment) cannot desync or double-space.
    */
-  private async drainBacklogAndAppendSpace(newSegment?: string): Promise<boolean> {
+  private async drainBacklogAndAppendSpace(
+    newSegment?: string,
+  ): Promise<boolean> {
     try {
       const result = await drainDictationBacklog(newSegment, this.currentAppId);
       // Only add a trailing separator when this is a standalone drain
@@ -263,9 +265,7 @@ export class DictationStrategy extends BaseStrategy {
 
     // Drain any remaining backlog before the transcript is finalized.
     if (hasDictationBacklog()) {
-      getLogger().info(
-        `Draining backlog segment(s) on finalize`,
-      );
+      getLogger().info(`Draining backlog segment(s) on finalize`);
       await this.drainBacklogAndAppendSpace();
     }
 

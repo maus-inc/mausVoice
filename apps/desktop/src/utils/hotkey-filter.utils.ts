@@ -79,9 +79,7 @@ export const evaluateHotkeyTrigger = (
   }
 
   // 3. WHILE RECORDING: only debounce style-switch actions
-  const isStyleAction = STYLE_SWITCH_PREFIXES.some((p) =>
-    lower.startsWith(p),
-  );
+  const isStyleAction = STYLE_SWITCH_PREFIXES.some((p) => lower.startsWith(p));
   if (!isStyleAction) {
     // Allow non-style, non-critical actions through (shouldn't normally happen)
     return { allowed: true, reason: "non-style action while recording" };
@@ -121,7 +119,9 @@ export const releaseHotkey = (actionName: string): void => {
     lastFireTimestamps.clear();
     return;
   }
-  if (STYLE_SWITCH_PREFIXES.some((p) => actionName.toLowerCase().startsWith(p))) {
+  if (
+    STYLE_SWITCH_PREFIXES.some((p) => actionName.toLowerCase().startsWith(p))
+  ) {
     heldActions.delete(actionName);
     lastFireTimestamps.delete(actionName);
   }

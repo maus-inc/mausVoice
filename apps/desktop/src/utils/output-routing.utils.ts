@@ -273,7 +273,10 @@ export const drainDictationBacklog = async (
   // Post-delivery nonce check: session may have advanced during the
   // async deliver call.
   if (getAppState().dictationBacklogNonce !== snap.nonce) {
-    return { delivered: true, copiedToClipboard: pasteOutcome === "copied_to_clipboard" };
+    return {
+      delivered: true,
+      copiedToClipboard: pasteOutcome === "copied_to_clipboard",
+    };
   }
 
   // Clear the backlog on successful delivery.

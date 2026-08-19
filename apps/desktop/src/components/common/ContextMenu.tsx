@@ -159,9 +159,7 @@ export const ContextMenu = ({ items, sx }: ContextMenuProps) => {
         case "End": {
           e.preventDefault();
           if (actionableIndices.length > 0) {
-setActiveIndex(
-                actionableIndices.at(-1) ?? 0,
-              );
+            setActiveIndex(actionableIndices.at(-1) ?? 0);
           }
           break;
         }
@@ -228,7 +226,11 @@ setActiveIndex(
               <ListItemIcon
                 sx={{
                   minWidth: 32,
-                  color: item.danger ? "error.main" : item.disabled ? "text.disabled" : "text.secondary",
+                  color: item.danger
+                    ? "error.main"
+                    : item.disabled
+                      ? "text.disabled"
+                      : "text.secondary",
                 }}
               >
                 {item.icon}
@@ -331,11 +333,7 @@ export const useContextMenu = (): UseContextMenuReturn => {
   );
 
   const handleContextMenu = useCallback(
-    (
-      e: React.MouseEvent,
-      items: ContextMenuItem[],
-      surfaceKey?: string,
-    ) => {
+    (e: React.MouseEvent, items: ContextMenuItem[], surfaceKey?: string) => {
       e.preventDefault();
       e.stopPropagation();
 
@@ -459,9 +457,9 @@ export const ContextMenuProvider = ({
 }: {
   children: React.ReactNode;
 }) => {
-  const surfaceHandlersRef = useRef<
-    Map<string, (e: React.MouseEvent) => void>
-  >(new Map());
+  const surfaceHandlersRef = useRef<Map<string, (e: React.MouseEvent) => void>>(
+    new Map(),
+  );
   const ctxMenu = useContextMenu();
 
   const registerSurface = useCallback(
@@ -477,7 +475,8 @@ export const ContextMenuProvider = ({
   const providerValue = useMemo(() => ({ registerSurface }), [registerSurface]);
 
   // Platform detection for accelerator display
-  const isMac = typeof navigator !== "undefined" && /Mac/.test(navigator.platform);
+  const isMac =
+    typeof navigator !== "undefined" && /Mac/.test(navigator.platform);
   const modKey = isMac ? "\u2318" : "Ctrl";
 
   // Global right-click handler - suppress default on ALL elements
@@ -495,7 +494,9 @@ export const ContextMenuProvider = ({
       if (isInput) {
         // For text inputs, offer clipboard actions via the platform clipboard API
         const selection = window.getSelection();
-        const hasSelection = selection ? selection.toString().length > 0 : false;
+        const hasSelection = selection
+          ? selection.toString().length > 0
+          : false;
         ctxMenu.handleContextMenu(e as unknown as React.MouseEvent, [
           {
             label: "Cut",
@@ -518,7 +519,7 @@ export const ContextMenuProvider = ({
           {
             label: "Paste",
             onClick: () => {
-              void navigator.clipboard.readText().then(function(t) {
+              void navigator.clipboard.readText().then(function (t) {
                 document.execCommand("insertText", false, t);
               });
             },

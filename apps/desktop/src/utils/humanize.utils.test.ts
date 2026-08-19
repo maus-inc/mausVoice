@@ -15,7 +15,9 @@ describe("humanizeScrub", () => {
   });
 
   it("replaces 'unlock' with 'enable'", () => {
-    expect(humanizeScrub("unlock your potential")).toBe("enable your potential");
+    expect(humanizeScrub("unlock your potential")).toBe(
+      "enable your potential",
+    );
   });
 
   it("replaces 'leveraging' with 'using'", () => {
@@ -35,9 +37,9 @@ describe("humanizeScrub", () => {
   });
 
   it("removes verbose hedges", () => {
-    expect(
-      humanizeScrub("it is important to note that this works"),
-    ).toContain("this works");
+    expect(humanizeScrub("it is important to note that this works")).toContain(
+      "this works",
+    );
   });
 
   it("handles null/undefined input", () => {

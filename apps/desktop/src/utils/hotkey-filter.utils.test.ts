@@ -54,12 +54,18 @@ describe("evaluateHotkeyTrigger", () => {
     const first = evaluateHotkeyTrigger("switch-writing-style-forward", true);
     expect(first.allowed).toBe(true);
 
-    const stillHeld = evaluateHotkeyTrigger("switch-writing-style-forward", true);
+    const stillHeld = evaluateHotkeyTrigger(
+      "switch-writing-style-forward",
+      true,
+    );
     expect(stillHeld.allowed).toBe(false);
 
     releaseHotkey("switch-writing-style-forward");
 
-    const afterRelease = evaluateHotkeyTrigger("switch-writing-style-forward", true);
+    const afterRelease = evaluateHotkeyTrigger(
+      "switch-writing-style-forward",
+      true,
+    );
     expect(afterRelease.allowed).toBe(true);
   });
 
