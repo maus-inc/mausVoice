@@ -324,6 +324,7 @@ pub fn build() -> tauri::Builder<tauri::Wry> {
             crate::commands::set_pill_window_size,
             crate::commands::paste,
             crate::commands::private_http_request,
+            crate::commands::openai_compatible_http_request,
             crate::commands::simulate_type,
             crate::commands::cancel_private_http_request,
             crate::commands::cancel_typing,

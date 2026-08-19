@@ -352,8 +352,16 @@ const EditApiKeyCard = ({
       overrides.baseUrl = fieldValues.baseUrl || config.defaultBaseUrl;
     if (fieldValues.azureRegion)
       overrides.azureRegion = fieldValues.azureRegion;
+    if (config.showIncludeV1Path) overrides.includeV1Path = includeV1Path;
     onTest(overrides);
-  }, [name, fieldValues, config.defaultBaseUrl, onTest]);
+  }, [
+    name,
+    fieldValues,
+    config.defaultBaseUrl,
+    config.showIncludeV1Path,
+    includeV1Path,
+    onTest,
+  ]);
 
   return (
     <Paper
@@ -465,8 +473,10 @@ const ModelPickerForProvider = ({
     return (
       <Box onClick={(e) => e.stopPropagation()}>
         <OpenAICompatibleModelPicker
+          apiKeyId={apiKey.id}
           baseUrl={apiKey.baseUrl ?? null}
           apiKey={apiKey.keyFull}
+          includeV1Path={apiKey.includeV1Path}
           selectedModel={currentModel}
           onModelSelect={onModelChange}
           disabled={disabled}
@@ -510,7 +520,9 @@ const GenericModelPicker = ({
   useEffect(() => {
     const options: FetchModelsOptions = {
       apiKey: apiKey.keyFull ?? undefined,
+      apiKeyId: apiKey.id,
       baseUrl: apiKey.baseUrl ?? undefined,
+      includeV1Path: apiKey.includeV1Path,
     };
 
     let cancelled = false;
@@ -535,7 +547,14 @@ const GenericModelPicker = ({
     return () => {
       cancelled = true;
     };
-  }, [repo, apiKey.keyFull, apiKey.baseUrl, context]);
+  }, [
+    repo,
+    apiKey.id,
+    apiKey.keyFull,
+    apiKey.baseUrl,
+    apiKey.includeV1Path,
+    context,
+  ]);
 
   if (models.length === 0 && !isLoading) return null;
 
@@ -929,6 +948,13 @@ export const ApiKeyList = ({
   const handleTestEditingApiKey = useCallback(
     async (apiKey: SettingsApiKey, overrides: Partial<SettingsApiKey>) => {
       const merged = { ...apiKey, ...overrides };
+      if (
+        apiKey.provider === "openai-compatible" &&
+        merged.baseUrl !== apiKey.baseUrl
+      ) {
+        showErrorSnackbar("Save endpoint URL changes before testing them.");
+        return;
+      }
       setTestingApiKeyId(apiKey.id);
       try {
         const config = getProviderFormConfig(merged.provider, context);

@@ -66,6 +66,7 @@ export type OpenAITranscriptionArgs = {
   ext: string;
   prompt?: string;
   language?: string;
+  customFetch?: CustomFetch;
 };
 
 /**
@@ -102,8 +103,9 @@ export const openaiTranscribeAudio = async ({
   ext,
   prompt,
   language,
+  customFetch,
 }: OpenAITranscriptionArgs): Promise<OpenAITranscribeAudioOutput> => {
-  const client = createClient(apiKey);
+  const client = createClient(apiKey, undefined, customFetch);
   const file = await toFile(blob, `audio.${ext}`);
   return runSdkTranscription(
     (body) =>
@@ -212,18 +214,21 @@ export const openaiGenerateTextResponse = async ({
 
 export type OpenAITestIntegrationArgs = {
   apiKey: string;
+  customFetch?: CustomFetch;
 };
 
 export type OpenAICompatibleTestIntegrationArgs = {
   baseUrl: string;
   apiKey?: string;
+  customFetch?: CustomFetch;
 };
 
 export const openaiCompatibleTestIntegration = async ({
   baseUrl,
   apiKey,
+  customFetch,
 }: OpenAICompatibleTestIntegrationArgs): Promise<boolean> => {
-  const client = createClient(apiKey || "dummy", baseUrl);
+  const client = createClient(apiKey || "dummy", baseUrl, customFetch);
 
   // Test connectivity by listing models
   await client.models.list();
@@ -234,38 +239,11 @@ export const openaiCompatibleTestIntegration = async ({
 
 export const openaiTestIntegration = async ({
   apiKey,
+  customFetch,
 }: OpenAITestIntegrationArgs): Promise<boolean> => {
-  const client = createClient(apiKey);
-
-  const response = await client.chat.completions.create({
-    messages: [
-      {
-        role: "user",
-        content: [
-          {
-            type: "text",
-            text: `Reply with the single word "Hello."`,
-          },
-        ],
-      },
-    ],
-    model: "gpt-4o-mini",
-    temperature: 0,
-    max_completion_tokens: 32,
-    top_p: 1,
-  });
-
-  if (!response.choices || response.choices.length === 0) {
-    throw new Error("No response from OpenAI");
-  }
-
-  const first = response.choices[0];
-  const content = contentToString(first?.message?.content);
-  if (!content) {
-    throw new Error("Response content is empty");
-  }
-
-  return content.toLowerCase().includes("hello");
+  const client = createClient(apiKey, undefined, customFetch);
+  await client.models.list();
+  return true;
 };
 
 // ============================================================================

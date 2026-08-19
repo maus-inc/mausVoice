@@ -650,6 +650,64 @@ fn validate_private_http_url(url: &Url) -> Result<(), String> {
     Ok(())
 }
 
+#[derive(Clone)]
+enum HttpRequestPolicy {
+    PrivateNetwork,
+    SavedOpenAiCompatibleEndpoint { base_url: Url },
+}
+
+fn normalized_url_path(path: &str) -> &str {
+    if path.len() > 1 {
+        path.trim_end_matches('/')
+    } else {
+        path
+    }
+}
+
+fn validate_saved_endpoint_url(url: &Url, base_url: &Url) -> Result<(), String> {
+    if !url.username().is_empty()
+        || url.password().is_some()
+        || !base_url.username().is_empty()
+        || base_url.password().is_some()
+    {
+        return Err("OpenAI-compatible endpoint URLs must not contain credentials".to_string());
+    }
+    if !matches!(base_url.scheme(), "http" | "https") {
+        return Err("OpenAI-compatible endpoints must use http or https".to_string());
+    }
+    if base_url.scheme() == "http" {
+        validate_private_http_url(base_url)?;
+        validate_private_http_url(url)?;
+    }
+    if url.scheme() != base_url.scheme()
+        || url.host() != base_url.host()
+        || url.port_or_known_default() != base_url.port_or_known_default()
+    {
+        return Err("Request URL is outside the saved OpenAI-compatible endpoint".to_string());
+    }
+
+    let base_path = normalized_url_path(base_url.path());
+    let request_path = normalized_url_path(url.path());
+    let path_allowed = base_path == "/"
+        || request_path == base_path
+        || request_path
+            .strip_prefix(base_path)
+            .is_some_and(|remainder| remainder.starts_with('/'));
+    if !path_allowed {
+        return Err("Request path is outside the saved OpenAI-compatible endpoint".to_string());
+    }
+    Ok(())
+}
+
+fn validate_http_request_url(url: &Url, policy: &HttpRequestPolicy) -> Result<(), String> {
+    match policy {
+        HttpRequestPolicy::PrivateNetwork => validate_private_http_url(url),
+        HttpRequestPolicy::SavedOpenAiCompatibleEndpoint { base_url } => {
+            validate_saved_endpoint_url(url, base_url)
+        }
+    }
+}
+
 #[tauri::command]
 #[specta::specta]
 pub fn cancel_private_http_request(request_id: String) -> Result<bool, String> {
@@ -707,10 +765,9 @@ pub fn cancel_private_http_request(request_id: String) -> Result<bool, String> {
     }
 }
 
-#[tauri::command]
-#[specta::specta]
-pub async fn private_http_request(
+async fn execute_http_request(
     request: PrivateHttpRequest,
+    policy: HttpRequestPolicy,
 ) -> Result<PrivateHttpResponse, String> {
     // Register before validation or any await so an abort IPC that wins the
     // command-scheduling race is consumed before networking can begin.
@@ -729,25 +786,29 @@ pub async fn private_http_request(
     }
 
     let initial_url = Url::parse(&request.url)
-        .map_err(|_| "Private-network request URL is invalid".to_string())?;
-    validate_private_http_url(&initial_url)?;
+        .map_err(|_| "HTTP request URL is invalid".to_string())?;
+    validate_http_request_url(&initial_url, &policy)?;
 
-    let client = reqwest::Client::builder()
-        // Connect directly so an environment proxy cannot turn an allowed
-        // private URL into a request delivered to an arbitrary public host.
-        .no_proxy()
+    let redirect_policy = policy.clone();
+    let mut client_builder = reqwest::Client::builder()
         .timeout(std::time::Duration::from_secs(10 * 60))
-        .redirect(reqwest::redirect::Policy::custom(|attempt| {
+        .redirect(reqwest::redirect::Policy::custom(move |attempt| {
             if attempt.previous().len() >= MAX_PRIVATE_HTTP_REDIRECTS {
-                return attempt.error("Private-network request exceeded the redirect limit");
+                return attempt.error("HTTP request exceeded the redirect limit");
             }
-            match validate_private_http_url(attempt.url()) {
+            match validate_http_request_url(attempt.url(), &redirect_policy) {
                 Ok(()) => attempt.follow(),
                 Err(error) => attempt.error(error),
             }
-        }))
+        }));
+    if matches!(policy, HttpRequestPolicy::PrivateNetwork) {
+        // Connect directly so an environment proxy cannot turn an allowed
+        // private URL into a request delivered to an arbitrary public host.
+        client_builder = client_builder.no_proxy();
+    }
+    let client = client_builder
         .build()
-        .map_err(|_| "Unable to initialize the private-network client".to_string())?;
+        .map_err(|_| "Unable to initialize the HTTP client".to_string())?;
 
     let method = reqwest::Method::from_bytes(request.method.trim().as_bytes())
         .map_err(|_| "Private-network request method is invalid".to_string())?;
@@ -849,6 +910,43 @@ pub async fn private_http_request(
         headers,
         body,
     })
+}
+
+#[tauri::command]
+#[specta::specta]
+pub async fn private_http_request(
+    request: PrivateHttpRequest,
+) -> Result<PrivateHttpResponse, String> {
+    execute_http_request(request, HttpRequestPolicy::PrivateNetwork).await
+}
+
+#[tauri::command]
+#[specta::specta]
+pub async fn openai_compatible_http_request(
+    api_key_id: String,
+    request: PrivateHttpRequest,
+    database: State<'_, crate::state::OptionKeyDatabase>,
+) -> Result<PrivateHttpResponse, String> {
+    let pool = database.pool();
+    let row = sqlx::query(
+        "SELECT base_url FROM api_keys WHERE id = ?1 AND provider = 'openai-compatible'",
+    )
+    .bind(&api_key_id)
+    .fetch_optional(&pool)
+    .await
+    .map_err(|_| "Unable to authorize the OpenAI-compatible endpoint".to_string())?
+    .ok_or_else(|| "OpenAI-compatible endpoint is not saved".to_string())?;
+    let saved_base_url = row
+        .get::<Option<String>, _>("base_url")
+        .ok_or_else(|| "Saved OpenAI-compatible endpoint has no base URL".to_string())?;
+    let base_url = Url::parse(saved_base_url.trim())
+        .map_err(|_| "Saved OpenAI-compatible endpoint URL is invalid".to_string())?;
+
+    execute_http_request(
+        request,
+        HttpRequestPolicy::SavedOpenAiCompatibleEndpoint { base_url },
+    )
+    .await
 }
 
 #[tauri::command]
@@ -4909,6 +5007,41 @@ mod tests {
                 "expected URL to be rejected: {rejected}"
             );
         }
+    }
+
+    #[test]
+    fn saved_openai_compatible_endpoint_confines_origin_and_path() {
+        let base = Url::parse("https://llm.example.com/proxy/openai").unwrap();
+        for accepted in [
+            "https://llm.example.com/proxy/openai/v1/models",
+            "https://llm.example.com/proxy/openai/v1/chat/completions",
+        ] {
+            assert!(validate_saved_endpoint_url(&Url::parse(accepted).unwrap(), &base).is_ok());
+        }
+        for rejected in [
+            "https://evil.example.com/proxy/openai/v1/models",
+            "https://llm.example.com/other/v1/models",
+            "http://llm.example.com/proxy/openai/v1/models",
+        ] {
+            assert!(validate_saved_endpoint_url(&Url::parse(rejected).unwrap(), &base).is_err());
+        }
+    }
+
+    #[test]
+    fn saved_plaintext_endpoint_remains_private_network_only() {
+        let local = Url::parse("http://192.168.1.20:8080").unwrap();
+        assert!(validate_saved_endpoint_url(
+            &Url::parse("http://192.168.1.20:8080/v1/models").unwrap(),
+            &local,
+        )
+        .is_ok());
+
+        let public = Url::parse("http://example.com").unwrap();
+        assert!(validate_saved_endpoint_url(
+            &Url::parse("http://example.com/v1/models").unwrap(),
+            &public,
+        )
+        .is_err());
     }
 
     #[tokio::test]

@@ -16,6 +16,7 @@ import type {
   LlmStreamEvent,
   LlmTool,
 } from "@maus-inc/types";
+import type { CustomFetch } from "./types";
 
 // The SDK does not re-export MessageStream from its root, so derive the type
 // from the client's stream() method instead of a deep subpath import.
@@ -45,10 +46,11 @@ export const CLAUDE_MODELS = [
 ] as const;
 export type ClaudeModel = (typeof CLAUDE_MODELS)[number];
 
-const createClient = (apiKey: string) => {
+const createClient = (apiKey: string, customFetch?: CustomFetch) => {
   return new Anthropic({
     apiKey: apiKey.trim(),
     dangerouslyAllowBrowser: true,
+    fetch: customFetch,
   });
 };
 
@@ -58,6 +60,7 @@ export type ClaudeGenerateTextArgs = {
   system?: string;
   prompt: string;
   jsonResponse?: JsonResponse;
+  customFetch?: CustomFetch;
 };
 
 export type ClaudeGenerateResponseOutput = {
@@ -71,11 +74,12 @@ export const claudeGenerateTextResponse = async ({
   system,
   prompt,
   jsonResponse,
+  customFetch,
 }: ClaudeGenerateTextArgs): Promise<ClaudeGenerateResponseOutput> => {
   return retry({
     retries: 3,
     fn: async () => {
-      const client = createClient(apiKey);
+      const client = createClient(apiKey, customFetch);
 
       let finalPrompt = prompt;
       if (jsonResponse) {
@@ -111,30 +115,16 @@ export const claudeGenerateTextResponse = async ({
 
 export type ClaudeTestIntegrationArgs = {
   apiKey: string;
+  customFetch?: CustomFetch;
 };
 
 export const claudeTestIntegration = async ({
   apiKey,
+  customFetch,
 }: ClaudeTestIntegrationArgs): Promise<boolean> => {
-  const client = createClient(apiKey);
-
-  const response = await client.messages.create({
-    model: "claude-3-haiku-20240307",
-    max_tokens: 32,
-    messages: [
-      {
-        role: "user",
-        content: 'Reply with the single word "Hello."',
-      },
-    ],
-  });
-
-  const textBlock = response.content.find((block) => block.type === "text");
-  if (!textBlock || textBlock.type !== "text") {
-    throw new Error("No text response from Claude");
-  }
-
-  return textBlock.text.toLowerCase().includes("hello");
+  const client = createClient(apiKey, customFetch);
+  await client.models.list();
+  return true;
 };
 
 // ============================================================================
@@ -218,6 +208,7 @@ export type ClaudeStreamChatArgs = {
   apiKey: string;
   model: string;
   input: LlmChatInput;
+  customFetch?: CustomFetch;
 };
 
 type PendingClaudeToolCall = {
@@ -301,8 +292,9 @@ export async function* claudeStreamChat({
   apiKey,
   model,
   input,
+  customFetch,
 }: ClaudeStreamChatArgs): AsyncGenerator<LlmStreamEvent> {
-  const client = createClient(apiKey);
+  const client = createClient(apiKey, customFetch);
   const { system, messages } = llmMessagesToClaude(input.messages);
   const tools = buildClaudeTools(input);
   const toolChoice = buildClaudeToolChoice(input, tools);

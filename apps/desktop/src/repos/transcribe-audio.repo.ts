@@ -34,6 +34,10 @@ import {
   gateSilentSegments,
   type TranscriptionSegment,
 } from "../utils/hallucination.utils";
+import {
+  createOpenAICompatibleFetch,
+  secureFetch,
+} from "../utils/secure-fetch.utils";
 import { speachesTranscribeAudio } from "../utils/speaches.utils";
 import {
   mergeTranscriptions,
@@ -288,6 +292,7 @@ export class GroqTranscribeAudioRepo extends BaseTranscribeAudioRepo {
       ext: "wav",
       prompt: input.prompt ?? undefined,
       language: input.language,
+      customFetch: secureFetch,
     });
 
     return {
@@ -341,6 +346,7 @@ export class OpenAITranscribeAudioRepo extends BaseTranscribeAudioRepo {
       ext: "wav",
       prompt: input.prompt ?? undefined,
       language: input.language,
+      customFetch: secureFetch,
     });
 
     return {
@@ -782,12 +788,19 @@ export class OpenAICompatibleTranscribeAudioRepo extends BaseTranscribeAudioRepo
   private baseUrl: string;
   private model: string;
   private apiKey?: string;
+  private customFetch: typeof secureFetch;
 
-  constructor(baseUrl: string, model: string, apiKey?: string) {
+  constructor(
+    apiKeyId: string,
+    baseUrl: string,
+    model: string,
+    apiKey?: string,
+  ) {
     super();
     this.baseUrl = baseUrl;
     this.model = model;
     this.apiKey = apiKey;
+    this.customFetch = createOpenAICompatibleFetch(apiKeyId);
   }
 
   protected getSegmentDurationSec(): number {
@@ -816,6 +829,7 @@ export class OpenAICompatibleTranscribeAudioRepo extends BaseTranscribeAudioRepo
         ext: "wav",
         prompt: input.prompt ?? undefined,
         language: input.language,
+        customFetch: this.customFetch,
       });
 
     return {
