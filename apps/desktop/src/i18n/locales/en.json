@@ -70,7 +70,7 @@
   "are_you_sure_you_want_to_delete_this_style": "Are you sure you want to delete this style?",
   "are_you_sure_you_want_to_delete_your_account_this_will": "Are you sure you want to delete your account? This will:",
   "ask_for_administrator_permission_every_time_mausvoice_starts": "Ask for administrator permission every time mausVoice starts, instead of configuring input permissions manually. Takes effect on the next launch.",
-  "assemblyai_speech_model_leave_empty_to_use_the_default_unive": "AssemblyAI speech model. Leave empty to use the default (Universal-3.5 Pro, falling back to Universal-2).",
+  "assemblyai_speech_model_universal_3_5_pro_keeps_universal_2": "AssemblyAI speech model. Universal-3.5 Pro keeps Universal-2 as a fallback; leave empty to use the AssemblyAI default.",
   "assign_a_shortcut_to_select_a_style_directly_leave_a_row_emp": "Assign a shortcut to select a style directly. Leave a row empty to disable its shortcut.",
   "assistant_hotkey": "Assistant hotkey",
   "assistant_mode": "Assistant mode",

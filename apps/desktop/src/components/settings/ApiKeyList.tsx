@@ -352,8 +352,14 @@ const EditApiKeyCard = ({
       overrides.baseUrl = fieldValues.baseUrl || config.defaultBaseUrl;
     if (fieldValues.azureRegion)
       overrides.azureRegion = fieldValues.azureRegion;
+    const hasTranscriptionModelField = config.fields.some(
+      (f) => f.key === "transcriptionModel",
+    );
+    if (hasTranscriptionModelField) {
+      overrides.transcriptionModel = fieldValues.transcriptionModel || null;
+    }
     onTest(overrides);
-  }, [name, fieldValues, config.defaultBaseUrl, onTest]);
+  }, [name, fieldValues, config, onTest]);
 
   return (
     <Paper

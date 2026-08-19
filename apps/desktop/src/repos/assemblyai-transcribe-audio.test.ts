@@ -1,6 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
-  ASSEMBLYAI_TRANSCRIPTION_MODELS,
   assemblyaiTestIntegration,
   assemblyaiTranscribeAudio,
 } from "@maus-inc/voice-ai";
@@ -522,9 +521,66 @@ describe("assemblyaiTranscribeAudio", () => {
     expect(fetchMock).not.toHaveBeenCalled();
   });
 
-  it.each(ASSEMBLYAI_TRANSCRIPTION_MODELS)(
-    "sends speech_models when model %s is selected",
-    async (model) => {
+  it("sends the Universal-2 fallback pair when Universal-3.5 Pro is selected", async () => {
+    let createBody: Record<string, unknown> | null = null;
+    vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
+      const url = String(input);
+      if (url.endsWith("/v2/upload")) {
+        return jsonResponse({ upload_url: UPLOAD_URL });
+      }
+      if (url.endsWith("/v2/transcript") && init?.method === "POST") {
+        createBody = JSON.parse(String(init.body)) as Record<string, unknown>;
+        return jsonResponse({ id: "t1", status: "queued" });
+      }
+      return jsonResponse({ id: "t1", status: "completed", text: "hi" });
+    });
+
+    const { text } = await assemblyaiTranscribeAudio({
+      apiKey: "aa-key",
+      model: "universal-3-5-pro",
+      blob: new ArrayBuffer(8),
+    });
+
+    expect(text).toBe("hi");
+    expect(createBody).toMatchObject({
+      audio_url: UPLOAD_URL,
+      speech_models: ["universal-3-5-pro", "universal-2"],
+    });
+  });
+
+  it("sends only Universal-2 when Universal-2 is selected", async () => {
+    let createBody: Record<string, unknown> | null = null;
+    vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
+      const url = String(input);
+      if (url.endsWith("/v2/upload")) {
+        return jsonResponse({ upload_url: UPLOAD_URL });
+      }
+      if (url.endsWith("/v2/transcript") && init?.method === "POST") {
+        createBody = JSON.parse(String(init.body)) as Record<string, unknown>;
+        return jsonResponse({ id: "t1", status: "queued" });
+      }
+      return jsonResponse({ id: "t1", status: "completed", text: "hi" });
+    });
+
+    const { text } = await assemblyaiTranscribeAudio({
+      apiKey: "aa-key",
+      model: "universal-2",
+      blob: new ArrayBuffer(8),
+    });
+
+    expect(text).toBe("hi");
+    expect(createBody).toMatchObject({
+      audio_url: UPLOAD_URL,
+      speech_models: ["universal-2"],
+    });
+  });
+
+  it.each([
+    ["best", ["universal-3-5-pro", "universal-2"]],
+    ["nano", ["universal-2"]],
+  ] as const)(
+    "migrates the legacy %s tier to its successor",
+    async (model, expected) => {
       let createBody: Record<string, unknown> | null = null;
       vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
         const url = String(input);
@@ -538,16 +594,15 @@ describe("assemblyaiTranscribeAudio", () => {
         return jsonResponse({ id: "t1", status: "completed", text: "hi" });
       });
 
-      const { text } = await assemblyaiTranscribeAudio({
+      await assemblyaiTranscribeAudio({
         apiKey: "aa-key",
         model,
         blob: new ArrayBuffer(8),
       });
 
-      expect(text).toBe("hi");
       expect(createBody).toMatchObject({
         audio_url: UPLOAD_URL,
-        speech_models: [model],
+        speech_models: expected,
       });
     },
   );
@@ -582,10 +637,10 @@ describe("assemblyaiTranscribeAudio", () => {
     await expect(
       assemblyaiTranscribeAudio({
         apiKey: "aa-key",
-        model: "nano",
+        model: "whisper-1",
         blob: new ArrayBuffer(8),
       }),
-    ).rejects.toThrow(/Unknown AssemblyAI speech model "nano"/);
+    ).rejects.toThrow(/Unknown AssemblyAI speech model "whisper-1"/);
 
     expect(fetchMock).not.toHaveBeenCalled();
   });
@@ -596,10 +651,23 @@ describe("assemblyaiTestIntegration", () => {
     const fetchMock = vi.spyOn(globalThis, "fetch");
 
     await expect(
-      assemblyaiTestIntegration({ apiKey: "aa-key", model: "nano" }),
-    ).rejects.toThrow(/Unknown AssemblyAI speech model "nano"/);
+      assemblyaiTestIntegration({ apiKey: "aa-key", model: "whisper-1" }),
+    ).rejects.toThrow(/Unknown AssemblyAI speech model "whisper-1"/);
 
     expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it("migrates a legacy model instead of failing the key test", async () => {
+    vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      new Response("[]", { status: 200 }),
+    );
+
+    await expect(
+      assemblyaiTestIntegration({ apiKey: "aa-key", model: "best" }),
+    ).resolves.toBe(true);
+    await expect(
+      assemblyaiTestIntegration({ apiKey: "aa-key", model: "nano" }),
+    ).resolves.toBe(true);
   });
 
   it("validates the API key when the selected model is supported", async () => {

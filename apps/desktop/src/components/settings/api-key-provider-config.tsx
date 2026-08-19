@@ -112,7 +112,7 @@ const ASSEMBLYAI_MODEL_FIELD: ProviderFieldDescriptor = {
   label: <FormattedMessage defaultMessage="Model" />,
   placeholder: "universal-3-5-pro",
   helperText: (
-    <FormattedMessage defaultMessage="AssemblyAI speech model. Leave empty to use the default (Universal-3.5 Pro, falling back to Universal-2)." />
+    <FormattedMessage defaultMessage="AssemblyAI speech model. Universal-3.5 Pro keeps Universal-2 as a fallback; leave empty to use the AssemblyAI default." />
   ),
   required: false,
 };

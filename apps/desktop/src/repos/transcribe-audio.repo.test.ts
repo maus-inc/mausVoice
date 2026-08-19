@@ -556,6 +556,52 @@ describe("AssemblyAITranscribeAudioRepo", () => {
       transcriptionMode: "api",
     });
   });
+
+  it("reports the migrated successor of a legacy model in metadata", async () => {
+    vi.spyOn(globalThis, "fetch").mockImplementation(
+      async (input: string | URL | Request, init?: RequestInit) => {
+        const url = String(input);
+        const method = init?.method ?? "GET";
+
+        if (url.endsWith("/v2/upload")) {
+          return new Response(
+            JSON.stringify({
+              upload_url: "https://cdn.assemblyai.com/upload/abc123",
+            }),
+            { status: 200 },
+          );
+        }
+
+        if (url.endsWith("/v2/transcript") && method === "POST") {
+          return new Response(
+            JSON.stringify({ id: "transcript-1", status: "queued" }),
+            { status: 200 },
+          );
+        }
+
+        return new Response(
+          JSON.stringify({
+            id: "transcript-1",
+            status: "completed",
+            text: "legacy migrated",
+          }),
+          { status: 200 },
+        );
+      },
+    );
+
+    const repo = new AssemblyAITranscribeAudioRepo("aa-key", "best");
+    const result = await repo.transcribeAudio({
+      samples: createSamples(1, 16000),
+      sampleRate: 16000,
+    });
+
+    expect(result.metadata).toMatchObject({
+      inferenceDevice: "API • AssemblyAI",
+      modelSize: "universal-3-5-pro",
+      transcriptionMode: "api",
+    });
+  });
 });
 
 describe("provider capability and transcription dispatch agreement", () => {

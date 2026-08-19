@@ -9,6 +9,7 @@ import {
   geminiTranscribeAudio,
   GeminiTranscriptionModel,
   groqTranscribeAudio,
+  normalizeAssemblyAISpeechModel,
   openaiTranscribeAudio,
   OpenAITranscriptionModel,
   TranscriptionModel,
@@ -440,7 +441,7 @@ export class AssemblyAITranscribeAudioRepo extends BaseTranscribeAudioRepo {
       text: transcript,
       metadata: {
         inferenceDevice: "API • AssemblyAI",
-        modelSize: this.model,
+        modelSize: normalizeAssemblyAISpeechModel(this.model) ?? null,
         transcriptionMode: "api",
       },
     };

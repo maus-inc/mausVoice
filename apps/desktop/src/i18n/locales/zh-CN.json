@@ -70,7 +70,7 @@
   "are_you_sure_you_want_to_delete_this_style": "您确定要删除此风格吗？",
   "are_you_sure_you_want_to_delete_your_account_this_will": "您确定要删除您的账户吗？这将会：",
   "ask_for_administrator_permission_every_time_mausvoice_starts": "每次 mausVoice 启动时请求管理员权限，而不是手动配置输入权限。在下一次启动时生效。",
-  "assemblyai_speech_model_leave_empty_to_use_the_default_unive": "AssemblyAI speech model. Leave empty to use the default (Universal-3.5 Pro, falling back to Universal-2).",
+  "assemblyai_speech_model_universal_3_5_pro_keeps_universal_2": "AssemblyAI 语音模型。Universal-3.5 Pro 会保留 Universal-2 作为后备；留空以使用 AssemblyAI 默认设置。",
   "assign_a_shortcut_to_select_a_style_directly_leave_a_row_emp": "为直接选择某种风格分配一个快捷键。留空该行可禁用其快捷键。",
   "assistant_hotkey": "助手快捷键",
   "assistant_mode": "助理模式",
