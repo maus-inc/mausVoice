@@ -35,7 +35,11 @@ const FENCE_CHARS = new Set<number>([0x60, 0x7e]);
 
 /** Bold / italic markers. */
 const BOLD_RE = /\*\*(.+?)\*\*/g;
-const ITALIC_RE = /(?:^|\s)\*(?!\*)([^*\n]+?)\*(?!\*)(?=\s|$)/g;
+// Non-consuming boundaries: lookbehind/lookahead for start-or-space and
+// end-or-space so the surrounding whitespace is preserved ("hello *world*"
+// stays "hello world", never "helloworld") while `*word*.` inside a word is
+// left alone (e.g. "is*not*" is not treated as emphasis).
+const ITALIC_RE = /(?<!\S)\*(?!\*)([^*\n]+?)\*(?!\*)(?!\S)/g;
 const STRIKETHROUGH_RE = /~~(.+?)~~/g;
 
 /** Inline code backtick fences. */

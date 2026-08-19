@@ -429,7 +429,14 @@ pub fn ring_head_index(head_len: f64, total_len: f64, point_count: usize) -> usi
     if point_count < 2 {
         return 0;
     }
-    let frac = head_len / total_len.max(RING_PATH_LEN_EPSILON);
+    // Degenerate perimeter: there is no meaningful position along the ring,
+    // so clamp to the first interior point instead of letting
+    // head_len / total_len explode (the epsilon guard alone would produce a
+    // huge fraction and clamp to the last point, which is the opposite end).
+    if total_len <= RING_PATH_LEN_EPSILON {
+        return 1;
+    }
+    let frac = head_len / total_len;
     ((frac * (point_count - 1) as f64).round() as usize).clamp(1, point_count - 1)
 }
 

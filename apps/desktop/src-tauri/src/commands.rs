@@ -2097,6 +2097,15 @@ pub async fn clear_local_data(
 
 #[tauri::command]
 #[specta::specta]
+/// A23: Mirror the TS playInteractionChime preference into Rust so the
+/// native thock path (pill overlays call audio_feedback::play_thock directly,
+/// bypassing the TS gate in tryPlayAudioChime) honors the user's choice.
+#[tauri::command]
+#[specta::specta]
+pub fn set_interaction_chime_enabled(enabled: bool) {
+    crate::system::audio_feedback::set_interaction_chime_enabled(enabled);
+}
+
 pub fn play_audio(clip: AudioClip) -> Result<(), String> {
     // Rapid re-entry (e.g. double-pressing the record hotkey) can layer
     // multiple overlapping chimes and produce a disorienting UX. If a chime

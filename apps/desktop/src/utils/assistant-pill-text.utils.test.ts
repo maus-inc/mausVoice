@@ -13,6 +13,16 @@ describe("markdownToPillText", () => {
     expect(markdownToPillText("hello **world**")).toBe("hello world");
   });
 
+  it("strips italic markers without eating surrounding whitespace", () => {
+    expect(markdownToPillText("hello *world* today")).toBe("hello world today");
+    expect(markdownToPillText("*lead* and tail")).toBe("lead and tail");
+  });
+
+  it("leaves asterisks glued inside words alone", () => {
+    // "is*not*" is not emphasis — no space around the stars.
+    expect(markdownToPillText("is*not*true")).toBe("is*not*true");
+  });
+
   it("strips horizontal rules", () => {
     const input = ["A", "---", "B"].join(NL);
     expect(markdownToPillText(input)).toBe("A B");

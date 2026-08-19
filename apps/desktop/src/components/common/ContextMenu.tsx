@@ -482,9 +482,6 @@ export const ContextMenuProvider = ({
   // Global right-click handler - suppress default on ALL elements
   useEffect(() => {
     const handleGlobalContextMenu = (e: MouseEvent) => {
-      // Always prevent the default webview context menu
-      e.preventDefault();
-
       const target = e.target as HTMLElement;
       const isInput =
         target.tagName === "INPUT" ||
@@ -492,6 +489,10 @@ export const ContextMenuProvider = ({
         target.isContentEditable;
 
       if (isInput) {
+        // Suppress the default webview menu only where we have a real menu
+        // to show (clipboard actions). Elsewhere we keep the native menu —
+        // an empty custom menu is worse than the platform default.
+        e.preventDefault();
         // For text inputs, offer clipboard actions via the platform clipboard API
         const selection = window.getSelection();
         const hasSelection = selection

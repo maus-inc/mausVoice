@@ -89,6 +89,7 @@ import {
 import {
   getEffectivePillVisibility,
   getIsDictationUnlocked,
+  getMyUser,
   getMyUserPreferences,
   LOCAL_USER_ID,
 } from "../../utils/user.utils";
@@ -180,6 +181,9 @@ export const AppSideEffects = () => {
     (state) => state.userById[LOCAL_USER_ID] ?? null,
   );
   const prefs = useAppStore((state) => getMyUserPreferences(state));
+  const playInteractionChime = useAppStore(
+    (state) => getMyUser(state)?.playInteractionChime ?? true,
+  );
   const keyPermAuthorized = useAppStore((state) =>
     isPermissionAuthorized(getRec(state.permissions, "accessibility")?.state),
   );
@@ -271,6 +275,14 @@ export const AppSideEffects = () => {
   useEffect(() => {
     void initLogging();
   }, []);
+
+  // A23: Keep the native thock gate in sync with the persisted
+  // playInteractionChime preference (initial value + changes).
+  useEffect(() => {
+    invoke("set_interaction_chime_enabled", {
+      enabled: playInteractionChime,
+    }).catch(() => {});
+  }, [playInteractionChime]);
 
   // Windows "Always run as administrator" pre-flight. Must stay ahead of
   // auth / Mixpanel / dashboard init — the gate in elevation.actions owns
