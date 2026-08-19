@@ -1368,24 +1368,55 @@ mod visibility_tests {
 mod geometry_tests {
     use super::*;
 
+    /// Tolerance for float assertions — the repo's usual test epsilon (see
+    /// rust_pill_shared). The conversions here produce integral pixel values,
+    /// but comparing approximately keeps the tests robust if intermediate
+    /// math or types ever change.
+    const EPSILON: f64 = 1e-6;
+
+    fn assert_rect_close(actual: &Rect, expected: &Rect) {
+        let fields = [
+            ("x", actual.x, expected.x),
+            ("y", actual.y, expected.y),
+            ("width", actual.width, expected.width),
+            ("height", actual.height, expected.height),
+        ];
+        for (name, a, e) in fields {
+            assert!(
+                (a - e).abs() < EPSILON,
+                "{name}: expected ~{e}, got {a} (rect {actual:?} vs {expected:?})"
+            );
+        }
+    }
+
     #[test]
     fn logical_rect_is_scaled_into_physical_pixels() {
         // A 2000x1000 logical work area at origin (100, 50) on a 2x monitor
         // must come out in the same physical space the pill rect uses.
         let rect = logical_rect_to_physical(&gdk::Rectangle::new(100, 50, 2000, 1000), 2.0);
-        assert_eq!(rect.x, 200.0);
-        assert_eq!(rect.y, 100.0);
-        assert_eq!(rect.width, 4000.0);
-        assert_eq!(rect.height, 2000.0);
+        assert_rect_close(
+            &rect,
+            &Rect {
+                x: 200.0,
+                y: 100.0,
+                width: 4000.0,
+                height: 2000.0,
+            },
+        );
     }
 
     #[test]
     fn logical_rect_scale_one_is_unchanged() {
         let rect = logical_rect_to_physical(&gdk::Rectangle::new(-1920, 0, 1920, 1080), 1.0);
-        assert_eq!(rect.x, -1920.0);
-        assert_eq!(rect.y, 0.0);
-        assert_eq!(rect.width, 1920.0);
-        assert_eq!(rect.height, 1080.0);
+        assert_rect_close(
+            &rect,
+            &Rect {
+                x: -1920.0,
+                y: 0.0,
+                width: 1920.0,
+                height: 1080.0,
+            },
+        );
     }
 
     #[test]
@@ -1402,7 +1433,8 @@ mod geometry_tests {
             height: 80.0 * scale,
         };
         // With the old unscaled workarea (2000 wide) this comparison used the
-        // wrong space at any scale != 1.
+        // wrong space at any scale != 1. Inequality assertions, so no epsilon
+        // needed here.
         assert!(pill.x + pill.width > monitor.x + monitor.width);
         assert!(pill.x < monitor.x + monitor.width);
     }
