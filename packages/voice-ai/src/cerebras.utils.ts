@@ -11,10 +11,11 @@ import type {
 } from "@maus-inc/types";
 import { openaiCompatibleStreamChat } from "./openai.utils";
 import { contentToString } from "./transcription.utils";
-import type { CustomFetch } from "./types";
+import type { CustomFetch, DiscoveredModelId } from "./types";
 
 export const CEREBRAS_MODELS = ["gpt-oss-120b", "gemma-4-31b"] as const;
-export type CerebrasModel = string;
+export type CerebrasModel =
+  (typeof CEREBRAS_MODELS)[number] | DiscoveredModelId;
 
 const CEREBRAS_BASE_URL = "https://api.cerebras.ai/v1";
 

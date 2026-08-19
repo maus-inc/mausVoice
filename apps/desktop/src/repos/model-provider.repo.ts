@@ -15,6 +15,7 @@ import {
   createOpenAICompatibleFetch,
   secureFetch as fetch,
 } from "../utils/secure-fetch.utils";
+import { getLogger } from "../utils/log.utils";
 import { getOllamaHeaders } from "../utils/ollama.utils";
 import {
   appendOpenAICompatiblePath,
@@ -51,7 +52,25 @@ export abstract class BaseModelProviderRepo extends BaseRepo {
   ): Promise<string[]>;
 }
 
+const logModelDiscoveryFailure = (provider: string, reason: string): void => {
+  // Do not log request URLs or caught errors: some providers put credentials
+  // in the query string, and native transport errors may echo those URLs.
+  getLogger().verbose(`${provider} model discovery failed (${reason})`);
+};
+
+const logModelDiscoveryResponseFailure = (
+  provider: string,
+  response: Response,
+): void => {
+  const statusText = response.statusText.trim();
+  logModelDiscoveryFailure(
+    provider,
+    `HTTP ${response.status}${statusText ? ` ${statusText}` : ""}`,
+  );
+};
+
 async function fetchOpenAICompatibleModels(
+  provider: string,
   url: string,
   apiKey: string,
 ): Promise<string[]> {
@@ -59,13 +78,17 @@ async function fetchOpenAICompatibleModels(
     const response = await fetch(url, {
       headers: { Authorization: `Bearer ${apiKey}` },
     });
-    if (!response.ok) return [];
+    if (!response.ok) {
+      logModelDiscoveryResponseFailure(provider, response);
+      return [];
+    }
     const payload = (await response.json()) as OpenAIListResponse;
     return (payload.data ?? [])
       .map((m) => (m.id ?? "").trim())
       .filter(Boolean)
       .sort();
   } catch {
+    logModelDiscoveryFailure(provider, "request or response parsing failed");
     return [];
   }
 }
@@ -131,6 +154,7 @@ export class GroqModelProviderRepo extends BaseModelProviderRepo {
   private async fetchModels(options: FetchModelsOptions): Promise<string[]> {
     if (!options.apiKey) return [];
     return fetchOpenAICompatibleModels(
+      "Groq",
       "https://api.groq.com/openai/v1/models",
       options.apiKey,
     );
@@ -163,6 +187,7 @@ export class OpenAIModelProviderRepo extends BaseModelProviderRepo {
   private async fetchModels(options: FetchModelsOptions): Promise<string[]> {
     if (!options.apiKey) return [];
     return fetchOpenAICompatibleModels(
+      "OpenAI",
       "https://api.openai.com/v1/models",
       options.apiKey,
     );
@@ -206,13 +231,17 @@ export class ClaudeModelProviderRepo extends BaseModelProviderRepo {
           },
         },
       );
-      if (!response.ok) return [];
+      if (!response.ok) {
+        logModelDiscoveryResponseFailure("Claude", response);
+        return [];
+      }
       const payload = (await response.json()) as OpenAIListResponse;
       return (payload.data ?? [])
         .map((m) => (m.id ?? "").trim())
         .filter(Boolean)
         .sort();
     } catch {
+      logModelDiscoveryFailure("Claude", "request or response parsing failed");
       return [];
     }
   }
@@ -241,6 +270,7 @@ export class CerebrasModelProviderRepo extends BaseModelProviderRepo {
   private async fetchModels(options: FetchModelsOptions): Promise<string[]> {
     if (!options.apiKey) return [];
     return fetchOpenAICompatibleModels(
+      "Cerebras",
       "https://api.cerebras.ai/v1/models",
       options.apiKey,
     );
@@ -270,6 +300,7 @@ export class DeepSeekModelProviderRepo extends BaseModelProviderRepo {
   private async fetchModels(options: FetchModelsOptions): Promise<string[]> {
     if (!options.apiKey) return [];
     return fetchOpenAICompatibleModels(
+      "DeepSeek",
       "https://api.deepseek.com/models",
       options.apiKey,
     );
@@ -314,7 +345,10 @@ export class GeminiModelProviderRepo extends BaseModelProviderRepo {
       const response = await fetch(
         `https://generativelanguage.googleapis.com/v1beta/models?key=${encodeURIComponent(options.apiKey)}&pageSize=1000`,
       );
-      if (!response.ok) return [];
+      if (!response.ok) {
+        logModelDiscoveryResponseFailure("Gemini", response);
+        return [];
+      }
       const payload = (await response.json()) as GeminiListResponse;
       return (payload.models ?? [])
         .filter((m) =>
@@ -324,6 +358,7 @@ export class GeminiModelProviderRepo extends BaseModelProviderRepo {
         .filter(isGeneralGeminiModel)
         .sort();
     } catch {
+      logModelDiscoveryFailure("Gemini", "request or response parsing failed");
       return [];
     }
   }
@@ -358,7 +393,10 @@ export class AzureModelProviderRepo extends BaseModelProviderRepo {
         headers: { "api-key": options.apiKey },
       },
     );
-    if (!response.ok) return [];
+    if (!response.ok) {
+      logModelDiscoveryResponseFailure("Azure OpenAI", response);
+      return [];
+    }
     const payload = (await response.json()) as OpenAIListResponse;
     return (payload.data ?? [])
       .map((m) => (m.id ?? "").trim())
@@ -397,7 +435,10 @@ export class OllamaModelProviderRepo extends BaseModelProviderRepo {
     const response = await fetch(new URL("/api/tags", options.baseUrl).href, {
       headers: getOllamaHeaders(options.apiKey),
     });
-    if (!response.ok) return [];
+    if (!response.ok) {
+      logModelDiscoveryResponseFailure("Ollama", response);
+      return [];
+    }
     const payload = (await response.json()) as {
       models?: Array<{ name?: string }>;
     };
@@ -437,7 +478,10 @@ export class OpenAICompatibleModelProviderRepo extends BaseModelProviderRepo {
       appendOpenAICompatiblePath(apiBaseUrl, "models"),
       { headers: getOllamaHeaders(options.apiKey) },
     );
-    if (!response.ok) return [];
+    if (!response.ok) {
+      logModelDiscoveryResponseFailure("OpenAI-compatible", response);
+      return [];
+    }
     const payload = (await response.json()) as OpenAIListResponse;
     return (payload.data ?? [])
       .map((m) => (m.id ?? "").trim())
@@ -462,7 +506,10 @@ export class SpeachesModelProviderRepo extends BaseModelProviderRepo {
   async getTranscriptionModels(options: FetchModelsOptions): Promise<string[]> {
     if (!options.baseUrl) return [];
     const response = await fetch(new URL("/v1/models", options.baseUrl).href);
-    if (!response.ok) return [];
+    if (!response.ok) {
+      logModelDiscoveryResponseFailure("Speaches", response);
+      return [];
+    }
     const payload = (await response.json()) as OpenAIListResponse;
     return (payload.data ?? [])
       .map((m) => (m.id ?? "").trim())
@@ -485,6 +532,7 @@ export class OpenRouterModelProviderRepo extends BaseModelProviderRepo {
   ): Promise<string[]> {
     if (!options.apiKey) return [];
     return fetchOpenAICompatibleModels(
+      "OpenRouter",
       "https://openrouter.ai/api/v1/models",
       options.apiKey,
     );

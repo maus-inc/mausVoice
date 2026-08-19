@@ -16,7 +16,7 @@ import type {
   LlmStreamEvent,
   LlmTool,
 } from "@maus-inc/types";
-import type { CustomFetch } from "./types";
+import type { CustomFetch, DiscoveredModelId } from "./types";
 
 // The SDK does not re-export MessageStream from its root, so derive the type
 // from the client's stream() method instead of a deep subpath import.
@@ -28,7 +28,7 @@ export const CLAUDE_MODELS = [
   "claude-opus-5",
   "claude-fable-5",
 ] as const;
-export type ClaudeModel = string;
+export type ClaudeModel = (typeof CLAUDE_MODELS)[number] | DiscoveredModelId;
 
 const createClient = (apiKey: string, customFetch?: CustomFetch) => {
   return new Anthropic({

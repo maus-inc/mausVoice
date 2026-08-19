@@ -69,6 +69,8 @@ const invokeHttpRequest = async (
       headers: Object.fromEntries(request.headers.entries()),
       body,
     },
+    // Tauri command arguments use camelCase at the JavaScript boundary;
+    // `apiKeyId` binds the Rust command's `api_key_id` parameter.
     ...(apiKeyId ? { apiKeyId } : {}),
   };
   const operation = invoke<PrivateHttpResponse>(command, payload);
