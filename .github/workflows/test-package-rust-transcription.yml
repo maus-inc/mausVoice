@@ -30,6 +30,7 @@ jobs:
             os: macos-latest
     permissions:
       contents: read
+      actions: write
     steps:
       - name: Checkout source
         uses: actions/checkout@v5
