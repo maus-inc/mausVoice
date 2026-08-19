@@ -27,7 +27,6 @@ import {
   setRemoteOutputEnabled,
   setRemoteTargetDeviceId,
 } from "../../actions/user.actions";
-import { runStartupElevationPreflight } from "../../actions/elevation.actions";
 import { useAsyncData, useAsyncEffect } from "../../hooks/async.hooks";
 import { useIntervalAsync, useKeyDownHandler } from "../../hooks/helper.hooks";
 import { useHotkeyFire } from "../../hooks/hotkey.hooks";
