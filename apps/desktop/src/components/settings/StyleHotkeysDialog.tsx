@@ -105,13 +105,11 @@ export const StyleHotkeysDialog = () => {
       );
       const next = rows
         .filter((row) => row.keys.length > 0)
-        .map(
-          (row): Hotkey => ({
-            id: existingIdByActionName.get(row.actionName) ?? createId(),
-            actionName: row.actionName,
-            keys: row.keys,
-          }),
-        );
+        .map((row): Hotkey => ({
+          id: existingIdByActionName.get(row.actionName) ?? createId(),
+          actionName: row.actionName,
+          keys: row.keys,
+        }));
 
       const repo = getHotkeyRepo();
       const saved = await repo.replaceStyleHotkeys(prefix, next);
