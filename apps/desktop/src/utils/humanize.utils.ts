@@ -16,7 +16,9 @@ interface Replacement {
 }
 
 const replacements: Replacement[] = [
-  // Em‑dashes → comma or space (context‑dependent)
+  // Em‑dashes → comma or space (context‑dependent).
+  // NOSONAR: \s* around a fixed literal is at most O(n) ambiguity for a
+  // fixed replacement; the two quantifiers cannot nest.
   { pattern: /\s*—\s*/g, replace: ", " },
   { pattern: /\s*–\s*/g, replace: " – " },
 

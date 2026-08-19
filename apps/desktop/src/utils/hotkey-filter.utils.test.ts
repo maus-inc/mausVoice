@@ -20,20 +20,12 @@ describe("evaluateHotkeyTrigger", () => {
 
   // ── Recording: always allow critical actions ──────────────────────────
 
-  it("allows dictate toggle even while recording", () => {
-    const result = evaluateHotkeyTrigger("dictate", true);
-    expect(result.allowed).toBe(true);
-    expect(result.reason).toContain("always allowed");
-  });
-
-  it("allows agent-dictate even while recording", () => {
-    const result = evaluateHotkeyTrigger("agent-dictate", true);
-    expect(result.allowed).toBe(true);
-    expect(result.reason).toContain("always allowed");
-  });
-
-  it("allows cancel-transcription even while recording", () => {
-    const result = evaluateHotkeyTrigger("cancel-transcription", true);
+  it.each([
+    ["dictate", "dictate toggle"],
+    ["agent-dictate", "agent dictation"],
+    ["cancel-transcription", "cancel"],
+  ])("allows %s even while recording", (actionName) => {
+    const result = evaluateHotkeyTrigger(actionName, true);
     expect(result.allowed).toBe(true);
     expect(result.reason).toContain("always allowed");
   });

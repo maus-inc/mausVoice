@@ -40,19 +40,22 @@ const BOLD_RE = /\*\*(.+?)\*\*/g;
 // stays "hello world", never "helloworld") while `*word*.` inside a word is
 // left alone (e.g. "is*not*" is not treated as emphasis).
 const ITALIC_RE = /(?<!\S)\*(?!\*)([^*\n]+?)\*(?!\*)(?!\S)/g;
-const STRIKETHROUGH_RE = /~~(.+?)~~/g;
+const STRIKETHROUGH_RE = /~~([^~\n]+?)~~/g;
 
 /** Inline code backtick fences. */
-const INLINE_CODE_RE = /`([^`]+)`/g;
+const INLINE_CODE_RE = /`([^`\n]+)`/g;
 
 /** Markdown links: [text](url). */
-const LINK_RE = /\[([^\]]+)\]\(([^)]+)\)/g;
+const LINK_RE = /\[([^\]\n]+)\]\(([^)\n]+)\)/g;
 
 /** Markdown images: ![alt](url). */
-const IMAGE_RE = /!\[([^\]]*)\]\(([^)]+)\)/g;
+const IMAGE_RE = /!\[([^\]\n]*)\]\(([^)\n]+)\)/g;
 
 /** Reference-style link brackets: [text] or [text][label]. */
-const REF_LINK_RE = /\[([^\]]+)\](?:\[([^\]]*)\])?/g;
+// Split into two non-nested replacements to avoid Sonar's backtracking
+// flag on the optional group; [text][label] must win over bare [text].
+const REF_LINK_PAIR_RE = /\[([^\]]+)\]\[([^\]]*)\]/g;
+const REF_LINK_BARE_RE = /\[([^\]]+)\]/g;
 
 // ── Helpers ───────────────────────────────────────────────────────────────
 
@@ -132,7 +135,8 @@ export const markdownToPillText = (
   });
 
   // Strip reference links after real links so [text] orphans don't survive.
-  text = text.replace(REF_LINK_RE, "$1");
+  text = text.replace(REF_LINK_PAIR_RE, "$1");
+  text = text.replace(REF_LINK_BARE_RE, "$1");
 
   // 1. Strip fenced code blocks (replace with a compact "[code]" marker)
   const lines = text.split("\n");
@@ -163,10 +167,10 @@ export const markdownToPillText = (
   text = text.replace(BLOCKQUOTE_RE, "");
 
   // 5. Convert unordered list markers to bullet symbol
-  text = text.replace(/^[\s]*[-*+]\s+/gm, "\u2022 ");
+  text = text.replace(/^\s*[-*+]\s+/gm, "\u2022 ");
 
   // 6. Convert ordered list markers to plain numbers
-  text = text.replace(/^\s*\d+\.\s+/gm, (match) => {
+  text = text.replace(/^[ \t]*\d+\.\s+/gm, (match) => {
     const num = match.trim().split(".")[0];
     return `${num}. `;
   });

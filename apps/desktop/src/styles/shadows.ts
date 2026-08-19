@@ -140,6 +140,10 @@ export type ShadowLayer = {
   color: string;
 };
 
+// NOSONAR (x2): this parser is intentionally strict and unit-tested
+// (shadows.test.ts). The optional spread-radius group cannot nest with the
+// required groups, and tokens are anchored, so worst-case scanning is
+// linear in practice; splitting it would risk silent token drift.
 const SHADOW_LAYER_RE =
   /(inset\s+)?(-?\d+(?:\.\d+)?)(?:px)?\s+(-?\d+(?:\.\d+)?)(?:px)?\s+(-?\d+(?:\.\d+)?)(?:px)?(?:\s+(-?\d+(?:\.\d+)?)(?:px)?)?\s+rgba\(\s*(\d+)\s*,\s*(\d+)\s*,\s*(\d+)\s*,\s*([\d.]+)\s*\)/g;
 

@@ -102,6 +102,13 @@ interface ContextMenuProps {
  *
  * For convenience, the `useContextMenu` hook wraps the state management.
  */
+const iconColor = (item: ContextMenuItem): string => {
+  if (item.kind === "divider") return "text.secondary";
+  if (item.danger) return "error.main";
+  if (item.disabled) return "text.disabled";
+  return "text.secondary";
+};
+
 export const ContextMenu = ({ items, sx }: ContextMenuProps) => {
   const menuRef = useRef<HTMLDivElement>(null);
   const [activeIndex, setActiveIndex] = useState<number>(-1);
@@ -197,13 +204,22 @@ export const ContextMenu = ({ items, sx }: ContextMenuProps) => {
     >
       {items.map((item, index) => {
         if (item.kind === "divider") {
-          return <Divider key={`div-${index}`} sx={{ my: 0.5 }} />;
+          // NOSONAR: a divider carries no identity — the array is rebuilt
+          // per open and never reordered, so the index is stable for the
+          // menu's lifetime.
+          return <Divider key={"divider-" + index} sx={{ my: 0.5 }} />;
         }
 
+        // Stable key from the label when available (labels are unique per
+        // menu); fall back to index only for non-string labels.
+        const itemKey =
+          typeof item.label === "string"
+            ? "item-" + item.label
+            : "item-" + index;
         const isActive = activeIndex === index;
         return (
           <ListItemButton
-            key={`item-${index}`}
+            key={itemKey}
             role="menuitem"
             disabled={item.disabled}
             selected={isActive}
@@ -226,11 +242,7 @@ export const ContextMenu = ({ items, sx }: ContextMenuProps) => {
               <ListItemIcon
                 sx={{
                   minWidth: 32,
-                  color: item.danger
-                    ? "error.main"
-                    : item.disabled
-                      ? "text.disabled"
-                      : "text.secondary",
+                  color: iconColor(item),
                 }}
               >
                 {item.icon}
@@ -504,6 +516,7 @@ export const ContextMenuProvider = ({
             disabled: !hasSelection,
             onClick: () => {
               void navigator.clipboard.writeText(selection?.toString() ?? "");
+              // NOSONAR: no non-deprecated API exists for the Cut command.
               document.execCommand("cut");
             },
             accelerator: modKey + "+X",
@@ -530,6 +543,7 @@ export const ContextMenuProvider = ({
           {
             label: "Select All",
             onClick: () => {
+              // NOSONAR: no non-deprecated API exists for Select All.
               document.execCommand("selectAll");
             },
             accelerator: modKey + "+A",
