@@ -7,8 +7,11 @@ import {
   Typography,
 } from "@mui/material";
 import { FormattedMessage } from "react-intl";
-import { quitApp } from "../../actions/native.actions";
-import { produceAppState, useAppStore } from "../../store";
+import {
+  launchNormallyAfterElevationDecline,
+  quitAfterElevationDecline,
+} from "../../actions/elevation.actions";
+import { useAppStore } from "../../store";
 
 /**
  * Shown when the Windows UAC elevation prompt for admin-on-startup is
@@ -24,16 +27,11 @@ export const ElevationDeclinedDialog = () => {
   );
 
   const handleLaunchNormally = () => {
-    produceAppState((draft) => {
-      draft.settings.elevationDeclinedDialogOpen = false;
-      // Release the startup gate so auth / dashboard init can proceed.
-      draft.settings.elevationStartupPending = false;
-    });
+    launchNormallyAfterElevationDecline();
   };
 
   const handleCloseApp = () => {
-    // Must use quit_app — window.close() is intercepted as hide-to-tray.
-    void quitApp();
+    void quitAfterElevationDecline();
   };
 
   return (

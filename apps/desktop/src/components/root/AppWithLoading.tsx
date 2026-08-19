@@ -1,4 +1,8 @@
 import { Box } from "@mui/material";
+import {
+  isReadyForFullApp,
+  shouldMountPostElevationSideEffects,
+} from "../../actions/elevation.actions";
 import Router from "../../router";
 import { useAppStore } from "../../store";
 import { AppSideEffects } from "./AppSideEffects";
@@ -20,14 +24,17 @@ export const AppWithLoading = () => {
     (state) => state.settings.elevationStartupPending,
   );
 
-  const readyForApp = initialized && !elevationStartupPending;
+  const readyForApp = isReadyForFullApp({
+    initialized,
+    elevationStartupPending,
+  });
 
   return (
     <>
       {/* Elevation gate runs inside AppSideEffects; always mount it. */}
       <AppSideEffects />
       <ElevationDeclinedDialog />
-      {!elevationStartupPending && (
+      {shouldMountPostElevationSideEffects(elevationStartupPending) && (
         <>
           {hotkeyStrategy === "bridge" && <KeyPressSideEffects />}
           <UpdateDialog />

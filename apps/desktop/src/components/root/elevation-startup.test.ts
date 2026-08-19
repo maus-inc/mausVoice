@@ -1,22 +1,15 @@
 /**
- * Contract tests for the elevation pre-flight gate timing.
- *
- * The gate must resolve from a minimal prefs read BEFORE auth / full init.
- * These tests pin the AppSideEffects source shape and the settings flag
- * defaults so a regression cannot silently move UAC after dashboard load.
+ * Elevation pre-flight gate contracts, expressed as exported API / state
+ * transitions rather than source-string matching.
  */
-import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
+import {
+  isReadyForFullApp,
+  shouldMountPostElevationSideEffects,
+  shouldReleaseElevationGateAfterRelaunch,
+  shouldRunStartupElevation,
+} from "../../actions/elevation.actions";
 import { INITIAL_SETTINGS_STATE } from "../../state/settings.state";
-
-const sideEffectsSource = readFileSync(
-  new URL("./AppSideEffects.tsx", import.meta.url),
-  "utf8",
-);
-const appWithLoadingSource = readFileSync(
-  new URL("./AppWithLoading.tsx", import.meta.url),
-  "utf8",
-);
 
 describe("elevation startup gate", () => {
   it("defaults elevationStartupPending so first paint cannot race full init", () => {
@@ -25,46 +18,41 @@ describe("elevation startup gate", () => {
   });
 
   it("holds the router and heavy side-effects behind elevationStartupPending", () => {
-    expect(appWithLoadingSource).toContain("elevationStartupPending");
-    expect(appWithLoadingSource).toContain("ElevationDeclinedDialog");
-    // Heavy subsystems must not mount while the gate is pending.
-    expect(appWithLoadingSource).toMatch(
-      /!elevationStartupPending && \([\s\S]*DictationSideEffects/,
-    );
-    expect(appWithLoadingSource).toMatch(
-      /readyForApp \? <Router \/> : <LoadingApp \/>/,
-    );
+    expect(
+      isReadyForFullApp({
+        initialized: true,
+        elevationStartupPending: true,
+      }),
+    ).toBe(false);
+    expect(shouldMountPostElevationSideEffects(true)).toBe(false);
+    expect(
+      isReadyForFullApp({
+        initialized: true,
+        elevationStartupPending: false,
+      }),
+    ).toBe(true);
+    expect(shouldMountPostElevationSideEffects(false)).toBe(true);
   });
 
-  it("starts elevation from a direct prefs read before auth listeners attach", () => {
-    const elevationBlockStart = sideEffectsSource.indexOf(
-      'Windows "Always run as administrator" pre-flight',
-    );
-    const authBlockStart = sideEffectsSource.indexOf(
-      "Auth and the rest of full-app init stay behind the elevation gate",
-    );
-    expect(elevationBlockStart).toBeGreaterThanOrEqual(0);
-    expect(authBlockStart).toBeGreaterThan(elevationBlockStart);
-
-    // Auth subscription is gated.
-    expect(sideEffectsSource).toMatch(
-      /if \(elevationStartupPending\) \{\s*return;\s*\}[\s\S]*getAuthRepo\(\)\.onAuthStateChanged/,
-    );
+  it("runs the elevation pre-flight only on the Windows main window", () => {
+    expect(
+      shouldRunStartupElevation({ isMainWindow: true, platform: "windows" }),
+    ).toBe(true);
+    expect(
+      shouldRunStartupElevation({ isMainWindow: false, platform: "windows" }),
+    ).toBe(false);
+    expect(
+      shouldRunStartupElevation({ isMainWindow: true, platform: "macos" }),
+    ).toBe(false);
   });
 
-  it("only releases the gate on cancel via the decline dialog, not the action", () => {
-    // requestAdminRelaunch on cancel / require-restart must NOT clear
-    // elevationStartupPending inside AppSideEffects — Launch normally does
-    // that in the dialog; require-restart keeps the gate until process exit.
-    const gateHoldStart = sideEffectsSource.indexOf(
-      'if (result === "cancelled" || result === "require-restart")',
+  it("only releases the gate on cancel via the decline dialog, not the relaunch result", () => {
+    expect(shouldReleaseElevationGateAfterRelaunch("cancelled")).toBe(false);
+    expect(shouldReleaseElevationGateAfterRelaunch("require-restart")).toBe(
+      false,
     );
-    expect(gateHoldStart).toBeGreaterThanOrEqual(0);
-    const cancelBranch = sideEffectsSource.slice(
-      gateHoldStart,
-      sideEffectsSource.indexOf("success (already elevated", gateHoldStart),
-    );
-    expect(cancelBranch).toContain("return;");
-    expect(cancelBranch).not.toContain("releaseElevationGate");
+    expect(shouldReleaseElevationGateAfterRelaunch("success")).toBe(true);
+    expect(shouldReleaseElevationGateAfterRelaunch("failed")).toBe(true);
+    expect(shouldReleaseElevationGateAfterRelaunch(null)).toBe(true);
   });
 });

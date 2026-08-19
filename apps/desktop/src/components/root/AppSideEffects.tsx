@@ -9,6 +9,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { useIntl } from "react-intl";
 import { combineLatest, from, Observable, of } from "rxjs";
 import { showErrorSnackbar, showSnackbar } from "../../actions/app.actions";
+import { runStartupElevationPreflight } from "../../actions/elevation.actions";
 import { loadPairedRemoteDevices } from "../../actions/paired-remote-device.actions";
 import {
   refreshRemoteReceiverStatus,
@@ -26,7 +27,7 @@ import {
   setRemoteOutputEnabled,
   setRemoteTargetDeviceId,
 } from "../../actions/user.actions";
-import { requestAdminRelaunch } from "../../actions/native.actions";
+import { runStartupElevationPreflight } from "../../actions/elevation.actions";
 import { useAsyncData, useAsyncEffect } from "../../hooks/async.hooks";
 import { useIntervalAsync, useKeyDownHandler } from "../../hooks/helper.hooks";
 import { useHotkeyFire } from "../../hooks/hotkey.hooks";
@@ -40,7 +41,6 @@ import {
   getMemberRepo,
   getTermRepo,
   getTranscriptionRepo,
-  getUserPreferencesRepo,
   getUserRepo,
 } from "../../repos";
 import {
@@ -265,73 +265,19 @@ export const AppSideEffects = () => {
     void initLogging();
   }, []);
 
-  // Windows "Always run as administrator" pre-flight.
-  //
-  // Runs at the earliest moment the webview can talk to Rust: read only the
-  // alwaysRequestAdminOnStartup bit from SQLite (no auth, no Mixpanel, no
-  // dashboard), show the loading surface, then either relaunch elevated or
-  // open ElevationDeclinedDialog. Full app init is gated on
-  // settings.elevationStartupPending so the heavy path never races UAC.
-  //
-  // The decision stays in TypeScript (Brain); Rust only provides
-  // request_admin_relaunch / quit_app. Relaunch is never invoked from Tauri
-  // setup() — see startup-elevation.test.ts.
+  // Windows "Always run as administrator" pre-flight. Must stay ahead of
+  // auth / Mixpanel / dashboard init — the gate in elevation.actions owns
+  // the state transitions so AppSideEffects and the decline dialog cannot
+  // diverge. Relaunch is never invoked from Tauri setup().
   useAsyncEffect(async () => {
     if (startupElevationAttemptedRef.current) {
       return;
     }
     startupElevationAttemptedRef.current = true;
-
-    const releaseElevationGate = () => {
-      produceAppState((draft) => {
-        draft.settings.elevationStartupPending = false;
-      });
-    };
-
-    // Non-main webviews (composer popout) never own elevation; clear the gate.
-    if (!isMainWindow || getPlatform() !== "windows") {
-      releaseElevationGate();
-      return;
-    }
-
-    let wantsAdmin = false;
-    try {
-      const stored = await getUserPreferencesRepo().getUserPreferences();
-      wantsAdmin = stored?.alwaysRequestAdminOnStartup === true;
-      // Seed the store early so later init sees a consistent prefs snapshot
-      // without waiting on auth. refreshCurrentUser will overwrite if needed.
-      if (stored) {
-        produceAppState((draft) => {
-          draft.userPrefs = stored;
-        });
-      }
-    } catch (error) {
-      getLogger().warning(
-        `Failed to read admin-on-startup preference; continuing without elevation: ${error}`,
-      );
-      releaseElevationGate();
-      return;
-    }
-
-    if (!wantsAdmin) {
-      releaseElevationGate();
-      return;
-    }
-
-    getLogger().info(
-      "Requesting administrator relaunch before full app startup",
-    );
-    const result = await requestAdminRelaunch();
-    // On UAC accept the process is exiting (require-restart / app.exit). Keep
-    // the gate closed so we don't flash the dashboard in the dying process.
-    // On cancel the decline dialog stays open and holds the gate until the
-    // user chooses Launch normally (releases) or Close mausVoice (quit_app).
-    if (result === "cancelled" || result === "require-restart") {
-      return;
-    }
-    // success (already elevated / no-op), failed, or null (invoke error):
-    // proceed with normal unelevated startup.
-    releaseElevationGate();
+    await runStartupElevationPreflight({
+      isMainWindow,
+      platform: getPlatform(),
+    });
   }, []);
 
   useAsyncEffect(async () => {
