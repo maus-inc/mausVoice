@@ -8,7 +8,6 @@ import {
 } from "../../src/utils/prompt.utils";
 import { ToneConfig } from "../../src/utils/tone.utils";
 import {
-  Eval,
   getGroqGentextRepo,
   getWritingStyle,
   runEval,
@@ -73,7 +72,7 @@ const runPostProcessingEval = async ({
   language?: string;
   userName?: string;
   tone: ToneConfig;
-  evals: Eval[];
+  evals: string[];
 }): Promise<void> => {
   const startTime = Date.now();
   const finalText = await postProcess({

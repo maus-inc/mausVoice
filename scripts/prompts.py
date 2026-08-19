@@ -46,6 +46,7 @@ Usage:
 
 import argparse
 import json
+import re
 import subprocess
 import sys
 import time
@@ -58,6 +59,9 @@ from dotenv import load_dotenv
 load_dotenv(Path(__file__).parent / ".env")
 
 OLLAMA_BASE = "http://localhost:11434"
+DEFAULT_JUDGE_MODEL = DEFAULT_JUDGE_MODEL
+TRANSCRIPT_GLOB = TRANSCRIPT_GLOB
+MODEL_ALIAS_HELP = MODEL_ALIAS_HELP
 
 OLLAMA_MODELS = {
     "gemma4": "gemma4:latest",
@@ -75,7 +79,7 @@ GROQ_MODELS = {
 }
 
 OPENAI_MODELS = {
-    "gpt-5.4": "gpt-5.4",
+    DEFAULT_JUDGE_MODEL: DEFAULT_JUDGE_MODEL,
 }
 
 REASONING_EFFORT = {
@@ -91,7 +95,13 @@ Here is the transcript: "{transcript}"
 """.strip()
 
 
+MODEL_TAG_RE = re.compile(r"^[A-Za-z0-9_.:/+@-]+$")
+
+
 def pull_model(model_tag: str):
+    if not MODEL_TAG_RE.fullmatch(model_tag):
+        print(f"{RED}Invalid model tag: {model_tag}{RESET}", file=sys.stderr)
+        sys.exit(1)
     print(f"Pulling {model_tag}...")
     subprocess.run(["ollama", "pull", model_tag], check=True)
     print(f"Done pulling {model_tag}")
@@ -206,7 +216,7 @@ transcript and the output.
 Respond with JSON only: { "evals": [{ "status": "pass" | "fail", "slice": "<text from prompt>", "reason": "<short explanation>" }] }"""
 
 
-def evaluate_result(sys_prompt: str, result: str, transcript: str, judge_model: str = "gpt-5.4") -> list[dict]:
+def evaluate_result(sys_prompt: str, result: str, transcript: str, judge_model: str = DEFAULT_JUDGE_MODEL) -> list[dict]:
     from openai import OpenAI
 
     client = OpenAI()
@@ -276,7 +286,7 @@ def resolve_transcripts(transcript_arg: str) -> list[Path]:
     for part in transcript_arg.split(","):
         p = Path(part.strip())
         if p.is_dir():
-            paths.extend(sorted(p.glob("*.txt")))
+            paths.extend(sorted(p.glob(TRANSCRIPT_GLOB)))
         elif p.is_file():
             paths.append(p)
         else:
@@ -288,8 +298,38 @@ def resolve_transcripts(transcript_arg: str) -> list[Path]:
     return paths
 
 
+
+
+def require_file(path: Path, what: str) -> Path:
+    resolved = path.expanduser().resolve()
+    if not resolved.is_file():
+        print(f"{RED}{what} not found: {resolved}{RESET}", file=sys.stderr)
+        sys.exit(1)
+    return resolved
+
+
+def require_dir(path: Path, what: str) -> Path:
+    resolved = path.expanduser().resolve()
+    if not resolved.is_dir():
+        print(f"{RED}{what} not found: {resolved}{RESET}", file=sys.stderr)
+        sys.exit(1)
+    return resolved
+
+
+def require_creatable_dir(path: Path, what: str) -> Path:
+    resolved = path.expanduser().resolve()
+    if resolved.exists() and not resolved.is_dir():
+        print(f"{RED}{what} is not a directory: {resolved}{RESET}", file=sys.stderr)
+        sys.exit(1)
+    parent = resolved.parent
+    if parent.exists() and not parent.is_dir():
+        print(f"{RED}Invalid parent for {what}: {resolved}{RESET}", file=sys.stderr)
+        sys.exit(1)
+    return resolved
+
 def run_prompt(model_tags: list[str], sys_prompt: str, transcript_files: list[Path], judge_model: str = None):
     for tf in transcript_files:
+        require_file(tf, "Transcript file")
         transcript = tf.read_text()
         print(f"\n{CYAN}=== {tf.name} ==={RESET}")
         print(transcript)
@@ -368,10 +408,13 @@ Respond with JSON only:
 
 
 def run_golden(model_tag: str, sys_prompt: str, transcripts_dir: Path, output_dir: Path):
+    require_dir(transcripts_dir, "Transcripts directory")
+    require_creatable_dir(output_dir, "Output directory")
+    output_dir.mkdir(parents=True, exist_ok=True)
     golden_dir = output_dir / "golden"
     golden_dir.mkdir(parents=True, exist_ok=True)
 
-    transcript_files = sorted(transcripts_dir.glob("*.txt"))
+    transcript_files = sorted(transcripts_dir.glob(TRANSCRIPT_GLOB))
     if not transcript_files:
         print(f"{RED}No transcript files found in {transcripts_dir}{RESET}")
         sys.exit(1)
@@ -406,7 +449,7 @@ def run_epoch(
     transcripts_dir: Path,
     golden_dir: Path,
     output_dir: Path,
-    judge_model: str = "gpt-5.4",
+    judge_model: str = DEFAULT_JUDGE_MODEL,
 ) -> tuple[str, bool]:
     epoch_label = f"{epoch_num:03d}"
     epoch_dir = output_dir / "epochs" / epoch_label
@@ -416,7 +459,7 @@ def run_epoch(
     # Save the prompt used this epoch
     (epoch_dir / "prompt.txt").write_text(sys_prompt)
 
-    transcript_files = sorted(transcripts_dir.glob("*.txt"))
+    transcript_files = sorted(transcripts_dir.glob(TRANSCRIPT_GLOB))
 
     print(f"\n{CYAN}=== Epoch {epoch_label} ==={RESET}")
     print(f"  Target model: {target_model_tag}")
@@ -539,10 +582,10 @@ def cmd_self_improve(args):
     golden_model = MODELS.get(args.golden_model, args.golden_model)
     target_model = MODELS.get(args.target_model, args.target_model)
     judge_model = MODELS.get(args.judge_model, args.judge_model)
-    golden_prompt = Path(args.golden_prompt).read_text().strip()
-    target_prompt = Path(args.target_prompt).read_text().strip()
-    transcripts_dir = Path(args.transcripts_dir)
-    output_dir = Path(args.output_dir)
+    golden_prompt = require_file(Path(args.golden_prompt), "Golden prompt file").read_text().strip()
+    target_prompt = require_file(Path(args.target_prompt), "Target prompt file").read_text().strip()
+    transcripts_dir = require_dir(Path(args.transcripts_dir), "Transcripts directory")
+    output_dir = require_creatable_dir(Path(args.output_dir), "Output directory")
     max_epochs = args.max_epochs
 
     import shutil
@@ -577,14 +620,14 @@ def main():
 
     # pull
     pull_p = sub.add_parser("pull", help="Pull/download a model")
-    pull_p.add_argument("model", help="Model alias or Ollama tag")
+    pull_p.add_argument("model", help=MODEL_ALIAS_HELP)
 
     # list
     sub.add_parser("list", help="List available model aliases")
 
     # run (default)
     run_p = sub.add_parser("run", help="Run a transcript cleanup prompt")
-    run_p.add_argument("--model", "-m", required=True, help="Model alias or Ollama tag")
+    run_p.add_argument("--model", "-m", required=True, help=MODEL_ALIAS_HELP)
     run_p.add_argument("--prompt", "-p", required=True, help="Path to system prompt text file")
     run_p.add_argument("--transcript", "-t", required=True, help="Transcript file(s) — comma-separated paths or a directory")
     run_p.add_argument("--judge-model", default=None, help="Model to evaluate results (omit to skip eval)")
@@ -598,10 +641,10 @@ def main():
     si_p.add_argument("--transcripts-dir", default=str(Path(__file__).parent / "transcripts"), help="Directory of transcript files")
     si_p.add_argument("--output-dir", default=str(SELF_IMPROVE_DIR), help="Output directory for results")
     si_p.add_argument("--max-epochs", type=int, default=10, help="Maximum number of refinement epochs")
-    si_p.add_argument("--judge-model", default="gpt-5.4", help="Model used for evaluation and prompt refinement (default: gpt-5.4)")
+    si_p.add_argument("--judge-model", default=DEFAULT_JUDGE_MODEL, help="Model used for evaluation and prompt refinement (default: gpt-5.4)")
 
     # Also support flat usage: prompts.py --model X --prompt Y --transcript Z
-    parser.add_argument("--model", "-m", help="Model alias or Ollama tag")
+    parser.add_argument("--model", "-m", help=MODEL_ALIAS_HELP)
     parser.add_argument("--prompt", "-p", help="Path to system prompt text file")
     parser.add_argument("--transcript", "-t", help="Transcript file(s) — comma-separated paths or a directory")
     parser.add_argument("--judge-model", default=None, help="Model to evaluate results (omit to skip eval)")
@@ -613,20 +656,14 @@ def main():
         pull_model(tag)
     elif args.command == "list":
         list_models()
-    elif args.command == "run":
+    elif args.command == "run" or (args.model and args.transcript and args.prompt):
         tags = [MODELS.get(m.strip(), m.strip()) for m in args.model.split(",")]
-        sys_prompt = open(args.prompt).read().strip()
+        sys_prompt = require_file(Path(args.prompt), "Prompt file").read_text().strip()
         transcript_files = resolve_transcripts(args.transcript)
         judge = MODELS.get(args.judge_model, args.judge_model) if args.judge_model else None
         run_prompt(tags, sys_prompt, transcript_files, judge)
     elif args.command == "self-improve":
         cmd_self_improve(args)
-    elif args.model and args.transcript and args.prompt:
-        tags = [MODELS.get(m.strip(), m.strip()) for m in args.model.split(",")]
-        sys_prompt = open(args.prompt).read().strip()
-        transcript_files = resolve_transcripts(args.transcript)
-        judge = MODELS.get(args.judge_model, args.judge_model) if args.judge_model else None
-        run_prompt(tags, sys_prompt, transcript_files, judge)
     else:
         parser.print_help()
 

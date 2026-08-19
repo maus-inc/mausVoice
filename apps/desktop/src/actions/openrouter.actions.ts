@@ -14,7 +14,7 @@ export const loadOpenRouterModels = async (): Promise<void> => {
   const apiKeyId = state.settings.aiPostProcessing.selectedApiKeyId;
   const apiKey = apiKeyId ? getRec(state.apiKeyById, apiKeyId) : null;
 
-  if (!apiKey || apiKey.provider !== "openrouter" || !apiKey.keyFull) {
+  if (apiKey?.provider !== "openrouter" || !apiKey.keyFull) {
     return;
   }
 
@@ -157,6 +157,6 @@ export const getOpenRouterConfigForKey = (
 ): OpenRouterConfig | null => {
   const state = getAppState();
   const apiKey = getRec(state.apiKeyById, apiKeyId);
-  if (!apiKey || !apiKey.openRouterConfig) return null;
+  if (!apiKey?.openRouterConfig) return null;
   return apiKey.openRouterConfig;
 };

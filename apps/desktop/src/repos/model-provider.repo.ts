@@ -48,7 +48,7 @@ async function fetchOpenAICompatibleModels(
   return (payload.data ?? [])
     .map((m) => (m.id ?? "").trim())
     .filter(Boolean)
-    .sort();
+    .sort((a, b) => a.localeCompare(b));
 }
 
 function isWhisperModel(modelId: string): boolean {
@@ -154,7 +154,7 @@ export class ClaudeModelProviderRepo extends BaseModelProviderRepo {
     return (payload.data ?? [])
       .map((m) => (m.id ?? "").trim())
       .filter(Boolean)
-      .sort();
+      .sort((a, b) => a.localeCompare(b));
   }
 
   async getGenerativeTextModels(
@@ -258,7 +258,7 @@ export class GeminiModelProviderRepo extends BaseModelProviderRepo {
     return (payload.models ?? [])
       .map((m) => (m.name ?? "").replace(/^models\//, "").trim())
       .filter(Boolean)
-      .sort();
+      .sort((a, b) => a.localeCompare(b));
   }
 }
 
@@ -296,7 +296,7 @@ export class AzureModelProviderRepo extends BaseModelProviderRepo {
     return (payload.data ?? [])
       .map((m) => (m.id ?? "").trim())
       .filter(Boolean)
-      .sort();
+      .sort((a, b) => a.localeCompare(b));
   }
 }
 
@@ -369,7 +369,7 @@ export class OpenAICompatibleModelProviderRepo extends BaseModelProviderRepo {
     return (payload.data ?? [])
       .map((m) => (m.id ?? "").trim())
       .filter(Boolean)
-      .sort();
+      .sort((a, b) => a.localeCompare(b));
   }
 }
 
@@ -394,7 +394,7 @@ export class SpeachesModelProviderRepo extends BaseModelProviderRepo {
     return (payload.data ?? [])
       .map((m) => (m.id ?? "").trim())
       .filter(Boolean)
-      .sort();
+      .sort((a, b) => a.localeCompare(b));
   }
 }
 

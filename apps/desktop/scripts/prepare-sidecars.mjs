@@ -15,11 +15,18 @@ const sidecarManifestPath = join(
   "Cargo.toml",
 );
 const cargoTargetDirOverride = process.env.CARGO_TARGET_DIR?.trim() || null;
-const rustTargetDir = cargoTargetDirOverride
-  ? isAbsolute(cargoTargetDirOverride)
-    ? cargoTargetDirOverride
-    : resolve(repoRoot, cargoTargetDirOverride)
-  : join(repoRoot, "packages", "rust_transcription", "target");
+const resolveCargoTargetDir = (defaultTargetDir) => {
+  if (!cargoTargetDirOverride) {
+    return defaultTargetDir;
+  }
+  if (isAbsolute(cargoTargetDirOverride)) {
+    return cargoTargetDirOverride;
+  }
+  return resolve(repoRoot, cargoTargetDirOverride);
+};
+const rustTargetDir = resolveCargoTargetDir(
+  join(repoRoot, "packages", "rust_transcription", "target"),
+);
 const tauriBinariesDir = join(desktopDir, "src-tauri", "binaries");
 
 const buildTarget =
@@ -194,7 +201,7 @@ function run(command, args, cwd, options = {}) {
 }
 
 function resolveHostTargetTriple() {
-  const result = spawnSync("rustc", ["-vV"], {
+  const result = spawnSync(process.env.RUSTC ?? "rustc", ["-vV"], {
     cwd: repoRoot,
     encoding: "utf8",
     stdio: ["ignore", "pipe", "ignore"],
@@ -338,11 +345,9 @@ function buildNativePill(packageDir, binaryName) {
     return;
   }
 
-  const pillTargetDir = cargoTargetDirOverride
-    ? isAbsolute(cargoTargetDirOverride)
-      ? cargoTargetDirOverride
-      : resolve(repoRoot, cargoTargetDirOverride)
-    : join(repoRoot, "packages", packageDir, "target");
+  const pillTargetDir = resolveCargoTargetDir(
+    join(repoRoot, "packages", packageDir, "target"),
+  );
 
   const pillCargoArgs = [
     "build",

@@ -39,6 +39,135 @@ const formatReleaseDate = (isoDate: string | null) => {
   }).format(parsed);
 };
 
+const UpdateProgressSection = ({
+  percent,
+  progressLabel,
+  statusMessage,
+}: {
+  readonly percent: number | null;
+  readonly progressLabel: string | null;
+  readonly statusMessage: React.ReactNode;
+}) => (
+  <Stack spacing={1}>
+    <LinearProgress
+      variant={percent != null ? "determinate" : "indeterminate"}
+      value={percent ?? undefined}
+    />
+    <Stack
+      direction="row"
+      spacing={1}
+      sx={{
+        justifyContent: "space-between",
+      }}
+    >
+      <Typography
+        variant="caption"
+        sx={{
+          color: "text.secondary",
+        }}
+      >
+        {statusMessage}
+      </Typography>
+      {progressLabel && (
+        <Typography
+          variant="caption"
+          sx={{
+            color: "text.secondary",
+          }}
+        >
+          {progressLabel}
+          {percent != null ? ` (${percent}%)` : ""}
+        </Typography>
+      )}
+    </Stack>
+  </Stack>
+);
+
+const UpdateInstallingAlert = ({
+  requiresManualInstall,
+}: {
+  readonly requiresManualInstall: boolean;
+}) =>
+  requiresManualInstall ? (
+    <Alert severity="success" variant="outlined">
+      <FormattedMessage defaultMessage="The installer has been opened. Follow the prompts to complete the update, then relaunch mausVoice." />
+    </Alert>
+  ) : (
+    <Alert severity="info" variant="outlined">
+      <FormattedMessage defaultMessage="Installation in progress. mausVoice may restart automatically when finished." />
+    </Alert>
+  );
+
+const UpdateErrorAlert = ({
+  errorMessage,
+  showManualInstallerAction,
+  onOpenManualInstaller,
+}: {
+  readonly errorMessage: string;
+  readonly showManualInstallerAction: boolean;
+  readonly onOpenManualInstaller: () => void;
+}) => (
+  <Alert
+    severity="error"
+    variant="outlined"
+    action={
+      showManualInstallerAction ? (
+        <Button color="error" size="small" onClick={onOpenManualInstaller}>
+          <FormattedMessage defaultMessage="Download installer" />
+        </Button>
+      ) : undefined
+    }
+  >
+    <Stack spacing={1}>
+      <Typography variant="body2">{errorMessage}</Typography>
+      {showManualInstallerAction && (
+        <Typography variant="body2">
+          <FormattedMessage defaultMessage="Your operating system is preventing mausVoice from modifying files in its current install location. Use the download button to get the latest installer, then run it to complete the update manually." />
+        </Typography>
+      )}
+    </Stack>
+  </Alert>
+);
+
+const UpdateActions = ({
+  requiresManualInstall,
+  status,
+  isUpdating,
+  onClose,
+  onInstall,
+}: {
+  readonly requiresManualInstall: boolean;
+  readonly status: string;
+  readonly isUpdating: boolean;
+  readonly onClose: () => void;
+  readonly onInstall: () => void;
+}) =>
+  requiresManualInstall && status === "installing" ? (
+    <Button onClick={onClose}>
+      <FormattedMessage defaultMessage="Close" />
+    </Button>
+  ) : (
+    <>
+      <Button onClick={onClose} disabled={isUpdating}>
+        <FormattedMessage defaultMessage="Later" />
+      </Button>
+      <Button
+        variant="contained"
+        onClick={onInstall}
+        disabled={isUpdating}
+        endIcon={
+          isUpdating ? (
+            <CircularProgress size={16} color="inherit" />
+          ) : (
+            <ArrowUpwardOutlined />
+          )
+        }
+      >
+        <FormattedMessage defaultMessage="Update" />
+      </Button>
+    </>
+  );
+
 export const UpdateDialog = () => {
   const intl = useIntl();
   const dialogOpen = useAppStore((state) => state.updater.dialogOpen);
@@ -145,6 +274,19 @@ export const UpdateDialog = () => {
     openUrl(manualInstallerUrl);
   }, [manualInstallerUrl]);
 
+  let updateStatusMessage: React.ReactNode;
+  if (status === "installing") {
+    updateStatusMessage = requiresManualInstall ? (
+      <FormattedMessage defaultMessage="Opening installer..." />
+    ) : (
+      <FormattedMessage defaultMessage="Installing update..." />
+    );
+  } else {
+    updateStatusMessage = (
+      <FormattedMessage defaultMessage="Downloading update..." />
+    );
+  }
+
   return (
     <Dialog
       open={dialogOpen}
@@ -204,114 +346,36 @@ export const UpdateDialog = () => {
           )}
 
           {showProgress && (
-            <Stack spacing={1}>
-              <LinearProgress
-                variant={percent != null ? "determinate" : "indeterminate"}
-                value={percent ?? undefined}
-              />
-              <Stack
-                direction="row"
-                spacing={1}
-                sx={{
-                  justifyContent: "space-between",
-                }}
-              >
-                <Typography
-                  variant="caption"
-                  sx={{
-                    color: "text.secondary",
-                  }}
-                >
-                  {status === "installing" ? (
-                    requiresManualInstall ? (
-                      <FormattedMessage defaultMessage="Opening installer..." />
-                    ) : (
-                      <FormattedMessage defaultMessage="Installing update..." />
-                    )
-                  ) : (
-                    <FormattedMessage defaultMessage="Downloading update..." />
-                  )}
-                </Typography>
-                {progressLabel && (
-                  <Typography
-                    variant="caption"
-                    sx={{
-                      color: "text.secondary",
-                    }}
-                  >
-                    {progressLabel}
-                    {percent != null ? ` (${percent}%)` : ""}
-                  </Typography>
-                )}
-              </Stack>
-            </Stack>
+            <UpdateProgressSection
+              percent={percent}
+              progressLabel={progressLabel}
+              statusMessage={updateStatusMessage}
+            />
           )}
 
-          {status === "installing" &&
-            (requiresManualInstall ? (
-              <Alert severity="success" variant="outlined">
-                <FormattedMessage defaultMessage="The installer has been opened. Follow the prompts to complete the update, then relaunch mausVoice." />
-              </Alert>
-            ) : (
-              <Alert severity="info" variant="outlined">
-                <FormattedMessage defaultMessage="Installation in progress. mausVoice may restart automatically when finished." />
-              </Alert>
-            ))}
+          {status === "installing" && (
+            <UpdateInstallingAlert
+              requiresManualInstall={requiresManualInstall}
+            />
+          )}
 
           {status === "error" && errorMessage && (
-            <Alert
-              severity="error"
-              variant="outlined"
-              action={
-                showManualInstallerAction ? (
-                  <Button
-                    color="error"
-                    size="small"
-                    onClick={handleOpenManualInstaller}
-                  >
-                    <FormattedMessage defaultMessage="Download installer" />
-                  </Button>
-                ) : undefined
-              }
-            >
-              <Stack spacing={1}>
-                <Typography variant="body2">{errorMessage}</Typography>
-                {showManualInstallerAction && (
-                  <Typography variant="body2">
-                    <FormattedMessage defaultMessage="Your operating system is preventing mausVoice from modifying files in its current install location. Use the download button to get the latest installer, then run it to complete the update manually." />
-                  </Typography>
-                )}
-              </Stack>
-            </Alert>
+            <UpdateErrorAlert
+              errorMessage={errorMessage}
+              showManualInstallerAction={showManualInstallerAction}
+              onOpenManualInstaller={handleOpenManualInstaller}
+            />
           )}
         </Stack>
       </DialogContent>
       <DialogActions>
-        {requiresManualInstall && status === "installing" ? (
-          <Button onClick={handleClose}>
-            <FormattedMessage defaultMessage="Close" />
-          </Button>
-        ) : (
-          <>
-            <Button onClick={handleClose} disabled={isUpdating}>
-              <FormattedMessage defaultMessage="Later" />
-            </Button>
-            <Button
-              variant="contained"
-              onClick={handleInstall}
-              disabled={isUpdating}
-              endIcon={
-                isUpdating ? (
-                  <CircularProgress size={16} color="inherit" />
-                ) : (
-                  <ArrowUpwardOutlined />
-                )
-              }
-            >
-              <FormattedMessage defaultMessage="Update" />
-            </Button>
-          </>
-        )}
+        <UpdateActions
+          requiresManualInstall={requiresManualInstall}
+          status={status}
+          isUpdating={isUpdating}
+          onClose={handleClose}
+          onInstall={handleInstall}
+        />
       </DialogActions>
     </Dialog>
   );

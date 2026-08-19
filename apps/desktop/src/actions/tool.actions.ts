@@ -40,7 +40,7 @@ export const resolveToolPermission = (
 ): void => {
   produceAppState((draft) => {
     const permission = draft.toolPermissionById[permissionId];
-    if (!permission || permission.status !== "pending") return;
+    if (permission?.status !== "pending") return;
     permission.status = status;
     if (status === "allowed") {
       permission.token = crypto.randomUUID();

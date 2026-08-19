@@ -87,14 +87,15 @@ export class LocalApiKeyRepo extends BaseApiKeyRepo {
   }
 
   async updateApiKey(payload: UpdateApiKeyPayload): Promise<ApiKey> {
+    let openRouterConfig: string | null | undefined;
+    if (payload.openRouterConfig !== undefined) {
+      openRouterConfig = payload.openRouterConfig
+        ? JSON.stringify(payload.openRouterConfig)
+        : null;
+    }
     const request = {
       ...payload,
-      openRouterConfig:
-        payload.openRouterConfig !== undefined
-          ? payload.openRouterConfig
-            ? JSON.stringify(payload.openRouterConfig)
-            : null
-          : undefined,
+      openRouterConfig,
     };
     const updated = await invoke<LocalApiKey>("api_key_update", { request });
     return fromLocalApiKey(updated);

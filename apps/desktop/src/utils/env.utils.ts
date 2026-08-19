@@ -50,26 +50,29 @@ export const getPlatform = (): Platform => {
 export const isMacOS = (): boolean => getPlatform() === "darwin";
 export const isWindows = (): boolean => getPlatform() === "win32";
 
+const getWindowsBuildNumber = (userAgent: string): number | null => {
+  const match = /Windows NT 10\.0.*build[:/\s]*(\d+)/i.exec(userAgent);
+  return match ? Number.parseInt(match[1], 10) : null;
+};
+
 export const isWindows10 = (): boolean => {
   if (!isWindows()) {
     return false;
   }
 
   const userAgent = navigator.userAgent;
-  const match = userAgent.match(/Windows NT 10\.0.*build[:/\s]*(\d+)/i);
-  if (match) {
-    const build = parseInt(match[1], 10);
+  const build = getWindowsBuildNumber(userAgent);
+  if (build !== null) {
     return build < 22000;
   }
 
   const uaData = (
     navigator as Navigator & { userAgentData?: { platform: string } }
   ).userAgentData;
-  if (uaData?.platform === "Windows") {
-    return userAgent.includes("Windows NT 10.0");
-  }
-
-  return userAgent.includes("Windows NT 10.0");
+  return (
+    (uaData?.platform === "Windows" || true) &&
+    userAgent.includes("Windows NT 10.0")
+  );
 };
 
 export const isWindows11 = (): boolean => {
@@ -77,12 +80,6 @@ export const isWindows11 = (): boolean => {
     return false;
   }
 
-  const userAgent = navigator.userAgent;
-  const match = userAgent.match(/Windows NT 10\.0.*build[:/\s]*(\d+)/i);
-  if (match) {
-    const build = parseInt(match[1], 10);
-    return build >= 22000;
-  }
-
-  return false;
+  const build = getWindowsBuildNumber(navigator.userAgent);
+  return build !== null && build >= 22000;
 };

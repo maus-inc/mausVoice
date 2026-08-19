@@ -131,86 +131,32 @@ describe("getStringSimilarity", () => {
 });
 
 describe("getFirstAndLastName", () => {
-  it("should return first and last name for a full name", () => {
-    const result = getFirstAndLastName("John Doe");
-    expect(result).toEqual({ firstName: "John", lastName: "Doe" });
-  });
-
-  it("should return only first name if no last name", () => {
-    const result = getFirstAndLastName("John");
-    expect(result).toEqual({ firstName: "John", lastName: null });
-  });
-
-  it("should handle names with multiple parts", () => {
-    const result = getFirstAndLastName("John Michael Doe");
-    expect(result).toEqual({ firstName: "John", lastName: "Doe" });
-  });
-
-  it("should handle leading and trailing spaces", () => {
-    const result = getFirstAndLastName("  John Doe  ");
-    expect(result).toEqual({ firstName: "John", lastName: "Doe" });
-  });
-
-  it("should return nulls for empty string", () => {
-    const result = getFirstAndLastName("");
-    expect(result).toEqual({ firstName: null, lastName: null });
-  });
-
-  it("should return nulls for string with only spaces", () => {
-    const result = getFirstAndLastName("   ");
-    expect(result).toEqual({ firstName: null, lastName: null });
-  });
-
-  it("should handle names with tabs and newlines", () => {
-    const result = getFirstAndLastName("John\tDoe\nSmith");
-    expect(result).toEqual({ firstName: "John", lastName: "Smith" });
+  it.each([
+    ["John Doe", { firstName: "John", lastName: "Doe" }],
+    ["John", { firstName: "John", lastName: null }],
+    ["John Michael Doe", { firstName: "John", lastName: "Doe" }],
+    ["  John Doe  ", { firstName: "John", lastName: "Doe" }],
+    ["", { firstName: null, lastName: null }],
+    ["   ", { firstName: null, lastName: null }],
+    ["John\tDoe\nSmith", { firstName: "John", lastName: "Smith" }],
+  ])("splits %s into first and last name", (input, expected) => {
+    expect(getFirstAndLastName(input)).toEqual(expected);
   });
 });
 
 describe("getInitials", () => {
-  it("should return initials for first and last name", () => {
-    const result = getInitials("John Doe");
-    expect(result).toBe("JD");
-  });
-
-  it("should return single initial for single name", () => {
-    const result = getInitials("John");
-    expect(result).toBe("J");
-  });
-
-  it("should return first and last initials for multiple names", () => {
-    const result = getInitials("John Michael Doe");
-    expect(result).toBe("JD");
-  });
-
-  it("should handle names with leading and trailing spaces", () => {
-    const result = getInitials("  John Doe  ");
-    expect(result).toBe("JD");
-  });
-
-  it("should return empty string for empty input", () => {
-    const result = getInitials("");
-    expect(result).toBe("");
-  });
-
-  it("should return empty string for string with only spaces", () => {
-    const result = getInitials("   ");
-    expect(result).toBe("");
-  });
-
-  it("should handle lowercase names and return uppercase initials", () => {
-    const result = getInitials("john doe");
-    expect(result).toBe("JD");
-  });
-
-  it("should handle names with special characters", () => {
-    const result = getInitials("Jean-Luc Picard");
-    expect(result).toBe("JP");
-  });
-
-  it("should handle names with tabs and newlines", () => {
-    const result = getInitials("John\tDoe\nSmith");
-    expect(result).toBe("JS");
+  it.each([
+    ["John Doe", "JD"],
+    ["John", "J"],
+    ["John Michael Doe", "JD"],
+    ["  John Doe  ", "JD"],
+    ["", ""],
+    ["   ", ""],
+    ["john doe", "JD"],
+    ["Jean-Luc Picard", "JP"],
+    ["John\tDoe\nSmith", "JS"],
+  ])("computes initials for %s", (input, expected) => {
+    expect(getInitials(input)).toBe(expected);
   });
 });
 
@@ -577,46 +523,20 @@ describe("applySymbolConversions", () => {
 });
 
 describe("sanitizeIndentation", () => {
-  it("removes leading spaces from each line", () => {
-    const input = "  hello\n    world\n  foo";
-    expect(sanitizeIndentation(input)).toBe("hello\nworld\nfoo");
-  });
-
-  it("removes leading tabs from each line", () => {
-    const input = "\thello\n\t\tworld";
-    expect(sanitizeIndentation(input)).toBe("hello\nworld");
-  });
-
-  it("removes mixed whitespace indentation", () => {
-    const input = "  \thello\n\t  world";
-    expect(sanitizeIndentation(input)).toBe("hello\nworld");
-  });
-
-  it("preserves empty lines", () => {
-    const input = "  hello\n\n  world";
-    expect(sanitizeIndentation(input)).toBe("hello\n\nworld");
-  });
-
-  it("preserves trailing whitespace", () => {
-    const input = "  hello  \n  world  ";
-    expect(sanitizeIndentation(input)).toBe("hello  \nworld  ");
-  });
-
-  it("returns empty string for empty input", () => {
-    expect(sanitizeIndentation("")).toBe("");
-  });
-
-  it("handles string with no indentation", () => {
-    const input = "hello\nworld";
-    expect(sanitizeIndentation(input)).toBe("hello\nworld");
-  });
-
-  it("handles single line with indentation", () => {
-    expect(sanitizeIndentation("    hello")).toBe("hello");
-  });
-
-  it("preserves multiple newlines between paragraphs", () => {
-    const input = "  paragraph one\n\n\n  paragraph two";
-    expect(sanitizeIndentation(input)).toBe("paragraph one\n\n\nparagraph two");
+  it.each([
+    ["  hello\n    world\n  foo", "hello\nworld\nfoo"],
+    ["\thello\n\t\tworld", "hello\nworld"],
+    ["  \thello\n\t  world", "hello\nworld"],
+    ["  hello\n\n  world", "hello\n\nworld"],
+    ["  hello  \n  world  ", "hello  \nworld  "],
+    ["", ""],
+    ["hello\nworld", "hello\nworld"],
+    ["    hello", "hello"],
+    [
+      "  paragraph one\n\n\n  paragraph two",
+      "paragraph one\n\n\nparagraph two",
+    ],
+  ])("sanitizes indentation of %j", (input, expected) => {
+    expect(sanitizeIndentation(input)).toBe(expected);
   });
 });

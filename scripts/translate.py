@@ -77,7 +77,7 @@ def read_en_file(locales_dir: Path) -> dict:
 
 
 TS_PAIR_RE = re.compile(
-    r'(\w+):\s*(?:\n\s*)?("(?:[^"\\]|\\.)*")',
+    r'(\w+):\s*(?:\n\s*)?("(?:[^"\\]*(?:\\.[^"\\]*)*)")',
     re.DOTALL,
 )
 
@@ -96,12 +96,20 @@ def parse_ts_translations(path: Path) -> dict[str, str]:
     return result
 
 
+def _validate_locale_ts_path(path: Path) -> None:
+    """Ensure the target is a .ts file inside a locales directory."""
+    resolved = path.expanduser().resolve()
+    if resolved.suffix != ".ts" or resolved.parent.name != "locales":
+        raise ValueError(f"Refusing to write outside locales dir: {resolved}")
+
+
 def write_ts_translation_values(path: Path, updates: dict[str, str]) -> None:
     """Replace specific key values in a .ts translations file in place."""
+    _validate_locale_ts_path(path)
     text = path.read_text(encoding="utf-8")
     for key, new_value in updates.items():
         pattern = re.compile(
-            rf'({re.escape(key)}:\s*(?:\n\s*)?)"(?:[^"\\]|\\.)*"',
+            rf'({re.escape(key)}:\s*(?:\n\s*)?)"(?:[^"\\]*(?:\\.[^"\\]*)*)"',
             re.DOTALL,
         )
         escaped = json.dumps(new_value, ensure_ascii=False)
@@ -147,9 +155,8 @@ def find_changed_keys(old_locales: dict[str, dict], new_locales: dict[str, dict]
 
         for key, new_value in new_messages.items():
             old_value = old_messages.get(key)
-            if old_value != new_value:
-                if key in en_messages:
-                    changed_keys.append(key)
+            if old_value != new_value and key in en_messages:
+                changed_keys.append(key)
 
         if changed_keys:
             changed[locale_code] = changed_keys
@@ -205,27 +212,12 @@ Text to translate:
     raise RuntimeError(f"Failed after {max_retries} attempts: {last_error}")
 
 
-def main():
-    parser = argparse.ArgumentParser(description="Translate locale files for mausVoice apps")
-    parser.add_argument("app", choices=["desktop", "admin", "web"], help="The app to translate")
-    parser.add_argument("--dry-run", action="store_true", help="Show what would be translated without making changes")
-    args = parser.parse_args()
+def _find_changed_messages(config: dict) -> tuple[dict[str, list[str]], dict]:
+    """Detect which keys need translation for the configured app format."""
+    locales_dir = Path(config["locales_dir"])
+    app_dir = Path(config["app_dir"])
 
-    api_key = os.getenv("GROQ_API_KEY")
-    if not api_key:
-        print("Error: GROQ_API_KEY not found in environment or .env file")
-        sys.exit(1)
-
-    config = APP_CONFIGS[args.app]
-    locales_dir = config["locales_dir"]
-    app_dir = config["app_dir"]
-    fmt = config["format"]
-
-    if not locales_dir.exists():
-        print(f"Error: Locales directory not found: {locales_dir}")
-        sys.exit(1)
-
-    if fmt == "json":
+    if config["format"] == "json":
         print(f"Reading existing locale files from {locales_dir}...")
         old_locales = read_locale_files(locales_dir)
         print(f"  Found {len(old_locales)} locale files (excluding en.json)")
@@ -238,19 +230,82 @@ def main():
         en_messages = read_en_file(locales_dir)
 
         print("\nFinding changed keys...")
-        changed = find_changed_keys(old_locales, new_locales, en_messages)
-    else:
-        print(f"Reading locale files from {locales_dir}...")
-        new_locales = read_locale_files_ts(locales_dir)
-        en_messages = read_en_file_ts(locales_dir)
-        print(f"  Found {len(new_locales)} locale files (excluding en.ts)")
+        return find_changed_keys(old_locales, new_locales, en_messages), en_messages
 
-        print("\nFinding untranslated keys...")
-        changed = {
-            code: find_untranslated_keys(data, en_messages)
-            for code, data in new_locales.items()
-        }
-        changed = {code: keys for code, keys in changed.items() if keys}
+    print(f"Reading locale files from {locales_dir}...")
+    new_locales = read_locale_files_ts(locales_dir)
+    en_messages = read_en_file_ts(locales_dir)
+    print(f"  Found {len(new_locales)} locale files (excluding en.ts)")
+
+    print("\nFinding untranslated keys...")
+    changed = {
+        code: find_untranslated_keys(data, en_messages)
+        for code, data in new_locales.items()
+    }
+    return {code: keys for code, keys in changed.items() if keys}, en_messages
+
+
+def _translate_locale(
+    client: Groq,
+    locale_code: str,
+    keys: list[str],
+    en_messages: dict,
+    fmt: str,
+    locales_dir: Path,
+) -> None:
+    """Translate one locale's keys and persist the updated file."""
+    lang_name = LANGUAGE_NAMES.get(locale_code, locale_code)
+    print(f"\nTranslating {len(keys)} key(s) to {lang_name}...")
+
+    translated_updates: dict[str, str] = {}
+    for key in keys:
+        en_text = en_messages.get(key)
+        if not en_text:
+            print(f"  Warning: No English text found for key '{key}', skipping")
+            continue
+
+        print(f"  Translating: {key[:50]}...")
+        try:
+            translated = translate_text(client, en_text, lang_name)
+            translated_updates[key] = translated
+            print(f"    -> {translated[:60]}{'...' if len(translated) > 60 else ''}")
+        except RuntimeError as e:
+            print(f"    Error: {e}, keeping original value")
+
+    if fmt == "json":
+        locale_file = locales_dir / f"{locale_code}.json"
+        with open(locale_file, "r", encoding="utf-8") as f:
+            locale_data = json.load(f)
+        locale_data.update(translated_updates)
+        with open(locale_file, "w", encoding="utf-8") as f:
+            json.dump(locale_data, f, ensure_ascii=False, indent=2)
+            f.write("\n")
+        print(f"  Saved {locale_file.name}")
+    else:
+        locale_file = locales_dir / f"{locale_code}.ts"
+        write_ts_translation_values(locale_file, translated_updates)
+        print(f"  Saved {locale_file.name}")
+
+
+def main():
+    parser = argparse.ArgumentParser(description="Translate locale files for mausVoice apps")
+    parser.add_argument("app", choices=["desktop", "admin", "web"], help="The app to translate")
+    parser.add_argument("--dry-run", action="store_true", help="Show what would be translated without making changes")
+    args = parser.parse_args()
+
+    api_key = os.getenv("GROQ_API_KEY")
+    if not api_key:
+        print("Error: GROQ_API_KEY not found in environment or .env file")
+        sys.exit(1)
+
+    config = APP_CONFIGS[args.app]
+    locales_dir = Path(config["locales_dir"])
+
+    if not locales_dir.exists():
+        print(f"Error: Locales directory not found: {locales_dir}")
+        sys.exit(1)
+
+    changed, en_messages = _find_changed_messages(config)
 
     if not changed:
         print("No changes detected. Nothing to translate.")
@@ -273,37 +328,7 @@ def main():
     client = Groq(api_key=api_key)
 
     for locale_code, keys in changed.items():
-        lang_name = LANGUAGE_NAMES.get(locale_code, locale_code)
-        print(f"\nTranslating {len(keys)} key(s) to {lang_name}...")
-
-        translated_updates: dict[str, str] = {}
-        for key in keys:
-            en_text = en_messages.get(key)
-            if not en_text:
-                print(f"  Warning: No English text found for key '{key}', skipping")
-                continue
-
-            print(f"  Translating: {key[:50]}...")
-            try:
-                translated = translate_text(client, en_text, lang_name)
-                translated_updates[key] = translated
-                print(f"    -> {translated[:60]}{'...' if len(translated) > 60 else ''}")
-            except RuntimeError as e:
-                print(f"    Error: {e}, keeping original value")
-
-        if fmt == "json":
-            locale_file = locales_dir / f"{locale_code}.json"
-            with open(locale_file, "r", encoding="utf-8") as f:
-                locale_data = json.load(f)
-            locale_data.update(translated_updates)
-            with open(locale_file, "w", encoding="utf-8") as f:
-                json.dump(locale_data, f, ensure_ascii=False, indent=2)
-                f.write("\n")
-            print(f"  Saved {locale_file.name}")
-        else:
-            locale_file = locales_dir / f"{locale_code}.ts"
-            write_ts_translation_values(locale_file, translated_updates)
-            print(f"  Saved {locale_file.name}")
+        _translate_locale(client, locale_code, keys, en_messages, config["format"], locales_dir)
 
     print("\nTranslation complete!")
 

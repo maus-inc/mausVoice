@@ -19,19 +19,19 @@ import {
 import { FormattedMessage } from "react-intl";
 
 export type ScrollListPageProps<Item> = {
-  title: ReactNode;
-  action?: ReactNode;
-  subtitle?: ReactNode;
-  items: readonly Item[];
-  renderItem: (item: Item, index: number) => ReactNode;
-  computeItemKey?: (item: Item, index: number) => string | number;
-  headerMaxWidth?: ContainerProps["maxWidth"];
-  contentMaxWidth?: ContainerProps["maxWidth"];
-  itemWrapperSx?: SxProps<Theme>;
-  itemContainerSx?: SxProps<Theme>;
-  emptyState?: ReactNode;
-  hasMore?: boolean;
-  onLoadMore?: () => void;
+  readonly title: ReactNode;
+  readonly action?: ReactNode;
+  readonly subtitle?: ReactNode;
+  readonly items: readonly Item[];
+  readonly renderItem: (item: Item, index: number) => ReactNode;
+  readonly computeItemKey?: (item: Item, index: number) => string | number;
+  readonly headerMaxWidth?: ContainerProps["maxWidth"];
+  readonly contentMaxWidth?: ContainerProps["maxWidth"];
+  readonly itemWrapperSx?: SxProps<Theme>;
+  readonly itemContainerSx?: SxProps<Theme>;
+  readonly emptyState?: ReactNode;
+  readonly hasMore?: boolean;
+  readonly onLoadMore?: () => void;
 };
 
 export function ScrollListPage<Item>({

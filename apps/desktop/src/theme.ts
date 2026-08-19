@@ -83,7 +83,7 @@ export const theme = createTheme({
 
   shape: { borderRadius: 14 },
 
-  shadows: Array(25).fill("none") as unknown[] as Shadows,
+  shadows: Array.from({ length: 25 }, () => "none") as unknown[] as Shadows,
 
   typography: {
     fontFamily: uiFont,
@@ -480,10 +480,10 @@ export const theme = createTheme({
                 },
               }),
               fontSize: theme.typography.pxToRem(15),
-              "& .MuiButton-startIcon > .MuiSvgIcon-root, \
-    & .MuiButton-endIcon  > .MuiSvgIcon-root": {
-                fontSize: 22,
-              },
+              "& .MuiButton-startIcon > .MuiSvgIcon-root, & .MuiButton-endIcon  > .MuiSvgIcon-root":
+                {
+                  fontSize: 22,
+                },
             };
           },
         },

@@ -52,18 +52,17 @@ export function ManualAddStyle() {
   const menuItems = useMemo((): MenuPopoverItem[] => {
     const items: MenuPopoverItem[] = [];
 
-    items.push({
-      kind: "listItem",
-      leading: <Add fontSize="small" />,
-      title: <FormattedMessage defaultMessage="New style" />,
-      onClick: ({ close }) => {
-        close();
-        openToneEditorDialog({ mode: "create" });
-      },
-    });
-    items.push({ kind: "divider" });
-
     items.push(
+      {
+        kind: "listItem",
+        leading: <Add fontSize="small" />,
+        title: <FormattedMessage defaultMessage="New style" />,
+        onClick: ({ close }) => {
+          close();
+          openToneEditorDialog({ mode: "create" });
+        },
+      },
+      { kind: "divider" },
       ...allTones.map((tone): MenuPopoverItem => {
         const isActive = activeSet.has(tone.id);
         const isGlobal = tone.isGlobal === true;
@@ -72,9 +71,9 @@ export function ManualAddStyle() {
         const canDeselect = isActive && activeSet.size > 1;
         const isLastActive = isActive && !canDeselect;
 
-        return {
-          kind: "listItem",
-          leading: isLastActive ? (
+        let leading: React.ReactNode;
+        if (isLastActive) {
+          leading = (
             <Tooltip
               disableInteractive
               title={
@@ -83,11 +82,16 @@ export function ManualAddStyle() {
             >
               <CheckBoxIcon fontSize="small" sx={{ color: "text.disabled" }} />
             </Tooltip>
-          ) : isActive ? (
-            <CheckBoxIcon fontSize="small" color="primary" />
-          ) : (
-            <CheckBoxOutlineBlankIcon fontSize="small" />
-          ),
+          );
+        } else if (isActive) {
+          leading = <CheckBoxIcon fontSize="small" color="primary" />;
+        } else {
+          leading = <CheckBoxOutlineBlankIcon fontSize="small" />;
+        }
+
+        return {
+          kind: "listItem",
+          leading,
           title: (
             <Typography variant="body2" noWrap>
               {tone.name}

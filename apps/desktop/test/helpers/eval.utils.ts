@@ -20,7 +20,6 @@ import {
 } from "../../src/utils/tone.utils";
 import { getGroqApiKey, getOpenAIApiKey } from "./env.utils";
 
-export type Eval = string;
 
 const EVAL_RESULT_SCHEMA = z.object({
   score: z.number().min(0).max(10),
@@ -49,7 +48,7 @@ export async function runEval({
 }: {
   originalText: string;
   finalText: string;
-  evals: Eval[];
+  evals: string[];
 }): Promise<void> {
   originalText = originalText.trim();
   finalText = finalText.trim();

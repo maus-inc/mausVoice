@@ -9,6 +9,8 @@ import { getAppState, produceAppState } from "../store";
 import {
   getLocalTranscriptionSidecarManager,
   type LocalSidecarDevice,
+  type SidecarDownloadSnapshot,
+  type LocalTranscriptionSidecarFacade,
 } from "../sidecars";
 import {
   isGpuPreferredTranscriptionDevice,
@@ -194,8 +196,13 @@ export const downloadLocalTranscriptionModel = async (
   }
 };
 
-export const pauseLocalTranscriptionModelDownload = async (
+const withLocalTranscriptionManager = async (
   model: LocalWhisperModel,
+  action: (
+    manager: LocalTranscriptionSidecarFacade,
+    preferGpu: boolean,
+  ) => Promise<SidecarDownloadSnapshot>,
+  errorPrefix: string,
 ): Promise<void> => {
   const state = getAppState();
   if (getEffectiveTranscriptionMode(state) !== "local") {
@@ -206,18 +213,25 @@ export const pauseLocalTranscriptionModelDownload = async (
   const preferGpu = getPreferGpu(state);
 
   try {
-    const snapshot = await sidecarManager.pauseModelDownload({
-      model,
-      preferGpu,
-    });
+    const snapshot = await action(sidecarManager, preferGpu);
     produceAppState((draft) => {
       draft.settings.aiTranscription.localModelManagement.modelDownloads[
         model
       ] = snapshot;
     });
   } catch (error) {
-    showErrorSnackbar(`Unable to pause download for '${model}': ${error}`);
+    showErrorSnackbar(`${errorPrefix} '${model}': ${error}`);
   }
+};
+
+export const pauseLocalTranscriptionModelDownload = async (
+  model: LocalWhisperModel,
+): Promise<void> => {
+  await withLocalTranscriptionManager(
+    model,
+    (manager, preferGpu) => manager.pauseModelDownload({ model, preferGpu }),
+    "Unable to pause download for",
+  );
 };
 
 export const resumeLocalTranscriptionModelDownload = async (
@@ -229,29 +243,11 @@ export const resumeLocalTranscriptionModelDownload = async (
 export const cancelLocalTranscriptionModelDownload = async (
   model: LocalWhisperModel,
 ): Promise<void> => {
-  const state = getAppState();
-  if (getEffectiveTranscriptionMode(state) !== "local") {
-    return;
-  }
-
-  const sidecarManager = getLocalTranscriptionSidecarManager();
-  const preferGpu = getPreferGpu(state);
-
-  try {
-    await sidecarManager.cancelModelDownload({
-      model,
-      preferGpu,
-    });
-  } catch (error) {
-    showErrorSnackbar(`Unable to cancel download for '${model}': ${error}`);
-  } finally {
-    produceAppState((draft) => {
-      delete draft.settings.aiTranscription.localModelManagement.modelDownloads[
-        model
-      ];
-    });
-    await refreshLocalTranscriptionModelStatuses({ showErrors: false });
-  }
+  await withLocalTranscriptionManager(
+    model,
+    (manager, preferGpu) => manager.cancelModelDownload({ model, preferGpu }),
+    "Unable to cancel download for",
+  );
 };
 
 export const deleteLocalTranscriptionModel = async (
