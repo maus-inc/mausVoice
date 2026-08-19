@@ -2095,8 +2095,6 @@ pub async fn clear_local_data(
     Ok(())
 }
 
-#[tauri::command]
-#[specta::specta]
 /// A23: Mirror the TS playInteractionChime preference into Rust so the
 /// native thock path (pill overlays call audio_feedback::play_thock directly,
 /// bypassing the TS gate in tryPlayAudioChime) honors the user's choice.
