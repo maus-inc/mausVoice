@@ -3,6 +3,10 @@ use gtk::prelude::*;
 use std::sync::mpsc;
 use tauri::WebviewWindow;
 
+pub fn hide_main_window(window: &WebviewWindow) -> Result<(), String> {
+    window.hide().map_err(|err| err.to_string())
+}
+
 pub fn surface_main_window(window: &WebviewWindow) -> Result<(), String> {
     let window_for_handle = window.clone();
     let (tx, rx) = mpsc::channel();
