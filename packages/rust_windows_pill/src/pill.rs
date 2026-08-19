@@ -166,6 +166,8 @@ pub fn run(receiver: Receiver<InMessage>) {
         saved_y: Cell::new(0),
         inflate_t: Cell::new(0.0),
         inflate_velocity: Cell::new(0.0),
+        drag_label_t: Cell::new(0.0),
+        drag_label_velocity: Cell::new(0.0),
         ring_alpha: Cell::new(0.0),
         ring_release_progress: Cell::new(0.0),
         press_elapsed: Cell::new(0.0),
@@ -633,6 +635,9 @@ fn tick(state: &PillState, dt: f64) {
         0.0
     };
     spring_anim(&state.expand_t, &state.expand_velocity, expand_target, SPRING_STIFFNESS, dt);
+
+    let drag_target = if state.dragging.get() || state.long_press_active.get() { 1.0 } else { 0.0 };
+    spring_anim(&state.drag_label_t, &state.drag_label_velocity, drag_target, rust_pill_shared::LABEL_SPRING_STIFFNESS, dt);
 
     if is_loading {
         state.loading_offset.set((state.loading_offset.get() + LOADING_SPEED * frame_scale) % 1.0);
