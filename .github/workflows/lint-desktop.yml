@@ -1,20 +1,6 @@
 name: Lint Desktop
 on:
   push:
-    branches:
-      - main
-    paths:
-      - "apps/desktop/**"
-      - "packages/**"
-      - "package.json"
-      - "pnpm-lock.yaml"
-      - "pnpm-workspace.yaml"
-      - "turbo.json"
-      - ".nvmrc"
-      - "patches/**"
-      - "scripts/generate-app-icons.mjs"
-      - ".github/workflows/lint-desktop.yml"
-  pull_request:
     paths:
       - "apps/desktop/**"
       - "packages/**"
