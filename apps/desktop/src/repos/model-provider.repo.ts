@@ -106,7 +106,6 @@ function isGroqGenerativeModel(modelId: string): boolean {
 function isOpenAITranscriptionModel(modelId: string): boolean {
   return (
     modelId === "whisper-1" ||
-    modelId === "gpt-transcribe" ||
     modelId.startsWith("gpt-4o-transcribe") ||
     modelId.startsWith("gpt-4o-mini-transcribe")
   );
@@ -140,6 +139,16 @@ function isGeneralGeminiModel(modelId: string): boolean {
     "-robotics",
     "-tts",
   ].some((marker) => modelId.includes(marker));
+}
+
+function isGeminiTranscriptionModel(modelId: string): boolean {
+  // Gemini transcription is done via generateContent with audio input, so
+  // the same general-model filter applies. However, models whose names
+  // suggest they are vision-only or cannot handle audio are excluded.
+  if (!isGeneralGeminiModel(modelId)) return false;
+  // Exclude models known to lack audio support.
+  // Vision-only preview models typically have shorter names with no audio.
+  return !["-thinking", "-search"].some((marker) => modelId.includes(marker));
 }
 
 export class GroqModelProviderRepo extends BaseModelProviderRepo {
@@ -335,7 +344,9 @@ export class GeminiModelProviderRepo extends BaseModelProviderRepo {
   }
 
   async getTranscriptionModels(options: FetchModelsOptions): Promise<string[]> {
-    const fetched = await this.fetchModels(options);
+    const fetched = (await this.fetchModels(options)).filter(
+      isGeminiTranscriptionModel,
+    );
     return fetched.length > 0 ? fetched : [...GEMINI_TRANSCRIPTION_MODELS];
   }
 

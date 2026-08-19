@@ -610,6 +610,29 @@ fn is_rfc1918_ipv4(address: std::net::Ipv4Addr) -> bool {
     first == 10 || (first == 172 && (16..=31).contains(&second)) || (first == 192 && second == 168)
 }
 
+/// Shared host-validation predicate used by both the HTTP private-network
+/// path and the HTTPS saved-endpoint path. Returns `true` when the host is
+/// loopback, RFC1918, unique-local IPv6, or a `.local` domain. Public
+/// domain names (e.g. `api.openai.com`) return `false`.
+fn host_is_private_or_local(host: &url::Host<&str>) -> bool {
+    match host {
+        url::Host::Domain(domain) => {
+            let domain = domain.to_ascii_lowercase();
+            domain == "localhost"
+                || (domain.ends_with(".local")
+                    && domain.len() > ".local".len()
+                    && !domain.contains(".."))
+        }
+        url::Host::Ipv4(address) => address.is_loopback() || is_rfc1918_ipv4(*address),
+        url::Host::Ipv6(address) => {
+            if let Some(mapped) = address.to_ipv4_mapped() {
+                return mapped.is_loopback() || is_rfc1918_ipv4(mapped);
+            }
+            address.is_loopback() || (address.segments()[0] & 0xfe00) == 0xfc00
+        }
+    }
+}
+
 /// Validate a user-configured plaintext endpoint without confusing hostname
 /// prefix globs (for example `10.evil.example`) with RFC1918 address ranges.
 /// Link-local addresses are deliberately excluded to keep cloud metadata
@@ -622,32 +645,13 @@ fn validate_private_http_url(url: &Url) -> Result<(), String> {
         return Err("Private-network URLs must not contain credentials".to_string());
     }
 
-    let allowed = match url.host() {
-        Some(url::Host::Domain(domain)) => {
-            let domain = domain.to_ascii_lowercase();
-            domain == "localhost"
-                || (domain.ends_with(".local")
-                    && domain.len() > ".local".len()
-                    && !domain.contains(".."))
-        }
-        Some(url::Host::Ipv4(address)) => address.is_loopback() || is_rfc1918_ipv4(address),
-        Some(url::Host::Ipv6(address)) => {
-            if let Some(mapped) = address.to_ipv4_mapped() {
-                mapped.is_loopback() || is_rfc1918_ipv4(mapped)
-            } else {
-                address.is_loopback() || (address.segments()[0] & 0xfe00) == 0xfc00
-            }
-        }
-        None => false,
-    };
-
-    if !allowed {
-        return Err(format!(
+    match url.host() {
+        Some(host) if host_is_private_or_local(&host) => Ok(()),
+        _ => Err(format!(
             "Private-network URL host is not loopback, RFC1918, unique-local IPv6, or .local: {}",
             url.host_str().unwrap_or("<missing>")
-        ));
+        )),
     }
-    Ok(())
 }
 
 #[derive(Clone)]
@@ -678,6 +682,35 @@ fn validate_saved_endpoint_url(url: &Url, base_url: &Url) -> Result<(), String> 
     if base_url.scheme() == "http" {
         validate_private_http_url(base_url)?;
         validate_private_http_url(url)?;
+    }
+    // HTTPS saved endpoints previously skipped private-network validation
+    // entirely, creating an SSRF gap: a user-configurable base URL like
+    // https://10.0.0.1:8080 would bypass the private-IP check. Apply the
+    // same host-level validation to both http and https so that IP-based
+    // endpoints (including IPv6) are still confined to loopback, RFC1918,
+    // and unique-local addresses. Uses the shared `host_is_private_or_local`
+    // helper so the HTTP and HTTPS paths cannot drift.
+    if base_url.scheme() == "https" {
+        let https_host_check = |u: &Url| -> Result<(), String> {
+            match u.host() {
+                Some(h) => {
+                    // Allow private/local hosts AND any domain name; only
+                    // reject public IP literals that are not loopback,
+                    // RFC1918, or unique-local.
+                    if host_is_private_or_local(&h) || matches!(h, url::Host::Domain(_)) {
+                        Ok(())
+                    } else {
+                        Err(format!(
+                            "OpenAI-compatible HTTPS endpoint host is not loopback, RFC1918, or unique-local: {}",
+                            u.host_str().unwrap_or("<missing>")
+                        ))
+                    }
+                }
+                None => Err("OpenAI-compatible endpoint has no host".to_string()),
+            }
+        };
+        https_host_check(base_url)?;
+        https_host_check(url)?;
     }
     if url.scheme() != base_url.scheme()
         || url.host() != base_url.host()

@@ -100,7 +100,7 @@ describe("provider model discovery", () => {
               { id: "gpt-5.7-luna" },
               { id: "gpt-image-2" },
               { id: "gpt-live-transcribe" },
-              { id: "gpt-transcribe" },
+              { id: "whisper-1" },
             ],
           }),
         ),
@@ -113,7 +113,7 @@ describe("provider model discovery", () => {
     ).resolves.toEqual(["gpt-5.7-luna"]);
     await expect(
       repo.getTranscriptionModels({ apiKey: "openai-key" }),
-    ).resolves.toEqual(["gpt-transcribe"]);
+    ).resolves.toEqual(["whisper-1"]);
   });
 
   it("logs provider HTTP failures before using a fallback catalog", async () => {

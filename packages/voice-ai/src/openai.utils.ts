@@ -34,10 +34,9 @@ export type OpenAIGenerateTextModel =
   (typeof OPENAI_GENERATE_TEXT_MODELS)[number] | DiscoveredModelId;
 
 export const OPENAI_TRANSCRIPTION_MODELS = [
-  "gpt-transcribe",
+  "whisper-1",
   "gpt-4o-transcribe",
   "gpt-4o-mini-transcribe",
-  "whisper-1",
 ] as const;
 export type OpenAITranscriptionModel =
   (typeof OPENAI_TRANSCRIPTION_MODELS)[number] | DiscoveredModelId;
@@ -97,7 +96,7 @@ export type OpenAITranscribeAudioOutput = TranscribeAudioOutput;
 
 export const openaiTranscribeAudio = async ({
   apiKey,
-  model = "gpt-transcribe",
+  model = "whisper-1",
   blob,
   ext,
   prompt,

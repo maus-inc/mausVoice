@@ -61,6 +61,13 @@ const invokeHttpRequest = async (
   if (request.signal.aborted) throw abortReason(request.signal);
 
   const requestId = crypto.randomUUID();
+  // `apiKeyId` is required by the Rust `openai_compatible_http_request`
+  // command; omitting it causes Tauri to reject the invocation with a
+  // cryptic error that does not surface the validation failure. Always
+  // include it when the command expects it.
+  if (command === "openai_compatible_http_request" && !apiKeyId) {
+    throw new Error("apiKeyId is required for openai_compatible_http_request");
+  }
   const payload = {
     request: {
       requestId,
@@ -73,13 +80,47 @@ const invokeHttpRequest = async (
     // `apiKeyId` binds the Rust command's `api_key_id` parameter.
     ...(apiKeyId ? { apiKeyId } : {}),
   };
-  const operation = invoke<PrivateHttpResponse>(command, payload);
+  // Tauri's invoke() rejects with a raw string on serialization or
+  // command errors, which erases stack traces and prevents instanceof
+  // checks downstream. Wrap the rejection in an Error to preserve the
+  // error message while keeping a proper type.
+  const operation = invoke<PrivateHttpResponse>(command, payload).catch(
+    (error: unknown) => {
+      if (error instanceof Error) throw error;
+      // String(error) / String(message) on a plain object produces
+      // '[object Object]', which is unhelpful. Use the object's own
+      // message property when it is a string, or JSON.stringify for
+      // a meaningful representation.
+      if (error != null && typeof error === "object") {
+        const rawMessage = (error as Record<string, unknown>).message;
+        const message =
+          typeof rawMessage === "string" ? rawMessage : JSON.stringify(error);
+        throw new Error(`Tauri IPC error: ${message}`);
+      }
+      // `error` is a primitive (string, number, boolean) or null/undefined.
+      // Use JSON.stringify to safely stringify any non-string value without
+      // producing '[object Object]'. JSON.stringify returns `undefined` for
+      // `undefined`, so fall back to a default message.
+      const errorText =
+        typeof error === "string"
+          ? error
+          : (JSON.stringify(error) ?? "Unknown Tauri IPC error");
+      throw new Error(errorText);
+    },
+  );
   const response = await awaitWithAbort(operation, request.signal, () => {
     void invoke<boolean>("cancel_private_http_request", { requestId }).catch(
       () => undefined,
     );
   });
-  return new Response(responseBytes(response.body), {
+  // 204 No Content, 205 Reset Content, and 304 Not Modified are null-body
+  // statuses: passing a body (even an empty Uint8Array) to the Response
+  // constructor throws a TypeError. Use a null body for these statuses.
+  const NULL_BODY_STATUSES = new Set([204, 205, 304]);
+  const responseBody = NULL_BODY_STATUSES.has(response.status)
+    ? null
+    : responseBytes(response.body);
+  return new Response(responseBody, {
     status: response.status,
     headers: response.headers,
   });
@@ -90,13 +131,21 @@ const invokeHttpRequest = async (
  * user-configured endpoints through a Rust command that parses hosts as real IP
  * addresses and accepts only loopback/RFC1918/unique-local/.local targets on
  * every redirect. This avoids treating hostname globs such as `10.*` as CIDR.
+ *
+ * Uses a positive allow-list for schemes rather than a negative check so
+ * that unsupported future schemes are rejected by default.
  */
 export const secureFetch: typeof globalThis.fetch = async (input, init) => {
   const url = new URL(requestUrl(input));
-  if (url.protocol !== "http:") {
+  if (url.protocol === "http:") {
+    return invokeHttpRequest("private_http_request", input, init);
+  }
+  if (url.protocol === "https:") {
     return tauriFetch(input, init);
   }
-  return invokeHttpRequest("private_http_request", input, init);
+  // Reject unsupported schemes (e.g. file:, data:) rather than forwarding
+  // them to plugin-http which may interpret them unexpectedly.
+  throw new TypeError(`Unsupported URL protocol: ${url.protocol}`);
 };
 
 /**
