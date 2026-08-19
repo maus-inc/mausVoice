@@ -6,14 +6,20 @@ import {
   DialogTitle,
   Typography,
 } from "@mui/material";
-import { getCurrentWindow } from "@tauri-apps/api/window";
 import { FormattedMessage } from "react-intl";
-import { produceAppState, useAppStore } from "../../store";
+import {
+  launchNormallyAfterElevationDecline,
+  quitAfterElevationDecline,
+} from "../../actions/elevation.actions";
+import { useAppStore } from "../../store";
 
 /**
  * Shown when the Windows UAC elevation prompt for admin-on-startup is
  * declined: the app continues running normally, and the user chooses between
  * staying in the unelevated session or closing the app.
+ *
+ * Mounted from AppWithLoading (not RootDialogs) so it can appear during the
+ * pre-init elevation helper surface, before the dashboard router loads.
  */
 export const ElevationDeclinedDialog = () => {
   const open = useAppStore(
@@ -21,13 +27,11 @@ export const ElevationDeclinedDialog = () => {
   );
 
   const handleLaunchNormally = () => {
-    produceAppState((draft) => {
-      draft.settings.elevationDeclinedDialogOpen = false;
-    });
+    launchNormallyAfterElevationDecline();
   };
 
   const handleCloseApp = () => {
-    void getCurrentWindow().close();
+    void quitAfterElevationDecline();
   };
 
   return (

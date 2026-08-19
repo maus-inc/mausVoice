@@ -374,6 +374,7 @@ pub fn build() -> tauri::Builder<tauri::Wry> {
             crate::commands::get_native_setup_status,
             crate::commands::run_native_setup,
             crate::commands::request_admin_relaunch,
+            crate::commands::quit_app,
             crate::commands::get_keyboard_language,
             crate::commands::conversation_create,
             crate::commands::conversation_list,

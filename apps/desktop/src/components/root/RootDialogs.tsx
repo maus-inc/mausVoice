@@ -8,7 +8,6 @@ import { DeleteAccountDialog } from "../settings/DeleteAccountDialog";
 import { DictationLanguageDialog } from "../settings/DictationLanguageDialog";
 import { StyleHotkeysDialog } from "../settings/StyleHotkeysDialog";
 import { DiagnosticsDialog } from "../settings/DiagnosticsDialog";
-import { ElevationDeclinedDialog } from "./ElevationDeclinedDialog";
 import { MicrophoneDialog } from "../settings/MicrophoneDialog";
 import { MultiDeviceDialog } from "../settings/MultiDeviceDialog";
 import { MoreSettingsDialog } from "../settings/MoreSettingsDialog";
@@ -37,7 +36,6 @@ export const RootDialogs = () => {
       <StyleHotkeysDialog />
       <AppKeybindingsDialog />
       <DiagnosticsDialog />
-      <ElevationDeclinedDialog />
     </>
   );
 };

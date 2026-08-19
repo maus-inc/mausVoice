@@ -2405,6 +2405,18 @@ pub fn request_admin_relaunch(app: tauri::AppHandle) -> crate::platform::NativeS
     }
 }
 
+/// Fully terminates the application process (including the tray icon).
+///
+/// Distinct from the main-window close path, which only hides to tray.
+/// Used by the elevation-declined dialog's "Close mausVoice" action and any
+/// other UI that must actually quit rather than background the app.
+#[tauri::command]
+#[specta::specta]
+pub fn quit_app(app: tauri::AppHandle) {
+    log::info!("quit_app: terminating process");
+    app.exit(0);
+}
+
 #[tauri::command]
 #[specta::specta]
 pub fn set_tray_title(app: AppHandle, title: Option<String>) -> Result<(), String> {

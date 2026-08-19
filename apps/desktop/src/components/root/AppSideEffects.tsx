@@ -9,6 +9,10 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { useIntl } from "react-intl";
 import { combineLatest, from, Observable, of } from "rxjs";
 import { showErrorSnackbar, showSnackbar } from "../../actions/app.actions";
+import {
+  canRunPostElevationInit,
+  runStartupElevationPreflight,
+} from "../../actions/elevation.actions";
 import { loadPairedRemoteDevices } from "../../actions/paired-remote-device.actions";
 import {
   refreshRemoteReceiverStatus,
@@ -26,8 +30,8 @@ import {
   setRemoteOutputEnabled,
   setRemoteTargetDeviceId,
 } from "../../actions/user.actions";
-import { requestAdminRelaunch } from "../../actions/native.actions";
 import { useAsyncData, useAsyncEffect } from "../../hooks/async.hooks";
+import { useElevationStartupReady } from "../../hooks/elevation.hooks";
 import { useIntervalAsync, useKeyDownHandler } from "../../hooks/helper.hooks";
 import { useHotkeyFire } from "../../hooks/hotkey.hooks";
 import { useStreamWithSideEffects } from "../../hooks/stream.hooks";
@@ -264,21 +268,20 @@ export const AppSideEffects = () => {
     void initLogging();
   }, []);
 
-  useEffect(() => {
-    if (!prefs || startupElevationAttemptedRef.current) {
+  // Windows "Always run as administrator" pre-flight. Must stay ahead of
+  // auth / Mixpanel / dashboard init — the gate in elevation.actions owns
+  // the state transitions so AppSideEffects and the decline dialog cannot
+  // diverge. Relaunch is never invoked from Tauri setup().
+  useAsyncEffect(async () => {
+    if (startupElevationAttemptedRef.current) {
       return;
     }
     startupElevationAttemptedRef.current = true;
-
-    if (getPlatform() !== "windows" || !prefs.alwaysRequestAdminOnStartup) {
-      return;
-    }
-
-    getLogger().info(
-      "Requesting administrator relaunch after frontend startup",
-    );
-    void requestAdminRelaunch();
-  }, [prefs]);
+    await runStartupElevationPreflight({
+      isMainWindow,
+      platform: getPlatform(),
+    });
+  }, []);
 
   useAsyncEffect(async () => {
     if (consumeSurfaceWindowFlag()) {
@@ -295,6 +298,8 @@ export const AppSideEffects = () => {
       draft.initialized = false;
     });
   };
+
+  const elevationReady = useElevationStartupReady();
 
   useTauriListen<OverlayPhasePayload>("overlay_phase", (payload) => {
     produceAppState((draft) => {
@@ -395,7 +400,14 @@ export const AppSideEffects = () => {
     },
   );
 
+  // Auth and the rest of full-app init stay behind the elevation gate so a
+  // declined-or-pending UAC never pays for Firebase / Mixpanel / remote
+  // receiver setup on the unelevated helper surface.
   useEffect(() => {
+    if (!canRunPostElevationInit(elevationReady)) {
+      return;
+    }
+
     authReadyRef.current = false;
 
     const timeoutId = setTimeout(() => {
@@ -417,11 +429,11 @@ export const AppSideEffects = () => {
       clearTimeout(timeoutId);
       unsubscribe();
     };
-  }, []);
+  }, [elevationReady]);
 
   useStreamWithSideEffects({
     builder: (): Observable<StreamRet> => {
-      if (!authReady) {
+      if (!canRunPostElevationInit(elevationReady, authReady)) {
         return of(null);
       }
 
@@ -443,6 +455,9 @@ export const AppSideEffects = () => {
       ]);
     },
     onSuccess: (results) => {
+      if (!canRunPostElevationInit(elevationReady)) {
+        return;
+      }
       setStreamReady(true);
       if (results === null) {
         return;
@@ -454,43 +469,49 @@ export const AppSideEffects = () => {
         registerMembers(draft, listify(members));
       });
     },
-    dependencies: [userId, authReady],
+    dependencies: [userId, authReady, elevationReady],
   });
 
   useAsyncEffect(async () => {
-    if (authReady) {
-      await refreshCurrentUser();
-      setInitReady(true);
+    if (!canRunPostElevationInit(elevationReady, authReady)) {
+      return;
     }
-  }, [authReady]);
+    await refreshCurrentUser();
+    setInitReady(true);
+  }, [authReady, elevationReady]);
 
   useAsyncEffect(async () => {
-    if (initReady) {
-      await loadPairedRemoteDevices();
-      await refreshRemoteReceiverStatus();
-      const prefs = getMyUserPreferences(getAppState());
-      if (
-        prefs?.remoteTargetDeviceId &&
-        !getAppState().pairedRemoteDeviceById[prefs.remoteTargetDeviceId]
-      ) {
-        await setRemoteTargetDeviceId(null);
-        await setRemoteOutputEnabled(false);
-      }
-      const receiverStatus = getAppState().remoteReceiverStatus;
-      if (prefs?.remoteReceiverAutoStart && !receiverStatus?.enabled) {
-        await startRemoteReceiver(prefs.remoteReceiverPort ?? null);
-      }
+    if (!canRunPostElevationInit(elevationReady, initReady)) {
+      return;
     }
-  }, [initReady]);
+    await loadPairedRemoteDevices();
+    await refreshRemoteReceiverStatus();
+    const prefs = getMyUserPreferences(getAppState());
+    if (
+      prefs?.remoteTargetDeviceId &&
+      !getAppState().pairedRemoteDeviceById[prefs.remoteTargetDeviceId]
+    ) {
+      await setRemoteTargetDeviceId(null);
+      await setRemoteOutputEnabled(false);
+    }
+    const receiverStatus = getAppState().remoteReceiverStatus;
+    if (prefs?.remoteReceiverAutoStart && !receiverStatus?.enabled) {
+      await startRemoteReceiver(prefs.remoteReceiverPort ?? null);
+    }
+  }, [initReady, elevationReady]);
 
   useEffect(() => {
-    if (streamReady && initReady && !initialized) {
-      getLogger().info("App fully initialized");
-      produceAppState((draft) => {
-        draft.initialized = true;
-      });
+    if (
+      !canRunPostElevationInit(elevationReady, streamReady, initReady) ||
+      initialized
+    ) {
+      return;
     }
-  }, [streamReady, initReady, initialized]);
+    getLogger().info("App fully initialized");
+    produceAppState((draft) => {
+      draft.initialized = true;
+    });
+  }, [streamReady, initReady, initialized, elevationReady]);
 
   const auth = useAppStore((state) => state.auth);
   const prevUserIdRef = useRef<string | null>(null);

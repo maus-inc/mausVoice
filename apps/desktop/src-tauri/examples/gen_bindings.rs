@@ -65,6 +65,7 @@ fn main() {
         pause_recording,
         play_audio,
         purge_stale_transcription_audio,
+        quit_app,
         read_accessibility_field_values,
         remote_receiver_start,
         remote_receiver_status,
