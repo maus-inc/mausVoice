@@ -154,8 +154,16 @@ echo ""
 info "All prerequisites satisfied. Installing dependencies..."
 
 # --- pnpm install ---
+# --ignore-scripts blocks untrusted lifecycle scripts (S6505). Rebuild the
+# allowlisted native addons from package.json#pnpm.onlyBuiltDependencies so
+# esbuild/sharp/protobufjs/etc. still get their postinstall binaries.
 pnpm install --ignore-scripts
-pnpm rebuild esbuild sharp protobufjs
+ONLY_BUILT="$(node -e "process.stdout.write((require('./package.json').pnpm.onlyBuiltDependencies || []).join(' '))")"
+if [[ -n "${ONLY_BUILT}" ]]; then
+  # Names come from package.json#pnpm.onlyBuiltDependencies and never contain whitespace.
+  # shellcheck disable=SC2086
+  pnpm rebuild ${ONLY_BUILT}
+fi
 
 # --- Build all packages ---
 info "Building all packages..."

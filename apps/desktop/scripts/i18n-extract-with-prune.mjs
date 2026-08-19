@@ -14,7 +14,18 @@ const formatjsBin = path.join(
   ".bin",
   process.platform === "win32" ? "formatjs.cmd" : "formatjs",
 );
-const formatjsCommand = `"${formatjsBin}" extract "src/**/*.{ts,tsx}" --ignore "src/**/*.d.ts" --out-file src/i18n/locales/en.json --format ./scripts/formatjs-formatter.mjs --id-interpolation-pattern "[sha1:contenthash:base64:6]"`;
+const formatjsArgs = [
+  "extract",
+  "src/**/*.{ts,tsx}",
+  "--ignore",
+  "src/**/*.d.ts",
+  "--out-file",
+  "src/i18n/locales/en.json",
+  "--format",
+  "./scripts/formatjs-formatter.mjs",
+  "--id-interpolation-pattern",
+  "[sha1:contenthash:base64:6]",
+];
 
 async function readJson(filePath) {
   const content = await readFile(filePath, "utf8");
