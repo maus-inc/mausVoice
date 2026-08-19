@@ -259,7 +259,7 @@ const createTranscriptRequest = async (
 ): Promise<string> => {
   const transcriptPayload: Record<string, unknown> = {
     audio_url: uploadUrl,
-    speech_models: ["universal-3-5-pro", "universal-2"],
+    speech_model: "best",
   };
   if (!language || language === "auto") {
     transcriptPayload.language_detection = true;
