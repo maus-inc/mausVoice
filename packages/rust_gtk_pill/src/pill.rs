@@ -787,12 +787,11 @@ pub(crate) fn pill_geometry(window: &gtk::Window, state: &PillState) -> (Option<
         // physical (`saved_x`/`saved_y` are X11 root coordinates and the
         // logical window size is scaled). The two rects must share one
         // coordinate space for the desktop's composer-anchoring math, so
-        // scale the workarea by its monitor's own scale factor — the same
-        // logical-to-physical conversion the X11 placement math applies (see
-        // `pill_pos_on_monitor`).
+        // scale the workarea by its monitor's own scale factor — via the
+        // shared logical→physical conversion the X11 placement math also
+        // uses (`pill_pos_on_monitor`).
         let monitor_scale = m.scale_factor() as f64;
-        let g = m.workarea();
-        workarea_to_physical(g.x(), g.y(), g.width(), g.height(), monitor_scale)
+        logical_rect_to_physical(&m.workarea(), monitor_scale)
     });
     let rect = if state.has_saved_position.get() && state.backend.get() == Backend::X11 {
         Some(Rect {
@@ -807,16 +806,19 @@ pub(crate) fn pill_geometry(window: &gtk::Window, state: &PillState) -> (Option<
     (rect, monitor_rect)
 }
 
-/// Converts a monitor work area from GDK logical pixels into the physical
-/// root-pixel space `pill_geometry` reports. Kept as a plain function of the
-/// work-area numbers (rather than taking a `gdk::Rectangle`) so the conversion
-/// is unit-testable without a display connection.
-fn workarea_to_physical(x: i32, y: i32, width: i32, height: i32, scale: f64) -> Rect {
+/// Converts a GDK logical-pixel rectangle (a monitor's geometry or work area)
+/// into the physical root-pixel space used for X11 window positioning and
+/// `Rect` reporting. This is the single source of truth for the
+/// logical→physical conversion: `pill_geometry` here and the placement math
+/// in `pill_pos_on_monitor` both go through it, so any scaling tweak lands in
+/// exactly one place. `Rectangle` is plain data, so this stays unit-testable
+/// without a display connection.
+pub(crate) fn logical_rect_to_physical(g: &gdk::Rectangle, scale: f64) -> Rect {
     Rect {
-        x: x as f64 * scale,
-        y: y as f64 * scale,
-        width: width as f64 * scale,
-        height: height as f64 * scale,
+        x: g.x() as f64 * scale,
+        y: g.y() as f64 * scale,
+        width: g.width() as f64 * scale,
+        height: g.height() as f64 * scale,
     }
 }
 
@@ -1367,10 +1369,10 @@ mod geometry_tests {
     use super::*;
 
     #[test]
-    fn workarea_is_scaled_into_physical_pixels() {
+    fn logical_rect_is_scaled_into_physical_pixels() {
         // A 2000x1000 logical work area at origin (100, 50) on a 2x monitor
         // must come out in the same physical space the pill rect uses.
-        let rect = workarea_to_physical(100, 50, 2000, 1000, 2.0);
+        let rect = logical_rect_to_physical(&gdk::Rectangle::new(100, 50, 2000, 1000), 2.0);
         assert_eq!(rect.x, 200.0);
         assert_eq!(rect.y, 100.0);
         assert_eq!(rect.width, 4000.0);
@@ -1378,8 +1380,8 @@ mod geometry_tests {
     }
 
     #[test]
-    fn workarea_scale_one_is_unchanged() {
-        let rect = workarea_to_physical(-1920, 0, 1920, 1080, 1.0);
+    fn logical_rect_scale_one_is_unchanged() {
+        let rect = logical_rect_to_physical(&gdk::Rectangle::new(-1920, 0, 1920, 1080), 1.0);
         assert_eq!(rect.x, -1920.0);
         assert_eq!(rect.y, 0.0);
         assert_eq!(rect.width, 1920.0);
@@ -1392,7 +1394,7 @@ mod geometry_tests {
         // pill parked at physical x=3800 on a 2000-logical-wide (4000 physical)
         // work area at 2x must overflow the monitor in *both* spaces alike.
         let scale = 2.0;
-        let monitor = workarea_to_physical(0, 0, 2000, 1000, scale);
+        let monitor = logical_rect_to_physical(&gdk::Rectangle::new(0, 0, 2000, 1000), scale);
         let pill = Rect {
             x: 3800.0,
             y: 0.0,
