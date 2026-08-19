@@ -77,8 +77,12 @@ def read_en_file(locales_dir: Path) -> dict:
         return json.load(f)
 
 
+# `\s*` already spans newlines, and each alternative below starts with a
+# distinct character, so the pattern is unambiguous and runs in linear time.
+TS_STRING_RE = r'"(?:[^"\\]|\\.)*"'
+
 TS_PAIR_RE = re.compile(
-    r'(\w+):\s*(?:\n\s*)?("[^"\\]*(?:\\.[^"\\]*)*")',
+    rf"(\w+):\s*({TS_STRING_RE})",
     re.DOTALL,
 )
 
@@ -115,7 +119,7 @@ def write_ts_translation_values(path: Path, updates: dict[str, str]) -> None:
     text = path.read_text(encoding="utf-8")
     for key, new_value in updates.items():
         pattern = re.compile(
-            rf'({re.escape(key)}:\s*(?:\n\s*)?)"[^"\\]*(?:\\.[^"\\]*)*"',
+            rf"({re.escape(key)}:\s*){TS_STRING_RE}",
             re.DOTALL,
         )
         escaped = json.dumps(new_value, ensure_ascii=False)
