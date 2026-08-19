@@ -8,6 +8,7 @@ export const API_KEY_PROVIDERS = [
   "assemblyai",
   "elevenlabs",
   "deepgram",
+  "gladia",
   "openrouter",
   "ollama",
   "openai-compatible",

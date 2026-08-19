@@ -124,6 +124,7 @@ describe("http:default capability contract", () => {
     // canonical csp-connect-src contract test, not duplicated here.)
     for (const host of [
       "https://api.assemblyai.com",
+      "https://api.gladia.io",
       "https://api.x.ai",
       "https://api.aldea.ai",
     ]) {

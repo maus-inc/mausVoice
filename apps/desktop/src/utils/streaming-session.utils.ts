@@ -132,11 +132,15 @@ export const finalizeStreamingSession = async ({
   providerLabel,
   log,
   logError = console.error,
+  getWarnings = () => [],
+  modelSize,
 }: {
   session: { finalize: () => Promise<string> } | null;
   providerLabel: string;
   log: typeof console.log;
   logError?: (message: string, ...args: unknown[]) => void;
+  getWarnings?: () => string[];
+  modelSize?: string;
 }): Promise<TranscriptionSessionResult> => {
   if (!session) {
     return sessionMissingResult(providerLabel);
@@ -158,10 +162,11 @@ export const finalizeStreamingSession = async ({
       rawTranscript: transcript || null,
       metadata: {
         inferenceDevice: `API • ${providerLabel} (Streaming)`,
+        ...(modelSize !== undefined ? { modelSize } : {}),
         transcriptionMode: "api",
         transcriptionDurationMs: durationMs,
       },
-      warnings: [],
+      warnings: Array.from(new Set(getWarnings())),
     };
   } catch (error) {
     logError(`[${providerLabel}] Failed to finalize session:`, error);
@@ -169,13 +174,17 @@ export const finalizeStreamingSession = async ({
       rawTranscript: null,
       metadata: {
         inferenceDevice: `API • ${providerLabel} (Streaming)`,
+        ...(modelSize !== undefined ? { modelSize } : {}),
         transcriptionMode: "api",
       },
-      warnings: [
-        `${providerLabel} finalization failed: ${
-          error instanceof Error ? error.message : "Unknown error"
-        }`,
-      ],
+      warnings: Array.from(
+        new Set([
+          ...getWarnings(),
+          `${providerLabel} finalization failed: ${
+            error instanceof Error ? error.message : "Unknown error"
+          }`,
+        ]),
+      ),
     };
   }
 };

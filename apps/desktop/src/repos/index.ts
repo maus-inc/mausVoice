@@ -3,8 +3,10 @@ import { Nullable } from "@maus-inc/types";
 import { getRec } from "@maus-inc/utilities";
 import { getAppState } from "../store";
 import type { AppState } from "../state/app.state";
+import { buildGladiaCustomizations } from "../utils/gladia.utils";
 import { getLogger } from "../utils/log.utils";
 import { OLLAMA_DEFAULT_URL } from "../utils/ollama.utils";
+import { collectDictionaryEntries } from "../utils/prompt.utils";
 import { buildOpenAICompatibleUrl } from "../utils/openai-compatible.utils";
 import {
   type ApiGenerativePrefs,
@@ -48,6 +50,7 @@ import {
   DeepSeekModelProviderRepo,
   ElevenLabsModelProviderRepo,
   GeminiModelProviderRepo,
+  GladiaModelProviderRepo,
   GroqModelProviderRepo,
   OllamaModelProviderRepo,
   OpenAICompatibleModelProviderRepo,
@@ -79,6 +82,7 @@ import {
   BaseTranscribeAudioRepo,
   DeepgramTranscribeAudioRepo,
   ElevenLabsTranscribeAudioRepo,
+  GladiaTranscribeAudioRepo,
   GeminiTranscribeAudioRepo,
   GroqTranscribeAudioRepo,
   LocalTranscribeAudioRepo,
@@ -443,6 +447,13 @@ export const getTranscribeAudioRepo = (): TranscribeAudioRepoOutput => {
           prefs.transcriptionModel,
         );
         break;
+      case "gladia":
+        repo = new GladiaTranscribeAudioRepo(
+          prefs.apiKeyValue,
+          prefs.transcriptionModel,
+          buildGladiaCustomizations(collectDictionaryEntries(getAppState())),
+        );
+        break;
       case "xai":
         repo = new XaiTranscribeAudioRepo(
           prefs.apiKeyValue,
@@ -536,6 +547,8 @@ export const getModelProviderRepo = (
       return new ElevenLabsModelProviderRepo();
     case "deepgram":
       return new DeepgramModelProviderRepo();
+    case "gladia":
+      return new GladiaModelProviderRepo();
     case "xai":
       return new XaiModelProviderRepo();
   }

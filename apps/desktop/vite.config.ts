@@ -16,6 +16,39 @@ export default defineConfig(async () => {
     // load — leaving a blank white window with no script execution.
     base: "./",
     plugins: [
+      // Gladia's isomorphic SDK contains guarded dynamic imports for Node-only
+      // file uploads and network fallbacks. Tauri always provides browser
+      // fetch/WebSocket and passes File objects, but Rollup would otherwise
+      // bundle optional `undici`/`ws` peers and externalize dozens of Node
+      // built-ins. Replace only imports originating inside the SDK.
+      {
+        name: "gladia-browser-peer-stubs",
+        enforce: "pre",
+        resolveId(source, importer) {
+          if (
+            importer?.includes("@gladiaio/sdk") &&
+            ["fs", "path", "undici", "ws"].includes(source)
+          ) {
+            return `\0gladia-browser-peer:${source}`;
+          }
+          return null;
+        },
+        load(id) {
+          if (id === "\0gladia-browser-peer:undici") {
+            return "export class Agent {}; export const setGlobalDispatcher = () => {};";
+          }
+          if (id === "\0gladia-browser-peer:ws") {
+            return "export const WebSocket = globalThis.WebSocket;";
+          }
+          if (id === "\0gladia-browser-peer:fs") {
+            return "export const readFileSync = () => { throw new Error('Node file uploads are unavailable in the desktop webview'); };";
+          }
+          if (id === "\0gladia-browser-peer:path") {
+            return "export const basename = () => { throw new Error('Node paths are unavailable in the desktop webview'); };";
+          }
+          return null;
+        },
+      },
       react({
         babel: {
           plugins: [

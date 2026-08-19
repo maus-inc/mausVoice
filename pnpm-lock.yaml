@@ -62,6 +62,11 @@ overrides:
   turbo@<=2.9.13: '>=2.9.14'
   ws@>=8.0.0 <8.21.0: '>=8.21.0'
 
+patchedDependencies:
+  '@gladiaio/sdk@1.1.0':
+    hash: 484bbdac3e2eba49d80cd4ba9b82a110f207827d3baf7bd4ecbcd70c1ca9d4ae
+    path: patches/@gladiaio__sdk@1.1.0.patch
+
 importers:
 
   .:
@@ -478,6 +483,9 @@ importers:
       '@anthropic-ai/sdk':
         specifier: ^0.71.2
         version: 0.71.2(zod@4.4.3)
+      '@gladiaio/sdk':
+        specifier: 1.1.0
+        version: 1.1.0(patch_hash=484bbdac3e2eba49d80cd4ba9b82a110f207827d3baf7bd4ecbcd70c1ca9d4ae)(eventemitter3@5.0.4)(undici@8.10.0)(ws@8.21.0)
       '@google/genai':
         specifier: ^1.52.0
         version: 1.52.0(@modelcontextprotocol/sdk@1.27.1(zod@4.4.3))
@@ -487,6 +495,9 @@ importers:
       '@maus-inc/utilities':
         specifier: workspace:*
         version: link:../utilities
+      eventemitter3:
+        specifier: 5.0.4
+        version: 5.0.4
       groq-sdk:
         specifier: ^0.37.0
         version: 0.37.0
@@ -1655,6 +1666,19 @@ packages:
       ts-jest: ^29
     peerDependenciesMeta:
       ts-jest:
+        optional: true
+
+  '@gladiaio/sdk@1.1.0':
+    resolution: {integrity: sha512-iKrYT+lAQ0WiqEk+g4kj0pjOuxPLS9Lc95RixljmpXwmISn6U+32OnvSomrhCMwlv+fiweC3AqxyFmn7Imvfog==}
+    engines: {node: '>=20'}
+    peerDependencies:
+      eventemitter3: '>=5'
+      undici: '>=7.28.0'
+      ws: '>=8.21.0'
+    peerDependenciesMeta:
+      undici:
+        optional: true
+      ws:
         optional: true
 
   '@google/genai@1.52.0':
@@ -9003,6 +9027,13 @@ snapshots:
       json-stable-stringify: 1.3.0
       tslib: 2.8.1
       typescript: 5.9.3
+
+  '@gladiaio/sdk@1.1.0(patch_hash=484bbdac3e2eba49d80cd4ba9b82a110f207827d3baf7bd4ecbcd70c1ca9d4ae)(eventemitter3@5.0.4)(undici@8.10.0)(ws@8.21.0)':
+    dependencies:
+      eventemitter3: 5.0.4
+    optionalDependencies:
+      undici: 8.10.0
+      ws: 8.21.0
 
   '@google/genai@1.52.0(@modelcontextprotocol/sdk@1.27.1(zod@4.4.3))':
     dependencies:

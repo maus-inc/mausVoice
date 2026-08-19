@@ -6,6 +6,7 @@ import {
   DEEPSEEK_MODELS,
   GEMINI_GENERATE_TEXT_MODELS,
   GEMINI_TRANSCRIPTION_MODELS,
+  GLADIA_TRANSCRIPTION_MODELS,
   XAI_TRANSCRIPTION_MODELS,
 } from "@maus-inc/voice-ai";
 import { secureFetch as fetch } from "../utils/secure-fetch.utils";
@@ -473,6 +474,24 @@ export class ElevenLabsModelProviderRepo extends BaseModelProviderRepo {
 
   async getTranscriptionModels(): Promise<string[]> {
     return [];
+  }
+}
+
+export class GladiaModelProviderRepo extends BaseModelProviderRepo {
+  supportsGenerativeTextModels(): boolean {
+    return false;
+  }
+
+  supportsTranscriptionModels(): boolean {
+    return true;
+  }
+
+  async getGenerativeTextModels(): Promise<string[]> {
+    return [];
+  }
+
+  async getTranscriptionModels(): Promise<string[]> {
+    return [...GLADIA_TRANSCRIPTION_MODELS];
   }
 }
 

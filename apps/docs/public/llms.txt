@@ -80,6 +80,7 @@ Use the most specific page below. Local describes the speech-recognition stage o
 - [Provider overview](https://maus-inc.github.io/mausVoice/docs/providers/overview/): Match the current provider forms and dispatch routes to transcription, post-processing, and Assistant tasks.
 - [Groq](https://maus-inc.github.io/mausVoice/docs/providers/groq/): Use Groq for batch speech recognition, post-processing, or the API-backed Assistant.
 - [Deepgram](https://maus-inc.github.io/mausVoice/docs/providers/deepgram/): Configure Nova-3 streaming dictation, language handling, and the Personal Deepgram shortcut.
+- [Gladia](https://maus-inc.github.io/mausVoice/docs/providers/gladia/): Configure Solaria live and pre-recorded transcription, dictionary hints, limits, and remote cleanup behavior.
 - [OpenAI](https://maus-inc.github.io/mausVoice/docs/providers/openai/): Use an OpenAI key for batch transcription, transcript cleanup, and Assistant conversations.
 - [OpenRouter](https://maus-inc.github.io/mausVoice/docs/providers/openrouter/): Choose OpenRouter models, favorites, and per-key upstream routing for rewriting and Assistant requests.
 - [Gemini](https://maus-inc.github.io/mausVoice/docs/providers/gemini/): Configure Gemini audio transcription, post-processing, and Assistant generation.
