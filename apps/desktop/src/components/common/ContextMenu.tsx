@@ -533,7 +533,7 @@ export const ContextMenuProvider = ({
             label: "Paste",
             onClick: () => {
               void navigator.clipboard.readText().then(function (t) {
-                document.execCommand("insertText", false, t);
+                document.execCommand("insertText", false, t); // NOSONAR: no non-deprecated paste API
               });
             },
             accelerator: modKey + "+V",

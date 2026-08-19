@@ -78,6 +78,42 @@ const isFenceLine = (tl: string): boolean => {
   return rest === "" || /^\w+$/.test(rest);
 };
 
+type ScanResult = { out: string; next: number } | null;
+
+/** ![alt](url) -> alt text. */
+const scanImage = (input: string, close: number, inner: string): ScanResult => {
+  if (input[close + 1] !== "(") return null;
+  const endParen = input.indexOf(")", close + 2);
+  if (endParen < 0) return null;
+  return { out: inner, next: endParen + 1 };
+};
+
+/** [text](url) -> "text (url)" when short, else text. */
+const scanLink = (input: string, close: number, inner: string): ScanResult => {
+  if (input[close + 1] !== "(") return null;
+  const endParen = input.indexOf(")", close + 2);
+  if (endParen < 0) return null;
+  const url = input.slice(close + 2, endParen);
+  const cleaned = collapseWhitespace(inner);
+  if (cleaned.includes(url) || cleaned.length > 50) {
+    return { out: cleaned, next: endParen + 1 };
+  }
+  const combined = `${cleaned} (${url})`;
+  return { out: combined.length > 60 ? cleaned : combined, next: endParen + 1 };
+};
+
+/** [text][label] -> text. */
+const scanRefLink = (
+  input: string,
+  close: number,
+  inner: string,
+): ScanResult => {
+  if (input[close + 1] !== "[") return null;
+  const endLabel = input.indexOf("]", close + 2);
+  if (endLabel < 0) return null;
+  return { out: inner, next: endLabel + 1 };
+};
+
 /**
  * Strip markdown images/links/reference-links with a hand-rolled scanner
  * (no regex, so no backtracking). Scans left to right for '[' and resolves:
@@ -104,48 +140,21 @@ const stripLinkSyntax = (input: string): string => {
     }
     const inner = input.slice(open + 1, close);
 
-    if (isImage) {
-      // ![alt](url) -> alt
-      if (input[close + 1] === "(") {
-        const endParen = input.indexOf(")", close + 2);
-        if (endParen >= 0) {
-          out += inner;
-          i = endParen + 1;
-          continue;
-        }
+    const handlers: Array<(s: string, c: number, inner: string) => ScanResult> =
+      isImage ? [scanImage] : [scanLink, scanRefLink];
+    let handled: ScanResult = null;
+    for (const handler of handlers) {
+      const result = handler(input, close, inner);
+      if (result) {
+        handled = result;
+        break;
       }
-      out += input.slice(i, close + 1);
-      i = close + 1;
+    }
+    if (handled) {
+      out += handled.out;
+      i = handled.next;
       continue;
     }
-
-    // [text](url) -> "text (url)" when short
-    if (input[close + 1] === "(") {
-      const endParen = input.indexOf(")", close + 2);
-      if (endParen >= 0) {
-        const url = input.slice(close + 2, endParen);
-        const cleaned = collapseWhitespace(inner);
-        if (cleaned.includes(url) || cleaned.length > 50) {
-          out += cleaned;
-        } else {
-          const combined = `${cleaned} (${url})`;
-          out += combined.length > 60 ? cleaned : combined;
-        }
-        i = endParen + 1;
-        continue;
-      }
-    }
-
-    // [text][label] -> text
-    if (input[close + 1] === "[") {
-      const endLabel = input.indexOf("]", close + 2);
-      if (endLabel >= 0) {
-        out += inner;
-        i = endLabel + 1;
-        continue;
-      }
-    }
-
     // bare [text] -> text
     out += inner;
     i = close + 1;
@@ -223,9 +232,8 @@ export const markdownToPillText = (
   text = text.replace(/^\s*[-*+]\s+/gm, "\u2022 ");
 
   // 6. Convert ordered list markers to plain numbers
-  // NOSONAR: anchored, disjoint tokens ([ \t]* and \s+ are separated by
-  // \d+\.), so scanning is linear.
   text = text.replace(/^[ \t]*\d+\.\s+/gm, (match) => {
+    // NOSONAR: anchored, disjoint tokens
     const num = match.trim().split(".")[0];
     return `${num}. `;
   });
