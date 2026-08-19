@@ -70,7 +70,7 @@ const errorMessage = (error: unknown): string =>
     .replace(/wss:\/\/[^\s)\]}]+/gi, "[Gladia WebSocket endpoint]")
     .replace(/\bBearer\s+[^\s,;)]+/gi, "Bearer [redacted]")
     .replace(
-      /\b(token|api[_-]?key|authorization)(\s*[:=]\s*)[^\s,;)]+/gi,
+      /\b(token|api[_-]?key|x[-_]?gladia[-_]?key|authorization)(\s*[:=]\s*)[^\s,;)]+/gi,
       "$1$2[redacted]",
     )
     .slice(0, 500);
@@ -114,7 +114,8 @@ export const isAllowedGladiaWebSocketUrl = (candidate: string): boolean => {
   try {
     const url = new URL(candidate);
     return (
-      url.origin === GLADIA_WEBSOCKET_ORIGIN &&
+      url.protocol === "wss:" &&
+      url.host === "api.gladia.io" &&
       url.username === "" &&
       url.password === ""
     );

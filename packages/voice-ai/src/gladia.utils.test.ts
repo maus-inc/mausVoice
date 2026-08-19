@@ -34,7 +34,15 @@ describe("Gladia configuration", () => {
     expect(
       isAllowedGladiaWebSocketUrl("wss://api.gladia.io/v2/live?id=one"),
     ).toBe(true);
+    expect(
+      isAllowedGladiaWebSocketUrl(
+        "wss://api.gladia.io:443/v2/live?id=explicit-default-port",
+      ),
+    ).toBe(true);
     expect(isAllowedGladiaWebSocketUrl("ws://api.gladia.io/v2/live")).toBe(
+      false,
+    );
+    expect(isAllowedGladiaWebSocketUrl("wss://api.gladia.io:444/v2/live")).toBe(
       false,
     );
     expect(

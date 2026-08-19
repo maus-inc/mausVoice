@@ -4,6 +4,12 @@ import svgr from "vite-plugin-svgr";
 import { vendorManualChunk } from "./scripts/vendor-manual-chunk.mjs";
 
 const host = process.env.TAURI_DEV_HOST;
+const GLADIA_BROWSER_PEERS = ["fs", "path", "undici", "ws"] as const;
+
+export const getGladiaBrowserPeer = (source: string) =>
+  GLADIA_BROWSER_PEERS.find(
+    (peer) => source === peer || source.startsWith(`${peer}/`),
+  );
 
 // https://vite.dev/config/
 export default defineConfig(async () => {
@@ -25,11 +31,9 @@ export default defineConfig(async () => {
         name: "gladia-browser-peer-stubs",
         enforce: "pre",
         resolveId(source, importer) {
-          if (
-            importer?.includes("@gladiaio/sdk") &&
-            ["fs", "path", "undici", "ws"].includes(source)
-          ) {
-            return `\0gladia-browser-peer:${source}`;
+          const peer = getGladiaBrowserPeer(source);
+          if (importer?.includes("@gladiaio/sdk") && peer) {
+            return `\0gladia-browser-peer:${peer}`;
           }
           return null;
         },

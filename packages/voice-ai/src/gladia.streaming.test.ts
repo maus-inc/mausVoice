@@ -228,9 +228,13 @@ describe("createGladiaStreamingSession", () => {
       "error",
       new Error("connect failed at wss://api.gladia.io/live?token=secret"),
     );
+    emit("error", new Error("request failed; x-gladia-key=provider-secret"));
     expect(session.getWarnings().join(" ")).not.toContain("secret");
     expect(session.getWarnings().join(" ")).toContain(
       "[Gladia WebSocket endpoint]",
+    );
+    expect(session.getWarnings().join(" ")).toContain(
+      "x-gladia-key=[redacted]",
     );
     emit("ended", {
       code: 1006,
