@@ -235,9 +235,9 @@ export const drainDictationBacklog = async (
   }
 
   // Build the combined text: backlog segments joined with spaces, then the
-  // new segment. The trailing space from each backlog segment's storage
-  // is normalized by the join.
-  const segments = [...snap.segments];
+  // new segment. Segments are defensively trimmed to avoid inconsistent
+  // spacing if callers store trailing whitespace or newlines.
+  const segments = [...snap.segments].map((s) => s.trim());
   if (newSegment?.trim()) {
     segments.push(newSegment.trim());
   }
