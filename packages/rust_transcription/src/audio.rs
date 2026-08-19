@@ -394,15 +394,31 @@ mod tests {
 
     #[test]
     fn resampling_handles_long_input_without_panic() {
-        // Five minutes of 48 kHz audio must resample to the expected length and
-        // stay well within the time budget (no per-sample trig).
+        // Five minutes of 48 kHz audio must resample to the expected length
+        // (no per-sample trig). No wall-clock budget here: shared CI runners
+        // made a tight one flaky, and a loose one (the 60 s bound this
+        // replaced) lets real regressions pass silently. The tight performance
+        // budget lives in the `#[ignore]`d test below, run explicitly via
+        // `cargo test -- --ignored`.
+        let samples = vec![0.0_f32; 5 * 60 * 48_000];
+        let output = resample_to_rate(&samples, 48_000, 16_000).unwrap();
+        assert_eq!(output.len(), 5 * 60 * 16_000);
+    }
+
+    #[test]
+    #[ignore = "wall-clock budget is machine-dependent; run with `cargo test -- --ignored`"]
+    fn resampling_long_input_stays_within_time_budget() {
+        // Five minutes of 48 kHz audio must resample well within 15 s (no
+        // per-sample trig). Kept tight so genuine resample_to_rate slowdowns
+        // stay detectable; ignored by default because timing asserts on
+        // shared CI runners are flaky.
         let samples = vec![0.0_f32; 5 * 60 * 48_000];
         let start = std::time::Instant::now();
         let output = resample_to_rate(&samples, 48_000, 16_000).unwrap();
         let elapsed = start.elapsed();
         assert_eq!(output.len(), 5 * 60 * 16_000);
         assert!(
-            elapsed.as_millis() < 60_000,
+            elapsed.as_millis() < 15_000,
             "resampling 5min/48k took {elapsed:?}"
         );
     }

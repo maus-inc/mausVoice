@@ -757,10 +757,13 @@ pub fn run(receiver: Receiver<InMessage>) {
 }
 
 /// Builds the pill window rect and the work area of the monitor it lives on,
-/// for the desktop to anchor the composer next to the real pill. On X11 the
-/// pill has a true saved position, so both are reported; on Wayland (where the
-/// layer-shell compositor owns placement and there is no queryable absolute
-/// position) only the monitor is reported and the rect is omitted.
+/// for the desktop to anchor the composer next to the real pill. Both rects
+/// are reported in physical pixels: the desktop compares them against each
+/// other and positions the composer via Tauri, which on X11 also works in
+/// physical pixels. On X11 the pill has a true saved position, so both are
+/// reported; on Wayland (where the layer-shell compositor owns placement and
+/// there is no queryable absolute position) only the monitor is reported and
+/// the rect is omitted.
 pub(crate) fn pill_geometry(window: &gtk::Window, state: &PillState) -> (Option<Rect>, Option<Rect>) {
     let (w, h) = window.size();
     let scale = window
@@ -780,13 +783,16 @@ pub(crate) fn pill_geometry(window: &gtk::Window, state: &PillState) -> (Option<
         .or_else(|| display.primary_monitor())
         .or_else(|| display.monitor(0));
     let monitor_rect = monitor.map(|m| {
+        // `workarea()` is in logical pixels while the pill rect below is
+        // physical (`saved_x`/`saved_y` are X11 root coordinates and the
+        // logical window size is scaled). The two rects must share one
+        // coordinate space for the desktop's composer-anchoring math, so
+        // scale the workarea by its monitor's own scale factor — the same
+        // logical-to-physical conversion the X11 placement math applies (see
+        // `pill_pos_on_monitor`).
+        let monitor_scale = m.scale_factor() as f64;
         let g = m.workarea();
-        Rect {
-            x: g.x() as f64,
-            y: g.y() as f64,
-            width: g.width() as f64,
-            height: g.height() as f64,
-        }
+        workarea_to_physical(g.x(), g.y(), g.width(), g.height(), monitor_scale)
     });
     let rect = if state.has_saved_position.get() && state.backend.get() == Backend::X11 {
         Some(Rect {
@@ -799,6 +805,19 @@ pub(crate) fn pill_geometry(window: &gtk::Window, state: &PillState) -> (Option<
         None
     };
     (rect, monitor_rect)
+}
+
+/// Converts a monitor work area from GDK logical pixels into the physical
+/// root-pixel space `pill_geometry` reports. Kept as a plain function of the
+/// work-area numbers (rather than taking a `gdk::Rectangle`) so the conversion
+/// is unit-testable without a display connection.
+fn workarea_to_physical(x: i32, y: i32, width: i32, height: i32, scale: f64) -> Rect {
+    Rect {
+        x: x as f64 * scale,
+        y: y as f64 * scale,
+        width: width as f64 * scale,
+        height: height as f64 * scale,
+    }
 }
 
 /// Ends the gesture and tears down any active drag.
@@ -1340,5 +1359,49 @@ mod visibility_tests {
     fn persistent_always_shows() {
         assert!(should_show_pill(Visibility::Persistent, Phase::Idle, false));
         assert!(should_show_pill(Visibility::Persistent, Phase::Recording, false));
+    }
+}
+
+#[cfg(test)]
+mod geometry_tests {
+    use super::*;
+
+    #[test]
+    fn workarea_is_scaled_into_physical_pixels() {
+        // A 2000x1000 logical work area at origin (100, 50) on a 2x monitor
+        // must come out in the same physical space the pill rect uses.
+        let rect = workarea_to_physical(100, 50, 2000, 1000, 2.0);
+        assert_eq!(rect.x, 200.0);
+        assert_eq!(rect.y, 100.0);
+        assert_eq!(rect.width, 4000.0);
+        assert_eq!(rect.height, 2000.0);
+    }
+
+    #[test]
+    fn workarea_scale_one_is_unchanged() {
+        let rect = workarea_to_physical(-1920, 0, 1920, 1080, 1.0);
+        assert_eq!(rect.x, -1920.0);
+        assert_eq!(rect.y, 0.0);
+        assert_eq!(rect.width, 1920.0);
+        assert_eq!(rect.height, 1080.0);
+    }
+
+    #[test]
+    fn pill_rect_and_workarea_share_physical_space() {
+        // Regression guard for the split coordinate spaces: a 200-logical-px
+        // pill parked at physical x=3800 on a 2000-logical-wide (4000 physical)
+        // work area at 2x must overflow the monitor in *both* spaces alike.
+        let scale = 2.0;
+        let monitor = workarea_to_physical(0, 0, 2000, 1000, scale);
+        let pill = Rect {
+            x: 3800.0,
+            y: 0.0,
+            width: 200.0 * scale,
+            height: 80.0 * scale,
+        };
+        // With the old unscaled workarea (2000 wide) this comparison used the
+        // wrong space at any scale != 1.
+        assert!(pill.x + pill.width > monitor.x + monitor.width);
+        assert!(pill.x < monitor.x + monitor.width);
     }
 }
