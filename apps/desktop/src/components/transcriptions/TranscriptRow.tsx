@@ -62,11 +62,32 @@ export const TranscriptionRow = ({ id }: TranscriptionRowProps) => {
   const activeRemoteTarget = useAppStore(getActiveRemoteTarget);
   const isRemoteTranscript = transcription?.remoteStatus === "received";
   const isSentToRemote = transcription?.remoteStatus === "sent";
-  const retranscribeTooltip = isRetranscribing
-    ? intl.formatMessage({ defaultMessage: "Retranscribing audio clip" })
-    : didRetranscribe
-      ? intl.formatMessage({ defaultMessage: "Retranscribed audio clip" })
-      : intl.formatMessage({ defaultMessage: "Retranscribe audio clip" });
+  const retranscribeTooltip = (() => {
+    if (isRetranscribing) {
+      return intl.formatMessage({
+        defaultMessage: "Retranscribing audio clip",
+      });
+    }
+    if (didRetranscribe) {
+      return intl.formatMessage({ defaultMessage: "Retranscribed audio clip" });
+    }
+    return intl.formatMessage({ defaultMessage: "Retranscribe audio clip" });
+  })();
+
+  const retranscribeIcon = (() => {
+    if (isRetranscribing && prefersReducedMotion) {
+      return <HourglassEmptyRoundedIcon fontSize="small" aria-hidden />;
+    }
+    if (isRetranscribing) {
+      return <CircularProgress size={18} color="inherit" aria-hidden />;
+    }
+    if (didRetranscribe) {
+      return (
+        <CheckCircleRoundedIcon color="success" fontSize="small" aria-hidden />
+      );
+    }
+    return <ReplayRoundedIcon fontSize="small" aria-hidden />;
+  })();
 
   const handleDetailsOpen = useCallback(() => {
     openTranscriptionDetailsDialog(id);
@@ -268,28 +289,7 @@ export const TranscriptionRow = ({ id }: TranscriptionRowProps) => {
                     disabled={isRetranscribing}
                     sx={{ p: 0.5 }}
                   >
-                    {isRetranscribing ? (
-                      prefersReducedMotion ? (
-                        <HourglassEmptyRoundedIcon
-                          fontSize="small"
-                          aria-hidden
-                        />
-                      ) : (
-                        <CircularProgress
-                          size={18}
-                          color="inherit"
-                          aria-hidden
-                        />
-                      )
-                    ) : didRetranscribe ? (
-                      <CheckCircleRoundedIcon
-                        color="success"
-                        fontSize="small"
-                        aria-hidden
-                      />
-                    ) : (
-                      <ReplayRoundedIcon fontSize="small" aria-hidden />
-                    )}
+                    {retranscribeIcon}
                   </IconButton>
                 </span>
               </Tooltip>
