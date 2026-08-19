@@ -211,12 +211,27 @@ pub const RING_HEAD_FADE_FROM: f64 = 0.55;
 pub const RING_HEAD_BLOOM: f64 = 0.45;
 /// Concentric steps used to approximate the head's radial falloff.
 pub const RING_HEAD_STEPS: usize = 4;
-/// Minimum head visibility at which the head's discs are painted.
+
+// ── Low-alpha draw cutoffs ────────────────────────────────────────────────
+//
+// Every ring layer skips draws it cannot make visible. The thresholds live
+// here, next to each other, so they are tuned as a set instead of drifting
+// apart as literals sprinkled through three renderers.
+
+/// Peak alpha below which a head-disc stack is not painted at all.
 ///
-/// Applied to both the raw head fade and the fully-scaled head alpha. The
-/// value is roughly one 8-bit alpha step (1/255 ≈ 0.0039): below it the
-/// concentric discs would only contribute sub-perceptual ghosts.
+/// Roughly one 8-bit alpha step (1/255 ≈ 0.0039): below it the concentric
+/// discs would only contribute sub-perceptual ghosts. Applied by
+/// [`RingLayers`] to both the silver head and its dark underlay.
 pub const RING_HEAD_FADE_CUTOFF: f64 = 0.004;
+/// Alpha below which one comet segment is skipped.
+///
+/// Higher than [`RING_HEAD_FADE_CUTOFF`] on purpose: the comet is hundreds of
+/// individually-stroked segments per frame, so its threshold buys real time,
+/// whereas a head stack is at most [`RING_HEAD_STEPS`] discs. Still about
+/// three 8-bit alpha steps — the dimmest tail segments it drops are already
+/// indistinguishable from the backdrop.
+pub const RING_SEGMENT_ALPHA_CUTOFF: f64 = 0.012;
 /// Exponent of the concentric-disc alpha falloff: `falloff = (1 - (k-1)/steps)^exp`,
 /// so the outermost disc is dimmest and the innermost is full brightness.
 pub const RING_HEAD_FALLOFF_EXP: f64 = 2.2;
@@ -416,6 +431,125 @@ pub fn ring_head_index(head_len: f64, total_len: f64, point_count: usize) -> usi
     }
     let frac = head_len / total_len.max(RING_PATH_LEN_EPSILON);
     ((frac * (point_count - 1) as f64).round() as usize).clamp(1, point_count - 1)
+}
+
+/// One concentric disc of the comet head, or of the dark underlay beneath it.
+///
+/// Positions and alphas are final: a renderer fills a circle per disc and adds
+/// nothing of its own but the colour.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct RingHeadDisc {
+    pub cx: f64,
+    pub cy: f64,
+    pub radius: f64,
+    pub alpha: f64,
+}
+
+/// The shadow and head layers of one ring frame, resolved once from the
+/// resampled perimeter.
+///
+/// The three renderers differ only in which primitives they call — Core
+/// Graphics strokes, Cairo strokes, Direct2D geometries. Everything *before*
+/// the primitive (where the head sits, how many shadow passes to make, each
+/// disc's radius and alpha, and which layers are too faint to bother with) is
+/// identical, so it lives here: a platform can no longer drift by forgetting a
+/// pass, ordering the discs the other way, or applying `ring_alpha` twice.
+///
+/// The comet body is deliberately NOT part of this: its per-segment shading is
+/// already driven by [`ring_envelope`] / [`ring_glimmer`], and it needs a
+/// different primitive per backend (batched lines on Windows, immediate
+/// strokes elsewhere).
+#[derive(Debug, Clone, Copy)]
+pub struct RingLayers {
+    /// Index of the comet head in the resampled buffer. The shadow arc is
+    /// `points[..=head_index]`, i.e. the perimeter the comet has covered.
+    pub head_index: usize,
+    /// Head centre, taken from the resampled point at `head_index`.
+    pub head_x: f64,
+    pub head_y: f64,
+    /// Head radius for this frame, already bloomed by [`ring_head_radius`].
+    pub head_radius: f64,
+    /// Peak alpha of the dark underlay discs, before per-disc falloff.
+    pub underlay_peak_alpha: f64,
+    /// Peak alpha of the silver head discs, before per-disc falloff.
+    pub head_peak_alpha: f64,
+    /// Master ring alpha, already folded into the peaks above and into
+    /// [`RingLayers::shadow_passes`].
+    ring_alpha: f64,
+}
+
+impl RingLayers {
+    /// Resolve the layers for one frame, or `None` when there is nothing to
+    /// paint: a degenerate buffer (`points.len() < 2`), a fully faded ring, or
+    /// a comet that has not started travelling yet.
+    ///
+    /// `points` are the `(x, y, dist)` triples from [`resample_perimeter`].
+    pub fn new(
+        points: &[(f64, f64, f64)],
+        head_len: f64,
+        total_len: f64,
+        progress: f64,
+        arm_t: f64,
+        ring_alpha: f64,
+    ) -> Option<Self> {
+        if points.len() < 2 || ring_alpha <= 0.0 || head_len <= 0.0 {
+            return None;
+        }
+        let head_index = ring_head_index(head_len, total_len, points.len());
+        let (head_x, head_y, _) = points[head_index];
+        let head_fade = ring_head_fade(progress, arm_t);
+        Some(Self {
+            head_index,
+            head_x,
+            head_y,
+            head_radius: ring_head_radius(progress),
+            underlay_peak_alpha: RING_SHADOW_HEAD_ALPHA * head_fade * ring_alpha,
+            head_peak_alpha: RING_HEAD_ALPHA * head_fade * ring_alpha,
+            ring_alpha,
+        })
+    }
+
+    /// `(stroke width, alpha)` for each halo pass over `points[..=head_index]`,
+    /// with the master ring alpha already applied. Narrowest and darkest pass
+    /// first; since every pass paints the same black, source-over compositing
+    /// is order-independent here — what matters is that a renderer makes all
+    /// of them.
+    pub fn shadow_passes(&self) -> impl Iterator<Item = (f64, f64)> {
+        let ring_alpha = self.ring_alpha;
+        RING_SHADOW_LAYERS
+            .iter()
+            .map(move |&(width, layer_alpha)| (width, layer_alpha * ring_alpha))
+    }
+
+    /// Dark discs painted under the head, so the soft silver blob separates
+    /// from a light backdrop. Empty when the head is too faint to matter.
+    pub fn underlay_discs(&self) -> impl Iterator<Item = RingHeadDisc> {
+        self.discs(self.underlay_peak_alpha)
+    }
+
+    /// The silver head itself, as concentric discs approximating a radial
+    /// falloff. Empty when the head has dissolved.
+    pub fn head_discs(&self) -> impl Iterator<Item = RingHeadDisc> {
+        self.discs(self.head_peak_alpha)
+    }
+
+    /// Discs for one stack, outermost first so the brighter inner discs are
+    /// painted over the dimmer outer ones.
+    fn discs(&self, peak_alpha: f64) -> impl Iterator<Item = RingHeadDisc> {
+        // An empty range is how "too faint to draw" is expressed, so the
+        // decision stays here instead of being re-derived by every renderer.
+        let steps = if peak_alpha > RING_HEAD_FADE_CUTOFF { RING_HEAD_STEPS } else { 0 };
+        let (cx, cy, head_radius) = (self.head_x, self.head_y, self.head_radius);
+        (1..=steps).rev().map(move |k| {
+            let (radius_frac, falloff) = ring_head_disc(k, steps);
+            RingHeadDisc {
+                cx,
+                cy,
+                radius: head_radius * radius_frac,
+                alpha: peak_alpha * falloff * RING_HEAD_DISC_ALPHA_SCALE,
+            }
+        })
+    }
 }
 
 /// Inflate target for the current gesture state.
@@ -988,8 +1122,119 @@ mod tests {
         // painting.
         assert!(RING_HEAD_FADE_CUTOFF > 0.0);
         assert!(RING_HEAD_FADE_CUTOFF <= 1.0 / 255.0 * 1.5);
+        // The comet's per-segment cutoff is deliberately the coarser of the
+        // two — hundreds of segments per frame versus a handful of discs —
+        // but must still stay within a few 8-bit alpha steps.
+        assert!(RING_SEGMENT_ALPHA_CUTOFF > RING_HEAD_FADE_CUTOFF);
+        assert!(RING_SEGMENT_ALPHA_CUTOFF <= 1.0 / 255.0 * 4.0);
         // The path-length guard must stay far below any real pixel distance.
         assert!(RING_PATH_LEN_EPSILON > 0.0 && RING_PATH_LEN_EPSILON < 1e-3);
+    }
+
+    /// A resampled perimeter of the size the pills actually draw.
+    fn sample_ring() -> (Vec<(f64, f64, f64)>, f64) {
+        let path =
+            rounded_rectangle_perimeter(0.0, 0.0, 120.0, 32.0, 16.0, RoundedRectArcSteps::Auto);
+        let (distances, total) = path_distances(&path);
+        let mut points = Vec::new();
+        resample_perimeter(&path, &distances, total, RING_SEGMENT_PX, &mut points);
+        (points, total)
+    }
+
+    #[test]
+    fn ring_layers_reports_nothing_to_paint_for_degenerate_frames() {
+        let (points, total) = sample_ring();
+        // Fewer than two points, a faded-out ring and a comet that has not
+        // set off all mean "draw nothing" — the renderers rely on this to
+        // avoid indexing an empty buffer.
+        assert!(RingLayers::new(&points[..1], total * 0.5, total, 0.5, 0.0, 1.0).is_none());
+        assert!(RingLayers::new(&[], total * 0.5, total, 0.5, 0.0, 1.0).is_none());
+        assert!(RingLayers::new(&points, total * 0.5, total, 0.5, 0.0, 0.0).is_none());
+        assert!(RingLayers::new(&points, 0.0, total, 0.0, 0.0, 1.0).is_none());
+        assert!(RingLayers::new(&points, total * 0.5, total, 0.5, 0.0, 1.0).is_some());
+    }
+
+    #[test]
+    fn ring_layers_places_the_head_on_the_shared_index() {
+        let (points, total) = sample_ring();
+        for p in [0.05, 0.4, 1.0] {
+            let head_len = total * p;
+            let layers = RingLayers::new(&points, head_len, total, p, 0.0, 1.0).unwrap();
+            // Same placement the shadow arc slices to, so the halo can never
+            // stop short of (or run past) the head it sits under.
+            assert_eq!(layers.head_index, ring_head_index(head_len, total, points.len()));
+            let (hx, hy, _) = points[layers.head_index];
+            assert_eq!((layers.head_x, layers.head_y), (hx, hy));
+            assert!(layers.head_index < points.len());
+        }
+    }
+
+    #[test]
+    fn ring_layers_shadow_passes_carry_the_ring_alpha() {
+        let (points, total) = sample_ring();
+        let ring_alpha = 0.4;
+        let layers = RingLayers::new(&points, total * 0.5, total, 0.5, 0.0, ring_alpha).unwrap();
+        let passes: Vec<(f64, f64)> = layers.shadow_passes().collect();
+        assert_eq!(passes.len(), RING_SHADOW_LAYERS.len());
+        for (&(want_w, want_a), &(got_w, got_a)) in RING_SHADOW_LAYERS.iter().zip(passes.iter()) {
+            assert_eq!(got_w, want_w);
+            // Applied exactly once — a renderer multiplying by `alpha` again
+            // would darken the halo quadratically as the ring fades.
+            assert!((got_a - want_a * ring_alpha).abs() < 1e-12);
+        }
+    }
+
+    #[test]
+    fn ring_layers_discs_are_painted_outermost_first() {
+        let (points, total) = sample_ring();
+        let layers = RingLayers::new(&points, total * 0.3, total, 0.3, 0.0, 1.0).unwrap();
+        for discs in [
+            layers.head_discs().collect::<Vec<_>>(),
+            layers.underlay_discs().collect::<Vec<_>>(),
+        ] {
+            assert_eq!(discs.len(), RING_HEAD_STEPS);
+            // Widest and dimmest first, so each brighter disc lands on top.
+            for pair in discs.windows(2) {
+                assert!(pair[1].radius < pair[0].radius, "discs must shrink inward");
+                assert!(pair[1].alpha > pair[0].alpha, "discs must brighten inward");
+            }
+            assert!((discs[0].radius - ring_head_radius(0.3)).abs() < 1e-12);
+            for d in &discs {
+                assert_eq!((d.cx, d.cy), (layers.head_x, layers.head_y));
+                assert!((0.0..=1.0).contains(&d.alpha));
+            }
+        }
+    }
+
+    #[test]
+    fn ring_layers_underlay_tracks_the_head_it_sits_under() {
+        let (points, total) = sample_ring();
+        let layers = RingLayers::new(&points, total * 0.3, total, 0.3, 0.0, 1.0).unwrap();
+        let head: Vec<_> = layers.head_discs().collect();
+        let under: Vec<_> = layers.underlay_discs().collect();
+        assert_eq!(head.len(), under.len());
+        for (h, u) in head.iter().zip(under.iter()) {
+            // Same geometry, so the dark disc is never visible around the rim
+            // of the silver one it is meant to back.
+            assert_eq!(h.radius, u.radius);
+            assert!(u.alpha < h.alpha, "underlay must stay dimmer than the head");
+        }
+    }
+
+    #[test]
+    fn ring_layers_drops_disc_stacks_once_the_head_dissolves() {
+        let (points, total) = sample_ring();
+        // At completion the head is gone; nothing bright (or dark) may be
+        // left parked at the seam.
+        let done = RingLayers::new(&points, total, total, 1.0, 0.0, 1.0).unwrap();
+        assert_eq!(done.head_discs().count(), 0);
+        assert_eq!(done.underlay_discs().count(), 0);
+        // Same story once the ring has nearly faded out after release.
+        let faint = RingLayers::new(&points, total * 0.3, total, 0.3, 0.0, 0.001).unwrap();
+        assert_eq!(faint.head_discs().count(), 0);
+        assert_eq!(faint.underlay_discs().count(), 0);
+        // But the shadow arc still exists while any ring is visible.
+        assert_eq!(faint.shadow_passes().count(), RING_SHADOW_LAYERS.len());
     }
 
     #[test]

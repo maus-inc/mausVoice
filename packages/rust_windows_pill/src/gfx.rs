@@ -370,8 +370,13 @@ impl Gfx {
     /// long-press ring shadow, where each of the layered passes shares one
     /// colour and width: a single `DrawGeometry` per pass is far cheaper than
     /// per-segment `DrawLine` calls.
+    ///
+    /// Degenerate input is a no-op: fewer than two points has no line to
+    /// stroke, and a non-positive width is backend-defined in D2D rather than
+    /// reliably invisible, so it is rejected here instead of being handed to
+    /// `DrawGeometry`.
     pub(crate) fn stroke_polyline(&self, points: &[(f64, f64, f64)], rgba: [f64; 4], width: f64) {
-        if points.len() < 2 {
+        if points.len() < 2 || width <= 0.0 {
             return;
         }
         unsafe {
