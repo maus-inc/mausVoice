@@ -94,6 +94,7 @@ libpulse-simple-binding = "2"
 x11 = { version = "2", features = ["xlib"] }
 
 [target.'cfg(target_os = "windows")'.dependencies]
+rfd = "0.15"
 enigo = "0.1"
 arboard = "3"
 windows = { version = "0.61.3", features = [

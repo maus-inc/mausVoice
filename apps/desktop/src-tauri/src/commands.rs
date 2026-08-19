@@ -2906,7 +2906,7 @@ fn validate_terminal_command_args(
                 ));
             }
         }
-        if token == ".." {
+        if *token == ".." {
             return Err(format!(
                 "Path traversal (..) is not permitted in command arguments (found in {token:?})"
             ));
