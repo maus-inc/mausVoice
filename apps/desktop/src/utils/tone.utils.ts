@@ -152,16 +152,23 @@ Do NOT use em-dash symbols (—) in your response.
           "Turn a rambling dictation into a concise, intent-preserving prompt.",
       }),
       promptTemplate: `
-Condense the speaker's rambling or fragmented dictation into a concise, self-contained prompt.
+Rewrite the speaker's rambling or fragmented dictation as a concise, self-contained prompt that is ready to paste into an AI assistant.
+Return the finished prompt text itself, addressed directly to the AI that will execute it.
+Never return a description of the prompt, an instruction to write one (e.g. "Write a prompt that..."), or an explanation of your edits.
+If the dictation is already phrased as a command or request, keep it as that command, only cleaned up; do not wrap it in meta-instructions about prompts.
 Preserve the speaker's intent, constraints, important names, numbers, and requested action.
-Return one to three sentences. Do not invent details, add a greeting, or explain the edits.
+Return one to three sentences. Do not invent details or add a greeting.
 If the input is already concise, make only the smallest necessary cleanup.
 Do NOT use em-dash symbols (—) in your response.
       `.trim(),
       category: "prompt",
       outputLength: "1–3 sentences",
-      exampleInputOutput:
-        "Input: I need, um, a short email to the team about moving tomorrow's meeting to Friday. Output: Write a short email to the team explaining that tomorrow's meeting is moving to Friday.",
+      exampleInputOutput: [
+        "Input: I need, um, a short email to the team about moving tomorrow's meeting to Friday.",
+        "Output: Write a short email to the team explaining that tomorrow's meeting is moving to Friday.",
+        "Input: Fix the prompt style, it, uh, just gives a message that says to write a prompt instead of, you know, actually writing the prompt.",
+        "Output: Fix the Prompt style so it returns the finished, optimized prompt itself instead of a message that says to write a prompt.",
+      ].join("\n"),
       isSystem: true,
       createdAt: 0,
       sortOrder: 5,
