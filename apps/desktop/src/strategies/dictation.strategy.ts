@@ -86,7 +86,11 @@ export class DictationStrategy extends BaseStrategy {
   private async drainBacklogAndAppendSpace(newSegment?: string): Promise<boolean> {
     try {
       const result = await drainDictationBacklog(newSegment, this.currentAppId);
-      if (result.delivered) {
+      // Only add a trailing separator when this is a standalone drain
+      // (no newSegment).  When the caller provides newSegment it has
+      // already appended the segment text to streamedProcessedText, so
+      // adding another space here would double-space.
+      if (result.delivered && !newSegment) {
         this.streamedProcessedText += " ";
       }
       return result.delivered;

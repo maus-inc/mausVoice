@@ -364,9 +364,9 @@ export const DictationSideEffects = () => {
     if (!isMainWindow || !isActiveSession) return;
     const interval = setInterval(() => {
       const strategy = strategyRef.current;
-      if (!strategy || !("checkAndDrainBacklog" in strategy)) return;
+      if (!(strategy instanceof DictationStrategy)) return;
       if (!hasDictationBacklog()) return;
-      (strategy as DictationStrategy).checkAndDrainBacklog()
+      strategy.checkAndDrainBacklog()
         .catch((error: unknown) => {
           getLogger().warning(`Backlog drain poll failed: ${error}`);
         });
