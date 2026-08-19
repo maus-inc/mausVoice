@@ -58,70 +58,46 @@ export const resolveInDictationArrowStyleSwitch = (args: {
  * being finalized.
  *
  * Semantics (manual mode):
- * - The FINAL output uses the tone selected at STOP, so a mid-utterance
- *   switch (any channel) styles this utterance, not just the pill label.
- * - A switch that arrives after stop has snapshotted the tone loses for
- *   this utterance (`toneIdAtStop` is already frozen). The live selection
- *   still updates for the next utterance.
- * - Already-inserted realtime text is never restyled. Streaming sessions
- *   skip post-processing; a mid-stream switch applies from the next
- *   interim segment only (atomic per segment).
+ * - Prefer the tone snapshotted at STOP, so a mid-utterance switch (any
+ *   channel) styles this utterance, not just the pill label.
+ * - A switch that arrives after that snapshot lives only in
+ *   `liveSelectedToneId` and is ignored while a stop/start snapshot exists.
+ * - If both snapshots are missing (teardown/start race), fall back to the
+ *   live selection so finalize never drops a known tone on the floor.
  *
  * Automatic mode uses the app-target tone captured at stop and ignores
  * manual switches.
+ *
+ * Already-inserted realtime text is never restyled here: streamed sessions
+ * skip post-processing in DictationStrategy, and a mid-stream switch
+ * applies from the next interim segment only.
  */
 export type FinalizeToneArgs = {
   stylingMode: StylingMode;
-  /** Manual selection when recording started. Fallback only. */
+  /** Manual selection when recording started. Fallback if stop is missing. */
   toneIdAtStart: string | null;
   /** Manual selection snapshotted when stop was initiated. */
   toneIdAtStop: string | null;
-  /** Live selection at the moment we ask (may have changed after stop). */
+  /**
+   * Live selection at the moment we ask. Used only when both snapshots
+   * are null; a post-stop switch must not override a frozen snapshot.
+   */
   liveSelectedToneId: string | null;
   /** App-target tone captured at stop. Automatic mode only. */
   appTargetToneId: string | null;
-  /**
-   * True when realtime interim text has already been inserted. Does not
-   * change the finalize tone; callers must not re-post-process streamed
-   * sessions.
-   */
-  hasInsertedInterimText?: boolean;
-};
-
-export type FinalizeToneDecision = {
-  toneId: string | null;
-  /** Always false: already-inserted realtime text is never rewritten. */
-  restyleInsertedText: false;
 };
 
 /**
  * Tone used for the FINAL post-processed output of the current utterance.
  *
- * Manual: stop-time selection. Mid-utterance switches are already reflected
- * in `toneIdAtStop`. A switch after stop lives only in `liveSelectedToneId`
- * and is ignored for this utterance.
- *
- * Automatic: `appTargetToneId`, regardless of any manual selection.
+ * Manual: `toneIdAtStop ?? toneIdAtStart ?? liveSelectedToneId`.
+ * Automatic: `appTargetToneId`.
  */
 export const getEffectiveToneIdAtFinalize = (
   args: FinalizeToneArgs,
-): FinalizeToneDecision => {
+): string | null => {
   if (args.stylingMode !== "manual") {
-    return { toneId: args.appTargetToneId, restyleInsertedText: false };
+    return args.appTargetToneId;
   }
-
-  return {
-    toneId: args.toneIdAtStop ?? args.toneIdAtStart,
-    restyleInsertedText: false,
-  };
-};
-
-/**
- * A switch that arrives after stop has locked the utterance tone does not
- * change this utterance. It still updates the live selection for next time.
- */
-export const doesLateStyleSwitchAffectCurrentUtterance = (
-  switchArrivedAfterStopSnapshot: boolean,
-): boolean => {
-  return !switchArrivedAfterStopSnapshot;
+  return args.toneIdAtStop ?? args.toneIdAtStart ?? args.liveSelectedToneId;
 };

@@ -293,6 +293,11 @@ export const DictationSideEffects = () => {
     }
   }, []);
 
+  const clearUtteranceToneSnapshots = useCallback(() => {
+    toneIdAtStartRef.current = null;
+    toneIdAtStopRef.current = null;
+  }, []);
+
   const clearRecordingState = useCallback(() => {
     isPausedRef.current = false;
     produceAppState((draft) => {
@@ -396,6 +401,7 @@ export const DictationSideEffects = () => {
       const strategy = strategyRef.current;
       strategyRef.current = null;
       sessionRef.current = null;
+      clearUtteranceToneSnapshots();
 
       try {
         session?.cleanup();
@@ -423,6 +429,7 @@ export const DictationSideEffects = () => {
       clearCancelPromptTimer,
       clearRecordingState,
       clearRecordingTimers,
+      clearUtteranceToneSnapshots,
       hardResetHotkeyState,
       restoreSystemVolume,
       sendPhaseToPill,
@@ -575,8 +582,9 @@ export const DictationSideEffects = () => {
       // output being produced, not just the pill label. A switch that
       // arrives after stop has snapshotted the tone loses for this
       // utterance. Automatic mode still keys off the app target captured
-      // at stop. Already-inserted realtime text is never restyled.
-      const { toneId } = getEffectiveToneIdAtFinalize({
+      // at stop. Streamed interim text is never restyled here —
+      // DictationStrategy skips post-processing once segments are inserted.
+      const toneId = getEffectiveToneIdAtFinalize({
         stylingMode: getEffectiveStylingMode(getAppState()),
         toneIdAtStart: toneIdAtStartRef.current,
         toneIdAtStop: toneIdAtStopRef.current,
@@ -696,10 +704,14 @@ export const DictationSideEffects = () => {
       hardResetHotkeyState();
       isStoppingRef.current = false;
       setIsStopping(false);
+      // Finalize has already read the snapshots. Drop them so a later
+      // session cannot inherit this utterance's tone if start is raced.
+      clearUtteranceToneSnapshots();
     }
   }, [
     abortRecording,
     clearRecordingTimers,
+    clearUtteranceToneSnapshots,
     hardResetHotkeyState,
     stopRecordingRaw,
     setIsStopping,
@@ -1140,6 +1152,7 @@ export const DictationSideEffects = () => {
     );
     sessionRef.current?.cleanup();
     sessionRef.current = null;
+    clearUtteranceToneSnapshots();
 
     produceAppState((draft) => {
       draft.assistantInputMode = "type";

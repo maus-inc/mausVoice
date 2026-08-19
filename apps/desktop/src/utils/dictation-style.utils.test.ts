@@ -1,6 +1,5 @@
 import { describe, expect, it } from "vitest";
 import {
-  doesLateStyleSwitchAffectCurrentUtterance,
   getEffectiveToneIdAtFinalize,
   resolveInDictationArrowStyleSwitch,
   toWritingStyleTransition,
@@ -24,72 +23,74 @@ const manual = (
 
 describe("getEffectiveToneIdAtFinalize", () => {
   it("uses the stop-time selection when the user switches before stop", () => {
-    const decision = getEffectiveToneIdAtFinalize(
-      manual({
-        toneIdAtStop: SWITCHED,
-        liveSelectedToneId: SWITCHED,
-      }),
-    );
-    expect(decision.toneId).toBe(SWITCHED);
-    expect(decision.restyleInsertedText).toBe(false);
+    expect(
+      getEffectiveToneIdAtFinalize(
+        manual({
+          toneIdAtStop: SWITCHED,
+          liveSelectedToneId: SWITCHED,
+        }),
+      ),
+    ).toBe(SWITCHED);
   });
 
   it("uses the stop-time selection when the switch happens during a realtime segment", () => {
-    // Already-inserted interim text is never rewritten; the finalize tone
-    // still follows the stop-time selection so any non-streamed leftover
-    // (and the stored label) match the newly selected profile.
-    const decision = getEffectiveToneIdAtFinalize(
-      manual({
-        toneIdAtStop: SWITCHED,
-        liveSelectedToneId: SWITCHED,
-        hasInsertedInterimText: true,
-      }),
-    );
-    expect(decision.toneId).toBe(SWITCHED);
-    expect(decision.restyleInsertedText).toBe(false);
+    // Streaming sessions skip post-processing of already-inserted text;
+    // the finalize tone still follows stop-time so any non-streamed
+    // leftover (and the stored label) match the newly selected profile.
+    expect(
+      getEffectiveToneIdAtFinalize(
+        manual({
+          toneIdAtStop: SWITCHED,
+          liveSelectedToneId: SWITCHED,
+        }),
+      ),
+    ).toBe(SWITCHED);
   });
 
   it("ignores a switch that arrives after stop has snapshotted the tone", () => {
-    const decision = getEffectiveToneIdAtFinalize(
-      manual({
-        toneIdAtStop: START,
-        liveSelectedToneId: SWITCHED,
-      }),
-    );
-    expect(decision.toneId).toBe(START);
-    expect(decision.restyleInsertedText).toBe(false);
+    expect(
+      getEffectiveToneIdAtFinalize(
+        manual({
+          toneIdAtStop: START,
+          liveSelectedToneId: SWITCHED,
+        }),
+      ),
+    ).toBe(START);
   });
 
   it("uses the app-target tone in automatic mode regardless of manual switches", () => {
-    const decision = getEffectiveToneIdAtFinalize({
-      stylingMode: "app",
-      toneIdAtStart: START,
-      toneIdAtStop: SWITCHED,
-      liveSelectedToneId: SWITCHED,
-      appTargetToneId: APP_TARGET,
-    });
-    expect(decision.toneId).toBe(APP_TARGET);
-    expect(decision.restyleInsertedText).toBe(false);
+    expect(
+      getEffectiveToneIdAtFinalize({
+        stylingMode: "app",
+        toneIdAtStart: START,
+        toneIdAtStop: SWITCHED,
+        liveSelectedToneId: SWITCHED,
+        appTargetToneId: APP_TARGET,
+      }),
+    ).toBe(APP_TARGET);
   });
 
   it("falls back to the start-time tone when the stop snapshot is missing", () => {
-    const decision = getEffectiveToneIdAtFinalize(
-      manual({
-        toneIdAtStop: null,
-        liveSelectedToneId: SWITCHED,
-      }),
-    );
-    expect(decision.toneId).toBe(START);
-  });
-});
-
-describe("doesLateStyleSwitchAffectCurrentUtterance", () => {
-  it("lets a switch before the stop snapshot win", () => {
-    expect(doesLateStyleSwitchAffectCurrentUtterance(false)).toBe(true);
+    expect(
+      getEffectiveToneIdAtFinalize(
+        manual({
+          toneIdAtStop: null,
+          liveSelectedToneId: SWITCHED,
+        }),
+      ),
+    ).toBe(START);
   });
 
-  it("lets the stop snapshot win when a switch arrives during finalize", () => {
-    expect(doesLateStyleSwitchAffectCurrentUtterance(true)).toBe(false);
+  it("falls back to the live selection when both snapshots are missing", () => {
+    expect(
+      getEffectiveToneIdAtFinalize(
+        manual({
+          toneIdAtStart: null,
+          toneIdAtStop: null,
+          liveSelectedToneId: SWITCHED,
+        }),
+      ),
+    ).toBe(SWITCHED);
   });
 });
 
