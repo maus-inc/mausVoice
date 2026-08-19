@@ -43,8 +43,8 @@ export class GladiaTranscriptionSession implements TranscriptionSession {
   private unlisten: UnlistenFn | null = null;
   private startupPromise: Promise<void> | null = null;
   private interimCallback: ((segment: string) => void) | null = null;
-  private warnings: string[] = [];
-  private warningSet = new Set<string>();
+  private readonly warnings: string[] = [];
+  private readonly warningSet = new Set<string>();
   private generation = 0;
   private finalized = false;
   private streamReady = false;

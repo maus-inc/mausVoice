@@ -278,6 +278,28 @@ const getMessageError = (message: LiveV2WebSocketMessage): string | null => {
     : String(message.error);
 };
 
+const waitBeforeDeadline = async (
+  promise: Promise<void>,
+  deadline: number,
+): Promise<boolean> => {
+  const remainingMs = deadline - Date.now();
+  if (remainingMs <= 0) {
+    return false;
+  }
+
+  let timeout: ReturnType<typeof setTimeout> | null = null;
+  try {
+    const timeoutPromise = new Promise<false>((resolve) => {
+      timeout = setTimeout(() => resolve(false), remainingMs);
+    });
+    return await Promise.race([promise.then(() => true), timeoutPromise]);
+  } finally {
+    if (timeout) {
+      clearTimeout(timeout);
+    }
+  }
+};
+
 export const createGladiaStreamingSession = ({
   apiKey,
   sampleRate,
@@ -483,8 +505,9 @@ export const createGladiaStreamingSession = ({
     onConnectionInterrupted?.();
     if (code !== 1000 && !disposed) {
       const safeReason = reason ? errorMessage(reason) : "";
+      const reasonSuffix = safeReason ? `: ${safeReason}` : "";
       addWarning(
-        `Gladia live session ended unexpectedly (${code}${safeReason ? `: ${safeReason}` : ""}).`,
+        `Gladia live session ended unexpectedly (${code}${reasonSuffix}).`,
       );
     }
     finishEnded();
@@ -504,25 +527,6 @@ export const createGladiaStreamingSession = ({
           )
         : DEFAULT_LIVE_FINALIZE_TIMEOUT_MS;
       const deadline = Date.now() + budgetMs;
-      const waitBeforeDeadline = async (promise: Promise<void>) => {
-        const remainingMs = deadline - Date.now();
-        if (remainingMs <= 0) {
-          return false;
-        }
-        let timeout: ReturnType<typeof setTimeout> | null = null;
-        try {
-          return await Promise.race([
-            promise.then(() => true),
-            new Promise<false>((resolve) => {
-              timeout = setTimeout(() => resolve(false), remainingMs);
-            }),
-          ]);
-        } finally {
-          if (timeout) {
-            clearTimeout(timeout);
-          }
-        }
-      };
 
       try {
         // Calling the SDK's stopRecording() while its initialization request is
@@ -530,8 +534,10 @@ export const createGladiaStreamingSession = ({
         // skips the `started` event but can still open the returned WebSocket,
         // bypassing our endpoint check. Wait for validation before stopping.
         if (!ended && !endpointValidated) {
-          const validationCompleted =
-            await waitBeforeDeadline(validationPromise);
+          const validationCompleted = await waitBeforeDeadline(
+            validationPromise,
+            deadline,
+          );
           if (!validationCompleted) {
             addWarning(
               "Gladia initialization timed out before endpoint validation.",
@@ -543,8 +549,10 @@ export const createGladiaStreamingSession = ({
 
         if (!ended && endpointValidated) {
           session.stopRecording();
-          const finalizedBeforeDeadline =
-            await waitBeforeDeadline(endedPromise);
+          const finalizedBeforeDeadline = await waitBeforeDeadline(
+            endedPromise,
+            deadline,
+          );
           if (!finalizedBeforeDeadline) {
             addWarning(
               "Gladia finalization timed out; using finalized text received so far.",
@@ -599,6 +607,179 @@ export const createGladiaStreamingSession = ({
   };
 };
 
+type GladiaPollingControls = {
+  intervalMs: number;
+  timeoutMs: number;
+};
+
+const normalizeGladiaPollingControls = (
+  pollIntervalMs: number,
+  timeoutMs: number,
+): GladiaPollingControls => {
+  const normalizedTimeoutMs = Number.isFinite(timeoutMs)
+    ? Math.min(DEFAULT_POLL_TIMEOUT_MS, Math.max(1, timeoutMs))
+    : DEFAULT_POLL_TIMEOUT_MS;
+  const requestedPollIntervalMs = Number.isFinite(pollIntervalMs)
+    ? Math.max(0, pollIntervalMs)
+    : DEFAULT_POLL_INTERVAL_MS;
+  return {
+    intervalMs: Math.min(
+      requestedPollIntervalMs,
+      MAX_POLL_INTERVAL_MS,
+      normalizedTimeoutMs,
+    ),
+    timeoutMs: normalizedTimeoutMs,
+  };
+};
+
+const createGladiaAudioFile = (blob: ArrayBuffer | Buffer): File => {
+  let audioBlobPart: ArrayBuffer;
+  if (blob instanceof ArrayBuffer) {
+    audioBlobPart = blob;
+  } else {
+    // Node Buffers may be backed by SharedArrayBuffer, which is not a
+    // BlobPart. Desktop-owned ArrayBuffers do not need this defensive copy.
+    const copied = new Uint8Array(blob.byteLength);
+    copied.set(blob);
+    audioBlobPart = copied.buffer;
+  }
+  return new File([audioBlobPart], "audio.wav", { type: "audio/wav" });
+};
+
+const getGladiaBatchWarnings = (
+  model: string | null | undefined,
+  customizations: GladiaCustomizations | undefined,
+): string[] => {
+  const warnings = [...(customizations?.warnings ?? [])];
+  const modelWarning = getGladiaModelWarning(model);
+  if (modelWarning) {
+    warnings.push(modelWarning);
+  }
+  return warnings;
+};
+
+const isRecord = (value: unknown): value is Record<string, unknown> =>
+  typeof value === "object" && value !== null && !Array.isArray(value);
+
+const requireAudioUrl = (upload: unknown): string => {
+  if (
+    !isRecord(upload) ||
+    typeof upload.audio_url !== "string" ||
+    !upload.audio_url
+  ) {
+    throw new Error("Gladia upload returned an invalid audio URL.");
+  }
+  return upload.audio_url;
+};
+
+const requireJobId = (init: unknown): string => {
+  if (!isRecord(init) || typeof init.id !== "string" || !init.id) {
+    throw new Error("Gladia create returned an invalid transcription ID.");
+  }
+  return init.id;
+};
+
+const requireTranscriptionRecord = (
+  result: unknown,
+): Record<string, unknown> => {
+  if (!isRecord(result)) {
+    throw new Error("Gladia polling returned an invalid result.");
+  }
+  const transcriptionResult = result.result;
+  if (!isRecord(transcriptionResult)) {
+    throw new Error("Gladia completed without a transcription result.");
+  }
+  const transcription = transcriptionResult.transcription;
+  if (!isRecord(transcription)) {
+    throw new Error("Gladia completed without a transcription result.");
+  }
+  return transcription;
+};
+
+const getFullTranscript = (transcription: Record<string, unknown>): string => {
+  const fullTranscript = transcription.full_transcript;
+  if (fullTranscript == null) {
+    return "";
+  }
+  if (typeof fullTranscript !== "string") {
+    throw new Error("Gladia returned a malformed full transcript.");
+  }
+  return fullTranscript.trim();
+};
+
+const getUtteranceTranscript = (
+  transcription: Record<string, unknown>,
+): string => {
+  const utterances = transcription.utterances;
+  if (utterances == null) {
+    return "";
+  }
+  if (!Array.isArray(utterances)) {
+    throw new Error("Gladia returned malformed transcript utterances.");
+  }
+  return utterances
+    .map((utterance) => {
+      if (!isRecord(utterance) || typeof utterance.text !== "string") {
+        throw new Error("Gladia returned a malformed transcript utterance.");
+      }
+      return utterance.text.trim();
+    })
+    .filter(Boolean)
+    .join(" ");
+};
+
+const extractGladiaBatchTranscript = (result: unknown): string => {
+  const transcription = requireTranscriptionRecord(result);
+  const fullTranscript = getFullTranscript(transcription);
+  const utteranceTranscript = getUtteranceTranscript(transcription);
+  return fullTranscript || utteranceTranscript;
+};
+
+const reportBatchCleanupWarning = (
+  warning: string,
+  warnings: string[],
+  primaryError: unknown,
+): void => {
+  if (primaryError) {
+    console.warn(warning);
+  } else {
+    warnings.push(warning);
+  }
+};
+
+const deleteGladiaBatchJob = async ({
+  jobId,
+  deleteJob,
+  warnings,
+  primaryError,
+}: {
+  jobId: string | null;
+  deleteJob: (id: string) => Promise<boolean>;
+  warnings: string[];
+  primaryError: unknown;
+}): Promise<void> => {
+  if (!jobId) {
+    return;
+  }
+  try {
+    const deleted = await deleteJob(jobId);
+    if (deleted) {
+      return;
+    }
+    reportBatchCleanupWarning(
+      "Gladia pre-recorded data deletion was not acknowledged.",
+      warnings,
+      primaryError,
+    );
+  } catch (error) {
+    reportBatchCleanupWarning(
+      `Gladia pre-recorded data deletion failed: ${errorMessage(error)}`,
+      warnings,
+      primaryError,
+    );
+  }
+};
+
 export const gladiaTranscribeAudio = async ({
   apiKey,
   blob,
@@ -608,17 +789,7 @@ export const gladiaTranscribeAudio = async ({
   pollIntervalMs = DEFAULT_POLL_INTERVAL_MS,
   timeoutMs = DEFAULT_POLL_TIMEOUT_MS,
 }: GladiaTranscribeAudioArgs): Promise<GladiaTranscribeAudioOutput> => {
-  const normalizedTimeoutMs = Number.isFinite(timeoutMs)
-    ? Math.min(DEFAULT_POLL_TIMEOUT_MS, Math.max(1, timeoutMs))
-    : DEFAULT_POLL_TIMEOUT_MS;
-  const requestedPollIntervalMs = Number.isFinite(pollIntervalMs)
-    ? Math.max(0, pollIntervalMs)
-    : DEFAULT_POLL_INTERVAL_MS;
-  const normalizedPollIntervalMs = Math.min(
-    requestedPollIntervalMs,
-    MAX_POLL_INTERVAL_MS,
-    normalizedTimeoutMs,
-  );
+  const polling = normalizeGladiaPollingControls(pollIntervalMs, timeoutMs);
   const client = new GladiaClient({
     apiKey: requireGladiaApiKey(apiKey),
     httpRetry: { maxAttempts: 3 },
@@ -628,110 +799,38 @@ export const gladiaTranscribeAudio = async ({
       create: 60_000,
       get: 10_000,
       delete: 10_000,
-      poll: normalizedTimeoutMs,
+      poll: polling.timeoutMs,
     },
   }).preRecordedV2();
-
-  // Desktop WAV encoding already owns an ArrayBuffer, so let File reference it
-  // directly instead of doubling memory for long recordings. Node Buffers may
-  // be backed by SharedArrayBuffer, which is not a BlobPart; copy only there.
-  const audioBlobPart =
-    blob instanceof ArrayBuffer
-      ? blob
-      : (() => {
-          const copied = new Uint8Array(blob.byteLength);
-          copied.set(blob);
-          return copied.buffer;
-        })();
-  const audioFile = new File([audioBlobPart], "audio.wav", {
-    type: "audio/wav",
-  });
-  const modelWarning = getGladiaModelWarning(model);
-  const warnings = [
-    ...(customizations?.warnings ?? []),
-    ...(modelWarning ? [modelWarning] : []),
-  ];
+  const audioFile = createGladiaAudioFile(blob);
+  const warnings = getGladiaBatchWarnings(model, customizations);
   let jobId: string | null = null;
   let primaryError: unknown = null;
 
   try {
     const upload = await client.uploadFile(audioFile);
-    if (!upload || typeof upload.audio_url !== "string" || !upload.audio_url) {
-      throw new Error("Gladia upload returned an invalid audio URL.");
-    }
     const init = await client.createUntyped({
-      audio_url: upload.audio_url,
+      audio_url: requireAudioUrl(upload),
       model: normalizeGladiaModel(model),
       language_config: mapToGladiaLanguageConfig(language),
       ...buildCustomVocabulary(customizations),
       ...buildCustomSpelling(customizations),
     });
-    if (!init || typeof init.id !== "string" || !init.id) {
-      throw new Error("Gladia create returned an invalid transcription ID.");
-    }
-    jobId = init.id;
+    jobId = requireJobId(init);
     const result = await client.poll(jobId, {
-      interval: normalizedPollIntervalMs,
-      timeout: normalizedTimeoutMs,
+      interval: polling.intervalMs,
+      timeout: polling.timeoutMs,
     });
-    if (!result || typeof result !== "object") {
-      throw new Error("Gladia polling returned an invalid result.");
-    }
-    const transcription = result.result?.transcription;
-    if (!transcription || typeof transcription !== "object") {
-      throw new Error("Gladia completed without a transcription result.");
-    }
-    if (
-      transcription.full_transcript != null &&
-      typeof transcription.full_transcript !== "string"
-    ) {
-      throw new Error("Gladia returned a malformed full transcript.");
-    }
-    if (
-      transcription.utterances != null &&
-      !Array.isArray(transcription.utterances)
-    ) {
-      throw new Error("Gladia returned malformed transcript utterances.");
-    }
-    const utterances = transcription.utterances ?? [];
-    if (
-      utterances.some(
-        (utterance) => !utterance || typeof utterance.text !== "string",
-      )
-    ) {
-      throw new Error("Gladia returned a malformed transcript utterance.");
-    }
-
-    const fullTranscript = transcription.full_transcript?.trim();
-    const utteranceTranscript = utterances
-      .map((utterance) => utterance.text.trim())
-      .filter(Boolean)
-      .join(" ");
-    return { text: fullTranscript || utteranceTranscript || "", warnings };
+    return { text: extractGladiaBatchTranscript(result), warnings };
   } catch (error) {
     primaryError = error;
     throw error;
   } finally {
-    if (jobId) {
-      try {
-        const deleted = await client.delete(jobId);
-        if (!deleted) {
-          const warning =
-            "Gladia pre-recorded data deletion was not acknowledged.";
-          if (primaryError) {
-            console.warn(warning);
-          } else {
-            warnings.push(warning);
-          }
-        }
-      } catch (error) {
-        const warning = `Gladia pre-recorded data deletion failed: ${errorMessage(error)}`;
-        if (primaryError) {
-          console.warn(warning);
-        } else {
-          warnings.push(warning);
-        }
-      }
-    }
+    await deleteGladiaBatchJob({
+      jobId,
+      deleteJob: (id) => client.delete(id),
+      warnings,
+      primaryError,
+    });
   }
 };

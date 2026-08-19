@@ -11,10 +11,10 @@ const MAX_DICTIONARY_CHARACTERS = 10_000;
 
 const sanitizeValue = (value: string): string =>
   value
-    .replace(/\0/g, "")
+    .replaceAll("\0", "")
     // oxlint-disable-next-line no-control-regex
-    .replace(/[\u0001-\u001f\u007f]/g, " ")
-    .replace(/\s+/g, " ")
+    .replaceAll(/[\u0001-\u001f\u007f]/g, " ")
+    .replaceAll(/\s+/g, " ")
     .trim();
 
 export const getGladiaSampleRate = (

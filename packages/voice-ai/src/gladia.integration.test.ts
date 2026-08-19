@@ -211,6 +211,28 @@ describe("gladiaTranscribeAudio", () => {
     expect(mocks.deleteJob).toHaveBeenCalledWith("job-1");
   });
 
+  it("rejects malformed utterances even with a valid full transcript", async () => {
+    const { gladiaTranscribeAudio, mocks } = await importWithSdkMock({
+      poll: {
+        result: {
+          transcription: {
+            full_transcript: "Hello Gladia",
+            utterances: [{ text: 42 }],
+          },
+        },
+      },
+    });
+
+    await expect(
+      gladiaTranscribeAudio({
+        apiKey: "key",
+        blob: new ArrayBuffer(4),
+        language: "auto",
+      }),
+    ).rejects.toThrow("malformed transcript utterance");
+    expect(mocks.deleteJob).toHaveBeenCalledWith("job-1");
+  });
+
   it("rejects malformed create responses before polling", async () => {
     const { gladiaTranscribeAudio, mocks } = await importWithSdkMock({
       create: {},
