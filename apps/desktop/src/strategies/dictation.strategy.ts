@@ -77,13 +77,12 @@ export class DictationStrategy extends BaseStrategy {
   }
 
   /**
-   * Check whether the currently focused element is editable, drain the
-   * backlog if one exists and the target is now editable, and return the
-   * paste-target state for the caller.
+   * Probe the currently focused element and, if it is editable (or the
+   * platform cannot tell), drain any accumulated dictation backlog into it.
    *
-   * Safe to call from outside (e.g. DictationSideEffects polling interval).
-   * The operation is serialised on `this.pasteQueue` so it never races an
-   * in-flight interim segment.
+   * Fire-and-forget (logging errors internally). Safe to call from a
+   * polling interval — the operation is serialised on `this.pasteQueue`
+   * so it never races an in-flight interim segment.
    */
   checkAndDrainBacklog(): Promise<void> {
     return (this.pasteQueue = this.pasteQueue.then(async () => {

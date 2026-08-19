@@ -257,7 +257,7 @@ export const drainDictationBacklog = async (
   const currentNonce = getAppState().dictationBacklogNonce;
   if (currentNonce !== snap.nonce) {
     // A new session started — don't clear backlog from a prior session.
-    return { delivered: true, copiedToClipboard: false };
+    return { delivered: true, copiedToClipboard: pasteOutcome === "copied_to_clipboard" };
   }
 
   // Clear the backlog on successful delivery.

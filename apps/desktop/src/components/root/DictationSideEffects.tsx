@@ -364,12 +364,14 @@ export const DictationSideEffects = () => {
     const interval = setInterval(() => {
       const strategy = strategyRef.current;
       if (!strategy || !("checkAndDrainBacklog" in strategy)) return;
-      const hasBacklog = (strategy as DictationStrategy).hasBacklog;
-      if (!hasBacklog) return;
+      // Use the actual backlog length rather than the strategy's internal
+      // backlogActive flag, so segments remaining in the Zustand backlog
+      // are always drained even if the flag desyncs.
+      if (getAppState().dictationBacklog.length === 0) return;
       (strategy as DictationStrategy).checkAndDrainBacklog()
         .catch((error: unknown) => {
           getLogger().warning(`Backlog drain poll failed: ${error}`);
-        })
+        });
     }, BACKLOG_DRAIN_POLL_MS);
     return () => clearInterval(interval);
   }, [isMainWindow]);
