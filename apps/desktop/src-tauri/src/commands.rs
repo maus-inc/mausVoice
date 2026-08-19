@@ -2927,9 +2927,14 @@ fn validate_floating_window_url(url: &Url) -> Result<(), String> {
     match url.scheme() {
         "http" | "https" => {
             let host = url.host_str().unwrap_or("");
-            // url::Url::host_str() returns IPv6 literals without brackets.
-            let is_localhost =
-                host == "localhost" || host == "127.0.0.1" || host == "::1";
+            // url::Url::host_str() typically returns IPv6 without brackets,
+            // but accept bracketed form and any loopback address too.
+            let is_loopback_ip = host
+                .trim_matches(|c| c == '[' || c == ']')
+                .parse::<std::net::IpAddr>()
+                .map(|ip| ip.is_loopback())
+                .unwrap_or(false);
+            let is_localhost = host == "localhost" || is_loopback_ip;
             // Docs-site windows are allowed to load, but they do not inherit
             // IPC: `maus-inc.github.io` is not in the `floating-*` capability
             // `remote.urls` list. Localhost remains the only remote host with

@@ -121,5 +121,10 @@ unexpected_cfgs = { level = "allow", check-cfg = [
   "cfg(mobile)",
 ] }
 
+# CI installs latest stable clippy (workflow cannot pin 1.88.0). This style
+# lint became deny-via-warnings recently and is unrelated to correctness.
+[lints.clippy]
+uninlined_format_args = "allow"
+
 [patch.crates-io]
 block = { path = "../../../patches/block-0.1.6" }
