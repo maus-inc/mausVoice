@@ -57,9 +57,9 @@ export abstract class BaseGenerateTextRepo extends BaseRepo {
 }
 
 export class GroqGenerateTextRepo extends BaseGenerateTextRepo {
-  private groqApiKey: string;
-  private model: GenerateTextModel;
-  private fallbackModel: GenerateTextModel = "qwen/qwen3.6-27b";
+  private readonly groqApiKey: string;
+  private readonly model: GenerateTextModel;
+  private readonly fallbackModel: GenerateTextModel = "qwen/qwen3.6-27b";
 
   constructor(apiKey: string, model: string | null) {
     super();
@@ -115,8 +115,8 @@ export class GroqGenerateTextRepo extends BaseGenerateTextRepo {
 }
 
 export class OpenAIGenerateTextRepo extends BaseGenerateTextRepo {
-  private openaiApiKey: string;
-  private model: OpenAIGenerateTextModel;
+  private readonly openaiApiKey: string;
+  private readonly model: OpenAIGenerateTextModel;
 
   constructor(apiKey: string, model: string | null) {
     super();
@@ -152,9 +152,9 @@ export class OpenAIGenerateTextRepo extends BaseGenerateTextRepo {
 }
 
 export class OllamaGenerateTextRepo extends BaseGenerateTextRepo {
-  private ollamaUrl: string;
-  private model: string;
-  private apiKey: string;
+  private readonly ollamaUrl: string;
+  private readonly model: string;
+  private readonly apiKey: string;
 
   constructor(url: string, model: string, apiKey?: string) {
     super();
@@ -194,10 +194,52 @@ export class OllamaGenerateTextRepo extends BaseGenerateTextRepo {
   }
 }
 
+type OpenAICompatibleRepoConfig = {
+  baseUrl: string;
+  apiKey: string;
+  model: string;
+};
+
+const generateWithOpenAICompatibleRepo = async (
+  config: OpenAICompatibleRepoConfig,
+  input: GenerateTextInput,
+  inferenceDevice: string,
+): Promise<GenerateTextOutput> => {
+  const response = await openaiGenerateTextResponse({
+    baseUrl: config.baseUrl,
+    apiKey: config.apiKey,
+    model: config.model,
+    prompt: input.prompt,
+    system: input.system ?? undefined,
+    jsonResponse: input.jsonResponse,
+    customFetch: tauriFetch,
+  });
+
+  return {
+    text: response.text,
+    metadata: {
+      postProcessingMode: "api",
+      inferenceDevice,
+    },
+  };
+};
+
+const streamChatWithOpenAICompatibleRepo = (
+  config: OpenAICompatibleRepoConfig,
+  input: LlmChatInput,
+): AsyncGenerator<LlmStreamEvent> =>
+  openaiStreamChat({
+    apiKey: config.apiKey,
+    baseUrl: config.baseUrl,
+    model: config.model,
+    input,
+    customFetch: tauriFetch,
+  });
+
 export class OpenAICompatibleGenerateTextRepo extends BaseGenerateTextRepo {
-  private baseUrl: string;
-  private model: string;
-  private apiKey: string;
+  private readonly baseUrl: string;
+  private readonly model: string;
+  private readonly apiKey: string;
 
   constructor(url: string, model: string, apiKey?: string) {
     super();
@@ -207,40 +249,33 @@ export class OpenAICompatibleGenerateTextRepo extends BaseGenerateTextRepo {
   }
 
   async generateText(input: GenerateTextInput): Promise<GenerateTextOutput> {
-    const response = await openaiGenerateTextResponse({
-      baseUrl: this.baseUrl,
-      apiKey: this.apiKey,
-      model: this.model,
-      prompt: input.prompt,
-      system: input.system ?? undefined,
-      jsonResponse: input.jsonResponse,
-      customFetch: tauriFetch,
-    });
-
-    return {
-      text: response.text,
-      metadata: {
-        postProcessingMode: "api",
-        inferenceDevice: "API • OpenAI Compatible",
+    return generateWithOpenAICompatibleRepo(
+      {
+        baseUrl: this.baseUrl,
+        apiKey: this.apiKey,
+        model: this.model,
       },
-    };
+      input,
+      "API • OpenAI Compatible",
+    );
   }
 
   async *streamChat(input: LlmChatInput): AsyncGenerator<LlmStreamEvent> {
-    yield* openaiStreamChat({
-      apiKey: this.apiKey,
-      baseUrl: this.baseUrl,
-      model: this.model,
+    yield* streamChatWithOpenAICompatibleRepo(
+      {
+        baseUrl: this.baseUrl,
+        apiKey: this.apiKey,
+        model: this.model,
+      },
       input,
-      customFetch: tauriFetch,
-    });
+    );
   }
 }
 
 export class OpenRouterGenerateTextRepo extends BaseGenerateTextRepo {
-  private apiKey: string;
-  private model: string;
-  private providerRouting?: OpenRouterProviderRouting;
+  private readonly apiKey: string;
+  private readonly model: string;
+  private readonly providerRouting?: OpenRouterProviderRouting;
 
   constructor(
     apiKey: string,
@@ -282,9 +317,9 @@ export class OpenRouterGenerateTextRepo extends BaseGenerateTextRepo {
 }
 
 export class AzureOpenAIGenerateTextRepo extends BaseGenerateTextRepo {
-  private apiKey: string;
-  private endpoint: string;
-  private deploymentName: string;
+  private readonly apiKey: string;
+  private readonly endpoint: string;
+  private readonly deploymentName: string;
 
   constructor(apiKey: string, endpoint: string, deploymentName: string | null) {
     super();
@@ -323,8 +358,8 @@ export class AzureOpenAIGenerateTextRepo extends BaseGenerateTextRepo {
 }
 
 export class DeepseekGenerateTextRepo extends BaseGenerateTextRepo {
-  private apiKey: string;
-  private model: DeepseekModel;
+  private readonly apiKey: string;
+  private readonly model: DeepseekModel;
 
   constructor(apiKey: string, model: string | null) {
     super();
@@ -360,8 +395,8 @@ export class DeepseekGenerateTextRepo extends BaseGenerateTextRepo {
 }
 
 export class GeminiGenerateTextRepo extends BaseGenerateTextRepo {
-  private apiKey: string;
-  private model: GeminiGenerateTextModel;
+  private readonly apiKey: string;
+  private readonly model: GeminiGenerateTextModel;
 
   constructor(apiKey: string, model: string | null) {
     super();
@@ -397,8 +432,8 @@ export class GeminiGenerateTextRepo extends BaseGenerateTextRepo {
 }
 
 export class ClaudeGenerateTextRepo extends BaseGenerateTextRepo {
-  private apiKey: string;
-  private model: ClaudeModel;
+  private readonly apiKey: string;
+  private readonly model: ClaudeModel;
 
   constructor(apiKey: string, model: string | null) {
     super();
@@ -434,8 +469,8 @@ export class ClaudeGenerateTextRepo extends BaseGenerateTextRepo {
 }
 
 export class CerebrasGenerateTextRepo extends BaseGenerateTextRepo {
-  private apiKey: string;
-  private model: CerebrasModel;
+  private readonly apiKey: string;
+  private readonly model: CerebrasModel;
 
   constructor(apiKey: string, model: string | null) {
     super();

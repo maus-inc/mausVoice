@@ -6,10 +6,10 @@ import { useIntl } from "react-intl";
 import { showErrorSnackbar } from "../../actions/app.actions";
 import { getTranscriptionRepo } from "../../repos";
 import {
-  activePlayback,
   buildWaveformOutline,
   DEFAULT_WAVEFORM_BAR_COUNT,
   formatDuration,
+  getActivePlayback,
   MAX_COMPUTED_BAR_COUNT,
   MIN_COMPUTED_BAR_COUNT,
   MIN_WAVEFORM_BAR_VALUE,
@@ -79,14 +79,16 @@ export const AudioPlayerPill = ({
   );
 
   const waveformBars = useMemo(() => {
-    if (!waveformValues.length) {
-      return Array.from(
-        { length: desiredWaveformBarCount },
-        () => MIN_WAVEFORM_BAR_VALUE,
-      );
-    }
-
-    return waveformValues;
+    const values = waveformValues.length
+      ? waveformValues
+      : Array.from(
+          { length: desiredWaveformBarCount },
+          () => MIN_WAVEFORM_BAR_VALUE,
+        );
+    return values.map((value, barIndex) => ({
+      id: `wave-bar-${barIndex}`,
+      value,
+    }));
   }, [desiredWaveformBarCount, waveformValues]);
 
   const computedBarWidth = useMemo(() => {
@@ -108,7 +110,7 @@ export const AudioPlayerPill = ({
 
   useEffect(() => {
     return () => {
-      if (activePlayback?.transcriptionId === transcriptionIdRef.current) {
+      if (getActivePlayback()?.transcriptionId === transcriptionIdRef.current) {
         stopActivePlayback("stopped");
       }
       setPlaybackProgress(0);
@@ -271,15 +273,15 @@ export const AudioPlayerPill = ({
             })}
           />
         </Box>
-        {waveformBars.map((value, index) => (
+        {waveformBars.map((bar) => (
           <Box
-            key={`wave-bar-${index}`}
+            key={bar.id}
             sx={(theme) => ({
               flex: "0 0 auto",
               width: `${computedBarWidth}px`,
               borderRadius: theme.spacing(0.25),
               backgroundColor: theme.vars?.palette.primary.main,
-              height: `${Math.round(35 + value * 55)}%`,
+              height: `${Math.round(35 + bar.value * 55)}%`,
               transition: "opacity 140ms ease",
             })}
           />

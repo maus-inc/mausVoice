@@ -32,10 +32,10 @@ for dir in \
     "apps/desktop/src-tauri/target/x86_64-apple-darwin/release" \
     "apps/desktop/src-tauri/target/universal-apple-darwin/release"
 do
-    if [ -d "$dir" ]; then
+    if [[ -d "$dir" ]]; then
         found=$(find "$dir" -maxdepth 1 -type f \( -name "mausVoice*" -o -name "mausvoice*" \) \
             ! -name "*transcription*" -perm -u+x 2>/dev/null | head -1)
-        if [ -n "$found" ]; then
+        if [[ -n "$found" ]]; then
             EXE="$found"
             break
         fi
@@ -43,7 +43,7 @@ do
 done
 
 echo ""
-if [ -n "$EXE" ]; then
+if [[ -n "$EXE" ]]; then
     EXE_ABS="$(cd "$(dirname "$EXE")" && pwd)/$(basename "$EXE")"
     echo "Build complete!"
     echo ""

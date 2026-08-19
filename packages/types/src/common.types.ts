@@ -37,3 +37,25 @@ export type PullStatus = "in_progress" | "error" | "complete";
 export const STYLING_MODES = ["app", "manual"] as const;
 export type StylingMode = (typeof STYLING_MODES)[number];
 export const StylingModeZod = z.enum(STYLING_MODES);
+
+export type ProviderInputBase = {
+  id?: string;
+  provider: string;
+  name: string;
+  url: string;
+  apiKey?: string;
+  model: string;
+  tier: number;
+};
+
+export const providerInputZod = z
+  .object({
+    id: z.string().optional(),
+    provider: z.string(),
+    name: z.string(),
+    url: z.string(),
+    apiKey: z.string().default(""),
+    model: z.string(),
+    tier: z.number().int(),
+  })
+  .strict();

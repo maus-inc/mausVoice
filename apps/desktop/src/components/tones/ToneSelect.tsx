@@ -121,42 +121,49 @@ export const ToneSelect = ({
             </div>
           </Stack>
         </MenuItem>
-        {tones.map((tone) => (
-          <MenuItem key={tone.id} value={tone.id}>
-            <Stack
-              direction="row"
-              sx={{
-                alignItems: "center",
-                justifyContent: "space-between",
-                width: "100%",
-              }}
-            >
-              <div>{tone.name}</div>
-              {tone.isGlobal ? (
-                <Tooltip
-                  title={intl.formatMessage({
-                    defaultMessage:
-                      "This is a global style and cannot be edited",
-                  })}
-                >
-                  <Public fontSize="small" sx={{ color: "text.secondary" }} />
-                </Tooltip>
-              ) : !tone.isSystem ? (
-                <IconButton
-                  size="small"
-                  onClick={(event) => {
-                    event.stopPropagation();
-                    event.preventDefault();
-                    setMenuOpen(false);
-                    openToneEditorDialog({ mode: "edit", toneId: tone.id });
-                  }}
-                >
-                  <Edit fontSize="small" />
-                </IconButton>
-              ) : null}
-            </Stack>
-          </MenuItem>
-        ))}
+        {tones.map((tone) => {
+          let actionNode: React.ReactNode = null;
+          if (tone.isGlobal) {
+            actionNode = (
+              <Tooltip
+                title={intl.formatMessage({
+                  defaultMessage: "This is a global style and cannot be edited",
+                })}
+              >
+                <Public fontSize="small" sx={{ color: "text.secondary" }} />
+              </Tooltip>
+            );
+          } else if (!tone.isSystem) {
+            actionNode = (
+              <IconButton
+                size="small"
+                onClick={(event) => {
+                  event.stopPropagation();
+                  event.preventDefault();
+                  setMenuOpen(false);
+                  openToneEditorDialog({ mode: "edit", toneId: tone.id });
+                }}
+              >
+                <Edit fontSize="small" />
+              </IconButton>
+            );
+          }
+          return (
+            <MenuItem key={tone.id} value={tone.id}>
+              <Stack
+                direction="row"
+                sx={{
+                  alignItems: "center",
+                  justifyContent: "space-between",
+                  width: "100%",
+                }}
+              >
+                <div>{tone.name}</div>
+                {actionNode}
+              </Stack>
+            </MenuItem>
+          );
+        })}
       </Select>
     </FormControl>
   );

@@ -141,55 +141,90 @@ export class DictationStrategy extends BaseStrategy {
     };
   }
 
+  private async prepareBulkTranscript(args: HandleTranscriptParams): Promise<{
+    transcript: string | null;
+    sanitizedTranscript: string | null;
+    postProcessMetadata: PostProcessMetadata;
+    postProcessWarnings: string[];
+  }> {
+    const sanitizedTranscript = this.sanitizeTranscript(args.rawTranscript);
+    if (!sanitizedTranscript) {
+      return {
+        transcript: null,
+        sanitizedTranscript: null,
+        postProcessMetadata: {},
+        postProcessWarnings: [],
+      };
+    }
+
+    if (args.processedTranscript) {
+      return {
+        transcript: args.processedTranscript,
+        sanitizedTranscript,
+        postProcessMetadata: args.serverPostProcessMetadata ?? {},
+        postProcessWarnings: [],
+      };
+    }
+
+    const result = await postProcessTranscript({
+      rawTranscript: sanitizedTranscript,
+      toneId: args.toneId,
+    });
+    return {
+      transcript: result.transcript,
+      sanitizedTranscript,
+      postProcessMetadata: result.metadata,
+      postProcessWarnings: result.warnings,
+    };
+  }
+
+  private async routeBulkTranscript(
+    transcript: string,
+    args: HandleTranscriptParams,
+  ): Promise<"sent" | null> {
+    await new Promise<void>((resolve) => setTimeout(resolve, 20));
+    getLogger().verbose(
+      `Routing transcript output (${transcript.length} chars, app=${args.currentApp?.id ?? "none"})`,
+    );
+
+    const textToPaste = transcript.trim() + " ";
+    const result = await routeTranscriptOutput({
+      text: textToPaste,
+      mode: "dictation",
+      currentAppId: args.currentApp?.id ?? null,
+    });
+    if (result.remote && result.delivered) {
+      showSnackbar("Transcript sent to paired receiver.", {
+        mode: "success",
+      });
+      return "sent";
+    }
+
+    getLogger().info("Transcript output routed successfully");
+    return null;
+  }
+
   private async handleFinalBulkTranscript(
     args: HandleTranscriptParams,
   ): Promise<HandleTranscriptResult> {
+    const remoteDeviceId = this.getActiveRemoteTargetDeviceId();
+    let remoteStatus: "sent" | null = null;
+
     let transcript: string | null = null;
     let sanitizedTranscript: string | null = null;
     let postProcessMetadata: PostProcessMetadata = {};
     let postProcessWarnings: string[] = [];
-    let remoteStatus: "sent" | null = null;
-    const remoteDeviceId = this.getActiveRemoteTargetDeviceId();
 
     try {
-      sanitizedTranscript = this.sanitizeTranscript(args.rawTranscript);
-      if (sanitizedTranscript) {
-        if (args.processedTranscript) {
-          transcript = args.processedTranscript;
-          postProcessMetadata = args.serverPostProcessMetadata ?? {};
-        } else {
-          const result = await postProcessTranscript({
-            rawTranscript: sanitizedTranscript,
-            toneId: args.toneId,
-          });
-
-          transcript = result.transcript;
-          postProcessMetadata = result.metadata;
-          postProcessWarnings = result.warnings;
-        }
-      }
+      const prepared = await this.prepareBulkTranscript(args);
+      transcript = prepared.transcript;
+      sanitizedTranscript = prepared.sanitizedTranscript;
+      postProcessMetadata = prepared.postProcessMetadata;
+      postProcessWarnings = prepared.postProcessWarnings;
 
       if (transcript) {
-        await new Promise<void>((resolve) => setTimeout(resolve, 20));
         try {
-          getLogger().verbose(
-            `Routing transcript output (${transcript.length} chars, app=${args.currentApp?.id ?? "none"})`,
-          );
-
-          const textToPaste = transcript.trim() + " ";
-          const result = await routeTranscriptOutput({
-            text: textToPaste,
-            mode: "dictation",
-            currentAppId: args.currentApp?.id ?? null,
-          });
-          if (result.remote && result.delivered) {
-            remoteStatus = "sent";
-            showSnackbar("Transcript sent to paired receiver.", {
-              mode: "success",
-            });
-          }
-
-          getLogger().info("Transcript output routed successfully");
+          remoteStatus = await this.routeBulkTranscript(transcript, args);
         } catch (error) {
           getLogger().error(`Failed to route transcription output: ${error}`);
           showErrorSnackbar(

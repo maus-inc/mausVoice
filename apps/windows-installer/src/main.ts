@@ -1,6 +1,5 @@
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
-import { getCurrentWindow } from "@tauri-apps/api/window";
 
 interface InstallProgress {
   stage: string;
@@ -30,7 +29,7 @@ class Installer {
   private message = "Ready to install";
   private errorMessage = "";
 
-  constructor() {
+  run() {
     this.render();
     this.setupEventListeners();
     this.autoStart();
@@ -183,5 +182,5 @@ class Installer {
 }
 
 document.addEventListener("DOMContentLoaded", () => {
-  new Installer();
+  new Installer().run();
 });

@@ -6,7 +6,7 @@ import { getMyUser } from "./user.utils";
 
 const writeString = (view: DataView, offset: number, text: string) => {
   for (let index = 0; index < text.length; index += 1) {
-    view.setUint8(offset + index, text.charCodeAt(index));
+    view.setUint8(offset + index, text.codePointAt(index) ?? 0);
   }
 };
 

@@ -11,7 +11,6 @@ import sys
 import time
 import wave
 from pathlib import Path
-from urllib.error import URLError
 from urllib.request import Request, urlopen
 
 PACKAGE_DIR = Path(__file__).resolve().parent
@@ -71,7 +70,7 @@ def wait_for_health(port: int, timeout: float = 15.0) -> dict:
         try:
             with urlopen(f"http://127.0.0.1:{port}/health", timeout=2) as resp:
                 return json.loads(resp.read())
-        except (URLError, OSError):
+        except OSError:
             time.sleep(0.2)
     raise TimeoutError(f"Sidecar on port {port} did not become healthy in {timeout}s")
 

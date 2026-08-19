@@ -39,7 +39,7 @@ function Invoke-Choco {
     [Parameter(Mandatory = $true)][string[]]$Arguments
   )
 
-  Write-Host "[INFO] choco $($Arguments -join ' ')"
+  Write-Output "[INFO] choco $($Arguments -join ' ')"
   & choco @Arguments
   if ($LASTEXITCODE -ne 0) {
     throw "Chocolatey command 'choco $($Arguments -join ' ')' failed with exit code $LASTEXITCODE"
@@ -52,7 +52,7 @@ function Download-File {
     [Parameter(Mandatory = $true)][string]$Destination
   )
 
-  Write-Host "[INFO] Downloading $Url"
+  Write-Output "[INFO] Downloading $Url"
 
   if ([Net.ServicePointManager]::SecurityProtocol -band [Net.SecurityProtocolType]::Tls12 -eq 0) {
     [Net.ServicePointManager]::SecurityProtocol = [Net.ServicePointManager]::SecurityProtocol -bor [Net.SecurityProtocolType]::Tls12
@@ -103,7 +103,7 @@ function Install-VulkanSdk {
 
   $destination = Join-Path -Path $InstallRoot -ChildPath $Version
   if (Test-Path -LiteralPath $destination) {
-    Write-Host "[INFO] Vulkan SDK $Version already present at $destination"
+    Write-Output "[INFO] Vulkan SDK $Version already present at $destination"
   }
   else {
     $url = "https://sdk.lunarg.com/sdk/download/$Version/windows/VulkanSDK-$Version-Installer.exe"
@@ -155,7 +155,7 @@ function Install-VulkanSdk {
       Write-Warning "[WARN] Unable to remove temporary installer $tempInstaller ($($_.Exception.Message))."
     }
 
-    Write-Host "[OK] Vulkan SDK $Version installed at $destination"
+    Write-Output "[OK] Vulkan SDK $Version installed at $destination"
   }
 
   $env:VULKAN_SDK = $destination
@@ -207,17 +207,17 @@ if ($EnableGpu) {
 
   try {
     $glslcPath = (Get-Command -Name "glslc.exe" -ErrorAction Stop).Path
-    Write-Host "[OK] glslc detected at $glslcPath"
+    Write-Output "[OK] glslc detected at $glslcPath"
   }
   catch {
     Write-Warning "[WARN] glslc.exe not found in PATH. Verify the Vulkan SDK installation if GPU builds fail."
   }
 }
 
-Write-Host "[OK] Windows dependencies installed."
+Write-Output "[OK] Windows dependencies installed."
 if ($EnableGpu) {
-  Write-Host "[INFO] GPU dependencies ready. Desktop builds now include the GPU sidecar automatically."
+  Write-Output "[INFO] GPU dependencies ready. Desktop builds now include the GPU sidecar automatically."
 }
 else {
-  Write-Host "[INFO] GPU dependencies were skipped. Set MAUSVOICE_ENABLE_GPU=1 or rerun with -EnableGpu to install them."
+  Write-Output "[INFO] GPU dependencies were skipped. Set MAUSVOICE_ENABLE_GPU=1 or rerun with -EnableGpu to install them."
 }

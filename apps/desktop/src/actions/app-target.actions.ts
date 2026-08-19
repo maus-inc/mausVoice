@@ -37,9 +37,10 @@ export const upsertAppTarget = async (
   return target;
 };
 
-export const setAppTargetTone = async (
+const updateAppTarget = async (
   id: string,
-  toneId: string | null,
+  patch: Partial<Pick<AppTarget, "toneId" | "pasteKeybind">>,
+  errorLabel: string,
 ): Promise<void> => {
   const existing = getAppState().appTargetById[id];
   if (!existing) {
@@ -51,50 +52,34 @@ export const setAppTargetTone = async (
     await upsertAppTarget({
       id,
       name: existing.name,
-      toneId,
+      toneId: patch.toneId ?? existing.toneId ?? null,
+      pasteKeybind: patch.pasteKeybind ?? existing.pasteKeybind ?? null,
       iconPath: existing.iconPath ?? null,
-      pasteKeybind: existing.pasteKeybind ?? null,
       insertionMethod: existing.insertionMethod ?? null,
       typingSpeedMs: existing.typingSpeedMs ?? null,
     });
   } catch (error) {
-    console.error("Failed to update app target tone", error);
+    console.error(`Failed to update app target ${errorLabel}`, error);
     showErrorSnackbar(
       error instanceof Error
         ? error.message
-        : "Failed to update app target tone.",
+        : `Failed to update app target ${errorLabel}.`,
     );
   }
+};
+
+export const setAppTargetTone = async (
+  id: string,
+  toneId: string | null,
+): Promise<void> => {
+  await updateAppTarget(id, { toneId }, "tone");
 };
 
 export const setAppTargetPasteKeybind = async (
   id: string,
   pasteKeybind: string | null,
 ): Promise<void> => {
-  const existing = getAppState().appTargetById[id];
-  if (!existing) {
-    showErrorSnackbar("App target is not registered.");
-    return;
-  }
-
-  try {
-    await upsertAppTarget({
-      id,
-      name: existing.name,
-      toneId: existing.toneId ?? null,
-      iconPath: existing.iconPath ?? null,
-      pasteKeybind,
-      insertionMethod: existing.insertionMethod ?? null,
-      typingSpeedMs: existing.typingSpeedMs ?? null,
-    });
-  } catch (error) {
-    console.error("Failed to update app target paste keybind", error);
-    showErrorSnackbar(
-      error instanceof Error
-        ? error.message
-        : "Failed to update app target paste keybind.",
-    );
-  }
+  await updateAppTarget(id, { pasteKeybind }, "paste keybind");
 };
 
 export const setAppTargetInsertionMethod = async (
@@ -181,7 +166,7 @@ export const tryRegisterCurrentAppTarget = async (): Promise<
     },
   );
 
-  const shouldRegisterAppTarget = !existingApp || !existingApp.iconPath;
+  const shouldRegisterAppTarget = !existingApp?.iconPath;
   if (shouldRegisterAppTarget) {
     let iconPath: string | undefined;
     if (appInfo.iconBase64) {

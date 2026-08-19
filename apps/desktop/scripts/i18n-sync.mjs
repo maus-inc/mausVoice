@@ -35,7 +35,7 @@ if (!fs.existsSync(baseLocalePath)) {
 }
 
 const baseMessages = JSON.parse(fs.readFileSync(baseLocalePath, "utf8"));
-const sortedKeys = Object.keys(baseMessages).sort();
+const sortedKeys = Object.keys(baseMessages).sort((a, b) => a.localeCompare(b));
 
 const cacheDir = path.join(localesDir, ".cache");
 const cacheFilePath = path.join(cacheDir, `${sourceLocale}.json`);

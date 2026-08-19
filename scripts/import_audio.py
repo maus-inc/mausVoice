@@ -48,6 +48,8 @@ def get_audio_duration_ms(wav_path):
 
 
 def convert_to_wav(input_path, output_path):
+    if not os.path.isfile(input_path):
+        raise ValueError(f"Audio file not found: {input_path}")
     ext = os.path.splitext(input_path)[1].lower()
     if ext == ".wav":
         with wave.open(input_path, "r") as w:
@@ -115,7 +117,7 @@ def main():
     transcription_id = str(uuid.uuid4())
     dest_path = os.path.join(audio_dir, f"{transcription_id}.wav")
 
-    print(f"Converting audio to WAV...")
+    print("Converting audio to WAV...")
     convert_to_wav(audio_file, dest_path)
 
     duration_ms = get_audio_duration_ms(dest_path)

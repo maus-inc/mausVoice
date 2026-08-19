@@ -1,8 +1,6 @@
 import OpenAI from "openai";
-import {
-  ChatCompletionContentPart,
-  ChatCompletionMessageParam,
-} from "openai/resources/chat/completions";
+import { contentToString, buildChatMessages } from "./shared.utils";
+import {} from "openai/resources/chat/completions";
 import { retry, countWords } from "@maus-inc/utilities";
 import type {
   JsonResponse,
@@ -21,27 +19,6 @@ export type CerebrasModel = (typeof CEREBRAS_MODELS)[number];
 
 const CEREBRAS_BASE_URL = "https://api.cerebras.ai/v1";
 
-const contentToString = (
-  content: string | ChatCompletionContentPart[] | null | undefined,
-): string => {
-  if (!content) {
-    return "";
-  }
-
-  if (typeof content === "string") {
-    return content;
-  }
-
-  return content
-    .map((part) => {
-      if (part.type === "text") {
-        return part.text ?? "";
-      }
-      return "";
-    })
-    .join("")
-    .trim();
-};
 
 const createClient = (apiKey: string) => {
   return new OpenAI({
@@ -76,19 +53,8 @@ export const cerebrasGenerateTextResponse = async ({
     fn: async () => {
       const client = createClient(apiKey);
 
-      const messages: ChatCompletionMessageParam[] = [];
-      if (system) {
-        messages.push({ role: "system", content: system });
-      }
+            const messages = buildChatMessages({ system, prompt, imageUrls: [] });
 
-      let finalPrompt = prompt;
-      if (jsonResponse) {
-        finalPrompt = `${prompt}\n\nRespond with valid JSON matching this schema: ${JSON.stringify(jsonResponse.schema)}`;
-      }
-
-      const userParts: ChatCompletionContentPart[] = [];
-      userParts.push({ type: "text", text: finalPrompt });
-      messages.push({ role: "user", content: userParts });
 
       const params: Record<string, unknown> = {
         messages,

@@ -35,13 +35,15 @@ export const LoginForm = ({
   hideModeSwitch = false,
   defaultMode,
 }: LoginFormProps) => {
-  useState(() => {
+  useEffect(() => {
     if (defaultMode) {
       produceAppState((draft) => {
         draft.login.mode = defaultMode;
       });
     }
-  });
+    // Intentionally runs once on mount; defaultMode is a static initial value.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   const [animate, setAnimate] = useState(false);
   useEffect(() => {

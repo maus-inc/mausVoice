@@ -19,7 +19,7 @@ type ChecklistItem = {
   extra?: React.ReactNode;
 };
 
-function ChecklistRow({ item }: { item: ChecklistItem }) {
+function ChecklistRow({ item }: { readonly item: ChecklistItem }) {
   return (
     <Stack
       direction="row"
@@ -62,18 +62,22 @@ function ChecklistRow({ item }: { item: ChecklistItem }) {
   );
 }
 
-function AppIconBoxes({ iconPaths }: { iconPaths: (string | null)[] }) {
+function AppIconBoxes({
+  iconPaths,
+}: {
+  readonly iconPaths: (string | null)[];
+}) {
   const slots = [
     iconPaths[0] ?? null,
     iconPaths[1] ?? null,
     iconPaths[2] ?? null,
-  ];
+  ].map((path, slotIndex) => ({ id: `app-icon-slot-${slotIndex}`, path }));
 
   return (
     <Stack direction="row" spacing={0.75}>
-      {slots.map((path, i) => (
+      {slots.map((slot) => (
         <Box
-          key={i}
+          key={slot.id}
           sx={{
             overflow: "hidden",
             borderRadius: 0.75,
@@ -85,10 +89,10 @@ function AppIconBoxes({ iconPaths }: { iconPaths: (string | null)[] }) {
             alignItems: "center",
             justifyContent: "center",
             bgcolor: "level2",
-            border: path ? "1.5px solid var(--app-palette-blue)" : "none",
+            border: slot.path ? "1.5px solid var(--app-palette-blue)" : "none",
           }}
         >
-          {path && <StorageImage path={path} size={36} />}
+          {slot.path && <StorageImage path={slot.path} size={36} />}
         </Box>
       ))}
     </Stack>

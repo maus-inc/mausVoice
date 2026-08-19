@@ -22,9 +22,13 @@ case "${FLAVOR}" in
   emulators)      export TAURI_DEV_CONFIG="src-tauri/tauri.local.conf.json" ;;
   enterprise)     export TAURI_DEV_CONFIG="src-tauri/tauri.enterprise.conf.json" ;;
   enterprise-dev) export TAURI_DEV_CONFIG="src-tauri/tauri.enterprise-dev.conf.json" ;;
+  *)
+    echo "Unknown flavor: ${FLAVOR}" >&2
+    exit 1
+    ;;
 esac
 
-if [ "${FLAVOR}" = "emulators" ]; then
+if [[ "${FLAVOR}" == "emulators" ]]; then
   if ! lsof -iTCP:9099 -sTCP:LISTEN >/dev/null 2>&1; then
     echo "Error: Firebase emulators are not running (nothing listening on port 9099)." >&2
     echo "Start the emulators first, then re-run this script." >&2

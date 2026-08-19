@@ -1,4 +1,10 @@
 import { convertFloat32ToPCM16 } from "@maus-inc/voice-ai";
+import {
+  computeChunkBounds,
+  createAudioBufferController,
+  createSessionTextBuffer,
+  createChunkSender,
+} from "./streaming-audio-buffer";
 import { listen, UnlistenFn } from "@tauri-apps/api/event";
 import { getAppState } from "../store";
 import {
@@ -21,15 +27,10 @@ const startDeepgramStreaming = async (
   onInterimResult?: (segment: string) => void,
 ): Promise<DeepgramStreamingSession> => {
   console.log("[Deepgram WebSocket] Starting with sample rate:", sampleRate);
-  const MIN_CHUNK_DURATION_MS = 20;
-  const MAX_CHUNK_DURATION_MS = 100;
-  const minSamplesPerChunk = Math.max(
-    1,
-    Math.ceil((sampleRate * MIN_CHUNK_DURATION_MS) / 1000),
-  );
-  const maxSamplesPerChunk = Math.max(
-    minSamplesPerChunk,
-    Math.ceil((sampleRate * MAX_CHUNK_DURATION_MS) / 1000),
+  const { minSamplesPerChunk, maxSamplesPerChunk } = computeChunkBounds(
+    sampleRate,
+    20,
+    100,
   );
 
   let ws: WebSocket | null = null;
@@ -39,95 +40,40 @@ const startDeepgramStreaming = async (
   let isFinalized = false;
   let receivedChunkCount = 0;
   let sentChunkCount = 0;
-  let pendingSampleCount = 0;
-  let pendingChunks: Float32Array[] = [];
+  const audioBuffer = createAudioBufferController();
 
-  const getText = () => {
-    return (
-      finalTranscript +
-      (partialTranscript
-        ? (finalTranscript ? " " : "") + partialTranscript
-        : "")
-    );
-  };
+  const { getText, resetBuffers, drainSamples } = createSessionTextBuffer(
+    () => finalTranscript,
+    () => partialTranscript,
+    audioBuffer,
+  );
 
-  const resetBuffers = () => {
-    pendingChunks = [];
-    pendingSampleCount = 0;
-  };
-
-  const drainSamples = (targetCount: number): Float32Array => {
-    if (targetCount <= 0) {
-      return new Float32Array(0);
-    }
-    const output = new Float32Array(targetCount);
-    let filled = 0;
-
-    while (filled < targetCount && pendingChunks.length > 0) {
-      const current = pendingChunks[0];
-      const remaining = targetCount - filled;
-      if (current.length <= remaining) {
-        output.set(current, filled);
-        filled += current.length;
-        pendingChunks.shift();
-      } else {
-        output.set(current.subarray(0, remaining), filled);
-        pendingChunks[0] = current.subarray(remaining);
-        filled += remaining;
-      }
-    }
-
-    pendingSampleCount = Math.max(0, pendingSampleCount - filled);
-    return filled === targetCount ? output : output.subarray(0, filled);
-  };
-
-  const flushPendingSamples = (force = false) => {
-    if (!ws || ws.readyState !== WebSocket.OPEN) {
-      return;
-    }
-
-    while (
-      pendingSampleCount >= minSamplesPerChunk ||
-      (force && pendingSampleCount > 0)
-    ) {
-      const available = pendingSampleCount;
-      let chunkSize = available;
-      if (available >= maxSamplesPerChunk) {
-        chunkSize = maxSamplesPerChunk;
-      } else if (available < minSamplesPerChunk && !force) {
-        break;
-      }
-
-      let chunk = drainSamples(chunkSize);
-      if (force && chunk.length > 0 && chunk.length < minSamplesPerChunk) {
-        const padded = new Float32Array(minSamplesPerChunk);
-        padded.set(chunk);
-        chunk = padded;
-      }
-
-      if (chunk.length === 0) {
-        break;
-      }
-
-      try {
-        const pcm16 = convertFloat32ToPCM16(chunk);
-        ws.send(pcm16);
-        sentChunkCount++;
-        if (sentChunkCount <= 3 || sentChunkCount % 10 === 0) {
-          const durationMs = (chunk.length / sampleRate) * 1000;
-          console.log(
-            `[Deepgram WebSocket] Sent chunk #${sentChunkCount} (${chunk.length} samples ~${durationMs.toFixed(1)} ms, ${pcm16.byteLength} bytes)`,
-          );
-        }
-      } catch (error) {
-        console.error(
-          "[Deepgram WebSocket] Error sending buffered chunk:",
-          error,
+  const chunkSender = createChunkSender({
+    ws: () => ws,
+    drainSamples,
+    getPendingSampleCount: () => audioBuffer.getPendingSampleCount(),
+    minSamplesPerChunk,
+    maxSamplesPerChunk,
+    sampleRate,
+    convertToPayload: convertFloat32ToPCM16,
+    onChunkSent: (chunk, payload) => {
+      sentChunkCount++;
+      if (sentChunkCount <= 3 || sentChunkCount % 10 === 0) {
+        const durationMs = (chunk.length / sampleRate) * 1000;
+        console.log(
+          `[Deepgram WebSocket] Sent chunk #${sentChunkCount} (${chunk.length} samples ~${durationMs.toFixed(1)} ms, ${payload.byteLength} bytes)`,
         );
-        break;
       }
-    }
-  };
+    },
+    onSendError: (error) => {
+      console.error(
+        "[Deepgram WebSocket] Error sending buffered chunk:",
+        error,
+      );
+    },
+  });
+
+  const { flushPendingSamples } = chunkSender;
 
   const cleanup = () => {
     if (unlisten) {
@@ -165,7 +111,7 @@ const startDeepgramStreaming = async (
       flushPendingSamples(true);
       console.log("[Deepgram WebSocket] Total chunks sent:", sentChunkCount);
 
-      if (ws && ws.readyState === WebSocket.OPEN) {
+      if (ws?.readyState === WebSocket.OPEN) {
         console.log("[Deepgram WebSocket] Sending CloseStream message...");
         ws.send(JSON.stringify({ type: "CloseStream" }));
 
@@ -220,8 +166,7 @@ const startDeepgramStreaming = async (
           event.payload.samples instanceof Float32Array
             ? event.payload.samples
             : Float32Array.from(event.payload.samples);
-        pendingChunks.push(typedChunk);
-        pendingSampleCount += typedChunk.length;
+        audioBuffer.pushSamples(typedChunk);
         flushPendingSamples(false);
       } catch (error) {
         console.error("[Deepgram WebSocket] Error sending audio chunk:", error);
@@ -245,7 +190,32 @@ const startDeepgramStreaming = async (
       resolve({ finalize, cleanup });
     };
 
-    ws.onmessage = (event) => {
+    const handleResultsMessage = (data: {
+      channel?: { alternatives?: { transcript?: string }[] };
+      is_final?: boolean;
+      speech_final?: boolean;
+    }) => {
+      const transcript = data.channel?.alternatives?.[0]?.transcript || "";
+      const isFinal = data.is_final === true;
+      const speechFinal = data.speech_final === true;
+
+      if (isFinal && transcript) {
+        finalTranscript += (finalTranscript ? " " : "") + transcript;
+        partialTranscript = "";
+        console.log(
+          "[Deepgram WebSocket] Final transcript received, length:",
+          finalTranscript.length,
+        );
+        onInterimResult?.(transcript);
+        if (speechFinal && isFinalized) {
+          completeFinalize();
+        }
+      } else if (!isFinal && transcript) {
+        partialTranscript = transcript;
+      }
+    };
+
+    const handleServerMessage = (event: MessageEvent) => {
       try {
         const data = JSON.parse(event.data);
         const messageType = data.type;
@@ -256,26 +226,7 @@ const startDeepgramStreaming = async (
         );
 
         if (messageType === "Results") {
-          const transcript = data.channel?.alternatives?.[0]?.transcript || "";
-          const isFinal = data.is_final === true;
-          const speechFinal = data.speech_final === true;
-
-          if (isFinal && transcript) {
-            finalTranscript += (finalTranscript ? " " : "") + transcript;
-            partialTranscript = "";
-            console.log(
-              "[Deepgram WebSocket] Final transcript received, length:",
-              finalTranscript.length,
-            );
-            if (onInterimResult) {
-              onInterimResult(transcript);
-            }
-            if (speechFinal && isFinalized) {
-              completeFinalize();
-            }
-          } else if (!isFinal && transcript) {
-            partialTranscript = transcript;
-          }
+          handleResultsMessage(data);
         } else if (messageType === "Metadata") {
           console.log("[Deepgram WebSocket] Metadata received:", data);
         } else if (messageType === "Error" || data.error) {
@@ -285,6 +236,8 @@ const startDeepgramStreaming = async (
         console.error("[Deepgram WebSocket] Error parsing message:", error);
       }
     };
+
+    ws.onmessage = handleServerMessage;
 
     ws.onerror = (error) => {
       console.error("[Deepgram WebSocket] WebSocket error:", error);
@@ -308,7 +261,7 @@ const startDeepgramStreaming = async (
 export class DeepgramTranscriptionSession implements TranscriptionSession {
   private session: DeepgramStreamingSession | null = null;
   private startupPromise: Promise<void> | null = null;
-  private apiKey: string;
+  private readonly apiKey: string;
   private interimCallback: ((segment: string) => void) | null = null;
 
   constructor(apiKey: string) {
