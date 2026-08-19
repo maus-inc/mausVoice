@@ -278,7 +278,10 @@ pub fn build() -> tauri::Builder<tauri::Wry> {
                 crate::platform::compositor::deploy_trigger_script(app.handle());
             }
 
-            // Open dev tools if MAUSVOICE_ENABLE_DEVTOOLS is set
+            // The capability itself is omitted from stable binaries. Keeping this
+            // behind the same compile-time feature makes the environment variable
+            // intentionally ineffective if it is set for a release build.
+            #[cfg(feature = "debug-assist")]
             if std::env::var("MAUSVOICE_ENABLE_DEVTOOLS").is_ok() {
                 log::info!("MAUSVOICE_ENABLE_DEVTOOLS detected, opening dev tools...");
                 if let Some(main_window) = app.get_webview_window("main") {
