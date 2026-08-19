@@ -2,35 +2,6 @@ name: Build Desktop
 
 on:
   push:
-<<<<<<< HEAD
-    branches:
-      - main
-=======
->>>>>>> 8d4d92cb (ci: trigger CI on push only (no pull_request) to avoid duplicate runs)
-    paths:
-      - "apps/desktop/**"
-      - "apps/windows-installer/**"
-      - "packages/**"
-      - "patches/**"
-      - "package.json"
-      - "pnpm-lock.yaml"
-      - "pnpm-workspace.yaml"
-      - "turbo.json"
-      - ".nvmrc"
-      - ".github/scripts/install-desktop-linux-deps.sh"
-      - ".github/workflows/build-desktop.yml"
-
-# Least privilege: this workflow only compiles and bundles; it never writes to
-# the repository or publishes releases.
-permissions:
-  contents: read
-  actions: write
-
-# Run every stacked PR independently, but cancel superseded runs for the same
-# PR (or the same branch for push/manual events) to avoid consuming runner slots.
-concurrency:
-  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
-  cancel-in-progress: true
 
 # Run every stacked PR independently, but cancel superseded runs for the same
 # PR (or the same branch for push/manual events) to avoid consuming runner slots.
