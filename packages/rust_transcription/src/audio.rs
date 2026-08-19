@@ -357,6 +357,24 @@ pub(crate) fn clear_cache() {
 mod tests {
     use super::*;
 
+    /// Long-input fixture shared by the long-resample tests: five minutes of
+    /// silence at 48 kHz resampled down to 16 kHz. Centralised so the default
+    /// test and the `#[ignore]`d timing test cannot drift apart.
+    const LONG_INPUT_SECS: usize = 5 * 60;
+    const LONG_SOURCE_RATE: u32 = 48_000;
+    const LONG_TARGET_RATE: u32 = 16_000;
+    /// Tight wall-clock budget for the opt-in timing test. Kept tight so
+    /// genuine `resample_to_rate` slowdowns stay detectable.
+    const LONG_RESAMPLE_BUDGET_MS: u128 = 15_000;
+
+    fn long_input_samples() -> Vec<f32> {
+        vec![0.0; LONG_INPUT_SECS * LONG_SOURCE_RATE as usize]
+    }
+
+    fn long_output_len() -> usize {
+        LONG_INPUT_SECS * LONG_TARGET_RATE as usize
+    }
+
     #[test]
     fn identity_resampling_preserves_samples() {
         let samples = [0.0, 0.25, -0.5, 1.0];
@@ -394,15 +412,30 @@ mod tests {
 
     #[test]
     fn resampling_handles_long_input_without_panic() {
-        // Five minutes of 48 kHz audio must resample to the expected length and
-        // stay well within the time budget (no per-sample trig).
-        let samples = vec![0.0_f32; 5 * 60 * 48_000];
+        // Five minutes of 48 kHz audio must resample to the expected length
+        // (no per-sample trig). No wall-clock budget here: shared CI runners
+        // made a tight one flaky, and a loose one (the 60 s bound this
+        // replaced) lets real regressions pass silently. The tight performance
+        // budget lives in the `#[ignore]`d test below, run explicitly via
+        // `cargo test -- --ignored`.
+        let output =
+            resample_to_rate(&long_input_samples(), LONG_SOURCE_RATE, LONG_TARGET_RATE).unwrap();
+        assert_eq!(output.len(), long_output_len());
+    }
+
+    #[test]
+    #[ignore = "wall-clock budget is machine-dependent; run with `cargo test -- --ignored`"]
+    fn resampling_long_input_stays_within_time_budget() {
+        // Ignored by default because timing asserts on shared CI runners are
+        // flaky; build the fixture before starting the clock so allocation
+        // is not timed.
+        let samples = long_input_samples();
         let start = std::time::Instant::now();
-        let output = resample_to_rate(&samples, 48_000, 16_000).unwrap();
+        let output = resample_to_rate(&samples, LONG_SOURCE_RATE, LONG_TARGET_RATE).unwrap();
         let elapsed = start.elapsed();
-        assert_eq!(output.len(), 5 * 60 * 16_000);
+        assert_eq!(output.len(), long_output_len());
         assert!(
-            elapsed.as_millis() < 60_000,
+            elapsed.as_millis() < LONG_RESAMPLE_BUDGET_MS,
             "resampling 5min/48k took {elapsed:?}"
         );
     }
