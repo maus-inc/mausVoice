@@ -13,6 +13,7 @@ import {
   Stack,
   Tooltip,
   Typography,
+  useMediaQuery,
 } from "@mui/material";
 import { getRec } from "@maus-inc/utilities";
 import { invoke } from "@tauri-apps/api/core";
@@ -27,6 +28,7 @@ import {
 } from "../../actions/transcriptions.actions";
 import { getTranscriptionRepo } from "../../repos";
 import { produceAppState, useAppStore } from "../../store";
+import { reducedMotionQuery } from "../../styles/motion";
 import { getActiveRemoteTarget } from "../../utils/device.utils";
 import { TypographyWithMore } from "../common/TypographyWithMore";
 import { AudioPlayerPill } from "./AudioPlayerPill";
@@ -37,6 +39,7 @@ export type TranscriptionRowProps = {
 
 export const TranscriptionRow = ({ id }: TranscriptionRowProps) => {
   const intl = useIntl();
+  const prefersReducedMotion = useMediaQuery(reducedMotionQuery);
   const transcription = useAppStore((state) =>
     getRec(state.transcriptionById, id),
   );
@@ -255,23 +258,36 @@ export const TranscriptionRow = ({ id }: TranscriptionRowProps) => {
           actions={
             <>
               <Tooltip title={retranscribeTooltip} placement="top">
-                <IconButton
-                  aria-label={intl.formatMessage({
-                    defaultMessage: "Retranscribe audio",
-                  })}
-                  size="small"
-                  onClick={() => openRetranscribeDialog(id)}
-                  disabled={isRetranscribing}
-                  sx={{ p: 0.5 }}
-                >
-                  {isRetranscribing ? (
-                    <CircularProgress size={18} color="inherit" />
-                  ) : didRetranscribe ? (
-                    <CheckCircleRoundedIcon color="success" fontSize="small" />
-                  ) : (
-                    <ReplayRoundedIcon fontSize="small" />
-                  )}
-                </IconButton>
+                <span>
+                  <IconButton
+                    aria-label={retranscribeTooltip}
+                    aria-busy={isRetranscribing}
+                    size="small"
+                    onClick={() => openRetranscribeDialog(id)}
+                    disabled={isRetranscribing}
+                    sx={{ p: 0.5 }}
+                  >
+                    {isRetranscribing ? (
+                      <CircularProgress
+                        size={18}
+                        color="inherit"
+                        variant={
+                          prefersReducedMotion ? "determinate" : "indeterminate"
+                        }
+                        value={prefersReducedMotion ? 70 : undefined}
+                        aria-hidden
+                      />
+                    ) : didRetranscribe ? (
+                      <CheckCircleRoundedIcon
+                        color="success"
+                        fontSize="small"
+                        aria-hidden
+                      />
+                    ) : (
+                      <ReplayRoundedIcon fontSize="small" aria-hidden />
+                    )}
+                  </IconButton>
+                </span>
               </Tooltip>
               <Tooltip
                 title={intl.formatMessage({

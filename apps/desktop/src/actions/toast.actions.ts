@@ -42,3 +42,15 @@ export async function dismissToast(): Promise<void> {
     payload: JSON.stringify({ type: "dismiss_toast" }),
   });
 }
+
+/** In-flight toast: stays until replaced or dismissed. */
+export async function showPersistentToast(message: string): Promise<void> {
+  await showToast({ message, toastType: "info" });
+}
+
+export async function showCompletionToast(
+  message: string,
+  duration = 4000,
+): Promise<void> {
+  await showToast({ message, toastType: "info", duration });
+}
