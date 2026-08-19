@@ -1054,13 +1054,6 @@ async fn existing_model_file_size(path: &Path) -> Option<u64> {
 /// is pinned, its SHA-256 matches. Without this gate an artifact fetched by an
 /// older build (mutable `resolve/main/` URL, no digest policy) would be trusted
 /// forever and would silently bypass the pinning trust boundary.
-///
-/// To avoid re-hashing multi-GB model files on every startup (the "completion
-/// shortcut" path in `start_or_get_active`), the file's modification time is
-/// checked against the last-known mtime persisted in the validator sidecar. If
-/// the mtime matches, the hash is skipped. The validator is updated after a
-/// successful hash so the next check is fast. When the validator is absent or
-/// the mtime differs, the full hash runs and the new mtime is cached.
 async fn artifact_admitted(destination: &Path, max_bytes: u64, sha256: Option<&str>) -> bool {
     let Some(size) = existing_model_file_size(destination).await else {
         return false;
@@ -1069,49 +1062,7 @@ async fn artifact_admitted(destination: &Path, max_bytes: u64, sha256: Option<&s
         return false;
     }
     match sha256 {
-        Some(expected) => {
-            // Fast path: if the file mtime matches our cached value, skip
-            // the expensive SHA-256 hash entirely.
-            if let Ok(metadata) = tokio::fs::metadata(destination).await {
-                let current_mtime = match metadata.modified() {
-                    Ok(t) => t,
-                    Err(_) => {
-                        return verify_file_sha256(destination, expected).await.is_ok();
-                    }
-                };
-                let checker_path = destination.with_file_name(format!(
-                    ".{}.mtime",
-                    destination
-                        .file_name()
-                        .and_then(|n| n.to_str())
-                        .unwrap_or("artifact")
-                ));
-                if let Ok(cached) = tokio::fs::read_to_string(&checker_path).await {
-                    if let Ok(cached_mtime) = cached.trim().parse::<u128>() {
-                        if current_mtime
-                            .duration_since(std::time::UNIX_EPOCH)
-                            .map(|d| d.as_nanos())
-                            == Ok(cached_mtime)
-                        {
-                            return true;
-                        }
-                    }
-                }
-                // Full verification: hash is correct → cache the current mtime.
-                let ok = verify_file_sha256(destination, expected).await.is_ok();
-                if ok {
-                    if let Ok(mtime_ns) = current_mtime
-                        .duration_since(std::time::UNIX_EPOCH)
-                        .map(|d| d.as_nanos())
-                    {
-                        let _ = tokio::fs::write(&checker_path, mtime_ns.to_string()).await;
-                    }
-                }
-                ok
-            } else {
-                verify_file_sha256(destination, expected).await.is_ok()
-            }
-        }
+        Some(expected) => verify_file_sha256(destination, expected).await.is_ok(),
         None => true,
     }
 }
