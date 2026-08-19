@@ -7,6 +7,22 @@ import { darkInk, highlight, ink } from "./palette";
  *
  * Light shadows are tinted with the warm `ink` so they sit on cream instead of
  * greying it out; dark shadows stay neutral black.
+ *
+ * Light-mode rationale (tuned 2026-08, A14 — keep in sync with DESIGN.md):
+ * Shares the same token across flat (level1 #FDFBF8 on level0 #F5F2ED) and
+ * contained (inkSolid.base #1A1712) buttons, so values are a compromise
+ * between visibility on near-white and subtlety on near-black.
+ * - rest 0.42 (1px crisp) + 0.14 (2px halo): visible on flat without a thick
+ *   white band; on dark contained blends to ~rgb122 vs previous ~rgb191 at
+ *   0.72, closer to dark's refined ~rgb49 at 0.08.
+ * - hover 0.58/0.20: slightly stronger lift than rest, analogue to dark
+ *   0.12/0.05.
+ * - active (pressed) ink(0.07) + highlight(0.18) + outer 0.06: subtle inner
+ *   dark inset suggests press without muddy interior; dark uses
+ *   darkInk(0.45)+highlight(0.04) heavier because near-black hides more.
+ * - selected 0.18/0.06 + outer 0.18/0.22: on dark selected bg (#1A1712)
+ *   distinct but not engraved; outer drop-shadow alphas unchanged (A16 will
+ *   evolve them). Only insets are tuned here — keep token shape stable.
  */
 export const premiumSurface = {
   light: {

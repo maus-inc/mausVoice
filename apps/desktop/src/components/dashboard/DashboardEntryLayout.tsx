@@ -1,7 +1,7 @@
 import { Container, Stack, type ContainerProps } from "@mui/material";
 
 export type DashboardEntryLayoutProps = {
-  children?: React.ReactNode;
+  children: React.ReactNode;
   maxWidth?: ContainerProps["maxWidth"];
 };
 export const DashboardEntryLayout = ({
