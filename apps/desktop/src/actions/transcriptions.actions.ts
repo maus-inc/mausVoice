@@ -214,7 +214,8 @@ const showRetranscribeSuccessFeedback = () => {
   const { complete } = retranscribeFeedbackCopy();
   showSnackbar(complete, { mode: "success" });
   ownsRetranscribeNativeToast = true;
-  runToast(showCompletionToast(complete));
+  // Dismiss the loading toast before showing the completion one
+  runToast(dismissToast().then(() => showCompletionToast(complete)));
 };
 
 const syncRetranscribeFeedback = (event: "success" | "error") => {

@@ -82,7 +82,10 @@ import {
   getNextPillVisibility,
   getPillMenuLabel,
 } from "../../utils/tray-pill-visibility.utils";
-import { evaluateHotkeyTrigger } from "../../utils/hotkey-filter.utils";
+import {
+  evaluateHotkeyTrigger,
+  releaseHotkey,
+} from "../../utils/hotkey-filter.utils";
 import {
   getEffectivePillVisibility,
   getIsDictationUnlocked,
@@ -357,6 +360,14 @@ export const AppSideEffects = () => {
     const existing = getAppState().keysHeld;
     if (isEqual(existing, payload.keys)) {
       return;
+    }
+
+    // A21: When ALL keys are released, clear the hotkey filter's held-action
+    // set so style-switch actions can fire again on the next press.
+    if (existing.length > 0 && payload.keys.length === 0) {
+      // Release all held style actions - when all physical keys are up,
+      // no style action can be physically held anymore.
+      releaseHotkey("__all__");
     }
 
     produceAppState((draft) => {

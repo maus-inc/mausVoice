@@ -113,8 +113,14 @@ export const evaluateHotkeyTrigger = (
 
 /**
  * Signal that a style-switch hotkey has been released.
+ * Pass "__all__" to clear all held state (e.g., when all physical keys are up).
  */
 export const releaseHotkey = (actionName: string): void => {
+  if (actionName === "__all__") {
+    heldActions.clear();
+    lastFireTimestamps.clear();
+    return;
+  }
   if (STYLE_SWITCH_PREFIXES.some((p) => actionName.toLowerCase().startsWith(p))) {
     heldActions.delete(actionName);
     lastFireTimestamps.delete(actionName);

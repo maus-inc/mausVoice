@@ -6,6 +6,7 @@ import { useEffect, useRef } from "react";
 import type { AppState, StreamingMessageState } from "../../state/app.state";
 import { useAppStore } from "../../store";
 import { markdownToPillText } from "../../utils/assistant-pill-text.utils";
+import { getLogger } from "../../utils/log.utils";
 
 export const OverlaySyncSideEffects = () => {
   useNativePillAssistantSync();
@@ -220,6 +221,8 @@ const useNativePillAssistantSync = () => {
 
     invoke("sync_native_pill_assistant", {
       payload: JSON.stringify(payload),
-    }).catch(() => {});
+    }).catch((error) => {
+      getLogger().error("Failed to sync pill assistant state", error);
+    });
   }, [state]);
 };

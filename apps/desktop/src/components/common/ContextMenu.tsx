@@ -465,13 +465,16 @@ export const ContextMenuProvider = ({
 
   const providerValue = useMemo(() => ({ registerSurface }), [registerSurface]);
 
-  // Global right-click handler for unhandled areas
+  // Platform detection for accelerator display
+  const isMac = typeof navigator !== "undefined" && /Mac/.test(navigator.platform);
+  const modKey = isMac ? "\u2318" : "Ctrl";
+
+  // Global right-click handler - suppress default on ALL elements
   useEffect(() => {
     const handleGlobalContextMenu = (e: MouseEvent) => {
-      // Let registered surfaces handle their own right-clicks via their
-      // own onContextMenu. This global handler only catches unhandled ones.
-      // If a surface handled it, preventDefault was already called.
-      // For truly unhandled areas, show a basic default menu.
+      // Always prevent the default webview context menu
+      e.preventDefault();
+
       const target = e.target as HTMLElement;
       const isInput =
         target.tagName === "INPUT" ||
@@ -479,33 +482,36 @@ export const ContextMenuProvider = ({
         target.isContentEditable;
 
       if (isInput) {
-        // For text inputs, only suppress default and offer clipboard actions
-        e.preventDefault();
-        const hasSelection = window.getSelection()?.toString().length ?? 0 > 0;
+        // For text inputs, offer clipboard actions via the platform clipboard API
+        const selection = window.getSelection();
+        const hasSelection = selection ? selection.toString().length > 0 : false;
         ctxMenu.handleContextMenu(e as unknown as React.MouseEvent, [
           {
             label: "Cut",
             disabled: !hasSelection,
             onClick: () => {
+              void navigator.clipboard.writeText(selection?.toString() ?? "");
               document.execCommand("cut");
             },
-            accelerator: "Ctrl+X",
+            accelerator: modKey + "+X",
           },
           {
             label: "Copy",
             disabled: !hasSelection,
             onClick: () => {
-              document.execCommand("copy");
+              void navigator.clipboard.writeText(selection?.toString() ?? "");
             },
-            accelerator: "Ctrl+C",
+            accelerator: modKey + "+C",
           },
           { kind: "divider" },
           {
             label: "Paste",
             onClick: () => {
-              document.execCommand("paste");
+              void navigator.clipboard.readText().then(function(t) {
+                document.execCommand("insertText", false, t);
+              });
             },
-            accelerator: "Ctrl+V",
+            accelerator: modKey + "+V",
           },
           { kind: "divider" },
           {
@@ -513,7 +519,7 @@ export const ContextMenuProvider = ({
             onClick: () => {
               document.execCommand("selectAll");
             },
-            accelerator: "Ctrl+A",
+            accelerator: modKey + "+A",
           },
         ]);
       }
