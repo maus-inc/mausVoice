@@ -100,7 +100,6 @@ export const routeTranscriptOutput = async (
 export const insertLocalTranscriptOutputViaPaste = async (
   text: string,
   keybind: string | null,
-  suppressClipboardFlash = false,
 ): Promise<PasteOutcome> => {
   const sanitized = sanitizeIndentation(text);
 
@@ -113,13 +112,11 @@ export const insertLocalTranscriptOutputViaPaste = async (
     getLogger().info(
       "Focused element was not editable, transcription copied to clipboard",
     );
-    if (!suppressClipboardFlash) {
-      sendPillFlashMessage(
-        getIntl().formatMessage({
-          defaultMessage: "Transcript copied to clipboard",
-        }),
-      );
-    }
+    sendPillFlashMessage(
+      getIntl().formatMessage({
+        defaultMessage: "Transcript copied to clipboard",
+      }),
+    );
   }
 
   return outcome;

@@ -105,15 +105,14 @@ export class DictationStrategy extends BaseStrategy {
    */
   checkAndDrainBacklog(): Promise<void> {
     const promise = this.pasteQueue.then(async () => {
-      const backlogLen = getAppState().dictationBacklog.length;
-      if (backlogLen === 0 && !this.backlogActive) {
+      if (!hasDictationBacklog() && !this.backlogActive) {
         return;
       }
 
       const state = await checkFocusedPasteTarget();
       if (state === "editable" || state === "unknown") {
         // Target is now editable (or we can't tell — try paste anyway).
-        if (backlogLen > 0) {
+        if (hasDictationBacklog()) {
           await this.drainBacklogAndAppendSpace();
         }
         this.backlogActive = false;
