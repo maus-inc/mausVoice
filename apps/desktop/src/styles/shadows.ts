@@ -11,27 +11,27 @@ import { darkInk, highlight, ink } from "./palette";
 export const premiumSurface = {
   light: {
     rest: `
-      inset 0 1px 0 ${highlight(0.72)},
-      inset 0 2px 0 ${highlight(0.28)},
+      inset 0 1px 0 ${highlight(0.42)},
+      inset 0 2px 0 ${highlight(0.14)},
       0 1px 2px ${ink(0.04)},
       0 6px 16px ${ink(0.08)},
       0 14px 32px ${ink(0.06)}
     `,
     hover: `
-      inset 0 1px 0 ${highlight(0.85)},
-      inset 0 2px 0 ${highlight(0.35)},
+      inset 0 1px 0 ${highlight(0.58)},
+      inset 0 2px 0 ${highlight(0.2)},
       0 2px 4px ${ink(0.05)},
       0 10px 24px ${ink(0.12)},
       0 22px 44px ${ink(0.1)}
     `,
     active: `
-      inset 0 2px 3px ${ink(0.12)},
-      inset 0 1px 0 ${highlight(0.35)},
+      inset 0 2px 3px ${ink(0.07)},
+      inset 0 1px 0 ${highlight(0.18)},
       0 1px 2px ${ink(0.06)}
     `,
     selected: `
-      inset 0 1px 0 ${highlight(0.2)},
-      inset 0 2px 0 ${highlight(0.08)},
+      inset 0 1px 0 ${highlight(0.18)},
+      inset 0 2px 0 ${highlight(0.06)},
       0 1px 2px ${ink(0.18)},
       0 8px 20px ${ink(0.22)}
     `,

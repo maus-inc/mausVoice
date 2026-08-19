@@ -49,10 +49,10 @@ describe("DashboardEntryLayout", () => {
 
   it("propagates the maxWidth prop to the Container element", () => {
     const htmlSm = renderToStaticMarkup(
-      createElement(DashboardEntryLayout, { maxWidth: "sm" }, null),
+      createElement(DashboardEntryLayout, { maxWidth: "sm", children: null }),
     );
     const htmlXl = renderToStaticMarkup(
-      createElement(DashboardEntryLayout, { maxWidth: "xl" }, null),
+      createElement(DashboardEntryLayout, { maxWidth: "xl", children: null }),
     );
     // Different maxWidth values produce different Container attributes (width
     // class / style), so the full HTML strings must differ.
