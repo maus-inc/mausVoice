@@ -1,6 +1,7 @@
 import { getVersion } from "@tauri-apps/api/app";
 import { invoke } from "@tauri-apps/api/core";
 import { getCurrentWindow } from "@tauri-apps/api/window";
+import { commands } from "@maus-inc/desktop-native-apis";
 import { Member, Nullable, Term, User } from "@maus-inc/types";
 import { getRec, listify } from "@maus-inc/utilities";
 import { isEqual } from "lodash-es";
@@ -689,7 +690,9 @@ export const AppSideEffects = () => {
     const sync = () => {
       clearTimeout(timeoutId);
       timeoutId = setTimeout(() => {
-        invoke("set_dashboard_menu_labels", labels).catch(console.error);
+        commands
+          .setDashboardMenuLabels(labels.openLabel, labels.hideLabel)
+          .catch(console.error);
       }, 50);
     };
 

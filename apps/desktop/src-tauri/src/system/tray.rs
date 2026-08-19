@@ -120,24 +120,6 @@ fn sync_dashboard_menu_state(app: &tauri::AppHandle) -> Result<(), String> {
     set_dashboard_menu_visibility(is_dashboard_visible(&window)?)
 }
 
-fn hide_dashboard(window: &tauri::WebviewWindow) -> Result<(), String> {
-    window.hide().map_err(|err| err.to_string())?;
-
-    #[cfg(target_os = "windows")]
-    {
-        use tauri::Manager;
-
-        crate::platform::window::keep_webview_active(window.app_handle(), "main");
-        crate::platform::window::set_webview_keepalive(true);
-    }
-    #[cfg(target_os = "macos")]
-    {
-        crate::platform::macos::dock::hide_dock_icon().map_err(|err| err.to_string())?;
-    }
-
-    Ok(())
-}
-
 #[cfg(desktop)]
 pub fn setup_tray(app: &mut tauri::App) -> tauri::Result<()> {
     use tauri::image::Image;
@@ -249,7 +231,7 @@ pub fn setup_tray(app: &mut tauri::App) -> tauri::Result<()> {
                 if let Some(window) = app.get_webview_window("main") {
                     let result = is_dashboard_visible(&window).and_then(|visible| {
                         if visible {
-                            hide_dashboard(&window)
+                            crate::platform::window::hide_main_window(&window)
                         } else {
                             crate::platform::window::surface_main_window(&window)
                         }

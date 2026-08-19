@@ -62,6 +62,13 @@ pub fn keep_webview_active(app_handle: &tauri::AppHandle, label: &str) {
     }
 }
 
+pub fn hide_main_window(window: &WebviewWindow) -> Result<(), String> {
+    window.hide().map_err(|err| err.to_string())?;
+    keep_webview_active(window.app_handle(), "main");
+    set_webview_keepalive(true);
+    Ok(())
+}
+
 pub fn surface_main_window(window: &WebviewWindow) -> Result<(), String> {
     let window_for_handle = window.clone();
     let (tx, rx) = mpsc::channel();

@@ -81,6 +81,7 @@ fn main() {
         retry_key_listener,
         run_native_setup,
         run_terminal_command,
+        set_dashboard_menu_labels,
         set_menu_icon,
         set_phase,
         set_pill_visibility,

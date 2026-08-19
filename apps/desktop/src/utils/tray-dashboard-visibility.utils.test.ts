@@ -1,12 +1,18 @@
-import { describe, expect, it } from "vitest";
-import { getDashboardMenuLabel } from "./tray-dashboard-visibility.utils";
+import type { IntlShape } from "react-intl";
+import { describe, expect, it, vi } from "vitest";
+import { getLocalizedDashboardMenuLabels } from "./tray-dashboard-visibility.utils";
 
-describe("getDashboardMenuLabel", () => {
-  it("offers to hide when the dashboard is visible", () => {
-    expect(getDashboardMenuLabel(true)).toBe("Hide Dashboard");
-  });
+describe("getLocalizedDashboardMenuLabels", () => {
+  it("resolves both dashboard actions through i18n", () => {
+    const formatMessage = vi.fn(
+      ({ defaultMessage }) => `localized:${defaultMessage}`,
+    );
+    const intl = { formatMessage } as unknown as IntlShape;
 
-  it("offers to open when the dashboard is hidden or minimized", () => {
-    expect(getDashboardMenuLabel(false)).toBe("Open Dashboard");
+    expect(getLocalizedDashboardMenuLabels(intl)).toEqual({
+      openLabel: "localized:Open Dashboard",
+      hideLabel: "localized:Hide Dashboard",
+    });
+    expect(formatMessage).toHaveBeenCalledTimes(2);
   });
 });
