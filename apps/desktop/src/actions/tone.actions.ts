@@ -13,7 +13,7 @@ import {
   getManuallySelectedToneId,
   getToneById,
 } from "../utils/tone.utils";
-import { getMyUser, setCurrentUser } from "../utils/user.utils";
+import { getMyUser } from "../utils/user.utils";
 import { showErrorSnackbar, showSnackbar } from "./app.actions";
 import { showToast } from "./toast.actions";
 import { activateAndSelectTone, setSelectedToneId } from "./user.actions";
@@ -141,19 +141,28 @@ export const openToneEditorDialog = (options: {
  * Apply the writing-style selection in memory immediately. Persist is
  * fire-and-forget from the caller's point of view: a stop that races the
  * DB write must still snapshot the newly selected tone.
+ *
+ * Returns false when there is no user. Callers must skip persist in that
+ * case so in-memory and persisted state stay aligned (`setSelectedToneId`
+ * would also no-op, but only after a snackbar).
+ *
+ * Does not touch `updatedAt` — that stays owned by `setSelectedToneId`.
  */
-export const applyWritingStyleSelectionNow = (toneId: string): void => {
+export const applyWritingStyleSelectionNow = (toneId: string): boolean => {
   const existing = getMyUser(getAppState());
-  if (!existing || existing.selectedToneId === toneId) {
-    return;
+  if (!existing) {
+    return false;
+  }
+  if (existing.selectedToneId === toneId) {
+    return true;
   }
   produceAppState((draft) => {
-    setCurrentUser(draft, {
-      ...existing,
-      selectedToneId: toneId,
-      updatedAt: new Date().toISOString(),
-    });
+    const user = getMyUser(draft);
+    if (user) {
+      user.selectedToneId = toneId;
+    }
   });
+  return true;
 };
 
 /**
@@ -165,7 +174,9 @@ export const applyWritingStyleSelectionNow = (toneId: string): void => {
 export const applyWritingStyleSelection = async (
   toneId: string,
 ): Promise<void> => {
-  applyWritingStyleSelectionNow(toneId);
+  if (!applyWritingStyleSelectionNow(toneId)) {
+    return;
+  }
   await setSelectedToneId(toneId);
 };
 
@@ -226,14 +237,18 @@ export const applyInDictationStyleSwitch = (
 ): Promise<void> => {
   const transition = toWritingStyleTransition(request);
   if (transition.kind === "select") {
-    applyWritingStyleSelectionNow(transition.toneId);
+    if (!applyWritingStyleSelectionNow(transition.toneId)) {
+      return Promise.resolve();
+    }
     return setSelectedToneId(transition.toneId);
   }
   const nextId = peekCycledToneId(transition.direction);
   if (nextId === null) {
     return notifyOnlyActiveStyle();
   }
-  applyWritingStyleSelectionNow(nextId);
+  if (!applyWritingStyleSelectionNow(nextId)) {
+    return Promise.resolve();
+  }
   return setSelectedToneId(nextId);
 };
 

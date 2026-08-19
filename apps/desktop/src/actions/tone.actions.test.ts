@@ -140,4 +140,11 @@ describe("writing style switch channels share one state transition", () => {
     expect(selectedToneId()).toBe("chat");
     void pending;
   });
+
+  it("skips persist when there is no user so in-memory and disk stay aligned", async () => {
+    setAppState(structuredClone(INITIAL_APP_STATE), true);
+    await applyInDictationStyleSwitch({ channel: "hotkey", toneId: "chat" });
+    expect(setSelectedToneIdMock).not.toHaveBeenCalled();
+    expect(selectedToneId()).toBeNull();
+  });
 });

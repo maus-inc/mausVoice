@@ -640,6 +640,7 @@ export const DictationSideEffects = () => {
     } catch (error) {
       const errorName = error instanceof Error ? ` [name=${error.name}]` : "";
       getLogger().error(`Error during stopRecording: ${error}${errorName}`);
+      clearUtteranceToneSnapshots();
       return {
         shouldContinue: false,
         abortMessage: String(error),
@@ -652,6 +653,7 @@ export const DictationSideEffects = () => {
   }, [
     captureStopRecordingInfo,
     clearRecordingTimers,
+    clearUtteranceToneSnapshots,
     finalizeAndPostProcess,
     restoreSystemVolume,
     sendPhaseToPill,
