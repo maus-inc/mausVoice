@@ -7,7 +7,7 @@ sidebar:
 
 Gemini is available in all three API-backed task dialogs. Add a Google AI API key, select the saved record separately for transcription, post-processing, or Assistant use, and choose a model for each task.
 
-The built-in model lists currently include `gemini-2.5-flash`, `gemini-2.5-pro`, and `gemini-3-flash-preview` for transcription. Generation also offers `gemini-3-pro-preview` and `gemini-2.5-flash-lite`. The default for both paths is `gemini-2.5-flash`. Preview IDs can change provider-side; a saved ID is not a promise of continued availability.
+The model pickers query Google's live model catalog and accept general Gemini models that advertise `generateContent`, rather than intersecting the response with a frozen allowlist. Specialized image, embedding, live, TTS, robotics, and computer-use entries are excluded. The offline fallbacks include the current Gemini 3 generation, and the default for transcription and generation is `gemini-3.7-flash`. Preview IDs can still change provider-side; a saved ID is not a promise of continued availability.
 
 ## Audio path
 
@@ -19,6 +19,6 @@ Because the result arrives after upload and generation, Gemini cannot drive real
 
 Post-processing combines system/style instructions with the transcript before calling Gemini. Assistant conversations use the streaming chat implementation and can carry function declarations for enabled tools.
 
-**Test** asks `gemini-2.5-flash` to reply with “Hello.” and checks for a non-empty matching response. It validates a small generation, not audio handling, the model selected elsewhere, quota for a long recording, or every tool call.
+**Test** authenticates by listing models through the desktop HTTP transport, so it no longer spends tokens or depends on one fixed Gemini model. It does not validate audio handling, the model selected elsewhere, quota for a long recording, or every tool call.
 
 If a test passes but dictation fails, first try a brief clip with post-processing Off. An empty raw transcript points to transcription; a raw transcript paired with a failed final result points to the separate generation stage.

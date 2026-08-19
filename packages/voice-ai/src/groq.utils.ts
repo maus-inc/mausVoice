@@ -22,7 +22,6 @@ import {
 export const GENERATE_TEXT_MODELS = [
   "openai/gpt-oss-20b",
   "openai/gpt-oss-120b",
-  "qwen/qwen3.6-27b",
 ] as const;
 export type GenerateTextModel = string;
 

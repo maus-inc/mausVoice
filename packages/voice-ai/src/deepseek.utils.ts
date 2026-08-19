@@ -13,8 +13,11 @@ import { openaiCompatibleStreamChat } from "./openai.utils";
 import { contentToString } from "./transcription.utils";
 import type { CustomFetch } from "./types";
 
-export const DEEPSEEK_MODELS = ["deepseek-chat", "deepseek-reasoner"] as const;
-export type DeepseekModel = (typeof DEEPSEEK_MODELS)[number];
+export const DEEPSEEK_MODELS = [
+  "deepseek-v4-flash",
+  "deepseek-v4-pro",
+] as const;
+export type DeepseekModel = string;
 
 const DEEPSEEK_BASE_URL = "https://api.deepseek.com";
 
@@ -43,7 +46,7 @@ export type DeepseekGenerateResponseOutput = {
 
 export const deepseekGenerateTextResponse = async ({
   apiKey,
-  model = "deepseek-chat",
+  model = "deepseek-v4-flash",
   system,
   prompt,
   jsonResponse,

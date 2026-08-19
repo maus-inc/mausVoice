@@ -9,11 +9,11 @@ Add OpenAI from **AI transcription**, **AI post processing**, or **Assistant mod
 
 ## Transcription
 
-OpenAI transcription is a batch path: mausVoice records the clip locally, creates an audio upload, and calls OpenAI after you release the shortcut. The default model ID is `whisper-1`. A specific dictation language is included; **Auto** omits that hint and lets the service infer it. This path does not provide committed segments to real-time output.
+OpenAI transcription is a batch path: mausVoice records the clip locally, creates an audio upload, and calls OpenAI after you release the shortcut. The default model ID is `gpt-transcribe`; the offline fallback list also includes the GPT-4o transcription models and `whisper-1`. A specific dictation language is included; **Auto** omits that hint and lets the service infer it. This path does not provide committed segments to real-time output.
 
 ## Generation
 
-Post-processing and the API-backed Assistant use OpenAI's chat-completion path. The default generation model is `gpt-4o`. The model picker loads the account's model list and filters obvious non-chat families such as Whisper, embeddings, moderation, TTS, and image models; that client-side filter is not a guarantee that every remaining model accepts the request shape.
+Post-processing and the API-backed Assistant use OpenAI's chat-completion path. The cost-conscious default remains `gpt-4o-mini`. The model picker loads the account's live catalog and accepts new GPT and o-series IDs while filtering obvious non-chat families such as transcription, realtime, embeddings, moderation, TTS, and image models; that client-side filter is not a guarantee that every remaining model accepts the request shape.
 
 Post-processing sends transcript text plus the active style instructions. Assistant requests can include conversation context and tool definitions. These are separate calls with separate task settings even when they share one key.
 

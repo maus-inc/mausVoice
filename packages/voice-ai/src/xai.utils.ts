@@ -1,21 +1,21 @@
 import { countWords, retry } from "@maus-inc/utilities";
+import type { CustomFetch } from "./types";
 
 const XAI_BASE_URL = "https://api.x.ai/v1";
-
-export const XAI_TRANSCRIPTION_MODELS = ["grok-stt"] as const;
-export type XaiTranscriptionModel = (typeof XAI_TRANSCRIPTION_MODELS)[number];
 
 export const XAI_TTS_VOICES = ["eve", "ara", "rex", "sal", "leo"] as const;
 export type XaiTtsVoice = (typeof XAI_TTS_VOICES)[number];
 
 export type XaiTestIntegrationArgs = {
   apiKey: string;
+  customFetch?: CustomFetch;
 };
 
 export const xaiTestIntegration = async ({
   apiKey,
+  customFetch = fetch,
 }: XaiTestIntegrationArgs): Promise<boolean> => {
-  const response = await fetch(`${XAI_BASE_URL}/models`, {
+  const response = await customFetch(`${XAI_BASE_URL}/models`, {
     method: "GET",
     headers: {
       Authorization: `Bearer ${apiKey.trim()}`,
@@ -35,10 +35,10 @@ export const xaiTestIntegration = async ({
 
 export type XaiTranscriptionArgs = {
   apiKey: string;
-  model?: XaiTranscriptionModel;
   blob: ArrayBuffer | Buffer;
   ext: string;
   language?: string;
+  customFetch?: CustomFetch;
 };
 
 export type XaiTranscribeAudioOutput = {
@@ -48,10 +48,10 @@ export type XaiTranscribeAudioOutput = {
 
 export const xaiTranscribeAudio = async ({
   apiKey,
-  model = "grok-stt",
   blob,
   ext,
   language,
+  customFetch = fetch,
 }: XaiTranscriptionArgs): Promise<XaiTranscribeAudioOutput> => {
   return retry({
     retries: 3,
@@ -60,14 +60,14 @@ export const xaiTranscribeAudio = async ({
       const bodyData =
         blob instanceof ArrayBuffer ? blob : (blob.buffer as ArrayBuffer);
       const audioBlob = new Blob([bodyData], { type: `audio/${ext}` });
-      formData.append("file", audioBlob, `audio.${ext}`);
-      formData.append("model", model);
-      formData.append("format", "json");
+      formData.append("format", "true");
       if (language && language !== "auto") {
         formData.append("language", language);
       }
+      // xAI requires the multipart file field to be appended last.
+      formData.append("file", audioBlob, `audio.${ext}`);
 
-      const response = await fetch(`${XAI_BASE_URL}/stt`, {
+      const response = await customFetch(`${XAI_BASE_URL}/stt`, {
         method: "POST",
         headers: {
           Authorization: `Bearer ${apiKey.trim()}`,
@@ -99,6 +99,7 @@ export type XaiSpeakArgs = {
   text: string;
   voice?: XaiTtsVoice;
   language?: string;
+  customFetch?: CustomFetch;
 };
 
 export const xaiGenerateSpeech = async ({
@@ -106,8 +107,9 @@ export const xaiGenerateSpeech = async ({
   text,
   voice = "eve",
   language = "en",
+  customFetch = fetch,
 }: XaiSpeakArgs): Promise<ArrayBuffer> => {
-  const response = await fetch(`${XAI_BASE_URL}/tts`, {
+  const response = await customFetch(`${XAI_BASE_URL}/tts`, {
     method: "POST",
     headers: {
       Authorization: `Bearer ${apiKey.trim()}`,

@@ -1,4 +1,5 @@
 import { countWords, retry } from "@maus-inc/utilities";
+import type { CustomFetch } from "./types";
 
 export type DeepgramTestIntegrationArgs = {
   apiKey: string;
@@ -48,6 +49,7 @@ export type DeepgramTranscriptionArgs = {
   blob: ArrayBuffer | Buffer;
   ext: string;
   language?: string;
+  customFetch?: CustomFetch;
 };
 
 export type DeepgramTranscribeAudioOutput = {
@@ -61,6 +63,7 @@ export const deepgramTranscribeAudio = async ({
   blob,
   ext,
   language,
+  customFetch = fetch,
 }: DeepgramTranscriptionArgs): Promise<DeepgramTranscribeAudioOutput> => {
   return retry({
     retries: 3,
@@ -77,7 +80,7 @@ export const deepgramTranscribeAudio = async ({
         params.set("detect_language", "true");
       }
 
-      const response = await fetch(
+      const response = await customFetch(
         `${DEEPGRAM_LISTEN_URL}?${params.toString()}`,
         {
           method: "POST",

@@ -343,7 +343,7 @@ export class DeepseekGenerateTextRepo extends BaseGenerateTextRepo {
   constructor(apiKey: string, model: string | null) {
     super();
     this.apiKey = apiKey;
-    this.model = (model as DeepseekModel) ?? "deepseek-chat";
+    this.model = model ?? "deepseek-v4-flash";
   }
 
   async generateText(input: GenerateTextInput): Promise<GenerateTextOutput> {
@@ -382,7 +382,7 @@ export class GeminiGenerateTextRepo extends BaseGenerateTextRepo {
   constructor(apiKey: string, model: string | null) {
     super();
     this.apiKey = apiKey;
-    this.model = (model as GeminiGenerateTextModel) ?? "gemini-2.5-flash";
+    this.model = model ?? "gemini-3.7-flash";
   }
 
   async generateText(input: GenerateTextInput): Promise<GenerateTextOutput> {
@@ -419,7 +419,7 @@ export class ClaudeGenerateTextRepo extends BaseGenerateTextRepo {
   constructor(apiKey: string, model: string | null) {
     super();
     this.apiKey = apiKey;
-    this.model = (model as ClaudeModel) ?? "claude-sonnet-4-20250514";
+    this.model = model ?? "claude-sonnet-5";
   }
 
   async generateText(input: GenerateTextInput): Promise<GenerateTextOutput> {

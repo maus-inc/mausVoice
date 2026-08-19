@@ -14,24 +14,23 @@ import type {
   LlmMessage,
   LlmStreamEvent,
 } from "@maus-inc/types";
+import type { CustomFetch } from "./types";
 
 export const GEMINI_GENERATE_TEXT_MODELS = [
+  "gemini-3.7-flash",
+  "gemini-3.5-flash-lite",
+  "gemini-3.1-pro-preview",
   "gemini-2.5-flash",
-  "gemini-2.5-pro",
-  "gemini-3-flash-preview",
-  "gemini-3-pro-preview",
-  "gemini-2.5-flash-lite",
 ] as const;
-export type GeminiGenerateTextModel =
-  (typeof GEMINI_GENERATE_TEXT_MODELS)[number];
+export type GeminiGenerateTextModel = string;
 
 export const GEMINI_TRANSCRIPTION_MODELS = [
+  "gemini-3.7-flash",
+  "gemini-3.5-flash-lite",
+  "gemini-3.1-flash-lite",
   "gemini-2.5-flash",
-  "gemini-2.5-pro",
-  "gemini-3-flash-preview",
 ] as const;
-export type GeminiTranscriptionModel =
-  (typeof GEMINI_TRANSCRIPTION_MODELS)[number];
+export type GeminiTranscriptionModel = string;
 
 const createClient = (apiKey: string) => {
   return new GoogleGenAI({ apiKey: apiKey.trim() });
@@ -95,7 +94,7 @@ export type GeminiTranscribeAudioOutput = {
 
 export const geminiTranscribeAudio = async ({
   apiKey,
-  model = "gemini-2.5-flash",
+  model = "gemini-3.7-flash",
   blob,
   mimeType = "audio/wav",
   prompt,
@@ -159,7 +158,7 @@ export type GeminiGenerateResponseOutput = {
 
 export const geminiGenerateTextResponse = async ({
   apiKey,
-  model = "gemini-2.5-flash",
+  model = "gemini-3.7-flash",
   system,
   prompt,
   jsonResponse,
@@ -211,24 +210,25 @@ export const geminiGenerateTextResponse = async ({
 
 export type GeminiTestIntegrationArgs = {
   apiKey: string;
+  customFetch?: CustomFetch;
 };
 
 export const geminiTestIntegration = async ({
   apiKey,
+  customFetch = fetch,
 }: GeminiTestIntegrationArgs): Promise<boolean> => {
-  const client = createClient(apiKey);
-
-  const response = await client.models.generateContent({
-    model: "gemini-2.5-flash",
-    contents: 'Reply with the single word "Hello."',
-  });
-
-  const text = response.text ?? "";
-  if (!text) {
-    throw new Error("Response content is empty");
+  const response = await customFetch(
+    `https://generativelanguage.googleapis.com/v1beta/models?key=${encodeURIComponent(apiKey.trim())}&pageSize=1`,
+  );
+  if (!response.ok) {
+    const detail = await response.text().catch(() => "");
+    throw new Error(
+      detail
+        ? `Gemini responded ${response.status}: ${detail}`
+        : `Gemini responded with status ${response.status}`,
+    );
   }
-
-  return text.toLowerCase().includes("hello");
+  return true;
 };
 
 // ============================================================================

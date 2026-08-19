@@ -7,8 +7,9 @@ import {
   GEMINI_GENERATE_TEXT_MODELS,
   GEMINI_TRANSCRIPTION_MODELS,
   GENERATE_TEXT_MODELS,
+  OPENAI_GENERATE_TEXT_MODELS,
+  OPENAI_TRANSCRIPTION_MODELS,
   TRANSCRIPTION_MODELS,
-  XAI_TRANSCRIPTION_MODELS,
 } from "@maus-inc/voice-ai";
 import {
   createOpenAICompatibleFetch,
@@ -26,7 +27,10 @@ type OpenAIListResponse = {
 };
 
 type GeminiListResponse = {
-  models?: Array<{ name?: string }>;
+  models?: Array<{
+    name?: string;
+    supportedGenerationMethods?: string[];
+  }>;
 };
 
 export type FetchModelsOptions = {
@@ -70,18 +74,49 @@ function isWhisperModel(modelId: string): boolean {
   return modelId.includes("whisper");
 }
 
-function isOpenAITranscriptionModel(modelId: string): boolean {
-  return isWhisperModel(modelId) || modelId.includes("transcribe");
+function isGroqGenerativeModel(modelId: string): boolean {
+  return !["orpheus", "prompt-guard", "safeguard", "whisper"].some((marker) =>
+    modelId.includes(marker),
+  );
 }
 
-function filterFetchedModels(
-  fetched: string[],
-  allowList: readonly string[],
-): string[] {
-  if (fetched.length === 0) return [...allowList];
-  const allowed = new Set<string>(allowList);
-  const filtered = fetched.filter((m) => allowed.has(m));
-  return filtered.length > 0 ? filtered : [...allowList];
+function isOpenAITranscriptionModel(modelId: string): boolean {
+  return (
+    modelId === "whisper-1" ||
+    modelId === "gpt-transcribe" ||
+    modelId.startsWith("gpt-4o-transcribe") ||
+    modelId.startsWith("gpt-4o-mini-transcribe")
+  );
+}
+
+function isOpenAIGenerativeModel(modelId: string): boolean {
+  if (!/^(gpt-|o\d)/.test(modelId)) return false;
+  return ![
+    "audio",
+    "embedding",
+    "image",
+    "live",
+    "moderation",
+    "realtime",
+    "transcribe",
+    "tts",
+    "whisper",
+  ].some((marker) => modelId.includes(marker));
+}
+
+function isGeneralGeminiModel(modelId: string): boolean {
+  if (!modelId.startsWith("gemini-")) return false;
+  return ![
+    "-audio",
+    "-computer-use",
+    "-embedding",
+    "-image",
+    "-live",
+    "-native-audio",
+    "-omni-",
+    "-robotics",
+    "-tts",
+  ].some((marker) => modelId.includes(marker));
 }
 
 export class GroqModelProviderRepo extends BaseModelProviderRepo {
@@ -105,7 +140,7 @@ export class GroqModelProviderRepo extends BaseModelProviderRepo {
     options: FetchModelsOptions,
   ): Promise<string[]> {
     const fetched = await this.fetchModels(options);
-    const models = fetched.filter((m) => !isWhisperModel(m));
+    const models = fetched.filter(isGroqGenerativeModel);
     return models.length > 0 ? models : [...GENERATE_TEXT_MODELS];
   }
 
@@ -136,13 +171,17 @@ export class OpenAIModelProviderRepo extends BaseModelProviderRepo {
   async getGenerativeTextModels(
     options: FetchModelsOptions,
   ): Promise<string[]> {
-    const fetched = await this.fetchModels(options);
-    return fetched.filter((m) => !isOpenAITranscriptionModel(m));
+    const models = (await this.fetchModels(options)).filter(
+      isOpenAIGenerativeModel,
+    );
+    return models.length > 0 ? models : [...OPENAI_GENERATE_TEXT_MODELS];
   }
 
   async getTranscriptionModels(options: FetchModelsOptions): Promise<string[]> {
-    const fetched = await this.fetchModels(options);
-    return fetched.filter(isOpenAITranscriptionModel);
+    const models = (await this.fetchModels(options)).filter(
+      isOpenAITranscriptionModel,
+    );
+    return models.length > 0 ? models : [...OPENAI_TRANSCRIPTION_MODELS];
   }
 }
 
@@ -157,21 +196,25 @@ export class ClaudeModelProviderRepo extends BaseModelProviderRepo {
 
   private async fetchModels(options: FetchModelsOptions): Promise<string[]> {
     if (!options.apiKey) return [];
-    const response = await fetch(
-      "https://api.anthropic.com/v1/models?limit=100",
-      {
-        headers: {
-          "x-api-key": options.apiKey,
-          "anthropic-version": "2023-06-01",
+    try {
+      const response = await fetch(
+        "https://api.anthropic.com/v1/models?limit=100",
+        {
+          headers: {
+            "x-api-key": options.apiKey,
+            "anthropic-version": "2023-06-01",
+          },
         },
-      },
-    );
-    if (!response.ok) return [];
-    const payload = (await response.json()) as OpenAIListResponse;
-    return (payload.data ?? [])
-      .map((m) => (m.id ?? "").trim())
-      .filter(Boolean)
-      .sort();
+      );
+      if (!response.ok) return [];
+      const payload = (await response.json()) as OpenAIListResponse;
+      return (payload.data ?? [])
+        .map((m) => (m.id ?? "").trim())
+        .filter(Boolean)
+        .sort();
+    } catch {
+      return [];
+    }
   }
 
   async getGenerativeTextModels(
@@ -257,25 +300,32 @@ export class GeminiModelProviderRepo extends BaseModelProviderRepo {
     options: FetchModelsOptions,
   ): Promise<string[]> {
     const fetched = await this.fetchModels(options);
-    return filterFetchedModels(fetched, GEMINI_GENERATE_TEXT_MODELS);
+    return fetched.length > 0 ? fetched : [...GEMINI_GENERATE_TEXT_MODELS];
   }
 
   async getTranscriptionModels(options: FetchModelsOptions): Promise<string[]> {
     const fetched = await this.fetchModels(options);
-    return filterFetchedModels(fetched, GEMINI_TRANSCRIPTION_MODELS);
+    return fetched.length > 0 ? fetched : [...GEMINI_TRANSCRIPTION_MODELS];
   }
 
   private async fetchModels(options: FetchModelsOptions): Promise<string[]> {
     if (!options.apiKey) return [];
-    const response = await fetch(
-      `https://generativelanguage.googleapis.com/v1beta/models?key=${encodeURIComponent(options.apiKey)}&pageSize=1000`,
-    );
-    if (!response.ok) return [];
-    const payload = (await response.json()) as GeminiListResponse;
-    return (payload.models ?? [])
-      .map((m) => (m.name ?? "").replace(/^models\//, "").trim())
-      .filter(Boolean)
-      .sort();
+    try {
+      const response = await fetch(
+        `https://generativelanguage.googleapis.com/v1beta/models?key=${encodeURIComponent(options.apiKey)}&pageSize=1000`,
+      );
+      if (!response.ok) return [];
+      const payload = (await response.json()) as GeminiListResponse;
+      return (payload.models ?? [])
+        .filter((m) =>
+          (m.supportedGenerationMethods ?? []).includes("generateContent"),
+        )
+        .map((m) => (m.name ?? "").replace(/^models\//, "").trim())
+        .filter(isGeneralGeminiModel)
+        .sort();
+    } catch {
+      return [];
+    }
   }
 }
 
@@ -513,7 +563,8 @@ export class XaiModelProviderRepo extends BaseModelProviderRepo {
   }
 
   async getTranscriptionModels(): Promise<string[]> {
-    return [...XAI_TRANSCRIPTION_MODELS];
+    // xAI's dedicated /v1/stt API does not accept a model parameter.
+    return [];
   }
 }
 
