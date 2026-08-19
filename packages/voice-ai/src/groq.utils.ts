@@ -11,7 +11,7 @@ import {
 } from "groq-sdk/resources/chat/completions";
 import OpenAI from "openai";
 import { openaiCompatibleStreamChat } from "./openai.utils";
-import type { CustomFetch } from "./types";
+import type { CustomFetch, DiscoveredModelId } from "./types";
 import {
   contentToString,
   runSdkTranscription,
@@ -23,7 +23,8 @@ export const GENERATE_TEXT_MODELS = [
   "openai/gpt-oss-20b",
   "openai/gpt-oss-120b",
 ] as const;
-export type GenerateTextModel = string;
+export type GenerateTextModel =
+  (typeof GENERATE_TEXT_MODELS)[number] | DiscoveredModelId;
 
 // Models that support `response_format: { type: "json_schema" }`.
 // See https://console.groq.com/docs/structured-outputs

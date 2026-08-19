@@ -14,7 +14,7 @@ import type {
   LlmMessage,
   LlmStreamEvent,
 } from "@maus-inc/types";
-import type { CustomFetch } from "./types";
+import type { CustomFetch, DiscoveredModelId } from "./types";
 
 export const GEMINI_GENERATE_TEXT_MODELS = [
   "gemini-3.7-flash",
@@ -22,7 +22,8 @@ export const GEMINI_GENERATE_TEXT_MODELS = [
   "gemini-3.1-pro-preview",
   "gemini-2.5-flash",
 ] as const;
-export type GeminiGenerateTextModel = string;
+export type GeminiGenerateTextModel =
+  (typeof GEMINI_GENERATE_TEXT_MODELS)[number] | DiscoveredModelId;
 
 export const GEMINI_TRANSCRIPTION_MODELS = [
   "gemini-3.7-flash",
@@ -30,7 +31,8 @@ export const GEMINI_TRANSCRIPTION_MODELS = [
   "gemini-3.1-flash-lite",
   "gemini-2.5-flash",
 ] as const;
-export type GeminiTranscriptionModel = string;
+export type GeminiTranscriptionModel =
+  (typeof GEMINI_TRANSCRIPTION_MODELS)[number] | DiscoveredModelId;
 
 const createClient = (apiKey: string) => {
   return new GoogleGenAI({ apiKey: apiKey.trim() });

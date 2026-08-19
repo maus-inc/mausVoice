@@ -1,12 +1,16 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
-const { invokeMock, pluginFetchMock } = vi.hoisted(() => ({
+const { invokeMock, loggerVerboseMock, pluginFetchMock } = vi.hoisted(() => ({
   invokeMock: vi.fn(),
+  loggerVerboseMock: vi.fn(),
   pluginFetchMock: vi.fn(),
 }));
 
 vi.mock("@tauri-apps/api/core", () => ({ invoke: invokeMock }));
 vi.mock("@tauri-apps/plugin-http", () => ({ fetch: pluginFetchMock }));
+vi.mock("../utils/log.utils", () => ({
+  getLogger: () => ({ verbose: loggerVerboseMock }),
+}));
 
 import {
   GeminiModelProviderRepo,
@@ -19,6 +23,7 @@ import {
 describe("provider model discovery", () => {
   beforeEach(() => {
     invokeMock.mockReset();
+    loggerVerboseMock.mockReset();
     pluginFetchMock.mockReset();
   });
 
@@ -109,6 +114,42 @@ describe("provider model discovery", () => {
     await expect(
       repo.getTranscriptionModels({ apiKey: "openai-key" }),
     ).resolves.toEqual(["gpt-transcribe"]);
+  });
+
+  it("logs provider HTTP failures before using a fallback catalog", async () => {
+    pluginFetchMock.mockResolvedValue(
+      new Response(null, { status: 401, statusText: "Unauthorized" }),
+    );
+
+    await expect(
+      new GeminiModelProviderRepo().getGenerativeTextModels({
+        apiKey: "secret-gemini-key",
+      }),
+    ).resolves.not.toEqual([]);
+    expect(loggerVerboseMock).toHaveBeenCalledWith(
+      "Gemini model discovery failed (HTTP 401 Unauthorized)",
+    );
+    expect(JSON.stringify(loggerVerboseMock.mock.calls)).not.toContain(
+      "secret-gemini-key",
+    );
+  });
+
+  it("logs caught discovery errors without leaking transport details", async () => {
+    pluginFetchMock.mockRejectedValue(
+      new Error("socket failed at a URL containing secret-openai-key"),
+    );
+
+    await expect(
+      new OpenAIModelProviderRepo().getGenerativeTextModels({
+        apiKey: "secret-openai-key",
+      }),
+    ).resolves.not.toEqual([]);
+    expect(loggerVerboseMock).toHaveBeenCalledWith(
+      "OpenAI model discovery failed (request or response parsing failed)",
+    );
+    expect(JSON.stringify(loggerVerboseMock.mock.calls)).not.toContain(
+      "secret-openai-key",
+    );
   });
 
   it("does not show a fake model selector for xAI's dedicated STT route", async () => {

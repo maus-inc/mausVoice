@@ -920,7 +920,7 @@ pub async fn private_http_request(
     execute_http_request(request, HttpRequestPolicy::PrivateNetwork).await
 }
 
-#[tauri::command]
+#[tauri::command(rename_all = "camelCase")]
 #[specta::specta]
 pub async fn openai_compatible_http_request(
     api_key_id: String,
@@ -5024,6 +5024,35 @@ mod tests {
             "http://llm.example.com/proxy/openai/v1/models",
         ] {
             assert!(validate_saved_endpoint_url(&Url::parse(rejected).unwrap(), &base).is_err());
+        }
+    }
+
+    #[test]
+    fn saved_endpoint_url_handles_normalized_host_path_and_query_edges() {
+        let base = Url::parse("HTTPS://LLM.Example.COM:443/proxy/openai/?tenant=alpha").unwrap();
+
+        for accepted in [
+            "https://llm.example.com/proxy/openai?tenant=alpha",
+            "https://LLM.EXAMPLE.COM/proxy/openai/?tenant=beta",
+            "https://llm.example.com/proxy/openai/v1/models?after=model%2Fone",
+        ] {
+            assert!(
+                validate_saved_endpoint_url(&Url::parse(accepted).unwrap(), &base).is_ok(),
+                "expected saved-endpoint URL to be accepted: {accepted}"
+            );
+        }
+
+        for rejected in [
+            "https://llm.example.com:444/proxy/openai/v1/models",
+            "https://llm.example.com/proxy/openai-tenant/v1/models",
+            "https://llm.example.com/proxy/openai/../admin/models",
+            "https://llm.example.com/proxy/OpenAI/v1/models",
+            "https://llm.example.com.evil/proxy/openai/v1/models",
+        ] {
+            assert!(
+                validate_saved_endpoint_url(&Url::parse(rejected).unwrap(), &base).is_err(),
+                "expected saved-endpoint URL to be rejected: {rejected}"
+            );
         }
     }
 

@@ -9,7 +9,7 @@ import type {
 } from "@maus-inc/types";
 import { countWords, retry } from "@maus-inc/utilities";
 import OpenAI, { toFile } from "openai";
-import type { CustomFetch } from "./types";
+import type { CustomFetch, DiscoveredModelId } from "./types";
 import {
   contentToString,
   runSdkTranscription,
@@ -30,7 +30,8 @@ export const OPENAI_GENERATE_TEXT_MODELS = [
   "gpt-5.6-sol",
   "gpt-5-mini",
 ] as const;
-export type OpenAIGenerateTextModel = string;
+export type OpenAIGenerateTextModel =
+  (typeof OPENAI_GENERATE_TEXT_MODELS)[number] | DiscoveredModelId;
 
 export const OPENAI_TRANSCRIPTION_MODELS = [
   "gpt-transcribe",
@@ -38,7 +39,8 @@ export const OPENAI_TRANSCRIPTION_MODELS = [
   "gpt-4o-mini-transcribe",
   "whisper-1",
 ] as const;
-export type OpenAITranscriptionModel = string;
+export type OpenAITranscriptionModel =
+  (typeof OPENAI_TRANSCRIPTION_MODELS)[number] | DiscoveredModelId;
 
 const createClient = (
   apiKey: string,
