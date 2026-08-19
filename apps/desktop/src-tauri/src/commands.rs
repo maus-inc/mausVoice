@@ -2104,6 +2104,8 @@ pub fn set_interaction_chime_enabled(enabled: bool) {
     crate::system::audio_feedback::set_interaction_chime_enabled(enabled);
 }
 
+#[tauri::command]
+#[specta::specta]
 pub fn play_audio(clip: AudioClip) -> Result<(), String> {
     // Rapid re-entry (e.g. double-pressing the record hotkey) can layer
     // multiple overlapping chimes and produce a disorienting UX. If a chime
