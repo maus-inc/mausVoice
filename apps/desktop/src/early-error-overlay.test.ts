@@ -18,8 +18,20 @@ class HTMLLinkElement {
   href = "";
 }
 
-const installEarlyOverlay = () => {
-  const nodes = new Map<string, { id: string; textContent: string }>();
+const installEarlyOverlay = (
+  seed: Array<{ id: string; textContent?: string; childNodes?: unknown[] }> = [],
+) => {
+  const nodes = new Map<
+    string,
+    { id: string; textContent: string; childNodes: unknown[] }
+  >();
+  for (const node of seed) {
+    nodes.set(node.id, {
+      id: node.id,
+      textContent: node.textContent ?? "",
+      childNodes: node.childNodes ?? [],
+    });
+  }
   const listeners: Record<string, Array<(event: unknown) => void>> = {
     error: [],
     unhandledrejection: [],
