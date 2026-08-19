@@ -20,6 +20,7 @@ import {
   appendToDictationBacklog,
   clearDictationBacklog,
   drainDictationBacklog,
+  hasDictationBacklog,
   incrementDictationBacklogNonce,
 } from "../utils/output-routing.utils";
 import { sanitizeTranscriptText } from "../utils/sanitize-transcript.utils";
@@ -156,7 +157,7 @@ export class DictationStrategy extends BaseStrategy {
 
       // Target is editable (or unknown -- optimistically try to paste).
       // Drain any accumulated backlog first, then paste the current segment.
-      if (getAppState().dictationBacklog.length > 0) {
+      if (hasDictationBacklog()) {
         await drainDictationBacklog(text);
         this.streamedProcessedText += " ";
         this.backlogActive = false;
@@ -237,9 +238,9 @@ export class DictationStrategy extends BaseStrategy {
     await this.pasteQueue;
 
     // Drain any remaining backlog before the transcript is finalized.
-    if (getAppState().dictationBacklog.length > 0) {
+    if (hasDictationBacklog()) {
       getLogger().info(
-        `Draining ${getAppState().dictationBacklog.length} backlog segment(s) on finalize`,
+        `Draining backlog segment(s) on finalize`,
       );
       await drainDictationBacklog();
     }

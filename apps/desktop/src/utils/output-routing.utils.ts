@@ -59,8 +59,8 @@ const reviewOutputText = async (
 const insertLocalOutput = async (
   context: OutputContext,
   text: string,
-  suppressFlashOnClipboard?: boolean,
-): Promise<void> => {
+  suppressFlashOnClipboard = false,
+): Promise<PasteOutcome | undefined> => {
   const insertionMethod =
     context.currentApp?.insertionMethod ??
     context.prefs?.insertionMethod ??
@@ -69,7 +69,7 @@ const insertLocalOutput = async (
     const typingSpeedMs =
       context.currentApp?.typingSpeedMs ?? context.prefs?.typingSpeedMs ?? 5;
     await insertLocalTranscriptOutputViaTyping(text, typingSpeedMs);
-    return;
+    return undefined;
   }
 
   const pasteKeybind =
@@ -78,7 +78,7 @@ const insertLocalOutput = async (
       : (context.currentApp?.pasteKeybind ??
         context.prefs?.pasteKeybind ??
         null);
-  await insertLocalTranscriptOutputViaPaste(
+  return insertLocalTranscriptOutputViaPaste(
     text,
     pasteKeybind,
     suppressFlashOnClipboard,
@@ -105,7 +105,7 @@ export const routeTranscriptOutput = async (
 export const insertLocalTranscriptOutputViaPaste = async (
   text: string,
   keybind: string | null,
-  suppressClipboardFlash?: boolean,
+  suppressClipboardFlash = false,
 ): Promise<PasteOutcome> => {
   const sanitized = sanitizeIndentation(text);
 
@@ -246,12 +246,17 @@ export const drainDictationBacklog = async (
   }
   const combinedText = segments.join(" ");
 
-  // Deliver the combined backlog text via the standard paste pipeline.
-  // suppressFlashOnClipboard=false so the ONE permitted pill flash
-  // happens when the backlog is delivered to a non-editable target.
-  const pasteOutcome = await insertLocalTranscriptOutputViaPaste(
-    combinedText, null, false,
-  );
+  // Deliver the combined backlog text through the standard output path so
+  // app- and user-specific insertion methods and paste keybinds are
+  // respected. suppressFlashOnClipboard=false so the ONE permitted pill
+  // flash happens when the backlog hits a non-editable target.
+  const state = getAppState();
+  const context: OutputContext = {
+    state,
+    prefs: getMyUserPreferences(state),
+    currentApp: null,
+  };
+  const pasteOutcome = await insertLocalOutput(context, combinedText, false);
 
   // Snapshot after paste to confirm we're still in the same session.
   const currentNonce = getAppState().dictationBacklogNonce;
