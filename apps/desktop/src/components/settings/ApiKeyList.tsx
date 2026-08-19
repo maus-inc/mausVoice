@@ -36,6 +36,7 @@ import {
 import { useAppStore } from "../../store";
 import { getModelProviderRepo } from "../../repos";
 import type { FetchModelsOptions } from "../../repos/model-provider.repo";
+import { selectedOutlineSx } from "../../styles/selection";
 import { getProviderFormConfig } from "./api-key-provider-config";
 import { OllamaModelPicker } from "./OllamaModelPicker";
 import { OpenAICompatibleModelPicker } from "./OpenAICompatibleModelPicker";
@@ -364,14 +365,13 @@ const EditApiKeyCard = ({
   return (
     <Paper
       variant="outlined"
-      sx={{
+      sx={(theme) => ({
         p: 2,
         display: "flex",
         flexDirection: "column",
         gap: 1.5,
-        borderColor: "primary.main",
-        borderWidth: 1,
-      }}
+        ...selectedOutlineSx(theme),
+      })}
     >
       <Typography
         variant="body2"
@@ -622,23 +622,23 @@ const ApiKeyCard = ({
     <Paper
       variant="outlined"
       onClick={onSelect}
-      sx={{
-        p: 2,
-        borderColor: selected ? "primary.main" : "divider",
-        borderWidth: 1,
-        cursor: "pointer",
-        transition: "border-color 0.2s ease, box-shadow 0.2s ease",
-        boxShadow: selected
-          ? (theme) => `0 0 0 1px ${theme.palette.primary.main}`
-          : "none",
-        ":hover": {
-          borderColor: selected ? "primary.main" : "action.active",
+      sx={[
+        {
+          p: 2,
+          borderColor: "divider",
+          borderWidth: 1,
+          cursor: "pointer",
+          transition: "border-color 0.2s ease, box-shadow 0.2s ease",
+          ":hover": {
+            borderColor: "action.active",
+          },
+          display: "flex",
+          flexDirection: "column",
+          gap: 2,
+          width: "100%",
         },
-        display: "flex",
-        flexDirection: "column",
-        gap: 2,
-        width: "100%",
-      }}
+        selected && ((theme) => selectedOutlineSx(theme)),
+      ]}
     >
       <Stack
         direction="row"

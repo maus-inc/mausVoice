@@ -1,3 +1,4 @@
+import type { Theme } from "@mui/material";
 import { duration, easeOutCubic } from "./motion";
 
 /**
@@ -10,6 +11,36 @@ import { duration, easeOutCubic } from "./motion";
  * accent) so it reads as "selected" without reintroducing the blue the app
  * moved away from.
  */
+
+/**
+ * Theme-aware selected outline for cards/rows that signal selection with a
+ * stroke (API-key cards, model download rows).
+ *
+ * The stroke is the scheme's own text token — dark ink on cream in light mode,
+ * light text on onyx in dark mode — so the ring is unmistakable in both
+ * schemes. Two subtleties make the `theme.vars` read necessary:
+ *
+ * - `theme.vars` emits the palette as a CSS variable (`var(--app-palette-…)`)
+ *   that resolves per active color scheme at runtime; a raw `theme.palette`
+ *   read would freeze in the light value and vanish against dark surfaces —
+ *   the original dark-mode bug.
+ * - MUI emits a `[data-mui-color-scheme="dark"]` override for outlined Paper
+ *   that resets the `border` shorthand after sx, so the border alone cannot
+ *   carry the selection signal in dark mode. The `0 0 0 1px` ring lives in
+ *   box-shadow, which no override touches, and keeps the outline crisp on top
+ *   of the card's own border in both schemes.
+ *
+ * Selected hover keeps the stroke instead of reverting to the resting border;
+ * the global `:focus-visible` outline in the theme still handles keyboard
+ * focus and is left untouched.
+ */
+export const selectedOutlineSx = (theme: Theme) => ({
+  borderColor: "text.primary",
+  boxShadow: `0 0 0 1px ${theme.vars.palette.text.primary}`,
+  "&:hover": {
+    borderColor: "text.primary",
+  },
+});
 
 /** Width of the rail that marks the active row. */
 const RAIL_WIDTH = 3;
