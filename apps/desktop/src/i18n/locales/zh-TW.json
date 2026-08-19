@@ -70,6 +70,7 @@
   "are_you_sure_you_want_to_delete_this_style": "您確定要刪除此樣式嗎？",
   "are_you_sure_you_want_to_delete_your_account_this_will": "您確定要刪除您的帳戶嗎？這將會：",
   "ask_for_administrator_permission_every_time_mausvoice_starts": "每次 mausVoice 啟動時都要求管理員權限，而不是手動設定輸入權限。將於下次啟動時生效。",
+  "assemblyai_speech_model_leave_empty_to_use_the_default_unive": "AssemblyAI speech model. Leave empty to use the default (Universal-3.5 Pro, falling back to Universal-2).",
   "assign_a_shortcut_to_select_a_style_directly_leave_a_row_emp": "指派快捷鍵以直接選擇樣式。保留該列空白可停用其快捷鍵。",
   "assistant_hotkey": "助理快捷鍵",
   "assistant_mode": "助理模式",

@@ -89,7 +89,6 @@ const STANDARD_PROVIDERS: Record<
   openai: { displayName: "OpenAI", testFn: openaiTestIntegration },
   openrouter: { displayName: "OpenRouter", testFn: openrouterTestIntegration },
   aldea: { displayName: "Aldea", testFn: aldeaTestIntegration },
-  assemblyai: { displayName: "AssemblyAI", testFn: assemblyaiTestIntegration },
   deepgram: { displayName: "Deepgram", testFn: deepgramTestIntegration },
   elevenlabs: { displayName: "ElevenLabs", testFn: elevenlabsTestIntegration },
   deepseek: { displayName: "DeepSeek", testFn: deepseekTestIntegration },
@@ -107,6 +106,26 @@ function buildStandardConfig(provider: string): ProviderFormConfig {
     testIntegration: standardTestConfig(entry.testFn),
   };
 }
+
+const ASSEMBLYAI_MODEL_FIELD: ProviderFieldDescriptor = {
+  key: "transcriptionModel",
+  label: <FormattedMessage defaultMessage="Model" />,
+  placeholder: "universal-3-5-pro",
+  helperText: (
+    <FormattedMessage defaultMessage="AssemblyAI speech model. Leave empty to use the default (Universal-3.5 Pro, falling back to Universal-2)." />
+  ),
+  required: false,
+};
+
+const ASSEMBLYAI_CONFIG: ProviderFormConfig = {
+  displayName: "AssemblyAI",
+  fields: [API_KEY_FIELD, ASSEMBLYAI_MODEL_FIELD],
+  testIntegration: (apiKey) =>
+    assemblyaiTestIntegration({
+      apiKey: requireApiKey(apiKey),
+      model: apiKey.transcriptionModel ?? null,
+    }),
+};
 
 const OLLAMA_CONFIG: ProviderFormConfig = {
   displayName: "Ollama",
@@ -264,6 +283,7 @@ export function getProviderFormConfig(
   if (provider === "azure") {
     return context === "transcription" ? AZURE_STT_CONFIG : AZURE_OPENAI_CONFIG;
   }
+  if (provider === "assemblyai") return ASSEMBLYAI_CONFIG;
   if (provider === "ollama") return OLLAMA_CONFIG;
   if (provider === "openai-compatible")
     return getOpenAICompatibleConfig(context);

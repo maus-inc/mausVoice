@@ -1,12 +1,38 @@
 import { delayed } from "@maus-inc/utilities";
 
+export const ASSEMBLYAI_TRANSCRIPTION_MODELS = [
+  "universal-3-5-pro",
+  "universal-2",
+] as const;
+export type AssemblyAITranscriptionModel =
+  (typeof ASSEMBLYAI_TRANSCRIPTION_MODELS)[number];
+
+const ASSEMBLYAI_TRANSCRIPTION_MODEL_SET = new Set<string>(
+  ASSEMBLYAI_TRANSCRIPTION_MODELS,
+);
+
+const resolveSpeechModel = (
+  model: string | null | undefined,
+): AssemblyAITranscriptionModel | undefined => {
+  if (!model) return undefined;
+  if (!ASSEMBLYAI_TRANSCRIPTION_MODEL_SET.has(model)) {
+    throw new Error(
+      `Unknown AssemblyAI speech model "${model}". Supported models: ${ASSEMBLYAI_TRANSCRIPTION_MODELS.join(", ")}.`,
+    );
+  }
+  return model as AssemblyAITranscriptionModel;
+};
+
 export type AssemblyAITestIntegrationArgs = {
   apiKey: string;
+  model?: string | null;
 };
 
 export const assemblyaiTestIntegration = async ({
   apiKey,
+  model,
 }: AssemblyAITestIntegrationArgs): Promise<boolean> => {
+  resolveSpeechModel(model);
   try {
     const response = await fetch("https://api.assemblyai.com/v2/transcript", {
       method: "GET",
@@ -22,6 +48,8 @@ export type AssemblyAITranscriptionArgs = {
   apiKey: string;
   blob: ArrayBuffer | Buffer;
   language?: string;
+  /** Speech model to transcribe with. Omitted => AssemblyAI default. */
+  model?: string | null;
   /** Total time budget for the transcript to reach "completed" (default 180 s). */
   timeoutMs?: number;
   /** Delay between status polls (default 3 s). */
@@ -242,10 +270,14 @@ const createTranscriptRequest = async (
   apiKey: string,
   uploadUrl: string,
   language: string | undefined,
+  model: AssemblyAITranscriptionModel | undefined,
   signal: AbortSignal,
   deadline: number,
 ): Promise<string> => {
   const transcriptPayload: Record<string, unknown> = { audio_url: uploadUrl };
+  if (model) {
+    transcriptPayload.speech_models = [model];
+  }
   if (!language || language === "auto") {
     transcriptPayload.language_detection = true;
   } else {
@@ -336,11 +368,13 @@ export const assemblyaiTranscribeAudio = async ({
   apiKey,
   blob,
   language,
+  model,
   timeoutMs = 180_000,
   pollIntervalMs = 3000,
 }: AssemblyAITranscriptionArgs): Promise<AssemblyAITranscribeAudioOutput> => {
   validatePositiveDuration(timeoutMs, "timeout");
   validatePositiveDuration(pollIntervalMs, "poll interval");
+  const speechModel = resolveSpeechModel(model);
 
   const arrayBuffer =
     blob instanceof ArrayBuffer ? blob : new Uint8Array(blob).buffer;
@@ -365,6 +399,7 @@ export const assemblyaiTranscribeAudio = async ({
       apiKey,
       uploadUrl,
       language,
+      speechModel,
       controller.signal,
       deadline,
     );

@@ -70,6 +70,7 @@
   "are_you_sure_you_want_to_delete_this_style": "Sei sicuro di voler eliminare questo stile?",
   "are_you_sure_you_want_to_delete_your_account_this_will": "Sei sicuro di voler eliminare il tuo account? Questo:",
   "ask_for_administrator_permission_every_time_mausvoice_starts": "Chiedi l'autorizzazione di amministratore a ogni avvio di mausVoice, invece di configurare manualmente i permessi di input. Ha effetto al prossimo avvio.",
+  "assemblyai_speech_model_leave_empty_to_use_the_default_unive": "AssemblyAI speech model. Leave empty to use the default (Universal-3.5 Pro, falling back to Universal-2).",
   "assign_a_shortcut_to_select_a_style_directly_leave_a_row_emp": "Assegna una scorciatoia per selezionare uno stile direttamente. Lascia vuota una riga per disabilitarne la scorciatoia.",
   "assistant_hotkey": "Scorciatoia per l'assistente",
   "assistant_mode": "Modalità assistente",
