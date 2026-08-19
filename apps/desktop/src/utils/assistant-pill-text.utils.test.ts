@@ -16,6 +16,11 @@ describe("markdownToPillText", () => {
   it("strips italic markers without eating surrounding whitespace", () => {
     expect(markdownToPillText("hello *world* today")).toBe("hello world today");
     expect(markdownToPillText("*lead* and tail")).toBe("lead and tail");
+    expect(markdownToPillText("This is *emphasized*.")).toBe(
+      "This is emphasized.",
+    );
+    expect(markdownToPillText("(*emphasized*)")).toBe("(emphasized)");
+    expect(markdownToPillText("*emphasized*, next")).toBe("emphasized, next");
   });
 
   it("leaves asterisks glued inside words alone", () => {

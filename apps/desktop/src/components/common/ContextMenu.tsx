@@ -210,12 +210,12 @@ export const ContextMenu = ({ items, sx }: ContextMenuProps) => {
           return <Divider key={"divider-" + index} sx={{ my: 0.5 }} />;
         }
 
-        // Stable key from the label when available (labels are unique per
-        // menu); fall back to index only for non-string labels.
+        // Index-prefixed keys stay unique even when two items share a label.
         const itemKey =
-          typeof item.label === "string"
-            ? "item-" + item.label
-            : "item-" + index;
+          "item-" +
+          index +
+          "-" +
+          (typeof item.label === "string" ? item.label : "");
         const isActive = activeIndex === index;
         return (
           <ListItemButton

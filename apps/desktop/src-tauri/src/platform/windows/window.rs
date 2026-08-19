@@ -114,10 +114,11 @@ pub fn surface_main_window(window: &WebviewWindow) -> Result<(), String> {
                 }
 
                 // A12: Clear the WebView2 keepalive only after the window is
-                // confirmed visible. If any of the show/unminimize/set_focus
-                // calls fail, the window may still be hidden — keep the
-                // keepalive active so background JS keeps running.
-                set_webview_keepalive(false);
+                // confirmed visible. If show/unminimize failed the window may
+                // still be hidden — leave keepalive on so background JS runs.
+                if window_for_handle.is_visible().unwrap_or(false) {
+                    set_webview_keepalive(false);
+                }
 
                 Ok(())
             })();
