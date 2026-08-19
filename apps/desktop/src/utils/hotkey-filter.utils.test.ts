@@ -13,88 +13,74 @@ describe("evaluateHotkeyTrigger", () => {
   // ── Not recording ────────────────────────────────────────────────────
 
   it("allows any trigger when not recording", () => {
-    const result = evaluateHotkeyTrigger("dictate:toggle", false);
+    const result = evaluateHotkeyTrigger("switch-writing-style-forward", false);
     expect(result.allowed).toBe(true);
     expect(result.reason).toContain("not recording");
   });
 
-  // ── Recording: always allow stop/cancel ───────────────────────────────
+  // ── Recording: always allow critical actions ──────────────────────────
 
-  it("allows stop triggers even while recording", () => {
-    const result = evaluateHotkeyTrigger("dictate:stop", true);
+  it("allows dictate toggle even while recording", () => {
+    const result = evaluateHotkeyTrigger("dictate", true);
     expect(result.allowed).toBe(true);
-    expect(result.reason).toContain("stop/cancel");
+    expect(result.reason).toContain("always allowed");
   });
 
-  it("allows cancel triggers even while recording", () => {
-    const result = evaluateHotkeyTrigger("dictate:cancel", true);
+  it("allows agent-dictate even while recording", () => {
+    const result = evaluateHotkeyTrigger("agent-dictate", true);
     expect(result.allowed).toBe(true);
-    expect(result.reason).toContain("stop/cancel");
+    expect(result.reason).toContain("always allowed");
   });
 
-  // ── Recording: debounce identical triggers ────────────────────────────
+  it("allows cancel-transcription even while recording", () => {
+    const result = evaluateHotkeyTrigger("cancel-transcription", true);
+    expect(result.allowed).toBe(true);
+    expect(result.reason).toContain("always allowed");
+  });
 
-  it("drops a rapid repeat of the same hotkey while recording", () => {
-    // First fire: allowed
-    const first = evaluateHotkeyTrigger("dictate:toggle", true);
+  // ── Recording: debounce style switches ───────────────────────────────
+
+  it("drops a rapid repeat of a style switch while recording", () => {
+    const first = evaluateHotkeyTrigger("switch-writing-style-forward", true);
     expect(first.allowed).toBe(true);
 
-    // Immediate repeat: should be dropped
-    const second = evaluateHotkeyTrigger("dictate:toggle", true);
+    // Immediate repeat should be dropped
+    const second = evaluateHotkeyTrigger("switch-writing-style-forward", true);
     expect(second.allowed).toBe(false);
     expect(second.reason).toContain("debounce");
   });
 
-  // ── Recording: release-before-refire ──────────────────────────────────
-
-  it("requires release before the same hotkey can fire again", () => {
-    // First press
-    const first = evaluateHotkeyTrigger("dictate:toggle", true);
+  it("requires release before the same style switch can fire again", () => {
+    const first = evaluateHotkeyTrigger("switch-writing-style-forward", true);
     expect(first.allowed).toBe(true);
 
-    // After debounce window but still held — should be dropped
-    // (Can't easily simulate time passage, but the held-key check is independent)
-    const afterWindow = evaluateHotkeyTrigger("dictate:toggle", true);
-    expect(afterWindow.allowed).toBe(false);
+    const stillHeld = evaluateHotkeyTrigger("switch-writing-style-forward", true);
+    expect(stillHeld.allowed).toBe(false);
 
-    // Release
-    releaseHotkey("dictate:toggle");
+    releaseHotkey("switch-writing-style-forward");
 
-    // After release, should fire again
-    const afterRelease = evaluateHotkeyTrigger("dictate:toggle", true);
+    const afterRelease = evaluateHotkeyTrigger("switch-writing-style-forward", true);
     expect(afterRelease.allowed).toBe(true);
   });
 
   // ── Recording: distinct hotkeys pass through ──────────────────────────
 
-  it("allows distinct hotkeys during recording", () => {
-    const first = evaluateHotkeyTrigger("dictate:toggle", true);
+  it("allows distinct style switches during recording", () => {
+    const first = evaluateHotkeyTrigger("switch-writing-style-forward", true);
     expect(first.allowed).toBe(true);
 
-    // A different hotkey should pass
-    const second = evaluateHotkeyTrigger("style:cycle-forward", true);
-    expect(second.allowed).toBe(true);
-  });
-
-  // ── Stop/cancel can always fire even when repeatedly triggered ────────
-
-  it("allows stop even when rapidly repeated", () => {
-    const first = evaluateHotkeyTrigger("dictate:stop", true);
-    expect(first.allowed).toBe(true);
-
-    const second = evaluateHotkeyTrigger("dictate:stop", true);
+    const second = evaluateHotkeyTrigger("switch-writing-style-backward", true);
     expect(second.allowed).toBe(true);
   });
 
   // ── Reset ────────────────────────────────────────────────────────────
 
-  it("resets all state", () => {
-    evaluateHotkeyTrigger("dictate:toggle", true);
-    releaseHotkey("dictate:toggle");
+  it("resets all state on resetHotkeyFilter", () => {
+    evaluateHotkeyTrigger("switch-writing-style-forward", true);
+    releaseHotkey("switch-writing-style-forward");
     resetHotkeyFilter();
 
-    // After reset, should fire fresh
-    const result = evaluateHotkeyTrigger("dictate:toggle", true);
+    const result = evaluateHotkeyTrigger("switch-writing-style-forward", true);
     expect(result.allowed).toBe(true);
   });
 });

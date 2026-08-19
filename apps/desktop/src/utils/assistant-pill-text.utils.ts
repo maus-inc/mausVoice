@@ -29,13 +29,13 @@ const HEADING_RE = /^#{1,6}\s+/gm;
 const BLOCKQUOTE_RE = /^>\s*/gm;
 
 /** Fence start characters: backtick (0x60) and tilde (0x7e). */
-const FENCE_CHARS: readonly number[] = [0x60, 0x7e];
+const FENCE_CHARS = new Set<number>([0x60, 0x7e]);
 
 // ── Inline patterns ───────────────────────────────────────────────────────
 
 /** Bold / italic markers. */
 const BOLD_RE = /\*\*(.+?)\*\*/g;
-const ITALIC_RE = /(?<!\*)\*(?!\*)(.+?)(?<!\*)\*(?!\*)/g;
+const ITALIC_RE = /(?:^|[^*])\*(?!\*)(.+?)(?<!\*)\*(?!\*)/g;
 const STRIKETHROUGH_RE = /~~(.+?)~~/g;
 
 /** Inline code backtick fences. */
@@ -48,7 +48,7 @@ const LINK_RE = /\[([^\]]+)\]\(([^)]+)\)/g;
 const IMAGE_RE = /!\[([^\]]*)\]\(([^)]+)\)/g;
 
 /** Reference-style link brackets: [text] or [text][label]. */
-const REF_LINK_RE = /\[([^\[\]]+)\](?:\[([^\[\]]*)\])?/g;
+const REF_LINK_RE = /\[([^\]]+)\](?:\[([^\]]*)\])?/g;
 
 // ── Helpers ───────────────────────────────────────────────────────────────
 
@@ -74,11 +74,11 @@ const clampWithEllipsis = (s: string, maxLen: number): string => {
 
 /** Check if a trimmed line is a fenced code block delimiter. */
 const isFenceLine = (tl: string): boolean => {
-  const fc = tl.charCodeAt(0);
-  if (!FENCE_CHARS.includes(fc)) return false;
+  const fc = tl.codePointAt(0) ?? 0;
+  if (!FENCE_CHARS.has(fc)) return false;
   if (tl.length < 3) return false;
   for (let i = 0; i < 3; i++) {
-    if (tl.charCodeAt(i) !== fc) return false;
+    if ((tl.codePointAt(i) ?? 0) !== fc) return false;
   }
   const rest = tl.slice(3).trim();
   return rest === "" || /^\w+$/.test(rest);

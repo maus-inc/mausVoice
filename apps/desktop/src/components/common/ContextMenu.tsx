@@ -45,6 +45,7 @@ import {
   useCallback,
   useContext,
   useEffect,
+  useMemo,
   useRef,
   useState,
 } from "react";
@@ -158,9 +159,9 @@ export const ContextMenu = ({ items, sx }: ContextMenuProps) => {
         case "End": {
           e.preventDefault();
           if (actionableIndices.length > 0) {
-            setActiveIndex(
-              actionableIndices[actionableIndices.length - 1],
-            );
+setActiveIndex(
+                actionableIndices.at(-1) ?? 0,
+              );
           }
           break;
         }
@@ -227,11 +228,7 @@ export const ContextMenu = ({ items, sx }: ContextMenuProps) => {
               <ListItemIcon
                 sx={{
                   minWidth: 32,
-                  color: item.danger
-                    ? "error.main"
-                    : item.disabled
-                      ? "text.disabled"
-                      : "text.secondary",
+                  color: item.danger ? "error.main" : item.disabled ? "text.disabled" : "text.secondary",
                 }}
               >
                 {item.icon}
@@ -466,52 +463,49 @@ export const ContextMenuProvider = ({
     [],
   );
 
-  // Global right-click handler - suppress default on ALL elements
+  const providerValue = useMemo(() => ({ registerSurface }), [registerSurface]);
+
+  // Global right-click handler for unhandled areas
   useEffect(() => {
     const handleGlobalContextMenu = (e: MouseEvent) => {
-      // Always prevent the default webview context menu
-      e.preventDefault();
+      // Let registered surfaces handle their own right-clicks via their
+      // own onContextMenu. This global handler only catches unhandled ones.
+      // If a surface handled it, preventDefault was already called.
+      // For truly unhandled areas, show a basic default menu.
       const target = e.target as HTMLElement;
       const isInput =
         target.tagName === "INPUT" ||
         target.tagName === "TEXTAREA" ||
         target.isContentEditable;
 
-      const isMac = typeof navigator !== "undefined" && /Mac/.test(navigator.platform);
-      const modKey = isMac ? "\u2318" : "Ctrl";
-
       if (isInput) {
-        const hasSelection = (window.getSelection()?.toString().length ?? 0) > 0;
+        // For text inputs, only suppress default and offer clipboard actions
+        e.preventDefault();
+        const hasSelection = window.getSelection()?.toString().length ?? 0 > 0;
         ctxMenu.handleContextMenu(e as unknown as React.MouseEvent, [
           {
             label: "Cut",
             disabled: !hasSelection,
             onClick: () => {
-              navigator.clipboard.writeText(window.getSelection()?.toString() ?? "").catch(() => {});
               document.execCommand("cut");
             },
-            accelerator: modKey + "+X",
+            accelerator: "Ctrl+X",
           },
           {
             label: "Copy",
             disabled: !hasSelection,
             onClick: () => {
-              navigator.clipboard.writeText(window.getSelection()?.toString() ?? "").catch(() => {});
+              document.execCommand("copy");
             },
-            accelerator: modKey + "+C",
+            accelerator: "Ctrl+C",
           },
           { kind: "divider" },
           {
             label: "Paste",
             onClick: () => {
-              navigator.clipboard.readText().then(t => {
-                const el = document.activeElement as HTMLElement;
-                if (el && (el.tagName === "INPUT" || el.tagName === "TEXTAREA" || el.isContentEditable)) {
-                  document.execCommand("insertText", false, t);
-                }
-              }).catch(() => {});
+              document.execCommand("paste");
             },
-            accelerator: modKey + "+V",
+            accelerator: "Ctrl+V",
           },
           { kind: "divider" },
           {
@@ -519,7 +513,7 @@ export const ContextMenuProvider = ({
             onClick: () => {
               document.execCommand("selectAll");
             },
-            accelerator: modKey + "+A",
+            accelerator: "Ctrl+A",
           },
         ]);
       }
@@ -532,7 +526,7 @@ export const ContextMenuProvider = ({
   }, [ctxMenu]);
 
   return (
-    <ContextMenuProviderContext.Provider value={{ registerSurface }}>
+    <ContextMenuProviderContext.Provider value={providerValue}>
       {children}
       {ctxMenu.renderMenu()}
     </ContextMenuProviderContext.Provider>
