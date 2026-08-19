@@ -74,6 +74,28 @@ export class DictationStrategy extends BaseStrategy {
   }
 
   /**
+   * Drain the accumulated backlog, track the trailing space in
+   * `streamedProcessedText`, and log/recover from any failure.
+   * Returns `true` when text was delivered.
+   *
+   * This is the single place backlog-drain + trailing-space bookkeeping
+   * happens, so the two callers (checkAndDrainBacklog,
+   * handleInterimSegment) cannot desync or double-space.
+   */
+  private async drainBacklogAndAppendSpace(newSegment?: string): Promise<boolean> {
+    try {
+      const result = await drainDictationBacklog(newSegment, this.currentAppId);
+      if (result.delivered) {
+        this.streamedProcessedText += " ";
+      }
+      return result.delivered;
+    } catch (error) {
+      getLogger().error(`Backlog drain failed: ${error}`);
+      return false;
+    }
+  }
+
+  /**
    * Probe the currently focused element and, if it is editable (or the
    * platform cannot tell), drain any accumulated dictation backlog into it.
    *
@@ -92,8 +114,7 @@ export class DictationStrategy extends BaseStrategy {
       if (state === "editable" || state === "unknown") {
         // Target is now editable (or we can't tell — try paste anyway).
         if (backlogLen > 0) {
-          await drainDictationBacklog();
-          this.streamedProcessedText += " ";
+          await this.drainBacklogAndAppendSpace();
         }
         this.backlogActive = false;
       }
@@ -158,8 +179,7 @@ export class DictationStrategy extends BaseStrategy {
       // Target is editable (or unknown -- optimistically try to paste).
       // Drain any accumulated backlog first, then paste the current segment.
       if (hasDictationBacklog()) {
-        await drainDictationBacklog(text);
-        this.streamedProcessedText += " ";
+        await this.drainBacklogAndAppendSpace(text);
         this.backlogActive = false;
         return;
       }
@@ -242,7 +262,7 @@ export class DictationStrategy extends BaseStrategy {
       getLogger().info(
         `Draining backlog segment(s) on finalize`,
       );
-      await drainDictationBacklog();
+      await this.drainBacklogAndAppendSpace();
     }
 
     // Interim paste already hit the focused app without structural commands

@@ -59,7 +59,6 @@ const reviewOutputText = async (
 const insertLocalOutput = async (
   context: OutputContext,
   text: string,
-  suppressFlashOnClipboard = false,
 ): Promise<PasteOutcome | undefined> => {
   const insertionMethod =
     context.currentApp?.insertionMethod ??
@@ -78,11 +77,7 @@ const insertLocalOutput = async (
       : (context.currentApp?.pasteKeybind ??
         context.prefs?.pasteKeybind ??
         null);
-  return insertLocalTranscriptOutputViaPaste(
-    text,
-    pasteKeybind,
-    suppressFlashOnClipboard,
-  );
+  return insertLocalTranscriptOutputViaPaste(text, pasteKeybind);
 };
 
 export const routeTranscriptOutput = async (
@@ -228,9 +223,14 @@ const takeBacklogSnapshot = (): BacklogSnapshot => {
  *
  * The backlog is CLEARED on successful delivery. If the drain fails, the
  * backlog is preserved so the user doesn't lose text.
+ *
+ * @param newSegment  Optional additional segment to deliver with the backlog.
+ * @param currentAppId  Optional app target id for resolving app-specific
+ *                      insertion method and paste keybind preferences.
  */
 export const drainDictationBacklog = async (
   newSegment?: string,
+  currentAppId?: string | null,
 ): Promise<{ delivered: boolean; copiedToClipboard: boolean }> => {
   const snap = takeBacklogSnapshot();
   if (snap.segments.length === 0 && !newSegment?.trim()) {
@@ -246,22 +246,28 @@ export const drainDictationBacklog = async (
   }
   const combinedText = segments.join(" ");
 
+  // Check nonce BEFORE delivery — if the session already advanced, this
+  // backlog belongs to a prior session and must not be delivered.
+  if (getAppState().dictationBacklogNonce !== snap.nonce) {
+    return { delivered: false, copiedToClipboard: false };
+  }
+
   // Deliver the combined backlog text through the standard output path so
   // app- and user-specific insertion methods and paste keybinds are
-  // respected. suppressFlashOnClipboard=false so the ONE permitted pill
-  // flash happens when the backlog hits a non-editable target.
+  // respected.
   const state = getAppState();
   const context: OutputContext = {
     state,
     prefs: getMyUserPreferences(state),
-    currentApp: null,
+    currentApp: currentAppId
+      ? (state.appTargetById[currentAppId] ?? null)
+      : null,
   };
-  const pasteOutcome = await insertLocalOutput(context, combinedText, false);
+  const pasteOutcome = await insertLocalOutput(context, combinedText);
 
-  // Snapshot after paste to confirm we're still in the same session.
-  const currentNonce = getAppState().dictationBacklogNonce;
-  if (currentNonce !== snap.nonce) {
-    // A new session started — don't clear backlog from a prior session.
+  // Post-delivery nonce check: session may have advanced during the
+  // async deliver call.
+  if (getAppState().dictationBacklogNonce !== snap.nonce) {
     return { delivered: true, copiedToClipboard: pasteOutcome === "copied_to_clipboard" };
   }
 
