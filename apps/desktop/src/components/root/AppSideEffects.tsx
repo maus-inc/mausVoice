@@ -82,6 +82,7 @@ import {
   getNextPillVisibility,
   getPillMenuLabel,
 } from "../../utils/tray-pill-visibility.utils";
+import { evaluateHotkeyTrigger, releaseHotkey } from "../../utils/hotkey-filter.utils";
 import {
   getEffectivePillVisibility,
   getIsDictationUnlocked,
@@ -324,6 +325,21 @@ export const AppSideEffects = () => {
   useTauriListen<BridgeHotkeyTriggerPayload>(
     "bridge_hotkey_trigger",
     (payload) => {
+      // A21: Filter hotkey spam while the pill is in an active recording state.
+      // Repeated identical triggers are debounced; stop/cancel always pass.
+      // This must happen BEFORE the counter increment so consumers never see
+      // a filtered trigger.
+      const isRecording = getAppState().overlayPhase === "recording";
+      const { allowed, reason } = evaluateHotkeyTrigger(
+        payload.hotkey,
+        isRecording,
+      );
+      if (!allowed) {
+        getLogger().verbose(
+          `[hotkey-filter] blocked ${payload.hotkey}: ${reason}`,
+        );
+        return;
+      }
       produceAppState((draft) => {
         draft.hotkeyTriggers[payload.hotkey] =
           (draft.hotkeyTriggers[payload.hotkey] ?? 0) + 1;
@@ -341,6 +357,14 @@ export const AppSideEffects = () => {
     const existing = getAppState().keysHeld;
     if (isEqual(existing, payload.keys)) {
       return;
+    }
+
+    // A21: When keys are released (keysHeld goes from non-empty to empty),
+    // notify the hotkey filter so release-before-refire tracking is accurate.
+    if (existing.length > 0 && payload.keys.length === 0) {
+      for (const key of existing) {
+        releaseHotkey(key);
+      }
     }
 
     produceAppState((draft) => {

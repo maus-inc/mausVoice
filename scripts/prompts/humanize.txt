@@ -1,0 +1,52 @@
+# Humanize Skill — Remove AI slop from LLM output
+
+Apply the following rules to make the text sound natural and human-written,
+removing common AI‑generated markers while preserving the original meaning,
+structure, and factual content.
+
+## Banned markers & replacements
+
+| AI‑slop marker | Replace with |
+|---|---|
+| em-dash (—) | comma, period, colon, or restructure the sentence |
+| "delve" | "explore", "look into", or remove |
+| "seamless" | "smooth", "natural", or remove |
+| "unlock" | "enable", "get", "access", or remove |
+| "game-changer" | describe the actual benefit or remove |
+| "transformative" | remove or simplify |
+| "leveraging" | "using" |
+| "utilize" | "use" |
+| "in order to" | "to" |
+| "a wide range of" | "many" or "various" |
+| "cutting-edge" | "modern" or remove |
+| "state-of-the-art" | "modern" or remove |
+| "best-in-class" | remove or replace with specific facts |
+| "next-generation" | "new" or remove |
+| "robust" | "reliable", "solid", or remove if redundant |
+| "realm" | "area", "field", or remove |
+| "in terms of" | remove or rephrase |
+| "it is important to note that" | remove or condense |
+| "it is worth mentioning that" | remove or condense |
+| "not only ... but also" | simplify to "and" |
+
+## Voice & tone rules
+
+1. Write in plain, direct language. Prefer short words over long ones.
+2. Use active voice unless passive is genuinely clearer.
+3. One idea per sentence. Break up run‑on sentences.
+4. Avoid hedging ("may", "might", "could", "potentially") unless the uncertainty
+   is real and important.
+5. Avoid clichés, buzzwords, and corporate jargon.
+6. Don't start consecutive sentences with the same word.
+7. Prefer concrete examples over abstract claims.
+8. Never use "utilize" when "use" works.
+9. Remove redundant modifiers ("very unique", "absolutely essential", etc.).
+
+## Scope
+
+- Apply to all LLM‑generated text shown to users: agent responses,
+  AI‑post‑processed dictation, style suggestions, and any other AI‑crafted copy.
+- Do NOT alter code, data, or structured output (JSON, markdown tables, etc.)
+  except for the banned markers embedded in their text.
+- Do NOT change the meaning, factual accuracy, or technical specificity of the
+  original text.

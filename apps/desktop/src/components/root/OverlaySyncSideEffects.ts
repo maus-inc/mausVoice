@@ -5,6 +5,7 @@ import { isEqual } from "lodash-es";
 import { useEffect, useRef } from "react";
 import type { AppState, StreamingMessageState } from "../../state/app.state";
 import { useAppStore } from "../../store";
+import { markdownToPillText } from "../../utils/assistant-pill-text.utils";
 
 export const OverlaySyncSideEffects = () => {
   useNativePillAssistantSync();
@@ -69,9 +70,16 @@ const buildNativePillMessages = (
       const toolName = (meta?.toolName as string) ?? null;
       const reason = (meta?.reason as string) ?? null;
       const toolInfo = toolName ? toolInfoById[toolName] : undefined;
+      // A04: Strip markdown from assistant messages so the native pill
+      // (which has no markdown renderer) shows clean plain text.
+      const rawContent = m.content || null;
+      const cleanedContent =
+        m.role === "assistant" && rawContent
+          ? markdownToPillText(rawContent, { maxLength: 600 })
+          : rawContent;
       return {
         id: m.id,
-        content: m.content || null,
+        content: cleanedContent,
         is_error: m.role === "system",
         is_tool_result: isToolResult,
         tool_name: toolName,
