@@ -2,8 +2,11 @@ name: Build Desktop
 
 on:
   push:
+<<<<<<< HEAD
     branches:
       - main
+=======
+>>>>>>> 8d4d92cb (ci: trigger CI on push only (no pull_request) to avoid duplicate runs)
     paths:
       - "apps/desktop/**"
       - "apps/windows-installer/**"
