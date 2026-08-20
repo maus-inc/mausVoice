@@ -22,10 +22,7 @@ describe("logOnRejection", () => {
     const onUnhandled = vi.fn();
     process.on("unhandledRejection", onUnhandled);
     try {
-      logOnRejection(
-        Promise.reject(new Error("boom")),
-        "saving the toggle",
-      );
+      logOnRejection(Promise.reject(new Error("boom")), "saving the toggle");
       await new Promise((resolve) => setTimeout(resolve, 10));
       expect(warningMock).toHaveBeenCalledTimes(1);
       expect(warningMock.mock.calls[0]?.[0]).toContain("saving the toggle");

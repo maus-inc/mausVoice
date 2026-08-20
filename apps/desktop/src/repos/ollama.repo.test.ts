@@ -23,9 +23,9 @@ describe("OpenAICompatibleRepo URL handling", () => {
     );
     await repo.getAvailableModels();
 
-    expect(calls.every((url) => url === "http://127.0.0.1:11434/v1/models")).toBe(
-      true,
-    );
+    expect(
+      calls.every((url) => url === "http://127.0.0.1:11434/v1/models"),
+    ).toBe(true);
   });
 
   it("does not re-root an already API-versioned base", async () => {
