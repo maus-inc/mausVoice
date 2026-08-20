@@ -415,8 +415,7 @@ export const useContextMenu = (): UseContextMenuReturn => {
     const previous = previouslyFocusedRef.current;
     if (
       restoreFocus &&
-      previous &&
-      previous.isConnected &&
+      previous?.isConnected &&
       typeof previous.focus === "function"
     ) {
       previous.focus();
