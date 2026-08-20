@@ -22,7 +22,11 @@ import {
   setSelectedToneId,
 } from "../../actions/user.actions";
 import { produceAppState, useAppStore } from "../../store";
-import { useContextMenu, type ContextMenuItem } from "../common/ContextMenu";
+import {
+  isEditableTarget,
+  useContextMenu,
+  type ContextMenuItem,
+} from "../common/ContextMenu";
 import {
   getActiveManualToneIds,
   getManuallySelectedToneId,
@@ -190,9 +194,11 @@ export const ManualStylingRow = ({ id }: ManualStylingRowProps) => {
   return (
     <Box
       component="div"
-      onContextMenu={(e) =>
-        ctxMenu.handleContextMenu(e.nativeEvent, contextMenuItems, "style")
-      }
+      onContextMenu={(e) => {
+        // Yield right-clicks on editable text to the provider's clipboard menu.
+        if (isEditableTarget(e.target)) return;
+        ctxMenu.handleContextMenu(e.nativeEvent, contextMenuItems);
+      }}
     >
       <ListTile
         onClick={handleSelect}

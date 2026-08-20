@@ -14,7 +14,11 @@ import { FormattedMessage, useIntl } from "react-intl";
 import { showErrorSnackbar } from "../../actions/app.actions";
 import { getTermRepo } from "../../repos";
 import { getAppState, produceAppState, useAppStore } from "../../store";
-import { useContextMenu, type ContextMenuItem } from "../common/ContextMenu";
+import {
+  isEditableTarget,
+  useContextMenu,
+  type ContextMenuItem,
+} from "../common/ContextMenu";
 
 export type DictionaryRowProps = {
   id: string;
@@ -131,13 +135,12 @@ export const DictionaryRow = ({ id }: DictionaryRowProps) => {
       <Stack
         direction="row"
         spacing={2}
-        onContextMenu={(e) =>
-          ctxMenu.handleContextMenu(
-            e.nativeEvent,
-            contextMenuItems,
-            "dictionary",
-          )
-        }
+        onContextMenu={(e) => {
+          // Yield right-clicks on the term/replacement text fields to the
+          // provider's clipboard menu (Cut/Copy/Paste/Select All).
+          if (isEditableTarget(e.target)) return;
+          ctxMenu.handleContextMenu(e.nativeEvent, contextMenuItems);
+        }}
         sx={{
           alignItems: "center",
           py: 1,

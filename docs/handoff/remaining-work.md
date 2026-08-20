@@ -1,8 +1,12 @@
-# Deterministic Handoff — Remaining Work (A12 · A23 test · A11 wiring)
+# Deterministic Handoff — Remaining Work (A12 audit · A11 composer/home wiring)
 
-This is the complete, self-contained specification for the three items that
-remain open on `arena/01a01be4-mausvoice` after the audit. Each section is
-written so a smaller model (or another engineer) can execute it without
+This is the complete, self-contained specification for the items still open after
+the audit. **A23's thock rate-limiter unit test and A11's A–D surface wiring are
+already implemented** (the A23 refactor landed as a pure function with race-free
+tests; transcripts/styles/chats/dictionary are wired — see the sections below for
+the current state). What genuinely remains: the **A12** measurement-backed
+stability/memory audit, and the **A11** composer/home (E/F) wiring. Each section
+is written so a smaller model (or another engineer) can execute it without
 re-deriving the context. **Do the work in the order given** — A11 last, because
 it must compose with the ContextMenu component already shipped on this branch.
 
@@ -24,43 +28,25 @@ and `REVIEW.md`):
 
 ---
 
-## 1. A23 — Add the missing thock rate-limiter unit test
+## 1. A23 — Verify the thock rate-limiter unit test
 
 ### Status
-`apps/desktop/src-tauri/src/system/audio_feedback.rs` ships a rate limiter that
-has **no test**, but the plan's A23 TESTS section explicitly requires
-"rate-limiter logic (pure function)". This is the only A23 deliverable that is
-still open.
 
-### Current code (read it first — lines ~154-182 of `audio_feedback.rs`)
-```rust
-mod thock_limiter {
-    use std::sync::atomic::{AtomicU64, Ordering};
-    use std::time::{SystemTime, UNIX_EPOCH};
+`apps/desktop/src-tauri/src/system/audio_feedback.rs` already ships the rate
+limiter **and its unit test**: `should_throttle_at(now_ms, last_ms) -> (bool, u64)`
+was extracted as a pure decision function and is covered by four tests
+(`first_thock_is_not_throttled`, `within_window_is_throttled`,
+`at_or_past_window_is_reenabled`, `clock_skew_backwards_is_safe`). The only
+remaining step is a `cargo` environment to compile and run them — `cargo` is
+unavailable in the authoring sandbox, so this section is a verification handoff,
+not a "write the test" task.
 
-    const THROTTLE_MS: u64 = 100;
+### Implemented (current code in `audio_feedback.rs`)
 
-    static LAST_THOCK_MS: AtomicU64 = AtomicU64::new(0);
-
-    pub fn should_throttle() -> bool {
-        let now = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .unwrap_or_default()
-            .as_millis() as u64;
-        let last = LAST_THOCK_MS.load(Ordering::Relaxed);
-        if now.saturating_sub(last) < THROTTLE_MS {
-            return true;
-        }
-        LAST_THOCK_MS.store(now, Ordering::Relaxed);
-        false
-    }
-}
-```
-
-### Required change (deterministic — do exactly this)
-
-1. Extract the decision logic into a **pure, timestamp-injected** function so it
-   is testable without sleeping or reading the wall clock:
+The rate-limiter decision is already a **pure, timestamp-injected** function —
+`should_throttle_at(now_ms, last_ms) -> (bool, u64)` has no shared state, so the
+unit tests below are immune to the parallel-test static race that the original
+reset-based tests had:
 
 ```rust
 mod thock_limiter {
@@ -71,15 +57,14 @@ mod thock_limiter {
 
     static LAST_THOCK_MS: AtomicU64 = AtomicU64::new(0);
 
-    /// Pure decision: true when `now_ms` is within THROTTLE_MS of the last
-    /// accepted timestamp. On accept, records `now_ms` and returns false.
-    fn should_throttle_at(now_ms: u64) -> bool {
-        let last = LAST_THOCK_MS.load(Ordering::Relaxed);
-        if now_ms.saturating_sub(last) < THROTTLE_MS {
-            return true;
+    /// Pure decision: returns `(throttled, next_last_ms)` given the current
+    /// timestamp and the last accepted one. No shared state.
+    fn should_throttle_at(now_ms: u64, last_ms: u64) -> (bool, u64) {
+        if now_ms.saturating_sub(last_ms) < THROTTLE_MS {
+            (true, last_ms)
+        } else {
+            (false, now_ms)
         }
-        LAST_THOCK_MS.store(now_ms, Ordering::Relaxed);
-        false
     }
 
     pub fn should_throttle() -> bool {
@@ -87,68 +72,58 @@ mod thock_limiter {
             .duration_since(UNIX_EPOCH)
             .unwrap_or_default()
             .as_millis() as u64;
-        should_throttle_at(now)
-    }
-}
-```
-
-2. Add tests in the **same module** (so they can reach the private `static`), in
-   a `#[cfg(test)] mod tests { … }`. Because `cargo test` runs tests on parallel
-   threads, **reset `LAST_THOCK_MS` to `0` at the start of every test** and do
-   not rely on cross-test ordering:
-
-```rust
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    fn reset() {
-        LAST_THOCK_MS.store(0, Ordering::Relaxed);
+        let last = LAST_THOCK_MS.load(Ordering::Relaxed);
+        let (throttled, next_last) = should_throttle_at(now, last);
+        if !throttled {
+            LAST_THOCK_MS.store(next_last, Ordering::Relaxed);
+        }
+        throttled
     }
 
-    #[test]
-    fn first_thock_is_not_throttled() {
-        reset();
-        assert!(!should_throttle_at(1_000));
-    }
+    #[cfg(test)]
+    mod tests {
+        use super::*;
 
-    #[test]
-    fn within_window_is_throttled() {
-        reset();
-        assert!(!should_throttle_at(1_000));   // accept at t=1000
-        assert!(should_throttle_at(1_050));    // 50ms later -> throttled
-        assert!(should_throttle_at(1_099));    // 99ms later -> throttled
-    }
+        #[test]
+        fn first_thock_is_not_throttled() {
+            assert_eq!(should_throttle_at(1_000, 0), (false, 1_000));
+        }
 
-    #[test]
-    fn at_or_past_window_is_reenabled() {
-        reset();
-        assert!(!should_throttle_at(1_000));
-        assert!(!should_throttle_at(1_100));   // exactly 100ms -> accept
-        assert!(!should_throttle_at(1_250));   // past window -> accept
-    }
+        #[test]
+        fn within_window_is_throttled() {
+            assert_eq!(should_throttle_at(1_050, 1_000), (true, 1_000));
+            assert_eq!(should_throttle_at(1_099, 1_000), (true, 1_000));
+        }
 
-    #[test]
-    fn clock_skew_backwards_is_safe() {
-        reset();
-        assert!(!should_throttle_at(2_000));
-        // `saturating_sub` must not panic or un-throttle on a backwards clock.
-        assert!(should_throttle_at(1_900));    // 1900 - 2000 saturates to 0 < 100
+        #[test]
+        fn at_or_past_window_is_reenabled() {
+            assert_eq!(should_throttle_at(1_100, 1_000), (false, 1_100));
+            assert_eq!(should_throttle_at(1_250, 1_100), (false, 1_250));
+        }
+
+        #[test]
+        fn clock_skew_backwards_is_safe() {
+            // `saturating_sub` must not panic or un-throttle on a backwards clock.
+            assert_eq!(should_throttle_at(1_900, 2_000), (true, 2_000));
+        }
     }
 }
 ```
 
 ### Verification (must all pass; run from repo root)
+
 ```bash
-cargo test -p mausvoice-desktop system::audio_feedback -- --test-threads=1   # if the crate is named mausvoice-desktop
-# or, if package name differs, `cargo test -p <pkg> audio_feedback`
+cargo test -p mausvoice-desktop audio_feedback   # no --test-threads=1 needed: the
+# tests are pure and share no static state; or `cargo test -p <pkg> audio_feedback`
 cargo fmt --check
 cargo clippy -- -D warnings
 ```
+
 If the crate package name is not `mausvoice-desktop`, find it via
 `grep '^name' apps/desktop/src-tauri/Cargo.toml` and use that.
 
 ### DoD
+
 - `should_throttle_at` is pure and unit-tested (all four cases above).
 - `should_throttle()` behavior is unchanged (still reads the wall clock).
 - `cargo fmt --check`, `cargo clippy -- -D warnings`, `cargo test` green.
@@ -158,8 +133,10 @@ If the crate package name is not `mausvoice-desktop`, find it via
 ## 2. A12 — Stability / memory / idle audit (measurement-backed)
 
 ### Status
+
 The **implementation** hardening the plan enumerates already exists in this
 checkout (verified):
+
 - `apps/desktop/src/hooks/async.hooks.ts` — `AsyncDataController` uses a monotonic
   generation counter and clears its timeout on cancel/unmount.
 - `packages/desktop-utils/src/tauri-listen.ts` — `useTauriListen` has a `canceled`
@@ -171,14 +148,18 @@ baselines, before/after metrics, and the consolidated report. This must be done
 on a running app and cannot be fabricated from static reading.
 
 ### Step 0 — Build the measurement harness (prerelease build)
+
 A06 gates dev surfaces behind a prerelease build. Use it so DevTools is available:
+
 ```bash
 pnpm --filter desktop dev:mac    # or dev:windows / dev:linux
 ```
+
 In the running app, open DevTools (right-click → Inspect, available only in the
 prerelease build), go to the **Memory** tab.
 
 ### Step 1 — Record baselines
+
 For each of the six pages (Home, History/Transcriptions, Dictionary, Styles,
 Chats, Composer) plus the Settings and each dialog you can reach:
 
@@ -191,13 +172,14 @@ Chats, Composer) plus the Settings and each dialog you can reach:
 Record a table: `surface | baseline heap | heap after 30 cycles | growth | detached nodes | listeners`. Growth must be recorded even if it is zero — the report must show evidence, not assertions.
 
 ### Step 2 — Audit these specific sites (verify teardown, do not fix unless proven)
+
 Read each and confirm the cleanup path actually runs on unmount/dep change. Only
 fix what you can **prove** leaks (listener count grows across cycles, or a
 detached-node count that never drops):
 
 1. `apps/desktop/src/components/root/TitleBar.tsx:31-49` — `onResized` unlisten
    (currently present via `return () => unlisten?.();`). Verify the promise-race:
-   if `onResized` resolves *after* unmount, is the unlisten still called? (The
+   if `onResized` resolves _after_ unmount, is the unlisten still called? (The
    `canceled`-flag pattern in `tauri-listen.ts` is the correct fix if it isn't.)
 2. `apps/desktop/src/components/root/WindowResizeHandles.tsx` — per-pointer
    handlers; verify `pointerdown/pointermove/pointerup` listeners are removed
@@ -219,6 +201,7 @@ detached-node count that never drops):
    Windows D2D / GTK) and IPC reader threads — verify clean exit.
 
 ### Step 3 — Idle memory
+
 While idle (no recording, no agent turn), identify what runs: keepalive timers
 (`platform/windows/window.rs` `start_webview_keepalive`), update poll
 (`AppSideEffects` `useIntervalAsync(UPDATE_CHECK_INTERVAL_MS, …)`), remote-receiver
@@ -227,7 +210,9 @@ runs after its data is already fresh), and keep instant-resume intact. Document
 any poller you decide to keep and why.
 
 ### Required report (this is the deliverable — omit none)
+
 Use the exact `REVIEW.md` §2.5 structure:
+
 ```
 ## Verdict: Ready / Not Ready   Confidence: High/Medium/Low
 ## Measurement harness setup
@@ -239,6 +224,7 @@ Use the exact `REVIEW.md` §2.5 structure:
 ```
 
 ### DoD
+
 - Table of baselines + growth for the six pages + dialogs, with evidence.
 - Zero known listener/observer leaks in the audited components (or a precise
   remaining-findings entry for each).
@@ -250,15 +236,31 @@ Use the exact `REVIEW.md` §2.5 structure:
 ## 3. A11 — Wire the contextual context menus (finish the inventory)
 
 ### Status
+
 The shared component `apps/desktop/src/components/common/ContextMenu.tsx` and the
-text-input clipboard menu already work and are tested. **No page surface is wired.**
-The plan requires the inventory (transcriptions, dictionary, styles, chats,
-composer, home, plus a default app-level menu) to be wired OR explicitly descoped
-with a written rationale. This section wires them.
+text-input clipboard menu already work and are tested, and the following
+**non-input surfaces are already wired** (each with its own `useContextMenu()`,
+`onContextMenu` handler, `renderMenu()`, and a component test):
+
+- **A. Transcriptions** — `TranscriptRow.tsx`: Copy text / Copy ID / Open details /
+  Retranscribe / divider / Delete (danger).
+- **C. Styles** — `ManualStylingRow.tsx`: Edit / divider / Delete (danger).
+- **D. Chats** — `ConversationListItem.tsx` (Delete conversation) and
+  `ChatMessageBubble.tsx` (Copy message).
+- **B. Dictionary** — `DictionaryRow.tsx` is wired with **Delete only**: the row
+  edits inline (no modal edit entry point exists), so Edit is intentionally
+  omitted per the item-ordering rule; the test documents this decision.
+
+What remains **open**: **E. Composer** and **F. Home** are not wired (the composer
+text area is already covered by the provider's input clipboard menu; there is no
+separate composer menu to add, and Home has no documented right-click refresh
+entry point). If a later pass wants them, wire `ComposerPage.tsx` and `HomePage.tsx`
+with the spec below; otherwise record them as explicitly descoped.
 
 ### The two mechanisms you have (use these, do not invent new ones)
+
 - `useContextMenu()` → `{ handleContextMenu, renderMenu, closeMenu }`.
-  `handleContextMenu(e.nativeEvent, items, surfaceKey)` where `items` is
+  `handleContextMenu(e.nativeEvent, items)` where `items` is
   `ContextMenuItem[]`.
 - `ContextMenuProvider` (already mounted at `Root.tsx:52`) intercepts global
   right-clicks and shows the clipboard menu **only on inputs**. It leaves all
@@ -266,6 +268,7 @@ with a written rationale. This section wires them.
   `onContextMenu` handler on that surface's row/container.
 
 ### Item ordering rules (follow exactly)
+
 - Common verbs first (Copy / Open / Edit), destructive verbs **last** with
   `danger: true` and `error.main` color, separators (`{ kind: "divider" }`)
   between groups.
@@ -278,6 +281,7 @@ with a written rationale. This section wires them.
 **A. Transcriptions / History — `TranscriptRow.tsx`**
 Wire `onContextMenu` on the row (or its container in `TranscriptionsPage.tsx`).
 Items, reusing the existing handlers:
+
 1. **Copy text** → `handleCopyTranscript(transcription?.transcript ?? "")` (already
    implemented at `TranscriptRow.tsx:96`).
 2. **Copy ID** → copy `id` via `navigator.clipboard.writeText(id)` then the existing
@@ -289,6 +293,7 @@ Items, reusing the existing handlers:
 6. **Delete** (danger) → `handleDeleteTranscript(id)` (`:111`).
 
 **B. Dictionary — `DictionaryRow.tsx`**
+
 1. **Edit** → reuse whatever the row's edit affordance calls (if the row has no
    edit, `openTermEditor`/equivalent — find the existing entry point; if none,
    record it as an out-of-lane finding and omit Edit rather than inventing one).
@@ -296,6 +301,7 @@ Items, reusing the existing handlers:
 3. **Delete** (danger) → `handleDelete` (`DictionaryRow.tsx:76`).
 
 **C. Styles — `ManualStylingRow.tsx`**
+
 1. **Edit** → `openToneEditorDialog({ mode: "edit", toneId: id })` (`handleEdit`,
    `ManualStylingRow.tsx:52`).
 2. `{ kind: "divider" }`
@@ -303,6 +309,7 @@ Items, reusing the existing handlers:
    confirmation/snackbar the row's delete affordance uses; reuse it, don't fork).
 
 **D. Chats — `ConversationListItem.tsx` (list) and `ChatMessageBubble.tsx` (message)**
+
 - List item: **Rename** (if a rename entry point exists — reuse it), divider,
   **Delete conversation** (danger) → `deleteConversation(id)` from
   `chat.actions.ts:56`.
@@ -320,8 +327,13 @@ data load) and nothing else. If Home has no refresh entry point, record it as
 descoped.
 
 ### Cross-cutting requirements
+
 - **Do not** duplicate the provider's clipboard logic; surfaces A–D are non-input
   rows, so they use `useContextMenu()` directly, not the provider.
+- **Yield editables to the provider:** if a surface contains editable text
+  (e.g. `DictionaryRow`'s term/replacement `TextField`s), its `onContextMenu`
+  must call `isEditableTarget(e.target)` first and return early so the provider's
+  clipboard menu (Cut/Copy/Paste/Select All) wins over the surface menu.
 - Remove the scattered `preventDefault()` hacks only where they now become menu
   items you own (`ConversationLayout.tsx:173`, `ListTile.tsx:145`). If a hack
   belongs to a surface you are not wiring here, **list it as a finding**, do not
@@ -331,8 +343,10 @@ descoped.
 - Every new label goes through i18n and `pnpm --filter desktop i18n` must be run.
 
 ### Required tests (component tests, jsdom + vitest, matching
+
 `ContextMenu.test.ts` conventions in the same directory)
 For **each** wired surface, one test file `<Surface>.test.ts(x)` that:
+
 1. renders the row with the necessary mocked store/repos,
 2. dispatches a `contextmenu` MouseEvent on the row,
 3. asserts the expected menu items (labels + presence of the divider + danger
@@ -343,6 +357,7 @@ Reuse the `vi.mock("react-intl", …)` and `IS_REACT_ACT_ENVIRONMENT` setup alre
 in `ContextMenu.test.ts` so labels render as `defaultMessage` strings.
 
 ### DoD
+
 - Surfaces A–D wired (F/E wired or explicitly descoped with a one-line rationale
   in the report).
 - `pnpm --filter desktop check-types && lint && test` green (new tests included).
