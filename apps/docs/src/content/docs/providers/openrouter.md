@@ -11,7 +11,7 @@ Expand **Model** on the selected key to fetch OpenRouter's live model catalog. S
 
 ## Route to upstream providers
 
-Expand **Advanced Routing** to set an ordered provider list, allow or forbid fallbacks, and allow or deny providers that may collect data. This configuration is saved on the API-key record and sent with requests made through that record. An empty priority list delegates routing to OpenRouter; fallback is allowed and data collection is allowed unless you change them.
+Expand **Advanced Routing** to set an ordered provider list, allow or forbid fallbacks, and allow or deny providers that may collect data. mausVoice saves this configuration on the API-key record and sends it with requests made through that record. An empty priority list delegates routing to OpenRouter; fallback and data collection stay allowed unless you change them.
 
 Denying data collection narrows eligibility, but it is not a complete local-privacy guarantee: requests still pass through OpenRouter and an eligible upstream. Review both services' current policies. Disabling fallbacks improves determinism but can reduce availability.
 

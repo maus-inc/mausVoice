@@ -5,7 +5,7 @@ sidebar:
   order: 10
 ---
 
-Assistant mode is an experimental command workflow, separate from ordinary dictation. Instead of cleaning up a transcript and inserting it directly, mausVoice sends the recognized command into an assistant conversation. The assistant can answer, inspect the focused interface through accessibility APIs, request permission to paste text, and—only when power mode is enabled—request permission to run a shell command.
+Assistant mode is an experimental command workflow, separate from ordinary dictation. Instead of cleaning up a transcript and inserting it directly, mausVoice sends the recognized command into an assistant conversation. The assistant can answer, inspect the focused interface through accessibility APIs, and request permission to paste text. When power mode is enabled, it can also request permission to run a shell command.
 
 ## Configure it
 
@@ -25,7 +25,7 @@ Useful companion shortcuts are listed under **Settings → General → Hotkey sh
 - **Open chat** opens the current assistant conversation in the main window.
 - **Cancel transcription** cancels the active dictation or assistant session.
 
-The assistant can iterate through several model and tool steps. Watch the activity and permission prompts rather than assuming a request has finished after the first response.
+The assistant can iterate through several model and tool steps. Watch the activity and permission prompts; a request is not necessarily finished after the first response.
 
 ## Tool approvals
 
@@ -39,4 +39,4 @@ Power mode adds the `run_terminal_command` tool. On Windows it invokes the propo
 
 Enabling power mode requires a warning confirmation, and the dialog asks you to restart mausVoice before relying on the change. Keep it off unless the task genuinely needs shell access. Never approve a command you do not understand, and avoid **Always allow** for terminal execution. Turning the switch off and restarting removes the terminal tool from the assistant, but previously remembered always-allow storage is a separate setting.
 
-For ordinary drafting and rewriting, leave power mode disabled. Screen-context and paste tools are enough for most field-focused work and substantially reduce the potential impact of a mistaken or malicious instruction.
+For ordinary drafting and rewriting, leave power mode disabled. Screen-context and paste tools are enough for most field-focused work, and without shell access a mistaken or malicious instruction can do far less damage.

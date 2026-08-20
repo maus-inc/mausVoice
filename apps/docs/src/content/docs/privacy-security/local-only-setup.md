@@ -7,7 +7,7 @@ sidebar:
 
 For ordinary dictation, choose **Settings → Processing → AI transcription → Local**, download and select a validated model, then set **AI post processing → Off**. Keep Assistant mode disabled and multi-device output disconnected. After the model download, that core audio-to-final-text path does not require a hosted AI provider.
 
-“Local” still has boundaries:
+"Local" still has boundaries:
 
 - Model download contacts Hugging Face. The app's sidecar itself binds to `127.0.0.1` on an ephemeral port and receives buffered audio over local HTTP.
 - A local transcription plus API rewrite sends transcript, style, and context to the selected generative provider.
@@ -17,4 +17,4 @@ For ordinary dictation, choose **Settings → Processing → AI transcription �
 
 Stored keys do not send requests by themselves, but removing unused entries makes the setup easier to audit. Enable Incognito before sensitive dictation if you do not want new history or audio snapshots persisted. It does not erase old records. Paste insertion also places text on the system clipboard, where the OS and clipboard managers may retain it.
 
-For stronger assurance, monitor outbound traffic during a representative dictation and audit every enabled stage rather than relying on the word “Local.”
+For stronger assurance, monitor outbound traffic during a representative dictation and audit every enabled stage rather than relying on the word "Local."

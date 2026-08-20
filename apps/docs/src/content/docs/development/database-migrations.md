@@ -19,4 +19,4 @@ A durable preference change usually needs all of these:
 
 Prefer forward transformations. SQLite has limited `ALTER TABLE`; copy/rename operations must preserve constraints and data deliberately. Consider profiles created under legacy product identities: `system/paths.rs` can migrate `com.voquill.desktop/voquill.db` and its `-wal`/`-shm` companions.
 
-Never test destructive migration ideas on the only live profile. Copy the database plus WAL and SHM files while the app is fully closed. A fresh database proving startup is insufficient—duplicate columns, stale nulls, removed enum values, and old tone/key records usually appear only on upgrade.
+Never test destructive migration ideas on the only live profile. Copy the database plus WAL and SHM files while the app is fully closed. A fresh database proving startup is insufficient. Duplicate columns, stale nulls, removed enum values, and old tone/key records usually appear only on upgrade.

@@ -5,7 +5,7 @@ sidebar:
   order: 2
 ---
 
-Use Node from `.nvmrc`—currently v24—even though the broad root engine floor says Node 18. CI follows `.nvmrc`. Enable Corepack or install the exact package manager from the root manifest, pnpm 10.11.0, then install from the repository root:
+Use Node from `.nvmrc`, currently v24, even though the broad root engine floor says Node 18. CI follows `.nvmrc`. Enable Corepack or install the exact package manager from the root manifest, pnpm 10.11.0, then install from the repository root:
 
 ```bash
 corepack enable

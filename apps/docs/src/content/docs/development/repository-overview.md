@@ -22,7 +22,7 @@ mausVoice is a pnpm 10.11.0/Turborepo workspace whose root package is marked pri
 
 - `packages/rust_transcription/` builds CPU and GPU HTTP sidecars that run whisper.cpp GGML models and ONNX Runtime Parakeet/Canary models.
 - `packages/rust_{macos,windows,gtk}_pill/` implement each native overlay.
-- `packages/rust_pill_shared/` shares geometry and ring-animation math—not the entire platform message protocol.
+- `packages/rust_pill_shared/` shares geometry and ring-animation math, not the entire platform message protocol.
 - `patches/` contains checked-in dependency fixes used by the Tauri Cargo manifest.
 
 `scripts/` and `.github/scripts/` prepare bindings, sidecars, release text, casks, and CI environments. `.github/workflows/` separates build, lint, desktop tests, sidecar tests, docs/Pages, and releases.
