@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 /**
- * Regenerates the README badge SVGs in docs/assets/badges/.
+ * Regenerates the repository badge SVGs in docs/assets/badges/.
  *
  * Style: black capsule (shadcn default-button look), 1px hairline border,
  * light inner top highlight, soft drop shadow, label in Geist Medium at 62%
@@ -8,9 +8,14 @@
  * opentype.js so the badge carries no font dependencies (GitHub will not
  * load remote fonts from <img> SVGs; outlines render identically everywhere).
  *
+ * Icon badges are optically centered on the glyph's bounding box (via
+ * svg-path-bbox), not on its 24-unit viewBox, which matters for glyphs
+ * whose content is not centered in the viewBox.
+ *
  * Usage:
- *   npm i opentype.js
- *   node docs/assets/badges/source/generate-badges.mjs
+ *   cd docs/assets/badges/source
+ *   npm install
+ *   node generate-badges.mjs
  *
  * To use Satoshi instead of Geist, point FONT_MEDIUM/FONT_SEMIBOLD at
  * marketing/assets/fonts/ (only Satoshi Medium ships as TTF today).
@@ -20,6 +25,7 @@ import fs from "node:fs";
 import path from "node:path";
 import url from "node:url";
 import opentype from "opentype.js";
+import { svgPathBbox } from "svg-path-bbox";
 
 const here = path.dirname(url.fileURLToPath(import.meta.url));
 const OUT = path.resolve(here, "..");
@@ -32,20 +38,20 @@ const semibold = opentype.loadSync(FONT_SEMIBOLD);
 const glyphs = JSON.parse(fs.readFileSync(path.join(here, "glyphs.json"), "utf8"));
 
 // -- design tokens ----------------------------------------------------------
-const H = 28; // capsule height
-const RX = 6; // corner radius
-const SIZE = 13; // text size
-const GAP = 6; // label/value gap
-const TEXT_PADX = 10; // capsule side padding for text badges
-const ICON = 14; // platform glyph box
-const ICON_PADX = 9;
-const PAD_SIDE = 6; // canvas padding around the capsule (shadow spread)
+const H = 35; // capsule height
+const RX = 7.5; // corner radius
+const SIZE = 16.25; // text size
+const GAP = 7.5; // label/value gap
+const TEXT_PADX = 12.5; // capsule side padding for text badges
+const ICON = 17.5; // platform glyph box
+const ICON_PADX = 11.25;
+const PAD_SIDE = 7; // canvas padding around the capsule (shadow spread)
 const PAD_TOP = 4;
-const PAD_BOTTOM = 8;
+const PAD_BOTTOM = 7;
 
 // shadow: soft, offset down
-const BLUR = 2.4;
-const SHADOW_DY = 1.6;
+const BLUR = 2.2;
+const SHADOW_DY = 2.2;
 const SHADOW_OPACITY = 0.32;
 
 const BLACK = "#000000";
@@ -54,36 +60,39 @@ const WHITE = "#ffffff";
 // -- helpers ----------------------------------------------------------------
 const fmt = (n) => Math.round(n * 100) / 100;
 
-function textPath(font, text, x, y, size) {
-  const p = font.getPath(text, x, y, size, { kerning: true });
+function textPath(font, text, size) {
+  const p = font.getPath(text, 0, 0, size, { kerning: true });
   return { d: p.toPathData(2), width: font.getAdvanceWidth(text, size, { kerning: true }) };
 }
 
-/** Text badge: dim label + bright value, both vertically centered. */
+function measureTextBadge(label, value) {
+  return textPath(medium, label, SIZE).width + GAP + textPath(semibold, value, SIZE).width;
+}
+
+/** Text badge: dim label + bright value, centered at (cx, baseY). */
 function textContent(label, value, cx, baseY) {
-  const lab = textPath(medium, label, 0, 0, SIZE);
-  const val = textPath(semibold, value, 0, 0, SIZE);
-  const total = lab.width + GAP + val.width;
-  let x = cx - total / 2;
+  const lab = textPath(medium, label, SIZE);
+  const val = textPath(semibold, value, SIZE);
+  let x = cx - (lab.width + GAP + val.width) / 2;
   let out = `<path d="${lab.d}" transform="translate(${fmt(x)} ${fmt(baseY)})" fill="${WHITE}" fill-opacity="0.62"/>`;
   x += lab.width + GAP;
   out += `<path d="${val.d}" transform="translate(${fmt(x)} ${fmt(baseY)})" fill="${WHITE}"/>`;
-  return { svg: out, width: total };
+  return out;
 }
 
-/** Icon-only badge: white glyph centered (24-unit viewBox scaled down). */
-function iconContent(glyph, capsuleW, baseCenterY) {
-  const scale = ICON / 24;
-  const x = (capsuleW - ICON) / 2;
-  const y = baseCenterY - ICON / 2;
-  return `<path d="${glyph}" transform="translate(${fmt(x)} ${fmt(y)}) scale(${fmt(scale)})" fill="${WHITE}" fill-opacity="0.95"/>`;
+/** Icon-only badge: white glyph optically centered on its bounding box. */
+function iconContent(glyph, cx, centerY) {
+  const s = ICON / 24;
+  const [x0, y0, x1, y1] = svgPathBbox(glyph);
+  const tx = cx - ((x0 + x1) / 2) * s;
+  const ty = centerY - ((y0 + y1) / 2) * s;
+  return `<path d="${glyph}" transform="translate(${fmt(tx)} ${fmt(ty)}) scale(${fmt(s)})" fill="${WHITE}" fill-opacity="0.95"/>`;
 }
 
 /** Full document: shadow -> capsule -> top light -> hairline -> content. */
 function frame(name, capsuleW, contentSvg) {
   const w = capsuleW + PAD_SIDE * 2;
   const h = H + PAD_TOP + PAD_BOTTOM;
-  const cx = PAD_SIDE + capsuleW / 2;
   return `<svg xmlns="http://www.w3.org/2000/svg" width="${fmt(w)}" height="${fmt(h)}" viewBox="0 0 ${fmt(w)} ${fmt(h)}" role="img" aria-label="${name}">
   <title>${name}</title>
   <defs>
@@ -114,6 +123,8 @@ const CENTER_Y = PAD_TOP + H / 2;
 // -- badge manifest ---------------------------------------------------------
 const textBadges = [
   ["license", "license", "AGPL-3.0"],
+  ["promo-prod", "open promotion PR", "prod from main"],
+  ["promo-enterprise", "open promotion PR", "enterprise from main"],
 ];
 
 const iconBadges = [
@@ -123,16 +134,16 @@ const iconBadges = [
 ];
 
 for (const [name, label, value] of textBadges) {
-  const measure = textContent(label, value, 0, 0);
-  const capsuleW = measure.width + TEXT_PADX * 2;
+  const capsuleW = measureTextBadge(label, value) + TEXT_PADX * 2;
   const content = textContent(label, value, PAD_SIDE + capsuleW / 2, BASE_Y);
-  fs.writeFileSync(path.join(OUT, `${name}.svg`), frame(name, capsuleW, content.svg));
+  fs.writeFileSync(path.join(OUT, `${name}.svg`), frame(name, capsuleW, content));
   console.log(`${name}.svg -> capsule ${fmt(capsuleW)}px`);
 }
 
 for (const [name, glyph] of iconBadges) {
   const capsuleW = ICON + ICON_PADX * 2;
-  fs.writeFileSync(path.join(OUT, `${name}.svg`), frame(name, capsuleW, iconContent(glyph, capsuleW, CENTER_Y)));
+  const content = iconContent(glyph, PAD_SIDE + capsuleW / 2, CENTER_Y);
+  fs.writeFileSync(path.join(OUT, `${name}.svg`), frame(name, capsuleW, content));
   console.log(`${name}.svg -> capsule ${fmt(capsuleW)}px`);
 }
 

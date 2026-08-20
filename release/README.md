@@ -20,11 +20,11 @@ eligible component workflows.
 
 ## Promote dev → prod
 
-[![Promote to prod](https://img.shields.io/badge/%E2%86%92%20Open%20promotion%20PR-prod%20%E2%86%90%20main-2ea44f?style=for-the-badge&logo=github)](https://github.com/maus-inc/mausVoice/compare/prod...main?expand=1)
+[![Promote to prod](../docs/assets/badges/promo-prod.svg)](https://github.com/maus-inc/mausVoice/compare/prod...main?expand=1)
 
 ## Promote dev → enterprise
 
-[![Promote to enterprise](https://img.shields.io/badge/%E2%86%92%20Open%20promotion%20PR-enterprise%20%E2%86%90%20main-5a2ea4?style=for-the-badge&logo=github)](https://github.com/maus-inc/mausVoice/compare/enterprise...main?expand=1)
+[![Promote to enterprise](../docs/assets/badges/promo-enterprise.svg)](https://github.com/maus-inc/mausVoice/compare/enterprise...main?expand=1)
 
 Clicking opens a pre-filled PR comparing `main` against the target branch
 (that's what's about to ship). Review the diff, title it (e.g.
