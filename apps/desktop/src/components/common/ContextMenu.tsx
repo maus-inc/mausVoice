@@ -459,12 +459,14 @@ export const useContextMenu = (): UseContextMenuReturn => {
       // while the menu is already open — but never captures the menu itself,
       // whose `autoFocus` would otherwise overwrite the real restore target.
       const clicked = e.target instanceof HTMLElement ? e.target : null;
-      previouslyFocusedRef.current =
-        clicked && !clicked.closest('[role="menu"]')
-          ? clicked
-          : document.activeElement instanceof HTMLElement
-            ? document.activeElement
-            : null;
+      const isClickOnMenu = clicked?.closest('[role="menu"]') != null;
+      let restoreTarget: HTMLElement | null = null;
+      if (clicked && !isClickOnMenu) {
+        restoreTarget = clicked;
+      } else if (document.activeElement instanceof HTMLElement) {
+        restoreTarget = document.activeElement;
+      }
+      previouslyFocusedRef.current = restoreTarget;
 
       const estimatedHeight = Math.min(
         items.filter((i) => i.kind !== "divider").length * ITEM_HEIGHT +

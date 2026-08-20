@@ -33,8 +33,8 @@ and `REVIEW.md`):
 ### Status
 
 `apps/desktop/src-tauri/src/system/audio_feedback.rs` already ships the rate
-limiter **and its unit test**: `should_throttle_at(now_ms)` was extracted as a
-pure decision function and is covered by four tests
+limiter **and its unit test**: `should_throttle_at(now_ms, last_ms) -> (bool, u64)`
+was extracted as a pure decision function and is covered by four tests
 (`first_thock_is_not_throttled`, `within_window_is_throttled`,
 `at_or_past_window_is_reenabled`, `clock_skew_backwards_is_safe`). The only
 remaining step is a `cargo` environment to compile and run them — `cargo` is

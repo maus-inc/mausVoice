@@ -39,8 +39,8 @@ the report; the static audit is largely already satisfied.
 
 ### A23 — thock rate-limiter unit test — **PRESENT, needs `cargo` verification**
 
-`should_throttle_at(now_ms)` was extracted as a pure decision function and is
-covered by four unit tests (`first_thock_is_not_throttled`,
+`should_throttle_at(now_ms, last_ms) -> (bool, u64)` was extracted as a pure
+decision function and is covered by four unit tests (`first_thock_is_not_throttled`,
 `within_window_is_throttled`, `at_or_past_window_is_reenabled`,
 `clock_skew_backwards_is_safe`) in `audio_feedback.rs`. `cargo` is unavailable in
 this sandbox, so they could not be compiled/verified here; the remaining step is a
