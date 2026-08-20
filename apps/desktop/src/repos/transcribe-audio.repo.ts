@@ -323,7 +323,7 @@ export class OpenAITranscribeAudioRepo extends BaseTranscribeAudioRepo {
   constructor(apiKey: string, model: string | null) {
     super();
     this.openaiApiKey = apiKey;
-    this.model = model ?? "gpt-transcribe";
+    this.model = model ?? "whisper-1";
   }
 
   // OpenAI has 25MB limit, 60s segments are well within that
