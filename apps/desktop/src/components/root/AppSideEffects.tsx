@@ -1,6 +1,7 @@
 import { getVersion } from "@tauri-apps/api/app";
 import { invoke } from "@tauri-apps/api/core";
 import { getCurrentWindow } from "@tauri-apps/api/window";
+import { commands } from "@maus-inc/desktop-native-apis";
 import { Member, Nullable, Term, User } from "@maus-inc/types";
 import { getRec, listify } from "@maus-inc/utilities";
 import { isEqual } from "lodash-es";
@@ -8,6 +9,10 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { useIntl } from "react-intl";
 import { combineLatest, from, Observable, of } from "rxjs";
 import { showErrorSnackbar, showSnackbar } from "../../actions/app.actions";
+import {
+  canRunPostElevationInit,
+  runStartupElevationPreflight,
+} from "../../actions/elevation.actions";
 import { loadPairedRemoteDevices } from "../../actions/paired-remote-device.actions";
 import {
   refreshRemoteReceiverStatus,
@@ -25,8 +30,8 @@ import {
   setRemoteOutputEnabled,
   setRemoteTargetDeviceId,
 } from "../../actions/user.actions";
-import { requestAdminRelaunch } from "../../actions/native.actions";
 import { useAsyncData, useAsyncEffect } from "../../hooks/async.hooks";
+import { useElevationStartupReady } from "../../hooks/elevation.hooks";
 import { useIntervalAsync, useKeyDownHandler } from "../../hooks/helper.hooks";
 import { useHotkeyFire } from "../../hooks/hotkey.hooks";
 import { useStreamWithSideEffects } from "../../hooks/stream.hooks";
@@ -63,6 +68,7 @@ import { getIsDevMode } from "../../utils/env.utils";
 import { createId } from "../../utils/id.utils";
 import {
   ADD_TO_DICTIONARY_HOTKEY,
+  getStyleSwitchActionNamesForKey,
   syncHotkeyCombosToNative,
 } from "../../utils/keyboard.utils";
 import { getLogger, initLogging } from "../../utils/log.utils";
@@ -70,6 +76,7 @@ import { sendPillFlashMessage } from "../../utils/overlay.utils";
 import { isPermissionAuthorized } from "../../utils/permission.utils";
 import { getPlatform } from "../../utils/platform.utils";
 import { hoursToMilliseconds } from "../../utils/time.utils";
+import { getLocalizedDashboardMenuLabels } from "../../utils/tray-dashboard-visibility.utils";
 import { buildTrayLanguageMenuModel } from "../../utils/tray-language.utils";
 import {
   getLocalizedPillMenuLabel,
@@ -77,8 +84,13 @@ import {
   getPillMenuLabel,
 } from "../../utils/tray-pill-visibility.utils";
 import {
+  evaluateHotkeyTrigger,
+  releaseHotkey,
+} from "../../utils/hotkey-filter.utils";
+import {
   getEffectivePillVisibility,
   getIsDictationUnlocked,
+  getMyUser,
   getMyUserPreferences,
   LOCAL_USER_ID,
 } from "../../utils/user.utils";
@@ -170,6 +182,9 @@ export const AppSideEffects = () => {
     (state) => state.userById[LOCAL_USER_ID] ?? null,
   );
   const prefs = useAppStore((state) => getMyUserPreferences(state));
+  const playInteractionChime = useAppStore(
+    (state) => getMyUser(state)?.playInteractionChime ?? true,
+  );
   const keyPermAuthorized = useAppStore((state) =>
     isPermissionAuthorized(getRec(state.permissions, "accessibility")?.state),
   );
@@ -262,21 +277,28 @@ export const AppSideEffects = () => {
     void initLogging();
   }, []);
 
+  // A23: Keep the native thock gate in sync with the persisted
+  // playInteractionChime preference (initial value + changes).
   useEffect(() => {
-    if (!prefs || startupElevationAttemptedRef.current) {
+    invoke("set_interaction_chime_enabled", {
+      enabled: playInteractionChime,
+    }).catch(() => {});
+  }, [playInteractionChime]);
+
+  // Windows "Always run as administrator" pre-flight. Must stay ahead of
+  // auth / Mixpanel / dashboard init — the gate in elevation.actions owns
+  // the state transitions so AppSideEffects and the decline dialog cannot
+  // diverge. Relaunch is never invoked from Tauri setup().
+  useAsyncEffect(async () => {
+    if (startupElevationAttemptedRef.current) {
       return;
     }
     startupElevationAttemptedRef.current = true;
-
-    if (getPlatform() !== "windows" || !prefs.alwaysRequestAdminOnStartup) {
-      return;
-    }
-
-    getLogger().info(
-      "Requesting administrator relaunch after frontend startup",
-    );
-    void requestAdminRelaunch();
-  }, [prefs]);
+    await runStartupElevationPreflight({
+      isMainWindow,
+      platform: getPlatform(),
+    });
+  }, []);
 
   useAsyncEffect(async () => {
     if (consumeSurfaceWindowFlag()) {
@@ -293,6 +315,8 @@ export const AppSideEffects = () => {
       draft.initialized = false;
     });
   };
+
+  const elevationReady = useElevationStartupReady();
 
   useTauriListen<OverlayPhasePayload>("overlay_phase", (payload) => {
     produceAppState((draft) => {
@@ -317,6 +341,21 @@ export const AppSideEffects = () => {
   useTauriListen<BridgeHotkeyTriggerPayload>(
     "bridge_hotkey_trigger",
     (payload) => {
+      // A21: Filter hotkey spam while the pill is in an active recording state.
+      // Repeated identical triggers are debounced; stop/cancel always pass.
+      // This must happen BEFORE the counter increment so consumers never see
+      // a filtered trigger.
+      const isRecording = getAppState().overlayPhase === "recording";
+      const { allowed, reason } = evaluateHotkeyTrigger(
+        payload.hotkey,
+        isRecording,
+      );
+      if (!allowed) {
+        getLogger().verbose(
+          `[hotkey-filter] blocked ${payload.hotkey}: ${reason}`,
+        );
+        return;
+      }
       produceAppState((draft) => {
         draft.hotkeyTriggers[payload.hotkey] =
           (draft.hotkeyTriggers[payload.hotkey] ?? 0) + 1;
@@ -334,6 +373,25 @@ export const AppSideEffects = () => {
     const existing = getAppState().keysHeld;
     if (isEqual(existing, payload.keys)) {
       return;
+    }
+
+    // A21: Release a style-switch action's "held" state when its physical key
+    // is released. Releasing only when ALL keys are up would never fire during
+    // hold-to-talk dictation (the dictate key stays held), wedging style
+    // switching after the first press.
+    const releasedKeys = existing.filter(
+      (key) =>
+        !payload.keys.some((held) => held.toLowerCase() === key.toLowerCase()),
+    );
+    if (releasedKeys.length > 0) {
+      for (const key of releasedKeys) {
+        for (const actionName of getStyleSwitchActionNamesForKey(
+          getAppState(),
+          key,
+        )) {
+          releaseHotkey(actionName);
+        }
+      }
     }
 
     produceAppState((draft) => {
@@ -393,7 +451,14 @@ export const AppSideEffects = () => {
     },
   );
 
+  // Auth and the rest of full-app init stay behind the elevation gate so a
+  // declined-or-pending UAC never pays for Firebase / Mixpanel / remote
+  // receiver setup on the unelevated helper surface.
   useEffect(() => {
+    if (!canRunPostElevationInit(elevationReady)) {
+      return;
+    }
+
     authReadyRef.current = false;
 
     const timeoutId = setTimeout(() => {
@@ -415,11 +480,11 @@ export const AppSideEffects = () => {
       clearTimeout(timeoutId);
       unsubscribe();
     };
-  }, []);
+  }, [elevationReady]);
 
   useStreamWithSideEffects({
     builder: (): Observable<StreamRet> => {
-      if (!authReady) {
+      if (!canRunPostElevationInit(elevationReady, authReady)) {
         return of(null);
       }
 
@@ -441,6 +506,9 @@ export const AppSideEffects = () => {
       ]);
     },
     onSuccess: (results) => {
+      if (!canRunPostElevationInit(elevationReady)) {
+        return;
+      }
       setStreamReady(true);
       if (results === null) {
         return;
@@ -452,43 +520,49 @@ export const AppSideEffects = () => {
         registerMembers(draft, listify(members));
       });
     },
-    dependencies: [userId, authReady],
+    dependencies: [userId, authReady, elevationReady],
   });
 
   useAsyncEffect(async () => {
-    if (authReady) {
-      await refreshCurrentUser();
-      setInitReady(true);
+    if (!canRunPostElevationInit(elevationReady, authReady)) {
+      return;
     }
-  }, [authReady]);
+    await refreshCurrentUser();
+    setInitReady(true);
+  }, [authReady, elevationReady]);
 
   useAsyncEffect(async () => {
-    if (initReady) {
-      await loadPairedRemoteDevices();
-      await refreshRemoteReceiverStatus();
-      const prefs = getMyUserPreferences(getAppState());
-      if (
-        prefs?.remoteTargetDeviceId &&
-        !getAppState().pairedRemoteDeviceById[prefs.remoteTargetDeviceId]
-      ) {
-        await setRemoteTargetDeviceId(null);
-        await setRemoteOutputEnabled(false);
-      }
-      const receiverStatus = getAppState().remoteReceiverStatus;
-      if (prefs?.remoteReceiverAutoStart && !receiverStatus?.enabled) {
-        await startRemoteReceiver(prefs.remoteReceiverPort ?? null);
-      }
+    if (!canRunPostElevationInit(elevationReady, initReady)) {
+      return;
     }
-  }, [initReady]);
+    await loadPairedRemoteDevices();
+    await refreshRemoteReceiverStatus();
+    const prefs = getMyUserPreferences(getAppState());
+    if (
+      prefs?.remoteTargetDeviceId &&
+      !getAppState().pairedRemoteDeviceById[prefs.remoteTargetDeviceId]
+    ) {
+      await setRemoteTargetDeviceId(null);
+      await setRemoteOutputEnabled(false);
+    }
+    const receiverStatus = getAppState().remoteReceiverStatus;
+    if (prefs?.remoteReceiverAutoStart && !receiverStatus?.enabled) {
+      await startRemoteReceiver(prefs.remoteReceiverPort ?? null);
+    }
+  }, [initReady, elevationReady]);
 
   useEffect(() => {
-    if (streamReady && initReady && !initialized) {
-      getLogger().info("App fully initialized");
-      produceAppState((draft) => {
-        draft.initialized = true;
-      });
+    if (
+      !canRunPostElevationInit(elevationReady, streamReady, initReady) ||
+      initialized
+    ) {
+      return;
     }
-  }, [streamReady, initReady, initialized]);
+    getLogger().info("App fully initialized");
+    produceAppState((draft) => {
+      draft.initialized = true;
+    });
+  }, [streamReady, initReady, initialized, elevationReady]);
 
   const auth = useAppStore((state) => state.auth);
   const prevUserIdRef = useRef<string | null>(null);
@@ -673,6 +747,41 @@ export const AppSideEffects = () => {
     if (!isMainWindow) return;
     setActiveDictationLanguage(code).catch(console.error);
   });
+
+  // The native command reads the real window state; these events only trigger
+  // a debounced re-sync after OS-driven minimize, close-to-tray, and surface
+  // transitions. Rust retains both localized labels so a tray click can update
+  // the item synchronously without waiting for the webview.
+  useEffect(() => {
+    if (!isMainWindow) return;
+
+    const appWindow = getCurrentWindow();
+    const labels = getLocalizedDashboardMenuLabels(intl);
+    let timeoutId: ReturnType<typeof setTimeout> | undefined;
+
+    const sync = () => {
+      clearTimeout(timeoutId);
+      timeoutId = setTimeout(() => {
+        commands
+          .setDashboardMenuLabels(labels.openLabel, labels.hideLabel)
+          .catch(console.error);
+      }, 50);
+    };
+
+    sync();
+    const listeners = Promise.all([
+      appWindow.onFocusChanged(sync),
+      appWindow.onResized(sync),
+      appWindow.onCloseRequested(sync),
+    ]);
+
+    return () => {
+      clearTimeout(timeoutId);
+      void listeners.then((unlisteners) => {
+        unlisteners.forEach((unlisten) => unlisten());
+      });
+    };
+  }, [intl]);
 
   // ── Tray pill-visibility toggle ────────────────────────────────────────────
   // One menu item whose label states the action it performs. The persisted

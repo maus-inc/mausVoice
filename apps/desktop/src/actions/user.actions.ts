@@ -7,6 +7,7 @@ import {
   User,
   UserPreferences,
 } from "@maus-inc/types";
+import { invoke } from "@tauri-apps/api/core";
 import dayjs from "dayjs";
 import { getIntl } from "../i18n";
 import { getUserPreferencesRepo, getUserRepo } from "../repos";
@@ -451,6 +452,10 @@ export const setInteractionChimeEnabled = async (enabled: boolean) => {
     "Unable to update interaction chime. User not found.",
     "Failed to save interaction chime preference. Please try again.",
   );
+  // A23: Mirror the pref into Rust so native pill thocks honor it too.
+  // Fire-and-forget: the persisted value is the source of truth and the
+  // command only controls the in-memory flag used by audio_feedback.
+  invoke("set_interaction_chime_enabled", { enabled }).catch(() => {});
 };
 
 export const setUserName = async (name: string): Promise<void> => {

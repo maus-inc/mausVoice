@@ -14,6 +14,7 @@ import { getAppState, produceAppState } from "../store";
 import { createTool } from "../tools";
 import { modifyAgentState } from "../utils/agent.utils";
 import { getLogger } from "../utils/log.utils";
+import { humanizeScrub } from "../utils/humanize.utils";
 import type { AgentTypeConfig } from "./agent-configs";
 
 const POLL_INTERVAL_MS = 500;
@@ -266,9 +267,12 @@ async function finalizeAssistantMessage(
   const message = getAppState().chatMessageById[messageId];
   if (!message) return;
 
+  // A19: Apply the humanize scrubber to remove AI-slop markers from the
+  // final assistant output before persisting and displaying it.
+  const cleaned = text ? humanizeScrub(text) : "";
   const final = {
     ...message,
-    content: text || "",
+    content: cleaned,
     metadata:
       toolCalls.length > 0
         ? ({ type: "reasoning", toolCalls } as Record<string, unknown>)

@@ -80,6 +80,13 @@ export type SettingsState = {
   styleHotkeysDialogOpen: boolean;
   appKeybindingsDialogOpen: boolean;
   elevationDeclinedDialogOpen: boolean;
+  /**
+   * True until the Windows startup-elevation gate resolves. Defaults true so
+   * heavy init (auth, dashboard) cannot race ahead of the elevation check on
+   * first paint; cleared immediately on non-Windows / non-main windows, or
+   * once the UAC decision is settled (including "Launch normally").
+   */
+  elevationStartupPending: boolean;
   diagnosticsDialogOpen: boolean;
   aiTranscription: SettingsTranscriptionState;
   aiPostProcessing: SettingsGenerativeState;
@@ -146,6 +153,7 @@ export const INITIAL_SETTINGS_STATE: SettingsState = {
   styleHotkeysDialogOpen: false,
   appKeybindingsDialogOpen: false,
   elevationDeclinedDialogOpen: false,
+  elevationStartupPending: true,
   diagnosticsDialogOpen: false,
   aiTranscription: {
     mode: null,

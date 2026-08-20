@@ -13,6 +13,7 @@ import {
   gladiaTranscribeAudio,
   type GladiaCustomizations,
   groqTranscribeAudio,
+  normalizeAssemblyAISpeechModel,
   openaiTranscribeAudio,
   OpenAITranscriptionModel,
   TranscriptionModel,
@@ -418,11 +419,17 @@ export class AldeaTranscribeAudioRepo extends BaseTranscribeAudioRepo {
 
 export class AssemblyAITranscribeAudioRepo extends BaseTranscribeAudioRepo {
   private readonly apiKey: string;
+  private readonly model: string | null;
   private readonly customFetch: typeof secureFetch;
 
-  constructor(apiKey: string, customFetch: typeof secureFetch = secureFetch) {
+  constructor(
+    apiKey: string,
+    model: string | null,
+    customFetch: typeof secureFetch = secureFetch,
+  ) {
     super();
     this.apiKey = apiKey;
+    this.model = model;
     this.customFetch = customFetch;
   }
 
@@ -449,6 +456,7 @@ export class AssemblyAITranscribeAudioRepo extends BaseTranscribeAudioRepo {
 
     const { text: transcript } = await assemblyaiTranscribeAudio({
       apiKey: this.apiKey,
+      model: this.model,
       blob: wavBuffer,
       language: input.language,
       customFetch: this.customFetch,
@@ -458,7 +466,7 @@ export class AssemblyAITranscribeAudioRepo extends BaseTranscribeAudioRepo {
       text: transcript,
       metadata: {
         inferenceDevice: "API • AssemblyAI",
-        modelSize: null,
+        modelSize: normalizeAssemblyAISpeechModel(this.model) ?? null,
         transcriptionMode: "api",
       },
     };

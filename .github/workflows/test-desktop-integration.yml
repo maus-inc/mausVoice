@@ -2,13 +2,10 @@ name: Test Desktop Integration
 
 on:
   push:
-    branches:
-      - main
     paths:
       - "apps/desktop/**"
       - "packages/**"
       - ".github/workflows/test-desktop-integration.yml"
-
 # Run every stacked PR independently, but cancel superseded runs for the same
 # PR (or the same branch for push/manual events) to avoid consuming runner slots.
 concurrency:

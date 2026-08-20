@@ -394,7 +394,10 @@ export const getTranscribeAudioRepo = (): TranscribeAudioRepoOutput => {
         );
         break;
       case "assemblyai":
-        repo = new AssemblyAITranscribeAudioRepo(prefs.apiKeyValue);
+        repo = new AssemblyAITranscribeAudioRepo(
+          prefs.apiKeyValue,
+          prefs.transcriptionModel,
+        );
         break;
       case "aldea":
         repo = new AldeaTranscribeAudioRepo(prefs.apiKeyValue);

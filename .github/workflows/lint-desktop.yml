@@ -1,7 +1,17 @@
 name: Lint Desktop
 on:
   push:
-
+    paths:
+      - "apps/desktop/**"
+      - "packages/**"
+      - "package.json"
+      - "pnpm-lock.yaml"
+      - "pnpm-workspace.yaml"
+      - "turbo.json"
+      - ".nvmrc"
+      - "patches/**"
+      - "scripts/generate-app-icons.mjs"
+      - ".github/workflows/lint-desktop.yml"
 # Run every stacked PR independently, but cancel superseded runs for the same
 # PR (or the same branch for push/manual events) to avoid consuming runner slots.
 concurrency:

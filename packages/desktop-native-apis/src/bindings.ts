@@ -708,6 +708,16 @@ export const commands = {
       else return { status: "error", error: e as any };
     }
   },
+  /**
+   * Fully terminates the application process (including the tray icon).
+   *
+   * Distinct from the main-window close path, which only hides to tray.
+   * Used by the elevation-declined dialog's "Close mausVoice" action and any
+   * other UI that must actually quit rather than background the app.
+   */
+  async quitApp(): Promise<void> {
+    await TAURI_INVOKE("quit_app");
+  },
   async readAccessibilityFieldValues(
     fields: FieldValueRequest[],
   ): Promise<Result<FieldValueResult[], string>> {
@@ -881,6 +891,27 @@ export const commands = {
       return {
         status: "ok",
         data: await TAURI_INVOKE("run_terminal_command", { command }),
+      };
+    } catch (e) {
+      if (e instanceof Error) throw e;
+      else return { status: "error", error: e as any };
+    }
+  },
+  /**
+   * Set the localized dashboard action labels and sync the tray item to the
+   * main window's actual visibility.
+   */
+  async setDashboardMenuLabels(
+    openLabel: string,
+    hideLabel: string,
+  ): Promise<Result<null, string>> {
+    try {
+      return {
+        status: "ok",
+        data: await TAURI_INVOKE("set_dashboard_menu_labels", {
+          openLabel,
+          hideLabel,
+        }),
       };
     } catch (e) {
       if (e instanceof Error) throw e;

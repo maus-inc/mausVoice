@@ -1,15 +1,65 @@
 import { delayed } from "@maus-inc/utilities";
 import type { CustomFetch } from "./types";
 
+export const ASSEMBLYAI_TRANSCRIPTION_MODELS = [
+  "universal-3-5-pro",
+  "universal-2",
+] as const;
+export type AssemblyAITranscriptionModel =
+  (typeof ASSEMBLYAI_TRANSCRIPTION_MODELS)[number];
+
+const ASSEMBLYAI_TRANSCRIPTION_MODEL_SET = new Set<string>(
+  ASSEMBLYAI_TRANSCRIPTION_MODELS,
+);
+
+// Legacy "tier" names from the deprecated singular `speech_model` parameter are
+// migrated to their current successors so a previously stored value keeps
+// working instead of hard-failing before any request.
+const LEGACY_MODEL_ALIASES: Record<string, AssemblyAITranscriptionModel> = {
+  best: "universal-3-5-pro",
+  nano: "universal-2",
+};
+
+export const normalizeAssemblyAISpeechModel = (
+  model: string | null | undefined,
+): AssemblyAITranscriptionModel | undefined => {
+  if (!model) return undefined;
+  const normalized = LEGACY_MODEL_ALIASES[model] ?? model;
+  if (!ASSEMBLYAI_TRANSCRIPTION_MODEL_SET.has(normalized)) {
+    throw new Error(
+      `Unknown AssemblyAI speech model "${model}". Supported models: ${ASSEMBLYAI_TRANSCRIPTION_MODELS.join(", ")}.`,
+    );
+  }
+  return normalized as AssemblyAITranscriptionModel;
+};
+
+// Pinning the flagship alone drops Universal-2 for the 81 languages it doesn't
+// cover, so send the provider-recommended fallback pair — mirroring the default
+// applied when the parameter is omitted.
+const speechModelsFor = (
+  model: string | null | undefined,
+): AssemblyAITranscriptionModel[] | undefined => {
+  const normalized = normalizeAssemblyAISpeechModel(model);
+  if (!normalized) return undefined;
+  return normalized === "universal-3-5-pro"
+    ? ["universal-3-5-pro", "universal-2"]
+    : [normalized];
+};
+
 export type AssemblyAITestIntegrationArgs = {
   apiKey: string;
+  model?: string | null;
   customFetch?: CustomFetch;
 };
 
 export const assemblyaiTestIntegration = async ({
   apiKey,
+  model,
   customFetch = fetch,
 }: AssemblyAITestIntegrationArgs): Promise<boolean> => {
+  // Validate (and migrate legacy values) before the key check so a bad model
+  // surfaces as a clear error instead of a passing key test.
+  normalizeAssemblyAISpeechModel(model);
   try {
     const response = await customFetch(
       "https://api.assemblyai.com/v2/transcript",
@@ -28,6 +78,8 @@ export type AssemblyAITranscriptionArgs = {
   apiKey: string;
   blob: ArrayBuffer | Buffer;
   language?: string;
+  /** Speech model to transcribe with. Omitted => AssemblyAI default. */
+  model?: string | null;
   /** Total time budget for the transcript to reach "completed" (default 180 s). */
   timeoutMs?: number;
   /** Delay between status polls (default 3 s). */
@@ -253,14 +305,15 @@ const createTranscriptRequest = async (
   apiKey: string,
   uploadUrl: string,
   language: string | undefined,
+  speechModels: AssemblyAITranscriptionModel[] | undefined,
   signal: AbortSignal,
   deadline: number,
   customFetch: CustomFetch,
 ): Promise<string> => {
-  const transcriptPayload: Record<string, unknown> = {
-    audio_url: uploadUrl,
-    speech_model: "best",
-  };
+  const transcriptPayload: Record<string, unknown> = { audio_url: uploadUrl };
+  if (speechModels) {
+    transcriptPayload.speech_models = speechModels;
+  }
   if (!language || language === "auto") {
     transcriptPayload.language_detection = true;
   } else {
@@ -354,12 +407,14 @@ export const assemblyaiTranscribeAudio = async ({
   apiKey,
   blob,
   language,
+  model,
   timeoutMs = 180_000,
   pollIntervalMs = 3000,
   customFetch = fetch,
 }: AssemblyAITranscriptionArgs): Promise<AssemblyAITranscribeAudioOutput> => {
   validatePositiveDuration(timeoutMs, "timeout");
   validatePositiveDuration(pollIntervalMs, "poll interval");
+  const speechModels = speechModelsFor(model);
 
   const arrayBuffer =
     blob instanceof ArrayBuffer ? blob : new Uint8Array(blob).buffer;
@@ -385,6 +440,7 @@ export const assemblyaiTranscribeAudio = async ({
       apiKey,
       uploadUrl,
       language,
+      speechModels,
       controller.signal,
       deadline,
       customFetch,

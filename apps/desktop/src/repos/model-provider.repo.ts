@@ -1,4 +1,5 @@
 import {
+  ASSEMBLYAI_TRANSCRIPTION_MODELS,
   AZURE_OPENAI_MODELS,
   CEREBRAS_MODELS,
   CLAUDE_MODELS,
@@ -87,7 +88,7 @@ async function fetchOpenAICompatibleModels(
     return (payload.data ?? [])
       .map((m) => (m.id ?? "").trim())
       .filter(Boolean)
-      .sort();
+      .sort((a, b) => a.localeCompare(b));
   } catch {
     logModelDiscoveryFailure(provider, "request or response parsing failed");
     return [];
@@ -249,7 +250,7 @@ export class ClaudeModelProviderRepo extends BaseModelProviderRepo {
       return (payload.data ?? [])
         .map((m) => (m.id ?? "").trim())
         .filter(Boolean)
-        .sort();
+        .sort((a, b) => a.localeCompare(b));
     } catch {
       logModelDiscoveryFailure("Claude", "request or response parsing failed");
       return [];
@@ -369,7 +370,7 @@ export class GeminiModelProviderRepo extends BaseModelProviderRepo {
         )
         .map((m) => (m.name ?? "").replace(/^models\//, "").trim())
         .filter(isGeneralGeminiModel)
-        .sort();
+        .sort((a, b) => a.localeCompare(b));
     } catch {
       logModelDiscoveryFailure("Gemini", "request or response parsing failed");
       return [];
@@ -414,7 +415,7 @@ export class AzureModelProviderRepo extends BaseModelProviderRepo {
     return (payload.data ?? [])
       .map((m) => (m.id ?? "").trim())
       .filter(Boolean)
-      .sort();
+      .sort((a, b) => a.localeCompare(b));
   }
 }
 
@@ -499,7 +500,7 @@ export class OpenAICompatibleModelProviderRepo extends BaseModelProviderRepo {
     return (payload.data ?? [])
       .map((m) => (m.id ?? "").trim())
       .filter(Boolean)
-      .sort();
+      .sort((a, b) => a.localeCompare(b));
   }
 }
 
@@ -527,7 +528,7 @@ export class SpeachesModelProviderRepo extends BaseModelProviderRepo {
     return (payload.data ?? [])
       .map((m) => (m.id ?? "").trim())
       .filter(Boolean)
-      .sort();
+      .sort((a, b) => a.localeCompare(b));
   }
 }
 
@@ -588,7 +589,7 @@ export class AssemblyAIModelProviderRepo extends BaseModelProviderRepo {
   }
 
   async getTranscriptionModels(): Promise<string[]> {
-    return [];
+    return [...ASSEMBLYAI_TRANSCRIPTION_MODELS];
   }
 }
 

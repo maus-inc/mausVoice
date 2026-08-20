@@ -16,11 +16,7 @@ import {
 } from "../../actions/chat.actions";
 import { refreshMember } from "../../actions/member.actions";
 import { dismissToast, showToast } from "../../actions/toast.actions";
-import {
-  selectToneByHotkey,
-  switchWritingStyleBackward,
-  switchWritingStyleForward,
-} from "../../actions/tone.actions";
+import { applyInDictationStyleSwitch } from "../../actions/tone.actions";
 import {
   resolveToolPermission,
   setToolAlwaysAllow,
@@ -70,6 +66,13 @@ import {
   getProviderRecordingTimerDurations,
   shouldEnableDictationLimit,
 } from "../../utils/dictation-limit.utils";
+import {
+  createUtteranceToneSnapshots,
+  getEffectiveToneIdAtFinalize,
+  isActivationComboHeld,
+  resolveInDictationArrowStyleSwitch,
+  resolveNewlyPressedDictationArrow,
+} from "../../utils/dictation-style.utils";
 import { getEffectiveStylingMode } from "../../utils/feature.utils";
 import { createId } from "../../utils/id.utils";
 import {
@@ -100,7 +103,9 @@ import {
   getMyUserPreferences,
   getTranscriptionPrefs,
 } from "../../utils/user.utils";
+import { hasDictationBacklog } from "../../utils/output-routing.utils";
 import { surfaceMainWindow } from "../../utils/window.utils";
+import { resetHotkeyFilter } from "../../utils/hotkey-filter.utils";
 
 type StartRecordingResponse = {
   sampleRate: number;
@@ -128,6 +133,9 @@ type FinalizedRecording = {
 const FINALIZE_TIMEOUT_MS = 90_000;
 const HANDLE_TRANSCRIPT_TIMEOUT_MS = 60_000;
 const PHASE_HEARTBEAT_INTERVAL_MS = 5_000;
+/** Dictation backlog poll interval: how often to check whether the user
+ *  has focused an editable target so accumulated backlog can be drained. */
+const BACKLOG_DRAIN_POLL_MS = 1_000;
 const IN_DICTATION_STYLE_KEYS = ["LeftArrow", "RightArrow"];
 
 export const DictationSideEffects = () => {
@@ -153,10 +161,7 @@ export const DictationSideEffects = () => {
   // heartbeat and keeps duplicate idle writes out of the pipe.
   const lastPhaseSentRef = useRef<OverlayPhase | null>(null);
   const previousStyleSwitchKeysRef = useRef<string[]>([]);
-  // Tone (writing style) active when the current segment started. Used to
-  // retag the finalized segment so a mid-utterance style switch doesn't
-  // mislabel it with the latest style instead of the one that was spoken.
-  const segmentStartToneIdRef = useRef<string | null>(null);
+  const utteranceTonesRef = useRef(createUtteranceToneSnapshots());
   const [isStopping, setIsStopping] = useState(false);
   const assistantModeEnabled = useAppStore(getIsAssistantModeEnabled);
 
@@ -173,6 +178,9 @@ export const DictationSideEffects = () => {
   const switchToStyleEntries = useAppStore(getSwitchToStyleEntries);
   const inDictationStyleSwitchingEnabled = useAppStore(
     (state) => state.userPrefs?.inDictationStyleSwitchingEnabled ?? false,
+  );
+  const dictateCombos = useAppStore((state) =>
+    getHotkeyCombosForAction(state, DICTATE_HOTKEY),
   );
   const isDictationUnlocked = useAppStore(getIsDictationUnlocked);
   const isDictationInteractable = isDictationUnlocked && !isStopping;
@@ -307,6 +315,10 @@ export const DictationSideEffects = () => {
     }
   }, []);
 
+  const clearUtteranceToneSnapshots = useCallback(() => {
+    utteranceTonesRef.current.clear();
+  }, []);
+
   const clearRecordingState = useCallback(() => {
     isPausedRef.current = false;
     produceAppState((draft) => {
@@ -330,6 +342,7 @@ export const DictationSideEffects = () => {
     invoke("reset_key_listener_state").catch((error) =>
       getLogger().verbose(`Failed to reset key listener state: ${error}`),
     );
+    resetHotkeyFilter();
   }, [additionalLanguageControllers, agentController, dictationController]);
 
   /**
@@ -372,6 +385,24 @@ export const DictationSideEffects = () => {
     return () => clearInterval(interval);
   }, [sendPhaseToPill]);
 
+  // Dictation backlog drain poll: while a session is active and there is a
+  // non-empty backlog, periodically probe whether the user has focused an
+  // editable target.  When they have, drain the full backlog once.
+  // This covers the case where the user clicks an input while not speaking
+  // (no interim segment fires to trigger the drain).
+  useEffect(() => {
+    if (!isMainWindow || !isActiveSession) return;
+    const interval = setInterval(() => {
+      const strategy = strategyRef.current;
+      if (!(strategy instanceof DictationStrategy)) return;
+      if (!hasDictationBacklog()) return;
+      strategy.checkAndDrainBacklog().catch((error: unknown) => {
+        getLogger().warning(`Backlog drain poll failed: ${error}`);
+      });
+    }, BACKLOG_DRAIN_POLL_MS);
+    return () => clearInterval(interval);
+  }, [isMainWindow, isActiveSession]);
+
   const abortRecording = useCallback(
     async (message?: AbortMessage) => {
       getLogger().info(
@@ -392,6 +423,7 @@ export const DictationSideEffects = () => {
       const strategy = strategyRef.current;
       strategyRef.current = null;
       sessionRef.current = null;
+      clearUtteranceToneSnapshots();
 
       try {
         session?.cleanup();
@@ -419,6 +451,7 @@ export const DictationSideEffects = () => {
       clearCancelPromptTimer,
       clearRecordingState,
       clearRecordingTimers,
+      clearUtteranceToneSnapshots,
       hardResetHotkeyState,
       restoreSystemVolume,
       sendPhaseToPill,
@@ -566,18 +599,22 @@ export const DictationSideEffects = () => {
         saveManualStyleForApp(appTarget);
       }
 
-      // Retag with the writing style that was active when the segment started,
-      // not the live style — a mid-utterance style switch must not relabel an
-      // already-spoken segment with the new style. Manual-mode switches are the
-      // common mid-recording change; automatic mode keys off the focused app
-      // target, which is captured at stop and does not change mid-utterance.
-      const stylingMode = getEffectiveStylingMode(getAppState());
-      const toneId =
-        stylingMode === "manual"
-          ? segmentStartToneIdRef.current
-          : getToneIdToUse(getAppState(), {
-              currentAppToneId: appTarget?.toneId ?? null,
-            });
+      // Manual mode: the tone selected at STOP styles this utterance, so a
+      // mid-utterance switch (pill / hotkey / Left-Right) applies to the
+      // output being produced, not just the pill label. A switch that
+      // arrives after stop has snapshotted the tone loses for this
+      // utterance. Automatic mode prefers the app-target tone and falls
+      // back to the live selection when the app has none. Streamed
+      // interim text is never restyled here —
+      // DictationStrategy skips post-processing once segments are inserted.
+      const utteranceTones = utteranceTonesRef.current.read();
+      const toneId = getEffectiveToneIdAtFinalize({
+        stylingMode: getEffectiveStylingMode(getAppState()),
+        toneIdAtStart: utteranceTones.start,
+        toneIdAtStop: utteranceTones.stop,
+        liveSelectedToneId: getManuallySelectedToneId(getAppState()),
+        appTargetToneId: appTarget?.toneId ?? null,
+      });
       const transcribeResult = await withTimeout(
         sessionRef.current?.finalize(audio, {
           toneId,
@@ -626,6 +663,7 @@ export const DictationSideEffects = () => {
     } catch (error) {
       const errorName = error instanceof Error ? ` [name=${error.name}]` : "";
       getLogger().error(`Error during stopRecording: ${error}${errorName}`);
+      clearUtteranceToneSnapshots();
       return {
         shouldContinue: false,
         abortMessage: String(error),
@@ -638,6 +676,7 @@ export const DictationSideEffects = () => {
   }, [
     captureStopRecordingInfo,
     clearRecordingTimers,
+    clearUtteranceToneSnapshots,
     finalizeAndPostProcess,
     restoreSystemVolume,
     sendPhaseToPill,
@@ -657,6 +696,14 @@ export const DictationSideEffects = () => {
     getLogger().info("stopRecording entered");
     isStoppingRef.current = true;
     setIsStopping(true);
+    // Lock the utterance tone now. Switches that already wrote selectedToneId
+    // are included; switches that arrive during capture/finalize lose for
+    // this utterance (they still update the selection for the next one).
+    utteranceTonesRef.current.snapshotAtStop(
+      getToneIdToUse(getAppState(), {
+        currentAppToneId: null,
+      }),
+    );
     try {
       const res = await stopRecordingRaw().catch((error) => {
         getLogger().error(
@@ -683,10 +730,14 @@ export const DictationSideEffects = () => {
       hardResetHotkeyState();
       isStoppingRef.current = false;
       setIsStopping(false);
+      // Finalize has already read the snapshots. Drop them so a later
+      // session cannot inherit this utterance's tone if start is raced.
+      clearUtteranceToneSnapshots();
     }
   }, [
     abortRecording,
     clearRecordingTimers,
+    clearUtteranceToneSnapshots,
     hardResetHotkeyState,
     stopRecordingRaw,
     setIsStopping,
@@ -814,11 +865,14 @@ export const DictationSideEffects = () => {
         await loadManualStyleForCurrentApp();
       }
 
-      // Snapshot after app-based style load so the first segment is tagged
-      // with the style that will actually be used, not the previous one.
-      segmentStartToneIdRef.current = getToneIdToUse(getAppState(), {
-        currentAppToneId: null,
-      });
+      // Seed both snapshots after app-based style load. Stop overwrites
+      // the stop snapshot with the live selection so a mid-utterance switch
+      // is what finalize actually applies.
+      utteranceTonesRef.current.seed(
+        getToneIdToUse(getAppState(), {
+          currentAppToneId: null,
+        }),
+      );
 
       const preferredMicrophone = getMyPreferredMicrophone(state);
       const transcriptPrefs = getTranscriptionPrefs(state);
@@ -986,12 +1040,14 @@ export const DictationSideEffects = () => {
   }, [stopRecording]);
 
   const handleSwitchWritingStyleForward = useCallback(
-    () => switchWritingStyleForward(),
+    () =>
+      applyInDictationStyleSwitch({ channel: "cycle-hotkey", direction: 1 }),
     [],
   );
 
   const handleSwitchWritingStyleBackward = useCallback(
-    () => switchWritingStyleBackward(),
+    () =>
+      applyInDictationStyleSwitch({ channel: "cycle-hotkey", direction: -1 }),
     [],
   );
 
@@ -1025,35 +1081,24 @@ export const DictationSideEffects = () => {
       previousStyleSwitchKeysRef.current.map((key) => key.toLowerCase()),
     );
     const current = new Set(keysHeld.map((key) => key.toLowerCase()));
-    const canSwitch =
-      isMainWindow &&
-      inDictationStyleSwitchingEnabled &&
-      isActiveSession &&
-      activeRecordingMode === "dictate" &&
-      isManualStyling;
-
-    if (canSwitch) {
-      // Per-style hold-shortcut dictation: dictation is started/held via the
-      // activation key (DICTATE_HOTKEY) and the two arrow keys are whitelisted
-      // as additional held keys (see `allowedAdditionalKeys` on the
-      // DICTATE_HOTKEY useHotkeyHold below). While dictation is active and the
-      // activation key is held, pressing Left/Right cycles the writing style —
-      // so the segment that begins (or continues) after a switch is dictated
-      // with the newly-selected style.
-      const dictateCombos = getHotkeyCombosForAction(
-        getAppState(),
-        DICTATE_HOTKEY,
-      );
-      const activationHeld = dictateCombos.some((combo) =>
-        combo.every((key) => current.has(key.toLowerCase())),
-      );
-      if (activationHeld) {
-        if (current.has("leftarrow") && !previous.has("leftarrow")) {
-          void switchWritingStyleBackward();
-        } else if (current.has("rightarrow") && !previous.has("rightarrow")) {
-          void switchWritingStyleForward();
-        }
-      }
+    // Combos are subscribed via `dictateCombos` so we don't rebuild them
+    // on every keysHeld change. While dictation is active and the
+    // activation key is held, Left/Right cycles the writing style.
+    const activationHeld = isActivationComboHeld(dictateCombos, current);
+    const newlyPressed = resolveNewlyPressedDictationArrow(current, previous);
+    const arrowDirection = resolveInDictationArrowStyleSwitch({
+      enabled: inDictationStyleSwitchingEnabled,
+      isMainWindow,
+      isActiveDictateSession:
+        isActiveSession && activeRecordingMode === "dictate",
+      isManualStyling,
+      activationHeld,
+      newlyPressed,
+    });
+    if (arrowDirection === "forward") {
+      void applyInDictationStyleSwitch({ channel: "arrows", direction: 1 });
+    } else if (arrowDirection === "backward") {
+      void applyInDictationStyleSwitch({ channel: "arrows", direction: -1 });
     }
 
     previousStyleSwitchKeysRef.current = keysHeld;
@@ -1062,8 +1107,10 @@ export const DictationSideEffects = () => {
     // mutation-based snapshot of the prior `keysHeld` updated at the end of this
     // effect, so including it would trigger a render loop.
     activeRecordingMode,
+    dictateCombos,
     inDictationStyleSwitchingEnabled,
     isActiveSession,
+    isMainWindow,
     isManualStyling,
     keysHeld,
   ]);
@@ -1072,7 +1119,10 @@ export const DictationSideEffects = () => {
     actions: switchToStyleEntries.map((entry) => ({
       actionName: entry.actionName,
       onFire: () => {
-        void selectToneByHotkey(entry.toneId);
+        void applyInDictationStyleSwitch({
+          channel: "hotkey",
+          toneId: entry.toneId,
+        });
       },
     })),
     isDisabled: !isDictationUnlocked || !isMainWindow,
@@ -1170,6 +1220,7 @@ export const DictationSideEffects = () => {
     );
     sessionRef.current?.cleanup();
     sessionRef.current = null;
+    clearUtteranceToneSnapshots();
 
     produceAppState((draft) => {
       draft.assistantInputMode = "type";
@@ -1314,12 +1365,12 @@ export const DictationSideEffects = () => {
 
   useTauriListen<void>("tone-switch-forward", () => {
     if (!isMainWindow) return;
-    switchWritingStyleForward();
+    void applyInDictationStyleSwitch({ channel: "pill", direction: 1 });
   });
 
   useTauriListen<void>("tone-switch-backward", () => {
     if (!isMainWindow) return;
-    switchWritingStyleBackward();
+    void applyInDictationStyleSwitch({ channel: "pill", direction: -1 });
   });
 
   useTauriListen<OverlayResolvePermissionPayload>(

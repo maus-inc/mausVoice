@@ -85,6 +85,7 @@ const NON_CONNECT_HOSTS = new Map<string, string>([
   ["www.youtube.com", "iframe embed — validated against frame-src"],
   // Documentation-only strings.
   ["firebase.google.com", "doc comment URL"],
+  ["api-docs.deepseek.com", "doc comment URL"],
 ]);
 
 /**

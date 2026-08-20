@@ -25,9 +25,9 @@ xAI's current batch speech-to-text API is a dedicated, model-less `/v1/stt` rout
 
 ### AssemblyAI
 
-AssemblyAI uses its dedicated v3 streaming WebSocket, with the API key in the connection query. It streams PCM16 audio, can emit committed segments for real-time output, and waits up to two seconds for finalization. Startup/finalization failure returns a warning and no transcript; there is no retained-audio fallback. The model-provider list is intentionally empty because the session does not expose a user model picker.
+AssemblyAI uses its dedicated v3 streaming WebSocket, with the API key in the connection query. It streams PCM16 audio, can emit committed segments for real-time output, and waits up to two seconds for finalization. Startup/finalization failure returns a warning and no transcript; there is no retained-audio fallback. The live session does not expose a model picker; model selection applies to stored-audio batch transcription.
 
-AssemblyAI's test lists transcripts from `/v2/transcript`; it can succeed without exercising the streaming endpoint. Stored-audio **Retranscribe** uploads each 60-second segment to `/v2/upload`, creates a `/v2/transcript`, and polls until completion through the desktop HTTP transport. It now requests the current `universal-3-5-pro` model with `universal-2` as the broad-language fallback, and enables language detection when the language is auto.
+AssemblyAI's test lists transcripts from `/v2/transcript`; it can succeed without exercising the streaming endpoint. Stored-audio **Retranscribe** uses an AssemblyAI batch implementation that uploads each 60-second segment to `/v2/upload`, creates a `/v2/transcript`, and polls until completion through the desktop HTTP transport. The batch route accepts an optional speech model. Selecting `universal-3-5-pro` sends `speech_models: ["universal-3-5-pro", "universal-2"]` so audio in a language outside the flagship's 18-language set still falls back; selecting `universal-2` sends it alone; leaving the field empty omits the parameter to use AssemblyAI's default. The legacy `best` and `nano` tiers are migrated to their current successors, and unknown model IDs are rejected up front rather than silently falling back.
 
 ## Generative providers
 

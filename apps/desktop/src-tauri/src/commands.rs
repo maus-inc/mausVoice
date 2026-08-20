@@ -2240,6 +2240,15 @@ pub async fn clear_local_data(
     Ok(())
 }
 
+/// A23: Mirror the TS playInteractionChime preference into Rust so the
+/// native thock path (pill overlays call audio_feedback::play_thock directly,
+/// bypassing the TS gate in tryPlayAudioChime) honors the user's choice.
+#[tauri::command]
+#[specta::specta]
+pub fn set_interaction_chime_enabled(enabled: bool) {
+    crate::system::audio_feedback::set_interaction_chime_enabled(enabled);
+}
+
 #[tauri::command]
 #[specta::specta]
 pub fn play_audio(clip: AudioClip) -> Result<(), String> {
@@ -2935,6 +2944,18 @@ pub fn request_admin_relaunch(app: tauri::AppHandle) -> crate::platform::NativeS
     }
 }
 
+/// Fully terminates the application process (including the tray icon).
+///
+/// Distinct from the main-window close path, which only hides to tray.
+/// Used by the elevation-declined dialog's "Close mausVoice" action and any
+/// other UI that must actually quit rather than background the app.
+#[tauri::command]
+#[specta::specta]
+pub fn quit_app(app: tauri::AppHandle) {
+    log::info!("quit_app: terminating process");
+    app.exit(0);
+}
+
 #[tauri::command]
 #[specta::specta]
 pub fn set_tray_title(app: AppHandle, title: Option<String>) -> Result<(), String> {
@@ -2985,6 +3006,18 @@ pub fn set_tray_language_menu(
 #[specta::specta]
 pub fn set_register_app_label(app: AppHandle, app_name: Option<String>) -> Result<(), String> {
     crate::system::tray::set_register_app_label(&app, app_name)
+}
+
+/// Set the localized dashboard action labels and sync the tray item to the
+/// main window's actual visibility.
+#[tauri::command]
+#[specta::specta]
+pub fn set_dashboard_menu_labels(
+    app: AppHandle,
+    open_label: String,
+    hide_label: String,
+) -> Result<(), String> {
+    crate::system::tray::set_dashboard_menu_labels(&app, open_label, hide_label)
 }
 
 /// Sync the tray's pill-visibility label.

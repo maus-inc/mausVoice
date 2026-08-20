@@ -4,7 +4,7 @@ import type {
   RouteTranscriptOutputResult,
 } from "@maus-inc/types";
 import { getIntl } from "../i18n/intl";
-import { getAppState } from "../store";
+import { getAppState, produceAppState } from "../store";
 import { reviewTextInComposer } from "./composer.utils";
 import { getLogger } from "./log.utils";
 import { sendPillFlashMessage } from "./overlay.utils";
@@ -59,7 +59,7 @@ const reviewOutputText = async (
 const insertLocalOutput = async (
   context: OutputContext,
   text: string,
-): Promise<void> => {
+): Promise<PasteOutcome | undefined> => {
   const insertionMethod =
     context.currentApp?.insertionMethod ??
     context.prefs?.insertionMethod ??
@@ -68,7 +68,7 @@ const insertLocalOutput = async (
     const typingSpeedMs =
       context.currentApp?.typingSpeedMs ?? context.prefs?.typingSpeedMs ?? 5;
     await insertLocalTranscriptOutputViaTyping(text, typingSpeedMs);
-    return;
+    return undefined;
   }
 
   const pasteKeybind =
@@ -77,7 +77,7 @@ const insertLocalOutput = async (
       : (context.currentApp?.pasteKeybind ??
         context.prefs?.pasteKeybind ??
         null);
-  await insertLocalTranscriptOutputViaPaste(text, pasteKeybind);
+  return insertLocalTranscriptOutputViaPaste(text, pasteKeybind);
 };
 
 export const routeTranscriptOutput = async (
@@ -106,7 +106,7 @@ export const routeTranscriptOutput = async (
 export const insertLocalTranscriptOutputViaPaste = async (
   text: string,
   keybind: string | null,
-): Promise<void> => {
+): Promise<PasteOutcome> => {
   const sanitized = sanitizeIndentation(text);
 
   const outcome = await invoke<PasteOutcome>("paste", {
@@ -124,6 +124,8 @@ export const insertLocalTranscriptOutputViaPaste = async (
       }),
     );
   }
+
+  return outcome;
 };
 
 export const insertLocalTranscriptOutputViaTyping = async (
@@ -159,4 +161,129 @@ export const insertLocalTranscriptOutputViaTyping = async (
     window.removeEventListener("blur", handleCancel);
     window.removeEventListener("keydown", keydownHandler);
   }
+};
+
+// ──────────────────────────────────────────────────────────────────────────────
+// Dictation backlog state management
+// ──────────────────────────────────────────────────────────────────────────────
+
+/** Return a snapshot of the current dictation backlog. */
+export const getDictationBacklog = (): string[] => {
+  return [...getAppState().dictationBacklog];
+};
+
+/** True when the backlog is non-empty. */
+export const hasDictationBacklog = (): boolean => {
+  return getAppState().dictationBacklog.length > 0;
+};
+
+/** Append a segment to the backlog. No side effects. */
+export const appendToDictationBacklog = (text: string): void => {
+  produceAppState((draft) => {
+    draft.dictationBacklog.push(text);
+  });
+};
+
+/** Clear the backlog (call at session start). */
+export const clearDictationBacklog = (): void => {
+  produceAppState((draft) => {
+    draft.dictationBacklog = [];
+  });
+};
+
+/**
+ * Increment the session nonce so stale backlog data from a previous
+ * session is identifiable.
+ */
+export const incrementDictationBacklogNonce = (): void => {
+  produceAppState((draft) => {
+    draft.dictationBacklogNonce += 1;
+  });
+};
+
+/**
+ * Snapshot of backlog + session nonce. Consumers compare the nonce against
+ * the current value before acting on old data (e.g. a queued drain that
+ * completed after a new session started).
+ */
+type BacklogSnapshot = { segments: string[]; nonce: number };
+
+const takeBacklogSnapshot = (): BacklogSnapshot => {
+  const { dictationBacklog, dictationBacklogNonce } = getAppState();
+  return { segments: [...dictationBacklog], nonce: dictationBacklogNonce };
+};
+
+/**
+ * Drain the dictation backlog (and optionally a newSegment) into the
+ * currently focused field via the standard paste pipeline.
+ *
+ * - If an editable target is focused: paste and return
+ *   `{ delivered: true, copiedToClipboard: false }`.
+ * - If NOT editable: single clipboard write + single pill flash, return
+ *   `{ delivered: true, copiedToClipboard: true }`.
+ * - Empty backlog + no newSegment → return
+ *   `{ delivered: false, copiedToClipboard: false }`.
+ *
+ * The backlog is CLEARED on successful delivery. If the drain fails, the
+ * backlog is preserved so the user doesn't lose text.
+ *
+ * @param newSegment  Optional additional segment to deliver with the backlog.
+ * @param currentAppId  Optional app target id for resolving app-specific
+ *                      insertion method and paste keybind preferences.
+ */
+export const drainDictationBacklog = async (
+  newSegment?: string,
+  currentAppId?: string | null,
+): Promise<{ delivered: boolean; copiedToClipboard: boolean }> => {
+  const snap = takeBacklogSnapshot();
+  if (snap.segments.length === 0 && !newSegment?.trim()) {
+    return { delivered: false, copiedToClipboard: false };
+  }
+
+  // Build the combined text: backlog segments joined with spaces (same
+  // separator used by the live path when it accumulates streamedText).
+  // Then apply the same trailing-space/newline logic as handleInterimSegment
+  // so the backlog text behaves identically to live segments.
+  const segments = [...snap.segments];
+  if (newSegment?.trim()) {
+    segments.push(newSegment.trim());
+  }
+  const raw = segments.join(" ");
+  const combinedText = raw.endsWith("\n") ? raw : `${raw} `;
+
+  // Check nonce BEFORE delivery — if the session already advanced, this
+  // backlog belongs to a prior session and must not be delivered.
+  if (getAppState().dictationBacklogNonce !== snap.nonce) {
+    return { delivered: false, copiedToClipboard: false };
+  }
+
+  // Deliver the combined backlog text through the standard output path so
+  // app- and user-specific insertion methods and paste keybinds are
+  // respected.
+  const state = getAppState();
+  const context: OutputContext = {
+    state,
+    prefs: getMyUserPreferences(state),
+    currentApp: currentAppId
+      ? (state.appTargetById[currentAppId] ?? null)
+      : null,
+  };
+  const pasteOutcome = await insertLocalOutput(context, combinedText);
+
+  // Post-delivery nonce check: session may have advanced during the
+  // async deliver call.
+  if (getAppState().dictationBacklogNonce !== snap.nonce) {
+    return {
+      delivered: true,
+      copiedToClipboard: pasteOutcome === "copied_to_clipboard",
+    };
+  }
+
+  // Clear the backlog on successful delivery.
+  clearDictationBacklog();
+
+  return {
+    delivered: true,
+    copiedToClipboard: pasteOutcome === "copied_to_clipboard",
+  };
 };

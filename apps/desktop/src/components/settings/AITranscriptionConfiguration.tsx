@@ -57,7 +57,11 @@ import {
   type LocalWhisperModel,
   normalizeLocalWhisperModel,
 } from "../../utils/local-transcription.utils";
-import { activeRowCheckSx, activeRowSx } from "../../styles/selection";
+import {
+  activeRowCheckSx,
+  activeRowSx,
+  selectedOutlineSx,
+} from "../../styles/selection";
 import { duration, easeOutCubic } from "../../styles/motion";
 import { AnimateSwitch } from "../common/AnimateIn";
 import { SegmentedControl } from "../common/SegmentedControl";
@@ -712,12 +716,13 @@ export const AITranscriptionConfiguration = () => {
     return (
       <Box
         key={value}
-        sx={{
+        sx={(theme) => ({
           border: 1,
-          borderColor: active ? "primary.main" : "divider",
+          borderColor: "divider",
           borderRadius: 1.5,
           p: 1.25,
-        }}
+          ...(active ? selectedOutlineSx(theme) : null),
+        })}
       >
         <Stack spacing={0.75}>
           <Stack
