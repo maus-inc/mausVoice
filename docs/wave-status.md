@@ -25,8 +25,9 @@ implemented). Em-dash counts and file evidence below were gathered from the work
 ## NOT finished (genuinely open)
 
 ### A12 — Stability / memory / idle audit (Wave 4 gate) — **MISSING**
+
 No audit report, no measured baselines, no "before/after memory metrics" — the core
-deliverable A12's DoD requires. Note: much of the *underlying* hardening the plan
+deliverable A12's DoD requires. Note: much of the _underlying_ hardening the plan
 enumerates already exists (`AsyncDataController` generation counter in
 `async.hooks.ts`, `useTauriListen` unlisten/`canceled` teardown in
 `desktop-utils/src/tauri-listen.ts`, `useAsyncEffect` cleanup chaining). What is
@@ -37,6 +38,7 @@ protocol on a prerelease build (per `ui-behavioral-issues-plan.md` A12 WALK) and
 the report; the static audit is largely already satisfied.
 
 ### A23 — thock rate-limiter unit test — **PRESENT, needs `cargo` verification**
+
 `should_throttle_at(now_ms)` was extracted as a pure decision function and is
 covered by four unit tests (`first_thock_is_not_throttled`,
 `within_window_is_throttled`, `at_or_past_window_is_reenabled`,
@@ -45,6 +47,7 @@ this sandbox, so they could not be compiled/verified here; the remaining step is
 `cargo test` in a Rust-capable environment.
 
 ### A11 — full surface wiring — **INCOMPLETE (A/C/D wired, E/F descoped)**
+
 The text-input clipboard menu is wired, and the non-input surfaces are now wired:
 transcriptions (`TranscriptRow.tsx`), styles (`ManualStylingRow.tsx`), chats
 (`ConversationListItem.tsx` + `ChatMessageBubble.tsx`), and dictionary
