@@ -26,10 +26,21 @@ const [owner, repo] = repository.split("/");
 
 // House badge chips: local SVGs under docs/assets/badges/ (black capsule,
 // inner top highlight, drop shadow, Geist outlines), referenced by absolute
-// raw URL so they render on release pages. The CI badge must show live
-// status, so it stays a shields.io workflow badge styled flat black.
+// raw URL so they render on release pages. The title chip (version +
+// stable/pre-release channel) changes with every release, so it is a
+// shields.io static badge whose values this script bakes in per run,
+// styled flat black to sit next to the house badges.
 const BADGE_BASE = `https://raw.githubusercontent.com/${owner}/${repo}/main/docs/assets/badges`;
-const CI_BADGE = `https://img.shields.io/github/actions/workflow/status/${owner}/${repo}/test-desktop-unit.yml?branch=main&label=CI&style=flat&color=000000&labelColor=000000`;
+
+// shields lets `-` act as a segment separator in static badge URLs, so
+// literal dashes and underscores in the copy must be doubled.
+function shieldsText(s) {
+  return s.replace(/-/g, "--").replace(/_/g, "__");
+}
+
+const channelLabel = prerelease ? "pre-release" : "stable";
+const versionLabel = version ? `v${version}` : tag || "release";
+const CHANNEL_BADGE = `https://img.shields.io/badge/${shieldsText(versionLabel)}-${shieldsText(channelLabel)}-000000?style=flat&labelColor=000000`;
 
 // mausVoice logo rendered from the repo so releases carry the brand mark.
 const MAUSVOICE_LOGO = `https://raw.githubusercontent.com/${owner}/${repo}/main/branding/mausvoice-logo-256.png`;
@@ -178,7 +189,6 @@ const noteItems = notes
   .join("\n");
 
 const githubBase = `https://github.com/${owner}/${repo}`;
-const actionsUrl = `${githubBase}/actions/workflows/test-desktop-unit.yml`;
 const releasesUrl = `${githubBase}/releases`;
 const licenceUrl = `${githubBase}/blob/main/LICENCE`;
 
@@ -217,7 +227,7 @@ const body = [
   `  <img src="${MAUSVOICE_LOGO}" alt="mausVoice" width="110" />`,
   `</p>`,
   "",
-  `# ${releaseName} <a href="${actionsUrl}"><img src="${CI_BADGE}" alt="CI" /></a>`,
+  `# ${releaseName} <a href="${releasesUrl}"><img src="${CHANNEL_BADGE}" alt="${versionLabel} ${channelLabel}" /></a>`,
   "",
   "Voice typing for your own machine. Dictate into any app, clean it up with AI. No account, no subscription.",
   "",
