@@ -141,7 +141,19 @@ const invokeHttpRequest = async (
  * that unsupported future schemes are rejected by default.
  */
 export const secureFetch: typeof globalThis.fetch = async (input, init) => {
-  const url = new URL(requestUrl(input));
+  const raw = requestUrl(input);
+  let url: URL;
+  try {
+    url = new URL(raw);
+  } catch {
+    // A relative URL (e.g. a saved base of "/v1" joined without an origin)
+    // otherwise surfaces as a generic engine "Invalid URL" with no pointer to
+    // which egress boundary rejected it. Echo the input start only — a
+    // relative string cannot contain credentials the caller didn't supply.
+    throw new TypeError(
+      `secureFetch requires an absolute http(s) URL, received: ${raw.slice(0, 128)}`,
+    );
+  }
   if (url.protocol === "http:") {
     return invokeHttpRequest("private_http_request", input, init);
   }

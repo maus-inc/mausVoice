@@ -89,7 +89,7 @@ afterEach(() => {
 });
 
 describe("OpenAICompatibleModelPicker polling", () => {
-  it("does not start a second refresh while one is still in flight", async () => {
+  it("does not start a second probe while one is still in flight", async () => {
     vi.useFakeTimers();
     try {
       let resolveFirst: ((value: boolean) => void) | undefined;
@@ -104,7 +104,8 @@ describe("OpenAICompatibleModelPicker polling", () => {
         await Promise.resolve();
       });
 
-      // Two polling intervals pass while the first request is still open.
+      // Polling windows pass while the first request is still open: exactly
+      // one probe ever runs at a time.
       await act(async () => {
         await vi.advanceTimersByTimeAsync(7000);
       });
@@ -114,10 +115,53 @@ describe("OpenAICompatibleModelPicker polling", () => {
         resolveFirst?.(true);
         await Promise.resolve();
       });
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("stops polling once the endpoint is available", async () => {
+    vi.useFakeTimers();
+    try {
+      renderPicker("http://127.0.0.1:8080");
       await act(async () => {
-        await vi.advanceTimersByTimeAsync(3000);
+        await Promise.resolve();
+        await vi.advanceTimersByTimeAsync(0);
       });
-      expect(checkAvailabilityMock.mock.calls.length).toBeGreaterThanOrEqual(2);
+      // First probe resolved available; the models fetch finishes inside.
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(0);
+      });
+      const afterAvailable = checkAvailabilityMock.mock.calls.length;
+      expect(afterAvailable).toBeGreaterThanOrEqual(1);
+
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(10_000);
+      });
+      expect(checkAvailabilityMock).toHaveBeenCalledTimes(afterAvailable);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("keeps probing while the endpoint is unavailable", async () => {
+    vi.useFakeTimers();
+    try {
+      checkAvailabilityMock.mockResolvedValue(false);
+      renderPicker("http://127.0.0.1:8080");
+      await act(async () => {
+        await Promise.resolve();
+        await vi.advanceTimersByTimeAsync(0);
+      });
+      const afterFirst = checkAvailabilityMock.mock.calls.length;
+      expect(afterFirst).toBeGreaterThanOrEqual(1);
+
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(7000);
+      });
+      expect(
+        checkAvailabilityMock.mock.calls.length,
+      ).toBeGreaterThanOrEqual(afterFirst + 2);
     } finally {
       vi.useRealTimers();
     }

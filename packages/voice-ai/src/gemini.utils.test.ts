@@ -387,6 +387,46 @@ describe("Gemini native transport", () => {
   });
 });
 
+describe("Gemini model path sanitization", () => {
+  it("encodes ordinary model ids into the models/:action URL", async () => {
+    const customFetch = vi
+      .fn()
+      .mockResolvedValue(
+        jsonResponse({ candidates: [{ content: { parts: [{ text: "x" }] } }] }),
+      );
+    await geminiGenerateTextResponse({
+      apiKey: "k",
+      model: "gemini-3.7-flash",
+      prompt: "p",
+      customFetch,
+    });
+    const url = String(customFetch.mock.calls[0]?.[0]);
+    expect(url).toContain("/models/gemini-3.7-flash:generateContent");
+  });
+
+  it.each(["../x", "a/../b", "a%2Fb", "models/../../admin:foo"])(
+    "rejects hostile model id %j before any HTTP call",
+    async (model) => {
+      // A well-formed Response stands in so pre-guard behavior reaches the
+      // network layer; the guard must reject before the fetch is attempted.
+      const customFetch = vi
+        .fn()
+        .mockResolvedValue(
+          jsonResponse({ candidates: [{ content: { parts: [{ text: "x" }] } }] }),
+        );
+      await expect(
+        geminiGenerateTextResponse({
+          apiKey: "k",
+          model,
+          prompt: "p",
+          customFetch,
+        }),
+      ).rejects.toThrow(/invalid model id/i);
+      expect(customFetch).not.toHaveBeenCalled();
+    },
+  );
+});
+
 describe("Gemini retry policy edge cases", () => {
   it("shares one absolute deadline signal across retried attempts", async () => {
     const signals: (AbortSignal | null | undefined)[] = [];
@@ -410,7 +450,7 @@ describe("Gemini retry policy edge cases", () => {
       prompt: "Hi",
       customFetch,
     });
-    expect(signals.length).toBe(2);
+    expect(signals).toHaveLength(2);
     // The deadline must cover the whole operation: one signal instance,
     // minted before the first attempt, not a fresh timer per attempt.
     expect(signals[0]).toBe(signals[1]);

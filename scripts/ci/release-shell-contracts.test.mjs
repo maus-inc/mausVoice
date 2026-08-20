@@ -9,9 +9,9 @@ const read = (relativePath) =>
   readFileSync(resolve(repoRoot, relativePath), "utf8");
 
 // POSIX-only shell tokens that pwsh (the default `run:` shell on
-// windows-latest) cannot parse. Kept conservative: only patterns that are
-// definitively invalid in PowerShell.
-const POSIX_ONLY = [/\bif\s*\[/, /\belif\b/, /\bfi\b/, /\bthen\b/];
+// windows-latest) cannot parse. `then`/`fi`/`elif` anchor to line start —
+// the bare word boundary would also match English prose inside echo strings.
+const POSIX_ONLY = [/\bif\s*\[/, /^\s*elif\b/m, /^\s*fi\b/m, /^\s*then\b/m];
 
 // Extract the steps of a workflow file as { name, shell, run } records. The
 // release workflow pins structure by convention (steps are `- name:` entries

@@ -41,15 +41,15 @@ export const OpenAICompatibleModelPicker = ({
     [baseUrl, includeV1Path],
   );
 
-  // Single effect owns polling: at most one in-flight request per config; a
-  // config change ends the old effect's polling and drops its completions
-  // (cancellation flag), so a stale probe can never overwrite fresh state.
-  // A toggle can briefly overlap with the previous config's request — that
-  // overlap is bounded by the request timeout and its late result is always
-  // discarded by the flag.
+  // Probes re-arm every 3s only while the endpoint is unavailable — once it
+  // answers, polling stops (a 2-call cadence against the native bridge for
+  // an open popover is pointless churn). A config change rebuilds the effect
+  // and drops the old run's completions via the cancellation flag, so a stale
+  // probe can never overwrite fresh state.
   useEffect(() => {
     let cancelled = false;
     let inFlight = false;
+    let timer: ReturnType<typeof setTimeout> | undefined;
 
     const run = async () => {
       if (cancelled || inFlight) return;
@@ -70,16 +70,22 @@ export const OpenAICompatibleModelPicker = ({
           if (cancelled) return;
           setModels(fetchedModels);
           setUseManualInput(false);
-        } else {
-          setModels([]);
-          setUseManualInput(true);
+          // Endpoint answered: stop polling until the next config change.
+          return;
         }
+        setModels([]);
+        setUseManualInput(true);
+        // Endpoint down: probe again shortly (runs are non-overlapping by
+        // construction because the next probe is scheduled only after this
+        // run settles).
+        timer = setTimeout(() => void run(), 3000);
       } catch (error) {
         console.error("Failed to fetch OpenAI-compatible models", error);
         if (!cancelled) {
           setIsAvailable(false);
           setModels([]);
           setUseManualInput(true);
+          timer = setTimeout(() => void run(), 3000);
         }
       } finally {
         inFlight = false;
@@ -88,13 +94,10 @@ export const OpenAICompatibleModelPicker = ({
     };
 
     void run();
-    const interval = setInterval(() => {
-      void run();
-    }, 3000);
 
     return () => {
       cancelled = true;
-      clearInterval(interval);
+      if (timer) clearTimeout(timer);
     };
   }, [effectiveUrl, apiKey, apiKeyId]);
 

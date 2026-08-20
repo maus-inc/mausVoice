@@ -5467,16 +5467,15 @@ mod tests {
     async fn run_redirect_chain(
         listeners: Vec<(tokio::net::TcpListener, Vec<String>)>,
         start: &Url,
+        policy: HttpRequestPolicy,
     ) -> (Result<PrivateHttpResponse, String>, Vec<String>) {
         let mut receivers = Vec::new();
         for (listener, responses) in listeners {
             receivers.push(spawn_head_capturing_server(listener, responses));
         }
-        let outcome = execute_http_request(
-            credentialed_post(redirect_chain_test_id(), start),
-            HttpRequestPolicy::PrivateNetwork,
-        )
-        .await;
+        let outcome =
+            execute_http_request(credentialed_post(redirect_chain_test_id(), start), policy)
+                .await;
         let mut heads = Vec::new();
         for mut receiver in receivers {
             while let Ok(head) = receiver.try_recv() {
@@ -5510,6 +5509,7 @@ mod tests {
                 (listener_b, vec![redirect_response(&url_back)]),
             ],
             &url_start,
+            HttpRequestPolicy::PrivateNetwork,
         )
         .await;
 
@@ -5541,6 +5541,7 @@ mod tests {
                 vec![redirect_response(&url_next), REDIRECT_OK_RESPONSE.to_string()],
             )],
             &url_start,
+            HttpRequestPolicy::PrivateNetwork,
         )
         .await;
 
@@ -5550,6 +5551,78 @@ mod tests {
             assert!(
                 head.to_ascii_lowercase().contains("authorization"),
                 "same-origin hop {index} keeps credentials"
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn saved_endpoint_refuses_redirect_outside_the_saved_origin() {
+        let _test_guard = PRIVATE_HTTP_CANCELLATION_TEST_LOCK.lock().await;
+
+        // Saved endpoint lives at A; its response redirects to B (a different
+        // port, hence a different origin). The request must fail closed and
+        // B must never be contacted.
+        let listener_a = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let port_a = listener_a.local_addr().unwrap().port();
+        let listener_b = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let port_b = listener_b.local_addr().unwrap().port();
+        let base = Url::parse(&format!("http://127.0.0.1:{port_a}/v1")).unwrap();
+        let url_start = Url::parse(&format!("http://127.0.0.1:{port_a}/v1/models")).unwrap();
+        let url_hop = Url::parse(&format!("http://127.0.0.1:{port_b}/v1/models")).unwrap();
+
+        let (outcome, heads) = run_redirect_chain(
+            vec![
+                (listener_a, vec![redirect_response(&url_hop)]),
+                // B would only answer if the invalid hop were attempted; it
+                // must starve instead.
+                (listener_b, vec![REDIRECT_OK_RESPONSE.to_string()]),
+            ],
+            &url_start,
+            HttpRequestPolicy::SavedOpenAiCompatibleEndpoint { base_url: base },
+        )
+        .await;
+
+        assert!(
+            outcome.is_err(),
+            "redirect leaving the saved origin must fail"
+        );
+        let error_message = outcome.as_ref().err().cloned().unwrap_or_default();
+        assert!(
+            error_message.contains("outside the saved OpenAI-compatible endpoint"),
+            "the refusal must come from the endpoint-confinement check: {error_message}"
+        );
+        assert_eq!(
+            heads.len(),
+            1,
+            "the foreign host must never receive a request"
+        );
+    }
+
+    #[tokio::test]
+    async fn saved_endpoint_follows_same_origin_redirects_with_credentials() {
+        let _test_guard = PRIVATE_HTTP_CANCELLATION_TEST_LOCK.lock().await;
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let port = listener.local_addr().unwrap().port();
+        let base = Url::parse(&format!("http://127.0.0.1:{port}/v1")).unwrap();
+        let url_start = Url::parse(&format!("http://127.0.0.1:{port}/v1/models")).unwrap();
+        let url_next = Url::parse(&format!("http://127.0.0.1:{port}/v1/catalog")).unwrap();
+
+        let (outcome, heads) = run_redirect_chain(
+            vec![(
+                listener,
+                vec![redirect_response(&url_next), REDIRECT_OK_RESPONSE.to_string()],
+            )],
+            &url_start,
+            HttpRequestPolicy::SavedOpenAiCompatibleEndpoint { base_url: base },
+        )
+        .await;
+
+        assert!(outcome.is_ok(), "chain completes: {:?}", outcome.err());
+        assert_eq!(heads.len(), 2);
+        for (index, head) in heads.iter().enumerate() {
+            assert!(
+                head.to_ascii_lowercase().contains("authorization"),
+                "saved-endpoint hop {index} keeps credentials in-origin"
             );
         }
     }

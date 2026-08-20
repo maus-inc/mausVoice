@@ -65,12 +65,21 @@ type GeminiGenerateContentRequest = {
   generationConfig?: Record<string, unknown>;
 };
 
-const geminiModelPath = (model: string): string =>
-  model
-    .replace(/^models\//, "")
-    .split("/")
-    .map(encodeURIComponent)
-    .join("/");
+// Model ids come from Google's discovery endpoint or a stored preference and
+// interpolate into the request path. Dot segments would rewrite the path on
+// the same host (`navigator` join semantics), and a re-split then re-encoded
+// slash is a silent path break — validate the charset and reject instead.
+const GEMINI_MODEL_ID = /^[A-Za-z0-9._-]+$/;
+
+const geminiModelPath = (model: string): string => {
+  const candidate = model.replace(/^models\//, "");
+  if (!GEMINI_MODEL_ID.test(candidate)) {
+    throw new TypeError(
+      `Gemini invalid model id: ${JSON.stringify(model.slice(0, 128))} — expected letters, digits, dot, underscore, dash (from the provider's model list).`,
+    );
+  }
+  return encodeURIComponent(candidate);
+};
 
 /**
  * Non-2xx Gemini response with the HTTP status preserved, so retry helpers

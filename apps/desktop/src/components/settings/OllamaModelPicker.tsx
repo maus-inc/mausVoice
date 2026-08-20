@@ -2,18 +2,20 @@ import ErrorOutlineIcon from "@mui/icons-material/ErrorOutlined";
 import { Box, CircularProgress, Typography } from "@mui/material";
 import { useEffect, useState } from "react";
 import { FormattedMessage } from "react-intl";
-import { OllamaRepo, OpenAICompatibleRepo } from "../../repos/ollama.repo";
+import { OllamaRepo } from "../../repos/ollama.repo";
 import { OLLAMA_DEFAULT_URL } from "../../utils/ollama.utils";
-import { buildOpenAICompatibleUrl } from "../../utils/openai-compatible.utils";
 import { FreeSoloModelAutocomplete } from "./FreeSoloModelAutocomplete";
 
+// This picker is Ollama-only: OpenAI-compatible providers route to
+// OpenAICompatibleModelPicker instead (which carries the authorized
+// saved-endpoint fetch and /v1 handling). Keeping a dormant compat branch
+// here would probe the wrong transport if it were ever revived.
 type OllamaModelPickerProps = {
   baseUrl: string | null;
   apiKey?: string | null;
   selectedModel: string | null;
   onModelSelect: (model: string | null) => void;
   disabled?: boolean;
-  provider?: "ollama" | "openai-compatible";
 };
 
 export const OllamaModelPicker = ({
@@ -22,7 +24,6 @@ export const OllamaModelPicker = ({
   selectedModel,
   onModelSelect,
   disabled = false,
-  provider = "ollama",
 }: OllamaModelPickerProps) => {
   const [models, setModels] = useState<string[]>([]);
   const [isAvailable, setIsAvailable] = useState<boolean | null>(null);
@@ -30,27 +31,22 @@ export const OllamaModelPicker = ({
 
   const effectiveUrl = baseUrl || OLLAMA_DEFAULT_URL;
 
-  // At most one in-flight probe per config; a config change ends the old
-  // effect's polling and discards its completions via the cancellation flag,
-  // so a stale response never overwrites the picker's current state.
+  // Probes re-arm every 3s only while the endpoint is unavailable; once it
+  // answers, polling stops (the models list is in-hand and a config change
+  // rebuilds the effect anyway). Runs never overlap by construction: the next
+  // probe is scheduled only after the current one settles, and its late
+  // result is discarded by the cancellation flag.
   useEffect(() => {
     let cancelled = false;
     let inFlight = false;
+    let timer: ReturnType<typeof setTimeout> | undefined;
 
     const run = async () => {
       if (cancelled || inFlight) return;
       inFlight = true;
       setIsLoading(true);
       try {
-        const repo =
-          provider === "openai-compatible"
-            ? // The OpenAI-compatible probe lives under /v1 like the rest of
-              // the provider's calls; skip the suffix for a plain Ollama host.
-              new OpenAICompatibleRepo(
-                buildOpenAICompatibleUrl(effectiveUrl),
-                apiKey || undefined,
-              )
-            : new OllamaRepo(effectiveUrl, apiKey || undefined);
+        const repo = new OllamaRepo(effectiveUrl, apiKey || undefined);
         const available = await repo.checkAvailability();
         if (cancelled) return;
         setIsAvailable(available);
@@ -59,14 +55,16 @@ export const OllamaModelPicker = ({
           const fetchedModels = await repo.getAvailableModels();
           if (cancelled) return;
           setModels(fetchedModels);
-        } else {
-          setModels([]);
+          return;
         }
+        setModels([]);
+        timer = setTimeout(() => void run(), 3000);
       } catch (error) {
         console.error("Failed to fetch Ollama models", error);
         if (!cancelled) {
           setIsAvailable(false);
           setModels([]);
+          timer = setTimeout(() => void run(), 3000);
         }
       } finally {
         inFlight = false;
@@ -75,15 +73,12 @@ export const OllamaModelPicker = ({
     };
 
     void run();
-    const interval = setInterval(() => {
-      void run();
-    }, 3000);
 
     return () => {
       cancelled = true;
-      clearInterval(interval);
+      if (timer) clearTimeout(timer);
     };
-  }, [effectiveUrl, apiKey, provider]);
+  }, [effectiveUrl, apiKey]);
 
   if (isLoading && isAvailable === null) {
     return (
