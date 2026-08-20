@@ -1,8 +1,12 @@
-# Deterministic Handoff — Remaining Work (A12 · A23 test · A11 wiring)
+# Deterministic Handoff — Remaining Work (A12 audit · A11 composer/home wiring)
 
-This is the complete, self-contained specification for the three items that
-remain open on `arena/01a01be4-mausvoice` after the audit. Each section is
-written so a smaller model (or another engineer) can execute it without
+This is the complete, self-contained specification for the items still open after
+the audit. **A23's thock rate-limiter unit test and A11's A–D surface wiring are
+already implemented** (the A23 refactor landed as a pure function with race-free
+tests; transcripts/styles/chats/dictionary are wired — see the sections below for
+the current state). What genuinely remains: the **A12** measurement-backed
+stability/memory audit, and the **A11** composer/home (E/F) wiring. Each section
+is written so a smaller model (or another engineer) can execute it without
 re-deriving the context. **Do the work in the order given** — A11 last, because
 it must compose with the ContextMenu component already shipped on this branch.
 
