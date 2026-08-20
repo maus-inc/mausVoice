@@ -14,10 +14,15 @@ export const buildOpenAICompatibleUrl = (
   const normalized = normalizeOpenAICompatibleBaseUrl(baseUrl);
   const shouldIncludeV1 = includeV1Path ?? true;
 
-  // Check if the URL already ends with /v1
   if (normalized.endsWith("/v1")) {
     return normalized;
   }
 
   return shouldIncludeV1 ? `${normalized}/v1` : normalized;
 };
+
+export const appendOpenAICompatiblePath = (
+  apiBaseUrl: string,
+  path: string,
+): string =>
+  `${normalizeOpenAICompatibleBaseUrl(apiBaseUrl)}/${path.replace(/^\/+/, "")}`;

@@ -664,6 +664,23 @@ export const commands = {
       else return { status: "error", error: e as any };
     }
   },
+  async openaiCompatibleHttpRequest(
+    apiKeyId: string,
+    request: PrivateHttpRequest,
+  ): Promise<Result<PrivateHttpResponse, string>> {
+    try {
+      return {
+        status: "ok",
+        data: await TAURI_INVOKE("openai_compatible_http_request", {
+          apiKeyId,
+          request,
+        }),
+      };
+    } catch (e) {
+      if (e instanceof Error) throw e;
+      else return { status: "error", error: e as any };
+    }
+  },
   async pauseRecording(): Promise<Result<null, string>> {
     try {
       return { status: "ok", data: await TAURI_INVOKE("pause_recording") };

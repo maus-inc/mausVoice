@@ -2,6 +2,8 @@ name: Test Package Rust Transcription
 
 on:
   push:
+    branches:
+      - main
     paths:
       - "packages/rust_transcription/**"
       - ".github/workflows/test-package-rust-transcription.yml"

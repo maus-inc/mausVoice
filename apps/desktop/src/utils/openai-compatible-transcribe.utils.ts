@@ -1,4 +1,5 @@
-import { secureFetch as fetch } from "./secure-fetch.utils";
+import { normalizeOpenAICompatibleBaseUrl } from "./openai-compatible.utils";
+import { secureFetch } from "./secure-fetch.utils";
 
 export type OpenAICompatibleTranscriptionArgs = {
   baseUrl: string;
@@ -8,6 +9,7 @@ export type OpenAICompatibleTranscriptionArgs = {
   ext: string;
   prompt?: string;
   language?: string;
+  customFetch?: typeof secureFetch;
 };
 
 export type OpenAICompatibleTranscriptionSegment = {
@@ -28,8 +30,11 @@ export const openaiCompatibleTranscribeAudio = async ({
   ext,
   prompt,
   language,
+  customFetch = secureFetch,
 }: OpenAICompatibleTranscriptionArgs): Promise<OpenAICompatibleTranscribeAudioOutput> => {
-  const url = baseUrl.replace(/\/$/, "");
+  // Use the shared URL normalizer so trailing-slash stripping and any future
+  // URL normalisation logic stays consistent across the codebase.
+  const url = normalizeOpenAICompatibleBaseUrl(baseUrl);
 
   // Arbitrary user-configured OpenAI-compatible servers vary widely. We prefer
   // `verbose_json` so capable servers return `segments[].no_speech_prob` and
@@ -61,7 +66,7 @@ export const openaiCompatibleTranscribeAudio = async ({
   }
 
   const send = (format: "verbose_json" | "json" | null) =>
-    fetch(`${url}/audio/transcriptions`, {
+    customFetch(`${url}/audio/transcriptions`, {
       method: "POST",
       body: buildBody(format),
       headers,
@@ -72,10 +77,19 @@ export const openaiCompatibleTranscribeAudio = async ({
   const readError = async (response: Response): Promise<string> =>
     response.ok ? "" : (await response.text().catch(() => "")).trim();
 
+  // Match only clear "unsupported format" error messages by requiring
+  // both a format keyword AND a rejection keyword in the error body.
+  // Two simple regexes (instead of one complex alternation-heavy pattern)
+  // keep SonarCloud cognitive complexity below 20. The original broad
+  // regex /response[_\s-]?format|verbose_json|unsupported/i triggered
+  // full-audio re-uploads up to 3 times on many unrelated 4xx responses.
+  const FORMAT_RE = /\b(response[_\s-]?format|verbose_json)\b/i;
+  const REJECTION_RE = /\b(?:not support|invalid|unsupported)\b/i;
   const isUnsupportedFormat = (status: number, body: string): boolean =>
     status >= 400 &&
     status < 500 &&
-    /response[_\s-]?format|verbose_json|unsupported/i.test(body);
+    FORMAT_RE.test(body) &&
+    REJECTION_RE.test(body);
 
   // Prefer verbose_json (keeps the silence gate); degrade to json, then to no
   // response_format, only on an unsupported-format 4xx.
@@ -107,7 +121,10 @@ export const openaiCompatibleTranscribeAudio = async ({
     throw new Error("Transcription failed: no text in response");
   }
 
-  const segments = data.segments
+  // Guard against segments being a non-array value: some OpenAI-compatible
+  // servers return `null` or an object for segments when no timing info is
+  // available, and the unsized `data.segments.map(...)` would throw.
+  const segments = Array.isArray(data.segments)
     ? data.segments.map((segment) => ({
         text: segment.text ?? "",
         noSpeechProb: segment.no_speech_prob,

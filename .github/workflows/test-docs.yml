@@ -2,6 +2,8 @@ name: Test Docs
 
 on:
   push:
+    branches:
+      - main
     paths:
       - "apps/docs/**"
       - "index.html"

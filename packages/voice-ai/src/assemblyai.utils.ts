@@ -1,17 +1,23 @@
 import { delayed } from "@maus-inc/utilities";
+import type { CustomFetch } from "./types";
 
 export type AssemblyAITestIntegrationArgs = {
   apiKey: string;
+  customFetch?: CustomFetch;
 };
 
 export const assemblyaiTestIntegration = async ({
   apiKey,
+  customFetch = fetch,
 }: AssemblyAITestIntegrationArgs): Promise<boolean> => {
   try {
-    const response = await fetch("https://api.assemblyai.com/v2/transcript", {
-      method: "GET",
-      headers: { Authorization: apiKey },
-    });
+    const response = await customFetch(
+      "https://api.assemblyai.com/v2/transcript",
+      {
+        method: "GET",
+        headers: { Authorization: apiKey },
+      },
+    );
     return response.ok || response.status === 404;
   } catch {
     return false;
@@ -26,6 +32,7 @@ export type AssemblyAITranscriptionArgs = {
   timeoutMs?: number;
   /** Delay between status polls (default 3 s). */
   pollIntervalMs?: number;
+  customFetch?: CustomFetch;
 };
 
 export type AssemblyAITranscribeAudioOutput = {
@@ -128,6 +135,7 @@ type RequestWithRetryOptions = {
   /** When set, the request is aborted once this absolute deadline passes. */
   signal?: AbortSignal;
   deadline?: number;
+  customFetch?: CustomFetch;
 };
 
 // Handle a fetch-level failure (network error or abort). Throws when the
@@ -161,13 +169,14 @@ const requestWithRetry = async ({
   maxRetries = 3,
   signal,
   deadline,
+  customFetch = fetch,
 }: RequestWithRetryOptions): Promise<Response> => {
   for (let attempt = 0; ; attempt++) {
     assertBeforeDeadline(deadline, errorLabel);
 
     let response: Response;
     try {
-      response = await fetch(url, {
+      response = await customFetch(url, {
         method,
         headers: { ...assemblyaiHeaders(apiKey), ...headers },
         body,
@@ -213,6 +222,7 @@ const uploadAudio = async (
   arrayBuffer: ArrayBuffer,
   signal: AbortSignal,
   deadline: number,
+  customFetch: CustomFetch,
 ): Promise<string> => {
   const response = await requestWithRetry({
     apiKey,
@@ -223,6 +233,7 @@ const uploadAudio = async (
     errorLabel: ASSEMBLYAI_UPLOAD_ERROR,
     signal,
     deadline,
+    customFetch,
   });
 
   const { upload_url: uploadUrl } =
@@ -244,8 +255,12 @@ const createTranscriptRequest = async (
   language: string | undefined,
   signal: AbortSignal,
   deadline: number,
+  customFetch: CustomFetch,
 ): Promise<string> => {
-  const transcriptPayload: Record<string, unknown> = { audio_url: uploadUrl };
+  const transcriptPayload: Record<string, unknown> = {
+    audio_url: uploadUrl,
+    speech_model: "best",
+  };
   if (!language || language === "auto") {
     transcriptPayload.language_detection = true;
   } else {
@@ -261,6 +276,7 @@ const createTranscriptRequest = async (
     errorLabel: ASSEMBLYAI_CREATE_ERROR,
     signal,
     deadline,
+    customFetch,
   });
 
   const created = await parseJsonResponse<AssemblyAITranscriptResponse>(
@@ -289,6 +305,7 @@ const waitForTranscript = async (
   signal: AbortSignal,
   deadline: number,
   pollIntervalMs: number,
+  customFetch: CustomFetch,
 ): Promise<string> => {
   for (;;) {
     if (Date.now() >= deadline) {
@@ -302,6 +319,7 @@ const waitForTranscript = async (
       errorLabel: ASSEMBLYAI_STATUS_ERROR,
       signal,
       deadline,
+      customFetch,
     });
     const status = await parseJsonResponse<AssemblyAITranscriptResponse>(
       response,
@@ -338,6 +356,7 @@ export const assemblyaiTranscribeAudio = async ({
   language,
   timeoutMs = 180_000,
   pollIntervalMs = 3000,
+  customFetch = fetch,
 }: AssemblyAITranscriptionArgs): Promise<AssemblyAITranscribeAudioOutput> => {
   validatePositiveDuration(timeoutMs, "timeout");
   validatePositiveDuration(pollIntervalMs, "poll interval");
@@ -360,6 +379,7 @@ export const assemblyaiTranscribeAudio = async ({
       arrayBuffer,
       controller.signal,
       deadline,
+      customFetch,
     );
     const transcriptId = await createTranscriptRequest(
       apiKey,
@@ -367,6 +387,7 @@ export const assemblyaiTranscribeAudio = async ({
       language,
       controller.signal,
       deadline,
+      customFetch,
     );
     const text = await waitForTranscript(
       apiKey,
@@ -374,6 +395,7 @@ export const assemblyaiTranscribeAudio = async ({
       controller.signal,
       deadline,
       pollIntervalMs,
+      customFetch,
     );
 
     return { text };

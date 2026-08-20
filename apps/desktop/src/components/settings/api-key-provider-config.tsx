@@ -24,7 +24,14 @@ import {
   OLLAMA_DEFAULT_URL,
   ollamaTestIntegration,
 } from "../../utils/ollama.utils";
-import { OPENAI_COMPATIBLE_DEFAULT_URL } from "../../utils/openai-compatible.utils";
+import {
+  buildOpenAICompatibleUrl,
+  OPENAI_COMPATIBLE_DEFAULT_URL,
+} from "../../utils/openai-compatible.utils";
+import {
+  createOpenAICompatibleFetch,
+  secureFetch,
+} from "../../utils/secure-fetch.utils";
 import { speachesTestIntegration } from "../../utils/speaches.utils";
 import type { ApiKeyListContext } from "./ApiKeyList";
 
@@ -86,19 +93,59 @@ const STANDARD_PROVIDERS: Record<
     testFn: (args: { apiKey: string }) => Promise<boolean>;
   }
 > = {
-  groq: { displayName: "Groq", testFn: groqTestIntegration },
-  openai: { displayName: "OpenAI", testFn: openaiTestIntegration },
-  openrouter: { displayName: "OpenRouter", testFn: openrouterTestIntegration },
+  groq: {
+    displayName: "Groq",
+    testFn: ({ apiKey }) =>
+      groqTestIntegration({ apiKey, customFetch: secureFetch }),
+  },
+  openai: {
+    displayName: "OpenAI",
+    testFn: ({ apiKey }) =>
+      openaiTestIntegration({ apiKey, customFetch: secureFetch }),
+  },
+  openrouter: {
+    displayName: "OpenRouter",
+    testFn: ({ apiKey }) =>
+      openrouterTestIntegration({ apiKey, customFetch: secureFetch }),
+  },
   aldea: { displayName: "Aldea", testFn: aldeaTestIntegration },
-  assemblyai: { displayName: "AssemblyAI", testFn: assemblyaiTestIntegration },
+  assemblyai: {
+    displayName: "AssemblyAI",
+    testFn: ({ apiKey }) =>
+      assemblyaiTestIntegration({ apiKey, customFetch: secureFetch }),
+  },
   deepgram: { displayName: "Deepgram", testFn: deepgramTestIntegration },
   gladia: { displayName: "Gladia", testFn: gladiaTestIntegration },
-  elevenlabs: { displayName: "ElevenLabs", testFn: elevenlabsTestIntegration },
-  deepseek: { displayName: "DeepSeek", testFn: deepseekTestIntegration },
-  gemini: { displayName: "Gemini", testFn: geminiTestIntegration },
-  claude: { displayName: "Claude", testFn: claudeTestIntegration },
-  cerebras: { displayName: "Cerebras", testFn: cerebrasTestIntegration },
-  xai: { displayName: "xAI Grok", testFn: xaiTestIntegration },
+  elevenlabs: {
+    displayName: "ElevenLabs",
+    testFn: ({ apiKey }) =>
+      elevenlabsTestIntegration({ apiKey, customFetch: secureFetch }),
+  },
+  deepseek: {
+    displayName: "DeepSeek",
+    testFn: ({ apiKey }) =>
+      deepseekTestIntegration({ apiKey, customFetch: secureFetch }),
+  },
+  gemini: {
+    displayName: "Gemini",
+    testFn: ({ apiKey }) =>
+      geminiTestIntegration({ apiKey, customFetch: secureFetch }),
+  },
+  claude: {
+    displayName: "Claude",
+    testFn: ({ apiKey }) =>
+      claudeTestIntegration({ apiKey, customFetch: secureFetch }),
+  },
+  cerebras: {
+    displayName: "Cerebras",
+    testFn: ({ apiKey }) =>
+      cerebrasTestIntegration({ apiKey, customFetch: secureFetch }),
+  },
+  xai: {
+    displayName: "xAI Grok",
+    testFn: ({ apiKey }) =>
+      xaiTestIntegration({ apiKey, customFetch: secureFetch }),
+  },
 };
 
 function buildStandardConfig(provider: string): ProviderFormConfig {
@@ -165,8 +212,12 @@ function getOpenAICompatibleConfig(
     fields,
     testIntegration: (apiKey) =>
       openaiCompatibleTestIntegration({
-        baseUrl: apiKey.baseUrl || OPENAI_COMPATIBLE_DEFAULT_URL,
+        baseUrl: buildOpenAICompatibleUrl(
+          apiKey.baseUrl || OPENAI_COMPATIBLE_DEFAULT_URL,
+          apiKey.includeV1Path,
+        ),
         apiKey: apiKey.keyFull || undefined,
+        customFetch: createOpenAICompatibleFetch(apiKey.id),
       }),
   };
 }
@@ -225,6 +276,7 @@ const AZURE_OPENAI_CONFIG: ProviderFormConfig = {
     return azureOpenAITestIntegration({
       apiKey: key,
       endpoint: apiKey.baseUrl,
+      customFetch: secureFetch,
     });
   },
 };

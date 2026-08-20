@@ -4,10 +4,12 @@ import {
   aldeaTranscribeAudio,
   assemblyaiTranscribeAudio,
   azureTranscribeAudio,
+  type CustomFetch,
   deepgramTranscribeAudio,
   elevenlabsTranscribeAudio,
   geminiTranscribeAudio,
   GeminiTranscriptionModel,
+  GEMINI_TRANSCRIPTION_MODELS,
   gladiaTranscribeAudio,
   type GladiaCustomizations,
   groqTranscribeAudio,
@@ -15,7 +17,6 @@ import {
   OpenAITranscriptionModel,
   TranscriptionModel,
   xaiTranscribeAudio,
-  XaiTranscriptionModel,
 } from "@maus-inc/voice-ai";
 import { getAppState } from "../store";
 import { DEFAULT_MODEL_SIZE, TranscriptionMode } from "../types/ai.types";
@@ -34,6 +35,10 @@ import {
   gateSilentSegments,
   type TranscriptionSegment,
 } from "../utils/hallucination.utils";
+import {
+  createOpenAICompatibleFetch,
+  secureFetch,
+} from "../utils/secure-fetch.utils";
 import { speachesTranscribeAudio } from "../utils/speaches.utils";
 import {
   mergeTranscriptions,
@@ -255,11 +260,17 @@ export class LocalTranscribeAudioRepo extends BaseTranscribeAudioRepo {
 export class GroqTranscribeAudioRepo extends BaseTranscribeAudioRepo {
   private groqApiKey: string;
   private model: TranscriptionModel;
+  private customFetch?: CustomFetch;
 
-  constructor(apiKey: string, model: string | null) {
+  constructor(
+    apiKey: string,
+    model: string | null,
+    customFetch: CustomFetch | null = secureFetch,
+  ) {
     super();
     this.groqApiKey = apiKey;
     this.model = (model as TranscriptionModel) ?? "whisper-large-v3-turbo";
+    this.customFetch = customFetch ?? undefined;
   }
 
   // Groq has 25MB limit, 60s segments are well within that
@@ -288,6 +299,7 @@ export class GroqTranscribeAudioRepo extends BaseTranscribeAudioRepo {
       ext: "wav",
       prompt: input.prompt ?? undefined,
       language: input.language,
+      customFetch: this.customFetch,
     });
 
     return {
@@ -312,7 +324,7 @@ export class OpenAITranscribeAudioRepo extends BaseTranscribeAudioRepo {
   constructor(apiKey: string, model: string | null) {
     super();
     this.openaiApiKey = apiKey;
-    this.model = (model as OpenAITranscriptionModel) ?? "whisper-1";
+    this.model = model ?? "whisper-1";
   }
 
   // OpenAI has 25MB limit, 60s segments are well within that
@@ -341,6 +353,7 @@ export class OpenAITranscribeAudioRepo extends BaseTranscribeAudioRepo {
       ext: "wav",
       prompt: input.prompt ?? undefined,
       language: input.language,
+      customFetch: secureFetch,
     });
 
     return {
@@ -405,10 +418,12 @@ export class AldeaTranscribeAudioRepo extends BaseTranscribeAudioRepo {
 
 export class AssemblyAITranscribeAudioRepo extends BaseTranscribeAudioRepo {
   private readonly apiKey: string;
+  private readonly customFetch: typeof secureFetch;
 
-  constructor(apiKey: string) {
+  constructor(apiKey: string, customFetch: typeof secureFetch = secureFetch) {
     super();
     this.apiKey = apiKey;
+    this.customFetch = customFetch;
   }
 
   // AssemblyAI batch transcripts accept far longer audio, but 60s keeps the
@@ -436,6 +451,7 @@ export class AssemblyAITranscribeAudioRepo extends BaseTranscribeAudioRepo {
       apiKey: this.apiKey,
       blob: wavBuffer,
       language: input.language,
+      customFetch: this.customFetch,
     });
 
     return {
@@ -479,6 +495,7 @@ export class ElevenLabsTranscribeAudioRepo extends BaseTranscribeAudioRepo {
       blob: wavBuffer,
       ext: "wav",
       language: input.language,
+      customFetch: secureFetch,
     });
 
     return {
@@ -495,11 +512,17 @@ export class ElevenLabsTranscribeAudioRepo extends BaseTranscribeAudioRepo {
 export class DeepgramTranscribeAudioRepo extends BaseTranscribeAudioRepo {
   private apiKey: string;
   private model: string;
+  private customFetch: typeof secureFetch;
 
-  constructor(apiKey: string, model: string | null) {
+  constructor(
+    apiKey: string,
+    model: string | null,
+    customFetch: typeof secureFetch = secureFetch,
+  ) {
     super();
     this.apiKey = apiKey;
     this.model = model ?? "nova-3";
+    this.customFetch = customFetch;
   }
 
   protected getSegmentDurationSec(): number {
@@ -525,6 +548,7 @@ export class DeepgramTranscribeAudioRepo extends BaseTranscribeAudioRepo {
       blob: wavBuffer,
       ext: "wav",
       language: input.language,
+      customFetch: this.customFetch,
     });
 
     return {
@@ -592,12 +616,10 @@ export class GladiaTranscribeAudioRepo extends BaseTranscribeAudioRepo {
 
 export class XaiTranscribeAudioRepo extends BaseTranscribeAudioRepo {
   private apiKey: string;
-  private model: XaiTranscriptionModel;
 
-  constructor(apiKey: string, model: string | null) {
+  constructor(apiKey: string) {
     super();
     this.apiKey = apiKey;
-    this.model = (model as XaiTranscriptionModel) ?? "grok-stt";
   }
 
   protected getSegmentDurationSec(): number {
@@ -619,17 +641,17 @@ export class XaiTranscribeAudioRepo extends BaseTranscribeAudioRepo {
 
     const { text: transcript } = await xaiTranscribeAudio({
       apiKey: this.apiKey,
-      model: this.model,
       blob: wavBuffer,
       ext: "wav",
       language: input.language,
+      customFetch: secureFetch,
     });
 
     return {
       text: transcript,
       metadata: {
         inferenceDevice: "API • Grok",
-        modelSize: this.model,
+        modelSize: "xAI Speech to Text",
         transcriptionMode: "api",
       },
     };
@@ -691,7 +713,7 @@ export class GeminiTranscribeAudioRepo extends BaseTranscribeAudioRepo {
   constructor(apiKey: string, model: string | null) {
     super();
     this.geminiApiKey = apiKey;
-    this.model = (model as GeminiTranscriptionModel) ?? "gemini-2.5-flash";
+    this.model = model ?? GEMINI_TRANSCRIPTION_MODELS[0];
   }
 
   protected getSegmentDurationSec(): number {
@@ -718,6 +740,7 @@ export class GeminiTranscribeAudioRepo extends BaseTranscribeAudioRepo {
       mimeType: "audio/wav",
       prompt: input.prompt ?? undefined,
       language: input.language,
+      customFetch: secureFetch,
     });
 
     return {
@@ -782,12 +805,19 @@ export class OpenAICompatibleTranscribeAudioRepo extends BaseTranscribeAudioRepo
   private baseUrl: string;
   private model: string;
   private apiKey?: string;
+  private customFetch: typeof secureFetch;
 
-  constructor(baseUrl: string, model: string, apiKey?: string) {
+  constructor(
+    apiKeyId: string,
+    baseUrl: string,
+    model: string,
+    apiKey?: string,
+  ) {
     super();
     this.baseUrl = baseUrl;
     this.model = model;
     this.apiKey = apiKey;
+    this.customFetch = createOpenAICompatibleFetch(apiKeyId);
   }
 
   protected getSegmentDurationSec(): number {
@@ -816,6 +846,7 @@ export class OpenAICompatibleTranscribeAudioRepo extends BaseTranscribeAudioRepo
         ext: "wav",
         prompt: input.prompt ?? undefined,
         language: input.language,
+        customFetch: this.customFetch,
       });
 
     return {

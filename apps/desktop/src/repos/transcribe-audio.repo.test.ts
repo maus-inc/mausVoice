@@ -390,7 +390,11 @@ describe("DeepgramTranscribeAudioRepo", () => {
         { status: 200 },
       ),
     );
-    const repo = new DeepgramTranscribeAudioRepo("dg-key", null);
+    const repo = new DeepgramTranscribeAudioRepo(
+      "dg-key",
+      null,
+      globalThis.fetch,
+    );
 
     const result = await repo.transcribeAudio({
       samples: createSamples(1, 16000),
@@ -536,7 +540,7 @@ describe("AssemblyAITranscribeAudioRepo", () => {
       },
     );
 
-    const repo = new AssemblyAITranscribeAudioRepo("aa-key");
+    const repo = new AssemblyAITranscribeAudioRepo("aa-key", globalThis.fetch);
     const result = await repo.transcribeAudio({
       samples: createSamples(1, 16000),
       sampleRate: 16000,

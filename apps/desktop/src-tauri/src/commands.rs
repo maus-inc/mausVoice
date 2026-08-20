@@ -610,6 +610,29 @@ fn is_rfc1918_ipv4(address: std::net::Ipv4Addr) -> bool {
     first == 10 || (first == 172 && (16..=31).contains(&second)) || (first == 192 && second == 168)
 }
 
+/// Shared host-validation predicate used by both the HTTP private-network
+/// path and the HTTPS saved-endpoint path. Returns `true` when the host is
+/// loopback, RFC1918, unique-local IPv6, or a `.local` domain. Public
+/// domain names (e.g. `api.openai.com`) return `false`.
+fn host_is_private_or_local(host: &url::Host<&str>) -> bool {
+    match host {
+        url::Host::Domain(domain) => {
+            let domain = domain.to_ascii_lowercase();
+            domain == "localhost"
+                || (domain.ends_with(".local")
+                    && domain.len() > ".local".len()
+                    && !domain.contains(".."))
+        }
+        url::Host::Ipv4(address) => address.is_loopback() || is_rfc1918_ipv4(*address),
+        url::Host::Ipv6(address) => {
+            if let Some(mapped) = address.to_ipv4_mapped() {
+                return mapped.is_loopback() || is_rfc1918_ipv4(mapped);
+            }
+            address.is_loopback() || (address.segments()[0] & 0xfe00) == 0xfc00
+        }
+    }
+}
+
 /// Validate a user-configured plaintext endpoint without confusing hostname
 /// prefix globs (for example `10.evil.example`) with RFC1918 address ranges.
 /// Link-local addresses are deliberately excluded to keep cloud metadata
@@ -622,32 +645,114 @@ fn validate_private_http_url(url: &Url) -> Result<(), String> {
         return Err("Private-network URLs must not contain credentials".to_string());
     }
 
-    let allowed = match url.host() {
-        Some(url::Host::Domain(domain)) => {
-            let domain = domain.to_ascii_lowercase();
-            domain == "localhost"
-                || (domain.ends_with(".local")
-                    && domain.len() > ".local".len()
-                    && !domain.contains(".."))
-        }
-        Some(url::Host::Ipv4(address)) => address.is_loopback() || is_rfc1918_ipv4(address),
-        Some(url::Host::Ipv6(address)) => {
-            if let Some(mapped) = address.to_ipv4_mapped() {
-                mapped.is_loopback() || is_rfc1918_ipv4(mapped)
-            } else {
-                address.is_loopback() || (address.segments()[0] & 0xfe00) == 0xfc00
-            }
-        }
-        None => false,
-    };
-
-    if !allowed {
-        return Err(format!(
+    match url.host() {
+        Some(host) if host_is_private_or_local(&host) => Ok(()),
+        _ => Err(format!(
             "Private-network URL host is not loopback, RFC1918, unique-local IPv6, or .local: {}",
             url.host_str().unwrap_or("<missing>")
-        ));
+        )),
+    }
+}
+
+#[derive(Clone)]
+enum HttpRequestPolicy {
+    PrivateNetwork,
+    SavedOpenAiCompatibleEndpoint { base_url: Url },
+}
+
+fn normalized_url_path(path: &str) -> &str {
+    if path.len() > 1 {
+        path.trim_end_matches('/')
+    } else {
+        path
+    }
+}
+
+fn validate_saved_endpoint_url(url: &Url, base_url: &Url) -> Result<(), String> {
+    if !url.username().is_empty()
+        || url.password().is_some()
+        || !base_url.username().is_empty()
+        || base_url.password().is_some()
+    {
+        return Err("OpenAI-compatible endpoint URLs must not contain credentials".to_string());
+    }
+    if !matches!(base_url.scheme(), "http" | "https") {
+        return Err("OpenAI-compatible endpoints must use http or https".to_string());
+    }
+    if base_url.scheme() == "http" {
+        validate_private_http_url(base_url)?;
+        validate_private_http_url(url)?;
+    }
+    // HTTPS saved endpoints deliberately do NOT mirror the HTTP path's
+    // private-network-only restriction. HTTPS encrypts credentials, so a
+    // public cloud domain is a legitimate endpoint; plaintext HTTP is
+    // confined to private/local hosts because cleartext credentials must
+    // never cross the public internet. The HTTPS branch below still rejects
+    // public IP literals to mitigate SSRF (see the comment there).
+    if base_url.scheme() == "https" {
+        let https_host_check = |u: &Url| -> Result<(), String> {
+            match u.host() {
+                Some(h) => {
+                    // Intentionally asymmetric with the HTTP path below, and
+                    // safe by design:
+                    //   * Plaintext HTTP carries the bearer API key in
+                    //     cleartext, so it is confined to private/local
+                    //     networks only (no plaintext to public hosts).
+                    //   * HTTPS encrypts the credential, so reaching a
+                    //     user-configured OpenAI-compatible provider at a
+                    //     public cloud domain (e.g. api.openai.com) is the
+                    //     expected, legitimate use case and is allowed.
+                    //   * Even over HTTPS we still reject public IP literals
+                    //     that are not loopback/RFC1918/unique-local. This
+                    //     blocks SSRF to raw addressable infrastructure
+                    //     (cloud metadata 169.254.169.254, internal services
+                    //     reachable by IP) and forces DNS + TLS hostname
+                    //     validation. Private/local IPs and any domain name
+                    //     remain permitted.
+                    // Both schemes share `host_is_private_or_local` so the
+                    // private-network rule cannot silently drift.
+                    if host_is_private_or_local(&h) || matches!(h, url::Host::Domain(_)) {
+                        Ok(())
+                    } else {
+                        Err(format!(
+                            "OpenAI-compatible HTTPS endpoint host is not loopback, RFC1918, or unique-local: {}",
+                            u.host_str().unwrap_or("<missing>")
+                        ))
+                    }
+                }
+                None => Err("OpenAI-compatible endpoint has no host".to_string()),
+            }
+        };
+        https_host_check(base_url)?;
+        https_host_check(url)?;
+    }
+    if url.scheme() != base_url.scheme()
+        || url.host() != base_url.host()
+        || url.port_or_known_default() != base_url.port_or_known_default()
+    {
+        return Err("Request URL is outside the saved OpenAI-compatible endpoint".to_string());
+    }
+
+    let base_path = normalized_url_path(base_url.path());
+    let request_path = normalized_url_path(url.path());
+    let path_allowed = base_path == "/"
+        || request_path == base_path
+        || request_path
+            .strip_prefix(base_path)
+            .is_some_and(|remainder| remainder.starts_with('/'));
+    if !path_allowed {
+        return Err("Request path is outside the saved OpenAI-compatible endpoint".to_string());
     }
     Ok(())
+}
+
+fn validate_http_request_url(url: &Url, policy: &HttpRequestPolicy) -> Result<(), String> {
+    match policy {
+        HttpRequestPolicy::PrivateNetwork => validate_private_http_url(url),
+        HttpRequestPolicy::SavedOpenAiCompatibleEndpoint { base_url } => {
+            validate_saved_endpoint_url(url, base_url)
+        }
+    }
 }
 
 #[tauri::command]
@@ -707,10 +812,9 @@ pub fn cancel_private_http_request(request_id: String) -> Result<bool, String> {
     }
 }
 
-#[tauri::command]
-#[specta::specta]
-pub async fn private_http_request(
+async fn execute_http_request(
     request: PrivateHttpRequest,
+    policy: HttpRequestPolicy,
 ) -> Result<PrivateHttpResponse, String> {
     // Register before validation or any await so an abort IPC that wins the
     // command-scheduling race is consumed before networking can begin.
@@ -729,25 +833,29 @@ pub async fn private_http_request(
     }
 
     let initial_url = Url::parse(&request.url)
-        .map_err(|_| "Private-network request URL is invalid".to_string())?;
-    validate_private_http_url(&initial_url)?;
+        .map_err(|_| "HTTP request URL is invalid".to_string())?;
+    validate_http_request_url(&initial_url, &policy)?;
 
-    let client = reqwest::Client::builder()
-        // Connect directly so an environment proxy cannot turn an allowed
-        // private URL into a request delivered to an arbitrary public host.
-        .no_proxy()
+    let redirect_policy = policy.clone();
+    let mut client_builder = reqwest::Client::builder()
         .timeout(std::time::Duration::from_secs(10 * 60))
-        .redirect(reqwest::redirect::Policy::custom(|attempt| {
+        .redirect(reqwest::redirect::Policy::custom(move |attempt| {
             if attempt.previous().len() >= MAX_PRIVATE_HTTP_REDIRECTS {
-                return attempt.error("Private-network request exceeded the redirect limit");
+                return attempt.error("HTTP request exceeded the redirect limit");
             }
-            match validate_private_http_url(attempt.url()) {
+            match validate_http_request_url(attempt.url(), &redirect_policy) {
                 Ok(()) => attempt.follow(),
                 Err(error) => attempt.error(error),
             }
-        }))
+        }));
+    if matches!(policy, HttpRequestPolicy::PrivateNetwork) {
+        // Connect directly so an environment proxy cannot turn an allowed
+        // private URL into a request delivered to an arbitrary public host.
+        client_builder = client_builder.no_proxy();
+    }
+    let client = client_builder
         .build()
-        .map_err(|_| "Unable to initialize the private-network client".to_string())?;
+        .map_err(|_| "Unable to initialize the HTTP client".to_string())?;
 
     let method = reqwest::Method::from_bytes(request.method.trim().as_bytes())
         .map_err(|_| "Private-network request method is invalid".to_string())?;
@@ -849,6 +957,43 @@ pub async fn private_http_request(
         headers,
         body,
     })
+}
+
+#[tauri::command]
+#[specta::specta]
+pub async fn private_http_request(
+    request: PrivateHttpRequest,
+) -> Result<PrivateHttpResponse, String> {
+    execute_http_request(request, HttpRequestPolicy::PrivateNetwork).await
+}
+
+#[tauri::command(rename_all = "camelCase")]
+#[specta::specta]
+pub async fn openai_compatible_http_request(
+    api_key_id: String,
+    request: PrivateHttpRequest,
+    database: State<'_, crate::state::OptionKeyDatabase>,
+) -> Result<PrivateHttpResponse, String> {
+    let pool = database.pool();
+    let row = sqlx::query(
+        "SELECT base_url FROM api_keys WHERE id = ?1 AND provider = 'openai-compatible'",
+    )
+    .bind(&api_key_id)
+    .fetch_optional(&pool)
+    .await
+    .map_err(|_| "Unable to authorize the OpenAI-compatible endpoint".to_string())?
+    .ok_or_else(|| "OpenAI-compatible endpoint is not saved".to_string())?;
+    let saved_base_url = row
+        .get::<Option<String>, _>("base_url")
+        .ok_or_else(|| "Saved OpenAI-compatible endpoint has no base URL".to_string())?;
+    let base_url = Url::parse(saved_base_url.trim())
+        .map_err(|_| "Saved OpenAI-compatible endpoint URL is invalid".to_string())?;
+
+    execute_http_request(
+        request,
+        HttpRequestPolicy::SavedOpenAiCompatibleEndpoint { base_url },
+    )
+    .await
 }
 
 #[tauri::command]
@@ -4909,6 +5054,101 @@ mod tests {
                 "expected URL to be rejected: {rejected}"
             );
         }
+    }
+
+    #[test]
+    fn saved_openai_compatible_endpoint_confines_origin_and_path() {
+        let base = Url::parse("https://llm.example.com/proxy/openai").unwrap();
+        for accepted in [
+            "https://llm.example.com/proxy/openai/v1/models",
+            "https://llm.example.com/proxy/openai/v1/chat/completions",
+        ] {
+            assert!(validate_saved_endpoint_url(&Url::parse(accepted).unwrap(), &base).is_ok());
+        }
+        for rejected in [
+            "https://evil.example.com/proxy/openai/v1/models",
+            "https://llm.example.com/other/v1/models",
+            "http://llm.example.com/proxy/openai/v1/models",
+        ] {
+            assert!(validate_saved_endpoint_url(&Url::parse(rejected).unwrap(), &base).is_err());
+        }
+    }
+
+    #[test]
+    fn saved_endpoint_url_handles_normalized_host_path_and_query_edges() {
+        let base = Url::parse("HTTPS://LLM.Example.COM:443/proxy/openai/?tenant=alpha").unwrap();
+
+        for accepted in [
+            "https://llm.example.com/proxy/openai?tenant=alpha",
+            "https://LLM.EXAMPLE.COM/proxy/openai/?tenant=beta",
+            "https://llm.example.com/proxy/openai/v1/models?after=model%2Fone",
+        ] {
+            assert!(
+                validate_saved_endpoint_url(&Url::parse(accepted).unwrap(), &base).is_ok(),
+                "expected saved-endpoint URL to be accepted: {accepted}"
+            );
+        }
+
+        for rejected in [
+            "https://llm.example.com:444/proxy/openai/v1/models",
+            "https://llm.example.com/proxy/openai-tenant/v1/models",
+            "https://llm.example.com/proxy/openai/../admin/models",
+            "https://llm.example.com/proxy/OpenAI/v1/models",
+            "https://llm.example.com.evil/proxy/openai/v1/models",
+        ] {
+            assert!(
+                validate_saved_endpoint_url(&Url::parse(rejected).unwrap(), &base).is_err(),
+                "expected saved-endpoint URL to be rejected: {rejected}"
+            );
+        }
+    }
+
+    #[test]
+    fn saved_https_endpoint_allows_domains_but_rejects_public_ip_literals() {
+        let domain = Url::parse("https://api.example.com/v1").unwrap();
+        assert!(validate_saved_endpoint_url(
+            &Url::parse("https://api.example.com/v1/models").unwrap(),
+            &domain,
+        )
+        .is_ok());
+
+        for public_ip in [
+            "https://8.8.8.8/v1",
+            "https://169.254.169.254/latest/meta-data",
+            "https://[2606:4700:4700::1111]/v1",
+            "https://[fe80::1]/v1",
+        ] {
+            let base = Url::parse(public_ip).unwrap();
+            assert!(
+                validate_saved_endpoint_url(&base, &base).is_err(),
+                "expected public or link-local IP literal to be rejected: {public_ip}"
+            );
+        }
+
+        for private_ip in ["https://10.0.0.5/v1", "https://[fd00::1]/v1"] {
+            let base = Url::parse(private_ip).unwrap();
+            assert!(
+                validate_saved_endpoint_url(&base, &base).is_ok(),
+                "expected private IP literal to be accepted: {private_ip}"
+            );
+        }
+    }
+
+    #[test]
+    fn saved_plaintext_endpoint_remains_private_network_only() {
+        let local = Url::parse("http://192.168.1.20:8080").unwrap();
+        assert!(validate_saved_endpoint_url(
+            &Url::parse("http://192.168.1.20:8080/v1/models").unwrap(),
+            &local,
+        )
+        .is_ok());
+
+        let public = Url::parse("http://example.com").unwrap();
+        assert!(validate_saved_endpoint_url(
+            &Url::parse("http://example.com/v1/models").unwrap(),
+            &public,
+        )
+        .is_err());
     }
 
     #[tokio::test]
