@@ -44,7 +44,7 @@ export type CerebrasGenerateResponseOutput = {
 
 export const cerebrasGenerateTextResponse = async ({
   apiKey,
-  model = "gpt-oss-120b",
+  model = CEREBRAS_MODELS[0],
   system,
   prompt,
   jsonResponse,

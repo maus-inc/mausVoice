@@ -5104,6 +5104,37 @@ mod tests {
     }
 
     #[test]
+    fn saved_https_endpoint_allows_domains_but_rejects_public_ip_literals() {
+        let domain = Url::parse("https://api.example.com/v1").unwrap();
+        assert!(validate_saved_endpoint_url(
+            &Url::parse("https://api.example.com/v1/models").unwrap(),
+            &domain,
+        )
+        .is_ok());
+
+        for public_ip in [
+            "https://8.8.8.8/v1",
+            "https://169.254.169.254/latest/meta-data",
+            "https://[2606:4700:4700::1111]/v1",
+            "https://[fe80::1]/v1",
+        ] {
+            let base = Url::parse(public_ip).unwrap();
+            assert!(
+                validate_saved_endpoint_url(&base, &base).is_err(),
+                "expected public or link-local IP literal to be rejected: {public_ip}"
+            );
+        }
+
+        for private_ip in ["https://10.0.0.5/v1", "https://[fd00::1]/v1"] {
+            let base = Url::parse(private_ip).unwrap();
+            assert!(
+                validate_saved_endpoint_url(&base, &base).is_ok(),
+                "expected private IP literal to be accepted: {private_ip}"
+            );
+        }
+    }
+
+    #[test]
     fn saved_plaintext_endpoint_remains_private_network_only() {
         let local = Url::parse("http://192.168.1.20:8080").unwrap();
         assert!(validate_saved_endpoint_url(

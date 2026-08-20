@@ -54,7 +54,7 @@ export type ClaudeGenerateResponseOutput = {
 
 export const claudeGenerateTextResponse = async ({
   apiKey,
-  model = "claude-sonnet-5",
+  model = CLAUDE_MODELS[0],
   system,
   prompt,
   jsonResponse,

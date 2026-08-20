@@ -17,8 +17,8 @@ Because the result arrives after upload and generation, Gemini cannot drive real
 
 ## Generation and test
 
-Post-processing combines system/style instructions with the transcript before calling Gemini. Assistant conversations use the streaming chat implementation and can carry function declarations for enabled tools.
+Post-processing combines system/style instructions with the transcript before calling Gemini. Assistant conversations use the streaming chat implementation and can carry function declarations for enabled tools. Model discovery, transcription, generation, and streaming all use the desktop HTTP transport rather than the webview's browser transport.
 
-**Test** authenticates by listing models through the desktop HTTP transport, so it no longer spends tokens or depends on one fixed Gemini model. It does not validate audio handling, the model selected elsewhere, quota for a long recording, or every tool call.
+**Test** authenticates by listing models through the same desktop HTTP transport, so it no longer spends tokens or depends on one fixed Gemini model. It does not validate audio handling, the model selected elsewhere, quota for a long recording, or every tool call.
 
 If a test passes but dictation fails, first try a brief clip with post-processing Off. An empty raw transcript points to transcription; a raw transcript paired with a failed final result points to the separate generation stage.
