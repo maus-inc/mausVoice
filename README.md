@@ -4,11 +4,11 @@
 
 # mausVoice
 
-Grab Your [Free Groq↗](https://console.groq.com/keys) and [Free Deepgram↗](https://console.deepgram.com/) API Keys.
+Grab your free [Groq↗](https://console.groq.com/keys) and [Deepgram↗](https://console.deepgram.com/) API keys.
 
 <br>
 
-**Voice typing for your own machine. Dictate into any app and clean it up with AI. With no account or subscription, written in Rust for high performance and minimal CPU and memory usage.**
+**Voice typing for your own machine. Dictate into any app and clean it up with AI. No account or subscription needed, and the Rust core keeps CPU and memory usage low.**
 
 [![license](https://shieldcn.dev/badge/license-AGPL--3.0-black.svg)](LICENCE)
 [![CI](https://shieldcn.dev/badge/CI-passing-black.svg)](https://github.com/maus-inc/mausVoice/actions)
@@ -32,13 +32,13 @@ Grab Your [Free Groq↗](https://console.groq.com/keys) and [Free Deepgram↗](h
   <img src="docs/assets/home-page.png" alt="mausVoice home" width="750" />
 </p>
 
-**mausVoice** is a desktop app that turns your voice into text anywhere you can type. Hold a global shortcut, speak, and release: mausVoice transcribes locally or through your chosen provider, optionally applies an **LLM** writing style, and sends the result to the field in focus.
+**mausVoice** is a desktop app that turns your voice into text anywhere you can type. Hold a global shortcut, speak, and release. mausVoice transcribes locally or through your chosen provider, optionally applies an **LLM** writing style, and sends the result to the field in focus.
 
 ## How it works
 
 1. Press your hotkey and speak. A small overlay shows you're recording.
 2. Audio is captured natively and transcribed as it happens, with streaming Deepgram (`nova-3`), or with fully local Whisper if you'd rather keep every byte on-device.
-3. The transcript is cleaned up with an LLM: filler removed, punctuation and formatting in, your chosen writing style applied.
+3. An LLM cleans up the transcript. It removes filler, fixes punctuation and formatting, and applies your chosen writing style.
 4. The finished text lands in whatever app you're focused on.
 <br>
 
@@ -52,9 +52,9 @@ Grab Your [Free Groq↗](https://console.groq.com/keys) and [Free Deepgram↗](h
 
 |                          |                                                                                                                                      |
 | ------------------------ | ------------------------------------------------------------------------------------------------------------------------------------ |
-| **Live transcription**   | Streaming `nova-3` transcript appears while you're still speaking. It's ready before you stop talking.                               |
+| **Live transcription**   | The streaming `nova-3` transcript appears while you're still speaking, so it's ready before you release the hotkey.                  |
 | **Fully local option**   | Run Whisper locally (CPU or GPU) with zero network calls for transcription.                                                          |
-| **AI cleanup**           | Filler words out, structure in. Choose a writing style and the result reads like you wrote it.                                       |
+| **AI cleanup**           | Removes filler words and fixes punctuation. Choose a writing style and the result reads like you wrote it.                           |
 | **Your keys, encrypted** | Deepgram and Groq keys live on your machine, encrypted with XChaCha20-Poly1305. Rotate them any time in Settings without rebuilding. |
 | **Personal dictionary**  | Add your names, jargon, and shorthand once and mausVoice remembers them.                                                             |
 | **Works in every app**   | The overlay captures audio globally and pastes the result into whatever has focus.                                                   |
@@ -103,14 +103,14 @@ pnpm dev:linux      # Linux
 
 > `pnpm dev` alone won't work. Native features need the platform-specific command above.
 
-On first launch, the onboarding asks for your transcription and cleanup keys. That's it. There are no build-time secrets, and the same binary works for the local Whisper path.
+On first launch, the onboarding asks for your transcription and cleanup keys. There are no build-time secrets, and the same binary works for the local Whisper path.
 
 ### API keys & configuration
 
 Two optional keys, both entered in Settings:
 
-- **Deepgram** (streaming transcription) — [get one here](https://console.deepgram.com/). If you skip it, mausVoice falls back to local Whisper.
-- **Groq** (LLM text cleanup) — [get one here](https://console.groq.com/keys).
+- **Deepgram** (streaming transcription): [get one here](https://console.deepgram.com/). If you skip it, mausVoice falls back to local Whisper.
+- **Groq** (LLM text cleanup): [get one here](https://console.groq.com/keys).
 
 Keys are stored encrypted on your machine and can be changed or rotated any time without rebuilding. For a fully offline setup, leave both empty and point at a downloaded Whisper model.
 
@@ -125,7 +125,7 @@ pnpm run check-types   # TypeScript type checking
 pnpm run test          # tests
 ```
 
-All documentation regarding development are [here](https://maus-inc.github.io/mausVoice/docs/development/repository-overview/)
+All development documentation is [here](https://maus-inc.github.io/mausVoice/docs/development/repository-overview/).
 
 </details>
 

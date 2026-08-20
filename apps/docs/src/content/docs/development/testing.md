@@ -15,9 +15,9 @@ pnpm --filter desktop test:evals
 pnpm --filter desktop test:webdriver
 ```
 
-Unit tests under `apps/desktop/src` cover repositories, prompt/AI parsing, local-sidecar normalization, key handling, limits, trays, recommendations, and UI contracts. Integration/eval tests under `apps/desktop/test` use checked-in WAV/text fixtures and may call providers. The GitHub integration workflow injects only `GROQ_API_KEY` and skips fork pull requests because secrets are withheld; do not “fix” a fork failure by exposing credentials.
+Unit tests under `apps/desktop/src` cover repositories, prompt/AI parsing, local-sidecar normalization, key handling, limits, trays, recommendations, and UI contracts. Integration/eval tests under `apps/desktop/test` use checked-in WAV/text fixtures and may call providers. The GitHub integration workflow injects only `GROQ_API_KEY` and skips fork pull requests because secrets are withheld; do not "fix" a fork failure by exposing credentials.
 
-Run Rust backend unit tests from `apps/desktop/src-tauri` with `cargo test --lib`. Native pill workflows run Clippy/tests selectively by host; `rust_pill_shared` has geometry/ring tests. Compile all affected platform adapters in CI rather than assuming one OS proves another.
+Run Rust backend unit tests from `apps/desktop/src-tauri` with `cargo test --lib`. Native pill workflows run Clippy/tests selectively by host; `rust_pill_shared` has geometry/ring tests. Compile all affected platform adapters in CI; one OS passing does not prove another.
 
 For local transcription, the non-ignored integration test exercises the sidecar binary/API without a model. The ignored test downloads Tiny and transcribes the fixture. CI currently runs both serially on Ubuntu, Windows, and macOS, so changes to downloads or timing must respect the 20-minute job limit.
 

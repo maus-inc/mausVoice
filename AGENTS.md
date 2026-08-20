@@ -8,6 +8,12 @@
 - Write clear, maintainable code that is self documenting. Do not comments on new code except where it's necessary to explain non-obvious things.
 - Prefer to follow existing patterns such as dialogs, state management, and API interactions, etc.
 
+** Writing style (docs, README, marketing copy) **
+
+- Before writing or editing any user-facing prose, load the `unslop` skill from `pstack/skills/unslop` in https://github.com/cursor/plugins and apply its rules.
+- In short: no em dashes (and no parentheses or connector colons as substitutes), straight quotes only, sentence-case headings, active voice with a named actor, plain words over jargon, no chatbot phrases or filler, and concrete facts (paths, numbers, mechanisms) instead of feel-good abstractions.
+- These rules were applied to `README.md` and every page under `apps/docs/src/content/docs/` in PR #119; keep new prose consistent with them.
+
 ** Repository structure **
 
 - This is a Turborepo monorepo. Root-level: `pnpm run build`, `pnpm run lint`, `pnpm run check-types`, `pnpm run test`.
