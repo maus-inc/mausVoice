@@ -210,6 +210,30 @@ Round 3 (reviewer re-verified case by case):
 - Conflicts with the docs overhaul PR (#125) were merged: base deletion of a
   stale plan file won, AGENTS.md took the union of both sides, and the base's
   more precise OpenAI doc paragraph was kept over mine.
+- Round 5 (CodeRabbit-style review of `72824da`): Gemini deadline hoisted to
+  one signal per operation across retries; legacy dual-true realtime/review
+  prefs normalized at the `setUserPreferences` write-site; stale re-review
+  doc refreshed. The review's HTTPS-proxy nitpick was already the documented
+  residual and required no change.
+- Cascade lesson: a typing slip in a voice-ai test file broke the
+  `voice-ai#build` step, which poisoned five downstream CI legs via the turbo
+  dependency build. Local gates now replicate CI's pristine-tree pipeline
+  (turbo build + unit scope) before pushing.
+- Round 6 (review of the branch): model-path builder rejects `..` and hostile
+  characters outright (encodeURIComponent cannot neutralize dot segments);
+  relative URLs surface a contextual `secureFetch` error; model pickers poll
+  only while the endpoint is down (non-overlapping by construction); the dead
+  openai-compatible branch was removed from OllamaModelPicker (its sole caller
+  never passes that prop, and reviving it would have used the wrong
+  transport); the release-shell contract anchors keyword tokens to line start;
+  saved-endpoint redirect confinement gained chain tests (refusal before the
+  foreign host is contacted; in-origin redirects keep credentials). The
+  secret-scan stacked-PR fix ships via handoff patch (workflow-scope push).
+  SonarCloud style nit on the new Gemini test was folded in.
+- Refuted this round per evidence: the AGENTS.md heading-style nitpick (every
+  section in that file uses the same bold pseudo-heading convention;
+  converting two of them creates inconsistency inside the file, which is the
+  worse outcome).
 
 ## Still open (out-of-band)
 
