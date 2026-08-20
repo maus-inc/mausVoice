@@ -159,9 +159,9 @@ describe("OpenAICompatibleModelPicker polling", () => {
       await act(async () => {
         await vi.advanceTimersByTimeAsync(7000);
       });
-      expect(
-        checkAvailabilityMock.mock.calls.length,
-      ).toBeGreaterThanOrEqual(afterFirst + 2);
+      expect(checkAvailabilityMock.mock.calls.length).toBeGreaterThanOrEqual(
+        afterFirst + 2,
+      );
     } finally {
       vi.useRealTimers();
     }
