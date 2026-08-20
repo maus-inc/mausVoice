@@ -81,7 +81,7 @@ src-tauri/
 
 ## Architecture
 
-**Rust is the API, TypeScript is the Brain.** Zustand + Immer is the single store. Repos in this build resolve to local SQLite and local or API-backed providers — there is no hosted cloud backend.
+**Rust is the API, TypeScript is the Brain.** Zustand + Immer is the single store. Repos in this build resolve to local SQLite and local or API-backed providers. There is no hosted cloud backend.
 
 Personal defaults: Deepgram `nova-3` streaming when a Deepgram key exists; Groq `whisper-large-v3-turbo` as batch fallback. Post-processing is a separate API/Off switch (Groq default `openai/gpt-oss-20b`). Local Whisper/ONNX does **not** turn cleanup off.
 

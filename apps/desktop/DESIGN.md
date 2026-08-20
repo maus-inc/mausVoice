@@ -4,7 +4,7 @@ Durable visual decisions for the mausVoice desktop app. This is an **existing, e
 
 ## Surface ladder (light / dark)
 
-Tokens live in `src/styles/palette.ts` and are wired into `src/theme.ts` (`palette` colorSchemes). 4-step elevation driven by luminance, not shadow. **Never hand-type a surface, hairline or shadow colour at a call site — import the token.**
+Tokens live in `src/styles/palette.ts` and are wired into `src/theme.ts` (`palette` colorSchemes). 4-step elevation driven by luminance, not shadow. **Never hand-type a surface, hairline or shadow colour at a call site. Import the token.**
 
 The two schemes have their own temperature rather than being inversions of each other: light is warm **cream paper**, dark is neutral **onyx** (the old blue-cast `#14161B` ladder is gone).
 
@@ -16,11 +16,11 @@ The two schemes have their own temperature rather than being inversions of each 
 | level3 elevated   | `#E0DBD2`     | `#2A2A2C`   |
 
 - **Never pure `#000` / `#fff`** for surfaces or text. Light tints from the warm ink `ink(α)` = `rgba(26,23,18,α)`; dark tints from `highlight(α)` / `onDark(α)`. The one sanctioned `#FFFFFF` is the inverted CTA fill in dark (`chalkSolid`).
-- **Borders over shadows.** Cards/surfaces separated by 1px translucent hairlines — use `hairline.light(α)` / `hairline.dark(α)` from `styles/shadows.ts` (0.04–0.08). Elevation shadows (`premiumSurface`) only on layered/floating surfaces (cards, hover), not every face.
+- **Borders over shadows.** Cards/surfaces separated by 1px translucent hairlines. Use `hairline.light(α)` / `hairline.dark(α)` from `styles/shadows.ts` (0.04-0.08). Elevation shadows (`premiumSurface`) only on layered/floating surfaces (cards, hover), not every face.
 - `premiumSurface` = 2px inner top highlight (emboss) + multi‑stop soft drop shadow; distinct rest/hover/active/selected. This is the "machined keycap" treatment (Raycast class).
 - Backdrop-filtered chrome uses `surfaceAlpha(tier, α)` so the translucent face can never drift from its opaque tier.
 
-## Color (restrained — one accent)
+## Color (restrained, one accent)
 
 - `primary` = warm near-black charcoal in light (`inkSolid.base` `#1A1712`), `#FFFFFF` in dark (white CTA is the primary).
 - Chrome accent is **silver/ink** (`accent` in `palette.ts`: `#6B6760` / `#C4C0B8`) for focus rings, selection wash, sliders. Never hue-blue.
@@ -31,13 +31,13 @@ The two schemes have their own temperature rather than being inversions of each 
 ## Typography
 
 - **One family** for product UI: `uiFont = "Satoshi", system-ui`. Display face `TAN-PARADISO` only for the logo wordmark and welcome/name, never in body/settings.
-- Scale is tight Operate — display/hint/title/body/label — no exaggerated contrast. Body measure target 65‑75ch for prose; dense UI can run narrower.
-- `tabular-nums` applied globally (stable digit width across dates, timers, WPM, and metrics — prevents side-by-side width jitter).
+- Scale is tight Operate: display/hint/title/body/label. No exaggerated contrast. Body measure target 65-75ch for prose; dense UI can run narrower.
+- `tabular-nums` applied globally. Stable digit width across dates, timers, WPM, and metrics prevents side-by-side width jitter.
 - Rail sidebars ~224–240px, icon 22px, dense rows 32–36px.
 
 ## Shape / spacing
 
-- Border radius 14 for cards; controls handled via MUI components semetric. Keep consistent — don't mix pill/soft/hard per component.
+- Border radius 14 for cards; controls handled via MUI components symmetric. Keep consistent. Don't mix pill/soft/hard per component.
 - 4px base spacing rhythm; generous separation around content, compact inside rows.
 
 ## Motion
@@ -61,7 +61,7 @@ The two schemes have their own temperature rather than being inversions of each 
 
 ## Custom chrome
 
-- Frameless custom `TitleBar` (drag region + native window controls) — height ~46px, uses title BarShadow. macOS notes traffic-light inset; Windows keeps native buttons via WCO.
+- Frameless custom `TitleBar` (drag region + native window controls). Height ~46px, uses title BarShadow. macOS notes traffic-light inset; Windows keeps native buttons via WCO.
 - `decorations: false` also removes the OS resize border, so `WindowResizeHandles` supplies eight invisible edge/corner grips that hand the gesture back to the window manager.
 - Every window command used by the chrome (`start-dragging`, `start-resize-dragging`, `minimize`, `maximize`, `unmaximize`, `close`) must be listed in `src-tauri/capabilities/default.json`; `core:window:default` grants none of them and the controls fail silently without them.
 - Chrome glyphs are lucide nodes rendered through `MorphNavIcon` (`snappy` spring) so state swaps morph instead of cutting.

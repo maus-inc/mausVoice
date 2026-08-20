@@ -1,7 +1,7 @@
 # Design-system baseline
 
 The shared rules that every surface must follow. This is the short, actionable
-extract of [`DESIGN.md`](../DESIGN.md) — read that for the reasoning and the
+extract of [`DESIGN.md`](../DESIGN.md). Read that for the reasoning and the
 full surface ladder. Applies to the React UI _and_ to the native pill, so the
 two never drift apart.
 
@@ -40,7 +40,7 @@ disabled, and loading where relevant.
 - Animate specific properties. Never `transition: all`.
 - `prefers-reduced-motion` is honoured globally by `MuiCssBaseline`.
 - The pill is the one place where movement conveys state (recording,
-  transcribing, done) rather than decoration — it still must not bounce.
+  transcribing, done) rather than decoration. It still must not bounce.
 
 ## Native pill parity
 
@@ -48,7 +48,7 @@ The pill is drawn three times (Direct2D, Core Graphics, Cairo). Keep the three
 in agreement:
 
 - Layout maths lives in a **shared helper per crate with the same name and
-  signature** — `pause_button_origin`, `cancel_button_origin`,
+  signature**. `pause_button_origin`, `cancel_button_origin`,
   `over_side_control`, `long_press_progress`. Draw code and hit-testing must
   both call them, so a control can never be painted somewhere it cannot be
   clicked.

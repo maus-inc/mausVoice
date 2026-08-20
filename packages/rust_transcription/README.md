@@ -5,7 +5,7 @@ whisper.cpp GGML models (Whisper Tiny through Large v3), ONNX Runtime models
 (NVIDIA Parakeet CTC/TDT 0.6B and Canary 1B), and SenseVoice via sherpa-onnx.
 
 The desktop app starts this process on an ephemeral loopback port. Standalone
-defaults are `127.0.0.1:7771` (CPU) and `:7772` (GPU). Session “streaming” is
+defaults are `127.0.0.1:7771` (CPU) and `:7772` (GPU). Session "streaming" is
 chunked Float32 upload plus in-memory buffering; inference runs at **finalize**,
 not per chunk. Idle sessions expire after ~10 minutes.
 

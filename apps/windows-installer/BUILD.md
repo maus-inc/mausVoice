@@ -18,7 +18,7 @@ Authoritative notes: [Repository overview](https://maus-inc.github.io/mausVoice/
 pnpm --filter desktop tauri -- build
 ```
 
-A native Windows host writes `mausVoice_*-setup.exe` under `apps/desktop/src-tauri/target/release/bundle/nsis/` (or `CARGO_TARGET_DIR` if CI set one). If you pass `--target x86_64-pc-windows-msvc`, Tauri places the bundle under `apps/desktop/src-tauri/target/x86_64-pc-windows-msvc/release/bundle/nsis/` instead — copy from that path.
+A native Windows host writes `mausVoice_*-setup.exe` under `apps/desktop/src-tauri/target/release/bundle/nsis/` (or `CARGO_TARGET_DIR` if CI set one). If you pass `--target x86_64-pc-windows-msvc`, Tauri places the bundle under `apps/desktop/src-tauri/target/x86_64-pc-windows-msvc/release/bundle/nsis/` instead; copy from that path.
 
 2. Copy it into the bootstrapper:
 

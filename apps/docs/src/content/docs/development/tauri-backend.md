@@ -26,7 +26,7 @@ Return structured errors across invokes and treat a missing sidecar/pill as a re
 2. Register the command in `app.rs` `invoke_handler`.
 3. Add it to `collect_commands!` in `examples/gen_bindings.rs`.
 4. Run `pnpm gen:bindings`.
-5. Call the generated wrapper from a repo, then an action — not from a raw UI handler.
+5. Call the generated wrapper from a repo, then from an action. Never call it from a raw UI handler.
 
 Typical domains: `start_recording` / `stop_recording` / `list_microphones`, `paste` / `simulate_type`, `transcription_*`, `user_*`, `api_key_*` (encrypt before persist).
 

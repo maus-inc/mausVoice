@@ -8,7 +8,7 @@ Type-safe TypeScript wrappers for the mausVoice desktop app's Tauri commands. A 
 pnpm add @maus-inc/desktop-native-apis
 ```
 
-The package declares `@tauri-apps/api` as a dependency — no extra setup is needed.
+The package declares `@tauri-apps/api` as a dependency. No extra setup is needed.
 
 ## Usage
 

@@ -13,7 +13,7 @@ The best model is the smallest one that handles your real speech reliably. File 
 4. Compare Raw text in History. Include names, numbers, punctuation intent, pauses, and your normal noise level.
 5. Increase model size only when the measured recognition gain justifies the additional storage and finalization delay.
 
-The recommendation chip is advisory. It tiers models by detected RAM: under 4 GB favors Tiny, Base, and Parakeet CTC; 4–8 GB reaches Small and Parakeet TDT; 8–16 GB reaches Medium, Turbo, and Canary 1B; and 16 GB or more reaches Large. A detected discrete Vulkan GPU raises that tier by one. This is a coarse rule, not a benchmark or memory check, and a cautioned choice remains downloadable.
+The recommendation chip is advisory. It tiers models by detected RAM: under 4 GB favors Tiny, Base, and Parakeet CTC; 4-8 GB reaches Small, Parakeet TDT, and SenseVoice; 8-16 GB reaches Medium, Turbo, and Canary 1B; and 16 GB or more reaches Large. A detected discrete Vulkan GPU raises that tier by one. This is a coarse rule, not a benchmark or memory check, and a cautioned choice remains downloadable.
 
 The Parakeet and Canary models are optimized NVIDIA ONNX checkpoints (Parakeet is especially fast for English; Canary adds multilingual recognition with automatic punctuation and casing). SenseVoice is a smaller sherpa-onnx multilingual model (Chinese, English, Japanese, Korean, Cantonese) without punctuation. The selected dictation language and dictionary entries are passed to local inference as a language and initial prompt, so test those settings together with the model.
 
