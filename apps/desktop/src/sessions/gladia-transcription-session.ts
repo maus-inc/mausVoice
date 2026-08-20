@@ -201,11 +201,13 @@ export class GladiaTranscriptionSession implements TranscriptionSession {
     const activeSession = this.session;
     if (!activeSession) {
       const missing = sessionMissingResult("Gladia");
-      return {
+      const result = {
         ...missing,
-        metadata: { ...missing.metadata, modelSize: "solaria-1" },
+        metadata: { ...missing.metadata, modelSize: this.model ?? "solaria-1" },
         warnings: Array.from(new Set([...this.warnings, ...missing.warnings])),
       };
+      this.cleanup();
+      return result;
     }
 
     if (!this.streamReady && this.readyPromise) {
@@ -248,7 +250,7 @@ export class GladiaTranscriptionSession implements TranscriptionSession {
       return await finalizeStreamingSession({
         session: activeSession,
         providerLabel: "Gladia",
-        modelSize: "solaria-1",
+        modelSize: this.model ?? "solaria-1",
         log: console.log,
         getWarnings: () => [...this.warnings, ...activeSession.getWarnings()],
       });
