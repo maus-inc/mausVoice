@@ -50,16 +50,24 @@ verbatim from this repository's own assets (`index.html` hero OS marks and
 the Windows logo long embedded in the README as a data URI), so the badges
 match the product site exactly.
 
-## Dynamic version badges
+## Dynamic title badges
 
-Two badges beside the mausVoice name are intentionally **not** generated
+Three badges beside the mausVoice name are intentionally **not** generated
 here, because their values change outside the repo's commit cycle — a
 committed SVG cannot adapt, and CI infrastructure that regenerates one on
-every release is deliberately out of scope. Both stay remote shields.io
-badges styled flat black-on-black to sit next to the house badges:
+every workflow run or release is deliberately out of scope. They stay
+remote shields.io badges styled flat black-on-black to sit next to the
+house badges:
 
-- Root README title: the live latest-release badge
-  (`github/v/release`), which tracks the newest stable GitHub Release.
+- Root README title: the live CI badge (Test Desktop Unit workflow status
+  on main), linked to the workflow runs.
+- Root README title: the live latest-release badge (`github/v/release`
+  with `include_prereleases`), wired to always show the newest published
+  GitHub Release whether stable or pre-release — the tag itself carries
+  the channel (e.g. an `rc` suffix), so the badge can never lag behind
+  the actual release state.
 - Generated release body title: a version + channel badge (`v{x.y.z}` +
   `stable`/`pre-release`) whose values the release workflow bakes into the
-  shields.io static-badge URL at generation time.
+  shields.io static-badge URL per run. The channel derives from the same
+  `inputs.prerelease` that flags the GitHub Release itself, so the badge
+  always agrees with the state of the release it ships on.

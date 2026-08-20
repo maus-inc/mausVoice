@@ -35,7 +35,7 @@ const BADGE_BASE = `https://raw.githubusercontent.com/${owner}/${repo}/main/docs
 // shields lets `-` act as a segment separator in static badge URLs, so
 // literal dashes and underscores in the copy must be doubled.
 function shieldsText(s) {
-  return s.replace(/-/g, "--").replace(/_/g, "__");
+  return s.replaceAll("-", "--").replaceAll("_", "__");
 }
 
 const channelLabel = prerelease ? "pre-release" : "stable";
