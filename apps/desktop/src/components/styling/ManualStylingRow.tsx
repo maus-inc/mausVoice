@@ -1,4 +1,11 @@
-import { CircleMinus, EllipsisVertical, Globe, Info, Pencil, Trash2 } from "lucide-react";
+import {
+  CircleMinus,
+  EllipsisVertical,
+  Globe,
+  Info,
+  Pencil,
+  Trash2,
+} from "lucide-react";
 import {
   Box,
   IconButton,
@@ -208,7 +215,7 @@ export const ManualStylingRow = ({ id }: ManualStylingRowProps) => {
             }}
             size="small"
           >
-            <MoreVert fontSize="small" />
+            <EllipsisVertical size={16} strokeWidth={1.9} />
           </IconButton>
         )}
       </MenuPopoverBuilder>

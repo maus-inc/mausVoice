@@ -106,7 +106,10 @@ export const AppStylingRow = ({ id }: AppStylingRowProps) => {
     {
       kind: "listItem",
       title: <FormattedMessage defaultMessage="Terminal (Ctrl+Shift+V)" />,
-      trailing: pasteKeybindValue === "ctrl+shift+v" ? <Check /> : undefined,
+      trailing:
+        pasteKeybindValue === "ctrl+shift+v" ? (
+          <Check size={16} strokeWidth={1.9} />
+        ) : undefined,
       onClick: ({ close }) => {
         handlePasteKeybindChange("ctrl+shift+v");
         close();

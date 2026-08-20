@@ -40,7 +40,12 @@ import {
   type SxProps,
   type Theme,
 } from "@mui/material";
-import { ClipboardCopy, ClipboardPaste, Scissors, SquareDashedMousePointer } from "lucide-react";
+import {
+  ClipboardCopy,
+  ClipboardPaste,
+  Scissors,
+  SquareDashedMousePointer,
+} from "lucide-react";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useIntl } from "react-intl";
 import { hairline, premiumSurface } from "../../styles/shadows";
@@ -662,6 +667,7 @@ export const ContextMenuProvider = ({
         { kind: "divider" },
         {
           label: intl.formatMessage({ defaultMessage: "Paste" }),
+          icon: <ClipboardPaste size={16} strokeWidth={1.9} />,
           onClick: () => {
             // `readText` can reject (permission denied / no clipboard access);
             // swallow it rather than surface an unhandled rejection.
