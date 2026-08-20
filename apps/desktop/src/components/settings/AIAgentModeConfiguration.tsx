@@ -10,6 +10,7 @@ import {
 } from "../../actions/user.actions";
 import { useAppStore } from "../../store";
 import { type AgentMode } from "../../types/ai.types";
+import { logOnRejection } from "../../utils/promise.utils";
 import { getEffectiveAgentMode } from "../../utils/user.utils";
 import { SegmentedControl } from "../common/SegmentedControl";
 import { ApiKeyList } from "./ApiKeyList";
@@ -42,11 +43,17 @@ export const AIAgentModeConfiguration = () => {
   }, [permissionTimeoutMs]);
 
   const handleModeChange = useCallback((mode: AgentMode) => {
-    void setPreferredAgentMode(mode);
+    logOnRejection(
+      setPreferredAgentMode(mode),
+      "agent settings: setPreferredAgentMode",
+    );
   }, []);
 
   const handleApiKeyChange = useCallback((id: string | null) => {
-    void setPreferredAgentModeApiKeyId(id);
+    logOnRejection(
+      setPreferredAgentModeApiKeyId(id),
+      "agent settings: setPreferredAgentModeApiKeyId",
+    );
   }, []);
 
   const isToolEnabled = (toolId: string) =>
@@ -55,7 +62,10 @@ export const AIAgentModeConfiguration = () => {
   const handleToolToggle = (toolId: string, enabled: boolean) => {
     // Derives the new allow-set from the latest preferences inside a serialized
     // mutation, so rapid toggles cannot clobber one another.
-    void setAgentToolEnabled(toolId, enabled);
+    logOnRejection(
+      setAgentToolEnabled(toolId, enabled),
+      "agent settings: setAgentToolEnabled",
+    );
   };
 
   const commitMaxIterations = () => {
@@ -64,8 +74,12 @@ export const AIAgentModeConfiguration = () => {
       return;
     }
     const value = Number(maxIterationsDraft);
-    if (Number.isFinite(value)) void setAgentMaxIterations(value);
-    else setMaxIterationsDraft(String(maxIterations));
+    if (Number.isFinite(value)) {
+      logOnRejection(
+        setAgentMaxIterations(value),
+        "agent settings: max iterations",
+      );
+    } else setMaxIterationsDraft(String(maxIterations));
   };
   const commitTimeout = () => {
     if (timeoutDraft.trim() === "") {
@@ -73,8 +87,12 @@ export const AIAgentModeConfiguration = () => {
       return;
     }
     const value = Number(timeoutDraft);
-    if (Number.isFinite(value)) void setAgentPermissionTimeoutMs(value * 1000);
-    else setTimeoutDraft(String(Math.round(permissionTimeoutMs / 1000)));
+    if (Number.isFinite(value)) {
+      logOnRejection(
+        setAgentPermissionTimeoutMs(value * 1000),
+        "agent settings: permission timeout",
+      );
+    } else setTimeoutDraft(String(Math.round(permissionTimeoutMs / 1000)));
   };
 
   return (

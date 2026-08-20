@@ -78,7 +78,9 @@ specta-typescript = "=0.0.9"
 tauri-specta = { version = "=2.0.0-rc.21", features = ["derive", "typescript"] }
 
 [target.'cfg(target_os = "macos")'.dependencies]
-rfd = "0.15"
+# Same minimal surface as Linux: rfd's defaults pull the Linux portal stack
+# (ashpd/async-std/pollster), which is dead weight on macOS.
+rfd = { version = "0.15", default-features = false }
 core-graphics = { version = "0.24", features = ["elcapitan"] }
 core-foundation = "0.10"
 cocoa = "0.24"
@@ -99,7 +101,7 @@ libpulse-simple-binding = "2"
 x11 = { version = "2", features = ["xlib"] }
 
 [target.'cfg(target_os = "windows")'.dependencies]
-rfd = "0.15"
+rfd = { version = "0.15", default-features = false }
 enigo = "0.1"
 arboard = "3"
 windows = { version = "0.61.3", features = [
@@ -120,7 +122,10 @@ windows = { version = "0.61.3", features = [
 ] }
 
 [lints.rust]
-unexpected_cfgs = { level = "allow", check-cfg = [
+# Warn (not allow) so a misspelled or stale cfg conditional still fails
+# review loudly; every dynamic cfg key is declared in check-cfg below, and
+# Cargo auto-declares `feature = "debug-assist"` from the [features] table.
+unexpected_cfgs = { level = "warn", check-cfg = [
   "cfg(feature, values(\"cargo-clippy\"))",
   "cfg(desktop)",
   "cfg(mobile)",

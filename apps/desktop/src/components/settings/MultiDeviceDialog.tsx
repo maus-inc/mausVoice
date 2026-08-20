@@ -46,6 +46,7 @@ import {
   listPairedRemoteDevices,
 } from "../../utils/device.utils";
 import { produceAppState, useAppStore } from "../../store";
+import { logOnRejection } from "../../utils/promise.utils";
 import { getMyUserPreferences } from "../../utils/user.utils";
 import { SettingSection } from "../common/SettingSection";
 
@@ -545,7 +546,10 @@ const useReceiverSettings = ({
   const handleRemoteReceiverAutoStartChange = (
     event: ChangeEvent<HTMLInputElement>,
   ) => {
-    void setRemoteReceiverAutoStart(event.target.checked);
+    logOnRejection(
+      setRemoteReceiverAutoStart(event.target.checked),
+      "multi-device settings: setRemoteReceiverAutoStart",
+    );
   };
 
   const handleCopyInvite = async () => {
@@ -631,14 +635,23 @@ const useSenderSettings = ({
         showErrorSnackbar("Pair a receiver first.");
         return;
       }
-      void setRemoteTargetDeviceId(firstReceiver.id);
+      logOnRejection(
+        setRemoteTargetDeviceId(firstReceiver.id),
+        "multi-device settings: setRemoteTargetDeviceId",
+      );
     }
-    void setRemoteOutputEnabled(enabled);
+    logOnRejection(
+      setRemoteOutputEnabled(enabled),
+      "multi-device settings: setRemoteOutputEnabled",
+    );
   };
 
   const handleRemoteTargetDeviceChange = (event: SelectChangeEvent<string>) => {
     const deviceId = event.target.value || null;
-    void setRemoteTargetDeviceId(deviceId);
+    logOnRejection(
+      setRemoteTargetDeviceId(deviceId),
+      "multi-device settings: setRemoteTargetDeviceId",
+    );
   };
 
   const handleSendTest = async () => {

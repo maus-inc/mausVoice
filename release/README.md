@@ -6,10 +6,10 @@ This tree does **not** ship enterprise admin/gateway apps. `enterprise/` is gone
 
 Releases are a **manual** `.github/workflows/release.yml` dispatch (version, prerelease, notes, optional tag `mausVoice-v{version}`).
 
-| What ships | Notes |
-| --- | --- |
-| Desktop | macOS universal, Windows, Linux `.deb` + AppImage |
-| Docs / Pages | Separate docs workflow; not an enterprise channel |
+| What ships    | Notes                                                |
+| ------------- | ---------------------------------------------------- |
+| Desktop       | macOS universal, Windows, Linux `.deb` + AppImage    |
+| Docs / Pages  | Separate docs workflow; not an enterprise channel    |
 | Homebrew cask | Stable releases only → `maus-inc/homebrew-mausvoice` |
 
 The release workflow is `workflow_dispatch` only (no path filters). Build workspaces are `apps/desktop/`, `apps/windows-installer/`, `apps/docs/`, and `packages/`.

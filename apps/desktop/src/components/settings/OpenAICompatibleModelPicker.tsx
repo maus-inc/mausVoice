@@ -6,7 +6,7 @@ import {
   TextField,
   Typography,
 } from "@mui/material";
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { FormattedMessage } from "react-intl";
 import { OpenAICompatibleRepo } from "../../repos/ollama.repo";
 import { buildOpenAICompatibleUrl } from "../../utils/openai-compatible.utils";
@@ -41,46 +41,60 @@ export const OpenAICompatibleModelPicker = ({
     [baseUrl, includeV1Path],
   );
 
-  const fetchModels = useCallback(async () => {
-    setIsLoading(true);
-    try {
-      const repo = new OpenAICompatibleRepo(
-        effectiveUrl,
-        apiKey || undefined,
-        createOpenAICompatibleFetch(apiKeyId),
-      );
-      const available = await repo.checkAvailability();
-      setIsAvailable(available);
+  // Single effect owns polling: one in-flight request at a time (a slow
+  // endpoint must not stack concurrent native HTTP calls), and a generation
+  // flag drops completions that arrive after unmount or after the URL/key
+  // changed so a stale probe can never overwrite fresh state.
+  useEffect(() => {
+    let cancelled = false;
+    let inFlight = false;
 
-      if (available) {
-        const fetchedModels = await repo.getAvailableModels();
-        setModels(fetchedModels);
-        setUseManualInput(false);
-      } else {
-        setModels([]);
-        setUseManualInput(true);
+    const run = async () => {
+      if (cancelled || inFlight) return;
+      inFlight = true;
+      setIsLoading(true);
+      try {
+        const repo = new OpenAICompatibleRepo(
+          effectiveUrl,
+          apiKey || undefined,
+          createOpenAICompatibleFetch(apiKeyId),
+        );
+        const available = await repo.checkAvailability();
+        if (cancelled) return;
+
+        setIsAvailable(available);
+        if (available) {
+          const fetchedModels = await repo.getAvailableModels();
+          if (cancelled) return;
+          setModels(fetchedModels);
+          setUseManualInput(false);
+        } else {
+          setModels([]);
+          setUseManualInput(true);
+        }
+      } catch (error) {
+        console.error("Failed to fetch OpenAI-compatible models", error);
+        if (!cancelled) {
+          setIsAvailable(false);
+          setModels([]);
+          setUseManualInput(true);
+        }
+      } finally {
+        inFlight = false;
+        if (!cancelled) setIsLoading(false);
       }
-    } catch (error) {
-      console.error("Failed to fetch OpenAI-compatible models", error);
-      setIsAvailable(false);
-      setModels([]);
-      setUseManualInput(true);
-    } finally {
-      setIsLoading(false);
-    }
-  }, [effectiveUrl, apiKey, apiKeyId]);
+    };
 
-  useEffect(() => {
-    void fetchModels();
-  }, [fetchModels]);
-
-  useEffect(() => {
+    void run();
     const interval = setInterval(() => {
-      void fetchModels();
+      void run();
     }, 3000);
 
-    return () => clearInterval(interval);
-  }, [fetchModels]);
+    return () => {
+      cancelled = true;
+      clearInterval(interval);
+    };
+  }, [effectiveUrl, apiKey, apiKeyId]);
 
   if (isLoading && isAvailable === null) {
     return (

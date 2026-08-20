@@ -92,6 +92,63 @@ describe("humanizeScrub", () => {
   });
 });
 
+describe("humanizeScrub structure preservation", () => {
+  it("leaves fenced code blocks byte-for-byte intact", () => {
+    const code = [
+      "```ts",
+      "// unlock the mutex",
+      "const ok = lock.unlock();  // keep  double   spaces",
+      "",
+      'const data = { "unlock": true };',
+      "```",
+    ].join("\n");
+    const input = `Here is the fix:\n\n${code}\n\nDone.`;
+    const result = humanizeScrub(input);
+    expect(result).toContain(code);
+    // Prose around the fence is still scrubbed.
+    expect(result).not.toContain("\n\n\n");
+  });
+
+  it("leaves inline code spans intact while scrubbing surrounding prose", () => {
+    const result = humanizeScrub(
+      "Call `lock.unlock()` to unlock the semaphore — carefully.",
+    );
+    expect(result).toContain("`lock.unlock()`");
+    expect(result).not.toContain("—");
+    expect(result).toContain("to enable the semaphore");
+  });
+
+  it("preserves indentation and blank lines in fenced JSON", () => {
+    const json = '{\n  "delve": 1,\n\n  "nested": {\n    "a": 2\n  }\n}';
+    const result = humanizeScrub(`Response:\n\n\`\`\`json\n${json}\n\`\`\``);
+    expect(result).toContain(json);
+  });
+
+  it("keeps paragraph breaks in plain prose", () => {
+    const result = humanizeScrub("First paragraph.\n\nSecond paragraph.");
+    expect(result).toBe("First paragraph.\n\nSecond paragraph.");
+  });
+
+  it("collapses horizontal runs but never newlines", () => {
+    expect(humanizeScrub("hello   world\n\nnext   line")).toBe(
+      "hello world\n\nnext line",
+    );
+  });
+
+  it("preserves an unterminated fence as code to end of text", () => {
+    const input = "Intro sentence.\n\n```\nunlock everything — as-is\n";
+    expect(humanizeScrub(input)).toContain("unlock everything — as-is");
+  });
+
+  it("scrubs prose on both sides of a fenced block", () => {
+    const input = "delve in\n\n```\ncode — stays\n```\n\nutilize this";
+    const result = humanizeScrub(input);
+    expect(result.startsWith("explore in")).toBe(true);
+    expect(result).toContain("code — stays");
+    expect(result.endsWith("use this")).toBe(true);
+  });
+});
+
 describe("humanizeScrub slop-word variants", () => {
   it("handles 'utilize' inflections case-insensitively", () => {
     expect(humanizeScrub("Utilizes the tool")).toBe("uses the tool");

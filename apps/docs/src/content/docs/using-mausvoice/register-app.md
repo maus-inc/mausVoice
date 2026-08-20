@@ -48,8 +48,8 @@ This works even when mausVoice itself is not active, because the system still re
 
 **Writing Styles** shows a **How it works** empty state when no targets exist:
 
-> 1. Open the app you want to style (like Slack or Chrome).  
-> 2. Click the mausVoice icon in the menu bar and click "Register current app".  
+> 1. Open the app you want to style (like Slack or Chrome).
+> 2. Click the mausVoice icon in the menu bar and click "Register current app".
 > 3. Go back to mausVoice and select a writing style for that app.
 
 Follow those three steps; the list populates after the tray action completes. Dictating once into the target app has the same effect.

@@ -72,12 +72,61 @@ const geminiModelPath = (model: string): string =>
     .map(encodeURIComponent)
     .join("/");
 
+/**
+ * Non-2xx Gemini response with the HTTP status preserved, so retry helpers
+ * can distinguish a permanent client error (400/401/403/404) from a transient
+ * rate limit or server failure.
+ */
+export class GeminiHttpError extends Error {
+  readonly status: number;
+
+  constructor(status: number, detail: string) {
+    super(
+      detail
+        ? `Gemini responded ${status}: ${detail}`
+        : `Gemini responded with status ${status}`,
+    );
+    this.name = "GeminiHttpError";
+    this.status = status;
+  }
+}
+
+// Permanent 4xx failures (bad key, malformed request, unknown model) are never
+// fixed by resending the same payload; retrying them rebuilds and re-uploads
+// the whole audio body for nothing. Abort/cancel must also stop retrying.
+const isGeminiFailureRetryable = (error: unknown): boolean => {
+  if (error instanceof GeminiHttpError) {
+    return error.status === 429 || error.status >= 500;
+  }
+  const name = error instanceof Error ? error.name : "";
+  return name !== "AbortError";
+};
+
+// Non-streaming calls get a generous absolute deadline: uploading and
+// transcribing a long clip can legitimately take minutes, but a stalled
+// connection must not hang post-processing forever. Streaming calls use the
+// caller's signal directly — a fixed total timeout would kill healthy
+// long-running generations mid-stream.
+const GEMINI_REQUEST_TIMEOUT_MS = 5 * 60 * 1000;
+
+const withDeadlineSignal = (
+  signal: AbortSignal | undefined,
+): AbortSignal | undefined =>
+  typeof AbortSignal.timeout === "function" &&
+  typeof AbortSignal.any === "function"
+    ? AbortSignal.any([
+        ...(signal ? [signal] : []),
+        AbortSignal.timeout(GEMINI_REQUEST_TIMEOUT_MS),
+      ])
+    : signal;
+
 const requestGemini = async (
   apiKey: string,
   model: string,
   action: "generateContent" | "streamGenerateContent",
   body: GeminiGenerateContentRequest,
   customFetch: CustomFetch,
+  signal?: AbortSignal,
 ): Promise<Response> => {
   const suffix = action === "streamGenerateContent" ? "?alt=sse" : "";
   const response = await customFetch(
@@ -89,16 +138,13 @@ const requestGemini = async (
         "x-goog-api-key": apiKey.trim(),
       },
       body: JSON.stringify(body),
+      signal,
     },
   );
 
   if (!response.ok) {
     const detail = await response.text().catch(() => "");
-    throw new Error(
-      detail
-        ? `Gemini responded ${response.status}: ${detail}`
-        : `Gemini responded with status ${response.status}`,
-    );
+    throw new GeminiHttpError(response.status, detail);
   }
 
   return response;
@@ -160,6 +206,8 @@ export type GeminiTranscriptionArgs = {
   mimeType?: string;
   prompt?: string;
   language?: string;
+  /** Aborts the request and stops any retry loop when cancelled. */
+  signal?: AbortSignal;
   customFetch?: CustomFetch;
 };
 
@@ -175,10 +223,12 @@ export const geminiTranscribeAudio = async ({
   mimeType = "audio/wav",
   prompt,
   language,
+  signal,
   customFetch = fetch,
 }: GeminiTranscriptionArgs): Promise<GeminiTranscribeAudioOutput> => {
   return retry({
     retries: 3,
+    isRetryable: isGeminiFailureRetryable,
     fn: async () => {
       const bytes = new Uint8Array(blob);
       let binary = "";
@@ -216,6 +266,7 @@ export const geminiTranscribeAudio = async ({
           ],
         },
         customFetch,
+        withDeadlineSignal(signal),
       );
       const response =
         (await httpResponse.json()) as GeminiGenerateContentResponse;
@@ -235,6 +286,8 @@ export type GeminiGenerateTextArgs = {
   system?: string;
   prompt: string;
   jsonResponse?: JsonResponse;
+  /** Aborts the request and stops any retry loop when cancelled. */
+  signal?: AbortSignal;
   customFetch?: CustomFetch;
 };
 
@@ -249,10 +302,12 @@ export const geminiGenerateTextResponse = async ({
   system,
   prompt,
   jsonResponse,
+  signal,
   customFetch = fetch,
 }: GeminiGenerateTextArgs): Promise<GeminiGenerateResponseOutput> => {
   return retry({
     retries: 3,
+    isRetryable: isGeminiFailureRetryable,
     fn: async () => {
       let fullPrompt = prompt;
       if (system) {
@@ -281,6 +336,7 @@ export const geminiGenerateTextResponse = async ({
               : undefined,
         },
         customFetch,
+        withDeadlineSignal(signal),
       );
       const response =
         (await httpResponse.json()) as GeminiGenerateContentResponse;
@@ -335,6 +391,10 @@ function llmMessagesToGemini(messages: LlmMessage[]): {
 } {
   let systemInstruction: string | undefined;
   const contents: GeminiContent[] = [];
+  // Tool-call ids are synthetic per provider turn (e.g. `gemini-tc-0`), while
+  // Gemini's functionResponse must name the declared *function*. Track the
+  // id -> name mapping from assistant turns so results pair correctly.
+  const functionNameByToolCallId = new Map<string, string>();
 
   for (const msg of messages) {
     if (msg.role === "system") {
@@ -353,6 +413,7 @@ function llmMessagesToGemini(messages: LlmMessage[]): {
         parts.push({ text: msg.content });
       }
       for (const tc of msg.toolCalls ?? []) {
+        functionNameByToolCallId.set(tc.id, tc.name);
         let parsedArgs: Record<string, unknown>;
         try {
           parsedArgs = JSON.parse(tc.arguments) as Record<string, unknown>;
@@ -370,12 +431,19 @@ function llmMessagesToGemini(messages: LlmMessage[]): {
     }
 
     if (msg.role === "tool") {
+      const functionName = functionNameByToolCallId.get(msg.toolCallId);
+      if (!functionName) {
+        // An orphaned tool result has no matching functionCall, so Gemini
+        // would reject the whole request. Drop it; the conversation keeps the
+        // visible answer context without the bogus reference.
+        continue;
+      }
       contents.push({
         role: "user",
         parts: [
           {
             functionResponse: {
-              name: msg.toolCallId,
+              name: functionName,
               response: { result: msg.content },
             },
           },
@@ -404,6 +472,8 @@ export type GeminiStreamChatArgs = {
   apiKey: string;
   model: string;
   input: LlmChatInput;
+  /** Aborts the in-flight request and stream when cancelled. */
+  signal?: AbortSignal;
   customFetch?: CustomFetch;
 };
 
@@ -514,14 +584,27 @@ async function* parseGeminiSse(
   let buffer = "";
   let done = false;
 
-  while (!done) {
-    const chunk = await reader.read();
-    done = chunk.done;
-    buffer += decoder.decode(chunk.value, { stream: !done });
+  try {
+    while (!done) {
+      const chunk = await reader.read();
+      done = chunk.done;
+      buffer += decoder.decode(chunk.value, { stream: !done });
 
-    const parsed = splitGeminiSseBuffer(buffer, done);
-    buffer = parsed.remainder;
-    yield* parseGeminiSseEvents(parsed.events);
+      const parsed = splitGeminiSseBuffer(buffer, done);
+      buffer = parsed.remainder;
+      yield* parseGeminiSseEvents(parsed.events);
+    }
+  } finally {
+    // Consumers may stop iterating early (agent aborted, caller only needed
+    // the first chunk). Without cancel + releaseLock the underlying response
+    // body and connection would stay open for the process lifetime.
+    await reader.cancel().catch(() => undefined);
+    try {
+      reader.releaseLock();
+    } catch {
+      // Releasing can throw when a read is mid-flight; the cancelled stream
+      // is still closed by the awaited cancel above.
+    }
   }
 }
 
@@ -529,6 +612,7 @@ export async function* geminiStreamChat({
   apiKey,
   model,
   input,
+  signal,
   customFetch = fetch,
 }: GeminiStreamChatArgs): AsyncGenerator<LlmStreamEvent> {
   const { systemInstruction, contents } = llmMessagesToGemini(input.messages);
@@ -555,6 +639,7 @@ export async function* geminiStreamChat({
       generationConfig: hasGenerationConfig ? generationConfig : undefined,
     },
     customFetch,
+    signal,
   );
 
   const state: GeminiStreamState = {
@@ -563,8 +648,18 @@ export async function* geminiStreamChat({
     toolCallCounter: 0,
   };
 
+  // A 200 response is not proof of an SSE stream: a proxy error page, a JSON
+  // body (missing `alt=sse`), or an empty body all parse to zero chunks and
+  // would otherwise surface as a successful, silent, empty completion.
+  let sawStreamChunk = false;
   for await (const chunk of parseGeminiSse(response)) {
+    sawStreamChunk = true;
     yield* handleGeminiChunk(chunk, state);
+  }
+  if (!sawStreamChunk) {
+    throw new Error(
+      "Gemini returned an empty or non-SSE streaming response (expected event-stream data)",
+    );
   }
 
   for (const tc of state.pendingToolCalls) {

@@ -103,6 +103,19 @@ export class DictationStrategy extends BaseStrategy {
   }
 
   /**
+   * Chain paste work onto the serial queue. The stored chain always catches
+   * and logs failures, so one rejected callback cannot poison the queue and
+   * silently stop every later interim segment and backlog drain.
+   */
+  private enqueuePasteWork(work: () => Promise<void>): Promise<void> {
+    const task = this.pasteQueue.then(work);
+    this.pasteQueue = task.catch((error) => {
+      getLogger().error(`Queued paste work failed: ${error}`);
+    });
+    return this.pasteQueue;
+  }
+
+  /**
    * Probe the currently focused element and, if it is editable (or the
    * platform cannot tell), drain any accumulated dictation backlog into it.
    *
@@ -111,7 +124,7 @@ export class DictationStrategy extends BaseStrategy {
    * so it never races an in-flight interim segment.
    */
   checkAndDrainBacklog(): Promise<void> {
-    const promise = this.pasteQueue.then(async () => {
+    return this.enqueuePasteWork(async () => {
       if (!hasDictationBacklog() && !this.backlogActive) {
         return;
       }
@@ -125,8 +138,6 @@ export class DictationStrategy extends BaseStrategy {
         this.backlogActive = false;
       }
     });
-    this.pasteQueue = promise;
-    return promise;
   }
 
   handleInterimSegment(segment: string): void {
@@ -147,7 +158,7 @@ export class DictationStrategy extends BaseStrategy {
     const isFirst = this.streamedSegmentCount === 0;
     this.streamedSegmentCount++;
 
-    this.pasteQueue = this.pasteQueue.then(async () => {
+    void this.enqueuePasteWork(async () => {
       const text = sanitized;
       // Interim sanitize skips structural commands, so this rarely ends with
       // "\n"; keep the branch for replacement/symbol output that already
@@ -185,7 +196,14 @@ export class DictationStrategy extends BaseStrategy {
       // Target is editable (or unknown -- optimistically try to paste).
       // Drain any accumulated backlog first, then paste the current segment.
       if (hasDictationBacklog()) {
-        await this.drainBacklogAndAppendSpace(text);
+        const delivered = await this.drainBacklogAndAppendSpace(text);
+        if (!delivered) {
+          // The drain preserved the older backlog entries but never owned
+          // this segment; park it too instead of dropping it on the floor.
+          appendToDictationBacklog(text);
+          this.backlogActive = true;
+          return;
+        }
         this.backlogActive = false;
         return;
       }
@@ -261,13 +279,15 @@ export class DictationStrategy extends BaseStrategy {
   ): Promise<HandleTranscriptResult> {
     const sanitizedTranscript = this.sanitizeTranscript(args.rawTranscript);
 
-    await this.pasteQueue;
-
-    // Drain any remaining backlog before the transcript is finalized.
-    if (hasDictationBacklog()) {
-      getLogger().info(`Draining backlog segment(s) on finalize`);
-      await this.drainBacklogAndAppendSpace();
-    }
+    // Drain any remaining backlog inside the serial queue. A polled drain
+    // (checkAndDrainBacklog) may already be in flight; running this drain
+    // outside the queue would let both snapshot and deliver the same backlog.
+    await this.enqueuePasteWork(async () => {
+      if (hasDictationBacklog()) {
+        getLogger().info(`Draining backlog segment(s) on finalize`);
+        await this.drainBacklogAndAppendSpace();
+      }
+    });
 
     // Interim paste already hit the focused app without structural commands
     // (chunk-safe). The saved transcript uses the full sanitize so scratch /
@@ -385,12 +405,15 @@ export class DictationStrategy extends BaseStrategy {
     // Reset the streaming state so a stale queued paste can't chain into the
     // next session. The in-flight promise is replaced: any paste that already
     // started is allowed to complete, but no new work queues onto it and the
-    // final-transcript path will not wait on a stale queue.
+    // final-transcript path will not wait on a stale queue. Advancing the
+    // backlog nonce invalidates any drain that already passed its pre-flight
+    // nonce check, so a cancelled session cannot deliver afterwards.
     this.pasteQueue = Promise.resolve();
     this.streamedSegmentCount = 0;
     this.streamedProcessedText = "";
     this.currentAppId = null;
     this.backlogActive = false;
     clearDictationBacklog();
+    incrementDictationBacklogNonce();
   }
 }

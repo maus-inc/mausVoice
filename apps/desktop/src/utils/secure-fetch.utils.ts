@@ -47,6 +47,11 @@ const awaitWithAbort = async <T>(
   });
 };
 
+// KNOWN TRADEOFF: the native bridge validates + caps and returns the whole
+// body, so SSE/LLM streaming over private or saved endpoints resolves in one
+// burst rather than token by token. Acceptable for the short rewrite/model
+// payloads this path carries (local network, bounded by config), and noted in
+// docs/pr63-pr109-review-findings-audit.md.
 const invokeHttpRequest = async (
   command: "private_http_request" | "openai_compatible_http_request",
   input: RequestInfo | URL,
@@ -141,6 +146,13 @@ export const secureFetch: typeof globalThis.fetch = async (input, init) => {
     return invokeHttpRequest("private_http_request", input, init);
   }
   if (url.protocol === "https:") {
+    // HTTPS goes through plugin-http directly. Two layers keep this safe:
+    // the Rust side re-checks saved-endpoint URLs and their resolved
+    // addresses (including per-redirect-hops in `commands.rs`), and the
+    // `http:default` capability is a curated provider allow-list (never
+    // `https://*`), enforced by `csp-capability.contract.test.ts`. If the
+    // capability ever loosens to a wildcard, routing here must be
+    // revisited: user-controlled HTTPS URLs would become an SSRF vector.
     return tauriFetch(input, init);
   }
   // Reject unsupported schemes (e.g. file:, data:) rather than forwarding

@@ -229,4 +229,74 @@ describe("runStartupElevationPreflight", () => {
       expect(getAppState().settings.elevationStartupPending).toBe(false);
     },
   );
+  it("releases the gate when the prefs read hangs past the watchdog", async () => {
+    vi.useFakeTimers();
+    try {
+      prefsRepoMock.getUserPreferences.mockReturnValueOnce(
+        new Promise(() => undefined), // never settles
+      );
+
+      const pending = runStartupElevationPreflight({
+        isMainWindow: true,
+        platform: "windows",
+      });
+      await vi.advanceTimersByTimeAsync(60_000);
+      await pending;
+
+      expect(requestAdminRelaunchMock).not.toHaveBeenCalled();
+      expect(getAppState().settings.elevationStartupPending).toBe(false);
+      expect(loggerMock.warning).toHaveBeenCalled();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("releases the gate when the admin relaunch hangs, and ignores the late result", async () => {
+    vi.useFakeTimers();
+    try {
+      prefsRepoMock.getUserPreferences.mockResolvedValueOnce(
+        prefsWithAdmin(true),
+      );
+      let resolveLate: ((value: string) => void) | undefined;
+      requestAdminRelaunchMock.mockReturnValueOnce(
+        new Promise((resolve) => {
+          resolveLate = resolve;
+        }),
+      );
+
+      const pending = runStartupElevationPreflight({
+        isMainWindow: true,
+        platform: "windows",
+      });
+      await vi.advanceTimersByTimeAsync(10 * 60_000);
+      await pending;
+
+      expect(getAppState().settings.elevationStartupPending).toBe(false);
+      expect(loggerMock.warning).toHaveBeenCalled();
+
+      // A relaunch result that arrives after the watchdog must not reopen the
+      // gate or relaunch a session that already launched unelevated.
+      resolveLate?.("cancelled");
+      await vi.advanceTimersByTimeAsync(1_000);
+      expect(getAppState().settings.elevationStartupPending).toBe(false);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("seeds prefs through the shared write-site so derived settings are applied", async () => {
+    prefsRepoMock.getUserPreferences.mockResolvedValueOnce({
+      ...prefsWithAdmin(false),
+      hallucinationFilterEnabled: false,
+      reviewBeforeInsert: true,
+    });
+
+    await runStartupElevationPreflight({
+      isMainWindow: true,
+      platform: "windows",
+    });
+
+    expect(getAppState().settings.hallucinationFilterEnabled).toBe(false);
+    expect(getAppState().settings.reviewBeforeInsert).toBe(true);
+  });
 });

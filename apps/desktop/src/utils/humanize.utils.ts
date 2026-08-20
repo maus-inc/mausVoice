@@ -76,15 +76,59 @@ const replacements: Replacement[] = [
 // ── Scrubber ─────────────────────────────────────────────────────────────
 
 export interface HumanizeOptions {
-  /** If true, also normalize whitespace (collapse, trim). Default true. */
+  /** If true (default), trim leading/trailing whitespace from the result. */
   normalizeWhitespace?: boolean;
 }
+
+// ── Structure protection ─────────────────────────────────────────────────
+//
+// The scrubber runs on arbitrary Markdown assistant output. Replacing words
+// or collapsing whitespace *inside* code or data corrupts it (renaming
+// `lock.unlock()` to `lock.enable()`, flattening pretty-printed JSON), which
+// would break the shared contract above ("Do NOT alter code, data, or
+// structured output"). Text is therefore split into protected segments
+// (fenced code blocks, inline code spans) and plain prose, and every
+// transformation applies to prose only.
+
+/**
+ * Split text into alternating `{ protected, text }` segments. Fenced code
+ * blocks (`​``` or `~~~` fences, including unterminated ones) and inline code
+ * spans are protected; everything else is prose.
+ */
+const splitProtectedSegments = (
+  text: string,
+): { protected: boolean; text: string }[] => {
+  const segments: { protected: boolean; text: string }[] = [];
+  // Fenced code: opening fence line plus everything up to the closing fence
+  // (or end of text). Inline code: backtick spans on a single line.
+  const pattern =
+    /(^|\n)([ \t]*(?:`{3,}|~{3,})[^\n]*\n[\s\S]*?(?:\n[ \t]*(?:`{3,}|~{3,})[ \t]*(?=\n|$)|$))|(`+[^\n`]*`+)/g;
+  let lastIndex = 0;
+  let match: RegExpExecArray | null;
+  while ((match = pattern.exec(text)) !== null) {
+    const start =
+      match[2] !== undefined ? match.index + match[1].length : match.index;
+    const token = match[2] ?? match[3] ?? match[0];
+    if (start > lastIndex) {
+      segments.push({ protected: false, text: text.slice(lastIndex, start) });
+    }
+    segments.push({ protected: true, text: token });
+    lastIndex = start + token.length;
+  }
+  if (lastIndex < text.length) {
+    segments.push({ protected: false, text: text.slice(lastIndex) });
+  }
+  return segments;
+};
 
 /**
  * Apply the post‑hoc scrubber to a string of LLM‑generated text.
  *
- * Returns the cleaned text. If `normalizeWhitespace` is true (default),
- * runs a final pass to collapse multiple spaces/line breaks and trim.
+ * Returns the cleaned text. Code and structured content (fenced blocks,
+ * inline code) pass through untouched. Whitespace normalization collapses
+ * horizontal runs only — paragraph breaks and line structure are preserved.
+ * If `normalizeWhitespace` is true (default), leading/trailing whitespace is
+ * trimmed.
  */
 export const humanizeScrub = (
   text: string | null | undefined,
@@ -93,14 +137,22 @@ export const humanizeScrub = (
   if (!text) return "";
 
   const { normalizeWhitespace = true } = options;
-  let result = text;
 
-  for (const { pattern, replace } of replacements) {
-    result = result.replace(pattern, replace);
-  }
-
-  // Clean up double spaces left by removed phrases
-  result = result.replace(/\s{2,}/g, " ");
+  let result = splitProtectedSegments(text)
+    .map((segment) => {
+      if (segment.protected) {
+        return segment.text;
+      }
+      let prose = segment.text;
+      for (const { pattern, replace } of replacements) {
+        prose = prose.replace(pattern, replace);
+      }
+      // Clean up double spaces left by removed phrases. Horizontal
+      // whitespace only: newlines carry Markdown structure (paragraphs,
+      // lists, indented blocks) and must survive.
+      return prose.replace(/[ \t]{2,}/g, " ");
+    })
+    .join("");
 
   if (normalizeWhitespace) {
     result = result.trim();
