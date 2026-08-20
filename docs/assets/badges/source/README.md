@@ -61,11 +61,10 @@ house badges:
 
 - Root README title: the live CI badge (Test Desktop Unit workflow status
   on main), linked to the workflow runs.
-- Root README title: the live latest-release badge (`github/v/release`
-  with `include_prereleases`), wired to always show the newest published
-  GitHub Release whether stable or pre-release — the tag itself carries
-  the channel (e.g. an `rc` suffix), so the badge can never lag behind
-  the actual release state.
+- Root README title: the live latest-release badge (`github/v/release`),
+  which tracks the newest **stable** GitHub Release (shields excludes
+  pre-releases by default — pre-release versions never surface on the
+  public README).
 - Generated release body title: a version + channel badge (`v{x.y.z}` +
   `stable`/`pre-release`) whose values the release workflow bakes into the
   shields.io static-badge URL per run. The channel derives from the same
