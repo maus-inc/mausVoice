@@ -757,6 +757,15 @@ fn validate_saved_endpoint_url(url: &Url, base_url: &Url) -> Result<(), String> 
     Ok(())
 }
 
+/// Origin equality for redirect-hop header sanitization. Mirrors the
+/// curl/reqwest behavior my manual redirect loop replaces: when a redirect
+/// changes scheme, host, or port, sensitive request headers must NOT follow.
+fn urls_share_origin(a: &Url, b: &Url) -> bool {
+    a.scheme() == b.scheme()
+        && a.host() == b.host()
+        && a.port_or_known_default() == b.port_or_known_default()
+}
+
 fn validate_http_request_url(url: &Url, policy: &HttpRequestPolicy) -> Result<(), String> {
     match policy {
         HttpRequestPolicy::PrivateNetwork => validate_private_http_url(url),
@@ -1012,6 +1021,10 @@ async fn execute_http_request(
     };
 
     let mut redirects_left = MAX_PRIVATE_HTTP_REDIRECTS;
+    // Set after the first hop completes as a redirect; compared per hop so a
+    // cross-origin redirect (e.g. a private 127.0.0.1 endpoint bouncing to a
+    // LAN sibling) never forwards credentials to the new origin.
+    let mut previous_url: Option<Url> = None;
     let mut response = loop {
         validate_http_request_url(&current_url, &policy)?;
         let addrs = resolve_and_validate_url(&current_url, &policy).await?;
@@ -1036,7 +1049,18 @@ async fn execute_http_request(
             .map_err(|_| "Unable to initialize the HTTP client".to_string())?;
 
         let mut builder = client.request(current_method.clone(), current_url.clone());
+        let cross_origin_hop = previous_url
+            .as_ref()
+            .is_some_and(|previous| !urls_share_origin(previous, &current_url));
         for (name, value) in &forwarded_headers {
+            if cross_origin_hop
+                && matches!(
+                    name.as_str(),
+                    "authorization" | "cookie" | "proxy-authorization" | "www-authenticate"
+                )
+            {
+                continue;
+            }
             builder = builder.header(name.clone(), value.clone());
         }
         if let Some(body) = current_body.clone() {
@@ -1078,7 +1102,7 @@ async fn execute_http_request(
                 current_body = None;
             }
         }
-        current_url = next_url;
+        previous_url = Some(std::mem::replace(&mut current_url, next_url));
     };
 
     if response
@@ -5344,6 +5368,34 @@ mod tests {
                 "expected private IP literal to be accepted: {private_ip}"
             );
         }
+    }
+
+    #[test]
+    fn urls_share_origin_compares_scheme_host_and_default_port() {
+        let ollama = Url::parse("http://127.0.0.1:11434/v1/chat/completions").unwrap();
+        // Same origin (trailing path/query never counts).
+        assert!(urls_share_origin(
+            &ollama,
+            &Url::parse("http://127.0.0.1:11434/api/generate").unwrap()
+        ));
+        // Default-vs-explicit port still shares the origin.
+        assert!(urls_share_origin(
+            &Url::parse("http://localhost/v1").unwrap(),
+            &Url::parse("http://localhost:80/models").unwrap()
+        ));
+        // Different host, port, and scheme each switch origin.
+        assert!(!urls_share_origin(
+            &ollama,
+            &Url::parse("http://192.168.1.5:11434/").unwrap()
+        ));
+        assert!(!urls_share_origin(
+            &ollama,
+            &Url::parse("http://127.0.0.1:9000/").unwrap()
+        ));
+        assert!(!urls_share_origin(
+            &ollama,
+            &Url::parse("https://127.0.0.1:11434/").unwrap()
+        ));
     }
 
     #[test]
