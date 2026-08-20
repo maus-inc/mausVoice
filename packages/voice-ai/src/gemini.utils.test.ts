@@ -388,6 +388,34 @@ describe("Gemini native transport", () => {
 });
 
 describe("Gemini retry policy edge cases", () => {
+  it("shares one absolute deadline signal across retried attempts", async () => {
+    const signals: (AbortSignal | undefined)[] = [];
+    const customFetch = vi
+      .fn()
+      .mockImplementation((_url: string, init?: RequestInit) => {
+        signals.push(init?.signal);
+        if (signals.length === 1) {
+          return Promise.resolve(new Response("nope", { status: 500 }));
+        }
+        return Promise.resolve(
+          jsonResponse({
+            candidates: [{ content: { parts: [{ text: "ok" }] } }],
+          }),
+        );
+      });
+
+    await geminiGenerateTextResponse({
+      apiKey: "gemini-key",
+      model: "gemini-3.7-flash",
+      prompt: "Hi",
+      customFetch,
+    });
+    expect(signals.length).toBe(2);
+    // The deadline must cover the whole operation: one signal instance,
+    // minted before the first attempt, not a fresh timer per attempt.
+    expect(signals[0]).toBe(signals[1]);
+  });
+
   it("does not retry a deadline abort (TimeoutError-named rejection)", async () => {
     const customFetch = vi
       .fn()

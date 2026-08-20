@@ -5,11 +5,15 @@
 structure §2.5).
 
 **Reviewed against:** `fix/superfix-review-findings` base @ `30e7af0` → branch
-head `2c32238`. The branch comprises the four-round fix set on top of the
-superfix head, the workflow patch (applied by the scoped downstream agent in
-`817fd46`), the bindings regen, the docs-overhaul merge, the SonarCloud fixes,
-and the three kilocode re-review corrections, closing with the duplicate-test
-repair `2c32238`.
+heads through round 5. The branch comprises the four-round fix set on top of
+the superfix head, the workflow patch (applied by the scoped downstream agent
+in `817fd46`), the bindings regen, the docs-overhaul merge, the SonarCloud
+fixes, the kilocode re-review corrections (through the duplicate-test repair
+`2c32238`), the round-4 timeout/rejection fixes (`72824da`), and the round-5
+items below. This document was refreshed after the CodeRabbit-style review of
+`72824da` pointed at it as stale; earlier editions described earlier heads.
+Desktop CI was green (including Windows) at the code-bearing head before the
+docs-only tail commits.
 
 **Method:** re-read the full final-state surface per area (private HTTP stack,
 reaper, model pinning, humanize scrubber, Gemini transport, dictation queue,
@@ -70,6 +74,20 @@ Where the reviews asked for coverage, it now exists (enumerated in
 live-response streaming e2e test for the private-HTTP bridge requires a real
 Tauri runtime environment, which no CI leg in this repo provides today — and
 that was already the case before this branch. Not introduced here.
+
+## Round-5 resolution (review of `72824da`)
+
+- Gemini non-streaming deadline is now minted once per operation and shared
+  across retries (was re-minted per attempt, so the "absolute" comment was
+  drift and 3×5 minutes was reachable). Regression test: two attempts share
+  the same signal object.
+- Legacy preference rows with `realtimeOutputEnabled && reviewBeforeInsert`
+  load-time normalized at the single prefs write-site (`setUserPreferences`),
+  realtime winning to match runtime behavior. Two tests cover dual-true and
+  single-true load.
+- The review's remaining notes required nothing new: the HTTPS-proxy DNS
+  observation was already the documented residual, and the verdict otherwise
+  closed every Major thread.
 
 ## What is working correctly
 

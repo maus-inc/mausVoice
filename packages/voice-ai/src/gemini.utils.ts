@@ -104,11 +104,12 @@ const isGeminiFailureRetryable = (error: unknown): boolean => {
   return name !== "AbortError" && name !== "TimeoutError";
 };
 
-// Non-streaming calls get a generous absolute deadline: uploading and
-// transcribing a long clip can legitimately take minutes, but a stalled
-// connection must not hang post-processing forever. Streaming calls use the
-// caller's signal directly — a fixed total timeout would kill healthy
-// long-running generations mid-stream.
+// Non-streaming calls get a generous absolute deadline — one signal minted
+// per operation and shared by every retry attempt (upload + transcribe of a
+// long clip can legitimately take minutes, but a stalled connection must not
+// hang post-processing forever). Streaming calls use the caller's signal
+// directly — a fixed total timeout would kill healthy long-running
+// generations mid-stream.
 const GEMINI_REQUEST_TIMEOUT_MS = 5 * 60 * 1000;
 
 const withDeadlineSignal = (
@@ -228,6 +229,10 @@ export const geminiTranscribeAudio = async ({
   signal,
   customFetch = fetch,
 }: GeminiTranscriptionArgs): Promise<GeminiTranscribeAudioOutput> => {
+  // One absolute deadline for the whole operation: minted once here, shared
+  // by every retry attempt (a retryable 500 must not reset the clock), and
+  // a TimeoutError from it is non-retryable by policy.
+  const deadlineSignal = withDeadlineSignal(signal);
   return retry({
     retries: 3,
     isRetryable: isGeminiFailureRetryable,
@@ -268,7 +273,7 @@ export const geminiTranscribeAudio = async ({
           ],
         },
         customFetch,
-        withDeadlineSignal(signal),
+        deadlineSignal,
       );
       const response =
         (await httpResponse.json()) as GeminiGenerateContentResponse;
@@ -307,6 +312,9 @@ export const geminiGenerateTextResponse = async ({
   signal,
   customFetch = fetch,
 }: GeminiGenerateTextArgs): Promise<GeminiGenerateResponseOutput> => {
+  // One absolute deadline per operation, shared across attempts (see
+  // geminiTranscribeAudio): a retry must not mint a new five-minute window.
+  const deadlineSignal = withDeadlineSignal(signal);
   return retry({
     retries: 3,
     isRetryable: isGeminiFailureRetryable,
@@ -338,7 +346,7 @@ export const geminiGenerateTextResponse = async ({
               : undefined,
         },
         customFetch,
-        withDeadlineSignal(signal),
+        deadlineSignal,
       );
       const response =
         (await httpResponse.json()) as GeminiGenerateContentResponse;
