@@ -141,6 +141,18 @@ const resolveEditableTarget = (target: HTMLElement): EditableTarget | null => {
   };
 };
 
+/**
+ * True when the right-click target is, or is inside, an editable surface
+ * (input/textarea/contenteditable). Surfaces use this to yield those
+ * right-clicks to the provider's clipboard menu (Cut/Copy/Paste/Select All)
+ * instead of showing their own row/context menu.
+ */
+export const isEditableTarget = (target: EventTarget | null): boolean => {
+  return (
+    target instanceof HTMLElement && resolveEditableTarget(target) !== null
+  );
+};
+
 /** Focus the editable and restore its selection so clipboard commands act on it. */
 const focusEditable = (t: EditableTarget): void => {
   t.el.focus();

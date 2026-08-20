@@ -30,7 +30,11 @@ import {
 } from "../../actions/transcriptions.actions";
 import { getTranscriptionRepo } from "../../repos";
 import { produceAppState, useAppStore } from "../../store";
-import { useContextMenu, type ContextMenuItem } from "../common/ContextMenu";
+import {
+  isEditableTarget,
+  useContextMenu,
+  type ContextMenuItem,
+} from "../common/ContextMenu";
 import { reducedMotionQuery } from "../../styles/motion";
 import { getActiveRemoteTarget } from "../../utils/device.utils";
 import { TypographyWithMore } from "../common/TypographyWithMore";
@@ -211,9 +215,11 @@ export const TranscriptionRow = ({ id }: TranscriptionRowProps) => {
   return (
     <Box
       component="div"
-      onContextMenu={(e) =>
-        ctxMenu.handleContextMenu(e.nativeEvent, contextMenuItems)
-      }
+      onContextMenu={(e) => {
+        // Yield right-clicks on editable text to the provider's clipboard menu.
+        if (isEditableTarget(e.target)) return;
+        ctxMenu.handleContextMenu(e.nativeEvent, contextMenuItems);
+      }}
     >
       <Stack
         direction="row"

@@ -8,7 +8,11 @@ import {
   MenuPopoverBuilder,
   type MenuPopoverItem,
 } from "../common/MenuPopover";
-import { useContextMenu, type ContextMenuItem } from "../common/ContextMenu";
+import {
+  isEditableTarget,
+  useContextMenu,
+  type ContextMenuItem,
+} from "../common/ContextMenu";
 
 type ConversationListItemProps = {
   conversation: Conversation;
@@ -58,9 +62,11 @@ export const ConversationListItem = ({
   return (
     <Box
       component="div"
-      onContextMenu={(e) =>
-        ctxMenu.handleContextMenu(e.nativeEvent, contextMenuItems)
-      }
+      onContextMenu={(e) => {
+        // Yield right-clicks on editable text to the provider's clipboard menu.
+        if (isEditableTarget(e.target)) return;
+        ctxMenu.handleContextMenu(e.nativeEvent, contextMenuItems);
+      }}
     >
       <ListItemButton
         selected={selected}

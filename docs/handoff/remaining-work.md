@@ -339,6 +339,10 @@ descoped.
 ### Cross-cutting requirements
 - **Do not** duplicate the provider's clipboard logic; surfaces A–D are non-input
   rows, so they use `useContextMenu()` directly, not the provider.
+- **Yield editables to the provider:** if a surface contains editable text
+  (e.g. `DictionaryRow`'s term/replacement `TextField`s), its `onContextMenu`
+  must call `isEditableTarget(e.target)` first and return early so the provider's
+  clipboard menu (Cut/Copy/Paste/Select All) wins over the surface menu.
 - Remove the scattered `preventDefault()` hacks only where they now become menu
   items you own (`ConversationLayout.tsx:173`, `ListTile.tsx:145`). If a hack
   belongs to a surface you are not wiring here, **list it as a finding**, do not

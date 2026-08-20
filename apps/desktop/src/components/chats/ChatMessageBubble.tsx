@@ -7,7 +7,11 @@ import { FormattedMessage, useIntl } from "react-intl";
 import remarkGfm from "remark-gfm";
 import { showErrorSnackbar, showSnackbar } from "../../actions/app.actions";
 import { useAppStore } from "../../store";
-import { useContextMenu, type ContextMenuItem } from "../common/ContextMenu";
+import {
+  isEditableTarget,
+  useContextMenu,
+  type ContextMenuItem,
+} from "../common/ContextMenu";
 import { OverflowTypography } from "../common/OverflowTypography";
 import { AgentActivity } from "./AgentActivity";
 
@@ -71,6 +75,8 @@ export const ChatMessageBubble = ({ id }: ChatMessageBubbleProps) => {
   return (
     <Stack
       onContextMenu={(e) => {
+        // Yield right-clicks on editable text to the provider's clipboard menu.
+        if (isEditableTarget(e.target)) return;
         if (contextMenuItems.length === 0) return;
         ctxMenu.handleContextMenu(e.nativeEvent, contextMenuItems);
       }}

@@ -14,7 +14,11 @@ vi.mock("react-intl", async (importOriginal) => {
   };
 });
 
-import { ContextMenuProvider, useContextMenu } from "./ContextMenu";
+import {
+  ContextMenuProvider,
+  isEditableTarget,
+  useContextMenu,
+} from "./ContextMenu";
 
 (
   globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }
@@ -135,6 +139,28 @@ describe("ContextMenuProvider", () => {
   });
 });
 
+describe("isEditableTarget", () => {
+  it("returns true for inputs/textareas and false for plain elements", () => {
+    const input = document.createElement("input");
+    expect(isEditableTarget(input)).toBe(true);
+    const textarea = document.createElement("textarea");
+    expect(isEditableTarget(textarea)).toBe(true);
+    const div = document.createElement("div");
+    expect(isEditableTarget(div)).toBe(false);
+    expect(isEditableTarget(null)).toBe(false);
+  });
+
+  it("returns true for contenteditable hosts and their descendants", () => {
+    const host = document.createElement("div");
+    host.setAttribute("contenteditable", "true");
+    expect(isEditableTarget(host)).toBe(true);
+    const child = document.createElement("span");
+    child.textContent = "x";
+    host.appendChild(child);
+    expect(isEditableTarget(child)).toBe(true);
+  });
+});
+
 describe("useContextMenu", () => {
   const Harness = () => {
     const menu = useContextMenu();
@@ -229,5 +255,48 @@ describe("useContextMenu", () => {
       document.body.dispatchEvent(new Event("scroll", { bubbles: true }));
     });
     expect(document.querySelector('[role="menu"]')).toBeNull();
+  });
+});
+
+describe("surface yields editable right-clicks to the provider", () => {
+  it("shows the clipboard menu (not the surface menu) on an input", () => {
+    const SurfaceHarness = () => {
+      const menu = useContextMenu();
+      return createElement(
+        "div",
+        {
+          // A surface that yields editable targets to the provider, matching
+          // the wired surfaces (TranscriptRow/DictionaryRow/…).
+          onContextMenu: (e: React.MouseEvent) => {
+            if (isEditableTarget(e.target)) return;
+            menu.handleContextMenu(e.nativeEvent, [
+              {
+                label: "Delete",
+                danger: true,
+                onClick: () => undefined,
+              },
+            ]);
+          },
+        },
+        createElement("input", { defaultValue: "hello" }),
+        menu.renderMenu(),
+      );
+    };
+
+    act(() => {
+      root.render(
+        createElement(ContextMenuProvider, null, createElement(SurfaceHarness)),
+      );
+    });
+
+    const input = container.querySelector("input")!;
+    nativeContextMenu(input);
+
+    const menu = document.querySelector('[role="menu"]')!;
+    expect(menu).not.toBeNull();
+    // The provider's clipboard menu wins over the surface's Delete item.
+    expect(menu.textContent).toContain("Copy");
+    expect(menu.textContent).toContain("Paste");
+    expect(menu.textContent).not.toContain("Delete");
   });
 });
