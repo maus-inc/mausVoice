@@ -37,4 +37,20 @@ describe("logOnRejection", () => {
     await new Promise((resolve) => setTimeout(resolve, 10));
     expect(warningMock).not.toHaveBeenCalled();
   });
+
+  it("produces no secondary rejection when the logger itself throws", async () => {
+    warningMock.mockImplementationOnce(() => {
+      throw new Error("log bridge down");
+    });
+    const onUnhandled = vi.fn();
+    process.on("unhandledRejection", onUnhandled);
+    try {
+      logOnRejection(Promise.reject(new Error("boom")), "crashy logger path");
+      await new Promise((resolve) => setTimeout(resolve, 10));
+      expect(warningMock).toHaveBeenCalledTimes(1);
+      expect(onUnhandled).not.toHaveBeenCalled();
+    } finally {
+      process.removeListener("unhandledRejection", onUnhandled);
+    }
+  });
 });

@@ -1016,6 +1016,14 @@ async fn execute_http_request(
     // Plaintext policies connect directly: an environment HTTP proxy could
     // otherwise tunnel a private-network (or saved plaintext endpoint)
     // request, and its bearer credential, to an arbitrary public host.
+    //
+    // RESIDUAL (documented, accepted): HTTPS saved endpoints may still use the
+    // system proxy, because corporate proxies are the only way some machines
+    // can reach public providers at all. In that case the proxy performs its
+    // own DNS for the CONNECT target, so the resolve_and_validate pinning
+    // above does not govern the dispatch address; TLS certificate validation
+    // (against the configured hostname) is what binds the bearer credential
+    // instead. An attacker without a valid certificate cannot learn it.
     let bypass_proxy = match &policy {
         HttpRequestPolicy::PrivateNetwork => true,
         HttpRequestPolicy::SavedOpenAiCompatibleEndpoint { base_url } => {

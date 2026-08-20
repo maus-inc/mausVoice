@@ -14,7 +14,19 @@ export const logOnRejection = (
   promise: Promise<unknown>,
   context: string,
 ): void => {
-  void promise.catch((error: unknown) => {
-    getLogger().warning(`${context} failed after its own error UI: ${error}`);
-  });
+  // Both catches: promise.catch's handler rejects again if the logger itself
+  // throws (that secondary rejection would be unhandled). Guard the log call
+  // and clear the chain so this helper can never manufacture a rejection.
+  void promise
+    .catch((error: unknown) => {
+      try {
+        getLogger().warning(
+          `${context} failed after its own error UI: ${error}`,
+        );
+      } catch {
+        // The native log bridge is unavailable (tests, shutdown): stay silent
+        // rather than converting a handled failure into a new rejection.
+      }
+    })
+    .catch(() => undefined);
 };

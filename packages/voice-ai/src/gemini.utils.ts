@@ -93,13 +93,15 @@ export class GeminiHttpError extends Error {
 
 // Permanent 4xx failures (bad key, malformed request, unknown model) are never
 // fixed by resending the same payload; retrying them rebuilds and re-uploads
-// the whole audio body for nothing. Abort/cancel must also stop retrying.
+// the whole audio body for nothing. Abort/cancel must also stop retrying —
+// including the deadline path: AbortSignal.timeout rejects with a
+// "TimeoutError"-named reason, not "AbortError".
 const isGeminiFailureRetryable = (error: unknown): boolean => {
   if (error instanceof GeminiHttpError) {
     return error.status === 429 || error.status >= 500;
   }
   const name = error instanceof Error ? error.name : "";
-  return name !== "AbortError";
+  return name !== "AbortError" && name !== "TimeoutError";
 };
 
 // Non-streaming calls get a generous absolute deadline: uploading and

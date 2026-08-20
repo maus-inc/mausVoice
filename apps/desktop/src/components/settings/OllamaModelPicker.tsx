@@ -30,9 +30,9 @@ export const OllamaModelPicker = ({
 
   const effectiveUrl = baseUrl || OLLAMA_DEFAULT_URL;
 
-  // One a request at a time, with stale results dropped: a slow endpoint
-  // must not stack concurrent probes, and a response from the previous URL
-  // must not overwrite the picker's current state.
+  // At most one in-flight probe per config; a config change ends the old
+  // effect's polling and discards its completions via the cancellation flag,
+  // so a stale response never overwrites the picker's current state.
   useEffect(() => {
     let cancelled = false;
     let inFlight = false;

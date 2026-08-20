@@ -386,3 +386,31 @@ describe("Gemini native transport", () => {
     );
   });
 });
+
+describe("Gemini retry policy edge cases", () => {
+  it("does not retry a deadline abort (TimeoutError-named rejection)", async () => {
+    const customFetch = vi
+      .fn()
+      .mockImplementation((_url: string, init?: RequestInit) =>
+        Promise.reject(
+          (init?.signal as AbortSignal | undefined)?.reason ??
+            new DOMException("This operation was aborted", "AbortError"),
+        ),
+      );
+    const controller = new AbortController();
+    controller.abort(
+      new DOMException("The operation timed out.", "TimeoutError"),
+    );
+
+    await expect(
+      geminiTranscribeAudio({
+        apiKey: "gemini-key",
+        model: "gemini-3.7-flash",
+        blob: new Uint8Array([1]).buffer,
+        signal: controller.signal,
+        customFetch,
+      }),
+    ).rejects.toThrow();
+    expect(customFetch).toHaveBeenCalledTimes(1);
+  });
+});

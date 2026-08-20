@@ -153,6 +153,9 @@ export const secureFetch: typeof globalThis.fetch = async (input, init) => {
     // `https://*`), enforced by `csp-capability.contract.test.ts`. If the
     // capability ever loosens to a wildcard, routing here must be
     // revisited: user-controlled HTTPS URLs would become an SSRF vector.
+    // Residual: when a system proxy routes the request (corporate CONNECT),
+    // DNS resolution happens at the proxy rather than under the Rust pin;
+    // TLS hostname validation is the binding layer there (see commands.rs).
     return tauriFetch(input, init);
   }
   // Reject unsupported schemes (e.g. file:, data:) rather than forwarding

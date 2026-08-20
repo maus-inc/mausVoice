@@ -41,10 +41,12 @@ export const OpenAICompatibleModelPicker = ({
     [baseUrl, includeV1Path],
   );
 
-  // Single effect owns polling: one in-flight request at a time (a slow
-  // endpoint must not stack concurrent native HTTP calls), and a generation
-  // flag drops completions that arrive after unmount or after the URL/key
-  // changed so a stale probe can never overwrite fresh state.
+  // Single effect owns polling: at most one in-flight request per config; a
+  // config change ends the old effect's polling and drops its completions
+  // (cancellation flag), so a stale probe can never overwrite fresh state.
+  // A toggle can briefly overlap with the previous config's request — that
+  // overlap is bounded by the request timeout and its late result is always
+  // discarded by the flag.
   useEffect(() => {
     let cancelled = false;
     let inFlight = false;
