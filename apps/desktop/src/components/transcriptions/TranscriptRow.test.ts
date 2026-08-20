@@ -197,7 +197,7 @@ describe("TranscriptionRow retranscribe button states", () => {
     expect(button?.disabled).toBe(false);
     expect(button?.getAttribute("aria-label")).toBe("Retranscribe audio clip");
     expect(
-      button?.querySelector('[data-testid="ReplayRoundedIcon"]'),
+      button?.querySelector('[data-testid="retranscribe-replay"]'),
     ).not.toBeNull();
   });
 });

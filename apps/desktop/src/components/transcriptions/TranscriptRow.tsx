@@ -87,12 +87,9 @@ export const TranscriptionRow = ({ id }: TranscriptionRowProps) => {
   const retranscribeIcon = (() => {
     if (isRetranscribing && prefersReducedMotion) {
       return (
-        <Hourglass
-          size={16}
-          strokeWidth={1.9}
-          aria-hidden
-          data-testid="retranscribe-hourglass"
-        />
+        <span data-testid="retranscribe-hourglass">
+          <Hourglass size={16} strokeWidth={1.9} aria-hidden />
+        </span>
       );
     }
     if (isRetranscribing) {
@@ -100,21 +97,15 @@ export const TranscriptionRow = ({ id }: TranscriptionRowProps) => {
     }
     if (didRetranscribe) {
       return (
-        <CheckCircle
-          size={16}
-          strokeWidth={1.9}
-          aria-hidden
-          data-testid="retranscribe-check"
-        />
+        <span data-testid="retranscribe-check">
+          <CheckCircle size={16} strokeWidth={1.9} aria-hidden />
+        </span>
       );
     }
     return (
-      <RotateCcw
-        size={16}
-        strokeWidth={1.9}
-        aria-hidden
-        data-testid="retranscribe-replay"
-      />
+      <span data-testid="retranscribe-replay">
+        <RotateCcw size={16} strokeWidth={1.9} aria-hidden />
+      </span>
     );
   })();
 

@@ -585,6 +585,11 @@ export const theme = createTheme({
           "&:active": {
             transform: "scale(0.96)",
           },
+          "& svg.lucide": {
+            width: 16,
+            height: 16,
+            strokeWidth: 1.9,
+          },
         }),
       },
     },
@@ -671,6 +676,19 @@ export const theme = createTheme({
             },
           }),
         }),
+      },
+    },
+
+    MuiListItemIcon: {
+      styleOverrides: {
+        root: {
+          minWidth: 32,
+          "& svg.lucide": {
+            width: 16,
+            height: 16,
+            strokeWidth: 1.9,
+          },
+        },
       },
     },
 
