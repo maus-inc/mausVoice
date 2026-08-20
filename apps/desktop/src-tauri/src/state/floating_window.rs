@@ -1,7 +1,7 @@
 use std::collections::HashMap;
 use std::sync::{
     atomic::{AtomicU64, Ordering},
-    Arc, Mutex,
+    Arc, Condvar, Mutex,
 };
 use std::time::{Duration, Instant};
 
@@ -26,6 +26,10 @@ pub struct FloatingWindowState {
     // Held in its own `Arc` so the background reaper thread keeps the map alive
     // (and keeps expiring entries) independently of this struct's lifetime.
     pending_composer_text: Arc<Mutex<HashMap<String, PendingComposerText>>>,
+    // (flag, condvar) wake-point for the background reaper so `Drop` can stop
+    // it instead of leaving a parked thread holding the map alive forever.
+    reaper_shutdown: Arc<(Mutex<bool>, Condvar)>,
+    reaper_thread: Option<std::thread::JoinHandle<()>>,
 }
 
 impl Default for FloatingWindowState {
@@ -38,20 +42,44 @@ impl FloatingWindowState {
     pub fn new() -> Self {
         let pending = Arc::new(Mutex::new(HashMap::new()));
         let reaper_pending = pending.clone();
+        let reaper_shutdown = Arc::new((Mutex::new(false), Condvar::new()));
+        let thread_shutdown = reaper_shutdown.clone();
         // Background reaper: guarantees the sixty-second retention actually
         // deletes dictated text even if the composer is force-closed and no
-        // later register/peek ever runs. Runs for the process lifetime.
-        std::thread::spawn(move || {
+        // later register/peek ever runs. Wakes on shutdown so `Drop` can join
+        // it; otherwise prunes after each interval.
+        let reaper_thread = std::thread::spawn(move || {
+            let (lock, condvar) = &*thread_shutdown;
+            let mut shutdown = match lock.lock() {
+                Ok(guard) => guard,
+                Err(_) => return,
+            };
             loop {
-                std::thread::sleep(PENDING_COMPOSER_TEXT_REAPER_INTERVAL);
-                if let Ok(mut map) = reaper_pending.lock() {
-                    Self::prune_expired(&mut map);
+                if *shutdown {
+                    return;
+                }
+                let (guard, timeout) = match condvar
+                    .wait_timeout(shutdown, PENDING_COMPOSER_TEXT_REAPER_INTERVAL)
+                {
+                    Ok(result) => result,
+                    Err(_) => return,
+                };
+                shutdown = guard;
+                if *shutdown {
+                    return;
+                }
+                if timeout.timed_out() {
+                    if let Ok(mut map) = reaper_pending.lock() {
+                        Self::prune_expired(&mut map);
+                    }
                 }
             }
         });
         Self {
             counter: AtomicU64::new(1),
             pending_composer_text: pending,
+            reaper_shutdown,
+            reaper_thread: Some(reaper_thread),
         }
     }
 
@@ -119,6 +147,22 @@ impl FloatingWindowState {
     }
 }
 
+impl Drop for FloatingWindowState {
+    fn drop(&mut self) {
+        let (lock, condvar) = &*self.reaper_shutdown;
+        if let Ok(mut shutdown) = lock.lock() {
+            *shutdown = true;
+        }
+        condvar.notify_all();
+        // Joining is safe and prompt: the reaper wakes on the condvar instead
+        // of sleeping through its interval. A poisoned lock is ignored — the
+        // thread still exits at the next interval timeout.
+        if let Some(thread) = self.reaper_thread.take() {
+            let _ = thread.join();
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -171,6 +215,38 @@ mod tests {
                 Instant::now() - PENDING_COMPOSER_TEXT_TTL - Duration::from_secs(1),
             ),
         );
+    }
+
+    #[test]
+    fn dropping_stops_and_joins_the_reaper_thread() {
+        // The reaper must not outlive its owner holding the pending map open:
+        // Drop sets the shutdown flag and joins promptly (condvar wake), so a
+        // recreated state cannot pile up sleeper threads.
+        let state = FloatingWindowState::new();
+        let handle = state
+            .reaper_thread
+            .as_ref()
+            .expect("reaper thread handle is stored");
+        assert!(!handle.is_finished());
+        drop(state);
+        // Reaching this line means Drop did not block on the 30s interval.
+    }
+
+    #[test]
+    fn reaper_survives_a_poisoned_pending_lock_without_deadlock() {
+        let state = FloatingWindowState::new();
+        {
+            let pending = state.pending_composer_text.clone();
+            std::thread::spawn(move || {
+                let _guard = pending.lock();
+                panic!("intentional poison");
+            })
+            .join()
+            .expect_err("poison thread must panic");
+        }
+        // Drop must still complete (and join the reaper) even with the
+        // pending lock poisoned.
+        drop(state);
     }
 
     #[test]

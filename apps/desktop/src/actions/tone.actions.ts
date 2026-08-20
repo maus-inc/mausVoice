@@ -4,6 +4,7 @@ import { getToneRepo, getUserPreferencesRepo } from "../repos";
 import { ToneEditorMode } from "../state/tone-editor.state";
 import { getAppState, produceAppState } from "../store";
 import { registerTones } from "../utils/app.utils";
+import { getLogger } from "../utils/log.utils";
 import {
   toWritingStyleTransition,
   type WritingStyleSwitchRequest,
@@ -166,6 +167,36 @@ export const applyWritingStyleSelectionNow = (toneId: string): boolean => {
 };
 
 /**
+ * Persist-assisted style switch: snapshot the current selection, write the
+ * new one in memory, then persist. If persistence fails, restore the snapshot
+ * explicitly — `updateUser`'s own rollback captured its `existing` after our
+ * in-memory write, so it would otherwise "restore" the new value while SQLite
+ * still holds the old one. The rejection is swallowed here because callers
+ * fire-and-forget and `updateUser` already surfaced the error snackbar.
+ */
+const applyWritingStyleSelectionWithPersist = async (
+  toneId: string,
+): Promise<void> => {
+  const previousId = getMyUser(getAppState())?.selectedToneId ?? null;
+  if (!applyWritingStyleSelectionNow(toneId)) {
+    return;
+  }
+  try {
+    await setSelectedToneId(toneId);
+  } catch (error) {
+    produceAppState((draft) => {
+      const user = getMyUser(draft);
+      if (user) {
+        user.selectedToneId = previousId;
+      }
+    });
+    getLogger().error(
+      `Style selection persist failed; restored previous selection: ${error}`,
+    );
+  }
+};
+
+/**
  * Single state transition for every writing-style switch channel (pill
  * chevrons, Left/Right while holding dictate, cycle hotkeys, and
  * switch-to-style hotkeys). The in-memory write is synchronous; persistence
@@ -174,10 +205,7 @@ export const applyWritingStyleSelectionNow = (toneId: string): boolean => {
 export const applyWritingStyleSelection = async (
   toneId: string,
 ): Promise<void> => {
-  if (!applyWritingStyleSelectionNow(toneId)) {
-    return;
-  }
-  await setSelectedToneId(toneId);
+  await applyWritingStyleSelectionWithPersist(toneId);
 };
 
 const peekCycledToneId = (direction: 1 | -1): string | null => {
@@ -237,19 +265,13 @@ export const applyInDictationStyleSwitch = (
 ): Promise<void> => {
   const transition = toWritingStyleTransition(request);
   if (transition.kind === "select") {
-    if (!applyWritingStyleSelectionNow(transition.toneId)) {
-      return Promise.resolve();
-    }
-    return setSelectedToneId(transition.toneId);
+    return applyWritingStyleSelectionWithPersist(transition.toneId);
   }
   const nextId = peekCycledToneId(transition.direction);
   if (nextId === null) {
     return notifyOnlyActiveStyle();
   }
-  if (!applyWritingStyleSelectionNow(nextId)) {
-    return Promise.resolve();
-  }
-  return setSelectedToneId(nextId);
+  return applyWritingStyleSelectionWithPersist(nextId);
 };
 
 export const closeToneEditorDialog = (): void => {

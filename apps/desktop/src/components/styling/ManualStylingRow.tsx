@@ -14,7 +14,7 @@ import {
   Typography,
 } from "@mui/material";
 import { getRec } from "@maus-inc/utilities";
-import { useCallback, useMemo } from "react";
+import { useCallback, useMemo, useState } from "react";
 import { FormattedMessage, useIntl } from "react-intl";
 import { deleteTone, openToneEditorDialog } from "../../actions/tone.actions";
 import {
@@ -31,6 +31,7 @@ import {
   getActiveManualToneIds,
   getManuallySelectedToneId,
 } from "../../utils/tone.utils";
+import { ConfirmDialog } from "../common/ConfirmDialog";
 import { ListTile } from "../common/ListTile";
 import {
   MenuPopoverBuilder,
@@ -87,6 +88,30 @@ export const ManualStylingRow = ({ id }: ManualStylingRowProps) => {
   const hasPrompt = Boolean(tone?.promptTemplate);
   const canDeselect = activeToneCount > 1;
   const ctxMenu = useContextMenu();
+  const [deleteConfirmOpen, setDeleteConfirmOpen] = useState(false);
+  const [isDeleting, setIsDeleting] = useState(false);
+
+  const handleDeleteRequest = useCallback(() => {
+    setDeleteConfirmOpen(true);
+  }, []);
+
+  const handleDeleteCancel = useCallback(() => {
+    setDeleteConfirmOpen(false);
+  }, []);
+
+  const handleDeleteConfirm = useCallback(async () => {
+    if (isDeleting) return;
+    setIsDeleting(true);
+    try {
+      await deleteTone(id);
+      setDeleteConfirmOpen(false);
+    } catch {
+      // deleteTone already logged and surfaced the snackbar; keep the dialog
+      // open so the user can retry or cancel.
+    } finally {
+      setIsDeleting(false);
+    }
+  }, [id, isDeleting]);
 
   // Context actions must honor the same managed/system-tone restrictions as
   // the overflow menu. The repository deletion command is not a permission
@@ -115,7 +140,7 @@ export const ManualStylingRow = ({ id }: ManualStylingRowProps) => {
         {
           label: intl.formatMessage({ defaultMessage: "Delete" }),
           danger: true,
-          onClick: () => deleteTone(id),
+          onClick: handleDeleteRequest,
         },
       );
     }
@@ -123,11 +148,10 @@ export const ManualStylingRow = ({ id }: ManualStylingRowProps) => {
   }, [
     canEdit,
     canDeselect,
-    deleteTone,
+    handleDeleteRequest,
     handleDeselect,
     handleEdit,
     handleViewPrompt,
-    id,
     intl,
   ]);
 
@@ -261,6 +285,17 @@ export const ManualStylingRow = ({ id }: ManualStylingRowProps) => {
         sx={{ backgroundColor: "level1", mb: 1, borderRadius: 1 }}
       />
       {ctxMenu.renderMenu()}
+      <ConfirmDialog
+        isOpen={deleteConfirmOpen}
+        title={<FormattedMessage defaultMessage="Delete style" />}
+        content={
+          <FormattedMessage defaultMessage="Are you sure you want to delete this style?" />
+        }
+        onCancel={handleDeleteCancel}
+        onConfirm={handleDeleteConfirm}
+        confirmLabel={<FormattedMessage defaultMessage="Delete" />}
+        confirmButtonProps={{ color: "error", disabled: isDeleting }}
+      />
     </Box>
   );
 };

@@ -1,7 +1,12 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { INITIAL_APP_STATE } from "../state/app.state";
 import { getAppState, setAppState } from "../store";
-import { createDefaultPreferences, setAgentToolEnabled } from "./user.actions";
+import {
+  createDefaultPreferences,
+  setAgentToolEnabled,
+  setRealtimeOutputEnabled,
+  setReviewBeforeInsert,
+} from "./user.actions";
 import type { ToolInfo } from "@maus-inc/types";
 
 const { loggerMock, prefsRepoMock } = vi.hoisted(() => {
@@ -77,5 +82,61 @@ describe("setAgentToolEnabled empty-registry guard", () => {
     await setAgentToolEnabled("run_terminal_command", true);
 
     expect(getAppState().userPrefs?.agentEnabledTools).toBeNull();
+  });
+});
+
+describe("real-time output vs review-before-insert mutual exclusion", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    setAppState(structuredClone(INITIAL_APP_STATE), true);
+  });
+
+  afterEach(() => {
+    vi.clearAllMocks();
+    setAppState(structuredClone(INITIAL_APP_STATE), true);
+  });
+
+  it("enabling real-time output turns review-before-insert off", async () => {
+    setAppState({
+      userPrefs: {
+        ...createDefaultPreferences(),
+        reviewBeforeInsert: true,
+      },
+    });
+
+    await setRealtimeOutputEnabled(true);
+
+    const prefs = getAppState().userPrefs;
+    expect(prefs?.realtimeOutputEnabled).toBe(true);
+    expect(prefs?.reviewBeforeInsert).toBe(false);
+  });
+
+  it("enabling review-before-insert turns real-time output off", async () => {
+    setAppState({
+      userPrefs: {
+        ...createDefaultPreferences(),
+        realtimeOutputEnabled: true,
+      },
+    });
+
+    await setReviewBeforeInsert(true);
+
+    const prefs = getAppState().userPrefs;
+    expect(prefs?.reviewBeforeInsert).toBe(true);
+    expect(prefs?.realtimeOutputEnabled).toBe(false);
+  });
+
+  it("leaves the other preference alone when disabling", async () => {
+    setAppState({
+      userPrefs: {
+        ...createDefaultPreferences(),
+        reviewBeforeInsert: true,
+        realtimeOutputEnabled: false,
+      },
+    });
+
+    await setRealtimeOutputEnabled(false);
+
+    expect(getAppState().userPrefs?.reviewBeforeInsert).toBe(true);
   });
 });

@@ -47,6 +47,11 @@ const awaitWithAbort = async <T>(
   });
 };
 
+// KNOWN TRADEOFF: the native bridge validates + caps and returns the whole
+// body, so SSE/LLM streaming over private or saved endpoints resolves in one
+// burst rather than token by token. Acceptable for the short rewrite/model
+// payloads this path carries (local network, bounded by config), and noted in
+// docs/pr63-pr109-review-findings-audit.md.
 const invokeHttpRequest = async (
   command: "private_http_request" | "openai_compatible_http_request",
   input: RequestInfo | URL,
@@ -136,11 +141,33 @@ const invokeHttpRequest = async (
  * that unsupported future schemes are rejected by default.
  */
 export const secureFetch: typeof globalThis.fetch = async (input, init) => {
-  const url = new URL(requestUrl(input));
+  const raw = requestUrl(input);
+  let url: URL;
+  try {
+    url = new URL(raw);
+  } catch {
+    // A relative URL (e.g. a saved base of "/v1" joined without an origin)
+    // otherwise surfaces as a generic engine "Invalid URL" with no pointer to
+    // which egress boundary rejected it. Echo the input start only — a
+    // relative string cannot contain credentials the caller didn't supply.
+    throw new TypeError(
+      `secureFetch requires an absolute http(s) URL, received: ${raw.slice(0, 128)}`,
+    );
+  }
   if (url.protocol === "http:") {
     return invokeHttpRequest("private_http_request", input, init);
   }
   if (url.protocol === "https:") {
+    // HTTPS goes through plugin-http directly. Two layers keep this safe:
+    // the Rust side re-checks saved-endpoint URLs and their resolved
+    // addresses (including per-redirect-hops in `commands.rs`), and the
+    // `http:default` capability is a curated provider allow-list (never
+    // `https://*`), enforced by `csp-capability.contract.test.ts`. If the
+    // capability ever loosens to a wildcard, routing here must be
+    // revisited: user-controlled HTTPS URLs would become an SSRF vector.
+    // Residual: when a system proxy routes the request (corporate CONNECT),
+    // DNS resolution happens at the proxy rather than under the Rust pin;
+    // TLS hostname validation is the binding layer there (see commands.rs).
     return tauriFetch(input, init);
   }
   // Reject unsupported schemes (e.g. file:, data:) rather than forwarding

@@ -240,6 +240,61 @@ describe("useContextMenu", () => {
     expect(document.querySelector('[role="menu"]')).toBeNull();
   });
 
+  it("renders the menu into document.body, outside transformed ancestors", () => {
+    act(() => {
+      root.render(createElement(Harness));
+    });
+    const button = container.querySelector("button")!;
+    nativeContextMenu(button, 200, 150);
+
+    const menu = document.body.querySelector('[role="menu"]');
+    expect(menu).not.toBeNull();
+    // The portal must lift the menu out of the render container so no
+    // ancestor's `filter`/`transform` can re-anchor or clip it.
+    expect(container.contains(menu)).toBe(false);
+    // Its positioned wrapper lives directly under <body>.
+    const positioned = menu!.parentElement as HTMLElement;
+    expect(positioned).not.toBeNull();
+    expect(positioned.parentElement).toBe(document.body);
+  });
+
+  it("consumes Escape before host (e.g. dialog) keydown handlers see it", () => {
+    const dialogKeydownSpy = vi.fn();
+    document.addEventListener("keydown", dialogKeydownSpy);
+    try {
+      act(() => {
+        root.render(createElement(Harness));
+      });
+      nativeContextMenu(container.querySelector("button")!);
+
+      const event = new KeyboardEvent("keydown", {
+        key: "Escape",
+        bubbles: true,
+        cancelable: true,
+      });
+      act(() => {
+        document.dispatchEvent(event);
+      });
+
+      // The menu closed and the event never continued to bubble-phase
+      // listeners, so a wrapping MUI dialog survives the Escape.
+      expect(document.querySelector('[role="menu"]')).toBeNull();
+      expect(dialogKeydownSpy).not.toHaveBeenCalled();
+    } finally {
+      document.removeEventListener("keydown", dialogKeydownSpy);
+    }
+  });
+
+  it("moves keyboard focus into the menu so arrow navigation works", () => {
+    act(() => {
+      root.render(createElement(Harness));
+    });
+    nativeContextMenu(container.querySelector("button")!);
+
+    const menu = document.body.querySelector('[role="menu"]');
+    expect(document.activeElement).toBe(menu);
+  });
+
   it("runs the item action and closes on click", () => {
     act(() => {
       root.render(createElement(Harness));

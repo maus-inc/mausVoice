@@ -455,6 +455,12 @@ pub struct PrivateHttpRequest {
     pub url: String,
     pub method: String,
     pub headers: std::collections::HashMap<String, String>,
+    // KNOWN COST: bodies cross the IPC bridge as JSON number arrays (Specta's
+    // Vec<u8> mapping), which inflates large payloads roughly 4x in transit.
+    // The 128 MiB request / 32 MiB response caps bound this. Moving to binary
+    // IPC (tauri::ipc::Request/Response raw payloads or base64 frames) needs
+    // regenerated Specta bindings and is tracked in
+    // docs/pr63-pr109-review-findings-audit.md.
     pub body: Option<Vec<u8>>,
 }
 
@@ -466,6 +472,11 @@ pub struct PrivateHttpResponse {
     pub body: Vec<u8>,
 }
 
+// Process-global by design: audio import runs the picker + decode pipeline
+// that is only ever invoked from the main window's settings surface. A second
+// call — from any window — returns a clear "already in progress" error rather
+// than stacking two decode sessions. If a future surface adds import, the
+// flag must become window- or session-keyed before that ships.
 static IMPORT_IN_FLIGHT: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
 
 enum PrivateHttpCancellationState {
@@ -746,6 +757,15 @@ fn validate_saved_endpoint_url(url: &Url, base_url: &Url) -> Result<(), String> 
     Ok(())
 }
 
+/// Origin equality for redirect-hop header sanitization. Mirrors the
+/// curl/reqwest behavior my manual redirect loop replaces: when a redirect
+/// changes scheme, host, or port, sensitive request headers must NOT follow.
+fn urls_share_origin(a: &Url, b: &Url) -> bool {
+    a.scheme() == b.scheme()
+        && a.host() == b.host()
+        && a.port_or_known_default() == b.port_or_known_default()
+}
+
 fn validate_http_request_url(url: &Url, policy: &HttpRequestPolicy) -> Result<(), String> {
     match policy {
         HttpRequestPolicy::PrivateNetwork => validate_private_http_url(url),
@@ -753,6 +773,114 @@ fn validate_http_request_url(url: &Url, policy: &HttpRequestPolicy) -> Result<()
             validate_saved_endpoint_url(url, base_url)
         }
     }
+}
+
+/// Loopback, RFC1918, or unique-local: the set of destinations the
+/// plaintext/private paths may reach. Mirrors `host_is_private_or_local`'s
+/// IP-literal arms for resolved addresses.
+fn ip_is_private_or_local(ip: std::net::IpAddr) -> bool {
+    match ip {
+        std::net::IpAddr::V4(v4) => v4.is_loopback() || is_rfc1918_ipv4(v4),
+        std::net::IpAddr::V6(v6) => {
+            if let Some(mapped) = v6.to_ipv4_mapped() {
+                return mapped.is_loopback() || is_rfc1918_ipv4(mapped);
+            }
+            v6.is_loopback() || (v6.segments()[0] & 0xfe00) == 0xfc00
+        }
+    }
+}
+
+/// Link-local (including the cloud metadata address 169.254.169.254) and
+/// unspecified (0.0.0.0 / ::) addresses are never legitimate API targets for
+/// any request policy. URL-string validation cannot see them when the
+/// attacker controls a DNS/mDNS answer behind a permitted hostname.
+fn ip_is_link_local_or_unspecified(ip: std::net::IpAddr) -> bool {
+    match ip {
+        std::net::IpAddr::V4(v4) => v4.is_link_local() || v4.is_unspecified(),
+        std::net::IpAddr::V6(v6) => {
+            if let Some(mapped) = v6.to_ipv4_mapped() {
+                return mapped.is_link_local() || mapped.is_unspecified();
+            }
+            v6.is_unicast_link_local() || v6.is_unspecified()
+        }
+    }
+}
+
+/// Validate a URL's DNS-resolved addresses against the request policy.
+///
+/// Plaintext policies (private-network requests, `http://` saved endpoints)
+/// require every resolved address to stay private/local, so a poisoned DNS
+/// answer cannot redirect a bearer credential to the public internet or to
+/// metadata services. HTTPS saved endpoints additionally allow public
+/// destinations (TLS binds the credential to the configured hostname) but
+/// still reject link-local and unspecified resolutions.
+fn validate_resolved_addresses(
+    addrs: &[std::net::SocketAddr],
+    policy: &HttpRequestPolicy,
+) -> Result<(), String> {
+    for addr in addrs {
+        let ip = addr.ip();
+        if ip_is_link_local_or_unspecified(ip) {
+            return Err(format!(
+                "HTTP request host resolved to a link-local or unspecified address: {ip}"
+            ));
+        }
+    }
+    let restrict_to_private = match policy {
+        HttpRequestPolicy::PrivateNetwork => true,
+        HttpRequestPolicy::SavedOpenAiCompatibleEndpoint { base_url } => {
+            base_url.scheme() == "http"
+        }
+    };
+    if restrict_to_private {
+        for addr in addrs {
+            let ip = addr.ip();
+            if !ip_is_private_or_local(ip) {
+                return Err(format!(
+                    "Private-network request host resolved to a non-private address: {ip}"
+                ));
+            }
+        }
+    }
+    Ok(())
+}
+
+/// Resolve the URL's host and validate every answer against the policy.
+/// Returns the validated addresses so the caller can pin them for the actual
+/// connection, closing the check-then-connect (rebinding) gap.
+async fn resolve_and_validate_url(
+    url: &Url,
+    policy: &HttpRequestPolicy,
+) -> Result<Vec<std::net::SocketAddr>, String> {
+    let host = url
+        .host()
+        .ok_or_else(|| "HTTP request URL has no host".to_string())?;
+    let port = url
+        .port_or_known_default()
+        .ok_or_else(|| "HTTP request URL has no port".to_string())?;
+    let addrs: Vec<std::net::SocketAddr> = match host {
+        url::Host::Ipv4(v4) => vec![std::net::SocketAddr::new(
+            std::net::IpAddr::V4(v4.to_owned()),
+            port,
+        )],
+        url::Host::Ipv6(v6) => vec![std::net::SocketAddr::new(
+            std::net::IpAddr::V6(v6.to_owned()),
+            port,
+        )],
+        url::Host::Domain(domain) => {
+            let domain = domain.to_ascii_lowercase();
+            let resolved = tokio::net::lookup_host((domain.as_str(), port))
+                .await
+                .map_err(|_| "Unable to resolve the HTTP request host".to_string())?;
+            let collected: Vec<std::net::SocketAddr> = resolved.collect();
+            if collected.is_empty() {
+                return Err("HTTP request host resolved to no addresses".to_string());
+            }
+            collected
+        }
+    };
+    validate_resolved_addresses(&addrs, policy)?;
+    Ok(addrs)
 }
 
 #[tauri::command]
@@ -834,28 +962,9 @@ async fn execute_http_request(
 
     let initial_url = Url::parse(&request.url)
         .map_err(|_| "HTTP request URL is invalid".to_string())?;
-    validate_http_request_url(&initial_url, &policy)?;
-
-    let redirect_policy = policy.clone();
-    let mut client_builder = reqwest::Client::builder()
-        .timeout(std::time::Duration::from_secs(10 * 60))
-        .redirect(reqwest::redirect::Policy::custom(move |attempt| {
-            if attempt.previous().len() >= MAX_PRIVATE_HTTP_REDIRECTS {
-                return attempt.error("HTTP request exceeded the redirect limit");
-            }
-            match validate_http_request_url(attempt.url(), &redirect_policy) {
-                Ok(()) => attempt.follow(),
-                Err(error) => attempt.error(error),
-            }
-        }));
-    if matches!(policy, HttpRequestPolicy::PrivateNetwork) {
-        // Connect directly so an environment proxy cannot turn an allowed
-        // private URL into a request delivered to an arbitrary public host.
-        client_builder = client_builder.no_proxy();
-    }
-    let client = client_builder
-        .build()
-        .map_err(|_| "Unable to initialize the HTTP client".to_string())?;
+    // The redirect loop owns the mutable hop URL; credentials belong to this
+    // original origin alone for the rest of the chain.
+    let credential_origin = initial_url.clone();
 
     let method = reqwest::Method::from_bytes(request.method.trim().as_bytes())
         .map_err(|_| "Private-network request method is invalid".to_string())?;
@@ -872,7 +981,10 @@ async fn execute_http_request(
         return Err("Private-network request method is not allowed".to_string());
     }
 
-    let mut builder = client.request(method, initial_url);
+    // Normalize header forwarding once; the redirect loop below reapplies the
+    // same list to every hop.
+    let mut forwarded_headers: Vec<(reqwest::header::HeaderName, reqwest::header::HeaderValue)> =
+        Vec::new();
     for (name, value) in request.headers {
         let normalized = name.trim().to_ascii_lowercase();
         if matches!(
@@ -891,17 +1003,123 @@ async fn execute_http_request(
             .map_err(|_| "Private-network request contains an invalid header".to_string())?;
         let value = reqwest::header::HeaderValue::from_str(&value)
             .map_err(|_| "Private-network request contains an invalid header".to_string())?;
-        builder = builder.header(name, value);
-    }
-    if let Some(body) = request.body {
-        builder = builder.body(body);
+        forwarded_headers.push((name, value));
     }
 
-    let mut response = tokio::select! {
-        _ = &mut cancellation => return Err(PRIVATE_HTTP_CANCELLED_ERROR.to_string()),
-        result = builder.send() => result
-            .map_err(|_| "Private-network request failed".to_string())?,
+    // Manual redirect loop. reqwest's redirect closure can validate the next
+    // URL string but cannot pin DNS for a host it has not seen yet, so every
+    // hop is validated, resolved, policy-checked, and dialed against the very
+    // addresses that passed the check.
+    let mut current_url = initial_url;
+    let mut current_method = method;
+    let mut current_body: Option<Vec<u8>> = request.body;
+    // Plaintext policies connect directly: an environment HTTP proxy could
+    // otherwise tunnel a private-network (or saved plaintext endpoint)
+    // request, and its bearer credential, to an arbitrary public host.
+    //
+    // RESIDUAL (documented, accepted): HTTPS saved endpoints may still use the
+    // system proxy, because corporate proxies are the only way some machines
+    // can reach public providers at all. In that case the proxy performs its
+    // own DNS for the CONNECT target, so the resolve_and_validate pinning
+    // above does not govern the dispatch address; TLS certificate validation
+    // (against the configured hostname) is what binds the bearer credential
+    // instead. An attacker without a valid certificate cannot learn it.
+    let bypass_proxy = match &policy {
+        HttpRequestPolicy::PrivateNetwork => true,
+        HttpRequestPolicy::SavedOpenAiCompatibleEndpoint { base_url } => {
+            base_url.scheme() == "http"
+        }
     };
+
+    let mut redirects_left = MAX_PRIVATE_HTTP_REDIRECTS;
+    // Once a hop leaves the original origin, credentials are gone for the
+    // rest of the chain — re-attaching them on a later same-origin hop (or a
+    // hop back) would leak them to whatever origin bounced the request. This
+    // mirrors curl/reqwest, which remove and never re-add these headers.
+    let mut credentials_stripped = false;
+    let mut response = loop {
+        validate_http_request_url(&current_url, &policy)?;
+        let addrs = resolve_and_validate_url(&current_url, &policy).await?;
+
+        let mut client_builder = reqwest::Client::builder()
+            .timeout(std::time::Duration::from_secs(10 * 60))
+            .redirect(reqwest::redirect::Policy::none());
+        if bypass_proxy {
+            client_builder = client_builder.no_proxy();
+        }
+        if let url::Host::Domain(domain) = current_url
+            .host()
+            .ok_or_else(|| "HTTP request URL has no host".to_string())?
+        {
+            // Pin the dial to the validated answers so a DNS flip between
+            // validation and connect cannot land elsewhere.
+            client_builder = client_builder
+                .resolve_to_addrs(&domain.to_ascii_lowercase(), &addrs);
+        }
+        let client = client_builder
+            .build()
+            .map_err(|_| "Unable to initialize the HTTP client".to_string())?;
+
+        let mut builder = client.request(current_method.clone(), current_url.clone());
+        if !urls_share_origin(&credential_origin, &current_url) {
+            credentials_stripped = true;
+        }
+        for (name, value) in &forwarded_headers {
+            // proxy-authorization is filtered at intake, but stays in the
+            // strip list as defense-in-depth against a future intake change.
+            // (www-authenticate is a response header and can never arrive.)
+            if credentials_stripped
+                && matches!(
+                    name.as_str(),
+                    "authorization" | "cookie" | "proxy-authorization"
+                )
+            {
+                continue;
+            }
+            builder = builder.header(name.clone(), value.clone());
+        }
+        if let Some(body) = current_body.clone() {
+            builder = builder.body(body);
+        }
+
+        let next_response = tokio::select! {
+            _ = &mut cancellation => return Err(PRIVATE_HTTP_CANCELLED_ERROR.to_string()),
+            result = builder.send() => result
+                .map_err(|_| "Private-network request failed".to_string())?,
+        };
+
+        let status = next_response.status();
+        if !status.is_redirection() {
+            break next_response;
+        }
+        let Some(location) = next_response
+            .headers()
+            .get(reqwest::header::LOCATION)
+            .and_then(|value| value.to_str().ok())
+        else {
+            // 3xx without Location: no follow is possible; hand the response
+            // back like any other status.
+            break next_response;
+        };
+        if redirects_left == 0 {
+            return Err("HTTP request exceeded the redirect limit".to_string());
+        }
+        redirects_left -= 1;
+        let next_url = current_url
+            .join(location)
+            .map_err(|_| "HTTP redirect location is invalid".to_string())?;
+        // Mirror reqwest's redirect semantics: 307/308 re-send the original
+        // method and body; 301/302/303 downgrade to a bodiless GET.
+        match status.as_u16() {
+            307 | 308 => {}
+            _ => {
+                current_method = reqwest::Method::GET;
+                current_body = None;
+            }
+        }
+        current_url = next_url;
+    };
+
     if response
         .content_length()
         .is_some_and(|length| length > MAX_PRIVATE_HTTP_RESPONSE_BYTES)
@@ -5164,6 +5382,369 @@ mod tests {
                 validate_saved_endpoint_url(&base, &base).is_ok(),
                 "expected private IP literal to be accepted: {private_ip}"
             );
+        }
+    }
+
+    /// Minimal HTTP responder for redirect-chain tests: serves the queued
+    /// responses in accept order and collects each request head (up to the
+    /// blank line) into the channel.
+    fn spawn_head_capturing_server(
+        listener: tokio::net::TcpListener,
+        responses: Vec<String>,
+    ) -> tokio::sync::mpsc::Receiver<String> {
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+        let (sender, receiver) = tokio::sync::mpsc::channel::<String>(responses.len());
+        tokio::spawn(async move {
+            for response in responses {
+                let Ok((mut socket, _)) = listener.accept().await else {
+                    return;
+                };
+                let mut buffer = Vec::new();
+                let mut chunk = [0u8; 4096];
+                while !buffer.windows(4).any(|w| w == b"\r\n\r\n") {
+                    match socket.read(&mut chunk).await {
+                        Ok(0) | Err(_) => break,
+                        Ok(n) => {
+                            buffer.extend_from_slice(&chunk[..n]);
+                            if buffer.len() > 64 * 1024 {
+                                break;
+                            }
+                        }
+                    }
+                }
+                if sender
+                    .send(String::from_utf8_lossy(&buffer).into_owned())
+                    .await
+                    .is_err()
+                {
+                    return;
+                }
+                let _ = socket.write_all(response.as_bytes()).await;
+                let _ = socket.shutdown().await;
+            }
+        });
+        receiver
+    }
+
+    fn redirect_response(target: &Url) -> String {
+        format!(
+            "HTTP/1.1 307 Temporary Redirect\r\nlocation: {target}\r\ncontent-length: 0\r\nconnection: close\r\n\r\n"
+        )
+    }
+
+    const REDIRECT_OK_RESPONSE: &str =
+        "HTTP/1.1 200 OK\r\ncontent-type: text/plain\r\ncontent-length: 2\r\nconnection: close\r\n\r\nok";
+
+    fn credentialed_post(request_id: &str, url: &Url) -> PrivateHttpRequest {
+        PrivateHttpRequest {
+            // Distinct per test: a failing sibling must not leave a stale
+            // cancellation registration behind that poisons the next run.
+            request_id: request_id.to_string(),
+            url: url.to_string(),
+            method: "POST".to_string(),
+            headers: [(
+                "authorization".to_string(),
+                "Bearer redirect-test-secret".to_string(),
+            )]
+            .into_iter()
+            .collect(),
+            body: Some(b"{}".to_vec()),
+        }
+    }
+
+    fn redirect_chain_test_id() -> &'static str {
+        use std::sync::atomic::{AtomicU64, Ordering};
+        static NEXT: AtomicU64 = AtomicU64::new(42);
+        // Leaks one boxed string per test — fine for a bounded test set.
+        let id = NEXT.fetch_add(1, Ordering::Relaxed);
+        Box::leak(
+            format!("00000000-0000-4000-8000-0000000000{id:02}").into_boxed_str(),
+        )
+    }
+
+    /// Drives a chain of hops across listeners as specified; returns the
+    /// captured request heads in order.
+    async fn run_redirect_chain(
+        listeners: Vec<(tokio::net::TcpListener, Vec<String>)>,
+        start: &Url,
+        policy: HttpRequestPolicy,
+    ) -> (Result<PrivateHttpResponse, String>, Vec<String>) {
+        let mut receivers = Vec::new();
+        for (listener, responses) in listeners {
+            receivers.push(spawn_head_capturing_server(listener, responses));
+        }
+        let outcome =
+            execute_http_request(credentialed_post(redirect_chain_test_id(), start), policy)
+                .await;
+        let mut heads = Vec::new();
+        for mut receiver in receivers {
+            while let Ok(head) = receiver.try_recv() {
+                heads.push(head);
+            }
+        }
+        (outcome, heads)
+    }
+
+    #[tokio::test]
+    async fn cross_origin_redirect_strips_credentials_permanently() {
+        let _test_guard = PRIVATE_HTTP_CANCELLATION_TEST_LOCK.lock().await;
+
+        // Chain: A:/start --307--> B:/hop --307--> A:/back --> 200. Each port
+        // is a separate origin, so B never sees the credential and the return
+        // hop to A must not re-attach it either (matches curl/reqwest).
+        let listener_a = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let port_a = listener_a.local_addr().unwrap().port();
+        let listener_b = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let port_b = listener_b.local_addr().unwrap().port();
+        let url_start = Url::parse(&format!("http://127.0.0.1:{port_a}/start")).unwrap();
+        let url_hop = Url::parse(&format!("http://127.0.0.1:{port_b}/hop")).unwrap();
+        let url_back = Url::parse(&format!("http://127.0.0.1:{port_a}/back")).unwrap();
+
+        let (outcome, heads) = run_redirect_chain(
+            vec![
+                (
+                    listener_a,
+                    vec![redirect_response(&url_hop), REDIRECT_OK_RESPONSE.to_string()],
+                ),
+                (listener_b, vec![redirect_response(&url_back)]),
+            ],
+            &url_start,
+            HttpRequestPolicy::PrivateNetwork,
+        )
+        .await;
+
+        assert!(outcome.is_ok(), "chain completes: {:?}", outcome.err());
+        assert_eq!(heads.len(), 3);
+        assert!(
+            heads[0].to_ascii_lowercase().contains("authorization"),
+            "the credential origin receives its header"
+        );
+        for (index, head) in heads.iter().enumerate().skip(1) {
+            assert!(
+                !head.to_ascii_lowercase().contains("authorization"),
+                "hop {index} must not carry credentials: {head}"
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn same_origin_redirect_keeps_credentials() {
+        let _test_guard = PRIVATE_HTTP_CANCELLATION_TEST_LOCK.lock().await;
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let port = listener.local_addr().unwrap().port();
+        let url_start = Url::parse(&format!("http://127.0.0.1:{port}/start")).unwrap();
+        let url_next = Url::parse(&format!("http://127.0.0.1:{port}/next")).unwrap();
+
+        let (outcome, heads) = run_redirect_chain(
+            vec![(
+                listener,
+                vec![redirect_response(&url_next), REDIRECT_OK_RESPONSE.to_string()],
+            )],
+            &url_start,
+            HttpRequestPolicy::PrivateNetwork,
+        )
+        .await;
+
+        assert!(outcome.is_ok(), "chain completes: {:?}", outcome.err());
+        assert_eq!(heads.len(), 2);
+        for (index, head) in heads.iter().enumerate() {
+            assert!(
+                head.to_ascii_lowercase().contains("authorization"),
+                "same-origin hop {index} keeps credentials"
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn saved_endpoint_refuses_redirect_outside_the_saved_origin() {
+        let _test_guard = PRIVATE_HTTP_CANCELLATION_TEST_LOCK.lock().await;
+
+        // Saved endpoint lives at A; its response redirects to B (a different
+        // port, hence a different origin). The request must fail closed and
+        // B must never be contacted.
+        let listener_a = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let port_a = listener_a.local_addr().unwrap().port();
+        let listener_b = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let port_b = listener_b.local_addr().unwrap().port();
+        let base = Url::parse(&format!("http://127.0.0.1:{port_a}/v1")).unwrap();
+        let url_start = Url::parse(&format!("http://127.0.0.1:{port_a}/v1/models")).unwrap();
+        let url_hop = Url::parse(&format!("http://127.0.0.1:{port_b}/v1/models")).unwrap();
+
+        let (outcome, heads) = run_redirect_chain(
+            vec![
+                (listener_a, vec![redirect_response(&url_hop)]),
+                // B would only answer if the invalid hop were attempted; it
+                // must starve instead.
+                (listener_b, vec![REDIRECT_OK_RESPONSE.to_string()]),
+            ],
+            &url_start,
+            HttpRequestPolicy::SavedOpenAiCompatibleEndpoint { base_url: base },
+        )
+        .await;
+
+        assert!(
+            outcome.is_err(),
+            "redirect leaving the saved origin must fail"
+        );
+        let error_message = outcome.as_ref().err().cloned().unwrap_or_default();
+        assert!(
+            error_message.contains("outside the saved OpenAI-compatible endpoint"),
+            "the refusal must come from the endpoint-confinement check: {error_message}"
+        );
+        assert_eq!(
+            heads.len(),
+            1,
+            "the foreign host must never receive a request"
+        );
+    }
+
+    #[tokio::test]
+    async fn saved_endpoint_follows_same_origin_redirects_with_credentials() {
+        let _test_guard = PRIVATE_HTTP_CANCELLATION_TEST_LOCK.lock().await;
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let port = listener.local_addr().unwrap().port();
+        let base = Url::parse(&format!("http://127.0.0.1:{port}/v1")).unwrap();
+        let url_start = Url::parse(&format!("http://127.0.0.1:{port}/v1/models")).unwrap();
+        let url_next = Url::parse(&format!("http://127.0.0.1:{port}/v1/catalog")).unwrap();
+
+        let (outcome, heads) = run_redirect_chain(
+            vec![(
+                listener,
+                vec![redirect_response(&url_next), REDIRECT_OK_RESPONSE.to_string()],
+            )],
+            &url_start,
+            HttpRequestPolicy::SavedOpenAiCompatibleEndpoint { base_url: base },
+        )
+        .await;
+
+        assert!(outcome.is_ok(), "chain completes: {:?}", outcome.err());
+        assert_eq!(heads.len(), 2);
+        for (index, head) in heads.iter().enumerate() {
+            assert!(
+                head.to_ascii_lowercase().contains("authorization"),
+                "saved-endpoint hop {index} keeps credentials in-origin"
+            );
+        }
+    }
+
+    #[test]
+    fn urls_share_origin_compares_scheme_host_and_default_port() {
+        let ollama = Url::parse("http://127.0.0.1:11434/v1/chat/completions").unwrap();
+        // Same origin (trailing path/query never counts).
+        assert!(urls_share_origin(
+            &ollama,
+            &Url::parse("http://127.0.0.1:11434/api/generate").unwrap()
+        ));
+        // Default-vs-explicit port still shares the origin.
+        assert!(urls_share_origin(
+            &Url::parse("http://localhost/v1").unwrap(),
+            &Url::parse("http://localhost:80/models").unwrap()
+        ));
+        // Different host, port, and scheme each switch origin.
+        assert!(!urls_share_origin(
+            &ollama,
+            &Url::parse("http://192.168.1.5:11434/").unwrap()
+        ));
+        assert!(!urls_share_origin(
+            &ollama,
+            &Url::parse("http://127.0.0.1:9000/").unwrap()
+        ));
+        assert!(!urls_share_origin(
+            &ollama,
+            &Url::parse("https://127.0.0.1:11434/").unwrap()
+        ));
+    }
+
+    #[test]
+    fn saved_endpoint_url_normalizes_dot_segments_before_the_prefix_check() {
+        // RFC 3986 dot-segment removal happens in the URL parser, so a
+        // request spelling like `/v1/../admin` must NOT sneak past the
+        // saved-endpoint path confinement.
+        let base = Url::parse("https://api.example.com/v1").unwrap();
+        let escaped = Url::parse("https://api.example.com/v1/../admin").unwrap();
+        assert_eq!(escaped.path(), "/admin");
+        assert!(validate_saved_endpoint_url(&escaped, &base).is_err());
+
+        let base_root = Url::parse("https://api.example.com/").unwrap();
+        assert!(validate_saved_endpoint_url(
+            &Url::parse("https://api.example.com/./v1/models").unwrap(),
+            &base_root,
+        )
+        .is_ok());
+    }
+
+    #[test]
+    fn resolved_addresses_reject_link_local_and_unspecified_for_every_policy() {
+        use std::net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr};
+
+        let private = HttpRequestPolicy::PrivateNetwork;
+        let https_base = Url::parse("https://api.example.com").unwrap();
+        let http_base = Url::parse("http://192.168.1.20:8080").unwrap();
+        let https_policy =
+            HttpRequestPolicy::SavedOpenAiCompatibleEndpoint { base_url: https_base };
+        let http_policy =
+            HttpRequestPolicy::SavedOpenAiCompatibleEndpoint { base_url: http_base };
+
+        for ip in [
+            // Cloud metadata and generic link-local.
+            IpAddr::V4(Ipv4Addr::new(169, 254, 169, 254)),
+            IpAddr::V4(Ipv4Addr::new(169, 254, 0, 1)),
+            IpAddr::V6(Ipv6Addr::new(0xfe80, 0, 0, 0, 0, 0, 0, 1)),
+            // Unspecified.
+            IpAddr::V4(Ipv4Addr::new(0, 0, 0, 0)),
+            IpAddr::V6(Ipv6Addr::UNSPECIFIED),
+            // IPv4-mapped IPv6 must not tunnel the metadata address through.
+            IpAddr::V6(Ipv4Addr::new(169, 254, 169, 254).to_ipv6_mapped()),
+        ] {
+            for policy in [&private, &https_policy, &http_policy] {
+                let addrs = [SocketAddr::new(ip, 443)];
+                assert!(
+                    validate_resolved_addresses(&addrs, policy).is_err(),
+                    "expected {ip} to be rejected"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn resolved_addresses_plaintext_policy_requires_private_targets() {
+        use std::net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr};
+
+        let private = HttpRequestPolicy::PrivateNetwork;
+        let http_base = Url::parse("http://192.168.1.20:8080").unwrap();
+        let http_policy =
+            HttpRequestPolicy::SavedOpenAiCompatibleEndpoint { base_url: http_base };
+        let https_base = Url::parse("https://api.example.com").unwrap();
+        let https_policy =
+            HttpRequestPolicy::SavedOpenAiCompatibleEndpoint { base_url: https_base };
+
+        // A poisoned `.local`/`localhost` answer resolving to a public address
+        // must fail the plaintext policies after resolution.
+        let public = [SocketAddr::new(IpAddr::V4(Ipv4Addr::new(8, 8, 8, 8)), 80)];
+        assert!(validate_resolved_addresses(&public, &private).is_err());
+        assert!(validate_resolved_addresses(&public, &http_policy).is_err());
+
+        // The same public address stays legal for an HTTPS endpoint whose
+        // credential is bound by TLS to the configured hostname.
+        assert!(validate_resolved_addresses(&public, &https_policy).is_ok());
+
+        // Private, loopback, and unique-local answers pass every policy.
+        for ip in [
+            IpAddr::V4(Ipv4Addr::new(127, 0, 0, 1)),
+            IpAddr::V4(Ipv4Addr::new(10, 0, 0, 2)),
+            IpAddr::V4(Ipv4Addr::new(192, 168, 1, 5)),
+            IpAddr::V4(Ipv4Addr::new(172, 16, 5, 9)),
+            IpAddr::V6(Ipv6Addr::LOCALHOST),
+            IpAddr::V6(Ipv4Addr::new(192, 168, 1, 5).to_ipv6_mapped()),
+            IpAddr::V6(Ipv6Addr::new(0xfd00, 0, 0, 0, 0, 0, 0, 9)),
+        ] {
+            for policy in [&private, &https_policy, &http_policy] {
+                let addrs = [SocketAddr::new(ip, 443)];
+                assert!(
+                    validate_resolved_addresses(&addrs, policy).is_ok(),
+                    "expected {ip} to be accepted"
+                );
+            }
         }
     }
 

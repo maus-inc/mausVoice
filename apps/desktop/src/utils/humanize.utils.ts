@@ -36,14 +36,10 @@ interface Replacement {
   replace: string;
 }
 
+// En‑dashes (U+2013) are deliberately NOT scrubbed anywhere: they are a
+// legitimate range/compound separator (e.g. "1–3 sentences"), not an AI slop
+// marker.
 const replacements: Replacement[] = [
-  // Em‑dashes → comma (context‑dependent). \s* around a fixed literal is at
-  // most O(n) ambiguity for a fixed replacement; the two quantifiers cannot
-  // nest. En‑dashes (U+2013) are deliberately NOT scrubbed: they are a
-  // legitimate range/compound separator (e.g. "1–3 sentences"), not an AI
-  // slop marker.
-  { pattern: /\s*—\s*/g, replace: ", " }, // NOSONAR: linear whitespace split
-
   // Common slop phrases (whole‑word, case‑insensitive)
   { pattern: /\bdelve\b/gi, replace: "explore" },
   { pattern: /\bseamless\b/gi, replace: "smooth" },
@@ -76,15 +72,136 @@ const replacements: Replacement[] = [
 // ── Scrubber ─────────────────────────────────────────────────────────────
 
 export interface HumanizeOptions {
-  /** If true, also normalize whitespace (collapse, trim). Default true. */
+  /** If true (default), trim leading/trailing whitespace from the result. */
   normalizeWhitespace?: boolean;
 }
+
+// ── Structure protection ─────────────────────────────────────────────────
+//
+// The scrubber runs on arbitrary Markdown assistant output. Replacing words
+// or collapsing whitespace *inside* code or data corrupts it (renaming
+// `lock.unlock()` to `lock.enable()`, flattening pretty-printed JSON), which
+// would break the shared contract above ("Do NOT alter code, data, or
+// structured output"). Text is therefore split into protected segments
+// (fenced code blocks, inline code spans) and plain prose, and every
+// transformation applies to prose only.
+
+/**
+ * Split text into alternating `{ protected, text }` segments at line
+ * granularity. Every input line lands in exactly one block, so callers can
+ * re-join the block texts with "\n" and get byte-identical structure.
+ *
+ * Implemented as a line scanner instead of one big regular expression: the
+ * scanner is linear and auditably simple, where a regex over arbitrary LLM
+ * text invites backtracking blowups.
+ */
+const splitProtectedSegments = (
+  text: string,
+): { protected: boolean; text: string }[] => {
+  type Segment = { protected: boolean; text: string };
+  const lineBlocks: Segment[] = [];
+  let proseLines: string[] = [];
+  let openFence: { lines: string[]; marker: string } | null = null;
+
+  const flushProse = () => {
+    if (proseLines.length > 0) {
+      lineBlocks.push({ protected: false, text: proseLines.join("\n") });
+      proseLines = [];
+    }
+  };
+
+  for (const line of text.split("\n")) {
+    const marker = fenceMarker(line);
+    if (openFence === null && marker) {
+      flushProse();
+      openFence = { lines: [line], marker };
+      continue;
+    }
+    if (openFence !== null) {
+      openFence.lines.push(line);
+      // A closing fence is marker-only (plus blanks). Lines with an info
+      // string (e.g. ```python) inside an open fence are content; treating
+      // them as closers would split the block and scrub its interior.
+      if (
+        marker &&
+        FENCE_CLOSE_LINE.test(line) &&
+        closesFence(marker, openFence.marker)
+      ) {
+        lineBlocks.push({ protected: true, text: openFence.lines.join("\n") });
+        openFence = null;
+      }
+      continue;
+    }
+    proseLines.push(line);
+  }
+  flushProse();
+  // Fail closed: an unterminated fence protects the rest of the text.
+  if (openFence !== null) {
+    lineBlocks.push({ protected: true, text: openFence.lines.join("\n") });
+  }
+  return lineBlocks;
+};
+
+// An opening fence is a line whose first non-blank characters are a backtick
+// or tilde run of 3+; it carries an optional info string after the marker.
+const fenceMarker = (line: string): string | null => {
+  const match = /^[ \t]*(`{3,}|~{3,})/.exec(line);
+  return match?.[1] ?? null;
+};
+
+// Closing fences are marker-only lines (CommonMark: no info string allowed).
+// CRLF input keeps a trailing \r on every line after the "\n" split.
+const FENCE_CLOSE_LINE = /^[ \t]*(`{3,}|~{3,})[ \t]*\r?$/;
+
+const closesFence = (marker: string, opener: string): boolean =>
+  marker.startsWith(opener.charAt(0)) && marker.length >= opener.length;
+
+/** End index of the inline code span starting at `from`, or -1. */
+const findInlineCodeEnd = (text: string, from: number): number => {
+  if (text[from] !== "`") return -1;
+  let end = from;
+  while (end < text.length && text[end] === "`") end++;
+  const run = text.slice(from, end);
+  const close = text.indexOf(run, end);
+  // Inline code spans do not cross line breaks.
+  if (close === -1 || text.slice(end, close).includes("\n")) return -1;
+  return close + run.length;
+};
+
+/** Split a prose block on single-line inline code spans (no regex). */
+const splitInlineCode = (
+  text: string,
+): { protected: boolean; text: string }[] => {
+  const segments: { protected: boolean; text: string }[] = [];
+  let start = 0;
+  let i = 0;
+  while (i < text.length) {
+    const protectedEnd = findInlineCodeEnd(text, i);
+    if (protectedEnd === -1) {
+      i++;
+      continue;
+    }
+    if (i > start) {
+      segments.push({ protected: false, text: text.slice(start, i) });
+    }
+    segments.push({ protected: true, text: text.slice(i, protectedEnd) });
+    i = protectedEnd;
+    start = protectedEnd;
+  }
+  if (start < text.length) {
+    segments.push({ protected: false, text: text.slice(start) });
+  }
+  return segments;
+};
 
 /**
  * Apply the post‑hoc scrubber to a string of LLM‑generated text.
  *
- * Returns the cleaned text. If `normalizeWhitespace` is true (default),
- * runs a final pass to collapse multiple spaces/line breaks and trim.
+ * Returns the cleaned text. Code and structured content (fenced blocks,
+ * inline code) pass through untouched. Whitespace normalization collapses
+ * horizontal runs only — paragraph breaks and line structure are preserved.
+ * If `normalizeWhitespace` is true (default), leading/trailing whitespace is
+ * trimmed.
  */
 export const humanizeScrub = (
   text: string | null | undefined,
@@ -93,14 +210,42 @@ export const humanizeScrub = (
   if (!text) return "";
 
   const { normalizeWhitespace = true } = options;
-  let result = text;
 
-  for (const { pattern, replace } of replacements) {
-    result = result.replace(pattern, replace);
-  }
+  const scrubProse = (prose: string): string => {
+    // Em‑dashes → comma first (was first in the old ordered list). Horizontal
+    // whitespace folds into the comma; a newline that followed the dash is
+    // eaten and re-emitted unchanged so lists/paragraphs never merge.
+    let out = prose.replace(
+      /[ \t]*—[ \t]*(\r?\n)?/g, // NOSONAR: linear whitespace scan
+      (_match, newline: string | undefined) => (newline ? `,${newline}` : ", "),
+    );
+    for (const { pattern, replace } of replacements) {
+      out = out.replace(pattern, replace);
+    }
+    // Clean up double spaces left by removed phrases. Horizontal runs only:
+    // newlines carry paragraph/list structure, and a line's leading indent
+    // (indented code blocks, nested lists) is preserved verbatim. The
+    // alternation tries the line-start run first, so indentation wins.
+    return out.replace(
+      /(^[ \t]+)|[ \t]{2,}/gm,
+      (_run, indent: string | undefined) => indent ?? " ",
+    );
+  };
 
-  // Clean up double spaces left by removed phrases
-  result = result.replace(/\s{2,}/g, " ");
+  let result = splitProtectedSegments(text)
+    .map((block) => {
+      if (block.protected) {
+        return block.text;
+      }
+      // Inline-code spans inside a prose block concatenate without the
+      // line-level "\n" (they never crossed a line boundary).
+      return splitInlineCode(block.text)
+        .map((segment) =>
+          segment.protected ? segment.text : scrubProse(segment.text),
+        )
+        .join("");
+    })
+    .join("\n");
 
   if (normalizeWhitespace) {
     result = result.trim();

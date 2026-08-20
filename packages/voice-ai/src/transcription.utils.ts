@@ -43,7 +43,9 @@ export const contentToString = (
  * support issue #54's probability-gated silence handling regardless of the
  * requested `response_format`.
  */
-export function parseSdkTranscription(response: unknown): TranscribeAudioOutput {
+export function parseSdkTranscription(
+  response: unknown,
+): TranscribeAudioOutput {
   const verbose = response as unknown as {
     text?: string;
     segments?: Array<{ text?: string; no_speech_prob?: number }>;

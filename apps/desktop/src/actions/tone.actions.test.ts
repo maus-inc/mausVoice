@@ -43,6 +43,15 @@ vi.mock("./toast.actions", () => ({
   showToast: showToastMock,
 }));
 
+vi.mock("../utils/log.utils", () => ({
+  getLogger: () => ({
+    error: vi.fn(),
+    warning: vi.fn(),
+    info: vi.fn(),
+    verbose: vi.fn(),
+  }),
+}));
+
 vi.mock("./user.actions", () => ({
   activateAndSelectTone: vi.fn(),
   setSelectedToneId: (toneId: string) => setSelectedToneIdMock(toneId),
@@ -146,5 +155,11 @@ describe("writing style switch channels share one state transition", () => {
     await applyInDictationStyleSwitch({ channel: "hotkey", toneId: "chat" });
     expect(setSelectedToneIdMock).not.toHaveBeenCalled();
     expect(selectedToneId()).toBeNull();
+  });
+
+  it("restores the previous selection when persistence fails", async () => {
+    setSelectedToneIdMock.mockRejectedValueOnce(new Error("sqlite down"));
+    await applyWritingStyleSelection("email");
+    expect(selectedToneId()).toBe("default");
   });
 });

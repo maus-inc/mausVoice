@@ -148,9 +148,14 @@ async fn download_model(
             })
             .collect()
     } else {
-        vec![DownloadArtifact::new(
+        // whisper.cpp ggml blobs travel the same verified pipeline: pinned
+        // immutable revision + LFS SHA-256 (absent only when a developer
+        // overrides the URL via the environment).
+        vec![DownloadArtifact::new_verified(
             model.download_url(),
             state.model_path(model),
+            crate::downloads::MAX_MODEL_ARTIFACT_BYTES,
+            model.download_sha256(),
         )]
     };
 
