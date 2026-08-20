@@ -1,11 +1,3 @@
-import {
-  GoogleGenAI,
-  Type,
-  type Content,
-  type FunctionDeclaration,
-  type GenerateContentResponse,
-  type Part,
-} from "@google/genai";
 import { retry, countWords } from "@maus-inc/utilities";
 import type {
   JsonResponse,
@@ -34,9 +26,90 @@ export const GEMINI_TRANSCRIPTION_MODELS = [
 export type GeminiTranscriptionModel =
   (typeof GEMINI_TRANSCRIPTION_MODELS)[number] | DiscoveredModelId;
 
-const createClient = (apiKey: string) => {
-  return new GoogleGenAI({ apiKey: apiKey.trim() });
+const GEMINI_API_URL = "https://generativelanguage.googleapis.com/v1beta";
+
+type GeminiFunctionDeclaration = {
+  name: string;
+  description?: string;
+  parameters?: Record<string, unknown>;
 };
+
+type GeminiPart = {
+  text?: string;
+  inlineData?: { mimeType: string; data: string };
+  functionCall?: { name?: string; args?: Record<string, unknown> };
+  functionResponse?: { name: string; response: Record<string, unknown> };
+};
+
+type GeminiContent = {
+  role?: "user" | "model";
+  parts: GeminiPart[];
+};
+
+type GeminiGenerateContentResponse = {
+  candidates?: Array<{
+    content?: GeminiContent;
+    finishReason?: string;
+  }>;
+  usageMetadata?: {
+    promptTokenCount?: number;
+    candidatesTokenCount?: number;
+    totalTokenCount?: number;
+  };
+};
+
+type GeminiGenerateContentRequest = {
+  contents: GeminiContent[];
+  systemInstruction?: GeminiContent;
+  tools?: Array<{ functionDeclarations: GeminiFunctionDeclaration[] }>;
+  generationConfig?: Record<string, unknown>;
+};
+
+const geminiModelPath = (model: string): string =>
+  model
+    .replace(/^models\//, "")
+    .split("/")
+    .map(encodeURIComponent)
+    .join("/");
+
+const requestGemini = async (
+  apiKey: string,
+  model: string,
+  action: "generateContent" | "streamGenerateContent",
+  body: GeminiGenerateContentRequest,
+  customFetch: CustomFetch,
+): Promise<Response> => {
+  const suffix = action === "streamGenerateContent" ? "?alt=sse" : "";
+  const response = await customFetch(
+    `${GEMINI_API_URL}/models/${geminiModelPath(model)}:${action}${suffix}`,
+    {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "x-goog-api-key": apiKey.trim(),
+      },
+      body: JSON.stringify(body),
+    },
+  );
+
+  if (!response.ok) {
+    const detail = await response.text().catch(() => "");
+    throw new Error(
+      detail
+        ? `Gemini responded ${response.status}: ${detail}`
+        : `Gemini responded with status ${response.status}`,
+    );
+  }
+
+  return response;
+};
+
+const getGeminiResponseText = (
+  response: GeminiGenerateContentResponse,
+): string =>
+  (response.candidates?.[0]?.content?.parts ?? [])
+    .map((part) => part.text ?? "")
+    .join("");
 
 const convertJsonSchemaToGeminiSchema = (
   schema: Record<string, unknown>,
@@ -50,12 +123,12 @@ const convertJsonSchemaToGeminiSchema = (
   for (const [key, value] of Object.entries(schema)) {
     if (key === "type" && typeof value === "string") {
       const typeMap: Record<string, unknown> = {
-        string: Type.STRING,
-        number: Type.NUMBER,
-        integer: Type.INTEGER,
-        boolean: Type.BOOLEAN,
-        array: Type.ARRAY,
-        object: Type.OBJECT,
+        string: "STRING",
+        number: "NUMBER",
+        integer: "INTEGER",
+        boolean: "BOOLEAN",
+        array: "ARRAY",
+        object: "OBJECT",
       };
       converted[key] = typeMap[value] ?? value;
     } else if (
@@ -87,6 +160,7 @@ export type GeminiTranscriptionArgs = {
   mimeType?: string;
   prompt?: string;
   language?: string;
+  customFetch?: CustomFetch;
 };
 
 export type GeminiTranscribeAudioOutput = {
@@ -96,17 +170,16 @@ export type GeminiTranscribeAudioOutput = {
 
 export const geminiTranscribeAudio = async ({
   apiKey,
-  model = "gemini-3.7-flash",
+  model = GEMINI_TRANSCRIPTION_MODELS[0],
   blob,
   mimeType = "audio/wav",
   prompt,
   language,
+  customFetch = fetch,
 }: GeminiTranscriptionArgs): Promise<GeminiTranscribeAudioOutput> => {
   return retry({
     retries: 3,
     fn: async () => {
-      const client = createClient(apiKey);
-
       const bytes = new Uint8Array(blob);
       let binary = "";
       for (let i = 0; i < bytes.length; i++) {
@@ -122,20 +195,31 @@ export const geminiTranscribeAudio = async ({
         transcriptionPrompt += ` Context: ${prompt}`;
       }
 
-      const response = await client.models.generateContent({
+      const httpResponse = await requestGemini(
+        apiKey,
         model,
-        contents: [
-          {
-            inlineData: {
-              mimeType,
-              data: base64Audio,
+        "generateContent",
+        {
+          contents: [
+            {
+              role: "user",
+              parts: [
+                {
+                  inlineData: {
+                    mimeType,
+                    data: base64Audio,
+                  },
+                },
+                { text: transcriptionPrompt },
+              ],
             },
-          },
-          { text: transcriptionPrompt },
-        ],
-      });
-
-      const text = response.text ?? "";
+          ],
+        },
+        customFetch,
+      );
+      const response =
+        (await httpResponse.json()) as GeminiGenerateContentResponse;
+      const text = getGeminiResponseText(response);
       if (!text) {
         throw new Error("Transcription failed - empty response");
       }
@@ -151,6 +235,7 @@ export type GeminiGenerateTextArgs = {
   system?: string;
   prompt: string;
   jsonResponse?: JsonResponse;
+  customFetch?: CustomFetch;
 };
 
 export type GeminiGenerateResponseOutput = {
@@ -160,45 +245,52 @@ export type GeminiGenerateResponseOutput = {
 
 export const geminiGenerateTextResponse = async ({
   apiKey,
-  model = "gemini-3.7-flash",
+  model = GEMINI_GENERATE_TEXT_MODELS[0],
   system,
   prompt,
   jsonResponse,
+  customFetch = fetch,
 }: GeminiGenerateTextArgs): Promise<GeminiGenerateResponseOutput> => {
   return retry({
     retries: 3,
     fn: async () => {
-      const client = createClient(apiKey);
-
       let fullPrompt = prompt;
       if (system) {
         fullPrompt = `${system}\n\n${prompt}`;
       }
 
-      const config: Record<string, unknown> = {};
+      const generationConfig: Record<string, unknown> = {};
       if (jsonResponse) {
-        config.responseMimeType = "application/json";
+        generationConfig.responseMimeType = "application/json";
         if (jsonResponse.schema) {
-          config.responseSchema = convertJsonSchemaToGeminiSchema(
+          generationConfig.responseSchema = convertJsonSchemaToGeminiSchema(
             jsonResponse.schema as Record<string, unknown>,
           );
         }
       }
 
-      const response = await client.models.generateContent({
+      const httpResponse = await requestGemini(
+        apiKey,
         model,
-        contents: fullPrompt,
-        config: Object.keys(config).length > 0 ? config : undefined,
-      });
-
-      const text = response.text ?? "";
+        "generateContent",
+        {
+          contents: [{ role: "user", parts: [{ text: fullPrompt }] }],
+          generationConfig:
+            Object.keys(generationConfig).length > 0
+              ? generationConfig
+              : undefined,
+        },
+        customFetch,
+      );
+      const response =
+        (await httpResponse.json()) as GeminiGenerateContentResponse;
+      const text = getGeminiResponseText(response);
       if (!text) {
         throw new Error("No response from Gemini");
       }
 
       const usageMetadata = response.usageMetadata;
-      const tokensUsed =
-        (usageMetadata?.totalTokenCount as number) ?? countWords(text);
+      const tokensUsed = usageMetadata?.totalTokenCount ?? countWords(text);
 
       console.log("gemini llm usage:", usageMetadata);
 
@@ -219,9 +311,9 @@ export const geminiTestIntegration = async ({
   apiKey,
   customFetch = fetch,
 }: GeminiTestIntegrationArgs): Promise<boolean> => {
-  const response = await customFetch(
-    `https://generativelanguage.googleapis.com/v1beta/models?key=${encodeURIComponent(apiKey.trim())}&pageSize=1`,
-  );
+  const response = await customFetch(`${GEMINI_API_URL}/models?pageSize=1`, {
+    headers: { "x-goog-api-key": apiKey.trim() },
+  });
   if (!response.ok) {
     const detail = await response.text().catch(() => "");
     throw new Error(
@@ -239,10 +331,10 @@ export const geminiTestIntegration = async ({
 
 function llmMessagesToGemini(messages: LlmMessage[]): {
   systemInstruction: string | undefined;
-  contents: Content[];
+  contents: GeminiContent[];
 } {
   let systemInstruction: string | undefined;
-  const contents: Content[] = [];
+  const contents: GeminiContent[] = [];
 
   for (const msg of messages) {
     if (msg.role === "system") {
@@ -256,7 +348,7 @@ function llmMessagesToGemini(messages: LlmMessage[]): {
     }
 
     if (msg.role === "assistant") {
-      const parts: Part[] = [];
+      const parts: GeminiPart[] = [];
       if (msg.content) {
         parts.push({ text: msg.content });
       }
@@ -312,6 +404,7 @@ export type GeminiStreamChatArgs = {
   apiKey: string;
   model: string;
   input: LlmChatInput;
+  customFetch?: CustomFetch;
 };
 
 type GeminiStreamState = {
@@ -324,7 +417,7 @@ type GeminiStreamState = {
 
 const buildGeminiTools = (
   input: LlmChatInput,
-): FunctionDeclaration[] | undefined => {
+): GeminiFunctionDeclaration[] | undefined => {
   if (!input.tools || input.tools.length === 0) {
     return undefined;
   }
@@ -338,7 +431,7 @@ const buildGeminiTools = (
 };
 
 const handleGeminiChunk = (
-  chunk: GenerateContentResponse,
+  chunk: GeminiGenerateContentResponse,
   state: GeminiStreamState,
 ): LlmStreamEvent[] => {
   const candidate = chunk.candidates?.[0];
@@ -374,29 +467,78 @@ const handleGeminiChunk = (
   return events;
 };
 
+const parseGeminiSseEvent = (
+  event: string,
+): GeminiGenerateContentResponse | undefined => {
+  const data = event
+    .split(/\r?\n/)
+    .filter((line) => line.startsWith("data:"))
+    .map((line) => line.slice("data:".length).trimStart())
+    .join("\n")
+    .trim();
+  if (!data || data === "[DONE]") return undefined;
+  return JSON.parse(data) as GeminiGenerateContentResponse;
+};
+
+async function* parseGeminiSse(
+  response: Response,
+): AsyncGenerator<GeminiGenerateContentResponse> {
+  if (!response.body) {
+    const event = parseGeminiSseEvent(await response.text());
+    if (event) yield event;
+    return;
+  }
+
+  const reader = response.body.getReader();
+  const decoder = new TextDecoder();
+  let buffer = "";
+
+  while (true) {
+    const { done, value } = await reader.read();
+    buffer += decoder.decode(value, { stream: !done });
+
+    const events = buffer.split(/\r?\n\r?\n/);
+    buffer = done ? "" : (events.pop() ?? "");
+    for (const rawEvent of events) {
+      const event = parseGeminiSseEvent(rawEvent);
+      if (event) yield event;
+    }
+
+    if (done) {
+      const event = parseGeminiSseEvent(buffer);
+      if (event) yield event;
+      return;
+    }
+  }
+}
+
 export async function* geminiStreamChat({
   apiKey,
   model,
   input,
+  customFetch = fetch,
 }: GeminiStreamChatArgs): AsyncGenerator<LlmStreamEvent> {
-  const client = createClient(apiKey);
   const { systemInstruction, contents } = llmMessagesToGemini(input.messages);
   const tools = buildGeminiTools(input);
-
-  const stream = await client.models.generateContentStream({
+  const response = await requestGemini(
+    apiKey,
     model,
-    contents,
-    config: {
+    "streamGenerateContent",
+    {
+      contents,
       systemInstruction: systemInstruction
         ? { parts: [{ text: systemInstruction }] }
         : undefined,
-      maxOutputTokens: input.maxTokens,
-      temperature: input.temperature,
-      topP: input.topP,
-      stopSequences: input.stopSequences,
       tools: tools ? [{ functionDeclarations: tools }] : undefined,
+      generationConfig: {
+        maxOutputTokens: input.maxTokens,
+        temperature: input.temperature,
+        topP: input.topP,
+        stopSequences: input.stopSequences,
+      },
     },
-  });
+    customFetch,
+  );
 
   const state: GeminiStreamState = {
     pendingToolCalls: [],
@@ -404,7 +546,7 @@ export async function* geminiStreamChat({
     toolCallCounter: 0,
   };
 
-  for await (const chunk of stream) {
+  for await (const chunk of parseGeminiSse(response)) {
     yield* handleGeminiChunk(chunk, state);
   }
 

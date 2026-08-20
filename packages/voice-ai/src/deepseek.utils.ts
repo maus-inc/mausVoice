@@ -13,13 +13,10 @@ import { openaiCompatibleStreamChat } from "./openai.utils";
 import { contentToString } from "./transcription.utils";
 import type { CustomFetch, DiscoveredModelId } from "./types";
 
-// DeepSeek model IDs as of the v4 API. `deepseek-v4-flash` and
-// `deepseek-v4-pro` were placeholders that did not match actual DeepSeek
-// model names (the API uses `deepseek-chat`, `deepseek-reasoner`, etc.).
-// These have been updated to the known working model IDs for the DeepSeek
-// platform. Verify against the latest DeepSeek API documentation when
-// the platform releases new models.
-export const DEEPSEEK_MODELS = ["deepseek-chat", "deepseek-reasoner"] as const;
+export const DEEPSEEK_MODELS = [
+  "deepseek-v4-flash",
+  "deepseek-v4-pro",
+] as const;
 export type DeepseekModel =
   (typeof DEEPSEEK_MODELS)[number] | DiscoveredModelId;
 
@@ -50,7 +47,7 @@ export type DeepseekGenerateResponseOutput = {
 
 export const deepseekGenerateTextResponse = async ({
   apiKey,
-  model = "deepseek-chat",
+  model = DEEPSEEK_MODELS[0],
   system,
   prompt,
   jsonResponse,

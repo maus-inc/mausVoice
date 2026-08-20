@@ -16,7 +16,7 @@ describe("provider fallback catalogs", () => {
       "claude-opus-5",
       "claude-fable-5",
     ]);
-    expect(DEEPSEEK_MODELS).toEqual(["deepseek-chat", "deepseek-reasoner"]);
+    expect(DEEPSEEK_MODELS).toEqual(["deepseek-v4-flash", "deepseek-v4-pro"]);
     expect(GEMINI_GENERATE_TEXT_MODELS).toContain("gemini-3.7-flash");
     expect(GEMINI_TRANSCRIPTION_MODELS).toContain("gemini-3.7-flash");
   });
@@ -44,6 +44,7 @@ describe("current speech APIs", () => {
     expect(url).toBe("https://api.x.ai/v1/stt");
     const body = init?.body as FormData;
     expect(Array.from(body.keys())).toEqual(["format", "language", "file"]);
+    expect(body.get("format")).toBe("true");
     expect(body.has("model")).toBe(false);
   });
 

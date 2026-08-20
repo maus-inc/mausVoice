@@ -60,12 +60,8 @@ export const xaiTranscribeAudio = async ({
       const bodyData =
         blob instanceof ArrayBuffer ? blob : (blob.buffer as ArrayBuffer);
       const audioBlob = new Blob([bodyData], { type: `audio/${ext}` });
-      // xAI's STT API expects the audio format as the `format` value (e.g.
-      // "wav", "mp3", "flac"), not the literal string "true". Using the actual
-      // extension from the file being transcribed gives the API the information
-      // it needs to decode the audio correctly.
-      formData.append("format", ext);
       if (language && language !== "auto") {
+        formData.append("format", "true");
         formData.append("language", language);
       }
       // xAI requires the multipart file field to be appended last.

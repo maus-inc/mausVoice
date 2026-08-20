@@ -9,6 +9,7 @@ import {
   elevenlabsTranscribeAudio,
   geminiTranscribeAudio,
   GeminiTranscriptionModel,
+  GEMINI_TRANSCRIPTION_MODELS,
   gladiaTranscribeAudio,
   type GladiaCustomizations,
   groqTranscribeAudio,
@@ -712,7 +713,7 @@ export class GeminiTranscribeAudioRepo extends BaseTranscribeAudioRepo {
   constructor(apiKey: string, model: string | null) {
     super();
     this.geminiApiKey = apiKey;
-    this.model = model ?? "gemini-3.7-flash";
+    this.model = model ?? GEMINI_TRANSCRIPTION_MODELS[0];
   }
 
   protected getSegmentDurationSec(): number {
@@ -739,6 +740,7 @@ export class GeminiTranscribeAudioRepo extends BaseTranscribeAudioRepo {
       mimeType: "audio/wav",
       prompt: input.prompt ?? undefined,
       language: input.language,
+      customFetch: secureFetch,
     });
 
     return {

@@ -89,6 +89,10 @@ describe("provider model discovery", () => {
     await expect(
       repo.getTranscriptionModels({ apiKey: "gemini-key" }),
     ).resolves.toEqual(["gemini-future-flash"]);
+    expect(pluginFetchMock).toHaveBeenCalledWith(
+      "https://generativelanguage.googleapis.com/v1beta/models?pageSize=1000",
+      { headers: { "x-goog-api-key": "gemini-key" } },
+    );
   });
 
   it("separates OpenAI chat and file-transcription models", async () => {

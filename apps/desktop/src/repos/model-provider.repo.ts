@@ -355,7 +355,8 @@ export class GeminiModelProviderRepo extends BaseModelProviderRepo {
     if (!options.apiKey) return [];
     try {
       const response = await fetch(
-        `https://generativelanguage.googleapis.com/v1beta/models?key=${encodeURIComponent(options.apiKey)}&pageSize=1000`,
+        "https://generativelanguage.googleapis.com/v1beta/models?pageSize=1000",
+        { headers: { "x-goog-api-key": options.apiKey } },
       );
       if (!response.ok) {
         logModelDiscoveryResponseFailure("Gemini", response);

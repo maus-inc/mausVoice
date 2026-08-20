@@ -11,14 +11,18 @@ import {
   claudeGenerateTextResponse,
   claudeStreamChat,
   ClaudeModel,
+  CLAUDE_MODELS,
   cerebrasGenerateTextResponse,
   cerebrasStreamChat,
   CerebrasModel,
+  CEREBRAS_MODELS,
   type CustomFetch,
   deepseekGenerateTextResponse,
   deepseekStreamChat,
   DeepseekModel,
+  DEEPSEEK_MODELS,
   GeminiGenerateTextModel,
+  GEMINI_GENERATE_TEXT_MODELS,
   geminiGenerateTextResponse,
   geminiStreamChat,
   GenerateTextModel,
@@ -350,7 +354,7 @@ export class DeepseekGenerateTextRepo extends BaseGenerateTextRepo {
   constructor(apiKey: string, model: string | null) {
     super();
     this.apiKey = apiKey;
-    this.model = model ?? "deepseek-v4-flash";
+    this.model = model ?? DEEPSEEK_MODELS[0];
   }
 
   async generateText(input: GenerateTextInput): Promise<GenerateTextOutput> {
@@ -389,7 +393,7 @@ export class GeminiGenerateTextRepo extends BaseGenerateTextRepo {
   constructor(apiKey: string, model: string | null) {
     super();
     this.apiKey = apiKey;
-    this.model = model ?? "gemini-3.7-flash";
+    this.model = model ?? GEMINI_GENERATE_TEXT_MODELS[0];
   }
 
   async generateText(input: GenerateTextInput): Promise<GenerateTextOutput> {
@@ -399,6 +403,7 @@ export class GeminiGenerateTextRepo extends BaseGenerateTextRepo {
       prompt: input.prompt,
       system: input.system ?? undefined,
       jsonResponse: input.jsonResponse,
+      customFetch: tauriFetch,
     });
 
     return {
@@ -415,6 +420,7 @@ export class GeminiGenerateTextRepo extends BaseGenerateTextRepo {
       apiKey: this.apiKey,
       model: this.model,
       input,
+      customFetch: tauriFetch,
     });
   }
 }
@@ -426,7 +432,7 @@ export class ClaudeGenerateTextRepo extends BaseGenerateTextRepo {
   constructor(apiKey: string, model: string | null) {
     super();
     this.apiKey = apiKey;
-    this.model = model ?? "claude-sonnet-5";
+    this.model = model ?? CLAUDE_MODELS[0];
   }
 
   async generateText(input: GenerateTextInput): Promise<GenerateTextOutput> {
@@ -465,7 +471,7 @@ export class CerebrasGenerateTextRepo extends BaseGenerateTextRepo {
   constructor(apiKey: string, model: string | null) {
     super();
     this.apiKey = apiKey;
-    this.model = model ?? "gpt-oss-120b";
+    this.model = model ?? CEREBRAS_MODELS[0];
   }
 
   async generateText(input: GenerateTextInput): Promise<GenerateTextOutput> {
