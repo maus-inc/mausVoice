@@ -14,13 +14,6 @@ on:
       - ".nvmrc"
       - ".github/scripts/install-desktop-linux-deps.sh"
       - ".github/workflows/build-desktop.yml"
-
-# Least privilege: this workflow only compiles and bundles; it never writes to
-# the repository or publishes releases.
-permissions:
-  contents: read
-  actions: write
-
 # Run every stacked PR independently, but cancel superseded runs for the same
 # PR (or the same branch for push/manual events) to avoid consuming runner slots.
 concurrency:
@@ -157,7 +150,10 @@ jobs:
         # This job only validates that the app compiles and bundles. It signs
         # nothing: `createUpdaterArtifacts` is false in the committed config,
         # so no signing key is needed and none may be committed here.
-        run: pnpm run tauri build --ci ${{ matrix.args }}
+        # `--features debug-assist` opts CI artifacts into the compile-time
+        # DevTools surface so QA can inspect them. Stable releases must NOT use
+        # this feature (see release.yml), which removes DevTools at compile time.
+        run: pnpm run tauri build --ci --features debug-assist ${{ matrix.args }}
 
       - name: Upload build artifacts
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v5

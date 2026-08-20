@@ -100,6 +100,7 @@ jobs:
             packages/rust_gtk_pill -> packages/rust_gtk_pill/target
           key: ubuntu-release-verify-rust
       - name: Install system dependencies
+        shell: bash
         run: |
           sudo apt-get update
           if apt-cache show libwebkit2gtk-4.1-dev >/dev/null 2>&1; then
@@ -330,6 +331,9 @@ jobs:
           "
 
       - name: Build Tauri app
+        # Runs on the OS matrix including windows-latest, so the POSIX
+        # conditional below must not land on the default pwsh shell.
+        shell: bash
         env:
           TAURI_PLATFORM: ${{ matrix.tauri_platform }}
           MAUSVOICE_DESKTOP_PLATFORM: ${{ matrix.node_platform }}
@@ -338,8 +342,17 @@ jobs:
           CMAKE_OSX_DEPLOYMENT_TARGET: "13.3"
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.UPDATER_PRIVATE_KEY }}
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.UPDATER_PRIVATE_KEY_PASSWORD }}
+          # Dispatcher prereleases opt into the compile-time DevTools surface
+          # (`debug-assist`); stable releases omit it so DevTools is removed at
+          # compile time and cannot be toggled by an environment variable.
+          MAUSVOICE_PRERELEASE: ${{ inputs.prerelease }}
         working-directory: apps/desktop
-        run: pnpm run tauri build --ci ${{ matrix.args }}
+        run: |
+          if [ "$MAUSVOICE_PRERELEASE" = "true" ]; then
+            pnpm run tauri build --ci --features debug-assist ${{ matrix.args }}
+          else
+            pnpm run tauri build --ci ${{ matrix.args }}
+          fi
 
       - name: Sign macOS DMG for manual updater
         # Tauri's updater only signs `.app.tar.gz` -> `.app.tar.gz.sig`. The
@@ -409,6 +422,7 @@ jobs:
 
       - name: Resolve tag name
         id: tag
+        shell: bash
         env:
           INPUT_TAG: ${{ inputs.tag }}
           INPUT_VERSION: ${{ inputs.version }}
@@ -534,6 +548,7 @@ jobs:
       # before downloading/rendering anything, instead of 403-ing on the final
       # `git push` with an opaque error.
       - name: Require RELEASE_TOKEN
+        shell: bash
         env:
           RELEASE_TOKEN: ${{ secrets.RELEASE_TOKEN }}
         run: |
