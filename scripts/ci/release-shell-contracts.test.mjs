@@ -64,6 +64,17 @@ const extractSteps = (workflowText) => {
 describe("release workflow shell contracts", () => {
   const release = read(".github/workflows/release.yml");
 
+  it("secret-scan pull_request trigger is not restricted to main (stacked PRs)", () => {
+    // This repo's review chain lands on feature branches (#109 -> #63 ->
+    // #127); a `branches: [main]` filter would silently skip scanning them.
+    const scan = read(".github/workflows/secret-scan.yml");
+    const trigger = scan.match(/pull_request:\s*\{([^}]*)\}/)?.[1] ?? null;
+    assert.ok(
+      trigger !== null && !/branches\s*:/.test(trigger),
+      "secret-scan.yml must keep a bare `pull_request` trigger with no branches filter",
+    );
+  });
+
   it("declares `shell: bash` on any matrix step that uses POSIX-only syntax", () => {
     // The release matrix includes windows-latest; a POSIX `run:` block without
     // an explicit bash shell fails at parse time on the default pwsh shell and
