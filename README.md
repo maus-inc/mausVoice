@@ -86,7 +86,7 @@ Download links open the releases page, where you'll find the latest `.exe` (Wind
 
 ## Quick start
 
-You'll need macOS, Windows, or Linux, plus Node 18+, pnpm 10, and a Rust toolchain (see the [Tauri prerequisites](https://v2.tauri.app/start/prerequisites/)).
+You'll need macOS, Windows, or Linux, plus Node 20+ (`.nvmrc` pins v24), pnpm 10, and a Rust toolchain (see the [Tauri prerequisites](https://v2.tauri.app/start/prerequisites/)).
 
 ```bash
 pnpm install

@@ -2,10 +2,10 @@
 title: "Auto-update pipeline"
 description: "How signed updater bundles are verified and published, and how the desktop app consumes their manifest."
 sidebar:
-  order: 13
+  order: 14
 ---
 
-The updater is a code-execution channel: whatever the manifest names is downloaded, verified, and run on a user's machine. The pipeline is therefore built so that the untrusted parts (endpoints, artifacts, release metadata) live in the repository, and the one trusted part — the signing key — never does.
+The updater is a code-execution channel: whatever the manifest names is downloaded, verified, and run on a user's machine. The pipeline is therefore built so that the untrusted parts (endpoints, artifacts, release metadata) live in the repository, and the one trusted part, the signing key, never does.
 
 ## Trust model
 
@@ -27,7 +27,7 @@ Accordingly `apps/desktop/src-tauri/tauri.conf.json` commits `createUpdaterArtif
 Generate a pair with `pnpm --filter desktop exec tauri signer generate -w ~/.tauri/mausvoice.key`. Keep the private key and its passphrase offline; store both halves plus the passphrase in the repository's secret store.
 
 :::caution[Windows writes the key inside the repository]
-PowerShell does not expand `~`, so on Windows that command creates a literal `~` directory **inside the working tree** — `apps/desktop/~/.tauri/mausvoice.key` — rather than in your home directory. `.gitignore` covers `*.key`, `*.key.pub`, `.tauri/`, and `**/~/` so it cannot be committed accidentally, but move it out of the repository once the secrets are set, and delete the stray `~` directory.
+PowerShell does not expand `~`, so on Windows that command creates a literal `~` directory inside the working tree at `apps/desktop/~/.tauri/mausvoice.key` rather than in your home directory. `.gitignore` covers `*.key`, `*.key.pub`, `.tauri/`, and `**/~/` so it cannot be committed accidentally, but move it out of the repository once the secrets are set, and delete the stray `~` directory.
 
 PowerShell also rejects `<` for input redirection. Set the secrets with `-b` instead:
 
@@ -40,7 +40,7 @@ gh secret set UPDATER_PRIVATE_KEY_PASSWORD --repo maus-inc/mausVoice
 `Get-Content -Raw` matters: without it PowerShell strips the trailing newline and reflows the content, which can corrupt the stored key.
 :::
 
-If `UPDATER_PRIVATE_KEY` or `UPDATER_PUBLIC_KEY` is missing, the build job emits a warning and builds unsigned installers with no `.sig` files and no manifest. Publishing then depends on the channel, and a **stable release fails closed**: the manifest-eligibility gate in the publish job errors out (`::error::`, non-zero exit) before anything is uploaded, because clients resolve `latest.json` from `releases/latest/download/` and a stable release without it would 404 every installed copy and permanently disable updates. A prerelease is the one case that degrades gracefully — it publishes the unsigned installers and deliberately skips the manifest. Nothing silently ships a build that clients would refuse or, worse, wrongly trust.
+If `UPDATER_PRIVATE_KEY` or `UPDATER_PUBLIC_KEY` is missing, the build job emits a warning and builds unsigned installers with no `.sig` files and no manifest. Publishing then depends on the channel, and a **stable release fails closed**: the manifest-eligibility gate in the publish job errors out (`::error::`, non-zero exit) before anything is uploaded, because clients resolve `latest.json` from `releases/latest/download/` and a stable release without it would 404 every installed copy and permanently disable updates. A prerelease is the one case that degrades gracefully: it publishes the unsigned installers and deliberately skips the manifest. Nothing silently ships a build that clients would refuse or, worse, wrongly trust.
 
 ## Release flow
 
@@ -60,7 +60,7 @@ The app resolves the manifest from `https://github.com/maus-inc/mausVoice/releas
 
 Two refusals are deliberate:
 
-- **A bundle without a matching `.sig` fails the run.** An unsigned entry is worse than a missing one — the client would download it and then fail verification, which the user experiences as a broken install rather than "you are up to date". The error lists every unsigned bundle at once.
+- **A bundle without a matching `.sig` fails the run.** An unsigned entry is worse than a missing one. The client would download it and then fail verification, which the user experiences as a broken install rather than "you are up to date". The error lists every unsigned bundle at once.
 - **A prerelease never produces a manifest.** The publish job guards this, and the script asserts it again so a regression in the workflow cannot leak a pre-release into the stable channel.
 
 `node --test scripts/ci/updater-manifest.test.mjs` drives the real script over fixture artifact trees covering all of the above.
@@ -75,4 +75,4 @@ Background checks run every six hours from `AppSideEffects` and are skipped in d
 
 ## Verifying a release
 
-After a signed run, confirm that `latest.json` is attached to the release and lists every platform you built, that each `url` resolves against the release tag, and that a previous version of the app offered and installed the update. If you rotated the key, verify with a build carrying the new public key — an older build will correctly reject the new signature.
+After a signed run, confirm that `latest.json` is attached to the release and lists every platform you built, that each `url` resolves against the release tag, and that a previous version of the app offered and installed the update. If you rotated the key, verify with a build carrying the new public key. An older build will correctly reject the new signature.

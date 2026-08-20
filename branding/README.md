@@ -1,8 +1,8 @@
 # mausVoice branding
 
-- `usethislogo-source.png` — full-resolution source artwork
-- `mausvoice-logo-1024.png` — cropped/squared 1024×1024 master used to generate all app icons
-- `mausvoice-logo-256.png` — 256×256 preview
+- `usethislogo-source.png`: full-resolution source artwork
+- `mausvoice-logo-1024.png`: cropped/squared 1024x1024 master used to generate all app icons
+- `mausvoice-logo-256.png`: 256x256 preview
 
 ## Regenerating icons
 
@@ -26,4 +26,4 @@ convert branding/mausvoice-logo-1024.png -resize 32x32 apps/windows-installer/sr
 convert branding/mausvoice-logo-1024.png -resize 128x128 apps/windows-installer/src-tauri/icons/128x128.png
 ```
 
-Generate the multi-resolution `icon.ico` (desktop and installer) and `icon.icns` (desktop only) from the 1024×1024 source using your preferred tool (e.g. ImageMagick for `.ico`, `iconutil` for `.icns`).
+Generate the multi-resolution `icon.ico` (desktop and installer) and `icon.icns` (desktop only) from the 1024x1024 source using your preferred tool (e.g. ImageMagick for `.ico`, `iconutil` for `.icns`).
