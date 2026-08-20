@@ -36,14 +36,10 @@ interface Replacement {
   replace: string;
 }
 
+// En‑dashes (U+2013) are deliberately NOT scrubbed anywhere: they are a
+// legitimate range/compound separator (e.g. "1–3 sentences"), not an AI slop
+// marker.
 const replacements: Replacement[] = [
-  // Em‑dashes → comma (context‑dependent). \s* around a fixed literal is at
-  // most O(n) ambiguity for a fixed replacement; the two quantifiers cannot
-  // nest. En‑dashes (U+2013) are deliberately NOT scrubbed: they are a
-  // legitimate range/compound separator (e.g. "1–3 sentences"), not an AI
-  // slop marker.
-  { pattern: /\s*—\s*/g, replace: ", " }, // NOSONAR: linear whitespace split
-
   // Common slop phrases (whole‑word, case‑insensitive)
   { pattern: /\bdelve\b/gi, replace: "explore" },
   { pattern: /\bseamless\b/gi, replace: "smooth" },
@@ -154,7 +150,8 @@ const fenceMarker = (line: string): string | null => {
 };
 
 // Closing fences are marker-only lines (CommonMark: no info string allowed).
-const FENCE_CLOSE_LINE = /^[ \t]*(`{3,}|~{3,})[ \t]*$/;
+// CRLF input keeps a trailing \r on every line after the "\n" split.
+const FENCE_CLOSE_LINE = /^[ \t]*(`{3,}|~{3,})[ \t]*\r?$/;
 
 const closesFence = (marker: string, opener: string): boolean =>
   marker.startsWith(opener.charAt(0)) && marker.length >= opener.length;
@@ -215,14 +212,24 @@ export const humanizeScrub = (
   const { normalizeWhitespace = true } = options;
 
   const scrubProse = (prose: string): string => {
-    let out = prose;
+    // Em‑dashes → comma first (was first in the old ordered list). Horizontal
+    // whitespace folds into the comma; a newline that followed the dash is
+    // eaten and re-emitted unchanged so lists/paragraphs never merge.
+    let out = prose.replace(
+      /[ \t]*—[ \t]*(\r?\n)?/g, // NOSONAR: linear whitespace scan
+      (_match, newline: string | undefined) => (newline ? `,${newline}` : ", "),
+    );
     for (const { pattern, replace } of replacements) {
       out = out.replace(pattern, replace);
     }
-    // Clean up double spaces left by removed phrases. Horizontal whitespace
-    // only: newlines carry Markdown structure (paragraphs, lists, indented
-    // blocks) and must survive.
-    return out.replace(/[ \t]{2,}/g, " ");
+    // Clean up double spaces left by removed phrases. Horizontal runs only:
+    // newlines carry paragraph/list structure, and a line's leading indent
+    // (indented code blocks, nested lists) is preserved verbatim. The
+    // alternation tries the line-start run first, so indentation wins.
+    return out.replace(
+      /(^[ \t]+)|[ \t]{2,}/gm,
+      (_run, indent: string | undefined) => indent ?? " ",
+    );
   };
 
   let result = splitProtectedSegments(text)

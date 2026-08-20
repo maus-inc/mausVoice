@@ -962,6 +962,9 @@ async fn execute_http_request(
 
     let initial_url = Url::parse(&request.url)
         .map_err(|_| "HTTP request URL is invalid".to_string())?;
+    // The redirect loop owns the mutable hop URL; credentials belong to this
+    // original origin alone for the rest of the chain.
+    let credential_origin = initial_url.clone();
 
     let method = reqwest::Method::from_bytes(request.method.trim().as_bytes())
         .map_err(|_| "Private-network request method is invalid".to_string())?;
@@ -1021,10 +1024,11 @@ async fn execute_http_request(
     };
 
     let mut redirects_left = MAX_PRIVATE_HTTP_REDIRECTS;
-    // Set after the first hop completes as a redirect; compared per hop so a
-    // cross-origin redirect (e.g. a private 127.0.0.1 endpoint bouncing to a
-    // LAN sibling) never forwards credentials to the new origin.
-    let mut previous_url: Option<Url> = None;
+    // Once a hop leaves the original origin, credentials are gone for the
+    // rest of the chain — re-attaching them on a later same-origin hop (or a
+    // hop back) would leak them to whatever origin bounced the request. This
+    // mirrors curl/reqwest, which remove and never re-add these headers.
+    let mut credentials_stripped = false;
     let mut response = loop {
         validate_http_request_url(&current_url, &policy)?;
         let addrs = resolve_and_validate_url(&current_url, &policy).await?;
@@ -1049,14 +1053,17 @@ async fn execute_http_request(
             .map_err(|_| "Unable to initialize the HTTP client".to_string())?;
 
         let mut builder = client.request(current_method.clone(), current_url.clone());
-        let cross_origin_hop = previous_url
-            .as_ref()
-            .is_some_and(|previous| !urls_share_origin(previous, &current_url));
+        if !urls_share_origin(&credential_origin, &current_url) {
+            credentials_stripped = true;
+        }
         for (name, value) in &forwarded_headers {
-            if cross_origin_hop
+            // proxy-authorization is filtered at intake, but stays in the
+            // strip list as defense-in-depth against a future intake change.
+            // (www-authenticate is a response header and can never arrive.)
+            if credentials_stripped
                 && matches!(
                     name.as_str(),
-                    "authorization" | "cookie" | "proxy-authorization" | "www-authenticate"
+                    "authorization" | "cookie" | "proxy-authorization"
                 )
             {
                 continue;
@@ -1102,7 +1109,7 @@ async fn execute_http_request(
                 current_body = None;
             }
         }
-        previous_url = Some(std::mem::replace(&mut current_url, next_url));
+        current_url = next_url;
     };
 
     if response
@@ -5370,6 +5377,179 @@ mod tests {
         }
     }
 
+    /// Minimal HTTP responder for redirect-chain tests: serves the queued
+    /// responses in accept order and collects each request head (up to the
+    /// blank line) into the channel.
+    fn spawn_head_capturing_server(
+        listener: tokio::net::TcpListener,
+        responses: Vec<String>,
+    ) -> tokio::sync::mpsc::Receiver<String> {
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+        let (sender, receiver) = tokio::sync::mpsc::channel::<String>(responses.len());
+        tokio::spawn(async move {
+            for response in responses {
+                let Ok((mut socket, _)) = listener.accept().await else {
+                    return;
+                };
+                let mut buffer = Vec::new();
+                let mut chunk = [0u8; 4096];
+                while !buffer.windows(4).any(|w| w == b"\r\n\r\n") {
+                    match socket.read(&mut chunk).await {
+                        Ok(0) | Err(_) => break,
+                        Ok(n) => {
+                            buffer.extend_from_slice(&chunk[..n]);
+                            if buffer.len() > 64 * 1024 {
+                                break;
+                            }
+                        }
+                    }
+                }
+                if sender
+                    .send(String::from_utf8_lossy(&buffer).into_owned())
+                    .await
+                    .is_err()
+                {
+                    return;
+                }
+                let _ = socket.write_all(response.as_bytes()).await;
+                let _ = socket.shutdown().await;
+            }
+        });
+        receiver
+    }
+
+    fn redirect_response(target: &Url) -> String {
+        format!(
+            "HTTP/1.1 307 Temporary Redirect\r\nlocation: {target}\r\ncontent-length: 0\r\nconnection: close\r\n\r\n"
+        )
+    }
+
+    const REDIRECT_OK_RESPONSE: &str =
+        "HTTP/1.1 200 OK\r\ncontent-type: text/plain\r\ncontent-length: 2\r\nconnection: close\r\n\r\nok";
+
+    fn credentialed_post(request_id: &str, url: &Url) -> PrivateHttpRequest {
+        PrivateHttpRequest {
+            // Distinct per test: a failing sibling must not leave a stale
+            // cancellation registration behind that poisons the next run.
+            request_id: request_id.to_string(),
+            url: url.to_string(),
+            method: "POST".to_string(),
+            headers: [(
+                "authorization".to_string(),
+                "Bearer redirect-test-secret".to_string(),
+            )]
+            .into_iter()
+            .collect(),
+            body: Some(b"{}".to_vec()),
+        }
+    }
+
+    fn redirect_chain_test_id() -> &'static str {
+        use std::sync::atomic::{AtomicU64, Ordering};
+        static NEXT: AtomicU64 = AtomicU64::new(42);
+        // Leaks one boxed string per test — fine for a bounded test set.
+        let id = NEXT.fetch_add(1, Ordering::Relaxed);
+        Box::leak(
+            format!("00000000-0000-4000-8000-0000000000{id:02}").into_boxed_str(),
+        )
+    }
+
+    /// Drives a chain of hops across listeners as specified; returns the
+    /// captured request heads in order.
+    async fn run_redirect_chain(
+        listeners: Vec<(tokio::net::TcpListener, Vec<String>)>,
+        start: &Url,
+    ) -> (Result<PrivateHttpResponse, String>, Vec<String>) {
+        let mut receivers = Vec::new();
+        for (listener, responses) in listeners {
+            receivers.push(spawn_head_capturing_server(listener, responses));
+        }
+        let outcome = execute_http_request(
+            credentialed_post(redirect_chain_test_id(), start),
+            HttpRequestPolicy::PrivateNetwork,
+        )
+        .await;
+        let mut heads = Vec::new();
+        for mut receiver in receivers {
+            while let Ok(head) = receiver.try_recv() {
+                heads.push(head);
+            }
+        }
+        (outcome, heads)
+    }
+
+    #[tokio::test]
+    async fn cross_origin_redirect_strips_credentials_permanently() {
+        let _test_guard = PRIVATE_HTTP_CANCELLATION_TEST_LOCK.lock().await;
+
+        // Chain: A:/start --307--> B:/hop --307--> A:/back --> 200. Each port
+        // is a separate origin, so B never sees the credential and the return
+        // hop to A must not re-attach it either (matches curl/reqwest).
+        let listener_a = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let port_a = listener_a.local_addr().unwrap().port();
+        let listener_b = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let port_b = listener_b.local_addr().unwrap().port();
+        let url_start = Url::parse(&format!("http://127.0.0.1:{port_a}/start")).unwrap();
+        let url_hop = Url::parse(&format!("http://127.0.0.1:{port_b}/hop")).unwrap();
+        let url_back = Url::parse(&format!("http://127.0.0.1:{port_a}/back")).unwrap();
+
+        let (outcome, heads) = run_redirect_chain(
+            vec![
+                (
+                    listener_a,
+                    vec![redirect_response(&url_hop), REDIRECT_OK_RESPONSE.to_string()],
+                ),
+                (listener_b, vec![redirect_response(&url_back)]),
+            ],
+            &url_start,
+        )
+        .await;
+
+        assert!(outcome.is_ok(), "chain completes: {:?}", outcome.err());
+        assert_eq!(heads.len(), 3);
+        assert!(
+            heads[0].to_ascii_lowercase().contains("authorization"),
+            "the credential origin receives its header"
+        );
+        for (index, head) in heads.iter().enumerate().skip(1) {
+            assert!(
+                !head.to_ascii_lowercase().contains("authorization"),
+                "hop {index} must not carry credentials: {head}"
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn same_origin_redirect_keeps_credentials() {
+        let _test_guard = PRIVATE_HTTP_CANCELLATION_TEST_LOCK.lock().await;
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let port = listener.local_addr().unwrap().port();
+        let url_start = Url::parse(&format!("http://127.0.0.1:{port}/start")).unwrap();
+        let url_next = Url::parse(&format!("http://127.0.0.1:{port}/next")).unwrap();
+
+        let (outcome, heads) = run_redirect_chain(
+            vec![(
+                listener,
+                vec![redirect_response(&url_next), REDIRECT_OK_RESPONSE.to_string()],
+            )],
+            &url_start,
+        )
+        .await;
+
+        assert!(outcome.is_ok(), "chain completes: {:?}", outcome.err());
+        assert_eq!(heads.len(), 2);
+        for (index, head) in heads.iter().enumerate() {
+            assert!(
+                head.to_ascii_lowercase().contains("authorization"),
+                "same-origin hop {index} keeps credentials"
+            );
+        }
+    }
+
+    #[test]
+    fn urls_share_origin_compares_scheme_host_and_default_port() {
+    #[test]
+    fn urls_share_origin_compares_scheme_host_and_default_port() {
     #[test]
     fn urls_share_origin_compares_scheme_host_and_default_port() {
         let ollama = Url::parse("http://127.0.0.1:11434/v1/chat/completions").unwrap();

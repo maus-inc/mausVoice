@@ -186,6 +186,26 @@ describe("humanizeScrub structure preservation", () => {
     );
   });
 
+  it("closes fenced blocks under CRLF line endings", () => {
+    const prose = "delve into this";
+    const input = `Intro.\r\n\r\n\`\`\`ts\r\nconst a = 1;\r\n\`\`\`\r\n\r\n${prose}`;
+    const result = humanizeScrub(input);
+    // Post-fence prose must still be scrubbed, and the structure must not
+    // collapse from fail-closed protection of the whole document.
+    expect(result).toContain("const a = 1;");
+    expect(result.endsWith("explore into this")).toBe(true);
+  });
+
+  it("preserves leading indentation (indented code blocks survive)", () => {
+    expect(humanizeScrub("Intro:\n    indented code or list item")).toBe(
+      "Intro:\n    indented code or list item",
+    );
+  });
+
+  it("never merges prose across a newline through the em-dash rule", () => {
+    expect(humanizeScrub("Intro —\n- bullet")).toBe("Intro,\n- bullet");
+  });
+
   it("scrubs prose on both sides of a fenced block", () => {
     const input = "delve in\n\n```\ncode — stays\n```\n\nutilize this";
     const result = humanizeScrub(input);
