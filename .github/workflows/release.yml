@@ -63,7 +63,12 @@ jobs:
           cache: pnpm
           cache-dependency-path: pnpm-lock.yaml
       - name: Install dependencies
-        run: pnpm install --frozen-lockfile # NOSONAR
+        # --ignore-scripts blocks arbitrary package postinstalls. The helper
+        # then runs `pnpm rebuild` with the explicit onlyBuiltDependencies
+        # names from pnpm-workspace.yaml. A bare `pnpm rebuild` is not used.
+        run: |
+          pnpm install --frozen-lockfile --ignore-scripts
+          node scripts/ci/rebuild-allowlisted.mjs
       - name: Build workspace dependencies
         run: pnpm exec turbo run build --filter=desktop^...
       - name: Lint TypeScript
@@ -222,9 +227,12 @@ jobs:
           ./.github/scripts/install-desktop-linux-deps.sh
 
       - name: Install dependencies
-        # --ignore-scripts would skip the esbuild/sharp postinstall builds this
-        # monorepo needs; mirrors build/lint/test workflows.
-        run: pnpm install --frozen-lockfile # NOSONAR
+        # --ignore-scripts blocks arbitrary package postinstalls. The helper
+        # then runs `pnpm rebuild` with the explicit onlyBuiltDependencies
+        # names from pnpm-workspace.yaml. A bare `pnpm rebuild` is not used.
+        run: |
+          pnpm install --frozen-lockfile --ignore-scripts
+          node scripts/ci/rebuild-allowlisted.mjs
 
       - name: Sync release version
         env:

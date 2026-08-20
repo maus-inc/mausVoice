@@ -33,7 +33,12 @@ jobs:
           cache-dependency-path: |
             pnpm-lock.yaml
       - name: Install dependencies
-        run: pnpm install --frozen-lockfile
+        # --ignore-scripts blocks arbitrary package postinstalls. The helper
+        # then runs `pnpm rebuild` with the explicit onlyBuiltDependencies
+        # names from pnpm-workspace.yaml. A bare `pnpm rebuild` is not used.
+        run: |
+          pnpm install --frozen-lockfile --ignore-scripts
+          node scripts/ci/rebuild-allowlisted.mjs
       - name: Build dependencies
         run: pnpm exec turbo run build --filter=desktop^... --verbosity=2 --continue
       - name: Run desktop unit tests
