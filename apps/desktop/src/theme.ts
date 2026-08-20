@@ -9,7 +9,13 @@ import {
   surfaces,
   text,
 } from "./styles/palette";
-import { accentSurface, hairline, premiumSurface } from "./styles/shadows";
+import {
+  accentSurface,
+  hairline,
+  premiumSurface,
+  switchThumb,
+  switchTrack,
+} from "./styles/shadows";
 
 const uiFont = '"Satoshi", system-ui, -apple-system, sans-serif';
 /** TAN-PARADISO only via CSS var(--font-display) on logo + welcome/name. */
@@ -286,10 +292,10 @@ export const theme = createTheme({
         }),
         thumb: ({ theme }) => ({
           borderRadius: 4,
-          boxShadow: `inset 0 1px 0 ${highlight(0.42)}, 0 1px 2px ${ink(0.18)}`,
+          boxShadow: switchThumb.light,
           transition: `transform 120ms ${theme.transitions.easing.easeOut}, box-shadow 160ms ${theme.transitions.easing.easeOut}`,
           ...theme.applyStyles("dark", {
-            boxShadow: `inset 0 1px 0 ${highlight(0.12)}, 0 1px 2px ${darkInk(0.45)}`,
+            boxShadow: switchThumb.dark,
           }),
         }),
         track: ({ theme }) => ({
@@ -297,19 +303,19 @@ export const theme = createTheme({
           opacity: 1,
           backgroundColor: theme.vars.palette.level3,
           border: hairline.light(0.08),
-          boxShadow: `inset 0 1px 2px ${ink(0.12)}`,
+          boxShadow: switchTrack.light,
           transition: `background-color 160ms ${theme.transitions.easing.easeOut}, box-shadow 160ms ${theme.transitions.easing.easeOut}`,
           ".Mui-checked:not(.Mui-disabled) + &": {
             backgroundColor: inkSolid.base,
             opacity: 1,
-            boxShadow: `inset 0 1px 2px ${ink(0.28)}`,
+            boxShadow: switchTrack.lightChecked,
           },
           ...theme.applyStyles("dark", {
             border: hairline.dark(0.1),
-            boxShadow: `inset 0 1px 2px ${darkInk(0.45)}`,
+            boxShadow: switchTrack.dark,
             ".Mui-checked:not(.Mui-disabled) + &": {
               backgroundColor: chalkSolid.base,
-              boxShadow: `inset 0 1px 2px ${darkInk(0.35)}`,
+              boxShadow: switchTrack.darkChecked,
             },
           }),
         }),
@@ -693,9 +699,16 @@ export const theme = createTheme({
             },
             "&.Mui-selected": {
               backgroundColor: surfaces.dark.level2,
+              color: text.dark.primary,
               boxShadow: premiumSurface.dark.selected,
               "&:hover": {
                 backgroundColor: surfaces.dark.level3,
+              },
+              "& .MuiListItemText-primary": {
+                color: text.dark.primary,
+              },
+              "& .MuiListItemText-secondary": {
+                color: text.dark.secondary,
               },
             },
           }),

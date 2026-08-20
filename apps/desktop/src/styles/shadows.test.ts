@@ -5,6 +5,8 @@ import {
   accentSurface,
   parseShadowLayers,
   premiumSurface,
+  switchThumb,
+  switchTrack,
   titleBarShadow,
   type ShadowLayer,
 } from "./shadows";
@@ -249,6 +251,8 @@ describe("theme.ts consumers", () => {
       accentSurface.light,
       accentSurface.dark,
       ...Object.values(titleBarShadow),
+      ...Object.values(switchThumb),
+      ...Object.values(switchTrack),
       "none",
     ]);
     const found = new Set<string>();

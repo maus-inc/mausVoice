@@ -118,6 +118,23 @@ export const titleBarShadow = {
 } as const;
 
 /**
+ * Compact switch chrome: 1px top rim + contact drop on the thumb, inset
+ * well on the track. Same geometry in both schemes; alphas follow
+ * premiumSurface (light warm ink, dark neutral).
+ */
+export const switchThumb = {
+  light: `inset 0 1px 0 ${highlight(0.42)}, 0 1px 2px ${ink(0.18)}`,
+  dark: `inset 0 1px 0 ${highlight(0.12)}, 0 1px 2px ${darkInk(0.45)}`,
+} as const;
+
+export const switchTrack = {
+  light: `inset 0 1px 2px ${ink(0.12)}`,
+  lightChecked: `inset 0 1px 2px ${ink(0.28)}`,
+  dark: `inset 0 1px 2px ${darkInk(0.45)}`,
+  darkChecked: `inset 0 1px 2px ${darkInk(0.35)}`,
+} as const;
+
+/**
  * 1px translucent hairline used instead of a shadow to separate faces
  * (DESIGN.md: "borders over shadows"). `strength` picks how present it is.
  */
