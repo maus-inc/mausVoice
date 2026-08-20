@@ -66,7 +66,6 @@ describe("assemblyaiTranscribeAudio", () => {
     expect(text).toBe("bonjour");
     expect(createBody).toEqual({
       audio_url: UPLOAD_URL,
-      speech_model: "best",
       language_code: "fr",
     });
   });
@@ -93,7 +92,6 @@ describe("assemblyaiTranscribeAudio", () => {
     expect(text).toBe("hola");
     expect(createBody).toEqual({
       audio_url: UPLOAD_URL,
-      speech_model: "best",
       language_detection: true,
     });
     expect(createBody).not.toHaveProperty("language_code");

@@ -540,7 +540,11 @@ describe("AssemblyAITranscribeAudioRepo", () => {
       },
     );
 
-    const repo = new AssemblyAITranscribeAudioRepo("aa-key", null, globalThis.fetch);
+    const repo = new AssemblyAITranscribeAudioRepo(
+      "aa-key",
+      null,
+      globalThis.fetch,
+    );
     const result = await repo.transcribeAudio({
       samples: createSamples(1, 16000),
       sampleRate: 16000,
