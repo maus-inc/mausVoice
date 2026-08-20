@@ -13,6 +13,9 @@ import { ToneConfig } from "./tone.utils";
 import { getMyUserName } from "./user.utils";
 import { HUMANIZE_SKILL_TEXT } from "./humanize.utils";
 
+const appendHumanizeSkill = (base: string): string =>
+  `${base.trim()}\n\n${HUMANIZE_SKILL_TEXT}`;
+
 const sanitizeGlossaryValue = (value: string): string =>
   // oxlint-disable-next-line no-control-regex
   value.replace(/\0/g, "").replace(/\s+/g, " ").trim();
@@ -140,7 +143,9 @@ export const buildSystemPostProcessingTonePrompt = (
       input.tone.systemPromptTemplate,
       buildPostProcessingTemplateVars(input),
     );
-    return appendStructuredStyleGuidance(systemPrompt, input.tone);
+    return appendHumanizeSkill(
+      appendStructuredStyleGuidance(systemPrompt, input.tone),
+    );
   }
 
   const stylePrompt = appendStructuredStyleGuidance(
@@ -154,9 +159,11 @@ The result must be in the ${languageName} language.
 Respond with JSON only: { "result": "<processed-transcript>" }
 `;
 
-  return applyTemplateVars(
-    fullPrompt.trim(),
-    buildPostProcessingTemplateVars(input),
+  return appendHumanizeSkill(
+    applyTemplateVars(
+      fullPrompt.trim(),
+      buildPostProcessingTemplateVars(input),
+    ),
   );
 };
 
@@ -309,11 +316,8 @@ export const buildPostProcessingPrompt = (
   // A19: append the shared humanize skill to every post-processing prompt so
   // styled dictation output is de-slopped at generation time (the scrubber in
   // run-agent.ts is the post-hoc safety net).
-  const withHumanizeSkill = (base: string): string =>
-    `${base.trim()}\n\n${HUMANIZE_SKILL_TEXT}`;
-
   if (tone.kind === "template") {
-    return withHumanizeSkill(
+    return appendHumanizeSkill(
       applyTemplateVars(
         tone.promptTemplate,
         buildPostProcessingTemplateVars(input),
@@ -321,7 +325,7 @@ export const buildPostProcessingPrompt = (
     );
   }
 
-  return withHumanizeSkill(
+  return appendHumanizeSkill(
     `
 Here is the transcript:
 

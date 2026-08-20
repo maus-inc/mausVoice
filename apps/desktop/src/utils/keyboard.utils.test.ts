@@ -143,6 +143,11 @@ describe("getStyleSwitchActionNamesForKey", () => {
           actionName: "switch-to-style:casual",
           keys: ["KeyC"],
         },
+        futureStyleAction: {
+          id: "future-style-action",
+          actionName: "switch-writing-style-custom",
+          keys: ["KeyF"],
+        },
         chat: {
           id: "chat",
           actionName: OPEN_CHAT_HOTKEY,
@@ -156,6 +161,10 @@ describe("getStyleSwitchActionNamesForKey", () => {
     ]);
     expect(getStyleSwitchActionNamesForKey(state, "KeyC")).toEqual([
       "switch-to-style:casual",
+    ]);
+    // Actions added under an existing shared prefix must also be releasable.
+    expect(getStyleSwitchActionNamesForKey(state, "KeyF")).toEqual([
+      "switch-writing-style-custom",
     ]);
     // A non-style action bound to a key must never be released as a style key.
     expect(getStyleSwitchActionNamesForKey(state, "KeyO")).toEqual([]);

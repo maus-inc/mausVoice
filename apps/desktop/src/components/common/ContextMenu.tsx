@@ -106,6 +106,29 @@ const contentEditableSelection = (): { text: string; range: Range | null } => {
 };
 
 /**
+ * Return the owning contenteditable host for `target`. An explicit nested
+ * `contenteditable="false"` is a boundary: it must not inherit the outer
+ * editor's clipboard menu.
+ */
+const getContentEditableHost = (target: HTMLElement): HTMLElement | null => {
+  for (
+    let current: HTMLElement | null = target;
+    current;
+    current = current.parentElement
+  ) {
+    const value = current.getAttribute("contenteditable");
+    if (value === "false") return null;
+    if (value === "" || value === "true") return current;
+  }
+  return null;
+};
+
+/** Whether an event target belongs to a user-editable control. */
+export const isEditableEventTarget = (target: EventTarget | null): boolean =>
+  target instanceof HTMLElement &&
+  (isTextInput(target) || getContentEditableHost(target) !== null);
+
+/**
  * Resolve the editable root for a right-click target. Returns null when the
  * click is not on (or inside) an editable surface.
  */
@@ -122,14 +145,7 @@ const resolveEditableTarget = (target: HTMLElement): EditableTarget | null => {
     };
   }
 
-  // A descendant of a contenteditable host has `isContentEditable` true; a
-  // host that is not itself contenteditable but sits inside one needs the
-  // closest() walk (contenteditable="false" nests excluded).
-  const host = target.isContentEditable
-    ? target
-    : target.closest<HTMLElement>(
-        '[contenteditable]:not([contenteditable="false"])',
-      );
+  const host = getContentEditableHost(target);
   if (!host) return null;
   const selection = contentEditableSelection();
   return {

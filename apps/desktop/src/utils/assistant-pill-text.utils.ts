@@ -202,8 +202,9 @@ export interface MarkdownToPillOptions {
 /**
  * Convert a markdown string to pill-safe plain text.
  *
- * The conversion is stable for partial/streaming input: each call processes
- * its input independently and never leaves dangling fences or bullets.
+ * Each call is self-contained and does not preserve parser state. Streaming
+ * consumers must therefore re-convert the complete accumulated message on
+ * every update rather than append independently converted chunks.
  */
 export const markdownToPillText = (
   raw: string | null | undefined,

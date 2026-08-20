@@ -81,29 +81,55 @@ export const ManualStylingRow = ({ id }: ManualStylingRowProps) => {
     deselectActiveTone(id);
   }, [id]);
 
-  const ctxMenu = useContextMenu();
-
-  const contextMenuItems = useMemo<ContextMenuItem[]>(
-    () => [
-      {
-        label: intl.formatMessage({ defaultMessage: "Edit" }),
-        onClick: handleEdit,
-      },
-      { kind: "divider" },
-      {
-        label: intl.formatMessage({ defaultMessage: "Delete" }),
-        danger: true,
-        onClick: () => deleteTone(id),
-      },
-    ],
-    [handleEdit, deleteTone, id, intl],
-  );
-
   const isGlobal = tone?.isGlobal === true;
   const isSystem = tone?.isSystem === true;
   const canEdit = !isGlobal && !isSystem;
   const hasPrompt = Boolean(tone?.promptTemplate);
   const canDeselect = activeToneCount > 1;
+  const ctxMenu = useContextMenu();
+
+  // Context actions must honor the same managed/system-tone restrictions as
+  // the overflow menu. The repository deletion command is not a permission
+  // boundary, so exposing Delete here would otherwise bypass the UI policy.
+  const contextMenuItems = useMemo<ContextMenuItem[]>(() => {
+    const items: ContextMenuItem[] = [];
+    if (canEdit) {
+      items.push({
+        label: intl.formatMessage({ defaultMessage: "Edit" }),
+        onClick: handleEdit,
+      });
+    }
+    items.push({
+      label: intl.formatMessage({ defaultMessage: "View full prompt" }),
+      onClick: handleViewPrompt,
+    });
+    if (canDeselect) {
+      items.push({
+        label: intl.formatMessage({ defaultMessage: "Deselect style" }),
+        onClick: handleDeselect,
+      });
+    }
+    if (canEdit) {
+      items.push(
+        { kind: "divider" },
+        {
+          label: intl.formatMessage({ defaultMessage: "Delete" }),
+          danger: true,
+          onClick: () => deleteTone(id),
+        },
+      );
+    }
+    return items;
+  }, [
+    canEdit,
+    canDeselect,
+    deleteTone,
+    handleDeselect,
+    handleEdit,
+    handleViewPrompt,
+    id,
+    intl,
+  ]);
 
   const menuItems = useMemo((): MenuPopoverItem[] => {
     const items: MenuPopoverItem[] = [];

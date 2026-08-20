@@ -36,6 +36,7 @@ vi.mock("react-intl", async (importOriginal) => {
   };
 });
 
+import { ContextMenuProvider } from "../common/ContextMenu";
 import { DictionaryRow } from "./DictionaryRow";
 
 (
@@ -112,6 +113,50 @@ describe("DictionaryRow context menu", () => {
     // Dictionary rows are inline-editable, so there is no separate "Edit"
     // context-menu action; only the destructive Delete is surfaced.
     expect(menuLabels(menu)).toEqual(["Delete"]);
+  });
+
+  it("does not expose Delete for an organization-managed term", async () => {
+    produceAppState((draft) => {
+      draft.termById["term-1"].isGlobal = true;
+    });
+
+    const menu = await openMenu();
+    expect(menu).toBeNull();
+  });
+
+  it("routes editable fields to the provider clipboard menu instead of Delete", async () => {
+    root = createRoot(container);
+    await act(async () => {
+      root!.render(
+        createElement(
+          StrictMode,
+          null,
+          createElement(
+            ContextMenuProvider,
+            null,
+            createElement(DictionaryRow, { id: "term-1" }),
+          ),
+        ),
+      );
+    });
+
+    const input = container.querySelector<HTMLInputElement>("input")!;
+    input.setSelectionRange(0, 3);
+    const event = new MouseEvent("contextmenu", {
+      bubbles: true,
+      cancelable: true,
+      clientX: 50,
+      clientY: 50,
+    });
+    act(() => {
+      input.dispatchEvent(event);
+    });
+
+    const labels = menuLabels(document.querySelector('[role="menu"]'));
+    expect(event.defaultPrevented).toBe(true);
+    expect(labels.some((label) => label.startsWith("Copy"))).toBe(true);
+    expect(labels.some((label) => label.startsWith("Paste"))).toBe(true);
+    expect(labels).not.toContain("Delete");
   });
 
   it("deletes the term when the Delete item is clicked", async () => {
