@@ -22,6 +22,11 @@ jobs:
   lint:
     name: Lint Desktop (${{ matrix.label }})
     runs-on: ${{ matrix.os }}
+    # Least privilege: linting installs dependencies and runs lifecycle
+    # scripts, so the job token must stay read-only regardless of the
+    # repository's default token scope.
+    permissions:
+      contents: read
     strategy:
       fail-fast: false
       matrix:
