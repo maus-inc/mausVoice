@@ -41,9 +41,12 @@ jobs:
           workspaces: |
             apps/desktop/src-tauri -> target
       - name: Install dependencies
-        # --ignore-scripts would skip the esbuild/sharp postinstall builds this
-        # monorepo needs; mirrors the release workflow.
-        run: pnpm install --frozen-lockfile # NOSONAR
+        # --ignore-scripts blocks arbitrary package postinstalls. pnpm rebuild
+        # then runs only the allowlisted native builds in onlyBuiltDependencies
+        # (esbuild, sharp, and the rest in pnpm-workspace.yaml).
+        run: |
+          pnpm install --frozen-lockfile --ignore-scripts
+          pnpm rebuild
       - name: Build dependencies
         run: pnpm exec turbo run build --filter=desktop^...
       - name: Lint TypeScript

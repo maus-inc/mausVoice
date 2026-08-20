@@ -1,0 +1,115 @@
+# AGENT: do not hand-edit this patch. Follow sonar_work/APPLY_WORKFLOW_PATCH.md exactly.
+# Required permission: GitHub `workflows` (without it, git push of .github/workflows/* is rejected).
+# Commands:
+#   git apply --check sonar_work/workflow-ignore-scripts.patch
+#   git apply sonar_work/workflow-ignore-scripts.patch
+#   node --test scripts/ci/pr28-contracts.test.mjs
+# End state: every pnpm install in the five files below has --frozen-lockfile --ignore-scripts
+# and the same step runs `pnpm rebuild`. Do not add # NOSONAR. Do not skip rebuild.
+#
+diff --git a/.github/workflows/build-desktop.yml b/.github/workflows/build-desktop.yml
+index c51804b..63056bc 100644
+--- a/.github/workflows/build-desktop.yml
++++ b/.github/workflows/build-desktop.yml
+@@ -133,7 +133,12 @@ jobs:
+           ./.github/scripts/install-desktop-linux-deps.sh
+ 
+       - name: Install dependencies
+-        run: pnpm install --frozen-lockfile
++        # --ignore-scripts blocks arbitrary package postinstalls. pnpm rebuild
++        # then runs only the allowlisted native builds in onlyBuiltDependencies
++        # (esbuild, sharp, and the rest in pnpm-workspace.yaml).
++        run: |
++          pnpm install --frozen-lockfile --ignore-scripts
++          pnpm rebuild
+ 
+       - name: Build frontend and dependencies
+         env:
+diff --git a/.github/workflows/lint-desktop.yml b/.github/workflows/lint-desktop.yml
+index a48a745..306255c 100644
+--- a/.github/workflows/lint-desktop.yml
++++ b/.github/workflows/lint-desktop.yml
+@@ -74,7 +74,12 @@ jobs:
+             libayatana-appindicator3-dev librsvg2-dev libasound2-dev libxdo-dev \
+             libgtk-layer-shell-dev imagemagick
+       - name: Install dependencies
+-        run: pnpm install --frozen-lockfile
++        # --ignore-scripts blocks arbitrary package postinstalls. pnpm rebuild
++        # then runs only the allowlisted native builds in onlyBuiltDependencies
++        # (esbuild, sharp, and the rest in pnpm-workspace.yaml).
++        run: |
++          pnpm install --frozen-lockfile --ignore-scripts
++          pnpm rebuild
+       - name: Build dependencies
+         run: pnpm exec turbo run build --filter=desktop^... --verbosity=2 --continue
+       - name: Lint TypeScript
+diff --git a/.github/workflows/release.yml b/.github/workflows/release.yml
+index 65ee386..17df861 100644
+--- a/.github/workflows/release.yml
++++ b/.github/workflows/release.yml
+@@ -63,7 +63,12 @@ jobs:
+           cache: pnpm
+           cache-dependency-path: pnpm-lock.yaml
+       - name: Install dependencies
+-        run: pnpm install --frozen-lockfile # NOSONAR
++        # --ignore-scripts blocks arbitrary package postinstalls. pnpm rebuild
++        # then runs only the allowlisted native builds in onlyBuiltDependencies
++        # (esbuild, sharp, and the rest in pnpm-workspace.yaml).
++        run: |
++          pnpm install --frozen-lockfile --ignore-scripts
++          pnpm rebuild
+       - name: Build workspace dependencies
+         run: pnpm exec turbo run build --filter=desktop^...
+       - name: Lint TypeScript
+@@ -222,9 +227,12 @@ jobs:
+           ./.github/scripts/install-desktop-linux-deps.sh
+ 
+       - name: Install dependencies
+-        # --ignore-scripts would skip the esbuild/sharp postinstall builds this
+-        # monorepo needs; mirrors build/lint/test workflows.
+-        run: pnpm install --frozen-lockfile # NOSONAR
++        # --ignore-scripts blocks arbitrary package postinstalls. pnpm rebuild
++        # then runs only the allowlisted native builds in onlyBuiltDependencies
++        # (esbuild, sharp, and the rest in pnpm-workspace.yaml).
++        run: |
++          pnpm install --frozen-lockfile --ignore-scripts
++          pnpm rebuild
+ 
+       - name: Sync release version
+         env:
+diff --git a/.github/workflows/test-desktop-integration.yml b/.github/workflows/test-desktop-integration.yml
+index 5d01490..4482316 100644
+--- a/.github/workflows/test-desktop-integration.yml
++++ b/.github/workflows/test-desktop-integration.yml
+@@ -35,7 +35,12 @@ jobs:
+           cache-dependency-path: |
+             pnpm-lock.yaml
+       - name: Install dependencies
+-        run: pnpm install --frozen-lockfile
++        # --ignore-scripts blocks arbitrary package postinstalls. pnpm rebuild
++        # then runs only the allowlisted native builds in onlyBuiltDependencies
++        # (esbuild, sharp, and the rest in pnpm-workspace.yaml).
++        run: |
++          pnpm install --frozen-lockfile --ignore-scripts
++          pnpm rebuild
+       - name: Build dependencies
+         run: pnpm exec turbo run build --filter=desktop^... --verbosity=2 --continue
+       - name: Create empty .env file since secrets are injected via env vars
+diff --git a/.github/workflows/test-desktop-unit.yml b/.github/workflows/test-desktop-unit.yml
+index 4167354..6be2fa9 100644
+--- a/.github/workflows/test-desktop-unit.yml
++++ b/.github/workflows/test-desktop-unit.yml
+@@ -33,7 +33,12 @@ jobs:
+           cache-dependency-path: |
+             pnpm-lock.yaml
+       - name: Install dependencies
+-        run: pnpm install --frozen-lockfile
++        # --ignore-scripts blocks arbitrary package postinstalls. pnpm rebuild
++        # then runs only the allowlisted native builds in onlyBuiltDependencies
++        # (esbuild, sharp, and the rest in pnpm-workspace.yaml).
++        run: |
++          pnpm install --frozen-lockfile --ignore-scripts
++          pnpm rebuild
+       - name: Build dependencies
+         run: pnpm exec turbo run build --filter=desktop^... --verbosity=2 --continue
+       - name: Run desktop unit tests

@@ -89,9 +89,12 @@ jobs:
           echo "CMAKE_TOOLCHAIN_FILE=$env:GITHUB_WORKSPACE\packages\rust_transcription\cmake\windows-ci-toolchain.cmake" >> $env:GITHUB_ENV
 
       - name: Install dependencies
-        # --ignore-scripts would skip the esbuild/sharp postinstall builds this
-        # monorepo needs; mirrors the release workflow.
-        run: pnpm install --frozen-lockfile # NOSONAR
+        # --ignore-scripts blocks arbitrary package postinstalls. pnpm rebuild
+        # then runs only the allowlisted native builds in onlyBuiltDependencies
+        # (esbuild, sharp, and the rest in pnpm-workspace.yaml).
+        run: |
+          pnpm install --frozen-lockfile --ignore-scripts
+          pnpm rebuild
 
       - name: Build frontend and dependencies
         env:

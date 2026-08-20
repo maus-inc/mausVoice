@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { spawnSync } from "node:child_process";
 import { existsSync, readFileSync, statSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -399,6 +400,93 @@ describe("PR28 workflow and public-asset contracts", () => {
     assert.match(source.docsWorkflow, /--ignore-scripts/);
     assert.match(source.docsWorkflow, /grep -RInE/);
     assert.match(source.docsWorkflow, /mausvoice-banner\.png/);
+  });
+
+  it("keeps a valid ignore-scripts patch for desktop GitHub workflows", () => {
+    const patchPath = "sonar_work/workflow-ignore-scripts.patch";
+    const promptPath = "sonar_work/APPLY_WORKFLOW_PATCH.md";
+    const workflowPaths = [
+      ".github/workflows/build-desktop.yml",
+      ".github/workflows/lint-desktop.yml",
+      ".github/workflows/release.yml",
+      ".github/workflows/test-desktop-integration.yml",
+      ".github/workflows/test-desktop-unit.yml",
+    ];
+    const patch = read(patchPath);
+    const prompt = read(promptPath);
+
+    assert.match(
+      prompt,
+      /git apply --check sonar_work\/workflow-ignore-scripts\.patch/,
+    );
+    assert.match(
+      prompt,
+      /git apply sonar_work\/workflow-ignore-scripts\.patch/,
+    );
+    assert.match(prompt, /NOSONAR/);
+    assert.match(prompt, /pnpm rebuild/);
+
+    for (const workflowPath of workflowPaths) {
+      assert.match(
+        patch,
+        new RegExp(`diff --git a/${workflowPath} b/${workflowPath}`),
+      );
+    }
+
+    const addedInstalls = [
+      ...patch.matchAll(/^\+[^+].*pnpm install[^\n]*/gm),
+    ].map((match) => match[0]);
+    assert.equal(addedInstalls.length, 6);
+    for (const line of addedInstalls) {
+      assert.match(line, /--ignore-scripts/);
+      assert.match(line, /--frozen-lockfile/);
+      assert.doesNotMatch(line, /NOSONAR/);
+    }
+    assert.match(patch, /^\+\s+pnpm rebuild$/m);
+
+    const installsAreSafe = (workflowText) => {
+      const installs = [...workflowText.matchAll(/pnpm install[^\n]*/g)].map(
+        (match) => match[0],
+      );
+      return (
+        installs.length > 0 &&
+        installs.every(
+          (install) =>
+            install.includes("--ignore-scripts") &&
+            install.includes("--frozen-lockfile") &&
+            !install.includes("NOSONAR"),
+        ) &&
+        workflowText.includes("pnpm rebuild")
+      );
+    };
+    const alreadyApplied = workflowPaths.every((workflowPath) =>
+      installsAreSafe(read(workflowPath)),
+    );
+    const check = spawnSync("git", ["apply", "--check", patchPath], {
+      cwd: repoRoot,
+      encoding: "utf8",
+    });
+    if (!alreadyApplied) {
+      assert.equal(check.status, 0, check.stderr || check.stdout);
+    }
+  });
+
+  it("installs personal-fork desktop CI dependencies without arbitrary lifecycle scripts", () => {
+    for (const workflowPath of [
+      "personal-fork-ci/workflows/build-desktop.yml",
+      "personal-fork-ci/workflows/lint-desktop.yml",
+    ]) {
+      const workflow = read(workflowPath);
+      const installs = [...workflow.matchAll(/pnpm install[^\n]*/g)].map(
+        (match) => match[0],
+      );
+      assert.ok(installs.length > 0, workflowPath);
+      for (const install of installs) {
+        assert.match(install, /--ignore-scripts/);
+        assert.match(install, /--frozen-lockfile/);
+      }
+      assert.match(workflow, /pnpm rebuild/);
+    }
   });
 
   it("assembles a complete project-Pages artifact at the documented base", () => {
