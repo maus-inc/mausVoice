@@ -197,6 +197,16 @@ Round 3 (reviewer re-verified case by case):
   entry. Strip is now an initial-origin latch with a TcpListener-driven
   redirect-chain test asserting the header never reaches a foreign origin,
   including on the hop back.
+- Round 4 (kilo-code-bot re-review of the merged head): deadline aborts counted
+  retryable (TimeoutError-name) — fixed; `logOnRejection` secondary-rejection
+  path — fixed; proxy-DNS residual for saved HTTPS endpoints — documented per
+  the accepted residual option; overstated picker comment — corrected in both
+  pickers. Three findings were refuted with evidence (rfd needs no backend
+  feature on macOS/Windows — no such features exist and both platform builds
+  stayed green; `Promise.race` keeps reactions attached so no loser goes
+  unhandled — measured 0 unhandled rejections; Escape capture+bubble
+  blocking — probed in jsdom showing the capture stopPropagation blocks the
+  bubble listener, matching the clarified DOM spec).
 - Conflicts with the docs overhaul PR (#125) were merged: base deletion of a
   stale plan file won, AGENTS.md took the union of both sides, and the base's
   more precise OpenAI doc paragraph was kept over mine.
