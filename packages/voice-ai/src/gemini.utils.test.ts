@@ -389,7 +389,7 @@ describe("Gemini native transport", () => {
 
 describe("Gemini retry policy edge cases", () => {
   it("shares one absolute deadline signal across retried attempts", async () => {
-    const signals: (AbortSignal | undefined)[] = [];
+    const signals: (AbortSignal | null | undefined)[] = [];
     const customFetch = vi
       .fn()
       .mockImplementation((_url: string, init?: RequestInit) => {
