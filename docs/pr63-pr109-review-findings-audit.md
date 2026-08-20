@@ -175,6 +175,31 @@ Docs:
 
 - `openai.md`: default transcription model is `whisper-1` (matches the code).
 
+## Post-review rounds on this branch
+
+Round 2 (self-review vs main's full REVIEW.md, before PR creation): `CI=false`
+truthiness in the sidecar script, and the i18n gate's placeholder exemption —
+both fixed pre-merge.
+
+Round 3 (reviewer re-verified case by case):
+- SonarCloud flagged my comparator ternary (S3358) and my splitting regex
+  (S8786 backtracking, S5843 complexity). The splitting regex was deleted
+  outright in favor of a line scanner, then restructured once more when that
+  scan introduced an optional-chain/startsWith/cognitive-complexity trio.
+- The kilocode review caught a true fence-semantics defect (info-string lines
+  inside fences closed the block) and my review of its report caught a second
+  one (block-boundary newlines were lost when rejoining segments). Both fixed
+  with exact-output regression tests, plus CRLF closing fences, leading-indent
+  preservation, and horizontal-only em-dash folding.
+- The same review caught the credential re-attachment flaw in my
+  cross-origin strip (per-hop comparison) and the dead `www-authenticate`
+  entry. Strip is now an initial-origin latch with a TcpListener-driven
+  redirect-chain test asserting the header never reaches a foreign origin,
+  including on the hop back.
+- Conflicts with the docs overhaul PR (#125) were merged: base deletion of a
+  stale plan file won, AGENTS.md took the union of both sides, and the base's
+  more precise OpenAI doc paragraph was kept over mine.
+
 ## Still open (out-of-band)
 
 - Rotate/revoke the token that may have been committed as `.ghtoken` and purge
