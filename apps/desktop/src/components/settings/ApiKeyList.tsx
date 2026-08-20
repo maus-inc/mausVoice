@@ -1,7 +1,4 @@
-import AddIcon from "@mui/icons-material/Add";
-import CheckRoundedIcon from "@mui/icons-material/CheckRounded";
-import DeleteOutlineIcon from "@mui/icons-material/DeleteOutlined";
-import EditOutlinedIcon from "@mui/icons-material/EditOutlined";
+import { Check, Pencil, Plus, Trash2 } from "lucide-react";
 import {
   Autocomplete,
   Box,
@@ -681,10 +678,11 @@ const ApiKeyCard = ({
               {apiKey.name}
             </Typography>
             {selected && (
-              <CheckRoundedIcon
-                fontSize="small"
-                sx={{ color: "text.primary", flexShrink: 0 }}
-                titleAccess={intl.formatMessage({ defaultMessage: "Selected" })}
+              <Check
+                size={16}
+                strokeWidth={1.9}
+                aria-label={intl.formatMessage({ defaultMessage: "Selected" })}
+                style={{ flexShrink: 0 }}
               />
             )}
           </Stack>
@@ -742,7 +740,7 @@ const ApiKeyCard = ({
                 }}
                 disabled={deleting || testing}
               >
-                <EditOutlinedIcon fontSize="small" />
+                <Pencil size={16} strokeWidth={1.9} />
               </IconButton>
             </span>
           </Tooltip>
@@ -757,7 +755,7 @@ const ApiKeyCard = ({
                 }}
                 disabled={deleting || testing}
               >
-                <DeleteOutlineIcon fontSize="small" />
+                <Trash2 size={16} strokeWidth={1.9} />
               </IconButton>
             </span>
           </Tooltip>
@@ -1050,7 +1048,7 @@ export const ApiKeyList = ({
       </Typography>
       <Button
         variant="contained"
-        startIcon={<AddIcon />}
+        startIcon={<Plus size={16} strokeWidth={1.9} />}
         onClick={() => setShowAddCard(true)}
       >
         <FormattedMessage defaultMessage="Add API key" />
@@ -1122,7 +1120,7 @@ export const ApiKeyList = ({
       ) : apiKeys.length > 0 || shouldShowError ? (
         <Button
           variant="outlined"
-          startIcon={<AddIcon />}
+          startIcon={<Plus size={16} strokeWidth={1.9} />}
           onClick={() => setShowAddCard(true)}
           sx={{ alignSelf: "flex-start" }}
         >

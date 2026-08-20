@@ -1,4 +1,4 @@
-import { Close } from "@mui/icons-material";
+import { X } from "lucide-react";
 import {
   Alert,
   Box,
@@ -169,7 +169,7 @@ export const StyleHotkeysDialog = () => {
             disabled={isSaving}
             sx={{ ml: 1, mt: -0.5 }}
           >
-            <Close fontSize="small" />
+            <X size={16} strokeWidth={1.9} />
           </IconButton>
         </Box>
       </DialogTitle>
@@ -234,7 +234,7 @@ export const StyleHotkeysDialog = () => {
                     )
                   }
                 >
-                  <Close fontSize="small" color="disabled" />
+                  <X size={16} strokeWidth={1.9} />
                 </IconButton>
               )}
             </Stack>

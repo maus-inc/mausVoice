@@ -1,10 +1,4 @@
-import {
-  Deselect,
-  Edit,
-  InfoOutlined,
-  MoreVert,
-  PublicOutlined,
-} from "@mui/icons-material";
+import { CircleMinus, EllipsisVertical, Globe, Info, Pencil, Trash2 } from "lucide-react";
 import {
   Box,
   IconButton,
@@ -96,16 +90,19 @@ export const ManualStylingRow = ({ id }: ManualStylingRowProps) => {
     if (canEdit) {
       items.push({
         label: intl.formatMessage({ defaultMessage: "Edit" }),
+        icon: <Pencil size={16} strokeWidth={1.9} />,
         onClick: handleEdit,
       });
     }
     items.push({
       label: intl.formatMessage({ defaultMessage: "View full prompt" }),
+      icon: <Info size={16} strokeWidth={1.9} />,
       onClick: handleViewPrompt,
     });
     if (canDeselect) {
       items.push({
         label: intl.formatMessage({ defaultMessage: "Deselect style" }),
+        icon: <CircleMinus size={16} strokeWidth={1.9} />,
         onClick: handleDeselect,
       });
     }
@@ -114,6 +111,7 @@ export const ManualStylingRow = ({ id }: ManualStylingRowProps) => {
         { kind: "divider" },
         {
           label: intl.formatMessage({ defaultMessage: "Delete" }),
+          icon: <Trash2 size={16} strokeWidth={1.9} />,
           danger: true,
           onClick: () => deleteTone(id),
         },
@@ -137,7 +135,7 @@ export const ManualStylingRow = ({ id }: ManualStylingRowProps) => {
       items.push({
         kind: "listItem",
         title: <FormattedMessage defaultMessage="Edit" />,
-        leading: <Edit fontSize="small" />,
+        leading: <Pencil size={16} strokeWidth={1.9} />,
         onClick: ({ close }) => {
           close();
           handleEdit();
@@ -147,7 +145,7 @@ export const ManualStylingRow = ({ id }: ManualStylingRowProps) => {
     items.push({
       kind: "listItem",
       title: <FormattedMessage defaultMessage="View full prompt" />,
-      leading: <InfoOutlined fontSize="small" />,
+      leading: <Info size={16} strokeWidth={1.9} />,
       onClick: ({ close }) => {
         close();
         handleViewPrompt();
@@ -157,7 +155,7 @@ export const ManualStylingRow = ({ id }: ManualStylingRowProps) => {
       items.push({
         kind: "listItem",
         title: <FormattedMessage defaultMessage="Deselect style" />,
-        leading: <Deselect fontSize="small" />,
+        leading: <CircleMinus size={16} strokeWidth={1.9} />,
         onClick: ({ close }) => {
           close();
           handleDeselect();
@@ -194,9 +192,9 @@ export const ManualStylingRow = ({ id }: ManualStylingRowProps) => {
           }
         >
           <span>
-            <IconButton size="small" disabled>
-              <PublicOutlined fontSize="small" />
-            </IconButton>
+              <IconButton size="small" disabled>
+                <Globe size={16} strokeWidth={1.9} />
+              </IconButton>
           </span>
         </Tooltip>
       )}
