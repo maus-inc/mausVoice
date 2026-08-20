@@ -16,6 +16,10 @@ const { loggerMock } = vi.hoisted(() => ({
 }));
 
 vi.mock("../utils/log.utils", () => ({ getLogger: () => loggerMock }));
+vi.mock("@tauri-apps/plugin-http", () => ({
+  fetch: (...args: Parameters<typeof globalThis.fetch>) =>
+    globalThis.fetch(...args),
+}));
 
 const staleOllamaState = () => {
   const state = structuredClone(INITIAL_APP_STATE);

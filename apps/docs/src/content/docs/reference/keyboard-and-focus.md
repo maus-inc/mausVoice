@@ -11,6 +11,6 @@ With **Paste**, the backend probes the focused target for up to 500 ms. A clearl
 
 With **Simulate typing**, mausVoice emits text into the current field over time using the selected per-character delay. Focus can move midway through a long result, and cancellation can stop the remaining synthetic events. Rich editors may transform individual keystrokes differently from one clipboard insertion.
 
-Focused executable identity also selects app-target overrides for insertion method, paste binding, typing delay, and style. Browser tabs usually share one browser identity; Store/sandboxed and conventional builds of the “same” app can resolve differently. App styling and insertion selection use that identity, not the page title alone.
+Focused executable identity also selects app-target overrides for insertion method, paste binding, typing delay, and style. Browser tabs usually share one browser identity; Store/sandboxed and conventional builds of the "same" app can resolve differently. App styling and insertion selection use that identity, not the page title alone.
 
 For predictable delivery, keep the intended caret active until the pill returns to idle. If output lands elsewhere, retry in a plain editor with post-processing off, then compare Paste and Simulate typing. A successful transcription visible in History points to focus/delivery rather than microphone recognition; no History record points earlier in the pipeline. See [Text was produced but not inserted](../../troubleshooting/text-not-inserted/) for the decision path.

@@ -21,6 +21,6 @@ The recording pill is a status indicator, not the destination for text. Keep the
 
 **Transcription** turns audio into raw text. Local mode runs the bundled Rust/Whisper sidecar on your computer. API mode sends audio to the provider attached to the selected key.
 
-**Post-processing** is optional and happens after transcription. When enabled, it sends transcript text—not a promise of local-only processing—to the selected generative provider and applies the active style. Set **Settings → Processing → AI post processing** to **Off** when raw output is preferable.
+**Post-processing** is optional and happens after transcription. When enabled, it sends transcript text to the selected generative provider and applies the active style; enabling it means the flow is no longer local-only. Set **Settings → Processing → AI post processing** to **Off** when raw output is preferable.
 
 No account is required for the local and bring-your-own-key paths. Provider accounts, network access, retention, and charges depend on the external service you choose.

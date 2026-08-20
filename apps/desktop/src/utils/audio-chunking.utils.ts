@@ -16,6 +16,7 @@ export type AudioChunkPumpCallbacks = {
    */
   sendChunk: (chunk: Float32Array, isLastChunk: boolean) => void;
   onError: (error: unknown) => void;
+  maxBufferedSamples?: number;
 };
 
 /**
@@ -47,6 +48,7 @@ export const createAudioChunkPump = ({
   canSend,
   sendChunk,
   onError,
+  maxBufferedSamples,
 }: AudioChunkPumpCallbacks): AudioChunkPump => {
   const minSamplesPerChunk = Math.max(
     1,
@@ -156,6 +158,12 @@ export const createAudioChunkPump = ({
   };
 
   const pushSamples = (samples: Float32Array) => {
+    if (
+      maxBufferedSamples !== undefined &&
+      pendingSampleCount + samples.length > maxBufferedSamples
+    ) {
+      throw new Error("Audio startup buffer limit exceeded.");
+    }
     // Copy on push so the pending queue owns its buffers. drainSamples keeps
     // subarray views into these chunks; without the copy a caller that reuses
     // its source buffer could mutate audio we have not yet sent.

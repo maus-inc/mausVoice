@@ -6,6 +6,7 @@ const buildPump = (
     sampleRate: number;
     minChunkDurationMs: number;
     maxChunkDurationMs: number;
+    maxBufferedSamples: number;
     canSend: () => boolean;
   }> = {},
 ) => {
@@ -15,6 +16,7 @@ const buildPump = (
     sampleRate: overrides.sampleRate ?? 16000,
     minChunkDurationMs: overrides.minChunkDurationMs ?? 100,
     maxChunkDurationMs: overrides.maxChunkDurationMs ?? 1000,
+    maxBufferedSamples: overrides.maxBufferedSamples,
     canSend: overrides.canSend ?? (() => true),
     sendChunk: (chunk, isLastChunk) => sent.push({ chunk, isLastChunk }),
     onError,
@@ -58,6 +60,18 @@ describe("createAudioChunkPump", () => {
     pump.pushSamples(new Float32Array(5000));
     pump.flushPendingSamples(true);
 
+    expect(sent).toHaveLength(0);
+  });
+
+  it("bounds pre-initialization audio buffering", () => {
+    const { pump, sent } = buildPump({
+      canSend: () => false,
+      maxBufferedSamples: 100,
+    });
+    pump.pushSamples(new Float32Array(80));
+    expect(() => pump.pushSamples(new Float32Array(21))).toThrow(
+      "Audio startup buffer limit exceeded",
+    );
     expect(sent).toHaveLength(0);
   });
 

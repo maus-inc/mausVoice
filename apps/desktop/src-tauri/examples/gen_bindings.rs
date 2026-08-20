@@ -64,6 +64,7 @@ fn main() {
         paired_remote_device_upsert,
         paste,
         private_http_request,
+        openai_compatible_http_request,
         pause_recording,
         play_audio,
         purge_stale_transcription_audio,

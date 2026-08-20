@@ -11,17 +11,25 @@ import type {
 } from "@maus-inc/types";
 import { openaiCompatibleStreamChat } from "./openai.utils";
 import { contentToString } from "./transcription.utils";
+import type { CustomFetch, DiscoveredModelId } from "./types";
 
-export const DEEPSEEK_MODELS = ["deepseek-chat", "deepseek-reasoner"] as const;
-export type DeepseekModel = (typeof DEEPSEEK_MODELS)[number];
+// Current hosted IDs from https://api-docs.deepseek.com/quick_start/pricing/.
+// The legacy deepseek-chat/deepseek-reasoner aliases were retired in July 2026.
+export const DEEPSEEK_MODELS = [
+  "deepseek-v4-flash",
+  "deepseek-v4-pro",
+] as const;
+export type DeepseekModel =
+  (typeof DEEPSEEK_MODELS)[number] | DiscoveredModelId;
 
 const DEEPSEEK_BASE_URL = "https://api.deepseek.com";
 
-const createClient = (apiKey: string) => {
+const createClient = (apiKey: string, customFetch?: CustomFetch) => {
   return new OpenAI({
     apiKey: apiKey.trim(),
     baseURL: DEEPSEEK_BASE_URL,
-    dangerouslyAllowBrowser: true, // This is safe because mausVoice natively on desktop
+    dangerouslyAllowBrowser: true,
+    fetch: customFetch,
   });
 };
 
@@ -31,6 +39,7 @@ export type DeepseekGenerateTextArgs = {
   system?: string;
   prompt: string;
   jsonResponse?: JsonResponse;
+  customFetch?: CustomFetch;
 };
 
 export type DeepseekGenerateResponseOutput = {
@@ -40,15 +49,16 @@ export type DeepseekGenerateResponseOutput = {
 
 export const deepseekGenerateTextResponse = async ({
   apiKey,
-  model = "deepseek-chat",
+  model = DEEPSEEK_MODELS[0],
   system,
   prompt,
   jsonResponse,
+  customFetch,
 }: DeepseekGenerateTextArgs): Promise<DeepseekGenerateResponseOutput> => {
   return retry({
     retries: 3,
     fn: async () => {
-      const client = createClient(apiKey);
+      const client = createClient(apiKey, customFetch);
 
       const messages: ChatCompletionMessageParam[] = [];
       if (system) {
@@ -94,42 +104,16 @@ export const deepseekGenerateTextResponse = async ({
 
 export type DeepseekTestIntegrationArgs = {
   apiKey: string;
+  customFetch?: CustomFetch;
 };
 
 export const deepseekTestIntegration = async ({
   apiKey,
+  customFetch,
 }: DeepseekTestIntegrationArgs): Promise<boolean> => {
-  const client = createClient(apiKey);
-
-  const response = await client.chat.completions.create({
-    messages: [
-      {
-        role: "user",
-        content: [
-          {
-            type: "text",
-            text: `Reply with the single word "Hello."`,
-          },
-        ],
-      },
-    ],
-    model: "deepseek-chat",
-    temperature: 0,
-    max_tokens: 32,
-    top_p: 1,
-  });
-
-  if (!response.choices || response.choices.length === 0) {
-    throw new Error("No response from DeepSeek");
-  }
-
-  const first = response.choices[0];
-  const content = contentToString(first?.message?.content);
-  if (!content) {
-    throw new Error("Response content is empty");
-  }
-
-  return content.toLowerCase().includes("hello");
+  const client = createClient(apiKey, customFetch);
+  await client.models.list();
+  return true;
 };
 
 // ============================================================================
@@ -140,13 +124,15 @@ export type DeepseekStreamChatArgs = {
   apiKey: string;
   model: string;
   input: LlmChatInput;
+  customFetch?: CustomFetch;
 };
 
 export async function* deepseekStreamChat({
   apiKey,
   model,
   input,
+  customFetch,
 }: DeepseekStreamChatArgs): AsyncGenerator<LlmStreamEvent> {
-  const client = createClient(apiKey);
+  const client = createClient(apiKey, customFetch);
   yield* openaiCompatibleStreamChat(client, model, input);
 }

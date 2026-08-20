@@ -7,10 +7,22 @@ import {
   DEEPSEEK_MODELS,
   GEMINI_GENERATE_TEXT_MODELS,
   GEMINI_TRANSCRIPTION_MODELS,
-  XAI_TRANSCRIPTION_MODELS,
+  GLADIA_TRANSCRIPTION_MODELS,
+  GENERATE_TEXT_MODELS,
+  OPENAI_GENERATE_TEXT_MODELS,
+  OPENAI_TRANSCRIPTION_MODELS,
+  TRANSCRIPTION_MODELS,
 } from "@maus-inc/voice-ai";
-import { secureFetch as fetch } from "../utils/secure-fetch.utils";
+import {
+  createOpenAICompatibleFetch,
+  secureFetch as fetch,
+} from "../utils/secure-fetch.utils";
+import { getLogger } from "../utils/log.utils";
 import { getOllamaHeaders } from "../utils/ollama.utils";
+import {
+  appendOpenAICompatiblePath,
+  buildOpenAICompatibleUrl,
+} from "../utils/openai-compatible.utils";
 import { BaseRepo } from "./base.repo";
 
 type OpenAIListResponse = {
@@ -18,12 +30,17 @@ type OpenAIListResponse = {
 };
 
 type GeminiListResponse = {
-  models?: Array<{ name?: string }>;
+  models?: Array<{
+    name?: string;
+    supportedGenerationMethods?: string[];
+  }>;
 };
 
 export type FetchModelsOptions = {
   apiKey?: string;
+  apiKeyId?: string;
   baseUrl?: string;
+  includeV1Path?: boolean | null;
 };
 
 export abstract class BaseModelProviderRepo extends BaseRepo {
@@ -37,37 +54,103 @@ export abstract class BaseModelProviderRepo extends BaseRepo {
   ): Promise<string[]>;
 }
 
+const logModelDiscoveryFailure = (provider: string, reason: string): void => {
+  // Do not log request URLs or caught errors: some providers put credentials
+  // in the query string, and native transport errors may echo those URLs.
+  getLogger().verbose(`${provider} model discovery failed (${reason})`);
+};
+
+const logModelDiscoveryResponseFailure = (
+  provider: string,
+  response: Response,
+): void => {
+  const statusText = response.statusText.trim();
+  const reason = [`HTTP ${response.status}`, statusText]
+    .filter(Boolean)
+    .join(" ");
+  logModelDiscoveryFailure(provider, reason);
+};
+
 async function fetchOpenAICompatibleModels(
+  provider: string,
   url: string,
   apiKey: string,
 ): Promise<string[]> {
-  const response = await fetch(url, {
-    headers: { Authorization: `Bearer ${apiKey}` },
-  });
-  if (!response.ok) return [];
-  const payload = (await response.json()) as OpenAIListResponse;
-  return (payload.data ?? [])
-    .map((m) => (m.id ?? "").trim())
-    .filter(Boolean)
-    .sort((a, b) => a.localeCompare(b));
+  try {
+    const response = await fetch(url, {
+      headers: { Authorization: `Bearer ${apiKey}` },
+    });
+    if (!response.ok) {
+      logModelDiscoveryResponseFailure(provider, response);
+      return [];
+    }
+    const payload = (await response.json()) as OpenAIListResponse;
+    return (payload.data ?? [])
+      .map((m) => (m.id ?? "").trim())
+      .filter(Boolean)
+      .sort((a, b) => a.localeCompare(b));
+  } catch {
+    logModelDiscoveryFailure(provider, "request or response parsing failed");
+    return [];
+  }
 }
 
 function isWhisperModel(modelId: string): boolean {
   return modelId.includes("whisper");
 }
 
-function isOpenAITranscriptionModel(modelId: string): boolean {
-  return isWhisperModel(modelId) || modelId.includes("transcribe");
+function isGroqGenerativeModel(modelId: string): boolean {
+  return !["orpheus", "prompt-guard", "safeguard", "whisper"].some((marker) =>
+    modelId.includes(marker),
+  );
 }
 
-function filterFetchedModels(
-  fetched: string[],
-  allowList: readonly string[],
-): string[] {
-  if (fetched.length === 0) return [...allowList];
-  const allowed = new Set<string>(allowList);
-  const filtered = fetched.filter((m) => allowed.has(m));
-  return filtered.length > 0 ? filtered : [...allowList];
+function isOpenAITranscriptionModel(modelId: string): boolean {
+  return (
+    modelId === "whisper-1" ||
+    modelId.startsWith("gpt-4o-transcribe") ||
+    modelId.startsWith("gpt-4o-mini-transcribe")
+  );
+}
+
+function isOpenAIGenerativeModel(modelId: string): boolean {
+  if (!/^(gpt-|o\d)/.test(modelId)) return false;
+  return ![
+    "audio",
+    "embedding",
+    "image",
+    "live",
+    "moderation",
+    "realtime",
+    "transcribe",
+    "tts",
+    "whisper",
+  ].some((marker) => modelId.includes(marker));
+}
+
+function isGeneralGeminiModel(modelId: string): boolean {
+  if (!modelId.startsWith("gemini-")) return false;
+  return ![
+    "-audio",
+    "-computer-use",
+    "-embedding",
+    "-image",
+    "-live",
+    "-native-audio",
+    "-omni-",
+    "-robotics",
+    "-tts",
+  ].some((marker) => modelId.includes(marker));
+}
+
+function isGeminiTranscriptionModel(modelId: string): boolean {
+  // Gemini transcription is done via generateContent with audio input, so
+  // the same general-model filter applies. A few variants are then dropped
+  // because they do not support the audio-input transcription path.
+  if (!isGeneralGeminiModel(modelId)) return false;
+  // Exclude reasoning/search-augmented Gemini variants, which are not served
+  // through the audio-input generateContent transcription path.
+  return !["-thinking", "-search"].some((marker) => modelId.includes(marker));
 }
 
 export class GroqModelProviderRepo extends BaseModelProviderRepo {
@@ -82,6 +165,7 @@ export class GroqModelProviderRepo extends BaseModelProviderRepo {
   private async fetchModels(options: FetchModelsOptions): Promise<string[]> {
     if (!options.apiKey) return [];
     return fetchOpenAICompatibleModels(
+      "Groq",
       "https://api.groq.com/openai/v1/models",
       options.apiKey,
     );
@@ -91,12 +175,14 @@ export class GroqModelProviderRepo extends BaseModelProviderRepo {
     options: FetchModelsOptions,
   ): Promise<string[]> {
     const fetched = await this.fetchModels(options);
-    return fetched.filter((m) => !isWhisperModel(m));
+    const models = fetched.filter(isGroqGenerativeModel);
+    return models.length > 0 ? models : [...GENERATE_TEXT_MODELS];
   }
 
   async getTranscriptionModels(options: FetchModelsOptions): Promise<string[]> {
     const fetched = await this.fetchModels(options);
-    return fetched.filter(isWhisperModel);
+    const models = fetched.filter(isWhisperModel);
+    return models.length > 0 ? models : [...TRANSCRIPTION_MODELS];
   }
 }
 
@@ -112,6 +198,7 @@ export class OpenAIModelProviderRepo extends BaseModelProviderRepo {
   private async fetchModels(options: FetchModelsOptions): Promise<string[]> {
     if (!options.apiKey) return [];
     return fetchOpenAICompatibleModels(
+      "OpenAI",
       "https://api.openai.com/v1/models",
       options.apiKey,
     );
@@ -120,13 +207,17 @@ export class OpenAIModelProviderRepo extends BaseModelProviderRepo {
   async getGenerativeTextModels(
     options: FetchModelsOptions,
   ): Promise<string[]> {
-    const fetched = await this.fetchModels(options);
-    return fetched.filter((m) => !isOpenAITranscriptionModel(m));
+    const models = (await this.fetchModels(options)).filter(
+      isOpenAIGenerativeModel,
+    );
+    return models.length > 0 ? models : [...OPENAI_GENERATE_TEXT_MODELS];
   }
 
   async getTranscriptionModels(options: FetchModelsOptions): Promise<string[]> {
-    const fetched = await this.fetchModels(options);
-    return fetched.filter(isOpenAITranscriptionModel);
+    const models = (await this.fetchModels(options)).filter(
+      isOpenAITranscriptionModel,
+    );
+    return models.length > 0 ? models : [...OPENAI_TRANSCRIPTION_MODELS];
   }
 }
 
@@ -141,21 +232,29 @@ export class ClaudeModelProviderRepo extends BaseModelProviderRepo {
 
   private async fetchModels(options: FetchModelsOptions): Promise<string[]> {
     if (!options.apiKey) return [];
-    const response = await fetch(
-      "https://api.anthropic.com/v1/models?limit=100",
-      {
-        headers: {
-          "x-api-key": options.apiKey,
-          "anthropic-version": "2023-06-01",
+    try {
+      const response = await fetch(
+        "https://api.anthropic.com/v1/models?limit=100",
+        {
+          headers: {
+            "x-api-key": options.apiKey,
+            "anthropic-version": "2023-06-01",
+          },
         },
-      },
-    );
-    if (!response.ok) return [];
-    const payload = (await response.json()) as OpenAIListResponse;
-    return (payload.data ?? [])
-      .map((m) => (m.id ?? "").trim())
-      .filter(Boolean)
-      .sort((a, b) => a.localeCompare(b));
+      );
+      if (!response.ok) {
+        logModelDiscoveryResponseFailure("Claude", response);
+        return [];
+      }
+      const payload = (await response.json()) as OpenAIListResponse;
+      return (payload.data ?? [])
+        .map((m) => (m.id ?? "").trim())
+        .filter(Boolean)
+        .sort((a, b) => a.localeCompare(b));
+    } catch {
+      logModelDiscoveryFailure("Claude", "request or response parsing failed");
+      return [];
+    }
   }
 
   async getGenerativeTextModels(
@@ -182,6 +281,7 @@ export class CerebrasModelProviderRepo extends BaseModelProviderRepo {
   private async fetchModels(options: FetchModelsOptions): Promise<string[]> {
     if (!options.apiKey) return [];
     return fetchOpenAICompatibleModels(
+      "Cerebras",
       "https://api.cerebras.ai/v1/models",
       options.apiKey,
     );
@@ -211,6 +311,7 @@ export class DeepSeekModelProviderRepo extends BaseModelProviderRepo {
   private async fetchModels(options: FetchModelsOptions): Promise<string[]> {
     if (!options.apiKey) return [];
     return fetchOpenAICompatibleModels(
+      "DeepSeek",
       "https://api.deepseek.com/models",
       options.apiKey,
     );
@@ -241,25 +342,39 @@ export class GeminiModelProviderRepo extends BaseModelProviderRepo {
     options: FetchModelsOptions,
   ): Promise<string[]> {
     const fetched = await this.fetchModels(options);
-    return filterFetchedModels(fetched, GEMINI_GENERATE_TEXT_MODELS);
+    return fetched.length > 0 ? fetched : [...GEMINI_GENERATE_TEXT_MODELS];
   }
 
   async getTranscriptionModels(options: FetchModelsOptions): Promise<string[]> {
-    const fetched = await this.fetchModels(options);
-    return filterFetchedModels(fetched, GEMINI_TRANSCRIPTION_MODELS);
+    const fetched = (await this.fetchModels(options)).filter(
+      isGeminiTranscriptionModel,
+    );
+    return fetched.length > 0 ? fetched : [...GEMINI_TRANSCRIPTION_MODELS];
   }
 
   private async fetchModels(options: FetchModelsOptions): Promise<string[]> {
     if (!options.apiKey) return [];
-    const response = await fetch(
-      `https://generativelanguage.googleapis.com/v1beta/models?key=${encodeURIComponent(options.apiKey)}&pageSize=1000`,
-    );
-    if (!response.ok) return [];
-    const payload = (await response.json()) as GeminiListResponse;
-    return (payload.models ?? [])
-      .map((m) => (m.name ?? "").replace(/^models\//, "").trim())
-      .filter(Boolean)
-      .sort((a, b) => a.localeCompare(b));
+    try {
+      const response = await fetch(
+        "https://generativelanguage.googleapis.com/v1beta/models?pageSize=1000",
+        { headers: { "x-goog-api-key": options.apiKey } },
+      );
+      if (!response.ok) {
+        logModelDiscoveryResponseFailure("Gemini", response);
+        return [];
+      }
+      const payload = (await response.json()) as GeminiListResponse;
+      return (payload.models ?? [])
+        .filter((m) =>
+          (m.supportedGenerationMethods ?? []).includes("generateContent"),
+        )
+        .map((m) => (m.name ?? "").replace(/^models\//, "").trim())
+        .filter(isGeneralGeminiModel)
+        .sort((a, b) => a.localeCompare(b));
+    } catch {
+      logModelDiscoveryFailure("Gemini", "request or response parsing failed");
+      return [];
+    }
   }
 }
 
@@ -292,7 +407,10 @@ export class AzureModelProviderRepo extends BaseModelProviderRepo {
         headers: { "api-key": options.apiKey },
       },
     );
-    if (!response.ok) return [];
+    if (!response.ok) {
+      logModelDiscoveryResponseFailure("Azure OpenAI", response);
+      return [];
+    }
     const payload = (await response.json()) as OpenAIListResponse;
     return (payload.data ?? [])
       .map((m) => (m.id ?? "").trim())
@@ -331,7 +449,10 @@ export class OllamaModelProviderRepo extends BaseModelProviderRepo {
     const response = await fetch(new URL("/api/tags", options.baseUrl).href, {
       headers: getOllamaHeaders(options.apiKey),
     });
-    if (!response.ok) return [];
+    if (!response.ok) {
+      logModelDiscoveryResponseFailure("Ollama", response);
+      return [];
+    }
     const payload = (await response.json()) as {
       models?: Array<{ name?: string }>;
     };
@@ -361,11 +482,20 @@ export class OpenAICompatibleModelProviderRepo extends BaseModelProviderRepo {
   }
 
   private async fetchModels(options: FetchModelsOptions): Promise<string[]> {
-    if (!options.baseUrl) return [];
-    const response = await fetch(new URL("/v1/models", options.baseUrl).href, {
-      headers: getOllamaHeaders(options.apiKey),
-    });
-    if (!response.ok) return [];
+    if (!options.baseUrl || !options.apiKeyId) return [];
+    const apiBaseUrl = buildOpenAICompatibleUrl(
+      options.baseUrl,
+      options.includeV1Path,
+    );
+    const customFetch = createOpenAICompatibleFetch(options.apiKeyId);
+    const response = await customFetch(
+      appendOpenAICompatiblePath(apiBaseUrl, "models"),
+      { headers: getOllamaHeaders(options.apiKey) },
+    );
+    if (!response.ok) {
+      logModelDiscoveryResponseFailure("OpenAI-compatible", response);
+      return [];
+    }
     const payload = (await response.json()) as OpenAIListResponse;
     return (payload.data ?? [])
       .map((m) => (m.id ?? "").trim())
@@ -390,7 +520,10 @@ export class SpeachesModelProviderRepo extends BaseModelProviderRepo {
   async getTranscriptionModels(options: FetchModelsOptions): Promise<string[]> {
     if (!options.baseUrl) return [];
     const response = await fetch(new URL("/v1/models", options.baseUrl).href);
-    if (!response.ok) return [];
+    if (!response.ok) {
+      logModelDiscoveryResponseFailure("Speaches", response);
+      return [];
+    }
     const payload = (await response.json()) as OpenAIListResponse;
     return (payload.data ?? [])
       .map((m) => (m.id ?? "").trim())
@@ -413,6 +546,7 @@ export class OpenRouterModelProviderRepo extends BaseModelProviderRepo {
   ): Promise<string[]> {
     if (!options.apiKey) return [];
     return fetchOpenAICompatibleModels(
+      "OpenRouter",
       "https://openrouter.ai/api/v1/models",
       options.apiKey,
     );
@@ -477,6 +611,24 @@ export class ElevenLabsModelProviderRepo extends BaseModelProviderRepo {
   }
 }
 
+export class GladiaModelProviderRepo extends BaseModelProviderRepo {
+  supportsGenerativeTextModels(): boolean {
+    return false;
+  }
+
+  supportsTranscriptionModels(): boolean {
+    return true;
+  }
+
+  async getGenerativeTextModels(): Promise<string[]> {
+    return [];
+  }
+
+  async getTranscriptionModels(): Promise<string[]> {
+    return [...GLADIA_TRANSCRIPTION_MODELS];
+  }
+}
+
 export class XaiModelProviderRepo extends BaseModelProviderRepo {
   supportsGenerativeTextModels(): boolean {
     return false;
@@ -491,7 +643,8 @@ export class XaiModelProviderRepo extends BaseModelProviderRepo {
   }
 
   async getTranscriptionModels(): Promise<string[]> {
-    return [...XAI_TRANSCRIPTION_MODELS];
+    // xAI's dedicated /v1/stt API does not accept a model parameter.
+    return [];
   }
 }
 

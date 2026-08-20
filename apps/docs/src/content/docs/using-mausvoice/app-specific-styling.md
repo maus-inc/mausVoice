@@ -22,6 +22,6 @@ On Windows and Linux, the row's overflow menu also exposes a per-app paste bindi
 
 Manual mode normally uses the currently selected style. When **Settings → General → More settings → Automatic style loading** is on, starting an ordinary dictation makes a best-effort, non-blocking attempt to load the style previously stored for the focused app. When dictation ends, the current manual style is saved back to that app target. Turn the switch off if one manual choice should remain fixed as you move between apps.
 
-Automatic loading applies only in Manual mode and ordinary dictation—not Assistant recording or the onboarding override. Because lookup is asynchronous, focus changes during startup can make the current selection the safer source of truth.
+Automatic loading applies only in Manual mode and ordinary dictation, not Assistant recording or the onboarding override. Because lookup is asynchronous, focus changes during startup can make the current selection the safer source of truth.
 
 Foreground-app detection is best-effort. Elevated windows, remote desktops, sandboxes, unusual window managers, and fast focus changes can produce an unknown or different app name. If output uses the wrong style, inspect the app row, keep focus on the destination through release, or use Manual mode with automatic loading off.

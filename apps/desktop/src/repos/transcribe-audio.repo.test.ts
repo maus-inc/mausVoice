@@ -6,6 +6,7 @@ import {
   AssemblyAITranscribeAudioRepo,
   BaseTranscribeAudioRepo,
   DeepgramTranscribeAudioRepo,
+  GladiaTranscribeAudioRepo,
   LocalTranscribeAudioRepo,
   TranscribeAudioOutput,
   TranscribeSegmentInput,
@@ -389,7 +390,11 @@ describe("DeepgramTranscribeAudioRepo", () => {
         { status: 200 },
       ),
     );
-    const repo = new DeepgramTranscribeAudioRepo("dg-key", null);
+    const repo = new DeepgramTranscribeAudioRepo(
+      "dg-key",
+      null,
+      globalThis.fetch,
+    );
 
     const result = await repo.transcribeAudio({
       samples: createSamples(1, 16000),
@@ -427,6 +432,53 @@ describe("DeepgramTranscribeAudioRepo", () => {
 
     expect(repo).toBeInstanceOf(DeepgramTranscribeAudioRepo);
     expect(apiKeyId).toBe("deepgram-key");
+  });
+});
+
+describe("GladiaTranscribeAudioRepo", () => {
+  it("is selected with Gladia's supported model", () => {
+    const state = structuredClone(INITIAL_APP_STATE);
+    state.settings.aiTranscription.mode = "api";
+    state.settings.aiTranscription.selectedApiKeyId = "gladia-key";
+    state.apiKeyById["gladia-key"] = {
+      id: "gladia-key",
+      name: "Gladia",
+      provider: "gladia",
+      createdAt: "2026-08-19T00:00:00.000Z",
+      keyFull: "gladia-secret",
+      transcriptionModel: "solaria-1",
+    };
+    setAppState(state, true);
+
+    const { repo, apiKeyId } = getTranscribeAudioRepo();
+
+    expect(repo).toBeInstanceOf(GladiaTranscribeAudioRepo);
+    expect(apiKeyId).toBe("gladia-key");
+    expect(getModelProviderRepo("gladia").supportsTranscriptionModels()).toBe(
+      true,
+    );
+  });
+
+  it("uses 10-minute chunks, five-second overlap, and concurrency one", () => {
+    class InspectableGladiaRepo extends GladiaTranscribeAudioRepo {
+      getChunkingConfiguration() {
+        return {
+          duration: this.getSegmentDurationSec(),
+          overlap: this.getOverlapDurationSec(),
+          concurrency: this.getBatchChunkCount(),
+        };
+      }
+    }
+
+    const repo = new InspectableGladiaRepo("key", "solaria-1", {
+      vocabulary: [],
+      spellingDictionary: {},
+    });
+    expect(repo.getChunkingConfiguration()).toEqual({
+      duration: 600,
+      overlap: 5,
+      concurrency: 1,
+    });
   });
 });
 
@@ -488,7 +540,7 @@ describe("AssemblyAITranscribeAudioRepo", () => {
       },
     );
 
-    const repo = new AssemblyAITranscribeAudioRepo("aa-key", null);
+    const repo = new AssemblyAITranscribeAudioRepo("aa-key", null, globalThis.fetch);
     const result = await repo.transcribeAudio({
       samples: createSamples(1, 16000),
       sampleRate: 16000,
@@ -540,7 +592,11 @@ describe("AssemblyAITranscribeAudioRepo", () => {
       },
     );
 
-    const repo = new AssemblyAITranscribeAudioRepo("aa-key", "universal-2");
+    const repo = new AssemblyAITranscribeAudioRepo(
+      "aa-key",
+      "universal-2",
+      globalThis.fetch,
+    );
     const result = await repo.transcribeAudio({
       samples: createSamples(1, 16000),
       sampleRate: 16000,
@@ -590,7 +646,11 @@ describe("AssemblyAITranscribeAudioRepo", () => {
       },
     );
 
-    const repo = new AssemblyAITranscribeAudioRepo("aa-key", "best");
+    const repo = new AssemblyAITranscribeAudioRepo(
+      "aa-key",
+      "best",
+      globalThis.fetch,
+    );
     const result = await repo.transcribeAudio({
       samples: createSamples(1, 16000),
       sampleRate: 16000,

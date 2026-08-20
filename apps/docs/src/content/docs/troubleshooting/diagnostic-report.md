@@ -17,4 +17,4 @@ Before filing, reproduce on the latest relevant release and search existing [Git
 
 Replace private speech with a neutral sentence that still reproduces the bug. Inspect diagnostics for account or user metadata. Never include API keys, encrypted database blobs as if they were harmless, or private audio.
 
-One report should describe one failure boundary. “Nothing works” is hard to act on; “History has correct raw text, clipboard is correct, Shift+Insert does not fire on KDE Wayland with ydotool 1.x” is testable.
+One report should describe one failure boundary. "Nothing works" is hard to act on; "History has correct raw text, clipboard is correct, Shift+Insert does not fire on KDE Wayland with ydotool 1.x" is testable.

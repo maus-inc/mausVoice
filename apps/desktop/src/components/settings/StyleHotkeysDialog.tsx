@@ -155,10 +155,23 @@ export const StyleHotkeysDialog = () => {
       fullWidth
     >
       <DialogTitle>
-        <FormattedMessage defaultMessage="Style hotkeys" />
-        <Typography variant="body2" color="text.secondary" sx={{ mt: 0.5 }}>
-          <FormattedMessage defaultMessage="Assign a shortcut to select a style directly. Leave a row empty to disable its shortcut." />
-        </Typography>
+        <Box sx={{ display: "flex", alignItems: "flex-start" }}>
+          <Box sx={{ flex: 1 }}>
+            <FormattedMessage defaultMessage="Style hotkeys" />
+            <Typography variant="body2" color="text.secondary" sx={{ mt: 0.5 }}>
+              <FormattedMessage defaultMessage="Assign a shortcut to select a style directly. Leave a row empty to disable its shortcut." />
+            </Typography>
+          </Box>
+          <IconButton
+            size="small"
+            aria-label={intl.formatMessage({ defaultMessage: "Close" })}
+            onClick={close}
+            disabled={isSaving}
+            sx={{ ml: 1, mt: -0.5 }}
+          >
+            <Close fontSize="small" />
+          </IconButton>
+        </Box>
       </DialogTitle>
       <DialogContent dividers>
         <Stack spacing={1.25}>

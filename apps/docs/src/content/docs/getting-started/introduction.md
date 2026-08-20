@@ -7,7 +7,7 @@ sidebar:
 
 mausVoice is a cross-platform desktop dictation application built with Tauri v2 (Rust native layer + TypeScript/React “brain”). A configurable global shortcut starts recording; the app converts speech to text, can optionally rewrite that text, stores a history entry when privacy settings allow it, and delivers the result to the editable field that has focus when output is inserted. The application detected at recording start can still determine app-specific style and insertion preferences.
 
-That single gesture crosses several independent stages. Understanding them makes configuration, privacy review, and troubleshooting much simpler.
+That single gesture crosses several independent stages, and most questions about the app come down to which stage is involved.
 
 ## The five-stage pipeline
 

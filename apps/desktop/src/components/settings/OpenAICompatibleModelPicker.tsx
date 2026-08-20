@@ -9,19 +9,24 @@ import {
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { FormattedMessage } from "react-intl";
 import { OpenAICompatibleRepo } from "../../repos/ollama.repo";
-import { normalizeOpenAICompatibleBaseUrl } from "../../utils/openai-compatible.utils";
+import { buildOpenAICompatibleUrl } from "../../utils/openai-compatible.utils";
+import { createOpenAICompatibleFetch } from "../../utils/secure-fetch.utils";
 
 type OpenAICompatibleModelPickerProps = {
+  apiKeyId: string;
   baseUrl: string | null;
   apiKey?: string | null;
+  includeV1Path?: boolean | null;
   selectedModel: string | null;
   onModelSelect: (model: string | null) => void;
   disabled?: boolean;
 };
 
 export const OpenAICompatibleModelPicker = ({
+  apiKeyId,
   baseUrl,
   apiKey,
+  includeV1Path,
   selectedModel,
   onModelSelect,
   disabled = false,
@@ -31,14 +36,19 @@ export const OpenAICompatibleModelPicker = ({
   const [isLoading, setIsLoading] = useState(false);
   const [useManualInput, setUseManualInput] = useState(false);
 
-  const effectiveUrl = useMemo(() => {
-    return normalizeOpenAICompatibleBaseUrl(baseUrl);
-  }, [baseUrl]);
+  const effectiveUrl = useMemo(
+    () => buildOpenAICompatibleUrl(baseUrl, includeV1Path),
+    [baseUrl, includeV1Path],
+  );
 
   const fetchModels = useCallback(async () => {
     setIsLoading(true);
     try {
-      const repo = new OpenAICompatibleRepo(effectiveUrl, apiKey || undefined);
+      const repo = new OpenAICompatibleRepo(
+        effectiveUrl,
+        apiKey || undefined,
+        createOpenAICompatibleFetch(apiKeyId),
+      );
       const available = await repo.checkAvailability();
       setIsAvailable(available);
 
@@ -58,7 +68,7 @@ export const OpenAICompatibleModelPicker = ({
     } finally {
       setIsLoading(false);
     }
-  }, [effectiveUrl, apiKey]);
+  }, [effectiveUrl, apiKey, apiKeyId]);
 
   useEffect(() => {
     void fetchModels();

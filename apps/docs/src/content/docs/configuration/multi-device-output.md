@@ -26,7 +26,7 @@ The receiver reports its listen address, port, last sender, last delivery state,
 
 ## Trusted devices and manual setup
 
-Invite pairing is the preferred path. **Trusted devices → Add device** is the manual fallback and asks for a name, device ID, platform, role, shared secret, and—when the device is a receiver—an address such as `192.168.1.25:43123`. Both records must use the same secret. The current platform selector offers macOS and Windows values.
+Invite pairing is the preferred path. **Trusted devices → Add device** is the manual fallback and asks for a name, device ID, platform, role, and shared secret. A receiver also needs an address such as `192.168.1.25:43123`. Both records must use the same secret. The current platform selector offers macOS and Windows values.
 
 You can copy, edit, or delete a trusted-device record from the dialog. Deleting a record removes that trust relationship locally; remove the counterpart record on the other computer as well when retiring a pairing.
 

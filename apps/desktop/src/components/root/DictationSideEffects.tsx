@@ -63,6 +63,7 @@ import {
   DEFAULT_DICTATION_LIMIT_MINUTES,
   getDictationRecordingTimerDurations,
   getEffectiveDictationLimitMinutes,
+  getProviderRecordingTimerDurations,
   shouldEnableDictationLimit,
 } from "../../utils/dictation-limit.utils";
 import {
@@ -151,6 +152,8 @@ export const DictationSideEffects = () => {
   const preDictationVolumeRef = useRef<number | null>(null);
   const recordingWarningTimerRef = useRef<NodeJS.Timeout | null>(null);
   const recordingAutoStopTimerRef = useRef<NodeJS.Timeout | null>(null);
+  const providerWarningTimerRef = useRef<NodeJS.Timeout | null>(null);
+  const providerAutoStopTimerRef = useRef<NodeJS.Timeout | null>(null);
   const cancelPromptTimerRef = useRef<NodeJS.Timeout | null>(null);
   const isStoppingRef = useRef(false);
   const isPausedRef = useRef(false);
@@ -276,7 +279,7 @@ export const DictationSideEffects = () => {
     }
   }, []);
 
-  const clearRecordingTimers = useCallback(() => {
+  const clearUserRecordingTimers = useCallback(() => {
     if (recordingWarningTimerRef.current) {
       clearTimeout(recordingWarningTimerRef.current);
       recordingWarningTimerRef.current = null;
@@ -286,6 +289,24 @@ export const DictationSideEffects = () => {
       recordingAutoStopTimerRef.current = null;
     }
   }, []);
+
+  const clearProviderRecordingTimers = useCallback(() => {
+    if (providerWarningTimerRef.current) {
+      clearTimeout(providerWarningTimerRef.current);
+      providerWarningTimerRef.current = null;
+    }
+    if (providerAutoStopTimerRef.current) {
+      clearTimeout(providerAutoStopTimerRef.current);
+      providerAutoStopTimerRef.current = null;
+    }
+  }, []);
+
+  const clearRecordingTimers = useCallback(() => {
+    clearUserRecordingTimers();
+    clearProviderRecordingTimers();
+  }, [clearProviderRecordingTimers, clearUserRecordingTimers]);
+
+  useEffect(() => () => clearRecordingTimers(), [clearRecordingTimers]);
 
   const clearCancelPromptTimer = useCallback(() => {
     if (cancelPromptTimerRef.current) {
@@ -722,13 +743,12 @@ export const DictationSideEffects = () => {
     setIsStopping,
   ]);
 
-  const startRecordingTimers = useCallback(() => {
-    clearRecordingTimers();
+  const startUserRecordingTimers = useCallback(() => {
+    clearUserRecordingTimers();
 
     const state = getAppState();
     const preferences = getMyUserPreferences(state);
     const transcriptionPrefs = getTranscriptionPrefs(state);
-
     const dictationLimitMinutes = shouldEnableDictationLimit(
       transcriptionPrefs.mode,
     )
@@ -764,11 +784,50 @@ export const DictationSideEffects = () => {
           toastType: "info",
           duration: 5_000,
         });
-
         stopRecording();
       }, autoStopDurationMs);
     }
-  }, [stopRecording, intl, clearRecordingTimers]);
+  }, [clearUserRecordingTimers, intl, stopRecording]);
+
+  const startProviderRecordingTimers = useCallback(() => {
+    clearProviderRecordingTimers();
+
+    const providerLimitMs =
+      sessionRef.current?.getMaximumRecordingDurationMs?.() ?? null;
+    const { warningDurationMs, autoStopDurationMs } =
+      getProviderRecordingTimerDurations(providerLimitMs);
+    if (autoStopDurationMs === null) {
+      return;
+    }
+
+    if (warningDurationMs !== null) {
+      providerWarningTimerRef.current = setTimeout(() => {
+        getLogger().warning(
+          `Provider recording duration warning (${providerLimitMs} ms limit)`,
+        );
+        showToast({
+          message: intl.formatMessage({
+            defaultMessage: "Provider limit: recording will stop in 60 seconds",
+          }),
+          toastType: "info",
+          duration: 5_000,
+        });
+      }, warningDurationMs);
+    }
+    providerAutoStopTimerRef.current = setTimeout(() => {
+      getLogger().warning(
+        `Recording auto-stopped at provider limit (${providerLimitMs} ms)`,
+      );
+      showToast({
+        message: intl.formatMessage({
+          defaultMessage: "Recording stopped: provider duration limit reached",
+        }),
+        toastType: "info",
+        duration: 5_000,
+      });
+      stopRecording();
+    }, autoStopDurationMs);
+  }, [clearProviderRecordingTimers, intl, stopRecording]);
 
   const startRecording = useCallback(
     async (args: { mode: RecordingMode; language?: string | null }) => {
@@ -843,6 +902,17 @@ export const DictationSideEffects = () => {
           strategy.setPhase("recording"),
           invoke<StartRecordingResponse>("start_recording", {
             args: { preferredMicrophone },
+          }).then((result) => {
+            // The phase update can outlive microphone startup. Anchor provider
+            // wall-clock limits at the instant native capture succeeds rather
+            // than waiting for the other Promise.all branch.
+            if (
+              sessionRef.current === session &&
+              strategyRef.current === strategy
+            ) {
+              startProviderRecordingTimers();
+            }
+            return result;
           }),
         ]);
 
@@ -851,18 +921,21 @@ export const DictationSideEffects = () => {
 
         // A stop/abort can arrive while `start_recording` is still opening
         // the mic (WASAPI init can take >1s on loaded machines).
-        // `abortRecording` nulls the refs, so re-check against a snapshot
-        // taken after the await — reading `sessionRef.current` here is what
-        // threw "Cannot read properties of null (reading 'onRecordingStart')"
-        // when the user stopped mid-initialization.
-        const startedSession = sessionRef.current;
-        const startedStrategy = strategyRef.current;
-        if (!startedSession || !startedStrategy) {
+        // `abortRecording` nulls the refs, so require the refs to still match
+        // this invocation's session before continuing. Reading and invoking a
+        // nullable current ref here previously crashed when the user stopped
+        // mid-initialization.
+        if (
+          sessionRef.current !== session ||
+          strategyRef.current !== strategy
+        ) {
           getLogger().warning(
-            "Recording start raced an abort; skipping session start (abort already ran cleanup)",
+            "Recording start raced an abort or replacement; skipping stale session start",
           );
           return;
         }
+        const startedSession = session;
+        const startedStrategy = strategy;
 
         await startedSession.onRecordingStart(sampleRate);
 
@@ -879,7 +952,9 @@ export const DictationSideEffects = () => {
           return;
         }
 
-        startRecordingTimers();
+        // Keep the user-configured active-audio timers at their established
+        // start point after session initialization succeeds.
+        startUserRecordingTimers();
         dimSystemVolume();
       } catch (error) {
         getLogger().error(`Failed to start recording: ${error}`);
@@ -914,7 +989,8 @@ export const DictationSideEffects = () => {
       dimSystemVolume,
       hardResetHotkeyState,
       intl,
-      startRecordingTimers,
+      startProviderRecordingTimers,
+      startUserRecordingTimers,
     ],
   );
 
@@ -1211,7 +1287,9 @@ export const DictationSideEffects = () => {
       // Hold mic capture without finalizing the session so the user can resume.
       await invoke("pause_recording");
       isPausedRef.current = true;
-      clearRecordingTimers();
+      // User-configured timers measure active audio. Provider hard limits are
+      // wall-clock limits and intentionally continue while paused.
+      clearUserRecordingTimers();
       // Keep the voice field fully open and slide the style bar in via paused phase.
       await strategyRef.current.setPhase("paused");
       showToast({
@@ -1224,7 +1302,7 @@ export const DictationSideEffects = () => {
     } catch (error) {
       getLogger().error(`Failed to pause dictation: ${error}`);
     }
-  }, [clearRecordingTimers, intl]);
+  }, [clearUserRecordingTimers, intl]);
 
   const resumeDictation = useCallback(async () => {
     if (!isPausedRef.current || isStoppingRef.current) {
@@ -1238,7 +1316,7 @@ export const DictationSideEffects = () => {
       await invoke("resume_recording");
       isPausedRef.current = false;
       await strategyRef.current.setPhase("recording");
-      startRecordingTimers();
+      startUserRecordingTimers();
     } catch (error) {
       getLogger().error(`Failed to resume dictation: ${error}`);
       showToast({
@@ -1249,7 +1327,7 @@ export const DictationSideEffects = () => {
         duration: 5_000,
       });
     }
-  }, [intl, startRecordingTimers]);
+  }, [intl, startUserRecordingTimers]);
 
   useTauriListen<void>("cancel-dictation", () => {
     if (!isMainWindow) return;
