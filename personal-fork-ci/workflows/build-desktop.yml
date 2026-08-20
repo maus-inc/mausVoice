@@ -89,7 +89,9 @@ jobs:
           echo "CMAKE_TOOLCHAIN_FILE=$env:GITHUB_WORKSPACE\packages\rust_transcription\cmake\windows-ci-toolchain.cmake" >> $env:GITHUB_ENV
 
       - name: Install dependencies
-        run: pnpm install --frozen-lockfile
+        # --ignore-scripts would skip the esbuild/sharp postinstall builds this
+        # monorepo needs; mirrors the release workflow.
+        run: pnpm install --frozen-lockfile # NOSONAR
 
       - name: Build frontend and dependencies
         env:
