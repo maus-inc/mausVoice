@@ -145,17 +145,10 @@ export const DictionaryRow = ({ id }: DictionaryRowProps) => {
           // Let the provider's document listener handle inputs/textareas and
           // contenteditables so their Cut/Copy/Paste menu is not replaced by
           // this row-level Delete action.
-          if (
-            isEditableTarget(e.target) ||
-            contextMenuItems.length === 0
-          ) {
+          if (isEditableTarget(e.target) || contextMenuItems.length === 0) {
             return;
           }
-          ctxMenu.handleContextMenu(
-            e.nativeEvent,
-            contextMenuItems,
-            "dictionary",
-          );
+          ctxMenu.handleContextMenu(e.nativeEvent, contextMenuItems);
         }}
         sx={{
           alignItems: "center",
