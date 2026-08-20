@@ -94,7 +94,7 @@ export const ThemeModeToggle = () => {
               },
             ),
           "&:hover": { backgroundColor: "action.hover", color: "text.primary" },
-          "&:active": { transform: "scale(0.94)" },
+          "&:active": { transform: "scale(0.96)" },
         }}
       >
         {/*

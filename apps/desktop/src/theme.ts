@@ -170,7 +170,9 @@ export const theme = createTheme({
           WebkitFontSmoothing: "antialiased",
           MozOsxFontSmoothing: "grayscale",
           textRendering: "optimizeLegibility",
-          transition: "background-color 220ms cubic-bezier(0.23, 1, 0.32, 1)",
+          // Scheme flips must snap. A body background transition smears every
+          // surface when light/dark/system changes (better-ui: suppress
+          // transitions on theme switch).
         },
         // Browser-owned surfaces. Theme them from the palette so every drawing
         // plane shares the design instead of shipping platform defaults.
@@ -210,6 +212,12 @@ export const theme = createTheme({
         },
         "#root": {
           height: "100%",
+        },
+        "h1, h2, h3, h4, h5, h6": {
+          textWrap: "balance",
+        },
+        p: {
+          textWrap: "pretty",
         },
         "@media (prefers-reduced-motion: reduce)": {
           "*, *::before, *::after": {
