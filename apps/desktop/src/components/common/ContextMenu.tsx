@@ -40,15 +40,8 @@ import {
   type SxProps,
   type Theme,
 } from "@mui/material";
-import {
-  createContext,
-  useCallback,
-  useContext,
-  useEffect,
-  useMemo,
-  useRef,
-  useState,
-} from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
+import { useIntl } from "react-intl";
 
 // ── Types ────────────────────────────────────────────────────────────────
 
@@ -58,7 +51,6 @@ export type ContextMenuActionItem = {
   icon?: React.ReactNode;
   onClick: () => void;
   disabled?: boolean;
-  disabledReason?: string;
   danger?: boolean;
   accelerator?: string;
 };
@@ -70,14 +62,8 @@ export type ContextMenuDivider = {
 export type ContextMenuItem = ContextMenuActionItem | ContextMenuDivider;
 
 interface ContextMenuState {
-  open: boolean;
   position: { left: number; top: number };
   items: ContextMenuItem[];
-  /**
-   * A unique key to identify the surface that opened the menu.
-   * Used to allow reopening on a different surface without explicit close.
-   */
-  surfaceKey: string;
 }
 
 // ── Constants ────────────────────────────────────────────────────────────
@@ -87,6 +73,115 @@ const MENU_MIN_WIDTH = 180;
 const MENU_MAX_HEIGHT = 360;
 const ITEM_HEIGHT = 40; // approx px per item for keyboard nav
 const PADDING = 12; // viewport padding so menu doesn't stick to edge
+
+// ── Editable-target helpers (clipboard menu) ─────────────────────────────
+
+/**
+ * The editable element a right-click acted on, plus its captured selection.
+ * Captured at `contextmenu` time because the menu's `autoFocus` steals focus,
+ * and `window.getSelection()` does NOT reflect `<input>`/`<textarea>`
+ * selections (those live in `selectionStart`/`selectionEnd`).
+ */
+type EditableTarget = {
+  el: HTMLElement;
+  /** Selected text ("" when nothing selected). */
+  text: string;
+  /** Input/textarea selection bounds (only meaningful for inputs). */
+  start: number;
+  end: number;
+  /** contenteditable selection snapshot (null for inputs). */
+  range: Range | null;
+};
+
+const isTextInput = (
+  el: HTMLElement,
+): el is HTMLInputElement | HTMLTextAreaElement =>
+  el.tagName === "INPUT" || el.tagName === "TEXTAREA";
+
+/** Snapshot the current selection for a contenteditable element. */
+const contentEditableSelection = (): { text: string; range: Range | null } => {
+  const sel = window.getSelection();
+  if (!sel || sel.rangeCount === 0) return { text: "", range: null };
+  return { text: sel.toString(), range: sel.getRangeAt(0).cloneRange() };
+};
+
+/**
+ * Return the owning contenteditable host for `target`. An explicit nested
+ * `contenteditable="false"` is a boundary: it must not inherit the outer
+ * editor's clipboard menu.
+ */
+const getContentEditableHost = (target: HTMLElement): HTMLElement | null => {
+  for (
+    let current: HTMLElement | null = target;
+    current;
+    current = current.parentElement
+  ) {
+    const value = current.getAttribute("contenteditable");
+    if (value === "false") return null;
+    if (value === "" || value === "true") return current;
+  }
+  return null;
+};
+
+/** Whether an event target belongs to a user-editable control. */
+export const isEditableEventTarget = (target: EventTarget | null): boolean =>
+  target instanceof HTMLElement &&
+  (isTextInput(target) || getContentEditableHost(target) !== null);
+
+/**
+ * Resolve the editable root for a right-click target. Returns null when the
+ * click is not on (or inside) an editable surface.
+ */
+const resolveEditableTarget = (target: HTMLElement): EditableTarget | null => {
+  if (isTextInput(target)) {
+    const start = target.selectionStart ?? 0;
+    const end = target.selectionEnd ?? 0;
+    return {
+      el: target,
+      text: target.value.slice(start, end),
+      start,
+      end,
+      range: null,
+    };
+  }
+
+  const host = getContentEditableHost(target);
+  if (!host) return null;
+  const selection = contentEditableSelection();
+  return {
+    el: host,
+    text: selection.text,
+    start: -1,
+    end: -1,
+    range: selection.range,
+  };
+};
+
+/**
+ * True when the right-click target is, or is inside, an editable surface
+ * (input/textarea/contenteditable). Surfaces use this to yield those
+ * right-clicks to the provider's clipboard menu (Cut/Copy/Paste/Select All)
+ * instead of showing their own row/context menu.
+ */
+export const isEditableTarget = (target: EventTarget | null): boolean => {
+  return (
+    target instanceof HTMLElement && resolveEditableTarget(target) !== null
+  );
+};
+
+/** Focus the editable and restore its selection so clipboard commands act on it. */
+const focusEditable = (t: EditableTarget): void => {
+  t.el.focus();
+  if (isTextInput(t.el)) {
+    if (t.start >= 0) t.el.setSelectionRange(t.start, t.end);
+    return;
+  }
+  if (t.range) {
+    const sel = window.getSelection();
+    sel?.removeAllRanges();
+    sel?.addRange(t.range);
+  }
+};
 
 // ── Component ────────────────────────────────────────────────────────────
 
@@ -110,7 +205,6 @@ const iconColor = (item: ContextMenuItem): string => {
 };
 
 export const ContextMenu = ({ items, sx }: ContextMenuProps) => {
-  const menuRef = useRef<HTMLDivElement>(null);
   const [activeIndex, setActiveIndex] = useState<number>(-1);
 
   // Reset active index when items change
@@ -177,7 +271,6 @@ export const ContextMenu = ({ items, sx }: ContextMenuProps) => {
 
   return (
     <Paper
-      ref={menuRef}
       role="menu"
       tabIndex={-1}
       onKeyDown={handleKeyDown}
@@ -280,16 +373,23 @@ export const ContextMenu = ({ items, sx }: ContextMenuProps) => {
 // ── Hook for managing context menu state ─────────────────────────────────
 
 export interface UseContextMenuReturn {
-  /** Call this from the surface's onContextMenu handler. */
-  handleContextMenu: (
-    e: React.MouseEvent,
-    items: ContextMenuItem[],
-    surfaceKey?: string,
-  ) => void;
+  /**
+   * Call this from a surface's `onContextMenu` handler, passing the native
+   * event (`e.nativeEvent`). Accepting the native `MouseEvent` (rather than
+   * the React synthetic wrapper) keeps the same entry point usable from
+   * native DOM listeners such as the provider's global `contextmenu` handler,
+   * where a synthetic event does not exist.
+   */
+  handleContextMenu: (e: MouseEvent, items: ContextMenuItem[]) => void;
   /** Render this in your component tree at the location where the menu should appear. */
   renderMenu: () => React.ReactElement | null;
-  /** Close the menu programmatically. */
-  closeMenu: () => void;
+  /**
+   * Close the menu programmatically. Pass `restoreFocus` to return focus to
+   * the element that had it before the menu opened (e.g. Escape or an item
+   * action); omit it for dismissals where the user is intentionally moving
+   * focus elsewhere (click-away, scroll, blur).
+   */
+  closeMenu: (restoreFocus?: boolean) => void;
 }
 
 /**
@@ -309,11 +409,25 @@ export interface UseContextMenuReturn {
  */
 export const useContextMenu = (): UseContextMenuReturn => {
   const [state, setState] = useState<ContextMenuState | null>(null);
-  const stateRef = useRef(state);
-  stateRef.current = state;
+  // Element that had focus before the menu opened, restored on close so
+  // keyboard users keep their place (A11 focus-management requirement).
+  const previouslyFocusedRef = useRef<HTMLElement | null>(null);
 
-  const closeMenu = useCallback(() => {
+  const closeMenu = useCallback((restoreFocus = false) => {
     setState(null);
+    // Restore focus only on explicit request (Escape / item activation). A
+    // click-away or scroll dismissal must NOT yank focus back — the user is
+    // deliberately moving focus elsewhere and calling focus() during their
+    // mousedown would defeat their click.
+    const previous = previouslyFocusedRef.current;
+    if (
+      restoreFocus &&
+      previous?.isConnected &&
+      typeof previous.focus === "function"
+    ) {
+      previous.focus();
+    }
+    previouslyFocusedRef.current = null;
   }, []);
 
   // Position the menu, clamping to viewport
@@ -345,11 +459,30 @@ export const useContextMenu = (): UseContextMenuReturn => {
   );
 
   const handleContextMenu = useCallback(
-    (e: React.MouseEvent, items: ContextMenuItem[], surfaceKey?: string) => {
+    (e: MouseEvent, items: ContextMenuItem[]) => {
+      // Bail before suppressing the native menu: an empty item list means
+      // there is nothing to show, so the default context menu should win.
+      if (items.length === 0) return;
+
       e.preventDefault();
       e.stopPropagation();
 
-      if (items.length === 0) return;
+      // Record the element that will lose focus once the menu's `autoFocus`
+      // steals it, so `closeMenu` can restore it later. Prefer the element the
+      // user actually right-clicked (the most natural return target for
+      // keyboard/a11y users), falling back to `document.activeElement`. This is
+      // updated on every open — including a reopen on a different surface
+      // while the menu is already open — but never captures the menu itself,
+      // whose `autoFocus` would otherwise overwrite the real restore target.
+      const clicked = e.target instanceof HTMLElement ? e.target : null;
+      const isClickOnMenu = clicked?.closest('[role="menu"]') != null;
+      let restoreTarget: HTMLElement | null = null;
+      if (clicked && !isClickOnMenu) {
+        restoreTarget = clicked;
+      } else if (document.activeElement instanceof HTMLElement) {
+        restoreTarget = document.activeElement;
+      }
+      previouslyFocusedRef.current = restoreTarget;
 
       const estimatedHeight = Math.min(
         items.filter((i) => i.kind !== "divider").length * ITEM_HEIGHT +
@@ -357,18 +490,9 @@ export const useContextMenu = (): UseContextMenuReturn => {
         MENU_MAX_HEIGHT,
       );
       const estimatedWidth = MENU_MIN_WIDTH;
-      const position = computePosition(
-        e.nativeEvent,
-        estimatedWidth,
-        estimatedHeight,
-      );
+      const position = computePosition(e, estimatedWidth, estimatedHeight);
 
-      setState({
-        open: true,
-        position,
-        items,
-        surfaceKey: surfaceKey ?? "default",
-      });
+      setState({ position, items });
     },
     [computePosition],
   );
@@ -381,20 +505,26 @@ export const useContextMenu = (): UseContextMenuReturn => {
       // Don't close if clicking inside the menu
       const target = e.target as HTMLElement;
       if (target.closest('[role="menu"]')) return;
-      closeMenu();
+      closeMenu(false);
     };
 
-    const handleScroll = () => {
-      closeMenu();
+    const handleScroll = (e: Event) => {
+      // Scrolling inside a long menu (overflowY: auto) must NOT close it —
+      // that's the user navigating the menu itself. Only an external scroll
+      // (the page, a parent list) dismisses the menu. The scroll listener is
+      // registered with capture, so `e.target` is the scrolled element.
+      const target = e.target as HTMLElement | null;
+      if (target?.closest('[role="menu"]')) return;
+      closeMenu(false);
     };
 
     const handleBlur = () => {
-      closeMenu();
+      closeMenu(false);
     };
 
     const handleEscape = (e: KeyboardEvent) => {
       if (e.key === "Escape") {
-        closeMenu();
+        closeMenu(true);
       }
     };
 
@@ -425,7 +555,7 @@ export const useContextMenu = (): UseContextMenuReturn => {
         ...item,
         onClick: () => {
           item.onClick();
-          closeMenu();
+          closeMenu(true);
         },
       };
     });
@@ -448,148 +578,120 @@ export const useContextMenu = (): UseContextMenuReturn => {
 
 // ── Context Provider for app-wide default right-click handling ───────────
 
-interface ContextMenuProviderContextValue {
-  /** Register a surface's context menu handler. Returns a cleanup function. */
-  registerSurface: (
-    key: string,
-    handler: (e: React.MouseEvent) => void,
-  ) => () => void;
-}
-
-const ContextMenuProviderContext =
-  createContext<ContextMenuProviderContextValue | null>(null);
-
 /**
- * Provider that enables app-wide context menu handling.
- * Surfaces register their handlers; the provider intercepts
- * unhandled right-clicks and shows a default menu.
+ * Provider that owns the app-wide context-menu instance. Surfaces render their
+ * own menus through `useContextMenu()`; this provider additionally handles
+ * right-clicks on editable surfaces (inputs/textareas/contenteditable) by
+ * showing a localized clipboard menu (Cut/Copy/Paste/Select All). Non-editable
+ * right-clicks are left to the platform's native menu.
  */
 export const ContextMenuProvider = ({
   children,
 }: {
   children: React.ReactNode;
 }) => {
-  const surfaceHandlersRef = useRef<Map<string, (e: React.MouseEvent) => void>>(
-    new Map(),
-  );
   const ctxMenu = useContextMenu();
+  const intl = useIntl();
 
-  const registerSurface = useCallback(
-    (key: string, handler: (e: React.MouseEvent) => void) => {
-      surfaceHandlersRef.current.set(key, handler);
-      return () => {
-        surfaceHandlersRef.current.delete(key);
-      };
-    },
-    [],
-  );
-
-  const providerValue = useMemo(() => ({ registerSurface }), [registerSurface]);
-
-  // Platform detection for accelerator display
+  // Platform detection for accelerator display. `navigator.platform` is
+  // deprecated; prefer `userAgentData` where available (a newer, not-yet-typed
+  // API) and fall back to the legacy property.
+  const userAgentDataPlatform =
+    typeof navigator !== "undefined"
+      ? (
+          navigator as Navigator & {
+            userAgentData?: { platform: string };
+          }
+        ).userAgentData?.platform
+      : undefined;
   const isMac =
-    typeof navigator !== "undefined" && /Mac/.test(navigator.platform);
+    typeof userAgentDataPlatform === "string"
+      ? /mac/i.test(userAgentDataPlatform)
+      : typeof navigator !== "undefined" && /Mac/i.test(navigator.platform);
   const modKey = isMac ? "\u2318" : "Ctrl";
 
   // Global right-click handler - suppress default on ALL elements
   useEffect(() => {
     const handleGlobalContextMenu = (e: MouseEvent) => {
       const target = e.target as HTMLElement;
-      const isInput =
-        target.tagName === "INPUT" ||
-        target.tagName === "TEXTAREA" ||
-        target.isContentEditable;
+      const editable = resolveEditableTarget(target);
+      if (!editable) return;
 
-      if (isInput) {
-        // Suppress the default webview menu only where we have a real menu
-        // to show (clipboard actions). Elsewhere we keep the native menu —
-        // an empty custom menu is worse than the platform default.
-        e.preventDefault();
-        // For text inputs, offer clipboard actions via the platform clipboard API
-        const selection = window.getSelection();
-        const hasSelection = selection
-          ? selection.toString().length > 0
-          : false;
-        ctxMenu.handleContextMenu(e as unknown as React.MouseEvent, [
-          {
-            label: "Cut",
-            disabled: !hasSelection,
-            onClick: () => {
-              void navigator.clipboard.writeText(selection?.toString() ?? "");
-              document.execCommand("cut"); // NOSONAR: no non-deprecated API for Cut
-            },
-            accelerator: modKey + "+X",
+      // Suppress the default webview menu only where we have a real menu to
+      // show (clipboard actions). Elsewhere we keep the native menu — an
+      // empty custom menu is worse than the platform default.
+      e.preventDefault();
+
+      const hasSelection = editable.text.length > 0;
+      const copySelection = () => {
+        // `writeText` can reject (permission denied in some webviews); swallow
+        // it rather than surface an unhandled rejection.
+        void navigator.clipboard
+          .writeText(editable.text)
+          .catch(() => undefined);
+      };
+
+      ctxMenu.handleContextMenu(e, [
+        {
+          label: intl.formatMessage({ defaultMessage: "Cut" }),
+          disabled: !hasSelection,
+          onClick: () => {
+            // Restore focus + selection to the editable so the native cut
+            // operates on it, not on the (auto-focused) menu.
+            focusEditable(editable);
+            document.execCommand("cut"); // NOSONAR: no non-deprecated API for Cut
+            copySelection();
           },
-          {
-            label: "Copy",
-            disabled: !hasSelection,
-            onClick: () => {
-              void navigator.clipboard.writeText(selection?.toString() ?? "");
-            },
-            accelerator: modKey + "+C",
+          accelerator: modKey + "+X",
+        },
+        {
+          label: intl.formatMessage({ defaultMessage: "Copy" }),
+          disabled: !hasSelection,
+          onClick: copySelection,
+          accelerator: modKey + "+C",
+        },
+        { kind: "divider" },
+        {
+          label: intl.formatMessage({ defaultMessage: "Paste" }),
+          onClick: () => {
+            // `readText` can reject (permission denied / no clipboard access);
+            // swallow it rather than surface an unhandled rejection.
+            void navigator.clipboard
+              .readText()
+              .then((text) => {
+                focusEditable(editable);
+                document.execCommand("insertText", false, text); // NOSONAR: no non-deprecated paste API
+              })
+              .catch(() => undefined);
           },
-          { kind: "divider" },
-          {
-            label: "Paste",
-            onClick: () => {
-              void navigator.clipboard.readText().then(function (t) {
-                document.execCommand("insertText", false, t); // NOSONAR: no non-deprecated paste API
-              });
-            },
-            accelerator: modKey + "+V",
-          },
-          { kind: "divider" },
-          {
-            label: "Select All",
-            onClick: () => {
+          accelerator: modKey + "+V",
+        },
+        { kind: "divider" },
+        {
+          label: intl.formatMessage({ defaultMessage: "Select All" }),
+          onClick: () => {
+            focusEditable(editable);
+            if (isTextInput(editable.el)) {
+              editable.el.select();
+            } else {
               document.execCommand("selectAll"); // NOSONAR: no non-deprecated API for Select All
-            },
-            accelerator: modKey + "+A",
+            }
           },
-        ]);
-      }
+          accelerator: modKey + "+A",
+        },
+      ]);
     };
 
     document.addEventListener("contextmenu", handleGlobalContextMenu);
     return () => {
       document.removeEventListener("contextmenu", handleGlobalContextMenu);
     };
-  }, [ctxMenu]);
+  }, [ctxMenu, intl]);
 
   return (
-    <ContextMenuProviderContext.Provider value={providerValue}>
+    <>
       {children}
       {ctxMenu.renderMenu()}
-    </ContextMenuProviderContext.Provider>
+    </>
   );
-};
-
-/**
- * Hook to register a surface's context menu handler with the provider.
- */
-export const useSurfaceContextMenu = (
-  surfaceKey: string,
-  getItems: () => ContextMenuItem[],
-) => {
-  const ctxMenu = useContextMenu();
-  const ctx = useContext(ContextMenuProviderContext);
-
-  const handleContextMenu = useCallback(
-    (e: React.MouseEvent) => {
-      ctxMenu.handleContextMenu(e, getItems(), surfaceKey);
-    },
-    [ctxMenu, getItems, surfaceKey],
-  );
-
-  // Register with provider if available
-  useEffect(() => {
-    if (!ctx) return;
-    return ctx.registerSurface(surfaceKey, handleContextMenu);
-  }, [ctx, surfaceKey, handleContextMenu]);
-
-  return {
-    handleContextMenu,
-    renderMenu: ctxMenu.renderMenu,
-    closeMenu: ctxMenu.closeMenu,
-  };
 };

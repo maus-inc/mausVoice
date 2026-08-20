@@ -14,6 +14,7 @@ import {
   DICTATE_HOTKEY,
   AGENT_DICTATE_HOTKEY,
   CANCEL_TRANSCRIPTION_HOTKEY,
+  STYLE_SWITCH_ACTION_PREFIXES,
 } from "./keyboard.utils";
 
 // ── Constants ────────────────────────────────────────────────────────────
@@ -30,12 +31,10 @@ const ALWAYS_ALLOW_ACTIONS: readonly string[] = [
 
 /**
  * Style-switch action name prefixes. These ARE debounced while recording
- * but must be releasable.
+ * but must be releasable. Shared with keyboard.utils so the reverse mapping
+ * (getStyleSwitchActionNamesForKey) and this matcher can't drift apart.
  */
-const STYLE_SWITCH_PREFIXES: readonly string[] = [
-  "switch-writing-style-",
-  "switch-to-style:",
-];
+const STYLE_SWITCH_PREFIXES = STYLE_SWITCH_ACTION_PREFIXES;
 
 // ── Module-level state ───────────────────────────────────────────────────
 
@@ -110,20 +109,21 @@ export const evaluateHotkeyTrigger = (
 };
 
 /**
- * Signal that a style-switch hotkey has been released.
- * Pass "__all__" to clear all held state (e.g., when all physical keys are up).
+ * Signal that a style-switch hotkey's physical key has been released.
+ *
+ * Release is keyed to a specific action name (see
+ * `getStyleSwitchActionNamesForKey`), so a style action only becomes
+ * re-firable once ITS key is up — releasing on "all keys up" would never fire
+ * during hold-to-talk dictation, where the dictate key stays held. A full
+ * reset (session abort/stop) is `resetHotkeyFilter`.
  */
 export const releaseHotkey = (actionName: string): void => {
-  if (actionName === "__all__") {
-    heldActions.clear();
-    lastFireTimestamps.clear();
-    return;
-  }
   if (
     STYLE_SWITCH_PREFIXES.some((p) => actionName.toLowerCase().startsWith(p))
   ) {
+    // Key-up releases the physical hold only. Retain the timestamp so a
+    // modifier-only/partial release cannot bypass the 300 ms debounce window.
     heldActions.delete(actionName);
-    lastFireTimestamps.delete(actionName);
   }
 };
 

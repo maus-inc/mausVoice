@@ -162,17 +162,59 @@ mod thock_limiter {
 
     static LAST_THOCK_MS: AtomicU64 = AtomicU64::new(0);
 
+    /// Pure decision: returns `(throttled, next_last_ms)` given the current
+    /// timestamp and the last accepted one. When the two are within `THROTTLE_MS`
+    /// the call is throttled (and the last-accepted timestamp is unchanged);
+    /// otherwise it is accepted and `next_last_ms` is `now_ms`. Keeping this free
+    /// of shared state makes it trivially unit-testable without racing the
+    /// process-global `LAST_THOCK_MS` across parallel test threads.
+    fn should_throttle_at(now_ms: u64, last_ms: u64) -> (bool, u64) {
+        if now_ms.saturating_sub(last_ms) < THROTTLE_MS {
+            (true, last_ms)
+        } else {
+            (false, now_ms)
+        }
+    }
+
     pub fn should_throttle() -> bool {
         let now = SystemTime::now()
             .duration_since(UNIX_EPOCH)
             .unwrap_or_default()
             .as_millis() as u64;
         let last = LAST_THOCK_MS.load(Ordering::Relaxed);
-        if now.saturating_sub(last) < THROTTLE_MS {
-            return true;
+        let (throttled, next_last) = should_throttle_at(now, last);
+        if !throttled {
+            LAST_THOCK_MS.store(next_last, Ordering::Relaxed);
         }
-        LAST_THOCK_MS.store(now, Ordering::Relaxed);
-        false
+        throttled
+    }
+
+    #[cfg(test)]
+    mod tests {
+        use super::*;
+
+        #[test]
+        fn first_thock_is_not_throttled() {
+            assert_eq!(should_throttle_at(1_000, 0), (false, 1_000));
+        }
+
+        #[test]
+        fn within_window_is_throttled() {
+            assert_eq!(should_throttle_at(1_050, 1_000), (true, 1_000));
+            assert_eq!(should_throttle_at(1_099, 1_000), (true, 1_000));
+        }
+
+        #[test]
+        fn at_or_past_window_is_reenabled() {
+            assert_eq!(should_throttle_at(1_100, 1_000), (false, 1_100));
+            assert_eq!(should_throttle_at(1_250, 1_100), (false, 1_250));
+        }
+
+        #[test]
+        fn clock_skew_backwards_is_safe() {
+            // `saturating_sub` must not panic or un-throttle on a backwards clock.
+            assert_eq!(should_throttle_at(1_900, 2_000), (true, 2_000));
+        }
     }
 }
 

@@ -17,7 +17,12 @@ jobs:
   test:
     name: Test Rust Transcription (${{ matrix.label }})
     runs-on: ${{ matrix.os }}
-    timeout-minutes: 20
+    # Ubuntu downloads ONNX/whisper model artifacts over the network during the
+    # ignored end-to-end integration tests; 20 minutes is too tight there (the
+    # macOS/Windows jobs finish in ~2-4 minutes). Raised so the slowest runner
+    # has headroom. A follow-up should cache the model artifacts instead of
+    # re-downloading them every run.
+    timeout-minutes: 45
     strategy:
       fail-fast: false
       matrix:

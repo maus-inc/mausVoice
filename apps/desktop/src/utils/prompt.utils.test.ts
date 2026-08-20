@@ -4,6 +4,7 @@ import {
   buildSystemPostProcessingTonePrompt,
   PostProcessingPromptInput,
 } from "./prompt.utils";
+import { HUMANIZE_SKILL_TEXT } from "./humanize.utils";
 import { StyleToneConfig, TemplateToneConfig } from "./tone.utils";
 
 const makeInput = (
@@ -24,6 +25,13 @@ describe("buildSystemPostProcessingTonePrompt", () => {
     );
     expect(result).toContain("Be formal");
     expect(result).toContain("English");
+  });
+
+  it("includes the shared humanize skill in every system prompt", () => {
+    const result = buildSystemPostProcessingTonePrompt(
+      makeInput({ kind: "style", stylePrompt: "Be concise" }),
+    );
+    expect(result).toContain(HUMANIZE_SKILL_TEXT);
   });
 
   it("appends structured style guidance when it is present", () => {
@@ -49,7 +57,9 @@ describe("buildSystemPostProcessingTonePrompt", () => {
         systemPromptTemplate: "You are a custom assistant for the enterprise.",
       }),
     );
-    expect(result).toBe("You are a custom assistant for the enterprise.");
+    expect(result).toBe(
+      `You are a custom assistant for the enterprise.\n\n${HUMANIZE_SKILL_TEXT}`,
+    );
   });
 
   it("substitutes variables in template system prompt", () => {
@@ -64,7 +74,9 @@ describe("buildSystemPostProcessingTonePrompt", () => {
         { userName: "Bob", dictationLanguage: "fr" },
       ),
     );
-    expect(result).toBe("You assist Bob with transcripts in Français.");
+    expect(result).toBe(
+      `You assist Bob with transcripts in Français.\n\n${HUMANIZE_SKILL_TEXT}`,
+    );
   });
 
   it("falls back to default when template config has no systemPromptTemplate", () => {
@@ -88,7 +100,9 @@ describe("buildPostProcessingPrompt", () => {
           "User <username/> said: <transcript/>. Respond in <language/>.",
       }),
     );
-    expect(result).toBe("User Alice said: Hello world. Respond in English.");
+    expect(result).toContain(
+      "User Alice said: Hello world. Respond in English.",
+    );
   });
 
   it("substitutes multiple occurrences of the same variable", () => {
@@ -101,7 +115,7 @@ describe("buildPostProcessingPrompt", () => {
         { transcript: "test", userName: "Bob", dictationLanguage: "fr" },
       ),
     );
-    expect(result).toBe("Bob (Bob) wrote: test");
+    expect(result).toContain("Bob (Bob) wrote: test");
   });
 
   it("uses standard prompt structure for style config", () => {
@@ -113,5 +127,22 @@ describe("buildPostProcessingPrompt", () => {
     expect(result).toContain(
       "Process the transcript according to the instructions",
     );
+  });
+
+  it("appends the humanize skill to every post-processing prompt", () => {
+    const template = buildPostProcessingPrompt(
+      makeInput({
+        kind: "template",
+        promptTemplate: "Process: <transcript/>",
+      }),
+    );
+    const style = buildPostProcessingPrompt(
+      makeInput({ kind: "style", stylePrompt: "Be formal" }),
+    );
+    for (const result of [template, style]) {
+      expect(result).toContain("Humanize the text");
+      expect(result).toContain("em-dashes");
+      expect(result).toContain("Do NOT alter code, data, or structured output");
+    }
   });
 });

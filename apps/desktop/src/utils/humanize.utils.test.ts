@@ -1,5 +1,26 @@
+import { readFileSync } from "node:fs";
 import { describe, it, expect } from "vitest";
-import { humanizeScrub } from "./humanize.utils";
+import { HUMANIZE_SKILL_TEXT, humanizeScrub } from "./humanize.utils";
+
+describe("HUMANIZE_SKILL_TEXT", () => {
+  it("stays byte-for-byte synchronized with the standalone prompt artifact", () => {
+    const promptArtifact = readFileSync(
+      new URL("../../../../scripts/prompts/humanize.txt", import.meta.url),
+      "utf8",
+    );
+    const startMarker = "## Runtime skill (verbatim)";
+    const endMarker = "## Expanded guidance";
+    const start = promptArtifact.indexOf(startMarker);
+    const end = promptArtifact.indexOf(endMarker);
+
+    expect(start).toBeGreaterThanOrEqual(0);
+    expect(end).toBeGreaterThan(start);
+    const standalonePrompt = promptArtifact
+      .slice(start + startMarker.length, end)
+      .trim();
+    expect(standalonePrompt).toBe(HUMANIZE_SKILL_TEXT);
+  });
+});
 
 describe("humanizeScrub", () => {
   it("replaces em-dashes with commas", () => {
@@ -68,5 +89,19 @@ describe("humanizeScrub", () => {
   it("does not alter clean text", () => {
     const input = "Hello world. This is fine text.";
     expect(humanizeScrub(input)).toBe(input);
+  });
+});
+
+describe("humanizeScrub slop-word variants", () => {
+  it("handles 'utilize' inflections case-insensitively", () => {
+    expect(humanizeScrub("Utilizes the tool")).toBe("uses the tool");
+    expect(humanizeScrub("UTILIZED the tool")).toBe("used the tool");
+    expect(humanizeScrub("utilizing the tool")).toBe("using the tool");
+    expect(humanizeScrub("Utilize the tool")).toBe("use the tool");
+  });
+
+  it("leaves en-dashes (range separators) untouched", () => {
+    // En-dash (U+2013) is a legitimate range/compound separator, not AI slop.
+    expect(humanizeScrub("1–3 sentences")).toBe("1–3 sentences");
   });
 });

@@ -7,6 +7,7 @@ import InfoOutlinedIcon from "@mui/icons-material/InfoOutlined";
 import ReplayRoundedIcon from "@mui/icons-material/ReplayRounded";
 import SendRoundedIcon from "@mui/icons-material/SendRounded";
 import {
+  Box,
   Chip,
   CircularProgress,
   Divider,
@@ -29,6 +30,11 @@ import {
 } from "../../actions/transcriptions.actions";
 import { getTranscriptionRepo } from "../../repos";
 import { produceAppState, useAppStore } from "../../store";
+import {
+  isEditableTarget,
+  useContextMenu,
+  type ContextMenuItem,
+} from "../common/ContextMenu";
 import { reducedMotionQuery } from "../../styles/motion";
 import { getActiveRemoteTarget } from "../../utils/device.utils";
 import { TypographyWithMore } from "../common/TypographyWithMore";
@@ -152,8 +158,69 @@ export const TranscriptionRow = ({ id }: TranscriptionRowProps) => {
     }
   }, [transcription?.transcript]);
 
+  const ctxMenu = useContextMenu();
+
+  const handleCopyId = useCallback(
+    async (transcriptionId: string) => {
+      try {
+        await navigator.clipboard.writeText(transcriptionId);
+        showSnackbar(
+          intl.formatMessage({ defaultMessage: "Copied successfully" }),
+          { mode: "success" },
+        );
+      } catch (error) {
+        showErrorSnackbar(error);
+      }
+    },
+    [intl],
+  );
+
+  const contextMenuItems = useMemo<ContextMenuItem[]>(
+    () => [
+      {
+        label: intl.formatMessage({ defaultMessage: "Copy text" }),
+        onClick: () => handleCopyTranscript(transcription?.transcript || ""),
+      },
+      {
+        label: intl.formatMessage({ defaultMessage: "Copy ID" }),
+        onClick: () => handleCopyId(id),
+      },
+      {
+        label: intl.formatMessage({ defaultMessage: "Open details" }),
+        onClick: handleDetailsOpen,
+      },
+      {
+        label: intl.formatMessage({ defaultMessage: "Retranscribe" }),
+        onClick: () => openRetranscribeDialog(id),
+      },
+      { kind: "divider" },
+      {
+        label: intl.formatMessage({ defaultMessage: "Delete" }),
+        danger: true,
+        onClick: () => handleDeleteTranscript(id),
+      },
+    ],
+    [
+      handleCopyTranscript,
+      handleCopyId,
+      handleDetailsOpen,
+      openRetranscribeDialog,
+      handleDeleteTranscript,
+      id,
+      intl,
+      transcription?.transcript,
+    ],
+  );
+
   return (
-    <>
+    <Box
+      component="div"
+      onContextMenu={(e) => {
+        // Yield right-clicks on editable text to the provider's clipboard menu.
+        if (isEditableTarget(e.target)) return;
+        ctxMenu.handleContextMenu(e.nativeEvent, contextMenuItems);
+      }}
+    >
       <Stack
         direction="row"
         spacing={1}
@@ -315,6 +382,7 @@ export const TranscriptionRow = ({ id }: TranscriptionRowProps) => {
         />
       )}
       <Divider sx={{ mt: 2 }} />
-    </>
+      {ctxMenu.renderMenu()}
+    </Box>
   );
 };

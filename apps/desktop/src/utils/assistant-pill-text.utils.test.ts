@@ -75,3 +75,28 @@ describe("markdownToPillText", () => {
     expect(result).toContain("List item");
   });
 });
+
+describe("streaming contract", () => {
+  it("never emits a raw fence delimiter for a single (partial) call", () => {
+    // An unclosed opening fence is reduced to the compact [code] marker rather
+    // than leaking raw ``` into the pill mid-stream.
+    expect(markdownToPillText(["```js", "const x = 1;"].join(NL))).toBe(
+      "[code]",
+    );
+    expect(markdownToPillText(["~~~", "let y;"].join(NL))).toBe("[code]");
+  });
+
+  it("documents that chunk-append is NOT the contract; re-convert accumulated text", () => {
+    // The converter is stateless and single-pass, so a marker split across a
+    // chunk boundary is not resolved by concatenating per-chunk outputs. The
+    // consumer (OverlaySyncSideEffects) re-converts the full accumulated
+    // message instead, which is correct.
+    const chunk1 = "**bold";
+    const chunk2 = " text**";
+
+    const naiveConcat = markdownToPillText(chunk1) + markdownToPillText(chunk2);
+    expect(naiveConcat).toContain("**"); // raw markers leak through chunk-append
+
+    expect(markdownToPillText(chunk1 + chunk2)).toBe("bold text");
+  });
+});
