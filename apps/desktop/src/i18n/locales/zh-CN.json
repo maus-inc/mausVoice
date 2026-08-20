@@ -277,7 +277,6 @@
   "failed_to_load_models": "无法加载模型",
   "failed_to_restart_mausvoice_as_administrator": "以管理员身份重启 mausVoice 失败。",
   "failed_to_schedule_delete": "无法安排删除。",
-
   "failed_to_stop_recording": "停止录制失败",
   "fast_large_model_great_accuracy": "快速的大型模型，极高的准确度",
   "fastest_lowest_accuracy": "速度最快，准确度最低",

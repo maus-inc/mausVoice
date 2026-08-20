@@ -277,7 +277,6 @@
   "failed_to_load_models": "Fehler beim Laden der Modelle",
   "failed_to_restart_mausvoice_as_administrator": "Konnte mausVoice nicht als Administrator neu starten.",
   "failed_to_schedule_delete": "Löschen konnte nicht geplant werden.",
-
   "failed_to_stop_recording": "Aufnahme konnte nicht gestoppt werden",
   "fast_large_model_great_accuracy": "Schnelles großes Modell, hohe Genauigkeit",
   "fastest_lowest_accuracy": "Am schnellsten, geringste Genauigkeit",
