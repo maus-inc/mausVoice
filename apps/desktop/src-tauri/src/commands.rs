@@ -683,20 +683,34 @@ fn validate_saved_endpoint_url(url: &Url, base_url: &Url) -> Result<(), String> 
         validate_private_http_url(base_url)?;
         validate_private_http_url(url)?;
     }
-    // HTTPS saved endpoints previously skipped private-network validation
-    // entirely, creating an SSRF gap: a user-configurable base URL like
-    // https://10.0.0.1:8080 would bypass the private-IP check. Apply the
-    // same host-level validation to both http and https so that IP-based
-    // endpoints (including IPv6) are still confined to loopback, RFC1918,
-    // and unique-local addresses. Uses the shared `host_is_private_or_local`
-    // helper so the HTTP and HTTPS paths cannot drift.
+    // HTTPS saved endpoints deliberately do NOT mirror the HTTP path's
+    // private-network-only restriction. HTTPS encrypts credentials, so a
+    // public cloud domain is a legitimate endpoint; plaintext HTTP is
+    // confined to private/local hosts because cleartext credentials must
+    // never cross the public internet. The HTTPS branch below still rejects
+    // public IP literals to mitigate SSRF (see the comment there).
     if base_url.scheme() == "https" {
         let https_host_check = |u: &Url| -> Result<(), String> {
             match u.host() {
                 Some(h) => {
-                    // Allow private/local hosts AND any domain name; only
-                    // reject public IP literals that are not loopback,
-                    // RFC1918, or unique-local.
+                    // Intentionally asymmetric with the HTTP path below, and
+                    // safe by design:
+                    //   * Plaintext HTTP carries the bearer API key in
+                    //     cleartext, so it is confined to private/local
+                    //     networks only (no plaintext to public hosts).
+                    //   * HTTPS encrypts the credential, so reaching a
+                    //     user-configured OpenAI-compatible provider at a
+                    //     public cloud domain (e.g. api.openai.com) is the
+                    //     expected, legitimate use case and is allowed.
+                    //   * Even over HTTPS we still reject public IP literals
+                    //     that are not loopback/RFC1918/unique-local. This
+                    //     blocks SSRF to raw addressable infrastructure
+                    //     (cloud metadata 169.254.169.254, internal services
+                    //     reachable by IP) and forces DNS + TLS hostname
+                    //     validation. Private/local IPs and any domain name
+                    //     remain permitted.
+                    // Both schemes share `host_is_private_or_local` so the
+                    // private-network rule cannot silently drift.
                     if host_is_private_or_local(&h) || matches!(h, url::Host::Domain(_)) {
                         Ok(())
                     } else {
