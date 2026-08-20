@@ -94,29 +94,97 @@ export interface HumanizeOptions {
  * Split text into alternating `{ protected, text }` segments. Fenced code
  * blocks (`​``` or `~~~` fences, including unterminated ones) and inline code
  * spans are protected; everything else is prose.
+ *
+ * Implemented as a line scanner plus a one-line backtick matcher instead of
+ * one big regular expression: the scanner is linear and auditably simple,
+ * where a regex over arbitrary LLM text invites backtracking blowups.
  */
 const splitProtectedSegments = (
   text: string,
 ): { protected: boolean; text: string }[] => {
-  const segments: { protected: boolean; text: string }[] = [];
-  // Fenced code: opening fence line plus everything up to the closing fence
-  // (or end of text). Inline code: backtick spans on a single line.
-  const pattern =
-    /(^|\n)([ \t]*(?:`{3,}|~{3,})[^\n]*\n[\s\S]*?(?:\n[ \t]*(?:`{3,}|~{3,})[ \t]*(?=\n|$)|$))|(`+[^\n`]*`+)/g;
-  let lastIndex = 0;
-  let match: RegExpExecArray | null;
-  while ((match = pattern.exec(text)) !== null) {
-    const start =
-      match[2] !== undefined ? match.index + match[1].length : match.index;
-    const token = match[2] ?? match[3] ?? match[0];
-    if (start > lastIndex) {
-      segments.push({ protected: false, text: text.slice(lastIndex, start) });
+  type Segment = { protected: boolean; text: string };
+  const segments: Segment[] = [];
+
+  // Pass 1: fenced code blocks, line by line. An opening fence is a line
+  // whose first non-blank characters are a backtick or tilde run of 3+; it
+  // closes on a later line repeating the same marker, and an unterminated
+  // fence protects the rest of the text (fail closed, not open).
+  const fenceMarker = (line: string): string | null => {
+    const match = /^[ \t]*(`{3,}|~{3,})/.exec(line);
+    return match?.[1] ?? null;
+  };
+
+  const lines = text.split("\n");
+  let proseLines: string[] = [];
+  let fenceLines: string[] | null = null;
+  let opener: string | null = null;
+
+  const flushProse = () => {
+    if (proseLines.length > 0) {
+      segments.push(...splitInlineCode(proseLines.join("\n")));
+      proseLines = [];
     }
-    segments.push({ protected: true, text: token });
-    lastIndex = start + token.length;
+  };
+
+  for (const line of lines) {
+    const marker = fenceMarker(line);
+    if (fenceLines === null) {
+      if (marker) {
+        flushProse();
+        fenceLines = [line];
+        opener = marker;
+      } else {
+        proseLines.push(line);
+      }
+      continue;
+    }
+    fenceLines.push(line);
+    if (marker && marker[0] === opener![0] && marker.length >= opener!.length) {
+      segments.push({ protected: true, text: fenceLines.join("\n") });
+      fenceLines = null;
+      opener = null;
+    }
   }
-  if (lastIndex < text.length) {
-    segments.push({ protected: false, text: text.slice(lastIndex) });
+  flushProse();
+  if (fenceLines !== null && fenceLines.length > 0) {
+    segments.push({ protected: true, text: fenceLines.join("\n") });
+  }
+  return segments;
+};
+
+/** Split a prose chunk on single-line inline code spans (no regex). */
+const splitInlineCode = (
+  text: string,
+): { protected: boolean; text: string }[] => {
+  const segments: { protected: boolean; text: string }[] = [];
+  let start = 0;
+  let i = 0;
+  while (i < text.length) {
+    let protectedEnd = -1;
+    if (text[i] === "`") {
+      // Measure the backtick run, then look for the identical closing run.
+      let end = i;
+      while (end < text.length && text[end] === "`") end++;
+      const run = text.slice(i, end);
+      const close = text.indexOf(run, end);
+      // Inline code spans do not cross line breaks.
+      if (close !== -1 && !text.slice(end, close).includes("\n")) {
+        protectedEnd = close + run.length;
+      }
+    }
+    if (protectedEnd === -1) {
+      i++;
+      continue;
+    }
+    if (i > start) {
+      segments.push({ protected: false, text: text.slice(start, i) });
+    }
+    segments.push({ protected: true, text: text.slice(i, protectedEnd) });
+    i = protectedEnd;
+    start = protectedEnd;
+  }
+  if (start < text.length) {
+    segments.push({ protected: false, text: text.slice(start) });
   }
   return segments;
 };
