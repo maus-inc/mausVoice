@@ -338,8 +338,17 @@ jobs:
           CMAKE_OSX_DEPLOYMENT_TARGET: "13.3"
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.UPDATER_PRIVATE_KEY }}
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.UPDATER_PRIVATE_KEY_PASSWORD }}
+          # Dispatcher prereleases opt into the compile-time DevTools surface
+          # (`debug-assist`); stable releases omit it so DevTools is removed at
+          # compile time and cannot be toggled by an environment variable.
+          MAUSVOICE_PRERELEASE: ${{ inputs.prerelease }}
         working-directory: apps/desktop
-        run: pnpm run tauri build --ci ${{ matrix.args }}
+        run: |
+          if [ "$MAUSVOICE_PRERELEASE" = "true" ]; then
+            pnpm run tauri build --ci --features debug-assist ${{ matrix.args }}
+          else
+            pnpm run tauri build --ci ${{ matrix.args }}
+          fi
 
       - name: Sign macOS DMG for manual updater
         # Tauri's updater only signs `.app.tar.gz` -> `.app.tar.gz.sig`. The
