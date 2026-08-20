@@ -5,7 +5,8 @@
 #   git apply sonar_work/workflow-ignore-scripts.patch
 #   node --test scripts/ci/pr28-contracts.test.mjs
 # End state: every pnpm install in the five files below has --frozen-lockfile --ignore-scripts
-# and the same step runs `pnpm rebuild`. Do not add # NOSONAR. Do not skip rebuild.
+# and the same step runs `node scripts/ci/rebuild-allowlisted.mjs`.
+# Do not add # NOSONAR. Do not use a bare `pnpm rebuild`.
 #
 diff --git a/.github/workflows/build-desktop.yml b/.github/workflows/build-desktop.yml
 index c51804b..63056bc 100644
@@ -16,12 +17,12 @@ index c51804b..63056bc 100644
  
        - name: Install dependencies
 -        run: pnpm install --frozen-lockfile
-+        # --ignore-scripts blocks arbitrary package postinstalls. pnpm rebuild
-+        # then runs only the allowlisted native builds in onlyBuiltDependencies
-+        # (esbuild, sharp, and the rest in pnpm-workspace.yaml).
++        # --ignore-scripts blocks arbitrary package postinstalls. The helper
++        # then runs `pnpm rebuild` with the explicit onlyBuiltDependencies
++        # names from pnpm-workspace.yaml. A bare `pnpm rebuild` is not used.
 +        run: |
 +          pnpm install --frozen-lockfile --ignore-scripts
-+          pnpm rebuild
++          node scripts/ci/rebuild-allowlisted.mjs
  
        - name: Build frontend and dependencies
          env:
@@ -34,12 +35,12 @@ index a48a745..306255c 100644
              libgtk-layer-shell-dev imagemagick
        - name: Install dependencies
 -        run: pnpm install --frozen-lockfile
-+        # --ignore-scripts blocks arbitrary package postinstalls. pnpm rebuild
-+        # then runs only the allowlisted native builds in onlyBuiltDependencies
-+        # (esbuild, sharp, and the rest in pnpm-workspace.yaml).
++        # --ignore-scripts blocks arbitrary package postinstalls. The helper
++        # then runs `pnpm rebuild` with the explicit onlyBuiltDependencies
++        # names from pnpm-workspace.yaml. A bare `pnpm rebuild` is not used.
 +        run: |
 +          pnpm install --frozen-lockfile --ignore-scripts
-+          pnpm rebuild
++          node scripts/ci/rebuild-allowlisted.mjs
        - name: Build dependencies
          run: pnpm exec turbo run build --filter=desktop^... --verbosity=2 --continue
        - name: Lint TypeScript
@@ -52,12 +53,12 @@ index 65ee386..17df861 100644
            cache-dependency-path: pnpm-lock.yaml
        - name: Install dependencies
 -        run: pnpm install --frozen-lockfile # NOSONAR
-+        # --ignore-scripts blocks arbitrary package postinstalls. pnpm rebuild
-+        # then runs only the allowlisted native builds in onlyBuiltDependencies
-+        # (esbuild, sharp, and the rest in pnpm-workspace.yaml).
++        # --ignore-scripts blocks arbitrary package postinstalls. The helper
++        # then runs `pnpm rebuild` with the explicit onlyBuiltDependencies
++        # names from pnpm-workspace.yaml. A bare `pnpm rebuild` is not used.
 +        run: |
 +          pnpm install --frozen-lockfile --ignore-scripts
-+          pnpm rebuild
++          node scripts/ci/rebuild-allowlisted.mjs
        - name: Build workspace dependencies
          run: pnpm exec turbo run build --filter=desktop^...
        - name: Lint TypeScript
@@ -68,12 +69,12 @@ index 65ee386..17df861 100644
 -        # --ignore-scripts would skip the esbuild/sharp postinstall builds this
 -        # monorepo needs; mirrors build/lint/test workflows.
 -        run: pnpm install --frozen-lockfile # NOSONAR
-+        # --ignore-scripts blocks arbitrary package postinstalls. pnpm rebuild
-+        # then runs only the allowlisted native builds in onlyBuiltDependencies
-+        # (esbuild, sharp, and the rest in pnpm-workspace.yaml).
++        # --ignore-scripts blocks arbitrary package postinstalls. The helper
++        # then runs `pnpm rebuild` with the explicit onlyBuiltDependencies
++        # names from pnpm-workspace.yaml. A bare `pnpm rebuild` is not used.
 +        run: |
 +          pnpm install --frozen-lockfile --ignore-scripts
-+          pnpm rebuild
++          node scripts/ci/rebuild-allowlisted.mjs
  
        - name: Sync release version
          env:
@@ -86,12 +87,12 @@ index 5d01490..4482316 100644
              pnpm-lock.yaml
        - name: Install dependencies
 -        run: pnpm install --frozen-lockfile
-+        # --ignore-scripts blocks arbitrary package postinstalls. pnpm rebuild
-+        # then runs only the allowlisted native builds in onlyBuiltDependencies
-+        # (esbuild, sharp, and the rest in pnpm-workspace.yaml).
++        # --ignore-scripts blocks arbitrary package postinstalls. The helper
++        # then runs `pnpm rebuild` with the explicit onlyBuiltDependencies
++        # names from pnpm-workspace.yaml. A bare `pnpm rebuild` is not used.
 +        run: |
 +          pnpm install --frozen-lockfile --ignore-scripts
-+          pnpm rebuild
++          node scripts/ci/rebuild-allowlisted.mjs
        - name: Build dependencies
          run: pnpm exec turbo run build --filter=desktop^... --verbosity=2 --continue
        - name: Create empty .env file since secrets are injected via env vars
@@ -104,12 +105,12 @@ index 4167354..6be2fa9 100644
              pnpm-lock.yaml
        - name: Install dependencies
 -        run: pnpm install --frozen-lockfile
-+        # --ignore-scripts blocks arbitrary package postinstalls. pnpm rebuild
-+        # then runs only the allowlisted native builds in onlyBuiltDependencies
-+        # (esbuild, sharp, and the rest in pnpm-workspace.yaml).
++        # --ignore-scripts blocks arbitrary package postinstalls. The helper
++        # then runs `pnpm rebuild` with the explicit onlyBuiltDependencies
++        # names from pnpm-workspace.yaml. A bare `pnpm rebuild` is not used.
 +        run: |
 +          pnpm install --frozen-lockfile --ignore-scripts
-+          pnpm rebuild
++          node scripts/ci/rebuild-allowlisted.mjs
        - name: Build dependencies
          run: pnpm exec turbo run build --filter=desktop^... --verbosity=2 --continue
        - name: Run desktop unit tests

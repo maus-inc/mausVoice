@@ -41,12 +41,12 @@ jobs:
           workspaces: |
             apps/desktop/src-tauri -> target
       - name: Install dependencies
-        # --ignore-scripts blocks arbitrary package postinstalls. pnpm rebuild
-        # then runs only the allowlisted native builds in onlyBuiltDependencies
-        # (esbuild, sharp, and the rest in pnpm-workspace.yaml).
+        # --ignore-scripts blocks arbitrary package postinstalls. The helper
+        # then runs `pnpm rebuild` with the explicit onlyBuiltDependencies
+        # names from pnpm-workspace.yaml. A bare `pnpm rebuild` is not used.
         run: |
           pnpm install --frozen-lockfile --ignore-scripts
-          pnpm rebuild
+          node scripts/ci/rebuild-allowlisted.mjs
       - name: Build dependencies
         run: pnpm exec turbo run build --filter=desktop^...
       - name: Lint TypeScript

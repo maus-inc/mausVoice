@@ -15,7 +15,7 @@ SonarCloud quality gate on `main` fails Security Rating because these four files
 
 ## Hard stop
 
-If `git push` of `.github/workflows/*` is rejected for missing `workflows` permission, STOP. Tell the human to reconnect GitHub with the `workflows` permission. Do not copy workflow YAML into `personal-fork-ci` as a substitute. Do not add `# NOSONAR`. Do not rewrite the patch.
+If `git push` of `.github/workflows/*` is rejected for missing `workflows` permission, STOP. Tell the human to reconnect GitHub with the `workflows` permission. Do not copy workflow YAML into `personal-fork-ci` as a substitute. Do not add `# NOSONAR`. Do not rewrite the patch. Do not replace the helper with a bare `pnpm rebuild`.
 
 ## Allowed files
 
@@ -39,7 +39,7 @@ git apply sonar_work/workflow-ignore-scripts.patch
 node --test scripts/ci/pr28-contracts.test.mjs
 ```
 
-If `git apply --check` fails, STOP. Do not hand-merge. Do not recreate the change from memory unless every remaining `pnpm install` line in the five files already contains both `--frozen-lockfile` and `--ignore-scripts` and each of those install steps already runs `pnpm rebuild` on the next line. In that case the patch is already applied: do not force it.
+If `git apply --check` fails, STOP. Do not hand-merge. Do not recreate the change from memory unless every remaining `pnpm install` line in the five files already contains both `--frozen-lockfile` and `--ignore-scripts` and each of those install steps already runs `node scripts/ci/rebuild-allowlisted.mjs` on the next line. In that case the patch is already applied: do not force it.
 
 If the contract tests fail, STOP and revert the apply with:
 
@@ -57,13 +57,14 @@ For each of the five files:
 ```yaml
         run: |
           pnpm install --frozen-lockfile --ignore-scripts
-          pnpm rebuild
+          node scripts/ci/rebuild-allowlisted.mjs
 ```
 
 - No `# NOSONAR` remains on those install lines.
+- No bare `pnpm rebuild` (rebuild with zero package arguments).
 - No other steps, permissions, triggers, or comments are edited.
 
-`pnpm rebuild` is required. `--ignore-scripts` skips all lifecycle scripts. `pnpm rebuild` then runs only the packages in `onlyBuiltDependencies` (`pnpm-workspace.yaml`: esbuild, sharp, bcrypt, protobufjs, chromedriver, `@firebase/util`, re2). Skipping rebuild breaks Vite/esbuild in desktop CI.
+`--ignore-scripts` skips all lifecycle scripts. `scripts/ci/rebuild-allowlisted.mjs` then runs `pnpm rebuild` with the explicit package names from `onlyBuiltDependencies` in `pnpm-workspace.yaml` (esbuild, sharp, bcrypt, protobufjs, chromedriver, `@firebase/util`, re2). A bare `pnpm rebuild` is forbidden: it selects every lockfile package and also runs workspace project lifecycle hooks. Skipping the helper leaves Vite/esbuild without native binaries.
 
 ## Commit and push
 
@@ -76,8 +77,8 @@ git add .github/workflows/build-desktop.yml \
 git commit -m "$(cat <<'EOF'
 fix: apply ignore-scripts patch to desktop CI workflows
 
-Install with --ignore-scripts, then pnpm rebuild so only the
-onlyBuiltDependencies allowlist runs lifecycle scripts.
+Install with --ignore-scripts, then rebuild only the
+onlyBuiltDependencies allowlist via scripts/ci/rebuild-allowlisted.mjs.
 EOF
 )"
 git push

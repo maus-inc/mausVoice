@@ -4,6 +4,10 @@ import { existsSync, readFileSync, statSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { describe, it } from "node:test";
+import {
+  readOnlyBuiltDependencies,
+  rebuildCommand,
+} from "./rebuild-allowlisted.mjs";
 
 const repoRoot = resolve(dirname(fileURLToPath(import.meta.url)), "../..");
 
@@ -424,7 +428,8 @@ describe("PR28 workflow and public-asset contracts", () => {
       /git apply sonar_work\/workflow-ignore-scripts\.patch/,
     );
     assert.match(prompt, /NOSONAR/);
-    assert.match(prompt, /pnpm rebuild/);
+    assert.match(prompt, /node scripts\/ci\/rebuild-allowlisted\.mjs/);
+    assert.match(prompt, /Do not replace the helper with a bare `pnpm rebuild`/);
 
     for (const workflowPath of workflowPaths) {
       assert.match(
@@ -442,7 +447,8 @@ describe("PR28 workflow and public-asset contracts", () => {
       assert.match(line, /--frozen-lockfile/);
       assert.doesNotMatch(line, /NOSONAR/);
     }
-    assert.match(patch, /^\+\s+pnpm rebuild$/m);
+    assert.match(patch, /^\+\s+node scripts\/ci\/rebuild-allowlisted\.mjs$/m);
+    assert.doesNotMatch(patch, /^\+\s+pnpm rebuild\s*$/m);
 
     const installsAreSafe = (workflowText) => {
       const installs = [...workflowText.matchAll(/pnpm install[^\n]*/g)].map(
@@ -456,7 +462,7 @@ describe("PR28 workflow and public-asset contracts", () => {
             install.includes("--frozen-lockfile") &&
             !install.includes("NOSONAR"),
         ) &&
-        workflowText.includes("pnpm rebuild")
+        workflowText.includes("node scripts/ci/rebuild-allowlisted.mjs")
       );
     };
     const alreadyApplied = workflowPaths.every((workflowPath) =>
@@ -485,8 +491,32 @@ describe("PR28 workflow and public-asset contracts", () => {
         assert.match(install, /--ignore-scripts/);
         assert.match(install, /--frozen-lockfile/);
       }
-      assert.match(workflow, /pnpm rebuild/);
+      assert.match(workflow, /node scripts\/ci\/rebuild-allowlisted\.mjs/);
+      assert.doesNotMatch(workflow, /^\s+pnpm rebuild\s*$/m);
     }
+  });
+
+  it("rebuilds only the onlyBuiltDependencies allowlist by name", () => {
+    const workspacePackages = readOnlyBuiltDependencies(
+      read("pnpm-workspace.yaml"),
+    );
+    const manifestPackages = JSON.parse(read("package.json")).pnpm
+      .onlyBuiltDependencies;
+    assert.deepEqual(workspacePackages, [
+      "esbuild",
+      "sharp",
+      "bcrypt",
+      "protobufjs",
+      "chromedriver",
+      "@firebase/util",
+      "re2",
+    ]);
+    assert.deepEqual(manifestPackages, workspacePackages);
+    assert.deepEqual(rebuildCommand(workspacePackages), [
+      "pnpm",
+      "rebuild",
+      ...workspacePackages,
+    ]);
   });
 
   it("assembles a complete project-Pages artifact at the documented base", () => {
