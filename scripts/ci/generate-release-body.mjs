@@ -24,11 +24,12 @@ const customNotes = process.env.RELEASE_NOTES ?? "";
 const repository = process.env.GITHUB_REPOSITORY ?? "";
 const [owner, repo] = repository.split("/");
 
-// Logo-only shieldcn chips: empty label + empty value + black background.
-// <img src="https://shieldcn.dev/badge/-black.svg?logo=<slug>" height="32" />
-// Windows logo as data URI (simple-icons removed the windows slug).
-const WINDOWS_LOGO =
-  "data%3Aimage%2Fsvg%2Bxml%3Bbase64%2CPHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCAyNCAyNCI%2BPHBhdGggZmlsbD0iI2ZmZiIgZD0iTTAgMy40NDlMOS43NSAyLjF2OS40NTFIMG0xMC45NDktOS42MDJMMjQgMHYxMS40SDEwLjk0OU0wIDEyLjZoOS43NXY5LjQ1MUwwIDIwLjY5OU0xMC45NDkgMTIuNkgyNFYyNGwtMTIuOS0xLjgwMSIvPjwvc3ZnPg%3D%3D";
+// House badge chips: local SVGs under docs/assets/badges/ (black capsule,
+// inner top highlight, drop shadow, Geist outlines), referenced by absolute
+// raw URL so they render on release pages. The CI badge must show live
+// status, so it stays a shields.io workflow badge styled flat black.
+const BADGE_BASE = `https://raw.githubusercontent.com/${owner}/${repo}/main/docs/assets/badges`;
+const CI_BADGE = `https://img.shields.io/github/actions/workflow/status/${owner}/${repo}/test-desktop-unit.yml?branch=main&label=CI&style=flat&color=000000&labelColor=000000`;
 
 // mausVoice logo rendered from the repo so releases carry the brand mark.
 const MAUSVOICE_LOGO = `https://raw.githubusercontent.com/${owner}/${repo}/main/branding/mausvoice-logo-256.png`;
@@ -91,17 +92,13 @@ function markdownLink(label, url) {
 // Badges and download chips live inside `<p align="center">` raw-HTML blocks.
 // GitHub does not parse Markdown link syntax inside raw HTML, so a
 // `[<img>](url)` here renders as literal text. Emit a real HTML anchor instead.
-function badgeImage(src, alt, url) {
-  const img = `<img src="${src}" alt="${alt}" height="32" />`;
+function badgeImage(src, alt, url, height = 40) {
+  const img = `<img src="${src}" alt="${alt}" height="${height}" />`;
   return url ? `<a href="${url}">${img}</a>` : img;
 }
 
-function logoChip(slug, alt, url) {
-  return badgeImage(
-    `https://shieldcn.dev/badge/-black.svg?logo=${slug}`,
-    alt,
-    url,
-  );
+function houseBadge(name, alt, url) {
+  return badgeImage(`${BADGE_BASE}/${name}.svg`, alt, url);
 }
 
 async function autoNotes() {
@@ -181,15 +178,15 @@ const noteItems = notes
   .join("\n");
 
 const githubBase = `https://github.com/${owner}/${repo}`;
-const actionsUrl = `${githubBase}/actions`;
+const actionsUrl = `${githubBase}/actions/workflows/test-desktop-unit.yml`;
 const releasesUrl = `${githubBase}/releases`;
 const licenceUrl = `${githubBase}/blob/main/LICENCE`;
 
 const downloadChips = [
   ...(mac
     ? [
-        logoChip(
-          "apple",
+        houseBadge(
+          "macos",
           "Download mausVoice for macOS",
           assetUrl(mac.basename),
         ),
@@ -197,8 +194,8 @@ const downloadChips = [
     : []),
   ...(win
     ? [
-        logoChip(
-          WINDOWS_LOGO,
+        houseBadge(
+          "windows",
           "Download mausVoice for Windows",
           assetUrl(win.basename),
         ),
@@ -206,7 +203,7 @@ const downloadChips = [
     : []),
   ...(linDeb || linAppImage
     ? [
-        logoChip(
+        houseBadge(
           "linux",
           "Download mausVoice for Linux",
           assetUrl((linAppImage ?? linDeb).basename),
@@ -220,14 +217,13 @@ const body = [
   `  <img src="${MAUSVOICE_LOGO}" alt="mausVoice" width="110" />`,
   `</p>`,
   "",
-  `# ${releaseName}`,
+  `# ${releaseName} <a href="${actionsUrl}"><img src="${CI_BADGE}" alt="CI" /></a>`,
   "",
   "Voice typing for your own machine. Dictate into any app, clean it up with AI. No account, no subscription.",
   "",
   `<p align="center">`,
-  `  ${logoChip("opensourceinitiative", "AGPL-3.0 license", licenceUrl)}`,
-  `  ${logoChip("githubactions", "CI passing", actionsUrl)}`,
-  `  ${logoChip("box", "Downloads", releasesUrl)}`,
+  `  ${houseBadge("license", "AGPL-3.0 license", licenceUrl)}`,
+  `  ${houseBadge("downloads", "Downloads for all platforms", releasesUrl)}`,
   `</p>`,
   "",
   "---",

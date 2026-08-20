@@ -18,8 +18,9 @@ actual outline bounds and the glyph is centered on those, not on its
 
 | File | Used in |
 | --- | --- |
-| `license.svg` | Root README header row |
-| `macos.svg`, `windows.svg`, `linux.svg` | Root README header row and download section |
+| `license.svg` | Root README header row; generated GitHub Release body |
+| `downloads.svg` | Generated GitHub Release body header row |
+| `macos.svg`, `windows.svg`, `linux.svg` | Root README header row and download section; generated GitHub Release body download chips |
 | `promo-prod.svg`, `promo-enterprise.svg` | `release/README.md` promotion links |
 
 The badge set deliberately avoids arrow characters because the Geist Latin

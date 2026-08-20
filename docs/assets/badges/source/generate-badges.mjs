@@ -123,6 +123,7 @@ const CENTER_Y = PAD_TOP + H / 2;
 // -- badge manifest ---------------------------------------------------------
 const textBadges = [
   ["license", "license", "AGPL-3.0"],
+  ["downloads", "downloads", "all platforms"],
   ["promo-prod", "open promotion PR", "prod from main"],
   ["promo-enterprise", "open promotion PR", "enterprise from main"],
 ];
