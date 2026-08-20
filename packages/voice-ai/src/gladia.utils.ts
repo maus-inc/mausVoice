@@ -74,9 +74,20 @@ const errorMessage = (error: unknown): string =>
     .replace(/wss:\/\/[^\s)\]}]+/gi, "[Gladia WebSocket endpoint]")
     .replace(/\bBearer\s+[^\s,;)]+/gi, "Bearer [redacted]")
     .replace(
-      /\b((?:refresh[_-]?)?token|(?:api[_-]?)?key|x[-_]?gladia[-_]?key|authorization)(\s*[:=]\s*)[^\s,;)]+/gi,
-      "$1$2[redacted]",
+      /\brefresh[_-]?token(\s*[:=]\s*)[^\s,;)]+/gi,
+      "refresh_token$1[redacted]",
     )
+    .replace(
+      /\bx[-_]?gladia[-_]?key(\s*[:=]\s*)[^\s,;)]+/gi,
+      "x-gladia-key$1[redacted]",
+    )
+    .replace(
+      /\bauthorization(\s*[:=]\s*)[^\s,;)]+/gi,
+      "authorization$1[redacted]",
+    )
+    .replace(/\bapi[_-]?key(\s*[:=]\s*)[^\s,;)]+/gi, "api_key$1[redacted]")
+    .replace(/\btoken(\s*[:=]\s*)[^\s,;)]+/gi, "token$1[redacted]")
+    .replace(/\bkey(\s*[:=]\s*)[^\s,;)]+/gi, "key$1[redacted]")
     .slice(0, 500);
 
 const requireGladiaApiKey = (apiKey: string): string => {
