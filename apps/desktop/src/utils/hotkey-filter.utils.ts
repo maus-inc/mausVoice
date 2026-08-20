@@ -121,8 +121,9 @@ export const releaseHotkey = (actionName: string): void => {
   if (
     STYLE_SWITCH_PREFIXES.some((p) => actionName.toLowerCase().startsWith(p))
   ) {
+    // Key-up releases the physical hold only. Retain the timestamp so a
+    // modifier-only/partial release cannot bypass the 300 ms debounce window.
     heldActions.delete(actionName);
-    lastFireTimestamps.delete(actionName);
   }
 };
 

@@ -109,18 +109,19 @@ export const getStyleSwitchActionNamesForKey = (
   key: string,
 ): string[] => {
   const normalized = key.toLowerCase();
-  const actionNames = new Set<string>();
-  // Every style-switch action that can be bound to a key: the two built-in
-  // cycle actions (which always have a default combo even when absent from
-  // `hotkeyById`) plus any per-tone `switch-to-style:` hotkey the user saved.
-  for (const actionName of [
-    SWITCH_WRITING_STYLE_FORWARD_HOTKEY,
-    SWITCH_WRITING_STYLE_BACKWARD_HOTKEY,
-  ]) {
-    actionNames.add(actionName);
-  }
+  // Include every configured action covered by the shared debounce prefixes,
+  // plus built-ins which can resolve to platform defaults on macOS/Windows.
+  // Linux has no default cycle bindings, so absent user configuration there is
+  // correctly not releasable: it could not have triggered or become held.
+  const isStyleSwitchAction = (actionName: string): boolean =>
+    STYLE_SWITCH_ACTION_PREFIXES.some((prefix) =>
+      actionName.toLowerCase().startsWith(prefix),
+    );
+  const actionNames = new Set(
+    Object.keys(DEFAULT_HOTKEY_COMBOS).filter(isStyleSwitchAction),
+  );
   for (const hotkey of Object.values(state.hotkeyById)) {
-    if (hotkey.actionName.startsWith(SWITCH_TO_STYLE_HOTKEY_PREFIX)) {
+    if (isStyleSwitchAction(hotkey.actionName)) {
       actionNames.add(hotkey.actionName);
     }
   }

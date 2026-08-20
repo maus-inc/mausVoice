@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   evaluateHotkeyTrigger,
   releaseHotkey,
@@ -7,7 +7,13 @@ import {
 
 describe("evaluateHotkeyTrigger", () => {
   beforeEach(() => {
+    vi.useFakeTimers();
+    vi.setSystemTime(1_000);
     resetHotkeyFilter();
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
   });
 
   // ── Not recording ────────────────────────────────────────────────────
@@ -54,6 +60,16 @@ describe("evaluateHotkeyTrigger", () => {
 
     releaseHotkey("switch-writing-style-forward");
 
+    // Releasing a modifier/key removes the held guard but must not bypass the
+    // short debounce window.
+    const stillDebounced = evaluateHotkeyTrigger(
+      "switch-writing-style-forward",
+      true,
+    );
+    expect(stillDebounced.allowed).toBe(false);
+    expect(stillDebounced.reason).toContain("debounce");
+
+    vi.advanceTimersByTime(300);
     const afterRelease = evaluateHotkeyTrigger(
       "switch-writing-style-forward",
       true,
