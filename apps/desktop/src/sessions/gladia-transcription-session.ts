@@ -184,8 +184,7 @@ export class GladiaTranscriptionSession implements TranscriptionSession {
         });
         this.pump?.flushPendingSamples();
       } catch (error) {
-        const message =
-          error instanceof Error ? error.message : String(error);
+        const message = error instanceof Error ? error.message : String(error);
         getLogger().error("Gladia streaming session could not start", error);
         this.addWarning(`Gladia streaming session could not start: ${message}`);
       }
