@@ -1454,10 +1454,10 @@ section { scroll-margin-top: 96px; }
 
   /* ---------- Lenis smooth scroll + GSAP staggered reveals ---------- */
 
-  var gsapReady = typeof window.gsap !== "undefined" && typeof window.ScrollTrigger !== "undefined";
+  var gsapReady = window.gsap !== undefined && window.ScrollTrigger !== undefined;
   var smoothScroll = !reduceMotion && gsapReady && typeof Lenis !== "undefined";
 
-  if (smoothScroll) {
+  function initSmoothScroll() {
     gsap.registerPlugin(ScrollTrigger);
 
     var lenis = new Lenis({ lerp: 0.12, smoothWheel: true });
@@ -1541,11 +1541,15 @@ section { scroll-margin-top: 96px; }
     }
   }
 
+  if (smoothScroll) {
+    initSmoothScroll();
+  }
+
   /* ---------- fadeUp + words reveals ----------
      GSAP/Lenis own the reveals when smooth scroll is active; the
      IntersectionObserver path is the fallback otherwise. ---------- */
 
-  if (!smoothScroll) {
+  function initFallbackReveals() {
     var fades = Array.prototype.slice.call(document.querySelectorAll(".fade-up"));
 
     if (reduceMotion || !supportsIO) {
@@ -1585,6 +1589,10 @@ section { scroll-margin-top: 96px; }
         io.observe(el);
       });
     }
+  }
+
+  if (!smoothScroll) {
+    initFallbackReveals();
   }
 
   /* ---------- Recording pill engine ---------------------------------
@@ -1637,11 +1645,15 @@ section { scroll-margin-top: 96px; }
 
     // Geometry: stage spans the page (mission) or matches the pill (CTA).
     // CTA pill is 30% smaller (189.1 x 51.0).
-    var PILL_W = fullStage ? 270.1 : 189.1, PILL_H = fullStage ? 72.9 : 51.0;
-    var CH = fullStage ? 140 : PILL_H;
-    var CW = fullStage ? (canvas.parentElement.clientWidth || window.innerWidth) : PILL_W;
-    var PILL_X = fullStage ? (CW - PILL_W) / 2 : 0;
-    var PILL_Y = fullStage ? (CH - PILL_H) / 2 : 0;
+    var PILL_W = 189.1, PILL_H = 51.0, CH = PILL_H, CW = PILL_W, PILL_X = 0, PILL_Y = 0;
+    if (fullStage) {
+      PILL_W = 270.1;
+      PILL_H = 72.9;
+      CH = 140;
+      CW = canvas.parentElement.clientWidth || window.innerWidth;
+      PILL_X = (CW - PILL_W) / 2;
+      PILL_Y = (CH - PILL_H) / 2;
+    }
     var BASELINE = CH / 2;
 
     var state = { phase: 0, currentLevel: 0, targetLevel: 0 };
@@ -1731,18 +1743,18 @@ section { scroll-margin-top: 96px; }
         var w = words[i];
         w.x += w.speed;
         w.t += 0.022;
-        var y = BASELINE + 7 * Math.sin(w.t * 1.3 + w.x * 0.008);
+        var wordY = BASELINE + 7 * Math.sin(w.t * 1.3 + w.x * 0.008);
         var a = 1;
         if (w.x < PILL_X + PILL_W + 14) a = Math.min(a, (w.x - (PILL_X + PILL_W)) / 14);
         if (w.x > CW - 70) a = Math.min(a, (CW - w.x) / 70);
         if (a <= 0 || w.x > CW + 20) { words.splice(i, 1); continue; }
         ctx.fillStyle = "rgba(255, 255, 255, " + a.toFixed(3) + ")";
-        ctx.fillText(w.text, w.x, y);
+        ctx.fillText(w.text, w.x, wordY);
       }
 
       if (performance.now() > nextWord) {
         words.push({
-          text: TRANSCRIPT[(rand() * TRANSCRIPT.length) | 0],
+          text: TRANSCRIPT[Math.trunc(rand() * TRANSCRIPT.length)],
           x: PILL_X + PILL_W + 2,
           t: 0,
           speed: 1.7 + rand() * 0.9,
@@ -1839,32 +1851,34 @@ section { scroll-margin-top: 96px; }
       }
     }
 
-    if (reducePillMotion) {
-      // static frame: pill at a mid level (+ strings and one word on stage)
-      drawPill(0.45);
-      if (fullStage) {
-        var sRun = PILL_X;
-        for (var line of IN_LINES) {
-          ctx.beginPath();
-          for (var x = 0; x <= sRun; x += 3) {
-            var t = x / sRun;
-            var center = BASELINE + (line.startY - BASELINE) * (1 - easeInOut(t));
-            var y = center + line.amp * (1 - t) * (1 - t) * Math.sin(line.freq * t * TAU + 1.2);
-            if (x === 0) ctx.moveTo(x, y);
-            else ctx.lineTo(x, y);
-          }
-          ctx.strokeStyle = "rgba(255, 255, 255, " + line.opacity + ")";
-          ctx.lineWidth = STROKE_WIDTH;
-          ctx.stroke();
+    // Static frame (reduced-motion mode): pill at a mid level plus the
+    // incoming strings and one word on the full stage.
+    function drawStaticFrame() {
+      if (!fullStage) return;
+
+      var sRun = PILL_X;
+      for (var line of IN_LINES) {
+        ctx.beginPath();
+        for (var x = 0; x <= sRun; x += 3) {
+          var t = x / sRun;
+          var center = BASELINE + (line.startY - BASELINE) * (1 - easeInOut(t));
+          var y = center + line.amp * (1 - t) * (1 - t) * Math.sin(line.freq * t * TAU + 1.2);
+          if (x === 0) ctx.moveTo(x, y);
+          else ctx.lineTo(x, y);
         }
-        ctx.font = "500 13px 'JetBrains Mono', ui-monospace, monospace";
-        ctx.textBaseline = "middle";
-        ctx.fillStyle = "rgba(255, 255, 255, 0.8)";
-        ctx.fillText("hello", PILL_X + PILL_W + 8, BASELINE);
+        ctx.strokeStyle = "rgba(255, 255, 255, " + line.opacity + ")";
+        ctx.lineWidth = STROKE_WIDTH;
+        ctx.stroke();
       }
-    } else {
-      // Off-screen gating: only run the rAF loop while the canvas is
-      // visible. Hidden canvases burn main-thread frames for nothing.
+      ctx.font = "500 13px 'JetBrains Mono', ui-monospace, monospace";
+      ctx.textBaseline = "middle";
+      ctx.fillStyle = "rgba(255, 255, 255, 0.8)";
+      ctx.fillText("hello", PILL_X + PILL_W + 8, BASELINE);
+    }
+
+    // Animated mode. Off-screen gating: only run the rAF loop while the
+    // canvas is visible. Hidden canvases burn main-thread frames for nothing.
+    function startAnimationLoop() {
       var rafId = 0;
       var running = false;
       function loop(now) {
@@ -1900,6 +1914,13 @@ section { scroll-margin-top: 96px; }
       } else {
         start();
       }
+    }
+
+    if (reducePillMotion) {
+      drawPill(0.45);
+      drawStaticFrame();
+    } else {
+      startAnimationLoop();
     }
   }
 
