@@ -199,9 +199,9 @@ export const ManualStylingRow = ({ id }: ManualStylingRowProps) => {
           }
         >
           <span>
-              <IconButton size="small" disabled>
-                <Globe size={16} strokeWidth={1.9} />
-              </IconButton>
+            <IconButton size="small" disabled>
+              <Globe size={16} strokeWidth={1.9} />
+            </IconButton>
           </span>
         </Tooltip>
       )}

@@ -7,7 +7,10 @@ import type { Transcription } from "@maus-inc/types";
 import { INITIAL_APP_STATE } from "../../state/app.state";
 import { produceAppState, setAppState } from "../../store";
 
-const h = vi.hoisted(() => ({ deleteTranscription: vi.fn() }));
+const h = vi.hoisted(() => ({
+  deleteTranscription: vi.fn(),
+  scheduleTranscriptionDelete: vi.fn(),
+}));
 
 vi.mock("@tauri-apps/api/core", async (importOriginal) => {
   const actual = await importOriginal<typeof import("@tauri-apps/api/core")>();
@@ -25,6 +28,11 @@ vi.mock("../../repos", () => ({
   getTranscriptionRepo: () => ({
     deleteTranscription: h.deleteTranscription,
   }),
+}));
+
+vi.mock("../../utils/pending-transcription-delete", () => ({
+  scheduleTranscriptionDelete: h.scheduleTranscriptionDelete,
+  undoTranscriptionDelete: vi.fn(),
 }));
 
 vi.mock("react-intl", async (importOriginal) => {
@@ -143,9 +151,7 @@ describe("TranscriptionRow retranscribe button states", () => {
       "Retranscribing audio clip",
     );
     expect(button?.querySelector(".MuiCircularProgress-root")).not.toBeNull();
-    expect(
-      button?.querySelector('[data-testid="HourglassEmptyRoundedIcon"]'),
-    ).toBeNull();
+    expect(button?.querySelector("svg.lucide-hourglass")).toBeNull();
   });
 
   it("renders a static hourglass instead of a spinner when motion is reduced", async () => {
@@ -160,9 +166,7 @@ describe("TranscriptionRow retranscribe button states", () => {
     expect(button?.disabled).toBe(true);
     expect(button?.getAttribute("aria-busy")).toBe("true");
     expect(button?.querySelector(".MuiCircularProgress-root")).toBeNull();
-    expect(
-      button?.querySelector('[data-testid="HourglassEmptyRoundedIcon"]'),
-    ).not.toBeNull();
+    expect(button?.querySelector("svg.lucide-hourglass")).not.toBeNull();
   });
 
   it("renders a checkmark while the row is in the completed set", async () => {
@@ -176,9 +180,7 @@ describe("TranscriptionRow retranscribe button states", () => {
     expect(button?.disabled).toBe(false);
     expect(button?.getAttribute("aria-busy")).toBe("false");
     expect(button?.getAttribute("aria-label")).toBe("Retranscribed audio clip");
-    expect(
-      button?.querySelector('[data-testid="CheckCircleRoundedIcon"]'),
-    ).not.toBeNull();
+    expect(button?.querySelector("svg.lucide-check-circle")).not.toBeNull();
   });
 
   it("renders the replay icon when the row is idle", async () => {
@@ -262,10 +264,10 @@ describe("TranscriptionRow context menu", () => {
       deleteItem?.click();
     });
 
-    const repo = await import("../../repos");
-    expect(
-      repo.getTranscriptionRepo().deleteTranscription,
-    ).toHaveBeenCalledWith("row-1");
+    expect(h.scheduleTranscriptionDelete).toHaveBeenCalledWith(
+      sampleTranscription,
+      5000,
+    );
     expect(document.querySelector('[role="menu"]')).toBeNull();
   });
 });
