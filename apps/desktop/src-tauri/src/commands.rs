@@ -5548,10 +5548,6 @@ mod tests {
 
     #[test]
     fn urls_share_origin_compares_scheme_host_and_default_port() {
-    #[test]
-    fn urls_share_origin_compares_scheme_host_and_default_port() {
-    #[test]
-    fn urls_share_origin_compares_scheme_host_and_default_port() {
         let ollama = Url::parse("http://127.0.0.1:11434/v1/chat/completions").unwrap();
         // Same origin (trailing path/query never counts).
         assert!(urls_share_origin(
