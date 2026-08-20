@@ -187,6 +187,43 @@ describe("useContextMenu", () => {
     );
   };
 
+  it("does not suppress the native menu when there are no items", () => {
+    const EmptyHarness = () => {
+      const menu = useContextMenu();
+      return createElement(
+        "div",
+        null,
+        createElement(
+          "button",
+          {
+            "data-testid": "empty",
+            onContextMenu: (e: React.MouseEvent) =>
+              menu.handleContextMenu(e.nativeEvent, []),
+          },
+          "right-click me",
+        ),
+        menu.renderMenu(),
+      );
+    };
+    act(() => {
+      root.render(createElement(EmptyHarness));
+    });
+    const button = container.querySelector('[data-testid="empty"]')!;
+    const event = new MouseEvent("contextmenu", {
+      bubbles: true,
+      cancelable: true,
+      clientX: 120,
+      clientY: 80,
+    });
+    act(() => {
+      button.dispatchEvent(event);
+    });
+    // An empty item list must NOT preventDefault (which would suppress the
+    // platform menu) and must not render a menu.
+    expect(event.defaultPrevented).toBe(false);
+    expect(document.querySelector('[role="menu"]')).toBeNull();
+  });
+
   it("closes on Escape", () => {
     act(() => {
       root.render(createElement(Harness));

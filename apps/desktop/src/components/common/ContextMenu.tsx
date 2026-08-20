@@ -444,10 +444,12 @@ export const useContextMenu = (): UseContextMenuReturn => {
 
   const handleContextMenu = useCallback(
     (e: MouseEvent, items: ContextMenuItem[]) => {
+      // Bail before suppressing the native menu: an empty item list means
+      // there is nothing to show, so the default context menu should win.
+      if (items.length === 0) return;
+
       e.preventDefault();
       e.stopPropagation();
-
-      if (items.length === 0) return;
 
       // Record the element that will lose focus once the menu's `autoFocus`
       // steals it, so `closeMenu` can restore it later. Prefer the element the
