@@ -151,7 +151,9 @@ describe("TranscriptionRow retranscribe button states", () => {
       "Retranscribing audio clip",
     );
     expect(button?.querySelector(".MuiCircularProgress-root")).not.toBeNull();
-    expect(button?.querySelector("svg.lucide-hourglass")).toBeNull();
+    expect(
+      button?.querySelector('[data-testid="retranscribe-hourglass"]'),
+    ).toBeNull();
   });
 
   it("renders a static hourglass instead of a spinner when motion is reduced", async () => {
@@ -166,7 +168,9 @@ describe("TranscriptionRow retranscribe button states", () => {
     expect(button?.disabled).toBe(true);
     expect(button?.getAttribute("aria-busy")).toBe("true");
     expect(button?.querySelector(".MuiCircularProgress-root")).toBeNull();
-    expect(button?.querySelector("svg.lucide-hourglass")).not.toBeNull();
+    expect(
+      button?.querySelector('[data-testid="retranscribe-hourglass"]'),
+    ).not.toBeNull();
   });
 
   it("renders a checkmark while the row is in the completed set", async () => {
@@ -180,7 +184,9 @@ describe("TranscriptionRow retranscribe button states", () => {
     expect(button?.disabled).toBe(false);
     expect(button?.getAttribute("aria-busy")).toBe("false");
     expect(button?.getAttribute("aria-label")).toBe("Retranscribed audio clip");
-    expect(button?.querySelector("svg.lucide-check-circle")).not.toBeNull();
+    expect(
+      button?.querySelector('[data-testid="retranscribe-check"]'),
+    ).not.toBeNull();
   });
 
   it("renders the replay icon when the row is idle", async () => {

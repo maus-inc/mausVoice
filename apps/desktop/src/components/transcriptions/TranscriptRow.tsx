@@ -86,15 +86,36 @@ export const TranscriptionRow = ({ id }: TranscriptionRowProps) => {
 
   const retranscribeIcon = (() => {
     if (isRetranscribing && prefersReducedMotion) {
-      return <Hourglass size={16} strokeWidth={1.9} aria-hidden />;
+      return (
+        <Hourglass
+          size={16}
+          strokeWidth={1.9}
+          aria-hidden
+          data-testid="retranscribe-hourglass"
+        />
+      );
     }
     if (isRetranscribing) {
       return <CircularProgress size={18} color="inherit" aria-hidden />;
     }
     if (didRetranscribe) {
-      return <CheckCircle size={16} strokeWidth={1.9} aria-hidden />;
+      return (
+        <CheckCircle
+          size={16}
+          strokeWidth={1.9}
+          aria-hidden
+          data-testid="retranscribe-check"
+        />
+      );
     }
-    return <RotateCcw size={16} strokeWidth={1.9} aria-hidden />;
+    return (
+      <RotateCcw
+        size={16}
+        strokeWidth={1.9}
+        aria-hidden
+        data-testid="retranscribe-replay"
+      />
+    );
   })();
 
   const handleDetailsOpen = useCallback(() => {
