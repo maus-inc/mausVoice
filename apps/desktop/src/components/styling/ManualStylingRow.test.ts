@@ -115,10 +115,28 @@ describe("ManualStylingRow context menu", () => {
   it("opens a context menu with Edit first and Delete last (danger)", async () => {
     const menu = await openMenu();
     expect(menu).not.toBeNull();
-    expect(menuLabels(menu)).toEqual(["Edit", "Delete"]);
+    expect(menuLabels(menu)).toEqual(["Edit", "View full prompt", "Delete"]);
     expect(menu?.querySelector("hr")).not.toBeNull();
     const items = menu?.querySelectorAll('[role="menuitem"]') ?? [];
     expect(items[items.length - 1].textContent).toBe("Delete");
+  });
+
+  it("does not expose Edit or Delete for an organization-managed style", async () => {
+    produceAppState((draft) => {
+      draft.toneById["tone-1"].isGlobal = true;
+    });
+
+    const menu = await openMenu();
+    expect(menuLabels(menu)).toEqual(["View full prompt"]);
+  });
+
+  it("does not expose Edit or Delete for a system style", async () => {
+    produceAppState((draft) => {
+      draft.toneById["tone-1"].isSystem = true;
+    });
+
+    const menu = await openMenu();
+    expect(menuLabels(menu)).toEqual(["View full prompt"]);
   });
 
   it("opens the tone editor when Edit is clicked", async () => {

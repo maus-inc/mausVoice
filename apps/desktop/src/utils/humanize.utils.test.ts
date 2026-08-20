@@ -1,5 +1,16 @@
+import { readFileSync } from "node:fs";
 import { describe, it, expect } from "vitest";
-import { humanizeScrub } from "./humanize.utils";
+import { HUMANIZE_SKILL_TEXT, humanizeScrub } from "./humanize.utils";
+
+describe("HUMANIZE_SKILL_TEXT", () => {
+  it("stays byte-for-byte synchronized with the standalone prompt artifact", () => {
+    const standalonePrompt = readFileSync(
+      new URL("../../../../scripts/prompts/humanize.txt", import.meta.url),
+      "utf8",
+    ).trim();
+    expect(standalonePrompt).toBe(HUMANIZE_SKILL_TEXT);
+  });
+});
 
 describe("humanizeScrub", () => {
   it("replaces em-dashes with commas", () => {

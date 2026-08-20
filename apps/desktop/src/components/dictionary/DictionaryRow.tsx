@@ -114,15 +114,21 @@ export const DictionaryRow = ({ id }: DictionaryRowProps) => {
 
   const ctxMenu = useContextMenu();
 
+  // Global terms are organization-managed. Keep the right-click surface in
+  // lockstep with the disabled inline controls: never offer a delete path the
+  // normal UI intentionally withholds.
   const contextMenuItems = useMemo<ContextMenuItem[]>(
-    () => [
-      {
-        label: intl.formatMessage({ defaultMessage: "Delete" }),
-        danger: true,
-        onClick: handleDelete,
-      },
-    ],
-    [handleDelete, intl],
+    () =>
+      isGlobal
+        ? []
+        : [
+            {
+              label: intl.formatMessage({ defaultMessage: "Delete" }),
+              danger: true,
+              onClick: handleDelete,
+            },
+          ],
+    [handleDelete, intl, isGlobal],
   );
 
   if (!term) {
@@ -136,10 +142,20 @@ export const DictionaryRow = ({ id }: DictionaryRowProps) => {
         direction="row"
         spacing={2}
         onContextMenu={(e) => {
-          // Yield right-clicks on the term/replacement text fields to the
-          // provider's clipboard menu (Cut/Copy/Paste/Select All).
-          if (isEditableTarget(e.target)) return;
-          ctxMenu.handleContextMenu(e.nativeEvent, contextMenuItems);
+          // Let the provider's document listener handle inputs/textareas and
+          // contenteditables so their Cut/Copy/Paste menu is not replaced by
+          // this row-level Delete action.
+          if (
+            isEditableTarget(e.target) ||
+            contextMenuItems.length === 0
+          ) {
+            return;
+          }
+          ctxMenu.handleContextMenu(
+            e.nativeEvent,
+            contextMenuItems,
+            "dictionary",
+          );
         }}
         sx={{
           alignItems: "center",
