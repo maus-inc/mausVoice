@@ -182,6 +182,7 @@ truthiness in the sidecar script, and the i18n gate's placeholder exemption —
 both fixed pre-merge.
 
 Round 3 (reviewer re-verified case by case):
+
 - SonarCloud flagged my comparator ternary (S3358) and my splitting regex
   (S8786 backtracking, S5843 complexity). The splitting regex was deleted
   outright in favor of a line scanner, then restructured once more when that
