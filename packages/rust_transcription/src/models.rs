@@ -213,11 +213,47 @@ impl WhisperModel {
         models_dir.join(self.as_slug()).join(filename)
     }
 
-    /// Resolve the download URL, optionally overridden by an environment variable.
-    /// The variable name is derived from `as_slug()` mapped to uppercase
-    /// alphanumeric with every non-alphanumeric character replaced by `_`.
-    /// Example: `sense-voice` -> `RUST_TRANSCRIPTION_MODEL_URL_SENSE_VOICE`.
-    pub fn download_url(self) -> String {
+    /// whisper.cpp ggml model hosting. Pinned to an immutable commit of the
+    /// upstream mirror; every blob carries its Hugging Face LFS SHA-256
+    /// (identical to the checksums in whisper.cpp's own download script).
+    const WHISPER_CPP_REVISION: &str = "5359861c739e955e79d9a303bcbc70fb988958b1";
+
+    /// Pinned digests per whisper.cpp ggml blob at [`Self::WHISPER_CPP_REVISION`].
+    /// Sources: Hugging Face repo API `lfs.oid` fields for the pinned tree.
+    const fn whisper_cpp_sha256(self) -> Option<&'static str> {
+        match self {
+            Self::Tiny => {
+                Some("be07e048e1e599ad46341c8d2a135645097a538221678b7acdd1b1919c6e1b21")
+            }
+            Self::Base => {
+                Some("60ed5bc3dd14eea856493d334349b405782ddcaf0028d4b5df4088345fba2efe")
+            }
+            Self::Small => {
+                Some("1be3a9b2063867b937e64e2ec7483364a79917e157fa98c5d94b5c1fffea987b")
+            }
+            Self::Medium => {
+                Some("6c14d5adee5f86394037b4e4e8b59f1673b6cee10e3cf0b11bbdbee79c156208")
+            }
+            Self::Large => {
+                Some("64d182b440b98d5203c4f9bd541544d84c605196c4f7b845dfa11fb23594d1e2")
+            }
+            Self::Turbo => {
+                Some("1fc70f774d38eb169993ac391eea357ef47c88757ef72ee5943879b7e8e2bc69")
+            }
+            _ => None,
+        }
+    }
+
+    pub fn is_whisper_cpp(self) -> bool {
+        matches!(
+            self,
+            Self::Tiny | Self::Base | Self::Small | Self::Medium | Self::Large | Self::Turbo
+        )
+    }
+
+    /// Environment override checked separately so the pinned digest only ever
+    /// vouches for the pinned URL: an overridden URL is never digest-checked.
+    fn download_url_env_override(self) -> Option<String> {
         let env_suffix: String = self
             .as_slug()
             .chars()
@@ -230,34 +266,72 @@ impl WhisperModel {
             })
             .collect();
         let env_var = format!("RUST_TRANSCRIPTION_MODEL_URL_{env_suffix}");
+        std::env::var(env_var)
+            .ok()
+            .map(|value| value.trim().to_string())
+            .filter(|value| !value.is_empty())
+    }
 
-        if let Ok(value) = std::env::var(env_var) {
-            let trimmed = value.trim();
-            if !trimmed.is_empty() {
-                return trimmed.to_string();
-            }
+    /// Resolved digest for the whisper.cpp path: pinned for the default URL,
+    /// absent when a developer overrides the URL via the environment.
+    pub fn download_sha256(self) -> Option<&'static str> {
+        if !self.is_whisper_cpp() {
+            return None;
+        }
+        if self.download_url_env_override().is_some() {
+            return None;
+        }
+        self.whisper_cpp_sha256()
+    }
+
+    /// Resolve the download URL, optionally overridden by an environment variable.
+    /// The variable name is derived from `as_slug()` mapped to uppercase
+    /// alphanumeric with every non-alphanumeric character replaced by `_`.
+    /// Example: `sense-voice` -> `RUST_TRANSCRIPTION_MODEL_URL_SENSE_VOICE`.
+    pub fn download_url(self) -> String {
+        if let Some(overridden) = self.download_url_env_override() {
+            return overridden;
         }
 
         match self {
-            // Whisper.cpp ggml binaries are fetched from the project's mutable
-            // default branch. Upstream publishes them without a per-blob
-            // immutable revision or digest, so — unlike the ONNX artifacts —
-            // they are not supply-chain pinned. Pinning requires the exact
-            // whisper.cpp commit that hosts each blob, which is tracked
-            // separately; see the review notes on PR #63.
-            Self::Tiny => "https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-tiny.bin",
-            Self::Base => "https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-base.bin",
+            // Whisper.cpp ggml binaries are pinned to an immutable revision of
+            // the upstream mirror and carry the digests above, same as the
+            // ONNX artifacts.
+            Self::Tiny => {
+                return format!(
+                    "https://huggingface.co/ggerganov/whisper.cpp/resolve/{}/ggml-tiny.bin",
+                    Self::WHISPER_CPP_REVISION
+                );
+            }
+            Self::Base => {
+                return format!(
+                    "https://huggingface.co/ggerganov/whisper.cpp/resolve/{}/ggml-base.bin",
+                    Self::WHISPER_CPP_REVISION
+                );
+            }
             Self::Small => {
-                "https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-small.bin"
+                return format!(
+                    "https://huggingface.co/ggerganov/whisper.cpp/resolve/{}/ggml-small.bin",
+                    Self::WHISPER_CPP_REVISION
+                );
             }
             Self::Medium => {
-                "https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-medium.bin"
+                return format!(
+                    "https://huggingface.co/ggerganov/whisper.cpp/resolve/{}/ggml-medium.bin",
+                    Self::WHISPER_CPP_REVISION
+                );
             }
             Self::Large => {
-                "https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-large-v3.bin"
+                return format!(
+                    "https://huggingface.co/ggerganov/whisper.cpp/resolve/{}/ggml-large-v3.bin",
+                    Self::WHISPER_CPP_REVISION
+                );
             }
             Self::Turbo => {
-                "https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-large-v3-turbo.bin"
+                return format!(
+                    "https://huggingface.co/ggerganov/whisper.cpp/resolve/{}/ggml-large-v3-turbo.bin",
+                    Self::WHISPER_CPP_REVISION
+                );
             }
             // ONNX models are downloaded through `artifact_set()`, which pins
             // each artifact to an immutable Hugging Face revision and verifies
@@ -404,6 +478,71 @@ mod tests {
             assert!(model.filename().starts_with("ggml-"));
             assert!(model.filename().ends_with(".bin"));
         }
+    }
+
+    #[test]
+    fn whisper_cpp_downloads_are_revision_pinned_and_digest_checked() {
+        for slug in ["tiny", "base", "small", "medium", "large", "turbo"] {
+            let model = WhisperModel::from_slug(slug).expect("supported whisper slug must parse");
+            let url = model.download_url();
+            assert!(
+                url.contains(&format!("/resolve/{}/", WhisperModel::WHISPER_CPP_REVISION)),
+                "whisper.cpp {slug} URL must pin the immutable revision: {url}"
+            );
+            assert!(!url.contains("/resolve/main/"));
+
+            let digest = model
+                .download_sha256()
+                .expect("whisper.cpp model must carry a pinned digest");
+            assert_eq!(digest.len(), 64, "{slug} digest must be SHA-256 hex");
+            assert!(
+                digest.chars().all(|c| c.is_ascii_hexdigit()),
+                "{slug} digest must be lowercase hex: {digest}"
+            );
+        }
+
+        assert_eq!(WhisperModel::WHISPER_CPP_REVISION.len(), 40);
+        assert!(WhisperModel::WHISPER_CPP_REVISION
+            .chars()
+            .all(|c| c.is_ascii_hexdigit()));
+    }
+
+    #[test]
+    fn whisper_cpp_env_override_supplies_url_and_suppresses_the_pin() {
+        // Parallel cargo tests share the process environment, so serialize
+        // access and restore the value on drop.
+        static ENV_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+        struct EnvRestore {
+            key: &'static str,
+            original: Option<String>,
+        }
+        impl Drop for EnvRestore {
+            fn drop(&mut self) {
+                if let Some(value) = &self.original {
+                    std::env::set_var(self.key, value);
+                } else {
+                    std::env::remove_var(self.key);
+                }
+            }
+        }
+
+        let _guard = ENV_LOCK.lock().unwrap();
+        let _restore = EnvRestore {
+            key: "RUST_TRANSCRIPTION_MODEL_URL_TINY",
+            original: std::env::var("RUST_TRANSCRIPTION_MODEL_URL_TINY").ok(),
+        };
+
+        std::env::set_var(
+            "RUST_TRANSCRIPTION_MODEL_URL_TINY",
+            "http://127.0.0.1:1234/local-tiny.bin",
+        );
+        let tiny = WhisperModel::from_slug("tiny").expect("tiny parses");
+        assert_eq!(
+            tiny.download_url(),
+            "http://127.0.0.1:1234/local-tiny.bin"
+        );
+        // A developer-supplied URL never wears the upstream digest.
+        assert_eq!(tiny.download_sha256(), None);
     }
 
     #[test]

@@ -34,6 +34,33 @@ if (tauriCommand === "build" || tauriCommand === "dev") {
   }
 }
 
+// §5.7: `CI=false` is a truthy string, so bare truthiness would misclassify
+// it as CI. Compare explicitly against "true".
+const inCi = process.env.CI === "true";
+const isReleaseBuild = process.env.RELEASE_BUILD === "true";
+if (tauriCommand === "build" && !inCi && !isReleaseBuild) {
+  // The committed config ships createUpdaterArtifacts: false; the release
+  // pipeline flips it on via workflow. A local `tauri build` therefore makes
+  // an installer that can never self-update — say so loudly instead of
+  // letting the build look shippable.
+  try {
+    const { readFileSync } = await import("node:fs");
+    const config = JSON.parse(
+      readFileSync(join(process.cwd(), "src-tauri", "tauri.conf.json"), "utf8"),
+    );
+    if (config?.bundle?.createUpdaterArtifacts === false) {
+      console.warn(
+        "\n⚠ createUpdaterArtifacts is false in src-tauri/tauri.conf.json —\n" +
+          "  this local build CANNOT self-update. Release builds enable it in CI.\n" +
+          "  To produce an updating build locally, flip the flag (and provide\n" +
+          "  TAURI_SIGNING_PRIVATE_KEY) or run the release workflow.\n",
+      );
+    }
+  } catch {
+    // Config probe is advisory; never block the build on it.
+  }
+}
+
 run("tauri", tauriArgs, process.env);
 
 function resolveTargets(requestedTarget) {

@@ -47,6 +47,7 @@ import {
   SquareDashedMousePointer,
 } from "lucide-react";
 import { useCallback, useEffect, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 import { useIntl } from "react-intl";
 import { hairline, premiumSurface } from "../../styles/shadows";
 
@@ -213,11 +214,19 @@ const iconColor = (item: ContextMenuItem): string => {
 
 export const ContextMenu = ({ items, sx }: ContextMenuProps) => {
   const [activeIndex, setActiveIndex] = useState<number>(-1);
+  const menuRef = useRef<HTMLDivElement>(null);
 
   // Reset active index when items change
   useEffect(() => {
     setActiveIndex(-1);
   }, [items]);
+
+  // Focus the menu on open so keyboard navigation (arrows/Enter) works.
+  // `autoFocus` alone is unreliable here inside a portal, so focus
+  // explicitly after commit.
+  useEffect(() => {
+    menuRef.current?.focus();
+  }, []);
 
   // Keyboard navigation
   const handleKeyDown = useCallback(
@@ -278,6 +287,7 @@ export const ContextMenu = ({ items, sx }: ContextMenuProps) => {
 
   return (
     <Paper
+      ref={menuRef}
       role="menu"
       tabIndex={-1}
       onKeyDown={handleKeyDown}
@@ -536,6 +546,9 @@ export const useContextMenu = (): UseContextMenuReturn => {
 
     const handleEscape = (e: KeyboardEvent) => {
       if (e.key === "Escape") {
+        // Capture phase + stopPropagation: the menu consumes Escape so a
+        // wrapping host (MUI dialog, drawer) does not also close.
+        e.stopPropagation();
         closeMenu(true);
       }
     };
@@ -547,14 +560,14 @@ export const useContextMenu = (): UseContextMenuReturn => {
 
     window.addEventListener("scroll", handleScroll, true);
     window.addEventListener("blur", handleBlur);
-    document.addEventListener("keydown", handleEscape);
+    document.addEventListener("keydown", handleEscape, true);
 
     return () => {
       clearTimeout(clickAwayTimer);
       document.removeEventListener("mousedown", handleClickAway);
       window.removeEventListener("scroll", handleScroll, true);
       window.removeEventListener("blur", handleBlur);
-      document.removeEventListener("keydown", handleEscape);
+      document.removeEventListener("keydown", handleEscape, true);
     };
   }, [state, closeMenu]);
 
@@ -571,7 +584,7 @@ export const useContextMenu = (): UseContextMenuReturn => {
         },
       };
     });
-    return (
+    return createPortal(
       <Box
         sx={{
           position: "fixed",
@@ -581,7 +594,11 @@ export const useContextMenu = (): UseContextMenuReturn => {
         }}
       >
         <ContextMenu items={wrappedItems} />
-      </Box>
+      </Box>,
+      // Portal to <body>: a transformed/filtered ancestor (Framer Motion
+      // route wrappers keep one) would re-anchor `position: fixed` and clip
+      // the menu at the overflow boundary.
+      document.body,
     );
   }, [state, closeMenu]);
 

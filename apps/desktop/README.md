@@ -89,14 +89,14 @@ Keys are entered in Settings / onboarding and stored with XChaCha20-Poly1305. No
 
 ## Environment variables
 
-| Variable | Description |
-| --- | --- |
-| `VITE_FLAVOR` | `emulators` (dev default), `dev`, `prod`. `enterprise` / `enterprise-dev` are leftover flavor names, not live backends. |
-| `MAUSVOICE_ENABLE_DEVTOOLS` | Open webview devtools on startup |
-| `MAUSVOICE_DESKTOP_PLATFORM` | Override platform detection for Node scripts |
-| `TAURI_PLATFORM` | Set by `dev:mac` / `dev:windows` / `dev:linux` |
-| `TAURI_DEV_CONFIG` | Alternate Tauri config |
-| `MAUSVOICE_API_KEY_SECRET` | Optional explicit at-rest key secret |
+| Variable                     | Description                                                                                                             |
+| ---------------------------- | ----------------------------------------------------------------------------------------------------------------------- |
+| `VITE_FLAVOR`                | `emulators` (dev default), `dev`, `prod`. `enterprise` / `enterprise-dev` are leftover flavor names, not live backends. |
+| `MAUSVOICE_ENABLE_DEVTOOLS`  | Open webview devtools on startup                                                                                        |
+| `MAUSVOICE_DESKTOP_PLATFORM` | Override platform detection for Node scripts                                                                            |
+| `TAURI_PLATFORM`             | Set by `dev:mac` / `dev:windows` / `dev:linux`                                                                          |
+| `TAURI_DEV_CONFIG`           | Alternate Tauri config                                                                                                  |
+| `MAUSVOICE_API_KEY_SECRET`   | Optional explicit at-rest key secret                                                                                    |
 
 ## Internationalization
 

@@ -26,6 +26,14 @@ describe("secureFetch", () => {
     expect(invokeMock).not.toHaveBeenCalled();
   });
 
+  it("rejects relative URLs with a contextual error instead of bare Invalid URL", async () => {
+    await expect(secureFetch("/v1/models")).rejects.toThrow(
+      /secureFetch requires an absolute http\(s\) URL.*\/v1\/models/,
+    );
+    expect(pluginFetchMock).not.toHaveBeenCalled();
+    expect(invokeMock).not.toHaveBeenCalled();
+  });
+
   it("routes plaintext requests through the Rust host validator", async () => {
     invokeMock.mockResolvedValue({
       status: 200,

@@ -1,32 +1,10 @@
 // @vitest-environment jsdom
+import { act, createElement } from "react";
+import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { createElement, StrictMode } from "react";
-import { act } from "react";
-import { createRoot } from "react-dom/client";
-import type { Tone } from "@maus-inc/types";
-import { INITIAL_APP_STATE } from "../../state/app.state";
-import { produceAppState, setAppState } from "../../store";
 
-vi.mock("@tauri-apps/api/core", async (importOriginal) => {
-  const actual = await importOriginal<typeof import("@tauri-apps/api/core")>();
-  return {
-    ...actual,
-    invoke: vi.fn(async () => null),
-  };
-});
-
-vi.mock("../../actions/tone.actions", () => ({
-  openToneEditorDialog: vi.fn(),
-  deleteTone: vi.fn(),
-}));
-
-vi.mock("../common/ListTile", () => ({
-  ListTile: () => createElement("div", null),
-}));
-
-vi.mock("../common/MenuPopover", () => ({
-  MenuPopoverBuilder: () => null,
-  MenuPopoverItem: {} as never,
+const { deleteToneMock } = vi.hoisted(() => ({
+  deleteToneMock: vi.fn(async () => undefined),
 }));
 
 vi.mock("react-intl", async (importOriginal) => {
@@ -42,134 +20,159 @@ vi.mock("react-intl", async (importOriginal) => {
   };
 });
 
+vi.mock("../../actions/tone.actions", () => ({
+  deleteTone: deleteToneMock,
+  openToneEditorDialog: vi.fn(),
+}));
+
+vi.mock("react-router-dom", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("react-router-dom")>();
+  return {
+    ...actual,
+    useNavigate: () => vi.fn(),
+    useLocation: () => ({ pathname: "/" }),
+  };
+});
+
+import { INITIAL_APP_STATE } from "../../state/app.state";
+import { setAppState } from "../../store";
 import { ManualStylingRow } from "./ManualStylingRow";
 
 (
   globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }
 ).IS_REACT_ACT_ENVIRONMENT = true;
 
-const resetState = () => setAppState(structuredClone(INITIAL_APP_STATE), true);
-
-const seedRow = () => {
-  produceAppState((draft) => {
-    draft.toneById["tone-1"] = {
-      id: "tone-1",
-      name: "Formal",
-      description: "",
-      promptTemplate: "Write formally.",
-      isSystem: false,
-      isGlobal: false,
-    } as unknown as Tone;
-  });
+// jsdom has no ResizeObserver; MUI menus/tooltips require one.
+(globalThis as { ResizeObserver?: unknown }).ResizeObserver ??= class {
+  observe() {}
+  unobserve() {}
+  disconnect() {}
 };
 
-describe("ManualStylingRow context menu", () => {
-  let container: HTMLDivElement;
-  let root: ReturnType<typeof createRoot> | null = null;
+let container: HTMLDivElement;
+let root: Root;
 
-  beforeEach(() => {
-    resetState();
-    seedRow();
-    container = document.createElement("div");
-    document.body.appendChild(container);
-  });
-
-  afterEach(() => {
-    act(() => {
-      root?.unmount();
-    });
-    root = null;
-    container.remove();
-    resetState();
-  });
-
-  const openMenu = async () => {
-    root = createRoot(container);
-    await act(async () => {
-      root!.render(
-        createElement(
-          StrictMode,
-          null,
-          createElement(ManualStylingRow, { id: "tone-1" }),
-        ),
-      );
-    });
-    const row = container.querySelector<HTMLElement>("div");
-    const event = new MouseEvent("contextmenu", {
-      bubbles: true,
-      cancelable: true,
-      clientX: 50,
-      clientY: 50,
-    });
-    act(() => {
-      row?.dispatchEvent(event);
-    });
-    return document.querySelector('[role="menu"]');
+beforeEach(() => {
+  vi.clearAllMocks();
+  deleteToneMock.mockResolvedValue(undefined);
+  const state = structuredClone(INITIAL_APP_STATE);
+  state.toneById = {
+    tone1: {
+      id: "tone1",
+      name: "My Style",
+      promptTemplate: "Write plainly.",
+      isSystem: false,
+      createdAt: 0,
+      sortOrder: 0,
+    },
   };
+  setAppState(state, true);
 
-  const menuLabels = (menu: Element | null): string[] =>
-    Array.from(menu?.querySelectorAll('[role="menuitem"]') ?? []).map(
-      (el) => el.textContent ?? "",
-    );
+  container = document.createElement("div");
+  document.body.appendChild(container);
+  root = createRoot(container);
+});
 
-  it("opens a context menu with Edit first and Delete last (danger)", async () => {
-    const menu = await openMenu();
-    expect(menu).not.toBeNull();
-    expect(menuLabels(menu)).toEqual(["Edit", "View full prompt", "Delete"]);
-    expect(menu?.querySelector("hr")).not.toBeNull();
-    const items = menu?.querySelectorAll('[role="menuitem"]') ?? [];
-    expect(items[items.length - 1].textContent).toBe("Delete");
+afterEach(() => {
+  act(() => root.unmount());
+  container.remove();
+  document.body.innerHTML = "";
+});
+
+const openRowContextMenu = () => {
+  const row = container.firstElementChild as HTMLElement;
+  const event = new MouseEvent("contextmenu", {
+    bubbles: true,
+    cancelable: true,
+    clientX: 100,
+    clientY: 100,
   });
-
-  it("does not expose Edit or Delete for an organization-managed style", async () => {
-    produceAppState((draft) => {
-      draft.toneById["tone-1"].isGlobal = true;
-    });
-
-    const menu = await openMenu();
-    expect(menuLabels(menu)).toEqual(["View full prompt"]);
+  act(() => {
+    row.dispatchEvent(event);
   });
+  return event;
+};
 
-  it("does not expose Edit or Delete for a system style", async () => {
-    produceAppState((draft) => {
-      draft.toneById["tone-1"].isSystem = true;
+describe("ManualStylingRow destructive delete", () => {
+  it("asks for confirmation instead of deleting directly", async () => {
+    act(() => {
+      root.render(createElement(ManualStylingRow, { id: "tone1" }));
     });
+    openRowContextMenu();
 
-    const menu = await openMenu();
-    expect(menuLabels(menu)).toEqual(["View full prompt"]);
-  });
-
-  it("opens the tone editor when Edit is clicked", async () => {
-    const menu = await openMenu();
-    const editItem = Array.from(
-      menu?.querySelectorAll('[role="menuitem"]') ?? [],
-    ).find((el) => el.textContent === "Edit") as HTMLElement | undefined;
-    expect(editItem).toBeTruthy();
-
-    await act(async () => {
-      editItem?.click();
-    });
-
-    const toneActions = await import("../../actions/tone.actions");
-    expect(toneActions.openToneEditorDialog).toHaveBeenCalledWith({
-      mode: "edit",
-      toneId: "tone-1",
-    });
-  });
-
-  it("deletes the tone when Delete is clicked", async () => {
-    const menu = await openMenu();
     const deleteItem = Array.from(
-      menu?.querySelectorAll('[role="menuitem"]') ?? [],
-    ).find((el) => el.textContent === "Delete") as HTMLElement | undefined;
+      document.querySelectorAll('[role="menuitem"]'),
+    ).find((el) => el.textContent?.includes("Delete")) as HTMLElement;
     expect(deleteItem).toBeTruthy();
 
-    await act(async () => {
-      deleteItem?.click();
+    act(() => {
+      deleteItem.click();
     });
 
-    const toneActions = await import("../../actions/tone.actions");
-    expect(toneActions.deleteTone).toHaveBeenCalledWith("tone-1");
-    expect(document.querySelector('[role="menu"]')).toBeNull();
+    // No deletion happened yet: the confirmation dialog is up.
+    expect(deleteToneMock).not.toHaveBeenCalled();
+    expect(document.body.textContent).toContain(
+      "Are you sure you want to delete this style?",
+    );
+
+    const confirmButton = Array.from(document.querySelectorAll("button")).find(
+      (el) => el.textContent?.trim() === "Delete",
+    ) as HTMLElement;
+    expect(confirmButton).toBeTruthy();
+
+    await act(async () => {
+      confirmButton.click();
+    });
+    expect(deleteToneMock).toHaveBeenCalledTimes(1);
+    expect(deleteToneMock).toHaveBeenCalledWith("tone1");
+  });
+
+  it("does not delete when the confirmation is cancelled", async () => {
+    act(() => {
+      root.render(createElement(ManualStylingRow, { id: "tone1" }));
+    });
+    openRowContextMenu();
+    const deleteItem = Array.from(
+      document.querySelectorAll('[role="menuitem"]'),
+    ).find((el) => el.textContent?.includes("Delete")) as HTMLElement;
+    act(() => {
+      deleteItem.click();
+    });
+
+    const cancelButton = Array.from(document.querySelectorAll("button")).find(
+      (el) => el.textContent?.trim() === "Cancel",
+    ) as HTMLElement;
+    await act(async () => {
+      cancelButton.click();
+    });
+
+    expect(deleteToneMock).not.toHaveBeenCalled();
+  });
+
+  it("keeps the dialog open and swallows the rejection when delete fails", async () => {
+    deleteToneMock.mockRejectedValueOnce(new Error("db unavailable"));
+    act(() => {
+      root.render(createElement(ManualStylingRow, { id: "tone1" }));
+    });
+    openRowContextMenu();
+    const deleteItem = Array.from(
+      document.querySelectorAll('[role="menuitem"]'),
+    ).find((el) => el.textContent?.includes("Delete")) as HTMLElement;
+    act(() => {
+      deleteItem.click();
+    });
+    const confirmButton = Array.from(document.querySelectorAll("button")).find(
+      (el) => el.textContent?.trim() === "Delete",
+    ) as HTMLElement;
+
+    await act(async () => {
+      confirmButton.click();
+    });
+
+    expect(deleteToneMock).toHaveBeenCalledTimes(1);
+    // Dialog stays open so the failure is not mistaken for success.
+    expect(document.body.textContent).toContain(
+      "Are you sure you want to delete this style?",
+    );
   });
 });

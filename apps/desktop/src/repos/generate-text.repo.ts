@@ -403,6 +403,7 @@ export class GeminiGenerateTextRepo extends BaseGenerateTextRepo {
       prompt: input.prompt,
       system: input.system ?? undefined,
       jsonResponse: input.jsonResponse,
+      signal: input.signal,
       customFetch: tauriFetch,
     });
 

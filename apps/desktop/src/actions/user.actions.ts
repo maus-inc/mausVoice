@@ -674,6 +674,13 @@ export const setRealtimeOutputEnabled = async (
 ): Promise<void> => {
   await updateUserPreferences((preferences) => {
     preferences.realtimeOutputEnabled = enabled;
+    // Real-time output streams interim segments straight into the focused
+    // app (skipReview), so review-before-insert can never apply while it is
+    // on. Keep the pair mutually exclusive instead of silently ignoring the
+    // review preference.
+    if (enabled) {
+      preferences.reviewBeforeInsert = false;
+    }
   }, "Failed to save real-time output preference. Please try again.");
 };
 
@@ -743,6 +750,12 @@ export const setReviewBeforeInsert = async (
 ): Promise<void> => {
   await updateUserPreferences((preferences) => {
     preferences.reviewBeforeInsert = enabled;
+    // A composer review step conflicts with live interim streaming; see the
+    // realtime counterpart above. Turning review on therefore turns
+    // real-time output off in the same persisted write.
+    if (enabled) {
+      preferences.realtimeOutputEnabled = false;
+    }
   }, "Failed to save review-before-insert preference. Please try again.");
 };
 

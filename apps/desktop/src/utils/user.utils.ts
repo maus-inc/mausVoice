@@ -215,8 +215,17 @@ export const setUserPreferences = (
   draft: AppState,
   value: UserPreferences,
 ): void => {
-  draft.userPrefs = value;
-  applyAiPreferences(draft, value);
+  // Invariant enforcement, one write-site wide: realtime output and
+  // review-before-insert cannot both be on (interim streaming always runs
+  // with skipReview, so dual-true would silently skip review). Setters keep
+  // the pair exclusive on write; this normalize also repairs legacy rows
+  // that predate that rule. Realtime wins to match the runtime preference.
+  const normalized =
+    value.realtimeOutputEnabled === true && value.reviewBeforeInsert === true
+      ? { ...value, reviewBeforeInsert: false }
+      : value;
+  draft.userPrefs = normalized;
+  applyAiPreferences(draft, normalized);
 };
 
 type BaseTranscriptionPrefs = {

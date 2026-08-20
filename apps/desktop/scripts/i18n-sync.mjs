@@ -35,7 +35,16 @@ if (!fs.existsSync(baseLocalePath)) {
 }
 
 const baseMessages = JSON.parse(fs.readFileSync(baseLocalePath, "utf8"));
-const sortedKeys = Object.keys(baseMessages).sort((a, b) => a.localeCompare(b));
+// Deterministic code-unit order: `localeCompare()` without an explicit locale
+// follows the host's ICU collation, so identical sources could produce
+// differently ordered catalogs on machines with different system locales and
+// trip the CI "no diff after sync" check.
+const compareKeys = (a, b) => {
+  if (a < b) return -1;
+  if (a > b) return 1;
+  return 0;
+};
+const sortedKeys = Object.keys(baseMessages).sort(compareKeys);
 
 const cacheDir = path.join(localesDir, ".cache");
 const cacheFilePath = path.join(cacheDir, `${sourceLocale}.json`);

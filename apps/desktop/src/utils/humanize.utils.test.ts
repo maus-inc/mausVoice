@@ -92,6 +92,129 @@ describe("humanizeScrub", () => {
   });
 });
 
+describe("humanizeScrub structure preservation", () => {
+  it("leaves fenced code blocks byte-for-byte intact", () => {
+    const code = [
+      "```ts",
+      "// unlock the mutex",
+      "const ok = lock.unlock();  // keep  double   spaces",
+      "",
+      'const data = { "unlock": true };',
+      "```",
+    ].join("\n");
+    const input = `Here is the fix:\n\n${code}\n\nDone.`;
+    const result = humanizeScrub(input);
+    expect(result).toContain(code);
+    // Prose around the fence is still scrubbed.
+    expect(result).not.toContain("\n\n\n");
+  });
+
+  it("leaves inline code spans intact while scrubbing surrounding prose", () => {
+    const result = humanizeScrub(
+      "Call `lock.unlock()` to unlock the semaphore — carefully.",
+    );
+    expect(result).toContain("`lock.unlock()`");
+    expect(result).not.toContain("—");
+    expect(result).toContain("to enable the semaphore");
+  });
+
+  it("preserves indentation and blank lines in fenced JSON", () => {
+    const json = '{\n  "delve": 1,\n\n  "nested": {\n    "a": 2\n  }\n}';
+    const result = humanizeScrub(`Response:\n\n\`\`\`json\n${json}\n\`\`\``);
+    expect(result).toContain(json);
+  });
+
+  it("keeps paragraph breaks in plain prose", () => {
+    const result = humanizeScrub("First paragraph.\n\nSecond paragraph.");
+    expect(result).toBe("First paragraph.\n\nSecond paragraph.");
+  });
+
+  it("collapses horizontal runs but never newlines", () => {
+    expect(humanizeScrub("hello   world\n\nnext   line")).toBe(
+      "hello world\n\nnext line",
+    );
+  });
+
+  it("preserves an unterminated fence as code to end of text", () => {
+    const input = "Intro sentence.\n\n```\nunlock everything — as-is\n";
+    expect(humanizeScrub(input)).toContain("unlock everything — as-is");
+  });
+
+  it("keeps fence-looking lines with info strings protected inside a block", () => {
+    // A line like ```python inside an open fence is content, not a closing
+    // fence: closing fences cannot carry info strings (CommonMark), and
+    // splitting there would scrub the block interior as prose.
+    const block = [
+      "```",
+      "An example fence starts with an info string:",
+      "```python",
+      "lock.unlock()    # keep   spacing",
+      "```",
+    ].join("\n");
+    const input = `Use this:\n\n${block}\n\nDone.`;
+    expect(humanizeScrub(input)).toBe(input);
+  });
+
+  it("keeps byte-identical structure across alternating prose and fences", () => {
+    const input = [
+      "First delve into prose.",
+      "",
+      "```ts",
+      "const seamless = true;  // stay untouched",
+      "```",
+      "",
+      "Then utilize this.",
+    ].join("\n");
+    expect(humanizeScrub(input)).toBe(
+      [
+        "First explore into prose.",
+        "",
+        "```ts",
+        "const seamless = true;  // stay untouched",
+        "```",
+        "",
+        "Then use this.",
+      ].join("\n"),
+    );
+  });
+
+  it("keeps prose punctuation structure across fence boundaries", () => {
+    const input =
+      "a seamless thing\n```\ncode — stays\n```\nanother delve plan";
+    expect(humanizeScrub(input)).toBe(
+      "a smooth thing\n```\ncode — stays\n```\nanother explore plan",
+    );
+  });
+
+  it("closes fenced blocks under CRLF line endings", () => {
+    const prose = "delve into this";
+    const input = `Intro.\r\n\r\n\`\`\`ts\r\nconst a = 1;\r\n\`\`\`\r\n\r\n${prose}`;
+    const result = humanizeScrub(input);
+    // Post-fence prose must still be scrubbed, and the structure must not
+    // collapse from fail-closed protection of the whole document.
+    expect(result).toContain("const a = 1;");
+    expect(result.endsWith("explore into this")).toBe(true);
+  });
+
+  it("preserves leading indentation (indented code blocks survive)", () => {
+    expect(humanizeScrub("Intro:\n    indented code or list item")).toBe(
+      "Intro:\n    indented code or list item",
+    );
+  });
+
+  it("never merges prose across a newline through the em-dash rule", () => {
+    expect(humanizeScrub("Intro —\n- bullet")).toBe("Intro,\n- bullet");
+  });
+
+  it("scrubs prose on both sides of a fenced block", () => {
+    const input = "delve in\n\n```\ncode — stays\n```\n\nutilize this";
+    const result = humanizeScrub(input);
+    expect(result.startsWith("explore in")).toBe(true);
+    expect(result).toContain("code — stays");
+    expect(result.endsWith("use this")).toBe(true);
+  });
+});
+
 describe("humanizeScrub slop-word variants", () => {
   it("handles 'utilize' inflections case-insensitively", () => {
     expect(humanizeScrub("Utilizes the tool")).toBe("uses the tool");

@@ -47,6 +47,7 @@ import {
   getTranscriptionPrefs,
 } from "../../utils/user.utils";
 import { SegmentedControl } from "../common/SegmentedControl";
+import { logOnRejection } from "../../utils/promise.utils";
 import { SettingSection } from "../common/SettingSection";
 import { UpdateSettingSection } from "./UpdateSettingSection";
 
@@ -130,7 +131,10 @@ export const MoreSettingsDialog = () => {
     }
 
     lastCommittedDictationLimitMinutesRef.current = normalized;
-    void setDictationLimitMinutes(normalized);
+    logOnRejection(
+      setDictationLimitMinutes(normalized),
+      "settings dialog: setDictationLimitMinutes",
+    );
   };
 
   const handleClose = () => {
@@ -142,58 +146,88 @@ export const MoreSettingsDialog = () => {
 
   const handleToggleShowUpdates = (event: ChangeEvent<HTMLInputElement>) => {
     const showUpdates = event.target.checked;
-    void setIgnoreUpdateDialog(!showUpdates);
+    logOnRejection(
+      setIgnoreUpdateDialog(!showUpdates),
+      "settings dialog: setIgnoreUpdateDialog",
+    );
   };
 
   const handleToggleIncognitoMode = (event: ChangeEvent<HTMLInputElement>) => {
     const enabled = event.target.checked;
-    void setIncognitoModeEnabled(enabled);
+    logOnRejection(
+      setIncognitoModeEnabled(enabled),
+      "settings dialog: setIncognitoModeEnabled",
+    );
   };
 
   const handleToggleIncognitoIncludeInStats = (
     event: ChangeEvent<HTMLInputElement>,
   ) => {
     const enabled = event.target.checked;
-    void setIncognitoModeIncludeInStats(enabled);
+    logOnRejection(
+      setIncognitoModeIncludeInStats(enabled),
+      "settings dialog: setIncognitoModeIncludeInStats",
+    );
   };
 
   const handleDictationPillVisibilityChange = (
     event: SelectChangeEvent<DictationPillVisibility>,
   ) => {
     const visibility = event.target.value as DictationPillVisibility;
-    void setDictationPillVisibility(visibility);
+    logOnRejection(
+      setDictationPillVisibility(visibility),
+      "settings dialog: setDictationPillVisibility",
+    );
   };
 
   const handlePillResetMonitorStrategyChange = (
     strategy: PillResetMonitorStrategy,
   ) => {
-    void setPillResetMonitorStrategy(strategy);
+    logOnRejection(
+      setPillResetMonitorStrategy(strategy),
+      "settings dialog: setPillResetMonitorStrategy",
+    );
   };
 
   const handleToggleRealtimeOutput = (event: ChangeEvent<HTMLInputElement>) => {
-    void setRealtimeOutputEnabled(event.target.checked);
+    logOnRejection(
+      setRealtimeOutputEnabled(event.target.checked),
+      "settings dialog: setRealtimeOutputEnabled",
+    );
   };
 
   const handleToggleSpokenCommands = (event: ChangeEvent<HTMLInputElement>) => {
-    void setSpokenCommandsEnabled(event.target.checked);
+    logOnRejection(
+      setSpokenCommandsEnabled(event.target.checked),
+      "settings dialog: setSpokenCommandsEnabled",
+    );
   };
 
   const handleToggleInDictationStyleSwitching = (
     event: ChangeEvent<HTMLInputElement>,
   ) => {
-    void setInDictationStyleSwitchingEnabled(event.target.checked);
+    logOnRejection(
+      setInDictationStyleSwitchingEnabled(event.target.checked),
+      "settings dialog: setInDictationStyleSwitchingEnabled",
+    );
   };
 
   const handleToggleHallucinationFilter = (
     event: ChangeEvent<HTMLInputElement>,
   ) => {
-    void setHallucinationFilterEnabled(event.target.checked);
+    logOnRejection(
+      setHallucinationFilterEnabled(event.target.checked),
+      "settings dialog: setHallucinationFilterEnabled",
+    );
   };
 
   const handleToggleReviewBeforeInsert = (
     event: ChangeEvent<HTMLInputElement>,
   ) => {
-    void setReviewBeforeInsert(event.target.checked);
+    logOnRejection(
+      setReviewBeforeInsert(event.target.checked),
+      "settings dialog: setReviewBeforeInsert",
+    );
   };
 
   const handleToggleDisablePillRewards = (
@@ -205,7 +239,10 @@ export const MoreSettingsDialog = () => {
   };
 
   const handleToggleMenuBarIcon = (event: ChangeEvent<HTMLInputElement>) => {
-    void setMenuBarIconHidden(!event.target.checked);
+    logOnRejection(
+      setMenuBarIconHidden(!event.target.checked),
+      "settings dialog: setMenuBarIconHidden",
+    );
   };
 
   const handleToggleAutoStyleLoading = (
@@ -229,7 +266,10 @@ export const MoreSettingsDialog = () => {
 
   const handleStylingModeChange = (event: SelectChangeEvent<string>) => {
     const value = event.target.value;
-    void setStylingMode(value === "" ? null : (value as StylingMode));
+    logOnRejection(
+      setStylingMode(value === "" ? null : (value as StylingMode)),
+      "settings dialog: setStylingMode",
+    );
   };
 
   const openMultiDeviceDialog = () => {
@@ -372,7 +412,7 @@ export const MoreSettingsDialog = () => {
           <SettingSection
             title={<FormattedMessage defaultMessage="Real-time output" />}
             description={
-              <FormattedMessage defaultMessage="Stream dictation text as you speak instead of pasting all at once when you stop. Verbatim and a supported provider only. Punctuation commands apply live. Scratch-that and new-line apply to the saved transcript on release; they cannot rewrite text already streamed into the app." />
+              <FormattedMessage defaultMessage="Stream dictation text as you speak instead of pasting all at once when you stop. Verbatim and a supported provider only. Punctuation commands apply live. Scratch-that and new-line apply to the saved transcript on release; they cannot rewrite text already streamed into the app. Real-time streaming skips Review before insert, so turning one on turns the other off." />
             }
             action={
               <Switch
@@ -386,7 +426,7 @@ export const MoreSettingsDialog = () => {
           <SettingSection
             title={<FormattedMessage defaultMessage="Review before insert" />}
             description={
-              <FormattedMessage defaultMessage="Open an editable composer so you can review or change dictated text before it is inserted." />
+              <FormattedMessage defaultMessage="Open an editable composer so you can review or change dictated text before it is inserted. Review pauses streaming, so turning this on turns Real-time output off." />
             }
             action={
               <Switch

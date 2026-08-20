@@ -77,4 +77,3 @@ pub fn create_text_format(
             })
     }
 }
-

@@ -123,3 +123,42 @@ The `debug-assist` feature compiles Tauri's DevTools inspection capability into 
 - `pnpm gen:bindings` regenerates `packages/desktop-native-apis/src/bindings.ts` from the Specta-facing Rust commands after changing `#[tauri::command]` signatures or exposed types.
 - `pnpm --filter desktop i18n` extracts/prunes messages and synchronizes the locale catalogs after changing user-facing strings.
 - `pnpm --filter desktop dev:mac` / `dev:windows` / `dev:linux` runs the desktop app for a specific platform.
+
+** Rust toolchain & build environment **
+
+- Honor the pinned toolchain. The repo pins `channel` and `components` in `rust-toolchain.toml` (currently `1.88.0` with `clippy` and `rustfmt`). Do not override it with a newer stable. `cargo` reads the file automatically once the toolchain is installed.
+- Install rustup if it is missing, then install the pinned toolchain and its components:
+
+  ```
+  curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --default-toolchain none --profile minimal
+  . "$HOME/.cargo/env"
+  rustup toolchain install 1.88.0 --profile minimal
+  rustup component add --toolchain 1.88.0 clippy rustfmt
+  ```
+
+- Install the Linux system dependencies that the Tauri desktop crate needs to compile. On Debian/Ubuntu (run as root or with `sudo`):
+
+  ```
+  apt-get update
+  apt-get install -y build-essential pkg-config cmake \
+    libgtk-3-dev libwebkit2gtk-4.1-dev \
+    libayatana-appindicator3-dev librsvg2-dev libasound2-dev \
+    libxdo-dev libgtk-layer-shell-dev libssl-dev protobuf-compiler
+  ```
+
+  Pick `libwebkit2gtk-4.1-dev` when available. Fall back to `libwebkit2gtk-4.0-dev` on older distros.
+- A C linker (`cc`/`gcc`) is required. `build-essential` provides it. If `cargo` reports "no default linker", install `build-essential` and re-open the shell.
+- CI runs these Rust checks (replicate them locally before claiming done):
+  - `apps/desktop/src-tauri`: `cargo clippy -- -D warnings` and `cargo test --lib`
+  - `packages/rust_gtk_pill`: `cargo clippy --all-targets -- -D warnings` and `cargo test`
+  - `packages/rust_pill_shared`: `cargo test`
+  Set `TAURI_CONFIG='{"bundle":{"externalBin":[]}}'` so the build does not require external binaries.
+- First builds are slow (Tauri pulls many crates). Expect several minutes for the initial `cargo check`/`clippy`/`test`. Later runs are fast because `target/` is cached.
+
+** Persistence: do not give up on the Rust/build steps **
+
+- Treat Rust toolchain and system-dependency setup as mandatory, not optional. The desktop app does not compile without the system libraries listed above.
+- Network errors, missing targets, and linker failures are expected in a fresh environment. Diagnose each failure, install the missing piece, and re-run. Do not skip the Rust steps or stub them out.
+- If a `cargo` command fails, read the actual error. Common fixes: install the named system package, add a missing `rustup` target, or re-run after `apt-get install`. Iterate until `cargo clippy` and `cargo test` are green.
+- If `cargo run --example gen_bindings` is required (Specta bindings), build it once. The first run compiles the example; later runs are quick. A 240s tool timeout can interrupt the first build, so run long `cargo` commands with a larger timeout or in the background and poll the logs.
+- A full headless Tauri GUI build may be impossible without a display. In that case, satisfy CI equivalence with `cargo check`/`clippy`/`test` for the Rust packages, regenerate the Specta bindings, and typecheck the frontend. Document any check you could not run rather than claiming success.
