@@ -104,20 +104,8 @@ const splitProtectedSegments = (
 ): { protected: boolean; text: string }[] => {
   type Segment = { protected: boolean; text: string };
   const segments: Segment[] = [];
-
-  // Pass 1: fenced code blocks, line by line. An opening fence is a line
-  // whose first non-blank characters are a backtick or tilde run of 3+; it
-  // closes on a later line repeating the same marker, and an unterminated
-  // fence protects the rest of the text (fail closed, not open).
-  const fenceMarker = (line: string): string | null => {
-    const match = /^[ \t]*(`{3,}|~{3,})/.exec(line);
-    return match?.[1] ?? null;
-  };
-
-  const lines = text.split("\n");
   let proseLines: string[] = [];
-  let fenceLines: string[] | null = null;
-  let opener: string | null = null;
+  let openFence: { lines: string[]; marker: string } | null = null;
 
   const flushProse = () => {
     if (proseLines.length > 0) {
@@ -126,30 +114,52 @@ const splitProtectedSegments = (
     }
   };
 
-  for (const line of lines) {
+  for (const line of text.split("\n")) {
     const marker = fenceMarker(line);
-    if (fenceLines === null) {
-      if (marker) {
-        flushProse();
-        fenceLines = [line];
-        opener = marker;
-      } else {
-        proseLines.push(line);
+    if (openFence === null && marker) {
+      flushProse();
+      openFence = { lines: [line], marker };
+      continue;
+    }
+    if (openFence !== null) {
+      openFence.lines.push(line);
+      if (marker && closesFence(marker, openFence.marker)) {
+        segments.push({ protected: true, text: openFence.lines.join("\n") });
+        openFence = null;
       }
       continue;
     }
-    fenceLines.push(line);
-    if (marker && marker[0] === opener![0] && marker.length >= opener!.length) {
-      segments.push({ protected: true, text: fenceLines.join("\n") });
-      fenceLines = null;
-      opener = null;
-    }
+    proseLines.push(line);
   }
   flushProse();
-  if (fenceLines !== null && fenceLines.length > 0) {
-    segments.push({ protected: true, text: fenceLines.join("\n") });
+  // Fail closed: an unterminated fence protects the rest of the text.
+  if (openFence !== null) {
+    segments.push({ protected: true, text: openFence.lines.join("\n") });
   }
   return segments;
+};
+
+// Pass 1 fence detection: an opening fence is a line whose first non-blank
+// characters are a backtick or tilde run of 3+; the fence closes on a later
+// line repeating at least as many of the same marker character.
+const fenceMarker = (line: string): string | null => {
+  const match = /^[ \t]*(`{3,}|~{3,})/.exec(line);
+  return match?.[1] ?? null;
+};
+
+const closesFence = (marker: string, opener: string): boolean =>
+  marker.startsWith(opener.charAt(0)) && marker.length >= opener.length;
+
+/** End index of the inline code span starting at `from`, or -1. */
+const findInlineCodeEnd = (text: string, from: number): number => {
+  if (text[from] !== "`") return -1;
+  let end = from;
+  while (end < text.length && text[end] === "`") end++;
+  const run = text.slice(from, end);
+  const close = text.indexOf(run, end);
+  // Inline code spans do not cross line breaks.
+  if (close === -1 || text.slice(end, close).includes("\n")) return -1;
+  return close + run.length;
 };
 
 /** Split a prose chunk on single-line inline code spans (no regex). */
@@ -160,18 +170,7 @@ const splitInlineCode = (
   let start = 0;
   let i = 0;
   while (i < text.length) {
-    let protectedEnd = -1;
-    if (text[i] === "`") {
-      // Measure the backtick run, then look for the identical closing run.
-      let end = i;
-      while (end < text.length && text[end] === "`") end++;
-      const run = text.slice(i, end);
-      const close = text.indexOf(run, end);
-      // Inline code spans do not cross line breaks.
-      if (close !== -1 && !text.slice(end, close).includes("\n")) {
-        protectedEnd = close + run.length;
-      }
-    }
+    const protectedEnd = findInlineCodeEnd(text, i);
     if (protectedEnd === -1) {
       i++;
       continue;
