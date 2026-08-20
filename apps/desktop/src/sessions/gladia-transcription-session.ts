@@ -20,6 +20,7 @@ import {
   getGladiaSampleRate,
   type StreamingResampler,
 } from "../utils/gladia.utils";
+import { getLogger } from "../utils/log.utils";
 import { collectDictionaryEntries } from "../utils/prompt.utils";
 import {
   finalizeStreamingSession,
@@ -136,7 +137,6 @@ export class GladiaTranscriptionSession implements TranscriptionSession {
               error instanceof Error ? error.message : String(error)
             }`,
           );
-          this.pump?.resetBuffers();
         }
       },
     );
@@ -184,11 +184,9 @@ export class GladiaTranscriptionSession implements TranscriptionSession {
         });
         this.pump?.flushPendingSamples();
       } catch (error) {
-        this.addWarning(
-          `Gladia streaming session could not start: ${
-            error instanceof Error ? error.message : String(error)
-          }`,
-        );
+        const message = error instanceof Error ? error.message : String(error);
+        getLogger().error("Gladia streaming session could not start", error);
+        this.addWarning(`Gladia streaming session could not start: ${message}`);
       }
     })();
     await this.startupPromise;
@@ -203,11 +201,13 @@ export class GladiaTranscriptionSession implements TranscriptionSession {
     const activeSession = this.session;
     if (!activeSession) {
       const missing = sessionMissingResult("Gladia");
-      return {
+      const result = {
         ...missing,
-        metadata: { ...missing.metadata, modelSize: "solaria-1" },
+        metadata: { ...missing.metadata, modelSize: this.model ?? "solaria-1" },
         warnings: Array.from(new Set([...this.warnings, ...missing.warnings])),
       };
+      this.cleanup();
+      return result;
     }
 
     if (!this.streamReady && this.readyPromise) {
@@ -246,13 +246,17 @@ export class GladiaTranscriptionSession implements TranscriptionSession {
     }
     this.pump?.flushPendingSamples(true);
 
-    return finalizeStreamingSession({
-      session: activeSession,
-      providerLabel: "Gladia",
-      modelSize: "solaria-1",
-      log: console.log,
-      getWarnings: () => [...this.warnings, ...activeSession.getWarnings()],
-    });
+    try {
+      return await finalizeStreamingSession({
+        session: activeSession,
+        providerLabel: "Gladia",
+        modelSize: this.model ?? "solaria-1",
+        log: console.log,
+        getWarnings: () => [...this.warnings, ...activeSession.getWarnings()],
+      });
+    } finally {
+      this.cleanup();
+    }
   }
 
   cleanup(): void {

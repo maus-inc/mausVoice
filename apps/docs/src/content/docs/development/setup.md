@@ -48,13 +48,13 @@ Each sets `TAURI_PLATFORM`, runs `scripts/prepare-sidecars.mjs`, and starts Taur
 
 ### Environment variables
 
-| Variable | Role |
-| --- | --- |
-| `VITE_FLAVOR` | Frontend flavor. Desktop dev defaults to `emulators`. `dev` / `prod` are live names; `enterprise` / `enterprise-dev` are leftover flavor names, not backends. |
-| `MAUSVOICE_ENABLE_DEVTOOLS` | Open webview devtools on launch |
-| `MAUSVOICE_DESKTOP_PLATFORM` | Override platform detection for Node scripts |
-| `TAURI_PLATFORM` | Native target used by desktop scripts and Turbo cache |
-| `TAURI_DEV_CONFIG` | Alternate Tauri config for `dev:tauri` |
+| Variable                     | Role                                                                                                                                                          |
+| ---------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `VITE_FLAVOR`                | Frontend flavor. Desktop dev defaults to `emulators`. `dev` / `prod` are live names; `enterprise` / `enterprise-dev` are leftover flavor names, not backends. |
+| `MAUSVOICE_ENABLE_DEVTOOLS`  | Open webview devtools on launch                                                                                                                               |
+| `MAUSVOICE_DESKTOP_PLATFORM` | Override platform detection for Node scripts                                                                                                                  |
+| `TAURI_PLATFORM`             | Native target used by desktop scripts and Turbo cache                                                                                                         |
+| `TAURI_DEV_CONFIG`           | Alternate Tauri config for `dev:tauri`                                                                                                                        |
 
 Turbo also tracks Firebase emulator hosts so those values invalidate the cache.
 

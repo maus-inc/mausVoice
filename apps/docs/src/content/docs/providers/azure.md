@@ -11,7 +11,7 @@ The **Azure** provider changes meaning with the task. In **AI transcription**, i
 
 The transcription form requires:
 
-- **Azure Region**: the Speech resource region, such as `eastus`—not a full URL.
+- **Azure Region**: the Speech resource region, such as `eastus`, not a full URL.
 - **Subscription key**: the key belonging to that Speech resource.
 
 Normal recording starts an Azure Speech continuous recognizer and streams microphone samples into it. The app gathers recognized phrases and returns the assembled text at finalization. It deliberately reports no real-time-output support, so Azure segments are not inserted while you are still speaking. Dictionary context is split into phrases and supplied as phrase-list hints.

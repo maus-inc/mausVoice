@@ -17,11 +17,11 @@ sidebar:
 - **Assistant:** the tool-capable, conversational workflow launched by its own hold shortcut. It is not ordinary post-processing.
 - **Chats:** persisted Assistant conversation history in the dashboard.
 - **Pill:** the native floating recording/status overlay. macOS embeds its renderer; Windows/Linux use child processes.
-- **Local mode:** bundled Rust recognition through the CPU/GPU sidecar using a downloaded model — either a whisper.cpp GGML model or an ONNX Parakeet/Canary model.
+- **Local mode:** bundled Rust recognition through the CPU/GPU sidecar using a downloaded model, either a whisper.cpp GGML model or an ONNX Parakeet/Canary model.
 - **API mode:** recognition/generation through a configured hosted or self-hosted provider record.
-- **Real-time output:** insertion of committed segments while a supported streaming Verbatim session remains active—not speculative interim text.
+- **Real-time output:** insertion of committed segments while a supported streaming Verbatim session remains active, not speculative interim text.
 - **Remote output:** sending completed output to a paired device over the multi-device transport; distinct from provider networking.
 - **Incognito:** suppression of newly persisted transcription history/audio. It is not a universal network-off or log-redaction guarantee.
 - **App target:** a focused application identity with optional inherited/overridden style and insertion preferences.
 
-Write the product name as **mausVoice**. In bug reports, name the failed stage—capture, transcription, replacement, post-processing, history, or delivery—instead of describing every output problem as “transcription.”
+Write the product name as **mausVoice**. In bug reports, name the failed stage (capture, transcription, replacement, post-processing, history, or delivery) instead of describing every output problem as "transcription."

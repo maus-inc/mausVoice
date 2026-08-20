@@ -15,7 +15,7 @@ number, URL, and uncertainty exactly as spoken. Use a heading followed by
 three to five bullets. Do not add facts or a greeting.
 ```
 
-Avoid “make this better.” It leaves tone, length, factual preservation, and format undefined. Do not include passwords, customer secrets, or private boilerplate: the style prompt can be sent with every applicable transcript to the selected post-processing provider.
+Avoid "make this better." It leaves tone, length, factual preservation, and format undefined. Do not include passwords, customer secrets, or private boilerplate: the style prompt can be sent with every applicable transcript to the selected post-processing provider.
 
 ## Test before reuse
 

@@ -20,4 +20,4 @@ Provider-side storage and deletion are separate from local history. For example,
 
 Local history, dictionary, preferences, and optional audio are separate from provider transmission. Incognito suppresses new history and audio snapshots, while usage-statistics inclusion has its own toggle. Clipboard insertion can also expose output to the operating system and clipboard managers.
 
-Make privacy claims about a concrete configuration, not the product in the abstract. “Local transcription” is accurate for the audio-to-text stage; “nothing leaves the device” is accurate only when all enabled network-backed stages and remote output are also excluded.
+Make privacy claims about a concrete configuration, not the product in the abstract. "Local transcription" is accurate for the audio-to-text stage; "nothing leaves the device" is accurate only when all enabled network-backed stages and remote output are also excluded.

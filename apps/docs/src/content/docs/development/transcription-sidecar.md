@@ -14,7 +14,7 @@ cargo build --manifest-path packages/rust_transcription/Cargo.toml --release --b
 cargo build --manifest-path packages/rust_transcription/Cargo.toml --release --bin rust-transcription-gpu --features gpu,gpu-vulkan
 ```
 
-Routes cover health, device enumeration, model download/job status/delete/validation, one-shot transcription, and create/chunk/finalize/delete session operations. Session chunks are raw little-endian Float32 bytes. “Streaming” here means chunked transport and in-memory buffering: inference runs at finalization, after finite samples are resampled to 16 kHz. Idle session buffers older than ten minutes are evicted.
+Routes cover health, device enumeration, model download/job status/delete/validation, one-shot transcription, and create/chunk/finalize/delete session operations. Session chunks are raw little-endian Float32 bytes. "Streaming" here means chunked transport and in-memory buffering: inference runs at finalization, after finite samples are resampled to 16 kHz. Idle session buffers older than ten minutes are evicted.
 
 Model IDs are the six whisper.cpp sizes (`tiny`, `base`, `small`, `medium`, `turbo`, `large`) plus the ONNX Runtime models `parakeet-ctc-0.6b`, `parakeet-tdt-0.6b`, and `canary-1b`, and sherpa-onnx **SenseVoice** (`sense-voice`). Whisper URLs default to the repositories recorded in `models.rs` and can be overridden with `RUST_TRANSCRIPTION_MODEL_URL_<ID>`. ONNX artifact URLs are pinned to immutable revisions and verified where upstream SHA-256 digests are available; they intentionally cannot be overridden at runtime. Host, port, and model directory also have environment overrides. Never bind the desktop-managed service to a public interface.
 

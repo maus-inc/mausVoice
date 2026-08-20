@@ -273,6 +273,11 @@ describe("production CSP connect-src covers every webview-fetched provider host"
         host: "mausvoice-prod-default-rtdb.firebaseio.com",
         why: "Firebase RTDB websocket upgrade from the https databaseURL",
       },
+      {
+        scheme: "wss",
+        host: "api.gladia.io",
+        why: "Gladia live SDK websocket (opened inside @gladiaio/sdk)",
+      },
     ];
     for (const { scheme, host, why } of dynamicEndpoints) {
       expect(

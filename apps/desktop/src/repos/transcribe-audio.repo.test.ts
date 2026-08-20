@@ -459,7 +459,7 @@ describe("GladiaTranscribeAudioRepo", () => {
     );
   });
 
-  it("uses 60-minute chunks, five-second overlap, and concurrency three", () => {
+  it("uses 10-minute chunks, five-second overlap, and concurrency one", () => {
     class InspectableGladiaRepo extends GladiaTranscribeAudioRepo {
       getChunkingConfiguration() {
         return {
@@ -475,9 +475,9 @@ describe("GladiaTranscribeAudioRepo", () => {
       spellingDictionary: {},
     });
     expect(repo.getChunkingConfiguration()).toEqual({
-      duration: 3600,
+      duration: 600,
       overlap: 5,
-      concurrency: 3,
+      concurrency: 1,
     });
   });
 });

@@ -35,7 +35,7 @@ const importWithLiveSdkMock = async ({
     endSession: vi.fn(),
   };
   const emit = (event: string, payload: unknown) => {
-    for (const listener of [...(listeners.get(event) ?? [])]) {
+    for (const listener of listeners.get(event) ?? []) {
       listener(payload);
     }
   };
@@ -235,6 +235,13 @@ describe("createGladiaStreamingSession", () => {
     );
     expect(session.getWarnings().join(" ")).toContain(
       "x-gladia-key=[redacted]",
+    );
+    emit("error", new Error("refresh failed; key=provider-secret"));
+    emit("error", new Error("refresh_token=provider-secret"));
+    expect(session.getWarnings().join(" ")).not.toContain("provider-secret");
+    expect(session.getWarnings().join(" ")).toContain("key=[redacted]");
+    expect(session.getWarnings().join(" ")).toContain(
+      "refresh_token=[redacted]",
     );
     emit("ended", {
       code: 1006,
