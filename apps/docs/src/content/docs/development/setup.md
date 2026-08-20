@@ -5,7 +5,7 @@ sidebar:
   order: 2
 ---
 
-Use Node from `.nvmrc`—currently **v24**. The root `engines.node` floor is `>=20`. Wiki notes that say “Node 18+” are outdated; CI follows `.nvmrc`. Enable Corepack or install the exact package manager from the root manifest, **pnpm 10.34.5**, then install from the repository root:
+Use Node from `.nvmrc`, currently **v24**. The root `engines.node` floor is `>=20`. Wiki notes that say "Node 18+" are outdated; CI follows `.nvmrc`. Enable Corepack or install the exact package manager from the root manifest, **pnpm 10.34.5**, then install from the repository root:
 
 ```bash
 corepack enable
@@ -51,7 +51,7 @@ Each sets `TAURI_PLATFORM`, runs `scripts/prepare-sidecars.mjs`, and starts Taur
 | Variable                     | Role                                                                                                                                                          |
 | ---------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `VITE_FLAVOR`                | Frontend flavor. Desktop dev defaults to `emulators`. `dev` / `prod` are live names; `enterprise` / `enterprise-dev` are leftover flavor names, not backends. |
-| `MAUSVOICE_ENABLE_DEVTOOLS`  | Open webview devtools on launch                                                                                                                               |
+| `MAUSVOICE_ENABLE_DEVTOOLS`  | Open webview devtools on launch (only effective when built with `--features debug-assist`)                                                                    |
 | `MAUSVOICE_DESKTOP_PLATFORM` | Override platform detection for Node scripts                                                                                                                  |
 | `TAURI_PLATFORM`             | Native target used by desktop scripts and Turbo cache                                                                                                         |
 | `TAURI_DEV_CONFIG`           | Alternate Tauri config for `dev:tauri`                                                                                                                        |

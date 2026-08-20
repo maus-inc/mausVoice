@@ -2,11 +2,11 @@
 
 ## Who uses this
 
-Individual knowledge workers who dictate more than they can type: one person dictating into any **macOS, Windows, or Linux** app. No heavy team or admin surface — local-first, bring-your-own-key. Default register: **Operate** (tool that disappears into the task).
+Individual knowledge workers who dictate more than they can type: one person dictating into any **macOS, Windows, or Linux** app. No heavy team or admin surface. Local-first, bring-your-own-key. Default register: **Operate** (tool that disappears into the task).
 
 ## Product purpose
 
-mausVoice turns speech into text and inserts it into whatever app has focus — then optionally cleans it up with an LLM in a chosen writing style. Hotkey-first. A small native overlay “pill” shows state; the system tray keeps it resident.
+mausVoice turns speech into text and inserts it into whatever app has focus, then optionally cleans it up with an LLM in a chosen writing style. Hotkey-first. A small native overlay "pill" shows state; the system tray keeps it resident.
 
 ## Product truth (do not invent or hype)
 
@@ -18,13 +18,13 @@ mausVoice turns speech into text and inserts it into whatever app has focus — 
 ## Brand / tone
 
 - Name: **mausVoice**. Display face TAN-PARADISO only on logo + welcome; body/UI is Satoshi / Plus Jakarta.
-- UI copy: direct, task-named. Buttons name the action (“Save and continue”, not “Proceed”).
+- UI copy: direct, task-named. Buttons name the action ("Save and continue", not "Proceed").
 - Nothing gimmicky. It is a tool a professional uses all day.
 
 ## Anti-references (never)
 
-- Loud or “AI-company-purple” aesthetics. No decorative glass, no gradient text, no emoji-as-icons, no generic 3-equal-card grids.
-- Do not make the pill more playful than it already is — Operate, not Experience.
+- Loud or "AI-company-purple" aesthetics. No decorative glass, no gradient text, no emoji-as-icons, no generic 3-equal-card grids.
+- Do not make the pill more playful than it already is. Operate, not Experience.
 - Never hide a destructive action behind a single hover.
 
 ## Constraints

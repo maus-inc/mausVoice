@@ -5,7 +5,7 @@ sidebar:
   order: 1
 ---
 
-mausVoice filters credentials by task. “Available for transcription” means audio can be routed there; “available for generation” means the shared text-generation path can power post-processing and the API-backed Assistant. It does not mean every model from that company supports both.
+mausVoice filters credentials by task. "Available for transcription" means audio can be routed there; "available for generation" means the shared text-generation path can power post-processing and the API-backed Assistant. It does not mean every model from that company supports both.
 
 | Provider label    |        Transcription        |     Generation      | Required connection fields                              |
 | ----------------- | :-------------------------: | :-----------------: | ------------------------------------------------------- |
@@ -27,11 +27,11 @@ mausVoice filters credentials by task. “Available for transcription” means a
 | Speaches          |         Yes, batch          |         No          | Base URL and transcription model                        |
 | xAI Grok          |         Yes, batch          |         No          | API key                                                 |
 
-“Live session” describes microphone transport during recording. AssemblyAI, Deepgram, ElevenLabs, and Gladia emit committed segments into mausVoice's optional [real-time output](../../using-mausvoice/real-time-output/). Azure has a dedicated recognition session but currently returns its assembled transcript in bulk.
+"Live session" describes microphone transport during recording. AssemblyAI, Deepgram, ElevenLabs, and Gladia emit committed segments into mausVoice's optional [real-time output](../../using-mausvoice/real-time-output/). Azure has a dedicated recognition session but currently returns its assembled transcript in bulk.
 
 ## Capability filter and dispatcher agreement
 
-The capability filter and the transcription dispatcher agree: every provider surfaced for transcription has an implemented route. Ollama is intentionally generative-only — mausVoice preserves its post-processing and Assistant capabilities but does not expose speech-to-text through it (stock Ollama has no transcription endpoint), so it is not offered under **AI transcription**. AssemblyAI covers both the live streaming session and stored-audio batch (upload → transcript → poll). A stale selection for a provider without a transcription route is treated as unselected and falls back to **Local** transcription with a warning instead of failing silently.
+The capability filter and the transcription dispatcher agree: every provider surfaced for transcription has an implemented route. Ollama is intentionally generative-only. mausVoice preserves its post-processing and Assistant capabilities but does not expose speech-to-text through it (stock Ollama has no transcription endpoint), so it is not offered under **AI transcription**. AssemblyAI covers both the live streaming session and stored-audio batch (upload → transcript → poll). A stale selection for a provider without a transcription route is treated as unselected and falls back to **Local** transcription with a warning instead of failing silently.
 
 ## Selection and tests
 
@@ -39,4 +39,4 @@ Each task stores its own mode, credential ID, and model field. Reusing one Groq,
 
 Integration tests are provider-specific smoke checks. Some list models; others submit a tiny generation, call an account endpoint, open a speech connection, or hit a health endpoint. A green result does not promise access to the chosen model, remaining quota, a supported language, real-time segments, or a particular provider privacy policy. Follow it with a short non-sensitive request in the actual task.
 
-Choose **Local** instead of a provider record for bundled Whisper transcription. “Self-hosted” applies only to the endpoint you operate; review HTTP versus HTTPS, authentication, logs, and network exposure yourself.
+Choose **Local** instead of a provider record for bundled Whisper transcription. "Self-hosted" applies only to the endpoint you operate; review HTTP versus HTTPS, authentication, logs, and network exposure yourself.

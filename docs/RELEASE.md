@@ -22,7 +22,7 @@ How to cut a release. One workflow, manual dispatch, nothing else.
 - Repo secrets the pipeline reads: `RELEASE_TOKEN` (release authorship),
   `GROQ_API_KEY` (integration tests), and the updater trio
   `UPDATER_PRIVATE_KEY`, `UPDATER_PRIVATE_KEY_PASSWORD`, `UPDATER_PUBLIC_KEY`.
-  Don't add Apple/Azure code-signing secrets — the workflow doesn't use them.
+  Don't add Apple/Azure code-signing secrets. The workflow doesn't use them.
 
 ## Steps
 
@@ -61,7 +61,7 @@ git push
 
 What happens: three platform builds run in parallel (macOS universal,
 Windows, Linux deb+AppImage), artifacts upload, then a publish job assembles
-the release — versioned tag, generated/downloads-formatted body, all bundles
+the release: versioned tag, generated/downloads-formatted body, all bundles
 attached.
 
 ### 3. Watch it
@@ -71,7 +71,7 @@ attached.
   limits).
 - The `Publish` job runs after all three finish and creates the GitHub
   Release (draft: false, prerelease per your input).
-- A failed build job retries the whole `Release mausVoice` run — the system
+- A failed build job retries the whole `Release mausVoice` run. The system
   is concurrency-locked (`release-mausvoice` group), so it won't double-post.
 
 ### 4. Verify
@@ -97,7 +97,7 @@ Open `https://github.com/maus-inc/mausVoice/releases` and check:
 
 | Symptom                                             | Cause / fix                                                                                                                                                                           |
 | --------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Build job fails                                     | Read the Actions log. Batch all fixes, push once — CI minutes are finite. Integration tests failing with a Groq 429/timeout is a rate limit, not your code: wait for reset and rerun. |
+| Build job fails                                     | Read the Actions log. Batch all fixes, push once. CI minutes are finite. Integration tests failing with a Groq 429/timeout is a rate limit, not your code: wait for reset and rerun. |
 | macOS/Windows fail but Linux passes (or vice versa) | Platform-specific toolchain issue. macOS needs its two Rust targets; check the "Ensure universal macOS Rust targets" step. Windows needs the `CARGO_TARGET_DIR=D:\cargo` env.         |
 | Release shows `github-actions[bot]`                 | `RELEASE_TOKEN` secret missing/wrong. Set it again: `gh secret set RELEASE_TOKEN --repo maus-inc/mausVoice --body "$(gh auth token)"` (or a fine-grained PAT with repo contents).     |
 | Tag already exists                                  | You're releasing a version that was already tagged. Pick a new version or delete the old tag (only if you're sure).                                                                   |
@@ -128,6 +128,6 @@ Open `https://github.com/maus-inc/mausVoice/releases` and check:
 - `release.yml` is the single release path. The old multi-channel
   orchestrator (`release.yml` 3-channel, `_release-desktop-impl.yml`,
   `release-enterprise-*`, `release-docs`, `retry-release`, `publish-packages`)
-  was removed — don't recreate it.
+  was removed. Don't recreate it.
 - Keep `personal-fork-ci/workflows/` in sync with live CI templates; it's
   the re-apply fallback when a push token can't touch `.github/workflows/`.

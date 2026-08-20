@@ -5,15 +5,15 @@ sidebar:
   order: 1
 ---
 
-mausVoice is a cross-platform desktop dictation application built with Tauri v2 (Rust native layer + TypeScript/React “brain”). A configurable global shortcut starts recording; the app converts speech to text, can optionally rewrite that text, stores a history entry when privacy settings allow it, and delivers the result to the editable field that has focus when output is inserted. The application detected at recording start can still determine app-specific style and insertion preferences.
+mausVoice is a cross-platform desktop dictation application built with Tauri v2 (Rust native layer + TypeScript/React "brain"). A configurable global shortcut starts recording; the app converts speech to text, can optionally rewrite that text, stores a history entry when privacy settings allow it, and delivers the result to the editable field that has focus when output is inserted. The application detected at recording stop determines app-specific style and insertion preferences.
 
 That single gesture crosses several independent stages, and most questions about the app come down to which stage is involved.
 
-## The five-stage pipeline
+## The pipeline
 
 1. **Capture:** the desktop app listens to the selected microphone while the shortcut is held. The native floating pill reports recording and processing state.
-2. **Transcription:** audio is sent either to the bundled local Whisper sidecar or to the selected speech API. This stage decides which words were recognized.
-3. **Text transformation:** glossary context, deterministic replacement rules, and optional AI post-processing can change the raw transcript. A Style changes writing; it does not improve the audio recording itself.
+2. **Transcription:** audio is sent either to the bundled local sidecar or to the selected speech API. This stage decides which words were recognized.
+3. **Text transformation:** replacement rules, the hallucination filter, spoken formatting commands, symbol conversions, and optional AI post-processing can all change the raw transcript. A style changes writing; it does not improve the audio recording itself.
 4. **Persistence:** unless Incognito or the related history settings suppress it, mausVoice writes history data to its local SQLite database and can retain a local audio snapshot.
 5. **Delivery:** the app inserts the final text into the focused field through paste or simulated typing. It can instead send completed output to a configured receiver.
 
@@ -32,7 +32,7 @@ Use this order for a first installation:
 1. Install the release for the operating system and complete its unsigned-build warning.
 2. Grant microphone and input-control permissions required by that platform.
 3. Select **Local** transcription and download a model, or configure one API transcription provider.
-4. Leave AI post-processing **Off** for the first test.
+4. Set **AI post processing** to **Off** for the first test.
 5. Dictate one sentence into a plain text editor.
 6. Confirm that the raw words appear correctly before enabling a Style, replacement rules, Assistant mode, or remote output.
 
