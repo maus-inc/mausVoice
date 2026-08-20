@@ -197,4 +197,37 @@ describe("useContextMenu", () => {
     );
     expect(document.querySelector('[role="menu"]')).toBeNull();
   });
+
+  it("keeps the menu open when scrolling inside the menu itself", () => {
+    act(() => {
+      root.render(createElement(Harness));
+    });
+    const button = container.querySelector("button")!;
+    nativeContextMenu(button);
+    const menu = document.querySelector('[role="menu"]')!;
+    expect(menu).not.toBeNull();
+
+    // The menu scrolls itself (overflowY: auto) when it has many items; that
+    // must NOT dismiss the menu. The window scroll listener is registered in
+    // the capture phase, so a scroll event dispatched on the menu element
+    // reaches it with the menu as target.
+    act(() => {
+      menu.dispatchEvent(new Event("scroll", { bubbles: true }));
+    });
+    expect(document.querySelector('[role="menu"]')).not.toBeNull();
+  });
+
+  it("closes the menu when an external element scrolls", () => {
+    act(() => {
+      root.render(createElement(Harness));
+    });
+    const button = container.querySelector("button")!;
+    nativeContextMenu(button);
+    expect(document.querySelector('[role="menu"]')).not.toBeNull();
+
+    act(() => {
+      document.body.dispatchEvent(new Event("scroll", { bubbles: true }));
+    });
+    expect(document.querySelector('[role="menu"]')).toBeNull();
+  });
 });

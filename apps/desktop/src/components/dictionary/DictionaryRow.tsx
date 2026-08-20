@@ -132,11 +132,7 @@ export const DictionaryRow = ({ id }: DictionaryRowProps) => {
         direction="row"
         spacing={2}
         onContextMenu={(e) =>
-          ctxMenu.handleContextMenu(
-            e.nativeEvent,
-            contextMenuItems,
-            "dictionary",
-          )
+          ctxMenu.handleContextMenu(e.nativeEvent, contextMenuItems)
         }
         sx={{
           alignItems: "center",

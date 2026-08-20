@@ -191,7 +191,7 @@ export const ManualStylingRow = ({ id }: ManualStylingRowProps) => {
     <Box
       component="div"
       onContextMenu={(e) =>
-        ctxMenu.handleContextMenu(e.nativeEvent, contextMenuItems, "style")
+        ctxMenu.handleContextMenu(e.nativeEvent, contextMenuItems)
       }
     >
       <ListTile

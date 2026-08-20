@@ -72,11 +72,7 @@ export const ChatMessageBubble = ({ id }: ChatMessageBubbleProps) => {
     <Stack
       onContextMenu={(e) => {
         if (contextMenuItems.length === 0) return;
-        ctxMenu.handleContextMenu(
-          e.nativeEvent,
-          contextMenuItems,
-          "chat-message",
-        );
+        ctxMenu.handleContextMenu(e.nativeEvent, contextMenuItems);
       }}
     >
       <AgentActivity messageId={id} />

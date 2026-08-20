@@ -36,21 +36,22 @@ only provable at runtime). This requires a running app + DevTools memory snapsho
 protocol on a prerelease build (per `ui-behavioral-issues-plan.md` A12 WALK) and land
 the report; the static audit is largely already satisfied.
 
-### A23 — thock rate-limiter unit test — **MISSING**
-`thock_limiter::should_throttle()` (`audio_feedback.rs:157+`) has no test, but the
-plan's TESTS section explicitly requires "rate-limiter logic (pure function)". Also
-the PR body wrongly lists A23 as "out of scope". `cargo` is unavailable in this
-sandbox, so the test cannot be compiled/verified here; it must be written and run in a
-Rust-capable environment (inject time rather than sleeping, since `should_throttle`
-reads `SystemTime::now()` directly).
+### A23 — thock rate-limiter unit test — **PRESENT, needs `cargo` verification**
+`should_throttle_at(now_ms)` was extracted as a pure decision function and is
+covered by four unit tests (`first_thock_is_not_throttled`,
+`within_window_is_throttled`, `at_or_past_window_is_reenabled`,
+`clock_skew_backwards_is_safe`) in `audio_feedback.rs`. `cargo` is unavailable in
+this sandbox, so they could not be compiled/verified here; the remaining step is a
+`cargo test` in a Rust-capable environment.
 
-### A11 — full surface wiring — **INCOMPLETE (explicitly descoped)**
-Only the text-input clipboard menu is wired. The plan's inventory
-(transcriptions/dictionary/styles/chats/composer/home + a default app-level menu) is
-not wired, and there is no descoping rationale on record. The plan's DoD permits
-"explicitly descoped with rationale in report" — that rationale is the missing piece;
-either wire the high-value surfaces or record the descope. This is a multi-file UI
-effort best done as its own lane.
+### A11 — full surface wiring — **INCOMPLETE (A/C/D wired, E/F descoped)**
+The text-input clipboard menu is wired, and the non-input surfaces are now wired:
+transcriptions (`TranscriptRow.tsx`), styles (`ManualStylingRow.tsx`), chats
+(`ConversationListItem.tsx` + `ChatMessageBubble.tsx`), and dictionary
+(`DictionaryRow.tsx`, Delete-only because the row edits inline). Composer and Home
+remain descoped (composer text is covered by the provider's input menu; Home has no
+documented right-click refresh entry point). Each wired surface has a component
+test; the descope rationale for E/F is recorded in `docs/handoff/remaining-work.md`.
 
 ## Verification status of the fixes on this branch
 

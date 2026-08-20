@@ -212,11 +212,7 @@ export const TranscriptionRow = ({ id }: TranscriptionRowProps) => {
     <Box
       component="div"
       onContextMenu={(e) =>
-        ctxMenu.handleContextMenu(
-          e.nativeEvent,
-          contextMenuItems,
-          "transcription",
-        )
+        ctxMenu.handleContextMenu(e.nativeEvent, contextMenuItems)
       }
     >
       <Stack

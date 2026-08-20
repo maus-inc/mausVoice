@@ -59,11 +59,7 @@ export const ConversationListItem = ({
     <Box
       component="div"
       onContextMenu={(e) =>
-        ctxMenu.handleContextMenu(
-          e.nativeEvent,
-          contextMenuItems,
-          "conversation",
-        )
+        ctxMenu.handleContextMenu(e.nativeEvent, contextMenuItems)
       }
     >
       <ListItemButton

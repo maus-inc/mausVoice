@@ -24,13 +24,17 @@ and `REVIEW.md`):
 
 ---
 
-## 1. A23 — Add the missing thock rate-limiter unit test
+## 1. A23 — Verify the thock rate-limiter unit test
 
 ### Status
-`apps/desktop/src-tauri/src/system/audio_feedback.rs` ships a rate limiter that
-has **no test**, but the plan's A23 TESTS section explicitly requires
-"rate-limiter logic (pure function)". This is the only A23 deliverable that is
-still open.
+`apps/desktop/src-tauri/src/system/audio_feedback.rs` already ships the rate
+limiter **and its unit test**: `should_throttle_at(now_ms)` was extracted as a
+pure decision function and is covered by four tests
+(`first_thock_is_not_throttled`, `within_window_is_throttled`,
+`at_or_past_window_is_reenabled`, `clock_skew_backwards_is_safe`). The only
+remaining step is a `cargo` environment to compile and run them — `cargo` is
+unavailable in the authoring sandbox, so this section is a verification handoff,
+not a "write the test" task.
 
 ### Current code (read it first — lines ~154-182 of `audio_feedback.rs`)
 ```rust
@@ -251,14 +255,27 @@ Use the exact `REVIEW.md` §2.5 structure:
 
 ### Status
 The shared component `apps/desktop/src/components/common/ContextMenu.tsx` and the
-text-input clipboard menu already work and are tested. **No page surface is wired.**
-The plan requires the inventory (transcriptions, dictionary, styles, chats,
-composer, home, plus a default app-level menu) to be wired OR explicitly descoped
-with a written rationale. This section wires them.
+text-input clipboard menu already work and are tested, and the following
+**non-input surfaces are already wired** (each with its own `useContextMenu()`,
+`onContextMenu` handler, `renderMenu()`, and a component test):
+- **A. Transcriptions** — `TranscriptRow.tsx`: Copy text / Copy ID / Open details /
+  Retranscribe / divider / Delete (danger).
+- **C. Styles** — `ManualStylingRow.tsx`: Edit / divider / Delete (danger).
+- **D. Chats** — `ConversationListItem.tsx` (Delete conversation) and
+  `ChatMessageBubble.tsx` (Copy message).
+- **B. Dictionary** — `DictionaryRow.tsx` is wired with **Delete only**: the row
+  edits inline (no modal edit entry point exists), so Edit is intentionally
+  omitted per the item-ordering rule; the test documents this decision.
+
+What remains **open**: **E. Composer** and **F. Home** are not wired (the composer
+text area is already covered by the provider's input clipboard menu; there is no
+separate composer menu to add, and Home has no documented right-click refresh
+entry point). If a later pass wants them, wire `ComposerPage.tsx` and `HomePage.tsx`
+with the spec below; otherwise record them as explicitly descoped.
 
 ### The two mechanisms you have (use these, do not invent new ones)
 - `useContextMenu()` → `{ handleContextMenu, renderMenu, closeMenu }`.
-  `handleContextMenu(e.nativeEvent, items, surfaceKey)` where `items` is
+  `handleContextMenu(e.nativeEvent, items)` where `items` is
   `ContextMenuItem[]`.
 - `ContextMenuProvider` (already mounted at `Root.tsx:52`) intercepts global
   right-clicks and shows the clipboard menu **only on inputs**. It leaves all
