@@ -87,6 +87,7 @@ export const ConversationListItem = ({
             noWrap
             sx={{
               lineHeight: 1.3,
+              color: "inherit",
             }}
           >
             {conversation.title}
@@ -94,7 +95,10 @@ export const ConversationListItem = ({
           <Typography
             variant="caption"
             sx={{
-              color: "text.secondary",
+              // Inherit the row's currentColor so selected light (cream on
+              // ink) and dark (chalk on onyx) both keep a readable date.
+              color: "inherit",
+              opacity: 0.62,
               lineHeight: 1.2,
             }}
           >

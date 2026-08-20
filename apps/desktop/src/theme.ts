@@ -273,17 +273,46 @@ export const theme = createTheme({
 
     MuiSwitch: {
       styleOverrides: {
-        root: {
-          // Square switch (shadcn switch-2 look, adapted to MUI): small radii
-          // on the thumb and track instead of the default pill geometry.
-          // Applied globally so every <Switch> inherits the new look.
-          "& .MuiSwitch-thumb": {
-            borderRadius: 3,
+        root: ({ theme }) => ({
+          // Squircle: same corner language on thumb and track (not a pill
+          // track with a square head). Press is 0.96 / 120ms ease-out.
+          padding: 7,
+          "&:active .MuiSwitch-thumb": {
+            transform: "scale(0.96)",
           },
-          "& .MuiSwitch-track": {
-            borderRadius: 5,
+          "& .MuiSwitch-switchBase": {
+            transition: `transform 160ms ${theme.transitions.easing.easeOut}`,
           },
-        },
+        }),
+        thumb: ({ theme }) => ({
+          borderRadius: 4,
+          boxShadow: `inset 0 1px 0 ${highlight(0.42)}, 0 1px 2px ${ink(0.18)}`,
+          transition: `transform 120ms ${theme.transitions.easing.easeOut}, box-shadow 160ms ${theme.transitions.easing.easeOut}`,
+          ...theme.applyStyles("dark", {
+            boxShadow: `inset 0 1px 0 ${highlight(0.12)}, 0 1px 2px ${darkInk(0.45)}`,
+          }),
+        }),
+        track: ({ theme }) => ({
+          borderRadius: 5,
+          opacity: 1,
+          backgroundColor: theme.vars.palette.level3,
+          border: hairline.light(0.08),
+          boxShadow: `inset 0 1px 2px ${ink(0.12)}`,
+          transition: `background-color 160ms ${theme.transitions.easing.easeOut}, box-shadow 160ms ${theme.transitions.easing.easeOut}`,
+          ".Mui-checked:not(.Mui-disabled) + &": {
+            backgroundColor: inkSolid.base,
+            opacity: 1,
+            boxShadow: `inset 0 1px 2px ${ink(0.28)}`,
+          },
+          ...theme.applyStyles("dark", {
+            border: hairline.dark(0.1),
+            boxShadow: `inset 0 1px 2px ${darkInk(0.45)}`,
+            ".Mui-checked:not(.Mui-disabled) + &": {
+              backgroundColor: chalkSolid.base,
+              boxShadow: `inset 0 1px 2px ${darkInk(0.35)}`,
+            },
+          }),
+        }),
         switchBase: ({ theme }) => ({
           "&.Mui-checked:not(.Mui-disabled)": {
             color: inkSolid.base,
@@ -299,19 +328,6 @@ export const theme = createTheme({
                 backgroundColor: chalkSolid.base,
                 opacity: 1,
               },
-            },
-          }),
-        }),
-        track: ({ theme }) => ({
-          backgroundColor: theme.vars.palette.level3,
-          opacity: 1,
-          ".Mui-checked:not(.Mui-disabled) + &": {
-            backgroundColor: inkSolid.base,
-            opacity: 1,
-          },
-          ...theme.applyStyles("dark", {
-            ".Mui-checked:not(.Mui-disabled) + &": {
-              backgroundColor: chalkSolid.base,
             },
           }),
         }),
