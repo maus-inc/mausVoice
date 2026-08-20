@@ -10,11 +10,11 @@ Grab your free [Groq↗](https://console.groq.com/keys) and [Deepgram↗](https:
 
 **Voice typing for your own machine. Dictate into any app and clean it up with AI. No account or subscription needed, and the Rust core keeps CPU and memory usage low.**
 
-[![license](https://shieldcn.dev/badge/license-AGPL--3.0-black.svg)](LICENCE)
-[![CI](https://img.shields.io/github/actions/workflow/status/maus-inc/mausVoice/test-desktop-unit.yml?branch=main&label=CI&style=flat&color=000000&labelColor=000000)](https://github.com/maus-inc/mausVoice/actions/workflows/test-desktop-unit.yml)
-[![macOS](https://shieldcn.dev/badge/-black.svg?logo=apple)](https://github.com/maus-inc/mausVoice/releases)
-[![Windows](https://shieldcn.dev/badge/-black.svg?logo=data%3Aimage%2Fsvg%2Bxml%3Bbase64%2CPHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCAyNCAyNCI%2BPHBhdGggZmlsbD0iI2ZmZiIgZD0iTTAgMy40NDlMOS43NSAyLjF2OS40NTFIMG0xMC45NDktOS42MDJMMjQgMHYxMS40SDEwLjk0OU0wIDEyLjZoOS43NXY5LjQ1MUwwIDIwLjY5OU0xMC45NDkgMTIuNkgyNFYyNGwtMTIuOS0xLjgwMSIvPjwvc3ZnPg%3D%3D)](https://github.com/maus-inc/mausVoice/releases)
-[![Linux](https://shieldcn.dev/badge/-black.svg?logo=linux)](https://github.com/maus-inc/mausVoice/releases)
+[![license: AGPL-3.0](docs/assets/badges/license.svg)](LICENCE)
+[![CI](https://shieldcn.dev/github/ci/maus-inc/mausVoice.svg)](https://github.com/maus-inc/mausVoice/actions)
+[![macOS builds available](docs/assets/badges/macos.svg)](https://github.com/maus-inc/mausVoice/releases)
+[![Windows builds available](docs/assets/badges/windows.svg)](https://github.com/maus-inc/mausVoice/releases)
+[![Linux builds available](docs/assets/badges/linux.svg)](https://github.com/maus-inc/mausVoice/releases)
 
 </div>
 
@@ -61,13 +61,13 @@ Grab your free [Groq↗](https://console.groq.com/keys) and [Deepgram↗](https:
 
 <p align="center">
   <a href="https://github.com/maus-inc/mausVoice/releases">
-    <img src="https://shieldcn.dev/badge/-black.svg?logo=data%3Aimage%2Fsvg%2Bxml%3Bbase64%2CPHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCAyNCAyNCI%2BPHBhdGggZmlsbD0iI2ZmZiIgZD0iTTAgMy40NDlMOS43NSAyLjF2OS40NTFIMG0xMC45NDktOS42MDJMMjQgMHYxMS40SDEwLjk0OU0wIDEyLjZoOS43NXY5LjQ1MUwwIDIwLjY5OU0xMC45NDkgMTIuNkgyNFYyNGwtMTIuOS0xLjgwMSIvPjwvc3ZnPg%3D%3D" alt="Download mausVoice for Windows" height="32" />
+    <img src="docs/assets/badges/windows.svg" alt="Download mausVoice for Windows" height="32" />
   </a>
   <a href="https://github.com/maus-inc/mausVoice/releases">
-    <img src="https://shieldcn.dev/badge/-black.svg?logo=apple" alt="Download mausVoice for macOS" height="32" />
+    <img src="docs/assets/badges/macos.svg" alt="Download mausVoice for macOS" height="32" />
   </a>
   <a href="https://github.com/maus-inc/mausVoice/releases">
-    <img src="https://shieldcn.dev/badge/-black.svg?logo=linux" alt="Download mausVoice for Linux" height="32" />
+    <img src="docs/assets/badges/linux.svg" alt="Download mausVoice for Linux" height="32" />
   </a>
 </p>
 
