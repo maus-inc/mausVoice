@@ -66,6 +66,11 @@ pub async fn replace_hotkeys_by_prefix(
     prefix: &str,
     hotkeys: &[Hotkey],
 ) -> Result<Vec<Hotkey>, sqlx::Error> {
+    if prefix.is_empty() {
+        return Err(sqlx::Error::Protocol(
+            "hotkey prefix must not be empty".into(),
+        ));
+    }
     let escaped_prefix: String = prefix
         .replace('\\', "\\\\")
         .replace('%', "\\%")

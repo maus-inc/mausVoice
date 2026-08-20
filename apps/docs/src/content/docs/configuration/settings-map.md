@@ -21,7 +21,7 @@ Open **Settings** from the bottom of the left navigation rail. The page uses sec
 
 - **Dictation language** chooses the primary recognition language; additional-language shortcuts are managed in the language dialog.
 - **Deepgram API key** and **Groq API key** are quick credential forms for fast streaming transcription and generative post-processing respectively.
-- **AI transcription** chooses Local or API processing, the local model/device, or a task-compatible provider record.
+- **AI transcription** chooses Local or API processing, the local model/device, or a task-compatible provider record. Gladia records expose `solaria-1` and support live plus batch/import transcription.
 - **AI post processing** chooses API or Off and a generative provider record.
 - **Assistant mode** is the beta command/chat workflow, with a separate provider, shortcut, feature switch, and optional power mode.
 

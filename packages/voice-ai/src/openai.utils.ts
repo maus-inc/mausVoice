@@ -9,7 +9,7 @@ import type {
 } from "@maus-inc/types";
 import { countWords, retry } from "@maus-inc/utilities";
 import OpenAI, { toFile } from "openai";
-import type { CustomFetch } from "./types";
+import type { CustomFetch, DiscoveredModelId } from "./types";
 import {
   contentToString,
   runSdkTranscription,
@@ -24,16 +24,14 @@ import type {
 } from "openai/resources/chat/completions";
 
 export const OPENAI_GENERATE_TEXT_MODELS = [
-  "gpt-4o",
   "gpt-4o-mini",
-  "gpt-4-turbo",
-  "gpt-3.5-turbo",
-  "gpt-5.2",
-  "gpt-5.3",
-  "gpt-5.4",
+  "gpt-5.6-luna",
+  "gpt-5.6-terra",
+  "gpt-5.6-sol",
+  "gpt-5-mini",
 ] as const;
 export type OpenAIGenerateTextModel =
-  (typeof OPENAI_GENERATE_TEXT_MODELS)[number];
+  (typeof OPENAI_GENERATE_TEXT_MODELS)[number] | DiscoveredModelId;
 
 export const OPENAI_TRANSCRIPTION_MODELS = [
   "whisper-1",
@@ -41,7 +39,7 @@ export const OPENAI_TRANSCRIPTION_MODELS = [
   "gpt-4o-mini-transcribe",
 ] as const;
 export type OpenAITranscriptionModel =
-  (typeof OPENAI_TRANSCRIPTION_MODELS)[number];
+  (typeof OPENAI_TRANSCRIPTION_MODELS)[number] | DiscoveredModelId;
 
 const createClient = (
   apiKey: string,
@@ -66,6 +64,7 @@ export type OpenAITranscriptionArgs = {
   ext: string;
   prompt?: string;
   language?: string;
+  customFetch?: CustomFetch;
 };
 
 /**
@@ -102,8 +101,9 @@ export const openaiTranscribeAudio = async ({
   ext,
   prompt,
   language,
+  customFetch,
 }: OpenAITranscriptionArgs): Promise<OpenAITranscribeAudioOutput> => {
-  const client = createClient(apiKey);
+  const client = createClient(apiKey, undefined, customFetch);
   const file = await toFile(blob, `audio.${ext}`);
   return runSdkTranscription(
     (body) =>
@@ -212,18 +212,21 @@ export const openaiGenerateTextResponse = async ({
 
 export type OpenAITestIntegrationArgs = {
   apiKey: string;
+  customFetch?: CustomFetch;
 };
 
 export type OpenAICompatibleTestIntegrationArgs = {
   baseUrl: string;
   apiKey?: string;
+  customFetch?: CustomFetch;
 };
 
 export const openaiCompatibleTestIntegration = async ({
   baseUrl,
   apiKey,
+  customFetch,
 }: OpenAICompatibleTestIntegrationArgs): Promise<boolean> => {
-  const client = createClient(apiKey || "dummy", baseUrl);
+  const client = createClient(apiKey || "dummy", baseUrl, customFetch);
 
   // Test connectivity by listing models
   await client.models.list();
@@ -234,38 +237,11 @@ export const openaiCompatibleTestIntegration = async ({
 
 export const openaiTestIntegration = async ({
   apiKey,
+  customFetch,
 }: OpenAITestIntegrationArgs): Promise<boolean> => {
-  const client = createClient(apiKey);
-
-  const response = await client.chat.completions.create({
-    messages: [
-      {
-        role: "user",
-        content: [
-          {
-            type: "text",
-            text: `Reply with the single word "Hello."`,
-          },
-        ],
-      },
-    ],
-    model: "gpt-4o-mini",
-    temperature: 0,
-    max_completion_tokens: 32,
-    top_p: 1,
-  });
-
-  if (!response.choices || response.choices.length === 0) {
-    throw new Error("No response from OpenAI");
-  }
-
-  const first = response.choices[0];
-  const content = contentToString(first?.message?.content);
-  if (!content) {
-    throw new Error("Response content is empty");
-  }
-
-  return content.toLowerCase().includes("hello");
+  const client = createClient(apiKey, undefined, customFetch);
+  await client.models.list();
+  return true;
 };
 
 // ============================================================================

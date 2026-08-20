@@ -1,9 +1,16 @@
+import { useMemo } from "react";
 import { Box, Stack, Typography } from "@mui/material";
 import { Wrench } from "lucide-react";
 import Markdown from "react-markdown";
-import { FormattedMessage } from "react-intl";
+import { FormattedMessage, useIntl } from "react-intl";
 import remarkGfm from "remark-gfm";
+import { showErrorSnackbar, showSnackbar } from "../../actions/app.actions";
 import { useAppStore } from "../../store";
+import {
+  isEditableTarget,
+  useContextMenu,
+  type ContextMenuItem,
+} from "../common/ContextMenu";
 import { OverflowTypography } from "../common/OverflowTypography";
 import { AgentActivity } from "./AgentActivity";
 
@@ -14,6 +21,30 @@ type ChatMessageBubbleProps = {
 export const ChatMessageBubble = ({ id }: ChatMessageBubbleProps) => {
   const message = useAppStore((s) => s.chatMessageById[id]);
   const isStreaming = useAppStore((s) => !!s.streamingMessageById[id]);
+
+  const intl = useIntl();
+  const ctxMenu = useContextMenu();
+  const content = message?.content ?? "";
+  const contextMenuItems = useMemo<ContextMenuItem[]>(() => {
+    if (!content.trim()) return [];
+    return [
+      {
+        label: intl.formatMessage({ defaultMessage: "Copy message" }),
+        onClick: async () => {
+          try {
+            await navigator.clipboard.writeText(content);
+            showSnackbar(
+              intl.formatMessage({ defaultMessage: "Copied successfully" }),
+              { mode: "success" },
+            );
+          } catch (error) {
+            showErrorSnackbar(error);
+          }
+        },
+      },
+    ];
+  }, [content, intl]);
+
   if (!message) {
     return null;
   }
@@ -35,7 +66,14 @@ export const ChatMessageBubble = ({ id }: ChatMessageBubbleProps) => {
   const isMe = message.role === "user";
 
   return (
-    <Stack>
+    <Stack
+      onContextMenu={(e) => {
+        // Yield right-clicks on editable text to the provider's clipboard menu.
+        if (isEditableTarget(e.target)) return;
+        if (contextMenuItems.length === 0) return;
+        ctxMenu.handleContextMenu(e.nativeEvent, contextMenuItems);
+      }}
+    >
       <AgentActivity messageId={id} />
       <Stack
         direction="row"
@@ -110,6 +148,7 @@ export const ChatMessageBubble = ({ id }: ChatMessageBubbleProps) => {
           )}
         </Box>
       </Stack>
+      {ctxMenu.renderMenu()}
     </Stack>
   );
 };

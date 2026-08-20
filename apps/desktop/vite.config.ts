@@ -4,6 +4,12 @@ import svgr from "vite-plugin-svgr";
 import { vendorManualChunk } from "./scripts/vendor-manual-chunk.mjs";
 
 const host = process.env.TAURI_DEV_HOST;
+const GLADIA_BROWSER_PEERS = ["fs", "path", "undici", "ws"] as const;
+
+export const getGladiaBrowserPeer = (source: string) =>
+  GLADIA_BROWSER_PEERS.find(
+    (peer) => source === peer || source.startsWith(`${peer}/`),
+  );
 
 // https://vite.dev/config/
 export default defineConfig(async () => {
@@ -16,6 +22,37 @@ export default defineConfig(async () => {
     // load — leaving a blank white window with no script execution.
     base: "./",
     plugins: [
+      // Gladia's isomorphic SDK contains guarded dynamic imports for Node-only
+      // file uploads and network fallbacks. Tauri always provides browser
+      // fetch/WebSocket and passes File objects, but Rollup would otherwise
+      // bundle optional `undici`/`ws` peers and externalize dozens of Node
+      // built-ins. Replace only imports originating inside the SDK.
+      {
+        name: "gladia-browser-peer-stubs",
+        enforce: "pre",
+        resolveId(source, importer) {
+          const peer = getGladiaBrowserPeer(source);
+          if (importer?.includes("@gladiaio/sdk") && peer) {
+            return `\0gladia-browser-peer:${peer}`;
+          }
+          return null;
+        },
+        load(id) {
+          if (id === "\0gladia-browser-peer:undici") {
+            return "export class Agent {}; export const setGlobalDispatcher = () => {};";
+          }
+          if (id === "\0gladia-browser-peer:ws") {
+            return "export const WebSocket = globalThis.WebSocket;";
+          }
+          if (id === "\0gladia-browser-peer:fs") {
+            return "export const readFileSync = () => { throw new Error('Node file uploads are unavailable in the desktop webview'); };";
+          }
+          if (id === "\0gladia-browser-peer:path") {
+            return "export const basename = () => { throw new Error('Node paths are unavailable in the desktop webview'); };";
+          }
+          return null;
+        },
+      },
       react({
         babel: {
           plugins: [

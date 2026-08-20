@@ -61,7 +61,7 @@ pnpm gen:bindings
 ./scripts/bindings.sh
 ```
 
-Both delegate to `scripts/bindings.sh`, which runs the `gen_bindings` Rust binary at `apps/desktop/src-tauri/src/bin/gen_bindings.rs`. That binary walks every annotated command and emits `packages/desktop-native-apis/src/bindings.ts`. After regenerating, rebuild the package:
+Both delegate to `scripts/bindings.sh`, which runs the Cargo example at `apps/desktop/src-tauri/examples/gen_bindings.rs`. That example walks every annotated command and emits `packages/desktop-native-apis/src/bindings.ts`. After regenerating, rebuild the package:
 
 ```bash
 pnpm --filter @maus-inc/desktop-native-apis build
@@ -70,6 +70,6 @@ pnpm --filter @maus-inc/desktop-native-apis build
 ### Adding a new command
 
 1. Add `#[tauri::command]` and `#[specta::specta]` to the new function in `apps/desktop/src-tauri/src/commands.rs`.
-2. Register the command in both `apps/desktop/src-tauri/src/app.rs` (invoke handler) and `apps/desktop/src-tauri/src/bin/gen_bindings.rs` (collect_commands macro).
+2. Register the command in both `apps/desktop/src-tauri/src/app.rs` (invoke handler) and `apps/desktop/src-tauri/examples/gen_bindings.rs` (`collect_commands!`).
 3. Derive `specta::Type` on any new argument or return types that aren't primitives.
 4. Run `pnpm gen:bindings`.

@@ -1,6 +1,6 @@
 import ErrorOutlineIcon from "@mui/icons-material/ErrorOutlined";
 import { Box, CircularProgress, Typography } from "@mui/material";
-import { fetch } from "@tauri-apps/plugin-http";
+import { secureFetch as fetch } from "../../utils/secure-fetch.utils";
 import { useCallback, useEffect, useState } from "react";
 import { FormattedMessage } from "react-intl";
 import { FreeSoloModelAutocomplete } from "./FreeSoloModelAutocomplete";
@@ -50,7 +50,7 @@ export const GroqModelPicker = ({
       const fetched = (payload.data ?? [])
         .map((m) => (m.id ?? "").trim())
         .filter(Boolean)
-        .sort();
+        .sort((a, b) => a.localeCompare(b));
       setModels(fetched);
     } catch (error) {
       console.error("Failed to fetch Groq models", error);

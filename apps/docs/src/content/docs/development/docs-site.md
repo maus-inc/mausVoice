@@ -21,4 +21,4 @@ Use relative links for other docs pages. A Markdown URL beginning `/` points at 
 
 The Pages workflow does more than upload `apps/docs/dist`. It assembles root `index.html`, the root custom `404.html`, `marketing/`, Astro output under `docs/`, shared `docs/assets/`, and root machine-readable files into one artifact. Preserve that topology when changing links or asset paths.
 
-Keep `public/llms.txt` aligned with every content route, including separate Assistant and Chats entries. Before publishing, inspect generated canonical URLs/sitemap, internal links, a nested page's fonts/assets, and the copied root 404. Product prose should identify which stage—capture, transcription, replacement, generative processing, persistence, or delivery—a statement actually describes.
+Keep `public/llms.txt` aligned with every content route, including separate Assistant and Chats entries. Before publishing, inspect generated canonical URLs/sitemap, internal links, a nested page's fonts/assets, and the copied root 404. Product prose should identify which stage a statement actually describes: capture, transcription, replacement, generative processing, persistence, or delivery.

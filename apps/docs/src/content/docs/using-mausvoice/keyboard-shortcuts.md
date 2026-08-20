@@ -17,7 +17,7 @@ Open **Settings → General → Hotkey shortcuts**. Click a key box, press the c
 - **Next writing style** and **Previous writing style** appear in manual styling mode and cycle active styles during a recording.
 - Additional dictation-language hold actions are configured under **Dictation language**, not in this dialog.
 
-Use **Add another** to assign more than one combination to the same action. The overlap warning means one combination equals or is a subset of another configured action, so a press may trigger both. Resolve the conflict rather than relying on event order.
+Use **Add another** to assign more than one combination to the same action. The overlap warning means one combination equals or is a subset of another configured action, so a press may trigger both. Resolve the conflict; event order is not something to rely on.
 
 ## Defaults and reset behavior
 

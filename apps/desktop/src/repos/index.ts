@@ -3,8 +3,10 @@ import { Nullable } from "@maus-inc/types";
 import { getRec } from "@maus-inc/utilities";
 import { getAppState } from "../store";
 import type { AppState } from "../state/app.state";
+import { buildGladiaCustomizations } from "../utils/gladia.utils";
 import { getLogger } from "../utils/log.utils";
 import { OLLAMA_DEFAULT_URL } from "../utils/ollama.utils";
+import { collectDictionaryEntries } from "../utils/prompt.utils";
 import { buildOpenAICompatibleUrl } from "../utils/openai-compatible.utils";
 import {
   type ApiGenerativePrefs,
@@ -48,6 +50,7 @@ import {
   DeepSeekModelProviderRepo,
   ElevenLabsModelProviderRepo,
   GeminiModelProviderRepo,
+  GladiaModelProviderRepo,
   GroqModelProviderRepo,
   OllamaModelProviderRepo,
   OpenAICompatibleModelProviderRepo,
@@ -79,6 +82,7 @@ import {
   BaseTranscribeAudioRepo,
   DeepgramTranscribeAudioRepo,
   ElevenLabsTranscribeAudioRepo,
+  GladiaTranscribeAudioRepo,
   GeminiTranscribeAudioRepo,
   GroqTranscribeAudioRepo,
   LocalTranscribeAudioRepo,
@@ -204,8 +208,13 @@ const buildOpenAICompatibleGenerateTextRepo = (
   getLogger().verbose(
     `Configuring OpenAI Compatible repo with baseUrl=${fullUrl} and model=${model}`,
   );
-  if (model) {
-    return new OpenAICompatibleGenerateTextRepo(fullUrl, model, providerApiKey);
+  if (model && apiKeyRecord) {
+    return new OpenAICompatibleGenerateTextRepo(
+      apiKeyRecord.id,
+      fullUrl,
+      model,
+      providerApiKey,
+    );
   }
   prefs.warnings.push(
     "No model configured for OpenAI Compatible post-processing.",
@@ -385,7 +394,10 @@ export const getTranscribeAudioRepo = (): TranscribeAudioRepoOutput => {
         );
         break;
       case "assemblyai":
-        repo = new AssemblyAITranscribeAudioRepo(prefs.apiKeyValue);
+        repo = new AssemblyAITranscribeAudioRepo(
+          prefs.apiKeyValue,
+          prefs.transcriptionModel,
+        );
         break;
       case "aldea":
         repo = new AldeaTranscribeAudioRepo(prefs.apiKeyValue);
@@ -411,7 +423,13 @@ export const getTranscribeAudioRepo = (): TranscribeAudioRepoOutput => {
         const providerApiKey = apiKeyRecord?.keyFull || undefined;
         const includeV1Path = apiKeyRecord?.includeV1Path;
         const fullUrl = buildOpenAICompatibleUrl(baseUrl, includeV1Path);
+        if (!apiKeyRecord) {
+          throw new Error(
+            "OpenAI-compatible endpoint configuration is missing.",
+          );
+        }
         repo = new OpenAICompatibleTranscribeAudioRepo(
+          apiKeyRecord.id,
           fullUrl,
           model,
           providerApiKey,
@@ -443,11 +461,15 @@ export const getTranscribeAudioRepo = (): TranscribeAudioRepoOutput => {
           prefs.transcriptionModel,
         );
         break;
-      case "xai":
-        repo = new XaiTranscribeAudioRepo(
+      case "gladia":
+        repo = new GladiaTranscribeAudioRepo(
           prefs.apiKeyValue,
           prefs.transcriptionModel,
+          buildGladiaCustomizations(collectDictionaryEntries(getAppState())),
         );
+        break;
+      case "xai":
+        repo = new XaiTranscribeAudioRepo(prefs.apiKeyValue);
         break;
       case "groq":
         repo = new GroqTranscribeAudioRepo(
@@ -536,6 +558,8 @@ export const getModelProviderRepo = (
       return new ElevenLabsModelProviderRepo();
     case "deepgram":
       return new DeepgramModelProviderRepo();
+    case "gladia":
+      return new GladiaModelProviderRepo();
     case "xai":
       return new XaiModelProviderRepo();
   }

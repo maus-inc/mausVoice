@@ -5,16 +5,28 @@ import {
   MoreVert,
   PublicOutlined,
 } from "@mui/icons-material";
-import { IconButton, Radio, Stack, Tooltip, Typography } from "@mui/material";
+import {
+  Box,
+  IconButton,
+  Radio,
+  Stack,
+  Tooltip,
+  Typography,
+} from "@mui/material";
 import { getRec } from "@maus-inc/utilities";
 import { useCallback, useMemo } from "react";
-import { FormattedMessage } from "react-intl";
-import { openToneEditorDialog } from "../../actions/tone.actions";
+import { FormattedMessage, useIntl } from "react-intl";
+import { deleteTone, openToneEditorDialog } from "../../actions/tone.actions";
 import {
   deselectActiveTone,
   setSelectedToneId,
 } from "../../actions/user.actions";
 import { produceAppState, useAppStore } from "../../store";
+import {
+  isEditableTarget,
+  useContextMenu,
+  type ContextMenuItem,
+} from "../common/ContextMenu";
 import {
   getActiveManualToneIds,
   getManuallySelectedToneId,
@@ -42,6 +54,7 @@ export type ManualStylingRowProps = {
 };
 
 export const ManualStylingRow = ({ id }: ManualStylingRowProps) => {
+  const intl = useIntl();
   const tone = useAppStore((state) => getRec(state.toneById, id));
   const isSelected = useAppStore(
     (state) => getManuallySelectedToneId(state) === id,
@@ -73,6 +86,50 @@ export const ManualStylingRow = ({ id }: ManualStylingRowProps) => {
   const canEdit = !isGlobal && !isSystem;
   const hasPrompt = Boolean(tone?.promptTemplate);
   const canDeselect = activeToneCount > 1;
+  const ctxMenu = useContextMenu();
+
+  // Context actions must honor the same managed/system-tone restrictions as
+  // the overflow menu. The repository deletion command is not a permission
+  // boundary, so exposing Delete here would otherwise bypass the UI policy.
+  const contextMenuItems = useMemo<ContextMenuItem[]>(() => {
+    const items: ContextMenuItem[] = [];
+    if (canEdit) {
+      items.push({
+        label: intl.formatMessage({ defaultMessage: "Edit" }),
+        onClick: handleEdit,
+      });
+    }
+    items.push({
+      label: intl.formatMessage({ defaultMessage: "View full prompt" }),
+      onClick: handleViewPrompt,
+    });
+    if (canDeselect) {
+      items.push({
+        label: intl.formatMessage({ defaultMessage: "Deselect style" }),
+        onClick: handleDeselect,
+      });
+    }
+    if (canEdit) {
+      items.push(
+        { kind: "divider" },
+        {
+          label: intl.formatMessage({ defaultMessage: "Delete" }),
+          danger: true,
+          onClick: () => deleteTone(id),
+        },
+      );
+    }
+    return items;
+  }, [
+    canEdit,
+    canDeselect,
+    deleteTone,
+    handleDeselect,
+    handleEdit,
+    handleViewPrompt,
+    id,
+    intl,
+  ]);
 
   const menuItems = useMemo((): MenuPopoverItem[] => {
     const items: MenuPopoverItem[] = [];
@@ -161,39 +218,49 @@ export const ManualStylingRow = ({ id }: ManualStylingRowProps) => {
   );
 
   return (
-    <ListTile
-      onClick={handleSelect}
-      leading={
-        <Radio
-          checked={isSelected}
-          size="small"
-          disableRipple
-          sx={{ mr: 1 }}
-          onClick={(e) => {
-            stopPropagation(e);
-            handleSelect();
-          }}
-          onMouseDown={stopPropagation}
-        />
-      }
-      title={tone?.name}
-      subtitle={
-        <Typography
-          variant="body2"
-          sx={{
-            color: "text.secondary",
-            display: "-webkit-box",
-            WebkitLineClamp: 2,
-            WebkitBoxOrient: "vertical",
-            overflow: "hidden",
-          }}
-        >
-          {tone?.description ||
-            formatPromptForPreview(tone?.promptTemplate ?? "-")}
-        </Typography>
-      }
-      trailing={trailing}
-      sx={{ backgroundColor: "level1", mb: 1, borderRadius: 1 }}
-    />
+    <Box
+      component="div"
+      onContextMenu={(e) => {
+        // Yield right-clicks on editable text to the provider's clipboard menu.
+        if (isEditableTarget(e.target)) return;
+        ctxMenu.handleContextMenu(e.nativeEvent, contextMenuItems);
+      }}
+    >
+      <ListTile
+        onClick={handleSelect}
+        leading={
+          <Radio
+            checked={isSelected}
+            size="small"
+            disableRipple
+            sx={{ mr: 1 }}
+            onClick={(e) => {
+              stopPropagation(e);
+              handleSelect();
+            }}
+            onMouseDown={stopPropagation}
+          />
+        }
+        title={tone?.name}
+        subtitle={
+          <Typography
+            variant="body2"
+            sx={{
+              color: "text.secondary",
+              display: "-webkit-box",
+              WebkitLineClamp: 2,
+              WebkitBoxOrient: "vertical",
+              overflow: "hidden",
+            }}
+          >
+            {tone?.description ||
+              formatPromptForPreview(tone?.promptTemplate ?? "-")}
+          </Typography>
+        }
+        trailing={trailing}
+        sx={{ backgroundColor: "level1", mb: 1, borderRadius: 1 }}
+      />
+      {ctxMenu.renderMenu()}
+    </Box>
   );
 };

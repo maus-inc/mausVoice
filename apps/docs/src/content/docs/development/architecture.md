@@ -27,4 +27,4 @@ Repositories under `repos/` select storage, model-provider, transcription, and g
 
 The Tauri backend exposes recording, keyboard, focus, insertion, clipboard, permissions, paths, encrypted keys, diagnostics, SQLite queries, native overlays, and remote-output transport. Whisper inference is deliberately outside the main process in CPU/GPU sidecars. Windows and GTK pills are separate processes; the macOS pill is embedded with channels.
 
-Preserve these boundaries. A UI component should not hand-roll provider auth or SQL. Rust should expose a narrow native primitive rather than deciding which AI provider or style wins. When a cross-boundary type changes, update Rust, generated bindings, TypeScript consumers, and failure handling together.
+Preserve these boundaries. A UI component should not hand-roll provider auth or SQL. Rust should expose a narrow native operation rather than deciding which AI provider or style wins. When a cross-boundary type changes, update Rust, generated bindings, TypeScript consumers, and failure handling together.

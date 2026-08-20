@@ -13,7 +13,7 @@ The quick row creates or updates **Personal Deepgram** and prefers it for transc
 
 Normal microphone recording opens a secure WebSocket to Deepgram and streams 16-bit PCM audio. The implementation currently fixes the model to `nova-3`, requests punctuation, smart formatting, interim results, and 300 ms endpointing, then assembles final segments when recording stops. Committed segments can feed mausVoice's optional real-time output path.
 
-The **Model** field on a saved record also defaults to `nova-3`. It is used by the separate HTTP batch route—for example, operations that transcribe a stored audio blob—not by the normal live session, whose model is currently fixed in code.
+The **Model** field on a saved record also defaults to `nova-3`. The separate HTTP batch route uses it, for example when transcribing a stored audio blob. The normal live session does not; its model is currently fixed in code.
 
 With language **Auto**, the live session sends Deepgram's `multi` setting. That supports multilingual switching for a defined set that includes English, Spanish, French, German, Hindi, Russian, Portuguese, Japanese, Italian, and Dutch, but not Chinese. Select a specific Chinese locale instead. The batch route asks Deepgram to detect the language when Auto is selected.
 

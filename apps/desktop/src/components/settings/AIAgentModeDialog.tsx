@@ -37,16 +37,7 @@ const ToggleRow = ({
 }) => {
   return (
     <SettingSection
-      title={
-        <Typography
-          variant="body1"
-          sx={{
-            fontWeight: "bold",
-          }}
-        >
-          {title}
-        </Typography>
-      }
+      title={title}
       description={description}
       action={<Switch checked={checked} onChange={onChange} />}
       sx={{
@@ -111,7 +102,7 @@ export const AIAgentModeDialog = () => {
               color: "text.secondary",
             }}
           >
-            <FormattedMessage defaultMessage="Power mode allows the assistant to run terminal commands on your computer. This is powerful but inherently dangerous — commands run with your full user permissions and can modify files, install software, or access sensitive data." />
+            <FormattedMessage defaultMessage="Power mode allows the assistant to run terminal commands on your computer. This is powerful but inherently dangerous; commands run with your full user permissions and can modify files, install software, or access sensitive data." />
           </Typography>
           <Typography
             variant="body2"

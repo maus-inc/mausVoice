@@ -68,6 +68,12 @@ describe("silence hallucination filtering", () => {
     ).toBe("Subtitles by the Amara.org community.");
   });
 
+  it("does not collapse blank lines or indentation when nothing is filtered", () => {
+    expect(filterKnownSilenceHallucinations("Hello\n\n  indented")).toBe(
+      "Hello\n\n  indented",
+    );
+  });
+
   it("preserves paragraph breaks around a stripped hallucination line", () => {
     expect(
       filterKnownSilenceHallucinations(
@@ -93,14 +99,30 @@ describe("applyHallucinationFiltering", () => {
     expect(applyHallucinationFiltering(raw, segments, "en", false)).toBe(raw);
   });
 
-  it("does not drop high noSpeechProb segments for non-English dictation", () => {
+  it("drops high noSpeechProb segments for non-English and auto languages", () => {
     const raw = "Some speech. [BLANK_AUDIO]";
     const segments = [
       { text: "Some speech.", noSpeechProb: 0.1 },
       { text: "[BLANK_AUDIO]", noSpeechProb: 0.99 },
     ];
-    expect(applyHallucinationFiltering(raw, segments, "de", true)).toBe(raw);
-    expect(applyHallucinationFiltering(raw, segments, "auto", true)).toBe(raw);
+    expect(applyHallucinationFiltering(raw, segments, "de", true)).toBe(
+      "Some speech.",
+    );
+    expect(applyHallucinationFiltering(raw, segments, "auto", true)).toBe(
+      "Some speech.",
+    );
+  });
+
+  it("keeps the English phrase filter off for auto while probability gating stays on", () => {
+    const raw = "Thank you for watching. Useful speech.";
+    const segments = [
+      { text: "Thank you for watching.", noSpeechProb: 0.1 },
+      { text: "Useful speech.", noSpeechProb: 0.1 },
+      { text: "model noise", noSpeechProb: 0.95 },
+    ];
+    expect(applyHallucinationFiltering(raw, segments, "auto", true)).toBe(
+      "Thank you for watching. Useful speech.",
+    );
   });
 
   it("drops near-certain-silence segments when the filter is enabled", () => {

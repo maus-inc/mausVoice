@@ -85,6 +85,53 @@ export const getSwitchToStyleEntries = (
       ),
     }));
 
+/**
+ * Action-name prefixes for style-switch hotkeys. The hotkey spam filter may
+ * debounce these while the pill is active. Kept in one place so the filter
+ * (hotkey-filter.utils.ts) and the release wiring (AppSideEffects keys_held
+ * handler) can't drift apart.
+ */
+export const STYLE_SWITCH_ACTION_PREFIXES: readonly string[] = [
+  "switch-writing-style-",
+  SWITCH_TO_STYLE_HOTKEY_PREFIX,
+];
+
+/**
+ * Return the style-switch action names bound to the given physical key.
+ *
+ * Used to release the hotkey filter's "held" state when the physical key is
+ * released — the previous wiring released only on *all* keys up, which never
+ * happens during hold-to-talk dictation (the dictate key stays held), wedging
+ * style switching after the first press.
+ */
+export const getStyleSwitchActionNamesForKey = (
+  state: AppState,
+  key: string,
+): string[] => {
+  const normalized = key.toLowerCase();
+  // Include every configured action covered by the shared debounce prefixes,
+  // plus built-ins which can resolve to platform defaults on macOS/Windows.
+  // Linux has no default cycle bindings, so absent user configuration there is
+  // correctly not releasable: it could not have triggered or become held.
+  const isStyleSwitchAction = (actionName: string): boolean =>
+    STYLE_SWITCH_ACTION_PREFIXES.some((prefix) =>
+      actionName.toLowerCase().startsWith(prefix),
+    );
+  const actionNames = new Set(
+    Object.keys(DEFAULT_HOTKEY_COMBOS).filter(isStyleSwitchAction),
+  );
+  for (const hotkey of Object.values(state.hotkeyById)) {
+    if (isStyleSwitchAction(hotkey.actionName)) {
+      actionNames.add(hotkey.actionName);
+    }
+  }
+  return [...actionNames].filter((actionName) =>
+    getHotkeyCombosForAction(state, actionName).some((combo) =>
+      combo.some((comboKey) => comboKey.toLowerCase() === normalized),
+    ),
+  );
+};
+
 export const isHoldActionHotkey = (actionName: string): boolean => {
   return (
     actionName === DICTATE_HOTKEY ||

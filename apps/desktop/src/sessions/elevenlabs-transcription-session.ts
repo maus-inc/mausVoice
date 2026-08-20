@@ -8,6 +8,7 @@ import {
   createStreamingFinalize,
   finalizeStreamingSession,
 } from "../utils/streaming-session.utils";
+import { secureFetch } from "../utils/secure-fetch.utils";
 import {
   StopRecordingResponse,
   TranscriptionSession,
@@ -61,7 +62,7 @@ const resampleAudio = (
 };
 
 const getElevenLabsToken = async (apiKey: string): Promise<string> => {
-  const response = await fetch(ELEVENLABS_TOKEN_URL, {
+  const response = await secureFetch(ELEVENLABS_TOKEN_URL, {
     method: "POST",
     headers: {
       "xi-api-key": apiKey,

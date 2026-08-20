@@ -11,7 +11,7 @@
 - **Repository:** https://github.com/maus-inc/mausVoice
 - **License:** AGPLv3
 - **Maintainer:** Owie Emmanuel (https://github.com/Owie6789)
-- **Package Manager:** pnpm@10.11.0 (Turborepo monorepo)
+- **Package Manager:** pnpm@10.34.5 (Turborepo monorepo)
 
 ## Quickstart
 
@@ -23,7 +23,7 @@ pnpm dev:windows    # Windows
 pnpm dev:linux      # Linux
 ```
 
-Prerequisites: Node 18+ (`.nvmrc` pins v24 for development), pnpm 10, Rust toolchain (Tauri v2).
+Prerequisites: Node from `.nvmrc` (v24; `engines.node` is `>=20`), pnpm 10.34.5, Rust toolchain (Tauri v2), CMake for whisper-rs.
 
 ## Architecture
 
@@ -53,16 +53,17 @@ SQLite, the local transcription sidecar, or external AI services
 | `apps/docs` | Astro + Starlight documentation site (the maintained, authoritative docs) |
 | `apps/windows-installer` | Windows installer (Tauri) |
 | `docs` | Loose architecture notes, release guides, and historical reference material |
-| `packages/*` | Shared packages: types, utilities, voice-ai, agent, desktop-native-apis, desktop-utils, firemix, shared-fonts, eslint-config, typescript-config, plus the native pill and `rust_transcription` sidecar crates |
+| `packages/*` | Shared packages: `@maus-inc/types`, `@maus-inc/utilities`, `@maus-inc/voice-ai`, `@repo/agent`, `@maus-inc/desktop-native-apis`, `@maus-inc/desktop-utils`, firemix, shared-fonts, eslint-config, typescript-config, plus native pill crates and `rust_transcription` |
 | `scripts` | Automation and helper scripts |
 | `marketing` | Marketing site assets (fonts, images, vendor scripts) |
 
 ## Key Features
 
-- **Live transcription:** Streaming nova-3 via Deepgram, or fully local Whisper
-  (CPU/GPU) with zero network calls.
-- **AI cleanup:** Filler words removed, punctuation and formatting applied via
-  LLM (Groq/OpenRouter), with configurable writing styles.
+- **Live transcription:** Streaming nova-3 via Deepgram (default personal path),
+  Groq `whisper-large-v3-turbo` (batch fallback), other API providers, or fully
+  local Whisper/ONNX (CPU/GPU) with zero network calls for recognition.
+- **AI cleanup:** Optional LLM rewrite (Groq default `openai/gpt-oss-20b`, also
+  OpenRouter/OpenAI/Gemini/Claude/Ollama). Independent of transcription mode.
 - **Works everywhere:** One hotkey pastes cleaned text into whatever app has focus.
 - **Encrypted keys:** Deepgram & Groq API keys stored encrypted with
   XChaCha20-Poly1305. Rotatable in Settings.

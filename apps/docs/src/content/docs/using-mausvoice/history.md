@@ -5,7 +5,7 @@ sidebar:
   order: 6
 ---
 
-Choose **History** in the left navigation to review persisted transcriptions. Each row shows its timestamp and final text. Its actions let you open details, copy the final transcript, delete the record, and—when a receiver is active—send the text to that device. Received and sent records carry status chips.
+Choose **History** in the left navigation to review persisted transcriptions. Each row shows its timestamp and final text. Its actions let you open details, copy the final transcript, and delete the record. When a receiver is active, you can also send the text to that device. Received and sent records carry status chips.
 
 History exists only when the current privacy settings permit it. **Incognito** prevents transcription history and audio snapshots from being saved. Outside Incognito, mausVoice attempts to save an audio snapshot with each ordinary transcription, but cleanup retains managed audio for only the 20 newest rows that have it. Older rows can therefore remain after their audio reference has been cleared, and an audio-write failure can also leave a row without playback.
 

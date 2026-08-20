@@ -1,6 +1,14 @@
 import { Transcription } from "@maus-inc/types";
 import { getRec } from "@maus-inc/utilities";
+import { getIntl } from "../i18n/intl";
 import { getTranscriptionRepo } from "../repos";
+import {
+  beginRetranscribe,
+  clearRetranscribeSuccess,
+  finishRetranscribe,
+  isRetranscribingId,
+  RETRANSCRIPTION_SUCCESS_VISIBLE_MS,
+} from "../state/transcriptions.state";
 import { getAppState, produceAppState } from "../store";
 import { sanitizeTranscriptText } from "../utils/sanitize-transcript.utils";
 import type { ReplacementRule } from "../utils/string.utils";
@@ -8,6 +16,12 @@ import {
   getMyDictationLanguage,
   getMyUserPreferences,
 } from "../utils/user.utils";
+import { showErrorSnackbar, showSnackbar } from "./app.actions";
+import {
+  dismissToast,
+  showCompletionToast,
+  showPersistentToast,
+} from "./toast.actions";
 import {
   postProcessTranscript,
   storeTranscription,
@@ -28,6 +42,9 @@ export const closeTranscriptionDetailsDialog = () => {
 };
 
 export const openRetranscribeDialog = (transcriptionId: string) => {
+  if (isRetranscribingId(getAppState().transcriptions, transcriptionId)) {
+    return;
+  }
   produceAppState((draft) => {
     draft.transcriptions.retranscribeDialogTranscriptionId = transcriptionId;
     draft.transcriptions.retranscribeDialogOpen = true;
@@ -137,7 +154,87 @@ type RetranscribeTranscriptionParams = {
   languageCode?: string | null;
 };
 
-export const retranscribeTranscription = async ({
+const RETRANSCRIBE_LOADING_SNACKBAR_MS = 2 * 60 * 1000;
+
+const retranscribeGenerationById = new Map<string, number>();
+
+const nextRetranscribeGeneration = (transcriptionId: string): number => {
+  const next = (retranscribeGenerationById.get(transcriptionId) ?? 0) + 1;
+  retranscribeGenerationById.set(transcriptionId, next);
+  return next;
+};
+
+const isCurrentRetranscribeGeneration = (
+  transcriptionId: string,
+  generation: number,
+): boolean => retranscribeGenerationById.get(transcriptionId) === generation;
+
+const releaseRetranscribeGeneration = (
+  transcriptionId: string,
+  generation: number,
+): void => {
+  if (retranscribeGenerationById.get(transcriptionId) === generation) {
+    retranscribeGenerationById.delete(transcriptionId);
+  }
+};
+
+const ignoreToastFailure = (error: unknown): void => {
+  console.error("Retranscribe toast failed", error);
+};
+
+const runToast = (work: Promise<void>): void => {
+  void work.catch(ignoreToastFailure);
+};
+
+let ownsRetranscribeNativeToast = false;
+
+const retranscribeFeedbackCopy = () => {
+  const intl = getIntl();
+  return {
+    loading: intl.formatMessage({
+      defaultMessage: "Retranscribing audio clip",
+    }),
+    complete: intl.formatMessage({
+      defaultMessage: "Retranscription complete",
+    }),
+    failed: intl.formatMessage({
+      defaultMessage: "Unable to retranscribe audio snippet.",
+    }),
+  };
+};
+
+const showRetranscribeLoadingFeedback = () => {
+  const { loading } = retranscribeFeedbackCopy();
+  showSnackbar(loading, { duration: RETRANSCRIBE_LOADING_SNACKBAR_MS });
+  ownsRetranscribeNativeToast = true;
+  runToast(showPersistentToast(loading, RETRANSCRIBE_LOADING_SNACKBAR_MS));
+};
+
+const showRetranscribeSuccessFeedback = () => {
+  const { complete } = retranscribeFeedbackCopy();
+  showSnackbar(complete, { mode: "success" });
+  ownsRetranscribeNativeToast = true;
+  // Dismiss the loading toast before showing the completion one
+  runToast(dismissToast().then(() => showCompletionToast(complete)));
+};
+
+const syncRetranscribeFeedback = (event: "success" | "error") => {
+  const inFlight = getAppState().transcriptions.retranscribingIds.length;
+  if (inFlight > 0) {
+    return;
+  }
+  if (event === "success") {
+    showRetranscribeSuccessFeedback();
+    return;
+  }
+  if (!ownsRetranscribeNativeToast) {
+    return;
+  }
+  ownsRetranscribeNativeToast = false;
+  runToast(dismissToast());
+};
+
+const performRetranscribe = async ({
   transcriptionId,
   toneId,
   languageCode,
@@ -163,19 +260,74 @@ export const retranscribeTranscription = async ({
   });
 };
 
+export const retranscribeTranscription = async (
+  params: RetranscribeTranscriptionParams,
+): Promise<void> => {
+  const { transcriptionId } = params;
+  if (isRetranscribingId(getAppState().transcriptions, transcriptionId)) {
+    return;
+  }
+
+  const generation = nextRetranscribeGeneration(transcriptionId);
+  const wasAnyInFlight =
+    getAppState().transcriptions.retranscribingIds.length > 0;
+  produceAppState((draft) => {
+    beginRetranscribe(draft.transcriptions, transcriptionId);
+  });
+  if (!wasAnyInFlight) {
+    showRetranscribeLoadingFeedback();
+  }
+
+  try {
+    await performRetranscribe(params);
+    if (!isCurrentRetranscribeGeneration(transcriptionId, generation)) {
+      return;
+    }
+    produceAppState((draft) => {
+      finishRetranscribe(draft.transcriptions, transcriptionId, true);
+    });
+    syncRetranscribeFeedback("success");
+    globalThis.setTimeout(() => {
+      if (!isCurrentRetranscribeGeneration(transcriptionId, generation)) {
+        return;
+      }
+      produceAppState((draft) => {
+        clearRetranscribeSuccess(draft.transcriptions, transcriptionId);
+      });
+      releaseRetranscribeGeneration(transcriptionId, generation);
+    }, RETRANSCRIPTION_SUCCESS_VISIBLE_MS);
+  } catch (error) {
+    if (!isCurrentRetranscribeGeneration(transcriptionId, generation)) {
+      return;
+    }
+    produceAppState((draft) => {
+      finishRetranscribe(draft.transcriptions, transcriptionId, false);
+    });
+    console.error("Failed to retranscribe audio", error);
+    const { failed } = retranscribeFeedbackCopy();
+    const message = error instanceof Error ? error.message : failed;
+    showErrorSnackbar(message || failed);
+    syncRetranscribeFeedback("error");
+    releaseRetranscribeGeneration(transcriptionId, generation);
+  }
+};
+
 export type ImportAudioParams = {
-  path: string;
   toneId?: string | null;
   languageCode?: string | null;
 };
 
-/** Import a file, decode it in Rust, then use the exact live dictation pipeline. */
+/**
+ * Ask Rust to select/decode a file, then use the exact live dictation pipeline.
+ * Returns false when the native picker is cancelled so the UI can retain its
+ * pending Style/Language selections.
+ */
 export const importAudioFile = async ({
-  path,
   toneId,
   languageCode,
-}: ImportAudioParams): Promise<void> => {
-  const audio = await getTranscriptionRepo().importAudioFile(path);
+}: ImportAudioParams): Promise<boolean> => {
+  const audio = await getTranscriptionRepo().importAudioFile();
+  if (!audio) return false;
   const processed = await processAudio({
     samples: audio.samples,
     sampleRate: audio.sampleRate,
@@ -187,11 +339,12 @@ export const importAudioFile = async ({
 
   await storeTranscription({
     audio: { samples: audio.samples, sampleRate: audio.sampleRate },
-    rawTranscript: transcribeResult.rawTranscript || null,
+    rawTranscript: transcribeResult.rawTranscript ?? null,
     sanitizedTranscript,
-    transcript: postProcessResult.transcript || null,
+    transcript: postProcessResult.transcript ?? null,
     transcriptionMetadata: transcribeResult.metadata,
     postProcessMetadata: postProcessResult.metadata,
     warnings: [...transcribeResult.warnings, ...postProcessResult.warnings],
   });
+  return true;
 };

@@ -1,13 +1,16 @@
 import { retry, countWords } from "@maus-inc/utilities";
+import type { CustomFetch } from "./types";
 
 export type ElevenLabsTestIntegrationArgs = {
   apiKey: string;
+  customFetch?: CustomFetch;
 };
 
 export const elevenlabsTestIntegration = async ({
   apiKey,
+  customFetch = fetch,
 }: ElevenLabsTestIntegrationArgs): Promise<boolean> => {
-  const response = await fetch("https://api.elevenlabs.io/v1/user", {
+  const response = await customFetch("https://api.elevenlabs.io/v1/user", {
     method: "GET",
     headers: { "xi-api-key": apiKey },
   });
@@ -27,6 +30,7 @@ export type ElevenLabsTranscriptionArgs = {
   blob: ArrayBuffer | Buffer;
   ext: string;
   language?: string;
+  customFetch?: CustomFetch;
 };
 
 export type ElevenLabsTranscribeAudioOutput = {
@@ -39,6 +43,7 @@ export const elevenlabsTranscribeAudio = async ({
   blob,
   ext,
   language,
+  customFetch = fetch,
 }: ElevenLabsTranscriptionArgs): Promise<ElevenLabsTranscribeAudioOutput> => {
   return retry({
     retries: 3,
@@ -48,12 +53,12 @@ export const elevenlabsTranscribeAudio = async ({
         blob instanceof ArrayBuffer ? blob : (blob.buffer as ArrayBuffer);
       const audioBlob = new Blob([bodyData], { type: `audio/${ext}` });
       formData.append("file", audioBlob, `audio.${ext}`);
-      formData.append("model_id", "scribe_v1");
+      formData.append("model_id", "scribe_v2");
       if (language && language !== "auto") {
         formData.append("language_code", language);
       }
 
-      const response = await fetch(
+      const response = await customFetch(
         "https://api.elevenlabs.io/v1/speech-to-text",
         {
           method: "POST",

@@ -128,6 +128,15 @@ export type AppState = {
   snackbarTransitionDuration?: number;
   snackbarAction?: { label: string; onClick: () => void };
 
+  /** Accumulated dictation segments while no editable target was focused.
+   *  Drained on the first editable-focus event or on transcription completion.
+   *  Cleared at session start — never carried across sessions. */
+  dictationBacklog: string[];
+  /** Monotonically incremented each time a new dictation session begins.
+   *  Any code reading the backlog must verify the nonce hasn't advanced
+   *  (i.e. a new session started) before acting on stale backlog data. */
+  dictationBacklogNonce: number;
+
   overlayCursor: Nullable<Vector2>;
   hotkeyTriggers: Record<string, number>;
   hotkeyStrategy: Nullable<HotkeyStrategy>;
@@ -173,6 +182,8 @@ export const INITIAL_APP_STATE: AppState = {
   snackbarMode: "info",
   snackbarDuration: 3000,
   snackbarTransitionDuration: undefined,
+  dictationBacklog: [],
+  dictationBacklogNonce: 0,
   overlayCursor: null,
   hotkeyTriggers: {},
   hotkeyStrategy: null,

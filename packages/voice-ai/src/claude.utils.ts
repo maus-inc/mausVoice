@@ -16,39 +16,25 @@ import type {
   LlmStreamEvent,
   LlmTool,
 } from "@maus-inc/types";
+import type { CustomFetch, DiscoveredModelId } from "./types";
 
 // The SDK does not re-export MessageStream from its root, so derive the type
 // from the client's stream() method instead of a deep subpath import.
 type MessageStream = ReturnType<Anthropic["messages"]["stream"]>;
 
 export const CLAUDE_MODELS = [
-  "claude-opus-4-5-20251101",
-  "claude-opus-4-5",
-  "claude-3-7-sonnet-latest",
-  "claude-3-7-sonnet-20250219",
-  "claude-3-5-haiku-latest",
-  "claude-3-5-haiku-20241022",
+  "claude-sonnet-5",
   "claude-haiku-4-5",
-  "claude-haiku-4-5-20251001",
-  "claude-sonnet-4-20250514",
-  "claude-sonnet-4-0",
-  "claude-4-sonnet-20250514",
-  "claude-sonnet-4-5",
-  "claude-sonnet-4-5-20250929",
-  "claude-opus-4-0",
-  "claude-opus-4-20250514",
-  "claude-4-opus-20250514",
-  "claude-opus-4-1-20250805",
-  "claude-3-opus-latest",
-  "claude-3-opus-20240229",
-  "claude-3-haiku-20240307",
+  "claude-opus-5",
+  "claude-fable-5",
 ] as const;
-export type ClaudeModel = (typeof CLAUDE_MODELS)[number];
+export type ClaudeModel = (typeof CLAUDE_MODELS)[number] | DiscoveredModelId;
 
-const createClient = (apiKey: string) => {
+const createClient = (apiKey: string, customFetch?: CustomFetch) => {
   return new Anthropic({
     apiKey: apiKey.trim(),
     dangerouslyAllowBrowser: true,
+    fetch: customFetch,
   });
 };
 
@@ -58,6 +44,7 @@ export type ClaudeGenerateTextArgs = {
   system?: string;
   prompt: string;
   jsonResponse?: JsonResponse;
+  customFetch?: CustomFetch;
 };
 
 export type ClaudeGenerateResponseOutput = {
@@ -67,15 +54,16 @@ export type ClaudeGenerateResponseOutput = {
 
 export const claudeGenerateTextResponse = async ({
   apiKey,
-  model = "claude-sonnet-4-20250514",
+  model = CLAUDE_MODELS[0],
   system,
   prompt,
   jsonResponse,
+  customFetch,
 }: ClaudeGenerateTextArgs): Promise<ClaudeGenerateResponseOutput> => {
   return retry({
     retries: 3,
     fn: async () => {
-      const client = createClient(apiKey);
+      const client = createClient(apiKey, customFetch);
 
       let finalPrompt = prompt;
       if (jsonResponse) {
@@ -111,30 +99,16 @@ export const claudeGenerateTextResponse = async ({
 
 export type ClaudeTestIntegrationArgs = {
   apiKey: string;
+  customFetch?: CustomFetch;
 };
 
 export const claudeTestIntegration = async ({
   apiKey,
+  customFetch,
 }: ClaudeTestIntegrationArgs): Promise<boolean> => {
-  const client = createClient(apiKey);
-
-  const response = await client.messages.create({
-    model: "claude-3-haiku-20240307",
-    max_tokens: 32,
-    messages: [
-      {
-        role: "user",
-        content: 'Reply with the single word "Hello."',
-      },
-    ],
-  });
-
-  const textBlock = response.content.find((block) => block.type === "text");
-  if (!textBlock || textBlock.type !== "text") {
-    throw new Error("No text response from Claude");
-  }
-
-  return textBlock.text.toLowerCase().includes("hello");
+  const client = createClient(apiKey, customFetch);
+  await client.models.list();
+  return true;
 };
 
 // ============================================================================
@@ -218,6 +192,7 @@ export type ClaudeStreamChatArgs = {
   apiKey: string;
   model: string;
   input: LlmChatInput;
+  customFetch?: CustomFetch;
 };
 
 type PendingClaudeToolCall = {
@@ -301,8 +276,9 @@ export async function* claudeStreamChat({
   apiKey,
   model,
   input,
+  customFetch,
 }: ClaudeStreamChatArgs): AsyncGenerator<LlmStreamEvent> {
-  const client = createClient(apiKey);
+  const client = createClient(apiKey, customFetch);
   const { system, messages } = llmMessagesToClaude(input.messages);
   const tools = buildClaudeTools(input);
   const toolChoice = buildClaudeToolChoice(input, tools);

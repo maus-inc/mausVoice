@@ -30,4 +30,4 @@ For contributors, author visible copy with `FormattedMessage`/`useIntl` and a sp
 pnpm --filter desktop i18n
 ```
 
-That combines extraction and synchronization. Review the resulting catalog diff—automation can add keys, but cannot guarantee idiomatic translations or that a new sentence fits every compact control. Keep locale codes aligned across `config.ts`, `manifest.json`, imports, and catalog files.
+That combines extraction and synchronization. Review the resulting catalog diff. Automation can add keys, but cannot guarantee idiomatic translations or that a new sentence fits every compact control. Keep locale codes aligned across `config.ts`, `manifest.json`, imports, and catalog files.

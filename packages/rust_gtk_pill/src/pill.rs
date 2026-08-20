@@ -176,6 +176,8 @@ pub fn run(receiver: Receiver<InMessage>) {
         drag_cancelled: Cell::new(false),
         inflate_t: Cell::new(0.0),
         inflate_velocity: Cell::new(0.0),
+        drag_label_t: Cell::new(0.0),
+        drag_label_velocity: Cell::new(0.0),
         ring_alpha: Cell::new(0.0),
         ring_release_progress: Cell::new(0.0),
         press_elapsed: Cell::new(0.0),
@@ -757,44 +759,69 @@ pub fn run(receiver: Receiver<InMessage>) {
 }
 
 /// Builds the pill window rect and the work area of the monitor it lives on,
-/// for the desktop to anchor the composer next to the real pill. On X11 the
-/// pill has a true saved position, so both are reported; on Wayland (where the
-/// layer-shell compositor owns placement and there is no queryable absolute
-/// position) only the monitor is reported and the rect is omitted.
+/// for the desktop to anchor the composer next to the real pill. Both rects
+/// are reported in physical pixels: the desktop compares them against each
+/// other and positions the composer via Tauri, which on X11 also works in
+/// physical pixels. On X11 the pill has a true saved position, so both are
+/// reported; on Wayland (where the layer-shell compositor owns placement and
+/// there is no queryable absolute position) only the monitor is reported and
+/// the rect is omitted.
 pub(crate) fn pill_geometry(window: &gtk::Window, state: &PillState) -> (Option<Rect>, Option<Rect>) {
     let (w, h) = window.size();
+    let scale = window
+        .window()
+        .map(|gdk_win| gdk_win.scale_factor() as f64)
+        .unwrap_or(1.0);
     let display = window.display();
     let monitor = window
         .window()
         .and_then(|gdk_win| display.monitor_at_window(&gdk_win))
         .or_else(|| {
             display.monitor_at_point(
-                (state.saved_x.get() + w as f64 / 2.0) as i32,
-                (state.saved_y.get() + h as f64 / 2.0) as i32,
+                (state.saved_x.get() + (w as f64 / 2.0) * scale) as i32,
+                (state.saved_y.get() + (h as f64 / 2.0) * scale) as i32,
             )
         })
         .or_else(|| display.primary_monitor())
         .or_else(|| display.monitor(0));
     let monitor_rect = monitor.map(|m| {
-        let g = m.workarea();
-        Rect {
-            x: g.x() as f64,
-            y: g.y() as f64,
-            width: g.width() as f64,
-            height: g.height() as f64,
-        }
+        // `workarea()` is in logical pixels while the pill rect below is
+        // physical (`saved_x`/`saved_y` are X11 root coordinates and the
+        // logical window size is scaled). The two rects must share one
+        // coordinate space for the desktop's composer-anchoring math, so
+        // scale the workarea by its monitor's own scale factor — via the
+        // shared logical→physical conversion the X11 placement math also
+        // uses (`pill_pos_on_monitor`).
+        let monitor_scale = m.scale_factor() as f64;
+        logical_rect_to_physical(&m.workarea(), monitor_scale)
     });
     let rect = if state.has_saved_position.get() && state.backend.get() == Backend::X11 {
         Some(Rect {
             x: state.saved_x.get(),
             y: state.saved_y.get(),
-            width: w as f64,
-            height: h as f64,
+            width: w as f64 * scale,
+            height: h as f64 * scale,
         })
     } else {
         None
     };
     (rect, monitor_rect)
+}
+
+/// Converts a GDK logical-pixel rectangle (a monitor's geometry or work area)
+/// into the physical root-pixel space used for X11 window positioning and
+/// `Rect` reporting. This is the single source of truth for the
+/// logical→physical conversion: `pill_geometry` here and the placement math
+/// in `pill_pos_on_monitor` both go through it, so any scaling tweak lands in
+/// exactly one place. `Rectangle` is plain data, so this stays unit-testable
+/// without a display connection.
+pub(crate) fn logical_rect_to_physical(g: &gdk::Rectangle, scale: f64) -> Rect {
+    Rect {
+        x: g.x() as f64 * scale,
+        y: g.y() as f64 * scale,
+        width: g.width() as f64 * scale,
+        height: g.height() as f64 * scale,
+    }
 }
 
 /// Ends the gesture and tears down any active drag.
@@ -994,6 +1021,9 @@ fn tick(state: &PillState) {
         state.dragging.get(),
     );
     spring_anim(&state.inflate_t, &state.inflate_velocity, inflate_target, DRAG_INFLATE_STIFFNESS);
+
+    let drag_target = if state.dragging.get() || state.long_press_active.get() { 1.0 } else { 0.0 };
+    spring_anim(&state.drag_label_t, &state.drag_label_velocity, drag_target, rust_pill_shared::LABEL_SPRING_STIFFNESS);
 
     tick_ring(state);
 
@@ -1336,5 +1366,81 @@ mod visibility_tests {
     fn persistent_always_shows() {
         assert!(should_show_pill(Visibility::Persistent, Phase::Idle, false));
         assert!(should_show_pill(Visibility::Persistent, Phase::Recording, false));
+    }
+}
+
+#[cfg(test)]
+mod geometry_tests {
+    use super::*;
+
+    /// Tolerance for float assertions — the repo's usual test epsilon (see
+    /// rust_pill_shared). The conversions here produce integral pixel values,
+    /// but comparing approximately keeps the tests robust if intermediate
+    /// math or types ever change.
+    const EPSILON: f64 = 1e-6;
+
+    fn assert_rect_close(actual: &Rect, expected: &Rect) {
+        let fields = [
+            ("x", actual.x, expected.x),
+            ("y", actual.y, expected.y),
+            ("width", actual.width, expected.width),
+            ("height", actual.height, expected.height),
+        ];
+        for (name, a, e) in fields {
+            assert!(
+                (a - e).abs() < EPSILON,
+                "{name}: expected ~{e}, got {a} (rect {actual:?} vs {expected:?})"
+            );
+        }
+    }
+
+    #[test]
+    fn logical_rect_is_scaled_into_physical_pixels() {
+        // A 2000x1000 logical work area at origin (100, 50) on a 2x monitor
+        // must come out in the same physical space the pill rect uses.
+        let rect = logical_rect_to_physical(&gdk::Rectangle::new(100, 50, 2000, 1000), 2.0);
+        assert_rect_close(
+            &rect,
+            &Rect {
+                x: 200.0,
+                y: 100.0,
+                width: 4000.0,
+                height: 2000.0,
+            },
+        );
+    }
+
+    #[test]
+    fn logical_rect_scale_one_is_unchanged() {
+        let rect = logical_rect_to_physical(&gdk::Rectangle::new(-1920, 0, 1920, 1080), 1.0);
+        assert_rect_close(
+            &rect,
+            &Rect {
+                x: -1920.0,
+                y: 0.0,
+                width: 1920.0,
+                height: 1080.0,
+            },
+        );
+    }
+
+    #[test]
+    fn pill_rect_and_workarea_share_physical_space() {
+        // Regression guard for the split coordinate spaces: a 200-logical-px
+        // pill parked at physical x=3800 on a 2000-logical-wide (4000 physical)
+        // work area at 2x must overflow the monitor in *both* spaces alike.
+        let scale = 2.0;
+        let monitor = logical_rect_to_physical(&gdk::Rectangle::new(0, 0, 2000, 1000), scale);
+        let pill = Rect {
+            x: 3800.0,
+            y: 0.0,
+            width: 200.0 * scale,
+            height: 80.0 * scale,
+        };
+        // With the old unscaled workarea (2000 wide) this comparison used the
+        // wrong space at any scale != 1. Inequality assertions, so no epsilon
+        // needed here.
+        assert!(pill.x + pill.width > monitor.x + monitor.width);
+        assert!(pill.x < monitor.x + monitor.width);
     }
 }

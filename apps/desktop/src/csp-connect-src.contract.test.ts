@@ -85,6 +85,7 @@ const NON_CONNECT_HOSTS = new Map<string, string>([
   ["www.youtube.com", "iframe embed — validated against frame-src"],
   // Documentation-only strings.
   ["firebase.google.com", "doc comment URL"],
+  ["api-docs.deepseek.com", "doc comment URL"],
 ]);
 
 /**
@@ -228,8 +229,9 @@ describe("production CSP connect-src covers every webview-fetched provider host"
         violations
           .map((v) => `  ${v.scheme}://${v.host} (${v.file})`)
           .join("\n") +
-        `\nAdd the host to connect-src, route the call through ` +
-        `@tauri-apps/plugin-http and extend the http:default capability, or — ` +
+        `\nAdd a hosted HTTPS provider to connect-src and the curated ` +
+        `http:default capability; route user-configured private HTTP through ` +
+        `secureFetch/private_http_request instead of a capability hostname glob; or — ` +
         `only if it is genuinely not a connect-src target (openUrl link, ` +
         `iframe, comment) — classify it in NON_CONNECT_HOSTS (or ` +
         `KNOWN_NON_SOURCE_REFS) with a reason.`,
@@ -271,6 +273,11 @@ describe("production CSP connect-src covers every webview-fetched provider host"
         scheme: "wss",
         host: "mausvoice-prod-default-rtdb.firebaseio.com",
         why: "Firebase RTDB websocket upgrade from the https databaseURL",
+      },
+      {
+        scheme: "wss",
+        host: "api.gladia.io",
+        why: "Gladia live SDK websocket (opened inside @gladiaio/sdk)",
       },
     ];
     for (const { scheme, host, why } of dynamicEndpoints) {

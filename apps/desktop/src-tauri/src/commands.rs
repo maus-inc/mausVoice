@@ -439,11 +439,144 @@ pub struct TranscriptionAudioSamplesData {
     pub sample_rate: u32,
 }
 
+const MAX_PRIVATE_HTTP_REQUEST_BYTES: usize = 128 * 1024 * 1024;
+const MAX_PRIVATE_HTTP_RESPONSE_BYTES: u64 = 32 * 1024 * 1024;
+const MAX_PRIVATE_HTTP_REDIRECTS: usize = 5;
+const MAX_PRIVATE_HTTP_ACTIVE_REQUESTS: usize = 1_024;
+const MAX_PRIVATE_HTTP_PRESTART_CANCELLATIONS: usize = 256;
+const PRIVATE_HTTP_PRESTART_CANCELLATION_TTL: std::time::Duration =
+    std::time::Duration::from_secs(30);
+const PRIVATE_HTTP_CANCELLED_ERROR: &str = "Private-network request was cancelled";
+
+#[derive(serde::Deserialize, specta::Type)]
+#[serde(rename_all = "camelCase")]
+pub struct PrivateHttpRequest {
+    pub request_id: String,
+    pub url: String,
+    pub method: String,
+    pub headers: std::collections::HashMap<String, String>,
+    pub body: Option<Vec<u8>>,
+}
+
+#[derive(serde::Serialize, specta::Type)]
+#[serde(rename_all = "camelCase")]
+pub struct PrivateHttpResponse {
+    pub status: u16,
+    pub headers: std::collections::HashMap<String, String>,
+    pub body: Vec<u8>,
+}
+
 static IMPORT_IN_FLIGHT: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
 
-/// Returns true when `path` lives at or under any of `allowed_roots`. Used by
-/// `transcription_import_audio` to confine imports to well-known user
-/// directories so the command cannot be used as a filesystem read oracle.
+enum PrivateHttpCancellationState {
+    Active {
+        registration_id: u64,
+        sender: tokio::sync::oneshot::Sender<()>,
+    },
+    CancelledBeforeStart(std::time::Instant),
+}
+
+static NEXT_PRIVATE_HTTP_REGISTRATION_ID: std::sync::atomic::AtomicU64 =
+    std::sync::atomic::AtomicU64::new(1);
+static PRIVATE_HTTP_CANCELLATIONS: once_cell::sync::Lazy<
+    std::sync::Mutex<std::collections::HashMap<String, PrivateHttpCancellationState>>,
+> = once_cell::sync::Lazy::new(|| std::sync::Mutex::new(std::collections::HashMap::new()));
+
+fn prune_private_http_prestart_cancellations(
+    requests: &mut std::collections::HashMap<String, PrivateHttpCancellationState>,
+) {
+    requests.retain(|_, state| match state {
+        PrivateHttpCancellationState::Active { .. } => true,
+        PrivateHttpCancellationState::CancelledBeforeStart(created_at) => {
+            created_at.elapsed() <= PRIVATE_HTTP_PRESTART_CANCELLATION_TTL
+        }
+    });
+}
+
+struct PrivateHttpCancellationGuard {
+    request_id: String,
+    registration_id: u64,
+}
+
+impl PrivateHttpCancellationGuard {
+    fn register(request_id: String) -> Result<(Self, tokio::sync::oneshot::Receiver<()>), String> {
+        if !is_valid_private_http_request_id(&request_id) {
+            return Err("Private-network request ID is invalid".to_string());
+        }
+
+        let (sender, receiver) = tokio::sync::oneshot::channel();
+        let mut requests = PRIVATE_HTTP_CANCELLATIONS
+            .lock()
+            .map_err(|_| "Private-network cancellation registry is unavailable".to_string())?;
+        prune_private_http_prestart_cancellations(&mut requests);
+        if matches!(
+            requests.get(&request_id),
+            Some(PrivateHttpCancellationState::CancelledBeforeStart(_))
+        ) {
+            requests.remove(&request_id);
+            return Err(PRIVATE_HTTP_CANCELLED_ERROR.to_string());
+        }
+        if requests.contains_key(&request_id) {
+            return Err("Private-network request ID is already in use".to_string());
+        }
+        let active_requests = requests
+            .values()
+            .filter(|state| matches!(state, PrivateHttpCancellationState::Active { .. }))
+            .count();
+        if active_requests >= MAX_PRIVATE_HTTP_ACTIVE_REQUESTS {
+            return Err("Too many private-network requests are in progress".to_string());
+        }
+        let registration_id = NEXT_PRIVATE_HTTP_REGISTRATION_ID.fetch_add(1, Ordering::Relaxed);
+        requests.insert(
+            request_id.clone(),
+            PrivateHttpCancellationState::Active {
+                registration_id,
+                sender,
+            },
+        );
+        Ok((
+            Self {
+                request_id,
+                registration_id,
+            },
+            receiver,
+        ))
+    }
+}
+
+impl Drop for PrivateHttpCancellationGuard {
+    fn drop(&mut self) {
+        if let Ok(mut requests) = PRIVATE_HTTP_CANCELLATIONS.lock() {
+            let owns_registration = matches!(
+                requests.get(&self.request_id),
+                Some(PrivateHttpCancellationState::Active {
+                    registration_id,
+                    ..
+                }) if *registration_id == self.registration_id
+            );
+            if owns_registration {
+                requests.remove(&self.request_id);
+            }
+        }
+    }
+}
+
+fn is_valid_private_http_request_id(request_id: &str) -> bool {
+    let bytes = request_id.as_bytes();
+    bytes.len() == 36
+        && bytes.iter().enumerate().all(|(index, byte)| {
+            if matches!(index, 8 | 13 | 18 | 23) {
+                *byte == b'-'
+            } else {
+                byte.is_ascii_hexdigit()
+            }
+        })
+}
+
+/// Returns true when `path` lives at or under any of `allowed_roots`. The
+/// Rust-owned import picker is the authorization boundary; this additional
+/// confinement keeps sensitive home-directory dotfiles out of scope even after
+/// an accidental or malicious picker-path substitution.
 fn is_path_within_allowed_roots(path: &std::path::Path, allowed_roots: &[PathBuf]) -> bool {
     allowed_roots.iter().any(|root| path.starts_with(root))
 }
@@ -472,17 +605,424 @@ fn windows_file_identity(file: &std::fs::File) -> Option<(u32, u64)> {
     Some((info.dwVolumeSerialNumber, file_index))
 }
 
+fn is_rfc1918_ipv4(address: std::net::Ipv4Addr) -> bool {
+    let [first, second, _, _] = address.octets();
+    first == 10 || (first == 172 && (16..=31).contains(&second)) || (first == 192 && second == 168)
+}
+
+/// Shared host-validation predicate used by both the HTTP private-network
+/// path and the HTTPS saved-endpoint path. Returns `true` when the host is
+/// loopback, RFC1918, unique-local IPv6, or a `.local` domain. Public
+/// domain names (e.g. `api.openai.com`) return `false`.
+fn host_is_private_or_local(host: &url::Host<&str>) -> bool {
+    match host {
+        url::Host::Domain(domain) => {
+            let domain = domain.to_ascii_lowercase();
+            domain == "localhost"
+                || (domain.ends_with(".local")
+                    && domain.len() > ".local".len()
+                    && !domain.contains(".."))
+        }
+        url::Host::Ipv4(address) => address.is_loopback() || is_rfc1918_ipv4(*address),
+        url::Host::Ipv6(address) => {
+            if let Some(mapped) = address.to_ipv4_mapped() {
+                return mapped.is_loopback() || is_rfc1918_ipv4(mapped);
+            }
+            address.is_loopback() || (address.segments()[0] & 0xfe00) == 0xfc00
+        }
+    }
+}
+
+/// Validate a user-configured plaintext endpoint without confusing hostname
+/// prefix globs (for example `10.evil.example`) with RFC1918 address ranges.
+/// Link-local addresses are deliberately excluded to keep cloud metadata
+/// services such as 169.254.169.254 unreachable.
+fn validate_private_http_url(url: &Url) -> Result<(), String> {
+    if url.scheme() != "http" {
+        return Err("Private-network requests must use http".to_string());
+    }
+    if !url.username().is_empty() || url.password().is_some() {
+        return Err("Private-network URLs must not contain credentials".to_string());
+    }
+
+    match url.host() {
+        Some(host) if host_is_private_or_local(&host) => Ok(()),
+        _ => Err(format!(
+            "Private-network URL host is not loopback, RFC1918, unique-local IPv6, or .local: {}",
+            url.host_str().unwrap_or("<missing>")
+        )),
+    }
+}
+
+#[derive(Clone)]
+enum HttpRequestPolicy {
+    PrivateNetwork,
+    SavedOpenAiCompatibleEndpoint { base_url: Url },
+}
+
+fn normalized_url_path(path: &str) -> &str {
+    if path.len() > 1 {
+        path.trim_end_matches('/')
+    } else {
+        path
+    }
+}
+
+fn validate_saved_endpoint_url(url: &Url, base_url: &Url) -> Result<(), String> {
+    if !url.username().is_empty()
+        || url.password().is_some()
+        || !base_url.username().is_empty()
+        || base_url.password().is_some()
+    {
+        return Err("OpenAI-compatible endpoint URLs must not contain credentials".to_string());
+    }
+    if !matches!(base_url.scheme(), "http" | "https") {
+        return Err("OpenAI-compatible endpoints must use http or https".to_string());
+    }
+    if base_url.scheme() == "http" {
+        validate_private_http_url(base_url)?;
+        validate_private_http_url(url)?;
+    }
+    // HTTPS saved endpoints deliberately do NOT mirror the HTTP path's
+    // private-network-only restriction. HTTPS encrypts credentials, so a
+    // public cloud domain is a legitimate endpoint; plaintext HTTP is
+    // confined to private/local hosts because cleartext credentials must
+    // never cross the public internet. The HTTPS branch below still rejects
+    // public IP literals to mitigate SSRF (see the comment there).
+    if base_url.scheme() == "https" {
+        let https_host_check = |u: &Url| -> Result<(), String> {
+            match u.host() {
+                Some(h) => {
+                    // Intentionally asymmetric with the HTTP path below, and
+                    // safe by design:
+                    //   * Plaintext HTTP carries the bearer API key in
+                    //     cleartext, so it is confined to private/local
+                    //     networks only (no plaintext to public hosts).
+                    //   * HTTPS encrypts the credential, so reaching a
+                    //     user-configured OpenAI-compatible provider at a
+                    //     public cloud domain (e.g. api.openai.com) is the
+                    //     expected, legitimate use case and is allowed.
+                    //   * Even over HTTPS we still reject public IP literals
+                    //     that are not loopback/RFC1918/unique-local. This
+                    //     blocks SSRF to raw addressable infrastructure
+                    //     (cloud metadata 169.254.169.254, internal services
+                    //     reachable by IP) and forces DNS + TLS hostname
+                    //     validation. Private/local IPs and any domain name
+                    //     remain permitted.
+                    // Both schemes share `host_is_private_or_local` so the
+                    // private-network rule cannot silently drift.
+                    if host_is_private_or_local(&h) || matches!(h, url::Host::Domain(_)) {
+                        Ok(())
+                    } else {
+                        Err(format!(
+                            "OpenAI-compatible HTTPS endpoint host is not loopback, RFC1918, or unique-local: {}",
+                            u.host_str().unwrap_or("<missing>")
+                        ))
+                    }
+                }
+                None => Err("OpenAI-compatible endpoint has no host".to_string()),
+            }
+        };
+        https_host_check(base_url)?;
+        https_host_check(url)?;
+    }
+    if url.scheme() != base_url.scheme()
+        || url.host() != base_url.host()
+        || url.port_or_known_default() != base_url.port_or_known_default()
+    {
+        return Err("Request URL is outside the saved OpenAI-compatible endpoint".to_string());
+    }
+
+    let base_path = normalized_url_path(base_url.path());
+    let request_path = normalized_url_path(url.path());
+    let path_allowed = base_path == "/"
+        || request_path == base_path
+        || request_path
+            .strip_prefix(base_path)
+            .is_some_and(|remainder| remainder.starts_with('/'));
+    if !path_allowed {
+        return Err("Request path is outside the saved OpenAI-compatible endpoint".to_string());
+    }
+    Ok(())
+}
+
+fn validate_http_request_url(url: &Url, policy: &HttpRequestPolicy) -> Result<(), String> {
+    match policy {
+        HttpRequestPolicy::PrivateNetwork => validate_private_http_url(url),
+        HttpRequestPolicy::SavedOpenAiCompatibleEndpoint { base_url } => {
+            validate_saved_endpoint_url(url, base_url)
+        }
+    }
+}
+
+#[tauri::command]
+#[specta::specta]
+pub fn cancel_private_http_request(request_id: String) -> Result<bool, String> {
+    if !is_valid_private_http_request_id(&request_id) {
+        return Err("Private-network request ID is invalid".to_string());
+    }
+
+    let mut requests = PRIVATE_HTTP_CANCELLATIONS
+        .lock()
+        .map_err(|_| "Private-network cancellation registry is unavailable".to_string())?;
+    prune_private_http_prestart_cancellations(&mut requests);
+    match requests.remove(&request_id) {
+        Some(PrivateHttpCancellationState::Active { sender, .. }) => {
+            // Removing frees active capacity immediately. The guard carries a
+            // unique registration ID, so its later cleanup cannot remove a new
+            // request that reuses this renderer-generated request ID.
+            Ok(sender.send(()).is_ok())
+        }
+        Some(marker @ PrivateHttpCancellationState::CancelledBeforeStart(_)) => {
+            requests.insert(request_id, marker);
+            Ok(false)
+        }
+        None => {
+            // IPC messages can race: remember an abort that arrives before the
+            // async request command is first polled. Pre-start markers have a
+            // separate cap and never consume active-request capacity. At the
+            // cap, evict the oldest marker so the latest abort remains reliable.
+            let prestart_cancellations = requests
+                .values()
+                .filter(|state| {
+                    matches!(state, PrivateHttpCancellationState::CancelledBeforeStart(_))
+                })
+                .count();
+            if prestart_cancellations >= MAX_PRIVATE_HTTP_PRESTART_CANCELLATIONS {
+                let oldest = requests
+                    .iter()
+                    .filter_map(|(request_id, state)| match state {
+                        PrivateHttpCancellationState::CancelledBeforeStart(created_at) => {
+                            Some((request_id.clone(), *created_at))
+                        }
+                        PrivateHttpCancellationState::Active { .. } => None,
+                    })
+                    .min_by_key(|(_, created_at)| *created_at)
+                    .map(|(request_id, _)| request_id);
+                if let Some(oldest) = oldest {
+                    requests.remove(&oldest);
+                }
+            }
+            requests.insert(
+                request_id,
+                PrivateHttpCancellationState::CancelledBeforeStart(std::time::Instant::now()),
+            );
+            Ok(false)
+        }
+    }
+}
+
+async fn execute_http_request(
+    request: PrivateHttpRequest,
+    policy: HttpRequestPolicy,
+) -> Result<PrivateHttpResponse, String> {
+    // Register before validation or any await so an abort IPC that wins the
+    // command-scheduling race is consumed before networking can begin.
+    let (_cancellation_guard, mut cancellation) =
+        PrivateHttpCancellationGuard::register(request.request_id.clone())?;
+
+    if request
+        .body
+        .as_ref()
+        .is_some_and(|body| body.len() > MAX_PRIVATE_HTTP_REQUEST_BYTES)
+    {
+        return Err(format!(
+            "Private-network request body exceeds the {} MiB limit",
+            MAX_PRIVATE_HTTP_REQUEST_BYTES / (1024 * 1024)
+        ));
+    }
+
+    let initial_url = Url::parse(&request.url)
+        .map_err(|_| "HTTP request URL is invalid".to_string())?;
+    validate_http_request_url(&initial_url, &policy)?;
+
+    let redirect_policy = policy.clone();
+    let mut client_builder = reqwest::Client::builder()
+        .timeout(std::time::Duration::from_secs(10 * 60))
+        .redirect(reqwest::redirect::Policy::custom(move |attempt| {
+            if attempt.previous().len() >= MAX_PRIVATE_HTTP_REDIRECTS {
+                return attempt.error("HTTP request exceeded the redirect limit");
+            }
+            match validate_http_request_url(attempt.url(), &redirect_policy) {
+                Ok(()) => attempt.follow(),
+                Err(error) => attempt.error(error),
+            }
+        }));
+    if matches!(policy, HttpRequestPolicy::PrivateNetwork) {
+        // Connect directly so an environment proxy cannot turn an allowed
+        // private URL into a request delivered to an arbitrary public host.
+        client_builder = client_builder.no_proxy();
+    }
+    let client = client_builder
+        .build()
+        .map_err(|_| "Unable to initialize the HTTP client".to_string())?;
+
+    let method = reqwest::Method::from_bytes(request.method.trim().as_bytes())
+        .map_err(|_| "Private-network request method is invalid".to_string())?;
+    if ![
+        reqwest::Method::GET,
+        reqwest::Method::POST,
+        reqwest::Method::PUT,
+        reqwest::Method::PATCH,
+        reqwest::Method::DELETE,
+        reqwest::Method::HEAD,
+    ]
+    .contains(&method)
+    {
+        return Err("Private-network request method is not allowed".to_string());
+    }
+
+    let mut builder = client.request(method, initial_url);
+    for (name, value) in request.headers {
+        let normalized = name.trim().to_ascii_lowercase();
+        if matches!(
+            normalized.as_str(),
+            "host"
+                | "content-length"
+                | "connection"
+                | "proxy-authorization"
+                | "proxy-connection"
+                | "transfer-encoding"
+                | "upgrade"
+        ) {
+            continue;
+        }
+        let name = reqwest::header::HeaderName::from_bytes(normalized.as_bytes())
+            .map_err(|_| "Private-network request contains an invalid header".to_string())?;
+        let value = reqwest::header::HeaderValue::from_str(&value)
+            .map_err(|_| "Private-network request contains an invalid header".to_string())?;
+        builder = builder.header(name, value);
+    }
+    if let Some(body) = request.body {
+        builder = builder.body(body);
+    }
+
+    let mut response = tokio::select! {
+        _ = &mut cancellation => return Err(PRIVATE_HTTP_CANCELLED_ERROR.to_string()),
+        result = builder.send() => result
+            .map_err(|_| "Private-network request failed".to_string())?,
+    };
+    if response
+        .content_length()
+        .is_some_and(|length| length > MAX_PRIVATE_HTTP_RESPONSE_BYTES)
+    {
+        return Err(format!(
+            "Private-network response exceeds the {} MiB limit",
+            MAX_PRIVATE_HTTP_RESPONSE_BYTES / (1024 * 1024)
+        ));
+    }
+
+    let status = response.status().as_u16();
+    let headers = response
+        .headers()
+        .iter()
+        .filter_map(|(name, value)| {
+            value
+                .to_str()
+                .ok()
+                .map(|value| (name.as_str().to_string(), value.to_string()))
+        })
+        .collect();
+    let initial_capacity = response
+        .content_length()
+        .unwrap_or_default()
+        .min(MAX_PRIVATE_HTTP_RESPONSE_BYTES) as usize;
+    let mut body = Vec::with_capacity(initial_capacity);
+    loop {
+        let chunk = tokio::select! {
+            _ = &mut cancellation => {
+                return Err(PRIVATE_HTTP_CANCELLED_ERROR.to_string());
+            }
+            result = response.chunk() => result
+                .map_err(|_| "Unable to read the private-network response".to_string())?,
+        };
+        let Some(chunk) = chunk else {
+            break;
+        };
+        if body
+            .len()
+            .checked_add(chunk.len())
+            .is_none_or(|length| length > MAX_PRIVATE_HTTP_RESPONSE_BYTES as usize)
+        {
+            return Err(format!(
+                "Private-network response exceeds the {} MiB limit",
+                MAX_PRIVATE_HTTP_RESPONSE_BYTES / (1024 * 1024)
+            ));
+        }
+        body.extend_from_slice(&chunk);
+    }
+
+    Ok(PrivateHttpResponse {
+        status,
+        headers,
+        body,
+    })
+}
+
+#[tauri::command]
+#[specta::specta]
+pub async fn private_http_request(
+    request: PrivateHttpRequest,
+) -> Result<PrivateHttpResponse, String> {
+    execute_http_request(request, HttpRequestPolicy::PrivateNetwork).await
+}
+
+#[tauri::command(rename_all = "camelCase")]
+#[specta::specta]
+pub async fn openai_compatible_http_request(
+    api_key_id: String,
+    request: PrivateHttpRequest,
+    database: State<'_, crate::state::OptionKeyDatabase>,
+) -> Result<PrivateHttpResponse, String> {
+    let pool = database.pool();
+    let row = sqlx::query(
+        "SELECT base_url FROM api_keys WHERE id = ?1 AND provider = 'openai-compatible'",
+    )
+    .bind(&api_key_id)
+    .fetch_optional(&pool)
+    .await
+    .map_err(|_| "Unable to authorize the OpenAI-compatible endpoint".to_string())?
+    .ok_or_else(|| "OpenAI-compatible endpoint is not saved".to_string())?;
+    let saved_base_url = row
+        .get::<Option<String>, _>("base_url")
+        .ok_or_else(|| "Saved OpenAI-compatible endpoint has no base URL".to_string())?;
+    let base_url = Url::parse(saved_base_url.trim())
+        .map_err(|_| "Saved OpenAI-compatible endpoint URL is invalid".to_string())?;
+
+    execute_http_request(
+        request,
+        HttpRequestPolicy::SavedOpenAiCompatibleEndpoint { base_url },
+    )
+    .await
+}
+
 #[tauri::command]
 #[specta::specta]
 pub async fn transcription_import_audio(
     app: tauri::AppHandle,
-    path: String,
-) -> Result<TranscriptionAudioData, String> {
-    let path = PathBuf::from(path.trim());
-    if path.as_os_str().is_empty() {
-        return Err("No audio file was selected".to_string());
-    }
-    let path = path
+) -> Result<Option<TranscriptionAudioData>, String> {
+    // Acquire before opening the native picker. The renderer receives neither
+    // a path argument nor a reusable authorization token: only a path returned
+    // directly by this Rust-owned OS dialog can reach the decoder. This closes
+    // the remaining renderer-to-Documents file-read surface.
+    let _import_guard = match ReentryGuard::acquire(&IMPORT_IN_FLIGHT) {
+        Ok(guard) => guard,
+        Err(_) => {
+            return Err(
+                "An audio import is already in progress. Please wait for it to finish.".to_string(),
+            );
+        }
+    };
+    let selection = rfd::AsyncFileDialog::new()
+        .set_title("Choose audio file")
+        .add_filter("Audio", &["wav", "mp3", "flac", "ogg"])
+        .pick_file()
+        .await;
+    let Some(selection) = selection else {
+        return Ok(None);
+    };
+    let path = selection
+        .path()
         .canonicalize()
         .map_err(|_| "Unable to resolve the selected audio file.".to_string())?;
 
@@ -529,25 +1069,18 @@ pub async fn transcription_import_audio(
         );
     }
 
-    // Open the validated path here (before any await) to narrow the TOCTOU
-    // window between validation and decode. This does not guarantee the opened
-    // file is the exact inode that `canonicalize` validated, but it avoids
-    // re-resolving the path after the blocking decode, and the single-flight
-    // guard below serializes concurrent imports so a rejected request cannot
-    // open files first.
-    #[cfg(unix)]
-    let validated = std::fs::metadata(&path)
-        .map_err(|_| "Unable to open the selected audio file.".to_string())?;
-    #[cfg(windows)]
-    let validated_id = {
-        let validated_file = std::fs::File::open(&path)
-            .map_err(|_| "Unable to open the selected audio file.".to_string())?;
-        windows_file_identity(&validated_file)
-            .ok_or_else(|| "Unable to open the selected audio file.".to_string())?
-    };
-
+    // Open first, then re-resolve and revalidate the path against the opened
+    // handle. If an attacker swaps the entry before open, the post-open
+    // canonical path exposes the new target and confinement rejects it. If it
+    // changes between canonicalization and metadata lookup, the identity check
+    // rejects it. Changes after this point cannot redirect the already-open fd.
     let file = std::fs::File::open(&path)
         .map_err(|_| "Unable to open the selected audio file.".to_string())?;
+    let opened_path = std::fs::canonicalize(&path)
+        .map_err(|_| "The selected audio file changed during import.".to_string())?;
+    if !is_path_within_allowed_roots(&opened_path, &allowed_roots) {
+        return Err("The selected file is outside the allowed import locations.".to_string());
+    }
 
     #[cfg(unix)]
     {
@@ -555,31 +1088,24 @@ pub async fn transcription_import_audio(
         let opened = file
             .metadata()
             .map_err(|_| "Unable to open the selected audio file.".to_string())?;
-        if opened.dev() != validated.dev() || opened.ino() != validated.ino() {
+        let resolved = std::fs::metadata(&opened_path)
+            .map_err(|_| "The selected audio file changed during import.".to_string())?;
+        if opened.dev() != resolved.dev() || opened.ino() != resolved.ino() {
             return Err("The selected audio file changed during import.".to_string());
         }
     }
     #[cfg(windows)]
     {
+        let resolved_file = std::fs::File::open(&opened_path)
+            .map_err(|_| "The selected audio file changed during import.".to_string())?;
         let opened_id = windows_file_identity(&file)
             .ok_or_else(|| "Unable to open the selected audio file.".to_string())?;
-        if opened_id != validated_id {
+        let resolved_id = windows_file_identity(&resolved_file)
+            .ok_or_else(|| "The selected audio file changed during import.".to_string())?;
+        if opened_id != resolved_id {
             return Err("The selected audio file changed during import.".to_string());
         }
     }
-
-    // Bound concurrent decodes so a flood of imports can't multiply the
-    // already-large per-decode memory ceiling. The ReentryGuard releases the
-    // flag on every exit path — including a dropped caller future — so a
-    // disconnected client can't wedge imports permanently (import DoS).
-    let _import_guard = match ReentryGuard::acquire(&IMPORT_IN_FLIGHT) {
-        Ok(guard) => guard,
-        Err(_) => {
-            return Err(
-                "An audio import is already in progress. Please wait for it to finish.".to_string(),
-            );
-        }
-    };
 
     let result = tauri::async_runtime::spawn_blocking(move || {
         let file_bytes = file
@@ -656,7 +1182,7 @@ pub async fn transcription_import_audio(
     })
     .await
     .map_err(|err| format!("audio import task failed: {err}"));
-    result?
+    result?.map(Some)
 }
 
 fn encode_pcm16_le(samples: &[f32]) -> Vec<u8> {
@@ -761,39 +1287,35 @@ fn resolve_managed_audio_path_for_read(
         return None;
     }
 
-    // Capture the device/inode identity of the validated path. We reopen and
-    // confirm the opened handle refers to the *same* inode, so a local
-    // swap/replace of the resolved file between validation and open cannot make
-    // us read an unrelated file.
-    #[cfg(unix)]
-    let validated_identity = {
-        use std::os::unix::fs::MetadataExt;
-        let meta = std::fs::metadata(&real_path).ok()?;
-        (meta.dev(), meta.ino())
-    };
-
-    // Open the validated file here so validation and the read are bound to the
-    // same handle, closing the time-of-check/time-of-use race where the file
-    // could be swapped for a symlink pointing outside `audio_dir` between this
-    // check and the later open/read.
+    // Open first, then resolve the entry again. This binds confinement to the
+    // target actually opened rather than to a pre-open canonicalization that a
+    // symlink swap could invalidate.
     let file = std::fs::File::open(&real_path).ok()?;
+    let opened_path = std::fs::canonicalize(&real_path).ok()?;
+    if opened_path.parent()? != real_audio_dir {
+        return None;
+    }
 
-    // Confirm the opened handle still matches the validated inode. Any swap
-    // that occurred after validation but before open is detected here.
     #[cfg(unix)]
     {
         use std::os::unix::fs::MetadataExt;
         let opened = file.metadata().ok()?;
-        if opened.dev() != validated_identity.0 || opened.ino() != validated_identity.1 {
+        let resolved = std::fs::metadata(&opened_path).ok()?;
+        if opened.dev() != resolved.dev() || opened.ino() != resolved.ino() {
             return None;
         }
     }
     #[cfg(windows)]
     {
-        let validated_file = std::fs::File::open(&real_path).ok()?;
-        let validated_id = windows_file_identity(&validated_file)?;
+        // Windows requires a file handle to retrieve file identity (volume serial
+        // + file index) via GetFileInformationByHandle. Reopening the resolved
+        // path is necessary because Windows provides no API to obtain file
+        // identity from a path alone. This ensures the TOCTOU check compares the
+        // actual opened file with the current target at the resolved path.
+        let resolved_file = std::fs::File::open(&opened_path).ok()?;
         let opened_id = windows_file_identity(&file)?;
-        if opened_id != validated_id {
+        let resolved_id = windows_file_identity(&resolved_file)?;
+        if opened_id != resolved_id {
             return None;
         }
     }
@@ -1441,6 +1963,9 @@ pub async fn hotkey_replace_style_hotkeys(
     hotkeys: Vec<crate::domain::Hotkey>,
     database: State<'_, crate::state::OptionKeyDatabase>,
 ) -> Result<Vec<crate::domain::Hotkey>, String> {
+    if prefix.is_empty() {
+        return Err("hotkey prefix must not be empty".to_string());
+    }
     crate::db::hotkey_queries::replace_hotkeys_by_prefix(
         database.pool(),
         &prefix,
@@ -1713,6 +2238,15 @@ pub async fn clear_local_data(
     }
 
     Ok(())
+}
+
+/// A23: Mirror the TS playInteractionChime preference into Rust so the
+/// native thock path (pill overlays call audio_feedback::play_thock directly,
+/// bypassing the TS gate in tryPlayAudioChime) honors the user's choice.
+#[tauri::command]
+#[specta::specta]
+pub fn set_interaction_chime_enabled(enabled: bool) {
+    crate::system::audio_feedback::set_interaction_chime_enabled(enabled);
 }
 
 #[tauri::command]
@@ -2410,6 +2944,18 @@ pub fn request_admin_relaunch(app: tauri::AppHandle) -> crate::platform::NativeS
     }
 }
 
+/// Fully terminates the application process (including the tray icon).
+///
+/// Distinct from the main-window close path, which only hides to tray.
+/// Used by the elevation-declined dialog's "Close mausVoice" action and any
+/// other UI that must actually quit rather than background the app.
+#[tauri::command]
+#[specta::specta]
+pub fn quit_app(app: tauri::AppHandle) {
+    log::info!("quit_app: terminating process");
+    app.exit(0);
+}
+
 #[tauri::command]
 #[specta::specta]
 pub fn set_tray_title(app: AppHandle, title: Option<String>) -> Result<(), String> {
@@ -2460,6 +3006,18 @@ pub fn set_tray_language_menu(
 #[specta::specta]
 pub fn set_register_app_label(app: AppHandle, app_name: Option<String>) -> Result<(), String> {
     crate::system::tray::set_register_app_label(&app, app_name)
+}
+
+/// Set the localized dashboard action labels and sync the tray item to the
+/// main window's actual visibility.
+#[tauri::command]
+#[specta::specta]
+pub fn set_dashboard_menu_labels(
+    app: AppHandle,
+    open_label: String,
+    hide_label: String,
+) -> Result<(), String> {
+    crate::system::tray::set_dashboard_menu_labels(&app, open_label, hide_label)
 }
 
 /// Sync the tray's pill-visibility label.
@@ -2875,8 +3433,8 @@ fn is_safe_arg_token(token: &str) -> bool {
 /// invoke a shell — makes it obvious to model authors that shell
 /// composition is out. `/` and `\` are forbidden so an allow-listed reader
 /// (e.g. a hypothetical `cat`) cannot reach arbitrary filesystem paths like
-/// `/etc/passwd`, `C:\Users\…`, or `~/.ssh/id_rsa`, and `..` path traversal is
-/// caught by the substring check below.
+/// `/etc/passwd`, `C:\Users\…`, or `~/.ssh/id_rsa`. A standalone `..` token
+/// is explicitly rejected; the `/` guard prevents traversal sequences.
 const TERMINAL_FORBIDDEN_CHARS: &[char] =
     &[';', '|', '&', '$', '`', '>', '<', '(', ')', '/', '\\', '\n', '\r'];
 
@@ -2911,7 +3469,7 @@ fn validate_terminal_command_args(
                 ));
             }
         }
-        if token.contains("..") {
+        if *token == ".." {
             return Err(format!(
                 "Path traversal (..) is not permitted in command arguments (found in {token:?})"
             ));
@@ -2932,8 +3490,14 @@ fn validate_floating_window_url(url: &Url) -> Result<(), String> {
     match url.scheme() {
         "http" | "https" => {
             let host = url.host_str().unwrap_or("");
-            let is_localhost =
-                host == "localhost" || host == "127.0.0.1" || host == "[::1]";
+            // url::Url::host_str() typically returns IPv6 without brackets,
+            // but accept bracketed form and any loopback address too.
+            let is_loopback_ip = host
+                .trim_matches(|c| c == '[' || c == ']')
+                .parse::<std::net::IpAddr>()
+                .map(|ip| ip.is_loopback())
+                .unwrap_or(false);
+            let is_localhost = host == "localhost" || is_loopback_ip;
             // Docs-site windows are allowed to load, but they do not inherit
             // IPC: `maus-inc.github.io` is not in the `floating-*` capability
             // `remote.urls` list. Localhost remains the only remote host with
@@ -2969,22 +3533,25 @@ fn hex_value(value: u8) -> Option<u8> {
     }
 }
 
-fn percent_decode_route_path(path: &str) -> Result<String, String> {
+fn percent_decode_route_path_once(path: &str) -> Result<String, String> {
     let bytes = path.as_bytes();
     let mut decoded = Vec::with_capacity(bytes.len());
     let mut index = 0;
     while index < bytes.len() {
         if bytes[index] == b'%' {
-            let high = bytes
-                .get(index + 1)
-                .and_then(|value| hex_value(*value))
-                .ok_or_else(|| "Floating app route has invalid percent encoding".to_string())?;
-            let low = bytes
-                .get(index + 2)
-                .and_then(|value| hex_value(*value))
-                .ok_or_else(|| "Floating app route has invalid percent encoding".to_string())?;
-            decoded.push((high << 4) | low);
-            index += 3;
+            let high = bytes.get(index + 1).and_then(|value| hex_value(*value));
+            let low = bytes.get(index + 2).and_then(|value| hex_value(*value));
+            match (high, low) {
+                (Some(h), Some(l)) => {
+                    decoded.push((h << 4) | l);
+                    index += 3;
+                }
+                _ => {
+                    // Leftover bare `%` (e.g. "100%done") is a literal.
+                    decoded.push(b'%');
+                    index += 1;
+                }
+            }
         } else {
             decoded.push(bytes[index]);
             index += 1;
@@ -2992,6 +3559,41 @@ fn percent_decode_route_path(path: &str) -> Result<String, String> {
     }
     String::from_utf8(decoded)
         .map_err(|_| "Floating app route path is not valid UTF-8".to_string())
+}
+
+fn percent_decode_route_path(path: &str) -> Result<String, String> {
+    // Webview/runtime layers may decode a route more than once. Validate the
+    // fully decoded path so double-encoded traversal cannot become dangerous
+    // only after this check. Bound nesting to reject pathological input.
+    let mut decoded = path.to_string();
+    let mut last_error: Option<String> = None;
+    for iteration in 0..4 {
+        match percent_decode_route_path_once(&decoded) {
+            Ok(next) => {
+                if next == decoded {
+                    return Ok(decoded);
+                }
+                decoded = next;
+            }
+            Err(e) if iteration > 0 => {
+                last_error = Some(e);
+                break;
+            }
+            Err(e) => return Err(e),
+        }
+    }
+    if decoded.contains('%') {
+        if let Some(err) = last_error {
+            return Err(err);
+        }
+        let still_encoded = decoded.as_bytes().windows(3).any(|w| {
+            w[0] == b'%' && hex_value(w[1]).is_some() && hex_value(w[2]).is_some()
+        });
+        if still_encoded {
+            return Err("Floating app route has excessive percent encoding".to_string());
+        }
+    }
+    Ok(decoded)
 }
 
 /// Validate only the path portion of a local app route. Query values are
@@ -3013,690 +3615,6 @@ fn validate_local_app_route(route: &str) -> Result<(), String> {
     }
 
     Ok(())
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn terminal_command_rejects_empty() {
-        assert!(validate_terminal_command_args("").is_err());
-        assert!(validate_terminal_command_args("   ").is_err());
-    }
-
-    #[test]
-    fn terminal_command_rejects_paths_and_shells() {
-        assert!(validate_terminal_command_args("/bin/sh").is_err());
-        assert!(validate_terminal_command_args("../../sh").is_err());
-        assert!(validate_terminal_command_args("sh -c 'echo hi'").is_err());
-        assert!(validate_terminal_command_args("bash ls").is_err());
-        assert!(validate_terminal_command_args("cmd /c dir").is_err());
-    }
-
-    #[test]
-    fn terminal_command_rejects_metacharacters() {
-        assert!(validate_terminal_command_args("ls ; rm -rf /").is_err());
-        assert!(validate_terminal_command_args("ls | cat").is_err());
-        assert!(validate_terminal_command_args("echo $(whoami)").is_err());
-        assert!(validate_terminal_command_args("echo `whoami`").is_err());
-        assert!(validate_terminal_command_args("echo > file").is_err());
-    }
-
-    #[test]
-    fn terminal_command_rejects_path_traversal_in_args() {
-        // Even with an allow-listed binary, path separators and `..` in
-        // arguments must be refused so a reader cannot reach arbitrary files.
-        assert!(validate_terminal_command_args("ls /etc/passwd").is_err());
-        assert!(validate_terminal_command_args("echo /etc/passwd").is_err());
-        assert!(validate_terminal_command_args("cat /etc/passwd").is_err());
-        assert!(validate_terminal_command_args("echo ../../secrets").is_err());
-        assert!(validate_terminal_command_args("echo ..").is_err());
-        assert!(validate_terminal_command_args("ls ~/.ssh/id_rsa").is_err());
-    }
-
-    #[cfg(not(target_os = "windows"))]
-    #[test]
-    fn terminal_command_allows_allowlisted() {
-        assert_eq!(
-            validate_terminal_command_args("ls -la").unwrap().0.binary,
-            "ls"
-        );
-        assert_eq!(
-            validate_terminal_command_args("pwd").unwrap().0.binary,
-            "pwd"
-        );
-        assert_eq!(
-            validate_terminal_command_args("echo hello world")
-                .unwrap()
-                .0
-                .binary,
-            "echo"
-        );
-    }
-
-    #[cfg(target_os = "windows")]
-    #[test]
-    fn terminal_command_allows_allowlisted() {
-        assert_eq!(
-            validate_terminal_command_args("whoami").unwrap().0.binary,
-            "whoami"
-        );
-        assert_eq!(
-            validate_terminal_command_args("where cargo").unwrap().0.binary,
-            "where"
-        );
-        // CMD builtins are intentionally absent: without a shell they have
-        // no executable to spawn.
-        assert!(validate_terminal_command_args("dir").is_err());
-    }
-
-    /// Every allow-listed entry must be reachable through the validator,
-    /// so the const and the parser can't drift apart on any platform.
-    #[test]
-    fn terminal_command_allowlist_entries_are_reachable() {
-        for entry in ALLOWED_COMMANDS {
-            let (matched, args) = validate_terminal_command_args(entry.binary)
-                .unwrap_or_else(|err| panic!("{} should validate: {err}", entry.binary));
-            assert_eq!(matched.binary, entry.binary);
-            assert!(args.is_empty());
-        }
-    }
-
-    #[test]
-    fn terminal_command_rejects_binary_with_embedded_space() {
-        // A binary name that contains a space can never match an allow-list
-        // entry (entries are single, space-free tokens), so it is rejected
-        // rather than silently collapsing into a different command.
-        assert!(validate_terminal_command_args("\"ls -rf\"").is_err());
-        assert!(validate_terminal_command_args("my binary").is_err());
-    }
-
-    #[test]
-    fn terminal_command_accepts_allowed_command_with_empty_args() {
-        // An allow-listed binary with no user-supplied arguments is accepted
-        // and reports an empty argv tail.
-        let (allowed, args) = validate_terminal_command_args("ls").unwrap();
-        assert_eq!(allowed.binary, "ls");
-        assert!(args.is_empty());
-    }
-
-    #[cfg(not(target_os = "windows"))]
-    #[tokio::test]
-    async fn terminal_command_runs_ls_without_path_in_environment() {
-        // Serialize env mutation so it cannot race any other test.
-        static PATH_GUARD: std::sync::Mutex<()> = std::sync::Mutex::new(());
-        let _guard = PATH_GUARD.lock().unwrap();
-
-        let original = std::env::var("PATH").ok();
-        // Simulate a process environment that has no PATH at all.
-        std::env::remove_var("PATH");
-
-        let result = run_terminal_command("ls".to_string()).await;
-
-        // Restore the environment for any subsequent code.
-        match original {
-            Some(value) => std::env::set_var("PATH", value),
-            None => std::env::remove_var("PATH"),
-        }
-        drop(_guard);
-
-        // `cmd.env_clear()` drops PATH from the child, but the OS default
-        // search path still resolves `ls`, so the command must succeed rather
-        // than fail to spawn with a missing-PATH error.
-        let response = result.expect("ls should run even without a PATH env var");
-        assert_eq!(response.exit_code, 0);
-        assert!(!response.stdout.is_empty());
-    }
-
-    #[test]
-    fn installer_url_accepts_trusted_release_hosts() {
-        assert!(validate_installer_url(
-            &Url::parse("https://github.com/maus-inc/mausVoice/releases/download/v1/app.pkg")
-                .unwrap(),
-            TRUSTED_REPO_NAMESPACE
-        )
-        .is_ok());
-        assert!(validate_installer_url(
-            &Url::parse("https://github.com/maus-inc/mausVoice/releases/download/v1/mausVoice_0.1.7_universal.dmg")
-                .unwrap(),
-            TRUSTED_REPO_NAMESPACE
-        )
-        .is_ok());
-        assert!(validate_installer_url(
-            &Url::parse(
-                "https://github.com/maus-inc/mausVoice/releases/download/v1/mausVoice.app.tar.gz"
-            )
-            .unwrap(),
-            TRUSTED_REPO_NAMESPACE
-        )
-        .is_ok());
-        // The objects CDN is allowed only when the hop retains the trusted
-        // repository namespace.
-        assert!(validate_installer_url(
-            &Url::parse(
-                "https://objects.githubusercontent.com/maus-inc/mausVoice/releases/download/v1/app.pkg"
-            )
-            .unwrap(),
-            TRUSTED_REPO_NAMESPACE
-        )
-        .is_ok());
-    }
-
-    #[test]
-    fn installer_url_rejects_untrusted_hosts_schemes_and_extensions() {
-        // A redirect target on an untrusted host must be refused: this is the
-        // check the redirect policy applies to every hop.
-        assert!(
-            validate_installer_url(
-                &Url::parse("https://evil.com/app.pkg").unwrap(),
-                TRUSTED_REPO_NAMESPACE
-            )
-            .is_err()
-        );
-        assert!(validate_installer_url(
-            &Url::parse("http://github.com/maus-inc/app.pkg").unwrap(),
-            TRUSTED_REPO_NAMESPACE
-        )
-        .is_err());
-        assert!(validate_installer_url(
-            &Url::parse("https://github.com/maus-inc/payload.sh").unwrap(),
-            TRUSTED_REPO_NAMESPACE
-        )
-        .is_err());
-        // An objects CDN hop that escapes into a different repository namespace
-        // must be rejected even though the host is allow-listed.
-        assert!(validate_installer_url(
-            &Url::parse("https://objects.githubusercontent.com/other-org/otherRepo/releases/download/v1/app.pkg")
-                .unwrap(),
-            TRUSTED_REPO_NAMESPACE
-        )
-        .is_err());
-    }
-
-    #[test]
-    fn capped_reader_bounds_memory_and_reports_total() {
-        let payload = vec![b'x'; 10_000];
-        let (retained, total) = read_capped(payload.as_slice(), 1_000);
-        assert_eq!(retained.len(), 1_000);
-        assert_eq!(total, 10_000);
-
-        let rendered = format_capped_output(&retained, total);
-        assert!(rendered.contains("truncated: 10000 bytes total"));
-    }
-
-    #[test]
-    fn capped_reader_passes_through_small_output() {
-        let (retained, total) = read_capped(b"hello".as_slice(), 1_000);
-        assert_eq!(total, 5);
-        assert_eq!(format_capped_output(&retained, total), "hello");
-    }
-
-    #[test]
-    fn floating_window_allows_localhost() {
-        assert!(validate_floating_window_url(&Url::parse("http://localhost:1420/").unwrap()).is_ok());
-        assert!(validate_floating_window_url(&Url::parse("http://127.0.0.1:8080/foo").unwrap()).is_ok());
-    }
-
-    #[test]
-    fn local_app_route_allows_dots_in_query_data() {
-        assert!(validate_local_app_route("composer?text=Wait...%20what%3F").is_ok());
-        assert!(validate_local_app_route("composer/../settings").is_err());
-        assert!(validate_local_app_route("composer/%2e%2e/settings").is_err());
-    }
-
-    #[test]
-    fn floating_window_allows_docs_site() {
-        assert!(validate_floating_window_url(
-            &Url::parse("https://maus-inc.github.io/mausVoice/welcome").unwrap()
-        )
-        .is_ok());
-        // GitHub Pages URL must be scoped to /mausVoice/ even though that
-        // host has no IPC capability — keep the navigation allow-list tight.
-        assert!(validate_floating_window_url(
-            &Url::parse("https://maus-inc.github.io/other-project/").unwrap()
-        )
-        .is_err());
-    }
-
-    #[test]
-    fn floating_window_rejects_arbitrary_origins() {
-        assert!(validate_floating_window_url(&Url::parse("https://evil.com/").unwrap()).is_err());
-        assert!(validate_floating_window_url(&Url::parse("file:///etc/passwd").unwrap()).is_err());
-        assert!(validate_floating_window_url(&Url::parse("javascript:alert(1)").unwrap()).is_err());
-        assert!(parse_floating_window_url("not a url").is_err());
-    }
-
-    #[test]
-    fn pill_visibility_rejects_unknown_values() {
-        // The validation in set_pill_visibility is a literal match against
-        // these three strings; any deviation would change the command's
-        // public contract and is caught here.
-        let valid = ["hidden", "persistent", "while_active"];
-        for v in valid {
-            assert!(matches!(v, "hidden" | "persistent" | "while_active"));
-        }
-        assert!(!matches!(
-            "always_on_top",
-            "hidden" | "persistent" | "while_active"
-        ));
-    }
-
-    #[test]
-    fn cancel_typing_only_signals_a_live_session() {
-        // `CANCEL_TYPING` is process-wide and `cargo test` runs tests in
-        // parallel, so put it back the way we found it before returning.
-        let previous = CANCEL_TYPING.load(Ordering::SeqCst);
-        CANCEL_TYPING.store(false, Ordering::SeqCst);
-
-        // No typing session is live, so the cancel must be ignored instead
-        // of arming the flag for the next session.
-        cancel_typing().unwrap();
-        assert!(!CANCEL_TYPING.load(Ordering::SeqCst));
-
-        {
-            let _session = ReentryGuard::acquire(&SIMULATE_TYPE_IN_PROGRESS).unwrap();
-            cancel_typing().unwrap();
-            assert!(CANCEL_TYPING.load(Ordering::SeqCst));
-        }
-
-        CANCEL_TYPING.store(previous, Ordering::SeqCst);
-    }
-
-    #[test]
-    fn reentry_guard_rejects_a_second_acquire() {
-        let flag = AtomicBool::new(false);
-        let first = ReentryGuard::acquire(&flag).unwrap();
-        assert!(ReentryGuard::acquire(&flag).is_err());
-        drop(first);
-        assert!(ReentryGuard::acquire(&flag).is_ok());
-    }
-
-    #[test]
-    fn reentry_guard_releases_on_panic() {
-        let flag = AtomicBool::new(false);
-        let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-            let _guard = ReentryGuard::acquire(&flag).unwrap();
-            panic!("boom");
-        }));
-        assert!(result.is_err());
-        assert!(!flag.load(Ordering::Acquire));
-        assert!(ReentryGuard::acquire(&flag).is_ok());
-    }
-
-    /// Tables that live in the schema but hold no user content, so
-    /// `clear_local_data` may skip them. Adding a name here is an explicit
-    /// privacy decision, which is the point: it cannot happen by omission.
-    const NON_USER_DATA_TABLES: &[&str] = &[];
-
-    /// Rebuild the set of tables the schema actually ends up with by
-    /// replaying the migration SQL. Derived independently of
-    /// `USER_DATA_TABLES_TO_CLEAR`, so a new table that nobody remembered
-    /// to clear still shows up here.
-    /// Strip SQL noise that would otherwise be mis-tokenized when the
-    /// migrations are replayed as statements:
-    /// - `/* */` block comments,
-    /// - `--` line comments (to end of line),
-    /// - single-quoted string literals (which may contain `;`, `--`, or
-    ///   `*/`), including the `''` doubled-quote escape.
-    ///
-    /// Double-quoted identifiers (table/column names in SQLite) are left in
-    /// place by this pass: they are not string literals, so unlike `'...'`
-    /// above they are not skipped. The surrounding quote characters are
-    /// trimmed later when the table name is extracted, so `"my_table"` and
-    /// `my_table` resolve to the same bare name that SQLite reports.
-    fn strip_sql_noise(sql: &str) -> String {
-        let mut out = String::with_capacity(sql.len());
-        let mut chars = sql.chars().peekable();
-        let mut in_block_comment = false;
-        let mut in_line_comment = false;
-        while let Some(c) = chars.next() {
-            if in_line_comment {
-                if c == '\n' {
-                    in_line_comment = false;
-                    out.push(c);
-                }
-                continue;
-            }
-            if in_block_comment {
-                if c == '*' && chars.peek() == Some(&'/') {
-                    chars.next();
-                    in_block_comment = false;
-                }
-                continue;
-            }
-            if c == '/' && chars.peek() == Some(&'*') {
-                chars.next();
-                in_block_comment = true;
-                continue;
-            }
-            if c == '-' && chars.peek() == Some(&'-') {
-                chars.next();
-                in_line_comment = true;
-                continue;
-            }
-            if c == '\'' {
-                // Single-quoted string literal: skip content (incl. '' escape).
-                while let Some(q) = chars.next() {
-                    if q == '\'' {
-                        if chars.peek() == Some(&'\'') {
-                            chars.next(); // doubled-quote escape
-                            continue;
-                        }
-                        break;
-                    }
-                }
-                continue;
-            }
-            out.push(c);
-        }
-        out
-    }
-
-    fn tables_declared_by_migrations() -> std::collections::BTreeSet<String> {
-        let first_word = |rest: &str| -> Option<String> {
-            rest.split(|c: char| c == '(' || c.is_whitespace())
-                .find(|part| !part.is_empty())
-                // Trim surrounding double quotes so a quoted identifier
-                // (`CREATE TABLE "name"`) resolves to the same bare name
-                // SQLite reports, rather than `"name"`.
-                .map(|name| name.trim_matches('"').to_string())
-        };
-
-        let mut tables: std::collections::BTreeSet<String> = std::collections::BTreeSet::new();
-        for migration in crate::db::migrations() {
-            // `strip_sql_noise` fully cleans each migration's SQL (block
-            // comments, line comments, and single-quoted string literals),
-            // so the remaining text can be replayed statement by statement.
-            let sql = strip_sql_noise(migration.sql)
-                .lines()
-                .map(|line| line.trim())
-                .collect::<Vec<_>>()
-                .join(" ");
-
-            for raw_statement in sql.split(';') {
-                let statement = raw_statement
-                    .split_whitespace()
-                    .map(|word| word.to_ascii_lowercase())
-                    .collect::<Vec<_>>()
-                    .join(" ");
-
-                if let Some(rest) = statement
-                    .strip_prefix("create table if not exists ")
-                    .or_else(|| statement.strip_prefix("create table "))
-                {
-                    if let Some(name) = first_word(rest) {
-                        tables.insert(name);
-                    }
-                } else if let Some(rest) = statement
-                    .strip_prefix("drop table if exists ")
-                    .or_else(|| statement.strip_prefix("drop table "))
-                {
-                    if let Some(name) = first_word(rest) {
-                        tables.remove(&name);
-                    }
-                } else if let Some(rest) = statement.strip_prefix("alter table ") {
-                    if let Some((old, new)) = rest.split_once(" rename to ") {
-                        if let (Some(old), Some(new)) = (first_word(old), first_word(new)) {
-                            tables.remove(&old);
-                            tables.insert(new);
-                        }
-                    }
-                }
-            }
-        }
-        tables
-    }
-
-    #[test]
-    fn user_data_tables_to_clear_covers_the_privacy_set() {
-        let declared = tables_declared_by_migrations();
-        assert!(
-            !declared.is_empty(),
-            "no tables parsed from the migrations — the parser is broken"
-        );
-
-        for table in &declared {
-            assert!(
-                USER_DATA_TABLES_TO_CLEAR.contains(&table.as_str())
-                    || NON_USER_DATA_TABLES.contains(&table.as_str()),
-                "table `{table}` exists in the schema but clear_local_data never wipes it — a missed table is a privacy leak"
-            );
-        }
-
-        for table in USER_DATA_TABLES_TO_CLEAR {
-            assert!(
-                declared.contains(table),
-                "`{table}` is cleared but no longer exists in the schema"
-            );
-        }
-    }
-
-    #[test]
-    fn managed_audio_path_rejects_paths_outside_the_audio_dir() {
-        let root = std::env::temp_dir()
-            .join(format!("mausvoice-audio-guard-{}", std::process::id()));
-        let audio_dir = root.join("audio");
-        let other_dir = root.join("other");
-        std::fs::create_dir_all(&audio_dir).unwrap();
-        std::fs::create_dir_all(&other_dir).unwrap();
-        // Canonicalized because the guard returns real paths (e.g. macOS
-        // maps /tmp to /private/tmp).
-        let expected = std::fs::canonicalize(&audio_dir).unwrap().join("clip.wav");
-
-        let inside = audio_dir.join("clip.wav");
-        let outside = other_dir.join("clip.wav");
-        // A traversal attempt must NOT escape the managed directory.
-        let traversal = audio_dir.join("..").join("escaped.wav");
-        assert_eq!(
-            resolve_managed_audio_path(&inside, &audio_dir),
-            Some(expected.clone())
-        );
-        assert_eq!(resolve_managed_audio_path(&outside, &audio_dir), None);
-        assert_eq!(resolve_managed_audio_path(&traversal, &audio_dir), None);
-        // A relative entry must resolve inside the managed directory, never
-        // against the process working directory.
-        assert_eq!(
-            resolve_managed_audio_path(std::path::Path::new("clip.wav"), &audio_dir),
-            Some(expected.clone())
-        );
-        // An `audio_dir` spelled with `.` still matches its own contents.
-        assert_eq!(
-            resolve_managed_audio_path(&inside, &root.join(".").join("audio")),
-            Some(expected)
-        );
-
-        #[cfg(unix)]
-        {
-            // A symlinked subdirectory must not tunnel out of audio_dir.
-            let link = audio_dir.join("link");
-            std::os::unix::fs::symlink(&other_dir, &link).unwrap();
-            assert_eq!(
-                resolve_managed_audio_path(&link.join("clip.wav"), &audio_dir),
-                None
-            );
-        }
-
-        let _ = std::fs::remove_dir_all(&root);
-    }
-
-    #[test]
-    fn managed_audio_read_rejects_final_symlink_escape() {
-        let root = std::env::temp_dir()
-            .join(format!("mausvoice-audio-read-{}", std::process::id()));
-        let audio_dir = root.join("audio");
-        let outside_dir = root.join("outside");
-        std::fs::create_dir_all(&audio_dir).unwrap();
-        std::fs::create_dir_all(&outside_dir).unwrap();
-        let secret = outside_dir.join("secret.wav");
-        std::fs::write(&secret, b"TOP SECRET").unwrap();
-
-        #[cfg(unix)]
-        {
-            // A final-entry symlink pointing outside must be rejected for
-            // reads: canonicalizing the whole path follows the symlink and
-            // lands outside audio_dir, so the bytes are never leaked.
-            let link = audio_dir.join("clip.wav");
-            std::os::unix::fs::symlink(&secret, &link).unwrap();
-            assert!(
-                resolve_managed_audio_path_for_read(&link, &audio_dir).is_none()
-            );
-
-            // A regular file inside audio_dir is still accepted.
-            let real = audio_dir.join("real.wav");
-            std::fs::write(&real, b"ok").unwrap();
-            assert!(resolve_managed_audio_path_for_read(&real, &audio_dir).is_some());
-        }
-
-        let _ = std::fs::remove_dir_all(&root);
-    }
-
-    #[test]
-    fn managed_audio_read_returns_usable_handle_for_regular_file() {
-        let root = std::env::temp_dir()
-            .join(format!("mausvoice-audio-read-handle-{}", std::process::id()));
-        let audio_dir = root.join("audio");
-        std::fs::create_dir_all(&audio_dir).unwrap();
-        let real = audio_dir.join("real.wav");
-        std::fs::write(&real, b"readable-bytes").unwrap();
-
-        // The read helper must return a handle to the *validated* file whose
-        // bytes match what was on disk.
-        let file = resolve_managed_audio_path_for_read(&real, &audio_dir);
-        assert!(file.is_some());
-        let mut buf = String::new();
-        use std::io::Read;
-        file.unwrap().read_to_string(&mut buf).unwrap();
-        assert_eq!(buf, "readable-bytes");
-
-        let _ = std::fs::remove_dir_all(&root);
-    }
-
-    #[test]
-    fn import_path_is_rejected_outside_allowed_roots() {
-        // Mirrors the confinement check in `transcription_import_audio`: a path
-        // outside the allowed import roots must be rejected so the command
-        // cannot be used as a filesystem read oracle.
-        let tmp = std::env::temp_dir()
-            .join(format!("mausvoice-import-confine-{}", std::process::id()));
-        let allowed = vec![tmp.join("allowed")];
-        std::fs::create_dir_all(&allowed[0]).unwrap();
-        let inside = allowed[0].join("clip.wav");
-        let outside = tmp.join("outside.wav");
-        assert!(is_path_within_allowed_roots(&inside, &allowed));
-        assert!(!is_path_within_allowed_roots(&outside, &allowed));
-        let _ = std::fs::remove_dir_all(&tmp);
-    }
-
-    #[test]
-    fn clear_local_data_file_helpers_respect_the_audio_dir_guard() {
-        let root = std::env::temp_dir().join(format!(
-            "mausvoice-clear-local-{}",
-            std::process::id()
-        ));
-        let audio_dir = root.join("audio");
-        let outside_dir = root.join("outside");
-        std::fs::create_dir_all(&audio_dir).unwrap();
-        std::fs::create_dir_all(&outside_dir).unwrap();
-
-        let inside = audio_dir.join("keep-me-not.wav");
-        let relative = audio_dir.join("relative.wav");
-        let orphan = audio_dir.join("orphan.wav");
-        let other = audio_dir.join("notes.txt");
-        let outside = outside_dir.join("do-not-delete.wav");
-        std::fs::write(&inside, b"in").unwrap();
-        std::fs::write(&relative, b"rel").unwrap();
-        std::fs::write(&orphan, b"or").unwrap();
-        std::fs::write(&other, b"txt").unwrap();
-        std::fs::write(&outside, b"out").unwrap();
-
-        delete_listed_audio_files(
-            &audio_dir,
-            &[
-                inside.to_string_lossy().into_owned(),
-                // A relative row must be deleted from inside `audio_dir`.
-                "relative.wav".to_string(),
-                outside.to_string_lossy().into_owned(),
-            ],
-        );
-        assert!(!inside.exists());
-        assert!(!relative.exists());
-        assert!(outside.exists());
-
-        sweep_orphaned_wavs(&audio_dir);
-        assert!(!orphan.exists());
-        assert!(other.exists());
-        assert!(outside.exists());
-
-        let _ = std::fs::remove_dir_all(&root);
-    }
-
-    #[test]
-    fn installer_redirect_validates_each_hop_and_caps_depth() {
-        let ok = Url::parse(
-            "https://github.com/maus-inc/mausVoice/releases/download/v1/app.pkg",
-        )
-        .unwrap();
-        let evil = Url::parse("https://evil.com/app.pkg").unwrap();
-        assert!(installer_redirect_allowed(0, &ok, TRUSTED_REPO_NAMESPACE).is_ok());
-        assert!(installer_redirect_allowed(9, &ok, TRUSTED_REPO_NAMESPACE).is_ok());
-        assert!(installer_redirect_allowed(10, &ok, TRUSTED_REPO_NAMESPACE).is_err());
-        assert!(installer_redirect_allowed(0, &evil, TRUSTED_REPO_NAMESPACE).is_err());
-    }
-
-    #[test]
-    fn installer_redirect_allows_opaque_cdn_path() {
-        // GitHub's release-asset CDN returns an opaque UUID path; the real
-        // filename is carried in the signed query parameters. The validator must
-        // accept this normal redirect rather than demanding a path extension.
-        let cdn = Url::parse(
-            "https://release-assets.githubusercontent.com/github-production-release-asset/1234/\
-             abcdef-1234-5678?response-content-disposition=attachment%3Bfilename%3DmausVoice_1.0.0_universal.dmg",
-        )
-        .unwrap();
-        assert!(installer_redirect_allowed(1, &cdn, TRUSTED_REPO_NAMESPACE).is_ok());
-        // A non-GitHub host must still be rejected even with a dmg-looking query.
-        let bad = Url::parse(
-            "https://evil-cdn.example.com/uuid?response-content-disposition=attachment%3Bfilename%3DmausVoice_1.0.0_universal.dmg",
-        )
-        .unwrap();
-        assert!(installer_redirect_allowed(1, &bad, TRUSTED_REPO_NAMESPACE).is_err());
-    }
-
-    #[test]
-    fn installer_size_cap_rejects_advertised_and_streamed_oversize() {
-        assert!(installer_content_length_ok(None).is_ok());
-        assert!(installer_content_length_ok(Some(INSTALLER_MAX_BYTES)).is_ok());
-        assert!(installer_content_length_ok(Some(INSTALLER_MAX_BYTES + 1)).is_err());
-        assert_eq!(
-            installer_account_chunk(0, INSTALLER_MAX_BYTES).unwrap(),
-            INSTALLER_MAX_BYTES
-        );
-        assert!(installer_account_chunk(INSTALLER_MAX_BYTES, 1).is_err());
-    }
-
-    #[test]
-    fn signature_size_cap_rejects_advertised_and_streamed_oversize() {
-        assert!(signature_content_length_ok(None).is_ok());
-        assert!(signature_content_length_ok(Some(SIGNATURE_MAX_BYTES)).is_ok());
-        assert!(signature_content_length_ok(Some(SIGNATURE_MAX_BYTES + 1)).is_err());
-        assert_eq!(
-            signature_account_chunk(0, SIGNATURE_MAX_BYTES).unwrap(),
-            SIGNATURE_MAX_BYTES
-        );
-        assert!(signature_account_chunk(SIGNATURE_MAX_BYTES, 1).is_err());
-    }
-
-    #[test]
-    fn current_timestamp_ok() {
-        // Replicate the function body to avoid a public exposure. SystemTime
-        // should always be post-epoch on modern OSes; if it isn't we'd want
-        // to know rather than silently return i64::MAX.
-        let duration = SystemTime::now().duration_since(UNIX_EPOCH);
-        assert!(duration.is_ok());
-        let millis: Result<i64, _> = duration.unwrap().as_millis().try_into();
-        assert!(millis.is_ok());
-    }
 }
 
 /// Strict, shell-free execution for an allow-listed command.
@@ -4533,6 +4451,994 @@ pub async fn floating_window_list(app: AppHandle) -> Result<Vec<FloatingWindowIn
         });
     }
     Ok(out)
+}
+
+
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    static PRIVATE_HTTP_CANCELLATION_TEST_LOCK: once_cell::sync::Lazy<tokio::sync::Mutex<()>> =
+        once_cell::sync::Lazy::new(|| tokio::sync::Mutex::new(()));
+
+    #[test]
+    fn terminal_command_rejects_empty() {
+        assert!(validate_terminal_command_args("").is_err());
+        assert!(validate_terminal_command_args("   ").is_err());
+    }
+
+    #[test]
+    fn terminal_command_allows_benign_double_dots_inside_a_token() {
+        assert!(validate_terminal_command_args("echo file..txt").is_ok());
+        assert!(validate_terminal_command_args("echo ..").is_err());
+    }
+
+    #[test]
+    fn terminal_command_rejects_paths_and_shells() {
+        assert!(validate_terminal_command_args("/bin/sh").is_err());
+        assert!(validate_terminal_command_args("../../sh").is_err());
+        assert!(validate_terminal_command_args("sh -c 'echo hi'").is_err());
+        assert!(validate_terminal_command_args("bash ls").is_err());
+        assert!(validate_terminal_command_args("cmd /c dir").is_err());
+    }
+
+    #[test]
+    fn terminal_command_rejects_metacharacters() {
+        assert!(validate_terminal_command_args("ls ; rm -rf /").is_err());
+        assert!(validate_terminal_command_args("ls | cat").is_err());
+        assert!(validate_terminal_command_args("echo $(whoami)").is_err());
+        assert!(validate_terminal_command_args("echo `whoami`").is_err());
+        assert!(validate_terminal_command_args("echo > file").is_err());
+    }
+
+    #[test]
+    fn terminal_command_rejects_path_traversal_in_args() {
+        // Even with an allow-listed binary, path separators and `..` in
+        // arguments must be refused so a reader cannot reach arbitrary files.
+        assert!(validate_terminal_command_args("ls /etc/passwd").is_err());
+        assert!(validate_terminal_command_args("echo /etc/passwd").is_err());
+        assert!(validate_terminal_command_args("cat /etc/passwd").is_err());
+        assert!(validate_terminal_command_args("echo ../../secrets").is_err());
+        assert!(validate_terminal_command_args("echo ..").is_err());
+        assert!(validate_terminal_command_args("ls ~/.ssh/id_rsa").is_err());
+    }
+
+    #[cfg(not(target_os = "windows"))]
+    #[test]
+    fn terminal_command_allows_allowlisted() {
+        assert_eq!(
+            validate_terminal_command_args("ls -la").unwrap().0.binary,
+            "ls"
+        );
+        assert_eq!(
+            validate_terminal_command_args("pwd").unwrap().0.binary,
+            "pwd"
+        );
+        assert_eq!(
+            validate_terminal_command_args("echo hello world")
+                .unwrap()
+                .0
+                .binary,
+            "echo"
+        );
+    }
+
+    #[cfg(target_os = "windows")]
+    #[test]
+    fn terminal_command_allows_allowlisted() {
+        assert_eq!(
+            validate_terminal_command_args("whoami").unwrap().0.binary,
+            "whoami"
+        );
+        assert_eq!(
+            validate_terminal_command_args("where cargo").unwrap().0.binary,
+            "where"
+        );
+        // CMD builtins are intentionally absent: without a shell they have
+        // no executable to spawn.
+        assert!(validate_terminal_command_args("dir").is_err());
+    }
+
+    /// Every allow-listed entry must be reachable through the validator,
+    /// so the const and the parser can't drift apart on any platform.
+    #[test]
+    fn terminal_command_allowlist_entries_are_reachable() {
+        for entry in ALLOWED_COMMANDS {
+            let (matched, args) = validate_terminal_command_args(entry.binary)
+                .unwrap_or_else(|err| panic!("{} should validate: {err}", entry.binary));
+            assert_eq!(matched.binary, entry.binary);
+            assert!(args.is_empty());
+        }
+    }
+
+    #[test]
+    fn terminal_command_rejects_binary_with_embedded_space() {
+        // A binary name that contains a space can never match an allow-list
+        // entry (entries are single, space-free tokens), so it is rejected
+        // rather than silently collapsing into a different command.
+        assert!(validate_terminal_command_args("\"ls -rf\"").is_err());
+        assert!(validate_terminal_command_args("my binary").is_err());
+    }
+
+    #[test]
+    fn terminal_command_accepts_allowed_command_with_empty_args() {
+        // An allow-listed binary with no user-supplied arguments is accepted
+        // and reports an empty argv tail.
+        #[cfg(not(target_os = "windows"))]
+        let binary = "ls";
+        #[cfg(target_os = "windows")]
+        let binary = "whoami";
+        let (allowed, args) = validate_terminal_command_args(binary).unwrap();
+        assert_eq!(allowed.binary, binary);
+        assert!(args.is_empty());
+    }
+
+    #[cfg(not(target_os = "windows"))]
+    #[tokio::test]
+    async fn terminal_command_runs_ls_without_path_in_environment() {
+        // Serialize env mutation so it cannot race any other test.
+        static PATH_GUARD: std::sync::Mutex<()> = std::sync::Mutex::new(());
+        let _guard = PATH_GUARD.lock().unwrap();
+
+        let original = std::env::var("PATH").ok();
+        // Simulate a process environment that has no PATH at all.
+        // `set_var`/`remove_var` are unsafe since 1.87.
+        #[allow(unused_unsafe)]
+        unsafe {
+            std::env::remove_var("PATH");
+        }
+
+        let result = run_terminal_command("ls".to_string()).await;
+
+        // Restore the environment for any subsequent code.
+        #[allow(unused_unsafe)]
+        unsafe {
+            match original {
+                Some(value) => std::env::set_var("PATH", value),
+                None => std::env::remove_var("PATH"),
+            }
+        }
+        drop(_guard);
+
+        // `cmd.env_clear()` drops PATH from the child, but the OS default
+        // search path still resolves `ls`, so the command must succeed rather
+        // than fail to spawn with a missing-PATH error.
+        let response = result.expect("ls should run even without a PATH env var");
+        assert_eq!(response.exit_code, 0);
+        assert!(!response.stdout.is_empty());
+    }
+
+    #[test]
+    fn installer_url_accepts_trusted_release_hosts() {
+        assert!(validate_installer_url(
+            &Url::parse("https://github.com/maus-inc/mausVoice/releases/download/v1/app.pkg")
+                .unwrap(),
+            TRUSTED_REPO_NAMESPACE
+        )
+        .is_ok());
+        assert!(validate_installer_url(
+            &Url::parse("https://github.com/maus-inc/mausVoice/releases/download/v1/mausVoice_0.1.7_universal.dmg")
+                .unwrap(),
+            TRUSTED_REPO_NAMESPACE
+        )
+        .is_ok());
+        assert!(validate_installer_url(
+            &Url::parse(
+                "https://github.com/maus-inc/mausVoice/releases/download/v1/mausVoice.app.tar.gz"
+            )
+            .unwrap(),
+            TRUSTED_REPO_NAMESPACE
+        )
+        .is_ok());
+        // The objects CDN is allowed only when the hop retains the trusted
+        // repository namespace.
+        assert!(validate_installer_url(
+            &Url::parse(
+                "https://objects.githubusercontent.com/maus-inc/mausVoice/releases/download/v1/app.pkg"
+            )
+            .unwrap(),
+            TRUSTED_REPO_NAMESPACE
+        )
+        .is_ok());
+    }
+
+    #[test]
+    fn installer_url_rejects_untrusted_hosts_schemes_and_extensions() {
+        // A redirect target on an untrusted host must be refused: this is the
+        // check the redirect policy applies to every hop.
+        assert!(
+            validate_installer_url(
+                &Url::parse("https://evil.com/app.pkg").unwrap(),
+                TRUSTED_REPO_NAMESPACE
+            )
+            .is_err()
+        );
+        assert!(validate_installer_url(
+            &Url::parse("http://github.com/maus-inc/app.pkg").unwrap(),
+            TRUSTED_REPO_NAMESPACE
+        )
+        .is_err());
+        assert!(validate_installer_url(
+            &Url::parse("https://github.com/maus-inc/payload.sh").unwrap(),
+            TRUSTED_REPO_NAMESPACE
+        )
+        .is_err());
+        // An objects CDN hop that escapes into a different repository namespace
+        // must be rejected even though the host is allow-listed.
+        assert!(validate_installer_url(
+            &Url::parse("https://objects.githubusercontent.com/other-org/otherRepo/releases/download/v1/app.pkg")
+                .unwrap(),
+            TRUSTED_REPO_NAMESPACE
+        )
+        .is_err());
+    }
+
+    #[test]
+    fn capped_reader_bounds_memory_and_reports_total() {
+        let payload = vec![b'x'; 10_000];
+        let (retained, total) = read_capped(payload.as_slice(), 1_000);
+        assert_eq!(retained.len(), 1_000);
+        assert_eq!(total, 10_000);
+
+        let rendered = format_capped_output(&retained, total);
+        assert!(rendered.contains("truncated: 10000 bytes total"));
+    }
+
+    #[test]
+    fn capped_reader_passes_through_small_output() {
+        let (retained, total) = read_capped(b"hello".as_slice(), 1_000);
+        assert_eq!(total, 5);
+        assert_eq!(format_capped_output(&retained, total), "hello");
+    }
+
+    #[test]
+    fn floating_window_allows_localhost() {
+        assert!(validate_floating_window_url(&Url::parse("http://localhost:1420/").unwrap()).is_ok());
+        assert!(validate_floating_window_url(&Url::parse("http://127.0.0.1:8080/foo").unwrap()).is_ok());
+    }
+
+    #[test]
+    fn local_app_route_allows_dots_in_query_data() {
+        assert!(validate_local_app_route("composer?text=Wait...%20what%3F").is_ok());
+        assert!(validate_local_app_route("composer/../settings").is_err());
+        assert!(validate_local_app_route("composer/%2e%2e/settings").is_err());
+        assert!(validate_local_app_route("composer/%252e%252e%252fsettings").is_err());
+        // A leftover bare `%` after the first successful decode is a terminal
+        // value, not another encoding round.
+        assert!(validate_local_app_route("composer/100%done").is_ok());
+        assert!(percent_decode_route_path("composer/100%done").is_ok());
+    }
+
+    #[test]
+    fn floating_window_treats_ipv6_loopback_as_localhost() {
+        assert!(validate_floating_window_url(
+            &Url::parse("http://[::1]:1420/").unwrap()
+        )
+        .is_ok());
+    }
+
+    #[test]
+    fn floating_window_allows_docs_site() {
+        assert!(validate_floating_window_url(
+            &Url::parse("https://maus-inc.github.io/mausVoice/welcome").unwrap()
+        )
+        .is_ok());
+        // GitHub Pages URL must be scoped to /mausVoice/ even though that
+        // host has no IPC capability — keep the navigation allow-list tight.
+        assert!(validate_floating_window_url(
+            &Url::parse("https://maus-inc.github.io/other-project/").unwrap()
+        )
+        .is_err());
+    }
+
+    #[test]
+    fn floating_window_rejects_arbitrary_origins() {
+        assert!(validate_floating_window_url(&Url::parse("https://evil.com/").unwrap()).is_err());
+        assert!(validate_floating_window_url(&Url::parse("file:///etc/passwd").unwrap()).is_err());
+        assert!(validate_floating_window_url(&Url::parse("javascript:alert(1)").unwrap()).is_err());
+        assert!(parse_floating_window_url("not a url").is_err());
+    }
+
+    #[test]
+    fn pill_visibility_rejects_unknown_values() {
+        // The validation in set_pill_visibility is a literal match against
+        // these three strings; any deviation would change the command's
+        // public contract and is caught here.
+        let valid = ["hidden", "persistent", "while_active"];
+        for v in valid {
+            assert!(matches!(v, "hidden" | "persistent" | "while_active"));
+        }
+        assert!(!matches!(
+            "always_on_top",
+            "hidden" | "persistent" | "while_active"
+        ));
+    }
+
+    #[test]
+    fn cancel_typing_only_signals_a_live_session() {
+        // `CANCEL_TYPING` is process-wide and `cargo test` runs tests in
+        // parallel, so put it back the way we found it before returning.
+        let previous = CANCEL_TYPING.load(Ordering::SeqCst);
+        CANCEL_TYPING.store(false, Ordering::SeqCst);
+
+        // No typing session is live, so the cancel must be ignored instead
+        // of arming the flag for the next session.
+        cancel_typing().unwrap();
+        assert!(!CANCEL_TYPING.load(Ordering::SeqCst));
+
+        {
+            let _session = ReentryGuard::acquire(&SIMULATE_TYPE_IN_PROGRESS).unwrap();
+            cancel_typing().unwrap();
+            assert!(CANCEL_TYPING.load(Ordering::SeqCst));
+        }
+
+        CANCEL_TYPING.store(previous, Ordering::SeqCst);
+    }
+
+    #[test]
+    fn reentry_guard_rejects_a_second_acquire() {
+        let flag = AtomicBool::new(false);
+        let first = ReentryGuard::acquire(&flag).unwrap();
+        assert!(ReentryGuard::acquire(&flag).is_err());
+        drop(first);
+        assert!(ReentryGuard::acquire(&flag).is_ok());
+    }
+
+    #[test]
+    fn reentry_guard_releases_on_panic() {
+        let flag = AtomicBool::new(false);
+        let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            let _guard = ReentryGuard::acquire(&flag).unwrap();
+            panic!("boom");
+        }));
+        assert!(result.is_err());
+        assert!(!flag.load(Ordering::Acquire));
+        assert!(ReentryGuard::acquire(&flag).is_ok());
+    }
+
+    /// Tables that live in the schema but hold no user content, so
+    /// `clear_local_data` may skip them. Adding a name here is an explicit
+    /// privacy decision, which is the point: it cannot happen by omission.
+    const NON_USER_DATA_TABLES: &[&str] = &[];
+
+    /// Rebuild the set of tables the schema actually ends up with by
+    /// replaying the migration SQL. Derived independently of
+    /// `USER_DATA_TABLES_TO_CLEAR`, so a new table that nobody remembered
+    /// to clear still shows up here.
+    /// Strip SQL noise that would otherwise be mis-tokenized when the
+    /// migrations are replayed as statements:
+    /// - `/* */` block comments,
+    /// - `--` line comments (to end of line),
+    /// - single-quoted string literals (which may contain `;`, `--`, or
+    ///   `*/`), including the `''` doubled-quote escape.
+    ///
+    /// Double-quoted identifiers (table/column names in SQLite) are left in
+    /// place by this pass: they are not string literals, so unlike `'...'`
+    /// above they are not skipped. The surrounding quote characters are
+    /// trimmed later when the table name is extracted, so `"my_table"` and
+    /// `my_table` resolve to the same bare name that SQLite reports.
+    fn strip_sql_noise(sql: &str) -> String {
+        let mut out = String::with_capacity(sql.len());
+        let mut chars = sql.chars().peekable();
+        let mut in_block_comment = false;
+        let mut in_line_comment = false;
+        while let Some(c) = chars.next() {
+            if in_line_comment {
+                if c == '\n' {
+                    in_line_comment = false;
+                    out.push(c);
+                }
+                continue;
+            }
+            if in_block_comment {
+                if c == '*' && chars.peek() == Some(&'/') {
+                    chars.next();
+                    in_block_comment = false;
+                }
+                continue;
+            }
+            if c == '/' && chars.peek() == Some(&'*') {
+                chars.next();
+                in_block_comment = true;
+                continue;
+            }
+            if c == '-' && chars.peek() == Some(&'-') {
+                chars.next();
+                in_line_comment = true;
+                continue;
+            }
+            if c == '\'' {
+                // Single-quoted string literal: skip content (incl. '' escape).
+                while let Some(q) = chars.next() {
+                    if q == '\'' {
+                        if chars.peek() == Some(&'\'') {
+                            chars.next(); // doubled-quote escape
+                            continue;
+                        }
+                        break;
+                    }
+                }
+                continue;
+            }
+            out.push(c);
+        }
+        out
+    }
+
+    fn tables_declared_by_migrations() -> std::collections::BTreeSet<String> {
+        let first_word = |rest: &str| -> Option<String> {
+            rest.split(|c: char| c == '(' || c.is_whitespace())
+                .find(|part| !part.is_empty())
+                // Trim surrounding double quotes so a quoted identifier
+                // (`CREATE TABLE "name"`) resolves to the same bare name
+                // SQLite reports, rather than `"name"`.
+                .map(|name| name.trim_matches('"').to_string())
+        };
+
+        let mut tables: std::collections::BTreeSet<String> = std::collections::BTreeSet::new();
+        for migration in crate::db::migrations() {
+            // `strip_sql_noise` fully cleans each migration's SQL (block
+            // comments, line comments, and single-quoted string literals),
+            // so the remaining text can be replayed statement by statement.
+            let sql = strip_sql_noise(migration.sql)
+                .lines()
+                .map(|line| line.trim())
+                .collect::<Vec<_>>()
+                .join(" ");
+
+            for raw_statement in sql.split(';') {
+                let statement = raw_statement
+                    .split_whitespace()
+                    .map(|word| word.to_ascii_lowercase())
+                    .collect::<Vec<_>>()
+                    .join(" ");
+
+                if let Some(rest) = statement
+                    .strip_prefix("create table if not exists ")
+                    .or_else(|| statement.strip_prefix("create table "))
+                {
+                    if let Some(name) = first_word(rest) {
+                        tables.insert(name);
+                    }
+                } else if let Some(rest) = statement
+                    .strip_prefix("drop table if exists ")
+                    .or_else(|| statement.strip_prefix("drop table "))
+                {
+                    if let Some(name) = first_word(rest) {
+                        tables.remove(&name);
+                    }
+                } else if let Some(rest) = statement.strip_prefix("alter table ") {
+                    if let Some((old, new)) = rest.split_once(" rename to ") {
+                        if let (Some(old), Some(new)) = (first_word(old), first_word(new)) {
+                            tables.remove(&old);
+                            tables.insert(new);
+                        }
+                    }
+                }
+            }
+        }
+        tables
+    }
+
+    #[test]
+    fn user_data_tables_to_clear_covers_the_privacy_set() {
+        let declared = tables_declared_by_migrations();
+        assert!(
+            !declared.is_empty(),
+            "no tables parsed from the migrations — the parser is broken"
+        );
+
+        for table in &declared {
+            assert!(
+                USER_DATA_TABLES_TO_CLEAR.contains(&table.as_str())
+                    || NON_USER_DATA_TABLES.contains(&table.as_str()),
+                "table `{table}` exists in the schema but clear_local_data never wipes it — a missed table is a privacy leak"
+            );
+        }
+
+        for table in USER_DATA_TABLES_TO_CLEAR {
+            assert!(
+                declared.contains(table),
+                "`{table}` is cleared but no longer exists in the schema"
+            );
+        }
+    }
+
+    #[test]
+    fn managed_audio_path_rejects_paths_outside_the_audio_dir() {
+        let root = std::env::temp_dir()
+            .join(format!("mausvoice-audio-guard-{}", std::process::id()));
+        let audio_dir = root.join("audio");
+        let other_dir = root.join("other");
+        std::fs::create_dir_all(&audio_dir).unwrap();
+        std::fs::create_dir_all(&other_dir).unwrap();
+        // Canonicalized because the guard returns real paths (e.g. macOS
+        // maps /tmp to /private/tmp).
+        let expected = std::fs::canonicalize(&audio_dir).unwrap().join("clip.wav");
+
+        let inside = audio_dir.join("clip.wav");
+        let outside = other_dir.join("clip.wav");
+        // A traversal attempt must NOT escape the managed directory.
+        let traversal = audio_dir.join("..").join("escaped.wav");
+        assert_eq!(
+            resolve_managed_audio_path(&inside, &audio_dir),
+            Some(expected.clone())
+        );
+        assert_eq!(resolve_managed_audio_path(&outside, &audio_dir), None);
+        assert_eq!(resolve_managed_audio_path(&traversal, &audio_dir), None);
+        // A relative entry must resolve inside the managed directory, never
+        // against the process working directory.
+        assert_eq!(
+            resolve_managed_audio_path(std::path::Path::new("clip.wav"), &audio_dir),
+            Some(expected.clone())
+        );
+        // An `audio_dir` spelled with `.` still matches its own contents.
+        assert_eq!(
+            resolve_managed_audio_path(&inside, &root.join(".").join("audio")),
+            Some(expected)
+        );
+
+        #[cfg(unix)]
+        {
+            // A symlinked subdirectory must not tunnel out of audio_dir.
+            let link = audio_dir.join("link");
+            std::os::unix::fs::symlink(&other_dir, &link).unwrap();
+            assert_eq!(
+                resolve_managed_audio_path(&link.join("clip.wav"), &audio_dir),
+                None
+            );
+        }
+
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn managed_audio_read_rejects_final_symlink_escape() {
+        let root = std::env::temp_dir()
+            .join(format!("mausvoice-audio-read-{}", std::process::id()));
+        let audio_dir = root.join("audio");
+        let outside_dir = root.join("outside");
+        std::fs::create_dir_all(&audio_dir).unwrap();
+        std::fs::create_dir_all(&outside_dir).unwrap();
+        let secret = outside_dir.join("secret.wav");
+        std::fs::write(&secret, b"TOP SECRET").unwrap();
+
+        #[cfg(unix)]
+        {
+            // A final-entry symlink pointing outside must be rejected for
+            // reads: canonicalizing the whole path follows the symlink and
+            // lands outside audio_dir, so the bytes are never leaked.
+            let link = audio_dir.join("clip.wav");
+            std::os::unix::fs::symlink(&secret, &link).unwrap();
+            assert!(
+                resolve_managed_audio_path_for_read(&link, &audio_dir).is_none()
+            );
+
+            // A regular file inside audio_dir is still accepted.
+            let real = audio_dir.join("real.wav");
+            std::fs::write(&real, b"ok").unwrap();
+            assert!(resolve_managed_audio_path_for_read(&real, &audio_dir).is_some());
+        }
+
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn managed_audio_read_returns_usable_handle_for_regular_file() {
+        let root = std::env::temp_dir()
+            .join(format!("mausvoice-audio-read-handle-{}", std::process::id()));
+        let audio_dir = root.join("audio");
+        std::fs::create_dir_all(&audio_dir).unwrap();
+        let real = audio_dir.join("real.wav");
+        std::fs::write(&real, b"readable-bytes").unwrap();
+
+        // The read helper must return a handle to the *validated* file whose
+        // bytes match what was on disk.
+        let file = resolve_managed_audio_path_for_read(&real, &audio_dir);
+        assert!(file.is_some());
+        let mut buf = String::new();
+        use std::io::Read;
+        file.unwrap().read_to_string(&mut buf).unwrap();
+        assert_eq!(buf, "readable-bytes");
+
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn private_http_url_accepts_only_private_or_local_hosts() {
+        for accepted in [
+            "http://localhost:11434/api/tags",
+            "http://127.0.0.1:8000/health",
+            "http://10.0.0.5:11434/api/tags",
+            "http://172.16.5.4:8080/v1/models",
+            "http://172.31.255.254:8080/v1/models",
+            "http://192.168.1.20:8000/health",
+            "http://speaker.local:8000/health",
+            "http://[::1]:8000/health",
+            "http://[fd00::1]:8000/health",
+        ] {
+            let url = Url::parse(accepted).unwrap();
+            assert!(
+                validate_private_http_url(&url).is_ok(),
+                "expected private URL to be accepted: {accepted}"
+            );
+        }
+    }
+
+    #[test]
+    fn private_http_url_rejects_hostname_globs_public_hosts_and_imds() {
+        for rejected in [
+            "http://10.evil.example:443/",
+            "http://192.168.attacker.example:443/",
+            "http://100.64.0.1/",
+            "http://100.127.255.254/",
+            "http://[::ffff:100.64.0.1]/",
+            "http://169.254.169.254/latest/meta-data/",
+            "http://[fe80::1]/",
+            "http://8.8.8.8/",
+            "http://example.com/",
+            "https://10.0.0.5/",
+            "http://user:password@127.0.0.1/",
+        ] {
+            let url = Url::parse(rejected).unwrap();
+            assert!(
+                validate_private_http_url(&url).is_err(),
+                "expected URL to be rejected: {rejected}"
+            );
+        }
+    }
+
+    #[test]
+    fn saved_openai_compatible_endpoint_confines_origin_and_path() {
+        let base = Url::parse("https://llm.example.com/proxy/openai").unwrap();
+        for accepted in [
+            "https://llm.example.com/proxy/openai/v1/models",
+            "https://llm.example.com/proxy/openai/v1/chat/completions",
+        ] {
+            assert!(validate_saved_endpoint_url(&Url::parse(accepted).unwrap(), &base).is_ok());
+        }
+        for rejected in [
+            "https://evil.example.com/proxy/openai/v1/models",
+            "https://llm.example.com/other/v1/models",
+            "http://llm.example.com/proxy/openai/v1/models",
+        ] {
+            assert!(validate_saved_endpoint_url(&Url::parse(rejected).unwrap(), &base).is_err());
+        }
+    }
+
+    #[test]
+    fn saved_endpoint_url_handles_normalized_host_path_and_query_edges() {
+        let base = Url::parse("HTTPS://LLM.Example.COM:443/proxy/openai/?tenant=alpha").unwrap();
+
+        for accepted in [
+            "https://llm.example.com/proxy/openai?tenant=alpha",
+            "https://LLM.EXAMPLE.COM/proxy/openai/?tenant=beta",
+            "https://llm.example.com/proxy/openai/v1/models?after=model%2Fone",
+        ] {
+            assert!(
+                validate_saved_endpoint_url(&Url::parse(accepted).unwrap(), &base).is_ok(),
+                "expected saved-endpoint URL to be accepted: {accepted}"
+            );
+        }
+
+        for rejected in [
+            "https://llm.example.com:444/proxy/openai/v1/models",
+            "https://llm.example.com/proxy/openai-tenant/v1/models",
+            "https://llm.example.com/proxy/openai/../admin/models",
+            "https://llm.example.com/proxy/OpenAI/v1/models",
+            "https://llm.example.com.evil/proxy/openai/v1/models",
+        ] {
+            assert!(
+                validate_saved_endpoint_url(&Url::parse(rejected).unwrap(), &base).is_err(),
+                "expected saved-endpoint URL to be rejected: {rejected}"
+            );
+        }
+    }
+
+    #[test]
+    fn saved_https_endpoint_allows_domains_but_rejects_public_ip_literals() {
+        let domain = Url::parse("https://api.example.com/v1").unwrap();
+        assert!(validate_saved_endpoint_url(
+            &Url::parse("https://api.example.com/v1/models").unwrap(),
+            &domain,
+        )
+        .is_ok());
+
+        for public_ip in [
+            "https://8.8.8.8/v1",
+            "https://169.254.169.254/latest/meta-data",
+            "https://[2606:4700:4700::1111]/v1",
+            "https://[fe80::1]/v1",
+        ] {
+            let base = Url::parse(public_ip).unwrap();
+            assert!(
+                validate_saved_endpoint_url(&base, &base).is_err(),
+                "expected public or link-local IP literal to be rejected: {public_ip}"
+            );
+        }
+
+        for private_ip in ["https://10.0.0.5/v1", "https://[fd00::1]/v1"] {
+            let base = Url::parse(private_ip).unwrap();
+            assert!(
+                validate_saved_endpoint_url(&base, &base).is_ok(),
+                "expected private IP literal to be accepted: {private_ip}"
+            );
+        }
+    }
+
+    #[test]
+    fn saved_plaintext_endpoint_remains_private_network_only() {
+        let local = Url::parse("http://192.168.1.20:8080").unwrap();
+        assert!(validate_saved_endpoint_url(
+            &Url::parse("http://192.168.1.20:8080/v1/models").unwrap(),
+            &local,
+        )
+        .is_ok());
+
+        let public = Url::parse("http://example.com").unwrap();
+        assert!(validate_saved_endpoint_url(
+            &Url::parse("http://example.com/v1/models").unwrap(),
+            &public,
+        )
+        .is_err());
+    }
+
+    #[tokio::test]
+    async fn private_http_cancellation_is_preserved_when_abort_arrives_first() {
+        let _test_guard = PRIVATE_HTTP_CANCELLATION_TEST_LOCK.lock().await;
+        let request_id = "00000000-0000-4000-8000-000000000000".to_string();
+        assert!(!cancel_private_http_request(request_id.clone()).unwrap());
+
+        let result = private_http_request(PrivateHttpRequest {
+            request_id: request_id.clone(),
+            url: "http://127.0.0.1:1/never-started".to_string(),
+            method: "GET".to_string(),
+            headers: std::collections::HashMap::new(),
+            body: None,
+        })
+        .await;
+        match result {
+            Err(error) => assert_eq!(error, PRIVATE_HTTP_CANCELLED_ERROR),
+            Ok(_) => panic!("a pre-cancelled private request unexpectedly started"),
+        }
+        assert!(!PRIVATE_HTTP_CANCELLATIONS
+            .lock()
+            .unwrap()
+            .contains_key(&request_id));
+    }
+
+    #[tokio::test]
+    async fn private_http_prestart_cancellations_have_separate_bounded_capacity() {
+        let _test_guard = PRIVATE_HTTP_CANCELLATION_TEST_LOCK.lock().await;
+        let prestart_ids: Vec<String> = (0..=MAX_PRIVATE_HTTP_PRESTART_CANCELLATIONS)
+            .map(|index| format!("{index:08x}-0000-4000-8000-000000000099"))
+            .collect();
+        for request_id in &prestart_ids {
+            assert!(!cancel_private_http_request(request_id.clone()).unwrap());
+        }
+
+        let active_ids: Vec<String> = (0..MAX_PRIVATE_HTTP_ACTIVE_REQUESTS)
+            .map(|index| format!("{index:08x}-0000-4000-8000-000000000098"))
+            .collect();
+        let mut active_registrations = Vec::with_capacity(MAX_PRIVATE_HTTP_ACTIVE_REQUESTS);
+        for request_id in &active_ids {
+            active_registrations.push(
+                PrivateHttpCancellationGuard::register(request_id.clone())
+                    .expect("pre-start markers must not consume active-request capacity"),
+            );
+        }
+        match PrivateHttpCancellationGuard::register(
+            "fffffffe-0000-4000-8000-000000000097".to_string(),
+        ) {
+            Err(error) => assert_eq!(error, "Too many private-network requests are in progress"),
+            Ok(_) => panic!("the active private-request limit was not enforced"),
+        }
+
+        // Cancellation must free active capacity immediately even though the
+        // old guard has not unwound yet.
+        assert!(cancel_private_http_request(active_ids[0].clone()).unwrap());
+        let (replacement_guard, _replacement_receiver) = PrivateHttpCancellationGuard::register(
+            "ffffffff-0000-4000-8000-000000000097".to_string(),
+        )
+        .expect("a cancelled request must release its active-capacity slot");
+
+        let prestart_count = PRIVATE_HTTP_CANCELLATIONS
+            .lock()
+            .unwrap()
+            .values()
+            .filter(|state| matches!(state, PrivateHttpCancellationState::CancelledBeforeStart(_)))
+            .count();
+        assert!(prestart_count <= MAX_PRIVATE_HTTP_PRESTART_CANCELLATIONS);
+
+        drop(replacement_guard);
+        drop(active_registrations);
+        let mut requests = PRIVATE_HTTP_CANCELLATIONS.lock().unwrap();
+        for request_id in prestart_ids {
+            requests.remove(&request_id);
+        }
+    }
+
+    #[tokio::test]
+    async fn private_http_request_cancellation_stops_the_rust_operation() {
+        let _test_guard = PRIVATE_HTTP_CANCELLATION_TEST_LOCK.lock().await;
+        let listener = tokio::net::TcpListener::bind(("127.0.0.1", 0))
+            .await
+            .unwrap();
+        let address = listener.local_addr().unwrap();
+        let (accepted_sender, accepted_receiver) = tokio::sync::oneshot::channel();
+        let server = tokio::spawn(async move {
+            let (_socket, _) = listener.accept().await.unwrap();
+            let _ = accepted_sender.send(());
+            tokio::time::sleep(std::time::Duration::from_secs(30)).await;
+        });
+
+        let request_id = "00000000-0000-4000-8000-000000000001".to_string();
+        let request = tokio::spawn(private_http_request(PrivateHttpRequest {
+            request_id: request_id.clone(),
+            url: format!("http://{address}/slow"),
+            method: "GET".to_string(),
+            headers: std::collections::HashMap::new(),
+            body: None,
+        }));
+        tokio::time::timeout(std::time::Duration::from_secs(2), accepted_receiver)
+            .await
+            .expect("the local server should accept the request")
+            .expect("the acceptance signal should be delivered");
+
+        assert!(cancel_private_http_request(request_id.clone()).unwrap());
+        let (replacement_guard, replacement_cancellation) =
+            PrivateHttpCancellationGuard::register(request_id.clone())
+                .expect("a cancelled request ID may be safely reused");
+        let result = tokio::time::timeout(std::time::Duration::from_secs(2), request)
+            .await
+            .expect("the cancelled request must not wait for the client timeout")
+            .expect("the private request task should not panic");
+        match result {
+            Err(error) => assert_eq!(error, "Private-network request was cancelled"),
+            Ok(_) => panic!("the cancelled private request unexpectedly succeeded"),
+        }
+
+        // The old request's guard has now dropped. Its registration token must
+        // not remove the replacement registration that reused the same ID.
+        assert!(cancel_private_http_request(request_id.clone()).unwrap());
+        replacement_cancellation
+            .await
+            .expect("the replacement request should receive its cancellation");
+        drop(replacement_guard);
+        assert!(!cancel_private_http_request(request_id.clone()).unwrap());
+        PRIVATE_HTTP_CANCELLATIONS
+            .lock()
+            .unwrap()
+            .remove(&request_id);
+        server.abort();
+    }
+
+    #[test]
+    fn import_path_is_rejected_outside_allowed_roots() {
+        // Mirrors the confinement check in `transcription_import_audio`: a path
+        // outside the allowed import roots must be rejected so the command
+        // cannot be used as a filesystem read oracle.
+        let tmp = std::env::temp_dir()
+            .join(format!("mausvoice-import-confine-{}", std::process::id()));
+        let allowed = vec![tmp.join("allowed")];
+        std::fs::create_dir_all(&allowed[0]).unwrap();
+        let inside = allowed[0].join("clip.wav");
+        let outside = tmp.join("outside.wav");
+        assert!(is_path_within_allowed_roots(&inside, &allowed));
+        assert!(!is_path_within_allowed_roots(&outside, &allowed));
+        let _ = std::fs::remove_dir_all(&tmp);
+    }
+
+    #[test]
+    fn clear_local_data_file_helpers_respect_the_audio_dir_guard() {
+        let root = std::env::temp_dir().join(format!(
+            "mausvoice-clear-local-{}",
+            std::process::id()
+        ));
+        let audio_dir = root.join("audio");
+        let outside_dir = root.join("outside");
+        std::fs::create_dir_all(&audio_dir).unwrap();
+        std::fs::create_dir_all(&outside_dir).unwrap();
+
+        let inside = audio_dir.join("keep-me-not.wav");
+        let relative = audio_dir.join("relative.wav");
+        let orphan = audio_dir.join("orphan.wav");
+        let other = audio_dir.join("notes.txt");
+        let outside = outside_dir.join("do-not-delete.wav");
+        std::fs::write(&inside, b"in").unwrap();
+        std::fs::write(&relative, b"rel").unwrap();
+        std::fs::write(&orphan, b"or").unwrap();
+        std::fs::write(&other, b"txt").unwrap();
+        std::fs::write(&outside, b"out").unwrap();
+
+        delete_listed_audio_files(
+            &audio_dir,
+            &[
+                inside.to_string_lossy().into_owned(),
+                // A relative row must be deleted from inside `audio_dir`.
+                "relative.wav".to_string(),
+                outside.to_string_lossy().into_owned(),
+            ],
+        );
+        assert!(!inside.exists());
+        assert!(!relative.exists());
+        assert!(outside.exists());
+
+        sweep_orphaned_wavs(&audio_dir);
+        assert!(!orphan.exists());
+        assert!(other.exists());
+        assert!(outside.exists());
+
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn installer_redirect_validates_each_hop_and_caps_depth() {
+        let ok = Url::parse(
+            "https://github.com/maus-inc/mausVoice/releases/download/v1/app.pkg",
+        )
+        .unwrap();
+        let evil = Url::parse("https://evil.com/app.pkg").unwrap();
+        assert!(installer_redirect_allowed(0, &ok, TRUSTED_REPO_NAMESPACE).is_ok());
+        assert!(installer_redirect_allowed(9, &ok, TRUSTED_REPO_NAMESPACE).is_ok());
+        assert!(installer_redirect_allowed(10, &ok, TRUSTED_REPO_NAMESPACE).is_err());
+        assert!(installer_redirect_allowed(0, &evil, TRUSTED_REPO_NAMESPACE).is_err());
+    }
+
+    #[test]
+    fn installer_redirect_allows_opaque_cdn_path() {
+        // GitHub's release-asset CDN returns an opaque UUID path; the real
+        // filename is carried in the signed query parameters. The validator must
+        // accept this normal redirect rather than demanding a path extension.
+        let cdn = Url::parse(
+            "https://release-assets.githubusercontent.com/github-production-release-asset/1234/\
+             abcdef-1234-5678?response-content-disposition=attachment%3Bfilename%3DmausVoice_1.0.0_universal.dmg",
+        )
+        .unwrap();
+        assert!(installer_redirect_allowed(1, &cdn, TRUSTED_REPO_NAMESPACE).is_ok());
+        // A non-GitHub host must still be rejected even with a dmg-looking query.
+        let bad = Url::parse(
+            "https://evil-cdn.example.com/uuid?response-content-disposition=attachment%3Bfilename%3DmausVoice_1.0.0_universal.dmg",
+        )
+        .unwrap();
+        assert!(installer_redirect_allowed(1, &bad, TRUSTED_REPO_NAMESPACE).is_err());
+    }
+
+    #[test]
+    fn installer_size_cap_rejects_advertised_and_streamed_oversize() {
+        assert!(installer_content_length_ok(None).is_ok());
+        assert!(installer_content_length_ok(Some(INSTALLER_MAX_BYTES)).is_ok());
+        assert!(installer_content_length_ok(Some(INSTALLER_MAX_BYTES + 1)).is_err());
+        assert_eq!(
+            installer_account_chunk(0, INSTALLER_MAX_BYTES).unwrap(),
+            INSTALLER_MAX_BYTES
+        );
+        assert!(installer_account_chunk(INSTALLER_MAX_BYTES, 1).is_err());
+    }
+
+    #[test]
+    fn signature_size_cap_rejects_advertised_and_streamed_oversize() {
+        assert!(signature_content_length_ok(None).is_ok());
+        assert!(signature_content_length_ok(Some(SIGNATURE_MAX_BYTES)).is_ok());
+        assert!(signature_content_length_ok(Some(SIGNATURE_MAX_BYTES + 1)).is_err());
+        assert_eq!(
+            signature_account_chunk(0, SIGNATURE_MAX_BYTES).unwrap(),
+            SIGNATURE_MAX_BYTES
+        );
+        assert!(signature_account_chunk(SIGNATURE_MAX_BYTES, 1).is_err());
+    }
+
+    #[test]
+    fn current_timestamp_ok() {
+        // Replicate the function body to avoid a public exposure. SystemTime
+        // should always be post-epoch on modern OSes; if it isn't we'd want
+        // to know rather than silently return i64::MAX.
+        let duration = SystemTime::now().duration_since(UNIX_EPOCH);
+        assert!(duration.is_ok());
+        let millis: Result<i64, _> = duration.unwrap().as_millis().try_into();
+        assert!(millis.is_ok());
+    }
 }
 
 #[cfg(test)]

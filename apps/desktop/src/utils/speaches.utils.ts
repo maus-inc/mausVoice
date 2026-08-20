@@ -1,4 +1,4 @@
-import { fetch } from "@tauri-apps/plugin-http";
+import { secureFetch as fetch } from "./secure-fetch.utils";
 
 export const SPEACHES_DEFAULT_URL = "http://localhost:8000";
 export const SPEACHES_DEFAULT_MODEL = "Systran/faster-whisper-large-v3";

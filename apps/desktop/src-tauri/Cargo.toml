@@ -15,11 +15,16 @@ default-run = "mausVoice"
 name = "desktop_lib"
 crate-type = ["staticlib", "cdylib", "rlib"]
 
+[features]
+# Never enable this in a stable release: it compiles Tauri's inspection
+# capability into the binary. CI and prerelease workflows opt in explicitly.
+debug-assist = ["tauri/devtools"]
+
 [build-dependencies]
 tauri-build = { version = "=2.5.6", features = [] }
 
 [dependencies]
-tauri = { version = "=2.10.3", features = ["protocol-asset", "tray-icon", "image-png", "devtools", "macos-private-api"] }
+tauri = { version = "=2.10.3", features = ["protocol-asset", "tray-icon", "image-png", "macos-private-api"] }
 tauri-plugin-log = "2"
 log = "0.4"
 tauri-plugin-autostart = "2"
@@ -40,7 +45,7 @@ tauri-plugin-shell = "2"
 tauri-plugin-window-state = "2"
 sqlx = { version = "0.8", default-features = false, features = ["runtime-tokio-rustls", "sqlite"] }
 thiserror = "1"
-reqwest = { version = "0.12", default-features = false, features = ["blocking", "json", "rustls-tls-native-roots"] }
+reqwest = { version = "0.12", default-features = false, features = ["blocking", "json", "rustls-tls-native-roots", "stream"] }
 cpal = "0.15"
 tauri-plugin-os = "2.3.1"
 # Local fork that restores macOS event taps disabled by the OS.
@@ -63,9 +68,8 @@ url = "2"
 jsonwebtoken = "9"
 dotenvy = "0.15"
 chrono = "0.4"
-tokio = { version = "1", features = ["time", "net", "io-util", "sync"] }
+tokio = { version = "1", features = ["time", "net", "io-util", "sync", "macros"] }
 hostname = "0.4"
-rfd = { version = "0.15", default-features = false, features = ["gtk3"] }
 zip = { version = "2", default-features = false, features = ["deflate"] }
 regex = "1"
 once_cell = "1"
@@ -74,6 +78,7 @@ specta-typescript = "=0.0.9"
 tauri-specta = { version = "=2.0.0-rc.21", features = ["derive", "typescript"] }
 
 [target.'cfg(target_os = "macos")'.dependencies]
+rfd = "0.15"
 core-graphics = { version = "0.24", features = ["elcapitan"] }
 core-foundation = "0.10"
 cocoa = "0.24"
@@ -85,6 +90,7 @@ arboard = "3"
 rust_macos_pill = { path = "../../../packages/rust_macos_pill" }
 
 [target.'cfg(target_os = "linux")'.dependencies]
+rfd = { version = "0.15", default-features = false, features = ["gtk3"] }
 arboard = "3"
 enigo = "0.1"
 gtk = "0.18"
@@ -93,6 +99,7 @@ libpulse-simple-binding = "2"
 x11 = { version = "2", features = ["xlib"] }
 
 [target.'cfg(target_os = "windows")'.dependencies]
+rfd = "0.15"
 enigo = "0.1"
 arboard = "3"
 windows = { version = "0.61.3", features = [
@@ -113,7 +120,16 @@ windows = { version = "0.61.3", features = [
 ] }
 
 [lints.rust]
-unexpected_cfgs = { level = "warn", check-cfg = ["cfg(feature, values(\"cargo-clippy\"))"] }
+unexpected_cfgs = { level = "allow", check-cfg = [
+  "cfg(feature, values(\"cargo-clippy\"))",
+  "cfg(desktop)",
+  "cfg(mobile)",
+] }
+
+# CI installs latest stable clippy (workflow cannot pin 1.88.0). This style
+# lint became deny-via-warnings recently and is unrelated to correctness.
+[lints.clippy]
+uninlined_format_args = "allow"
 
 [patch.crates-io]
 block = { path = "../../../patches/block-0.1.6" }

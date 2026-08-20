@@ -1,5 +1,7 @@
 # mausVoice Architecture Walkthrough
 
+> Authoritative, maintained pages: [`apps/docs` Desktop architecture](../apps/docs/src/content/docs/development/architecture.md) and https://maus-inc.github.io/mausVoice/docs/development/architecture/. Prefer those if this historical walkthrough disagrees.
+
 A practical tour of how this repo is put together: the technology stack, the monorepo layout, the desktop app's layered design, the feature subsystems, and the personal/local build.
 
 > As of 0.1.6 this is a **local, personal build**. The hosted mausVoice Cloud backend, billing, and enterprise SSO/gateway were removed (migrations `071_remove_cloud_modes` / `072_drop_is_enterprise`). There are no cloud or enterprise repos, gateways, or `enterprise/` directories in the tree — every repo factory resolves to a local implementation.
@@ -51,7 +53,7 @@ This is documented upstream in [`docs/desktop-architecture.md`](desktop-architec
 
 ### Shared AI clients (`packages/voice-ai`, `packages/agent`)
 
-Multi-provider clients: `groq-sdk`, `openai`, `@anthropic-ai/sdk`, `@google/genai`, `@azure/openai`, plus Azure Speech. The agent loop in `packages/agent` is provider-agnostic and drives tool use.
+Multi-provider clients: `groq-sdk`, `openai`, `@anthropic-ai/sdk`, `@google/genai`, `@gladiaio/sdk`, `@azure/openai`, plus Azure Speech. The agent loop in `packages/agent` is provider-agnostic and drives tool use.
 
 ### Build system
 
@@ -188,9 +190,9 @@ At the Tauri boundary, repos convert with `toLocalXxx()` / `fromLocalXxx()` help
 Two paths, selected by user preferences:
 
 - **Local transcription** — the `rust_transcription` sidecar runs a small HTTP server (CPU and GPU builds) that the desktop app drives via a transcription _session_ (`src/sessions/`). It supports the whisper.cpp GGML models (tiny, base, small, medium, large-v3, large-v3-turbo) plus ONNX Parakeet 0.6B (CTC/TDT) and Canary 1B. Models are downloaded on demand into the app-data `transcription-models/` directory; GPU acceleration uses Metal/Vulkan via `wgpu`/`ort`.
-- **Cloud / API providers** — Deepgram, Groq, OpenAI, Azure, ElevenLabs, AssemblyAI, etc., each with a session in `src/sessions/`. The **personal build defaults to Deepgram** (`nova-3`), which **streams audio over a websocket during recording** so the transcript is ready almost as soon as you stop (`DeepgramTranscriptionSession`). If no Deepgram key is configured it falls back to Groq (`whisper-large-v3-turbo`, batch).
+- **Cloud / API providers** — Deepgram, Gladia, Groq, OpenAI, Azure, ElevenLabs, AssemblyAI, etc., routed through `src/sessions/` and `src/repos/transcribe-audio.repo.ts`. Gladia uses a live SDK session for microphone PCM and an upload/create/poll/delete flow for batch audio; both paths request provider-side deletion and preserve cleanup failures as warnings. The **personal build defaults to Deepgram** (`nova-3`), which **streams audio over a websocket during recording** so the transcript is ready almost as soon as you stop (`DeepgramTranscriptionSession`). If no Deepgram key is configured it falls back to Groq (`whisper-large-v3-turbo`, batch).
 
-The personal dictionary is injected as the Whisper `initialPrompt` to bias recognition toward your terms.
+The personal dictionary is injected as a Whisper `initialPrompt` on compatible routes. Gladia maps canonical terms to custom vocabulary and source→destination replacements to custom spelling, then the shared deterministic replacement pass still runs locally.
 
 **Streaming session lifecycle** — `rust_transcription`'s in-memory streaming-session registry evicts a session after **10 minutes** with no appended audio (`SESSION_IDLE_TTL`), so a client that connects but never finalizes can't accumulate buffered audio in RAM indefinitely. An independent background task sweeps the registry every **60 seconds** (`SWEEP_INTERVAL`) and removes anything past the TTL; appending samples to a session refreshes its activity timestamp and cancels the countdown.
 

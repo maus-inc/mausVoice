@@ -120,12 +120,11 @@ async function autoNotes() {
       ],
       { encoding: "utf8" },
     );
-    const tags = (tagsResult.stdout ?? "")
+    const prev = (tagsResult.stdout ?? "")
       .trim()
       .split("\n")
       .map((s) => s.trim())
-      .filter(Boolean);
-    const prev = tags[0];
+      .find(Boolean);
     const range = prev ? `${prev}..HEAD` : "HEAD";
     const logResult = spawnSync(
       "git",

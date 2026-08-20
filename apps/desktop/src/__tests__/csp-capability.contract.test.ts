@@ -41,22 +41,30 @@ function collectFiles(dir: string, acc: string[] = []): string[] {
     const full = join(dir, entry);
     const st = statSync(full);
     if (st.isDirectory()) {
-      if (entry === "node_modules" || entry === "dist" || entry === ".git")
+      if (
+        entry === "node_modules" ||
+        entry === "dist" ||
+        entry === ".git" ||
+        entry === "__tests__"
+      )
         continue;
       collectFiles(full, acc);
-    } else if (entry.endsWith(".ts") || entry.endsWith(".tsx")) {
+    } else if (
+      (entry.endsWith(".ts") || entry.endsWith(".tsx")) &&
+      !entry.includes(".test.")
+    ) {
       acc.push(full);
     }
   }
   return acc;
 }
 
-/** Every `https://api.*` host literal in the provider source trees. */
+/** Every `https://api.*` host literal in desktop and workspace-package sources. */
 function sourceApiHosts(): Set<string> {
-  const roots = [
-    resolve(repoRoot, "packages/voice-ai/src"),
-    resolve(desktopRoot, "src/sessions"),
-  ];
+  const packageRoots = readdirSync(resolve(repoRoot, "packages"))
+    .map((entry) => resolve(repoRoot, "packages", entry, "src"))
+    .filter((root) => statSync(root, { throwIfNoEntry: false })?.isDirectory());
+  const roots = [resolve(desktopRoot, "src"), ...packageRoots];
   const hosts = new Set<string>();
   const apiRe = /https:\/\/api\.[a-z0-9.-]+/g;
   for (const root of roots) {
@@ -73,22 +81,16 @@ function sourceApiHosts(): Set<string> {
 const apiHosts = sourceApiHosts();
 
 describe("http:default capability contract", () => {
-  it("restricts plaintext HTTP to loopback/LAN/self-hosted ranges", () => {
-    expect(allowUrls).not.toContain("http://*:*");
-    expect(allowUrls).not.toContain("http://*:*/**");
-    expect(allowUrls).not.toContain("http://1.*:*");
-    expect(allowUrls).not.toContain("http://8.*:*");
-
-    expect(allowUrls).toContain("http://localhost:*");
-    expect(allowUrls).toContain("http://127.0.0.1:*");
-    expect(allowUrls).toContain("http://10.*:*");
-    expect(allowUrls).toContain("http://192.168.*:*");
-    expect(allowUrls).toContain("http://169.254.*:*");
-    expect(allowUrls).toContain("http://*.local:*");
-
-    for (let octet = 16; octet <= 31; octet += 1) {
-      expect(allowUrls).toContain(`http://172.${octet}.*:*`);
-    }
+  it("routes every plaintext request through the parsed Rust private-network policy", () => {
+    // Capability URL globs are hostname patterns, not CIDR. Even `10.*` would
+    // permit 10.evil.example, while 169.254.* reaches cloud IMDS. Plain HTTP is
+    // therefore absent here and user-configured private endpoints go through
+    // private_http_request, whose Rust tests cover positive RFC1918/.local and
+    // negative public-host/link-local cases.
+    expect(allowUrls.filter((url) => url.startsWith("http://"))).toEqual([]);
+    expect(allowUrls).not.toContain("http://10.*:*");
+    expect(allowUrls).not.toContain("http://192.168.*:*");
+    expect(allowUrls).not.toContain("http://169.254.*:*");
   });
 
   it("does not allow https://* (hosted SaaS stays a curated allow-list)", () => {
@@ -122,6 +124,7 @@ describe("http:default capability contract", () => {
     // canonical csp-connect-src contract test, not duplicated here.)
     for (const host of [
       "https://api.assemblyai.com",
+      "https://api.gladia.io",
       "https://api.x.ai",
       "https://api.aldea.ai",
     ]) {

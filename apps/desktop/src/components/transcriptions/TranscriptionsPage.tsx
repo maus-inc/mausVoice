@@ -10,7 +10,6 @@ import {
   Select,
   Stack,
 } from "@mui/material";
-import { open as openFileDialog } from "@tauri-apps/plugin-dialog";
 import type { Tone } from "@maus-inc/types";
 import { getRec } from "@maus-inc/utilities";
 import { useEffect, useRef, useState } from "react";
@@ -27,6 +26,7 @@ import {
   type DictationLanguageCode,
   ORDERED_DICTATION_LANGUAGES,
 } from "../../utils/language.utils";
+import { isPostProcessingEnabled } from "../../utils/post-processing.utils";
 import { getSortedToneIds } from "../../utils/tone.utils";
 import { getMyDictationLanguage } from "../../utils/user.utils";
 
@@ -43,6 +43,7 @@ export default function TranscriptionsPage() {
     (state) => state.transcriptions.transcriptionIds,
   );
   const defaultLanguage = useAppStore((state) => getMyDictationLanguage(state));
+  const postProcessingEnabled = useAppStore(isPostProcessingEnabled);
   const tones = useAppStore((state) =>
     getSortedToneIds(state)
       .map((id) => getRec(state.toneById, id))
@@ -73,27 +74,16 @@ export default function TranscriptionsPage() {
   }, [importDialogOpen]);
 
   const handleImport = async () => {
-    const selected = await openFileDialog({
-      multiple: false,
-      directory: false,
-      title: intl.formatMessage({ defaultMessage: "Choose audio file" }),
-      filters: [
-        {
-          name: intl.formatMessage({ defaultMessage: "Audio" }),
-          extensions: ["wav", "mp3", "flac", "ogg"],
-        },
-      ],
-    });
-    if (typeof selected !== "string" || selected.length === 0) return;
-
-    setImportDialogOpen(false);
     setIsImporting(true);
     try {
-      await importAudioFile({
-        path: selected,
-        toneId: selectedToneId,
+      const imported = await importAudioFile({
+        toneId: postProcessingEnabled ? selectedToneId : null,
         languageCode: selectedLanguage,
       });
+      // Keep the in-app dialog (and its Style/Language choices) open when the
+      // user cancels the Rust-owned OS picker. Close only after a file was
+      // actually selected and imported.
+      if (imported) setImportDialogOpen(false);
     } catch (error) {
       showErrorSnackbar(
         error instanceof Error
@@ -137,7 +127,9 @@ export default function TranscriptionsPage() {
 
       <Dialog
         open={importDialogOpen}
-        onClose={() => setImportDialogOpen(false)}
+        onClose={() => {
+          if (!isImporting) setImportDialogOpen(false);
+        }}
         maxWidth="xs"
         fullWidth
       >
@@ -146,24 +138,26 @@ export default function TranscriptionsPage() {
         </DialogTitle>
         <DialogContent>
           <Stack spacing={2.5} sx={{ mt: 1 }}>
-            <FormControl fullWidth size="small">
-              <InputLabel>
-                <FormattedMessage defaultMessage="Style" />
-              </InputLabel>
-              <Select
-                label={intl.formatMessage({ defaultMessage: "Style" })}
-                value={selectedToneId ?? ""}
-                onChange={(event) =>
-                  setSelectedToneId(event.target.value || null)
-                }
-              >
-                {tones.map((tone) => (
-                  <MenuItem key={tone.id} value={tone.id}>
-                    {tone.name}
-                  </MenuItem>
-                ))}
-              </Select>
-            </FormControl>
+            {postProcessingEnabled && (
+              <FormControl fullWidth size="small">
+                <InputLabel>
+                  <FormattedMessage defaultMessage="Style" />
+                </InputLabel>
+                <Select
+                  label={intl.formatMessage({ defaultMessage: "Style" })}
+                  value={selectedToneId ?? ""}
+                  onChange={(event) =>
+                    setSelectedToneId(event.target.value || null)
+                  }
+                >
+                  {tones.map((tone) => (
+                    <MenuItem key={tone.id} value={tone.id}>
+                      {tone.name}
+                    </MenuItem>
+                  ))}
+                </Select>
+              </FormControl>
+            )}
             <FormControl fullWidth size="small">
               <InputLabel>
                 <FormattedMessage defaultMessage="Language" />
@@ -187,10 +181,17 @@ export default function TranscriptionsPage() {
           </Stack>
         </DialogContent>
         <DialogActions>
-          <Button onClick={() => setImportDialogOpen(false)}>
+          <Button
+            onClick={() => setImportDialogOpen(false)}
+            disabled={isImporting}
+          >
             <FormattedMessage defaultMessage="Cancel" />
           </Button>
-          <Button variant="contained" onClick={() => void handleImport()}>
+          <Button
+            variant="contained"
+            onClick={() => void handleImport()}
+            disabled={isImporting}
+          >
             <FormattedMessage defaultMessage="Choose file" />
           </Button>
         </DialogActions>

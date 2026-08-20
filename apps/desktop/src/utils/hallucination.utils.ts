@@ -90,25 +90,34 @@ export const filterKnownSilenceHallucinations = (
   }
   if (isKnownSilenceHallucination(text)) return "";
 
-  const lines = text.split(/\n+/);
+  const lines = text.split("\n");
   const subtitlePresent = lines.some((line) =>
     line.split(/(?<=[.!?。！？])\s+/u).some(isSubtitleHallucination),
   );
 
-  const keptLines = lines
-    .map((line) => {
-      const parts = line.split(/(?<=[.!?。！？])\s+/u);
-      const kept = parts.filter((part) => {
-        if (isKnownSilenceHallucination(part)) return false;
-        if (subtitlePresent && isSilenceCompanion(part)) return false;
-        return true;
-      });
-      return kept
-        .join(" ")
-        .replace(/[ \t]+/g, " ")
-        .trim();
-    })
-    .filter((line) => line.length > 0);
+  let changed = false;
+  const keptLines: string[] = [];
+  for (const line of lines) {
+    const parts = line.split(/(?<=[.!?。！？])\s+/u);
+    const kept = parts.filter((part) => {
+      if (isKnownSilenceHallucination(part)) return false;
+      if (subtitlePresent && isSilenceCompanion(part)) return false;
+      return true;
+    });
+    if (kept.length === parts.length) {
+      keptLines.push(line);
+      continue;
+    }
+    changed = true;
+    const rebuilt = kept
+      .join(" ")
+      .replace(/[ \t]+/g, " ")
+      .trim();
+    if (rebuilt.length > 0) {
+      keptLines.push(rebuilt);
+    }
+  }
+  if (!changed) return text;
   return keptLines.join("\n");
 };
 
@@ -132,7 +141,11 @@ export const applyHallucinationFiltering = (
   }
   // Prefer the caller-supplied (already overlap-merged) transcript whenever
   // segments are absent. When segments exist they belong to a single chunk.
-  const gated = gateSilentSegments(segments, language);
+  // noSpeechProb is a model confidence, not a language-specific phrase.
+  // Always apply it when verbose segments are present — including for the
+  // reachable `auto` language sentinel. Only the known-phrase filter below is
+  // English-gated.
+  const gated = gateSilentSegments(segments);
   const transcriptForFiltering = gated ?? rawTranscript;
   return filterKnownSilenceHallucinations(transcriptForFiltering, language);
 };
@@ -162,26 +175,27 @@ export const NO_SPEECH_PROB_THRESHOLD = 0.9;
  * `verbose_json` output (e.g. some OpenAI-compatible endpoints) simply bypass
  * this gate.
  *
- * Same English gate as phrase filtering: a defined non-English / sentinel
- * `language` returns null so the raw transcript is kept. Omitting `language`
- * keeps the historical always-gate behavior.
+ * The probability is model metadata and is language-agnostic. Do not gate it
+ * on a BCP-47 language or on sentinels such as `auto`; language gating belongs
+ * only to the conservative known-phrase filter.
  */
 export const gateSilentSegments = (
   segments: TranscriptionSegment[] | undefined | null,
-  language?: string,
 ): string | null => {
   if (!segments || segments.length === 0) {
     return null;
   }
-  if (language !== undefined && !isEnglishSanitizeLanguage(language)) {
+  const kept = segments.filter(
+    (segment) =>
+      segment.noSpeechProb == null ||
+      segment.noSpeechProb < NO_SPEECH_PROB_THRESHOLD,
+  );
+  // Nothing gated — keep the provider transcript (and its spacing) instead
+  // of rebuilding with a single-space join.
+  if (kept.length === segments.length) {
     return null;
   }
-  return segments
-    .filter(
-      (segment) =>
-        segment.noSpeechProb == null ||
-        segment.noSpeechProb < NO_SPEECH_PROB_THRESHOLD,
-    )
+  return kept
     .map((segment) => segment.text)
     .join(" ")
     .replace(/\s+/g, " ")

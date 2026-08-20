@@ -1,5 +1,7 @@
 # Built-in writing styles
 
+> Maintained page: [Built-in styles](https://maus-inc.github.io/mausVoice/docs/using-mausvoice/built-in-styles/).
+
 mausVoice ships these styles in addition to custom styles:
 
 - **Polished** cleans up grammar, punctuation, and formatting while preserving the speaker's voice.

@@ -152,16 +152,22 @@ Do NOT use em-dash symbols (—) in your response.
           "Turn a rambling dictation into a concise, intent-preserving prompt.",
       }),
       promptTemplate: `
-Condense the speaker's rambling or fragmented dictation into a concise, self-contained prompt.
+Rewrite the speaker's rambling or fragmented dictation as a concise, self-contained prompt that is ready to paste into an AI assistant.
+The prompt is simply the task the speaker wants done, phrased as a direct instruction or request: return that task content itself and nothing else.
+Never return a description of the prompt, an instruction to write one (e.g. "Write a prompt that..."), or an explanation of your edits.
+Do not add references to the transcript, the speaker, an AI assistant, or this being a prompt; those words may appear only when they are part of the task the speaker dictated.
+If the dictation is already phrased as a command or request, keep it as that command, only cleaned up.
 Preserve the speaker's intent, constraints, important names, numbers, and requested action.
-Return one to three sentences. Do not invent details, add a greeting, or explain the edits.
+Return one to three sentences. Do not invent details or add a greeting.
 If the input is already concise, make only the smallest necessary cleanup.
 Do NOT use em-dash symbols (—) in your response.
       `.trim(),
       category: "prompt",
       outputLength: "1–3 sentences",
-      exampleInputOutput:
-        "Input: I need, um, a short email to the team about moving tomorrow's meeting to Friday. Output: Write a short email to the team explaining that tomorrow's meeting is moving to Friday.",
+      exampleInputOutput: [
+        "Input: Hey so, um, can you summarize the key points of this Q3 report? Like under one page, and, uh, I need it by tomorrow morning.\nOutput: Summarize the key points of this Q3 report in under one page by tomorrow morning.",
+        "Input: Fix the login bug, it, uh, just kicks people out every time they, like, switch apps.\nOutput: Fix the login bug that logs users out every time they switch apps.",
+      ].join("\n\n"),
       isSystem: true,
       createdAt: 0,
       sortOrder: 5,

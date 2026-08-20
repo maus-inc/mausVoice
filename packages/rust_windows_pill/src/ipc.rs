@@ -145,6 +145,9 @@ pub enum OutMessage {
     PauseDictation,
     ResumeDictation,
     ToastAction { action: String },
+    /// Haptic/audio feedback request for the desktop process.
+    /// `kind` values: "press", "deep", "release".
+    HapticFeedback { kind: String },
     PositionChanged {
         has_saved_position: bool,
         rect: Option<Rect>,

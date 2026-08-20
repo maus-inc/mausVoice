@@ -9,7 +9,7 @@ import {
   surfaces,
   text,
 } from "./styles/palette";
-import { hairline, premiumSurface } from "./styles/shadows";
+import { accentSurface, hairline, premiumSurface } from "./styles/shadows";
 
 const uiFont = '"Satoshi", system-ui, -apple-system, sans-serif';
 /** TAN-PARADISO only via CSS var(--font-display) on logo + welcome/name. */
@@ -512,17 +512,9 @@ export const theme = createTheme({
           style: ({ theme }) => ({
             backgroundColor: theme.vars.palette.chrome,
             color: theme.vars.palette.onChrome,
-            boxShadow: `
-              inset 0 1px 0 ${highlight(0.28)},
-              inset 0 2px 0 ${highlight(0.1)},
-              0 6px 16px rgba(${accent.light.rgb}, 0.35)
-            `,
+            boxShadow: accentSurface.light,
             ...theme.applyStyles("dark", {
-              boxShadow: `
-                inset 0 1px 0 ${highlight(0.28)},
-                inset 0 2px 0 ${highlight(0.1)},
-                0 6px 16px rgba(${accent.dark.rgb}, 0.35)
-              `,
+              boxShadow: accentSurface.dark,
             }),
             "&:hover": {
               backgroundColor: theme.vars.palette.chromeHover,

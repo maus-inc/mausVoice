@@ -259,6 +259,7 @@ const TRANSCRIPTION_CAPABLE_PROVIDERS: Set<ApiKeyProvider> = new Set([
   "assemblyai",
   "elevenlabs",
   "deepgram",
+  "gladia",
   "openai-compatible",
   "azure",
   "gemini",

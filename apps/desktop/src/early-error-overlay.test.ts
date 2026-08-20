@@ -18,24 +18,19 @@ class HTMLLinkElement {
   href = "";
 }
 
-const installEarlyOverlay = (
-  seed: Array<{
-    id: string;
-    textContent?: string;
-    childNodes?: unknown[];
-  }> = [],
-) => {
-  const nodes = new Map<
-    string,
-    { id: string; textContent: string; childNodes: unknown[] }
-  >();
-  for (const node of seed) {
-    nodes.set(node.id, {
-      id: node.id,
-      textContent: node.textContent ?? "",
-      childNodes: node.childNodes ?? [],
-    });
-  }
+type MockElement = {
+  id: string;
+  textContent: string;
+  childNodes: unknown[];
+};
+
+const installEarlyOverlay = (rootChildren: unknown[] = []) => {
+  const nodes = new Map<string, MockElement>();
+  nodes.set("root", {
+    id: "root",
+    textContent: "",
+    childNodes: rootChildren,
+  });
   const listeners: Record<string, Array<(event: unknown) => void>> = {
     error: [],
     unhandledrejection: [],
@@ -153,14 +148,14 @@ describe("early error overlay", () => {
     );
   });
 
-  it("does not paint over a mounted #root on unhandledrejection", () => {
-    const { nodes, listeners } = installEarlyOverlay([
-      { id: "root", childNodes: [{ textContent: "app" }] },
-    ]);
-    const reason = new Error("post-mount rejection");
+  it("does not paint a fatal rejection overlay after React has mounted", () => {
+    const { nodes, listeners } = installEarlyOverlay([{}]);
 
-    listeners.unhandledrejection[0]({ reason });
+    listeners.unhandledrejection[0]({
+      reason: new Error("post-mount rejection"),
+    });
 
-    expect(nodes.get("maus-global-error-overlay")).toBeUndefined();
+    expect(nodes.has("maus-global-error-overlay")).toBe(false);
+    expect(nodes.get("root")?.childNodes).toHaveLength(1);
   });
 });

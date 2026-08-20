@@ -11,6 +11,10 @@ import {
 } from "./language.utils";
 import { ToneConfig } from "./tone.utils";
 import { getMyUserName } from "./user.utils";
+import { HUMANIZE_SKILL_TEXT } from "./humanize.utils";
+
+const appendHumanizeSkill = (base: string): string =>
+  `${base.trim()}\n\n${HUMANIZE_SKILL_TEXT}`;
 
 const sanitizeGlossaryValue = (value: string): string =>
   // oxlint-disable-next-line no-control-regex
@@ -139,7 +143,9 @@ export const buildSystemPostProcessingTonePrompt = (
       input.tone.systemPromptTemplate,
       buildPostProcessingTemplateVars(input),
     );
-    return appendStructuredStyleGuidance(systemPrompt, input.tone);
+    return appendHumanizeSkill(
+      appendStructuredStyleGuidance(systemPrompt, input.tone),
+    );
   }
 
   const stylePrompt = appendStructuredStyleGuidance(
@@ -153,9 +159,11 @@ The result must be in the ${languageName} language.
 Respond with JSON only: { "result": "<processed-transcript>" }
 `;
 
-  return applyTemplateVars(
-    fullPrompt.trim(),
-    buildPostProcessingTemplateVars(input),
+  return appendHumanizeSkill(
+    applyTemplateVars(
+      fullPrompt.trim(),
+      buildPostProcessingTemplateVars(input),
+    ),
   );
 };
 
@@ -305,14 +313,20 @@ export const buildPostProcessingPrompt = (
   input: PostProcessingPromptInput,
 ): string => {
   const { transcript, tone } = input;
+  // A19: append the shared humanize skill to every post-processing prompt so
+  // styled dictation output is de-slopped at generation time (the scrubber in
+  // run-agent.ts is the post-hoc safety net).
   if (tone.kind === "template") {
-    return applyTemplateVars(
-      tone.promptTemplate,
-      buildPostProcessingTemplateVars(input),
+    return appendHumanizeSkill(
+      applyTemplateVars(
+        tone.promptTemplate,
+        buildPostProcessingTemplateVars(input),
+      ),
     );
   }
 
-  return `
+  return appendHumanizeSkill(
+    `
 Here is the transcript:
 
 <transcript>
@@ -320,7 +334,8 @@ ${transcript}
 </transcript>
 
 Process the transcript according to the instructions.
-`.trim();
+`,
+  );
 };
 
 export const PROCESSED_TRANSCRIPTION_SCHEMA = z.object({
@@ -400,6 +415,6 @@ Return ONLY the requested output, nothing else. The output will be pasted direct
     );
   }
 
-  console.log("Agent prompt", prompt);
+  console.log("Agent prompt", base);
   return base;
 };
