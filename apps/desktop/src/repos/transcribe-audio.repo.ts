@@ -555,7 +555,7 @@ export class GladiaTranscribeAudioRepo extends BaseTranscribeAudioRepo {
   }
 
   protected getSegmentDurationSec(): number {
-    return 60 * 60;
+    return 10 * 60;
   }
 
   protected getOverlapDurationSec(): number {
@@ -563,7 +563,7 @@ export class GladiaTranscribeAudioRepo extends BaseTranscribeAudioRepo {
   }
 
   protected getBatchChunkCount(): number {
-    return 3;
+    return 1;
   }
 
   protected async transcribeSegment(
@@ -583,7 +583,7 @@ export class GladiaTranscribeAudioRepo extends BaseTranscribeAudioRepo {
       warnings,
       metadata: {
         inferenceDevice: "API • Gladia",
-        modelSize: "solaria-1",
+        modelSize: this.model,
         transcriptionMode: "api",
       },
     };

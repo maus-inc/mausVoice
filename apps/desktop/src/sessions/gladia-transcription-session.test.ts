@@ -129,6 +129,7 @@ describe("GladiaTranscriptionSession", () => {
       warnings: [],
     });
     expect(mocks.finalize).toHaveBeenCalledOnce();
+    expect(mocks.cleanup).toHaveBeenCalledOnce();
   });
 
   it("hands locally buffered reconnect audio to the SDK before finalizing", async () => {
@@ -148,6 +149,7 @@ describe("GladiaTranscriptionSession", () => {
 
     expect(mocks.sendAudio).toHaveBeenCalledOnce();
     expect(mocks.finalize).toHaveBeenCalledOnce();
+    expect(mocks.cleanup).toHaveBeenCalledOnce();
   });
 
   it("removes a listener that resolves after cleanup without starting the SDK", async () => {
