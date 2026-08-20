@@ -1,5 +1,12 @@
 # Handoff — Apply the CI workflow patch (requires `workflows` permission)
 
+> **STATUS (updated): DONE.** This change was applied and pushed in commit
+> `bc43b5a` ("ci: raise Ubuntu Rust-transcription timeout 20 -> 45 min") on
+> `arena/01a01be4-mausvoice`. The instructions below are retained for
+> reference/rollback only — **do not re-apply the patch** on a branch that
+> already contains `bc43b5a`, or `git apply` will fail with "patch does not
+> apply" (the hunk is already present).
+
 ## Context
 
 The stacked branch `arena/01a01be4-mausvoice` (fixes for PR #105) could not be

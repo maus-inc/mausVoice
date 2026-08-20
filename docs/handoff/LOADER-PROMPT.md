@@ -24,8 +24,10 @@ LOAD THESE DOCS FIRST, IN ORDER, AND DO NOT PROCEED UNTIL YOU HAVE READ ALL OF T
 
 THEN EXECUTE, IN THIS ORDER:
 
-STEP 1 — CI workflow patch (requires `workflows` scope):
+STEP 1 — CI workflow patch (ALREADY DONE on arena/01a01be4-mausvoice as commit
+bc43b5a; skip this step unless you are starting from a base BEFORE bc43b5a):
   git checkout arena/01a01be4-mausvoice
+  git log --oneline -1 | grep bc43b5a && echo "STEP 1 already applied; skipping" && exit
   git apply docs/handoff/workflow-timeout.patch
   git diff --stat   # confirm only .github/workflows/test-package-rust-transcription.yml changed
   grep -n timeout-minutes .github/workflows/test-package-rust-transcription.yml   # expect 45

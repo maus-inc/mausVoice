@@ -1,22 +1,8 @@
-From: arena agent (handoff)
-Subject: [PATCH] Raise Ubuntu Rust-transcription CI timeout 20 -> 45 min
-
-Apply with:  git apply docs/handoff/workflow-timeout.patch
-(or `git am docs/handoff/workflow-timeout.patch` if you keep the mail headers)
-
-This is the ONE change I could not push from the arena branch because the
-GitHub App token for this session lacks the `workflows: write` permission.
-Any branch that (via a stacked base) touches `.github/workflows/**` is
-rejected with:
-
-  refusing to allow a GitHub App to create or update workflow
-  `.github/workflows/...` without `workflows` permission
-
-Apply this on a device/token with `workflows` scope, then push.
-
+diff --git a/.github/workflows/test-package-rust-transcription.yml b/.github/workflows/test-package-rust-transcription.yml
+index e4ca399..50e2adb 100644
 --- a/.github/workflows/test-package-rust-transcription.yml
 +++ b/.github/workflows/test-package-rust-transcription.yml
-@@ -17,7 +17,10 @@ jobs:
+@@ -17,7 +17,12 @@ jobs:
    test:
      name: Test Rust Transcription (${{ matrix.label }})
      runs-on: ${{ matrix.os }}
@@ -30,5 +16,3 @@ Apply this on a device/token with `workflows` scope, then push.
      strategy:
        fail-fast: false
        matrix:
--- 
-2.43.0
