@@ -144,11 +144,11 @@ function isGeneralGeminiModel(modelId: string): boolean {
 
 function isGeminiTranscriptionModel(modelId: string): boolean {
   // Gemini transcription is done via generateContent with audio input, so
-  // the same general-model filter applies. However, models whose names
-  // suggest they are vision-only or cannot handle audio are excluded.
+  // the same general-model filter applies. A few variants are then dropped
+  // because they do not support the audio-input transcription path.
   if (!isGeneralGeminiModel(modelId)) return false;
-  // Exclude models known to lack audio support.
-  // Vision-only preview models typically have shorter names with no audio.
+  // Exclude reasoning/search-augmented Gemini variants, which are not served
+  // through the audio-input generateContent transcription path.
   return !["-thinking", "-search"].some((marker) => modelId.includes(marker));
 }
 
