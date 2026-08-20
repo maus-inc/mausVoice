@@ -45,4 +45,4 @@ The general default-preference factory uses **While active** for pill visibility
 
 Incognito is off, inclusion of Incognito words in statistics is off, and automatic presentation of an available update is on. Real-time output currently requires Manual styling with Verbatim selected and a transcription session that emits committed segments. API credentials are encrypted at rest with XChaCha20-Poly1305 and a fresh per-record nonce, but provider requests and multi-device transport have separate security boundaries.
 
-Application targets can override paste keystroke, insertion method, typing delay, and style. `null` in a target record means “inherit the current global setting,” not necessarily the hard-coded default above.
+Application targets can override paste keystroke, insertion method, typing delay, and style. `null` in a target record means "inherit the current global setting," not necessarily the hard-coded default above.

@@ -5,7 +5,7 @@ sidebar:
   order: 2
 ---
 
-A dictation crosses distinct stages. Knowing the boundary between them makes both configuration and troubleshooting easier.
+A dictation crosses distinct stages, and most configuration and troubleshooting questions come down to which stage is involved.
 
 1. **Trigger:** the global hold-to-dictate shortcut starts capture.
 2. **Capture:** the selected microphone supplies audio while the shortcut remains held.

@@ -19,6 +19,6 @@ Because the result arrives after upload and generation, Gemini cannot drive real
 
 Post-processing combines system/style instructions with the transcript before calling Gemini. Assistant conversations use the streaming chat implementation and can carry function declarations for enabled tools.
 
-**Test** asks `gemini-2.5-flash` to reply with “Hello.” and checks for a non-empty matching response. It validates a small generation, not audio handling, the model selected elsewhere, quota for a long recording, or every tool call.
+**Test** asks `gemini-2.5-flash` to reply with "Hello." and checks for a non-empty matching response. It validates a small generation, not audio handling, the model selected elsewhere, quota for a long recording, or every tool call.
 
 If a test passes but dictation fails, first try a brief clip with post-processing Off. An empty raw transcript points to transcription; a raw transcript paired with a failed final result points to the separate generation stage.

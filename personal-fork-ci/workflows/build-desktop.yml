@@ -128,7 +128,9 @@ jobs:
           ./.github/scripts/install-desktop-linux-deps.sh
 
       - name: Install dependencies
-        run: pnpm install --frozen-lockfile
+        # --ignore-scripts would skip the esbuild/sharp postinstall builds this
+        # monorepo needs; mirrors the release workflow.
+        run: pnpm install --frozen-lockfile # NOSONAR
 
       - name: Build frontend and dependencies
         env:
