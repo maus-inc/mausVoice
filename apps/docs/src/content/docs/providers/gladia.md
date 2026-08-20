@@ -34,7 +34,7 @@ Batch transcription follows this sequence:
 4. extract the full transcript (or assembled utterances);
 5. request deletion of the transcription job in `finally` cleanup.
 
-Long recordings are split into 60-minute chunks with five seconds of overlap and at most three concurrent requests. The overlap is removed while results are merged. This stays below Gladia's documented per-file pre-recorded limit; check [current formats and limits](https://docs.gladia.io/chapters/limits-and-specifications/supported-formats) before relying on a provider limit.
+Long recordings are split into 10-minute chunks with five seconds of overlap. Chunks are transcribed one at a time. The overlap is removed while results are merged. This stays below Gladia's documented per-file pre-recorded limit; check [current formats and limits](https://docs.gladia.io/chapters/limits-and-specifications/supported-formats) before relying on a provider limit.
 
 ## Languages and dictionary
 

@@ -12,11 +12,11 @@ Releases are a **manual** `.github/workflows/release.yml` dispatch (version, pre
 | Docs / Pages  | Separate docs workflow; not an enterprise channel    |
 | Homebrew cask | Stable releases only → `maus-inc/homebrew-mausvoice` |
 
-The release workflow is `workflow_dispatch` only (no path filters). Build workspaces are `apps/desktop/`, `apps/windows-installer/`, `apps/docs/`, and `packages/`.
+The release workflow is `workflow_dispatch` only (no path filters). It builds `apps/desktop/` and its `packages/` dependencies. The docs site builds in a separate Pages workflow. `apps/windows-installer/` is not part of the release pipeline.
 
 ## Notes files
 
-- `prod.txt` — optional manual notes. The workflow does not read this file into the GitHub Release body; paste or attach notes when dispatching.
+- `prod.txt`: optional manual notes. The workflow does not read this file into the GitHub Release body; paste or attach notes when dispatching.
 
 There is no live `enterprise.txt` channel.
 
@@ -24,4 +24,4 @@ There is no live `enterprise.txt` channel.
 
 OS binaries are unsigned. The **updater** uses minisign secrets (`UPDATER_*`). Stable releases without those secrets fail closed (no unsigned `latest.json`). Prereleases skip the manifest.
 
-Do not force-push production tags casually. Rollback is a new release or a documented tag move — see `docs/RELEASE.md`.
+Do not force-push production tags casually. Rollback is a new release or a documented tag move. See `docs/RELEASE.md`.

@@ -91,25 +91,25 @@ export interface HumanizeOptions {
 // transformation applies to prose only.
 
 /**
- * Split text into alternating `{ protected, text }` segments. Fenced code
- * blocks (`​``` or `~~~` fences, including unterminated ones) and inline code
- * spans are protected; everything else is prose.
+ * Split text into alternating `{ protected, text }` segments at line
+ * granularity. Every input line lands in exactly one block, so callers can
+ * re-join the block texts with "\n" and get byte-identical structure.
  *
- * Implemented as a line scanner plus a one-line backtick matcher instead of
- * one big regular expression: the scanner is linear and auditably simple,
- * where a regex over arbitrary LLM text invites backtracking blowups.
+ * Implemented as a line scanner instead of one big regular expression: the
+ * scanner is linear and auditably simple, where a regex over arbitrary LLM
+ * text invites backtracking blowups.
  */
 const splitProtectedSegments = (
   text: string,
 ): { protected: boolean; text: string }[] => {
   type Segment = { protected: boolean; text: string };
-  const segments: Segment[] = [];
+  const lineBlocks: Segment[] = [];
   let proseLines: string[] = [];
   let openFence: { lines: string[]; marker: string } | null = null;
 
   const flushProse = () => {
     if (proseLines.length > 0) {
-      segments.push(...splitInlineCode(proseLines.join("\n")));
+      lineBlocks.push({ protected: false, text: proseLines.join("\n") });
       proseLines = [];
     }
   };
@@ -123,8 +123,15 @@ const splitProtectedSegments = (
     }
     if (openFence !== null) {
       openFence.lines.push(line);
-      if (marker && closesFence(marker, openFence.marker)) {
-        segments.push({ protected: true, text: openFence.lines.join("\n") });
+      // A closing fence is marker-only (plus blanks). Lines with an info
+      // string (e.g. ```python) inside an open fence are content; treating
+      // them as closers would split the block and scrub its interior.
+      if (
+        marker &&
+        FENCE_CLOSE_LINE.test(line) &&
+        closesFence(marker, openFence.marker)
+      ) {
+        lineBlocks.push({ protected: true, text: openFence.lines.join("\n") });
         openFence = null;
       }
       continue;
@@ -134,18 +141,20 @@ const splitProtectedSegments = (
   flushProse();
   // Fail closed: an unterminated fence protects the rest of the text.
   if (openFence !== null) {
-    segments.push({ protected: true, text: openFence.lines.join("\n") });
+    lineBlocks.push({ protected: true, text: openFence.lines.join("\n") });
   }
-  return segments;
+  return lineBlocks;
 };
 
-// Pass 1 fence detection: an opening fence is a line whose first non-blank
-// characters are a backtick or tilde run of 3+; the fence closes on a later
-// line repeating at least as many of the same marker character.
+// An opening fence is a line whose first non-blank characters are a backtick
+// or tilde run of 3+; it carries an optional info string after the marker.
 const fenceMarker = (line: string): string | null => {
   const match = /^[ \t]*(`{3,}|~{3,})/.exec(line);
   return match?.[1] ?? null;
 };
+
+// Closing fences are marker-only lines (CommonMark: no info string allowed).
+const FENCE_CLOSE_LINE = /^[ \t]*(`{3,}|~{3,})[ \t]*$/;
 
 const closesFence = (marker: string, opener: string): boolean =>
   marker.startsWith(opener.charAt(0)) && marker.length >= opener.length;
@@ -162,7 +171,7 @@ const findInlineCodeEnd = (text: string, from: number): number => {
   return close + run.length;
 };
 
-/** Split a prose chunk on single-line inline code spans (no regex). */
+/** Split a prose block on single-line inline code spans (no regex). */
 const splitInlineCode = (
   text: string,
 ): { protected: boolean; text: string }[] => {
@@ -205,21 +214,31 @@ export const humanizeScrub = (
 
   const { normalizeWhitespace = true } = options;
 
+  const scrubProse = (prose: string): string => {
+    let out = prose;
+    for (const { pattern, replace } of replacements) {
+      out = out.replace(pattern, replace);
+    }
+    // Clean up double spaces left by removed phrases. Horizontal whitespace
+    // only: newlines carry Markdown structure (paragraphs, lists, indented
+    // blocks) and must survive.
+    return out.replace(/[ \t]{2,}/g, " ");
+  };
+
   let result = splitProtectedSegments(text)
-    .map((segment) => {
-      if (segment.protected) {
-        return segment.text;
+    .map((block) => {
+      if (block.protected) {
+        return block.text;
       }
-      let prose = segment.text;
-      for (const { pattern, replace } of replacements) {
-        prose = prose.replace(pattern, replace);
-      }
-      // Clean up double spaces left by removed phrases. Horizontal
-      // whitespace only: newlines carry Markdown structure (paragraphs,
-      // lists, indented blocks) and must survive.
-      return prose.replace(/[ \t]{2,}/g, " ");
+      // Inline-code spans inside a prose block concatenate without the
+      // line-level "\n" (they never crossed a line boundary).
+      return splitInlineCode(block.text)
+        .map((segment) =>
+          segment.protected ? segment.text : scrubProse(segment.text),
+        )
+        .join("");
     })
-    .join("");
+    .join("\n");
 
   if (normalizeWhitespace) {
     result = result.trim();

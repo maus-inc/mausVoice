@@ -20,13 +20,13 @@ When a newer version exists you will see:
 
 ## Check on demand
 
-Open **Settings → More settings → Software update**. The section shows the version you are running and when the app last checked, and the **Check now** button runs a check immediately. A manual check reports its outcome inline — _You're up to date_, the version that is available, or a connection error — and it ignores the three-day dismissal window, so it will show you an update you previously snoozed.
+Open **Settings → More settings → Software update**. The section shows the version you are running and when the app last checked, and the **Check now** button runs a check immediately. A manual check reports its outcome inline: _You're up to date_, the version that is available, or a connection error. It also ignores the three-day dismissal window, so it will show you an update you previously snoozed.
 
 ## Installing
 
 Choose **Update** in the dialog and mausVoice downloads the new version with a progress bar, installs it, and restarts. Your preferences, history, dictionary, and API keys live outside the application bundle and are untouched.
 
-On macOS, if the app is running from a location it cannot write to — a read-only volume, a quarantined download, or a directory owned by another user — the in-place update fails. mausVoice detects this and falls back to downloading the `.pkg` installer and opening it in Installer.app; that path only ever downloads over HTTPS from `github.com`. The cleanest fix is to move mausVoice into `/Applications` and update from there.
+On macOS, the in-place update fails when the app runs from a read-only volume, a quarantined download, or a directory owned by another user. mausVoice detects this and falls back to downloading the `.pkg` installer and opening it in Installer.app; that path only ever downloads over HTTPS from `github.com`. The cleanest fix is to move mausVoice into `/Applications` and update from there.
 
 Homebrew users can also run `brew upgrade --cask mausvoice-desktop`. The tap is only ever pointed at stable releases.
 

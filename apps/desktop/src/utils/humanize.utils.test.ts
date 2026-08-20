@@ -140,6 +140,52 @@ describe("humanizeScrub structure preservation", () => {
     expect(humanizeScrub(input)).toContain("unlock everything — as-is");
   });
 
+  it("keeps fence-looking lines with info strings protected inside a block", () => {
+    // A line like ```python inside an open fence is content, not a closing
+    // fence: closing fences cannot carry info strings (CommonMark), and
+    // splitting there would scrub the block interior as prose.
+    const block = [
+      "```",
+      "An example fence starts with an info string:",
+      "```python",
+      "lock.unlock()    # keep   spacing",
+      "```",
+    ].join("\n");
+    const input = `Use this:\n\n${block}\n\nDone.`;
+    expect(humanizeScrub(input)).toBe(input);
+  });
+
+  it("keeps byte-identical structure across alternating prose and fences", () => {
+    const input = [
+      "First delve into prose.",
+      "",
+      "```ts",
+      "const seamless = true;  // stay untouched",
+      "```",
+      "",
+      "Then utilize this.",
+    ].join("\n");
+    expect(humanizeScrub(input)).toBe(
+      [
+        "First explore into prose.",
+        "",
+        "```ts",
+        "const seamless = true;  // stay untouched",
+        "```",
+        "",
+        "Then use this.",
+      ].join("\n"),
+    );
+  });
+
+  it("keeps prose punctuation structure across fence boundaries", () => {
+    const input =
+      "a seamless thing\n```\ncode — stays\n```\nanother delve plan";
+    expect(humanizeScrub(input)).toBe(
+      "a smooth thing\n```\ncode — stays\n```\nanother explore plan",
+    );
+  });
+
   it("scrubs prose on both sides of a fenced block", () => {
     const input = "delve in\n\n```\ncode — stays\n```\n\nutilize this";
     const result = humanizeScrub(input);

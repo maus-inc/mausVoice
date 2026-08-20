@@ -9,7 +9,7 @@ Add OpenAI from **AI transcription**, **AI post processing**, or **Assistant mod
 
 ## Transcription
 
-OpenAI transcription is a batch path: mausVoice records the clip locally, creates an audio upload, and calls OpenAI after you release the shortcut. The default model ID is `whisper-1`; the fallback list also includes the GPT-4o transcription models. A specific dictation language is included; **Auto** omits that hint and lets the service infer it. This path does not provide committed segments to real-time output.
+OpenAI transcription is a batch path: mausVoice records the clip locally, creates an audio upload, and calls OpenAI after you release the shortcut. The default model ID is `whisper-1`; the offline fallback list also includes `gpt-4o-transcribe` and `gpt-4o-mini-transcribe`. A specific dictation language is included; **Auto** omits that hint and lets the service infer it. This path does not provide committed segments to real-time output.
 
 ## Generation
 

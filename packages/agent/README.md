@@ -27,10 +27,9 @@ const tools: AgentTool[] = [
     name: "my_tool",
     description: "Does something useful",
     parameters: { type: "object", properties: {} },
-    async execute(params) {
-      return { result: "done" };
+    async execute({ params, reason }) {
+      return { success: true, result: "done" };
     },
-    requiresApproval: () => true, // optional
   },
 ];
 
@@ -39,10 +38,6 @@ const loop = new AgentLoop({
   tools,
   systemPrompt: "You are a helpful assistant.",
   maxIterations: 20,
-  onPermissionRequest: async (toolName, params) => {
-    // Return true to allow, false to deny
-    return true;
-  },
 });
 
 for await (const event of loop.run([{ role: "user", content: "Hello" }])) {
@@ -65,9 +60,9 @@ OPENAI_API_KEY=sk-... pnpm --filter @repo/agent run example
 
 ### Available tools in the example
 
-| Tool                         | Real/Mock | Description                             |
-| ---------------------------- | --------- | --------------------------------------- |
-| `execute_terminal_command`   | Real      | Runs shell commands (requires approval) |
-| `read_accessibility_context` | Mock      | Returns fake accessibility data         |
-| `paste_text`                 | Mock      | Logs what would be pasted               |
-| `grab_screenshot`            | Mock      | Returns fake screenshot description     |
+| Tool | Real/Mock | Description |
+|---|---|---|
+| `execute_terminal_command` | Real | Runs shell commands (requires approval) |
+| `read_accessibility_context` | Mock | Returns fake accessibility data |
+| `paste_text` | Mock | Logs what would be pasted |
+| `grab_screenshot` | Mock | Returns fake screenshot description |
