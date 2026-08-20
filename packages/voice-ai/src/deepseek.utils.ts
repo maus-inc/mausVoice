@@ -13,6 +13,8 @@ import { openaiCompatibleStreamChat } from "./openai.utils";
 import { contentToString } from "./transcription.utils";
 import type { CustomFetch, DiscoveredModelId } from "./types";
 
+// Current hosted IDs from https://api-docs.deepseek.com/quick_start/pricing/.
+// The legacy deepseek-chat/deepseek-reasoner aliases were retired in July 2026.
 export const DEEPSEEK_MODELS = [
   "deepseek-v4-flash",
   "deepseek-v4-pro",

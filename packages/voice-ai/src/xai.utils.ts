@@ -60,6 +60,8 @@ export const xaiTranscribeAudio = async ({
       const bodyData =
         blob instanceof ArrayBuffer ? blob : (blob.buffer as ArrayBuffer);
       const audioBlob = new Blob([bodyData], { type: `audio/${ext}` });
+      // xAI requires a specific language when `format=true`; container audio
+      // formats are detected from the uploaded file without this field.
       if (language && language !== "auto") {
         formData.append("format", "true");
         formData.append("language", language);

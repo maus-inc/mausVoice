@@ -12,6 +12,20 @@ const jsonResponse = (body: unknown): Response =>
     headers: { "content-type": "application/json" },
   });
 
+const sseResponse = (chunks: string[]): Response => {
+  const encoder = new TextEncoder();
+  const body = new ReadableStream<Uint8Array>({
+    start(controller) {
+      for (const chunk of chunks) controller.enqueue(encoder.encode(chunk));
+      controller.close();
+    },
+  });
+  return new Response(body, {
+    status: 200,
+    headers: { "content-type": "text/event-stream" },
+  });
+};
+
 describe("Gemini native transport", () => {
   it("uses the injected fetch for text generation", async () => {
     const customFetch = vi.fn().mockResolvedValue(
@@ -80,19 +94,15 @@ describe("Gemini native transport", () => {
     });
   });
 
-  it("parses native SSE streaming responses from the injected fetch", async () => {
+  it("buffers split SSE chunks from the injected fetch", async () => {
     const customFetch = vi
       .fn()
       .mockResolvedValue(
-        new Response(
-          [
-            'data: {"candidates":[{"content":{"parts":[{"text":"Hi "}]}}]}',
-            "",
-            'data: {"candidates":[{"content":{"parts":[{"text":"there"},{"functionCall":{"name":"lookup","args":{"id":3}}}],"role":"model"},"finishReason":"STOP"}],"usageMetadata":{"promptTokenCount":4,"candidatesTokenCount":2}}',
-            "",
-          ].join("\n"),
-          { status: 200, headers: { "content-type": "text/event-stream" } },
-        ),
+        sseResponse([
+          'data: {"candidates":[{"content":{"parts":[{"text":"Hi',
+          ' "}]}}]}\r\n\r\n',
+          'data: {"candidates":[{"content":{"parts":[{"text":"there"},{"functionCall":{"name":"lookup","args":{"id":3}}}],"role":"model"},"finishReason":"STOP"}],"usageMetadata":{"promptTokenCount":4,"candidatesTokenCount":2}}\r\n\r\n',
+        ]),
       );
 
     const events = [];
@@ -141,6 +151,7 @@ describe("Gemini native transport", () => {
       type: "OBJECT",
       properties: { id: { type: "INTEGER" } },
     });
+    expect(body).not.toHaveProperty("generationConfig");
   });
 
   it("keeps API keys out of model-list URLs", async () => {

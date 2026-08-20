@@ -477,38 +477,51 @@ const parseGeminiSseEvent = (
     .join("\n")
     .trim();
   if (!data || data === "[DONE]") return undefined;
-  return JSON.parse(data) as GeminiGenerateContentResponse;
+
+  try {
+    return JSON.parse(data) as GeminiGenerateContentResponse;
+  } catch {
+    throw new Error("Gemini returned malformed SSE data");
+  }
+};
+
+const parseGeminiSseEvents = (
+  events: string[],
+): GeminiGenerateContentResponse[] =>
+  events
+    .map(parseGeminiSseEvent)
+    .filter((event): event is GeminiGenerateContentResponse => event != null);
+
+const splitGeminiSseBuffer = (
+  buffer: string,
+  done: boolean,
+): { events: string[]; remainder: string } => {
+  const events = buffer.split(/\r?\n\r?\n/);
+  const remainder = done ? "" : (events.pop() ?? "");
+  return { events, remainder };
 };
 
 async function* parseGeminiSse(
   response: Response,
 ): AsyncGenerator<GeminiGenerateContentResponse> {
   if (!response.body) {
-    const event = parseGeminiSseEvent(await response.text());
-    if (event) yield event;
+    yield* parseGeminiSseEvents([await response.text()]);
     return;
   }
 
   const reader = response.body.getReader();
   const decoder = new TextDecoder();
   let buffer = "";
+  let done = false;
 
-  while (true) {
-    const { done, value } = await reader.read();
-    buffer += decoder.decode(value, { stream: !done });
+  while (!done) {
+    const chunk = await reader.read();
+    done = chunk.done;
+    buffer += decoder.decode(chunk.value, { stream: !done });
 
-    const events = buffer.split(/\r?\n\r?\n/);
-    buffer = done ? "" : (events.pop() ?? "");
-    for (const rawEvent of events) {
-      const event = parseGeminiSseEvent(rawEvent);
-      if (event) yield event;
-    }
-
-    if (done) {
-      const event = parseGeminiSseEvent(buffer);
-      if (event) yield event;
-      return;
-    }
+    const parsed = splitGeminiSseBuffer(buffer, done);
+    buffer = parsed.remainder;
+    yield* parseGeminiSseEvents(parsed.events);
   }
 }
 
@@ -520,6 +533,15 @@ export async function* geminiStreamChat({
 }: GeminiStreamChatArgs): AsyncGenerator<LlmStreamEvent> {
   const { systemInstruction, contents } = llmMessagesToGemini(input.messages);
   const tools = buildGeminiTools(input);
+  const generationConfig = {
+    maxOutputTokens: input.maxTokens,
+    temperature: input.temperature,
+    topP: input.topP,
+    stopSequences: input.stopSequences,
+  };
+  const hasGenerationConfig = Object.values(generationConfig).some(
+    (value) => value !== undefined,
+  );
   const response = await requestGemini(
     apiKey,
     model,
@@ -530,12 +552,7 @@ export async function* geminiStreamChat({
         ? { parts: [{ text: systemInstruction }] }
         : undefined,
       tools: tools ? [{ functionDeclarations: tools }] : undefined,
-      generationConfig: {
-        maxOutputTokens: input.maxTokens,
-        temperature: input.temperature,
-        topP: input.topP,
-        stopSequences: input.stopSequences,
-      },
+      generationConfig: hasGenerationConfig ? generationConfig : undefined,
     },
     customFetch,
   );

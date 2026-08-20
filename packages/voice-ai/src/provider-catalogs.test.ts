@@ -48,6 +48,27 @@ describe("current speech APIs", () => {
     expect(body.has("model")).toBe(false);
   });
 
+  it("leaves xAI formatting disabled when language detection is automatic", async () => {
+    const customFetch = vi.fn().mockResolvedValue(
+      new Response(JSON.stringify({ text: "hello" }), {
+        headers: { "content-type": "application/json" },
+      }),
+    );
+
+    await xaiTranscribeAudio({
+      apiKey: "xai-key",
+      blob: new ArrayBuffer(4),
+      ext: "wav",
+      language: "auto",
+      customFetch,
+    });
+
+    const body = customFetch.mock.calls[0]?.[1]?.body as FormData;
+    expect(Array.from(body.keys())).toEqual(["file"]);
+    expect(body.has("format")).toBe(false);
+    expect(body.has("language")).toBe(false);
+  });
+
   it("uses ElevenLabs Scribe v2", async () => {
     const customFetch = vi.fn().mockResolvedValue(
       new Response(JSON.stringify({ text: "hello" }), {
