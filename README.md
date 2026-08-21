@@ -4,7 +4,12 @@
 
 # mausVoice <a href="https://github.com/maus-inc/mausVoice/actions/workflows/test-desktop-unit.yml"><img src="https://img.shields.io/github/actions/workflow/status/maus-inc/mausVoice/test-desktop-unit.yml?branch=main&label=CI&style=flat&color=000000&labelColor=000000" alt="CI" /></a> <a href="https://github.com/maus-inc/mausVoice/releases/latest"><img src="https://img.shields.io/github/v/release/maus-inc/mausVoice?style=flat&labelColor=000000&color=000000" alt="Latest stable release" /></a>
 
-Grab your free [Groq↗](https://console.groq.com/keys) and [Deepgram↗](https://console.deepgram.com/) API keys.
+</div>
+
+> [!TIP]
+> Grab your free [Groq↗](https://console.groq.com/keys) and [Deepgram↗](https://console.deepgram.com/) API keys.
+
+<div align="center">
 
 <br>
 
@@ -218,3 +223,48 @@ All development documentation is [here](https://maus-inc.github.io/mausVoice/doc
 [AGPLv3](LICENCE). Built on [Tauri](https://tauri.app), with the frontend in React and the audio/overlay layer in Rust.
 
 **Maintainer:** [Owie Emmanuel](https://github.com/Owie6789)
+
+> [!WARNING]
+> **mausVoice is currently in very early beta.** Although it is not expected during normal use, you may encounter undocumented behavior or bugs carried over from the app's pre-alpha stage.
+>
+> If you find a bug, please [open an issue](https://github.com/maus-inc/mausVoice/issues/new) and be as detailed as possible. Include the steps to reproduce it, what you expected, what happened, your platform and mausVoice version, and—when possible—a screenshot and sanitized diagnostic logs.
+>
+> We welcome these reports—they help us, as a community, improve the app for one another. 😊
+
+<details>
+<summary><strong>How to find and attach mausVoice logs</strong></summary>
+
+### Recommended on every platform
+
+1. Open **mausVoice → Settings → General → Diagnostics**.
+2. Select **Open** to reveal the log directory, or **Download** to export `mausvoice-diagnostics.zip`.
+3. Inspect the files before sharing them. Remove names, email addresses, private paths, transcript fragments, provider responses, API keys, and anything unrelated to the report.
+4. Attach the sanitized archive to your GitHub issue with a screenshot and clear reproduction steps.
+
+### macOS
+
+In Finder, choose **Go → Go to Folder…**, then enter:
+
+```text
+~/Library/Logs/com.mausinc.desktop
+```
+
+### Windows
+
+Press **Win + R**, then enter:
+
+```text
+%LOCALAPPDATA%\com.mausinc.desktop\logs
+```
+
+### Linux
+
+Open this directory in your file manager:
+
+```text
+~/.local/share/com.mausinc.desktop/logs
+```
+
+If `XDG_DATA_HOME` is set, use `$XDG_DATA_HOME/com.mausinc.desktop/logs` instead. Local development builds use `com.mausinc.desktop.local` as the identifier on every platform.
+
+</details>
