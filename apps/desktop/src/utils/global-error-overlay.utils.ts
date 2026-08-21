@@ -106,6 +106,11 @@ export const installGlobalErrorOverlay = (): void => {
     window.removeEventListener("unhandledrejection", earlyHandler);
     delete window.__mausVoiceEarlyUnhandledRejection;
   }
+  const earlyError = window.__mausVoiceEarlyError;
+  if (earlyError) {
+    window.removeEventListener("error", earlyError, true);
+    delete window.__mausVoiceEarlyError;
+  }
   // Capture phase: resource load failures (a <script>/<link> that fails to
   // fetch, e.g. a CORS rejection) fire a non-bubbling `error` event, so the
   // bubble-phase listener would never receive them. Capture catches both
@@ -114,6 +119,10 @@ export const installGlobalErrorOverlay = (): void => {
     "error",
     (event) => {
       if (!shouldPaintFatalWindowError(event)) {
+        console.error(
+          "Ignored post-mount error",
+          event.error ?? event.message,
+        );
         return;
       }
       paintError("mausVoice failed to start", describeWindowError(event));
@@ -122,6 +131,7 @@ export const installGlobalErrorOverlay = (): void => {
   );
   window.addEventListener("unhandledrejection", (event) => {
     if (!shouldPaintFatalRejection()) {
+      console.error("Unhandled rejection after mount", event.reason);
       return;
     }
     paintError("mausVoice failed to start", describe(event.reason));

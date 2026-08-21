@@ -208,19 +208,16 @@ pub fn build() -> tauri::Builder<tauri::Wry> {
             // Write startup diagnostics for debugging
             crate::system::diagnostics::write_startup_diagnostics(app.handle());
 
-            let db_url = {
+            let db_path = {
                 let handle = app.handle();
-                crate::system::paths::database_url(handle)
+                crate::system::paths::database_path(handle)
                     .map_err(|err| -> Box<dyn std::error::Error> { Box::new(err) })?
             };
 
-            let pool = tauri::async_runtime::block_on(async {
-                SqlitePoolOptions::new()
-                    .max_connections(5)
-                    .connect(&db_url)
-                    .await
-            })
-            .map_err(|err| -> Box<dyn std::error::Error> { Box::new(err) })?;
+            let pool = tauri::async_runtime::block_on(crate::db::open::open_app_database(
+                &db_path,
+            ))
+            .map_err(|err| -> Box<dyn std::error::Error> { err.into() })?;
 
             app.manage(crate::state::OptionKeyDatabase::new(pool.clone()));
             app.manage(crate::state::OverlayState::new());

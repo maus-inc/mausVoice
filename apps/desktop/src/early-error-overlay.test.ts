@@ -74,7 +74,7 @@ const installEarlyOverlay = (rootChildren: unknown[] = []) => {
         listeners[type] ??= [];
         listeners[type].push(handler);
       },
-    },
+    } as Record<string, unknown>,
   });
 
   return { nodes, listeners };
@@ -146,6 +146,18 @@ describe("early error overlay", () => {
     expect(overlay?.textContent).toContain(
       "async init rejected before React mounted",
     );
+  });
+
+  it("does not paint a fatal runtime-error overlay after React has mounted", () => {
+    const { nodes, listeners } = installEarlyOverlay([{}]);
+
+    listeners.error[0]({
+      error: new Error("post-mount runtime"),
+      message: "post-mount runtime",
+      target: {},
+    });
+
+    expect(nodes.has("maus-global-error-overlay")).toBe(false);
   });
 
   it("does not paint a fatal rejection overlay after React has mounted", () => {

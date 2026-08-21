@@ -128,6 +128,7 @@ describe("global error overlay", () => {
       },
       removeEventListener: () => {},
     });
+    const consoleError = vi.spyOn(console, "error").mockImplementation(() => {});
     const { installGlobalErrorOverlay } = await import(
       "./global-error-overlay.utils.ts"
     );
@@ -136,5 +137,7 @@ describe("global error overlay", () => {
       reason: new Error("sidecar timeout"),
     });
     expect(doc.getElementById(overlayId)).toBeNull();
+    expect(consoleError).toHaveBeenCalled();
+    consoleError.mockRestore();
   });
 });
