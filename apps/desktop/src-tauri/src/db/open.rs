@@ -175,10 +175,14 @@ async fn apply_migrations(pool: &SqlitePool) -> Result<(), OpenError> {
         {
             let classified = classify_sqlx(&format!("migration {version}"), err);
             if let Err(rollback_err) = transaction.rollback().await {
-                return Err(OpenError::Other(format!(
+                let message = format!(
                     "{}; rollback failed: {rollback_err}",
                     classified.message()
-                )));
+                );
+                return Err(match classified {
+                    OpenError::Integrity(_) => OpenError::Integrity(message),
+                    OpenError::Other(_) => OpenError::Other(message),
+                });
             }
             return Err(classified);
         }
@@ -328,6 +332,31 @@ mod tests {
             .unwrap()
             .to_string_lossy()
             .starts_with("mausvoice.broken-"));
+    }
+
+    #[tokio::test]
+    async fn corrupt_sqlite_file_is_quarantined_and_reopened() {
+        let temp = TempDb::new();
+        std::fs::write(&temp.path, b"this is not a sqlite database").unwrap();
+
+        let recovered = open_app_database(&temp.path)
+            .await
+            .expect("corrupt bytes should quarantine and reopen");
+        let count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM _sqlx_migrations")
+            .fetch_one(&recovered)
+            .await
+            .unwrap();
+        assert_eq!(count, migrations().len() as i64);
+        recovered.close().await;
+        assert!(
+            std::fs::read_dir(&temp.dir)
+                .unwrap()
+                .flatten()
+                .any(|entry| entry
+                    .file_name()
+                    .to_string_lossy()
+                    .starts_with("mausvoice.broken-"))
+        );
     }
 
     #[tokio::test]

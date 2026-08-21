@@ -44,6 +44,15 @@ export const appHasMounted = (): boolean => {
   return Boolean(root && root.childNodes.length > 0);
 };
 
+const linkIsStylesheet = (link: HTMLLinkElement): boolean => {
+  if (link.relList?.contains("stylesheet") === true) {
+    return true;
+  }
+  return link.rel
+    .split(/\s+/)
+    .some((token) => token.toLowerCase() === "stylesheet");
+};
+
 const isFatalResourceTarget = (target: EventTarget | null): boolean => {
   if (target == null) {
     return false;
@@ -56,8 +65,7 @@ const isFatalResourceTarget = (target: EventTarget | null): boolean => {
     return true;
   }
   if (linkCtor != null && target instanceof linkCtor) {
-    const link = target as HTMLLinkElement;
-    return link.relList?.contains("stylesheet") === true;
+    return linkIsStylesheet(target as HTMLLinkElement);
   }
   return false;
 };

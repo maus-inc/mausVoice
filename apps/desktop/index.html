@@ -128,11 +128,16 @@
         // runtime errors must not cover a working UI.
         window.__mausVoiceEarlyError = function (event) {
           var target = event.target;
-          var isStylesheet =
-            target instanceof HTMLLinkElement &&
-            ((target.relList && target.relList.contains("stylesheet")) ||
-              (typeof target.rel === "string" &&
-                target.rel.split(/\s+/).includes("stylesheet")));
+          var isStylesheet = false;
+          if (target instanceof HTMLLinkElement) {
+            if (target.relList && target.relList.contains("stylesheet")) {
+              isStylesheet = true;
+            } else if (typeof target.rel === "string") {
+              isStylesheet = target.rel.split(/\s+/).some(function (token) {
+                return token.toLowerCase() === "stylesheet";
+              });
+            }
+          }
           var isAsset =
             target instanceof HTMLScriptElement || isStylesheet;
           if (isAsset) {

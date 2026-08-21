@@ -16,9 +16,9 @@ class HTMLScriptElement {
 
 class HTMLLinkElement {
   href = "";
-  rel = "stylesheet";
+  rel = "StyleSheet";
   relList = {
-    contains: (token: string): boolean => token === "stylesheet",
+    contains: (_token: string): boolean => false,
   };
 }
 

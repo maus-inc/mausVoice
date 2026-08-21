@@ -63,9 +63,9 @@ describe("global error overlay", () => {
     }
     class HTMLLinkElement {
       href = "asset://localhost/assets/styles.css";
-      rel = "stylesheet";
+      rel = "StyleSheet";
       relList = {
-        contains: (token: string): boolean => token === "stylesheet",
+        contains: (_token: string): boolean => false,
       };
     }
     vi.stubGlobal("HTMLScriptElement", HTMLScriptElement);
