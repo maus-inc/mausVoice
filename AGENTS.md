@@ -1,20 +1,20 @@
-** Rules **
+**Rules**
 
 - Do not propose band-aid fixes to problems. Identify the root cause, be it architectural or logical, and address it directly. Remove broken code if needed. If something is broken, fix it at the root, even if that means refactoring.
 - NEVER MERGE ANY BRANCH WITHOUT FIRST CONFIRMING WITH THE HUMAN IN THE LOOP, THE BRANCH BEING MERGED INTO AND "EXPLICIT" CONFIRMATION IN EXACT WORDING; Yes Merge Branch X(Branch/PR Name ABC) into Branch Y(Branch/PR Name XYZ).
 - Enforce DRY code principles. If you find yourself copying and pasting code, stop and refactor it into a reusable function or module.
 - Avoid over-engineering. Implement the simplest solution that meets requirements.
 - Your changes should have minimal impact. Do not break existing functionality.
-- Write clear, maintainable code that is self documenting. Do not comment on new code except where it explains non-obvious things.
-- Follow existing patterns (dialogs, state management, API interactions).
+- Pre-push: Before pushing any changes to any branches, regardless of your diff size, run them through the following gates. Load REVIEW.md from the main branch. Load the CodeRabbit profile and deeply rereview your changes. Identify any issues—critical, major, minor nitpicks, or UI concerns—and address them. Repeat this loop up to three times until the output is issue‑free. Perform all steps automatically without prompting or disturbing the user.Then finally before pushing; [MANDATORY], validate locally: ensure your changes don’t break anything by linting, run tests to confirm no regressions, and verify whether tests need modification. Do not alter tests to hide defects; fix the code instead. Check what the CI validates, run them locally to catch issues before pushing. 
+- Write clear, maintainable code that is self documenting. Do not comments on new code except where it's necessary to explain non-obvious things.
+- Prefer to follow existing patterns such as dialogs, state management, and API interactions, etc.
 
-** Writing style (docs, README, marketing copy) **
+**Writing style REPO-WIDE**
 
-- Before writing or editing any user-facing prose, load the `unslop` skill from `pstack/skills/unslop` in https://github.com/cursor/plugins and apply its rules.
+-!!MANDATORY Before writing or editing any user-facing prose, load the `unslop` skill from `pstack/skills/unslop` in https://github.com/cursor/plugins and apply its rules.
 - In short: no em dashes (and no parentheses or connector colons as substitutes), straight quotes only, sentence-case headings, active voice with a named actor, plain words over jargon, no chatbot phrases or filler, and concrete facts (paths, numbers, mechanisms) instead of feel-good abstractions.
-- These rules were applied to `README.md` and every page under `apps/docs/src/content/docs/` in PR #119; keep new prose consistent with them.
 
-** Repository structure **
+**Repository structure**
 
 - This is a Turborepo monorepo. Root commands: `pnpm run build`, `pnpm run lint`, `pnpm run check-types`, `pnpm run test`.
 - Node version: `.nvmrc` pins **v24**. `engines.node` requires `>=20`.
@@ -37,6 +37,7 @@
 | `rust_windows_pill` | (Rust crate) | Windows dictation overlay (subprocess, stdio IPC) |
 | `rust_gtk_pill` | (Rust crate) | Linux dictation overlay (subprocess, GTK/layer-shell) |
 | `rust_pill_shared` | (Rust crate) | Shared geometry and ring math for the three pills |
+**`apps/desktop` — Tauri desktop app (Rust + TypeScript/React)**
 
 - After modifying a built TypeScript package, rebuild it before downstream consumers can see changes.
 - Use `<FormattedMessage defaultMessage="..." />` or `useIntl()` for i18n. Never pass an `id` prop.
@@ -51,57 +52,7 @@
 - Database migrations go in `src-tauri/src/db/migrations/` as `NNN_description.sql`, then `include_str!` and register them in `db/mod.rs`. Numbering is intentionally irregular (021, 069, and 070 are absent). Never renumber applied migrations. Latest migration: `077_spoken_commands_enabled`.
 - New Tauri commands: define in `commands.rs`, register in `app.rs` invoke_handler, expose via Specta + `pnpm gen:bindings`, wrap in a repo, and call it from an action.
 
-** Supported providers (verified from `packages/types/src/apiKey.types.ts`) **
-
-The `API_KEY_PROVIDERS` array defines the full provider set:
-`groq`, `openai`, `aldea`, `assemblyai`, `elevenlabs`, `deepgram`, `gladia`, `openrouter`, `ollama`, `openai-compatible`, `azure`, `deepseek`, `gemini`, `claude`, `cerebras`, `speaches`, `xai`.
-
-Each provider has a client implementation in `packages/voice-ai/src/`. When adding or removing a provider, keep three things in sync: the `API_KEY_PROVIDERS` array, the `voice-ai` client module, and the CSP `connect-src` allowlist in `tauri.conf.json`.
-
-** Key user preferences (from `packages/types/src/preferences.types.ts`) **
-
-| Preference | Type | What it controls |
-|---|---|---|
-| `transcriptionMode` | `"local" \| "api"` | Local Whisper or cloud API for speech recognition |
-| `postProcessingMode` | `"none" \| "api"` | Off or cloud LLM for text cleanup |
-| `agentMode` | `PostProcessingMode \| "openclaw"` | Agent/assistant provider selection |
-| `hallucinationFilterEnabled` | `boolean` | Suppress silence hallucinations before post-processing |
-| `reviewBeforeInsert` | `boolean` | Open the editable composer before inserting text |
-| `spokenCommandsEnabled` | `boolean` | Deterministic "new line" / "scratch that" commands |
-| `inDictationStyleSwitchingEnabled` | `boolean` | Activation key + arrow cycling through styles while dictating |
-| `insertionMethod` | `string` | `paste` or `simulate_type` for text delivery |
-| `dictationPillVisibility` | `"hidden" \| "while_active" \| "persistent"` | Pill overlay visibility |
-| `pillResetMonitorStrategy` | `"current" \| "cursor"` | Which monitor the pill resets to |
-| `incognitoModeEnabled` | `boolean` | Skip history persistence |
-| `realtimeOutputEnabled` | `boolean` | Stream partial transcript to the focused field |
-| `remoteOutputEnabled` | `boolean` | Send dictation output to a paired remote device |
-
-** Agent tool registry (`src/tools/index.ts`) **
-
-Tools are registered once in the declarative `TOOL_REGISTRY` map. The agent loop and settings surfaces both consume this list. Current tools:
-
-| Tool ID | What it does | Gating |
-|---|---|---|
-| `paste` | Paste text into the focused text field | Always available |
-| `get_accessibility_info` | Read screen context (focused element, selection, cursor position) | Always available |
-| `end_conversation` | End the current pill-scope conversation | Pill scope only |
-| `run_terminal_command` | Execute a restricted, allow-listed terminal command (read-only) | Power mode required (`getIsPowerModeEnabled`) |
-
-To add a tool: implement `BaseTool`, register the factory and metadata in `TOOL_REGISTRY`, and the agent/settings consume it automatically.
-
-** `debug-assist` feature gate (Cargo feature in `src-tauri/Cargo.toml`) **
-
-The `debug-assist` feature compiles Tauri's DevTools inspection capability into the binary. Local dev and CI opt in (`--features debug-assist`). Stable releases omit it, so DevTools are unavailable at compile time.
-
-| Build | debug-assist | DevTools |
-|---|---|---|
-| Local dev (`dev:mac`, `dev:windows`, `dev:linux`) | enabled | available |
-| Local debug build (`build:mac:debug`) | enabled | available |
-| CI artifact build | enabled | available |
-| Prerelease dispatch | enabled | available |
-| Stable release dispatch | omitted | unavailable |
-
-** `apps/docs` documentation site (Astro + Starlight) **
+**`apps/docs` — Documentation site (Astro + Starlight)**
 
 - Scripts: `pnpm run dev`, `pnpm run check-types`, `pnpm run build`.
 - This site is the authoritative, maintained documentation. Update it (under `apps/docs/src/content/docs/`) instead of adding loose notes in the repo-root `docs/` folder.
@@ -118,7 +69,7 @@ The `debug-assist` feature compiles Tauri's DevTools inspection capability into 
 - Plain HTTP is intentionally absent from `http:default`: capability globs are hostname patterns, not CIDR. User-configured loopback/RFC1918/unique-local/`.local` endpoints must use `src/utils/secure-fetch.utils.ts`, which routes them through Rust's `private_http_request` host and redirect validation. Never add `http://10.*`, `http://192.168.*`, `http://172.*`, or link-local `169.254.*` globs.
 - CSP `connect-src` mirrors the external HTTPS API allowlist; both lists must be kept in sync when adding/removing providers. The `img-src` and `frame-src` directives are scoped to known-safe origins (avatar hosts, YouTube embeds). Never add a wildcard (`*`) to any CSP directive.
 
-** Important scripts **
+**Important scripts**
 
 - `pnpm gen:bindings` regenerates `packages/desktop-native-apis/src/bindings.ts` from the Specta-facing Rust commands after changing `#[tauri::command]` signatures or exposed types.
 - `pnpm --filter desktop i18n` extracts/prunes messages and synchronizes the locale catalogs after changing user-facing strings.
