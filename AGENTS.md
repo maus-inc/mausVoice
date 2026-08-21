@@ -1,6 +1,7 @@
 **Rules**
 
 - Do not propose band-aid fixes to problems. Identify the root cause, be it architectural or logical, and address it directly. Don't be afraid to remove broken code. If something is broken, fix it at the root, even if that means refactoring and overhauling systems (if necessary).
+- When asked to review your changes, or perform a review, read REVIEW.md.
 - NEVER MERGE ANY BRANCH WITHOUT FIRST CONFIRMING WITH THE HUMAN IN THE LOOP, THE BRANCH BEING MERGED INTO AND "EXPLICIT" CONFIRMATION IN EXACT WORDING; Yes Merge Branch X(Branch/PR Name ABC) into Branch Y(Branch/PR Name XYZ).
 - Enforce DRY code principles. If you find yourself copying and pasting code, stop and refactor it into a reusable function or module.
 - Avoid over-engineering. Implement solutions that are as simple as possible while still meeting requirements.
