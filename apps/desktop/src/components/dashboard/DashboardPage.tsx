@@ -56,11 +56,9 @@ export default function DashboardPage() {
           <Box
             component={motion.div}
             key={location.pathname}
-            initial={
-              reduceMotion ? false : { opacity: 0, y: 8, filter: "blur(2px)" }
-            }
-            animate={{ opacity: 1, y: 0, filter: "blur(0px)" }}
-            transition={{ duration: 0.22, ease: easeOutQuint }}
+            initial={reduceMotion ? false : { opacity: 0, y: 8 }}
+            animate={{ opacity: 1, y: 0 }}
+            transition={{ duration: 0.18, ease: easeOutQuint }}
             // Flat: the route content owns its own surfaces (cards, rows), so
             // wrapping it in a second bordered panel stacked two tiers of
             // elevation for one plane and boxed the page inside the page.

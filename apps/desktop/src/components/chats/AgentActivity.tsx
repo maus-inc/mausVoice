@@ -1,5 +1,10 @@
-import { Box, Collapse, Stack, Typography } from "@mui/material";
-import { useState } from "react";
+/**
+ * Pattern from siriwatknp/mui-treasury ai-reasoning.tsx:
+ * button trigger, duration tracking, auto-open while streaming, auto-close 1s after.
+ */
+import { Box, Stack, Typography } from "@mui/material";
+import { ChevronDown } from "lucide-react";
+import { useEffect, useRef, useState } from "react";
 import { FormattedMessage } from "react-intl";
 import type { StreamingToolCall } from "../../state/app.state";
 import { useAppStore } from "../../store";
@@ -8,13 +13,12 @@ type AgentActivityProps = {
   messageId: string;
 };
 
+const AUTO_CLOSE_DELAY = 1000;
+
 const ToolCallLine = ({ tc }: { tc: StreamingToolCall }) => (
   <Typography
     variant="caption"
-    sx={{
-      color: "text.secondary",
-      fontStyle: "italic",
-    }}
+    sx={{ color: "text.secondary", fontStyle: "italic" }}
   >
     {tc.done ? (
       <FormattedMessage
@@ -32,14 +36,43 @@ const ToolCallLine = ({ tc }: { tc: StreamingToolCall }) => (
 
 export const AgentActivity = ({ messageId }: AgentActivityProps) => {
   const streaming = useAppStore((s) => s.streamingMessageById[messageId]);
-  const [reasoningOpen, setReasoningOpen] = useState(false);
+  const [isOpen, setIsOpen] = useState(true);
+  const [duration, setDuration] = useState(0);
+  const startTimeRef = useRef<number | null>(null);
+  const [hasAutoClosed, setHasAutoClosed] = useState(false);
+
+  const isStreaming = streaming?.isStreaming ?? false;
+
+  useEffect(() => {
+    if (isStreaming) {
+      if (startTimeRef.current === null) {
+        startTimeRef.current = Date.now();
+        setIsOpen(true);
+      }
+    } else if (startTimeRef.current !== null) {
+      setDuration(
+        Math.max(1, Math.ceil((Date.now() - startTimeRef.current) / 1000)),
+      );
+      startTimeRef.current = null;
+    }
+  }, [isStreaming]);
+
+  useEffect(() => {
+    if (!isStreaming && isOpen && !hasAutoClosed && duration > 0) {
+      const timer = window.setTimeout(() => {
+        setIsOpen(false);
+        setHasAutoClosed(true);
+      }, AUTO_CLOSE_DELAY);
+      return () => window.clearTimeout(timer);
+    }
+  }, [isStreaming, isOpen, hasAutoClosed, duration]);
+
   if (!streaming) {
     return null;
   }
 
-  const { toolCalls, reasoning, isStreaming } = streaming;
-  const hasActivity = toolCalls.length > 0 || reasoning.length > 0;
-  if (!hasActivity) {
+  const { toolCalls, reasoning } = streaming;
+  if (toolCalls.length === 0 && reasoning.length === 0) {
     return null;
   }
 
@@ -50,32 +83,53 @@ export const AgentActivity = ({ messageId }: AgentActivityProps) => {
       ))}
       {reasoning.length > 0 && (
         <Box>
-          <Typography
-            variant="caption"
-            onClick={() => setReasoningOpen((o) => !o)}
+          <Box
+            component="button"
+            type="button"
+            onClick={() => setIsOpen((o) => !o)}
+            aria-expanded={isOpen}
             sx={{
+              display: "flex",
+              alignItems: "center",
+              gap: 1,
               color: "text.secondary",
+              fontSize: "0.875rem",
+              border: "none",
+              background: "transparent",
               cursor: "pointer",
-              userSelect: "none",
-              "&:hover": { textDecoration: "underline" },
+              p: 0,
+              "&:hover": { color: "text.primary" },
             }}
           >
-            {isStreaming ? (
-              <FormattedMessage defaultMessage="Thinking…" />
-            ) : (
-              <FormattedMessage defaultMessage="Thought process" />
-            )}
-          </Typography>
-          <Collapse in={reasoningOpen}>
+            <Typography variant="caption" sx={{ color: "inherit" }}>
+              {isStreaming || duration === 0 ? (
+                <FormattedMessage defaultMessage="Thinking…" />
+              ) : (
+                <FormattedMessage
+                  defaultMessage="Thought for {seconds} seconds"
+                  values={{ seconds: duration }}
+                />
+              )}
+            </Typography>
+            <ChevronDown
+              size={16}
+              strokeWidth={1.9}
+              style={{
+                transform: isOpen ? "rotate(180deg)" : "rotate(0deg)",
+                transition: "transform 200ms",
+              }}
+            />
+          </Box>
+          {isOpen && (
             <Typography
               variant="caption"
               sx={{
+                mt: 1,
                 color: "text.secondary",
                 whiteSpace: "pre-wrap",
                 display: "block",
-                mt: 0.25,
                 pl: 1,
-                borderLeft: 2,
+                borderLeft: 1,
                 borderColor: "divider",
                 maxHeight: 200,
                 overflow: "auto",
@@ -83,7 +137,7 @@ export const AgentActivity = ({ messageId }: AgentActivityProps) => {
             >
               {reasoning}
             </Typography>
-          </Collapse>
+          )}
         </Box>
       )}
     </Stack>

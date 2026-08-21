@@ -1,11 +1,13 @@
-import ContentCopyRoundedIcon from "@mui/icons-material/ContentCopyRounded";
-import CheckCircleRoundedIcon from "@mui/icons-material/CheckCircleRounded";
-import DeleteOutlineRoundedIcon from "@mui/icons-material/DeleteOutlineRounded";
-import FileDownloadOutlinedIcon from "@mui/icons-material/FileDownloadOutlined";
-import HourglassEmptyRoundedIcon from "@mui/icons-material/HourglassEmptyRounded";
-import InfoOutlinedIcon from "@mui/icons-material/InfoOutlined";
-import ReplayRoundedIcon from "@mui/icons-material/ReplayRounded";
-import SendRoundedIcon from "@mui/icons-material/SendRounded";
+import {
+  CheckCircle,
+  Copy,
+  Download,
+  Hourglass,
+  Info,
+  RotateCcw,
+  Send,
+  Trash2,
+} from "lucide-react";
 import {
   Box,
   Chip,
@@ -19,17 +21,19 @@ import {
 } from "@mui/material";
 import { getRec } from "@maus-inc/utilities";
 import { invoke } from "@tauri-apps/api/core";
-import dayjs from "dayjs";
 import { useCallback, useMemo } from "react";
 import { useIntl } from "react-intl";
 import { showErrorSnackbar, showSnackbar } from "../../actions/app.actions";
+import {
+  scheduleTranscriptionDelete,
+  undoTranscriptionDelete,
+} from "../../utils/pending-transcription-delete";
 import { sendTextToActiveRemoteTarget } from "../../actions/remote-output.actions";
 import {
   openRetranscribeDialog,
   openTranscriptionDetailsDialog,
 } from "../../actions/transcriptions.actions";
-import { getTranscriptionRepo } from "../../repos";
-import { produceAppState, useAppStore } from "../../store";
+import { useAppStore } from "../../store";
 import {
   isEditableTarget,
   useContextMenu,
@@ -82,17 +86,27 @@ export const TranscriptionRow = ({ id }: TranscriptionRowProps) => {
 
   const retranscribeIcon = (() => {
     if (isRetranscribing && prefersReducedMotion) {
-      return <HourglassEmptyRoundedIcon fontSize="small" aria-hidden />;
+      return (
+        <span data-testid="retranscribe-hourglass">
+          <Hourglass size={16} strokeWidth={1.9} aria-hidden />
+        </span>
+      );
     }
     if (isRetranscribing) {
       return <CircularProgress size={18} color="inherit" aria-hidden />;
     }
     if (didRetranscribe) {
       return (
-        <CheckCircleRoundedIcon color="success" fontSize="small" aria-hidden />
+        <span data-testid="retranscribe-check">
+          <CheckCircle size={16} strokeWidth={1.9} aria-hidden />
+        </span>
       );
     }
-    return <ReplayRoundedIcon fontSize="small" aria-hidden />;
+    return (
+      <span data-testid="retranscribe-replay">
+        <RotateCcw size={16} strokeWidth={1.9} aria-hidden />
+      </span>
+    );
   })();
 
   const handleDetailsOpen = useCallback(() => {
@@ -115,25 +129,43 @@ export const TranscriptionRow = ({ id }: TranscriptionRowProps) => {
   );
 
   const handleDeleteTranscript = useCallback(
-    async (id: string) => {
-      try {
-        produceAppState((draft) => {
-          delete draft.transcriptionById[id];
-          draft.transcriptions.transcriptionIds =
-            draft.transcriptions.transcriptionIds.filter(
-              (transcriptionId) => transcriptionId !== id,
-            );
-        });
-        await getTranscriptionRepo().deleteTranscription(id);
-        showSnackbar(
-          intl.formatMessage({ defaultMessage: "Delete successful" }),
-          { mode: "success" },
-        );
-      } catch (error) {
-        showErrorSnackbar(error);
+    (targetId: string) => {
+      const snapshot = transcription;
+      if (!snapshot) {
+        return;
       }
+      const undoWindowMs = 5000;
+      try {
+        scheduleTranscriptionDelete(snapshot, undoWindowMs);
+      } catch {
+        showErrorSnackbar(
+          intl.formatMessage({
+            defaultMessage: "Failed to schedule delete.",
+          }),
+        );
+        return;
+      }
+      showSnackbar(
+        intl.formatMessage({ defaultMessage: "Delete successful" }),
+        {
+          mode: "success",
+          duration: undoWindowMs,
+          action: {
+            label: intl.formatMessage({ defaultMessage: "Undo" }),
+            onClick: () => {
+              if (!undoTranscriptionDelete(targetId)) {
+                showErrorSnackbar(
+                  intl.formatMessage({
+                    defaultMessage: "Unable to undo delete.",
+                  }),
+                );
+              }
+            },
+          },
+        },
+      );
     },
-    [intl],
+    [intl, transcription],
   );
 
   const handleExport = useCallback(async () => {
@@ -244,7 +276,12 @@ export const TranscriptionRow = ({ id }: TranscriptionRowProps) => {
               color: "text.secondary",
             }}
           >
-            {dayjs(transcription?.createdAt).format("MMM D, YYYY h:mm A")}
+            {transcription?.createdAt
+              ? new Intl.DateTimeFormat(undefined, {
+                  dateStyle: "medium",
+                  timeStyle: "short",
+                }).format(new Date(transcription.createdAt))
+              : ""}
           </Typography>
           {isRemoteTranscript && (
             <Chip
@@ -276,7 +313,7 @@ export const TranscriptionRow = ({ id }: TranscriptionRowProps) => {
               size="small"
               color={hasMetadata ? "primary" : "default"}
             >
-              <InfoOutlinedIcon fontSize="small" />
+              <Info size={16} strokeWidth={1.9} />
             </IconButton>
           </Tooltip>
           <Tooltip
@@ -292,7 +329,7 @@ export const TranscriptionRow = ({ id }: TranscriptionRowProps) => {
               }
               size="small"
             >
-              <ContentCopyRoundedIcon fontSize="small" />
+              <Copy size={16} strokeWidth={1.9} />
             </IconButton>
           </Tooltip>
           <Tooltip
@@ -306,7 +343,7 @@ export const TranscriptionRow = ({ id }: TranscriptionRowProps) => {
               onClick={() => handleDeleteTranscript(id)}
               size="small"
             >
-              <DeleteOutlineRoundedIcon fontSize="small" />
+              <Trash2 size={16} strokeWidth={1.9} />
             </IconButton>
           </Tooltip>
           {!isRemoteTranscript && activeRemoteTarget && (
@@ -325,7 +362,7 @@ export const TranscriptionRow = ({ id }: TranscriptionRowProps) => {
                 onClick={handleSendToReceiver}
                 size="small"
               >
-                <SendRoundedIcon fontSize="small" />
+                <Send size={16} strokeWidth={1.9} />
               </IconButton>
             </Tooltip>
           )}
@@ -374,7 +411,7 @@ export const TranscriptionRow = ({ id }: TranscriptionRowProps) => {
                   onClick={handleExport}
                   sx={{ p: 0.5 }}
                 >
-                  <FileDownloadOutlinedIcon fontSize="small" />
+                  <Download size={16} strokeWidth={1.9} />
                 </IconButton>
               </Tooltip>
             </>

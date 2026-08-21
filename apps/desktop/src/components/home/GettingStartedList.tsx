@@ -35,7 +35,7 @@ function ChecklistRow({ item }: { item: ChecklistItem }) {
     >
       {item.done ? (
         <CheckCircleRounded
-          sx={{ color: "var(--app-palette-blue)", fontSize: 22 }}
+          sx={{ color: "var(--app-palette-chrome)", fontSize: 22 }}
         />
       ) : (
         <RadioButtonUncheckedRounded
@@ -85,7 +85,7 @@ function AppIconBoxes({ iconPaths }: { iconPaths: (string | null)[] }) {
             alignItems: "center",
             justifyContent: "center",
             bgcolor: "level2",
-            border: path ? "1.5px solid var(--app-palette-blue)" : "none",
+            border: path ? "1.5px solid var(--app-palette-chrome)" : "none",
           }}
         >
           {path && <StorageImage path={path} size={36} />}
@@ -237,7 +237,7 @@ export function GettingStartedList() {
           bgcolor: "var(--app-palette-level2)",
           mb: 1,
           "& .MuiLinearProgress-bar": {
-            bgcolor: "var(--app-palette-blue)",
+            bgcolor: "var(--app-palette-chrome)",
             borderRadius: 3,
           },
         }}

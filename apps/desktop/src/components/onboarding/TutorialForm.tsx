@@ -35,15 +35,15 @@ import {
 } from "./OnboardingCommon";
 
 // The surrounding card deliberately mimics a third-party notes app, so its
-// greys stay literal; only the focus accent follows the mausVoice brand blue.
+// greys stay literal; only the focus accent follows the mausVoice chrome token.
 const pulseNotes = keyframes`
   0%, 100% {
-    border-color: color-mix(in srgb, var(--app-palette-blue) 40%, transparent);
-    box-shadow: 0 0 0 0 color-mix(in srgb, var(--app-palette-blue) 40%, transparent);
+    border-color: color-mix(in srgb, var(--app-palette-chrome) 40%, transparent);
+    box-shadow: 0 0 0 0 color-mix(in srgb, var(--app-palette-chrome) 40%, transparent);
   }
   50% {
-    border-color: var(--app-palette-blue);
-    box-shadow: 0 0 0 4px color-mix(in srgb, var(--app-palette-blue) 30%, transparent);
+    border-color: var(--app-palette-chrome);
+    box-shadow: 0 0 0 4px color-mix(in srgb, var(--app-palette-chrome) 30%, transparent);
   }
 `;
 
@@ -328,7 +328,7 @@ const NotesStep = ({
         sx={tutorialFieldSx({
           isFieldFocused,
           pulse: pulseNotes,
-          focusBorderColor: "var(--app-palette-blue)",
+          focusBorderColor: "var(--app-palette-chrome)",
           placeholderColor: "#5f6368",
         })}
       />

@@ -9,7 +9,13 @@ import {
   surfaces,
   text,
 } from "./styles/palette";
-import { accentSurface, hairline, premiumSurface } from "./styles/shadows";
+import {
+  accentSurface,
+  hairline,
+  premiumSurface,
+  switchThumb,
+  switchTrack,
+} from "./styles/shadows";
 
 const uiFont = '"Satoshi", system-ui, -apple-system, sans-serif';
 /** TAN-PARADISO only via CSS var(--font-display) on logo + welcome/name. */
@@ -48,10 +54,11 @@ export const theme = createTheme({
         goldFg: "rgb(104, 48, 9)",
         goldBg: "rgba(255, 193, 7, 0.6)",
         shadow: ink(0.12),
-        blue: accent.light.main,
-        blueHover: "#1a7cd4ff",
-        blueActive: "#166bbf",
-        onBlue: text.dark.primary,
+        chrome: accent.light.main,
+        chromeHover: inkSolid.raised,
+        chromeActive: inkSolid.pressed,
+        onChrome: surfaces.light.level1,
+        dangerHover: "rgba(232, 77, 77, 0.92)",
 
         ...surfaces.light,
       },
@@ -71,10 +78,11 @@ export const theme = createTheme({
         goldFg: "#FFD700",
         goldBg: "rgba(255, 215, 0, 0.2)",
         shadow: darkInk(0.5),
-        blue: accent.dark.main,
-        blueHover: "#2787e6ff",
-        blueActive: "#1f76cc",
-        onBlue: text.dark.primary,
+        chrome: accent.dark.main,
+        chromeHover: chalkSolid.raised,
+        chromeActive: chalkSolid.pressed,
+        onChrome: surfaces.dark.level0,
+        dangerHover: "rgba(232, 77, 77, 0.92)",
 
         ...surfaces.dark,
       },
@@ -168,7 +176,9 @@ export const theme = createTheme({
           WebkitFontSmoothing: "antialiased",
           MozOsxFontSmoothing: "grayscale",
           textRendering: "optimizeLegibility",
-          transition: "background-color 220ms cubic-bezier(0.23, 1, 0.32, 1)",
+          // Scheme flips must snap. A body background transition smears every
+          // surface when light/dark/system changes (better-ui: suppress
+          // transitions on theme switch).
         },
         // Browser-owned surfaces. Theme them from the palette so every drawing
         // plane shares the design instead of shipping platform defaults.
@@ -208,6 +218,12 @@ export const theme = createTheme({
         },
         "#root": {
           height: "100%",
+        },
+        "h1, h2, h3, h4, h5, h6": {
+          textWrap: "balance",
+        },
+        p: {
+          textWrap: "pretty",
         },
         "@media (prefers-reduced-motion: reduce)": {
           "*, *::before, *::after": {
@@ -263,29 +279,63 @@ export const theme = createTheme({
 
     MuiSwitch: {
       styleOverrides: {
-        root: {
-          // Square switch (shadcn switch-2 look, adapted to MUI): small radii
-          // on the thumb and track instead of the default pill geometry.
-          // Applied globally so every <Switch> inherits the new look.
-          "& .MuiSwitch-thumb": {
-            borderRadius: 3,
+        root: ({ theme }) => ({
+          // Squircle: same corner language on thumb and track (not a pill
+          // track with a square head). Press is 0.96 / 120ms ease-out.
+          padding: 7,
+          "&:active .MuiSwitch-thumb": {
+            transform: "scale(0.96)",
           },
-          "& .MuiSwitch-track": {
-            borderRadius: 5,
-          },
-        },
-        switchBase: ({ theme }) => ({
-          "&.Mui-checked": {
-            color: theme.vars.palette.blue,
-            "& + .MuiSwitch-track": {
-              backgroundColor: theme.vars.palette.blue,
-            },
+          "& .MuiSwitch-switchBase": {
+            transition: `transform 160ms ${theme.transitions.easing.easeOut}`,
           },
         }),
+        thumb: ({ theme }) => ({
+          borderRadius: 4,
+          boxShadow: switchThumb.light,
+          transition: `transform 120ms ${theme.transitions.easing.easeOut}, box-shadow 160ms ${theme.transitions.easing.easeOut}`,
+          ...theme.applyStyles("dark", {
+            boxShadow: switchThumb.dark,
+          }),
+        }),
         track: ({ theme }) => ({
-          ".Mui-checked.Mui-checked + &": {
-            backgroundColor: theme.vars.palette.blue,
+          borderRadius: 5,
+          opacity: 1,
+          backgroundColor: theme.vars.palette.level3,
+          border: hairline.light(0.08),
+          boxShadow: switchTrack.light,
+          transition: `background-color 160ms ${theme.transitions.easing.easeOut}, box-shadow 160ms ${theme.transitions.easing.easeOut}`,
+          ".Mui-checked:not(.Mui-disabled) + &": {
+            backgroundColor: inkSolid.base,
+            opacity: 1,
+            boxShadow: switchTrack.lightChecked,
           },
+          ...theme.applyStyles("dark", {
+            border: hairline.dark(0.1),
+            boxShadow: switchTrack.dark,
+            ".Mui-checked:not(.Mui-disabled) + &": {
+              backgroundColor: chalkSolid.base,
+              boxShadow: switchTrack.darkChecked,
+            },
+          }),
+        }),
+        switchBase: ({ theme }) => ({
+          "&.Mui-checked:not(.Mui-disabled)": {
+            color: inkSolid.base,
+            "& + .MuiSwitch-track": {
+              backgroundColor: inkSolid.base,
+              opacity: 1,
+            },
+          },
+          ...theme.applyStyles("dark", {
+            "&.Mui-checked:not(.Mui-disabled)": {
+              color: surfaces.dark.level0,
+              "& + .MuiSwitch-track": {
+                backgroundColor: chalkSolid.base,
+                opacity: 1,
+              },
+            },
+          }),
         }),
       },
     },
@@ -488,20 +538,20 @@ export const theme = createTheme({
           },
         },
         {
-          props: { variant: "blue" },
+          props: { variant: "chrome" },
           style: ({ theme }) => ({
-            backgroundColor: theme.vars.palette.blue,
-            color: theme.vars.palette.onBlue,
+            backgroundColor: theme.vars.palette.chrome,
+            color: theme.vars.palette.onChrome,
             boxShadow: accentSurface.light,
             ...theme.applyStyles("dark", {
               boxShadow: accentSurface.dark,
             }),
             "&:hover": {
-              backgroundColor: theme.vars.palette.blueHover,
+              backgroundColor: theme.vars.palette.chromeHover,
               transform: "translateY(-1px)",
             },
             "&:active": {
-              backgroundColor: theme.vars.palette.blueActive,
+              backgroundColor: theme.vars.palette.chromeActive,
               transform: "scale(0.98) translateY(0)",
             },
           }),
@@ -564,6 +614,11 @@ export const theme = createTheme({
           },
           "&:active": {
             transform: "scale(0.96)",
+          },
+          "& svg.lucide": {
+            width: 16,
+            height: 16,
+            strokeWidth: 1.9,
           },
         }),
       },
@@ -644,13 +699,33 @@ export const theme = createTheme({
             },
             "&.Mui-selected": {
               backgroundColor: surfaces.dark.level2,
+              color: text.dark.primary,
               boxShadow: premiumSurface.dark.selected,
               "&:hover": {
                 backgroundColor: surfaces.dark.level3,
               },
+              "& .MuiListItemText-primary": {
+                color: text.dark.primary,
+              },
+              "& .MuiListItemText-secondary": {
+                color: text.dark.secondary,
+              },
             },
           }),
         }),
+      },
+    },
+
+    MuiListItemIcon: {
+      styleOverrides: {
+        root: {
+          minWidth: 32,
+          "& svg.lucide": {
+            width: 16,
+            height: 16,
+            strokeWidth: 1.9,
+          },
+        },
       },
     },
 

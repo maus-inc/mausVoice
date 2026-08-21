@@ -55,7 +55,8 @@ export const KeyPressSimulator = ({ keys }: KeyPressSimulatorProps) => {
                 ? "none"
                 : `0px 3px 0px ${theme.vars?.palette.level3}`,
               transform: isPressed ? "translateY(3px)" : "translateY(0px)",
-              transition: "all 0.1s ease-out",
+              transition:
+                "transform 100ms cubic-bezier(0.23, 1, 0.32, 1), background-color 100ms cubic-bezier(0.23, 1, 0.32, 1), box-shadow 100ms cubic-bezier(0.23, 1, 0.32, 1)",
               userSelect: "none",
             }}
           >
