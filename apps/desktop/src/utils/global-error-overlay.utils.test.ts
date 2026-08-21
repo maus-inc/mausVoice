@@ -64,7 +64,9 @@ describe("global error overlay", () => {
     class HTMLLinkElement {
       href = "asset://localhost/assets/styles.css";
       rel = "stylesheet";
-      relList = { contains: (token: string) => token === "stylesheet" };
+      relList = {
+        contains: (token: string): boolean => token === "stylesheet",
+      };
     }
     vi.stubGlobal("HTMLScriptElement", HTMLScriptElement);
     vi.stubGlobal("HTMLLinkElement", HTMLLinkElement);
@@ -82,7 +84,9 @@ describe("global error overlay", () => {
     ).toBe(true);
     const icon = new HTMLLinkElement();
     icon.rel = "icon";
-    icon.relList = { contains: (token: string) => token === "icon" };
+    icon.relList = {
+      contains: (token: string): boolean => token === "icon",
+    };
     expect(
       shouldPaintFatalWindowError({
         target: icon,

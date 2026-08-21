@@ -49,7 +49,7 @@ fn classify_sqlx(context: &str, err: impl std::fmt::Display) -> OpenError {
 
 fn sqlite_connect_options(path: &Path) -> SqliteConnectOptions {
     SqliteConnectOptions::new()
-        .filename(path.to_path_buf())
+        .filename(path)
         .create_if_missing(true)
         .foreign_keys(true)
 }
