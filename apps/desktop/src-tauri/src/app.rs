@@ -1,4 +1,3 @@
-use sqlx::sqlite::SqlitePoolOptions;
 use std::sync::Mutex;
 use std::time::{Duration, Instant};
 use tauri::{Manager, PhysicalPosition, RunEvent, Window, WindowEvent};
@@ -128,11 +127,11 @@ pub fn build() -> tauri::Builder<tauri::Wry> {
         ))
         .plugin(tauri_plugin_process::init())
         .plugin(tauri_plugin_dialog::init())
-        .plugin(
-            tauri_plugin_sql::Builder::new()
-                .add_migrations(crate::db::DB_CONNECTION, crate::db::migrations())
-                .build(),
-        )
+        // Migrations are applied in setup via `open_app_database`. Registering
+        // them on this plugin aborts process startup on a checksum mismatch or
+        // a half-applied migration, which is exactly when the user still needs
+        // a window.
+        .plugin(tauri_plugin_sql::Builder::new().build())
         .plugin(updater_builder.build())
         .plugin(tauri_plugin_os::init())
         .plugin(tauri_plugin_opener::init())
@@ -192,8 +191,9 @@ pub fn build() -> tauri::Builder<tauri::Wry> {
 
             // Preserve GGML files from the old app-data/models location before
             // the desktop sidecars start using app-data/transcription-models.
-            crate::system::paths::migrate_legacy_models(app.handle())
-                .map_err(|err| -> Box<dyn std::error::Error> { Box::new(err) })?;
+            if let Err(err) = crate::system::paths::migrate_legacy_models(app.handle()) {
+                log::error!("Failed to migrate legacy transcription models: {err}");
+            }
 
             // Record the Windows elevation state once. An unelevated low-level
             // keyboard hook cannot observe input delivered to a higher-integrity
