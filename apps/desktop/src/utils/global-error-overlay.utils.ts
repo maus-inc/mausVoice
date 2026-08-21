@@ -119,10 +119,12 @@ export const installGlobalErrorOverlay = (): void => {
     "error",
     (event) => {
       if (!shouldPaintFatalWindowError(event)) {
-        console.error(
-          "Ignored post-mount error",
-          event.error ?? event.message,
-        );
+        if (event.error || event.message) {
+          console.error(
+            "Ignored post-mount error",
+            event.error ?? event.message,
+          );
+        }
         return;
       }
       paintError("mausVoice failed to start", describeWindowError(event));

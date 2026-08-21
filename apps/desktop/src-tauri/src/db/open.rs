@@ -2,7 +2,7 @@ use std::path::{Path, PathBuf};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use sha2::{Digest, Sha384};
-use sqlx::sqlite::SqlitePoolOptions;
+use sqlx::sqlite::{SqliteConnectOptions, SqlitePoolOptions};
 use sqlx::{Row, SqlitePool};
 
 use super::migrations;
@@ -37,11 +37,11 @@ pub fn is_integrity_failure(message: &str) -> bool {
         || normalized.contains("not a database")
 }
 
-fn sqlite_url(path: &Path) -> Result<String, String> {
-    let path_str = path
-        .to_str()
-        .ok_or_else(|| "Invalid database path".to_string())?;
-    Ok(format!("sqlite:{path_str}?mode=rwc"))
+fn sqlite_connect_options(path: &Path) -> SqliteConnectOptions {
+    SqliteConnectOptions::new()
+        .filename(path)
+        .create_if_missing(true)
+        .foreign_keys(true)
 }
 
 pub fn quarantine_sqlite_file(path: &Path) -> std::io::Result<PathBuf> {
@@ -72,10 +72,9 @@ async fn connect_pool(path: &Path) -> Result<SqlitePool, OpenError> {
     if let Some(parent) = path.parent() {
         std::fs::create_dir_all(parent).map_err(|err| OpenError::Other(err.to_string()))?;
     }
-    let url = sqlite_url(path).map_err(OpenError::Other)?;
     SqlitePoolOptions::new()
         .max_connections(5)
-        .connect(&url)
+        .connect_with(sqlite_connect_options(path))
         .await
         .map_err(|err| {
             let message = err.to_string();
@@ -151,6 +150,7 @@ async fn apply_migrations(pool: &SqlitePool) -> Result<(), OpenError> {
             .execute(&mut *transaction)
             .await
         {
+            let _ = transaction.rollback().await;
             return Err(OpenError::Other(format!(
                 "migration {version} failed: {err}"
             )));
@@ -252,13 +252,20 @@ mod tests {
     }
 
     #[test]
-    fn checksum_is_stable_sha384() {
-        let a = migration_checksum("SELECT 1;");
-        let b = migration_checksum("SELECT 1;");
-        let c = migration_checksum("SELECT 2;");
-        assert_eq!(a, b);
-        assert_ne!(a, c);
-        assert_eq!(a.len(), 48);
+    fn checksum_matches_sqlx_sha384_vector() {
+        // Independent SHA-384 of b"SELECT 1;" (same digest sqlx stores).
+        let expected = hex_literal(
+            "26e71cc37450b183fb5bb72ec4f644ed27de1b55fad3d4d6cfb0ca0d71f42ca990911d74649814105a190325e15d2092",
+        );
+        assert_eq!(migration_checksum("SELECT 1;"), expected);
+        assert_ne!(migration_checksum("SELECT 2;"), expected);
+    }
+
+    fn hex_literal(hex: &str) -> Vec<u8> {
+        (0..hex.len())
+            .step_by(2)
+            .map(|i| u8::from_str_radix(&hex[i..i + 2], 16).unwrap())
+            .collect()
     }
 
     #[test]
