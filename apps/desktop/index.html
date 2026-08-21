@@ -132,7 +132,7 @@
             target instanceof HTMLLinkElement &&
             ((target.relList && target.relList.contains("stylesheet")) ||
               (typeof target.rel === "string" &&
-                target.rel.split(/\s+/).indexOf("stylesheet") !== -1));
+                target.rel.split(/\s+/).includes("stylesheet")));
           var isAsset =
             target instanceof HTMLScriptElement || isStylesheet;
           if (isAsset) {
