@@ -1,4 +1,3 @@
-use sqlx::sqlite::SqlitePoolOptions;
 use std::sync::Mutex;
 use std::time::{Duration, Instant};
 use tauri::{Manager, PhysicalPosition, RunEvent, Window, WindowEvent};
@@ -128,11 +127,11 @@ pub fn build() -> tauri::Builder<tauri::Wry> {
         ))
         .plugin(tauri_plugin_process::init())
         .plugin(tauri_plugin_dialog::init())
-        .plugin(
-            tauri_plugin_sql::Builder::new()
-                .add_migrations(crate::db::DB_CONNECTION, crate::db::migrations())
-                .build(),
-        )
+        // Migrations are applied in setup via `open_app_database`. Registering
+        // them on this plugin aborts process startup on a checksum mismatch or
+        // a half-applied migration, which is exactly when the user still needs
+        // a window.
+        .plugin(tauri_plugin_sql::Builder::new().build())
         .plugin(updater_builder.build())
         .plugin(tauri_plugin_os::init())
         .plugin(tauri_plugin_opener::init())
@@ -192,8 +191,9 @@ pub fn build() -> tauri::Builder<tauri::Wry> {
 
             // Preserve GGML files from the old app-data/models location before
             // the desktop sidecars start using app-data/transcription-models.
-            crate::system::paths::migrate_legacy_models(app.handle())
-                .map_err(|err| -> Box<dyn std::error::Error> { Box::new(err) })?;
+            if let Err(err) = crate::system::paths::migrate_legacy_models(app.handle()) {
+                log::error!("Failed to migrate legacy transcription models: {err}");
+            }
 
             // Record the Windows elevation state once. An unelevated low-level
             // keyboard hook cannot observe input delivered to a higher-integrity
@@ -208,19 +208,16 @@ pub fn build() -> tauri::Builder<tauri::Wry> {
             // Write startup diagnostics for debugging
             crate::system::diagnostics::write_startup_diagnostics(app.handle());
 
-            let db_url = {
+            let db_path = {
                 let handle = app.handle();
-                crate::system::paths::database_url(handle)
+                crate::system::paths::database_path(handle)
                     .map_err(|err| -> Box<dyn std::error::Error> { Box::new(err) })?
             };
 
-            let pool = tauri::async_runtime::block_on(async {
-                SqlitePoolOptions::new()
-                    .max_connections(5)
-                    .connect(&db_url)
-                    .await
-            })
-            .map_err(|err| -> Box<dyn std::error::Error> { Box::new(err) })?;
+            let pool = tauri::async_runtime::block_on(crate::db::open::open_app_database(
+                &db_path,
+            ))
+            .map_err(|err| -> Box<dyn std::error::Error> { err.into() })?;
 
             app.manage(crate::state::OptionKeyDatabase::new(pool.clone()));
             app.manage(crate::state::OverlayState::new());

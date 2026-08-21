@@ -16,6 +16,10 @@ class HTMLScriptElement {
 
 class HTMLLinkElement {
   href = "";
+  rel = "StyleSheet";
+  relList = {
+    contains: (_token: string): boolean => false,
+  };
 }
 
 type MockElement = {
@@ -74,7 +78,7 @@ const installEarlyOverlay = (rootChildren: unknown[] = []) => {
         listeners[type] ??= [];
         listeners[type].push(handler);
       },
-    },
+    } as Record<string, unknown>,
   });
 
   return { nodes, listeners };
@@ -130,6 +134,17 @@ describe("early error overlay", () => {
     const overlayAfterLink = nodes.get("maus-global-error-overlay");
     expect(overlayAfterLink?.textContent).toContain("Failed to load resource");
     expect(overlayAfterLink?.textContent).toContain(link.href);
+
+    const icon = new HTMLLinkElement();
+    icon.href = "/app-icon.png";
+    icon.rel = "icon";
+    icon.relList = { contains: (token: string) => token === "icon" };
+    listeners.error[0]({
+      target: icon,
+    });
+    expect(nodes.get("maus-global-error-overlay")?.textContent).not.toContain(
+      icon.href,
+    );
   });
 
   it("paints unhandled promise rejections instead of leaving a blank window", () => {
@@ -146,6 +161,18 @@ describe("early error overlay", () => {
     expect(overlay?.textContent).toContain(
       "async init rejected before React mounted",
     );
+  });
+
+  it("does not paint a fatal runtime-error overlay after React has mounted", () => {
+    const { nodes, listeners } = installEarlyOverlay([{}]);
+
+    listeners.error[0]({
+      error: new Error("post-mount runtime"),
+      message: "post-mount runtime",
+      target: {},
+    });
+
+    expect(nodes.has("maus-global-error-overlay")).toBe(false);
   });
 
   it("does not paint a fatal rejection overlay after React has mounted", () => {
