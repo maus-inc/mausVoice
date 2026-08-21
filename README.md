@@ -49,14 +49,35 @@ Grab your free [Groq↗](https://console.groq.com/keys) and [Deepgram↗](https:
 
 ## Features
 
-|                          |                                                                                                                                      |
-| ------------------------ | ------------------------------------------------------------------------------------------------------------------------------------ |
-| **Live transcription**   | The streaming `nova-3` transcript appears while you're still speaking, so it's ready before you release the hotkey.                  |
-| **Fully local option**   | Run Whisper locally (CPU or GPU) with zero network calls for transcription.                                                          |
-| **AI cleanup**           | Removes filler words and fixes punctuation. Choose a writing style and the result reads like you wrote it.                           |
-| **Your keys, encrypted** | Deepgram and Groq keys live on your machine, encrypted with XChaCha20-Poly1305. Rotate them any time in Settings without rebuilding. |
-| **Personal dictionary**  | Add your names, jargon, and shorthand once and mausVoice remembers them.                                                             |
-| **Works in every app**   | The overlay captures audio globally and pastes the result into whatever has focus.                                                   |
+![mausVoice global dictation flow from hotkey to focused field](docs/assets/features/dictate-anywhere.png)
+
+### Your voice, in the field with focus
+
+Hold the global shortcut, speak, and release. The native pill follows capture while mausVoice transcribes and delivers the result to the field that has focus. Use clipboard paste for speed, simulated typing for stubborn apps, or committed-segment real-time output with Verbatim and a compatible streaming provider.
+
+![mausVoice transcription settings with local and connected provider paths](docs/assets/features/choose-your-engine.png)
+
+### Local or live—pick the transcription path
+
+Keep speech on-device with downloadable Whisper and NeMo/Sherpa-ONNX models on CPU or GPU, or connect your own provider for API and streaming transcription. Bring your own credentials; mausVoice encrypts the full secrets at rest in local SQLite with XChaCha20-Poly1305.
+
+![mausVoice writing styles mapped to apps with a raw and final transcript preview](docs/assets/features/writing-styles.png)
+
+### Style per app, or choose it yourself
+
+Optional post-processing applies a writing style after deterministic replacements. Select styles manually or map a default to each app—concise in Mail, conversational in chat, Verbatim in a terminal. Turn processing off and the unrewritten transcript remains the output.
+
+![mausVoice dictionary rules and inspectable transcription history](docs/assets/features/dictionary-history.png)
+
+### Teach the words. Trace the pipeline.
+
+Glossary hints help supported transcription paths recognize names, acronyms, and jargon. Replacement rules make exact corrections or expand spoken snippets before an optional rewrite. History separates raw, replaced, and final text, with available audio playback, re-transcription, and provider, model, warning, and timing details.
+
+![mausVoice Assistant requesting approval before pasting into the focused field](docs/assets/features/assistant-approval.png)
+
+### An assistant that asks before it acts
+
+Experimental Assistant mode sends a separate voice shortcut into a conversation instead of ordinary dictation. It can inspect focused context and request a paste, but permissioned tools stop for **Deny**, **Allow**, or **Always allow**. Power Mode additionally exposes shell commands and should stay off unless a task genuinely needs them.
 
 <p align="center">
   <a href="https://github.com/maus-inc/mausVoice/releases">
