@@ -141,7 +141,7 @@ export const ChatMessageBubble = ({ id }: ChatMessageBubbleProps) => {
                 },
               }}
             >
-              <FormattedMessage id="thinking" defaultMessage="Thinking…" />
+              <FormattedMessage defaultMessage="Thinking…" />
             </Typography>
           ) : (
             <Markdown remarkPlugins={[remarkGfm]}>{message.content}</Markdown>

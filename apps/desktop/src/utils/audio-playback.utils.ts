@@ -143,10 +143,18 @@ export const seekPlayback = (progress: number): boolean => {
 
   try {
     playback.source.onended = null;
+  } catch {
+    // no-op
+  }
+  try {
     playback.source.stop();
-    playback.source.disconnect();
   } catch {
     // source already stopped
+  }
+  try {
+    playback.source.disconnect();
+  } catch {
+    // already disconnected
   }
 
   startSourceAt(playback, offsetSeconds);
