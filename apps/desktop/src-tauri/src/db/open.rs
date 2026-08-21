@@ -129,7 +129,7 @@ async fn apply_migrations(pool: &SqlitePool) -> Result<(), OpenError> {
         if !matches!(migration.kind, tauri_plugin_sql::MigrationKind::Up) {
             continue;
         }
-        let version = migration.version as i64;
+        let version = migration.version;
         let expected = migration_checksum(migration.sql);
         if let Some(stored) = applied_checksums.get(&version) {
             if stored.as_slice() != expected.as_slice() {
@@ -150,7 +150,11 @@ async fn apply_migrations(pool: &SqlitePool) -> Result<(), OpenError> {
             .execute(&mut *transaction)
             .await
         {
-            let _ = transaction.rollback().await;
+            if let Err(rollback_err) = transaction.rollback().await {
+                return Err(OpenError::Other(format!(
+                    "migration {version} failed: {err}; rollback failed: {rollback_err}"
+                )));
+            }
             return Err(OpenError::Other(format!(
                 "migration {version} failed: {err}"
             )));
