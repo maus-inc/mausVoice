@@ -63,6 +63,8 @@ describe("global error overlay", () => {
     }
     class HTMLLinkElement {
       href = "asset://localhost/assets/styles.css";
+      rel = "stylesheet";
+      relList = { contains: (token: string) => token === "stylesheet" };
     }
     vi.stubGlobal("HTMLScriptElement", HTMLScriptElement);
     vi.stubGlobal("HTMLLinkElement", HTMLLinkElement);
@@ -78,6 +80,14 @@ describe("global error overlay", () => {
         target: new HTMLLinkElement(),
       } as unknown as ErrorEvent),
     ).toBe(true);
+    const icon = new HTMLLinkElement();
+    icon.rel = "icon";
+    icon.relList = { contains: (token: string) => token === "icon" };
+    expect(
+      shouldPaintFatalWindowError({
+        target: icon,
+      } as unknown as ErrorEvent),
+    ).toBe(false);
   });
 
   it("ignores image load failures and post-mount runtime errors", async () => {

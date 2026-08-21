@@ -37,32 +37,49 @@ pub fn is_integrity_failure(message: &str) -> bool {
         || normalized.contains("not a database")
 }
 
+fn classify_sqlx(context: &str, err: impl std::fmt::Display) -> OpenError {
+    let detail = err.to_string();
+    let message = format!("{context}: {detail}");
+    if is_integrity_failure(&detail) || is_integrity_failure(&message) {
+        OpenError::Integrity(message)
+    } else {
+        OpenError::Other(message)
+    }
+}
+
 fn sqlite_connect_options(path: &Path) -> SqliteConnectOptions {
     SqliteConnectOptions::new()
-        .filename(path)
+        .filename(path.to_path_buf())
         .create_if_missing(true)
         .foreign_keys(true)
 }
 
 pub fn quarantine_sqlite_file(path: &Path) -> std::io::Result<PathBuf> {
-    let nanos = SystemTime::now()
+    let parent = path.parent().unwrap_or(path);
+    let mut stamp = SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .map(|d| d.as_nanos())
         .unwrap_or(0);
-    let dest = path.with_file_name(format!("mausvoice.broken-{nanos}.db"));
+    let dir = loop {
+        let candidate = parent.join(format!("mausvoice.broken-{stamp}"));
+        match std::fs::create_dir(&candidate) {
+            Ok(()) => break candidate,
+            Err(err) if err.kind() == std::io::ErrorKind::AlreadyExists => {
+                stamp = stamp.saturating_add(1);
+            }
+            Err(err) => return Err(err),
+        }
+    };
+    let dest = dir.join("mausvoice.db");
     if path.exists() {
         std::fs::rename(path, &dest)?;
     }
     if let Some(name) = path.file_name().and_then(|n| n.to_str()) {
         for suffix in ["-wal", "-shm"] {
             let side = path.with_file_name(format!("{name}{suffix}"));
-            if !side.exists() {
-                continue;
+            if side.exists() {
+                std::fs::rename(&side, dir.join(format!("mausvoice.db{suffix}")))?;
             }
-            let Some(dest_name) = dest.file_name().and_then(|n| n.to_str()) else {
-                continue;
-            };
-            std::fs::rename(&side, dest.with_file_name(format!("{dest_name}{suffix}")))?;
         }
     }
     Ok(dest)
@@ -76,14 +93,7 @@ async fn connect_pool(path: &Path) -> Result<SqlitePool, OpenError> {
         .max_connections(5)
         .connect_with(sqlite_connect_options(path))
         .await
-        .map_err(|err| {
-            let message = err.to_string();
-            if is_integrity_failure(&message) {
-                OpenError::Integrity(message)
-            } else {
-                OpenError::Other(message)
-            }
-        })
+        .map_err(|err| classify_sqlx("connect", err))
 }
 
 async fn apply_migrations(pool: &SqlitePool) -> Result<(), OpenError> {
@@ -99,14 +109,14 @@ async fn apply_migrations(pool: &SqlitePool) -> Result<(), OpenError> {
     )
     .execute(pool)
     .await
-    .map_err(|err| OpenError::Other(err.to_string()))?;
+    .map_err(|err| classify_sqlx("create _sqlx_migrations", err))?;
 
     let failed: Option<i64> = sqlx::query_scalar(
         "SELECT version FROM _sqlx_migrations WHERE success = false ORDER BY version LIMIT 1",
     )
     .fetch_optional(pool)
     .await
-    .map_err(|err| OpenError::Other(err.to_string()))?;
+    .map_err(|err| classify_sqlx("read failed migrations", err))?;
     if let Some(version) = failed {
         return Err(OpenError::Integrity(format!(
             "migration {version} previously failed; database needs recovery"
@@ -116,13 +126,26 @@ async fn apply_migrations(pool: &SqlitePool) -> Result<(), OpenError> {
     let applied = sqlx::query("SELECT version, checksum FROM _sqlx_migrations ORDER BY version")
         .fetch_all(pool)
         .await
-        .map_err(|err| OpenError::Other(err.to_string()))?;
+        .map_err(|err| classify_sqlx("read applied migrations", err))?;
 
     let mut applied_checksums = std::collections::HashMap::new();
     for row in applied {
         let version: i64 = row.get("version");
         let checksum: Vec<u8> = row.get("checksum");
         applied_checksums.insert(version, checksum);
+    }
+
+    let configured: std::collections::HashSet<i64> = migrations()
+        .into_iter()
+        .filter(|migration| matches!(migration.kind, tauri_plugin_sql::MigrationKind::Up))
+        .map(|migration| migration.version)
+        .collect();
+    for version in applied_checksums.keys() {
+        if !configured.contains(version) {
+            return Err(OpenError::Integrity(format!(
+                "migration {version} is recorded but is not in the current migration set"
+            )));
+        }
     }
 
     for migration in migrations() {
@@ -145,19 +168,19 @@ async fn apply_migrations(pool: &SqlitePool) -> Result<(), OpenError> {
         let mut transaction = pool
             .begin()
             .await
-            .map_err(|err| OpenError::Other(err.to_string()))?;
+            .map_err(|err| classify_sqlx("begin migration transaction", err))?;
         if let Err(err) = sqlx::raw_sql(migration.sql)
             .execute(&mut *transaction)
             .await
         {
+            let classified = classify_sqlx(&format!("migration {version}"), err);
             if let Err(rollback_err) = transaction.rollback().await {
                 return Err(OpenError::Other(format!(
-                    "migration {version} failed: {err}; rollback failed: {rollback_err}"
+                    "{}; rollback failed: {rollback_err}",
+                    classified.message()
                 )));
             }
-            return Err(OpenError::Other(format!(
-                "migration {version} failed: {err}"
-            )));
+            return Err(classified);
         }
         let execution_time = i64::try_from(started.elapsed().as_nanos()).unwrap_or(i64::MAX);
         sqlx::query(
@@ -171,11 +194,11 @@ async fn apply_migrations(pool: &SqlitePool) -> Result<(), OpenError> {
         .bind(execution_time)
         .execute(&mut *transaction)
         .await
-        .map_err(|err| OpenError::Other(err.to_string()))?;
+        .map_err(|err| classify_sqlx("record migration", err))?;
         transaction
             .commit()
             .await
-            .map_err(|err| OpenError::Other(err.to_string()))?;
+            .map_err(|err| classify_sqlx("commit migration", err))?;
     }
 
     Ok(())
@@ -295,13 +318,44 @@ mod tests {
         assert!(dest.exists());
         assert_eq!(std::fs::read(&dest).unwrap(), b"broken");
         assert_eq!(
-            std::fs::read(dest.with_file_name(format!(
-                "{}-wal",
-                dest.file_name().unwrap().to_str().unwrap()
-            )))
-            .unwrap(),
+            std::fs::read(dest.with_file_name("mausvoice.db-wal")).unwrap(),
             b"wal"
         );
+        assert!(dest
+            .parent()
+            .unwrap()
+            .file_name()
+            .unwrap()
+            .to_string_lossy()
+            .starts_with("mausvoice.broken-"));
+    }
+
+    #[tokio::test]
+    async fn unknown_recorded_migration_version_is_an_integrity_failure() {
+        let temp = TempDb::new();
+        let path = &temp.path;
+        let pool = try_open(path).await.expect("initial migrate");
+        sqlx::query(
+            "INSERT INTO _sqlx_migrations
+             (version, description, success, checksum, execution_time)
+             VALUES (9999, 'ghost', true, x'deadbeef', 0)",
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
+        pool.close().await;
+
+        let recovered = open_app_database(path)
+            .await
+            .expect("unknown history should quarantine and reopen");
+        let ghost: Option<i64> = sqlx::query_scalar(
+            "SELECT version FROM _sqlx_migrations WHERE version = 9999",
+        )
+        .fetch_optional(&recovered)
+        .await
+        .unwrap();
+        assert!(ghost.is_none());
+        recovered.close().await;
     }
 
     #[tokio::test]

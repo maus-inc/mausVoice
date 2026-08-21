@@ -128,9 +128,13 @@
         // runtime errors must not cover a working UI.
         window.__mausVoiceEarlyError = function (event) {
           var target = event.target;
+          var isStylesheet =
+            target instanceof HTMLLinkElement &&
+            ((target.relList && target.relList.contains("stylesheet")) ||
+              (typeof target.rel === "string" &&
+                target.rel.split(/\s+/).indexOf("stylesheet") !== -1));
           var isAsset =
-            target instanceof HTMLScriptElement ||
-            target instanceof HTMLLinkElement;
+            target instanceof HTMLScriptElement || isStylesheet;
           if (isAsset) {
             var url =
               target instanceof HTMLScriptElement ? target.src : target.href;

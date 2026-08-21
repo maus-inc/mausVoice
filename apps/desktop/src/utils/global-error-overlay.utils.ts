@@ -52,10 +52,14 @@ const isFatalResourceTarget = (target: EventTarget | null): boolean => {
     typeof HTMLScriptElement === "undefined" ? undefined : HTMLScriptElement;
   const linkCtor =
     typeof HTMLLinkElement === "undefined" ? undefined : HTMLLinkElement;
-  return (
-    (scriptCtor != null && target instanceof scriptCtor) ||
-    (linkCtor != null && target instanceof linkCtor)
-  );
+  if (scriptCtor != null && target instanceof scriptCtor) {
+    return true;
+  }
+  if (linkCtor != null && target instanceof linkCtor) {
+    const link = target as HTMLLinkElement;
+    return link.relList?.contains("stylesheet") === true;
+  }
+  return false;
 };
 
 export const shouldPaintFatalWindowError = (event: ErrorEvent): boolean => {
@@ -76,11 +80,12 @@ export const shouldPaintFatalRejection = (): boolean => !appHasMounted();
 // failing URL from there to give a useful message.
 const describeWindowError = (event: ErrorEvent): string => {
   const target = event.target as EventTarget | null;
-  if (
-    target instanceof HTMLScriptElement ||
-    target instanceof HTMLLinkElement
-  ) {
-    const url = target instanceof HTMLScriptElement ? target.src : target.href;
+  if (isFatalResourceTarget(target)) {
+    const url =
+      typeof HTMLScriptElement !== "undefined" &&
+      target instanceof HTMLScriptElement
+        ? target.src
+        : (target as HTMLLinkElement).href;
     return `Failed to load resource: ${url || "(unknown URL)"}\n\nThe frontend asset could not be fetched. Under Tauri's asset: protocol this is usually a CORS or path issue — check the built index.html asset URLs.`;
   }
   const message = event.message ?? "";

@@ -16,6 +16,8 @@ class HTMLScriptElement {
 
 class HTMLLinkElement {
   href = "";
+  rel = "stylesheet";
+  relList = { contains: (token: string) => token === "stylesheet" };
 }
 
 type MockElement = {
@@ -130,6 +132,17 @@ describe("early error overlay", () => {
     const overlayAfterLink = nodes.get("maus-global-error-overlay");
     expect(overlayAfterLink?.textContent).toContain("Failed to load resource");
     expect(overlayAfterLink?.textContent).toContain(link.href);
+
+    const icon = new HTMLLinkElement();
+    icon.href = "/app-icon.png";
+    icon.rel = "icon";
+    icon.relList = { contains: (token: string) => token === "icon" };
+    listeners.error[0]({
+      target: icon,
+    });
+    expect(nodes.get("maus-global-error-overlay")?.textContent).not.toContain(
+      icon.href,
+    );
   });
 
   it("paints unhandled promise rejections instead of leaving a blank window", () => {
