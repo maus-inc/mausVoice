@@ -1,156 +1,215 @@
+<a id="readme-top"></a>
+
 <div align="center">
+  <img src="branding/mausvoice-logo-256.png" alt="mausVoice app icon" width="92" />
 
-<img src="branding/mausvoice-logo-256.png" alt="mausVoice logo" width="88" />
+  <h1>mausVoice</h1>
 
-# mausVoice <a href="https://github.com/maus-inc/mausVoice/actions/workflows/test-desktop-unit.yml"><img src="https://img.shields.io/github/actions/workflow/status/maus-inc/mausVoice/test-desktop-unit.yml?branch=main&label=CI&style=flat&color=000000&labelColor=000000" alt="CI" /></a> <a href="https://github.com/maus-inc/mausVoice/releases/latest"><img src="https://img.shields.io/github/v/release/maus-inc/mausVoice?style=flat&labelColor=000000&color=000000" alt="Latest stable release" /></a>
+  <p>
+    <strong>Private, fast voice typing for your own machine.</strong><br />
+    Dictate into any app, choose local or cloud transcription, and keep control of the pipeline.
+  </p>
 
-Grab your free [Groq↗](https://console.groq.com/keys) and [Deepgram↗](https://console.deepgram.com/) API keys.
+  <p>
+    <a href="https://github.com/maus-inc/mausVoice/actions/workflows/test-desktop-unit.yml"><img src="https://github.com/maus-inc/mausVoice/actions/workflows/test-desktop-unit.yml/badge.svg?branch=main" alt="CI status" /></a>
+    <a href="https://github.com/maus-inc/mausVoice/releases/latest"><img src="https://img.shields.io/github/v/release/maus-inc/mausVoice?style=flat-square&amp;label=release&amp;labelColor=111111&amp;color=2d2d2d" alt="Latest release" /></a>
+  </p>
 
-<br>
-
-**Voice typing for your own machine. Dictate into any app and clean it up with AI. No account or subscription needed, and the Rust core keeps CPU and memory usage low.**
-
-[![license: AGPL-3.0](docs/assets/badges/license.svg)](LICENCE)
-[![macOS builds available](docs/assets/badges/macos.svg)](https://github.com/maus-inc/mausVoice/releases)
-[![Windows builds available](docs/assets/badges/windows.svg)](https://github.com/maus-inc/mausVoice/releases)
-[![Linux builds available](docs/assets/badges/linux.svg)](https://github.com/maus-inc/mausVoice/releases)
-
+  <p>
+    <a href="https://github.com/maus-inc/mausVoice/releases/latest"><strong>Download mausVoice</strong></a>
+    &nbsp;·&nbsp;
+    <a href="https://maus-inc.github.io/mausVoice/docs/">Documentation</a>
+    &nbsp;·&nbsp;
+    <a href="#build-from-source">Build from source</a>
+  </p>
 </div>
 
-## Documentation
-
-**New to mausVoice, tuning a provider, or building from source? Visit the complete [mausVoice Documentation](https://maus-inc.github.io/mausVoice/docs/).** It covers platform setup, daily dictation, every configuration area, provider behavior, privacy and local data, troubleshooting, and the repository architecture.
+<br />
 
 <p align="center">
-  <a href="https://maus-inc.github.io/mausVoice/docs/"> 
-  <img src="docs/assets/readthedocsbtn.png" alt="mausVoice readthedocs button" width="320" />
-  </a>
+  <img src="docs/assets/mausvoice-banner.png" alt="mausVoice — desktop dictation, engineered for privacy" width="100%" />
 </p>
 
-<p align="center">
-  <img src="docs/assets/home-page.png" alt="mausVoice home" width="750" />
-</p>
-
-**mausVoice** is a desktop app that turns your voice into text anywhere you can type. Hold a global shortcut, speak, and release. mausVoice transcribes locally or through your chosen provider, optionally applies an **LLM** writing style, and sends the result to the field in focus.
+mausVoice is a cross-platform desktop dictation app built with Rust and [Tauri](https://tauri.app/). There is no required account, subscription, or managed backend. Run transcription locally, connect your own provider keys, and decide whether post-processing should happen at all.
 
 ## How it works
 
-1. Press your hotkey and speak. A small overlay shows you're recording.
-2. Audio is captured natively and transcribed as it happens, with streaming Deepgram (`nova-3`), or with fully local Whisper if you'd rather keep every byte on-device.
-3. An LLM cleans up the transcript. It removes filler, fixes punctuation and formatting, and applies your chosen writing style.
-4. The finished text lands in whatever app you're focused on.
-<br>
+1. **Hold** your configured push-to-talk shortcut and speak.
+2. **Transcribe** locally or through a provider you choose.
+3. **Shape** the result with an optional writing style, dictionary, or LLM pass.
+4. **Deliver** the text by clipboard paste, direct typing, or copy-only mode.
 
-<br>
-<br>
+> [!TIP]
+> Start fully local, or connect your own [Deepgram](https://console.deepgram.com/signup) and [Groq](https://console.groq.com/keys) keys for hosted transcription and post-processing.
+
 <p align="center">
-  <img src="docs/assets/animated-pill.gif" alt="mausVoice pill in action" width="200" />
+  <img src="docs/assets/home-page.png" alt="mausVoice desktop application home screen" width="900" />
 </p>
 
 ## Features
 
-![mausVoice global dictation flow from hotkey to focused field](docs/assets/features/dictate-anywhere.png)
-
-### Your voice, in the field with focus
-
-Hold the global shortcut, speak, and release. The native pill follows capture while mausVoice transcribes and delivers the result to the field that has focus. Use clipboard paste for speed, simulated typing for stubborn apps, or committed-segment real-time output with Verbatim and a compatible streaming provider.
-
-![mausVoice transcription settings with local and connected provider paths](docs/assets/features/choose-your-engine.png)
-
-### Local or live—pick the transcription path
-
-Keep speech on-device with downloadable Whisper and NeMo/Sherpa-ONNX models on CPU or GPU, or connect your own provider for API and streaming transcription. Bring your own credentials; mausVoice encrypts the full secrets at rest in local SQLite with XChaCha20-Poly1305.
-
-![mausVoice writing styles mapped to apps with a raw and final transcript preview](docs/assets/features/writing-styles.png)
-
-### Style per app, or choose it yourself
-
-Optional post-processing applies a writing style after deterministic replacements. Select styles manually or map a default to each app—concise in Mail, conversational in chat, Verbatim in a terminal. Turn processing off and the unrewritten transcript remains the output.
-
-![mausVoice dictionary rules and inspectable transcription history](docs/assets/features/dictionary-history.png)
-
-### Teach the words. Trace the pipeline.
-
-Glossary hints help supported transcription paths recognize names, acronyms, and jargon. Replacement rules make exact corrections or expand spoken snippets before an optional rewrite. History separates raw, replaced, and final text, with available audio playback, re-transcription, and provider, model, warning, and timing details.
-
-![mausVoice Assistant requesting approval before pasting into the focused field](docs/assets/features/assistant-approval.png)
-
-### An assistant that asks before it acts
-
-Experimental Assistant mode sends a separate voice shortcut into a conversation instead of ordinary dictation. It can inspect focused context and request a paste, but permissioned tools stop for **Deny**, **Allow**, or **Always allow**. Power Mode additionally exposes shell commands and should stay off unless a task genuinely needs them.
+Every stage is configurable: capture globally, select the transcription path that fits the moment, then control exactly how the finished text reaches the focused app.
 
 <p align="center">
-  <a href="https://github.com/maus-inc/mausVoice/releases">
-    <img src="docs/assets/badges/windows.svg" alt="Download mausVoice for Windows" height="40" />
-  </a>
-  <a href="https://github.com/maus-inc/mausVoice/releases">
-    <img src="docs/assets/badges/macos.svg" alt="Download mausVoice for macOS" height="40" />
-  </a>
-  <a href="https://github.com/maus-inc/mausVoice/releases">
-    <img src="docs/assets/badges/linux.svg" alt="Download mausVoice for Linux" height="40" />
-  </a>
+  <a href="#global-dictation">Global dictation</a>
+  &nbsp;·&nbsp;
+  <a href="#transcription-engines">Transcription engines</a>
+  &nbsp;·&nbsp;
+  <a href="#writing-styles">Writing styles</a>
+  &nbsp;·&nbsp;
+  <a href="#dictionary-and-history">Dictionary &amp; history</a>
+  &nbsp;·&nbsp;
+  <a href="#assistant-approval">Assistant</a>
 </p>
 
-Download links open the releases page, where you'll find the latest `.exe` (Windows), `.dmg` (macOS), and `.AppImage`/`.deb` (Linux) for your platform.
+<br />
 
-<br>
+<a id="global-dictation"></a>
+
+<p align="center">
+  <img src="docs/assets/features/dictate-anywhere.png" alt="Global dictation with live listening waveform" width="100%" />
+</p>
+
+<p align="center"><sub><strong>01 / GLOBAL DICTATION</strong></sub></p>
+<h3 align="center">Your voice, in the field with focus</h3>
+
+<p align="center">
+  Hold a global push-to-talk shortcut and speak into the app you are already using.<br />
+  mausVoice can paste, type directly, or leave the result on your clipboard.
+</p>
+
+<br />
+
+<a id="transcription-engines"></a>
+
+<p align="center">
+  <img src="docs/assets/features/choose-your-engine.png" alt="Local and API transcription engine choices" width="100%" />
+</p>
+
+<p align="center"><sub><strong>02 / TRANSCRIPTION ENGINES</strong></sub></p>
+<h3 align="center">Local or hosted—pick the transcription path.</h3>
+
+<p align="center">
+  Run Whisper, Parakeet, or Canary locally on CPU or a detected Vulkan GPU, or choose a hosted provider.<br />
+  Bring your own credentials; local recognition stays on-device once its model is downloaded.
+</p>
+
+<br />
+
+<a id="writing-styles"></a>
+
+<p align="center">
+  <img src="docs/assets/features/writing-styles.png" alt="Writing styles for mail, chat, and terminal text" width="100%" />
+</p>
+
+<p align="center"><sub><strong>03 / WRITING STYLES</strong></sub></p>
+<h3 align="center">Say it once. Shape it for the destination.</h3>
+
+<p align="center">
+  Create reusable instructions for email, chat, terminal work, or any voice you need.<br />
+  Choose the style before recording, or switch post-processing off for a literal transcript.
+</p>
+
+<br />
+
+<a id="dictionary-and-history"></a>
+
+<p align="center">
+  <img src="docs/assets/features/dictionary-history.png" alt="Dictionary replacement rule and inspectable transcription history" width="100%" />
+</p>
+
+<p align="center"><sub><strong>04 / DICTIONARY &amp; HISTORY</strong></sub></p>
+<h3 align="center">Teach it your vocabulary. Keep the useful trail.</h3>
+
+<p align="center">
+  Add replacement rules for names, acronyms, and phrases that general models miss.<br />
+  Review raw and final text, play retained audio, or retranscribe a saved clip with current settings.
+</p>
+
+<br />
+
+<a id="assistant-approval"></a>
+
+<p align="center">
+  <img src="docs/assets/features/assistant-approval.png" alt="mausVoice Assistant with command approval controls" width="100%" />
+</p>
+
+<p align="center"><sub><strong>05 / ASSISTANT</strong></sub></p>
+<h3 align="center">Ask for action. Approve every command.</h3>
+
+<p align="center">
+  Use voice or text to work with the built-in Assistant and its permissioned tools.<br />
+  Requests pause for Deny, Allow, or Always allow; Power Mode keeps shell access off until enabled.
+</p>
+
+<br />
 
 <div align="center">
-  <img src="docs/assets/mausvoice-banner.png" alt="mausVoice" width="840" />
+  <h2>Use your voice anywhere you can type.</h2>
+  <p>Download the latest desktop build. No account required.</p>
+  <p>
+    <a href="https://github.com/maus-inc/mausVoice/releases/latest"><img src="docs/assets/badges/macos.svg" alt="Download for macOS" height="46" /></a>
+    <a href="https://github.com/maus-inc/mausVoice/releases/latest"><img src="docs/assets/badges/windows.svg" alt="Download for Windows" height="46" /></a>
+    <a href="https://github.com/maus-inc/mausVoice/releases/latest"><img src="docs/assets/badges/linux.svg" alt="Download for Linux" height="46" /></a>
+  </p>
+  <p><a href="https://github.com/maus-inc/mausVoice/releases/latest"><strong>View the latest release →</strong></a></p>
 </div>
 
-<br>
+## Documentation
+
+The [mausVoice documentation](https://maus-inc.github.io/mausVoice/docs/) covers installation, first-run setup, dictation, providers, models, troubleshooting, and development.
+
+<p align="center">
+  <a href="https://maus-inc.github.io/mausVoice/docs/"><img src="docs/assets/readthedocsbtn.png" alt="Read the documentation" width="320" /></a>
+</p>
+
+## Develop
+
+<a id="build-from-source"></a>
 
 <details>
-<summary>Developer's quick start</summary>
+<summary><strong>Build mausVoice from source</strong></summary>
 
-## Quick start
+### Requirements
 
-You'll need macOS, Windows, or Linux, plus Node 20+, pnpm 10, and a Rust toolchain (see the [Tauri prerequisites](https://v2.tauri.app/start/prerequisites/)).
+- Node.js 20 or newer
+- pnpm 10
+- Rust stable toolchain
+- The platform-specific [Tauri prerequisites](https://tauri.app/start/prerequisites/)
+
+### Run the desktop app
 
 ```bash
+git clone https://github.com/maus-inc/mausVoice.git
+cd mausVoice
 pnpm install
-```
-
-Then run the desktop app with the platform-specific command:
-
-```bash
 cd apps/desktop
 pnpm dev:mac        # macOS
 pnpm dev:windows    # Windows
 pnpm dev:linux      # Linux
 ```
 
-> `pnpm dev` alone won't work. Native features need the platform-specific command above.
+Native features require the platform-specific desktop command rather than the root `pnpm dev` command.
 
-On first launch, the onboarding asks for your transcription and cleanup keys. There are no build-time secrets, and the same binary works for the local Whisper path.
+### Useful commands
 
-### API keys & configuration
-
-Two optional keys, both entered in Settings:
-
-- **Deepgram** (streaming transcription): [get one here](https://console.deepgram.com/). If you skip it, mausVoice falls back to local Whisper.
-- **Groq** (LLM text cleanup): [get one here](https://console.groq.com/keys).
-
-Keys are stored encrypted on your machine and can be changed or rotated any time without rebuilding. For a fully offline setup, leave both empty and point at a downloaded Whisper model.
-
-## Build & quality
-
-From the repo root:
+From the repository root:
 
 ```bash
-pnpm run build         # build all workspaces (turborepo)
-pnpm run lint          # lint
-pnpm run check-types   # TypeScript type checking
-pnpm run test          # tests
+pnpm build          # Build all workspace packages
+pnpm lint           # Run workspace linters
+pnpm check-types    # Check TypeScript types
+pnpm test           # Run workspace tests
 ```
 
-All development documentation is [here](https://maus-inc.github.io/mausVoice/docs/development/repository-overview/).
+For repository structure, environment variables, testing strategy, and release details, see the [development documentation](https://maus-inc.github.io/mausVoice/docs/development/repository-overview/).
 
 </details>
 
 ## License
 
-[AGPLv3](LICENCE). Built on [Tauri](https://tauri.app), with the frontend in React and the audio/overlay layer in Rust.
+mausVoice is distributed under the [GNU Affero General Public License v3.0](LICENCE).
 
-**Maintainer:** [Owie Emmanuel](https://github.com/Owie6789)
+Maintained by [Maus](https://github.com/maus-inc).
+
+<p align="right"><a href="#readme-top">Back to top ↑</a></p>
