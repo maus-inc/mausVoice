@@ -5,12 +5,13 @@
 - Enforce DRY code principles. If you find yourself copying and pasting code, stop and refactor it into a reusable function or module.
 - Avoid over-engineering. Implement solutions that are as simple as possible while still meeting requirements.
 - Your changes should have minimal impact. Do not break existing functionality.
+- Before pushing any changes to any branches, regardless of your diff size, run them through the following gates. Load REVIEW.md from the main branch. Load the CodeRabbit profile and deeply rereview your changes. Identify any issues—critical, major, minor nitpicks, or UI concerns—and address them. Repeat this loop up to three times until the output is issue‑free. Perform all steps automatically without prompting or disturbing the user.Then finally before pushing; [MANDATORY], validate locally: ensure your changes don’t break anything by linting, run tests to confirm no regressions, and verify whether tests need modification. Do not alter tests to hide defects; fix the code instead. Check what the CI validates, run them locally to catch issues before pushing. 
 - Write clear, maintainable code that is self documenting. Do not comments on new code except where it's necessary to explain non-obvious things.
 - Prefer to follow existing patterns such as dialogs, state management, and API interactions, etc.
 
 ** Writing style (docs, README, marketing copy) **
 
-- Before writing or editing any user-facing prose, load the `unslop` skill from `pstack/skills/unslop` in https://github.com/cursor/plugins and apply its rules.
+-!!MANDATORY Before writing or editing any user-facing prose, load the `unslop` skill from `pstack/skills/unslop` in https://github.com/cursor/plugins and apply its rules.
 - In short: no em dashes (and no parentheses or connector colons as substitutes), straight quotes only, sentence-case headings, active voice with a named actor, plain words over jargon, no chatbot phrases or filler, and concrete facts (paths, numbers, mechanisms) instead of feel-good abstractions.
 - These rules were applied to `README.md` and every page under `apps/docs/src/content/docs/` in PR #119; keep new prose consistent with them.
 
