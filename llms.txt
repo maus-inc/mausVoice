@@ -11,7 +11,7 @@
 - **Repository:** https://github.com/maus-inc/mausVoice
 - **License:** AGPLv3
 - **Maintainer:** Owie Emmanuel (https://github.com/Owie6789)
-- **Package Manager:** pnpm@10.11.0 (Turborepo monorepo)
+- **Package Manager:** pnpm@10.34.5 (Turborepo monorepo)
 
 ## Quickstart
 
@@ -23,7 +23,7 @@ pnpm dev:windows    # Windows
 pnpm dev:linux      # Linux
 ```
 
-Prerequisites: Node 18+ (`.nvmrc` pins v24 for development), pnpm 10, Rust toolchain (Tauri v2).
+Prerequisites: Node 20+ (`.nvmrc` pins v24 for development), pnpm 10, Rust toolchain (Tauri v2).
 
 ## Architecture
 
@@ -74,8 +74,8 @@ SQLite, the local transcription sidecar, or external AI services
 ## API Keys & Configuration
 
 Two optional keys entered in-app (Settings):
-- **Deepgram** (streaming transcription) — https://console.deepgram.com/
-- **Groq** (LLM text cleanup) — https://console.groq.com/keys
+- **Deepgram** (streaming transcription): https://console.deepgram.com/
+- **Groq** (LLM text cleanup): https://console.groq.com/keys
 
 Keys are encrypted on disk. For fully offline use, leave both empty and use
 local Whisper.

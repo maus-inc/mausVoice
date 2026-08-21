@@ -81,7 +81,7 @@ packages/
   rust_pill_shared/    # shared geometry/ring math for the pills
   shared-fonts/        # Satoshi and TAN Paradiso font assets
   eslint-config/, typescript-config/  # shared tooling configs
-config/, release/, scripts/, docs/
+config/, scripts/, docs/
 ```
 
 The `mobile/` Flutter app, `packages/flutter_video_looper`, the Rust CLI (`cli/`), the hosted `packages/functions`/`packages/pricing`, and the `enterprise/` gateway/admin apps were all removed in earlier work. Linux desktop support is retained (`src-tauri/src/platform/linux`, `packages/rust_gtk_pill`, Linux CI/packaging). The Astro site under `apps/docs/` is the maintained documentation; the files at the repo-root `docs/` are looser notes and historical specs.
