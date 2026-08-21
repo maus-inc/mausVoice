@@ -17,7 +17,9 @@ class HTMLScriptElement {
 class HTMLLinkElement {
   href = "";
   rel = "stylesheet";
-  relList = { contains: (token: string) => token === "stylesheet" };
+  relList = {
+    contains: (token: string): boolean => token === "stylesheet",
+  };
 }
 
 type MockElement = {
