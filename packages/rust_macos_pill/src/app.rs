@@ -18,7 +18,7 @@ use crate::constants::*;
 use crate::draw;
 use crate::gfx::{self, Ctx};
 use crate::input;
-use crate::ipc::{self, InMessage, OutMessage, Phase, ResetStrategy, Visibility};
+use crate::ipc::{self, InMessage, OutMessage, Phase, Rect, ResetStrategy, Visibility};
 
 // ── Safe wrappers around common Cocoa FFI patterns ─────────────────────
 // Issue #4: These reduce the blast radius of unsafe blocks by encapsulating
@@ -53,6 +53,34 @@ unsafe fn screens() -> id {
 /// Returns the visible frame of a screen.
 unsafe fn screen_visible_frame(screen: id) -> NSRect {
     msg_send![screen, visibleFrame]
+}
+
+/// Converts an AppKit (bottom-left origin, y-up) rectangle into the top-left,
+/// y-down coordinate space Tauri uses for window positions. `primary_top` is
+/// the AppKit y of the primary screen's top edge, so windows on screens above
+/// the primary correctly come out with negative y values.
+unsafe fn to_top_down(rect: NSRect, primary_top: f64) -> Rect {
+    Rect {
+        x: rect.origin.x,
+        y: primary_top - (rect.origin.y + rect.size.height),
+        width: rect.size.width,
+        height: rect.size.height,
+    }
+}
+
+/// Reads the pill window's screen rect and the visible frame of the monitor it
+/// lives on, already flipped into Tauri's top-down coordinate space, so the
+/// desktop can anchor the composer next to the real pill.
+unsafe fn pill_geometry(window: id) -> (Rect, Rect) {
+    let frame = window_frame(window);
+    let screen: id = msg_send![window, screen];
+    let primary_screens = screens();
+    let primary: id = msg_send![primary_screens, objectAtIndex: 0usize];
+    let pf: NSRect = msg_send![primary, frame];
+    let primary_top = pf.origin.y + pf.size.height;
+    let rect = to_top_down(frame, primary_top);
+    let monitor = to_top_down(screen_visible_frame(screen), primary_top);
+    (rect, monitor)
 }
 
 use crate::state::{FlameTongue, PillState, Rocket, RocketPhase, Spark, WindowMode};
@@ -458,7 +486,12 @@ fn perform_tick() {
                 InMessage::ResetPosition { strategy } => {
                     ctx.state.has_saved_position.set(false);
                     ctx.state.reset_strategy.set(strategy);
-                    ipc::send(&OutMessage::PositionChanged { has_saved_position: false });
+                    let (rect, monitor) = unsafe { pill_geometry(ctx.window) };
+                    ipc::send(&OutMessage::PositionChanged {
+                        has_saved_position: false,
+                        rect: Some(rect),
+                        monitor: Some(monitor),
+                    });
                 }
                 InMessage::Quit => {
                     ctx.quit.set(true);
@@ -558,7 +591,12 @@ fn end_drag(state: &PillState, window: id) {
         state.saved_x.set(frame.origin.x);
         state.saved_y.set(frame.origin.y);
         state.has_saved_position.set(true);
-        ipc::send(&OutMessage::PositionChanged { has_saved_position: true });
+        let (rect, monitor) = unsafe { pill_geometry(window) };
+        ipc::send(&OutMessage::PositionChanged {
+            has_saved_position: true,
+            rect: Some(rect),
+            monitor: Some(monitor),
+        });
     }
     state.dragging.set(false);
     state.long_press_active.set(false);
@@ -761,6 +799,9 @@ fn tick(state: &PillState, window: id, dt: f64) {
         state.dragging.get(),
     );
     spring_anim(&state.inflate_t, &state.inflate_velocity, inflate_target, DRAG_INFLATE_STIFFNESS, dt);
+
+    let drag_target = if state.dragging.get() || state.long_press_active.get() { 1.0 } else { 0.0 };
+    spring_anim(&state.drag_label_t, &state.drag_label_velocity, drag_target, rust_pill_shared::LABEL_SPRING_STIFFNESS, dt);
 
     tick_ring(state, dt);
 
@@ -1392,6 +1433,8 @@ unsafe fn setup(receiver: Receiver<InMessage>, embedded: bool) {
         first_placement_done: Cell::new(false),
         inflate_t: Cell::new(0.0),
         inflate_velocity: Cell::new(0.0),
+        drag_label_t: Cell::new(0.0),
+        drag_label_velocity: Cell::new(0.0),
         ring_alpha: Cell::new(0.0),
         ring_release_progress: Cell::new(0.0),
         press_elapsed: Cell::new(0.0),

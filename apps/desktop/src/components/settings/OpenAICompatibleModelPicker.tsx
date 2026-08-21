@@ -6,22 +6,27 @@ import {
   TextField,
   Typography,
 } from "@mui/material";
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { FormattedMessage } from "react-intl";
 import { OpenAICompatibleRepo } from "../../repos/ollama.repo";
-import { normalizeOpenAICompatibleBaseUrl } from "../../utils/openai-compatible.utils";
+import { buildOpenAICompatibleUrl } from "../../utils/openai-compatible.utils";
+import { createOpenAICompatibleFetch } from "../../utils/secure-fetch.utils";
 
 type OpenAICompatibleModelPickerProps = {
+  apiKeyId: string;
   baseUrl: string | null;
   apiKey?: string | null;
+  includeV1Path?: boolean | null;
   selectedModel: string | null;
   onModelSelect: (model: string | null) => void;
   disabled?: boolean;
 };
 
 export const OpenAICompatibleModelPicker = ({
+  apiKeyId,
   baseUrl,
   apiKey,
+  includeV1Path,
   selectedModel,
   onModelSelect,
   disabled = false,
@@ -31,46 +36,70 @@ export const OpenAICompatibleModelPicker = ({
   const [isLoading, setIsLoading] = useState(false);
   const [useManualInput, setUseManualInput] = useState(false);
 
-  const effectiveUrl = useMemo(() => {
-    return normalizeOpenAICompatibleBaseUrl(baseUrl);
-  }, [baseUrl]);
+  const effectiveUrl = useMemo(
+    () => buildOpenAICompatibleUrl(baseUrl, includeV1Path),
+    [baseUrl, includeV1Path],
+  );
 
-  const fetchModels = useCallback(async () => {
-    setIsLoading(true);
-    try {
-      const repo = new OpenAICompatibleRepo(effectiveUrl, apiKey || undefined);
-      const available = await repo.checkAvailability();
-      setIsAvailable(available);
+  // Probes re-arm every 3s only while the endpoint is unavailable — once it
+  // answers, polling stops (a 2-call cadence against the native bridge for
+  // an open popover is pointless churn). A config change rebuilds the effect
+  // and drops the old run's completions via the cancellation flag, so a stale
+  // probe can never overwrite fresh state.
+  useEffect(() => {
+    let cancelled = false;
+    let inFlight = false;
+    let timer: ReturnType<typeof setTimeout> | undefined;
 
-      if (available) {
-        const fetchedModels = await repo.getAvailableModels();
-        setModels(fetchedModels);
-        setUseManualInput(false);
-      } else {
+    const run = async () => {
+      if (cancelled || inFlight) return;
+      inFlight = true;
+      setIsLoading(true);
+      try {
+        const repo = new OpenAICompatibleRepo(
+          effectiveUrl,
+          apiKey || undefined,
+          createOpenAICompatibleFetch(apiKeyId),
+        );
+        const available = await repo.checkAvailability();
+        if (cancelled) return;
+
+        setIsAvailable(available);
+        if (available) {
+          const fetchedModels = await repo.getAvailableModels();
+          if (cancelled) return;
+          setModels(fetchedModels);
+          setUseManualInput(false);
+          // Endpoint answered: stop polling until the next config change.
+          return;
+        }
         setModels([]);
         setUseManualInput(true);
+        // Endpoint down: probe again shortly (runs are non-overlapping by
+        // construction because the next probe is scheduled only after this
+        // run settles).
+        timer = setTimeout(() => void run(), 3000);
+      } catch (error) {
+        console.error("Failed to fetch OpenAI-compatible models", error);
+        if (!cancelled) {
+          setIsAvailable(false);
+          setModels([]);
+          setUseManualInput(true);
+          timer = setTimeout(() => void run(), 3000);
+        }
+      } finally {
+        inFlight = false;
+        if (!cancelled) setIsLoading(false);
       }
-    } catch (error) {
-      console.error("Failed to fetch OpenAI-compatible models", error);
-      setIsAvailable(false);
-      setModels([]);
-      setUseManualInput(true);
-    } finally {
-      setIsLoading(false);
-    }
-  }, [effectiveUrl, apiKey]);
+    };
 
-  useEffect(() => {
-    void fetchModels();
-  }, [fetchModels]);
+    void run();
 
-  useEffect(() => {
-    const interval = setInterval(() => {
-      void fetchModels();
-    }, 3000);
-
-    return () => clearInterval(interval);
-  }, [fetchModels]);
+    return () => {
+      cancelled = true;
+      if (timer) clearTimeout(timer);
+    };
+  }, [effectiveUrl, apiKey, apiKeyId]);
 
   if (isLoading && isAvailable === null) {
     return (

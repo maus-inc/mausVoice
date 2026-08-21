@@ -13,7 +13,7 @@ use crate::constants::*;
 use crate::draw;
 use crate::gfx::Gfx;
 use crate::input;
-use crate::ipc::{self, InMessage, OutMessage, Phase, ResetStrategy, Visibility};
+use crate::ipc::{self, InMessage, OutMessage, Phase, Rect, ResetStrategy, Visibility};
 use crate::state;
 use crate::state::{ClickAction, PillState, Rocket, RocketPhase, Spark, WindowMode};
 
@@ -166,6 +166,8 @@ pub fn run(receiver: Receiver<InMessage>) {
         saved_y: Cell::new(0),
         inflate_t: Cell::new(0.0),
         inflate_velocity: Cell::new(0.0),
+        drag_label_t: Cell::new(0.0),
+        drag_label_velocity: Cell::new(0.0),
         ring_alpha: Cell::new(0.0),
         ring_release_progress: Cell::new(0.0),
         press_elapsed: Cell::new(0.0),
@@ -559,7 +561,14 @@ fn process_message(msg: InMessage, state: &PillState, _hwnd: HWND) {
             state.has_saved_position.set(false);
             state.reset_strategy.set(strategy);
             state.dirty.set(true);
-            ipc::send(&OutMessage::PositionChanged { has_saved_position: false });
+            let hwnd = HWND_CELL.with(|c| c.get());
+            reposition_to_cursor_monitor(hwnd, state);
+            let (rect, monitor) = current_pill_geometry(hwnd);
+            ipc::send(&OutMessage::PositionChanged {
+                has_saved_position: false,
+                rect: Some(rect),
+                monitor,
+            });
         }
         InMessage::Quit => {
             QUIT.with(|q| q.set(true));
@@ -626,6 +635,9 @@ fn tick(state: &PillState, dt: f64) {
         0.0
     };
     spring_anim(&state.expand_t, &state.expand_velocity, expand_target, SPRING_STIFFNESS, dt);
+
+    let drag_target = if state.dragging.get() || state.long_press_active.get() { 1.0 } else { 0.0 };
+    spring_anim(&state.drag_label_t, &state.drag_label_velocity, drag_target, rust_pill_shared::LABEL_SPRING_STIFFNESS, dt);
 
     if is_loading {
         state.loading_offset.set((state.loading_offset.get() + LOADING_SPEED * frame_scale) % 1.0);
@@ -1232,6 +1244,38 @@ fn tick_long_press(state: &PillState, dt: f64) {
     }
 }
 
+/// Reads the pill window's screen rect and the work area of the monitor it
+/// lives on, so the desktop can anchor the composer next to the real pill
+/// instead of relying on OS-centred placement.
+fn current_pill_geometry(hwnd: HWND) -> (Rect, Option<Rect>) {
+    unsafe {
+        let mut wr = RECT::default();
+        let _ = GetWindowRect(hwnd, &mut wr);
+        let rect = Rect {
+            x: wr.left as f64,
+            y: wr.top as f64,
+            width: (wr.right - wr.left) as f64,
+            height: (wr.bottom - wr.top) as f64,
+        };
+        let monitor = {
+            let mon = MonitorFromWindow(hwnd, MONITOR_DEFAULTTONEAREST);
+            if mon == HMONITOR::default() {
+                None
+            } else {
+                let mut mi: MONITORINFO = std::mem::zeroed();
+                mi.cbSize = std::mem::size_of::<MONITORINFO>() as u32;
+                (GetMonitorInfoW(mon, &mut mi).as_bool()).then(|| Rect {
+                    x: mi.rcWork.left as f64,
+                    y: mi.rcWork.top as f64,
+                    width: (mi.rcWork.right - mi.rcWork.left) as f64,
+                    height: (mi.rcWork.bottom - mi.rcWork.top) as f64,
+                })
+            }
+        };
+        (rect, monitor)
+    }
+}
+
 /// Terminate an in-progress drag, persist the drop position and release the
 /// pointer capture. Safe to call when no drag is active.
 ///
@@ -1249,7 +1293,12 @@ fn end_drag(hwnd: HWND, state: &PillState, persist_position: bool) -> bool {
         state.saved_x.set(rect.left);
         state.saved_y.set(rect.top);
         state.has_saved_position.set(true);
-        ipc::send(&OutMessage::PositionChanged { has_saved_position: true });
+        let (win_rect, monitor) = current_pill_geometry(hwnd);
+        ipc::send(&OutMessage::PositionChanged {
+            has_saved_position: true,
+            rect: Some(win_rect),
+            monitor,
+        });
     }
 
     state.dragging.set(false);

@@ -1,5 +1,11 @@
 import { Nullable } from "@maus-inc/types";
 
+export {
+  KNOWN_SILENCE_HALLUCINATIONS,
+  filterKnownSilenceHallucinations,
+  isKnownSilenceHallucination,
+} from "./hallucination.utils";
+
 /**
  * Calculates the Levenshtein edit distance between two strings.
  * Returns the minimum number of single-character edits (insertions,
@@ -143,15 +149,14 @@ const countWords = (phrase: string): number => {
   return trimmed ? trimmed.split(/\s+/).length : 0;
 };
 
-export const applyReplacements = (
-  text: string,
-  rules: ReplacementRule[],
-): string => {
-  if (rules.length === 0) return text;
+type PreparedReplacementRule = {
+  rule: ReplacementRule;
+  source: string;
+  wordCount: number;
+};
 
-  const segments = text.split(/(\s+)/);
-
-  // Positions of the word segments; the odd indices in between are whitespace.
+// Positions of the word segments; the odd indices in between are whitespace.
+const findWordPositions = (segments: string[]): number[] => {
   const wordPositions: number[] = [];
   for (let i = 0; i < segments.length; i++) {
     const segment = segments[i];
@@ -159,11 +164,16 @@ export const applyReplacements = (
       wordPositions.push(i);
     }
   }
+  return wordPositions;
+};
 
-  // Rules are matched as phrases, so a rule spans as many words as its source
-  // does. Longer phrases are tried first so that "New York City" wins over a
-  // "New York" rule at the same position.
-  const preparedRules = rules
+// Rules are matched as phrases, so a rule spans as many words as its source
+// does. Longer phrases are tried first so that "New York City" wins over a
+// "New York" rule at the same position.
+const prepareReplacementRules = (
+  rules: ReplacementRule[],
+): PreparedReplacementRule[] =>
+  rules
     .map((rule) => ({
       rule,
       source: normalizePhrase(rule.sourceValue).toLowerCase(),
@@ -171,81 +181,126 @@ export const applyReplacements = (
     }))
     .filter((prepared) => prepared.source.length > 0);
 
+const findBestRuleMatch = (
+  preparedRules: PreparedReplacementRule[],
+  span: number,
+  normalizedCandidate: string,
+): ReplacementRule | null => {
+  let bestMatch: ReplacementRule | null = null;
+  let bestSimilarity = 0;
+
+  for (const prepared of preparedRules) {
+    if (prepared.wordCount !== span) continue;
+
+    const similarity = getStringSimilarity(
+      normalizedCandidate,
+      prepared.source,
+    );
+    if (similarity >= SIMILARITY_THRESHOLD && similarity > bestSimilarity) {
+      bestSimilarity = similarity;
+      bestMatch = prepared.rule;
+    }
+  }
+
+  return bestMatch;
+};
+
+const appendUntil = (
+  result: string[],
+  segments: string[],
+  from: number,
+  until: number,
+): void => {
+  for (let i = from; i < until; i++) {
+    result.push(segments[i]);
+  }
+};
+
+const tryReplaceSpan = (
+  preparedRules: PreparedReplacementRule[],
+  segments: string[],
+  wordPositions: number[],
+  wordIndex: number,
+  startSegment: number,
+  span: number,
+): { text: string; nextSegmentIndex: number } | null => {
+  const endSegment = wordPositions[wordIndex + span - 1];
+  const candidate = segments.slice(startSegment, endSegment + 1).join("");
+  const { word, leadingPunctuation, trailingPunctuation } =
+    extractPunctuation(candidate);
+  if (!word) {
+    return null;
+  }
+
+  const bestMatch = findBestRuleMatch(
+    preparedRules,
+    span,
+    collapseWhitespace(word).toLowerCase(),
+  );
+  if (!bestMatch) {
+    return null;
+  }
+
+  const { word: destinationWord } = extractPunctuation(
+    bestMatch.destinationValue,
+  );
+  return {
+    text: leadingPunctuation + destinationWord + trailingPunctuation,
+    nextSegmentIndex: endSegment + 1,
+  };
+};
+
+export const applyReplacements = (
+  text: string,
+  rules: ReplacementRule[],
+): string => {
+  if (rules.length === 0) return text;
+
+  const segments = text.split(/(\s+)/);
+  const wordPositions = findWordPositions(segments);
+  const preparedRules = prepareReplacementRules(rules);
+
   if (preparedRules.length === 0) return text;
 
   const maxWordCount = Math.max(
     ...preparedRules.map((prepared) => prepared.wordCount),
   );
-
   const result: string[] = [];
   let segmentIndex = 0;
   let wordIndex = 0;
 
   while (wordIndex < wordPositions.length) {
     const startSegment = wordPositions[wordIndex];
-
-    // Emit whitespace (and anything else) preceding this word untouched.
-    while (segmentIndex < startSegment) {
-      result.push(segments[segmentIndex]);
-      segmentIndex++;
-    }
-
+    appendUntil(result, segments, segmentIndex, startSegment);
     const remainingWords = wordPositions.length - wordIndex;
-    let matched = false;
+    let matchedSpan = 0;
 
-    for (
-      let span = Math.min(maxWordCount, remainingWords);
-      span >= 1 && !matched;
-      span--
-    ) {
-      const endSegment = wordPositions[wordIndex + span - 1];
-      const candidate = segments.slice(startSegment, endSegment + 1).join("");
-      const { word, leadingPunctuation, trailingPunctuation } =
-        extractPunctuation(candidate);
-
-      if (!word) continue;
-
-      const normalizedCandidate = collapseWhitespace(word).toLowerCase();
-
-      let bestMatch: ReplacementRule | null = null;
-      let bestSimilarity = 0;
-
-      for (const prepared of preparedRules) {
-        if (prepared.wordCount !== span) continue;
-
-        const similarity = getStringSimilarity(
-          normalizedCandidate,
-          prepared.source,
-        );
-        if (similarity >= SIMILARITY_THRESHOLD && similarity > bestSimilarity) {
-          bestSimilarity = similarity;
-          bestMatch = prepared.rule;
-        }
-      }
-
-      if (bestMatch) {
-        const { word: destinationWord } = extractPunctuation(
-          bestMatch.destinationValue,
-        );
-        result.push(leadingPunctuation + destinationWord + trailingPunctuation);
-        segmentIndex = endSegment + 1;
-        wordIndex += span;
-        matched = true;
+    for (let span = Math.min(maxWordCount, remainingWords); span >= 1; span--) {
+      const replacement = tryReplaceSpan(
+        preparedRules,
+        segments,
+        wordPositions,
+        wordIndex,
+        startSegment,
+        span,
+      );
+      if (replacement) {
+        result.push(replacement.text);
+        segmentIndex = replacement.nextSegmentIndex;
+        matchedSpan = span;
+        break;
       }
     }
 
-    if (!matched) {
+    if (matchedSpan === 0) {
       result.push(segments[startSegment]);
       segmentIndex = startSegment + 1;
       wordIndex++;
+    } else {
+      wordIndex += matchedSpan;
     }
   }
 
-  // Emit any trailing whitespace.
-  while (segmentIndex < segments.length) {
-    result.push(segments[segmentIndex]);
-    segmentIndex++;
-  }
-
+  appendUntil(result, segments, segmentIndex, segments.length);
   return result.join("");
 };

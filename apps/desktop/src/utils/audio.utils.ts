@@ -1,6 +1,5 @@
 import { invoke } from "@tauri-apps/api/core";
 import { getAppState } from "../store";
-import { AudioSamples } from "../types/audio.types";
 import { isMacOS, isWindows11 } from "./env.utils";
 import { getMyUser } from "./user.utils";
 
@@ -52,9 +51,6 @@ export const buildWaveFile = (
   floatTo16BitPCM(view, 44, samples);
   return buffer;
 };
-
-export const normalizeSamples = (samples: AudioSamples): number[] =>
-  Array.isArray(samples) ? samples : Array.from(samples ?? []);
 
 export type AudioClip =
   | "start_recording_clip"

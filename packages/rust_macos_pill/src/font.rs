@@ -19,8 +19,11 @@ pub fn install_embedded_satoshi() {
         let dir = std::env::temp_dir().join("mausvoice-fonts");
         let _ = std::fs::create_dir_all(&dir);
         let path = dir.join("Satoshi-Medium.ttf");
-        std::fs::write(&path, SATOSHI_MEDIUM_TTF)
+        let tmp = path.with_extension("tmp");
+        std::fs::write(&tmp, SATOSHI_MEDIUM_TTF)
             .unwrap_or_else(|e| panic!("failed to materialize embedded Satoshi: {e}"));
+        std::fs::rename(&tmp, &path)
+            .unwrap_or_else(|e| panic!("failed to finalize embedded Satoshi: {e}"));
 
         unsafe {
             // CTFontManagerRegisterFontsForURL
@@ -90,6 +93,7 @@ pub fn satoshi_font(size: f64, bold: bool) -> id {
                 return font;
             }
         }
+        rust_pill_shared::log_font_error("embedded Satoshi registered but NSFont cannot resolve it");
         panic!("embedded Satoshi is registered but NSFont cannot resolve it");
     }
 }

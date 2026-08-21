@@ -208,6 +208,8 @@ pub(crate) struct PillState {
     // Inflate animation — pill slightly expands when entering drag, contracts on release.
     pub(crate) inflate_t: Cell<f64>,
     pub(crate) inflate_velocity: Cell<f64>,
+    pub(crate) drag_label_t: Cell<f64>,
+    pub(crate) drag_label_velocity: Cell<f64>,
     // Master alpha for the long-press outline. Pinned at 1 while the gesture is
     // held, eased to 0 over LONG_PRESS_RING_FADE after release, so the outline
     // never fades under an active press.

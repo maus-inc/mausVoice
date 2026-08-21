@@ -127,6 +127,7 @@ pub fn build() -> tauri::Builder<tauri::Wry> {
             Some(vec![AUTOSTART_HIDDEN_ARG]),
         ))
         .plugin(tauri_plugin_process::init())
+        .plugin(tauri_plugin_dialog::init())
         .plugin(
             tauri_plugin_sql::Builder::new()
                 .add_migrations(crate::db::DB_CONNECTION, crate::db::migrations())
@@ -153,19 +154,11 @@ pub fn build() -> tauri::Builder<tauri::Wry> {
                     let _ = window
                         .app_handle()
                         .save_window_state(StateFlags::SIZE);
-                    let _ = window.hide();
-                    // On Windows, force the WebView to stay active after hiding the window
-                    // so that background JS (global hotkey detection via keys_held events)
-                    // continues running while the app is minimized to the system tray.
-                    #[cfg(target_os = "windows")]
-                    {
-                        crate::platform::window::keep_webview_active(window.app_handle(), "main");
-                        crate::platform::window::set_webview_keepalive(true);
-                    }
-                    #[cfg(target_os = "macos")]
-                    {
-                        if let Err(err) = crate::platform::macos::dock::hide_dock_icon() {
-                            log::error!("Failed to hide dock icon: {err}");
+                    // Use the webview window for hide_main_window (which
+                    // needs &WebviewWindow, not &Window from on_window_event).
+                    if let Some(main_ww) = window.app_handle().get_webview_window("main") {
+                        if let Err(err) = crate::platform::window::hide_main_window(&main_ww) {
+                            log::error!("Failed to hide main window: {err}");
                         }
                     }
                 }
@@ -238,17 +231,8 @@ pub fn build() -> tauri::Builder<tauri::Wry> {
             {
                 if std::env::args().any(|arg| arg == AUTOSTART_HIDDEN_ARG) {
                     if let Some(main_window) = app.get_webview_window("main") {
-                        let _ = main_window.hide();
-                        #[cfg(target_os = "windows")]
-                        {
-                            crate::platform::window::keep_webview_active(app.handle(), "main");
-                            crate::platform::window::set_webview_keepalive(true);
-                        }
-                        #[cfg(target_os = "macos")]
-                        {
-                            if let Err(err) = crate::platform::macos::dock::hide_dock_icon() {
-                                log::error!("Failed to hide dock icon on autostart: {err}");
-                            }
+                        if let Err(err) = crate::platform::window::hide_main_window(&main_window) {
+                            log::error!("Failed to hide main window on autostart: {err}");
                         }
                     }
                 }
@@ -277,7 +261,10 @@ pub fn build() -> tauri::Builder<tauri::Wry> {
                 crate::platform::compositor::deploy_trigger_script(app.handle());
             }
 
-            // Open dev tools if MAUSVOICE_ENABLE_DEVTOOLS is set
+            // The capability itself is omitted from stable binaries. Keeping this
+            // behind the same compile-time feature makes the environment variable
+            // intentionally ineffective if it is set for a release build.
+            #[cfg(feature = "debug-assist")]
             if std::env::var("MAUSVOICE_ENABLE_DEVTOOLS").is_ok() {
                 log::info!("MAUSVOICE_ENABLE_DEVTOOLS detected, opening dev tools...");
                 if let Some(main_window) = app.get_webview_window("main") {
@@ -322,7 +309,10 @@ pub fn build() -> tauri::Builder<tauri::Wry> {
             crate::commands::surface_main_window,
             crate::commands::set_pill_window_size,
             crate::commands::paste,
+            crate::commands::private_http_request,
+            crate::commands::openai_compatible_http_request,
             crate::commands::simulate_type,
+            crate::commands::cancel_private_http_request,
             crate::commands::cancel_typing,
             crate::commands::copy_to_clipboard,
             crate::commands::transcription_create,
@@ -330,6 +320,7 @@ pub fn build() -> tauri::Builder<tauri::Wry> {
             crate::commands::transcription_delete,
             crate::commands::transcription_update,
             crate::commands::transcription_audio_load,
+            crate::commands::transcription_import_audio,
             crate::commands::purge_stale_transcription_audio,
             crate::commands::export_transcription,
             crate::commands::export_diagnostics,
@@ -340,10 +331,12 @@ pub fn build() -> tauri::Builder<tauri::Wry> {
             crate::commands::hotkey_list,
             crate::commands::hotkey_save,
             crate::commands::hotkey_delete,
+            crate::commands::hotkey_replace_style_hotkeys,
             crate::commands::set_tray_title,
             crate::commands::set_menu_icon,
             crate::commands::set_tray_language_menu,
             crate::commands::set_register_app_label,
+            crate::commands::set_dashboard_menu_labels,
             crate::commands::set_pill_visibility_menu_state,
             crate::commands::set_reset_pill_position_enabled,
             crate::commands::reset_pill_position,
@@ -369,6 +362,7 @@ pub fn build() -> tauri::Builder<tauri::Wry> {
             crate::commands::get_key_listener_health,
             crate::commands::retry_key_listener,
             crate::commands::play_audio,
+            crate::commands::set_interaction_chime_enabled,
             crate::commands::get_text_field_info,
             crate::commands::get_screen_context,
             crate::commands::find_pid_by_window_title,
@@ -388,6 +382,7 @@ pub fn build() -> tauri::Builder<tauri::Wry> {
             crate::commands::get_native_setup_status,
             crate::commands::run_native_setup,
             crate::commands::request_admin_relaunch,
+            crate::commands::quit_app,
             crate::commands::get_keyboard_language,
             crate::commands::conversation_create,
             crate::commands::conversation_list,
@@ -401,6 +396,9 @@ pub fn build() -> tauri::Builder<tauri::Wry> {
             crate::commands::download_and_open_mac_installer,
             crate::commands::get_system_volume,
             crate::commands::set_system_volume,
+            crate::commands::composer_register_text,
+            crate::commands::composer_peek_text,
+            crate::commands::composer_discard_text,
             crate::commands::floating_window_create,
             crate::commands::floating_window_destroy,
             crate::commands::floating_window_list,

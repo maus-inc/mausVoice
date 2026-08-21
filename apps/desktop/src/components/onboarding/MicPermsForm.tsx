@@ -1,5 +1,4 @@
-import { ArrowForward, Check, OpenInNew } from "@mui/icons-material";
-import { Box, Button, Stack, Typography } from "@mui/material";
+import { Box, Stack } from "@mui/material";
 import { useCallback, useState } from "react";
 import { FormattedMessage } from "react-intl";
 import { goToOnboardingPage } from "../../actions/onboarding.actions";
@@ -12,9 +11,12 @@ import {
 } from "../../utils/permission.utils";
 import { isPersonalUseEnabled } from "../../utils/personal-use.utils";
 import { isMacOS } from "../../utils/env.utils";
+import { PermissionAccessButton } from "./PermissionAccessButton";
 import {
   BackButton,
   DualPaneLayout,
+  OnboardingContinueButton,
+  OnboardingFormHeader,
   OnboardingFormLayout,
 } from "./OnboardingCommon";
 
@@ -54,58 +56,25 @@ export const MicPermsForm = () => {
     <OnboardingFormLayout
       back={<BackButton />}
       actions={
-        <Button
-          variant="contained"
-          endIcon={<ArrowForward />}
+        <OnboardingContinueButton
           onClick={handleContinue}
           disabled={!canContinue}
-        >
-          <FormattedMessage defaultMessage="Continue" />
-        </Button>
+        />
       }
     >
       <Stack spacing={3}>
-        <Box>
-          <Typography
-            variant="h4"
-            sx={{
-              fontWeight: 600,
-              pb: 1,
-            }}
-          >
-            <FormattedMessage defaultMessage="Set up your microphone" />
-          </Typography>
-          <Typography
-            variant="body1"
-            sx={{
-              color: "text.secondary",
-            }}
-          >
+        <OnboardingFormHeader
+          title={<FormattedMessage defaultMessage="Set up your microphone" />}
+          subtitle={
             <FormattedMessage defaultMessage="mausVoice only activates your microphone when you choose to start recording." />
-          </Typography>
-        </Box>
+          }
+        />
 
-        {isAuthorized ? (
-          <Button
-            variant="outlined"
-            color="success"
-            startIcon={<Check />}
-            disabled
-            sx={{ alignSelf: "flex-start" }}
-          >
-            <FormattedMessage defaultMessage="Access granted" />
-          </Button>
-        ) : (
-          <Button
-            variant="outlined"
-            onClick={() => void handleAllow()}
-            disabled={requesting}
-            endIcon={<OpenInNew />}
-            sx={{ alignSelf: "flex-start" }}
-          >
-            <FormattedMessage defaultMessage="Allow access" />
-          </Button>
-        )}
+        <PermissionAccessButton
+          isAuthorized={isAuthorized}
+          requesting={requesting}
+          onAllow={() => void handleAllow()}
+        />
       </Stack>
     </OnboardingFormLayout>
   );

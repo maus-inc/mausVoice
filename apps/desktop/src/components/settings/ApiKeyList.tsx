@@ -36,6 +36,7 @@ import {
 import { useAppStore } from "../../store";
 import { getModelProviderRepo } from "../../repos";
 import type { FetchModelsOptions } from "../../repos/model-provider.repo";
+import { selectedOutlineSx } from "../../styles/selection";
 import { getProviderFormConfig } from "./api-key-provider-config";
 import { OllamaModelPicker } from "./OllamaModelPicker";
 import { OpenAICompatibleModelPicker } from "./OpenAICompatibleModelPicker";
@@ -59,6 +60,61 @@ const getAvailableProviders = (context: ApiKeyListContext): ApiKeyProvider[] =>
       ? repo.supportsTranscriptionModels()
       : repo.supportsGenerativeTextModels();
   });
+
+const ApiKeyFormActions = ({
+  onCancel,
+  onSave,
+  saving,
+  canSave,
+  onTest,
+  testing,
+}: {
+  onCancel: () => void;
+  onSave: () => void;
+  saving: boolean;
+  canSave: boolean;
+  onTest?: () => void;
+  testing?: boolean;
+}) => {
+  return (
+    <Box sx={{ display: "flex", gap: 1, justifyContent: "flex-end" }}>
+      {onTest && (
+        <Button
+          variant="outlined"
+          size="small"
+          onClick={onTest}
+          disabled={testing || saving}
+        >
+          {testing ? (
+            <FormattedMessage defaultMessage="Testing..." />
+          ) : (
+            <FormattedMessage defaultMessage="Test" />
+          )}
+        </Button>
+      )}
+      <Button
+        variant="outlined"
+        onClick={onCancel}
+        size="small"
+        disabled={saving}
+      >
+        <FormattedMessage defaultMessage="Cancel" />
+      </Button>
+      <Button
+        variant="contained"
+        size="small"
+        onClick={onSave}
+        disabled={!canSave || saving}
+      >
+        {saving ? (
+          <FormattedMessage defaultMessage="Saving..." />
+        ) : (
+          <FormattedMessage defaultMessage="Save" />
+        )}
+      </Button>
+    </Box>
+  );
+};
 
 type AddApiKeyCardProps = {
   onSave: (
@@ -183,28 +239,12 @@ const AddApiKeyCard = ({ onSave, onCancel, context }: AddApiKeyCardProps) => {
         includeV1Path={includeV1Path}
         onIncludeV1PathChange={setIncludeV1Path}
       />
-      <Box sx={{ display: "flex", gap: 1, justifyContent: "flex-end" }}>
-        <Button
-          variant="outlined"
-          onClick={onCancel}
-          size="small"
-          disabled={saving}
-        >
-          <FormattedMessage defaultMessage="Cancel" />
-        </Button>
-        <Button
-          variant="contained"
-          size="small"
-          onClick={handleSave}
-          disabled={!canSave || saving}
-        >
-          {saving ? (
-            <FormattedMessage defaultMessage="Saving..." />
-          ) : (
-            <FormattedMessage defaultMessage="Save" />
-          )}
-        </Button>
-      </Box>
+      <ApiKeyFormActions
+        onCancel={onCancel}
+        onSave={() => void handleSave()}
+        saving={saving}
+        canSave={canSave}
+      />
     </Paper>
   );
 };
@@ -313,20 +353,26 @@ const EditApiKeyCard = ({
       overrides.baseUrl = fieldValues.baseUrl || config.defaultBaseUrl;
     if (fieldValues.azureRegion)
       overrides.azureRegion = fieldValues.azureRegion;
+    const hasTranscriptionModelField = config.fields.some(
+      (f) => f.key === "transcriptionModel",
+    );
+    if (hasTranscriptionModelField) {
+      overrides.transcriptionModel = fieldValues.transcriptionModel || null;
+    }
+    if (config.showIncludeV1Path) overrides.includeV1Path = includeV1Path;
     onTest(overrides);
-  }, [name, fieldValues, config.defaultBaseUrl, onTest]);
+  }, [name, fieldValues, config, includeV1Path, onTest]);
 
   return (
     <Paper
       variant="outlined"
-      sx={{
+      sx={(theme) => ({
         p: 2,
         display: "flex",
         flexDirection: "column",
         gap: 1.5,
-        borderColor: "primary.main",
-        borderWidth: 1,
-      }}
+        ...selectedOutlineSx(theme),
+      })}
     >
       <Typography
         variant="body2"
@@ -357,40 +403,14 @@ const EditApiKeyCard = ({
         onIncludeV1PathChange={setIncludeV1Path}
         isEditing
       />
-      <Box sx={{ display: "flex", gap: 1, justifyContent: "flex-end" }}>
-        <Button
-          variant="outlined"
-          size="small"
-          onClick={handleTest}
-          disabled={testing || saving}
-        >
-          {testing ? (
-            <FormattedMessage defaultMessage="Testing..." />
-          ) : (
-            <FormattedMessage defaultMessage="Test" />
-          )}
-        </Button>
-        <Button
-          variant="outlined"
-          onClick={onCancel}
-          size="small"
-          disabled={saving}
-        >
-          <FormattedMessage defaultMessage="Cancel" />
-        </Button>
-        <Button
-          variant="contained"
-          size="small"
-          onClick={handleSave}
-          disabled={!canSave || saving}
-        >
-          {saving ? (
-            <FormattedMessage defaultMessage="Saving..." />
-          ) : (
-            <FormattedMessage defaultMessage="Save" />
-          )}
-        </Button>
-      </Box>
+      <ApiKeyFormActions
+        onCancel={onCancel}
+        onSave={() => void handleSave()}
+        saving={saving}
+        canSave={canSave}
+        onTest={handleTest}
+        testing={testing}
+      />
     </Paper>
   );
 };
@@ -452,8 +472,10 @@ const ModelPickerForProvider = ({
     return (
       <Box onClick={(e) => e.stopPropagation()}>
         <OpenAICompatibleModelPicker
+          apiKeyId={apiKey.id}
           baseUrl={apiKey.baseUrl ?? null}
           apiKey={apiKey.keyFull}
+          includeV1Path={apiKey.includeV1Path}
           selectedModel={currentModel}
           onModelSelect={onModelChange}
           disabled={disabled}
@@ -497,7 +519,9 @@ const GenericModelPicker = ({
   useEffect(() => {
     const options: FetchModelsOptions = {
       apiKey: apiKey.keyFull ?? undefined,
+      apiKeyId: apiKey.id,
       baseUrl: apiKey.baseUrl ?? undefined,
+      includeV1Path: apiKey.includeV1Path,
     };
 
     let cancelled = false;
@@ -522,7 +546,14 @@ const GenericModelPicker = ({
     return () => {
       cancelled = true;
     };
-  }, [repo, apiKey.keyFull, apiKey.baseUrl, context]);
+  }, [
+    repo,
+    apiKey.id,
+    apiKey.keyFull,
+    apiKey.baseUrl,
+    apiKey.includeV1Path,
+    context,
+  ]);
 
   if (models.length === 0 && !isLoading) return null;
 
@@ -603,23 +634,26 @@ const ApiKeyCard = ({
     <Paper
       variant="outlined"
       onClick={onSelect}
-      sx={{
-        p: 2,
-        borderColor: selected ? "primary.main" : "divider",
-        borderWidth: 1,
-        cursor: "pointer",
-        transition: "border-color 0.2s ease, box-shadow 0.2s ease",
-        boxShadow: selected
-          ? (theme) => `0 0 0 1px ${theme.palette.primary.main}`
-          : "none",
-        ":hover": {
-          borderColor: selected ? "primary.main" : "action.active",
+      sx={[
+        {
+          p: 2,
+          borderColor: "divider",
+          borderWidth: 1,
+          cursor: "pointer",
+          transition: "border-color 0.2s ease, box-shadow 0.2s ease",
+          // Hover lives here, in one place: a selected card keeps its stroke
+          // (never reverts to an invisible state), an unselected card lights
+          // up with the active border colour.
+          ":hover": {
+            borderColor: selected ? "text.primary" : "action.active",
+          },
+          display: "flex",
+          flexDirection: "column",
+          gap: 2,
+          width: "100%",
         },
-        display: "flex",
-        flexDirection: "column",
-        gap: 2,
-        width: "100%",
-      }}
+        selected && selectedOutlineSx,
+      ]}
     >
       <Stack
         direction="row"
@@ -916,6 +950,13 @@ export const ApiKeyList = ({
   const handleTestEditingApiKey = useCallback(
     async (apiKey: SettingsApiKey, overrides: Partial<SettingsApiKey>) => {
       const merged = { ...apiKey, ...overrides };
+      if (
+        apiKey.provider === "openai-compatible" &&
+        merged.baseUrl !== apiKey.baseUrl
+      ) {
+        showErrorSnackbar("Save endpoint URL changes before testing them.");
+        return;
+      }
       setTestingApiKeyId(apiKey.id);
       try {
         const config = getProviderFormConfig(merged.provider, context);

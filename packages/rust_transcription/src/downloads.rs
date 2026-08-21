@@ -4,11 +4,27 @@ use std::sync::Arc;
 
 use futures_util::StreamExt;
 use serde::Serialize;
+use sha2::{Digest, Sha256};
 use tokio::io::AsyncWriteExt;
 use tokio::sync::{watch, Mutex};
 use uuid::Uuid;
 
 use crate::models::WhisperModel;
+
+struct DownloadJobParams {
+    job_id: Uuid,
+    generation: u64,
+    model: WhisperModel,
+    artifacts: Vec<DownloadArtifact>,
+    client: reqwest::Client,
+    control_rx: watch::Receiver<DownloadCommand>,
+    prev_worker_rx: Option<watch::Receiver<bool>>,
+    finished_tx: watch::Sender<bool>,
+}
+
+/// Largest currently-supported model artifact plus headroom. This is a hard
+/// limit, not a progress hint, and protects users from chunked responses.
+pub const MAX_MODEL_ARTIFACT_BYTES: u64 = 4 * 1024 * 1024 * 1024;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "lowercase")]
@@ -37,11 +53,29 @@ pub struct DownloadJobSnapshot {
 pub struct DownloadArtifact {
     pub url: String,
     pub destination: PathBuf,
+    /// Hard upper bound enforced for both declared and chunked responses.
+    pub max_bytes: u64,
+    /// Pinned digest for executable ONNX graphs/weights.
+    pub sha256: Option<&'static str>,
 }
 
 impl DownloadArtifact {
     pub fn new(url: String, destination: PathBuf) -> Self {
-        Self { url, destination }
+        Self::new_verified(url, destination, MAX_MODEL_ARTIFACT_BYTES, None)
+    }
+
+    pub fn new_verified(
+        url: String,
+        destination: PathBuf,
+        max_bytes: u64,
+        sha256: Option<&'static str>,
+    ) -> Self {
+        Self {
+            url,
+            destination,
+            max_bytes,
+            sha256,
+        }
     }
 }
 
@@ -122,7 +156,11 @@ impl DownloadRegistry {
             .iter()
             .map(|artifact| artifact.destination.clone())
             .collect::<Vec<_>>();
-        if let Some(existing_size) = existing_artifact_set_size(&artifact_paths).await {
+        // A bundle already on disk is only reported as completed when every
+        // artifact still satisfies the current integrity policy (size cap plus
+        // the pinned digest). Files written by an older build under mutable
+        // `resolve/main/` URLs are therefore re-verified instead of trusted.
+        if let Some(existing_size) = admitted_artifact_set_size(&artifacts).await {
             let job_id = Uuid::new_v4();
             let mut store = self.inner.lock().await;
             let record = DownloadJobRecord {
@@ -177,15 +215,7 @@ impl DownloadRegistry {
                     } else {
                         let generation = record.generation;
                         let existing = record.to_snapshot(existing_id);
-                        (
-                            existing_id,
-                            generation,
-                            existing,
-                            None,
-                            None,
-                            None,
-                            false,
-                        )
+                        (existing_id, generation, existing, None, None, None, false)
                     }
                 } else {
                     store.active_by_model.remove(&model);
@@ -256,7 +286,7 @@ impl DownloadRegistry {
                 let registry = self.clone();
                 tokio::spawn(async move {
                     if let Err(err) = registry
-                        .run_download_job(
+                        .run_download_job(DownloadJobParams {
                             job_id,
                             generation,
                             model,
@@ -265,7 +295,7 @@ impl DownloadRegistry {
                             control_rx,
                             prev_worker_rx,
                             finished_tx,
-                        )
+                        })
                         .await
                     {
                         registry.mark_failed(job_id, generation, model, err).await;
@@ -277,7 +307,11 @@ impl DownloadRegistry {
         Ok(snapshot)
     }
 
-    pub async fn pause_job(&self, model: WhisperModel, job_id: Uuid) -> Option<DownloadJobSnapshot> {
+    pub async fn pause_job(
+        &self,
+        model: WhisperModel,
+        job_id: Uuid,
+    ) -> Option<DownloadJobSnapshot> {
         let mut store = self.inner.lock().await;
         let job = store.jobs.get_mut(&job_id)?;
         if job.model != model {
@@ -288,7 +322,10 @@ impl DownloadRegistry {
             return Some(job.to_snapshot(job_id));
         }
 
-        if matches!(job.status, DownloadJobStatus::Running | DownloadJobStatus::Pending) {
+        if matches!(
+            job.status,
+            DownloadJobStatus::Running | DownloadJobStatus::Pending
+        ) {
             if let Some(control_tx) = &job.control_tx {
                 let _ = control_tx.send(DownloadCommand::Pause);
             }
@@ -389,17 +426,17 @@ impl DownloadRegistry {
         store.jobs.retain(|_, job| job.model != model);
     }
 
-    async fn run_download_job(
-        &self,
-        job_id: Uuid,
-        generation: u64,
-        model: WhisperModel,
-        artifacts: Vec<DownloadArtifact>,
-        client: reqwest::Client,
-        mut control_rx: watch::Receiver<DownloadCommand>,
-        prev_worker_rx: Option<watch::Receiver<bool>>,
-        finished_tx: watch::Sender<bool>,
-    ) -> Result<(), String> {
+    async fn run_download_job(&self, params: DownloadJobParams) -> Result<(), String> {
+        let DownloadJobParams {
+            job_id,
+            generation,
+            model,
+            artifacts,
+            client,
+            mut control_rx,
+            prev_worker_rx,
+            finished_tx,
+        } = params;
         // A resumed worker waits for its predecessor to close the active
         // artifact before opening the same partial file.
         if let Some(mut prev_rx) = prev_worker_rx {
@@ -507,10 +544,19 @@ impl DownloadRegistry {
             DownloadCommand::Run => {}
         }
 
-        if let Some(existing_size) = existing_model_file_size(&artifact.destination).await {
-            return Ok(ArtifactDownloadOutcome::Completed {
-                bytes: existing_size,
-            });
+        // An artifact that is already present is a shortcut, never an exemption:
+        // it must pass exactly the size + SHA-256 gate enforced on a fresh
+        // download. Anything else is discarded and re-fetched.
+        if existing_model_file_size(&artifact.destination)
+            .await
+            .is_some()
+        {
+            if let Some(existing_size) = admitted_artifact_size(artifact).await {
+                return Ok(ArtifactDownloadOutcome::Completed {
+                    bytes: existing_size,
+                });
+            }
+            discard_rejected_artifact(&artifact.destination, Some(job_id)).await;
         }
 
         if let Some(parent) = artifact.destination.parent() {
@@ -535,13 +581,26 @@ impl DownloadRegistry {
             None
         };
 
-        let (response, resume_is_valid) = request_artifact_response(
+        crate::state::validate_model_download_url(&artifact.url)?;
+        let (response, resume_is_valid) = match request_artifact_response(
             client,
             &artifact.url,
             existing_bytes,
             existing_validator.as_deref(),
+            artifact.max_bytes,
         )
-        .await?;
+        .await
+        {
+            Ok(response) => response,
+            Err(error) => {
+                // A rejected advertised size must not leave a resumable
+                // partial artifact behind. Otherwise every retry preserves
+                // data from a response that violated the policy.
+                let _ = tokio::fs::remove_file(&temp_path).await;
+                let _ = tokio::fs::remove_file(&validator_path).await;
+                return Err(error);
+            }
+        };
         let validator = response_resume_validator(&response).or_else(|| {
             if resume_is_valid {
                 existing_validator.clone()
@@ -558,7 +617,9 @@ impl DownloadRegistry {
         }
 
         let (mut downloaded, artifact_total, mut file) = if resume_is_valid {
-            let total = response.content_length().map(|len| existing_bytes + len);
+            let total = response
+                .content_length()
+                .map(|len| existing_bytes.saturating_add(len));
             let file = tokio::fs::OpenOptions::new()
                 .create(true)
                 .append(true)
@@ -612,10 +673,21 @@ impl DownloadRegistry {
                 item = stream.next() => {
                     match item {
                         Some(Ok(chunk)) => {
+                            // Enforce the cap *before* writing so an oversized
+                            // chunk is never buffered to disk. Incrementing
+                            // after `write_all` would flush the whole chunk
+                            // first and only detect the breach afterwards.
+                            let next = downloaded.saturating_add(chunk.len() as u64);
+                            if next > artifact.max_bytes {
+                                drop(file);
+                                let _ = tokio::fs::remove_file(&temp_path).await;
+                                let _ = tokio::fs::remove_file(&validator_path).await;
+                                return Err(format!("artifact exceeds {} byte limit", artifact.max_bytes));
+                            }
                             file.write_all(&chunk)
                                 .await
                                 .map_err(|err| format!("failed to write artifact: {err}"))?;
-                            downloaded = downloaded.saturating_add(chunk.len() as u64);
+                            downloaded = next;
                             self.set_progress(
                                 job_id,
                                 generation,
@@ -640,6 +712,14 @@ impl DownloadRegistry {
             .await
             .map_err(|err| format!("failed to sync artifact: {err}"))?;
         drop(file);
+
+        if let Some(expected_sha256) = artifact.sha256 {
+            if let Err(error) = verify_file_sha256(&temp_path, expected_sha256).await {
+                let _ = tokio::fs::remove_file(&temp_path).await;
+                let _ = tokio::fs::remove_file(&validator_path).await;
+                return Err(error);
+            }
+        }
 
         // Block pause/cancel only for the short replace+rename section. The
         // control sender stays installed for every subsequent artifact.
@@ -700,7 +780,10 @@ impl DownloadRegistry {
         let mut store = self.inner.lock().await;
         if let Some(job) = store.jobs.get_mut(&job_id) {
             if job.generation == generation
-                && matches!(job.status, DownloadJobStatus::Pending | DownloadJobStatus::Running)
+                && matches!(
+                    job.status,
+                    DownloadJobStatus::Pending | DownloadJobStatus::Running
+                )
                 && !job.is_finalizing
             {
                 job.is_finalizing = true;
@@ -714,7 +797,12 @@ impl DownloadRegistry {
     async fn mark_running(&self, job_id: Uuid, generation: u64) -> bool {
         let mut store = self.inner.lock().await;
         if let Some(job) = store.jobs.get_mut(&job_id) {
-            if job.generation == generation && matches!(job.status, DownloadJobStatus::Pending | DownloadJobStatus::Running) {
+            if job.generation == generation
+                && matches!(
+                    job.status,
+                    DownloadJobStatus::Pending | DownloadJobStatus::Running
+                )
+            {
                 job.status = DownloadJobStatus::Running;
                 job.error = None;
                 return true;
@@ -754,7 +842,12 @@ impl DownloadRegistry {
     ) {
         let mut store = self.inner.lock().await;
         if let Some(job) = store.jobs.get_mut(&job_id) {
-            if job.generation == generation && matches!(job.status, DownloadJobStatus::Pending | DownloadJobStatus::Running) {
+            if job.generation == generation
+                && matches!(
+                    job.status,
+                    DownloadJobStatus::Pending | DownloadJobStatus::Running
+                )
+            {
                 job.bytes_downloaded = downloaded;
                 job.total_bytes = match (job.total_bytes, total_bytes) {
                     (Some(existing), Some(incoming)) => Some(existing.max(incoming)),
@@ -833,9 +926,15 @@ async fn request_artifact_response(
     url: &str,
     existing_bytes: u64,
     if_range: Option<&str>,
+    max_bytes: u64,
 ) -> Result<(reqwest::Response, bool), String> {
     // Never append without a validator tied to the existing prefix. A bare
     // byte offset cannot prove that the remote object is still the same file.
+    if existing_bytes > max_bytes {
+        return Err(format!(
+            "existing partial artifact exceeds {max_bytes} byte limit"
+        ));
+    }
     if let Some(if_range) = if_range.filter(|_| existing_bytes > 0) {
         let ranged = client
             .get(url)
@@ -847,6 +946,7 @@ async fn request_artifact_response(
 
         if ranged.status() == reqwest::StatusCode::PARTIAL_CONTENT {
             if content_range_start(&ranged) == Some(existing_bytes) {
+                reject_oversized_response(&ranged, max_bytes.saturating_sub(existing_bytes))?;
                 return Ok((ranged, true));
             }
             // A 206 response is append-safe only when the server confirms
@@ -854,6 +954,7 @@ async fn request_artifact_response(
         } else if ranged.status() == reqwest::StatusCode::OK {
             // If-Range intentionally produces 200 when the remote object
             // changed. The caller truncates the stale temporary prefix.
+            reject_oversized_response(&ranged, max_bytes)?;
             return Ok((ranged, false));
         } else if ranged.status() != reqwest::StatusCode::RANGE_NOT_SATISFIABLE {
             return Err(format!("request failed with status {}", ranged.status()));
@@ -868,7 +969,49 @@ async fn request_artifact_response(
     if response.status() != reqwest::StatusCode::OK {
         return Err(format!("request failed with status {}", response.status()));
     }
+    reject_oversized_response(&response, max_bytes)?;
     Ok((response, false))
+}
+
+fn reject_oversized_response(response: &reqwest::Response, max_bytes: u64) -> Result<(), String> {
+    if response
+        .content_length()
+        .is_some_and(|length| length > max_bytes)
+    {
+        return Err(format!("artifact exceeds {max_bytes} byte limit"));
+    }
+    Ok(())
+}
+
+pub(crate) async fn verify_file_sha256(path: &Path, expected: &str) -> Result<(), String> {
+    let path = path.to_path_buf();
+    let expected = expected.to_owned();
+    tokio::task::spawn_blocking(move || {
+        use std::io::Read;
+        let mut file = std::fs::File::open(&path)
+            .map_err(|err| format!("failed to reopen artifact for checksum: {err}"))?;
+        let mut hasher = Sha256::new();
+        let mut buffer = [0_u8; 64 * 1024];
+        loop {
+            let count = file
+                .read(&mut buffer)
+                .map_err(|err| format!("failed to checksum artifact: {err}"))?;
+            if count == 0 {
+                break;
+            }
+            hasher.update(&buffer[..count]);
+        }
+        let actual = format!("{:x}", hasher.finalize());
+        if actual.eq_ignore_ascii_case(&expected) {
+            Ok(())
+        } else {
+            Err(format!(
+                "artifact SHA-256 mismatch (expected {expected}, got {actual})"
+            ))
+        }
+    })
+    .await
+    .map_err(|err| format!("checksum task failed: {err}"))?
 }
 
 fn content_range_start(response: &reqwest::Response) -> Option<u64> {
@@ -897,19 +1040,79 @@ fn response_resume_validator(response: &reqwest::Response) -> Option<String> {
         .map(str::to_owned)
 }
 
-async fn existing_model_file_size(path: &PathBuf) -> Option<u64> {
+async fn existing_model_file_size(path: &Path) -> Option<u64> {
     match tokio::fs::metadata(path).await {
         Ok(metadata) if metadata.is_file() && metadata.len() > 0 => Some(metadata.len()),
         _ => None,
     }
 }
 
-async fn existing_artifact_set_size(paths: &[PathBuf]) -> Option<u64> {
-    let mut total = 0_u64;
-    for path in paths {
-        total = total.checked_add(existing_model_file_size(path).await?)?;
+/// Admission gate for an artifact that is already present on disk.
+///
+/// Returns `true` only when the existing file satisfies the same policy the
+/// fresh-download path enforces: it is within `max_bytes` **and**, when a digest
+/// is pinned, its SHA-256 matches. Without this gate an artifact fetched by an
+/// older build (mutable `resolve/main/` URL, no digest policy) would be trusted
+/// forever and would silently bypass the pinning trust boundary.
+async fn artifact_admitted(destination: &Path, max_bytes: u64, sha256: Option<&str>) -> bool {
+    let Some(size) = existing_model_file_size(destination).await else {
+        return false;
+    };
+    if size > max_bytes {
+        return false;
     }
-    Some(total)
+    match sha256 {
+        Some(expected) => verify_file_sha256(destination, expected).await.is_ok(),
+        None => true,
+    }
+}
+
+/// Size of a pre-existing artifact that passed the admission gate.
+async fn admitted_artifact_size(artifact: &DownloadArtifact) -> Option<u64> {
+    let size = existing_model_file_size(&artifact.destination).await?;
+    if artifact_admitted(&artifact.destination, artifact.max_bytes, artifact.sha256).await {
+        Some(size)
+    } else {
+        None
+    }
+}
+
+/// Total size of a complete artifact set, but only when **every** artifact
+/// passes the admission gate. Rejected files are removed so the download path
+/// cannot mistake them for completed artifacts; artifacts that passed the gate
+/// are preserved so a partially valid bundle is not re-downloaded in full.
+async fn admitted_artifact_set_size(artifacts: &[DownloadArtifact]) -> Option<u64> {
+    let mut total = Some(0_u64);
+    for artifact in artifacts {
+        match admitted_artifact_size(artifact).await {
+            Some(size) => {
+                total = total.and_then(|sum| sum.checked_add(size));
+            }
+            None => {
+                // Missing, oversized, or digest-mismatched. Removal is a no-op
+                // for an artifact that was simply never downloaded.
+                discard_rejected_artifact(&artifact.destination, None).await;
+                total = None;
+            }
+        }
+    }
+    total
+}
+
+/// Delete an artifact that failed the admission gate, plus the job-scoped
+/// partial download and resume validator when the caller owns a job. The
+/// artifact is then re-downloaded from byte zero under the current policy.
+async fn discard_rejected_artifact(destination: &Path, job_id: Option<Uuid>) {
+    let _ = tokio::fs::remove_file(destination).await;
+    let Some(job_id) = job_id else {
+        return;
+    };
+    if let Ok(temp_path) = temporary_artifact_path(destination, job_id) {
+        if let Ok(validator_path) = temporary_validator_path(&temp_path) {
+            let _ = tokio::fs::remove_file(validator_path).await;
+        }
+        let _ = tokio::fs::remove_file(temp_path).await;
+    }
 }
 
 fn temporary_artifact_path(destination: &Path, job_id: Uuid) -> Result<PathBuf, String> {
@@ -1027,11 +1230,12 @@ mod tests {
         let job_id = Uuid::new_v4();
 
         let temp_file = temporary_artifact_path(&destination, job_id).unwrap();
-        let auxiliary_temp_file =
-            temporary_artifact_path(&auxiliary_destination, job_id).unwrap();
+        let auxiliary_temp_file = temporary_artifact_path(&auxiliary_destination, job_id).unwrap();
         let validator_file = temporary_validator_path(&temp_file).unwrap();
         let auxiliary_validator_file = temporary_validator_path(&auxiliary_temp_file).unwrap();
-        tokio::fs::write(&temp_file, b"partial bytes").await.unwrap();
+        tokio::fs::write(&temp_file, b"partial bytes")
+            .await
+            .unwrap();
         tokio::fs::write(&auxiliary_temp_file, b"partial tokens")
             .await
             .unwrap();
@@ -1084,10 +1288,7 @@ mod tests {
         let registry = DownloadRegistry::default();
         let job_id = Uuid::new_v4();
 
-        let filename = destination
-            .file_name()
-            .and_then(|n| n.to_str())
-            .unwrap();
+        let filename = destination.file_name().and_then(|n| n.to_str()).unwrap();
         let temp_file = destination.with_file_name(format!("{filename}.{job_id}.download"));
         tokio::fs::write(&temp_file, b"first-chunk").await.unwrap();
 
@@ -1135,9 +1336,7 @@ mod tests {
 
     #[tokio::test]
     async fn bundle_job_waits_for_auxiliary_artifact() {
-        let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
-            .await
-            .unwrap();
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
         let address = listener.local_addr().unwrap();
         let (accepted_tx, accepted_rx) = oneshot::channel();
         let (release_tx, release_rx) = oneshot::channel();
@@ -1165,10 +1364,7 @@ mod tests {
                 WhisperModel::ParakeetTdt06B,
                 vec![
                     DownloadArtifact::new("http://unused.invalid".to_string(), primary),
-                    DownloadArtifact::new(
-                        format!("http://{address}/vocab.txt"),
-                        auxiliary.clone(),
-                    ),
+                    DownloadArtifact::new(format!("http://{address}/vocab.txt"), auxiliary.clone()),
                 ],
                 reqwest::Client::new(),
             )
@@ -1195,16 +1391,17 @@ mod tests {
             }
             tokio::time::sleep(tokio::time::Duration::from_millis(20)).await;
         }
-        assert!(completed, "bundle did not complete after auxiliary finalized");
+        assert!(
+            completed,
+            "bundle did not complete after auxiliary finalized"
+        );
         assert_eq!(tokio::fs::read(&auxiliary).await.unwrap(), b"aux");
         server.await.unwrap();
     }
 
     #[tokio::test]
     async fn mismatched_content_range_restarts_without_append() {
-        let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
-            .await
-            .unwrap();
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
         let address = listener.local_addr().unwrap();
         let server = tokio::spawn(async move {
             for response in [
@@ -1231,6 +1428,7 @@ mod tests {
             &format!("http://{address}/artifact"),
             3,
             Some("\"artifact-v1\""),
+            MAX_MODEL_ARTIFACT_BYTES,
         )
         .await
         .unwrap();
@@ -1241,9 +1439,7 @@ mod tests {
 
     #[tokio::test]
     async fn partial_download_without_validator_restarts_from_zero() {
-        let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
-            .await
-            .unwrap();
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
         let address = listener.local_addr().unwrap();
         let server = tokio::spawn(async move {
             let (mut socket, _) = listener.accept().await.unwrap();
@@ -1265,6 +1461,7 @@ mod tests {
             &format!("http://{address}/artifact"),
             3,
             None,
+            MAX_MODEL_ARTIFACT_BYTES,
         )
         .await
         .unwrap();
@@ -1275,9 +1472,7 @@ mod tests {
 
     #[tokio::test]
     async fn successful_status_without_artifact_body_is_rejected() {
-        let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
-            .await
-            .unwrap();
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
         let address = listener.local_addr().unwrap();
         let server = tokio::spawn(async move {
             let (mut socket, _) = listener.accept().await.unwrap();
@@ -1297,6 +1492,7 @@ mod tests {
             &format!("http://{address}/artifact"),
             3,
             Some("\"artifact-v1\""),
+            MAX_MODEL_ARTIFACT_BYTES,
         )
         .await
         .unwrap_err();
@@ -1389,8 +1585,13 @@ mod tests {
         }
 
         let failed = failed.expect("bundle job did not report auxiliary failure");
-        let error = failed.error.expect("failed bundle should include a diagnostic");
-        assert!(error.contains("vocab.txt"), "unexpected diagnostic: {error}");
+        let error = failed
+            .error
+            .expect("failed bundle should include a diagnostic");
+        assert!(
+            error.contains("vocab.txt"),
+            "unexpected diagnostic: {error}"
+        );
         let latest = registry
             .get_latest_job(WhisperModel::ParakeetTdt06B)
             .await
@@ -1398,5 +1599,198 @@ mod tests {
         assert_eq!(latest.status, DownloadJobStatus::Failed);
         assert!(primary.exists());
         assert!(!auxiliary.exists());
+    }
+
+    #[tokio::test]
+    async fn pre_existing_artifact_must_pass_size_and_digest_gate() {
+        let temp_dir = tempfile::tempdir().unwrap();
+        let destination = temp_dir.path().join("model.int8.onnx");
+        let bytes = b"pre-existing artifact bytes";
+        tokio::fs::write(&destination, bytes).await.unwrap();
+        let digest = format!("{:x}", Sha256::digest(bytes));
+
+        // Matching digest and size within the cap is the only admitted case.
+        assert!(artifact_admitted(&destination, 1_024, Some(&digest)).await);
+        assert!(artifact_admitted(&destination, 1_024, None).await);
+        // Digest mismatch: a file downloaded before the pinning policy existed.
+        assert!(!artifact_admitted(&destination, 1_024, Some(&"a".repeat(64))).await);
+        // Oversized relative to the per-artifact cap.
+        assert!(!artifact_admitted(&destination, 4, None).await);
+        // Missing files are never admitted.
+        assert!(!artifact_admitted(&temp_dir.path().join("absent.onnx"), 1_024, None).await);
+    }
+
+    #[tokio::test]
+    async fn pre_existing_bundle_with_wrong_digest_is_rejected_and_removed() {
+        let temp_dir = tempfile::tempdir().unwrap();
+        let pinned = temp_dir.path().join("encoder-model.int8.onnx");
+        let unpinned = temp_dir.path().join("vocab.txt");
+        tokio::fs::write(&pinned, b"legacy unverified graph")
+            .await
+            .unwrap();
+        tokio::fs::write(&unpinned, b"legacy vocabulary")
+            .await
+            .unwrap();
+
+        let artifacts = vec![
+            DownloadArtifact::new_verified(
+                "http://127.0.0.1:0/encoder-model.int8.onnx".to_string(),
+                pinned.clone(),
+                MAX_MODEL_ARTIFACT_BYTES,
+                Some("0000000000000000000000000000000000000000000000000000000000000000"),
+            ),
+            DownloadArtifact::new("http://127.0.0.1:0/vocab.txt".to_string(), unpinned.clone()),
+        ];
+        assert_eq!(admitted_artifact_set_size(&artifacts).await, None);
+        // The digest-mismatched artifact is dropped so it is re-downloaded, and
+        // the artifact that passed the gate is preserved.
+        assert!(!pinned.exists());
+        assert!(unpinned.exists());
+
+        // The registry must not publish the stale bundle as completed either.
+        let registry = DownloadRegistry::default();
+        let snapshot = registry
+            .start_or_get_active(
+                WhisperModel::ParakeetTdt06B,
+                artifacts,
+                reqwest::Client::new(),
+            )
+            .await
+            .unwrap();
+        assert_ne!(snapshot.status, DownloadJobStatus::Completed);
+    }
+
+    #[tokio::test]
+    async fn oversized_content_length_is_rejected_before_download() {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let address = listener.local_addr().unwrap();
+        let server = tokio::spawn(async move {
+            let (mut socket, _) = listener.accept().await.unwrap();
+            let mut request = [0_u8; 1024];
+            let _ = socket.read(&mut request).await.unwrap();
+            socket
+                .write_all(
+                    b"HTTP/1.1 200 OK\r\nContent-Length: 9999999999\r\nConnection: close\r\n\r\n",
+                )
+                .await
+                .unwrap();
+        });
+
+        let error = request_artifact_response(
+            &reqwest::Client::new(),
+            &format!("http://{address}/artifact"),
+            0,
+            None,
+            100,
+        )
+        .await
+        .unwrap_err();
+        assert!(
+            error.contains("exceeds 100 byte limit"),
+            "unexpected error: {error}"
+        );
+        server.await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn chunk_cap_breach_deletes_partial_download_file() {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let address = listener.local_addr().unwrap();
+        let server = tokio::spawn(async move {
+            let (mut socket, _) = listener.accept().await.unwrap();
+            let mut request = [0_u8; 1024];
+            let _ = socket.read(&mut request).await.unwrap();
+            // No Content-Length and Connection: close, so reqwest reads until
+            // EOF; the 6-byte body exceeds the 4-byte artifact cap and must
+            // trigger a chunk-cap breach.
+            socket
+                .write_all(b"HTTP/1.1 200 OK\r\nConnection: close\r\n\r\nTOOBIG")
+                .await
+                .unwrap();
+        });
+
+        let temp_dir = tempfile::tempdir().unwrap();
+        let destination = temp_dir.path().join("model.bin");
+        let artifact = DownloadArtifact::new_verified(
+            format!("http://{address}/model.bin"),
+            destination.clone(),
+            4,
+            None,
+        );
+
+        let registry = DownloadRegistry::default();
+        let snapshot = registry
+            .start_or_get_active(
+                WhisperModel::Tiny,
+                vec![artifact],
+                reqwest::Client::new(),
+            )
+            .await
+            .unwrap();
+
+        let mut failed = None;
+        for _ in 0..100 {
+            let current = registry
+                .get_job(WhisperModel::Tiny, snapshot.job_id)
+                .await
+                .unwrap();
+            if current.status == DownloadJobStatus::Failed {
+                failed = Some(current);
+                break;
+            }
+            tokio::time::sleep(tokio::time::Duration::from_millis(20)).await;
+        }
+
+        let failed = failed.expect("chunk cap breach should fail the job");
+        assert!(
+            failed
+                .error
+                .as_ref()
+                .map(|err| err.contains("exceeds 4 byte limit"))
+                .unwrap_or(false),
+            "unexpected diagnostic: {:?}",
+            failed.error
+        );
+
+        // The partial temp file must be removed on the cap breach so a retry
+        // cannot resume from poisoned data.
+        let temp_file = temporary_artifact_path(&destination, snapshot.job_id).unwrap();
+        assert!(!temp_file.exists());
+        server.await.unwrap();
+    }
+
+    /// A typo'd digest constant is a permanent, unrecoverable download failure
+    /// (the artifact can never verify). Refetching upstream needs network access
+    /// CI cannot rely on, so at minimum every pinned digest must be a plausible
+    /// SHA-256: exactly 64 hexadecimal characters.
+    #[test]
+    fn pinned_artifact_digests_are_well_formed_sha256() {
+        let mut pinned_digests = 0_usize;
+        for slug in WhisperModel::supported() {
+            let Some(model) = WhisperModel::from_slug(slug) else {
+                continue;
+            };
+            for (name, _, sha256) in model.artifact_set() {
+                let Some(digest) = sha256 else {
+                    continue;
+                };
+                assert_eq!(
+                    digest.len(),
+                    64,
+                    "pinned digest for '{name}' must be 64 hex characters: '{digest}'"
+                );
+                assert!(
+                    digest
+                        .chars()
+                        .all(|character| character.is_ascii_hexdigit()),
+                    "pinned digest for '{name}' must be hexadecimal: '{digest}'"
+                );
+                pinned_digests += 1;
+            }
+        }
+        assert!(
+            pinned_digests > 0,
+            "at least one artifact must carry a pinned SHA-256 digest"
+        );
     }
 }

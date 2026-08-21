@@ -1,7 +1,11 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { INITIAL_APP_STATE } from "../state/app.state";
 import { setAppState } from "../store";
-import { OPEN_CHAT_HOTKEY, syncHotkeyCombosToNative } from "./keyboard.utils";
+import {
+  getStyleSwitchActionNamesForKey,
+  OPEN_CHAT_HOTKEY,
+  syncHotkeyCombosToNative,
+} from "./keyboard.utils";
 
 const { invokeMock } = vi.hoisted(() => ({ invokeMock: vi.fn() }));
 
@@ -104,7 +108,11 @@ describe("syncHotkeyCombosToNative", () => {
       return Promise.resolve(undefined);
     });
 
-    await syncHotkeyCombosToNative();
+    // The failure must reach this caller (run rejects), not be swallowed by
+    // the queue-keeping catch.
+    await expect(syncHotkeyCombosToNative()).rejects.toThrow(
+      "native bridge down",
+    );
     setHotkeyCombo(["ControlLeft", "KeyP"]);
     await syncHotkeyCombosToNative();
 
@@ -112,5 +120,71 @@ describe("syncHotkeyCombosToNative", () => {
     expect(calls).toHaveLength(2);
     expect(calls[1][1].combos).toContainEqual(["ControlLeft", "KeyP"]);
     errorSpy.mockRestore();
+  });
+});
+
+describe("getStyleSwitchActionNamesForKey", () => {
+  it("maps a released physical key to its bound style-switch actions", () => {
+    const state = {
+      ...INITIAL_APP_STATE,
+      hotkeyById: {
+        fwd: {
+          id: "fwd",
+          actionName: "switch-writing-style-forward",
+          keys: ["RightArrow"],
+        },
+        bwd: {
+          id: "bwd",
+          actionName: "switch-writing-style-backward",
+          keys: ["LeftArrow"],
+        },
+        casual: {
+          id: "casual",
+          actionName: "switch-to-style:casual",
+          keys: ["KeyC"],
+        },
+        futureStyleAction: {
+          id: "future-style-action",
+          actionName: "switch-writing-style-custom",
+          keys: ["KeyF"],
+        },
+        chat: {
+          id: "chat",
+          actionName: OPEN_CHAT_HOTKEY,
+          keys: ["KeyO"],
+        },
+      },
+    };
+
+    expect(getStyleSwitchActionNamesForKey(state, "RightArrow")).toEqual([
+      "switch-writing-style-forward",
+    ]);
+    expect(getStyleSwitchActionNamesForKey(state, "KeyC")).toEqual([
+      "switch-to-style:casual",
+    ]);
+    // Actions added under an existing shared prefix must also be releasable.
+    expect(getStyleSwitchActionNamesForKey(state, "KeyF")).toEqual([
+      "switch-writing-style-custom",
+    ]);
+    // A non-style action bound to a key must never be released as a style key.
+    expect(getStyleSwitchActionNamesForKey(state, "KeyO")).toEqual([]);
+    // A key with no binding resolves to nothing.
+    expect(getStyleSwitchActionNamesForKey(state, "KeyZ")).toEqual([]);
+  });
+
+  it("is case-insensitive about the physical key", () => {
+    const state = {
+      ...INITIAL_APP_STATE,
+      hotkeyById: {
+        fwd: {
+          id: "fwd",
+          actionName: "switch-writing-style-forward",
+          keys: ["RightArrow"],
+        },
+      },
+    };
+    expect(getStyleSwitchActionNamesForKey(state, "rightarrow")).toEqual([
+      "switch-writing-style-forward",
+    ]);
   });
 });

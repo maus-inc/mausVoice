@@ -1,13 +1,18 @@
 import { getVersion } from "@tauri-apps/api/app";
 import { invoke } from "@tauri-apps/api/core";
+import { getCurrentWindow } from "@tauri-apps/api/window";
+import { commands } from "@maus-inc/desktop-native-apis";
 import { Member, Nullable, Term, User } from "@maus-inc/types";
 import { getRec, listify } from "@maus-inc/utilities";
-import dayjs from "dayjs";
 import { isEqual } from "lodash-es";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useIntl } from "react-intl";
 import { combineLatest, from, Observable, of } from "rxjs";
 import { showErrorSnackbar, showSnackbar } from "../../actions/app.actions";
+import {
+  canRunPostElevationInit,
+  runStartupElevationPreflight,
+} from "../../actions/elevation.actions";
 import { loadPairedRemoteDevices } from "../../actions/paired-remote-device.actions";
 import {
   refreshRemoteReceiverStatus,
@@ -16,7 +21,6 @@ import {
 import { handleRemoteFinalTextReceived } from "../../actions/remote-transcript.actions";
 import {
   checkForAppUpdates,
-  dismissUpdateDialog,
   installAvailableUpdate,
 } from "../../actions/updater.actions";
 import {
@@ -26,8 +30,8 @@ import {
   setRemoteOutputEnabled,
   setRemoteTargetDeviceId,
 } from "../../actions/user.actions";
-import { requestAdminRelaunch } from "../../actions/native.actions";
 import { useAsyncData, useAsyncEffect } from "../../hooks/async.hooks";
+import { useElevationStartupReady } from "../../hooks/elevation.hooks";
 import { useIntervalAsync, useKeyDownHandler } from "../../hooks/helper.hooks";
 import { useHotkeyFire } from "../../hooks/hotkey.hooks";
 import { useStreamWithSideEffects } from "../../hooks/stream.hooks";
@@ -51,19 +55,28 @@ import {
 import { getAppState, produceAppState, useAppStore } from "../../store";
 import { AuthUser } from "../../types/auth.types";
 import { OverlayPhase } from "../../types/overlay.types";
-import { CURRENT_COHORT, getMixpanel } from "../../utils/analytics.utils";
+import {
+  buildAnalyticsIdentity,
+  buildFirstTouchProperties,
+  buildPeopleProperties,
+  buildSuperProperties,
+  getMixpanel,
+} from "../../utils/analytics.utils";
 import { registerMembers, registerUsers } from "../../utils/app.utils";
+import { setPillGeometry } from "../../utils/composer.utils";
 import { getIsDevMode } from "../../utils/env.utils";
 import { createId } from "../../utils/id.utils";
 import {
   ADD_TO_DICTIONARY_HOTKEY,
+  getStyleSwitchActionNamesForKey,
   syncHotkeyCombosToNative,
 } from "../../utils/keyboard.utils";
 import { getLogger, initLogging } from "../../utils/log.utils";
 import { sendPillFlashMessage } from "../../utils/overlay.utils";
 import { isPermissionAuthorized } from "../../utils/permission.utils";
 import { getPlatform } from "../../utils/platform.utils";
-import { minutesToMilliseconds } from "../../utils/time.utils";
+import { hoursToMilliseconds } from "../../utils/time.utils";
+import { getLocalizedDashboardMenuLabels } from "../../utils/tray-dashboard-visibility.utils";
 import { buildTrayLanguageMenuModel } from "../../utils/tray-language.utils";
 import {
   getLocalizedPillMenuLabel,
@@ -71,8 +84,13 @@ import {
   getPillMenuLabel,
 } from "../../utils/tray-pill-visibility.utils";
 import {
+  evaluateHotkeyTrigger,
+  releaseHotkey,
+} from "../../utils/hotkey-filter.utils";
+import {
   getEffectivePillVisibility,
   getIsDictationUnlocked,
+  getMyUser,
   getMyUserPreferences,
   LOCAL_USER_ID,
 } from "../../utils/user.utils";
@@ -114,9 +132,8 @@ type RemoteFinalTextReceivedPayload = {
 // Timeout for Firebase Auth initialization.
 const AUTH_READY_TIMEOUT_MS = 4_000;
 
-// 10 minutes
-
-// 60 seconds
+// Cadence of the background update poll.
+const UPDATE_CHECK_INTERVAL_MS = hoursToMilliseconds(6);
 
 /**
  * Fingerprint of every state input that decides which combos the native
@@ -142,6 +159,10 @@ const hotkeyGrabFingerprint = (state: AppState): string => {
 
 export const AppSideEffects = () => {
   const intl = useIntl();
+  // The composer popout is a separate webview that loads the same SPA. The
+  // main window is the only surface that owns dictation input, so it is the
+  // only window that should track held keys for the dictation pipeline.
+  const isMainWindow = getCurrentWindow().label === "main";
   const [authReady, setAuthReady] = useState(false);
   const [streamReady, setStreamReady] = useState(false);
   const [initReady, setInitReady] = useState(false);
@@ -150,7 +171,6 @@ export const AppSideEffects = () => {
   // Tracks whether we've already notified about the current listener-failure episode, so the
   // 30s Rust slow-retry churn (failed -> connected -> failed) doesn't re-toast every cycle.
   const listenerFailureNotifiedRef = useRef(false);
-  const updateInitializedRef = useRef(false);
   const versionData = useAsyncData(getVersion, []);
   const userId = useAppStore((state) => state.auth?.uid ?? "");
   const initialized = useAppStore((state) => state.initialized);
@@ -162,6 +182,9 @@ export const AppSideEffects = () => {
     (state) => state.userById[LOCAL_USER_ID] ?? null,
   );
   const prefs = useAppStore((state) => getMyUserPreferences(state));
+  const playInteractionChime = useAppStore(
+    (state) => getMyUser(state)?.playInteractionChime ?? true,
+  );
   const keyPermAuthorized = useAppStore((state) =>
     isPermissionAuthorized(getRec(state.permissions, "accessibility")?.state),
   );
@@ -183,6 +206,10 @@ export const AppSideEffects = () => {
 
   useAsyncEffect(async () => {
     if (hotkeyStrategy !== "listener") {
+      return;
+    }
+    // Only the main window owns the global key grab.
+    if (!isMainWindow) {
       return;
     }
 
@@ -218,6 +245,10 @@ export const AppSideEffects = () => {
   // of the sync never runs half-configured, and re-runs whenever any
   // grab-relevant input changes — regardless of data load order.
   useEffect(() => {
+    // Native hotkey grab sync is owned by the main window only.
+    if (!isMainWindow) {
+      return;
+    }
     const push = () => {
       if (getAppState().hotkeyStrategy) {
         // syncHotkeyCombosToNative rejects if the native grab fails to install
@@ -246,21 +277,28 @@ export const AppSideEffects = () => {
     void initLogging();
   }, []);
 
+  // A23: Keep the native thock gate in sync with the persisted
+  // playInteractionChime preference (initial value + changes).
   useEffect(() => {
-    if (!prefs || startupElevationAttemptedRef.current) {
+    invoke("set_interaction_chime_enabled", {
+      enabled: playInteractionChime,
+    }).catch(() => {});
+  }, [playInteractionChime]);
+
+  // Windows "Always run as administrator" pre-flight. Must stay ahead of
+  // auth / Mixpanel / dashboard init — the gate in elevation.actions owns
+  // the state transitions so AppSideEffects and the decline dialog cannot
+  // diverge. Relaunch is never invoked from Tauri setup().
+  useAsyncEffect(async () => {
+    if (startupElevationAttemptedRef.current) {
       return;
     }
     startupElevationAttemptedRef.current = true;
-
-    if (getPlatform() !== "windows" || !prefs.alwaysRequestAdminOnStartup) {
-      return;
-    }
-
-    getLogger().info(
-      "Requesting administrator relaunch after frontend startup",
-    );
-    void requestAdminRelaunch();
-  }, [prefs]);
+    await runStartupElevationPreflight({
+      isMainWindow,
+      platform: getPlatform(),
+    });
+  }, []);
 
   useAsyncEffect(async () => {
     if (consumeSurfaceWindowFlag()) {
@@ -277,6 +315,8 @@ export const AppSideEffects = () => {
       draft.initialized = false;
     });
   };
+
+  const elevationReady = useElevationStartupReady();
 
   useTauriListen<OverlayPhasePayload>("overlay_phase", (payload) => {
     produceAppState((draft) => {
@@ -301,6 +341,21 @@ export const AppSideEffects = () => {
   useTauriListen<BridgeHotkeyTriggerPayload>(
     "bridge_hotkey_trigger",
     (payload) => {
+      // A21: Filter hotkey spam while the pill is in an active recording state.
+      // Repeated identical triggers are debounced; stop/cancel always pass.
+      // This must happen BEFORE the counter increment so consumers never see
+      // a filtered trigger.
+      const isRecording = getAppState().overlayPhase === "recording";
+      const { allowed, reason } = evaluateHotkeyTrigger(
+        payload.hotkey,
+        isRecording,
+      );
+      if (!allowed) {
+        getLogger().verbose(
+          `[hotkey-filter] blocked ${payload.hotkey}: ${reason}`,
+        );
+        return;
+      }
       produceAppState((draft) => {
         draft.hotkeyTriggers[payload.hotkey] =
           (draft.hotkeyTriggers[payload.hotkey] ?? 0) + 1;
@@ -309,9 +364,34 @@ export const AppSideEffects = () => {
   );
 
   useTauriListen<KeysHeldPayload>("keys_held", (payload) => {
+    // Only the main window owns dictation input; ignore held-key updates in
+    // the composer popout (and any other webview) so its SPA copy can't drive
+    // a duplicate dictation/style-switch pipeline.
+    if (!isMainWindow) {
+      return;
+    }
     const existing = getAppState().keysHeld;
     if (isEqual(existing, payload.keys)) {
       return;
+    }
+
+    // A21: Release a style-switch action's "held" state when its physical key
+    // is released. Releasing only when ALL keys are up would never fire during
+    // hold-to-talk dictation (the dictate key stays held), wedging style
+    // switching after the first press.
+    const releasedKeys = existing.filter(
+      (key) =>
+        !payload.keys.some((held) => held.toLowerCase() === key.toLowerCase()),
+    );
+    if (releasedKeys.length > 0) {
+      for (const key of releasedKeys) {
+        for (const actionName of getStyleSwitchActionNamesForKey(
+          getAppState(),
+          key,
+        )) {
+          releaseHotkey(actionName);
+        }
+      }
     }
 
     produceAppState((draft) => {
@@ -361,12 +441,24 @@ export const AppSideEffects = () => {
   useTauriListen<RemoteFinalTextReceivedPayload>(
     "remote_final_text_received",
     async (payload) => {
+      // Inserting the remote transcript is a window-global action; only the
+      // main window must perform it to avoid double-insertion from a popout.
+      if (!isMainWindow) {
+        return;
+      }
       await handleRemoteFinalTextReceived(payload);
       await refreshRemoteReceiverStatus().catch(() => undefined);
     },
   );
 
+  // Auth and the rest of full-app init stay behind the elevation gate so a
+  // declined-or-pending UAC never pays for Firebase / Mixpanel / remote
+  // receiver setup on the unelevated helper surface.
   useEffect(() => {
+    if (!canRunPostElevationInit(elevationReady)) {
+      return;
+    }
+
     authReadyRef.current = false;
 
     const timeoutId = setTimeout(() => {
@@ -388,11 +480,11 @@ export const AppSideEffects = () => {
       clearTimeout(timeoutId);
       unsubscribe();
     };
-  }, []);
+  }, [elevationReady]);
 
   useStreamWithSideEffects({
     builder: (): Observable<StreamRet> => {
-      if (!authReady) {
+      if (!canRunPostElevationInit(elevationReady, authReady)) {
         return of(null);
       }
 
@@ -414,6 +506,9 @@ export const AppSideEffects = () => {
       ]);
     },
     onSuccess: (results) => {
+      if (!canRunPostElevationInit(elevationReady)) {
+        return;
+      }
       setStreamReady(true);
       if (results === null) {
         return;
@@ -425,43 +520,49 @@ export const AppSideEffects = () => {
         registerMembers(draft, listify(members));
       });
     },
-    dependencies: [userId, authReady],
+    dependencies: [userId, authReady, elevationReady],
   });
 
   useAsyncEffect(async () => {
-    if (authReady) {
-      await refreshCurrentUser();
-      setInitReady(true);
+    if (!canRunPostElevationInit(elevationReady, authReady)) {
+      return;
     }
-  }, [authReady]);
+    await refreshCurrentUser();
+    setInitReady(true);
+  }, [authReady, elevationReady]);
 
   useAsyncEffect(async () => {
-    if (initReady) {
-      await loadPairedRemoteDevices();
-      await refreshRemoteReceiverStatus();
-      const prefs = getMyUserPreferences(getAppState());
-      if (
-        prefs?.remoteTargetDeviceId &&
-        !getAppState().pairedRemoteDeviceById[prefs.remoteTargetDeviceId]
-      ) {
-        await setRemoteTargetDeviceId(null);
-        await setRemoteOutputEnabled(false);
-      }
-      const receiverStatus = getAppState().remoteReceiverStatus;
-      if (prefs?.remoteReceiverAutoStart && !receiverStatus?.enabled) {
-        await startRemoteReceiver(prefs.remoteReceiverPort ?? null);
-      }
+    if (!canRunPostElevationInit(elevationReady, initReady)) {
+      return;
     }
-  }, [initReady]);
+    await loadPairedRemoteDevices();
+    await refreshRemoteReceiverStatus();
+    const prefs = getMyUserPreferences(getAppState());
+    if (
+      prefs?.remoteTargetDeviceId &&
+      !getAppState().pairedRemoteDeviceById[prefs.remoteTargetDeviceId]
+    ) {
+      await setRemoteTargetDeviceId(null);
+      await setRemoteOutputEnabled(false);
+    }
+    const receiverStatus = getAppState().remoteReceiverStatus;
+    if (prefs?.remoteReceiverAutoStart && !receiverStatus?.enabled) {
+      await startRemoteReceiver(prefs.remoteReceiverPort ?? null);
+    }
+  }, [initReady, elevationReady]);
 
   useEffect(() => {
-    if (streamReady && initReady && !initialized) {
-      getLogger().info("App fully initialized");
-      produceAppState((draft) => {
-        draft.initialized = true;
-      });
+    if (
+      !canRunPostElevationInit(elevationReady, streamReady, initReady) ||
+      initialized
+    ) {
+      return;
     }
-  }, [streamReady, initReady, initialized]);
+    getLogger().info("App fully initialized");
+    produceAppState((draft) => {
+      draft.initialized = true;
+    });
+  }, [streamReady, initReady, initialized, elevationReady]);
 
   const auth = useAppStore((state) => state.auth);
   const prevUserIdRef = useRef<string | null>(null);
@@ -481,66 +582,33 @@ export const AppSideEffects = () => {
       mp.reset();
     }
 
-    const isPro = member?.plan === "pro";
-    const isFree = member?.plan === "free";
-    const isCommunity = !currentUserId;
-    const isTrial = member?.isOnTrial ?? false;
-    const isPaying = !isTrial && isPro;
-    const onboardedAt = localUser?.onboardedAt;
-    const daysSinceOnboarded = onboardedAt
-      ? dayjs().diff(dayjs(onboardedAt), "day")
-      : 0;
-    const platform = getPlatform();
-    const locale = detectLocale();
-    const onboarded = localUser?.onboarded ?? false;
-    const planStatus = member?.plan ?? "community";
+    const identity = buildAnalyticsIdentity({
+      userId: currentUserId,
+      member,
+      localUser,
+      preferences: prefs,
+      platform: getPlatform(),
+      locale: detectLocale(),
+    });
 
     if (currentUserId && currentUserId !== prevUserId) {
       mp.identify(currentUserId);
-
+      const firstTouch = buildFirstTouchProperties(identity);
       mp.people.set_once({
         $created: new Date().toISOString(),
-        initialPlatform: platform,
-        initialLocale: locale,
-        initialCohort: CURRENT_COHORT,
+        ...firstTouch,
       });
-
-      mp.register_once({
-        initialPlatform: platform,
-        initialLocale: locale,
-        initialCohort: CURRENT_COHORT,
-      });
+      mp.register_once(firstTouch);
     }
 
-    mp.people.set({
-      $email: auth?.email ?? undefined,
-      $name: auth?.displayName ?? undefined,
-      planStatus,
-      isPro,
-      isFree,
-      isCommunity,
-      isTrial,
-      isPaying,
-      onboarded,
-      onboardedAt: onboardedAt ?? undefined,
-      activeSystemCohort: CURRENT_COHORT,
-      daysSinceOnboarded,
-      pillState: getEffectivePillVisibility(prefs?.dictationPillVisibility),
-    });
+    mp.people.set(
+      buildPeopleProperties(identity, {
+        email: auth?.email,
+        displayName: auth?.displayName,
+      }),
+    );
 
-    mp.register({
-      userId: currentUserId,
-      planStatus,
-      isPro,
-      isFree,
-      isCommunity,
-      platform,
-      locale,
-      onboarded,
-      daysSinceOnboarded,
-      activeSystemCohort: CURRENT_COHORT,
-      pillState: getEffectivePillVisibility(prefs?.dictationPillVisibility),
-    });
+    mp.register(buildSuperProperties(identity));
 
     if (versionData.state === "success") {
       mp.register({
@@ -586,7 +654,7 @@ export const AppSideEffects = () => {
 
   useHotkeyFire({
     actionName: ADD_TO_DICTIONARY_HOTKEY,
-    isDisabled: false,
+    isDisabled: !isMainWindow,
     onFire: handleAddToDictionary,
   });
 
@@ -613,22 +681,19 @@ export const AppSideEffects = () => {
     },
   });
 
-  // check for app updates every minute
-  useIntervalAsync(
-    minutesToMilliseconds(1),
-    async () => {
-      if (!updateInitializedRef.current) {
-        dismissUpdateDialog();
-        updateInitializedRef.current = true;
-      }
+  // Background update poll. Releases land a few times a year, so a slow
+  // cadence is plenty; the Settings "Check now" button covers impatience.
+  useIntervalAsync(UPDATE_CHECK_INTERVAL_MS, async () => {
+    // Dev builds run against an unsigned local bundle the updater endpoint
+    // knows nothing about, so a check can only ever produce noise.
+    if (getIsDevMode()) {
+      return;
+    }
 
-      const available = await checkForAppUpdates();
-      invoke("set_menu_icon", {
-        variant: available ? "update" : "default",
-      }).catch(console.error);
-    },
-    [],
-  );
+    // The action syncs the tray badge itself, so a manual check from Settings
+    // updates it too rather than waiting for the next poll.
+    await checkForAppUpdates();
+  }, []);
 
   useToastAction(async (payload) => {
     if (payload.action === "open_agent_settings") {
@@ -642,11 +707,13 @@ export const AppSideEffects = () => {
   });
 
   useTauriListen<void>("tray-install-update", () => {
+    if (!isMainWindow) return;
     surfaceMainWindow();
     installAvailableUpdate();
   });
 
   useTauriListen<void>("tray-copy-last-transcript", async () => {
+    if (!isMainWindow) return;
     const [latest] = await getTranscriptionRepo().listTranscriptions({
       limit: 1,
     });
@@ -657,6 +724,7 @@ export const AppSideEffects = () => {
 
   const menuBarIconHidden = prefs?.menuBarIconHidden ?? false;
   useEffect(() => {
+    if (!isMainWindow) return;
     invoke("set_tray_visible", { visible: !menuBarIconHidden }).catch(
       console.error,
     );
@@ -669,14 +737,51 @@ export const AppSideEffects = () => {
     JSON.stringify(buildTrayLanguageMenuModel(state)),
   );
   useEffect(() => {
+    if (!isMainWindow) return;
     invoke("set_tray_language_menu", {
       items: JSON.parse(trayLanguageMenuKey),
     }).catch(console.error);
   }, [trayLanguageMenuKey]);
 
   useTauriListen<string>("tray-set-dictation-language", (code) => {
+    if (!isMainWindow) return;
     setActiveDictationLanguage(code).catch(console.error);
   });
+
+  // The native command reads the real window state; these events only trigger
+  // a debounced re-sync after OS-driven minimize, close-to-tray, and surface
+  // transitions. Rust retains both localized labels so a tray click can update
+  // the item synchronously without waiting for the webview.
+  useEffect(() => {
+    if (!isMainWindow) return;
+
+    const appWindow = getCurrentWindow();
+    const labels = getLocalizedDashboardMenuLabels(intl);
+    let timeoutId: ReturnType<typeof setTimeout> | undefined;
+
+    const sync = () => {
+      clearTimeout(timeoutId);
+      timeoutId = setTimeout(() => {
+        commands
+          .setDashboardMenuLabels(labels.openLabel, labels.hideLabel)
+          .catch(console.error);
+      }, 50);
+    };
+
+    sync();
+    const listeners = Promise.all([
+      appWindow.onFocusChanged(sync),
+      appWindow.onResized(sync),
+      appWindow.onCloseRequested(sync),
+    ]);
+
+    return () => {
+      clearTimeout(timeoutId);
+      void listeners.then((unlisteners) => {
+        unlisteners.forEach((unlisten) => unlisten());
+      });
+    };
+  }, [intl]);
 
   // ── Tray pill-visibility toggle ────────────────────────────────────────────
   // One menu item whose label states the action it performs. The persisted
@@ -701,6 +806,7 @@ export const AppSideEffects = () => {
   // Label follows the persisted preference: startup hydration, tray clicks and
   // Settings edits all flow through here, so the tray cannot drift.
   useEffect(() => {
+    if (!isMainWindow) return;
     const label = getLocalizedPillMenuLabel(effectivePillVisibility, intl);
     invoke("set_pill_visibility_menu_state", {
       label,
@@ -708,6 +814,7 @@ export const AppSideEffects = () => {
   }, [effectivePillVisibility, intl]);
 
   useTauriListen<void>("tray-toggle-pill-visibility", () => {
+    if (!isMainWindow) return;
     pillVisibilityQueueRef.current = pillVisibilityQueueRef.current
       .then(async () => {
         const current = pillVisibilityRef.current;
@@ -735,6 +842,7 @@ export const AppSideEffects = () => {
   // the tray menu item's enabled state; when the user clicks "Reset Pill
   // Position" we forward the IPC message and the pill re-homes itself.
   useTauriListen<void>("tray-reset-pill-position", () => {
+    if (!isMainWindow) return;
     const strategy =
       getMyUserPreferences(getAppState())?.pillResetMonitorStrategy ??
       "current";
@@ -743,18 +851,22 @@ export const AppSideEffects = () => {
     });
   });
 
-  useTauriListen<{ hasSavedPosition: boolean }>(
-    "pill-position-changed",
-    (event) => {
-      invoke("set_reset_pill_position_enabled", {
-        enabled: event.hasSavedPosition,
-      }).catch((error) => {
-        getLogger().error(
-          `Failed to update reset-pill-position menu state: ${error}`,
-        );
-      });
-    },
-  );
+  useTauriListen<{
+    hasSavedPosition: boolean;
+    rect?: { x: number; y: number; width: number; height: number };
+    monitor?: { x: number; y: number; width: number; height: number };
+  }>("pill-position-changed", (event) => {
+    // Pill geometry and tray menu belong to the main window's pill.
+    if (!isMainWindow) return;
+    setPillGeometry(event.rect ?? null, event.monitor ?? null);
+    invoke("set_reset_pill_position_enabled", {
+      enabled: event.hasSavedPosition,
+    }).catch((error) => {
+      getLogger().error(
+        `Failed to update reset-pill-position menu state: ${error}`,
+      );
+    });
+  });
 
   return null;
 };

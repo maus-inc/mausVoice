@@ -11,6 +11,10 @@ import {
 } from "./language.utils";
 import { ToneConfig } from "./tone.utils";
 import { getMyUserName } from "./user.utils";
+import { HUMANIZE_SKILL_TEXT } from "./humanize.utils";
+
+const appendHumanizeSkill = (base: string): string =>
+  `${base.trim()}\n\n${HUMANIZE_SKILL_TEXT}`;
 
 const sanitizeGlossaryValue = (value: string): string =>
   // oxlint-disable-next-line no-control-regex
@@ -112,17 +116,42 @@ const getStylePrompt = (input: PostProcessingPromptInput): string => {
   return "Clean up the provided transcript";
 };
 
+const appendStructuredStyleGuidance = (
+  prompt: string,
+  tone: ToneConfig,
+): string => {
+  const fields = [
+    tone.category && `Category: ${tone.category}`,
+    tone.outputLength && `Output length: ${tone.outputLength}`,
+    tone.exampleInputOutput &&
+      `Example input/output: ${tone.exampleInputOutput}`,
+  ].filter((field): field is string => Boolean(field));
+
+  // Keep the exact legacy prompt when no structured fields were supplied.
+  if (fields.length === 0) {
+    return prompt;
+  }
+
+  return `${prompt}\n\nAdditional style guidance:\n${fields.join("\n")}`;
+};
+
 export const buildSystemPostProcessingTonePrompt = (
   input: PostProcessingPromptInput,
 ): string => {
   if (input.tone.kind === "template" && input.tone.systemPromptTemplate) {
-    return applyTemplateVars(
+    const systemPrompt = applyTemplateVars(
       input.tone.systemPromptTemplate,
       buildPostProcessingTemplateVars(input),
     );
+    return appendHumanizeSkill(
+      appendStructuredStyleGuidance(systemPrompt, input.tone),
+    );
   }
 
-  const stylePrompt = getStylePrompt(input);
+  const stylePrompt = appendStructuredStyleGuidance(
+    getStylePrompt(input),
+    input.tone,
+  );
   const languageName = getDisplayNameForLanguage(input.dictationLanguage);
   const fullPrompt = `
 ${stylePrompt}
@@ -130,9 +159,11 @@ The result must be in the ${languageName} language.
 Respond with JSON only: { "result": "<processed-transcript>" }
 `;
 
-  return applyTemplateVars(
-    fullPrompt.trim(),
-    buildPostProcessingTemplateVars(input),
+  return appendHumanizeSkill(
+    applyTemplateVars(
+      fullPrompt.trim(),
+      buildPostProcessingTemplateVars(input),
+    ),
   );
 };
 
@@ -282,14 +313,20 @@ export const buildPostProcessingPrompt = (
   input: PostProcessingPromptInput,
 ): string => {
   const { transcript, tone } = input;
+  // A19: append the shared humanize skill to every post-processing prompt so
+  // styled dictation output is de-slopped at generation time (the scrubber in
+  // run-agent.ts is the post-hoc safety net).
   if (tone.kind === "template") {
-    return applyTemplateVars(
-      tone.promptTemplate,
-      buildPostProcessingTemplateVars(input),
+    return appendHumanizeSkill(
+      applyTemplateVars(
+        tone.promptTemplate,
+        buildPostProcessingTemplateVars(input),
+      ),
     );
   }
 
-  return `
+  return appendHumanizeSkill(
+    `
 Here is the transcript:
 
 <transcript>
@@ -297,7 +334,8 @@ ${transcript}
 </transcript>
 
 Process the transcript according to the instructions.
-`.trim();
+`,
+  );
 };
 
 export const PROCESSED_TRANSCRIPTION_SCHEMA = z.object({
@@ -377,6 +415,6 @@ Return ONLY the requested output, nothing else. The output will be pasted direct
     );
   }
 
-  console.log("Agent prompt", prompt);
+  console.log("Agent prompt", base);
   return base;
 };

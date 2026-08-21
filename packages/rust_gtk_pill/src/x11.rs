@@ -87,8 +87,11 @@ pub(crate) fn persist_drop_position(
     state.saved_x.set(drop_x as f64);
     state.saved_y.set(drop_y as f64);
     state.has_saved_position.set(true);
+    let (rect, monitor) = crate::pill::pill_geometry(window, state);
     ipc::send(&OutMessage::PositionChanged {
         has_saved_position: true,
+        rect,
+        monitor,
     });
     true
 }
@@ -248,7 +251,12 @@ pub(crate) fn setup_x11_window(window: &gtk::Window, state: Rc<PillState>) {
             state_tick.saved_x.set(dx as f64);
             state_tick.saved_y.set(dy as f64);
             state_tick.has_saved_position.set(true);
-            ipc::send(&OutMessage::PositionChanged { has_saved_position: true });
+            let (rect, monitor) = crate::pill::pill_geometry(&win_tick, &state_tick);
+            ipc::send(&OutMessage::PositionChanged {
+                has_saved_position: true,
+                rect,
+                monitor,
+            });
         }
         was_dragging.set(dragging);
 
@@ -333,18 +341,21 @@ pub(crate) fn setup_x11_window(window: &gtk::Window, state: Rc<PillState>) {
 /// anchor when the cursor sits on a transiently-missing monitor at realize().
 fn primary_monitor_bottom_centre(display: &gdk::Display) -> Option<(f64, f64)> {
     let primary = display.primary_monitor().or_else(|| display.monitor(0))?;
-    let g = primary.geometry();
-    let scale = primary.scale_factor() as f64;
-    let centre_x = (g.x() as f64 + g.width() as f64 / 2.0) * scale;
-    // Containment is exclusive on the lower edge (`anchor_y < phys_y + phys_h`),
+    let phys = crate::pill::logical_rect_to_physical(
+        &primary.geometry(),
+        primary.scale_factor() as f64,
+    );
+    let centre_x = phys.x + phys.width / 2.0;
+    // Containment is exclusive on the lower edge (`anchor_y < phys.y + phys.height`),
     // so sit one physical pixel inside rather than on the boundary.
-    let bottom_y = (g.y() as f64 + g.height() as f64) * scale - 1.0;
+    let bottom_y = phys.y + phys.height - 1.0;
     Some((centre_x, bottom_y))
 }
 
 /// Computes where the toplevel belongs, given the anchor point that decides
 /// which monitor owns the pill. All coordinates are physical pixels: cursor
-/// queries are physical root coords, and monitor geometry is scaled to match.
+/// queries are physical root coords, and monitor geometry/work areas are
+/// converted via `logical_rect_to_physical` to match.
 fn pill_pos_on_monitor(
     anchor_x: f64,
     anchor_y: f64,
@@ -361,22 +372,17 @@ fn pill_pos_on_monitor(
         let Some(monitor) = display.monitor(i) else {
             continue;
         };
-        let g = monitor.geometry();
         let scale = monitor.scale_factor() as f64;
-        let phys_x = g.x() as f64 * scale;
-        let phys_y = g.y() as f64 * scale;
-        let phys_w = g.width() as f64 * scale;
-        let phys_h = g.height() as f64 * scale;
-        if anchor_x >= phys_x
-            && anchor_x < phys_x + phys_w
-            && anchor_y >= phys_y
-            && anchor_y < phys_y + phys_h
+        // Monitor geometry and work areas come back in logical pixels; the
+        // hit-test and placement math below (and XMoveWindow itself) work in
+        // physical root pixels, so convert through the shared helper.
+        let phys = crate::pill::logical_rect_to_physical(&monitor.geometry(), scale);
+        if anchor_x >= phys.x
+            && anchor_x < phys.x + phys.width
+            && anchor_y >= phys.y
+            && anchor_y < phys.y + phys.height
         {
-            let wa = monitor.workarea();
-            let wa_x = wa.x() as f64 * scale;
-            let wa_y = wa.y() as f64 * scale;
-            let wa_w = wa.width() as f64 * scale;
-            let wa_h = wa.height() as f64 * scale;
+            let wa = crate::pill::logical_rect_to_physical(&monitor.workarea(), scale);
             let (alloc_w, alloc_h) = window.size();
             // window.size() returns logical pixels; XMoveWindow and the
             // workarea math above are in physical pixels, so scale here too.
@@ -407,13 +413,13 @@ fn pill_pos_on_monitor(
                     let fw = pw * scale;
                     let fh = ph * scale;
                     (
-                        wa_x - fx,
-                        wa_y - fy,
-                        wa_x + wa_w - fx - fw,
-                        wa_y + wa_h - fy - fh,
+                        wa.x - fx,
+                        wa.y - fy,
+                        wa.x + wa.width - fx - fw,
+                        wa.y + wa.height - fy - fh,
                     )
                 } else {
-                    (wa_x, wa_y, wa_x + wa_w - win_w, wa_y + wa_h - win_h)
+                    (wa.x, wa.y, wa.x + wa.width - win_w, wa.y + wa.height - win_h)
                 };
 
             // Guard against inverted bounds (e.g. a zero-size work area or a
@@ -447,8 +453,8 @@ fn pill_pos_on_monitor(
             }
 
             return Some((
-                (wa_x + (wa_w - win_w) / 2.0) as c_int,
-                (wa_y + wa_h - win_h - margin) as c_int,
+                (wa.x + (wa.width - win_w) / 2.0) as c_int,
+                (wa.y + wa.height - win_h - margin) as c_int,
             ));
         }
     }

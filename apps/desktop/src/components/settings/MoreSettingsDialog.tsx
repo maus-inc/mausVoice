@@ -22,8 +22,12 @@ import {
   setDictationLimitMinutes,
   setDictationPillVisibility,
   setPillResetMonitorStrategy,
+  setSpokenCommandsEnabled,
   setIgnoreUpdateDialog,
   setIncognitoModeEnabled,
+  setInDictationStyleSwitchingEnabled,
+  setHallucinationFilterEnabled,
+  setReviewBeforeInsert,
   setIncognitoModeIncludeInStats,
   setMenuBarIconHidden,
   setRealtimeOutputEnabled,
@@ -43,7 +47,9 @@ import {
   getTranscriptionPrefs,
 } from "../../utils/user.utils";
 import { SegmentedControl } from "../common/SegmentedControl";
+import { logOnRejection } from "../../utils/promise.utils";
 import { SettingSection } from "../common/SettingSection";
+import { UpdateSettingSection } from "./UpdateSettingSection";
 
 export const MoreSettingsDialog = () => {
   const intl = useIntl();
@@ -62,6 +68,10 @@ export const MoreSettingsDialog = () => {
     disablePillRewards,
     disableAutoStyleLoading,
     menuBarIconHidden,
+    spokenCommandsEnabled,
+    inDictationStyleSwitchingEnabled,
+    hallucinationFilterEnabled,
+    reviewBeforeInsert,
   ] = useAppStore((state) => {
     const prefs = getMyUserPreferences(state);
     const transcriptionPrefs = getTranscriptionPrefs(state);
@@ -80,6 +90,10 @@ export const MoreSettingsDialog = () => {
       state.local.disablePillRewards,
       state.local.disableAutoStyleLoading ?? false,
       prefs?.menuBarIconHidden ?? false,
+      prefs?.spokenCommandsEnabled ?? true,
+      prefs?.inDictationStyleSwitchingEnabled ?? false,
+      prefs?.hallucinationFilterEnabled ?? true,
+      prefs?.reviewBeforeInsert ?? false,
     ] as const;
   });
   const [dictationLimitInput, setDictationLimitInput] = useState(
@@ -117,7 +131,10 @@ export const MoreSettingsDialog = () => {
     }
 
     lastCommittedDictationLimitMinutesRef.current = normalized;
-    void setDictationLimitMinutes(normalized);
+    logOnRejection(
+      setDictationLimitMinutes(normalized),
+      "settings dialog: setDictationLimitMinutes",
+    );
   };
 
   const handleClose = () => {
@@ -129,36 +146,88 @@ export const MoreSettingsDialog = () => {
 
   const handleToggleShowUpdates = (event: ChangeEvent<HTMLInputElement>) => {
     const showUpdates = event.target.checked;
-    void setIgnoreUpdateDialog(!showUpdates);
+    logOnRejection(
+      setIgnoreUpdateDialog(!showUpdates),
+      "settings dialog: setIgnoreUpdateDialog",
+    );
   };
 
   const handleToggleIncognitoMode = (event: ChangeEvent<HTMLInputElement>) => {
     const enabled = event.target.checked;
-    void setIncognitoModeEnabled(enabled);
+    logOnRejection(
+      setIncognitoModeEnabled(enabled),
+      "settings dialog: setIncognitoModeEnabled",
+    );
   };
 
   const handleToggleIncognitoIncludeInStats = (
     event: ChangeEvent<HTMLInputElement>,
   ) => {
     const enabled = event.target.checked;
-    void setIncognitoModeIncludeInStats(enabled);
+    logOnRejection(
+      setIncognitoModeIncludeInStats(enabled),
+      "settings dialog: setIncognitoModeIncludeInStats",
+    );
   };
 
   const handleDictationPillVisibilityChange = (
     event: SelectChangeEvent<DictationPillVisibility>,
   ) => {
     const visibility = event.target.value as DictationPillVisibility;
-    void setDictationPillVisibility(visibility);
+    logOnRejection(
+      setDictationPillVisibility(visibility),
+      "settings dialog: setDictationPillVisibility",
+    );
   };
 
   const handlePillResetMonitorStrategyChange = (
     strategy: PillResetMonitorStrategy,
   ) => {
-    void setPillResetMonitorStrategy(strategy);
+    logOnRejection(
+      setPillResetMonitorStrategy(strategy),
+      "settings dialog: setPillResetMonitorStrategy",
+    );
   };
 
   const handleToggleRealtimeOutput = (event: ChangeEvent<HTMLInputElement>) => {
-    void setRealtimeOutputEnabled(event.target.checked);
+    logOnRejection(
+      setRealtimeOutputEnabled(event.target.checked),
+      "settings dialog: setRealtimeOutputEnabled",
+    );
+  };
+
+  const handleToggleSpokenCommands = (event: ChangeEvent<HTMLInputElement>) => {
+    logOnRejection(
+      setSpokenCommandsEnabled(event.target.checked),
+      "settings dialog: setSpokenCommandsEnabled",
+    );
+  };
+
+  const handleToggleInDictationStyleSwitching = (
+    event: ChangeEvent<HTMLInputElement>,
+  ) => {
+    logOnRejection(
+      setInDictationStyleSwitchingEnabled(event.target.checked),
+      "settings dialog: setInDictationStyleSwitchingEnabled",
+    );
+  };
+
+  const handleToggleHallucinationFilter = (
+    event: ChangeEvent<HTMLInputElement>,
+  ) => {
+    logOnRejection(
+      setHallucinationFilterEnabled(event.target.checked),
+      "settings dialog: setHallucinationFilterEnabled",
+    );
+  };
+
+  const handleToggleReviewBeforeInsert = (
+    event: ChangeEvent<HTMLInputElement>,
+  ) => {
+    logOnRejection(
+      setReviewBeforeInsert(event.target.checked),
+      "settings dialog: setReviewBeforeInsert",
+    );
   };
 
   const handleToggleDisablePillRewards = (
@@ -170,7 +239,10 @@ export const MoreSettingsDialog = () => {
   };
 
   const handleToggleMenuBarIcon = (event: ChangeEvent<HTMLInputElement>) => {
-    void setMenuBarIconHidden(!event.target.checked);
+    logOnRejection(
+      setMenuBarIconHidden(!event.target.checked),
+      "settings dialog: setMenuBarIconHidden",
+    );
   };
 
   const handleToggleAutoStyleLoading = (
@@ -194,7 +266,10 @@ export const MoreSettingsDialog = () => {
 
   const handleStylingModeChange = (event: SelectChangeEvent<string>) => {
     const value = event.target.value;
-    void setStylingMode(value === "" ? null : (value as StylingMode));
+    logOnRejection(
+      setStylingMode(value === "" ? null : (value as StylingMode)),
+      "settings dialog: setStylingMode",
+    );
   };
 
   const openMultiDeviceDialog = () => {
@@ -242,6 +317,8 @@ export const MoreSettingsDialog = () => {
               }
             />
           )}
+
+          <UpdateSettingSection />
 
           <SettingSection
             title={
@@ -319,15 +396,75 @@ export const MoreSettingsDialog = () => {
           />
 
           <SettingSection
+            title={<FormattedMessage defaultMessage="Spoken commands" />}
+            description={
+              <FormattedMessage defaultMessage='Turn phrases like "new line", "comma", and "scratch that" into formatting, even in Verbatim. Requires an English dictation language; Auto does not apply these commands.' />
+            }
+            action={
+              <Switch
+                edge="end"
+                checked={spokenCommandsEnabled}
+                onChange={handleToggleSpokenCommands}
+              />
+            }
+          />
+
+          <SettingSection
             title={<FormattedMessage defaultMessage="Real-time output" />}
             description={
-              <FormattedMessage defaultMessage="Stream dictation text as you speak instead of pasting all at once when you stop. Only applies to Verbatim mode with supported providers." />
+              <FormattedMessage defaultMessage="Stream dictation text as you speak instead of pasting all at once when you stop. Verbatim and a supported provider only. Punctuation commands apply live. Scratch-that and new-line apply to the saved transcript on release; they cannot rewrite text already streamed into the app. Real-time streaming skips Review before insert, so turning one on turns the other off." />
             }
             action={
               <Switch
                 edge="end"
                 checked={realtimeOutputEnabled}
                 onChange={handleToggleRealtimeOutput}
+              />
+            }
+          />
+
+          <SettingSection
+            title={<FormattedMessage defaultMessage="Review before insert" />}
+            description={
+              <FormattedMessage defaultMessage="Open an editable composer so you can review or change dictated text before it is inserted. Review pauses streaming, so turning this on turns Real-time output off." />
+            }
+            action={
+              <Switch
+                edge="end"
+                checked={reviewBeforeInsert}
+                onChange={handleToggleReviewBeforeInsert}
+              />
+            }
+          />
+
+          <SettingSection
+            title={
+              <FormattedMessage defaultMessage="Silence hallucination filter" />
+            }
+            description={
+              <FormattedMessage defaultMessage="Discard common fabricated phrases produced when the microphone hears silence or noise." />
+            }
+            action={
+              <Switch
+                edge="end"
+                checked={hallucinationFilterEnabled}
+                onChange={handleToggleHallucinationFilter}
+              />
+            }
+          />
+
+          <SettingSection
+            title={
+              <FormattedMessage defaultMessage="Switch style while dictating" />
+            }
+            description={
+              <FormattedMessage defaultMessage="Hold the dictate activation key and press Left or Right Arrow to cycle active styles." />
+            }
+            action={
+              <Switch
+                edge="end"
+                checked={inDictationStyleSwitchingEnabled}
+                onChange={handleToggleInDictationStyleSwitching}
               />
             }
           />

@@ -15,6 +15,7 @@ mausVoice filters credentials by task. "Available for transcription" means audio
 | AssemblyAI        | Yes, live session and batch |         No          | API key                                                 |
 | ElevenLabs        | Yes, live session and batch |         No          | API key                                                 |
 | Deepgram          |      Yes, live session      |         No          | API key                                                 |
+| Gladia            | Yes, live session and batch |         No          | API key                                                 |
 | OpenRouter        |             No              |         Yes         | API key                                                 |
 | Ollama            |             No              |         Yes         | Base URL; optional key                                  |
 | OpenAI Compatible |         Yes, batch          |         Yes         | Base URL; optional key; `/v1` choice                    |
@@ -26,11 +27,11 @@ mausVoice filters credentials by task. "Available for transcription" means audio
 | Speaches          |         Yes, batch          |         No          | Base URL and transcription model                        |
 | xAI Grok          |         Yes, batch          |         No          | API key                                                 |
 
-"Live session" describes microphone transport during recording. Only AssemblyAI, Deepgram, and ElevenLabs currently emit committed segments into mausVoice's optional [real-time output](../../using-mausvoice/real-time-output/). Azure has a dedicated recognition session but currently returns its assembled transcript in bulk.
+"Live session" describes microphone transport during recording. AssemblyAI, Deepgram, ElevenLabs, and Gladia emit committed segments into mausVoice's optional [real-time output](../../using-mausvoice/real-time-output/). Azure has a dedicated recognition session but currently returns its assembled transcript in bulk.
 
 ## Capability filter and dispatcher agreement
 
-Every provider surfaced for transcription has an implemented route. Ollama is intentionally generative-only. Stock Ollama has no transcription endpoint, so mausVoice keeps its post-processing and Assistant capabilities but does not offer it under **AI transcription**. AssemblyAI covers both the live streaming session and stored-audio batch (upload → transcript → poll). A stale selection for a provider without a transcription route is treated as unselected and falls back to **Local** transcription with a warning instead of failing silently.
+The capability filter and the transcription dispatcher agree: every provider surfaced for transcription has an implemented route. Ollama is intentionally generative-only. mausVoice preserves its post-processing and Assistant capabilities but does not expose speech-to-text through it (stock Ollama has no transcription endpoint), so it is not offered under **AI transcription**. AssemblyAI covers both the live streaming session and stored-audio batch (upload → transcript → poll). A stale selection for a provider without a transcription route is treated as unselected and falls back to **Local** transcription with a warning instead of failing silently.
 
 ## Selection and tests
 
