@@ -653,7 +653,7 @@ bash scripts/check-bindings.sh
 ### Repository-wide and CI changes
 
 ```sh
-pnpm format        # prettier --write "**/*.{ts,tsx,md}" — write mode; diff must be clean after
+pnpm exec prettier --check "**/*.{ts,tsx,md}"   # verify mode; the root `pnpm format` script runs --write and mutates files
 pnpm lint          # turbo run lint
 pnpm check-types   # turbo run check-types
 pnpm test          # turbo run test
@@ -1149,6 +1149,16 @@ The following four skills are reproduced in full. They complement Part I:
 Each appendix contains the skill's `SKILL.md` verbatim, including its
 frontmatter, inside a fenced block so headings do not collide with this
 document's structure.
+
+> **Note on upstream references:** Because the appendices are verbatim
+> copies, some links and references resolve only in each skill's upstream
+> repository, not in mausVoice. Examples: the `security-and-hardening` and
+> `performance-optimization` sibling skills and the
+> `../../references/security-checklist.md` /
+> `../../references/performance-checklist.md` paths in Appendix D, and
+> `docs/agents/issue-tracker.md` / `/setup-matt-pocock-skills` in
+> Appendix B. Treat these as pointers into the source repositories listed
+> at the top of each appendix; do not expect them to exist in this repo.
 
 ## Appendix A — CodeRabbit `code-review` skill
 
