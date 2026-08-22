@@ -4,7 +4,12 @@
 
 # mausVoice <a href="https://github.com/maus-inc/mausVoice/actions/workflows/test-desktop-unit.yml"><img src="https://img.shields.io/github/actions/workflow/status/maus-inc/mausVoice/test-desktop-unit.yml?branch=main&label=CI&style=flat&color=000000&labelColor=000000" alt="CI" /></a> <a href="https://github.com/maus-inc/mausVoice/releases/latest"><img src="https://img.shields.io/github/v/release/maus-inc/mausVoice?style=flat&labelColor=000000&color=000000" alt="Latest stable release" /></a>
 
-Grab your free [Groq↗](https://console.groq.com/keys) and [Deepgram↗](https://console.deepgram.com/) API keys.
+</div>
+
+> [!TIP]
+> Grab your free [Groq↗](https://console.groq.com/keys) and [Deepgram↗](https://console.deepgram.com/) API keys.
+
+<div align="center">
 
 <br>
 
@@ -49,14 +54,99 @@ Grab your free [Groq↗](https://console.groq.com/keys) and [Deepgram↗](https:
 
 ## Features
 
-|                          |                                                                                                                                      |
-| ------------------------ | ------------------------------------------------------------------------------------------------------------------------------------ |
-| **Live transcription**   | The streaming `nova-3` transcript appears while you're still speaking, so it's ready before you release the hotkey.                  |
-| **Fully local option**   | Run Whisper locally (CPU or GPU) with zero network calls for transcription.                                                          |
-| **AI cleanup**           | Removes filler words and fixes punctuation. Choose a writing style and the result reads like you wrote it.                           |
-| **Your keys, encrypted** | Deepgram and Groq keys live on your machine, encrypted with XChaCha20-Poly1305. Rotate them any time in Settings without rebuilding. |
-| **Personal dictionary**  | Add your names, jargon, and shorthand once and mausVoice remembers them.                                                             |
-| **Works in every app**   | The overlay captures audio globally and pastes the result into whatever has focus.                                                   |
+Every stage is configurable: capture globally, select the transcription path that fits the moment, then control exactly how the finished text reaches the focused app.
+
+<p align="center">
+  <a href="#global-dictation">Global dictation</a>
+  &nbsp;·&nbsp;
+  <a href="#transcription-engines">Transcription engines</a>
+  &nbsp;·&nbsp;
+  <a href="#writing-styles">Writing styles</a>
+  &nbsp;·&nbsp;
+  <a href="#dictionary-and-history">Dictionary &amp; history</a>
+  &nbsp;·&nbsp;
+  <a href="#assistant-approval">Assistant</a>
+</p>
+
+<br />
+
+<a id="global-dictation"></a>
+
+<p align="center">
+  <img src="docs/assets/features/dictate-anywhere.png" alt="Global dictation with live listening waveform" width="100%" />
+</p>
+
+<p align="center"><sub><strong>01 / GLOBAL DICTATION</strong></sub></p>
+<h3 align="center">Your voice, in the field with focus</h3>
+
+<p align="center">
+  Hold a global push-to-talk shortcut and speak into the app you are already using.<br />
+  mausVoice can paste, type directly, or leave the result on your clipboard.
+</p>
+
+<br />
+
+<a id="transcription-engines"></a>
+
+<p align="center">
+  <img src="docs/assets/features/choose-your-engine.png" alt="Local and API transcription engine choices" width="100%" />
+</p>
+
+<p align="center"><sub><strong>02 / TRANSCRIPTION ENGINES</strong></sub></p>
+<h3 align="center">Local or hosted. Pick the transcription path.</h3>
+
+<p align="center">
+  Run Whisper, Parakeet, or Canary locally on CPU or a detected Vulkan GPU, or choose a hosted provider.<br />
+  Bring your own credentials; local recognition stays on-device once its model is downloaded.
+</p>
+
+<br />
+
+<a id="writing-styles"></a>
+
+<p align="center">
+  <img src="docs/assets/features/writing-styles.png" alt="Writing styles for mail, chat, and terminal text" width="100%" />
+</p>
+
+<p align="center"><sub><strong>03 / WRITING STYLES</strong></sub></p>
+<h3 align="center">Say it once. Shape it for the destination.</h3>
+
+<p align="center">
+  Create reusable instructions for email, chat, terminal work, or any voice you need.<br />
+  Choose the style before recording, or switch post-processing off for a literal transcript.
+</p>
+
+<br />
+
+<a id="dictionary-and-history"></a>
+
+<p align="center">
+  <img src="docs/assets/features/dictionary-history.png" alt="Dictionary replacement rule and inspectable transcription history" width="100%" />
+</p>
+
+<p align="center"><sub><strong>04 / DICTIONARY &amp; HISTORY</strong></sub></p>
+<h3 align="center">Teach it your vocabulary. Keep the useful trail.</h3>
+
+<p align="center">
+  Add replacement rules for names, acronyms, and phrases that general models miss.<br />
+  Review raw and final text, play retained audio, or retranscribe a saved clip with current settings.
+</p>
+
+<br />
+
+<a id="assistant-approval"></a>
+
+<p align="center">
+  <img src="docs/assets/features/assistant-approval.png" alt="mausVoice Assistant with command approval controls" width="100%" />
+</p>
+
+<p align="center"><sub><strong>05 / ASSISTANT</strong></sub></p>
+<h3 align="center">Ask for action. Approve every command.</h3>
+
+<p align="center">
+  Use voice or text to work with the built-in Assistant and its permissioned tools.<br />
+  Requests pause for Deny, Allow, or Always allow; Power Mode keeps shell access off until enabled.
+</p>
 
 <p align="center">
   <a href="https://github.com/maus-inc/mausVoice/releases">
@@ -133,3 +223,48 @@ All development documentation is [here](https://maus-inc.github.io/mausVoice/doc
 [AGPLv3](LICENCE). Built on [Tauri](https://tauri.app), with the frontend in React and the audio/overlay layer in Rust.
 
 **Maintainer:** [Owie Emmanuel](https://github.com/Owie6789)
+
+> [!WARNING]
+> **mausVoice is currently in very early beta.** Although it is not expected during normal use, you may encounter undocumented behavior or bugs carried over from the app's pre-alpha stage.
+>
+> If you find a bug, please [open an issue](https://github.com/maus-inc/mausVoice/issues/new) and be as detailed as possible. Include the steps to reproduce it, what you expected, what happened, your platform and mausVoice version, and, when possible, a screenshot and sanitized diagnostic logs.
+>
+> We welcome these reports. They help us, as a community, improve the app for one another. 😊
+
+<details>
+<summary><strong>How to find and attach mausVoice logs</strong></summary>
+
+### Recommended on every platform
+
+1. Open **mausVoice → Settings → General → Diagnostics**.
+2. Select **Open** to reveal the log directory, or **Download** to export `mausvoice-diagnostics.zip`.
+3. Inspect the files before sharing them. Remove names, email addresses, private paths, transcript fragments, provider responses, API keys, and anything unrelated to the report.
+4. Attach the sanitized archive to your GitHub issue with a screenshot and clear reproduction steps.
+
+### macOS
+
+In Finder, choose **Go → Go to Folder…**, then enter:
+
+```text
+~/Library/Logs/com.mausinc.desktop
+```
+
+### Windows
+
+Press **Win + R**, then enter:
+
+```text
+%LOCALAPPDATA%\com.mausinc.desktop\logs
+```
+
+### Linux
+
+Open this directory in your file manager:
+
+```text
+~/.local/share/com.mausinc.desktop/logs
+```
+
+If `XDG_DATA_HOME` is set, use `$XDG_DATA_HOME/com.mausinc.desktop/logs` instead. Local development builds use `com.mausinc.desktop.local` as the identifier on every platform.
+
+</details>
