@@ -93,7 +93,7 @@ Every stage is configurable: capture globally, select the transcription path tha
 </p>
 
 <p align="center"><sub><strong>02 / TRANSCRIPTION ENGINES</strong></sub></p>
-<h3 align="center">Local or hosted—pick the transcription path.</h3>
+<h3 align="center">Local or hosted. Pick the transcription path.</h3>
 
 <p align="center">
   Run Whisper, Parakeet, or Canary locally on CPU or a detected Vulkan GPU, or choose a hosted provider.<br />
@@ -227,9 +227,9 @@ All development documentation is [here](https://maus-inc.github.io/mausVoice/doc
 > [!WARNING]
 > **mausVoice is currently in very early beta.** Although it is not expected during normal use, you may encounter undocumented behavior or bugs carried over from the app's pre-alpha stage.
 >
-> If you find a bug, please [open an issue](https://github.com/maus-inc/mausVoice/issues/new) and be as detailed as possible. Include the steps to reproduce it, what you expected, what happened, your platform and mausVoice version, and—when possible—a screenshot and sanitized diagnostic logs.
+> If you find a bug, please [open an issue](https://github.com/maus-inc/mausVoice/issues/new) and be as detailed as possible. Include the steps to reproduce it, what you expected, what happened, your platform and mausVoice version, and, when possible, a screenshot and sanitized diagnostic logs.
 >
-> We welcome these reports—they help us, as a community, improve the app for one another. 😊
+> We welcome these reports. They help us, as a community, improve the app for one another. 😊
 
 <details>
 <summary><strong>How to find and attach mausVoice logs</strong></summary>
