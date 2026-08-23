@@ -54,6 +54,22 @@ fn sqlite_connect_options(path: &Path) -> SqliteConnectOptions {
         .foreign_keys(true)
 }
 
+const SQLITE_SIDECARS: &[&str] = &["-journal", "-wal", "-shm"];
+
+fn rename_all_or_restore(moves: &[(PathBuf, PathBuf)]) -> std::io::Result<()> {
+    let mut completed = Vec::new();
+    for (from, to) in moves {
+        if let Err(err) = std::fs::rename(from, to) {
+            for (done_from, done_to) in completed.into_iter().rev() {
+                let _ = std::fs::rename(done_to, done_from);
+            }
+            return Err(err);
+        }
+        completed.push((from, to));
+    }
+    Ok(())
+}
+
 pub fn quarantine_sqlite_file(path: &Path) -> std::io::Result<PathBuf> {
     let parent = path.parent().unwrap_or(path);
     let mut stamp = SystemTime::now()
@@ -71,16 +87,21 @@ pub fn quarantine_sqlite_file(path: &Path) -> std::io::Result<PathBuf> {
         }
     };
     let dest = dir.join("mausvoice.db");
+    let mut moves = Vec::new();
     if path.exists() {
-        std::fs::rename(path, &dest)?;
+        moves.push((path.to_path_buf(), dest.clone()));
     }
     if let Some(name) = path.file_name().and_then(|n| n.to_str()) {
-        for suffix in ["-wal", "-shm"] {
+        for suffix in SQLITE_SIDECARS {
             let side = path.with_file_name(format!("{name}{suffix}"));
             if side.exists() {
-                std::fs::rename(&side, dir.join(format!("mausvoice.db{suffix}")))?;
+                moves.push((side, dir.join(format!("mausvoice.db{suffix}"))));
             }
         }
+    }
+    if let Err(err) = rename_all_or_restore(&moves) {
+        let _ = std::fs::remove_dir(&dir);
+        return Err(err);
     }
     Ok(dest)
 }
@@ -314,13 +335,20 @@ mod tests {
         let temp = TempDb::new();
         let path = &temp.path;
         std::fs::write(path, b"broken").unwrap();
+        let journal = path.with_file_name("mausvoice.db-journal");
         let wal = path.with_file_name("mausvoice.db-wal");
+        std::fs::write(&journal, b"journal").unwrap();
         std::fs::write(&wal, b"wal").unwrap();
         let dest = quarantine_sqlite_file(path).unwrap();
         assert!(!path.exists());
+        assert!(!journal.exists());
         assert!(!wal.exists());
         assert!(dest.exists());
         assert_eq!(std::fs::read(&dest).unwrap(), b"broken");
+        assert_eq!(
+            std::fs::read(dest.with_file_name("mausvoice.db-journal")).unwrap(),
+            b"journal"
+        );
         assert_eq!(
             std::fs::read(dest.with_file_name("mausvoice.db-wal")).unwrap(),
             b"wal"
@@ -332,6 +360,27 @@ mod tests {
             .unwrap()
             .to_string_lossy()
             .starts_with("mausvoice.broken-"));
+    }
+
+    #[test]
+    fn quarantine_restores_moved_files_if_a_sidecar_rename_fails() {
+        let temp = TempDb::new();
+        let path = &temp.path;
+        std::fs::write(path, b"db").unwrap();
+        let journal = path.with_file_name("mausvoice.db-journal");
+        std::fs::write(&journal, b"journal").unwrap();
+        let dest_dir = temp.dir.join("dest");
+        std::fs::create_dir(&dest_dir).unwrap();
+        std::fs::create_dir(dest_dir.join("mausvoice.db-journal")).unwrap();
+        rename_all_or_restore(&[
+            (path.clone(), dest_dir.join("mausvoice.db")),
+            (journal.clone(), dest_dir.join("mausvoice.db-journal")),
+        ])
+        .unwrap_err();
+        assert!(path.exists());
+        assert!(journal.exists());
+        assert_eq!(std::fs::read(path).unwrap(), b"db");
+        assert_eq!(std::fs::read(&journal).unwrap(), b"journal");
     }
 
     #[tokio::test]
