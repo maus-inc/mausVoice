@@ -4,7 +4,16 @@ import type {
   LlmMessage,
   LlmToolCall,
 } from "@maus-inc/types";
-import type { AgentConfig, AgentEvent, AgentTool } from "./types";
+import type {
+  AgentConfig,
+  AgentEvent,
+  AgentTool,
+  AgentToolOutput,
+} from "./types";
+
+/** Render a tool's successful result to a string. */
+const stringifyToolResult = (result: unknown): string =>
+  typeof result === "string" ? result : JSON.stringify(result ?? {});
 
 /** Coerce an unknown thrown value into a readable string without producing
  * `[object Object]` for a plain object. */
@@ -157,6 +166,26 @@ export class AgentLoop {
     return { ...schema, properties, required };
   }
 
+  private async executeTool(
+    tool: AgentTool,
+    toolParams: Record<string, unknown>,
+    reason: unknown,
+  ): Promise<AgentToolOutput> {
+    try {
+      return await tool.execute({
+        params: toolParams,
+        reason: (reason as string) ?? "",
+      });
+    } catch (err) {
+      // A tool must never abort the whole agent loop. Surface the failure
+      // as a tool-result message so the model can recover or end cleanly.
+      return {
+        success: false,
+        failureReason: err instanceof Error ? err.message : safeStringify(err),
+      };
+    }
+  }
+
   private async *processToolCalls(
     history: LlmMessage[],
     toolCalls: LlmToolCall[],
@@ -184,50 +213,34 @@ export class AgentLoop {
       const tool = this.config.tools.find((t) => t.name === tc.name);
 
       if (!tool) {
-        const error = `Unknown tool: ${tc.name}`;
-        history.push({ role: "tool", toolCallId: tc.id, content: error });
-        yield {
-          type: "tool-call-result",
-          toolCallId: tc.id,
-          toolName: tc.name,
-          result: error,
-          isError: true,
-        };
+        yield this.toolResult(tc, `Unknown tool: ${tc.name}`, history, true);
         continue;
       }
 
-      let output: Awaited<ReturnType<AgentTool["execute"]>>;
-      try {
-        output = await tool.execute({
-          params: toolParams,
-          reason: (reason as string) ?? "",
-        });
-      } catch (err) {
-        // A cancelled run must not persist a tool failure; stop processing.
-        if (this.aborted) return;
-        // A tool must never abort the whole agent loop. Surface the failure
-        // as a tool-result message so the model can recover or end cleanly.
-        output = {
-          success: false,
-          failureReason:
-            err instanceof Error ? err.message : safeStringify(err),
-        };
-      }
+      const output = await this.executeTool(tool, toolParams, reason);
+      if (this.aborted) return;
 
       const resultStr = output.success
-        ? typeof output.result === "string"
-          ? output.result
-          : JSON.stringify(output.result ?? {})
+        ? stringifyToolResult(output.result)
         : (output.failureReason ?? "Tool execution failed");
 
-      history.push({ role: "tool", toolCallId: tc.id, content: resultStr });
-      yield {
-        type: "tool-call-result",
-        toolCallId: tc.id,
-        toolName: tc.name,
-        result: resultStr,
-        isError: !output.success,
-      };
+      yield this.toolResult(tc, resultStr, history, !output.success);
     }
+  }
+
+  private toolResult(
+    tc: LlmToolCall,
+    result: string,
+    history: LlmMessage[],
+    isError: boolean,
+  ): AgentEvent {
+    history.push({ role: "tool", toolCallId: tc.id, content: result });
+    return {
+      type: "tool-call-result",
+      toolCallId: tc.id,
+      toolName: tc.name,
+      result,
+      isError,
+    };
   }
 }

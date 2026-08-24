@@ -238,6 +238,40 @@ export const transcribeAudio = async ({
  * Post-process a raw transcript using LLM.
  * This is the second step - cleans up and formats the transcript based on tone.
  */
+/**
+ * Parse and validate the LLM's JSON post-processing response. Returns the
+ * cleaned transcript on success, or the raw transcript plus a warning on
+ * any parse/validation failure.
+ */
+const parseProcessedTranscript = (
+  raw: string,
+  fallback: string,
+): { transcript: string; warning: string | null } => {
+  try {
+    const parsed = unwrapNestedLlmResponse(
+      parsePostProcessingJson(raw) as Record<string, unknown>,
+      "processedTranscription",
+    );
+    const validationResult = PROCESSED_TRANSCRIPTION_SCHEMA.safeParse(parsed);
+    if (!validationResult.success) {
+      return {
+        transcript: fallback,
+        warning: `Post-processing response validation failed: ${validationResult.error.message}`,
+      };
+    }
+    return { transcript: validationResult.data.result.trim(), warning: null };
+  } catch (e) {
+    const message = (e as Error).message;
+    const truncationHint = /Unterminated string/i.test(message)
+      ? " The model output may have been truncated at its token limit."
+      : "";
+    return {
+      transcript: fallback,
+      warning: `Failed to parse post-processing response: ${message}.${truncationHint}`,
+    };
+  }
+};
+
 export const postProcessTranscript = async ({
   rawTranscript,
   toneId,
@@ -322,37 +356,18 @@ export const postProcessTranscript = async ({
       );
       getLogger().verbose("LLM raw output length:", genOutput.text.length);
 
-      try {
-        const parsed = unwrapNestedLlmResponse(
-          parsePostProcessingJson(genOutput.text) as Record<string, unknown>,
-          "processedTranscription",
-        );
-
-        const validationResult =
-          PROCESSED_TRANSCRIPTION_SCHEMA.safeParse(parsed);
-        if (!validationResult.success) {
-          getLogger().warning(
-            "Post-processing validation failed:",
-            validationResult.error.message,
-          );
-          warnings.push(
-            `Post-processing response validation failed: ${validationResult.error.message}`,
-          );
-        } else {
-          processedTranscript = validationResult.data.result.trim();
-          getLogger().verbose(
-            "Processed transcript length:",
-            processedTranscript.length,
-          );
-        }
-      } catch (e) {
-        getLogger().error("Failed to parse post-processing response:", e);
-        const message = (e as Error).message;
-        const truncationHint = /Unterminated string/i.test(message)
-          ? " The model output may have been truncated at its token limit."
-          : "";
-        warnings.push(
-          `Failed to parse post-processing response: ${message}.${truncationHint}`,
+      const parseResult = parseProcessedTranscript(
+        genOutput.text,
+        processedTranscript,
+      );
+      processedTranscript = parseResult.transcript;
+      if (parseResult.warning) {
+        getLogger().warning(parseResult.warning);
+        warnings.push(parseResult.warning);
+      } else {
+        getLogger().verbose(
+          "Processed transcript length:",
+          processedTranscript.length,
         );
       }
 

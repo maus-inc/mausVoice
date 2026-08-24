@@ -72,7 +72,18 @@ const collapseWhitespace = (s: string): string =>
  * true so the caller can skip it.
  */
 const isTableSeparator = (cells: string[]): boolean =>
-  cells.length > 0 && cells.every((cell) => /^\s*:?-{1,}:?\s*$/.test(cell));
+  cells.length > 0 && cells.every((cell) => /^\s*:?-+:?\s*$/.test(cell));
+
+/**
+ * Split a GFM table row into trimmed cells, stripping a single leading and
+ * trailing pipe.
+ */
+const splitTableRow = (row: string): string[] => {
+  let trimmed = row.trim();
+  if (trimmed.startsWith("|")) trimmed = trimmed.slice(1);
+  if (trimmed.endsWith("|")) trimmed = trimmed.slice(0, -1);
+  return trimmed.split("|").map((cell) => cell.trim());
+};
 
 /**
  * Convert a run of consecutive GFM table lines into one line per data row,
@@ -82,36 +93,33 @@ const isTableSeparator = (cells: string[]): boolean =>
 const convertTables = (input: string): string => {
   const lines = input.split("\n");
   const out: string[] = [];
-  let i = 0;
-  while (i < lines.length) {
+
+  for (let i = 0; i < lines.length; i += 1) {
     const line = lines[i];
-    if (line.includes("|") && i + 1 < lines.length) {
-      const splitRow = (row: string): string[] => {
-        let trimmed = row.trim();
-        if (trimmed.startsWith("|")) trimmed = trimmed.slice(1);
-        if (trimmed.endsWith("|")) trimmed = trimmed.slice(0, -1);
-        return trimmed.split("|").map((cell) => cell.trim());
-      };
-      const headerCells = splitRow(line);
-      const sepCells = splitRow(lines[i + 1] ?? "");
-      const looksLikeTable =
-        headerCells.length >= 2 && isTableSeparator(sepCells);
-      if (looksLikeTable) {
-        out.push(headerCells.join(" | "));
-        i += 2;
-        while (i < lines.length && lines[i].includes("|")) {
-          const cells = splitRow(lines[i]);
-          if (cells.length < 2) break;
-          out.push(cells.join(" | "));
-          i += 1;
-        }
-        out.push("");
-        continue;
-      }
+    if (!line.includes("|") || i + 1 >= lines.length) {
+      out.push(line);
+      continue;
     }
-    out.push(line);
+
+    const headerCells = splitTableRow(line);
+    const sepCells = splitTableRow(lines[i + 1] ?? "");
+    const isTable = headerCells.length >= 2 && isTableSeparator(sepCells);
+    if (!isTable) {
+      out.push(line);
+      continue;
+    }
+
+    out.push(headerCells.join(" | "));
     i += 1;
+    while (i + 1 < lines.length && lines[i + 1].includes("|")) {
+      const cells = splitTableRow(lines[i + 1]);
+      if (cells.length < 2) break;
+      out.push(cells.join(" | "));
+      i += 1;
+    }
+    out.push("");
   }
+
   return out.join("\n");
 };
 
@@ -125,13 +133,15 @@ const convertTables = (input: string): string => {
  * output.
  */
 const stripHtml = (input: string): string => {
+  // Remove tags first. A non-backtracking character class keeps this linear
+  // (no nested quantifiers) so it cannot exhibit super-linear runtime.
   const withoutTags = input.replace(/<[^>]+>/g, "");
   return withoutTags
-    .replace(/&amp;/g, "&")
-    .replace(/&lt;/g, "<")
-    .replace(/&gt;/g, ">")
-    .replace(/&quot;/g, '"')
-    .replace(/&#39;/g, "'");
+    .replaceAll("&amp;", "&")
+    .replaceAll("&lt;", "<")
+    .replaceAll("&gt;", ">")
+    .replaceAll("&quot;", '"')
+    .replaceAll("&#39;", "'");
 };
 
 /**

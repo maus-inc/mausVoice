@@ -20,8 +20,7 @@ export const computeRms = (samples: AudioSamples): number => {
   const input = toFloat32(samples);
   if (input.length === 0) return 0;
   let sumSquares = 0;
-  for (let i = 0; i < input.length; i++) {
-    const v = input[i] ?? 0;
+  for (const v of input) {
     sumSquares += v * v;
   }
   return Math.sqrt(sumSquares / input.length);
@@ -35,9 +34,9 @@ export const computePeak = (samples: AudioSamples): number => {
   if (!samples || samples.length === 0) return 0;
   const input = toFloat32(samples);
   let peak = 0;
-  for (let i = 0; i < input.length; i++) {
-    const v = Math.abs(input[i] ?? 0);
-    if (v > peak) peak = v;
+  for (const v of input) {
+    const abs = Math.abs(v);
+    if (abs > peak) peak = abs;
   }
   return peak;
 };
