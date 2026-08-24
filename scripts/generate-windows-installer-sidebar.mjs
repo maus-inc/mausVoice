@@ -13,7 +13,7 @@
  * documented sidebar size), while design tooling exports PNG. This script
  * owns that conversion so nobody has to hand-produce a BMP:
  *
- *   mausvoice-sidebar-installerimg          (repo root; committed art, PNG/BMP)
+ *   mausvoice-sidebar-installerimg.png    (repo root; committed art, PNG/BMP)
  *        |
  *        |  composite onto an edge-sampled background, contain-fit,
  *        |  bilinear resample
@@ -27,7 +27,11 @@
  * otherwise skip the side effect while restoring none of it.
  *
  * Usage:
- *   node scripts/generate-windows-installer-sidebar.mjs
+ *   node scripts/generate-windows-installer-sidebar.mjs [--windows-only]
+ *
+ * `--windows-only` makes the script a no-op (exit 0) on non-Windows hosts;
+ * the desktop `build` script uses it so mac/Linux builds - which never
+ * bundle NSIS - are not gated on Windows installer art.
  *
  * Overrides (for testing; paths resolve against the repository root):
  *   MAUSVOICE_SIDEBAR_SOURCE  source art location
@@ -49,10 +53,10 @@ const repoRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const TARGET_WIDTH = 164;
 const TARGET_HEIGHT = 314;
 
-/** Committed art at the repository root. Extensionless by contract. */
+/** Committed art at the repository root. */
 const SOURCE = process.env.MAUSVOICE_SIDEBAR_SOURCE
   ? resolve(repoRoot, process.env.MAUSVOICE_SIDEBAR_SOURCE)
-  : join(repoRoot, "mausvoice-sidebar-installerimg");
+  : join(repoRoot, "mausvoice-sidebar-installerimg.png");
 
 /** Generated bitmap referenced by `bundle.windows.nsis.sidebarImage`. */
 const OUTPUT = process.env.MAUSVOICE_SIDEBAR_OUTPUT
@@ -65,7 +69,7 @@ const PNG_MAGIC = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
 const PNG_CHANNELS = { 0: 1, 2: 3, 3: 1, 4: 2, 6: 4 };
 
 const MISSING_SOURCE_HINT = `Commit the custom art to the repository root as
-    mausvoice-sidebar-installerimg
+    mausvoice-sidebar-installerimg.png
 PNG (8-bit, non-interlaced) or BMP (24/32-bit uncompressed). Full-bleed
 ${TARGET_WIDTH}x${TARGET_HEIGHT} art renders edge to edge; other aspect
 ratios are contain-fit and letterboxed. The Windows build regenerates
@@ -86,9 +90,9 @@ function paeth(a, b, c) {
  * Decode a non-interlaced 8-bit PNG into raw RGBA.
  *
  * Supported colour types: grayscale (0), RGB (2), palette (3, with tRNS
- * alpha), gray+alpha (4) and RGBA (6). 16-bit depth, interlacing and colour-
- * key tRNS on types 0/2 are rejected - nothing a design tool emits for this
- * purpose needs them, and a clear error beats a silently wrong banner.
+ * alpha), gray+alpha (4) and RGBA (6). 16-bit depth, interlacing and tRNS
+ * on any non-palette type are rejected - a clear error beats a silently
+ * wrong banner (colour-key transparency would decode as fully opaque).
  */
 function decodePng(buf) {
   if (buf.length < 8 || !buf.subarray(0, 8).equals(PNG_MAGIC)) {
@@ -152,6 +156,16 @@ function decodePng(buf) {
   }
   if (colorType === 3 && palette === null) {
     throw new Error("palette PNG is missing its PLTE chunk");
+  }
+  // Palette tRNS is handled below; on every other colour type it is either a
+  // colour key (grayscale/RGB), which this decoder does not resolve, or
+  // malformed (alpha types 4/6 must not carry tRNS at all). Either way,
+  // ignoring it would render the art fully opaque - reject it instead.
+  if (transparency !== null && colorType !== 3) {
+    throw new Error(
+      "tRNS transparency is only supported on palette PNGs; re-export " +
+        "grayscale/RGB art as RGBA (or without tRNS)",
+    );
   }
 
   const channels = PNG_CHANNELS[colorType];
@@ -317,8 +331,8 @@ function decodeImage(buf) {
     return decodeBmp(buf);
   }
   throw new Error(
-    "unsupported image format - commit a PNG (8-bit, non-interlaced) or a " +
-      "24/32-bit uncompressed BMP as mausvoice-sidebar-installerimg",
+      "unsupported image format - commit a PNG (8-bit, non-interlaced) or a " +
+      "24/32-bit uncompressed BMP as mausvoice-sidebar-installerimg.png",
   );
 }
 
@@ -506,6 +520,15 @@ function verifyOutput(path) {
 }
 
 function main() {
+  // The desktop `build` script passes --windows-only: platforms that never
+  // bundle NSIS must not be gated on Windows installer art.
+  if (process.argv.includes("--windows-only") && process.platform !== "win32") {
+    console.log(
+      `Skipping NSIS sidebar generation (--windows-only, platform ${process.platform}).`,
+    );
+    return;
+  }
+
   if (!existsSync(SOURCE)) {
     throw new Error(`Installer sidebar art not found: ${SOURCE}\n${MISSING_SOURCE_HINT}`);
   }

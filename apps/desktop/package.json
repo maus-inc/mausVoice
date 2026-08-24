@@ -13,7 +13,7 @@
     "dev:vite": "node scripts/run-vite-with-flavor.mjs dev",
     "build:mac:debug": "pnpm run prepare:sidecars && pnpm tauri build --debug --features debug-assist --bundles app --config src-tauri/tauri.local.conf.json --no-sign",
     "open:mac:debug": "open \"src-tauri/target/debug/bundle/macos/mausVoice (local).app\"",
-    "build": "node ../../scripts/generate-windows-installer-sidebar.mjs && tsc && node scripts/run-vite-with-flavor.mjs build",
+    "build": "node ../../scripts/generate-windows-installer-sidebar.mjs --windows-only && tsc && node scripts/run-vite-with-flavor.mjs build",
     "preview": "node scripts/run-vite-with-flavor.mjs preview",
     "tauri": "node scripts/run-tauri-with-sidecars.mjs",
     "test:webdriver": "wdio run webdriver/wdio.conf.js",

@@ -30,7 +30,7 @@ Generate the multi-resolution `icon.ico` (desktop and installer) and `icon.icns`
 
 ## Windows installer sidebar
 
-`mausvoice-sidebar-installerimg` at the repository root is the custom art shown
+`mausvoice-sidebar-installerimg.png` at the repository root is the custom art shown
 on the Welcome and Finish pages of the Windows NSIS setup, replacing the stock
 blue NSIS panel.
 
@@ -47,5 +47,7 @@ node scripts/generate-windows-installer-sidebar.mjs
 ```
 
 The output (`apps/desktop/src-tauri/icons/nsis-sidebar.bmp`) is generated and
-gitignored; the desktop `build` script and the Windows CI jobs regenerate it,
-so it can never drift from the committed art.
+gitignored; the desktop `build` script regenerates it (with `--windows-only`,
+so mac/Linux builds - which never bundle NSIS - are not gated on the art) and
+the Windows CI jobs regenerate it, so it can never drift from the committed
+art.
