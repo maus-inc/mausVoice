@@ -85,10 +85,10 @@ pub fn path_distances(path: &[(f64, f64)]) -> (Vec<f64>, f64) {
 /// action is also inert. Both conditions stay identical on every platform
 /// because the decision lives in this shared crate.
 pub const fn can_emit_interaction_feedback(
-    _action_available: bool,
+    action_available: bool,
     is_loading: bool,
 ) -> bool {
-    _action_available && !is_loading
+    action_available && !is_loading
 }
 
 /// How many line segments to use for each corner arc.
