@@ -16,14 +16,18 @@ export const Logo = ({
   ...rest
 }: LogoProps) => {
   // Provide 1x/2x/3x sources so the logo stays sharp at 125%, 150% and 200%
-  // Windows display scaling instead of upscaling the 32px source bitmap.
-  const srcSet = `${appLogo32} 32w, ${appLogo64} 64w, ${appLogo192} 192w`;
+  // Windows display scaling instead of upscaling the source bitmap. `x`
+  // descriptors are correct for a fixed-density candidate (the element is
+  // sized in CSS px); `sizes` tells the browser that density is what matters.
+  const srcSet = `${appLogo32} 1x, ${appLogo64} 2x, ${appLogo192} 3x`;
+  const sizes = `${typeof width === "number" ? width : 22}px`;
 
   return (
     <Box
       component="img"
       src={appLogo64}
       srcSet={srcSet}
+      sizes={sizes}
       alt="mausVoice"
       draggable={false}
       sx={[

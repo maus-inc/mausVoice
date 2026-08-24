@@ -482,6 +482,9 @@ const buildTranscriptionRecord = ({
   transcriptionMode: orNull(input.transcriptionMetadata.transcriptionMode),
   postProcessMode: orNull(input.postProcessMetadata.postProcessMode),
   postProcessDevice: orNull(input.postProcessMetadata.postProcessDevice),
+  postProcessProvider: orNull(input.postProcessMetadata.postProcessProvider),
+  postProcessFailed: input.postProcessMetadata.postProcessFailed ?? null,
+  postProcessError: orNull(input.postProcessMetadata.postProcessError),
   transcriptionDurationMs: orNull(
     input.transcriptionMetadata.transcriptionDurationMs,
   ),

@@ -599,14 +599,14 @@ export const DictationSideEffects = () => {
         saveManualStyleForApp(appTarget);
       }
 
-      // Manual mode: the tone selected at STOP styles this utterance, so a
-      // mid-utterance switch (pill / hotkey / Left-Right) applies to the
-      // output being produced, not just the pill label. A switch that
-      // arrives after stop has snapshotted the tone loses for this
-      // utterance. Automatic mode prefers the app-target tone and falls
-      // back to the live selection when the app has none. Streamed
-      // interim text is never restyled here —
-      // DictationStrategy skips post-processing once segments are inserted.
+      // Manual mode: the tone selected at recording START styles the whole
+      // utterance, so a mid-dictation switch (pill / hotkey / Left-Right)
+      // only affects the NEXT recording, matching the label shown at start.
+      // The stop snapshot is a race-safety fallback if start was missed.
+      // Automatic mode prefers the app-target tone and falls back to the
+      // live selection when the app has none. Streamed interim text is
+      // never restyled here — DictationStrategy skips post-processing once
+      // segments are inserted.
       const utteranceTones = utteranceTonesRef.current.read();
       const toneId = getEffectiveToneIdAtFinalize({
         stylingMode: getEffectiveStylingMode(getAppState()),

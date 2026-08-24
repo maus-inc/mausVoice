@@ -77,12 +77,14 @@ pub fn warm_audio_output() {
             }
             Err(err) => {
                 log::error!("Failed to create audio output: {err}");
-                // Still process requests, but they'll fail gracefully
+                // Still process requests, but they'll fail gracefully. The
+                // volume is applied per-sink in the no-device fallback too,
+                // so a thock never plays louder than THOCK_VOLUME.
                 for request in rx {
                     match request {
-                        AudioRequest::Play(bytes) => play_clip_fallback(bytes),
-                        AudioRequest::PlayThock { bytes, .. } => {
-                            play_clip_fallback(bytes)
+                        AudioRequest::Play(bytes) => play_clip_fallback(bytes, None),
+                        AudioRequest::PlayThock { bytes, volume } => {
+                            play_clip_fallback(bytes, Some(volume))
                         }
                     }
                 }
@@ -150,21 +152,21 @@ pub fn play_alert_windows_11_clip() {
 const THOCK_VOLUME: f32 = 0.45;
 
 pub fn play_thock_press() {
-    play_thock(THOCK_PRESS_CLIP);
+    play_thock_clip(THOCK_PRESS_CLIP);
 }
 
 pub fn play_thock_deep() {
-    play_thock(THOCK_DEEP_CLIP);
+    play_thock_clip(THOCK_DEEP_CLIP);
 }
 
 pub fn play_thock_release() {
-    play_thock(THOCK_RELEASE_CLIP);
+    play_thock_clip(THOCK_RELEASE_CLIP);
 }
 
 /// Play a thock clip at the reduced haptic volume. Routed through the same
 /// warm/fallback path as other clips, but sets the sink volume so the
 /// bass-heavy source material reads as a click.
-fn play_thock(bytes: &'static [u8]) {
+fn play_thock_clip(bytes: &'static [u8]) {
     if let Some(sender) = AUDIO_SENDER.get() {
         if sender
             .send(AudioRequest::PlayThock { bytes, volume: THOCK_VOLUME })
@@ -173,9 +175,9 @@ fn play_thock(bytes: &'static [u8]) {
             return;
         }
     }
-    // Fallback path cannot set volume cheaply; play the raw clip. The warm
-    // thread is the normal path so this is rare.
-    play_clip_fallback(bytes);
+    // Fallback path when the warm thread is down; still scale the sink so
+    // the bass-heavy clip does not play at full default volume.
+    play_clip_fallback(bytes, Some(THOCK_VOLUME));
 }
 
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -286,15 +288,21 @@ fn play_clip(bytes: &'static [u8]) {
     }
 
     // Fallback: spawn a new thread with its own stream
-    play_clip_fallback(bytes);
+    play_clip_fallback(bytes, None);
 }
 
-fn play_clip_fallback(bytes: &'static [u8]) {
+/// Fallback playback when the warm thread is unavailable. When `volume` is
+/// `Some`, the sink is scaled so a thock still plays at the reduced
+/// THOCK_VOLUME on the no-default-output path instead of reverting to 1.0.
+fn play_clip_fallback(bytes: &'static [u8], volume: Option<f32>) {
     thread::spawn(move || {
         if let Ok((stream, handle)) = OutputStream::try_default() {
             match Sink::try_new(&handle) {
                 Ok(sink) => match Decoder::new(Cursor::new(bytes)) {
                     Ok(source) => {
+                        if let Some(vol) = volume {
+                            sink.set_volume(vol.clamp(0.0, 1.0));
+                        }
                         sink.append(source);
                         sink.sleep_until_end();
                     }

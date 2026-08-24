@@ -23,6 +23,7 @@ import { getAppState } from "../store";
 import { DEFAULT_MODEL_SIZE, TranscriptionMode } from "../types/ai.types";
 import { AudioSamples } from "../types/audio.types";
 import { buildWaveFile } from "../utils/audio.utils";
+import { analyzeSilence } from "../utils/audio-energy.utils";
 import { getLocalTranscriptionSidecarManager } from "../sidecars";
 import {
   getTranscriptionSidecarDeviceId,
@@ -134,6 +135,26 @@ export abstract class BaseTranscribeAudioRepo extends BaseRepo {
       return { text: "", metadata: null };
     }
 
+    // Energy-based silence gate. Cloud providers (Gemini, Groq, OpenAI) are
+    // biased by their prompt, which for us contains the user's dictionary:
+    // on near-silent audio they return those glossary words instead of an
+    // empty transcript. This is provider- and language-independent, unlike
+    // `no_speech_prob` (which only some Whisper endpoints return). When the
+    // filter is disabled the user wants the raw transcript, so skip it.
+    const filterEnabled = input.hallucinationFilterEnabled ?? true;
+    if (filterEnabled) {
+      const silence = analyzeSilence(floatSamples, input.sampleRate);
+      if (silence.silent) {
+        getLogger().info(
+          `Skipping transcription: audio is near-silent (rms=${silence.rms.toExponential(2)}, peak=${silence.peak.toExponential(2)}, maxWindowRms=${silence.maxWindowRms.toExponential(2)})`,
+        );
+        return {
+          text: "",
+          metadata: { transcriptionMode: "api" },
+        };
+      }
+    }
+
     const segmentDurationSec = this.getSegmentDurationSec();
     const segmentSampleCount = Math.floor(
       input.sampleRate * segmentDurationSec,
@@ -157,16 +178,23 @@ export abstract class BaseTranscribeAudioRepo extends BaseRepo {
       overlapDurationSec: this.getOverlapDurationSec(),
     });
 
-    // Create promise factories for batched execution
-    const transcriptionTasks = segments.map(
-      (segmentSamples) => () =>
-        this.transcribeSegment({
-          samples: segmentSamples,
-          sampleRate: input.sampleRate,
-          prompt: input.prompt,
-          language: input.language,
-        }),
-    );
+    // Create promise factories for batched execution. Skip chunks that are
+    // near-silent so their glossary-prompt bias cannot produce a dictionary
+    // hallucination (and so we don't pay to transcribe room noise).
+    const transcriptionTasks = segments.map((segmentSamples) => () => {
+      if (
+        filterEnabled &&
+        analyzeSilence(segmentSamples, input.sampleRate).silent
+      ) {
+        return Promise.resolve({ text: "", metadata: null });
+      }
+      return this.transcribeSegment({
+        samples: segmentSamples,
+        sampleRate: input.sampleRate,
+        prompt: input.prompt,
+        language: input.language,
+      });
+    });
 
     // Execute in batches
     const results = await batchAsync(
@@ -180,7 +208,6 @@ export abstract class BaseTranscribeAudioRepo extends BaseRepo {
     // action layer. Chunks without verbose segments fall back to their raw text.
     // When the user disables the filter, merge every raw chunk text unchanged so
     // the off switch preserves the provider transcript for long audio too.
-    const filterEnabled = input.hallucinationFilterEnabled ?? true;
     const transcriptionTexts = results.map((r) => {
       const gated = filterEnabled ? gateSilentSegments(r.segments) : null;
       return gated ?? r.text;

@@ -6,6 +6,18 @@ import type {
 } from "@maus-inc/types";
 import type { AgentConfig, AgentEvent, AgentTool } from "./types";
 
+/** Coerce an unknown thrown value into a readable string without producing
+ * `[object Object]` for a plain object. */
+const safeStringify = (value: unknown): string => {
+  if (typeof value === "string") return value;
+  if (value instanceof Error) return value.message;
+  try {
+    return JSON.stringify(value) ?? String(value);
+  } catch {
+    return String(value);
+  }
+};
+
 export class AgentLoop {
   private config: AgentConfig;
   private aborted = false;
@@ -166,6 +178,8 @@ export class AgentLoop {
         args: params,
       };
 
+      if (this.aborted) return;
+
       const { reason, ...toolParams } = params;
       const tool = this.config.tools.find((t) => t.name === tc.name);
 
@@ -189,11 +203,14 @@ export class AgentLoop {
           reason: (reason as string) ?? "",
         });
       } catch (err) {
+        // A cancelled run must not persist a tool failure; stop processing.
+        if (this.aborted) return;
         // A tool must never abort the whole agent loop. Surface the failure
         // as a tool-result message so the model can recover or end cleanly.
         output = {
           success: false,
-          failureReason: err instanceof Error ? err.message : String(err),
+          failureReason:
+            err instanceof Error ? err.message : safeStringify(err),
         };
       }
 

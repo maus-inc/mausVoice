@@ -88,9 +88,20 @@ class MockTranscribeAudioRepo extends BaseTranscribeAudioRepo {
   }
 }
 
-// Helper to create samples of a specific duration
-const createSamples = (durationSec: number, sampleRate: number): Float32Array =>
-  new Float32Array(Math.floor(durationSec * sampleRate));
+// Helper to create samples of a specific duration. Fill with a low-amplitude
+// tone so the energy-based silence gate treats the audio as speech (all-zero
+// samples are correctly classified as silence and short-circuit the network
+// call, which the splitting/batching tests below do not expect).
+const createSamples = (
+  durationSec: number,
+  sampleRate: number,
+): Float32Array => {
+  const samples = new Float32Array(Math.floor(durationSec * sampleRate));
+  for (let i = 0; i < samples.length; i++) {
+    samples[i] = 0.1 * Math.sin((2 * Math.PI * 220 * i) / sampleRate);
+  }
+  return samples;
+};
 
 const resetStore = () => {
   setAppState(structuredClone(INITIAL_APP_STATE), true);

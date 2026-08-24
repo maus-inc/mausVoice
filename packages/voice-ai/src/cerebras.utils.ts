@@ -221,5 +221,11 @@ export async function* cerebrasStreamChat({
   customFetch,
 }: CerebrasStreamChatArgs): AsyncGenerator<LlmStreamEvent> {
   const client = createClient(apiKey, customFetch);
-  yield* openaiCompatibleStreamChat(client, model, input);
+  try {
+    yield* openaiCompatibleStreamChat(client, model, input);
+  } catch (error) {
+    // Surface a 402 (or other terminal status) with an actionable message in
+    // agent/assistant streaming too, not just the non-streaming path.
+    throw normalizeCerebrasError(error);
+  }
 }

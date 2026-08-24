@@ -4655,7 +4655,9 @@ pub async fn floating_window_create(
         log::error!(
             "floating_window_create failed (label={label}): {detail}"
         );
-        if detail.contains("0x8007139f") || detail.to_ascii_lowercase().contains("webview2") {
+        if detail.to_ascii_lowercase().contains("0x8007139f")
+            || detail.to_ascii_lowercase().contains("webview2")
+        {
             format!(
                 "Could not open the review window (WebView2 error). \
                  The transcript was saved to history. Try again or open it in the main app. ({label})"

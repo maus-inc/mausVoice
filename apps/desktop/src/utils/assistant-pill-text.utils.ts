@@ -119,15 +119,20 @@ const convertTables = (input: string): string => {
  * Strip raw HTML tags and unescape entities. Model output must never render
  * as active HTML; the pill is plain text, so tags are removed and `<`, `>`
  * in the remaining text are shown literally.
+ *
+ * Tags are removed BEFORE entities are decoded, so an encoded tag such as
+ * `&lt;script&gt;` cannot re-materialise as a literal `<script>` in the
+ * output.
  */
-const stripHtml = (input: string): string =>
-  input
-    .replace(/<[^>]+>/g, "")
+const stripHtml = (input: string): string => {
+  const withoutTags = input.replace(/<[^>]+>/g, "");
+  return withoutTags
     .replace(/&amp;/g, "&")
     .replace(/&lt;/g, "<")
     .replace(/&gt;/g, ">")
     .replace(/&quot;/g, '"')
     .replace(/&#39;/g, "'");
+};
 
 /**
  * Clamp a string to `maxLen` characters, breaking at the last word boundary
