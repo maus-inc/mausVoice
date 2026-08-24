@@ -138,4 +138,22 @@ describe("unsafe HTML is neutralized", () => {
     expect(result).toContain("Safe");
     expect(result).toContain("text");
   });
+
+  it("decodes entities only after stripping tags so encoded tags stay inert", () => {
+    // &lt;script&gt; must not turn back into <script> in the output.
+    const input = "Safe &lt;script&gt;alert(1)&lt;/script&gt; text";
+    const result = markdownToPillText(input);
+    expect(result).not.toContain("<script>");
+    expect(result).toContain("Safe");
+  });
+
+  it("handles a long run of opening-angle brackets without backtracking", () => {
+    // The tag scanner is single-pass; this would be a worst case for a
+    // backtracking regex but must complete immediately.
+    const input = "<".repeat(50_000) + "text";
+    const start = Date.now();
+    const result = markdownToPillText(input);
+    expect(Date.now() - start).toBeLessThan(1000);
+    expect(result).toContain("text");
+  });
 });

@@ -132,16 +132,55 @@ const convertTables = (input: string): string => {
  * `&lt;script&gt;` cannot re-materialise as a literal `<script>` in the
  * output.
  */
-const stripHtml = (input: string): string => {
-  // Remove tags first. A non-backtracking character class keeps this linear
-  // (no nested quantifiers) so it cannot exhibit super-linear runtime.
-  const withoutTags = input.replace(/<[^>]+>/g, "");
-  return withoutTags
+/**
+ * Single-pass linear scanner that removes HTML/XML tags. A `<` only opens a
+ * tag when it is followed by tag content (a letter, `/`, `!`, or `?`); a
+ * lone `<` (e.g. "a < b") is kept as literal text. No regex/backtracking,
+ * so runtime is linear even on adversarial input.
+ */
+const stripTagsOnce = (input: string): string => {
+  let out = "";
+  let i = 0;
+  while (i < input.length) {
+    const ch = input[i] as string;
+    if (ch !== "<") {
+      out += ch;
+      i += 1;
+      continue;
+    }
+    const next = input[i + 1] ?? "";
+    const isTagStart = /[a-zA-Z/!?]/.test(next);
+    if (!isTagStart) {
+      out += ch;
+      i += 1;
+      continue;
+    }
+    // A tag needs a closing `>`. If there is none, the `<` was not a real
+    // tag (e.g. "a < b" or a truncated string): keep it as literal text.
+    const close = input.indexOf(">", i + 1);
+    if (close === -1) {
+      out += ch;
+      i += 1;
+      continue;
+    }
+    i = close + 1;
+  }
+  return out;
+};
+
+const unescapeEntities = (input: string): string =>
+  input
     .replaceAll("&amp;", "&")
     .replaceAll("&lt;", "<")
     .replaceAll("&gt;", ">")
     .replaceAll("&quot;", '"')
     .replaceAll("&#39;", "'");
+
+const stripHtml = (input: string): string => {
+  // Strip real tags, decode entities, then strip again so a source-encoded
+  // tag like `&lt;script&gt;` cannot re-materialise after decoding. Each
+  // pass is a single linear scan (no regex backtracking).
+  return stripTagsOnce(unescapeEntities(stripTagsOnce(input)));
 };
 
 /**
