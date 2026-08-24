@@ -14,6 +14,8 @@ on:
       - ".nvmrc"
       - ".github/scripts/install-desktop-linux-deps.sh"
       - ".github/workflows/build-desktop.yml"
+      - "mausvoice-sidebar-installerimg.png"
+      - "scripts/generate-windows-installer-sidebar.mjs"
 # Run every stacked PR independently, but cancel superseded runs for the same
 # PR (or the same branch for push/manual events) to avoid consuming runner slots.
 concurrency:
@@ -130,6 +132,13 @@ jobs:
 
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
+
+      # The NSIS wizard sidebar bitmap must exist before the Tauri bundle
+      # step. The desktop `build` script regenerates it too, but a turbo
+      # cache hit would skip that side effect, so CI regenerates it here.
+      - name: Generate NSIS sidebar image
+        if: matrix.tauri_platform == 'windows'
+        run: node scripts/generate-windows-installer-sidebar.mjs
 
       - name: Build frontend and dependencies
         env:
