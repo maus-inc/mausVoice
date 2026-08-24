@@ -13,7 +13,7 @@
  * documented sidebar size), while design tooling exports PNG. This script
  * owns that conversion so nobody has to hand-produce a BMP:
  *
- *   mausvoice-sidebar-installerimg.png    (repo root; committed art, PNG/BMP)
+ *   branding/mausvoice-sidebar-installerimg.png (repo; committed art, PNG/BMP)
  *        |
  *        |  composite onto an edge-sampled background, contain-fit,
  *        |  bilinear resample
@@ -53,10 +53,10 @@ const repoRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const TARGET_WIDTH = 164;
 const TARGET_HEIGHT = 314;
 
-/** Committed art at the repository root. */
+/** Committed art, kept with the other branding assets. */
 const SOURCE = process.env.MAUSVOICE_SIDEBAR_SOURCE
   ? resolve(repoRoot, process.env.MAUSVOICE_SIDEBAR_SOURCE)
-  : join(repoRoot, "mausvoice-sidebar-installerimg.png");
+  : join(repoRoot, "branding", "mausvoice-sidebar-installerimg.png");
 
 /** Generated bitmap referenced by `bundle.windows.nsis.sidebarImage`. */
 const OUTPUT = process.env.MAUSVOICE_SIDEBAR_OUTPUT
@@ -68,8 +68,8 @@ const PNG_MAGIC = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
 /** Samples per pixel for each supported PNG colour type. */
 const PNG_CHANNELS = { 0: 1, 2: 3, 3: 1, 4: 2, 6: 4 };
 
-const MISSING_SOURCE_HINT = `Commit the custom art to the repository root as
-    mausvoice-sidebar-installerimg.png
+const MISSING_SOURCE_HINT = `Commit the custom art as
+    branding/mausvoice-sidebar-installerimg.png
 PNG (8-bit, non-interlaced) or BMP (24/32-bit uncompressed). Full-bleed
 ${TARGET_WIDTH}x${TARGET_HEIGHT} art renders edge to edge; other aspect
 ratios are contain-fit and letterboxed. The Windows build regenerates
@@ -87,6 +87,210 @@ function paeth(a, b, c) {
 }
 
 /**
+ * Walk a PNG's chunk list and collect the fields this decoder consumes.
+ *
+ * CRCs are not re-verified: inflateSync fails loudly on corrupted image
+ * data, which is the only payload consumed here.
+ */
+function parsePngChunks(buf) {
+  const png = {
+    width: 0,
+    height: 0,
+    bitDepth: 0,
+    colorType: -1,
+    interlace: -1,
+    palette: null,
+    transparency: null,
+    idat: [],
+  };
+
+  let offset = 8;
+  while (offset + 12 <= buf.length) {
+    const length = buf.readUInt32BE(offset);
+    const type = buf.toString("ascii", offset + 4, offset + 8);
+    const dataStart = offset + 8;
+    if (dataStart + length + 4 > buf.length) {
+      throw new Error(`PNG chunk '${type}' is truncated`);
+    }
+    const data = buf.subarray(dataStart, dataStart + length);
+    if (type === "IHDR") {
+      png.width = data.readUInt32BE(0);
+      png.height = data.readUInt32BE(4);
+      png.bitDepth = data[8];
+      png.colorType = data[9];
+      png.interlace = data[12];
+    } else if (type === "PLTE") {
+      png.palette = data;
+    } else if (type === "tRNS") {
+      png.transparency = data;
+    } else if (type === "IDAT") {
+      png.idat.push(data);
+    } else if (type === "IEND") {
+      break;
+    }
+    offset = dataStart + length + 4;
+  }
+  return png;
+}
+
+/**
+ * Reject the PNG variants this decoder does not handle, each with a message
+ * saying how to re-export the art. One flat list keeps the supported
+ * profile explicit.
+ */
+function validatePngHeader(png) {
+  if (png.width <= 0 || png.height <= 0) {
+    throw new Error("PNG is missing its IHDR chunk");
+  }
+  if (png.bitDepth !== 8) {
+    throw new Error(
+      `PNG bit depth ${png.bitDepth} is not supported (re-export as 8-bit)`,
+    );
+  }
+  if (!(png.colorType in PNG_CHANNELS)) {
+    throw new Error(`PNG colour type ${png.colorType} is not supported`);
+  }
+  if (png.interlace !== 0) {
+    throw new Error(
+      "interlaced PNG is not supported (re-export non-interlaced)",
+    );
+  }
+  if (png.idat.length === 0) {
+    throw new Error("PNG has no image data (IDAT)");
+  }
+  if (png.colorType === 3 && png.palette === null) {
+    throw new Error("palette PNG is missing its PLTE chunk");
+  }
+  // Palette tRNS is handled during expansion; on every other colour type it
+  // is either a colour key (grayscale/RGB), which this decoder does not
+  // resolve, or malformed (alpha types 4/6 must not carry tRNS at all).
+  // Either way, ignoring it would render the art fully opaque - reject it.
+  if (png.transparency !== null && png.colorType !== 3) {
+    throw new Error(
+      "tRNS transparency is only supported on palette PNGs; re-export " +
+        "grayscale/RGB art as RGBA (or without tRNS)",
+    );
+  }
+}
+
+/** Undo one PNG scanline filter byte for the given prediction neighbours. */
+function unfilterByte(filter, rawByte, left, up, upLeft, row) {
+  switch (filter) {
+    case 0:
+      return rawByte;
+    case 1:
+      return rawByte + left;
+    case 2:
+      return rawByte + up;
+    case 3:
+      return rawByte + ((left + up) >> 1);
+    case 4:
+      return rawByte + paeth(left, up, upLeft);
+    default:
+      throw new Error(`PNG scanline ${row} uses unknown filter ${filter}`);
+  }
+}
+
+/** Defilter one scanline in place within the shared sample buffer. */
+function defilterRow(inflated, y, samples, rowBytes, channels) {
+  const base = y * (rowBytes + 1);
+  const filter = inflated[base];
+  const rowStart = y * rowBytes;
+  const prevStart = rowStart - rowBytes;
+  for (let x = 0; x < rowBytes; x += 1) {
+    const left = x >= channels ? samples[rowStart + x - channels] : 0;
+    const up = y > 0 ? samples[prevStart + x] : 0;
+    const upLeft =
+      x >= channels && y > 0 ? samples[prevStart + x - channels] : 0;
+    const rawByte = inflated[base + 1 + x];
+    samples[rowStart + x] =
+      unfilterByte(filter, rawByte, left, up, upLeft, y) & 0xff;
+  }
+}
+
+/**
+ * Undo the per-scanline filters in place, one byte at a time. `left`, `up`
+ * and `upLeft` are the neighbours the PNG spec defines; the up-neighbour
+ * row is already final when it is read.
+ */
+function defilterScanlines(inflated, width, height, rowBytes, channels) {
+  const samples = new Uint8Array(height * rowBytes);
+  for (let y = 0; y < height; y += 1) {
+    defilterRow(inflated, y, samples, rowBytes, channels);
+  }
+  return samples;
+}
+
+/** Grayscale (colour type 0). */
+function expandGraySample(samples, i, o, rgba) {
+  const gray = samples[i];
+  rgba[o] = gray;
+  rgba[o + 1] = gray;
+  rgba[o + 2] = gray;
+  rgba[o + 3] = 255;
+}
+
+/** Truecolour RGB (colour type 2). */
+function expandRgbSample(samples, i, o, rgba) {
+  rgba[o] = samples[i * 3];
+  rgba[o + 1] = samples[i * 3 + 1];
+  rgba[o + 2] = samples[i * 3 + 2];
+  rgba[o + 3] = 255;
+}
+
+/** Palette index (colour type 3), with per-index tRNS alpha. */
+function expandPaletteSample(samples, i, o, rgba, palette, transparency) {
+  const index = samples[i];
+  if (index * 3 + 2 >= palette.length) {
+    throw new Error(`palette index ${index} is out of range`);
+  }
+  rgba[o] = palette[index * 3];
+  rgba[o + 1] = palette[index * 3 + 1];
+  rgba[o + 2] = palette[index * 3 + 2];
+  rgba[o + 3] =
+    transparency !== null && index < transparency.length
+      ? transparency[index]
+      : 255;
+}
+
+/** Grayscale + alpha (colour type 4). */
+function expandGrayAlphaSample(samples, i, o, rgba) {
+  const gray = samples[i * 2];
+  rgba[o] = gray;
+  rgba[o + 1] = gray;
+  rgba[o + 2] = gray;
+  rgba[o + 3] = samples[i * 2 + 1];
+}
+
+/** Truecolour RGBA (colour type 6). */
+function expandRgbaSample(samples, i, o, rgba) {
+  rgba[o] = samples[i * 4];
+  rgba[o + 1] = samples[i * 4 + 1];
+  rgba[o + 2] = samples[i * 4 + 2];
+  rgba[o + 3] = samples[i * 4 + 3];
+}
+
+/** Expand one defiltered sample buffer into RGBA for its colour type. */
+function expandToRgba(samples, width, height, colorType, palette, transparency) {
+  const rgba = new Uint8Array(width * height * 4);
+  for (let i = 0; i < width * height; i += 1) {
+    const o = i * 4;
+    if (colorType === 0) {
+      expandGraySample(samples, i, o, rgba);
+    } else if (colorType === 2) {
+      expandRgbSample(samples, i, o, rgba);
+    } else if (colorType === 3) {
+      expandPaletteSample(samples, i, o, rgba, palette, transparency);
+    } else if (colorType === 4) {
+      expandGrayAlphaSample(samples, i, o, rgba);
+    } else {
+      expandRgbaSample(samples, i, o, rgba);
+    }
+  }
+  return rgba;
+}
+
+/**
  * Decode a non-interlaced 8-bit PNG into raw RGBA.
  *
  * Supported colour types: grayscale (0), RGB (2), palette (3, with tRNS
@@ -99,176 +303,36 @@ function decodePng(buf) {
     throw new Error("not a PNG (signature mismatch)");
   }
 
-  let width = 0;
-  let height = 0;
-  let bitDepth = 0;
-  let colorType = -1;
-  let interlace = -1;
-  let palette = null;
-  let transparency = null;
-  const idat = [];
+  const png = parsePngChunks(buf);
+  validatePngHeader(png);
 
-  // Walk the chunk list. CRCs are not re-verified: inflateSync fails loudly
-  // on corrupted image data, which is the only payload consumed here.
-  let offset = 8;
-  while (offset + 12 <= buf.length) {
-    const length = buf.readUInt32BE(offset);
-    const type = buf.toString("ascii", offset + 4, offset + 8);
-    const dataStart = offset + 8;
-    if (dataStart + length + 4 > buf.length) {
-      throw new Error(`PNG chunk '${type}' is truncated`);
-    }
-    const data = buf.subarray(dataStart, dataStart + length);
-    if (type === "IHDR") {
-      width = data.readUInt32BE(0);
-      height = data.readUInt32BE(4);
-      bitDepth = data[8];
-      colorType = data[9];
-      interlace = data[12];
-    } else if (type === "PLTE") {
-      palette = data;
-    } else if (type === "tRNS") {
-      transparency = data;
-    } else if (type === "IDAT") {
-      idat.push(data);
-    } else if (type === "IEND") {
-      break;
-    }
-    offset = dataStart + length + 4;
-  }
-
-  if (width <= 0 || height <= 0) {
-    throw new Error("PNG is missing its IHDR chunk");
-  }
-  if (bitDepth !== 8) {
-    throw new Error(
-      `PNG bit depth ${bitDepth} is not supported (re-export as 8-bit)`,
-    );
-  }
-  if (!(colorType in PNG_CHANNELS)) {
-    throw new Error(`PNG colour type ${colorType} is not supported`);
-  }
-  if (interlace !== 0) {
-    throw new Error("interlaced PNG is not supported (re-export non-interlaced)");
-  }
-  if (idat.length === 0) {
-    throw new Error("PNG has no image data (IDAT)");
-  }
-  if (colorType === 3 && palette === null) {
-    throw new Error("palette PNG is missing its PLTE chunk");
-  }
-  // Palette tRNS is handled below; on every other colour type it is either a
-  // colour key (grayscale/RGB), which this decoder does not resolve, or
-  // malformed (alpha types 4/6 must not carry tRNS at all). Either way,
-  // ignoring it would render the art fully opaque - reject it instead.
-  if (transparency !== null && colorType !== 3) {
-    throw new Error(
-      "tRNS transparency is only supported on palette PNGs; re-export " +
-        "grayscale/RGB art as RGBA (or without tRNS)",
-    );
-  }
-
-  const channels = PNG_CHANNELS[colorType];
-  const rowBytes = width * channels;
-  const inflated = inflateSync(Buffer.concat(idat));
-  if (inflated.length < height * (rowBytes + 1)) {
+  const channels = PNG_CHANNELS[png.colorType];
+  const rowBytes = png.width * channels;
+  const inflated = inflateSync(Buffer.concat(png.idat));
+  const expected = png.height * (rowBytes + 1);
+  if (inflated.length < expected) {
     throw new Error(
       `PNG image data is truncated: ${inflated.length} bytes, expected ` +
-        `${height * (rowBytes + 1)}`,
+        `${expected}`,
     );
   }
 
-  // Undo the per-scanline filters in place, one byte at a time. `a`, `b` and
-  // `c` are the left, up and up-left neighbours the PNG spec defines; the
-  // up-neighbour row is already final when it is read.
-  const samples = new Uint8Array(height * rowBytes);
-  for (let y = 0; y < height; y += 1) {
-    const base = y * (rowBytes + 1);
-    const filter = inflated[base];
-    const rowStart = y * rowBytes;
-    const prevStart = rowStart - rowBytes;
-    for (let x = 0; x < rowBytes; x += 1) {
-      const rawByte = inflated[base + 1 + x];
-      const left = x >= channels ? samples[rowStart + x - channels] : 0;
-      const up = y > 0 ? samples[prevStart + x] : 0;
-      const upLeft =
-        x >= channels && y > 0 ? samples[prevStart + x - channels] : 0;
-      let value;
-      switch (filter) {
-        case 0:
-          value = rawByte;
-          break;
-        case 1:
-          value = rawByte + left;
-          break;
-        case 2:
-          value = rawByte + up;
-          break;
-        case 3:
-          value = rawByte + ((left + up) >> 1);
-          break;
-        case 4:
-          value = rawByte + paeth(left, up, upLeft);
-          break;
-        default:
-          throw new Error(`PNG scanline ${y} uses unknown filter ${filter}`);
-      }
-      samples[rowStart + x] = value & 0xff;
-    }
-  }
-
-  const rgba = new Uint8Array(width * height * 4);
-  for (let i = 0; i < width * height; i += 1) {
-    const o = i * 4;
-    switch (colorType) {
-      case 0: {
-        const gray = samples[i];
-        rgba[o] = gray;
-        rgba[o + 1] = gray;
-        rgba[o + 2] = gray;
-        rgba[o + 3] = 255;
-        break;
-      }
-      case 2: {
-        rgba[o] = samples[i * 3];
-        rgba[o + 1] = samples[i * 3 + 1];
-        rgba[o + 2] = samples[i * 3 + 2];
-        rgba[o + 3] = 255;
-        break;
-      }
-      case 3: {
-        const index = samples[i];
-        if (index * 3 + 2 >= palette.length) {
-          throw new Error(`palette index ${index} is out of range`);
-        }
-        rgba[o] = palette[index * 3];
-        rgba[o + 1] = palette[index * 3 + 1];
-        rgba[o + 2] = palette[index * 3 + 2];
-        rgba[o + 3] =
-          transparency !== null && index < transparency.length
-            ? transparency[index]
-            : 255;
-        break;
-      }
-      case 4: {
-        const gray = samples[i * 2];
-        rgba[o] = gray;
-        rgba[o + 1] = gray;
-        rgba[o + 2] = gray;
-        rgba[o + 3] = samples[i * 2 + 1];
-        break;
-      }
-      case 6: {
-        rgba[o] = samples[i * 4];
-        rgba[o + 1] = samples[i * 4 + 1];
-        rgba[o + 2] = samples[i * 4 + 2];
-        rgba[o + 3] = samples[i * 4 + 3];
-        break;
-      }
-    }
-  }
-
-  return { width, height, rgba, format: "PNG" };
+  const samples = defilterScanlines(
+    inflated,
+    png.width,
+    png.height,
+    rowBytes,
+    channels,
+  );
+  const rgba = expandToRgba(
+    samples,
+    png.width,
+    png.height,
+    png.colorType,
+    png.palette,
+    png.transparency,
+  );
+  return { width: png.width, height: png.height, rgba, format: "PNG" };
 }
 
 /**
@@ -332,7 +396,7 @@ function decodeImage(buf) {
   }
   throw new Error(
       "unsupported image format - commit a PNG (8-bit, non-interlaced) or a " +
-      "24/32-bit uncompressed BMP as mausvoice-sidebar-installerimg.png",
+      "24/32-bit uncompressed BMP as branding/mausvoice-sidebar-installerimg.png",
   );
 }
 

@@ -20,7 +20,7 @@ pnpm --filter desktop tauri -- build
 
 A native Windows host writes `mausVoice_*-setup.exe` under `apps/desktop/src-tauri/target/release/bundle/nsis/` (or `CARGO_TARGET_DIR` if CI set one). If you pass `--target x86_64-pc-windows-msvc`, Tauri places the bundle under `apps/desktop/src-tauri/target/x86_64-pc-windows-msvc/release/bundle/nsis/` instead; copy from that path.
 
-The setup's welcome/finish sidebar art comes from `mausvoice-sidebar-installerimg.png` (repository root) and is converted to the NSIS bitmap automatically by `scripts/generate-windows-installer-sidebar.mjs` (see `branding/README.md`); there is nothing to copy manually.
+The setup's welcome/finish sidebar art comes from `branding/mausvoice-sidebar-installerimg.png` and is converted to the NSIS bitmap automatically by `scripts/generate-windows-installer-sidebar.mjs` (see `branding/README.md`); there is nothing to copy manually.
 
 2. Copy it into the bootstrapper:
 

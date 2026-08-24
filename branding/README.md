@@ -30,7 +30,7 @@ Generate the multi-resolution `icon.ico` (desktop and installer) and `icon.icns`
 
 ## Windows installer sidebar
 
-`mausvoice-sidebar-installerimg.png` at the repository root is the custom art shown
+`branding/mausvoice-sidebar-installerimg.png` is the custom art shown
 on the Welcome and Finish pages of the Windows NSIS setup, replacing the stock
 blue NSIS panel.
 
