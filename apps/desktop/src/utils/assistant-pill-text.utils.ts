@@ -54,10 +54,80 @@ const INLINE_CODE_RE = /`([^`\n]+)`/g;
 const ELLIPSIS = "\u2026";
 
 /**
- * Collapse repeated whitespace (including newlines) to a single space,
- * then trim.
+ * Collapse runs of spaces/tabs (but NOT newlines) to a single space, trim
+ * each line, drop blank lines that stack up, then trim. We preserve a single
+ * newline between non-empty lines so multi-line constructs (lists, tables,
+ * headings) stay readable on the native pill instead of collapsing to one run.
  */
-const collapseWhitespace = (s: string): string => s.replace(/\s+/g, " ").trim();
+const collapseWhitespace = (s: string): string =>
+  s
+    .split("\n")
+    .map((line) => line.replace(/[ \t]+/g, " ").trim())
+    .filter((line, index, arr) => line !== "" || arr[index - 1] !== "")
+    .join("\n")
+    .trim();
+
+/**
+ * Remove the GFM separator row (`| --- | --- |`) from table rows and return
+ * true so the caller can skip it.
+ */
+const isTableSeparator = (cells: string[]): boolean =>
+  cells.length > 0 && cells.every((cell) => /^\s*:?-{1,}:?\s*$/.test(cell));
+
+/**
+ * Convert a run of consecutive GFM table lines into one line per data row,
+ * each cell separated by " | ". The separator row is dropped. The header row
+ * is kept as the first line, matching how the main app renders it.
+ */
+const convertTables = (input: string): string => {
+  const lines = input.split("\n");
+  const out: string[] = [];
+  let i = 0;
+  while (i < lines.length) {
+    const line = lines[i];
+    if (line.includes("|") && i + 1 < lines.length) {
+      const splitRow = (row: string): string[] => {
+        let trimmed = row.trim();
+        if (trimmed.startsWith("|")) trimmed = trimmed.slice(1);
+        if (trimmed.endsWith("|")) trimmed = trimmed.slice(0, -1);
+        return trimmed.split("|").map((cell) => cell.trim());
+      };
+      const headerCells = splitRow(line);
+      const sepCells = splitRow(lines[i + 1] ?? "");
+      const looksLikeTable =
+        headerCells.length >= 2 && isTableSeparator(sepCells);
+      if (looksLikeTable) {
+        out.push(headerCells.join(" | "));
+        i += 2;
+        while (i < lines.length && lines[i].includes("|")) {
+          const cells = splitRow(lines[i]);
+          if (cells.length < 2) break;
+          out.push(cells.join(" | "));
+          i += 1;
+        }
+        out.push("");
+        continue;
+      }
+    }
+    out.push(line);
+    i += 1;
+  }
+  return out.join("\n");
+};
+
+/**
+ * Strip raw HTML tags and unescape entities. Model output must never render
+ * as active HTML; the pill is plain text, so tags are removed and `<`, `>`
+ * in the remaining text are shown literally.
+ */
+const stripHtml = (input: string): string =>
+  input
+    .replace(/<[^>]+>/g, "")
+    .replace(/&amp;/g, "&")
+    .replace(/&lt;/g, "<")
+    .replace(/&gt;/g, ">")
+    .replace(/&quot;/g, '"')
+    .replace(/&#39;/g, "'");
 
 /**
  * Clamp a string to `maxLen` characters, breaking at the last word boundary
@@ -295,10 +365,18 @@ export const markdownToPillText = (
   }
   text = text.replace(STRIKETHROUGH_RE, "$1");
 
+  // 9b. Convert GFM tables to pipe-separated lines (after block markers so
+  // header rows are not mistaken for headings).
+  text = convertTables(text);
+
+  // 9c. Strip any raw HTML. Model output is untrusted and the pill is plain
+  // text; tags must never render as active content.
+  text = stripHtml(text);
+
   // 10. Inline code to quoted text
   text = text.replace(INLINE_CODE_RE, '"$1"');
 
-  // 11. Collapse excessive whitespace
+  // 11. Collapse excessive whitespace (preserving one newline between lines).
   text = collapseWhitespace(text);
 
   // 12. Optional length clamp

@@ -79,6 +79,18 @@ pub fn path_distances(path: &[(f64, f64)]) -> (Vec<f64>, f64) {
     (distances, total)
 }
 
+/// Whether a pill-body click may emit interaction feedback and dispatch its
+/// action. Loading owns the current operation, so another body click must be
+/// inert: no haptic/audio event and no second action. A click on an unavailable
+/// action is also inert. Both conditions stay identical on every platform
+/// because the decision lives in this shared crate.
+pub const fn can_emit_interaction_feedback(
+    action_available: bool,
+    is_loading: bool,
+) -> bool {
+    action_available && !is_loading
+}
+
 /// How many line segments to use for each corner arc.
 #[derive(Debug, Clone, Copy)]
 pub enum RoundedRectArcSteps {
@@ -1504,5 +1516,21 @@ mod tests {
             "this is the state the old gate could not see",
         );
         assert!(resolve_hover(false, pointer_down));
+    }
+
+    #[test]
+    fn eligible_action_emits_feedback() {
+        assert!(can_emit_interaction_feedback(true, false));
+    }
+
+    #[test]
+    fn loading_action_is_inert() {
+        assert!(!can_emit_interaction_feedback(true, true));
+    }
+
+    #[test]
+    fn unavailable_action_is_inert() {
+        assert!(!can_emit_interaction_feedback(false, false));
+        assert!(!can_emit_interaction_feedback(false, true));
     }
 }

@@ -19,6 +19,88 @@ export type CerebrasModel =
 
 const CEREBRAS_BASE_URL = "https://api.cerebras.ai/v1";
 
+/**
+ * Terminal, non-retryable failure from a Cerebras request. Carries the HTTP
+ * status when the SDK surfaced one so callers can map 402 to a billing/quota
+ * message instead of a generic fallback. The API key, authorization header,
+ * and raw transcript are never attached.
+ */
+export class CerebrasProviderError extends Error {
+  readonly status?: number;
+
+  constructor(message: string, status?: number) {
+    super(message);
+    this.name = "CerebrasProviderError";
+    this.status = status;
+  }
+}
+
+/** True when a status must not be retried (billing, auth, bad request). */
+export const isCerebrasTerminalStatus = (status: number): boolean =>
+  status === 400 ||
+  status === 401 ||
+  status === 402 ||
+  status === 403 ||
+  status === 404 ||
+  status === 422;
+
+const readStatus = (error: unknown): number | undefined => {
+  if (typeof error !== "object" || error === null || !("status" in error)) {
+    return undefined;
+  }
+  const status = (error as { status?: unknown }).status;
+  return typeof status === "number" ? status : undefined;
+};
+
+/** True when a thrown value carries a non-retryable Cerebras HTTP status. */
+export const isCerebrasTerminalError = (error: unknown): boolean => {
+  if (error instanceof CerebrasProviderError && error.status !== undefined) {
+    return isCerebrasTerminalStatus(error.status);
+  }
+  const status = readStatus(error);
+  return status !== undefined && isCerebrasTerminalStatus(status);
+};
+
+/**
+ * Normalize any value thrown by a Cerebras call into a throwable error.
+ *
+ * The OpenAI SDK (which Cerebras is wire-compatible with) rejects on a
+ * non-2xx response with an `APIError` carrying `status`. For a 402 with an
+ * empty body that surfaces as `402 status code (no body)`; we map it to a
+ * provider-specific message. Other errors pass through with their original
+ * message so transient failures still retry.
+ */
+export const normalizeCerebrasError = (error: unknown): Error => {
+  if (error instanceof CerebrasProviderError) {
+    return error;
+  }
+
+  const status =
+    typeof error === "object" && error !== null && "status" in error
+      ? (error as { status?: unknown }).status
+      : undefined;
+  const numericStatus = typeof status === "number" ? status : undefined;
+
+  if (numericStatus === 402) {
+    return new CerebrasProviderError(
+      "Cerebras could not process this request. Your Cerebras account may be out of credit, over its quota, blocked by billing state, or missing access to the selected model.",
+      402,
+    );
+  }
+
+  if (numericStatus !== undefined && isCerebrasTerminalStatus(numericStatus)) {
+    const message =
+      error instanceof Error && error.message
+        ? error.message
+        : `Cerebras request failed with status ${numericStatus}`;
+    return new CerebrasProviderError(`Cerebras: ${message}`, numericStatus);
+  }
+
+  // Network/timeout/5xx: return a plain Error so the retry helper treats it
+  // as transient and tries again.
+  return error instanceof Error ? error : new Error(String(error));
+};
+
 const createClient = (apiKey: string, customFetch?: CustomFetch) => {
   return new OpenAI({
     apiKey: apiKey.trim(),
@@ -52,6 +134,11 @@ export const cerebrasGenerateTextResponse = async ({
 }: CerebrasGenerateTextArgs): Promise<CerebrasGenerateResponseOutput> => {
   return retry({
     retries: 3,
+    // A billing/auth/validation failure cannot be fixed by retrying. A 402
+    // in particular must surface immediately with an actionable message.
+    // The status may arrive either as a raw SDK error (before normalization)
+    // or already wrapped, so inspect both shapes.
+    isRetryable: (error) => !isCerebrasTerminalError(error),
     fn: async () => {
       const client = createClient(apiKey, customFetch);
 
@@ -97,6 +184,8 @@ export const cerebrasGenerateTextResponse = async ({
         tokensUsed: response.usage?.total_tokens ?? countWords(content),
       };
     },
+  }).catch((error: unknown) => {
+    throw normalizeCerebrasError(error);
   });
 };
 

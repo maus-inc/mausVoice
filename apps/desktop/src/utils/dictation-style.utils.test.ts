@@ -25,7 +25,10 @@ const manual = (
 });
 
 describe("getEffectiveToneIdAtFinalize", () => {
-  it("uses the stop-time selection when the user switches before stop", () => {
+  it("keeps the start-time style when the user switches mid-dictation", () => {
+    // Contract: one whole utterance uses the style selected at recording
+    // start. A switch made while recording (captured at stop) must not
+    // restyle the utterance; it applies to the next recording only.
     expect(
       getEffectiveToneIdAtFinalize(
         manual({
@@ -33,13 +36,10 @@ describe("getEffectiveToneIdAtFinalize", () => {
           liveSelectedToneId: SWITCHED,
         }),
       ),
-    ).toBe(SWITCHED);
+    ).toBe(START);
   });
 
-  it("uses the stop-time selection when the switch happens during a realtime segment", () => {
-    // Streaming sessions skip post-processing of already-inserted text;
-    // the finalize tone still follows stop-time so any non-streamed
-    // leftover (and the stored label) match the newly selected profile.
+  it("does not let a streaming-segment switch change the finalize style", () => {
     expect(
       getEffectiveToneIdAtFinalize(
         manual({
@@ -47,7 +47,7 @@ describe("getEffectiveToneIdAtFinalize", () => {
           liveSelectedToneId: SWITCHED,
         }),
       ),
-    ).toBe(SWITCHED);
+    ).toBe(START);
   });
 
   it("ignores a switch that arrives after stop has snapshotted the tone", () => {

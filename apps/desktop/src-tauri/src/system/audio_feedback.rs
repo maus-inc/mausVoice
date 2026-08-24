@@ -49,6 +49,11 @@ static AUDIO_SENDER: OnceLock<Sender<AudioRequest>> = OnceLock::new();
 
 enum AudioRequest {
     Play(&'static [u8]),
+    /// Play a thock clip at the given volume (0.0..=1.0).
+    PlayThock {
+        bytes: &'static [u8],
+        volume: f32,
+    },
 }
 
 /// Initialize a dedicated audio thread at app startup for instant chime playback.
@@ -74,8 +79,12 @@ pub fn warm_audio_output() {
                 log::error!("Failed to create audio output: {err}");
                 // Still process requests, but they'll fail gracefully
                 for request in rx {
-                    let AudioRequest::Play(bytes) = request;
-                    play_clip_fallback(bytes);
+                    match request {
+                        AudioRequest::Play(bytes) => play_clip_fallback(bytes),
+                        AudioRequest::PlayThock { bytes, .. } => {
+                            play_clip_fallback(bytes)
+                        }
+                    }
                 }
                 return;
             }
@@ -86,6 +95,15 @@ pub fn warm_audio_output() {
             match request {
                 AudioRequest::Play(bytes) => {
                     if let Ok(sink) = Sink::try_new(&handle) {
+                        if let Ok(source) = Decoder::new(Cursor::new(bytes)) {
+                            sink.append(source);
+                            sink.sleep_until_end();
+                        }
+                    }
+                }
+                AudioRequest::PlayThock { bytes, volume } => {
+                    if let Ok(sink) = Sink::try_new(&handle) {
+                        sink.set_volume(volume.clamp(0.0, 1.0));
                         if let Ok(source) = Decoder::new(Cursor::new(bytes)) {
                             sink.append(source);
                             sink.sleep_until_end();
@@ -127,16 +145,37 @@ pub fn play_alert_windows_11_clip() {
 }
 
 /// Thock haptic feedback (short low-frequency pulses for pill interactions).
+/// The WAV clips were mastered fairly hot/bass-heavy; scale them down so the
+/// result reads as a tight haptic click rather than a thud.
+const THOCK_VOLUME: f32 = 0.45;
+
 pub fn play_thock_press() {
-    play_clip(THOCK_PRESS_CLIP);
+    play_thock(THOCK_PRESS_CLIP);
 }
 
 pub fn play_thock_deep() {
-    play_clip(THOCK_DEEP_CLIP);
+    play_thock(THOCK_DEEP_CLIP);
 }
 
 pub fn play_thock_release() {
-    play_clip(THOCK_RELEASE_CLIP);
+    play_thock(THOCK_RELEASE_CLIP);
+}
+
+/// Play a thock clip at the reduced haptic volume. Routed through the same
+/// warm/fallback path as other clips, but sets the sink volume so the
+/// bass-heavy source material reads as a click.
+fn play_thock(bytes: &'static [u8]) {
+    if let Some(sender) = AUDIO_SENDER.get() {
+        if sender
+            .send(AudioRequest::PlayThock { bytes, volume: THOCK_VOLUME })
+            .is_ok()
+        {
+            return;
+        }
+    }
+    // Fallback path cannot set volume cheaply; play the raw clip. The warm
+    // thread is the normal path so this is rare.
+    play_clip_fallback(bytes);
 }
 
 use std::sync::atomic::{AtomicBool, Ordering};

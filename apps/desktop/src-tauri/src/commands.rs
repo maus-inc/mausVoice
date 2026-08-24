@@ -4610,9 +4610,25 @@ pub async fn floating_window_create(
     .title(title.clone())
     .always_on_top(true)
     .skip_taskbar(true)
+    .visible(true)
     .decorations(args.decorations.unwrap_or(true))
     .resizable(args.resizable.unwrap_or(true))
     .focused(args.focused.unwrap_or(false));
+
+    // Windows: apply the same renderer-backgrounding mitigations the main
+    // window uses, so a composer webview cannot be suspended before it has
+    // rendered (the reported "white tab flashes then vanishes" failure).
+    // Tauri only accepts this method on Windows; guard by cfg so other
+    // platforms still compile.
+    #[cfg(target_os = "windows")]
+    {
+        builder = builder.additional_browser_args(
+            "--disable-features=CalculateNativeWinOcclusion \
+             --disable-renderer-backgrounding \
+             --disable-background-timer-throttling \
+             --disable-backgrounding-occluded-windows",
+        );
+    }
 
     if args.transparent.unwrap_or(false) {
         builder = builder.transparent(true);
@@ -4628,7 +4644,26 @@ pub async fn floating_window_create(
         builder = builder.position(x, y);
     }
 
-    builder.build().map_err(|err| err.to_string())?;
+    builder.build().map_err(|err| {
+        let detail = err.to_string();
+        // WebView2 returns HRESULT 0x8007139F (E_UNEXPECTED / "The group or
+        // resource is not in the correct state") when a second webview is
+        // created before the runtime is ready or on a broken install. Surface
+        // a sanitized, actionable message including the window label so the
+        // Windows failure is diagnosable from logs without exposing URLs or
+        // user text.
+        log::error!(
+            "floating_window_create failed (label={label}): {detail}"
+        );
+        if detail.contains("0x8007139f") || detail.to_ascii_lowercase().contains("webview2") {
+            format!(
+                "Could not open the review window (WebView2 error). \
+                 The transcript was saved to history. Try again or open it in the main app. ({label})"
+            )
+        } else {
+            detail
+        }
+    })?;
 
     Ok(FloatingWindowInfo {
         id: label,

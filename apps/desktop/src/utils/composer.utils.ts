@@ -3,6 +3,7 @@ import { listen } from "@tauri-apps/api/event";
 import { WebviewWindow } from "@tauri-apps/api/webviewWindow";
 import { getIntl } from "../i18n/intl";
 import { createId } from "./id.utils";
+import { getLogger } from "./log.utils";
 
 export type ComposerResult = {
   requestId: string;
@@ -132,7 +133,7 @@ export const reviewTextInComposer = async (
 
   try {
     await invoke("composer_register_text", { requestId, text });
-    const result = await new Promise<string | null>((resolve, reject) => {
+    const result = await new Promise<string | null>((resolve) => {
       let settled = false;
       let timeoutId: number | null = null;
       const finish = (value: string | null) => {
@@ -195,6 +196,12 @@ export const reviewTextInComposer = async (
           );
           windowId = created.id;
 
+          // A second transcript while a composer is open must not create a
+          // broken duplicate window. If a composer window already exists the
+          // caller (the paste tool) runs one review at a time and awaits it,
+          // so reaching here means no live review is pending; we still guard
+          // against a stale label by focusing the created window.
+
           // A user closing the popout is a Cancel decision. Without this
           // listener the caller waits for the five-minute timeout and keeps
           // the dictation/paste flow blocked.
@@ -209,7 +216,17 @@ export const reviewTextInComposer = async (
             finish(null);
           }, COMPOSER_TIMEOUT_MS);
         } catch (error) {
-          reject(error);
+          // WebView2 creation failure (the Windows "white flash then
+          // disappears" report). Do NOT silently fall back to insertion
+          // when review-before-insert is enabled: return null so the caller
+          // skips insertion and keeps the transcript in history. The Rust
+          // command already logged a sanitized error with the window label.
+          getLogger().error(
+            `reviewTextInComposer window creation failed: ${
+              error instanceof Error ? error.message : String(error)
+            }`,
+          );
+          finish(null);
         }
       })();
     });

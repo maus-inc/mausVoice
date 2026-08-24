@@ -156,6 +156,10 @@ export async function runAgent(
         case "tool-call-result": {
           toolCallIndex++;
           const reason = toolCallReasons.get(event.toolCallId);
+          // buildConversationMessages recognizes a persisted tool result by
+          // metadata.type === "tool-result", not by the stored role. Keep the
+          // persisted role within ChatMessageRole ("system") while tagging the
+          // metadata so it reloads as an LlmMessage `tool` with the right id.
           await createChatMessage({
             id: crypto.randomUUID(),
             conversationId,

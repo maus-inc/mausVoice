@@ -28,9 +28,10 @@ describe("markdownToPillText", () => {
     expect(markdownToPillText("is*not*true")).toBe("is*not*true");
   });
 
-  it("strips horizontal rules", () => {
+  it("strips horizontal rules while preserving line breaks between blocks", () => {
     const input = ["A", "---", "B"].join(NL);
-    expect(markdownToPillText(input)).toBe("A B");
+    // The HR line is removed; a single blank line separates the blocks.
+    expect(markdownToPillText(input)).toBe(["A", "", "B"].join(NL));
   });
 
   it("strips reference links before fence processing", () => {
@@ -98,5 +99,43 @@ describe("streaming contract", () => {
     expect(naiveConcat).toContain("**"); // raw markers leak through chunk-append
 
     expect(markdownToPillText(chunk1 + chunk2)).toBe("bold text");
+  });
+});
+
+describe("tables and lists stay structured", () => {
+  it("renders a GFM table as one line per row with cells joined by pipes", () => {
+    const input = [
+      "| Name | Score |",
+      "| --- | --- |",
+      "| Ada | 9 |",
+      "| Linus | 10 |",
+    ].join(NL);
+    const result = markdownToPillText(input);
+    expect(result).toContain("Name | Score");
+    expect(result).toContain("Ada | 9");
+    expect(result).toContain("Linus | 10");
+    // The separator row must not leak through.
+    expect(result).not.toContain("---");
+  });
+
+  it("keeps each bullet on its own line", () => {
+    const input = ["- one", "- two", "- three"].join(NL);
+    const result = markdownToPillText(input);
+    const lines = result.split(NL);
+    expect(lines).toEqual(
+      expect.arrayContaining(["\u2022 one", "\u2022 two", "\u2022 three"]),
+    );
+  });
+});
+
+describe("unsafe HTML is neutralized", () => {
+  it("strips script and other tags without rendering them", () => {
+    const input =
+      "Safe <script>alert('x')</script> <img src=x onerror=alert(1)> text";
+    const result = markdownToPillText(input);
+    expect(result).not.toContain("<script>");
+    expect(result).not.toContain("onerror");
+    expect(result).toContain("Safe");
+    expect(result).toContain("text");
   });
 });

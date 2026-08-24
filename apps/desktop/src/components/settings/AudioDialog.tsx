@@ -57,9 +57,9 @@ export const AudioDialog = () => {
       </DialogTitle>
       <DialogContent sx={{ minWidth: 360 }}>
         <SettingSection
-          title={<FormattedMessage defaultMessage="Interaction chime" />}
+          title={<FormattedMessage defaultMessage="Interaction feedback" />}
           description={
-            <FormattedMessage defaultMessage="Play a sound when you start or stop recording." />
+            <FormattedMessage defaultMessage="Play a short haptic-style click when you press the pill or start and stop recording. No sound plays while a recording is processing." />
           }
           action={
             <Switch

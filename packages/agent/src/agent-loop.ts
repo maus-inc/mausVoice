@@ -4,7 +4,7 @@ import type {
   LlmMessage,
   LlmToolCall,
 } from "@maus-inc/types";
-import type { AgentConfig, AgentEvent } from "./types";
+import type { AgentConfig, AgentEvent, AgentTool } from "./types";
 
 export class AgentLoop {
   private config: AgentConfig;
@@ -182,10 +182,20 @@ export class AgentLoop {
         continue;
       }
 
-      const output = await tool.execute({
-        params: toolParams,
-        reason: (reason as string) ?? "",
-      });
+      let output: Awaited<ReturnType<AgentTool["execute"]>>;
+      try {
+        output = await tool.execute({
+          params: toolParams,
+          reason: (reason as string) ?? "",
+        });
+      } catch (err) {
+        // A tool must never abort the whole agent loop. Surface the failure
+        // as a tool-result message so the model can recover or end cleanly.
+        output = {
+          success: false,
+          failureReason: err instanceof Error ? err.message : String(err),
+        };
+      }
 
       const resultStr = output.success
         ? typeof output.result === "string"

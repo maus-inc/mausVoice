@@ -83,9 +83,14 @@ export type PostProcessInput = {
 export type PostProcessMetadata = {
   postProcessPrompt?: string | null;
   postProcessApiKeyId?: string | null;
+  postProcessProvider?: string | null;
   postProcessMode?: PostProcessingMode | null;
   postProcessDevice?: string | null;
   postprocessDurationMs?: number | null;
+  /** True when a post-processing request was attempted and failed. */
+  postProcessFailed?: boolean | null;
+  /** Sanitized, non-secret error message from a failed post-processing request. */
+  postProcessError?: string | null;
 };
 
 export type PostProcessResult = {
@@ -246,6 +251,7 @@ export const postProcessTranscript = async ({
   const {
     repo: genRepo,
     apiKeyId: genApiKeyId,
+    provider: genProvider,
     warnings: genWarnings,
   } = getGenerateTextRepo();
   warnings.push(...genWarnings);
@@ -259,8 +265,16 @@ export const postProcessTranscript = async ({
     metadata.postProcessMode = "none";
   } else if (genRepo) {
     getLogger().verbose(
-      `Post-processing with tone=${toneId ?? "default"}, apiKeyId=${genApiKeyId ?? "none"}`,
+      `Post-processing with tone=${toneId ?? "default"}, provider=${genProvider ?? "none"}, apiKeyId=${genApiKeyId ?? "none"}`,
     );
+
+    // Persist attribution BEFORE the network request so a 402, timeout, or
+    // cancellation still records which provider was selected. We never reset
+    // this to "none" on failure; that would hide the user's choice.
+    metadata.postProcessApiKeyId = genApiKeyId;
+    metadata.postProcessProvider = genProvider;
+    metadata.postProcessMode = "api";
+
     const dictationLanguage = dictationLanguageOverride
       ? coerceToDictationLanguage(dictationLanguageOverride)
       : await loadMyEffectiveDictationLanguage(state);
@@ -280,6 +294,7 @@ export const postProcessTranscript = async ({
     };
     const ppSystem = buildSystemPostProcessingTonePrompt(promptInput);
     const ppPrompt = buildPostProcessingPrompt(promptInput);
+    metadata.postProcessPrompt = ppPrompt;
     getLogger().verbose(
       "Post-process prompt length:",
       ppPrompt.length,
@@ -289,66 +304,82 @@ export const postProcessTranscript = async ({
 
     const postprocessStart = performance.now();
     getLogger().verbose("Calling LLM for post-processing");
-    const genOutput = await genRepo.generateText({
-      system: ppSystem,
-      prompt: ppPrompt,
-      jsonResponse: {
-        name: "transcription_cleaning",
-        description: "JSON response with the processed transcription",
-        schema: PROCESSED_TRANSCRIPTION_JSON_SCHEMA,
-      },
-    });
-    const postprocessDuration = performance.now() - postprocessStart;
-    metadata.postprocessDurationMs = Math.round(postprocessDuration);
-
-    getLogger().info(
-      `Post-processing complete in ${Math.round(postprocessDuration)}ms`,
-    );
-    getLogger().verbose("LLM raw output length:", genOutput.text.length);
-
     try {
-      const parsed = unwrapNestedLlmResponse(
-        parsePostProcessingJson(genOutput.text) as Record<string, unknown>,
-        "processedTranscription",
-      );
+      const genOutput = await genRepo.generateText({
+        system: ppSystem,
+        prompt: ppPrompt,
+        jsonResponse: {
+          name: "transcription_cleaning",
+          description: "JSON response with the processed transcription",
+          schema: PROCESSED_TRANSCRIPTION_JSON_SCHEMA,
+        },
+      });
+      const postprocessDuration = performance.now() - postprocessStart;
+      metadata.postprocessDurationMs = Math.round(postprocessDuration);
 
-      const validationResult = PROCESSED_TRANSCRIPTION_SCHEMA.safeParse(parsed);
-      if (!validationResult.success) {
-        getLogger().warning(
-          "Post-processing validation failed:",
-          validationResult.error.message,
+      getLogger().info(
+        `Post-processing complete in ${Math.round(postprocessDuration)}ms`,
+      );
+      getLogger().verbose("LLM raw output length:", genOutput.text.length);
+
+      try {
+        const parsed = unwrapNestedLlmResponse(
+          parsePostProcessingJson(genOutput.text) as Record<string, unknown>,
+          "processedTranscription",
         );
+
+        const validationResult =
+          PROCESSED_TRANSCRIPTION_SCHEMA.safeParse(parsed);
+        if (!validationResult.success) {
+          getLogger().warning(
+            "Post-processing validation failed:",
+            validationResult.error.message,
+          );
+          warnings.push(
+            `Post-processing response validation failed: ${validationResult.error.message}`,
+          );
+        } else {
+          processedTranscript = validationResult.data.result.trim();
+          getLogger().verbose(
+            "Processed transcript length:",
+            processedTranscript.length,
+          );
+        }
+      } catch (e) {
+        getLogger().error("Failed to parse post-processing response:", e);
+        const message = (e as Error).message;
+        const truncationHint = /Unterminated string/i.test(message)
+          ? " The model output may have been truncated at its token limit."
+          : "";
         warnings.push(
-          `Post-processing response validation failed: ${validationResult.error.message}`,
-        );
-      } else {
-        processedTranscript = validationResult.data.result.trim();
-        getLogger().verbose(
-          "Processed transcript length:",
-          processedTranscript.length,
+          `Failed to parse post-processing response: ${message}.${truncationHint}`,
         );
       }
-    } catch (e) {
-      getLogger().error("Failed to parse post-processing response:", e);
-      const message = (e as Error).message;
-      const truncationHint = /Unterminated string/i.test(message)
-        ? " The model output may have been truncated at its token limit."
-        : "";
-      warnings.push(
-        `Failed to parse post-processing response: ${message}.${truncationHint}`,
-      );
-    }
 
-    metadata.postProcessPrompt = ppPrompt;
-    metadata.postProcessApiKeyId = genApiKeyId;
-    metadata.postProcessMode = genOutput.metadata?.postProcessingMode || null;
-    metadata.postProcessDevice = genOutput.metadata?.inferenceDevice || null;
-    getLogger().verbose(
-      "Post-process mode:",
-      metadata.postProcessMode,
-      "device:",
-      metadata.postProcessDevice,
-    );
+      metadata.postProcessMode =
+        genOutput.metadata?.postProcessingMode || metadata.postProcessMode;
+      metadata.postProcessDevice = genOutput.metadata?.inferenceDevice || null;
+      getLogger().verbose(
+        "Post-process mode:",
+        metadata.postProcessMode,
+        "device:",
+        metadata.postProcessDevice,
+      );
+    } catch (error) {
+      // Terminal provider failure (e.g. Cerebras 402) or network error. Keep
+      // the raw transcript and the selected-provider attribution; do not
+      // throw into the dictation pipeline or wait for the unrelated 60s
+      // timeout. The sanitized message never includes the key, auth header,
+      // or transcript.
+      const postprocessDuration = performance.now() - postprocessStart;
+      metadata.postprocessDurationMs = Math.round(postprocessDuration);
+      metadata.postProcessFailed = true;
+      const message =
+        error instanceof Error ? error.message : "Post-processing failed";
+      metadata.postProcessError = message;
+      getLogger().error(`Post-processing request failed: ${message}`);
+      warnings.push(message);
+    }
   } else {
     getLogger().info("No post-processing repo configured, skipping");
     metadata.postProcessMode = "none";
