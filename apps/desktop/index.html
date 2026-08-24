@@ -122,36 +122,49 @@
           if (fallback) return fallback;
           return String(error || "Unknown error");
         }
-        window.addEventListener(
-          "error",
-          function (event) {
-            var target = event.target;
-            if (
-              target instanceof HTMLScriptElement ||
-              target instanceof HTMLLinkElement
-            ) {
-              var url =
-                target instanceof HTMLScriptElement ? target.src : target.href;
-              paint(
-                "mausVoice failed to start",
-                "Failed to load resource: " +
-                  (url || "(unknown URL)") +
-                  "\n\nThe frontend asset could not be fetched. Under Tauri's asset: protocol this is usually a CORS or path issue — check the built index.html asset URLs.",
-              );
-              return;
+        // Named so the bundle installer can removeEventListener it. Capture
+        // phase is required for failed <script>/<link> fetches. After React
+        // has mounted, only those resource failures stay fatal; ordinary
+        // runtime errors must not cover a working UI.
+        window.__mausVoiceEarlyError = function (event) {
+          var target = event.target;
+          var isStylesheet = false;
+          if (target instanceof HTMLLinkElement) {
+            if (target.relList && target.relList.contains("stylesheet")) {
+              isStylesheet = true;
+            } else if (typeof target.rel === "string") {
+              isStylesheet = target.rel.split(/\s+/).some(function (token) {
+                return token.toLowerCase() === "stylesheet";
+              });
             }
-            // Module-evaluation failures (e.g. a vendor chunk throwing
-            // `Cannot read properties of undefined (reading 'Fragment')`)
-            // fire here before the React overlay installer runs.
-            if (event.error || event.message) {
-              paint(
-                "mausVoice failed to start",
-                detailFromError(event.error, event.message),
-              );
-            }
-          },
-          true,
-        );
+          }
+          var isAsset =
+            target instanceof HTMLScriptElement || isStylesheet;
+          if (isAsset) {
+            var url =
+              target instanceof HTMLScriptElement ? target.src : target.href;
+            paint(
+              "mausVoice failed to start",
+              "Failed to load resource: " +
+                (url || "(unknown URL)") +
+                "\n\nThe frontend asset could not be fetched. Under Tauri's asset: protocol this is usually a CORS or path issue — check the built index.html asset URLs.",
+            );
+            return;
+          }
+          if (
+            document.getElementById("root") &&
+            document.getElementById("root").childNodes.length
+          ) {
+            return;
+          }
+          if (event.error || event.message) {
+            paint(
+              "mausVoice failed to start",
+              detailFromError(event.error, event.message),
+            );
+          }
+        };
+        window.addEventListener("error", window.__mausVoiceEarlyError, true);
         // Stable named handler so the bundle's overlay installer
         // (global-error-overlay.utils.ts) can removeEventListener it once the
         // app is up. Without the removal there would be two co-resident

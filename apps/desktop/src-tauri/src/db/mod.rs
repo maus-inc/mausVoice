@@ -1,4 +1,5 @@
 pub mod api_key_queries;
+pub mod open;
 pub mod app_target_queries;
 pub mod chat_message_queries;
 pub mod conversation_queries;
