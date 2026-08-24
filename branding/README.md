@@ -27,3 +27,25 @@ convert branding/mausvoice-logo-1024.png -resize 128x128 apps/windows-installer/
 ```
 
 Generate the multi-resolution `icon.ico` (desktop and installer) and `icon.icns` (desktop only) from the 1024x1024 source using your preferred tool (e.g. ImageMagick for `.ico`, `iconutil` for `.icns`).
+
+## Windows installer sidebar
+
+`mausvoice-sidebar-installerimg` at the repository root is the custom art shown
+on the Welcome and Finish pages of the Windows NSIS setup, replacing the stock
+blue NSIS panel.
+
+- Format: PNG (8-bit, non-interlaced) or BMP (24/32-bit uncompressed).
+- Full-bleed 164x314 art renders edge to edge; other aspect ratios are
+  contain-fit and letterboxed with a background sampled from the art's edges
+  (white when the art has no opaque edge, e.g. a bare logo).
+
+The NSIS wizard only accepts a 24-bit BMP, so the bitmap is regenerated from
+the root art on every build:
+
+```bash
+node scripts/generate-windows-installer-sidebar.mjs
+```
+
+The output (`apps/desktop/src-tauri/icons/nsis-sidebar.bmp`) is generated and
+gitignored; the desktop `build` script and the Windows CI jobs regenerate it,
+so it can never drift from the committed art.
