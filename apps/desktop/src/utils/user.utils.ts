@@ -265,6 +265,7 @@ const TRANSCRIPTION_CAPABLE_PROVIDERS: Set<ApiKeyProvider> = new Set([
   "gemini",
   "speaches",
   "xai",
+  "openrouter",
 ]);
 
 export const getTranscriptionPrefs = (state: AppState): TranscriptionPrefs => {

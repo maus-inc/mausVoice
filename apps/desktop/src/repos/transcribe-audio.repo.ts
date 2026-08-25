@@ -11,6 +11,7 @@ import {
   groqTranscribeAudio,
   openaiTranscribeAudio,
   OpenAITranscriptionModel,
+  openrouterTranscribeAudio,
   TranscriptionModel,
   xaiTranscribeAudio,
   XaiTranscriptionModel,
@@ -727,6 +728,53 @@ export class OpenAICompatibleTranscribeAudioRepo extends BaseTranscribeAudioRepo
       text: transcript,
       metadata: {
         inferenceDevice: "API • OpenAI Compatible",
+        modelSize: this.model,
+        transcriptionMode: "api",
+      },
+    };
+  }
+}
+
+export class OpenRouterTranscribeAudioRepo extends BaseTranscribeAudioRepo {
+  private openrouterApiKey: string;
+  private model: string;
+
+  constructor(apiKey: string, model: string) {
+    super();
+    this.openrouterApiKey = apiKey;
+    this.model = model;
+  }
+
+  protected getSegmentDurationSec(): number {
+    return 60;
+  }
+
+  protected getOverlapDurationSec(): number {
+    return 5;
+  }
+
+  protected getBatchChunkCount(): number {
+    return 3;
+  }
+
+  protected async transcribeSegment(
+    input: TranscribeSegmentInput,
+  ): Promise<TranscribeAudioOutput> {
+    const wavBuffer = buildWaveFile(input.samples, input.sampleRate);
+
+    const { text: transcript } = await openrouterTranscribeAudio({
+      apiKey: this.openrouterApiKey,
+      model: this.model,
+      blob: wavBuffer,
+      ext: "wav",
+      prompt: input.prompt ?? undefined,
+      language: input.language,
+    });
+
+    return {
+      text: transcript,
+      metadata: {
+        inferenceDevice: "API • OpenRouter",
         modelSize: this.model,
         transcriptionMode: "api",
       },
