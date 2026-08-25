@@ -45,20 +45,7 @@ export type UserPreferences = {
   typingSpeedMs: Nullable<number>;
   pillResetMonitorStrategy: PillResetMonitorStrategy;
   alwaysRequestAdminOnStartup: boolean;
-  /** Optional opt-in for activation-key + arrow style cycling while dictating. */
-  inDictationStyleSwitchingEnabled: boolean;
-  /** Suppress common silence hallucinations before post-processing. */
-  hallucinationFilterEnabled: boolean;
-  /** Review transcript text in the composer before inserting it. */
-  reviewBeforeInsert: Nullable<boolean>;
-  /** Tools enabled for agent mode; null means use the built-in registry defaults. */
-  agentEnabledTools: Nullable<string[]>;
-  /** Maximum agent loop iterations, clamped by the settings UI. */
-  agentMaxIterations: number;
-  /** Time allowed for a user permission response. */
-  agentPermissionTimeoutMs: number;
-  /** Deterministic "new line" / "scratch that" commands. Default on. */
-  spokenCommandsEnabled: boolean;
+  handsFreeDelayMs: Nullable<number>;
 
   // deprecated
 };
