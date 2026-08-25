@@ -203,12 +203,14 @@ mod imp {
             .collect();
         let window_name = PCWSTR(window_name_w.as_ptr());
 
-        let wc = WNDCLASSW {
-            style: CS_OWNDC | CS_HREDRAW | CS_VREDRAW,
-            lpfnWndProc: Some(wndproc),
-            hInstance: HINSTANCE(GetModuleHandleW(None).unwrap_or_default().0),
-            lpszClassName: class_name,
-            ..Default::default()
+        let wc = unsafe {
+            WNDCLASSW {
+                style: CS_OWNDC | CS_HREDRAW | CS_VREDRAW,
+                lpfnWndProc: Some(wndproc),
+                hInstance: HINSTANCE(GetModuleHandleW(None).unwrap_or_default().0),
+                lpszClassName: class_name,
+                ..Default::default()
+            }
         };
 
         let atom = unsafe { RegisterClassW(&wc) };
