@@ -26,6 +26,10 @@ pub fn purge_old_logs(app: &tauri::AppHandle) {
 }
 
 fn purge_old_logs_in(logs_dir: &Path) {
+    purge_old_logs_in_with_cap(logs_dir, MAX_LOG_DIR_SIZE);
+}
+
+fn purge_old_logs_in_with_cap(logs_dir: &Path, cap: u64) {
     let mut files: Vec<(std::path::PathBuf, std::time::SystemTime, u64)> =
         match fs::read_dir(logs_dir) {
             Ok(entries) => entries
@@ -45,7 +49,7 @@ fn purge_old_logs_in(logs_dir: &Path) {
         };
 
     let total_size: u64 = files.iter().map(|(_, _, size)| size).sum();
-    if files.len() <= MIN_KEEP_RECENT_FILES && total_size <= MAX_LOG_DIR_SIZE {
+    if files.len() <= MIN_KEEP_RECENT_FILES && total_size <= cap {
         return;
     }
 
@@ -55,7 +59,7 @@ fn purge_old_logs_in(logs_dir: &Path) {
     let mut bytes_freed: u64 = 0;
 
     for (idx, (path, _, size)) in files.iter().enumerate() {
-        if idx < MIN_KEEP_RECENT_FILES && total_size - bytes_freed <= MAX_LOG_DIR_SIZE {
+        if idx < MIN_KEEP_RECENT_FILES && total_size - bytes_freed <= cap {
             continue;
         }
         match fs::remove_file(path) {
@@ -130,7 +134,7 @@ pub fn write_startup_diagnostics(app: &tauri::AppHandle) {
 
 #[cfg(test)]
 mod tests {
-    use super::{purge_old_logs_in, MAX_LOG_DIR_SIZE, MIN_KEEP_RECENT_FILES};
+    use super::{purge_old_logs_in, purge_old_logs_in_with_cap, MIN_KEEP_RECENT_FILES};
     use std::fs;
     use std::path::PathBuf;
     use std::thread::sleep;
@@ -215,15 +219,17 @@ mod tests {
             sleep(Duration::from_millis(2));
         }
 
+        let total_after_writes: u64 = (file_size as u64) * 30;
+        let test_cap = (file_size as u64) * 15;
         let initial_size = total_size(&dir);
-        assert!(initial_size > MAX_LOG_DIR_SIZE);
+        assert!(initial_size > test_cap);
 
-        purge_old_logs_in(&dir);
+        purge_old_logs_in_with_cap(&dir, test_cap);
 
         let final_size = total_size(&dir);
         assert!(
-            final_size <= MAX_LOG_DIR_SIZE,
-            "log dir size {final_size} exceeded cap {MAX_LOG_DIR_SIZE}"
+            final_size <= test_cap,
+            "log dir size {final_size} exceeded cap {test_cap}"
         );
         assert!(count_files(&dir) >= MIN_KEEP_RECENT_FILES);
         fs::remove_dir_all(&dir).expect("failed to clean up");

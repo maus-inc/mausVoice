@@ -34,13 +34,13 @@ mod imp {
 
     use tauri::{AppHandle, Emitter};
     use windows::core::PCWSTR;
-    use windows::Win32::Foundation::{HANDLE, HINSTANCE, HWND, LPARAM, LRESULT, WPARAM};
+    use windows::Win32::Foundation::{HINSTANCE, HWND, LPARAM, LRESULT, WPARAM};
     use windows::Win32::System::Console::{
         GetConsoleWindow, SetConsoleCtrlHandler, CTRL_BREAK_EVENT, CTRL_C_EVENT,
     };
     use windows::Win32::System::LibraryLoader::GetModuleHandleW;
     use windows::Win32::System::Power::{
-        RegisterPowerSettingNotification, UnregisterPowerSettingNotification, DEVICE_NOTIFY_WINDOW_HANDLE,
+        RegisterPowerSettingNotification, UnregisterPowerSettingNotification,
         HPOWERNOTIFY,
     };
     use windows::Win32::System::RemoteDesktop::{
@@ -53,8 +53,8 @@ mod imp {
     use windows::Win32::UI::WindowsAndMessaging::{
         CreateWindowExW, DefWindowProcW, DestroyWindow, DispatchMessageW, GetMessageW,
         RegisterClassW, TranslateMessage, UnregisterClassW, CS_HREDRAW, CS_OWNDC, CS_VREDRAW,
-        HWND_DESKTOP, MSG, WNDCLASSW, WINDOW_EX_STYLE, WINDOW_STYLE, WS_EX_NOACTIVATE,
-        WS_EX_TOOLWINDOW,
+        DEVICE_NOTIFY_WINDOW_HANDLE, HWND_DESKTOP, MSG, WNDCLASSW, WINDOW_EX_STYLE,
+        WINDOW_STYLE, WS_EX_NOACTIVATE, WS_EX_TOOLWINDOW,
     };
 
     use crate::domain::EVT_DESKTOP_RESUME;
@@ -227,7 +227,7 @@ mod imp {
                 0,
                 0,
                 0,
-                HWND_DESKTOP,
+                Some(HWND_DESKTOP),
                 None,
                 None,
                 None,
@@ -284,11 +284,11 @@ mod imp {
     /// does not kill the message pump before the rest of the app gets a
     /// chance to clean up. Returning `BOOL(1)` tells the OS "I handled it,
     /// do not terminate the process".
-    unsafe extern "system" fn console_ctrl_handler(event: u32) -> windows::Win32::Foundation::BOOL {
+    unsafe extern "system" fn console_ctrl_handler(event: u32) -> i32 {
         if event == CTRL_C_EVENT || event == CTRL_BREAK_EVENT {
-            return windows::Win32::Foundation::BOOL(1);
+            return 1;
         }
-        windows::Win32::Foundation::BOOL(0)
+        0
     }
 }
 
