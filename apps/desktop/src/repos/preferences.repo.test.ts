@@ -85,7 +85,10 @@ describe("preserveAudioOnFailure preference", () => {
 
   it("preserves an explicit false across a round-trip", () => {
     const base = toLocalPreferences(createDefaultPreferences());
-    const loaded = fromLocalPreferences({ ...base, preserveAudioOnFailure: false });
+    const loaded = fromLocalPreferences({
+      ...base,
+      preserveAudioOnFailure: false,
+    });
     expect(loaded.preserveAudioOnFailure).toBe(false);
 
     const saved = toLocalPreferences(loaded);

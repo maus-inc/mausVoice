@@ -12,9 +12,7 @@ describe("normalizeHandsFreeDelayMs", () => {
     expect(normalizeHandsFreeDelayMs(undefined)).toBe(
       DEFAULT_HANDS_FREE_DELAY_MS,
     );
-    expect(normalizeHandsFreeDelayMs(null)).toBe(
-      DEFAULT_HANDS_FREE_DELAY_MS,
-    );
+    expect(normalizeHandsFreeDelayMs(null)).toBe(DEFAULT_HANDS_FREE_DELAY_MS);
     expect(normalizeHandsFreeDelayMs(Number.NaN)).toBe(
       DEFAULT_HANDS_FREE_DELAY_MS,
     );
@@ -66,9 +64,7 @@ describe("getEffectiveHandsFreeDelayMs", () => {
     expect(getEffectiveHandsFreeDelayMs(null)).toBe(
       DEFAULT_HANDS_FREE_DELAY_MS,
     );
-    expect(getEffectiveHandsFreeDelayMs({})).toBe(
-      DEFAULT_HANDS_FREE_DELAY_MS,
-    );
+    expect(getEffectiveHandsFreeDelayMs({})).toBe(DEFAULT_HANDS_FREE_DELAY_MS);
     expect(getEffectiveHandsFreeDelayMs({ handsFreeDelayMs: null })).toBe(
       DEFAULT_HANDS_FREE_DELAY_MS,
     );

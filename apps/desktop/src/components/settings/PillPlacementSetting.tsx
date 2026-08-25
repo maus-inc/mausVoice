@@ -27,7 +27,10 @@ export const PillPlacementSetting = () => {
           value={placement}
           onChange={handleChange}
           options={[
-            { value: "top", label: intl.formatMessage({ defaultMessage: "Top" }) },
+            {
+              value: "top",
+              label: intl.formatMessage({ defaultMessage: "Top" }),
+            },
             {
               value: "bottom",
               label: intl.formatMessage({ defaultMessage: "Bottom" }),

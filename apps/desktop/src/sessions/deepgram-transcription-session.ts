@@ -26,7 +26,10 @@ const startDeepgramStreaming = async (
   language: string,
   onInterimResult?: (segment: string) => void,
 ): Promise<DeepgramStreamingSession> => {
-  getLogger().verbose(`[${LOGGER_PREFIX}] Starting with sample rate:`, sampleRate);
+  getLogger().verbose(
+    `[${LOGGER_PREFIX}] Starting with sample rate:`,
+    sampleRate,
+  );
 
   let ws: WebSocket | null = null;
   let unlisten: UnlistenFn | null = null;
@@ -130,9 +133,7 @@ const startDeepgramStreaming = async (
     }
   };
 
-  getLogger().verbose(
-    `[${LOGGER_PREFIX}] Setting up audio_chunk listener...`,
-  );
+  getLogger().verbose(`[${LOGGER_PREFIX}] Setting up audio_chunk listener...`);
   unlisten = await listen<{ samples: number[] }>("audio_chunk", (event) => {
     receivedLogger.record(event.payload.samples.length);
     if (!isFinalized) {
@@ -209,10 +210,7 @@ const startDeepgramStreaming = async (
           getLogger().error(`[${LOGGER_PREFIX}] Error from server:`, data);
         }
       } catch (error) {
-        getLogger().error(
-          `[${LOGGER_PREFIX}] Error parsing message:`,
-          error,
-        );
+        getLogger().error(`[${LOGGER_PREFIX}] Error parsing message:`, error);
       }
     };
 
