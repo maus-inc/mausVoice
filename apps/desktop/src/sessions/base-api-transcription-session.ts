@@ -14,23 +14,29 @@ export type BaseApiTranscriptionSessionOptions = {
 export type BaseApiStreamSession = {
   finalize: () => Promise<string>;
   cleanup: () => void;
+  writeAudioChunk?: (chunk: Float32Array) => void;
 };
 
 export abstract class BaseApiTranscriptionSession implements TranscriptionSession {
   protected readonly providerLabel: string;
   protected readonly inferenceDevice: string;
   protected interimCallback: InterimResultCallback | null = null;
+  protected streamSession: BaseApiStreamSession | null = null;
 
   constructor(options: BaseApiTranscriptionSessionOptions) {
     this.providerLabel = options.providerLabel;
     this.inferenceDevice = options.inferenceDevice;
   }
 
-  protected abstract getStreamSession(): BaseApiStreamSession | null;
-
   abstract onRecordingStart(sampleRate: number): Promise<void>;
-  abstract cleanup(): void;
   abstract supportsStreaming(): boolean;
+
+  cleanup(): void {
+    if (this.streamSession) {
+      this.streamSession.cleanup();
+      this.streamSession = null;
+    }
+  }
 
   setInterimResultCallback(callback: InterimResultCallback): void {
     this.interimCallback = callback;
@@ -39,11 +45,10 @@ export abstract class BaseApiTranscriptionSession implements TranscriptionSessio
   async finalize(
     _audio: StopRecordingResponse,
   ): Promise<TranscriptionSessionResult> {
-    const streamSession = this.getStreamSession();
-    if (!streamSession) {
+    if (!this.streamSession) {
       return this.notEstablishedResult();
     }
-    return this.runFinalize(streamSession);
+    return this.runFinalize(this.streamSession);
   }
 
   private notEstablishedResult(): TranscriptionSessionResult {
