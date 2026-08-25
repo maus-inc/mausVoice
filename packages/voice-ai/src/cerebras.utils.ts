@@ -10,21 +10,44 @@ import type {
   LlmStreamEvent,
 } from "@maus-inc/types";
 import { openaiCompatibleStreamChat } from "./openai.utils";
-import { contentToString } from "./transcription.utils";
-import type { CustomFetch, DiscoveredModelId } from "./types";
 
-export const CEREBRAS_MODELS = ["gpt-oss-120b", "gemma-4-31b"] as const;
-export type CerebrasModel =
-  (typeof CEREBRAS_MODELS)[number] | DiscoveredModelId;
+export const CEREBRAS_MODELS = [
+  "zai-glm-4.7",
+  "llama3.1-8b",
+  "gpt-oss-120b",
+  "qwen-3-235b-a22b-instruct-2507",
+] as const;
+export type CerebrasModel = (typeof CEREBRAS_MODELS)[number];
 
 const CEREBRAS_BASE_URL = "https://api.cerebras.ai/v1";
 
-const createClient = (apiKey: string, customFetch?: CustomFetch) => {
+const contentToString = (
+  content: string | ChatCompletionContentPart[] | null | undefined,
+): string => {
+  if (!content) {
+    return "";
+  }
+
+  if (typeof content === "string") {
+    return content;
+  }
+
+  return content
+    .map((part) => {
+      if (part.type === "text") {
+        return part.text ?? "";
+      }
+      return "";
+    })
+    .join("")
+    .trim();
+};
+
+const createClient = (apiKey: string) => {
   return new OpenAI({
     apiKey: apiKey.trim(),
     baseURL: CEREBRAS_BASE_URL,
     dangerouslyAllowBrowser: true,
-    fetch: customFetch,
   });
 };
 
@@ -34,7 +57,7 @@ export type CerebrasGenerateTextArgs = {
   system?: string;
   prompt: string;
   jsonResponse?: JsonResponse;
-  customFetch?: CustomFetch;
+  maxTokens?: number;
 };
 
 export type CerebrasGenerateResponseOutput = {
@@ -44,16 +67,16 @@ export type CerebrasGenerateResponseOutput = {
 
 export const cerebrasGenerateTextResponse = async ({
   apiKey,
-  model = CEREBRAS_MODELS[0],
+  model = "zai-glm-4.7",
   system,
   prompt,
   jsonResponse,
-  customFetch,
+  maxTokens,
 }: CerebrasGenerateTextArgs): Promise<CerebrasGenerateResponseOutput> => {
   return retry({
     retries: 3,
     fn: async () => {
-      const client = createClient(apiKey, customFetch);
+      const client = createClient(apiKey);
 
       const messages: ChatCompletionMessageParam[] = [];
       if (system) {
@@ -73,10 +96,14 @@ export const cerebrasGenerateTextResponse = async ({
         messages,
         model,
         temperature: 1,
-        max_tokens: 1024,
+        max_tokens: maxTokens ?? 1024,
         top_p: 1,
         response_format: jsonResponse ? { type: "json_object" } : undefined,
       };
+      if (model === "zai-glm-4.7") {
+        params.reasoning_effort = "none";
+      }
+
       const response = await client.chat.completions.create(
         params as unknown as OpenAI.ChatCompletionCreateParamsNonStreaming,
       );
@@ -102,16 +129,42 @@ export const cerebrasGenerateTextResponse = async ({
 
 export type CerebrasTestIntegrationArgs = {
   apiKey: string;
-  customFetch?: CustomFetch;
 };
 
 export const cerebrasTestIntegration = async ({
   apiKey,
-  customFetch,
 }: CerebrasTestIntegrationArgs): Promise<boolean> => {
-  const client = createClient(apiKey, customFetch);
-  await client.models.list();
-  return true;
+  const client = createClient(apiKey);
+
+  const response = await client.chat.completions.create({
+    messages: [
+      {
+        role: "user",
+        content: [
+          {
+            type: "text",
+            text: `Reply with the single word "Hello."`,
+          },
+        ],
+      },
+    ],
+    model: "llama3.1-8b",
+    temperature: 0,
+    max_tokens: 32,
+    top_p: 1,
+  });
+
+  if (!response.choices || response.choices.length === 0) {
+    throw new Error("No response from Cerebras");
+  }
+
+  const first = response.choices[0];
+  const content = contentToString(first?.message?.content);
+  if (!content) {
+    throw new Error("Response content is empty");
+  }
+
+  return content.toLowerCase().includes("hello");
 };
 
 // ============================================================================
@@ -122,15 +175,18 @@ export type CerebrasStreamChatArgs = {
   apiKey: string;
   model: string;
   input: LlmChatInput;
-  customFetch?: CustomFetch;
 };
 
 export async function* cerebrasStreamChat({
   apiKey,
   model,
   input,
-  customFetch,
 }: CerebrasStreamChatArgs): AsyncGenerator<LlmStreamEvent> {
-  const client = createClient(apiKey, customFetch);
-  yield* openaiCompatibleStreamChat(client, model, input);
+  const client = createClient(apiKey);
+  yield* openaiCompatibleStreamChat(
+    client,
+    model,
+    input,
+    model === "zai-glm-4.7" ? { reasoning_effort: "none" } : undefined,
+  );
 }

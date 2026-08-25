@@ -245,6 +245,10 @@ export const postProcessTranscript = async ({
 
     const postprocessStart = performance.now();
     getLogger().verbose("Calling LLM for post-processing");
+    const POST_PROCESS_MAX_TOKENS = 600;
+    getLogger().verbose(
+      `Post-processing budget: maxTokens=${POST_PROCESS_MAX_TOKENS}`,
+    );
     const genOutput = await genRepo.generateText({
       system: ppSystem,
       prompt: ppPrompt,
@@ -253,6 +257,7 @@ export const postProcessTranscript = async ({
         description: "JSON response with the processed transcription",
         schema: PROCESSED_TRANSCRIPTION_JSON_SCHEMA,
       },
+      maxTokens: POST_PROCESS_MAX_TOKENS,
     });
     const postprocessDuration = performance.now() - postprocessStart;
     metadata.postprocessDurationMs = Math.round(postprocessDuration);
