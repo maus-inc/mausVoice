@@ -124,15 +124,6 @@ const convertTables = (input: string): string => {
 };
 
 /**
- * Strip raw HTML tags and unescape entities. Model output must never render
- * as active HTML; the pill is plain text, so tags are removed and `<`, `>`
- * in the remaining text are shown literally.
- *
- * Tags are removed BEFORE entities are decoded, so an encoded tag such as
- * `&lt;script&gt;` cannot re-materialise as a literal `<script>` in the
- * output.
- */
-/**
  * Single-pass linear scanner that removes HTML/XML tags. A `<` only opens a
  * tag when it is followed by tag content (a letter, `/`, `!`, or `?`); a
  * lone `<` (e.g. "a < b") is kept as literal text. No regex/backtracking,
