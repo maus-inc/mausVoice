@@ -75,3 +75,5 @@ nul
 
 # Local handoff artifact (not committed)
 HANDOFF.md
+
+.kilo/
