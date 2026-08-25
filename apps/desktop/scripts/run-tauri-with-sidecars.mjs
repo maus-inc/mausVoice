@@ -50,12 +50,13 @@ if (tauriCommand === "build" || tauriCommand === "dev") {
 
 if (tauriCommand === "build") {
   // Turbo caches the desktop `build` task, but the NSIS sidebar bitmap is
-  // gitignored and is not a task output, so a cache hit would restore
-  // neither the bitmap nor its regeneration - and the Tauri bundle step
-  // would then fail on the missing `sidebarImage` (or ship a stale one).
-  // This wrapper is never cached, so regenerate here, immediately before
-  // every Tauri bundle. `--windows-only` keeps non-Windows hosts, which
-  // never bundle NSIS, a fast no-op.
+  // gitignored and is not a task output, so a cache hit restores neither
+  // the bitmap nor its regeneration: a clean checkout would then fail the
+  // bundle step on the missing `sidebarImage`, and a persistent checkout
+  // would reuse a bitmap left stale by an art change. This wrapper is
+  // never cached, so regenerate here, immediately before every Tauri
+  // bundle. `--windows-only` keeps non-Windows hosts, which never bundle
+  // NSIS, a fast no-op.
   run("node", [sidebarGenerator, "--windows-only"], process.env);
 }
 
