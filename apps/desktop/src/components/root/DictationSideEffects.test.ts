@@ -53,10 +53,8 @@ const baseStrategyStub = (
 const asToastCall = (spy: ReturnType<typeof vi.fn>, index = 0): ToastCall =>
   spy.mock.calls[index]?.[0] as ToastCall;
 
-const asStoreCall = (
-  spy: ReturnType<typeof vi.fn>,
-  index = 0,
-): StoreCall => spy.mock.calls[index]?.[0] as StoreCall;
+const asStoreCall = (spy: ReturnType<typeof vi.fn>, index = 0): StoreCall =>
+  spy.mock.calls[index]?.[0] as StoreCall;
 
 describe("handleEmptyTranscriptionResult (#418)", () => {
   it("shows a recovery toast, stores a failure marker, and emits recording_failed", async () => {

@@ -128,7 +128,9 @@ export type ReceivedChunkLogger = {
   record: (sampleCount: number) => number;
 };
 
-export const createReceivedChunkLogger = (loggerPrefix: string): ReceivedChunkLogger => {
+export const createReceivedChunkLogger = (
+  loggerPrefix: string,
+): ReceivedChunkLogger => {
   let count = 0;
   return {
     record: (sampleCount) => {

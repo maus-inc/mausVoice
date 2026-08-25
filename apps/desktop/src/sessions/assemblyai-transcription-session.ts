@@ -22,10 +22,7 @@ const startAssemblyAIStreaming = async (
   sampleRate: number,
   onInterimResult?: (segment: string) => void,
 ): Promise<AssemblyAIStreamingSession> => {
-  getLogger().info(
-    `[${LOGGER_PREFIX}] Starting with sample rate:`,
-    sampleRate,
-  );
+  getLogger().info(`[${LOGGER_PREFIX}] Starting with sample rate:`, sampleRate);
   return new Promise((resolve, reject) => {
     let ws: WebSocket | null = null;
     let unlisten: UnlistenFn | null = null;
@@ -85,9 +82,7 @@ const startAssemblyAIStreaming = async (
         );
 
         if (ws && ws.readyState === WebSocket.OPEN) {
-          getLogger().info(
-            `[${LOGGER_PREFIX}] Sending Terminate message...`,
-          );
+          getLogger().info(`[${LOGGER_PREFIX}] Sending Terminate message...`);
           ws.send(JSON.stringify({ type: "Terminate" }));
 
           const timeout = setTimeout(() => {
@@ -158,9 +153,7 @@ const startAssemblyAIStreaming = async (
           },
         );
 
-        getLogger().info(
-          `[${LOGGER_PREFIX}] Session ready, listener attached`,
-        );
+        getLogger().info(`[${LOGGER_PREFIX}] Session ready, listener attached`);
         resolve({ finalize, cleanup });
       } catch (error) {
         getLogger().error(
@@ -204,10 +197,7 @@ const startAssemblyAIStreaming = async (
           }
         }
       } catch (error) {
-        getLogger().error(
-          `[${LOGGER_PREFIX}] Error parsing message:`,
-          error,
-        );
+        getLogger().error(`[${LOGGER_PREFIX}] Error parsing message:`, error);
       }
     };
 

@@ -649,7 +649,14 @@ describe("escapeRegExp", () => {
   });
 
   it("produces a regex that matches the original literal", () => {
-    const sources = ["C++", "a.b", "path\\to\\file", "[brackets]", "x*y", "(a)"];
+    const sources = [
+      "C++",
+      "a.b",
+      "path\\to\\file",
+      "[brackets]",
+      "x*y",
+      "(a)",
+    ];
     for (const source of sources) {
       const re = new RegExp(escapeRegExp(source));
       expect(re.test(source)).toBe(true);
