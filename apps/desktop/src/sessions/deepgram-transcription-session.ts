@@ -12,6 +12,7 @@ import {
   createAudioChunkBuffer,
   createReceivedChunkLogger,
 } from "./transcription-stream.utils";
+import { createTranscriptAccumulator } from "./transcript-accumulator.utils";
 
 type DeepgramStreamingSession = {
   finalize: () => Promise<string>;
@@ -33,9 +34,8 @@ const startDeepgramStreaming = async (
 
   let ws: WebSocket | null = null;
   let unlisten: UnlistenFn | null = null;
-  let finalTranscript = "";
-  let partialTranscript = "";
   let isFinalized = false;
+  const transcriptState = createTranscriptAccumulator();
   const receivedLogger = createReceivedChunkLogger(LOGGER_PREFIX);
 
   const buffer = createAudioChunkBuffer(() => ws, {
@@ -45,14 +45,7 @@ const startDeepgramStreaming = async (
     loggerPrefix: LOGGER_PREFIX,
   });
 
-  const getText = () => {
-    return (
-      finalTranscript +
-      (partialTranscript
-        ? (finalTranscript ? " " : "") + partialTranscript
-        : "")
-    );
-  };
+  const getText = () => transcriptState.text();
 
   const cleanup = () => {
     if (unlisten) {
@@ -184,25 +177,26 @@ const startDeepgramStreaming = async (
         );
 
         if (messageType === "Results") {
-          const transcript = data.channel?.alternatives?.[0]?.transcript || "";
+          const transcriptText =
+            data.channel?.alternatives?.[0]?.transcript || "";
           const isFinal = data.is_final === true;
           const speechFinal = data.speech_final === true;
 
-          if (isFinal && transcript) {
-            finalTranscript += (finalTranscript ? " " : "") + transcript;
-            partialTranscript = "";
+          if (isFinal && transcriptText) {
+            transcriptState.appendFinal(transcriptText);
+            transcriptState.setPartial("");
             getLogger().verbose(
               `[${LOGGER_PREFIX}] Final transcript received, length:`,
-              finalTranscript.length,
+              transcriptState.finalLength(),
             );
             if (onInterimResult) {
-              onInterimResult(transcript);
+              onInterimResult(transcriptText);
             }
             if (speechFinal && isFinalized) {
               completeFinalize();
             }
-          } else if (!isFinal && transcript) {
-            partialTranscript = transcript;
+          } else if (!isFinal && transcriptText) {
+            transcriptState.setPartial(transcriptText);
           }
         } else if (messageType === "Metadata") {
           getLogger().verbose(`[${LOGGER_PREFIX}] Metadata received:`, data);

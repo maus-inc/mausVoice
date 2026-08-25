@@ -219,7 +219,6 @@ mod tests {
             sleep(Duration::from_millis(2));
         }
 
-        let total_after_writes: u64 = (file_size as u64) * 30;
         let test_cap = (file_size as u64) * 15;
         let initial_size = total_size(&dir);
         assert!(initial_size > test_cap);

@@ -62,50 +62,52 @@ export const createAudioChunkBuffer = (
 
   const flush = (force = false) => {
     const socket = ws();
-    if (!socket || socket.readyState !== WebSocket.OPEN) {
+    if (!socket?.OPEN || socket.readyState !== WebSocket.OPEN) {
       return;
     }
 
-    while (
-      pendingSampleCount >= minSamplesPerChunk ||
-      (force && pendingSampleCount > 0)
-    ) {
-      const available = pendingSampleCount;
-      let chunkSize = available;
-      if (available >= maxSamplesPerChunk) {
-        chunkSize = maxSamplesPerChunk;
-      } else if (available < minSamplesPerChunk && !force) {
-        break;
-      }
+    while (sendNextChunk(socket, force)) {
+      // drain the buffer
+    }
+  };
 
-      let chunk = drainSamples(chunkSize);
-      if (force && chunk.length > 0 && chunk.length < minSamplesPerChunk) {
-        const padded = new Float32Array(minSamplesPerChunk);
-        padded.set(chunk);
-        chunk = padded;
-      }
+  const sendNextChunk = (socket: WebSocket, force: boolean): boolean => {
+    const available = pendingSampleCount;
+    if (available < minSamplesPerChunk && !(force && available > 0)) {
+      return false;
+    }
+    const chunkSize =
+      available >= maxSamplesPerChunk ? maxSamplesPerChunk : available;
+    let chunk = drainSamples(chunkSize);
+    if (force && chunk.length > 0 && chunk.length < minSamplesPerChunk) {
+      const padded = new Float32Array(minSamplesPerChunk);
+      padded.set(chunk);
+      chunk = padded;
+    }
+    if (chunk.length === 0) {
+      return false;
+    }
+    return trySendChunk(socket, chunk);
+  };
 
-      if (chunk.length === 0) {
-        break;
-      }
-
-      try {
-        const pcm16 = convertFloat32ToPCM16(chunk);
-        socket.send(pcm16);
-        sentChunkCount++;
-        if (sentChunkCount <= 3 || sentChunkCount % 10 === 0) {
-          const durationMs = (chunk.length / sampleRate) * 1000;
-          getLogger().verbose(
-            `[${loggerPrefix}] Sent chunk #${sentChunkCount} (${chunk.length} samples ~${durationMs.toFixed(1)} ms, ${pcm16.byteLength} bytes)`,
-          );
-        }
-      } catch (error) {
-        getLogger().error(
-          `[${loggerPrefix}] Error sending buffered chunk:`,
-          error,
+  const trySendChunk = (socket: WebSocket, chunk: Float32Array): boolean => {
+    try {
+      const pcm16 = convertFloat32ToPCM16(chunk);
+      socket.send(pcm16);
+      sentChunkCount++;
+      if (sentChunkCount <= 3 || sentChunkCount % 10 === 0) {
+        const durationMs = (chunk.length / sampleRate) * 1000;
+        getLogger().verbose(
+          `[${loggerPrefix}] Sent chunk #${sentChunkCount} (${chunk.length} samples ~${durationMs.toFixed(1)} ms, ${pcm16.byteLength} bytes)`,
         );
-        break;
       }
+      return true;
+    } catch (error) {
+      getLogger().error(
+        `[${loggerPrefix}] Error sending buffered chunk:`,
+        error,
+      );
+      return false;
     }
   };
 
