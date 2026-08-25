@@ -13,26 +13,26 @@ describe("buildOpenAICompatibleUrl", () => {
   });
 
   it("does not append /v1 when includeV1Path is false", () => {
-    expect(
-      buildOpenAICompatibleUrl("http://localhost:8080", false),
-    ).toBe("http://localhost:8080");
+    expect(buildOpenAICompatibleUrl("http://localhost:8080", false)).toBe(
+      "http://localhost:8080",
+    );
   });
 
   it("preserves an existing /v1 suffix", () => {
-    expect(
-      buildOpenAICompatibleUrl("http://localhost:8080/v1", true),
-    ).toBe("http://localhost:8080/v1");
-    expect(
-      buildOpenAICompatibleUrl("http://localhost:8080/v1", false),
-    ).toBe("http://localhost:8080/v1");
+    expect(buildOpenAICompatibleUrl("http://localhost:8080/v1", true)).toBe(
+      "http://localhost:8080/v1",
+    );
+    expect(buildOpenAICompatibleUrl("http://localhost:8080/v1", false)).toBe(
+      "http://localhost:8080/v1",
+    );
   });
 });
 
 describe("buildOpenAICompatibleTranscriptionUrl", () => {
   it("defaults to /audio/transcriptions under the v1 base URL", () => {
-    expect(
-      buildOpenAICompatibleTranscriptionUrl("http://localhost:8080"),
-    ).toBe("http://localhost:8080/v1/audio/transcriptions");
+    expect(buildOpenAICompatibleTranscriptionUrl("http://localhost:8080")).toBe(
+      "http://localhost:8080/v1/audio/transcriptions",
+    );
   });
 
   it("returns the default path constant when no override is given", () => {
