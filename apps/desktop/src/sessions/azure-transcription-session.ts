@@ -1,7 +1,4 @@
-import {
-  AzureStreamingSession,
-  createAzureStreamingSession,
-} from "@maus-inc/voice-ai";
+import { createAzureStreamingSession } from "@maus-inc/voice-ai";
 import { listen, UnlistenFn } from "@tauri-apps/api/event";
 import { getAppState } from "../store";
 import { getLogger } from "../utils/log.utils";
@@ -13,7 +10,6 @@ import { loadMyEffectiveDictationLanguage } from "../utils/user.utils";
 import { BaseApiTranscriptionSession } from "./base-api-transcription-session";
 
 export class AzureTranscriptionSession extends BaseApiTranscriptionSession {
-  private session: AzureStreamingSession | null = null;
   private readonly subscriptionKey: string;
   private readonly region: string;
   private unlisten: UnlistenFn | null = null;
@@ -41,7 +37,7 @@ export class AzureTranscriptionSession extends BaseApiTranscriptionSession {
         state,
       });
 
-      this.session = await createAzureStreamingSession({
+      this.streamSession = await createAzureStreamingSession({
         subscriptionKey: this.subscriptionKey,
         region: this.region,
         sampleRate,
@@ -63,14 +59,14 @@ export class AzureTranscriptionSession extends BaseApiTranscriptionSession {
             );
           }
 
-          if (this.session) {
+          if (this.streamSession?.writeAudioChunk) {
             try {
               const typedChunk =
                 event.payload.samples instanceof Float32Array
                   ? event.payload.samples
                   : Float32Array.from(event.payload.samples);
 
-              this.session.writeAudioChunk(typedChunk);
+              this.streamSession.writeAudioChunk(typedChunk);
             } catch (error) {
               getLogger().error("[Azure] Error writing audio chunk:", error);
             }
@@ -84,19 +80,12 @@ export class AzureTranscriptionSession extends BaseApiTranscriptionSession {
     }
   }
 
-  protected getStreamSession() {
-    return this.session;
-  }
-
   cleanup(): void {
     if (this.unlisten) {
       this.unlisten();
       this.unlisten = null;
     }
-    if (this.session) {
-      this.session.cleanup();
-      this.session = null;
-    }
+    super.cleanup();
   }
 
   supportsStreaming(): boolean {

@@ -224,7 +224,6 @@ const startDeepgramStreaming = async (
 };
 
 export class DeepgramTranscriptionSession extends BaseApiTranscriptionSession {
-  private session: DeepgramStreamingSession | null = null;
   private startupPromise: Promise<void> | null = null;
   private readonly apiKey: string;
 
@@ -247,7 +246,7 @@ export class DeepgramTranscriptionSession extends BaseApiTranscriptionSession {
         const deepgramLanguage = await loadMyEffectiveDictationLanguage(state);
 
         getLogger().verbose("[Deepgram] Starting streaming session...");
-        this.session = await startDeepgramStreaming(
+        this.streamSession = await startDeepgramStreaming(
           this.apiKey,
           sampleRate,
           deepgramLanguage,
@@ -263,21 +262,10 @@ export class DeepgramTranscriptionSession extends BaseApiTranscriptionSession {
     await this.startupPromise;
   }
 
-  protected getStreamSession() {
-    return this.session;
-  }
-
   async finalize(audio: Parameters<BaseApiTranscriptionSession["finalize"]>[0]) {
     if (this.startupPromise) {
       await this.startupPromise;
     }
     return super.finalize(audio);
-  }
-
-  cleanup(): void {
-    if (this.session) {
-      this.session.cleanup();
-      this.session = null;
-    }
   }
 }
