@@ -12,6 +12,8 @@ pub fn init_x11_threads() {}
 
 pub fn configure_display_backend() {}
 
+pub fn apply_webkit_workarounds() {}
+
 /// Owns a Win32 `HANDLE` and closes it on drop.
 ///
 /// `OpenProcessToken` hands back a kernel handle that the caller must close.

@@ -4,6 +4,8 @@ pub fn init_x11_threads() {}
 
 pub fn configure_display_backend() {}
 
+pub fn apply_webkit_workarounds() {}
+
 pub fn get_native_setup_status() -> crate::platform::NativeSetupStatus {
     let mic = permissions::check_microphone_permission();
     let ax = permissions::check_accessibility_permission();
