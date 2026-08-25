@@ -73,3 +73,21 @@ describe("preferences round-trip", () => {
     expect(saved.activeDictationLanguage).toBe("primary");
   });
 });
+
+describe("preserveAudioOnFailure preference", () => {
+  it("defaults to true when the local row omits the field", () => {
+    const loaded = fromLocalPreferences({
+      ...toLocalPreferences(createDefaultPreferences()),
+    });
+    expect(loaded.preserveAudioOnFailure).toBe(true);
+  });
+
+  it("preserves an explicit false across a round-trip", () => {
+    const base = toLocalPreferences(createDefaultPreferences());
+    const loaded = fromLocalPreferences({ ...base, preserveAudioOnFailure: false });
+    expect(loaded.preserveAudioOnFailure).toBe(false);
+
+    const saved = toLocalPreferences(loaded);
+    expect(saved.preserveAudioOnFailure).toBe(false);
+  });
+});

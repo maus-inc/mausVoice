@@ -150,6 +150,8 @@ pub const FEATURE_PREFERENCES_MIGRATION_SQL: &str =
     include_str!("migrations/076_feature_preferences.sql");
 pub const SPOKEN_COMMANDS_MIGRATION_SQL: &str =
     include_str!("migrations/077_spoken_commands_enabled.sql");
+pub const PRESERVE_AUDIO_ON_FAILURE_MIGRATION_SQL: &str =
+    include_str!("migrations/081_preserve_audio_on_failure.sql");
 
 pub fn migrations() -> Vec<tauri_plugin_sql::Migration> {
     vec![
@@ -601,6 +603,12 @@ pub fn migrations() -> Vec<tauri_plugin_sql::Migration> {
             version: 77,
             description: "add_spoken_commands_enabled",
             sql: SPOKEN_COMMANDS_MIGRATION_SQL,
+            kind: tauri_plugin_sql::MigrationKind::Up,
+        },
+        tauri_plugin_sql::Migration {
+            version: 81,
+            description: "add_preserve_audio_on_failure",
+            sql: PRESERVE_AUDIO_ON_FAILURE_MIGRATION_SQL,
             kind: tauri_plugin_sql::MigrationKind::Up,
         },
     ]

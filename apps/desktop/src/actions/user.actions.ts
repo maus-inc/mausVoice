@@ -107,6 +107,7 @@ export const createDefaultPreferences = (): UserPreferences => ({
   ignoreUpdateDialog: false,
   incognitoModeEnabled: false,
   incognitoModeIncludeInStats: false,
+  preserveAudioOnFailure: true,
   dictationLimitMinutes: DEFAULT_DICTATION_LIMIT_MINUTES,
   dictationPillVisibility: "while_active",
   pillResetMonitorStrategy: "current",
