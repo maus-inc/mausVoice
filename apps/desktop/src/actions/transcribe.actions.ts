@@ -397,6 +397,21 @@ export const storeTranscription = async (
 
   const transcriptionId = createId();
 
+  if (incognitoEnabled) {
+    getLogger().verbose(
+      `Incognito mode: skipping storage (includeInStats=${includeInStats}, words=${wordsAdded})`,
+    );
+    if (wordsAdded > 0 && includeInStats) {
+      try {
+        await addWordsToCurrentUser(wordsAdded);
+      } catch (error) {
+        console.error("Failed to update usage metrics", error);
+      }
+    }
+
+    return { transcription: null, wordCount: wordsAdded };
+  }
+
   let audioSnapshot: TranscriptionAudioSnapshot | undefined;
   if (rate > 0 && sampleCount > 0) {
     const payloadSamples = Array.isArray(input.audio.samples)
@@ -414,21 +429,6 @@ export const storeTranscription = async (
     } catch (error) {
       console.error("Failed to persist audio snapshot", error);
     }
-  }
-
-  if (incognitoEnabled) {
-    getLogger().verbose(
-      `Incognito mode: skipping storage (includeInStats=${includeInStats}, words=${wordsAdded})`,
-    );
-    if (wordsAdded > 0 && includeInStats) {
-      try {
-        await addWordsToCurrentUser(wordsAdded);
-      } catch (error) {
-        console.error("Failed to update usage metrics", error);
-      }
-    }
-
-    return { transcription: null, wordCount: wordsAdded };
   }
 
   if (transcriptionFailed && !preserveAudioOnFailure) {

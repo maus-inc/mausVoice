@@ -152,7 +152,7 @@ export const handleEmptyTranscriptionResult = async (
   });
 
   if (strategy.shouldStoreTranscript()) {
-    input.storeTranscriptionFn({
+    await input.storeTranscriptionFn({
       audio,
       rawTranscript: null,
       sanitizedTranscript: null,
