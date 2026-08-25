@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import type { Nullable } from "@maus-inc/types";
 import { createDefaultPreferences } from "../actions/user.actions";
 import { fromLocalPreferences, toLocalPreferences } from "./preferences.repo";
 
@@ -89,5 +90,32 @@ describe("preserveAudioOnFailure preference", () => {
 
     const saved = toLocalPreferences(loaded);
     expect(saved.preserveAudioOnFailure).toBe(false);
+  });
+});
+
+describe("pillPlacement preference", () => {
+  it("defaults to bottom when the local row omits the field", () => {
+    const loaded = fromLocalPreferences({
+      ...toLocalPreferences(createDefaultPreferences()),
+    });
+    expect(loaded.pillPlacement).toBe("bottom");
+  });
+
+  it("preserves a top placement across a round-trip", () => {
+    const base = toLocalPreferences(createDefaultPreferences());
+    const loaded = fromLocalPreferences({ ...base, pillPlacement: "top" });
+    expect(loaded.pillPlacement).toBe("top");
+
+    const saved = toLocalPreferences(loaded);
+    expect(saved.pillPlacement).toBe("top");
+  });
+
+  it("normalises an unknown placement to bottom", () => {
+    const base = toLocalPreferences(createDefaultPreferences());
+    const loaded = fromLocalPreferences({
+      ...base,
+      pillPlacement: "side" as unknown as Nullable<string>,
+    });
+    expect(loaded.pillPlacement).toBe("bottom");
   });
 });

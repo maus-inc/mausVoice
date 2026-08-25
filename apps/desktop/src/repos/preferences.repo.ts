@@ -2,6 +2,7 @@ import {
   AgentMode,
   DictationPillVisibility,
   Nullable,
+  PillPlacement,
   PillResetMonitorStrategy,
   PostProcessingMode,
   TranscriptionMode,
@@ -12,6 +13,7 @@ import {
   DEFAULT_DICTATION_LIMIT_MINUTES,
   normalizeDictationLimitMinutes,
 } from "../utils/dictation-limit.utils";
+import { normalizeHandsFreeDelayMs } from "../utils/hands-free-delay.utils";
 import { PRIMARY_LANGUAGE_SENTINEL } from "../utils/language.utils";
 import { getEffectivePillVisibility, LOCAL_USER_ID } from "../utils/user.utils";
 import { BaseRepo } from "./base.repo";
@@ -60,12 +62,18 @@ type LocalUserPreferences = {
   insertionMethod: Nullable<string>;
   typingSpeedMs: Nullable<number>;
   pillResetMonitorStrategy?: Nullable<PillResetMonitorStrategy>;
+  pillPlacement?: Nullable<PillPlacement>;
   alwaysRequestAdminOnStartup?: boolean;
+  handsFreeDelayMs?: Nullable<number>;
 };
 
 const normalizePillResetMonitorStrategy = (
   strategy: Nullable<string> | undefined,
 ): PillResetMonitorStrategy => (strategy === "cursor" ? "cursor" : "current");
+
+const normalizePillPlacement = (
+  placement: Nullable<string> | undefined,
+): PillPlacement => (placement === "top" ? "top" : "bottom");
 
 // Backwards-compatibility normalization for the persisted AI modes. Older
 // builds stored modes that no longer exist ("cloud" for all three, plus
@@ -148,7 +156,12 @@ export const fromLocalPreferences = (
   pillResetMonitorStrategy: normalizePillResetMonitorStrategy(
     preferences.pillResetMonitorStrategy,
   ),
+  pillPlacement: normalizePillPlacement(preferences.pillPlacement),
   alwaysRequestAdminOnStartup: preferences.alwaysRequestAdminOnStartup ?? false,
+  handsFreeDelayMs:
+    preferences.handsFreeDelayMs == null
+      ? null
+      : normalizeHandsFreeDelayMs(preferences.handsFreeDelayMs),
 });
 
 export const toLocalPreferences = (
@@ -200,7 +213,12 @@ export const toLocalPreferences = (
   pillResetMonitorStrategy: normalizePillResetMonitorStrategy(
     preferences.pillResetMonitorStrategy,
   ),
+  pillPlacement: normalizePillPlacement(preferences.pillPlacement ?? null),
   alwaysRequestAdminOnStartup: preferences.alwaysRequestAdminOnStartup ?? false,
+  handsFreeDelayMs:
+    preferences.handsFreeDelayMs === null
+      ? null
+      : normalizeHandsFreeDelayMs(preferences.handsFreeDelayMs),
 });
 
 export abstract class BaseUserPreferencesRepo extends BaseRepo {
