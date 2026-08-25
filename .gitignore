@@ -77,3 +77,5 @@ nul
 HANDOFF.md
 
 .kilo/
+#Agent 
+.mausagent/
