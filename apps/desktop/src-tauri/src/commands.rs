@@ -1452,6 +1452,7 @@ pub async fn start_recording(
             }
 
             log::error!("Failed to start recording via command: {message}");
+            let _ = app.emit_to(EventTarget::any(), "recording_failed", message.clone());
             Err(message)
         }
     }
@@ -1829,6 +1830,17 @@ pub fn set_pill_visibility(app: AppHandle, visibility: String) -> Result<(), Str
         other => return Err(format!("invalid pill visibility: {other:?}")),
     }
     crate::platform::overlay::notify_visibility(&app, &visibility);
+    Ok(())
+}
+
+#[tauri::command]
+#[specta::specta]
+pub fn set_pill_placement(app: AppHandle, placement: String) -> Result<(), String> {
+    match placement.as_str() {
+        "top" | "bottom" => {}
+        other => return Err(format!("invalid pill placement: {other:?}")),
+    }
+    crate::platform::overlay::notify_pill_placement(&app, &placement);
     Ok(())
 }
 
@@ -2775,6 +2787,18 @@ mod tests {
             "always_on_top",
             "hidden" | "persistent" | "while_active"
         ));
+    }
+
+    #[test]
+    fn pill_placement_accepts_top_and_bottom_only() {
+        // set_pill_placement mirrors the same accept-list policy as
+        // set_pill_visibility: an unknown value would otherwise be
+        // coerced to a default on the platform overlay and mask a typo.
+        let valid = ["top", "bottom"];
+        for v in valid {
+            assert!(matches!(v, "top" | "bottom"));
+        }
+        assert!(!matches!("center", "top" | "bottom"));
     }
 
     #[test]

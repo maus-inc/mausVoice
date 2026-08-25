@@ -109,6 +109,8 @@ pub enum InMessage {
         #[serde(default)]
         strategy: ResetStrategy,
     },
+    /// User preference for which screen edge the pill anchors to.
+    PillPlacement { placement: String },
     Quit,
 }
 

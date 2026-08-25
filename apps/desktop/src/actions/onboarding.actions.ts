@@ -203,6 +203,7 @@ export const submitOnboarding = async () => {
       insertionMethod: null,
       typingSpeedMs: null,
       pillResetMonitorStrategy: "current",
+      pillPlacement: "bottom",
       alwaysRequestAdminOnStartup: false,
       handsFreeDelayMs: DEFAULT_HANDS_FREE_DELAY_MS,
     };
