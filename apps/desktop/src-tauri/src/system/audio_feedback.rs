@@ -233,6 +233,7 @@ mod thock_limiter {
     #[cfg(test)]
     mod tests {
         use super::*;
+        use super::super::THOCK_VOLUME;
 
         #[test]
         fn first_thock_is_not_throttled() {
