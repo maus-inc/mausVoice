@@ -45,6 +45,7 @@ export type UserPreferences = {
   typingSpeedMs: Nullable<number>;
   pillResetMonitorStrategy: PillResetMonitorStrategy;
   alwaysRequestAdminOnStartup: boolean;
+  handsFreeDelayMs: Nullable<number>;
 
   // deprecated
 };
