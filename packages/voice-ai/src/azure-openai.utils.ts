@@ -1,6 +1,7 @@
 import { AzureOpenAI } from "openai";
 import type { ChatCompletionMessageParam } from "openai/resources/chat/completions";
 import { retry, countWords } from "@maus-inc/utilities";
+import { buildJsonSchemaResponseFormat } from "./response-format.utils";
 import type {
   JsonResponse,
   LlmChatInput,
@@ -41,6 +42,11 @@ export type AzureOpenAIGenerateTextArgs = {
   maxTokens?: number;
 };
 
+const buildResponseFormat = (
+  deploymentName: string,
+  jsonResponse?: JsonResponse,
+) => buildJsonSchemaResponseFormat(deploymentName, JSON_SCHEMA_SUPPORTED_MODELS, jsonResponse);
+
 export type AzureOpenAIGenerateResponseOutput = {
   text: string;
   tokensUsed: number;
@@ -75,24 +81,14 @@ export const azureOpenAIGenerateText = async ({
       }
       messages.push({ role: "user", content: prompt });
 
+      const response_format = buildResponseFormat(deploymentName, jsonResponse);
+
       const response = await client.chat.completions.create({
         messages,
         model: deploymentName,
         temperature: 1,
         max_completion_tokens: maxTokens ?? 1024,
-        response_format: jsonResponse
-          ? JSON_SCHEMA_SUPPORTED_MODELS.has(deploymentName)
-            ? {
-                type: "json_schema",
-                json_schema: {
-                  name: jsonResponse.name,
-                  description: jsonResponse.description,
-                  schema: jsonResponse.schema,
-                  strict: true,
-                },
-              }
-            : { type: "json_object" }
-          : undefined,
+        response_format,
       });
 
       const content = response.choices?.[0]?.message?.content || "";

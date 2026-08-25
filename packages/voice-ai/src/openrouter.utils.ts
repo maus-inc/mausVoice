@@ -1,5 +1,10 @@
 import OpenAI, { toFile } from "openai";
+import type {
+  ChatCompletionCreateParamsNonStreaming,
+  ChatCompletionMessageParam,
+} from "openai/resources/chat/completions";
 import { retry, countWords } from "@maus-inc/utilities";
+import { buildJsonSchemaResponseFormat } from "./response-format.utils";
 import type {
   JsonResponse,
   LlmChatInput,
@@ -24,8 +29,10 @@ export const OPENROUTER_FAVORITE_MODELS = [
   "openai/gpt-oss-20b",
 ] as const;
 
-/** Default generation model when no selection is saved. */
-export const OPENROUTER_DEFAULT_MODEL = "openai/gpt-oss-20b";
+/**
+ * Default model for testing and fallback
+ */
+export const OPENROUTER_DEFAULT_MODEL = "openai/gpt-4o-mini";
 
 // OpenRouter routes requests to many providers; most reject `json_schema`
 // and only accept the legacy `json_object` shape. Use `json_schema` only for
@@ -42,6 +49,11 @@ const JSON_SCHEMA_SUPPORTED_MODELS = new Set<string>([
   "openai/gpt-oss-120b",
   "moonshotai/kimi-k2-instruct-0905",
 ]);
+
+const buildResponseFormat = (
+  model: string,
+  jsonResponse?: JsonResponse,
+) => buildJsonSchemaResponseFormat(model, JSON_SCHEMA_SUPPORTED_MODELS, jsonResponse);
 
 /**
  * Create OpenAI client configured for OpenRouter
@@ -176,14 +188,16 @@ export const openrouterGenerateTextResponse = async ({
     fn: async () => {
       const client = createClient(apiKey, customFetch);
 
-      const messages: OpenAI.Chat.ChatCompletionMessageParam[] = [];
+      const messages: ChatCompletionMessageParam[] = [];
       if (system) {
         messages.push({ role: "system", content: system });
       }
       messages.push({ role: "user", content: prompt });
 
       // Build the request with optional provider routing
-      const requestParams: OpenAI.Chat.ChatCompletionCreateParamsNonStreaming & {
+      const response_format = buildResponseFormat(model, jsonResponse);
+
+      const requestParams: ChatCompletionCreateParamsNonStreaming & {
         provider?: OpenRouterProviderRouting;
       } = {
         messages,
@@ -191,19 +205,7 @@ export const openrouterGenerateTextResponse = async ({
         temperature: 1,
         max_tokens: maxTokens ?? 1024,
         top_p: 1,
-        response_format: jsonResponse
-          ? JSON_SCHEMA_SUPPORTED_MODELS.has(model)
-            ? {
-                type: "json_schema",
-                json_schema: {
-                  name: jsonResponse.name,
-                  description: jsonResponse.description,
-                  schema: jsonResponse.schema,
-                  strict: true,
-                },
-              }
-            : { type: "json_object" }
-          : undefined,
+        ...(response_format ? { response_format } : {}),
       };
 
       // Add provider routing if specified
@@ -240,14 +242,33 @@ export type OpenRouterTestIntegrationArgs = {
   customFetch?: CustomFetch;
 };
 
-/** Test authentication without depending on a fixed inference model. */
+/**
+ * Test if an OpenRouter API key is valid by making a simple chat completion.
+ */
 export const openrouterTestIntegration = async ({
   apiKey,
   customFetch,
 }: OpenRouterTestIntegrationArgs): Promise<boolean> => {
   const client = createClient(apiKey, customFetch);
-  await client.models.list();
-  return true;
+
+  const response = await client.chat.completions.create({
+    messages: [
+      {
+        role: "user",
+        content: 'Reply with the single word "Hello."',
+      },
+    ],
+    model: OPENROUTER_DEFAULT_MODEL,
+    temperature: 0,
+    max_tokens: 32,
+  });
+
+  if (!response.choices || response.choices.length === 0) {
+    throw new Error("No response from OpenRouter");
+  }
+
+  const content = response.choices[0]?.message?.content ?? "";
+  return content.toLowerCase().includes("hello");
 };
 
 // ============================================================================

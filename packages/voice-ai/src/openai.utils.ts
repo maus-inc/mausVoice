@@ -9,6 +9,7 @@ import type {
 } from "@maus-inc/types";
 import { countWords, retry } from "@maus-inc/utilities";
 import OpenAI, { toFile } from "openai";
+import { buildJsonSchemaResponseFormat } from "./response-format.utils";
 import type { CustomFetch } from "./types";
 import type {
   ChatCompletionContentPart,
@@ -55,6 +56,11 @@ const JSON_SCHEMA_SUPPORTED_MODELS = new Set<string>([
 export function supportsOpenAIJsonSchema(model: string): boolean {
   return JSON_SCHEMA_SUPPORTED_MODELS.has(model);
 }
+
+const buildResponseFormat = (
+  model: string,
+  jsonResponse?: JsonResponse,
+) => buildJsonSchemaResponseFormat(model, JSON_SCHEMA_SUPPORTED_MODELS, jsonResponse);
 
 const contentToString = (
   content: string | ChatCompletionContentPart[] | null | undefined,
@@ -187,25 +193,15 @@ export const openaiGenerateTextResponse = async ({
       userParts.push({ type: "text", text: prompt });
       messages.push({ role: "user", content: userParts });
 
+      const response_format = buildResponseFormat(model, jsonResponse);
+
       const response = await client.chat.completions.create({
         messages,
         model,
         temperature: 1,
         max_completion_tokens: maxTokens ?? 1024,
         top_p: 1,
-        response_format: jsonResponse
-          ? JSON_SCHEMA_SUPPORTED_MODELS.has(model)
-            ? {
-                type: "json_schema",
-                json_schema: {
-                  name: jsonResponse.name,
-                  description: jsonResponse.description,
-                  schema: jsonResponse.schema,
-                  strict: true,
-                },
-              }
-            : { type: "json_object" }
-          : undefined,
+        ...(response_format ? { response_format } : {}),
       });
 
       console.log("openai llm usage:", response.usage);
