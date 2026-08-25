@@ -71,11 +71,15 @@ const isFatalResourceTarget = (target: EventTarget | null): boolean => {
 };
 
 export const shouldPaintFatalWindowError = (event: ErrorEvent): boolean => {
-  if (isFatalResourceTarget(event.target)) {
-    return true;
-  }
+  // Once React has mounted, a runtime asset load failure (a <script>/<link>
+  // that fails to fetch after the bundle is live — e.g. an async chunk's
+  // stylesheet) must not cover a working UI with the fatal overlay. Check the
+  // mount state first so post-mount resource errors are logged, not painted.
   if (appHasMounted()) {
     return false;
+  }
+  if (isFatalResourceTarget(event.target)) {
+    return true;
   }
   return Boolean(event.error || event.message);
 };
@@ -110,6 +114,12 @@ const describeWindowError = (event: ErrorEvent): string => {
 // fire capture-phase `error` events and must be ignored.
 export const installGlobalErrorOverlay = (): void => {
   if (typeof window === "undefined") return;
+  // Re-invocation (hot reload, repeated React remount, test re-run) would
+  // register a second pair of listeners and double-log every event. The early
+  // inline handlers from index.html are already detached on the first call,
+  // so a re-entrant call has nothing left to do.
+  if (window.__mausVoiceOverlayInstalled) return;
+  window.__mausVoiceOverlayInstalled = true;
   // Detach the inline pre-bundle handler from index.html: from here on this
   // installer owns error surfacing. Leaving the early listener attached would
   // duplicate every unhandledrejection. The property type comes from the
@@ -131,16 +141,24 @@ export const installGlobalErrorOverlay = (): void => {
   window.addEventListener(
     "error",
     (event) => {
-      if (!shouldPaintFatalWindowError(event)) {
-        if (event.error || event.message) {
-          console.error(
-            "Ignored post-mount error",
-            event.error ?? event.message,
-          );
-        }
+      if (shouldPaintFatalWindowError(event)) {
+        paintError("mausVoice failed to start", describeWindowError(event));
         return;
       }
-      paintError("mausVoice failed to start", describeWindowError(event));
+      // Post-mount failures are never fatal. Resource load failures dispatch a
+      // plain `Event` with no `error`/`message`, so they are logged here by
+      // target rather than falling through the error/message branch below;
+      // otherwise a broken async chunk would disappear with no diagnostics.
+      if (isFatalResourceTarget(event.target)) {
+        console.warn(
+          "Ignored post-mount resource load failure",
+          describeWindowError(event),
+        );
+        return;
+      }
+      if (event.error || event.message) {
+        console.error("Ignored post-mount error", event.error ?? event.message);
+      }
     },
     true,
   );

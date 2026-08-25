@@ -147,6 +147,18 @@ describe("early error overlay", () => {
     );
   });
 
+  it("does not paint a fatal overlay for a post-mount resource load failure", () => {
+    const { nodes, listeners } = installEarlyOverlay([{}]);
+    const link = new HTMLLinkElement();
+    link.href = "asset://localhost/assets/async-chunk.css";
+
+    listeners.error[0]({
+      target: link,
+    });
+
+    expect(nodes.has("maus-global-error-overlay")).toBe(false);
+  });
+
   it("paints unhandled promise rejections instead of leaving a blank window", () => {
     const { nodes, listeners } = installEarlyOverlay();
     const reason = new Error("async init rejected before React mounted");
