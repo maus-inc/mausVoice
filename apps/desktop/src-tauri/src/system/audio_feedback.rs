@@ -256,6 +256,9 @@ mod thock_limiter {
     #[cfg(test)]
     mod tests {
         use super::*;
+        use super::super::{
+            current_interaction_feedback_volume, set_interaction_feedback_volume,
+        };
 
         #[test]
         fn first_thock_is_not_throttled() {
