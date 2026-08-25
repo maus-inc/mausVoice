@@ -62,7 +62,10 @@ export const createAudioChunkBuffer = (
 
   const flush = (force = false) => {
     const socket = ws();
-    if (socket === null || socket.readyState !== WebSocket.OPEN) {
+    if (socket === null) {
+      return;
+    }
+    if (socket.readyState !== WebSocket.OPEN) {
       return;
     }
 
