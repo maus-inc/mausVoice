@@ -2,14 +2,14 @@ import { getLogger } from "../utils/log.utils";
 import { listen, UnlistenFn } from "@tauri-apps/api/event";
 import {
   StopRecordingResponse,
-  TranscriptionSession,
   TranscriptionSessionResult,
 } from "../types/transcription-session.types";
+import { BaseApiTranscriptionSession } from "./base-api-transcription-session";
+import { createTranscriptAccumulator } from "./transcript-accumulator.utils";
 import {
   createAudioChunkBuffer,
   createReceivedChunkLogger,
 } from "./transcription-stream.utils";
-import { createTranscriptAccumulator } from "./transcript-accumulator.utils";
 
 type AssemblyAIStreamingSession = {
   finalize: () => Promise<string>;
@@ -213,21 +213,20 @@ const startAssemblyAIStreaming = async (
   });
 };
 
-export class AssemblyAITranscriptionSession implements TranscriptionSession {
+export class AssemblyAITranscriptionSession extends BaseApiTranscriptionSession {
   private session: AssemblyAIStreamingSession | null = null;
   private apiKey: string;
-  private interimCallback: ((segment: string) => void) | null = null;
 
   constructor(apiKey: string) {
+    super({
+      providerLabel: "AssemblyAI",
+      inferenceDevice: "API • AssemblyAI (Streaming)",
+    });
     this.apiKey = apiKey;
   }
 
   supportsStreaming(): boolean {
     return true;
-  }
-
-  setInterimResultCallback(callback: (segment: string) => void): void {
-    this.interimCallback = callback;
   }
 
   async onRecordingStart(sampleRate: number): Promise<void> {
@@ -241,58 +240,23 @@ export class AssemblyAITranscriptionSession implements TranscriptionSession {
       getLogger().info("[AssemblyAI] Streaming session started successfully");
     } catch (error) {
       getLogger().error("[AssemblyAI] Failed to start streaming:", error);
-      // Continue recording anyway - finalize will handle missing session
     }
   }
 
+  protected async runFinalize(): Promise<string | null> {
+    if (!this.session) {
+      throw new Error("session not established");
+    }
+    return this.session.finalize();
+  }
+
   async finalize(
-    _audio: StopRecordingResponse,
+    audio: StopRecordingResponse,
   ): Promise<TranscriptionSessionResult> {
     if (!this.session) {
-      return {
-        rawTranscript: null,
-        metadata: {
-          inferenceDevice: "API • AssemblyAI (Streaming)",
-          transcriptionMode: "api",
-        },
-        warnings: ["AssemblyAI streaming session was not established"],
-      };
+      return this.notEstablishedResult();
     }
-
-    try {
-      getLogger().info("[AssemblyAI] Finalizing streaming session...");
-      const finalizeStart = performance.now();
-      const transcript = await this.session.finalize();
-      const durationMs = Math.round(performance.now() - finalizeStart);
-
-      getLogger().info("[AssemblyAI] Transcript timing:", { durationMs });
-      getLogger().info(
-        "[AssemblyAI] Received transcript, length:",
-        transcript?.length ?? 0,
-      );
-
-      return {
-        rawTranscript: transcript || null,
-        metadata: {
-          inferenceDevice: "API • AssemblyAI (Streaming)",
-          transcriptionMode: "api",
-          transcriptionDurationMs: durationMs,
-        },
-        warnings: [],
-      };
-    } catch (error) {
-      getLogger().error("[AssemblyAI] Failed to finalize session:", error);
-      return {
-        rawTranscript: null,
-        metadata: {
-          inferenceDevice: "API • AssemblyAI (Streaming)",
-          transcriptionMode: "api",
-        },
-        warnings: [
-          `AssemblyAI finalization failed: ${error instanceof Error ? error.message : "Unknown error"}`,
-        ],
-      };
-    }
+    return super.finalize(audio);
   }
 
   cleanup(): void {

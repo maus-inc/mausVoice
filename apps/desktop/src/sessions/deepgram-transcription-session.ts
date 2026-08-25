@@ -2,17 +2,17 @@ import { listen, UnlistenFn } from "@tauri-apps/api/event";
 import { getAppState } from "../store";
 import {
   StopRecordingResponse,
-  TranscriptionSession,
   TranscriptionSessionResult,
 } from "../types/transcription-session.types";
 import { buildDeepgramWebSocketUrl } from "../utils/deepgram.utils";
 import { getLogger } from "../utils/log.utils";
 import { loadMyEffectiveDictationLanguage } from "../utils/user.utils";
+import { BaseApiTranscriptionSession } from "./base-api-transcription-session";
+import { createTranscriptAccumulator } from "./transcript-accumulator.utils";
 import {
   createAudioChunkBuffer,
   createReceivedChunkLogger,
 } from "./transcription-stream.utils";
-import { createTranscriptAccumulator } from "./transcript-accumulator.utils";
 
 type DeepgramStreamingSession = {
   finalize: () => Promise<string>;
@@ -227,22 +227,21 @@ const startDeepgramStreaming = async (
   });
 };
 
-export class DeepgramTranscriptionSession implements TranscriptionSession {
+export class DeepgramTranscriptionSession extends BaseApiTranscriptionSession {
   private session: DeepgramStreamingSession | null = null;
   private startupPromise: Promise<void> | null = null;
   private apiKey: string;
-  private interimCallback: ((segment: string) => void) | null = null;
 
   constructor(apiKey: string) {
+    super({
+      providerLabel: "Deepgram",
+      inferenceDevice: "API • Deepgram (Streaming)",
+    });
     this.apiKey = apiKey;
   }
 
   supportsStreaming(): boolean {
     return true;
-  }
-
-  setInterimResultCallback(callback: (segment: string) => void): void {
-    this.interimCallback = callback;
   }
 
   async onRecordingStart(sampleRate: number): Promise<void> {
@@ -268,58 +267,23 @@ export class DeepgramTranscriptionSession implements TranscriptionSession {
     await this.startupPromise;
   }
 
+  protected async runFinalize(): Promise<string | null> {
+    if (!this.session) {
+      throw new Error("session not established");
+    }
+    return this.session.finalize();
+  }
+
   async finalize(
-    _audio: StopRecordingResponse,
+    audio: StopRecordingResponse,
   ): Promise<TranscriptionSessionResult> {
     if (this.startupPromise) {
       await this.startupPromise;
     }
-
     if (!this.session) {
-      return {
-        rawTranscript: null,
-        metadata: {
-          inferenceDevice: "API • Deepgram (Streaming)",
-          transcriptionMode: "api",
-        },
-        warnings: ["Deepgram streaming session was not established"],
-      };
+      return this.notEstablishedResult();
     }
-
-    try {
-      getLogger().verbose("[Deepgram] Finalizing streaming session...");
-      const finalizeStart = performance.now();
-      const transcript = await this.session.finalize();
-      const durationMs = Math.round(performance.now() - finalizeStart);
-
-      getLogger().verbose("[Deepgram] Transcript timing:", { durationMs });
-      getLogger().verbose(
-        "[Deepgram] Received transcript, length:",
-        transcript?.length ?? 0,
-      );
-
-      return {
-        rawTranscript: transcript || null,
-        metadata: {
-          inferenceDevice: "API • Deepgram (Streaming)",
-          transcriptionMode: "api",
-          transcriptionDurationMs: durationMs,
-        },
-        warnings: [],
-      };
-    } catch (error) {
-      getLogger().error("[Deepgram] Failed to finalize session:", error);
-      return {
-        rawTranscript: null,
-        metadata: {
-          inferenceDevice: "API • Deepgram (Streaming)",
-          transcriptionMode: "api",
-        },
-        warnings: [
-          `Deepgram finalization failed: ${error instanceof Error ? error.message : "Unknown error"}`,
-        ],
-      };
-    }
+    return super.finalize(audio);
   }
 
   cleanup(): void {
