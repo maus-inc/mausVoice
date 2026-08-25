@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import type { Nullable } from "@maus-inc/types";
+import type { Nullable, PillPlacement } from "@maus-inc/types";
 import { createDefaultPreferences } from "../actions/user.actions";
 import { fromLocalPreferences, toLocalPreferences } from "./preferences.repo";
 
@@ -114,7 +114,7 @@ describe("pillPlacement preference", () => {
     const base = toLocalPreferences(createDefaultPreferences());
     const loaded = fromLocalPreferences({
       ...base,
-      pillPlacement: "side" as unknown as Nullable<string>,
+      pillPlacement: "side" as unknown as Nullable<PillPlacement>,
     });
     expect(loaded.pillPlacement).toBe("bottom");
   });
