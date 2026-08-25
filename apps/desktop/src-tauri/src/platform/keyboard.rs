@@ -1340,4 +1340,19 @@ mod tests {
         assert_eq!(retry_backoff(FAILURE_CAP), SLOW_RETRY_INTERVAL);
         assert_eq!(retry_backoff(FAILURE_CAP + 5), SLOW_RETRY_INTERVAL);
     }
+
+    /// Regression test for issue #488: the Windows resume path calls
+    /// `restart_key_listener` (which is `start_key_listener` under the
+    /// hood) after sleep/wake or session unlock, and may receive a second
+    /// `desktop_resume` event while the first restart is still in flight.
+    /// The platform-agnostic entry point must therefore be safe to call
+    /// twice in quick succession. We exercise the stop half directly here
+    /// because the start half spawns a child process; the stop path
+    /// shares the same `lifecycle_lock` + `Option::take` invariant.
+    #[test]
+    fn stop_key_listener_is_idempotent() {
+        assert!(super::stop_key_listener().is_ok());
+        assert!(super::stop_key_listener().is_ok());
+        assert!(super::stop_key_listener().is_ok());
+    }
 }

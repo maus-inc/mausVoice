@@ -1,4 +1,5 @@
 import { invoke } from "@tauri-apps/api/core";
+import { emit as emitTauriEvent } from "@tauri-apps/api/event";
 import { AppTarget } from "@maus-inc/types";
 import { delayed } from "@maus-inc/utilities";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
@@ -47,6 +48,7 @@ import type {
 import {
   StopRecordingResponse,
   TranscriptionSession,
+  TranscriptionSessionResult,
 } from "../../types/transcription-session.types";
 import {
   ActivationController,
@@ -107,6 +109,65 @@ type AbortMessage = {
 type RawStopResp = {
   shouldContinue: boolean;
   abortMessage?: string;
+};
+
+type HandleEmptyResultInput = {
+  audio: StopRecordingResponse;
+  transcribeResult: TranscriptionSessionResult | undefined;
+  strategy: BaseStrategy;
+  formatMessage: (descriptor: { defaultMessage: string }) => string;
+  showToast: (options: {
+    message: string;
+    toastType: "info" | "error";
+    duration?: number;
+  }) => Promise<void> | void;
+  storeTranscriptionFn: typeof storeTranscription;
+  emitFailed: () => Promise<void> | void;
+  refreshMember: () => void;
+};
+
+export const handleEmptyTranscriptionResult = async (
+  input: HandleEmptyResultInput,
+): Promise<{ handled: boolean }> => {
+  const { audio, transcribeResult, strategy, formatMessage, showToast } = input;
+  const rawTranscript = transcribeResult?.rawTranscript;
+  const transcriptionWarnings = transcribeResult?.warnings ?? [];
+  if (rawTranscript) {
+    return { handled: false };
+  }
+  if (transcriptionWarnings.length === 0) {
+    return { handled: false };
+  }
+
+  getLogger().warning(
+    `stopRecordingRaw: empty rawTranscript with ${transcriptionWarnings.length} warning(s); preserving recording`,
+  );
+  await showToast({
+    message: formatMessage({
+      defaultMessage:
+        "Transcription failed. Your recording is saved so you can retry.",
+    }),
+    toastType: "error",
+    duration: 8_000,
+  });
+
+  if (strategy.shouldStoreTranscript()) {
+    input.storeTranscriptionFn({
+      audio,
+      rawTranscript: null,
+      sanitizedTranscript: null,
+      transcript: null,
+      transcriptionMetadata: transcribeResult?.metadata ?? {},
+      postProcessMetadata: {},
+      warnings: transcriptionWarnings,
+      remoteStatus: null,
+      remoteDeviceId: null,
+    });
+  }
+
+  await input.emitFailed();
+  input.refreshMember();
+  return { handled: true };
 };
 
 const FINALIZE_TIMEOUT_MS = 90_000;
@@ -458,6 +519,33 @@ export const DictationSideEffects = () => {
         `Transcription result: rawTranscript=${rawTranscript ? `${rawTranscript.length} chars` : "empty"}, toneId=${toneId ?? "none"}, app=${appTarget?.name ?? "unknown"}`,
       );
       if (!rawTranscript) {
+        const strategyForEmpty = strategyRef.current;
+        if (!strategyForEmpty) {
+          getLogger().warning(
+            "stopRecordingRaw: refs cleared before empty-result handling",
+          );
+          return {
+            shouldContinue: false,
+          };
+        }
+        const { handled } = await handleEmptyTranscriptionResult({
+          audio,
+          transcribeResult,
+          strategy: strategyForEmpty,
+          formatMessage: intl.formatMessage,
+          showToast,
+          storeTranscriptionFn: storeTranscription,
+          emitFailed: () =>
+            emitTauriEvent("recording_failed").catch((e) =>
+              getLogger().verbose(`Failed to emit recording_failed: ${e}`),
+            ),
+          refreshMember,
+        });
+        if (handled) {
+          return {
+            shouldContinue: false,
+          };
+        }
         getLogger().warning("stopRecordingRaw: no rawTranscript from finalize");
         return {
           shouldContinue: false,
@@ -1039,6 +1127,22 @@ export const DictationSideEffects = () => {
 
   useTauriListen<void>("resume-dictation", () => {
     void resumeDictation();
+  });
+
+  // The Windows global hotkey hook installed by `rdev::grab` is torn down
+  // across a sleep/wake boundary or a workstation unlock. The native
+  // lifecycle watcher (see `platform/windows/lifecycle.rs`) emits this
+  // event in response to either transition; re-invoking
+  // `restart_key_listener` causes the platform-agnostic `start_key_listener`
+  // path to stop the dead child process and spawn a fresh one, which
+  // re-installs the low-level hook. The TS listener is fire-and-forget:
+  // the Rust side already serializes concurrent stop/start calls, so a
+  // second event arriving while the restart is in flight just becomes a
+  // second no-op idempotent restart.
+  useTauriListen<void>("desktop_resume", () => {
+    invoke("restart_key_listener").catch((error) =>
+      getLogger().error(`Failed to restart key listener after resume: ${error}`),
+    );
   });
 
   useToastAction(async (payload) => {
