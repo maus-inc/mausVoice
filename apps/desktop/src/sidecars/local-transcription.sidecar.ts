@@ -34,11 +34,17 @@ type SidecarDownloadSnapshot = {
   error: string | null;
 };
 
+type SidecarSegment = {
+  text: string;
+  noSpeechProb: number;
+};
+
 type SidecarTranscriptionResponse = {
   text: string;
   model: LocalWhisperModel;
   inferenceDevice: string;
   durationMs: number;
+  segments: SidecarSegment[];
 };
 
 type SidecarCreateTranscriptionSessionResponse = {
@@ -90,6 +96,7 @@ export type LocalSidecarTranscribeOutput = {
   inferenceDevice: string;
   durationMs: number;
   mode: SidecarMode;
+  segments: SidecarSegment[];
 };
 
 export type LocalSidecarStreamingSession = {
@@ -426,6 +433,7 @@ export class LocalTranscriptionSidecar extends BaseSidecar {
             inferenceDevice: result.inferenceDevice,
             durationMs: result.durationMs,
             mode: this.mode,
+            segments: result.segments ?? [],
           };
         })();
 

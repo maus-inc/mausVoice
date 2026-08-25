@@ -1,5 +1,6 @@
 import { listen, UnlistenFn } from "@tauri-apps/api/event";
 import { transcribeAudio } from "../actions/transcribe.actions";
+import { filterLocalTranscriptionSegments } from "../repos/transcribe-audio.repo";
 import { getAppState } from "../store";
 import {
   StopRecordingResponse,
@@ -102,11 +103,14 @@ export class LocalTranscriptionSession implements TranscriptionSession {
     try {
       getLogger().info(`[local-stream-session] finalizing streaming session`);
       const output = await this.session.finalize();
+      const filteredText = filterLocalTranscriptionSegments(
+        output.segments ?? [],
+      );
       getLogger().info(
-        `[local-stream-session] streaming finalize succeeded (${output.text.length} chars)`,
+        `[local-stream-session] streaming finalize succeeded (${filteredText.length} chars)`,
       );
       return {
-        rawTranscript: output.text.trim() || null,
+        rawTranscript: filteredText.trim() || null,
         metadata: {
           modelSize: output.model,
           inferenceDevice: output.inferenceDevice,

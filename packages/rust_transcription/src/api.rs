@@ -14,7 +14,7 @@ use crate::downloads::DownloadArtifact;
 use crate::errors::ApiError;
 use crate::models::WhisperModel;
 use crate::state::AppState;
-use crate::transcription::{ComputeDevice, TranscriptionInput};
+use crate::transcription::{ComputeDevice, TranscriptionInput, TranscriptionSegment};
 
 pub fn create_router(state: AppState) -> Router {
     Router::new()
@@ -442,11 +442,31 @@ struct DeleteTranscriptionSessionResponse {
 
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
+struct SegmentResponse {
+    text: String,
+    no_speech_prob: f32,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
 struct TranscribeResponse {
     text: String,
     model: WhisperModel,
     inference_device: String,
     duration_ms: u128,
+    segments: Vec<SegmentResponse>,
+}
+
+fn segments_to_response(
+    segments: &[TranscriptionSegment],
+) -> Vec<SegmentResponse> {
+    segments
+        .iter()
+        .map(|segment| SegmentResponse {
+            text: segment.text.clone(),
+            no_speech_prob: segment.no_speech_prob,
+        })
+        .collect()
 }
 
 async fn transcribe(
@@ -473,6 +493,7 @@ async fn transcribe(
         model: request.model,
         inference_device: output.inference_device,
         duration_ms: started.elapsed().as_millis(),
+        segments: segments_to_response(&output.segments),
     }))
 }
 
@@ -559,6 +580,7 @@ async fn finalize_transcription_session(
         model: session.model,
         inference_device: output.inference_device,
         duration_ms: started.elapsed().as_millis(),
+        segments: segments_to_response(&output.segments),
     }))
 }
 

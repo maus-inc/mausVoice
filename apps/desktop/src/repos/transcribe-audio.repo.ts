@@ -71,6 +71,33 @@ export type TranscribeSegmentInput = {
   language?: string;
 };
 
+export type LocalTranscriptionSegment = {
+  text: string;
+  noSpeechProb: number;
+};
+
+// Whisper emits a non-zero `noSpeechProb` for short bursts of background
+// noise and silences. Drop high-probability segments whose text is too
+// short to be real speech so the LLM post-process step does not amplify
+// stray "thank you" / "you" / punctuation.
+export const NO_SPEECH_PROB_THRESHOLD = 0.6;
+export const HALLUCINATION_TEXT_MAX_CHARS = 12;
+
+export const filterLocalTranscriptionSegments = (
+  segments: readonly LocalTranscriptionSegment[],
+): string => {
+  return segments
+    .filter((segment) => {
+      if (segment.noSpeechProb <= NO_SPEECH_PROB_THRESHOLD) {
+        return true;
+      }
+      return segment.text.trim().length > HALLUCINATION_TEXT_MAX_CHARS;
+    })
+    .map((segment) => segment.text)
+    .filter((text) => text.trim().length > 0)
+    .join(" ");
+};
+
 export abstract class BaseTranscribeAudioRepo extends BaseRepo {
   /**
    * Maximum duration in seconds for a single audio segment.
@@ -209,7 +236,7 @@ export class LocalTranscribeAudioRepo extends BaseTranscribeAudioRepo {
     });
 
     return {
-      text: output.text,
+      text: filterLocalTranscriptionSegments(output.segments ?? []),
       metadata: {
         inferenceDevice: output.inferenceDevice,
         modelSize: output.model,
