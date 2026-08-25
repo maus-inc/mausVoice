@@ -361,8 +361,8 @@ const startElevenLabsStreaming = async (
           transcriptState.appendFinal(committedText);
           transcriptState.setPartial("");
           getLogger().verbose(
-            `[ElevenLabs WebSocket] Final chunk received, length:`,
-            transcriptState.finalLength(),
+            `[ElevenLabs WebSocket] Committed chunk appended, length:`,
+            committedText.length,
           );
           if (onInterimResult && committedText) {
             onInterimResult(committedText);

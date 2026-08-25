@@ -8,6 +8,10 @@ export type TranscriptAccumulator = {
 export const createTranscriptAccumulator = (): TranscriptAccumulator => {
   let finalTranscript = "";
   let partialTranscript = "";
+  const joinPartial = (): string => {
+    if (!partialTranscript) return "";
+    return (finalTranscript ? " " : "") + partialTranscript;
+  };
   return {
     appendFinal: (text) => {
       finalTranscript = finalTranscript ? `${finalTranscript} ${text}` : text;
@@ -15,11 +19,7 @@ export const createTranscriptAccumulator = (): TranscriptAccumulator => {
     setPartial: (text) => {
       partialTranscript = text;
     },
-    text: () =>
-      finalTranscript +
-      (partialTranscript
-        ? (finalTranscript ? " " : "") + partialTranscript
-        : ""),
+    text: () => finalTranscript + joinPartial(),
     finalLength: () => finalTranscript.length,
   };
 };

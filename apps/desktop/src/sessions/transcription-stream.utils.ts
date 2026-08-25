@@ -62,7 +62,7 @@ export const createAudioChunkBuffer = (
 
   const flush = (force = false) => {
     const socket = ws();
-    if (!socket?.OPEN || socket.readyState !== WebSocket.OPEN) {
+    if (!socket || socket.readyState !== WebSocket.OPEN) {
       return;
     }
 
@@ -76,8 +76,7 @@ export const createAudioChunkBuffer = (
     if (available < minSamplesPerChunk && !(force && available > 0)) {
       return false;
     }
-    const chunkSize =
-      available >= maxSamplesPerChunk ? maxSamplesPerChunk : available;
+    const chunkSize = Math.min(available, maxSamplesPerChunk);
     let chunk = drainSamples(chunkSize);
     if (force && chunk.length > 0 && chunk.length < minSamplesPerChunk) {
       const padded = new Float32Array(minSamplesPerChunk);
