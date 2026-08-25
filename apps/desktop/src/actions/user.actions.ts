@@ -9,6 +9,7 @@ import {
   UserPreferences,
 } from "@maus-inc/types";
 import dayjs from "dayjs";
+import { invoke } from "@tauri-apps/api/core";
 import { getIntl } from "../i18n";
 import { getUserPreferencesRepo, getUserRepo } from "../repos";
 import { getAppState, produceAppState } from "../store";
