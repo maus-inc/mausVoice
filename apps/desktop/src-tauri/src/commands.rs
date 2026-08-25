@@ -4649,9 +4649,9 @@ pub async fn floating_window_create(
         // WebView2 returns HRESULT 0x8007139F (E_UNEXPECTED / "The group or
         // resource is not in the correct state") when a second webview is
         // created before the runtime is ready or on a broken install. Surface
-        // a sanitized, actionable message including the window label so the
-        // Windows failure is diagnosable from logs without exposing URLs or
-        // user text.
+        // a sanitized, actionable message. `label` is always a server-generated
+        // "floating-{n}" (see FloatingWindowState::next_label), never caller
+        // text, so interpolating it cannot inject content into the toast.
         log::error!(
             "floating_window_create failed (label={label}): {detail}"
         );

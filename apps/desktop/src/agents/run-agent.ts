@@ -156,10 +156,10 @@ export async function runAgent(
         case "tool-call-result": {
           toolCallIndex++;
           const reason = toolCallReasons.get(event.toolCallId);
-          // buildConversationMessages recognizes a persisted tool result by
-          // metadata.type === "tool-result", not by the stored role. Keep the
-          // persisted role within ChatMessageRole ("system") while tagging the
-          // metadata so it reloads as an LlmMessage `tool` with the right id.
+          // Persist the tool result as a "system" ChatMessageRole (the
+          // persistence layer has no "tool" role) and tag it with
+          // metadata.type so the load path can rehydrate it as an
+          // LlmMessage `tool` correlated to event.toolCallId.
           await createChatMessage({
             id: crypto.randomUUID(),
             conversationId,
@@ -566,6 +566,9 @@ function buildConversationMessages(conversationId: string): LlmMessage[] {
 
     const metadata = msg.metadata as Record<string, unknown> | null;
 
+    // Tool results are persisted with role "system" plus metadata.type
+    // (see the tool-call-result persist branch above). Rehydrate them
+    // here as LlmMessage `tool` messages by matching the saved id.
     if (
       metadata?.type === "tool-result" &&
       typeof metadata.toolCallId === "string"

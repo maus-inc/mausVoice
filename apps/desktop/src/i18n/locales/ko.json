@@ -449,7 +449,7 @@
   "open_details": "세부 정보 열기",
   "open_download_page": "다운로드 페이지 열기",
   "open_groq_api_keys": "Groq API 키 열기",
-  "open_history": "Open history",
+  "open_history": "기록 열기",
   "open_the_current_assistant_conversation_in_the_main_window": "현재 어시스턴트 대화를 메인 창에서 열기",
   "open_the_dictionary_page_and_add_a_glossary_term_or_replacem": "사전 페이지를 열고 용어집 용어 또는 교체 규칙을 추가하세요.",
   "openai_whisper_multilingual_ggml": "OpenAI Whisper (다국어 GGML)",

@@ -117,6 +117,27 @@ export abstract class BaseTranscribeAudioRepo extends BaseRepo {
   ): Promise<TranscribeAudioOutput>;
 
   /**
+   * Energy-based silence gate. Returns true when the samples are
+   * near-silent (low RMS, low loudest-window energy, and low peak), so
+   * a cloud provider cannot echo its dictionary/glossary prompt back as
+   * a fake transcript. Logs the decision with the scope ("whole clip"
+   * or "chunk") for diagnostics.
+   */
+  protected isNearSilent(
+    samples: Float32Array,
+    sampleRate: number,
+    scope: string,
+  ): boolean {
+    const silence = analyzeSilence(samples, sampleRate);
+    if (silence.silent) {
+      getLogger().info(
+        `Skipping transcription (${scope}): audio is near-silent (rms=${silence.rms.toExponential(2)}, peak=${silence.peak.toExponential(2)}, maxWindowRms=${silence.maxWindowRms.toExponential(2)})`,
+      );
+    }
+    return silence.silent;
+  }
+
+  /**
    * Transcribes audio, automatically splitting long audio into segments
    * and merging the results.
    */
@@ -142,17 +163,11 @@ export abstract class BaseTranscribeAudioRepo extends BaseRepo {
     // `no_speech_prob` (which only some Whisper endpoints return). When the
     // filter is disabled the user wants the raw transcript, so skip it.
     const filterEnabled = input.hallucinationFilterEnabled ?? true;
-    if (filterEnabled) {
-      const silence = analyzeSilence(floatSamples, input.sampleRate);
-      if (silence.silent) {
-        getLogger().info(
-          `Skipping transcription: audio is near-silent (rms=${silence.rms.toExponential(2)}, peak=${silence.peak.toExponential(2)}, maxWindowRms=${silence.maxWindowRms.toExponential(2)})`,
-        );
-        return {
-          text: "",
-          metadata: { transcriptionMode: "api" },
-        };
-      }
+    if (
+      filterEnabled &&
+      this.isNearSilent(floatSamples, input.sampleRate, "whole clip")
+    ) {
+      return { text: "", metadata: { transcriptionMode: "api" } };
     }
 
     const segmentDurationSec = this.getSegmentDurationSec();
@@ -184,7 +199,7 @@ export abstract class BaseTranscribeAudioRepo extends BaseRepo {
     const transcriptionTasks = segments.map((segmentSamples) => () => {
       if (
         filterEnabled &&
-        analyzeSilence(segmentSamples, input.sampleRate).silent
+        this.isNearSilent(segmentSamples, input.sampleRate, "chunk")
       ) {
         return Promise.resolve({ text: "", metadata: null });
       }

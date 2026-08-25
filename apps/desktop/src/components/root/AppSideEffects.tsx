@@ -706,7 +706,13 @@ export const AppSideEffects = () => {
       surfaceMainWindow();
     } else if (payload.action === "open_transcriptions") {
       surfaceMainWindow();
-      browserRouter.navigate("/dashboard/transcriptions");
+      try {
+        browserRouter.navigate("/dashboard/transcriptions");
+      } catch (error) {
+        getLogger().warning(
+          `Failed to navigate to transcriptions: ${error instanceof Error ? error.message : String(error)}`,
+        );
+      }
     }
   });
 

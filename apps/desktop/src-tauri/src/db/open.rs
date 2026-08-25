@@ -468,6 +468,141 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn migration_78_adds_post_process_attribution_on_existing_db() {
+        // Simulate a user upgrading from a pre-078 (1.5.x) build:
+        // create the transcriptions table without the three new columns,
+        // record migrations 1..77 as already applied with their real
+        // checksums, then open the DB. apply_migrations must run only 78
+        // (ADD COLUMN) and the legacy row must survive with NULLs.
+        let temp = TempDb::new();
+        let pool = connect_pool(&temp.path)
+            .await
+            .expect("connect to fresh db");
+
+        sqlx::query(
+            "CREATE TABLE IF NOT EXISTS _sqlx_migrations (
+                version BIGINT PRIMARY KEY,
+                description TEXT NOT NULL,
+                installed_on TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                success BOOLEAN NOT NULL,
+                checksum BLOB NOT NULL,
+                execution_time BIGINT NOT NULL
+            )",
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
+
+        // Mark every migration up to and including 77 as applied.
+        for migration in migrations() {
+            if migration.version > 77 {
+                continue;
+            }
+            sqlx::query(
+                "INSERT INTO _sqlx_migrations
+                 (version, description, success, checksum, execution_time)
+                 VALUES (?1, ?2, 1, ?3, 0)",
+            )
+            .bind(migration.version)
+            .bind(migration.description)
+            .bind(migration_checksum(migration.sql))
+            .execute(&pool)
+            .await
+            .unwrap();
+        }
+
+        // Legacy transcriptions table (no post_process_* columns).
+        sqlx::query(
+            "CREATE TABLE transcriptions (
+                id TEXT PRIMARY KEY,
+                transcript TEXT NOT NULL,
+                timestamp INTEGER NOT NULL,
+                audio_path TEXT,
+                audio_duration_ms INTEGER,
+                model_size TEXT,
+                inference_device TEXT,
+                raw_transcript TEXT,
+                sanitized_transcript TEXT,
+                transcription_prompt TEXT,
+                post_process_prompt TEXT,
+                transcription_api_key_id TEXT,
+                post_process_api_key_id TEXT,
+                transcription_mode TEXT,
+                post_process_mode TEXT,
+                post_process_device TEXT,
+                transcription_duration_ms INTEGER,
+                postprocess_duration_ms INTEGER,
+                warnings_json TEXT,
+                remote_status TEXT,
+                remote_device_id TEXT
+             )",
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
+        sqlx::query(
+            "INSERT INTO transcriptions (id, transcript, timestamp)
+             VALUES ('legacy', 'old', 1)",
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
+        pool.close().await;
+
+        // Reopen: only migration 78 should run (ADD COLUMN ...).
+        let pool = try_open(&temp.path).await.expect("upgrade opens");
+
+        // Legacy row reads back NULL for the new columns.
+        let legacy = sqlx::query(
+            "SELECT post_process_provider, post_process_failed, post_process_error
+             FROM transcriptions WHERE id = 'legacy'",
+        )
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        let provider: Option<String> = legacy.try_get("post_process_provider").unwrap();
+        let failed: Option<bool> = legacy.try_get("post_process_failed").unwrap();
+        let error: Option<String> = legacy.try_get("post_process_error").unwrap();
+        assert_eq!(provider, None);
+        assert_eq!(failed, None);
+        assert_eq!(error, None);
+
+        // A new row populates all three and reads them back.
+        sqlx::query(
+            "INSERT INTO transcriptions
+                (id, transcript, timestamp,
+                 post_process_provider, post_process_failed, post_process_error)
+             VALUES ('new', 'new', 2, 'cerebras', 1, '402 out of credit')",
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
+        let new_row = sqlx::query(
+            "SELECT post_process_provider, post_process_failed, post_process_error
+             FROM transcriptions WHERE id = 'new'",
+        )
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        let provider: String = new_row.try_get("post_process_provider").unwrap();
+        let failed: bool = new_row.try_get("post_process_failed").unwrap();
+        let error: String = new_row.try_get("post_process_error").unwrap();
+        assert_eq!(provider, "cerebras");
+        assert!(failed);
+        assert_eq!(error, "402 out of credit");
+
+        // Migration 78 is now recorded.
+        let applied: i64 =
+            sqlx::query_scalar("SELECT COUNT(*) FROM _sqlx_migrations WHERE version = 78")
+                .fetch_one(&pool)
+                .await
+                .unwrap();
+        assert_eq!(applied, 1);
+
+        pool.close().await;
+    }
+
+    #[tokio::test]
     async fn non_integrity_errors_do_not_quarantine() {
         let temp = TempDb::new();
         // A non-integrity failure: pass a directory as the database path.

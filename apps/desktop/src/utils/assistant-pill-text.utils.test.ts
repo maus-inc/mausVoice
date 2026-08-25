@@ -156,4 +156,17 @@ describe("unsafe HTML is neutralized", () => {
     expect(Date.now() - start).toBeLessThan(1000);
     expect(result).toContain("text");
   });
+
+  it("strips HTML comments and CDATA sections rather than rendering them", () => {
+    // Pins the behavior for model-emitted comments/CDATA: the tag content
+    // between the opening `<` and the first `>` is removed, so the comment
+    // text never leaks into the pill.
+    const withComment = "before <!-- internal note --> after";
+    expect(markdownToPillText(withComment)).not.toContain("internal note");
+    expect(markdownToPillText(withComment)).toContain("before");
+    expect(markdownToPillText(withComment)).toContain("after");
+
+    const withCdata = "a <![CDATA[ raw ]]> b";
+    expect(markdownToPillText(withCdata)).not.toContain("raw");
+  });
 });

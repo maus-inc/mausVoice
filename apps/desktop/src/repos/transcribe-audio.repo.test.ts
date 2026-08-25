@@ -733,3 +733,50 @@ describe("provider capability and transcription dispatch agreement", () => {
     ).toBe(true);
   });
 });
+
+describe("per-segment silence gate (mixed recordings)", () => {
+  it("skips a silent chunk but transcribes a loud chunk in the same recording", async () => {
+    // Two 10s segments: first is a tone (speech-level energy), second
+    // is digital silence. The per-chunk gate must skip the second while
+    // the first is still sent to the provider.
+    const sampleRate = 16000;
+    const samples = new Float32Array(sampleRate * 20);
+    for (let i = 0; i < sampleRate * 10; i++) {
+      samples[i] = 0.1 * Math.sin((2 * Math.PI * 220 * i) / sampleRate);
+    }
+    // indices sampleRate*10 .. end stay 0 (silent)
+
+    // overlapDuration = 0 so the split is exactly [0,10) tone and
+    // [10,20) silence (no mixing of the two regions).
+    const repo = new MockTranscribeAudioRepo(10, 0, 1);
+    const result = await repo.transcribeAudio({
+      samples,
+      sampleRate,
+      prompt: "glossary",
+      language: "en",
+    });
+
+    // Only the first, loud segment reached transcribeSegment.
+    expect(repo.segmentCalls).toHaveLength(1);
+    expect(repo.segmentCalls[0]?.samples.length).toBe(sampleRate * 10);
+    // The result comes from the loud segment only (silent one is "").
+    expect(result.text).toContain("segment 0");
+    expect(result.text).not.toContain("segment 1");
+  });
+
+  it("still sends every chunk when the hallucination filter is disabled", async () => {
+    const sampleRate = 16000;
+    const samples = new Float32Array(sampleRate * 20); // fully silent
+
+    const repo = new MockTranscribeAudioRepo(10, 0, 1);
+    await repo.transcribeAudio({
+      samples,
+      sampleRate,
+      hallucinationFilterEnabled: false,
+    });
+
+    // With overlap 0 a 20s clip splits into two segments, and the filter
+    // being off means even the silent one is sent to the provider.
+    expect(repo.segmentCalls).toHaveLength(2);
+  });
+});

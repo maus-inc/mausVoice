@@ -256,6 +256,26 @@ mod thock_limiter {
             // `saturating_sub` must not panic or un-throttle on a backwards clock.
             assert_eq!(should_throttle_at(1_900, 2_000), (true, 2_000));
         }
+
+        #[test]
+        fn thock_volume_is_meaningfully_reduced() {
+            // The whole point of THOCK_VOLUME is to take the edge off the
+            // bass-heavy clips: it must be strictly below full default volume
+            // and within the valid 0..=1 sink range.
+            assert!(THOCK_VOLUME > 0.0);
+            assert!(THOCK_VOLUME < 1.0);
+            assert!(THOCK_VOLUME <= 0.5);
+        }
+
+        #[test]
+        fn sink_volume_clamp_keeps_values_in_range() {
+            // Mirrors the clamp applied before sink.set_volume so an
+            // out-of-range value can never blow out the sink or go negative.
+            let clamp = |v: f32| v.clamp(0.0, 1.0);
+            assert_eq!(clamp(-1.0), 0.0);
+            assert_eq!(clamp(2.0), 1.0);
+            assert_eq!(clamp(THOCK_VOLUME), THOCK_VOLUME);
+        }
     }
 }
 

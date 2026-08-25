@@ -236,6 +236,23 @@ describe("createUtteranceToneSnapshots", () => {
     store.clear();
     expect(store.read()).toEqual({ start: null, stop: null });
   });
+
+  it("start snapshot wins a mid-dictation switch through finalize", () => {
+    // End-to-end contract: seed at start, the user switches while
+    // recording, stop captures the switched tone, but finalize must use
+    // the start tone so a mid-utterance switch only affects the next
+    // recording.
+    const store = createUtteranceToneSnapshots();
+    store.seed(START);
+    store.snapshotAtStop(SWITCHED);
+    const { start, stop } = store.read();
+
+    expect(
+      getEffectiveToneIdAtFinalize(
+        manual({ toneIdAtStart: start, toneIdAtStop: stop }),
+      ),
+    ).toBe(START);
+  });
 });
 
 describe("isActivationComboHeld", () => {
