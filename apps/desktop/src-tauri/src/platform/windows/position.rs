@@ -28,6 +28,11 @@ pub fn set_overlay_position(
             let y = visible_y + visible_height - window_height - margin;
             (x, y)
         }
+        OverlayAnchor::TopCenter => {
+            let x = visible_x + (visible_width - window_width) / 2.0;
+            let y = visible_y + margin;
+            (x, y)
+        }
         OverlayAnchor::TopRight => {
             let x = visible_x + visible_width - window_width - margin;
             let y = visible_y + margin;
@@ -71,6 +76,11 @@ pub fn is_cursor_in_bounds(
             let y = monitor.visible_y + monitor.visible_height
                 - physical_bounds_height
                 - physical_margin;
+            (x, y)
+        }
+        OverlayAnchor::TopCenter => {
+            let x = monitor.visible_x + (monitor.visible_width - physical_bounds_width) / 2.0;
+            let y = monitor.visible_y + physical_margin;
             (x, y)
         }
         OverlayAnchor::TopRight => {

@@ -31,6 +31,10 @@ pub fn notify_visibility(app: &tauri::AppHandle, visibility: &str) {
     pill_process::notify_visibility(app, visibility);
 }
 
+pub fn notify_pill_placement(app: &tauri::AppHandle, placement: &str) {
+    pill_process::notify_pill_placement(app, placement);
+}
+
 pub fn notify_style_info(app: &tauri::AppHandle, count: u32, name: &str) {
     pill_process::notify_style_info(app, count, name);
 }

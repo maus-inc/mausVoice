@@ -157,6 +157,15 @@ pub fn notify_visibility(app: &tauri::AppHandle, visibility: &str) {
     }
 }
 
+pub fn notify_pill_placement(app: &tauri::AppHandle, placement: &str) {
+    if let Some(pill) = app.try_state::<std::sync::Arc<PillProcess>>() {
+        let msg = format!(r#"{{"type":"pill_placement","placement":"{placement}"}}"#);
+        if let Err(err) = pill.send(&msg) {
+            log::error!("Failed to notify pill of placement: {err}");
+        }
+    }
+}
+
 pub fn notify_style_info(app: &tauri::AppHandle, count: u32, name: &str) {
     if let Some(pill) = app.try_state::<std::sync::Arc<PillProcess>>() {
         if let Ok(json) = serde_json::to_string(&serde_json::json!({

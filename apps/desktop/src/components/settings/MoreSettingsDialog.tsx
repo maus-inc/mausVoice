@@ -47,6 +47,7 @@ import {
   getMyUserPreferences,
   getTranscriptionPrefs,
 } from "../../utils/user.utils";
+import { PillPlacementSetting } from "./PillPlacementSetting";
 import { SegmentedControl } from "../common/SegmentedControl";
 import { SettingSection } from "../common/SettingSection";
 
@@ -225,9 +226,7 @@ export const MoreSettingsDialog = () => {
     void setHandsFreeDelayMs(normalized);
   };
 
-  const handleHandsFreeDelayChange = (
-    event: ChangeEvent<HTMLInputElement>,
-  ) => {
+  const handleHandsFreeDelayChange = (event: ChangeEvent<HTMLInputElement>) => {
     setHandsFreeDelayInput(event.target.value);
   };
 
@@ -371,6 +370,8 @@ export const MoreSettingsDialog = () => {
               />
             }
           />
+
+          <PillPlacementSetting />
 
           <SettingSection
             title={<FormattedMessage defaultMessage="Real-time output" />}

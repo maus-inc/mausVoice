@@ -2,6 +2,7 @@ import type {
   AgentMode,
   DictationPillVisibility,
   Nullable,
+  PillPlacement,
   PillResetMonitorStrategy,
   PostProcessingMode,
   TranscriptionMode,
@@ -44,6 +45,7 @@ export type UserPreferences = {
   insertionMethod: Nullable<string>;
   typingSpeedMs: Nullable<number>;
   pillResetMonitorStrategy: PillResetMonitorStrategy;
+  pillPlacement: PillPlacement;
   alwaysRequestAdminOnStartup: boolean;
   handsFreeDelayMs: Nullable<number>;
 

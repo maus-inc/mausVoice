@@ -2,6 +2,7 @@ import {
   type AgentMode,
   DictationPillVisibility,
   Nullable,
+  PillPlacement,
   PillResetMonitorStrategy,
   StylingMode,
   User,
@@ -113,6 +114,7 @@ export const createDefaultPreferences = (): UserPreferences => ({
   dictationLimitMinutes: DEFAULT_DICTATION_LIMIT_MINUTES,
   dictationPillVisibility: "while_active",
   pillResetMonitorStrategy: "current",
+  pillPlacement: "bottom",
 
   alwaysRequestAdminOnStartup: false,
   realtimeOutputEnabled: false,
@@ -628,6 +630,21 @@ export const setPillResetMonitorStrategy = async (
   await updateUserPreferences((preferences) => {
     preferences.pillResetMonitorStrategy = strategy;
   }, "Failed to save pill reset monitor strategy. Please try again.");
+};
+
+export const setPillPlacement = async (
+  placement: PillPlacement,
+): Promise<void> => {
+  await updateUserPreferences((preferences) => {
+    preferences.pillPlacement = placement;
+  }, "Failed to save pill placement preference. Please try again.");
+  try {
+    await invoke("set_pill_placement", { placement });
+  } catch (error) {
+    getLogger().warning(
+      `Failed to push pill placement to native pill: ${error}`,
+    );
+  }
 };
 
 export const setAlwaysRequestAdminOnStartup = async (

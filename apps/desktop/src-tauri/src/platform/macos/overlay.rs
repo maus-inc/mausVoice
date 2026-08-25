@@ -73,6 +73,15 @@ pub fn notify_visibility(app: &tauri::AppHandle, visibility: &str) {
     }
 }
 
+pub fn notify_pill_placement(_app: &tauri::AppHandle, placement: &str) {
+    // The macOS pill (rust_macos_pill) is the embedded in-process pill and
+    // currently only supports a bottom-anchored layout, so the user's
+    // `pillPlacement` preference is recorded by the host but not pushed to
+    // the native pill yet. The overlay.rs surface stays consistent across
+    // platforms so the host code does not need to special-case macOS.
+    log::debug!("Pill placement preference received: {placement}");
+}
+
 pub fn notify_style_info(app: &tauri::AppHandle, count: u32, name: &str) {
     if let Some(pill) = app.try_state::<std::sync::Arc<MacosPill>>() {
         pill.send(InMessage::StyleInfo {
