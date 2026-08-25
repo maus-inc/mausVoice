@@ -10,6 +10,9 @@ fn main() {
     // CRITICAL: Initialize X11 threading before ANY other operations
     desktop_lib::platform::init::init_x11_threads();
 
+    // CRITICAL: Apply WebKit workarounds on X11 before the Tauri builder creates the WebView.
+    desktop_lib::platform::init::apply_webkit_workarounds();
+
     // Initialize startup logging
     eprintln!("=== mausVoice Startup ===");
     eprintln!("[startup] Version: {}", env!("CARGO_PKG_VERSION"));

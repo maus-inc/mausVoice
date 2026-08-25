@@ -12,6 +12,10 @@ pub fn configure_display_backend() {
     }
 }
 
+pub fn apply_webkit_workarounds() {
+    super::launch_env::apply_webkit_workarounds();
+}
+
 pub fn get_native_setup_status() -> NativeSetupStatus {
     if super::detect::is_wayland() {
         super::wl::setup::get_native_setup_status()
