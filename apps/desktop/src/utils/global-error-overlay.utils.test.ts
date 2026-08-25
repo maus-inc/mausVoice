@@ -160,6 +160,42 @@ describe("global error overlay", () => {
     ).toBe(true);
   });
 
+  it("logs a post-mount resource load failure instead of dropping it", async () => {
+    const doc = makeDocument([{}]);
+    vi.stubGlobal("document", doc);
+    class HTMLScriptElement {
+      src = "asset://localhost/assets/async-chunk.js";
+    }
+    class HTMLLinkElement {
+      href = "asset://localhost/assets/async-chunk.css";
+      rel = "StyleSheet";
+      relList = {
+        contains: (_token: string): boolean => false,
+      };
+    }
+    vi.stubGlobal("HTMLScriptElement", HTMLScriptElement);
+    vi.stubGlobal("HTMLLinkElement", HTMLLinkElement);
+    const listeners: Record<string, Array<(event: unknown) => void>> = {};
+    vi.stubGlobal("window", {
+      addEventListener: (type: string, handler: (event: unknown) => void) => {
+        listeners[type] ??= [];
+        listeners[type].push(handler);
+      },
+      removeEventListener: () => {},
+    });
+    const consoleWarn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    const { installGlobalErrorOverlay } =
+      await import("./global-error-overlay.utils.ts");
+    installGlobalErrorOverlay();
+    // A resource load failure dispatches a plain Event with no error/message.
+    listeners.error[0]({
+      target: new HTMLScriptElement(),
+    });
+    expect(doc.getElementById(overlayId)).toBeNull();
+    expect(consoleWarn).toHaveBeenCalled();
+    consoleWarn.mockRestore();
+  });
+
   it("does not log ignored image load failures", async () => {
     const doc = makeDocument([{}]);
     vi.stubGlobal("document", doc);

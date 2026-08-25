@@ -135,16 +135,24 @@ export const installGlobalErrorOverlay = (): void => {
   window.addEventListener(
     "error",
     (event) => {
-      if (!shouldPaintFatalWindowError(event)) {
-        if (event.error || event.message) {
-          console.error(
-            "Ignored post-mount error",
-            event.error ?? event.message,
-          );
-        }
+      if (shouldPaintFatalWindowError(event)) {
+        paintError("mausVoice failed to start", describeWindowError(event));
         return;
       }
-      paintError("mausVoice failed to start", describeWindowError(event));
+      // Post-mount failures are never fatal. Resource load failures dispatch a
+      // plain `Event` with no `error`/`message`, so they are logged here by
+      // target rather than falling through the error/message branch below;
+      // otherwise a broken async chunk would disappear with no diagnostics.
+      if (isFatalResourceTarget(event.target)) {
+        console.warn(
+          "Ignored post-mount resource load failure",
+          describeWindowError(event),
+        );
+        return;
+      }
+      if (event.error || event.message) {
+        console.error("Ignored post-mount error", event.error ?? event.message);
+      }
     },
     true,
   );
