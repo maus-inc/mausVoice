@@ -31,7 +31,7 @@ export const openaiCompatibleTranscribeAudio = async ({
 }: OpenAICompatibleTranscriptionArgs): Promise<OpenAICompatibleTranscribeAudioOutput> => {
   const url = buildOpenAICompatibleTranscriptionUrl(
     baseUrl,
-    true,
+    false,
     transcriptionPath ?? OPENAI_COMPATIBLE_DEFAULT_TRANSCRIPTION_PATH,
   );
 
