@@ -123,9 +123,9 @@
           return String(error || "Unknown error");
         }
         // Named so the bundle installer can removeEventListener it. Capture
-        // phase is required for failed <script>/<link> fetches. After React
-        // has mounted, only those resource failures stay fatal; ordinary
-        // runtime errors must not cover a working UI.
+        // phase is required for failed <script>/<link> fetches. Once React has
+        // mounted, this early handler defers to the bundled handler, which
+        // paints fatal errors pre-mount and only logs them after mount.
         window.__mausVoiceEarlyError = function (event) {
           var target = event.target;
           var isStylesheet = false;
@@ -138,6 +138,16 @@
               });
             }
           }
+          // Once React has mounted, the early handler ignores both post-mount
+          // runtime and resource failures so they cannot cover a working UI
+          // with the fatal overlay. The bundled handler is responsible for
+          // logging resource failures.
+          if (
+            document.getElementById("root") &&
+            document.getElementById("root").childNodes.length
+          ) {
+            return;
+          }
           var isAsset =
             target instanceof HTMLScriptElement || isStylesheet;
           if (isAsset) {
@@ -149,12 +159,6 @@
                 (url || "(unknown URL)") +
                 "\n\nThe frontend asset could not be fetched. Under Tauri's asset: protocol this is usually a CORS or path issue — check the built index.html asset URLs.",
             );
-            return;
-          }
-          if (
-            document.getElementById("root") &&
-            document.getElementById("root").childNodes.length
-          ) {
             return;
           }
           if (event.error || event.message) {

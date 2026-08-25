@@ -33,10 +33,29 @@ const makeDocument = (rootChildren: unknown[] = []) => {
   };
 };
 
+const installOverlayWithMockWindow = (rootChildren: unknown[] = []) => {
+  const doc = makeDocument(rootChildren);
+  vi.stubGlobal("document", doc);
+  const listeners: Record<string, Array<(event: unknown) => void>> = {};
+  vi.stubGlobal("window", {
+    addEventListener: (type: string, handler: (event: unknown) => void) => {
+      listeners[type] ??= [];
+      listeners[type].push(handler);
+    },
+    removeEventListener: () => {},
+  });
+  return { doc, listeners };
+};
+
 describe("global error overlay", () => {
   afterEach(() => {
     vi.unstubAllGlobals();
     vi.resetModules();
+    // The idempotency sentinel persists on the real `window` across module
+    // resets, so clear it explicitly to keep tests independent.
+    if (typeof window !== "undefined") {
+      delete window.__mausVoiceOverlayInstalled;
+    }
   });
 
   it("does not treat a mounted app's unhandled rejection as a failed start", async () => {
@@ -56,8 +75,8 @@ describe("global error overlay", () => {
     expect(shouldPaintFatalRejection()).toBe(true);
   });
 
-  it("still treats failed script and stylesheet loads as fatal", async () => {
-    vi.stubGlobal("document", makeDocument([{}]));
+  it("treats failed script and stylesheet loads as fatal before mount", async () => {
+    vi.stubGlobal("document", makeDocument([]));
     class HTMLScriptElement {
       src = "asset://localhost/assets/index.js";
     }
@@ -82,6 +101,7 @@ describe("global error overlay", () => {
         target: new HTMLLinkElement(),
       } as unknown as ErrorEvent),
     ).toBe(true);
+    // A non-stylesheet <link> (e.g. an icon) is not a fatal resource target.
     const icon = new HTMLLinkElement();
     icon.rel = "icon";
     icon.relList = {
@@ -90,6 +110,36 @@ describe("global error overlay", () => {
     expect(
       shouldPaintFatalWindowError({
         target: icon,
+      } as unknown as ErrorEvent),
+    ).toBe(false);
+  });
+
+  it("does not treat a post-mount failed stylesheet/script load as fatal", async () => {
+    // Once React has mounted, an async chunk's stylesheet/script can still fail
+    // to load; that must log, not cover a working UI with the fatal overlay.
+    vi.stubGlobal("document", makeDocument([{}]));
+    class HTMLScriptElement {
+      src = "asset://localhost/assets/index.js";
+    }
+    class HTMLLinkElement {
+      href = "asset://localhost/assets/styles.css";
+      rel = "StyleSheet";
+      relList = {
+        contains: (_token: string): boolean => false,
+      };
+    }
+    vi.stubGlobal("HTMLScriptElement", HTMLScriptElement);
+    vi.stubGlobal("HTMLLinkElement", HTMLLinkElement);
+    const { shouldPaintFatalWindowError } =
+      await import("./global-error-overlay.utils.ts");
+    expect(
+      shouldPaintFatalWindowError({
+        target: new HTMLScriptElement(),
+      } as unknown as ErrorEvent),
+    ).toBe(false);
+    expect(
+      shouldPaintFatalWindowError({
+        target: new HTMLLinkElement(),
       } as unknown as ErrorEvent),
     ).toBe(false);
   });
@@ -129,19 +179,37 @@ describe("global error overlay", () => {
     ).toBe(true);
   });
 
+  it("logs a post-mount resource load failure instead of dropping it", async () => {
+    const { doc, listeners } = installOverlayWithMockWindow([{}]);
+    class HTMLScriptElement {
+      src = "asset://localhost/assets/async-chunk.js";
+    }
+    class HTMLLinkElement {
+      href = "asset://localhost/assets/async-chunk.css";
+      rel = "StyleSheet";
+      relList = {
+        contains: (_token: string): boolean => false,
+      };
+    }
+    vi.stubGlobal("HTMLScriptElement", HTMLScriptElement);
+    vi.stubGlobal("HTMLLinkElement", HTMLLinkElement);
+    const consoleWarn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    const { installGlobalErrorOverlay } =
+      await import("./global-error-overlay.utils.ts");
+    installGlobalErrorOverlay();
+    // A resource load failure dispatches a plain Event with no error/message.
+    listeners.error[0]({
+      target: new HTMLScriptElement(),
+    });
+    expect(doc.getElementById(overlayId)).toBeNull();
+    expect(consoleWarn).toHaveBeenCalled();
+    consoleWarn.mockRestore();
+  });
+
   it("does not log ignored image load failures", async () => {
-    const doc = makeDocument([{}]);
-    vi.stubGlobal("document", doc);
+    const { doc, listeners } = installOverlayWithMockWindow([{}]);
     class HTMLImageElement {}
     vi.stubGlobal("HTMLImageElement", HTMLImageElement);
-    const listeners: Record<string, Array<(event: unknown) => void>> = {};
-    vi.stubGlobal("window", {
-      addEventListener: (type: string, handler: (event: unknown) => void) => {
-        listeners[type] ??= [];
-        listeners[type].push(handler);
-      },
-      removeEventListener: () => {},
-    });
     const consoleError = vi
       .spyOn(console, "error")
       .mockImplementation(() => {});
@@ -159,16 +227,7 @@ describe("global error overlay", () => {
   });
 
   it("does not create an overlay for post-mount rejections", async () => {
-    const doc = makeDocument([{}]);
-    vi.stubGlobal("document", doc);
-    const listeners: Record<string, Array<(event: unknown) => void>> = {};
-    vi.stubGlobal("window", {
-      addEventListener: (type: string, handler: (event: unknown) => void) => {
-        listeners[type] ??= [];
-        listeners[type].push(handler);
-      },
-      removeEventListener: () => {},
-    });
+    const { doc, listeners } = installOverlayWithMockWindow([{}]);
     const consoleError = vi
       .spyOn(console, "error")
       .mockImplementation(() => {});
@@ -180,6 +239,29 @@ describe("global error overlay", () => {
     });
     expect(doc.getElementById(overlayId)).toBeNull();
     expect(consoleError).toHaveBeenCalled();
+    consoleError.mockRestore();
+  });
+
+  it("is idempotent when installed more than once", async () => {
+    // Re-invocation is realistic on hot reloads, repeated React remounts, and
+    // test re-runs. The second install must not register a second pair of
+    // listeners, so a single error event is still observed exactly once.
+    const { listeners } = installOverlayWithMockWindow([{}]);
+    const consoleError = vi
+      .spyOn(console, "error")
+      .mockImplementation(() => {});
+    const { installGlobalErrorOverlay } =
+      await import("./global-error-overlay.utils.ts");
+    installGlobalErrorOverlay();
+    installGlobalErrorOverlay();
+    expect(listeners.error).toHaveLength(1);
+    expect(listeners.unhandledrejection).toHaveLength(1);
+    listeners.error[0]({
+      target: {},
+      error: new Error("post-mount runtime"),
+      message: "post-mount runtime",
+    });
+    expect(consoleError).toHaveBeenCalledTimes(1);
     consoleError.mockRestore();
   });
 });
