@@ -32,27 +32,29 @@
 mod imp {
     use std::sync::OnceLock;
 
-    use tauri::{AppHandle, Emitter, Runtime};
+    use tauri::{AppHandle, Emitter};
     use windows::core::PCWSTR;
-    use windows::Win32::Foundation::{HINSTANCE, HWND, LPARAM, LRESULT, WPARAM};
+    use windows::Win32::Foundation::{HANDLE, HINSTANCE, HWND, LPARAM, LRESULT, WPARAM};
     use windows::Win32::System::Console::{
         GetConsoleWindow, SetConsoleCtrlHandler, CTRL_BREAK_EVENT, CTRL_C_EVENT,
     };
     use windows::Win32::System::LibraryLoader::GetModuleHandleW;
     use windows::Win32::System::Power::{
-        RegisterPowerSettingNotification, UnregisterPowerSettingNotification,
+        RegisterPowerSettingNotification, UnregisterPowerSettingNotification, DEVICE_NOTIFY_WINDOW_HANDLE,
         HPOWERNOTIFY,
+    };
+    use windows::Win32::System::RemoteDesktop::{
+        WTSRegisterSessionNotification, WTSUnRegisterSessionNotification, NOTIFY_FOR_THIS_SESSION,
     };
     use windows::Win32::System::StationsAndDesktops::{
         GetThreadDesktop, SetThreadDesktop,
     };
+    use windows::Win32::System::Threading::GetCurrentThreadId;
     use windows::Win32::UI::WindowsAndMessaging::{
         CreateWindowExW, DefWindowProcW, DestroyWindow, DispatchMessageW, GetMessageW,
-        RegisterClassW, TranslateMessage, UnregisterClassW, CS_HREDRAW, CS_OWNDC,
-        CS_VREDRAW, HWND_MESSAGE, MSG, WNDCLASSW, WS_OVERLAPPEDWINDOW,
-    };
-    use windows::Win32::UI::WindowsAndMessaging::{
-        WTSRegisterSessionNotification, WTSUnRegisterSessionNotification, NOTIFY_FOR_THIS_SESSION,
+        RegisterClassW, TranslateMessage, UnregisterClassW, CS_HREDRAW, CS_OWNDC, CS_VREDRAW,
+        HWND_DESKTOP, MSG, WNDCLASSW, WINDOW_EX_STYLE, WINDOW_STYLE, WS_EX_NOACTIVATE,
+        WS_EX_TOOLWINDOW,
     };
 
     use crate::domain::EVT_DESKTOP_RESUME;
@@ -86,7 +88,7 @@ mod imp {
 
     fn clear_power_handle() {
         if let Some(raw) = power_notify_handle().get().copied() {
-            let _ = unsafe { UnregisterPowerSettingNotification(HPOWERNOTIFY(raw as *mut _)) };
+            let _ = unsafe { UnregisterPowerSettingNotification(HPOWERNOTIFY(raw as isize)) };
         }
     }
 
@@ -139,8 +141,8 @@ mod imp {
         }
     }
 
-    fn current_app_handle() -> &'static OnceLock<AppHandle> {
-        static HANDLE: OnceLock<AppHandle> = OnceLock::new();
+    fn current_app_handle() -> &'static OnceLock<AppHandle<tauri::Wry>> {
+        static HANDLE: OnceLock<AppHandle<tauri::Wry>> = OnceLock::new();
         &HANDLE
     }
 
@@ -151,7 +153,7 @@ mod imp {
     /// `desktop_resume` whenever the OS notifies us of a sleep/wake
     /// transition or a session unlock. The thread runs the
     /// message-only window's pump for the lifetime of the process.
-    pub fn start_watcher<R: Runtime>(app: &tauri::AppHandle<R>) {
+    pub fn start_watcher(app: &tauri::AppHandle<tauri::Wry>) {
         if watcher_started().set(()).is_err() {
             return;
         }
@@ -180,8 +182,8 @@ mod imp {
         // because the current thread desktop is what the lock screen
         // would route to anyway.
         unsafe {
-            let current = GetThreadDesktop();
-            if let Ok(current) = current {
+            let tid = GetCurrentThreadId();
+            if let Ok(current) = GetThreadDesktop(tid) {
                 let _ = SetThreadDesktop(current);
             }
         }
@@ -192,6 +194,12 @@ mod imp {
             .collect();
 
         let class_name = PCWSTR(class_name_w.as_ptr());
+
+        let window_name_w: Vec<u16> = "mausVoice Lifecycle"
+            .encode_utf16()
+            .chain(std::iter::once(0))
+            .collect();
+        let window_name = PCWSTR(window_name_w.as_ptr());
 
         let wc = WNDCLASSW {
             style: CS_OWNDC | CS_HREDRAW | CS_VREDRAW,
@@ -209,15 +217,17 @@ mod imp {
 
         let hwnd = unsafe {
             CreateWindowExW(
-                Default::default(),
+                WINDOW_EX_STYLE(
+                    WS_EX_TOOLWINDOW.0 | WS_EX_NOACTIVATE.0,
+                ),
                 class_name,
-                class_name,
-                WS_OVERLAPPEDWINDOW,
+                window_name,
+                WINDOW_STYLE(0),
                 0,
                 0,
                 0,
                 0,
-                HWND_MESSAGE,
+                HWND_DESKTOP,
                 None,
                 None,
                 None,
@@ -233,9 +243,9 @@ mod imp {
 
         match unsafe {
             RegisterPowerSettingNotification(
-                hwnd,
+                HANDLE(hwnd.0),
                 &GUID_CONSOLE_DISPLAY_STATE,
-                windows::Win32::System::Power::DEVICE_NOTIFY_WINDOW_HANDLE,
+                DEVICE_NOTIFY_WINDOW_HANDLE,
             )
         } {
             Ok(handle) => store_power_handle(handle),
@@ -248,11 +258,11 @@ mod imp {
             log::error!("lifecycle: WTSRegisterSessionNotification failed: {err}");
         }
 
-        log::info!("lifecycle: message-only HWND registered, entering pump");
+        log::info!("lifecycle: lifecycle HWND registered, entering pump");
 
         let mut msg = MSG::default();
         loop {
-            let r = unsafe { GetMessageW(&mut msg, hwnd, 0, 0) };
+            let r = unsafe { GetMessageW(&mut msg, Some(hwnd), 0, 0) };
             // r == 0 => WM_QUIT; r < 0 => error.
             if r.0 <= 0 {
                 break;
@@ -272,13 +282,13 @@ mod imp {
 
     /// Best-effort console control handler so a Ctrl-C in a debug build
     /// does not kill the message pump before the rest of the app gets a
-    /// chance to clean up. Returning `true` tells the OS "I handled it,
+    /// chance to clean up. Returning `BOOL(1)` tells the OS "I handled it,
     /// do not terminate the process".
-    unsafe extern "system" fn console_ctrl_handler(event: u32) -> bool {
+    unsafe extern "system" fn console_ctrl_handler(event: u32) -> windows::Win32::Foundation::BOOL {
         if event == CTRL_C_EVENT || event == CTRL_BREAK_EVENT {
-            return true;
+            return windows::Win32::Foundation::BOOL(1);
         }
-        false
+        windows::Win32::Foundation::BOOL(0)
     }
 }
 
@@ -288,4 +298,4 @@ pub use imp::start_watcher;
 /// Stub for non-Windows targets so callers can invoke this unconditionally
 /// from platform-agnostic setup code.
 #[cfg(not(target_os = "windows"))]
-pub fn start_watcher<R: tauri::Runtime>(_app: &tauri::AppHandle<R>) {}
+pub fn start_watcher(_app: &tauri::AppHandle<tauri::Wry>) {}
