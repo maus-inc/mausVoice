@@ -34,7 +34,7 @@ mod imp {
 
     use tauri::{AppHandle, Emitter};
     use windows::core::PCWSTR;
-    use windows::Win32::Foundation::{HINSTANCE, HWND, LPARAM, LRESULT, WPARAM};
+    use windows::Win32::Foundation::{HANDLE, HINSTANCE, HWND, LPARAM, LRESULT, WPARAM};
     use windows::Win32::System::Console::{
         GetConsoleWindow, SetConsoleCtrlHandler, CTRL_BREAK_EVENT, CTRL_C_EVENT,
     };
@@ -172,7 +172,8 @@ mod imp {
         unsafe {
             let console = GetConsoleWindow();
             if console.0.is_null() {
-                let _ = SetConsoleCtrlHandler(Some(console_ctrl_handler), true);
+                let handler: unsafe extern "system" fn(u32) -> i32 = console_ctrl_handler;
+                let _ = SetConsoleCtrlHandler(Some(handler), true);
             }
         }
 
