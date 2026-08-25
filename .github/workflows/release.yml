@@ -268,8 +268,9 @@ jobs:
         run: pnpm install --frozen-lockfile # NOSONAR
 
       # The NSIS wizard sidebar bitmap must exist before the Tauri bundle
-      # step. The desktop `build` script regenerates it too, but a turbo
-      # cache hit would skip that side effect, so CI regenerates it here.
+      # step. The tauri wrapper regenerates it immediately before every
+      # build, but CI regenerates it here too so the bundle step never
+      # depends on that path.
       - name: Generate NSIS sidebar image
         if: matrix.tauri_platform == 'windows'
         run: node scripts/generate-windows-installer-sidebar.mjs
