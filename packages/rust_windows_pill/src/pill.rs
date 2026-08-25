@@ -25,6 +25,7 @@ use crate::state::{ClickAction, PillState, Rocket, RocketPhase, Spark, WindowMod
 // same ergonomics as globals without violating HWND affinity.
 
 const TIMER_CURSOR: usize = 2;
+const TOPMOST_REASSERT_INTERVAL: Duration = Duration::from_secs(2);
 
 thread_local! {
     static STATE: RefCell<Option<PillState>> = const { RefCell::new(None) };
@@ -37,6 +38,14 @@ thread_local! {
     static EDIT_CONTAINER: Cell<HWND> = const { Cell::new(HWND(std::ptr::null_mut())) };
     static EDIT_HWND: Cell<HWND> = const { Cell::new(HWND(std::ptr::null_mut())) };
     static EDIT_BG_BRUSH: Cell<HBRUSH> = const { Cell::new(HBRUSH(std::ptr::null_mut())) };
+}
+
+const PILL_PLACEMENT_BOTTOM: u8 = 0;
+const PILL_PLACEMENT_TOP: u8 = 1;
+thread_local! {
+    static LAST_TOPMOST_REASSERT: Cell<Option<Instant>> = const { Cell::new(None) };
+    static TOPMOST_REASSERT_COUNT: Cell<u32> = const { Cell::new(0) };
+    static PILL_PLACEMENT: Cell<u8> = const { Cell::new(PILL_PLACEMENT_BOTTOM) };
 }
 
 /// Runs the Windows pill: registers the window class, creates the layered
@@ -425,6 +434,8 @@ fn on_anim_tick(hwnd: HWND) {
         }
     });
 
+    maybe_reassert_topmost(hwnd, Instant::now());
+
     GFX.with(|g| {
         STATE.with(|s| {
             if let (Some(ref mut gfx), Some(ref state)) = (&mut *g.borrow_mut(), &*s.borrow()) {
@@ -446,6 +457,33 @@ fn on_cursor_tick(hwnd: HWND) {
             reposition_to_cursor_monitor(hwnd, state);
         }
     });
+}
+
+fn maybe_reassert_topmost(hwnd: HWND, now: Instant) {
+    let last = LAST_TOPMOST_REASSERT.with(|cell| cell.get());
+    if !should_reassert_topmost(last, now) {
+        return;
+    }
+    LAST_TOPMOST_REASSERT.with(|cell| cell.set(Some(now)));
+    unsafe {
+        let _ = SetWindowPos(
+            hwnd,
+            HWND_TOPMOST,
+            0,
+            0,
+            0,
+            0,
+            SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE,
+        );
+    }
+    TOPMOST_REASSERT_COUNT.with(|c| c.set(c.get() + 1));
+}
+
+fn should_reassert_topmost(last: Option<Instant>, now: Instant) -> bool {
+    match last {
+        None => true,
+        Some(prev) => now.duration_since(prev) >= TOPMOST_REASSERT_INTERVAL,
+    }
 }
 
 /// Applies one IPC message to the pill state and marks the surface dirty so
@@ -560,6 +598,15 @@ fn process_message(msg: InMessage, state: &PillState, _hwnd: HWND) {
             state.reset_strategy.set(strategy);
             state.dirty.set(true);
             ipc::send(&OutMessage::PositionChanged { has_saved_position: false });
+        }
+        InMessage::PillPlacement { placement } => {
+            let code = if placement == "top" {
+                PILL_PLACEMENT_TOP
+            } else {
+                PILL_PLACEMENT_BOTTOM
+            };
+            PILL_PLACEMENT.with(|c| c.set(code));
+            state.dirty.set(true);
         }
         InMessage::Quit => {
             QUIT.with(|q| q.set(true));
@@ -1032,8 +1079,17 @@ fn initial_position() -> (i32, i32) {
         let wa_w = wa.right - wa.left;
         let wa_h = wa.bottom - wa.top;
         let x = wa.left + (wa_w - WINDOW_W_TYPING) / 2;
-        let y = wa.top + wa_h - WINDOW_H_TYPING - MARGIN_BOTTOM;
+        let y = default_pill_y(wa.top, wa_h, WINDOW_H_TYPING);
         (x, y)
+    }
+}
+
+fn default_pill_y(work_area_top: i32, work_area_height: i32, win_h: i32) -> i32 {
+    let placement = PILL_PLACEMENT.with(|c| c.get());
+    if placement == PILL_PLACEMENT_TOP {
+        work_area_top + MARGIN_BOTTOM
+    } else {
+        work_area_top + work_area_height - win_h - MARGIN_BOTTOM
     }
 }
 
@@ -1145,10 +1201,8 @@ fn reposition_to_cursor_monitor(hwnd: HWND, state: &PillState) {
             sy = sy.max(min_y).min(max_y);
             (sx, sy)
         } else {
-            // Default: centre at the bottom of the pill's current monitor.
             let mut x = wa.left + (wa_w - win_w) / 2;
-            let mut y = wa.top + wa_h - win_h - MARGIN_BOTTOM;
-            // Clamp into the work area, matching the drag and saved branches.
+            let mut y = default_pill_y(wa.top, wa_h, win_h);
             x = x.max(min_x).min(max_x);
             y = y.max(min_y).min(max_y);
             (x, y)
@@ -1656,5 +1710,59 @@ pub(crate) fn focus_edit_control() {
     unsafe {
         let _ = SetForegroundWindow(container);
         let _ = SetFocus(Some(edit));
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn topmost_reassert_fires_on_first_tick() {
+        assert!(should_reassert_topmost(None, Instant::now()));
+    }
+
+    #[test]
+    fn topmost_reassert_skips_within_interval() {
+        let prev = Instant::now();
+        let next = prev + Duration::from_millis(500);
+        assert!(!should_reassert_topmost(Some(prev), next));
+    }
+
+    #[test]
+    fn topmost_reassert_fires_after_interval() {
+        let prev = Instant::now();
+        let next = prev + TOPMOST_REASSERT_INTERVAL + Duration::from_millis(1);
+        assert!(should_reassert_topmost(Some(prev), next));
+    }
+
+    #[test]
+    fn maybe_reassert_topmost_invokes_setwindowpos() {
+        TOPMOST_REASSERT_COUNT.with(|c| c.set(0));
+        LAST_TOPMOST_REASSERT.with(|c| c.set(None));
+
+        maybe_reassert_topmost(HWND(std::ptr::null_mut()), Instant::now());
+        let after_first = TOPMOST_REASSERT_COUNT.with(|c| c.get());
+        assert_eq!(after_first, 1, "first tick should fire reassert");
+
+        maybe_reassert_topmost(HWND(std::ptr::null_mut()), Instant::now());
+        let after_second = TOPMOST_REASSERT_COUNT.with(|c| c.get());
+        assert_eq!(
+            after_second, 1,
+            "immediate second tick should be throttled by interval"
+        );
+    }
+
+    #[test]
+    fn default_pill_y_bottom_anchors_to_bottom() {
+        PILL_PLACEMENT.with(|c| c.set(PILL_PLACEMENT_BOTTOM));
+        assert_eq!(default_pill_y(0, 1080, 362), 1080 - 362 - MARGIN_BOTTOM);
+    }
+
+    #[test]
+    fn default_pill_y_top_anchors_to_top() {
+        PILL_PLACEMENT.with(|c| c.set(PILL_PLACEMENT_TOP));
+        assert_eq!(default_pill_y(0, 1080, 362), MARGIN_BOTTOM);
+        assert_eq!(default_pill_y(50, 1080, 362), 50 + MARGIN_BOTTOM);
     }
 }
