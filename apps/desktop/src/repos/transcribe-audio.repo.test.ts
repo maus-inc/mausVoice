@@ -13,6 +13,15 @@ import {
 } from "./transcribe-audio.repo";
 import { type TranscriptionSegment } from "../utils/hallucination.utils";
 
+vi.mock("../utils/log.utils", () => ({
+  getLogger: () => ({
+    info: () => {},
+    warning: () => {},
+    error: () => {},
+    verbose: () => {},
+  }),
+}));
+
 /**
  * Mock implementation that tracks calls and returns predictable text
  * based on the segment's position in the audio.
