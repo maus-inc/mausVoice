@@ -796,3 +796,55 @@ describe("OpenAI-compatible transcription path override", () => {
     expect(repo).toBeInstanceOf(OpenAICompatibleTranscribeAudioRepo);
   });
 });
+
+import {
+  filterLocalTranscriptionSegments,
+  HALLUCINATION_TEXT_MAX_CHARS,
+  NO_SPEECH_PROB_THRESHOLD,
+  type LocalTranscriptionSegment,
+} from "./transcribe-audio.repo";
+
+describe("filterLocalTranscriptionSegments", () => {
+  it("drops high-noSpeechProb segments with short text", () => {
+    expect(NO_SPEECH_PROB_THRESHOLD).toBe(0.6);
+    expect(HALLUCINATION_TEXT_MAX_CHARS).toBe(12);
+    const segments: LocalTranscriptionSegment[] = [
+      { text: "Hello there", noSpeechProb: 0.1 },
+      { text: "you", noSpeechProb: 0.95 },
+      { text: "", noSpeechProb: 0.95 },
+    ];
+    expect(filterLocalTranscriptionSegments(segments)).toBe("Hello there");
+  });
+
+  it("keeps high-noSpeechProb segments when text is long enough", () => {
+    const long = "this is a real sentence that whisper is confident about";
+    const segments: LocalTranscriptionSegment[] = [
+      { text: long, noSpeechProb: 0.95 },
+    ];
+    expect(filterLocalTranscriptionSegments(segments)).toBe(long);
+  });
+
+  it("keeps all segments when noSpeechProb is below the threshold", () => {
+    const segments: LocalTranscriptionSegment[] = [
+      { text: "short", noSpeechProb: 0.5 },
+      { text: "another short one", noSpeechProb: 0.3 },
+    ];
+    expect(filterLocalTranscriptionSegments(segments)).toBe(
+      "short another short one",
+    );
+  });
+
+  it("returns an empty string for an empty input", () => {
+    expect(filterLocalTranscriptionSegments([])).toBe("");
+  });
+
+  it("strips pure-punctuation noise segments", () => {
+    const segments: LocalTranscriptionSegment[] = [
+      { text: "Hi", noSpeechProb: 0.1 },
+      { text: ".", noSpeechProb: 0.9 },
+      { text: "  ", noSpeechProb: 0.9 },
+      { text: "there", noSpeechProb: 0.1 },
+    ];
+    expect(filterLocalTranscriptionSegments(segments)).toBe("Hi there");
+  });
+});
