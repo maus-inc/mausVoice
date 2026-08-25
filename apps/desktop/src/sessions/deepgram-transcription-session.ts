@@ -1,4 +1,3 @@
-import { convertFloat32ToPCM16 } from "@maus-inc/voice-ai";
 import { listen, UnlistenFn } from "@tauri-apps/api/event";
 import { getAppState } from "../store";
 import {
@@ -9,11 +8,17 @@ import {
 import { buildDeepgramWebSocketUrl } from "../utils/deepgram.utils";
 import { getLogger } from "../utils/log.utils";
 import { loadMyEffectiveDictationLanguage } from "../utils/user.utils";
+import {
+  createAudioChunkBuffer,
+  createReceivedChunkLogger,
+} from "./transcription-stream.utils";
 
 type DeepgramStreamingSession = {
   finalize: () => Promise<string>;
   cleanup: () => void;
 };
+
+const LOGGER_PREFIX = "Deepgram WebSocket";
 
 const startDeepgramStreaming = async (
   apiKey: string,
@@ -21,27 +26,21 @@ const startDeepgramStreaming = async (
   language: string,
   onInterimResult?: (segment: string) => void,
 ): Promise<DeepgramStreamingSession> => {
-  getLogger().verbose("[Deepgram WebSocket] Starting with sample rate:", sampleRate);
-  const MIN_CHUNK_DURATION_MS = 20;
-  const MAX_CHUNK_DURATION_MS = 100;
-  const minSamplesPerChunk = Math.max(
-    1,
-    Math.ceil((sampleRate * MIN_CHUNK_DURATION_MS) / 1000),
-  );
-  const maxSamplesPerChunk = Math.max(
-    minSamplesPerChunk,
-    Math.ceil((sampleRate * MAX_CHUNK_DURATION_MS) / 1000),
-  );
+  getLogger().verbose(`[${LOGGER_PREFIX}] Starting with sample rate:`, sampleRate);
 
   let ws: WebSocket | null = null;
   let unlisten: UnlistenFn | null = null;
   let finalTranscript = "";
   let partialTranscript = "";
   let isFinalized = false;
-  let receivedChunkCount = 0;
-  let sentChunkCount = 0;
-  let pendingSampleCount = 0;
-  let pendingChunks: Float32Array[] = [];
+  const receivedLogger = createReceivedChunkLogger(LOGGER_PREFIX);
+
+  const buffer = createAudioChunkBuffer(() => ws, {
+    sampleRate,
+    minChunkDurationMs: 20,
+    maxChunkDurationMs: 100,
+    loggerPrefix: LOGGER_PREFIX,
+  });
 
   const getText = () => {
     return (
@@ -50,84 +49,6 @@ const startDeepgramStreaming = async (
         ? (finalTranscript ? " " : "") + partialTranscript
         : "")
     );
-  };
-
-  const resetBuffers = () => {
-    pendingChunks = [];
-    pendingSampleCount = 0;
-  };
-
-  const drainSamples = (targetCount: number): Float32Array => {
-    if (targetCount <= 0) {
-      return new Float32Array(0);
-    }
-    const output = new Float32Array(targetCount);
-    let filled = 0;
-
-    while (filled < targetCount && pendingChunks.length > 0) {
-      const current = pendingChunks[0];
-      const remaining = targetCount - filled;
-      if (current.length <= remaining) {
-        output.set(current, filled);
-        filled += current.length;
-        pendingChunks.shift();
-      } else {
-        output.set(current.subarray(0, remaining), filled);
-        pendingChunks[0] = current.subarray(remaining);
-        filled += remaining;
-      }
-    }
-
-    pendingSampleCount = Math.max(0, pendingSampleCount - filled);
-    return filled === targetCount ? output : output.subarray(0, filled);
-  };
-
-  const flushPendingSamples = (force = false) => {
-    if (!ws || ws.readyState !== WebSocket.OPEN) {
-      return;
-    }
-
-    while (
-      pendingSampleCount >= minSamplesPerChunk ||
-      (force && pendingSampleCount > 0)
-    ) {
-      const available = pendingSampleCount;
-      let chunkSize = available;
-      if (available >= maxSamplesPerChunk) {
-        chunkSize = maxSamplesPerChunk;
-      } else if (available < minSamplesPerChunk && !force) {
-        break;
-      }
-
-      let chunk = drainSamples(chunkSize);
-      if (force && chunk.length > 0 && chunk.length < minSamplesPerChunk) {
-        const padded = new Float32Array(minSamplesPerChunk);
-        padded.set(chunk);
-        chunk = padded;
-      }
-
-      if (chunk.length === 0) {
-        break;
-      }
-
-      try {
-        const pcm16 = convertFloat32ToPCM16(chunk);
-        ws.send(pcm16);
-        sentChunkCount++;
-        if (sentChunkCount <= 3 || sentChunkCount % 10 === 0) {
-          const durationMs = (chunk.length / sampleRate) * 1000;
-          getLogger().verbose(
-            `[Deepgram WebSocket] Sent chunk #${sentChunkCount} (${chunk.length} samples ~${durationMs.toFixed(1)} ms, ${pcm16.byteLength} bytes)`,
-          );
-        }
-      } catch (error) {
-        getLogger().error(
-          "[Deepgram WebSocket] Error sending buffered chunk:",
-          error,
-        );
-        break;
-      }
-    }
   };
 
   const cleanup = () => {
@@ -139,7 +60,7 @@ const startDeepgramStreaming = async (
       ws.close();
       ws = null;
     }
-    resetBuffers();
+    buffer.reset();
   };
 
   let finalizeResolver: ((text: string) => void) | null = null;
@@ -148,14 +69,14 @@ const startDeepgramStreaming = async (
   const finalize = (): Promise<string> => {
     return new Promise((resolveFinalize) => {
       getLogger().verbose(
-        "[Deepgram WebSocket] Finalize called, isFinalized:",
+        `[${LOGGER_PREFIX}] Finalize called, isFinalized:`,
         isFinalized,
         "ws state:",
         ws?.readyState,
       );
       if (isFinalized) {
         getLogger().verbose(
-          "[Deepgram WebSocket] Already finalized, returning transcript",
+          `[${LOGGER_PREFIX}] Already finalized, returning transcript`,
         );
         resolveFinalize(getText());
         return;
@@ -163,21 +84,21 @@ const startDeepgramStreaming = async (
 
       isFinalized = true;
       finalizeResolver = resolveFinalize;
-      flushPendingSamples(true);
+      buffer.flush(true);
       getLogger().verbose(
-        "[Deepgram WebSocket] Total chunks sent:",
-        sentChunkCount,
+        `[${LOGGER_PREFIX}] Total chunks sent:`,
+        buffer.sentChunkCount(),
       );
 
       if (ws && ws.readyState === WebSocket.OPEN) {
         getLogger().verbose(
-          "[Deepgram WebSocket] Sending CloseStream message...",
+          `[${LOGGER_PREFIX}] Sending CloseStream message...`,
         );
         ws.send(JSON.stringify({ type: "CloseStream" }));
 
         finalizeTimeout = setTimeout(() => {
           getLogger().verbose(
-            "[Deepgram WebSocket] Timeout reached, finalizing with transcript length:",
+            `[${LOGGER_PREFIX}] Timeout reached, finalizing with transcript length:`,
             getText().length,
           );
           cleanup();
@@ -200,7 +121,7 @@ const startDeepgramStreaming = async (
     }
     if (finalizeResolver) {
       getLogger().verbose(
-        "[Deepgram WebSocket] Completing finalize with transcript length:",
+        `[${LOGGER_PREFIX}] Completing finalize with transcript length:`,
         getText().length,
       );
       cleanup();
@@ -209,38 +130,29 @@ const startDeepgramStreaming = async (
     }
   };
 
-  // Start listening for audio chunks IMMEDIATELY, before the WebSocket connects.
-  // This buffers audio so nothing is lost during the connection handshake.
   getLogger().verbose(
-    "[Deepgram WebSocket] Setting up audio_chunk listener...",
+    `[${LOGGER_PREFIX}] Setting up audio_chunk listener...`,
   );
   unlisten = await listen<{ samples: number[] }>("audio_chunk", (event) => {
-    receivedChunkCount++;
-    if (receivedChunkCount <= 3 || receivedChunkCount % 10 === 0) {
-      getLogger().verbose(
-        `[Deepgram WebSocket] Received chunk #${receivedChunkCount}, samples:`,
-        event.payload.samples.length,
-      );
-    }
+    receivedLogger.record(event.payload.samples.length);
     if (!isFinalized) {
       try {
         const typedChunk =
           event.payload.samples instanceof Float32Array
             ? event.payload.samples
             : Float32Array.from(event.payload.samples);
-        pendingChunks.push(typedChunk);
-        pendingSampleCount += typedChunk.length;
-        flushPendingSamples(false);
+        buffer.push(typedChunk);
+        buffer.flush(false);
       } catch (error) {
         getLogger().error(
-          "[Deepgram WebSocket] Error sending audio chunk:",
+          `[${LOGGER_PREFIX}] Error sending audio chunk:`,
           error,
         );
       }
     }
   });
   getLogger().verbose(
-    "[Deepgram WebSocket] Audio listener attached, connecting...",
+    `[${LOGGER_PREFIX}] Audio listener attached, connecting...`,
   );
 
   return new Promise((resolve, reject) => {
@@ -248,15 +160,15 @@ const startDeepgramStreaming = async (
       sampleRate,
       language,
     });
-    getLogger().verbose("[Deepgram WebSocket] Connecting to:", wsUrl);
+    getLogger().verbose(`[${LOGGER_PREFIX}] Connecting to:`, wsUrl);
     ws = new WebSocket(wsUrl, ["token", apiKey]);
 
     ws.onopen = () => {
       getLogger().verbose(
-        "[Deepgram WebSocket] Connected, flushing buffered audio...",
+        `[${LOGGER_PREFIX}] Connected, flushing buffered audio...`,
       );
-      flushPendingSamples(false);
-      getLogger().verbose("[Deepgram WebSocket] Session ready");
+      buffer.flush(false);
+      getLogger().verbose(`[${LOGGER_PREFIX}] Session ready`);
       resolve({ finalize, cleanup });
     };
 
@@ -265,7 +177,7 @@ const startDeepgramStreaming = async (
         const data = JSON.parse(event.data);
         const messageType = data.type;
         getLogger().verbose(
-          "[Deepgram WebSocket] Received message:",
+          `[${LOGGER_PREFIX}] Received message:`,
           messageType,
           data,
         );
@@ -279,7 +191,7 @@ const startDeepgramStreaming = async (
             finalTranscript += (finalTranscript ? " " : "") + transcript;
             partialTranscript = "";
             getLogger().verbose(
-              "[Deepgram WebSocket] Final transcript received, length:",
+              `[${LOGGER_PREFIX}] Final transcript received, length:`,
               finalTranscript.length,
             );
             if (onInterimResult) {
@@ -292,26 +204,26 @@ const startDeepgramStreaming = async (
             partialTranscript = transcript;
           }
         } else if (messageType === "Metadata") {
-          getLogger().verbose("[Deepgram WebSocket] Metadata received:", data);
+          getLogger().verbose(`[${LOGGER_PREFIX}] Metadata received:`, data);
         } else if (messageType === "Error" || data.error) {
-          getLogger().error("[Deepgram WebSocket] Error from server:", data);
+          getLogger().error(`[${LOGGER_PREFIX}] Error from server:`, data);
         }
       } catch (error) {
         getLogger().error(
-          "[Deepgram WebSocket] Error parsing message:",
+          `[${LOGGER_PREFIX}] Error parsing message:`,
           error,
         );
       }
     };
 
     ws.onerror = (error) => {
-      getLogger().error("[Deepgram WebSocket] WebSocket error:", error);
+      getLogger().error(`[${LOGGER_PREFIX}] WebSocket error:`, error);
       cleanup();
       reject(new Error("WebSocket connection failed"));
     };
 
     ws.onclose = (event) => {
-      getLogger().verbose("[Deepgram WebSocket] WebSocket closed:", {
+      getLogger().verbose(`[${LOGGER_PREFIX}] WebSocket closed:`, {
         code: event.code,
         reason: event.reason,
       });
