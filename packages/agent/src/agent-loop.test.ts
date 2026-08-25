@@ -294,35 +294,3 @@ describe("AgentLoop", () => {
     expect(toolResult?.result).toBe(JSON.stringify({ code: "E_BOOM", detail: "secret" }));
   });
 });
-
-  it("stringifies a non-Error thrown value instead of [object Object]", async () => {
-    const throwing: AgentTool = {
-      name: "rejecter",
-      description: "rejects with a plain object",
-      parameters: { type: "object", properties: {} },
-      execute: vi.fn(async () => {
-        // eslint-disable-next-line @typescript-eslint/only-throw-error
-        throw { code: "E_BOOM", detail: "secret" };
-      }),
-    };
-    const { provider } = scriptedProvider(
-      [
-        [
-          {
-            type: "tool-call",
-            id: "call_4",
-            name: "rejecter",
-            arguments: JSON.stringify({ reason: "x" }),
-          },
-        ],
-      ],
-      [{ type: "text-delta", text: "done" }],
-    );
-    const loop = new AgentLoop({ provider, tools: [throwing], systemPrompt: "sys" });
-    const events = (await collectEvents(
-      loop.run([{ role: "user", content: "go" }]),
-    )) as Array<{ type: string; result?: string }>;
-    const toolResult = events.find((e) => e.type === "tool-call-result");
-    // JSON representation of the object, never "[object Object]" or undefined.
-    expect(toolResult?.result).toBe(JSON.stringify({ code: "E_BOOM", detail: "secret" }));
-  });

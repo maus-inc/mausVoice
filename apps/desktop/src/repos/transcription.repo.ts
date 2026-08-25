@@ -1,9 +1,4 @@
-import {
-  PostProcessingMode,
-  Transcription,
-  TranscriptionAudioSnapshot,
-  TranscriptionMode,
-} from "@maus-inc/types";
+import { Transcription, TranscriptionAudioSnapshot } from "@maus-inc/types";
 import { invoke } from "@tauri-apps/api/core";
 import dayjs from "dayjs";
 import { orNull, orUndefined } from "../utils/nullable.utils";
@@ -23,30 +18,11 @@ const mapAudioSnapshot = (
 
 type LocalTranscriptionAudio = TranscriptionAudioSnapshot;
 
-type LocalTranscription = {
-  id: string;
-  transcript: string;
+type LocalTranscription = Omit<
+  Transcription,
+  "createdAt" | "createdByUserId" | "isDeleted"
+> & {
   timestamp: number;
-  audio?: LocalTranscriptionAudio | null;
-  modelSize?: string | null;
-  inferenceDevice?: string | null;
-  rawTranscript?: string | null;
-  sanitizedTranscript?: string | null;
-  transcriptionPrompt?: string | null;
-  postProcessPrompt?: string | null;
-  transcriptionApiKeyId?: string | null;
-  postProcessApiKeyId?: string | null;
-  transcriptionMode?: TranscriptionMode | null;
-  postProcessMode?: PostProcessingMode | null;
-  postProcessDevice?: string | null;
-  postProcessProvider?: string | null;
-  postProcessFailed?: boolean | null;
-  postProcessError?: string | null;
-  transcriptionDurationMs?: number | null;
-  postprocessDurationMs?: number | null;
-  warnings?: string[] | null;
-  remoteStatus?: string | null;
-  remoteDeviceId?: string | null;
 };
 
 export type TranscriptionAudioData = {
