@@ -1,7 +1,11 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { INITIAL_APP_STATE } from "../state/app.state";
 import { setAppState } from "../store";
-import { OPEN_CHAT_HOTKEY, syncHotkeyCombosToNative } from "./keyboard.utils";
+import {
+  getPrettyKeyName,
+  OPEN_CHAT_HOTKEY,
+  syncHotkeyCombosToNative,
+} from "./keyboard.utils";
 
 const { invokeMock } = vi.hoisted(() => ({ invokeMock: vi.fn() }));
 
@@ -112,5 +116,31 @@ describe("syncHotkeyCombosToNative", () => {
     expect(calls).toHaveLength(2);
     expect(calls[1][1].combos).toContainEqual(["ControlLeft", "KeyP"]);
     errorSpy.mockRestore();
+  });
+});
+
+describe("getPrettyKeyName", () => {
+  it.each([
+    ["MetaLeft", "⊞ L"],
+    ["MetaRight", "⊞ R"],
+    ["ControlLeft", "Ctrl L"],
+    ["ControlRight", "Ctrl R"],
+    ["ShiftLeft", "Shift L"],
+    ["ShiftRight", "Shift R"],
+    ["AltLeft", "Alt L"],
+    ["AltRight", "Alt R"],
+    ["OptionLeft", "Alt L"],
+    ["KeyA", "A"],
+    ["Escape", "Escape"],
+    ["LeftArrow", "←"],
+    ["RightArrow", "→"],
+    ["UpArrow", "↑"],
+    ["DownArrow", "↓"],
+  ])("renders %s as %s", (input, expected) => {
+    expect(getPrettyKeyName(input)).toBe(expected);
+  });
+
+  it("preserves side suffix on bare Meta* without a side", () => {
+    expect(getPrettyKeyName("Meta")).toBe("⊞");
   });
 });

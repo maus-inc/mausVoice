@@ -72,6 +72,15 @@ export const isModifierOnlyCombo = (combo: string[]): boolean => {
   return combo.length > 0 && combo.every((key) => isModifierLikeKey(key));
 };
 
+const MODIFIER_SIDE_RE = /(Left|Right)$/i;
+
+const appendSideLabel = (base: string, key: string): string => {
+  const match = key.match(MODIFIER_SIDE_RE);
+  if (!match) return base;
+  const side = match[1].charAt(0).toUpperCase();
+  return `${base} ${side}`;
+};
+
 export const getPrettyKeyName = (key: string): string => {
   const lower = key.toLowerCase();
   if (lower.startsWith("key")) {
@@ -79,19 +88,19 @@ export const getPrettyKeyName = (key: string): string => {
   }
 
   if (lower.startsWith("meta")) {
-    return getPlatform() === "macos" ? "⌘" : "⊞";
+    return appendSideLabel(getPlatform() === "macos" ? "⌘" : "⊞", key);
   }
 
   if (lower.startsWith("control")) {
-    return getPlatform() === "macos" ? "⌃" : "Ctrl";
+    return appendSideLabel(getPlatform() === "macos" ? "⌃" : "Ctrl", key);
   }
 
   if (lower.startsWith("shift")) {
-    return getPlatform() === "macos" ? "⇧" : "Shift";
+    return appendSideLabel(getPlatform() === "macos" ? "⇧" : "Shift", key);
   }
 
   if (lower.startsWith("alt") || lower.startsWith("option")) {
-    return getPlatform() === "macos" ? "⌥" : "Alt";
+    return appendSideLabel(getPlatform() === "macos" ? "⌥" : "Alt", key);
   }
 
   if (lower.startsWith("function")) {
