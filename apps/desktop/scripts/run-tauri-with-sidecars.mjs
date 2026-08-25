@@ -2,7 +2,21 @@
 
 import { spawnSync } from "node:child_process";
 import { chmodSync, existsSync } from "node:fs";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
+import { fileURLToPath } from "node:url";
+
+// Resolved from this file's own location rather than the caller's working
+// directory: a cwd outside apps/desktop would otherwise push `../../scripts`
+// above the repository root. The generator itself resolves its source and
+// output the same way (import.meta.url), so both halves stay cwd-independent.
+const sidebarGenerator = join(
+  dirname(fileURLToPath(import.meta.url)),
+  "..",
+  "..",
+  "..",
+  "scripts",
+  "generate-windows-installer-sidebar.mjs",
+);
 
 const tauriArgs = process.argv.slice(2);
 const tauriCommand = tauriArgs[0];
@@ -32,6 +46,18 @@ if (tauriCommand === "build" || tauriCommand === "dev") {
   if (requestedTarget === "universal-apple-darwin") {
     composeUniversalMacSidecars();
   }
+}
+
+if (tauriCommand === "build") {
+  // Turbo caches the desktop `build` task, but the NSIS sidebar bitmap is
+  // gitignored and is not a task output, so a cache hit restores neither
+  // the bitmap nor its regeneration: a clean checkout would then fail the
+  // bundle step on the missing `sidebarImage`, and a persistent checkout
+  // would reuse a bitmap left stale by an art change. This wrapper is
+  // never cached, so regenerate here, immediately before every Tauri
+  // bundle. `--windows-only` keeps non-Windows hosts, which never bundle
+  // NSIS, a fast no-op.
+  run("node", [sidebarGenerator, "--windows-only"], process.env);
 }
 
 // §5.7: `CI=false` is a truthy string, so bare truthiness would misclassify
