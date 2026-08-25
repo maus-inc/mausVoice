@@ -112,14 +112,17 @@ const getStylePrompt = (input: PostProcessingPromptInput): string => {
   return "Clean up the provided transcript";
 };
 
+export const GLOSSARY_EXACT_SPELLING_INSTRUCTION =
+  "When the user's glossary contains a term, prefer that exact spelling even if the raw transcript differs.";
+
 export const buildSystemPostProcessingTonePrompt = (
   input: PostProcessingPromptInput,
 ): string => {
   if (input.tone.kind === "template" && input.tone.systemPromptTemplate) {
-    return applyTemplateVars(
+    return `${applyTemplateVars(
       input.tone.systemPromptTemplate,
       buildPostProcessingTemplateVars(input),
-    );
+    )}\n${GLOSSARY_EXACT_SPELLING_INSTRUCTION}`;
   }
 
   const stylePrompt = getStylePrompt(input);
@@ -128,6 +131,7 @@ export const buildSystemPostProcessingTonePrompt = (
 ${stylePrompt}
 The result must be in the ${languageName} language.
 Respond with JSON only: { "result": "<processed-transcript>" }
+${GLOSSARY_EXACT_SPELLING_INSTRUCTION}
 `;
 
   return applyTemplateVars(
