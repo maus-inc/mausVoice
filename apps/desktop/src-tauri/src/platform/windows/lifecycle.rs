@@ -173,7 +173,7 @@ mod imp {
         unsafe {
             let console = GetConsoleWindow();
             if console.0.is_null() {
-                let handler: unsafe extern "system" fn(u32) -> i32 = console_ctrl_handler;
+                let handler: unsafe extern "system" fn(u32) -> BOOL = console_ctrl_handler;
                 let _ = SetConsoleCtrlHandler(Some(handler), true);
             }
         }
