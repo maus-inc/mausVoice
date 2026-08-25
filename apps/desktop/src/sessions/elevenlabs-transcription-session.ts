@@ -6,6 +6,7 @@ import {
   TranscriptionSession,
   TranscriptionSessionResult,
 } from "../types/transcription-session.types";
+import { createTranscriptAccumulator } from "./transcript-accumulator.utils";
 
 type ElevenLabsStreamingSession = {
   finalize: () => Promise<string>;
@@ -110,22 +111,14 @@ const startElevenLabsStreaming = async (
   return new Promise((resolve, reject) => {
     let ws: WebSocket | null = null;
     let unlisten: UnlistenFn | null = null;
-    let finalTranscript = "";
-    let partialTranscript = "";
     let isFinalized = false;
     let receivedChunkCount = 0;
     let sentChunkCount = 0;
     let pendingSampleCount = 0;
     let pendingChunks: Float32Array[] = [];
+    const transcriptState = createTranscriptAccumulator();
 
-    const getText = () => {
-      return (
-        finalTranscript +
-        (partialTranscript
-          ? (finalTranscript ? " " : "") + partialTranscript
-          : "")
-      );
-    };
+    const getText = () => transcriptState.text();
 
     const resetBuffers = () => {
       pendingChunks = [];
@@ -365,11 +358,11 @@ const startElevenLabsStreaming = async (
 
         if (messageType === "committed_transcript") {
           const committedText = data.text || "";
-          finalTranscript += (finalTranscript ? " " : "") + committedText;
-          partialTranscript = "";
+          transcriptState.appendFinal(committedText);
+          transcriptState.setPartial("");
           getLogger().verbose(
-            "[ElevenLabs WebSocket] Committed transcript received, length:",
-            finalTranscript.length,
+            `[ElevenLabs WebSocket] Final chunk received, length:`,
+            transcriptState.finalLength(),
           );
           if (onInterimResult && committedText) {
             onInterimResult(committedText);
@@ -378,7 +371,7 @@ const startElevenLabsStreaming = async (
             completeFinalize();
           }
         } else if (messageType === "partial_transcript") {
-          partialTranscript = data.text || "";
+          transcriptState.setPartial(data.text || "");
         } else if (messageType === "session_started") {
           getLogger().verbose("[ElevenLabs WebSocket] Session started:", data);
         } else if (messageType === "error" || messageType === "input_error") {
