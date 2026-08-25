@@ -13,8 +13,9 @@ Choose **OpenAI Compatible** when a service implements the relevant OpenAI-shape
 - **API key** is optional. When present, mausVoice sends it as a Bearer token.
 - **Include /v1 path** defaults on. At runtime, mausVoice strips trailing slashes and appends `/v1` unless the URL already ends in `/v1`. Turn it off when your server exposes the OpenAI routes directly beneath the entered base.
 - The transcription form has an optional **Model** field and falls back to `whisper-1`. Generation requires a selected or typed model.
+- The transcription form has an optional **Transcription path** override (defaults to `/audio/transcriptions`). Set it when the server exposes the STT endpoint at a different route — for example, `/v1/audio/transcriptions` for Open WebUI, or a vendor-specific path. Leave empty to keep the default. Whitespace is trimmed; a leading slash is added if missing.
 
-For transcription, the resolved route is `{runtime base}/audio/transcriptions`. mausVoice submits WAV multipart data with `file` and `model`, plus optional `prompt` and a non-Auto `language`. Long input is divided into 60-second segments with five-second overlap and up to three concurrent requests. This is a batch route and cannot feed real-time output.
+For transcription, the resolved route is `{runtime base}{transcription path}`. mausVoice submits WAV multipart data with `file` and `model`, plus optional `prompt` and a non-Auto `language`. Long input is divided into 60-second segments with five-second overlap and up to three concurrent requests. This is a batch route and cannot feed real-time output.
 
 Generation uses chat completions at the resolved API base. A server may handle ordinary post-processing but reject Assistant tool schemas or streaming; test those separately.
 

@@ -423,6 +423,7 @@ export const getTranscribeAudioRepo = (): TranscribeAudioRepoOutput => {
         const model = prefs.transcriptionModel || "whisper-1";
         const providerApiKey = apiKeyRecord?.keyFull || undefined;
         const includeV1Path = apiKeyRecord?.includeV1Path;
+        const transcriptionPath = apiKeyRecord?.transcriptionPath ?? undefined;
         const fullUrl = buildOpenAICompatibleUrl(baseUrl, includeV1Path);
         if (!apiKeyRecord) {
           throw new Error(
@@ -434,6 +435,7 @@ export const getTranscribeAudioRepo = (): TranscribeAudioRepoOutput => {
           fullUrl,
           model,
           providerApiKey,
+          transcriptionPath,
         );
         break;
       }

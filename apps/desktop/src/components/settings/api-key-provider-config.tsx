@@ -224,6 +224,15 @@ function getOpenAICompatibleConfig(
       ),
       required: false,
     });
+    fields.push({
+      key: "transcriptionPath",
+      label: <FormattedMessage defaultMessage="Transcription path" />,
+      placeholder: "/audio/transcriptions",
+      helperText: (
+        <FormattedMessage defaultMessage="Override the transcription endpoint path. Leave empty to use /audio/transcriptions. Set to /v1/audio/transcriptions for Open WebUI." />
+      ),
+      required: false,
+    });
   }
   return {
     displayName: "OpenAI Compatible",

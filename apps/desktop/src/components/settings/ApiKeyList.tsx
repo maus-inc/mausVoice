@@ -125,6 +125,7 @@ type AddApiKeyCardProps = {
     azureRegion?: string,
     transcriptionModel?: string,
     includeV1Path?: boolean,
+    transcriptionPath?: string,
   ) => Promise<void>;
   onCancel: () => void;
   context: ApiKeyListContext;
@@ -164,6 +165,9 @@ const AddApiKeyCard = ({ onSave, onCancel, context }: AddApiKeyCardProps) => {
       const includeV1PathValue = config.showIncludeV1Path
         ? includeV1Path
         : undefined;
+      const transcriptionPath = fieldValues.transcriptionPath
+        ? fieldValues.transcriptionPath
+        : undefined;
 
       await onSave(
         name,
@@ -173,6 +177,7 @@ const AddApiKeyCard = ({ onSave, onCancel, context }: AddApiKeyCardProps) => {
         azureRegion,
         transcriptionModel,
         includeV1PathValue,
+        transcriptionPath,
       );
       setName("");
       setFieldValues({});
@@ -258,6 +263,7 @@ type EditApiKeyCardProps = {
     azureRegion?: string | null;
     includeV1Path?: boolean | null;
     transcriptionModel?: string | null;
+    transcriptionPath?: string | null;
   }) => Promise<void>;
   onCancel: () => void;
   onTest: (overrides: Partial<SettingsApiKey>) => void;
@@ -280,6 +286,8 @@ const EditApiKeyCard = ({
     if (apiKey.azureRegion) initial.azureRegion = apiKey.azureRegion;
     if (apiKey.transcriptionModel)
       initial.transcriptionModel = apiKey.transcriptionModel;
+    if (apiKey.transcriptionPath)
+      initial.transcriptionPath = apiKey.transcriptionPath;
     return initial;
   });
   const [includeV1Path, setIncludeV1Path] = useState(
@@ -321,6 +329,12 @@ const EditApiKeyCard = ({
       const transcriptionModel = hasTranscriptionModelField
         ? fieldValues.transcriptionModel || null
         : undefined;
+      const hasTranscriptionPathField = config.fields.some(
+        (f) => f.key === "transcriptionPath",
+      );
+      const transcriptionPath = hasTranscriptionPathField
+        ? fieldValues.transcriptionPath || null
+        : undefined;
 
       await onSave({
         name,
@@ -329,6 +343,7 @@ const EditApiKeyCard = ({
         azureRegion,
         includeV1Path: includeV1PathValue,
         transcriptionModel,
+        transcriptionPath,
       });
     } catch (error) {
       console.error("Failed to save API key", error);
@@ -828,6 +843,7 @@ export const ApiKeyList = ({
       azureRegion?: string,
       transcriptionModel?: string,
       includeV1Path?: boolean,
+      transcriptionPath?: string,
     ) => {
       const created = await createApiKey({
         id: generateApiKeyId(),
@@ -837,6 +853,7 @@ export const ApiKeyList = ({
         baseUrl,
         azureRegion,
         includeV1Path,
+        transcriptionPath,
       });
 
       if (transcriptionModel) {
@@ -928,6 +945,7 @@ export const ApiKeyList = ({
         azureRegion?: string | null;
         includeV1Path?: boolean | null;
         transcriptionModel?: string | null;
+        transcriptionPath?: string | null;
       },
     ) => {
       await updateApiKey({
@@ -940,6 +958,10 @@ export const ApiKeyList = ({
         transcriptionModel:
           payload.transcriptionModel !== undefined
             ? payload.transcriptionModel
+            : undefined,
+        transcriptionPath:
+          payload.transcriptionPath !== undefined
+            ? payload.transcriptionPath
             : undefined,
       });
       setEditingApiKeyId(null);
