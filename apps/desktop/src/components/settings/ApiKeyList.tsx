@@ -60,17 +60,19 @@ const getAvailableProviders = (context: ApiKeyListContext): ApiKeyProvider[] =>
       : repo.supportsGenerativeTextModels();
   });
 
+type AddApiKeyValues = {
+  name: string;
+  provider: SettingsApiKeyProvider;
+  key: string;
+  baseUrl?: string;
+  azureRegion?: string;
+  transcriptionModel?: string;
+  includeV1Path?: boolean;
+  transcriptionPath?: string;
+};
+
 type AddApiKeyCardProps = {
-  onSave: (
-    name: string,
-    provider: SettingsApiKeyProvider,
-    key: string,
-    baseUrl?: string,
-    azureRegion?: string,
-    transcriptionModel?: string,
-    includeV1Path?: boolean,
-    transcriptionPath?: string,
-  ) => Promise<void>;
+  onSave: (values: AddApiKeyValues) => Promise<void>;
   onCancel: () => void;
   context: ApiKeyListContext;
 };
@@ -113,16 +115,16 @@ const AddApiKeyCard = ({ onSave, onCancel, context }: AddApiKeyCardProps) => {
         ? fieldValues.transcriptionPath
         : undefined;
 
-      await onSave(
+      await onSave({
         name,
         provider,
-        apiKeyValue,
+        key: apiKeyValue,
         baseUrl,
         azureRegion,
         transcriptionModel,
-        includeV1PathValue,
+        includeV1Path: includeV1PathValue,
         transcriptionPath,
-      );
+      });
       setName("");
       setFieldValues({});
       setIncludeV1Path(true);
@@ -801,16 +803,16 @@ export const ApiKeyList = ({
   }, [apiKeys, selectedApiKeyId, onChange]);
 
   const handleAddApiKey = useCallback(
-    async (
-      name: string,
-      provider: SettingsApiKeyProvider,
-      key: string,
-      baseUrl?: string,
-      azureRegion?: string,
-      transcriptionModel?: string,
-      includeV1Path?: boolean,
-      transcriptionPath?: string,
-    ) => {
+    async ({
+      name,
+      provider,
+      key,
+      baseUrl,
+      azureRegion,
+      transcriptionModel,
+      includeV1Path,
+      transcriptionPath,
+    }: AddApiKeyValues) => {
       const created = await createApiKey({
         id: generateApiKeyId(),
         name,

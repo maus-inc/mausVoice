@@ -187,25 +187,30 @@ export const openaiGenerateTextResponse = async ({
       userParts.push({ type: "text", text: prompt });
       messages.push({ role: "user", content: userParts });
 
+      let response_format: OpenAI.Chat.ChatCompletionCreateParamsNonStreaming["response_format"];
+      if (jsonResponse) {
+        if (JSON_SCHEMA_SUPPORTED_MODELS.has(model)) {
+          response_format = {
+            type: "json_schema",
+            json_schema: {
+              name: jsonResponse.name,
+              description: jsonResponse.description,
+              schema: jsonResponse.schema,
+              strict: true,
+            },
+          };
+        } else {
+          response_format = { type: "json_object" };
+        }
+      }
+
       const response = await client.chat.completions.create({
         messages,
         model,
         temperature: 1,
         max_completion_tokens: maxTokens ?? 1024,
         top_p: 1,
-        response_format: jsonResponse
-          ? JSON_SCHEMA_SUPPORTED_MODELS.has(model)
-            ? {
-                type: "json_schema",
-                json_schema: {
-                  name: jsonResponse.name,
-                  description: jsonResponse.description,
-                  schema: jsonResponse.schema,
-                  strict: true,
-                },
-              }
-            : { type: "json_object" }
-          : undefined,
+        ...(response_format ? { response_format } : {}),
       });
 
       console.log("openai llm usage:", response.usage);

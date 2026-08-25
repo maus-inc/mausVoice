@@ -771,8 +771,8 @@ export class OpenAICompatibleTranscribeAudioRepo extends BaseTranscribeAudioRepo
 }
 
 export class OpenRouterTranscribeAudioRepo extends BaseTranscribeAudioRepo {
-  private openrouterApiKey: string;
-  private model: string;
+  private readonly openrouterApiKey: string;
+  private readonly model: string;
 
   constructor(apiKey: string, model: string) {
     super();

@@ -75,24 +75,31 @@ export const azureOpenAIGenerateText = async ({
       }
       messages.push({ role: "user", content: prompt });
 
+      let response_format:
+        | OpenAI.Chat.ChatCompletionCreateParamsNonStreaming["response_format"]
+        | undefined;
+      if (jsonResponse) {
+        if (JSON_SCHEMA_SUPPORTED_MODELS.has(deploymentName)) {
+          response_format = {
+            type: "json_schema",
+            json_schema: {
+              name: jsonResponse.name,
+              description: jsonResponse.description,
+              schema: jsonResponse.schema,
+              strict: true,
+            },
+          };
+        } else {
+          response_format = { type: "json_object" };
+        }
+      }
+
       const response = await client.chat.completions.create({
         messages,
         model: deploymentName,
         temperature: 1,
         max_completion_tokens: maxTokens ?? 1024,
-        response_format: jsonResponse
-          ? JSON_SCHEMA_SUPPORTED_MODELS.has(deploymentName)
-            ? {
-                type: "json_schema",
-                json_schema: {
-                  name: jsonResponse.name,
-                  description: jsonResponse.description,
-                  schema: jsonResponse.schema,
-                  strict: true,
-                },
-              }
-            : { type: "json_object" }
-          : undefined,
+        response_format,
       });
 
       const content = response.choices?.[0]?.message?.content || "";

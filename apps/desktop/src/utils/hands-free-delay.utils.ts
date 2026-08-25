@@ -28,5 +28,5 @@ export const normalizeHandsFreeDelayMs = (
 };
 
 export const getEffectiveHandsFreeDelayMs = (
-  preferences: { handsFreeDelayMs?: number | null | undefined } | null | undefined,
+  preferences: { handsFreeDelayMs?: number | null } | null | undefined,
 ): number => normalizeHandsFreeDelayMs(preferences?.handsFreeDelayMs);

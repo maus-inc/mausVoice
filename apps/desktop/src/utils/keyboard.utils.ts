@@ -75,7 +75,7 @@ export const isModifierOnlyCombo = (combo: string[]): boolean => {
 const MODIFIER_SIDE_RE = /(Left|Right)$/i;
 
 const appendSideLabel = (base: string, key: string): string => {
-  const match = key.match(MODIFIER_SIDE_RE);
+  const match = MODIFIER_SIDE_RE.exec(key);
   if (!match) return base;
   const side = match[1].charAt(0).toUpperCase();
   return `${base} ${side}`;

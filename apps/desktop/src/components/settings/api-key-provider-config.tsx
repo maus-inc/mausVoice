@@ -133,7 +133,7 @@ const OLLAMA_CONFIG: ProviderFormConfig = {
 function getOpenAICompatibleConfig(
   context: ApiKeyListContext,
 ): ProviderFormConfig {
-  const fields: ProviderFieldDescriptor[] = [
+  let fields: ProviderFieldDescriptor[] = [
     {
       key: "baseUrl",
       label: <FormattedMessage defaultMessage="Base URL" />,
@@ -146,24 +146,26 @@ function getOpenAICompatibleConfig(
     OPTIONAL_API_KEY_FIELD,
   ];
   if (context === "transcription") {
-    fields.push({
-      key: "transcriptionModel",
-      label: <FormattedMessage defaultMessage="Model" />,
-      placeholder: "whisper-1",
-      helperText: (
-        <FormattedMessage defaultMessage="Transcription model name (e.g. whisper-1, gpt-4o-transcribe)" />
-      ),
-      required: false,
-    });
-    fields.push({
-      key: "transcriptionPath",
-      label: <FormattedMessage defaultMessage="Transcription path" />,
-      placeholder: "/audio/transcriptions",
-      helperText: (
-        <FormattedMessage defaultMessage="Override the transcription endpoint path. Leave empty to use /audio/transcriptions. Set to /v1/audio/transcriptions for Open WebUI." />
-      ),
-      required: false,
-    });
+    fields = fields.concat([
+      {
+        key: "transcriptionModel",
+        label: <FormattedMessage defaultMessage="Model" />,
+        placeholder: "whisper-1",
+        helperText: (
+          <FormattedMessage defaultMessage="Transcription model name (e.g. whisper-1, gpt-4o-transcribe)" />
+        ),
+        required: false,
+      },
+      {
+        key: "transcriptionPath",
+        label: <FormattedMessage defaultMessage="Transcription path" />,
+        placeholder: "/audio/transcriptions",
+        helperText: (
+          <FormattedMessage defaultMessage="Override the transcription endpoint path. Leave empty to use /audio/transcriptions. Set to /v1/audio/transcriptions for Open WebUI." />
+        ),
+        required: false,
+      },
+    ]);
   }
   return {
     displayName: "OpenAI Compatible",

@@ -31,11 +31,11 @@ export const buildOpenAICompatibleTranscriptionUrl = (
   transcriptionPath?: string | null,
 ): string => {
   const trimmed = transcriptionPath?.trim();
-  const path =
-    trimmed && trimmed.length > 0
-      ? trimmed.startsWith("/")
-        ? trimmed
-        : `/${trimmed}`
-      : OPENAI_COMPATIBLE_DEFAULT_TRANSCRIPTION_PATH;
+  let path: string;
+  if (!trimmed || trimmed.length === 0) {
+    path = OPENAI_COMPATIBLE_DEFAULT_TRANSCRIPTION_PATH;
+  } else {
+    path = trimmed.startsWith("/") ? trimmed : `/${trimmed}`;
+  }
   return `${buildOpenAICompatibleUrl(baseUrl, includeV1Path)}${path}`;
 };

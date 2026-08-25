@@ -185,6 +185,23 @@ export const openrouterGenerateTextResponse = async ({
       messages.push({ role: "user", content: prompt });
 
       // Build the request with optional provider routing
+      let response_format: OpenAI.Chat.ChatCompletionCreateParamsNonStreaming["response_format"];
+      if (jsonResponse) {
+        if (JSON_SCHEMA_SUPPORTED_MODELS.has(model)) {
+          response_format = {
+            type: "json_schema",
+            json_schema: {
+              name: jsonResponse.name,
+              description: jsonResponse.description,
+              schema: jsonResponse.schema,
+              strict: true,
+            },
+          };
+        } else {
+          response_format = { type: "json_object" };
+        }
+      }
+
       const requestParams: OpenAI.Chat.ChatCompletionCreateParamsNonStreaming & {
         provider?: OpenRouterProviderRouting;
       } = {
@@ -193,19 +210,7 @@ export const openrouterGenerateTextResponse = async ({
         temperature: 1,
         max_tokens: maxTokens ?? 1024,
         top_p: 1,
-        response_format: jsonResponse
-          ? JSON_SCHEMA_SUPPORTED_MODELS.has(model)
-            ? {
-                type: "json_schema",
-                json_schema: {
-                  name: jsonResponse.name,
-                  description: jsonResponse.description,
-                  schema: jsonResponse.schema,
-                  strict: true,
-                },
-              }
-            : { type: "json_object" }
-          : undefined,
+        ...(response_format ? { response_format } : {}),
       };
 
       // Add provider routing if specified

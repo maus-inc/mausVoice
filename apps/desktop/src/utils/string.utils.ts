@@ -8,8 +8,13 @@ import { Nullable } from "@maus-inc/types";
  * like `C++` or `a.b` is interpreted as a regex pattern and either throws
  * or matches the wrong span.
  */
+const REGEXP_ESCAPE_PATTERN = new RegExp(
+  String.raw`[.*+?^` + "${}()|[\\]\\\\]",
+  "g",
+);
+
 export const escapeRegExp = (value: string): string =>
-  value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  value.replace(REGEXP_ESCAPE_PATTERN, String.raw`\$&`);
 
 /**
  * Calculates the Levenshtein edit distance between two strings.
