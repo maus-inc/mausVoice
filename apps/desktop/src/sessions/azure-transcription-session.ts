@@ -6,7 +6,6 @@ import { listen, UnlistenFn } from "@tauri-apps/api/event";
 import { getAppState } from "../store";
 import {
   StopRecordingResponse,
-  TranscriptionSession,
   TranscriptionSessionResult,
 } from "../types/transcription-session.types";
 import { getLogger } from "../utils/log.utils";
@@ -15,8 +14,9 @@ import {
   collectDictionaryEntries,
 } from "../utils/prompt.utils";
 import { loadMyEffectiveDictationLanguage } from "../utils/user.utils";
+import { BaseApiTranscriptionSession } from "./base-api-transcription-session";
 
-export class AzureTranscriptionSession implements TranscriptionSession {
+export class AzureTranscriptionSession extends BaseApiTranscriptionSession {
   private session: AzureStreamingSession | null = null;
   private subscriptionKey: string;
   private region: string;
@@ -24,6 +24,10 @@ export class AzureTranscriptionSession implements TranscriptionSession {
   private receivedChunkCount = 0;
 
   constructor(subscriptionKey: string, region: string) {
+    super({
+      providerLabel: "Azure",
+      inferenceDevice: "API • Azure (Streaming)",
+    });
     this.subscriptionKey = subscriptionKey;
     this.region = region;
   }
@@ -84,54 +88,20 @@ export class AzureTranscriptionSession implements TranscriptionSession {
     }
   }
 
+  protected async runFinalize(): Promise<string | null> {
+    if (!this.session) {
+      throw new Error("session not established");
+    }
+    return this.session.finalize();
+  }
+
   async finalize(
-    _audio: StopRecordingResponse,
+    audio: StopRecordingResponse,
   ): Promise<TranscriptionSessionResult> {
     if (!this.session) {
-      return {
-        rawTranscript: null,
-        metadata: {
-          inferenceDevice: "API • Azure (Streaming)",
-          transcriptionMode: "api",
-        },
-        warnings: ["Azure streaming session was not established"],
-      };
+      return this.notEstablishedResult();
     }
-
-    try {
-      getLogger().verbose("[Azure] Finalizing streaming session...");
-      const finalizeStart = performance.now();
-      const transcript = await this.session.finalize();
-      const durationMs = Math.round(performance.now() - finalizeStart);
-
-      getLogger().verbose("[Azure] Transcript timing:", { durationMs });
-      getLogger().verbose(
-        "[Azure] Received transcript, length:",
-        transcript?.length ?? 0,
-      );
-
-      return {
-        rawTranscript: transcript || null,
-        metadata: {
-          inferenceDevice: "API • Azure (Streaming)",
-          transcriptionMode: "api",
-          transcriptionDurationMs: durationMs,
-        },
-        warnings: [],
-      };
-    } catch (error) {
-      getLogger().error("[Azure] Failed to finalize session:", error);
-      return {
-        rawTranscript: null,
-        metadata: {
-          inferenceDevice: "API • Azure (Streaming)",
-          transcriptionMode: "api",
-        },
-        warnings: [
-          `Azure finalization failed: ${error instanceof Error ? error.message : "Unknown error"}`,
-        ],
-      };
-    }
+    return super.finalize(audio);
   }
 
   cleanup(): void {
@@ -148,6 +118,4 @@ export class AzureTranscriptionSession implements TranscriptionSession {
   supportsStreaming(): boolean {
     return false;
   }
-
-  setInterimResultCallback(): void {}
 }
