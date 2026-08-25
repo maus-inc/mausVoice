@@ -47,7 +47,8 @@ node scripts/generate-windows-installer-sidebar.mjs
 ```
 
 The output (`apps/desktop/src-tauri/icons/nsis-sidebar.bmp`) is generated and
-gitignored; the desktop `build` script regenerates it (with `--windows-only`,
-so mac/Linux builds - which never bundle NSIS - are not gated on the art) and
-the Windows CI jobs regenerate it, so it can never drift from the committed
-art.
+gitignored; the uncached Tauri wrapper (`apps/desktop/scripts/run-tauri-with-sidecars.mjs`)
+regenerates it immediately before every `tauri build` — with `--windows-only`,
+so mac/Linux builds, which never bundle NSIS, are not gated on the art — and
+the Windows CI jobs regenerate it too, so it can never drift from the
+committed art.

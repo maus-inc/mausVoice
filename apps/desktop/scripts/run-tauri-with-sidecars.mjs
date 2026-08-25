@@ -34,6 +34,17 @@ if (tauriCommand === "build" || tauriCommand === "dev") {
   }
 }
 
+if (tauriCommand === "build") {
+  // Turbo caches the desktop `build` task, but the NSIS sidebar bitmap is
+  // gitignored and is not a task output, so a cache hit would restore
+  // neither the bitmap nor its regeneration - and the Tauri bundle step
+  // would then fail on the missing `sidebarImage` (or ship a stale one).
+  // This wrapper is never cached, so regenerate here, immediately before
+  // every Tauri bundle. `--windows-only` keeps non-Windows hosts, which
+  // never bundle NSIS, a fast no-op.
+  run("node", ["../../scripts/generate-windows-installer-sidebar.mjs", "--windows-only"], process.env);
+}
+
 // §5.7: `CI=false` is a truthy string, so bare truthiness would misclassify
 // it as CI. Compare explicitly against "true".
 const inCi = process.env.CI === "true";

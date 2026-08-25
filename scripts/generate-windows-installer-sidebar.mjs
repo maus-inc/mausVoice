@@ -21,10 +21,10 @@
  *   apps/desktop/src-tauri/icons/nsis-sidebar.bmp   (generated, 164x314, 24bpp)
  *
  * The generated bitmap is gitignored and always rebuilt from the committed
- * art, so the two can never drift. It is produced by the desktop `build`
- * script (so every `tauri build` has a fresh copy) and again explicitly in
- * CI before the Windows bundle step - a turbo cache hit on `build` would
- * otherwise skip the side effect while restoring none of it.
+ * art, so the two can never drift. It is produced by the uncached Tauri
+ * wrapper (`scripts/run-tauri-with-sidecars.mjs`, so every `tauri build`
+ * has a fresh copy regardless of Turbo cache hits on the `build` task)
+ * and again explicitly in CI before the Windows bundle step.
  *
  * Usage:
  *   node scripts/generate-windows-installer-sidebar.mjs [--windows-only]
