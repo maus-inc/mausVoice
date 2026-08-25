@@ -1,9 +1,5 @@
 import { getLogger } from "../utils/log.utils";
 import { listen, UnlistenFn } from "@tauri-apps/api/event";
-import {
-  StopRecordingResponse,
-  TranscriptionSessionResult,
-} from "../types/transcription-session.types";
 import { BaseApiTranscriptionSession } from "./base-api-transcription-session";
 import { createTranscriptAccumulator } from "./transcript-accumulator.utils";
 import {
@@ -215,7 +211,7 @@ const startAssemblyAIStreaming = async (
 
 export class AssemblyAITranscriptionSession extends BaseApiTranscriptionSession {
   private session: AssemblyAIStreamingSession | null = null;
-  private apiKey: string;
+  private readonly apiKey: string;
 
   constructor(apiKey: string) {
     super({
@@ -243,20 +239,8 @@ export class AssemblyAITranscriptionSession extends BaseApiTranscriptionSession 
     }
   }
 
-  protected async runFinalize(): Promise<string | null> {
-    if (!this.session) {
-      throw new Error("session not established");
-    }
-    return this.session.finalize();
-  }
-
-  async finalize(
-    audio: StopRecordingResponse,
-  ): Promise<TranscriptionSessionResult> {
-    if (!this.session) {
-      return this.notEstablishedResult();
-    }
-    return super.finalize(audio);
+  protected getStreamSession() {
+    return this.session;
   }
 
   cleanup(): void {

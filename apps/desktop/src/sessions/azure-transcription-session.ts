@@ -4,10 +4,6 @@ import {
 } from "@maus-inc/voice-ai";
 import { listen, UnlistenFn } from "@tauri-apps/api/event";
 import { getAppState } from "../store";
-import {
-  StopRecordingResponse,
-  TranscriptionSessionResult,
-} from "../types/transcription-session.types";
 import { getLogger } from "../utils/log.utils";
 import {
   buildLocalizedTranscriptionPrompt,
@@ -18,8 +14,8 @@ import { BaseApiTranscriptionSession } from "./base-api-transcription-session";
 
 export class AzureTranscriptionSession extends BaseApiTranscriptionSession {
   private session: AzureStreamingSession | null = null;
-  private subscriptionKey: string;
-  private region: string;
+  private readonly subscriptionKey: string;
+  private readonly region: string;
   private unlisten: UnlistenFn | null = null;
   private receivedChunkCount = 0;
 
@@ -88,20 +84,8 @@ export class AzureTranscriptionSession extends BaseApiTranscriptionSession {
     }
   }
 
-  protected async runFinalize(): Promise<string | null> {
-    if (!this.session) {
-      throw new Error("session not established");
-    }
-    return this.session.finalize();
-  }
-
-  async finalize(
-    audio: StopRecordingResponse,
-  ): Promise<TranscriptionSessionResult> {
-    if (!this.session) {
-      return this.notEstablishedResult();
-    }
-    return super.finalize(audio);
+  protected getStreamSession() {
+    return this.session;
   }
 
   cleanup(): void {

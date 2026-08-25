@@ -1,9 +1,5 @@
 import { listen, UnlistenFn } from "@tauri-apps/api/event";
 import { getAppState } from "../store";
-import {
-  StopRecordingResponse,
-  TranscriptionSessionResult,
-} from "../types/transcription-session.types";
 import { buildDeepgramWebSocketUrl } from "../utils/deepgram.utils";
 import { getLogger } from "../utils/log.utils";
 import { loadMyEffectiveDictationLanguage } from "../utils/user.utils";
@@ -230,7 +226,7 @@ const startDeepgramStreaming = async (
 export class DeepgramTranscriptionSession extends BaseApiTranscriptionSession {
   private session: DeepgramStreamingSession | null = null;
   private startupPromise: Promise<void> | null = null;
-  private apiKey: string;
+  private readonly apiKey: string;
 
   constructor(apiKey: string) {
     super({
@@ -267,21 +263,13 @@ export class DeepgramTranscriptionSession extends BaseApiTranscriptionSession {
     await this.startupPromise;
   }
 
-  protected async runFinalize(): Promise<string | null> {
-    if (!this.session) {
-      throw new Error("session not established");
-    }
-    return this.session.finalize();
+  protected getStreamSession() {
+    return this.session;
   }
 
-  async finalize(
-    audio: StopRecordingResponse,
-  ): Promise<TranscriptionSessionResult> {
+  async finalize(audio: Parameters<BaseApiTranscriptionSession["finalize"]>[0]) {
     if (this.startupPromise) {
       await this.startupPromise;
-    }
-    if (!this.session) {
-      return this.notEstablishedResult();
     }
     return super.finalize(audio);
   }
