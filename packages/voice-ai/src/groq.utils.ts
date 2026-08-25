@@ -4,13 +4,14 @@ import type {
   LlmStreamEvent,
 } from "@maus-inc/types";
 import { countWords, retry } from "@maus-inc/utilities";
-import Groq, { toFile } from "groq-sdk/index";
+import Groq from "groq-sdk/index";
 import {
   ChatCompletionContentPart,
   ChatCompletionMessageParam,
 } from "groq-sdk/resources/chat/completions";
 import OpenAI from "openai";
 import { openaiCompatibleStreamChat } from "./openai.utils";
+import { openaiCompatibleTranscribeAudio } from "./openai-compatible-transcribe.utils";
 
 export const GENERATE_TEXT_MODELS = [
   "moonshotai/kimi-k2-instruct-0905",
@@ -85,25 +86,13 @@ export const groqTranscribeAudio = async ({
   prompt,
   language,
 }: GroqTranscriptionArgs): Promise<GroqTranscribeAudioOutput> => {
-  return retry({
-    retries: 3,
-    fn: async () => {
-      const client = createClient(apiKey);
-
-      const file = await toFile(blob, `audio.${ext}`);
-      const response = await client.audio.transcriptions.create({
-        file,
-        model,
-        prompt,
-        language: language && language !== "auto" ? language : undefined,
-      });
-
-      if (!response.text) {
-        throw new Error("Transcription failed");
-      }
-
-      return { text: response.text, wordsUsed: countWords(response.text) };
-    },
+  return openaiCompatibleTranscribeAudio({
+    client: createClient(apiKey),
+    blob,
+    model,
+    ext,
+    prompt,
+    language,
   });
 };
 
