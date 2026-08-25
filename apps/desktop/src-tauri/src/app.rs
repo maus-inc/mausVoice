@@ -1,10 +1,38 @@
 use std::sync::Mutex;
 use std::time::{Duration, Instant};
 use tauri::{Manager, PhysicalPosition, RunEvent, Window, WindowEvent};
-use tauri_plugin_log::{Target, TargetKind, TimezoneStrategy};
+use tauri_plugin_log::{RotationStrategy, Target, TargetKind, TimezoneStrategy};
 use tauri_plugin_window_state::{AppHandleExt, StateFlags};
 
 const AUTOSTART_HIDDEN_ARG: &str = "--mausvoice-autostart-hidden";
+
+/// Maximum size of a single log file before the plugin rotates it.
+/// At 25 MB and `MAX_LOG_FILES` kept files, the total log directory is
+/// capped near 250 MB.
+const MAX_LOG_FILE_SIZE: u64 = 25 * 1024 * 1024;
+
+/// Number of rotated log files the plugin keeps on disk. Combined with
+/// `MAX_LOG_FILE_SIZE` this bounds the log directory to roughly 250 MB.
+const MAX_LOG_FILES: usize = 10;
+
+/// Returns the default log level, or the level requested through the
+/// `MAUSVOICE_LOG` environment variable when it parses to a known level.
+/// `debug` and `trace` are reachable for opt-in troubleshooting; the
+/// production default is `info` to keep file size and noise in check.
+fn default_log_level() -> log::LevelFilter {
+    if let Ok(raw) = std::env::var("MAUSVOICE_LOG") {
+        match raw.trim().to_ascii_lowercase().as_str() {
+            "trace" => return log::LevelFilter::Trace,
+            "debug" => return log::LevelFilter::Debug,
+            "info" => return log::LevelFilter::Info,
+            "warn" | "warning" => return log::LevelFilter::Warn,
+            "error" => return log::LevelFilter::Error,
+            "off" => return log::LevelFilter::Off,
+            _ => {}
+        }
+    }
+    log::LevelFilter::Info
+}
 
 /// Minimum gap between two window-move log lines.
 const MOVE_LOG_THROTTLE: Duration = Duration::from_millis(250);
@@ -99,7 +127,9 @@ pub fn build() -> tauri::Builder<tauri::Wry> {
                     Target::new(TargetKind::Stdout),
                     Target::new(TargetKind::Webview),
                 ])
-                .level(log::LevelFilter::Debug)
+                .max_file_size(MAX_LOG_FILE_SIZE)
+                .rotation_strategy(RotationStrategy::KeepSome(MAX_LOG_FILES))
+                .level(default_log_level())
                 .level_for("hyper_util", log::LevelFilter::Info)
                 .level_for("reqwest", log::LevelFilter::Info)
                 .timezone_strategy(TimezoneStrategy::UseLocal)
@@ -200,7 +230,10 @@ pub fn build() -> tauri::Builder<tauri::Wry> {
             // window (UIPI), so this is the first thing to check when a user
             // reports hotkeys failing over an elevated app.
             #[cfg(target_os = "windows")]
-            crate::platform::windows::permissions::log_elevation_state();
+            {
+                crate::platform::windows::permissions::log_elevation_state();
+                crate::platform::windows::lifecycle::start_watcher(app.handle());
+            }
 
             // Purge old log files, keeping the latest 10
             crate::system::diagnostics::purge_old_logs(app.handle());
@@ -353,6 +386,7 @@ pub fn build() -> tauri::Builder<tauri::Wry> {
             crate::commands::sync_native_pill_assistant,
             crate::commands::start_key_listener,
             crate::commands::stop_key_listener,
+            crate::commands::restart_key_listener,
             crate::commands::sync_hotkey_combos,
             crate::commands::sync_compositor_hotkeys,
             crate::commands::reset_key_listener_state,
