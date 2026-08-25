@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 import {
   computeComposerRect,
   getComposerWindowPosition,
@@ -114,5 +114,125 @@ describe("pill geometry integration", () => {
   it("returns null when no pill geometry is known, falling back to OS placement", () => {
     setPillGeometry(null, null);
     expect(getComposerWindowPosition({ width: 560, height: 420 })).toBeNull();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// reviewTextInComposer failure / duplicate-window behaviour.
+// The Tauri and webview-window surfaces are mocked so these run in node.
+// ---------------------------------------------------------------------------
+const mocks = vi.hoisted(() => {
+  const invoke = vi.fn();
+  const getByLabel = vi.fn();
+  const listen = vi.fn();
+  const showToast = vi.fn();
+  return { invoke, getByLabel, listen, showToast };
+});
+
+vi.mock("@tauri-apps/api/core", () => ({
+  invoke: (...args: unknown[]) => mocks.invoke(...args),
+}));
+vi.mock("@tauri-apps/api/event", () => ({
+  listen: (...args: unknown[]) => mocks.listen(...args),
+}));
+vi.mock("@tauri-apps/api/webviewWindow", () => ({
+  WebviewWindow: {
+    getByLabel: (...args: unknown[]) => mocks.getByLabel(...args),
+  },
+}));
+vi.mock("../i18n/intl", () => {
+  return {
+    getIntl: () => ({
+      formatMessage: (descriptor: unknown) => {
+        const m = descriptor as { defaultMessage?: string };
+        return m.defaultMessage ?? "";
+      },
+    }),
+  };
+});
+vi.mock("../actions/toast.actions", () => ({
+  showToast: (...args: unknown[]) => mocks.showToast(...args),
+}));
+vi.mock("./log.utils", () => ({
+  getLogger: () => ({
+    info: vi.fn(),
+    warning: vi.fn(),
+    error: vi.fn(),
+    verbose: vi.fn(),
+  }),
+}));
+
+import { reviewTextInComposer } from "./composer.utils";
+
+describe("reviewTextInComposer", () => {
+  beforeEach(() => {
+    mocks.invoke.mockReset();
+    mocks.getByLabel.mockReset();
+    mocks.listen.mockReset();
+    mocks.showToast.mockReset();
+    // Default: register/discard/destroy succeed; creation returns a window.
+    mocks.invoke.mockImplementation(async (cmd: string) => {
+      if (cmd === "floating_window_create") return { id: "floating-1" };
+      return undefined;
+    });
+    mocks.getByLabel.mockResolvedValue(null);
+    mocks.listen.mockResolvedValue(vi.fn());
+  });
+
+  it("returns null and surfaces a recovery toast when window creation fails", async () => {
+    mocks.invoke.mockImplementation(async (cmd: string) => {
+      if (cmd === "floating_window_create") {
+        throw new Error("0x8007139F");
+      }
+      return undefined;
+    });
+    const result = await reviewTextInComposer("hello");
+    expect(result).toBeNull();
+    expect(mocks.showToast).toHaveBeenCalledWith(
+      expect.objectContaining({
+        toastType: "error",
+        action: "open_transcriptions",
+      }),
+    );
+  });
+
+  it("does not open a second window while one is already live", async () => {
+    let created = 0;
+    let resultListener: ((event: { payload: unknown }) => void) | undefined;
+    mocks.listen.mockImplementation(
+      async (_event: string, cb: typeof resultListener) => {
+        resultListener = cb;
+        return vi.fn();
+      },
+    );
+    mocks.invoke.mockImplementation(async (cmd: string) => {
+      if (cmd === "floating_window_create") {
+        created += 1;
+        return { id: `floating-${created}` };
+      }
+      return undefined;
+    });
+
+    // Start the first review but do NOT await it. The synchronous entry
+    // guard reserves the slot before any microtask runs, so the second
+    // call is rejected without creating another window.
+    const firstPromise = reviewTextInComposer("one");
+    // Flush the first await microtask boundary.
+    await Promise.resolve();
+    const second = await reviewTextInComposer("two");
+
+    expect(second).toBeNull();
+    // Only one window was created (by the first, in-flight review).
+    expect(created).toBe(1);
+
+    // Resolve the first call via its composer-result listener so it does
+    // not leak the five-minute timeout.
+    const firstRequestId = mocks.invoke.mock.calls.find(
+      (c: unknown[]) => c[0] === "composer_register_text",
+    )?.[1]?.requestId as string;
+    resultListener?.({
+      payload: { requestId: firstRequestId, accepted: false, text: "" },
+    });
+    await firstPromise;
   });
 });

@@ -64,6 +64,7 @@ import {
 } from "../../utils/analytics.utils";
 import { registerMembers, registerUsers } from "../../utils/app.utils";
 import { setPillGeometry } from "../../utils/composer.utils";
+import { browserRouter } from "../../router";
 import { getIsDevMode } from "../../utils/env.utils";
 import { createId } from "../../utils/id.utils";
 import {
@@ -703,6 +704,9 @@ export const AppSideEffects = () => {
       });
     } else if (payload.action === "surface_window") {
       surfaceMainWindow();
+    } else if (payload.action === "open_transcriptions") {
+      surfaceMainWindow();
+      browserRouter.navigate("/dashboard/transcriptions");
     }
   });
 

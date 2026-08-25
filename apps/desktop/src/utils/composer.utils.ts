@@ -2,6 +2,7 @@ import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { WebviewWindow } from "@tauri-apps/api/webviewWindow";
 import { getIntl } from "../i18n/intl";
+import { showToast } from "../actions/toast.actions";
 import { createId } from "./id.utils";
 import { getLogger } from "./log.utils";
 
@@ -121,15 +122,42 @@ export const getComposerWindowPosition = (
   return computeComposerRect(cachedPillRect, composerSize, cachedPillMonitor);
 };
 
+/**
+ * Tracks the currently open review window, if any. The paste/output path
+ * awaits one review at a time, but a second dictation or a stale caller can
+ * race; reusing the live window prevents a broken duplicate WebView2 window
+ * (the Windows "white flash then vanishes" failure class).
+ */
+let activeComposer: { windowId: string; requestId: string } | null = null;
+
 /** Open the local composer popout and wait for its Insert/Cancel decision. */
 export const reviewTextInComposer = async (
   text: string,
 ): Promise<string | null> => {
+  // If a review is already in flight, focus its window best-effort and do
+  // not open a second WebView2 window. The guard is set synchronously at
+  // entry (before any await) so a racing second dictation cannot slip
+  // through while the first window is still being created.
+  if (activeComposer) {
+    if (activeComposer.windowId) {
+      WebviewWindow.getByLabel(activeComposer.windowId)
+        .then((existing) => existing?.setFocus())
+        .catch(() => undefined);
+    }
+    getLogger().warning(
+      "reviewTextInComposer: a composer window is already open; focusing it",
+    );
+    return null;
+  }
+
   const requestId = createId();
   const route = `composer?requestId=${encodeURIComponent(requestId)}`;
   let windowId: string | null = null;
   let unlisten: (() => void) | undefined;
   let unlistenClose: (() => void) | undefined;
+
+  // Reserve the slot synchronously so concurrent calls are rejected.
+  activeComposer = { windowId: "", requestId };
 
   try {
     await invoke("composer_register_text", { requestId, text });
@@ -139,6 +167,7 @@ export const reviewTextInComposer = async (
       const finish = (value: string | null) => {
         if (settled) return;
         settled = true;
+        activeComposer = null;
         if (timeoutId !== null) {
           window.clearTimeout(timeoutId);
           timeoutId = null;
@@ -195,6 +224,7 @@ export const reviewTextInComposer = async (
             },
           );
           windowId = created.id;
+          activeComposer = { windowId: created.id, requestId };
 
           // A second transcript while a composer is open must not create a
           // broken duplicate window. If a composer window already exists the
@@ -221,17 +251,30 @@ export const reviewTextInComposer = async (
           // when review-before-insert is enabled: return null so the caller
           // skips insertion and keeps the transcript in history. The Rust
           // command already logged a sanitized error with the window label.
+          const message =
+            error instanceof Error ? error.message : String(error);
           getLogger().error(
-            `reviewTextInComposer window creation failed: ${
-              error instanceof Error ? error.message : String(error)
-            }`,
+            `reviewTextInComposer window creation failed: ${message}`,
           );
+          // Surface a visible recovery action: the transcript was retained
+          // in history, and the "Open history" button brings the main
+          // window to the transcriptions list so the user does not lose it.
+          void showToast({
+            message: getIntl().formatMessage({
+              defaultMessage:
+                "Could not open the review window. Your transcript was saved to history.",
+            }),
+            toastType: "error",
+            duration: 8000,
+            action: "open_transcriptions",
+          });
           finish(null);
         }
       })();
     });
     return result;
   } finally {
+    activeComposer = null;
     unlisten?.();
     unlistenClose?.();
     await invoke("composer_discard_text", { requestId }).catch(() => {
