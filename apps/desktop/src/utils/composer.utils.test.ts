@@ -236,3 +236,54 @@ describe("reviewTextInComposer", () => {
     await firstPromise;
   });
 });
+
+describe("reviewTextInComposer cleanup", () => {
+  beforeEach(() => {
+    mocks.invoke.mockReset();
+    mocks.getByLabel.mockReset();
+    mocks.listen.mockReset();
+    mocks.showToast.mockReset();
+    mocks.invoke.mockResolvedValue(undefined);
+    mocks.getByLabel.mockResolvedValue(null);
+    mocks.listen.mockResolvedValue(vi.fn());
+  });
+
+  it("destroys the window and discards its text when the user accepts", async () => {
+    let createdId = "";
+    let resultListener: ((event: { payload: unknown }) => void) | undefined;
+    mocks.listen.mockImplementation(
+      async (_event: string, cb: typeof resultListener) => {
+        resultListener = cb;
+        return vi.fn();
+      },
+    );
+    mocks.invoke.mockImplementation(async (cmd: string) => {
+      if (cmd === "floating_window_create") {
+        createdId = "floating-accept";
+        return { id: createdId };
+      }
+      return undefined;
+    });
+
+    const promise = reviewTextInComposer("hello");
+    await Promise.resolve();
+    const requestId = mocks.invoke.mock.calls.find(
+      (c: unknown[]) => c[0] === "composer_register_text",
+    )?.[1]?.requestId as string;
+
+    resultListener?.({
+      payload: { requestId, accepted: true, text: "edited" },
+    });
+    const result = await promise;
+
+    expect(result).toBe("edited");
+    const destroyCall = mocks.invoke.mock.calls.find(
+      (c: unknown[]) => c[0] === "floating_window_destroy",
+    );
+    expect(destroyCall?.[1]).toMatchObject({ id: "floating-accept" });
+    const discardCall = mocks.invoke.mock.calls.find(
+      (c: unknown[]) => c[0] === "composer_discard_text",
+    );
+    expect(discardCall?.[1]).toMatchObject({ requestId });
+  });
+});
