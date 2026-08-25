@@ -8,7 +8,8 @@ import type {
   LlmToolChoice,
 } from "@maus-inc/types";
 import { countWords, retry } from "@maus-inc/utilities";
-import OpenAI, { toFile } from "openai";
+import OpenAI from "openai";
+import { openaiCompatibleTranscribeAudio } from "./openai-compatible-transcribe.utils";
 import { buildJsonSchemaResponseFormat } from "./response-format.utils";
 import type { CustomFetch } from "./types";
 import type {
@@ -122,25 +123,13 @@ export const openaiTranscribeAudio = async ({
   prompt,
   language,
 }: OpenAITranscriptionArgs): Promise<OpenAITranscribeAudioOutput> => {
-  return retry({
-    retries: 3,
-    fn: async () => {
-      const client = createClient(apiKey);
-
-      const file = await toFile(blob, `audio.${ext}`);
-      const response = await client.audio.transcriptions.create({
-        file,
-        model,
-        prompt,
-        language: language && language !== "auto" ? language : undefined,
-      });
-
-      if (!response.text) {
-        throw new Error("Transcription failed");
-      }
-
-      return { text: response.text, wordsUsed: countWords(response.text) };
-    },
+  return openaiCompatibleTranscribeAudio({
+    client: createClient(apiKey),
+    blob,
+    model,
+    ext,
+    prompt,
+    language,
   });
 };
 
