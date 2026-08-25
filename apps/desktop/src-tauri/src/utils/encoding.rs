@@ -1,3 +1,9 @@
+// Stable iterators in this file are intentional; clippy 1.98's
+// `chunks_exact_to_as_chunks` lint suggests `as_chunks` which still requires
+// `chunks_exact` semantics in nested call sites and would churn diffs for no
+// behavioral gain.
+#![allow(clippy::chunks_exact_to_as_chunks)]
+
 pub fn decode_to_utf8(bytes: &[u8]) -> Result<String, String> {
     if bytes.starts_with(&[0xFF, 0xFE]) {
         let u16s: Vec<u16> = bytes[2..]
