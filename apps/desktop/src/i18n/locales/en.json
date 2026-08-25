@@ -631,6 +631,7 @@
   "transcription": "Transcription",
   "transcription_details": "Transcription Details",
   "transcription_duration": "Transcription Duration",
+  "transcription_failed_your_recording_is_saved_so_you_can_retry": "Transcription failed. Your recording is saved so you can retry.",
   "transcription_model": "Transcription model",
   "transcription_model_name_e_g_whisper_1_gpt_4o_transcribe": "Transcription model name (e.g. whisper-1, gpt-4o-transcribe)",
   "transcription_step": "Transcription Step",

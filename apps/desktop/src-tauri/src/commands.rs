@@ -1474,16 +1474,13 @@ pub async fn stop_recording(
             })
         }
         Err(err) => {
-            let not_recording = (*err)
-                .downcast_ref::<crate::errors::RecordingError>()
-                .map(|inner| matches!(inner, crate::errors::RecordingError::NotRecording))
-                .unwrap_or(false);
+            let recording_error = (*err).downcast_ref::<crate::errors::RecordingError>();
 
-            if not_recording {
-                return Ok(StopRecordingResponse {
-                    samples: Vec::new(),
-                    sample_rate: 0,
-                });
+            if matches!(
+                recording_error,
+                Some(crate::errors::RecordingError::NotRecording)
+            ) {
+                return Err("No recording in progress".to_string());
             }
 
             let message = err.to_string();

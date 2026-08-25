@@ -1141,7 +1141,9 @@ export const DictationSideEffects = () => {
   // second no-op idempotent restart.
   useTauriListen<void>("desktop_resume", () => {
     invoke("restart_key_listener").catch((error) =>
-      getLogger().error(`Failed to restart key listener after resume: ${error}`),
+      getLogger().error(
+        `Failed to restart key listener after resume: ${error}`,
+      ),
     );
   });
 
