@@ -176,6 +176,34 @@ export const reviewTextInComposer = async (
       let settled = false;
       let timeoutId: number | null = null;
       let readyTimeoutId: number | null = null;
+      // The `composer-ready` listener may fire before the window-creation
+      // await chain completes and schedules the timeout. A flag — not a
+      // nullable timeout id — is the only race-free readiness signal: the
+      // listener sets it the moment the page mounts, and the setTimeout
+      // call only schedules itself when the flag is still false. The
+      // previous nullable-id guard let a fast-mounting page be killed 15s
+      // later because the listener had no timeout id to clear at the
+      // moment it fired.
+      let composerReady = false;
+      const armReadyTimeout = () => {
+        if (composerReady) return;
+        readyTimeoutId = window.setTimeout(() => {
+          readyTimeoutId = null;
+          getLogger().error(
+            "reviewTextInComposer: composer-ready timeout (webview likely blank)",
+          );
+          void showToast({
+            message: getIntl().formatMessage({
+              defaultMessage:
+                "Could not open the review window. Your transcript was saved to history.",
+            }),
+            toastType: "error",
+            duration: 8000,
+            action: "open_transcriptions",
+          });
+          finish(null);
+        }, COMPOSER_READY_TIMEOUT_MS);
+      };
       const finish = (value: string | null) => {
         if (settled) return;
         settled = true;
@@ -202,6 +230,7 @@ export const reviewTextInComposer = async (
             "composer-ready",
             (event) => {
               if (event.payload.requestId !== requestId) return;
+              composerReady = true;
               if (readyTimeoutId !== null) {
                 window.clearTimeout(readyTimeoutId);
                 readyTimeoutId = null;
@@ -274,26 +303,14 @@ export const reviewTextInComposer = async (
             });
           }
 
-          // Start the ready-timeout AFTER the window exists; if the page
-          // never mounts, surface a recovery toast (the transcript is
-          // already in history via the calling pipeline) and resolve
-          // null so the paste/insert path is skipped, matching the
-          // window-creation-failure contract.
-          readyTimeoutId = window.setTimeout(() => {
-            getLogger().error(
-              "reviewTextInComposer: composer-ready timeout (webview likely blank)",
-            );
-            void showToast({
-              message: getIntl().formatMessage({
-                defaultMessage:
-                  "Could not open the review window. Your transcript was saved to history.",
-              }),
-              toastType: "error",
-              duration: 8000,
-              action: "open_transcriptions",
-            });
-            finish(null);
-          }, COMPOSER_READY_TIMEOUT_MS);
+          // Start the ready-timeout AFTER the window exists. `armReadyTimeout`
+          // is a no-op if the page already mounted during the awaits above,
+          // so a fast-mounting composer is never killed by its own safety
+          // net. If the page never mounts, surface a recovery toast (the
+          // transcript is already in history via the calling pipeline)
+          // and resolve null so the paste/insert path is skipped, matching
+          // the window-creation-failure contract.
+          armReadyTimeout();
 
           timeoutId = window.setTimeout(() => {
             finish(null);

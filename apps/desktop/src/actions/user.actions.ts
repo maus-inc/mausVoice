@@ -461,18 +461,23 @@ export const setInteractionChimeEnabled = async (enabled: boolean) => {
 export const setInteractionFeedbackVolume = async (
   volume: number,
 ): Promise<void> => {
-  // Persist the user-facing preference (full 0..=1) and mirror the clamped
-  // value into Rust so the thock gain is honored on the warm path AND the
-  // fallback path. The Rust side clamps again to its safe window as a
-  // defence-in-depth measure.
+  // Persist the user-facing preference (clamped to [0, 1]) and mirror the
+  // same clamped value into Rust so the IPC payload matches the persisted
+  // record. The Rust side clamps again to its safe window as a
+  // defence-in-depth measure; this clamp guarantees the on-the-wire
+  // payload never exceeds the [0, 1] range even if that fallback is
+  // removed in the future.
+  const clamped = Math.max(0, Math.min(1, volume));
   await updateUser(
     (user) => {
-      user.interactionFeedbackVolume = Math.max(0, Math.min(1, volume));
+      user.interactionFeedbackVolume = clamped;
     },
     "Unable to update interaction feedback volume. User not found.",
     "Failed to save interaction feedback volume. Please try again.",
   );
-  invoke("set_interaction_feedback_volume", { volume }).catch(() => {});
+  invoke("set_interaction_feedback_volume", { volume: clamped }).catch(
+    () => {},
+  );
 };
 
 export const setUserName = async (name: string): Promise<void> => {
