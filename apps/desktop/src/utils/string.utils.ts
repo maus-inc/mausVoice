@@ -11,7 +11,7 @@ import { Nullable } from "@maus-inc/types";
 const REGEXP_ESCAPE_PATTERN = /[.*+?^${}()|[\]\\]/g;
 
 export const escapeRegExp = (value: string): string =>
-  value.replace(REGEXP_ESCAPE_PATTERN, "\\$&");
+  value.replace(REGEXP_ESCAPE_PATTERN, String.raw`\$&`);
 
 /**
  * Calculates the Levenshtein edit distance between two strings.

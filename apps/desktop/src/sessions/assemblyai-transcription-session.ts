@@ -9,6 +9,7 @@ import {
   createAudioChunkBuffer,
   createReceivedChunkLogger,
 } from "./transcription-stream.utils";
+import { createTranscriptAccumulator } from "./transcript-accumulator.utils";
 
 type AssemblyAIStreamingSession = {
   finalize: () => Promise<string>;
@@ -26,8 +27,8 @@ const startAssemblyAIStreaming = async (
   return new Promise((resolve, reject) => {
     let ws: WebSocket | null = null;
     let unlisten: UnlistenFn | null = null;
-    let finalTranscript = "";
     let isFinalized = false;
+    const transcriptState = createTranscriptAccumulator();
     const receivedLogger = createReceivedChunkLogger(LOGGER_PREFIX);
 
     const buffer = createAudioChunkBuffer(() => ws, {
@@ -38,13 +39,8 @@ const startAssemblyAIStreaming = async (
     });
 
     let currentTurn = 0;
-    let extra = "";
 
-    const getText = () => {
-      return (
-        finalTranscript + (extra ? (finalTranscript ? " " : "") + extra : "")
-      );
-    };
+    const getText = () => transcriptState.text();
 
     const cleanup = () => {
       if (unlisten) {
@@ -109,7 +105,7 @@ const startAssemblyAIStreaming = async (
           };
         } else {
           cleanup();
-          resolveFinalize(finalTranscript);
+          resolveFinalize(transcriptState.text());
         }
       });
     };
@@ -178,22 +174,22 @@ const startAssemblyAIStreaming = async (
 
         if (data.type === "Turn" && data.end_of_turn) {
           const turnTranscript = data.transcript || "";
-          finalTranscript += (finalTranscript ? " " : "") + turnTranscript;
+          transcriptState.appendFinal(turnTranscript);
           getLogger().info(
             `[${LOGGER_PREFIX}] Final formatted transcript received, length:`,
-            finalTranscript.length,
+            transcriptState.finalLength(),
           );
           if (onInterimResult && turnTranscript) {
             onInterimResult(turnTranscript);
           }
           if (currentTurn === data.turn_order) {
-            extra = "";
+            transcriptState.setPartial("");
           }
         } else if (data.type === "Turn") {
           if (currentTurn != data.turn_order) {
             currentTurn = data.turn_order;
 
-            extra = data.transcript;
+            transcriptState.setPartial(data.transcript);
           }
         }
       } catch (error) {
