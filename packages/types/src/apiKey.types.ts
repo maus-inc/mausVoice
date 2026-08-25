@@ -34,4 +34,5 @@ export type ApiKey = {
   baseUrl?: string | null;
   azureRegion?: string | null;
   includeV1Path?: boolean | null;
+  transcriptionPath?: string | null;
 };

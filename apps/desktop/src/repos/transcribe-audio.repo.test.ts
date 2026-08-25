@@ -7,6 +7,7 @@ import {
   BaseTranscribeAudioRepo,
   DeepgramTranscribeAudioRepo,
   LocalTranscribeAudioRepo,
+  OpenAICompatibleTranscribeAudioRepo,
   OpenRouterTranscribeAudioRepo,
   TranscribeAudioOutput,
   TranscribeSegmentInput,
@@ -531,5 +532,27 @@ describe("OpenRouter transcription support", () => {
     expect(
       warnings.some((warning) => warning.includes("OpenRouter transcription")),
     ).toBe(true);
+  });
+});
+
+describe("OpenAI-compatible transcription path override", () => {
+  it("dispatches an openai-compatible key to OpenAICompatibleTranscribeAudioRepo", () => {
+    const state = structuredClone(INITIAL_APP_STATE);
+    state.settings.aiTranscription.mode = "api";
+    state.settings.aiTranscription.selectedApiKeyId = "compat-key";
+    state.apiKeyById["compat-key"] = {
+      id: "compat-key",
+      name: "Compat",
+      provider: "openai-compatible",
+      createdAt: "2026-06-03T00:00:00.000Z",
+      keyFull: "ck",
+      baseUrl: "http://localhost:8080",
+      transcriptionModel: "whisper-1",
+    };
+    setAppState(state, true);
+
+    const { repo } = getTranscribeAudioRepo();
+
+    expect(repo).toBeInstanceOf(OpenAICompatibleTranscribeAudioRepo);
   });
 });

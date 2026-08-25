@@ -1,4 +1,8 @@
 import { fetch } from "@tauri-apps/plugin-http";
+import {
+  buildOpenAICompatibleTranscriptionUrl,
+  OPENAI_COMPATIBLE_DEFAULT_TRANSCRIPTION_PATH,
+} from "./openai-compatible.utils";
 
 export type OpenAICompatibleTranscriptionArgs = {
   baseUrl: string;
@@ -8,6 +12,7 @@ export type OpenAICompatibleTranscriptionArgs = {
   ext: string;
   prompt?: string;
   language?: string;
+  transcriptionPath?: string;
 };
 
 export type OpenAICompatibleTranscribeAudioOutput = {
@@ -22,8 +27,13 @@ export const openaiCompatibleTranscribeAudio = async ({
   ext,
   prompt,
   language,
+  transcriptionPath,
 }: OpenAICompatibleTranscriptionArgs): Promise<OpenAICompatibleTranscribeAudioOutput> => {
-  const url = baseUrl.replace(/\/$/, "");
+  const url = buildOpenAICompatibleTranscriptionUrl(
+    baseUrl,
+    true,
+    transcriptionPath ?? OPENAI_COMPATIBLE_DEFAULT_TRANSCRIPTION_PATH,
+  );
 
   const formData = new FormData();
   const file = new Blob([blob], { type: `audio/${ext}` });
@@ -41,7 +51,7 @@ export const openaiCompatibleTranscribeAudio = async ({
     headers["Authorization"] = `Bearer ${apiKey}`;
   }
 
-  const response = await fetch(`${url}/audio/transcriptions`, {
+  const response = await fetch(url, {
     method: "POST",
     body: formData,
     headers,

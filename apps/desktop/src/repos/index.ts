@@ -352,11 +352,13 @@ export const getTranscribeAudioRepo = (): TranscribeAudioRepoOutput => {
         const model = prefs.transcriptionModel || "whisper-1";
         const providerApiKey = apiKeyRecord?.keyFull || undefined;
         const includeV1Path = apiKeyRecord?.includeV1Path;
+        const transcriptionPath = apiKeyRecord?.transcriptionPath ?? undefined;
         const fullUrl = buildOpenAICompatibleUrl(baseUrl, includeV1Path);
         repo = new OpenAICompatibleTranscribeAudioRepo(
           fullUrl,
           model,
           providerApiKey,
+          transcriptionPath,
         );
         break;
       }
