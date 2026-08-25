@@ -244,7 +244,10 @@ describe("storeTranscription audio retention", () => {
     );
     expect(createTranscriptionMock).toHaveBeenCalledTimes(1);
     const stored = createTranscriptionMock.mock.calls[0][0];
-    expect(stored.audio).toEqual({ filePath: "/tmp/audio.wav", durationMs: 100 });
+    expect(stored.audio).toEqual({
+      filePath: "/tmp/audio.wav",
+      durationMs: 100,
+    });
     expect(stored.transcript).toBe("[Transcription Failed]");
     expect(result.transcription).not.toBeNull();
   });
