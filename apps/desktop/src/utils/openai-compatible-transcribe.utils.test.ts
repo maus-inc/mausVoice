@@ -28,9 +28,9 @@ afterEach(() => {
 
 describe("openaiCompatibleTranscribeAudio", () => {
   it("posts to the default /audio/transcriptions path when no override is given", async () => {
-    const fetchSpy = vi.fn().mockResolvedValue(
-      mockFetchResponse({ text: "hello" }),
-    );
+    const fetchSpy = vi
+      .fn()
+      .mockResolvedValue(mockFetchResponse({ text: "hello" }));
     mockTauriFetch(fetchSpy);
 
     const transcribe = await loadModule();
@@ -46,9 +46,9 @@ describe("openaiCompatibleTranscribeAudio", () => {
   });
 
   it("replaces the trailing path with a custom transcription path", async () => {
-    const fetchSpy = vi.fn().mockResolvedValue(
-      mockFetchResponse({ text: "hello" }),
-    );
+    const fetchSpy = vi
+      .fn()
+      .mockResolvedValue(mockFetchResponse({ text: "hello" }));
     mockTauriFetch(fetchSpy);
 
     const transcribe = await loadModule();
@@ -65,9 +65,9 @@ describe("openaiCompatibleTranscribeAudio", () => {
   });
 
   it("normalizes a custom transcription path that does not start with /", async () => {
-    const fetchSpy = vi.fn().mockResolvedValue(
-      mockFetchResponse({ text: "hi" }),
-    );
+    const fetchSpy = vi
+      .fn()
+      .mockResolvedValue(mockFetchResponse({ text: "hi" }));
     mockTauriFetch(fetchSpy);
 
     const transcribe = await loadModule();
@@ -84,9 +84,9 @@ describe("openaiCompatibleTranscribeAudio", () => {
   });
 
   it("trims whitespace from the transcription path override", async () => {
-    const fetchSpy = vi.fn().mockResolvedValue(
-      mockFetchResponse({ text: "ok" }),
-    );
+    const fetchSpy = vi
+      .fn()
+      .mockResolvedValue(mockFetchResponse({ text: "ok" }));
     mockTauriFetch(fetchSpy);
 
     const transcribe = await loadModule();
