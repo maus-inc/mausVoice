@@ -2981,6 +2981,16 @@ pub fn retry_key_listener(app: AppHandle) -> Result<(), String> {
     crate::platform::keyboard::start_key_listener(&app)
 }
 
+/// Re-registers the global keyboard hook. Used by the Windows resume
+/// handler in `platform::windows::lifecycle` to recover from a
+/// sleep/wake or session-unlock transition that tore down the
+/// low-level hook installed by `rdev::grab`.
+#[tauri::command]
+#[specta::specta]
+pub fn restart_key_listener(app: AppHandle) -> Result<(), String> {
+    crate::platform::keyboard::start_key_listener(&app)
+}
+
 #[tauri::command]
 #[specta::specta]
 pub fn sync_compositor_hotkeys(
