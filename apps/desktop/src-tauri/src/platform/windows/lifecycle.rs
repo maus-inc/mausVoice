@@ -34,7 +34,7 @@ mod imp {
 
     use tauri::{AppHandle, Emitter};
     use windows::core::PCWSTR;
-    use windows::Win32::Foundation::{HANDLE, HINSTANCE, HWND, LPARAM, LRESULT, WPARAM};
+    use windows::Win32::Foundation::{BOOL, HANDLE, HINSTANCE, HWND, LPARAM, LRESULT, WPARAM};
     use windows::Win32::System::Console::{
         GetConsoleWindow, SetConsoleCtrlHandler, CTRL_BREAK_EVENT, CTRL_C_EVENT,
     };
@@ -285,11 +285,11 @@ mod imp {
     /// does not kill the message pump before the rest of the app gets a
     /// chance to clean up. Returning `BOOL(1)` tells the OS "I handled it,
     /// do not terminate the process".
-    unsafe extern "system" fn console_ctrl_handler(event: u32) -> i32 {
+    unsafe extern "system" fn console_ctrl_handler(event: u32) -> BOOL {
         if event == CTRL_C_EVENT || event == CTRL_BREAK_EVENT {
-            return 1;
+            return BOOL(1);
         }
-        0
+        BOOL(0)
     }
 }
 
