@@ -45,6 +45,7 @@ type LocalUserPreferences = {
   ignoreUpdateDialog: boolean;
   incognitoModeEnabled: boolean;
   incognitoModeIncludeInStats: boolean;
+  preserveAudioOnFailure: boolean;
   dictationLimitMinutes?: Nullable<number>;
   dictationPillVisibility: DictationPillVisibility;
   realtimeOutputEnabled: boolean;
@@ -127,6 +128,7 @@ export const fromLocalPreferences = (
   ignoreUpdateDialog: preferences.ignoreUpdateDialog ?? false,
   incognitoModeEnabled: preferences.incognitoModeEnabled ?? false,
   incognitoModeIncludeInStats: preferences.incognitoModeIncludeInStats ?? false,
+  preserveAudioOnFailure: preferences.preserveAudioOnFailure ?? true,
   dictationLimitMinutes: normalizeDictationLimitMinutes(
     preferences.dictationLimitMinutes,
   ),
@@ -177,6 +179,7 @@ export const toLocalPreferences = (
   ignoreUpdateDialog: preferences.ignoreUpdateDialog ?? false,
   incognitoModeEnabled: preferences.incognitoModeEnabled ?? false,
   incognitoModeIncludeInStats: preferences.incognitoModeIncludeInStats ?? false,
+  preserveAudioOnFailure: preferences.preserveAudioOnFailure ?? true,
   dictationLimitMinutes: normalizeDictationLimitMinutes(
     preferences.dictationLimitMinutes ?? DEFAULT_DICTATION_LIMIT_MINUTES,
   ),

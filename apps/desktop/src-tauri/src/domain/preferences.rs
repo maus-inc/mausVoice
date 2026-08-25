@@ -56,6 +56,8 @@ pub struct UserPreferences {
     pub incognito_mode_enabled: bool,
     #[serde(default)]
     pub incognito_mode_include_in_stats: bool,
+    #[serde(default = "default_preserve_audio_on_failure")]
+    pub preserve_audio_on_failure: bool,
     #[serde(default = "default_dictation_limit_minutes")]
     pub dictation_limit_minutes: i64,
     #[serde(default = "default_dictation_pill_visibility")]
@@ -104,4 +106,8 @@ fn default_dictation_limit_minutes() -> i64 {
 
 fn default_dictation_audio_dim() -> f64 {
     1.0
+}
+
+fn default_preserve_audio_on_failure() -> bool {
+    true
 }

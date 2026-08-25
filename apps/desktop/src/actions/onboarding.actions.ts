@@ -188,6 +188,7 @@ export const submitOnboarding = async () => {
       ignoreUpdateDialog: false,
       incognitoModeEnabled: false,
       incognitoModeIncludeInStats: false,
+      preserveAudioOnFailure: true,
       dictationLimitMinutes: DEFAULT_DICTATION_LIMIT_MINUTES,
       dictationPillVisibility: "persistent",
       realtimeOutputEnabled: false,

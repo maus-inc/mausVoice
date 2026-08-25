@@ -362,17 +362,54 @@ export const storeTranscription = async (
     return { transcription: null, wordCount: 0 };
   }
 
+  const transcriptionFailed =
+    input.rawTranscript === null && input.warnings.length > 0;
+  const hasText = !!(input.rawTranscript && input.rawTranscript.length > 0);
+
   if (rate <= 0 || sampleCount === 0) {
-    getLogger().warning(
-      `Skipping store: rate=${rate}, sampleCount=${sampleCount}`,
-    );
-    return { transcription: null, wordCount: 0 };
+    if (hasText) {
+      getLogger().warning(
+        `Storing text record with empty audio (rate=${rate}, sampleCount=${sampleCount})`,
+      );
+    } else if (transcriptionFailed) {
+      getLogger().warning(
+        `Storing transcription-failure marker (rate=${rate}, sampleCount=${sampleCount})`,
+      );
+    } else {
+      getLogger().warning(
+        `Skipping store: rate=${rate}, sampleCount=${sampleCount}`,
+      );
+      return { transcription: null, wordCount: 0 };
+    }
   }
 
   const state = getAppState();
   const incognitoEnabled = state.userPrefs?.incognitoModeEnabled ?? false;
   const includeInStats = state.userPrefs?.incognitoModeIncludeInStats ?? false;
+  const preserveAudioOnFailure =
+    state.userPrefs?.preserveAudioOnFailure ?? true;
   const wordsAdded = input.transcript ? countWords(input.transcript) : 0;
+
+  const transcriptionId = createId();
+
+  let audioSnapshot: TranscriptionAudioSnapshot | undefined;
+  if (rate > 0 && sampleCount > 0) {
+    const payloadSamples = Array.isArray(input.audio.samples)
+      ? input.audio.samples
+      : Array.from(input.audio.samples ?? []);
+    try {
+      audioSnapshot = await invoke<TranscriptionAudioSnapshot>(
+        "store_transcription_audio",
+        {
+          id: transcriptionId,
+          samples: payloadSamples,
+          sampleRate: rate,
+        },
+      );
+    } catch (error) {
+      console.error("Failed to persist audio snapshot", error);
+    }
+  }
 
   if (incognitoEnabled) {
     getLogger().verbose(
@@ -389,33 +426,9 @@ export const storeTranscription = async (
     return { transcription: null, wordCount: wordsAdded };
   }
 
-  // Coerce the samples to an Array regardless of whether the IPC layer
-  // returned a plain Array or a typed-array-like. The rate<=0 / empty
-  // short-circuit above already guarantees this path is non-empty.
-  const payloadSamples = Array.isArray(input.audio.samples)
-    ? input.audio.samples
-    : Array.from(input.audio.samples ?? []);
-
-  const transcriptionId = createId();
-
-  let audioSnapshot: TranscriptionAudioSnapshot | undefined;
-  if (!incognitoEnabled) {
-    try {
-      audioSnapshot = await invoke<TranscriptionAudioSnapshot>(
-        "store_transcription_audio",
-        {
-          id: transcriptionId,
-          samples: payloadSamples,
-          sampleRate: rate,
-        },
-      );
-    } catch (error) {
-      console.error("Failed to persist audio snapshot", error);
-    }
+  if (transcriptionFailed && !preserveAudioOnFailure) {
+    audioSnapshot = undefined;
   }
-
-  const transcriptionFailed =
-    input.rawTranscript === null && input.warnings.length > 0;
 
   const transcription: Transcription = {
     id: transcriptionId,
