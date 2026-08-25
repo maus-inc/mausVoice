@@ -34,13 +34,18 @@ type AldeaResponse = {
 export const aldeaTranscribeAudio = async ({
   apiKey,
   blob,
+  language,
 }: AldeaTranscriptionArgs): Promise<AldeaTranscribeAudioOutput> => {
   return retry({
     retries: 3,
     fn: async () => {
       const bodyData =
         blob instanceof ArrayBuffer ? blob : (blob.buffer as ArrayBuffer);
-      const response = await fetch(ALDEA_API_URL, {
+      const url = new URL(ALDEA_API_URL);
+      if (language && language !== "auto") {
+        url.searchParams.set("language", language);
+      }
+      const response = await fetch(url.toString(), {
         method: "POST",
         headers: {
           Authorization: `Bearer ${apiKey.trim()}`,
