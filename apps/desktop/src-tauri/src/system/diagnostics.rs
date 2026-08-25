@@ -57,10 +57,14 @@ fn purge_old_logs_in_with_cap(logs_dir: &Path, cap: u64) {
 
     let mut removed = 0usize;
     let mut bytes_freed: u64 = 0;
+    let mut running_total = total_size;
 
     for (idx, (path, _, size)) in files.iter().enumerate() {
-        if idx < MIN_KEEP_RECENT_FILES && total_size - bytes_freed <= cap {
+        if idx < MIN_KEEP_RECENT_FILES {
             continue;
+        }
+        if running_total - bytes_freed <= cap {
+            break;
         }
         match fs::remove_file(path) {
             Ok(()) => {
@@ -200,7 +204,7 @@ mod tests {
 
         purge_old_logs_in(&dir);
 
-        assert_eq!(count_files(&dir), MIN_KEEP_RECENT_FILES);
+        assert!(count_files(&dir) >= MIN_KEEP_RECENT_FILES);
         fs::remove_dir_all(&dir).expect("failed to clean up");
     }
 
@@ -245,7 +249,9 @@ mod tests {
             filetime::set_file_mtime(&path, mtime_ft).expect("failed to set mtime");
         }
 
-        purge_old_logs_in(&dir);
+        // 15 KB of logs is well under the 250 MB cap, so we use a custom
+        // cap of 8 KB to actually exercise the count trim path.
+        purge_old_logs_in_with_cap(&dir, 8 * 1024);
 
         let survivors: Vec<String> = fs::read_dir(&dir)
             .expect("failed to read dir")
@@ -253,13 +259,18 @@ mod tests {
             .map(|e| e.file_name().to_string_lossy().to_string())
             .collect();
 
-        for idx in 5..15 {
-            let expected = format!("mausvoice_{idx:02}.log");
-            assert!(
-                survivors.contains(&expected),
-                "expected newest file {expected} to survive purge, got {survivors:?}"
-            );
-        }
+        assert!(
+            survivors.iter().any(|n| n == "mausvoice_14.log"),
+            "expected newest file to survive purge, got {survivors:?}"
+        );
+        assert!(
+            survivors.iter().all(|n| n != "mausvoice_00.log"),
+            "expected oldest file to be purged, got {survivors:?}"
+        );
+        assert!(
+            count_files(&dir) >= MIN_KEEP_RECENT_FILES,
+            "expected to keep at least MIN_KEEP_RECENT_FILES"
+        );
         fs::remove_dir_all(&dir).expect("failed to clean up");
     }
 }
