@@ -71,11 +71,15 @@ const isFatalResourceTarget = (target: EventTarget | null): boolean => {
 };
 
 export const shouldPaintFatalWindowError = (event: ErrorEvent): boolean => {
-  if (isFatalResourceTarget(event.target)) {
-    return true;
-  }
+  // Once React has mounted, a runtime asset load failure (a <script>/<link>
+  // that fails to fetch after the bundle is live — e.g. an async chunk's
+  // stylesheet) must not cover a working UI with the fatal overlay. Check the
+  // mount state first so post-mount resource errors are logged, not painted.
   if (appHasMounted()) {
     return false;
+  }
+  if (isFatalResourceTarget(event.target)) {
+    return true;
   }
   return Boolean(event.error || event.message);
 };

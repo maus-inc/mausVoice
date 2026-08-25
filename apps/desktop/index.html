@@ -138,6 +138,17 @@
               });
             }
           }
+          // Once React has mounted, a post-mount asset load failure (e.g. an
+          // async chunk's stylesheet) must not cover a working UI with the
+          // fatal overlay. Guard on mount state first, before classifying the
+          // target, so both resource and runtime errors stay non-fatal after
+          // mount.
+          if (
+            document.getElementById("root") &&
+            document.getElementById("root").childNodes.length
+          ) {
+            return;
+          }
           var isAsset =
             target instanceof HTMLScriptElement || isStylesheet;
           if (isAsset) {
@@ -149,12 +160,6 @@
                 (url || "(unknown URL)") +
                 "\n\nThe frontend asset could not be fetched. Under Tauri's asset: protocol this is usually a CORS or path issue — check the built index.html asset URLs.",
             );
-            return;
-          }
-          if (
-            document.getElementById("root") &&
-            document.getElementById("root").childNodes.length
-          ) {
             return;
           }
           if (event.error || event.message) {

@@ -163,8 +163,16 @@ async fn apply_migrations(pool: &SqlitePool) -> Result<(), OpenError> {
         .collect();
     for version in applied_checksums.keys() {
         if !configured.contains(version) {
-            return Err(OpenError::Integrity(format!(
-                "migration {version} is recorded but is not in the current migration set"
+            // A version recorded in `_sqlx_migrations` that this build does not
+            // ship means the database was written by a newer release (a normal
+            // downgrade/rollback). The file is perfectly readable, so this is
+            // not corruption: classify it as `Other` so the failure is surfaced
+            // to the user instead of `Integrity`, which would quarantine the
+            // file and silently discard the user's transcriptions, keys and
+            // preferences.
+            return Err(OpenError::Other(format!(
+                "migration {version} is recorded but is not in the current migration set; \
+                 the database was likely created by a newer version of the app"
             )));
         }
     }
@@ -231,8 +239,9 @@ async fn apply_migrations(pool: &SqlitePool) -> Result<(), OpenError> {
 
 /// Open the app database, applying migrations. Integrity failures (checksum
 /// mismatch, a half-applied migration, or a corrupt file) quarantine the
-/// broken file and open a fresh database. Transient errors such as a lock,
-/// a permission failure, or a buggy new migration are returned as-is.
+/// broken file and open a fresh database. Transient errors such as a lock or
+/// a permission failure, a buggy new migration, and a database written by a
+/// newer version of the app are returned as-is, leaving the file untouched.
 pub async fn open_app_database(path: &Path) -> Result<SqlitePool, String> {
     match try_open(path).await {
         Ok(pool) => Ok(pool),
@@ -409,7 +418,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn unknown_recorded_migration_version_is_an_integrity_failure() {
+    async fn unknown_recorded_migration_version_is_surfaced_not_quarantined() {
         let temp = TempDb::new();
         let path = &temp.path;
         let pool = try_open(path).await.expect("initial migrate");
@@ -423,17 +432,97 @@ mod tests {
         .unwrap();
         pool.close().await;
 
-        let recovered = open_app_database(path)
+        // A version this build does not ship (a newer release wrote it) is a
+        // forward-compatible downgrade, not corruption: the open must fail
+        // loudly but leave the user's database file untouched.
+        let result = open_app_database(path).await;
+        assert!(result.is_err(), "newer-schema database must be surfaced, not silently opened");
+        assert!(
+            std::fs::read_dir(&temp.dir)
+                .unwrap()
+                .flatten()
+                .all(|entry| !entry
+                    .file_name()
+                    .to_string_lossy()
+                    .starts_with("mausvoice.broken-")),
+            "a newer-schema database must never be quarantined"
+        );
+        assert!(path.exists(), "the original database must be preserved");
+    }
+
+    #[tokio::test]
+    async fn existing_database_is_upgraded_to_head_without_quarantine() {
+        let temp = TempDb::new();
+        let path = &temp.path;
+        let up_migrations: Vec<_> = migrations()
+            .into_iter()
+            .filter(|migration| matches!(migration.kind, tauri_plugin_sql::MigrationKind::Up))
+            .collect();
+        assert!(up_migrations.len() >= 2, "test needs at least two migrations");
+
+        // Reproduce the state every existing user's database is in before an
+        // upgrade: all but the newest migration applied, with each recorded in
+        // `_sqlx_migrations` exactly as the previous (tauri-plugin-sql) migrator
+        // wrote them.
+        {
+            let pool = connect_pool(path).await.expect("connect");
+            sqlx::query(
+                "CREATE TABLE _sqlx_migrations (
+                    version BIGINT PRIMARY KEY,
+                    description TEXT NOT NULL,
+                    installed_on TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                    success BOOLEAN NOT NULL,
+                    checksum BLOB NOT NULL,
+                    execution_time BIGINT NOT NULL
+                )",
+            )
+            .execute(&pool)
             .await
-            .expect("unknown history should quarantine and reopen");
-        let ghost: Option<i64> = sqlx::query_scalar(
-            "SELECT version FROM _sqlx_migrations WHERE version = 9999",
-        )
-        .fetch_optional(&recovered)
-        .await
-        .unwrap();
-        assert!(ghost.is_none());
-        recovered.close().await;
+            .expect("create _sqlx_migrations");
+            for migration in &up_migrations[..up_migrations.len() - 1] {
+                let checksum = migration_checksum(migration.sql);
+                sqlx::raw_sql(migration.sql)
+                    .execute(&pool)
+                    .await
+                    .expect("apply prior migration");
+                sqlx::query(
+                    "INSERT INTO _sqlx_migrations
+                     (version, description, success, checksum, execution_time)
+                     VALUES (?1, ?2, true, ?3, 0)",
+                )
+                .bind(migration.version)
+                .bind(migration.description)
+                .bind(&checksum)
+                .execute(&pool)
+                .await
+                .expect("record prior migration");
+            }
+            pool.close().await;
+        }
+
+        let upgraded = open_app_database(path)
+            .await
+            .expect("an existing database must upgrade, not fail");
+        let count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM _sqlx_migrations")
+            .fetch_one(&upgraded)
+            .await
+            .unwrap();
+        assert_eq!(
+            count,
+            up_migrations.len() as i64,
+            "the remaining migration must be applied on upgrade"
+        );
+        upgraded.close().await;
+        assert!(
+            std::fs::read_dir(&temp.dir)
+                .unwrap()
+                .flatten()
+                .all(|entry| !entry
+                    .file_name()
+                    .to_string_lossy()
+                    .starts_with("mausvoice.broken-")),
+            "a routine upgrade must never quarantine the database"
+        );
     }
 
     #[tokio::test]

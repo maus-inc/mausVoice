@@ -536,6 +536,12 @@ export const createGladiaStreamingSession = ({
     acceptingAudio = false;
 
     finalizePromise = (async () => {
+      // Clamp the caller's budget into [1, DEFAULT_LIVE_FINALIZE_TIMEOUT_MS]:
+      // a floor of 1 ms avoids a zero/negative deadline, and the ceiling keeps
+      // finalization from hanging forever on a misbehaving SDK even when a
+      // caller asks for an unbounded wait. Callers needing more headroom should
+      // raise DEFAULT_LIVE_FINALIZE_TIMEOUT_MS rather than pass a huge value
+      // that is silently reduced here.
       const budgetMs = Number.isFinite(finalizeTimeoutMs)
         ? Math.min(
             DEFAULT_LIVE_FINALIZE_TIMEOUT_MS,

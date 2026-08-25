@@ -56,8 +56,7 @@ describe("global error overlay", () => {
     expect(shouldPaintFatalRejection()).toBe(true);
   });
 
-  it("still treats failed script and stylesheet loads as fatal", async () => {
-    vi.stubGlobal("document", makeDocument([{}]));
+  const stubResourceElements = (): void => {
     class HTMLScriptElement {
       src = "asset://localhost/assets/index.js";
     }
@@ -70,6 +69,11 @@ describe("global error overlay", () => {
     }
     vi.stubGlobal("HTMLScriptElement", HTMLScriptElement);
     vi.stubGlobal("HTMLLinkElement", HTMLLinkElement);
+  };
+
+  it("treats failed script and stylesheet loads as fatal before mount", async () => {
+    vi.stubGlobal("document", makeDocument([]));
+    stubResourceElements();
     const { shouldPaintFatalWindowError } =
       await import("./global-error-overlay.utils.ts");
     expect(
@@ -82,6 +86,7 @@ describe("global error overlay", () => {
         target: new HTMLLinkElement(),
       } as unknown as ErrorEvent),
     ).toBe(true);
+    // A non-stylesheet <link> (e.g. an icon) is not a fatal resource target.
     const icon = new HTMLLinkElement();
     icon.rel = "icon";
     icon.relList = {
@@ -90,6 +95,25 @@ describe("global error overlay", () => {
     expect(
       shouldPaintFatalWindowError({
         target: icon,
+      } as unknown as ErrorEvent),
+    ).toBe(false);
+  });
+
+  it("does not treat a post-mount failed stylesheet/script load as fatal", async () => {
+    // Once React has mounted, an async chunk's stylesheet/script can still fail
+    // to load; that must log, not cover a working UI with the fatal overlay.
+    vi.stubGlobal("document", makeDocument([{}]));
+    stubResourceElements();
+    const { shouldPaintFatalWindowError } =
+      await import("./global-error-overlay.utils.ts");
+    expect(
+      shouldPaintFatalWindowError({
+        target: new HTMLScriptElement(),
+      } as unknown as ErrorEvent),
+    ).toBe(false);
+    expect(
+      shouldPaintFatalWindowError({
+        target: new HTMLLinkElement(),
       } as unknown as ErrorEvent),
     ).toBe(false);
   });
