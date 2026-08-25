@@ -9,11 +9,11 @@ import {
   TranscriptionSession,
   TranscriptionSessionResult,
 } from "../types/transcription-session.types";
+import { getLogger } from "../utils/log.utils";
 import {
   buildLocalizedTranscriptionPrompt,
   collectDictionaryEntries,
 } from "../utils/prompt.utils";
-import { finalizeStreamingSession } from "../utils/streaming-session.utils";
 import { loadMyEffectiveDictationLanguage } from "../utils/user.utils";
 
 export class AzureTranscriptionSession implements TranscriptionSession {
@@ -30,7 +30,7 @@ export class AzureTranscriptionSession implements TranscriptionSession {
 
   async onRecordingStart(sampleRate: number): Promise<void> {
     try {
-      console.log("[Azure] Starting streaming session...");
+      getLogger().verbose("[Azure] Starting streaming session...");
 
       const state = getAppState();
       const language = await loadMyEffectiveDictationLanguage(state);
@@ -57,7 +57,7 @@ export class AzureTranscriptionSession implements TranscriptionSession {
             this.receivedChunkCount <= 3 ||
             this.receivedChunkCount % 10 === 0
           ) {
-            console.log(
+            getLogger().verbose(
               `[Azure] Received chunk #${this.receivedChunkCount}, samples:`,
               event.payload.samples.length,
             );
@@ -72,26 +72,66 @@ export class AzureTranscriptionSession implements TranscriptionSession {
 
               this.session.writeAudioChunk(typedChunk);
             } catch (error) {
-              console.error("[Azure] Error writing audio chunk:", error);
+              getLogger().error("[Azure] Error writing audio chunk:", error);
             }
           }
         },
       );
 
-      console.log("[Azure] Streaming session started successfully");
+      getLogger().verbose("[Azure] Streaming session started successfully");
     } catch (error) {
-      console.error("[Azure] Failed to start streaming:", error);
+      getLogger().error("[Azure] Failed to start streaming:", error);
     }
   }
 
   async finalize(
     _audio: StopRecordingResponse,
   ): Promise<TranscriptionSessionResult> {
-    return finalizeStreamingSession({
-      session: this.session,
-      providerLabel: "Azure",
-      log: console.log,
-    });
+    if (!this.session) {
+      return {
+        rawTranscript: null,
+        metadata: {
+          inferenceDevice: "API • Azure (Streaming)",
+          transcriptionMode: "api",
+        },
+        warnings: ["Azure streaming session was not established"],
+      };
+    }
+
+    try {
+      getLogger().verbose("[Azure] Finalizing streaming session...");
+      const finalizeStart = performance.now();
+      const transcript = await this.session.finalize();
+      const durationMs = Math.round(performance.now() - finalizeStart);
+
+      getLogger().verbose("[Azure] Transcript timing:", { durationMs });
+      getLogger().verbose(
+        "[Azure] Received transcript, length:",
+        transcript?.length ?? 0,
+      );
+
+      return {
+        rawTranscript: transcript || null,
+        metadata: {
+          inferenceDevice: "API • Azure (Streaming)",
+          transcriptionMode: "api",
+          transcriptionDurationMs: durationMs,
+        },
+        warnings: [],
+      };
+    } catch (error) {
+      getLogger().error("[Azure] Failed to finalize session:", error);
+      return {
+        rawTranscript: null,
+        metadata: {
+          inferenceDevice: "API • Azure (Streaming)",
+          transcriptionMode: "api",
+        },
+        warnings: [
+          `Azure finalization failed: ${error instanceof Error ? error.message : "Unknown error"}`,
+        ],
+      };
+    }
   }
 
   cleanup(): void {
