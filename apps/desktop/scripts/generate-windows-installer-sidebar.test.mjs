@@ -365,8 +365,8 @@ describe("generator CLI", () => {
     expect(stderr).toContain("branding/mausvoice-sidebar-installerimg.png");
   });
 
-  it("is a no-op off Windows under --windows-only", () => {
-    if (process.platform === "win32") return; // covered by the strict runs
+  it("is a no-op off Windows under --windows-only", (ctx) => {
+    if (process.platform === "win32") ctx.skip(); // covered by the strict runs
     const output = join(dir, "skipped.bmp");
     execFileSync(process.execPath, [generatorPath, "--windows-only"], {
       env: { ...process.env, MAUSVOICE_SIDEBAR_OUTPUT: output },
