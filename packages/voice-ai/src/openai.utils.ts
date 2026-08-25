@@ -46,9 +46,10 @@ const JSON_SCHEMA_SUPPORTED_MODELS = new Set<string>([
   "gpt-4o-mini",
   "gpt-4-turbo",
   "gpt-3.5-turbo",
-  "gpt-5.2",
-  "gpt-5.3",
-  "gpt-5.4",
+  "gpt-5",
+  "gpt-5-mini",
+  "gpt-5-nano",
+  "gpt-5-pro",
 ]);
 
 export function supportsOpenAIJsonSchema(model: string): boolean {
