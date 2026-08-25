@@ -40,18 +40,23 @@
  * No third-party dependencies: PNG scanlines are inflated and defiltered
  * with `node:zlib` directly and the BMP container is assembled byte by byte,
  * mirroring `scripts/generate-app-icons.mjs`.
+ *
+ * The decoding, scaling and encoding stages are exported for the unit suite
+ * at apps/desktop/scripts/generate-windows-installer-sidebar.test.mjs
+ * (run by `pnpm --filter desktop run test:unit`); `main()` only runs when
+ * the file is executed directly.
  */
 
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
-import { fileURLToPath } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
 import { inflateSync } from "node:zlib";
 
 const repoRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 
 /** NSIS welcome/finish sidebar size at standard 96 DPI (see Tauri NSIS docs). */
-const TARGET_WIDTH = 164;
-const TARGET_HEIGHT = 314;
+export const TARGET_WIDTH = 164;
+export const TARGET_HEIGHT = 314;
 
 /** Committed art, kept with the other branding assets. */
 const SOURCE = process.env.MAUSVOICE_SIDEBAR_SOURCE
@@ -298,7 +303,7 @@ function expandToRgba(samples, width, height, colorType, palette, transparency) 
  * on any non-palette type are rejected - a clear error beats a silently
  * wrong banner (colour-key transparency would decode as fully opaque).
  */
-function decodePng(buf) {
+export function decodePng(buf) {
   if (buf.length < 8 || !buf.subarray(0, 8).equals(PNG_MAGIC)) {
     throw new Error("not a PNG (signature mismatch)");
   }
@@ -339,7 +344,7 @@ function decodePng(buf) {
  * Decode an uncompressed 24/32-bit BMP (BI_RGB) into opaque RGBA. Anything
  * else (RLE, JPEG/PNG embedded in a BMP container) is rejected outright.
  */
-function decodeBmp(buf) {
+export function decodeBmp(buf) {
   if (buf.length < 54 || buf[0] !== 0x42 || buf[1] !== 0x4d) {
     throw new Error("not a BMP (signature mismatch)");
   }
@@ -387,7 +392,7 @@ function decodeBmp(buf) {
 }
 
 /** Sniff the container and decode to RGBA. */
-function decodeImage(buf) {
+export function decodeImage(buf) {
   if (buf.length >= 8 && buf.subarray(0, 8).equals(PNG_MAGIC)) {
     return decodePng(buf);
   }
@@ -405,7 +410,7 @@ function decodeImage(buf) {
  * samples. Full-bleed art therefore gets a seamless bar colour; art that is
  * transparent at every sample (a bare logo) falls back to the wizard's white.
  */
-function chooseBackground(image) {
+export function chooseBackground(image) {
   const { width, height, rgba } = image;
   const midX = Math.floor(width / 2);
   const midY = Math.floor(height / 2);
@@ -480,7 +485,7 @@ function sampleBilinear(image, x, y, out, outOffset) {
  * Contain-fit the art onto the target canvas, centred, with the letterbox
  * background everywhere else. An exact-size source short-circuits to a copy.
  */
-function drawContainFit(image, background) {
+export function drawContainFit(image, background) {
   const canvas = new Uint8Array(TARGET_WIDTH * TARGET_HEIGHT * 4);
   const scale = Math.min(TARGET_WIDTH / image.width, TARGET_HEIGHT / image.height);
   const fitWidth = Math.max(1, Math.round(image.width * scale));
@@ -522,7 +527,7 @@ function drawContainFit(image, background) {
 }
 
 /** Assemble a bottom-up 24-bit BI_RGB BMP, the flavour NSIS expects. */
-function encodeBmp24(rgba) {
+export function encodeBmp24(rgba) {
   const rowSize = Math.ceil((TARGET_WIDTH * 3) / 4) * 4;
   const imageSize = rowSize * TARGET_HEIGHT;
   const buf = Buffer.alloc(54 + imageSize);
@@ -557,7 +562,7 @@ function encodeBmp24(rgba) {
 }
 
 /** Re-read the generated file and assert it is what NSIS needs. */
-function verifyOutput(path) {
+export function verifyOutput(path) {
   const buf = readFileSync(path);
   const problems = [];
   if (buf.length < 54 || buf.toString("ascii", 0, 2) !== "BM") {
@@ -629,4 +634,11 @@ function main() {
   );
 }
 
-main();
+// Only self-execute when invoked as a program (node scripts/…, the tauri
+// wrapper, CI). Under `import` - the unit suite - stay side-effect free.
+const invokedDirectly =
+  process.argv[1] !== undefined &&
+  import.meta.url === pathToFileURL(resolve(process.argv[1])).href;
+if (invokedDirectly) {
+  main();
+}
