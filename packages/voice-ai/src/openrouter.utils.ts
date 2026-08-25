@@ -1,5 +1,10 @@
 import OpenAI, { toFile } from "openai";
+import type {
+  ChatCompletionCreateParamsNonStreaming,
+  ChatCompletionMessageParam,
+} from "openai/resources/chat/completions";
 import { retry, countWords } from "@maus-inc/utilities";
+import { buildJsonSchemaResponseFormat } from "./response-format.utils";
 import type {
   JsonResponse,
   LlmChatInput,
@@ -44,6 +49,11 @@ const JSON_SCHEMA_SUPPORTED_MODELS = new Set<string>([
   "openai/gpt-oss-120b",
   "moonshotai/kimi-k2-instruct-0905",
 ]);
+
+const buildResponseFormat = (
+  model: string,
+  jsonResponse?: JsonResponse,
+) => buildJsonSchemaResponseFormat(model, JSON_SCHEMA_SUPPORTED_MODELS, jsonResponse);
 
 /**
  * Create OpenAI client configured for OpenRouter
@@ -178,31 +188,16 @@ export const openrouterGenerateTextResponse = async ({
     fn: async () => {
       const client = createClient(apiKey, customFetch);
 
-      const messages: OpenAI.Chat.ChatCompletionMessageParam[] = [];
+      const messages: ChatCompletionMessageParam[] = [];
       if (system) {
         messages.push({ role: "system", content: system });
       }
       messages.push({ role: "user", content: prompt });
 
       // Build the request with optional provider routing
-      let response_format: OpenAI.Chat.ChatCompletionCreateParamsNonStreaming["response_format"];
-      if (jsonResponse) {
-        if (JSON_SCHEMA_SUPPORTED_MODELS.has(model)) {
-          response_format = {
-            type: "json_schema",
-            json_schema: {
-              name: jsonResponse.name,
-              description: jsonResponse.description,
-              schema: jsonResponse.schema,
-              strict: true,
-            },
-          };
-        } else {
-          response_format = { type: "json_object" };
-        }
-      }
+      const response_format = buildResponseFormat(model, jsonResponse);
 
-      const requestParams: OpenAI.Chat.ChatCompletionCreateParamsNonStreaming & {
+      const requestParams: ChatCompletionCreateParamsNonStreaming & {
         provider?: OpenRouterProviderRouting;
       } = {
         messages,
