@@ -17,6 +17,13 @@ export type DatabaseUser = {
   preferredLanguage?: Nullable<string>;
   preferredMicrophone?: Nullable<string>;
   playInteractionChime: boolean;
+  /**
+   * Thock playback gain in 0..1, applied on the warm audio path AND the
+   * fallback path. Defaults to 0.35 (a touch below the previous hard-coded
+   * 0.45). Clamped to [0.05, 0.5] server-side so the user can never blow
+   * out the sink or make the thock inaudible.
+   */
+  interactionFeedbackVolume?: Nullable<number>;
   hasFinishedTutorial: boolean;
   wordsThisMonth: number;
   wordsThisMonthMonth?: Nullable<string>;
@@ -54,6 +61,7 @@ export const UserZod = z
     preferredLanguage: z.string().nullable().optional(),
     preferredMicrophone: z.string().nullable().optional(),
     playInteractionChime: z.boolean(),
+    interactionFeedbackVolume: z.number().min(0).max(1).nullable().optional(),
     hasFinishedTutorial: z.boolean(),
     wordsThisMonth: z.number(),
     wordsThisMonthMonth: z.string().nullable().optional(),

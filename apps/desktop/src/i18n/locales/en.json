@@ -340,6 +340,8 @@
   "installation_in_progress_mausvoice_may_restart_automatically": "Installation in progress. mausVoice may restart automatically when finished.",
   "installing_update": "Installing update...",
   "interaction_feedback": "Interaction feedback",
+  "interaction_feedback_volume": "Interaction feedback volume",
+  "lower_the_click_volume_or_turn_the_click_off_entirely": "Lower the click volume or turn the click off entirely.",
   "invalid_email_address": "Invalid email address",
   "it_works": "It works",
   "john_doe": "John Doe",

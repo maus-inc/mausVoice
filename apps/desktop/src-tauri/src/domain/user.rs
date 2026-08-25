@@ -23,6 +23,8 @@ pub struct User {
     pub words_total: i64,
     #[serde(default = "default_play_interaction_chime")]
     pub play_interaction_chime: bool,
+    #[serde(default = "default_interaction_feedback_volume")]
+    pub interaction_feedback_volume: f32,
     #[serde(default)]
     pub has_finished_tutorial: bool,
     #[serde(default)]
@@ -45,4 +47,8 @@ pub struct User {
 
 const fn default_play_interaction_chime() -> bool {
     true
+}
+
+const fn default_interaction_feedback_volume() -> f32 {
+    0.35
 }

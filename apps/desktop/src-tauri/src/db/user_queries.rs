@@ -4,51 +4,53 @@ use crate::domain::User;
 
 pub async fn upsert_user(pool: SqlitePool, user: &User) -> Result<User, sqlx::Error> {
     sqlx::query(
-        "INSERT INTO user_profiles (
-             id,
-             name,
-             bio,
-             company,
-             title,
-             onboarded,
-             preferred_microphone,
-             preferred_language,
-             words_this_month,
-             words_this_month_month,
-             words_total,
-             play_interaction_chime,
-             has_finished_tutorial,
-             has_migrated_preferred_microphone,
-             cohort,
-             styling_mode,
-             selected_tone_id,
-             active_tone_ids,
-             streak,
-             streak_recorded_at,
-             referral_source
-         )
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20, ?21)
-         ON CONFLICT(id) DO UPDATE SET
-            name = excluded.name,
-            bio = excluded.bio,
-            company = excluded.company,
-            title = excluded.title,
-            onboarded = excluded.onboarded,
-            preferred_microphone = excluded.preferred_microphone,
-            preferred_language = excluded.preferred_language,
-            words_this_month = excluded.words_this_month,
-            words_this_month_month = excluded.words_this_month_month,
-            words_total = excluded.words_total,
-            play_interaction_chime = excluded.play_interaction_chime,
-            has_finished_tutorial = excluded.has_finished_tutorial,
-            has_migrated_preferred_microphone = excluded.has_migrated_preferred_microphone,
-            cohort = excluded.cohort,
-            styling_mode = excluded.styling_mode,
-            selected_tone_id = excluded.selected_tone_id,
-            active_tone_ids = excluded.active_tone_ids,
-            streak = excluded.streak,
-            streak_recorded_at = excluded.streak_recorded_at,
-            referral_source = excluded.referral_source",
+    "INSERT INTO user_profiles (
+         id,
+         name,
+         bio,
+         company,
+         title,
+         onboarded,
+         preferred_microphone,
+         preferred_language,
+         words_this_month,
+         words_this_month_month,
+         words_total,
+         play_interaction_chime,
+         interaction_feedback_volume,
+         has_finished_tutorial,
+         has_migrated_preferred_microphone,
+         cohort,
+         styling_mode,
+         selected_tone_id,
+         active_tone_ids,
+         streak,
+         streak_recorded_at,
+         referral_source
+     )
+     VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20, ?21, ?22)
+     ON CONFLICT(id) DO UPDATE SET
+        name = excluded.name,
+        bio = excluded.bio,
+        company = excluded.company,
+        title = excluded.title,
+        onboarded = excluded.onboarded,
+        preferred_microphone = excluded.preferred_microphone,
+        preferred_language = excluded.preferred_language,
+        words_this_month = excluded.words_this_month,
+        words_this_month_month = excluded.words_this_month_month,
+        words_total = excluded.words_total,
+        play_interaction_chime = excluded.play_interaction_chime,
+        interaction_feedback_volume = excluded.interaction_feedback_volume,
+        has_finished_tutorial = excluded.has_finished_tutorial,
+        has_migrated_preferred_microphone = excluded.has_migrated_preferred_microphone,
+        cohort = excluded.cohort,
+        styling_mode = excluded.styling_mode,
+        selected_tone_id = excluded.selected_tone_id,
+        active_tone_ids = excluded.active_tone_ids,
+        streak = excluded.streak,
+        streak_recorded_at = excluded.streak_recorded_at,
+        referral_source = excluded.referral_source",
     )
     .bind(&user.id)
     .bind(&user.name)
@@ -62,6 +64,7 @@ pub async fn upsert_user(pool: SqlitePool, user: &User) -> Result<User, sqlx::Er
     .bind(&user.words_this_month_month)
     .bind(user.words_total)
     .bind(if user.play_interaction_chime { 1 } else { 0 })
+    .bind(user.interaction_feedback_volume as f64)
     .bind(if user.has_finished_tutorial { 1 } else { 0 })
     .bind(if user.has_migrated_preferred_microphone { 1 } else { 0 })
     .bind(&user.cohort)
@@ -92,6 +95,7 @@ pub async fn fetch_user(pool: SqlitePool) -> Result<Option<User>, sqlx::Error> {
             words_this_month_month,
             words_total,
             play_interaction_chime,
+            interaction_feedback_volume,
             has_finished_tutorial,
             has_migrated_preferred_microphone,
             cohort,
@@ -130,6 +134,12 @@ pub async fn fetch_user(pool: SqlitePool) -> Result<Option<User>, sqlx::Error> {
                     .unwrap_or(None),
                 words_total: row.try_get::<i64, _>("words_total").unwrap_or(0),
                 play_interaction_chime: play_interaction_raw != 0,
+                interaction_feedback_volume: row
+                    .try_get::<Option<f64>, _>("interaction_feedback_volume")
+                    .ok()
+                    .flatten()
+                    .map(|v| v as f32)
+                    .unwrap_or(0.35),
                 has_finished_tutorial: tutorial_finished_raw != 0,
                 has_migrated_preferred_microphone: migrated_microphone_raw != 0,
                 cohort: row.try_get::<Option<String>, _>("cohort").unwrap_or(None),

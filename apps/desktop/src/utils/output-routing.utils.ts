@@ -53,6 +53,15 @@ const reviewOutputText = async (
   if (skipReview || prefs?.reviewBeforeInsert !== true || !text.trim()) {
     return text;
   }
+  // Decouple the pill from processing BEFORE the review window opens. The
+  // previous contract kept the pill in `loading` while the user reviewed
+  // text, which the user reported as: "the pill just continue loading,
+  // then it's kills itself with an error message". Sending `idle` here
+  // lets the user dismiss the review window cleanly without the pill
+  // timing out and self-closing on top of an in-flight review.
+  await invoke<void>("set_phase", { phase: "idle" }).catch((error) => {
+    getLogger().verbose(`set_phase idle during review failed: ${error}`);
+  });
   return reviewTextInComposer(text);
 };
 

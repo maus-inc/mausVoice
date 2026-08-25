@@ -458,6 +458,23 @@ export const setInteractionChimeEnabled = async (enabled: boolean) => {
   invoke("set_interaction_chime_enabled", { enabled }).catch(() => {});
 };
 
+export const setInteractionFeedbackVolume = async (
+  volume: number,
+): Promise<void> => {
+  // Persist the user-facing preference (full 0..=1) and mirror the clamped
+  // value into Rust so the thock gain is honored on the warm path AND the
+  // fallback path. The Rust side clamps again to its safe window as a
+  // defence-in-depth measure.
+  await updateUser(
+    (user) => {
+      user.interactionFeedbackVolume = Math.max(0, Math.min(1, volume));
+    },
+    "Unable to update interaction feedback volume. User not found.",
+    "Failed to save interaction feedback volume. Please try again.",
+  );
+  invoke("set_interaction_feedback_volume", { volume }).catch(() => {});
+};
+
 export const setUserName = async (name: string): Promise<void> => {
   const normalized = name.trim();
 

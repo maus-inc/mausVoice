@@ -360,6 +360,7 @@ pub fn build() -> tauri::Builder<tauri::Wry> {
             crate::commands::retry_key_listener,
             crate::commands::play_audio,
             crate::commands::set_interaction_chime_enabled,
+            crate::commands::set_interaction_feedback_volume,
             crate::commands::get_text_field_info,
             crate::commands::get_screen_context,
             crate::commands::find_pid_by_window_title,

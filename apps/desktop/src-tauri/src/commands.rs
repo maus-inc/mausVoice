@@ -2467,6 +2467,16 @@ pub fn set_interaction_chime_enabled(enabled: bool) {
     crate::system::audio_feedback::set_interaction_chime_enabled(enabled);
 }
 
+/// Mirror the TS interactionFeedbackVolume preference into Rust so the
+/// thock gain is applied on the warm path AND the fallback path. The
+/// Rust side clamps to a safe range, so an out-of-range value from the
+/// frontend can never blow out the sink.
+#[tauri::command]
+#[specta::specta]
+pub fn set_interaction_feedback_volume(volume: f32) {
+    crate::system::audio_feedback::set_interaction_feedback_volume(volume);
+}
+
 #[tauri::command]
 #[specta::specta]
 pub fn play_audio(clip: AudioClip) -> Result<(), String> {

@@ -26,6 +26,16 @@ export type Size = {
 
 const COMPOSER_TIMEOUT_MS = 5 * 60 * 1000;
 
+/**
+ * If the composer webview never reports `composer-ready`, the user sees a
+ * blank page (the reported "white flash" / "killed itself with an error"
+ * failure class). Bail out before the full timeout so the caller can fall
+ * back to history recovery instead of waiting 5 minutes. The page still
+ * has time to mount and call `composer-ready`; the grace period is just a
+ * safety net for an unresponsive webview.
+ */
+const COMPOSER_READY_TIMEOUT_MS = 15_000;
+
 // Gap (logical px) kept between the native pill and the composer window so the
 // composer never overlaps the pill.
 const COMPOSER_PILL_GAP = 8;
@@ -155,6 +165,7 @@ export const reviewTextInComposer = async (
   let windowId: string | null = null;
   let unlisten: (() => void) | undefined;
   let unlistenClose: (() => void) | undefined;
+  let unlistenReady: (() => void) | undefined;
 
   // Reserve the slot synchronously so concurrent calls are rejected.
   activeComposer = { windowId: "", requestId };
@@ -164,6 +175,7 @@ export const reviewTextInComposer = async (
     const result = await new Promise<string | null>((resolve) => {
       let settled = false;
       let timeoutId: number | null = null;
+      let readyTimeoutId: number | null = null;
       const finish = (value: string | null) => {
         if (settled) return;
         settled = true;
@@ -172,11 +184,31 @@ export const reviewTextInComposer = async (
           window.clearTimeout(timeoutId);
           timeoutId = null;
         }
+        if (readyTimeoutId !== null) {
+          window.clearTimeout(readyTimeoutId);
+          readyTimeoutId = null;
+        }
         resolve(value);
       };
 
       void (async () => {
         try {
+          // Track composer readiness separately from the user-decision
+          // timeout. If the webview never emits `composer-ready`, the page
+          // never mounted (blank white surface). Bail out with a Cancel
+          // result and surface the recovery toast so the user does not have
+          // to wait the full 5 minutes or restart the app.
+          unlistenReady = await listen<{ requestId: string }>(
+            "composer-ready",
+            (event) => {
+              if (event.payload.requestId !== requestId) return;
+              if (readyTimeoutId !== null) {
+                window.clearTimeout(readyTimeoutId);
+                readyTimeoutId = null;
+              }
+            },
+          );
+
           unlisten = await listen<ComposerResult>(
             "composer-result",
             (event) => {
@@ -242,6 +274,27 @@ export const reviewTextInComposer = async (
             });
           }
 
+          // Start the ready-timeout AFTER the window exists; if the page
+          // never mounts, surface a recovery toast (the transcript is
+          // already in history via the calling pipeline) and resolve
+          // null so the paste/insert path is skipped, matching the
+          // window-creation-failure contract.
+          readyTimeoutId = window.setTimeout(() => {
+            getLogger().error(
+              "reviewTextInComposer: composer-ready timeout (webview likely blank)",
+            );
+            void showToast({
+              message: getIntl().formatMessage({
+                defaultMessage:
+                  "Could not open the review window. Your transcript was saved to history.",
+              }),
+              toastType: "error",
+              duration: 8000,
+              action: "open_transcriptions",
+            });
+            finish(null);
+          }, COMPOSER_READY_TIMEOUT_MS);
+
           timeoutId = window.setTimeout(() => {
             finish(null);
           }, COMPOSER_TIMEOUT_MS);
@@ -277,6 +330,7 @@ export const reviewTextInComposer = async (
     activeComposer = null;
     unlisten?.();
     unlistenClose?.();
+    unlistenReady?.();
     await invoke("composer_discard_text", { requestId }).catch(() => {
       // The composer may already have consumed the request.
     });

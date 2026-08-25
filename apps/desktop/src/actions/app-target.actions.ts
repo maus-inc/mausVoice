@@ -239,6 +239,19 @@ export const loadManualStyleForCurrentApp = async (): Promise<void> => {
   }
 };
 
+/**
+ * Persist the live manual selection as the per-app tone at finalize.
+ *
+ * Source-of-truth contract:
+ * - `getManuallySelectedToneId` reads the LIVE `user.selectedToneId`, which
+ *   `applyWritingStyleSelection` updates on every switch channel. A switch
+ *   made mid-dictation therefore reaches the live selection before stop
+ *   fires, and `saveManualStyleForApp` writes that new tone to the app
+ *   target — the start-time tone is the post-processing input for the
+ *   ACTIVE utterance, not the saved default.
+ * - Never read from any start-time snapshot here. Doing so would silently
+ *   revert the user's mid-recording switch.
+ */
 export const saveManualStyleForApp = (appTarget: AppTarget): void => {
   if (getEffectiveStylingMode(getAppState()) !== "manual") return;
 

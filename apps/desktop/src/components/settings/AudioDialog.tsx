@@ -13,6 +13,7 @@ import { FormattedMessage, useIntl } from "react-intl";
 import {
   setDictationAudioDim,
   setInteractionChimeEnabled,
+  setInteractionFeedbackVolume,
 } from "../../actions/user.actions";
 import { produceAppState, useAppStore } from "../../store";
 import { getMyUser } from "../../utils/user.utils";
@@ -21,16 +22,20 @@ import { SettingSection } from "../common/SettingSection";
 
 export const AudioDialog = () => {
   const intl = useIntl();
-  const [open, playInteractionChime, dictationAudioDim] = useAppStore(
-    (state) => {
-      const user = getMyUser(state);
-      return [
-        state.settings.audioDialogOpen,
-        user?.playInteractionChime ?? true,
-        state.userPrefs?.dictationAudioDim ?? 1.0,
-      ] as const;
-    },
-  );
+  const [
+    open,
+    playInteractionChime,
+    interactionFeedbackVolume,
+    dictationAudioDim,
+  ] = useAppStore((state) => {
+    const user = getMyUser(state);
+    return [
+      state.settings.audioDialogOpen,
+      user?.playInteractionChime ?? true,
+      user?.interactionFeedbackVolume ?? 0.35,
+      state.userPrefs?.dictationAudioDim ?? 1.0,
+    ] as const;
+  });
 
   const handleClose = () => {
     produceAppState((draft) => {
@@ -45,10 +50,14 @@ export const AudioDialog = () => {
 
   // Live display value while dragging; the persisted value updates on commit.
   const [displayDim, setDisplayDim] = useState(dictationAudioDim);
+  const [displayThock, setDisplayThock] = useState(interactionFeedbackVolume);
 
   useEffect(() => {
     setDisplayDim(dictationAudioDim);
   }, [dictationAudioDim]);
+  useEffect(() => {
+    setDisplayThock(interactionFeedbackVolume);
+  }, [interactionFeedbackVolume]);
 
   return (
     <Dialog open={open} onClose={handleClose}>
@@ -69,6 +78,39 @@ export const AudioDialog = () => {
             />
           }
         />
+        <Box sx={{ mt: 2, pl: 1, opacity: playInteractionChime ? 1 : 0.4 }}>
+          <Typography variant="body2" sx={{ fontWeight: 600 }}>
+            <FormattedMessage defaultMessage="Interaction feedback volume" />
+          </Typography>
+          <Typography
+            variant="caption"
+            sx={{ color: "text.secondary", display: "block", mb: 1 }}
+          >
+            <FormattedMessage defaultMessage="Lower the click volume or turn the click off entirely." />
+          </Typography>
+          <Box sx={{ display: "flex", alignItems: "center", gap: 2 }}>
+            <ElasticSlider
+              value={interactionFeedbackVolume}
+              onChangeDisplay={setDisplayThock}
+              onCommit={(v) => {
+                void setInteractionFeedbackVolume(v);
+              }}
+              min={0}
+              max={1}
+              step={0.05}
+              disabled={!playInteractionChime}
+              ariaLabel={intl.formatMessage({
+                defaultMessage: "Interaction feedback volume",
+              })}
+            />
+            <Typography
+              variant="body2"
+              sx={{ minWidth: 40, textAlign: "right" }}
+            >
+              {Math.round(displayThock * 100)}%
+            </Typography>
+          </Box>
+        </Box>
         <Box sx={{ mt: 3 }}>
           <Typography variant="body1" sx={{ fontWeight: 600 }}>
             <FormattedMessage defaultMessage="Dim audio while dictating" />

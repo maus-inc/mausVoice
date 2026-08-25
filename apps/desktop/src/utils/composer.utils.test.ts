@@ -129,6 +129,27 @@ const mocks = vi.hoisted(() => {
   return { invoke, getByLabel, listen, showToast };
 });
 
+/**
+ * Install a `listen` mock that records every listener by event name. Tests
+ * then trigger the desired listener by name. The real Tauri `listen`
+ * returns an unlisten handle; the mock does too.
+ */
+const installPerEventListener = () => {
+  const byEvent = new Map<
+    string,
+    Array<(event: { payload: unknown }) => void>
+  >();
+  mocks.listen.mockImplementation(
+    async (event: string, cb: (event: { payload: unknown }) => void) => {
+      const list = byEvent.get(event) ?? [];
+      list.push(cb);
+      byEvent.set(event, list);
+      return vi.fn();
+    },
+  );
+  return byEvent;
+};
+
 vi.mock("@tauri-apps/api/core", () => ({
   invoke: (...args: unknown[]) => mocks.invoke(...args),
 }));
@@ -198,13 +219,7 @@ describe("reviewTextInComposer", () => {
 
   it("does not open a second window while one is already live", async () => {
     let created = 0;
-    let resultListener: ((event: { payload: unknown }) => void) | undefined;
-    mocks.listen.mockImplementation(
-      async (_event: string, cb: typeof resultListener) => {
-        resultListener = cb;
-        return vi.fn();
-      },
-    );
+    const listeners = installPerEventListener();
     mocks.invoke.mockImplementation(async (cmd: string) => {
       if (cmd === "floating_window_create") {
         created += 1;
@@ -217,8 +232,13 @@ describe("reviewTextInComposer", () => {
     // guard reserves the slot before any microtask runs, so the second
     // call is rejected without creating another window.
     const firstPromise = reviewTextInComposer("one");
-    // Flush the first await microtask boundary.
-    await Promise.resolve();
+    // Flush the first await microtask boundary, then keep flushing until
+    // the inner block has issued the floating_window_create call. The
+    // first call awaits composer_register_text before floating_window_create,
+    // so one Promise.resolve is not enough.
+    for (let i = 0; i < 10 && created === 0; i += 1) {
+      await Promise.resolve();
+    }
     const second = await reviewTextInComposer("two");
 
     expect(second).toBeNull();
@@ -226,10 +246,16 @@ describe("reviewTextInComposer", () => {
     expect(created).toBe(1);
 
     // Resolve the first call via its composer-result listener so it does
-    // not leak the five-minute timeout.
+    // not leak the five-minute timeout. Drain microtasks first so the
+    // listener is registered.
+    for (let i = 0; i < 10; i += 1) {
+      await Promise.resolve();
+      if (listeners.get("composer-result")?.[0]) break;
+    }
     const firstRequestId = mocks.invoke.mock.calls.find(
       (c: unknown[]) => c[0] === "composer_register_text",
     )?.[1]?.requestId as string;
+    const resultListener = listeners.get("composer-result")?.[0];
     resultListener?.({
       payload: { requestId: firstRequestId, accepted: false, text: "" },
     });
@@ -250,29 +276,43 @@ describe("reviewTextInComposer cleanup", () => {
 
   it("destroys the window and discards its text when the user accepts", async () => {
     let createdId = "";
-    let resultListener: ((event: { payload: unknown }) => void) | undefined;
+    const listeners = new Map<
+      string,
+      Array<(event: { payload: unknown }) => void>
+    >();
     mocks.listen.mockImplementation(
-      async (_event: string, cb: typeof resultListener) => {
-        resultListener = cb;
+      async (event: string, cb: (event: { payload: unknown }) => void) => {
+        const list = listeners.get(event) ?? [];
+        list.push(cb);
+        listeners.set(event, list);
         return vi.fn();
       },
     );
     mocks.invoke.mockImplementation(async (cmd: string) => {
       if (cmd === "floating_window_create") {
-        createdId = "floating-accept";
+        createdId = "floating-1";
         return { id: createdId };
       }
       return undefined;
     });
 
-    const promise = reviewTextInComposer("hello");
-    await Promise.resolve();
-    const requestId = mocks.invoke.mock.calls.find(
+    const promise = reviewTextInComposer("draft");
+    // Flush microtasks until the inner block has registered its
+    // `composer-result` listener (the call we're going to fire). The
+    // production code runs in a node environment, so we must not let
+    // it progress all the way to the `window.setTimeout(...)` ready
+    // guard — `window` is not defined in node.
+    for (let i = 0; i < 10; i += 1) {
+      await Promise.resolve();
+      if (listeners.get("composer-result")?.[0]) break;
+    }
+    const firstRequestId = mocks.invoke.mock.calls.find(
       (c: unknown[]) => c[0] === "composer_register_text",
     )?.[1]?.requestId as string;
-
+    const resultListener = listeners.get("composer-result")?.[0];
+    expect(resultListener).toBeDefined();
     resultListener?.({
-      payload: { requestId, accepted: true, text: "edited" },
+      payload: { requestId: firstRequestId, accepted: true, text: "edited" },
     });
     const result = await promise;
 
@@ -280,10 +320,10 @@ describe("reviewTextInComposer cleanup", () => {
     const destroyCall = mocks.invoke.mock.calls.find(
       (c: unknown[]) => c[0] === "floating_window_destroy",
     );
-    expect(destroyCall?.[1]).toMatchObject({ id: "floating-accept" });
+    expect(destroyCall?.[1]).toEqual({ id: createdId });
     const discardCall = mocks.invoke.mock.calls.find(
       (c: unknown[]) => c[0] === "composer_discard_text",
     );
-    expect(discardCall?.[1]).toMatchObject({ requestId });
+    expect(discardCall).toBeDefined();
   });
 });

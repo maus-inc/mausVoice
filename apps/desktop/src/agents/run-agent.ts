@@ -21,6 +21,40 @@ const POLL_INTERVAL_MS = 500;
 const MAX_CONTEXT_MESSAGES = 80;
 const activeLoops = new Map<string, AgentLoop>();
 
+/**
+ * Run a non-critical side effect inside the agent's `for await` loop and
+ * isolate any rejection. A failing chat-message persistence, streaming-state
+ * write, or tool-UI update must NEVER terminate the agent run: the
+ * in-memory `AgentLoop` already has the tool result and the next LLM
+ * request must be issued. The "resource id is invalid" log the user saw
+ * in the diagnostics zip was an unhandled rejection from this exact
+ * surface; wrapping the call keeps the loop alive.
+ *
+ * `label` is included in the log so post-mortem inspection can map a
+ * failure back to a specific event handler. `context` is included verbatim
+ * (caller must sanitize) so the tool-call id, conversation id, and
+ * message id are available without joining on a stack trace.
+ */
+export async function safeSideEffect<T>(
+  label: string,
+  context: Record<string, string>,
+  fn: () => Promise<T>,
+): Promise<T | null> {
+  try {
+    return await fn();
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    getLogger().error(
+      `Agent non-critical side effect failed (${label}, ${Object.entries(
+        context,
+      )
+        .map(([k, v]) => `${k}=${v}`)
+        .join(", ")}): ${message}`,
+    );
+    return null;
+  }
+}
+
 export async function runAgent(
   conversationId: string,
   config: AgentTypeConfig,
@@ -56,11 +90,17 @@ export async function runAgent(
     for await (const event of loop.run(messages)) {
       switch (event.type) {
         case "iteration-start": {
-          if (currentMessageId) {
-            await finalizeAssistantMessage(
-              currentMessageId,
-              iterationText,
-              iterationToolCalls,
+          const previousMessageId = currentMessageId;
+          if (previousMessageId) {
+            await safeSideEffect(
+              "iteration-start.finalizePrevious",
+              { conversationId, messageId: previousMessageId },
+              () =>
+                finalizeAssistantMessage(
+                  previousMessageId,
+                  iterationText,
+                  iterationToolCalls,
+                ),
             );
           }
 
@@ -160,19 +200,35 @@ export async function runAgent(
           // persistence layer has no "tool" role) and tag it with
           // metadata.type so the load path can rehydrate it as an
           // LlmMessage `tool` correlated to event.toolCallId.
-          await createChatMessage({
-            id: crypto.randomUUID(),
-            conversationId,
-            role: "system",
-            content: event.result,
-            createdAt: new Date().toISOString(),
-            metadata: {
-              type: "tool-result",
+          //
+          // The persist call is wrapped in `safeSideEffect` because a
+          // rejected write (for example, the "resource id is invalid"
+          // error captured in the user's diagnostics zip) would otherwise
+          // escape the `for await` loop and prevent the next model
+          // iteration. The in-memory `AgentLoop` has already appended
+          // the tool result to its history; failing to persist it must
+          // not stop the agent.
+          await safeSideEffect(
+            "tool-call-result.persist",
+            {
+              conversationId,
               toolCallId: event.toolCallId,
-              toolName: event.toolName,
-              ...(reason && { reason }),
             },
-          });
+            () =>
+              createChatMessage({
+                id: crypto.randomUUID(),
+                conversationId,
+                role: "system",
+                content: event.result,
+                createdAt: new Date().toISOString(),
+                metadata: {
+                  type: "tool-result",
+                  toolCallId: event.toolCallId,
+                  toolName: event.toolName,
+                  ...(reason && { reason }),
+                },
+              }),
+          );
           produceAppState((draft) => {
             if (currentMessageId) {
               const streaming = draft.streamingMessageById[currentMessageId];
@@ -205,11 +261,17 @@ export async function runAgent(
         }
 
         case "finish": {
-          if (currentMessageId) {
-            await finalizeAssistantMessage(
-              currentMessageId,
-              iterationText,
-              iterationToolCalls,
+          const finishingMessageId = currentMessageId;
+          if (finishingMessageId) {
+            await safeSideEffect(
+              "finish.finalize",
+              { conversationId, messageId: finishingMessageId },
+              () =>
+                finalizeAssistantMessage(
+                  finishingMessageId,
+                  iterationText,
+                  iterationToolCalls,
+                ),
             );
           }
           produceAppState((draft) => {

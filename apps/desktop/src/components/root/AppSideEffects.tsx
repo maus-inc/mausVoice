@@ -186,6 +186,9 @@ export const AppSideEffects = () => {
   const playInteractionChime = useAppStore(
     (state) => getMyUser(state)?.playInteractionChime ?? true,
   );
+  const interactionFeedbackVolume = useAppStore(
+    (state) => getMyUser(state)?.interactionFeedbackVolume ?? 0.35,
+  );
   const keyPermAuthorized = useAppStore((state) =>
     isPermissionAuthorized(getRec(state.permissions, "accessibility")?.state),
   );
@@ -285,6 +288,15 @@ export const AppSideEffects = () => {
       enabled: playInteractionChime,
     }).catch(() => {});
   }, [playInteractionChime]);
+
+  // Mirror the user-chosen thock gain into Rust so the warm path AND the
+  // fallback path apply the live volume. The Rust side clamps to its safe
+  // window, so a value outside [0, 1] here is a no-op.
+  useEffect(() => {
+    invoke("set_interaction_feedback_volume", {
+      volume: interactionFeedbackVolume,
+    }).catch(() => {});
+  }, [interactionFeedbackVolume]);
 
   // Windows "Always run as administrator" pre-flight. Must stay ahead of
   // auth / Mixpanel / dashboard init — the gate in elevation.actions owns
