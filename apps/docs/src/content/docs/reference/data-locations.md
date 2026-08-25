@@ -10,7 +10,7 @@ mausVoice resolves platform folders through Tauri; it does not hard-code one cro
 | Data                  | Resolved location                          | Notes                                                                                                                      |
 | --------------------- | ------------------------------------------ | -------------------------------------------------------------------------------------------------------------------------- |
 | SQLite                | `mausvoice.db` in the app config directory | May have `mausvoice.db-wal` and `mausvoice.db-shm` companions                                                              |
-| Local models          | `transcription-models/` under app data     | Managed whisper.cpp GGML and ONNX Parakeet/Canary downloads; files from the old `models/` directory are migrated here once |
+| Local models          | `transcription-models/` under app data     | Managed whisper.cpp GGML and ONNX Parakeet/Canary downloads; files from the old `models/` directory are migrated here once. See [Manual placement](../configuration/local-models#manual-placement-advanced) for per-OS paths, expected filenames, and validation behavior when placing files yourself. |
 | Saved dictation audio | `transcription-audio/` under app data      | Mono WAV snapshots linked from History                                                                                     |
 | General files         | `storage/` under app data                  | App-managed storage repository                                                                                             |
 | Logs                  | Tauri's app log directory                  | Rotated at 25 MB per file, up to 10 files kept (~250 MB cap)     |
