@@ -526,6 +526,47 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn multiple_unknown_recorded_migration_versions_preserve_the_database() {
+        let temp = TempDb::new();
+        let path = &temp.path;
+        let pool = try_open(path).await.expect("initial migrate");
+        // The recorded set must be a realistic mix: shipped versions, plus
+        // two newer-release versions interleaved with the existing applied
+        // set. Iteration order over the applied HashMap is non-deterministic,
+        // so this test exercises every position the unknown rows can land in.
+        sqlx::query(
+            "INSERT INTO _sqlx_migrations
+             (version, description, success, checksum, execution_time)
+             VALUES (9998, 'future_a', true, x'deadbeef', 0),
+                    (9999, 'future_b', true, x'feedface', 0)",
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
+        pool.close().await;
+
+        let result = open_app_database(path).await;
+        assert!(
+            result.is_err(),
+            "a database with newer-release migrations must be surfaced, not silently opened"
+        );
+        assert!(
+            std::fs::read_dir(&temp.dir)
+                .unwrap()
+                .flatten()
+                .all(|entry| !entry
+                    .file_name()
+                    .to_string_lossy()
+                    .starts_with("mausvoice.broken-")),
+            "a downgrade with multiple newer versions must never quarantine the database"
+        );
+        assert!(
+            path.exists(),
+            "the original database must be preserved regardless of how many newer versions are present"
+        );
+    }
+
+    #[tokio::test]
     async fn checksum_mismatch_is_recovered_with_a_fresh_database() {
         let temp = TempDb::new();
         let path = &temp.path;

@@ -33,6 +33,20 @@ const makeDocument = (rootChildren: unknown[] = []) => {
   };
 };
 
+const installOverlayWithMockWindow = (rootChildren: unknown[] = []) => {
+  const doc = makeDocument(rootChildren);
+  vi.stubGlobal("document", doc);
+  const listeners: Record<string, Array<(event: unknown) => void>> = {};
+  vi.stubGlobal("window", {
+    addEventListener: (type: string, handler: (event: unknown) => void) => {
+      listeners[type] ??= [];
+      listeners[type].push(handler);
+    },
+    removeEventListener: () => {},
+  });
+  return { doc, listeners };
+};
+
 describe("global error overlay", () => {
   afterEach(() => {
     vi.unstubAllGlobals();
@@ -161,8 +175,7 @@ describe("global error overlay", () => {
   });
 
   it("logs a post-mount resource load failure instead of dropping it", async () => {
-    const doc = makeDocument([{}]);
-    vi.stubGlobal("document", doc);
+    const { doc, listeners } = installOverlayWithMockWindow([{}]);
     class HTMLScriptElement {
       src = "asset://localhost/assets/async-chunk.js";
     }
@@ -175,14 +188,6 @@ describe("global error overlay", () => {
     }
     vi.stubGlobal("HTMLScriptElement", HTMLScriptElement);
     vi.stubGlobal("HTMLLinkElement", HTMLLinkElement);
-    const listeners: Record<string, Array<(event: unknown) => void>> = {};
-    vi.stubGlobal("window", {
-      addEventListener: (type: string, handler: (event: unknown) => void) => {
-        listeners[type] ??= [];
-        listeners[type].push(handler);
-      },
-      removeEventListener: () => {},
-    });
     const consoleWarn = vi.spyOn(console, "warn").mockImplementation(() => {});
     const { installGlobalErrorOverlay } =
       await import("./global-error-overlay.utils.ts");
@@ -197,18 +202,9 @@ describe("global error overlay", () => {
   });
 
   it("does not log ignored image load failures", async () => {
-    const doc = makeDocument([{}]);
-    vi.stubGlobal("document", doc);
+    const { doc, listeners } = installOverlayWithMockWindow([{}]);
     class HTMLImageElement {}
     vi.stubGlobal("HTMLImageElement", HTMLImageElement);
-    const listeners: Record<string, Array<(event: unknown) => void>> = {};
-    vi.stubGlobal("window", {
-      addEventListener: (type: string, handler: (event: unknown) => void) => {
-        listeners[type] ??= [];
-        listeners[type].push(handler);
-      },
-      removeEventListener: () => {},
-    });
     const consoleError = vi
       .spyOn(console, "error")
       .mockImplementation(() => {});
@@ -226,16 +222,7 @@ describe("global error overlay", () => {
   });
 
   it("does not create an overlay for post-mount rejections", async () => {
-    const doc = makeDocument([{}]);
-    vi.stubGlobal("document", doc);
-    const listeners: Record<string, Array<(event: unknown) => void>> = {};
-    vi.stubGlobal("window", {
-      addEventListener: (type: string, handler: (event: unknown) => void) => {
-        listeners[type] ??= [];
-        listeners[type].push(handler);
-      },
-      removeEventListener: () => {},
-    });
+    const { doc, listeners } = installOverlayWithMockWindow([{}]);
     const consoleError = vi
       .spyOn(console, "error")
       .mockImplementation(() => {});
