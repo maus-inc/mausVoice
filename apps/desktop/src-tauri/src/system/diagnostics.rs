@@ -57,7 +57,7 @@ fn purge_old_logs_in_with_cap(logs_dir: &Path, cap: u64) {
 
     let mut removed = 0usize;
     let mut bytes_freed: u64 = 0;
-    let mut running_total = total_size;
+    let running_total = total_size;
 
     for (idx, (path, _, size)) in files.iter().enumerate() {
         if idx < MIN_KEEP_RECENT_FILES {
