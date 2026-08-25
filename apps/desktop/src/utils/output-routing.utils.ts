@@ -13,6 +13,8 @@ import { getMyUserPreferences } from "./user.utils";
 
 type PasteOutcome = "pasted" | "copied_to_clipboard";
 
+let handsFreeSessionId = 0;
+
 export const routeTranscriptOutput = async (
   args: RouteTranscriptOutputArgs,
 ): Promise<RouteTranscriptOutputResult> => {
@@ -50,10 +52,21 @@ export const routeTranscriptOutput = async (
   const typingSpeedMs = currentApp?.typingSpeedMs ?? prefs?.typingSpeedMs ?? 5;
   const handsFreeDelayMs = getEffectiveHandsFreeDelayMs(prefs);
 
+  const sessionId = ++handsFreeSessionId;
+
   if (handsFreeDelayMs > 0) {
     await new Promise<void>((resolve) => {
-      setTimeout(resolve, handsFreeDelayMs);
+      setTimeout(() => {
+        if (sessionId !== handsFreeSessionId) {
+          resolve();
+          return;
+        }
+        resolve();
+      }, handsFreeDelayMs);
     });
+    if (sessionId !== handsFreeSessionId) {
+      return { delivered: false, remote: false };
+    }
   }
 
   if (insertionMethod === "type") {

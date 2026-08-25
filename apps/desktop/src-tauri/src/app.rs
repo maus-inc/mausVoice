@@ -9,7 +9,7 @@ const AUTOSTART_HIDDEN_ARG: &str = "--mausvoice-autostart-hidden";
 /// Maximum size of a single log file before the plugin rotates it.
 /// At 25 MB and `MAX_LOG_FILES` kept files, the total log directory is
 /// capped near 250 MB.
-const MAX_LOG_FILE_SIZE: u64 = 25 * 1024 * 1024;
+const MAX_LOG_FILE_SIZE: u128 = 25 * 1024 * 1024;
 
 /// Number of rotated log files the plugin keeps on disk. Combined with
 /// `MAX_LOG_FILE_SIZE` this bounds the log directory to roughly 250 MB.

@@ -191,7 +191,7 @@ describe("storeTranscription audio retention", () => {
     setAppState(structuredClone(INITIAL_APP_STATE), true);
   });
 
-  it("saves the audio snapshot in incognito when transcription fails (no history record)", async () => {
+  it("never saves the audio snapshot in incognito when transcription fails (no history record)", async () => {
     setPrefs({ incognitoModeEnabled: true });
     invokeMock.mockResolvedValue({
       filePath: "/tmp/audio.wav",
@@ -202,15 +202,12 @@ describe("storeTranscription audio retention", () => {
       buildInput({ rawTranscript: null, warnings: ["provider failed"] }),
     );
 
-    expect(invokeMock).toHaveBeenCalledWith(
-      "store_transcription_audio",
-      expect.objectContaining({ sampleRate: 16000 }),
-    );
+    expect(invokeMock).not.toHaveBeenCalledWith("store_transcription_audio");
     expect(createTranscriptionMock).not.toHaveBeenCalled();
     expect(result.transcription).toBeNull();
   });
 
-  it("saves the audio snapshot in incognito when transcription succeeds (no history record)", async () => {
+  it("never saves the audio snapshot in incognito when transcription succeeds (no history record)", async () => {
     setPrefs({ incognitoModeEnabled: true });
     invokeMock.mockResolvedValue({
       filePath: "/tmp/audio.wav",
@@ -219,10 +216,7 @@ describe("storeTranscription audio retention", () => {
 
     const result = await storeTranscription(buildInput());
 
-    expect(invokeMock).toHaveBeenCalledWith(
-      "store_transcription_audio",
-      expect.objectContaining({ sampleRate: 16000 }),
-    );
+    expect(invokeMock).not.toHaveBeenCalledWith("store_transcription_audio");
     expect(createTranscriptionMock).not.toHaveBeenCalled();
     expect(result.transcription).toBeNull();
   });
