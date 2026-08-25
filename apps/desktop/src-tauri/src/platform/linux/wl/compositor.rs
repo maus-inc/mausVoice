@@ -161,7 +161,11 @@ pub fn sync_compositor_hotkeys(
 
 fn classify_key(key: &str) -> Option<(&'static str, bool)> {
     let lower = key.to_lowercase();
-    if lower.starts_with("meta") {
+    if lower.starts_with("meta")
+        || lower.starts_with("super")
+        || lower.starts_with("os")
+        || lower.starts_with("win")
+    {
         Some(("super", true))
     } else if lower.starts_with("control") {
         Some(("ctrl", true))
@@ -171,6 +175,58 @@ fn classify_key(key: &str) -> Option<(&'static str, bool)> {
         Some(("alt", true))
     } else {
         None
+    }
+}
+
+#[cfg(test)]
+mod classify_key_tests {
+    use super::classify_key;
+
+    #[test]
+    fn maps_meta_prefix_to_super() {
+        assert_eq!(classify_key("MetaLeft"), Some(("super", true)));
+        assert_eq!(classify_key("MetaRight"), Some(("super", true)));
+        assert_eq!(classify_key("MetaL"), Some(("super", true)));
+    }
+
+    #[test]
+    fn maps_os_prefix_to_super() {
+        assert_eq!(classify_key("OSLeft"), Some(("super", true)));
+        assert_eq!(classify_key("OSRight"), Some(("super", true)));
+    }
+
+    #[test]
+    fn maps_super_prefix_to_super() {
+        assert_eq!(classify_key("SuperL"), Some(("super", true)));
+        assert_eq!(classify_key("SuperLeft"), Some(("super", true)));
+    }
+
+    #[test]
+    fn maps_win_prefix_to_super() {
+        assert_eq!(classify_key("WinL"), Some(("super", true)));
+        assert_eq!(classify_key("WinLeft"), Some(("super", true)));
+    }
+
+    #[test]
+    fn is_case_insensitive() {
+        assert_eq!(classify_key("metaleft"), Some(("super", true)));
+        assert_eq!(classify_key("OSLEFT"), Some(("super", true)));
+        assert_eq!(classify_key("SuPeR"), Some(("super", true)));
+    }
+
+    #[test]
+    fn maps_other_modifiers() {
+        assert_eq!(classify_key("ControlLeft"), Some(("ctrl", true)));
+        assert_eq!(classify_key("ShiftRight"), Some(("shift", true)));
+        assert_eq!(classify_key("AltLeft"), Some(("alt", true)));
+        assert_eq!(classify_key("Option"), Some(("alt", true)));
+    }
+
+    #[test]
+    fn returns_none_for_non_modifier() {
+        assert_eq!(classify_key("KeyA"), None);
+        assert_eq!(classify_key("Escape"), None);
+        assert_eq!(classify_key("Digit1"), None);
     }
 }
 
