@@ -11,6 +11,11 @@ export type BaseApiTranscriptionSessionOptions = {
   inferenceDevice: string;
 };
 
+export type BaseApiStreamSession = {
+  finalize: () => Promise<string>;
+  cleanup: () => void;
+};
+
 export abstract class BaseApiTranscriptionSession implements TranscriptionSession {
   protected readonly providerLabel: string;
   protected readonly inferenceDevice: string;
@@ -21,10 +26,11 @@ export abstract class BaseApiTranscriptionSession implements TranscriptionSessio
     this.inferenceDevice = options.inferenceDevice;
   }
 
+  protected abstract getStreamSession(): BaseApiStreamSession | null;
+
   abstract onRecordingStart(sampleRate: number): Promise<void>;
   abstract cleanup(): void;
   abstract supportsStreaming(): boolean;
-  protected abstract runFinalize(): Promise<string | null>;
 
   setInterimResultCallback(callback: InterimResultCallback): void {
     this.interimCallback = callback;
@@ -33,21 +39,33 @@ export abstract class BaseApiTranscriptionSession implements TranscriptionSessio
   async finalize(
     _audio: StopRecordingResponse,
   ): Promise<TranscriptionSessionResult> {
-    const failureResult = (message: string): TranscriptionSessionResult => ({
+    const streamSession = this.getStreamSession();
+    if (!streamSession) {
+      return this.notEstablishedResult();
+    }
+    return this.runFinalize(streamSession);
+  }
+
+  private notEstablishedResult(): TranscriptionSessionResult {
+    return {
       rawTranscript: null,
       metadata: {
         inferenceDevice: this.inferenceDevice,
         transcriptionMode: "api",
       },
-      warnings: [message],
-    });
+      warnings: [`${this.providerLabel} streaming session was not established`],
+    };
+  }
 
+  private async runFinalize(
+    streamSession: BaseApiStreamSession,
+  ): Promise<TranscriptionSessionResult> {
     try {
       getLogger().verbose(
         `[${this.providerLabel}] Finalizing streaming session...`,
       );
       const finalizeStart = performance.now();
-      const transcript = await this.runFinalize();
+      const transcript = await streamSession.finalize();
       const durationMs = Math.round(performance.now() - finalizeStart);
 
       getLogger().verbose(`[${this.providerLabel}] Transcript timing:`, {
@@ -72,22 +90,18 @@ export abstract class BaseApiTranscriptionSession implements TranscriptionSessio
         `[${this.providerLabel}] Failed to finalize session:`,
         error,
       );
-      return failureResult(
-        `${this.providerLabel} finalization failed: ${
-          error instanceof Error ? error.message : "Unknown error"
-        }`,
-      );
+      return {
+        rawTranscript: null,
+        metadata: {
+          inferenceDevice: this.inferenceDevice,
+          transcriptionMode: "api",
+        },
+        warnings: [
+          `${this.providerLabel} finalization failed: ${
+            error instanceof Error ? error.message : "Unknown error"
+          }`,
+        ],
+      };
     }
-  }
-
-  protected notEstablishedResult(): TranscriptionSessionResult {
-    return {
-      rawTranscript: null,
-      metadata: {
-        inferenceDevice: this.inferenceDevice,
-        transcriptionMode: "api",
-      },
-      warnings: [`${this.providerLabel} streaming session was not established`],
-    };
   }
 }
