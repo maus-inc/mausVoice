@@ -3,6 +3,7 @@ import {
   applyReplacements,
   applySymbolConversions,
   editDistance,
+  escapeRegExp,
   getFirstAndLastName,
   getInitials,
   getStringSimilarity,
@@ -618,5 +619,120 @@ describe("sanitizeIndentation", () => {
   it("preserves multiple newlines between paragraphs", () => {
     const input = "  paragraph one\n\n\n  paragraph two";
     expect(sanitizeIndentation(input)).toBe("paragraph one\n\n\nparagraph two");
+  });
+});
+
+describe("escapeRegExp", () => {
+  it.each([
+    [".", "\\."],
+    ["\\", "\\\\"],
+    ["[", "\\["],
+    ["]", "\\]"],
+    ["(", "\\("],
+    [")", "\\)"],
+    ["+", "\\+"],
+    ["*", "\\*"],
+    ["?", "\\?"],
+    ["^", "\\^"],
+    ["$", "\\$"],
+    ["{", "\\{"],
+    ["}", "\\}"],
+    ["|", "\\|"],
+  ])("escapes %s", (input, expected) => {
+    expect(escapeRegExp(input)).toBe(expected);
+  });
+
+  it("escapes a multi-character source without altering literal letters", () => {
+    expect(escapeRegExp("C++")).toBe("C\\+\\+");
+    expect(escapeRegExp("(group)")).toBe("\\(group\\)");
+    expect(escapeRegExp("a.b")).toBe("a\\.b");
+  });
+
+  it("produces a regex that matches the original literal", () => {
+    const sources = ["C++", "a.b", "path\\to\\file", "[brackets]", "x*y", "(a)"];
+    for (const source of sources) {
+      const re = new RegExp(escapeRegExp(source));
+      expect(re.test(source)).toBe(true);
+    }
+  });
+});
+
+describe("applyReplacements with regex metacharacters in sourceValue", () => {
+  it("does not treat a slash inside a word as a regex delimiter", () => {
+    expect(() =>
+      applyReplacements("use a/b notation", [
+        { sourceValue: "a/b", destinationValue: "AB" },
+      ]),
+    ).not.toThrow();
+    expect(
+      applyReplacements("use a/b notation", [
+        { sourceValue: "a/b", destinationValue: "AB" },
+      ]),
+    ).toBe("use AB notation");
+  });
+
+  it("does not treat a backslash inside a word as a regex escape", () => {
+    expect(() =>
+      applyReplacements("see foo\\bar here", [
+        { sourceValue: "foo\\bar", destinationValue: "FB" },
+      ]),
+    ).not.toThrow();
+  });
+
+  it("does not treat brackets inside a word as a character class", () => {
+    expect(() =>
+      applyReplacements("see foo[bar] here", [
+        { sourceValue: "foo[bar]", destinationValue: "FB" },
+      ]),
+    ).not.toThrow();
+    const out = applyReplacements("see foo[bar] here", [
+      { sourceValue: "foo[bar]", destinationValue: "FB" },
+    ]);
+    expect(out).toContain("FB");
+  });
+
+  it("does not treat parens inside a word as a capture group", () => {
+    expect(() =>
+      applyReplacements("see foo(bar) here", [
+        { sourceValue: "foo(bar)", destinationValue: "FB" },
+      ]),
+    ).not.toThrow();
+    const out = applyReplacements("see foo(bar) here", [
+      { sourceValue: "foo(bar)", destinationValue: "FB" },
+    ]);
+    expect(out).toContain("FB");
+  });
+
+  it("does not treat a plus sign as a quantifier", () => {
+    expect(() =>
+      applyReplacements("write C++ daily", [
+        { sourceValue: "C++", destinationValue: "Rust" },
+      ]),
+    ).not.toThrow();
+    const out = applyReplacements("write C++ daily", [
+      { sourceValue: "C++", destinationValue: "Rust" },
+    ]);
+    expect(out).toContain("Rust");
+  });
+
+  it("does not treat an asterisk as a quantifier", () => {
+    expect(() =>
+      applyReplacements("use a*b style", [
+        { sourceValue: "a*b", destinationValue: "AB" },
+      ]),
+    ).not.toThrow();
+    expect(
+      applyReplacements("use a*b style", [
+        { sourceValue: "a*b", destinationValue: "AB" },
+      ]),
+    ).toBe("use AB style");
+  });
+
+  it("does not treat a question mark as a quantifier", () => {
+    expect(() =>
+      applyReplacements("answer is maybe? right", [
+        { sourceValue: "maybe", destinationValue: "perhaps" },
+      ]),
+    ).not.toThrow();
   });
 });

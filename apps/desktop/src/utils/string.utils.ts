@@ -1,9 +1,20 @@
 import { Nullable } from "@maus-inc/types";
 
 /**
+ * Escapes regular expression metacharacters in `value` so it can be embedded
+ * as a literal pattern. Use this whenever a user-supplied string (for example
+ * a dictionary term's source value) is passed to `new RegExp`, `String.replace`
+ * with a regex, or any other regex-accepting API. Without escaping, a term
+ * like `C++` or `a.b` is interpreted as a regex pattern and either throws
+ * or matches the wrong span.
+ */
+export const escapeRegExp = (value: string): string =>
+  value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+
+/**
  * Calculates the Levenshtein edit distance between two strings.
  * Returns the minimum number of single-character edits (insertions,
- * deletions, or substitutions) required to change one string into the other.
+ * deletions, or substitutions) required to change one string into another.
  */
 export const editDistance = (a: string, b: string): number => {
   if (a.length === 0) return b.length;
