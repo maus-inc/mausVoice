@@ -117,3 +117,4 @@ HANDOFF.md
 /logs/
 #Agent 
 .mausagent/
+.kilo/
