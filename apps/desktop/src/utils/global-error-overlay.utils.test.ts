@@ -56,7 +56,8 @@ describe("global error overlay", () => {
     expect(shouldPaintFatalRejection()).toBe(true);
   });
 
-  const stubResourceElements = (): void => {
+  it("treats failed script and stylesheet loads as fatal before mount", async () => {
+    vi.stubGlobal("document", makeDocument([]));
     class HTMLScriptElement {
       src = "asset://localhost/assets/index.js";
     }
@@ -69,11 +70,6 @@ describe("global error overlay", () => {
     }
     vi.stubGlobal("HTMLScriptElement", HTMLScriptElement);
     vi.stubGlobal("HTMLLinkElement", HTMLLinkElement);
-  };
-
-  it("treats failed script and stylesheet loads as fatal before mount", async () => {
-    vi.stubGlobal("document", makeDocument([]));
-    stubResourceElements();
     const { shouldPaintFatalWindowError } =
       await import("./global-error-overlay.utils.ts");
     expect(
@@ -103,7 +99,18 @@ describe("global error overlay", () => {
     // Once React has mounted, an async chunk's stylesheet/script can still fail
     // to load; that must log, not cover a working UI with the fatal overlay.
     vi.stubGlobal("document", makeDocument([{}]));
-    stubResourceElements();
+    class HTMLScriptElement {
+      src = "asset://localhost/assets/index.js";
+    }
+    class HTMLLinkElement {
+      href = "asset://localhost/assets/styles.css";
+      rel = "StyleSheet";
+      relList = {
+        contains: (_token: string): boolean => false,
+      };
+    }
+    vi.stubGlobal("HTMLScriptElement", HTMLScriptElement);
+    vi.stubGlobal("HTMLLinkElement", HTMLLinkElement);
     const { shouldPaintFatalWindowError } =
       await import("./global-error-overlay.utils.ts");
     expect(
