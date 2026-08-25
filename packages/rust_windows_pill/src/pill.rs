@@ -468,7 +468,7 @@ fn maybe_reassert_topmost(hwnd: HWND, now: Instant) {
     unsafe {
         let _ = SetWindowPos(
             hwnd,
-            HWND_TOPMOST,
+            Some(HWND_TOPMOST),
             0,
             0,
             0,
