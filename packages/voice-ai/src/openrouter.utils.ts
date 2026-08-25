@@ -29,6 +29,22 @@ export const OPENROUTER_FAVORITE_MODELS = [
  */
 export const OPENROUTER_DEFAULT_MODEL = "openai/gpt-4o-mini";
 
+// OpenRouter routes requests to many providers; most reject `json_schema`
+// and only accept the legacy `json_object` shape. Use `json_schema` only for
+// models that explicitly support structured outputs upstream.
+const JSON_SCHEMA_SUPPORTED_MODELS = new Set<string>([
+  "openai/gpt-4o",
+  "openai/gpt-4o-mini",
+  "openai/gpt-4-turbo",
+  "openai/gpt-3.5-turbo",
+  "openai/gpt-5.2",
+  "openai/gpt-5.3",
+  "openai/gpt-5.4",
+  "openai/gpt-oss-20b",
+  "openai/gpt-oss-120b",
+  "moonshotai/kimi-k2-instruct-0905",
+]);
+
 /**
  * Create OpenAI client configured for OpenRouter
  */
@@ -178,15 +194,17 @@ export const openrouterGenerateTextResponse = async ({
         max_tokens: maxTokens ?? 1024,
         top_p: 1,
         response_format: jsonResponse
-          ? {
-              type: "json_schema",
-              json_schema: {
-                name: jsonResponse.name,
-                description: jsonResponse.description,
-                schema: jsonResponse.schema,
-                strict: true,
-              },
-            }
+          ? JSON_SCHEMA_SUPPORTED_MODELS.has(model)
+            ? {
+                type: "json_schema",
+                json_schema: {
+                  name: jsonResponse.name,
+                  description: jsonResponse.description,
+                  schema: jsonResponse.schema,
+                  strict: true,
+                },
+              }
+            : { type: "json_object" }
           : undefined,
       };
 

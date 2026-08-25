@@ -18,6 +18,19 @@ export const AZURE_OPENAI_MODELS = [
 ] as const;
 export type AzureOpenAIModel = (typeof AZURE_OPENAI_MODELS)[number];
 
+// Azure OpenAI deployments accept the same `json_schema` shape as the
+// upstream OpenAI service. The set is keyed off the deployment name so
+// user-deployed open-source models (Llama, Phi, etc.) fall back to
+// `json_object` instead of being rejected.
+const JSON_SCHEMA_SUPPORTED_MODELS = new Set<string>([
+  "gpt-5-mini",
+  "gpt-5-nano",
+  "gpt-4o",
+  "gpt-4o-mini",
+  "gpt-4",
+  "gpt-35-turbo",
+]);
+
 export type AzureOpenAIGenerateTextArgs = {
   apiKey: string;
   endpoint: string;
@@ -68,15 +81,17 @@ export const azureOpenAIGenerateText = async ({
         temperature: 1,
         max_completion_tokens: maxTokens ?? 1024,
         response_format: jsonResponse
-          ? {
-              type: "json_schema",
-              json_schema: {
-                name: jsonResponse.name,
-                description: jsonResponse.description,
-                schema: jsonResponse.schema,
-                strict: true,
-              },
-            }
+          ? JSON_SCHEMA_SUPPORTED_MODELS.has(deploymentName)
+            ? {
+                type: "json_schema",
+                json_schema: {
+                  name: jsonResponse.name,
+                  description: jsonResponse.description,
+                  schema: jsonResponse.schema,
+                  strict: true,
+                },
+              }
+            : { type: "json_object" }
           : undefined,
       });
 

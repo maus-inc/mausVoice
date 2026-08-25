@@ -36,6 +36,25 @@ export const OPENAI_TRANSCRIPTION_MODELS = [
 export type OpenAITranscriptionModel =
   (typeof OPENAI_TRANSCRIPTION_MODELS)[number];
 
+// Models that support `response_format: { type: "json_schema" }`. The base
+// OpenAI endpoint does, but downstream OpenAI-compatible providers and
+// proxied open-source models often reject `json_schema` and require the
+// legacy `json_object` shape. Proxied callers pass their own `model` strings,
+// so the fallback is keyed off the model name itself.
+const JSON_SCHEMA_SUPPORTED_MODELS = new Set<string>([
+  "gpt-4o",
+  "gpt-4o-mini",
+  "gpt-4-turbo",
+  "gpt-3.5-turbo",
+  "gpt-5.2",
+  "gpt-5.3",
+  "gpt-5.4",
+]);
+
+export function supportsOpenAIJsonSchema(model: string): boolean {
+  return JSON_SCHEMA_SUPPORTED_MODELS.has(model);
+}
+
 const contentToString = (
   content: string | ChatCompletionContentPart[] | null | undefined,
 ): string => {
@@ -174,15 +193,17 @@ export const openaiGenerateTextResponse = async ({
         max_completion_tokens: maxTokens ?? 1024,
         top_p: 1,
         response_format: jsonResponse
-          ? {
-              type: "json_schema",
-              json_schema: {
-                name: jsonResponse.name,
-                description: jsonResponse.description,
-                schema: jsonResponse.schema,
-                strict: true,
-              },
-            }
+          ? JSON_SCHEMA_SUPPORTED_MODELS.has(model)
+            ? {
+                type: "json_schema",
+                json_schema: {
+                  name: jsonResponse.name,
+                  description: jsonResponse.description,
+                  schema: jsonResponse.schema,
+                  strict: true,
+                },
+              }
+            : { type: "json_object" }
           : undefined,
       });
 
