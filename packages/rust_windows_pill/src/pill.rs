@@ -13,7 +13,7 @@ use crate::constants::*;
 use crate::draw;
 use crate::gfx::Gfx;
 use crate::input;
-use crate::ipc::{self, InMessage, OutMessage, Phase, Rect, ResetStrategy, Visibility};
+use crate::ipc::{self, InMessage, OutMessage, Phase, ResetStrategy, Visibility};
 use crate::state;
 use crate::state::{ClickAction, PillState, Rocket, RocketPhase, Spark, WindowMode};
 
@@ -25,6 +25,7 @@ use crate::state::{ClickAction, PillState, Rocket, RocketPhase, Spark, WindowMod
 // same ergonomics as globals without violating HWND affinity.
 
 const TIMER_CURSOR: usize = 2;
+const TOPMOST_REASSERT_INTERVAL: Duration = Duration::from_secs(2);
 
 thread_local! {
     static STATE: RefCell<Option<PillState>> = const { RefCell::new(None) };
@@ -37,6 +38,14 @@ thread_local! {
     static EDIT_CONTAINER: Cell<HWND> = const { Cell::new(HWND(std::ptr::null_mut())) };
     static EDIT_HWND: Cell<HWND> = const { Cell::new(HWND(std::ptr::null_mut())) };
     static EDIT_BG_BRUSH: Cell<HBRUSH> = const { Cell::new(HBRUSH(std::ptr::null_mut())) };
+}
+
+const PILL_PLACEMENT_BOTTOM: u8 = 0;
+const PILL_PLACEMENT_TOP: u8 = 1;
+thread_local! {
+    static LAST_TOPMOST_REASSERT: Cell<Option<Instant>> = const { Cell::new(None) };
+    static TOPMOST_REASSERT_COUNT: Cell<u32> = const { Cell::new(0) };
+    static PILL_PLACEMENT: Cell<u8> = const { Cell::new(PILL_PLACEMENT_BOTTOM) };
 }
 
 /// Runs the Windows pill: registers the window class, creates the layered
@@ -99,7 +108,6 @@ pub fn run(receiver: Receiver<InMessage>) {
         tooltip_t: Cell::new(0.0),
         tooltip_velocity: Cell::new(0.0),
         tooltip_width: Cell::new(0.0),
-        style_tooltip_gate: rust_pill_shared::StyleTooltipGate::default(),
         window_mode: Cell::new(WindowMode::Dictation),
         draw_width: Cell::new(DICTATION_WINDOW_WIDTH as f64),
         draw_height: Cell::new(DICTATION_WINDOW_HEIGHT as f64),
@@ -167,8 +175,6 @@ pub fn run(receiver: Receiver<InMessage>) {
         saved_y: Cell::new(0),
         inflate_t: Cell::new(0.0),
         inflate_velocity: Cell::new(0.0),
-        drag_label_t: Cell::new(0.0),
-        drag_label_velocity: Cell::new(0.0),
         ring_alpha: Cell::new(0.0),
         ring_release_progress: Cell::new(0.0),
         press_elapsed: Cell::new(0.0),
@@ -428,6 +434,8 @@ fn on_anim_tick(hwnd: HWND) {
         }
     });
 
+    maybe_reassert_topmost(hwnd, Instant::now());
+
     GFX.with(|g| {
         STATE.with(|s| {
             if let (Some(ref mut gfx), Some(ref state)) = (&mut *g.borrow_mut(), &*s.borrow()) {
@@ -451,11 +459,31 @@ fn on_cursor_tick(hwnd: HWND) {
     });
 }
 
-fn clear_flash(state: &PillState) {
-    state.flash_visible.set(false);
-    state.flash_timer.set(0.0);
-    *state.flash_action.borrow_mut() = None;
-    *state.flash_action_label.borrow_mut() = None;
+fn maybe_reassert_topmost(hwnd: HWND, now: Instant) {
+    let last = LAST_TOPMOST_REASSERT.with(|cell| cell.get());
+    if !should_reassert_topmost(last, now) {
+        return;
+    }
+    LAST_TOPMOST_REASSERT.with(|cell| cell.set(Some(now)));
+    unsafe {
+        let _ = SetWindowPos(
+            hwnd,
+            HWND_TOPMOST,
+            0,
+            0,
+            0,
+            0,
+            SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE,
+        );
+    }
+    TOPMOST_REASSERT_COUNT.with(|c| c.set(c.get() + 1));
+}
+
+fn should_reassert_topmost(last: Option<Instant>, now: Instant) -> bool {
+    match last {
+        None => true,
+        Some(prev) => now.duration_since(prev) >= TOPMOST_REASSERT_INTERVAL,
+    }
 }
 
 /// Applies one IPC message to the pill state and marks the surface dirty so
@@ -480,14 +508,6 @@ fn process_message(msg: InMessage, state: &PillState, _hwnd: HWND) {
             }
             let prev = state.phase.get();
             state.phase.set(phase);
-            state.style_tooltip_gate.set_take_running(phase == Phase::Recording);
-            // A new take sweeps any banner parked above the pill (for example
-            // the retranscribing toast) so it cannot sit on the style selector
-            // for the whole take. A resume from Paused keeps toasts raised
-            // during the take, such as the cancel confirm.
-            if phase == Phase::Recording && matches!(prev, Phase::Idle | Phase::Loading) {
-                clear_flash(state);
-            }
             if phase == Phase::Idle && prev != Phase::Idle {
                 state.target_level.set(0.0);
                 state.current_level.set(0.0);
@@ -510,7 +530,10 @@ fn process_message(msg: InMessage, state: &PillState, _hwnd: HWND) {
             *state.flash_action_label.borrow_mut() = action_label;
         }
         InMessage::DismissToast => {
-            clear_flash(state);
+            state.flash_visible.set(false);
+            state.flash_timer.set(0.0);
+            *state.flash_action.borrow_mut() = None;
+            *state.flash_action_label.borrow_mut() = None;
         }
         InMessage::Fireworks { message } => {
             *state.flash_message.borrow_mut() = message;
@@ -574,14 +597,16 @@ fn process_message(msg: InMessage, state: &PillState, _hwnd: HWND) {
             state.has_saved_position.set(false);
             state.reset_strategy.set(strategy);
             state.dirty.set(true);
-            let hwnd = HWND_CELL.with(|c| c.get());
-            reposition_to_cursor_monitor(hwnd, state);
-            let (rect, monitor) = current_pill_geometry(hwnd);
-            ipc::send(&OutMessage::PositionChanged {
-                has_saved_position: false,
-                rect: Some(rect),
-                monitor,
-            });
+            ipc::send(&OutMessage::PositionChanged { has_saved_position: false });
+        }
+        InMessage::PillPlacement { placement } => {
+            let code = if placement == "top" {
+                PILL_PLACEMENT_TOP
+            } else {
+                PILL_PLACEMENT_BOTTOM
+            };
+            PILL_PLACEMENT.with(|c| c.set(code));
+            state.dirty.set(true);
         }
         InMessage::Quit => {
             QUIT.with(|q| q.set(true));
@@ -649,25 +674,18 @@ fn tick(state: &PillState, dt: f64) {
     };
     spring_anim(&state.expand_t, &state.expand_velocity, expand_target, SPRING_STIFFNESS, dt);
 
-    let drag_target = if state.dragging.get() || state.long_press_active.get() { 1.0 } else { 0.0 };
-    spring_anim(&state.drag_label_t, &state.drag_label_velocity, drag_target, rust_pill_shared::LABEL_SPRING_STIFFNESS, dt);
-
     if is_loading {
         state.loading_offset.set((state.loading_offset.get() + LOADING_SPEED * frame_scale) % 1.0);
     }
 
-    // Hover-revealed in every phase except Paused, so the chevrons stay
-    // clickable mid-take. A take that starts under a parked pointer fades
-    // the tooltip until the pointer leaves the pill and comes back;
-    // rust_pill_shared owns the rule, every port agrees.
-    let tooltip_target = rust_pill_shared::style_tooltip_target(
-        &state.style_tooltip_gate,
-        state.assistant_active.get(),
-        state.style_count.get(),
-        matches!(phase, Phase::Paused),
-        hovered,
-        state.expand_t.get(),
-    );
+    // While paused, fade/hide the style picker (polished/verbatim) but keep the
+    // main pill fully expanded via expand_target above.
+    let show_tooltip = !state.assistant_active.get()
+        && state.style_count.get() > 1
+        && phase != Phase::Paused
+        && (hovered || phase == Phase::Recording)
+        && state.expand_t.get() > 0.3;
+    let tooltip_target = if show_tooltip { 1.0 } else { 0.0 };
     spring_anim(&state.tooltip_t, &state.tooltip_velocity, tooltip_target, SPRING_STIFFNESS, dt);
 
     let panel_target = if state.assistant_active.get() { 1.0 } else { 0.0 };
@@ -701,11 +719,7 @@ fn tick(state: &PillState, dt: f64) {
             state.flash_timer.set(remaining);
         }
     }
-    let flash_target = rust_pill_shared::flash_banner_target(
-        state.flash_visible.get(),
-        state.flash_action.borrow().is_some(),
-        tooltip_target > 0.5,
-    );
+    let flash_target = if state.flash_visible.get() { 1.0 } else { 0.0 };
     spring_anim(&state.flash_t, &state.flash_velocity, flash_target, SPRING_STIFFNESS, dt);
 
     // Recording <-> paused crossfade driven by the same critically damped
@@ -1065,8 +1079,17 @@ fn initial_position() -> (i32, i32) {
         let wa_w = wa.right - wa.left;
         let wa_h = wa.bottom - wa.top;
         let x = wa.left + (wa_w - WINDOW_W_TYPING) / 2;
-        let y = wa.top + wa_h - WINDOW_H_TYPING - MARGIN_BOTTOM;
+        let y = default_pill_y(wa.top, wa_h, WINDOW_H_TYPING);
         (x, y)
+    }
+}
+
+fn default_pill_y(work_area_top: i32, work_area_height: i32, win_h: i32) -> i32 {
+    let placement = PILL_PLACEMENT.with(|c| c.get());
+    if placement == PILL_PLACEMENT_TOP {
+        work_area_top + MARGIN_BOTTOM
+    } else {
+        work_area_top + work_area_height - win_h - MARGIN_BOTTOM
     }
 }
 
@@ -1178,10 +1201,8 @@ fn reposition_to_cursor_monitor(hwnd: HWND, state: &PillState) {
             sy = sy.max(min_y).min(max_y);
             (sx, sy)
         } else {
-            // Default: centre at the bottom of the pill's current monitor.
             let mut x = wa.left + (wa_w - win_w) / 2;
-            let mut y = wa.top + wa_h - win_h - MARGIN_BOTTOM;
-            // Clamp into the work area, matching the drag and saved branches.
+            let mut y = default_pill_y(wa.top, wa_h, win_h);
             x = x.max(min_x).min(max_x);
             y = y.max(min_y).min(max_y);
             (x, y)
@@ -1265,38 +1286,6 @@ fn tick_long_press(state: &PillState, dt: f64) {
     }
 }
 
-/// Reads the pill window's screen rect and the work area of the monitor it
-/// lives on, so the desktop can anchor the composer next to the real pill
-/// instead of relying on OS-centred placement.
-fn current_pill_geometry(hwnd: HWND) -> (Rect, Option<Rect>) {
-    unsafe {
-        let mut wr = RECT::default();
-        let _ = GetWindowRect(hwnd, &mut wr);
-        let rect = Rect {
-            x: wr.left as f64,
-            y: wr.top as f64,
-            width: (wr.right - wr.left) as f64,
-            height: (wr.bottom - wr.top) as f64,
-        };
-        let monitor = {
-            let mon = MonitorFromWindow(hwnd, MONITOR_DEFAULTTONEAREST);
-            if mon == HMONITOR::default() {
-                None
-            } else {
-                let mut mi: MONITORINFO = std::mem::zeroed();
-                mi.cbSize = std::mem::size_of::<MONITORINFO>() as u32;
-                (GetMonitorInfoW(mon, &mut mi).as_bool()).then(|| Rect {
-                    x: mi.rcWork.left as f64,
-                    y: mi.rcWork.top as f64,
-                    width: (mi.rcWork.right - mi.rcWork.left) as f64,
-                    height: (mi.rcWork.bottom - mi.rcWork.top) as f64,
-                })
-            }
-        };
-        (rect, monitor)
-    }
-}
-
 /// Terminate an in-progress drag, persist the drop position and release the
 /// pointer capture. Safe to call when no drag is active.
 ///
@@ -1314,12 +1303,7 @@ fn end_drag(hwnd: HWND, state: &PillState, persist_position: bool) -> bool {
         state.saved_x.set(rect.left);
         state.saved_y.set(rect.top);
         state.has_saved_position.set(true);
-        let (win_rect, monitor) = current_pill_geometry(hwnd);
-        ipc::send(&OutMessage::PositionChanged {
-            has_saved_position: true,
-            rect: Some(win_rect),
-            monitor,
-        });
+        ipc::send(&OutMessage::PositionChanged { has_saved_position: true });
     }
 
     state.dragging.set(false);
@@ -1726,5 +1710,59 @@ pub(crate) fn focus_edit_control() {
     unsafe {
         let _ = SetForegroundWindow(container);
         let _ = SetFocus(Some(edit));
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn topmost_reassert_fires_on_first_tick() {
+        assert!(should_reassert_topmost(None, Instant::now()));
+    }
+
+    #[test]
+    fn topmost_reassert_skips_within_interval() {
+        let prev = Instant::now();
+        let next = prev + Duration::from_millis(500);
+        assert!(!should_reassert_topmost(Some(prev), next));
+    }
+
+    #[test]
+    fn topmost_reassert_fires_after_interval() {
+        let prev = Instant::now();
+        let next = prev + TOPMOST_REASSERT_INTERVAL + Duration::from_millis(1);
+        assert!(should_reassert_topmost(Some(prev), next));
+    }
+
+    #[test]
+    fn maybe_reassert_topmost_invokes_setwindowpos() {
+        TOPMOST_REASSERT_COUNT.with(|c| c.set(0));
+        LAST_TOPMOST_REASSERT.with(|c| c.set(None));
+
+        maybe_reassert_topmost(HWND(std::ptr::null_mut()), Instant::now());
+        let after_first = TOPMOST_REASSERT_COUNT.with(|c| c.get());
+        assert_eq!(after_first, 1, "first tick should fire reassert");
+
+        maybe_reassert_topmost(HWND(std::ptr::null_mut()), Instant::now());
+        let after_second = TOPMOST_REASSERT_COUNT.with(|c| c.get());
+        assert_eq!(
+            after_second, 1,
+            "immediate second tick should be throttled by interval"
+        );
+    }
+
+    #[test]
+    fn default_pill_y_bottom_anchors_to_bottom() {
+        PILL_PLACEMENT.with(|c| c.set(PILL_PLACEMENT_BOTTOM));
+        assert_eq!(default_pill_y(0, 1080, 362), 1080 - 362 - MARGIN_BOTTOM);
+    }
+
+    #[test]
+    fn default_pill_y_top_anchors_to_top() {
+        PILL_PLACEMENT.with(|c| c.set(PILL_PLACEMENT_TOP));
+        assert_eq!(default_pill_y(0, 1080, 362), MARGIN_BOTTOM);
+        assert_eq!(default_pill_y(50, 1080, 362), 50 + MARGIN_BOTTOM);
     }
 }
