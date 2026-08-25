@@ -22,6 +22,7 @@ import {
   setDictationLimitMinutes,
   setDictationPillVisibility,
   setPillResetMonitorStrategy,
+  setHandsFreeDelayMs,
   setIgnoreUpdateDialog,
   setIncognitoModeEnabled,
   setIncognitoModeIncludeInStats,
@@ -36,6 +37,10 @@ import {
   normalizeDictationLimitMinutes,
   shouldEnableDictationLimit,
 } from "../../utils/dictation-limit.utils";
+import {
+  getEffectiveHandsFreeDelayMs,
+  MAX_HANDS_FREE_DELAY_MS,
+} from "../../utils/hands-free-delay.utils";
 import { getEffectiveStylingMode } from "../../utils/feature.utils";
 import {
   getEffectivePillVisibility,
@@ -62,6 +67,7 @@ export const MoreSettingsDialog = () => {
     disablePillRewards,
     disableAutoStyleLoading,
     menuBarIconHidden,
+    handsFreeDelayMs,
   ] = useAppStore((state) => {
     const prefs = getMyUserPreferences(state);
     const transcriptionPrefs = getTranscriptionPrefs(state);
@@ -80,12 +86,17 @@ export const MoreSettingsDialog = () => {
       state.local.disablePillRewards,
       state.local.disableAutoStyleLoading ?? false,
       prefs?.menuBarIconHidden ?? false,
+      getEffectiveHandsFreeDelayMs(prefs),
     ] as const;
   });
   const [dictationLimitInput, setDictationLimitInput] = useState(
     String(dictationLimitMinutes),
   );
   const lastCommittedDictationLimitMinutesRef = useRef(dictationLimitMinutes);
+  const [handsFreeDelayInput, setHandsFreeDelayInput] = useState(
+    String(handsFreeDelayMs),
+  );
+  const lastCommittedHandsFreeDelayMsRef = useRef(handsFreeDelayMs);
 
   useEffect(() => {
     lastCommittedDictationLimitMinutesRef.current = dictationLimitMinutes;
@@ -93,6 +104,13 @@ export const MoreSettingsDialog = () => {
       setDictationLimitInput(String(dictationLimitMinutes));
     }
   }, [dictationLimitMinutes, open]);
+
+  useEffect(() => {
+    lastCommittedHandsFreeDelayMsRef.current = handsFreeDelayMs;
+    if (open) {
+      setHandsFreeDelayInput(String(handsFreeDelayMs));
+    }
+  }, [handsFreeDelayMs, open]);
 
   const commitDictationLimitInput = () => {
     if (!showDictationLimitSetting) {
@@ -122,6 +140,7 @@ export const MoreSettingsDialog = () => {
 
   const handleClose = () => {
     commitDictationLimitInput();
+    commitHandsFreeDelayInput();
     produceAppState((draft) => {
       draft.settings.moreSettingsDialogOpen = false;
     });
@@ -179,6 +198,41 @@ export const MoreSettingsDialog = () => {
     produceAppState((draft) => {
       draft.local.disableAutoStyleLoading = !event.target.checked;
     });
+  };
+
+  const commitHandsFreeDelayInput = () => {
+    if (handsFreeDelayInput === "") {
+      setHandsFreeDelayInput(String(handsFreeDelayMs));
+      return;
+    }
+
+    const parsed = Number(handsFreeDelayInput);
+    if (!Number.isFinite(parsed) || parsed < 0) {
+      setHandsFreeDelayInput(String(handsFreeDelayMs));
+      return;
+    }
+
+    const normalized = Math.min(
+      MAX_HANDS_FREE_DELAY_MS,
+      Math.max(0, Math.floor(parsed)),
+    );
+    setHandsFreeDelayInput(String(normalized));
+    if (normalized === lastCommittedHandsFreeDelayMsRef.current) {
+      return;
+    }
+
+    lastCommittedHandsFreeDelayMsRef.current = normalized;
+    void setHandsFreeDelayMs(normalized);
+  };
+
+  const handleHandsFreeDelayChange = (
+    event: ChangeEvent<HTMLInputElement>,
+  ) => {
+    setHandsFreeDelayInput(event.target.value);
+  };
+
+  const handleHandsFreeDelayBlur = () => {
+    commitHandsFreeDelayInput();
   };
 
   const handleDictationLimitChange = (event: ChangeEvent<HTMLInputElement>) => {
@@ -374,6 +428,33 @@ export const MoreSettingsDialog = () => {
               }
             />
           )}
+
+          <SettingSection
+            title={
+              <FormattedMessage defaultMessage="Hands-free output delay (ms)" />
+            }
+            description={
+              <FormattedMessage defaultMessage="Wait this many milliseconds before inserting the dictated text when you stop recording. Enter 0 to disable." />
+            }
+            action={
+              <TextField
+                size="small"
+                type="number"
+                value={handsFreeDelayInput}
+                onChange={handleHandsFreeDelayChange}
+                onBlur={handleHandsFreeDelayBlur}
+                sx={{ width: 104 }}
+                slotProps={{
+                  htmlInput: {
+                    min: 0,
+                    max: MAX_HANDS_FREE_DELAY_MS,
+                    step: 50,
+                    inputMode: "numeric",
+                  },
+                }}
+              />
+            }
+          />
 
           {stylingMode === "manual" && (
             <SettingSection

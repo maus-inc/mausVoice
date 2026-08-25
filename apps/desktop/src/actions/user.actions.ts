@@ -20,6 +20,10 @@ import {
   DEFAULT_DICTATION_LIMIT_MINUTES,
   normalizeDictationLimitMinutes,
 } from "../utils/dictation-limit.utils";
+import {
+  DEFAULT_HANDS_FREE_DELAY_MS,
+  normalizeHandsFreeDelayMs,
+} from "../utils/hands-free-delay.utils";
 import { PRIMARY_LANGUAGE_SENTINEL } from "../utils/language.utils";
 import {
   isGpuPreferredTranscriptionDevice,
@@ -121,6 +125,7 @@ export const createDefaultPreferences = (): UserPreferences => ({
   menuBarIconHidden: false,
   insertionMethod: null,
   typingSpeedMs: null,
+  handsFreeDelayMs: DEFAULT_HANDS_FREE_DELAY_MS,
 });
 
 export const updateUserPreferences = async (
@@ -639,6 +644,15 @@ export const setDictationLimitMinutes = async (
   await updateUserPreferences((preferences) => {
     preferences.dictationLimitMinutes = normalizeDictationLimitMinutes(minutes);
   }, "Failed to save dictation limit preference. Please try again.");
+};
+
+export const setHandsFreeDelayMs = async (
+  delayMs: Nullable<number>,
+): Promise<void> => {
+  await updateUserPreferences((preferences) => {
+    preferences.handsFreeDelayMs =
+      delayMs == null ? null : normalizeHandsFreeDelayMs(delayMs);
+  }, "Failed to save hands-free delay preference. Please try again.");
 };
 
 export const setRealtimeOutputEnabled = async (

@@ -5,6 +5,7 @@ import type {
 } from "@maus-inc/types";
 import { getIntl } from "../i18n/intl";
 import { getAppState } from "../store";
+import { getEffectiveHandsFreeDelayMs } from "./hands-free-delay.utils";
 import { getLogger } from "./log.utils";
 import { sendPillFlashMessage } from "./overlay.utils";
 import { sanitizeIndentation } from "./string.utils";
@@ -47,6 +48,13 @@ export const routeTranscriptOutput = async (
     currentApp?.insertionMethod ?? prefs?.insertionMethod ?? "paste";
 
   const typingSpeedMs = currentApp?.typingSpeedMs ?? prefs?.typingSpeedMs ?? 5;
+  const handsFreeDelayMs = getEffectiveHandsFreeDelayMs(prefs);
+
+  if (handsFreeDelayMs > 0) {
+    await new Promise<void>((resolve) => {
+      setTimeout(resolve, handsFreeDelayMs);
+    });
+  }
 
   if (insertionMethod === "type") {
     await insertLocalTranscriptOutputViaTyping(args.text, typingSpeedMs);
