@@ -1,60 +1,49 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 
-describe("groqGenerateTextResponse", () => {
+describe("azureOpenAIGenerateText", () => {
   afterEach(() => {
-    vi.doUnmock("groq-sdk/index");
+    vi.doUnmock("openai");
     vi.resetModules();
   });
 
-  it("uses a small completion budget for structured transcript cleanup", async () => {
+  it("uses the hardcoded max_completion_tokens when maxTokens is undefined", async () => {
     const createCompletion = vi.fn().mockResolvedValue({
       choices: [
         {
           message: {
-            content: JSON.stringify({ result: "Hello there" }),
+            content: JSON.stringify({ result: "ok" }),
           },
         },
       ],
       usage: {
-        total_tokens: 42,
+        total_tokens: 5,
       },
     });
 
     vi.resetModules();
-    vi.doMock("groq-sdk/index", () => ({
-      default: class MockGroq {
+    vi.doMock("openai", () => ({
+      AzureOpenAI: class MockAzureOpenAI {
         chat = {
           completions: {
             create: createCompletion,
           },
         };
       },
-      toFile: vi.fn(),
     }));
 
-    const { groqGenerateTextResponse } = await import("../src/groq.utils");
+    const { azureOpenAIGenerateText } =
+      await import("../src/azure-openai.utils");
 
-    await groqGenerateTextResponse({
+    await azureOpenAIGenerateText({
       apiKey: "test-key",
-      prompt: "hello there",
-      jsonResponse: {
-        name: "transcription_cleaning",
-        description: "JSON response with the processed transcription",
-        schema: {
-          type: "object",
-          properties: {
-            result: {
-              type: "string",
-            },
-          },
-          required: ["result"],
-        },
-      },
+      endpoint: "https://example.azure.com",
+      deploymentName: "gpt-4o-mini",
+      prompt: "hello",
     });
 
     expect(createCompletion).toHaveBeenCalledTimes(1);
     expect(createCompletion.mock.calls[0][0]).toMatchObject({
-      max_completion_tokens: 5000,
+      max_completion_tokens: 1024,
     });
   });
 
@@ -73,22 +62,24 @@ describe("groqGenerateTextResponse", () => {
     });
 
     vi.resetModules();
-    vi.doMock("groq-sdk/index", () => ({
-      default: class MockGroq {
+    vi.doMock("openai", () => ({
+      AzureOpenAI: class MockAzureOpenAI {
         chat = {
           completions: {
             create: createCompletion,
           },
         };
       },
-      toFile: vi.fn(),
     }));
 
-    const { groqGenerateTextResponse } = await import("../src/groq.utils");
+    const { azureOpenAIGenerateText } =
+      await import("../src/azure-openai.utils");
 
-    await groqGenerateTextResponse({
+    await azureOpenAIGenerateText({
       apiKey: "test-key",
-      prompt: "hello there",
+      endpoint: "https://example.azure.com",
+      deploymentName: "gpt-4o-mini",
+      prompt: "hello",
       maxTokens: 600,
     });
 

@@ -135,6 +135,7 @@ export type OpenRouterGenerateTextArgs = {
   jsonResponse?: JsonResponse;
   providerRouting?: OpenRouterProviderRouting;
   customFetch?: CustomFetch;
+  maxTokens?: number;
 };
 
 export type OpenRouterGenerateTextOutput = {
@@ -154,6 +155,7 @@ export const openrouterGenerateTextResponse = async ({
   jsonResponse,
   providerRouting,
   customFetch,
+  maxTokens,
 }: OpenRouterGenerateTextArgs): Promise<OpenRouterGenerateTextOutput> => {
   return retry({
     retries: 3,
@@ -173,7 +175,7 @@ export const openrouterGenerateTextResponse = async ({
         messages,
         model,
         temperature: 1,
-        max_tokens: 1024,
+        max_tokens: maxTokens ?? 1024,
         top_p: 1,
         response_format: jsonResponse
           ? {

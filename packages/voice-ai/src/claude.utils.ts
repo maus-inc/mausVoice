@@ -53,6 +53,7 @@ export type ClaudeGenerateTextArgs = {
   system?: string;
   prompt: string;
   jsonResponse?: JsonResponse;
+  maxTokens?: number;
 };
 
 export type ClaudeGenerateResponseOutput = {
@@ -66,6 +67,7 @@ export const claudeGenerateTextResponse = async ({
   system,
   prompt,
   jsonResponse,
+  maxTokens,
 }: ClaudeGenerateTextArgs): Promise<ClaudeGenerateResponseOutput> => {
   return retry({
     retries: 3,
@@ -79,7 +81,7 @@ export const claudeGenerateTextResponse = async ({
 
       const response = await client.messages.create({
         model,
-        max_tokens: 1024,
+        max_tokens: maxTokens ?? 1024,
         system: system ?? undefined,
         messages: [{ role: "user", content: finalPrompt }],
       });

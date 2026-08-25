@@ -39,6 +39,7 @@ export type GenerateTextInput = {
   system?: Nullable<string>;
   prompt: string;
   jsonResponse?: JsonResponse;
+  maxTokens?: number;
 };
 
 export type GenerateTextMetadata = {
@@ -89,6 +90,7 @@ export class GroqGenerateTextRepo extends BaseGenerateTextRepo {
         prompt: input.prompt,
         system: input.system ?? undefined,
         jsonResponse: input.jsonResponse,
+        maxTokens: input.maxTokens,
       });
     } catch (error) {
       if (this.model === this.fallbackModel) {
@@ -101,6 +103,7 @@ export class GroqGenerateTextRepo extends BaseGenerateTextRepo {
         prompt: input.prompt,
         system: input.system ?? undefined,
         jsonResponse: input.jsonResponse,
+        maxTokens: input.maxTokens,
       });
     }
   }
@@ -131,6 +134,7 @@ export class OpenAIGenerateTextRepo extends BaseGenerateTextRepo {
       prompt: input.prompt,
       system: input.system ?? undefined,
       jsonResponse: input.jsonResponse,
+      maxTokens: input.maxTokens,
     });
 
     return {
@@ -172,6 +176,7 @@ export class OllamaGenerateTextRepo extends BaseGenerateTextRepo {
       system: input.system ?? undefined,
       jsonResponse: input.jsonResponse,
       customFetch: tauriFetch,
+      maxTokens: input.maxTokens,
     });
 
     return {
@@ -215,6 +220,7 @@ export class OpenAICompatibleGenerateTextRepo extends BaseGenerateTextRepo {
       system: input.system ?? undefined,
       jsonResponse: input.jsonResponse,
       customFetch: tauriFetch,
+      maxTokens: input.maxTokens,
     });
 
     return {
@@ -261,6 +267,7 @@ export class OpenRouterGenerateTextRepo extends BaseGenerateTextRepo {
       system: input.system ?? undefined,
       jsonResponse: input.jsonResponse,
       providerRouting: this.providerRouting,
+      maxTokens: input.maxTokens,
     });
 
     return {
@@ -301,6 +308,7 @@ export class AzureOpenAIGenerateTextRepo extends BaseGenerateTextRepo {
       system: input.system ?? undefined,
       prompt: input.prompt,
       jsonResponse: input.jsonResponse,
+      maxTokens: input.maxTokens,
     });
 
     return {
@@ -339,6 +347,7 @@ export class DeepseekGenerateTextRepo extends BaseGenerateTextRepo {
       prompt: input.prompt,
       system: input.system ?? undefined,
       jsonResponse: input.jsonResponse,
+      maxTokens: input.maxTokens,
     });
 
     return {
@@ -376,6 +385,7 @@ export class GeminiGenerateTextRepo extends BaseGenerateTextRepo {
       prompt: input.prompt,
       system: input.system ?? undefined,
       jsonResponse: input.jsonResponse,
+      maxTokens: input.maxTokens,
     });
 
     return {
@@ -413,6 +423,7 @@ export class ClaudeGenerateTextRepo extends BaseGenerateTextRepo {
       prompt: input.prompt,
       system: input.system ?? undefined,
       jsonResponse: input.jsonResponse,
+      maxTokens: input.maxTokens,
     });
 
     return {
@@ -450,6 +461,7 @@ export class CerebrasGenerateTextRepo extends BaseGenerateTextRepo {
       prompt: input.prompt,
       system: input.system ?? undefined,
       jsonResponse: input.jsonResponse,
+      maxTokens: input.maxTokens,
     });
 
     return {
