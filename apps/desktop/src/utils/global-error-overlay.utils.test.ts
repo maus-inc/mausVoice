@@ -51,6 +51,11 @@ describe("global error overlay", () => {
   afterEach(() => {
     vi.unstubAllGlobals();
     vi.resetModules();
+    // The idempotency sentinel persists on the real `window` across module
+    // resets, so clear it explicitly to keep tests independent.
+    if (typeof window !== "undefined") {
+      delete window.__mausVoiceOverlayInstalled;
+    }
   });
 
   it("does not treat a mounted app's unhandled rejection as a failed start", async () => {
@@ -234,6 +239,29 @@ describe("global error overlay", () => {
     });
     expect(doc.getElementById(overlayId)).toBeNull();
     expect(consoleError).toHaveBeenCalled();
+    consoleError.mockRestore();
+  });
+
+  it("is idempotent when installed more than once", async () => {
+    // Re-invocation is realistic on hot reloads, repeated React remounts, and
+    // test re-runs. The second install must not register a second pair of
+    // listeners, so a single error event is still observed exactly once.
+    const { listeners } = installOverlayWithMockWindow([{}]);
+    const consoleError = vi
+      .spyOn(console, "error")
+      .mockImplementation(() => {});
+    const { installGlobalErrorOverlay } =
+      await import("./global-error-overlay.utils.ts");
+    installGlobalErrorOverlay();
+    installGlobalErrorOverlay();
+    expect(listeners.error).toHaveLength(1);
+    expect(listeners.unhandledrejection).toHaveLength(1);
+    listeners.error[0]({
+      target: {},
+      error: new Error("post-mount runtime"),
+      message: "post-mount runtime",
+    });
+    expect(consoleError).toHaveBeenCalledTimes(1);
     consoleError.mockRestore();
   });
 });

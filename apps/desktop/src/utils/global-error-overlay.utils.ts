@@ -114,6 +114,12 @@ const describeWindowError = (event: ErrorEvent): string => {
 // fire capture-phase `error` events and must be ignored.
 export const installGlobalErrorOverlay = (): void => {
   if (typeof window === "undefined") return;
+  // Re-invocation (hot reload, repeated React remount, test re-run) would
+  // register a second pair of listeners and double-log every event. The early
+  // inline handlers from index.html are already detached on the first call,
+  // so a re-entrant call has nothing left to do.
+  if (window.__mausVoiceOverlayInstalled) return;
+  window.__mausVoiceOverlayInstalled = true;
   // Detach the inline pre-bundle handler from index.html: from here on this
   // installer owns error surfacing. Leaving the early listener attached would
   // duplicate every unhandledrejection. The property type comes from the
