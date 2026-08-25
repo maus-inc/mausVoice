@@ -538,7 +538,7 @@ export class OpenRouterModelProviderRepo extends BaseModelProviderRepo {
   }
 
   supportsTranscriptionModels(): boolean {
-    return false;
+    return true;
   }
 
   async getGenerativeTextModels(

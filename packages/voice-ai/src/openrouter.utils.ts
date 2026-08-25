@@ -1,4 +1,4 @@
-import OpenAI from "openai";
+import OpenAI, { toFile } from "openai";
 import { retry, countWords } from "@maus-inc/utilities";
 import type {
   JsonResponse,
@@ -230,6 +230,54 @@ export const openrouterTestIntegration = async ({
   const client = createClient(apiKey, customFetch);
   await client.models.list();
   return true;
+};
+
+// ============================================================================
+// Transcribe Audio
+// ============================================================================
+
+export type OpenRouterTranscriptionArgs = {
+  apiKey: string;
+  model: string;
+  blob: ArrayBuffer | Buffer;
+  ext: string;
+  prompt?: string;
+  language?: string;
+};
+
+export type OpenRouterTranscribeAudioOutput = {
+  text: string;
+  wordsUsed: number;
+};
+
+export const openrouterTranscribeAudio = async ({
+  apiKey,
+  model,
+  blob,
+  ext,
+  prompt,
+  language,
+}: OpenRouterTranscriptionArgs): Promise<OpenRouterTranscribeAudioOutput> => {
+  return retry({
+    retries: 3,
+    fn: async () => {
+      const client = createClient(apiKey);
+
+      const file = await toFile(blob, `audio.${ext}`);
+      const response = await client.audio.transcriptions.create({
+        file,
+        model,
+        prompt,
+        language: language && language !== "auto" ? language : undefined,
+      });
+
+      if (!response.text) {
+        throw new Error("Transcription failed");
+      }
+
+      return { text: response.text, wordsUsed: countWords(response.text) };
+    },
+  });
 };
 
 // ============================================================================

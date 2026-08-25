@@ -8,6 +8,7 @@ import {
   DeepgramTranscribeAudioRepo,
   GladiaTranscribeAudioRepo,
   LocalTranscribeAudioRepo,
+  OpenRouterTranscribeAudioRepo,
   TranscribeAudioOutput,
   TranscribeSegmentInput,
 } from "./transcribe-audio.repo";
@@ -719,6 +720,56 @@ describe("provider capability and transcription dispatch agreement", () => {
       warnings.some((warning) =>
         warning.includes("No transcription-capable API key selected"),
       ),
+    ).toBe(true);
+  });
+});
+
+describe("OpenRouter transcription support", () => {
+  it("advertises OpenRouter as transcription-capable", () => {
+    expect(
+      getModelProviderRepo("openrouter").supportsTranscriptionModels(),
+    ).toBe(true);
+  });
+
+  it("dispatches an OpenRouter-selected key to OpenRouterTranscribeAudioRepo", () => {
+    const state = structuredClone(INITIAL_APP_STATE);
+    state.settings.aiTranscription.mode = "api";
+    state.settings.aiTranscription.selectedApiKeyId = "openrouter-key";
+    state.apiKeyById["openrouter-key"] = {
+      id: "openrouter-key",
+      name: "OpenRouter",
+      provider: "openrouter",
+      createdAt: "2026-06-03T00:00:00.000Z",
+      keyFull: "or-key",
+      transcriptionModel: "openai/whisper-1",
+    };
+    setAppState(state, true);
+
+    const { repo, apiKeyId, warnings } = getTranscribeAudioRepo();
+
+    expect(repo).toBeInstanceOf(OpenRouterTranscribeAudioRepo);
+    expect(apiKeyId).toBe("openrouter-key");
+    expect(warnings).toHaveLength(0);
+  });
+
+  it("warns when an OpenRouter key is selected without a transcription model", () => {
+    const state = structuredClone(INITIAL_APP_STATE);
+    state.settings.aiTranscription.mode = "api";
+    state.settings.aiTranscription.selectedApiKeyId = "openrouter-key";
+    state.apiKeyById["openrouter-key"] = {
+      id: "openrouter-key",
+      name: "OpenRouter",
+      provider: "openrouter",
+      createdAt: "2026-06-03T00:00:00.000Z",
+      keyFull: "or-key",
+      transcriptionModel: null,
+    };
+    setAppState(state, true);
+
+    const { warnings } = getTranscribeAudioRepo();
+
+    expect(
+      warnings.some((warning) => warning.includes("OpenRouter transcription")),
     ).toBe(true);
   });
 });

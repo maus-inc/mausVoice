@@ -88,6 +88,7 @@ import {
   LocalTranscribeAudioRepo,
   OpenAICompatibleTranscribeAudioRepo,
   OpenAITranscribeAudioRepo,
+  OpenRouterTranscribeAudioRepo,
   SpeachesTranscribeAudioRepo,
   XaiTranscribeAudioRepo,
 } from "./transcribe-audio.repo";
@@ -477,6 +478,19 @@ export const getTranscribeAudioRepo = (): TranscribeAudioRepoOutput => {
           prefs.transcriptionModel,
         );
         break;
+      case "openrouter": {
+        const configuredModel = prefs.transcriptionModel;
+        if (!configuredModel) {
+          prefs.warnings.push(
+            "No model configured for OpenRouter transcription.",
+          );
+        }
+        repo = new OpenRouterTranscribeAudioRepo(
+          prefs.apiKeyValue,
+          configuredModel || "openai/whisper-1",
+        );
+        break;
+      }
       default: {
         // Every provider surfaced by the transcription capability filter now
         // has an explicit branch above. Reaching here means a stale saved
