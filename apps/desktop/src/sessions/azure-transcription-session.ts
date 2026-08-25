@@ -9,6 +9,7 @@ import {
   TranscriptionSession,
   TranscriptionSessionResult,
 } from "../types/transcription-session.types";
+import { getLogger } from "../utils/log.utils";
 import {
   buildLocalizedTranscriptionPrompt,
   collectDictionaryEntries,
@@ -29,7 +30,7 @@ export class AzureTranscriptionSession implements TranscriptionSession {
 
   async onRecordingStart(sampleRate: number): Promise<void> {
     try {
-      console.log("[Azure] Starting streaming session...");
+      getLogger().verbose("[Azure] Starting streaming session...");
 
       const state = getAppState();
       const language = await loadMyEffectiveDictationLanguage(state);
@@ -56,7 +57,7 @@ export class AzureTranscriptionSession implements TranscriptionSession {
             this.receivedChunkCount <= 3 ||
             this.receivedChunkCount % 10 === 0
           ) {
-            console.log(
+            getLogger().verbose(
               `[Azure] Received chunk #${this.receivedChunkCount}, samples:`,
               event.payload.samples.length,
             );
@@ -71,15 +72,15 @@ export class AzureTranscriptionSession implements TranscriptionSession {
 
               this.session.writeAudioChunk(typedChunk);
             } catch (error) {
-              console.error("[Azure] Error writing audio chunk:", error);
+              getLogger().error("[Azure] Error writing audio chunk:", error);
             }
           }
         },
       );
 
-      console.log("[Azure] Streaming session started successfully");
+      getLogger().verbose("[Azure] Streaming session started successfully");
     } catch (error) {
-      console.error("[Azure] Failed to start streaming:", error);
+      getLogger().error("[Azure] Failed to start streaming:", error);
     }
   }
 
@@ -98,13 +99,13 @@ export class AzureTranscriptionSession implements TranscriptionSession {
     }
 
     try {
-      console.log("[Azure] Finalizing streaming session...");
+      getLogger().verbose("[Azure] Finalizing streaming session...");
       const finalizeStart = performance.now();
       const transcript = await this.session.finalize();
       const durationMs = Math.round(performance.now() - finalizeStart);
 
-      console.log("[Azure] Transcript timing:", { durationMs });
-      console.log(
+      getLogger().verbose("[Azure] Transcript timing:", { durationMs });
+      getLogger().verbose(
         "[Azure] Received transcript, length:",
         transcript?.length ?? 0,
       );
@@ -119,7 +120,7 @@ export class AzureTranscriptionSession implements TranscriptionSession {
         warnings: [],
       };
     } catch (error) {
-      console.error("[Azure] Failed to finalize session:", error);
+      getLogger().error("[Azure] Failed to finalize session:", error);
       return {
         rawTranscript: null,
         metadata: {

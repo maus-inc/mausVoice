@@ -114,7 +114,7 @@ const startAssemblyAIStreaming = async (
           sentChunkCount++;
           if (sentChunkCount <= 3 || sentChunkCount % 10 === 0) {
             const durationMs = (chunk.length / sampleRate) * 1000;
-            getLogger().info(
+            getLogger().verbose(
               `[AssemblyAI WebSocket] Sent chunk #${sentChunkCount} (${chunk.length} samples ~${durationMs.toFixed(1)} ms, ${pcm16.byteLength} bytes)`,
             );
           }
@@ -228,7 +228,7 @@ const startAssemblyAIStreaming = async (
           (event) => {
             receivedChunkCount++;
             if (receivedChunkCount <= 3 || receivedChunkCount % 10 === 0) {
-              getLogger().info(
+              getLogger().verbose(
                 `[AssemblyAI WebSocket] Received chunk #${receivedChunkCount}, samples:`,
                 event.payload.samples.length,
               );
@@ -280,7 +280,6 @@ const startAssemblyAIStreaming = async (
         });
 
         if (data.type === "Turn" && data.end_of_turn) {
-          // Final formatted transcript
           const turnTranscript = data.transcript || "";
           finalTranscript += (finalTranscript ? " " : "") + turnTranscript;
           getLogger().info(
