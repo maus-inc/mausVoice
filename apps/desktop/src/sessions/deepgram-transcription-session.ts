@@ -262,7 +262,9 @@ export class DeepgramTranscriptionSession extends BaseApiTranscriptionSession {
     await this.startupPromise;
   }
 
-  async finalize(audio: Parameters<BaseApiTranscriptionSession["finalize"]>[0]) {
+  async finalize(
+    audio: Parameters<BaseApiTranscriptionSession["finalize"]>[0],
+  ) {
     if (this.startupPromise) {
       await this.startupPromise;
     }

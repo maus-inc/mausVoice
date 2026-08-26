@@ -1,5 +1,6 @@
 import { convertFloat32ToPCM16 } from "@maus-inc/voice-ai";
 import { getLogger } from "../utils/log.utils";
+import { drainSamples } from "./audio-buffer.utils";
 
 export type AudioChunkBufferConfig = {
   sampleRate: number;
@@ -32,33 +33,11 @@ export const createAudioChunkBuffer = (
   );
 
   let pendingChunks: Float32Array[] = [];
-  let pendingSampleCount = 0;
+  const pendingSampleCountRef = { value: 0 };
   let sentChunkCount = 0;
 
-  const drainSamples = (targetCount: number): Float32Array => {
-    if (targetCount <= 0) {
-      return new Float32Array(0);
-    }
-    const output = new Float32Array(targetCount);
-    let filled = 0;
-
-    while (filled < targetCount && pendingChunks.length > 0) {
-      const current = pendingChunks[0];
-      const remaining = targetCount - filled;
-      if (current.length <= remaining) {
-        output.set(current, filled);
-        filled += current.length;
-        pendingChunks.shift();
-      } else {
-        output.set(current.subarray(0, remaining), filled);
-        pendingChunks[0] = current.subarray(remaining);
-        filled += remaining;
-      }
-    }
-
-    pendingSampleCount = Math.max(0, pendingSampleCount - filled);
-    return filled === targetCount ? output : output.subarray(0, filled);
-  };
+  const drain = (targetCount: number) =>
+    drainSamples(pendingChunks, pendingSampleCountRef, targetCount);
 
   const flush = (force = false) => {
     const socket = ws();
@@ -75,12 +54,12 @@ export const createAudioChunkBuffer = (
   };
 
   const sendNextChunk = (socket: WebSocket, force: boolean): boolean => {
-    const available = pendingSampleCount;
+    const available = pendingSampleCountRef.value;
     if (available < minSamplesPerChunk && !(force && available > 0)) {
       return false;
     }
     const chunkSize = Math.min(available, maxSamplesPerChunk);
-    let chunk = drainSamples(chunkSize);
+    let chunk = drain(chunkSize);
     if (force && chunk.length > 0 && chunk.length < minSamplesPerChunk) {
       const padded = new Float32Array(minSamplesPerChunk);
       padded.set(chunk);
@@ -116,14 +95,14 @@ export const createAudioChunkBuffer = (
   return {
     push: (chunk) => {
       pendingChunks.push(chunk);
-      pendingSampleCount += chunk.length;
+      pendingSampleCountRef.value += chunk.length;
     },
     flush,
     reset: () => {
       pendingChunks = [];
-      pendingSampleCount = 0;
+      pendingSampleCountRef.value = 0;
     },
-    pendingSampleCount: () => pendingSampleCount,
+    pendingSampleCount: () => pendingSampleCountRef.value,
     sentChunkCount: () => sentChunkCount,
   };
 };
