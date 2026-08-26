@@ -30,7 +30,6 @@ pub enum Phase {
     Paused,
 }
 
-
 /// Which monitor a reset-position re-homes the pill onto.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -86,10 +85,19 @@ pub enum InMessage {
         #[serde(default)]
         seq: u64,
     },
-    Levels { levels: Vec<f32> },
-    StyleInfo { count: u32, name: String },
-    Visibility { visibility: Visibility },
-    WindowSize { size: String },
+    Levels {
+        levels: Vec<f32>,
+    },
+    StyleInfo {
+        count: u32,
+        name: String,
+    },
+    Visibility {
+        visibility: Visibility,
+    },
+    WindowSize {
+        size: String,
+    },
     Toast {
         message: String,
         toast_type: Option<String>,
@@ -102,10 +110,16 @@ pub enum InMessage {
         reject_action_label: Option<String>,
     },
     DismissToast,
-    Fireworks { message: String },
-    Flame { message: String },
+    Fireworks {
+        message: String,
+    },
+    Flame {
+        message: String,
+    },
     FlashBlue,
-    BroadcastTranscript { text: String },
+    BroadcastTranscript {
+        text: String,
+    },
     AssistantState {
         active: bool,
         input_mode: String,
@@ -130,14 +144,22 @@ pub enum InMessage {
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum OutMessage {
     Ready,
-    Hover { hovered: bool },
+    Hover {
+        hovered: bool,
+    },
     Click,
-    StyleSwitch { direction: String },
+    StyleSwitch {
+        direction: String,
+    },
     AgentTalk,
     AssistantClose,
     EnableTypeMode,
-    TypedMessage { text: String },
-    OpenConversation { conversation_id: String },
+    TypedMessage {
+        text: String,
+    },
+    OpenConversation {
+        conversation_id: String,
+    },
     ResolvePermission {
         permission_id: String,
         status: String,
@@ -146,8 +168,12 @@ pub enum OutMessage {
     CancelDictation,
     PauseDictation,
     ResumeDictation,
-    ToastAction { action: String },
-    PositionChanged { has_saved_position: bool },
+    ToastAction {
+        action: String,
+    },
+    PositionChanged {
+        has_saved_position: bool,
+    },
 }
 
 pub fn send(msg: &OutMessage) {

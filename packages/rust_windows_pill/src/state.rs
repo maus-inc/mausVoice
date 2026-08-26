@@ -1,7 +1,7 @@
 use std::cell::{Cell, RefCell};
 
-use crate::ipc::{Phase, PillMessage, PillPermission, PillStreaming, ResetStrategy, Visibility};
 use crate::constants::*;
+use crate::ipc::{Phase, PillMessage, PillPermission, PillStreaming, ResetStrategy, Visibility};
 
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub(crate) enum RocketPhase {
@@ -107,7 +107,6 @@ pub(crate) struct FlameTongue {
 }
 
 #[derive(Debug, Clone)]
-
 
 pub(crate) struct PillState {
     pub(crate) phase: Cell<Phase>,
@@ -263,47 +262,98 @@ impl PillState {
     pub(crate) fn content_offset(&self) -> (f64, f64) {
         let dw = self.draw_width.get();
         let dh = self.draw_height.get();
-        ((WINDOW_W_TYPING as f64 - dw) / 2.0, WINDOW_H_TYPING as f64 - dh)
+        (
+            (WINDOW_W_TYPING as f64 - dw) / 2.0,
+            WINDOW_H_TYPING as f64 - dh,
+        )
     }
 
     pub(crate) fn needs_redraw(&self) -> bool {
-        if self.dirty.get() { return true; }
+        if self.dirty.get() {
+            return true;
+        }
 
         // Continuous animations driven by phase
-        if self.phase.get() != Phase::Idle { return true; }
+        if self.phase.get() != Phase::Idle {
+            return true;
+        }
 
         // Spring animations still in motion
-        if self.expand_velocity.get() != 0.0 { return true; }
-        if self.tooltip_velocity.get() != 0.0 { return true; }
-        if self.panel_open_velocity.get() != 0.0 { return true; }
-        if self.kb_button_velocity.get() != 0.0 { return true; }
-        if self.draw_w_velocity.get() != 0.0 { return true; }
-        if self.draw_h_velocity.get() != 0.0 { return true; }
-        if self.flash_velocity.get() != 0.0 { return true; }
-        if self.cancel_velocity.get() != 0.0 { return true; }
-        if self.pause_velocity.get() != 0.0 { return true; }
-        if self.inflate_velocity.get() != 0.0 { return true; }
+        if self.expand_velocity.get() != 0.0 {
+            return true;
+        }
+        if self.tooltip_velocity.get() != 0.0 {
+            return true;
+        }
+        if self.panel_open_velocity.get() != 0.0 {
+            return true;
+        }
+        if self.kb_button_velocity.get() != 0.0 {
+            return true;
+        }
+        if self.draw_w_velocity.get() != 0.0 {
+            return true;
+        }
+        if self.draw_h_velocity.get() != 0.0 {
+            return true;
+        }
+        if self.flash_velocity.get() != 0.0 {
+            return true;
+        }
+        if self.cancel_velocity.get() != 0.0 {
+            return true;
+        }
+        if self.pause_velocity.get() != 0.0 {
+            return true;
+        }
+        if self.inflate_velocity.get() != 0.0 {
+            return true;
+        }
 
         // Active visual effects
-        if self.fireworks_active.get() { return true; }
-        if self.flame_active.get() { return true; }
-        if self.flash_visible.get() { return true; }
-        if self.flash_blue_active.get() { return true; }
-        if self.transcript_has_message.get() { return true; }
-        if self.transcript_opacity.get() > 0.001 { return true; }
+        if self.fireworks_active.get() {
+            return true;
+        }
+        if self.flame_active.get() {
+            return true;
+        }
+        if self.flash_visible.get() {
+            return true;
+        }
+        if self.flash_blue_active.get() {
+            return true;
+        }
+        if self.transcript_has_message.get() {
+            return true;
+        }
+        if self.transcript_opacity.get() > 0.001 {
+            return true;
+        }
 
         // Long-press balloon pop + drag (ring_alpha keeps drawing while the
         // release fade is in flight).
-        if self.long_press_active.get() { return true; }
-        if self.dragging.get() { return true; }
-        if self.ring_alpha.get() > 0.0 { return true; }
+        if self.long_press_active.get() {
+            return true;
+        }
+        if self.dragging.get() {
+            return true;
+        }
+        if self.ring_alpha.get() > 0.0 {
+            return true;
+        }
         // The arm-confirmation halo outlives the ring's own alpha, so it needs
         // its own liveness check or the pulse would be culled mid-flight.
-        if rust_pill_shared::pulse_is_running(self.arm_pulse.get()) { return true; }
-        if self.arm_t.get() > 0.0 { return true; }
+        if rust_pill_shared::pulse_is_running(self.arm_pulse.get()) {
+            return true;
+        }
+        if self.arm_t.get() > 0.0 {
+            return true;
+        }
 
         // Assistant panel has shimmer and streaming content
-        if self.assistant_active.get() { return true; }
+        if self.assistant_active.get() {
+            return true;
+        }
 
         false
     }

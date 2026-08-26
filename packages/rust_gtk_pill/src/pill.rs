@@ -263,7 +263,9 @@ pub fn run(receiver: Receiver<InMessage>) {
         let was_hovered = state_motion.hovered.get();
         if is_over_pill != was_hovered {
             state_motion.hovered.set(is_over_pill);
-            ipc::send(&OutMessage::Hover { hovered: is_over_pill });
+            ipc::send(&OutMessage::Hover {
+                hovered: is_over_pill,
+            });
         }
 
         if state_motion.long_press_active.get() {
@@ -369,7 +371,9 @@ pub fn run(receiver: Receiver<InMessage>) {
         let now_hovered = input::is_over_pill_area(&state_click, rx, ry);
         if now_hovered != state_click.hovered.get() {
             state_click.hovered.set(now_hovered);
-            ipc::send(&OutMessage::Hover { hovered: now_hovered });
+            ipc::send(&OutMessage::Hover {
+                hovered: now_hovered,
+            });
         }
         glib::Propagation::Proceed
     });
@@ -425,7 +429,9 @@ pub fn run(receiver: Receiver<InMessage>) {
         let text = e.text().to_string();
         let trimmed = text.trim();
         if !trimmed.is_empty() {
-            ipc::send(&OutMessage::TypedMessage { text: trimmed.to_string() });
+            ipc::send(&OutMessage::TypedMessage {
+                text: trimmed.to_string(),
+            });
             e.set_text("");
             *state_entry.entry_text.borrow_mut() = String::new();
         }
@@ -474,11 +480,23 @@ pub fn run(receiver: Receiver<InMessage>) {
                     state_tick.style_count.set(count);
                     *state_tick.style_name.borrow_mut() = name;
                 }
-                InMessage::Toast { message, toast_type, duration, action, action_label, reject_action, reject_action_label } => {
+                InMessage::Toast {
+                    message,
+                    toast_type,
+                    duration,
+                    action,
+                    action_label,
+                    reject_action,
+                    reject_action_label,
+                } => {
                     *state_tick.flash_message.borrow_mut() = message;
-                    state_tick.flash_is_error.set(toast_type.as_deref() == Some("error"));
+                    state_tick
+                        .flash_is_error
+                        .set(toast_type.as_deref() == Some("error"));
                     state_tick.flash_visible.set(true);
-                    state_tick.flash_timer.set(duration.unwrap_or(FLASH_DURATION));
+                    state_tick
+                        .flash_timer
+                        .set(duration.unwrap_or(FLASH_DURATION));
                     *state_tick.flash_action.borrow_mut() = action;
                     *state_tick.flash_action_label.borrow_mut() = action_label;
                     *state_tick.flash_reject_action.borrow_mut() = reject_action;
@@ -567,7 +585,9 @@ pub fn run(receiver: Receiver<InMessage>) {
                     state_tick.drag_draw_offset_y.set(0.0);
                     state_tick.has_saved_position.set(false);
                     state_tick.reset_strategy.set(strategy);
-                    ipc::send(&OutMessage::PositionChanged { has_saved_position: false });
+                    ipc::send(&OutMessage::PositionChanged {
+                        has_saved_position: false,
+                    });
                 }
                 InMessage::Quit => {
                     quit_tick.set(true);
@@ -598,13 +618,10 @@ pub fn run(receiver: Receiver<InMessage>) {
             } else {
                 WINDOW_W_TYPING as f64 - ox - dw
             };
-            let margin_end = (right_margin + (dw - panel_x - panel_w) + PANEL_CONTENT_SIDE_INSET) as i32;
+            let margin_end =
+                (right_margin + (dw - panel_x - panel_w) + PANEL_CONTENT_SIDE_INSET) as i32;
             let ah = state_tick.alloc_height.get();
-            let bottom_margin = if ah > 0.0 {
-                ah - oy - dh
-            } else {
-                0.0
-            };
+            let bottom_margin = if ah > 0.0 { ah - oy - dh } else { 0.0 };
             let margin_bottom = (bottom_margin + PANEL_BOTTOM_MARGIN) as i32;
             entry_tick.set_margin_start(margin_start);
             entry_tick.set_margin_end(margin_end);
@@ -617,7 +634,9 @@ pub fn run(receiver: Receiver<InMessage>) {
                     win_tick.set_keyboard_mode(gtk_layer_shell::KeyboardMode::OnDemand);
                     glib::idle_add_local_once({
                         let e = entry_tick.clone();
-                        move || { e.grab_focus(); }
+                        move || {
+                            e.grab_focus();
+                        }
                     });
                 }
                 Backend::X11 => {
@@ -636,7 +655,9 @@ pub fn run(receiver: Receiver<InMessage>) {
                     win_tick.set_accept_focus(true);
                     glib::idle_add_local_once({
                         let e = entry_tick.clone();
-                        move || { e.grab_focus(); }
+                        move || {
+                            e.grab_focus();
+                        }
                     });
                 }
             }
@@ -774,7 +795,9 @@ fn clear_pointer_pin(state: &PillState, window: &gtk::Window) {
             state.x11_release_persisted.set(persisted);
         } else {
             state.has_saved_position.set(true);
-            ipc::send(&OutMessage::PositionChanged { has_saved_position: true });
+            ipc::send(&OutMessage::PositionChanged {
+                has_saved_position: true,
+            });
         }
     }
     state.dragging.set(false);
@@ -826,7 +849,9 @@ fn tick(state: &PillState) {
             let combined = (avg * 0.9 + peak * 0.85).min(1.0);
             let boosted = (combined.sqrt() * 1.35).min(1.0);
             let target = state.target_level.get();
-            state.target_level.set((target * 0.25 + boosted * 0.75).min(1.0));
+            state
+                .target_level
+                .set((target * 0.25 + boosted * 0.75).min(1.0));
         }
     } else if is_loading {
         let target = state.target_level.get();
@@ -842,24 +867,48 @@ fn tick(state: &PillState) {
     let current = state.current_level.get();
     let target = state.target_level.get();
     let new_current = current + (target - current) * LEVEL_SMOOTHING;
-    state.current_level.set(if new_current < 0.0002 { 0.0 } else { new_current });
+    state.current_level.set(if new_current < 0.0002 {
+        0.0
+    } else {
+        new_current
+    });
 
     let decayed = target * TARGET_DECAY_PER_FRAME;
-    state.target_level.set(if decayed < 0.0005 { 0.0 } else { decayed });
+    state
+        .target_level
+        .set(if decayed < 0.0005 { 0.0 } else { decayed });
 
     let level = state.current_level.get();
-    let base_level = if is_loading && !is_recording { PROCESSING_BASE_LEVEL } else { 0.0 };
+    let base_level = if is_loading && !is_recording {
+        PROCESSING_BASE_LEVEL
+    } else {
+        0.0
+    };
     let effective_level = level.max(base_level);
     let advance = WAVE_BASE_PHASE_STEP + WAVE_PHASE_GAIN * effective_level;
-    state.wave_phase.set((state.wave_phase.get() + advance) % TAU);
+    state
+        .wave_phase
+        .set((state.wave_phase.get() + advance) % TAU);
 
     // Pill expand/collapse (spring)
-    let expand_target = if is_active || hovered || state.assistant_active.get() || phase == Phase::Paused { 1.0 } else { 0.0 };
-    spring_anim(&state.expand_t, &state.expand_velocity, expand_target, SPRING_STIFFNESS);
+    let expand_target =
+        if is_active || hovered || state.assistant_active.get() || phase == Phase::Paused {
+            1.0
+        } else {
+            0.0
+        };
+    spring_anim(
+        &state.expand_t,
+        &state.expand_velocity,
+        expand_target,
+        SPRING_STIFFNESS,
+    );
 
     // Loading offset
     if is_loading {
-        state.loading_offset.set((state.loading_offset.get() + LOADING_SPEED) % 1.0);
+        state
+            .loading_offset
+            .set((state.loading_offset.get() + LOADING_SPEED) % 1.0);
     }
 
     // Tooltip animation (spring)
@@ -871,25 +920,60 @@ fn tick(state: &PillState) {
         && (hovered || phase == Phase::Recording)
         && state.expand_t.get() > 0.3;
     let tooltip_target = if show_tooltip { 1.0 } else { 0.0 };
-    spring_anim(&state.tooltip_t, &state.tooltip_velocity, tooltip_target, SPRING_STIFFNESS);
+    spring_anim(
+        &state.tooltip_t,
+        &state.tooltip_velocity,
+        tooltip_target,
+        SPRING_STIFFNESS,
+    );
 
     // Panel open/close (spring)
-    let panel_target = if state.assistant_active.get() { 1.0 } else { 0.0 };
-    spring_anim(&state.panel_open_t, &state.panel_open_velocity, panel_target, SPRING_STIFFNESS);
+    let panel_target = if state.assistant_active.get() {
+        1.0
+    } else {
+        0.0
+    };
+    spring_anim(
+        &state.panel_open_t,
+        &state.panel_open_velocity,
+        panel_target,
+        SPRING_STIFFNESS,
+    );
 
     // Keyboard button (spring)
     let is_voice = *state.assistant_input_mode.borrow() == "voice";
-    let kb_target = if state.assistant_active.get() && is_voice { 1.0 } else { 0.0 };
-    spring_anim(&state.kb_button_t, &state.kb_button_velocity, kb_target, SPRING_STIFFNESS);
+    let kb_target = if state.assistant_active.get() && is_voice {
+        1.0
+    } else {
+        0.0
+    };
+    spring_anim(
+        &state.kb_button_t,
+        &state.kb_button_velocity,
+        kb_target,
+        SPRING_STIFFNESS,
+    );
 
     // Animate content dimensions toward target mode
     let mode = state.window_mode.get();
     let (tw, th) = mode.dimensions();
-    spring_px(&state.draw_width, &state.draw_w_velocity, tw as f64, SPRING_STIFFNESS);
-    spring_px(&state.draw_height, &state.draw_h_velocity, th as f64, SPRING_STIFFNESS);
+    spring_px(
+        &state.draw_width,
+        &state.draw_w_velocity,
+        tw as f64,
+        SPRING_STIFFNESS,
+    );
+    spring_px(
+        &state.draw_height,
+        &state.draw_h_velocity,
+        th as f64,
+        SPRING_STIFFNESS,
+    );
 
     // Shimmer phase for thinking animation
-    state.shimmer_phase.set((state.shimmer_phase.get() + SHIMMER_SPEED) % 1.0);
+    state
+        .shimmer_phase
+        .set((state.shimmer_phase.get() + SHIMMER_SPEED) % 1.0);
 
     // Fireworks
     tick_fireworks(state);
@@ -916,7 +1000,12 @@ fn tick(state: &PillState) {
         }
     }
     let flash_target = if state.flash_visible.get() { 1.0 } else { 0.0 };
-    spring_anim(&state.flash_t, &state.flash_velocity, flash_target, SPRING_STIFFNESS);
+    spring_anim(
+        &state.flash_t,
+        &state.flash_velocity,
+        flash_target,
+        SPRING_STIFFNESS,
+    );
 
     // Long-press cancel flash timer
     if state.cancel_flash.get() > 0.0 {
@@ -926,8 +1015,17 @@ fn tick(state: &PillState) {
 
     // Recording <-> paused crossfade driven by the same critically damped
     // spring as the other pill transitions (settles, never overshoots).
-    let pause_target = if state.phase.get() == Phase::Paused { 1.0 } else { 0.0 };
-    spring_anim(&state.pause_t, &state.pause_velocity, pause_target, SPRING_STIFFNESS);
+    let pause_target = if state.phase.get() == Phase::Paused {
+        1.0
+    } else {
+        0.0
+    };
+    spring_anim(
+        &state.pause_t,
+        &state.pause_velocity,
+        pause_target,
+        SPRING_STIFFNESS,
+    );
 
     // Cancel + pause controls.
     let controls_phase = state.phase.get();
@@ -941,7 +1039,12 @@ fn tick(state: &PillState) {
             Phase::Idle | Phase::Loading => false,
         };
     let cancel_target = if show_controls { 1.0 } else { 0.0 };
-    spring_anim(&state.cancel_t, &state.cancel_velocity, cancel_target, SPRING_STIFFNESS * 2.0);
+    spring_anim(
+        &state.cancel_t,
+        &state.cancel_velocity,
+        cancel_target,
+        SPRING_STIFFNESS * 2.0,
+    );
 
     // Inflate animation. The target ramps up partway through the hold (not at
     // the arm moment), so the pill is already growing while the ring fills and
@@ -952,7 +1055,12 @@ fn tick(state: &PillState) {
         state.long_press_active.get(),
         state.dragging.get(),
     );
-    spring_anim(&state.inflate_t, &state.inflate_velocity, inflate_target, DRAG_INFLATE_STIFFNESS);
+    spring_anim(
+        &state.inflate_t,
+        &state.inflate_velocity,
+        inflate_target,
+        DRAG_INFLATE_STIFFNESS,
+    );
 
     tick_ring(state);
 
@@ -1194,7 +1302,11 @@ fn tick_transcript(state: &PillState) {
         0.0
     };
 
-    let speed = if target > 0.5 { TRANSCRIPT_RISE_SPEED } else { TRANSCRIPT_FADE_SPEED };
+    let speed = if target > 0.5 {
+        TRANSCRIPT_RISE_SPEED
+    } else {
+        TRANSCRIPT_FADE_SPEED
+    };
     let opacity = state.transcript_opacity.get();
     let blend = 1.0 - (-speed * dt).exp();
     let next = opacity + (target - opacity) * blend;
@@ -1210,7 +1322,9 @@ fn tick_transcript(state: &PillState) {
 fn spring_anim(value: &Cell<f64>, velocity: &Cell<f64>, target: f64, stiffness: f64) {
     let v = value.get();
     let vel = velocity.get();
-    if v == target && vel == 0.0 { return; }
+    if v == target && vel == 0.0 {
+        return;
+    }
     let damping = 2.0 * stiffness.sqrt();
     let force = stiffness * (target - v) - damping * vel;
     let new_vel = vel + force * SPRING_DT;
@@ -1220,14 +1334,20 @@ fn spring_anim(value: &Cell<f64>, velocity: &Cell<f64>, target: f64, stiffness: 
         velocity.set(0.0);
     } else {
         value.set(new_v.clamp(0.0, 1.0));
-        velocity.set(if !(0.0..=1.0).contains(&new_v) { 0.0 } else { new_vel });
+        velocity.set(if !(0.0..=1.0).contains(&new_v) {
+            0.0
+        } else {
+            new_vel
+        });
     }
 }
 
 fn spring_px(value: &Cell<f64>, velocity: &Cell<f64>, target: f64, stiffness: f64) {
     let v = value.get();
     let vel = velocity.get();
-    if v == target && vel == 0.0 { return; }
+    if v == target && vel == 0.0 {
+        return;
+    }
     let damping = 2.0 * stiffness.sqrt();
     let force = stiffness * (target - v) - damping * vel;
     let new_vel = vel + force * SPRING_DT;
@@ -1254,11 +1374,7 @@ fn spring_px(value: &Cell<f64>, velocity: &Cell<f64>, target: f64, stiffness: f6
 ///
 /// Assistant mode is a deliberate exception: the pill is the assistant's own
 /// surface, so it shows even when the preference is `Hidden`.
-pub(crate) fn should_show_pill(
-    visibility: Visibility,
-    phase: Phase,
-    is_assistant: bool,
-) -> bool {
+pub(crate) fn should_show_pill(visibility: Visibility, phase: Phase, is_assistant: bool) -> bool {
     let is_active = phase != Phase::Idle;
     match visibility {
         Visibility::Hidden => is_assistant,
@@ -1274,7 +1390,11 @@ mod visibility_tests {
     #[test]
     fn hidden_stays_hidden_while_recording() {
         // The Wayland regression: a Hidden pill used to appear while recording.
-        assert!(!should_show_pill(Visibility::Hidden, Phase::Recording, false));
+        assert!(!should_show_pill(
+            Visibility::Hidden,
+            Phase::Recording,
+            false
+        ));
         assert!(!should_show_pill(Visibility::Hidden, Phase::Idle, false));
     }
 
@@ -1286,14 +1406,26 @@ mod visibility_tests {
 
     #[test]
     fn while_active_shows_only_when_busy() {
-        assert!(!should_show_pill(Visibility::WhileActive, Phase::Idle, false));
-        assert!(should_show_pill(Visibility::WhileActive, Phase::Recording, false));
+        assert!(!should_show_pill(
+            Visibility::WhileActive,
+            Phase::Idle,
+            false
+        ));
+        assert!(should_show_pill(
+            Visibility::WhileActive,
+            Phase::Recording,
+            false
+        ));
         assert!(should_show_pill(Visibility::WhileActive, Phase::Idle, true));
     }
 
     #[test]
     fn persistent_always_shows() {
         assert!(should_show_pill(Visibility::Persistent, Phase::Idle, false));
-        assert!(should_show_pill(Visibility::Persistent, Phase::Recording, false));
+        assert!(should_show_pill(
+            Visibility::Persistent,
+            Phase::Recording,
+            false
+        ));
     }
 }

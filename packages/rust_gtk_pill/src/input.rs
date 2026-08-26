@@ -34,8 +34,10 @@ pub(crate) fn is_over_pill_area(state: &PillState, x: f64, y: f64) -> bool {
         let tooltip_w = state.tooltip_width.get();
         let (tooltip_x, tooltip_y) =
             tooltip_rendered_origin(px, py, pw, tooltip_w, state.tooltip_t.get());
-        if x >= tooltip_x && x <= tooltip_x + tooltip_w
-            && y >= tooltip_y && y <= tooltip_y + TOOLTIP_HEIGHT
+        if x >= tooltip_x
+            && x <= tooltip_x + tooltip_w
+            && y >= tooltip_y
+            && y <= tooltip_y + TOOLTIP_HEIGHT
         {
             return true;
         }
@@ -94,17 +96,23 @@ pub(crate) fn handle_click(state: &PillState, x: f64, y: f64) {
                     }
                 }
                 ClickAction::StyleForward => {
-                    ipc::send(&OutMessage::StyleSwitch { direction: "forward".to_string() });
+                    ipc::send(&OutMessage::StyleSwitch {
+                        direction: "forward".to_string(),
+                    });
                 }
                 ClickAction::StyleBackward => {
-                    ipc::send(&OutMessage::StyleSwitch { direction: "backward".to_string() });
+                    ipc::send(&OutMessage::StyleSwitch {
+                        direction: "backward".to_string(),
+                    });
                 }
                 ClickAction::AssistantClose => {
                     ipc::send(&OutMessage::AssistantClose);
                 }
                 ClickAction::OpenInNew => {
                     if let Some(ref id) = *state.assistant_conversation_id.borrow() {
-                        ipc::send(&OutMessage::OpenConversation { conversation_id: id.clone() });
+                        ipc::send(&OutMessage::OpenConversation {
+                            conversation_id: id.clone(),
+                        });
                     }
                     ipc::send(&OutMessage::AssistantClose);
                 }
@@ -122,17 +130,23 @@ pub(crate) fn handle_click(state: &PillState, x: f64, y: f64) {
                 }
                 ClickAction::PermissionAllow(id) => {
                     ipc::send(&OutMessage::ResolvePermission {
-                        permission_id: id.clone(), status: "allowed".to_string(), always_allow: false,
+                        permission_id: id.clone(),
+                        status: "allowed".to_string(),
+                        always_allow: false,
                     });
                 }
                 ClickAction::PermissionDeny(id) => {
                     ipc::send(&OutMessage::ResolvePermission {
-                        permission_id: id.clone(), status: "denied".to_string(), always_allow: false,
+                        permission_id: id.clone(),
+                        status: "denied".to_string(),
+                        always_allow: false,
                     });
                 }
                 ClickAction::PermissionAlwaysAllow(id) => {
                     ipc::send(&OutMessage::ResolvePermission {
-                        permission_id: id.clone(), status: "allowed".to_string(), always_allow: true,
+                        permission_id: id.clone(),
+                        status: "allowed".to_string(),
+                        always_allow: true,
                     });
                 }
                 ClickAction::SendButton => {
@@ -144,7 +158,9 @@ pub(crate) fn handle_click(state: &PillState, x: f64, y: f64) {
                 }
                 ClickAction::FlashAction => {
                     if let Some(ref action) = *state.flash_action.borrow() {
-                        ipc::send(&OutMessage::ToastAction { action: action.clone() });
+                        ipc::send(&OutMessage::ToastAction {
+                            action: action.clone(),
+                        });
                     }
                     state.flash_visible.set(false);
                     state.flash_timer.set(0.0);
@@ -155,7 +171,9 @@ pub(crate) fn handle_click(state: &PillState, x: f64, y: f64) {
                 }
                 ClickAction::FlashReject => {
                     if let Some(ref action) = *state.flash_reject_action.borrow() {
-                        ipc::send(&OutMessage::ToastAction { action: action.clone() });
+                        ipc::send(&OutMessage::ToastAction {
+                            action: action.clone(),
+                        });
                     }
                     state.flash_visible.set(false);
                     state.flash_timer.set(0.0);
@@ -198,9 +216,14 @@ pub(crate) fn handle_scroll(state: &PillState, event: &gdk::EventScroll) {
 /// both side controls stay clickable.
 #[allow(clippy::too_many_arguments)]
 fn build_input_region(
-    ox: f64, oy: f64,
-    pill_x: f64, pill_y: f64, pill_w: f64, pill_h: f64,
-    tooltip_t: f64, tooltip_w: f64,
+    ox: f64,
+    oy: f64,
+    pill_x: f64,
+    pill_y: f64,
+    pill_w: f64,
+    pill_h: f64,
+    tooltip_t: f64,
+    tooltip_w: f64,
     include_side_controls: bool,
 ) -> cairo::Region {
     let pill_rect = cairo::RectangleInt::new(
@@ -239,13 +262,22 @@ fn build_input_region(
 #[allow(clippy::too_many_arguments)]
 fn input_region(
     state: &PillState,
-    ox: f64, oy: f64,
-    pill_x: f64, pill_y: f64, pill_w: f64, pill_h: f64,
+    ox: f64,
+    oy: f64,
+    pill_x: f64,
+    pill_y: f64,
+    pill_w: f64,
+    pill_h: f64,
 ) -> cairo::Region {
     let region = build_input_region(
-        ox, oy,
-        pill_x, pill_y, pill_w, pill_h,
-        state.tooltip_t.get(), state.tooltip_width.get(),
+        ox,
+        oy,
+        pill_x,
+        pill_y,
+        pill_w,
+        pill_h,
+        state.tooltip_t.get(),
+        state.tooltip_width.get(),
         state.phase.get() != Phase::Idle,
     );
     union_flash_action(&region, state, ox, oy);
@@ -258,10 +290,8 @@ pub(crate) fn set_expanded_input_region(gdk_window: &gdk::Window, state: &PillSt
     let (ox, oy) = state.content_offset();
 
     if state.assistant_active.get() {
-        let rect = cairo::RectangleInt::new(
-            ox as i32, oy as i32,
-            dw.ceil() as i32, dh.ceil() as i32,
-        );
+        let rect =
+            cairo::RectangleInt::new(ox as i32, oy as i32, dw.ceil() as i32, dh.ceil() as i32);
         let region = cairo::Region::create_rectangle(&rect);
         gdk_window.input_shape_combine_region(&region, 0, 0);
     } else {
@@ -276,11 +306,7 @@ pub(crate) fn set_expanded_input_region(gdk_window: &gdk::Window, state: &PillSt
     }
 }
 
-fn union_flash_action(
-    region: &cairo::Region,
-    state: &PillState,
-    ox: f64, oy: f64,
-) {
+fn union_flash_action(region: &cairo::Region, state: &PillState, ox: f64, oy: f64) {
     if state.flash_action.borrow().is_none() || state.flash_t.get() < 0.5 {
         return;
     }
@@ -304,8 +330,12 @@ fn union_flash_action(
 
 fn union_side_controls(
     region: &cairo::Region,
-    ox: f64, oy: f64,
-    pill_x: f64, pill_y: f64, pill_w: f64, pill_h: f64,
+    ox: f64,
+    oy: f64,
+    pill_x: f64,
+    pill_y: f64,
+    pill_w: f64,
+    pill_h: f64,
 ) {
     // Both side controls use the same shared origins as the draw code, so
     // hit-testing can never drift away from where the controls are painted.
@@ -339,11 +369,8 @@ pub(crate) fn update_input_region(gdk_window: &gdk::Window, state: &PillState) {
         let (pill_x, pill_y, pill_w, pill_h) = pill_position(state, dw, dh);
         let pill_rx = (ox + pill_x) as i32;
         let pill_ry = (oy + pill_y) as i32;
-        let rect = cairo::RectangleInt::new(
-            pill_rx, pill_ry,
-            pill_w.ceil() as i32,
-            pill_h.ceil() as i32,
-        );
+        let rect =
+            cairo::RectangleInt::new(pill_rx, pill_ry, pill_w.ceil() as i32, pill_h.ceil() as i32);
         let region = cairo::Region::create_rectangle(&rect);
         union_flash_action(&region, state, ox, oy);
         gdk_window.input_shape_combine_region(&region, 0, 0);
@@ -374,10 +401,8 @@ mod input_region_tests {
 
         // Active phase -> side controls are part of the input region.
         let region = build_input_region(
-            ox, oy,
-            pill_x, pill_y, pill_w, pill_h,
-            0.0, 0.0,   // no tooltip
-            true,       // include side controls
+            ox, oy, pill_x, pill_y, pill_w, pill_h, 0.0, 0.0,  // no tooltip
+            true, // include side controls
         );
 
         // Moved pill body centre must be inside the region.
@@ -419,9 +444,7 @@ mod input_region_tests {
             let pill_y = base_y + offset_y;
 
             let region = build_input_region(
-                ox, oy,
-                pill_x, pill_y, pill_w, pill_h,
-                1.0, tooltip_w,  // tooltip fully shown
+                ox, oy, pill_x, pill_y, pill_w, pill_h, 1.0, tooltip_w, // tooltip fully shown
                 false,
             );
 
@@ -433,7 +456,11 @@ mod input_region_tests {
                 (tx + tooltip_w - 1.0, ty + 1.0, "top-right"),
                 (tx + tooltip_w / 2.0, ty + TOOLTIP_HEIGHT / 2.0, "centre"),
                 (tx + 1.0, ty + TOOLTIP_HEIGHT - 1.0, "bottom-left"),
-                (tx + tooltip_w - 1.0, ty + TOOLTIP_HEIGHT - 1.0, "bottom-right"),
+                (
+                    tx + tooltip_w - 1.0,
+                    ty + TOOLTIP_HEIGHT - 1.0,
+                    "bottom-right",
+                ),
             ];
             for (px, py, label) in probes {
                 assert!(
@@ -470,20 +497,20 @@ mod input_region_tests {
         // while input ignored it until 0.1, so it was briefly unclickable.
         for tooltip_t in [0.05f64, 0.2, 0.5, 0.8, 1.0] {
             let region = build_input_region(
-                ox, oy,
-                pill_x, pill_y, pill_w, pill_h,
-                tooltip_t, tooltip_w,
-                false,
+                ox, oy, pill_x, pill_y, pill_w, pill_h, tooltip_t, tooltip_w, false,
             );
 
-            let (tx, ty) =
-                tooltip_rendered_origin(pill_x, pill_y, pill_w, tooltip_w, tooltip_t);
+            let (tx, ty) = tooltip_rendered_origin(pill_x, pill_y, pill_w, tooltip_w, tooltip_t);
             let probes = [
                 (tx + 1.0, ty + 1.0, "top-left"),
                 (tx + tooltip_w - 1.0, ty + 1.0, "top-right"),
                 (tx + tooltip_w / 2.0, ty + TOOLTIP_HEIGHT / 2.0, "centre"),
                 (tx + 1.0, ty + TOOLTIP_HEIGHT - 1.0, "bottom-left"),
-                (tx + tooltip_w - 1.0, ty + TOOLTIP_HEIGHT - 1.0, "bottom-right"),
+                (
+                    tx + tooltip_w - 1.0,
+                    ty + TOOLTIP_HEIGHT - 1.0,
+                    "bottom-right",
+                ),
             ];
             for (px, py, label) in probes {
                 assert!(
@@ -503,9 +530,14 @@ mod input_region_tests {
 
         // Just visible: must already be in the region.
         let region = build_input_region(
-            0.0, 0.0,
-            pill_x, pill_y, pill_w, pill_h,
-            TOOLTIP_VISIBLE_T, tooltip_w,
+            0.0,
+            0.0,
+            pill_x,
+            pill_y,
+            pill_w,
+            pill_h,
+            TOOLTIP_VISIBLE_T,
+            tooltip_w,
             false,
         );
         let (tx, ty) =
@@ -521,10 +553,7 @@ mod input_region_tests {
         // Fully hidden: the region is the pill alone, so a point above the
         // pill (where the tooltip would sit) is excluded.
         let hidden = build_input_region(
-            0.0, 0.0,
-            pill_x, pill_y, pill_w, pill_h,
-            0.0, tooltip_w,
-            false,
+            0.0, 0.0, pill_x, pill_y, pill_w, pill_h, 0.0, tooltip_w, false,
         );
         assert!(
             !hidden.contains_point(
@@ -555,10 +584,7 @@ mod input_region_tests {
 
         // While the switcher exists the tooltip owns input above the pill.
         let with_tooltip = build_input_region(
-            0.0, 0.0,
-            pill_x, pill_y, pill_w, pill_h,
-            1.0, measured_w,
-            false,
+            0.0, 0.0, pill_x, pill_y, pill_w, pill_h, 1.0, measured_w, false,
         );
         let (tx, ty) = tooltip_rendered_origin(pill_x, pill_y, pill_w, measured_w, 1.0);
         let probe = (
@@ -573,12 +599,7 @@ mod input_region_tests {
         // draw_tooltip() clears the width when the switcher goes away, even
         // though tooltip_t has not finished fading. The same point must fall
         // through to whatever is underneath.
-        let cleared = build_input_region(
-            0.0, 0.0,
-            pill_x, pill_y, pill_w, pill_h,
-            1.0, 0.0,
-            false,
-        );
+        let cleared = build_input_region(0.0, 0.0, pill_x, pill_y, pill_w, pill_h, 1.0, 0.0, false);
         assert!(
             !cleared.contains_point(probe.0, probe.1),
             "an unpainted tooltip must not keep blocking clicks"
@@ -596,12 +617,10 @@ mod input_region_tests {
     #[test]
     fn unshifted_pill_body_is_in_region() {
         let (ox, oy) = (0.0f64, 0.0f64);
-        let region = build_input_region(
-            ox, oy,
-            240.0, 100.0, 120.0, 32.0,
-            0.0, 0.0,
-            false,
+        let region = build_input_region(ox, oy, 240.0, 100.0, 120.0, 32.0, 0.0, 0.0, false);
+        assert!(
+            region.contains_point(300, 116),
+            "pill centre should be inside"
         );
-        assert!(region.contains_point(300, 116), "pill centre should be inside");
     }
 }

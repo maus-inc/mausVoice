@@ -108,7 +108,6 @@ pub(crate) struct FlameTongue {
 
 #[derive(Debug, Clone)]
 
-
 pub(crate) struct PillState {
     pub(crate) phase: Cell<Phase>,
     pub(crate) visibility: Cell<Visibility>,
@@ -269,6 +268,9 @@ impl PillState {
     pub(crate) fn content_offset(&self) -> (f64, f64) {
         let dw = self.draw_width.get();
         let dh = self.draw_height.get();
-        ((WINDOW_W_TYPING as f64 - dw) / 2.0, WINDOW_H_TYPING as f64 - dh)
+        (
+            (WINDOW_W_TYPING as f64 - dw) / 2.0,
+            WINDOW_H_TYPING as f64 - dh,
+        )
     }
 }

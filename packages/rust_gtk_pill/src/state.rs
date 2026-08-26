@@ -279,7 +279,10 @@ impl PillState {
         if aw > 0.0 && ah > 0.0 {
             ((aw - dw) / 2.0, ah - dh - MARGIN_BOTTOM as f64)
         } else {
-            ((WINDOW_W_TYPING as f64 - dw) / 2.0, WINDOW_H_TYPING as f64 - dh)
+            (
+                (WINDOW_W_TYPING as f64 - dw) / 2.0,
+                WINDOW_H_TYPING as f64 - dh,
+            )
         }
     }
 }
