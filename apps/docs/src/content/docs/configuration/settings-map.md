@@ -15,7 +15,7 @@ Open **Settings** from the bottom of the left navigation rail. The page uses sec
 - **Hotkey shortcuts** configures hold-to-dictate, cancel, open chat, add-to-dictionary, Assistant, and manual-style actions. Conditional actions appear only when their feature is active.
 - **Diagnostics** shows platform paths and exports a support bundle.
 - **Text insertion options** chooses paste or simulated typing globally and per detected application.
-- **More settings** contains Incognito, auto-learn dictionary, update prompts, menu-bar visibility, pill behavior, real-time output, limits, styling mode, celebrations, and multi-device output.
+- **More settings** contains Incognito, auto-learn dictionary, learn from corrections, update prompts, menu-bar visibility, pill behavior, real-time output, limits, styling mode, celebrations, and multi-device output.
 
 ## Processing
 

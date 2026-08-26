@@ -701,7 +701,9 @@ fn draw_flash_message(cr: &cairo::Context, state: &PillState, ww: f64, wh: f64) 
 
     let is_error = state.flash_is_error.get();
     let action_label = state.flash_action_label.borrow();
+    let reject_label = state.flash_reject_action_label.borrow();
     let has_action = action_label.is_some();
+    let has_reject = reject_label.is_some();
 
     let layout = pangocairo::functions::create_layout(cr);
     let font_desc = pango::FontDescription::from_string("Satoshi Bold 12");
@@ -721,7 +723,25 @@ fn draw_flash_message(cr: &cairo::Context, state: &PillState, ww: f64, wh: f64) 
     } else {
         (0.0, None)
     };
-    let action_section = if has_action { FLASH_ACTION_GAP + action_w } else { 0.0 };
+
+    let (reject_w, reject_layout) = if let Some(ref label) = *reject_label {
+        let rl = pangocairo::functions::create_layout(cr);
+        let rf = pango::FontDescription::from_string("Satoshi Bold 11");
+        rl.set_font_description(Some(&rf));
+        rl.set_text(label);
+        let (rw, _) = rl.pixel_size();
+        (rw as f64 + FLASH_ACTION_PADDING_H * 2.0, Some(rl))
+    } else {
+        (0.0, None)
+    };
+
+    let mut action_section = 0.0;
+    if has_action {
+        action_section += FLASH_ACTION_GAP + action_w;
+    }
+    if has_reject {
+        action_section += FLASH_ACTION_GAP + reject_w;
+    }
 
     let flash_w = (text_w + FLASH_PADDING_H * 2.0 + action_section).max(80.0);
 
@@ -748,7 +768,7 @@ fn draw_flash_message(cr: &cairo::Context, state: &PillState, ww: f64, wh: f64) 
 
     // Message text
     cr.set_source_rgba(1.0, 1.0, 1.0, 0.9 * alpha);
-    let text_left = if has_action {
+    let text_left = if has_action || has_reject {
         full_x + FLASH_PADDING_H
     } else {
         full_x + (flash_w - text_w) / 2.0
@@ -756,6 +776,36 @@ fn draw_flash_message(cr: &cairo::Context, state: &PillState, ww: f64, wh: f64) 
     let ty = full_y + (FLASH_HEIGHT - text_h) / 2.0;
     cr.move_to(text_left, ty);
     pangocairo::functions::show_layout(cr, &layout);
+
+    // Reject button (drawn to the left of the accept button)
+    if let Some(rl) = reject_layout {
+        let accept_offset = if has_action {
+            action_w + FLASH_ACTION_GAP
+        } else {
+            0.0
+        };
+        let btn_x = full_x + flash_w - FLASH_PADDING_H - accept_offset - reject_w;
+        let btn_y = full_y + (FLASH_HEIGHT - FLASH_ACTION_HEIGHT) / 2.0;
+
+        rounded_rect(cr, btn_x, btn_y, reject_w, FLASH_ACTION_HEIGHT, FLASH_ACTION_RADIUS);
+        cr.set_source_rgba(1.0, 1.0, 1.0, 0.2 * alpha);
+        let _ = cr.fill();
+
+        cr.set_source_rgba(1.0, 1.0, 1.0, 0.95 * alpha);
+        let (lw, lh) = rl.pixel_size();
+        let lx = btn_x + (reject_w - lw as f64) / 2.0;
+        let ly = btn_y + (FLASH_ACTION_HEIGHT - lh as f64) / 2.0;
+        cr.move_to(lx, ly);
+        pangocairo::functions::show_layout(cr, &rl);
+
+        state.click_regions.borrow_mut().push(ClickRegion {
+            x: btn_x,
+            y: btn_y,
+            w: reject_w,
+            h: FLASH_ACTION_HEIGHT,
+            action: ClickAction::FlashReject,
+        });
+    }
 
     // Action button
     if let Some(al) = action_layout {

@@ -155,6 +155,8 @@ pub fn run(receiver: Receiver<InMessage>) {
         flash_is_error: Cell::new(false),
         flash_action: RefCell::new(None),
         flash_action_label: RefCell::new(None),
+        flash_reject_action: RefCell::new(None),
+        flash_reject_action_label: RefCell::new(None),
         fireworks_active: Cell::new(false),
         fireworks_elapsed: Cell::new(0.0),
         fireworks_next_launch: Cell::new(0),
@@ -472,25 +474,31 @@ pub fn run(receiver: Receiver<InMessage>) {
                     state_tick.style_count.set(count);
                     *state_tick.style_name.borrow_mut() = name;
                 }
-                InMessage::Toast { message, toast_type, duration, action, action_label } => {
+                InMessage::Toast { message, toast_type, duration, action, action_label, reject_action, reject_action_label } => {
                     *state_tick.flash_message.borrow_mut() = message;
                     state_tick.flash_is_error.set(toast_type.as_deref() == Some("error"));
                     state_tick.flash_visible.set(true);
                     state_tick.flash_timer.set(duration.unwrap_or(FLASH_DURATION));
                     *state_tick.flash_action.borrow_mut() = action;
                     *state_tick.flash_action_label.borrow_mut() = action_label;
+                    *state_tick.flash_reject_action.borrow_mut() = reject_action;
+                    *state_tick.flash_reject_action_label.borrow_mut() = reject_action_label;
                 }
                 InMessage::DismissToast => {
                     state_tick.flash_visible.set(false);
                     state_tick.flash_timer.set(0.0);
                     *state_tick.flash_action.borrow_mut() = None;
                     *state_tick.flash_action_label.borrow_mut() = None;
+                    *state_tick.flash_reject_action.borrow_mut() = None;
+                    *state_tick.flash_reject_action_label.borrow_mut() = None;
                 }
                 InMessage::Fireworks { message } => {
                     *state_tick.flash_message.borrow_mut() = message;
                     state_tick.flash_is_error.set(false);
                     *state_tick.flash_action.borrow_mut() = None;
                     *state_tick.flash_action_label.borrow_mut() = None;
+                    *state_tick.flash_reject_action.borrow_mut() = None;
+                    *state_tick.flash_reject_action_label.borrow_mut() = None;
                     state_tick.flash_visible.set(true);
                     state_tick.flash_timer.set(FIREWORKS_TOTAL_DURATION);
 
@@ -504,6 +512,8 @@ pub fn run(receiver: Receiver<InMessage>) {
                     state_tick.flash_is_error.set(false);
                     *state_tick.flash_action.borrow_mut() = None;
                     *state_tick.flash_action_label.borrow_mut() = None;
+                    *state_tick.flash_reject_action.borrow_mut() = None;
+                    *state_tick.flash_reject_action_label.borrow_mut() = None;
                     state_tick.flash_visible.set(true);
                     state_tick.flash_timer.set(FLAME_TOTAL_DURATION);
 

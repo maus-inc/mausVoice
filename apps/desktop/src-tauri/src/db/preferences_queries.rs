@@ -66,9 +66,10 @@ pub async fn upsert_user_preferences(
              always_request_admin_on_startup,
              pill_placement,
              hands_free_delay_ms,
-             auto_learn_dictionary_enabled
+             auto_learn_dictionary_enabled,
+             auto_learn_from_edits_enabled
          )
-            VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20, ?21, ?22, ?23, ?24, ?25, ?26, ?27, ?28, ?29, ?30, ?31, ?32, ?33, ?34, ?35, ?36, ?37, ?38, ?39, ?40, ?41, ?42, ?43, ?44)
+            VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20, ?21, ?22, ?23, ?24, ?25, ?26, ?27, ?28, ?29, ?30, ?31, ?32, ?33, ?34, ?35, ?36, ?37, ?38, ?39, ?40, ?41, ?42, ?43, ?44, ?45)
          ON CONFLICT(user_id) DO UPDATE SET
             transcription_mode = excluded.transcription_mode,
             transcription_api_key_id = excluded.transcription_api_key_id,
@@ -112,7 +113,8 @@ pub async fn upsert_user_preferences(
             always_request_admin_on_startup = excluded.always_request_admin_on_startup,
             pill_placement = excluded.pill_placement,
             hands_free_delay_ms = excluded.hands_free_delay_ms,
-            auto_learn_dictionary_enabled = excluded.auto_learn_dictionary_enabled",
+            auto_learn_dictionary_enabled = excluded.auto_learn_dictionary_enabled,
+            auto_learn_from_edits_enabled = excluded.auto_learn_from_edits_enabled",
     )
     .bind(&preferences.user_id)
     .bind(&preferences.transcription_mode)
@@ -158,6 +160,7 @@ pub async fn upsert_user_preferences(
     .bind(&preferences.pill_placement)
     .bind(preferences.hands_free_delay_ms)
     .bind(preferences.auto_learn_dictionary_enabled)
+    .bind(preferences.auto_learn_from_edits_enabled)
     .execute(&pool)
     .await?;
 
@@ -213,7 +216,8 @@ pub async fn fetch_user_preferences(
             always_request_admin_on_startup,
             pill_placement,
             hands_free_delay_ms,
-            auto_learn_dictionary_enabled
+            auto_learn_dictionary_enabled,
+            auto_learn_from_edits_enabled
          FROM user_preferences
          WHERE user_id = ?1
          LIMIT 1",
@@ -365,6 +369,10 @@ pub async fn fetch_user_preferences(
             .try_get::<i64, _>("auto_learn_dictionary_enabled")
             .map(|v| v != 0)
             .unwrap_or(true),
+        auto_learn_from_edits_enabled: row
+            .try_get::<i64, _>("auto_learn_from_edits_enabled")
+            .map(|v| v != 0)
+            .unwrap_or(false),
     });
 
     Ok(preferences)

@@ -154,6 +154,8 @@ pub fn run(receiver: Receiver<InMessage>) {
         flash_is_error: Cell::new(false),
         flash_action: RefCell::new(None),
         flash_action_label: RefCell::new(None),
+        flash_reject_action: RefCell::new(None),
+        flash_reject_action_label: RefCell::new(None),
         fireworks_active: Cell::new(false),
         fireworks_elapsed: Cell::new(0.0),
         fireworks_next_launch: Cell::new(0),
@@ -545,6 +547,8 @@ fn process_message(msg: InMessage, state: &PillState, _hwnd: HWND) {
             duration,
             action,
             action_label,
+            reject_action,
+            reject_action_label,
         } => {
             *state.flash_message.borrow_mut() = message;
             state
@@ -554,18 +558,24 @@ fn process_message(msg: InMessage, state: &PillState, _hwnd: HWND) {
             state.flash_timer.set(duration.unwrap_or(FLASH_DURATION));
             *state.flash_action.borrow_mut() = action;
             *state.flash_action_label.borrow_mut() = action_label;
+            *state.flash_reject_action.borrow_mut() = reject_action;
+            *state.flash_reject_action_label.borrow_mut() = reject_action_label;
         }
         InMessage::DismissToast => {
             state.flash_visible.set(false);
             state.flash_timer.set(0.0);
             *state.flash_action.borrow_mut() = None;
             *state.flash_action_label.borrow_mut() = None;
+            *state.flash_reject_action.borrow_mut() = None;
+            *state.flash_reject_action_label.borrow_mut() = None;
         }
         InMessage::Fireworks { message } => {
             *state.flash_message.borrow_mut() = message;
             state.flash_is_error.set(false);
             *state.flash_action.borrow_mut() = None;
             *state.flash_action_label.borrow_mut() = None;
+            *state.flash_reject_action.borrow_mut() = None;
+            *state.flash_reject_action_label.borrow_mut() = None;
             state.flash_visible.set(true);
             state.flash_timer.set(FIREWORKS_TOTAL_DURATION);
             state.fireworks_active.set(true);
@@ -578,6 +588,8 @@ fn process_message(msg: InMessage, state: &PillState, _hwnd: HWND) {
             state.flash_is_error.set(false);
             *state.flash_action.borrow_mut() = None;
             *state.flash_action_label.borrow_mut() = None;
+            *state.flash_reject_action.borrow_mut() = None;
+            *state.flash_reject_action_label.borrow_mut() = None;
             state.flash_visible.set(true);
             state.flash_timer.set(FLAME_TOTAL_DURATION);
 

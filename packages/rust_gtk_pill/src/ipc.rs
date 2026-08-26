@@ -86,6 +86,10 @@ pub enum InMessage {
         duration: Option<f64>,
         action: Option<String>,
         action_label: Option<String>,
+        #[serde(default)]
+        reject_action: Option<String>,
+        #[serde(default)]
+        reject_action_label: Option<String>,
     },
     DismissToast,
     Fireworks { message: String },

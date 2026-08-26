@@ -344,7 +344,9 @@ fn draw_flash_message(gfx: &mut Gfx, state: &PillState, ww: f64, wh: f64) {
 
     let is_error = state.flash_is_error.get();
     let action_label = state.flash_action_label.borrow();
+    let reject_label = state.flash_reject_action_label.borrow();
     let has_action = action_label.is_some();
+    let has_reject = reject_label.is_some();
 
     let (text_w, _) = gfx.measure_text(&message, 12.0, true);
 
@@ -354,7 +356,21 @@ fn draw_flash_message(gfx: &mut Gfx, state: &PillState, ww: f64, wh: f64) {
     } else {
         0.0
     };
-    let action_section = if has_action { FLASH_ACTION_GAP + action_w } else { 0.0 };
+
+    let reject_w = if let Some(ref label) = *reject_label {
+        let (rw, _) = gfx.measure_text(label, 11.0, true);
+        rw + FLASH_ACTION_PADDING_H * 2.0
+    } else {
+        0.0
+    };
+
+    let mut action_section = 0.0;
+    if has_action {
+        action_section += FLASH_ACTION_GAP + action_w;
+    }
+    if has_reject {
+        action_section += FLASH_ACTION_GAP + reject_w;
+    }
 
     let flash_w = (text_w + FLASH_PADDING_H * 2.0 + action_section).max(80.0);
 
@@ -379,7 +395,7 @@ fn draw_flash_message(gfx: &mut Gfx, state: &PillState, ww: f64, wh: f64) {
         [bg_r, bg_g, bg_b, 0.92 * alpha]);
 
     // Message text
-    if has_action {
+    if has_action || has_reject {
         let (_, th) = gfx.measure_text(&message, 12.0, true);
         gfx.draw_text_top_left(&message, full_x + FLASH_PADDING_H,
             full_y + (FLASH_HEIGHT - th) / 2.0,
@@ -387,6 +403,31 @@ fn draw_flash_message(gfx: &mut Gfx, state: &PillState, ww: f64, wh: f64) {
     } else {
         gfx.draw_text_centered(&message, full_x, full_y, flash_w, FLASH_HEIGHT,
             12.0, true, [1.0, 1.0, 1.0, 0.9 * alpha]);
+    }
+
+    // Reject button (drawn to the left of the accept button)
+    if let Some(ref label) = *reject_label {
+        let accept_offset = if has_action {
+            action_w + FLASH_ACTION_GAP
+        } else {
+            0.0
+        };
+        let btn_x = full_x + flash_w - FLASH_PADDING_H - accept_offset - reject_w;
+        let btn_y = full_y + (FLASH_HEIGHT - FLASH_ACTION_HEIGHT) / 2.0;
+
+        gfx.fill_rounded_rect(btn_x, btn_y, reject_w, FLASH_ACTION_HEIGHT, FLASH_ACTION_RADIUS,
+            [1.0, 1.0, 1.0, 0.2 * alpha]);
+
+        gfx.draw_text_centered(label, btn_x, btn_y, reject_w, FLASH_ACTION_HEIGHT,
+            11.0, true, [1.0, 1.0, 1.0, 0.95 * alpha]);
+
+        state.click_regions.borrow_mut().push(ClickRegion {
+            x: btn_x,
+            y: btn_y,
+            w: reject_w,
+            h: FLASH_ACTION_HEIGHT,
+            action: ClickAction::FlashReject,
+        });
     }
 
     // Action button

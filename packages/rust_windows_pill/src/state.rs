@@ -51,6 +51,7 @@ pub(crate) enum ClickAction {
     SendButton,
     InputField,
     FlashAction,
+    FlashReject,
 }
 
 #[derive(Debug, Clone)]
@@ -174,6 +175,8 @@ pub(crate) struct PillState {
     pub(crate) flash_is_error: Cell<bool>,
     pub(crate) flash_action: RefCell<Option<String>>,
     pub(crate) flash_action_label: RefCell<Option<String>>,
+    pub(crate) flash_reject_action: RefCell<Option<String>>,
+    pub(crate) flash_reject_action_label: RefCell<Option<String>>,
 
     pub(crate) fireworks_active: Cell<bool>,
     pub(crate) fireworks_elapsed: Cell<f64>,

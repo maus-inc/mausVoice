@@ -3,6 +3,7 @@ import Router from "../../router";
 import { useAppStore } from "../../store";
 import { AppSideEffects } from "./AppSideEffects";
 import { DictationSideEffects } from "./DictationSideEffects";
+import { EditWatchSideEffects } from "./EditWatchSideEffects";
 import { KeyPressSideEffects } from "./KeyPressSideEffects";
 import { MigratorSideEffects } from "./MigratorSideEffects";
 import { SessionSideEffects } from "./SessionSideEffects";
@@ -20,6 +21,7 @@ export const AppWithLoading = () => {
       <UpdateDialog />
       <MigratorSideEffects />
       <DictationSideEffects />
+      <EditWatchSideEffects />
       <SessionSideEffects />
       <Box sx={{ height: "100dvh", width: "100vw", overflow: "hidden" }}>
         {initialized ? <Router /> : <LoadingApp />}

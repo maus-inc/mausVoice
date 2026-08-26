@@ -103,6 +103,11 @@ pub struct UserPreferences {
     /// the user edits a transcription. Enabled by default.
     #[serde(default = "default_auto_learn_dictionary_enabled")]
     pub auto_learn_dictionary_enabled: bool,
+    /// Watch the target app after dictation and offer to add corrected names
+    /// as glossary terms. Disabled by default because it polls the focused
+    /// text field through the accessibility APIs.
+    #[serde(default)]
+    pub auto_learn_from_edits_enabled: bool,
 }
 
 fn default_pill_reset_monitor_strategy() -> String {

@@ -30,7 +30,9 @@ import {
   setRealtimeOutputEnabled,
   setStylingMode,
   setAutoLearnDictionaryEnabled,
+  setAutoLearnFromEditsEnabled,
 } from "../../actions/user.actions";
+import { isMacOS, isWindows } from "../../utils/env.utils";
 import { produceAppState, useAppStore } from "../../store";
 import {
   getEffectiveDictationLimitMinutes,
@@ -71,6 +73,7 @@ export const MoreSettingsDialog = () => {
     menuBarIconHidden,
     handsFreeDelayMs,
     autoLearnDictionaryEnabled,
+    autoLearnFromEditsEnabled,
   ] = useAppStore((state) => {
     const prefs = getMyUserPreferences(state);
     const transcriptionPrefs = getTranscriptionPrefs(state);
@@ -91,6 +94,7 @@ export const MoreSettingsDialog = () => {
       prefs?.menuBarIconHidden ?? false,
       getEffectiveHandsFreeDelayMs(prefs),
       prefs?.autoLearnDictionaryEnabled ?? true,
+      prefs?.autoLearnFromEditsEnabled ?? false,
     ] as const;
   });
   const [dictationLimitInput, setDictationLimitInput] = useState(
@@ -188,6 +192,12 @@ export const MoreSettingsDialog = () => {
     event: ChangeEvent<HTMLInputElement>,
   ) => {
     void setAutoLearnDictionaryEnabled(event.target.checked);
+  };
+
+  const handleToggleAutoLearnFromEdits = (
+    event: ChangeEvent<HTMLInputElement>,
+  ) => {
+    void setAutoLearnFromEditsEnabled(event.target.checked);
   };
 
   const handleToggleDisablePillRewards = (
@@ -318,6 +328,24 @@ export const MoreSettingsDialog = () => {
               />
             }
           />
+
+          {(isMacOS() || isWindows()) && (
+            <SettingSection
+              title={
+                <FormattedMessage defaultMessage="Learn from corrections" />
+              }
+              description={
+                <FormattedMessage defaultMessage="After dictation, watch for corrections you make in the target app and offer to add the corrected names to your dictionary." />
+              }
+              action={
+                <Switch
+                  edge="end"
+                  checked={autoLearnFromEditsEnabled}
+                  onChange={handleToggleAutoLearnFromEdits}
+                />
+              }
+            />
+          )}
 
           <SettingSection
             title={

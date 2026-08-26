@@ -1150,7 +1150,13 @@ handsFreeDelayMs?: number | null;
  * Automatically add corrected names and words as glossary terms when
  * the user edits a transcription. Enabled by default.
  */
-autoLearnDictionaryEnabled?: boolean }
+autoLearnDictionaryEnabled?: boolean; 
+/**
+ * Watch the target app after dictation and offer to add corrected names
+ * as glossary terms. Disabled by default because it polls the focused
+ * text field through the accessibility APIs.
+ */
+autoLearnFromEditsEnabled?: boolean }
 export type UserPreferencesGetArgs = { userId: string }
 
 /** tauri-specta globals **/
