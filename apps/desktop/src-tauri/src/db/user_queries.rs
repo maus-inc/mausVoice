@@ -2,6 +2,8 @@ use sqlx::{Row, SqlitePool};
 
 use crate::domain::User;
 
+/// Insert or update a user profile row, clamping the optional thock
+/// volume into the canonical safe window before it reaches SQLite.
 pub async fn upsert_user(pool: SqlitePool, user: &User) -> Result<User, sqlx::Error> {
     sqlx::query(
     "INSERT INTO user_profiles (

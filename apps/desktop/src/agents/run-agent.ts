@@ -55,6 +55,11 @@ export async function safeSideEffect<T>(
   }
 }
 
+/**
+ * Drive one agent conversation to completion on the desktop adapter.
+ * Emits every AgentLoop event into app state; non-critical persistence
+ * failures are logged via safeSideEffect so the loop always finishes.
+ */
 export async function runAgent(
   conversationId: string,
   config: AgentTypeConfig,
@@ -312,6 +317,10 @@ export async function runAgent(
   }
 }
 
+/**
+ * Abort the live agent loop for a conversation and mark its state
+ * aborted so any in-flight permission polling resolves as denied.
+ */
 export function abortAgentLoop(conversationId: string): void {
   const loop = activeLoops.get(conversationId);
   if (loop) loop.abort();
@@ -327,6 +336,10 @@ export function abortAgentLoop(conversationId: string): void {
   });
 }
 
+/**
+ * Persist the finished assistant message with scrubbed content and
+ * retire its streaming entry, regardless of persistence outcome.
+ */
 async function finalizeAssistantMessage(
   messageId: string,
   text: string,
@@ -452,6 +465,10 @@ async function executeWithPermission(
   return { success: false, failureReason: "Tool call was denied by user" };
 }
 
+/**
+ * Poll app state until the user resolves a tool permission request,
+ * or return denied when the conversation is aborted first.
+ */
 async function pollForPermission(
   conversationId: string,
   permissionId: string,

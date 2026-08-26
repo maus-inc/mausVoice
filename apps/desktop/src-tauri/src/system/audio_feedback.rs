@@ -153,14 +153,17 @@ pub fn play_alert_windows_11_clip() {
 /// syncs from the user preference at startup and on slider commit. The
 /// default lives in the atomic so a fresh process plays at the same level
 /// the user last chose.
+/// Play the press-thock clip at the user-controlled gain.
 pub fn play_thock_press() {
     play_thock_clip(THOCK_PRESS_CLIP);
 }
 
+/// Play the deep-thock clip at the user-controlled gain.
 pub fn play_thock_deep() {
     play_thock_clip(THOCK_DEEP_CLIP);
 }
 
+/// Play the release-thock clip at the user-controlled gain.
 pub fn play_thock_release() {
     play_thock_clip(THOCK_RELEASE_CLIP);
 }

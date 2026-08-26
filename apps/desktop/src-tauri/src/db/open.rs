@@ -714,7 +714,17 @@ mod tests {
                 .expect("legacy profile row survives")
                 .try_get::<f64, _>("interaction_feedback_volume")
                 .expect("column exists after migration");
-        assert_eq!(migrated_volume, crate::domain::user::DEFAULT_INTERACTION_FEEDBACK_VOLUME as f64);
+        // The migration's SQL literal is an f64 0.35, while the runtime
+        // write path stores an f32-cast value (0.3499999940395355). Both
+        // round-trip through the sink clamp identically, so compare with
+        // an audio-scale epsilon rather than bit equality.
+        assert!(
+            (migrated_volume - f64::from(
+                crate::domain::user::DEFAULT_INTERACTION_FEEDBACK_VOLUME
+            ))
+            .abs()
+                < 1e-6
+        );
         let v79 = sqlx::query(
             "SELECT COUNT(*) AS n FROM _sqlx_migrations WHERE version = 79 AND success = 1",
         )

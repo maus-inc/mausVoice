@@ -141,6 +141,11 @@ export const getComposerWindowPosition = (
 let activeComposer: { windowId: string; requestId: string } | null = null;
 
 /** Open the local composer popout and wait for its Insert/Cancel decision. */
+/**
+ * Open the review-before-insert popout for one transcript and resolve
+ * with the edited text, null on cancel/close/failure. Guards against a
+ * second concurrent window.
+ */
 export const reviewTextInComposer = async (
   text: string,
 ): Promise<string | null> => {
