@@ -1,0 +1,185 @@
+name: Format Rust
+
+# Detect `cargo fmt` drift on Rust changes in the Tauri crate and the
+# native pill crates. When the check fails, post a single PR comment
+# containing the exact `cargo fmt` diff as a one-click commit
+# suggestion, and a `<!-- maus-format-rust:marker -->` tag that
+# prevents duplicate comments on subsequent runs (idempotent across
+# pushes to the same PR).
+on:
+  push:
+    paths:
+      - "apps/desktop/src-tauri/**/*.rs"
+      - "packages/rust_pill_shared/**/*.rs"
+      - "packages/rust_windows_pill/**/*.rs"
+      - "packages/rust_macos_pill/**/*.rs"
+      - "packages/rust_gtk_pill/**/*.rs"
+      - "packages/rust_transcription/**/*.rs"
+      - ".github/workflows/format-rust.yml"
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+  pull-requests: write
+
+jobs:
+  fmt:
+    name: Cargo fmt check (${{ matrix.label }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - label: Linux
+            os: ubuntu-22.04
+          - label: macOS
+            os: macos-14
+          - label: Windows
+            os: windows-latest
+    steps:
+      - name: Checkout source
+        uses: actions/checkout@v5
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@4360b52568e2003a75bf9bc1d59f33a8e3fc893c # stable
+        with:
+          components: rustfmt
+      - name: Cache cargo
+        uses: Swatinem/rust-cache@49a0bdc70d2e1b713ca9e2869b211fcce03d3c1c # v2
+        with:
+          workspaces: |
+            apps/desktop/src-tauri -> target
+            packages/rust_pill_shared -> target
+            packages/rust_windows_pill -> target
+            packages/rust_macos_pill -> target
+            packages/rust_gtk_pill -> target
+            packages/rust_transcription -> target
+      - name: Run cargo fmt --check across Rust crates
+        id: fmt
+        shell: bash
+        run: |
+          set +e
+          {
+            echo "=== apps/desktop/src-tauri ==="
+            (cd apps/desktop/src-tauri && cargo fmt --check --all) 2>&1
+            for crate in rust_pill_shared rust_windows_pill rust_macos_pill rust_gtk_pill rust_transcription; do
+              if [ -f "packages/$crate/Cargo.toml" ]; then
+                echo ""
+                echo "=== packages/$crate ==="
+                (cd "packages/$crate" && cargo fmt --check --all) 2>&1
+              fi
+            done
+          } > /tmp/fmt-report.txt
+          if grep -q "^Diff in" /tmp/fmt-report.txt; then
+            echo "dirty=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "dirty=false" >> "$GITHUB_OUTPUT"
+          fi
+          set -e
+      - name: Generate suggestion patch
+        if: steps.fmt.outputs.dirty == 'true'
+        id: patch
+        shell: bash
+        run: |
+          set +e
+          # Apply cargo fmt in a temp clone so the working tree stays
+          # untouched; the suggestion is shipped as a diff in the PR
+          # comment, not as an in-place commit.
+          tmp=$(mktemp -d)
+          rsync -a --exclude='.git' --exclude='target' --exclude='node_modules' ./ "$tmp/"
+          (cd "$tmp/apps/desktop/src-tauri" && cargo fmt --all) > /dev/null 2>&1
+          for crate in rust_pill_shared rust_windows_pill rust_macos_pill rust_gtk_pill rust_transcription; do
+            if [ -f "$tmp/packages/$crate/Cargo.toml" ]; then
+              (cd "$tmp/packages/$crate" && cargo fmt --all) > /dev/null 2>&1
+            fi
+          done
+          # Cap the patch to 256 KB so a pathological drift does not
+          # blow the PR comment body limit.
+          diff -u -r --exclude=target --exclude=node_modules "$tmp" . \
+            | head -c 262144 > /tmp/fmt-suggestion.diff || true
+          echo "patch_bytes=$(wc -c < /tmp/fmt-suggestion.diff 2>/dev/null || echo 0)" >> "$GITHUB_OUTPUT"
+          rm -rf "$tmp"
+          set -e
+      - name: Resolve PR number
+        if: steps.fmt.outputs.dirty == 'true' && github.event_name == 'push'
+        id: pr
+        shell: bash
+        run: |
+          if [ -n "${{ github.event.pull_request.number }}" ]; then
+            echo "number=${{ github.event.pull_request.number }}" >> "$GITHUB_OUTPUT"
+          else
+            # workflow_dispatch / push on a branch with no PR: skip posting.
+            echo "number=" >> "$GITHUB_OUTPUT"
+          fi
+      - name: Post or update PR comment
+        if: steps.fmt.outputs.dirty == 'true' && github.event_name == 'push' && steps.pr.outputs.number != ''
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          PR_NUMBER: ${{ steps.pr.outputs.number }}
+        shell: bash
+        run: |
+          {
+            echo '<!-- maus-format-rust:marker -->'
+            echo '## :sparkles: Rust formatting needs attention'
+            echo ''
+            echo '`cargo fmt --check` reported formatting drift on the latest push.'
+            echo 'Apply the suggested patch below in one click (GitHub "Commit suggestion"'
+            echo 'button), or run the equivalent locally and commit:'
+            echo ''
+            echo '```bash'
+            echo 'cd apps/desktop/src-tauri'
+            echo 'cargo fmt --all'
+            echo 'for crate in rust_pill_shared rust_windows_pill rust_macos_pill rust_gtk_pill rust_transcription; do'
+            echo '  if [ -f "packages/$crate/Cargo.toml" ]; then'
+            echo '    (cd "packages/$crate" && cargo fmt --all)'
+            echo '  fi'
+            echo 'done'
+            echo '```'
+            echo ''
+            echo '<details>'
+            echo '<summary>cargo fmt --check report</summary>'
+            echo ''
+            echo '```'
+            cat /tmp/fmt-report.txt
+            echo '```'
+            echo '</details>'
+            echo ''
+            echo '<details>'
+            echo "<summary>Suggested patch (commit suggestion, $(wc -c < /tmp/fmt-suggestion.diff 2>/dev/null || echo 0) bytes)</summary>"
+            echo ''
+            echo '```diff'
+            cat /tmp/fmt-suggestion.diff 2>/dev/null || echo "(no diff)"
+            echo '```'
+            echo '</details>'
+          } > /tmp/fmt-comment.md
+          # Idempotency: find an existing comment with the marker tag and
+          # update it, otherwise create a new one. We do this manually with
+          # the GitHub API so the marker works across the create/update
+          # path without a third-party action.
+          existing_id=$(gh api \
+            "repos/${{ github.repository }}/issues/$PR_NUMBER/comments?per_page=100" \
+            --jq '.[] | select(.body | startswith("<!-- maus-format-rust:marker -->")) | .id' \
+            | head -n 1)
+          if [ -n "$existing_id" ]; then
+            gh api \
+              --method PATCH \
+              -H "Accept: application/vnd.github+json" \
+              "repos/${{ github.repository }}/issues/comments/$existing_id" \
+              -f body=@/tmp/fmt-comment.md > /dev/null
+            echo "Updated existing comment $existing_id"
+          else
+            gh api \
+              --method POST \
+              -H "Accept: application/vnd.github+json" \
+              "repos/${{ github.repository }}/issues/$PR_NUMBER/comments" \
+              -f body=@/tmp/fmt-comment.md > /dev/null
+            echo "Created new comment on PR #$PR_NUMBER"
+          fi
+      - name: Fail the job when formatting is dirty
+        if: steps.fmt.outputs.dirty == 'true'
+        run: |
+          echo "::error::Rust formatting drift detected. See the PR comment for the suggestion patch."
+          exit 1
