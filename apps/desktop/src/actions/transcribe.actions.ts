@@ -413,7 +413,16 @@ export const storeTranscription = async (
   }
 
   let audioSnapshot: TranscriptionAudioSnapshot | undefined;
-  if (rate > 0 && sampleCount > 0) {
+  // Skip the audio write entirely when the user has opted out of retaining
+  // failed recordings, so we don't leak a WAV on disk with no DB pointer to
+  // ever purge it from. The transcriptions.audio_path is the only thing
+  // purge_stale_transcription_audio follows, so a write that the DB row
+  // then forgets about is unrecoverable.
+  const shouldPersistAudio =
+    rate > 0 &&
+    sampleCount > 0 &&
+    !(transcriptionFailed && !preserveAudioOnFailure);
+  if (shouldPersistAudio) {
     const payloadSamples = Array.isArray(input.audio.samples)
       ? input.audio.samples
       : Array.from(input.audio.samples ?? []);
@@ -429,10 +438,6 @@ export const storeTranscription = async (
     } catch (error) {
       console.error("Failed to persist audio snapshot", error);
     }
-  }
-
-  if (transcriptionFailed && !preserveAudioOnFailure) {
-    audioSnapshot = undefined;
   }
 
   const transcription: Transcription = {
