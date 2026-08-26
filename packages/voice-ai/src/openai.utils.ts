@@ -345,6 +345,54 @@ function toFinishReason(raw: string | null | undefined): LlmFinishReason {
   }
 }
 
+type OpenAIChunkState = {
+  toolCalls: Map<number, { id: string; name: string; arguments: string }>;
+  finishReason: LlmFinishReason;
+  promptTokens: number | undefined;
+  completionTokens: number | undefined;
+  modelId: string | undefined;
+};
+
+const processOpenAIChunk = (
+  chunk: OpenAI.Chat.Completions.ChatCompletionChunk,
+  state: OpenAIChunkState,
+): string | undefined => {
+  if (chunk.model) {
+    state.modelId = chunk.model;
+  }
+
+  if (chunk.usage) {
+    state.promptTokens = chunk.usage.prompt_tokens ?? undefined;
+    state.completionTokens = chunk.usage.completion_tokens ?? undefined;
+  }
+
+  const choice = chunk.choices[0];
+  if (!choice) return undefined;
+
+  if (choice.delta?.content) {
+    return choice.delta.content;
+  }
+
+  for (const tc of choice.delta?.tool_calls ?? []) {
+    const index = tc.index ?? state.toolCalls.size;
+    const current = state.toolCalls.get(index) ?? {
+      id: "",
+      name: "",
+      arguments: "",
+    };
+    if (tc.id) current.id = tc.id;
+    if (tc.function?.name) current.name = tc.function.name;
+    if (tc.function?.arguments) current.arguments += tc.function.arguments;
+    state.toolCalls.set(index, current);
+  }
+
+  if (choice.finish_reason) {
+    state.finishReason = toFinishReason(choice.finish_reason);
+  }
+
+  return undefined;
+};
+
 export async function* openaiCompatibleStreamChat(
   client: OpenAI,
   model: string,
@@ -368,51 +416,27 @@ export async function* openaiCompatibleStreamChat(
     ...extraBody,
   });
 
-  const toolCalls = new Map<
-    number,
-    { id: string; name: string; arguments: string }
-  >();
-  let finishReason: LlmFinishReason = "other";
-  let promptTokens: number | undefined;
-  let completionTokens: number | undefined;
-  let modelId: string | undefined;
+  const state: OpenAIChunkState = {
+    toolCalls: new Map<
+      number,
+      { id: string; name: string; arguments: string }
+    >(),
+    finishReason: "other",
+    promptTokens: undefined,
+    completionTokens: undefined,
+    modelId: undefined,
+  };
 
   for await (const chunk of stream) {
-    if (chunk.model) {
-      modelId = chunk.model;
-    }
-
-    if (chunk.usage) {
-      promptTokens = chunk.usage.prompt_tokens ?? undefined;
-      completionTokens = chunk.usage.completion_tokens ?? undefined;
-    }
-
-    const choice = chunk.choices[0];
-    if (!choice) continue;
-
-    if (choice.delta?.content) {
-      yield { type: "text-delta", text: choice.delta.content };
-    }
-
-    for (const tc of choice.delta?.tool_calls ?? []) {
-      const index = tc.index ?? toolCalls.size;
-      const current = toolCalls.get(index) ?? {
-        id: "",
-        name: "",
-        arguments: "",
-      };
-      if (tc.id) current.id = tc.id;
-      if (tc.function?.name) current.name = tc.function.name;
-      if (tc.function?.arguments) current.arguments += tc.function.arguments;
-      toolCalls.set(index, current);
-    }
-
-    if (choice.finish_reason) {
-      finishReason = toFinishReason(choice.finish_reason);
+    const textDelta = processOpenAIChunk(chunk, state);
+    if (textDelta) {
+      yield { type: "text-delta", text: textDelta };
     }
   }
 
-  for (const [, tc] of [...toolCalls.entries()].sort(([a], [b]) => a - b)) {
+  for (const [, tc] of [...state.toolCalls.entries()].sort(
+    ([a], [b]) => a - b,
+  )) {
     yield {
       type: "tool-call",
       id: tc.id,
@@ -423,12 +447,15 @@ export async function* openaiCompatibleStreamChat(
 
   yield {
     type: "finish",
-    finishReason,
+    finishReason: state.finishReason,
     usage:
-      promptTokens != null || completionTokens != null
-        ? { promptTokens, completionTokens }
+      state.promptTokens != null || state.completionTokens != null
+        ? {
+            promptTokens: state.promptTokens,
+            completionTokens: state.completionTokens,
+          }
         : undefined,
-    modelId,
+    modelId: state.modelId,
   };
 }
 
