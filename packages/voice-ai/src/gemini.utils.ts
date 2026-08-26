@@ -3,6 +3,7 @@ import {
   Type,
   type Content,
   type FunctionDeclaration,
+  type GenerateContentResponse,
   type Part,
 } from "@google/genai";
 import { retry, countWords } from "@maus-inc/utilities";
@@ -316,6 +317,51 @@ export type GeminiStreamChatArgs = {
   input: LlmChatInput;
 };
 
+type GeminiChunkState = {
+  pendingToolCalls: Array<{ id: string; name: string; arguments: string }>;
+  finishReason: LlmFinishReason;
+  promptTokens: number | undefined;
+  completionTokens: number | undefined;
+  toolCallCounter: number;
+};
+
+type GeminiChunkEvent = { type: "text-delta"; text: string };
+
+const processGeminiChunk = (
+  chunk: GenerateContentResponse,
+  state: GeminiChunkState,
+): GeminiChunkEvent[] => {
+  const events: GeminiChunkEvent[] = [];
+  const candidate = chunk.candidates?.[0];
+  if (!candidate) return events;
+
+  for (const part of candidate.content?.parts ?? []) {
+    if (part.text) {
+      events.push({ type: "text-delta", text: part.text });
+    }
+
+    if (part.functionCall) {
+      state.pendingToolCalls.push({
+        id: `gemini-tc-${state.toolCallCounter++}`,
+        name: part.functionCall.name ?? "",
+        arguments: JSON.stringify(part.functionCall.args ?? {}),
+      });
+    }
+  }
+
+  if (candidate.finishReason) {
+    state.finishReason = geminiFinishReason(candidate.finishReason as string);
+  }
+
+  if (chunk.usageMetadata) {
+    state.promptTokens = chunk.usageMetadata.promptTokenCount ?? undefined;
+    state.completionTokens =
+      chunk.usageMetadata.candidatesTokenCount ?? undefined;
+  }
+
+  return events;
+};
+
 export async function* geminiStreamChat({
   apiKey,
   model,
@@ -352,45 +398,21 @@ export async function* geminiStreamChat({
     },
   });
 
-  const pendingToolCalls: Array<{
-    id: string;
-    name: string;
-    arguments: string;
-  }> = [];
-  let finishReason: LlmFinishReason = "other";
-  let promptTokens: number | undefined;
-  let completionTokens: number | undefined;
-  let toolCallCounter = 0;
+  const state: GeminiChunkState = {
+    pendingToolCalls: [],
+    finishReason: "other",
+    promptTokens: undefined,
+    completionTokens: undefined,
+    toolCallCounter: 0,
+  };
 
   for await (const chunk of stream) {
-    const candidate = chunk.candidates?.[0];
-    if (!candidate) continue;
-
-    for (const part of candidate.content?.parts ?? []) {
-      if (part.text) {
-        yield { type: "text-delta", text: part.text };
-      }
-
-      if (part.functionCall) {
-        pendingToolCalls.push({
-          id: `gemini-tc-${toolCallCounter++}`,
-          name: part.functionCall.name ?? "",
-          arguments: JSON.stringify(part.functionCall.args ?? {}),
-        });
-      }
-    }
-
-    if (candidate.finishReason) {
-      finishReason = geminiFinishReason(candidate.finishReason as string);
-    }
-
-    if (chunk.usageMetadata) {
-      promptTokens = chunk.usageMetadata.promptTokenCount ?? undefined;
-      completionTokens = chunk.usageMetadata.candidatesTokenCount ?? undefined;
+    for (const event of processGeminiChunk(chunk, state)) {
+      yield event;
     }
   }
 
-  for (const tc of pendingToolCalls) {
+  for (const tc of state.pendingToolCalls) {
     yield {
       type: "tool-call",
       id: tc.id,
@@ -401,10 +423,13 @@ export async function* geminiStreamChat({
 
   yield {
     type: "finish",
-    finishReason,
+    finishReason: state.finishReason,
     usage:
-      promptTokens != null || completionTokens != null
-        ? { promptTokens, completionTokens }
+      state.promptTokens != null || state.completionTokens != null
+        ? {
+            promptTokens: state.promptTokens,
+            completionTokens: state.completionTokens,
+          }
         : undefined,
   };
 }
