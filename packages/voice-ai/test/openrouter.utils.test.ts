@@ -202,9 +202,8 @@ describe("openrouterTranscribeAudio", () => {
     const create = vi.fn().mockResolvedValue({ text: "hello world" });
     setupTranscriptionMock(create);
 
-    const { openrouterTranscribeAudio } = await import(
-      "../src/openrouter.utils"
-    );
+    const { openrouterTranscribeAudio } =
+      await import("../src/openrouter.utils");
 
     const result = await openrouterTranscribeAudio({
       apiKey: "test-key",
@@ -224,9 +223,8 @@ describe("openrouterTranscribeAudio", () => {
     const create = vi.fn().mockResolvedValue({ text: "你好" });
     setupTranscriptionMock(create);
 
-    const { openrouterTranscribeAudio } = await import(
-      "../src/openrouter.utils"
-    );
+    const { openrouterTranscribeAudio } =
+      await import("../src/openrouter.utils");
 
     await openrouterTranscribeAudio({
       apiKey: "test-key",
@@ -243,9 +241,8 @@ describe("openrouterTranscribeAudio", () => {
     const create = vi.fn().mockResolvedValue({ text: "hi" });
     setupTranscriptionMock(create);
 
-    const { openrouterTranscribeAudio } = await import(
-      "../src/openrouter.utils"
-    );
+    const { openrouterTranscribeAudio } =
+      await import("../src/openrouter.utils");
 
     await openrouterTranscribeAudio({
       apiKey: "test-key",
@@ -264,9 +261,8 @@ describe("openrouterTranscribeAudio", () => {
     const create = vi.fn().mockResolvedValue({ text: "" });
     setupTranscriptionMock(create);
 
-    const { openrouterTranscribeAudio } = await import(
-      "../src/openrouter.utils"
-    );
+    const { openrouterTranscribeAudio } =
+      await import("../src/openrouter.utils");
 
     await expect(
       openrouterTranscribeAudio({

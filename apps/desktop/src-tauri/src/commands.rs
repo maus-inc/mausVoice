@@ -1483,7 +1483,10 @@ pub async fn stop_recording(
                 recording_error,
                 Some(crate::errors::RecordingError::NotRecording)
             ) {
-                return Err("No recording in progress".to_string());
+                return Ok(StopRecordingResponse {
+                    samples: vec![],
+                    sample_rate: 0,
+                });
             }
 
             let message = err.to_string();
