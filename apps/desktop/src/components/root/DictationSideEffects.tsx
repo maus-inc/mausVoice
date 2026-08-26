@@ -1,5 +1,4 @@
 import { invoke } from "@tauri-apps/api/core";
-import { emit as emitTauriEvent } from "@tauri-apps/api/event";
 import { AppTarget } from "@maus-inc/types";
 import { delayed } from "@maus-inc/utilities";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
@@ -535,10 +534,12 @@ export const DictationSideEffects = () => {
           formatMessage: intl.formatMessage,
           showToast,
           storeTranscriptionFn: storeTranscription,
-          emitFailed: () =>
-            emitTauriEvent("recording_failed").catch((e) =>
-              getLogger().verbose(`Failed to emit recording_failed: ${e}`),
-            ),
+          // emitFailed previously forwarded a synthetic "recording_failed"
+          // event here, but the global listener in this component then
+          // surfaced a *second* error toast on top of the one the
+          // empty-transcript handler already shows. Single toast owner is
+          // the empty-transcript path now; no cross-event propagation.
+          emitFailed: () => {},
           refreshMember,
         });
         if (handled) {
@@ -842,13 +843,12 @@ export const DictationSideEffects = () => {
           ),
         );
 
-        showToast({
-          message: intl.formatMessage({
-            defaultMessage: "Recording failed",
-          }),
-          toastType: "error",
-          duration: 8_000,
-        });
+        // The `recording_failed` global listener (registered below) is the
+        // single owner of the user-visible failure toast. The Rust
+        // `start_recording` already emitted that event before rejecting
+        // here, so this catch only does state cleanup. Adding a toast in
+        // this block stacks a second "Recording failed" notification over
+        // the listener's platform-specific one.
       }
     },
     [
