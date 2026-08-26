@@ -310,6 +310,7 @@ fn start_stdout_reader(app: tauri::AppHandle, reader: std::io::BufReader<ChildSt
                 }
             }
         }
+        log::info!("Pill overlay process stdout closed");
     });
 }
 
@@ -330,75 +331,97 @@ fn handle_stdout_line(app: &tauri::AppHandle, line: &str) {
         let _ = app.emit_to("main", "resume-dictation", ());
     } else if line.contains("\"typed_message\"") {
         handle_typed_message(app, line);
+    } else if line.contains("\"open_conversation\"") {
+        handle_open_conversation(app, line);
+        let _ = app.emit_to("main", "assistant-mode-close", ());
+    } else if line.contains("\"resolve_permission\"") {
+        handle_resolve_permission(app, line);
+    } else if line.contains("\"style_switch\"") {
+        handle_style_switch(app, line);
+    } else if line.contains("\"toast_action\"") {
+        handle_toast_action(app, line);
+    } else if line.contains("\"position_changed\"") {
+        handle_position_changed(app, line);
     }
 }
 
+fn parse_json(line: &str) -> Option<serde_json::Value> {
+    serde_json::from_str::<serde_json::Value>(line).ok()
+}
+
 fn handle_typed_message(app: &tauri::AppHandle, line: &str) {
-    if let Ok(val) = serde_json::from_str::<serde_json::Value>(line) {
-        if let Some(text) = val.get("text").and_then(|v| v.as_str()) {
-            let _ = app.emit_to("main", "on-typed-message", text.to_string());
-        }
+    let Some(text) = parse_json(line)
+        .as_ref()
+        .and_then(|val| val.get("text"))
+        .and_then(|v| v.as_str())
+    else {
+        return;
+    };
+    let payload = serde_json::json!({ "text": text });
+    let _ = app.emit_to("main", "assistant-typed-message", payload);
+}
+
+fn handle_open_conversation(app: &tauri::AppHandle, line: &str) {
+    let Some(id) = parse_json(line)
+        .as_ref()
+        .and_then(|val| val.get("conversation_id"))
+        .and_then(|v| v.as_str())
+    else {
+        return;
+    };
+    let payload = serde_json::json!({ "conversationId": id });
+    let _ = app.emit_to("main", "open-pill-conversation", payload);
+}
+
+fn handle_resolve_permission(app: &tauri::AppHandle, line: &str) {
+    let Some(val) = parse_json(line) else {
+        return;
+    };
+    let permission_id = val
+        .get("permission_id")
+        .and_then(|v| v.as_str())
+        .unwrap_or("");
+    let status = val.get("status").and_then(|v| v.as_str()).unwrap_or("denied");
+    let always_allow = val
+        .get("always_allow")
+        .and_then(|v| v.as_bool())
+        .unwrap_or(false);
+    let payload = serde_json::json!({
+        "permissionId": permission_id,
+        "status": status,
+        "alwaysAllow": always_allow,
+    });
+    let _ = app.emit_to("main", "overlay-resolve-permission", payload);
+}
+
+fn handle_style_switch(app: &tauri::AppHandle, line: &str) {
+    if line.contains("\"forward\"") {
+        let _ = app.emit_to("main", "tone-switch-forward", ());
+    } else if line.contains("\"backward\"") {
+        let _ = app.emit_to("main", "tone-switch-backward", ());
     }
 }
-                                let payload = serde_json::json!({ "text": text });
-                                let _ = app.emit_to("main", "assistant-typed-message", payload);
-                            }
-                        }
-                    } else if line.contains("\"open_conversation\"") {
-                        if let Ok(val) = serde_json::from_str::<serde_json::Value>(&line) {
-                            if let Some(id) = val.get("conversation_id").and_then(|v| v.as_str()) {
-                                let payload = serde_json::json!({ "conversationId": id });
-                                let _ = app.emit_to("main", "open-pill-conversation", payload);
-                            }
-                        }
-                        let _ = app.emit_to("main", "assistant-mode-close", ());
-                    } else if line.contains("\"resolve_permission\"") {
-                        if let Ok(val) = serde_json::from_str::<serde_json::Value>(&line) {
-                            let permission_id = val
-                                .get("permission_id")
-                                .and_then(|v| v.as_str())
-                                .unwrap_or("");
-                            let status = val
-                                .get("status")
-                                .and_then(|v| v.as_str())
-                                .unwrap_or("denied");
-                            let always_allow = val
-                                .get("always_allow")
-                                .and_then(|v| v.as_bool())
-                                .unwrap_or(false);
-                            let payload = serde_json::json!({
-                                "permissionId": permission_id,
-                                "status": status,
-                                "alwaysAllow": always_allow,
-                            });
-                            let _ = app.emit_to("main", "overlay-resolve-permission", payload);
-                        }
-                    } else if line.contains("\"style_switch\"") {
-                        if line.contains("\"forward\"") {
-                            let _ = app.emit_to("main", "tone-switch-forward", ());
-                        } else if line.contains("\"backward\"") {
-                            let _ = app.emit_to("main", "tone-switch-backward", ());
-                        }
-                    } else if line.contains("\"toast_action\"") {
-                        if let Ok(val) = serde_json::from_str::<serde_json::Value>(&line) {
-                            if let Some(action) = val.get("action").and_then(|v| v.as_str()) {
-                                let payload = serde_json::json!({ "action": action });
-                                let _ = app.emit_to("main", "toast-action", payload);
-                            }
-                        }
-                    } else if line.contains("\"position_changed\"") {
-                        if let Ok(val) = serde_json::from_str::<serde_json::Value>(&line) {
-                            let has_saved = val
-                                .get("has_saved_position")
-                                .and_then(|v| v.as_bool())
-                                .unwrap_or(false);
-                            let payload = serde_json::json!({ "hasSavedPosition": has_saved });
-                            let _ = app.emit_to("main", "pill-position-changed", payload);
-                        }
-                    }
-                }
-            }
-        }
-        log::info!("Pill overlay process stdout closed");
-    });
+
+fn handle_toast_action(app: &tauri::AppHandle, line: &str) {
+    let Some(action) = parse_json(line)
+        .as_ref()
+        .and_then(|val| val.get("action"))
+        .and_then(|v| v.as_str())
+    else {
+        return;
+    };
+    let payload = serde_json::json!({ "action": action });
+    let _ = app.emit_to("main", "toast-action", payload);
+}
+
+fn handle_position_changed(app: &tauri::AppHandle, line: &str) {
+    let Some(has_saved) = parse_json(line)
+        .as_ref()
+        .and_then(|val| val.get("has_saved_position"))
+        .and_then(|v| v.as_bool())
+    else {
+        return;
+    };
+    let payload = serde_json::json!({ "hasSavedPosition": has_saved });
+    let _ = app.emit_to("main", "pill-position-changed", payload);
 }
