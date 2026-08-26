@@ -35,16 +35,15 @@ mod imp {
     use std::sync::OnceLock;
 
     use tauri::{AppHandle, Emitter};
-    use windows::core::PCWSTR;
     use windows::core::BOOL;
+    use windows::core::PCWSTR;
     use windows::Win32::Foundation::{HANDLE, HINSTANCE, HWND, LPARAM, LRESULT, WPARAM};
     use windows::Win32::System::Console::{
         GetConsoleWindow, SetConsoleCtrlHandler, CTRL_BREAK_EVENT, CTRL_C_EVENT,
     };
     use windows::Win32::System::LibraryLoader::GetModuleHandleW;
     use windows::Win32::System::Power::{
-        RegisterPowerSettingNotification, UnregisterPowerSettingNotification,
-        HPOWERNOTIFY,
+        RegisterPowerSettingNotification, UnregisterPowerSettingNotification, HPOWERNOTIFY,
     };
     use windows::Win32::System::RemoteDesktop::{
         WTSRegisterSessionNotification, WTSUnRegisterSessionNotification, NOTIFY_FOR_THIS_SESSION,
@@ -52,8 +51,8 @@ mod imp {
     use windows::Win32::UI::WindowsAndMessaging::{
         CreateWindowExW, DefWindowProcW, DestroyWindow, DispatchMessageW, GetMessageW,
         RegisterClassW, TranslateMessage, UnregisterClassW, CS_HREDRAW, CS_OWNDC, CS_VREDRAW,
-        DEVICE_NOTIFY_WINDOW_HANDLE, HWND_DESKTOP, MSG, WNDCLASSW, WINDOW_EX_STYLE,
-        WINDOW_STYLE, WS_EX_NOACTIVATE, WS_EX_TOOLWINDOW,
+        DEVICE_NOTIFY_WINDOW_HANDLE, HWND_DESKTOP, MSG, WINDOW_EX_STYLE, WINDOW_STYLE, WNDCLASSW,
+        WS_EX_NOACTIVATE, WS_EX_TOOLWINDOW,
     };
 
     use crate::domain::EVT_DESKTOP_RESUME;
@@ -207,9 +206,7 @@ mod imp {
 
         let hwnd = unsafe {
             CreateWindowExW(
-                WINDOW_EX_STYLE(
-                    WS_EX_TOOLWINDOW.0 | WS_EX_NOACTIVATE.0,
-                ),
+                WINDOW_EX_STYLE(WS_EX_TOOLWINDOW.0 | WS_EX_NOACTIVATE.0),
                 class_name,
                 window_name,
                 WINDOW_STYLE(0),
@@ -247,9 +244,7 @@ mod imp {
             Err(err) => log::error!("lifecycle: RegisterPowerSettingNotification failed: {err}"),
         }
 
-        if let Err(err) = unsafe {
-            WTSRegisterSessionNotification(hwnd, NOTIFY_FOR_THIS_SESSION)
-        } {
+        if let Err(err) = unsafe { WTSRegisterSessionNotification(hwnd, NOTIFY_FOR_THIS_SESSION) } {
             log::error!("lifecycle: WTSRegisterSessionNotification failed: {err}");
         }
 

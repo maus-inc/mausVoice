@@ -236,7 +236,7 @@ fn record_loop(
         .map(|c| c.as_c_str().to_str().unwrap_or_default());
 
     let simple = match psimple::Simple::new(
-        None,      // server (default)
+        None,        // server (default)
         "mausVoice", // app name
         pulse::stream::Direction::Record,
         source_ref,  // source (None = default)

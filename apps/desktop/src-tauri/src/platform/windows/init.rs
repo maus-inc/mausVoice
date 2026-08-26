@@ -99,9 +99,7 @@ pub async fn run_native_setup(app: tauri::AppHandle) -> crate::platform::NativeS
 ///
 /// On UAC cancellation the app keeps running and returns `Cancelled`; the
 /// caller decides whether that cancellation should be surfaced to the user.
-pub fn request_elevation_relaunch(
-    app: tauri::AppHandle,
-) -> crate::platform::NativeSetupResult {
+pub fn request_elevation_relaunch(app: tauri::AppHandle) -> crate::platform::NativeSetupResult {
     if is_process_elevated() {
         return crate::platform::NativeSetupResult::Success;
     }
@@ -213,7 +211,11 @@ enum ParentExit {
 #[cfg(target_os = "windows")]
 fn decide_parent_exit(
     parent_pid: u32,
-    open: &mut dyn FnMut(u32) -> Option<std::result::Result<windows::Win32::Foundation::WAIT_EVENT, u32>>,
+    open: &mut dyn FnMut(
+        u32,
+    ) -> Option<
+        std::result::Result<windows::Win32::Foundation::WAIT_EVENT, u32>,
+    >,
 ) -> ParentExit {
     match open(parent_pid) {
         Some(Ok(event)) => {
@@ -242,18 +244,19 @@ fn run_elevate_helper(parent_pid: u32, rest_args: &[String]) {
         PROCESS_INFORMATION, PROCESS_SYNCHRONIZE, STARTUPINFOW,
     };
 
-    let mut open = |pid: u32| -> Option<std::result::Result<windows::Win32::Foundation::WAIT_EVENT, u32>> {
-        match unsafe { OpenProcess(PROCESS_SYNCHRONIZE, false, pid) } {
-            Ok(handle) => {
-                let event = unsafe { WaitForSingleObject(handle, INFINITE) };
-                unsafe {
-                    let _ = CloseHandle(handle);
+    let mut open =
+        |pid: u32| -> Option<std::result::Result<windows::Win32::Foundation::WAIT_EVENT, u32>> {
+            match unsafe { OpenProcess(PROCESS_SYNCHRONIZE, false, pid) } {
+                Ok(handle) => {
+                    let event = unsafe { WaitForSingleObject(handle, INFINITE) };
+                    unsafe {
+                        let _ = CloseHandle(handle);
+                    }
+                    Some(Ok(event))
                 }
-                Some(Ok(event))
+                Err(_) => Some(Err(unsafe { windows::Win32::Foundation::GetLastError() }.0)),
             }
-            Err(_) => Some(Err(unsafe { windows::Win32::Foundation::GetLastError() }.0)),
-        }
-    };
+        };
     match decide_parent_exit(parent_pid, &mut open) {
         ParentExit::Launch => {}
         ParentExit::Abort => {
@@ -406,7 +409,9 @@ mod tests {
     #[cfg(target_os = "windows")]
     mod elevate_helper {
         use super::super::{decide_parent_exit, ParentExit};
-        use windows::Win32::Foundation::{WAIT_EVENT, WAIT_OBJECT_0, ERROR_ACCESS_DENIED, ERROR_INVALID_PARAMETER};
+        use windows::Win32::Foundation::{
+            ERROR_ACCESS_DENIED, ERROR_INVALID_PARAMETER, WAIT_EVENT, WAIT_OBJECT_0,
+        };
 
         type OpenResult = Option<std::result::Result<WAIT_EVENT, u32>>;
 
@@ -421,7 +426,10 @@ mod tests {
                 Some(Err(ERROR_INVALID_PARAMETER.0))
             };
             assert_eq!(decide_parent_exit(1234, &mut open), ParentExit::Launch);
-            assert_eq!(calls, 1, "must not re-call opener after ERROR_INVALID_PARAMETER");
+            assert_eq!(
+                calls, 1,
+                "must not re-call opener after ERROR_INVALID_PARAMETER"
+            );
         }
 
         #[test]

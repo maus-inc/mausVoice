@@ -180,9 +180,7 @@ pub fn build() -> tauri::Builder<tauri::Wry> {
             match event {
                 WindowEvent::CloseRequested { api, .. } if window.label() == "main" => {
                     api.prevent_close();
-                    let _ = window
-                        .app_handle()
-                        .save_window_state(StateFlags::SIZE);
+                    let _ = window.app_handle().save_window_state(StateFlags::SIZE);
                     // Use the webview window for hide_main_window (which
                     // needs &WebviewWindow, not &Window from on_window_event).
                     if let Some(main_ww) = window.app_handle().get_webview_window("main") {
@@ -247,10 +245,8 @@ pub fn build() -> tauri::Builder<tauri::Wry> {
                     .map_err(|err| -> Box<dyn std::error::Error> { Box::new(err) })?
             };
 
-            let pool = tauri::async_runtime::block_on(crate::db::open::open_app_database(
-                &db_path,
-            ))
-            .map_err(|err| -> Box<dyn std::error::Error> { err.into() })?;
+            let pool = tauri::async_runtime::block_on(crate::db::open::open_app_database(&db_path))
+                .map_err(|err| -> Box<dyn std::error::Error> { err.into() })?;
 
             app.manage(crate::state::OptionKeyDatabase::new(pool.clone()));
             app.manage(crate::state::OverlayState::new());

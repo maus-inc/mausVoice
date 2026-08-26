@@ -75,8 +75,8 @@ use crate::platform::{ChunkCallback, LevelCallback};
 mod shared_audio;
 use crate::system::crypto::{protect_api_key, reveal_api_key};
 use crate::system::StorageRepo;
-use sqlx::Row;
 use rodio::Source;
+use sqlx::Row;
 
 use crate::platform::input::paste_text_into_focused_field as platform_paste_text;
 
@@ -415,8 +415,7 @@ pub struct UserPreferencesGetArgs {
 const MAX_RETAINED_TRANSCRIPTION_AUDIO: usize = 20;
 const MAX_AUDIO_IMPORT_FILE_BYTES: u64 = 100 * 1024 * 1024;
 const MAX_AUDIO_IMPORT_DURATION_SECONDS: u64 = 5 * 60;
-const MAX_AUDIO_IMPORT_OUTPUT_SAMPLES: usize =
-    16_000 * MAX_AUDIO_IMPORT_DURATION_SECONDS as usize;
+const MAX_AUDIO_IMPORT_OUTPUT_SAMPLES: usize = 16_000 * MAX_AUDIO_IMPORT_DURATION_SECONDS as usize;
 // Keep one absolute memory ceiling for pathological sample rates while the
 // normal limit below is derived from the file's actual rate and channel count.
 const MAX_AUDIO_IMPORT_DECODED_MEMORY_BYTES: usize = 128 * 1024 * 1024;
@@ -611,8 +610,7 @@ fn windows_file_identity(file: &std::fs::File) -> Option<(u32, u64)> {
     unsafe {
         windows::Win32::Storage::FileSystem::GetFileInformationByHandle(handle, &mut info).ok()?;
     }
-    let file_index =
-        ((info.nFileIndexHigh as u64) << 32) | (info.nFileIndexLow as u64);
+    let file_index = ((info.nFileIndexHigh as u64) << 32) | (info.nFileIndexLow as u64);
     Some((info.dwVolumeSerialNumber, file_index))
 }
 
@@ -960,8 +958,8 @@ async fn execute_http_request(
         ));
     }
 
-    let initial_url = Url::parse(&request.url)
-        .map_err(|_| "HTTP request URL is invalid".to_string())?;
+    let initial_url =
+        Url::parse(&request.url).map_err(|_| "HTTP request URL is invalid".to_string())?;
     // The redirect loop owns the mutable hop URL; credentials belong to this
     // original origin alone for the rest of the chain.
     let credential_origin = initial_url.clone();
@@ -1053,8 +1051,7 @@ async fn execute_http_request(
         {
             // Pin the dial to the validated answers so a DNS flip between
             // validation and connect cannot land elsewhere.
-            client_builder = client_builder
-                .resolve_to_addrs(&domain.to_ascii_lowercase(), &addrs);
+            client_builder = client_builder.resolve_to_addrs(&domain.to_ascii_lowercase(), &addrs);
         }
         let client = client_builder
             .build()
@@ -1282,9 +1279,7 @@ pub async fn transcription_import_audio(
         .filter_map(|root| std::fs::canonicalize(&root).ok())
         .collect();
     if !is_path_within_allowed_roots(&path, &allowed_roots) {
-        return Err(
-            "The selected file is outside the allowed import locations.".to_string(),
-        );
+        return Err("The selected file is outside the allowed import locations.".to_string());
     }
 
     // Open first, then re-resolve and revalidate the path against the opened
@@ -1353,8 +1348,8 @@ pub async fn transcription_import_audio(
         let duration_sample_limit = (source_rate as usize)
             .saturating_mul(channels)
             .saturating_mul(MAX_AUDIO_IMPORT_DURATION_SECONDS as usize);
-        let max_decoded_samples = duration_sample_limit
-            .clamp(1, MAX_AUDIO_IMPORT_ABSOLUTE_DECODED_SAMPLES);
+        let max_decoded_samples =
+            duration_sample_limit.clamp(1, MAX_AUDIO_IMPORT_ABSOLUTE_DECODED_SAMPLES);
         let memory_limited = duration_sample_limit > max_decoded_samples;
         let decoded: Vec<f32> = decoder
             .convert_samples::<f32>()
@@ -1383,9 +1378,8 @@ pub async fn transcription_import_audio(
                 .map(|frame| frame.iter().copied().sum::<f32>() / frame.len() as f32)
                 .collect()
         };
-        let samples = shared_audio::resample_to_rate(&mono, source_rate, 16_000).map_err(|err| {
-            format!("Unable to convert the selected audio to 16 kHz mono: {err}")
-        })?;
+        let samples = shared_audio::resample_to_rate(&mono, source_rate, 16_000)
+            .map_err(|err| format!("Unable to convert the selected audio to 16 kHz mono: {err}"))?;
         if samples.len() > MAX_AUDIO_IMPORT_OUTPUT_SAMPLES {
             return Err(format!(
                 "The selected audio file exceeds the {} minute import limit",
@@ -2184,13 +2178,9 @@ pub async fn hotkey_replace_style_hotkeys(
     if prefix.is_empty() {
         return Err("hotkey prefix must not be empty".to_string());
     }
-    crate::db::hotkey_queries::replace_hotkeys_by_prefix(
-        database.pool(),
-        &prefix,
-        &hotkeys,
-    )
-    .await
-    .map_err(|err| err.to_string())
+    crate::db::hotkey_queries::replace_hotkeys_by_prefix(database.pool(), &prefix, &hotkeys)
+        .await
+        .map_err(|err| err.to_string())
 }
 
 fn current_timestamp_millis() -> Result<i64, String> {
@@ -2600,7 +2590,6 @@ pub async fn stop_recording(
     .map_err(|err| err.to_string())?
 }
 
-
 #[tauri::command]
 #[specta::specta]
 pub async fn pause_recording(
@@ -2788,8 +2777,8 @@ pub async fn paste(
     // Re-entry guard: a paste in progress owns the clipboard and the
     // synthetic keystroke pipeline. Racing a second paste interleaves both
     // clipboard swaps and keystrokes and produces garbled output.
-    let _paste_guard =
-        ReentryGuard::acquire(&PASTE_IN_PROGRESS).map_err(|_| "Paste is already in progress".to_string())?;
+    let _paste_guard = ReentryGuard::acquire(&PASTE_IN_PROGRESS)
+        .map_err(|_| "Paste is already in progress".to_string())?;
 
     // Probe the focused target first. If it clearly can't accept text, write
     // the transcript to the clipboard and skip the paste keystroke entirely —
@@ -3296,10 +3285,7 @@ pub fn set_reset_pill_position_enabled(app: AppHandle, enabled: bool) -> Result<
 /// `"cursor"` (the monitor under the mouse).
 #[tauri::command]
 #[specta::specta]
-pub fn reset_pill_position(
-    app: AppHandle,
-    strategy: Option<String>,
-) -> Result<(), String> {
+pub fn reset_pill_position(app: AppHandle, strategy: Option<String>) -> Result<(), String> {
     let strategy = strategy.unwrap_or_else(|| "current".to_string());
     crate::platform::overlay::notify_reset_position(&app, &strategy)
 }
@@ -3634,22 +3620,64 @@ struct AllowedCommand {
 
 #[cfg(not(target_os = "windows"))]
 const ALLOWED_COMMANDS: &[AllowedCommand] = &[
-    AllowedCommand { binary: "ls", fixed_args: &[] },
-    AllowedCommand { binary: "pwd", fixed_args: &[] },
-    AllowedCommand { binary: "echo", fixed_args: &[] },
-    AllowedCommand { binary: "which", fixed_args: &[] },
-    AllowedCommand { binary: "whoami", fixed_args: &[] },
-    AllowedCommand { binary: "date", fixed_args: &[] },
-    AllowedCommand { binary: "uname", fixed_args: &["-a"] },
-    AllowedCommand { binary: "df", fixed_args: &["-h"] },
-    AllowedCommand { binary: "du", fixed_args: &["-sh"] },
-    AllowedCommand { binary: "head", fixed_args: &["-n", "200"] },
-    AllowedCommand { binary: "tail", fixed_args: &["-n", "200"] },
-    AllowedCommand { binary: "wc", fixed_args: &["-l"] },
+    AllowedCommand {
+        binary: "ls",
+        fixed_args: &[],
+    },
+    AllowedCommand {
+        binary: "pwd",
+        fixed_args: &[],
+    },
+    AllowedCommand {
+        binary: "echo",
+        fixed_args: &[],
+    },
+    AllowedCommand {
+        binary: "which",
+        fixed_args: &[],
+    },
+    AllowedCommand {
+        binary: "whoami",
+        fixed_args: &[],
+    },
+    AllowedCommand {
+        binary: "date",
+        fixed_args: &[],
+    },
+    AllowedCommand {
+        binary: "uname",
+        fixed_args: &["-a"],
+    },
+    AllowedCommand {
+        binary: "df",
+        fixed_args: &["-h"],
+    },
+    AllowedCommand {
+        binary: "du",
+        fixed_args: &["-sh"],
+    },
+    AllowedCommand {
+        binary: "head",
+        fixed_args: &["-n", "200"],
+    },
+    AllowedCommand {
+        binary: "tail",
+        fixed_args: &["-n", "200"],
+    },
+    AllowedCommand {
+        binary: "wc",
+        fixed_args: &["-l"],
+    },
     #[cfg(target_os = "macos")]
-    AllowedCommand { binary: "open", fixed_args: &[] },
+    AllowedCommand {
+        binary: "open",
+        fixed_args: &[],
+    },
     #[cfg(target_os = "linux")]
-    AllowedCommand { binary: "xdg-open", fixed_args: &[] },
+    AllowedCommand {
+        binary: "xdg-open",
+        fixed_args: &[],
+    },
 ];
 
 /// Windows allow-list. Deliberately excludes CMD builtins (`dir`, `cd`,
@@ -3658,10 +3686,22 @@ const ALLOWED_COMMANDS: &[AllowedCommand] = &[
 /// always fail with "program not found". Only real executables are listed.
 #[cfg(target_os = "windows")]
 const ALLOWED_COMMANDS: &[AllowedCommand] = &[
-    AllowedCommand { binary: "whoami", fixed_args: &[] },
-    AllowedCommand { binary: "where", fixed_args: &[] },
-    AllowedCommand { binary: "hostname", fixed_args: &[] },
-    AllowedCommand { binary: "explorer", fixed_args: &[] },
+    AllowedCommand {
+        binary: "whoami",
+        fixed_args: &[],
+    },
+    AllowedCommand {
+        binary: "where",
+        fixed_args: &[],
+    },
+    AllowedCommand {
+        binary: "hostname",
+        fixed_args: &[],
+    },
+    AllowedCommand {
+        binary: "explorer",
+        fixed_args: &[],
+    },
 ];
 
 /// Validate that a single argv token contains no NUL bytes (which would truncate
@@ -3671,7 +3711,9 @@ fn is_safe_arg_token(token: &str) -> bool {
     if token.is_empty() {
         return false;
     }
-    token.chars().all(|ch| !(ch.is_control() && ch != '\t') && ch != '\0')
+    token
+        .chars()
+        .all(|ch| !(ch.is_control() && ch != '\t') && ch != '\0')
 }
 
 /// Characters that are forbidden inside any argv token passed through
@@ -3681,8 +3723,9 @@ fn is_safe_arg_token(token: &str) -> bool {
 /// (e.g. a hypothetical `cat`) cannot reach arbitrary filesystem paths like
 /// `/etc/passwd`, `C:\Users\…`, or `~/.ssh/id_rsa`. A standalone `..` token
 /// is explicitly rejected; the `/` guard prevents traversal sequences.
-const TERMINAL_FORBIDDEN_CHARS: &[char] =
-    &[';', '|', '&', '$', '`', '>', '<', '(', ')', '/', '\\', '\n', '\r'];
+const TERMINAL_FORBIDDEN_CHARS: &[char] = &[
+    ';', '|', '&', '$', '`', '>', '<', '(', ')', '/', '\\', '\n', '\r',
+];
 
 /// Validate a user-supplied command string against the same rules
 /// `run_terminal_command` enforces. Shared between the command itself and
@@ -3748,8 +3791,8 @@ fn validate_floating_window_url(url: &Url) -> Result<(), String> {
             // IPC: `maus-inc.github.io` is not in the `floating-*` capability
             // `remote.urls` list. Localhost remains the only remote host with
             // IPC (dev tooling).
-            let is_docs_site = host == "maus-inc.github.io"
-                && url.path().starts_with("/mausVoice/");
+            let is_docs_site =
+                host == "maus-inc.github.io" && url.path().starts_with("/mausVoice/");
             if !is_localhost && !is_docs_site {
                 return Err(format!(
                     "Floating window URL host {host:?} is not in the trusted allow-list"
@@ -3803,8 +3846,7 @@ fn percent_decode_route_path_once(path: &str) -> Result<String, String> {
             index += 1;
         }
     }
-    String::from_utf8(decoded)
-        .map_err(|_| "Floating app route path is not valid UTF-8".to_string())
+    String::from_utf8(decoded).map_err(|_| "Floating app route path is not valid UTF-8".to_string())
 }
 
 fn percent_decode_route_path(path: &str) -> Result<String, String> {
@@ -3832,9 +3874,10 @@ fn percent_decode_route_path(path: &str) -> Result<String, String> {
         if let Some(err) = last_error {
             return Err(err);
         }
-        let still_encoded = decoded.as_bytes().windows(3).any(|w| {
-            w[0] == b'%' && hex_value(w[1]).is_some() && hex_value(w[2]).is_some()
-        });
+        let still_encoded = decoded
+            .as_bytes()
+            .windows(3)
+            .any(|w| w[0] == b'%' && hex_value(w[1]).is_some() && hex_value(w[2]).is_some());
         if still_encoded {
             return Err("Floating app route has excessive percent encoding".to_string());
         }
@@ -4196,8 +4239,7 @@ fn updater_public_key_text(app: &AppHandle) -> Result<String, String> {
     let decoded = base64::engine::general_purpose::STANDARD
         .decode(raw)
         .map_err(|e| format!("Failed to decode updater public key: {e}"))?;
-    String::from_utf8(decoded)
-        .map_err(|e| format!("Updater public key is not valid UTF-8: {e}"))
+    String::from_utf8(decoded).map_err(|e| format!("Updater public key is not valid UTF-8: {e}"))
 }
 
 /// Download the detached `.sig` (minisign text format) for an installer,
@@ -4224,11 +4266,7 @@ async fn download_installer_signature(signature_url: &str) -> Result<Vec<u8>, St
         .build()
         .map_err(|e| e.to_string())?;
 
-    let mut response = client
-        .get(parsed)
-        .send()
-        .await
-        .map_err(|e| e.to_string())?;
+    let mut response = client.get(parsed).send().await.map_err(|e| e.to_string())?;
     if !response.status().is_success() {
         return Err(format!(
             "Signature download failed with status {}",
@@ -4272,7 +4310,9 @@ async fn verify_installer_signature(
     signature_url: &str,
 ) -> Result<(), String> {
     if signature_url.is_empty() {
-        return Err("No installer signature provided; refusing to open unverified installer".to_string());
+        return Err(
+            "No installer signature provided; refusing to open unverified installer".to_string(),
+        );
     }
     let public_key_text = updater_public_key_text(app)?;
     let sig_bytes = download_installer_signature(signature_url).await?;
@@ -4441,9 +4481,7 @@ pub async fn download_and_open_mac_installer(
         .map(|d| d.as_nanos())
         .unwrap_or(0);
     let pid = std::process::id();
-    let dest = std::env::temp_dir().join(format!(
-        "mausvoice-update-{nanos}-{pid}{downloaded_ext}"
-    ));
+    let dest = std::env::temp_dir().join(format!("mausvoice-update-{nanos}-{pid}{downloaded_ext}"));
 
     // Remove any stale previous download (best-effort).
     let _ = std::fs::remove_file(&dest);
@@ -4465,11 +4503,7 @@ pub async fn download_and_open_mac_installer(
         .build()
         .map_err(|e| e.to_string())?;
 
-    let mut response = client
-        .get(parsed)
-        .send()
-        .await
-        .map_err(|e| e.to_string())?;
+    let mut response = client.get(parsed).send().await.map_err(|e| e.to_string())?;
     if !response.status().is_success() {
         return Err(format!("Download failed with status {}", response.status()));
     }
@@ -4612,7 +4646,10 @@ pub async fn floating_window_create(
     state: State<'_, crate::state::FloatingWindowState>,
 ) -> Result<FloatingWindowInfo, String> {
     let label = state.next_label();
-    let title = args.title.clone().unwrap_or_else(|| "mausVoice".to_string());
+    let title = args
+        .title
+        .clone()
+        .unwrap_or_else(|| "mausVoice".to_string());
     let (webview_url, reported_url) = if let Some(route) = args
         .route
         .as_deref()
@@ -4630,17 +4667,13 @@ pub async fn floating_window_create(
         (tauri::WebviewUrl::External(parsed_url), args.url.clone())
     };
 
-    let mut builder = tauri::WebviewWindowBuilder::new(
-        &app,
-        label.clone(),
-        webview_url,
-    )
-    .title(title.clone())
-    .always_on_top(true)
-    .skip_taskbar(true)
-    .decorations(args.decorations.unwrap_or(true))
-    .resizable(args.resizable.unwrap_or(true))
-    .focused(args.focused.unwrap_or(false));
+    let mut builder = tauri::WebviewWindowBuilder::new(&app, label.clone(), webview_url)
+        .title(title.clone())
+        .always_on_top(true)
+        .skip_taskbar(true)
+        .decorations(args.decorations.unwrap_or(true))
+        .resizable(args.resizable.unwrap_or(true))
+        .focused(args.focused.unwrap_or(false));
 
     if args.transparent.unwrap_or(false) {
         builder = builder.transparent(true);
@@ -4698,8 +4731,6 @@ pub async fn floating_window_list(app: AppHandle) -> Result<Vec<FloatingWindowIn
     }
     Ok(out)
 }
-
-
 
 #[cfg(test)]
 mod tests {
@@ -4778,7 +4809,10 @@ mod tests {
             "whoami"
         );
         assert_eq!(
-            validate_terminal_command_args("where cargo").unwrap().0.binary,
+            validate_terminal_command_args("where cargo")
+                .unwrap()
+                .0
+                .binary,
             "where"
         );
         // CMD builtins are intentionally absent: without a shell they have
@@ -4893,13 +4927,11 @@ mod tests {
     fn installer_url_rejects_untrusted_hosts_schemes_and_extensions() {
         // A redirect target on an untrusted host must be refused: this is the
         // check the redirect policy applies to every hop.
-        assert!(
-            validate_installer_url(
-                &Url::parse("https://evil.com/app.pkg").unwrap(),
-                TRUSTED_REPO_NAMESPACE
-            )
-            .is_err()
-        );
+        assert!(validate_installer_url(
+            &Url::parse("https://evil.com/app.pkg").unwrap(),
+            TRUSTED_REPO_NAMESPACE
+        )
+        .is_err());
         assert!(validate_installer_url(
             &Url::parse("http://github.com/maus-inc/app.pkg").unwrap(),
             TRUSTED_REPO_NAMESPACE
@@ -4940,8 +4972,12 @@ mod tests {
 
     #[test]
     fn floating_window_allows_localhost() {
-        assert!(validate_floating_window_url(&Url::parse("http://localhost:1420/").unwrap()).is_ok());
-        assert!(validate_floating_window_url(&Url::parse("http://127.0.0.1:8080/foo").unwrap()).is_ok());
+        assert!(
+            validate_floating_window_url(&Url::parse("http://localhost:1420/").unwrap()).is_ok()
+        );
+        assert!(
+            validate_floating_window_url(&Url::parse("http://127.0.0.1:8080/foo").unwrap()).is_ok()
+        );
     }
 
     #[test]
@@ -4958,10 +4994,7 @@ mod tests {
 
     #[test]
     fn floating_window_treats_ipv6_loopback_as_localhost() {
-        assert!(validate_floating_window_url(
-            &Url::parse("http://[::1]:1420/").unwrap()
-        )
-        .is_ok());
+        assert!(validate_floating_window_url(&Url::parse("http://[::1]:1420/").unwrap()).is_ok());
     }
 
     #[test]
@@ -5206,8 +5239,8 @@ mod tests {
 
     #[test]
     fn managed_audio_path_rejects_paths_outside_the_audio_dir() {
-        let root = std::env::temp_dir()
-            .join(format!("mausvoice-audio-guard-{}", std::process::id()));
+        let root =
+            std::env::temp_dir().join(format!("mausvoice-audio-guard-{}", std::process::id()));
         let audio_dir = root.join("audio");
         let other_dir = root.join("other");
         std::fs::create_dir_all(&audio_dir).unwrap();
@@ -5254,8 +5287,8 @@ mod tests {
 
     #[test]
     fn managed_audio_read_rejects_final_symlink_escape() {
-        let root = std::env::temp_dir()
-            .join(format!("mausvoice-audio-read-{}", std::process::id()));
+        let root =
+            std::env::temp_dir().join(format!("mausvoice-audio-read-{}", std::process::id()));
         let audio_dir = root.join("audio");
         let outside_dir = root.join("outside");
         std::fs::create_dir_all(&audio_dir).unwrap();
@@ -5270,9 +5303,7 @@ mod tests {
             // lands outside audio_dir, so the bytes are never leaked.
             let link = audio_dir.join("clip.wav");
             std::os::unix::fs::symlink(&secret, &link).unwrap();
-            assert!(
-                resolve_managed_audio_path_for_read(&link, &audio_dir).is_none()
-            );
+            assert!(resolve_managed_audio_path_for_read(&link, &audio_dir).is_none());
 
             // A regular file inside audio_dir is still accepted.
             let real = audio_dir.join("real.wav");
@@ -5285,8 +5316,10 @@ mod tests {
 
     #[test]
     fn managed_audio_read_returns_usable_handle_for_regular_file() {
-        let root = std::env::temp_dir()
-            .join(format!("mausvoice-audio-read-handle-{}", std::process::id()));
+        let root = std::env::temp_dir().join(format!(
+            "mausvoice-audio-read-handle-{}",
+            std::process::id()
+        ));
         let audio_dir = root.join("audio");
         std::fs::create_dir_all(&audio_dir).unwrap();
         let real = audio_dir.join("real.wav");
@@ -5498,9 +5531,7 @@ mod tests {
         static NEXT: AtomicU64 = AtomicU64::new(42);
         // Leaks one boxed string per test — fine for a bounded test set.
         let id = NEXT.fetch_add(1, Ordering::Relaxed);
-        Box::leak(
-            format!("00000000-0000-4000-8000-0000000000{id:02}").into_boxed_str(),
-        )
+        Box::leak(format!("00000000-0000-4000-8000-0000000000{id:02}").into_boxed_str())
     }
 
     /// Drives a chain of hops across listeners as specified; returns the
@@ -5515,8 +5546,7 @@ mod tests {
             receivers.push(spawn_head_capturing_server(listener, responses));
         }
         let outcome =
-            execute_http_request(credentialed_post(redirect_chain_test_id(), start), policy)
-                .await;
+            execute_http_request(credentialed_post(redirect_chain_test_id(), start), policy).await;
         let mut heads = Vec::new();
         for mut receiver in receivers {
             while let Ok(head) = receiver.try_recv() {
@@ -5545,7 +5575,10 @@ mod tests {
             vec![
                 (
                     listener_a,
-                    vec![redirect_response(&url_hop), REDIRECT_OK_RESPONSE.to_string()],
+                    vec![
+                        redirect_response(&url_hop),
+                        REDIRECT_OK_RESPONSE.to_string(),
+                    ],
                 ),
                 (listener_b, vec![redirect_response(&url_back)]),
             ],
@@ -5579,7 +5612,10 @@ mod tests {
         let (outcome, heads) = run_redirect_chain(
             vec![(
                 listener,
-                vec![redirect_response(&url_next), REDIRECT_OK_RESPONSE.to_string()],
+                vec![
+                    redirect_response(&url_next),
+                    REDIRECT_OK_RESPONSE.to_string(),
+                ],
             )],
             &url_start,
             HttpRequestPolicy::PrivateNetwork,
@@ -5651,7 +5687,10 @@ mod tests {
         let (outcome, heads) = run_redirect_chain(
             vec![(
                 listener,
-                vec![redirect_response(&url_next), REDIRECT_OK_RESPONSE.to_string()],
+                vec![
+                    redirect_response(&url_next),
+                    REDIRECT_OK_RESPONSE.to_string(),
+                ],
             )],
             &url_start,
             HttpRequestPolicy::SavedOpenAiCompatibleEndpoint { base_url: base },
@@ -5721,10 +5760,12 @@ mod tests {
         let private = HttpRequestPolicy::PrivateNetwork;
         let https_base = Url::parse("https://api.example.com").unwrap();
         let http_base = Url::parse("http://192.168.1.20:8080").unwrap();
-        let https_policy =
-            HttpRequestPolicy::SavedOpenAiCompatibleEndpoint { base_url: https_base };
-        let http_policy =
-            HttpRequestPolicy::SavedOpenAiCompatibleEndpoint { base_url: http_base };
+        let https_policy = HttpRequestPolicy::SavedOpenAiCompatibleEndpoint {
+            base_url: https_base,
+        };
+        let http_policy = HttpRequestPolicy::SavedOpenAiCompatibleEndpoint {
+            base_url: http_base,
+        };
 
         for ip in [
             // Cloud metadata and generic link-local.
@@ -5753,11 +5794,13 @@ mod tests {
 
         let private = HttpRequestPolicy::PrivateNetwork;
         let http_base = Url::parse("http://192.168.1.20:8080").unwrap();
-        let http_policy =
-            HttpRequestPolicy::SavedOpenAiCompatibleEndpoint { base_url: http_base };
+        let http_policy = HttpRequestPolicy::SavedOpenAiCompatibleEndpoint {
+            base_url: http_base,
+        };
         let https_base = Url::parse("https://api.example.com").unwrap();
-        let https_policy =
-            HttpRequestPolicy::SavedOpenAiCompatibleEndpoint { base_url: https_base };
+        let https_policy = HttpRequestPolicy::SavedOpenAiCompatibleEndpoint {
+            base_url: https_base,
+        };
 
         // A poisoned `.local`/`localhost` answer resolving to a public address
         // must fail the plaintext policies after resolution.
@@ -5941,8 +5984,8 @@ mod tests {
         // Mirrors the confinement check in `transcription_import_audio`: a path
         // outside the allowed import roots must be rejected so the command
         // cannot be used as a filesystem read oracle.
-        let tmp = std::env::temp_dir()
-            .join(format!("mausvoice-import-confine-{}", std::process::id()));
+        let tmp =
+            std::env::temp_dir().join(format!("mausvoice-import-confine-{}", std::process::id()));
         let allowed = vec![tmp.join("allowed")];
         std::fs::create_dir_all(&allowed[0]).unwrap();
         let inside = allowed[0].join("clip.wav");
@@ -5954,10 +5997,8 @@ mod tests {
 
     #[test]
     fn clear_local_data_file_helpers_respect_the_audio_dir_guard() {
-        let root = std::env::temp_dir().join(format!(
-            "mausvoice-clear-local-{}",
-            std::process::id()
-        ));
+        let root =
+            std::env::temp_dir().join(format!("mausvoice-clear-local-{}", std::process::id()));
         let audio_dir = root.join("audio");
         let outside_dir = root.join("outside");
         std::fs::create_dir_all(&audio_dir).unwrap();
@@ -5997,10 +6038,8 @@ mod tests {
 
     #[test]
     fn installer_redirect_validates_each_hop_and_caps_depth() {
-        let ok = Url::parse(
-            "https://github.com/maus-inc/mausVoice/releases/download/v1/app.pkg",
-        )
-        .unwrap();
+        let ok = Url::parse("https://github.com/maus-inc/mausVoice/releases/download/v1/app.pkg")
+            .unwrap();
         let evil = Url::parse("https://evil.com/app.pkg").unwrap();
         assert!(installer_redirect_allowed(0, &ok, TRUSTED_REPO_NAMESPACE).is_ok());
         assert!(installer_redirect_allowed(9, &ok, TRUSTED_REPO_NAMESPACE).is_ok());
@@ -6080,10 +6119,7 @@ mod installer_url_tests {
 
         // A release asset from a *different* repository must be rejected.
         assert!(validate_initial_installer_url(
-            &Url::parse(
-                "https://github.com/evil/repo/releases/download/v1/x.dmg"
-            )
-            .unwrap()
+            &Url::parse("https://github.com/evil/repo/releases/download/v1/x.dmg").unwrap()
         )
         .is_err());
 
@@ -6098,10 +6134,8 @@ mod installer_url_tests {
 
         // Non-installer extensions are rejected.
         assert!(validate_initial_installer_url(
-            &Url::parse(
-                "https://github.com/maus-inc/mausVoice/releases/download/v0.1.5/notes.txt"
-            )
-            .unwrap()
+            &Url::parse("https://github.com/maus-inc/mausVoice/releases/download/v0.1.5/notes.txt")
+                .unwrap()
         )
         .is_err());
     }
@@ -6139,10 +6173,8 @@ mod installer_url_tests {
 
         // A github.com hop that stays within the trusted repo is still allowed.
         assert!(validate_installer_url(
-            &Url::parse(
-                "https://github.com/maus-inc/mausVoice/releases/download/v1/app.pkg"
-            )
-            .unwrap(),
+            &Url::parse("https://github.com/maus-inc/mausVoice/releases/download/v1/app.pkg")
+                .unwrap(),
             TRUSTED_REPO_NAMESPACE
         )
         .is_ok());
@@ -6158,10 +6190,8 @@ mod installer_url_tests {
         .is_err());
         assert!(signature_redirect_allowed(
             1,
-            &Url::parse(
-                "https://github.com/maus-inc/mausVoice/releases/download/v1/x.sig"
-            )
-            .unwrap(),
+            &Url::parse("https://github.com/maus-inc/mausVoice/releases/download/v1/x.sig")
+                .unwrap(),
             TRUSTED_REPO_NAMESPACE
         )
         .is_ok());
@@ -6189,8 +6219,7 @@ mod installer_url_tests {
 
         // A release asset from a *different* repository is rejected.
         assert!(validate_initial_signature_url(
-            &Url::parse("https://github.com/evil/repo/releases/download/v1/x.sig")
-                .unwrap()
+            &Url::parse("https://github.com/evil/repo/releases/download/v1/x.sig").unwrap()
         )
         .is_err());
 

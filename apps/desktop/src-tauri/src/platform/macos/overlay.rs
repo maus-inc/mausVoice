@@ -113,10 +113,7 @@ pub fn notify_assistant_state(app: &tauri::AppHandle, payload: &str) {
     }
 }
 
-pub fn notify_reset_position(
-    app: &tauri::AppHandle,
-    strategy: &str,
-) -> Result<(), String> {
+pub fn notify_reset_position(app: &tauri::AppHandle, strategy: &str) -> Result<(), String> {
     let strategy = if strategy == "cursor" {
         ResetStrategy::Cursor
     } else {
