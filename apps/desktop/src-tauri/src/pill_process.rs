@@ -166,6 +166,8 @@ pub fn notify_pill_placement(app: &tauri::AppHandle, placement: &str) {
     }
 }
 
+/// Forwards the active writing-style name and total count to the native
+/// pill so it can render its style indicator.
 pub fn notify_style_info(app: &tauri::AppHandle, count: u32, name: &str) {
     if let Some(pill) = app.try_state::<std::sync::Arc<PillProcess>>() {
         if let Ok(json) = serde_json::to_string(&serde_json::json!({
@@ -306,40 +308,23 @@ fn start_stdout_reader(app: tauri::AppHandle, reader: std::io::BufReader<ChildSt
             match reader.read_line(&mut line) {
                 Ok(0) | Err(_) => break,
                 Ok(_) => {
-                    handle_stdout_line(&app, &line);
-                }
-            }
-        }
-    });
-}
-
-fn handle_stdout_line(app: &tauri::AppHandle, line: &str) {
-    if line.contains("\"click\"") {
-        let _ = app.emit_to("main", "on-click-dictate", ());
-    } else if line.contains("\"agent_talk\"") {
-        let _ = app.emit_to("main", "on-click-agent-talk", ());
-    } else if line.contains("\"assistant_close\"") {
-        let _ = app.emit_to("main", "assistant-mode-close", ());
-    } else if line.contains("\"enable_type_mode\"") {
-        let _ = app.emit_to("main", "assistant-enable-type-mode", ());
-    } else if line.contains("\"cancel_dictation\"") {
-        let _ = app.emit_to("main", "cancel-dictation", ());
-    } else if line.contains("\"pause_dictation\"") {
-        let _ = app.emit_to("main", "pause-dictation", ());
-    } else if line.contains("\"resume_dictation\"") {
-        let _ = app.emit_to("main", "resume-dictation", ());
-    } else if line.contains("\"typed_message\"") {
-        handle_typed_message(app, line);
-    }
-}
-
-fn handle_typed_message(app: &tauri::AppHandle, line: &str) {
-    if let Ok(val) = serde_json::from_str::<serde_json::Value>(line) {
-        if let Some(text) = val.get("text").and_then(|v| v.as_str()) {
-            let _ = app.emit_to("main", "on-typed-message", text.to_string());
-        }
-    }
-}
+                    if line.contains("\"click\"") {
+                        let _ = app.emit_to("main", "on-click-dictate", ());
+                    } else if line.contains("\"agent_talk\"") {
+                        let _ = app.emit_to("main", "on-click-agent-talk", ());
+                    } else if line.contains("\"assistant_close\"") {
+                        let _ = app.emit_to("main", "assistant-mode-close", ());
+                    } else if line.contains("\"enable_type_mode\"") {
+                        let _ = app.emit_to("main", "assistant-enable-type-mode", ());
+                    } else if line.contains("\"cancel_dictation\"") {
+                        let _ = app.emit_to("main", "cancel-dictation", ());
+                    } else if line.contains("\"pause_dictation\"") {
+                        let _ = app.emit_to("main", "pause-dictation", ());
+                    } else if line.contains("\"resume_dictation\"") {
+                        let _ = app.emit_to("main", "resume-dictation", ());
+                    } else if line.contains("\"typed_message\"") {
+                        if let Ok(val) = serde_json::from_str::<serde_json::Value>(&line) {
+                            if let Some(text) = val.get("text").and_then(|v| v.as_str()) {
                                 let payload = serde_json::json!({ "text": text });
                                 let _ = app.emit_to("main", "assistant-typed-message", payload);
                             }
@@ -374,9 +359,6 @@ fn handle_typed_message(app: &tauri::AppHandle, line: &str) {
                             let _ = app.emit_to("main", "overlay-resolve-permission", payload);
                         }
                     } else if line.contains("\"style_switch\"") {
-                        // Cheap pre-filter so we only attempt JSON parsing (and
-                        // can only emit a parse warning) for lines that actually
-                        // claim to be a style switch, not every misc stdout line.
                         if let Some(direction) = parse_style_switch_direction(&line) {
                             emit_pill_style_switch(&app, direction);
                         }
@@ -388,7 +370,6 @@ fn handle_typed_message(app: &tauri::AppHandle, line: &str) {
                             }
                         }
                     } else if line.contains("\"haptic_feedback\"") {
-                        // A23: Thock haptics - play audio feedback for pill gestures.
                         if let Ok(val) =
                             serde_json::from_str::<serde_json::Value>(&line)
                         {
@@ -404,11 +385,6 @@ fn handle_typed_message(app: &tauri::AppHandle, line: &str) {
                                 .get("has_saved_position")
                                 .and_then(|v| v.as_bool())
                                 .unwrap_or(false);
-                            // Forward any real pill + monitor geometry the sidecar
-                            // emits (when present) so the composer can anchor next
-                            // to the actual pill instead of falling back to OS
-                            // placement. Absent fields serialize to null and the
-                            // TypeScript consumer treats them as "unknown".
                             let rect = val.get("rect").cloned().filter(|v| v.is_object());
                             let monitor = val
                                 .get("monitor")

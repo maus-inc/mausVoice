@@ -86,11 +86,18 @@ export const NO_SPEECH_PROB_THRESHOLD = 0.6;
 
 const HALLUCINATION_PHRASES = new Set(["thank you", "thanks", "you"]);
 
+const TRAILING_PUNCTUATION = "!.?,";
+
+const stripTrailingPunctuation = (value: string): string => {
+  let end = value.length;
+  while (end > 0 && TRAILING_PUNCTUATION.includes(value[end - 1] ?? "")) {
+    end -= 1;
+  }
+  return value.slice(0, end);
+};
+
 const isHallucinationText = (text: string): boolean => {
-  const normalized = text
-    .trim()
-    .toLowerCase()
-    .replace(/[!.?,]+$/u, "");
+  const normalized = stripTrailingPunctuation(text.trim().toLowerCase());
   if (normalized.length === 0) {
     return true;
   }
