@@ -79,7 +79,9 @@ pub fn warm_audio_output() {
                 log::error!("Failed to create audio output: {err}");
                 // Still process requests, but they'll fail gracefully. The
                 // volume is applied per-sink in the no-device fallback too,
-                // so a thock never plays louder than THOCK_VOLUME.
+                // so a thock never plays louder than the user-controlled
+                // `INTERACTION_FEEDBACK_VOLUME` (clamped to the safe window
+                // by `current_interaction_feedback_volume`).
                 for request in rx {
                     match request {
                         AudioRequest::Play(bytes) => play_clip_fallback(bytes, None),
@@ -348,8 +350,9 @@ fn play_clip(bytes: &'static [u8]) {
 }
 
 /// Fallback playback when the warm thread is unavailable. When `volume` is
-/// `Some`, the sink is scaled so a thock still plays at the reduced
-/// THOCK_VOLUME on the no-default-output path instead of reverting to 1.0.
+/// `Some`, the sink is scaled so a thock plays at the user-controlled
+/// gain (clamped to `[0.05, 0.5]` by `current_interaction_feedback_volume`)
+/// on the no-default-output path instead of reverting to 1.0.
 fn play_clip_fallback(bytes: &'static [u8], volume: Option<f32>) {
     thread::spawn(move || {
         if let Ok((stream, handle)) = OutputStream::try_default() {

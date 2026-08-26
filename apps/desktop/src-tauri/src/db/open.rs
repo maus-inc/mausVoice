@@ -693,7 +693,9 @@ mod tests {
         .unwrap();
         pool.close().await;
 
-        // Reopen: only migration 78 should run (ADD COLUMN ...).
+        // Reopen: migrations 78 and 79 run (ADD COLUMN on
+        // transcriptions and user_profiles respectively). A failing
+        // upgrade would fail the `try_open` call below.
         let pool = try_open(&temp.path).await.expect("upgrade opens");
 
         // Legacy row reads back NULL for the new columns.

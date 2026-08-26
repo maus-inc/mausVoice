@@ -64,7 +64,7 @@ pub async fn upsert_user(pool: SqlitePool, user: &User) -> Result<User, sqlx::Er
     .bind(&user.words_this_month_month)
     .bind(user.words_total)
     .bind(if user.play_interaction_chime { 1 } else { 0 })
-    .bind(user.interaction_feedback_volume as f64)
+    .bind(user.interaction_feedback_volume.unwrap_or(crate::domain::DEFAULT_INTERACTION_FEEDBACK_VOLUME) as f64)
     .bind(if user.has_finished_tutorial { 1 } else { 0 })
     .bind(if user.has_migrated_preferred_microphone { 1 } else { 0 })
     .bind(&user.cohort)
@@ -138,8 +138,7 @@ pub async fn fetch_user(pool: SqlitePool) -> Result<Option<User>, sqlx::Error> {
                     .try_get::<Option<f64>, _>("interaction_feedback_volume")
                     .ok()
                     .flatten()
-                    .map(|v| v as f32)
-                    .unwrap_or(0.35),
+                    .map(|v| v as f32),
                 has_finished_tutorial: tutorial_finished_raw != 0,
                 has_migrated_preferred_microphone: migrated_microphone_raw != 0,
                 cohort: row.try_get::<Option<String>, _>("cohort").unwrap_or(None),
