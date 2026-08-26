@@ -544,9 +544,8 @@ export const DictationSideEffects = () => {
       // When review-before-insert is on, the composer owns the pacing;
       // give the wrapper a budget above the composer's own so the two
       // timeouts can never race (see REVIEW_HANDLE_TRANSCRIPT_TIMEOUT_MS).
-      const handleTranscriptTimeoutMs = getMyUserPreferences(
-        getAppState(),
-      )?.reviewBeforeInsert
+      const handleTranscriptTimeoutMs = getMyUserPreferences(getAppState())
+        ?.reviewBeforeInsert
         ? REVIEW_HANDLE_TRANSCRIPT_TIMEOUT_MS
         : HANDLE_TRANSCRIPT_TIMEOUT_MS;
       const result = await withTimeout(

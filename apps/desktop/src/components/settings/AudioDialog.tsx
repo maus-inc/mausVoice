@@ -20,6 +20,60 @@ import { getMyUser } from "../../utils/user.utils";
 import { ElasticSlider } from "../common/ElasticSlider";
 import { SettingSection } from "../common/SettingSection";
 
+type ThockVolumeControlProps = {
+  enabled: boolean;
+  volume: number;
+  onCommit: (v: number) => void;
+};
+
+/**
+ * Slider row for the interaction-feedback (thock) click volume.
+ * Extracted from AudioDialog to keep JSX nesting shallow.
+ */
+const ThockVolumeControl = ({
+  enabled,
+  volume,
+  onCommit,
+}: ThockVolumeControlProps) => {
+  const intl = useIntl();
+  const [display, setDisplay] = useState(volume);
+  useEffect(() => {
+    setDisplay(volume);
+  }, [volume]);
+  return (
+    <Box sx={{ mt: 2, pl: 1, opacity: enabled ? 1 : 0.4 }}>
+      <Typography variant="body2" sx={{ fontWeight: 600 }}>
+        <FormattedMessage defaultMessage="Interaction feedback volume" />
+      </Typography>
+      <Typography
+        variant="caption"
+        sx={{ color: "text.secondary", display: "block", mb: 1 }}
+      >
+        <FormattedMessage defaultMessage="Lower the click volume or turn the click off entirely." />
+      </Typography>
+      <Box sx={{ display: "flex", alignItems: "center", gap: 2 }}>
+        <ElasticSlider
+          value={volume}
+          onChangeDisplay={setDisplay}
+          onCommit={onCommit}
+          // The effective range matches the Rust sink's safe window
+          // [0.05, 0.5]; showing a wider range would persist values
+          // the sink silently caps at 50%.
+          min={0.05}
+          max={0.5}
+          step={0.05}
+          disabled={!enabled}
+          ariaLabel={intl.formatMessage({
+            defaultMessage: "Interaction feedback volume",
+          })}
+        />
+        <Typography variant="body2" sx={{ minWidth: 40, textAlign: "right" }}>
+          {Math.round(display * 100)}%
+        </Typography>
+      </Box>
+    </Box>
+  );
+};
 export const AudioDialog = () => {
   const intl = useIntl();
   const [
@@ -50,15 +104,10 @@ export const AudioDialog = () => {
 
   // Live display value while dragging; the persisted value updates on commit.
   const [displayDim, setDisplayDim] = useState(dictationAudioDim);
-  const [displayThock, setDisplayThock] = useState(interactionFeedbackVolume);
 
   useEffect(() => {
     setDisplayDim(dictationAudioDim);
   }, [dictationAudioDim]);
-  useEffect(() => {
-    setDisplayThock(interactionFeedbackVolume);
-  }, [interactionFeedbackVolume]);
-
   return (
     <Dialog open={open} onClose={handleClose}>
       <DialogTitle>
@@ -78,42 +127,13 @@ export const AudioDialog = () => {
             />
           }
         />
-        <Box sx={{ mt: 2, pl: 1, opacity: playInteractionChime ? 1 : 0.4 }}>
-          <Typography variant="body2" sx={{ fontWeight: 600 }}>
-            <FormattedMessage defaultMessage="Interaction feedback volume" />
-          </Typography>
-          <Typography
-            variant="caption"
-            sx={{ color: "text.secondary", display: "block", mb: 1 }}
-          >
-            <FormattedMessage defaultMessage="Lower the click volume or turn the click off entirely." />
-          </Typography>
-          <Box sx={{ display: "flex", alignItems: "center", gap: 2 }}>
-            <ElasticSlider
-              value={interactionFeedbackVolume}
-              onChangeDisplay={setDisplayThock}
-              onCommit={(v) => {
-                void setInteractionFeedbackVolume(v);
-              }}
-              // The effective range matches the Rust sink's safe window
-              // [0.05, 0.5]; showing a wider range would persist values
-              // the sink silently caps at 50%.
-              min={0.05}
-              max={0.5}
-              step={0.05}
-              disabled={!playInteractionChime}
-              ariaLabel={intl.formatMessage({
-                defaultMessage: "Interaction feedback volume",
-              })}
-            />
-            <Typography
-              variant="body2"
-              sx={{ minWidth: 40, textAlign: "right" }}
-            >
-              {Math.round(displayThock * 100)}%
-            </Typography>
-          </Box>
-        </Box>
+        <ThockVolumeControl
+          enabled={playInteractionChime}
+          volume={interactionFeedbackVolume}
+          onCommit={(v) => {
+            void setInteractionFeedbackVolume(v);
+          }}
+        />
         <Box sx={{ mt: 3 }}>
           <Typography variant="body1" sx={{ fontWeight: 600 }}>
             <FormattedMessage defaultMessage="Dim audio while dictating" />

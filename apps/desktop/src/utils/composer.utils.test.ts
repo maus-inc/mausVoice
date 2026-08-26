@@ -378,11 +378,21 @@ describe("reviewTextInComposer ready-timeout safety net", () => {
         return undefined;
       });
 
-      const promise = reviewTextInComposer("ghost");
-      // Flush microtasks until the window exists (the point where the
-      // ready guard arms). Never emit `composer-ready`.
-      for (let i = 0; i < 30 && !createdId; i += 1) {
-        await Promise.resolve();
+      // Fresh module instance: reviewTextInComposer guards on a
+      // module-level activeComposer slot that earlier tests in this file
+      // release asynchronously (their finally drains after the awaited
+      // promise settles), so a synchronous re-entry here can race and see
+      // the slot still occupied. A reset module has a pristine slot.
+      vi.resetModules();
+      const { reviewTextInComposer: freshReview } =
+        await import("./composer.utils");
+      const promise = freshReview("ghost");
+      // Drive the fake clock while flushing until the window exists (the
+      // point where the ready guard arms). The pre-create chain includes
+      // timer-backed awaits, so pure microtask flushes stall under
+      // vi.useFakeTimers. Never emit `composer-ready`.
+      for (let i = 0; i < 40 && !createdId; i += 1) {
+        await vi.advanceTimersByTimeAsync(5);
       }
       expect(createdId).toBe("floating-blank");
       expect(mocks.showToast).not.toHaveBeenCalled();

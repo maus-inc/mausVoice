@@ -7,7 +7,7 @@ import { saveManualStyleForApp } from "./app-target.actions";
 
 const { upsertAppTargetMock, getLoggerMock } = vi.hoisted(() => ({
   upsertAppTargetMock: vi.fn(
-    async (params: {
+    (params: {
       id: string;
       name: string;
       toneId: string | null;
@@ -91,6 +91,11 @@ const seedAppTarget = (target: AppTarget) => {
   };
   setAppState(state, true);
 };
+const seededUser = () => {
+  const user = getAppState().userById[LOCAL_USER_ID];
+  if (!user) throw new Error("seedAppTarget must run first");
+  return user;
+};
 
 describe("saveManualStyleForApp", () => {
   beforeEach(() => {
@@ -110,7 +115,7 @@ describe("saveManualStyleForApp", () => {
     const target = targetWithTone("app-1", "default");
     seedAppTarget(target);
 
-    getAppState().userById[LOCAL_USER_ID]!.selectedToneId = "email";
+    seededUser().selectedToneId = "email";
 
     const appTarget = { ...target, toneId: "default" };
     // The helper returns its persistence promise, so awaiting it is a
@@ -128,7 +133,7 @@ describe("saveManualStyleForApp", () => {
     const target = targetWithTone("app-1", "email");
     seedAppTarget(target);
 
-    getAppState().userById[LOCAL_USER_ID]!.selectedToneId = "email";
+    seededUser().selectedToneId = "email";
 
     await saveManualStyleForApp(target);
 
@@ -138,8 +143,8 @@ describe("saveManualStyleForApp", () => {
   it("is a no-op in automatic styling mode", async () => {
     const target = targetWithTone("app-1", null);
     seedAppTarget(target);
-    getAppState().userById[LOCAL_USER_ID]!.selectedToneId = "email";
-    getAppState().userById[LOCAL_USER_ID]!.stylingMode = "app";
+    seededUser().selectedToneId = "email";
+    seededUser().stylingMode = "app";
 
     await saveManualStyleForApp(target);
 

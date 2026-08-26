@@ -286,7 +286,10 @@ export const AppSideEffects = () => {
   useEffect(() => {
     invoke("set_interaction_chime_enabled", {
       enabled: playInteractionChime,
-    }).catch(() => {});
+    }).catch(() => {
+      // Best-effort mirror of the persisted preference; the store value
+      // remains the source of truth and is re-sent on the next change.
+    });
   }, [playInteractionChime]);
 
   // Mirror the user-chosen thock gain into Rust so the warm path AND the
@@ -295,7 +298,10 @@ export const AppSideEffects = () => {
   useEffect(() => {
     invoke("set_interaction_feedback_volume", {
       volume: interactionFeedbackVolume,
-    }).catch(() => {});
+    }).catch(() => {
+      // Best-effort mirror of the persisted preference; the store value
+      // remains the source of truth and is re-sent on the next change.
+    });
   }, [interactionFeedbackVolume]);
 
   // Windows "Always run as administrator" pre-flight. Must stay ahead of
