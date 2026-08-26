@@ -235,10 +235,20 @@ export class LocalTranscribeAudioRepo extends BaseTranscribeAudioRepo {
       deviceId: options.deviceId,
     });
 
+    const segments = output.segments ?? [];
+    // Narrow fallback: only when the sidecar didn't emit per-segment
+    // metadata at all (the ONNX branch populates `text` directly and
+    // leaves `segments` empty). If segments were emitted but the filter
+    // dropped them all, prefer the empty result over `output.text` so
+    // the silence-hallucination filter still wins against stray
+    // "thank you" / "you" fragments whisper adds on no-sound input.
+    const filtered =
+      segments.length === 0
+        ? (output.text ?? "")
+        : filterLocalTranscriptionSegments(segments);
+
     return {
-      text:
-        filterLocalTranscriptionSegments(output.segments ?? []) ||
-        output.text,
+      text: filtered,
       metadata: {
         inferenceDevice: output.inferenceDevice,
         modelSize: output.model,

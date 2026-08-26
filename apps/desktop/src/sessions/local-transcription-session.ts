@@ -103,8 +103,15 @@ export class LocalTranscriptionSession implements TranscriptionSession {
     try {
       getLogger().info(`[local-stream-session] finalizing streaming session`);
       const output = await this.session.finalize();
+      const segments = output.segments ?? [];
+      // Narrow fallback: only when the sidecar didn't emit per-segment
+      // metadata (ONNX branch). If segments were emitted but the filter
+      // dropped them all, keep the empty result so silence-hallucination
+      // filtering still wins.
       const filteredText =
-        filterLocalTranscriptionSegments(output.segments ?? []) || output.text;
+        segments.length === 0
+          ? (output.text ?? "")
+          : filterLocalTranscriptionSegments(segments);
       getLogger().info(
         `[local-stream-session] streaming finalize succeeded (${filteredText.length} chars)`,
       );
