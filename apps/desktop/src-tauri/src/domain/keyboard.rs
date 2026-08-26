@@ -1,5 +1,6 @@
 use serde::Serialize;
 
+/// Tauri event emitted while a hold-to-talk hotkey is physically held.
 pub const EVT_KEYS_HELD: &str = "keys_held";
 
 /// Emitted by the Windows lifecycle watcher (see `platform::windows::lifecycle`)

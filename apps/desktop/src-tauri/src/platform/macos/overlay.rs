@@ -82,6 +82,8 @@ pub fn notify_pill_placement(_app: &tauri::AppHandle, placement: &str) {
     log::debug!("Pill placement preference received: {placement}");
 }
 
+/// Logs style info instead of forwarding it: the macOS pill is rendered by
+/// SwiftUI in-process and reads style state from the app store directly.
 pub fn notify_style_info(app: &tauri::AppHandle, count: u32, name: &str) {
     if let Some(pill) = app.try_state::<std::sync::Arc<MacosPill>>() {
         pill.send(InMessage::StyleInfo {

@@ -150,10 +150,14 @@ pub const FEATURE_PREFERENCES_MIGRATION_SQL: &str =
     include_str!("migrations/076_feature_preferences.sql");
 pub const SPOKEN_COMMANDS_MIGRATION_SQL: &str =
     include_str!("migrations/077_spoken_commands_enabled.sql");
+/// Adds the `preserve_audio_on_failure` column to `user_preferences`.
 pub const PRESERVE_AUDIO_ON_FAILURE_MIGRATION_SQL: &str =
     include_str!("migrations/081_preserve_audio_on_failure.sql");
+/// Adds the `transcription_path` column to `api_keys`.
 pub const API_KEY_TRANSCRIPTION_PATH_MIGRATION_SQL: &str =
     include_str!("migrations/082_api_key_transcription_path.sql");
+/// Adds the `pill_placement` and `hands_free_delay_ms` columns to
+/// `user_preferences`.
 pub const PILL_PLACEMENT_AND_HANDS_FREE_DELAY_MIGRATION_SQL: &str =
     include_str!("migrations/083_pill_placement_and_hands_free_delay.sql");
 

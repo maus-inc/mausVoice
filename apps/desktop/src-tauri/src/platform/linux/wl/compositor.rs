@@ -926,7 +926,7 @@ fn data_home() -> PathBuf {
     if let Ok(home) = std::env::var(HOME) {
         return PathBuf::from(home).join(".local/share");
     }
-    PathBuf::from("/tmp")
+    std::env::temp_dir()
 }
 
 fn config_home() -> PathBuf {
@@ -936,5 +936,5 @@ fn config_home() -> PathBuf {
     if let Ok(home) = std::env::var(HOME) {
         return PathBuf::from(home).join(".config");
     }
-    PathBuf::from("/tmp")
+    std::env::temp_dir()
 }
