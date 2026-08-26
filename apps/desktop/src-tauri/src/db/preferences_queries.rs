@@ -63,9 +63,11 @@ pub async fn upsert_user_preferences(
              insertion_method,
              typing_speed_ms,
              pill_reset_monitor_strategy,
-             always_request_admin_on_startup
+             always_request_admin_on_startup,
+             pill_placement,
+             hands_free_delay_ms
          )
-            VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20, ?21, ?22, ?23, ?24, ?25, ?26, ?27, ?28, ?29, ?30, ?31, ?32, ?33, ?34, ?35, ?36, ?37, ?38, ?39, ?40, ?41)
+            VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20, ?21, ?22, ?23, ?24, ?25, ?26, ?27, ?28, ?29, ?30, ?31, ?32, ?33, ?34, ?35, ?36, ?37, ?38, ?39, ?40, ?41, ?42, ?43)
          ON CONFLICT(user_id) DO UPDATE SET
             transcription_mode = excluded.transcription_mode,
             transcription_api_key_id = excluded.transcription_api_key_id,
@@ -106,7 +108,9 @@ pub async fn upsert_user_preferences(
             insertion_method = excluded.insertion_method,
             typing_speed_ms = excluded.typing_speed_ms,
             pill_reset_monitor_strategy = excluded.pill_reset_monitor_strategy,
-            always_request_admin_on_startup = excluded.always_request_admin_on_startup",
+            always_request_admin_on_startup = excluded.always_request_admin_on_startup,
+            pill_placement = excluded.pill_placement,
+            hands_free_delay_ms = excluded.hands_free_delay_ms",
     )
     .bind(&preferences.user_id)
     .bind(&preferences.transcription_mode)
@@ -149,6 +153,8 @@ pub async fn upsert_user_preferences(
     .bind(preferences.typing_speed_ms)
     .bind(&preferences.pill_reset_monitor_strategy)
     .bind(preferences.always_request_admin_on_startup)
+    .bind(&preferences.pill_placement)
+    .bind(preferences.hands_free_delay_ms)
     .execute(&pool)
     .await?;
 
@@ -187,6 +193,7 @@ pub async fn fetch_user_preferences(
             ignore_update_dialog,
             incognito_mode_enabled,
             incognito_mode_include_in_stats,
+            preserve_audio_on_failure,
             dictation_limit_minutes,
             dictation_pill_visibility,
             use_new_backend,
@@ -200,7 +207,9 @@ pub async fn fetch_user_preferences(
             insertion_method,
             typing_speed_ms,
             pill_reset_monitor_strategy,
-            always_request_admin_on_startup
+            always_request_admin_on_startup,
+            pill_placement,
+            hands_free_delay_ms
          FROM user_preferences
          WHERE user_id = ?1
          LIMIT 1",
@@ -342,6 +351,12 @@ pub async fn fetch_user_preferences(
             .try_get::<i64, _>("always_request_admin_on_startup")
             .map(|v| v != 0)
             .unwrap_or(false),
+        pill_placement: row
+            .try_get::<String, _>("pill_placement")
+            .unwrap_or_else(|_| "bottom".to_string()),
+        hands_free_delay_ms: row
+            .try_get::<Option<i64>, _>("hands_free_delay_ms")
+            .unwrap_or(None),
     });
 
     Ok(preferences)

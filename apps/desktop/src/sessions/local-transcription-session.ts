@@ -103,9 +103,8 @@ export class LocalTranscriptionSession implements TranscriptionSession {
     try {
       getLogger().info(`[local-stream-session] finalizing streaming session`);
       const output = await this.session.finalize();
-      const filteredText = filterLocalTranscriptionSegments(
-        output.segments ?? [],
-      );
+      const filteredText =
+        filterLocalTranscriptionSegments(output.segments ?? []) || output.text;
       getLogger().info(
         `[local-stream-session] streaming finalize succeeded (${filteredText.length} chars)`,
       );

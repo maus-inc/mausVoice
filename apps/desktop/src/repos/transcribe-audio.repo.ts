@@ -236,7 +236,9 @@ export class LocalTranscribeAudioRepo extends BaseTranscribeAudioRepo {
     });
 
     return {
-      text: filterLocalTranscriptionSegments(output.segments ?? []),
+      text:
+        filterLocalTranscriptionSegments(output.segments ?? []) ||
+        output.text,
       metadata: {
         inferenceDevice: output.inferenceDevice,
         modelSize: output.model,

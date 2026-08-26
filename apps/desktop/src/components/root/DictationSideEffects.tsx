@@ -1147,6 +1147,22 @@ export const DictationSideEffects = () => {
     );
   });
 
+  useTauriListen<string>("recording_failed", (message) => {
+    // Backend `start_recording` emits this event when the mic cannot be
+    // initialised (no device, permission denied, WASAPI failure). The
+    // invoke-rejection already surfaces a generic toast, but the event
+    // payload carries a more specific reason from the platform layer.
+    getLogger().error(`Recording failed (backend): ${message}`);
+    showToast({
+      message:
+        message && message.trim().length > 0
+          ? `${intl.formatMessage({ defaultMessage: "Recording failed" })}: ${message}`
+          : intl.formatMessage({ defaultMessage: "Recording failed" }),
+      toastType: "error",
+      duration: 8_000,
+    });
+  });
+
   useToastAction(async (payload) => {
     if (payload.action === "confirm_cancel_transcription") {
       await abortRecording();
