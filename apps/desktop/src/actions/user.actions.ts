@@ -465,9 +465,11 @@ export const setInteractionFeedbackVolume = async (
   // same clamped value into Rust so the IPC payload matches the persisted
   // record. The Rust side clamps again to its safe window as a
   // defence-in-depth measure; this clamp guarantees the on-the-wire
-  // payload never exceeds the [0, 1] range even if that fallback is
-  // removed in the future.
-  const clamped = Math.max(0, Math.min(1, volume));
+  // payload never exceeds the effective [0.05, 0.5] range. The Rust
+  // sink clamps playback to the same window, so clamping here keeps the
+  // persisted value, the IPC payload, and what the user actually hears
+  // identical — a slider at maximum must not silently play at half.
+  const clamped = Math.max(0.05, Math.min(0.5, volume));
   await updateUser(
     (user) => {
       user.interactionFeedbackVolume = clamped;

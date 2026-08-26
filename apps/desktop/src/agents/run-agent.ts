@@ -345,12 +345,22 @@ async function finalizeAssistantMessage(
         : null,
   };
 
-  await getChatMessageRepo().createChatMessage(final);
-
-  produceAppState((draft) => {
-    draft.chatMessageById[messageId] = final;
-    delete draft.streamingMessageById[messageId];
-  });
+  // Retire the streaming entry regardless of the persistence outcome.
+  // safeSideEffect swallows rejections from this function so the agent
+  // loop survives (the whole point of the wrapper); without the finally,
+  // a failed createChatMessage would leave the message stuck in
+  // streamingMessageById forever as an indefinitely-streaming bubble.
+  // On failure the in-memory copy still gets the scrubbed final text so
+  // the conversation view stays coherent for the session; only the
+  // durable history row is missing, and that is what the log records.
+  try {
+    await getChatMessageRepo().createChatMessage(final);
+  } finally {
+    produceAppState((draft) => {
+      draft.chatMessageById[messageId] = final;
+      delete draft.streamingMessageById[messageId];
+    });
+  }
 }
 
 function createLlmProvider(): AgentLlmProvider {

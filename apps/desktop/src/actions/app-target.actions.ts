@@ -251,14 +251,20 @@ export const loadManualStyleForCurrentApp = async (): Promise<void> => {
  *   ACTIVE utterance, not the saved default.
  * - Never read from any start-time snapshot here. Doing so would silently
  *   revert the user's mid-recording switch.
+ *
+ * Returns the persistence promise (already error-logged, never rejects)
+ * so callers can await it; fire-and-forget callers are unaffected.
  */
-export const saveManualStyleForApp = (appTarget: AppTarget): void => {
-  if (getEffectiveStylingMode(getAppState()) !== "manual") return;
+export const saveManualStyleForApp = (appTarget: AppTarget): Promise<void> => {
+  if (getEffectiveStylingMode(getAppState()) !== "manual") {
+    return Promise.resolve();
+  }
 
   const manualToneId = getManuallySelectedToneId(getAppState());
-  if (manualToneId !== (appTarget.toneId ?? null)) {
-    setAppTargetTone(appTarget.id, manualToneId).catch((error) =>
-      getLogger().verbose(`Failed to save app style: ${error}`),
-    );
+  if (manualToneId === (appTarget.toneId ?? null)) {
+    return Promise.resolve();
   }
+  return setAppTargetTone(appTarget.id, manualToneId).catch((error) => {
+    getLogger().verbose(`Failed to save app style: ${error}`);
+  });
 };

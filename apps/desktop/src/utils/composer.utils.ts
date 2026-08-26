@@ -192,6 +192,15 @@ export const reviewTextInComposer = async (
           getLogger().error(
             "reviewTextInComposer: composer-ready timeout (webview likely blank)",
           );
+          // Destroy the blank surface immediately rather than waiting for
+          // the outer finally: that path queues teardown behind
+          // composer_discard_text, an IPC to the very webview that just
+          // proved itself wedged. The later destroy is a harmless no-op.
+          if (windowId) {
+            void invoke("floating_window_destroy", { id: windowId }).catch(
+              () => {},
+            );
+          }
           void showToast({
             message: getIntl().formatMessage({
               defaultMessage:

@@ -113,10 +113,9 @@ describe("saveManualStyleForApp", () => {
     getAppState().userById[LOCAL_USER_ID]!.selectedToneId = "email";
 
     const appTarget = { ...target, toneId: "default" };
-    saveManualStyleForApp(appTarget);
-    // The helper is fire-and-forget: yield once so the queued
-    // upsertAppTarget call resolves before assertions.
-    await new Promise((resolve) => setTimeout(resolve, 0));
+    // The helper returns its persistence promise, so awaiting it is a
+    // deterministic sync point (no zero-delay timer races).
+    await saveManualStyleForApp(appTarget);
 
     expect(upsertAppTargetMock).toHaveBeenCalledTimes(1);
     expect(upsertAppTargetMock).toHaveBeenCalledWith(
@@ -131,8 +130,7 @@ describe("saveManualStyleForApp", () => {
 
     getAppState().userById[LOCAL_USER_ID]!.selectedToneId = "email";
 
-    saveManualStyleForApp(target);
-    await new Promise((resolve) => setTimeout(resolve, 0));
+    await saveManualStyleForApp(target);
 
     expect(upsertAppTargetMock).not.toHaveBeenCalled();
   });
@@ -143,8 +141,7 @@ describe("saveManualStyleForApp", () => {
     getAppState().userById[LOCAL_USER_ID]!.selectedToneId = "email";
     getAppState().userById[LOCAL_USER_ID]!.stylingMode = "app";
 
-    saveManualStyleForApp(target);
-    await new Promise((resolve) => setTimeout(resolve, 0));
+    await saveManualStyleForApp(target);
 
     expect(upsertAppTargetMock).not.toHaveBeenCalled();
   });

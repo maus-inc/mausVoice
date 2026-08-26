@@ -148,7 +148,7 @@ pub fn play_alert_windows_11_clip() {
     play_clip(ALERT_WINDOWS_11_CLIP);
 }
 
-/// Thock haptic feedback (short low-frequency pulses for pill interactions).
+/// Thock haptic feedback (short click transients for pill interactions).
 /// The gain is read from `INTERACTION_FEEDBACK_VOLUME`, which the frontend
 /// syncs from the user preference at startup and on slider commit. The
 /// default lives in the atomic so a fresh process plays at the same level

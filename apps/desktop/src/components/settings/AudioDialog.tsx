@@ -95,8 +95,11 @@ export const AudioDialog = () => {
               onCommit={(v) => {
                 void setInteractionFeedbackVolume(v);
               }}
-              min={0}
-              max={1}
+              // The effective range matches the Rust sink's safe window
+              // [0.05, 0.5]; showing a wider range would persist values
+              // the sink silently caps at 50%.
+              min={0.05}
+              max={0.5}
               step={0.05}
               disabled={!playInteractionChime}
               ariaLabel={intl.formatMessage({
