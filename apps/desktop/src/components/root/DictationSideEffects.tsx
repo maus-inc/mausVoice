@@ -132,6 +132,13 @@ type FinalizedRecording = {
 
 const FINALIZE_TIMEOUT_MS = 90_000;
 const HANDLE_TRANSCRIPT_TIMEOUT_MS = 60_000;
+// Review-before-insert keeps the composer open for up to its own
+// 5-minute decision window (COMPOSER_TIMEOUT_MS in composer.utils).
+// Budget the wrapper above that plus slack: a wrapper smaller than the
+// review window would reject mid-review, skip storeTranscription below,
+// and silently drop the transcript from history while the window still
+// inserts on Save — with a recovery toast promising the opposite.
+const REVIEW_HANDLE_TRANSCRIPT_TIMEOUT_MS = 6 * 60_000;
 const PHASE_HEARTBEAT_INTERVAL_MS = 5_000;
 /** Dictation backlog poll interval: how often to check whether the user
  *  has focused an editable target so accumulated backlog can be drained. */
@@ -534,6 +541,14 @@ export const DictationSideEffects = () => {
       }
 
       getLogger().info("Post-processing transcript");
+      // When review-before-insert is on, the composer owns the pacing;
+      // give the wrapper a budget above the composer's own so the two
+      // timeouts can never race (see REVIEW_HANDLE_TRANSCRIPT_TIMEOUT_MS).
+      const handleTranscriptTimeoutMs = getMyUserPreferences(
+        getAppState(),
+      )?.reviewBeforeInsert
+        ? REVIEW_HANDLE_TRANSCRIPT_TIMEOUT_MS
+        : HANDLE_TRANSCRIPT_TIMEOUT_MS;
       const result = await withTimeout(
         strategy.handleTranscript({
           rawTranscript,
@@ -547,7 +562,7 @@ export const DictationSideEffects = () => {
           transcriptionMetadata: transcribeResult.metadata,
           transcriptionWarnings: transcribeResult.warnings,
         }),
-        HANDLE_TRANSCRIPT_TIMEOUT_MS,
+        handleTranscriptTimeoutMs,
         "Transcript post-processing",
       );
 
