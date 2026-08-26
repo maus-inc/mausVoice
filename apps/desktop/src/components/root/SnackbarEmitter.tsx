@@ -31,6 +31,8 @@ export const SnackbarEmitter = () => {
   let backgroundColor: string;
   if (snackbarMode === "error") {
     backgroundColor = theme.palette.error.main;
+  } else if (snackbarMode === "warning") {
+    backgroundColor = theme.palette.warning.main;
   } else if (snackbarMode === "success") {
     backgroundColor = theme.palette.success.main;
   } else {

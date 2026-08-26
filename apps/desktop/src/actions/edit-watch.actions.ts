@@ -5,6 +5,7 @@ import { findEditCorrections } from "../utils/edit-watch.utils";
 import { getLogger } from "../utils/log.utils";
 import { getLocalStorage } from "../utils/local-storage.utils";
 import { getMyUserPreferences } from "../utils/user.utils";
+import { showSnackbar } from "./app.actions";
 import { createGlossaryTerms } from "./dictionary.actions";
 import { showToast } from "./toast.actions";
 
@@ -15,6 +16,8 @@ const MAX_DENIED_TERMS = 50;
 type WatchSnapshot = {
   text: string;
   startedAt: number;
+  /** Focused app captured right after insertion; null when lookup failed. */
+  appName: string | null;
 };
 
 // The in-flight dictation snapshot is transient polling state, not UI state,
@@ -70,7 +73,17 @@ export const beginEditWatch = (text: string): void => {
     activeWatch = null;
     return;
   }
-  activeWatch = { text: normalized, startedAt: Date.now() };
+  activeWatch = { text: normalized, startedAt: Date.now(), appName: null };
+
+  // Capture the focused app while the paste has just landed, so later polls
+  // can stop watching once the user moves focus to a different app.
+  void invoke<{ appName: string }>("get_current_app_info")
+    .then((info) => {
+      if (activeWatch && activeWatch.text === normalized) {
+        activeWatch.appName = info.appName;
+      }
+    })
+    .catch(() => {});
 };
 
 export const endEditWatch = (): void => {
@@ -124,10 +137,19 @@ export const pollEditWatch = async (): Promise<void> => {
   }
 
   try {
-    const info = await invoke<{ textContent: string | null }>(
-      "get_text_field_info",
-    );
-    const fieldText = info.textContent?.trim();
+    const [fieldInfo, appInfo] = await Promise.all([
+      invoke<{ textContent: string | null }>("get_text_field_info"),
+      invoke<{ appName: string }>("get_current_app_info").catch(() => null),
+    ]);
+
+    // Focus moved to another app after the dictation landed; corrections
+    // made there are not ours to learn.
+    if (snapshot.appName && appInfo && appInfo.appName !== snapshot.appName) {
+      endEditWatch();
+      return;
+    }
+
+    const fieldText = fieldInfo.textContent?.trim();
     if (!fieldText) {
       return;
     }
@@ -155,6 +177,18 @@ export const pollEditWatch = async (): Promise<void> => {
   }
 };
 
+/** Clears the active auto-learn proposal so the pill can show the next one. */
+export const clearAutoLearnProposal = (): void => {
+  produceAppState((draft) => {
+    draft.autoLearn.proposal = null;
+  });
+};
+
+/**
+ * Accepts the proposed correction and persists it as a glossary term. Shows
+ * a confirmation snackbar on success and logs a warning on persistence failure
+ * since the pill offers no retry path.
+ */
 export const acceptAutoLearnProposal = async (): Promise<void> => {
   const proposal = getAppState().autoLearn.proposal;
   if (!proposal) {
@@ -163,7 +197,24 @@ export const acceptAutoLearnProposal = async (): Promise<void> => {
 
   const { term } = proposal;
   clearAutoLearnProposal();
-  await createGlossaryTerms([term]);
+
+  const { created, failed } = await createGlossaryTerms([term]);
+  if (created.length > 0) {
+    showSnackbar(
+      getIntl().formatMessage(
+        { defaultMessage: 'Added "{term}" to your dictionary' },
+        { term },
+      ),
+      { mode: "success" },
+    );
+  }
+  if (failed > 0) {
+    // createGlossaryTerms already logged the underlying error; make the
+    // failure observable here too, since the pill offers no retry.
+    getLogger().warning(
+      `Failed to add accepted auto-learn term "${term}" to the dictionary.`,
+    );
+  }
 };
 
 export const rejectAutoLearnProposal = (): void => {
@@ -174,10 +225,4 @@ export const rejectAutoLearnProposal = (): void => {
 
   rememberDeniedTerm(proposal.term);
   clearAutoLearnProposal();
-};
-
-export const clearAutoLearnProposal = (): void => {
-  produceAppState((draft) => {
-    draft.autoLearn.proposal = null;
-  });
 };

@@ -58,6 +58,14 @@ describe("findEditCorrections", () => {
     ).toEqual([]);
   });
 
+  it("rejects a single-word dictation against an unrelated focused word", () => {
+    expect(find("hello", "Bo")).toEqual([]);
+  });
+
+  it("accepts a single-word full replacement that shares its initial letter", () => {
+    expect(find("sandra", "Sarah")).toEqual(["Sarah"]);
+  });
+
   it("returns nothing when the focused field is empty", () => {
     expect(find("hello world", "")).toEqual([]);
   });

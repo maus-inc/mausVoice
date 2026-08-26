@@ -43,7 +43,7 @@ import {
 } from "./transcriptions.state";
 import { INITIAL_UPDATER_STATE, UpdaterState } from "./updater.state";
 
-export type SnackbarMode = "info" | "success" | "error";
+export type SnackbarMode = "info" | "success" | "warning" | "error";
 export type HotkeyStrategy = "listener" | "bridge";
 export type PasteKeybindSupport = "disabled" | "per-app" | "global";
 

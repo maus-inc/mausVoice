@@ -12,20 +12,42 @@
  * while still learning two-letter names such as "Jo".
  */
 
+/** Two-character floor: drops stray single letters, keeps short names like "Jo". */
 const MIN_TERM_LENGTH = 2;
 const MAX_TERM_LENGTH = 40;
 const MAX_LEARNED_TERMS = 5;
 const MAX_EDIT_TOKENS = 8;
 
-// Strip leading/trailing punctuation. Each character class is anchored and
-// uses a single negated property class plus an explicit punctuation set, so
-// there is no alternation that could backtrack super-linearly. Splitting the
-// strip into two passes (leading, then trailing) keeps each regex linear.
-const LEADING_EDGE_PATTERN = /^[^\p{L}\p{N}'’\u2014-]+/u;
-const TRAILING_EDGE_PATTERN = /[^\p{L}\p{N}'’\u2014-]+$/u;
 const POSSESSIVE_SUFFIX_PATTERN = /['’]s$/iu;
 const UPPERCASE_LETTER_PATTERN = /^\p{Lu}/u;
 const LETTER_PATTERN = /\p{L}/u;
+const WORD_CHARACTER_PATTERN = /[\p{L}\p{N}]/u;
+
+/**
+ * A character allowed to sit at a token edge without ending the word.
+ * Apostrophes survive so possessives stay intact; hyphens survive so
+ * compounds like "well-known" tokenize as one word. Everything else that is
+ * not a letter or digit is stripped. Implemented as a scan rather than a
+ * quantified negated-property regex, which keeps tokenizing linear and free
+ * of backtracking.
+ */
+const isEdgeCharacter = (char: string): boolean =>
+  !WORD_CHARACTER_PATTERN.test(char) &&
+  char !== "'" &&
+  char !== "’" &&
+  char !== "-";
+
+const trimTokenEdges = (raw: string): string => {
+  let start = 0;
+  let end = raw.length;
+  while (start < end && isEdgeCharacter(raw[start] as string)) {
+    start++;
+  }
+  while (end > start && isEdgeCharacter(raw[end - 1] as string)) {
+    end--;
+  }
+  return raw.slice(start, end);
+};
 
 /**
  * Common English function words, auxiliaries, pronouns, contractions and
@@ -249,12 +271,7 @@ export type AutoLearnTermsResult = {
 export const tokenizeForComparison = (text: string): string[] =>
   text
     .split(/\s+/)
-    .map((raw) =>
-      raw
-        .replace(LEADING_EDGE_PATTERN, "")
-        .replace(TRAILING_EDGE_PATTERN, "")
-        .replace(POSSESSIVE_SUFFIX_PATTERN, ""),
-    )
+    .map((raw) => trimTokenEdges(raw).replace(POSSESSIVE_SUFFIX_PATTERN, ""))
     .filter((token) => token.length > 0);
 
 const toTokenCounts = (tokens: string[]): Map<string, number> => {
@@ -267,28 +284,38 @@ const toTokenCounts = (tokens: string[]): Map<string, number> => {
 };
 
 /**
+ * Case-insensitive multiset difference: every token in `from` that has no
+ * unmatched counterpart in `against`. Original token casing is preserved.
+ */
+const multisetDifference = (from: string[], against: string[]): string[] => {
+  const counts = toTokenCounts(against);
+  const difference: string[] = [];
+
+  for (const token of from) {
+    const key = token.toLowerCase();
+    const remaining = counts.get(key) ?? 0;
+    if (remaining > 0) {
+      counts.set(key, remaining - 1);
+    } else {
+      difference.push(token);
+    }
+  }
+
+  return difference;
+};
+
+/**
  * Tokens present in `corrected` but not in `original`, as a case-insensitive
  * multiset difference. Original token casing is preserved.
  */
 export const computeAddedTokens = (
   original: string,
   corrected: string,
-): string[] => {
-  const originalCounts = toTokenCounts(tokenizeForComparison(original));
-  const added: string[] = [];
-
-  for (const token of tokenizeForComparison(corrected)) {
-    const key = token.toLowerCase();
-    const remaining = originalCounts.get(key) ?? 0;
-    if (remaining > 0) {
-      originalCounts.set(key, remaining - 1);
-    } else {
-      added.push(token);
-    }
-  }
-
-  return added;
-};
+): string[] =>
+  multisetDifference(
+    tokenizeForComparison(corrected),
+    tokenizeForComparison(original),
+  );
 
 /**
  * Tokens present in `original` but not in `corrected`, as a case-insensitive
@@ -298,7 +325,11 @@ export const computeAddedTokens = (
 export const computeRemovedTokens = (
   original: string,
   corrected: string,
-): string[] => computeAddedTokens(original, corrected);
+): string[] =>
+  multisetDifference(
+    tokenizeForComparison(original),
+    tokenizeForComparison(corrected),
+  );
 
 const isCommonWord = (word: string): boolean =>
   COMMON_WORDS.has(word.toLowerCase());

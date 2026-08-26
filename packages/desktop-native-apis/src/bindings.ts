@@ -1140,17 +1140,17 @@ alwaysRequestAdminOnStartup?: boolean;
  * "top" or "bottom"; any other value is treated as the default
  * "bottom" so legacy data never breaks the UI.
  */
-pillPlacement?: string; 
+pillPlacement?: string;
 /**
  * Delay (ms) between a hands-free stop and the actual paste/type
  * action. NULL disables the delay (immediate paste on stop).
  */
-handsFreeDelayMs?: number | null; 
+handsFreeDelayMs?: number | null;
 /**
  * Automatically add corrected names and words as glossary terms when
  * the user edits a transcription. Enabled by default.
  */
-autoLearnDictionaryEnabled?: boolean; 
+autoLearnDictionaryEnabled?: boolean;
 /**
  * Watch the target app after dictation and offer to add corrected names
  * as glossary terms. Disabled by default because it polls the focused

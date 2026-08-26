@@ -264,14 +264,11 @@ export const TranscriptionDetailsDialog = () => {
         );
       } else if (learnedTerms.length > 0 && failedTerms > 0) {
         showSnackbar(
-          intl.formatMessage(
-            {
-              defaultMessage:
-                "Added {added} words to your dictionary ({failed} failed)",
-            },
-            { added: learnedTerms.length, failed: failedTerms },
-          ),
-          { mode: "success" },
+          intl.formatMessage({
+            defaultMessage:
+              "Some corrected words were added to your dictionary, but others failed.",
+          }),
+          { mode: "warning" },
         );
       } else if (failedTerms > 0) {
         showSnackbar(
