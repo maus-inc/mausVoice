@@ -1,0 +1,102 @@
+name: Format and i18n Hygiene
+
+on:
+  push:
+    paths:
+      - "apps/**"
+      - "packages/**"
+      - "scripts/**"
+      - "marketing/**"
+      - "branding/**"
+      - "homebrew-mausvoice/**"
+      - "personal-fork-ci/**"
+      - "patches/**"
+      - "docs/**"
+      - "package.json"
+      - "pnpm-lock.yaml"
+      - "pnpm-workspace.yaml"
+      - "turbo.json"
+      - ".prettierignore"
+      - ".prettierrc*"
+      - "*.md"
+      - ".github/**"
+  pull_request:
+    paths:
+      - "apps/**"
+      - "packages/**"
+      - "scripts/**"
+      - "marketing/**"
+      - "branding/**"
+      - "homebrew-mausvoice/**"
+      - "personal-fork-ci/**"
+      - "patches/**"
+      - "docs/**"
+      - "package.json"
+      - "pnpm-lock.yaml"
+      - "pnpm-workspace.yaml"
+      - "turbo.json"
+      - ".prettierignore"
+      - ".prettierrc*"
+      - "*.md"
+      - ".github/**"
+  workflow_dispatch:
+
+# Least privilege: this workflow only reads the source and verifies formatting
+# and i18n consistency. It never writes to the repository, never publishes, and
+# does not cancel other workflow runs, so it needs only contents: read.
+permissions:
+  contents: read
+
+# Group every run for the same PR or branch so they queue instead of running in
+# parallel, without cancelling earlier runs (which would need actions: write).
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+
+jobs:
+  prettier:
+    name: Repo-wide Prettier Check
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout source
+        uses: actions/checkout@v5
+      - name: Setup pnpm
+        uses: pnpm/action-setup@a8198c4bff370c8506180b035930dea56dbd5288 # v5
+      - name: Setup Node
+        uses: actions/setup-node@v5
+        with:
+          node-version-file: .nvmrc
+          cache: pnpm
+          cache-dependency-path: pnpm-lock.yaml
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+      - name: Check formatting
+        run: pnpm run format:check
+
+  i18n-idempotence:
+    name: i18n Extractor Idempotence
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout source
+        uses: actions/checkout@v5
+      - name: Setup pnpm
+        uses: pnpm/action-setup@a8198c4bff370c8506180b035930dea56dbd5288 # v5
+      - name: Setup Node
+        uses: actions/setup-node@v5
+        with:
+          node-version-file: .nvmrc
+          cache: pnpm
+          cache-dependency-path: pnpm-lock.yaml
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+      - name: Clear i18n cache
+        # A stale cache would make the sync step report spurious resets and mask
+        # real drift, so start every run from a clean cache.
+        run: rm -rf apps/desktop/src/i18n/locales/.cache
+      - name: Run i18n extraction and sync
+        run: pnpm --filter desktop run i18n
+      - name: Verify extractor is idempotent
+        run: |
+          if ! git diff --exit-code -- apps/desktop/src/i18n; then
+            echo "::error::The i18n extractor changed the committed locales. Run 'pnpm --filter desktop run i18n' and commit the result." >&2
+            exit 1
+          fi
