@@ -377,7 +377,6 @@ const startElevenLabsStreaming = async (
 };
 
 export class ElevenLabsTranscriptionSession extends BaseApiTranscriptionSession {
-  private session: ElevenLabsStreamingSession | null = null;
   private readonly apiKey: string;
 
   constructor(apiKey: string) {
@@ -406,9 +405,5 @@ export class ElevenLabsTranscriptionSession extends BaseApiTranscriptionSession 
     } catch (error) {
       getLogger().error("[ElevenLabs] Failed to start streaming:", error);
     }
-  }
-
-  protected getStreamSession() {
-    return this.session;
   }
 }
