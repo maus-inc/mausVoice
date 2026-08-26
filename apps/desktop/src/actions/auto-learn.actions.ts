@@ -9,17 +9,22 @@ import { createGlossaryTerms } from "./dictionary.actions";
 export type SaveCorrectedTranscriptResult = {
   /** Glossary terms that were auto-learned from the correction. */
   learnedTerms: string[];
+  /** Glossary-term inserts that failed, so callers can report partial success. */
+  failedTerms: number;
 };
 
 const learnTermsFromCorrection = async (
   original: string,
   corrected: string,
-): Promise<string[]> => {
+): Promise<{ learnedTerms: string[]; failedTerms: number }> => {
   const state = getAppState();
-  const existingTerms = Object.values(state.termById).flatMap((term) => [
-    term.sourceValue,
-    term.destinationValue,
-  ]);
+  // Only non-empty values are candidates for the existing-terms set; a
+  // glossary term always carries an empty destinationValue.
+  const existingTerms = Object.values(state.termById).flatMap((term) =>
+    term.destinationValue
+      ? [term.sourceValue, term.destinationValue]
+      : [term.sourceValue],
+  );
 
   const { learnedTerms } = extractAutoLearnTerms({
     original,
@@ -28,17 +33,23 @@ const learnTermsFromCorrection = async (
   });
 
   if (learnedTerms.length === 0) {
-    return [];
+    return { learnedTerms: [], failedTerms: 0 };
   }
 
-  const created = await createGlossaryTerms(learnedTerms);
-  return created.map((term) => term.sourceValue);
+  // createGlossaryTerms absorbs per-term persistence errors (it logs and
+  // continues) and reports them through `failed`, so a glossary failure is
+  // surfaced as partial success rather than thrown here.
+  const { created, failed } = await createGlossaryTerms(learnedTerms);
+  return {
+    learnedTerms: created.map((term) => term.sourceValue),
+    failedTerms: failed,
+  };
 };
 
 /**
  * Persists a user's manual correction to a transcription's final text and,
- * when auto-learn is enabled, adds the corrected words to the dictionary as
- * glossary terms.
+ * when auto-learn is enabled, adds only corrected tokens beginning with an
+ * uppercase letter as proper-noun-like glossary terms.
  */
 export const saveCorrectedTranscript = async ({
   transcriptionId,
@@ -66,6 +77,7 @@ export const saveCorrectedTranscript = async ({
   });
 
   let learnedTerms: string[] = [];
+  let failedTerms = 0;
   try {
     const persisted = await getTranscriptionRepo().updateTranscription(updated);
     produceAppState((draft) => {
@@ -75,10 +87,12 @@ export const saveCorrectedTranscript = async ({
     const autoLearnEnabled =
       getMyUserPreferences(getAppState())?.autoLearnDictionaryEnabled ?? true;
     if (autoLearnEnabled) {
-      learnedTerms = await learnTermsFromCorrection(
+      const result = await learnTermsFromCorrection(
         previous.transcript,
         normalized,
       );
+      learnedTerms = result.learnedTerms;
+      failedTerms = result.failedTerms;
     }
   } catch (error) {
     produceAppState((draft) => {
@@ -88,5 +102,5 @@ export const saveCorrectedTranscript = async ({
     throw error;
   }
 
-  return { learnedTerms };
+  return { learnedTerms, failedTerms };
 };
