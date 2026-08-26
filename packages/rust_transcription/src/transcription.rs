@@ -168,7 +168,7 @@ impl TranscriptionEngine {
             .map(str::trim)
             .filter(|v| !v.is_empty())
         {
-            let sanitized: String = prompt.chars().filter(|ch| *ch != '\0').collect();
+            let sanitized: Vec<&str> = prompt.matches(|ch| ch != '\0').collect();
             if !sanitized.is_empty() {
                 params.set_initial_prompt(&sanitized);
             }
@@ -369,8 +369,8 @@ impl TranscriptionEngine {
 fn collect_transcription(
     state: &whisper_rs::WhisperState,
 ) -> Result<(String, Vec<TranscriptionSegment>), String> {
-    let mut transcript = String::new();
-    let mut segments = Vec::new();
+    let mut transcript = String::default();
+    let mut segments = Vec::default();
 
     for segment in state.as_iter() {
         let piece = match segment.to_str() {

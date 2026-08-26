@@ -336,7 +336,7 @@ fn child_stdin_store() -> &'static Mutex<Option<ChildStdin>> {
 pub fn sync_combos(combos: Vec<Vec<String>>) {
     {
         let mut guard = lock(combo_store());
-        *guard = combos.clone();
+        guard.clone_from(&combos);
     }
 
     let mut guard = lock(child_stdin_store());
@@ -969,6 +969,8 @@ pub(crate) fn update_grab_hotkey_state(
                 return GrabDecision::PassThrough;
             }
             state.suppressed_keys.insert(key_label.to_string());
+static MAUSVOICE_KEYBOARD_PORT: &str = "MAUSVOICE_KEYBOARD_PORT";
+
             return GrabDecision::Suppress;
         }
 
@@ -994,7 +996,7 @@ pub(crate) struct ListenerContext {
 }
 
 pub(crate) fn setup_listener_process() -> Result<ListenerContext, String> {
-    let port = env::var("MAUSVOICE_KEYBOARD_PORT")
+    let port = env::var(MAUSVOICE_KEYBOARD_PORT)
         .map_err(|_| "MAUSVOICE_KEYBOARD_PORT env var missing".to_string())?
         .parse::<u16>()
         .map_err(|err| format!("invalid MAUSVOICE_KEYBOARD_PORT: {err}"))?;

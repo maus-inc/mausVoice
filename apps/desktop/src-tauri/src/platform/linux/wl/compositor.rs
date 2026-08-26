@@ -2,6 +2,7 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::sync::OnceLock;
+use tempfile::tempdir;
 use tauri::Manager;
 
 use crate::domain::CompositorBinding;
@@ -88,8 +89,10 @@ fn trigger_script_path(app: &tauri::AppHandle) -> Result<PathBuf, String> {
     Ok(config_dir.join("trigger-hotkey.sh"))
 }
 
+static XDG_CURRENT_DESKTOP: &str = "XDG_CURRENT_DESKTOP";
+
 fn detect_compositor() -> Compositor {
-    if let Ok(desktop) = std::env::var("XDG_CURRENT_DESKTOP") {
+    if let Ok(desktop) = std::env::var(XDG_CURRENT_DESKTOP) {
         let lower = desktop.to_lowercase();
         if lower.contains("gnome") {
             return Compositor::Gnome;
@@ -131,7 +134,7 @@ fn detect_compositor() -> Compositor {
         }
     }
 
-    Compositor::Unknown(std::env::var("XDG_CURRENT_DESKTOP").unwrap_or_default())
+    Compositor::Unknown(std::env::var(XDG_CURRENT_DESKTOP).unwrap_or_default())
 }
 
 pub fn sync_compositor_hotkeys(
@@ -270,8 +273,8 @@ fn extract_non_modifier_key(key: &str) -> String {
 }
 
 fn keys_to_gnome_binding(keys: &[String]) -> String {
-    let mut modifiers = Vec::new();
-    let mut non_mod = String::new();
+    let mut modifiers = Vec::default();
+    let mut non_mod = String::default();
 
     for key in keys {
         if let Some((name, _)) = classify_key(key) {
@@ -317,8 +320,8 @@ fn keys_to_sway_binding(keys: &[String]) -> String {
 }
 
 fn keys_to_hyprland_binding(keys: &[String]) -> (String, String) {
-    let mut modifiers = Vec::new();
-    let mut non_mod = String::new();
+    let mut modifiers = Vec::default();
+    let mut non_mod = String::default();
 
     for key in keys {
         if let Some((name, _)) = classify_key(key) {
@@ -582,8 +585,8 @@ fn sync_hyprland(script_path: &Path, bindings: &[CompositorBinding]) -> Result<(
 const KDE_DESKTOP_PREFIX: &str = "mausvoice-hotkey-";
 
 fn keys_to_kde_binding(keys: &[String]) -> String {
-    let mut modifiers = Vec::new();
-    let mut non_mod = String::new();
+    let mut modifiers = Vec::default();
+    let mut non_mod = String::default();
 
     for key in keys {
         if let Some((name, _)) = classify_key(key) {
@@ -777,8 +780,8 @@ fn cosmic_shortcuts_file() -> PathBuf {
 }
 
 fn keys_to_cosmic_binding(keys: &[String]) -> (Vec<String>, String) {
-    let mut modifiers: Vec<String> = Vec::new();
-    let mut non_mod = String::new();
+    let mut modifiers: Vec<String> = Vec::default();
+    let mut non_mod = String::default();
 
     for key in keys {
         if let Some((name, _)) = classify_key(key) {
@@ -913,22 +916,30 @@ fn sync_cosmic(script_path: &Path, bindings: &[CompositorBinding]) -> Result<(),
     Ok(())
 }
 
+static XDG_DATA_HOME: &str = "XDG_DATA_HOME";
+static HOME: &str = "HOME";
+
 fn data_home() -> PathBuf {
-    if let Ok(xdg) = std::env::var("XDG_DATA_HOME") {
+    if let Ok(xdg) = std::env::var(XDG_DATA_HOME) {
         return PathBuf::from(xdg);
     }
-    if let Ok(home) = std::env::var("HOME") {
+    if let Ok(home) = std::env::var(HOME) {
         return PathBuf::from(home).join(".local/share");
     }
-    PathBuf::from("/tmp")
+    let dir = tempdir().expect("Failed to create a temporary data directory");
+    dir.path().to_path_buf()
 }
 
+static XDG_CONFIG_HOME: &str = "XDG_CONFIG_HOME";
+static HOME: &str = "HOME";
+
 fn config_home() -> PathBuf {
-    if let Ok(xdg) = std::env::var("XDG_CONFIG_HOME") {
+    if let Ok(xdg) = std::env::var(XDG_CONFIG_HOME) {
         return PathBuf::from(xdg);
     }
-    if let Ok(home) = std::env::var("HOME") {
+    if let Ok(home) = std::env::var(HOME) {
         return PathBuf::from(home).join(".config");
     }
-    PathBuf::from("/tmp")
+    let dir = tempdir().expect("failed to create a temporary directory");
+    dir.into_path()
 }

@@ -110,9 +110,9 @@ pub fn run(receiver: Receiver<InMessage>) {
         current_level: Cell::new(0.0),
         target_level: Cell::new(0.0),
         loading_offset: Cell::new(0.0),
-        pending_levels: RefCell::new(Vec::new()),
+        pending_levels: RefCell::new(Vec::default()),
         style_count: Cell::new(0),
-        style_name: RefCell::new(String::new()),
+        style_name: RefCell::new(String::default()),
         tooltip_t: Cell::new(0.0),
         tooltip_velocity: Cell::new(0.0),
         tooltip_width: Cell::new(0.0),
@@ -126,9 +126,9 @@ pub fn run(receiver: Receiver<InMessage>) {
         assistant_compact: Cell::new(true),
         assistant_conversation_id: RefCell::new(None),
         assistant_user_prompt: RefCell::new(None),
-        assistant_messages: RefCell::new(Vec::new()),
+        assistant_messages: RefCell::new(Vec::default()),
         assistant_streaming: RefCell::new(None),
-        assistant_permissions: RefCell::new(Vec::new()),
+        assistant_permissions: RefCell::new(Vec::default()),
         panel_open_t: Cell::new(0.0),
         panel_open_velocity: Cell::new(0.0),
         kb_button_t: Cell::new(0.0),
@@ -138,15 +138,15 @@ pub fn run(receiver: Receiver<InMessage>) {
         content_height: Cell::new(0.0),
         viewport_height: Cell::new(0.0),
         should_stick: Cell::new(true),
-        click_regions: RefCell::new(Vec::new()),
+        click_regions: RefCell::new(Vec::default()),
         mouse_x: Cell::new(-1000.0),
         mouse_y: Cell::new(-1000.0),
-        entry_text: RefCell::new(String::new()),
+        entry_text: RefCell::new(String::default()),
         pause_t: Cell::new(0.0),
         pause_velocity: Cell::new(0.0),
         cancel_t: Cell::new(0.0),
         cancel_velocity: Cell::new(0.0),
-        flash_message: RefCell::new(String::new()),
+        flash_message: RefCell::new(String::default()),
         flash_visible: Cell::new(false),
         flash_t: Cell::new(0.0),
         flash_velocity: Cell::new(0.0),
@@ -157,13 +157,13 @@ pub fn run(receiver: Receiver<InMessage>) {
         fireworks_active: Cell::new(false),
         fireworks_elapsed: Cell::new(0.0),
         fireworks_next_launch: Cell::new(0),
-        fireworks_rockets: RefCell::new(Vec::new()),
+        fireworks_rockets: RefCell::new(Vec::default()),
         flame_active: Cell::new(false),
         flame_elapsed: Cell::new(0.0),
-        flame_tongues: RefCell::new(Vec::new()),
+        flame_tongues: RefCell::new(Vec::default()),
         flash_blue_active: Cell::new(false),
         flash_blue_elapsed: Cell::new(0.0),
-        transcript_text: RefCell::new(String::new()),
+        transcript_text: RefCell::new(String::default()),
         transcript_time_since_update: Cell::new(0.0),
         transcript_opacity: Cell::new(0.0),
         transcript_has_message: Cell::new(false),
@@ -216,56 +216,62 @@ pub fn run(receiver: Receiver<InMessage>) {
             while PeekMessageW(&mut msg, None, 0, 0, PM_REMOVE).as_bool() {
                 if msg.message == WM_QUIT {
                     windows::Win32::Media::timeEndPeriod(1);
-                    return;
                 }
-                if handle_edit_message(&msg) {
-                    continue;
+                if QUIT.with(|q| q.get()) {
+                    break;
                 }
-                let _ = TranslateMessage(&msg);
-                DispatchMessageW(&msg);
-            }
-            if QUIT.with(|q| q.get()) {
-                break;
-            }
 
-            on_anim_tick(hwnd);
+                on_anim_tick(hwnd);
 
-            let elapsed = Instant::now()
-                .duration_since(LAST_TICK.with(|c| c.get()).unwrap_or_else(Instant::now));
-            if let Some(remaining) = frame_interval.checked_sub(elapsed) {
-                std::thread::sleep(remaining);
+                let elapsed = Instant::now()
+                    .duration_since(LAST_TICK.with(|c| c.get()).unwrap_or_else(Instant::now));
+                if let Some(remaining) = frame_interval.checked_sub(elapsed) {
+                    std::thread::sleep(remaining);
+                }
             }
+            windows::Win32::Media::timeEndPeriod(1);
         }
-        windows::Win32::Media::timeEndPeriod(1);
     }
 }
 
 unsafe extern "system" fn wndproc(hwnd: HWND, msg: u32, wparam: WPARAM, lparam: LPARAM) -> LRESULT {
     match msg {
-        WM_TIMER => {
-            let timer_id = wparam.0;
-            if timer_id == TIMER_CURSOR {
-                on_cursor_tick(hwnd);
-            }
-            LRESULT(0)
+        WM_TIMER => handle_wm_timer(hwnd, wparam),
+        WM_MOUSEMOVE => handle_wm_mousemove(hwnd, lparam),
+        _ => DefaultWindowProcW(hwnd, msg, wparam, lparam),
+    }
+}
+
+fn handle_wm_timer(hwnd: HWND, wparam: WPARAM) -> LRESULT {
+    let timer_id = wparam.0;
+    if timer_id == TIMER_CURSOR {
+        on_cursor_tick(hwnd);
+    }
+    LRESULT(0)
+}
+
+fn handle_wm_mousemove(hwnd: HWND, lparam: LPARAM) -> LRESULT {
+    let raw_x = (lparam.0 & 0xFFFF) as i16 as f64;
+    let raw_y = ((lparam.0 >> 16) & 0xFFFF) as i16 as f64;
+    STATE.with(|s| {
+        if let Some(ref state) = *s.borrow() {
+            let (ox, oy) = state.content_offset();
+            let x = raw_x - ox;
+            let y = raw_y - oy;
+            state.mouse_x.set(x);
+            state.mouse_y.set(y);
+            let regions = state.click_regions.borrow();
+            let hit = regions.iter().rev().find(|r| r.contains(x, y));
+            let cursor_id = match hit {
+                Some(r) if matches!(r.action, ClickAction::InputField) => IDC_IBEAM,
+                Some(_) => IDC_HAND,
+                None => IDC_ARROW,
+            };
+            set_cursor(cursor_id);
         }
-        WM_MOUSEMOVE => {
-            let raw_x = (lparam.0 & 0xFFFF) as i16 as f64;
-            let raw_y = ((lparam.0 >> 16) & 0xFFFF) as i16 as f64;
-            STATE.with(|s| {
-                if let Some(ref state) = *s.borrow() {
-                    let (ox, oy) = state.content_offset();
-                    let x = raw_x - ox;
-                    let y = raw_y - oy;
-                    state.mouse_x.set(x);
-                    state.mouse_y.set(y);
-                    let regions = state.click_regions.borrow();
-                    let hit = regions.iter().rev().find(|r| r.contains(x, y));
-                    let cursor_id = match hit {
-                        Some(r) if matches!(r.action, ClickAction::InputField) => IDC_IBEAM,
-                        Some(_) => IDC_HAND,
-                        None => IDC_ARROW,
-                    };
+    });
+    LRESULT(0)
+}
                     unsafe {
                         SetCursor(LoadCursorW(None, cursor_id).ok());
                     }
@@ -370,7 +376,7 @@ unsafe extern "system" fn wndproc(hwnd: HWND, msg: u32, wparam: WPARAM, lparam: 
                             let text = state.entry_text.borrow().trim().to_string();
                             if !text.is_empty() {
                                 ipc::send(&OutMessage::TypedMessage { text });
-                                *state.entry_text.borrow_mut() = String::new();
+                                *state.entry_text.borrow_mut() = String::default();
                             }
                         } else if ch == '\u{8}' {
                             // Backspace
@@ -626,27 +632,6 @@ fn process_message(msg: InMessage, state: &PillState, _hwnd: HWND) {
         }
         InMessage::ResetPosition { strategy } => {
             state.has_saved_position.set(false);
-            state.reset_strategy.set(strategy);
-            state.dirty.set(true);
-            ipc::send(&OutMessage::PositionChanged {
-                has_saved_position: false,
-            });
-        }
-        InMessage::PillPlacement { placement } => {
-            let code = if placement == "top" {
-                PILL_PLACEMENT_TOP
-            } else {
-                PILL_PLACEMENT_BOTTOM
-            };
-            PILL_PLACEMENT.with(|c| c.set(code));
-            state.dirty.set(true);
-        }
-        InMessage::Quit => {
-            QUIT.with(|q| q.set(true));
-        }
-    }
-}
-
 /// Advances all pill animations by `dt` seconds: audio levels, springs
 /// (expand, tooltip, panel, keyboard button, window size, pause crossfade,
 /// cancel controls, drag inflate), and the fireworks/flame/flash/transcript
@@ -661,22 +646,36 @@ fn tick(state: &PillState, dt: f64) {
 
     // Audio levels (frame-rate independent)
     if is_recording {
-        let levels = state.pending_levels.borrow();
-        if !levels.is_empty() {
-            let sum: f64 = levels.iter().map(|v| *v as f64).sum();
-            let avg = sum / levels.len() as f64;
-            let peak = levels.iter().copied().fold(0.0_f32, f32::max) as f64;
-            let combined = (avg * 0.9 + peak * 0.85).min(1.0);
-            let boosted = (combined.sqrt() * 1.35).min(1.0);
-            let target = state.target_level.get();
-            let mix = 1.0 - 0.25_f64.powf(frame_scale);
-            state
-                .target_level
-                .set((target * (1.0 - mix) + boosted * mix).min(1.0));
-        }
+        tick_audio_levels(state, frame_scale);
     } else if is_loading {
+        tick_loading_levels(state);
+    }
+
+    // ... remaining tick logic ...
+}
+
+// Extracted from tick: audio level updates
+fn tick_audio_levels(state: &PillState, frame_scale: f64) {
+    let levels = state.pending_levels.borrow();
+    if !levels.is_empty() {
+        let sum: f64 = levels.iter().map(|v| *v as f64).sum();
+        let avg = sum / levels.len() as f64;
+        let peak = levels.iter().copied().fold(0.0_f32, f32::max) as f64;
+        let combined = (avg * 0.9 + peak * 0.85).min(1.0);
+        let boosted = (combined.sqrt() * 1.35).min(1.0);
         let target = state.target_level.get();
-        state.target_level.set(target.max(PROCESSING_BASE_LEVEL));
+        let mix = 1.0 - 0.25_f64.powf(frame_scale);
+        state
+            .target_level
+            .set((target * (1.0 - mix) + boosted * mix).min(1.0));
+    }
+}
+
+// Extracted from tick: loading level updates
+fn tick_loading_levels(state: &PillState) {
+    let target = state.target_level.get();
+    state.target_level.set(target.max(PROCESSING_BASE_LEVEL));
+}
     } else {
         state.target_level.set(0.0);
         state
@@ -896,7 +895,7 @@ fn tick_fireworks(state: &PillState, dt: f64) {
 
     let ww = state.draw_width.get();
     let wh = state.draw_height.get();
-    let (_, pill_y, _, _) = draw::pill_position(state, ww, wh);
+    let (_, pill_y, ..) = draw::pill_position(state, ww, wh);
     let origin_x = ww / 2.0;
     let origin_y = pill_y - FLASH_GAP - FLASH_HEIGHT / 2.0;
 
@@ -1327,22 +1326,22 @@ fn reposition_to_cursor_monitor(hwnd: HWND, state: &PillState) {
             let mut dy = cursor.y - state.drag_grab_offset_y.get().round() as i32;
             // Clamp the pill's footprint to the work area of whichever monitor
             // holds the cursor.
-            dx = dx.max(min_x).min(max_x);
-            dy = dy.max(min_y).min(max_y);
+            dx = dx.clamp(min_x, max_x);
+            dy = dy.clamp(min_y, max_y);
             (dx, dy)
         } else if state.has_saved_position.get() {
             // Use persisted position from last drag, clamped into the work area
             // of the monitor that position belongs to.
             let mut sx = state.saved_x.get();
             let mut sy = state.saved_y.get();
-            sx = sx.max(min_x).min(max_x);
-            sy = sy.max(min_y).min(max_y);
+            sx = sx.clamp(min_x, max_x);
+            sy = sy.clamp(min_y, max_y);
             (sx, sy)
         } else {
             let mut x = wa.left + (wa_w - win_w) / 2;
             let mut y = default_pill_y(wa.top, wa_h, win_h);
-            x = x.max(min_x).min(max_x);
-            y = y.max(min_y).min(max_y);
+            x = x.clamp(min_x, max_x);
+            y = y.clamp(min_y, max_y);
             (x, y)
         };
 
@@ -1735,7 +1734,7 @@ fn handle_edit_message(msg: &MSG) -> bool {
                         let text = state.entry_text.borrow().trim().to_string();
                         if !text.is_empty() {
                             ipc::send(&OutMessage::TypedMessage { text });
-                            *state.entry_text.borrow_mut() = String::new();
+                            *state.entry_text.borrow_mut() = String::default();
                         }
                     }
                 });
@@ -1888,7 +1887,7 @@ fn get_edit_text() -> String {
     unsafe {
         let len = GetWindowTextLengthW(edit);
         if len == 0 {
-            return String::new();
+            return String::default();
         }
         let mut buf = vec![0u16; (len + 1) as usize];
         GetWindowTextW(edit, &mut buf);

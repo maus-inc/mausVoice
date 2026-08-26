@@ -1,6 +1,9 @@
 // Prevents additional console window on Windows in release, DO NOT REMOVE!!
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
+static MAUSVOICE_KEYBOARD_LISTENER: &str = "MAUSVOICE_KEYBOARD_LISTENER";
+static MAUSVOICE_GPU_ENUMERATOR: &str = "MAUSVOICE_GPU_ENUMERATOR";
+
 mod flavor_env;
 
 fn main() {
@@ -21,7 +24,7 @@ fn main() {
 
     flavor_env::load_flavor_env();
 
-    if std::env::var("MAUSVOICE_KEYBOARD_LISTENER").as_deref() == Ok("1") {
+    if std::env::var(MAUSVOICE_KEYBOARD_LISTENER).as_deref() == Ok("1") {
         eprintln!("[startup] Running in keyboard listener mode");
         if let Err(err) = desktop_lib::platform::keyboard::run_listener_process() {
             eprintln!("[startup] ERROR: Keyboard listener process failed: {err}");
@@ -30,7 +33,7 @@ fn main() {
         return;
     }
 
-    if std::env::var("MAUSVOICE_GPU_ENUMERATOR").as_deref() == Ok("1") {
+    if std::env::var(MAUSVOICE_GPU_ENUMERATOR).as_deref() == Ok("1") {
         eprintln!("[startup] Running in GPU enumerator mode");
         if let Err(err) = desktop_lib::system::gpu::run_gpu_enumerator_process() {
             eprintln!("[startup] ERROR: GPU enumerator process failed: {err}");
