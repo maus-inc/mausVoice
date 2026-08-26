@@ -73,6 +73,8 @@ export const findEditCorrections = (args: {
 
   const added = computeAddedTokens(insertedText, windowText);
   const removed = computeRemovedTokens(insertedText, windowText);
+  // Symmetric multiset difference: tokens present in the inserted dictation
+  // but not in the focused field (i.e. what the user replaced away from).
 
   if (added.length === 0 || added.length > MAX_EDIT_TOKENS) {
     return [];

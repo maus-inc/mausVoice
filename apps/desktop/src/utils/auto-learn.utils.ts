@@ -17,11 +17,12 @@ const MAX_TERM_LENGTH = 40;
 const MAX_LEARNED_TERMS = 5;
 const MAX_EDIT_TOKENS = 8;
 
-// Split into leading/trailing passes rather than a single alternation. The
-// two anchored character classes can otherwise overlap on all-punctuation
-// tokens, which makes the regex backtrack in super-linear time.
-const LEADING_EDGE_PATTERN = /^[^\p{L}\p{N}'’-]+/u;
-const TRAILING_EDGE_PATTERN = /[^\p{L}\p{N}'’-]+$/u;
+// Strip leading/trailing punctuation. Each character class is anchored and
+// uses a single negated property class plus an explicit punctuation set, so
+// there is no alternation that could backtrack super-linearly. Splitting the
+// strip into two passes (leading, then trailing) keeps each regex linear.
+const LEADING_EDGE_PATTERN = /^[^\p{L}\p{N}'’\u2014-]+/u;
+const TRAILING_EDGE_PATTERN = /[^\p{L}\p{N}'’\u2014-]+$/u;
 const POSSESSIVE_SUFFIX_PATTERN = /['’]s$/iu;
 const UPPERCASE_LETTER_PATTERN = /^\p{Lu}/u;
 const LETTER_PATTERN = /\p{L}/u;
@@ -297,7 +298,7 @@ export const computeAddedTokens = (
 export const computeRemovedTokens = (
   original: string,
   corrected: string,
-): string[] => computeAddedTokens(corrected, original);
+): string[] => computeAddedTokens(original, corrected);
 
 const isCommonWord = (word: string): boolean =>
   COMMON_WORDS.has(word.toLowerCase());
