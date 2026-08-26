@@ -168,7 +168,7 @@ impl TranscriptionEngine {
             .map(str::trim)
             .filter(|v| !v.is_empty())
         {
-            let sanitized: Vec<&str> = prompt.matches(|ch| ch != '\0').collect();
+            let sanitized: String = prompt.matches(|ch| ch != '\0').collect();
             if !sanitized.is_empty() {
                 params.set_initial_prompt(&sanitized);
             }
