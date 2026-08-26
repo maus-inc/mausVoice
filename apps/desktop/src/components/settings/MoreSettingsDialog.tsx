@@ -29,6 +29,7 @@ import {
   setMenuBarIconHidden,
   setRealtimeOutputEnabled,
   setStylingMode,
+  setAutoLearnDictionaryEnabled,
 } from "../../actions/user.actions";
 import { produceAppState, useAppStore } from "../../store";
 import {
@@ -69,6 +70,7 @@ export const MoreSettingsDialog = () => {
     disableAutoStyleLoading,
     menuBarIconHidden,
     handsFreeDelayMs,
+    autoLearnDictionaryEnabled,
   ] = useAppStore((state) => {
     const prefs = getMyUserPreferences(state);
     const transcriptionPrefs = getTranscriptionPrefs(state);
@@ -88,6 +90,7 @@ export const MoreSettingsDialog = () => {
       state.local.disableAutoStyleLoading ?? false,
       prefs?.menuBarIconHidden ?? false,
       getEffectiveHandsFreeDelayMs(prefs),
+      prefs?.autoLearnDictionaryEnabled ?? true,
     ] as const;
   });
   const [dictationLimitInput, setDictationLimitInput] = useState(
@@ -179,6 +182,12 @@ export const MoreSettingsDialog = () => {
 
   const handleToggleRealtimeOutput = (event: ChangeEvent<HTMLInputElement>) => {
     void setRealtimeOutputEnabled(event.target.checked);
+  };
+
+  const handleToggleAutoLearnDictionary = (
+    event: ChangeEvent<HTMLInputElement>,
+  ) => {
+    void setAutoLearnDictionaryEnabled(event.target.checked);
   };
 
   const handleToggleDisablePillRewards = (
@@ -295,6 +304,20 @@ export const MoreSettingsDialog = () => {
               }
             />
           )}
+
+          <SettingSection
+            title={<FormattedMessage defaultMessage="Auto-learn dictionary" />}
+            description={
+              <FormattedMessage defaultMessage="When you correct a transcription, add the corrected names and words to your dictionary automatically." />
+            }
+            action={
+              <Switch
+                edge="end"
+                checked={autoLearnDictionaryEnabled}
+                onChange={handleToggleAutoLearnDictionary}
+              />
+            }
+          />
 
           <SettingSection
             title={

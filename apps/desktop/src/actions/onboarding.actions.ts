@@ -206,6 +206,7 @@ export const submitOnboarding = async () => {
       pillPlacement: "bottom",
       alwaysRequestAdminOnStartup: false,
       handsFreeDelayMs: DEFAULT_HANDS_FREE_DELAY_MS,
+      autoLearnDictionaryEnabled: true,
     };
 
     const [savedUser, savedPreferences] = await Promise.all([

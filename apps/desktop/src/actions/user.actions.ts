@@ -129,6 +129,7 @@ export const createDefaultPreferences = (): UserPreferences => ({
   insertionMethod: null,
   typingSpeedMs: null,
   handsFreeDelayMs: DEFAULT_HANDS_FREE_DELAY_MS,
+  autoLearnDictionaryEnabled: true,
 });
 
 export const updateUserPreferences = async (
@@ -671,6 +672,14 @@ export const setHandsFreeDelayMs = async (
     preferences.handsFreeDelayMs =
       delayMs == null ? null : normalizeHandsFreeDelayMs(delayMs);
   }, "Failed to save hands-free delay preference. Please try again.");
+};
+
+export const setAutoLearnDictionaryEnabled = async (
+  enabled: boolean,
+): Promise<void> => {
+  await updateUserPreferences((preferences) => {
+    preferences.autoLearnDictionaryEnabled = enabled;
+  }, "Failed to save auto-learn dictionary preference. Please try again.");
 };
 
 export const setRealtimeOutputEnabled = async (

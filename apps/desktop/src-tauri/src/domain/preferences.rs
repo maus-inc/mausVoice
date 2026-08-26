@@ -114,6 +114,10 @@ pub struct UserPreferences {
     /// Deterministic spoken formatting / scratch-that. Default on.
     #[serde(default = "default_true")]
     pub spoken_commands_enabled: bool,
+    /// Automatically add corrected names and words as glossary terms when
+    /// the user edits a transcription. Enabled by default.
+    #[serde(default = "default_auto_learn_dictionary_enabled")]
+    pub auto_learn_dictionary_enabled: bool,
 }
 
 fn default_hallucination_filter_enabled() -> bool {
@@ -126,6 +130,10 @@ fn default_agent_max_iterations() -> i64 {
 
 fn default_agent_permission_timeout_ms() -> i64 {
     60_000
+}
+
+fn default_auto_learn_dictionary_enabled() -> bool {
+    true
 }
 
 fn default_true() -> bool {

@@ -48,6 +48,7 @@ export type UserPreferences = {
   pillPlacement: PillPlacement;
   alwaysRequestAdminOnStartup: boolean;
   handsFreeDelayMs: Nullable<number>;
+  autoLearnDictionaryEnabled: boolean;
 
   // deprecated
 };

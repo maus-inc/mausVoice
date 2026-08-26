@@ -1145,7 +1145,12 @@ pillPlacement?: string;
  * Delay (ms) between a hands-free stop and the actual paste/type
  * action. NULL disables the delay (immediate paste on stop).
  */
-handsFreeDelayMs?: number | null }
+handsFreeDelayMs?: number | null; 
+/**
+ * Automatically add corrected names and words as glossary terms when
+ * the user edits a transcription. Enabled by default.
+ */
+autoLearnDictionaryEnabled?: boolean }
 export type UserPreferencesGetArgs = { userId: string }
 
 /** tauri-specta globals **/

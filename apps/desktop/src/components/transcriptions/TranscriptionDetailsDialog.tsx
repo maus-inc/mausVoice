@@ -1,4 +1,7 @@
 import CheckCircleRoundedIcon from "@mui/icons-material/CheckCircleRounded";
+import CheckRoundedIcon from "@mui/icons-material/CheckRounded";
+import CloseRoundedIcon from "@mui/icons-material/CloseRounded";
+import EditRoundedIcon from "@mui/icons-material/EditRounded";
 import ReplayRoundedIcon from "@mui/icons-material/ReplayRounded";
 import {
   Box,
@@ -10,11 +13,14 @@ import {
   DialogTitle,
   Divider,
   Stack,
+  TextField,
   Typography,
 } from "@mui/material";
 import { getRec } from "@maus-inc/utilities";
-import { useMemo } from "react";
-import { FormattedMessage } from "react-intl";
+import { useEffect, useMemo, useState } from "react";
+import { FormattedMessage, useIntl } from "react-intl";
+import { saveCorrectedTranscript } from "../../actions/auto-learn.actions";
+import { showErrorSnackbar, showSnackbar } from "../../actions/app.actions";
 import {
   closeTranscriptionDetailsDialog,
   openRetranscribeDialog,
@@ -59,6 +65,7 @@ const resolveApiKeyLabel = (
 };
 
 export const TranscriptionDetailsDialog = () => {
+  const intl = useIntl();
   const open = useAppStore((state) => state.transcriptions.detailsDialogOpen);
   const transcription = useAppStore((state) => {
     const transcriptionId = state.transcriptions.detailsDialogTranscriptionId;
@@ -68,6 +75,15 @@ export const TranscriptionDetailsDialog = () => {
     return getRec(state.transcriptionById, transcriptionId);
   });
   const apiKeysById = useAppStore((state) => state.apiKeyById);
+
+  const [isEditingFinal, setIsEditingFinal] = useState(false);
+  const [finalDraft, setFinalDraft] = useState("");
+  const [isSavingFinal, setIsSavingFinal] = useState(false);
+
+  useEffect(() => {
+    setIsEditingFinal(false);
+    setFinalDraft("");
+  }, [open, transcription?.id]);
 
   const isRetranscribing = useAppStore((state) =>
     transcription?.id
@@ -197,6 +213,60 @@ export const TranscriptionDetailsDialog = () => {
       .filter((warning) => warning.length > 0);
   }, [transcription?.warnings]);
 
+  const startEditingFinal = () => {
+    setFinalDraft(finalTranscriptText);
+    setIsEditingFinal(true);
+  };
+
+  const cancelEditingFinal = () => {
+    setIsEditingFinal(false);
+    setFinalDraft("");
+  };
+
+  const handleSaveFinal = async () => {
+    if (!transcription?.id) {
+      return;
+    }
+
+    setIsSavingFinal(true);
+    try {
+      const { learnedTerms } = await saveCorrectedTranscript({
+        transcriptionId: transcription.id,
+        correctedText: finalDraft,
+      });
+
+      setIsEditingFinal(false);
+      setFinalDraft("");
+
+      if (learnedTerms.length === 1) {
+        showSnackbar(
+          intl.formatMessage(
+            { defaultMessage: 'Added "{term}" to your dictionary' },
+            { term: learnedTerms[0] },
+          ),
+          { mode: "success" },
+        );
+      } else if (learnedTerms.length > 1) {
+        showSnackbar(
+          intl.formatMessage(
+            { defaultMessage: "Added {count} words to your dictionary" },
+            { count: learnedTerms.length },
+          ),
+          { mode: "success" },
+        );
+      } else {
+        showSnackbar(
+          intl.formatMessage({ defaultMessage: "Transcript updated" }),
+          { mode: "success" },
+        );
+      }
+    } catch (error) {
+      showErrorSnackbar(error);
+    } finally {
+      setIsSavingFinal(false);
+    }
+  };
+
   return (
     <Dialog
       open={open}
@@ -239,16 +309,83 @@ export const TranscriptionDetailsDialog = () => {
                     monospace
                   />
                 )}
-                <TranscriptionTextBlock
-                  label={
-                    <FormattedMessage defaultMessage="Final transcription" />
-                  }
-                  value={finalTranscriptText}
-                  placeholder={
-                    <FormattedMessage defaultMessage="Final transcript unavailable." />
-                  }
-                  monospace
-                />
+                {isEditingFinal ? (
+                  <Box>
+                    <Typography
+                      variant="caption"
+                      sx={{
+                        color: "text.secondary",
+                      }}
+                    >
+                      <FormattedMessage defaultMessage="Final transcription" />
+                    </Typography>
+                    <TextField
+                      autoFocus
+                      fullWidth
+                      multiline
+                      minRows={3}
+                      value={finalDraft}
+                      onChange={(event) => setFinalDraft(event.target.value)}
+                      disabled={isSavingFinal}
+                      sx={{ mt: 0.5 }}
+                    />
+                    <Stack
+                      direction="row"
+                      spacing={1}
+                      sx={{ justifyContent: "flex-end", mt: 1 }}
+                    >
+                      <Button
+                        size="small"
+                        variant="text"
+                        startIcon={<CloseRoundedIcon />}
+                        onClick={cancelEditingFinal}
+                        disabled={isSavingFinal}
+                      >
+                        <FormattedMessage defaultMessage="Cancel" />
+                      </Button>
+                      <Button
+                        size="small"
+                        variant="contained"
+                        startIcon={
+                          isSavingFinal ? (
+                            <CircularProgress size={16} color="inherit" />
+                          ) : (
+                            <CheckRoundedIcon />
+                          )
+                        }
+                        onClick={handleSaveFinal}
+                        disabled={
+                          isSavingFinal || finalDraft.trim().length === 0
+                        }
+                      >
+                        <FormattedMessage defaultMessage="Save" />
+                      </Button>
+                    </Stack>
+                  </Box>
+                ) : (
+                  <Box>
+                    <TranscriptionTextBlock
+                      label={
+                        <FormattedMessage defaultMessage="Final transcription" />
+                      }
+                      value={finalTranscriptText}
+                      placeholder={
+                        <FormattedMessage defaultMessage="Final transcript unavailable." />
+                      }
+                      monospace
+                    />
+                    {finalTranscriptText.trim().length > 0 && (
+                      <Button
+                        size="small"
+                        startIcon={<EditRoundedIcon />}
+                        onClick={startEditingFinal}
+                        sx={{ mt: 0.5 }}
+                      >
+                        <FormattedMessage defaultMessage="Edit" />
+                      </Button>
+                    )}
+                  </Box>
+                )}
               </Stack>
             </Box>
 

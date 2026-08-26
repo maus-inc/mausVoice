@@ -12,3 +12,5 @@ Enter the canonical spelling you want the recognizer to favor. Do not add severa
 Provider behavior differs. Some APIs expose prompt, keyword, or vocabulary features with different limits, and local models may consume context differently. mausVoice passes the available hints through its transcription layer where implemented, but cannot promise identical weighting across providers.
 
 After adding a term, make three normal-speed test recordings with it in different sentence positions. If the raw transcript still returns a consistent alternative, add a replacement rule from that observed alternative to the canonical text.
+
+mausVoice can also add terms for you. Turn on **More settings → Auto-learn dictionary**, then correct a transcription in History. The corrected names become glossary terms automatically. The heuristic adds proper nouns, skips common words, and never creates a replacement rule.

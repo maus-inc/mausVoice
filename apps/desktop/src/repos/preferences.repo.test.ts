@@ -123,6 +123,27 @@ describe("preferences round-trip", () => {
   });
 });
 
+describe("autoLearnDictionaryEnabled preference", () => {
+  it("defaults to true when the local row omits the field", () => {
+    const loaded = fromLocalPreferences({
+      ...toLocalPreferences(createDefaultPreferences()),
+      autoLearnDictionaryEnabled: undefined,
+    });
+    expect(loaded.autoLearnDictionaryEnabled).toBe(true);
+  });
+
+  it("preserves an explicit false across a round-trip", () => {
+    const loaded = fromLocalPreferences({
+      ...toLocalPreferences(createDefaultPreferences()),
+      autoLearnDictionaryEnabled: false,
+    });
+    expect(loaded.autoLearnDictionaryEnabled).toBe(false);
+
+    const saved = toLocalPreferences(loaded);
+    expect(saved.autoLearnDictionaryEnabled).toBe(false);
+  });
+});
+
 describe("preserveAudioOnFailure preference", () => {
   it("defaults to true when the local row omits the field", () => {
     const loaded = fromLocalPreferences({

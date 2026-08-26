@@ -161,6 +161,11 @@ pub const API_KEY_TRANSCRIPTION_PATH_MIGRATION_SQL: &str =
 pub const PILL_PLACEMENT_AND_HANDS_FREE_DELAY_MIGRATION_SQL: &str =
     include_str!("migrations/083_pill_placement_and_hands_free_delay.sql");
 
+/// Adds the `auto_learn_dictionary_enabled` column to
+/// `user_preferences`.
+pub const AUTO_LEARN_DICTIONARY_MIGRATION_SQL: &str =
+    include_str!("migrations/084_auto_learn_dictionary.sql");
+
 pub fn migrations() -> Vec<tauri_plugin_sql::Migration> {
     vec![
         tauri_plugin_sql::Migration {
@@ -629,6 +634,12 @@ pub fn migrations() -> Vec<tauri_plugin_sql::Migration> {
             version: 83,
             description: "add_pill_placement_and_hands_free_delay",
             sql: PILL_PLACEMENT_AND_HANDS_FREE_DELAY_MIGRATION_SQL,
+            kind: tauri_plugin_sql::MigrationKind::Up,
+        },
+        tauri_plugin_sql::Migration {
+            version: 84,
+            description: "add_auto_learn_dictionary_enabled",
+            sql: AUTO_LEARN_DICTIONARY_MIGRATION_SQL,
             kind: tauri_plugin_sql::MigrationKind::Up,
         },
     ]
