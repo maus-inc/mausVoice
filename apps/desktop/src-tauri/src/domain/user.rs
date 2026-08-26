@@ -78,10 +78,6 @@ mod tests {
 
     #[test]
     fn deserializes_when_interaction_feedback_volume_is_null() {
-        // Build the payload with the new field INSIDE the object, so the
-        // JSON is well-formed. The previous format!("{MINIMAL}, ...")-style
-        // build produced trailing characters after the closing brace and
-        // made the boundary test panic at parse time.
         let payload = json!({
             "id": "u-1",
             "name": "Test",

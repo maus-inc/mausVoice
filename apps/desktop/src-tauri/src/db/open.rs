@@ -598,7 +598,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn migration_78_adds_post_process_attribution_on_existing_db() {
+    async fn migration_78_and_79_upgrade_legacy_1_5_x_db() {
         // Simulate a user upgrading from a pre-078 (1.5.x) build:
         // create the transcriptions table without the three new columns,
         // record migrations 1..77 as already applied with their real
@@ -678,8 +678,8 @@ mod tests {
         .await
         .unwrap();
         // Legacy user_profiles table (no interaction_feedback_volume
-        // column). Migration 79 ALTERs this table; without it the
-        // upgrade path panics with "no such table: user_profiles".
+        // column), with one pre-upgrade row so migration 79's DEFAULT
+        // materialization is observable.
         sqlx::query(
             "CREATE TABLE user_profiles (
                 id TEXT PRIMARY KEY,
@@ -691,12 +691,38 @@ mod tests {
         .execute(&pool)
         .await
         .unwrap();
+        sqlx::query(
+            "INSERT INTO user_profiles (id, name, bio)
+             VALUES ('legacy-user', 'Legacy', '')",
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
         pool.close().await;
 
         // Reopen: migrations 78 and 79 run (ADD COLUMN on
         // transcriptions and user_profiles respectively). A failing
         // upgrade would fail the `try_open` call below.
         let pool = try_open(&temp.path).await.expect("upgrade opens");
+
+        // Migration 79 recorded and its constant default materialized on
+        // the pre-upgrade profile row.
+        let migrated_volume =
+            sqlx::query("SELECT interaction_feedback_volume FROM user_profiles WHERE id = 'legacy-user'")
+                .fetch_one(&pool)
+                .await
+                .expect("legacy profile row survives")
+                .try_get::<f64, _>("interaction_feedback_volume")
+                .expect("column exists after migration");
+        assert_eq!(migrated_volume, crate::domain::user::DEFAULT_INTERACTION_FEEDBACK_VOLUME as f64);
+        let v79 = sqlx::query(
+            "SELECT COUNT(*) AS n FROM _sqlx_migrations WHERE version = 79 AND success = 1",
+        )
+        .fetch_one(&pool)
+        .await
+        .unwrap()
+        .get::<i64, _>("n");
+        assert_eq!(v79, 1);
 
         // Legacy row reads back NULL for the new columns.
         let legacy = sqlx::query(

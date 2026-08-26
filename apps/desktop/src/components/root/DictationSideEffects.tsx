@@ -610,7 +610,9 @@ export const DictationSideEffects = () => {
       trackAppUsed(appTarget?.name ?? "Unknown");
 
       if (appTarget) {
-        saveManualStyleForApp(appTarget);
+        // Awaited so a fast next dictation cannot read the stale app tone
+        // and clobber the live selection the user just switched to.
+        await saveManualStyleForApp(appTarget);
       }
 
       // Manual mode: the tone selected at recording START styles the whole

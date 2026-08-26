@@ -65,9 +65,13 @@ pub async fn upsert_user(pool: SqlitePool, user: &User) -> Result<User, sqlx::Er
     .bind(user.words_total)
     .bind(if user.play_interaction_chime { 1 } else { 0 })
     .bind(
+        // Enforce the canonical safe window at the persistence boundary:
+        // a restored or synced payload carrying an out-of-range value is
+        // clamped before it can reach SQLite, matching the sink-side
+        // clamp so what is stored is always what would be played.
         user.interaction_feedback_volume
             .unwrap_or(crate::domain::user::DEFAULT_INTERACTION_FEEDBACK_VOLUME)
-            as f64,
+            .clamp(0.05, 0.5) as f64,
     )
     .bind(if user.has_finished_tutorial { 1 } else { 0 })
     .bind(if user.has_migrated_preferred_microphone { 1 } else { 0 })

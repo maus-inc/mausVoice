@@ -61,7 +61,12 @@ export const UserZod = z
     preferredLanguage: z.string().nullable().optional(),
     preferredMicrophone: z.string().nullable().optional(),
     playInteractionChime: z.boolean(),
-    interactionFeedbackVolume: z.number().min(0).max(1).nullable().optional(),
+    interactionFeedbackVolume: z
+      .number()
+      .min(0.05)
+      .max(0.5)
+      .nullable()
+      .optional(),
     hasFinishedTutorial: z.boolean(),
     wordsThisMonth: z.number(),
     wordsThisMonthMonth: z.string().nullable().optional(),

@@ -27,8 +27,8 @@ type ThockVolumeControlProps = {
 };
 
 /**
- * Slider row for the interaction-feedback (thock) click volume.
- * Extracted from AudioDialog to keep JSX nesting shallow.
+ * Slider row for the interaction-feedback (thock) click volume. Its
+ * range mirrors the Rust sink's safe window.
  */
 const ThockVolumeControl = ({
   enabled,
