@@ -125,7 +125,7 @@ pub fn write_startup_diagnostics(app: &tauri::AppHandle) {
         }
     }
 
-    match fs::OpenOptions::default()
+    match fs::OpenOptions::new()
         .create(true)
         .append(true)
         .open(&log_path)
