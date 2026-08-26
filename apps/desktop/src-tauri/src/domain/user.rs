@@ -54,10 +54,13 @@ const fn default_play_interaction_chime() -> bool {
     true
 }
 
-/// Default thock gain (clamped to the safe window at the sink). Used by
-/// `audio_feedback` and the Audio dialog when the field is missing on
-/// disk; the deserialized value is `Option<f32>`, so the write site
-/// still needs to coalesce explicit `null`.
+/// Default thock gain (clamped to the safe window at the sink). The
+/// `user_set_one` write site coalesces a `None`/`interaction_feedback_volume`
+/// to this value so the `NOT NULL` column stays in range. The
+/// `audio_feedback` module owns its own internal default (the atomic
+/// is initialized to `0.35_f32.to_bits()`), and the TS fallbacks use
+/// `?? 0.35` literals; this constant is the canonical Rust-side value
+/// the SQL layer should write.
 pub const DEFAULT_INTERACTION_FEEDBACK_VOLUME: f32 = 0.35;
 
 #[cfg(test)]
@@ -71,31 +74,47 @@ mod tests {
     //! on every fresh install.
 
     use super::*;
-
-    const MINIMAL: &str = r#"{
-        "id": "u-1",
-        "name": "Test",
-        "bio": "",
-        "onboarded": false
-    }"#;
+    use serde_json::json;
 
     #[test]
     fn deserializes_when_interaction_feedback_volume_is_null() {
-        let payload = format!("{MINIMAL}, \"interactionFeedbackVolume\": null");
-        let user: User = serde_json::from_str(&payload).expect("null must deserialize");
+        // Build the payload with the new field INSIDE the object, so the
+        // JSON is well-formed. The previous format!("{MINIMAL}, ...")-style
+        // build produced trailing characters after the closing brace and
+        // made the boundary test panic at parse time.
+        let payload = json!({
+            "id": "u-1",
+            "name": "Test",
+            "bio": "",
+            "onboarded": false,
+            "interactionFeedbackVolume": null,
+        });
+        let user: User = serde_json::from_value(payload).expect("null must deserialize");
         assert_eq!(user.interaction_feedback_volume, None);
     }
 
     #[test]
     fn deserializes_when_interaction_feedback_volume_is_missing() {
-        let user: User = serde_json::from_str(MINIMAL).expect("missing key must deserialize");
+        let payload = json!({
+            "id": "u-1",
+            "name": "Test",
+            "bio": "",
+            "onboarded": false,
+        });
+        let user: User = serde_json::from_value(payload).expect("missing key must deserialize");
         assert_eq!(user.interaction_feedback_volume, None);
     }
 
     #[test]
     fn deserializes_when_interaction_feedback_volume_is_a_number() {
-        let payload = format!("{MINIMAL}, \"interactionFeedbackVolume\": 0.42");
-        let user: User = serde_json::from_str(&payload).expect("number must deserialize");
+        let payload = json!({
+            "id": "u-1",
+            "name": "Test",
+            "bio": "",
+            "onboarded": false,
+            "interactionFeedbackVolume": 0.42,
+        });
+        let user: User = serde_json::from_value(payload).expect("number must deserialize");
         assert_eq!(user.interaction_feedback_volume, Some(0.42));
     }
 }
