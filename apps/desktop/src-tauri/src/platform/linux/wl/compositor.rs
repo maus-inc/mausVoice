@@ -159,19 +159,38 @@ pub fn sync_compositor_hotkeys(
 
 // --- Key translation ---
 
+fn is_super_modifier(lower: &str) -> bool {
+    let n = lower.len();
+    (lower.starts_with("meta") && n >= 5)
+        || (lower.starts_with("super") && n >= 5)
+        || (lower.starts_with("os") && n >= 4)
+        || (lower.starts_with("win") && n >= 4)
+}
+
+fn is_ctrl_modifier(lower: &str) -> bool {
+    let n = lower.len();
+    lower.starts_with("control") && n >= 7
+}
+
+fn is_shift_modifier(lower: &str) -> bool {
+    let n = lower.len();
+    lower.starts_with("shift") && n >= 5
+}
+
+fn is_alt_modifier(lower: &str) -> bool {
+    let n = lower.len();
+    (lower.starts_with("alt") && n >= 3) || (lower.starts_with("option") && n >= 6)
+}
+
 fn classify_key(key: &str) -> Option<(&'static str, bool)> {
     let lower = key.to_lowercase();
-    if lower.starts_with("meta")
-        || lower.starts_with("super")
-        || lower.starts_with("os")
-        || lower.starts_with("win")
-    {
+    if is_super_modifier(&lower) {
         Some(("super", true))
-    } else if lower.starts_with("control") {
+    } else if is_ctrl_modifier(&lower) {
         Some(("ctrl", true))
-    } else if lower.starts_with("shift") {
+    } else if is_shift_modifier(&lower) {
         Some(("shift", true))
-    } else if lower.starts_with("alt") || lower.starts_with("option") {
+    } else if is_alt_modifier(&lower) {
         Some(("alt", true))
     } else {
         None
@@ -227,6 +246,15 @@ mod classify_key_tests {
         assert_eq!(classify_key("KeyA"), None);
         assert_eq!(classify_key("Escape"), None);
         assert_eq!(classify_key("Digit1"), None);
+    }
+
+    #[test]
+    fn does_not_match_oem_like_keys() {
+        assert_eq!(classify_key("oem102"), None);
+        assert_eq!(classify_key("oem1"), None);
+        assert_eq!(classify_key("o"), None);
+        assert_eq!(classify_key("ordinary"), None);
+        assert_eq!(classify_key("ose"), None);
     }
 }
 

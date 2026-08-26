@@ -15,12 +15,12 @@ Incognito only controls mausVoice's local persistence. It does not stop API proc
 
 ## Audio retention on failed transcriptions
 
-When a transcription fails (the provider rejects the request, returns an empty result, or returns warnings that mark the call as failed), the dictated words are lost unless the audio was already saved. To keep that recovery path open, mausVoice writes the audio snapshot **before** the Incognito check, so even an Incognito session has the audio on disk if the transcription later fails.
+Incognito never writes the audio snapshot. The transcription result is also not added to your history. If the transcription later fails, the audio is gone too, so there is no on-disk recovery path for an Incognito recording. This is the privacy trade-off: Incognito guarantees that nothing about the recording is persisted locally, at the cost of being unable to recover a failed Incognito dictation.
 
 The behavior at a glance:
 
-- Incognito on, transcription succeeds: audio is saved to disk, no row in **History** (Incognito still suppresses the record).
-- Incognito on, transcription fails: audio is saved to disk, no row in **History**. The user can recover the audio file from the app's managed-audio directory.
+- Incognito on, transcription succeeds: no audio on disk, no row in **History**.
+- Incognito on, transcription fails: no audio on disk, no row in **History**. The recording cannot be recovered.
 - Incognito off, transcription succeeds: audio is saved and the row appears in **History**.
 - Incognito off, transcription fails: depends on **Preserve audio on failure** (see below).
 
@@ -31,6 +31,4 @@ The behavior at a glance:
 - **On (default):** the audio is retained alongside the failed transcription row, so you can replay it and recover the words.
 - **Off:** the audio is dropped for failed transcriptions. Successful transcriptions still keep their audio. This is the older behavior and is useful when disk space matters more than recovery.
 
-The setting applies only outside Incognito. In Incognito, audio is always written to disk before the transcription result is known, because the recovery path is the main reason the audio exists in that mode.
-
-A failed Incognito recording still produces no **History** row, even with the audio on disk. The audio is a recovery artifact, not a logged entry.
+The setting applies only outside Incognito. In Incognito, the audio snapshot is never written to disk and the transcription is not added to your history, regardless of the result.

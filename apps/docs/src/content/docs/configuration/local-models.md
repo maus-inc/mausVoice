@@ -34,22 +34,22 @@ The Settings panel downloads every supported file and validates it before it is 
 
 The parent directory is the Tauri app data directory. Production uses bundle id `com.mausinc.desktop`; local development uses `com.mausinc.desktop.local`, so dev and release do not share files.
 
-| OS      | `transcription-models/` parent                                                  |
-| ------- | ------------------------------------------------------------------------------- |
-| macOS   | `~/Library/Application Support/com.mausinc.desktop/transcription-models/`      |
+| OS      | `transcription-models/` parent                                                        |
+| ------- | ------------------------------------------------------------------------------------- |
+| macOS   | `~/Library/Application Support/com.mausinc.desktop/transcription-models/`             |
 | Windows | `%APPDATA%\com.mausinc.desktop\transcription-models\` (resolve with `echo %APPDATA%`) |
-| Linux   | `~/.local/share/com.mausinc.desktop/transcription-models/`                      |
+| Linux   | `~/.local/share/com.mausinc.desktop/transcription-models/`                            |
 
 Whisper files go straight into that directory. The filename must match the model ID exactly because the runtime opens it by name; a renamed file is treated as missing.
 
-| UI label               | ID        | Expected filename              |
-| ---------------------- | --------- | ------------------------------ |
-| Whisper Tiny           | `tiny`    | `ggml-tiny.bin`                |
-| Whisper Base           | `base`    | `ggml-base.bin`                |
-| Whisper Small          | `small`   | `ggml-small.bin`               |
-| Whisper Medium         | `medium`  | `ggml-medium.bin`              |
-| Whisper Large v3       | `large`   | `ggml-large-v3.bin`            |
-| Whisper Large v3 Turbo | `turbo`   | `ggml-large-v3-turbo.bin`      |
+| UI label               | ID       | Expected filename         |
+| ---------------------- | -------- | ------------------------- |
+| Whisper Tiny           | `tiny`   | `ggml-tiny.bin`           |
+| Whisper Base           | `base`   | `ggml-base.bin`           |
+| Whisper Small          | `small`  | `ggml-small.bin`          |
+| Whisper Medium         | `medium` | `ggml-medium.bin`         |
+| Whisper Large v3       | `large`  | `ggml-large-v3.bin`       |
+| Whisper Large v3 Turbo | `turbo`  | `ggml-large-v3-turbo.bin` |
 
 ONNX models (Parakeet CTC, Parakeet TDT, Canary 1B) ship multiple artifacts, so each gets its own subdirectory named after the model ID. The sidecar marks the model ready only after the encoder, decoder, tokenizer, and any companion files for that model are present together. Downloading from the Settings panel handles this grouping; manual placement must keep every artifact in the same subdirectory, or validation will keep failing.
 

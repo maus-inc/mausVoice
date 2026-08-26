@@ -51,10 +51,12 @@ const JSON_SCHEMA_SUPPORTED_MODELS = new Set<string>([
   "moonshotai/kimi-k2-instruct-0905",
 ]);
 
-const buildResponseFormat = (
-  model: string,
-  jsonResponse?: JsonResponse,
-) => buildJsonSchemaResponseFormat(model, JSON_SCHEMA_SUPPORTED_MODELS, jsonResponse);
+const buildResponseFormat = (model: string, jsonResponse?: JsonResponse) =>
+  buildJsonSchemaResponseFormat(
+    model,
+    JSON_SCHEMA_SUPPORTED_MODELS,
+    jsonResponse,
+  );
 
 /**
  * Create OpenAI client configured for OpenRouter
