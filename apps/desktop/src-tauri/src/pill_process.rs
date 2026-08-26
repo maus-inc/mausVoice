@@ -352,10 +352,7 @@ fn parse_json(line: &str) -> Option<serde_json::Value> {
 // Owned extraction: borrowing from a temporary `Value` inside a let-else
 // would outlive the temporary (E0716), so string fields are cloned out.
 fn json_str_field(line: &str, key: &str) -> Option<String> {
-    parse_json(line)?
-        .get(key)?
-        .as_str()
-        .map(str::to_string)
+    parse_json(line)?.get(key)?.as_str().map(str::to_string)
 }
 
 fn handle_typed_message(app: &tauri::AppHandle, line: &str) {
