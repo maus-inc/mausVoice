@@ -2938,12 +2938,16 @@ pub fn set_pill_visibility(app: AppHandle, visibility: String) -> Result<(), Str
 #[tauri::command]
 #[specta::specta]
 pub fn set_pill_placement(app: AppHandle, placement: String) -> Result<(), String> {
-    match placement.as_str() {
-        "top" | "bottom" => {}
-        other => return Err(format!("invalid pill placement: {other:?}")),
-    }
+    validate_pill_placement(&placement)?;
     crate::platform::overlay::notify_pill_placement(&app, &placement);
     Ok(())
+}
+
+fn validate_pill_placement(placement: &str) -> Result<(), String> {
+    match placement {
+        "top" | "bottom" => Ok(()),
+        other => Err(format!("invalid pill placement: {other:?}")),
+    }
 }
 
 #[tauri::command]
@@ -2997,7 +3001,7 @@ pub fn retry_key_listener(app: AppHandle) -> Result<(), String> {
 #[tauri::command]
 #[specta::specta]
 pub fn restart_key_listener(app: AppHandle) -> Result<(), String> {
-    crate::platform::keyboard::start_key_listener(&app)
+    retry_key_listener(app)
 }
 
 #[tauri::command]
@@ -4994,14 +4998,15 @@ mod tests {
 
     #[test]
     fn pill_placement_accepts_top_and_bottom_only() {
-        // set_pill_placement mirrors the same accept-list policy as
-        // set_pill_visibility: an unknown value would otherwise be
-        // coerced to a default on the platform overlay and mask a typo.
-        let valid = ["top", "bottom"];
-        for v in valid {
-            assert!(matches!(v, "top" | "bottom"));
-        }
-        assert!(!matches!("center", "top" | "bottom"));
+        // Exercise the validator extracted from set_pill_placement so a
+        // regression in the accept-list (typo in the literal, removal of a
+        // branch, etc.) cannot ship silently — the previous test simply
+        // re-asserted the implementation against the implementation.
+        assert!(validate_pill_placement("top").is_ok());
+        assert!(validate_pill_placement("bottom").is_ok());
+        assert!(validate_pill_placement("center").is_err());
+        assert!(validate_pill_placement("").is_err());
+        assert!(validate_pill_placement("TOP").is_err());
     }
 
     #[test]

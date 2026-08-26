@@ -90,6 +90,15 @@ pub struct UserPreferences {
     /// default so existing behavior is unchanged.
     #[serde(default)]
     pub always_request_admin_on_startup: bool,
+    /// Where the dictation pill anchors on screen. Accepted values are
+    /// "top" or "bottom"; any other value is treated as the default
+    /// "bottom" so legacy data never breaks the UI.
+    #[serde(default = "default_pill_placement")]
+    pub pill_placement: String,
+    /// Delay (ms) between a hands-free stop and the actual paste/type
+    /// action. NULL disables the delay (immediate paste on stop).
+    #[serde(default)]
+    pub hands_free_delay_ms: Option<i64>,
     #[serde(default)]
     pub in_dictation_style_switching_enabled: bool,
     #[serde(default = "default_hallucination_filter_enabled")]
@@ -117,7 +126,6 @@ fn default_agent_max_iterations() -> i64 {
 
 fn default_agent_permission_timeout_ms() -> i64 {
     60_000
-}
 
 fn default_pill_reset_monitor_strategy() -> String {
     "current".to_string()
@@ -137,6 +145,10 @@ fn default_dictation_audio_dim() -> f64 {
 
 fn default_preserve_audio_on_failure() -> bool {
     true
+}
+
+fn default_pill_placement() -> String {
+    "bottom".to_string()
 }
 
 fn default_true() -> bool {

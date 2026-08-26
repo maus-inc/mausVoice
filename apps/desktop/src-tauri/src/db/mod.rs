@@ -152,6 +152,10 @@ pub const SPOKEN_COMMANDS_MIGRATION_SQL: &str =
     include_str!("migrations/077_spoken_commands_enabled.sql");
 pub const PRESERVE_AUDIO_ON_FAILURE_MIGRATION_SQL: &str =
     include_str!("migrations/081_preserve_audio_on_failure.sql");
+pub const API_KEY_TRANSCRIPTION_PATH_MIGRATION_SQL: &str =
+    include_str!("migrations/082_api_key_transcription_path.sql");
+pub const PILL_PLACEMENT_AND_HANDS_FREE_DELAY_MIGRATION_SQL: &str =
+    include_str!("migrations/083_pill_placement_and_hands_free_delay.sql");
 
 pub fn migrations() -> Vec<tauri_plugin_sql::Migration> {
     vec![
@@ -609,6 +613,18 @@ pub fn migrations() -> Vec<tauri_plugin_sql::Migration> {
             version: 81,
             description: "add_preserve_audio_on_failure",
             sql: PRESERVE_AUDIO_ON_FAILURE_MIGRATION_SQL,
+            kind: tauri_plugin_sql::MigrationKind::Up,
+        },
+        tauri_plugin_sql::Migration {
+            version: 82,
+            description: "add_api_key_transcription_path",
+            sql: API_KEY_TRANSCRIPTION_PATH_MIGRATION_SQL,
+            kind: tauri_plugin_sql::MigrationKind::Up,
+        },
+        tauri_plugin_sql::Migration {
+            version: 83,
+            description: "add_pill_placement_and_hands_free_delay",
+            sql: PILL_PLACEMENT_AND_HANDS_FREE_DELAY_MIGRATION_SQL,
             kind: tauri_plugin_sql::MigrationKind::Up,
         },
     ]
