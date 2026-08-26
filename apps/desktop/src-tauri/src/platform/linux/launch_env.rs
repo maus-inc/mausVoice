@@ -1,10 +1,10 @@
 use super::detect;
 
 /// Session-type variable consulted when `WAYLAND_DISPLAY` is unset.
+pub const ENV_XDG_SESSION_TYPE: &str = "XDG_SESSION_TYPE";
 /// Set when the session runs under Wayland; takes precedence over
 /// `XDG_SESSION_TYPE`.
 pub const ENV_WAYLAND_DISPLAY: &str = "WAYLAND_DISPLAY";
-pub const ENV_XDG_SESSION_TYPE
 /// Set to `1` on X11 to force WebKitGTK off its accelerated compositor.
 pub const ENV_WEBKIT_DISABLE_COMPOSITING_MODE: &str = "WEBKIT_DISABLE_COMPOSITING_MODE";
 /// Set to `1` on X11 to avoid the DMABUF renderer path that blanks the
