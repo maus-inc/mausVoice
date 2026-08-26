@@ -847,4 +847,37 @@ describe("filterLocalTranscriptionSegments", () => {
     ];
     expect(filterLocalTranscriptionSegments(segments)).toBe("Hi there");
   });
+
+  it("is a building block the local repo composes with a narrow output.text fallback for ONNX models", () => {
+    // The Rust ONNX branch returns `segments: Vec::new()` and populates
+    // `text` directly, so the repo layer must fall back to `output.text`
+    // in that case. But when the sidecar DID emit segments and the
+    // filter dropped them all, the empty result must win over
+    // `output.text` so the silence-hallucination filter still removes
+    // stray "thank you" / "you" fragments.
+    const resolveText = (segments: LocalTranscriptionSegment[], outputText: string) =>
+      segments.length === 0
+        ? (outputText ?? "")
+        : filterLocalTranscriptionSegments(segments);
+
+    // ONNX: empty segments, text populated → use output.text
+    expect(resolveText([], "this is the onnx output")).toBe(
+      "this is the onnx output",
+    );
+
+    // Whisper with valid segments → filter wins, even if raw text contains
+    // a known hallucination fragment.
+    const segments: LocalTranscriptionSegment[] = [
+      { text: "thank you", noSpeechProb: 0.95 },
+      { text: "you", noSpeechProb: 0.95 },
+    ];
+    expect(resolveText(segments, "thank you you")).toBe("");
+
+    // Whisper with at least one good segment → keep that segment.
+    const mixed: LocalTranscriptionSegment[] = [
+      { text: "thank you", noSpeechProb: 0.95 },
+      { text: "hello world", noSpeechProb: 0.1 },
+    ];
+    expect(resolveText(mixed, "thank you hello world")).toBe("hello world");
+  });
 });
