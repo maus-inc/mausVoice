@@ -18,7 +18,9 @@ use strum::IntoEnumIterator;
 
 /// Helper to acquire a mutex lock, always returning a guard by recovering from poison errors.
 fn lock<T>(mutex: &Mutex<T>) -> MutexGuard<'_, T> {
-    mutex.lock().unwrap_or_else(|poisoned| poisoned.into_inner())
+    mutex
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner())
 }
 
 #[cfg(target_os = "linux")]
@@ -674,8 +676,7 @@ fn ensure_listener_child(port: u16) -> Result<(), String> {
     }
 
     {
-        let combos = lock(combo_store())
-            .clone();
+        let combos = lock(combo_store()).clone();
         if !combos.is_empty() {
             let mut guard = lock(child_stdin_store());
             if let Some(stdin) = guard.as_mut() {
@@ -1084,10 +1085,10 @@ pub(crate) fn run_listen_loop(
 #[cfg(all(test, any(target_os = "macos", target_os = "windows")))]
 mod tests {
     use super::{
-        connection_proved_alive, failure_capped, matches_any_combo, retry_backoff,
-        should_promote, update_grab_hotkey_state, ControlState, GrabDecision, GrabHotkeyState,
-        HealthState, KeyboardEventPayload, WireEventKind, WireMessage, BACKOFF_CEILING,
-        FAILURE_CAP, HEALTHY_GRAB_GRACE, SLOW_RETRY_INTERVAL,
+        connection_proved_alive, failure_capped, matches_any_combo, retry_backoff, should_promote,
+        update_grab_hotkey_state, ControlState, GrabDecision, GrabHotkeyState, HealthState,
+        KeyboardEventPayload, WireEventKind, WireMessage, BACKOFF_CEILING, FAILURE_CAP,
+        HEALTHY_GRAB_GRACE, SLOW_RETRY_INTERVAL,
     };
     use std::collections::HashSet;
     use std::time::Duration;

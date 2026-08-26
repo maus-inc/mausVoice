@@ -139,10 +139,7 @@ async fn download_model(
             .artifact_set()
             .into_iter()
             .map(|(name, url)| {
-                DownloadArtifact::new(
-                    url,
-                    model.artifact_path(&state.config.models_dir, name),
-                )
+                DownloadArtifact::new(url, model.artifact_path(&state.config.models_dir, name))
             })
             .collect()
     } else {
@@ -292,13 +289,7 @@ async fn handle_download_action(
     Path(path): Path<DownloadTargetPath>,
 ) -> Result<Json<crate::downloads::DownloadJobSnapshot>, ApiError> {
     let model = parse_model(&path.model)?;
-    dispatch_download_action(
-        &state,
-        model,
-        ResolvedDownloadTarget::Active,
-        &path.target,
-    )
-    .await
+    dispatch_download_action(&state, model, ResolvedDownloadTarget::Active, &path.target).await
 }
 
 async fn handle_job_action(
@@ -457,9 +448,7 @@ struct TranscribeResponse {
     segments: Vec<SegmentResponse>,
 }
 
-fn segments_to_response(
-    segments: &[TranscriptionSegment],
-) -> Vec<SegmentResponse> {
+fn segments_to_response(segments: &[TranscriptionSegment]) -> Vec<SegmentResponse> {
     segments
         .iter()
         .map(|segment| SegmentResponse {
@@ -831,8 +820,7 @@ async fn remove_partial_model_downloads(
         };
 
         if !file_name.starts_with(&prefix)
-            || !(file_name.ends_with(".download")
-                || file_name.ends_with(".download.validator"))
+            || !(file_name.ends_with(".download") || file_name.ends_with(".download.validator"))
         {
             continue;
         }
@@ -961,12 +949,9 @@ mod tests {
         let model = WhisperModel::ParakeetCtc06B;
         let model_dir = state.config.models_dir.join(model.as_slug());
         tokio::fs::create_dir_all(&model_dir).await.unwrap();
-        tokio::fs::write(
-            model_dir.join("model_int8.onnx"),
-            b"not a valid ONNX graph",
-        )
-        .await
-        .unwrap();
+        tokio::fs::write(model_dir.join("model_int8.onnx"), b"not a valid ONNX graph")
+            .await
+            .unwrap();
         tokio::fs::write(model_dir.join("model_int8.onnx_data"), b"corrupt weights")
             .await
             .unwrap();
@@ -996,10 +981,7 @@ mod tests {
             .map(|(name, _)| {
                 let destination = model.artifact_path(&state.config.models_dir, name);
                 assert!(!destination.exists(), "invalid artifact was not removed");
-                DownloadArtifact::new(
-                    format!("http://127.0.0.1:0/{name}"),
-                    destination,
-                )
+                DownloadArtifact::new(format!("http://127.0.0.1:0/{name}"), destination)
             })
             .collect();
         let retry = state

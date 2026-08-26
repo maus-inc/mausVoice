@@ -71,7 +71,9 @@ pub fn run(receiver: Receiver<InMessage>) {
         hCursor: unsafe { LoadCursorW(None, IDC_ARROW).unwrap_or_default() },
         ..Default::default()
     };
-    unsafe { RegisterClassExW(&wc); }
+    unsafe {
+        RegisterClassExW(&wc);
+    }
 
     let (wx, wy) = initial_position();
     let hwnd = unsafe {
@@ -80,10 +82,16 @@ pub fn run(receiver: Receiver<InMessage>) {
             class_name,
             w!("MausVoicePill"),
             WS_POPUP,
-            wx, wy,
-            WINDOW_W_TYPING, WINDOW_H_TYPING,
-            None, None, Some(hinstance.into()), None,
-        ).unwrap()
+            wx,
+            wy,
+            WINDOW_W_TYPING,
+            WINDOW_H_TYPING,
+            None,
+            None,
+            Some(hinstance.into()),
+            None,
+        )
+        .unwrap()
     };
 
     HWND_CELL.with(|c| c.set(hwnd));
@@ -210,17 +218,20 @@ pub fn run(receiver: Receiver<InMessage>) {
                     windows::Win32::Media::timeEndPeriod(1);
                     return;
                 }
-                if handle_edit_message(&msg) { continue; }
+                if handle_edit_message(&msg) {
+                    continue;
+                }
                 let _ = TranslateMessage(&msg);
                 DispatchMessageW(&msg);
             }
-            if QUIT.with(|q| q.get()) { break; }
+            if QUIT.with(|q| q.get()) {
+                break;
+            }
 
             on_anim_tick(hwnd);
 
-            let elapsed = Instant::now().duration_since(
-                LAST_TICK.with(|c| c.get()).unwrap_or_else(Instant::now),
-            );
+            let elapsed = Instant::now()
+                .duration_since(LAST_TICK.with(|c| c.get()).unwrap_or_else(Instant::now));
             if let Some(remaining) = frame_interval.checked_sub(elapsed) {
                 std::thread::sleep(remaining);
             }
@@ -255,14 +266,17 @@ unsafe extern "system" fn wndproc(hwnd: HWND, msg: u32, wparam: WPARAM, lparam: 
                         Some(_) => IDC_HAND,
                         None => IDC_ARROW,
                     };
-                    unsafe { SetCursor(LoadCursorW(None, cursor_id).ok()); }
+                    unsafe {
+                        SetCursor(LoadCursorW(None, cursor_id).ok());
+                    }
                 }
             });
             LRESULT(0)
         }
         WM_SETCURSOR => {
             let hit_test = (lparam.0 & 0xFFFF) as i16;
-            if hit_test == 1 { // HTCLIENT
+            if hit_test == 1 {
+                // HTCLIENT
                 LRESULT(1)
             } else {
                 unsafe { DefWindowProcW(hwnd, msg, wparam, lparam) }
@@ -385,7 +399,9 @@ unsafe extern "system" fn wndproc(hwnd: HWND, msg: u32, wparam: WPARAM, lparam: 
             LRESULT(0)
         }
         WM_DESTROY => {
-            unsafe { PostQuitMessage(0); }
+            unsafe {
+                PostQuitMessage(0);
+            }
             LRESULT(0)
         }
         _ => unsafe { DefWindowProcW(hwnd, msg, wparam, lparam) },
@@ -404,7 +420,9 @@ fn on_anim_tick(hwnd: HWND) {
     });
 
     if QUIT.with(|q| q.get()) {
-        unsafe { DestroyWindow(hwnd).ok(); }
+        unsafe {
+            DestroyWindow(hwnd).ok();
+        }
         return;
     }
 
@@ -521,9 +539,17 @@ fn process_message(msg: InMessage, state: &PillState, _hwnd: HWND) {
             state.style_count.set(count);
             *state.style_name.borrow_mut() = name;
         }
-        InMessage::Toast { message, toast_type, duration, action, action_label } => {
+        InMessage::Toast {
+            message,
+            toast_type,
+            duration,
+            action,
+            action_label,
+        } => {
             *state.flash_message.borrow_mut() = message;
-            state.flash_is_error.set(toast_type.as_deref() == Some("error"));
+            state
+                .flash_is_error
+                .set(toast_type.as_deref() == Some("error"));
             state.flash_visible.set(true);
             state.flash_timer.set(duration.unwrap_or(FLASH_DURATION));
             *state.flash_action.borrow_mut() = action;
@@ -575,9 +601,14 @@ fn process_message(msg: InMessage, state: &PillState, _hwnd: HWND) {
             state.window_mode.set(WindowMode::from_str(size));
         }
         InMessage::AssistantState {
-            active, input_mode, compact,
-            conversation_id, user_prompt,
-            messages, streaming, permissions,
+            active,
+            input_mode,
+            compact,
+            conversation_id,
+            user_prompt,
+            messages,
+            streaming,
+            permissions,
         } => {
             let was_active = state.assistant_active.get();
             state.assistant_active.set(active);
@@ -597,7 +628,9 @@ fn process_message(msg: InMessage, state: &PillState, _hwnd: HWND) {
             state.has_saved_position.set(false);
             state.reset_strategy.set(strategy);
             state.dirty.set(true);
-            ipc::send(&OutMessage::PositionChanged { has_saved_position: false });
+            ipc::send(&OutMessage::PositionChanged {
+                has_saved_position: false,
+            });
         }
         InMessage::PillPlacement { placement } => {
             let code = if placement == "top" {
@@ -637,14 +670,18 @@ fn tick(state: &PillState, dt: f64) {
             let boosted = (combined.sqrt() * 1.35).min(1.0);
             let target = state.target_level.get();
             let mix = 1.0 - 0.25_f64.powf(frame_scale);
-            state.target_level.set((target * (1.0 - mix) + boosted * mix).min(1.0));
+            state
+                .target_level
+                .set((target * (1.0 - mix) + boosted * mix).min(1.0));
         }
     } else if is_loading {
         let target = state.target_level.get();
         state.target_level.set(target.max(PROCESSING_BASE_LEVEL));
     } else {
         state.target_level.set(0.0);
-        state.current_level.set(state.current_level.get() * 0.4_f64.powf(frame_scale));
+        state
+            .current_level
+            .set(state.current_level.get() * 0.4_f64.powf(frame_scale));
         if state.current_level.get() < 0.0002 {
             state.current_level.set(0.0);
         }
@@ -654,28 +691,49 @@ fn tick(state: &PillState, dt: f64) {
     let target = state.target_level.get();
     let smoothing = 1.0 - (1.0 - LEVEL_SMOOTHING).powf(frame_scale);
     let new_current = current + (target - current) * smoothing;
-    state.current_level.set(if new_current < 0.0002 { 0.0 } else { new_current });
+    state.current_level.set(if new_current < 0.0002 {
+        0.0
+    } else {
+        new_current
+    });
 
     let decay = TARGET_DECAY_PER_FRAME.powf(frame_scale);
     let decayed = target * decay;
-    state.target_level.set(if decayed < 0.0005 { 0.0 } else { decayed });
+    state
+        .target_level
+        .set(if decayed < 0.0005 { 0.0 } else { decayed });
 
     let level = state.current_level.get();
-    let base_level = if is_loading && !is_recording { PROCESSING_BASE_LEVEL } else { 0.0 };
-    let effective_level = level.max(base_level);
-    let advance = (WAVE_BASE_PHASE_STEP + WAVE_PHASE_GAIN * effective_level) * frame_scale;
-    state.wave_phase.set((state.wave_phase.get() + advance) % TAU);
-
-    // Paused keeps the pill fully expanded (voice field stays open, not mini mode).
-    let expand_target = if is_active || hovered || state.assistant_active.get() || phase == Phase::Paused {
-        1.0
+    let base_level = if is_loading && !is_recording {
+        PROCESSING_BASE_LEVEL
     } else {
         0.0
     };
-    spring_anim(&state.expand_t, &state.expand_velocity, expand_target, SPRING_STIFFNESS, dt);
+    let effective_level = level.max(base_level);
+    let advance = (WAVE_BASE_PHASE_STEP + WAVE_PHASE_GAIN * effective_level) * frame_scale;
+    state
+        .wave_phase
+        .set((state.wave_phase.get() + advance) % TAU);
+
+    // Paused keeps the pill fully expanded (voice field stays open, not mini mode).
+    let expand_target =
+        if is_active || hovered || state.assistant_active.get() || phase == Phase::Paused {
+            1.0
+        } else {
+            0.0
+        };
+    spring_anim(
+        &state.expand_t,
+        &state.expand_velocity,
+        expand_target,
+        SPRING_STIFFNESS,
+        dt,
+    );
 
     if is_loading {
-        state.loading_offset.set((state.loading_offset.get() + LOADING_SPEED * frame_scale) % 1.0);
+        state
+            .loading_offset
+            .set((state.loading_offset.get() + LOADING_SPEED * frame_scale) % 1.0);
     }
 
     // While paused, fade/hide the style picker (polished/verbatim) but keep the
@@ -686,21 +744,61 @@ fn tick(state: &PillState, dt: f64) {
         && (hovered || phase == Phase::Recording)
         && state.expand_t.get() > 0.3;
     let tooltip_target = if show_tooltip { 1.0 } else { 0.0 };
-    spring_anim(&state.tooltip_t, &state.tooltip_velocity, tooltip_target, SPRING_STIFFNESS, dt);
+    spring_anim(
+        &state.tooltip_t,
+        &state.tooltip_velocity,
+        tooltip_target,
+        SPRING_STIFFNESS,
+        dt,
+    );
 
-    let panel_target = if state.assistant_active.get() { 1.0 } else { 0.0 };
-    spring_anim(&state.panel_open_t, &state.panel_open_velocity, panel_target, SPRING_STIFFNESS, dt);
+    let panel_target = if state.assistant_active.get() {
+        1.0
+    } else {
+        0.0
+    };
+    spring_anim(
+        &state.panel_open_t,
+        &state.panel_open_velocity,
+        panel_target,
+        SPRING_STIFFNESS,
+        dt,
+    );
 
     let is_voice = *state.assistant_input_mode.borrow() == "voice";
-    let kb_target = if state.assistant_active.get() && is_voice { 1.0 } else { 0.0 };
-    spring_anim(&state.kb_button_t, &state.kb_button_velocity, kb_target, SPRING_STIFFNESS, dt);
+    let kb_target = if state.assistant_active.get() && is_voice {
+        1.0
+    } else {
+        0.0
+    };
+    spring_anim(
+        &state.kb_button_t,
+        &state.kb_button_velocity,
+        kb_target,
+        SPRING_STIFFNESS,
+        dt,
+    );
 
     let mode = state.window_mode.get();
     let (tw, th) = mode.dimensions();
-    spring_px(&state.draw_width, &state.draw_w_velocity, tw as f64, SPRING_STIFFNESS, dt);
-    spring_px(&state.draw_height, &state.draw_h_velocity, th as f64, SPRING_STIFFNESS, dt);
+    spring_px(
+        &state.draw_width,
+        &state.draw_w_velocity,
+        tw as f64,
+        SPRING_STIFFNESS,
+        dt,
+    );
+    spring_px(
+        &state.draw_height,
+        &state.draw_h_velocity,
+        th as f64,
+        SPRING_STIFFNESS,
+        dt,
+    );
 
-    state.shimmer_phase.set((state.shimmer_phase.get() + SHIMMER_SPEED * frame_scale) % 1.0);
+    state
+        .shimmer_phase
+        .set((state.shimmer_phase.get() + SHIMMER_SPEED * frame_scale) % 1.0);
 
     tick_fireworks(state, dt);
     tick_flame(state, dt);
@@ -720,12 +818,28 @@ fn tick(state: &PillState, dt: f64) {
         }
     }
     let flash_target = if state.flash_visible.get() { 1.0 } else { 0.0 };
-    spring_anim(&state.flash_t, &state.flash_velocity, flash_target, SPRING_STIFFNESS, dt);
+    spring_anim(
+        &state.flash_t,
+        &state.flash_velocity,
+        flash_target,
+        SPRING_STIFFNESS,
+        dt,
+    );
 
     // Recording <-> paused crossfade driven by the same critically damped
     // spring as the other pill transitions (settles, never overshoots).
-    let pause_target = if state.phase.get() == Phase::Paused { 1.0 } else { 0.0 };
-    spring_anim(&state.pause_t, &state.pause_velocity, pause_target, SPRING_STIFFNESS, dt);
+    let pause_target = if state.phase.get() == Phase::Paused {
+        1.0
+    } else {
+        0.0
+    };
+    spring_anim(
+        &state.pause_t,
+        &state.pause_velocity,
+        pause_target,
+        SPRING_STIFFNESS,
+        dt,
+    );
 
     // Cancel + pause controls.
     let controls_phase = state.phase.get();
@@ -739,7 +853,13 @@ fn tick(state: &PillState, dt: f64) {
             Phase::Idle | Phase::Loading => false,
         };
     let cancel_target = if show_controls { 1.0 } else { 0.0 };
-    spring_anim(&state.cancel_t, &state.cancel_velocity, cancel_target, SPRING_STIFFNESS * 2.0, dt);
+    spring_anim(
+        &state.cancel_t,
+        &state.cancel_velocity,
+        cancel_target,
+        SPRING_STIFFNESS * 2.0,
+        dt,
+    );
 
     // Inflate animation. The target ramps up partway through the hold (not at
     // the arm moment), so the pill is already growing while the ring fills and
@@ -750,7 +870,13 @@ fn tick(state: &PillState, dt: f64) {
         state.long_press_active.get(),
         state.dragging.get(),
     );
-    spring_anim(&state.inflate_t, &state.inflate_velocity, inflate_target, DRAG_INFLATE_STIFFNESS, dt);
+    spring_anim(
+        &state.inflate_t,
+        &state.inflate_velocity,
+        inflate_target,
+        DRAG_INFLATE_STIFFNESS,
+        dt,
+    );
 
     tick_ring(state, dt);
 
@@ -761,7 +887,9 @@ fn tick(state: &PillState, dt: f64) {
 }
 
 fn tick_fireworks(state: &PillState, dt: f64) {
-    if !state.fireworks_active.get() { return; }
+    if !state.fireworks_active.get() {
+        return;
+    }
 
     let elapsed = state.fireworks_elapsed.get() + dt;
     state.fireworks_elapsed.set(elapsed);
@@ -780,7 +908,8 @@ fn tick_fireworks(state: &PillState, dt: f64) {
         let angle_rad = launch.angle_deg.to_radians();
         let color = FIREWORK_COLORS[next % FIREWORK_COLORS.len()];
         rockets.push(Rocket {
-            x: origin_x, y: origin_y,
+            x: origin_x,
+            y: origin_y,
             vx: launch.speed * angle_rad.sin(),
             vy: -launch.speed * angle_rad.cos(),
             trail: vec![(origin_x, origin_y)],
@@ -816,7 +945,8 @@ fn tick_fireworks(state: &PillState, dt: f64) {
                         let speed_t = ((i * 7 + 3) % rocket.num_sparks.max(1)) as f64 / n;
                         let speed = FIREWORKS_SPARK_BASE_SPEED * (0.6 + 0.8 * speed_t);
                         rocket.sparks.push(Spark {
-                            x: rocket.x, y: rocket.y,
+                            x: rocket.x,
+                            y: rocket.y,
                             vx: speed * angle.cos(),
                             vy: speed * angle.sin(),
                             life: 1.0,
@@ -835,7 +965,9 @@ fn tick_fireworks(state: &PillState, dt: f64) {
                     spark.life -= dt / FIREWORKS_SPARK_LIFE;
                 }
                 rocket.trail_alpha -= FIREWORKS_TRAIL_FADE_RATE * dt;
-                if rocket.trail_alpha < 0.0 { rocket.trail_alpha = 0.0; }
+                if rocket.trail_alpha < 0.0 {
+                    rocket.trail_alpha = 0.0;
+                }
             }
         }
     }
@@ -918,7 +1050,11 @@ fn tick_transcript(state: &PillState, dt: f64) {
         0.0
     };
 
-    let speed = if target > 0.5 { TRANSCRIPT_RISE_SPEED } else { TRANSCRIPT_FADE_SPEED };
+    let speed = if target > 0.5 {
+        TRANSCRIPT_RISE_SPEED
+    } else {
+        TRANSCRIPT_FADE_SPEED
+    };
     let opacity = state.transcript_opacity.get();
     let blend = 1.0 - (-speed * dt).exp();
     let next = opacity + (target - opacity) * blend;
@@ -954,8 +1090,7 @@ fn update_visibility(hwnd: HWND, state: &PillState) {
 }
 
 fn update_typing_focus(_hwnd: HWND, state: &PillState) {
-    let is_typing = state.assistant_active.get()
-        && *state.assistant_input_mode.borrow() == "type";
+    let is_typing = state.assistant_active.get() && *state.assistant_input_mode.borrow() == "type";
     let was_typing = TYPING_ACTIVE.with(|t| t.get());
 
     if is_typing && !was_typing {
@@ -974,10 +1109,14 @@ fn update_typing_focus(_hwnd: HWND, state: &PillState) {
 /// panel and syncs the hovered state (and the hover IPC message) on change.
 fn check_hover(hwnd: HWND, state: &PillState) {
     let mut cursor = POINT::default();
-    unsafe { let _ = GetCursorPos(&mut cursor); }
+    unsafe {
+        let _ = GetCursorPos(&mut cursor);
+    }
 
     let mut win_rect = RECT::default();
-    unsafe { let _ = GetWindowRect(hwnd, &mut win_rect); }
+    unsafe {
+        let _ = GetWindowRect(hwnd, &mut win_rect);
+    }
 
     let (ox, oy) = state.content_offset();
     let dw = state.draw_width.get();
@@ -1000,8 +1139,7 @@ fn check_hover(hwnd: HWND, state: &PillState) {
     let in_panel = if state.assistant_active.get() {
         let panel_x = win_rect.left as f64 + ox;
         let panel_y = win_rect.top as f64 + oy;
-        cx >= panel_x && cx <= panel_x + dw
-            && cy >= panel_y && cy <= panel_y + dh
+        cx >= panel_x && cx <= panel_x + dw && cy >= panel_y && cy <= panel_y + dh
     } else {
         false
     };
@@ -1033,7 +1171,9 @@ fn check_hover(hwnd: HWND, state: &PillState) {
     if new_hovered != was_hovered {
         state.hovered.set(new_hovered);
         state.dirty.set(true);
-        ipc::send(&OutMessage::Hover { hovered: new_hovered });
+        ipc::send(&OutMessage::Hover {
+            hovered: new_hovered,
+        });
     }
     if !new_hovered {
         state.mouse_x.set(-1000.0);
@@ -1043,7 +1183,10 @@ fn check_hover(hwnd: HWND, state: &PillState) {
 
 fn update_layered(hwnd: HWND, gfx: &Gfx) {
     unsafe {
-        let size = SIZE { cx: gfx.width, cy: gfx.height };
+        let size = SIZE {
+            cx: gfx.width,
+            cy: gfx.height,
+        };
         let src_point = POINT { x: 0, y: 0 };
         let blend = BLENDFUNCTION {
             BlendOp: AC_SRC_OVER as u8,
@@ -1112,16 +1255,13 @@ fn reposition_to_cursor_monitor(hwnd: HWND, state: &PillState) {
         // monitors (and clamp into the wrong work area) whenever the pointer
         // crossed a screen edge.
         let dragging = state.dragging.get();
-        let (px, py, pw, ph) = draw::pill_position(
-            state,
-            state.draw_width.get(),
-            state.draw_height.get(),
-        );
+        let (px, py, pw, ph) =
+            draw::pill_position(state, state.draw_width.get(), state.draw_height.get());
         let (cox, coy) = state.content_offset();
         let footprint_cx = (cox + px + pw / 2.0).round() as i32;
         let footprint_cy = (coy + py + ph / 2.0).round() as i32;
-        let reset_to_cursor = !state.has_saved_position.get()
-            && state.reset_strategy.get() == ResetStrategy::Cursor;
+        let reset_to_cursor =
+            !state.has_saved_position.get() && state.reset_strategy.get() == ResetStrategy::Cursor;
         let monitor = if dragging {
             MonitorFromPoint(cursor, MONITOR_DEFAULTTOPRIMARY)
         } else if reset_to_cursor {
@@ -1160,9 +1300,7 @@ fn reposition_to_cursor_monitor(hwnd: HWND, state: &PillState) {
         // panel/typing modes fill the canvas, so they keep whole-window
         // clamping.
         let (min_x, min_y, max_x, max_y) =
-            if state.window_mode.get() == WindowMode::Dictation
-                && !state.assistant_active.get()
-            {
+            if state.window_mode.get() == WindowMode::Dictation && !state.assistant_active.get() {
                 let fx = (cox + px).round() as i32;
                 let fy = (coy + py).round() as i32;
                 let fw = pw.round().max(1.0) as i32;
@@ -1210,7 +1348,12 @@ fn reposition_to_cursor_monitor(hwnd: HWND, state: &PillState) {
 
         if current.left != x || current.top != y {
             let _ = SetWindowPos(
-                hwnd, None, x, y, 0, 0,
+                hwnd,
+                None,
+                x,
+                y,
+                0,
+                0,
                 SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE,
             );
         }
@@ -1228,7 +1371,6 @@ fn tick_long_press(state: &PillState, dt: f64) {
         state.long_press_elapsed.set(0.0);
         return;
     }
-
 
     // Cancel if mouse moved too far from start position (screen coords)
     unsafe {
@@ -1303,7 +1445,9 @@ fn end_drag(hwnd: HWND, state: &PillState, persist_position: bool) -> bool {
         state.saved_x.set(rect.left);
         state.saved_y.set(rect.top);
         state.has_saved_position.set(true);
-        ipc::send(&OutMessage::PositionChanged { has_saved_position: true });
+        ipc::send(&OutMessage::PositionChanged {
+            has_saved_position: true,
+        });
     }
 
     state.dragging.set(false);
@@ -1358,8 +1502,6 @@ fn tick_drag_release_fallback(hwnd: HWND, state: &PillState) {
     check_hover(hwnd, state);
 }
 
-
-
 /// Advances the long-press ring for one frame.
 ///
 /// All the policy lives in `rust_pill_shared::advance_ring` so the three
@@ -1413,7 +1555,9 @@ fn tick_ring(state: &PillState, dt: f64) {
 fn spring_anim(value: &Cell<f64>, velocity: &Cell<f64>, target: f64, stiffness: f64, dt: f64) {
     let v = value.get();
     let vel = velocity.get();
-    if v == target && vel == 0.0 { return; }
+    if v == target && vel == 0.0 {
+        return;
+    }
     let damping = 2.0 * stiffness.sqrt();
     let force = stiffness * (target - v) - damping * vel;
     let new_vel = vel + force * dt;
@@ -1423,14 +1567,20 @@ fn spring_anim(value: &Cell<f64>, velocity: &Cell<f64>, target: f64, stiffness: 
         velocity.set(0.0);
     } else {
         value.set(new_v.clamp(0.0, 1.0));
-        velocity.set(if !(0.0..=1.0).contains(&new_v) { 0.0 } else { new_vel });
+        velocity.set(if !(0.0..=1.0).contains(&new_v) {
+            0.0
+        } else {
+            new_vel
+        });
     }
 }
 
 fn spring_px(value: &Cell<f64>, velocity: &Cell<f64>, target: f64, stiffness: f64, dt: f64) {
     let v = value.get();
     let vel = velocity.get();
-    if v == target && vel == 0.0 { return; }
+    if v == target && vel == 0.0 {
+        return;
+    }
     let damping = 2.0 * stiffness.sqrt();
     let force = stiffness * (target - v) - damping * vel;
     let new_vel = vel + force * dt;
@@ -1478,24 +1628,32 @@ fn create_edit_overlay(hinstance: HMODULE, main_hwnd: HWND) {
             class_name,
             w!(""),
             WS_POPUP | WS_CLIPCHILDREN,
-            0, 0, 400, PANEL_INPUT_HEIGHT as i32,
+            0,
+            0,
+            400,
+            PANEL_INPUT_HEIGHT as i32,
             Some(main_hwnd),
             None,
             Some(hinstance.into()),
             None,
-        ).unwrap();
+        )
+        .unwrap();
 
         let edit = CreateWindowExW(
             WS_EX_LEFT,
             w!("EDIT"),
             w!(""),
             WINDOW_STYLE(WS_CHILD.0 | WS_VISIBLE.0 | ES_AUTOHSCROLL),
-            0, 0, 400, PANEL_INPUT_HEIGHT as i32,
+            0,
+            0,
+            400,
+            PANEL_INPUT_HEIGHT as i32,
             Some(container),
             None,
             Some(hinstance.into()),
             None,
-        ).unwrap();
+        )
+        .unwrap();
 
         // Always use the embedded Satoshi face for the type-mode editor.
         crate::font::install_embedded_satoshi();
@@ -1506,11 +1664,21 @@ fn create_edit_overlay(hinstance: HMODULE, main_hwnd: HWND) {
         lf.lfHeight = -18;
         lf.lfWeight = 500; // Medium
         let font = CreateFontIndirectW(&lf);
-        SendMessageW(edit, WM_SETFONT, Some(WPARAM(font.0 as usize)), Some(LPARAM(1)));
+        SendMessageW(
+            edit,
+            WM_SETFONT,
+            Some(WPARAM(font.0 as usize)),
+            Some(LPARAM(1)),
+        );
 
         // Set internal margins
         let margins = (8u32 as isize) | ((8u32 as isize) << 16);
-        SendMessageW(edit, EM_SETMARGINS, Some(WPARAM((EC_LEFTMARGIN | EC_RIGHTMARGIN) as usize)), Some(LPARAM(margins)));
+        SendMessageW(
+            edit,
+            EM_SETMARGINS,
+            Some(WPARAM((EC_LEFTMARGIN | EC_RIGHTMARGIN) as usize)),
+            Some(LPARAM(margins)),
+        );
 
         EDIT_CONTAINER.with(|c| c.set(container));
         EDIT_HWND.with(|e| e.set(edit));
@@ -1518,7 +1686,10 @@ fn create_edit_overlay(hinstance: HMODULE, main_hwnd: HWND) {
 }
 
 unsafe extern "system" fn edit_container_proc(
-    hwnd: HWND, msg: u32, wparam: WPARAM, lparam: LPARAM,
+    hwnd: HWND,
+    msg: u32,
+    wparam: WPARAM,
+    lparam: LPARAM,
 ) -> LRESULT {
     match msg {
         WM_CTLCOLOREDIT => {
@@ -1549,7 +1720,9 @@ unsafe extern "system" fn edit_container_proc(
 /// Returns true if the message was consumed and should not be dispatched.
 fn handle_edit_message(msg: &MSG) -> bool {
     let edit = EDIT_HWND.with(|e| e.get());
-    if msg.hwnd != edit { return false; }
+    if msg.hwnd != edit {
+        return false;
+    }
 
     match msg.message {
         WM_KEYDOWN => {
@@ -1566,14 +1739,18 @@ fn handle_edit_message(msg: &MSG) -> bool {
                         }
                     }
                 });
-                unsafe { let _ = SetWindowTextW(edit, w!("")); }
+                unsafe {
+                    let _ = SetWindowTextW(edit, w!(""));
+                }
                 return true;
             } else if msg.wParam.0 == VK_ESCAPE.0 as usize {
                 ipc::send(&OutMessage::AssistantClose);
                 return true;
             } else if ctrl && msg.wParam.0 == 'A' as usize {
                 // Select all
-                unsafe { SendMessageW(edit, EM_SETSEL, Some(WPARAM(0)), Some(LPARAM(-1))); }
+                unsafe {
+                    SendMessageW(edit, EM_SETSEL, Some(WPARAM(0)), Some(LPARAM(-1)));
+                }
                 return true;
             } else if ctrl && msg.wParam.0 == VK_BACK.0 as usize {
                 ctrl_backspace(edit);
@@ -1590,11 +1767,15 @@ fn ctrl_backspace(edit: HWND) {
         // Get caret position from return value: LOWORD=start, HIWORD=end
         let result = SendMessageW(edit, EM_GETSEL, None, None);
         let caret = ((result.0 >> 16) & 0xFFFF) as usize;
-        if caret == 0 { return; }
+        if caret == 0 {
+            return;
+        }
 
         // Get text as UTF-16
         let len = GetWindowTextLengthW(edit);
-        if len == 0 { return; }
+        if len == 0 {
+            return;
+        }
         let mut buf = vec![0u16; (len + 1) as usize];
         GetWindowTextW(edit, &mut buf);
 
@@ -1610,15 +1791,24 @@ fn ctrl_backspace(edit: HWND) {
         }
 
         // Select from word start to caret and replace with empty
-        SendMessageW(edit, EM_SETSEL, Some(WPARAM(pos)), Some(LPARAM(caret as isize)));
+        SendMessageW(
+            edit,
+            EM_SETSEL,
+            Some(WPARAM(pos)),
+            Some(LPARAM(caret as isize)),
+        );
         let empty: [u16; 1] = [0];
-        SendMessageW(edit, EM_REPLACESEL, Some(WPARAM(1)), Some(LPARAM(empty.as_ptr() as isize)));
+        SendMessageW(
+            edit,
+            EM_REPLACESEL,
+            Some(WPARAM(1)),
+            Some(LPARAM(empty.as_ptr() as isize)),
+        );
     }
 }
 
 fn update_edit_overlay(main_hwnd: HWND, state: &PillState) {
-    let is_typing = state.assistant_active.get()
-        && *state.assistant_input_mode.borrow() == "type";
+    let is_typing = state.assistant_active.get() && *state.assistant_input_mode.borrow() == "type";
     let container = EDIT_CONTAINER.with(|c| c.get());
     let edit = EDIT_HWND.with(|e| e.get());
 
@@ -1647,7 +1837,9 @@ fn update_edit_overlay(main_hwnd: HWND, state: &PillState) {
     let input_w = panel_w - PANEL_CONTENT_SIDE_INSET * 2.0 - send_btn_size - 8.0;
 
     let mut win_rect = RECT::default();
-    unsafe { let _ = GetWindowRect(main_hwnd, &mut win_rect); }
+    unsafe {
+        let _ = GetWindowRect(main_hwnd, &mut win_rect);
+    }
 
     let screen_x = win_rect.left as f64 + ox + input_x;
     let screen_y = win_rect.top as f64 + oy + input_y + 1.0;
@@ -1657,20 +1849,28 @@ fn update_edit_overlay(main_hwnd: HWND, state: &PillState) {
         // Color key makes the background transparent; alpha matches text to panel opacity
         let alpha = (state.panel_open_t.get() * PANEL_BG_ALPHA * 255.0) as u8;
         let _ = SetLayeredWindowAttributes(
-            container, COLORREF(EDIT_COLOR_KEY), alpha,
+            container,
+            COLORREF(EDIT_COLOR_KEY),
+            alpha,
             LWA_COLORKEY | LWA_ALPHA,
         );
 
         let _ = SetWindowPos(
-            container, None,
-            screen_x as i32, screen_y as i32,
-            input_w as i32, h as i32,
+            container,
+            None,
+            screen_x as i32,
+            screen_y as i32,
+            input_w as i32,
+            h as i32,
             SWP_NOZORDER | SWP_NOACTIVATE | SWP_SHOWWINDOW,
         );
         let _ = SetWindowPos(
-            edit, None,
-            0, 0,
-            input_w as i32, h as i32,
+            edit,
+            None,
+            0,
+            0,
+            input_w as i32,
+            h as i32,
             SWP_NOZORDER | SWP_NOACTIVATE | SWP_NOMOVE,
         );
     }
@@ -1687,7 +1887,9 @@ fn get_edit_text() -> String {
     let edit = EDIT_HWND.with(|e| e.get());
     unsafe {
         let len = GetWindowTextLengthW(edit);
-        if len == 0 { return String::new(); }
+        if len == 0 {
+            return String::new();
+        }
         let mut buf = vec![0u16; (len + 1) as usize];
         GetWindowTextW(edit, &mut buf);
         String::from_utf16_lossy(&buf[..len as usize])
@@ -1697,7 +1899,9 @@ fn get_edit_text() -> String {
 fn set_edit_text(text: &str) {
     let edit = EDIT_HWND.with(|e| e.get());
     let wide: Vec<u16> = text.encode_utf16().chain(std::iter::once(0)).collect();
-    unsafe { let _ = SetWindowTextW(edit, PCWSTR(wide.as_ptr())); }
+    unsafe {
+        let _ = SetWindowTextW(edit, PCWSTR(wide.as_ptr()));
+    }
 }
 
 pub(crate) fn clear_edit_control() {

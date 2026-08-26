@@ -183,9 +183,7 @@ pub fn build() -> tauri::Builder<tauri::Wry> {
             match event {
                 WindowEvent::CloseRequested { api, .. } if window.label() == "main" => {
                     api.prevent_close();
-                    let _ = window
-                        .app_handle()
-                        .save_window_state(StateFlags::SIZE);
+                    let _ = window.app_handle().save_window_state(StateFlags::SIZE);
                     let _ = window.hide();
                     // On Windows, force the WebView to stay active after hiding the window
                     // so that background JS (global hotkey detection via keys_held events)

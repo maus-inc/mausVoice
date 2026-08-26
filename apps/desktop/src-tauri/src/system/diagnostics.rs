@@ -223,10 +223,7 @@ mod tests {
         let file_size = chunk * chunks_per_file;
 
         for idx in 0..30 {
-            write_file_with_size(
-                &dir.join(format!("mausvoice_{idx:02}.log")),
-                file_size,
-            );
+            write_file_with_size(&dir.join(format!("mausvoice_{idx:02}.log")), file_size);
             sleep(Duration::from_millis(2));
         }
 
