@@ -3070,7 +3070,7 @@ pub fn enable_java_access_bridge() -> Result<JavaAccessBridgeStatus, String> {
     // Read existing contents (if any). A missing file is treated as empty.
     let existing = match std::fs::read_to_string(&path) {
         Ok(s) => s,
-        Err(err) if err.kind() == std::io::ErrorKind::NotFound => String::new(),
+        Err(err) if err.kind() == std::io::ErrorKind::NotFound => String::default(),
         Err(err) => {
             return Err(format!("Failed to read {}: {}", path.display(), err));
         }
@@ -3080,7 +3080,7 @@ pub fn enable_java_access_bridge() -> Result<JavaAccessBridgeStatus, String> {
     // find an existing `assistive_technologies=` line, merge our value into
     // its comma-separated list instead of clobbering whatever was already
     // there (e.g. screen reader entries).
-    let mut lines: Vec<String> = Vec::new();
+    let mut lines: Vec<String> = Vec::default();
     let mut found_key = false;
     let mut already_enabled = false;
 
@@ -3915,6 +3915,7 @@ fn validate_local_app_route(route: &str) -> Result<(), String> {
 /// - The binary must appear in `ALLOWED_COMMANDS` (exact name match); path
 ///   traversal (e.g. `/bin/sh`, `../../sh`) is rejected.
 /// - Per-command timeout and output-size cap bound resource use.
+static PATH: &str = "PATH";
 #[tauri::command]
 #[specta::specta]
 pub async fn run_terminal_command(command: String) -> Result<RunTerminalCommandResponse, String> {
@@ -3934,7 +3935,7 @@ pub async fn run_terminal_command(command: String) -> Result<RunTerminalCommandR
 
         // Never inherit the user's shell environment wholesale; clear dangerous vars.
         cmd.env_clear();
-        if let Ok(path) = std::env::var("PATH") {
+        if let Ok(path) = std::env::var(PATH) {
             cmd.env("PATH", path);
         }
         cmd.env("LANG", "C.UTF-8");
@@ -4478,8 +4479,7 @@ pub async fn download_and_open_mac_installer(
     };
     let nanos = SystemTime::now()
         .duration_since(UNIX_EPOCH)
-        .map(|d| d.as_nanos())
-        .unwrap_or(0);
+        .map_or(0, |d| d.as_nanos());
     let pid = std::process::id();
     let dest = std::env::temp_dir().join(format!("mausvoice-update-{nanos}-{pid}{downloaded_ext}"));
 
@@ -4713,7 +4713,7 @@ pub async fn floating_window_destroy(id: String, app: AppHandle) -> Result<(), S
 #[tauri::command]
 #[specta::specta]
 pub async fn floating_window_list(app: AppHandle) -> Result<Vec<FloatingWindowInfo>, String> {
-    let mut out = Vec::new();
+    let mut out = Vec::default();
     for (label, window) in app.webview_windows() {
         if !label.starts_with(crate::state::FLOATING_WINDOW_LABEL_PREFIX) {
             continue;
@@ -4722,7 +4722,7 @@ pub async fn floating_window_list(app: AppHandle) -> Result<Vec<FloatingWindowIn
         let url = window
             .url()
             .map(|u| u.to_string())
-            .unwrap_or_else(|_| String::new());
+            .unwrap_or_else(|_| String::default());
         out.push(FloatingWindowInfo {
             id: label,
             url,

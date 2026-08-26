@@ -277,7 +277,7 @@ fn run_elevate_helper(parent_pid: u32, rest_args: &[String]) {
     // ShellExecuteW("open") is NOT safe here: it can be routed through the
     // unelevated Explorer and drop the elevation, leaving the replacement
     // unelevated.
-    let mut cli = String::new();
+    let mut cli = String::default();
     for arg in rest_args {
         cli.push(' ');
         cli.push_str(&windows_quote(arg));

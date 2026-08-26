@@ -32,7 +32,7 @@ unsafe impl Sync for PulseRecorder {}
 
 impl Default for PulseRecorder {
     fn default() -> Self {
-        Self::new()
+        Self(0)
     }
 }
 

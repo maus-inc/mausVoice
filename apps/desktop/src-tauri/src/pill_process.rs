@@ -257,7 +257,7 @@ fn wait_for_ready(
     let (tx, rx) = std::sync::mpsc::channel();
     std::thread::spawn(move || {
         let mut reader = std::io::BufReader::new(stdout);
-        let mut line = String::new();
+        let mut line = String::default();
         loop {
             line.clear();
             match reader.read_line(&mut line) {
@@ -300,29 +300,46 @@ fn wait_for_ready(
 fn start_stdout_reader(app: tauri::AppHandle, reader: std::io::BufReader<ChildStdout>) {
     std::thread::spawn(move || {
         let mut reader = reader;
-        let mut line = String::new();
+        let mut line = String::default();
         loop {
             line.clear();
             match reader.read_line(&mut line) {
                 Ok(0) | Err(_) => break,
                 Ok(_) => {
-                    if line.contains("\"click\"") {
-                        let _ = app.emit_to("main", "on-click-dictate", ());
-                    } else if line.contains("\"agent_talk\"") {
-                        let _ = app.emit_to("main", "on-click-agent-talk", ());
-                    } else if line.contains("\"assistant_close\"") {
-                        let _ = app.emit_to("main", "assistant-mode-close", ());
-                    } else if line.contains("\"enable_type_mode\"") {
-                        let _ = app.emit_to("main", "assistant-enable-type-mode", ());
-                    } else if line.contains("\"cancel_dictation\"") {
-                        let _ = app.emit_to("main", "cancel-dictation", ());
-                    } else if line.contains("\"pause_dictation\"") {
-                        let _ = app.emit_to("main", "pause-dictation", ());
-                    } else if line.contains("\"resume_dictation\"") {
-                        let _ = app.emit_to("main", "resume-dictation", ());
-                    } else if line.contains("\"typed_message\"") {
-                        if let Ok(val) = serde_json::from_str::<serde_json::Value>(&line) {
-                            if let Some(text) = val.get("text").and_then(|v| v.as_str()) {
+                    handle_stdout_line(&app, &line);
+                }
+            }
+        }
+    });
+}
+
+fn handle_stdout_line(app: &tauri::AppHandle, line: &str) {
+    if line.contains("\"click\"") {
+        let _ = app.emit_to("main", "on-click-dictate", ());
+    } else if line.contains("\"agent_talk\"") {
+        let _ = app.emit_to("main", "on-click-agent-talk", ());
+    } else if line.contains("\"assistant_close\"") {
+        let _ = app.emit_to("main", "assistant-mode-close", ());
+    } else if line.contains("\"enable_type_mode\"") {
+        let _ = app.emit_to("main", "assistant-enable-type-mode", ());
+    } else if line.contains("\"cancel_dictation\"") {
+        let _ = app.emit_to("main", "cancel-dictation", ());
+    } else if line.contains("\"pause_dictation\"") {
+        let _ = app.emit_to("main", "pause-dictation", ());
+    } else if line.contains("\"resume_dictation\"") {
+        let _ = app.emit_to("main", "resume-dictation", ());
+    } else if line.contains("\"typed_message\"") {
+        handle_typed_message(app, line);
+    }
+}
+
+fn handle_typed_message(app: &tauri::AppHandle, line: &str) {
+    if let Ok(val) = serde_json::from_str::<serde_json::Value>(line) {
+        if let Some(text) = val.get("text").and_then(|v| v.as_str()) {
+            let _ = app.emit_to("main", "on-typed-message", text.to_string());
+        }
+    }
+}
                                 let payload = serde_json::json!({ "text": text });
                                 let _ = app.emit_to("main", "assistant-typed-message", payload);
                             }
