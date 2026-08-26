@@ -677,6 +677,20 @@ mod tests {
         .execute(&pool)
         .await
         .unwrap();
+        // Legacy user_profiles table (no interaction_feedback_volume
+        // column). Migration 79 ALTERs this table; without it the
+        // upgrade path panics with "no such table: user_profiles".
+        sqlx::query(
+            "CREATE TABLE user_profiles (
+                id TEXT PRIMARY KEY,
+                name TEXT NOT NULL,
+                bio TEXT NOT NULL,
+                onboarded INTEGER NOT NULL DEFAULT 0 CHECK (onboarded IN (0, 1))
+             )",
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
         pool.close().await;
 
         // Reopen: only migration 78 should run (ADD COLUMN ...).
