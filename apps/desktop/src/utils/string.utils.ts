@@ -156,6 +156,36 @@ const countWords = (phrase: string): number => {
   return trimmed ? trimmed.split(/\s+/).length : 0;
 };
 
+type PreparedRule = {
+  rule: ReplacementRule;
+  source: string;
+  wordCount: number;
+};
+
+const findBestMatchingRule = (
+  preparedRules: PreparedRule[],
+  normalizedCandidate: string,
+  span: number,
+): ReplacementRule | null => {
+  let bestMatch: ReplacementRule | null = null;
+  let bestSimilarity = 0;
+
+  for (const prepared of preparedRules) {
+    if (prepared.wordCount !== span) continue;
+
+    const similarity = getStringSimilarity(
+      normalizedCandidate,
+      prepared.source,
+    );
+    if (similarity >= SIMILARITY_THRESHOLD && similarity > bestSimilarity) {
+      bestSimilarity = similarity;
+      bestMatch = prepared.rule;
+    }
+  }
+
+  return bestMatch;
+};
+
 export const applyReplacements = (
   text: string,
   rules: ReplacementRule[],
@@ -176,7 +206,7 @@ export const applyReplacements = (
   // Rules are matched as phrases, so a rule spans as many words as its source
   // does. Longer phrases are tried first so that "New York City" wins over a
   // "New York" rule at the same position.
-  const preparedRules = rules
+  const preparedRules: PreparedRule[] = rules
     .map((rule) => ({
       rule,
       source: normalizePhrase(rule.sourceValue).toLowerCase(),
@@ -219,22 +249,11 @@ export const applyReplacements = (
       if (!word) continue;
 
       const normalizedCandidate = collapseWhitespace(word).toLowerCase();
-
-      let bestMatch: ReplacementRule | null = null;
-      let bestSimilarity = 0;
-
-      for (const prepared of preparedRules) {
-        if (prepared.wordCount !== span) continue;
-
-        const similarity = getStringSimilarity(
-          normalizedCandidate,
-          prepared.source,
-        );
-        if (similarity >= SIMILARITY_THRESHOLD && similarity > bestSimilarity) {
-          bestSimilarity = similarity;
-          bestMatch = prepared.rule;
-        }
-      }
+      const bestMatch = findBestMatchingRule(
+        preparedRules,
+        normalizedCandidate,
+        span,
+      );
 
       if (bestMatch) {
         const { word: destinationWord } = extractPunctuation(
