@@ -1,0 +1,71 @@
+# autofix.ci — automatically fixes pull requests.
+#
+# Install the GitHub App once (https://github.com/apps/autofix-ci), then
+# this workflow runs `cargo fmt` across every Rust crate on each PR and
+# hands the diff to the autofix-ci action. When there are changes, the
+# app pushes an "autofix [bot]" commit to the PR branch. Because the app
+# authenticates with its own credentials, that commit re-triggers CI —
+# unlike pushes made with GITHUB_TOKEN.
+#
+# The literal workflow name below is required: autofix.ci uses it to
+# securely identify this workflow for fork pull requests, where its
+# tightly-scoped app token replaces dangerous pull_request_target or
+# personal-access-token patterns.
+name: autofix.ci # needed to securely identify the workflow
+
+on:
+  pull_request:
+    paths:
+      - "apps/desktop/src-tauri/**/*.rs"
+      - "packages/rust_pill_shared/**/*.rs"
+      - "packages/rust_windows_pill/**/*.rs"
+      - "packages/rust_macos_pill/**/*.rs"
+      - "packages/rust_gtk_pill/**/*.rs"
+      - "packages/rust_transcription/**/*.rs"
+      - ".github/workflows/autofix.yml"
+  push:
+    branches: ["main"]
+    paths:
+      - "apps/desktop/src-tauri/**/*.rs"
+      - "packages/rust_pill_shared/**/*.rs"
+      - "packages/rust_windows_pill/**/*.rs"
+      - "packages/rust_macos_pill/**/*.rs"
+      - "packages/rust_gtk_pill/**/*.rs"
+      - "packages/rust_transcription/**/*.rs"
+      - ".github/workflows/autofix.yml"
+
+# Least privilege: formatting needs no secrets; the autofix-ci action
+# only uploads a git-diff artifact and the app does the actual push.
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  autofix:
+    runs-on: ubuntu-22.04
+    steps:
+      - name: Checkout source
+        uses: actions/checkout@v5
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@4360b52568e2003a75bf9bc1d59f33a8e3fc893c # stable
+        with:
+          channel: stable
+          components: rustfmt
+
+      # Formatting is a pure text transform: identical output on every OS,
+      # no dependency build needed, so one Linux job covers all platforms.
+      - name: Apply cargo fmt across Rust crates
+        run: |
+          (cd apps/desktop/src-tauri && cargo fmt --all)
+          for crate in rust_pill_shared rust_windows_pill rust_macos_pill rust_gtk_pill rust_transcription; do
+            if [ -f "packages/$crate/Cargo.toml" ]; then
+              (cd "packages/$crate" && cargo fmt --all)
+            fi
+          done
+
+      - name: autofix.ci
+        uses: autofix-ci/action@c5b2d67aa2274e7b5a18224e8171550871fc7e4a
