@@ -53,30 +53,30 @@ fn purge_old_logs_in_with_cap(logs_dir: &Path, cap: u64) {
         return;
     }
 
-    files.sort_by_key(|(_, modified, _)| std::cmp::Reverse(*modified));
+    // Oldest first, so deletion walks from the oldest file upward while
+    // the directory stays over the cap. The final entry is the newest
+    // file and is kept unconditionally: it is the active log the rotating
+    // writer currently holds open (deleting it on Windows fails with a
+    // sharing violation anyway). Trimming ignores the MIN_KEEP_RECENT_FILES
+    // recency floor once over the cap, so a directory with few huge legacy
+    // logs (the #468 case) still shrinks.
+    files.sort_by_key(|(_, modified, _)| *modified);
 
-    // Newest file is kept unconditionally: it is the active log the
-    // rotating writer currently holds open (deleting it on Windows fails
-    // with a sharing violation anyway). Every older file is trimmable
-    // oldest-first while the directory stays over the cap — including
-    // files inside the MIN_KEEP_RECENT_FILES window, so a directory with
-    // few huge legacy logs (the #468 case) still shrinks instead of
-    // being protected by the recency floor.
     let mut removed = 0usize;
-    let mut bytes_freed: u64 = 0;
-    let running_total = total_size;
+    let newest_idx = files.len() - 1;
+    let mut running_total = total_size;
 
     for (idx, (path, _, size)) in files.iter().enumerate() {
-        if idx == 0 {
+        if idx == newest_idx {
             continue;
         }
-        if running_total - bytes_freed <= cap {
+        if running_total <= cap {
             break;
         }
         match fs::remove_file(path) {
             Ok(()) => {
                 removed += 1;
-                bytes_freed += size;
+                running_total -= size;
             }
             Err(err) => {
                 log::warn!("Failed to purge old log file {}: {err}", path.display());
@@ -86,9 +86,9 @@ fn purge_old_logs_in_with_cap(logs_dir: &Path, cap: u64) {
 
     if removed > 0 {
         log::info!(
-            "Purged {} old log file(s), freed {} bytes",
+            "Purged {} old log file(s), log dir now at {} bytes",
             removed,
-            bytes_freed
+            running_total
         );
     }
 }
