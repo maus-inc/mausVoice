@@ -71,7 +71,6 @@ mod tests {
     //! on every fresh install.
 
     use super::*;
-    use serde_json::json;
 
     const MINIMAL: &str = r#"{
         "id": "u-1",
