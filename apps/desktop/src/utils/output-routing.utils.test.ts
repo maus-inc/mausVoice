@@ -99,6 +99,72 @@ describe("routeTranscriptOutput hands-free delay", () => {
       keybind: null,
     });
   });
+
+  it("drops an older delayed transcript when a newer transcript completes", async () => {
+    const olderRouting = routeTranscriptOutput({
+      text: "older words",
+      mode: "dictation",
+      currentAppId: null,
+    });
+    const newerRouting = routeTranscriptOutput({
+      text: "newer words",
+      mode: "dictation",
+      currentAppId: null,
+    });
+
+    await vi.advanceTimersByTimeAsync(3000);
+
+    await expect(olderRouting).resolves.toEqual({
+      delivered: false,
+      remote: false,
+    });
+    await expect(newerRouting).resolves.toEqual({
+      delivered: true,
+      remote: false,
+    });
+    expect(invokeMock).toHaveBeenCalledTimes(1);
+    expect(invokeMock).toHaveBeenCalledWith("paste", {
+      text: "newer words",
+      keybind: null,
+    });
+  });
+
+  it("lets a newer remote delivery cancel an older delayed local transcript", async () => {
+    const olderRouting = routeTranscriptOutput({
+      text: "older local words",
+      mode: "dictation",
+      currentAppId: null,
+    });
+
+    getPrefsMock.mockReturnValue({
+      remoteOutputEnabled: true,
+      remoteTargetDeviceId: "remote-device",
+    });
+    const newerRouting = routeTranscriptOutput({
+      text: "newer remote words",
+      mode: "dictation",
+      currentAppId: null,
+    });
+
+    await newerRouting;
+    await vi.advanceTimersByTimeAsync(3000);
+
+    await expect(olderRouting).resolves.toEqual({
+      delivered: false,
+      remote: false,
+    });
+    expect(invokeMock).toHaveBeenCalledTimes(1);
+    expect(invokeMock).toHaveBeenCalledWith(
+      "remote_sender_deliver_final_text",
+      {
+        args: {
+          targetDeviceId: "remote-device",
+          text: "newer remote words",
+          mode: "dictation",
+        },
+      },
+    );
+  });
 });
 
 type Listener = (event?: { key?: string }) => void;

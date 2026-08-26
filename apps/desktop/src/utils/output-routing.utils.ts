@@ -20,6 +20,7 @@ export const routeTranscriptOutput = async (
 ): Promise<RouteTranscriptOutputResult> => {
   const state = getAppState();
   const prefs = getMyUserPreferences(state);
+  const sessionId = ++handsFreeSessionId;
   const currentApp = args.currentAppId
     ? (state.appTargetById[args.currentAppId] ?? null)
     : null;
@@ -51,8 +52,6 @@ export const routeTranscriptOutput = async (
 
   const typingSpeedMs = currentApp?.typingSpeedMs ?? prefs?.typingSpeedMs ?? 5;
   const handsFreeDelayMs = getEffectiveHandsFreeDelayMs(prefs);
-
-  const sessionId = ++handsFreeSessionId;
 
   if (handsFreeDelayMs > 0 && !args.isInterim) {
     await new Promise<void>((resolve) => {
