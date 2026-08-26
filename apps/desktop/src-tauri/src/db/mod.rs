@@ -143,10 +143,14 @@ pub const PILL_RESET_MONITOR_STRATEGY_MIGRATION_SQL: &str =
     include_str!("migrations/073_pill_reset_monitor_strategy.sql");
 pub const ALWAYS_REQUEST_ADMIN_ON_STARTUP_MIGRATION_SQL: &str =
     include_str!("migrations/074_always_request_admin_on_startup.sql");
+/// Adds the `preserve_audio_on_failure` column to `user_preferences`.
 pub const PRESERVE_AUDIO_ON_FAILURE_MIGRATION_SQL: &str =
     include_str!("migrations/075_preserve_audio_on_failure.sql");
+/// Adds the `transcription_path` column to `api_keys`.
 pub const API_KEY_TRANSCRIPTION_PATH_MIGRATION_SQL: &str =
     include_str!("migrations/076_api_key_transcription_path.sql");
+/// Adds the `pill_placement` and `hands_free_delay_ms` columns to
+/// `user_preferences`.
 pub const PILL_PLACEMENT_AND_HANDS_FREE_DELAY_MIGRATION_SQL: &str =
     include_str!("migrations/077_pill_placement_and_hands_free_delay.sql");
 

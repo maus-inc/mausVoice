@@ -12,6 +12,8 @@ pub fn configure_display_backend() {
     }
 }
 
+/// Applies the WebKitGTK rendering workarounds for the current session
+/// type. See [`launch_env::apply_webkit_workarounds`].
 pub fn apply_webkit_workarounds() {
     super::launch_env::apply_webkit_workarounds();
 }

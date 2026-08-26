@@ -31,14 +31,18 @@ pub fn notify_visibility(app: &tauri::AppHandle, visibility: &str) {
     pill_process::notify_visibility(app, visibility);
 }
 
+/// Forwards the pill anchor preference (`top` / `bottom`) to the GTK pill
+/// process. The GTK pill currently ignores it; see the settings gate.
 pub fn notify_pill_placement(app: &tauri::AppHandle, placement: &str) {
     pill_process::notify_pill_placement(app, placement);
 }
 
+/// See [`pill_process::notify_style_info`].
 pub fn notify_style_info(app: &tauri::AppHandle, count: u32, name: &str) {
     pill_process::notify_style_info(app, count, name);
 }
 
+/// Forwards a pill window-size change to the native pill process.
 pub fn notify_pill_window_size(app: &tauri::AppHandle, size: &PillWindowSize) {
     pill_process::notify_pill_window_size(app, size);
 }

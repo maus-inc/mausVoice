@@ -166,6 +166,8 @@ pub fn notify_pill_placement(app: &tauri::AppHandle, placement: &str) {
     }
 }
 
+/// Forwards the active writing-style name and total count to the native
+/// pill so it can render its style indicator.
 pub fn notify_style_info(app: &tauri::AppHandle, count: u32, name: &str) {
     if let Some(pill) = app.try_state::<std::sync::Arc<PillProcess>>() {
         if let Ok(json) = serde_json::to_string(&serde_json::json!({

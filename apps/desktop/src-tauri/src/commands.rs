@@ -1845,6 +1845,8 @@ pub fn set_pill_placement(app: AppHandle, placement: String) -> Result<(), Strin
     Ok(())
 }
 
+/// Accept-list for [`set_pill_placement`]; kept separate so the policy is
+/// unit-testable without an `AppHandle`.
 fn validate_pill_placement(placement: &str) -> Result<(), String> {
     match placement {
         "top" | "bottom" => Ok(()),
