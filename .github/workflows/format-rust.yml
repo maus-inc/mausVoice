@@ -191,12 +191,12 @@ jobs:
           if [ -n "$existing_id" ]; then
             gh api --method PATCH \
               "repos/${{ github.repository }}/issues/comments/$existing_id" \
-              -f body=@/tmp/fmt-comment.md > /dev/null
+              -f body="$(cat /tmp/fmt-comment.md)" > /dev/null
             echo "Updated existing formatting comment $existing_id"
           else
             gh api --method POST \
               "repos/${{ github.repository }}/issues/$PR_NUMBER/comments" \
-              -f body=@/tmp/fmt-comment.md > /dev/null
+              -f body="$(cat /tmp/fmt-comment.md)" > /dev/null
             echo "Posted new formatting comment on PR #$PR_NUMBER"
           fi
 
