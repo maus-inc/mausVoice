@@ -108,8 +108,13 @@ jobs:
               (cd "packages/$crate" && cargo fmt --all)
             fi
           done
-          # Cap at ~256 KB to stay under the PR comment body limit.
-          git diff --no-color | head -c 262144 > /tmp/fmt-suggestion.diff
+          # Cap at ~256 KB to stay under the PR comment body limit. Write
+          # the full diff to a file first, then truncate: piping straight
+          # into `head -c` would kill git with SIGPIPE under pipefail
+          # whenever the diff exceeds the cap.
+          git diff --no-color > /tmp/fmt-full.diff
+          head -c 262144 /tmp/fmt-full.diff > /tmp/fmt-suggestion.diff
+          rm -f /tmp/fmt-full.diff
           git checkout -- .
           echo "patch_bytes=$(wc -c < /tmp/fmt-suggestion.diff)" >> "$GITHUB_OUTPUT"
 
