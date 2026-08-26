@@ -373,8 +373,8 @@ fn play_clip_fallback(bytes: &'static [u8], volume: Option<f32>) {
                     log::error!("Failed to create audio sink: {err}");
                 }
             }
-
-            drop(stream);
+            // `stream` ends the warm thread's playback when it goes out of
+            // scope here; no explicit drop needed.
         } else {
             log::error!("Failed to open default audio output stream");
         }

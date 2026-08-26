@@ -104,7 +104,8 @@ export async function runAgent(
             );
           }
 
-          currentMessageId = crypto.randomUUID();
+          const newMessageId = crypto.randomUUID();
+          currentMessageId = newMessageId;
           iterationText = "";
           iterationToolCalls = [];
           toolCallIndex = 0;
@@ -121,8 +122,8 @@ export async function runAgent(
               },
             });
 
-            draft.chatMessageById[currentMessageId!] = {
-              id: currentMessageId!,
+            draft.chatMessageById[newMessageId] = {
+              id: newMessageId,
               conversationId,
               role: "assistant",
               content: "",
@@ -131,10 +132,10 @@ export async function runAgent(
             };
             const ids =
               draft.chatMessageIdsByConversationId[conversationId] ?? [];
-            ids.push(currentMessageId!);
+            ids.push(newMessageId);
             draft.chatMessageIdsByConversationId[conversationId] = ids;
 
-            draft.streamingMessageById[currentMessageId!] = {
+            draft.streamingMessageById[newMessageId] = {
               toolCalls: [],
               reasoning: "",
               isStreaming: true,
@@ -301,9 +302,10 @@ export async function runAgent(
       });
     });
   } finally {
-    if (currentMessageId) {
+    const finishedMessageId = currentMessageId;
+    if (finishedMessageId) {
       produceAppState((draft) => {
-        delete draft.streamingMessageById[currentMessageId!];
+        delete draft.streamingMessageById[finishedMessageId];
       });
     }
     activeLoops.delete(conversationId);
