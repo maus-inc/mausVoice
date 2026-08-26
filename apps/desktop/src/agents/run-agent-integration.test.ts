@@ -54,10 +54,9 @@ const {
 
 vi.mock("@repo/agent", () => {
   class AgentLoop {
-    constructor(_args: unknown) {}
-    abort() {}
+    private readonly runImpl = loopRunMock;
     run(...args: unknown[]) {
-      return loopRunMock(...args);
+      return this.runImpl(...args);
     }
   }
   return { AgentLoop };
@@ -132,9 +131,11 @@ describe("runAgent continues after a tool call when the desktop side effect reje
     createAgentToolsMock.mockReturnValue([]);
 
     let repoCreateCalls = 0;
-    getChatMessageRepoCreateMock.mockImplementation(async () => {
+    getChatMessageRepoCreateMock.mockImplementation(() => {
       repoCreateCalls += 1;
-      throw new Error("The resource id 'chat-msg-1' is invalid");
+      return Promise.reject(
+        new Error("The resource id 'chat-msg-1' is invalid"),
+      );
     });
 
     // The AgentLoop yields: tool-call-start, tool-call-result, text-delta,
@@ -231,9 +232,11 @@ describe("runAgent continues after a tool call when the desktop side effect reje
     createAgentToolsMock.mockReturnValue([]);
 
     let repoCreateCalls = 0;
-    getChatMessageRepoCreateMock.mockImplementation(async () => {
+    getChatMessageRepoCreateMock.mockImplementation(() => {
       repoCreateCalls += 1;
-      throw new Error("The resource id 'assistant-msg' is invalid");
+      return Promise.reject(
+        new Error("The resource id 'assistant-msg' is invalid"),
+      );
     });
 
     // Two iteration rollovers: the second iteration-start finalizes the
