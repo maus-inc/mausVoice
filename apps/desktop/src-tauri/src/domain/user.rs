@@ -55,7 +55,7 @@ const fn default_play_interaction_chime() -> bool {
 }
 
 /// Default thock gain (clamped to the safe window at the sink). The
-/// `user_set_one` write site coalesces a `None`/`interaction_feedback_volume`
+/// `user_set_one` write site coalesces a `None` `interaction_feedback_volume`
 /// to this value so the `NOT NULL` column stays in range. The
 /// `audio_feedback` module owns its own internal default (the atomic
 /// is initialized to `0.35_f32.to_bits()`), and the TS fallbacks use

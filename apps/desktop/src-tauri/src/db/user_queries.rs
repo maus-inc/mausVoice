@@ -64,7 +64,11 @@ pub async fn upsert_user(pool: SqlitePool, user: &User) -> Result<User, sqlx::Er
     .bind(&user.words_this_month_month)
     .bind(user.words_total)
     .bind(if user.play_interaction_chime { 1 } else { 0 })
-    .bind(user.interaction_feedback_volume.unwrap_or(crate::domain::user::DEFAULT_INTERACTION_FEEDBACK_VOLUME) as f64)
+    .bind(
+        user.interaction_feedback_volume
+            .unwrap_or(crate::domain::user::DEFAULT_INTERACTION_FEEDBACK_VOLUME)
+            as f64,
+    )
     .bind(if user.has_finished_tutorial { 1 } else { 0 })
     .bind(if user.has_migrated_preferred_microphone { 1 } else { 0 })
     .bind(&user.cohort)
