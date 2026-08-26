@@ -355,7 +355,9 @@ fn play_clip(bytes: &'static [u8]) {
 /// on the no-default-output path instead of reverting to 1.0.
 fn play_clip_fallback(bytes: &'static [u8], volume: Option<f32>) {
     thread::spawn(move || {
-        if let Ok((stream, handle)) = OutputStream::try_default() {
+        // The stream binding must stay alive for the whole closure: it is
+        // what keeps playback running until `sleep_until_end` finishes.
+        if let Ok((_stream, handle)) = OutputStream::try_default() {
             match Sink::try_new(&handle) {
                 Ok(sink) => match Decoder::new(Cursor::new(bytes)) {
                     Ok(source) => {
@@ -373,8 +375,8 @@ fn play_clip_fallback(bytes: &'static [u8], volume: Option<f32>) {
                     log::error!("Failed to create audio sink: {err}");
                 }
             }
-            // `stream` ends the warm thread's playback when it goes out of
-            // scope here; no explicit drop needed.
+            // `_stream` retires here, ending the fallback playback exactly
+            // as the previous explicit `drop` did.
         } else {
             log::error!("Failed to open default audio output stream");
         }
