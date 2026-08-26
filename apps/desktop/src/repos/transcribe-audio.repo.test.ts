@@ -615,7 +615,10 @@ describe("filterLocalTranscriptionSegments", () => {
     // filter dropped them all, the empty result must win over
     // `output.text` so the silence-hallucination filter still removes
     // stray "thank you" / "you" fragments.
-    const resolveText = (segments: LocalTranscriptionSegment[], outputText: string) =>
+    const resolveText = (
+      segments: LocalTranscriptionSegment[],
+      outputText: string,
+    ) =>
       segments.length === 0
         ? (outputText ?? "")
         : filterLocalTranscriptionSegments(segments);
