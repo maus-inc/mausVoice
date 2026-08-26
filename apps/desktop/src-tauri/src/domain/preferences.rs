@@ -99,6 +99,10 @@ pub struct UserPreferences {
     /// action. NULL disables the delay (immediate paste on stop).
     #[serde(default)]
     pub hands_free_delay_ms: Option<i64>,
+    /// Automatically add corrected names and words as glossary terms when
+    /// the user edits a transcription. Enabled by default.
+    #[serde(default = "default_auto_learn_dictionary_enabled")]
+    pub auto_learn_dictionary_enabled: bool,
 }
 
 fn default_pill_reset_monitor_strategy() -> String {
@@ -123,4 +127,8 @@ fn default_preserve_audio_on_failure() -> bool {
 
 fn default_pill_placement() -> String {
     "bottom".to_string()
+}
+
+fn default_auto_learn_dictionary_enabled() -> bool {
+    true
 }
