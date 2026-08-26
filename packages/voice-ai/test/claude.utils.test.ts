@@ -96,11 +96,13 @@ describe("claudeGenerateTextResponse", () => {
       jsonResponse,
     });
 
-    const sentMessages = createMessage.mock.calls[0][0]?.messages as Array<{
-      role: string;
-      content: string;
-    }>;
-    const userMessage = sentMessages[0]?.content;
+    const sentMessages = createMessage.mock.calls[0][0]?.messages as
+      | Array<{
+          role: string;
+          content: string;
+        }>
+      | undefined;
+    const userMessage = sentMessages?.[0]?.content;
     expect(userMessage).toContain("transcribe this");
     expect(userMessage).toContain(JSON.stringify(jsonResponse.schema));
   });

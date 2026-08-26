@@ -210,7 +210,6 @@ const startAssemblyAIStreaming = async (
 };
 
 export class AssemblyAITranscriptionSession extends BaseApiTranscriptionSession {
-  private session: AssemblyAIStreamingSession | null = null;
   private readonly apiKey: string;
 
   constructor(apiKey: string) {
@@ -228,7 +227,9 @@ export class AssemblyAITranscriptionSession extends BaseApiTranscriptionSession 
   async onRecordingStart(sampleRate: number): Promise<void> {
     try {
       getLogger().info("[AssemblyAI] Starting streaming session...");
-      this.session = await startAssemblyAIStreaming(
+      // Must land in the inherited `streamSession` field: the base
+      // `finalize()` and `cleanup()` read that field, not any local one.
+      this.streamSession = await startAssemblyAIStreaming(
         this.apiKey,
         sampleRate,
         this.interimCallback ?? undefined,
@@ -236,17 +237,6 @@ export class AssemblyAITranscriptionSession extends BaseApiTranscriptionSession 
       getLogger().info("[AssemblyAI] Streaming session started successfully");
     } catch (error) {
       getLogger().error("[AssemblyAI] Failed to start streaming:", error);
-    }
-  }
-
-  protected getStreamSession() {
-    return this.session;
-  }
-
-  cleanup(): void {
-    if (this.session) {
-      this.session.cleanup();
-      this.session = null;
     }
   }
 }

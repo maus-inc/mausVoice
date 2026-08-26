@@ -27,7 +27,10 @@ vi.mock("../../utils/log.utils", () => ({
   }),
 }));
 
-import { handleEmptyTranscriptionResult } from "./DictationSideEffects";
+import {
+  handleEmptyTranscriptionResult,
+  reportStartFailureToast,
+} from "./DictationSideEffects";
 import type { BaseStrategy } from "../../strategies/base.strategy";
 
 type ToastCall = {
@@ -57,10 +60,9 @@ const asStoreCall = (spy: ReturnType<typeof vi.fn>, index = 0): StoreCall =>
   spy.mock.calls[index]?.[0] as StoreCall;
 
 describe("handleEmptyTranscriptionResult (#418)", () => {
-  it("shows a recovery toast, stores a failure marker, and emits recording_failed", async () => {
+  it("shows a recovery toast and stores a failure marker without emitting recording_failed", async () => {
     const showToast = vi.fn(async () => undefined);
     const storeTranscriptionFn = vi.fn();
-    const emitFailed = vi.fn(async () => undefined);
     const refreshMember = vi.fn();
 
     const result = await handleEmptyTranscriptionResult({
@@ -74,7 +76,6 @@ describe("handleEmptyTranscriptionResult (#418)", () => {
       formatMessage: (descriptor) => descriptor.defaultMessage,
       showToast: showToast as never,
       storeTranscriptionFn: storeTranscriptionFn as never,
-      emitFailed,
       refreshMember,
     });
 
@@ -89,14 +90,16 @@ describe("handleEmptyTranscriptionResult (#418)", () => {
       transcript: null,
       warnings: ["provider timed out"],
     });
-    expect(emitFailed).toHaveBeenCalledTimes(1);
+    // The synthetic `recording_failed` emission was removed along with the
+    // `emitFailed` input: this path owns its own recovery toast, and
+    // forwarding to the global listener stacked a second generic error
+    // toast over it.
     expect(refreshMember).toHaveBeenCalledTimes(1);
   });
 
   it("skips the audio store when strategy.shouldStoreTranscript() is false", async () => {
     const showToast = vi.fn(async () => undefined);
     const storeTranscriptionFn = vi.fn();
-    const emitFailed = vi.fn(async () => undefined);
 
     await handleEmptyTranscriptionResult({
       audio: { samples: new Float32Array(0), sampleRate: 16000 },
@@ -109,13 +112,11 @@ describe("handleEmptyTranscriptionResult (#418)", () => {
       formatMessage: (descriptor) => descriptor.defaultMessage,
       showToast: showToast as never,
       storeTranscriptionFn: storeTranscriptionFn as never,
-      emitFailed,
       refreshMember: vi.fn(),
     });
 
     expect(storeTranscriptionFn).not.toHaveBeenCalled();
     expect(showToast).toHaveBeenCalledTimes(1);
-    expect(emitFailed).toHaveBeenCalledTimes(1);
   });
 
   it("returns handled: false when rawTranscript is non-empty (caller continues)", async () => {
@@ -130,7 +131,6 @@ describe("handleEmptyTranscriptionResult (#418)", () => {
       formatMessage: (descriptor) => descriptor.defaultMessage,
       showToast: vi.fn() as never,
       storeTranscriptionFn: vi.fn() as never,
-      emitFailed: vi.fn(),
       refreshMember: vi.fn(),
     });
 
@@ -150,11 +150,47 @@ describe("handleEmptyTranscriptionResult (#418)", () => {
       formatMessage: (descriptor) => descriptor.defaultMessage,
       showToast: showToast as never,
       storeTranscriptionFn: vi.fn() as never,
-      emitFailed: vi.fn(),
       refreshMember: vi.fn(),
     });
 
     expect(result).toEqual({ handled: false });
     expect(showToast).not.toHaveBeenCalled();
+  });
+});
+
+describe("reportStartFailureToast (single-owner failure toast)", () => {
+  const buildInput = (
+    startInvokeRejected: boolean,
+    showToast: ReturnType<typeof vi.fn>,
+  ) => ({
+    startInvokeRejected,
+    formatMessage: (descriptor: { defaultMessage: string }) =>
+      descriptor.defaultMessage,
+    showToast: showToast as never,
+  });
+
+  it("stays silent when the failure came from the start_recording invoke", async () => {
+    // The Rust command emits `recording_failed` with the platform reason
+    // before rejecting; the global listener owns that toast. A second
+    // toast here would stack a duplicate "Recording failed" notification.
+    const showToast = vi.fn(async () => undefined);
+
+    await reportStartFailureToast(buildInput(true, showToast));
+
+    expect(showToast).not.toHaveBeenCalled();
+  });
+
+  it("shows exactly one generic error toast for non-invoke start failures", async () => {
+    // Covers chime playback throws, strategy.onBeforeStart, setPhase,
+    // and session.onRecordingStart (provider/websocket/model-download)
+    // failures, none of which emit `recording_failed`.
+    const showToast = vi.fn(async () => undefined);
+
+    await reportStartFailureToast(buildInput(false, showToast));
+
+    expect(showToast).toHaveBeenCalledTimes(1);
+    const toastCall = asToastCall(showToast);
+    expect(toastCall.toastType).toBe("error");
+    expect(toastCall.message).toMatch(/recording failed/i);
   });
 });

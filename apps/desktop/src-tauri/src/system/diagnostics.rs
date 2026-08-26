@@ -49,18 +49,25 @@ fn purge_old_logs_in_with_cap(logs_dir: &Path, cap: u64) {
         };
 
     let total_size: u64 = files.iter().map(|(_, _, size)| size).sum();
-    if files.len() <= MIN_KEEP_RECENT_FILES && total_size <= cap {
+    if total_size <= cap {
         return;
     }
 
     files.sort_by_key(|(_, modified, _)| std::cmp::Reverse(*modified));
 
+    // Newest file is kept unconditionally: it is the active log the
+    // rotating writer currently holds open (deleting it on Windows fails
+    // with a sharing violation anyway). Every older file is trimmable
+    // oldest-first while the directory stays over the cap — including
+    // files inside the MIN_KEEP_RECENT_FILES window, so a directory with
+    // few huge legacy logs (the #468 case) still shrinks instead of
+    // being protected by the recency floor.
     let mut removed = 0usize;
     let mut bytes_freed: u64 = 0;
     let running_total = total_size;
 
     for (idx, (path, _, size)) in files.iter().enumerate() {
-        if idx < MIN_KEEP_RECENT_FILES {
+        if idx == 0 {
             continue;
         }
         if running_total - bytes_freed <= cap {
@@ -267,10 +274,64 @@ mod tests {
             survivors.iter().all(|n| n != "mausvoice_00.log"),
             "expected oldest file to be purged, got {survivors:?}"
         );
+        // The recency floor only applies while under the cap; once the
+        // directory is over it, the cap wins and the directory may drop
+        // below MIN_KEEP_RECENT_FILES.
         assert!(
-            count_files(&dir) >= MIN_KEEP_RECENT_FILES,
-            "expected to keep at least MIN_KEEP_RECENT_FILES"
+            total_size(&dir) <= 8 * 1024,
+            "expected size to shrink to the cap, got {}",
+            total_size(&dir)
         );
+        fs::remove_dir_all(&dir).expect("failed to clean up");
+    }
+
+    // Regression test for #468: a directory holding few files but huge
+    // legacy logs (the 63 GB case) must still shrink. The old recency
+    // floor protected every file inside MIN_KEEP_RECENT_FILES, so a
+    // <=10-file directory over the cap was never trimmed.
+    #[test]
+    fn purge_shrinks_small_dir_over_cap() {
+        let dir = unique_tmp_dir("purge-small-dir-over-cap");
+        for idx in 0..5 {
+            let path = dir.join(format!("mausvoice_{idx:02}.log"));
+            write_file_with_size(&path, 2048);
+            let mtime = SystemTime::now() + Duration::from_secs(idx as u64);
+            let mtime_ft = filetime::FileTime::from_system_time(mtime);
+            filetime::set_file_mtime(&path, mtime_ft).expect("failed to set mtime");
+        }
+
+        purge_old_logs_in_with_cap(&dir, 4 * 1024);
+
+        assert!(
+            total_size(&dir) <= 4 * 1024,
+            "expected dir to shrink to cap, got {}",
+            total_size(&dir)
+        );
+        let survivors: Vec<String> = fs::read_dir(&dir)
+            .expect("failed to read dir")
+            .filter_map(|e| e.ok())
+            .map(|e| e.file_name().to_string_lossy().to_string())
+            .collect();
+        assert!(
+            survivors.iter().any(|n| n == "mausvoice_04.log"),
+            "expected newest file to survive, got {survivors:?}"
+        );
+        fs::remove_dir_all(&dir).expect("failed to clean up");
+    }
+
+    // A single oversized file that is also the newest is left alone: it is
+    // the active log the rotating writer holds open (deletion fails with a
+    // sharing violation on Windows), and it ages out through normal
+    // rotation.
+    #[test]
+    fn purge_single_newest_oversized_file_is_preserved() {
+        let dir = unique_tmp_dir("purge-single-huge");
+        write_file_with_size(&dir.join("mausvoice_huge.log"), 8 * 1024);
+
+        purge_old_logs_in_with_cap(&dir, 4 * 1024);
+
+        assert_eq!(count_files(&dir), 1);
+        assert_eq!(total_size(&dir), 8 * 1024);
         fs::remove_dir_all(&dir).expect("failed to clean up");
     }
 }

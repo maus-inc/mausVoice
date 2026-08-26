@@ -799,24 +799,37 @@ describe("OpenAI-compatible transcription path override", () => {
 
 import {
   filterLocalTranscriptionSegments,
-  HALLUCINATION_TEXT_MAX_CHARS,
   NO_SPEECH_PROB_THRESHOLD,
   type LocalTranscriptionSegment,
 } from "./transcribe-audio.repo";
 
 describe("filterLocalTranscriptionSegments", () => {
-  it("drops high-noSpeechProb segments with short text", () => {
+  it("drops high-noSpeechProb hallucination fragments", () => {
     expect(NO_SPEECH_PROB_THRESHOLD).toBe(0.6);
-    expect(HALLUCINATION_TEXT_MAX_CHARS).toBe(12);
     const segments: LocalTranscriptionSegment[] = [
       { text: "Hello there", noSpeechProb: 0.1 },
       { text: "you", noSpeechProb: 0.95 },
+      { text: "thank you", noSpeechProb: 0.95 },
       { text: "", noSpeechProb: 0.95 },
     ];
     expect(filterLocalTranscriptionSegments(segments)).toBe("Hello there");
   });
 
-  it("keeps high-noSpeechProb segments when text is long enough", () => {
+  // Regression test for the review finding: short real words ("no", "ok",
+  // "hi", a name) can carry an elevated noSpeechProb on quiet recordings.
+  // Length alone must not decide the drop — only known hallucination
+  // fragments or pure noise should be removed.
+  it("keeps short real words even when noSpeechProb is elevated", () => {
+    const segments: LocalTranscriptionSegment[] = [
+      { text: "yes", noSpeechProb: 0.7 },
+      { text: "no", noSpeechProb: 0.75 },
+      { text: "ok", noSpeechProb: 0.65 },
+      { text: "hi", noSpeechProb: 0.7 },
+    ];
+    expect(filterLocalTranscriptionSegments(segments)).toBe("yes no ok hi");
+  });
+
+  it("keeps high-noSpeechProb segments when text is a real sentence", () => {
     const long = "this is a real sentence that whisper is confident about";
     const segments: LocalTranscriptionSegment[] = [
       { text: long, noSpeechProb: 0.95 },

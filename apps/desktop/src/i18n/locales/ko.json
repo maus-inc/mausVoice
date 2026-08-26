@@ -556,6 +556,7 @@
   "replace_with": "바꿀 내용",
   "replacement": "대체",
   "replacement_term": "대체 용어",
+  "replaces_only_the_path_after_the_base_url_for_open_webui_ent": "기본 URL 뒤의 경로만 대체합니다. Open WebUI의 경우 /v1/audio/transcriptions를 입력하고 Include /v1 path를 끄세요. 그렇지 않으면 비워 두세요.",
   "requests_accessibility_and_microphone_access_so_the_pill_can": "팰이 대신 입력할 수 있도록 접근성 및 마이크 권한을 요청합니다. 시스템 설정에서 프롬프트가 표시됩니다.",
   "reset_link_will_be_sent_to_email": "재설정 링크가 다음 주소로 발송됩니다: {email}",
   "reset_password": "비밀번호 재설정",

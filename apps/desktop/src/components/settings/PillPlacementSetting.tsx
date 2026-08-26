@@ -1,6 +1,7 @@
 import type { PillPlacement } from "@maus-inc/types";
 import { FormattedMessage, useIntl } from "react-intl";
 import { setPillPlacement } from "../../actions/user.actions";
+import { isWindows } from "../../utils/env.utils";
 import { useAppStore } from "../../store";
 import { getMyUserPreferences } from "../../utils/user.utils";
 import { SegmentedControl } from "../common/SegmentedControl";
@@ -11,6 +12,14 @@ export const PillPlacementSetting = () => {
   const placement = useAppStore(
     (state) => getMyUserPreferences(state)?.pillPlacement ?? "bottom",
   );
+
+  // Only the native Windows pill implements the `pill_placement` IPC
+  // message so far. The GTK pill drops it as an unknown message and the
+  // macOS pill ignores it, so rendering this control on those platforms
+  // would present a setting that silently does nothing.
+  if (!isWindows()) {
+    return null;
+  }
 
   const handleChange = (next: PillPlacement) => {
     void setPillPlacement(next);

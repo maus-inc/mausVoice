@@ -556,6 +556,7 @@
   "replace_with": "替換為",
   "replacement": "替換",
   "replacement_term": "替代詞",
+  "replaces_only_the_path_after_the_base_url_for_open_webui_ent": "僅取代基礎 URL 之後的路徑。使用 Open WebUI 時請輸入 /v1/audio/transcriptions 並關閉「包含 /v1 路徑」；否則請留空。",
   "requests_accessibility_and_microphone_access_so_the_pill_can": "請求「輔助功能」與「麥克風」存取權，讓語音輸入小工具能為您輸入文字。系統設定中會出現提示。",
   "reset_link_will_be_sent_to_email": "重設連結將發送至：{email}",
   "reset_password": "重設密碼",

@@ -1,10 +1,14 @@
 use super::detect;
 
+pub const ENV_XDG_SESSION_TYPE: &str = "XDG_SESSION_TYPE";
+pub const ENV_WEBKIT_DISABLE_COMPOSITING_MODE: &str = "WEBKIT_DISABLE_COMPOSITING_MODE";
+pub const ENV_WEBKIT_DISABLE_DMABUF_RENDERER: &str = "WEBKIT_DISABLE_DMABUF_RENDERER";
+
 pub fn is_x11_session() -> bool {
     if detect::is_wayland() {
         return false;
     }
-    match std::env::var("XDG_SESSION_TYPE") {
+    match std::env::var(ENV_XDG_SESSION_TYPE) {
         Ok(value) => value.eq_ignore_ascii_case("x11"),
         Err(_) => true,
     }
@@ -14,11 +18,11 @@ pub fn apply_webkit_workarounds() {
     if !is_x11_session() {
         return;
     }
-    if std::env::var("WEBKIT_DISABLE_COMPOSITING_MODE").is_err() {
-        std::env::set_var("WEBKIT_DISABLE_COMPOSITING_MODE", "1");
+    if std::env::var(ENV_WEBKIT_DISABLE_COMPOSITING_MODE).is_err() {
+        std::env::set_var(ENV_WEBKIT_DISABLE_COMPOSITING_MODE, "1");
     }
-    if std::env::var("WEBKIT_DISABLE_DMABUF_RENDERER").is_err() {
-        std::env::set_var("WEBKIT_DISABLE_DMABUF_RENDERER", "1");
+    if std::env::var(ENV_WEBKIT_DISABLE_DMABUF_RENDERER).is_err() {
+        std::env::set_var(ENV_WEBKIT_DISABLE_DMABUF_RENDERER, "1");
     }
 }
 

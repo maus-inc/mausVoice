@@ -556,6 +556,7 @@
   "replace_with": "Ersetzen durch",
   "replacement": "Ersetzung",
   "replacement_term": "Ersatzbegriff",
+  "replaces_only_the_path_after_the_base_url_for_open_webui_ent": "Ersetzt nur den Pfad nach der Basis-URL. Für Open WebUI /v1/audio/transcriptions eingeben und „Include /v1 path“ deaktivieren; andernfalls leer lassen.",
   "requests_accessibility_and_microphone_access_so_the_pill_can": "Fordert Bedienungshilfen- und Mikrofonzugriff an, damit die Pille für dich tippen kann. Du wirst in den Systemeinstellungen dazu aufgefordert.",
   "reset_link_will_be_sent_to_email": "Reset-Link wird gesendet an: {email}",
   "reset_password": "Passwort zurücksetzen",

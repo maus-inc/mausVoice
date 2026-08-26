@@ -556,6 +556,7 @@
   "replace_with": "Remplacer par",
   "replacement": "Remplacement",
   "replacement_term": "Terme de remplacement",
+  "replaces_only_the_path_after_the_base_url_for_open_webui_ent": "Remplace uniquement le chemin après l'URL de base. Pour Open WebUI, saisissez /v1/audio/transcriptions et désactivez Include /v1 path ; sinon, laissez vide.",
   "requests_accessibility_and_microphone_access_so_the_pill_can": "Demande l'accès à l'accessibilité et au microphone pour que la pilule puisse taper à votre place. Vous serez invité dans les réglages système.",
   "reset_link_will_be_sent_to_email": "Le lien de réinitialisation sera envoyé à : {email}",
   "reset_password": "Réinitialiser le mot de passe",
