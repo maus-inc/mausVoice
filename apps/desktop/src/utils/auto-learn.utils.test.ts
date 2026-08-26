@@ -82,4 +82,9 @@ describe("extractAutoLearnTerms", () => {
   it("ignores surrounding punctuation on both sides", () => {
     expect(learn("(Sonia)", "(Soniya)")).toEqual(["Soniya"]);
   });
+
+  it("learns two-letter proper nouns but drops single letters", () => {
+    expect(learn("her name is Jo", "her name is Bo")).toEqual(["Bo"]);
+    expect(learn("I said A", "I said B")).toEqual([]);
+  });
 });

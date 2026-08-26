@@ -6,6 +6,10 @@
  * new in the corrected text (it did not appear in the original), looks like a
  * proper noun (an initial capital letter), and is not already a dictionary
  * term. A large edit is treated as a rewrite and learns nothing.
+ *
+ * Tokens shorter than MIN_TERM_LENGTH are dropped: the two-letter floor
+ * keeps single-letter noise like a stray "A" or "I" out of the dictionary
+ * while still learning two-letter names such as "Jo".
  */
 
 const MIN_TERM_LENGTH = 2;
@@ -13,10 +17,14 @@ const MAX_TERM_LENGTH = 40;
 const MAX_LEARNED_TERMS = 5;
 const MAX_EDIT_TOKENS = 8;
 
-const EDGE_PUNCTUATION_PATTERN = /^[^\p{L}\p{N}'’-]+|[^\p{L}\p{N}'’-]+$/gu;
+// Split into leading/trailing passes rather than a single alternation. The
+// two anchored character classes can otherwise overlap on all-punctuation
+// tokens, which makes the regex backtrack in super-linear time.
+const LEADING_EDGE_PATTERN = /^[^\p{L}\p{N}'’-]+/u;
+const TRAILING_EDGE_PATTERN = /[^\p{L}\p{N}'’-]+$/u;
 const POSSESSIVE_SUFFIX_PATTERN = /['’]s$/iu;
 const UPPERCASE_LETTER_PATTERN = /^\p{Lu}/u;
-const LETTER_PATTERN = /[\p{L}]/u;
+const LETTER_PATTERN = /\p{L}/u;
 
 /**
  * Common English function words, auxiliaries, pronouns, contractions and
@@ -233,12 +241,17 @@ export type AutoLearnTermsResult = {
   learnedTerms: string[];
 };
 
-const tokenize = (text: string): string[] =>
+/**
+ * Splits text into comparable word tokens: surrounding punctuation stripped,
+ * a trailing possessive "'s" removed, empty tokens dropped.
+ */
+export const tokenizeForComparison = (text: string): string[] =>
   text
     .split(/\s+/)
     .map((raw) =>
       raw
-        .replace(EDGE_PUNCTUATION_PATTERN, "")
+        .replace(LEADING_EDGE_PATTERN, "")
+        .replace(TRAILING_EDGE_PATTERN, "")
         .replace(POSSESSIVE_SUFFIX_PATTERN, ""),
     )
     .filter((token) => token.length > 0);
@@ -252,11 +265,18 @@ const toTokenCounts = (tokens: string[]): Map<string, number> => {
   return counts;
 };
 
-const computeAddedTokens = (original: string, corrected: string): string[] => {
-  const originalCounts = toTokenCounts(tokenize(original));
+/**
+ * Tokens present in `corrected` but not in `original`, as a case-insensitive
+ * multiset difference. Original token casing is preserved.
+ */
+export const computeAddedTokens = (
+  original: string,
+  corrected: string,
+): string[] => {
+  const originalCounts = toTokenCounts(tokenizeForComparison(original));
   const added: string[] = [];
 
-  for (const token of tokenize(corrected)) {
+  for (const token of tokenizeForComparison(corrected)) {
     const key = token.toLowerCase();
     const remaining = originalCounts.get(key) ?? 0;
     if (remaining > 0) {
@@ -269,8 +289,72 @@ const computeAddedTokens = (original: string, corrected: string): string[] => {
   return added;
 };
 
+/**
+ * Tokens present in `original` but not in `corrected`, as a case-insensitive
+ * multiset difference. Used to confirm an edit was a replacement rather than
+ * a pure insertion.
+ */
+export const computeRemovedTokens = (
+  original: string,
+  corrected: string,
+): string[] => computeAddedTokens(corrected, original);
+
 const isCommonWord = (word: string): boolean =>
   COMMON_WORDS.has(word.toLowerCase());
+
+const isLearnableProperNoun = (token: string): boolean => {
+  if (!LETTER_PATTERN.test(token)) {
+    return false;
+  }
+
+  if (token.length < MIN_TERM_LENGTH || token.length > MAX_TERM_LENGTH) {
+    return false;
+  }
+
+  if (isCommonWord(token)) {
+    return false;
+  }
+
+  // Only learn proper nouns, signalled by an initial capital letter. This
+  // deliberately skips corrections of ordinary lowercase words.
+  return UPPERCASE_LETTER_PATTERN.test(token);
+};
+
+/**
+ * Filters candidate tokens down to the learnable proper nouns, skipping
+ * existing dictionary terms and duplicates, capped at MAX_LEARNED_TERMS.
+ */
+export const collectLearnableTerms = (
+  candidates: string[],
+  existingTerms: string[],
+): string[] => {
+  const existing = new Set(
+    existingTerms.map((term) => term.trim().toLowerCase()).filter(Boolean),
+  );
+
+  const learnedTerms: string[] = [];
+  const seen = new Set<string>();
+
+  for (const token of candidates) {
+    if (learnedTerms.length >= MAX_LEARNED_TERMS) {
+      break;
+    }
+
+    if (!isLearnableProperNoun(token)) {
+      continue;
+    }
+
+    const lower = token.toLowerCase();
+    if (existing.has(lower) || seen.has(lower)) {
+      continue;
+    }
+
+    seen.add(lower);
+    learnedTerms.push(token);
+  }
+
+  return learnedTerms;
+};
 
 export const extractAutoLearnTerms = (args: {
   original: string;
@@ -286,40 +370,5 @@ export const extractAutoLearnTerms = (args: {
     return { learnedTerms: [] };
   }
 
-  const existing = new Set(
-    existingTerms.map((term) => term.trim().toLowerCase()).filter(Boolean),
-  );
-
-  const learnedTerms: string[] = [];
-  const seen = new Set<string>();
-
-  for (const token of added) {
-    if (learnedTerms.length >= MAX_LEARNED_TERMS) {
-      break;
-    }
-
-    if (!LETTER_PATTERN.test(token)) {
-      continue;
-    }
-
-    if (token.length < MIN_TERM_LENGTH || token.length > MAX_TERM_LENGTH) {
-      continue;
-    }
-
-    const lower = token.toLowerCase();
-    if (isCommonWord(lower) || existing.has(lower) || seen.has(lower)) {
-      continue;
-    }
-
-    // Only learn proper nouns, signalled by an initial capital letter. This
-    // deliberately skips corrections of ordinary lowercase words.
-    if (!UPPERCASE_LETTER_PATTERN.test(token)) {
-      continue;
-    }
-
-    seen.add(lower);
-    learnedTerms.push(token);
-  }
-
-  return { learnedTerms };
+  return { learnedTerms: collectLearnableTerms(added, existingTerms) };
 };

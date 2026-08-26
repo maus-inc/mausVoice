@@ -21,12 +21,13 @@ export const loadDictionary = async (): Promise<void> => {
 /**
  * Adds each value as a glossary term (not a replacement rule). Optimistic
  * update with rollback per term, so one failure does not abort the rest.
- * Returns the terms that were successfully persisted.
+ * Returns the terms that were persisted and how many failed.
  */
 export const createGlossaryTerms = async (
   sourceValues: string[],
-): Promise<Term[]> => {
+): Promise<{ created: Term[]; failed: number }> => {
   const created: Term[] = [];
+  let failed = 0;
 
   for (const sourceValue of sourceValues) {
     const normalized = sourceValue.trim();
@@ -61,8 +62,9 @@ export const createGlossaryTerms = async (
         );
       });
       getLogger().warning(`Failed to create glossary term: ${error}`);
+      failed++;
     }
   }
 
-  return created;
+  return { created, failed };
 };

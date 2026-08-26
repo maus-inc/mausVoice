@@ -228,9 +228,17 @@ export const TranscriptionDetailsDialog = () => {
       return;
     }
 
+    // Saving unchanged text would perform a needless DB write and run the
+    // full glossary extraction pipeline for nothing.
+    if (finalDraft.trim() === finalTranscriptText.trim()) {
+      setIsEditingFinal(false);
+      setFinalDraft("");
+      return;
+    }
+
     setIsSavingFinal(true);
     try {
-      const { learnedTerms } = await saveCorrectedTranscript({
+      const { learnedTerms, failedTerms } = await saveCorrectedTranscript({
         transcriptionId: transcription.id,
         correctedText: finalDraft,
       });
@@ -238,7 +246,7 @@ export const TranscriptionDetailsDialog = () => {
       setIsEditingFinal(false);
       setFinalDraft("");
 
-      if (learnedTerms.length === 1) {
+      if (learnedTerms.length === 1 && failedTerms === 0) {
         showSnackbar(
           intl.formatMessage(
             { defaultMessage: 'Added "{term}" to your dictionary' },
@@ -246,13 +254,32 @@ export const TranscriptionDetailsDialog = () => {
           ),
           { mode: "success" },
         );
-      } else if (learnedTerms.length > 1) {
+      } else if (learnedTerms.length > 0 && failedTerms === 0) {
         showSnackbar(
           intl.formatMessage(
             { defaultMessage: "Added {count} words to your dictionary" },
             { count: learnedTerms.length },
           ),
           { mode: "success" },
+        );
+      } else if (learnedTerms.length > 0 && failedTerms > 0) {
+        showSnackbar(
+          intl.formatMessage(
+            {
+              defaultMessage:
+                "Added {added} words to your dictionary ({failed} failed)",
+            },
+            { added: learnedTerms.length, failed: failedTerms },
+          ),
+          { mode: "success" },
+        );
+      } else if (failedTerms > 0) {
+        showSnackbar(
+          intl.formatMessage({
+            defaultMessage:
+              "Transcript updated, but the corrected words could not be added to your dictionary.",
+          }),
+          { mode: "error" },
         );
       } else {
         showSnackbar(
