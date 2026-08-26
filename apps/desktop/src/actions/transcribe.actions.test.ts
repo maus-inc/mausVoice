@@ -246,7 +246,7 @@ describe("storeTranscription audio retention", () => {
     expect(result.transcription).not.toBeNull();
   });
 
-  it("does not keep the audio snapshot outside incognito on failure when preserveAudioOnFailure is false", async () => {
+  it("does not write the audio file outside incognito on failure when preserveAudioOnFailure is false (no orphan WAV)", async () => {
     setPrefs({ incognitoModeEnabled: false, preserveAudioOnFailure: false });
     invokeMock.mockResolvedValue({
       filePath: "/tmp/audio.wav",
@@ -257,10 +257,11 @@ describe("storeTranscription audio retention", () => {
       buildInput({ rawTranscript: null, warnings: ["provider failed"] }),
     );
 
-    expect(invokeMock).toHaveBeenCalledWith(
-      "store_transcription_audio",
-      expect.objectContaining({ sampleRate: 16000 }),
-    );
+    // The previous behaviour wrote the WAV and then dropped the snapshot from
+    // the DB row, leaking the file (purge only follows audio_path). Skip the
+    // write entirely now so the audio directory cannot grow unboundedly when
+    // the user opts out of failure retention.
+    expect(invokeMock).not.toHaveBeenCalledWith("store_transcription_audio");
     expect(createTranscriptionMock).toHaveBeenCalledTimes(1);
     const stored = createTranscriptionMock.mock.calls[0][0];
     expect(stored.audio).toBeUndefined();

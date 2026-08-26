@@ -241,6 +241,11 @@ mod imp {
             Ok(h) => h,
             Err(err) => {
                 log::error!("lifecycle: CreateWindowExW failed: {err}");
+                // Class is registered but no window exists. Without this
+                // call the registration would leak for the lifetime of
+                // the process; OnceLock then prevents a retry from
+                // re-arming the watcher.
+                let _ = unsafe { UnregisterClassW(class_name, None) };
                 return;
             }
         };
