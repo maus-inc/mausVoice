@@ -58,109 +58,77 @@
 
 Every stage is configurable: capture globally, select the transcription path that fits the moment, then control exactly how the finished text reaches the focused app.
 
-<p align="center">
-  <a href="#global-dictation">Global dictation</a>
-  &nbsp;·&nbsp;
-  <a href="#transcription-engines">Transcription engines</a>
-  &nbsp;·&nbsp;
-  <a href="#writing-styles">Writing styles</a>
-  &nbsp;·&nbsp;
-  <a href="#dictionary-and-history">Dictionary &amp; history</a>
-  &nbsp;·&nbsp;
-  <a href="#assistant-approval">Assistant</a>
-</p>
+<div style="display: grid; grid-template-columns: 1fr 1fr; gap: 1.5rem 1.5rem; margin-top: 1rem;">
+  <!-- Feature 01: Global Dictation -->
+  <div style="order: 2; background: var(--bg-subtle); border-radius: 12px; padding: 1.5rem; box-shadow: 0 2px 8px rgba(0,0,0,0.08);">
+    <a id="global-dictation"></a>
+    <p align="center">
+      <img src="docs/assets/features/dictate-anywhere.png" alt="Global dictation with live listening waveform" style="width: 100%; border-radius: 8px; margin-bottom: 1rem; object-fit: contain;" />
+    </p>
+    <p align="center" style="font-size: 0.85rem; color: var(--muted);">01 / GLOBAL DICTATION</p>
+    <h3 style="font-size: 1.1rem; margin: 0.5rem 0;">Your voice, in the field with focus</h3>
+    <p style="font-size: 0.875rem; line-height: 1.5; margin: 0;">
+      Hold a global push-to-talk shortcut and speak into the app you are already using.<br />
+      mausVoice can paste, type directly, or leave the result on your clipboard.
+    </p>
+  </div>
 
-<br />
+  <!-- Feature 02: Transcription Engines -->
+  <div style="order: 1; background: var(--bg-subtle); border-radius: 12px; padding: 1.5rem; box-shadow: 0 2px 8px rgba(0,0,0,0.08);">
+    <a id="transcription-engines"></a>
+    <p align="center" style="margin-bottom: 1rem;">
+      <img src="docs/assets/features/choose-your-engine.png" alt="Local and API transcription engine choices" style="width: 100%; border-radius: 8px; margin-bottom: 1rem; object-fit: contain;" />
+    </p>
+    <p align="center" style="font-size: 0.85rem; color: var(--muted);">02 / TRANSCRIPTION ENGINES</p>
+    <h3 style="font-size: 1.1rem; margin: 0.5rem 0;">Local or hosted. Pick the transcription path.</h3>
+    <p style="font-size: 0.875rem; line-height: 1.5; margin: 0;">
+      Run Whisper, Parakeet, or Canary locally on CPU or a detected Vulkan GPU, or choose a hosted provider.<br />
+      Bring your own credentials; local recognition stays on-device once its model is downloaded.
+    </p>
+  </div>
 
-<a id="global-dictation"></a>
+  <!-- Feature 03: Writing Styles -->
+  <div style="order: 2; background: var(--bg-subtle); border-radius: 12px; padding: 1.5rem; box-shadow: 0 2px 8px rgba(0,0,0,0.08);">
+    <a id="writing-styles"></a>
+    <p align="center" style="margin-bottom: 1rem;">
+      <img src="docs/assets/features/writing-styles.png" alt="Writing styles for mail, chat, and terminal text" style="width: 100%; border-radius: 8px; margin-bottom: 1rem; object-fit: contain;" />
+    </p>
+    <p align="center" style="font-size: 0.85rem; color: var(--muted);">03 / WRITING STYLES</p>
+    <h3 style="font-size: 1.1rem; margin: 0.5rem 0;">Say it once. Shape it for the destination.</h3>
+    <p style="font-size: 0.875rem; line-height: 1.5; margin: 0;">
+      Create reusable instructions for email, chat, terminal work, or any voice you need.<br />
+      Choose the style before recording, or switch post-processing off for a literal transcript.
+    </p>
+  </div>
 
-<p align="center">
-  <img src="docs/assets/features/dictate-anywhere.png" alt="Global dictation with live listening waveform" width="100%" />
-</p>
+  <!-- Feature 04: Dictionary & History -->
+  <div style="order: 1; background: var(--bg-subtle); border-radius: 12px; padding: 1.5rem; box-shadow: 0 2px 8px rgba(0,0,0,0.08);">
+    <a id="dictionary-and-history"></a>
+    <p align="center" style="margin-bottom: 1rem;">
+      <img src="docs/assets/features/dictionary-history.png" alt="Dictionary replacement rule and inspectable transcription history" style="width: 100%; border-radius: 8px; margin-bottom: 1rem; object-fit: contain;" />
+    </p>
+    <p align="center" style="font-size: 0.85rem; color: var(--muted);">04 / DICTIONARY &amp; HISTORY</p>
+    <h3 style="font-size: 1.1rem; margin: 0.5rem 0;">Teach it your vocabulary. Keep the useful trail.</h3>
+    <p style="font-size: 0.875rem; line-height: 1.5; margin: 0;">
+      Add replacement rules for names, acronyms, and phrases that general models miss.<br />
+      Review raw and final text, play retained audio, or retranscribe a saved clip with current settings.
+    </p>
+  </div>
 
-<p align="center"><sub><strong>01 / GLOBAL DICTATION</strong></sub></p>
-<h3 align="center">Your voice, in the field with focus</h3>
-
-<p align="center">
-  Hold a global push-to-talk shortcut and speak into the app you are already using.<br />
-  mausVoice can paste, type directly, or leave the result on your clipboard.
-</p>
-
-<br />
-
-<a id="transcription-engines"></a>
-
-<p align="center">
-  <img src="docs/assets/features/choose-your-engine.png" alt="Local and API transcription engine choices" width="100%" />
-</p>
-
-<p align="center"><sub><strong>02 / TRANSCRIPTION ENGINES</strong></sub></p>
-<h3 align="center">Local or hosted. Pick the transcription path.</h3>
-
-<p align="center">
-  Run Whisper, Parakeet, or Canary locally on CPU or a detected Vulkan GPU, or choose a hosted provider.<br />
-  Bring your own credentials; local recognition stays on-device once its model is downloaded.
-</p>
-
-<br />
-
-<a id="writing-styles"></a>
-
-<p align="center">
-  <img src="docs/assets/features/writing-styles.png" alt="Writing styles for mail, chat, and terminal text" width="100%" />
-</p>
-
-<p align="center"><sub><strong>03 / WRITING STYLES</strong></sub></p>
-<h3 align="center">Say it once. Shape it for the destination.</h3>
-
-<p align="center">
-  Create reusable instructions for email, chat, terminal work, or any voice you need.<br />
-  Choose the style before recording, or switch post-processing off for a literal transcript.
-</p>
-
-<br />
-
-<a id="dictionary-and-history"></a>
-
-<p align="center">
-  <img src="docs/assets/features/dictionary-history.png" alt="Dictionary replacement rule and inspectable transcription history" width="100%" />
-</p>
-
-<p align="center"><sub><strong>04 / DICTIONARY &amp; HISTORY</strong></sub></p>
-<h3 align="center">Teach it your vocabulary. Keep the useful trail.</h3>
-
-<p align="center">
-  Add replacement rules for names, acronyms, and phrases that general models miss.<br />
-  Review raw and final text, play retained audio, or retranscribe a saved clip with current settings.
-</p>
-
-<br />
-
-<a id="assistant-approval"></a>
-
-<p align="center">
-  <img src="docs/assets/features/assistant-approval.png" alt="mausVoice Assistant with command approval controls" width="100%" />
-</p>
-
-<p align="center"><sub><strong>05 / ASSISTANT</strong></sub></p>
-<h3 align="center">Ask for action. Approve every command.</h3>
-
-<p align="center">
-  Use voice or text to work with the built-in Assistant and its permissioned tools.<br />
-  Requests pause for Deny, Allow, or Always allow; Power Mode keeps shell access off until enabled.
-</p>
-
-<p align="center">
-  <a href="https://github.com/maus-inc/mausVoice/releases">
-    <img src="docs/assets/badges/windows.svg" alt="Download mausVoice for Windows" height="40" />
-  </a>
-  <a href="https://github.com/maus-inc/mausVoice/releases">
-    <img src="docs/assets/badges/macos.svg" alt="Download mausVoice for macOS" height="40" />
-  </a>
-  <a href="https://github.com/maus-inc/mausVoice/releases">
-    <img src="docs/assets/badges/linux.svg" alt="Download mausVoice for Linux" height="40" />
-  </a>
-</p>
+  <!-- Feature 05: Assistant -->
+  <div style="order: 2; background: var(--bg-subtle); border-radius: 12px; padding: 1.5rem; box-shadow: 0 2px 8px rgba(0,0,0,0.08);">
+    <a id="assistant-approval"></a>
+    <p align="center" style="margin-bottom: 1rem;">
+      <img src="docs/assets/features/assistant-approval.png" alt="mausVoice Assistant with command approval controls" style="width: 100%; border-radius: 8px; margin-bottom: 1rem; object-fit: contain;" />
+    </p>
+    <p align="center" style="font-size: 0.85rem; color: var(--muted);">05 / ASSISTANT</p>
+    <h3 style="font-size: 1.1rem; margin: 0.5rem 0;">Ask for action. Approve every command.</h3>
+    <p style="font-size: 0.875rem; line-height: 1.5; margin: 0;">
+      Use voice or text to work with the built-in Assistant and its permissioned tools.<br />
+      Requests pause for Deny, Allow, or Always allow; Power Mode keeps shell access off until enabled.
+    </p>
+  </div>
+</div>
 
 Download links open the releases page, where you'll find the latest `.exe` (Windows), `.dmg` (macOS), and `.AppImage`/`.deb` (Linux) for your platform.
 
