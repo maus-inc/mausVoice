@@ -16,6 +16,8 @@ use tauri::{AppHandle, Emitter, EventTarget};
 use serde::{Deserialize, Serialize};
 use strum::IntoEnumIterator;
 
+static MAUSVOICE_KEYBOARD_PORT: &str = "MAUSVOICE_KEYBOARD_PORT";
+
 /// Helper to acquire a mutex lock, always returning a guard by recovering from poison errors.
 fn lock<T>(mutex: &Mutex<T>) -> MutexGuard<'_, T> {
     mutex
@@ -969,8 +971,6 @@ pub(crate) fn update_grab_hotkey_state(
                 return GrabDecision::PassThrough;
             }
             state.suppressed_keys.insert(key_label.to_string());
-static MAUSVOICE_KEYBOARD_PORT: &str = "MAUSVOICE_KEYBOARD_PORT";
-
             return GrabDecision::Suppress;
         }
 

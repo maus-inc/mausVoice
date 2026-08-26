@@ -349,12 +349,17 @@ fn parse_json(line: &str) -> Option<serde_json::Value> {
     serde_json::from_str::<serde_json::Value>(line).ok()
 }
 
+// Owned extraction: borrowing from a temporary `Value` inside a let-else
+// would outlive the temporary (E0716), so string fields are cloned out.
+fn json_str_field(line: &str, key: &str) -> Option<String> {
+    parse_json(line)?
+        .get(key)?
+        .as_str()
+        .map(str::to_string)
+}
+
 fn handle_typed_message(app: &tauri::AppHandle, line: &str) {
-    let Some(text) = parse_json(line)
-        .as_ref()
-        .and_then(|val| val.get("text"))
-        .and_then(|v| v.as_str())
-    else {
+    let Some(text) = json_str_field(line, "text") else {
         return;
     };
     let payload = serde_json::json!({ "text": text });
@@ -362,11 +367,7 @@ fn handle_typed_message(app: &tauri::AppHandle, line: &str) {
 }
 
 fn handle_open_conversation(app: &tauri::AppHandle, line: &str) {
-    let Some(id) = parse_json(line)
-        .as_ref()
-        .and_then(|val| val.get("conversation_id"))
-        .and_then(|v| v.as_str())
-    else {
+    let Some(id) = json_str_field(line, "conversation_id") else {
         return;
     };
     let payload = serde_json::json!({ "conversationId": id });
@@ -380,8 +381,13 @@ fn handle_resolve_permission(app: &tauri::AppHandle, line: &str) {
     let permission_id = val
         .get("permission_id")
         .and_then(|v| v.as_str())
-        .unwrap_or("");
-    let status = val.get("status").and_then(|v| v.as_str()).unwrap_or("denied");
+        .unwrap_or("")
+        .to_string();
+    let status = val
+        .get("status")
+        .and_then(|v| v.as_str())
+        .unwrap_or("denied")
+        .to_string();
     let always_allow = val
         .get("always_allow")
         .and_then(|v| v.as_bool())
@@ -403,11 +409,7 @@ fn handle_style_switch(app: &tauri::AppHandle, line: &str) {
 }
 
 fn handle_toast_action(app: &tauri::AppHandle, line: &str) {
-    let Some(action) = parse_json(line)
-        .as_ref()
-        .and_then(|val| val.get("action"))
-        .and_then(|v| v.as_str())
-    else {
+    let Some(action) = json_str_field(line, "action") else {
         return;
     };
     let payload = serde_json::json!({ "action": action });

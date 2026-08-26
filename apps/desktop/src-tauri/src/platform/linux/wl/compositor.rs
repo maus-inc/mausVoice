@@ -2,7 +2,6 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::sync::OnceLock;
-use tempfile::tempdir;
 use tauri::Manager;
 
 use crate::domain::CompositorBinding;
@@ -917,6 +916,7 @@ fn sync_cosmic(script_path: &Path, bindings: &[CompositorBinding]) -> Result<(),
 }
 
 static XDG_DATA_HOME: &str = "XDG_DATA_HOME";
+static XDG_CONFIG_HOME: &str = "XDG_CONFIG_HOME";
 static HOME: &str = "HOME";
 
 fn data_home() -> PathBuf {
@@ -926,12 +926,8 @@ fn data_home() -> PathBuf {
     if let Ok(home) = std::env::var(HOME) {
         return PathBuf::from(home).join(".local/share");
     }
-    let dir = tempdir().expect("Failed to create a temporary data directory");
-    dir.path().to_path_buf()
+    PathBuf::from("/tmp")
 }
-
-static XDG_CONFIG_HOME: &str = "XDG_CONFIG_HOME";
-static HOME: &str = "HOME";
 
 fn config_home() -> PathBuf {
     if let Ok(xdg) = std::env::var(XDG_CONFIG_HOME) {
@@ -940,6 +936,5 @@ fn config_home() -> PathBuf {
     if let Ok(home) = std::env::var(HOME) {
         return PathBuf::from(home).join(".config");
     }
-    let dir = tempdir().expect("failed to create a temporary directory");
-    dir.into_path()
+    PathBuf::from("/tmp")
 }
