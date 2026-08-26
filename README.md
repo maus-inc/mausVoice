@@ -8,6 +8,8 @@
 
 > [!TIP]
 > Grab your free [Groq↗](https://console.groq.com/keys) and [Deepgram↗](https://console.deepgram.com/) API keys.
+>
+> **Transcription accuracy varies by STT provider or model; transcripts may not be 100 percent accurate due to differences in intonation and native accents. We continually optimize the client-side pipeline.**
 
 <div align="center">
 
