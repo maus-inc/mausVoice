@@ -2,6 +2,7 @@ import Anthropic from "@anthropic-ai/sdk";
 import type {
   ContentBlockParam,
   MessageParam,
+  MessageStreamEvent,
   ToolChoiceAuto,
   ToolChoiceAny,
   ToolChoiceTool,
@@ -14,6 +15,7 @@ import type {
   LlmFinishReason,
   LlmMessage,
   LlmStreamEvent,
+  LlmToolChoice,
 } from "@maus-inc/types";
 
 export const CLAUDE_MODELS = [
@@ -217,6 +219,62 @@ export type ClaudeStreamChatArgs = {
   input: LlmChatInput;
 };
 
+const mapClaudeToolChoice = (
+  choice: LlmToolChoice | undefined,
+  hasTools: boolean,
+): ToolChoiceAuto | ToolChoiceAny | ToolChoiceTool | undefined => {
+  if (!choice || !hasTools) return undefined;
+  if (typeof choice === "string") {
+    switch (choice) {
+      case "auto":
+        return { type: "auto" };
+      case "required":
+        return { type: "any" };
+      case "none":
+        return undefined;
+    }
+  }
+  return { type: "tool", name: choice.name };
+};
+
+type ClaudeToolCall = { id: string; name: string; arguments: string };
+
+const processClaudeStreamEvent = (
+  event: MessageStreamEvent,
+  pendingToolCalls: ClaudeToolCall[],
+): string | undefined => {
+  if (
+    event.type === "content_block_delta" &&
+    event.delta.type === "text_delta"
+  ) {
+    return event.delta.text;
+  }
+
+  if (
+    event.type === "content_block_delta" &&
+    event.delta.type === "input_json_delta"
+  ) {
+    const last = pendingToolCalls[pendingToolCalls.length - 1];
+    if (last) {
+      last.arguments += event.delta.partial_json;
+    }
+    return undefined;
+  }
+
+  if (
+    event.type === "content_block_start" &&
+    event.content_block.type === "tool_use"
+  ) {
+    pendingToolCalls.push({
+      id: event.content_block.id,
+      name: event.content_block.name,
+      arguments: "",
+    });
+  }
+
+  return undefined;
+};
+
 export async function* claudeStreamChat({
   apiKey,
   model,
@@ -237,24 +295,7 @@ export async function* claudeStreamChat({
         }))
       : undefined;
 
-  let toolChoice: ToolChoiceAuto | ToolChoiceAny | ToolChoiceTool | undefined;
-  if (input.toolChoice && tools) {
-    if (typeof input.toolChoice === "string") {
-      switch (input.toolChoice) {
-        case "auto":
-          toolChoice = { type: "auto" };
-          break;
-        case "required":
-          toolChoice = { type: "any" };
-          break;
-        case "none":
-          toolChoice = undefined;
-          break;
-      }
-    } else {
-      toolChoice = { type: "tool", name: input.toolChoice.name };
-    }
-  }
+  const toolChoice = mapClaudeToolChoice(input.toolChoice, Boolean(tools));
 
   const stream = client.messages.stream({
     model,
@@ -268,39 +309,12 @@ export async function* claudeStreamChat({
     stop_sequences: input.stopSequences,
   });
 
-  const pendingToolCalls: Array<{
-    id: string;
-    name: string;
-    arguments: string;
-  }> = [];
+  const pendingToolCalls: ClaudeToolCall[] = [];
 
   for await (const event of stream) {
-    if (
-      event.type === "content_block_delta" &&
-      event.delta.type === "text_delta"
-    ) {
-      yield { type: "text-delta", text: event.delta.text };
-    }
-
-    if (
-      event.type === "content_block_delta" &&
-      event.delta.type === "input_json_delta"
-    ) {
-      const last = pendingToolCalls[pendingToolCalls.length - 1];
-      if (last) {
-        last.arguments += event.delta.partial_json;
-      }
-    }
-
-    if (
-      event.type === "content_block_start" &&
-      event.content_block.type === "tool_use"
-    ) {
-      pendingToolCalls.push({
-        id: event.content_block.id,
-        name: event.content_block.name,
-        arguments: "",
-      });
+    const textDelta = processClaudeStreamEvent(event, pendingToolCalls);
+    if (textDelta) {
+      yield { type: "text-delta", text: textDelta };
     }
   }
 
