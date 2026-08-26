@@ -23,7 +23,7 @@ const createPreviewUrl = (
 
   const samples = ensureFloat32Array(rawSamples ?? []);
 
-  if (!samples || samples.length === 0) {
+  if (samples.length === 0) {
     return null;
   }
 

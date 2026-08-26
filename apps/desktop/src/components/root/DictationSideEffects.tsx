@@ -121,8 +121,37 @@ type HandleEmptyResultInput = {
     duration?: number;
   }) => Promise<void> | void;
   storeTranscriptionFn: typeof storeTranscription;
-  emitFailed: () => Promise<void> | void;
   refreshMember: () => void;
+};
+
+type StartFailureToastInput = {
+  startInvokeRejected: boolean;
+  formatMessage: (descriptor: { defaultMessage: string }) => string;
+  showToast: (options: {
+    message: string;
+    toastType: "info" | "error";
+    duration?: number;
+  }) => Promise<void> | void;
+};
+
+export const reportStartFailureToast = async (
+  input: StartFailureToastInput,
+): Promise<void> => {
+  // `start_recording` emits the platform-specific reason on the
+  // `recording_failed` event before rejecting, and the global listener in
+  // this component toasts that event — so an invoke rejection must stay
+  // silent here or the user gets stacked error notifications. Every other
+  // throw on the start path (chime playback, strategy init, phase push,
+  // `onRecordingStart` provider/websocket/model failures) has no event
+  // behind it, so this generic toast is the only feedback they produce.
+  if (input.startInvokeRejected) {
+    return;
+  }
+  await input.showToast({
+    message: input.formatMessage({ defaultMessage: "Recording failed" }),
+    toastType: "error",
+    duration: 8_000,
+  });
 };
 
 export const handleEmptyTranscriptionResult = async (
@@ -164,7 +193,9 @@ export const handleEmptyTranscriptionResult = async (
     });
   }
 
-  await input.emitFailed();
+  // No synthetic `recording_failed` emission here: this path owns its own
+  // recovery toast above, and forwarding to the global listener stacked a
+  // second generic error toast over it.
   input.refreshMember();
   return { handled: true };
 };
@@ -534,12 +565,6 @@ export const DictationSideEffects = () => {
           formatMessage: intl.formatMessage,
           showToast,
           storeTranscriptionFn: storeTranscription,
-          // emitFailed previously forwarded a synthetic "recording_failed"
-          // event here, but the global listener in this component then
-          // surfaced a *second* error toast on top of the one the
-          // empty-transcript handler already shows. Single toast owner is
-          // the empty-transcript path now; no cross-event propagation.
-          emitFailed: () => {},
           refreshMember,
         });
         if (handled) {
@@ -598,7 +623,7 @@ export const DictationSideEffects = () => {
         getLogger().verbose("Storing transcription");
         storeTranscription({
           audio,
-          rawTranscript: rawTranscript ?? null,
+          rawTranscript,
           sanitizedTranscript,
           transcript,
           transcriptionMetadata: transcribeResult.metadata,
@@ -762,6 +787,15 @@ export const DictationSideEffects = () => {
 
       const preferredMicrophone = getMyPreferredMicrophone(state);
       const transcriptPrefs = getTranscriptionPrefs(state);
+      // True when the failure came from the `start_recording` invoke
+      // itself. That command emits `recording_failed` (with the platform
+      // reason) before rejecting and the global listener below toasts it,
+      // so the catch must stay silent for that path to avoid stacking a
+      // second notification. Every other throw in this block — chime
+      // playback, strategy init, phase push, `onRecordingStart` (provider /
+      // websocket / model-download failures) — has no event behind it, so
+      // the generic fallback toast there is the only user feedback.
+      let startInvokeRejected = false;
       try {
         getLogger().info(`Transcription prefs: mode=${transcriptPrefs.mode}`);
         const session = createTranscriptionSession(transcriptPrefs);
@@ -786,8 +820,15 @@ export const DictationSideEffects = () => {
         isPausedRef.current = false;
         const [, startRecordingResult] = await Promise.all([
           strategy.setPhase("recording"),
+          // `start_recording` emits the platform-specific reason on the
+          // `recording_failed` event before rejecting; the global listener
+          // below owns the user-visible toast for that path. Mark the
+          // source so the outer catch does not stack a second toast.
           invoke<StartRecordingResponse>("start_recording", {
             args: { preferredMicrophone },
+          }).catch((error) => {
+            startInvokeRejected = true;
+            throw error;
           }),
         ]);
 
@@ -843,12 +884,11 @@ export const DictationSideEffects = () => {
           ),
         );
 
-        // The `recording_failed` global listener (registered below) is the
-        // single owner of the user-visible failure toast. The Rust
-        // `start_recording` already emitted that event before rejecting
-        // here, so this catch only does state cleanup. Adding a toast in
-        // this block stacks a second "Recording failed" notification over
-        // the listener's platform-specific one.
+        await reportStartFailureToast({
+          startInvokeRejected,
+          formatMessage: intl.formatMessage,
+          showToast,
+        });
       }
     },
     [

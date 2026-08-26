@@ -16,12 +16,15 @@ const MAX_LOG_FILE_SIZE: u128 = 25 * 1024 * 1024;
 /// `MAX_LOG_FILE_SIZE` this bounds the log directory to roughly 250 MB.
 const MAX_LOG_FILES: usize = 10;
 
+const ENV_MAUSVOICE_LOG: &str = "MAUSVOICE_LOG";
+const ENV_MAUSVOICE_ENABLE_DEVTOOLS: &str = "MAUSVOICE_ENABLE_DEVTOOLS";
+
 /// Returns the default log level, or the level requested through the
 /// `MAUSVOICE_LOG` environment variable when it parses to a known level.
 /// `debug` and `trace` are reachable for opt-in troubleshooting; the
 /// production default is `info` to keep file size and noise in check.
 fn default_log_level() -> log::LevelFilter {
-    if let Ok(raw) = std::env::var("MAUSVOICE_LOG") {
+    if let Ok(raw) = std::env::var(ENV_MAUSVOICE_LOG) {
         match raw.trim().to_ascii_lowercase().as_str() {
             "trace" => return log::LevelFilter::Trace,
             "debug" => return log::LevelFilter::Debug,
@@ -311,7 +314,7 @@ pub fn build() -> tauri::Builder<tauri::Wry> {
             }
 
             // Open dev tools if MAUSVOICE_ENABLE_DEVTOOLS is set
-            if std::env::var("MAUSVOICE_ENABLE_DEVTOOLS").is_ok() {
+            if std::env::var(ENV_MAUSVOICE_ENABLE_DEVTOOLS).is_ok() {
                 log::info!("MAUSVOICE_ENABLE_DEVTOOLS detected, opening dev tools...");
                 if let Some(main_window) = app.get_webview_window("main") {
                     main_window.open_devtools();

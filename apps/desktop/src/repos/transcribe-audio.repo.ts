@@ -77,11 +77,25 @@ export type LocalTranscriptionSegment = {
 };
 
 // Whisper emits a non-zero `noSpeechProb` for short bursts of background
-// noise and silences. Drop high-probability segments whose text is too
-// short to be real speech so the LLM post-process step does not amplify
-// stray "thank you" / "you" / punctuation.
+// noise and silences. Drop high-probability segments only when their text
+// matches a known hallucination fragment (stray "thank you" / "you" /
+// punctuation) or is pure noise. Real short utterances ("yes", "ok", a
+// name) can also carry an elevated noSpeechProb on quiet recordings, so
+// length alone must not decide the drop.
 export const NO_SPEECH_PROB_THRESHOLD = 0.6;
-export const HALLUCINATION_TEXT_MAX_CHARS = 12;
+
+const HALLUCINATION_PHRASES = new Set(["thank you", "thanks", "you"]);
+
+const isHallucinationText = (text: string): boolean => {
+  const normalized = text
+    .trim()
+    .toLowerCase()
+    .replace(/[!.?,]+$/u, "");
+  if (normalized.length === 0) {
+    return true;
+  }
+  return HALLUCINATION_PHRASES.has(normalized);
+};
 
 export const filterLocalTranscriptionSegments = (
   segments: readonly LocalTranscriptionSegment[],
@@ -91,7 +105,7 @@ export const filterLocalTranscriptionSegments = (
       if (segment.noSpeechProb <= NO_SPEECH_PROB_THRESHOLD) {
         return true;
       }
-      return segment.text.trim().length > HALLUCINATION_TEXT_MAX_CHARS;
+      return !isHallucinationText(segment.text);
     })
     .map((segment) => segment.text)
     .filter((text) => text.trim().length > 0)

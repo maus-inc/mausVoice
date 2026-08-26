@@ -24,7 +24,7 @@ Open **Settings → General → More settings** for controls that do not belong 
 
 **Reset pill position** decides which display is used when you invoke the tray's reset action: the monitor containing the pill or the monitor containing the pointer. It does not immediately reset the position.
 
-**Pill placement** anchors the dictation pill to the **top** or **bottom** of the screen. It defaults to bottom; choose top if the bottom anchor is obscured by another app or a taskbar. The preference is remembered across sessions.
+**Pill placement** anchors the dictation pill to the **top** or **bottom** of the screen. It defaults to bottom; choose top if the bottom anchor is obscured by another app or a taskbar. The preference is remembered across sessions. Windows only for now; the setting is hidden on macOS and Linux until their native pills support repositioning.
 
 ## Processing and delivery
 

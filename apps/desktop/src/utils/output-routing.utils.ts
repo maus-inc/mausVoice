@@ -54,17 +54,13 @@ export const routeTranscriptOutput = async (
 
   const sessionId = ++handsFreeSessionId;
 
-  if (handsFreeDelayMs > 0) {
+  if (handsFreeDelayMs > 0 && !args.isInterim) {
     await new Promise<void>((resolve) => {
-      setTimeout(() => {
-        if (sessionId !== handsFreeSessionId) {
-          resolve();
-          return;
-        }
-        resolve();
-      }, handsFreeDelayMs);
+      setTimeout(resolve, handsFreeDelayMs);
     });
     if (sessionId !== handsFreeSessionId) {
+      // A newer delivery (final transcript or another session) superseded
+      // this one while it waited; drop it instead of pasting stale text.
       return { delivered: false, remote: false };
     }
   }

@@ -161,7 +161,7 @@ function getOpenAICompatibleConfig(
         label: <FormattedMessage defaultMessage="Transcription path" />,
         placeholder: "/audio/transcriptions",
         helperText: (
-          <FormattedMessage defaultMessage="Override the transcription endpoint path. Leave empty to use /audio/transcriptions. Set to /v1/audio/transcriptions for Open WebUI." />
+          <FormattedMessage defaultMessage="Replaces only the path after the base URL. For Open WebUI, enter /v1/audio/transcriptions and turn off Include /v1 path; otherwise leave empty." />
         ),
         required: false,
       },

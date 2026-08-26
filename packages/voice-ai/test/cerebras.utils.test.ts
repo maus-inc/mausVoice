@@ -127,10 +127,12 @@ describe("cerebrasGenerateTextResponse", () => {
     expect(createCompletion.mock.calls[0][0]).toMatchObject({
       response_format: { type: "json_object" },
     });
-    const sentMessages = createCompletion.mock.calls[0][0]?.messages as Array<{
-      content: string | Array<{ type: string; text: string }>;
-    }>;
-    const userContent = sentMessages[0]?.content;
+    const sentMessages = createCompletion.mock.calls[0][0]?.messages as
+      | Array<{
+          content: string | Array<{ type: string; text: string }>;
+        }>
+      | undefined;
+    const userContent = sentMessages?.[0]?.content;
     const userText = Array.isArray(userContent)
       ? userContent.map((p) => p.text).join("")
       : String(userContent);

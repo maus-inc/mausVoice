@@ -3,7 +3,7 @@
 //! `rdev::grab` installs a low-level keyboard hook that the OS tears down
 //! across a sleep/wake boundary or a workstation unlock (UIPI / input desktop
 //! changes). Without explicit re-registration the global dictation hotkey
-//! silently dies on resume. This module owns a hidden message-only HWND that
+//! silently dies on resume. This module owns a hidden top-level HWND that
 //! subscribes to the relevant Windows notifications and emits a single
 //! `desktop_resume` Tauri event whenever the user comes back, so the
 //! frontend can ask the listener to re-grab.
@@ -19,14 +19,16 @@
 //! Why a dedicated thread rather than a `RunEvent` handler or a Tokio task:
 //!
 //! * `RunEvent` only fires for Tauri-managed windows. The HWND we need is
-//!   a `HWND_MESSAGE` (message-only, invisible, no Z-order, no taskbar
-//!   entry); Tauri does not own it, so Tauri will never deliver its
-//!   `WM_POWERBROADCAST` or `WM_WTSSESSION_CHANGE` to us.
+//!   an invisible top-level tool window parented to the desktop —
+//!   deliberately **not** a `HWND_MESSAGE` message-only window, because
+//!   message-only windows do not receive broadcast messages such as
+//!   `WM_POWERBROADCAST`. Tauri does not own this window either way, so
+//!   it will never deliver these notifications for us.
 //! * A Tokio task cannot host a `GetMessageW` loop: `GetMessageW` blocks
 //!   the calling thread on a kernel message queue, and `SendMessage` from
 //!   other threads (e.g. from the lock-screen SMSS) requires the HWND to
 //!   have an actual thread pumping it. A worker thread is the canonical
-//!   Win32 pattern for a message-only window.
+//!   Win32 pattern for a notification window.
 
 #[cfg(target_os = "windows")]
 mod imp {
@@ -47,10 +49,6 @@ mod imp {
     use windows::Win32::System::RemoteDesktop::{
         WTSRegisterSessionNotification, WTSUnRegisterSessionNotification, NOTIFY_FOR_THIS_SESSION,
     };
-    use windows::Win32::System::StationsAndDesktops::{
-        GetThreadDesktop, SetThreadDesktop,
-    };
-    use windows::Win32::System::Threading::GetCurrentThreadId;
     use windows::Win32::UI::WindowsAndMessaging::{
         CreateWindowExW, DefWindowProcW, DestroyWindow, DispatchMessageW, GetMessageW,
         RegisterClassW, TranslateMessage, UnregisterClassW, CS_HREDRAW, CS_OWNDC, CS_VREDRAW,
@@ -153,7 +151,7 @@ mod imp {
     /// `app` is cloned into the thread and used to emit
     /// `desktop_resume` whenever the OS notifies us of a sleep/wake
     /// transition or a session unlock. The thread runs the
-    /// message-only window's pump for the lifetime of the process.
+    /// hidden window's pump for the lifetime of the process.
     pub fn start_watcher(app: &tauri::AppHandle<tauri::Wry>) {
         if watcher_started().set(()).is_err() {
             return;
@@ -175,18 +173,6 @@ mod imp {
             if console.0.is_null() {
                 let handler: unsafe extern "system" fn(u32) -> BOOL = console_ctrl_handler;
                 let _ = SetConsoleCtrlHandler(Some(handler), true);
-            }
-        }
-
-        // Move to the input desktop so messages from the active session
-        // (e.g. lock-screen SMSS) reach us. Best-effort: if the call
-        // fails (e.g. service context) we still try the message pump
-        // because the current thread desktop is what the lock screen
-        // would route to anyway.
-        unsafe {
-            let tid = GetCurrentThreadId();
-            if let Ok(current) = GetThreadDesktop(tid) {
-                let _ = SetThreadDesktop(current);
             }
         }
 
