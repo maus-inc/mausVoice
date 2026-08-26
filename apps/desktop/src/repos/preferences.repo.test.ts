@@ -144,6 +144,27 @@ describe("autoLearnDictionaryEnabled preference", () => {
   });
 });
 
+describe("autoLearnFromEditsEnabled preference", () => {
+  it("defaults to false when the local row omits the field", () => {
+    const loaded = fromLocalPreferences({
+      ...toLocalPreferences(createDefaultPreferences()),
+      autoLearnFromEditsEnabled: undefined,
+    });
+    expect(loaded.autoLearnFromEditsEnabled).toBe(false);
+  });
+
+  it("preserves an explicit true across a round-trip", () => {
+    const loaded = fromLocalPreferences({
+      ...toLocalPreferences(createDefaultPreferences()),
+      autoLearnFromEditsEnabled: true,
+    });
+    expect(loaded.autoLearnFromEditsEnabled).toBe(true);
+
+    const saved = toLocalPreferences(loaded);
+    expect(saved.autoLearnFromEditsEnabled).toBe(true);
+  });
+});
+
 describe("preserveAudioOnFailure preference", () => {
   it("defaults to true when the local row omits the field", () => {
     const loaded = fromLocalPreferences({

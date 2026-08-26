@@ -9,6 +9,8 @@ export const sendPillFlashMessage = (message: string): void => {
       duration: null,
       action: null,
       action_label: null,
+      reject_action: null,
+      reject_action_label: null,
     }),
   }).catch(console.error);
 };

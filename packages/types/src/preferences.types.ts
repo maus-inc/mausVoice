@@ -49,6 +49,7 @@ export type UserPreferences = {
   alwaysRequestAdminOnStartup: boolean;
   handsFreeDelayMs: Nullable<number>;
   autoLearnDictionaryEnabled: boolean;
+  autoLearnFromEditsEnabled: boolean;
 
   // deprecated
 };

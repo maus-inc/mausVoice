@@ -13,6 +13,10 @@ function getActionLabel(action: ToastAction): string {
       return intl.formatMessage({ defaultMessage: "Open" });
     case "confirm_cancel_transcription":
       return intl.formatMessage({ defaultMessage: "Yes, cancel" });
+    case "auto_learn_accept":
+      return intl.formatMessage({ defaultMessage: "Add" });
+    case "auto_learn_reject":
+      return intl.formatMessage({ defaultMessage: "Ignore" });
   }
 }
 
@@ -21,6 +25,8 @@ export type ShowToastOptions = {
   toastType?: ToastType;
   duration?: number;
   action?: ToastAction;
+  /** Optional second (reject) action, rendered beside the primary action. */
+  rejectAction?: ToastAction;
 };
 
 export async function showToast(options: ShowToastOptions): Promise<void> {
@@ -33,6 +39,10 @@ export async function showToast(options: ShowToastOptions): Promise<void> {
       duration: durationSec,
       action: options.action ?? null,
       action_label: options.action ? getActionLabel(options.action) : null,
+      reject_action: options.rejectAction ?? null,
+      reject_action_label: options.rejectAction
+        ? getActionLabel(options.rejectAction)
+        : null,
     }),
   });
 }

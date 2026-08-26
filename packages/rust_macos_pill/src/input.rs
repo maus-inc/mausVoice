@@ -13,7 +13,12 @@ fn has_flash_action_at(state: &PillState, x: f64, y: f64) -> bool {
     // since the flash can be wider than the draw area (it extends into the
     // content-offset margins). The FlashAction region has exact coordinates.
     let regions = state.click_regions.borrow();
-    regions.iter().any(|r| matches!(r.action, ClickAction::FlashAction) && r.contains(x, y))
+    regions.iter().any(|r| {
+        matches!(
+            r.action,
+            ClickAction::FlashAction | ClickAction::FlashReject
+        ) && r.contains(x, y)
+    })
 }
 
 /// A23: Dispatch haptic/audio feedback to the desktop process.
@@ -103,6 +108,19 @@ pub(crate) fn handle_click(state: &PillState, x: f64, y: f64) {
                     state.flash_timer.set(0.0);
                     *state.flash_action.borrow_mut() = None;
                     *state.flash_action_label.borrow_mut() = None;
+                    *state.flash_reject_action.borrow_mut() = None;
+                    *state.flash_reject_action_label.borrow_mut() = None;
+                }
+                ClickAction::FlashReject => {
+                    if let Some(ref action) = *state.flash_reject_action.borrow() {
+                        ipc::send(&OutMessage::ToastAction { action: action.clone() });
+                    }
+                    state.flash_visible.set(false);
+                    state.flash_timer.set(0.0);
+                    *state.flash_action.borrow_mut() = None;
+                    *state.flash_action_label.borrow_mut() = None;
+                    *state.flash_reject_action.borrow_mut() = None;
+                    *state.flash_reject_action_label.borrow_mut() = None;
                 }
             }
             return;

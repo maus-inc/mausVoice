@@ -66,6 +66,7 @@ type LocalUserPreferences = {
   alwaysRequestAdminOnStartup?: boolean;
   handsFreeDelayMs?: Nullable<number>;
   autoLearnDictionaryEnabled?: boolean;
+  autoLearnFromEditsEnabled?: boolean;
 };
 
 const normalizePillResetMonitorStrategy = (
@@ -176,6 +177,7 @@ export const fromLocalPreferences = (
       ? null
       : normalizeHandsFreeDelayMs(preferences.handsFreeDelayMs),
   autoLearnDictionaryEnabled: preferences.autoLearnDictionaryEnabled ?? true,
+  autoLearnFromEditsEnabled: preferences.autoLearnFromEditsEnabled ?? false,
 });
 
 export const toLocalPreferences = (
@@ -248,6 +250,7 @@ export const toLocalPreferences = (
       ? null
       : normalizeHandsFreeDelayMs(preferences.handsFreeDelayMs),
   autoLearnDictionaryEnabled: preferences.autoLearnDictionaryEnabled ?? true,
+  autoLearnFromEditsEnabled: preferences.autoLearnFromEditsEnabled ?? false,
 });
 
 export abstract class BaseUserPreferencesRepo extends BaseRepo {

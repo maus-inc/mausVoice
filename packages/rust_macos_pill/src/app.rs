@@ -412,13 +412,15 @@ fn perform_tick() {
                     ctx.state.style_count.set(count);
                     *ctx.state.style_name.borrow_mut() = name;
                 }
-                InMessage::Toast { message, toast_type, duration, action, action_label } => {
+                InMessage::Toast { message, toast_type, duration, action, action_label, reject_action, reject_action_label } => {
                     *ctx.state.flash_message.borrow_mut() = message;
                     ctx.state.flash_is_error.set(toast_type.as_deref() == Some("error"));
                     ctx.state.flash_visible.set(true);
                     ctx.state.flash_timer.set(duration.unwrap_or(FLASH_DURATION));
                     *ctx.state.flash_action.borrow_mut() = action;
                     *ctx.state.flash_action_label.borrow_mut() = action_label;
+                    *ctx.state.flash_reject_action.borrow_mut() = reject_action;
+                    *ctx.state.flash_reject_action_label.borrow_mut() = reject_action_label;
                 }
                 InMessage::DismissToast => {
                     clear_flash(&ctx.state);
@@ -428,6 +430,8 @@ fn perform_tick() {
                     ctx.state.flash_is_error.set(false);
                     *ctx.state.flash_action.borrow_mut() = None;
                     *ctx.state.flash_action_label.borrow_mut() = None;
+                    *ctx.state.flash_reject_action.borrow_mut() = None;
+                    *ctx.state.flash_reject_action_label.borrow_mut() = None;
                     ctx.state.flash_visible.set(true);
                     ctx.state.flash_timer.set(FIREWORKS_TOTAL_DURATION);
 
@@ -441,6 +445,8 @@ fn perform_tick() {
                     ctx.state.flash_is_error.set(false);
                     *ctx.state.flash_action.borrow_mut() = None;
                     *ctx.state.flash_action_label.borrow_mut() = None;
+                    *ctx.state.flash_reject_action.borrow_mut() = None;
+                    *ctx.state.flash_reject_action_label.borrow_mut() = None;
                     ctx.state.flash_visible.set(true);
                     ctx.state.flash_timer.set(FLAME_TOTAL_DURATION);
 
@@ -656,6 +662,8 @@ fn clear_flash(state: &PillState) {
     state.flash_timer.set(0.0);
     *state.flash_action.borrow_mut() = None;
     *state.flash_action_label.borrow_mut() = None;
+    *state.flash_reject_action.borrow_mut() = None;
+    *state.flash_reject_action_label.borrow_mut() = None;
 }
 
 /// Advances all pill animations by `dt` seconds: audio levels, springs
@@ -780,6 +788,8 @@ fn tick(state: &PillState, window: id, dt: f64) {
             state.flash_timer.set(0.0);
             *state.flash_action.borrow_mut() = None;
             *state.flash_action_label.borrow_mut() = None;
+            *state.flash_reject_action.borrow_mut() = None;
+            *state.flash_reject_action_label.borrow_mut() = None;
         } else {
             state.flash_timer.set(remaining);
         }
@@ -1427,6 +1437,8 @@ unsafe fn setup(receiver: Receiver<InMessage>, embedded: bool) {
         flash_is_error: Cell::new(false),
         flash_action: RefCell::new(None),
         flash_action_label: RefCell::new(None),
+        flash_reject_action: RefCell::new(None),
+        flash_reject_action_label: RefCell::new(None),
         fireworks_active: Cell::new(false),
         fireworks_elapsed: Cell::new(0.0),
         fireworks_next_launch: Cell::new(0),

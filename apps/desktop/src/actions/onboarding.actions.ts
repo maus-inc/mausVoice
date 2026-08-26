@@ -207,6 +207,7 @@ export const submitOnboarding = async () => {
       alwaysRequestAdminOnStartup: false,
       handsFreeDelayMs: DEFAULT_HANDS_FREE_DELAY_MS,
       autoLearnDictionaryEnabled: true,
+      autoLearnFromEditsEnabled: false,
     };
 
     const [savedUser, savedPreferences] = await Promise.all([

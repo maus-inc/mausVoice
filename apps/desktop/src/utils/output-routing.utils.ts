@@ -3,6 +3,7 @@ import type {
   RouteTranscriptOutputArgs,
   RouteTranscriptOutputResult,
 } from "@maus-inc/types";
+import { beginEditWatch } from "../actions/edit-watch.actions";
 import { getIntl } from "../i18n/intl";
 import { getAppState } from "../store";
 import { getEffectiveHandsFreeDelayMs } from "./hands-free-delay.utils";
@@ -73,6 +74,13 @@ export const routeTranscriptOutput = async (
         : (currentApp?.pasteKeybind ?? prefs?.pasteKeybind ?? null);
 
     await insertLocalTranscriptOutputViaPaste(args.text, pasteKeybind);
+  }
+
+  // After a final dictation lands in the target app, watch for corrections
+  // the user makes there and offer to learn them. Interim streamed segments
+  // are excluded: there is no single "final" paste to diff against.
+  if (!args.isInterim && args.mode === "dictation") {
+    beginEditWatch(args.text);
   }
 
   return {

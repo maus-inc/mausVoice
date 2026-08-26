@@ -130,6 +130,7 @@ export const createDefaultPreferences = (): UserPreferences => ({
   typingSpeedMs: null,
   handsFreeDelayMs: DEFAULT_HANDS_FREE_DELAY_MS,
   autoLearnDictionaryEnabled: true,
+  autoLearnFromEditsEnabled: false,
 });
 
 export const updateUserPreferences = async (
@@ -680,6 +681,14 @@ export const setAutoLearnDictionaryEnabled = async (
   await updateUserPreferences((preferences) => {
     preferences.autoLearnDictionaryEnabled = enabled;
   }, "Failed to save auto-learn dictionary preference. Please try again.");
+};
+
+export const setAutoLearnFromEditsEnabled = async (
+  enabled: boolean,
+): Promise<void> => {
+  await updateUserPreferences((preferences) => {
+    preferences.autoLearnFromEditsEnabled = enabled;
+  }, "Failed to save learn-from-corrections preference. Please try again.");
 };
 
 export const setRealtimeOutputEnabled = async (
