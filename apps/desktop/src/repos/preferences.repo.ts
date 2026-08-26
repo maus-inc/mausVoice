@@ -109,6 +109,9 @@ const normalizeAgentMode = (mode: Nullable<string>): Nullable<AgentMode> => {
   return "none";
 };
 
+const withDefault = <T>(value: T | null | undefined, fallback: T): T =>
+  (value ?? fallback) as T;
+
 export const fromLocalPreferences = (
   preferences: LocalUserPreferences,
 ): UserPreferences => ({
@@ -128,14 +131,20 @@ export const fromLocalPreferences = (
   gpuEnumerationEnabled: preferences.gpuEnumerationEnabled,
   agentMode: normalizeAgentMode(preferences.agentMode),
   agentModeApiKeyId: preferences.agentModeApiKeyId,
-  openclawGatewayUrl: preferences.openclawGatewayUrl ?? null,
-  openclawToken: preferences.openclawToken ?? null,
+  openclawGatewayUrl: withDefault(preferences.openclawGatewayUrl, null),
+  openclawToken: withDefault(preferences.openclawToken, null),
   lastSeenFeature: preferences.lastSeenFeature,
-  activeDictationLanguage: preferences.activeDictationLanguage ?? null,
-  preferredMicrophone: preferences.preferredMicrophone ?? null,
+  activeDictationLanguage: withDefault(
+    preferences.activeDictationLanguage,
+    null,
+  ),
+  preferredMicrophone: withDefault(preferences.preferredMicrophone, null),
   ignoreUpdateDialog: preferences.ignoreUpdateDialog ?? false,
   incognitoModeEnabled: preferences.incognitoModeEnabled ?? false,
-  incognitoModeIncludeInStats: preferences.incognitoModeIncludeInStats ?? false,
+  incognitoModeIncludeInStats: withDefault(
+    preferences.incognitoModeIncludeInStats,
+    false,
+  ),
   preserveAudioOnFailure: preferences.preserveAudioOnFailure ?? true,
   dictationLimitMinutes: normalizeDictationLimitMinutes(
     preferences.dictationLimitMinutes,
@@ -145,19 +154,22 @@ export const fromLocalPreferences = (
   ),
   realtimeOutputEnabled: preferences.realtimeOutputEnabled ?? false,
   remoteOutputEnabled: preferences.remoteOutputEnabled ?? false,
-  remoteTargetDeviceId: preferences.remoteTargetDeviceId ?? null,
-  remoteReceiverPort: preferences.remoteReceiverPort ?? null,
+  remoteTargetDeviceId: withDefault(preferences.remoteTargetDeviceId, null),
+  remoteReceiverPort: withDefault(preferences.remoteReceiverPort, null),
   remoteReceiverAutoStart: preferences.remoteReceiverAutoStart ?? false,
   dictationAudioDim: preferences.dictationAudioDim ?? 1.0,
-  pasteKeybind: preferences.pasteKeybind ?? null,
+  pasteKeybind: withDefault(preferences.pasteKeybind, null),
   menuBarIconHidden: preferences.menuBarIconHidden ?? false,
-  insertionMethod: preferences.insertionMethod ?? null,
-  typingSpeedMs: preferences.typingSpeedMs ?? null,
+  insertionMethod: withDefault(preferences.insertionMethod, null),
+  typingSpeedMs: withDefault(preferences.typingSpeedMs, null),
   pillResetMonitorStrategy: normalizePillResetMonitorStrategy(
     preferences.pillResetMonitorStrategy,
   ),
   pillPlacement: normalizePillPlacement(preferences.pillPlacement),
-  alwaysRequestAdminOnStartup: preferences.alwaysRequestAdminOnStartup ?? false,
+  alwaysRequestAdminOnStartup: withDefault(
+    preferences.alwaysRequestAdminOnStartup,
+    false,
+  ),
   handsFreeDelayMs:
     preferences.handsFreeDelayMs == null
       ? null
@@ -168,30 +180,41 @@ export const toLocalPreferences = (
   preferences: UserPreferences,
 ): LocalUserPreferences => ({
   userId: LOCAL_USER_ID,
-  transcriptionMode: preferences.transcriptionMode ?? null,
-  transcriptionApiKeyId: preferences.transcriptionApiKeyId ?? null,
-  transcriptionDevice: preferences.transcriptionDevice ?? null,
-  transcriptionModelSize: preferences.transcriptionModelSize ?? null,
-  postProcessingMode: preferences.postProcessingMode ?? null,
-  postProcessingApiKeyId: preferences.postProcessingApiKeyId ?? null,
-  postProcessingOllamaUrl: preferences.postProcessingOllamaUrl ?? null,
-  postProcessingOllamaModel: preferences.postProcessingOllamaModel ?? null,
-  activeToneId: preferences.activeToneId ?? null,
-  gotStartedAt: preferences.gotStartedAt ?? null,
+  transcriptionMode: withDefault(preferences.transcriptionMode, null),
+  transcriptionApiKeyId: withDefault(preferences.transcriptionApiKeyId, null),
+  transcriptionDevice: withDefault(preferences.transcriptionDevice, null),
+  transcriptionModelSize: withDefault(preferences.transcriptionModelSize, null),
+  postProcessingMode: withDefault(preferences.postProcessingMode, null),
+  postProcessingApiKeyId: withDefault(preferences.postProcessingApiKeyId, null),
+  postProcessingOllamaUrl: withDefault(
+    preferences.postProcessingOllamaUrl,
+    null,
+  ),
+  postProcessingOllamaModel: withDefault(
+    preferences.postProcessingOllamaModel,
+    null,
+  ),
+  activeToneId: withDefault(preferences.activeToneId, null),
+  gotStartedAt: withDefault(preferences.gotStartedAt, null),
   gpuEnumerationEnabled: preferences.gpuEnumerationEnabled,
-  agentMode: preferences.agentMode ?? null,
-  agentModeApiKeyId: preferences.agentModeApiKeyId ?? null,
-  openclawGatewayUrl: preferences.openclawGatewayUrl ?? null,
-  openclawToken: preferences.openclawToken ?? null,
-  lastSeenFeature: preferences.lastSeenFeature ?? null,
+  agentMode: withDefault(preferences.agentMode, null),
+  agentModeApiKeyId: withDefault(preferences.agentModeApiKeyId, null),
+  openclawGatewayUrl: withDefault(preferences.openclawGatewayUrl, null),
+  openclawToken: withDefault(preferences.openclawToken, null),
+  lastSeenFeature: withDefault(preferences.lastSeenFeature, null),
   languageSwitchEnabled: false,
   secondaryDictationLanguage: null,
-  activeDictationLanguage:
-    preferences.activeDictationLanguage ?? PRIMARY_LANGUAGE_SENTINEL,
-  preferredMicrophone: preferences.preferredMicrophone ?? null,
+  activeDictationLanguage: withDefault(
+    preferences.activeDictationLanguage,
+    PRIMARY_LANGUAGE_SENTINEL,
+  ),
+  preferredMicrophone: withDefault(preferences.preferredMicrophone, null),
   ignoreUpdateDialog: preferences.ignoreUpdateDialog ?? false,
   incognitoModeEnabled: preferences.incognitoModeEnabled ?? false,
-  incognitoModeIncludeInStats: preferences.incognitoModeIncludeInStats ?? false,
+  incognitoModeIncludeInStats: withDefault(
+    preferences.incognitoModeIncludeInStats,
+    false,
+  ),
   preserveAudioOnFailure: preferences.preserveAudioOnFailure ?? true,
   dictationLimitMinutes: normalizeDictationLimitMinutes(
     preferences.dictationLimitMinutes ?? DEFAULT_DICTATION_LIMIT_MINUTES,
@@ -201,20 +224,23 @@ export const toLocalPreferences = (
   ),
   realtimeOutputEnabled: preferences.realtimeOutputEnabled ?? false,
   remoteOutputEnabled: preferences.remoteOutputEnabled ?? false,
-  remoteTargetDeviceId: preferences.remoteTargetDeviceId ?? null,
-  remoteReceiverPort: preferences.remoteReceiverPort ?? null,
+  remoteTargetDeviceId: withDefault(preferences.remoteTargetDeviceId, null),
+  remoteReceiverPort: withDefault(preferences.remoteReceiverPort, null),
   remoteReceiverAutoStart: preferences.remoteReceiverAutoStart ?? false,
   dictationAudioDim: preferences.dictationAudioDim ?? 1.0,
-  pasteKeybind: preferences.pasteKeybind ?? null,
+  pasteKeybind: withDefault(preferences.pasteKeybind, null),
   useNewBackend: true,
   menuBarIconHidden: preferences.menuBarIconHidden ?? false,
-  insertionMethod: preferences.insertionMethod ?? null,
-  typingSpeedMs: preferences.typingSpeedMs ?? null,
+  insertionMethod: withDefault(preferences.insertionMethod, null),
+  typingSpeedMs: withDefault(preferences.typingSpeedMs, null),
   pillResetMonitorStrategy: normalizePillResetMonitorStrategy(
     preferences.pillResetMonitorStrategy,
   ),
   pillPlacement: normalizePillPlacement(preferences.pillPlacement ?? null),
-  alwaysRequestAdminOnStartup: preferences.alwaysRequestAdminOnStartup ?? false,
+  alwaysRequestAdminOnStartup: withDefault(
+    preferences.alwaysRequestAdminOnStartup,
+    false,
+  ),
   handsFreeDelayMs:
     preferences.handsFreeDelayMs === null
       ? null

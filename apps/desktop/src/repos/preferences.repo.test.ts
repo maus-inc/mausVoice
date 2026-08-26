@@ -73,6 +73,54 @@ describe("preferences round-trip", () => {
     const saved = toLocalPreferences(loaded);
     expect(saved.activeDictationLanguage).toBe("primary");
   });
+
+  it("round-trips a fully-populated UserPreferences", () => {
+    const populated = {
+      ...createDefaultPreferences(),
+      transcriptionMode: "api" as const,
+      transcriptionApiKeyId: "transcription-key",
+      transcriptionDevice: "default-microphone",
+      transcriptionModelSize: "large-v3",
+      postProcessingMode: "api" as const,
+      postProcessingApiKeyId: "pp-key",
+      postProcessingOllamaUrl: "http://localhost:11434",
+      postProcessingOllamaModel: "llama3.1",
+      activeToneId: "tone-1",
+      gotStartedAt: 1700000000000,
+      gpuEnumerationEnabled: true,
+      agentMode: "api" as const,
+      agentModeApiKeyId: "agent-key",
+      openclawGatewayUrl: "https://gateway.example.com",
+      openclawToken: "openclaw-token",
+      lastSeenFeature: "feature-x",
+      activeDictationLanguage: "fr",
+      preferredMicrophone: "Yeti X",
+      ignoreUpdateDialog: true,
+      incognitoModeEnabled: true,
+      incognitoModeIncludeInStats: true,
+      preserveAudioOnFailure: false,
+      dictationLimitMinutes: 15,
+      dictationPillVisibility: "persistent" as const,
+      realtimeOutputEnabled: true,
+      remoteOutputEnabled: true,
+      remoteTargetDeviceId: "device-1",
+      remoteReceiverPort: 9000,
+      remoteReceiverAutoStart: true,
+      dictationAudioDim: 0.5,
+      pasteKeybind: "Ctrl+Shift+V",
+      menuBarIconHidden: true,
+      insertionMethod: "keystroke",
+      typingSpeedMs: 25,
+      pillResetMonitorStrategy: "cursor" as const,
+      pillPlacement: "top" as const,
+      alwaysRequestAdminOnStartup: true,
+      handsFreeDelayMs: 2500,
+    };
+
+    const local = toLocalPreferences(populated);
+    const reloaded = fromLocalPreferences(local);
+    expect(reloaded).toEqual(populated);
+  });
 });
 
 describe("preserveAudioOnFailure preference", () => {
