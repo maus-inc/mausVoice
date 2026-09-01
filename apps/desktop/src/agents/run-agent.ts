@@ -156,23 +156,31 @@ export async function runAgent(
         case "tool-call-result": {
           toolCallIndex++;
           const reason = toolCallReasons.get(event.toolCallId);
-          // Persist the tool result as a "system" ChatMessageRole (the
-          // persistence layer has no "tool" role) and tag it with
-          // metadata.type so the load path can rehydrate it as an
-          // LlmMessage `tool` correlated to event.toolCallId.
-          await createChatMessage({
-            id: crypto.randomUUID(),
-            conversationId,
-            role: "system",
-            content: event.result,
-            createdAt: new Date().toISOString(),
-            metadata: {
-              type: "tool-result",
-              toolCallId: event.toolCallId,
-              toolName: event.toolName,
-              ...(reason && { reason }),
-            },
-          });
+          try {
+            // Persist the tool result as a "system" ChatMessageRole (the
+            // persistence layer has no "tool" role) and tag it with
+            // metadata.type so the load path can rehydrate it as an
+            // LlmMessage `tool` correlated to event.toolCallId.
+            await createChatMessage({
+              id: crypto.randomUUID(),
+              conversationId,
+              role: "system",
+              content: event.result,
+              createdAt: new Date().toISOString(),
+              metadata: {
+                type: "tool-result",
+                toolCallId: event.toolCallId,
+                toolName: event.toolName,
+                ...(reason && { reason }),
+              },
+            });
+          } catch (error) {
+            getLogger().error(
+              `Tool result save failed; continuing loop: ${error}`,
+              { conversationId, toolCallId: event.toolCallId },
+            );
+          }
+
           produceAppState((draft) => {
             if (currentMessageId) {
               const streaming = draft.streamingMessageById[currentMessageId];
