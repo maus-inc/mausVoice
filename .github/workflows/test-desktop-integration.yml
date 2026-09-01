@@ -1,0 +1,46 @@
+name: Test Desktop Integration
+
+on:
+  push:
+    paths:
+      - "apps/desktop/**"
+      - "packages/**"
+      - ".github/workflows/test-desktop-integration.yml"
+# Run every stacked PR independently, but cancel superseded runs for the same
+# PR (or the same branch for push/manual events) to avoid consuming runner slots.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  integration-tests:
+    name: Desktop Integration Tests
+    runs-on: ubuntu-latest
+    # Provider-backed tests need the repository secret. Keep fork PRs from
+    # failing solely because GitHub withholds secrets from fork workflows.
+    if: |
+      github.event_name == 'push' ||
+      (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository)
+    steps:
+      - name: Checkout source
+        uses: actions/checkout@v5
+      - name: Setup pnpm
+        uses: pnpm/action-setup@a8198c4bff370c8506180b035930dea56dbd5288 # v5
+      - name: Setup Node
+        uses: actions/setup-node@v5
+        with:
+          node-version-file: .nvmrc
+          cache: pnpm
+          cache-dependency-path: |
+            pnpm-lock.yaml
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+      - name: Build dependencies
+        run: pnpm exec turbo run build --filter=desktop^... --verbosity=2 --continue
+      - name: Create empty .env file since secrets are injected via env vars
+        run: |
+          echo '' > apps/desktop/test/helpers/.env
+      - name: Run integration tests
+        env:
+          GROQ_API_KEY: ${{ secrets.GROQ_API_KEY }}
+        run: pnpm --filter desktop run test:integration

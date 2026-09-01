@@ -1,0 +1,32 @@
+{
+  "name": "@maus-inc/types",
+  "version": "0.3.25",
+  "description": "Shared types for the monorepo",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/mausvoice/mausvoice.git",
+    "directory": "packages/types"
+  },
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "scripts": {
+    "build": "tsc",
+    "dev": "tsc --watch",
+    "clean": "rm -rf dist"
+  },
+  "devDependencies": {
+    "@types/json-schema": "^7.0.15",
+    "@maus-inc/typescript-config": "workspace:*",
+    "typescript": "5.9.3"
+  },
+  "files": [
+    "dist"
+  ],
+  "dependencies": {
+    "@firemix/core": "^0.1.16",
+    "zod": "^4.4.3"
+  },
+  "publishConfig": {
+    "access": "public"
+  }
+}

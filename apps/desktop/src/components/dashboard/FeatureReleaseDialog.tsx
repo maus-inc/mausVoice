@@ -1,0 +1,378 @@
+import { ArrowForward, AutoAwesome } from "@mui/icons-material";
+import {
+  Box,
+  Button,
+  Chip,
+  Dialog,
+  DialogActions,
+  DialogContent,
+  Stack,
+  TextField,
+  Typography,
+} from "@mui/material";
+import { ChangeEvent, Fragment, useEffect, useRef, useState } from "react";
+import { FormattedMessage, useIntl } from "react-intl";
+import { showConfetti } from "../../actions/app.actions";
+import { markFeatureSeen } from "../../actions/user.actions";
+import { useAppStore } from "../../store";
+import { CURRENT_FEATURE_DATE } from "../../utils/feature.utils";
+import {
+  AGENT_DICTATE_HOTKEY,
+  getHotkeyCombosForAction,
+} from "../../utils/keyboard.utils";
+import { getEffectivePlan } from "../../utils/member.utils";
+import { getIsOnboarded, getMyUser } from "../../utils/user.utils";
+import { HotkeyBadge } from "../common/HotkeyBadge";
+import { AIAgentModeConfiguration } from "../settings/AIAgentModeConfiguration";
+import { HotkeySetting } from "../settings/HotkeySetting";
+
+const IntroPage = () => {
+  return (
+    <Stack
+      spacing={3}
+      sx={{
+        alignItems: "center",
+        textAlign: "center",
+        py: 2,
+      }}
+    >
+      <Box
+        sx={{
+          width: 80,
+          height: 80,
+          borderRadius: "50%",
+          background:
+            "linear-gradient(135deg, color-mix(in srgb, var(--app-palette-blue) 80%, #FFFFFF) 0%, var(--app-palette-blue) 100%)",
+          display: "flex",
+          alignItems: "center",
+          justifyContent: "center",
+          boxShadow:
+            "0 8px 32px color-mix(in srgb, var(--app-palette-blue) 40%, transparent)",
+        }}
+      >
+        <AutoAwesome sx={{ fontSize: 40, color: "white" }} />
+      </Box>
+      <Stack
+        spacing={1}
+        sx={{
+          alignItems: "center",
+        }}
+      >
+        <Stack
+          direction="row"
+          spacing={1}
+          sx={{
+            alignItems: "center",
+          }}
+        >
+          <Typography
+            variant="h5"
+            sx={{
+              fontWeight: 600,
+            }}
+          >
+            <FormattedMessage defaultMessage="A more powerful mausVoice" />
+          </Typography>
+          <Chip label="Beta" size="small" color="primary" />
+        </Stack>
+        <Typography
+          variant="body1"
+          sx={{
+            color: "text.secondary",
+          }}
+        >
+          <FormattedMessage defaultMessage="New styles, local transcription, audio import, and a reviewable composer" />
+        </Typography>
+      </Stack>
+      <Stack
+        spacing={2}
+        sx={{
+          textAlign: "left",
+          maxWidth: 480,
+        }}
+      >
+        <Typography
+          variant="body2"
+          sx={{
+            color: "text.secondary",
+          }}
+        >
+          <FormattedMessage defaultMessage="Choose Prompt, Bullets, Concise, or Notes styles, bind a shortcut to any style, and cycle active styles with the activation key plus arrow keys." />
+        </Typography>
+        <Typography
+          variant="body2"
+          sx={{
+            color: "text.secondary",
+          }}
+        >
+          <FormattedMessage defaultMessage="SenseVoice adds fast multilingual local transcription without punctuation, while the silence filter reduces fabricated text from quiet audio. You can also import recordings from your History page." />
+        </Typography>
+        <Typography
+          variant="body2"
+          sx={{
+            color: "text.secondary",
+          }}
+        >
+          <FormattedMessage defaultMessage="Turn on Review before insert to edit dictated text in a composer, use voice Edit Mode for transformations, and configure which Agent Mode tools may run." />
+        </Typography>
+      </Stack>
+    </Stack>
+  );
+};
+
+const ReleasePageLayout = ({
+  title,
+  subtitle,
+  children,
+}: {
+  title: React.ReactNode;
+  subtitle: React.ReactNode;
+  children?: React.ReactNode;
+}) => {
+  return (
+    <Stack
+      spacing={3}
+      sx={{
+        py: 4,
+        px: 2,
+      }}
+    >
+      <Stack
+        spacing={1}
+        sx={{
+          textAlign: "center",
+        }}
+      >
+        <Typography
+          variant="h5"
+          sx={{
+            fontWeight: 600,
+          }}
+        >
+          {title}
+        </Typography>
+        <Typography
+          variant="body2"
+          sx={{
+            color: "text.secondary",
+          }}
+        >
+          {subtitle}
+        </Typography>
+      </Stack>
+      {children}
+    </Stack>
+  );
+};
+
+const HotkeyPage = () => {
+  return (
+    <ReleasePageLayout
+      title={<FormattedMessage defaultMessage="Set Your Shortcut" />}
+      subtitle={
+        <FormattedMessage defaultMessage="Choose the keyboard shortcut you'll use to activate Agent Mode" />
+      }
+    >
+      <Box sx={{ pt: 2 }}>
+        <HotkeySetting
+          title={<FormattedMessage defaultMessage="Agent Mode shortcut" />}
+          description={
+            <FormattedMessage defaultMessage="Press this shortcut to start and stop Agent Mode anywhere on your computer." />
+          }
+          actionName={AGENT_DICTATE_HOTKEY}
+          buttonSize="medium"
+        />
+      </Box>
+    </ReleasePageLayout>
+  );
+};
+
+const TryItPage = () => {
+  const intl = useIntl();
+  const [value, setValue] = useState("");
+  const combos = useAppStore((state) =>
+    getHotkeyCombosForAction(state, AGENT_DICTATE_HOTKEY),
+  );
+
+  const handleChange = (
+    event: ChangeEvent<HTMLInputElement | HTMLTextAreaElement>,
+  ) => {
+    setValue(event.target.value);
+  };
+
+  const hotkeys = (
+    <>
+      {combos.map((combo, index) => {
+        const key = combo.join("|");
+        const isLast = index === combos.length - 1;
+        const separator = (() => {
+          if (isLast) {
+            return "";
+          }
+          if (combos.length === 2) {
+            return " or ";
+          }
+          if (index === combos.length - 2) {
+            return ", or ";
+          }
+          return ", ";
+        })();
+
+        return (
+          <Fragment key={key}>
+            <HotkeyBadge keys={combo} sx={{ mx: 0.25 }} />
+            {separator}
+          </Fragment>
+        );
+      })}
+    </>
+  );
+
+  return (
+    <ReleasePageLayout
+      title={<FormattedMessage defaultMessage="Give It a Try!" />}
+      subtitle={
+        <FormattedMessage defaultMessage="Test out Agent Mode right now" />
+      }
+    >
+      <Typography
+        variant="body2"
+        component="div"
+        sx={{
+          color: "text.secondary",
+        }}
+      >
+        <FormattedMessage
+          defaultMessage="Press {hotkeys} and say something like 'Write an email to Bob about his shoes'."
+          values={{ hotkeys }}
+        />
+      </Typography>
+      <TextField
+        autoFocus
+        multiline
+        minRows={4}
+        fullWidth
+        placeholder={intl.formatMessage({
+          defaultMessage:
+            'Try saying "Write an email to Bob about his shoes" or "Make this more casual"',
+        })}
+        value={value}
+        onChange={handleChange}
+      />
+      <Typography
+        variant="body2"
+        sx={{
+          color: "text.secondary",
+          fontStyle: "italic",
+        }}
+      >
+        <FormattedMessage defaultMessage="Tip: Run Agent Mode multiple times to keep refining! It remembers what's in the text box." />
+      </Typography>
+    </ReleasePageLayout>
+  );
+};
+
+const ProcessorPage = () => {
+  return (
+    <ReleasePageLayout
+      title={<FormattedMessage defaultMessage="Choose Your Processor" />}
+      subtitle={
+        <FormattedMessage defaultMessage="Select which AI provider to use for Agent Mode" />
+      }
+    >
+      <Box sx={{ pt: 2 }}>
+        <AIAgentModeConfiguration />
+      </Box>
+      <Typography
+        variant="body2"
+        sx={{
+          color: "text.secondary",
+          fontStyle: "italic",
+        }}
+      >
+        <FormattedMessage defaultMessage="Tip: Choose a stronger model for better results. Smaller or weaker models may produce lower quality output." />
+      </Typography>
+    </ReleasePageLayout>
+  );
+};
+
+export const FeatureReleaseDialog = () => {
+  const featureSeenAt = useAppStore((state) => state.local.featureSeenAt);
+  const userCreatedAt = useAppStore((state) => getMyUser(state)?.createdAt);
+  const isOnboarded = useAppStore((state) => getIsOnboarded(state));
+  const isCommunity = useAppStore(
+    (state) => getEffectivePlan(state) === "community",
+  );
+  const hasConfettiFired = useRef(false);
+  const [pageIndex, setPageIndex] = useState(0);
+
+  const pageCount = isCommunity ? 4 : 3;
+  const open =
+    isOnboarded &&
+    !!userCreatedAt &&
+    userCreatedAt < CURRENT_FEATURE_DATE &&
+    (!featureSeenAt || featureSeenAt < CURRENT_FEATURE_DATE);
+
+  useEffect(() => {
+    if (open && !hasConfettiFired.current) {
+      hasConfettiFired.current = true;
+      showConfetti();
+    }
+  }, [open]);
+
+  const handleDismiss = () => {
+    markFeatureSeen(CURRENT_FEATURE_DATE);
+  };
+
+  const handleNext = () => {
+    setPageIndex((prev) => Math.min(pageCount - 1, prev + 1));
+  };
+
+  const handleBack = () => {
+    setPageIndex((prev) => Math.max(0, prev - 1));
+  };
+
+  const canBack = pageIndex > 0;
+  const isLastPage = pageIndex === pageCount - 1;
+
+  const getPageContent = () => {
+    if (pageIndex === 0) return <IntroPage />;
+    if (isCommunity) {
+      if (pageIndex === 1) return <ProcessorPage />;
+      if (pageIndex === 2) return <HotkeyPage />;
+      if (pageIndex === 3) return <TryItPage />;
+    } else {
+      if (pageIndex === 1) return <HotkeyPage />;
+      if (pageIndex === 2) return <TryItPage />;
+    }
+    return null;
+  };
+
+  return (
+    <Dialog open={open} fullWidth maxWidth="sm">
+      <DialogContent sx={{ px: 2, py: 1 }}>{getPageContent()}</DialogContent>
+      <DialogActions sx={{ justifyContent: "space-between", px: 2, pb: 2 }}>
+        {canBack ? (
+          <Button onClick={handleBack}>
+            <FormattedMessage defaultMessage="Back" />
+          </Button>
+        ) : (
+          <div />
+        )}
+        {isLastPage ? (
+          <Button onClick={handleDismiss} variant="contained">
+            <FormattedMessage defaultMessage="Got it!" />
+          </Button>
+        ) : (
+          <Button
+            variant="contained"
+            endIcon={<ArrowForward />}
+            onClick={handleNext}
+          >
+            <FormattedMessage defaultMessage="Next" />
+          </Button>
+        )}
+      </DialogActions>
+    </Dialog>
+  );
+};

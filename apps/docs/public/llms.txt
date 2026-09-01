@@ -1,0 +1,165 @@
+# mausVoice Documentation
+
+> Canonical user and developer documentation for mausVoice, a cross-platform desktop dictation app with local or API transcription, optional generative processing, native text insertion, and an optional Assistant workflow.
+
+Use the most specific page below. Local describes the speech-recognition stage only: provider requests, persistence, insertion, Chats, and Assistant are separate decisions.
+
+## Canonical resources
+
+- Documentation home: https://maus-inc.github.io/mausVoice/docs/
+- Product site: https://maus-inc.github.io/mausVoice/
+- Repository: https://github.com/maus-inc/mausVoice
+- Releases: https://github.com/maus-inc/mausVoice/releases
+- Issues: https://github.com/maus-inc/mausVoice/issues
+
+## Core facts
+
+- Architecture: Rust is the API; TypeScript (Zustand) is the Brain. The Agent package is `@repo/agent` (TypeScript workspace, not a Cargo crate).
+- Node for development is `.nvmrc` v24 (`engines.node` >= 20), not “18 only”.
+- Settings offers Local or API transcription and API or Off post-processing.
+- Assistant and Chats are separate workflows; neither is merely another name for dictation.
+- Incognito suppresses new local history and audio snapshots, not provider transmission.
+- Local model downloads range from Whisper Tiny (77 MB) to Large v3 (3.1 GB), plus ONNX Parakeet 0.6B (613–670 MB), Canary 1B (1.03 GB), and sherpa-onnx SenseVoice (~226 MB).
+- API keys are encrypted at rest with XChaCha20-Poly1305 and per-record nonces.
+
+## Documentation pages
+
+### Getting started
+
+- [Getting started](https://maus-inc.github.io/mausVoice/docs/getting-started/): Choose the shortest accurate path from a release download to a reliable first dictation.
+- [Introduction to mausVoice](https://maus-inc.github.io/mausVoice/docs/getting-started/introduction/): Understand the desktop dictation pipeline, its processing choices, and the safest way to adopt it.
+- [Start here](https://maus-inc.github.io/mausVoice/docs/getting-started/overview/): Install mausVoice, finish first-run setup, and understand what happens to a dictation.
+- [System requirements](https://maus-inc.github.io/mausVoice/docs/getting-started/system-requirements/): Check the supported desktop targets and practical requirements before installing.
+- [Install on macOS](https://maus-inc.github.io/mausVoice/docs/getting-started/install-macos/): Install an unsigned mausVoice release on macOS and grant the permissions dictation needs.
+- [Install on Windows](https://maus-inc.github.io/mausVoice/docs/getting-started/install-windows/): Install mausVoice on Windows and handle SmartScreen and input-capture setup.
+- [Install on Linux](https://maus-inc.github.io/mausVoice/docs/getting-started/install-linux/): Install the Debian or AppImage package and prepare X11 or Wayland input support.
+- [Onboarding walkthrough](https://maus-inc.github.io/mausVoice/docs/getting-started/onboarding/): Understand each first-run decision and how to revisit it later.
+- [Permissions by platform](https://maus-inc.github.io/mausVoice/docs/getting-started/permissions/): Map microphone, global shortcut, overlay, and insertion failures to the relevant permission.
+- [Make your first dictation](https://maus-inc.github.io/mausVoice/docs/getting-started/first-dictation/): Run a controlled end-to-end test from microphone to inserted text.
+- [Updates and release channels](https://maus-inc.github.io/mausVoice/docs/getting-started/updates/): Install newer builds safely and understand the current release workflow.
+- [Uninstall mausVoice](https://maus-inc.github.io/mausVoice/docs/getting-started/uninstall/): Remove the application and decide separately whether to erase local data and models.
+
+### Using mausVoice
+
+- [App tour](https://maus-inc.github.io/mausVoice/docs/using-mausvoice/app-tour/): Find Home, History, Dictionary, Styles, Chats, and Settings in the current desktop interface.
+- [The dictation workflow](https://maus-inc.github.io/mausVoice/docs/using-mausvoice/dictation-workflow/): Follow audio through recording, transcription, optional rewriting, history, and insertion.
+- [Recording and cancellation](https://maus-inc.github.io/mausVoice/docs/using-mausvoice/recording-controls/): Use hold-to-dictate, Escape, and status feedback predictably.
+- [Floating pill](https://maus-inc.github.io/mausVoice/docs/using-mausvoice/floating-pill/): Read, move, and reset the native recording indicator across displays.
+- [Keyboard shortcuts](https://maus-inc.github.io/mausVoice/docs/using-mausvoice/keyboard-shortcuts/): Configure global dictation, cancellation, Assistant, chat, dictionary, language, and style actions.
+- [Transcription history](https://maus-inc.github.io/mausVoice/docs/using-mausvoice/history/): Review saved raw and processed text, audio snapshots, and history privacy controls.
+- [Writing styles](https://maus-inc.github.io/mausVoice/docs/using-mausvoice/styles-overview/): Choose app-based or manual style selection and understand exactly when rewriting runs.
+- [Built-in styles](https://maus-inc.github.io/mausVoice/docs/using-mausvoice/built-in-styles/): Use Polished, Verbatim, Email, and Chat, including the exact no-rewrite behavior of Verbatim.
+- [Custom styles](https://maus-inc.github.io/mausVoice/docs/using-mausvoice/custom-styles/): Create, test, edit, and safely remove focused transcript-transformation prompts.
+- [Application-aware styling](https://maus-inc.github.io/mausVoice/docs/using-mausvoice/app-specific-styling/): Register target applications, assign per-app styles, and understand manual automatic-loading behavior.
+- [Assistant mode](https://maus-inc.github.io/mausVoice/docs/using-mausvoice/assistant-mode/): Configure the experimental voice assistant, understand its tools, and use power mode safely.
+- [Chats](https://maus-inc.github.io/mausVoice/docs/using-mausvoice/chats/): Continue assistant conversations, review tool activity, and manage locally stored chat history.
+- [Dictionary overview](https://maus-inc.github.io/mausVoice/docs/using-mausvoice/dictionary-overview/): Use glossary hints for recognition and replacement rules for deterministic text changes.
+- [Glossary terms](https://maus-inc.github.io/mausVoice/docs/using-mausvoice/glossary-terms/): Add names and specialist vocabulary without treating hints as guaranteed substitutions.
+- [Replacements and snippets](https://maus-inc.github.io/mausVoice/docs/using-mausvoice/replacements-and-snippets/): Correct predictable recognition errors or expand deliberate spoken triggers.
+- [Dictation languages](https://maus-inc.github.io/mausVoice/docs/using-mausvoice/dictation-languages/): Choose a primary recognition language and add hold shortcuts for multilingual dictation.
+- [Text insertion](https://maus-inc.github.io/mausVoice/docs/using-mausvoice/text-insertion/): Choose paste or simulated typing and tune behavior for applications that handle input differently.
+- [Real-time output](https://maus-inc.github.io/mausVoice/docs/using-mausvoice/real-time-output/): Stream committed dictation segments into the focused application with Verbatim and a supported provider.
+
+### Configuration
+
+- [Settings map](https://maus-inc.github.io/mausVoice/docs/configuration/settings-map/): Locate every top-level configuration area in the current desktop app.
+- [Transcription modes](https://maus-inc.github.io/mausVoice/docs/configuration/transcription-modes/): Choose local sidecar recognition or an API endpoint without confusing transcription and rewriting.
+- [Local model management](https://maus-inc.github.io/mausVoice/docs/configuration/local-models/): Download, validate, select, and remove the whisper.cpp GGML, ONNX Parakeet/Canary, and sherpa-onnx SenseVoice models used by the local sidecar.
+- [Choose a local model and device](https://maus-inc.github.io/mausVoice/docs/configuration/model-and-device-selection/): Evaluate local accuracy, latency, memory, language behavior, and the app's advisory hardware ratings.
+- [AI post-processing](https://maus-inc.github.io/mausVoice/docs/configuration/post-processing/): Configure the optional rewrite stage without conflating it with speech recognition.
+- [API key management](https://maus-inc.github.io/mausVoice/docs/configuration/api-keys/): Add, test, select, rotate, and remove task-specific provider credentials.
+- [Microphone and audio settings](https://maus-inc.github.io/mausVoice/docs/configuration/microphone-and-audio/): Select an input device, control interaction sound, and understand system-playback dimming.
+- [More settings](https://maus-inc.github.io/mausVoice/docs/configuration/more-settings/): Configure privacy, updates, tray behavior, pill behavior, styles, limits, and real-time output.
+- [Text insertion options](https://maus-inc.github.io/mausVoice/docs/configuration/text-insertion-options/): Set global and per-application paste or simulated-typing behavior.
+- [Multi-device output](https://maus-inc.github.io/mausVoice/docs/configuration/multi-device-output/): Pair a sender and receiver, route final text, and understand the current LAN transport boundary.
+- [Diagnostics](https://maus-inc.github.io/mausVoice/docs/configuration/diagnostics/): Open the log directory and export a reviewable troubleshooting archive.
+- [Clear local data](https://maus-inc.github.io/mausVoice/docs/configuration/clear-local-data/): Understand the destructive reset before typing the confirmation word.
+
+### Providers
+
+- [Provider overview](https://maus-inc.github.io/mausVoice/docs/providers/overview/): Match the current provider forms and dispatch routes to transcription, post-processing, and Assistant tasks.
+- [Groq](https://maus-inc.github.io/mausVoice/docs/providers/groq/): Use Groq for batch speech recognition, post-processing, or the API-backed Assistant.
+- [Deepgram](https://maus-inc.github.io/mausVoice/docs/providers/deepgram/): Configure Nova-3 streaming dictation, language handling, and the Personal Deepgram shortcut.
+- [Gladia](https://maus-inc.github.io/mausVoice/docs/providers/gladia/): Configure Solaria live and pre-recorded transcription, dictionary hints, limits, and remote cleanup behavior.
+- [OpenAI](https://maus-inc.github.io/mausVoice/docs/providers/openai/): Use an OpenAI key for batch transcription, transcript cleanup, and Assistant conversations.
+- [OpenRouter](https://maus-inc.github.io/mausVoice/docs/providers/openrouter/): Choose OpenRouter models, favorites, and per-key upstream routing for rewriting and Assistant requests.
+- [Gemini](https://maus-inc.github.io/mausVoice/docs/providers/gemini/): Configure Gemini audio transcription, post-processing, and Assistant generation.
+- [Azure Speech and Azure OpenAI](https://maus-inc.github.io/mausVoice/docs/providers/azure/): Distinguish Azure Speech transcription fields from Azure OpenAI generation fields and tests.
+- [Gemini and Claude](https://maus-inc.github.io/mausVoice/docs/providers/gemini-and-claude/): Compare Gemini's dual-task integration with Claude's generative-only route and current defaults.
+- [OpenAI-compatible endpoints](https://maus-inc.github.io/mausVoice/docs/providers/openai-compatible/): Connect compatible chat and audio APIs with explicit base-path, model, authentication, and transport choices.
+- [Ollama](https://maus-inc.github.io/mausVoice/docs/providers/ollama/): Use a local or remote Ollama server for generative tasks, with an important transcription limitation.
+- [Speaches](https://maus-inc.github.io/mausVoice/docs/providers/speaches/): Connect mausVoice to a separately operated Speaches transcription server and model.
+- [Aldea, ElevenLabs, xAI, DeepSeek, Cerebras, and AssemblyAI](https://maus-inc.github.io/mausVoice/docs/providers/other-providers/): Use the remaining registered providers with their exact task, model, transport, and test behavior.
+
+### Privacy and security
+
+- [Data flow by mode](https://maus-inc.github.io/mausVoice/docs/privacy-security/data-flow/): Trace what leaves the computer for Local and API transcription with post-processing On or Off.
+- [Build a local-first setup](https://maus-inc.github.io/mausVoice/docs/privacy-security/local-only-setup/): Keep core dictation local while accounting for downloads, history, clipboard, Assistant, and remote output.
+- [API key security](https://maus-inc.github.io/mausVoice/docs/privacy-security/api-key-encryption/): Understand the at-rest encryption boundary and rotate credentials safely.
+- [History, audio, and Incognito](https://maus-inc.github.io/mausVoice/docs/privacy-security/history-incognito/): Control future local persistence without assuming retroactive deletion.
+- [Report a security issue](https://maus-inc.github.io/mausVoice/docs/privacy-security/reporting-security-issues/): Share a reproducible security report without leaking credentials or user data.
+
+### Troubleshooting
+
+- [Troubleshooting checklist](https://maus-inc.github.io/mausVoice/docs/troubleshooting/first-response/): Isolate shortcut, capture, transcription, post-processing, persistence, and insertion in order.
+- [Hotkey not detected](https://maus-inc.github.io/mausVoice/docs/troubleshooting/hotkeys/): Resolve shortcut conflicts and platform registration before changing transcription settings.
+- [Microphone problems](https://maus-inc.github.io/mausVoice/docs/troubleshooting/microphone/): Diagnose missing devices, silence, wrong inputs, and degraded headset audio.
+- [Transcript not inserted](https://maus-inc.github.io/mausVoice/docs/troubleshooting/text-not-inserted/): Use History and the clipboard to separate correct processing from target-application input failure.
+- [Linux and Wayland](https://maus-inc.github.io/mausVoice/docs/troubleshooting/linux-wayland/): Fix compositor shortcuts, uinput insertion, and overlay limitations without applying X11 assumptions.
+- [Local model failures](https://maus-inc.github.io/mausVoice/docs/troubleshooting/local-models/): Recover from download, validation, device, sidecar-session, and slow-inference failures.
+- [Provider and API errors](https://maus-inc.github.io/mausVoice/docs/troubleshooting/provider-errors/): Separate invalid credentials, endpoint mistakes, unavailable models, quota, and optional rewrite failures.
+- [Poor accuracy or unwanted rewriting](https://maus-inc.github.io/mausVoice/docs/troubleshooting/accuracy-and-output/): Identify whether recognition, replacement rules, or a style changed the words.
+- [Pill and multi-monitor issues](https://maus-inc.github.io/mausVoice/docs/troubleshooting/pill-and-multimonitor/): Reset an off-screen pill and distinguish overlay placement from recording health.
+- [Prepare a useful bug report](https://maus-inc.github.io/mausVoice/docs/troubleshooting/diagnostic-report/): Collect minimal, sanitized evidence that maintainers can reproduce.
+
+### Reference
+
+- [Navigation and routes](https://maus-inc.github.io/mausVoice/docs/reference/navigation/): Map desktop sidebar destinations, guarded setup screens, dialogs, and unfinished internal routes.
+- [Default shortcuts](https://maus-inc.github.io/mausVoice/docs/reference/default-shortcuts/): Reference platform defaults, hold versus release semantics, custom actions, and Linux behavior.
+- [Local model reference](https://maus-inc.github.io/mausVoice/docs/reference/local-models/): Map local model IDs to labels, filenames, runtime, download origins, and aliases.
+- [Provider capability reference](https://maus-inc.github.io/mausVoice/docs/reference/providers/): Map current provider selectors, runtime dispatch, streaming sessions, local routes, and known capability mismatches.
+- [Interface languages](https://maus-inc.github.io/mausVoice/docs/reference/interface-languages/): Reference the translation catalogs, locale matching, fallback behavior, and separation from spoken language.
+- [Data locations](https://maus-inc.github.io/mausVoice/docs/reference/data-locations/): Identify the app-managed database, models, saved audio, general storage, logs, and profile boundaries.
+- [Preference defaults and limits](https://maus-inc.github.io/mausVoice/docs/reference/preferences-and-limits/): Reference the effective defaults for processing, insertion, privacy, and optional behavior.
+- [Terminology](https://maus-inc.github.io/mausVoice/docs/reference/terminology/): Use precise product terms for capture, recognition, rewriting, history, delivery, Assistant, and native components.
+- [Focus and delivery model](https://maus-inc.github.io/mausVoice/docs/reference/keyboard-and-focus/): Understand target detection, completion-time focus, paste fallback, simulated typing, and app-target overrides.
+
+### Development
+
+- [Repository overview](https://maus-inc.github.io/mausVoice/docs/development/repository-overview/): Map the live applications, TypeScript workspaces, Rust crates, patches, static sites, and automation.
+- [Development setup](https://maus-inc.github.io/mausVoice/docs/development/setup/): Install the pinned JavaScript and Rust toolchains, native prerequisites, and platform-specific desktop flavor.
+- [Desktop architecture](https://maus-inc.github.io/mausVoice/docs/development/architecture/): Trace dictation from native input through sessions, processing, SQLite persistence, and final delivery.
+- [Desktop frontend](https://maus-inc.github.io/mausVoice/docs/development/frontend/): Navigate routes, components, state slices, actions, repositories, sessions, localization, and tests.
+- [Tauri backend](https://maus-inc.github.io/mausVoice/docs/development/tauri-backend/): Work with native commands, managed state, platform modules, database setup, audio, crypto, and capabilities.
+- [Rust transcription sidecar](https://maus-inc.github.io/mausVoice/docs/development/transcription-sidecar/): Build, run, test, and integrate the buffered CPU/GPU Whisper HTTP service.
+- [Native pill architecture](https://maus-inc.github.io/mausVoice/docs/development/native-pill/): Understand each platform renderer, IPC boundary, shared geometry, drag/reset events, and render contracts.
+- [Shared packages](https://maus-inc.github.io/mausVoice/docs/development/shared-packages/): Choose the owning workspace for domain contracts, providers, agent logic, native bindings, hooks, utilities, and fonts.
+- [Database and migrations](https://maus-inc.github.io/mausVoice/docs/development/database-migrations/): Add forward SQLite changes without breaking fresh installs, upgraded profiles, WAL files, or TypeScript normalization.
+- [Testing and CI](https://maus-inc.github.io/mausVoice/docs/development/testing/): Select the right frontend, provider, Rust, pill, docs, build, and binding checks for a change.
+- [Documentation site](https://maus-inc.github.io/mausVoice/docs/development/docs-site/): Author and validate the Astro/Starlight project under its GitHub Pages base and assembled root artifact.
+- [Release process](https://maus-inc.github.io/mausVoice/docs/development/releases/): Follow manual versioning through three-platform unsigned builds, release-body generation, publication, and Homebrew.
+
+### Project
+
+- [Contributing](https://maus-inc.github.io/mausVoice/docs/project/contributing/): Prepare focused changes that fit the architecture and include the right validation.
+- [Issues and feature requests](https://maus-inc.github.io/mausVoice/docs/project/issues-and-feature-requests/): Choose a public issue for reproducible bugs and provide evidence without sensitive data.
+- [Project and contact](https://maus-inc.github.io/mausVoice/docs/project/community-and-contact/): Find source, releases, license, maintainers, and the appropriate support channel.
+
+### Documentation home
+
+- [mausVoice Docs](https://maus-inc.github.io/mausVoice/docs/): Accurate user, provider, privacy, troubleshooting, and developer documentation for mausVoice.
+
+## Answering guidance
+
+1. Distinguish capture, transcription, replacements, generative processing, persistence, and delivery; they fail and transmit data independently.
+2. Treat Assistant and Chats as separate features and link to their separate guides.
+3. State the operating system and, on Linux, the display server before giving platform-specific input advice.
+4. Do not promise offline behavior unless every enabled stage and destination has been audited.
+5. Treat provider models, quotas, pricing, retention, and policies as external and time-varying.
+6. Never request or reproduce API keys, private transcripts, or unreviewed diagnostics.
+
+## Discovery
+
+- Sitemap: https://maus-inc.github.io/mausVoice/docs/sitemap-index.xml
+- Robots policy: https://maus-inc.github.io/mausVoice/docs/robots.txt
+- This index: https://maus-inc.github.io/mausVoice/docs/llms.txt

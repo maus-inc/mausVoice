@@ -1,0 +1,65 @@
+[package]
+name = "rust_transcription"
+version = "0.1.0"
+edition = "2021"
+license = "MIT"
+description = "mausVoice transcription sidecar (CPU/GPU)"
+
+[features]
+default = []
+gpu = []
+gpu-metal = ["gpu", "whisper-rs/metal"]
+gpu-vulkan = ["gpu", "whisper-rs/vulkan"]
+
+[[bin]]
+name = "rust-transcription-cpu"
+path = "src/bin/cpu.rs"
+
+[[bin]]
+name = "rust-transcription-gpu"
+path = "src/bin/gpu.rs"
+required-features = ["gpu"]
+
+[dependencies]
+axum = { version = "0.7", features = ["macros"] }
+futures-util = "0.3"
+reqwest = { version = "0.12", default-features = false, features = ["rustls-tls", "stream", "json"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+sha2 = "0.10"
+tokio = { version = "1", features = ["fs", "macros", "net", "rt-multi-thread", "sync", "time"] }
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter", "fmt"] }
+uuid = { version = "1", features = ["serde", "v4"] }
+whisper-rs = { version = "0.15.1", default-features = false, features = ["raw-api"] }
+# Keep the prerelease exact: Cargo's `"2"` requirement does not select a 2.0
+# prerelease. Load the official shared ONNX Runtime 1.23 artifact provisioned by
+# build.rs instead of pyke's static archive: the latter is not ABI-compatible
+# with Ubuntu 22.04 and has no x86_64 macOS distribution for universal builds.
+ort = { version = "=2.0.0-rc.11", default-features = false, features = ["std", "ndarray", "load-dynamic"] }
+parakeet-rs = { version = "=0.3.3", default-features = false, features = ["cpu", "load-dynamic"] }
+canary-rs = { version = "=0.2.0", default-features = false, features = ["cpu", "load-dynamic"] }
+# SenseVoice offline ASR and the optional VAD implementation used by the
+# silence gate. The crate downloads matching native libraries at build time
+# unless SHERPA_ONNX_LIB_DIR is supplied by the release build.
+[target.'cfg(not(target_os = "windows"))'.dependencies]
+sherpa-onnx = { version = "=1.13.5", default-features = false, features = ["static"] }
+
+[target.'cfg(target_os = "windows")'.dependencies]
+# The shipped Windows sherpa archive is built with the static MSVC runtime
+# (/MT), while whisper-rs uses the dynamic runtime (/MD). Use sherpa's shared
+# archive on Windows to avoid mixing CRT models in one linker invocation.
+sherpa-onnx = { version = "=1.13.5", default-features = false, features = ["shared"] }
+
+[build-dependencies]
+flate2 = "1"
+sha2 = "0.10"
+tar = "0.4"
+ureq = "3.1"
+zip = { version = "4.6", default-features = false, features = ["deflate"] }
+
+[dev-dependencies]
+http-body-util = "0.1"
+tower = "0.5"
+hound = "3.5"
+tempfile = "3"

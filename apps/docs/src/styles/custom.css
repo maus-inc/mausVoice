@@ -1,0 +1,315 @@
+/* ------------------------------------------------------------------ *
+ * mausVoice docs theme — mirrors the product landing page (index.html)
+ * Monochrome (black/white) palette, Satoshi/Inter/JetBrains Mono.
+ * ------------------------------------------------------------------ */
+
+@font-face {
+  font-family: "Satoshi";
+  src: url("/mausVoice/docs/assets/fonts/Satoshi-Medium.ttf") format("truetype");
+  font-weight: 100 900;
+  font-style: normal;
+  font-display: swap;
+}
+
+@font-face {
+  font-family: "Inter";
+  src: url("/mausVoice/docs/assets/fonts/inter-latin-400-normal.woff2")
+    format("woff2");
+  font-weight: 400;
+  font-style: normal;
+  font-display: swap;
+}
+
+@font-face {
+  font-family: "Inter";
+  src: url("/mausVoice/docs/assets/fonts/inter-latin-500-normal.woff2")
+    format("woff2");
+  font-weight: 500;
+  font-style: normal;
+  font-display: swap;
+}
+
+@font-face {
+  font-family: "Inter";
+  src: url("/mausVoice/docs/assets/fonts/inter-latin-600-normal.woff2")
+    format("woff2");
+  font-weight: 600;
+  font-style: normal;
+  font-display: swap;
+}
+
+@font-face {
+  font-family: "Inter";
+  src: url("/mausVoice/docs/assets/fonts/inter-latin-700-normal.woff2")
+    format("woff2");
+  font-weight: 700;
+  font-style: normal;
+  font-display: swap;
+}
+
+@font-face {
+  font-family: "JetBrains Mono";
+  src: url("/mausVoice/docs/assets/fonts/jetbrains-mono-latin-400-normal.woff2")
+    format("woff2");
+  font-weight: 400;
+  font-style: normal;
+  font-display: swap;
+}
+
+@font-face {
+  font-family: "JetBrains Mono";
+  src: url("/mausVoice/docs/assets/fonts/jetbrains-mono-latin-500-normal.woff2")
+    format("woff2");
+  font-weight: 500;
+  font-style: normal;
+  font-display: swap;
+}
+
+@font-face {
+  font-family: "JetBrains Mono";
+  src: url("/mausVoice/docs/assets/fonts/jetbrains-mono-latin-700-normal.woff2")
+    format("woff2");
+  font-weight: 700;
+  font-style: normal;
+  font-display: swap;
+}
+
+@font-face {
+  font-family: "TAN-PARADISO";
+  src: url("/mausVoice/docs/assets/fonts/TAN-PARADISO-Regular.woff2")
+    format("woff2");
+  font-weight: 400 700;
+  font-style: normal;
+  font-display: swap;
+}
+
+/* Starlight theme tokens — monochrome (black/white), matching the landing page. */
+:root {
+  color-scheme: dark;
+
+  --sl-color-accent-low: hsl(0 0% 16%);
+  --sl-color-accent: hsl(0 0% 100%);
+  --sl-color-accent-high: hsl(0 0% 100%);
+
+  --sl-color-white: hsl(0 0% 100%);
+  --sl-color-gray-1: hsl(0 0% 90%);
+  --sl-color-gray-2: hsl(0 0% 78%);
+  --sl-color-gray-3: hsl(0 0% 65%);
+  --sl-color-gray-4: hsl(0 0% 40%);
+  --sl-color-gray-5: hsl(0 0% 22%);
+  --sl-color-gray-6: hsl(0 0% 14%);
+  --sl-color-black: hsl(0 0% 0%);
+
+  --sl-color-text-accent: hsl(0 0% 100%);
+  --sl-color-text-invert: hsl(0 0% 0%);
+
+  --sl-font: "Satoshi", "Inter", system-ui, -apple-system, sans-serif;
+  --sl-font-mono:
+    "JetBrains Mono", ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+}
+
+/* Light theme. */
+:root[data-theme="light"] {
+  color-scheme: light;
+
+  --sl-color-accent-low: hsl(0 0% 90%);
+  --sl-color-accent: hsl(0 0% 0%);
+  --sl-color-accent-high: hsl(0 0% 0%);
+
+  --sl-color-white: hsl(0 0% 8%);
+  --sl-color-gray-1: hsl(0 0% 16%);
+  --sl-color-gray-2: hsl(0 0% 24%);
+  --sl-color-gray-3: hsl(0 0% 40%);
+  --sl-color-gray-4: hsl(0 0% 55%);
+  --sl-color-gray-5: hsl(0 0% 78%);
+  --sl-color-gray-6: hsl(0 0% 90%);
+  --sl-color-black: hsl(0 0% 100%);
+
+  --sl-color-text-accent: hsl(0 0% 0%);
+  --sl-color-text-invert: hsl(0 0% 100%);
+}
+
+html {
+  scroll-behavior: smooth;
+  letter-spacing: -0.012em;
+}
+
+body {
+  font-family: var(--sl-font);
+  line-height: 1.42;
+  -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
+}
+
+/* The Starlight masthead title is split into a brand wordmark ("mausVoice",
+ * rendered in the decorative cursive face at a reduced size) and a suffix
+ * ("Docs", set in the normal Satoshi face). */
+.site-title .site-title-brand {
+  font-family: "TAN-PARADISO", "Satoshi", sans-serif;
+  font-weight: 400;
+  font-size: 0.86em;
+  letter-spacing: -0.045em;
+  line-height: 1;
+  vertical-align: baseline;
+}
+
+.site-title .site-title-suffix {
+  font-family: "Satoshi", "Inter", system-ui, sans-serif;
+  font-weight: 500;
+  font-size: 0.78em;
+  letter-spacing: 0.02em;
+  line-height: 1.05;
+  color: var(--sl-color-gray-2);
+  margin-inline-start: 0.42em;
+  vertical-align: baseline;
+}
+
+/* Condensed editorial rhythm: denser than Starlight's defaults without
+ * sacrificing the scan lines that make long reference pages readable. */
+.sl-markdown-content {
+  line-height: 1.48;
+  letter-spacing: -0.014em;
+}
+
+.sl-markdown-content :is(p, ul, ol, blockquote) {
+  margin-block: 0.72rem;
+}
+
+.sl-markdown-content :is(li + li) {
+  margin-top: 0.18rem;
+}
+
+.sl-markdown-content :is(h2, h3, h4) {
+  margin-bottom: 0.48rem;
+}
+
+.sidebar-content,
+.right-sidebar,
+header,
+.sl-link-button {
+  letter-spacing: -0.018em;
+  line-height: 1.32;
+}
+
+/* Headings use Satoshi rather than the decorative brand face, preserving
+ * readability on API names and longer troubleshooting headings. */
+.sl-markdown-content h1,
+.sl-markdown-content h2 {
+  font-family: "Satoshi", "Inter", system-ui, sans-serif;
+  letter-spacing: -0.035em;
+  line-height: 1.05;
+}
+
+/* Cards / callouts echo the landing page .card surface. */
+.expressive-code .frame,
+.sl-card,
+.astro-code {
+  border-radius: 4px;
+}
+
+::selection {
+  background: var(--sl-color-text-accent);
+  color: var(--sl-color-text-invert);
+}
+
+:focus-visible {
+  outline: 1px solid hsl(0 0% 40%);
+  outline-offset: 3px;
+  border-radius: 4px;
+}
+
+/* ------------------------------------------------------------------ *
+ * Primary action button — inner white highlight plus a soft drop shadow.
+ * ------------------------------------------------------------------ */
+.sl-link-button.primary {
+  /* On the dark (white) button the top white highlight is invisible, so a
+   * bottom inner shadow carries the bevel; on the light (black) button the
+   * top white highlight is what reads. Together they make the design visible
+   * in both themes, plus a small outer drop shadow. */
+  box-shadow:
+    inset 0 2px 0 hsl(0 0% 100% / 0.85),
+    inset 0 -2px 3px hsl(0 0% 0% / 0.22),
+    0 3px 8px hsl(0 0% 0% / 0.4);
+}
+
+/* ------------------------------------------------------------------ *
+ * Bento cards — the coloured icon chrome is scrapped in favour of 3D
+ * ASCII element decorations pinned to the card edges. Each card carries a
+ * single element in a corner, faded toward the centre; the positioning
+ * alternates across the four edges and the artwork inverts on light theme.
+ * ------------------------------------------------------------------ */
+.card-grid.stagger .card {
+  position: relative;
+  overflow: hidden;
+}
+
+.card-grid.stagger .card::before {
+  content: "";
+  position: absolute;
+  width: 220px;
+  height: 150px;
+  background-repeat: no-repeat;
+  background-size: contain;
+  background-position: center;
+  pointer-events: none;
+  opacity: 0.85;
+}
+
+/* Cube — top-left */
+.card-grid.stagger .card:nth-child(1)::before {
+  top: 0;
+  left: 0;
+  background-image: url("/mausVoice/docs/assets/cards/ascii-cube.svg");
+  -webkit-mask-image: linear-gradient(135deg, #000 0%, transparent 70%);
+  mask-image: linear-gradient(135deg, #000 0%, transparent 70%);
+}
+
+/* Pyramid — top-right */
+.card-grid.stagger .card:nth-child(2)::before {
+  top: 0;
+  right: 0;
+  background-image: url("/mausVoice/docs/assets/cards/ascii-pyramid.svg");
+  -webkit-mask-image: linear-gradient(225deg, #000 0%, transparent 70%);
+  mask-image: linear-gradient(225deg, #000 0%, transparent 70%);
+}
+
+/* Sphere — bottom-left */
+.card-grid.stagger .card:nth-child(3)::before {
+  bottom: 0;
+  left: 0;
+  background-image: url("/mausVoice/docs/assets/cards/ascii-sphere.svg");
+  -webkit-mask-image: linear-gradient(315deg, #000 0%, transparent 70%);
+  mask-image: linear-gradient(315deg, #000 0%, transparent 70%);
+}
+
+/* Diamond — bottom-right */
+.card-grid.stagger .card:nth-child(4)::before {
+  bottom: 0;
+  right: 0;
+  background-image: url("/mausVoice/docs/assets/cards/ascii-diamond.svg");
+  -webkit-mask-image: linear-gradient(45deg, #000 0%, transparent 70%);
+  mask-image: linear-gradient(45deg, #000 0%, transparent 70%);
+}
+
+/* Alternate the positioning for the trailing cards. */
+.card-grid.stagger .card:nth-child(5)::before {
+  top: 0;
+  right: 0;
+  background-image: url("/mausVoice/docs/assets/cards/ascii-pyramid.svg");
+  -webkit-mask-image: linear-gradient(225deg, #000 0%, transparent 70%);
+  mask-image: linear-gradient(225deg, #000 0%, transparent 70%);
+}
+
+.card-grid.stagger .card:nth-child(6)::before {
+  bottom: 0;
+  left: 0;
+  background-image: url("/mausVoice/docs/assets/cards/ascii-diamond.svg");
+  -webkit-mask-image: linear-gradient(315deg, #000 0%, transparent 70%);
+  mask-image: linear-gradient(315deg, #000 0%, transparent 70%);
+}
+
+/* Invert the white ASCII artwork to black on light theme. */
+:root[data-theme="light"] .card-grid.stagger .card::before {
+  filter: invert(1);
+  opacity: 0.6;
+}

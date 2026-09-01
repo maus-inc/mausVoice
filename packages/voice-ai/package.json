@@ -1,0 +1,41 @@
+{
+  "name": "@maus-inc/voice-ai",
+  "version": "0.3.25",
+  "description": "Shared Groq voice transcription helpers",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/mausvoice/mausvoice.git",
+    "directory": "packages/voice-ai"
+  },
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "scripts": {
+    "build": "tsc",
+    "dev": "tsc --watch",
+    "clean": "rm -rf dist",
+    "test": "vitest run",
+    "test:watch": "vitest"
+  },
+  "files": [
+    "dist"
+  ],
+  "dependencies": {
+    "@anthropic-ai/sdk": "^0.71.2",
+    "@gladiaio/sdk": "1.1.0",
+    "@maus-inc/types": "workspace:*",
+    "@maus-inc/utilities": "workspace:*",
+    "eventemitter3": "5.0.4",
+    "groq-sdk": "^0.37.0",
+    "microsoft-cognitiveservices-speech-sdk": "^1.51.0",
+    "openai": "^4.104.0",
+    "zod": "^4.4.3"
+  },
+  "devDependencies": {
+    "@maus-inc/typescript-config": "workspace:*",
+    "typescript": "5.9.3",
+    "vitest": "^3.2.7"
+  },
+  "publishConfig": {
+    "access": "public"
+  }
+}

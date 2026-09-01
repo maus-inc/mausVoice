@@ -1,0 +1,29 @@
+[allowlist]
+description = "Public/non-secret values"
+paths = [
+  '''apps/desktop/\.env\.(dev|emulators|prod)''',
+  '''apps/desktop/src/main\.tsx''',
+  '''apps/desktop/test/.*\.test\.ts''',
+  '''enterprise/gateway/test/.*\.test\.ts''',
+  '''config/docker-compose\.yml''',
+  '''enterprise/docker-compose\.yml''',
+  '''docs/.*\.md''',
+  # Narrow exemptions so scanning the whole repo does not self-detect the
+  # detector definition or the config-structure guard that contains the
+  # preamble constant. NOT a broad workflow exemption.
+  '''gitleaks\.toml''',
+  '''scripts/ci/check-gitleaks-config\.mjs''',
+  # This integration test deliberately embeds a hardcoded minisign updater key
+  # to validate the detection rule above. It is a test fixture, not a secret,
+  # so the tree/working-tree scan must skip it (history scanning still applies
+  # to real commits via the scan workflow's add-then-delete coverage).
+  '''(^|/)scripts/ci/test-secret-history-scan\.mjs''',
+]
+regexes = [
+  '''pk_live_.*''',
+]
+
+[[rules]]
+id = "tauri-minisign-updater-private-key"
+description = "Tauri/Minisign updater private signing key ('untrusted comment: rsign'). A committed updater signing key lets a fork forge trusted auto-updates, so it must never be committed."
+regex = '''dW50cnVzdGVkIGNvbW1lbnQ6IHJzaWdu'''

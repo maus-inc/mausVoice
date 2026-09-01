@@ -1,0 +1,50 @@
+import { Typography } from "@mui/material";
+import { Stack } from "@mui/system";
+import { FormattedMessage } from "react-intl";
+import { produceAppState, useAppStore } from "../../store";
+import {
+  DICTATE_HOTKEY,
+  getHotkeyCombosForAction,
+} from "../../utils/keyboard.utils";
+import { HotkeyBadge } from "./HotkeyBadge";
+
+const openShortcuts = () =>
+  produceAppState((draft) => {
+    draft.settings.shortcutsDialogOpen = true;
+  });
+
+export const DictationInstruction = () => {
+  const firstCombo = useAppStore((state) => {
+    const combos = getHotkeyCombosForAction(state, DICTATE_HOTKEY);
+    return combos.length > 0 ? combos[0] : null;
+  });
+
+  if (!firstCombo) {
+    return null;
+  }
+
+  return (
+    <Stack
+      direction="row"
+      spacing={1}
+      sx={{
+        alignItems: "center",
+      }}
+    >
+      <Typography
+        variant="body2"
+        component="div"
+        sx={{
+          color: "text.secondary",
+        }}
+      >
+        <FormattedMessage defaultMessage="Press your hotkey to dictate anywhere" />
+      </Typography>
+      <HotkeyBadge
+        keys={firstCombo}
+        onClick={openShortcuts}
+        sx={{ flexShrink: 0 }}
+      />
+    </Stack>
+  );
+};

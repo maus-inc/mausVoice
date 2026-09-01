@@ -1,0 +1,34 @@
+{
+  "name": "@maus-inc/utilities",
+  "version": "0.3.25",
+  "description": "Shared utility functions",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/mausvoice/mausvoice.git",
+    "directory": "packages/utilities"
+  },
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "scripts": {
+    "build": "tsc",
+    "dev": "tsc --watch",
+    "clean": "rm -rf dist",
+    "test": "vitest run",
+    "test:watch": "vitest"
+  },
+  "files": [
+    "dist"
+  ],
+  "dependencies": {
+    "@maus-inc/types": "workspace:*"
+  },
+  "devDependencies": {
+    "@maus-inc/typescript-config": "workspace:*",
+    "typescript": "5.9.3",
+    "vite": "^7.3.6",
+    "vitest": "^4.1.10"
+  },
+  "publishConfig": {
+    "access": "public"
+  }
+}

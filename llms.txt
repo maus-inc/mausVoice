@@ -1,0 +1,117 @@
+# mausVoice
+
+> Voice typing for your own machine. Press a hotkey, speak, and mausVoice
+> transcribes live, cleans it up with AI, and types it into any app. No
+> account, no subscription, built with Rust and TypeScript/React.
+
+## Project
+
+- **Name:** mausVoice
+- **Site:** https://maus-inc.github.io/mausVoice/
+- **Repository:** https://github.com/maus-inc/mausVoice
+- **License:** AGPLv3
+- **Maintainer:** Owie Emmanuel (https://github.com/Owie6789)
+- **Package Manager:** pnpm@10.34.5 (Turborepo monorepo)
+
+## Quickstart
+
+```bash
+pnpm install
+cd apps/desktop
+pnpm dev:mac        # macOS
+pnpm dev:windows    # Windows
+pnpm dev:linux      # Linux
+```
+
+Prerequisites: Node 20+ (`.nvmrc` pins v24), pnpm 10, Rust toolchain (Tauri v2), CMake for whisper-rs.
+
+## Architecture
+
+mausVoice is a Tauri v2 desktop application (Rust + TypeScript/React). The
+"Rust is the API, TypeScript is the Brain" pattern keeps all business logic in
+TypeScript (Zustand + Immer) while Rust handles native capabilities (audio
+capture, keyboard injection, updater, encryption, GPU enumeration, filesystem).
+
+```
+User input / System events
+        ↓
+React + Zustand state (TypeScript)
+        ↓
+Repos resolve local storage and AI providers
+        ↓
+Tauri commands (Rust API bridge)
+        ↓
+SQLite, the local transcription sidecar, or external AI services
+```
+
+## Repository Structure
+
+| Path | Description |
+|---|---|
+| `apps/desktop` | Tauri desktop app (Vite + React + Zustand) |
+| `apps/desktop/src-tauri` | Rust API layer (native capabilities, SQLite, transcription sidecar bridge) |
+| `apps/docs` | Astro + Starlight documentation site (the maintained, authoritative docs) |
+| `apps/windows-installer` | Windows installer (Tauri) |
+| `docs` | Loose architecture notes, release guides, and historical reference material |
+| `packages/*` | Shared packages: `@maus-inc/types`, `@maus-inc/utilities`, `@maus-inc/voice-ai`, `@repo/agent`, `@maus-inc/desktop-native-apis`, `@maus-inc/desktop-utils`, firemix, shared-fonts, eslint-config, typescript-config, plus native pill crates and `rust_transcription` |
+| `scripts` | Automation and helper scripts |
+| `marketing` | Marketing site assets (fonts, images, vendor scripts) |
+
+## Key Features
+
+- **Live transcription:** Streaming nova-3 via Deepgram (default personal path),
+  Groq `whisper-large-v3-turbo` (batch fallback), other API providers, or fully
+  local Whisper/ONNX (CPU/GPU) with zero network calls for recognition.
+- **AI cleanup:** Optional LLM rewrite (Groq default `openai/gpt-oss-20b`, also
+  OpenRouter/OpenAI/Gemini/Claude/Ollama). Independent of transcription mode.
+- **Works everywhere:** One hotkey pastes cleaned text into whatever app has focus.
+- **Encrypted keys:** Deepgram & Groq API keys stored encrypted with
+  XChaCha20-Poly1305. Rotatable in Settings.
+- **Personal dictionary:** Custom names, jargon, and shorthand remembered
+  across sessions.
+- **Cross-platform:** Native builds for macOS (Apple silicon + Intel, universal),
+  Windows (NSIS/MSI), and Linux (`.deb` and AppImage).
+
+## API Keys & Configuration
+
+Two optional keys entered in-app (Settings):
+- **Deepgram** (streaming transcription): https://console.deepgram.com/
+- **Groq** (LLM text cleanup): https://console.groq.com/keys
+
+Keys are encrypted on disk. For fully offline use, leave both empty and use
+local Whisper.
+
+## Quality Commands
+
+```bash
+pnpm run build         # Build all workspaces (turborepo)
+pnpm run lint          # Lint all workspaces
+pnpm run check-types   # TypeScript type checking
+pnpm run test          # Run tests
+pnpm run format        # Prettier format (ts, tsx, md)
+```
+
+## State Management
+
+Single Zustand store with Immer. Actions compose pure utility functions and
+call into repos. In this build repos resolve to local SQLite storage and local
+or API-backed AI providers.
+
+## Important Patterns
+
+- Never duplicate business logic in Rust; TypeScript owns all decisions.
+- Use `<FormattedMessage defaultMessage="..." />` for i18n (never pass `id` prop).
+- Database migrations: `apps/desktop/src-tauri/src/db/migrations/NNN_description.sql`
+- New Tauri commands: define in `commands.rs`, register in `app.rs` invoke_handler.
+- Shared package changes require rebuild before downstream consumers see them.
+
+## Documentation
+
+- Desktop architecture: `docs/desktop-architecture.md`
+- Release playbook: `docs/RELEASE.md`
+- Getting started (dev): `docs/getting-started.md`
+- Architecture deep-dive: `docs/ARCHITECTURE.md`
+- Contributor conventions: `AGENTS.md`
+- Local model integration: `docs/local-model-integration.md`
+- Keyboard listener hardening: `docs/keyboard-listener-hardening.md`
+- Pill flash message spec: `docs/pill-flash-message.md`

@@ -1,0 +1,205 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <link rel="icon" type="image/png" href="/app-icon.png" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>mausVoice</title>
+    <style>
+      :root {
+        color-scheme: light dark;
+      }
+
+      /*
+        Pre-hydration canvas. The script below resolves the persisted mode and
+        sets the same selector MUI uses before <body> is painted. The fallback
+        colours must stay in sync with surfaces.*.level0 in src/styles/palette.ts.
+        Once MUI mounts, --app-palette-level0 supplies the runtime value.
+      */
+      body {
+        margin: 0;
+        background-color: var(--app-palette-level0, #0c0c0d);
+      }
+
+      @media (prefers-color-scheme: light) {
+        body {
+          background-color: var(--app-palette-level0, #f5f2ed);
+        }
+      }
+
+      html[data-mui-color-scheme="dark"] body {
+        background-color: var(--app-palette-level0, #0c0c0d);
+      }
+
+      html[data-mui-color-scheme="light"] body {
+        background-color: var(--app-palette-level0, #f5f2ed);
+      }
+
+      .firebase-emulator-warning {
+        display: none !important;
+      }
+    </style>
+    <script>
+      // Keep this key and selector aligned with THEME_MODE_STORAGE_KEY and
+      // THEME_COLOR_SCHEME_SELECTOR in src/theme.ts.
+      (function () {
+        var stored;
+        try {
+          // Keep MUI's established mode key as the source of truth. The first
+          // light-mode fix read "mode" during bootstrap but set
+          // colorSchemeStorageKey instead of modeStorageKey, so some installs
+          // can have only that fallback copy. Migrate it without deleting it,
+          // preserving compatibility with both upgrades and rollbacks.
+          stored = localStorage.getItem("mui-mode");
+          if (stored !== "light" && stored !== "dark" && stored !== "system") {
+            var legacy = localStorage.getItem("mode");
+            if (
+              legacy === "light" ||
+              legacy === "dark" ||
+              legacy === "system"
+            ) {
+              // Assign before persisting so a failed write keeps the valid
+              // legacy preference instead of falling back to "system".
+              stored = legacy;
+              try {
+                localStorage.setItem("mui-mode", legacy);
+              } catch {
+                // Best-effort migration; a persistence failure is non-fatal.
+              }
+            }
+          }
+        } catch {
+          stored = null;
+        }
+
+        var mode =
+          stored === "light" || stored === "dark" || stored === "system"
+            ? stored
+            : "system";
+        var resolved = mode;
+        if (mode === "system") {
+          var prefersDark = window.matchMedia
+            ? window.matchMedia("(prefers-color-scheme: dark)").matches
+            : true;
+          resolved = prefersDark ? "dark" : "light";
+        }
+
+        document.documentElement.dataset.muiColorScheme = resolved;
+      })();
+    </script>
+    <script data-early-error>
+      // Early error safety net. Runs before any generated <link>/<script>
+      // tags, so a failed asset load or a vendor-chunk throw under Tauri's
+      // asset: protocol paints this overlay instead of a blank window. The
+      // full handler in src/utils/global-error-overlay.utils.ts takes over
+      // once the bundle loads.
+      (function () {
+        var OVERLAY_ID = "maus-global-error-overlay";
+        function paint(heading, detail) {
+          var el = document.getElementById(OVERLAY_ID);
+          if (!el) {
+            el = document.createElement("div");
+            el.id = OVERLAY_ID;
+            el.style.cssText = [
+              "position:fixed",
+              "inset:0",
+              "z-index:2147483647",
+              "box-sizing:border-box",
+              "background:#0c0c0d",
+              "color:#f5f2ed",
+              "font:14px/1.6 system-ui,-apple-system,sans-serif",
+              "padding:32px",
+              "overflow:auto",
+              "white-space:pre-wrap",
+            ].join(";");
+            (document.body || document.documentElement).appendChild(el);
+          }
+          el.textContent = heading + "\n\n" + detail;
+        }
+        function detailFromError(error, fallback) {
+          if (error && error.stack) return error.stack;
+          if (error && error.message) return error.message;
+          if (fallback) return fallback;
+          return String(error || "Unknown error");
+        }
+        // Named so the bundle installer can removeEventListener it. Capture
+        // phase is required for failed <script>/<link> fetches. Once React has
+        // mounted, this early handler defers to the bundled handler, which
+        // paints fatal errors pre-mount and only logs them after mount.
+        window.__mausVoiceEarlyError = function (event) {
+          var target = event.target;
+          var isStylesheet = false;
+          if (target instanceof HTMLLinkElement) {
+            if (target.relList && target.relList.contains("stylesheet")) {
+              isStylesheet = true;
+            } else if (typeof target.rel === "string") {
+              isStylesheet = target.rel.split(/\s+/).some(function (token) {
+                return token.toLowerCase() === "stylesheet";
+              });
+            }
+          }
+          // Once React has mounted, the early handler ignores both post-mount
+          // runtime and resource failures so they cannot cover a working UI
+          // with the fatal overlay. The bundled handler is responsible for
+          // logging resource failures.
+          if (
+            document.getElementById("root") &&
+            document.getElementById("root").childNodes.length
+          ) {
+            return;
+          }
+          var isAsset =
+            target instanceof HTMLScriptElement || isStylesheet;
+          if (isAsset) {
+            var url =
+              target instanceof HTMLScriptElement ? target.src : target.href;
+            paint(
+              "mausVoice failed to start",
+              "Failed to load resource: " +
+                (url || "(unknown URL)") +
+                "\n\nThe frontend asset could not be fetched. Under Tauri's asset: protocol this is usually a CORS or path issue — check the built index.html asset URLs.",
+            );
+            return;
+          }
+          if (event.error || event.message) {
+            paint(
+              "mausVoice failed to start",
+              detailFromError(event.error, event.message),
+            );
+          }
+        };
+        window.addEventListener("error", window.__mausVoiceEarlyError, true);
+        // Stable named handler so the bundle's overlay installer
+        // (global-error-overlay.utils.ts) can removeEventListener it once the
+        // app is up. Without the removal there would be two co-resident
+        // unhandledrejection listeners, and any post-mount rejection would
+        // paint this fatal "failed to start" overlay over a working app.
+        // The root-children guard below is a fallback for the window between
+        // handler registration and the TS installer running.
+        // NOTE: the property name below is duplicated in the global Window
+        // declaration in src/vite-env.d.ts (and consumed by
+        // src/utils/global-error-overlay.utils.ts). This inline script runs
+        // pre-bundle, so it cannot import a shared constant — when renaming,
+        // update all three places together.
+        window.__mausVoiceEarlyUnhandledRejection = function (event) {
+          if (
+            document.getElementById("root") &&
+            document.getElementById("root").childNodes.length
+          ) {
+            return;
+          }
+          paint("mausVoice failed to start", detailFromError(event.reason, ""));
+        };
+        window.addEventListener(
+          "unhandledrejection",
+          window.__mausVoiceEarlyUnhandledRejection,
+        );
+      })();
+    </script>
+  </head>
+
+  <body>
+    <div id="root"></div>
+    <script type="module" src="/src/main.tsx"></script>
+  </body>
+</html>

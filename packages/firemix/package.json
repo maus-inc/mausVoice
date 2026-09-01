@@ -1,0 +1,36 @@
+{
+  "name": "@maus-inc/firemix",
+  "version": "0.3.25",
+  "description": "Shared firemix utilities",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/mausvoice/mausvoice.git",
+    "directory": "packages/firemix"
+  },
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "scripts": {
+    "build": "tsc",
+    "dev": "tsc --watch",
+    "clean": "rm -rf dist"
+  },
+  "files": [
+    "dist"
+  ],
+  "peerDependencies": {
+    "firebase": "^11.1.0 || ^12.0.0"
+  },
+  "devDependencies": {
+    "@maus-inc/typescript-config": "workspace:*",
+    "firebase": "^12.17.1",
+    "typescript": "5.9.3"
+  },
+  "dependencies": {
+    "@firemix/core": "^0.1.16",
+    "@maus-inc/types": "workspace:*",
+    "@maus-inc/utilities": "workspace:*"
+  },
+  "publishConfig": {
+    "access": "public"
+  }
+}

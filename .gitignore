@@ -1,0 +1,119 @@
+# See https://help.github.com/articles/ignoring-files/ for more about ignoring files.
+
+/temp
+
+# Dependencies
+node_modules
+.pnp
+.pnpm-store
+.pnp.js
+.ignore
+.claude
+.venv
+.worktrees/
+
+# Local env files
+.env
+.env.local
+.env.development.local
+.env.test.local
+.env.production.local
+
+# Testing
+coverage
+models
+
+# Turbo
+.turbo
+
+# Vercel
+.vercel
+
+# Build Outputs
+.next/
+out/
+build
+dist
+.astro/
+apps/desktop/src/i18n/locales/.cache/
+apps/desktop/src-tauri/icons/nsis-sidebar.bmp
+apps/windows-installer/src-tauri/installer/mausVoice_Setup.exe
+
+
+# Lockfiles (npm/yarn — we use pnpm)
+package-lock.json
+yarn.lock
+
+# Debug
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# Misc
+.DS_Store
+*.pem
+
+# Signing keys and credentials. These must never be committed: the updater
+# private key is the anchor installed copies of mausVoice trust to execute
+# code. Tauri's `signer generate -w ~/...` does not expand "~" in PowerShell,
+# so on Windows it writes the key to a literal "~" directory inside the repo
+# (apps/desktop/~/.tauri/) — that path is covered explicitly.
+*.key
+*.key.pub
+.tauri/
+**/~/
+*.p12
+*.pfx
+*.jks
+*.keystore
+id_rsa
+id_ed25519
+*.asc
+*.gpg
+
+# Build-time updater manifest. `build-updater-manifest.mjs` defaults to
+# writing latest.json at the repo root when OUTPUT_PATH is unset; in CI it
+# goes to dist/, but a local run would drop one here.
+/latest.json
+
+# Tauri bundler toolchains, downloaded into src-tauri during a Windows build.
+WixTools/
+NSIS/
+
+# Logs
+*.log
+
+# Python caches (scripts/ and packages/rust_transcription carry .py tooling)
+__pycache__/
+*.py[cod]
+
+target/
+.toolchain/
+nul
+
+*.exe
+
+# Local craft kit (not committed)
+.craft/
+
+# Local skill kits (fetched for design work, not committed)
+.humanize/
+.impeccable/
+.taste/
+.brandkit/
+.emilkowalski/
+.ui-ux-pro-max/
+.design-md/
+.motion-ui/
+.review-animations/
+.creative-excellence/
+.design-motion-principles/
+
+# Local handoff artifact (not committed)
+HANDOFF.md
+
+# Secrets and local CI/log artifacts (must never be committed)
+.ghtoken
+/logs/
+#Agent 
+.mausagent/

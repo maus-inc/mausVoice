@@ -1,0 +1,13 @@
+[package]
+name = "rust_pill_shared"
+version = "0.1.0"
+edition = "2021"
+description = "Shared geometry helpers for the mausVoice pill overlays"
+publish = false
+
+[lib]
+name = "rust_pill_shared"
+path = "src/lib.rs"
+
+[lints.clippy]
+uninlined_format_args = "allow"

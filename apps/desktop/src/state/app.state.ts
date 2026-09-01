@@ -1,0 +1,204 @@
+import {
+  ApiKey,
+  AppTarget,
+  ChatMessage,
+  Conversation,
+  Hotkey,
+  Member,
+  Nullable,
+  PairedRemoteDevice,
+  RemoteReceiverStatus,
+  Term,
+  Tone,
+  ToolInfo,
+  ToolPermission,
+  Transcription,
+  User,
+  UserPreferences,
+} from "@maus-inc/types";
+import { AuthUser } from "../types/auth.types";
+import { Vector2 } from "../types/math.types";
+import { OverlayPhase } from "../types/overlay.types";
+import { PermissionMap } from "../types/permission.types";
+
+import { AgentRunState } from "./agent.state";
+import { ChatState, INITIAL_CHAT_STATE } from "./chat.state";
+import { DictionaryState, INITIAL_DICTIONARY_STATE } from "./dictionary.state";
+import { INITIAL_LOCAL_STATE, LocalState } from "./local.state";
+import { INITIAL_LOGIN_STATE, LoginState } from "./login.state";
+import {
+  INITIAL_ONBOARDING_STATE,
+  type OnboardingState,
+} from "./onboarding.state";
+import { INITIAL_SETTINGS_STATE, SettingsState } from "./settings.state";
+import {
+  INITIAL_TONE_EDITOR_STATE,
+  ToneEditorState,
+} from "./tone-editor.state";
+import { INITIAL_TONES_STATE, TonesState } from "./tones.state";
+import {
+  INITIAL_TRANSCRIPTIONS_STATE,
+  TranscriptionsState,
+} from "./transcriptions.state";
+import { INITIAL_UPDATER_STATE, UpdaterState } from "./updater.state";
+
+export type SnackbarMode = "info" | "success" | "error";
+export type HotkeyStrategy = "listener" | "bridge";
+export type PasteKeybindSupport = "disabled" | "per-app" | "global";
+
+// Mirrors the Rust `HealthState` (platform::keyboard). Grounded in the child listener's
+// actual grab/listen outcome, not in OS permission state.
+export type KeyboardListenerHealth =
+  | "starting"
+  | "connected"
+  | "healthy_grab"
+  | "grab_failed"
+  | "fallback_starting"
+  | "degraded_listen_fallback"
+  | "failed"
+  | "stopped";
+
+export type StreamingToolCall = {
+  toolCallId: string;
+  toolName: string;
+  done: boolean;
+};
+
+export type StreamingMessageState = {
+  toolCalls: StreamingToolCall[];
+  reasoning: string;
+  isStreaming: boolean;
+};
+
+export type RecordingMode = "dictate" | "agent";
+
+export type AssistantInputMode = "voice" | "type";
+
+export type AppState = {
+  initialized: boolean;
+  auth: Nullable<AuthUser>;
+  keysHeld: string[];
+  isRecordingHotkey: boolean;
+  activeRecordingMode: Nullable<RecordingMode>;
+  dictationLanguageOverride: Nullable<string>;
+  overlayPhase: OverlayPhase;
+  audioLevels: number[];
+  permissions: PermissionMap;
+  confettiCounter: number;
+  userPrefs: Nullable<UserPreferences>;
+  localStorageCache: Record<string, unknown>;
+
+  memberById: Record<string, Member>;
+  userById: Record<string, User>;
+  /** First tenant the signed-in user belongs to, with their role and seat
+   * status on it. Null if the user has no tenants. */
+  termById: Record<string, Term>;
+  appTargetById: Record<string, AppTarget>;
+  pairedRemoteDeviceById: Record<string, PairedRemoteDevice>;
+  remoteReceiverStatus: Nullable<RemoteReceiverStatus>;
+  transcriptionById: Record<string, Transcription>;
+  hotkeyById: Record<string, Hotkey>;
+  apiKeyById: Record<string, ApiKey>;
+  toneById: Record<string, Tone>;
+  conversationById: Record<string, Conversation>;
+  chatMessageById: Record<string, ChatMessage>;
+  chatMessageIdsByConversationId: Record<string, string[]>;
+  toolInfoById: Record<string, ToolInfo>;
+  toolPermissionById: Record<string, ToolPermission>;
+  agentStateByConversationId: Record<string, AgentRunState>;
+  streamingMessageById: Record<string, StreamingMessageState>;
+
+  local: LocalState;
+  onboarding: OnboardingState;
+  transcriptions: TranscriptionsState;
+  dictionary: DictionaryState;
+  tones: TonesState;
+  toneEditor: ToneEditorState;
+  settings: SettingsState;
+  updater: UpdaterState;
+  login: LoginState;
+  pillConversationId: Nullable<string>;
+  assistantInputMode: AssistantInputMode;
+  chat: ChatState;
+
+  snackbarMessage?: string;
+  snackbarCounter: number;
+  snackbarMode: SnackbarMode;
+  snackbarDuration: number;
+  snackbarTransitionDuration?: number;
+
+  /** Accumulated dictation segments while no editable target was focused.
+   *  Drained on the first editable-focus event or on transcription completion.
+   *  Cleared at session start — never carried across sessions. */
+  dictationBacklog: string[];
+  /** Monotonically incremented each time a new dictation session begins.
+   *  Any code reading the backlog must verify the nonce hasn't advanced
+   *  (i.e. a new session started) before acting on stale backlog data. */
+  dictationBacklogNonce: number;
+
+  overlayCursor: Nullable<Vector2>;
+  hotkeyTriggers: Record<string, number>;
+  hotkeyStrategy: Nullable<HotkeyStrategy>;
+  keyboardListenerHealth: KeyboardListenerHealth;
+  supportsAppDetection: boolean;
+  supportsPasteKeybinds: PasteKeybindSupport;
+};
+
+export const INITIAL_APP_STATE: AppState = {
+  userPrefs: null,
+  isRecordingHotkey: false,
+  activeRecordingMode: null,
+  dictationLanguageOverride: null,
+  localStorageCache: {},
+  memberById: {},
+  userById: {},
+  termById: {},
+  appTargetById: {},
+  pairedRemoteDeviceById: {},
+  remoteReceiverStatus: null,
+  transcriptionById: {},
+  apiKeyById: {},
+  toneById: {},
+  conversationById: {},
+  chatMessageById: {},
+  chatMessageIdsByConversationId: {},
+  toolInfoById: {},
+  toolPermissionById: {},
+  agentStateByConversationId: {},
+  streamingMessageById: {},
+  overlayPhase: "idle",
+  audioLevels: [],
+  permissions: {
+    microphone: null,
+    accessibility: null,
+  },
+  hotkeyById: {},
+  auth: null,
+  confettiCounter: 0,
+  keysHeld: [],
+  initialized: false,
+  snackbarCounter: 0,
+  snackbarMode: "info",
+  snackbarDuration: 3000,
+  snackbarTransitionDuration: undefined,
+  dictationBacklog: [],
+  dictationBacklogNonce: 0,
+  overlayCursor: null,
+  hotkeyTriggers: {},
+  hotkeyStrategy: null,
+  keyboardListenerHealth: "stopped",
+  supportsAppDetection: true,
+  supportsPasteKeybinds: "disabled",
+  pillConversationId: null,
+  assistantInputMode: "voice",
+  local: INITIAL_LOCAL_STATE,
+  chat: INITIAL_CHAT_STATE,
+  onboarding: INITIAL_ONBOARDING_STATE,
+  transcriptions: INITIAL_TRANSCRIPTIONS_STATE,
+  dictionary: INITIAL_DICTIONARY_STATE,
+  tones: INITIAL_TONES_STATE,
+  toneEditor: INITIAL_TONE_EDITOR_STATE,
+  settings: INITIAL_SETTINGS_STATE,
+  updater: INITIAL_UPDATER_STATE,
+  login: INITIAL_LOGIN_STATE,
+};
