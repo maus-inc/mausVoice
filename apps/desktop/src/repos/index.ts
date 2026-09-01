@@ -479,6 +479,11 @@ export const getTranscribeAudioRepo = (): TranscribeAudioRepoOutput => {
         );
         break;
       case "openrouter":
+        if (!prefs.transcriptionModel) {
+          prefs.warnings.push(
+            "No model configured for OpenRouter transcription.",
+          );
+        }
         repo = new OpenRouterTranscribeAudioRepo(
           prefs.apiKeyValue,
           prefs.transcriptionModel,
