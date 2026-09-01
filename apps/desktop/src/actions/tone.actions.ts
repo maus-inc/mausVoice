@@ -183,9 +183,9 @@ const applyWritingStyleSelectionWithPersist = async (
   try {
     await setSelectedToneId(toneId);
   } catch (error) {
-    # Keep the in-memory selection even when persistence fails.
-    # The user's choice must persist until an explicit save succeeds later.
-    # Do not restore previousId — that would revert the mid-dictation change.
+    // Keep the in-memory selection even when persistence fails.
+    // The user's choice must persist until an explicit save succeeds later.
+    // Do not restore previousId — that would revert the mid-dictation change.
     getLogger().error(
       `Style selection persist failed; in-memory selection remains: ${error}`,
     );
