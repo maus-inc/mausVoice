@@ -122,6 +122,7 @@ pub(crate) struct PillState {
     pub(crate) tooltip_t: Cell<f64>,
     pub(crate) tooltip_velocity: Cell<f64>,
     pub(crate) tooltip_width: Cell<f64>,
+    pub(crate) style_tooltip_gate: rust_pill_shared::StyleTooltipGate,
 
     // Window sizing
     pub(crate) window_mode: Cell<WindowMode>,

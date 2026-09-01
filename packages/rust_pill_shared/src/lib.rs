@@ -6,6 +6,7 @@
 //! platform traces the *same* path for the same input rectangle, so the
 //! ring lines up pixel-for-pixel across Linux, macOS and Windows.
 
+use std::cell::Cell;
 use std::f64::consts::FRAC_PI_2;
 
 /// Build the perimeter of an axis-aligned rounded rectangle as an ordered
@@ -643,6 +644,110 @@ pub fn ring_release_drift(release_elapsed: f64) -> f64 {
 /// definition still under the pointer.
 pub fn resolve_hover(probed: bool, pointer_down: bool) -> bool {
     pointer_down || probed
+}
+
+/// The pill must be at least this expanded before the style tooltip appears,
+/// so the tooltip never floats above a still-collapsing pill.
+pub const STYLE_TOOLTIP_EXPAND_T: f64 = 0.3;
+
+/// Visibility rule for the dictation style tooltip, the style selector that
+/// floats above the pill.
+///
+/// The tooltip is hover-revealed: the pointer on the pill shows it (so the
+/// chevrons stay clickable mid-take) and the pointer leaving fades it out.
+/// Paused keeps it hidden even on hover, leaving the pause/resume controls
+/// free of it.
+///
+/// Hover alone cannot decide take-start: a take that begins under a parked
+/// pointer would keep the tooltip open for the whole take. That timing lives
+/// in [`StyleTooltipGate`], which forces the fade when a take starts and
+/// re-arms hover-reveal once the pointer has actually left the pill.
+pub fn style_tooltip_visible(
+    assistant_active: bool,
+    style_count: u32,
+    paused: bool,
+    hovered: bool,
+    expand_t: f64,
+) -> bool {
+    !assistant_active
+        && style_count > 1
+        && !paused
+        && hovered
+        && expand_t > STYLE_TOOLTIP_EXPAND_T
+}
+
+/// Spring target (0.0 or 1.0) for the style tooltip, combining the pure
+/// visibility rule with the take-start gate.
+pub fn style_tooltip_target(
+    gate: &StyleTooltipGate,
+    assistant_active: bool,
+    style_count: u32,
+    paused: bool,
+    hovered: bool,
+    expand_t: f64,
+) -> f64 {
+    // The gate must be evaluated first: is_suppressed() is what releases the
+    // latch on pointer-leave, so hiding it behind the pure rule's
+    // short-circuit would leave the latch set whenever the tooltip is
+    // ineligible for any other reason (single style, assistant panel,
+    // collapsed pill) and the tooltip would stay hidden on the next hover
+    // entry in the same take.
+    if !gate.is_suppressed(hovered)
+        && style_tooltip_visible(assistant_active, style_count, paused, hovered, expand_t)
+    {
+        1.0
+    } else {
+        0.0
+    }
+}
+
+/// Spring target (0.0 or 1.0) for the flash banner (the native pill toast,
+/// e.g. the retranscribing banner).
+///
+/// The banner and the style tooltip share the strip above the pill, so one
+/// must yield. A banner without an action button is informational and yields
+/// to a revealed tooltip: hovering the pill swaps the banner for the style
+/// selector without cancelling the banner, which returns once the pointer
+/// leaves and it has not expired. A banner with an action button (for
+/// example the cancel-dictation confirm) keeps the strip; it is an
+/// interactive prompt, so the tooltip stays suppressed beneath it.
+pub fn flash_banner_target(flash_visible: bool, has_action: bool, tooltip_revealed: bool) -> f64 {
+    if flash_visible && (has_action || !tooltip_revealed) {
+        1.0
+    } else {
+        0.0
+    }
+}
+
+/// Latch that forces the style tooltip to fade the moment a take starts,
+/// even under a pointer that never leaves the pill.
+///
+/// The latch holds from take-start until the pointer actually leaves the
+/// pill or the take ends, so the tooltip comes back on the next hover entry
+/// and the chevrons stay reachable mid-take.
+#[derive(Debug, Clone, Default)]
+pub struct StyleTooltipGate {
+    suppressed: Cell<bool>,
+}
+
+impl StyleTooltipGate {
+    /// Phase-handler hook. Recording latches the fade (a resume from Paused
+    /// re-latches: the tooltip must not pop back in on resume under a parked
+    /// pointer); every other phase (Idle, Loading, Paused) releases it. Paused
+    /// still hides the tooltip through [`style_tooltip_visible`] either way.
+    pub fn set_take_running(&self, running: bool) {
+        self.suppressed.set(running);
+    }
+
+    /// Tick hook: reports whether the tooltip stays hidden. The pointer
+    /// leaving the pill releases the latch, so the next hover entry
+    /// reveals the tooltip again.
+    pub fn is_suppressed(&self, hovered: bool) -> bool {
+        if !hovered {
+            self.suppressed.set(false);
+        }
+        self.suppressed.get()
+    }
 }
 
 /// Normalised progress of the arm-confirmation pulse, in `0..=1`.
@@ -1532,5 +1637,129 @@ mod tests {
     fn unavailable_action_is_inert() {
         assert!(!can_emit_interaction_feedback(false, false));
         assert!(!can_emit_interaction_feedback(false, true));
+    }
+
+    #[test]
+    fn style_tooltip_follows_hover_mid_take_so_the_chevrons_stay_clickable() {
+        // A running take must not pin the tooltip open, but the pointer on
+        // the pill still reveals it mid-take so a chevron click switches style.
+        assert!(style_tooltip_visible(false, 3, false, true, 1.0));
+        // The pin was the bug: recording with the pointer elsewhere keeps
+        // the tooltip faded out.
+        assert!(!style_tooltip_visible(false, 3, false, false, 1.0));
+    }
+
+    #[test]
+    fn style_tooltip_stays_hidden_while_paused() {
+        // Paused keeps the tooltip hidden even on hover, as it was before
+        // the rule was shared.
+        assert!(!style_tooltip_visible(false, 3, true, true, 1.0));
+        assert!(!style_tooltip_visible(false, 3, true, false, 1.0));
+    }
+
+    #[test]
+    fn style_tooltip_is_hover_revealed_when_idle_or_processing() {
+        assert!(style_tooltip_visible(false, 3, false, true, 1.0));
+        // Processing the finished take keeps the hover reveal.
+        assert!(style_tooltip_visible(false, 3, false, true, 0.5));
+        assert!(!style_tooltip_visible(false, 3, false, false, 1.0));
+    }
+
+    #[test]
+    fn style_tooltip_stays_hidden_when_it_has_nothing_to_switch() {
+        // One active style leaves nothing to cycle, and the assistant panel
+        // owns the window; a collapsing pill must not float a tooltip either.
+        assert!(!style_tooltip_visible(false, 1, false, true, 1.0));
+        assert!(!style_tooltip_visible(true, 3, false, true, 1.0));
+        assert!(!style_tooltip_visible(false, 3, false, true, 0.1));
+    }
+
+    #[test]
+    fn style_tooltip_fades_when_a_take_starts_under_a_parked_pointer() {
+        // The repro the pure rule could not decide on its own: the pointer
+        // never leaves the pill, yet the tooltip must fade when the take
+        // starts.
+        let gate = StyleTooltipGate::default();
+        assert_eq!(style_tooltip_target(&gate, false, 3, false, true, 1.0), 1.0);
+        gate.set_take_running(true);
+        assert_eq!(style_tooltip_target(&gate, false, 3, false, true, 1.0), 0.0);
+    }
+
+    #[test]
+    fn style_tooltip_returns_after_the_pointer_leaves_and_re_enters() {
+        // Mid-take hover re-entry reveals the tooltip again, keeping the
+        // chevrons clickable while recording.
+        let gate = StyleTooltipGate::default();
+        gate.set_take_running(true);
+        assert_eq!(style_tooltip_target(&gate, false, 3, false, true, 1.0), 0.0);
+        // Pointer leaves the pill: the latch releases.
+        assert!(!gate.is_suppressed(false));
+        assert_eq!(style_tooltip_target(&gate, false, 3, false, true, 1.0), 1.0);
+    }
+
+    #[test]
+    fn style_tooltip_latch_releases_when_the_take_ends() {
+        // A pointer parked on the pill through the whole take gets the
+        // tooltip back once the take ends (Idle or Loading).
+        let gate = StyleTooltipGate::default();
+        gate.set_take_running(true);
+        assert_eq!(style_tooltip_target(&gate, false, 3, false, true, 1.0), 0.0);
+        gate.set_take_running(false);
+        assert_eq!(style_tooltip_target(&gate, false, 3, false, true, 1.0), 1.0);
+        // Hover never dropped, so a later take must re-latch cleanly.
+        gate.set_take_running(true);
+        assert_eq!(style_tooltip_target(&gate, false, 3, false, true, 1.0), 0.0);
+    }
+
+    /// Regression: the latch must release even when the pure rule is false
+    /// when the pointer leaves. Evaluating the gate only behind
+    /// style_tooltip_visible() skipped is_suppressed() whenever the tooltip
+    /// was ineligible for another reason (single style, assistant panel,
+    /// collapsed pill), so the tooltip stayed hidden on the next hover entry
+    /// in the same take.
+    #[test]
+    fn style_tooltip_latch_releases_while_the_rule_is_false_for_other_reasons() {
+        let gate = StyleTooltipGate::default();
+        gate.set_take_running(true);
+        // Pointer leaves while only one style is active: the rule is false,
+        // but the leave must still release the latch.
+        assert_eq!(style_tooltip_target(&gate, false, 1, false, false, 1.0), 0.0);
+        // A second style becomes active and the pointer re-enters mid-take.
+        assert_eq!(style_tooltip_target(&gate, false, 3, false, true, 1.0), 1.0);
+    }
+
+    #[test]
+    fn flash_banner_yields_the_strip_to_a_revealed_tooltip() {
+        // The retranscribing banner has no action button: hovering the pill
+        // must swap it for the style selector instead of sitting on top of it.
+        assert_eq!(flash_banner_target(true, false, true), 0.0);
+        // Pointer leaves before the banner expires: it returns.
+        assert_eq!(flash_banner_target(true, false, false), 1.0);
+    }
+
+    #[test]
+    fn flash_banner_with_an_action_keeps_the_strip() {
+        // An interactive banner (cancel-dictation confirm) must not vanish
+        // the moment the pill is hovered; the tooltip waits beneath it.
+        assert_eq!(flash_banner_target(true, true, true), 1.0);
+        assert_eq!(flash_banner_target(true, true, false), 1.0);
+    }
+
+    #[test]
+    fn flash_banner_stays_hidden_when_not_visible() {
+        assert_eq!(flash_banner_target(false, false, false), 0.0);
+        assert_eq!(flash_banner_target(false, true, true), 0.0);
+    }
+
+    #[test]
+    fn style_tooltip_stays_hidden_while_paused_even_after_re_entry() {
+        // Paused hides the tooltip regardless of the latch, and a resume
+        // re-latches so the tooltip does not pop in under a parked pointer.
+        let gate = StyleTooltipGate::default();
+        gate.set_take_running(true);
+        gate.is_suppressed(false);
+        assert_eq!(style_tooltip_target(&gate, false, 3, true, true, 1.0), 0.0);
+        gate.set_take_running(true);
+        assert_eq!(style_tooltip_target(&gate, false, 3, false, true, 1.0), 0.0);
     }
 }
