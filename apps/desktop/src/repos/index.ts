@@ -88,6 +88,7 @@ import {
   LocalTranscribeAudioRepo,
   OpenAICompatibleTranscribeAudioRepo,
   OpenAITranscribeAudioRepo,
+  OpenRouterTranscribeAudioRepo,
   SpeachesTranscribeAudioRepo,
   XaiTranscribeAudioRepo,
 } from "./transcribe-audio.repo";
@@ -473,6 +474,12 @@ export const getTranscribeAudioRepo = (): TranscribeAudioRepoOutput => {
         break;
       case "groq":
         repo = new GroqTranscribeAudioRepo(
+          prefs.apiKeyValue,
+          prefs.transcriptionModel,
+        );
+        break;
+      case "openrouter":
+        repo = new OpenRouterTranscribeAudioRepo(
           prefs.apiKeyValue,
           prefs.transcriptionModel,
         );

@@ -31,8 +31,12 @@ class FakeWebSocket {
     queueMicrotask(() => this.onopen?.());
   }
 
-  send(data: string) {
-    this.sent.push(data);
+  send(data: string | ArrayBufferView | Blob) {
+    if (typeof data === "string") {
+      this.sent.push(data);
+    } else {
+      this.sent.push(String(data));
+    }
   }
 
   close() {

@@ -84,6 +84,9 @@ const normalizePillResetMonitorStrategy = (
   strategy: Nullable<string> | undefined,
 ): PillResetMonitorStrategy => (strategy === "cursor" ? "cursor" : "current");
 
+const normalizePillPlacement = (value: Nullable<string>): PillPlacement =>
+  value === "top" || value === "bottom" ? value : "bottom";
+
 export const normalizeAgentMaxIterations = (
   value: number | null | undefined,
 ): number => {
@@ -202,7 +205,7 @@ const fromLocalOutputPreferences = (preferences: LocalUserPreferences) => ({
   pillResetMonitorStrategy: normalizePillResetMonitorStrategy(
     preferences.pillResetMonitorStrategy,
   ),
-  pillPlacement: (preferences.pillPlacement ?? "bottom") as PillPlacement,
+  pillPlacement: normalizePillPlacement(preferences.pillPlacement),
   alwaysRequestAdminOnStartup: orFalse(preferences.alwaysRequestAdminOnStartup),
   preserveAudioOnFailure: preferences.preserveAudioOnFailure ?? true,
   handsFreeDelayMs: preferences.handsFreeDelayMs ?? null,

@@ -147,7 +147,7 @@ export const buildSystemPostProcessingTonePrompt = (
     );
     return appendHumanizeSkill(
       appendStructuredStyleGuidance(systemPrompt, input.tone),
-    );
+    ) + `\n\n${GLOSSARY_EXACT_SPELLING_INSTRUCTION}`;
   }
 
   const stylePrompt = appendStructuredStyleGuidance(
