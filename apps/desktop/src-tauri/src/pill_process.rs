@@ -539,5 +539,4 @@ mod style_switch_parse_tests {
             None
         );
     }
->>>>>>> origin/fix/superfix-review-findings
 }
