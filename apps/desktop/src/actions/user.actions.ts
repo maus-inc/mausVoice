@@ -465,7 +465,7 @@ export const setInteractionChimeEnabled = async (enabled: boolean) => {
 export const setInteractionFeedbackVolume = async (
   volume: number,
 ): Promise<void> => {
-  // Persist the user-facing preference (clamped to [0, 1]) and mirror the
+  // Persist the user-facing preference (clamped to [0.05, 0.5]) and mirror the
   // same clamped value into Rust so the IPC payload matches the persisted
   // record. The Rust side clamps again to its safe window as a
   // defence-in-depth measure; this clamp guarantees the on-the-wire

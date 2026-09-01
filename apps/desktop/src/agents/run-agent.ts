@@ -58,7 +58,8 @@ export async function safeSideEffect<T>(
 /**
  * Drive one agent conversation to completion on the desktop adapter.
  * Emits every AgentLoop event into app state; non-critical persistence
- * failures are logged via safeSideEffect so the loop always finishes.
+ * failures are logged via safeSideEffect so they do not terminate loop
+ * processing.
  */
 export async function runAgent(
   conversationId: string,
@@ -378,6 +379,7 @@ async function finalizeAssistantMessage(
   }
 }
 
+/** Build the AgentLlmProvider that proxies streaming through the repo. */
 function createLlmProvider(): AgentLlmProvider {
   const { repo } = getAgentRepo();
   if (!repo) throw new Error("No LLM provider configured");

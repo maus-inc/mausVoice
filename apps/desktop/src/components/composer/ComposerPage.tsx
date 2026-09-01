@@ -192,7 +192,7 @@ export const ComposerPage = () => {
     // The host (reviewTextInComposer) uses this to cancel its 15s blank-
     // page safety net. Emit on every mount so a re-render that re-runs
     // this effect does not strand the host's safety timer.
-    void emit("composer-ready", { requestId }).catch(() => undefined);
+    emit("composer-ready", { requestId }).catch(() => undefined);
     void invoke<string | null>("composer_peek_text", { requestId })
       .then((initialText) => {
         if (active) setText(initialText ?? "");

@@ -17,7 +17,7 @@ describe("safeSideEffect", () => {
     const result = await safeSideEffect(
       "label",
       { conversationId: "c-1" },
-      async () => "ok",
+      () => Promise.resolve("ok"),
     );
     expect(result).toBe("ok");
     expect(loggerMock.error).not.toHaveBeenCalled();
@@ -31,9 +31,10 @@ describe("safeSideEffect", () => {
     const result = await safeSideEffect(
       "tool-call-result.persist",
       { conversationId: "c-1", toolCallId: "t-1" },
-      async () => {
-        throw new Error("The resource id 'foo' is invalid");
-      },
+      () =>
+        Promise.reject(
+          new Error("The resource id 'foo' is invalid"),
+        ),
     );
     expect(result).toBeNull();
     expect(loggerMock.error).toHaveBeenCalledTimes(1);

@@ -718,12 +718,12 @@ mod tests {
         // write path stores an f32-cast value (0.3499999940395355). Both
         // round-trip through the sink clamp identically, so compare with
         // an audio-scale epsilon rather than bit equality.
+        let expected =
+            f64::from(crate::domain::user::DEFAULT_INTERACTION_FEEDBACK_VOLUME);
+        let diff = (migrated_volume - expected).abs();
         assert!(
-            (migrated_volume - f64::from(
-                crate::domain::user::DEFAULT_INTERACTION_FEEDBACK_VOLUME
-            ))
-            .abs()
-                < 1e-6
+            diff < 1e-6,
+            "migration 79 default {migrated_volume} != {expected} (diff {diff})"
         );
         let v79 = sqlx::query(
             "SELECT COUNT(*) AS n FROM _sqlx_migrations WHERE version = 79 AND success = 1",

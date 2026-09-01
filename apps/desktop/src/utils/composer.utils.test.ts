@@ -275,19 +275,8 @@ describe("reviewTextInComposer cleanup", () => {
   });
 
   it("destroys the window and discards its text when the user accepts", async () => {
+    const listeners = installPerEventListener();
     let createdId = "";
-    const listeners = new Map<
-      string,
-      Array<(event: { payload: unknown }) => void>
-    >();
-    mocks.listen.mockImplementation(
-      async (event: string, cb: (event: { payload: unknown }) => void) => {
-        const list = listeners.get(event) ?? [];
-        list.push(cb);
-        listeners.set(event, list);
-        return vi.fn();
-      },
-    );
     mocks.invoke.mockImplementation(async (cmd: string) => {
       if (cmd === "floating_window_create") {
         createdId = "floating-1";
@@ -357,18 +346,7 @@ describe("reviewTextInComposer ready-timeout safety net", () => {
     };
 
     try {
-      const listeners = new Map<
-        string,
-        Array<(event: { payload: unknown }) => void>
-      >();
-      mocks.listen.mockImplementation(
-        async (event: string, cb: (event: { payload: unknown }) => void) => {
-          const list = listeners.get(event) ?? [];
-          list.push(cb);
-          listeners.set(event, list);
-          return vi.fn();
-        },
-      );
+      const listeners = installPerEventListener();
       let createdId = "";
       mocks.invoke.mockImplementation(async (cmd: string) => {
         if (cmd === "floating_window_create") {

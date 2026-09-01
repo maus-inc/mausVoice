@@ -74,6 +74,7 @@ const ThockVolumeControl = ({
     </Box>
   );
 };
+/** Audio settings dialog: interaction chime toggle, thock volume slider, and dictation dim. */
 export const AudioDialog = () => {
   const intl = useIntl();
   const [
@@ -131,7 +132,7 @@ export const AudioDialog = () => {
           enabled={playInteractionChime}
           volume={interactionFeedbackVolume}
           onCommit={(v) => {
-            void setInteractionFeedbackVolume(v);
+            setInteractionFeedbackVolume(v).catch(() => undefined);
           }}
         />
         <Box sx={{ mt: 3 }}>

@@ -55,6 +55,7 @@ const {
 vi.mock("@repo/agent", () => {
   class AgentLoop {
     private readonly runImpl = loopRunMock;
+    abort = vi.fn();
     run(...args: unknown[]) {
       return this.runImpl(...args);
     }
