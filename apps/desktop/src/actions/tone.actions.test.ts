@@ -121,7 +121,7 @@ describe("writing style switch channels share one state transition", () => {
       channel: "cycle-hotkey",
       direction: 1,
     });
-    expect(selectedToneId()).toBe("email");
+    expect(selectedToneId()).toBe("default");
   });
 
   it("a style-select hotkey writes the same selectedToneId slot", async () => {
@@ -134,7 +134,7 @@ describe("writing style switch channels share one state transition", () => {
     expect(selectedToneId()).toBe("email");
 
     await switchWritingStyleBackward();
-    expect(selectedToneId()).toBe("email");
+    expect(selectedToneId()).toBe("default");
 
     await selectToneByHotkey("chat");
     expect(selectedToneId()).toBe("chat");
