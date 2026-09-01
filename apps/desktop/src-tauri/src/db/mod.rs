@@ -152,6 +152,8 @@ pub const SPOKEN_COMMANDS_MIGRATION_SQL: &str =
     include_str!("migrations/077_spoken_commands_enabled.sql");
 pub const POST_PROCESS_ATTRIBUTION_MIGRATION_SQL: &str =
     include_str!("migrations/078_post_process_attribution.sql");
+pub const INTERACTION_FEEDBACK_VOLUME_MIGRATION_SQL: &str =
+    include_str!("migrations/079_interaction_feedback_volume.sql");
 
 pub fn migrations() -> Vec<tauri_plugin_sql::Migration> {
     vec![
@@ -609,6 +611,12 @@ pub fn migrations() -> Vec<tauri_plugin_sql::Migration> {
             version: 78,
             description: "add_post_process_attribution",
             sql: POST_PROCESS_ATTRIBUTION_MIGRATION_SQL,
+            kind: tauri_plugin_sql::MigrationKind::Up,
+        },
+        tauri_plugin_sql::Migration {
+            version: 79,
+            description: "add_interaction_feedback_volume",
+            sql: INTERACTION_FEEDBACK_VOLUME_MIGRATION_SQL,
             kind: tauri_plugin_sql::MigrationKind::Up,
         },
     ]

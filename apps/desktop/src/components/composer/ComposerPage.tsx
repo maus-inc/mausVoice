@@ -188,6 +188,11 @@ export const ComposerPage = () => {
 
   useEffect(() => {
     let active = true;
+    // Signal the host process that the webview is alive and responsive.
+    // The host (reviewTextInComposer) uses this to cancel its 15s blank-
+    // page safety net. Emit on every mount so a re-render that re-runs
+    // this effect does not strand the host's safety timer.
+    emit("composer-ready", { requestId }).catch(() => undefined);
     void invoke<string | null>("composer_peek_text", { requestId })
       .then((initialText) => {
         if (active) setText(initialText ?? "");

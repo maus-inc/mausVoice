@@ -21,6 +21,46 @@ const POLL_INTERVAL_MS = 500;
 const MAX_CONTEXT_MESSAGES = 80;
 const activeLoops = new Map<string, AgentLoop>();
 
+/**
+ * Run a non-critical side effect inside the agent's `for await` loop and
+ * isolate any rejection. A failing chat-message persistence, streaming-state
+ * write, or tool-UI update must NEVER terminate the agent run: the
+ * in-memory `AgentLoop` already has the tool result and the next LLM
+ * request must be issued. The "resource id is invalid" log the user saw
+ * in the diagnostics zip was an unhandled rejection from this exact
+ * surface; wrapping the call keeps the loop alive.
+ *
+ * `label` is included in the log so post-mortem inspection can map a
+ * failure back to a specific event handler. `context` is included verbatim
+ * (caller must sanitize) so the tool-call id, conversation id, and
+ * message id are available without joining on a stack trace.
+ */
+export async function safeSideEffect<T>(
+  label: string,
+  context: Record<string, string>,
+  fn: () => Promise<T>,
+): Promise<T | null> {
+  try {
+    return await fn();
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    getLogger().error(
+      `Agent non-critical side effect failed (${label}, ${Object.entries(
+        context,
+      )
+        .map(([k, v]) => `${k}=${v}`)
+        .join(", ")}): ${message}`,
+    );
+    return null;
+  }
+}
+
+/**
+ * Drive one agent conversation to completion on the desktop adapter.
+ * Emits every AgentLoop event into app state; non-critical persistence
+ * failures are logged via safeSideEffect so they do not terminate loop
+ * processing.
+ */
 export async function runAgent(
   conversationId: string,
   config: AgentTypeConfig,
@@ -56,15 +96,22 @@ export async function runAgent(
     for await (const event of loop.run(messages)) {
       switch (event.type) {
         case "iteration-start": {
-          if (currentMessageId) {
-            await finalizeAssistantMessage(
-              currentMessageId,
-              iterationText,
-              iterationToolCalls,
+          const previousMessageId = currentMessageId;
+          if (previousMessageId) {
+            await safeSideEffect(
+              "iteration-start.finalizePrevious",
+              { conversationId, messageId: previousMessageId },
+              () =>
+                finalizeAssistantMessage(
+                  previousMessageId,
+                  iterationText,
+                  iterationToolCalls,
+                ),
             );
           }
 
-          currentMessageId = crypto.randomUUID();
+          const newMessageId = crypto.randomUUID();
+          currentMessageId = newMessageId;
           iterationText = "";
           iterationToolCalls = [];
           toolCallIndex = 0;
@@ -81,8 +128,8 @@ export async function runAgent(
               },
             });
 
-            draft.chatMessageById[currentMessageId!] = {
-              id: currentMessageId!,
+            draft.chatMessageById[newMessageId] = {
+              id: newMessageId,
               conversationId,
               role: "assistant",
               content: "",
@@ -91,10 +138,10 @@ export async function runAgent(
             };
             const ids =
               draft.chatMessageIdsByConversationId[conversationId] ?? [];
-            ids.push(currentMessageId!);
+            ids.push(newMessageId);
             draft.chatMessageIdsByConversationId[conversationId] = ids;
 
-            draft.streamingMessageById[currentMessageId!] = {
+            draft.streamingMessageById[newMessageId] = {
               toolCalls: [],
               reasoning: "",
               isStreaming: true,
@@ -156,31 +203,39 @@ export async function runAgent(
         case "tool-call-result": {
           toolCallIndex++;
           const reason = toolCallReasons.get(event.toolCallId);
-          try {
-            // Persist the tool result as a "system" ChatMessageRole (the
-            // persistence layer has no "tool" role) and tag it with
-            // metadata.type so the load path can rehydrate it as an
-            // LlmMessage `tool` correlated to event.toolCallId.
-            await createChatMessage({
-              id: crypto.randomUUID(),
+          // Persist the tool result as a "system" ChatMessageRole (the
+          // persistence layer has no "tool" role) and tag it with
+          // metadata.type so the load path can rehydrate it as an
+          // LlmMessage `tool` correlated to event.toolCallId.
+          //
+          // The persist call is wrapped in `safeSideEffect` because a
+          // rejected write (for example, the "resource id is invalid"
+          // error captured in the user's diagnostics zip) would otherwise
+          // escape the `for await` loop and prevent the next model
+          // iteration. The in-memory `AgentLoop` has already appended
+          // the tool result to its history; failing to persist it must
+          // not stop the agent.
+          await safeSideEffect(
+            "tool-call-result.persist",
+            {
               conversationId,
-              role: "system",
-              content: event.result,
-              createdAt: new Date().toISOString(),
-              metadata: {
-                type: "tool-result",
-                toolCallId: event.toolCallId,
-                toolName: event.toolName,
-                ...(reason && { reason }),
-              },
-            });
-          } catch (error) {
-            getLogger().error(
-              `Tool result save failed; continuing loop: ${error}`,
-              { conversationId, toolCallId: event.toolCallId },
-            );
-          }
-
+              toolCallId: event.toolCallId,
+            },
+            () =>
+              createChatMessage({
+                id: crypto.randomUUID(),
+                conversationId,
+                role: "system",
+                content: event.result,
+                createdAt: new Date().toISOString(),
+                metadata: {
+                  type: "tool-result",
+                  toolCallId: event.toolCallId,
+                  toolName: event.toolName,
+                  ...(reason && { reason }),
+                },
+              }),
+          );
           produceAppState((draft) => {
             if (currentMessageId) {
               const streaming = draft.streamingMessageById[currentMessageId];
@@ -213,11 +268,17 @@ export async function runAgent(
         }
 
         case "finish": {
-          if (currentMessageId) {
-            await finalizeAssistantMessage(
-              currentMessageId,
-              iterationText,
-              iterationToolCalls,
+          const finishingMessageId = currentMessageId;
+          if (finishingMessageId) {
+            await safeSideEffect(
+              "finish.finalize",
+              { conversationId, messageId: finishingMessageId },
+              () =>
+                finalizeAssistantMessage(
+                  finishingMessageId,
+                  iterationText,
+                  iterationToolCalls,
+                ),
             );
           }
           produceAppState((draft) => {
@@ -247,15 +308,20 @@ export async function runAgent(
       });
     });
   } finally {
-    if (currentMessageId) {
+    const finishedMessageId = currentMessageId;
+    if (finishedMessageId) {
       produceAppState((draft) => {
-        delete draft.streamingMessageById[currentMessageId!];
+        delete draft.streamingMessageById[finishedMessageId];
       });
     }
     activeLoops.delete(conversationId);
   }
 }
 
+/**
+ * Abort the live agent loop for a conversation and mark its state
+ * aborted so any in-flight permission polling resolves as denied.
+ */
 export function abortAgentLoop(conversationId: string): void {
   const loop = activeLoops.get(conversationId);
   if (loop) loop.abort();
@@ -271,6 +337,10 @@ export function abortAgentLoop(conversationId: string): void {
   });
 }
 
+/**
+ * Persist the finished assistant message with scrubbed content and
+ * retire its streaming entry, regardless of persistence outcome.
+ */
 async function finalizeAssistantMessage(
   messageId: string,
   text: string,
@@ -291,14 +361,25 @@ async function finalizeAssistantMessage(
         : null,
   };
 
-  await getChatMessageRepo().createChatMessage(final);
-
-  produceAppState((draft) => {
-    draft.chatMessageById[messageId] = final;
-    delete draft.streamingMessageById[messageId];
-  });
+  // Retire the streaming entry regardless of the persistence outcome.
+  // safeSideEffect swallows rejections from this function so the agent
+  // loop survives (the whole point of the wrapper); without the finally,
+  // a failed createChatMessage would leave the message stuck in
+  // streamingMessageById forever as an indefinitely-streaming bubble.
+  // On failure the in-memory copy still gets the scrubbed final text so
+  // the conversation view stays coherent for the session; only the
+  // durable history row is missing, and that is what the log records.
+  try {
+    await getChatMessageRepo().createChatMessage(final);
+  } finally {
+    produceAppState((draft) => {
+      draft.chatMessageById[messageId] = final;
+      delete draft.streamingMessageById[messageId];
+    });
+  }
 }
 
+/** Build the AgentLlmProvider that proxies streaming through the repo. */
 function createLlmProvider(): AgentLlmProvider {
   const { repo } = getAgentRepo();
   if (!repo) throw new Error("No LLM provider configured");
@@ -386,6 +467,10 @@ async function executeWithPermission(
   return { success: false, failureReason: "Tool call was denied by user" };
 }
 
+/**
+ * Poll app state until the user resolves a tool permission request,
+ * or return denied when the conversation is aborted first.
+ */
 async function pollForPermission(
   conversationId: string,
   permissionId: string,

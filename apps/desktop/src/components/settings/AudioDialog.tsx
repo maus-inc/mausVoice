@@ -13,24 +13,84 @@ import { FormattedMessage, useIntl } from "react-intl";
 import {
   setDictationAudioDim,
   setInteractionChimeEnabled,
+  setInteractionFeedbackVolume,
 } from "../../actions/user.actions";
 import { produceAppState, useAppStore } from "../../store";
 import { getMyUser } from "../../utils/user.utils";
 import { ElasticSlider } from "../common/ElasticSlider";
 import { SettingSection } from "../common/SettingSection";
 
+type ThockVolumeControlProps = {
+  enabled: boolean;
+  volume: number;
+  onCommit: (v: number) => void;
+};
+
+/**
+ * Slider row for the interaction-feedback (thock) click volume. Its
+ * range mirrors the Rust sink's safe window.
+ */
+const ThockVolumeControl = ({
+  enabled,
+  volume,
+  onCommit,
+}: ThockVolumeControlProps) => {
+  const intl = useIntl();
+  const [display, setDisplay] = useState(volume);
+  useEffect(() => {
+    setDisplay(volume);
+  }, [volume]);
+  return (
+    <Box sx={{ mt: 2, pl: 1, opacity: enabled ? 1 : 0.4 }}>
+      <Typography variant="body2" sx={{ fontWeight: 600 }}>
+        <FormattedMessage defaultMessage="Interaction feedback volume" />
+      </Typography>
+      <Typography
+        variant="caption"
+        sx={{ color: "text.secondary", display: "block", mb: 1 }}
+      >
+        <FormattedMessage defaultMessage="Lower the click volume or turn the click off entirely." />
+      </Typography>
+      <Box sx={{ display: "flex", alignItems: "center", gap: 2 }}>
+        <ElasticSlider
+          value={volume}
+          onChangeDisplay={setDisplay}
+          onCommit={onCommit}
+          // The effective range matches the Rust sink's safe window
+          // [0.05, 0.5]; showing a wider range would persist values
+          // the sink silently caps at 50%.
+          min={0.05}
+          max={0.5}
+          step={0.05}
+          disabled={!enabled}
+          ariaLabel={intl.formatMessage({
+            defaultMessage: "Interaction feedback volume",
+          })}
+        />
+        <Typography variant="body2" sx={{ minWidth: 40, textAlign: "right" }}>
+          {Math.round(display * 100)}%
+        </Typography>
+      </Box>
+    </Box>
+  );
+};
+/** Audio settings dialog: interaction chime toggle, thock volume slider, and dictation dim. */
 export const AudioDialog = () => {
   const intl = useIntl();
-  const [open, playInteractionChime, dictationAudioDim] = useAppStore(
-    (state) => {
-      const user = getMyUser(state);
-      return [
-        state.settings.audioDialogOpen,
-        user?.playInteractionChime ?? true,
-        state.userPrefs?.dictationAudioDim ?? 1.0,
-      ] as const;
-    },
-  );
+  const [
+    open,
+    playInteractionChime,
+    interactionFeedbackVolume,
+    dictationAudioDim,
+  ] = useAppStore((state) => {
+    const user = getMyUser(state);
+    return [
+      state.settings.audioDialogOpen,
+      user?.playInteractionChime ?? true,
+      user?.interactionFeedbackVolume ?? 0.35,
+      state.userPrefs?.dictationAudioDim ?? 1.0,
+    ] as const;
+  });
 
   const handleClose = () => {
     produceAppState((draft) => {
@@ -49,7 +109,6 @@ export const AudioDialog = () => {
   useEffect(() => {
     setDisplayDim(dictationAudioDim);
   }, [dictationAudioDim]);
-
   return (
     <Dialog open={open} onClose={handleClose}>
       <DialogTitle>
@@ -68,6 +127,13 @@ export const AudioDialog = () => {
               onChange={handleToggle}
             />
           }
+        />
+        <ThockVolumeControl
+          enabled={playInteractionChime}
+          volume={interactionFeedbackVolume}
+          onCommit={(v) => {
+            setInteractionFeedbackVolume(v).catch(() => undefined);
+          }}
         />
         <Box sx={{ mt: 3 }}>
           <Typography variant="body1" sx={{ fontWeight: 600 }}>

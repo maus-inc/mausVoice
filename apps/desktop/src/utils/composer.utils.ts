@@ -26,6 +26,16 @@ export type Size = {
 
 const COMPOSER_TIMEOUT_MS = 5 * 60 * 1000;
 
+/**
+ * If the composer webview never reports `composer-ready`, the user sees a
+ * blank page (the reported "white flash" / "killed itself with an error"
+ * failure class). Bail out before the full timeout so the caller can fall
+ * back to history recovery instead of waiting 5 minutes. The page still
+ * has time to mount and call `composer-ready`; the grace period is just a
+ * safety net for an unresponsive webview.
+ */
+const COMPOSER_READY_TIMEOUT_MS = 15_000;
+
 // Gap (logical px) kept between the native pill and the composer window so the
 // composer never overlaps the pill.
 const COMPOSER_PILL_GAP = 8;
@@ -130,7 +140,11 @@ export const getComposerWindowPosition = (
  */
 let activeComposer: { windowId: string; requestId: string } | null = null;
 
-/** Open the local composer popout and wait for its Insert/Cancel decision. */
+/**
+ * Open the review-before-insert popout for one transcript and resolve
+ * with the edited text, null on cancel/close/failure. Guards against a
+ * second concurrent window.
+ */
 export const reviewTextInComposer = async (
   text: string,
 ): Promise<string | null> => {
@@ -155,6 +169,7 @@ export const reviewTextInComposer = async (
   let windowId: string | null = null;
   let unlisten: (() => void) | undefined;
   let unlistenClose: (() => void) | undefined;
+  let unlistenReady: (() => void) | undefined;
 
   // Reserve the slot synchronously so concurrent calls are rejected.
   activeComposer = { windowId: "", requestId };
@@ -164,6 +179,44 @@ export const reviewTextInComposer = async (
     const result = await new Promise<string | null>((resolve) => {
       let settled = false;
       let timeoutId: number | null = null;
+      let readyTimeoutId: number | null = null;
+      // The `composer-ready` listener may fire before the window-creation
+      // await chain completes and schedules the timeout. A flag — not a
+      // nullable timeout id — is the only race-free readiness signal: the
+      // listener sets it the moment the page mounts, and the setTimeout
+      // call only schedules itself when the flag is still false. The
+      // previous nullable-id guard let a fast-mounting page be killed 15s
+      // later because the listener had no timeout id to clear at the
+      // moment it fired.
+      let composerReady = false;
+      const armReadyTimeout = () => {
+        if (composerReady) return;
+        readyTimeoutId = window.setTimeout(() => {
+          readyTimeoutId = null;
+          getLogger().error(
+            "reviewTextInComposer: composer-ready timeout (webview likely blank)",
+          );
+          // Destroy the blank surface immediately rather than waiting for
+          // the outer finally: that path queues teardown behind
+          // composer_discard_text, an IPC to the very webview that just
+          // proved itself wedged. The later destroy is a harmless no-op.
+          if (windowId) {
+            void invoke("floating_window_destroy", { id: windowId }).catch(
+              () => {},
+            );
+          }
+          void showToast({
+            message: getIntl().formatMessage({
+              defaultMessage:
+                "Could not open the review window. Your transcript was saved to history.",
+            }),
+            toastType: "error",
+            duration: 8000,
+            action: "open_transcriptions",
+          });
+          finish(null);
+        }, COMPOSER_READY_TIMEOUT_MS);
+      };
       const finish = (value: string | null) => {
         if (settled) return;
         settled = true;
@@ -172,11 +225,32 @@ export const reviewTextInComposer = async (
           window.clearTimeout(timeoutId);
           timeoutId = null;
         }
+        if (readyTimeoutId !== null) {
+          window.clearTimeout(readyTimeoutId);
+          readyTimeoutId = null;
+        }
         resolve(value);
       };
 
       void (async () => {
         try {
+          // Track composer readiness separately from the user-decision
+          // timeout. If the webview never emits `composer-ready`, the page
+          // never mounted (blank white surface). Bail out with a Cancel
+          // result and surface the recovery toast so the user does not have
+          // to wait the full 5 minutes or restart the app.
+          unlistenReady = await listen<{ requestId: string }>(
+            "composer-ready",
+            (event) => {
+              if (event.payload.requestId !== requestId) return;
+              composerReady = true;
+              if (readyTimeoutId !== null) {
+                window.clearTimeout(readyTimeoutId);
+                readyTimeoutId = null;
+              }
+            },
+          );
+
           unlisten = await listen<ComposerResult>(
             "composer-result",
             (event) => {
@@ -242,6 +316,15 @@ export const reviewTextInComposer = async (
             });
           }
 
+          // Start the ready-timeout AFTER the window exists. `armReadyTimeout`
+          // is a no-op if the page already mounted during the awaits above,
+          // so a fast-mounting composer is never killed by its own safety
+          // net. If the page never mounts, surface a recovery toast (the
+          // transcript is already in history via the calling pipeline)
+          // and resolve null so the paste/insert path is skipped, matching
+          // the window-creation-failure contract.
+          armReadyTimeout();
+
           timeoutId = window.setTimeout(() => {
             finish(null);
           }, COMPOSER_TIMEOUT_MS);
@@ -277,6 +360,7 @@ export const reviewTextInComposer = async (
     activeComposer = null;
     unlisten?.();
     unlistenClose?.();
+    unlistenReady?.();
     await invoke("composer_discard_text", { requestId }).catch(() => {
       // The composer may already have consumed the request.
     });

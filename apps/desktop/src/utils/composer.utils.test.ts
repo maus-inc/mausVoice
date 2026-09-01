@@ -129,6 +129,27 @@ const mocks = vi.hoisted(() => {
   return { invoke, getByLabel, listen, showToast };
 });
 
+/**
+ * Install a `listen` mock that records every listener by event name. Tests
+ * then trigger the desired listener by name. The real Tauri `listen`
+ * returns an unlisten handle; the mock does too.
+ */
+const installPerEventListener = () => {
+  const byEvent = new Map<
+    string,
+    Array<(event: { payload: unknown }) => void>
+  >();
+  mocks.listen.mockImplementation(
+    async (event: string, cb: (event: { payload: unknown }) => void) => {
+      const list = byEvent.get(event) ?? [];
+      list.push(cb);
+      byEvent.set(event, list);
+      return vi.fn();
+    },
+  );
+  return byEvent;
+};
+
 vi.mock("@tauri-apps/api/core", () => ({
   invoke: (...args: unknown[]) => mocks.invoke(...args),
 }));
@@ -198,13 +219,7 @@ describe("reviewTextInComposer", () => {
 
   it("does not open a second window while one is already live", async () => {
     let created = 0;
-    let resultListener: ((event: { payload: unknown }) => void) | undefined;
-    mocks.listen.mockImplementation(
-      async (_event: string, cb: typeof resultListener) => {
-        resultListener = cb;
-        return vi.fn();
-      },
-    );
+    const listeners = installPerEventListener();
     mocks.invoke.mockImplementation(async (cmd: string) => {
       if (cmd === "floating_window_create") {
         created += 1;
@@ -217,8 +232,13 @@ describe("reviewTextInComposer", () => {
     // guard reserves the slot before any microtask runs, so the second
     // call is rejected without creating another window.
     const firstPromise = reviewTextInComposer("one");
-    // Flush the first await microtask boundary.
-    await Promise.resolve();
+    // Flush the first await microtask boundary, then keep flushing until
+    // the inner block has issued the floating_window_create call. The
+    // first call awaits composer_register_text before floating_window_create,
+    // so one Promise.resolve is not enough.
+    for (let i = 0; i < 10 && created === 0; i += 1) {
+      await Promise.resolve();
+    }
     const second = await reviewTextInComposer("two");
 
     expect(second).toBeNull();
@@ -226,10 +246,16 @@ describe("reviewTextInComposer", () => {
     expect(created).toBe(1);
 
     // Resolve the first call via its composer-result listener so it does
-    // not leak the five-minute timeout.
+    // not leak the five-minute timeout. Drain microtasks first so the
+    // listener is registered.
+    for (let i = 0; i < 10; i += 1) {
+      await Promise.resolve();
+      if (listeners.get("composer-result")?.[0]) break;
+    }
     const firstRequestId = mocks.invoke.mock.calls.find(
       (c: unknown[]) => c[0] === "composer_register_text",
     )?.[1]?.requestId as string;
+    const resultListener = listeners.get("composer-result")?.[0];
     resultListener?.({
       payload: { requestId: firstRequestId, accepted: false, text: "" },
     });
@@ -249,30 +275,33 @@ describe("reviewTextInComposer cleanup", () => {
   });
 
   it("destroys the window and discards its text when the user accepts", async () => {
+    const listeners = installPerEventListener();
     let createdId = "";
-    let resultListener: ((event: { payload: unknown }) => void) | undefined;
-    mocks.listen.mockImplementation(
-      async (_event: string, cb: typeof resultListener) => {
-        resultListener = cb;
-        return vi.fn();
-      },
-    );
     mocks.invoke.mockImplementation(async (cmd: string) => {
       if (cmd === "floating_window_create") {
-        createdId = "floating-accept";
+        createdId = "floating-1";
         return { id: createdId };
       }
       return undefined;
     });
 
-    const promise = reviewTextInComposer("hello");
-    await Promise.resolve();
-    const requestId = mocks.invoke.mock.calls.find(
+    const promise = reviewTextInComposer("draft");
+    // Flush microtasks until the inner block has registered its
+    // `composer-result` listener (the call we're going to fire). The
+    // production code runs in a node environment, so we must not let
+    // it progress all the way to the `window.setTimeout(...)` ready
+    // guard — `window` is not defined in node.
+    for (let i = 0; i < 10; i += 1) {
+      await Promise.resolve();
+      if (listeners.get("composer-result")?.[0]) break;
+    }
+    const firstRequestId = mocks.invoke.mock.calls.find(
       (c: unknown[]) => c[0] === "composer_register_text",
     )?.[1]?.requestId as string;
-
+    const resultListener = listeners.get("composer-result")?.[0];
+    expect(resultListener).toBeDefined();
     resultListener?.({
-      payload: { requestId, accepted: true, text: "edited" },
+      payload: { requestId: firstRequestId, accepted: true, text: "edited" },
     });
     const result = await promise;
 
@@ -280,10 +309,93 @@ describe("reviewTextInComposer cleanup", () => {
     const destroyCall = mocks.invoke.mock.calls.find(
       (c: unknown[]) => c[0] === "floating_window_destroy",
     );
-    expect(destroyCall?.[1]).toMatchObject({ id: "floating-accept" });
+    expect(destroyCall?.[1]).toEqual({ id: createdId });
     const discardCall = mocks.invoke.mock.calls.find(
       (c: unknown[]) => c[0] === "composer_discard_text",
     );
-    expect(discardCall?.[1]).toMatchObject({ requestId });
+    // The discard must target THIS review's registered request, not just
+    // any — a stale id would leak the text buffer for the next review.
+    expect(discardCall?.[1]).toMatchObject({ requestId: firstRequestId });
   });
+});
+
+describe("reviewTextInComposer ready-timeout safety net", () => {
+  beforeEach(() => {
+    mocks.invoke.mockReset();
+    mocks.getByLabel.mockReset();
+    mocks.listen.mockReset();
+    mocks.showToast.mockReset();
+    mocks.invoke.mockResolvedValue(undefined);
+    mocks.getByLabel.mockResolvedValue(null);
+    mocks.listen.mockResolvedValue(vi.fn());
+  });
+
+  it("destroys a blank composer window and toasts recovery when composer-ready never arrives", async () => {
+    // Production guards the blank-page failure class with a 15s
+    // `composer-ready` timer armed only after the floating window exists.
+    // Node has no `window`, so shim it onto globalThis with arrow wrappers
+    // that resolve at call time — vi.useFakeTimers then controls both.
+    vi.useFakeTimers();
+    const globalRef = globalThis as { window?: unknown };
+    const previousWindow = globalRef.window;
+    globalRef.window = {
+      setTimeout: (...args: Parameters<typeof setTimeout>) =>
+        setTimeout(...args),
+      clearTimeout: (...args: Parameters<typeof clearTimeout>) =>
+        clearTimeout(...args),
+    };
+
+    try {
+      installPerEventListener();
+      let createdId = "";
+      mocks.invoke.mockImplementation(async (cmd: string) => {
+        if (cmd === "floating_window_create") {
+          createdId = "floating-blank";
+          return { id: createdId };
+        }
+        return undefined;
+      });
+
+      // Fresh module instance: reviewTextInComposer guards on a
+      // module-level activeComposer slot that earlier tests in this file
+      // release asynchronously (their finally drains after the awaited
+      // promise settles), so a synchronous re-entry here can race and see
+      // the slot still occupied. A reset module has a pristine slot.
+      vi.resetModules();
+      const { reviewTextInComposer: freshReview } =
+        await import("./composer.utils");
+      const promise = freshReview("ghost");
+      // Drive the fake clock while flushing until the window exists (the
+      // point where the ready guard arms). The pre-create chain includes
+      // timer-backed awaits, so pure microtask flushes stall under
+      // vi.useFakeTimers. Never emit `composer-ready`.
+      for (let i = 0; i < 40 && !createdId; i += 1) {
+        await vi.advanceTimersByTimeAsync(5);
+      }
+      expect(createdId).toBe("floating-blank");
+      expect(mocks.showToast).not.toHaveBeenCalled();
+
+      // Cross the 15s safety net. The production constant is private;
+      // 15_000 mirrors COMPOSER_READY_TIMEOUT_MS in composer.utils.ts.
+      await vi.advanceTimersByTimeAsync(15_000);
+      const result = await promise;
+
+      expect(result).toBeNull();
+      expect(mocks.showToast).toHaveBeenCalledWith(
+        expect.objectContaining({
+          toastType: "error",
+          action: "open_transcriptions",
+        }),
+      );
+      // The blank surface is destroyed immediately by the timeout
+      // callback, not left behind for the user to close manually.
+      const destroyCall = mocks.invoke.mock.calls.find(
+        (c: unknown[]) => c[0] === "floating_window_destroy",
+      );
+      expect(destroyCall?.[1]).toEqual({ id: "floating-blank" });
+    } finally {
+      globalRef.window = previousWindow;
+      vi.useRealTimers();
+    }
+  }, 20_000);
 });

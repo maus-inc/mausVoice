@@ -262,7 +262,8 @@ pub fn build() -> tauri::Builder<tauri::Wry> {
             // behind the same compile-time feature makes the environment variable
             // intentionally ineffective if it is set for a release build.
             #[cfg(feature = "debug-assist")]
-            if std::env::var("MAUSVOICE_ENABLE_DEVTOOLS").is_ok() {
+            // skipcq: RS-W1015 - devtools opt-in is a fixed env-var contract.
+                if std::env::var("MAUSVOICE_ENABLE_DEVTOOLS").is_ok() {
                 log::info!("MAUSVOICE_ENABLE_DEVTOOLS detected, opening dev tools...");
                 if let Some(main_window) = app.get_webview_window("main") {
                     main_window.open_devtools();
@@ -360,6 +361,7 @@ pub fn build() -> tauri::Builder<tauri::Wry> {
             crate::commands::retry_key_listener,
             crate::commands::play_audio,
             crate::commands::set_interaction_chime_enabled,
+            crate::commands::set_interaction_feedback_volume,
             crate::commands::get_text_field_info,
             crate::commands::get_screen_context,
             crate::commands::find_pid_by_window_title,

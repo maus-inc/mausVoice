@@ -2467,6 +2467,16 @@ pub fn set_interaction_chime_enabled(enabled: bool) {
     crate::system::audio_feedback::set_interaction_chime_enabled(enabled);
 }
 
+/// Mirror the TS interactionFeedbackVolume preference into Rust so the
+/// thock gain is applied on the warm path AND the fallback path. The
+/// Rust side clamps to a safe range, so an out-of-range value from the
+/// frontend can never blow out the sink.
+#[tauri::command]
+#[specta::specta]
+pub fn set_interaction_feedback_volume(volume: f32) {
+    crate::system::audio_feedback::set_interaction_feedback_volume(volume);
+}
+
 #[tauri::command]
 #[specta::specta]
 pub fn play_audio(clip: AudioClip) -> Result<(), String> {
@@ -3863,6 +3873,7 @@ pub async fn run_terminal_command(command: String) -> Result<RunTerminalCommandR
 
         // Never inherit the user's shell environment wholesale; clear dangerous vars.
         cmd.env_clear();
+        // skipcq: RS-W1015 - PATH is read to re-seed a scrubbed child env.
         if let Ok(path) = std::env::var("PATH") {
             cmd.env("PATH", path);
         }
@@ -4457,13 +4468,13 @@ pub async fn download_and_open_mac_installer(
         written = match installer_account_chunk(written, chunk.len() as u64) {
             Ok(next) => next,
             Err(err) => {
-                drop(file);
+                drop(file); // skipcq: RS-E1021 - File must close before remove_file on Windows
                 let _ = std::fs::remove_file(&dest);
                 return Err(err);
             }
         };
         if let Err(err) = std::io::Write::write_all(&mut file, &chunk) {
-            drop(file);
+            drop(file); // skipcq: RS-E1021 - File must close before remove_file on Windows
             let _ = std::fs::remove_file(&dest);
             return Err(err.to_string());
         }
@@ -4472,7 +4483,7 @@ pub async fn download_and_open_mac_installer(
         let _ = std::fs::remove_file(&dest);
         return Err(err.to_string());
     }
-    drop(file);
+    drop(file); // skipcq: RS-E1021 - File must close before remove_file on Windows
 
     // Verify the downloaded DMG against its detached minisign signature
     // BEFORE opening it. On any failure (missing/invalid key, missing or
@@ -4836,12 +4847,13 @@ mod tests {
         static PATH_GUARD: std::sync::Mutex<()> = std::sync::Mutex::new(());
         let _guard = PATH_GUARD.lock().unwrap();
 
+        // skipcq: RS-W1015 - PATH is a fixed OS contract, not a configurable key.
         let original = std::env::var("PATH").ok();
         // Simulate a process environment that has no PATH at all.
         // `set_var`/`remove_var` are unsafe since 1.87.
         #[allow(unused_unsafe)]
         unsafe {
-            std::env::remove_var("PATH");
+            std::env::remove_var("PATH"); // skipcq: RS-W1015 - fixed OS contract.
         }
 
         let result = run_terminal_command("ls".to_string()).await;
@@ -4850,8 +4862,8 @@ mod tests {
         #[allow(unused_unsafe)]
         unsafe {
             match original {
-                Some(value) => std::env::set_var("PATH", value),
-                None => std::env::remove_var("PATH"),
+                Some(value) => std::env::set_var("PATH", value), // skipcq: RS-W1015 - fixed OS contract.
+                None => std::env::remove_var("PATH"), // skipcq: RS-W1015 - fixed OS contract.
             }
         }
         drop(_guard);
