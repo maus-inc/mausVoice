@@ -160,6 +160,7 @@
   "copy_invite": "Einladung kopieren",
   "copy_secret": "Geheimnis kopieren",
   "copy_transcript": "Transkript kopieren",
+  "could_not_add_term_to_your_dictionary": "„{term}“ konnte nicht zu deinem Wörterbuch hinzugefügt werden",
   "could_not_resume_dictation": "Could not resume dictation",
   "count_count_plural_one_transcription_other_transcriptions": "{count} {count, plural, one {Transkription} other {Transkriptionen}}",
   "cpu": "CPU",

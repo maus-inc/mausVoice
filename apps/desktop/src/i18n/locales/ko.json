@@ -160,6 +160,7 @@
   "copy_invite": "초대 복사",
   "copy_secret": "비밀 복사",
   "copy_transcript": "텍스트 복사",
+  "could_not_add_term_to_your_dictionary": "사전에 \"{term}\"을(를) 추가하지 못했습니다",
   "could_not_resume_dictation": "Could not resume dictation",
   "count_count_plural_one_transcription_other_transcriptions": "{count}개 {count, plural, one {음성 인식} other {음성 인식}}",
   "cpu": "CPU",

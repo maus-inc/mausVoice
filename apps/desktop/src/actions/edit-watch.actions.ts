@@ -237,10 +237,18 @@ export const acceptAutoLearnProposal = async (): Promise<void> => {
     );
   }
   if (failed > 0) {
-    // createGlossaryTerms already logged the underlying error; make the
-    // failure observable here too, since the pill offers no retry.
+    // createGlossaryTerms already logged the underlying error. Surface a
+    // snackbar too so the failure is visible to the user, since the pill
+    // offers no retry path.
     getLogger().warning(
       `Failed to add accepted auto-learn term "${term}" to the dictionary.`,
+    );
+    showSnackbar(
+      getIntl().formatMessage(
+        { defaultMessage: 'Could not add "{term}" to your dictionary' },
+        { term },
+      ),
+      { mode: "error" },
     );
   }
 };

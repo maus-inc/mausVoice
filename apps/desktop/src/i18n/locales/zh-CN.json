@@ -160,6 +160,7 @@
   "copy_invite": "复制邀请",
   "copy_secret": "复制密钥",
   "copy_transcript": "复制转录",
+  "could_not_add_term_to_your_dictionary": "无法将“{term}”添加到词典",
   "could_not_resume_dictation": "Could not resume dictation",
   "count_count_plural_one_transcription_other_transcriptions": "{count} 个转录",
   "cpu": "CPU",
