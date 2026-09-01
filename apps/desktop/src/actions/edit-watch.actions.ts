@@ -133,6 +133,41 @@ const proposeAutoLearnTerm = async (term: string): Promise<void> => {
   });
 };
 
+const loadFocusedFieldAndApp = async (): Promise<
+  [{ textContent: string | null }, { appName: string } | null]
+> => {
+  const [fieldInfo, appInfo] = await Promise.all([
+    invoke<{ textContent: string | null }>("get_text_field_info"),
+    invoke<{ appName: string }>("get_current_app_info").catch(
+      (error: unknown) => {
+        getLogger().warning(
+          `Failed to read focused app during edit watch: ${error}`,
+        );
+        return null;
+      },
+    ),
+  ]);
+  return [fieldInfo, appInfo];
+};
+
+const hasFocusLeftSnapshot = (
+  snapshot: WatchSnapshot,
+  appInfo: { appName: string } | null,
+): boolean =>
+  Boolean(snapshot.appName && appInfo && appInfo.appName !== snapshot.appName);
+
+const pickProposalTerm = (
+  insertedText: string,
+  fieldText: string,
+): string | null => {
+  const corrections = findEditCorrections({
+    insertedText,
+    fieldText,
+    existingTerms: collectExistingTerms(),
+  });
+  return corrections[0] ?? null;
+};
+
 /**
  * Reads the focused text field and, when it contains the inserted dictation
  * with a small proper-noun correction, proposes the corrected term.
@@ -168,41 +203,6 @@ export const pollEditWatch = async (): Promise<void> => {
   } catch (error) {
     getLogger().warning(`Edit watch poll failed: ${error}`);
   }
-};
-
-const loadFocusedFieldAndApp = async (): Promise<
-  [{ textContent: string | null }, { appName: string } | null]
-> => {
-  const [fieldInfo, appInfo] = await Promise.all([
-    invoke<{ textContent: string | null }>("get_text_field_info"),
-    invoke<{ appName: string }>("get_current_app_info").catch(
-      (error: unknown) => {
-        getLogger().warning(
-          `Failed to read focused app during edit watch: ${error}`,
-        );
-        return null;
-      },
-    ),
-  ]);
-  return [fieldInfo, appInfo];
-};
-
-const hasFocusLeftSnapshot = (
-  snapshot: WatchSnapshot,
-  appInfo: { appName: string } | null,
-): boolean =>
-  Boolean(snapshot.appName && appInfo && appInfo.appName !== snapshot.appName);
-
-const pickProposalTerm = (
-  insertedText: string,
-  fieldText: string,
-): string | null => {
-  const corrections = findEditCorrections({
-    insertedText,
-    fieldText,
-    existingTerms: collectExistingTerms(),
-  });
-  return corrections[0] ?? null;
 };
 
 /** Clears the active auto-learn proposal so the pill can show the next one. */
