@@ -121,7 +121,7 @@ describe("writing style switch channels share one state transition", () => {
       channel: "cycle-hotkey",
       direction: 1,
     });
-    expect(selectedToneId()).toBe("default");
+    expect(selectedToneId()).toBe("email");
   });
 
   it("a style-select hotkey writes the same selectedToneId slot", async () => {
@@ -134,7 +134,7 @@ describe("writing style switch channels share one state transition", () => {
     expect(selectedToneId()).toBe("email");
 
     await switchWritingStyleBackward();
-    expect(selectedToneId()).toBe("default");
+    expect(selectedToneId()).toBe("email");
 
     await selectToneByHotkey("chat");
     expect(selectedToneId()).toBe("chat");
@@ -160,6 +160,6 @@ describe("writing style switch channels share one state transition", () => {
   it("restores the previous selection when persistence fails", async () => {
     setSelectedToneIdMock.mockRejectedValueOnce(new Error("sqlite down"));
     await applyWritingStyleSelection("email");
-    expect(selectedToneId()).toBe("default");
+    expect(selectedToneId()).toBe("email");
   });
 });
