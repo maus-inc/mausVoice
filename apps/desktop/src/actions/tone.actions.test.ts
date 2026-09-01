@@ -1,7 +1,6 @@
-import type { Tone } from "@maus-inc/types";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { INITIAL_APP_STATE } from "../state/app.state";
 import { getAppState, produceAppState, setAppState } from "../store";
+import { INITIAL_APP_STATE } from "../state/app.state";
 import { LOCAL_USER_ID } from "../utils/user.utils";
 import {
   applyInDictationStyleSwitch,
@@ -10,37 +9,38 @@ import {
   switchWritingStyleBackward,
   switchWritingStyleForward,
 } from "./tone.actions";
+import { seedManualStyles } from "../../test/helpers/tone-test.utils";
 
-const { showToastMock, setSelectedToneIdMock } = vi.hoisted(() => ({
-  showToastMock: vi.fn(async () => undefined),
-  setSelectedToneIdMock: vi.fn(async (toneId: string) => {
+const { setSelectedToneIdMock } = vi.hoisted(() => ({
+  setSelectedToneIdMock: vi.fn((toneId: string) => {
     produceAppState((draft) => {
       const user = draft.userById[LOCAL_USER_ID];
       if (user) {
         user.selectedToneId = toneId;
       }
     });
+    return Promise.resolve();
   }),
 }));
 
 vi.mock("../repos", () => ({
   getToneRepo: () => ({
-    listTones: vi.fn(async () => []),
+    listTones: vi.fn(() => Promise.resolve([])),
     upsertTone: vi.fn(),
     deleteTone: vi.fn(),
   }),
   getUserPreferencesRepo: () => ({
-    setUserPreferences: vi.fn(async (prefs: unknown) => prefs),
-    getUserPreferences: vi.fn(async () => null),
+    setUserPreferences: vi.fn((prefs: unknown) => Promise.resolve(prefs)),
+    getUserPreferences: vi.fn(() => Promise.resolve(null)),
   }),
   getUserRepo: () => ({
-    setMyUser: vi.fn(async (user: unknown) => user),
-    getMyUser: vi.fn(async () => null),
+    setMyUser: vi.fn((user: unknown) => Promise.resolve(user)),
+    getMyUser: vi.fn(() => Promise.resolve(null)),
   }),
 }));
 
 vi.mock("./toast.actions", () => ({
-  showToast: showToastMock,
+  showToast: vi.fn(() => Promise.resolve(undefined)),
 }));
 
 vi.mock("../utils/log.utils", () => ({
@@ -56,39 +56,6 @@ vi.mock("./user.actions", () => ({
   activateAndSelectTone: vi.fn(),
   setSelectedToneId: (toneId: string) => setSelectedToneIdMock(toneId),
 }));
-
-const tone = (id: string, name: string): Tone => ({
-  id,
-  name,
-  promptTemplate: "",
-  isSystem: true,
-  createdAt: 0,
-  sortOrder: 0,
-});
-
-const seedManualStyles = (selectedToneId: string) => {
-  const state = structuredClone(INITIAL_APP_STATE);
-  state.toneById = {
-    default: tone("default", "Polished"),
-    email: tone("email", "Email"),
-    chat: tone("chat", "Chat"),
-  };
-  state.userById[LOCAL_USER_ID] = {
-    id: LOCAL_USER_ID,
-    createdAt: "2026-01-01T00:00:00.000Z",
-    updatedAt: "2026-01-01T00:00:00.000Z",
-    name: "Tester",
-    onboarded: true,
-    playInteractionChime: false,
-    hasFinishedTutorial: true,
-    wordsThisMonth: 0,
-    wordsTotal: 0,
-    stylingMode: "manual",
-    selectedToneId,
-    activeToneIds: ["default", "email", "chat"],
-  };
-  setAppState(state, true);
-};
 
 const selectedToneId = () =>
   getAppState().userById[LOCAL_USER_ID]?.selectedToneId ?? null;
