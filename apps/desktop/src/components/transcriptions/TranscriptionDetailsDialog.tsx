@@ -352,6 +352,9 @@ export const TranscriptionDetailsDialog = () => {
                       onChange={(event) => setFinalDraft(event.target.value)}
                       disabled={isSavingFinal}
                       sx={{ mt: 0.5 }}
+                      aria-label={intl.formatMessage({
+                        defaultMessage: "Final transcription",
+                      })}
                     />
                     <Stack
                       direction="row"

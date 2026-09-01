@@ -571,7 +571,7 @@
   "simulated_typing_speed": "模拟输入速度",
   "skip": "跳过",
   "skip_for_now": "Skip for now",
-  "some_corrected_words_were_added_to_your_dictionary_but_other": "Some corrected words were added to your dictionary, but others failed.",
+  "some_corrected_words_were_added_to_your_dictionary_but_other": "部分修正词已添加到词典，其余添加失败。",
   "some_hotkeys_share_overlapping_keys_which_may_cause_conflict": "部分快捷键存在按键重叠，可能会导致冲突。",
   "something_went_wrong": "Something went wrong:",
   "speaches_url": "speaches URL",

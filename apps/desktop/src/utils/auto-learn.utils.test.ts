@@ -87,4 +87,8 @@ describe("extractAutoLearnTerms", () => {
     expect(learn("her name is Jo", "her name is Bo")).toEqual(["Bo"]);
     expect(learn("I said A", "I said B")).toEqual([]);
   });
+
+  it("does not learn a pure insertion where nothing was replaced", () => {
+    expect(learn("Hello", "Hello Soniya")).toEqual([]);
+  });
 });

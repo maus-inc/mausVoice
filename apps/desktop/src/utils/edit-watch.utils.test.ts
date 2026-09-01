@@ -75,4 +75,10 @@ describe("findEditCorrections", () => {
       find("call Ralph", "first some earlier text then please call Ralf now"),
     ).toEqual(["Ralf"]);
   });
+
+  it("rejects a multi-token dictation with only one coincidental overlap", () => {
+    // Inserted "I want to call Sonia" against an unrelated field in the same
+    // app that happens to share only the token "to" at the same position.
+    expect(find("I want to call Sonia", "a b to c Alice")).toEqual([]);
+  });
 });

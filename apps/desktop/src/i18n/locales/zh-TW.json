@@ -571,7 +571,7 @@
   "simulated_typing_speed": "模擬輸入速度",
   "skip": "跳過",
   "skip_for_now": "Skip for now",
-  "some_corrected_words_were_added_to_your_dictionary_but_other": "Some corrected words were added to your dictionary, but others failed.",
+  "some_corrected_words_were_added_to_your_dictionary_but_other": "部分修正詞已加入辭典，其餘加入失敗。",
   "some_hotkeys_share_overlapping_keys_which_may_cause_conflict": "某些快捷鍵共享重疊的鍵，可能會導致衝突。",
   "something_went_wrong": "Something went wrong:",
   "speaches_url": "演講 URL",

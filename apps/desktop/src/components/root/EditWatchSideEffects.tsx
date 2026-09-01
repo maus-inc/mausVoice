@@ -1,6 +1,7 @@
 import { useEffect } from "react";
 import {
   acceptAutoLearnProposal,
+  clearAutoLearnProposal,
   endEditWatch,
   pollEditWatch,
   rejectAutoLearnProposal,
@@ -25,6 +26,7 @@ export const EditWatchSideEffects = () => {
   useEffect(() => {
     if (!enabled) {
       endEditWatch();
+      clearAutoLearnProposal();
     }
   }, [enabled]);
 

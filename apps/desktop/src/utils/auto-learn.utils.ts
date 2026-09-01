@@ -402,5 +402,12 @@ export const extractAutoLearnTerms = (args: {
     return { learnedTerms: [] };
   }
 
+  // A pure insertion (nothing removed) is not a correction: the user added a
+  // word, they did not fix a mistaken one. Learn nothing in that case.
+  const removed = computeRemovedTokens(original, corrected);
+  if (removed.length === 0) {
+    return { learnedTerms: [] };
+  }
+
   return { learnedTerms: collectLearnableTerms(added, existingTerms) };
 };

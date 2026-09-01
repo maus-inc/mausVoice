@@ -73,7 +73,19 @@ export const routeTranscriptOutput = async (
         ? (prefs?.pasteKeybind ?? null)
         : (currentApp?.pasteKeybind ?? prefs?.pasteKeybind ?? null);
 
-    await insertLocalTranscriptOutputViaPaste(args.text, pasteKeybind);
+    const pasteOutcome = await insertLocalTranscriptOutputViaPaste(
+      args.text,
+      pasteKeybind,
+    );
+
+    // If the paste fell back to the clipboard, nothing was inserted into the
+    // target field, so there is nothing to watch for corrections against.
+    if (pasteOutcome === "copied_to_clipboard") {
+      return {
+        delivered: false,
+        remote: false,
+      };
+    }
   }
 
   // After a final dictation lands in the target app, watch for corrections
@@ -92,7 +104,7 @@ export const routeTranscriptOutput = async (
 export const insertLocalTranscriptOutputViaPaste = async (
   text: string,
   keybind: string | null,
-): Promise<void> => {
+): Promise<PasteOutcome> => {
   const sanitized = sanitizeIndentation(text);
 
   const outcome = await invoke<PasteOutcome>("paste", {
@@ -110,6 +122,8 @@ export const insertLocalTranscriptOutputViaPaste = async (
       }),
     );
   }
+
+  return outcome;
 };
 
 export const insertLocalTranscriptOutputViaTyping = async (

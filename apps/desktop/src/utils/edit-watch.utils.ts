@@ -19,20 +19,29 @@ const startsWithSameLetter = (a: string, b: string): boolean => {
  * positional (case-insensitive) token equality. The inserted text is expected
  * to survive in the field nearly verbatim, with at most a couple of edited
  * tokens, so the best-scoring equal-length window is the dictation region.
+ *
+ * Returns the matching window and its positional-overlap score (the number of
+ * tokens that match at the same position).
  */
 const locateInsertedWindow = (
   insertedTokens: string[],
   fieldTokens: string[],
-): string[] => {
+): { window: string[]; score: number } => {
   const n = insertedTokens.length;
   const m = fieldTokens.length;
   if (n === 0) {
-    return [];
+    return { window: [], score: 0 };
   }
 
   // The field is the transcript (or shorter); diff it directly.
   if (m <= n) {
-    return fieldTokens;
+    let score = 0;
+    for (let i = 0; i < m; i++) {
+      if (fieldTokens[i].toLowerCase() === insertedTokens[i].toLowerCase()) {
+        score++;
+      }
+    }
+    return { window: fieldTokens, score };
   }
 
   let bestStart = 0;
@@ -52,7 +61,10 @@ const locateInsertedWindow = (
     }
   }
 
-  return fieldTokens.slice(bestStart, bestStart + n);
+  return {
+    window: fieldTokens.slice(bestStart, bestStart + n),
+    score: bestScore,
+  };
 };
 
 /**
@@ -75,7 +87,10 @@ export const findEditCorrections = (args: {
   }
 
   const fieldTokens = tokenizeForComparison(fieldText);
-  const windowTokens = locateInsertedWindow(insertedTokens, fieldTokens);
+  const { window: windowTokens, score: overlapScore } = locateInsertedWindow(
+    insertedTokens,
+    fieldTokens,
+  );
 
   // A single-token dictation whose whole field replaced it has no positional
   // context to anchor on, so any unrelated focused word would otherwise read
@@ -90,6 +105,17 @@ export const findEditCorrections = (args: {
     )
   ) {
     return [];
+  }
+
+  // Reject weak overlaps for multi-token dictations: an unrelated field that
+  // happens to share one positional token (e.g. inserted "I want to call
+  // Sonia" against field "a b to c Alice") must not produce a correction.
+  // Require that at least half of the inserted tokens survive in the window.
+  if (insertedTokens.length > 1) {
+    const minOverlap = Math.ceil(insertedTokens.length / 2);
+    if (overlapScore < minOverlap) {
+      return [];
+    }
   }
 
   const windowText = windowTokens.join(" ");

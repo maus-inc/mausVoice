@@ -571,7 +571,7 @@
   "simulated_typing_speed": "Velocidad de escritura simulada",
   "skip": "Omitir",
   "skip_for_now": "Skip for now",
-  "some_corrected_words_were_added_to_your_dictionary_but_other": "Some corrected words were added to your dictionary, but others failed.",
+  "some_corrected_words_were_added_to_your_dictionary_but_other": "Algunas palabras corregidas se añadieron a tu diccionario, pero otras no.",
   "some_hotkeys_share_overlapping_keys_which_may_cause_conflict": "Algunos atajos comparten teclas superpuestas, lo que puede causar conflictos.",
   "something_went_wrong": "Something went wrong:",
   "speaches_url": "URL de discursos",

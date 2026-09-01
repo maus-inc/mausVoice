@@ -571,7 +571,7 @@
   "simulated_typing_speed": "시뮬레이션 입력 속도",
   "skip": "건너뛰기",
   "skip_for_now": "Skip for now",
-  "some_corrected_words_were_added_to_your_dictionary_but_other": "Some corrected words were added to your dictionary, but others failed.",
+  "some_corrected_words_were_added_to_your_dictionary_but_other": "수정된 단어 중 일부는 사전에 추가되었지만 나머지는 추가되지 않았습니다.",
   "some_hotkeys_share_overlapping_keys_which_may_cause_conflict": "일부 단축키가 겹치는 키를 공유하고 있어 충돌이 발생할 수 있습니다.",
   "something_went_wrong": "Something went wrong:",
   "speaches_url": "연설 URL",
