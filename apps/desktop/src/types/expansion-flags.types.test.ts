@@ -16,7 +16,7 @@ describe("expansion-flags.types", () => {
     });
 
     it("returns defaults for undefined input", () => {
-      expect(parseExpansionFlags(undefined)).toEqual(DEFAULT_EXPANSION_FLAGS);
+      expect(parseExpansionFlags()).toEqual(DEFAULT_EXPANSION_FLAGS);
     });
 
     it("returns defaults for empty string", () => {
