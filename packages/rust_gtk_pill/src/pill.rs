@@ -895,46 +895,10 @@ fn tick(state: &PillState) {
     tick_long_press(state);
     let phase = state.phase.get();
     let is_active = phase != Phase::Idle;
-    let is_recording = phase == Phase::Recording;
     let is_loading = phase == Phase::Loading;
     let hovered = state.hovered.get();
 
-    // Audio levels
-    if is_recording {
-        let levels = state.pending_levels.borrow();
-        if !levels.is_empty() {
-            let sum: f64 = levels.iter().map(|v| *v as f64).sum();
-            let avg = sum / levels.len() as f64;
-            let peak = levels.iter().copied().fold(0.0_f32, f32::max) as f64;
-            let combined = (avg * 0.9 + peak * 0.85).min(1.0);
-            let boosted = (combined.sqrt() * 1.35).min(1.0);
-            let target = state.target_level.get();
-            state.target_level.set((target * 0.25 + boosted * 0.75).min(1.0));
-        }
-    } else if is_loading {
-        let target = state.target_level.get();
-        state.target_level.set(target.max(PROCESSING_BASE_LEVEL));
-    } else {
-        state.target_level.set(0.0);
-        state.current_level.set(state.current_level.get() * 0.4);
-        if state.current_level.get() < 0.0002 {
-            state.current_level.set(0.0);
-        }
-    }
-
-    let current = state.current_level.get();
-    let target = state.target_level.get();
-    let new_current = current + (target - current) * LEVEL_SMOOTHING;
-    state.current_level.set(if new_current < 0.0002 { 0.0 } else { new_current });
-
-    let decayed = target * TARGET_DECAY_PER_FRAME;
-    state.target_level.set(if decayed < 0.0005 { 0.0 } else { decayed });
-
-    let level = state.current_level.get();
-    let base_level = if is_loading && !is_recording { PROCESSING_BASE_LEVEL } else { 0.0 };
-    let effective_level = level.max(base_level);
-    let advance = WAVE_BASE_PHASE_STEP + WAVE_PHASE_GAIN * effective_level;
-    state.wave_phase.set((state.wave_phase.get() + advance) % TAU);
+    tick_audio_levels(state, phase);
 
     // Pill expand/collapse (spring)
     let expand_target = if is_active || hovered || state.assistant_active.get() || phase == Phase::Paused { 1.0 } else { 0.0 };
@@ -990,24 +954,7 @@ fn tick(state: &PillState) {
     // Broadcast transcript
     tick_transcript(state);
 
-    // Flash message timer
-    if state.flash_visible.get() {
-        let remaining = state.flash_timer.get() - SPRING_DT;
-        if remaining <= 0.0 {
-            state.flash_visible.set(false);
-            state.flash_timer.set(0.0);
-            *state.flash_action.borrow_mut() = None;
-            *state.flash_action_label.borrow_mut() = None;
-        } else {
-            state.flash_timer.set(remaining);
-        }
-    }
-    let flash_target = rust_pill_shared::flash_banner_target(
-        state.flash_visible.get(),
-        state.flash_action.borrow().is_some(),
-        tooltip_target > 0.5,
-    );
-    spring_anim(&state.flash_t, &state.flash_velocity, flash_target, SPRING_STIFFNESS);
+    tick_flash(state, tooltip_target > 0.5);
 
     // Long-press cancel flash timer
     if state.cancel_flash.get() > 0.0 {
@@ -1055,6 +1002,73 @@ fn tick(state: &PillState) {
         let max_scroll = (state.content_height.get() - state.viewport_height.get()).max(0.0);
         state.scroll_offset.set(max_scroll);
     }
+}
+
+/// Audio-level meters and the waveform phase they drive: pending input levels
+/// fold into the target level, decay toward silence when idle, and advance the
+/// wave animation at a level-dependent rate.
+fn tick_audio_levels(state: &PillState, phase: Phase) {
+    let is_recording = phase == Phase::Recording;
+    let is_loading = phase == Phase::Loading;
+
+    if is_recording {
+        let levels = state.pending_levels.borrow();
+        if !levels.is_empty() {
+            let sum: f64 = levels.iter().map(|v| *v as f64).sum();
+            let avg = sum / levels.len() as f64;
+            let peak = levels.iter().copied().fold(0.0_f32, f32::max) as f64;
+            let combined = (avg * 0.9 + peak * 0.85).min(1.0);
+            let boosted = (combined.sqrt() * 1.35).min(1.0);
+            let target = state.target_level.get();
+            state.target_level.set((target * 0.25 + boosted * 0.75).min(1.0));
+        }
+    } else if is_loading {
+        let target = state.target_level.get();
+        state.target_level.set(target.max(PROCESSING_BASE_LEVEL));
+    } else {
+        state.target_level.set(0.0);
+        state.current_level.set(state.current_level.get() * 0.4);
+        if state.current_level.get() < 0.0002 {
+            state.current_level.set(0.0);
+        }
+    }
+
+    let current = state.current_level.get();
+    let target = state.target_level.get();
+    let new_current = current + (target - current) * LEVEL_SMOOTHING;
+    state.current_level.set(if new_current < 0.0002 { 0.0 } else { new_current });
+
+    let decayed = target * TARGET_DECAY_PER_FRAME;
+    state.target_level.set(if decayed < 0.0005 { 0.0 } else { decayed });
+
+    let level = state.current_level.get();
+    let base_level = if is_loading && !is_recording { PROCESSING_BASE_LEVEL } else { 0.0 };
+    let effective_level = level.max(base_level);
+    let advance = WAVE_BASE_PHASE_STEP + WAVE_PHASE_GAIN * effective_level;
+    state.wave_phase.set((state.wave_phase.get() + advance) % TAU);
+}
+
+/// Flash banner (native pill toast) expiry and fade spring. An action-less
+/// banner yields the strip above the pill to a revealed style tooltip, so the
+/// banner and the selector never sit on top of each other.
+fn tick_flash(state: &PillState, tooltip_revealed: bool) {
+    if state.flash_visible.get() {
+        let remaining = state.flash_timer.get() - SPRING_DT;
+        if remaining <= 0.0 {
+            state.flash_visible.set(false);
+            state.flash_timer.set(0.0);
+            *state.flash_action.borrow_mut() = None;
+            *state.flash_action_label.borrow_mut() = None;
+        } else {
+            state.flash_timer.set(remaining);
+        }
+    }
+    let flash_target = rust_pill_shared::flash_banner_target(
+        state.flash_visible.get(),
+        state.flash_action.borrow().is_some(),
+        tooltip_revealed,
+    );
+    spring_anim(&state.flash_t, &state.flash_velocity, flash_target, SPRING_STIFFNESS);
 }
 
 fn tick_long_press(state: &PillState) {
