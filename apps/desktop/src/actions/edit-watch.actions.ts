@@ -64,6 +64,26 @@ const rememberDeniedTerm = (term: string): void => {
 };
 
 /**
+ * Captures the focused app while the paste has just landed, so later polls
+ * can stop watching once the user moves focus to a different app. The
+ * returned promise is intentionally not awaited; failures degrade open
+ * (no focus guard) and are logged for observability.
+ */
+const captureFocusedApp = (text: string): void => {
+  invoke<{ appName: string }>("get_current_app_info")
+    .then((info) => {
+      if (activeWatch?.text === text) {
+        activeWatch.appName = info.appName;
+      }
+    })
+    .catch((error: unknown) => {
+      getLogger().warning(
+        `Failed to capture focused app for edit watch: ${error}`,
+      );
+    });
+};
+
+/**
  * Starts watching the target app for corrections after a dictation was
  * inserted. Replaces any previous snapshot; a no-op when the feature is off.
  */
@@ -74,16 +94,7 @@ export const beginEditWatch = (text: string): void => {
     return;
   }
   activeWatch = { text: normalized, startedAt: Date.now(), appName: null };
-
-  // Capture the focused app while the paste has just landed, so later polls
-  // can stop watching once the user moves focus to a different app.
-  void invoke<{ appName: string }>("get_current_app_info")
-    .then((info) => {
-      if (activeWatch && activeWatch.text === normalized) {
-        activeWatch.appName = info.appName;
-      }
-    })
-    .catch(() => {});
+  captureFocusedApp(normalized);
 };
 
 export const endEditWatch = (): void => {
@@ -127,24 +138,15 @@ const proposeAutoLearnTerm = async (term: string): Promise<void> => {
  * with a small proper-noun correction, proposes the corrected term.
  */
 export const pollEditWatch = async (): Promise<void> => {
-  if (!isWatchActive()) {
+  if (!isWatchActive() || getAppState().autoLearn.proposal) {
     return;
   }
 
   const snapshot = activeWatch as WatchSnapshot;
-  if (getAppState().autoLearn.proposal) {
-    return;
-  }
-
   try {
-    const [fieldInfo, appInfo] = await Promise.all([
-      invoke<{ textContent: string | null }>("get_text_field_info"),
-      invoke<{ appName: string }>("get_current_app_info").catch(() => null),
-    ]);
+    const [fieldInfo, appInfo] = await loadFocusedFieldAndApp();
 
-    // Focus moved to another app after the dictation landed; corrections
-    // made there are not ours to learn.
-    if (snapshot.appName && appInfo && appInfo.appName !== snapshot.appName) {
+    if (hasFocusLeftSnapshot(snapshot, appInfo)) {
       endEditWatch();
       return;
     }
@@ -154,17 +156,8 @@ export const pollEditWatch = async (): Promise<void> => {
       return;
     }
 
-    const corrections = findEditCorrections({
-      insertedText: snapshot.text,
-      fieldText,
-      existingTerms: collectExistingTerms(),
-    });
-    if (corrections.length === 0) {
-      return;
-    }
-
-    const term = corrections[0];
-    if (readDeniedTerms().has(term.toLowerCase())) {
+    const term = pickProposalTerm(snapshot.text, fieldText);
+    if (!term || readDeniedTerms().has(term.toLowerCase())) {
       return;
     }
 
@@ -175,6 +168,41 @@ export const pollEditWatch = async (): Promise<void> => {
   } catch (error) {
     getLogger().warning(`Edit watch poll failed: ${error}`);
   }
+};
+
+const loadFocusedFieldAndApp = async (): Promise<
+  [{ textContent: string | null }, { appName: string } | null]
+> => {
+  const [fieldInfo, appInfo] = await Promise.all([
+    invoke<{ textContent: string | null }>("get_text_field_info"),
+    invoke<{ appName: string }>("get_current_app_info").catch(
+      (error: unknown) => {
+        getLogger().warning(
+          `Failed to read focused app during edit watch: ${error}`,
+        );
+        return null;
+      },
+    ),
+  ]);
+  return [fieldInfo, appInfo];
+};
+
+const hasFocusLeftSnapshot = (
+  snapshot: WatchSnapshot,
+  appInfo: { appName: string } | null,
+): boolean =>
+  Boolean(snapshot.appName && appInfo && appInfo.appName !== snapshot.appName);
+
+const pickProposalTerm = (
+  insertedText: string,
+  fieldText: string,
+): string | null => {
+  const corrections = findEditCorrections({
+    insertedText,
+    fieldText,
+    existingTerms: collectExistingTerms(),
+  });
+  return corrections[0] ?? null;
 };
 
 /** Clears the active auto-learn proposal so the pill can show the next one. */

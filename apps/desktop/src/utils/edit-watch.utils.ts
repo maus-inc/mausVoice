@@ -7,6 +7,13 @@ import {
 
 const MAX_EDIT_TOKENS = 8;
 
+const startsWithSameLetter = (a: string, b: string): boolean => {
+  if (a.length === 0 || b.length === 0) {
+    return false;
+  }
+  return a.startsWith(b[0] as string);
+};
+
 /**
  * Locates the window of `fieldTokens` that best matches `insertedTokens` by
  * positional (case-insensitive) token equality. The inserted text is expected
@@ -77,7 +84,10 @@ export const findEditCorrections = (args: {
   if (
     insertedTokens.length === 1 &&
     fieldTokens.length <= 1 &&
-    windowTokens[0]?.toLowerCase()[0] !== insertedTokens[0]?.toLowerCase()[0]
+    !startsWithSameLetter(
+      windowTokens[0]?.toLowerCase() ?? "",
+      insertedTokens[0]?.toLowerCase() ?? "",
+    )
   ) {
     return [];
   }
