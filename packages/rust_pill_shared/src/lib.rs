@@ -674,8 +674,14 @@ pub fn style_tooltip_target(
     hovered: bool,
     expand_t: f64,
 ) -> f64 {
-    if style_tooltip_visible(assistant_active, style_count, paused, hovered, expand_t)
-        && !gate.is_suppressed(hovered)
+    // The gate must be evaluated first: is_suppressed() is what releases the
+    // latch on pointer-leave, so hiding it behind the pure rule's
+    // short-circuit would leave the latch set whenever the tooltip is
+    // ineligible for any other reason (single style, assistant panel,
+    // collapsed pill) and the tooltip would stay hidden on the next hover
+    // entry in the same take.
+    if !gate.is_suppressed(hovered)
+        && style_tooltip_visible(assistant_active, style_count, paused, hovered, expand_t)
     {
         1.0
     } else {
@@ -695,12 +701,6 @@ pub struct StyleTooltipGate {
 }
 
 impl StyleTooltipGate {
-    pub fn new() -> Self {
-        Self {
-            suppressed: Cell::new(false),
-        }
-    }
-
     /// Phase-handler hook. Recording latches the fade (a resume from Paused
     /// re-latches: the tooltip must not pop back in on resume under a parked
     /// pointer); every other phase (Idle, Loading, Paused) releases it. Paused
@@ -1633,7 +1633,7 @@ mod tests {
         // The repro the pure rule could not decide on its own: the pointer
         // never leaves the pill, yet the tooltip must fade when the take
         // starts.
-        let gate = StyleTooltipGate::new();
+        let gate = StyleTooltipGate::default();
         assert_eq!(style_tooltip_target(&gate, false, 3, false, true, 1.0), 1.0);
         gate.set_take_running(true);
         assert_eq!(style_tooltip_target(&gate, false, 3, false, true, 1.0), 0.0);
@@ -1643,7 +1643,7 @@ mod tests {
     fn style_tooltip_returns_after_the_pointer_leaves_and_re_enters() {
         // Mid-take hover re-entry reveals the tooltip again, keeping the
         // chevrons clickable while recording.
-        let gate = StyleTooltipGate::new();
+        let gate = StyleTooltipGate::default();
         gate.set_take_running(true);
         assert_eq!(style_tooltip_target(&gate, false, 3, false, true, 1.0), 0.0);
         // Pointer leaves the pill: the latch releases.
@@ -1655,7 +1655,7 @@ mod tests {
     fn style_tooltip_latch_releases_when_the_take_ends() {
         // A pointer parked on the pill through the whole take gets the
         // tooltip back once the take ends (Idle or Loading).
-        let gate = StyleTooltipGate::new();
+        let gate = StyleTooltipGate::default();
         gate.set_take_running(true);
         assert_eq!(style_tooltip_target(&gate, false, 3, false, true, 1.0), 0.0);
         gate.set_take_running(false);
@@ -1665,11 +1665,28 @@ mod tests {
         assert_eq!(style_tooltip_target(&gate, false, 3, false, true, 1.0), 0.0);
     }
 
+    /// Regression: the latch must release even when the pure rule is false
+    /// when the pointer leaves. Evaluating the gate only behind
+    /// style_tooltip_visible() skipped is_suppressed() whenever the tooltip
+    /// was ineligible for another reason (single style, assistant panel,
+    /// collapsed pill), so the tooltip stayed hidden on the next hover entry
+    /// in the same take.
+    #[test]
+    fn style_tooltip_latch_releases_while_the_rule_is_false_for_other_reasons() {
+        let gate = StyleTooltipGate::default();
+        gate.set_take_running(true);
+        // Pointer leaves while only one style is active: the rule is false,
+        // but the leave must still release the latch.
+        assert_eq!(style_tooltip_target(&gate, false, 1, false, 1.0), 0.0);
+        // A second style becomes active and the pointer re-enters mid-take.
+        assert_eq!(style_tooltip_target(&gate, false, 3, false, true, 1.0), 1.0);
+    }
+
     #[test]
     fn style_tooltip_stays_hidden_while_paused_even_after_re_entry() {
         // Paused hides the tooltip regardless of the latch, and a resume
         // re-latches so the tooltip does not pop in under a parked pointer.
-        let gate = StyleTooltipGate::new();
+        let gate = StyleTooltipGate::default();
         gate.set_take_running(true);
         gate.is_suppressed(false);
         assert_eq!(style_tooltip_target(&gate, false, 3, true, true, 1.0), 0.0);

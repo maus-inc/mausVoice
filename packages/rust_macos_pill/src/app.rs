@@ -1373,7 +1373,7 @@ unsafe fn setup(receiver: Receiver<InMessage>, embedded: bool) {
         tooltip_t: Cell::new(0.0),
         tooltip_velocity: Cell::new(0.0),
         tooltip_width: Cell::new(0.0),
-        style_tooltip_gate: rust_pill_shared::StyleTooltipGate::new(),
+        style_tooltip_gate: rust_pill_shared::StyleTooltipGate::default(),
         ui_scale,
         window_mode: Cell::new(WindowMode::Dictation),
         draw_width: Cell::new(DICTATION_WINDOW_WIDTH as f64),
