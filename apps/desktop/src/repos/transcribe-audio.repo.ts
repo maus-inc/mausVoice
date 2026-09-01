@@ -807,10 +807,10 @@ export class OpenRouterTranscribeAudioRepo extends BaseTranscribeAudioRepo {
   private openrouterApiKey: string;
   private model: string;
 
-  constructor(apiKey: string, model: string) {
+  constructor(apiKey: string, model: string | null) {
     super();
     this.openrouterApiKey = apiKey;
-    this.model = model;
+    this.model = model ?? "openai/whisper-large-v3";
   }
 
   protected getSegmentDurationSec(): number {
