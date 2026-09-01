@@ -53,6 +53,62 @@ function echoTool(name = "echo"): AgentTool {
   };
 }
 
+function toolCallEvent(id: string, name: string): LlmStreamEvent {
+  return {
+    type: "tool-call",
+    id,
+    name,
+    arguments: JSON.stringify({ reason: "x" }),
+  };
+}
+
+function expectErrorContinuation(params: {
+  tool: AgentTool;
+  callId: string;
+  errorFragment: string;
+  finalText: string;
+}) {
+  const { provider } = scriptedProvider([
+    [toolCallEvent(params.callId, params.tool.name)],
+    [{ type: "text-delta", text: params.finalText }],
+  ]);
+  const loop = new AgentLoop({
+    provider,
+    tools: [params.tool],
+    systemPrompt: "sys",
+  });
+  return expectErrorEvents(loop, params.errorFragment, params.finalText);
+}
+
+async function expectErrorEvents(
+  loop: AgentLoop,
+  errorFragment: string,
+  finalText: string,
+) {
+  const events = (await collectEvents(
+    loop.run([{ role: "user", content: "go" }]),
+  )) as Array<{ type: string; isError?: boolean; result?: string }>;
+  const toolResult = events.find((e) => e.type === "tool-call-result");
+  expect(toolResult?.isError).toBe(true);
+  expect(toolResult?.result).toContain(errorFragment);
+  const finish = events.find((e) => e.type === "finish");
+  expect(finish).toMatchObject({ reason: "stop", text: finalText });
+}
+
+async function runLoop(loop: AgentLoop) {
+  return (await collectEvents(
+    loop.run([{ role: "user", content: "go" }]),
+  )) as Array<Record<string, unknown>>;
+}
+
+function expectFinish(
+  events: Array<Record<string, unknown>>,
+  expected: Record<string, unknown>,
+) {
+  const finish = events.find((e) => e.type === "finish");
+  expect(finish).toMatchObject(expected);
+}
+
 describe("AgentLoop", () => {
   it("continues after a tool result and produces a final response without a second prompt", async () => {
     // First model turn requests one tool; second turn returns the final text.
@@ -75,9 +131,7 @@ describe("AgentLoop", () => {
       maxIterations: 5,
     });
 
-    const events = (await collectEvents(
-      loop.run([{ role: "user", content: "go" }]),
-    )) as Array<{ type: string; [k: string]: unknown }>;
+    const events = await runLoop(loop);
 
     // Two provider calls: the tool-request turn and the post-tool turn.
     expect(calls).toHaveLength(2);
@@ -91,8 +145,7 @@ describe("AgentLoop", () => {
     expect(assistantMsg?.toolCalls?.[0]?.id).toBe("call_1");
     expect(secondHistory.some((m) => m.role === "tool")).toBe(true);
 
-    const finish = events.find((e) => e.type === "finish");
-    expect(finish).toMatchObject({ reason: "stop", text: "Done." });
+    expectFinish(events, { reason: "stop", text: "Done." });
   });
 
   it("turns a failed tool execution into an error tool-result and continues", async () => {
@@ -105,35 +158,12 @@ describe("AgentLoop", () => {
         failureReason: "kaboom",
       })),
     };
-
-    const { provider } = scriptedProvider([
-      [
-        {
-          type: "tool-call",
-          id: "call_2",
-          name: "boom",
-          arguments: JSON.stringify({ reason: "x" }),
-        },
-      ],
-      [{ type: "text-delta", text: "Recovered." }],
-    ]);
-
-    const loop = new AgentLoop({
-      provider,
-      tools: [failing],
-      systemPrompt: "sys",
+    await expectErrorContinuation({
+      tool: failing,
+      callId: "call_2",
+      errorFragment: "kaboom",
+      finalText: "Recovered.",
     });
-
-    const events = (await collectEvents(
-      loop.run([{ role: "user", content: "go" }]),
-    )) as Array<{ type: string; isError?: boolean; result?: string }>;
-
-    const toolResult = events.find((e) => e.type === "tool-call-result");
-    expect(toolResult?.isError).toBe(true);
-    expect(toolResult?.result).toContain("kaboom");
-
-    const finish = events.find((e) => e.type === "finish");
-    expect(finish).toMatchObject({ reason: "stop", text: "Recovered." });
   });
 
   it("catches a tool that throws and still continues the loop", async () => {
@@ -145,30 +175,12 @@ describe("AgentLoop", () => {
         throw new Error("kaboom");
       }),
     };
-    const { provider } = scriptedProvider([
-      [
-        {
-          type: "tool-call",
-          id: "call_3",
-          name: "boom",
-          arguments: JSON.stringify({ reason: "x" }),
-        },
-      ],
-      [{ type: "text-delta", text: "Handled." }],
-    ]);
-    const loop = new AgentLoop({
-      provider,
-      tools: [throwing],
-      systemPrompt: "sys",
+    await expectErrorContinuation({
+      tool: throwing,
+      callId: "call_3",
+      errorFragment: "kaboom",
+      finalText: "Handled.",
     });
-    const events = (await collectEvents(
-      loop.run([{ role: "user", content: "go" }]),
-    )) as Array<{ type: string; isError?: boolean; result?: string }>;
-    const toolResult = events.find((e) => e.type === "tool-call-result");
-    expect(toolResult?.isError).toBe(true);
-    expect(toolResult?.result).toContain("kaboom");
-    const finish = events.find((e) => e.type === "finish");
-    expect(finish).toMatchObject({ reason: "stop", text: "Handled." });
   });
 
   it("reports a terminal error when the provider stream fails", async () => {
@@ -182,11 +194,8 @@ describe("AgentLoop", () => {
       tools: [],
       systemPrompt: "sys",
     });
-    const events = (await collectEvents(
-      loop.run([{ role: "user", content: "go" }]),
-    )) as Array<Record<string, unknown>>;
-    const finish = events.find((e) => e.type === "finish");
-    expect(finish).toMatchObject({ reason: "error", error: "network down" });
+    const events = await runLoop(loop);
+    expectFinish(events, { reason: "error", error: "network down" });
   });
 
   it("stops at maxIterations with a visible terminal reason", async () => {
@@ -255,14 +264,9 @@ describe("AgentLoop", () => {
       tools: [echoTool()],
       systemPrompt: "sys",
     });
-    const events = (await collectEvents(
-      loop.run([{ role: "user", content: "hi" }]),
-    )) as Array<Record<string, unknown>>;
+    const events = await runLoop(loop);
     expect(events.filter((e) => e.type === "text-delta")).toHaveLength(2);
-    expect(events.find((e) => e.type === "finish")).toMatchObject({
-      reason: "stop",
-      text: "Hello there",
-    });
+    expectFinish(events, { reason: "stop", text: "Hello there" });
   });
 
   it("stringifies a non-Error thrown value instead of [object Object]", async () => {
@@ -275,22 +279,11 @@ describe("AgentLoop", () => {
         throw { code: "E_BOOM", detail: "secret" };
       }),
     };
-    const { provider } = scriptedProvider([
-      [
-        {
-          type: "tool-call",
-          id: "call_4",
-          name: "rejecter",
-          arguments: JSON.stringify({ reason: "x" }),
-        },
-      ],
-    ]);
-    const loop = new AgentLoop({ provider, tools: [throwing], systemPrompt: "sys" });
-    const events = (await collectEvents(
-      loop.run([{ role: "user", content: "go" }]),
-    )) as Array<{ type: string; result?: string }>;
-    const toolResult = events.find((e) => e.type === "tool-call-result");
-    // JSON representation of the object, never "[object Object]" or undefined.
-    expect(toolResult?.result).toBe(JSON.stringify({ code: "E_BOOM", detail: "secret" }));
+    await expectErrorContinuation({
+      tool: throwing,
+      callId: "call_4",
+      errorFragment: JSON.stringify({ code: "E_BOOM", detail: "secret" }),
+      finalText: "done",
+    });
   });
 });

@@ -99,6 +99,23 @@ vi.mock("../utils/log.utils", () => ({ getLogger: () => loggerMock }));
 
 vi.mock("./agent-configs", () => ({}));
 
+/**
+ * Wire the mocks that every runAgent integration test shares: a repo that
+ * streams chat, a chat-message repo that delegates to the create mock, an
+ * empty tool set, an LLM-calling run state, and a no-op agent-state modifier.
+ * Each test layers its own app-state and scrub behavior on top.
+ */
+const setupAgentMocks = () => {
+  createAgentRunStateMock.mockReturnValue({ status: "calling-llm" });
+  modifyAgentStateMock.mockImplementation(() => undefined);
+  getAgentRepoMock.mockReturnValue({ repo: { streamChat: vi.fn() } });
+  getChatMessageRepoMock.mockReturnValue({
+    createChatMessage: (...args: unknown[]) =>
+      getChatMessageRepoCreateMock(...args),
+  });
+  createAgentToolsMock.mockReturnValue([]);
+};
+
 describe("runAgent continues after a tool call when the desktop side effect rejects", () => {
   it("isolates a rejected chat-message persistence so the loop yields the next event", async () => {
     const chatMessageById: Record<string, unknown> = {};
@@ -112,24 +129,8 @@ describe("runAgent continues after a tool call when the desktop side effect reje
       toolInfoById: {},
     });
     produceAppStateMock.mockImplementation(() => undefined);
-    createAgentRunStateMock.mockReturnValue({ status: "calling-llm" });
     humanizeScrubMock.mockImplementation((text: string) => text);
-    modifyAgentStateMock.mockImplementation(() => undefined);
-
-    getAgentRepoMock.mockReturnValue({
-      repo: { streamChat: vi.fn() },
-    });
-    // The createChatMessage action (in chat.actions.ts) calls
-    // getChatMessageRepo().createChatMessage(). We mock the repo so the
-    // action's persistence call rejects with the exact "resource id is
-    // invalid" pattern from the user's diagnostics zip. The desktop
-    // adapter must isolate that rejection so the for-await loop yields
-    // the next event.
-    getChatMessageRepoMock.mockReturnValue({
-      createChatMessage: (...args: unknown[]) =>
-        getChatMessageRepoCreateMock(...args),
-    });
-    createAgentToolsMock.mockReturnValue([]);
+    setupAgentMocks();
 
     let repoCreateCalls = 0;
     getChatMessageRepoCreateMock.mockImplementation(() => {
@@ -219,18 +220,8 @@ describe("runAgent continues after a tool call when the desktop side effect reje
     produceAppStateMock.mockImplementation((fn: (d: unknown) => void) =>
       fn(live),
     );
-    createAgentRunStateMock.mockReturnValue({ status: "calling-llm" });
     humanizeScrubMock.mockImplementation((text: string) => `scrubbed:${text}`);
-    modifyAgentStateMock.mockImplementation(() => undefined);
-
-    getAgentRepoMock.mockReturnValue({
-      repo: { streamChat: vi.fn() },
-    });
-    getChatMessageRepoMock.mockReturnValue({
-      createChatMessage: (...args: unknown[]) =>
-        getChatMessageRepoCreateMock(...args),
-    });
-    createAgentToolsMock.mockReturnValue([]);
+    setupAgentMocks();
 
     let repoCreateCalls = 0;
     getChatMessageRepoCreateMock.mockImplementation(() => {
