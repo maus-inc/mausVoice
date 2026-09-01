@@ -26,9 +26,7 @@ export const EXPANSION_FLAG_NAMES: ExpansionFeatureName[] = [
   "voiceWorkflowsEnabled",
 ];
 
-export const parseExpansionFlags = (
-  raw?: string | null,
-): ExpansionFlags => {
+export const parseExpansionFlags = (raw?: string | null): ExpansionFlags => {
   if (!raw) {
     return { ...DEFAULT_EXPANSION_FLAGS };
   }
