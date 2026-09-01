@@ -126,8 +126,8 @@ pub async fn upsert_user_preferences(
             agent_enabled_tools = excluded.agent_enabled_tools,
             agent_max_iterations = excluded.agent_max_iterations,
             agent_permission_timeout_ms = excluded.agent_permission_timeout_ms,
-            spoken_commands_enabled = excluded.spoken_commands_enabled",
-    )
+            spoken_commands_enabled = excluded.spoken_commands_enabled
+        )
     .bind(&preferences.user_id)
     .bind(&preferences.transcription_mode)
     .bind(&preferences.transcription_api_key_id)
