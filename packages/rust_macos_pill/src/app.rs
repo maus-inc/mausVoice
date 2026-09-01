@@ -390,6 +390,15 @@ fn perform_tick() {
                     }
                     let prev = ctx.state.phase.get();
                     ctx.state.phase.set(phase);
+                    ctx.state.style_tooltip_gate.set_take_running(phase == Phase::Recording);
+                    // A new take sweeps any banner parked above the pill (for
+                    // example the retranscribing toast) so it cannot sit on the
+                    // style selector for the whole take. A resume from Paused
+                    // keeps toasts raised during the take, such as the cancel
+                    // confirm.
+                    if phase == Phase::Recording && matches!(prev, Phase::Idle | Phase::Loading) {
+                        clear_flash(&ctx.state);
+                    }
                     if phase == Phase::Idle && prev != Phase::Idle {
                         ctx.state.target_level.set(0.0);
                         ctx.state.current_level.set(0.0);
@@ -412,10 +421,7 @@ fn perform_tick() {
                     *ctx.state.flash_action_label.borrow_mut() = action_label;
                 }
                 InMessage::DismissToast => {
-                    ctx.state.flash_visible.set(false);
-                    ctx.state.flash_timer.set(0.0);
-                    *ctx.state.flash_action.borrow_mut() = None;
-                    *ctx.state.flash_action_label.borrow_mut() = None;
+                    clear_flash(&ctx.state);
                 }
                 InMessage::Fireworks { message } => {
                     *ctx.state.flash_message.borrow_mut() = message;
@@ -645,6 +651,13 @@ fn update_hover(view: id, ctx: &AppContext) {
 
 // ── Animation tick ────────────────────────────────────────────────
 
+fn clear_flash(state: &PillState) {
+    state.flash_visible.set(false);
+    state.flash_timer.set(0.0);
+    *state.flash_action.borrow_mut() = None;
+    *state.flash_action_label.borrow_mut() = None;
+}
+
 /// Advances all pill animations by `dt` seconds: audio levels, springs
 /// (expand, tooltip, panel, keyboard button, window size, pause crossfade,
 /// cancel controls, drag inflate), and the fireworks/flame/flash/transcript
@@ -712,14 +725,18 @@ fn tick(state: &PillState, window: id, dt: f64) {
     }
 
     // Tooltip animation (spring)
-    // While paused, fade/hide the style picker (polished/verbatim) but keep the
-    // main pill fully expanded via expand_target above.
-    let show_tooltip = !state.assistant_active.get()
-        && state.style_count.get() > 1
-        && phase != Phase::Paused
-        && (hovered || phase == Phase::Recording)
-        && state.expand_t.get() > 0.3;
-    let tooltip_target = if show_tooltip { 1.0 } else { 0.0 };
+    // Hover-revealed in every phase except Paused, so the chevrons stay
+    // clickable mid-take. A take that starts under a parked pointer fades
+    // the tooltip until the pointer leaves the pill and comes back;
+    // rust_pill_shared owns the rule, every port agrees.
+    let tooltip_target = rust_pill_shared::style_tooltip_target(
+        &state.style_tooltip_gate,
+        state.assistant_active.get(),
+        state.style_count.get(),
+        matches!(phase, Phase::Paused),
+        hovered,
+        state.expand_t.get(),
+    );
     spring_anim(&state.tooltip_t, &state.tooltip_velocity, tooltip_target, SPRING_STIFFNESS, dt);
 
     // Panel open/close (spring)
@@ -767,7 +784,11 @@ fn tick(state: &PillState, window: id, dt: f64) {
             state.flash_timer.set(remaining);
         }
     }
-    let flash_target = if state.flash_visible.get() { 1.0 } else { 0.0 };
+    let flash_target = rust_pill_shared::flash_banner_target(
+        state.flash_visible.get(),
+        state.flash_action.borrow().is_some(),
+        tooltip_target > 0.5,
+    );
     spring_anim(&state.flash_t, &state.flash_velocity, flash_target, SPRING_STIFFNESS, dt);
 
     // Recording <-> paused crossfade driven by the same critically damped
@@ -1368,6 +1389,7 @@ unsafe fn setup(receiver: Receiver<InMessage>, embedded: bool) {
         tooltip_t: Cell::new(0.0),
         tooltip_velocity: Cell::new(0.0),
         tooltip_width: Cell::new(0.0),
+        style_tooltip_gate: rust_pill_shared::StyleTooltipGate::default(),
         ui_scale,
         window_mode: Cell::new(WindowMode::Dictation),
         draw_width: Cell::new(DICTATION_WINDOW_WIDTH as f64),
