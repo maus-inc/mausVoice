@@ -27,7 +27,7 @@ export const EXPANSION_FLAG_NAMES: ExpansionFeatureName[] = [
 ];
 
 export const parseExpansionFlags = (
-  raw: string | null | undefined,
+  raw?: string | null,
 ): ExpansionFlags => {
   if (!raw) {
     return { ...DEFAULT_EXPANSION_FLAGS };
