@@ -60,6 +60,15 @@ type LocalUserPreferences = {
   typingSpeedMs: Nullable<number>;
   pillResetMonitorStrategy?: Nullable<PillResetMonitorStrategy>;
   alwaysRequestAdminOnStartup?: boolean;
+  meetingNotesEnabled?: boolean;
+  localAutomationEnabled?: boolean;
+  connectorsEnabled?: boolean;
+  webhooksEnabled?: boolean;
+  translationsEnabled?: boolean;
+  interactiveSnippetsEnabled?: boolean;
+  handsFreeToggleEnabled?: boolean;
+  voiceWorkflowsEnabled?: boolean;
+  ephemeralSessionEnabled?: boolean;
 };
 
 const normalizePillResetMonitorStrategy = (
@@ -147,6 +156,15 @@ export const fromLocalPreferences = (
     preferences.pillResetMonitorStrategy,
   ),
   alwaysRequestAdminOnStartup: preferences.alwaysRequestAdminOnStartup ?? false,
+  meetingNotesEnabled: preferences.meetingNotesEnabled ?? false,
+  localAutomationEnabled: preferences.localAutomationEnabled ?? false,
+  connectorsEnabled: preferences.connectorsEnabled ?? false,
+  webhooksEnabled: preferences.webhooksEnabled ?? false,
+  translationsEnabled: preferences.translationsEnabled ?? false,
+  interactiveSnippetsEnabled: preferences.interactiveSnippetsEnabled ?? false,
+  handsFreeToggleEnabled: preferences.handsFreeToggleEnabled ?? false,
+  voiceWorkflowsEnabled: preferences.voiceWorkflowsEnabled ?? false,
+  ephemeralSessionEnabled: preferences.ephemeralSessionEnabled ?? false,
 });
 
 export const toLocalPreferences = (
@@ -198,6 +216,15 @@ export const toLocalPreferences = (
     preferences.pillResetMonitorStrategy,
   ),
   alwaysRequestAdminOnStartup: preferences.alwaysRequestAdminOnStartup ?? false,
+  meetingNotesEnabled: preferences.meetingNotesEnabled ?? false,
+  localAutomationEnabled: preferences.localAutomationEnabled ?? false,
+  connectorsEnabled: preferences.connectorsEnabled ?? false,
+  webhooksEnabled: preferences.webhooksEnabled ?? false,
+  translationsEnabled: preferences.translationsEnabled ?? false,
+  interactiveSnippetsEnabled: preferences.interactiveSnippetsEnabled ?? false,
+  handsFreeToggleEnabled: preferences.handsFreeToggleEnabled ?? false,
+  voiceWorkflowsEnabled: preferences.voiceWorkflowsEnabled ?? false,
+  ephemeralSessionEnabled: preferences.ephemeralSessionEnabled ?? false,
 });
 
 export abstract class BaseUserPreferencesRepo extends BaseRepo {

@@ -37,6 +37,43 @@ static RULES: Lazy<Vec<SanitizeRule>> = Lazy::new(|| {
             pattern: Regex::new(r"(?m)(final transcript:)\s*.+$").unwrap(),
             replacement: "$1 [REDACTED]",
         },
+        // Prompts sent to LLM providers
+        SanitizeRule {
+            pattern: Regex::new(r#"(?m)(LLM prompt:\s*)(?:.+$)"#).unwrap(),
+            replacement: "$1[REDACTED]",
+        },
+        // Webhook payloads
+        SanitizeRule {
+            pattern: Regex::new(r#"(?m)(Webhook payload:\s*)(?:.+$)"#).unwrap(),
+            replacement: "$1[REDACTED]",
+        },
+        // Webhook URLs
+        SanitizeRule {
+            pattern: Regex::new(
+                r#"(?m)(Webhook URL:\s*)https?://(?:[^\s"']+)"#,
+            )
+            .unwrap(),
+            replacement: "$1[REDACTED_URL]",
+        },
+        // Connector credentials/tokens
+        SanitizeRule {
+            pattern: Regex::new(
+                r#"(?m)(Connector (?:token|credential|secret|api[_-]?key):\s*)(?:[^\s"']+)"#,
+            )
+            .unwrap(),
+            replacement: "$1[REDACTED]",
+        },
+        // Meeting transcript content
+        SanitizeRule {
+            pattern: Regex::new(r#"(?m)(Meeting transcript:\s*)(?:.+$)"#).unwrap(),
+            replacement: "$1[REDACTED]",
+        },
+        // Translation content
+        SanitizeRule {
+            pattern: Regex::new(r#"(?m)(Translation (?:source|result|content):\s*)(?:.+$)"#)
+                .unwrap(),
+            replacement: "$1[REDACTED]",
+        },
     ]
 });
 
@@ -151,6 +188,70 @@ mod tests {
         let result = sanitize_log_content(input);
         assert!(result.contains("LLM raw output: [REDACTED]"));
         assert!(!result.contains("Testing, one, two, three"));
+    }
+
+    #[test]
+    fn test_redacts_llm_prompt() {
+        let input = "[2024-01-15][14:30:45.123][DEBUG][webview] LLM prompt: Summarize the following meeting notes about Q4 budget planning...";
+        let result = sanitize_log_content(input);
+        assert!(result.contains("LLM prompt: [REDACTED]"));
+        assert!(!result.contains("Q4 budget planning"));
+    }
+
+    #[test]
+    fn test_redacts_webhook_payload() {
+        let input = r#"[2024-01-15][14:30:45.123][DEBUG][webview] Webhook payload: {"event":"meeting.completed","data":{"id":"abc123"}}"#;
+        let result = sanitize_log_content(input);
+        assert!(result.contains("Webhook payload: [REDACTED]"));
+        assert!(!result.contains("abc123"));
+    }
+
+    #[test]
+    fn test_redacts_webhook_url() {
+        let input = "[2024-01-15][14:30:45.123][DEBUG][webview] Webhook URL: https://example.com/webhook/secret-endpoint";
+        let result = sanitize_log_content(input);
+        assert!(result.contains("Webhook URL: [REDACTED_URL]"));
+        assert!(!result.contains("example.com"));
+    }
+
+    #[test]
+    fn test_redacts_connector_token() {
+        let input = "[2024-01-15][14:30:45.123][DEBUG][webview] Connector token: sk_live_abcdef1234567890";
+        let result = sanitize_log_content(input);
+        assert!(result.contains("Connector token: [REDACTED]"));
+        assert!(!result.contains("sk_live_abcdef"));
+    }
+
+    #[test]
+    fn test_redacts_connector_credential() {
+        let input = "[2024-01-15][14:30:45.123][DEBUG][webview] Connector credential: super_secret_value_12345";
+        let result = sanitize_log_content(input);
+        assert!(result.contains("Connector credential: [REDACTED]"));
+        assert!(!result.contains("super_secret_value"));
+    }
+
+    #[test]
+    fn test_redacts_meeting_transcript() {
+        let input = "[2024-01-15][14:30:45.123][DEBUG][webview] Meeting transcript: Alice said the project deadline is next Friday and Bob agreed to deliver the API by Wednesday.";
+        let result = sanitize_log_content(input);
+        assert!(result.contains("Meeting transcript: [REDACTED]"));
+        assert!(!result.contains("Alice said"));
+    }
+
+    #[test]
+    fn test_redacts_translation_source() {
+        let input = "[2024-01-15][14:30:45.123][DEBUG][webview] Translation source: Bonjour, comment allez-vous aujourd'hui?";
+        let result = sanitize_log_content(input);
+        assert!(result.contains("Translation source: [REDACTED]"));
+        assert!(!result.contains("Bonjour"));
+    }
+
+    #[test]
+    fn test_redacts_translation_result() {
+        let input = "[2024-01-15][14:30:45.123][DEBUG][webview] Translation result: Hello, how are you today?";
+        let result = sanitize_log_content(input);
+        assert!(result.contains("Translation result: [REDACTED]"));
+        assert!(!result.contains("how are you"));
     }
 
     #[test]

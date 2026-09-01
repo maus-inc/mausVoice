@@ -88,6 +88,26 @@ pub struct UserPreferences {
     /// default so existing behavior is unchanged.
     #[serde(default)]
     pub always_request_admin_on_startup: bool,
+    /// Expansion feature flags. All off by default.
+    #[serde(default)]
+    pub meeting_notes_enabled: bool,
+    #[serde(default)]
+    pub local_automation_enabled: bool,
+    #[serde(default)]
+    pub connectors_enabled: bool,
+    #[serde(default)]
+    pub webhooks_enabled: bool,
+    #[serde(default)]
+    pub translations_enabled: bool,
+    #[serde(default)]
+    pub interactive_snippets_enabled: bool,
+    #[serde(default)]
+    pub hands_free_toggle_enabled: bool,
+    #[serde(default)]
+    pub voice_workflows_enabled: bool,
+    /// Session-scoped ephemeral mode (non-persistent). Off by default.
+    #[serde(default)]
+    pub ephemeral_session_enabled: bool,
 }
 
 fn default_pill_reset_monitor_strategy() -> String {

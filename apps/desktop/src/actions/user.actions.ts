@@ -110,6 +110,15 @@ export const createDefaultPreferences = (): UserPreferences => ({
   pillResetMonitorStrategy: "current",
 
   alwaysRequestAdminOnStartup: false,
+  meetingNotesEnabled: false,
+  localAutomationEnabled: false,
+  connectorsEnabled: false,
+  webhooksEnabled: false,
+  translationsEnabled: false,
+  interactiveSnippetsEnabled: false,
+  handsFreeToggleEnabled: false,
+  voiceWorkflowsEnabled: false,
+  ephemeralSessionEnabled: false,
   realtimeOutputEnabled: false,
   remoteOutputEnabled: false,
   remoteTargetDeviceId: null,
@@ -606,6 +615,26 @@ export const setIncognitoModeIncludeInStats = async (
   await updateUserPreferences((preferences) => {
     preferences.incognitoModeIncludeInStats = enabled;
   }, "Failed to save incognito mode stats preference. Please try again.");
+};
+
+export const setEphemeralSessionEnabled = async (
+  enabled: boolean,
+): Promise<void> => {
+  await updateUserPreferences((preferences) => {
+    preferences.ephemeralSessionEnabled = enabled;
+  }, "Failed to save ephemeral session preference. Please try again.");
+};
+
+export const startEphemeralSession = (): void => {
+  produceAppState((draft) => {
+    draft.local.ephemeralSessionActive = true;
+  });
+};
+
+export const endEphemeralSession = (): void => {
+  produceAppState((draft) => {
+    draft.local.ephemeralSessionActive = false;
+  });
 };
 
 export const setDictationPillVisibility = async (
