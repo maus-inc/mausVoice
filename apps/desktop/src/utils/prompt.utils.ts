@@ -119,10 +119,15 @@ export const buildSystemPostProcessingTonePrompt = (
   input: PostProcessingPromptInput,
 ): string => {
   if (input.tone.kind === "template" && input.tone.systemPromptTemplate) {
-    return `${applyTemplateVars(
+    const systemPrompt = applyTemplateVars(
       input.tone.systemPromptTemplate,
       buildPostProcessingTemplateVars(input),
-    )}\n${GLOSSARY_EXACT_SPELLING_INSTRUCTION}`;
+    );
+    return (
+      appendHumanizeSkill(
+        appendStructuredStyleGuidance(systemPrompt, input.tone),
+      ) + `\n\n${GLOSSARY_EXACT_SPELLING_INSTRUCTION}`
+    );
   }
 
   const stylePrompt = getStylePrompt(input);
