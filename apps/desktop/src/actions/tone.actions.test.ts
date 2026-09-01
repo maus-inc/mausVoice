@@ -40,7 +40,7 @@ vi.mock("../repos", () => ({
 }));
 
 vi.mock("./toast.actions", () => ({
-  showToast: vi.fn(() => Promise.resolve(undefined)),
+  showToast: vi.fn(() => Promise.resolve()),
 }));
 
 vi.mock("../utils/log.utils", () => ({

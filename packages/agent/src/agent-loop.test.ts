@@ -53,6 +53,48 @@ function echoTool(name = "echo"): AgentTool {
   };
 }
 
+function toolCallEvent(id: string, name: string): LlmStreamEvent {
+  return {
+    type: "tool-call",
+    id,
+    name,
+    arguments: JSON.stringify({ reason: "x" }),
+  };
+}
+
+function expectErrorContinuation(params: {
+  tool: AgentTool;
+  callId: string;
+  errorFragment: string;
+  finalText: string;
+}) {
+  const { provider } = scriptedProvider([
+    [toolCallEvent(params.callId, params.tool.name)],
+    [{ type: "text-delta", text: params.finalText }],
+  ]);
+  const loop = new AgentLoop({
+    provider,
+    tools: [params.tool],
+    systemPrompt: "sys",
+  });
+  return expectErrorEvents(loop, params.errorFragment, params.finalText);
+}
+
+async function expectErrorEvents(
+  loop: AgentLoop,
+  errorFragment: string,
+  finalText: string,
+) {
+  const events = (await collectEvents(
+    loop.run([{ role: "user", content: "go" }]),
+  )) as Array<{ type: string; isError?: boolean; result?: string }>;
+  const toolResult = events.find((e) => e.type === "tool-call-result");
+  expect(toolResult?.isError).toBe(true);
+  expect(toolResult?.result).toContain(errorFragment);
+  const finish = events.find((e) => e.type === "finish");
+  expect(finish).toMatchObject({ reason: "stop", text: finalText });
+}
+
 describe("AgentLoop", () => {
   it("continues after a tool result and produces a final response without a second prompt", async () => {
     // First model turn requests one tool; second turn returns the final text.
@@ -105,35 +147,12 @@ describe("AgentLoop", () => {
         failureReason: "kaboom",
       })),
     };
-
-    const { provider } = scriptedProvider([
-      [
-        {
-          type: "tool-call",
-          id: "call_2",
-          name: "boom",
-          arguments: JSON.stringify({ reason: "x" }),
-        },
-      ],
-      [{ type: "text-delta", text: "Recovered." }],
-    ]);
-
-    const loop = new AgentLoop({
-      provider,
-      tools: [failing],
-      systemPrompt: "sys",
+    await expectErrorContinuation({
+      tool: failing,
+      callId: "call_2",
+      errorFragment: "kaboom",
+      finalText: "Recovered.",
     });
-
-    const events = (await collectEvents(
-      loop.run([{ role: "user", content: "go" }]),
-    )) as Array<{ type: string; isError?: boolean; result?: string }>;
-
-    const toolResult = events.find((e) => e.type === "tool-call-result");
-    expect(toolResult?.isError).toBe(true);
-    expect(toolResult?.result).toContain("kaboom");
-
-    const finish = events.find((e) => e.type === "finish");
-    expect(finish).toMatchObject({ reason: "stop", text: "Recovered." });
   });
 
   it("catches a tool that throws and still continues the loop", async () => {
@@ -145,30 +164,12 @@ describe("AgentLoop", () => {
         throw new Error("kaboom");
       }),
     };
-    const { provider } = scriptedProvider([
-      [
-        {
-          type: "tool-call",
-          id: "call_3",
-          name: "boom",
-          arguments: JSON.stringify({ reason: "x" }),
-        },
-      ],
-      [{ type: "text-delta", text: "Handled." }],
-    ]);
-    const loop = new AgentLoop({
-      provider,
-      tools: [throwing],
-      systemPrompt: "sys",
+    await expectErrorContinuation({
+      tool: throwing,
+      callId: "call_3",
+      errorFragment: "kaboom",
+      finalText: "Handled.",
     });
-    const events = (await collectEvents(
-      loop.run([{ role: "user", content: "go" }]),
-    )) as Array<{ type: string; isError?: boolean; result?: string }>;
-    const toolResult = events.find((e) => e.type === "tool-call-result");
-    expect(toolResult?.isError).toBe(true);
-    expect(toolResult?.result).toContain("kaboom");
-    const finish = events.find((e) => e.type === "finish");
-    expect(finish).toMatchObject({ reason: "stop", text: "Handled." });
   });
 
   it("reports a terminal error when the provider stream fails", async () => {
