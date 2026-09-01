@@ -18,9 +18,8 @@ const SECRET_VALUE_PATTERN =
 const hashString = (input: string): string => {
   let hash = 0;
   for (let i = 0; i < input.length; i++) {
-    const chr = input.charCodeAt(i);
-    hash = (hash << 5) - hash + chr;
-    hash |= 0;
+    const chr = input.codePointAt(i) ?? 0;
+    hash = Math.trunc((hash << 5) - hash + chr);
   }
   return `[hash:${Math.abs(hash).toString(16).slice(0, 8)}]`;
 };
