@@ -16,6 +16,13 @@ fn has_flash_action_at(state: &PillState, x: f64, y: f64) -> bool {
     regions.iter().any(|r| matches!(r.action, ClickAction::FlashAction) && r.contains(x, y))
 }
 
+/// A23: Dispatch haptic/audio feedback to the desktop process.
+fn send_haptic(kind: &str) {
+    ipc::send(&OutMessage::HapticFeedback {
+        kind: kind.to_string(),
+    });
+}
+
 pub(crate) fn handle_click(state: &PillState, x: f64, y: f64) {
     let s = state.ui_scale;
     let (ox, oy) = state.content_offset();
@@ -27,6 +34,15 @@ pub(crate) fn handle_click(state: &PillState, x: f64, y: f64) {
         if region.contains(x, y) {
             match &region.action {
                 ClickAction::Pill => {
+                    // Loading owns the current operation; another body click
+                    // must not emit feedback or start a second action.
+                    if !rust_pill_shared::can_emit_interaction_feedback(
+                        true,
+                        state.phase.get() == Phase::Loading,
+                    ) {
+                        return;
+                    }
+                    send_haptic("press");
                     if state.assistant_active.get() {
                         ipc::send(&OutMessage::AgentTalk);
                     } else {
@@ -34,9 +50,11 @@ pub(crate) fn handle_click(state: &PillState, x: f64, y: f64) {
                     }
                 }
                 ClickAction::StyleForward => {
+                    send_haptic("deep");
                     ipc::send(&OutMessage::StyleSwitch { direction: "forward".to_string() });
                 }
                 ClickAction::StyleBackward => {
+                    send_haptic("deep");
                     ipc::send(&OutMessage::StyleSwitch { direction: "backward".to_string() });
                 }
                 ClickAction::AssistantClose => {
@@ -52,12 +70,15 @@ pub(crate) fn handle_click(state: &PillState, x: f64, y: f64) {
                     ipc::send(&OutMessage::EnableTypeMode);
                 }
                 ClickAction::CancelDictation => {
+                    send_haptic("deep");
                     ipc::send(&OutMessage::CancelDictation);
                 }
                 ClickAction::PauseDictation => {
+                    send_haptic("press");
                     ipc::send(&OutMessage::PauseDictation);
                 }
                 ClickAction::ResumeDictation => {
+                    send_haptic("press");
                     ipc::send(&OutMessage::ResumeDictation);
                 }
                 ClickAction::PermissionAllow(id) => {

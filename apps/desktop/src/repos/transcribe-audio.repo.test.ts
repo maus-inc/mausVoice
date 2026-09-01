@@ -6,10 +6,21 @@ import {
   AssemblyAITranscribeAudioRepo,
   BaseTranscribeAudioRepo,
   DeepgramTranscribeAudioRepo,
+  GladiaTranscribeAudioRepo,
   LocalTranscribeAudioRepo,
   TranscribeAudioOutput,
   TranscribeSegmentInput,
 } from "./transcribe-audio.repo";
+import { type TranscriptionSegment } from "../utils/hallucination.utils";
+
+vi.mock("../utils/log.utils", () => ({
+  getLogger: () => ({
+    info: () => {},
+    warning: () => {},
+    error: () => {},
+    verbose: () => {},
+  }),
+}));
 
 /**
  * Mock implementation that tracks calls and returns predictable text
@@ -28,6 +39,10 @@ class MockTranscribeAudioRepo extends BaseTranscribeAudioRepo {
       input: TranscribeSegmentInput,
       index: number,
     ) => string,
+    private segmentGenerator?: (
+      input: TranscribeSegmentInput,
+      index: number,
+    ) => TranscriptionSegment[] | undefined,
   ) {
     super();
   }
@@ -66,8 +81,13 @@ class MockTranscribeAudioRepo extends BaseTranscribeAudioRepo {
       ? this.transcriptGenerator(input, index)
       : `segment ${index}`;
 
+    const segments = this.segmentGenerator
+      ? this.segmentGenerator(input, index)
+      : undefined;
+
     return {
       text,
+      segments,
       metadata: {
         inferenceDevice: "Mock Device",
         modelSize: "mock",
@@ -77,9 +97,20 @@ class MockTranscribeAudioRepo extends BaseTranscribeAudioRepo {
   }
 }
 
-// Helper to create samples of a specific duration
-const createSamples = (durationSec: number, sampleRate: number): Float32Array =>
-  new Float32Array(Math.floor(durationSec * sampleRate));
+// Helper to create samples of a specific duration. Fill with a low-amplitude
+// tone so the energy-based silence gate treats the audio as speech (all-zero
+// samples are correctly classified as silence and short-circuit the network
+// call, which the splitting/batching tests below do not expect).
+const createSamples = (
+  durationSec: number,
+  sampleRate: number,
+): Float32Array => {
+  const samples = new Float32Array(Math.floor(durationSec * sampleRate));
+  for (let i = 0; i < samples.length; i++) {
+    samples[i] = 0.1 * Math.sin((2 * Math.PI * 220 * i) / sampleRate);
+  }
+  return samples;
+};
 
 const resetStore = () => {
   setAppState(structuredClone(INITIAL_APP_STATE), true);
@@ -167,6 +198,71 @@ describe("BaseTranscribeAudioRepo", () => {
       const result = await repo.transcribeAudio({ samples, sampleRate });
 
       expect(result.text).toBe("Hello world Goodbye moon See you later");
+    });
+
+    it("applies probability-gated silence handling to each chunk before merging long audio", async () => {
+      // Each chunk returns one real segment plus a near-certain-silence
+      // segment (no_speech_prob >= 0.9). The repo must drop the silent segment
+      // per-chunk (not just for single-segment audio) before overlap-merging,
+      // so long recordings still get the probability gate.
+      const chunkTexts = [
+        "The cat sat still.",
+        "A dog ran home.",
+        "Birds flew away.",
+      ];
+      const repo = new MockTranscribeAudioRepo(
+        10,
+        2,
+        3,
+        (_input, index) => chunkTexts[index] ?? "",
+        (_input, index) => [
+          { text: chunkTexts[index] ?? "", noSpeechProb: 0.1 },
+          { text: "[BLANK_AUDIO]", noSpeechProb: 0.99 },
+        ],
+      );
+      const sampleRate = 16000;
+      const samples = createSamples(25, sampleRate);
+
+      const result = await repo.transcribeAudio({ samples, sampleRate });
+
+      expect(result.text).not.toContain("[BLANK_AUDIO]");
+      expect(result.text).toBe(
+        "The cat sat still. A dog ran home. Birds flew away.",
+      );
+    });
+
+    it("preserves each chunk's raw text when hallucination filtering is disabled on long audio", async () => {
+      // Mirrors the enabled-path test above but with the off switch on: every
+      // chunk still has a near-certain-silence segment, but the repo must merge
+      // raw chunk text unchanged so the off switch works for multi-chunk audio.
+      const chunkTexts = [
+        "The cat sat still.",
+        "A dog ran home.",
+        "Birds flew away.",
+      ];
+      const repo = new MockTranscribeAudioRepo(
+        10,
+        2,
+        3,
+        (_input, index) => `${chunkTexts[index] ?? ""} [BLANK_AUDIO]`,
+        (_input, index) => [
+          { text: chunkTexts[index] ?? "", noSpeechProb: 0.1 },
+          { text: "[BLANK_AUDIO]", noSpeechProb: 0.99 },
+        ],
+      );
+      const sampleRate = 16000;
+      const samples = createSamples(25, sampleRate);
+
+      const result = await repo.transcribeAudio({
+        samples,
+        sampleRate,
+        hallucinationFilterEnabled: false,
+      });
+
+      expect(result.text).toContain("[BLANK_AUDIO]");
+      expect(result.text).toBe(
+        "The cat sat still. [BLANK_AUDIO] A dog ran home. [BLANK_AUDIO] Birds flew away. [BLANK_AUDIO]",
+      );
     });
   });
 
@@ -314,7 +410,11 @@ describe("DeepgramTranscribeAudioRepo", () => {
         { status: 200 },
       ),
     );
-    const repo = new DeepgramTranscribeAudioRepo("dg-key", null);
+    const repo = new DeepgramTranscribeAudioRepo(
+      "dg-key",
+      null,
+      globalThis.fetch,
+    );
 
     const result = await repo.transcribeAudio({
       samples: createSamples(1, 16000),
@@ -352,6 +452,53 @@ describe("DeepgramTranscribeAudioRepo", () => {
 
     expect(repo).toBeInstanceOf(DeepgramTranscribeAudioRepo);
     expect(apiKeyId).toBe("deepgram-key");
+  });
+});
+
+describe("GladiaTranscribeAudioRepo", () => {
+  it("is selected with Gladia's supported model", () => {
+    const state = structuredClone(INITIAL_APP_STATE);
+    state.settings.aiTranscription.mode = "api";
+    state.settings.aiTranscription.selectedApiKeyId = "gladia-key";
+    state.apiKeyById["gladia-key"] = {
+      id: "gladia-key",
+      name: "Gladia",
+      provider: "gladia",
+      createdAt: "2026-08-19T00:00:00.000Z",
+      keyFull: "gladia-secret",
+      transcriptionModel: "solaria-1",
+    };
+    setAppState(state, true);
+
+    const { repo, apiKeyId } = getTranscribeAudioRepo();
+
+    expect(repo).toBeInstanceOf(GladiaTranscribeAudioRepo);
+    expect(apiKeyId).toBe("gladia-key");
+    expect(getModelProviderRepo("gladia").supportsTranscriptionModels()).toBe(
+      true,
+    );
+  });
+
+  it("uses 10-minute chunks, five-second overlap, and concurrency one", () => {
+    class InspectableGladiaRepo extends GladiaTranscribeAudioRepo {
+      getChunkingConfiguration() {
+        return {
+          duration: this.getSegmentDurationSec(),
+          overlap: this.getOverlapDurationSec(),
+          concurrency: this.getBatchChunkCount(),
+        };
+      }
+    }
+
+    const repo = new InspectableGladiaRepo("key", "solaria-1", {
+      vocabulary: [],
+      spellingDictionary: {},
+    });
+    expect(repo.getChunkingConfiguration()).toEqual({
+      duration: 600,
+      overlap: 5,
+      concurrency: 1,
+    });
   });
 });
 
@@ -413,7 +560,11 @@ describe("AssemblyAITranscribeAudioRepo", () => {
       },
     );
 
-    const repo = new AssemblyAITranscribeAudioRepo("aa-key");
+    const repo = new AssemblyAITranscribeAudioRepo(
+      "aa-key",
+      null,
+      globalThis.fetch,
+    );
     const result = await repo.transcribeAudio({
       samples: createSamples(1, 16000),
       sampleRate: 16000,
@@ -423,6 +574,115 @@ describe("AssemblyAITranscribeAudioRepo", () => {
     expect(result.text).toBe("hello from assemblyai");
     expect(result.metadata).toMatchObject({
       inferenceDevice: "API • AssemblyAI",
+      transcriptionMode: "api",
+    });
+  });
+
+  it("passes the configured speech model through and reports it in metadata", async () => {
+    let createBody: Record<string, unknown> | null = null;
+    vi.spyOn(globalThis, "fetch").mockImplementation(
+      async (input: string | URL | Request, init?: RequestInit) => {
+        const url = String(input);
+        const method = init?.method ?? "GET";
+
+        if (url.endsWith("/v2/upload")) {
+          return new Response(
+            JSON.stringify({
+              upload_url: "https://cdn.assemblyai.com/upload/abc123",
+            }),
+            { status: 200 },
+          );
+        }
+
+        if (url.endsWith("/v2/transcript") && method === "POST") {
+          createBody = JSON.parse(String(init?.body)) as Record<
+            string,
+            unknown
+          >;
+          return new Response(
+            JSON.stringify({ id: "transcript-1", status: "queued" }),
+            { status: 200 },
+          );
+        }
+
+        return new Response(
+          JSON.stringify({
+            id: "transcript-1",
+            status: "completed",
+            text: "model aware transcript",
+          }),
+          { status: 200 },
+        );
+      },
+    );
+
+    const repo = new AssemblyAITranscribeAudioRepo(
+      "aa-key",
+      "universal-2",
+      globalThis.fetch,
+    );
+    const result = await repo.transcribeAudio({
+      samples: createSamples(1, 16000),
+      sampleRate: 16000,
+    });
+
+    expect(createBody).toMatchObject({
+      speech_models: ["universal-2"],
+      language_detection: true,
+    });
+    expect(result.metadata).toMatchObject({
+      inferenceDevice: "API • AssemblyAI",
+      modelSize: "universal-2",
+      transcriptionMode: "api",
+    });
+  });
+
+  it("reports the migrated successor of a legacy model in metadata", async () => {
+    vi.spyOn(globalThis, "fetch").mockImplementation(
+      async (input: string | URL | Request, init?: RequestInit) => {
+        const url = String(input);
+        const method = init?.method ?? "GET";
+
+        if (url.endsWith("/v2/upload")) {
+          return new Response(
+            JSON.stringify({
+              upload_url: "https://cdn.assemblyai.com/upload/abc123",
+            }),
+            { status: 200 },
+          );
+        }
+
+        if (url.endsWith("/v2/transcript") && method === "POST") {
+          return new Response(
+            JSON.stringify({ id: "transcript-1", status: "queued" }),
+            { status: 200 },
+          );
+        }
+
+        return new Response(
+          JSON.stringify({
+            id: "transcript-1",
+            status: "completed",
+            text: "legacy migrated",
+          }),
+          { status: 200 },
+        );
+      },
+    );
+
+    const repo = new AssemblyAITranscribeAudioRepo(
+      "aa-key",
+      "best",
+      globalThis.fetch,
+    );
+    const result = await repo.transcribeAudio({
+      samples: createSamples(1, 16000),
+      sampleRate: 16000,
+    });
+
+    expect(result.metadata).toMatchObject({
+      inferenceDevice: "API • AssemblyAI",
+      modelSize: "universal-3-5-pro",
       transcriptionMode: "api",
     });
   });
@@ -480,5 +740,52 @@ describe("provider capability and transcription dispatch agreement", () => {
         warning.includes("No transcription-capable API key selected"),
       ),
     ).toBe(true);
+  });
+});
+
+describe("per-segment silence gate (mixed recordings)", () => {
+  it("skips a silent chunk but transcribes a loud chunk in the same recording", async () => {
+    // Two 10s segments: first is a tone (speech-level energy), second
+    // is digital silence. The per-chunk gate must skip the second while
+    // the first is still sent to the provider.
+    const sampleRate = 16000;
+    const samples = new Float32Array(sampleRate * 20);
+    for (let i = 0; i < sampleRate * 10; i++) {
+      samples[i] = 0.1 * Math.sin((2 * Math.PI * 220 * i) / sampleRate);
+    }
+    // indices sampleRate*10 .. end stay 0 (silent)
+
+    // overlapDuration = 0 so the split is exactly [0,10) tone and
+    // [10,20) silence (no mixing of the two regions).
+    const repo = new MockTranscribeAudioRepo(10, 0, 1);
+    const result = await repo.transcribeAudio({
+      samples,
+      sampleRate,
+      prompt: "glossary",
+      language: "en",
+    });
+
+    // Only the first, loud segment reached transcribeSegment.
+    expect(repo.segmentCalls).toHaveLength(1);
+    expect(repo.segmentCalls[0]?.samples.length).toBe(sampleRate * 10);
+    // The result comes from the loud segment only (silent one is "").
+    expect(result.text).toContain("segment 0");
+    expect(result.text).not.toContain("segment 1");
+  });
+
+  it("still sends every chunk when the hallucination filter is disabled", async () => {
+    const sampleRate = 16000;
+    const samples = new Float32Array(sampleRate * 20); // fully silent
+
+    const repo = new MockTranscribeAudioRepo(10, 0, 1);
+    await repo.transcribeAudio({
+      samples,
+      sampleRate,
+      hallucinationFilterEnabled: false,
+    });
+
+    // With overlap 0 a 20s clip splits into two segments, and the filter
+    // being off means even the silent one is sent to the provider.
+    expect(repo.segmentCalls).toHaveLength(2);
   });
 });
