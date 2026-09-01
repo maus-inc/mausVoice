@@ -391,6 +391,14 @@ fn perform_tick() {
                     let prev = ctx.state.phase.get();
                     ctx.state.phase.set(phase);
                     ctx.state.style_tooltip_gate.set_take_running(phase == Phase::Recording);
+                    // A new take sweeps any banner parked above the pill (for
+                    // example the retranscribing toast) so it cannot sit on the
+                    // style selector for the whole take. A resume from Paused
+                    // keeps toasts raised during the take, such as the cancel
+                    // confirm.
+                    if phase == Phase::Recording && matches!(prev, Phase::Idle | Phase::Loading) {
+                        clear_flash(&ctx.state);
+                    }
                     if phase == Phase::Idle && prev != Phase::Idle {
                         ctx.state.target_level.set(0.0);
                         ctx.state.current_level.set(0.0);
@@ -413,10 +421,7 @@ fn perform_tick() {
                     *ctx.state.flash_action_label.borrow_mut() = action_label;
                 }
                 InMessage::DismissToast => {
-                    ctx.state.flash_visible.set(false);
-                    ctx.state.flash_timer.set(0.0);
-                    *ctx.state.flash_action.borrow_mut() = None;
-                    *ctx.state.flash_action_label.borrow_mut() = None;
+                    clear_flash(&ctx.state);
                 }
                 InMessage::Fireworks { message } => {
                     *ctx.state.flash_message.borrow_mut() = message;
@@ -646,6 +651,14 @@ fn update_hover(view: id, ctx: &AppContext) {
 
 // ── Animation tick ────────────────────────────────────────────────
 
+/// Clears the flash banner (native pill toast) and its timer.
+fn clear_flash(state: &PillState) {
+    state.flash_visible.set(false);
+    state.flash_timer.set(0.0);
+    *state.flash_action.borrow_mut() = None;
+    *state.flash_action_label.borrow_mut() = None;
+}
+
 /// Advances all pill animations by `dt` seconds: audio levels, springs
 /// (expand, tooltip, panel, keyboard button, window size, pause crossfade,
 /// cancel controls, drag inflate), and the fireworks/flame/flash/transcript
@@ -772,7 +785,11 @@ fn tick(state: &PillState, window: id, dt: f64) {
             state.flash_timer.set(remaining);
         }
     }
-    let flash_target = if state.flash_visible.get() { 1.0 } else { 0.0 };
+    let flash_target = rust_pill_shared::flash_banner_target(
+        state.flash_visible.get(),
+        state.flash_action.borrow().is_some(),
+        tooltip_target > 0.5,
+    );
     spring_anim(&state.flash_t, &state.flash_velocity, flash_target, SPRING_STIFFNESS, dt);
 
     // Recording <-> paused crossfade driven by the same critically damped

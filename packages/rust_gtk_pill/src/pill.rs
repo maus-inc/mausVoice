@@ -463,6 +463,14 @@ pub fn run(receiver: Receiver<InMessage>) {
                     let prev = state_tick.phase.get();
                     state_tick.phase.set(phase);
                     state_tick.style_tooltip_gate.set_take_running(phase == Phase::Recording);
+                    // A new take sweeps any banner parked above the pill (for
+                    // example the retranscribing toast) so it cannot sit on the
+                    // style selector for the whole take. A resume from Paused
+                    // keeps toasts raised during the take, such as the cancel
+                    // confirm.
+                    if phase == Phase::Recording && matches!(prev, Phase::Idle | Phase::Loading) {
+                        clear_flash(&state_tick);
+                    }
                     if phase == Phase::Idle && prev != Phase::Idle {
                         state_tick.target_level.set(0.0);
                         state_tick.current_level.set(0.0);
@@ -485,10 +493,7 @@ pub fn run(receiver: Receiver<InMessage>) {
                     *state_tick.flash_action_label.borrow_mut() = action_label;
                 }
                 InMessage::DismissToast => {
-                    state_tick.flash_visible.set(false);
-                    state_tick.flash_timer.set(0.0);
-                    *state_tick.flash_action.borrow_mut() = None;
-                    *state_tick.flash_action_label.borrow_mut() = None;
+                    clear_flash(&state_tick);
                 }
                 InMessage::Fireworks { message } => {
                     *state_tick.flash_message.borrow_mut() = message;
@@ -878,6 +883,14 @@ fn release_pointer_if_button_up(window: &gtk::Window, state: &PillState) {
     }
 }
 
+/// Clears the flash banner (native pill toast) and its timer.
+fn clear_flash(state: &PillState) {
+    state.flash_visible.set(false);
+    state.flash_timer.set(0.0);
+    *state.flash_action.borrow_mut() = None;
+    *state.flash_action_label.borrow_mut() = None;
+}
+
 fn tick(state: &PillState) {
     tick_long_press(state);
     let phase = state.phase.get();
@@ -989,7 +1002,11 @@ fn tick(state: &PillState) {
             state.flash_timer.set(remaining);
         }
     }
-    let flash_target = if state.flash_visible.get() { 1.0 } else { 0.0 };
+    let flash_target = rust_pill_shared::flash_banner_target(
+        state.flash_visible.get(),
+        state.flash_action.borrow().is_some(),
+        tooltip_target > 0.5,
+    );
     spring_anim(&state.flash_t, &state.flash_velocity, flash_target, SPRING_STIFFNESS);
 
     // Long-press cancel flash timer

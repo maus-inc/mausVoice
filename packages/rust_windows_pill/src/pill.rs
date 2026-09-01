@@ -451,6 +451,14 @@ fn on_cursor_tick(hwnd: HWND) {
     });
 }
 
+/// Clears the flash banner (native pill toast) and its timer.
+fn clear_flash(state: &PillState) {
+    state.flash_visible.set(false);
+    state.flash_timer.set(0.0);
+    *state.flash_action.borrow_mut() = None;
+    *state.flash_action_label.borrow_mut() = None;
+}
+
 /// Applies one IPC message to the pill state and marks the surface dirty so
 /// the next timer tick repaints.
 fn process_message(msg: InMessage, state: &PillState, _hwnd: HWND) {
@@ -474,6 +482,13 @@ fn process_message(msg: InMessage, state: &PillState, _hwnd: HWND) {
             let prev = state.phase.get();
             state.phase.set(phase);
             state.style_tooltip_gate.set_take_running(phase == Phase::Recording);
+            // A new take sweeps any banner parked above the pill (for example
+            // the retranscribing toast) so it cannot sit on the style selector
+            // for the whole take. A resume from Paused keeps toasts raised
+            // during the take, such as the cancel confirm.
+            if phase == Phase::Recording && matches!(prev, Phase::Idle | Phase::Loading) {
+                clear_flash(state);
+            }
             if phase == Phase::Idle && prev != Phase::Idle {
                 state.target_level.set(0.0);
                 state.current_level.set(0.0);
@@ -496,10 +511,7 @@ fn process_message(msg: InMessage, state: &PillState, _hwnd: HWND) {
             *state.flash_action_label.borrow_mut() = action_label;
         }
         InMessage::DismissToast => {
-            state.flash_visible.set(false);
-            state.flash_timer.set(0.0);
-            *state.flash_action.borrow_mut() = None;
-            *state.flash_action_label.borrow_mut() = None;
+            clear_flash(state);
         }
         InMessage::Fireworks { message } => {
             *state.flash_message.borrow_mut() = message;
@@ -690,7 +702,11 @@ fn tick(state: &PillState, dt: f64) {
             state.flash_timer.set(remaining);
         }
     }
-    let flash_target = if state.flash_visible.get() { 1.0 } else { 0.0 };
+    let flash_target = rust_pill_shared::flash_banner_target(
+        state.flash_visible.get(),
+        state.flash_action.borrow().is_some(),
+        tooltip_target > 0.5,
+    );
     spring_anim(&state.flash_t, &state.flash_velocity, flash_target, SPRING_STIFFNESS, dt);
 
     // Recording <-> paused crossfade driven by the same critically damped

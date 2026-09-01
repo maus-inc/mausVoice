@@ -689,6 +689,24 @@ pub fn style_tooltip_target(
     }
 }
 
+/// Spring target (0.0 or 1.0) for the flash banner (the native pill toast,
+/// e.g. the retranscribing banner).
+///
+/// The banner and the style tooltip share the strip above the pill, so one
+/// must yield. A banner without an action button is informational and yields
+/// to a revealed tooltip: hovering the pill swaps the banner for the style
+/// selector without cancelling the banner, which returns once the pointer
+/// leaves and it has not expired. A banner with an action button (for
+/// example the cancel-dictation confirm) keeps the strip; it is an
+/// interactive prompt, so the tooltip stays suppressed beneath it.
+pub fn flash_banner_target(flash_visible: bool, has_action: bool, tooltip_revealed: bool) -> f64 {
+    if flash_visible && (has_action || !tooltip_revealed) {
+        1.0
+    } else {
+        0.0
+    }
+}
+
 /// Latch that forces the style tooltip to fade the moment a take starts,
 /// even under a pointer that never leaves the pill.
 ///
@@ -1677,9 +1695,32 @@ mod tests {
         gate.set_take_running(true);
         // Pointer leaves while only one style is active: the rule is false,
         // but the leave must still release the latch.
-        assert_eq!(style_tooltip_target(&gate, false, 1, false, 1.0), 0.0);
+        assert_eq!(style_tooltip_target(&gate, false, 1, false, false, 1.0), 0.0);
         // A second style becomes active and the pointer re-enters mid-take.
         assert_eq!(style_tooltip_target(&gate, false, 3, false, true, 1.0), 1.0);
+    }
+
+    #[test]
+    fn flash_banner_yields_the_strip_to_a_revealed_tooltip() {
+        // The retranscribing banner has no action button: hovering the pill
+        // must swap it for the style selector instead of sitting on top of it.
+        assert_eq!(flash_banner_target(true, false, true), 0.0);
+        // Pointer leaves before the banner expires: it returns.
+        assert_eq!(flash_banner_target(true, false, false), 1.0);
+    }
+
+    #[test]
+    fn flash_banner_with_an_action_keeps_the_strip() {
+        // An interactive banner (cancel-dictation confirm) must not vanish
+        // the moment the pill is hovered; the tooltip waits beneath it.
+        assert_eq!(flash_banner_target(true, true, true), 1.0);
+        assert_eq!(flash_banner_target(true, true, false), 1.0);
+    }
+
+    #[test]
+    fn flash_banner_stays_hidden_when_not_visible() {
+        assert_eq!(flash_banner_target(false, false, false), 0.0);
+        assert_eq!(flash_banner_target(false, true, true), 0.0);
     }
 
     #[test]
