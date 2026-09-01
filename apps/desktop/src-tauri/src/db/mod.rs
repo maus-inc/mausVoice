@@ -144,7 +144,6 @@ pub const PILL_RESET_MONITOR_STRATEGY_MIGRATION_SQL: &str =
     include_str!("migrations/073_pill_reset_monitor_strategy.sql");
 pub const ALWAYS_REQUEST_ADMIN_ON_STARTUP_MIGRATION_SQL: &str =
     include_str!("migrations/074_always_request_admin_on_startup.sql");
-<<<<<<< HEAD
 /// Adds the `preserve_audio_on_failure` column to `user_preferences`.
 pub const PRESERVE_AUDIO_ON_FAILURE_MIGRATION_SQL: &str =
     include_str!("migrations/075_preserve_audio_on_failure.sql");
@@ -155,14 +154,12 @@ pub const API_KEY_TRANSCRIPTION_PATH_MIGRATION_SQL: &str =
 /// `user_preferences`.
 pub const PILL_PLACEMENT_AND_HANDS_FREE_DELAY_MIGRATION_SQL: &str =
     include_str!("migrations/077_pill_placement_and_hands_free_delay.sql");
-=======
 pub const TONE_STRUCTURED_FIELDS_MIGRATION_SQL: &str =
-    include_str!("migrations/075_tone_structured_fields.sql");
+    include_str!("migrations/078_tone_structured_fields.sql");
 pub const FEATURE_PREFERENCES_MIGRATION_SQL: &str =
-    include_str!("migrations/076_feature_preferences.sql");
+    include_str!("migrations/079_feature_preferences.sql");
 pub const SPOKEN_COMMANDS_MIGRATION_SQL: &str =
-    include_str!("migrations/077_spoken_commands_enabled.sql");
->>>>>>> origin/fix/superfix-review-findings
+    include_str!("migrations/080_spoken_commands_enabled.sql");
 
 pub fn migrations() -> Vec<tauri_plugin_sql::Migration> {
     vec![
@@ -600,35 +597,38 @@ pub fn migrations() -> Vec<tauri_plugin_sql::Migration> {
         },
         tauri_plugin_sql::Migration {
             version: 75,
-<<<<<<< HEAD
             description: "add_preserve_audio_on_failure",
             sql: PRESERVE_AUDIO_ON_FAILURE_MIGRATION_SQL,
-=======
-            description: "add_tone_structured_fields",
-            sql: TONE_STRUCTURED_FIELDS_MIGRATION_SQL,
->>>>>>> origin/fix/superfix-review-findings
             kind: tauri_plugin_sql::MigrationKind::Up,
         },
         tauri_plugin_sql::Migration {
             version: 76,
-<<<<<<< HEAD
             description: "add_api_key_transcription_path",
             sql: API_KEY_TRANSCRIPTION_PATH_MIGRATION_SQL,
-=======
-            description: "add_feature_preferences",
-            sql: FEATURE_PREFERENCES_MIGRATION_SQL,
->>>>>>> origin/fix/superfix-review-findings
             kind: tauri_plugin_sql::MigrationKind::Up,
         },
         tauri_plugin_sql::Migration {
             version: 77,
-<<<<<<< HEAD
             description: "add_pill_placement_and_hands_free_delay",
             sql: PILL_PLACEMENT_AND_HANDS_FREE_DELAY_MIGRATION_SQL,
-=======
+            kind: tauri_plugin_sql::MigrationKind::Up,
+        },
+        tauri_plugin_sql::Migration {
+            version: 78,
+            description: "add_tone_structured_fields",
+            sql: TONE_STRUCTURED_FIELDS_MIGRATION_SQL,
+            kind: tauri_plugin_sql::MigrationKind::Up,
+        },
+        tauri_plugin_sql::Migration {
+            version: 79,
+            description: "add_feature_preferences",
+            sql: FEATURE_PREFERENCES_MIGRATION_SQL,
+            kind: tauri_plugin_sql::MigrationKind::Up,
+        },
+        tauri_plugin_sql::Migration {
+            version: 80,
             description: "add_spoken_commands_enabled",
             sql: SPOKEN_COMMANDS_MIGRATION_SQL,
->>>>>>> origin/fix/superfix-review-findings
             kind: tauri_plugin_sql::MigrationKind::Up,
         },
     ]

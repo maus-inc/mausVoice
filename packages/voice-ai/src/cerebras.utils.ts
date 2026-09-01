@@ -34,11 +34,8 @@ export type CerebrasGenerateTextArgs = {
   system?: string;
   prompt: string;
   jsonResponse?: JsonResponse;
-<<<<<<< HEAD
   maxTokens?: number;
-=======
   customFetch?: CustomFetch;
->>>>>>> origin/fix/superfix-review-findings
 };
 
 export type CerebrasGenerateResponseOutput = {
@@ -52,11 +49,8 @@ export const cerebrasGenerateTextResponse = async ({
   system,
   prompt,
   jsonResponse,
-<<<<<<< HEAD
   maxTokens,
-=======
   customFetch,
->>>>>>> origin/fix/superfix-review-findings
 }: CerebrasGenerateTextArgs): Promise<CerebrasGenerateResponseOutput> => {
   return retry({
     retries: 3,

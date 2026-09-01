@@ -170,14 +170,9 @@ pub enum OutMessage {
     CancelDictation,
     PauseDictation,
     ResumeDictation,
-<<<<<<< HEAD
     ToastAction {
         action: String,
     },
-    PositionChanged {
-        has_saved_position: bool,
-=======
-    ToastAction { action: String },
     /// Haptic/audio feedback request for the desktop process.
     /// `kind` values: "press", "deep", "release".
     HapticFeedback { kind: String },
@@ -185,7 +180,7 @@ pub enum OutMessage {
         has_saved_position: bool,
         rect: Option<Rect>,
         monitor: Option<Rect>,
->>>>>>> origin/fix/superfix-review-findings
+    },
     },
 }
 

@@ -308,9 +308,6 @@ fn start_stdout_reader(app: tauri::AppHandle, reader: std::io::BufReader<ChildSt
             match reader.read_line(&mut line) {
                 Ok(0) | Err(_) => break,
                 Ok(_) => {
-<<<<<<< HEAD
-                    handle_stdout_line(&app, &line);
-=======
                     if line.contains("\"click\"") {
                         let _ = app.emit_to("main", "on-click-dictate", ());
                     } else if line.contains("\"agent_talk\"") {
@@ -362,9 +359,6 @@ fn start_stdout_reader(app: tauri::AppHandle, reader: std::io::BufReader<ChildSt
                             let _ = app.emit_to("main", "overlay-resolve-permission", payload);
                         }
                     } else if line.contains("\"style_switch\"") {
-                        // Cheap pre-filter so we only attempt JSON parsing (and
-                        // can only emit a parse warning) for lines that actually
-                        // claim to be a style switch, not every misc stdout line.
                         if let Some(direction) = parse_style_switch_direction(&line) {
                             emit_pill_style_switch(&app, direction);
                         }
@@ -376,7 +370,6 @@ fn start_stdout_reader(app: tauri::AppHandle, reader: std::io::BufReader<ChildSt
                             }
                         }
                     } else if line.contains("\"haptic_feedback\"") {
-                        // A23: Thock haptics - play audio feedback for pill gestures.
                         if let Ok(val) =
                             serde_json::from_str::<serde_json::Value>(&line)
                         {
@@ -392,11 +385,6 @@ fn start_stdout_reader(app: tauri::AppHandle, reader: std::io::BufReader<ChildSt
                                 .get("has_saved_position")
                                 .and_then(|v| v.as_bool())
                                 .unwrap_or(false);
-                            // Forward any real pill + monitor geometry the sidecar
-                            // emits (when present) so the composer can anchor next
-                            // to the actual pill instead of falling back to OS
-                            // placement. Absent fields serialize to null and the
-                            // TypeScript consumer treats them as "unknown".
                             let rect = val.get("rect").cloned().filter(|v| v.is_object());
                             let monitor = val
                                 .get("monitor")
@@ -410,7 +398,6 @@ fn start_stdout_reader(app: tauri::AppHandle, reader: std::io::BufReader<ChildSt
                             let _ = app.emit_to("main", "pill-position-changed", payload);
                         }
                     }
->>>>>>> origin/fix/superfix-review-findings
                 }
             }
         }
@@ -418,117 +405,6 @@ fn start_stdout_reader(app: tauri::AppHandle, reader: std::io::BufReader<ChildSt
     });
 }
 
-<<<<<<< HEAD
-fn handle_stdout_line(app: &tauri::AppHandle, line: &str) {
-    if line.contains("\"click\"") {
-        let _ = app.emit_to("main", "on-click-dictate", ());
-    } else if line.contains("\"agent_talk\"") {
-        let _ = app.emit_to("main", "on-click-agent-talk", ());
-    } else if line.contains("\"assistant_close\"") {
-        let _ = app.emit_to("main", "assistant-mode-close", ());
-    } else if line.contains("\"enable_type_mode\"") {
-        let _ = app.emit_to("main", "assistant-enable-type-mode", ());
-    } else if line.contains("\"cancel_dictation\"") {
-        let _ = app.emit_to("main", "cancel-dictation", ());
-    } else if line.contains("\"pause_dictation\"") {
-        let _ = app.emit_to("main", "pause-dictation", ());
-    } else if line.contains("\"resume_dictation\"") {
-        let _ = app.emit_to("main", "resume-dictation", ());
-    } else if line.contains("\"typed_message\"") {
-        handle_typed_message(app, line);
-    } else if line.contains("\"open_conversation\"") {
-        handle_open_conversation(app, line);
-        let _ = app.emit_to("main", "assistant-mode-close", ());
-    } else if line.contains("\"resolve_permission\"") {
-        handle_resolve_permission(app, line);
-    } else if line.contains("\"style_switch\"") {
-        handle_style_switch(app, line);
-    } else if line.contains("\"toast_action\"") {
-        handle_toast_action(app, line);
-    } else if line.contains("\"position_changed\"") {
-        handle_position_changed(app, line);
-    }
-}
-
-fn parse_json(line: &str) -> Option<serde_json::Value> {
-    serde_json::from_str::<serde_json::Value>(line).ok()
-}
-
-// Owned extraction: borrowing from a temporary `Value` inside a let-else
-// would outlive the temporary (E0716), so string fields are cloned out.
-fn json_str_field(line: &str, key: &str) -> Option<String> {
-    parse_json(line)?.get(key)?.as_str().map(str::to_string)
-}
-
-fn handle_typed_message(app: &tauri::AppHandle, line: &str) {
-    let Some(text) = json_str_field(line, "text") else {
-        return;
-    };
-    let payload = serde_json::json!({ "text": text });
-    let _ = app.emit_to("main", "assistant-typed-message", payload);
-}
-
-fn handle_open_conversation(app: &tauri::AppHandle, line: &str) {
-    let Some(id) = json_str_field(line, "conversation_id") else {
-        return;
-    };
-    let payload = serde_json::json!({ "conversationId": id });
-    let _ = app.emit_to("main", "open-pill-conversation", payload);
-}
-
-fn handle_resolve_permission(app: &tauri::AppHandle, line: &str) {
-    let Some(val) = parse_json(line) else {
-        return;
-    };
-    let permission_id = val
-        .get("permission_id")
-        .and_then(|v| v.as_str())
-        .unwrap_or("")
-        .to_string();
-    let status = val
-        .get("status")
-        .and_then(|v| v.as_str())
-        .unwrap_or("denied")
-        .to_string();
-    let always_allow = val
-        .get("always_allow")
-        .and_then(|v| v.as_bool())
-        .unwrap_or(false);
-    let payload = serde_json::json!({
-        "permissionId": permission_id,
-        "status": status,
-        "alwaysAllow": always_allow,
-    });
-    let _ = app.emit_to("main", "overlay-resolve-permission", payload);
-}
-
-fn handle_style_switch(app: &tauri::AppHandle, line: &str) {
-    if line.contains("\"forward\"") {
-        let _ = app.emit_to("main", "tone-switch-forward", ());
-    } else if line.contains("\"backward\"") {
-        let _ = app.emit_to("main", "tone-switch-backward", ());
-    }
-}
-
-fn handle_toast_action(app: &tauri::AppHandle, line: &str) {
-    let Some(action) = json_str_field(line, "action") else {
-        return;
-    };
-    let payload = serde_json::json!({ "action": action });
-    let _ = app.emit_to("main", "toast-action", payload);
-}
-
-fn handle_position_changed(app: &tauri::AppHandle, line: &str) {
-    let Some(has_saved) = parse_json(line)
-        .as_ref()
-        .and_then(|val| val.get("has_saved_position"))
-        .and_then(|v| v.as_bool())
-    else {
-        return;
-    };
-    let payload = serde_json::json!({ "hasSavedPosition": has_saved });
-    let _ = app.emit_to("main", "pill-position-changed", payload);
-=======
 /// Direction of a pill style switch. A closed enum lets the emit path match
 /// exhaustively instead of defensively warning on a value the parser already
 /// guarantees is valid.

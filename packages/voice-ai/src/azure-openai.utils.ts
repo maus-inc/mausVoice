@@ -40,11 +40,8 @@ export type AzureOpenAIGenerateTextArgs = {
   system?: string;
   prompt: string;
   jsonResponse?: JsonResponse;
-<<<<<<< HEAD
   maxTokens?: number;
-=======
   customFetch?: CustomFetch;
->>>>>>> origin/fix/superfix-review-findings
 };
 
 const buildResponseFormat = (
@@ -83,11 +80,8 @@ export const azureOpenAIGenerateText = async ({
   system,
   prompt,
   jsonResponse,
-<<<<<<< HEAD
   maxTokens,
-=======
   customFetch,
->>>>>>> origin/fix/superfix-review-findings
 }: AzureOpenAIGenerateTextArgs): Promise<AzureOpenAIGenerateResponseOutput> => {
   return retry({
     retries: 3,

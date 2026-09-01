@@ -205,9 +205,7 @@ export const submitOnboarding = async () => {
       pillResetMonitorStrategy: "current",
       pillPlacement: "bottom",
       alwaysRequestAdminOnStartup: false,
-<<<<<<< HEAD
       handsFreeDelayMs: DEFAULT_HANDS_FREE_DELAY_MS,
-=======
       inDictationStyleSwitchingEnabled: false,
       hallucinationFilterEnabled: true,
       reviewBeforeInsert: null,
@@ -215,7 +213,6 @@ export const submitOnboarding = async () => {
       agentMaxIterations: 20,
       agentPermissionTimeoutMs: 60_000,
       spokenCommandsEnabled: true,
->>>>>>> origin/fix/superfix-review-findings
     };
 
     const [savedUser, savedPreferences] = await Promise.all([

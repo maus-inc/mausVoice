@@ -116,10 +116,9 @@ const getStylePrompt = (input: PostProcessingPromptInput): string => {
   return "Clean up the provided transcript";
 };
 
-<<<<<<< HEAD
 export const GLOSSARY_EXACT_SPELLING_INSTRUCTION =
   "When the user's glossary contains a term, prefer that exact spelling even if the raw transcript differs.";
-=======
+
 const appendStructuredStyleGuidance = (
   prompt: string,
   tone: ToneConfig,
@@ -131,25 +130,17 @@ const appendStructuredStyleGuidance = (
       `Example input/output: ${tone.exampleInputOutput}`,
   ].filter((field): field is string => Boolean(field));
 
-  // Keep the exact legacy prompt when no structured fields were supplied.
   if (fields.length === 0) {
     return prompt;
   }
 
   return `${prompt}\n\nAdditional style guidance:\n${fields.join("\n")}`;
 };
->>>>>>> origin/fix/superfix-review-findings
 
 export const buildSystemPostProcessingTonePrompt = (
   input: PostProcessingPromptInput,
 ): string => {
   if (input.tone.kind === "template" && input.tone.systemPromptTemplate) {
-<<<<<<< HEAD
-    return `${applyTemplateVars(
-      input.tone.systemPromptTemplate,
-      buildPostProcessingTemplateVars(input),
-    )}\n${GLOSSARY_EXACT_SPELLING_INSTRUCTION}`;
-=======
     const systemPrompt = applyTemplateVars(
       input.tone.systemPromptTemplate,
       buildPostProcessingTemplateVars(input),
@@ -157,7 +148,6 @@ export const buildSystemPostProcessingTonePrompt = (
     return appendHumanizeSkill(
       appendStructuredStyleGuidance(systemPrompt, input.tone),
     );
->>>>>>> origin/fix/superfix-review-findings
   }
 
   const stylePrompt = appendStructuredStyleGuidance(

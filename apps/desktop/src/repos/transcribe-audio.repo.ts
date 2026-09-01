@@ -94,16 +94,9 @@ export type LocalTranscriptionSegment = {
   noSpeechProb: number;
 };
 
-// Whisper emits a non-zero `noSpeechProb` for short bursts of background
-// noise and silences. Drop high-probability segments only when their text
-// matches a known hallucination fragment (stray "thank you" / "you" /
-// punctuation) or is pure noise. Real short utterances ("yes", "ok", a
-// name) can also carry an elevated noSpeechProb on quiet recordings, so
-// length alone must not decide the drop.
 export const NO_SPEECH_PROB_THRESHOLD = 0.6;
 
 const HALLUCINATION_PHRASES = new Set(["thank you", "thanks", "you"]);
-
 const TRAILING_PUNCTUATION = "!.?,";
 
 const stripTrailingPunctuation = (value: string): string => {
@@ -296,20 +289,8 @@ export class LocalTranscribeAudioRepo extends BaseTranscribeAudioRepo {
       hallucinationFilterEnabled: options.hallucinationFilterEnabled,
     });
 
-    const segments = output.segments ?? [];
-    // Narrow fallback: only when the sidecar didn't emit per-segment
-    // metadata at all (the ONNX branch populates `text` directly and
-    // leaves `segments` empty). If segments were emitted but the filter
-    // dropped them all, prefer the empty result over `output.text` so
-    // the silence-hallucination filter still wins against stray
-    // "thank you" / "you" fragments whisper adds on no-sound input.
-    const filtered =
-      segments.length === 0
-        ? (output.text ?? "")
-        : filterLocalTranscriptionSegments(segments);
-
     return {
-      text: filtered,
+      text: output.text,
       metadata: {
         inferenceDevice: output.inferenceDevice,
         modelSize: output.model,
@@ -874,15 +855,6 @@ export class OpenAICompatibleTranscribeAudioRepo extends BaseTranscribeAudioRepo
   private baseUrl: string;
   private model: string;
   private apiKey?: string;
-<<<<<<< HEAD
-  private transcriptionPath?: string;
-
-  constructor(
-    baseUrl: string,
-    model: string,
-    apiKey?: string,
-    transcriptionPath?: string,
-=======
   private customFetch: typeof secureFetch;
 
   constructor(
@@ -890,17 +862,12 @@ export class OpenAICompatibleTranscribeAudioRepo extends BaseTranscribeAudioRepo
     baseUrl: string,
     model: string,
     apiKey?: string,
->>>>>>> origin/fix/superfix-review-findings
   ) {
     super();
     this.baseUrl = baseUrl;
     this.model = model;
     this.apiKey = apiKey;
-<<<<<<< HEAD
-    this.transcriptionPath = transcriptionPath;
-=======
     this.customFetch = createOpenAICompatibleFetch(apiKeyId);
->>>>>>> origin/fix/superfix-review-findings
   }
 
   protected getSegmentDurationSec(): number {
@@ -920,18 +887,6 @@ export class OpenAICompatibleTranscribeAudioRepo extends BaseTranscribeAudioRepo
   ): Promise<TranscribeAudioOutput> {
     const wavBuffer = buildWaveFile(input.samples, input.sampleRate);
 
-<<<<<<< HEAD
-    const { text: transcript } = await openaiCompatibleTranscribeAudio({
-      baseUrl: this.baseUrl,
-      model: this.model,
-      apiKey: this.apiKey,
-      blob: wavBuffer,
-      ext: "wav",
-      prompt: input.prompt ?? undefined,
-      language: input.language,
-      transcriptionPath: this.transcriptionPath,
-    });
-=======
     const { text: transcript, segments } =
       await openaiCompatibleTranscribeAudio({
         baseUrl: this.baseUrl,
@@ -943,7 +898,6 @@ export class OpenAICompatibleTranscribeAudioRepo extends BaseTranscribeAudioRepo
         language: input.language,
         customFetch: this.customFetch,
       });
->>>>>>> origin/fix/superfix-review-findings
 
     return {
       text: transcript,
@@ -961,13 +915,13 @@ export class OpenAICompatibleTranscribeAudioRepo extends BaseTranscribeAudioRepo
 }
 
 export class OpenRouterTranscribeAudioRepo extends BaseTranscribeAudioRepo {
-  private readonly openrouterApiKey: string;
-  private readonly model: string;
+  private apiKey: string;
+  private model: string;
 
-  constructor(apiKey: string, model: string) {
+  constructor(apiKey: string, model: string | null) {
     super();
-    this.openrouterApiKey = apiKey;
-    this.model = model;
+    this.apiKey = apiKey;
+    this.model = model ?? "openai/whisper-large-v3";
   }
 
   protected getSegmentDurationSec(): number {
@@ -986,9 +940,8 @@ export class OpenRouterTranscribeAudioRepo extends BaseTranscribeAudioRepo {
     input: TranscribeSegmentInput,
   ): Promise<TranscribeAudioOutput> {
     const wavBuffer = buildWaveFile(input.samples, input.sampleRate);
-
     const { text: transcript } = await openrouterTranscribeAudio({
-      apiKey: this.openrouterApiKey,
+      apiKey: this.apiKey,
       model: this.model,
       blob: wavBuffer,
       ext: "wav",

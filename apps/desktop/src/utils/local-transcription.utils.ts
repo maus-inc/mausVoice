@@ -10,8 +10,7 @@ export type LocalWhisperModel =
   | "turbo"
   | "parakeet-ctc-0.6b"
   | "parakeet-tdt-0.6b"
-  | "canary-1b"
-  | "sense-voice";
+  | "canary-1b";
 
 export type LocalModelCategory = "fast" | "whisper" | "sherpa";
 
@@ -28,7 +27,6 @@ export const LOCAL_WHISPER_MODELS: LocalWhisperModel[] = [
   "parakeet-ctc-0.6b",
   "parakeet-tdt-0.6b",
   "canary-1b",
-  "sense-voice",
   "tiny",
   "base",
   "small",
@@ -68,14 +66,6 @@ const MODEL_LOOKUP: Record<LocalWhisperModel, ModelMeta> = {
       defaultMessage: "Multilingual STT + automatic punctuation & casing",
     }),
     category: "fast",
-  },
-  "sense-voice": {
-    label: defineMessage({ defaultMessage: "SenseVoice (226 MB)" }),
-    helper: defineMessage({
-      defaultMessage:
-        "Multilingual local ASR with strong silence handling (no punctuation)",
-    }),
-    category: "sherpa",
   },
   tiny: {
     label: defineMessage({ defaultMessage: "Whisper Tiny (77 MB)" }),

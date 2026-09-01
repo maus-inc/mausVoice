@@ -1248,7 +1248,6 @@ pillResetMonitorStrategy?: string;
  * Request admin elevation (UAC) on every startup. Windows-only; off by
  * default so existing behavior is unchanged.
  */
-<<<<<<< HEAD
 alwaysRequestAdminOnStartup?: boolean; 
 /**
  * Where the dictation pill anchors on screen. Accepted values are
@@ -1260,14 +1259,17 @@ pillPlacement?: string;
  * Delay (ms) between a hands-free stop and the actual paste/type
  * action. NULL disables the delay (immediate paste on stop).
  */
-handsFreeDelayMs?: number | null }
-=======
-alwaysRequestAdminOnStartup?: boolean; inDictationStyleSwitchingEnabled?: boolean; hallucinationFilterEnabled?: boolean; reviewBeforeInsert?: boolean | null; agentEnabledTools?: string | null; agentMaxIterations?: number; agentPermissionTimeoutMs?: number; 
+handsFreeDelayMs?: number | null; 
+inDictationStyleSwitchingEnabled?: boolean; 
+hallucinationFilterEnabled?: boolean; 
+reviewBeforeInsert?: boolean | null; 
+agentEnabledTools?: string | null; 
+agentMaxIterations?: number; 
+agentPermissionTimeoutMs?: number; 
 /**
  * Deterministic spoken formatting / scratch-that. Default on.
  */
 spokenCommandsEnabled?: boolean }
->>>>>>> origin/fix/superfix-review-findings
 export type UserPreferencesGetArgs = { userId: string }
 
 /** tauri-specta globals **/

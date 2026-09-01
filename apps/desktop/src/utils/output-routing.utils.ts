@@ -4,13 +4,9 @@ import type {
   RouteTranscriptOutputResult,
 } from "@maus-inc/types";
 import { getIntl } from "../i18n/intl";
-<<<<<<< HEAD
-import { getAppState } from "../store";
-import { getEffectiveHandsFreeDelayMs } from "./hands-free-delay.utils";
-=======
 import { getAppState, produceAppState } from "../store";
+import { getEffectiveHandsFreeDelayMs } from "./hands-free-delay.utils";
 import { reviewTextInComposer } from "./composer.utils";
->>>>>>> origin/fix/superfix-review-findings
 import { getLogger } from "./log.utils";
 import { sendPillFlashMessage } from "./overlay.utils";
 import { sanitizeIndentation } from "./string.utils";
@@ -18,9 +14,8 @@ import { getMyUserPreferences } from "./user.utils";
 
 type PasteOutcome = "pasted" | "copied_to_clipboard";
 
-<<<<<<< HEAD
 let handsFreeSessionId = 0;
-=======
+
 type OutputContext = {
   state: ReturnType<typeof getAppState>;
   prefs: ReturnType<typeof getMyUserPreferences>;
@@ -87,22 +82,13 @@ const insertLocalOutput = async (
         null);
   return insertLocalTranscriptOutputViaPaste(text, pasteKeybind);
 };
->>>>>>> origin/fix/superfix-review-findings
 
 export const routeTranscriptOutput = async (
   args: RouteTranscriptOutputArgs,
 ): Promise<RouteTranscriptOutputResult> => {
-<<<<<<< HEAD
-  const state = getAppState();
-  const prefs = getMyUserPreferences(state);
-  const sessionId = ++handsFreeSessionId;
-  const currentApp = args.currentAppId
-    ? (state.appTargetById[args.currentAppId] ?? null)
-    : null;
-=======
   const context = getOutputContext(args);
   const { prefs } = context;
->>>>>>> origin/fix/superfix-review-findings
+  const sessionId = ++handsFreeSessionId;
 
   if (prefs?.remoteOutputEnabled && prefs.remoteTargetDeviceId) {
     const outputText = await reviewOutputText(
@@ -117,8 +103,6 @@ export const routeTranscriptOutput = async (
   const outputText = await reviewOutputText(args.text, prefs, args.skipReview);
   if (!outputText?.trim()) return { delivered: false, remote: false };
 
-<<<<<<< HEAD
-  const typingSpeedMs = currentApp?.typingSpeedMs ?? prefs?.typingSpeedMs ?? 5;
   const handsFreeDelayMs = getEffectiveHandsFreeDelayMs(prefs);
 
   if (handsFreeDelayMs > 0 && !args.isInterim) {
@@ -126,31 +110,12 @@ export const routeTranscriptOutput = async (
       setTimeout(resolve, handsFreeDelayMs);
     });
     if (sessionId !== handsFreeSessionId) {
-      // A newer delivery (final transcript or another session) superseded
-      // this one while it waited; drop it instead of pasting stale text.
       return { delivered: false, remote: false };
     }
   }
 
-  if (insertionMethod === "type") {
-    await insertLocalTranscriptOutputViaTyping(args.text, typingSpeedMs);
-  } else {
-    const pasteKeybind =
-      state.supportsPasteKeybinds === "global"
-        ? (prefs?.pasteKeybind ?? null)
-        : (currentApp?.pasteKeybind ?? prefs?.pasteKeybind ?? null);
-
-    await insertLocalTranscriptOutputViaPaste(args.text, pasteKeybind);
-  }
-
-  return {
-    delivered: true,
-    remote: false,
-  };
-=======
   await insertLocalOutput(context, outputText);
   return { delivered: true, remote: false };
->>>>>>> origin/fix/superfix-review-findings
 };
 
 export const insertLocalTranscriptOutputViaPaste = async (

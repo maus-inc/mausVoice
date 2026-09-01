@@ -520,9 +520,9 @@ export const storeTranscription = async (
     return { transcription: null, wordCount: 0 };
   }
 
+  const hasText = !!(input.rawTranscript && input.rawTranscript.length > 0);
   const transcriptionFailed =
     input.rawTranscript === null && input.warnings.length > 0;
-  const hasText = !!(input.rawTranscript && input.rawTranscript.length > 0);
 
   if (rate <= 0 || sampleCount === 0) {
     if (hasText) {
@@ -542,18 +542,11 @@ export const storeTranscription = async (
   }
 
   const state = getAppState();
-<<<<<<< HEAD
-  const incognitoEnabled = state.userPrefs?.incognitoModeEnabled ?? false;
-  const includeInStats = state.userPrefs?.incognitoModeIncludeInStats ?? false;
-  const preserveAudioOnFailure =
-    state.userPrefs?.preserveAudioOnFailure ?? true;
-  const wordsAdded = input.transcript ? countWords(input.transcript) : 0;
-=======
   const incognitoEnabled = orFalse(state.userPrefs?.incognitoModeEnabled);
   const includeInStats = orFalse(state.userPrefs?.incognitoModeIncludeInStats);
+  const preserveAudioOnFailure =
+    state.userPrefs?.preserveAudioOnFailure ?? true;
   const wordsAdded = getWordsAdded(input.transcript);
->>>>>>> origin/fix/superfix-review-findings
-
   const transcriptionId = createId();
 
   if (incognitoEnabled) {
@@ -567,64 +560,25 @@ export const storeTranscription = async (
     return { transcription: null, wordCount: wordsAdded };
   }
 
-<<<<<<< HEAD
-  let audioSnapshot: TranscriptionAudioSnapshot | undefined;
   // Skip the audio write entirely when the user has opted out of retaining
   // failed recordings, so we don't leak a WAV on disk with no DB pointer to
-  // ever purge it from. The transcriptions.audio_path is the only thing
-  // purge_stale_transcription_audio follows, so a write that the DB row
-  // then forgets about is unrecoverable.
+  // ever purge it from.
   const shouldPersistAudio =
     rate > 0 &&
     sampleCount > 0 &&
     !(transcriptionFailed && !preserveAudioOnFailure);
-  if (shouldPersistAudio) {
-    const payloadSamples = Array.isArray(input.audio.samples)
-      ? input.audio.samples
-      : Array.from(input.audio.samples ?? []);
-    try {
-      audioSnapshot = await invoke<TranscriptionAudioSnapshot>(
-        "store_transcription_audio",
-        {
-          id: transcriptionId,
-          samples: payloadSamples,
-          sampleRate: rate,
-        },
-      );
-    } catch (error) {
-      console.error("Failed to persist audio snapshot", error);
-    }
-  }
-
-  const transcription: Transcription = {
-    id: transcriptionId,
-    transcript: !transcriptionFailed
-      ? (input.transcript ?? "")
-      : "[Transcription Failed]",
-=======
-  // Coerce the samples to an Array regardless of whether the IPC layer
-  // returned a plain Array or a typed-array-like. The rate<=0 / empty
-  // short-circuit above already guarantees this path is non-empty.
   const payloadSamples = Array.isArray(input.audio.samples)
     ? input.audio.samples
     : Array.from(input.audio.samples ?? []);
-
-  const transcriptionId = createId();
-  const audioSnapshot = await persistAudioSnapshot(
-    transcriptionId,
-    payloadSamples,
-    rate,
-  );
-
-  const transcriptionFailed =
-    input.rawTranscript === null && input.warnings.length > 0;
+  const audioSnapshot = shouldPersistAudio
+    ? await persistAudioSnapshot(transcriptionId, payloadSamples, rate)
+    : undefined;
 
   const transcription = buildTranscriptionRecord({
     input,
     transcriptionId,
     audioSnapshot,
     transcriptionFailed,
->>>>>>> origin/fix/superfix-review-findings
     createdAt: dayjs().toISOString(),
     createdByUserId: getMyEffectiveUserId(state),
   });

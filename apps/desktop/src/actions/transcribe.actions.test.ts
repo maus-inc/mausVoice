@@ -22,12 +22,16 @@ const { loggerMock, invokeMock } = vi.hoisted(() => ({
 }));
 
 vi.mock("../utils/log.utils", () => ({ getLogger: () => loggerMock }));
-<<<<<<< HEAD
 vi.mock("@tauri-apps/api/core", () => ({
   invoke: (...args: unknown[]) => invokeMock(...args),
   Resource: class {},
   Channel: class {},
   convertFileSrc: (path: string) => path,
+}));
+
+vi.mock("@tauri-apps/plugin-http", () => ({
+  fetch: (...args: Parameters<typeof globalThis.fetch>) =>
+    globalThis.fetch(...args),
 }));
 
 const { createTranscriptionMock, purgeStaleAudioMock } = vi.hoisted(() => ({
@@ -40,6 +44,7 @@ vi.mock("../repos", async (importOriginal) => {
   return {
     ...actual,
     getTranscriptionRepo: () => ({
+      ...actual.getTranscriptionRepo(),
       createTranscription: createTranscriptionMock,
       purgeStaleAudio: purgeStaleAudioMock,
     }),
@@ -47,12 +52,7 @@ vi.mock("../repos", async (importOriginal) => {
 });
 
 vi.mock("./user.actions", () => ({
-  addWordsToCurrentUser: vi.fn(async () => undefined),
-=======
-vi.mock("@tauri-apps/plugin-http", () => ({
-  fetch: (...args: Parameters<typeof globalThis.fetch>) =>
-    globalThis.fetch(...args),
->>>>>>> origin/fix/superfix-review-findings
+  recordUsageWords: vi.fn(),
 }));
 
 const staleOllamaState = () => {

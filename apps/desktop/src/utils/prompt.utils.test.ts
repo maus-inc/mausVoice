@@ -58,14 +58,9 @@ describe("buildSystemPostProcessingTonePrompt", () => {
         systemPromptTemplate: "You are a custom assistant for the enterprise.",
       }),
     );
-<<<<<<< HEAD
     expect(result).toContain("You are a custom assistant for the enterprise.");
     expect(result).toContain(GLOSSARY_EXACT_SPELLING_INSTRUCTION);
-=======
-    expect(result).toBe(
-      `You are a custom assistant for the enterprise.\n\n${HUMANIZE_SKILL_TEXT}`,
-    );
->>>>>>> origin/fix/superfix-review-findings
+    expect(result).toContain(HUMANIZE_SKILL_TEXT);
   });
 
   it("substitutes variables in template system prompt", () => {
@@ -80,14 +75,9 @@ describe("buildSystemPostProcessingTonePrompt", () => {
         { userName: "Bob", dictationLanguage: "fr" },
       ),
     );
-<<<<<<< HEAD
     expect(result).toContain("You assist Bob with transcripts in Français.");
     expect(result).toContain(GLOSSARY_EXACT_SPELLING_INSTRUCTION);
-=======
-    expect(result).toBe(
-      `You assist Bob with transcripts in Français.\n\n${HUMANIZE_SKILL_TEXT}`,
-    );
->>>>>>> origin/fix/superfix-review-findings
+    expect(result).toContain(HUMANIZE_SKILL_TEXT);
   });
 
   it("falls back to default when template config has no systemPromptTemplate", () => {

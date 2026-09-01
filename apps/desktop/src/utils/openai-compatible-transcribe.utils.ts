@@ -1,13 +1,9 @@
-<<<<<<< HEAD
-import { fetch } from "@tauri-apps/plugin-http";
 import {
   buildOpenAICompatibleTranscriptionUrl,
+  normalizeOpenAICompatibleBaseUrl,
   OPENAI_COMPATIBLE_DEFAULT_TRANSCRIPTION_PATH,
 } from "./openai-compatible.utils";
-=======
-import { normalizeOpenAICompatibleBaseUrl } from "./openai-compatible.utils";
 import { secureFetch } from "./secure-fetch.utils";
->>>>>>> origin/fix/superfix-review-findings
 
 export type OpenAICompatibleTranscriptionArgs = {
   baseUrl: string;
@@ -17,16 +13,13 @@ export type OpenAICompatibleTranscriptionArgs = {
   ext: string;
   prompt?: string;
   language?: string;
-<<<<<<< HEAD
   transcriptionPath?: string;
-=======
   customFetch?: typeof secureFetch;
 };
 
 export type OpenAICompatibleTranscriptionSegment = {
   text: string;
   noSpeechProb?: number;
->>>>>>> origin/fix/superfix-review-findings
 };
 
 export type OpenAICompatibleTranscribeAudioOutput = {
@@ -42,21 +35,14 @@ export const openaiCompatibleTranscribeAudio = async ({
   ext,
   prompt,
   language,
-<<<<<<< HEAD
   transcriptionPath,
+  customFetch = secureFetch,
 }: OpenAICompatibleTranscriptionArgs): Promise<OpenAICompatibleTranscribeAudioOutput> => {
   const url = buildOpenAICompatibleTranscriptionUrl(
-    baseUrl,
+    normalizeOpenAICompatibleBaseUrl(baseUrl),
     false,
     transcriptionPath ?? OPENAI_COMPATIBLE_DEFAULT_TRANSCRIPTION_PATH,
   );
-=======
-  customFetch = secureFetch,
-}: OpenAICompatibleTranscriptionArgs): Promise<OpenAICompatibleTranscribeAudioOutput> => {
-  // Use the shared URL normalizer so trailing-slash stripping and any future
-  // URL normalisation logic stays consistent across the codebase.
-  const url = normalizeOpenAICompatibleBaseUrl(baseUrl);
->>>>>>> origin/fix/superfix-review-findings
 
   // Arbitrary user-configured OpenAI-compatible servers vary widely. We prefer
   // `verbose_json` so capable servers return `segments[].no_speech_prob` and
@@ -87,20 +73,12 @@ export const openaiCompatibleTranscribeAudio = async ({
     headers["Authorization"] = `Bearer ${apiKey}`;
   }
 
-<<<<<<< HEAD
-  const response = await fetch(url, {
-    method: "POST",
-    body: formData,
-    headers,
-  });
-=======
   const send = (format: "verbose_json" | "json" | null) =>
-    customFetch(`${url}/audio/transcriptions`, {
+    customFetch(url, {
       method: "POST",
       body: buildBody(format),
       headers,
     });
->>>>>>> origin/fix/superfix-review-findings
 
   // A Response body is a single-use stream: read it at most once and pass the
   // text around rather than re-reading after the degradation logic consumes it.

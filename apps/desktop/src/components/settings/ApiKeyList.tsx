@@ -61,17 +61,6 @@ const getAvailableProviders = (context: ApiKeyListContext): ApiKeyProvider[] =>
       : repo.supportsGenerativeTextModels();
   });
 
-<<<<<<< HEAD
-type AddApiKeyValues = {
-  name: string;
-  provider: SettingsApiKeyProvider;
-  key: string;
-  baseUrl?: string;
-  azureRegion?: string;
-  transcriptionModel?: string;
-  includeV1Path?: boolean;
-  transcriptionPath?: string;
-=======
 const ApiKeyFormActions = ({
   onCancel,
   onSave,
@@ -125,11 +114,18 @@ const ApiKeyFormActions = ({
       </Button>
     </Box>
   );
->>>>>>> origin/fix/superfix-review-findings
 };
 
 type AddApiKeyCardProps = {
-  onSave: (values: AddApiKeyValues) => Promise<void>;
+  onSave: (
+    name: string,
+    provider: SettingsApiKeyProvider,
+    key: string,
+    baseUrl?: string,
+    azureRegion?: string,
+    transcriptionModel?: string,
+    includeV1Path?: boolean,
+  ) => Promise<void>;
   onCancel: () => void;
   context: ApiKeyListContext;
 };
@@ -168,20 +164,16 @@ const AddApiKeyCard = ({ onSave, onCancel, context }: AddApiKeyCardProps) => {
       const includeV1PathValue = config.showIncludeV1Path
         ? includeV1Path
         : undefined;
-      const transcriptionPath = fieldValues.transcriptionPath
-        ? fieldValues.transcriptionPath
-        : undefined;
 
-      await onSave({
+      await onSave(
         name,
         provider,
-        key: apiKeyValue,
+        apiKeyValue,
         baseUrl,
         azureRegion,
         transcriptionModel,
-        includeV1Path: includeV1PathValue,
-        transcriptionPath,
-      });
+        includeV1PathValue,
+      );
       setName("");
       setFieldValues({});
       setIncludeV1Path(true);
@@ -266,7 +258,6 @@ type EditApiKeyCardProps = {
     azureRegion?: string | null;
     includeV1Path?: boolean | null;
     transcriptionModel?: string | null;
-    transcriptionPath?: string | null;
   }) => Promise<void>;
   onCancel: () => void;
   onTest: (overrides: Partial<SettingsApiKey>) => void;
@@ -289,8 +280,6 @@ const EditApiKeyCard = ({
     if (apiKey.azureRegion) initial.azureRegion = apiKey.azureRegion;
     if (apiKey.transcriptionModel)
       initial.transcriptionModel = apiKey.transcriptionModel;
-    if (apiKey.transcriptionPath)
-      initial.transcriptionPath = apiKey.transcriptionPath;
     return initial;
   });
   const [includeV1Path, setIncludeV1Path] = useState(
@@ -332,12 +321,6 @@ const EditApiKeyCard = ({
       const transcriptionModel = hasTranscriptionModelField
         ? fieldValues.transcriptionModel || null
         : undefined;
-      const hasTranscriptionPathField = config.fields.some(
-        (f) => f.key === "transcriptionPath",
-      );
-      const transcriptionPath = hasTranscriptionPathField
-        ? fieldValues.transcriptionPath || null
-        : undefined;
 
       await onSave({
         name,
@@ -346,7 +329,6 @@ const EditApiKeyCard = ({
         azureRegion,
         includeV1Path: includeV1PathValue,
         transcriptionModel,
-        transcriptionPath,
       });
     } catch (error) {
       console.error("Failed to save API key", error);
@@ -838,16 +820,15 @@ export const ApiKeyList = ({
   }, [apiKeys, selectedApiKeyId, onChange]);
 
   const handleAddApiKey = useCallback(
-    async ({
-      name,
-      provider,
-      key,
-      baseUrl,
-      azureRegion,
-      transcriptionModel,
-      includeV1Path,
-      transcriptionPath,
-    }: AddApiKeyValues) => {
+    async (
+      name: string,
+      provider: SettingsApiKeyProvider,
+      key: string,
+      baseUrl?: string,
+      azureRegion?: string,
+      transcriptionModel?: string,
+      includeV1Path?: boolean,
+    ) => {
       const created = await createApiKey({
         id: generateApiKeyId(),
         name,
@@ -856,7 +837,6 @@ export const ApiKeyList = ({
         baseUrl,
         azureRegion,
         includeV1Path,
-        transcriptionPath,
       });
 
       if (transcriptionModel) {
@@ -948,7 +928,6 @@ export const ApiKeyList = ({
         azureRegion?: string | null;
         includeV1Path?: boolean | null;
         transcriptionModel?: string | null;
-        transcriptionPath?: string | null;
       },
     ) => {
       await updateApiKey({
@@ -961,10 +940,6 @@ export const ApiKeyList = ({
         transcriptionModel:
           payload.transcriptionModel !== undefined
             ? payload.transcriptionModel
-            : undefined,
-        transcriptionPath:
-          payload.transcriptionPath !== undefined
-            ? payload.transcriptionPath
             : undefined,
       });
       setEditingApiKeyId(null);

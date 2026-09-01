@@ -24,7 +24,6 @@ export const buildOpenAICompatibleUrl = (
   return shouldIncludeV1 ? `${normalized}/v1` : normalized;
 };
 
-<<<<<<< HEAD
 export const buildOpenAICompatibleTranscriptionUrl = (
   baseUrl?: string | null,
   includeV1Path?: boolean | null,
@@ -39,10 +38,9 @@ export const buildOpenAICompatibleTranscriptionUrl = (
   }
   return `${buildOpenAICompatibleUrl(baseUrl, includeV1Path)}${path}`;
 };
-=======
+
 export const appendOpenAICompatiblePath = (
   apiBaseUrl: string,
   path: string,
 ): string =>
   `${normalizeOpenAICompatibleBaseUrl(apiBaseUrl)}/${path.replace(/^\/+/, "")}`;
->>>>>>> origin/fix/superfix-review-findings

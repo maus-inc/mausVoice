@@ -215,11 +215,8 @@ export class DictationStrategy extends BaseStrategy {
           text: textToPaste,
           mode: "dictation",
           currentAppId: this.currentAppId,
-<<<<<<< HEAD
           isInterim: true,
-=======
           skipReview: true,
->>>>>>> origin/fix/superfix-review-findings
         });
       } catch (error) {
         getLogger().error(`Failed to paste interim segment: ${error}`);

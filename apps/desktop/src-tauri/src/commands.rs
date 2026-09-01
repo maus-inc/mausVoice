@@ -3632,7 +3632,6 @@ struct AllowedCommand {
 
 #[cfg(not(target_os = "windows"))]
 const ALLOWED_COMMANDS: &[AllowedCommand] = &[
-<<<<<<< HEAD
     AllowedCommand {
         binary: "ls",
         fixed_args: &[],
@@ -3685,20 +3684,6 @@ const ALLOWED_COMMANDS: &[AllowedCommand] = &[
         binary: "wc",
         fixed_args: &["-l"],
     },
-=======
-    AllowedCommand { binary: "ls", fixed_args: &[] },
-    AllowedCommand { binary: "pwd", fixed_args: &[] },
-    AllowedCommand { binary: "echo", fixed_args: &[] },
-    AllowedCommand { binary: "which", fixed_args: &[] },
-    AllowedCommand { binary: "whoami", fixed_args: &[] },
-    AllowedCommand { binary: "date", fixed_args: &[] },
-    AllowedCommand { binary: "uname", fixed_args: &["-a"] },
-    AllowedCommand { binary: "df", fixed_args: &["-h"] },
-    AllowedCommand { binary: "du", fixed_args: &["-sh"] },
-    AllowedCommand { binary: "head", fixed_args: &["-n", "200"] },
-    AllowedCommand { binary: "tail", fixed_args: &["-n", "200"] },
-    AllowedCommand { binary: "wc", fixed_args: &["-l"] },
->>>>>>> origin/fix/superfix-review-findings
     #[cfg(target_os = "macos")]
     AllowedCommand {
         binary: "open",
@@ -3809,9 +3794,6 @@ fn validate_floating_window_url(url: &Url) -> Result<(), String> {
     match url.scheme() {
         "http" | "https" => {
             let host = url.host_str().unwrap_or("");
-<<<<<<< HEAD
-            let is_localhost = host == "localhost" || host == "127.0.0.1" || host == "[::1]";
-=======
             // url::Url::host_str() typically returns IPv6 without brackets,
             // but accept bracketed form and any loopback address too.
             let is_loopback_ip = host
@@ -3820,7 +3802,6 @@ fn validate_floating_window_url(url: &Url) -> Result<(), String> {
                 .map(|ip| ip.is_loopback())
                 .unwrap_or(false);
             let is_localhost = host == "localhost" || is_loopback_ip;
->>>>>>> origin/fix/superfix-review-findings
             // Docs-site windows are allowed to load, but they do not inherit
             // IPC: `maus-inc.github.io` is not in the `floating-*` capability
             // `remote.urls` list. Localhost remains the only remote host with
@@ -4975,21 +4956,11 @@ mod tests {
         // check the redirect policy applies to every hop.
         assert!(validate_installer_url(&Url::parse("https://evil.com/app.pkg").unwrap()).is_err());
         assert!(
-<<<<<<< HEAD
             validate_installer_url(&Url::parse("http://github.com/maus-inc/app.pkg").unwrap())
                 .is_err()
         );
         assert!(validate_installer_url(
-            &Url::parse("https://github.com/maus-inc/payload.sh").unwrap()
-=======
-            validate_installer_url(
-                &Url::parse("https://evil.com/app.pkg").unwrap(),
-                TRUSTED_REPO_NAMESPACE
-            )
-            .is_err()
-        );
-        assert!(validate_installer_url(
-            &Url::parse("http://github.com/maus-inc/app.pkg").unwrap(),
+            &Url::parse("https://evil.com/app.pkg").unwrap(),
             TRUSTED_REPO_NAMESPACE
         )
         .is_err());
@@ -4998,13 +4969,12 @@ mod tests {
             TRUSTED_REPO_NAMESPACE
         )
         .is_err());
-        // An objects CDN hop that escapes into a different repository namespace
-        // must be rejected even though the host is allow-listed.
         assert!(validate_installer_url(
             &Url::parse("https://objects.githubusercontent.com/other-org/otherRepo/releases/download/v1/app.pkg")
                 .unwrap(),
             TRUSTED_REPO_NAMESPACE
->>>>>>> origin/fix/superfix-review-findings
+        )
+        .is_err());
         )
         .is_err());
     }
@@ -6152,7 +6122,6 @@ mod tests {
     }
 }
 
-<<<<<<< HEAD
 /// Strict, shell-free execution for an allow-listed command.
 ///
 /// Security properties:
@@ -6171,49 +6140,13 @@ pub async fn run_terminal_command(command: String) -> Result<RunTerminalCommandR
     // All validation is centralised in validate_terminal_command_args so the
     // production path and unit tests can't drift.
     let (allowed, user) = validate_terminal_command_args(&command)?;
-=======
-#[cfg(test)]
-mod installer_url_tests {
-    use super::*;
->>>>>>> origin/fix/superfix-review-findings
-
-    #[test]
-    fn initial_installer_url_requires_trusted_repo_path() {
-        // The exact URL the TS layer builds for the macOS manual fallback.
-        assert!(validate_initial_installer_url(
-            &Url::parse(
-                "https://github.com/maus-inc/mausVoice/releases/download/v0.1.5/mausVoice_0.1.5_universal.dmg"
-            )
-            .unwrap()
-        )
-        .is_ok());
-
-        // A release asset from a *different* repository must be rejected.
-        assert!(validate_initial_installer_url(
-            &Url::parse(
-                "https://github.com/evil/repo/releases/download/v1/x.dmg"
-            )
-            .unwrap()
-        )
-        .is_err());
-
-<<<<<<< HEAD
-        // Never inherit the user's shell environment wholesale; clear dangerous vars.
-        cmd.env_clear();
-        if let Ok(path) = std::env::var(PATH) {
-            cmd.env("PATH", path);
-        }
-        cmd.env("LANG", "C.UTF-8");
-=======
-        // The redirect CDN host is not a valid *initial* URL.
-        assert!(validate_initial_installer_url(
-            &Url::parse(
-                "https://release-assets.githubusercontent.com/maus-inc/mausVoice/releases/download/v0.1.5/x.dmg"
-            )
-            .unwrap()
-        )
-        .is_err());
->>>>>>> origin/fix/superfix-review-findings
+    // Never inherit the user's shell environment wholesale; clear dangerous vars.
+    let mut cmd = std::process::Command::new(allowed.binary);
+    cmd.env_clear();
+    if let Ok(path) = std::env::var(PATH) {
+        cmd.env("PATH", path);
+    }
+    cmd.env("LANG", "C.UTF-8");
 
         // Non-installer extensions are rejected.
         assert!(validate_initial_installer_url(
@@ -6422,7 +6355,6 @@ wLMDjy9FLAuxZ3q4NlEvkgtyhrr0gtTu6KC4KBJdITbbOeAi1zBIYo0v4iTgt8jJpIidRJnp94ABQkJA
         assert!(verify_minisign_data(public_key, b"test", "not-a-signature").is_err());
     }
 }
-<<<<<<< HEAD
 
 /// Maximum size we are willing to download for a `.pkg` installer.
 const INSTALLER_MAX_BYTES: u64 = 250 * 1024 * 1024;
@@ -6682,5 +6614,3 @@ pub async fn floating_window_list(app: AppHandle) -> Result<Vec<FloatingWindowIn
     }
     Ok(out)
 }
-=======
->>>>>>> origin/fix/superfix-review-findings

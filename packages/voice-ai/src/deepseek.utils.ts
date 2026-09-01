@@ -39,11 +39,8 @@ export type DeepseekGenerateTextArgs = {
   system?: string;
   prompt: string;
   jsonResponse?: JsonResponse;
-<<<<<<< HEAD
   maxTokens?: number;
-=======
   customFetch?: CustomFetch;
->>>>>>> origin/fix/superfix-review-findings
 };
 
 export type DeepseekGenerateResponseOutput = {
@@ -57,11 +54,8 @@ export const deepseekGenerateTextResponse = async ({
   system,
   prompt,
   jsonResponse,
-<<<<<<< HEAD
   maxTokens,
-=======
   customFetch,
->>>>>>> origin/fix/superfix-review-findings
 }: DeepseekGenerateTextArgs): Promise<DeepseekGenerateResponseOutput> => {
   return retry({
     retries: 3,

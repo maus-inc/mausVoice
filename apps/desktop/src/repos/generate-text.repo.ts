@@ -46,11 +46,8 @@ export type GenerateTextInput = {
   system?: Nullable<string>;
   prompt: string;
   jsonResponse?: JsonResponse;
-<<<<<<< HEAD
-  maxTokens?: number;
-=======
   signal?: AbortSignal;
->>>>>>> origin/fix/superfix-review-findings
+  maxTokens?: number;
 };
 
 export type GenerateTextMetadata = {
@@ -105,12 +102,8 @@ export class GroqGenerateTextRepo extends BaseGenerateTextRepo {
         prompt: input.prompt,
         system: input.system ?? undefined,
         jsonResponse: input.jsonResponse,
-<<<<<<< HEAD
-        maxTokens: input.maxTokens,
-=======
         signal: input.signal,
         customFetch: this.customFetch,
->>>>>>> origin/fix/superfix-review-findings
       });
     } catch (error) {
       if (input.signal?.aborted || this.model === this.fallbackModel) {
@@ -123,12 +116,8 @@ export class GroqGenerateTextRepo extends BaseGenerateTextRepo {
         prompt: input.prompt,
         system: input.system ?? undefined,
         jsonResponse: input.jsonResponse,
-<<<<<<< HEAD
-        maxTokens: input.maxTokens,
-=======
         signal: input.signal,
         customFetch: this.customFetch,
->>>>>>> origin/fix/superfix-review-findings
       });
     }
   }
@@ -160,11 +149,7 @@ export class OpenAIGenerateTextRepo extends BaseGenerateTextRepo {
       prompt: input.prompt,
       system: input.system ?? undefined,
       jsonResponse: input.jsonResponse,
-<<<<<<< HEAD
-      maxTokens: input.maxTokens,
-=======
       customFetch: tauriFetch,
->>>>>>> origin/fix/superfix-review-findings
     });
 
     return {
@@ -207,7 +192,6 @@ export class OllamaGenerateTextRepo extends BaseGenerateTextRepo {
       system: input.system ?? undefined,
       jsonResponse: input.jsonResponse,
       customFetch: tauriFetch,
-      maxTokens: input.maxTokens,
     });
 
     return {
@@ -252,12 +236,7 @@ export class OpenAICompatibleGenerateTextRepo extends BaseGenerateTextRepo {
       prompt: input.prompt,
       system: input.system ?? undefined,
       jsonResponse: input.jsonResponse,
-<<<<<<< HEAD
-      customFetch: tauriFetch,
-      maxTokens: input.maxTokens,
-=======
       customFetch: this.customFetch,
->>>>>>> origin/fix/superfix-review-findings
     });
 
     return {
@@ -304,11 +283,7 @@ export class OpenRouterGenerateTextRepo extends BaseGenerateTextRepo {
       system: input.system ?? undefined,
       jsonResponse: input.jsonResponse,
       providerRouting: this.providerRouting,
-<<<<<<< HEAD
-      maxTokens: input.maxTokens,
-=======
       customFetch: tauriFetch,
->>>>>>> origin/fix/superfix-review-findings
     });
 
     return {
@@ -350,11 +325,7 @@ export class AzureOpenAIGenerateTextRepo extends BaseGenerateTextRepo {
       system: input.system ?? undefined,
       prompt: input.prompt,
       jsonResponse: input.jsonResponse,
-<<<<<<< HEAD
-      maxTokens: input.maxTokens,
-=======
       customFetch: tauriFetch,
->>>>>>> origin/fix/superfix-review-findings
     });
 
     return {
@@ -394,11 +365,7 @@ export class DeepseekGenerateTextRepo extends BaseGenerateTextRepo {
       prompt: input.prompt,
       system: input.system ?? undefined,
       jsonResponse: input.jsonResponse,
-<<<<<<< HEAD
-      maxTokens: input.maxTokens,
-=======
       customFetch: tauriFetch,
->>>>>>> origin/fix/superfix-review-findings
     });
 
     return {
@@ -437,12 +404,8 @@ export class GeminiGenerateTextRepo extends BaseGenerateTextRepo {
       prompt: input.prompt,
       system: input.system ?? undefined,
       jsonResponse: input.jsonResponse,
-<<<<<<< HEAD
-      maxTokens: input.maxTokens,
-=======
       signal: input.signal,
       customFetch: tauriFetch,
->>>>>>> origin/fix/superfix-review-findings
     });
 
     return {
@@ -481,11 +444,7 @@ export class ClaudeGenerateTextRepo extends BaseGenerateTextRepo {
       prompt: input.prompt,
       system: input.system ?? undefined,
       jsonResponse: input.jsonResponse,
-<<<<<<< HEAD
-      maxTokens: input.maxTokens,
-=======
       customFetch: tauriFetch,
->>>>>>> origin/fix/superfix-review-findings
     });
 
     return {
@@ -524,11 +483,7 @@ export class CerebrasGenerateTextRepo extends BaseGenerateTextRepo {
       prompt: input.prompt,
       system: input.system ?? undefined,
       jsonResponse: input.jsonResponse,
-<<<<<<< HEAD
-      maxTokens: input.maxTokens,
-=======
       customFetch: tauriFetch,
->>>>>>> origin/fix/superfix-review-findings
     });
 
     return {

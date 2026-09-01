@@ -10,7 +10,6 @@ import {
 } from "@maus-inc/types";
 import { invoke } from "@tauri-apps/api/core";
 import dayjs from "dayjs";
-import { invoke } from "@tauri-apps/api/core";
 import { getIntl } from "../i18n";
 import { getUserPreferencesRepo, getUserRepo } from "../repos";
 import { getAppState, produceAppState } from "../store";
@@ -131,16 +130,13 @@ export const createDefaultPreferences = (): UserPreferences => ({
   menuBarIconHidden: false,
   insertionMethod: null,
   typingSpeedMs: null,
-<<<<<<< HEAD
   handsFreeDelayMs: DEFAULT_HANDS_FREE_DELAY_MS,
-=======
   inDictationStyleSwitchingEnabled: false,
   hallucinationFilterEnabled: true,
   reviewBeforeInsert: null,
   agentEnabledTools: null,
   agentMaxIterations: 20,
   agentPermissionTimeoutMs: 60_000,
->>>>>>> origin/fix/superfix-review-findings
 });
 
 // Serializes preference mutations so overlapping tool toggles or numeric edits

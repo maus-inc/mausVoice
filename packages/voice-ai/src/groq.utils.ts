@@ -9,11 +9,9 @@ import {
   ChatCompletionContentPart,
   ChatCompletionMessageParam,
 } from "groq-sdk/resources/chat/completions";
-import OpenAI from "openai";
+import OpenAI, { toFile } from "openai";
 import { openaiCompatibleStreamChat } from "./openai.utils";
-<<<<<<< HEAD
 import { openaiCompatibleTranscribeAudio } from "./openai-compatible-transcribe.utils";
-=======
 import type { CustomFetch, DiscoveredModelId } from "./types";
 import {
   contentToString,
@@ -21,7 +19,6 @@ import {
   TranscriptionSegment,
   TranscribeAudioOutput,
 } from "./transcription.utils";
->>>>>>> origin/fix/superfix-review-findings
 
 export const GENERATE_TEXT_MODELS = [
   "openai/gpt-oss-20b",
@@ -76,16 +73,6 @@ export const groqTranscribeAudio = async ({
   language,
   customFetch,
 }: GroqTranscriptionArgs): Promise<GroqTranscribeAudioOutput> => {
-<<<<<<< HEAD
-  return openaiCompatibleTranscribeAudio({
-    client: createClient(apiKey),
-    blob,
-    model,
-    ext,
-    prompt,
-    language,
-  });
-=======
   const client = createClient(apiKey, customFetch);
   const file = await toFile(blob, `audio.${ext}`);
   return runSdkTranscription(
@@ -100,12 +87,9 @@ export const groqTranscribeAudio = async ({
       model,
       prompt,
       language,
-      // Groq Whisper models support `verbose_json`, so `segments[].no_speech_prob`
-      // is returned for issue #54's probability-gated silence handling.
       response_format: "verbose_json",
     },
   );
->>>>>>> origin/fix/superfix-review-findings
 };
 
 export type GroqGenerateTextArgs = {
@@ -115,12 +99,9 @@ export type GroqGenerateTextArgs = {
   prompt: string;
   imageUrls?: string[];
   jsonResponse?: JsonResponse;
-<<<<<<< HEAD
   maxTokens?: number;
-=======
   signal?: AbortSignal;
   customFetch?: CustomFetch;
->>>>>>> origin/fix/superfix-review-findings
 };
 
 export type GroqGenerateResponseOutput = {
@@ -135,12 +116,9 @@ export const groqGenerateTextResponse = async ({
   prompt,
   imageUrls = [],
   jsonResponse,
-<<<<<<< HEAD
   maxTokens,
-=======
   signal,
   customFetch,
->>>>>>> origin/fix/superfix-review-findings
 }: GroqGenerateTextArgs): Promise<GroqGenerateResponseOutput> => {
   return retry({
     retries: signal ? 1 : 3,
@@ -163,30 +141,11 @@ export const groqGenerateTextResponse = async ({
       userParts.push({ type: "text", text: prompt });
       messages.push({ role: "user", content: userParts });
 
-<<<<<<< HEAD
-      const response = await client.chat.completions.create({
-        messages,
-        model,
-        max_completion_tokens: maxTokens ?? 5000,
-        response_format: jsonResponse
-          ? JSON_SCHEMA_SUPPORTED_MODELS.has(model)
-            ? {
-                type: "json_schema",
-                json_schema: {
-                  name: jsonResponse.name,
-                  description: jsonResponse.description,
-                  schema: jsonResponse.schema,
-                },
-              }
-            : { type: "json_object" }
-          : undefined,
-      });
-=======
       const response = await client.chat.completions.create(
         {
           messages,
           model,
-          max_completion_tokens: 5000,
+          max_completion_tokens: maxTokens ?? 5000,
           response_format: jsonResponse
             ? JSON_SCHEMA_SUPPORTED_MODELS.has(model)
               ? {
@@ -202,7 +161,6 @@ export const groqGenerateTextResponse = async ({
         },
         { signal },
       );
->>>>>>> origin/fix/superfix-review-findings
 
       console.log("groq llm usage:", response.usage);
       if (!response.choices || response.choices.length === 0) {

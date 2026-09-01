@@ -47,9 +47,7 @@ export type UserPreferences = {
   pillResetMonitorStrategy: PillResetMonitorStrategy;
   pillPlacement: PillPlacement;
   alwaysRequestAdminOnStartup: boolean;
-<<<<<<< HEAD
   handsFreeDelayMs: Nullable<number>;
-=======
   /** Optional opt-in for activation-key + arrow style cycling while dictating. */
   inDictationStyleSwitchingEnabled: boolean;
   /** Suppress common silence hallucinations before post-processing. */
@@ -64,7 +62,6 @@ export type UserPreferences = {
   agentPermissionTimeoutMs: number;
   /** Deterministic "new line" / "scratch that" commands. Default on. */
   spokenCommandsEnabled: boolean;
->>>>>>> origin/fix/superfix-review-findings
 
   // deprecated
 };

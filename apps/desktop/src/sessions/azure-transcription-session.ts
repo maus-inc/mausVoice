@@ -1,3 +1,7 @@
+import {
+  StopRecordingResponse,
+  TranscriptionSessionResult,
+} from "../types/transcription-session.types";
 import { createAzureStreamingSession } from "@maus-inc/voice-ai";
 import { listen, UnlistenFn } from "@tauri-apps/api/event";
 import { getAppState } from "../store";
@@ -77,11 +81,7 @@ export class AzureTranscriptionSession extends BaseApiTranscriptionSession {
 
       getLogger().verbose("[Azure] Streaming session started successfully");
     } catch (error) {
-<<<<<<< HEAD
       getLogger().error("[Azure] Failed to start streaming:", error);
-    }
-=======
-      console.error("[Azure] Failed to start streaming:", error);
     }
   }
 
@@ -89,11 +89,10 @@ export class AzureTranscriptionSession extends BaseApiTranscriptionSession {
     _audio: StopRecordingResponse,
   ): Promise<TranscriptionSessionResult> {
     return finalizeStreamingSession({
-      session: this.session,
+      session: this.streamSession,
       providerLabel: "Azure",
-      log: console.log,
+      log: getLogger().verbose.bind(getLogger()),
     });
->>>>>>> origin/fix/superfix-review-findings
   }
 
   cleanup(): void {

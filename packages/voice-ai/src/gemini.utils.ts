@@ -1,4 +1,3 @@
-<<<<<<< HEAD
 import {
   GoogleGenAI,
   Type,
@@ -7,8 +6,6 @@ import {
   type GenerateContentResponse,
   type Part,
 } from "@google/genai";
-=======
->>>>>>> origin/fix/superfix-review-findings
 import { retry, countWords } from "@maus-inc/utilities";
 import type {
   JsonResponse,
@@ -313,13 +310,10 @@ export type GeminiGenerateTextArgs = {
   system?: string;
   prompt: string;
   jsonResponse?: JsonResponse;
-<<<<<<< HEAD
   maxTokens?: number;
-=======
   /** Aborts the request and stops any retry loop when cancelled. */
   signal?: AbortSignal;
   customFetch?: CustomFetch;
->>>>>>> origin/fix/superfix-review-findings
 };
 
 export type GeminiGenerateResponseOutput = {
@@ -333,12 +327,9 @@ export const geminiGenerateTextResponse = async ({
   system,
   prompt,
   jsonResponse,
-<<<<<<< HEAD
   maxTokens,
-=======
   signal,
   customFetch = fetch,
->>>>>>> origin/fix/superfix-review-findings
 }: GeminiGenerateTextArgs): Promise<GeminiGenerateResponseOutput> => {
   // One absolute deadline per operation, shared across attempts (see
   // geminiTranscribeAudio): a retry must not mint a new five-minute window.
@@ -352,14 +343,10 @@ export const geminiGenerateTextResponse = async ({
         fullPrompt = `${system}\n\n${prompt}`;
       }
 
-<<<<<<< HEAD
-      const config: Record<string, unknown> = {};
-      if (maxTokens !== undefined) {
-        config.maxOutputTokens = maxTokens;
-      }
-=======
       const generationConfig: Record<string, unknown> = {};
->>>>>>> origin/fix/superfix-review-findings
+      if (maxTokens !== undefined) {
+        generationConfig.maxOutputTokens = maxTokens;
+      }
       if (jsonResponse) {
         generationConfig.responseMimeType = "application/json";
         if (jsonResponse.schema) {
@@ -522,7 +509,6 @@ export type GeminiStreamChatArgs = {
   customFetch?: CustomFetch;
 };
 
-<<<<<<< HEAD
 type GeminiChunkState = {
   pendingToolCalls: Array<{ id: string; name: string; arguments: string }>;
   finishReason: LlmFinishReason;
@@ -532,23 +518,6 @@ type GeminiChunkState = {
 };
 
 type GeminiChunkEvent = { type: "text-delta"; text: string };
-
-const processGeminiChunk = (
-  chunk: GenerateContentResponse,
-  state: GeminiChunkState,
-): GeminiChunkEvent[] => {
-  const events: GeminiChunkEvent[] = [];
-  const candidate = chunk.candidates?.[0];
-  if (!candidate) return events;
-
-=======
-type GeminiStreamState = {
-  pendingToolCalls: Array<{ id: string; name: string; arguments: string }>;
-  finishReason: LlmFinishReason;
-  promptTokens?: number;
-  completionTokens?: number;
-  toolCallCounter: number;
-};
 
 const buildGeminiTools = (
   input: LlmChatInput,
@@ -565,17 +534,13 @@ const buildGeminiTools = (
   }));
 };
 
-const handleGeminiChunk = (
+const processGeminiChunk = (
   chunk: GeminiGenerateContentResponse,
-  state: GeminiStreamState,
-): LlmStreamEvent[] => {
+  state: GeminiChunkState,
+): GeminiChunkEvent[] => {
+  const events: GeminiChunkEvent[] = [];
   const candidate = chunk.candidates?.[0];
-  if (!candidate) {
-    return [];
-  }
-
-  const events: LlmStreamEvent[] = [];
->>>>>>> origin/fix/superfix-review-findings
+  if (!candidate) return events;
   for (const part of candidate.content?.parts ?? []) {
     if (part.text) {
       events.push({ type: "text-delta", text: part.text });
@@ -603,8 +568,6 @@ const handleGeminiChunk = (
   return events;
 };
 
-<<<<<<< HEAD
-=======
 const parseGeminiSseEvent = (
   event: string,
 ): GeminiGenerateContentResponse | undefined => {
@@ -676,7 +639,6 @@ async function* parseGeminiSse(
   }
 }
 
->>>>>>> origin/fix/superfix-review-findings
 export async function* geminiStreamChat({
   apiKey,
   model,
@@ -711,7 +673,6 @@ export async function* geminiStreamChat({
     signal,
   );
 
-<<<<<<< HEAD
   const state: GeminiChunkState = {
     pendingToolCalls: [],
     finishReason: "other",
@@ -720,30 +681,17 @@ export async function* geminiStreamChat({
     toolCallCounter: 0,
   };
 
-  for await (const chunk of stream) {
-    for (const event of processGeminiChunk(chunk, state)) {
-      yield event;
-    }
-=======
-  const state: GeminiStreamState = {
-    pendingToolCalls: [],
-    finishReason: "other",
-    toolCallCounter: 0,
-  };
-
-  // A 200 response is not proof of an SSE stream: a proxy error page, a JSON
-  // body (missing `alt=sse`), or an empty body all parse to zero chunks and
-  // would otherwise surface as a successful, silent, empty completion.
   let sawStreamChunk = false;
   for await (const chunk of parseGeminiSse(response)) {
     sawStreamChunk = true;
-    yield* handleGeminiChunk(chunk, state);
+    for (const event of processGeminiChunk(chunk, state)) {
+      yield event;
+    }
   }
   if (!sawStreamChunk) {
     throw new Error(
       "Gemini returned an empty or non-SSE streaming response (expected event-stream data)",
     );
->>>>>>> origin/fix/superfix-review-findings
   }
 
   for (const tc of state.pendingToolCalls) {

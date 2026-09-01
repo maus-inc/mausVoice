@@ -480,7 +480,6 @@ fn on_cursor_tick(hwnd: HWND) {
     });
 }
 
-<<<<<<< HEAD
 fn maybe_reassert_topmost(hwnd: HWND, now: Instant) {
     let last = LAST_TOPMOST_REASSERT.with(|cell| cell.get());
     if !should_reassert_topmost(last, now) {
@@ -506,13 +505,14 @@ fn should_reassert_topmost(last: Option<Instant>, now: Instant) -> bool {
         None => true,
         Some(prev) => now.duration_since(prev) >= TOPMOST_REASSERT_INTERVAL,
     }
-=======
+}
+
 fn clear_flash(state: &PillState) {
     state.flash_visible.set(false);
     state.flash_timer.set(0.0);
     *state.flash_action.borrow_mut() = None;
     *state.flash_action_label.borrow_mut() = None;
->>>>>>> origin/fix/superfix-review-findings
+}
 }
 
 /// Applies one IPC message to the pill state and marks the surface dirty so
@@ -644,9 +644,13 @@ fn process_message(msg: InMessage, state: &PillState, _hwnd: HWND) {
             state.has_saved_position.set(false);
             state.reset_strategy.set(strategy);
             state.dirty.set(true);
-<<<<<<< HEAD
+            let hwnd = HWND_CELL.with(|c| c.get());
+            reposition_to_cursor_monitor(hwnd, state);
+            let (rect, monitor) = current_pill_geometry(hwnd);
             ipc::send(&OutMessage::PositionChanged {
                 has_saved_position: false,
+                rect: Some(rect),
+                monitor,
             });
         }
         InMessage::PillPlacement { placement } => {
@@ -657,16 +661,6 @@ fn process_message(msg: InMessage, state: &PillState, _hwnd: HWND) {
             };
             PILL_PLACEMENT.with(|c| c.set(code));
             state.dirty.set(true);
-=======
-            let hwnd = HWND_CELL.with(|c| c.get());
-            reposition_to_cursor_monitor(hwnd, state);
-            let (rect, monitor) = current_pill_geometry(hwnd);
-            ipc::send(&OutMessage::PositionChanged {
-                has_saved_position: false,
-                rect: Some(rect),
-                monitor,
-            });
->>>>>>> origin/fix/superfix-review-findings
         }
         InMessage::Quit => {
             QUIT.with(|q| q.set(true));
@@ -766,27 +760,6 @@ fn tick(state: &PillState, dt: f64) {
             .set((state.loading_offset.get() + LOADING_SPEED * frame_scale) % 1.0);
     }
 
-<<<<<<< HEAD
-    // While paused, fade/hide the style picker (polished/verbatim) but keep the
-    // main pill fully expanded via expand_target above.
-    let show_tooltip = !state.assistant_active.get()
-        && state.style_count.get() > 1
-        && phase != Phase::Paused
-        && (hovered || phase == Phase::Recording)
-        && state.expand_t.get() > 0.3;
-    let tooltip_target = if show_tooltip { 1.0 } else { 0.0 };
-    spring_anim(
-        &state.tooltip_t,
-        &state.tooltip_velocity,
-        tooltip_target,
-        SPRING_STIFFNESS,
-        dt,
-    );
-=======
-    // Hover-revealed in every phase except Paused, so the chevrons stay
-    // clickable mid-take. A take that starts under a parked pointer fades
-    // the tooltip until the pointer leaves the pill and comes back;
-    // rust_pill_shared owns the rule, every port agrees.
     let tooltip_target = rust_pill_shared::style_tooltip_target(
         &state.style_tooltip_gate,
         state.assistant_active.get(),
@@ -796,7 +769,6 @@ fn tick(state: &PillState, dt: f64) {
         state.expand_t.get(),
     );
     spring_anim(&state.tooltip_t, &state.tooltip_velocity, tooltip_target, SPRING_STIFFNESS, dt);
->>>>>>> origin/fix/superfix-review-findings
 
     let panel_target = if state.assistant_active.get() {
         1.0
@@ -863,23 +835,12 @@ fn tick(state: &PillState, dt: f64) {
             state.flash_timer.set(remaining);
         }
     }
-<<<<<<< HEAD
-    let flash_target = if state.flash_visible.get() { 1.0 } else { 0.0 };
-    spring_anim(
-        &state.flash_t,
-        &state.flash_velocity,
-        flash_target,
-        SPRING_STIFFNESS,
-        dt,
-    );
-=======
     let flash_target = rust_pill_shared::flash_banner_target(
         state.flash_visible.get(),
         state.flash_action.borrow().is_some(),
         tooltip_target > 0.5,
     );
     spring_anim(&state.flash_t, &state.flash_velocity, flash_target, SPRING_STIFFNESS, dt);
->>>>>>> origin/fix/superfix-review-findings
 
     // Recording <-> paused crossfade driven by the same critically damped
     // spring as the other pill transitions (settles, never overshoots).
@@ -1532,16 +1493,11 @@ fn end_drag(hwnd: HWND, state: &PillState, persist_position: bool) -> bool {
         state.saved_x.set(rect.left);
         state.saved_y.set(rect.top);
         state.has_saved_position.set(true);
-<<<<<<< HEAD
-        ipc::send(&OutMessage::PositionChanged {
-            has_saved_position: true,
-=======
         let (win_rect, monitor) = current_pill_geometry(hwnd);
         ipc::send(&OutMessage::PositionChanged {
             has_saved_position: true,
             rect: Some(win_rect),
             monitor,
->>>>>>> origin/fix/superfix-review-findings
         });
     }
 

@@ -138,10 +138,6 @@ async fn download_model(
         model
             .artifact_set()
             .into_iter()
-<<<<<<< HEAD
-            .map(|(name, url)| {
-                DownloadArtifact::new(url, model.artifact_path(&state.config.models_dir, name))
-=======
             .map(|(name, url, sha256)| {
                 DownloadArtifact::new_verified(
                     url,
@@ -149,7 +145,7 @@ async fn download_model(
                     crate::downloads::MAX_MODEL_ARTIFACT_BYTES,
                     sha256,
                 )
->>>>>>> origin/fix/superfix-review-findings
+            })
             })
             .collect()
     } else {

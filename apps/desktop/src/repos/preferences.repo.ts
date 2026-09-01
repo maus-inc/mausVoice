@@ -13,7 +13,6 @@ import {
   DEFAULT_DICTATION_LIMIT_MINUTES,
   normalizeDictationLimitMinutes,
 } from "../utils/dictation-limit.utils";
-import { normalizeHandsFreeDelayMs } from "../utils/hands-free-delay.utils";
 import { PRIMARY_LANGUAGE_SENTINEL } from "../utils/language.utils";
 import { orFalse, orNull, orTrue, orValue } from "../utils/nullable.utils";
 import { getEffectivePillVisibility, LOCAL_USER_ID } from "../utils/user.utils";
@@ -48,7 +47,6 @@ type LocalUserPreferences = {
   ignoreUpdateDialog: boolean;
   incognitoModeEnabled: boolean;
   incognitoModeIncludeInStats: boolean;
-  preserveAudioOnFailure: boolean;
   dictationLimitMinutes?: Nullable<number>;
   dictationPillVisibility: DictationPillVisibility;
   realtimeOutputEnabled: boolean;
@@ -63,11 +61,10 @@ type LocalUserPreferences = {
   insertionMethod: Nullable<string>;
   typingSpeedMs: Nullable<number>;
   pillResetMonitorStrategy?: Nullable<PillResetMonitorStrategy>;
-  pillPlacement?: Nullable<PillPlacement>;
+  pillPlacement?: Nullable<string>;
   alwaysRequestAdminOnStartup?: boolean;
-<<<<<<< HEAD
+  preserveAudioOnFailure?: boolean;
   handsFreeDelayMs?: Nullable<number>;
-=======
   inDictationStyleSwitchingEnabled?: boolean;
   hallucinationFilterEnabled?: boolean;
   reviewBeforeInsert?: Nullable<boolean>;
@@ -81,18 +78,12 @@ type LocalUserPreferences = {
   agentMaxIterations?: number;
   agentPermissionTimeoutMs?: number;
   spokenCommandsEnabled?: boolean;
->>>>>>> origin/fix/superfix-review-findings
 };
 
 const normalizePillResetMonitorStrategy = (
   strategy: Nullable<string> | undefined,
 ): PillResetMonitorStrategy => (strategy === "cursor" ? "cursor" : "current");
 
-<<<<<<< HEAD
-const normalizePillPlacement = (
-  placement: Nullable<string> | undefined,
-): PillPlacement => (placement === "top" ? "top" : "bottom");
-=======
 export const normalizeAgentMaxIterations = (
   value: number | null | undefined,
 ): number => {
@@ -127,7 +118,6 @@ const parseAgentEnabledTools = (
     return parsed.length > 0 ? parsed : null;
   }
 };
->>>>>>> origin/fix/superfix-review-findings
 
 // Backwards-compatibility normalization for the persisted AI modes. Older
 // builds stored modes that no longer exist ("cloud" for all three, plus
@@ -163,20 +153,10 @@ const normalizeAgentMode = (mode: Nullable<string>): Nullable<AgentMode> => {
   return "none";
 };
 
-<<<<<<< HEAD
-const withDefault = <T>(value: T | null | undefined, fallback: T): T =>
-  (value ?? fallback) as T;
-
-export const fromLocalPreferences = (
-  preferences: LocalUserPreferences,
-): UserPreferences => ({
-  userId: preferences.userId,
-=======
 const jsonValue = (value: string[] | null | undefined): string | null =>
   value ? JSON.stringify(value) : null;
 
 const fromLocalAiPreferences = (preferences: LocalUserPreferences) => ({
->>>>>>> origin/fix/superfix-review-findings
   transcriptionMode: normalizeTranscriptionMode(preferences.transcriptionMode),
   transcriptionApiKeyId: orNull(preferences.transcriptionApiKeyId),
   transcriptionDevice: orNull(preferences.transcriptionDevice),
@@ -191,23 +171,6 @@ const fromLocalAiPreferences = (preferences: LocalUserPreferences) => ({
   gpuEnumerationEnabled: orFalse(preferences.gpuEnumerationEnabled),
   agentMode: normalizeAgentMode(preferences.agentMode),
   agentModeApiKeyId: preferences.agentModeApiKeyId,
-<<<<<<< HEAD
-  openclawGatewayUrl: withDefault(preferences.openclawGatewayUrl, null),
-  openclawToken: withDefault(preferences.openclawToken, null),
-  lastSeenFeature: preferences.lastSeenFeature,
-  activeDictationLanguage: withDefault(
-    preferences.activeDictationLanguage,
-    null,
-  ),
-  preferredMicrophone: withDefault(preferences.preferredMicrophone, null),
-  ignoreUpdateDialog: preferences.ignoreUpdateDialog ?? false,
-  incognitoModeEnabled: preferences.incognitoModeEnabled ?? false,
-  incognitoModeIncludeInStats: withDefault(
-    preferences.incognitoModeIncludeInStats,
-    false,
-  ),
-  preserveAudioOnFailure: preferences.preserveAudioOnFailure ?? true,
-=======
   openclawGatewayUrl: orNull(preferences.openclawGatewayUrl),
   openclawToken: orNull(preferences.openclawToken),
 });
@@ -220,37 +183,12 @@ const fromLocalOutputPreferences = (preferences: LocalUserPreferences) => ({
   ignoreUpdateDialog: orFalse(preferences.ignoreUpdateDialog),
   incognitoModeEnabled: orFalse(preferences.incognitoModeEnabled),
   incognitoModeIncludeInStats: orFalse(preferences.incognitoModeIncludeInStats),
->>>>>>> origin/fix/superfix-review-findings
   dictationLimitMinutes: normalizeDictationLimitMinutes(
     preferences.dictationLimitMinutes,
   ),
   dictationPillVisibility: getEffectivePillVisibility(
     preferences.dictationPillVisibility,
   ),
-<<<<<<< HEAD
-  realtimeOutputEnabled: preferences.realtimeOutputEnabled ?? false,
-  remoteOutputEnabled: preferences.remoteOutputEnabled ?? false,
-  remoteTargetDeviceId: withDefault(preferences.remoteTargetDeviceId, null),
-  remoteReceiverPort: withDefault(preferences.remoteReceiverPort, null),
-  remoteReceiverAutoStart: preferences.remoteReceiverAutoStart ?? false,
-  dictationAudioDim: preferences.dictationAudioDim ?? 1.0,
-  pasteKeybind: withDefault(preferences.pasteKeybind, null),
-  menuBarIconHidden: preferences.menuBarIconHidden ?? false,
-  insertionMethod: withDefault(preferences.insertionMethod, null),
-  typingSpeedMs: withDefault(preferences.typingSpeedMs, null),
-  pillResetMonitorStrategy: normalizePillResetMonitorStrategy(
-    preferences.pillResetMonitorStrategy,
-  ),
-  pillPlacement: normalizePillPlacement(preferences.pillPlacement),
-  alwaysRequestAdminOnStartup: withDefault(
-    preferences.alwaysRequestAdminOnStartup,
-    false,
-  ),
-  handsFreeDelayMs:
-    preferences.handsFreeDelayMs == null
-      ? null
-      : normalizeHandsFreeDelayMs(preferences.handsFreeDelayMs),
-=======
   realtimeOutputEnabled: orFalse(preferences.realtimeOutputEnabled),
   remoteOutputEnabled: orFalse(preferences.remoteOutputEnabled),
   remoteTargetDeviceId: orNull(preferences.remoteTargetDeviceId),
@@ -264,7 +202,10 @@ const fromLocalOutputPreferences = (preferences: LocalUserPreferences) => ({
   pillResetMonitorStrategy: normalizePillResetMonitorStrategy(
     preferences.pillResetMonitorStrategy,
   ),
+  pillPlacement: (preferences.pillPlacement ?? "bottom") as PillPlacement,
   alwaysRequestAdminOnStartup: orFalse(preferences.alwaysRequestAdminOnStartup),
+  preserveAudioOnFailure: preferences.preserveAudioOnFailure ?? true,
+  handsFreeDelayMs: preferences.handsFreeDelayMs ?? null,
 });
 
 const fromLocalFeaturePreferences = (preferences: LocalUserPreferences) => ({
@@ -358,84 +299,15 @@ const toLocalFeaturePreferences = (preferences: UserPreferences) => ({
     preferences.agentPermissionTimeoutMs,
   ),
   spokenCommandsEnabled: orTrue(preferences.spokenCommandsEnabled),
->>>>>>> origin/fix/superfix-review-findings
 });
 
 export const toLocalPreferences = (
   preferences: UserPreferences,
 ): LocalUserPreferences => ({
   userId: LOCAL_USER_ID,
-<<<<<<< HEAD
-  transcriptionMode: withDefault(preferences.transcriptionMode, null),
-  transcriptionApiKeyId: withDefault(preferences.transcriptionApiKeyId, null),
-  transcriptionDevice: withDefault(preferences.transcriptionDevice, null),
-  transcriptionModelSize: withDefault(preferences.transcriptionModelSize, null),
-  postProcessingMode: withDefault(preferences.postProcessingMode, null),
-  postProcessingApiKeyId: withDefault(preferences.postProcessingApiKeyId, null),
-  postProcessingOllamaUrl: withDefault(
-    preferences.postProcessingOllamaUrl,
-    null,
-  ),
-  postProcessingOllamaModel: withDefault(
-    preferences.postProcessingOllamaModel,
-    null,
-  ),
-  activeToneId: withDefault(preferences.activeToneId, null),
-  gotStartedAt: withDefault(preferences.gotStartedAt, null),
-  gpuEnumerationEnabled: preferences.gpuEnumerationEnabled,
-  agentMode: withDefault(preferences.agentMode, null),
-  agentModeApiKeyId: withDefault(preferences.agentModeApiKeyId, null),
-  openclawGatewayUrl: withDefault(preferences.openclawGatewayUrl, null),
-  openclawToken: withDefault(preferences.openclawToken, null),
-  lastSeenFeature: withDefault(preferences.lastSeenFeature, null),
-  languageSwitchEnabled: false,
-  secondaryDictationLanguage: null,
-  activeDictationLanguage: withDefault(
-    preferences.activeDictationLanguage,
-    PRIMARY_LANGUAGE_SENTINEL,
-  ),
-  preferredMicrophone: withDefault(preferences.preferredMicrophone, null),
-  ignoreUpdateDialog: preferences.ignoreUpdateDialog ?? false,
-  incognitoModeEnabled: preferences.incognitoModeEnabled ?? false,
-  incognitoModeIncludeInStats: withDefault(
-    preferences.incognitoModeIncludeInStats,
-    false,
-  ),
-  preserveAudioOnFailure: preferences.preserveAudioOnFailure ?? true,
-  dictationLimitMinutes: normalizeDictationLimitMinutes(
-    preferences.dictationLimitMinutes ?? DEFAULT_DICTATION_LIMIT_MINUTES,
-  ),
-  dictationPillVisibility: getEffectivePillVisibility(
-    preferences.dictationPillVisibility,
-  ),
-  realtimeOutputEnabled: preferences.realtimeOutputEnabled ?? false,
-  remoteOutputEnabled: preferences.remoteOutputEnabled ?? false,
-  remoteTargetDeviceId: withDefault(preferences.remoteTargetDeviceId, null),
-  remoteReceiverPort: withDefault(preferences.remoteReceiverPort, null),
-  remoteReceiverAutoStart: preferences.remoteReceiverAutoStart ?? false,
-  dictationAudioDim: preferences.dictationAudioDim ?? 1.0,
-  pasteKeybind: withDefault(preferences.pasteKeybind, null),
-  useNewBackend: true,
-  menuBarIconHidden: preferences.menuBarIconHidden ?? false,
-  insertionMethod: withDefault(preferences.insertionMethod, null),
-  typingSpeedMs: withDefault(preferences.typingSpeedMs, null),
-  pillResetMonitorStrategy: normalizePillResetMonitorStrategy(
-    preferences.pillResetMonitorStrategy,
-  ),
-  pillPlacement: normalizePillPlacement(preferences.pillPlacement ?? null),
-  alwaysRequestAdminOnStartup: withDefault(
-    preferences.alwaysRequestAdminOnStartup,
-    false,
-  ),
-  handsFreeDelayMs:
-    preferences.handsFreeDelayMs === null
-      ? null
-      : normalizeHandsFreeDelayMs(preferences.handsFreeDelayMs),
-=======
   ...toLocalAiPreferences(preferences),
   ...toLocalOutputPreferences(preferences),
   ...toLocalFeaturePreferences(preferences),
->>>>>>> origin/fix/superfix-review-findings
 });
 
 export abstract class BaseUserPreferencesRepo extends BaseRepo {

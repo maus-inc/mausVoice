@@ -8,13 +8,9 @@ import type {
   LlmToolChoice,
 } from "@maus-inc/types";
 import { countWords, retry } from "@maus-inc/utilities";
-<<<<<<< HEAD
-import OpenAI from "openai";
+import OpenAI, { toFile } from "openai";
 import { openaiCompatibleTranscribeAudio } from "./openai-compatible-transcribe.utils";
 import { buildJsonSchemaResponseFormat } from "./response-format.utils";
-import type { CustomFetch } from "./types";
-=======
-import OpenAI, { toFile } from "openai";
 import type { CustomFetch, DiscoveredModelId } from "./types";
 import {
   contentToString,
@@ -22,7 +18,6 @@ import {
   TranscriptionSegment,
   TranscribeAudioOutput,
 } from "./transcription.utils";
->>>>>>> origin/fix/superfix-review-findings
 import type {
   ChatCompletionChunk,
   ChatCompletionContentPart,
@@ -46,8 +41,7 @@ export const OPENAI_TRANSCRIPTION_MODELS = [
   "gpt-4o-mini-transcribe",
 ] as const;
 export type OpenAITranscriptionModel =
-<<<<<<< HEAD
-  (typeof OPENAI_TRANSCRIPTION_MODELS)[number];
+  (typeof OPENAI_TRANSCRIPTION_MODELS)[number] | DiscoveredModelId;
 
 // Models that support `response_format: { type: "json_schema" }`. The base
 // OpenAI endpoint does, but downstream OpenAI-compatible providers and
@@ -66,6 +60,9 @@ const JSON_SCHEMA_SUPPORTED_MODELS = new Set<string>([
   "gpt-5-mini",
   "gpt-5-nano",
   "gpt-5-pro",
+  "gpt-5.6-luna",
+  "gpt-5.6-terra",
+  "gpt-5.6-sol",
 ]);
 
 export function supportsOpenAIJsonSchema(model: string): boolean {
@@ -78,31 +75,6 @@ const buildResponseFormat = (model: string, jsonResponse?: JsonResponse) =>
     JSON_SCHEMA_SUPPORTED_MODELS,
     jsonResponse,
   );
-
-const contentToString = (
-  content: string | ChatCompletionContentPart[] | null | undefined,
-): string => {
-  if (!content) {
-    return "";
-  }
-
-  if (typeof content === "string") {
-    return content;
-  }
-
-  return content
-    .map((part) => {
-      if (part.type === "text") {
-        return part.text ?? "";
-      }
-      return "";
-    })
-    .join("")
-    .trim();
-};
-=======
-  (typeof OPENAI_TRANSCRIPTION_MODELS)[number] | DiscoveredModelId;
->>>>>>> origin/fix/superfix-review-findings
 
 const createClient = (
   apiKey: string,
@@ -166,16 +138,6 @@ export const openaiTranscribeAudio = async ({
   language,
   customFetch,
 }: OpenAITranscriptionArgs): Promise<OpenAITranscribeAudioOutput> => {
-<<<<<<< HEAD
-  return openaiCompatibleTranscribeAudio({
-    client: createClient(apiKey),
-    blob,
-    model,
-    ext,
-    prompt,
-    language,
-  });
-=======
   const client = createClient(apiKey, undefined, customFetch);
   const file = await toFile(blob, `audio.${ext}`);
   return runSdkTranscription(
@@ -190,13 +152,9 @@ export const openaiTranscribeAudio = async ({
       model,
       prompt,
       language,
-      // `whisper-1` keeps `verbose_json` so `segments[].no_speech_prob` is
-      // returned; `gpt-4o-transcribe` / `gpt-4o-mini-transcribe` reject
-      // `verbose_json` (HTTP 400) and use `json` instead.
       response_format: getTranscriptionResponseFormat(model),
     },
   );
->>>>>>> origin/fix/superfix-review-findings
 };
 
 export type OpenAIGenerateTextArgs = {
@@ -387,7 +345,6 @@ function toFinishReason(raw: string | null | undefined): LlmFinishReason {
   }
 }
 
-<<<<<<< HEAD
 type OpenAIChunkState = {
   toolCalls: Map<number, { id: string; name: string; arguments: string }>;
   finishReason: LlmFinishReason;
@@ -396,22 +353,9 @@ type OpenAIChunkState = {
   modelId: string | undefined;
 };
 
-const processOpenAIChunk = (
-  chunk: OpenAI.Chat.Completions.ChatCompletionChunk,
-  state: OpenAIChunkState,
-): string | undefined => {
-=======
-type OpenAIStreamState = {
-  toolCalls: Map<number, { id: string; name: string; arguments: string }>;
-  finishReason: LlmFinishReason;
-  promptTokens?: number;
-  completionTokens?: number;
-  modelId?: string;
-};
-
 const applyOpenAIToolCalls = (
   choice: ChatCompletionChunk.Choice,
-  toolCalls: OpenAIStreamState["toolCalls"],
+  toolCalls: OpenAIChunkState["toolCalls"],
 ): void => {
   for (const tc of choice.delta?.tool_calls ?? []) {
     const index = tc.index ?? toolCalls.size;
@@ -427,11 +371,11 @@ const applyOpenAIToolCalls = (
   }
 };
 
-const handleOpenAIChunk = (
-  chunk: ChatCompletionChunk,
-  state: OpenAIStreamState,
+const processOpenAIChunk = (
+  chunk: OpenAI.Chat.Completions.ChatCompletionChunk,
+  state: OpenAIChunkState,
 ): LlmStreamEvent[] => {
->>>>>>> origin/fix/superfix-review-findings
+  const events: LlmStreamEvent[] = [];
   if (chunk.model) {
     state.modelId = chunk.model;
   }
@@ -442,47 +386,21 @@ const handleOpenAIChunk = (
   }
 
   const choice = chunk.choices[0];
-<<<<<<< HEAD
-  if (!choice) return undefined;
-
-  if (choice.delta?.content) {
-    return choice.delta.content;
-  }
-
-  for (const tc of choice.delta?.tool_calls ?? []) {
-    const index = tc.index ?? state.toolCalls.size;
-    const current = state.toolCalls.get(index) ?? {
-      id: "",
-      name: "",
-      arguments: "",
-    };
-    if (tc.id) current.id = tc.id;
-    if (tc.function?.name) current.name = tc.function.name;
-    if (tc.function?.arguments) current.arguments += tc.function.arguments;
-    state.toolCalls.set(index, current);
-  }
-=======
   if (!choice) {
-    return [];
+    return events;
   }
 
-  const events: LlmStreamEvent[] = [];
   if (choice.delta?.content) {
     events.push({ type: "text-delta", text: choice.delta.content });
   }
 
   applyOpenAIToolCalls(choice, state.toolCalls);
->>>>>>> origin/fix/superfix-review-findings
 
   if (choice.finish_reason) {
     state.finishReason = toFinishReason(choice.finish_reason);
   }
 
-<<<<<<< HEAD
-  return undefined;
-=======
   return events;
->>>>>>> origin/fix/superfix-review-findings
 };
 
 export async function* openaiCompatibleStreamChat(
@@ -508,7 +426,6 @@ export async function* openaiCompatibleStreamChat(
     ...extraBody,
   });
 
-<<<<<<< HEAD
   const state: OpenAIChunkState = {
     toolCalls: new Map<
       number,
@@ -521,19 +438,9 @@ export async function* openaiCompatibleStreamChat(
   };
 
   for await (const chunk of stream) {
-    const textDelta = processOpenAIChunk(chunk, state);
-    if (textDelta) {
-      yield { type: "text-delta", text: textDelta };
+    for (const event of processOpenAIChunk(chunk, state)) {
+      yield event;
     }
-=======
-  const state: OpenAIStreamState = {
-    toolCalls: new Map(),
-    finishReason: "other",
-  };
-
-  for await (const chunk of stream) {
-    yield* handleOpenAIChunk(chunk, state);
->>>>>>> origin/fix/superfix-review-findings
   }
 
   for (const [, tc] of [...state.toolCalls.entries()].sort(

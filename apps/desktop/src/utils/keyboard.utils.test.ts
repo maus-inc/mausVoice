@@ -2,11 +2,8 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import { INITIAL_APP_STATE } from "../state/app.state";
 import { setAppState } from "../store";
 import {
-<<<<<<< HEAD
   getPrettyKeyName,
-=======
   getStyleSwitchActionNamesForKey,
->>>>>>> origin/fix/superfix-review-findings
   OPEN_CHAT_HOTKEY,
   syncHotkeyCombosToNative,
 } from "./keyboard.utils";
@@ -127,7 +124,6 @@ describe("syncHotkeyCombosToNative", () => {
   });
 });
 
-<<<<<<< HEAD
 describe("getPrettyKeyName", () => {
   it.each([
     ["MetaLeft", "⊞ L"],
@@ -151,7 +147,9 @@ describe("getPrettyKeyName", () => {
 
   it("preserves side suffix on bare Meta* without a side", () => {
     expect(getPrettyKeyName("Meta")).toBe("⊞");
-=======
+  });
+});
+
 describe("getStyleSwitchActionNamesForKey", () => {
   it("maps a released physical key to its bound style-switch actions", () => {
     const state = {
@@ -191,13 +189,10 @@ describe("getStyleSwitchActionNamesForKey", () => {
     expect(getStyleSwitchActionNamesForKey(state, "KeyC")).toEqual([
       "switch-to-style:casual",
     ]);
-    // Actions added under an existing shared prefix must also be releasable.
     expect(getStyleSwitchActionNamesForKey(state, "KeyF")).toEqual([
       "switch-writing-style-custom",
     ]);
-    // A non-style action bound to a key must never be released as a style key.
     expect(getStyleSwitchActionNamesForKey(state, "KeyO")).toEqual([]);
-    // A key with no binding resolves to nothing.
     expect(getStyleSwitchActionNamesForKey(state, "KeyZ")).toEqual([]);
   });
 
@@ -215,6 +210,5 @@ describe("getStyleSwitchActionNamesForKey", () => {
     expect(getStyleSwitchActionNamesForKey(state, "rightarrow")).toEqual([
       "switch-writing-style-forward",
     ]);
->>>>>>> origin/fix/superfix-review-findings
   });
 });

@@ -121,7 +121,6 @@ type RawStopResp = {
   abortMessage?: string;
 };
 
-<<<<<<< HEAD
 type HandleEmptyResultInput = {
   audio: StopRecordingResponse;
   transcribeResult: TranscriptionSessionResult | undefined;
@@ -149,13 +148,6 @@ type StartFailureToastInput = {
 export const reportStartFailureToast = async (
   input: StartFailureToastInput,
 ): Promise<void> => {
-  // `start_recording` emits the platform-specific reason on the
-  // `recording_failed` event before rejecting, and the global listener in
-  // this component toasts that event — so an invoke rejection must stay
-  // silent here or the user gets stacked error notifications. Every other
-  // throw on the start path (chime playback, strategy init, phase push,
-  // `onRecordingStart` provider/websocket/model failures) has no event
-  // behind it, so this generic toast is the only feedback they produce.
   if (input.startInvokeRejected) {
     return;
   }
@@ -205,12 +197,10 @@ export const handleEmptyTranscriptionResult = async (
     });
   }
 
-  // No synthetic `recording_failed` emission here: this path owns its own
-  // recovery toast above, and forwarding to the global listener stacked a
-  // second generic error toast over it.
   input.refreshMember();
   return { handled: true };
-=======
+};
+
 type FinalizedRecording = {
   audio: StopRecordingResponse;
   a11yInfo: TextFieldInfo | null;
@@ -218,7 +208,6 @@ type FinalizedRecording = {
   toneId: string | null;
   rawTranscript: string;
   transcribeResult: TranscriptionSessionResult;
->>>>>>> origin/fix/superfix-review-findings
 };
 
 const FINALIZE_TIMEOUT_MS = 90_000;
@@ -599,75 +588,8 @@ export const DictationSideEffects = () => {
       },
     );
 
-<<<<<<< HEAD
-          return [audio, a11yInfo, appTarget];
-        },
-      );
-
-      if (!audio) {
-        getLogger().warning("stopRecordingRaw: no audio data received");
-        return {
-          shouldContinue: false,
-          abortMessage: "No audio data received",
-        };
-      }
-
-      getLogger().info("Finalizing transcription session");
-      trackAppUsed(appTarget?.name ?? "Unknown");
-
-      if (appTarget) {
-        saveManualStyleForApp(appTarget);
-      }
-
-      const toneId = getToneIdToUse(getAppState(), {
-        currentAppToneId: appTarget?.toneId ?? null,
-      });
-
-      const transcribeResult = await withTimeout(
-        sessionRef.current?.finalize(audio, {
-          toneId,
-          a11yInfo,
-        }) ?? Promise.resolve(undefined),
-        FINALIZE_TIMEOUT_MS,
-        "Transcription finalize",
-      );
-      const rawTranscript = transcribeResult?.rawTranscript;
-      getLogger().verbose(
-        `Transcription result: rawTranscript=${rawTranscript ? `${rawTranscript.length} chars` : "empty"}, toneId=${toneId ?? "none"}, app=${appTarget?.name ?? "unknown"}`,
-      );
-      if (!rawTranscript) {
-        const strategyForEmpty = strategyRef.current;
-        if (!strategyForEmpty) {
-          getLogger().warning(
-            "stopRecordingRaw: refs cleared before empty-result handling",
-          );
-          return {
-            shouldContinue: false,
-          };
-        }
-        const { handled } = await handleEmptyTranscriptionResult({
-          audio,
-          transcribeResult,
-          strategy: strategyForEmpty,
-          formatMessage: intl.formatMessage,
-          showToast,
-          storeTranscriptionFn: storeTranscription,
-          refreshMember,
-        });
-        if (handled) {
-          return {
-            shouldContinue: false,
-          };
-        }
-        getLogger().warning("stopRecordingRaw: no rawTranscript from finalize");
-        return {
-          shouldContinue: false,
-        };
-      }
-=======
     return { audio, a11yInfo, appTarget };
   }, [intl]);
->>>>>>> origin/fix/superfix-review-findings
 
   const processFinalizedRecording = useCallback(
     async ({
@@ -721,7 +643,7 @@ export const DictationSideEffects = () => {
         getLogger().verbose("Storing transcription");
         storeTranscription({
           audio,
-          rawTranscript,
+          rawTranscript: rawTranscript ?? null,
           sanitizedTranscript,
           transcript,
           transcriptionMetadata: transcribeResult.metadata,
@@ -1034,15 +956,6 @@ export const DictationSideEffects = () => {
 
       const preferredMicrophone = getMyPreferredMicrophone(state);
       const transcriptPrefs = getTranscriptionPrefs(state);
-      // True when the failure came from the `start_recording` invoke
-      // itself. That command emits `recording_failed` (with the platform
-      // reason) before rejecting and the global listener below toasts it,
-      // so the catch must stay silent for that path to avoid stacking a
-      // second notification. Every other throw in this block — chime
-      // playback, strategy init, phase push, `onRecordingStart` (provider /
-      // websocket / model-download failures) — has no event behind it, so
-      // the generic fallback toast there is the only user feedback.
-      let startInvokeRejected = false;
       try {
         getLogger().info(`Transcription prefs: mode=${transcriptPrefs.mode}`);
         const session = createTranscriptionSession(transcriptPrefs);
@@ -1067,17 +980,8 @@ export const DictationSideEffects = () => {
         isPausedRef.current = false;
         const [, startRecordingResult] = await Promise.all([
           strategy.setPhase("recording"),
-          // `start_recording` emits the platform-specific reason on the
-          // `recording_failed` event before rejecting; the global listener
-          // below owns the user-visible toast for that path. Mark the
-          // source so the outer catch does not stack a second toast.
           invoke<StartRecordingResponse>("start_recording", {
             args: { preferredMicrophone },
-<<<<<<< HEAD
-          }).catch((error) => {
-            startInvokeRejected = true;
-            throw error;
-=======
           }).then((result) => {
             // The phase update can outlive microphone startup. Anchor provider
             // wall-clock limits at the instant native capture succeeds rather
@@ -1089,7 +993,6 @@ export const DictationSideEffects = () => {
               startProviderRecordingTimers();
             }
             return result;
->>>>>>> origin/fix/superfix-review-findings
           }),
         ]);
 
@@ -1150,10 +1053,12 @@ export const DictationSideEffects = () => {
           ),
         );
 
-        await reportStartFailureToast({
-          startInvokeRejected,
-          formatMessage: intl.formatMessage,
-          showToast,
+        showToast({
+          message: intl.formatMessage({
+            defaultMessage: "Recording failed",
+          }),
+          toastType: "error",
+          duration: 8_000,
         });
       }
     },
@@ -1517,40 +1422,6 @@ export const DictationSideEffects = () => {
   useTauriListen<void>("resume-dictation", () => {
     if (!isMainWindow) return;
     void resumeDictation();
-  });
-
-  // The Windows global hotkey hook installed by `rdev::grab` is torn down
-  // across a sleep/wake boundary or a workstation unlock. The native
-  // lifecycle watcher (see `platform/windows/lifecycle.rs`) emits this
-  // event in response to either transition; re-invoking
-  // `restart_key_listener` causes the platform-agnostic `start_key_listener`
-  // path to stop the dead child process and spawn a fresh one, which
-  // re-installs the low-level hook. The TS listener is fire-and-forget:
-  // the Rust side already serializes concurrent stop/start calls, so a
-  // second event arriving while the restart is in flight just becomes a
-  // second no-op idempotent restart.
-  useTauriListen<void>("desktop_resume", () => {
-    invoke("restart_key_listener").catch((error) =>
-      getLogger().error(
-        `Failed to restart key listener after resume: ${error}`,
-      ),
-    );
-  });
-
-  useTauriListen<string>("recording_failed", (message) => {
-    // Backend `start_recording` emits this event when the mic cannot be
-    // initialised (no device, permission denied, WASAPI failure). The
-    // invoke-rejection already surfaces a generic toast, but the event
-    // payload carries a more specific reason from the platform layer.
-    getLogger().error(`Recording failed (backend): ${message}`);
-    showToast({
-      message:
-        message && message.trim().length > 0
-          ? `${intl.formatMessage({ defaultMessage: "Recording failed" })}: ${message}`
-          : intl.formatMessage({ defaultMessage: "Recording failed" }),
-      toastType: "error",
-      duration: 8_000,
-    });
   });
 
   useToastAction(async (payload) => {
