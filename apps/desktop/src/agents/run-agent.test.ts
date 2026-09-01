@@ -31,10 +31,7 @@ describe("safeSideEffect", () => {
     const result = await safeSideEffect(
       "tool-call-result.persist",
       { conversationId: "c-1", toolCallId: "t-1" },
-      () =>
-        Promise.reject(
-          new Error("The resource id 'foo' is invalid"),
-        ),
+      () => Promise.reject(new Error("The resource id 'foo' is invalid")),
     );
     expect(result).toBeNull();
     expect(loggerMock.error).toHaveBeenCalledTimes(1);
