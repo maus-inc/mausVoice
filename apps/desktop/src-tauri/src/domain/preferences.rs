@@ -155,7 +155,3 @@ fn default_preserve_audio_on_failure() -> bool {
 fn default_pill_placement() -> String {
     "bottom".to_string()
 }
-
-fn default_true() -> bool {
-    true
-}
