@@ -1,5 +1,8 @@
 export const OPENAI_COMPATIBLE_DEFAULT_URL = "http://127.0.0.1:8080";
 
+export const OPENAI_COMPATIBLE_DEFAULT_TRANSCRIPTION_PATH =
+  "/audio/transcriptions";
+
 export const normalizeOpenAICompatibleBaseUrl = (
   baseUrl?: string | null,
 ): string => {
@@ -20,4 +23,19 @@ export const buildOpenAICompatibleUrl = (
   }
 
   return shouldIncludeV1 ? `${normalized}/v1` : normalized;
+};
+
+export const buildOpenAICompatibleTranscriptionUrl = (
+  baseUrl?: string | null,
+  includeV1Path?: boolean | null,
+  transcriptionPath?: string | null,
+): string => {
+  const trimmed = transcriptionPath?.trim();
+  let path: string;
+  if (!trimmed || trimmed.length === 0) {
+    path = OPENAI_COMPATIBLE_DEFAULT_TRANSCRIPTION_PATH;
+  } else {
+    path = trimmed.startsWith("/") ? trimmed : `/${trimmed}`;
+  }
+  return `${buildOpenAICompatibleUrl(baseUrl, includeV1Path)}${path}`;
 };
