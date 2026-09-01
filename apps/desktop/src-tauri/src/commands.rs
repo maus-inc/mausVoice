@@ -2218,7 +2218,6 @@ pub async fn api_key_create(
         base_url,
         azure_region,
         include_v1_path,
-        transcription_path,
     } = api_key;
 
     let protected = protect_api_key(&key);
@@ -2239,7 +2238,6 @@ pub async fn api_key_create(
         base_url,
         azure_region,
         include_v1_path,
-        transcription_path,
     };
 
     crate::db::api_key_queries::insert_api_key(database.pool(), &stored)
@@ -2556,7 +2554,6 @@ pub async fn start_recording(
             }
 
             log::error!("Failed to start recording via command: {message}");
-            let _ = app.emit_to(EventTarget::any(), "recording_failed", message.clone());
             Err(message)
         }
     }
@@ -2579,14 +2576,14 @@ pub async fn stop_recording(
             })
         }
         Err(err) => {
-            let recording_error = (*err).downcast_ref::<crate::errors::RecordingError>();
+            let not_recording = (*err)
+                .downcast_ref::<crate::errors::RecordingError>()
+                .map(|inner| matches!(inner, crate::errors::RecordingError::NotRecording))
+                .unwrap_or(false);
 
-            if matches!(
-                recording_error,
-                Some(crate::errors::RecordingError::NotRecording)
-            ) {
+            if not_recording {
                 return Ok(StopRecordingResponse {
-                    samples: vec![],
+                    samples: Vec::new(),
                     sample_rate: 0,
                 });
             }
@@ -2599,6 +2596,7 @@ pub async fn stop_recording(
     .await
     .map_err(|err| err.to_string())?
 }
+
 
 #[tauri::command]
 #[specta::specta]
@@ -2787,8 +2785,8 @@ pub async fn paste(
     // Re-entry guard: a paste in progress owns the clipboard and the
     // synthetic keystroke pipeline. Racing a second paste interleaves both
     // clipboard swaps and keystrokes and produces garbled output.
-    let _paste_guard = ReentryGuard::acquire(&PASTE_IN_PROGRESS)
-        .map_err(|_| "Paste is already in progress".to_string())?;
+    let _paste_guard =
+        ReentryGuard::acquire(&PASTE_IN_PROGRESS).map_err(|_| "Paste is already in progress".to_string())?;
 
     // Probe the focused target first. If it clearly can't accept text, write
     // the transcript to the clipboard and skip the paste keystroke entirely —
@@ -2941,23 +2939,6 @@ pub fn set_pill_visibility(app: AppHandle, visibility: String) -> Result<(), Str
 
 #[tauri::command]
 #[specta::specta]
-pub fn set_pill_placement(app: AppHandle, placement: String) -> Result<(), String> {
-    validate_pill_placement(&placement)?;
-    crate::platform::overlay::notify_pill_placement(&app, &placement);
-    Ok(())
-}
-
-/// Accept-list for [`set_pill_placement`]; kept separate so the policy is
-/// unit-testable without an `AppHandle`.
-fn validate_pill_placement(placement: &str) -> Result<(), String> {
-    match placement {
-        "top" | "bottom" => Ok(()),
-        other => Err(format!("invalid pill placement: {other:?}")),
-    }
-}
-
-#[tauri::command]
-#[specta::specta]
 pub fn notify_pill_style_info(app: AppHandle, count: u32, name: String) {
     crate::platform::overlay::notify_style_info(&app, count, &name);
 }
@@ -2998,16 +2979,6 @@ pub fn get_key_listener_health() -> String {
 #[specta::specta]
 pub fn retry_key_listener(app: AppHandle) -> Result<(), String> {
     crate::platform::keyboard::start_key_listener(&app)
-}
-
-/// Re-registers the global keyboard hook. Used by the Windows resume
-/// handler in `platform::windows::lifecycle` to recover from a
-/// sleep/wake or session-unlock transition that tore down the
-/// low-level hook installed by `rdev::grab`.
-#[tauri::command]
-#[specta::specta]
-pub fn restart_key_listener(app: AppHandle) -> Result<(), String> {
-    retry_key_listener(app)
 }
 
 #[tauri::command]
@@ -3082,7 +3053,7 @@ pub fn enable_java_access_bridge() -> Result<JavaAccessBridgeStatus, String> {
     // Read existing contents (if any). A missing file is treated as empty.
     let existing = match std::fs::read_to_string(&path) {
         Ok(s) => s,
-        Err(err) if err.kind() == std::io::ErrorKind::NotFound => String::default(),
+        Err(err) if err.kind() == std::io::ErrorKind::NotFound => String::new(),
         Err(err) => {
             return Err(format!("Failed to read {}: {}", path.display(), err));
         }
@@ -3092,7 +3063,7 @@ pub fn enable_java_access_bridge() -> Result<JavaAccessBridgeStatus, String> {
     // find an existing `assistive_technologies=` line, merge our value into
     // its comma-separated list instead of clobbering whatever was already
     // there (e.g. screen reader entries).
-    let mut lines: Vec<String> = Vec::default();
+    let mut lines: Vec<String> = Vec::new();
     let mut found_key = false;
     let mut already_enabled = false;
 
@@ -3297,7 +3268,10 @@ pub fn set_reset_pill_position_enabled(app: AppHandle, enabled: bool) -> Result<
 /// `"cursor"` (the monitor under the mouse).
 #[tauri::command]
 #[specta::specta]
-pub fn reset_pill_position(app: AppHandle, strategy: Option<String>) -> Result<(), String> {
+pub fn reset_pill_position(
+    app: AppHandle,
+    strategy: Option<String>,
+) -> Result<(), String> {
     let strategy = strategy.unwrap_or_else(|| "current".to_string());
     crate::platform::overlay::notify_reset_position(&app, &strategy)
 }
@@ -3632,68 +3606,22 @@ struct AllowedCommand {
 
 #[cfg(not(target_os = "windows"))]
 const ALLOWED_COMMANDS: &[AllowedCommand] = &[
-    AllowedCommand {
-        binary: "ls",
-        fixed_args: &[],
-    },
-    AllowedCommand {
-        binary: "pwd",
-        fixed_args: &[],
-    },
-    AllowedCommand {
-        binary: "echo",
-        fixed_args: &[],
-    },
-    AllowedCommand {
-        binary: "cat",
-        fixed_args: &[],
-    },
-    AllowedCommand {
-        binary: "which",
-        fixed_args: &[],
-    },
-    AllowedCommand {
-        binary: "whoami",
-        fixed_args: &[],
-    },
-    AllowedCommand {
-        binary: "date",
-        fixed_args: &[],
-    },
-    AllowedCommand {
-        binary: "uname",
-        fixed_args: &["-a"],
-    },
-    AllowedCommand {
-        binary: "df",
-        fixed_args: &["-h"],
-    },
-    AllowedCommand {
-        binary: "du",
-        fixed_args: &["-sh"],
-    },
-    AllowedCommand {
-        binary: "head",
-        fixed_args: &["-n", "200"],
-    },
-    AllowedCommand {
-        binary: "tail",
-        fixed_args: &["-n", "200"],
-    },
-    AllowedCommand {
-        binary: "wc",
-        fixed_args: &["-l"],
-    },
+    AllowedCommand { binary: "ls", fixed_args: &[] },
+    AllowedCommand { binary: "pwd", fixed_args: &[] },
+    AllowedCommand { binary: "echo", fixed_args: &[] },
+    AllowedCommand { binary: "which", fixed_args: &[] },
+    AllowedCommand { binary: "whoami", fixed_args: &[] },
+    AllowedCommand { binary: "date", fixed_args: &[] },
+    AllowedCommand { binary: "uname", fixed_args: &["-a"] },
+    AllowedCommand { binary: "df", fixed_args: &["-h"] },
+    AllowedCommand { binary: "du", fixed_args: &["-sh"] },
+    AllowedCommand { binary: "head", fixed_args: &["-n", "200"] },
+    AllowedCommand { binary: "tail", fixed_args: &["-n", "200"] },
+    AllowedCommand { binary: "wc", fixed_args: &["-l"] },
     #[cfg(target_os = "macos")]
-    AllowedCommand {
-        binary: "open",
-        fixed_args: &[],
-    },
+    AllowedCommand { binary: "open", fixed_args: &[] },
     #[cfg(target_os = "linux")]
-    AllowedCommand {
-        binary: "xdg-open",
-        fixed_args: &[],
-    },
+    AllowedCommand { binary: "xdg-open", fixed_args: &[] },
 ];
 
 /// Windows allow-list. Deliberately excludes CMD builtins (`dir`, `cd`,
@@ -3702,22 +3630,10 @@ const ALLOWED_COMMANDS: &[AllowedCommand] = &[
 /// always fail with "program not found". Only real executables are listed.
 #[cfg(target_os = "windows")]
 const ALLOWED_COMMANDS: &[AllowedCommand] = &[
-    AllowedCommand {
-        binary: "whoami",
-        fixed_args: &[],
-    },
-    AllowedCommand {
-        binary: "where",
-        fixed_args: &[],
-    },
-    AllowedCommand {
-        binary: "hostname",
-        fixed_args: &[],
-    },
-    AllowedCommand {
-        binary: "explorer",
-        fixed_args: &[],
-    },
+    AllowedCommand { binary: "whoami", fixed_args: &[] },
+    AllowedCommand { binary: "where", fixed_args: &[] },
+    AllowedCommand { binary: "hostname", fixed_args: &[] },
+    AllowedCommand { binary: "explorer", fixed_args: &[] },
 ];
 
 /// Validate that a single argv token contains no NUL bytes (which would truncate
@@ -3727,9 +3643,7 @@ fn is_safe_arg_token(token: &str) -> bool {
     if token.is_empty() {
         return false;
     }
-    token
-        .chars()
-        .all(|ch| !(ch.is_control() && ch != '\t') && ch != '\0')
+    token.chars().all(|ch| !(ch.is_control() && ch != '\t') && ch != '\0')
 }
 
 /// Characters that are forbidden inside any argv token passed through
@@ -3806,8 +3720,8 @@ fn validate_floating_window_url(url: &Url) -> Result<(), String> {
             // IPC: `maus-inc.github.io` is not in the `floating-*` capability
             // `remote.urls` list. Localhost remains the only remote host with
             // IPC (dev tooling).
-            let is_docs_site =
-                host == "maus-inc.github.io" && url.path().starts_with("/mausVoice/");
+            let is_docs_site = host == "maus-inc.github.io"
+                && url.path().starts_with("/mausVoice/");
             if !is_localhost && !is_docs_site {
                 return Err(format!(
                     "Floating window URL host {host:?} is not in the trusted allow-list"
@@ -4836,10 +4750,7 @@ mod tests {
             "whoami"
         );
         assert_eq!(
-            validate_terminal_command_args("where cargo")
-                .unwrap()
-                .0
-                .binary,
+            validate_terminal_command_args("where cargo").unwrap().0.binary,
             "where"
         );
         // CMD builtins are intentionally absent: without a shell they have
@@ -4954,13 +4865,15 @@ mod tests {
     fn installer_url_rejects_untrusted_hosts_schemes_and_extensions() {
         // A redirect target on an untrusted host must be refused: this is the
         // check the redirect policy applies to every hop.
-        assert!(validate_installer_url(&Url::parse("https://evil.com/app.pkg").unwrap()).is_err());
         assert!(
-            validate_installer_url(&Url::parse("http://github.com/maus-inc/app.pkg").unwrap())
-                .is_err()
+            validate_installer_url(
+                &Url::parse("https://evil.com/app.pkg").unwrap(),
+                TRUSTED_REPO_NAMESPACE
+            )
+            .is_err()
         );
         assert!(validate_installer_url(
-            &Url::parse("https://evil.com/app.pkg").unwrap(),
+            &Url::parse("http://github.com/maus-inc/app.pkg").unwrap(),
             TRUSTED_REPO_NAMESPACE
         )
         .is_err());
@@ -4969,12 +4882,12 @@ mod tests {
             TRUSTED_REPO_NAMESPACE
         )
         .is_err());
+        // An objects CDN hop that escapes into a different repository namespace
+        // must be rejected even though the host is allow-listed.
         assert!(validate_installer_url(
             &Url::parse("https://objects.githubusercontent.com/other-org/otherRepo/releases/download/v1/app.pkg")
                 .unwrap(),
             TRUSTED_REPO_NAMESPACE
-        )
-        .is_err());
         )
         .is_err());
     }
@@ -4999,12 +4912,8 @@ mod tests {
 
     #[test]
     fn floating_window_allows_localhost() {
-        assert!(
-            validate_floating_window_url(&Url::parse("http://localhost:1420/").unwrap()).is_ok()
-        );
-        assert!(
-            validate_floating_window_url(&Url::parse("http://127.0.0.1:8080/foo").unwrap()).is_ok()
-        );
+        assert!(validate_floating_window_url(&Url::parse("http://localhost:1420/").unwrap()).is_ok());
+        assert!(validate_floating_window_url(&Url::parse("http://127.0.0.1:8080/foo").unwrap()).is_ok());
     }
 
     #[test]
@@ -5062,19 +4971,6 @@ mod tests {
             "always_on_top",
             "hidden" | "persistent" | "while_active"
         ));
-    }
-
-    #[test]
-    fn pill_placement_accepts_top_and_bottom_only() {
-        // Exercise the validator extracted from set_pill_placement so a
-        // regression in the accept-list (typo in the literal, removal of a
-        // branch, etc.) cannot ship silently — the previous test simply
-        // re-asserted the implementation against the implementation.
-        assert!(validate_pill_placement("top").is_ok());
-        assert!(validate_pill_placement("bottom").is_ok());
-        assert!(validate_pill_placement("center").is_err());
-        assert!(validate_pill_placement("").is_err());
-        assert!(validate_pill_placement("TOP").is_err());
     }
 
     #[test]
@@ -5269,8 +5165,8 @@ mod tests {
 
     #[test]
     fn managed_audio_path_rejects_paths_outside_the_audio_dir() {
-        let root =
-            std::env::temp_dir().join(format!("mausvoice-audio-guard-{}", std::process::id()));
+        let root = std::env::temp_dir()
+            .join(format!("mausvoice-audio-guard-{}", std::process::id()));
         let audio_dir = root.join("audio");
         let other_dir = root.join("other");
         std::fs::create_dir_all(&audio_dir).unwrap();
@@ -6017,8 +5913,10 @@ mod tests {
 
     #[test]
     fn clear_local_data_file_helpers_respect_the_audio_dir_guard() {
-        let root =
-            std::env::temp_dir().join(format!("mausvoice-clear-local-{}", std::process::id()));
+        let root = std::env::temp_dir().join(format!(
+            "mausvoice-clear-local-{}",
+            std::process::id()
+        ));
         let audio_dir = root.join("audio");
         let outside_dir = root.join("outside");
         std::fs::create_dir_all(&audio_dir).unwrap();
@@ -6058,8 +5956,10 @@ mod tests {
 
     #[test]
     fn installer_redirect_validates_each_hop_and_caps_depth() {
-        let ok = Url::parse("https://github.com/maus-inc/mausVoice/releases/download/v1/app.pkg")
-            .unwrap();
+        let ok = Url::parse(
+            "https://github.com/maus-inc/mausVoice/releases/download/v1/app.pkg",
+        )
+        .unwrap();
         let evil = Url::parse("https://evil.com/app.pkg").unwrap();
         assert!(installer_redirect_allowed(0, &ok, TRUSTED_REPO_NAMESPACE).is_ok());
         assert!(installer_redirect_allowed(9, &ok, TRUSTED_REPO_NAMESPACE).is_ok());
@@ -6122,31 +6022,38 @@ mod tests {
     }
 }
 
-/// Strict, shell-free execution for an allow-listed command.
-///
-/// Security properties:
-/// - No shell is invoked; `command` is tokenized into argv by whitespace only
-///   (no quoting, no metacharacter evaluation). A token like `;rm -rf /` is
-///   passed as a single literal argument to the binary.
-/// - The binary must appear in `ALLOWED_COMMANDS` (exact name match); path
-///   traversal (e.g. `/bin/sh`, `../../sh`) is rejected.
-/// - Per-command timeout and output-size cap bound resource use.
-static PATH: &str = "PATH";
-#[tauri::command]
-#[specta::specta]
-pub async fn run_terminal_command(command: String) -> Result<RunTerminalCommandResponse, String> {
-    // Whitespace-tokenize without shell interpretation. Quoting is deliberately
-    // unsupported — AI tools pass structured argv tokens separated by spaces.
-    // All validation is centralised in validate_terminal_command_args so the
-    // production path and unit tests can't drift.
-    let (allowed, user) = validate_terminal_command_args(&command)?;
-    // Never inherit the user's shell environment wholesale; clear dangerous vars.
-    let mut cmd = std::process::Command::new(allowed.binary);
-    cmd.env_clear();
-    if let Ok(path) = std::env::var(PATH) {
-        cmd.env("PATH", path);
-    }
-    cmd.env("LANG", "C.UTF-8");
+#[cfg(test)]
+mod installer_url_tests {
+    use super::*;
+
+    #[test]
+    fn initial_installer_url_requires_trusted_repo_path() {
+        // The exact URL the TS layer builds for the macOS manual fallback.
+        assert!(validate_initial_installer_url(
+            &Url::parse(
+                "https://github.com/maus-inc/mausVoice/releases/download/v0.1.5/mausVoice_0.1.5_universal.dmg"
+            )
+            .unwrap()
+        )
+        .is_ok());
+
+        // A release asset from a *different* repository must be rejected.
+        assert!(validate_initial_installer_url(
+            &Url::parse(
+                "https://github.com/evil/repo/releases/download/v1/x.dmg"
+            )
+            .unwrap()
+        )
+        .is_err());
+
+        // The redirect CDN host is not a valid *initial* URL.
+        assert!(validate_initial_installer_url(
+            &Url::parse(
+                "https://release-assets.githubusercontent.com/maus-inc/mausVoice/releases/download/v0.1.5/x.dmg"
+            )
+            .unwrap()
+        )
+        .is_err());
 
         // Non-installer extensions are rejected.
         assert!(validate_initial_installer_url(
@@ -6354,263 +6261,4 @@ wLMDjy9FLAuxZ3q4NlEvkgtyhrr0gtTu6KC4KBJdITbbOeAi1zBIYo0v4iTgt8jJpIidRJnp94ABQkJA
         // A malformed signature must fail to parse.
         assert!(verify_minisign_data(public_key, b"test", "not-a-signature").is_err());
     }
-}
-
-/// Maximum size we are willing to download for a `.pkg` installer.
-const INSTALLER_MAX_BYTES: u64 = 250 * 1024 * 1024;
-const INSTALLER_MAX_REDIRECTS: usize = 10;
-
-/// Decide whether a redirect hop is allowed. Applied to every hop so an
-/// allowed host cannot bounce us onto an untrusted origin.
-fn installer_redirect_allowed(previous_hops: usize, url: &Url) -> Result<(), String> {
-    if previous_hops >= INSTALLER_MAX_REDIRECTS {
-        return Err("too many redirects".to_string());
-    }
-    validate_installer_url(url)
-}
-
-/// Reject an advertised Content-Length above the streaming cap before any
-/// bytes are written.
-fn installer_content_length_ok(len: Option<u64>) -> Result<(), String> {
-    if let Some(n) = len {
-        if n > INSTALLER_MAX_BYTES {
-            return Err("Installer download exceeded 250MiB safety limit".to_string());
-        }
-    }
-    Ok(())
-}
-
-/// Accumulate a downloaded chunk against the streaming cap.
-fn installer_account_chunk(written: u64, chunk_len: u64) -> Result<u64, String> {
-    let next = written.saturating_add(chunk_len);
-    if next > INSTALLER_MAX_BYTES {
-        return Err("Installer download exceeded 250MiB safety limit".to_string());
-    }
-    Ok(next)
-}
-
-/// Validate an installer URL (scheme, host allow-list, `.pkg` path). Applied
-/// to the initial URL *and* to every redirect hop, because the redirect chain
-/// is attacker-influenced: an allowed host could otherwise bounce us to an
-/// untrusted origin whose bytes we would write and execute.
-fn validate_installer_url(url: &Url) -> Result<(), String> {
-    if url.scheme() != "https" {
-        return Err("Installer URL must use https".to_string());
-    }
-    let host = url.host_str().unwrap_or("");
-    if !matches!(host, "github.com" | "objects.githubusercontent.com") {
-        return Err(format!(
-            "Installer URL host {host:?} is not in the trusted allow-list"
-        ));
-    }
-    if !url.path().ends_with(".pkg") {
-        return Err("Installer URL must point to a .pkg file".to_string());
-    }
-    Ok(())
-}
-
-/// Downloads a `.pkg` installer to a temp directory and opens it with
-/// macOS Installer.app. This is used as a fallback when the normal in-place
-/// updater cannot write to the app's install location.
-#[tauri::command]
-#[specta::specta]
-pub async fn download_and_open_mac_installer(url: String) -> Result<(), String> {
-    // Defense-in-depth: only allow downloads from the trusted release host.
-    // The TS caller derives this URL from the signed updater manifest, but
-    // any future caller (including a compromised webview) must not be able
-    // to make us download+execute arbitrary files.
-    let parsed = Url::parse(&url).map_err(|e| format!("Invalid URL: {e}"))?;
-    validate_installer_url(&parsed)?;
-
-    // Use a unique temp filename (not the URL-derived basename) so a crafted
-    // path like "../../../LaunchAgents/foo" cannot escape the temp dir. The
-    // nanosecond timestamp + pid is unique enough for our purposes; we
-    // overwrite then delete on installer completion anyway.
-    let nanos = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map_or(0, |d| d.as_nanos());
-    let pid = std::process::id();
-    let dest = std::env::temp_dir().join(format!("mausvoice-update-{nanos}-{pid}.pkg"));
-
-    // Remove any stale previous download (best-effort).
-    let _ = std::fs::remove_file(&dest);
-
-    // Validate every redirect hop rather than trusting the initial URL: the
-    // default policy would silently follow an allowed host to an arbitrary one.
-    let redirect_policy = reqwest::redirect::Policy::custom(|attempt| {
-        match installer_redirect_allowed(attempt.previous().len(), attempt.url()) {
-            Ok(()) => attempt.follow(),
-            Err(err) => attempt.error(err),
-        }
-    });
-    let client = reqwest::Client::builder()
-        .redirect(redirect_policy)
-        .build()
-        .map_err(|e| e.to_string())?;
-
-    let mut response = client.get(parsed).send().await.map_err(|e| e.to_string())?;
-    if !response.status().is_success() {
-        return Err(format!("Download failed with status {}", response.status()));
-    }
-
-    // Reject an oversized advertised length before transferring anything.
-    installer_content_length_ok(response.content_length())?;
-
-    // Stream to disk, enforcing the cap as we go so a server that lies about
-    // (or omits) Content-Length cannot exhaust memory or fill the disk.
-    let mut file = std::fs::File::create(&dest).map_err(|e| e.to_string())?;
-    let mut written: u64 = 0;
-    while let Some(chunk) = response.chunk().await.map_err(|e| e.to_string())? {
-        written = match installer_account_chunk(written, chunk.len() as u64) {
-            Ok(next) => next,
-            Err(err) => {
-                drop(file);
-                let _ = std::fs::remove_file(&dest);
-                return Err(err);
-            }
-        };
-        std::io::Write::write_all(&mut file, &chunk).map_err(|e| e.to_string())?;
-    }
-    std::io::Write::flush(&mut file).map_err(|e| e.to_string())?;
-    drop(file);
-
-    std::process::Command::new("open")
-        .arg(&dest)
-        .spawn()
-        .map_err(|e| e.to_string())?;
-
-    Ok(())
-}
-
-#[tauri::command]
-#[specta::specta]
-pub fn get_system_volume() -> Result<f64, String> {
-    crate::platform::volume::get_system_volume()
-}
-
-#[tauri::command]
-#[specta::specta]
-pub fn set_system_volume(volume: f64) -> Result<(), String> {
-    let clamped = volume.clamp(0.0, 1.0);
-    crate::platform::volume::set_system_volume(clamped)
-}
-
-#[derive(serde::Deserialize, specta::Type)]
-#[serde(rename_all = "camelCase")]
-pub struct CreateFloatingWindowArgs {
-    pub url: String,
-    pub title: Option<String>,
-    pub width: Option<f64>,
-    pub height: Option<f64>,
-    pub min_width: Option<f64>,
-    pub min_height: Option<f64>,
-    pub x: Option<f64>,
-    pub y: Option<f64>,
-    pub decorations: Option<bool>,
-    pub transparent: Option<bool>,
-    pub resizable: Option<bool>,
-    pub focused: Option<bool>,
-}
-
-#[derive(serde::Serialize, specta::Type, Clone, Debug)]
-#[serde(rename_all = "camelCase")]
-pub struct FloatingWindowInfo {
-    pub id: String,
-    pub url: String,
-    pub title: String,
-}
-
-/// Opens a draggable, always-on-top webview window pointed at the given URL
-/// and returns a stable id that can be used to destroy it later.
-///
-/// External URLs are restricted to http(s) and to a small allow-list of
-/// trusted schemes/hosts. This is the only place in the app that creates a
-/// webview pointed at a non-local origin. Localhost loopback is the only
-/// remote host that also receives IPC (via `floating-*` `remote.urls`);
-/// the GitHub Pages docs host is allowed to load but has no IPC capability.
-/// We keep the navigation allow-list small to avoid a compromised or
-/// confused caller creating a floating window on an attacker-controlled origin.
-#[tauri::command]
-#[specta::specta]
-pub async fn floating_window_create(
-    args: CreateFloatingWindowArgs,
-    app: AppHandle,
-    state: State<'_, crate::state::FloatingWindowState>,
-) -> Result<FloatingWindowInfo, String> {
-    let parsed_url = parse_floating_window_url(&args.url)?;
-    validate_floating_window_url(&parsed_url)?;
-
-    let label = state.next_label();
-    let title = args
-        .title
-        .clone()
-        .unwrap_or_else(|| "mausVoice".to_string());
-
-    let mut builder = tauri::WebviewWindowBuilder::new(
-        &app,
-        label.clone(),
-        tauri::WebviewUrl::External(parsed_url),
-    )
-    .title(title.clone())
-    .always_on_top(true)
-    .skip_taskbar(true)
-    .decorations(args.decorations.unwrap_or(true))
-    .resizable(args.resizable.unwrap_or(true))
-    .focused(args.focused.unwrap_or(false));
-
-    if args.transparent.unwrap_or(false) {
-        builder = builder.transparent(true);
-    }
-
-    if let (Some(w), Some(h)) = (args.width, args.height) {
-        builder = builder.inner_size(w, h);
-    }
-    if let (Some(min_w), Some(min_h)) = (args.min_width, args.min_height) {
-        builder = builder.min_inner_size(min_w, min_h);
-    }
-    if let (Some(x), Some(y)) = (args.x, args.y) {
-        builder = builder.position(x, y);
-    }
-
-    builder.build().map_err(|err| err.to_string())?;
-
-    Ok(FloatingWindowInfo {
-        id: label,
-        url: args.url,
-        title,
-    })
-}
-
-#[tauri::command]
-#[specta::specta]
-pub async fn floating_window_destroy(id: String, app: AppHandle) -> Result<(), String> {
-    if !id.starts_with(crate::state::FLOATING_WINDOW_LABEL_PREFIX) {
-        return Err(format!("invalid floating window id: {id}"));
-    }
-    match app.get_webview_window(&id) {
-        Some(window) => window.close().map_err(|err| err.to_string()),
-        None => Ok(()),
-    }
-}
-
-#[tauri::command]
-#[specta::specta]
-pub async fn floating_window_list(app: AppHandle) -> Result<Vec<FloatingWindowInfo>, String> {
-    let mut out = Vec::default();
-    for (label, window) in app.webview_windows() {
-        if !label.starts_with(crate::state::FLOATING_WINDOW_LABEL_PREFIX) {
-            continue;
-        }
-        let title = window.title().unwrap_or_default();
-        let url = window
-            .url()
-            .map(|u| u.to_string())
-            .unwrap_or_else(|_| String::default());
-        out.push(FloatingWindowInfo {
-            id: label,
-            url,
-            title,
-        });
-    }
-    Ok(out)
 }

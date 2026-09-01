@@ -1,41 +1,10 @@
 use std::sync::Mutex;
 use std::time::{Duration, Instant};
 use tauri::{Manager, PhysicalPosition, RunEvent, Window, WindowEvent};
-use tauri_plugin_log::{RotationStrategy, Target, TargetKind, TimezoneStrategy};
+use tauri_plugin_log::{Target, TargetKind, TimezoneStrategy};
 use tauri_plugin_window_state::{AppHandleExt, StateFlags};
 
 const AUTOSTART_HIDDEN_ARG: &str = "--mausvoice-autostart-hidden";
-
-/// Maximum size of a single log file before the plugin rotates it.
-/// At 25 MB and `MAX_LOG_FILES` kept files, the total log directory is
-/// capped near 250 MB.
-const MAX_LOG_FILE_SIZE: u128 = 25 * 1024 * 1024;
-
-/// Number of rotated log files the plugin keeps on disk. Combined with
-/// `MAX_LOG_FILE_SIZE` this bounds the log directory to roughly 250 MB.
-const MAX_LOG_FILES: usize = 10;
-
-const ENV_MAUSVOICE_LOG: &str = "MAUSVOICE_LOG";
-const ENV_MAUSVOICE_ENABLE_DEVTOOLS: &str = "MAUSVOICE_ENABLE_DEVTOOLS";
-
-/// Returns the default log level, or the level requested through the
-/// `MAUSVOICE_LOG` environment variable when it parses to a known level.
-/// `debug` and `trace` are reachable for opt-in troubleshooting; the
-/// production default is `info` to keep file size and noise in check.
-fn default_log_level() -> log::LevelFilter {
-    if let Ok(raw) = std::env::var(ENV_MAUSVOICE_LOG) {
-        match raw.trim().to_ascii_lowercase().as_str() {
-            "trace" => return log::LevelFilter::Trace,
-            "debug" => return log::LevelFilter::Debug,
-            "info" => return log::LevelFilter::Info,
-            "warn" | "warning" => return log::LevelFilter::Warn,
-            "error" => return log::LevelFilter::Error,
-            "off" => return log::LevelFilter::Off,
-            _ => {}
-        }
-    }
-    log::LevelFilter::Info
-}
 
 /// Minimum gap between two window-move log lines.
 const MOVE_LOG_THROTTLE: Duration = Duration::from_millis(250);
@@ -130,9 +99,7 @@ pub fn build() -> tauri::Builder<tauri::Wry> {
                     Target::new(TargetKind::Stdout),
                     Target::new(TargetKind::Webview),
                 ])
-                .max_file_size(MAX_LOG_FILE_SIZE)
-                .rotation_strategy(RotationStrategy::KeepSome(MAX_LOG_FILES))
-                .level(default_log_level())
+                .level(log::LevelFilter::Debug)
                 .level_for("hyper_util", log::LevelFilter::Info)
                 .level_for("reqwest", log::LevelFilter::Info)
                 .timezone_strategy(TimezoneStrategy::UseLocal)
@@ -183,23 +150,14 @@ pub fn build() -> tauri::Builder<tauri::Wry> {
             match event {
                 WindowEvent::CloseRequested { api, .. } if window.label() == "main" => {
                     api.prevent_close();
-                    let _ = window.app_handle().save_window_state(StateFlags::SIZE);
-                    let _ = window.hide();
-                    #[cfg(target_os = "windows")]
-                    {
-                        crate::platform::window::keep_webview_active(window.app_handle(), "main");
-                        crate::platform::window::set_webview_keepalive(true);
-                    }
-                    #[cfg(target_os = "macos")]
-                    {
-                        if let Some(main_ww) = window.app_handle().get_webview_window("main") {
-                            if let Err(err) = crate::platform::window::hide_main_window(&main_ww) {
-                                log::error!("Failed to hide main window: {err}");
-                            }
-                        }
-                        if let Err(err) = crate::platform::macos::dock::hide_dock_icon() {
-                            log::error!("Failed to hide dock icon: {err}");
-                        }
+                    let _ = window
+                        .app_handle()
+                        .save_window_state(StateFlags::SIZE);
+                    // Use the webview window for hide_main_window (which
+                    // needs &WebviewWindow, not &Window from on_window_event).
+                    if let Some(main_ww) = window.app_handle().get_webview_window("main") {
+                        if let Err(err) = crate::platform::window::hide_main_window(&main_ww) {
+                            log::error!("Failed to hide main window: {err}");
                         }
                     }
                 }
@@ -242,10 +200,7 @@ pub fn build() -> tauri::Builder<tauri::Wry> {
             // window (UIPI), so this is the first thing to check when a user
             // reports hotkeys failing over an elevated app.
             #[cfg(target_os = "windows")]
-            {
-                crate::platform::windows::permissions::log_elevation_state();
-                crate::platform::windows::lifecycle::start_watcher(app.handle());
-            }
+            crate::platform::windows::permissions::log_elevation_state();
 
             // Purge old log files, keeping the latest 10
             crate::system::diagnostics::purge_old_logs(app.handle());
@@ -303,8 +258,11 @@ pub fn build() -> tauri::Builder<tauri::Wry> {
                 crate::platform::compositor::deploy_trigger_script(app.handle());
             }
 
+            // The capability itself is omitted from stable binaries. Keeping this
+            // behind the same compile-time feature makes the environment variable
+            // intentionally ineffective if it is set for a release build.
             #[cfg(feature = "debug-assist")]
-            if std::env::var(ENV_MAUSVOICE_ENABLE_DEVTOOLS).is_ok() {
+            if std::env::var("MAUSVOICE_ENABLE_DEVTOOLS").is_ok() {
                 log::info!("MAUSVOICE_ENABLE_DEVTOOLS detected, opening dev tools...");
                 if let Some(main_window) = app.get_webview_window("main") {
                     main_window.open_devtools();
@@ -391,12 +349,10 @@ pub fn build() -> tauri::Builder<tauri::Wry> {
             crate::commands::clear_local_data,
             crate::commands::set_phase,
             crate::commands::set_pill_visibility,
-            crate::commands::set_pill_placement,
             crate::commands::notify_pill_style_info,
             crate::commands::sync_native_pill_assistant,
             crate::commands::start_key_listener,
             crate::commands::stop_key_listener,
-            crate::commands::restart_key_listener,
             crate::commands::sync_hotkey_combos,
             crate::commands::sync_compositor_hotkeys,
             crate::commands::reset_key_listener_state,
