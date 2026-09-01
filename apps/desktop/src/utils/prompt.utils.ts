@@ -145,9 +145,11 @@ export const buildSystemPostProcessingTonePrompt = (
       input.tone.systemPromptTemplate,
       buildPostProcessingTemplateVars(input),
     );
-    return appendHumanizeSkill(
-      appendStructuredStyleGuidance(systemPrompt, input.tone),
-    ) + `\n\n${GLOSSARY_EXACT_SPELLING_INSTRUCTION}`;
+    return (
+      appendHumanizeSkill(
+        appendStructuredStyleGuidance(systemPrompt, input.tone),
+      ) + `\n\n${GLOSSARY_EXACT_SPELLING_INSTRUCTION}`
+    );
   }
 
   const stylePrompt = appendStructuredStyleGuidance(

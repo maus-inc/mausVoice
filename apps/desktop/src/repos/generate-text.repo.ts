@@ -151,7 +151,7 @@ export class OpenAIGenerateTextRepo extends BaseGenerateTextRepo {
       prompt: input.prompt,
       system: input.system ?? undefined,
       jsonResponse: input.jsonResponse,
-        maxTokens: input.maxTokens,
+      maxTokens: input.maxTokens,
       customFetch: tauriFetch,
     });
 
@@ -194,7 +194,7 @@ export class OllamaGenerateTextRepo extends BaseGenerateTextRepo {
       prompt: input.prompt,
       system: input.system ?? undefined,
       jsonResponse: input.jsonResponse,
-        maxTokens: input.maxTokens,
+      maxTokens: input.maxTokens,
       customFetch: tauriFetch,
     });
 
@@ -240,7 +240,7 @@ export class OpenAICompatibleGenerateTextRepo extends BaseGenerateTextRepo {
       prompt: input.prompt,
       system: input.system ?? undefined,
       jsonResponse: input.jsonResponse,
-        maxTokens: input.maxTokens,
+      maxTokens: input.maxTokens,
       customFetch: this.customFetch,
     });
 
@@ -287,7 +287,7 @@ export class OpenRouterGenerateTextRepo extends BaseGenerateTextRepo {
       prompt: input.prompt,
       system: input.system ?? undefined,
       jsonResponse: input.jsonResponse,
-        maxTokens: input.maxTokens,
+      maxTokens: input.maxTokens,
       providerRouting: this.providerRouting,
       customFetch: tauriFetch,
     });
@@ -331,7 +331,7 @@ export class AzureOpenAIGenerateTextRepo extends BaseGenerateTextRepo {
       system: input.system ?? undefined,
       prompt: input.prompt,
       jsonResponse: input.jsonResponse,
-        maxTokens: input.maxTokens,
+      maxTokens: input.maxTokens,
       customFetch: tauriFetch,
     });
 
@@ -372,7 +372,7 @@ export class DeepseekGenerateTextRepo extends BaseGenerateTextRepo {
       prompt: input.prompt,
       system: input.system ?? undefined,
       jsonResponse: input.jsonResponse,
-        maxTokens: input.maxTokens,
+      maxTokens: input.maxTokens,
       customFetch: tauriFetch,
     });
 
@@ -412,7 +412,7 @@ export class GeminiGenerateTextRepo extends BaseGenerateTextRepo {
       prompt: input.prompt,
       system: input.system ?? undefined,
       jsonResponse: input.jsonResponse,
-        maxTokens: input.maxTokens,
+      maxTokens: input.maxTokens,
       signal: input.signal,
       customFetch: tauriFetch,
     });
@@ -453,7 +453,7 @@ export class ClaudeGenerateTextRepo extends BaseGenerateTextRepo {
       prompt: input.prompt,
       system: input.system ?? undefined,
       jsonResponse: input.jsonResponse,
-        maxTokens: input.maxTokens,
+      maxTokens: input.maxTokens,
       customFetch: tauriFetch,
     });
 
@@ -493,7 +493,7 @@ export class CerebrasGenerateTextRepo extends BaseGenerateTextRepo {
       prompt: input.prompt,
       system: input.system ?? undefined,
       jsonResponse: input.jsonResponse,
-        maxTokens: input.maxTokens,
+      maxTokens: input.maxTokens,
       customFetch: tauriFetch,
     });
 

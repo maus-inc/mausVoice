@@ -84,8 +84,9 @@ const normalizePillResetMonitorStrategy = (
   strategy: Nullable<string> | undefined,
 ): PillResetMonitorStrategy => (strategy === "cursor" ? "cursor" : "current");
 
-const normalizePillPlacement = (value: Nullable<string>): PillPlacement =>
-  value === "top" || value === "bottom" ? value : "bottom";
+const normalizePillPlacement = (
+  value: Nullable<string> | undefined,
+): PillPlacement => (value === "top" || value === "bottom" ? value : "bottom");
 
 export const normalizeAgentMaxIterations = (
   value: number | null | undefined,
