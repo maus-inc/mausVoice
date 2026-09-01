@@ -40,6 +40,7 @@ import {
   normalizeDictationLimitMinutes,
   shouldEnableDictationLimit,
 } from "../../utils/dictation-limit.utils";
+import { getLogger } from "../../utils/log.utils";
 import {
   getEffectiveHandsFreeDelayMs,
   MAX_HANDS_FREE_DELAY_MS,
@@ -181,23 +182,43 @@ export const MoreSettingsDialog = () => {
   const handlePillResetMonitorStrategyChange = (
     strategy: PillResetMonitorStrategy,
   ) => {
-    void setPillResetMonitorStrategy(strategy);
+    setPillResetMonitorStrategy(strategy).catch((error: unknown) => {
+      getLogger().warning(
+        `Failed to persist pill reset monitor strategy: ${error}`,
+      );
+    });
   };
 
   const handleToggleRealtimeOutput = (event: ChangeEvent<HTMLInputElement>) => {
-    void setRealtimeOutputEnabled(event.target.checked);
+    setRealtimeOutputEnabled(event.target.checked).catch((error: unknown) => {
+      getLogger().warning(
+        `Failed to persist realtime output preference: ${error}`,
+      );
+    });
   };
 
   const handleToggleAutoLearnDictionary = (
     event: ChangeEvent<HTMLInputElement>,
   ) => {
-    void setAutoLearnDictionaryEnabled(event.target.checked);
+    setAutoLearnDictionaryEnabled(event.target.checked).catch(
+      (error: unknown) => {
+        getLogger().warning(
+          `Failed to persist auto-learn dictionary preference: ${error}`,
+        );
+      },
+    );
   };
 
   const handleToggleAutoLearnFromEdits = (
     event: ChangeEvent<HTMLInputElement>,
   ) => {
-    void setAutoLearnFromEditsEnabled(event.target.checked);
+    setAutoLearnFromEditsEnabled(event.target.checked).catch(
+      (error: unknown) => {
+        getLogger().warning(
+          `Failed to persist auto-learn from edits preference: ${error}`,
+        );
+      },
+    );
   };
 
   const handleToggleDisablePillRewards = (
