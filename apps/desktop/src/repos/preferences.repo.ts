@@ -60,6 +60,7 @@ type LocalUserPreferences = {
   typingSpeedMs: Nullable<number>;
   pillResetMonitorStrategy?: Nullable<PillResetMonitorStrategy>;
   alwaysRequestAdminOnStartup?: boolean;
+  expansionFlags?: Nullable<string>;
 };
 
 const normalizePillResetMonitorStrategy = (
@@ -147,6 +148,7 @@ export const fromLocalPreferences = (
     preferences.pillResetMonitorStrategy,
   ),
   alwaysRequestAdminOnStartup: preferences.alwaysRequestAdminOnStartup ?? false,
+  expansionFlags: preferences.expansionFlags ?? "{}",
 });
 
 export const toLocalPreferences = (
@@ -198,6 +200,7 @@ export const toLocalPreferences = (
     preferences.pillResetMonitorStrategy,
   ),
   alwaysRequestAdminOnStartup: preferences.alwaysRequestAdminOnStartup ?? false,
+  expansionFlags: preferences.expansionFlags ?? "{}",
 });
 
 export abstract class BaseUserPreferencesRepo extends BaseRepo {

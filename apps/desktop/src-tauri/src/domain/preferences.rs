@@ -88,6 +88,10 @@ pub struct UserPreferences {
     /// default so existing behavior is unchanged.
     #[serde(default)]
     pub always_request_admin_on_startup: bool,
+    /// JSON object of expansion feature-name -> boolean flag. Stored as a
+    /// serialized string; defaults to an empty object so every flag is off.
+    #[serde(default)]
+    pub expansion_flags: String,
 }
 
 fn default_pill_reset_monitor_strategy() -> String {

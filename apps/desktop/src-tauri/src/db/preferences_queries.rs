@@ -62,9 +62,10 @@ pub async fn upsert_user_preferences(
              insertion_method,
              typing_speed_ms,
              pill_reset_monitor_strategy,
-             always_request_admin_on_startup
-         )
-            VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20, ?21, ?22, ?23, ?24, ?25, ?26, ?27, ?28, ?29, ?30, ?31, ?32, ?33, ?34, ?35, ?36, ?37, ?38, ?39, ?40)
+             always_request_admin_on_startup,
+             expansion_flags
+          )
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20, ?21, ?22, ?23, ?24, ?25, ?26, ?27, ?28, ?29, ?30, ?31, ?32, ?33, ?34, ?35, ?36, ?37, ?38, ?39, ?40, ?41)
          ON CONFLICT(user_id) DO UPDATE SET
             transcription_mode = excluded.transcription_mode,
             transcription_api_key_id = excluded.transcription_api_key_id,
@@ -103,8 +104,9 @@ pub async fn upsert_user_preferences(
             menu_bar_icon_hidden = excluded.menu_bar_icon_hidden,
             insertion_method = excluded.insertion_method,
             typing_speed_ms = excluded.typing_speed_ms,
-            pill_reset_monitor_strategy = excluded.pill_reset_monitor_strategy,
-            always_request_admin_on_startup = excluded.always_request_admin_on_startup",
+             pill_reset_monitor_strategy = excluded.pill_reset_monitor_strategy,
+             always_request_admin_on_startup = excluded.always_request_admin_on_startup,
+             expansion_flags = excluded.expansion_flags",
     )
     .bind(&preferences.user_id)
     .bind(&preferences.transcription_mode)
@@ -144,10 +146,11 @@ pub async fn upsert_user_preferences(
     .bind(preferences.menu_bar_icon_hidden)
     .bind(&preferences.insertion_method)
     .bind(preferences.typing_speed_ms)
-    .bind(&preferences.pill_reset_monitor_strategy)
-    .bind(preferences.always_request_admin_on_startup)
-    .execute(&pool)
-    .await?;
+        .bind(&preferences.pill_reset_monitor_strategy)
+        .bind(preferences.always_request_admin_on_startup)
+        .bind(&preferences.expansion_flags)
+        .execute(&pool)
+        .await?;
 
     Ok(preferences.clone())
 }
@@ -196,11 +199,12 @@ pub async fn fetch_user_preferences(
             menu_bar_icon_hidden,
             insertion_method,
             typing_speed_ms,
-            pill_reset_monitor_strategy,
-            always_request_admin_on_startup
-         FROM user_preferences
-         WHERE user_id = ?1
-         LIMIT 1",
+             pill_reset_monitor_strategy,
+             always_request_admin_on_startup,
+             expansion_flags
+          FROM user_preferences
+          WHERE user_id = ?1
+          LIMIT 1",
     )
     .bind(user_id)
     .fetch_optional(&pool)
@@ -335,6 +339,9 @@ pub async fn fetch_user_preferences(
             .try_get::<i64, _>("always_request_admin_on_startup")
             .map(|v| v != 0)
             .unwrap_or(false),
+        expansion_flags: row
+            .try_get::<String, _>("expansion_flags")
+            .unwrap_or_else(|_| "{}".to_string()),
     });
 
     Ok(preferences)
