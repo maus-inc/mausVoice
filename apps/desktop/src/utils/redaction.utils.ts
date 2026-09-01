@@ -53,28 +53,15 @@ export const redactError = (error: unknown): string => {
   return message.replace(SECRET_VALUE_PATTERN, "[redacted-secret]");
 };
 
+const isNestedObject = (value: unknown): value is Record<string, unknown> => {
+  return value !== null && typeof value === "object" && !Array.isArray(value);
+};
+
 const isSensitiveKey = (key: string, sensitiveKeys: string[]): boolean => {
   return (
     sensitiveKeys.includes(key) ||
     SENSITIVE_KEY_PATTERNS.some((pattern) => pattern.test(key))
   );
-};
-
-const redactValue = (
-  value: unknown,
-  key: string,
-  sensitiveKeys: string[],
-): unknown => {
-  if (!isSensitiveKey(key, sensitiveKeys)) {
-    if (value && typeof value === "object" && !Array.isArray(value)) {
-      return redactObject(value as Record<string, unknown>, sensitiveKeys);
-    }
-    return value;
-  }
-  if (typeof value === "string") {
-    return redactString(value, "full");
-  }
-  return "[redacted]";
 };
 
 export const redactObject = (
@@ -83,7 +70,14 @@ export const redactObject = (
 ): Record<string, unknown> => {
   const result: Record<string, unknown> = {};
   for (const [key, value] of Object.entries(obj)) {
-    result[key] = redactValue(value, key, sensitiveKeys);
+    if (isSensitiveKey(key, sensitiveKeys)) {
+      result[key] =
+        typeof value === "string" ? redactString(value, "full") : "[redacted]";
+    } else if (isNestedObject(value)) {
+      result[key] = redactObject(value, sensitiveKeys);
+    } else {
+      result[key] = value;
+    }
   }
   return result;
 };
