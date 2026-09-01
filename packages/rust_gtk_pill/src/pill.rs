@@ -883,7 +883,6 @@ fn release_pointer_if_button_up(window: &gtk::Window, state: &PillState) {
     }
 }
 
-/// Clears the flash banner (native pill toast) and its timer.
 fn clear_flash(state: &PillState) {
     state.flash_visible.set(false);
     state.flash_timer.set(0.0);
