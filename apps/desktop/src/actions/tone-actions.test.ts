@@ -1,6 +1,5 @@
-import { describe, expect, it, vi } from "vitest";
-import { applyWritingStyleSelection, switchWritingStyleForward, switchWritingStyleBackward, selectToneByHotkey } from "../actions/tone.actions";
-import { use tone } from "../state/tone.state";
+import { describe, expect, it } from "vitest";
+import { applyWritingStyleSelection, switchWritingStyleForward, switchWritingStyleBackward } from "../actions/tone.actions";
 
 describe("Style switching shares one state transition", () => {
   it("pill forward, arrow forward, and cycle-hotkey forward all land on the next style", async () => {
