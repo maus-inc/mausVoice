@@ -283,7 +283,10 @@ const toLocalOutputPreferences = (preferences: UserPreferences) => ({
   pillResetMonitorStrategy: normalizePillResetMonitorStrategy(
     preferences.pillResetMonitorStrategy,
   ),
+  pillPlacement: orValue(preferences.pillPlacement, "bottom"),
   alwaysRequestAdminOnStartup: orFalse(preferences.alwaysRequestAdminOnStartup),
+  preserveAudioOnFailure: preferences.preserveAudioOnFailure ?? true,
+  handsFreeDelayMs: orNull(preferences.handsFreeDelayMs),
 });
 
 const toLocalFeaturePreferences = (preferences: UserPreferences) => ({
