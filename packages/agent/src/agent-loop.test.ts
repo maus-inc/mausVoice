@@ -264,6 +264,7 @@ describe("AgentLoop", () => {
       text: "Hello there",
     });
   });
+});
 
   it("stringifies a non-Error thrown value instead of [object Object]", async () => {
     const throwing: AgentTool = {
@@ -284,6 +285,7 @@ describe("AgentLoop", () => {
           arguments: JSON.stringify({ reason: "x" }),
         },
       ],
+      [{ type: "text-delta", text: "done" }],
     ]);
     const loop = new AgentLoop({ provider, tools: [throwing], systemPrompt: "sys" });
     const events = (await collectEvents(
@@ -293,4 +295,3 @@ describe("AgentLoop", () => {
     // JSON representation of the object, never "[object Object]" or undefined.
     expect(toolResult?.result).toBe(JSON.stringify({ code: "E_BOOM", detail: "secret" }));
   });
-});
