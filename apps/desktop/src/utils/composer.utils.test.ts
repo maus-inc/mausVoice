@@ -346,7 +346,7 @@ describe("reviewTextInComposer ready-timeout safety net", () => {
     };
 
     try {
-      const listeners = installPerEventListener();
+      installPerEventListener();
       let createdId = "";
       mocks.invoke.mockImplementation(async (cmd: string) => {
         if (cmd === "floating_window_create") {
