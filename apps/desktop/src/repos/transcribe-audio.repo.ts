@@ -4,26 +4,26 @@ import {
   aldeaTranscribeAudio,
   assemblyaiTranscribeAudio,
   azureTranscribeAudio,
+  type CustomFetch,
   deepgramTranscribeAudio,
   elevenlabsTranscribeAudio,
   geminiTranscribeAudio,
   GeminiTranscriptionModel,
+  GEMINI_TRANSCRIPTION_MODELS,
+  gladiaTranscribeAudio,
+  type GladiaCustomizations,
   groqTranscribeAudio,
+  normalizeAssemblyAISpeechModel,
   openaiTranscribeAudio,
   OpenAITranscriptionModel,
   openrouterTranscribeAudio,
   TranscriptionModel,
   xaiTranscribeAudio,
-  XaiTranscriptionModel,
 } from "@maus-inc/voice-ai";
 import { getAppState } from "../store";
 import { DEFAULT_MODEL_SIZE, TranscriptionMode } from "../types/ai.types";
 import { AudioSamples } from "../types/audio.types";
-import {
-  buildWaveFile,
-  ensureFloat32Array,
-  normalizeSamples,
-} from "../utils/audio.utils";
+import { buildWaveFile } from "../utils/audio.utils";
 import { getLocalTranscriptionSidecarManager } from "../sidecars";
 import {
   getTranscriptionSidecarDeviceId,
@@ -33,6 +33,14 @@ import {
 } from "../utils/local-transcription.utils";
 import { getLogger } from "../utils/log.utils";
 import { openaiCompatibleTranscribeAudio } from "../utils/openai-compatible-transcribe.utils";
+import {
+  gateSilentSegments,
+  type TranscriptionSegment,
+} from "../utils/hallucination.utils";
+import {
+  createOpenAICompatibleFetch,
+  secureFetch,
+} from "../utils/secure-fetch.utils";
 import { speachesTranscribeAudio } from "../utils/speaches.utils";
 import {
   mergeTranscriptions,
@@ -44,6 +52,7 @@ type TranscriptionOptionsPayload = {
   model: LocalWhisperModel;
   preferGpu: boolean;
   deviceId?: string;
+  hallucinationFilterEnabled: boolean;
 };
 
 export type TranscribeAudioMetadata = {
@@ -57,11 +66,20 @@ export type TranscribeAudioInput = {
   sampleRate: number;
   prompt?: Nullable<string>;
   language?: string;
+  /**
+   * When false, the probability-gated silence handling is skipped entirely so
+   * the raw provider transcript is preserved EXACTLY, for both single- and
+   * multi-chunk audio. Defaults to true when omitted.
+   */
+  hallucinationFilterEnabled?: boolean;
 };
 
 export type TranscribeAudioOutput = {
   text: string;
   metadata?: Nullable<TranscribeAudioMetadata>;
+  warnings?: string[];
+  /** Verbose Whisper segments (with `no_speech_prob`) when the provider returns them. */
+  segments?: TranscriptionSegment[];
 };
 
 export type TranscribeSegmentInput = {
@@ -153,8 +171,13 @@ export abstract class BaseTranscribeAudioRepo extends BaseRepo {
   async transcribeAudio(
     input: TranscribeAudioInput,
   ): Promise<TranscribeAudioOutput> {
-    const normalizedSamples = normalizeSamples(input.samples);
-    const floatSamples = ensureFloat32Array(normalizedSamples);
+    // Keep one defensive Float32 copy without routing typed input through a
+    // temporary number[]; hour-long provider chunks make that extra allocation
+    // prohibitively expensive.
+    const floatSamples =
+      input.samples instanceof Float32Array
+        ? input.samples.slice()
+        : Float32Array.from(input.samples ?? []);
 
     if (floatSamples.length === 0) {
       return { text: "", metadata: null };
@@ -200,8 +223,17 @@ export abstract class BaseTranscribeAudioRepo extends BaseRepo {
       transcriptionTasks,
     );
 
-    // Merge transcription texts
-    const transcriptionTexts = results.map((r) => r.text);
+    // Gate each provider chunk by its `no_speech_prob` segments BEFORE merging,
+    // so audio longer than one provider segment still benefits from the
+    // probability-gated silence handling that single-segment audio gets in the
+    // action layer. Chunks without verbose segments fall back to their raw text.
+    // When the user disables the filter, merge every raw chunk text unchanged so
+    // the off switch preserves the provider transcript for long audio too.
+    const filterEnabled = input.hallucinationFilterEnabled ?? true;
+    const transcriptionTexts = results.map((r) => {
+      const gated = filterEnabled ? gateSilentSegments(r.segments) : null;
+      return gated ?? r.text;
+    });
     const mergedText = mergeTranscriptions(transcriptionTexts);
 
     // Use metadata from first result (all segments use same provider/device)
@@ -210,6 +242,11 @@ export abstract class BaseTranscribeAudioRepo extends BaseRepo {
     return {
       text: mergedText,
       metadata,
+      warnings: Array.from(
+        new Set(results.flatMap((result) => result.warnings ?? [])),
+      ),
+      // Do not flatten overlapping chunk segments: a later join would undo
+      // mergeTranscriptions() and reintroduce duplicated overlap words.
     };
   }
 }
@@ -238,6 +275,8 @@ export class LocalTranscribeAudioRepo extends BaseTranscribeAudioRepo {
       model: normalizeLocalWhisperModel(modelSize || DEFAULT_MODEL_SIZE),
       preferGpu: isGpuPreferredTranscriptionDevice(device),
       deviceId: getTranscriptionSidecarDeviceId(device),
+      hallucinationFilterEnabled:
+        state.userPrefs?.hallucinationFilterEnabled !== false,
     };
   }
 
@@ -254,6 +293,7 @@ export class LocalTranscribeAudioRepo extends BaseTranscribeAudioRepo {
       initialPrompt: input.prompt ?? undefined,
       language: input.language,
       deviceId: options.deviceId,
+      hallucinationFilterEnabled: options.hallucinationFilterEnabled,
     });
 
     const segments = output.segments ?? [];
@@ -282,11 +322,17 @@ export class LocalTranscribeAudioRepo extends BaseTranscribeAudioRepo {
 export class GroqTranscribeAudioRepo extends BaseTranscribeAudioRepo {
   private groqApiKey: string;
   private model: TranscriptionModel;
+  private customFetch?: CustomFetch;
 
-  constructor(apiKey: string, model: string | null) {
+  constructor(
+    apiKey: string,
+    model: string | null,
+    customFetch: CustomFetch | null = secureFetch,
+  ) {
     super();
     this.groqApiKey = apiKey;
     this.model = (model as TranscriptionModel) ?? "whisper-large-v3-turbo";
+    this.customFetch = customFetch ?? undefined;
   }
 
   // Groq has 25MB limit, 60s segments are well within that
@@ -308,17 +354,22 @@ export class GroqTranscribeAudioRepo extends BaseTranscribeAudioRepo {
   ): Promise<TranscribeAudioOutput> {
     const wavBuffer = buildWaveFile(input.samples, input.sampleRate);
 
-    const { text: transcript } = await groqTranscribeAudio({
+    const { text: transcript, segments } = await groqTranscribeAudio({
       apiKey: this.groqApiKey,
       model: this.model,
       blob: wavBuffer,
       ext: "wav",
       prompt: input.prompt ?? undefined,
       language: input.language,
+      customFetch: this.customFetch,
     });
 
     return {
       text: transcript,
+      segments: segments?.map((segment) => ({
+        text: segment.text,
+        noSpeechProb: segment.noSpeechProb,
+      })),
       metadata: {
         inferenceDevice: "API • Groq",
         modelSize: this.model,
@@ -335,7 +386,7 @@ export class OpenAITranscribeAudioRepo extends BaseTranscribeAudioRepo {
   constructor(apiKey: string, model: string | null) {
     super();
     this.openaiApiKey = apiKey;
-    this.model = (model as OpenAITranscriptionModel) ?? "whisper-1";
+    this.model = model ?? "whisper-1";
   }
 
   // OpenAI has 25MB limit, 60s segments are well within that
@@ -357,17 +408,22 @@ export class OpenAITranscribeAudioRepo extends BaseTranscribeAudioRepo {
   ): Promise<TranscribeAudioOutput> {
     const wavBuffer = buildWaveFile(input.samples, input.sampleRate);
 
-    const { text: transcript } = await openaiTranscribeAudio({
+    const { text: transcript, segments } = await openaiTranscribeAudio({
       apiKey: this.openaiApiKey,
       model: this.model,
       blob: wavBuffer,
       ext: "wav",
       prompt: input.prompt ?? undefined,
       language: input.language,
+      customFetch: secureFetch,
     });
 
     return {
       text: transcript,
+      segments: segments?.map((segment) => ({
+        text: segment.text,
+        noSpeechProb: segment.noSpeechProb,
+      })),
       metadata: {
         inferenceDevice: "API • OpenAI",
         modelSize: this.model,
@@ -424,10 +480,18 @@ export class AldeaTranscribeAudioRepo extends BaseTranscribeAudioRepo {
 
 export class AssemblyAITranscribeAudioRepo extends BaseTranscribeAudioRepo {
   private readonly apiKey: string;
+  private readonly model: string | null;
+  private readonly customFetch: typeof secureFetch;
 
-  constructor(apiKey: string) {
+  constructor(
+    apiKey: string,
+    model: string | null,
+    customFetch: typeof secureFetch = secureFetch,
+  ) {
     super();
     this.apiKey = apiKey;
+    this.model = model;
+    this.customFetch = customFetch;
   }
 
   // AssemblyAI batch transcripts accept far longer audio, but 60s keeps the
@@ -453,15 +517,17 @@ export class AssemblyAITranscribeAudioRepo extends BaseTranscribeAudioRepo {
 
     const { text: transcript } = await assemblyaiTranscribeAudio({
       apiKey: this.apiKey,
+      model: this.model,
       blob: wavBuffer,
       language: input.language,
+      customFetch: this.customFetch,
     });
 
     return {
       text: transcript,
       metadata: {
         inferenceDevice: "API • AssemblyAI",
-        modelSize: null,
+        modelSize: normalizeAssemblyAISpeechModel(this.model) ?? null,
         transcriptionMode: "api",
       },
     };
@@ -498,6 +564,7 @@ export class ElevenLabsTranscribeAudioRepo extends BaseTranscribeAudioRepo {
       blob: wavBuffer,
       ext: "wav",
       language: input.language,
+      customFetch: secureFetch,
     });
 
     return {
@@ -514,11 +581,17 @@ export class ElevenLabsTranscribeAudioRepo extends BaseTranscribeAudioRepo {
 export class DeepgramTranscribeAudioRepo extends BaseTranscribeAudioRepo {
   private apiKey: string;
   private model: string;
+  private customFetch: typeof secureFetch;
 
-  constructor(apiKey: string, model: string | null) {
+  constructor(
+    apiKey: string,
+    model: string | null,
+    customFetch: typeof secureFetch = secureFetch,
+  ) {
     super();
     this.apiKey = apiKey;
     this.model = model ?? "nova-3";
+    this.customFetch = customFetch;
   }
 
   protected getSegmentDurationSec(): number {
@@ -544,6 +617,7 @@ export class DeepgramTranscribeAudioRepo extends BaseTranscribeAudioRepo {
       blob: wavBuffer,
       ext: "wav",
       language: input.language,
+      customFetch: this.customFetch,
     });
 
     return {
@@ -557,14 +631,64 @@ export class DeepgramTranscribeAudioRepo extends BaseTranscribeAudioRepo {
   }
 }
 
-export class XaiTranscribeAudioRepo extends BaseTranscribeAudioRepo {
-  private apiKey: string;
-  private model: XaiTranscriptionModel;
+export class GladiaTranscribeAudioRepo extends BaseTranscribeAudioRepo {
+  private readonly apiKey: string;
+  private readonly model: string;
+  private readonly customizations: GladiaCustomizations;
 
-  constructor(apiKey: string, model: string | null) {
+  constructor(
+    apiKey: string,
+    model: string | null,
+    customizations: GladiaCustomizations,
+  ) {
     super();
     this.apiKey = apiKey;
-    this.model = (model as XaiTranscriptionModel) ?? "grok-stt";
+    this.model = model ?? "solaria-1";
+    this.customizations = customizations;
+  }
+
+  protected getSegmentDurationSec(): number {
+    return 10 * 60;
+  }
+
+  protected getOverlapDurationSec(): number {
+    return 5;
+  }
+
+  protected getBatchChunkCount(): number {
+    return 1;
+  }
+
+  protected async transcribeSegment(
+    input: TranscribeSegmentInput,
+  ): Promise<TranscribeAudioOutput> {
+    const wavBuffer = buildWaveFile(input.samples, input.sampleRate);
+    const { text, warnings } = await gladiaTranscribeAudio({
+      apiKey: this.apiKey,
+      model: this.model,
+      blob: wavBuffer,
+      language: input.language ?? "auto",
+      customizations: this.customizations,
+    });
+
+    return {
+      text,
+      warnings,
+      metadata: {
+        inferenceDevice: "API • Gladia",
+        modelSize: this.model,
+        transcriptionMode: "api",
+      },
+    };
+  }
+}
+
+export class XaiTranscribeAudioRepo extends BaseTranscribeAudioRepo {
+  private apiKey: string;
+
+  constructor(apiKey: string) {
+    super();
+    this.apiKey = apiKey;
   }
 
   protected getSegmentDurationSec(): number {
@@ -586,17 +710,17 @@ export class XaiTranscribeAudioRepo extends BaseTranscribeAudioRepo {
 
     const { text: transcript } = await xaiTranscribeAudio({
       apiKey: this.apiKey,
-      model: this.model,
       blob: wavBuffer,
       ext: "wav",
       language: input.language,
+      customFetch: secureFetch,
     });
 
     return {
       text: transcript,
       metadata: {
         inferenceDevice: "API • Grok",
-        modelSize: this.model,
+        modelSize: "xAI Speech to Text",
         transcriptionMode: "api",
       },
     };
@@ -658,7 +782,7 @@ export class GeminiTranscribeAudioRepo extends BaseTranscribeAudioRepo {
   constructor(apiKey: string, model: string | null) {
     super();
     this.geminiApiKey = apiKey;
-    this.model = (model as GeminiTranscriptionModel) ?? "gemini-2.5-flash";
+    this.model = model ?? GEMINI_TRANSCRIPTION_MODELS[0];
   }
 
   protected getSegmentDurationSec(): number {
@@ -685,6 +809,7 @@ export class GeminiTranscribeAudioRepo extends BaseTranscribeAudioRepo {
       mimeType: "audio/wav",
       prompt: input.prompt ?? undefined,
       language: input.language,
+      customFetch: secureFetch,
     });
 
     return {
@@ -749,6 +874,7 @@ export class OpenAICompatibleTranscribeAudioRepo extends BaseTranscribeAudioRepo
   private baseUrl: string;
   private model: string;
   private apiKey?: string;
+<<<<<<< HEAD
   private transcriptionPath?: string;
 
   constructor(
@@ -756,12 +882,25 @@ export class OpenAICompatibleTranscribeAudioRepo extends BaseTranscribeAudioRepo
     model: string,
     apiKey?: string,
     transcriptionPath?: string,
+=======
+  private customFetch: typeof secureFetch;
+
+  constructor(
+    apiKeyId: string,
+    baseUrl: string,
+    model: string,
+    apiKey?: string,
+>>>>>>> origin/fix/superfix-review-findings
   ) {
     super();
     this.baseUrl = baseUrl;
     this.model = model;
     this.apiKey = apiKey;
+<<<<<<< HEAD
     this.transcriptionPath = transcriptionPath;
+=======
+    this.customFetch = createOpenAICompatibleFetch(apiKeyId);
+>>>>>>> origin/fix/superfix-review-findings
   }
 
   protected getSegmentDurationSec(): number {
@@ -781,6 +920,7 @@ export class OpenAICompatibleTranscribeAudioRepo extends BaseTranscribeAudioRepo
   ): Promise<TranscribeAudioOutput> {
     const wavBuffer = buildWaveFile(input.samples, input.sampleRate);
 
+<<<<<<< HEAD
     const { text: transcript } = await openaiCompatibleTranscribeAudio({
       baseUrl: this.baseUrl,
       model: this.model,
@@ -791,9 +931,26 @@ export class OpenAICompatibleTranscribeAudioRepo extends BaseTranscribeAudioRepo
       language: input.language,
       transcriptionPath: this.transcriptionPath,
     });
+=======
+    const { text: transcript, segments } =
+      await openaiCompatibleTranscribeAudio({
+        baseUrl: this.baseUrl,
+        model: this.model,
+        apiKey: this.apiKey,
+        blob: wavBuffer,
+        ext: "wav",
+        prompt: input.prompt ?? undefined,
+        language: input.language,
+        customFetch: this.customFetch,
+      });
+>>>>>>> origin/fix/superfix-review-findings
 
     return {
       text: transcript,
+      segments: segments?.map((segment) => ({
+        text: segment.text,
+        noSpeechProb: segment.noSpeechProb,
+      })),
       metadata: {
         inferenceDevice: "API • OpenAI Compatible",
         modelSize: this.model,

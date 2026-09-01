@@ -1,9 +1,26 @@
 import { convertFloat32ToBase64PCM16 } from "@maus-inc/voice-ai";
 import { listen, UnlistenFn } from "@tauri-apps/api/event";
+<<<<<<< HEAD
 import { getLogger } from "../utils/log.utils";
 import { drainSamples } from "./audio-buffer.utils";
 import { BaseApiTranscriptionSession } from "./base-api-transcription-session";
 import { createTranscriptAccumulator } from "./transcript-accumulator.utils";
+=======
+import {
+  combineStreamingTranscript,
+  createAudioChunkPump,
+} from "../utils/audio-chunking.utils";
+import {
+  createStreamingFinalize,
+  finalizeStreamingSession,
+} from "../utils/streaming-session.utils";
+import { secureFetch } from "../utils/secure-fetch.utils";
+import {
+  StopRecordingResponse,
+  TranscriptionSession,
+  TranscriptionSessionResult,
+} from "../types/transcription-session.types";
+>>>>>>> origin/fix/superfix-review-findings
 
 type ElevenLabsStreamingSession = {
   finalize: () => Promise<string>;
@@ -52,7 +69,7 @@ const resampleAudio = (
 };
 
 const getElevenLabsToken = async (apiKey: string): Promise<string> => {
-  const response = await fetch(ELEVENLABS_TOKEN_URL, {
+  const response = await secureFetch(ELEVENLABS_TOKEN_URL, {
     method: "POST",
     headers: {
       "xi-api-key": apiKey,
@@ -91,17 +108,6 @@ const startElevenLabsStreaming = async (
     sampleRate,
   );
 
-  const MIN_CHUNK_DURATION_MS = 20;
-  const MAX_CHUNK_DURATION_MS = 100;
-  const minSamplesPerChunk = Math.max(
-    1,
-    Math.ceil((sampleRate * MIN_CHUNK_DURATION_MS) / 1000),
-  );
-  const maxSamplesPerChunk = Math.max(
-    minSamplesPerChunk,
-    Math.ceil((sampleRate * MAX_CHUNK_DURATION_MS) / 1000),
-  );
-
   const token = await getElevenLabsToken(apiKey);
   getLogger().verbose("[ElevenLabs WebSocket] Got single-use token");
 
@@ -111,6 +117,7 @@ const startElevenLabsStreaming = async (
     let isFinalized = false;
     let receivedChunkCount = 0;
     let sentChunkCount = 0;
+<<<<<<< HEAD
     let pendingChunks: Float32Array[] = [];
     const pendingSampleCountRef = { value: 0 };
     const transcriptState = createTranscriptAccumulator();
@@ -131,14 +138,23 @@ const startElevenLabsStreaming = async (
       }
 
       try {
+=======
+
+    const pump = createAudioChunkPump({
+      sampleRate,
+      minChunkDurationMs: 20,
+      maxChunkDurationMs: 100,
+      canSend: () => !!ws && ws.readyState === WebSocket.OPEN,
+      sendChunk: (chunk, isLastChunk) => {
+>>>>>>> origin/fix/superfix-review-findings
         const base64Audio = convertFloat32ToBase64PCM16(chunk);
         const message = JSON.stringify({
           message_type: "input_audio_chunk",
           audio_base_64: base64Audio,
-          commit,
+          commit: isLastChunk,
           sample_rate: sampleRate,
         });
-        ws.send(message);
+        ws?.send(message);
         sentChunkCount++;
         if (sentChunkCount <= 3 || sentChunkCount % 10 === 0) {
           const durationMs = (chunk.length / sampleRate) * 1000;
@@ -146,6 +162,7 @@ const startElevenLabsStreaming = async (
             `[ElevenLabs WebSocket] Sent chunk #${sentChunkCount} (${chunk.length} samples ~${durationMs.toFixed(1)} ms)`,
           );
         }
+<<<<<<< HEAD
       } catch (error) {
         getLogger().error("[ElevenLabs WebSocket] Error sending chunk:", error);
       }
@@ -183,6 +200,16 @@ const startElevenLabsStreaming = async (
         sendAudioChunk(chunk, isLastChunk);
       }
     };
+=======
+      },
+      onError: (error) => {
+        console.error("[ElevenLabs WebSocket] Error sending chunk:", error);
+      },
+    });
+
+    const getText = () =>
+      combineStreamingTranscript(finalTranscript, partialTranscript);
+>>>>>>> origin/fix/superfix-review-findings
 
     const cleanup = () => {
       if (unlisten) {
@@ -193,9 +220,10 @@ const startElevenLabsStreaming = async (
         ws.close();
         ws = null;
       }
-      resetBuffers();
+      pump.resetBuffers();
     };
 
+<<<<<<< HEAD
     let finalizeResolver: ((text: string) => void) | null = null;
     let finalizeTimeout: ReturnType<typeof setTimeout> | null = null;
 
@@ -259,6 +287,28 @@ const startElevenLabsStreaming = async (
         finalizeResolver = null;
       }
     };
+=======
+    const streamingFinalize = createStreamingFinalize({
+      logPrefix: "[ElevenLabs WebSocket]",
+      timeoutMs: 6000,
+      getText,
+      getIsFinalized: () => isFinalized,
+      setIsFinalized: (value) => {
+        isFinalized = value;
+      },
+      flushPendingSamples: (force) => pump.flushPendingSamples(force),
+      logTotalChunks: () =>
+        console.log(
+          "[ElevenLabs WebSocket] Total chunks sent:",
+          sentChunkCount,
+          "- waiting for final transcript...",
+        ),
+      canSend: () => !!ws && ws.readyState === WebSocket.OPEN,
+      getWsState: () => ws?.readyState,
+      cleanup,
+    });
+    const { finalize, completeFinalize } = streamingFinalize;
+>>>>>>> origin/fix/superfix-review-findings
 
     const audioFormat = `pcm_${sampleRate}`;
     const wsUrl = `${ELEVENLABS_WS_URL}?token=${encodeURIComponent(token)}&model_id=scribe_v2_realtime&audio_format=${audioFormat}&commit_strategy=vad`;
@@ -294,9 +344,14 @@ const startElevenLabsStreaming = async (
                 const typedChunk = needsResample
                   ? resampleAudio(rawChunk, inputSampleRate, sampleRate)
                   : rawChunk;
+<<<<<<< HEAD
                 pendingChunks.push(typedChunk);
                 pendingSampleCountRef.value += typedChunk.length;
                 flushPendingSamples(false);
+=======
+                pump.pushSamples(typedChunk);
+                pump.flushPendingSamples();
+>>>>>>> origin/fix/superfix-review-findings
               } catch (error) {
                 getLogger().error(
                   "[ElevenLabs WebSocket] Error sending audio chunk:",
@@ -399,11 +454,34 @@ export class ElevenLabsTranscriptionSession extends BaseApiTranscriptionSession 
         sampleRate,
         this.interimCallback ?? undefined,
       );
+<<<<<<< HEAD
       getLogger().verbose(
         "[ElevenLabs] Streaming session started successfully",
       );
     } catch (error) {
       getLogger().error("[ElevenLabs] Failed to start streaming:", error);
+=======
+      console.log("[ElevenLabs] Streaming session started successfully");
+    } catch (error) {
+      console.error("[ElevenLabs] Failed to start streaming:", error);
+    }
+  }
+
+  async finalize(
+    _audio: StopRecordingResponse,
+  ): Promise<TranscriptionSessionResult> {
+    return finalizeStreamingSession({
+      session: this.session,
+      providerLabel: "ElevenLabs",
+      log: console.log,
+    });
+  }
+
+  cleanup(): void {
+    if (this.session) {
+      this.session.cleanup();
+      this.session = null;
+>>>>>>> origin/fix/superfix-review-findings
     }
   }
 }

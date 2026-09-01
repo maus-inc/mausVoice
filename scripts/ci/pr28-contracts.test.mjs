@@ -178,7 +178,9 @@ describe("PR28 ring-alpha render-loop policy", () => {
     for (const draw of [source.gtkDraw, source.macDraw, source.windowsDraw]) {
       assert.match(draw, /ring_envelope/);
       assert.match(draw, /ring_glimmer/);
-      assert.match(draw, /ring_head_fade/);
+      // The head fade is centralized in rust_pill_shared::RingLayers; the
+      // draw files consume it via head_discs() (A13 refactor).
+      assert.match(draw, /head_discs\(\)/);
       // The retired dash renderer must not linger anywhere.
       assert.doesNotMatch(draw, /ring_dash_is_on/);
       assert.doesNotMatch(draw, /RING_SHIMMER_ALPHA/);

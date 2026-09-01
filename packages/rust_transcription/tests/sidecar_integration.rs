@@ -3,6 +3,7 @@ use std::process::{Child, Command, Stdio};
 use std::time::{Duration, Instant};
 
 use reqwest::{Client, StatusCode};
+use rust_transcription::WhisperModel;
 use serde::{Deserialize, Serialize};
 use tempfile::TempDir;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
@@ -17,6 +18,52 @@ const DOWNLOAD_TIMEOUT: Duration = Duration::from_secs(900);
 const TRANSCRIPTION_TIMEOUT: Duration = Duration::from_secs(180);
 const VALIDATION_TIMEOUT: Duration = Duration::from_secs(120);
 const TINY_MODEL_FILENAME: &str = "ggml-tiny.bin";
+
+#[test]
+fn every_downloaded_model_artifact_is_supply_chain_pinned() {
+    for slug in WhisperModel::supported() {
+        let Some(model) = WhisperModel::from_slug(slug) else {
+            continue;
+        };
+        if model.is_onnx() {
+            let artifacts = model.artifact_set();
+            assert!(artifacts.len() > 1, "{model:?} must have companion files");
+            for (name, url, digest) in artifacts {
+                assert!(
+                    !url.contains("/resolve/main/"),
+                    "{model:?} artifact {name} must not track the mutable main branch"
+                );
+                let digest = digest.unwrap_or_else(|| {
+                    panic!("{model:?} runtime artifact {name} must be digest-pinned")
+                });
+                assert_eq!(
+                    digest.len(),
+                    64,
+                    "{model:?} runtime artifact {name} must use SHA-256"
+                );
+                assert!(
+                    digest.bytes().all(|byte| byte.is_ascii_hexdigit()),
+                    "{model:?} runtime artifact {name} digest must be hexadecimal"
+                );
+            }
+        } else {
+            // whisper.cpp ggml path: pinned revision URL plus pinned digest.
+            let url = model.download_url();
+            assert!(
+                !url.contains("/resolve/main/"),
+                "{model:?} download URL must not track the mutable main branch"
+            );
+            let digest = model
+                .download_sha256()
+                .unwrap_or_else(|| panic!("{model:?} must carry a pinned digest"));
+            assert_eq!(digest.len(), 64, "{model:?} digest must use SHA-256");
+            assert!(
+                digest.bytes().all(|byte| byte.is_ascii_hexdigit()),
+                "{model:?} digest must be hexadecimal"
+            );
+        }
+    }
+}
 
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -537,7 +584,10 @@ async fn cpu_sidecar_rejects_invalid_onnx_model(
         .json::<ModelStatusResponse>()
         .await?;
 
-    assert!(status.downloaded, "complete artifact set should be reported downloaded");
+    assert!(
+        status.downloaded,
+        "complete artifact set should be reported downloaded"
+    );
     assert!(
         !status.valid,
         "synthetic bytes must NOT be reported valid once validation runs through ONNX Runtime"
@@ -574,10 +624,7 @@ async fn download_model_and_wait(
     while Instant::now() < deadline {
         let progress = sidecar
             .client
-            .get(sidecar.url(&format!(
-                "/v1/models/{slug}/download/{}",
-                download.job_id
-            )))
+            .get(sidecar.url(&format!("/v1/models/{slug}/download/{}", download.job_id)))
             .send()
             .await?
             .error_for_status()?
@@ -639,8 +686,7 @@ async fn run_model_end_to_end(
     download_model_and_wait(sidecar, slug).await?;
 
     let max_seconds = if slug == "tiny" { 10 } else { 30 };
-    let (samples, sample_rate) =
-        load_wav_as_f32_mono(&audio_asset_path("test.wav")?, max_seconds)?;
+    let (samples, sample_rate) = load_wav_as_f32_mono(&audio_asset_path("test.wav")?, max_seconds)?;
     assert!(!samples.is_empty());
 
     let device_id = if slug == "tiny" {
@@ -796,8 +842,7 @@ async fn read_announced_port(
                 Ok(0) => break, // EOF
                 Ok(_) => {
                     if !announced {
-                        if let Some(captured) =
-                            line.strip_prefix("RUST_TRANSCRIPTION_BOUND_PORT=")
+                        if let Some(captured) = line.strip_prefix("RUST_TRANSCRIPTION_BOUND_PORT=")
                         {
                             if let Ok(port) = captured.trim().parse::<u16>() {
                                 announced = true;
@@ -913,7 +958,7 @@ async fn start_slow_download_server(
 }
 
 fn encode_f32le_samples(values: &[f32]) -> Vec<u8> {
-    let mut bytes = Vec::with_capacity(values.len() * std::mem::size_of::<f32>());
+    let mut bytes = Vec::with_capacity(std::mem::size_of_val(values));
     for value in values {
         bytes.extend_from_slice(&value.to_le_bytes());
     }

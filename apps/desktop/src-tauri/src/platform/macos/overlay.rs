@@ -180,19 +180,35 @@ fn start_out_reader(app: tauri::AppHandle, rx: mpsc::Receiver<OutMessage>) {
                     let _ = app.emit_to("main", "overlay-resolve-permission", payload);
                 }
                 OutMessage::StyleSwitch { direction } => {
-                    if direction == "forward" {
-                        let _ = app.emit_to("main", "tone-switch-forward", ());
-                    } else if direction == "backward" {
-                        let _ = app.emit_to("main", "tone-switch-backward", ());
+                    match crate::pill_process::PillStyleSwitchDirection::parse(&direction) {
+                        Some(direction) => {
+                            crate::pill_process::emit_pill_style_switch(&app, direction);
+                        }
+                        None => {
+                            log::warn!("Ignoring unknown pill style-switch direction: {direction}");
+                        }
                     }
                 }
                 OutMessage::ToastAction { action } => {
                     let payload = serde_json::json!({ "action": action });
                     let _ = app.emit_to("main", "toast-action", payload);
                 }
+                OutMessage::HapticFeedback { kind } => {
+                    crate::system::audio_feedback::play_thock(&kind);
+                }
                 OutMessage::Hover { .. } => {}
-                OutMessage::PositionChanged { has_saved_position } => {
-                    let payload = serde_json::json!({ "hasSavedPosition": has_saved_position });
+                OutMessage::PositionChanged { has_saved_position, rect, monitor } => {
+                    let rect_json = rect.map(|r| {
+                        serde_json::json!({ "x": r.x, "y": r.y, "width": r.width, "height": r.height })
+                    });
+                    let monitor_json = monitor.map(|m| {
+                        serde_json::json!({ "x": m.x, "y": m.y, "width": m.width, "height": m.height })
+                    });
+                    let payload = serde_json::json!({
+                        "hasSavedPosition": has_saved_position,
+                        "rect": rect_json,
+                        "monitor": monitor_json,
+                    });
                     let _ = app.emit_to("main", "pill-position-changed", payload);
                 }
             }

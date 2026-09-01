@@ -17,7 +17,7 @@ All platforms need a working microphone or audio input device. API-backed transc
 
 ## Storage and compute
 
-Reserve space for the app plus any local models. The selectable downloads range from **77 MB** for Whisper Tiny to **3.1 GB** for Whisper Large v3, with the ONNX Parakeet/Canary models between roughly **613 MB and 1.03 GB**. Temporary download and installation overhead means free space should exceed the displayed model size. Larger models generally demand more memory and take longer on modest hardware.
+Reserve space for the app plus any local models. The selectable downloads range from **77 MB** for Whisper Tiny to **3.1 GB** for Whisper Large v3, with the ONNX Parakeet/Canary models between roughly **613 MB and 1.03 GB** and the sherpa-onnx SenseVoice model at roughly **226 MB**. Temporary download and installation overhead means free space should exceed the displayed model size. Larger models generally demand more memory and take longer on modest hardware.
 
 GPU availability is discovered by the local sidecar. Do not assume the presence of a GPU guarantees acceleration: the supported execution device must appear in the local model configuration. CPU remains the portable fallback.
 

@@ -308,7 +308,109 @@ fn start_stdout_reader(app: tauri::AppHandle, reader: std::io::BufReader<ChildSt
             match reader.read_line(&mut line) {
                 Ok(0) | Err(_) => break,
                 Ok(_) => {
+<<<<<<< HEAD
                     handle_stdout_line(&app, &line);
+=======
+                    if line.contains("\"click\"") {
+                        let _ = app.emit_to("main", "on-click-dictate", ());
+                    } else if line.contains("\"agent_talk\"") {
+                        let _ = app.emit_to("main", "on-click-agent-talk", ());
+                    } else if line.contains("\"assistant_close\"") {
+                        let _ = app.emit_to("main", "assistant-mode-close", ());
+                    } else if line.contains("\"enable_type_mode\"") {
+                        let _ = app.emit_to("main", "assistant-enable-type-mode", ());
+                    } else if line.contains("\"cancel_dictation\"") {
+                        let _ = app.emit_to("main", "cancel-dictation", ());
+                    } else if line.contains("\"pause_dictation\"") {
+                        let _ = app.emit_to("main", "pause-dictation", ());
+                    } else if line.contains("\"resume_dictation\"") {
+                        let _ = app.emit_to("main", "resume-dictation", ());
+                    } else if line.contains("\"typed_message\"") {
+                        if let Ok(val) = serde_json::from_str::<serde_json::Value>(&line) {
+                            if let Some(text) = val.get("text").and_then(|v| v.as_str()) {
+                                let payload = serde_json::json!({ "text": text });
+                                let _ = app.emit_to("main", "assistant-typed-message", payload);
+                            }
+                        }
+                    } else if line.contains("\"open_conversation\"") {
+                        if let Ok(val) = serde_json::from_str::<serde_json::Value>(&line) {
+                            if let Some(id) = val.get("conversation_id").and_then(|v| v.as_str()) {
+                                let payload = serde_json::json!({ "conversationId": id });
+                                let _ = app.emit_to("main", "open-pill-conversation", payload);
+                            }
+                        }
+                        let _ = app.emit_to("main", "assistant-mode-close", ());
+                    } else if line.contains("\"resolve_permission\"") {
+                        if let Ok(val) = serde_json::from_str::<serde_json::Value>(&line) {
+                            let permission_id = val
+                                .get("permission_id")
+                                .and_then(|v| v.as_str())
+                                .unwrap_or("");
+                            let status = val
+                                .get("status")
+                                .and_then(|v| v.as_str())
+                                .unwrap_or("denied");
+                            let always_allow = val
+                                .get("always_allow")
+                                .and_then(|v| v.as_bool())
+                                .unwrap_or(false);
+                            let payload = serde_json::json!({
+                                "permissionId": permission_id,
+                                "status": status,
+                                "alwaysAllow": always_allow,
+                            });
+                            let _ = app.emit_to("main", "overlay-resolve-permission", payload);
+                        }
+                    } else if line.contains("\"style_switch\"") {
+                        // Cheap pre-filter so we only attempt JSON parsing (and
+                        // can only emit a parse warning) for lines that actually
+                        // claim to be a style switch, not every misc stdout line.
+                        if let Some(direction) = parse_style_switch_direction(&line) {
+                            emit_pill_style_switch(&app, direction);
+                        }
+                    } else if line.contains("\"toast_action\"") {
+                        if let Ok(val) = serde_json::from_str::<serde_json::Value>(&line) {
+                            if let Some(action) = val.get("action").and_then(|v| v.as_str()) {
+                                let payload = serde_json::json!({ "action": action });
+                                let _ = app.emit_to("main", "toast-action", payload);
+                            }
+                        }
+                    } else if line.contains("\"haptic_feedback\"") {
+                        // A23: Thock haptics - play audio feedback for pill gestures.
+                        if let Ok(val) =
+                            serde_json::from_str::<serde_json::Value>(&line)
+                        {
+                            if let Some(kind) =
+                                val.get("kind").and_then(|v| v.as_str())
+                            {
+                                crate::system::audio_feedback::play_thock(kind);
+                            }
+                        }
+                    } else if line.contains("\"position_changed\"") {
+                        if let Ok(val) = serde_json::from_str::<serde_json::Value>(&line) {
+                            let has_saved = val
+                                .get("has_saved_position")
+                                .and_then(|v| v.as_bool())
+                                .unwrap_or(false);
+                            // Forward any real pill + monitor geometry the sidecar
+                            // emits (when present) so the composer can anchor next
+                            // to the actual pill instead of falling back to OS
+                            // placement. Absent fields serialize to null and the
+                            // TypeScript consumer treats them as "unknown".
+                            let rect = val.get("rect").cloned().filter(|v| v.is_object());
+                            let monitor = val
+                                .get("monitor")
+                                .cloned()
+                                .filter(|v| v.is_object());
+                            let payload = serde_json::json!({
+                                "hasSavedPosition": has_saved,
+                                "rect": rect,
+                                "monitor": monitor,
+                            });
+                            let _ = app.emit_to("main", "pill-position-changed", payload);
+                        }
+                    }
+>>>>>>> origin/fix/superfix-review-findings
                 }
             }
         }
@@ -316,6 +418,7 @@ fn start_stdout_reader(app: tauri::AppHandle, reader: std::io::BufReader<ChildSt
     });
 }
 
+<<<<<<< HEAD
 fn handle_stdout_line(app: &tauri::AppHandle, line: &str) {
     if line.contains("\"click\"") {
         let _ = app.emit_to("main", "on-click-dictate", ());
@@ -425,4 +528,140 @@ fn handle_position_changed(app: &tauri::AppHandle, line: &str) {
     };
     let payload = serde_json::json!({ "hasSavedPosition": has_saved });
     let _ = app.emit_to("main", "pill-position-changed", payload);
+=======
+/// Direction of a pill style switch. A closed enum lets the emit path match
+/// exhaustively instead of defensively warning on a value the parser already
+/// guarantees is valid.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PillStyleSwitchDirection {
+    Forward,
+    Backward,
+}
+
+impl PillStyleSwitchDirection {
+    /// Case-insensitive parse from the direction string the pills emit.
+    pub fn parse(direction: &str) -> Option<Self> {
+        if direction.eq_ignore_ascii_case("forward") {
+            Some(Self::Forward)
+        } else if direction.eq_ignore_ascii_case("backward") {
+            Some(Self::Backward)
+        } else {
+            None
+        }
+    }
+}
+
+/// Parsed `style_switch` direction from a pill stdout line.
+///
+/// Accepts the serde-tagged JSON the pills emit
+/// (`{"type":"style_switch","direction":"forward"}`) and is case-insensitive
+/// on `direction` so a casing drift cannot silently drop the click.
+pub(crate) fn parse_style_switch_direction(line: &str) -> Option<PillStyleSwitchDirection> {
+    let trimmed = line.trim();
+    let value: serde_json::Value = match serde_json::from_str(trimmed) {
+        Ok(value) => value,
+        Err(error) => {
+            // Distinguish unparseable lines from valid-but-unsupported payloads:
+            // a JSON parse failure here is genuinely malformed pill output and
+            // warrants its own warning rather than a silent `None`.
+            log::warn!("Ignoring unparseable pill line {trimmed:?}: {error}");
+            return None;
+        }
+    };
+    if value.get("type").and_then(|v| v.as_str()) != Some("style_switch") {
+        return None;
+    }
+    let Some(raw_direction) = value.get("direction").and_then(|v| v.as_str()) else {
+        log::warn!("Ignoring pill style-switch line missing direction: {trimmed}");
+        return None;
+    };
+    match PillStyleSwitchDirection::parse(raw_direction) {
+        Some(direction) => Some(direction),
+        None => {
+            log::warn!(
+                "Ignoring unknown pill style-switch direction from line: {trimmed}"
+            );
+            None
+        }
+    }
+}
+
+/// Tauri event names the pill bridge emits for a chevron click. These must
+/// stay in sync with the `useTauriListen` event strings in
+/// `DictationSideEffects.tsx` (currently the hard-coded `"tone-switch-forward"`
+/// / `"tone-switch-backward"` listeners), which are the webview's counterpart.
+pub const PILL_STYLE_SWITCH_FORWARD_EVENT: &str = "tone-switch-forward";
+pub const PILL_STYLE_SWITCH_BACKWARD_EVENT: &str = "tone-switch-backward";
+
+/// Emit the pill chevron click to the desktop webview.
+///
+/// Prefer the main window (dictation is owned there) but fall back to a
+/// broadcast so a hidden/relabeled window cannot swallow the switch.
+pub fn emit_pill_style_switch(app: &tauri::AppHandle, direction: PillStyleSwitchDirection) {
+    let event = match direction {
+        PillStyleSwitchDirection::Forward => PILL_STYLE_SWITCH_FORWARD_EVENT,
+        PillStyleSwitchDirection::Backward => PILL_STYLE_SWITCH_BACKWARD_EVENT,
+    };
+    log::debug!("Pill style switch: {direction:?}");
+    if let Err(err) = app.emit_to("main", event, ()) {
+        log::warn!("Failed to emit {event} to main: {err}; broadcasting");
+        if let Err(err) = app.emit(event, ()) {
+            log::error!("Failed to broadcast {event}: {err}");
+        }
+    }
+}
+
+#[cfg(test)]
+mod style_switch_parse_tests {
+    use super::{parse_style_switch_direction, PillStyleSwitchDirection};
+
+    #[test]
+    fn parses_canonical_pill_line() {
+        assert_eq!(
+            parse_style_switch_direction(
+                r#"{"type":"style_switch","direction":"forward"}"#
+            ),
+            Some(PillStyleSwitchDirection::Forward)
+        );
+        assert_eq!(
+            parse_style_switch_direction(
+                r#"{"type":"style_switch","direction":"backward"}"#
+            ),
+            Some(PillStyleSwitchDirection::Backward)
+        );
+    }
+
+    #[test]
+    fn accepts_trailing_newline_and_mixed_case() {
+        assert_eq!(
+            parse_style_switch_direction(
+                "{\"type\":\"style_switch\",\"direction\":\"Forward\"}\n"
+            ),
+            Some(PillStyleSwitchDirection::Forward)
+        );
+        assert_eq!(
+            parse_style_switch_direction(
+                "{\"type\":\"style_switch\",\"direction\":\"BACKWARD\"}\r\n"
+            ),
+            Some(PillStyleSwitchDirection::Backward)
+        );
+    }
+
+    #[test]
+    fn rejects_malformed_or_unrelated_lines() {
+        assert_eq!(
+            parse_style_switch_direction(r#"{"type":"click"}"#),
+            None
+        );
+        assert_eq!(
+            parse_style_switch_direction(r#"{"type":"style_switch","direction":"sideways"}"#),
+            None
+        );
+        assert_eq!(parse_style_switch_direction("not json"), None);
+        assert_eq!(
+            parse_style_switch_direction(r#"{"type":"style_info","name":"forward"}"#),
+            None
+        );
+    }
+>>>>>>> origin/fix/superfix-review-findings
 }

@@ -161,7 +161,7 @@ fn draw_pill(gfx: &mut Gfx, state: &PillState, ww: f64, wh: f64) {
             draw_loading(gfx, rx, ry, pill_w, pill_h, expand_t, state);
         }
         Phase::Idle if expand_t > 0.5 && (state.hovered.get() || state.assistant_active.get()) => {
-            draw_idle_label(gfx, rx, ry, pill_w, pill_h, expand_t);
+            draw_idle_label(gfx, rx, ry, pill_w, pill_h, expand_t, state);
         }
         _ => {}
     }
@@ -274,9 +274,39 @@ fn draw_loading(
     draw_edge_gradient(gfx, rx, ry, pill_w, pill_h, expand_t, state);
 }
 
-fn draw_idle_label(gfx: &Gfx, rx: f64, ry: f64, pill_w: f64, pill_h: f64, expand_t: f64) {
-    gfx.draw_text_centered("Click to dictate", rx, ry, pill_w, pill_h,
-        12.0, true, [1.0, 1.0, 1.0, 0.55 * expand_t]);
+fn draw_idle_label(gfx: &Gfx, rx: f64, ry: f64, pill_w: f64, pill_h: f64, expand_t: f64, state: &PillState) {
+    let drag_t = state.drag_label_t.get();
+    let (alpha_idle, alpha_drag) = rust_pill_shared::label_crossfade_alpha(drag_t, expand_t);
+
+    // Normalize baseline to pill vertical center (same concept as macOS/GTK base_y)
+    let base_y = ry + pill_h / 2.0;
+    let (y_idle_target, y_drag_target) = rust_pill_shared::label_slide_y(base_y, drag_t);
+
+    if alpha_idle > rust_pill_shared::LABEL_ALPHA_CUTOFF {
+        gfx.draw_text_centered(
+            rust_pill_shared::LABEL_IDLE_TEXT,
+            rx,
+            y_idle_target - pill_h / 2.0,
+            pill_w,
+            pill_h,
+            12.0,
+            false,
+            [1.0, 1.0, 1.0, alpha_idle],
+        );
+    }
+
+    if alpha_drag > rust_pill_shared::LABEL_ALPHA_CUTOFF {
+        gfx.draw_text_centered(
+            rust_pill_shared::LABEL_DRAG_TEXT,
+            rx,
+            y_drag_target - pill_h / 2.0,
+            pill_w,
+            pill_h,
+            12.0,
+            false,
+            [1.0, 1.0, 1.0, alpha_drag],
+        );
+    }
 }
 
 // ── Tooltip (dictation style selector) ────────────────────────────
@@ -319,7 +349,7 @@ fn draw_tooltip(gfx: &Gfx, state: &PillState, ww: f64, pill_area_top: f64) {
     let text_area_right = tooltip_rx + tooltip_w - padding_h - chevron_area;
     let text_area_w = text_area_right - text_area_left;
     gfx.draw_text_centered(&style_name, text_area_left, tooltip_ry, text_area_w, TOOLTIP_HEIGHT,
-        13.0, true, [1.0, 1.0, 1.0, 0.95 * alpha]);
+        13.0, false, [1.0, 1.0, 1.0, 0.95 * alpha]);
 
     // Click regions
     let mid_x = tooltip_rx + tooltip_w / 2.0;
@@ -1261,9 +1291,9 @@ fn draw_long_press_ring(gfx: &Gfx, state: &PillState, ww: f64, wh: f64) {
     }
 
     if alpha > 0.0 && head_len > 0.0 {
-        // Primary layer: the comet. Brightness is envelope × glimmer evaluated
-        // per evenly-spaced segment — the portable stand-in for a gradient
-        // along a path, which Direct2D cannot stroke directly.
+        // One resampled perimeter drives the shadow, the comet and the head,
+        // so the layers can never drift apart and no geometry is built more
+        // than once per frame.
         let mut points = state.ring_points.borrow_mut();
         rust_pill_shared::resample_perimeter(
             &path,
@@ -1273,60 +1303,83 @@ fn draw_long_press_ring(gfx: &Gfx, state: &PillState, ww: f64, wh: f64) {
             &mut points,
         );
 
-        let lift = 1.0 + rust_pill_shared::RING_ARM_LIFT * arm_t;
-        let mut shaded: Vec<ShadedSegment> = Vec::with_capacity(points.len());
-        for w in points.windows(2) {
-            let (x1, y1, _) = w[0];
-            let (x2, y2, d) = w[1];
-            if d > head_len {
-                break;
+        // Degenerate geometry cannot occur with the shared perimeter (this
+        // block is only entered when `head_len > 0`), but the shadow slice
+        // and head placement below must never index an empty buffer — which
+        // `RingLayers::new` reports as `None`.
+        if let Some(layers) = rust_pill_shared::RingLayers::new(
+            &points, head_len, total_len, progress, arm_t, alpha,
+        ) {
+            // Shadow layer: a soft dark halo behind the silver ring so it stays
+            // readable on light backdrops. Direct2D has no cheap blur on the
+            // render path, so the ring path is stroked several times with
+            // growing widths and shrinking alphas — the passes sum to a
+            // falloff that is darkest right under the ring and gone within a
+            // few pixels. Widths, alphas and the arc's extent all come from
+            // the shared plan; only the stroking is platform code.
+            for (width, layer_alpha) in layers.shadow_passes() {
+                gfx.stroke_polyline(
+                    &points[..=layers.head_index],
+                    [0.0, 0.0, 0.0, layer_alpha],
+                    width,
+                );
             }
-            let env = rust_pill_shared::ring_envelope(d, head_len, progress, total_len);
-            let glim = rust_pill_shared::ring_glimmer(d, total_len, wave_phase, progress);
-            let a = (env * glim * lift).clamp(0.0, 1.0) * alpha;
-            if a < 0.012 {
-                continue;
-            }
-            shaded.push(ShadedSegment {
-                x1,
-                y1,
-                x2,
-                y2,
-                rgba: [
-                    LONG_PRESS_OUTLINE_COLOR.0,
-                    LONG_PRESS_OUTLINE_COLOR.1,
-                    LONG_PRESS_OUTLINE_COLOR.2,
-                    a,
-                ],
-                width: rust_pill_shared::RING_CORE_WIDTH
-                    + rust_pill_shared::RING_WIDTH_SWELL * env * (1.0 - 0.35 * arm_t),
-            });
-        }
-        gfx.draw_line_shaded(&shaded);
 
-        // Secondary layer: the soft head. Concentric discs approximate a radial
-        // falloff without allocating a gradient every frame. It dissolves and
-        // blooms before completion so nothing bright is left at the seam.
-        let head_fade = rust_pill_shared::ring_head_fade(progress, arm_t);
-        let head_alpha = rust_pill_shared::RING_HEAD_ALPHA * head_fade * alpha;
-        if head_alpha > 0.004 && points.len() >= 2 {
-            let idx = (((head_len / total_len) * (points.len() - 1) as f64).round() as usize)
-                .clamp(1, points.len() - 1);
-            let (hx, hy, _) = points[idx];
-            let head_r = rust_pill_shared::ring_head_radius(progress);
-            let steps = rust_pill_shared::RING_HEAD_STEPS;
-            for k in (1..=steps).rev() {
-                let rr = head_r * (k as f64 / steps as f64);
-                let falloff = (1.0 - (k - 1) as f64 / steps as f64).powf(2.2);
+            // Dark underlay beneath the comet head so the soft silver blob
+            // also separates from a light backdrop; mirrors the head's disc
+            // shading.
+            for disc in layers.underlay_discs() {
+                gfx.fill_circle(disc.cx, disc.cy, disc.radius, [0.0, 0.0, 0.0, disc.alpha]);
+            }
+
+            // Primary layer: the comet. Brightness is envelope × glimmer
+            // evaluated per evenly-spaced segment — the portable stand-in for
+            // a gradient along a path, which Direct2D cannot stroke directly.
+            let lift = 1.0 + rust_pill_shared::RING_ARM_LIFT * arm_t;
+            let mut shaded: Vec<ShadedSegment> = Vec::with_capacity(points.len());
+            for w in points.windows(2) {
+                let (x1, y1, _) = w[0];
+                let (x2, y2, d) = w[1];
+                if d > head_len {
+                    break;
+                }
+                let env = rust_pill_shared::ring_envelope(d, head_len, progress, total_len);
+                let glim = rust_pill_shared::ring_glimmer(d, total_len, wave_phase, progress);
+                let a = (env * glim * lift).clamp(0.0, 1.0) * alpha;
+                if a < rust_pill_shared::RING_SEGMENT_ALPHA_CUTOFF {
+                    continue;
+                }
+                shaded.push(ShadedSegment {
+                    x1,
+                    y1,
+                    x2,
+                    y2,
+                    rgba: [
+                        LONG_PRESS_OUTLINE_COLOR.0,
+                        LONG_PRESS_OUTLINE_COLOR.1,
+                        LONG_PRESS_OUTLINE_COLOR.2,
+                        a,
+                    ],
+                    width: rust_pill_shared::RING_CORE_WIDTH
+                        + rust_pill_shared::RING_WIDTH_SWELL * env * (1.0 - 0.35 * arm_t),
+                });
+            }
+            gfx.draw_line_shaded(&shaded);
+
+            // Secondary layer: the soft head. Concentric discs approximate a
+            // radial falloff without allocating a gradient every frame. It
+            // dissolves and blooms before completion so nothing bright is left
+            // at the seam — once it has, the shared plan yields no discs.
+            for disc in layers.head_discs() {
                 gfx.fill_circle(
-                    hx,
-                    hy,
-                    rr,
+                    disc.cx,
+                    disc.cy,
+                    disc.radius,
                     [
                         LONG_PRESS_OUTLINE_COLOR.0,
                         LONG_PRESS_OUTLINE_COLOR.1,
                         LONG_PRESS_OUTLINE_COLOR.2,
-                        head_alpha * falloff * 0.5,
+                        disc.alpha,
                     ],
                 );
             }

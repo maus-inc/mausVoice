@@ -90,6 +90,7 @@ pub struct UserPreferences {
     /// default so existing behavior is unchanged.
     #[serde(default)]
     pub always_request_admin_on_startup: bool,
+<<<<<<< HEAD
     /// Where the dictation pill anchors on screen. Accepted values are
     /// "top" or "bottom"; any other value is treated as the default
     /// "bottom" so legacy data never breaks the UI.
@@ -99,6 +100,35 @@ pub struct UserPreferences {
     /// action. NULL disables the delay (immediate paste on stop).
     #[serde(default)]
     pub hands_free_delay_ms: Option<i64>,
+=======
+    #[serde(default)]
+    pub in_dictation_style_switching_enabled: bool,
+    #[serde(default = "default_hallucination_filter_enabled")]
+    pub hallucination_filter_enabled: bool,
+    #[serde(default)]
+    pub review_before_insert: Option<bool>,
+    #[serde(default)]
+    pub agent_enabled_tools: Option<String>,
+    #[serde(default = "default_agent_max_iterations")]
+    pub agent_max_iterations: i64,
+    #[serde(default = "default_agent_permission_timeout_ms")]
+    pub agent_permission_timeout_ms: i64,
+    /// Deterministic spoken formatting / scratch-that. Default on.
+    #[serde(default = "default_true")]
+    pub spoken_commands_enabled: bool,
+}
+
+fn default_hallucination_filter_enabled() -> bool {
+    true
+}
+
+fn default_agent_max_iterations() -> i64 {
+    20
+}
+
+fn default_agent_permission_timeout_ms() -> i64 {
+    60_000
+>>>>>>> origin/fix/superfix-review-findings
 }
 
 fn default_pill_reset_monitor_strategy() -> String {
@@ -117,6 +147,7 @@ fn default_dictation_audio_dim() -> f64 {
     1.0
 }
 
+<<<<<<< HEAD
 fn default_preserve_audio_on_failure() -> bool {
     true
 }
@@ -124,3 +155,8 @@ fn default_preserve_audio_on_failure() -> bool {
 fn default_pill_placement() -> String {
     "bottom".to_string()
 }
+=======
+fn default_true() -> bool {
+    true
+}
+>>>>>>> origin/fix/superfix-review-findings

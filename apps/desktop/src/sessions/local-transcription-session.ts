@@ -63,6 +63,8 @@ export class LocalTranscriptionSession implements TranscriptionSession {
           language: whisperLanguage,
           initialPrompt: prompt || undefined,
           deviceId: getTranscriptionSidecarDeviceId(settings.device),
+          hallucinationFilterEnabled:
+            state.userPrefs?.hallucinationFilterEnabled !== false,
         });
 
       this.session = sidecarSession;

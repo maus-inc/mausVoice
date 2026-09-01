@@ -8,27 +8,37 @@ import type {
   LlmToolChoice,
 } from "@maus-inc/types";
 import { countWords, retry } from "@maus-inc/utilities";
+<<<<<<< HEAD
 import OpenAI from "openai";
 import { openaiCompatibleTranscribeAudio } from "./openai-compatible-transcribe.utils";
 import { buildJsonSchemaResponseFormat } from "./response-format.utils";
 import type { CustomFetch } from "./types";
+=======
+import OpenAI, { toFile } from "openai";
+import type { CustomFetch, DiscoveredModelId } from "./types";
+import {
+  contentToString,
+  runSdkTranscription,
+  TranscriptionSegment,
+  TranscribeAudioOutput,
+} from "./transcription.utils";
+>>>>>>> origin/fix/superfix-review-findings
 import type {
+  ChatCompletionChunk,
   ChatCompletionContentPart,
   ChatCompletionMessageParam,
   ChatCompletionTool,
 } from "openai/resources/chat/completions";
 
 export const OPENAI_GENERATE_TEXT_MODELS = [
-  "gpt-4o",
   "gpt-4o-mini",
-  "gpt-4-turbo",
-  "gpt-3.5-turbo",
-  "gpt-5.2",
-  "gpt-5.3",
-  "gpt-5.4",
+  "gpt-5.6-luna",
+  "gpt-5.6-terra",
+  "gpt-5.6-sol",
+  "gpt-5-mini",
 ] as const;
 export type OpenAIGenerateTextModel =
-  (typeof OPENAI_GENERATE_TEXT_MODELS)[number];
+  (typeof OPENAI_GENERATE_TEXT_MODELS)[number] | DiscoveredModelId;
 
 export const OPENAI_TRANSCRIPTION_MODELS = [
   "whisper-1",
@@ -36,6 +46,7 @@ export const OPENAI_TRANSCRIPTION_MODELS = [
   "gpt-4o-mini-transcribe",
 ] as const;
 export type OpenAITranscriptionModel =
+<<<<<<< HEAD
   (typeof OPENAI_TRANSCRIPTION_MODELS)[number];
 
 // Models that support `response_format: { type: "json_schema" }`. The base
@@ -89,6 +100,9 @@ const contentToString = (
     .join("")
     .trim();
 };
+=======
+  (typeof OPENAI_TRANSCRIPTION_MODELS)[number] | DiscoveredModelId;
+>>>>>>> origin/fix/superfix-review-findings
 
 const createClient = (
   apiKey: string,
@@ -113,12 +127,35 @@ export type OpenAITranscriptionArgs = {
   ext: string;
   prompt?: string;
   language?: string;
+  customFetch?: CustomFetch;
 };
 
-export type OpenAITranscribeAudioOutput = {
-  text: string;
-  wordsUsed: number;
-};
+/**
+ * OpenAI transcription models that support `verbose_json` and return the
+ * detailed per-segment `no_speech_prob` used by downstream hallucination
+ * gating (issue #54). Models here keep `verbose_json`.
+ */
+const VERBOSE_JSON_TRANSCRIPTION_MODELS = ["whisper-1"] as const;
+
+/**
+ * Pick the `response_format` for an OpenAI transcription request.
+ *
+ * `whisper-1` keeps `verbose_json` so `segments[].no_speech_prob` is returned
+ * for probability-gated silence handling. The newer `gpt-4o-transcribe` and
+ * `gpt-4o-mini-transcribe` models do NOT support `verbose_json` — they reject
+ * it with a deterministic HTTP 400 — and only accept `json` / `text`. Sending
+ * `verbose_json` to them previously caused a 400 that the generic retry wrapper
+ * repeated three times.
+ */
+const getTranscriptionResponseFormat = (
+  model: OpenAITranscriptionModel,
+): "verbose_json" | "json" =>
+  (VERBOSE_JSON_TRANSCRIPTION_MODELS as readonly string[]).includes(model)
+    ? "verbose_json"
+    : "json";
+
+export type OpenAITranscriptionSegment = TranscriptionSegment;
+export type OpenAITranscribeAudioOutput = TranscribeAudioOutput;
 
 export const openaiTranscribeAudio = async ({
   apiKey,
@@ -127,7 +164,9 @@ export const openaiTranscribeAudio = async ({
   ext,
   prompt,
   language,
+  customFetch,
 }: OpenAITranscriptionArgs): Promise<OpenAITranscribeAudioOutput> => {
+<<<<<<< HEAD
   return openaiCompatibleTranscribeAudio({
     client: createClient(apiKey),
     blob,
@@ -136,6 +175,28 @@ export const openaiTranscribeAudio = async ({
     prompt,
     language,
   });
+=======
+  const client = createClient(apiKey, undefined, customFetch);
+  const file = await toFile(blob, `audio.${ext}`);
+  return runSdkTranscription(
+    (body) =>
+      client.audio.transcriptions.create(
+        body as unknown as Parameters<
+          typeof client.audio.transcriptions.create
+        >[0],
+      ),
+    {
+      file,
+      model,
+      prompt,
+      language,
+      // `whisper-1` keeps `verbose_json` so `segments[].no_speech_prob` is
+      // returned; `gpt-4o-transcribe` / `gpt-4o-mini-transcribe` reject
+      // `verbose_json` (HTTP 400) and use `json` instead.
+      response_format: getTranscriptionResponseFormat(model),
+    },
+  );
+>>>>>>> origin/fix/superfix-review-findings
 };
 
 export type OpenAIGenerateTextArgs = {
@@ -219,18 +280,21 @@ export const openaiGenerateTextResponse = async ({
 
 export type OpenAITestIntegrationArgs = {
   apiKey: string;
+  customFetch?: CustomFetch;
 };
 
 export type OpenAICompatibleTestIntegrationArgs = {
   baseUrl: string;
   apiKey?: string;
+  customFetch?: CustomFetch;
 };
 
 export const openaiCompatibleTestIntegration = async ({
   baseUrl,
   apiKey,
+  customFetch,
 }: OpenAICompatibleTestIntegrationArgs): Promise<boolean> => {
-  const client = createClient(apiKey || "dummy", baseUrl);
+  const client = createClient(apiKey || "dummy", baseUrl, customFetch);
 
   // Test connectivity by listing models
   await client.models.list();
@@ -241,38 +305,11 @@ export const openaiCompatibleTestIntegration = async ({
 
 export const openaiTestIntegration = async ({
   apiKey,
+  customFetch,
 }: OpenAITestIntegrationArgs): Promise<boolean> => {
-  const client = createClient(apiKey);
-
-  const response = await client.chat.completions.create({
-    messages: [
-      {
-        role: "user",
-        content: [
-          {
-            type: "text",
-            text: `Reply with the single word "Hello."`,
-          },
-        ],
-      },
-    ],
-    model: "gpt-4o-mini",
-    temperature: 0,
-    max_completion_tokens: 32,
-    top_p: 1,
-  });
-
-  if (!response.choices || response.choices.length === 0) {
-    throw new Error("No response from OpenAI");
-  }
-
-  const first = response.choices[0];
-  const content = contentToString(first?.message?.content);
-  if (!content) {
-    throw new Error("Response content is empty");
-  }
-
-  return content.toLowerCase().includes("hello");
+  const client = createClient(apiKey, undefined, customFetch);
+  await client.models.list();
+  return true;
 };
 
 // ============================================================================
@@ -350,6 +387,7 @@ function toFinishReason(raw: string | null | undefined): LlmFinishReason {
   }
 }
 
+<<<<<<< HEAD
 type OpenAIChunkState = {
   toolCalls: Map<number, { id: string; name: string; arguments: string }>;
   finishReason: LlmFinishReason;
@@ -362,6 +400,38 @@ const processOpenAIChunk = (
   chunk: OpenAI.Chat.Completions.ChatCompletionChunk,
   state: OpenAIChunkState,
 ): string | undefined => {
+=======
+type OpenAIStreamState = {
+  toolCalls: Map<number, { id: string; name: string; arguments: string }>;
+  finishReason: LlmFinishReason;
+  promptTokens?: number;
+  completionTokens?: number;
+  modelId?: string;
+};
+
+const applyOpenAIToolCalls = (
+  choice: ChatCompletionChunk.Choice,
+  toolCalls: OpenAIStreamState["toolCalls"],
+): void => {
+  for (const tc of choice.delta?.tool_calls ?? []) {
+    const index = tc.index ?? toolCalls.size;
+    const current = toolCalls.get(index) ?? {
+      id: "",
+      name: "",
+      arguments: "",
+    };
+    if (tc.id) current.id = tc.id;
+    if (tc.function?.name) current.name = tc.function.name;
+    if (tc.function?.arguments) current.arguments += tc.function.arguments;
+    toolCalls.set(index, current);
+  }
+};
+
+const handleOpenAIChunk = (
+  chunk: ChatCompletionChunk,
+  state: OpenAIStreamState,
+): LlmStreamEvent[] => {
+>>>>>>> origin/fix/superfix-review-findings
   if (chunk.model) {
     state.modelId = chunk.model;
   }
@@ -372,6 +442,7 @@ const processOpenAIChunk = (
   }
 
   const choice = chunk.choices[0];
+<<<<<<< HEAD
   if (!choice) return undefined;
 
   if (choice.delta?.content) {
@@ -390,12 +461,28 @@ const processOpenAIChunk = (
     if (tc.function?.arguments) current.arguments += tc.function.arguments;
     state.toolCalls.set(index, current);
   }
+=======
+  if (!choice) {
+    return [];
+  }
+
+  const events: LlmStreamEvent[] = [];
+  if (choice.delta?.content) {
+    events.push({ type: "text-delta", text: choice.delta.content });
+  }
+
+  applyOpenAIToolCalls(choice, state.toolCalls);
+>>>>>>> origin/fix/superfix-review-findings
 
   if (choice.finish_reason) {
     state.finishReason = toFinishReason(choice.finish_reason);
   }
 
+<<<<<<< HEAD
   return undefined;
+=======
+  return events;
+>>>>>>> origin/fix/superfix-review-findings
 };
 
 export async function* openaiCompatibleStreamChat(
@@ -421,6 +508,7 @@ export async function* openaiCompatibleStreamChat(
     ...extraBody,
   });
 
+<<<<<<< HEAD
   const state: OpenAIChunkState = {
     toolCalls: new Map<
       number,
@@ -437,6 +525,15 @@ export async function* openaiCompatibleStreamChat(
     if (textDelta) {
       yield { type: "text-delta", text: textDelta };
     }
+=======
+  const state: OpenAIStreamState = {
+    toolCalls: new Map(),
+    finishReason: "other",
+  };
+
+  for await (const chunk of stream) {
+    yield* handleOpenAIChunk(chunk, state);
+>>>>>>> origin/fix/superfix-review-findings
   }
 
   for (const [, tc] of [...state.toolCalls.entries()].sort(

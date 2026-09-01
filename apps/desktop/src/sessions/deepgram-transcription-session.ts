@@ -1,5 +1,21 @@
 import { listen, UnlistenFn } from "@tauri-apps/api/event";
 import { getAppState } from "../store";
+<<<<<<< HEAD
+=======
+import {
+  StopRecordingResponse,
+  TranscriptionSession,
+  TranscriptionSessionResult,
+} from "../types/transcription-session.types";
+import {
+  combineStreamingTranscript,
+  createAudioChunkPump,
+} from "../utils/audio-chunking.utils";
+import {
+  createStreamingFinalize,
+  finalizeStreamingSession,
+} from "../utils/streaming-session.utils";
+>>>>>>> origin/fix/superfix-review-findings
 import { buildDeepgramWebSocketUrl } from "../utils/deepgram.utils";
 import { getLogger } from "../utils/log.utils";
 import { loadMyEffectiveDictationLanguage } from "../utils/user.utils";
@@ -23,14 +39,19 @@ const startDeepgramStreaming = async (
   language: string,
   onInterimResult?: (segment: string) => void,
 ): Promise<DeepgramStreamingSession> => {
+<<<<<<< HEAD
   getLogger().verbose(
     `[${LOGGER_PREFIX}] Starting with sample rate:`,
     sampleRate,
   );
+=======
+  console.log("[Deepgram WebSocket] Starting with sample rate:", sampleRate);
+>>>>>>> origin/fix/superfix-review-findings
 
   let ws: WebSocket | null = null;
   let unlisten: UnlistenFn | null = null;
   let isFinalized = false;
+<<<<<<< HEAD
   const transcriptState = createTranscriptAccumulator();
   const receivedLogger = createReceivedChunkLogger(LOGGER_PREFIX);
 
@@ -42,6 +63,37 @@ const startDeepgramStreaming = async (
   });
 
   const getText = () => transcriptState.text();
+=======
+  let receivedChunkCount = 0;
+  let sentChunkCount = 0;
+
+  const pump = createAudioChunkPump({
+    sampleRate,
+    minChunkDurationMs: 20,
+    maxChunkDurationMs: 100,
+    canSend: () => !!ws && ws.readyState === WebSocket.OPEN,
+    sendChunk: (chunk) => {
+      const pcm16 = convertFloat32ToPCM16(chunk);
+      ws?.send(pcm16);
+      sentChunkCount++;
+      if (sentChunkCount <= 3 || sentChunkCount % 10 === 0) {
+        const durationMs = (chunk.length / sampleRate) * 1000;
+        console.log(
+          `[Deepgram WebSocket] Sent chunk #${sentChunkCount} (${chunk.length} samples ~${durationMs.toFixed(1)} ms, ${pcm16.byteLength} bytes)`,
+        );
+      }
+    },
+    onError: (error) => {
+      console.error(
+        "[Deepgram WebSocket] Error sending buffered chunk:",
+        error,
+      );
+    },
+  });
+
+  const getText = () =>
+    combineStreamingTranscript(finalTranscript, partialTranscript);
+>>>>>>> origin/fix/superfix-review-findings
 
   const cleanup = () => {
     if (unlisten) {
@@ -52,6 +104,7 @@ const startDeepgramStreaming = async (
       ws.close();
       ws = null;
     }
+<<<<<<< HEAD
     buffer.reset();
   };
 
@@ -121,6 +174,28 @@ const startDeepgramStreaming = async (
       finalizeResolver = null;
     }
   };
+=======
+    pump.resetBuffers();
+  };
+
+  const streamingFinalize = createStreamingFinalize({
+    logPrefix: "[Deepgram WebSocket]",
+    timeoutMs: 3000,
+    getText,
+    getIsFinalized: () => isFinalized,
+    setIsFinalized: (value) => {
+      isFinalized = value;
+    },
+    flushPendingSamples: (force) => pump.flushPendingSamples(force),
+    logTotalChunks: () =>
+      console.log("[Deepgram WebSocket] Total chunks sent:", sentChunkCount),
+    canSend: () => !!ws && ws.readyState === WebSocket.OPEN,
+    getWsState: () => ws?.readyState,
+    sendTermination: () => ws?.send(JSON.stringify({ type: "CloseStream" })),
+    cleanup,
+  });
+  const { finalize, completeFinalize } = streamingFinalize;
+>>>>>>> origin/fix/superfix-review-findings
 
   getLogger().verbose(`[${LOGGER_PREFIX}] Setting up audio_chunk listener...`);
   unlisten = await listen<{ samples: number[] }>("audio_chunk", (event) => {
@@ -131,8 +206,13 @@ const startDeepgramStreaming = async (
           event.payload.samples instanceof Float32Array
             ? event.payload.samples
             : Float32Array.from(event.payload.samples);
+<<<<<<< HEAD
         buffer.push(typedChunk);
         buffer.flush(false);
+=======
+        pump.pushSamples(typedChunk);
+        pump.flushPendingSamples();
+>>>>>>> origin/fix/superfix-review-findings
       } catch (error) {
         getLogger().error(
           `[${LOGGER_PREFIX}] Error sending audio chunk:`,
@@ -154,11 +234,17 @@ const startDeepgramStreaming = async (
     ws = new WebSocket(wsUrl, ["token", apiKey]);
 
     ws.onopen = () => {
+<<<<<<< HEAD
       getLogger().verbose(
         `[${LOGGER_PREFIX}] Connected, flushing buffered audio...`,
       );
       buffer.flush(false);
       getLogger().verbose(`[${LOGGER_PREFIX}] Session ready`);
+=======
+      console.log("[Deepgram WebSocket] Connected, flushing buffered audio...");
+      pump.flushPendingSamples();
+      console.log("[Deepgram WebSocket] Session ready");
+>>>>>>> origin/fix/superfix-review-findings
       resolve({ finalize, cleanup });
     };
 
@@ -215,7 +301,7 @@ const startDeepgramStreaming = async (
         code: event.code,
         reason: event.reason,
       });
-      if (isFinalized && finalizeResolver) {
+      if (isFinalized && streamingFinalize.hasPendingFinalize()) {
         completeFinalize();
       }
       cleanup();
@@ -268,6 +354,22 @@ export class DeepgramTranscriptionSession extends BaseApiTranscriptionSession {
     if (this.startupPromise) {
       await this.startupPromise;
     }
+<<<<<<< HEAD
     return super.finalize(audio);
+=======
+
+    return finalizeStreamingSession({
+      session: this.session,
+      providerLabel: "Deepgram",
+      log: console.log,
+    });
+  }
+
+  cleanup(): void {
+    if (this.session) {
+      this.session.cleanup();
+      this.session = null;
+    }
+>>>>>>> origin/fix/superfix-review-findings
   }
 }

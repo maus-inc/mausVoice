@@ -9,7 +9,7 @@ use gtk::prelude::*;
 use gtk_layer_shell::LayerShell;
 
 use crate::constants::*;
-use crate::ipc::{self, InMessage, OutMessage, Phase, ResetStrategy, Visibility};
+use crate::ipc::{self, InMessage, OutMessage, Phase, Rect, ResetStrategy, Visibility};
 use crate::state::{FlameTongue, PillState, Rocket, RocketPhase, Spark, WindowMode};
 use crate::{draw, input, x11};
 
@@ -119,6 +119,7 @@ pub fn run(receiver: Receiver<InMessage>) {
         tooltip_t: Cell::new(0.0),
         tooltip_velocity: Cell::new(0.0),
         tooltip_width: Cell::new(0.0),
+        style_tooltip_gate: rust_pill_shared::StyleTooltipGate::default(),
         window_mode: Cell::new(WindowMode::Dictation),
         draw_width: Cell::new(DICTATION_WINDOW_WIDTH as f64),
         draw_height: Cell::new(DICTATION_WINDOW_HEIGHT as f64),
@@ -176,6 +177,8 @@ pub fn run(receiver: Receiver<InMessage>) {
         drag_cancelled: Cell::new(false),
         inflate_t: Cell::new(0.0),
         inflate_velocity: Cell::new(0.0),
+        drag_label_t: Cell::new(0.0),
+        drag_label_velocity: Cell::new(0.0),
         ring_alpha: Cell::new(0.0),
         ring_release_progress: Cell::new(0.0),
         press_elapsed: Cell::new(0.0),
@@ -459,6 +462,15 @@ pub fn run(receiver: Receiver<InMessage>) {
                     }
                     let prev = state_tick.phase.get();
                     state_tick.phase.set(phase);
+                    state_tick.style_tooltip_gate.set_take_running(phase == Phase::Recording);
+                    // A new take sweeps any banner parked above the pill (for
+                    // example the retranscribing toast) so it cannot sit on the
+                    // style selector for the whole take. A resume from Paused
+                    // keeps toasts raised during the take, such as the cancel
+                    // confirm.
+                    if phase == Phase::Recording && matches!(prev, Phase::Idle | Phase::Loading) {
+                        clear_flash(&state_tick);
+                    }
                     if phase == Phase::Idle && prev != Phase::Idle {
                         state_tick.target_level.set(0.0);
                         state_tick.current_level.set(0.0);
@@ -481,10 +493,7 @@ pub fn run(receiver: Receiver<InMessage>) {
                     *state_tick.flash_action_label.borrow_mut() = action_label;
                 }
                 InMessage::DismissToast => {
-                    state_tick.flash_visible.set(false);
-                    state_tick.flash_timer.set(0.0);
-                    *state_tick.flash_action.borrow_mut() = None;
-                    *state_tick.flash_action_label.borrow_mut() = None;
+                    clear_flash(&state_tick);
                 }
                 InMessage::Fireworks { message } => {
                     *state_tick.flash_message.borrow_mut() = message;
@@ -557,7 +566,12 @@ pub fn run(receiver: Receiver<InMessage>) {
                     state_tick.drag_draw_offset_y.set(0.0);
                     state_tick.has_saved_position.set(false);
                     state_tick.reset_strategy.set(strategy);
-                    ipc::send(&OutMessage::PositionChanged { has_saved_position: false });
+                    let (rect, monitor) = pill_geometry(&win_tick, &state_tick);
+                    ipc::send(&OutMessage::PositionChanged {
+                        has_saved_position: false,
+                        rect,
+                        monitor,
+                    });
                 }
                 InMessage::Quit => {
                     quit_tick.set(true);
@@ -751,6 +765,72 @@ pub fn run(receiver: Receiver<InMessage>) {
     main_loop.run();
 }
 
+/// Builds the pill window rect and the work area of the monitor it lives on,
+/// for the desktop to anchor the composer next to the real pill. Both rects
+/// are reported in physical pixels: the desktop compares them against each
+/// other and positions the composer via Tauri, which on X11 also works in
+/// physical pixels. On X11 the pill has a true saved position, so both are
+/// reported; on Wayland (where the layer-shell compositor owns placement and
+/// there is no queryable absolute position) only the monitor is reported and
+/// the rect is omitted.
+pub(crate) fn pill_geometry(window: &gtk::Window, state: &PillState) -> (Option<Rect>, Option<Rect>) {
+    let (w, h) = window.size();
+    let scale = window
+        .window()
+        .map(|gdk_win| gdk_win.scale_factor() as f64)
+        .unwrap_or(1.0);
+    let display = window.display();
+    let monitor = window
+        .window()
+        .and_then(|gdk_win| display.monitor_at_window(&gdk_win))
+        .or_else(|| {
+            display.monitor_at_point(
+                (state.saved_x.get() + (w as f64 / 2.0) * scale) as i32,
+                (state.saved_y.get() + (h as f64 / 2.0) * scale) as i32,
+            )
+        })
+        .or_else(|| display.primary_monitor())
+        .or_else(|| display.monitor(0));
+    let monitor_rect = monitor.map(|m| {
+        // `workarea()` is in logical pixels while the pill rect below is
+        // physical (`saved_x`/`saved_y` are X11 root coordinates and the
+        // logical window size is scaled). The two rects must share one
+        // coordinate space for the desktop's composer-anchoring math, so
+        // scale the workarea by its monitor's own scale factor — via the
+        // shared logical→physical conversion the X11 placement math also
+        // uses (`pill_pos_on_monitor`).
+        let monitor_scale = m.scale_factor() as f64;
+        logical_rect_to_physical(&m.workarea(), monitor_scale)
+    });
+    let rect = if state.has_saved_position.get() && state.backend.get() == Backend::X11 {
+        Some(Rect {
+            x: state.saved_x.get(),
+            y: state.saved_y.get(),
+            width: w as f64 * scale,
+            height: h as f64 * scale,
+        })
+    } else {
+        None
+    };
+    (rect, monitor_rect)
+}
+
+/// Converts a GDK logical-pixel rectangle (a monitor's geometry or work area)
+/// into the physical root-pixel space used for X11 window positioning and
+/// `Rect` reporting. This is the single source of truth for the
+/// logical→physical conversion: `pill_geometry` here and the placement math
+/// in `pill_pos_on_monitor` both go through it, so any scaling tweak lands in
+/// exactly one place. `Rectangle` is plain data, so this stays unit-testable
+/// without a display connection.
+pub(crate) fn logical_rect_to_physical(g: &gdk::Rectangle, scale: f64) -> Rect {
+    Rect {
+        x: g.x() as f64 * scale,
+        y: g.y() as f64 * scale,
+        width: g.width() as f64 * scale,
+        height: g.height() as f64 * scale,
+    }
+}
+
 /// Ends the gesture and tears down any active drag.
 ///
 /// Clears the hover pin and gesture flags. If a drag was in progress, the
@@ -764,7 +844,12 @@ fn clear_pointer_pin(state: &PillState, window: &gtk::Window) {
             state.x11_release_persisted.set(persisted);
         } else {
             state.has_saved_position.set(true);
-            ipc::send(&OutMessage::PositionChanged { has_saved_position: true });
+            let (rect, monitor) = pill_geometry(window, state);
+            ipc::send(&OutMessage::PositionChanged {
+                has_saved_position: true,
+                rect,
+                monitor,
+            });
         }
     }
     state.dragging.set(false);
@@ -798,50 +883,21 @@ fn release_pointer_if_button_up(window: &gtk::Window, state: &PillState) {
     }
 }
 
+fn clear_flash(state: &PillState) {
+    state.flash_visible.set(false);
+    state.flash_timer.set(0.0);
+    *state.flash_action.borrow_mut() = None;
+    *state.flash_action_label.borrow_mut() = None;
+}
+
 fn tick(state: &PillState) {
     tick_long_press(state);
     let phase = state.phase.get();
     let is_active = phase != Phase::Idle;
-    let is_recording = phase == Phase::Recording;
     let is_loading = phase == Phase::Loading;
     let hovered = state.hovered.get();
 
-    // Audio levels
-    if is_recording {
-        let levels = state.pending_levels.borrow();
-        if !levels.is_empty() {
-            let sum: f64 = levels.iter().map(|v| *v as f64).sum();
-            let avg = sum / levels.len() as f64;
-            let peak = levels.iter().copied().fold(0.0_f32, f32::max) as f64;
-            let combined = (avg * 0.9 + peak * 0.85).min(1.0);
-            let boosted = (combined.sqrt() * 1.35).min(1.0);
-            let target = state.target_level.get();
-            state.target_level.set((target * 0.25 + boosted * 0.75).min(1.0));
-        }
-    } else if is_loading {
-        let target = state.target_level.get();
-        state.target_level.set(target.max(PROCESSING_BASE_LEVEL));
-    } else {
-        state.target_level.set(0.0);
-        state.current_level.set(state.current_level.get() * 0.4);
-        if state.current_level.get() < 0.0002 {
-            state.current_level.set(0.0);
-        }
-    }
-
-    let current = state.current_level.get();
-    let target = state.target_level.get();
-    let new_current = current + (target - current) * LEVEL_SMOOTHING;
-    state.current_level.set(if new_current < 0.0002 { 0.0 } else { new_current });
-
-    let decayed = target * TARGET_DECAY_PER_FRAME;
-    state.target_level.set(if decayed < 0.0005 { 0.0 } else { decayed });
-
-    let level = state.current_level.get();
-    let base_level = if is_loading && !is_recording { PROCESSING_BASE_LEVEL } else { 0.0 };
-    let effective_level = level.max(base_level);
-    let advance = WAVE_BASE_PHASE_STEP + WAVE_PHASE_GAIN * effective_level;
-    state.wave_phase.set((state.wave_phase.get() + advance) % TAU);
+    tick_audio_levels(state, phase);
 
     // Pill expand/collapse (spring)
     let expand_target = if is_active || hovered || state.assistant_active.get() || phase == Phase::Paused { 1.0 } else { 0.0 };
@@ -853,14 +909,18 @@ fn tick(state: &PillState) {
     }
 
     // Tooltip animation (spring)
-    // While paused, fade/hide the style picker (polished/verbatim) but keep the
-    // main pill fully expanded via expand_target above.
-    let show_tooltip = !state.assistant_active.get()
-        && state.style_count.get() > 1
-        && phase != Phase::Paused
-        && (hovered || phase == Phase::Recording)
-        && state.expand_t.get() > 0.3;
-    let tooltip_target = if show_tooltip { 1.0 } else { 0.0 };
+    // Hover-revealed in every phase except Paused, so the chevrons stay
+    // clickable mid-take. A take that starts under a parked pointer fades
+    // the tooltip until the pointer leaves the pill and comes back;
+    // rust_pill_shared owns the rule, every port agrees.
+    let tooltip_target = rust_pill_shared::style_tooltip_target(
+        &state.style_tooltip_gate,
+        state.assistant_active.get(),
+        state.style_count.get(),
+        matches!(phase, Phase::Paused),
+        hovered,
+        state.expand_t.get(),
+    );
     spring_anim(&state.tooltip_t, &state.tooltip_velocity, tooltip_target, SPRING_STIFFNESS);
 
     // Panel open/close (spring)
@@ -893,20 +953,7 @@ fn tick(state: &PillState) {
     // Broadcast transcript
     tick_transcript(state);
 
-    // Flash message timer
-    if state.flash_visible.get() {
-        let remaining = state.flash_timer.get() - SPRING_DT;
-        if remaining <= 0.0 {
-            state.flash_visible.set(false);
-            state.flash_timer.set(0.0);
-            *state.flash_action.borrow_mut() = None;
-            *state.flash_action_label.borrow_mut() = None;
-        } else {
-            state.flash_timer.set(remaining);
-        }
-    }
-    let flash_target = if state.flash_visible.get() { 1.0 } else { 0.0 };
-    spring_anim(&state.flash_t, &state.flash_velocity, flash_target, SPRING_STIFFNESS);
+    tick_flash(state, tooltip_target > 0.5);
 
     // Long-press cancel flash timer
     if state.cancel_flash.get() > 0.0 {
@@ -944,6 +991,9 @@ fn tick(state: &PillState) {
     );
     spring_anim(&state.inflate_t, &state.inflate_velocity, inflate_target, DRAG_INFLATE_STIFFNESS);
 
+    let drag_target = if state.dragging.get() || state.long_press_active.get() { 1.0 } else { 0.0 };
+    spring_anim(&state.drag_label_t, &state.drag_label_velocity, drag_target, rust_pill_shared::LABEL_SPRING_STIFFNESS);
+
     tick_ring(state);
 
     // Auto-scroll to bottom when new content arrives
@@ -951,6 +1001,73 @@ fn tick(state: &PillState) {
         let max_scroll = (state.content_height.get() - state.viewport_height.get()).max(0.0);
         state.scroll_offset.set(max_scroll);
     }
+}
+
+/// Audio-level meters and the waveform phase they drive: pending input levels
+/// fold into the target level, decay toward silence when idle, and advance the
+/// wave animation at a level-dependent rate.
+fn tick_audio_levels(state: &PillState, phase: Phase) {
+    let is_recording = phase == Phase::Recording;
+    let is_loading = phase == Phase::Loading;
+
+    if is_recording {
+        let levels = state.pending_levels.borrow();
+        if !levels.is_empty() {
+            let sum: f64 = levels.iter().map(|v| *v as f64).sum();
+            let avg = sum / levels.len() as f64;
+            let peak = levels.iter().copied().fold(0.0_f32, f32::max) as f64;
+            let combined = (avg * 0.9 + peak * 0.85).min(1.0);
+            let boosted = (combined.sqrt() * 1.35).min(1.0);
+            let target = state.target_level.get();
+            state.target_level.set((target * 0.25 + boosted * 0.75).min(1.0));
+        }
+    } else if is_loading {
+        let target = state.target_level.get();
+        state.target_level.set(target.max(PROCESSING_BASE_LEVEL));
+    } else {
+        state.target_level.set(0.0);
+        state.current_level.set(state.current_level.get() * 0.4);
+        if state.current_level.get() < 0.0002 {
+            state.current_level.set(0.0);
+        }
+    }
+
+    let current = state.current_level.get();
+    let target = state.target_level.get();
+    let new_current = current + (target - current) * LEVEL_SMOOTHING;
+    state.current_level.set(if new_current < 0.0002 { 0.0 } else { new_current });
+
+    let decayed = target * TARGET_DECAY_PER_FRAME;
+    state.target_level.set(if decayed < 0.0005 { 0.0 } else { decayed });
+
+    let level = state.current_level.get();
+    let base_level = if is_loading && !is_recording { PROCESSING_BASE_LEVEL } else { 0.0 };
+    let effective_level = level.max(base_level);
+    let advance = WAVE_BASE_PHASE_STEP + WAVE_PHASE_GAIN * effective_level;
+    state.wave_phase.set((state.wave_phase.get() + advance) % TAU);
+}
+
+/// Flash banner (native pill toast) expiry and fade spring. An action-less
+/// banner yields the strip above the pill to a revealed style tooltip, so the
+/// banner and the selector never sit on top of each other.
+fn tick_flash(state: &PillState, tooltip_revealed: bool) {
+    if state.flash_visible.get() {
+        let remaining = state.flash_timer.get() - SPRING_DT;
+        if remaining <= 0.0 {
+            state.flash_visible.set(false);
+            state.flash_timer.set(0.0);
+            *state.flash_action.borrow_mut() = None;
+            *state.flash_action_label.borrow_mut() = None;
+        } else {
+            state.flash_timer.set(remaining);
+        }
+    }
+    let flash_target = rust_pill_shared::flash_banner_target(
+        state.flash_visible.get(),
+        state.flash_action.borrow().is_some(),
+        tooltip_revealed,
+    );
+    spring_anim(&state.flash_t, &state.flash_velocity, flash_target, SPRING_STIFFNESS);
 }
 
 fn tick_long_press(state: &PillState) {
@@ -1285,5 +1402,81 @@ mod visibility_tests {
     fn persistent_always_shows() {
         assert!(should_show_pill(Visibility::Persistent, Phase::Idle, false));
         assert!(should_show_pill(Visibility::Persistent, Phase::Recording, false));
+    }
+}
+
+#[cfg(test)]
+mod geometry_tests {
+    use super::*;
+
+    /// Tolerance for float assertions — the repo's usual test epsilon (see
+    /// rust_pill_shared). The conversions here produce integral pixel values,
+    /// but comparing approximately keeps the tests robust if intermediate
+    /// math or types ever change.
+    const EPSILON: f64 = 1e-6;
+
+    fn assert_rect_close(actual: &Rect, expected: &Rect) {
+        let fields = [
+            ("x", actual.x, expected.x),
+            ("y", actual.y, expected.y),
+            ("width", actual.width, expected.width),
+            ("height", actual.height, expected.height),
+        ];
+        for (name, a, e) in fields {
+            assert!(
+                (a - e).abs() < EPSILON,
+                "{name}: expected ~{e}, got {a} (rect {actual:?} vs {expected:?})"
+            );
+        }
+    }
+
+    #[test]
+    fn logical_rect_is_scaled_into_physical_pixels() {
+        // A 2000x1000 logical work area at origin (100, 50) on a 2x monitor
+        // must come out in the same physical space the pill rect uses.
+        let rect = logical_rect_to_physical(&gdk::Rectangle::new(100, 50, 2000, 1000), 2.0);
+        assert_rect_close(
+            &rect,
+            &Rect {
+                x: 200.0,
+                y: 100.0,
+                width: 4000.0,
+                height: 2000.0,
+            },
+        );
+    }
+
+    #[test]
+    fn logical_rect_scale_one_is_unchanged() {
+        let rect = logical_rect_to_physical(&gdk::Rectangle::new(-1920, 0, 1920, 1080), 1.0);
+        assert_rect_close(
+            &rect,
+            &Rect {
+                x: -1920.0,
+                y: 0.0,
+                width: 1920.0,
+                height: 1080.0,
+            },
+        );
+    }
+
+    #[test]
+    fn pill_rect_and_workarea_share_physical_space() {
+        // Regression guard for the split coordinate spaces: a 200-logical-px
+        // pill parked at physical x=3800 on a 2000-logical-wide (4000 physical)
+        // work area at 2x must overflow the monitor in *both* spaces alike.
+        let scale = 2.0;
+        let monitor = logical_rect_to_physical(&gdk::Rectangle::new(0, 0, 2000, 1000), scale);
+        let pill = Rect {
+            x: 3800.0,
+            y: 0.0,
+            width: 200.0 * scale,
+            height: 80.0 * scale,
+        };
+        // With the old unscaled workarea (2000 wide) this comparison used the
+        // wrong space at any scale != 1. Inequality assertions, so no epsilon
+        // needed here.
+        assert!(pill.x + pill.width > monitor.x + monitor.width);
+        assert!(pill.x < monitor.x + monitor.width);
     }
 }

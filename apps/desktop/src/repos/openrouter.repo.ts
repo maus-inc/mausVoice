@@ -1,4 +1,4 @@
-import { fetch as tauriFetch } from "@tauri-apps/plugin-http";
+import { secureFetch as tauriFetch } from "../utils/secure-fetch.utils";
 import {
   openrouterFetchModels,
   openrouterTestIntegration,

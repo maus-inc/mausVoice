@@ -1,0 +1,102 @@
+import { describe, it, expect } from "vitest";
+import { markdownToPillText } from "./assistant-pill-text.utils";
+
+const NL = String.fromCharCode(10); // actual newline
+
+describe("markdownToPillText", () => {
+  it("handles tilde fences", () => {
+    const input = ["~~~", "code", "~~~"].join(NL);
+    expect(markdownToPillText(input)).toBe("[code]");
+  });
+
+  it("strips bold markers", () => {
+    expect(markdownToPillText("hello **world**")).toBe("hello world");
+  });
+
+  it("strips italic markers without eating surrounding whitespace", () => {
+    expect(markdownToPillText("hello *world* today")).toBe("hello world today");
+    expect(markdownToPillText("*lead* and tail")).toBe("lead and tail");
+    expect(markdownToPillText("This is *emphasized*.")).toBe(
+      "This is emphasized.",
+    );
+    expect(markdownToPillText("(*emphasized*)")).toBe("(emphasized)");
+    expect(markdownToPillText("*emphasized*, next")).toBe("emphasized, next");
+  });
+
+  it("leaves asterisks glued inside words alone", () => {
+    // "is*not*" is not emphasis — no space around the stars.
+    expect(markdownToPillText("is*not*true")).toBe("is*not*true");
+  });
+
+  it("strips horizontal rules", () => {
+    const input = ["A", "---", "B"].join(NL);
+    expect(markdownToPillText(input)).toBe("A B");
+  });
+
+  it("strips reference links before fence processing", () => {
+    expect(markdownToPillText("see [docs]")).toBe("see docs");
+  });
+
+  it("converts ordered list markers with a manual scanner", () => {
+    const input = ["1. first", "2.  second", "  3. third"].join(NL);
+    const result = markdownToPillText(input);
+    expect(result).toContain("1. first");
+    expect(result).toContain("2. second");
+    expect(result).toContain("3. third");
+  });
+
+  it("handles empty input", () => {
+    expect(markdownToPillText("")).toBe("");
+    expect(markdownToPillText(null)).toBe("");
+    expect(markdownToPillText(undefined)).toBe("");
+  });
+
+  it("cleans a mixed markdown document", () => {
+    const input = [
+      "# Welcome",
+      "",
+      "This is **important** and *emphasized*.",
+      "",
+      "> A wise quote",
+      "",
+      "- List item A",
+      "- List item B",
+      "",
+      "```",
+      "const x = 1;",
+      "```",
+    ].join(NL);
+    const result = markdownToPillText(input);
+    expect(result).not.toContain("**");
+    expect(result).not.toContain("```");
+    expect(result).toContain("[code]");
+    expect(result).toContain("important");
+    expect(result).toContain("A wise quote");
+    expect(result).toContain("List item");
+  });
+});
+
+describe("streaming contract", () => {
+  it("never emits a raw fence delimiter for a single (partial) call", () => {
+    // An unclosed opening fence is reduced to the compact [code] marker rather
+    // than leaking raw ``` into the pill mid-stream.
+    expect(markdownToPillText(["```js", "const x = 1;"].join(NL))).toBe(
+      "[code]",
+    );
+    expect(markdownToPillText(["~~~", "let y;"].join(NL))).toBe("[code]");
+  });
+
+  it("documents that chunk-append is NOT the contract; re-convert accumulated text", () => {
+    // The converter is stateless and single-pass, so a marker split across a
+    // chunk boundary is not resolved by concatenating per-chunk outputs. The
+    // consumer (OverlaySyncSideEffects) re-converts the full accumulated
+    // message instead, which is correct.
+    const chunk1 = "**bold";
+    const chunk2 = " text**";
+
+    const naiveConcat = markdownToPillText(chunk1) + markdownToPillText(chunk2);
+    expect(naiveConcat).toContain("**"); // raw markers leak through chunk-append
+
+    expect(markdownToPillText(chunk1 + chunk2)).toBe("bold text");
+  });
+});

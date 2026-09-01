@@ -2,11 +2,18 @@ import type { ApiKeyProvider } from "@maus-inc/types";
 import { Nullable } from "@maus-inc/types";
 import { getRec } from "@maus-inc/utilities";
 import { getAppState } from "../store";
+import type { AppState } from "../state/app.state";
+import { buildGladiaCustomizations } from "../utils/gladia.utils";
 import { getLogger } from "../utils/log.utils";
 import { OLLAMA_DEFAULT_URL } from "../utils/ollama.utils";
+import { collectDictionaryEntries } from "../utils/prompt.utils";
 import { buildOpenAICompatibleUrl } from "../utils/openai-compatible.utils";
 import {
+<<<<<<< HEAD
   ApiGenerativePrefs,
+=======
+  type ApiGenerativePrefs,
+>>>>>>> origin/fix/superfix-review-findings
   GenerativePrefs,
   getAgentModePrefs,
   getGenerativePrefs,
@@ -47,6 +54,7 @@ import {
   DeepSeekModelProviderRepo,
   ElevenLabsModelProviderRepo,
   GeminiModelProviderRepo,
+  GladiaModelProviderRepo,
   GroqModelProviderRepo,
   OllamaModelProviderRepo,
   OpenAICompatibleModelProviderRepo,
@@ -78,6 +86,7 @@ import {
   BaseTranscribeAudioRepo,
   DeepgramTranscribeAudioRepo,
   ElevenLabsTranscribeAudioRepo,
+  GladiaTranscribeAudioRepo,
   GeminiTranscribeAudioRepo,
   GroqTranscribeAudioRepo,
   LocalTranscribeAudioRepo,
@@ -172,6 +181,165 @@ export type GenerateTextRepoOutput = {
   warnings: string[];
 };
 
+const buildOllamaGenerateTextRepo = (
+  prefs: ApiGenerativePrefs,
+  state: AppState,
+): BaseGenerateTextRepo | null => {
+  // Get Ollama-specific config from the API key
+  const apiKeyRecord = getRec(state.apiKeyById, prefs.apiKeyId);
+  const baseUrl = apiKeyRecord?.baseUrl || OLLAMA_DEFAULT_URL;
+  const model = prefs.postProcessingModel;
+  const ollamaApiKey = apiKeyRecord?.keyFull || undefined;
+  getLogger().verbose(
+    `Configuring Ollama repo with baseUrl=${baseUrl} and model=${model}`,
+  );
+  if (model) {
+    return new OllamaGenerateTextRepo(`${baseUrl}/v1`, model, ollamaApiKey);
+  }
+  prefs.warnings.push("No model configured for Ollama post-processing.");
+  return null;
+};
+
+const buildOpenAICompatibleGenerateTextRepo = (
+  prefs: ApiGenerativePrefs,
+  state: AppState,
+): BaseGenerateTextRepo | null => {
+  const apiKeyRecord = getRec(state.apiKeyById, prefs.apiKeyId);
+  const baseUrl = apiKeyRecord?.baseUrl;
+  const model = prefs.postProcessingModel;
+  const providerApiKey = apiKeyRecord?.keyFull || undefined;
+  const includeV1Path = apiKeyRecord?.includeV1Path;
+  const fullUrl = buildOpenAICompatibleUrl(baseUrl, includeV1Path);
+  getLogger().verbose(
+    `Configuring OpenAI Compatible repo with baseUrl=${fullUrl} and model=${model}`,
+  );
+  if (model && apiKeyRecord) {
+    return new OpenAICompatibleGenerateTextRepo(
+      apiKeyRecord.id,
+      fullUrl,
+      model,
+      providerApiKey,
+    );
+  }
+  prefs.warnings.push(
+    "No model configured for OpenAI Compatible post-processing.",
+  );
+  return null;
+};
+
+const buildOpenRouterGenerateTextRepo = (
+  prefs: ApiGenerativePrefs,
+  state: AppState,
+): BaseGenerateTextRepo => {
+  // Get OpenRouter-specific config from the API key
+  const apiKey = getRec(state.apiKeyById, prefs.apiKeyId);
+  const config = apiKey?.openRouterConfig;
+  const providerRouting = config?.providerRouting ?? undefined;
+  getLogger().verbose(
+    `Configuring OpenRouter repo with providerRouting=${providerRouting}`,
+  );
+  return new OpenRouterGenerateTextRepo(
+    prefs.apiKeyValue,
+    prefs.postProcessingModel,
+    providerRouting,
+  );
+};
+
+const buildOpenAIGenerateTextRepo = (
+  prefs: ApiGenerativePrefs,
+): BaseGenerateTextRepo => {
+  getLogger().verbose("Configuring OpenAI repo for generate text");
+  return new OpenAIGenerateTextRepo(
+    prefs.apiKeyValue,
+    prefs.postProcessingModel,
+  );
+};
+
+const buildAzureGenerateTextRepo = (
+  prefs: ApiGenerativePrefs,
+  state: AppState,
+): BaseGenerateTextRepo => {
+  const apiKeyRecord = getRec(state.apiKeyById, prefs.apiKeyId);
+  const endpoint = apiKeyRecord?.baseUrl || "";
+  const deploymentName = prefs.postProcessingModel || "gpt-4o-mini";
+  if (!endpoint) {
+    prefs.warnings.push("No endpoint configured for Azure OpenAI.");
+  }
+  getLogger().verbose(
+    `Configuring Azure OpenAI repo with endpoint=${endpoint} and deployment=${deploymentName}`,
+  );
+  return new AzureOpenAIGenerateTextRepo(
+    prefs.apiKeyValue,
+    endpoint,
+    deploymentName,
+  );
+};
+
+const buildDeepseekGenerateTextRepo = (
+  prefs: ApiGenerativePrefs,
+): BaseGenerateTextRepo => {
+  getLogger().verbose("Configuring Deepseek repo for generate text");
+  return new DeepseekGenerateTextRepo(
+    prefs.apiKeyValue,
+    prefs.postProcessingModel,
+  );
+};
+
+const buildGeminiGenerateTextRepo = (
+  prefs: ApiGenerativePrefs,
+): BaseGenerateTextRepo => {
+  getLogger().verbose("Configuring Gemini repo for generate text");
+  return new GeminiGenerateTextRepo(
+    prefs.apiKeyValue,
+    prefs.postProcessingModel,
+  );
+};
+
+const buildClaudeGenerateTextRepo = (
+  prefs: ApiGenerativePrefs,
+): BaseGenerateTextRepo => {
+  getLogger().verbose("Configuring Claude repo for generate text");
+  return new ClaudeGenerateTextRepo(
+    prefs.apiKeyValue,
+    prefs.postProcessingModel,
+  );
+};
+
+const buildCerebrasGenerateTextRepo = (
+  prefs: ApiGenerativePrefs,
+): BaseGenerateTextRepo => {
+  getLogger().verbose("Configuring Cerebras repo for generate text");
+  return new CerebrasGenerateTextRepo(
+    prefs.apiKeyValue,
+    prefs.postProcessingModel,
+  );
+};
+
+const buildGroqGenerateTextRepo = (
+  prefs: ApiGenerativePrefs,
+): BaseGenerateTextRepo => {
+  getLogger().verbose("Configuring Groq repo for generate text");
+  return new GroqGenerateTextRepo(prefs.apiKeyValue, prefs.postProcessingModel);
+};
+
+const generateTextRepoBuilders: Partial<
+  Record<
+    ApiKeyProvider,
+    (prefs: ApiGenerativePrefs, state: AppState) => BaseGenerateTextRepo | null
+  >
+> = {
+  ollama: buildOllamaGenerateTextRepo,
+  "openai-compatible": buildOpenAICompatibleGenerateTextRepo,
+  openrouter: buildOpenRouterGenerateTextRepo,
+  openai: buildOpenAIGenerateTextRepo,
+  azure: buildAzureGenerateTextRepo,
+  deepseek: buildDeepseekGenerateTextRepo,
+  gemini: buildGeminiGenerateTextRepo,
+  claude: buildClaudeGenerateTextRepo,
+  cerebras: buildCerebrasGenerateTextRepo,
+  groq: buildGroqGenerateTextRepo,
+};
+
 const getGenTextRepoInternal = ({
   prefs,
 }: {
@@ -182,6 +350,7 @@ const getGenTextRepoInternal = ({
   }
 
   const state = getAppState();
+<<<<<<< HEAD
   const apiKeyRecord = getRec(state.apiKeyById, prefs.apiKeyId);
 
   const builders: Partial<
@@ -280,6 +449,17 @@ const getGenTextRepoInternal = ({
   const build = builders[prefs.provider] ?? builders.groq;
   return {
     repo: build ? build(prefs) : null,
+=======
+  // Any provider without a dedicated builder (e.g. transcription-only
+  // providers) falls back to the default Groq repo, matching the previous
+  // if/else chain.
+  const builder =
+    generateTextRepoBuilders[prefs.provider] ?? buildGroqGenerateTextRepo;
+  const repo = builder(prefs, state);
+
+  return {
+    repo,
+>>>>>>> origin/fix/superfix-review-findings
     apiKeyId: prefs.apiKeyId,
     warnings: prefs.warnings,
   };
@@ -320,7 +500,10 @@ export const getTranscribeAudioRepo = (): TranscribeAudioRepoOutput => {
         );
         break;
       case "assemblyai":
-        repo = new AssemblyAITranscribeAudioRepo(prefs.apiKeyValue);
+        repo = new AssemblyAITranscribeAudioRepo(
+          prefs.apiKeyValue,
+          prefs.transcriptionModel,
+        );
         break;
       case "aldea":
         repo = new AldeaTranscribeAudioRepo(prefs.apiKeyValue);
@@ -347,7 +530,13 @@ export const getTranscribeAudioRepo = (): TranscribeAudioRepoOutput => {
         const includeV1Path = apiKeyRecord?.includeV1Path;
         const transcriptionPath = apiKeyRecord?.transcriptionPath ?? undefined;
         const fullUrl = buildOpenAICompatibleUrl(baseUrl, includeV1Path);
+        if (!apiKeyRecord) {
+          throw new Error(
+            "OpenAI-compatible endpoint configuration is missing.",
+          );
+        }
         repo = new OpenAICompatibleTranscribeAudioRepo(
+          apiKeyRecord.id,
           fullUrl,
           model,
           providerApiKey,
@@ -380,11 +569,15 @@ export const getTranscribeAudioRepo = (): TranscribeAudioRepoOutput => {
           prefs.transcriptionModel,
         );
         break;
-      case "xai":
-        repo = new XaiTranscribeAudioRepo(
+      case "gladia":
+        repo = new GladiaTranscribeAudioRepo(
           prefs.apiKeyValue,
           prefs.transcriptionModel,
+          buildGladiaCustomizations(collectDictionaryEntries(getAppState())),
         );
+        break;
+      case "xai":
+        repo = new XaiTranscribeAudioRepo(prefs.apiKeyValue);
         break;
       case "groq":
         repo = new GroqTranscribeAudioRepo(
@@ -486,6 +679,8 @@ export const getModelProviderRepo = (
       return new ElevenLabsModelProviderRepo();
     case "deepgram":
       return new DeepgramModelProviderRepo();
+    case "gladia":
+      return new GladiaModelProviderRepo();
     case "xai":
       return new XaiModelProviderRepo();
   }

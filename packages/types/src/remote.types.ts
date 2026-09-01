@@ -55,12 +55,20 @@ export type RouteTranscriptOutputArgs = {
   mode: "dictation";
   currentAppId: Nullable<string>;
   /**
+<<<<<<< HEAD
    * Realtime interim segments must bypass the hands-free output delay:
    * the documented contract applies the wait "when you stop recording",
    * i.e. to final delivery only. Applying it per interim segment would
    * queue each behind the full delay and destroy realtime behavior.
    */
   isInterim?: boolean;
+=======
+   * When true, the text is delivered without routing through the
+   * review-before-insert composer. Used for streaming interim segments, which
+   * must never spawn a blocking review popout on every token.
+   */
+  skipReview?: boolean;
+>>>>>>> origin/fix/superfix-review-findings
 };
 
 export type RouteTranscriptOutputResult = {

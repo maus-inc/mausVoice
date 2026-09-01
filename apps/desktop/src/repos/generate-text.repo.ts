@@ -11,16 +11,20 @@ import {
   claudeGenerateTextResponse,
   claudeStreamChat,
   ClaudeModel,
+  CLAUDE_MODELS,
   cerebrasGenerateTextResponse,
   cerebrasStreamChat,
   CerebrasModel,
+  CEREBRAS_MODELS,
+  type CustomFetch,
   deepseekGenerateTextResponse,
   deepseekStreamChat,
   DeepseekModel,
+  DEEPSEEK_MODELS,
   GeminiGenerateTextModel,
+  GEMINI_GENERATE_TEXT_MODELS,
   geminiGenerateTextResponse,
   geminiStreamChat,
-  GENERATE_TEXT_MODELS,
   GenerateTextModel,
   groqGenerateTextResponse,
   groqStreamChat,
@@ -31,7 +35,10 @@ import {
   openrouterGenerateTextResponse,
   openrouterStreamChat,
 } from "@maus-inc/voice-ai";
-import { fetch as tauriFetch } from "@tauri-apps/plugin-http";
+import {
+  createOpenAICompatibleFetch,
+  secureFetch as tauriFetch,
+} from "../utils/secure-fetch.utils";
 import { PostProcessingMode } from "../types/ai.types";
 import { BaseRepo } from "./base.repo";
 
@@ -39,7 +46,11 @@ export type GenerateTextInput = {
   system?: Nullable<string>;
   prompt: string;
   jsonResponse?: JsonResponse;
+<<<<<<< HEAD
   maxTokens?: number;
+=======
+  signal?: AbortSignal;
+>>>>>>> origin/fix/superfix-review-findings
 };
 
 export type GenerateTextMetadata = {
@@ -60,14 +71,18 @@ export abstract class BaseGenerateTextRepo extends BaseRepo {
 export class GroqGenerateTextRepo extends BaseGenerateTextRepo {
   private groqApiKey: string;
   private model: GenerateTextModel;
-  private fallbackModel: GenerateTextModel = "qwen/qwen3.6-27b";
+  private fallbackModel: GenerateTextModel = "openai/gpt-oss-120b";
+  private customFetch?: CustomFetch;
 
-  constructor(apiKey: string, model: string | null) {
+  constructor(
+    apiKey: string,
+    model: string | null,
+    customFetch: CustomFetch | null = tauriFetch,
+  ) {
     super();
     this.groqApiKey = apiKey;
-    this.model = GENERATE_TEXT_MODELS.includes(model as GenerateTextModel)
-      ? (model as GenerateTextModel)
-      : "openai/gpt-oss-20b";
+    this.model = model ?? "openai/gpt-oss-20b";
+    this.customFetch = customFetch ?? undefined;
   }
 
   async generateText(input: GenerateTextInput): Promise<GenerateTextOutput> {
@@ -90,10 +105,15 @@ export class GroqGenerateTextRepo extends BaseGenerateTextRepo {
         prompt: input.prompt,
         system: input.system ?? undefined,
         jsonResponse: input.jsonResponse,
+<<<<<<< HEAD
         maxTokens: input.maxTokens,
+=======
+        signal: input.signal,
+        customFetch: this.customFetch,
+>>>>>>> origin/fix/superfix-review-findings
       });
     } catch (error) {
-      if (this.model === this.fallbackModel) {
+      if (input.signal?.aborted || this.model === this.fallbackModel) {
         throw error;
       }
 
@@ -103,7 +123,12 @@ export class GroqGenerateTextRepo extends BaseGenerateTextRepo {
         prompt: input.prompt,
         system: input.system ?? undefined,
         jsonResponse: input.jsonResponse,
+<<<<<<< HEAD
         maxTokens: input.maxTokens,
+=======
+        signal: input.signal,
+        customFetch: this.customFetch,
+>>>>>>> origin/fix/superfix-review-findings
       });
     }
   }
@@ -113,6 +138,7 @@ export class GroqGenerateTextRepo extends BaseGenerateTextRepo {
       apiKey: this.groqApiKey,
       model: this.model,
       input,
+      customFetch: this.customFetch,
     });
   }
 }
@@ -134,7 +160,11 @@ export class OpenAIGenerateTextRepo extends BaseGenerateTextRepo {
       prompt: input.prompt,
       system: input.system ?? undefined,
       jsonResponse: input.jsonResponse,
+<<<<<<< HEAD
       maxTokens: input.maxTokens,
+=======
+      customFetch: tauriFetch,
+>>>>>>> origin/fix/superfix-review-findings
     });
 
     return {
@@ -151,6 +181,7 @@ export class OpenAIGenerateTextRepo extends BaseGenerateTextRepo {
       apiKey: this.openaiApiKey,
       model: this.model,
       input,
+      customFetch: tauriFetch,
     });
   }
 }
@@ -203,12 +234,14 @@ export class OpenAICompatibleGenerateTextRepo extends BaseGenerateTextRepo {
   private baseUrl: string;
   private model: string;
   private apiKey: string;
+  private customFetch: typeof tauriFetch;
 
-  constructor(url: string, model: string, apiKey?: string) {
+  constructor(apiKeyId: string, url: string, model: string, apiKey?: string) {
     super();
     this.baseUrl = url;
     this.model = model;
     this.apiKey = apiKey || "";
+    this.customFetch = createOpenAICompatibleFetch(apiKeyId);
   }
 
   async generateText(input: GenerateTextInput): Promise<GenerateTextOutput> {
@@ -219,8 +252,12 @@ export class OpenAICompatibleGenerateTextRepo extends BaseGenerateTextRepo {
       prompt: input.prompt,
       system: input.system ?? undefined,
       jsonResponse: input.jsonResponse,
+<<<<<<< HEAD
       customFetch: tauriFetch,
       maxTokens: input.maxTokens,
+=======
+      customFetch: this.customFetch,
+>>>>>>> origin/fix/superfix-review-findings
     });
 
     return {
@@ -238,7 +275,7 @@ export class OpenAICompatibleGenerateTextRepo extends BaseGenerateTextRepo {
       baseUrl: this.baseUrl,
       model: this.model,
       input,
-      customFetch: tauriFetch,
+      customFetch: this.customFetch,
     });
   }
 }
@@ -267,7 +304,11 @@ export class OpenRouterGenerateTextRepo extends BaseGenerateTextRepo {
       system: input.system ?? undefined,
       jsonResponse: input.jsonResponse,
       providerRouting: this.providerRouting,
+<<<<<<< HEAD
       maxTokens: input.maxTokens,
+=======
+      customFetch: tauriFetch,
+>>>>>>> origin/fix/superfix-review-findings
     });
 
     return {
@@ -284,6 +325,7 @@ export class OpenRouterGenerateTextRepo extends BaseGenerateTextRepo {
       apiKey: this.apiKey,
       model: this.model,
       input,
+      customFetch: tauriFetch,
     });
   }
 }
@@ -308,7 +350,11 @@ export class AzureOpenAIGenerateTextRepo extends BaseGenerateTextRepo {
       system: input.system ?? undefined,
       prompt: input.prompt,
       jsonResponse: input.jsonResponse,
+<<<<<<< HEAD
       maxTokens: input.maxTokens,
+=======
+      customFetch: tauriFetch,
+>>>>>>> origin/fix/superfix-review-findings
     });
 
     return {
@@ -326,6 +372,7 @@ export class AzureOpenAIGenerateTextRepo extends BaseGenerateTextRepo {
       endpoint: this.endpoint,
       deploymentName: this.deploymentName,
       input,
+      customFetch: tauriFetch,
     });
   }
 }
@@ -337,7 +384,7 @@ export class DeepseekGenerateTextRepo extends BaseGenerateTextRepo {
   constructor(apiKey: string, model: string | null) {
     super();
     this.apiKey = apiKey;
-    this.model = (model as DeepseekModel) ?? "deepseek-chat";
+    this.model = model ?? DEEPSEEK_MODELS[0];
   }
 
   async generateText(input: GenerateTextInput): Promise<GenerateTextOutput> {
@@ -347,7 +394,11 @@ export class DeepseekGenerateTextRepo extends BaseGenerateTextRepo {
       prompt: input.prompt,
       system: input.system ?? undefined,
       jsonResponse: input.jsonResponse,
+<<<<<<< HEAD
       maxTokens: input.maxTokens,
+=======
+      customFetch: tauriFetch,
+>>>>>>> origin/fix/superfix-review-findings
     });
 
     return {
@@ -364,6 +415,7 @@ export class DeepseekGenerateTextRepo extends BaseGenerateTextRepo {
       apiKey: this.apiKey,
       model: this.model,
       input,
+      customFetch: tauriFetch,
     });
   }
 }
@@ -375,7 +427,7 @@ export class GeminiGenerateTextRepo extends BaseGenerateTextRepo {
   constructor(apiKey: string, model: string | null) {
     super();
     this.apiKey = apiKey;
-    this.model = (model as GeminiGenerateTextModel) ?? "gemini-2.5-flash";
+    this.model = model ?? GEMINI_GENERATE_TEXT_MODELS[0];
   }
 
   async generateText(input: GenerateTextInput): Promise<GenerateTextOutput> {
@@ -385,7 +437,12 @@ export class GeminiGenerateTextRepo extends BaseGenerateTextRepo {
       prompt: input.prompt,
       system: input.system ?? undefined,
       jsonResponse: input.jsonResponse,
+<<<<<<< HEAD
       maxTokens: input.maxTokens,
+=======
+      signal: input.signal,
+      customFetch: tauriFetch,
+>>>>>>> origin/fix/superfix-review-findings
     });
 
     return {
@@ -402,6 +459,7 @@ export class GeminiGenerateTextRepo extends BaseGenerateTextRepo {
       apiKey: this.apiKey,
       model: this.model,
       input,
+      customFetch: tauriFetch,
     });
   }
 }
@@ -413,7 +471,7 @@ export class ClaudeGenerateTextRepo extends BaseGenerateTextRepo {
   constructor(apiKey: string, model: string | null) {
     super();
     this.apiKey = apiKey;
-    this.model = (model as ClaudeModel) ?? "claude-sonnet-4-20250514";
+    this.model = model ?? CLAUDE_MODELS[0];
   }
 
   async generateText(input: GenerateTextInput): Promise<GenerateTextOutput> {
@@ -423,7 +481,11 @@ export class ClaudeGenerateTextRepo extends BaseGenerateTextRepo {
       prompt: input.prompt,
       system: input.system ?? undefined,
       jsonResponse: input.jsonResponse,
+<<<<<<< HEAD
       maxTokens: input.maxTokens,
+=======
+      customFetch: tauriFetch,
+>>>>>>> origin/fix/superfix-review-findings
     });
 
     return {
@@ -440,6 +502,7 @@ export class ClaudeGenerateTextRepo extends BaseGenerateTextRepo {
       apiKey: this.apiKey,
       model: this.model,
       input,
+      customFetch: tauriFetch,
     });
   }
 }
@@ -451,7 +514,7 @@ export class CerebrasGenerateTextRepo extends BaseGenerateTextRepo {
   constructor(apiKey: string, model: string | null) {
     super();
     this.apiKey = apiKey;
-    this.model = (model as CerebrasModel) ?? "zai-glm-4.7";
+    this.model = model ?? CEREBRAS_MODELS[0];
   }
 
   async generateText(input: GenerateTextInput): Promise<GenerateTextOutput> {
@@ -461,7 +524,11 @@ export class CerebrasGenerateTextRepo extends BaseGenerateTextRepo {
       prompt: input.prompt,
       system: input.system ?? undefined,
       jsonResponse: input.jsonResponse,
+<<<<<<< HEAD
       maxTokens: input.maxTokens,
+=======
+      customFetch: tauriFetch,
+>>>>>>> origin/fix/superfix-review-findings
     });
 
     return {
@@ -478,6 +545,7 @@ export class CerebrasGenerateTextRepo extends BaseGenerateTextRepo {
       apiKey: this.apiKey,
       model: this.model,
       input,
+      customFetch: tauriFetch,
     });
   }
 }

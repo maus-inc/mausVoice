@@ -22,6 +22,7 @@ const { loggerMock, invokeMock } = vi.hoisted(() => ({
 }));
 
 vi.mock("../utils/log.utils", () => ({ getLogger: () => loggerMock }));
+<<<<<<< HEAD
 vi.mock("@tauri-apps/api/core", () => ({
   invoke: (...args: unknown[]) => invokeMock(...args),
   Resource: class {},
@@ -47,6 +48,11 @@ vi.mock("../repos", async (importOriginal) => {
 
 vi.mock("./user.actions", () => ({
   addWordsToCurrentUser: vi.fn(async () => undefined),
+=======
+vi.mock("@tauri-apps/plugin-http", () => ({
+  fetch: (...args: Parameters<typeof globalThis.fetch>) =>
+    globalThis.fetch(...args),
+>>>>>>> origin/fix/superfix-review-findings
 }));
 
 const staleOllamaState = () => {

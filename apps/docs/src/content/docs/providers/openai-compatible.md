@@ -19,8 +19,10 @@ For transcription, the resolved route is `{runtime base}{transcription path}`. m
 
 Generation uses chat completions at the resolved API base. A server may handle ordinary post-processing but reject Assistant tool schemas or streaming; test those separately.
 
-## Test and picker caveats
+## Test and model discovery
 
-The current **Test** passes the entered base URL directly to an OpenAI client and lists models; it does not apply the **Include /v1 path** switch. The live model picker independently probes `/v1/models`. Runtime requests do apply the switch. A valid deployment can therefore show different outcomes between the test, picker, and actual request when its routes use an unusual prefix. Use server access logs to verify the exact paths.
+**Test**, automatic model discovery, and runtime requests all resolve the base URL through the **Include /v1 path** setting. Model discovery appends `/models` to that resolved API base without discarding reverse-proxy path prefixes. The returned model IDs populate the picker and remain usable even when they were released after this version of mausVoice. Save a changed endpoint URL before testing it so the native request can authorize the new destination.
+
+Hosted custom HTTPS endpoints are fetched through a native request authorized against the saved credential's exact scheme, host, port, and base path. This avoids browser CORS failures without broadening the app CSP or native HTTP capability to every HTTPS host. Redirects must stay inside that saved endpoint. Plain `http://` remains restricted to loopback, RFC1918, unique-local IPv6, and `.local` endpoints.
 
 `http://` sends audio, text, and any Bearer token without TLS. Loopback confines routing to this computer, but not to a particular process; a LAN hostname exposes the traffic to that network. Prefer HTTPS and authenticated access for any non-loopback endpoint.

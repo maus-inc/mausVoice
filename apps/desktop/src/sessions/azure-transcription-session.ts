@@ -6,6 +6,7 @@ import {
   buildLocalizedTranscriptionPrompt,
   collectDictionaryEntries,
 } from "../utils/prompt.utils";
+import { finalizeStreamingSession } from "../utils/streaming-session.utils";
 import { loadMyEffectiveDictationLanguage } from "../utils/user.utils";
 import { BaseApiTranscriptionSession } from "./base-api-transcription-session";
 
@@ -76,8 +77,23 @@ export class AzureTranscriptionSession extends BaseApiTranscriptionSession {
 
       getLogger().verbose("[Azure] Streaming session started successfully");
     } catch (error) {
+<<<<<<< HEAD
       getLogger().error("[Azure] Failed to start streaming:", error);
     }
+=======
+      console.error("[Azure] Failed to start streaming:", error);
+    }
+  }
+
+  async finalize(
+    _audio: StopRecordingResponse,
+  ): Promise<TranscriptionSessionResult> {
+    return finalizeStreamingSession({
+      session: this.session,
+      providerLabel: "Azure",
+      log: console.log,
+    });
+>>>>>>> origin/fix/superfix-review-findings
   }
 
   cleanup(): void {

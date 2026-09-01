@@ -30,10 +30,8 @@ export const OPENROUTER_FAVORITE_MODELS = [
   "openai/gpt-oss-20b",
 ] as const;
 
-/**
- * Default model for testing and fallback
- */
-export const OPENROUTER_DEFAULT_MODEL = "openai/gpt-4o-mini";
+/** Default generation model when no selection is saved. */
+export const OPENROUTER_DEFAULT_MODEL = "openai/gpt-oss-20b";
 
 // OpenRouter routes requests to many providers; most reject `json_schema`
 // and only accept the legacy `json_object` shape. Use `json_schema` only for
@@ -245,33 +243,14 @@ export type OpenRouterTestIntegrationArgs = {
   customFetch?: CustomFetch;
 };
 
-/**
- * Test if an OpenRouter API key is valid by making a simple chat completion.
- */
+/** Test authentication without depending on a fixed inference model. */
 export const openrouterTestIntegration = async ({
   apiKey,
   customFetch,
 }: OpenRouterTestIntegrationArgs): Promise<boolean> => {
   const client = createClient(apiKey, customFetch);
-
-  const response = await client.chat.completions.create({
-    messages: [
-      {
-        role: "user",
-        content: 'Reply with the single word "Hello."',
-      },
-    ],
-    model: OPENROUTER_DEFAULT_MODEL,
-    temperature: 0,
-    max_tokens: 32,
-  });
-
-  if (!response.choices || response.choices.length === 0) {
-    throw new Error("No response from OpenRouter");
-  }
-
-  const content = response.choices[0]?.message?.content ?? "";
-  return content.toLowerCase().includes("hello");
+  await client.models.list();
+  return true;
 };
 
 // ============================================================================

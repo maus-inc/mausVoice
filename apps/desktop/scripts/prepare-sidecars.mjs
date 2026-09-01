@@ -1,9 +1,16 @@
 #!/usr/bin/env node
 
 import { spawnSync } from "node:child_process";
-import { chmodSync, copyFileSync, existsSync, mkdirSync } from "node:fs";
+import {
+  chmodSync,
+  copyFileSync,
+  existsSync,
+  mkdirSync,
+  readdirSync,
+} from "node:fs";
 import { dirname, isAbsolute, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
+import { validateSherpaRuntimeDlls } from "./sidecar-runtime-dlls.mjs";
 
 const scriptDir = dirname(fileURLToPath(import.meta.url));
 const desktopDir = resolve(scriptDir, "..");
@@ -21,6 +28,23 @@ const rustTargetDir = cargoTargetDirOverride
     : resolve(repoRoot, cargoTargetDirOverride)
   : join(repoRoot, "packages", "rust_transcription", "target");
 const tauriBinariesDir = join(desktopDir, "src-tauri", "binaries");
+
+// These are the runtime DLLs shipped by sherpa-onnx's Windows shared build.
+// Never copy arbitrary DLLs from Cargo's profile directory into the app
+// bundle: build tools and unrelated native dependencies may be present there.
+const WINDOWS_SHERPA_RUNTIME_DLLS = new Set([
+  "onnxruntime.dll",
+  "onnxruntime_providers_shared.dll",
+  "sherpa-onnx-c-api.dll",
+  "sherpa-onnx-cxx-api.dll",
+]);
+
+// The essential subset the sidecar imports directly. A missing entry here means
+// the sidecar cannot start, so packaging fails closed on any of these.
+const REQUIRED_SHERPA_RUNTIME_DLLS = new Set([
+  "onnxruntime.dll",
+  "sherpa-onnx-c-api.dll",
+]);
 
 const buildTarget =
   process.env.CARGO_BUILD_TARGET?.trim() ||
@@ -40,6 +64,7 @@ if (!existsSync(sidecarManifestPath)) {
 mkdirSync(tauriBinariesDir, { recursive: true });
 
 const cpuSidecarPath = buildAndCopy("rust-transcription-cpu", false);
+prepareSherpaWindowsRuntime();
 prepareOnnxRuntimeLibrary();
 const gpuBuildState = resolveGpuBuildState(targetTriple);
 
@@ -128,6 +153,61 @@ function buildArtifactPath(fileName) {
   );
 }
 
+function prepareSherpaWindowsRuntime() {
+  if (!isWindowsTarget(targetTriple)) {
+    return;
+  }
+
+  const profileDir = join(
+    rustTargetDir,
+    ...(buildTarget ? [buildTarget] : []),
+    buildProfile,
+  );
+  if (!existsSync(profileDir)) {
+    return;
+  }
+
+  // Keep on-disk names for copy (Windows filesystems may use OnnxRuntime.dll)
+  // and compare required names case-insensitively in validateSherpaRuntimeDlls.
+  const runtimeDlls = readdirSync(profileDir).filter((name) =>
+    WINDOWS_SHERPA_RUNTIME_DLLS.has(name.toLowerCase()),
+  );
+
+  // Fail closed: the shared sherpa-onnx build must produce the DLLs the sidecar
+  // actually imports. If even the essential subset is absent the sidecar would
+  // exit before main()/before announcing its bound port, so surface it as a
+  // hard build error rather than a warning.
+  const { missingRequired, missingOptional } = validateSherpaRuntimeDlls(
+    runtimeDlls,
+    REQUIRED_SHERPA_RUNTIME_DLLS,
+    WINDOWS_SHERPA_RUNTIME_DLLS,
+  );
+
+  if (missingRequired.length > 0) {
+    fail(
+      `Sherpa-onnx Windows runtime is missing required DLLs: ${missingRequired.join(", ")} ` +
+        `(found: ${runtimeDlls.join(", ") || "none"}) in ${profileDir}`,
+    );
+  }
+
+  if (missingOptional.length > 0) {
+    console.warn(
+      `[sidecar] Sherpa Windows runtime may be incomplete; missing: ${missingOptional.join(", ")}`,
+    );
+  }
+
+  for (const name of runtimeDlls) {
+    const destinationDir = join(tauriBinariesDir, "onnxruntime");
+    mkdirSync(destinationDir, { recursive: true });
+    // Always emit the canonical lowercase name the sidecar loader looks up.
+    copyFileSync(
+      join(profileDir, name),
+      join(destinationDir, name.toLowerCase()),
+    );
+    console.log(`[sidecar] Prepared sherpa Windows runtime: ${name}`);
+  }
+}
+
 function prepareOnnxRuntimeLibrary() {
   const libraryName = onnxRuntimeLibraryName(targetTriple);
   const sourcePath = buildArtifactPath(libraryName);
@@ -176,7 +256,6 @@ function run(command, args, cwd, options = {}) {
   const result = spawnSync(command, args, {
     cwd,
     stdio: "inherit",
-    env: process.env,
   });
 
   if (result.status !== 0) {

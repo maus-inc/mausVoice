@@ -3,9 +3,20 @@ import { listen, UnlistenFn } from "@tauri-apps/api/event";
 import { BaseApiTranscriptionSession } from "./base-api-transcription-session";
 import { createTranscriptAccumulator } from "./transcript-accumulator.utils";
 import {
+<<<<<<< HEAD
   createAudioChunkBuffer,
   createReceivedChunkLogger,
 } from "./transcription-stream.utils";
+=======
+  StopRecordingResponse,
+  TranscriptionSession,
+  TranscriptionSessionResult,
+} from "../types/transcription-session.types";
+import {
+  combineStreamingTranscript,
+  createAudioChunkPump,
+} from "../utils/audio-chunking.utils";
+>>>>>>> origin/fix/superfix-review-findings
 
 type AssemblyAIStreamingSession = {
   finalize: () => Promise<string>;
@@ -19,11 +30,19 @@ const startAssemblyAIStreaming = async (
   sampleRate: number,
   onInterimResult?: (segment: string) => void,
 ): Promise<AssemblyAIStreamingSession> => {
+<<<<<<< HEAD
   getLogger().info(`[${LOGGER_PREFIX}] Starting with sample rate:`, sampleRate);
+=======
+  getLogger().info(
+    "[AssemblyAI WebSocket] Starting with sample rate:",
+    sampleRate,
+  );
+>>>>>>> origin/fix/superfix-review-findings
   return new Promise((resolve, reject) => {
     let ws: WebSocket | null = null;
     let unlisten: UnlistenFn | null = null;
     let isFinalized = false;
+<<<<<<< HEAD
     const transcriptState = createTranscriptAccumulator();
     const receivedLogger = createReceivedChunkLogger(LOGGER_PREFIX);
 
@@ -37,6 +56,39 @@ const startAssemblyAIStreaming = async (
     let currentTurn = 0;
 
     const getText = () => transcriptState.text();
+=======
+    let receivedChunkCount = 0;
+
+    let currentTurn = 0;
+    let extra = "";
+    let sentChunkCount = 0;
+
+    const pump = createAudioChunkPump({
+      sampleRate,
+      minChunkDurationMs: 50,
+      maxChunkDurationMs: 100,
+      canSend: () => !!ws && ws.readyState === WebSocket.OPEN,
+      sendChunk: (chunk) => {
+        const pcm16 = convertFloat32ToPCM16(chunk);
+        ws?.send(pcm16);
+        sentChunkCount++;
+        if (sentChunkCount <= 3 || sentChunkCount % 10 === 0) {
+          const durationMs = (chunk.length / sampleRate) * 1000;
+          getLogger().info(
+            `[AssemblyAI WebSocket] Sent chunk #${sentChunkCount} (${chunk.length} samples ~${durationMs.toFixed(1)} ms, ${pcm16.byteLength} bytes)`,
+          );
+        }
+      },
+      onError: (error) => {
+        getLogger().error(
+          "[AssemblyAI WebSocket] Error sending buffered chunk:",
+          error,
+        );
+      },
+    });
+
+    const getText = () => combineStreamingTranscript(finalTranscript, extra);
+>>>>>>> origin/fix/superfix-review-findings
 
     const cleanup = () => {
       if (unlisten) {
@@ -47,7 +99,11 @@ const startAssemblyAIStreaming = async (
         ws.close();
         ws = null;
       }
+<<<<<<< HEAD
       buffer.reset();
+=======
+      pump.resetBuffers();
+>>>>>>> origin/fix/superfix-review-findings
     };
 
     const finalize = (): Promise<string> => {
@@ -67,7 +123,11 @@ const startAssemblyAIStreaming = async (
         }
 
         isFinalized = true;
+<<<<<<< HEAD
         buffer.flush(true);
+=======
+        pump.flushPendingSamples(true);
+>>>>>>> origin/fix/superfix-review-findings
         getLogger().info(
           `[${LOGGER_PREFIX}] Total chunks sent:`,
           buffer.sentChunkCount(),
@@ -101,7 +161,11 @@ const startAssemblyAIStreaming = async (
           };
         } else {
           cleanup();
+<<<<<<< HEAD
           resolveFinalize(transcriptState.text());
+=======
+          resolveFinalize(getText());
+>>>>>>> origin/fix/superfix-review-findings
         }
       });
     };
@@ -133,8 +197,13 @@ const startAssemblyAIStreaming = async (
                   event.payload.samples instanceof Float32Array
                     ? event.payload.samples
                     : Float32Array.from(event.payload.samples);
+<<<<<<< HEAD
                 buffer.push(typedChunk);
                 buffer.flush(false);
+=======
+                pump.pushSamples(typedChunk);
+                pump.flushPendingSamples();
+>>>>>>> origin/fix/superfix-review-findings
               } catch (error) {
                 getLogger().error(
                   `[${LOGGER_PREFIX}] Error sending audio chunk:`,

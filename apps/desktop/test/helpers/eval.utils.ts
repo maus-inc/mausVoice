@@ -39,7 +39,9 @@ export function getGroqGentextRepo(
   model = "openai/gpt-oss-120b",
 ): BaseGenerateTextRepo {
   const apiKey = getGroqApiKey();
-  return new GroqGenerateTextRepo(apiKey, model);
+  // Integration tests run in Node, so use the Groq SDK's Node transport.
+  // Production construction defaults to the Tauri-native secure transport.
+  return new GroqGenerateTextRepo(apiKey, model, null);
 }
 
 export async function runEval({
@@ -97,12 +99,14 @@ export const postProcess = async ({
   language = "en",
   userName = "Thomas Gundan",
   repo,
+  signal,
 }: {
   tone: ToneConfig;
   transcription: string;
   language?: string;
   userName?: string;
   repo?: BaseGenerateTextRepo;
+  signal?: AbortSignal;
 }): Promise<string> => {
   const promptInput: PostProcessingPromptInput = {
     transcript: transcription,
@@ -116,6 +120,7 @@ export const postProcess = async ({
   const output = await (repo ?? getGroqGentextRepo()).generateText({
     system: ppSystem,
     prompt: ppPrompt,
+    signal,
     jsonResponse: {
       name: "transcription_cleaning",
       description: "JSON response with the processed transcription",
