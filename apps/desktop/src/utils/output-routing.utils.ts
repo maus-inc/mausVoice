@@ -5,6 +5,7 @@ import type {
 } from "@maus-inc/types";
 import { getIntl } from "../i18n/intl";
 import { getAppState } from "../store";
+import { getEffectiveHandsFreeDelayMs } from "./hands-free-delay.utils";
 import { getLogger } from "./log.utils";
 import { sendPillFlashMessage } from "./overlay.utils";
 import { sanitizeIndentation } from "./string.utils";
@@ -12,11 +13,14 @@ import { getMyUserPreferences } from "./user.utils";
 
 type PasteOutcome = "pasted" | "copied_to_clipboard";
 
+let handsFreeSessionId = 0;
+
 export const routeTranscriptOutput = async (
   args: RouteTranscriptOutputArgs,
 ): Promise<RouteTranscriptOutputResult> => {
   const state = getAppState();
   const prefs = getMyUserPreferences(state);
+  const sessionId = ++handsFreeSessionId;
   const currentApp = args.currentAppId
     ? (state.appTargetById[args.currentAppId] ?? null)
     : null;
@@ -47,6 +51,18 @@ export const routeTranscriptOutput = async (
     currentApp?.insertionMethod ?? prefs?.insertionMethod ?? "paste";
 
   const typingSpeedMs = currentApp?.typingSpeedMs ?? prefs?.typingSpeedMs ?? 5;
+  const handsFreeDelayMs = getEffectiveHandsFreeDelayMs(prefs);
+
+  if (handsFreeDelayMs > 0 && !args.isInterim) {
+    await new Promise<void>((resolve) => {
+      setTimeout(resolve, handsFreeDelayMs);
+    });
+    if (sessionId !== handsFreeSessionId) {
+      // A newer delivery (final transcript or another session) superseded
+      // this one while it waited; drop it instead of pasting stale text.
+      return { delivered: false, remote: false };
+    }
+  }
 
   if (insertionMethod === "type") {
     await insertLocalTranscriptOutputViaTyping(args.text, typingSpeedMs);
