@@ -126,6 +126,11 @@ fn default_agent_max_iterations() -> i64 {
 
 fn default_agent_permission_timeout_ms() -> i64 {
     60_000
+}
+
+fn default_true() -> bool {
+    true
+}
 
 fn default_pill_reset_monitor_strategy() -> String {
     "current".to_string()
@@ -149,8 +154,4 @@ fn default_preserve_audio_on_failure() -> bool {
 
 fn default_pill_placement() -> String {
     "bottom".to_string()
-}
-
-fn default_true() -> bool {
-    true
 }
