@@ -33,6 +33,7 @@ import {
   OpenRouterGenerateTextRepo,
 } from "./generate-text.repo";
 import { BaseHotkeyRepo, LocalHotkeyRepo } from "./hotkey.repo";
+import { BaseMeetingRepo, LocalMeetingRepo } from "./meeting.repo";
 import { BaseMemberRepo, LocalMemberRepo } from "./member.repo";
 import { BaseNativeRepo, LocalNativeRepo } from "./native.repo";
 import {
@@ -134,6 +135,10 @@ export const getTermRepo = (): BaseTermRepo => {
 
 export const getHotkeyRepo = (): BaseHotkeyRepo => {
   return new LocalHotkeyRepo();
+};
+
+export const getMeetingRepo = (): BaseMeetingRepo => {
+  return new LocalMeetingRepo();
 };
 
 export const getApiKeyRepo = (): BaseApiKeyRepo => {
