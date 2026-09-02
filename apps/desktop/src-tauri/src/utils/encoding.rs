@@ -2,6 +2,7 @@
 // `chunks_exact_to_as_chunks` lint suggests `as_chunks` which still requires
 // `chunks_exact` semantics in nested call sites and would churn diffs for no
 // behavioral gain.
+#![allow(unknown_lints)]
 #![allow(clippy::chunks_exact_to_as_chunks)]
 
 pub fn decode_to_utf8(bytes: &[u8]) -> Result<String, String> {
