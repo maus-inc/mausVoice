@@ -568,12 +568,15 @@ pub async fn user_preferences_set_expansion_flags(
     args: UserPreferencesSetExpansionFlagsArgs,
     database: State<'_, crate::state::OptionKeyDatabase>,
 ) -> Result<crate::domain::UserPreferences, String> {
-    crate::db::preferences_queries::set_expansion_flags(database.pool(), &args.flags)
+    use crate::db::preferences_queries::{set_expansion_flags, LOCAL_USER_ID};
+    set_expansion_flags(database.pool(), &args.flags)
         .await
         .map_err(|err| err.to_string())?;
-    crate::db::preferences_queries::fetch_user_preferences(database.pool(), LOCAL_USER_ID)
+    let prefs = crate::db::preferences_queries::fetch_user_preferences(database.pool(), LOCAL_USER_ID)
         .await
-        .map_err(|err| err.to_string())
+        .map_err(|err| err.to_string())?
+        .ok_or_else(|| "Preferences not found".to_string())?;
+    Ok(prefs)
 }
 
 #[tauri::command]
