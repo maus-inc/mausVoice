@@ -141,6 +141,7 @@ impl TranscriptionEngine {
             return Ok(TranscriptionOutput {
                 text: String::new(),
                 inference_device,
+                segments: Vec::new(),
             });
         }
 
