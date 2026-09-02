@@ -44,7 +44,9 @@ export const setExpansionFlag = (
       }
       const flags = parseExpansionFlags(current.expansionFlags);
       flags[name] = enabled;
-      const updated = await repo.setExpansionFlags(serializeExpansionFlags(flags));
+      const updated = await repo.setExpansionFlags(
+        serializeExpansionFlags(flags),
+      );
       produceAppState((draft) => {
         draft.userPrefs = updated;
       });
