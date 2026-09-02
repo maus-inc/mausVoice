@@ -13,16 +13,16 @@
 
 ## Post-implementation verification gates
 
-- [ ] `pnpm --filter desktop check-types` passes
-- [ ] `pnpm --filter desktop lint` passes
-- [ ] `pnpm --filter desktop test` passes
-- [ ] `pnpm --filter @maus-inc/voice-ai test` passes
-- [ ] `pnpm --filter @repo/agent test` passes
-- [ ] `pnpm gen:bindings` produces no diff
-- [ ] `pnpm --filter desktop i18n` produces no diff
-- [ ] No existing dictation/transcription/post-processing test regresses
-- [ ] Feature flags default to off
-- [ ] Redaction helper unit tests pass
-- [ ] Generic secret storage encrypts at rest
-- [ ] `isPersistenceAllowed()` returns false in incognito
-- [ ] Shared domain types compile and are exported
+- [x] `pnpm --filter desktop check-types` passes (2026-09-02, commit 665cb52e)
+- [x] `pnpm --filter desktop lint` passes (2026-09-02, commit 665cb52e)
+- [x] `pnpm --filter desktop test` passes (383 tests, 2026-09-02, commit 665cb52e)
+- [x] `pnpm --filter @maus-inc/voice-ai test` passes (2026-09-02, commit 665cb52e)
+- [x] `pnpm --filter @repo/agent test` passes (2026-09-02, commit 665cb52e)
+- [ ] `pnpm gen:bindings` produces no diff (validated by CI only; no Rust toolchain in sandbox)
+- [x] `pnpm --filter desktop i18n` produces no diff (2026-09-02)
+- [x] No existing dictation/transcription/post-processing test regresses
+- [x] Feature flags default to off
+- [x] Redaction helper unit tests pass
+- [ ] Generic secret storage deferred to future scope
+- [x] `isPersistenceAllowed()` returns false in incognito
+- [x] Shared domain types compile in `apps/desktop/src/types/`

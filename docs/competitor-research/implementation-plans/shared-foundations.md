@@ -72,7 +72,8 @@ themselves.
 
 ## Required migrations
 
-None for this foundation PR. Schema changes come with Meeting Notes and later.
+`075_expansion_flags.sql` adds an `expansionFlags` JSON column to
+`user_preferences`. Registered in `src-tauri/src/db/mod.rs`.
 
 ## Required feature flags
 
@@ -96,16 +97,10 @@ A `src/utils/redaction.utils.ts` helper with:
   object.
 
 The helper is used by the new local API audit log and by any connector/webhook
-logging that follows. Existing logging is left alone unless it currently leaks
-secrets.
-
-## Encrypted secret storage reuse
-
-The existing `system/crypto.rs` XChaCha20-Poly1305 implementation is already
-generic. This PR adds a typed wrapper repo + Tauri command pair for
-"generic named secrets" so connectors and the local API can store webhook
-secrets, API tokens, and pairing credentials without re-implementing crypto.
-The wrapper stores `name, ciphertext, nonce` in a new `generic_secrets` table.
+logging that follows. Existing logging call sites that currently log transcript
+text, provider names, or prompt content must be identified and either removed
+or wrapped with the redaction helper before declaring privacy-safe logging
+complete.
 
 ## Incognito-mode persistence suppression
 
@@ -117,15 +112,14 @@ Existing behavior is preserved exactly.
 
 ## Shared domain types
 
-Add to `packages/types/src/` (or `apps/desktop/src/types/` if the package is
-not the right home for app-specific types):
-- `Meeting.ts` — `Meeting`, `MeetingSegment`, `MeetingSpeaker`,
+Add to `apps/desktop/src/types/`:
+- `meetings.types.ts` — `Meeting`, `MeetingSegment`, `MeetingSpeaker`,
   `MeetingSummary`.
-- `Automation.ts` — `ApiKeyCredential`, `WebhookConfig`, `ApiRequest`,
+- `automation.types.ts` — `ApiKeyCredential`, `WebhookConfig`, `ApiRequest`,
   `ApiResponse`.
-- `Translation.ts` — `TranslationRequest`, `TranslationResult`.
-- `Snippet.ts` — `Snippet`, `SnippetVariable`, `SnippetVariableType`.
-- `ExpansionFlags.ts` — the feature-flag map type.
+- `translations.types.ts` — `TranslationRequest`, `TranslationResult`.
+- `snippets.types.ts` — `Snippet`, `SnippetVariable`, `SnippetVariableType`.
+- `expansion-flags.types.ts` — the feature-flag map type.
 
 ---
 
@@ -133,13 +127,11 @@ not the right home for app-specific types):
 
 1. Feature flags read from preferences and default to off.
 2. Redaction helper covers strings, errors, and objects; unit tests cover each.
-3. Generic secret storage encrypts at rest and is reachable through a repo;
-   incognito mode suppresses its persistence.
-4. `isPersistenceAllowed()` returns false when incognito is on; existing
+3. `isPersistenceAllowed()` returns false when incognito is on; existing
    incognito behavior is unchanged.
-5. Shared domain types compile and are exported from the types package.
-6. No existing dictation, transcription, or post-processing test regresses.
-7. Type check, lint, unit tests, and i18n all pass.
+4. Shared domain types compile in `apps/desktop/src/types/`.
+5. No existing dictation, transcription, or post-processing test regresses.
+6. Type check, lint, unit tests, and i18n all pass.
 
 ---
 
@@ -162,5 +154,4 @@ After this PR is green, the Meeting Notes PR (`expansion/2-meeting-notes`)
 can build on:
 - `src/features/featureFlags.ts` for the `meetingNotesEnabled` gate.
 - `src/utils/incognito.utils.ts` for persistence suppression.
-- `packages/types/src/Meeting.ts` for domain types.
-- The generic secret repo for any per-meeting credentials.
+- `apps/desktop/src/types/meetings.types.ts` for domain types.

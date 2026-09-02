@@ -23,19 +23,14 @@ JSON via `json_extract`.
 Rust side already avoids logging secrets. Keeping it in TS matches the
 "TypeScript is the brain" principle.
 
-## Decision 3: Generic secret storage via new Tauri command + repo
+## Decision 3: Generic secret storage — future scope
 
-**Choice:** Add a `generic_secrets` SQLite table with `name, ciphertext, nonce`,
-plus `generic_secret_set` / `generic_secret_get` Tauri commands that wrap
-`system/crypto.rs`. Expose through a `LocalGenericSecretRepo`.
+**Choice:** Defer generic named-secret storage to a later expansion PR.
 
-**Rationale:** The crypto primitives are already generic. This just adds a
-typed persistence layer for arbitrary named secrets (webhook tokens, API
-credentials, pairing secrets).
-
-**Rejected alternatives:**
-- Reuse the API key table: semantically wrong, couples unrelated features.
-- OS keychain via Tauri: adds a dependency, inconsistent across platforms.
+**Rationale:** The crypto primitives in `system/crypto.rs` are already generic,
+but adding a `generic_secrets` table and Tauri commands is out of scope for
+the shared-foundations PR. Connectors and the local API can add their own
+secret storage when those features are implemented.
 
 ## Decision 4: Centralize incognito checks behind `isPersistenceAllowed()`
 

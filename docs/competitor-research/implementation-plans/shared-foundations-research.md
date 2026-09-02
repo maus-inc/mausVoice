@@ -3,7 +3,7 @@
 ## Falsifiable research questions
 
 1. Does mausVoice currently have a centralized feature-flag mechanism?
-2. Where does the codebase currently log potentially sensitive data?
+2. Where does the codebase log potentially sensitive data?
 3. Is the existing encrypted secret storage (`system/crypto.rs`) reusable for
    arbitrary named secrets, or only for API keys?
 4. How many places gate persistence on incognito mode, and are they consistent?
