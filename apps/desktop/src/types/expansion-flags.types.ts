@@ -32,7 +32,10 @@ export const parseExpansionFlags = (raw?: string | null): ExpansionFlags => {
     const parsed = JSON.parse(raw) as Record<string, unknown>;
     const flags = { ...DEFAULT_EXPANSION_FLAGS };
     for (const name of EXPANSION_FLAG_NAMES) {
-      if (typeof parsed[name] === "boolean") {
+      if (
+        Object.prototype.hasOwnProperty.call(parsed, name) &&
+        typeof parsed[name] === "boolean"
+      ) {
         flags[name] = parsed[name];
       }
     }
