@@ -30,41 +30,49 @@ export function createGeminiGenerateTests({
       Type: { STRING: "string" },
     });
 
-    it("omits maxOutputTokens from the config when maxTokens is undefined", async () => {
-      const generateContent = buildGenerateContent();
-
-      vi.doMock("@google/genai", () => buildMockFactory());
+    async function runTestCase(
+      generateContent: ReturnType<typeof buildGenerateContent>,
+      params: Record<string, unknown>,
+    ) {
+      vi.doMock("@google/genai", () => ({
+        ...buildMockFactory(),
+        GoogleGenAI: class MockGoogleGenAI {
+          models = {
+            generateContent,
+          };
+        },
+      }));
 
       const mod = await loadModule();
       const fn = mod[functionName] as (params: Record<string, unknown>) => Promise<unknown>;
 
-      await fn({
+      await fn(params);
+
+      const callParams = generateContent.mock.calls[0][0];
+      return { callParams };
+    }
+
+    it("omits maxOutputTokens from the config when maxTokens is undefined", async () => {
+      const generateContent = buildGenerateContent();
+
+      const { callParams } = await runTestCase(generateContent, {
         apiKey: "test-key",
         prompt: "hello",
       });
 
-      expect(generateContent).toHaveBeenCalledTimes(1);
-      const params = generateContent.mock.calls[0][0];
-      expect(params.config).toBeUndefined();
+      expect(callParams.config).toBeUndefined();
     });
 
     it("forwards caller-owned maxTokens to config.maxOutputTokens when provided", async () => {
       const generateContent = buildGenerateContent();
 
-      vi.doMock("@google/genai", () => buildMockFactory());
-
-      const mod = await loadModule();
-      const fn = mod[functionName] as (params: Record<string, unknown>) => Promise<unknown>;
-
-      await fn({
+      const { callParams } = await runTestCase(generateContent, {
         apiKey: "test-key",
         prompt: "hello",
         maxTokens: 600,
       });
 
-      expect(generateContent).toHaveBeenCalledTimes(1);
-      const params = generateContent.mock.calls[0][0];
-      expect(params.config).toMatchObject({ maxOutputTokens: 600 });
+      expect(callParams.config).toMatchObject({ maxOutputTokens: 600 });
     });
   });
 }
