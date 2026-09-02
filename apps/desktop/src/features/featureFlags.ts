@@ -30,7 +30,7 @@ export const isExpansionFeatureEnabled = (
  * Persist a single expansion flag change atomically.
  * Concurrent toggles are serialized to prevent lost updates.
  */
-export const setExpansionFlag = async (
+export const setExpansionFlag = (
   name: ExpansionFeatureName,
   enabled: boolean,
 ): Promise<void> => {
