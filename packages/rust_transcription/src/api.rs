@@ -146,7 +146,6 @@ async fn download_model(
                     sha256,
                 )
             })
-            })
             .collect()
     } else {
         // whisper.cpp ggml blobs travel the same verified pipeline: pinned
