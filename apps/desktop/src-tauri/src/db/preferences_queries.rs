@@ -116,8 +116,6 @@ pub async fn upsert_user_preferences(
             typing_speed_ms = excluded.typing_speed_ms,
             pill_reset_monitor_strategy = excluded.pill_reset_monitor_strategy,
             always_request_admin_on_startup = excluded.always_request_admin_on_startup,
-            pill_reset_monitor_strategy = excluded.pill_reset_monitor_strategy,
-            always_request_admin_on_startup = excluded.always_request_admin_on_startup,
             pill_placement = excluded.pill_placement,
             hands_free_delay_ms = excluded.hands_free_delay_ms,
             in_dictation_style_switching_enabled = excluded.in_dictation_style_switching_enabled,
@@ -229,8 +227,6 @@ pub async fn fetch_user_preferences(
             menu_bar_icon_hidden,
             insertion_method,
             typing_speed_ms,
-            pill_reset_monitor_strategy,
-            always_request_admin_on_startup,
             pill_reset_monitor_strategy,
             always_request_admin_on_startup,
             pill_placement,
@@ -379,10 +375,6 @@ pub async fn fetch_user_preferences(
         pill_reset_monitor_strategy: row
             .try_get::<String, _>("pill_reset_monitor_strategy")
             .unwrap_or_else(|_| "current".to_string()),
-        always_request_admin_on_startup: row
-            .try_get::<i64, _>("always_request_admin_on_startup")
-            .map(|v| v != 0)
-            .unwrap_or(false),
         always_request_admin_on_startup: row
             .try_get::<i64, _>("always_request_admin_on_startup")
             .map(|v| v != 0)

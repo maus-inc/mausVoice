@@ -2218,6 +2218,7 @@ pub async fn api_key_create(
         base_url,
         azure_region,
         include_v1_path,
+        transcription_path,
     } = api_key;
 
     let protected = protect_api_key(&key);
@@ -2238,6 +2239,7 @@ pub async fn api_key_create(
         base_url,
         azure_region,
         include_v1_path,
+        transcription_path,
     };
 
     crate::db::api_key_queries::insert_api_key(database.pool(), &stored)
