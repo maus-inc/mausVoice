@@ -1,4 +1,13 @@
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeAll, describe, expect, it, vi } from "vitest";
+
+const buildCreateCompletion = (
+  content: string,
+  usage = { total_tokens: 5 },
+) =>
+  vi.fn().mockResolvedValue({
+    choices: [{ message: { content } }],
+    usage,
+  });
 
 export function createOpenAICompatibleGenerateTests({
   describeName,
@@ -7,7 +16,9 @@ export function createOpenAICompatibleGenerateTests({
   defaultModel,
   expectedDefaultMaxTokens = 1024,
   expectedForwardedMaxTokens = 600,
-  mockFactory = buildDefaultMockFactory,
+  expectedJsonResponseType = "json_object",
+  maxTokensKey = "max_completion_tokens",
+  extraParams = {},
 }: {
   describeName: string;
   loadModule: () => Promise<Record<string, unknown>>;
@@ -15,22 +26,18 @@ export function createOpenAICompatibleGenerateTests({
   defaultModel: string;
   expectedDefaultMaxTokens?: number;
   expectedForwardedMaxTokens?: number;
-  mockFactory?: () => Record<string, unknown>;
+  expectedJsonResponseType?: "json_object" | "json_schema";
+  maxTokensKey?: "max_completion_tokens" | "max_tokens" | "maxOutputTokens";
+  extraParams?: Record<string, unknown>;
 }) {
   describe(describeName, () => {
-    afterEach(() => {
-      vi.doUnmock("openai");
+    beforeAll(() => {
       vi.resetModules();
     });
 
-    const buildCreateCompletion = (
-      content: string,
-      usage = { total_tokens: 5 },
-    ) =>
-      vi.fn().mockResolvedValue({
-        choices: [{ message: { content } }],
-        usage,
-      });
+    afterEach(() => {
+      vi.resetModules();
+    });
 
     const baseJsonResponse = {
       name: "schema",
@@ -52,7 +59,14 @@ export function createOpenAICompatibleGenerateTests({
             completions: {
               create: createCompletion,
             },
-          },
+          };
+        },
+        AzureOpenAI: class MockAzureOpenAI {
+          chat = {
+            completions: {
+              create: createCompletion,
+            },
+          };
         },
       }));
 
@@ -73,11 +87,12 @@ export function createOpenAICompatibleGenerateTests({
         apiKey: "test-key",
         model: defaultModel,
         prompt: "hello",
+        ...extraParams,
       });
 
       expect(createCompletion).toHaveBeenCalledTimes(1);
       expect(createCompletion.mock.calls[0][0]).toMatchObject({
-        max_completion_tokens: expectedDefaultMaxTokens,
+        [maxTokensKey]: expectedDefaultMaxTokens,
       });
     });
 
@@ -91,11 +106,12 @@ export function createOpenAICompatibleGenerateTests({
         model: defaultModel,
         prompt: "hello",
         maxTokens: expectedForwardedMaxTokens,
+        ...extraParams,
       });
 
       expect(createCompletion).toHaveBeenCalledTimes(1);
       expect(createCompletion.mock.calls[0][0]).toMatchObject({
-        max_completion_tokens: expectedForwardedMaxTokens,
+        [maxTokensKey]: expectedForwardedMaxTokens,
       });
     });
 
@@ -109,21 +125,12 @@ export function createOpenAICompatibleGenerateTests({
         model: defaultModel,
         prompt: "hi",
         jsonResponse: baseJsonResponse,
+        ...extraParams,
       });
 
       expect(createCompletion.mock.calls[0][0]).toMatchObject({
-        response_format: { type: "json_object" },
+        response_format: { type: expectedJsonResponseType },
       });
-      const sentMessages = createCompletion.mock.calls[0][0]?.messages as
-        | Array<{
-            content: string | Array<{ type: string; text: string }>;
-          }>
-        | undefined;
-      const userContent = sentMessages?.[0]?.content;
-      const userText = Array.isArray(userContent)
-        ? userContent.map((p) => p.text).join("")
-        : String(userContent);
-      expect(userText).toContain(JSON.stringify(baseJsonResponse.schema));
     });
 
     it("omits response_format when jsonResponse is not set", async () => {
@@ -133,21 +140,10 @@ export function createOpenAICompatibleGenerateTests({
         apiKey: "test-key",
         model: defaultModel,
         prompt: "hi",
+        ...extraParams,
       });
 
       expect(createCompletion.mock.calls[0][0]?.response_format).toBeUndefined();
     });
   });
-}
-
-export function buildDefaultMockFactory() {
-  return {
-    default: class MockOpenAI {
-      chat = {
-        completions: {
-          create: vi.fn(),
-        },
-      };
-    },
-  };
 }

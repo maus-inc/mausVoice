@@ -9,6 +9,8 @@ createOpenAICompatibleGenerateTests({
   },
   functionName: "openrouterGenerateTextResponse",
   defaultModel: "openai/gpt-4o-mini",
+  expectedJsonResponseType: "json_schema",
+  maxTokensKey: "max_tokens",
 });
 
 describe("openrouterTranscribeAudio", () => {

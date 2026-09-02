@@ -10,6 +10,7 @@ createOpenAICompatibleGenerateTests({
   },
   functionName: "openaiGenerateTextResponse",
   defaultModel: "gpt-4o-mini",
+  expectedJsonResponseType: "json_schema",
 });
 
 describe("supportsOpenAIJsonSchema", () => {

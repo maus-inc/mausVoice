@@ -1,17 +1,4 @@
-import { vi } from "vitest";
 import { createOpenAICompatibleGenerateTests } from "../src/test-helpers/shared-openai-compat-generate.helper";
-
-function buildAzureMockFactory() {
-  return {
-    AzureOpenAI: class MockAzureOpenAI {
-      chat = {
-        completions: {
-          create: vi.fn(),
-        },
-      };
-    },
-  };
-}
 
 createOpenAICompatibleGenerateTests({
   describeName: "azureOpenAIGenerateText",
@@ -21,5 +8,9 @@ createOpenAICompatibleGenerateTests({
   },
   functionName: "azureOpenAIGenerateText",
   defaultModel: "gpt-4o-mini",
-  mockFactory: buildAzureMockFactory,
+  expectedJsonResponseType: "json_schema",
+  extraParams: {
+    endpoint: "https://test.azure.com",
+    deploymentName: "gpt-4o-mini",
+  },
 });

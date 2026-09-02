@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 
 export function createAnthropicGenerateTests({
   describeName,
@@ -14,9 +14,13 @@ export function createAnthropicGenerateTests({
   forwardedMaxTokens: number;
 }) {
   describe(describeName, () => {
-    afterEach(() => {
-      vi.doUnmock("@anthropic-ai/sdk");
+    beforeAll(() => {
       vi.resetModules();
+    });
+
+    afterEach(() => {
+      vi.resetModules();
+      vi.doUnmock("@anthropic-ai/sdk");
     });
 
     const buildCreateMessage = (text = "ok") =>
