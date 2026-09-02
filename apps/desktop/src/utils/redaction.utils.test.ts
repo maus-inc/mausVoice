@@ -73,9 +73,9 @@ describe("redaction.utils", () => {
     it("redacts known sensitive keys", async () => {
       const input = {
         name: "test",
-        password: "test-fixture-password",
-        apiKey: "test-fixture-api-key",
-        nested: { token: "abc123", value: "visible" },
+        password: "test-password-value",
+        apiKey: "test-api-key-value",
+        nested: { token: "test-token-value", value: "visible" },
       };
       const result = await redactObject(input);
       expect(result.name).toBe("test");
