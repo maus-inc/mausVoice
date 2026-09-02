@@ -412,6 +412,7 @@ pub fn build() -> tauri::Builder<tauri::Wry> {
             crate::commands::meeting_delete,
             crate::commands::meeting_segment_insert,
             crate::commands::meeting_speaker_insert,
+            crate::commands::meeting_complete,
         ])
 }
 

@@ -65,14 +65,6 @@ const fromLocalMeeting = (local: LocalMeeting): Meeting => ({
   source: local.source as Meeting["source"],
 });
 
-const fromLocalMeetingWithDetails = (
-  local: LocalMeetingWithDetails,
-): Meeting => ({
-  ...fromLocalMeeting(local),
-  segments: local.segments.map(fromLocalSegment),
-  speakers: local.speakers.map(fromLocalSpeaker),
-});
-
 const fromLocalSegment = (local: LocalMeetingSegment): MeetingSegment => ({
   id: local.id,
   meetingId: local.meetingId,
@@ -87,7 +79,7 @@ const toLocalSegment = (
   meetingId: string,
   segment: MeetingSegment,
 ): LocalMeetingSegment => ({
-  id: createId(),
+  id: segment.id?.trim() ? segment.id : createId(),
   meetingId,
   speakerId: segment.speakerId,
   startTimeMs: segment.startTimeMs,
@@ -113,13 +105,26 @@ const toLocalSpeaker = (
   label: speaker.label ?? null,
 });
 
+const fromLocalMeetingWithDetails = (
+  local: LocalMeetingWithDetails,
+): Meeting => ({
+  ...fromLocalMeeting(local),
+  segments: local.segments.map(fromLocalSegment),
+  speakers: local.speakers.map(fromLocalSpeaker),
+});
+
 export type UpdateMeetingParams = {
   id: string;
   title?: string;
   status?: string;
-  summary?: string | null;
+  summary?: string;
   transcript?: string;
   durationMs?: number;
+};
+
+export type CompleteMeetingParams = UpdateMeetingParams & {
+  segments: MeetingSegment[];
+  speakers: MeetingSpeaker[];
 };
 
 export abstract class BaseMeetingRepo extends BaseRepo {
@@ -136,31 +141,38 @@ export abstract class BaseMeetingRepo extends BaseRepo {
     meetingId: string,
     speakers: MeetingSpeaker[],
   ): Promise<void>;
+  abstract completeMeeting(params: CompleteMeetingParams): Promise<void>;
 }
 
 export class LocalMeetingRepo extends BaseMeetingRepo {
-  async createMeeting(meeting: Meeting): Promise<Meeting> {
+  async createMeeting(
+    this: LocalMeetingRepo,
+    meeting: Meeting,
+  ): Promise<Meeting> {
     const stored = await invoke<LocalMeeting>("meeting_create", {
       meeting: toLocalMeeting(meeting),
     });
     return fromLocalMeeting(stored);
   }
 
-  async getMeeting(id: string): Promise<Meeting> {
+  async getMeeting(this: LocalMeetingRepo, id: string): Promise<Meeting> {
     const stored = await invoke<LocalMeetingWithDetails>("meeting_get", {
       id,
     });
     return fromLocalMeetingWithDetails(stored);
   }
 
-  async listMeetings(limit = 20): Promise<Meeting[]> {
+  async listMeetings(this: LocalMeetingRepo, limit = 20): Promise<Meeting[]> {
     const stored = await invoke<LocalMeeting[]>("meeting_list", {
       limit,
     });
     return stored.map(fromLocalMeeting);
   }
 
-  async updateMeeting(params: UpdateMeetingParams): Promise<void> {
+  async updateMeeting(
+    this: LocalMeetingRepo,
+    params: UpdateMeetingParams,
+  ): Promise<void> {
     await invoke<void>("meeting_update", {
       args: {
         id: params.id,
@@ -173,11 +185,12 @@ export class LocalMeetingRepo extends BaseMeetingRepo {
     });
   }
 
-  async deleteMeeting(id: string): Promise<void> {
+  async deleteMeeting(this: LocalMeetingRepo, id: string): Promise<void> {
     await invoke<void>("meeting_delete", { id });
   }
 
   async insertSegments(
+    this: LocalMeetingRepo,
     meetingId: string,
     segments: MeetingSegment[],
   ): Promise<void> {
@@ -188,6 +201,7 @@ export class LocalMeetingRepo extends BaseMeetingRepo {
   }
 
   async insertSpeakers(
+    this: LocalMeetingRepo,
     meetingId: string,
     speakers: MeetingSpeaker[],
   ): Promise<void> {
@@ -195,5 +209,27 @@ export class LocalMeetingRepo extends BaseMeetingRepo {
       toLocalSpeaker(meetingId, speaker),
     );
     await invoke<void>("meeting_speaker_insert", { speakers: locals });
+  }
+
+  async completeMeeting(
+    this: LocalMeetingRepo,
+    params: CompleteMeetingParams,
+  ): Promise<void> {
+    await invoke<void>("meeting_complete", {
+      args: {
+        meetingId: params.id,
+        title: params.title,
+        status: params.status,
+        summary: params.summary,
+        transcript: params.transcript,
+        durationMs: params.durationMs,
+        segments: params.segments.map((segment) =>
+          toLocalSegment(params.id, segment),
+        ),
+        speakers: params.speakers.map((speaker) =>
+          toLocalSpeaker(params.id, speaker),
+        ),
+      },
+    });
   }
 }

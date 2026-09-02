@@ -12,7 +12,7 @@
 | # | Branch | PR | Title | Status | Parent |
 |---|--------|----|-------|--------|--------|
 | 1 | `expansion/1-shared-foundations` | #149 | feat(expansion): shared foundations (feature flags, privacy-safe logging, shared types) | All CI green | PR #144 head (`session/agent_2605e9ee-1c1c-4742-9d36-dcfc05851daf`) |
-| 2 | `expansion/2-meeting-notes` | #151 | feat(expansion): meeting notes domain (DB, Tauri commands, repos, actions) | PR open, CI running | expansion/1-shared-foundations |
+| 2 | `expansion/2-meeting-notes` | #151 | feat(expansion): meeting notes domain (DB, Tauri commands, repos, actions) | In review, addressing CI/review findings | expansion/1-shared-foundations |
 | 3 | `expansion/3-local-automation` | — | feat(expansion): local automation (HTTP API, CLI, MCP) | Planned | expansion/2 |
 | 4 | `expansion/4-connectors-webhooks` | — | feat(expansion): connectors and webhooks | Planned | expansion/3 |
 | 5 | `expansion/5-translation-snippets` | — | feat(expansion): translation and interactive snippets | Planned | expansion/4 |
@@ -54,3 +54,4 @@
 ## Log
 
 - 2026-09-01: PR #149 created (expansion/1-shared-foundations). All CI green after fixes: clippy chunks_exact→as_chunks, redaction utils complexity reduction, SonarCloud codePointAt/Math.trunc, optional parseExpansionFlags parameter. Ready for Meeting Notes PR.
+- 2026-09-02: PR #151 (expansion/2-meeting-notes) review round. Fixed E0515 compile error in `meeting_update` by simplifying `MeetingUpdateArgs.summary` from `Option<Option<String>>` to `Option<String>`. Introduced transactional `meeting_complete` command so segments, speakers, and the parent update commit or roll back together (previously a mid-stop failure could leave a `completed` meeting with missing detail records). Reordered `generateMeetingSummary` to check `isPersistenceAllowed()` before invoking the LLM, closing the transcript exfiltration path in incognito mode. Replaced `Object.prototype.hasOwnProperty.call` with `Object.hasOwn` to clear SonarCloud S6653. Added `meeting.repo.test.ts` covering payload wrapping, segment id preservation, and the `meeting_complete` shape.

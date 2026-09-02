@@ -2632,7 +2632,7 @@ pub struct MeetingUpdateArgs {
     pub id: String,
     pub title: Option<String>,
     pub status: Option<String>,
-    pub summary: Option<Option<String>>,
+    pub summary: Option<String>,
     pub transcript: Option<String>,
     pub duration_ms: Option<i64>,
 }
@@ -2701,7 +2701,7 @@ pub async fn meeting_update(
         &args.id,
         args.title.as_deref(),
         args.status.as_deref(),
-        args.summary.map(|s| s.as_deref()),
+        args.summary.as_deref(),
         args.transcript.as_deref(),
         args.duration_ms,
     )
@@ -2740,6 +2740,40 @@ pub async fn meeting_speaker_insert(
     crate::db::meeting_queries::insert_speakers(database.pool(), &speakers)
         .await
         .map_err(|err| err.to_string())
+}
+
+#[derive(serde::Deserialize, specta::Type)]
+#[serde(rename_all = "camelCase")]
+pub struct MeetingCompleteArgs {
+    pub meeting_id: String,
+    pub title: Option<String>,
+    pub status: Option<String>,
+    pub summary: Option<String>,
+    pub transcript: Option<String>,
+    pub duration_ms: Option<i64>,
+    pub segments: Vec<crate::domain::MeetingSegment>,
+    pub speakers: Vec<crate::domain::MeetingSpeaker>,
+}
+
+#[tauri::command]
+#[specta::specta]
+pub async fn meeting_complete(
+    args: MeetingCompleteArgs,
+    database: State<'_, crate::state::OptionKeyDatabase>,
+) -> Result<(), String> {
+    crate::db::meeting_queries::complete_meeting(
+        database.pool(),
+        &args.meeting_id,
+        args.title.as_deref(),
+        args.status.as_deref(),
+        args.summary.as_deref(),
+        args.transcript.as_deref(),
+        args.duration_ms,
+        &args.segments,
+        &args.speakers,
+    )
+    .await
+    .map_err(|err| err.to_string())
 }
 
 #[cfg(test)]
