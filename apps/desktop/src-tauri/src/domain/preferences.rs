@@ -134,7 +134,7 @@ mod tests {
         let payload = json!({
             "userId": "user-1",
             "transcriptionMode": "online",
-            "expansionFlags": {"meetingNotesEnabled": true},
+            "expansionFlags": "{\"meetingNotesEnabled\":true}",
         });
         let prefs: UserPreferences = serde_json::from_value(payload).unwrap();
         assert_eq!(prefs.expansion_flags, "{\"meetingNotesEnabled\":true}");

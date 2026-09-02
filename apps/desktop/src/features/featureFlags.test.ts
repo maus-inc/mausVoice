@@ -12,9 +12,22 @@ import {
   serializeExpansionFlags,
 } from "../types/expansion-flags.types";
 
+beforeEach(() => {
+  vi.clearAllMocks();
+});
+
 vi.mock("../store");
 vi.mock("../repos");
 vi.mock("../types/expansion-flags.types");
+vi.mock("../utils/log.utils", () => ({
+  getLogger: () => ({
+    error: () => {},
+    info: () => {},
+    warning: () => {},
+    verbose: () => {},
+    stopwatch: async (_label: string, fn: () => Promise<unknown>) => fn(),
+  }),
+}));
 
 describe("featureFlags", () => {
   beforeEach(() => {
