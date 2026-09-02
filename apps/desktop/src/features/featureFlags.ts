@@ -34,19 +34,23 @@ export const setExpansionFlag = (
   name: ExpansionFeatureName,
   enabled: boolean,
 ): Promise<void> => {
-  togglePromise = togglePromise.then(async () => {
-    const repo = getUserPreferencesRepo();
-    const current = await repo.getUserPreferences();
-    if (!current) {
-      return;
-    }
-    const flags = parseExpansionFlags(current.expansionFlags);
-    flags[name] = enabled;
-    const updated = await repo.setExpansionFlags(JSON.stringify(flags));
-    produceAppState((draft) => {
-      draft.userPrefs = updated;
+  togglePromise = togglePromise
+    .then(async () => {
+      const repo = getUserPreferencesRepo();
+      const current = await repo.getUserPreferences();
+      if (!current) {
+        return;
+      }
+      const flags = parseExpansionFlags(current.expansionFlags);
+      flags[name] = enabled;
+      const updated = await repo.setExpansionFlags(JSON.stringify(flags));
+      produceAppState((draft) => {
+        draft.userPrefs = updated;
+      });
+    })
+    .catch(() => {
+      togglePromise = Promise.resolve();
     });
-  });
 
   return togglePromise;
 };
