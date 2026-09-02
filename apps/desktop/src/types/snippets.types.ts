@@ -1,10 +1,5 @@
 export type SnippetVariableType =
-  | "text"
-  | "multiline"
-  | "choice"
-  | "multiselect"
-  | "date"
-  | "clipboard";
+  "text" | "multiline" | "choice" | "multiselect" | "date" | "clipboard";
 
 export type SnippetVariableChoice = {
   label: string;
