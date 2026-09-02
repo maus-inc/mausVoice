@@ -1,4 +1,4 @@
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 
 export function createOpenAICompatibleGenerateTests({
   describeName,
@@ -50,7 +50,7 @@ export function createOpenAICompatibleGenerateTests({
       vi.doMock("openai", () => mockFactory());
 
       const mod = await loadModule();
-      const fn = mod[functionName];
+      const fn = mod[functionName] as (params: Record<string, unknown>) => Promise<unknown>;
 
       await fn({
         apiKey: "test-key",
@@ -72,7 +72,7 @@ export function createOpenAICompatibleGenerateTests({
       vi.doMock("openai", () => mockFactory());
 
       const mod = await loadModule();
-      const fn = mod[functionName];
+      const fn = mod[functionName] as (params: Record<string, unknown>) => Promise<unknown>;
 
       await fn({
         apiKey: "test-key",
@@ -95,7 +95,7 @@ export function createOpenAICompatibleGenerateTests({
       vi.doMock("openai", () => mockFactory());
 
       const mod = await loadModule();
-      const fn = mod[functionName];
+      const fn = mod[functionName] as (params: Record<string, unknown>) => Promise<unknown>;
 
       await fn({
         apiKey: "test-key",
@@ -125,7 +125,7 @@ export function createOpenAICompatibleGenerateTests({
       vi.doMock("openai", () => mockFactory());
 
       const mod = await loadModule();
-      const fn = mod[functionName];
+      const fn = mod[functionName] as (params: Record<string, unknown>) => Promise<unknown>;
 
       await fn({
         apiKey: "test-key",
