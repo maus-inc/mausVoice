@@ -53,6 +53,7 @@ vi.mock("../repos", async (importOriginal) => {
 
 vi.mock("./user.actions", () => ({
   recordUsageWords: vi.fn(),
+  addWordsToCurrentUser: vi.fn(),
 }));
 
 const staleOllamaState = () => {
