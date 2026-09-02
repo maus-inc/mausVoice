@@ -1,16 +1,16 @@
 import OpenAI from "openai";
-import {
-  ChatCompletionContentPart,
-  ChatCompletionMessageParam,
-} from "openai/resources/chat/completions";
-import { retry, countWords } from "@maus-inc/utilities";
+import { retry } from "@maus-inc/utilities";
 import type {
   JsonResponse,
   LlmChatInput,
   LlmStreamEvent,
 } from "@maus-inc/types";
 import { openaiCompatibleStreamChat } from "./openai.utils";
-import { contentToString } from "./transcription.utils";
+import {
+  buildJsonObjectPrompt,
+  buildOpenAICompatibleMessages,
+  parseOpenAICompatibleGenerateTextResponse,
+} from "./openai-compatible-generate.utils";
 import type { CustomFetch, DiscoveredModelId } from "./types";
 
 export const CEREBRAS_MODELS = ["gpt-oss-120b", "gemma-4-31b"] as const;
@@ -57,19 +57,11 @@ export const cerebrasGenerateTextResponse = async ({
     fn: async () => {
       const client = createClient(apiKey, customFetch);
 
-      const messages: ChatCompletionMessageParam[] = [];
-      if (system) {
-        messages.push({ role: "system", content: system });
-      }
-
-      let finalPrompt = prompt;
-      if (jsonResponse) {
-        finalPrompt = `${prompt}\n\nRespond with valid JSON matching this schema: ${JSON.stringify(jsonResponse.schema)}`;
-      }
-
-      const userParts: ChatCompletionContentPart[] = [];
-      userParts.push({ type: "text", text: finalPrompt });
-      messages.push({ role: "user", content: userParts });
+      const finalPrompt = buildJsonObjectPrompt({ prompt, jsonResponse });
+      const messages = buildOpenAICompatibleMessages({
+        system,
+        prompt: finalPrompt,
+      });
 
       const params: Record<string, unknown> = {
         messages,
@@ -84,20 +76,10 @@ export const cerebrasGenerateTextResponse = async ({
       );
 
       console.log("cerebras llm usage:", response.usage);
-      if (!response.choices || response.choices.length === 0) {
-        throw new Error("No response from Cerebras");
-      }
-
-      const result = response.choices[0].message.content;
-      if (!result) {
-        throw new Error("Content is empty");
-      }
-
-      const content = contentToString(result);
-      return {
-        text: content,
-        tokensUsed: response.usage?.total_tokens ?? countWords(content),
-      };
+      return parseOpenAICompatibleGenerateTextResponse({
+        response,
+        providerLabel: "Cerebras",
+      });
     },
   });
 };

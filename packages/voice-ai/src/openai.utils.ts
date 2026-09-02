@@ -7,19 +7,21 @@ import type {
   LlmTool,
   LlmToolChoice,
 } from "@maus-inc/types";
-import { countWords, retry } from "@maus-inc/utilities";
+import { retry } from "@maus-inc/utilities";
 import OpenAI, { toFile } from "openai";
 import { buildJsonSchemaResponseFormat } from "./response-format.utils";
+import {
+  buildOpenAICompatibleMessages,
+  parseOpenAICompatibleGenerateTextResponse,
+} from "./openai-compatible-generate.utils";
 import type { CustomFetch, DiscoveredModelId } from "./types";
 import {
-  contentToString,
   runSdkTranscription,
   TranscriptionSegment,
   TranscribeAudioOutput,
 } from "./transcription.utils";
 import type {
   ChatCompletionChunk,
-  ChatCompletionContentPart,
   ChatCompletionMessageParam,
   ChatCompletionTool,
 } from "openai/resources/chat/completions";
@@ -189,21 +191,11 @@ export const openaiGenerateTextResponse = async ({
     fn: async () => {
       const client = createClient(apiKey, baseUrl, customFetch);
 
-      const messages: ChatCompletionMessageParam[] = [];
-      if (system) {
-        messages.push({ role: "system", content: system });
-      }
-
-      const userParts: ChatCompletionContentPart[] = [];
-      for (const url of imageUrls) {
-        userParts.push({
-          type: "image_url",
-          image_url: { url },
-        });
-      }
-
-      userParts.push({ type: "text", text: prompt });
-      messages.push({ role: "user", content: userParts });
+      const messages = buildOpenAICompatibleMessages({
+        system,
+        prompt,
+        imageUrls,
+      });
 
       const response_format = buildResponseFormat(model, jsonResponse);
 
@@ -217,20 +209,10 @@ export const openaiGenerateTextResponse = async ({
       });
 
       console.log("openai llm usage:", response.usage);
-      if (!response.choices || response.choices.length === 0) {
-        throw new Error("No response from OpenAI");
-      }
-
-      const result = response.choices[0].message.content;
-      if (!result) {
-        throw new Error("Content is empty");
-      }
-
-      const content = contentToString(result);
-      return {
-        text: content,
-        tokensUsed: response.usage?.total_tokens ?? countWords(content),
-      };
+      return parseOpenAICompatibleGenerateTextResponse({
+        response,
+        providerLabel: "OpenAI",
+      });
     },
   });
 };
