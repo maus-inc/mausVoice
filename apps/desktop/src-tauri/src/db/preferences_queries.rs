@@ -106,7 +106,7 @@ pub async fn upsert_user_preferences(
             typing_speed_ms = excluded.typing_speed_ms,
              pill_reset_monitor_strategy = excluded.pill_reset_monitor_strategy,
              always_request_admin_on_startup = excluded.always_request_admin_on_startup,
-             expansion_flags = user_preferences.expansion_flags",
+             expansion_flags = expansion_flags",
     )
     .bind(&preferences.user_id)
     .bind(&preferences.transcription_mode)

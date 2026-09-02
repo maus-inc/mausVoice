@@ -1,4 +1,5 @@
 import { getAppState, produceAppState } from "../store";
+import { getLogger } from "../utils/log.utils";
 import {
   DEFAULT_EXPANSION_FLAGS,
   type ExpansionFeatureName,
@@ -35,27 +36,32 @@ export const setExpansionFlag = (
   name: ExpansionFeatureName,
   enabled: boolean,
 ): Promise<void> => {
-  togglePromise = togglePromise.then(async () => {
-    try {
-      const repo = getUserPreferencesRepo();
-      const current = await repo.getUserPreferences();
-      if (!current) {
-        return;
+  togglePromise = togglePromise
+    .then(async () => {
+      try {
+        const repo = getUserPreferencesRepo();
+        const current = await repo.getUserPreferences();
+        if (!current) {
+          return;
+        }
+        const flags = parseExpansionFlags(current.expansionFlags);
+        flags[name] = enabled;
+        const updated = await repo.setExpansionFlags(
+          serializeExpansionFlags(flags),
+        );
+        produceAppState((draft) => {
+          draft.userPrefs = updated;
+        });
+      } catch (error) {
+        getLogger().error("Failed to set expansion flag:", error);
+        throw error;
       }
-      const flags = parseExpansionFlags(current.expansionFlags);
-      flags[name] = enabled;
-      const updated = await repo.setExpansionFlags(
-        serializeExpansionFlags(flags),
-      );
-      produceAppState((draft) => {
-        draft.userPrefs = updated;
-      });
-    } catch (error) {
-      console.error("Failed to set expansion flag:", error);
-    }
-  });
+    })
+    .catch(() => {
+      togglePromise = Promise.resolve();
+    });
 
   return togglePromise;
 };
 
-export const DEFAULT_FLAGS: ExpansionFlags = DEFAULT_EXPANSION_FLAGS;
+export const DEFAULT_FLAGS: ExpansionFlags = { ...DEFAULT_EXPANSION_FLAGS };

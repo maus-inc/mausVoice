@@ -246,7 +246,6 @@
   "export_transcription": "Exporter la transcription",
   "failed_to_load_api_keys": "Échec du chargement des clés API",
   "failed_to_load_models": "Échec du chargement des modèles",
-  "failed_to_restart_mausvoice_as_administrator": "Échec du redémarrage de mausVoice en tant qu'administrateur.",
   "failed_to_stop_recording": "Impossible d'arrêter l'enregistrement",
   "fast_large_model_great_accuracy": "Grand modèle rapide, excellente précision",
   "fastest_lowest_accuracy": "Le plus rapide, précision la plus faible",

@@ -96,7 +96,7 @@ enabled/disabled without a rebuild. Flags added now:
 
 A `src/utils/redaction.utils.ts` helper with:
 - `redactString(input, mode)` — truncates or hashes strings for logs.
-- `redactError(error)` — strips filesystem paths, secrets, and tokens from
+- `redactError(error)` — strips secrets and tokens from
   error messages before they reach any log surface.
 - `redactObject(obj, sensitiveKeys)` — redacts known-sensitive keys from a log
   object.
@@ -111,8 +111,10 @@ complete.
 
 Centralize the existing scattered incognito checks behind a single
 `isPersistenceAllowed()` helper in `src/utils/incognito.utils.ts` that returns
-`true` only when incognito mode is off. All persistence-gating code paths
-(transcriptions, history, meetings, connectors, cache) call this helper.
+`true` only when incognito mode is off. New persistence-gating code paths
+call this helper. Existing inline checks in `transcribe.actions.ts` and
+`remote-transcript.actions.ts` are left unchanged for this PR and should be
+migrated in a follow-up to keep the privacy invariant centralized.
 Existing behavior is preserved exactly.
 
 ## Shared domain types

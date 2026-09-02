@@ -1,14 +1,13 @@
 export type RedactionMode = "full" | "hash" | "truncate";
 
 const SENSITIVE_KEY_PATTERNS = [
-  /\bpassword\b/i,
-  /\bsecret\b/i,
-  /\btoken\b/i,
-  /\bauth\b/i,
-  /\bcredential\b/i,
-  /\bprivate\b/i,
-  /\bapikey\b/i,
-  /\bapi[_-]?key\b/i,
+  /password|passwd|pwd/i,
+  /secret|clientSecret|client_secret/i,
+  /token|accessToken|refreshToken|idToken/i,
+  /authorization|auth(?:Header|orization|_header)?/i,
+  /credential/i,
+  /private/i,
+  /apikey|api[_-]?key/i,
 ];
 
 const SECRET_VALUE_PATTERN =
@@ -94,6 +93,8 @@ export const redactObject = async (
     if (isSensitiveKey(key, sensitiveKeys)) {
       if (typeof value === "string") {
         result[key] = await redactString(value, "full");
+      } else if (Array.isArray(value)) {
+        result[key] = await redactArray(value, sensitiveKeys);
       } else {
         result[key] = "[redacted]";
       }
