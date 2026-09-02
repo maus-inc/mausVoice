@@ -46,7 +46,15 @@ export function createOpenAICompatibleGenerateTests({
       createCompletion: ReturnType<typeof buildCreateCompletion>,
       params: Record<string, unknown>,
     ) {
-      vi.doMock("openai", () => mockFactory());
+      vi.doMock("openai", () => ({
+        default: class MockOpenAI {
+          chat = {
+            completions: {
+              create: createCompletion,
+            },
+          },
+        },
+      }));
 
       const mod = await loadModule();
       const fn = mod[functionName] as (params: Record<string, unknown>) => Promise<unknown>;

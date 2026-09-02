@@ -1,3 +1,5 @@
+import { describe, expect, it } from "vitest";
+import { OPENAI_GENERATE_TEXT_MODELS } from "../src/openai.utils";
 import { createOpenAICompatibleGenerateTests } from "../src/test-helpers/shared-openai-compat-generate.helper";
 
 createOpenAICompatibleGenerateTests({
