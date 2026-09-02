@@ -641,7 +641,7 @@ export const DictationSideEffects = () => {
 
       if (strategy.shouldStoreTranscript()) {
         getLogger().verbose("Storing transcription");
-        storeTranscription({
+        await input.storeTranscriptionFn({
           audio,
           rawTranscript: rawTranscript ?? null,
           sanitizedTranscript,
