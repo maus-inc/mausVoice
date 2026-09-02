@@ -1,10 +1,13 @@
-export type ExpansionFeatureName =
-  | "meetingNotesEnabled"
-  | "localApiEnabled"
-  | "translationsEnabled"
-  | "connectorsEnabled"
-  | "handsFreeToggleEnabled"
-  | "voiceWorkflowsEnabled";
+export const EXPANSION_FLAG_NAMES = [
+  "meetingNotesEnabled",
+  "localApiEnabled",
+  "translationsEnabled",
+  "connectorsEnabled",
+  "handsFreeToggleEnabled",
+  "voiceWorkflowsEnabled",
+] as const;
+
+export type ExpansionFeatureName = (typeof EXPANSION_FLAG_NAMES)[number];
 
 export type ExpansionFlags = Record<ExpansionFeatureName, boolean>;
 
@@ -17,15 +20,10 @@ export const DEFAULT_EXPANSION_FLAGS: ExpansionFlags = {
   voiceWorkflowsEnabled: false,
 };
 
-export const EXPANSION_FLAG_NAMES: ExpansionFeatureName[] = [
-  "meetingNotesEnabled",
-  "localApiEnabled",
-  "translationsEnabled",
-  "connectorsEnabled",
-  "handsFreeToggleEnabled",
-  "voiceWorkflowsEnabled",
-];
-
+/**
+ * Parse a JSON string of expansion flags, falling back to defaults
+ * for any missing or invalid keys.
+ */
 export const parseExpansionFlags = (raw?: string | null): ExpansionFlags => {
   if (!raw) {
     return { ...DEFAULT_EXPANSION_FLAGS };
@@ -44,10 +42,16 @@ export const parseExpansionFlags = (raw?: string | null): ExpansionFlags => {
   }
 };
 
+/**
+ * Serialize expansion flags to a JSON string for persistence.
+ */
 export const serializeExpansionFlags = (flags: ExpansionFlags): string => {
   return JSON.stringify(flags);
 };
 
+/**
+ * Check whether a specific expansion feature flag is enabled.
+ */
 export const isExpansionFlagEnabled = (
   flags: ExpansionFlags,
   name: ExpansionFeatureName,

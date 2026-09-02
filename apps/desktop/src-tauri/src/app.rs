@@ -292,6 +292,7 @@ pub fn build() -> tauri::Builder<tauri::Wry> {
             crate::commands::user_set_one,
             crate::commands::user_preferences_get,
             crate::commands::user_preferences_set,
+            crate::commands::user_preferences_set_expansion_flags,
             crate::commands::list_microphones,
             crate::commands::list_gpus,
             crate::commands::get_system_capabilities,

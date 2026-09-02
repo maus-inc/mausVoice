@@ -372,3 +372,15 @@ pub async fn fetch_transcription_mode(pool: SqlitePool) -> Result<Option<String>
 
     Ok(row.flatten())
 }
+
+pub async fn set_expansion_flags(
+    pool: SqlitePool,
+    flags: &str,
+) -> Result<(), sqlx::Error> {
+    sqlx::query("UPDATE user_preferences SET expansion_flags = ?1 WHERE user_id = ?2")
+        .bind(flags)
+        .bind(LOCAL_USER_ID)
+        .execute(&pool)
+        .await?;
+    Ok(())
+}

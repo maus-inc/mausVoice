@@ -74,5 +74,18 @@ describe("redaction.utils", () => {
       const result = redactObject(input);
       expect(result).toEqual(input);
     });
+
+    it("redacts sensitive fields inside nested arrays", () => {
+      const input = {
+        items: [
+          { name: "a", token: "secret1" },
+          { name: "b", token: "secret2" },
+        ],
+      };
+      const result = redactObject(input) as typeof input;
+      expect(result.items[0].token).toBe("[redacted]");
+      expect(result.items[1].token).toBe("[redacted]");
+      expect(result.items[0].name).toBe("a");
+    });
   });
 });

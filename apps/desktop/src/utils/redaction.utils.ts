@@ -31,6 +31,11 @@ const truncateString = (input: string): string => {
   return `${input.slice(0, 2)}***${input.slice(-2)}`;
 };
 
+/**
+ * Redact a string according to the given mode.
+ * "full" replaces with [redacted], "hash" replaces with a short hash,
+ * "truncate" shows only the first and last two characters.
+ */
 export const redactString = (
   input: string,
   mode: RedactionMode = "full",
@@ -47,6 +52,9 @@ export const redactString = (
   return truncateString(input);
 };
 
+/**
+ * Redact any embedded secrets from an error message.
+ */
 export const redactError = (error: unknown): string => {
   const message = error instanceof Error ? error.message : String(error);
   return message.replace(SECRET_VALUE_PATTERN, "[redacted-secret]");
@@ -63,6 +71,24 @@ const isSensitiveKey = (key: string, sensitiveKeys: string[]): boolean => {
   );
 };
 
+const redactArray = (arr: unknown[], sensitiveKeys: string[]): unknown[] => {
+  return arr.map((item) => {
+    if (isNestedObject(item)) {
+      return redactObject(item, sensitiveKeys);
+    }
+    if (Array.isArray(item)) {
+      return redactArray(item, sensitiveKeys);
+    }
+    if (typeof item === "string") {
+      return redactString(item, "full");
+    }
+    return item;
+  });
+};
+
+/**
+ * Redact sensitive keys and recursively redact nested objects and arrays.
+ */
 export const redactObject = (
   obj: Record<string, unknown>,
   sensitiveKeys: string[] = [],
@@ -74,6 +100,8 @@ export const redactObject = (
         typeof value === "string" ? redactString(value, "full") : "[redacted]";
     } else if (isNestedObject(value)) {
       result[key] = redactObject(value, sensitiveKeys);
+    } else if (Array.isArray(value)) {
+      result[key] = redactArray(value, sensitiveKeys);
     } else {
       result[key] = value;
     }
