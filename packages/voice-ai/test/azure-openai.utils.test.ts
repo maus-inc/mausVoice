@@ -1,4 +1,4 @@
-import { describe, expect, it, vi } from "vitest";
+import { vi } from "vitest";
 import { createOpenAICompatibleGenerateTests } from "../src/test-helpers/shared-openai-compat-generate.helper";
 
 function buildAzureMockFactory() {

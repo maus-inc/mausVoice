@@ -36,7 +36,7 @@ export function createGeminiGenerateTests({
       vi.doMock("@google/genai", () => buildMockFactory());
 
       const mod = await loadModule();
-      const fn = mod[functionName];
+      const fn = mod[functionName] as (params: Record<string, unknown>) => Promise<unknown>;
 
       await fn({
         apiKey: "test-key",
@@ -54,7 +54,7 @@ export function createGeminiGenerateTests({
       vi.doMock("@google/genai", () => buildMockFactory());
 
       const mod = await loadModule();
-      const fn = mod[functionName];
+      const fn = mod[functionName] as (params: Record<string, unknown>) => Promise<unknown>;
 
       await fn({
         apiKey: "test-key",

@@ -37,7 +37,7 @@ export function createAnthropicGenerateTests({
       }));
 
       const mod = await loadModule();
-      const fn = mod[functionName];
+      const fn = mod[functionName] as (params: Record<string, unknown>) => Promise<unknown>;
 
       await fn({
         apiKey: "test-key",
@@ -62,7 +62,7 @@ export function createAnthropicGenerateTests({
       }));
 
       const mod = await loadModule();
-      const fn = mod[functionName];
+      const fn = mod[functionName] as (params: Record<string, unknown>) => Promise<unknown>;
 
       await fn({
         apiKey: "test-key",
@@ -88,7 +88,7 @@ export function createAnthropicGenerateTests({
       }));
 
       const mod = await loadModule();
-      const fn = mod[functionName];
+      const fn = mod[functionName] as (params: Record<string, unknown>) => Promise<unknown>;
 
       const jsonResponse = {
         name: "schema",
