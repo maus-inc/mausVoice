@@ -119,6 +119,10 @@ CREATE TABLE IF NOT EXISTS meeting_speakers (
 - `meeting_delete` — Delete meeting (cascades to segments/speakers).
 - `meeting_segment_insert` — Insert a batch of segments.
 - `meeting_speaker_insert` — Insert a batch of speakers.
+- `meeting_complete` — Persist segments, speakers, and the parent meeting
+  update in a single transaction. Used by `stopMeetingRecording` so a
+  mid-stop failure cannot leave a `completed` meeting with missing
+  detail records.
 
 ## TypeScript repos
 

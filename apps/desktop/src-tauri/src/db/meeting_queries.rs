@@ -2,6 +2,39 @@ use sqlx::{Row, SqlitePool};
 
 use crate::domain::{Meeting, MeetingSegment, MeetingSpeaker};
 
+/// Build the `SET` clause and bind order for `update_meeting`.
+/// Returning the assignment order alongside the query string makes the
+/// bind order obvious to both readers and tests, and keeps the placeholder
+/// indices aligned with the caller's `Some` / `None` decisions.
+fn meeting_update_clauses(
+    title: Option<&str>,
+    status: Option<&str>,
+    summary: Option<&str>,
+    transcript: Option<&str>,
+    duration_ms: Option<i64>,
+) -> String {
+    let mut assignments: Vec<&str> = Vec::new();
+    if title.is_some() {
+        assignments.push("title = ?");
+    }
+    if status.is_some() {
+        assignments.push("status = ?");
+    }
+    if summary.is_some() {
+        assignments.push("summary = ?");
+    }
+    if transcript.is_some() {
+        assignments.push("transcript = ?");
+    }
+    if duration_ms.is_some() {
+        assignments.push("duration_ms = ?");
+    }
+    if assignments.is_empty() {
+        return String::new();
+    }
+    format!("UPDATE meetings SET {} WHERE id = ?", assignments.join(", "))
+}
+
 pub async fn insert_meeting(
     pool: SqlitePool,
     meeting: &Meeting,
@@ -79,33 +112,14 @@ pub async fn update_meeting(
     id: &str,
     title: Option<&str>,
     status: Option<&str>,
-    summary: Option<Option<&str>>,
+    summary: Option<&str>,
     transcript: Option<&str>,
     duration_ms: Option<i64>,
 ) -> Result<(), sqlx::Error> {
-    let mut assignments: Vec<&str> = Vec::new();
-    if title.is_some() {
-        assignments.push("title = ?");
-    }
-    if status.is_some() {
-        assignments.push("status = ?");
-    }
-    if summary.is_some() {
-        assignments.push("summary = ?");
-    }
-    if transcript.is_some() {
-        assignments.push("transcript = ?");
-    }
-    if duration_ms.is_some() {
-        assignments.push("duration_ms = ?");
-    }
-    if assignments.is_empty() {
+    let query = meeting_update_clauses(title, status, summary, transcript, duration_ms);
+    if query.is_empty() {
         return Ok(());
     }
-    let query = format!(
-        "UPDATE meetings SET {} WHERE id = ?",
-        assignments.join(", "),
-    );
 
     let mut q = sqlx::query(&query);
     if let Some(v) = title { q = q.bind(v); }
@@ -115,6 +129,101 @@ pub async fn update_meeting(
     if let Some(v) = duration_ms { q = q.bind(v); }
     q.bind(id).execute(&pool).await?;
     Ok(())
+}
+
+/// Persist segments, speakers, and the parent meeting update atomically.
+/// Any failure rolls back every child insert so a partial stop-recording
+/// state never lingers in the database.
+pub async fn complete_meeting(
+    pool: SqlitePool,
+    meeting_id: &str,
+    title: Option<&str>,
+    status: Option<&str>,
+    summary: Option<&str>,
+    transcript: Option<&str>,
+    duration_ms: Option<i64>,
+    segments: &[crate::domain::MeetingSegment],
+    speakers: &[crate::domain::MeetingSpeaker],
+) -> Result<(), sqlx::Error> {
+    let mut tx = pool.begin().await?;
+    for segment in segments {
+        sqlx::query(
+            "INSERT INTO meeting_segments (id, meeting_id, speaker_id, start_time_ms, end_time_ms, text, confidence)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
+        )
+        .bind(&segment.id)
+        .bind(&segment.meeting_id)
+        .bind(&segment.speaker_id)
+        .bind(segment.start_time_ms)
+        .bind(segment.end_time_ms)
+        .bind(&segment.text)
+        .bind(segment.confidence)
+        .execute(&mut *tx)
+        .await?;
+    }
+    for speaker in speakers {
+        sqlx::query(
+            "INSERT INTO meeting_speakers (id, meeting_id, name, label)
+             VALUES (?1, ?2, ?3, ?4)",
+        )
+        .bind(&speaker.id)
+        .bind(&speaker.meeting_id)
+        .bind(&speaker.name)
+        .bind(&speaker.label)
+        .execute(&mut *tx)
+        .await?;
+    }
+
+    let query = meeting_update_clauses(title, status, summary, transcript, duration_ms);
+    if !query.is_empty() {
+        let mut q = sqlx::query(&query);
+        if let Some(v) = title { q = q.bind(v); }
+        if let Some(v) = status { q = q.bind(v); }
+        if let Some(v) = summary { q = q.bind(v); }
+        if let Some(v) = transcript { q = q.bind(v); }
+        if let Some(v) = duration_ms { q = q.bind(v); }
+        q.bind(meeting_id).execute(&mut *tx).await?;
+    }
+
+    tx.commit().await?;
+    Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn meeting_update_clauses_only_includes_some_fields() {
+        assert_eq!(
+            meeting_update_clauses(Some("T"), None, None, None, None),
+            "UPDATE meetings SET title = ? WHERE id = ?",
+        );
+        assert_eq!(
+            meeting_update_clauses(None, Some("completed"), None, None, None),
+            "UPDATE meetings SET status = ? WHERE id = ?",
+        );
+        assert_eq!(
+            meeting_update_clauses(None, None, None, None, Some(42)),
+            "UPDATE meetings SET duration_ms = ? WHERE id = ?",
+        );
+    }
+
+    #[test]
+    fn meeting_update_clauses_orders_fields_by_declaration() {
+        assert_eq!(
+            meeting_update_clauses(Some("T"), Some("completed"), None, Some("hi"), Some(100)),
+            "UPDATE meetings SET title = ?, status = ?, transcript = ?, duration_ms = ? WHERE id = ?",
+        );
+    }
+
+    #[test]
+    fn meeting_update_clauses_returns_empty_when_all_none() {
+        assert_eq!(
+            meeting_update_clauses(None, None, None, None, None),
+            "",
+        );
+    }
 }
 
 pub async fn delete_meeting(pool: SqlitePool, id: &str) -> Result<(), sqlx::Error> {

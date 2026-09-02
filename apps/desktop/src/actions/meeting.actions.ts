@@ -8,6 +8,7 @@ import { createId } from "../utils/id.utils";
 import { isExpansionFeatureEnabled } from "../features/featureFlags";
 import { isPersistenceAllowed } from "../utils/incognito.utils";
 import { getLogger } from "../utils/log.utils";
+import { redactError } from "../utils/redaction.utils";
 
 const ensureMeetingNotesEnabled = (): void => {
   if (!isExpansionFeatureEnabled("meetingNotesEnabled")) {
@@ -58,19 +59,13 @@ export const stopMeetingRecording = async (
     .filter(Boolean)
     .join("\n");
 
-  if (segments.length > 0) {
-    await repo.insertSegments(meetingId, segments);
-  }
-
-  if (speakers.length > 0) {
-    await repo.insertSpeakers(meetingId, speakers);
-  }
-
-  await repo.updateMeeting({
+  await repo.completeMeeting({
     id: meetingId,
     status: "completed",
     durationMs,
     transcript,
+    segments,
+    speakers,
   });
 };
 
@@ -78,6 +73,12 @@ export const generateMeetingSummary = async (
   meetingId: string,
 ): Promise<void> => {
   ensureMeetingNotesEnabled();
+  if (!isPersistenceAllowed()) {
+    getLogger().warning(
+      `Skipping meeting summary in incognito mode for meeting ${meetingId}`,
+    );
+    return;
+  }
   const repo = getMeetingRepo();
   const meeting = await repo.getMeeting(meetingId);
 
@@ -99,11 +100,19 @@ export const generateMeetingSummary = async (
     return;
   }
 
-  const output = await genRepo.generateText({
-    system:
-      "You are a meeting assistant. Given the transcript of a meeting, produce a concise summary capturing the key discussion points, decisions, and action items.",
-    prompt: meeting.transcript,
-  });
+  let output;
+  try {
+    output = await genRepo.generateText({
+      system:
+        "You are a meeting assistant. Given the transcript of a meeting, produce a concise summary capturing the key discussion points, decisions, and action items.",
+      prompt: meeting.transcript,
+    });
+  } catch (err) {
+    getLogger().warning(
+      `Summary generation failed for meeting ${meetingId}: ${redactError(err)}`,
+    );
+    return;
+  }
 
   const summary = output.text.trim();
 
