@@ -12,7 +12,7 @@
 | # | Branch | PR | Title | Status | Parent |
 |---|--------|----|-------|--------|--------|
 | 1 | `expansion/1-shared-foundations` | #149 | feat(expansion): shared foundations (feature flags, privacy-safe logging, shared types) | All CI green | PR #144 head (`session/agent_2605e9ee-1c1c-4742-9d36-dcfc05851daf`) |
-| 2 | `expansion/2-meeting-notes` | — | feat(expansion): meeting notes | Planned | expansion/1 |
+| 2 | `expansion/2-meeting-notes` | #151 | feat(expansion): meeting notes domain (DB, Tauri commands, repos, actions) | PR open, CI running | expansion/1-shared-foundations |
 | 3 | `expansion/3-local-automation` | — | feat(expansion): local automation (HTTP API, CLI, MCP) | Planned | expansion/2 |
 | 4 | `expansion/4-connectors-webhooks` | — | feat(expansion): connectors and webhooks | Planned | expansion/3 |
 | 5 | `expansion/5-translation-snippets` | — | feat(expansion): translation and interactive snippets | Planned | expansion/4 |
