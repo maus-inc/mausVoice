@@ -13,7 +13,7 @@ use crate::constants::*;
 use crate::draw;
 use crate::gfx::Gfx;
 use crate::input;
-use crate::ipc::{self, InMessage, OutMessage, Phase, ResetStrategy, Visibility};
+use crate::ipc::{self, InMessage, OutMessage, Phase, Rect, ResetStrategy, Visibility};
 use crate::state;
 use crate::state::{ClickAction, PillState, Rocket, RocketPhase, Spark, WindowMode};
 
@@ -116,6 +116,7 @@ pub fn run(receiver: Receiver<InMessage>) {
         tooltip_t: Cell::new(0.0),
         tooltip_velocity: Cell::new(0.0),
         tooltip_width: Cell::new(0.0),
+        style_tooltip_gate: rust_pill_shared::StyleTooltipGate::default(),
         window_mode: Cell::new(WindowMode::Dictation),
         draw_width: Cell::new(DICTATION_WINDOW_WIDTH as f64),
         draw_height: Cell::new(DICTATION_WINDOW_HEIGHT as f64),
@@ -183,6 +184,8 @@ pub fn run(receiver: Receiver<InMessage>) {
         saved_y: Cell::new(0),
         inflate_t: Cell::new(0.0),
         inflate_velocity: Cell::new(0.0),
+        drag_label_t: Cell::new(0.0),
+        drag_label_velocity: Cell::new(0.0),
         ring_alpha: Cell::new(0.0),
         ring_release_progress: Cell::new(0.0),
         press_elapsed: Cell::new(0.0),
@@ -504,6 +507,13 @@ fn should_reassert_topmost(last: Option<Instant>, now: Instant) -> bool {
     }
 }
 
+fn clear_flash(state: &PillState) {
+    state.flash_visible.set(false);
+    state.flash_timer.set(0.0);
+    *state.flash_action.borrow_mut() = None;
+    *state.flash_action_label.borrow_mut() = None;
+}
+
 /// Applies one IPC message to the pill state and marks the surface dirty so
 /// the next timer tick repaints.
 fn process_message(msg: InMessage, state: &PillState, _hwnd: HWND) {
@@ -526,6 +536,14 @@ fn process_message(msg: InMessage, state: &PillState, _hwnd: HWND) {
             }
             let prev = state.phase.get();
             state.phase.set(phase);
+            state.style_tooltip_gate.set_take_running(phase == Phase::Recording);
+            // A new take sweeps any banner parked above the pill (for example
+            // the retranscribing toast) so it cannot sit on the style selector
+            // for the whole take. A resume from Paused keeps toasts raised
+            // during the take, such as the cancel confirm.
+            if phase == Phase::Recording && matches!(prev, Phase::Idle | Phase::Loading) {
+                clear_flash(state);
+            }
             if phase == Phase::Idle && prev != Phase::Idle {
                 state.target_level.set(0.0);
                 state.current_level.set(0.0);
@@ -556,10 +574,7 @@ fn process_message(msg: InMessage, state: &PillState, _hwnd: HWND) {
             *state.flash_action_label.borrow_mut() = action_label;
         }
         InMessage::DismissToast => {
-            state.flash_visible.set(false);
-            state.flash_timer.set(0.0);
-            *state.flash_action.borrow_mut() = None;
-            *state.flash_action_label.borrow_mut() = None;
+            clear_flash(state);
         }
         InMessage::Fireworks { message } => {
             *state.flash_message.borrow_mut() = message;
@@ -628,8 +643,13 @@ fn process_message(msg: InMessage, state: &PillState, _hwnd: HWND) {
             state.has_saved_position.set(false);
             state.reset_strategy.set(strategy);
             state.dirty.set(true);
+            let hwnd = HWND_CELL.with(|c| c.get());
+            reposition_to_cursor_monitor(hwnd, state);
+            let (rect, monitor) = current_pill_geometry(hwnd);
             ipc::send(&OutMessage::PositionChanged {
                 has_saved_position: false,
+                rect: Some(rect),
+                monitor,
             });
         }
         InMessage::PillPlacement { placement } => {
@@ -730,27 +750,24 @@ fn tick(state: &PillState, dt: f64) {
         dt,
     );
 
+    let drag_target = if state.dragging.get() || state.long_press_active.get() { 1.0 } else { 0.0 };
+    spring_anim(&state.drag_label_t, &state.drag_label_velocity, drag_target, rust_pill_shared::LABEL_SPRING_STIFFNESS, dt);
+
     if is_loading {
         state
             .loading_offset
             .set((state.loading_offset.get() + LOADING_SPEED * frame_scale) % 1.0);
     }
 
-    // While paused, fade/hide the style picker (polished/verbatim) but keep the
-    // main pill fully expanded via expand_target above.
-    let show_tooltip = !state.assistant_active.get()
-        && state.style_count.get() > 1
-        && phase != Phase::Paused
-        && (hovered || phase == Phase::Recording)
-        && state.expand_t.get() > 0.3;
-    let tooltip_target = if show_tooltip { 1.0 } else { 0.0 };
-    spring_anim(
-        &state.tooltip_t,
-        &state.tooltip_velocity,
-        tooltip_target,
-        SPRING_STIFFNESS,
-        dt,
+    let tooltip_target = rust_pill_shared::style_tooltip_target(
+        &state.style_tooltip_gate,
+        state.assistant_active.get(),
+        state.style_count.get(),
+        matches!(phase, Phase::Paused),
+        hovered,
+        state.expand_t.get(),
     );
+    spring_anim(&state.tooltip_t, &state.tooltip_velocity, tooltip_target, SPRING_STIFFNESS, dt);
 
     let panel_target = if state.assistant_active.get() {
         1.0
@@ -817,14 +834,12 @@ fn tick(state: &PillState, dt: f64) {
             state.flash_timer.set(remaining);
         }
     }
-    let flash_target = if state.flash_visible.get() { 1.0 } else { 0.0 };
-    spring_anim(
-        &state.flash_t,
-        &state.flash_velocity,
-        flash_target,
-        SPRING_STIFFNESS,
-        dt,
+    let flash_target = rust_pill_shared::flash_banner_target(
+        state.flash_visible.get(),
+        state.flash_action.borrow().is_some(),
+        tooltip_target > 0.5,
     );
+    spring_anim(&state.flash_t, &state.flash_velocity, flash_target, SPRING_STIFFNESS, dt);
 
     // Recording <-> paused crossfade driven by the same critically damped
     // spring as the other pill transitions (settles, never overshoots).
@@ -1428,6 +1443,38 @@ fn tick_long_press(state: &PillState, dt: f64) {
     }
 }
 
+/// Reads the pill window's screen rect and the work area of the monitor it
+/// lives on, so the desktop can anchor the composer next to the real pill
+/// instead of relying on OS-centred placement.
+fn current_pill_geometry(hwnd: HWND) -> (Rect, Option<Rect>) {
+    unsafe {
+        let mut wr = RECT::default();
+        let _ = GetWindowRect(hwnd, &mut wr);
+        let rect = Rect {
+            x: wr.left as f64,
+            y: wr.top as f64,
+            width: (wr.right - wr.left) as f64,
+            height: (wr.bottom - wr.top) as f64,
+        };
+        let monitor = {
+            let mon = MonitorFromWindow(hwnd, MONITOR_DEFAULTTONEAREST);
+            if mon == HMONITOR::default() {
+                None
+            } else {
+                let mut mi: MONITORINFO = std::mem::zeroed();
+                mi.cbSize = std::mem::size_of::<MONITORINFO>() as u32;
+                (GetMonitorInfoW(mon, &mut mi).as_bool()).then(|| Rect {
+                    x: mi.rcWork.left as f64,
+                    y: mi.rcWork.top as f64,
+                    width: (mi.rcWork.right - mi.rcWork.left) as f64,
+                    height: (mi.rcWork.bottom - mi.rcWork.top) as f64,
+                })
+            }
+        };
+        (rect, monitor)
+    }
+}
+
 /// Terminate an in-progress drag, persist the drop position and release the
 /// pointer capture. Safe to call when no drag is active.
 ///
@@ -1445,8 +1492,11 @@ fn end_drag(hwnd: HWND, state: &PillState, persist_position: bool) -> bool {
         state.saved_x.set(rect.left);
         state.saved_y.set(rect.top);
         state.has_saved_position.set(true);
+        let (win_rect, monitor) = current_pill_geometry(hwnd);
         ipc::send(&OutMessage::PositionChanged {
             has_saved_position: true,
+            rect: Some(win_rect),
+            monitor,
         });
     }
 
