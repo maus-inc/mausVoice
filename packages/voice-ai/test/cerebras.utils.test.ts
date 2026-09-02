@@ -1,8 +1,11 @@
-import { createOpenAICompatibleGenerateTests } from "./shared-openai-compat-generate.test";
+import { createOpenAICompatibleGenerateTests } from "../src/test-helpers/shared-openai-compat-generate.helper";
 
 createOpenAICompatibleGenerateTests({
   describeName: "cerebrasGenerateTextResponse",
-  importPath: "../src/cerebras.utils",
+  loadModule: async () => {
+    const mod = await import("../src/cerebras.utils");
+    return mod;
+  },
   functionName: "cerebrasGenerateTextResponse",
   defaultModel: "llama3.1-8b",
 });
