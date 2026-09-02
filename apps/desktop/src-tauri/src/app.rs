@@ -405,6 +405,14 @@ pub fn build() -> tauri::Builder<tauri::Wry> {
             crate::commands::floating_window_create,
             crate::commands::floating_window_destroy,
             crate::commands::floating_window_list,
+            crate::commands::meeting_create,
+            crate::commands::meeting_get,
+            crate::commands::meeting_list,
+            crate::commands::meeting_update,
+            crate::commands::meeting_delete,
+            crate::commands::meeting_segment_insert,
+            crate::commands::meeting_speaker_insert,
+            crate::commands::meeting_complete,
         ])
 }
 

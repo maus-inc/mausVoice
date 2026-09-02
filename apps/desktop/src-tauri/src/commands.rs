@@ -47,7 +47,7 @@ static CANCEL_TYPING: AtomicBool = AtomicBool::new(false);
 
 /// User-data tables wiped by `clear_local_data`. Extend this list when
 /// adding a table that stores user content — a missed table is a privacy leak.
-const USER_DATA_TABLES_TO_CLEAR: [&str; 11] = [
+const USER_DATA_TABLES_TO_CLEAR: [&str; 14] = [
     "chat_messages",
     "conversations",
     "user_profiles",
@@ -59,6 +59,9 @@ const USER_DATA_TABLES_TO_CLEAR: [&str; 11] = [
     "tones",
     "app_targets",
     "paired_remote_devices",
+    "meetings",
+    "meeting_segments",
+    "meeting_speakers",
 ];
 use tauri::{AppHandle, Emitter, EventTarget, Manager, State};
 
@@ -2624,6 +2627,156 @@ fn validate_floating_window_url(url: &Url) -> Result<(), String> {
 
 fn parse_floating_window_url(url: &str) -> Result<Url, String> {
     Url::parse(url).map_err(|e| format!("Invalid URL: {e}"))
+}
+
+#[derive(serde::Deserialize, specta::Type)]
+#[serde(rename_all = "camelCase")]
+pub struct MeetingUpdateArgs {
+    pub id: String,
+    pub title: Option<String>,
+    pub status: Option<String>,
+    pub summary: Option<String>,
+    pub transcript: Option<String>,
+    pub duration_ms: Option<i64>,
+}
+
+#[tauri::command]
+#[specta::specta]
+pub async fn meeting_create(
+    meeting: crate::domain::Meeting,
+    database: State<'_, crate::state::OptionKeyDatabase>,
+) -> Result<crate::domain::Meeting, String> {
+    crate::db::meeting_queries::insert_meeting(database.pool(), &meeting)
+        .await
+        .map_err(|err| err.to_string())?;
+    Ok(meeting)
+}
+
+#[tauri::command]
+#[specta::specta]
+pub async fn meeting_get(
+    id: String,
+    database: State<'_, crate::state::OptionKeyDatabase>,
+) -> Result<crate::domain::MeetingWithDetails, String> {
+    let meeting = crate::db::meeting_queries::fetch_meeting(database.pool(), &id)
+        .await
+        .map_err(|err| err.to_string())?
+        .ok_or_else(|| "Meeting not found".to_string())?;
+    let segments = crate::db::meeting_queries::fetch_segments(database.pool(), &id)
+        .await
+        .map_err(|err| err.to_string())?;
+    let speakers = crate::db::meeting_queries::fetch_speakers(database.pool(), &id)
+        .await
+        .map_err(|err| err.to_string())?;
+    Ok(crate::domain::MeetingWithDetails {
+        id: meeting.id,
+        title: meeting.title,
+        created_at: meeting.created_at,
+        duration_ms: meeting.duration_ms,
+        status: meeting.status,
+        summary: meeting.summary,
+        transcript: meeting.transcript,
+        source: meeting.source,
+        segments,
+        speakers,
+    })
+}
+
+#[tauri::command]
+#[specta::specta]
+pub async fn meeting_list(
+    limit: i64,
+    database: State<'_, crate::state::OptionKeyDatabase>,
+) -> Result<Vec<crate::domain::Meeting>, String> {
+    crate::db::meeting_queries::fetch_meetings(database.pool(), limit)
+        .await
+        .map_err(|err| err.to_string())
+}
+
+#[tauri::command]
+#[specta::specta]
+pub async fn meeting_update(
+    args: MeetingUpdateArgs,
+    database: State<'_, crate::state::OptionKeyDatabase>,
+) -> Result<(), String> {
+    crate::db::meeting_queries::update_meeting(
+        database.pool(),
+        &args.id,
+        args.title.as_deref(),
+        args.status.as_deref(),
+        args.summary.as_deref(),
+        args.transcript.as_deref(),
+        args.duration_ms,
+    )
+    .await
+    .map_err(|err| err.to_string())
+}
+
+#[tauri::command]
+#[specta::specta]
+pub async fn meeting_delete(
+    id: String,
+    database: State<'_, crate::state::OptionKeyDatabase>,
+) -> Result<(), String> {
+    crate::db::meeting_queries::delete_meeting(database.pool(), &id)
+        .await
+        .map_err(|err| err.to_string())
+}
+
+#[tauri::command]
+#[specta::specta]
+pub async fn meeting_segment_insert(
+    segments: Vec<crate::domain::MeetingSegment>,
+    database: State<'_, crate::state::OptionKeyDatabase>,
+) -> Result<(), String> {
+    crate::db::meeting_queries::insert_segments(database.pool(), &segments)
+        .await
+        .map_err(|err| err.to_string())
+}
+
+#[tauri::command]
+#[specta::specta]
+pub async fn meeting_speaker_insert(
+    speakers: Vec<crate::domain::MeetingSpeaker>,
+    database: State<'_, crate::state::OptionKeyDatabase>,
+) -> Result<(), String> {
+    crate::db::meeting_queries::insert_speakers(database.pool(), &speakers)
+        .await
+        .map_err(|err| err.to_string())
+}
+
+#[derive(serde::Deserialize, specta::Type)]
+#[serde(rename_all = "camelCase")]
+pub struct MeetingCompleteArgs {
+    pub meeting_id: String,
+    pub title: Option<String>,
+    pub status: Option<String>,
+    pub summary: Option<String>,
+    pub transcript: Option<String>,
+    pub duration_ms: Option<i64>,
+    pub segments: Vec<crate::domain::MeetingSegment>,
+    pub speakers: Vec<crate::domain::MeetingSpeaker>,
+}
+
+#[tauri::command]
+#[specta::specta]
+pub async fn meeting_complete(
+    args: MeetingCompleteArgs,
+    database: State<'_, crate::state::OptionKeyDatabase>,
+) -> Result<(), String> {
+    crate::db::meeting_queries::complete_meeting(
+        database.pool(),
+        &args.meeting_id,
+        args.title.as_deref(),
+        args.status.as_deref(),
+        args.summary.as_deref(),
+        args.transcript.as_deref(),
+        args.duration_ms,
+        &args.segments,
+        &args.speakers,
+    )
+    .await
+    .map_err(|err| err.to_string())
 }
 
 #[cfg(test)]

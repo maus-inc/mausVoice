@@ -6,6 +6,13 @@ export type SnippetVariableChoice = {
   value: string;
 };
 
+/**
+ * A snippet variable definition.
+ *
+ * For `multiselect`, the selected values are stored as a comma-joined string
+ * in `SnippetFillIn.variableValues[name]`. Consumers split on "," to recover
+ * the array. `choices` enumerates the allowed options.
+ */
 export type SnippetVariable = {
   name: string;
   type: SnippetVariableType;
