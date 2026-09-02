@@ -1,10 +1,13 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { OPENAI_GENERATE_TEXT_MODELS } from "../src/openai.utils";
-import { createOpenAICompatibleGenerateTests } from "./shared-openai-compat-generate.test";
+import { createOpenAICompatibleGenerateTests } from "../src/test-helpers/shared-openai-compat-generate.helper";
 
 createOpenAICompatibleGenerateTests({
   describeName: "openaiGenerateTextResponse",
-  importPath: "../src/openai.utils",
+  loadModule: async () => {
+    const mod = await import("../src/openai.utils");
+    return mod;
+  },
   functionName: "openaiGenerateTextResponse",
   defaultModel: "gpt-4o-mini",
 });

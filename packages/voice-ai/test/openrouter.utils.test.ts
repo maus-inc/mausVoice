@@ -1,8 +1,12 @@
-import { createOpenAICompatibleGenerateTests } from "./shared-openai-compat-generate.test";
+import { describe, expect, it, vi } from "vitest";
+import { createOpenAICompatibleGenerateTests } from "../src/test-helpers/shared-openai-compat-generate.helper";
 
 createOpenAICompatibleGenerateTests({
   describeName: "openrouterGenerateTextResponse",
-  importPath: "../src/openrouter.utils",
+  loadModule: async () => {
+    const mod = await import("../src/openrouter.utils");
+    return mod;
+  },
   functionName: "openrouterGenerateTextResponse",
   defaultModel: "openai/gpt-4o-mini",
 });

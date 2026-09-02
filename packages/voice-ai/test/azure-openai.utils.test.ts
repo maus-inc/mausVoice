@@ -1,4 +1,5 @@
-import { createOpenAICompatibleGenerateTests } from "./shared-openai-compat-generate.test";
+import { describe, expect, it, vi } from "vitest";
+import { createOpenAICompatibleGenerateTests } from "../src/test-helpers/shared-openai-compat-generate.helper";
 
 function buildAzureMockFactory() {
   return {
@@ -14,7 +15,10 @@ function buildAzureMockFactory() {
 
 createOpenAICompatibleGenerateTests({
   describeName: "azureOpenAIGenerateText",
-  importPath: "../src/azure-openai.utils",
+  loadModule: async () => {
+    const mod = await import("../src/azure-openai.utils");
+    return mod;
+  },
   functionName: "azureOpenAIGenerateText",
   defaultModel: "gpt-4o-mini",
   mockFactory: buildAzureMockFactory,

@@ -1,8 +1,11 @@
-import { createOpenAICompatibleGenerateTests } from "./shared-openai-compat-generate.test";
+import { createOpenAICompatibleGenerateTests } from "../src/test-helpers/shared-openai-compat-generate.helper";
 
 createOpenAICompatibleGenerateTests({
   describeName: "deepseekGenerateTextResponse",
-  importPath: "../src/deepseek.utils",
+  loadModule: async () => {
+    const mod = await import("../src/deepseek.utils");
+    return mod;
+  },
   functionName: "deepseekGenerateTextResponse",
   defaultModel: "deepseek-chat",
 });
