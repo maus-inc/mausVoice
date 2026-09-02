@@ -3,14 +3,29 @@ import {
   MeetingSegment,
   MeetingSpeaker,
 } from "../types/meetings.types";
-import { getMeetingRepo } from "../repos";
-import { getGenerateTextRepo } from "../repos";
+import { getGenerateTextRepo, getMeetingRepo } from "../repos";
 import { createId } from "../utils/id.utils";
+import { isExpansionFeatureEnabled } from "../features/featureFlags";
+import { isPersistenceAllowed } from "../utils/incognito.utils";
 import { getLogger } from "../utils/log.utils";
+
+const ensureMeetingNotesEnabled = (): void => {
+  if (!isExpansionFeatureEnabled("meetingNotesEnabled")) {
+    throw new Error("Meeting notes feature is not enabled");
+  }
+};
+
+const ensurePersistenceAllowed = (): void => {
+  if (!isPersistenceAllowed()) {
+    throw new Error("Persistence is suppressed in incognito mode");
+  }
+};
 
 export const startMeetingRecording = async (
   title: string,
 ): Promise<Meeting> => {
+  ensureMeetingNotesEnabled();
+  ensurePersistenceAllowed();
   const repo = getMeetingRepo();
   return repo.createMeeting({
     id: createId(),
@@ -22,7 +37,7 @@ export const startMeetingRecording = async (
     segments: [],
     summary: undefined,
     transcript: "",
-    source: "mixed",
+    source: "microphone",
   });
 };
 
@@ -31,6 +46,8 @@ export const stopMeetingRecording = async (
   segments: MeetingSegment[],
   speakers: MeetingSpeaker[],
 ): Promise<void> => {
+  ensureMeetingNotesEnabled();
+  ensurePersistenceAllowed();
   const repo = getMeetingRepo();
 
   const durationMs =
@@ -41,13 +58,6 @@ export const stopMeetingRecording = async (
     .filter(Boolean)
     .join("\n");
 
-  await repo.updateMeeting({
-    id: meetingId,
-    status: "completed",
-    durationMs,
-    transcript,
-  });
-
   if (segments.length > 0) {
     await repo.insertSegments(meetingId, segments);
   }
@@ -55,11 +65,19 @@ export const stopMeetingRecording = async (
   if (speakers.length > 0) {
     await repo.insertSpeakers(meetingId, speakers);
   }
+
+  await repo.updateMeeting({
+    id: meetingId,
+    status: "completed",
+    durationMs,
+    transcript,
+  });
 };
 
 export const generateMeetingSummary = async (
   meetingId: string,
 ): Promise<void> => {
+  ensureMeetingNotesEnabled();
   const repo = getMeetingRepo();
   const meeting = await repo.getMeeting(meetingId);
 
@@ -92,6 +110,13 @@ export const generateMeetingSummary = async (
   if (!summary) {
     getLogger().warning(
       `Summary generation returned empty for meeting ${meetingId}`,
+    );
+    return;
+  }
+
+  if (!isPersistenceAllowed()) {
+    getLogger().warning(
+      `Skipping summary persistence in incognito mode for meeting ${meetingId}`,
     );
     return;
   }

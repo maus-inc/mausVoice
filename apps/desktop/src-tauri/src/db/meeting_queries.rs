@@ -83,40 +83,37 @@ pub async fn update_meeting(
     transcript: Option<&str>,
     duration_ms: Option<i64>,
 ) -> Result<(), sqlx::Error> {
-    let mut query = String::from("UPDATE meetings SET ");
-    let mut first = true;
+    let mut assignments: Vec<&str> = Vec::new();
     if title.is_some() {
-        query.push_str("title = ?2");
-        first = false;
+        assignments.push("title = ?");
     }
     if status.is_some() {
-        if !first { query.push_str(", "); }
-        query.push_str("status = ?3");
-        first = false;
+        assignments.push("status = ?");
     }
     if summary.is_some() {
-        if !first { query.push_str(", "); }
-        query.push_str("summary = ?4");
-        first = false;
+        assignments.push("summary = ?");
     }
     if transcript.is_some() {
-        if !first { query.push_str(", "); }
-        query.push_str("transcript = ?5");
-        first = false;
+        assignments.push("transcript = ?");
     }
     if duration_ms.is_some() {
-        if !first { query.push_str(", "); }
-        query.push_str("duration_ms = ?6");
+        assignments.push("duration_ms = ?");
     }
-    query.push_str(" WHERE id = ?1");
+    if assignments.is_empty() {
+        return Ok(());
+    }
+    let query = format!(
+        "UPDATE meetings SET {} WHERE id = ?",
+        assignments.join(", "),
+    );
 
-    let mut q = sqlx::query(&query).bind(id);
+    let mut q = sqlx::query(&query);
     if let Some(v) = title { q = q.bind(v); }
     if let Some(v) = status { q = q.bind(v); }
     if let Some(v) = summary { q = q.bind(v); }
     if let Some(v) = transcript { q = q.bind(v); }
     if let Some(v) = duration_ms { q = q.bind(v); }
-    q.execute(&pool).await?;
+    q.bind(id).execute(&pool).await?;
     Ok(())
 }
 

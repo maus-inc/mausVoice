@@ -74,6 +74,8 @@ const fromLocalMeetingWithDetails = (
 });
 
 const fromLocalSegment = (local: LocalMeetingSegment): MeetingSegment => ({
+  id: local.id,
+  meetingId: local.meetingId,
   speakerId: local.speakerId,
   startTimeMs: local.startTimeMs,
   endTimeMs: local.endTimeMs,
@@ -96,6 +98,7 @@ const toLocalSegment = (
 
 const fromLocalSpeaker = (local: LocalMeetingSpeaker): MeetingSpeaker => ({
   id: local.id,
+  meetingId: local.meetingId,
   name: local.name,
   label: local.label ?? undefined,
 });
@@ -159,12 +162,14 @@ export class LocalMeetingRepo extends BaseMeetingRepo {
 
   async updateMeeting(params: UpdateMeetingParams): Promise<void> {
     await invoke<void>("meeting_update", {
-      id: params.id,
-      title: params.title ?? null,
-      status: params.status ?? null,
-      summary: params.summary,
-      transcript: params.transcript ?? null,
-      durationMs: params.durationMs ?? null,
+      args: {
+        id: params.id,
+        title: params.title,
+        status: params.status,
+        summary: params.summary,
+        transcript: params.transcript,
+        durationMs: params.durationMs,
+      },
     });
   }
 
