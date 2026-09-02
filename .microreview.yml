@@ -1,0 +1,31 @@
+# MicroReview Configuration
+# Docs: https://microreview.dev/docs/config
+
+# AI-powered features
+ai:
+  enabled: true
+  bugDetection: true
+  prWalkthrough: true
+  maxFindingsPerPr: 15
+
+# Language-specific rules
+languages:
+  typescript: true
+  python: true
+  java: false
+
+# Rule configuration
+rules:
+  # Set any rule to enabled: false to disable it
+  HARDCODED_URL:
+    enabled: true
+
+# Security scanning
+security:
+  enabled: true
+  secretDetection: true
+
+# Review behavior
+review:
+  blockOnCritical: true
+  githubChecks: true
