@@ -181,7 +181,6 @@ pub enum OutMessage {
         rect: Option<Rect>,
         monitor: Option<Rect>,
     },
-    },
 }
 
 pub fn send(msg: &OutMessage) {

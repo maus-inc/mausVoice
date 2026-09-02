@@ -513,7 +513,6 @@ fn clear_flash(state: &PillState) {
     *state.flash_action.borrow_mut() = None;
     *state.flash_action_label.borrow_mut() = None;
 }
-}
 
 /// Applies one IPC message to the pill state and marks the surface dirty so
 /// the next timer tick repaints.
