@@ -4,6 +4,7 @@ import {
   type ExpansionFeatureName,
   type ExpansionFlags,
   parseExpansionFlags,
+  serializeExpansionFlags,
 } from "../types/expansion-flags.types";
 import { getUserPreferencesRepo } from "../repos";
 
@@ -43,7 +44,7 @@ export const setExpansionFlag = (
       }
       const flags = parseExpansionFlags(current.expansionFlags);
       flags[name] = enabled;
-      const updated = await repo.setExpansionFlags(JSON.stringify(flags));
+      const updated = await repo.setExpansionFlags(serializeExpansionFlags(flags));
       produceAppState((draft) => {
         draft.userPrefs = updated;
       });

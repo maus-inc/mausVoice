@@ -4,7 +4,6 @@ const SENSITIVE_KEY_PATTERNS = [
   /password/i,
   /secret/i,
   /token/i,
-  /key/i,
   /auth/i,
   /credential/i,
   /private/i,
@@ -66,8 +65,9 @@ const isNestedObject = (value: unknown): value is Record<string, unknown> => {
 };
 
 const isSensitiveKey = (key: string, sensitiveKeys: string[]): boolean => {
+  const lowerKey = key.toLowerCase();
   return (
-    sensitiveKeys.includes(key) ||
+    sensitiveKeys.some((k) => k.toLowerCase() === lowerKey) ||
     SENSITIVE_KEY_PATTERNS.some((pattern) => pattern.test(key))
   );
 };
