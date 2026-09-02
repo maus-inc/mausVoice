@@ -36,32 +36,33 @@ export const setExpansionFlag = (
   name: ExpansionFeatureName,
   enabled: boolean,
 ): Promise<void> => {
-  togglePromise = togglePromise
-    .then(async () => {
-      try {
-        const repo = getUserPreferencesRepo();
-        const current = await repo.getUserPreferences();
-        if (!current) {
-          return;
-        }
-        const flags = parseExpansionFlags(current.expansionFlags);
-        flags[name] = enabled;
-        const updated = await repo.setExpansionFlags(
-          serializeExpansionFlags(flags),
-        );
-        produceAppState((draft) => {
-          draft.userPrefs = updated;
-        });
-      } catch (error) {
-        getLogger().error("Failed to set expansion flag:", error);
-        throw error;
+  const currentToggle = togglePromise.then(async () => {
+    try {
+      const repo = getUserPreferencesRepo();
+      const current = await repo.getUserPreferences();
+      if (!current) {
+        return;
       }
-    })
-    .catch(() => {
-      togglePromise = Promise.resolve();
-    });
+      const flags = parseExpansionFlags(current.expansionFlags);
+      flags[name] = enabled;
+      const updated = await repo.setExpansionFlags(
+        serializeExpansionFlags(flags),
+      );
+      produceAppState((draft) => {
+        draft.userPrefs = updated;
+      });
+    } catch (error) {
+      getLogger().error("Failed to set expansion flag:", error);
+      throw error;
+    }
+  });
 
-  return togglePromise;
+  // Ensure the shared chain recovers from failures so later toggles
+  // remain runnable, while still returning the original promise so
+  // callers can observe success or rejection.
+  togglePromise = currentToggle.catch(() => {});
+
+  return currentToggle;
 };
 
 export const DEFAULT_FLAGS: ExpansionFlags = { ...DEFAULT_EXPANSION_FLAGS };

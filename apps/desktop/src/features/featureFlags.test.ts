@@ -1,9 +1,9 @@
-import { describe, expect, it, vi } from "vitest";
+import { describe, expect, it, vi, beforeEach } from "vitest";
 import {
   setExpansionFlag,
   getExpansionFlags,
   isExpansionFeatureEnabled,
-} from "../features/featureFlags";
+} from "./featureFlags";
 import { getAppState, produceAppState } from "../store";
 import { getUserPreferencesRepo } from "../repos";
 import {
@@ -102,6 +102,7 @@ describe("featureFlags", () => {
         mockRepo,
       );
 
+      // Swallow the first failure so Promise.all can observe p2.
       const p1 = setExpansionFlag("meetingNotesEnabled", true).catch(() => {});
       const p2 = setExpansionFlag("localApiEnabled", true);
 

@@ -3,7 +3,7 @@ export type RedactionMode = "full" | "hash" | "truncate";
 const SENSITIVE_KEY_PATTERNS = [
   /password|passwd|pwd/i,
   /secret|clientSecret|client_secret/i,
-  /token|accessToken|refreshToken|idToken/i,
+  /token(?!s)|accessToken|refreshToken|idToken/gi,
   /authorization|auth(?:Header|orization|_header)?/i,
   /credential/i,
   /private/i,
@@ -77,39 +77,6 @@ const isSensitiveKey = (key: string, sensitiveKeys: string[]): boolean => {
   );
 };
 
-const redactStringValue = (value: string): string => {
-  return value.replace(SECRET_VALUE_PATTERN, "[redacted-secret]");
-};
-
-/**
- * Redact sensitive keys and recursively redact nested objects and arrays.
- */
-export const redactObject = async (
-  obj: Record<string, unknown>,
-  sensitiveKeys: string[] = [],
-): Promise<Record<string, unknown>> => {
-  const result: Record<string, unknown> = {};
-  for (const [key, value] of Object.entries(obj)) {
-    if (isSensitiveKey(key, sensitiveKeys)) {
-      if (typeof value === "string") {
-        result[key] = await redactString(value, "full");
-      } else if (Array.isArray(value)) {
-        result[key] = await redactArray(value, sensitiveKeys);
-      } else {
-        result[key] = "[redacted]";
-      }
-    } else if (isNestedObject(value)) {
-      result[key] = await redactObject(value, sensitiveKeys);
-    } else if (Array.isArray(value)) {
-      result[key] = await redactArray(value, sensitiveKeys);
-    } else {
-      result[key] =
-        typeof value === "string" ? redactStringValue(value) : value;
-    }
-  }
-  return result;
-};
-
 const redactArray = async (
   arr: unknown[],
   sensitiveKeys: string[],
@@ -128,4 +95,50 @@ const redactArray = async (
       return item;
     }),
   );
+};
+
+const redactStringValue = (value: string): string => {
+  return value.replace(SECRET_VALUE_PATTERN, "[redacted-secret]");
+};
+
+/**
+ * Redact sensitive keys and recursively redact nested objects and arrays.
+ */
+export const redactObject = async (
+  obj: Record<string, unknown>,
+  sensitiveKeys: string[] = [],
+): Promise<Record<string, unknown>> => {
+  const result: Record<string, unknown> = {};
+  for (const [key, value] of Object.entries(obj)) {
+    if (isSensitiveKey(key, sensitiveKeys)) {
+      if (typeof value === "string") {
+        result[key] = await redactString(value, "full");
+      } else if (Array.isArray(value)) {
+        result[key] = await Promise.all(
+          value.map(async (item) => {
+            if (typeof item === "string") {
+              return await redactString(item, "full");
+            }
+            if (isNestedObject(item)) {
+              return redactObject(item, sensitiveKeys);
+            }
+            if (Array.isArray(item)) {
+              return redactArray(item, sensitiveKeys);
+            }
+            return "[redacted]";
+          }),
+        );
+      } else {
+        result[key] = "[redacted]";
+      }
+    } else if (isNestedObject(value)) {
+      result[key] = await redactObject(value, sensitiveKeys);
+    } else if (Array.isArray(value)) {
+      result[key] = await redactArray(value, sensitiveKeys);
+    } else {
+      result[key] =
+        typeof value === "string" ? redactStringValue(value) : value;
+    }
+  }
+  return result;
 };
