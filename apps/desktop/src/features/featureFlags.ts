@@ -1,11 +1,15 @@
 import { getAppState, produceAppState } from "../store";
+import { getLogger } from "../utils/log.utils";
 import {
   DEFAULT_EXPANSION_FLAGS,
   type ExpansionFeatureName,
   type ExpansionFlags,
   parseExpansionFlags,
+  serializeExpansionFlags,
 } from "../types/expansion-flags.types";
 import { getUserPreferencesRepo } from "../repos";
+
+let togglePromise: Promise<void> = Promise.resolve();
 
 /**
  * Read the current expansion flags from app state.
@@ -26,22 +30,39 @@ export const isExpansionFeatureEnabled = (
 
 /**
  * Persist a single expansion flag change atomically.
+ * Concurrent toggles are serialized to prevent lost updates.
  */
-export const setExpansionFlag = async (
+export const setExpansionFlag = (
   name: ExpansionFeatureName,
   enabled: boolean,
 ): Promise<void> => {
-  const repo = getUserPreferencesRepo();
-  const current = await repo.getUserPreferences();
-  if (!current) {
-    return;
-  }
-  const flags = parseExpansionFlags(current.expansionFlags);
-  flags[name] = enabled;
-  const updated = await repo.setExpansionFlags(JSON.stringify(flags));
-  produceAppState((draft) => {
-    draft.userPrefs = updated;
+  const currentToggle = togglePromise.then(async () => {
+    try {
+      const repo = getUserPreferencesRepo();
+      const current = await repo.getUserPreferences();
+      if (!current) {
+        return;
+      }
+      const flags = parseExpansionFlags(current.expansionFlags);
+      flags[name] = enabled;
+      const updated = await repo.setExpansionFlags(
+        serializeExpansionFlags(flags),
+      );
+      produceAppState((draft) => {
+        draft.userPrefs = updated;
+      });
+    } catch (error) {
+      getLogger().error("Failed to set expansion flag:", error);
+      throw error;
+    }
   });
+
+  // Ensure the shared chain recovers from failures so later toggles
+  // remain runnable, while still returning the original promise so
+  // callers can observe success or rejection.
+  togglePromise = currentToggle.catch(() => {});
+
+  return currentToggle;
 };
 
-export const DEFAULT_FLAGS: ExpansionFlags = DEFAULT_EXPANSION_FLAGS;
+export const DEFAULT_FLAGS: ExpansionFlags = { ...DEFAULT_EXPANSION_FLAGS };
