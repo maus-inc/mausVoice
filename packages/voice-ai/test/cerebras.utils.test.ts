@@ -8,4 +8,5 @@ createOpenAICompatibleGenerateTests({
   },
   functionName: "cerebrasGenerateTextResponse",
   defaultModel: "llama3.1-8b",
+  maxTokensKey: "max_tokens",
 });

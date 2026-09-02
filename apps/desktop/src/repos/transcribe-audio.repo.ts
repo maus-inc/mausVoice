@@ -527,6 +527,14 @@ export class GladiaTranscribeAudioRepo extends BaseTranscribeAudioRepo {
     this.customizations = customizations;
   }
 
+  protected override getSegmentDurationSec(): number {
+    return 600;
+  }
+
+  protected override getBatchChunkCount(): number {
+    return 1;
+  }
+
   protected async transcribeSegment(
     input: TranscribeSegmentInput,
   ): Promise<TranscribeAudioOutput> {

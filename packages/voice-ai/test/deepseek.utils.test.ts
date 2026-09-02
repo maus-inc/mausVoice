@@ -8,4 +8,5 @@ createOpenAICompatibleGenerateTests({
   },
   functionName: "deepseekGenerateTextResponse",
   defaultModel: "deepseek-chat",
+  maxTokensKey: "max_tokens",
 });
