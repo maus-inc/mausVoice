@@ -1,11 +1,3 @@
-import {
-  GoogleGenAI,
-  Type,
-  type Content,
-  type FunctionDeclaration,
-  type GenerateContentResponse,
-  type Part,
-} from "@google/genai";
 import { retry, countWords } from "@maus-inc/utilities";
 import type {
   JsonResponse,

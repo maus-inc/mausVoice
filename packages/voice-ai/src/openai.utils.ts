@@ -9,7 +9,6 @@ import type {
 } from "@maus-inc/types";
 import { countWords, retry } from "@maus-inc/utilities";
 import OpenAI, { toFile } from "openai";
-import { openaiCompatibleTranscribeAudio } from "./openai-compatible-transcribe.utils";
 import { buildJsonSchemaResponseFormat } from "./response-format.utils";
 import type { CustomFetch, DiscoveredModelId } from "./types";
 import {

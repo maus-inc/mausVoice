@@ -11,7 +11,6 @@ import {
 } from "groq-sdk/resources/chat/completions";
 import OpenAI, { toFile } from "openai";
 import { openaiCompatibleStreamChat } from "./openai.utils";
-import { openaiCompatibleTranscribeAudio } from "./openai-compatible-transcribe.utils";
 import type { CustomFetch, DiscoveredModelId } from "./types";
 import {
   contentToString,
