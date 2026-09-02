@@ -34,7 +34,7 @@ export function createAldeaTranscribeTests({
       const fetchMock = buildFetchMock("你好世界");
 
       const mod = await loadModule();
-      const fn = mod[functionName];
+      const fn = mod[functionName] as (params: Record<string, unknown>) => Promise<{ text: string }>;
 
       const result = await fn({
         apiKey: "aldea-key",
@@ -56,7 +56,7 @@ export function createAldeaTranscribeTests({
       const fetchMock = buildFetchMock("你好");
 
       const mod = await loadModule();
-      const fn = mod[functionName];
+      const fn = mod[functionName] as (params: Record<string, unknown>) => Promise<{ text: string }>;
 
       await fn({
         apiKey: "aldea-key",
@@ -73,7 +73,7 @@ export function createAldeaTranscribeTests({
       const fetchMock = buildFetchMock("hello world");
 
       const mod = await loadModule();
-      const fn = mod[functionName];
+      const fn = mod[functionName] as (params: Record<string, unknown>) => Promise<{ text: string }>;
 
       await fn({
         apiKey: "aldea-key",
@@ -90,7 +90,7 @@ export function createAldeaTranscribeTests({
       const fetchMock = buildFetchMock("hi");
 
       const mod = await loadModule();
-      const fn = mod[functionName];
+      const fn = mod[functionName] as (params: Record<string, unknown>) => Promise<{ text: string }>;
 
       await fn({
         apiKey: "aldea-key",

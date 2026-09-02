@@ -1,5 +1,4 @@
 import { retry, countWords } from "@maus-inc/utilities";
-import { convertFloat32ToBase64PCM16 } from "./audio-convert.utils";
 import type { CustomFetch } from "./types";
 
 export type ElevenLabsTestIntegrationArgs = {

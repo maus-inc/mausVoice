@@ -1,5 +1,4 @@
 import { delayed } from "@maus-inc/utilities";
-import { convertFloat32ToPCM16 } from "./audio-convert.utils";
 import type { CustomFetch } from "./types";
 
 export const ASSEMBLYAI_TRANSCRIPTION_MODELS = [

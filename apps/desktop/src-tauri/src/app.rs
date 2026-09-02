@@ -5,6 +5,7 @@ use tauri_plugin_log::{Target, TargetKind, TimezoneStrategy};
 use tauri_plugin_window_state::{AppHandleExt, StateFlags};
 
 const AUTOSTART_HIDDEN_ARG: &str = "--mausvoice-autostart-hidden";
+const ENABLE_DEVTOOLS_ENV: &str = "MAUSVOICE_ENABLE_DEVTOOLS";
 
 /// Minimum gap between two window-move log lines.
 const MOVE_LOG_THROTTLE: Duration = Duration::from_millis(250);
@@ -262,7 +263,7 @@ pub fn build() -> tauri::Builder<tauri::Wry> {
             // behind the same compile-time feature makes the environment variable
             // intentionally ineffective if it is set for a release build.
             #[cfg(feature = "debug-assist")]
-            if std::env::var("MAUSVOICE_ENABLE_DEVTOOLS").is_ok() {
+            if std::env::var(ENABLE_DEVTOOLS_ENV).is_ok() {
                 log::info!("MAUSVOICE_ENABLE_DEVTOOLS detected, opening dev tools...");
                 if let Some(main_window) = app.get_webview_window("main") {
                     main_window.open_devtools();

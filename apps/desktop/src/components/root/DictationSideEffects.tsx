@@ -135,29 +135,6 @@ type HandleEmptyResultInput = {
   refreshMember: () => void;
 };
 
-type StartFailureToastInput = {
-  startInvokeRejected: boolean;
-  formatMessage: (descriptor: { defaultMessage: string }) => string;
-  showToast: (options: {
-    message: string;
-    toastType: "info" | "error";
-    duration?: number;
-  }) => Promise<void> | void;
-};
-
-export const reportStartFailureToast = async (
-  input: StartFailureToastInput,
-): Promise<void> => {
-  if (input.startInvokeRejected) {
-    return;
-  }
-  await input.showToast({
-    message: input.formatMessage({ defaultMessage: "Recording failed" }),
-    toastType: "error",
-    duration: 8_000,
-  });
-};
-
 export const handleEmptyTranscriptionResult = async (
   input: HandleEmptyResultInput,
 ): Promise<{ handled: boolean }> => {
@@ -641,7 +618,7 @@ export const DictationSideEffects = () => {
 
       if (strategy.shouldStoreTranscript()) {
         getLogger().verbose("Storing transcription");
-        await input.storeTranscriptionFn({
+        await storeTranscription({
           audio,
           rawTranscript: rawTranscript ?? null,
           sanitizedTranscript,
