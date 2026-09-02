@@ -134,6 +134,7 @@ pub async fn update_meeting(
 /// Persist segments, speakers, and the parent meeting update atomically.
 /// Any failure rolls back every child insert so a partial stop-recording
 /// state never lingers in the database.
+#[allow(clippy::too_many_arguments)]
 pub async fn complete_meeting(
     pool: SqlitePool,
     meeting_id: &str,
@@ -145,6 +146,17 @@ pub async fn complete_meeting(
     segments: &[crate::domain::MeetingSegment],
     speakers: &[crate::domain::MeetingSpeaker],
 ) -> Result<(), sqlx::Error> {
+    if segments.is_empty()
+        && speakers.is_empty()
+        && title.is_none()
+        && status.is_none()
+        && summary.is_none()
+        && transcript.is_none()
+        && duration_ms.is_none()
+    {
+        return Ok(());
+    }
+
     let mut tx = pool.begin().await?;
     for segment in segments {
         sqlx::query(

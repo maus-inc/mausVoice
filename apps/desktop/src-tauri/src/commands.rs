@@ -47,7 +47,7 @@ static CANCEL_TYPING: AtomicBool = AtomicBool::new(false);
 
 /// User-data tables wiped by `clear_local_data`. Extend this list when
 /// adding a table that stores user content — a missed table is a privacy leak.
-const USER_DATA_TABLES_TO_CLEAR: [&str; 11] = [
+const USER_DATA_TABLES_TO_CLEAR: [&str; 14] = [
     "chat_messages",
     "conversations",
     "user_profiles",
@@ -59,6 +59,9 @@ const USER_DATA_TABLES_TO_CLEAR: [&str; 11] = [
     "tones",
     "app_targets",
     "paired_remote_devices",
+    "meetings",
+    "meeting_segments",
+    "meeting_speakers",
 ];
 use tauri::{AppHandle, Emitter, EventTarget, Manager, State};
 

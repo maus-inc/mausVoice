@@ -123,13 +123,6 @@ export const generateMeetingSummary = async (
     return;
   }
 
-  if (!isPersistenceAllowed()) {
-    getLogger().warning(
-      `Skipping summary persistence in incognito mode for meeting ${meetingId}`,
-    );
-    return;
-  }
-
   await repo.updateMeeting({
     id: meetingId,
     summary,
