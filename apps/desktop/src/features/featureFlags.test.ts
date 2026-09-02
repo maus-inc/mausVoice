@@ -12,10 +12,6 @@ import {
   serializeExpansionFlags,
 } from "../types/expansion-flags.types";
 
-beforeEach(() => {
-  vi.clearAllMocks();
-});
-
 vi.mock("../store");
 vi.mock("../repos");
 vi.mock("../types/expansion-flags.types");
@@ -25,7 +21,7 @@ vi.mock("../utils/log.utils", () => ({
     info: () => {},
     warning: () => {},
     verbose: () => {},
-    stopwatch: async (_label: string, fn: () => Promise<unknown>) => fn(),
+    stopwatch: (_label: string, fn: () => Promise<unknown>) => fn(),
   }),
 }));
 
