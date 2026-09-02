@@ -25,9 +25,10 @@ export function createAnthropicGenerateTests({
         usage: { input_tokens: 1, output_tokens: 1 },
       });
 
-    it("uses the hardcoded max_tokens when maxTokens is undefined", async () => {
-      const createMessage = buildCreateMessage();
-
+    async function runTestCase(
+      createMessage: ReturnType<typeof buildCreateMessage>,
+      params: Record<string, unknown>,
+    ) {
       vi.doMock("@anthropic-ai/sdk", () => ({
         default: class MockAnthropic {
           messages = {
@@ -39,7 +40,15 @@ export function createAnthropicGenerateTests({
       const mod = await loadModule();
       const fn = mod[functionName] as (params: Record<string, unknown>) => Promise<unknown>;
 
-      await fn({
+      await fn(params);
+
+      return { createMessage };
+    }
+
+    it("uses the hardcoded max_tokens when maxTokens is undefined", async () => {
+      const createMessage = buildCreateMessage();
+
+      const { createMessage: cm } = await runTestCase(createMessage, {
         apiKey: "test-key",
         prompt: "hello",
       });
@@ -53,18 +62,7 @@ export function createAnthropicGenerateTests({
     it("forwards caller-owned maxTokens to max_tokens when provided", async () => {
       const createMessage = buildCreateMessage();
 
-      vi.doMock("@anthropic-ai/sdk", () => ({
-        default: class MockAnthropic {
-          messages = {
-            create: createMessage,
-          };
-        },
-      }));
-
-      const mod = await loadModule();
-      const fn = mod[functionName] as (params: Record<string, unknown>) => Promise<unknown>;
-
-      await fn({
+      const { createMessage: cm } = await runTestCase(createMessage, {
         apiKey: "test-key",
         prompt: "hello",
         maxTokens: forwardedMaxTokens,
@@ -79,17 +77,6 @@ export function createAnthropicGenerateTests({
     it("injects the schema into the prompt when jsonResponse is set", async () => {
       const createMessage = buildCreateMessage("ok");
 
-      vi.doMock("@anthropic-ai/sdk", () => ({
-        default: class MockAnthropic {
-          messages = {
-            create: createMessage,
-          };
-        },
-      }));
-
-      const mod = await loadModule();
-      const fn = mod[functionName] as (params: Record<string, unknown>) => Promise<unknown>;
-
       const jsonResponse = {
         name: "schema",
         description: "x",
@@ -100,7 +87,7 @@ export function createAnthropicGenerateTests({
         },
       };
 
-      await fn({
+      const { createMessage: cm } = await runTestCase(createMessage, {
         apiKey: "test-key",
         prompt: "transcribe this",
         jsonResponse,

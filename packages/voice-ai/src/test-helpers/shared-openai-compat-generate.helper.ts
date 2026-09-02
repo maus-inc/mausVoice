@@ -42,17 +42,26 @@ export function createOpenAICompatibleGenerateTests({
       },
     };
 
-    it("uses the hardcoded max_tokens when maxTokens is undefined", async () => {
-      const createCompletion = buildCreateCompletion(
-        JSON.stringify({ result: "ok" }),
-      );
-
+    async function runTestCase(
+      createCompletion: ReturnType<typeof buildCreateCompletion>,
+      params: Record<string, unknown>,
+    ) {
       vi.doMock("openai", () => mockFactory());
 
       const mod = await loadModule();
       const fn = mod[functionName] as (params: Record<string, unknown>) => Promise<unknown>;
 
-      await fn({
+      await fn(params);
+
+      return { createCompletion };
+    }
+
+    it("uses the hardcoded max_tokens when maxTokens is undefined", async () => {
+      const createCompletion = buildCreateCompletion(
+        JSON.stringify({ result: "ok" }),
+      );
+
+      const { createCompletion: cc } = await runTestCase(createCompletion, {
         apiKey: "test-key",
         model: defaultModel,
         prompt: "hello",
@@ -69,12 +78,7 @@ export function createOpenAICompatibleGenerateTests({
         JSON.stringify({ result: "ok" }),
       );
 
-      vi.doMock("openai", () => mockFactory());
-
-      const mod = await loadModule();
-      const fn = mod[functionName] as (params: Record<string, unknown>) => Promise<unknown>;
-
-      await fn({
+      const { createCompletion: cc } = await runTestCase(createCompletion, {
         apiKey: "test-key",
         model: defaultModel,
         prompt: "hello",
@@ -92,12 +96,7 @@ export function createOpenAICompatibleGenerateTests({
         JSON.stringify({ result: "ok" }),
       );
 
-      vi.doMock("openai", () => mockFactory());
-
-      const mod = await loadModule();
-      const fn = mod[functionName] as (params: Record<string, unknown>) => Promise<unknown>;
-
-      await fn({
+      const { createCompletion: cc } = await runTestCase(createCompletion, {
         apiKey: "test-key",
         model: defaultModel,
         prompt: "hi",
@@ -122,12 +121,7 @@ export function createOpenAICompatibleGenerateTests({
     it("omits response_format when jsonResponse is not set", async () => {
       const createCompletion = buildCreateCompletion("ok");
 
-      vi.doMock("openai", () => mockFactory());
-
-      const mod = await loadModule();
-      const fn = mod[functionName] as (params: Record<string, unknown>) => Promise<unknown>;
-
-      await fn({
+      const { createCompletion: cc } = await runTestCase(createCompletion, {
         apiKey: "test-key",
         model: defaultModel,
         prompt: "hi",
