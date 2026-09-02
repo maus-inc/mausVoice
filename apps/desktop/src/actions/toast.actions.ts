@@ -42,3 +42,22 @@ export async function dismissToast(): Promise<void> {
     payload: JSON.stringify({ type: "dismiss_toast" }),
   });
 }
+
+/**
+ * In-flight toast. The native pill treats a missing duration as 2.5s
+ * (`FLASH_DURATION`), so callers that want the toast to outlive a long job
+ * must pass an explicit duration.
+ */
+export async function showPersistentToast(
+  message: string,
+  duration: number,
+): Promise<void> {
+  await showToast({ message, toastType: "info", duration });
+}
+
+export async function showCompletionToast(
+  message: string,
+  duration = 4000,
+): Promise<void> {
+  await showToast({ message, toastType: "info", duration });
+}

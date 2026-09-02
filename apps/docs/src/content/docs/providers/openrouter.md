@@ -7,7 +7,15 @@ sidebar:
 
 OpenRouter is generative-only in mausVoice. Add its API key under **Settings → Processing → AI post processing** or **Assistant mode** and select that record for the task. Pair it with Local or another implemented transcription provider; OpenRouter never receives microphone audio through the transcription dispatcher.
 
+<<<<<<< ours
 Expand **Model** on the selected key to fetch OpenRouter's live model catalog. Search matches model names and IDs, and stars keep preferred entries at the top. A key with no customized favorites starts with `openai/gpt-oss-120b` and `openai/gpt-oss-20b`. If no model is saved at request time, generation and the key test default to `openai/gpt-4o-mini`.
+=======
+Expand **Model** on the selected key to fetch OpenRouter's live model catalog. Search matches model names and IDs, and stars keep preferred entries at the top. A key with no customized favorites starts with `openai/gpt-oss-120b` and `openai/gpt-oss-20b`. If no model is saved at request time, generation and the key test default to `openai/gpt-4o-mini`. For transcription, pick an OpenRouter-routed STT model such as `openai/whisper-1`.
+
+## Speech-to-text
+
+When the OpenRouter key is the selected transcription record, mausVoice POSTs multipart audio to `${OPENROUTER_BASE_URL}/audio/transcriptions` through the OpenAI-compatible SDK and reads the returned `text` field. The active dictation language is forwarded as a `language` form field; selecting **Auto** lets the upstream model detect it. The selected model is required; selecting OpenRouter transcription without a model emits a warning and falls back to `openai/whisper-1`.
+>>>>>>> theirs
 
 ## Route to upstream providers
 

@@ -472,9 +472,18 @@ importers:
       '@anthropic-ai/sdk':
         specifier: ^0.71.2
         version: 0.71.2(zod@4.4.3)
+<<<<<<< ours
       '@google/genai':
         specifier: ^1.52.0
         version: 1.52.0(@modelcontextprotocol/sdk@1.27.1(zod@4.4.3))
+=======
+      '@gladiaio/sdk':
+        specifier: 1.1.0
+        version: 1.1.0(patch_hash=484bbdac3e2eba49d80cd4ba9b82a110f207827d3baf7bd4ecbcd70c1ca9d4ae)(eventemitter3@5.0.4)(undici@8.10.0)(ws@8.21.0)
+      '@google/genai':
+        specifier: ^1.52.0
+        version: 1.52.0
+>>>>>>> theirs
       '@maus-inc/types':
         specifier: workspace:*
         version: link:../types
@@ -1592,6 +1601,15 @@ packages:
       ts-jest: ^29
     peerDependenciesMeta:
       ts-jest:
+        optional: true
+
+  '@google/genai@1.52.0':
+    resolution: {integrity: sha512-gwSvbpiN/17O9TbsqSsE/OzZcpv5Fo4RQjdngGgogtuB9RsyJ8ZHhX5KjHj1bp5N9snN2eK8LDGXSaWW2hof8Q==}
+    engines: {node: '>=20.0.0'}
+    peerDependencies:
+      '@modelcontextprotocol/sdk': ^1.25.2
+    peerDependenciesMeta:
+      '@modelcontextprotocol/sdk':
         optional: true
 
   '@google/genai@1.52.0':
@@ -3534,6 +3552,9 @@ packages:
   bignumber.js@9.3.1:
     resolution: {integrity: sha512-Ko0uX15oIUS7wJ3Rb30Fs6SkVbLmPBAKdlm7q9+ak9bbIeFf0MwuBsQV6z7+X768/cHsfg+WlysDWJcmthjsjQ==}
 
+  bignumber.js@9.3.1:
+    resolution: {integrity: sha512-Ko0uX15oIUS7wJ3Rb30Fs6SkVbLmPBAKdlm7q9+ak9bbIeFf0MwuBsQV6z7+X768/cHsfg+WlysDWJcmthjsjQ==}
+
   binary-extensions@2.3.0:
     resolution: {integrity: sha512-Ceh+7ox5qe7LJuLHoY0feh3pHuUDHAcRUeyL2VYghZwfpkNIy/+8Ocg0a3UuSoYzavmylwuLWQOf3hl0jjMMIw==}
     engines: {node: '>=8'}
@@ -4506,10 +4527,13 @@ packages:
     resolution: {integrity: sha512-buewHzMvYL29jdeQTVILecSaZKnt/RJWjoZCF5OW60Z67/GmSLBkOFM7qh1PI3zFNtJbaZL5eQu1vLfazOwj4g==}
     engines: {node: '>=12.20.0'}
 
+<<<<<<< ours
   forwarded@0.2.0:
     resolution: {integrity: sha512-buRG0fpBtRHSTCOASe6hD258tEubFoRLb4ZNA6NxMVHNw2gOcwHo9wyablzMzOA5z9xA9L1KNjk/Nt6MT9aYow==}
     engines: {node: '>= 0.6'}
 
+=======
+>>>>>>> theirs
   framer-motion@12.38.0:
     resolution: {integrity: sha512-rFYkY/pigbcswl1XQSb7q424kSTQ8q6eAC+YUsSKooHQYuLdzdHjrt6uxUC+PRAO++q5IS7+TamgIw1AphxR+g==}
     peerDependencies:
@@ -4546,8 +4570,13 @@ packages:
   functions-have-names@1.2.3:
     resolution: {integrity: sha512-xckBUXyTIqT97tq2x2AMb+g163b5JFysYk0x4qxNFwbfQkmNZoiRHb6sPzI9/QV33WeuvVYBUIiD4NzNIyqaRQ==}
 
+<<<<<<< ours
   gaxios@7.1.4:
     resolution: {integrity: sha512-bTIgTsM2bWn3XklZISBTQX7ZSddGW+IO3bMdGaemHZ3tbqExMENHLx6kKZ/KlejgrMtj8q7wBItt51yegqalrA==}
+=======
+  gaxios@7.3.1:
+    resolution: {integrity: sha512-kB3rzJV7d9juLZh8/56QTXCwQfxyhdOMdyYk1HdQKFtF8TJTDTZQJtixWIwXdE9Jji91mC41DUNpjleo4L4eAQ==}
+>>>>>>> theirs
     engines: {node: '>=18'}
 
   gcp-metadata@8.1.2:
@@ -4644,8 +4673,13 @@ packages:
     resolution: {integrity: sha512-DpLKbNU4WylpxJykQujfCcwYWiV/Jhm50Goo0wrVILAv5jOr9d+H+UR3PhSCD2rCCEIg0uc+G+muBTwD54JhDQ==}
     engines: {node: '>= 0.4'}
 
+<<<<<<< ours
   google-auth-library@10.6.2:
     resolution: {integrity: sha512-e27Z6EThmVNNvtYASwQxose/G57rkRuaRbQyxM2bvYLLX/GqWZ5chWq2EBoUchJbCc57eC9ArzO5wMsEmWftCw==}
+=======
+  google-auth-library@10.9.1:
+    resolution: {integrity: sha512-i1ydyHrqcIxXkWh/uBmVkzCvIuq5yiK2ATndIe5XxKholrG/MTYP9xGYka4sQhrbIAgGjL2B6NOE7rFaiF3fXw==}
+>>>>>>> theirs
     engines: {node: '>=18'}
 
   google-logging-utils@1.1.3:
@@ -8819,6 +8853,17 @@ snapshots:
       - supports-color
       - utf-8-validate
 
+  '@google/genai@1.52.0':
+    dependencies:
+      google-auth-library: 10.9.1
+      p-retry: 4.6.2
+      protobufjs: 8.7.1
+      ws: 8.21.0
+    transitivePeerDependencies:
+      - bufferutil
+      - supports-color
+      - utf-8-validate
+
   '@grpc/grpc-js@1.14.4':
     dependencies:
       '@grpc/proto-loader': 0.8.1
@@ -10821,6 +10866,8 @@ snapshots:
 
   bignumber.js@9.3.1: {}
 
+  bignumber.js@9.3.1: {}
+
   binary-extensions@2.3.0: {}
 
   body-parser@2.3.0:
@@ -12061,9 +12108,12 @@ snapshots:
     dependencies:
       fetch-blob: 3.2.0
 
+<<<<<<< ours
   forwarded@0.2.0:
     optional: true
 
+=======
+>>>>>>> theirs
   framer-motion@12.38.0(@emotion/is-prop-valid@1.4.0)(react-dom@19.2.8(react@19.2.8))(react@19.2.8):
     dependencies:
       motion-dom: 12.38.0
@@ -12095,7 +12145,11 @@ snapshots:
 
   functions-have-names@1.2.3: {}
 
+<<<<<<< ours
   gaxios@7.1.4:
+=======
+  gaxios@7.3.1:
+>>>>>>> theirs
     dependencies:
       extend: 3.0.2
       https-proxy-agent: 7.0.6
@@ -12105,7 +12159,11 @@ snapshots:
 
   gcp-metadata@8.1.2:
     dependencies:
+<<<<<<< ours
       gaxios: 7.1.4
+=======
+      gaxios: 7.3.1
+>>>>>>> theirs
       google-logging-utils: 1.1.3
       json-bigint: 1.0.0
     transitivePeerDependencies:
@@ -12221,11 +12279,19 @@ snapshots:
       define-properties: 1.2.1
       gopd: 1.2.0
 
+<<<<<<< ours
   google-auth-library@10.6.2:
     dependencies:
       base64-js: 1.5.1
       ecdsa-sig-formatter: 1.0.11
       gaxios: 7.1.4
+=======
+  google-auth-library@10.9.1:
+    dependencies:
+      base64-js: 1.5.1
+      ecdsa-sig-formatter: 1.0.11
+      gaxios: 7.3.1
+>>>>>>> theirs
       gcp-metadata: 8.1.2
       google-logging-utils: 1.1.3
       jws: 4.0.1
