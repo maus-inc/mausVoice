@@ -4,6 +4,7 @@ pub mod chat_message;
 pub mod conversation;
 pub mod hotkey;
 pub mod keyboard;
+pub mod meeting;
 pub mod monitor;
 pub mod overlay;
 pub mod paired_remote_device;
@@ -23,6 +24,7 @@ pub use hotkey::{CompositorBinding, Hotkey};
 pub use keyboard::{
     KeyboardListenerHealthPayload, KeysHeldPayload, EVT_KEYBOARD_LISTENER_HEALTH, EVT_KEYS_HELD,
 };
+pub use meeting::{Meeting, MeetingSegment, MeetingSpeaker, MeetingWithDetails};
 pub use monitor::{MonitorAtCursor, OverlayAnchor, ScreenVisibleArea};
 pub use overlay::{OverlayPhase, OverlayPhasePayload, PillWindowSize, EVT_OVERLAY_PHASE};
 pub use paired_remote_device::PairedRemoteDevice;
