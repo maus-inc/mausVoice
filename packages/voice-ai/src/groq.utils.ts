@@ -3,28 +3,31 @@ import type {
   LlmChatInput,
   LlmStreamEvent,
 } from "@maus-inc/types";
-import { countWords, retry } from "@maus-inc/utilities";
+import { retry } from "@maus-inc/utilities";
 import Groq from "groq-sdk/index";
-import {
-  ChatCompletionContentPart,
+import type {
   ChatCompletionMessageParam,
 } from "groq-sdk/resources/chat/completions";
-import OpenAI from "openai";
+import OpenAI, { toFile } from "openai";
 import { openaiCompatibleStreamChat } from "./openai.utils";
-import { openaiCompatibleTranscribeAudio } from "./openai-compatible-transcribe.utils";
+import { parseOpenAICompatibleGenerateTextResponse } from "./openai-compatible-generate.utils";
+import type { CustomFetch, DiscoveredModelId } from "./types";
+import {
+  runSdkTranscription,
+  TranscriptionSegment,
+  TranscribeAudioOutput,
+} from "./transcription.utils";
 
 export const GENERATE_TEXT_MODELS = [
-  "moonshotai/kimi-k2-instruct-0905",
   "openai/gpt-oss-20b",
   "openai/gpt-oss-120b",
-  "qwen/qwen3.6-27b",
 ] as const;
-export type GenerateTextModel = (typeof GENERATE_TEXT_MODELS)[number];
+export type GenerateTextModel =
+  (typeof GENERATE_TEXT_MODELS)[number] | DiscoveredModelId;
 
 // Models that support `response_format: { type: "json_schema" }`.
 // See https://console.groq.com/docs/structured-outputs
 const JSON_SCHEMA_SUPPORTED_MODELS = new Set<string>([
-  "moonshotai/kimi-k2-instruct-0905",
   "openai/gpt-oss-20b",
   "openai/gpt-oss-120b",
 ]);
@@ -35,33 +38,12 @@ export const TRANSCRIPTION_MODELS = [
 ] as const;
 export type TranscriptionModel = (typeof TRANSCRIPTION_MODELS)[number];
 
-const contentToString = (
-  content: string | ChatCompletionContentPart[] | null | undefined,
-): string => {
-  if (!content) {
-    return "";
-  }
-
-  if (typeof content === "string") {
-    return content;
-  }
-
-  return content
-    .map((part) => {
-      if (part.type === "text") {
-        return part.text ?? "";
-      }
-      return "";
-    })
-    .join("")
-    .trim();
-};
-
-const createClient = (apiKey: string) => {
-  // `dangerouslyAllowBrowser` is needed because this runs on a desktop tauri app.
-  // The Tauri app doesn't run in a web browser and encyrpts API keys locally, so this
-  // is safe.
-  return new Groq({ apiKey: apiKey.trim(), dangerouslyAllowBrowser: true });
+const createClient = (apiKey: string, customFetch?: CustomFetch) => {
+  return new Groq({
+    apiKey: apiKey.trim(),
+    dangerouslyAllowBrowser: true,
+    fetch: customFetch,
+  });
 };
 
 export type GroqTranscriptionArgs = {
@@ -71,12 +53,11 @@ export type GroqTranscriptionArgs = {
   ext: string;
   prompt?: string;
   language?: string;
+  customFetch?: CustomFetch;
 };
 
-export type GroqTranscribeAudioOutput = {
-  text: string;
-  wordsUsed: number;
-};
+export type GroqTranscriptionSegment = TranscriptionSegment;
+export type GroqTranscribeAudioOutput = TranscribeAudioOutput;
 
 export const groqTranscribeAudio = async ({
   apiKey,
@@ -85,15 +66,25 @@ export const groqTranscribeAudio = async ({
   ext,
   prompt,
   language,
+  customFetch,
 }: GroqTranscriptionArgs): Promise<GroqTranscribeAudioOutput> => {
-  return openaiCompatibleTranscribeAudio({
-    client: createClient(apiKey),
-    blob,
-    model,
-    ext,
-    prompt,
-    language,
-  });
+  const client = createClient(apiKey, customFetch);
+  const file = await toFile(blob, `audio.${ext}`);
+  return runSdkTranscription(
+    (body) =>
+      client.audio.transcriptions.create(
+        body as unknown as Parameters<
+          typeof client.audio.transcriptions.create
+        >[0],
+      ),
+    {
+      file,
+      model,
+      prompt,
+      language,
+      response_format: "verbose_json",
+    },
+  );
 };
 
 export type GroqGenerateTextArgs = {
@@ -104,6 +95,8 @@ export type GroqGenerateTextArgs = {
   imageUrls?: string[];
   jsonResponse?: JsonResponse;
   maxTokens?: number;
+  signal?: AbortSignal;
+  customFetch?: CustomFetch;
 };
 
 export type GroqGenerateResponseOutput = {
@@ -119,104 +112,70 @@ export const groqGenerateTextResponse = async ({
   imageUrls = [],
   jsonResponse,
   maxTokens,
+  signal,
+  customFetch,
 }: GroqGenerateTextArgs): Promise<GroqGenerateResponseOutput> => {
   return retry({
-    retries: 3,
+    retries: signal ? 1 : 3,
     fn: async () => {
-      const client = createClient(apiKey);
+      const client = createClient(apiKey, customFetch);
 
-      const messages: ChatCompletionMessageParam[] = [];
-      if (system) {
-        messages.push({ role: "system", content: system });
-      }
+      const messages: ChatCompletionMessageParam[] = [
+        ...(system ? [{ role: "system" as const, content: system }] : []),
+        {
+          role: "user" as const,
+          content: [
+            ...imageUrls.map((url) => ({
+              type: "image_url" as const,
+              image_url: { url },
+            })),
+            { type: "text" as const, text: prompt },
+          ],
+        },
+      ];
 
-      const userParts: ChatCompletionContentPart[] = [];
-      for (const url of imageUrls) {
-        userParts.push({
-          type: "image_url",
-          image_url: { url },
-        });
-      }
-
-      userParts.push({ type: "text", text: prompt });
-      messages.push({ role: "user", content: userParts });
-
-      const response = await client.chat.completions.create({
-        messages,
-        model,
-        max_completion_tokens: maxTokens ?? 5000,
-        response_format: jsonResponse
-          ? JSON_SCHEMA_SUPPORTED_MODELS.has(model)
-            ? {
-                type: "json_schema",
-                json_schema: {
-                  name: jsonResponse.name,
-                  description: jsonResponse.description,
-                  schema: jsonResponse.schema,
-                },
-              }
-            : { type: "json_object" }
-          : undefined,
-      });
+      const response = await client.chat.completions.create(
+        {
+          messages,
+          model,
+          max_completion_tokens: maxTokens ?? 5000,
+          response_format: jsonResponse
+            ? JSON_SCHEMA_SUPPORTED_MODELS.has(model)
+              ? {
+                  type: "json_schema",
+                  json_schema: {
+                    name: jsonResponse.name,
+                    description: jsonResponse.description,
+                    schema: jsonResponse.schema,
+                  },
+                }
+              : { type: "json_object" }
+            : undefined,
+        },
+        { signal },
+      );
 
       console.log("groq llm usage:", response.usage);
-      if (!response.choices || response.choices.length === 0) {
-        throw new Error("No response from Groq");
-      }
-
-      const result = response.choices[0].message.content;
-      if (!result) {
-        throw new Error("Content is empty");
-      }
-
-      const content = contentToString(result);
-      return {
-        text: content,
-        tokensUsed: response.usage?.total_tokens ?? countWords(content),
-      };
+      return parseOpenAICompatibleGenerateTextResponse({
+        response,
+        providerLabel: "Groq",
+      });
     },
   });
 };
 
 export type GroqTestIntegrationArgs = {
   apiKey: string;
+  customFetch?: CustomFetch;
 };
 
 export const groqTestIntegration = async ({
   apiKey,
+  customFetch,
 }: GroqTestIntegrationArgs): Promise<boolean> => {
-  const client = createClient(apiKey);
-
-  const response = await client.chat.completions.create({
-    messages: [
-      {
-        role: "user",
-        content: [
-          {
-            type: "text",
-            text: `Reply with the single word "Hello."`,
-          },
-        ],
-      },
-    ],
-    model: "openai/gpt-oss-120b",
-    temperature: 0,
-    reasoning_effort: "low",
-    max_completion_tokens: 1024,
-    top_p: 1,
-  });
-
-  if (!response.choices || response.choices.length === 0) {
-    throw new Error("No response from Groq");
-  }
-
-  const first = response.choices[0];
-  const content = contentToString(first?.message?.content);
-  if (!content) {
-    throw new Error("Response content is empty");
-  }
-
-  return content.toLowerCase().includes("hello");
+  const client = createClient(apiKey, customFetch);
+  await client.models.list();
+  return true;
 };
 
 // ============================================================================
@@ -227,17 +186,20 @@ export type GroqStreamChatArgs = {
   apiKey: string;
   model: string;
   input: LlmChatInput;
+  customFetch?: CustomFetch;
 };
 
 export async function* groqStreamChat({
   apiKey,
   model,
   input,
+  customFetch,
 }: GroqStreamChatArgs): AsyncGenerator<LlmStreamEvent> {
   const client = new OpenAI({
     apiKey: apiKey.trim(),
     baseURL: "https://api.groq.com/openai/v1",
     dangerouslyAllowBrowser: true,
+    fetch: customFetch,
   });
   yield* openaiCompatibleStreamChat(client, model, input);
 }

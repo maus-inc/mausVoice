@@ -1,11 +1,14 @@
 import OpenAI from "openai";
 import type {
   ChatCompletionCreateParamsNonStreaming,
-  ChatCompletionMessageParam,
 } from "openai/resources/chat/completions";
-import { retry, countWords } from "@maus-inc/utilities";
+import { retry } from "@maus-inc/utilities";
 import { openaiCompatibleTranscribeAudio } from "./openai-compatible-transcribe.utils";
 import { buildJsonSchemaResponseFormat } from "./response-format.utils";
+import {
+  buildOpenAICompatibleMessages,
+  parseOpenAICompatibleGenerateTextResponse,
+} from "./openai-compatible-generate.utils";
 import type {
   JsonResponse,
   LlmChatInput,
@@ -191,13 +194,11 @@ export const openrouterGenerateTextResponse = async ({
     fn: async () => {
       const client = createClient(apiKey, customFetch);
 
-      const messages: ChatCompletionMessageParam[] = [];
-      if (system) {
-        messages.push({ role: "system", content: system });
-      }
-      messages.push({ role: "user", content: prompt });
+      const messages = buildOpenAICompatibleMessages({
+        system,
+        prompt,
+      });
 
-      // Build the request with optional provider routing
       const response_format = buildResponseFormat(model, jsonResponse);
 
       const requestParams: ChatCompletionCreateParamsNonStreaming & {
@@ -211,7 +212,6 @@ export const openrouterGenerateTextResponse = async ({
         ...(response_format ? { response_format } : {}),
       };
 
-      // Add provider routing if specified
       if (providerRouting) {
         requestParams.provider = providerRouting;
       }
@@ -219,19 +219,10 @@ export const openrouterGenerateTextResponse = async ({
       const response = await client.chat.completions.create(requestParams);
 
       console.log("openrouter llm usage:", response.usage);
-      if (!response.choices || response.choices.length === 0) {
-        throw new Error("No response from OpenRouter");
-      }
-
-      const result = response.choices[0].message.content;
-      if (!result) {
-        throw new Error("Content is empty");
-      }
-
-      return {
-        text: result,
-        tokensUsed: response.usage?.total_tokens ?? countWords(result),
-      };
+      return parseOpenAICompatibleGenerateTextResponse({
+        response,
+        providerLabel: "OpenRouter",
+      });
     },
   });
 };

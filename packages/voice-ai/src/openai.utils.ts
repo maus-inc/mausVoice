@@ -7,28 +7,34 @@ import type {
   LlmTool,
   LlmToolChoice,
 } from "@maus-inc/types";
-import { countWords, retry } from "@maus-inc/utilities";
-import OpenAI from "openai";
-import { openaiCompatibleTranscribeAudio } from "./openai-compatible-transcribe.utils";
+import { retry } from "@maus-inc/utilities";
+import OpenAI, { toFile } from "openai";
 import { buildJsonSchemaResponseFormat } from "./response-format.utils";
-import type { CustomFetch } from "./types";
+import {
+  buildOpenAICompatibleMessages,
+  parseOpenAICompatibleGenerateTextResponse,
+} from "./openai-compatible-generate.utils";
+import type { CustomFetch, DiscoveredModelId } from "./types";
+import {
+  runSdkTranscription,
+  TranscriptionSegment,
+  TranscribeAudioOutput,
+} from "./transcription.utils";
 import type {
-  ChatCompletionContentPart,
+  ChatCompletionChunk,
   ChatCompletionMessageParam,
   ChatCompletionTool,
 } from "openai/resources/chat/completions";
 
 export const OPENAI_GENERATE_TEXT_MODELS = [
-  "gpt-4o",
   "gpt-4o-mini",
-  "gpt-4-turbo",
-  "gpt-3.5-turbo",
-  "gpt-5.2",
-  "gpt-5.3",
-  "gpt-5.4",
+  "gpt-5.6-luna",
+  "gpt-5.6-terra",
+  "gpt-5.6-sol",
+  "gpt-5-mini",
 ] as const;
 export type OpenAIGenerateTextModel =
-  (typeof OPENAI_GENERATE_TEXT_MODELS)[number];
+  (typeof OPENAI_GENERATE_TEXT_MODELS)[number] | DiscoveredModelId;
 
 export const OPENAI_TRANSCRIPTION_MODELS = [
   "whisper-1",
@@ -36,7 +42,7 @@ export const OPENAI_TRANSCRIPTION_MODELS = [
   "gpt-4o-mini-transcribe",
 ] as const;
 export type OpenAITranscriptionModel =
-  (typeof OPENAI_TRANSCRIPTION_MODELS)[number];
+  (typeof OPENAI_TRANSCRIPTION_MODELS)[number] | DiscoveredModelId;
 
 // Models that support `response_format: { type: "json_schema" }`. The base
 // OpenAI endpoint does, but downstream OpenAI-compatible providers and
@@ -55,6 +61,9 @@ const JSON_SCHEMA_SUPPORTED_MODELS = new Set<string>([
   "gpt-5-mini",
   "gpt-5-nano",
   "gpt-5-pro",
+  "gpt-5.6-luna",
+  "gpt-5.6-terra",
+  "gpt-5.6-sol",
 ]);
 
 export function supportsOpenAIJsonSchema(model: string): boolean {
@@ -67,28 +76,6 @@ const buildResponseFormat = (model: string, jsonResponse?: JsonResponse) =>
     JSON_SCHEMA_SUPPORTED_MODELS,
     jsonResponse,
   );
-
-const contentToString = (
-  content: string | ChatCompletionContentPart[] | null | undefined,
-): string => {
-  if (!content) {
-    return "";
-  }
-
-  if (typeof content === "string") {
-    return content;
-  }
-
-  return content
-    .map((part) => {
-      if (part.type === "text") {
-        return part.text ?? "";
-      }
-      return "";
-    })
-    .join("")
-    .trim();
-};
 
 const createClient = (
   apiKey: string,
@@ -113,12 +100,35 @@ export type OpenAITranscriptionArgs = {
   ext: string;
   prompt?: string;
   language?: string;
+  customFetch?: CustomFetch;
 };
 
-export type OpenAITranscribeAudioOutput = {
-  text: string;
-  wordsUsed: number;
-};
+/**
+ * OpenAI transcription models that support `verbose_json` and return the
+ * detailed per-segment `no_speech_prob` used by downstream hallucination
+ * gating (issue #54). Models here keep `verbose_json`.
+ */
+const VERBOSE_JSON_TRANSCRIPTION_MODELS = ["whisper-1"] as const;
+
+/**
+ * Pick the `response_format` for an OpenAI transcription request.
+ *
+ * `whisper-1` keeps `verbose_json` so `segments[].no_speech_prob` is returned
+ * for probability-gated silence handling. The newer `gpt-4o-transcribe` and
+ * `gpt-4o-mini-transcribe` models do NOT support `verbose_json` — they reject
+ * it with a deterministic HTTP 400 — and only accept `json` / `text`. Sending
+ * `verbose_json` to them previously caused a 400 that the generic retry wrapper
+ * repeated three times.
+ */
+const getTranscriptionResponseFormat = (
+  model: OpenAITranscriptionModel,
+): "verbose_json" | "json" =>
+  (VERBOSE_JSON_TRANSCRIPTION_MODELS as readonly string[]).includes(model)
+    ? "verbose_json"
+    : "json";
+
+export type OpenAITranscriptionSegment = TranscriptionSegment;
+export type OpenAITranscribeAudioOutput = TranscribeAudioOutput;
 
 export const openaiTranscribeAudio = async ({
   apiKey,
@@ -127,15 +137,25 @@ export const openaiTranscribeAudio = async ({
   ext,
   prompt,
   language,
+  customFetch,
 }: OpenAITranscriptionArgs): Promise<OpenAITranscribeAudioOutput> => {
-  return openaiCompatibleTranscribeAudio({
-    client: createClient(apiKey),
-    blob,
-    model,
-    ext,
-    prompt,
-    language,
-  });
+  const client = createClient(apiKey, undefined, customFetch);
+  const file = await toFile(blob, `audio.${ext}`);
+  return runSdkTranscription(
+    (body) =>
+      client.audio.transcriptions.create(
+        body as unknown as Parameters<
+          typeof client.audio.transcriptions.create
+        >[0],
+      ),
+    {
+      file,
+      model,
+      prompt,
+      language,
+      response_format: getTranscriptionResponseFormat(model),
+    },
+  );
 };
 
 export type OpenAIGenerateTextArgs = {
@@ -171,21 +191,11 @@ export const openaiGenerateTextResponse = async ({
     fn: async () => {
       const client = createClient(apiKey, baseUrl, customFetch);
 
-      const messages: ChatCompletionMessageParam[] = [];
-      if (system) {
-        messages.push({ role: "system", content: system });
-      }
-
-      const userParts: ChatCompletionContentPart[] = [];
-      for (const url of imageUrls) {
-        userParts.push({
-          type: "image_url",
-          image_url: { url },
-        });
-      }
-
-      userParts.push({ type: "text", text: prompt });
-      messages.push({ role: "user", content: userParts });
+      const messages = buildOpenAICompatibleMessages({
+        system,
+        prompt,
+        imageUrls,
+      });
 
       const response_format = buildResponseFormat(model, jsonResponse);
 
@@ -199,38 +209,31 @@ export const openaiGenerateTextResponse = async ({
       });
 
       console.log("openai llm usage:", response.usage);
-      if (!response.choices || response.choices.length === 0) {
-        throw new Error("No response from OpenAI");
-      }
-
-      const result = response.choices[0].message.content;
-      if (!result) {
-        throw new Error("Content is empty");
-      }
-
-      const content = contentToString(result);
-      return {
-        text: content,
-        tokensUsed: response.usage?.total_tokens ?? countWords(content),
-      };
+      return parseOpenAICompatibleGenerateTextResponse({
+        response,
+        providerLabel: "OpenAI",
+      });
     },
   });
 };
 
 export type OpenAITestIntegrationArgs = {
   apiKey: string;
+  customFetch?: CustomFetch;
 };
 
 export type OpenAICompatibleTestIntegrationArgs = {
   baseUrl: string;
   apiKey?: string;
+  customFetch?: CustomFetch;
 };
 
 export const openaiCompatibleTestIntegration = async ({
   baseUrl,
   apiKey,
+  customFetch,
 }: OpenAICompatibleTestIntegrationArgs): Promise<boolean> => {
-  const client = createClient(apiKey || "dummy", baseUrl);
+  const client = createClient(apiKey || "dummy", baseUrl, customFetch);
 
   // Test connectivity by listing models
   await client.models.list();
@@ -241,38 +244,11 @@ export const openaiCompatibleTestIntegration = async ({
 
 export const openaiTestIntegration = async ({
   apiKey,
+  customFetch,
 }: OpenAITestIntegrationArgs): Promise<boolean> => {
-  const client = createClient(apiKey);
-
-  const response = await client.chat.completions.create({
-    messages: [
-      {
-        role: "user",
-        content: [
-          {
-            type: "text",
-            text: `Reply with the single word "Hello."`,
-          },
-        ],
-      },
-    ],
-    model: "gpt-4o-mini",
-    temperature: 0,
-    max_completion_tokens: 32,
-    top_p: 1,
-  });
-
-  if (!response.choices || response.choices.length === 0) {
-    throw new Error("No response from OpenAI");
-  }
-
-  const first = response.choices[0];
-  const content = contentToString(first?.message?.content);
-  if (!content) {
-    throw new Error("Response content is empty");
-  }
-
-  return content.toLowerCase().includes("hello");
+  const client = createClient(apiKey, undefined, customFetch);
+  await client.models.list();
+  return true;
 };
 
 // ============================================================================
@@ -358,10 +334,29 @@ type OpenAIChunkState = {
   modelId: string | undefined;
 };
 
+const applyOpenAIToolCalls = (
+  choice: ChatCompletionChunk.Choice,
+  toolCalls: OpenAIChunkState["toolCalls"],
+): void => {
+  for (const tc of choice.delta?.tool_calls ?? []) {
+    const index = tc.index ?? toolCalls.size;
+    const current = toolCalls.get(index) ?? {
+      id: "",
+      name: "",
+      arguments: "",
+    };
+    if (tc.id) current.id = tc.id;
+    if (tc.function?.name) current.name = tc.function.name;
+    if (tc.function?.arguments) current.arguments += tc.function.arguments;
+    toolCalls.set(index, current);
+  }
+};
+
 const processOpenAIChunk = (
   chunk: OpenAI.Chat.Completions.ChatCompletionChunk,
   state: OpenAIChunkState,
-): string | undefined => {
+): LlmStreamEvent[] => {
+  const events: LlmStreamEvent[] = [];
   if (chunk.model) {
     state.modelId = chunk.model;
   }
@@ -372,30 +367,21 @@ const processOpenAIChunk = (
   }
 
   const choice = chunk.choices[0];
-  if (!choice) return undefined;
+  if (!choice) {
+    return events;
+  }
 
   if (choice.delta?.content) {
-    return choice.delta.content;
+    events.push({ type: "text-delta", text: choice.delta.content });
   }
 
-  for (const tc of choice.delta?.tool_calls ?? []) {
-    const index = tc.index ?? state.toolCalls.size;
-    const current = state.toolCalls.get(index) ?? {
-      id: "",
-      name: "",
-      arguments: "",
-    };
-    if (tc.id) current.id = tc.id;
-    if (tc.function?.name) current.name = tc.function.name;
-    if (tc.function?.arguments) current.arguments += tc.function.arguments;
-    state.toolCalls.set(index, current);
-  }
+  applyOpenAIToolCalls(choice, state.toolCalls);
 
   if (choice.finish_reason) {
     state.finishReason = toFinishReason(choice.finish_reason);
   }
 
-  return undefined;
+  return events;
 };
 
 export async function* openaiCompatibleStreamChat(
@@ -433,9 +419,8 @@ export async function* openaiCompatibleStreamChat(
   };
 
   for await (const chunk of stream) {
-    const textDelta = processOpenAIChunk(chunk, state);
-    if (textDelta) {
-      yield { type: "text-delta", text: textDelta };
+    for (const event of processOpenAIChunk(chunk, state)) {
+      yield event;
     }
   }
 
