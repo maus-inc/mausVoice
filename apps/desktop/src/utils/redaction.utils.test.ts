@@ -11,9 +11,10 @@ describe("redaction.utils", () => {
       expect(await redactString("secret-value", "full")).toBe("[redacted]");
     });
 
-    it("returns a hash in hash mode", async () => {
-      const result = await redactString("secret-value", "hash");
-      expect(result).toMatch(/^\[hash:[0-9a-f]{8}\]$/);
+    it("returns a deterministic SHA-256 prefix in hash mode", async () => {
+      expect(await redactString("secret-value", "hash")).toBe(
+        "[hash:31160254]",
+      );
     });
 
     it("returns truncated value in truncate mode for long strings", async () => {
@@ -30,35 +31,36 @@ describe("redaction.utils", () => {
   });
 
   describe("redactError", () => {
-    it("redacts secret patterns from error messages", async () => {
-      const message = "Failed with key sk-abcdefghijklmnopqrstuvwxyz123456";
-      expect(await redactError(message)).toBe(
-        "Failed with key [redacted-secret]",
-      );
-    });
+    const secretPatternCases = [
+      {
+        key: "OpenAI sk-",
+        message: "Failed with key sk-abcdefghijklmnopqrstuvwxyz123456",
+        expected: "Failed with key [redacted-secret]",
+      },
+      {
+        key: "OpenAI sk-proj-",
+        message:
+          "Failed with key sk-proj-abcdefghijklmnopqrstuvwxyz1234567890AB",
+        expected: "Failed with key [redacted-secret]",
+      },
+      {
+        key: "Anthropic sk-ant-",
+        message: "Failed with key sk-ant-api03-abcdefghijklmnopqrstuvwxyz12",
+        expected: "Failed with key [redacted-secret]",
+      },
+      {
+        key: "Groq gsk_",
+        message: "Token gsk_abcdefghijklmnopqrstuvwxyz123456 invalid",
+        expected: "Token [redacted-secret] invalid",
+      },
+    ];
 
-    it("redacts production OpenAI-style keys", async () => {
-      const message =
-        "Failed with key sk-proj-abcdefghijklmnopqrstuvwxyz1234567890AB";
-      expect(await redactError(message)).toBe(
-        "Failed with key [redacted-secret]",
-      );
-    });
-
-    it("redacts production Anthropic-style keys", async () => {
-      const message =
-        "Failed with key sk-ant-api03-abcdefghijklmnopqrstuvwxyz12";
-      expect(await redactError(message)).toBe(
-        "Failed with key [redacted-secret]",
-      );
-    });
-
-    it("handles Error objects", async () => {
-      const error = new Error(
-        "Token gsk_abcdefghijklmnopqrstuvwxyz123456 invalid",
-      );
-      expect(await redactError(error)).toBe("Token [redacted-secret] invalid");
-    });
+    it.each(secretPatternCases)(
+      "redacts $key style keys from error messages",
+      async ({ message, expected }) => {
+        expect(await redactError(message)).toBe(expected);
+      },
+    );
 
     it("returns message unchanged when no secrets present", async () => {
       expect(await redactError("Plain error message")).toBe(
@@ -116,6 +118,15 @@ describe("redaction.utils", () => {
       const result = await redactObject(input);
       expect(result.labels).toEqual(["alpha", "beta", "gamma"]);
       expect(result.counts).toEqual([1, 2, 3]);
+    });
+
+    it("redacts secret values embedded in bare array strings", async () => {
+      const input = {
+        tokens: ["sk-abcdefghijklmnopqrstuvwxyz123456", "visible-token"],
+      };
+      const result = (await redactObject(input)) as typeof input;
+      expect(result.tokens[0]).toBe("[redacted-secret]");
+      expect(result.tokens[1]).toBe("visible-token");
     });
 
     it("preserves non-sensitive objects inside arrays", async () => {

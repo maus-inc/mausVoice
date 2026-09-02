@@ -35,8 +35,8 @@ export const setExpansionFlag = (
   name: ExpansionFeatureName,
   enabled: boolean,
 ): Promise<void> => {
-  togglePromise = togglePromise
-    .then(async () => {
+  togglePromise = togglePromise.then(async () => {
+    try {
       const repo = getUserPreferencesRepo();
       const current = await repo.getUserPreferences();
       if (!current) {
@@ -50,10 +50,10 @@ export const setExpansionFlag = (
       produceAppState((draft) => {
         draft.userPrefs = updated;
       });
-    })
-    .catch(() => {
-      togglePromise = Promise.resolve();
-    });
+    } catch (error) {
+      console.error("Failed to set expansion flag:", error);
+    }
+  });
 
   return togglePromise;
 };

@@ -1,28 +1,34 @@
 export type RedactionMode = "full" | "hash" | "truncate";
 
 const SENSITIVE_KEY_PATTERNS = [
-  /password/i,
-  /secret/i,
-  /token/i,
-  /auth/i,
-  /credential/i,
-  /private/i,
-  /apikey/i,
-  /api[_-]?key/i,
+  /\bpassword\b/i,
+  /\bsecret\b/i,
+  /\btoken\b/i,
+  /\bauth\b/i,
+  /\bcredential\b/i,
+  /\bprivate\b/i,
+  /\bapikey\b/i,
+  /\bapi[_-]?key\b/i,
 ];
 
 const SECRET_VALUE_PATTERN =
   /(sk|gsk|ghp|gho|xox|xai|nvapi)(?:[_-][a-zA-Z0-9]{2,})*?[_-][a-zA-Z0-9]{20,}/gi;
 
-const hashString = async (input: string): Promise<string> => {
-  const encoded = new TextEncoder().encode(input);
-  const hashBuffer = await crypto.subtle.digest("SHA-256", encoded);
-  const hashBytes = new Uint8Array(hashBuffer);
-  const prefix = Array.from(hashBytes.slice(0, 4))
-    .map((b) => b.toString(16).padStart(2, "0"))
-    .join("");
-  return `[hash:${prefix}]`;
-};
+async function sha256Prefix(input: string): Promise<string> {
+  if (typeof crypto !== "undefined" && crypto.subtle) {
+    const encoded = new TextEncoder().encode(input);
+    const hashBuffer = await crypto.subtle.digest("SHA-256", encoded);
+    const hashBytes = new Uint8Array(hashBuffer);
+    const prefix = Array.from(hashBytes.slice(0, 4))
+      .map((b) => b.toString(16).padStart(2, "0"))
+      .join("");
+    return `[hash:${prefix}]`;
+  }
+
+  const { createHash } = await import("node:crypto");
+  const hash = createHash("sha256").update(input).digest("hex");
+  return `[hash:${hash.slice(0, 8)}]`;
+}
 
 const truncateString = (input: string): string => {
   if (input.length <= 8) {
@@ -47,7 +53,7 @@ export const redactString = async (
     return "[redacted]";
   }
   if (mode === "hash") {
-    return hashString(input);
+    return sha256Prefix(input);
   }
   return truncateString(input);
 };
@@ -72,6 +78,10 @@ const isSensitiveKey = (key: string, sensitiveKeys: string[]): boolean => {
   );
 };
 
+const redactStringValue = (value: string): string => {
+  return value.replace(SECRET_VALUE_PATTERN, "[redacted-secret]");
+};
+
 /**
  * Redact sensitive keys and recursively redact nested objects and arrays.
  */
@@ -92,7 +102,8 @@ export const redactObject = async (
     } else if (Array.isArray(value)) {
       result[key] = await redactArray(value, sensitiveKeys);
     } else {
-      result[key] = value;
+      result[key] =
+        typeof value === "string" ? redactStringValue(value) : value;
     }
   }
   return result;
@@ -109,6 +120,9 @@ const redactArray = async (
       }
       if (Array.isArray(item)) {
         return redactArray(item, sensitiveKeys);
+      }
+      if (typeof item === "string") {
+        return redactStringValue(item);
       }
       return item;
     }),

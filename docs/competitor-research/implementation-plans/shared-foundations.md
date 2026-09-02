@@ -73,7 +73,12 @@ themselves.
 ## Required migrations
 
 `075_expansion_flags.sql` adds an `expansionFlags` JSON column to
-`user_preferences`. Registered in `src-tauri/src/db/mod.rs`.
+`user_preferences`. The SQLite column name is `expansion_flags` (snake_case);
+the Rust domain type and TypeScript `UserPreferences.expansionFlags` use
+camelCase. `LocalUserPreferencesRepo.setExpansionFlags()` is the single
+write path; `upsert_user_preferences` preserves the existing
+`expansion_flags` value on conflict so concurrent preference writers do
+not overwrite flag state. Registered in `src-tauri/src/db/mod.rs`.
 
 ## Required feature flags
 
