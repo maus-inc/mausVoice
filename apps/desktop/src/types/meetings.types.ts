@@ -1,10 +1,13 @@
 export type MeetingSpeaker = {
   id: string;
+  meetingId: string;
   name: string;
   label?: string;
 };
 
 export type MeetingSegment = {
+  id: string;
+  meetingId: string;
   speakerId: string;
   startTimeMs: number;
   endTimeMs: number;
