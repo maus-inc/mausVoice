@@ -163,10 +163,10 @@ pub fn sync_compositor_hotkeys(
 
 fn is_super_modifier(lower: &str) -> bool {
     let n = lower.len();
-    (lower.starts_with("meta") && n >= 5)
-        || (lower.starts_with("super") && n >= 5)
-        || (lower.starts_with("os") && n >= 4)
-        || (lower.starts_with("win") && n >= 4)
+    n >= 4
+        && ((lower.starts_with("super") || lower.starts_with("meta")) && n >= 5
+            || lower.starts_with("os")
+            || lower.starts_with("win"))
 }
 
 fn is_ctrl_modifier(lower: &str) -> bool {
