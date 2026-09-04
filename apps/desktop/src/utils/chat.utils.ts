@@ -23,12 +23,15 @@ export const deriveConversationTitle = (text: string): string => {
     .split(" ")
     .slice(0, TITLE_MAX_WORDS)
     .join(" ")
-    .slice(0, TITLE_MAX_CHARS)
-    .trimEnd();
+    .slice(0, TITLE_MAX_CHARS);
+  const lastCode = capped.charCodeAt(capped.length - 1);
+  const graphemeSafe =
+    lastCode >= 0xdc00 && lastCode <= 0xdfff ? capped.slice(0, -2) : capped;
+  const trimmed = graphemeSafe.trimEnd();
 
-  if (capped.length === collapsed.length) return capped;
+  if (trimmed.length === collapsed.length) return trimmed;
   const withinCap =
-    capped.length < TITLE_MAX_CHARS ? capped : capped.slice(0, -1);
+    trimmed.length < TITLE_MAX_CHARS ? trimmed : trimmed.slice(0, -1);
   return `${withinCap}…`;
 };
 

@@ -41,6 +41,12 @@ describe("deriveConversationTitle", () => {
     expect(title).toHaveLength(32);
   });
 
+  it("does not leave a partial surrogate at the truncation boundary", () => {
+    const title = deriveConversationTitle("Hello world 👨‍👩‍👧‍👦 family gathering");
+    expect(title).not.toMatch(/\uD800-\uDBFF[\uDC00-\uDFFF]?$/);
+    expect(title.length).toBeLessThanOrEqual(32);
+  });
+
   it("returns an empty string for blank input", () => {
     expect(deriveConversationTitle("   \n\t ")).toBe("");
   });

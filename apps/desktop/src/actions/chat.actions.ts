@@ -56,6 +56,9 @@ export const updateConversation = async (
 };
 
 export const deleteConversation = async (id: string): Promise<void> => {
+  const previous = sendQueuesByConversationId.get(id) ?? Promise.resolve();
+  await previous;
+
   await getConversationRepo().deleteConversation(id);
 
   produceAppState((draft) => {
