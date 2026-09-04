@@ -58,9 +58,11 @@ describe("analyzeSilence", () => {
   it("flags low-amplitude room noise as silent", () => {
     // Well below both thresholds; a dictation with no speech must not be
     // sent to a cloud provider that could echo back dictionary words.
-    const samples = new Float32Array(SAMPLE_RATE).map(
-      () => (Math.random() - 0.5) * 0.001,
-    );
+    // Deterministic low-amplitude tone to keep CI stable.
+    const samples = new Float32Array(SAMPLE_RATE);
+    for (let i = 0; i < samples.length; i++) {
+      samples[i] = 0.0005 * Math.sin((2 * Math.PI * 220 * i) / SAMPLE_RATE);
+    }
     const decision = analyzeSilence(samples, SAMPLE_RATE);
     expect(decision.silent).toBe(true);
     expect(decision.rms).toBeLessThan(SILENCE_RMS_THRESHOLD);

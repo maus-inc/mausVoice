@@ -140,7 +140,7 @@ const stripTagsOnce = (input: string): string => {
       continue;
     }
     const next = input[i + 1] ?? "";
-    const isTagStart = /[a-zA-Z/!?]/.test(next);
+    const isTagStart = /[A-Za-z0-9/!?_-]/.test(next);
     if (!isTagStart) {
       out += ch;
       i += 1;

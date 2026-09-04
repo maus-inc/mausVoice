@@ -35,6 +35,19 @@ const activeLoops = new Map<string, AgentLoop>();
  * (caller must sanitize) so the tool-call id, conversation id, and
  * message id are available without joining on a stack trace.
  */
+const MAX_CONTEXT_VALUE_LENGTH = 64;
+
+const summarizeContext = (context: Record<string, string>): string =>
+  Object.entries(context)
+    .map(([k, v]) => {
+      const value =
+        v.length > MAX_CONTEXT_VALUE_LENGTH
+          ? `${v.slice(0, MAX_CONTEXT_VALUE_LENGTH)}…`
+          : v;
+      return `${k}=${value}`;
+    })
+    .join(", ");
+
 export async function safeSideEffect<T>(
   label: string,
   context: Record<string, string>,
@@ -45,11 +58,9 @@ export async function safeSideEffect<T>(
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
     getLogger().error(
-      `Agent non-critical side effect failed (${label}, ${Object.entries(
+      `Agent non-critical side effect failed (${label}, ${summarizeContext(
         context,
-      )
-        .map(([k, v]) => `${k}=${v}`)
-        .join(", ")}): ${message}`,
+      )}): ${message}`,
     );
     return null;
   }
