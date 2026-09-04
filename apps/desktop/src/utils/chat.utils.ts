@@ -4,6 +4,8 @@ import { getIntl } from "../i18n/intl";
 /**
  * Conversation titles live in the narrow chats sidebar. A few words are
  * enough to tell chats apart, so the derived title is deliberately tiny.
+ * The cap counts the ellipsis, so a truncated title never runs past 32
+ * characters.
  */
 const TITLE_MAX_WORDS = 4;
 const TITLE_MAX_CHARS = 32;
@@ -24,13 +26,18 @@ export const deriveConversationTitle = (text: string): string => {
     .slice(0, TITLE_MAX_CHARS)
     .trimEnd();
 
-  return capped.length < collapsed.length ? `${capped}…` : capped;
+  if (capped.length === collapsed.length) return capped;
+  const withinCap =
+    capped.length < TITLE_MAX_CHARS ? capped : capped.slice(0, -1);
+  return `${withinCap}…`;
 };
 
 let placeholderTitles: ReadonlySet<string> | undefined;
 
-// Conversation creation localizes the "New conversation" placeholder at
-// creation time, so a row can carry any supported locale's translation.
+// Cached once. The set already holds every locale's placeholder, so a
+// locale switch never invalidates it. Conversation creation localizes the
+// "New conversation" placeholder at creation time, so a row can carry any
+// supported locale's translation.
 const getPlaceholderTitles = (): ReadonlySet<string> => {
   placeholderTitles ??= new Set(
     SUPPORTED_LOCALES.map((locale) =>

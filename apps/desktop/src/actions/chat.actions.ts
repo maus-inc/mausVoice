@@ -145,6 +145,30 @@ export const runAgentForConversation = async (
 
 const sendQueuesByConversationId = new Map<string, Promise<void>>();
 
+const applySendToConversation = async (
+  conversation: Conversation,
+  text: string,
+  isFirstMessage: boolean,
+  createdAt: string,
+): Promise<void> => {
+  // The first user message names the conversation. A conversation that still
+  // carries the placeholder also adopts a title from its next message, which
+  // covers chats created before auto-titling existed. Every message bumps
+  // updatedAt so the sidebar timestamp and recency order stay truthful. The
+  // repo lists conversations by updated_at descending.
+  const shouldDeriveTitle =
+    isFirstMessage || hasPlaceholderTitle(conversation.title);
+  const derived = deriveConversationTitle(text);
+  const title = shouldDeriveTitle && derived ? derived : conversation.title;
+  // The message is already persisted, so a failed title or timestamp bump
+  // must not abort the send or skip the agent. The next send retries both.
+  try {
+    await updateConversation({ ...conversation, title, updatedAt: createdAt });
+  } catch (error) {
+    console.error("Failed to update the conversation after a send", error);
+  }
+};
+
 const persistSend = async (
   conversationId: string,
   text: string,
@@ -166,28 +190,13 @@ const persistSend = async (
     metadata: null,
   });
 
-  // The first user message names the conversation. A conversation that still
-  // carries the placeholder also adopts a title from its next message, which
-  // covers chats created before auto-titling existed. Every message bumps
-  // updatedAt so the sidebar timestamp and recency order stay truthful. The
-  // repo lists conversations by updated_at descending.
   if (conversation) {
-    const shouldDeriveTitle =
-      isFirstMessage || hasPlaceholderTitle(conversation.title);
-    const title = shouldDeriveTitle
-      ? deriveConversationTitle(text) || conversation.title
-      : conversation.title;
-    // The message is already persisted, so a failed title or timestamp bump
-    // must not abort the send or skip the agent. The next send retries both.
-    try {
-      await updateConversation({
-        ...conversation,
-        title,
-        updatedAt: createdAt,
-      });
-    } catch (error) {
-      console.error("Failed to update the conversation after a send", error);
-    }
+    await applySendToConversation(
+      conversation,
+      text,
+      isFirstMessage,
+      createdAt,
+    );
   }
 
   produceAppState((draft) => {
@@ -204,7 +213,11 @@ export const sendChatMessage = async (
 ): Promise<void> => {
   // Concurrent sends into one conversation persist back to back, so an
   // older send cannot overwrite a newer send's timestamp or title. The
-  // agent run stays outside the queue and never blocks the next send.
+  // queue holds only in-flight sends, because each entry removes itself
+  // once its persist settles. The agent run stays outside the queue, so a
+  // running agent never blocks the next message. A persist failure rejects
+  // the whole send and skips the agent, since at that point nothing was
+  // sent.
   const previous =
     sendQueuesByConversationId.get(conversationId) ?? Promise.resolve();
   const persist = previous

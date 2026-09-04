@@ -7,7 +7,9 @@ export const nowIso = (): string => {
 /**
  * Compact short date for chat surfaces, e.g. "Aug 25". The year is only
  * appended when the timestamp is not from the current year, so recent
- * activity stays short while older entries stay unambiguous.
+ * activity stays short while older entries stay unambiguous. Both years
+ * come from local time, matching the local-timezone formatting that
+ * react-intl applies below.
  */
 export const formatShortDate = (intl: IntlShape, isoDate: string): string => {
   const date = new Date(isoDate);

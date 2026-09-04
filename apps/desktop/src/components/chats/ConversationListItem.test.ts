@@ -139,7 +139,9 @@ describe("ConversationListItem context menu", () => {
   const openMenu = async () => {
     row = mountRow({ onDelete });
     await row.render();
-    const rowEl = row.container.querySelector<HTMLElement>("div");
+    const rowEl = row.container.querySelector<HTMLElement>(
+      ".MuiListItemButton-root",
+    );
     const event = new MouseEvent("contextmenu", {
       bubbles: true,
       cancelable: true,

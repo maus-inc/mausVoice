@@ -71,7 +71,8 @@ const mountPage = () => {
   return {
     container,
     waitFor: async (predicate: () => boolean) => {
-      for (let attempt = 0; attempt < 50 && !predicate(); attempt++) {
+      const deadline = Date.now() + 2000;
+      while (!predicate() && Date.now() < deadline) {
         await act(async () => {
           await new Promise((resolve) => setTimeout(resolve, 10));
         });

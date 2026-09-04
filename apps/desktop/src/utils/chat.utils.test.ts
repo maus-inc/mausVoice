@@ -29,12 +29,12 @@ describe("deriveConversationTitle", () => {
     ).toBe("Can you help me…");
   });
 
-  it("caps the title at 32 characters when the first words are long", () => {
+  it("caps the title at 32 characters including the ellipsis", () => {
     const title = deriveConversationTitle(
       "Supercalifragilisticexpialidocious is a marvelous word indeed",
     );
-    expect(title).toBe("Supercalifragilisticexpialidocio…");
-    expect(title).toHaveLength(33);
+    expect(title).toBe("Supercalifragilisticexpialidoci…");
+    expect(title).toHaveLength(32);
   });
 
   it("returns an empty string for blank input", () => {
