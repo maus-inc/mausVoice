@@ -31,13 +31,13 @@ type TimestampTextProps = {
 const TimestampText = ({ value, hidden, hiddenShift }: TimestampTextProps) => (
   <Box
     component="span"
-    aria-hidden={hidden ? "true" : undefined}
+    aria-hidden={hidden}
     sx={(theme) => ({
       gridArea: "1 / 1",
       opacity: hidden ? 0 : 1,
       transform: hidden ? `translateY(${hiddenShift}px)` : "none",
       transition: theme.transitions.create(["opacity", "transform"], {
-        duration: theme.transitions.duration.short,
+        duration: 180,
         easing: theme.transitions.easing.easeOut,
       }),
       // Users who prefer reduced motion get an instant swap with no slide.
