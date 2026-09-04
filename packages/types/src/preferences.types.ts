@@ -44,6 +44,15 @@ export type UserPreferences = {
   typingSpeedMs: Nullable<number>;
   pillResetMonitorStrategy: PillResetMonitorStrategy;
   alwaysRequestAdminOnStartup: boolean;
+  meetingNotesEnabled: boolean;
+  localAutomationEnabled: boolean;
+  connectorsEnabled: boolean;
+  webhooksEnabled: boolean;
+  translationsEnabled: boolean;
+  interactiveSnippetsEnabled: boolean;
+  handsFreeToggleEnabled: boolean;
+  voiceWorkflowsEnabled: boolean;
+  ephemeralSessionEnabled: boolean;
 
   // deprecated
 };

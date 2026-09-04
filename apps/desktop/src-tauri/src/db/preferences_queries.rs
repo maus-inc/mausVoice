@@ -62,9 +62,18 @@ pub async fn upsert_user_preferences(
              insertion_method,
              typing_speed_ms,
              pill_reset_monitor_strategy,
-             always_request_admin_on_startup
-         )
-            VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20, ?21, ?22, ?23, ?24, ?25, ?26, ?27, ?28, ?29, ?30, ?31, ?32, ?33, ?34, ?35, ?36, ?37, ?38, ?39, ?40)
+             always_request_admin_on_startup,
+             meeting_notes_enabled,
+             local_automation_enabled,
+             connectors_enabled,
+             webhooks_enabled,
+             translations_enabled,
+             interactive_snippets_enabled,
+             hands_free_toggle_enabled,
+             voice_workflows_enabled,
+             ephemeral_session_enabled
+          )
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20, ?21, ?22, ?23, ?24, ?25, ?26, ?27, ?28, ?29, ?30, ?31, ?32, ?33, ?34, ?35, ?36, ?37, ?38, ?39, ?40, ?41, ?42, ?43, ?44, ?45, ?46, ?47, ?48, ?49, ?50)
          ON CONFLICT(user_id) DO UPDATE SET
             transcription_mode = excluded.transcription_mode,
             transcription_api_key_id = excluded.transcription_api_key_id,
@@ -104,7 +113,16 @@ pub async fn upsert_user_preferences(
             insertion_method = excluded.insertion_method,
             typing_speed_ms = excluded.typing_speed_ms,
             pill_reset_monitor_strategy = excluded.pill_reset_monitor_strategy,
-            always_request_admin_on_startup = excluded.always_request_admin_on_startup",
+            always_request_admin_on_startup = excluded.always_request_admin_on_startup,
+            meeting_notes_enabled = excluded.meeting_notes_enabled,
+            local_automation_enabled = excluded.local_automation_enabled,
+            connectors_enabled = excluded.connectors_enabled,
+            webhooks_enabled = excluded.webhooks_enabled,
+            translations_enabled = excluded.translations_enabled,
+            interactive_snippets_enabled = excluded.interactive_snippets_enabled,
+            hands_free_toggle_enabled = excluded.hands_free_toggle_enabled,
+            voice_workflows_enabled = excluded.voice_workflows_enabled,
+            ephemeral_session_enabled = excluded.ephemeral_session_enabled",
     )
     .bind(&preferences.user_id)
     .bind(&preferences.transcription_mode)
@@ -144,10 +162,19 @@ pub async fn upsert_user_preferences(
     .bind(preferences.menu_bar_icon_hidden)
     .bind(&preferences.insertion_method)
     .bind(preferences.typing_speed_ms)
-    .bind(&preferences.pill_reset_monitor_strategy)
-    .bind(preferences.always_request_admin_on_startup)
-    .execute(&pool)
-    .await?;
+        .bind(&preferences.pill_reset_monitor_strategy)
+        .bind(preferences.always_request_admin_on_startup)
+        .bind(preferences.meeting_notes_enabled)
+        .bind(preferences.local_automation_enabled)
+        .bind(preferences.connectors_enabled)
+        .bind(preferences.webhooks_enabled)
+        .bind(preferences.translations_enabled)
+        .bind(preferences.interactive_snippets_enabled)
+        .bind(preferences.hands_free_toggle_enabled)
+        .bind(preferences.voice_workflows_enabled)
+        .bind(preferences.ephemeral_session_enabled)
+        .execute(&pool)
+        .await?;
 
     Ok(preferences.clone())
 }
@@ -196,11 +223,20 @@ pub async fn fetch_user_preferences(
             menu_bar_icon_hidden,
             insertion_method,
             typing_speed_ms,
-            pill_reset_monitor_strategy,
-            always_request_admin_on_startup
-         FROM user_preferences
-         WHERE user_id = ?1
-         LIMIT 1",
+             pill_reset_monitor_strategy,
+             always_request_admin_on_startup,
+             meeting_notes_enabled,
+             local_automation_enabled,
+             connectors_enabled,
+             webhooks_enabled,
+             translations_enabled,
+             interactive_snippets_enabled,
+             hands_free_toggle_enabled,
+             voice_workflows_enabled,
+             ephemeral_session_enabled
+          FROM user_preferences
+          WHERE user_id = ?1
+          LIMIT 1",
     )
     .bind(user_id)
     .fetch_optional(&pool)
@@ -333,6 +369,42 @@ pub async fn fetch_user_preferences(
             .unwrap_or_else(|_| "current".to_string()),
         always_request_admin_on_startup: row
             .try_get::<i64, _>("always_request_admin_on_startup")
+            .map(|v| v != 0)
+            .unwrap_or(false),
+        meeting_notes_enabled: row
+            .try_get::<i64, _>("meeting_notes_enabled")
+            .map(|v| v != 0)
+            .unwrap_or(false),
+        local_automation_enabled: row
+            .try_get::<i64, _>("local_automation_enabled")
+            .map(|v| v != 0)
+            .unwrap_or(false),
+        connectors_enabled: row
+            .try_get::<i64, _>("connectors_enabled")
+            .map(|v| v != 0)
+            .unwrap_or(false),
+        webhooks_enabled: row
+            .try_get::<i64, _>("webhooks_enabled")
+            .map(|v| v != 0)
+            .unwrap_or(false),
+        translations_enabled: row
+            .try_get::<i64, _>("translations_enabled")
+            .map(|v| v != 0)
+            .unwrap_or(false),
+        interactive_snippets_enabled: row
+            .try_get::<i64, _>("interactive_snippets_enabled")
+            .map(|v| v != 0)
+            .unwrap_or(false),
+        hands_free_toggle_enabled: row
+            .try_get::<i64, _>("hands_free_toggle_enabled")
+            .map(|v| v != 0)
+            .unwrap_or(false),
+        voice_workflows_enabled: row
+            .try_get::<i64, _>("voice_workflows_enabled")
+            .map(|v| v != 0)
+            .unwrap_or(false),
+        ephemeral_session_enabled: row
+            .try_get::<i64, _>("ephemeral_session_enabled")
             .map(|v| v != 0)
             .unwrap_or(false),
     });

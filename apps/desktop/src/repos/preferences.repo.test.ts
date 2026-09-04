@@ -73,3 +73,38 @@ describe("preferences round-trip", () => {
     expect(saved.activeDictationLanguage).toBe("primary");
   });
 });
+
+describe("expansion feature flags round-trip", () => {
+  it("preserves feature flag values across load then save", () => {
+    const base = toLocalPreferences(createDefaultPreferences());
+    base.meetingNotesEnabled = true;
+    base.connectorsEnabled = true;
+    base.ephemeralSessionEnabled = true;
+
+    const loaded = fromLocalPreferences(base);
+    expect(loaded.meetingNotesEnabled).toBe(true);
+    expect(loaded.connectorsEnabled).toBe(true);
+    expect(loaded.ephemeralSessionEnabled).toBe(true);
+    expect(loaded.webhooksEnabled).toBe(false);
+
+    const saved = toLocalPreferences(loaded);
+    expect(saved.meetingNotesEnabled).toBe(true);
+    expect(saved.connectorsEnabled).toBe(true);
+    expect(saved.ephemeralSessionEnabled).toBe(true);
+  });
+
+  it("defaults all expansion flags to false", () => {
+    const loaded = fromLocalPreferences(
+      toLocalPreferences(createDefaultPreferences()),
+    );
+    expect(loaded.meetingNotesEnabled).toBe(false);
+    expect(loaded.localAutomationEnabled).toBe(false);
+    expect(loaded.connectorsEnabled).toBe(false);
+    expect(loaded.webhooksEnabled).toBe(false);
+    expect(loaded.translationsEnabled).toBe(false);
+    expect(loaded.interactiveSnippetsEnabled).toBe(false);
+    expect(loaded.handsFreeToggleEnabled).toBe(false);
+    expect(loaded.voiceWorkflowsEnabled).toBe(false);
+    expect(loaded.ephemeralSessionEnabled).toBe(false);
+  });
+});
