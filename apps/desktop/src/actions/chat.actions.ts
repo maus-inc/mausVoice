@@ -277,11 +277,13 @@ export const sendChatMessage = async (
   // when no message was actually persisted. The previous chain is
   // swallowed so an unrelated send failure does not abort this send.
   let persistFailed = false;
-  const persist = previous.catch(() => undefined).then(() =>
-    persistSend(conversationId, text).catch(() => {
-      persistFailed = true;
-    }),
-  );
+  const persist = previous
+    .catch(() => undefined)
+    .then(() =>
+      persistSend(conversationId, text).catch(() => {
+        persistFailed = true;
+      }),
+    );
   sendQueuesByConversationId.set(conversationId, persist);
   persist
     .catch(() => undefined)
