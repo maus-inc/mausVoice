@@ -228,12 +228,14 @@ const applySendToConversation = async (
 };
 
 // Returns the number of messages persisted for the conversation, or
-// 0 when the repo query fails. A transient repo error must not abort
-// the send, so the caller falls back to the in-memory count.
+// null when the repo query fails. A transient repo error must not
+// abort the send, and a failure should be treated as "unknown" by
+// the caller so it defaults to not-first rather than risking a title
+// overwrite on a stale empty read.
 const readPersistedMessageCount = async (
   conversationId: string,
   text: string,
-): Promise<number> => {
+): Promise<number | null> => {
   try {
     return (await getChatMessageRepo().listChatMessages(conversationId)).length;
   } catch (error) {
@@ -241,10 +243,10 @@ const readPersistedMessageCount = async (
       typeof process !== "undefined" && process.env.NODE_ENV !== "production";
     console.error(
       `Failed to read persisted message count for conversation ${conversationId}`,
-      dev ? { content: text } : undefined,
+      dev ? { contentPreview: text.slice(0, 50) } : undefined,
       error,
     );
-    return 0;
+    return null;
   }
 };
 
@@ -256,6 +258,20 @@ const bumpConversationToTop = (conversationId: string) => {
       ...draft.chat.conversationIds.filter((cid) => cid !== conversationId),
     ];
   });
+};
+
+// True when the conversation has no messages in memory and the
+// persisted count is confirmed to be zero. A failed persisted read
+// returns null and defaults to not-first so a transient error does
+// not risk overwriting a real title.
+const computeIsFirstMessage = (
+  conversationId: string,
+  persistedCount: number | null,
+): boolean => {
+  const inMemoryCount = (
+    getAppState().chatMessageIdsByConversationId[conversationId] ?? []
+  ).length;
+  return inMemoryCount === 0 && persistedCount === 0;
 };
 
 const persistSend = async (
@@ -275,11 +291,11 @@ const persistSend = async (
   // The in-memory message list can be empty even for a conversation
   // that already has messages persisted when a send races with
   // loadChatMessages. The persisted count keeps the isFirstMessage
-  // decision accurate in that window.
+  // decision accurate in that window. A failed repo read defaults to
+  // not-first so a transient error does not risk overwriting a real
+  // title with the new message.
   const persistedCount = await readPersistedMessageCount(conversationId, text);
-  const isFirstMessage =
-    (getAppState().chatMessageIdsByConversationId[conversationId] ?? [])
-      .length === 0 && persistedCount === 0;
+  const isFirstMessage = computeIsFirstMessage(conversationId, persistedCount);
 
   // The timestamp comes from inside the serialized section, so queued sends
   // stay monotonic.
@@ -339,7 +355,7 @@ export const sendChatMessage = async (
           process.env.NODE_ENV !== "production";
         console.error(
           `Failed to persist chat message for conversation ${conversationId}`,
-          dev ? { content: text } : undefined,
+          dev ? { contentPreview: text.slice(0, 50) } : undefined,
           error,
         );
       }),

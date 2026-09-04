@@ -326,10 +326,18 @@ describe("sendChatMessage", () => {
     }
   });
 
-  it("falls back to the in-memory count when the persisted list query fails", async () => {
+  it("falls back to not-first when the persisted list query fails", async () => {
     // A transient repo failure on listChatMessages must not abort
-    // the send. The send still persists and runs the agent, falling
-    // back to the in-memory count for the isFirstMessage decision.
+    // the send. The send still persists and runs the agent, and the
+    // isFirstMessage decision defaults to not-first so a stale
+    // transient error does not risk overwriting a real title.
+    // Seed a conversation with an existing real title.
+    seed({ title: "Quarterly report", withExistingMessage: true });
+    // Clear the in-memory list to simulate a stale empty read.
+    const state = getAppState();
+    state.chatMessageIdsByConversationId["conv-1"] = [];
+    setAppState(state, true);
+
     repoMocks.rejectNextList = true;
     const errorSpy = vi
       .spyOn(console, "error")
@@ -338,8 +346,13 @@ describe("sendChatMessage", () => {
     try {
       await sendChatMessage("conv-1", "Hello");
 
-      expect(messageStorage.size).toBe(1);
+      expect(messageStorage.size).toBe(2);
       expect(runAgentMock).toHaveBeenCalledTimes(1);
+      // The title must not be overwritten because the failed
+      // persisted read defaults to not-first.
+      expect(getAppState().conversationById["conv-1"]?.title).toBe(
+        "Quarterly report",
+      );
     } finally {
       errorSpy.mockRestore();
     }
