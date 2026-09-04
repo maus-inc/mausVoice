@@ -83,35 +83,37 @@ export const deleteConversation = async (id: string): Promise<void> => {
     sendQueuesByConversationId.delete(id);
 
     await getConversationRepo().deleteConversation(id);
-  } finally {
-    // Clear the in-memory store and the flag together. A send that
-    // races with produceAppState would otherwise find the
-    // conversation removed from the store while deletingConversationIds
-    // is already cleared, and would re-add it to the sidebar. Running
-    // the state update inside the finally also keeps the in-memory
-    // store consistent when the repo delete throws, so a retry of
-    // deleteConversation does not have to reconcile a half-deleted
-    // state.
-    try {
-      produceAppState((draft) => {
-        // deepsource ignore JS-0323: delete is the idiomatic Immer
-        // draft operation and matches the rest of the codebase.
-        delete draft.conversationById[id];
-        draft.chat.conversationIds = draft.chat.conversationIds.filter(
-          (cid) => cid !== id,
-        );
+  } catch (error) {
+    // The repo delete failed. Leave the in-memory store intact so the
+    // conversation remains visible and the user can retry. Re-throw
+    // after clearing the flag below.
+    deletingConversationIds.delete(id);
+    throw error;
+  }
 
-        const messageIds = draft.chatMessageIdsByConversationId[id] ?? [];
-        for (const messageId of messageIds) {
-          // deepsource ignore JS-0323: see above.
-          delete draft.chatMessageById[messageId];
-        }
+  // Clear the in-memory store and the flag together. A send that
+  // races with produceAppState would otherwise find the
+  // conversation removed from the store while deletingConversationIds
+  // is already cleared, and would re-add it to the sidebar.
+  try {
+    produceAppState((draft) => {
+      // deepsource ignore JS-0323: delete is the idiomatic Immer
+      // draft operation and matches the rest of the codebase.
+      delete draft.conversationById[id];
+      draft.chat.conversationIds = draft.chat.conversationIds.filter(
+        (cid) => cid !== id,
+      );
+
+      const messageIds = draft.chatMessageIdsByConversationId[id] ?? [];
+      for (const messageId of messageIds) {
         // deepsource ignore JS-0323: see above.
-        delete draft.chatMessageIdsByConversationId[id];
-      });
-    } finally {
-      deletingConversationIds.delete(id);
-    }
+        delete draft.chatMessageById[messageId];
+      }
+      // deepsource ignore JS-0323: see above.
+      delete draft.chatMessageIdsByConversationId[id];
+    });
+  } finally {
+    deletingConversationIds.delete(id);
   }
 };
 

@@ -7,6 +7,7 @@ const runAgentMock = vi.hoisted(() => vi.fn(() => Promise.resolve()));
 const repoMocks = vi.hoisted(() => ({
   rejectNextUpdate: false,
   rejectNextCreate: false,
+  rejectNextDelete: false,
 }));
 
 vi.mock("../agents", () => ({
@@ -48,6 +49,10 @@ vi.mock("../repos", () => ({
       return Promise.resolve(conversation);
     },
     deleteConversation: (id: string) => {
+      if (repoMocks.rejectNextDelete) {
+        repoMocks.rejectNextDelete = false;
+        return Promise.reject(new Error("delete rejected"));
+      }
       conversationStorage.delete(id);
       return Promise.resolve();
     },
@@ -105,6 +110,7 @@ describe("sendChatMessage", () => {
     vi.clearAllMocks();
     repoMocks.rejectNextUpdate = false;
     repoMocks.rejectNextCreate = false;
+    repoMocks.rejectNextDelete = false;
     conversationStorage.clear();
     messageStorage.clear();
     seed();
@@ -260,5 +266,37 @@ describe("sendChatMessage", () => {
 
     expect(runAgentMock).not.toHaveBeenCalled();
     expect(messageStorage.size).toBe(0);
+  });
+});
+
+describe("deleteConversation", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    repoMocks.rejectNextUpdate = false;
+    repoMocks.rejectNextCreate = false;
+    repoMocks.rejectNextDelete = false;
+    conversationStorage.clear();
+    messageStorage.clear();
+    seed();
+  });
+
+  it("keeps the in-memory store intact when the repo delete rejects", async () => {
+    // The conversation must remain visible so the user can retry the
+    // delete. The deletingConversationIds flag must also be cleared
+    // so a subsequent send can reach the store.
+    repoMocks.rejectNextDelete = true;
+
+    await expect(deleteConversation("conv-1")).rejects.toThrow(
+      "delete rejected",
+    );
+
+    expect(getAppState().conversationById["conv-1"]).toBeDefined();
+    expect(getAppState().chat.conversationIds.includes("conv-1")).toBe(true);
+
+    // A send after the failed delete must still persist and run the
+    // agent, proving the deleting flag was cleared.
+    await sendChatMessage("conv-1", "After failed delete");
+    expect(messageStorage.size).toBe(1);
+    expect(runAgentMock).toHaveBeenCalledTimes(1);
   });
 });

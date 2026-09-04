@@ -105,6 +105,16 @@ describe("deriveConversationTitle", () => {
     expect(deriveConversationTitle("Hello 😀")).toBe("Hello 😀");
   });
 
+  it("returns just the ellipsis when the first grapheme exceeds the cap", () => {
+    // A base character followed by many combining marks is one
+    // grapheme cluster. When the cluster alone exceeds the cap, the
+    // function must not slice inside it. The base string is empty
+    // and ellipsizes to a single ellipsis character.
+    const oversizedGrapheme = "a" + "\u0301".repeat(40);
+    const title = deriveConversationTitle(oversizedGrapheme);
+    expect(title).toBe("…");
+  });
+
   it("returns an empty string for blank input", () => {
     expect(deriveConversationTitle("   \n\t ")).toBe("");
   });

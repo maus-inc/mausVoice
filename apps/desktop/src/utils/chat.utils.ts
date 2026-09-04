@@ -65,12 +65,13 @@ const segmenter =
 // the cut never lands inside a grapheme cluster. Code-unit cap keeps
 // the title length predictable for the sidebar layout; the grapheme
 // check keeps emoji and ZWJ sequences intact. Returns the input
-// unchanged when it is already at or under the cap.
+// unchanged when it is already at or under the cap, and an empty
+// string when the first grapheme alone exceeds the cap.
 const capByGraphemes = (text: string, cap: number): string => {
   if (text.length <= cap) return text;
   if (!segmenter) return text.slice(0, cap);
 
-  let cut = cap;
+  let cut = 0;
   for (const { segment, index } of segmenter.segment(text)) {
     const end = index + segment.length;
     if (end > cap) break;
