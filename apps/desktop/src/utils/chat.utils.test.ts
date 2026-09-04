@@ -54,6 +54,17 @@ describe("deriveConversationTitle", () => {
     expect(title.length).toBeLessThanOrEqual(32);
   });
 
+  it("drops both surrogates when the slice keeps a lone high surrogate", () => {
+    // 31 ASCII chars + a space + an emoji. slice(0, 32) includes the
+    // high surrogate but drops the low surrogate, leaving a dangling
+    // high surrogate. The fix must drop both so the title is a valid
+    // UTF-16 string.
+    const title = deriveConversationTitle("a".repeat(31) + " " + "😀");
+    expect(title).not.toMatch(/[\uD800-\uDBFF]$/);
+    expect(title).not.toMatch(/[\uDC00-\uDFFF]$/);
+    expect(title.length).toBeLessThanOrEqual(32);
+  });
+
   it("returns an empty string for blank input", () => {
     expect(deriveConversationTitle("   \n\t ")).toBe("");
   });

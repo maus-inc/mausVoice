@@ -29,8 +29,9 @@ vi.mock("../i18n/intl", async (importOriginal) => {
 const conversationStorage = new Map<string, Conversation>();
 const messageStorage = new Map<string, ChatMessage>();
 
-// Only the two repo methods sendChatMessage touches are faked. Everything
-// else stays out so an unexpected repo call fails loudly. Setting
+// Only the two repo methods sendChatMessage touches are faked, plus the
+// deleteConversation method deleteConversation touches. Everything else
+// stays out so an unexpected repo call fails loudly. Setting
 // rejectNextUpdate makes the next updateConversation reject once, for the
 // failure-path test.
 vi.mock("../repos", () => ({
@@ -43,6 +44,10 @@ vi.mock("../repos", () => ({
       conversationStorage.set(conversation.id, conversation);
       return Promise.resolve(conversation);
     },
+    deleteConversation: (id: string) => {
+      conversationStorage.delete(id);
+      return Promise.resolve();
+    },
   }),
   getChatMessageRepo: () => ({
     createChatMessage: (message: ChatMessage) => {
@@ -52,7 +57,7 @@ vi.mock("../repos", () => ({
   }),
 }));
 
-import { sendChatMessage } from "./chat.actions";
+import { deleteConversation, sendChatMessage } from "./chat.actions";
 
 const baseConversation: Conversation = {
   id: "conv-1",
@@ -202,5 +207,23 @@ describe("sendChatMessage", () => {
     } finally {
       errorSpy.mockRestore();
     }
+  });
+
+  it("a send that lands after deleteConversation never persists a message", async () => {
+    // The conversation is alive at send time. The delete completes first,
+    // then the send is enqueued, then the send reaches the front of the
+    // queue. persistSend re-reads the store and aborts because the
+    // conversation is gone.
+    seed();
+    await sendChatMessage("conv-1", "Before delete");
+    await deleteConversation("conv-1");
+    expect(getAppState().conversationById["conv-1"]).toBeUndefined();
+
+    await sendChatMessage("conv-1", "After delete");
+
+    // The second send must not have created a message or re-added the
+    // conversation to the sidebar.
+    expect(messageStorage.size).toBe(1);
+    expect(getAppState().chat.conversationIds.includes("conv-1")).toBe(false);
   });
 });

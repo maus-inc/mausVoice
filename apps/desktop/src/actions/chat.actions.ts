@@ -58,11 +58,12 @@ export const updateConversation = async (
 };
 
 export const deleteConversation = async (id: string): Promise<void> => {
-  // Wait for any in-flight send so its updateConversation cannot fire after
-  // the delete. Swallow the queue's own rejection so an unrelated send
-  // failure does not block the user-initiated delete. Removing the entry
-  // before the await prevents a new send from chaining after the delete
-  // and creating a message for a conversation that no longer exists.
+  // Wait for the in-flight send so its updateConversation cannot fire after
+  // the delete. The queue's own rejection is swallowed so an unrelated
+  // send failure does not block the user-initiated delete. The queue entry
+  // is removed before the await so a new send initiated before the repo
+  // delete lands does not chain onto this resolved promise; persistSend
+  // re-reads the store and aborts when the conversation is already gone.
   const previous = sendQueuesByConversationId.get(id) ?? Promise.resolve();
   sendQueuesByConversationId.delete(id);
   await previous.catch(() => undefined);
@@ -183,6 +184,12 @@ const persistSend = async (
   conversationId: string,
   text: string,
 ): Promise<void> => {
+  // The conversation may have been deleted between the time the user pressed
+  // send and the time this entry reached the front of the queue. A send
+  // initiated after deleteConversation started would otherwise persist a
+  // message for a conversation that no longer exists, and re-add the id to
+  // the sidebar. Bail out before createChatMessage.
+  if (!getAppState().conversationById[conversationId]) return;
   const { chatMessageIdsByConversationId } = getAppState();
   const isFirstMessage =
     (chatMessageIdsByConversationId[conversationId] ?? []).length === 0;
