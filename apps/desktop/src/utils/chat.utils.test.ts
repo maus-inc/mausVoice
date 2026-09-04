@@ -17,6 +17,14 @@ const expectTrailingNotSurrogate = (text: string) => {
 // flags `stringExpr + stringLiteral` in test fixtures.
 const concat = (...parts: string[]): string => parts.join("");
 
+// True when the runtime exposes Intl.Segmenter. The grapheme
+// segmentation tests are skipped on older runtimes that lack the
+// constructor because the implementation falls back to a plain
+// slice that can split emoji sequences.
+const hasIntlSegmenter =
+  typeof Intl !== "undefined" &&
+  typeof (Intl as { Segmenter?: unknown }).Segmenter === "function";
+
 // The German locale returns a distinct placeholder so the tests prove the
 // match spans every supported locale, not just the active one.
 vi.mock("../i18n/intl", () => ({
@@ -80,7 +88,7 @@ describe("deriveConversationTitle", () => {
     expectTrailingNotSurrogate(title);
   });
 
-  it.runIf(typeof Intl !== "undefined" && "Segmenter" in Intl)(
+  it.runIf(hasIntlSegmenter)(
     "keeps a ZWJ emoji sequence intact at the truncation boundary",
     () => {
       // 👨‍👩‍👧 is an 8-code-unit ZWJ sequence. The cap must not slice inside it.
@@ -105,7 +113,7 @@ describe("deriveConversationTitle", () => {
     expect(deriveConversationTitle("Hello 😀")).toBe("Hello 😀");
   });
 
-  it.runIf(typeof Intl !== "undefined" && "Segmenter" in Intl)(
+  it.runIf(hasIntlSegmenter)(
     "returns just the ellipsis when the first grapheme exceeds the cap",
     () => {
       // A base character followed by many combining marks is one
