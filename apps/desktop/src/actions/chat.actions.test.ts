@@ -4,7 +4,10 @@ import { INITIAL_APP_STATE } from "../state/app.state";
 import { getAppState, setAppState } from "../store";
 
 const runAgentMock = vi.hoisted(() => vi.fn(() => Promise.resolve()));
-const repoMocks = vi.hoisted(() => ({ rejectNextUpdate: false }));
+const repoMocks = vi.hoisted(() => ({
+  rejectNextUpdate: false,
+  rejectNextCreate: false,
+}));
 
 vi.mock("../agents", () => ({
   runAgent: runAgentMock,
@@ -51,6 +54,10 @@ vi.mock("../repos", () => ({
   }),
   getChatMessageRepo: () => ({
     createChatMessage: (message: ChatMessage) => {
+      if (repoMocks.rejectNextCreate) {
+        repoMocks.rejectNextCreate = false;
+        return Promise.reject(new Error("persist rejected"));
+      }
       messageStorage.set(message.id, message);
       return Promise.resolve(message);
     },
@@ -97,6 +104,7 @@ describe("sendChatMessage", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     repoMocks.rejectNextUpdate = false;
+    repoMocks.rejectNextCreate = false;
     conversationStorage.clear();
     messageStorage.clear();
     seed();
@@ -226,5 +234,31 @@ describe("sendChatMessage", () => {
     expect(messageStorage.size).toBe(1);
     expect(getAppState().chat.conversationIds.includes("conv-1")).toBe(false);
     expect(runAgentMock).toHaveBeenCalledTimes(1);
+  });
+
+  it("a delete that starts during a send skips the agent for that send", async () => {
+    // Queue a send, then race a delete against it. The send's persist
+    // either lands before the repo delete (and the conversation is
+    // gone by the time we re-check) or after (and persistSend bails).
+    // In both cases the agent must not run.
+    seed();
+    const sendPromise = sendChatMessage("conv-1", "Racing send");
+    const deletePromise = deleteConversation("conv-1");
+    await Promise.all([sendPromise, deletePromise]);
+
+    expect(runAgentMock).not.toHaveBeenCalled();
+    expect(getAppState().conversationById["conv-1"]).toBeUndefined();
+    expect(getAppState().chat.conversationIds.includes("conv-1")).toBe(false);
+  });
+
+  it("a persist failure skips the agent and does not run it", async () => {
+    // Make createChatMessage reject. The send must not trigger the
+    // agent because no message reached storage.
+    repoMocks.rejectNextCreate = true;
+
+    await sendChatMessage("conv-1", "This will fail");
+
+    expect(runAgentMock).not.toHaveBeenCalled();
+    expect(messageStorage.size).toBe(0);
   });
 });

@@ -10,27 +10,73 @@ import { getIntl } from "../i18n/intl";
 const TITLE_MAX_WORDS = 4;
 const TITLE_MAX_CHARS = 32;
 
+// True when a code unit is a high surrogate (0xD800-0xDBFF). High
+// surrogates always lead a pair, so a trailing high surrogate means
+// the low half was dropped by a prior slice.
+const isHighSurrogate = (codeUnit: number): boolean =>
+  codeUnit >= 0xd800 && codeUnit <= 0xdbff;
+
+// True when a code unit is a low surrogate (0xDC00-0xDFFF). Low
+// surrogates always follow a high surrogate, so a trailing low
+// surrogate means the slice kept a complete pair and the next code
+// unit is a lone high surrogate from the truncation.
+const isLowSurrogate = (codeUnit: number): boolean =>
+  codeUnit >= 0xdc00 && codeUnit <= 0xdfff;
+
 // Drops trailing code units that would leave a lone surrogate in the
-// returned string. slice(0, TITLE_MAX_CHARS) can land on either half of
-// a surrogate pair, so the cut is adjusted based on which half survived.
+// returned string. slice can land on either half of a surrogate pair,
+// so the cut is adjusted based on which half survived.
 const dropTrailingSurrogate = (text: string): string => {
-  const last = text.codePointAt(text.length - 1);
-  if (last === undefined) return text;
-  if (last >= 0xdc00 && last <= 0xdfff) return text.slice(0, -2);
-  if (last >= 0xd800 && last <= 0xdbff) return text.slice(0, -1);
+  const last = text.charCodeAt(text.length - 1);
+  if (isHighSurrogate(last)) return text.slice(0, -1);
+  if (isLowSurrogate(last)) return text.slice(0, -2);
   return text;
 };
 
-// Ellipsizes text that was truncated by a prior cap, dropping the last
-// character so the trailing … fits the cap exactly when the text is at
-// the cap, or appending … directly when the text is already under the
-// cap. The slice can land on the low half of a surrogate pair, so
-// dropTrailingSurrogate is applied to the result to keep the string
-// valid UTF-16.
+const segmenter =
+  typeof Intl !== "undefined" && "Segmenter" in Intl
+    ? new Intl.Segmenter(undefined, { granularity: "grapheme" })
+    : undefined;
+
+// Truncates a string so the result never exceeds `cap` code units and
+// the cut never lands inside a grapheme cluster. Code-unit cap keeps
+// the title length predictable for the sidebar layout; the grapheme
+// check keeps emoji and ZWJ sequences intact. Returns the input
+// unchanged when it is already at or under the cap.
+const capByGraphemes = (text: string, cap: number): string => {
+  if (text.length <= cap) return text;
+  if (!segmenter) return text.slice(0, cap);
+
+  let cut = cap;
+  for (const { segment, index } of segmenter.segment(text)) {
+    const end = index + segment.length;
+    if (end > cap) break;
+    cut = end;
+  }
+  return text.slice(0, cut);
+};
+
+// Ellipsizes text that was truncated by a prior cap. When the text is
+// already under the cap, the ellipsis is appended directly. When the
+// text is at the cap, the last code unit is dropped so the trailing
+// ellipsis keeps the result at or below the cap. Surrogate handling
+// runs on the base substring before the ellipsis is added so the
+// returned string never contains a dangling surrogate in the middle.
 const ellipsizeCapped = (text: string, cap: number): string =>
+  `${dropTrailingSurrogate(text.length < cap ? text : text.slice(0, -1))}…`;
+
+// Caps the input at the first `wordCap` whitespace-separated tokens.
+const capByWords = (text: string, wordCap: number): string =>
+  text.split(" ").slice(0, wordCap).join(" ");
+
+// Caps the input at the first `wordCap` whitespace-separated tokens,
+// then at `charCap` code units respecting grapheme boundaries, then
+// drops any trailing surrogate and trims trailing whitespace. The
+// result is the untruncated capped text.
+const capTitleText = (text: string): string =>
   dropTrailingSurrogate(
-    text.length < cap ? `${text}…` : `${text.slice(0, -1)}…`,
-  );
+    capByGraphemes(capByWords(text, TITLE_MAX_WORDS), TITLE_MAX_CHARS),
+  ).trimEnd();
 
 /**
  * Derives a very short conversation title from the first user message.
@@ -40,17 +86,15 @@ const ellipsizeCapped = (text: string, cap: number): string =>
 export const deriveConversationTitle = (text: string): string => {
   const collapsed = text.replace(/\s+/g, " ").trim();
   if (!collapsed) return "";
-
-  const capped = collapsed
-    .split(" ")
-    .slice(0, TITLE_MAX_WORDS)
-    .join(" ")
-    .slice(0, TITLE_MAX_CHARS);
-  const trimmed = dropTrailingSurrogate(capped).trimEnd();
-
-  if (trimmed.length === collapsed.length) return trimmed;
-  return ellipsizeCapped(trimmed, TITLE_MAX_CHARS);
+  return ellipsizeIfTrimmed(capTitleText(collapsed), collapsed);
 };
+
+// Returns the trimmed text when nothing was cut, or the ellipsized
+// version when the cap shortened it.
+const ellipsizeIfTrimmed = (trimmed: string, collapsed: string): string =>
+  trimmed.length === collapsed.length
+    ? trimmed
+    : ellipsizeCapped(trimmed, TITLE_MAX_CHARS);
 
 let placeholderTitles: ReadonlySet<string> | undefined;
 

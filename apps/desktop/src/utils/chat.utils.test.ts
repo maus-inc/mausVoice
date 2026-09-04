@@ -5,6 +5,13 @@ import {
   nextConversationTitle,
 } from "./chat.utils";
 
+const LONE_HIGH = /[\uD800-\uDBFF]$/u;
+const LONE_LOW = /[\uDC00-\uDFFF]$/u;
+const expectTrailingNotSurrogate = (text: string) => {
+  expect(text).not.toMatch(LONE_HIGH);
+  expect(text).not.toMatch(LONE_LOW);
+};
+
 // The German locale returns a distinct placeholder so the tests prove the
 // match spans every supported locale, not just the active one.
 vi.mock("../i18n/intl", () => ({
@@ -46,12 +53,8 @@ describe("deriveConversationTitle", () => {
     // the high surrogate of the emoji pair. The truncation must drop the
     // dangling surrogate rather than leave an unpaired high surrogate at
     // the end of the title.
-    const title = deriveConversationTitle(
-      "a".repeat(30) + " " + "😀" + " more",
-    );
-    expect(title).not.toMatch(/[\uD800-\uDBFF]$/);
-    expect(title).not.toMatch(/[\uDC00-\uDFFF]$/);
-    expect(title.length).toBeLessThanOrEqual(32);
+    const title = deriveConversationTitle(`a`.repeat(30) + " 😀 more");
+    expectTrailingNotSurrogate(title);
   });
 
   it("drops both surrogates when the slice keeps a lone high surrogate", () => {
@@ -59,10 +62,8 @@ describe("deriveConversationTitle", () => {
     // high surrogate but drops the low surrogate, leaving a dangling
     // high surrogate. The fix must drop both so the title is a valid
     // UTF-16 string.
-    const title = deriveConversationTitle("a".repeat(31) + " " + "😀");
-    expect(title).not.toMatch(/[\uD800-\uDBFF]$/);
-    expect(title).not.toMatch(/[\uDC00-\uDFFF]$/);
-    expect(title.length).toBeLessThanOrEqual(32);
+    const title = deriveConversationTitle(`a`.repeat(31) + " 😀");
+    expectTrailingNotSurrogate(title);
   });
 
   it("keeps a valid UTF-16 string when ellipsize lands on a surrogate pair", () => {
@@ -70,9 +71,17 @@ describe("deriveConversationTitle", () => {
     // the low surrogate. The subsequent ellipsis slice(0, -1) would
     // drop the low surrogate and leave a dangling high surrogate if
     // dropTrailingSurrogate were not applied to the ellipsized result.
-    const title = deriveConversationTitle("a".repeat(30) + "😀" + " more");
-    expect(title).not.toMatch(/[\uD800-\uDBFF]$/);
-    expect(title).not.toMatch(/[\uDC00-\uDFFF]$/);
+    const title = deriveConversationTitle(`a`.repeat(30) + `😀 more`);
+    expectTrailingNotSurrogate(title);
+  });
+
+  it("keeps a ZWJ emoji sequence intact at the truncation boundary", () => {
+    // 👨‍👩‍👧 is an 8-code-unit ZWJ sequence. The cap must not slice inside it.
+    const family = `👨‍👩‍👧`;
+    const title = deriveConversationTitle(`a`.repeat(31) + " " + family);
+    expect(title.endsWith("…")).toBe(true);
+    expectTrailingNotSurrogate(title);
+    expect(title).not.toContain("\u200d");
   });
 
   it("returns an empty string for blank input", () => {
