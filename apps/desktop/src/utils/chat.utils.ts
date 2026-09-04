@@ -16,23 +16,43 @@ const TITLE_MAX_CHARS = 32;
 const isHighSurrogate = (codePoint: number | undefined): boolean =>
   codePoint !== undefined && codePoint >= 0xd800 && codePoint <= 0xdbff;
 
-// True when a code point is a low surrogate (0xDC00-0xDFFF). Low
-// surrogates always follow a high surrogate, so a trailing low
-// surrogate means the slice kept a complete pair and the next code
-// unit is a lone high surrogate from the truncation.
+// True when a code point is a low surrogate (0xDC00-0xDFFF). A low
+// surrogate at the end of a string is almost always the second half
+// of a complete pair, so the caller must check the preceding code
+// unit before deciding to drop it.
 const isLowSurrogate = (codePoint: number | undefined): boolean =>
   codePoint !== undefined && codePoint >= 0xdc00 && codePoint <= 0xdfff;
 
+// True when a code point is in the supplementary plane (above
+// 0xFFFF), meaning codePointAt assembled a full surrogate pair.
+// The string ends with a complete emoji or other astral character.
+const isSupplementaryCodePoint = (codePoint: number | undefined): boolean =>
+  codePoint !== undefined && codePoint > 0xffff;
+
+// True when the code unit at `position` starts a surrogate pair.
+// codePointAt returns the assembled supplementary code point when
+// the position is a high surrogate followed by a low, and returns
+// the raw low surrogate value when the position is a low surrogate
+// without a preceding high.
+const startsSurrogatePair = (text: string, position: number): boolean => {
+  const value = text.codePointAt(position);
+  return isSupplementaryCodePoint(value) || isLowSurrogate(value);
+};
+
 // Drops trailing code units that would leave a lone surrogate in the
-// returned string. slice can land on either half of a surrogate pair,
-// so the cut is adjusted based on which half survived. codePointAt is
-// safe here because we only read the value at a single position and
-// compare it against the surrogate ranges, which are disjoint from
-// the supplementary code points codePointAt would otherwise assemble.
+// returned string. A lone high surrogate (not followed by a low) is
+// dropped with slice(0, -1). A complete pair (assembled by
+// codePointAt into a supplementary code point) is kept as-is. A low
+// surrogate that starts a pair with the preceding high surrogate is
+// kept as-is. An orphaned low surrogate is dropped with slice(0, -1).
 const dropTrailingSurrogate = (text: string): string => {
   const last = text.codePointAt(text.length - 1);
   if (isHighSurrogate(last)) return text.slice(0, -1);
-  if (isLowSurrogate(last)) return text.slice(0, -2);
+  if (isSupplementaryCodePoint(last)) return text;
+  if (isLowSurrogate(last)) {
+    if (startsSurrogatePair(text, text.length - 2)) return text;
+    return text.slice(0, -1);
+  }
   return text;
 };
 

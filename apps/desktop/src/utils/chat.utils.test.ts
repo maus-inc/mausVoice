@@ -80,17 +80,29 @@ describe("deriveConversationTitle", () => {
     expectTrailingNotSurrogate(title);
   });
 
-  it("keeps a ZWJ emoji sequence intact at the truncation boundary", () => {
-    // 👨‍👩‍👧 is an 8-code-unit ZWJ sequence. The cap must not slice inside it.
-    // The test is skipped when Intl.Segmenter is unavailable because the
-    // implementation falls back to a best-effort slice that can break the
-    // sequence.
-    if (typeof Intl === "undefined" || !("Segmenter" in Intl)) return;
-    const family = "👨‍👩‍👧";
-    const title = deriveConversationTitle(concat("a".repeat(31), " ", family));
-    expect(title.endsWith("…")).toBe(true);
-    expectTrailingNotSurrogate(title);
-    expect(title).not.toContain("\u200d");
+  it.runIf(typeof Intl !== "undefined" && "Segmenter" in Intl)(
+    "keeps a ZWJ emoji sequence intact at the truncation boundary",
+    () => {
+      // 👨‍👩‍👧 is an 8-code-unit ZWJ sequence. The cap must not slice inside it.
+      // The test is skipped when Intl.Segmenter is unavailable because the
+      // implementation falls back to a best-effort slice that can break the
+      // sequence.
+      const family = "👨‍👩‍👧";
+      const title = deriveConversationTitle(
+        concat("a".repeat(31), " ", family),
+      );
+      expect(title.endsWith("…")).toBe(true);
+      expectTrailingNotSurrogate(title);
+      expect(title).not.toContain("\u200d");
+    },
+  );
+
+  it("preserves a complete emoji pair at the end of an under-cap title", () => {
+    // 'Hello 😀' is 9 code units, under the 32 cap. The emoji must
+    // survive dropTrailingSurrogate because the trailing low
+    // surrogate is preceded by a high surrogate and the pair is
+    // complete.
+    expect(deriveConversationTitle("Hello 😀")).toBe("Hello 😀");
   });
 
   it("returns an empty string for blank input", () => {

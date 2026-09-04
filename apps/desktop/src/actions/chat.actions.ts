@@ -94,16 +94,16 @@ export const deleteConversation = async (id: string): Promise<void> => {
     // state.
     try {
       produceAppState((draft) => {
-        Reflect.deleteProperty(draft.conversationById, id);
+        delete draft.conversationById[id];
         draft.chat.conversationIds = draft.chat.conversationIds.filter(
           (cid) => cid !== id,
         );
 
         const messageIds = draft.chatMessageIdsByConversationId[id] ?? [];
         for (const messageId of messageIds) {
-          Reflect.deleteProperty(draft.chatMessageById, messageId);
+          delete draft.chatMessageById[messageId];
         }
-        Reflect.deleteProperty(draft.chatMessageIdsByConversationId, id);
+        delete draft.chatMessageIdsByConversationId[id];
       });
     } finally {
       deletingConversationIds.delete(id);
@@ -280,15 +280,21 @@ export const sendChatMessage = async (
   // Track whether persistSend rejected so the agent is not invoked
   // when no message was actually persisted. The previous chain is
   // swallowed so an unrelated send failure does not abort this send.
-  // The error is logged so storage failures stay visible.
+  // The error is logged so storage failures stay visible, mirroring
+  // the dev/prod gating in applySendToConversation so production logs
+  // stay compact.
   let persistFailed = false;
   const persist = previous
     .catch(() => undefined)
     .then(() =>
       persistSend(conversationId, text).catch((error) => {
         persistFailed = true;
+        const dev =
+          typeof process !== "undefined" &&
+          process.env.NODE_ENV !== "production";
         console.error(
           `Failed to persist chat message for conversation ${conversationId}`,
+          dev ? { content: text } : undefined,
           error,
         );
       }),
