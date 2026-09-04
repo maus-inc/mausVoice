@@ -1,11 +1,16 @@
 import type { ChatMessage, Conversation } from "@maus-inc/types";
 import { abortAgentLoop, CHAT_AGENT_CONFIG, runAgent } from "../agents";
 import { getChatMessageRepo, getConversationRepo } from "../repos";
-import { produceAppState } from "../store";
+import { getAppState, produceAppState } from "../store";
 import {
   registerChatMessages,
   registerConversations,
 } from "../utils/app.utils";
+import {
+  deriveConversationTitle,
+  hasPlaceholderTitle,
+} from "../utils/chat.utils";
+import { nowIso } from "../utils/date.utils";
 
 export const loadConversations = async (): Promise<void> => {
   produceAppState((draft) => {
@@ -138,19 +143,83 @@ export const runAgentForConversation = async (
   }
 };
 
-export const sendChatMessage = async (
+const sendQueuesByConversationId = new Map<string, Promise<void>>();
+
+const persistSend = async (
   conversationId: string,
   text: string,
 ): Promise<void> => {
+  const { conversationById, chatMessageIdsByConversationId } = getAppState();
+  const conversation = conversationById[conversationId];
+  const isFirstMessage =
+    (chatMessageIdsByConversationId[conversationId] ?? []).length === 0;
+
+  // The timestamp comes from inside the serialized section, so queued sends
+  // stay monotonic.
+  const createdAt = nowIso();
   await createChatMessage({
     id: crypto.randomUUID(),
     conversationId,
     role: "user",
     content: text,
-    createdAt: new Date().toISOString(),
+    createdAt,
     metadata: null,
   });
 
+  // The first user message names the conversation. A conversation that still
+  // carries the placeholder also adopts a title from its next message, which
+  // covers chats created before auto-titling existed. Every message bumps
+  // updatedAt so the sidebar timestamp and recency order stay truthful. The
+  // repo lists conversations by updated_at descending.
+  if (conversation) {
+    const shouldDeriveTitle =
+      isFirstMessage || hasPlaceholderTitle(conversation.title);
+    const title = shouldDeriveTitle
+      ? deriveConversationTitle(text) || conversation.title
+      : conversation.title;
+    // The message is already persisted, so a failed title or timestamp bump
+    // must not abort the send or skip the agent. The next send retries both.
+    try {
+      await updateConversation({
+        ...conversation,
+        title,
+        updatedAt: createdAt,
+      });
+    } catch (error) {
+      console.error("Failed to update the conversation after a send", error);
+    }
+  }
+
+  produceAppState((draft) => {
+    draft.chat.conversationIds = [
+      conversationId,
+      ...draft.chat.conversationIds.filter((cid) => cid !== conversationId),
+    ];
+  });
+};
+
+export const sendChatMessage = async (
+  conversationId: string,
+  text: string,
+): Promise<void> => {
+  // Concurrent sends into one conversation persist back to back, so an
+  // older send cannot overwrite a newer send's timestamp or title. The
+  // agent run stays outside the queue and never blocks the next send.
+  const previous =
+    sendQueuesByConversationId.get(conversationId) ?? Promise.resolve();
+  const persist = previous
+    .catch(() => undefined)
+    .then(() => persistSend(conversationId, text));
+  sendQueuesByConversationId.set(conversationId, persist);
+  persist
+    .catch(() => undefined)
+    .then(() => {
+      if (sendQueuesByConversationId.get(conversationId) === persist) {
+        sendQueuesByConversationId.delete(conversationId);
+      }
+    });
+
+  await persist;
   await runAgentForConversation(conversationId);
 };
 

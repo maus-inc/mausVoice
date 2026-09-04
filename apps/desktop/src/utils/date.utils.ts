@@ -4,37 +4,24 @@ export const nowIso = (): string => {
   return new Date().toISOString();
 };
 
-export const formatRelativeTime = (
-  intl: IntlShape,
-  isoDate: string,
-): string => {
-  const now = Date.now();
-  const then = new Date(isoDate).getTime();
-  const diffMs = now - then;
-  const diffSeconds = Math.floor(diffMs / 1000);
-
-  if (diffSeconds < 60) {
-    return intl.formatMessage({ defaultMessage: "Just now" });
-  }
-
-  const diffMinutes = Math.floor(diffSeconds / 60);
-  if (diffMinutes < 60) {
-    return intl.formatRelativeTime(-diffMinutes, "minute", { numeric: "auto" });
-  }
-
-  const diffHours = Math.floor(diffMinutes / 60);
-  if (diffHours < 24) {
-    return intl.formatRelativeTime(-diffHours, "hour", { numeric: "auto" });
-  }
-
-  const diffDays = Math.floor(diffHours / 24);
-  if (diffDays < 7) {
-    return intl.formatRelativeTime(-diffDays, "day", { numeric: "auto" });
-  }
-
-  return intl.formatDate(isoDate, {
+/**
+ * Compact short date for chat surfaces, e.g. "Aug 25". The year is only
+ * appended when the timestamp is not from the current year, so recent
+ * activity stays short while older entries stay unambiguous.
+ */
+export const formatShortDate = (intl: IntlShape, isoDate: string): string => {
+  const date = new Date(isoDate);
+  const sameYear = date.getFullYear() === new Date().getFullYear();
+  return intl.formatDate(date, {
     month: "short",
     day: "numeric",
-    year: diffDays > 365 ? "numeric" : undefined,
+    ...(sameYear ? {} : { year: "numeric" }),
   });
 };
+
+/** Compact time for chat surfaces, e.g. "10:40 PM". */
+export const formatShortTime = (intl: IntlShape, isoDate: string): string =>
+  intl.formatTime(new Date(isoDate), {
+    hour: "numeric",
+    minute: "2-digit",
+  });
