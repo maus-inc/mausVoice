@@ -1,5 +1,9 @@
 import { describe, expect, it, vi } from "vitest";
-import { deriveConversationTitle, hasPlaceholderTitle } from "./chat.utils";
+import {
+  deriveConversationTitle,
+  hasPlaceholderTitle,
+  nextConversationTitle,
+} from "./chat.utils";
 
 // The German locale returns a distinct placeholder so the tests prove the
 // match spans every supported locale, not just the active one.
@@ -57,5 +61,39 @@ describe("hasPlaceholderTitle", () => {
 
   it("rejects real titles", () => {
     expect(hasPlaceholderTitle("Quarterly report numbers")).toBe(false);
+  });
+});
+
+describe("nextConversationTitle", () => {
+  it("derives the title from the first message", () => {
+    expect(
+      nextConversationTitle(
+        "Please help me fix the heating",
+        "New conversation",
+        true,
+      ),
+    ).toBe("Please help me fix…");
+  });
+
+  it("retitles a legacy placeholder conversation on its next message", () => {
+    expect(
+      nextConversationTitle(
+        "It is about the broken heater",
+        "New conversation",
+        false,
+      ),
+    ).toBe("It is about the…");
+  });
+
+  it("keeps a real title on later messages", () => {
+    expect(
+      nextConversationTitle("Any follow up question", "Broken heater", false),
+    ).toBe("Broken heater");
+  });
+
+  it("keeps the current title when the message yields nothing", () => {
+    expect(nextConversationTitle("   \n\t ", "New conversation", true)).toBe(
+      "New conversation",
+    );
   });
 });

@@ -6,10 +6,7 @@ import {
   registerChatMessages,
   registerConversations,
 } from "../utils/app.utils";
-import {
-  deriveConversationTitle,
-  hasPlaceholderTitle,
-} from "../utils/chat.utils";
+import { nextConversationTitle } from "../utils/chat.utils";
 import { nowIso } from "../utils/date.utils";
 
 export const loadConversations = async (): Promise<void> => {
@@ -157,15 +154,7 @@ const applySendToConversation = async (
   const conversation = getAppState().conversationById[conversationId];
   if (!conversation) return;
 
-  // The first user message names the conversation. A conversation that still
-  // carries the placeholder also adopts a title from its next message, which
-  // covers chats created before auto-titling existed. Every message bumps
-  // updatedAt so the sidebar timestamp and recency order stay truthful. The
-  // repo lists conversations by updated_at descending.
-  const shouldDeriveTitle =
-    isFirstMessage || hasPlaceholderTitle(conversation.title);
-  const derived = deriveConversationTitle(text);
-  const title = shouldDeriveTitle && derived ? derived : conversation.title;
+  const title = nextConversationTitle(text, conversation.title, isFirstMessage);
   // The message is already persisted, so a failed title or timestamp bump
   // must not abort the send or skip the agent. The next send retries both.
   try {

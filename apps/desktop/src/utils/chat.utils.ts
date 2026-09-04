@@ -55,3 +55,20 @@ const getPlaceholderTitles = (): ReadonlySet<string> => {
  */
 export const hasPlaceholderTitle = (title: string): boolean =>
   !title || getPlaceholderTitles().has(title);
+
+/**
+ * The title a conversation should carry after a send. The first message
+ * names the conversation, and a conversation that still carries the
+ * placeholder also adopts a title from its next message, which covers
+ * conversations created before auto-titling existed. A message that
+ * yields no derived title leaves the current title alone.
+ */
+export const nextConversationTitle = (
+  text: string,
+  currentTitle: string,
+  isFirstMessage: boolean,
+): string => {
+  const shouldDerive = isFirstMessage || hasPlaceholderTitle(currentTitle);
+  const derived = deriveConversationTitle(text);
+  return shouldDerive && derived ? derived : currentTitle;
+};
