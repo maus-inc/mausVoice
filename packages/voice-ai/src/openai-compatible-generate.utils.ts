@@ -28,8 +28,7 @@ export const buildOpenAICompatibleMessages = ({
   if (system) {
     messages.push({ role: "system", content: system });
   }
-  const userParts: ChatCompletionContentPart[] =
-    providedUserParts ?? [];
+  const userParts: ChatCompletionContentPart[] = providedUserParts ?? [];
   for (const url of imageUrls) {
     userParts.push({
       type: "image_url",

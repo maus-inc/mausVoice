@@ -60,9 +60,9 @@ OPENAI_API_KEY=sk-... pnpm --filter @repo/agent run example
 
 ### Available tools in the example
 
-| Tool | Real/Mock | Description |
-|---|---|---|
-| `execute_terminal_command` | Real | Runs shell commands (requires approval) |
-| `read_accessibility_context` | Mock | Returns fake accessibility data |
-| `paste_text` | Mock | Logs what would be pasted |
-| `grab_screenshot` | Mock | Returns fake screenshot description |
+| Tool                         | Real/Mock | Description                             |
+| ---------------------------- | --------- | --------------------------------------- |
+| `execute_terminal_command`   | Real      | Runs shell commands (requires approval) |
+| `read_accessibility_context` | Mock      | Returns fake accessibility data         |
+| `paste_text`                 | Mock      | Logs what would be pasted               |
+| `grab_screenshot`            | Mock      | Returns fake screenshot description     |
