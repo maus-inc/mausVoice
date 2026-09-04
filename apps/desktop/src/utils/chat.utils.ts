@@ -24,9 +24,13 @@ const dropTrailingSurrogate = (text: string): string => {
 // Ellipsizes text that was truncated by a prior cap, dropping the last
 // character so the trailing … fits the cap exactly when the text is at
 // the cap, or appending … directly when the text is already under the
-// cap.
+// cap. The slice can land on the low half of a surrogate pair, so
+// dropTrailingSurrogate is applied to the result to keep the string
+// valid UTF-16.
 const ellipsizeCapped = (text: string, cap: number): string =>
-  text.length < cap ? `${text}…` : `${text.slice(0, -1)}…`;
+  dropTrailingSurrogate(
+    text.length < cap ? `${text}…` : `${text.slice(0, -1)}…`,
+  );
 
 /**
  * Derives a very short conversation title from the first user message.
