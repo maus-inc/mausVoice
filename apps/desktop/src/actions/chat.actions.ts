@@ -227,6 +227,37 @@ const applySendToConversation = async (
   }
 };
 
+// Returns the number of messages persisted for the conversation, or
+// 0 when the repo query fails. A transient repo error must not abort
+// the send, so the caller falls back to the in-memory count.
+const readPersistedMessageCount = async (
+  conversationId: string,
+  text: string,
+): Promise<number> => {
+  try {
+    return (await getChatMessageRepo().listChatMessages(conversationId)).length;
+  } catch (error) {
+    const dev =
+      typeof process !== "undefined" && process.env.NODE_ENV !== "production";
+    console.error(
+      `Failed to read persisted message count for conversation ${conversationId}`,
+      dev ? { content: text } : undefined,
+      error,
+    );
+    return 0;
+  }
+};
+
+// Moves the conversation to the top of the local sidebar order.
+const bumpConversationToTop = (conversationId: string) => {
+  produceAppState((draft) => {
+    draft.chat.conversationIds = [
+      conversationId,
+      ...draft.chat.conversationIds.filter((cid) => cid !== conversationId),
+    ];
+  });
+};
+
 const persistSend = async (
   conversationId: string,
   text: string,
@@ -243,25 +274,9 @@ const persistSend = async (
   }
   // The in-memory message list can be empty even for a conversation
   // that already has messages persisted when a send races with
-  // loadChatMessages. Ask the repo for the persisted count so a stale
-  // empty in-memory list cannot cause a non-first message to be
-  // treated as the first one and overwrite a real title. A repo
-  // failure falls back to the in-memory count so a transient error
-  // does not abort the send.
-  let persistedCount = 0;
-  try {
-    persistedCount = (
-      await getChatMessageRepo().listChatMessages(conversationId)
-    ).length;
-  } catch (error) {
-    const dev =
-      typeof process !== "undefined" && process.env.NODE_ENV !== "production";
-    console.error(
-      `Failed to read persisted message count for conversation ${conversationId}`,
-      dev ? { content: text } : undefined,
-      error,
-    );
-  }
+  // loadChatMessages. The persisted count keeps the isFirstMessage
+  // decision accurate in that window.
+  const persistedCount = await readPersistedMessageCount(conversationId, text);
   const isFirstMessage =
     (getAppState().chatMessageIdsByConversationId[conversationId] ?? [])
       .length === 0 && persistedCount === 0;
@@ -290,12 +305,7 @@ const persistSend = async (
   // order so a reload restores a consistent view, and the next send
   // retries the bump.
   if (!updated) return;
-  produceAppState((draft) => {
-    draft.chat.conversationIds = [
-      conversationId,
-      ...draft.chat.conversationIds.filter((cid) => cid !== conversationId),
-    ];
-  });
+  bumpConversationToTop(conversationId);
 };
 
 export const sendChatMessage = async (
