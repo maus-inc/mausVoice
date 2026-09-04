@@ -25,9 +25,14 @@ export const deriveConversationTitle = (text: string): string => {
     .join(" ")
     .slice(0, TITLE_MAX_CHARS);
   const lastCode = capped.codePointAt(capped.length - 1);
-  const graphemeSafe =
-    lastCode !== undefined && lastCode >= 0xdc00 && lastCode <= 0xdfff
-      ? capped.slice(0, -2)
+  const isLoneLowSurrogate =
+    lastCode !== undefined && lastCode >= 0xdc00 && lastCode <= 0xdfff;
+  const isLoneHighSurrogate =
+    lastCode !== undefined && lastCode >= 0xd800 && lastCode <= 0xdbff;
+  const graphemeSafe = isLoneLowSurrogate
+    ? capped.slice(0, -2)
+    : isLoneHighSurrogate
+      ? capped.slice(0, -1)
       : capped;
   const trimmed = graphemeSafe.trimEnd();
 

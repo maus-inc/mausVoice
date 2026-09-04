@@ -42,8 +42,15 @@ describe("deriveConversationTitle", () => {
   });
 
   it("does not leave a partial surrogate at the truncation boundary", () => {
-    const title = deriveConversationTitle("Hello world 👨‍👩‍👧‍👦 family gathering");
-    expect(title).not.toMatch(/\uD800-\uDBFF[\uDC00-\uDFFF]?$/);
+    // 30 ASCII chars + a space + an astral emoji, so slice(0, 32) ends on
+    // the high surrogate of the emoji pair. The truncation must drop the
+    // dangling surrogate rather than leave an unpaired high surrogate at
+    // the end of the title.
+    const title = deriveConversationTitle(
+      "a".repeat(30) + " " + "😀" + " more",
+    );
+    expect(title).not.toMatch(/[\uD800-\uDBFF]$/);
+    expect(title).not.toMatch(/[\uDC00-\uDFFF]$/);
     expect(title.length).toBeLessThanOrEqual(32);
   });
 

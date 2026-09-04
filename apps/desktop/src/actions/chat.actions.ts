@@ -58,8 +58,14 @@ export const updateConversation = async (
 };
 
 export const deleteConversation = async (id: string): Promise<void> => {
+  // Wait for any in-flight send so its updateConversation cannot fire after
+  // the delete. Swallow the queue's own rejection so an unrelated send
+  // failure does not block the user-initiated delete. Removing the entry
+  // before the await prevents a new send from chaining after the delete
+  // and creating a message for a conversation that no longer exists.
   const previous = sendQueuesByConversationId.get(id) ?? Promise.resolve();
-  await previous;
+  sendQueuesByConversationId.delete(id);
+  await previous.catch(() => undefined);
 
   await getConversationRepo().deleteConversation(id);
 
@@ -163,22 +169,13 @@ const applySendToConversation = async (
   try {
     await updateConversation({ ...conversation, title, updatedAt: createdAt });
   } catch (error) {
-    if (
-      typeof process !== "undefined" &&
-      process.env.NODE_ENV !== "production"
-    ) {
-      console.error(
-        `Failed to update conversation ${conversationId} after a send`,
-        { title, updatedAt: createdAt },
-        error,
-      );
-    } else {
-      console.error(
-        `Failed to update conversation ${conversationId} after a send`,
-        { updatedAt: createdAt },
-        error,
-      );
-    }
+    const dev =
+      typeof process !== "undefined" && process.env.NODE_ENV !== "production";
+    console.error(
+      `Failed to update conversation ${conversationId} after a send`,
+      dev ? { title, updatedAt: createdAt } : { updatedAt: createdAt },
+      error,
+    );
   }
 };
 

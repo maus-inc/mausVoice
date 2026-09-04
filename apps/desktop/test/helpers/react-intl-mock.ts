@@ -27,7 +27,7 @@ const useIntlMock = (): Partial<IntlShape> => {
     formatMessage,
     formatDate,
     formatTime,
-  } as Partial<IntlShape>;
+  };
 };
 
 const FormattedMessageMock = ((props: { defaultMessage: string }): string =>
