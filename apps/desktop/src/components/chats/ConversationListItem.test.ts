@@ -13,18 +13,9 @@ vi.mock("../common/MenuPopover", () => ({
 }));
 
 vi.mock("react-intl", async (importOriginal) => {
-  const actual = await importOriginal<typeof import("react-intl")>();
-  return {
-    ...actual,
-    useIntl: () => ({
-      formatMessage: ({ defaultMessage }: { defaultMessage: string }) =>
-        defaultMessage,
-      formatDate: () => "date",
-      formatTime: () => "time",
-    }),
-    FormattedMessage: ({ defaultMessage }: { defaultMessage: string }) =>
-      defaultMessage,
-  };
+  const { reactIntlMockModule } =
+    await import("../../../test/helpers/react-intl-mock");
+  return reactIntlMockModule(importOriginal);
 });
 
 import { ConversationListItem } from "./ConversationListItem";
