@@ -4,12 +4,16 @@ export function createGeminiGenerateTests({
   describeName,
   loadModule,
   functionName,
-  generateContentMock,
+  fetchMock,
+  respond,
+  extraParams = {},
 }: {
   describeName: string;
   loadModule: () => Promise<Record<string, unknown>>;
   functionName: string;
-  generateContentMock: ReturnType<typeof vi.fn>;
+  fetchMock: ReturnType<typeof vi.fn>;
+  respond: () => Response | Promise<Response>;
+  extraParams?: Record<string, unknown>;
 }) {
   describe(describeName, () => {
     beforeAll(() => {
@@ -17,7 +21,7 @@ export function createGeminiGenerateTests({
     });
 
     afterEach(() => {
-      generateContentMock.mockReset();
+      fetchMock.mockReset();
       vi.resetModules();
     });
 
@@ -25,39 +29,33 @@ export function createGeminiGenerateTests({
       const mod = await loadModule();
       const fn = mod[functionName] as (params: Record<string, unknown>) => Promise<unknown>;
 
-      await fn(params);
+      fetchMock.mockImplementation(respond);
 
-      const callParams = generateContentMock.mock.calls[0][0];
+      await fn({ ...extraParams, ...params });
+
+      const init = fetchMock.mock.calls[0]?.[1] as RequestInit | undefined;
+      const callParams = init?.body ? JSON.parse(String(init.body)) : undefined;
+
       return { callParams };
     }
 
     it("omits maxOutputTokens from the config when maxTokens is undefined", async () => {
-      generateContentMock.mockResolvedValue({
-        text: "ok",
-        usageMetadata: { totalTokenCount: 1 },
-      });
-
       const { callParams } = await runTestCase({
         apiKey: "test-key",
         prompt: "hello",
       });
 
-      expect(callParams.config).toBeUndefined();
+      expect(callParams?.generationConfig).toBeUndefined();
     });
 
     it("forwards caller-owned maxTokens to config.maxOutputTokens when provided", async () => {
-      generateContentMock.mockResolvedValue({
-        text: "ok",
-        usageMetadata: { totalTokenCount: 1 },
-      });
-
       const { callParams } = await runTestCase({
         apiKey: "test-key",
         prompt: "hello",
         maxTokens: 600,
       });
 
-      expect(callParams.config).toMatchObject({ maxOutputTokens: 600 });
+      expect(callParams?.generationConfig).toMatchObject({ maxOutputTokens: 600 });
     });
   });
 }

@@ -202,6 +202,13 @@ pub fn build() -> tauri::Builder<tauri::Wry> {
             #[cfg(target_os = "windows")]
             crate::platform::windows::permissions::log_elevation_state();
 
+            // Spin up the OS-level sleep/wake and session-unlock watcher so
+            // the global keyboard hook can be re-armed after resume. Without
+            // this the hotkey stops firing after a laptop sleep or a fast
+            // user-switch unlock.
+            #[cfg(target_os = "windows")]
+            crate::platform::windows::lifecycle::start_watcher(app.handle());
+
             // Purge old log files, keeping the latest 10
             crate::system::diagnostics::purge_old_logs(app.handle());
 
