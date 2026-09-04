@@ -160,7 +160,11 @@ const applySendToConversation = async (
   try {
     await updateConversation({ ...conversation, title, updatedAt: createdAt });
   } catch (error) {
-    console.error("Failed to update the conversation after a send", error);
+    console.error(
+      `Failed to update conversation ${conversationId} after a send`,
+      { title, updatedAt: createdAt },
+      error,
+    );
   }
 };
 
