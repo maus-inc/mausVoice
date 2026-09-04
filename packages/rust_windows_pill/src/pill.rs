@@ -825,6 +825,8 @@ fn tick(state: &PillState, dt: f64) {
             state.flash_timer.set(0.0);
             *state.flash_action.borrow_mut() = None;
             *state.flash_action_label.borrow_mut() = None;
+            *state.flash_reject_action.borrow_mut() = None;
+            *state.flash_reject_action_label.borrow_mut() = None;
         } else {
             state.flash_timer.set(remaining);
         }

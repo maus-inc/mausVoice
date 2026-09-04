@@ -5,6 +5,18 @@ use crate::draw::{over_side_control, pill_position};
 use crate::gfx;
 use crate::state::{ClickAction, PillState};
 
+fn complete_flash(state: &PillState, selected_action: Option<String>) {
+    if let Some(action) = selected_action {
+        ipc::send(&OutMessage::ToastAction { action });
+    }
+    state.flash_visible.set(false);
+    state.flash_timer.set(0.0);
+    *state.flash_action.borrow_mut() = None;
+    *state.flash_action_label.borrow_mut() = None;
+    *state.flash_reject_action.borrow_mut() = None;
+    *state.flash_reject_action_label.borrow_mut() = None;
+}
+
 fn has_flash_action_at(state: &PillState, x: f64, y: f64) -> bool {
     if state.flash_action.borrow().is_none() || state.flash_t.get() < 0.5 {
         return false;
@@ -100,30 +112,10 @@ pub(crate) fn handle_click(state: &PillState, x: f64, y: f64) {
                     }
                 }
                 ClickAction::FlashAction => {
-                    if let Some(ref action) = *state.flash_action.borrow() {
-                        ipc::send(&OutMessage::ToastAction {
-                            action: action.clone(),
-                        });
-                    }
-                    state.flash_visible.set(false);
-                    state.flash_timer.set(0.0);
-                    *state.flash_action.borrow_mut() = None;
-                    *state.flash_action_label.borrow_mut() = None;
-                    *state.flash_reject_action.borrow_mut() = None;
-                    *state.flash_reject_action_label.borrow_mut() = None;
+                    complete_flash(state, state.flash_action.borrow().clone());
                 }
                 ClickAction::FlashReject => {
-                    if let Some(ref action) = *state.flash_reject_action.borrow() {
-                        ipc::send(&OutMessage::ToastAction {
-                            action: action.clone(),
-                        });
-                    }
-                    state.flash_visible.set(false);
-                    state.flash_timer.set(0.0);
-                    *state.flash_action.borrow_mut() = None;
-                    *state.flash_action_label.borrow_mut() = None;
-                    *state.flash_reject_action.borrow_mut() = None;
-                    *state.flash_reject_action_label.borrow_mut() = None;
+                    complete_flash(state, state.flash_reject_action.borrow().clone());
                 }
             }
             return;
