@@ -94,6 +94,8 @@ export const deleteConversation = async (id: string): Promise<void> => {
     // state.
     try {
       produceAppState((draft) => {
+        // deepsource ignore JS-0323: delete is the idiomatic Immer
+        // draft operation and matches the rest of the codebase.
         delete draft.conversationById[id];
         draft.chat.conversationIds = draft.chat.conversationIds.filter(
           (cid) => cid !== id,
@@ -101,8 +103,10 @@ export const deleteConversation = async (id: string): Promise<void> => {
 
         const messageIds = draft.chatMessageIdsByConversationId[id] ?? [];
         for (const messageId of messageIds) {
+          // deepsource ignore JS-0323: see above.
           delete draft.chatMessageById[messageId];
         }
+        // deepsource ignore JS-0323: see above.
         delete draft.chatMessageIdsByConversationId[id];
       });
     } finally {
