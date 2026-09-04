@@ -229,8 +229,8 @@ const applySendToConversation = async (
 
 // True when the conversation has no messages in memory and the
 // persisted count is confirmed to be zero. A failed persisted read
-// returns null and defaults to not-first so a transient error does
-// not risk overwriting a real title.
+// returns false (not-first) so a transient error does not risk
+// overwriting a real title.
 const computeIsFirstMessage = async (
   conversationId: string,
   text: string,
