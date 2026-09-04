@@ -8,6 +8,7 @@ import {
 } from "../utils/app.utils";
 import { nextConversationTitle } from "../utils/chat.utils";
 import { nowIso } from "../utils/date.utils";
+import { getIsDevMode } from "../utils/env.utils";
 
 const sendQueuesByConversationId = new Map<string, Promise<void>>();
 
@@ -216,8 +217,7 @@ const applySendToConversation = async (
     await updateConversation({ ...conversation, title, updatedAt: createdAt });
     return true;
   } catch (error) {
-    const dev =
-      typeof process !== "undefined" && process.env.NODE_ENV !== "production";
+    const dev = getIsDevMode();
     console.error(
       `Failed to update conversation ${conversationId} after a send`,
       dev ? { title, updatedAt: createdAt } : { updatedAt: createdAt },
@@ -227,26 +227,34 @@ const applySendToConversation = async (
   }
 };
 
-// Returns the number of messages persisted for the conversation, or
-// null when the repo query fails. A transient repo error must not
-// abort the send, and a failure should be treated as "unknown" by
-// the caller so it defaults to not-first rather than risking a title
-// overwrite on a stale empty read.
-const readPersistedMessageCount = async (
+// True when the conversation has no messages in memory and the
+// persisted count is confirmed to be zero. A failed persisted read
+// returns null and defaults to not-first so a transient error does
+// not risk overwriting a real title.
+const computeIsFirstMessage = async (
   conversationId: string,
   text: string,
-): Promise<number | null> => {
+): Promise<boolean> => {
+  const inMemoryCount = (
+    getAppState().chatMessageIdsByConversationId[conversationId] ?? []
+  ).length;
+  if (inMemoryCount > 0) return false;
+  // The probe only runs when the in-memory list is empty, because
+  // a non-empty list already proves the message is not the first.
+  // A failed read defaults to false (not-first) so a transient
+  // error never overwrites a real title.
   try {
-    return (await getChatMessageRepo().listChatMessages(conversationId)).length;
+    return (
+      (await getChatMessageRepo().listChatMessages(conversationId)).length === 0
+    );
   } catch (error) {
-    const dev =
-      typeof process !== "undefined" && process.env.NODE_ENV !== "production";
+    const dev = getIsDevMode();
     console.error(
       `Failed to read persisted message count for conversation ${conversationId}`,
       dev ? { contentPreview: text.slice(0, 50) } : undefined,
       error,
     );
-    return null;
+    return false;
   }
 };
 
@@ -258,20 +266,6 @@ const bumpConversationToTop = (conversationId: string) => {
       ...draft.chat.conversationIds.filter((cid) => cid !== conversationId),
     ];
   });
-};
-
-// True when the conversation has no messages in memory and the
-// persisted count is confirmed to be zero. A failed persisted read
-// returns null and defaults to not-first so a transient error does
-// not risk overwriting a real title.
-const computeIsFirstMessage = (
-  conversationId: string,
-  persistedCount: number | null,
-): boolean => {
-  const inMemoryCount = (
-    getAppState().chatMessageIdsByConversationId[conversationId] ?? []
-  ).length;
-  return inMemoryCount === 0 && persistedCount === 0;
 };
 
 const persistSend = async (
@@ -290,12 +284,9 @@ const persistSend = async (
   }
   // The in-memory message list can be empty even for a conversation
   // that already has messages persisted when a send races with
-  // loadChatMessages. The persisted count keeps the isFirstMessage
-  // decision accurate in that window. A failed repo read defaults to
-  // not-first so a transient error does not risk overwriting a real
-  // title with the new message.
-  const persistedCount = await readPersistedMessageCount(conversationId, text);
-  const isFirstMessage = computeIsFirstMessage(conversationId, persistedCount);
+  // loadChatMessages. The probe only runs in that window and
+  // defaults to not-first on failure.
+  const isFirstMessage = await computeIsFirstMessage(conversationId, text);
 
   // The timestamp comes from inside the serialized section, so queued sends
   // stay monotonic.
@@ -333,26 +324,23 @@ export const sendChatMessage = async (
   // queue holds only in-flight sends, because each entry removes itself
   // once its persist settles. The agent run stays outside the queue, so a
   // running agent never blocks the next message. A failed message persist
-  // skips the agent, because the message never reached storage. A failed
-  // conversation update is caught and logged inside applySendToConversation
-  // instead.
+  // rejects the send and skips the agent, because the message never
+  // reached storage. A failed conversation update is caught and logged
+  // inside applySendToConversation instead.
   const previous =
     sendQueuesByConversationId.get(conversationId) ?? Promise.resolve();
-  // Track whether persistSend rejected so the agent is not invoked
-  // when no message was actually persisted. The previous chain is
-  // swallowed so an unrelated send failure does not abort this send.
-  // The error is logged so storage failures stay visible, mirroring
-  // the dev/prod gating in applySendToConversation so production logs
-  // stay compact.
+  // The error is captured so it can be re-thrown to the caller after
+  // the queue cleanup runs. The previous chain is swallowed so an
+  // unrelated send failure does not abort this send.
+  let persistError: unknown;
   let persistFailed = false;
   const persist = previous
     .catch(() => undefined)
     .then(() =>
       persistSend(conversationId, text).catch((error) => {
         persistFailed = true;
-        const dev =
-          typeof process !== "undefined" &&
-          process.env.NODE_ENV !== "production";
+        persistError = error;
+        const dev = getIsDevMode();
         console.error(
           `Failed to persist chat message for conversation ${conversationId}`,
           dev ? { contentPreview: text.slice(0, 50) } : undefined,
@@ -370,7 +358,7 @@ export const sendChatMessage = async (
     });
 
   await persist.catch(() => undefined);
-  if (persistFailed) return;
+  if (persistFailed) throw persistError;
   // Re-check the conversation state after persist settles. A delete
   // that started during the persist window may have cleared the
   // conversation, and the agent must not run against a deleted row.

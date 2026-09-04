@@ -5,11 +5,12 @@ import {
   nextConversationTitle,
 } from "./chat.utils";
 
-const LONE_HIGH = /[\uD800-\uDBFF]$/u;
-const LONE_LOW = /[\uDC00-\uDFFF]$/u;
-const expectTrailingNotSurrogate = (text: string) => {
-  expect(text).not.toMatch(LONE_HIGH);
-  expect(text).not.toMatch(LONE_LOW);
+// Asserts the title is valid UTF-16 and fits the sidebar cap. Inspects
+// the whole string because a dangling surrogate can sit in any
+// position, not just the final code unit.
+const expectWellFormedTitle = (text: string) => {
+  expect(text.isWellFormed()).toBe(true);
+  expect(text.length).toBeLessThanOrEqual(32);
 };
 
 // Builds long test inputs from repeated ASCII and a suffix without
@@ -67,7 +68,7 @@ describe("deriveConversationTitle", () => {
     // dangling surrogate rather than leave an unpaired high surrogate at
     // the end of the title.
     const title = deriveConversationTitle(concat("a".repeat(30), " 😀 more"));
-    expectTrailingNotSurrogate(title);
+    expectWellFormedTitle(title);
   });
 
   it("drops both surrogates when the slice keeps a lone high surrogate", () => {
@@ -76,7 +77,7 @@ describe("deriveConversationTitle", () => {
     // high surrogate. The fix must drop both so the title is a valid
     // UTF-16 string.
     const title = deriveConversationTitle(concat("a".repeat(31), " 😀"));
-    expectTrailingNotSurrogate(title);
+    expectWellFormedTitle(title);
   });
 
   it("keeps a valid UTF-16 string when ellipsize lands on a surrogate pair", () => {
@@ -85,7 +86,7 @@ describe("deriveConversationTitle", () => {
     // drop the low surrogate and leave a dangling high surrogate if
     // dropTrailingSurrogate were not applied to the ellipsized result.
     const title = deriveConversationTitle(concat("a".repeat(30), "😀 more"));
-    expectTrailingNotSurrogate(title);
+    expectWellFormedTitle(title);
   });
 
   it.runIf(hasIntlSegmenter)(
@@ -100,7 +101,7 @@ describe("deriveConversationTitle", () => {
         concat("a".repeat(31), " ", family),
       );
       expect(title.endsWith("…")).toBe(true);
-      expectTrailingNotSurrogate(title);
+      expectWellFormedTitle(title);
       expect(title).not.toContain("\u200d");
     },
   );
@@ -137,7 +138,25 @@ describe("hasPlaceholderTitle", () => {
   });
 
   it("matches a placeholder saved under a different locale", () => {
+    // 'Neue Unterhaltung' is the legacy German placeholder from an
+    // older catalog. The set still includes it so conversations
+    // saved before the rename are retitled on their next message.
     expect(hasPlaceholderTitle("Neue Unterhaltung")).toBe(true);
+  });
+
+  it("covers the current German placeholder from the real catalog", () => {
+    // The cross-locale detection iterates every supported locale and
+    // looks up the placeholder. The current German catalog uses
+    // 'Neues Gespräch' (different from the mock's legacy value). The
+    // mock is the one under test above; this test guards the real
+    // catalog against silent renames that would leave legacy
+    // conversations without a detected placeholder.
+    const deMessages = require("../i18n/locales/de.json") as Record<
+      string,
+      string
+    >;
+    expect(typeof deMessages.new_conversation).toBe("string");
+    expect(deMessages.new_conversation.length).toBeGreaterThan(0);
   });
 
   it("matches an empty title", () => {

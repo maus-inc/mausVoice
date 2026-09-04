@@ -270,15 +270,24 @@ describe("sendChatMessage", () => {
     expect(getAppState().chat.conversationIds.includes("conv-1")).toBe(false);
   });
 
-  it("a persist failure skips the agent and does not run it", async () => {
-    // Make createChatMessage reject. The send must not trigger the
-    // agent because no message reached storage.
+  it("a persist failure rejects the send and skips the agent", async () => {
+    // Make createChatMessage reject. The send must re-throw so the
+    // caller's error handling runs, and the agent must not run
+    // because no message reached storage.
     repoMocks.rejectNextCreate = true;
+    const errorSpy = vi
+      .spyOn(console, "error")
+      .mockImplementation(() => undefined);
 
-    await sendChatMessage("conv-1", "This will fail");
-
-    expect(runAgentMock).not.toHaveBeenCalled();
-    expect(messageStorage.size).toBe(0);
+    try {
+      await expect(sendChatMessage("conv-1", "This will fail")).rejects.toThrow(
+        "persist rejected",
+      );
+      expect(runAgentMock).not.toHaveBeenCalled();
+      expect(messageStorage.size).toBe(0);
+    } finally {
+      errorSpy.mockRestore();
+    }
   });
 
   it("treats a persisted message as not-first when the in-memory list is stale", async () => {
@@ -355,6 +364,37 @@ describe("sendChatMessage", () => {
       );
     } finally {
       errorSpy.mockRestore();
+    }
+  });
+
+  it("skips the persisted-count probe when the in-memory list is non-empty", async () => {
+    // When the in-memory list already proves the message is not the
+    // first, the probe must not run. A rejection on the probe would
+    // otherwise abort an otherwise-fine send.
+    seed({ withExistingMessage: true });
+    const listSpy = vi.fn();
+    const errorSpy = vi
+      .spyOn(console, "error")
+      .mockImplementation(() => undefined);
+
+    // Replace the chat message repo mock for this test only by
+    // wrapping the existing mock with a spy on listChatMessages.
+    const original = await import("../repos");
+    const originalGetChatMessageRepo = original.getChatMessageRepo;
+    vi.spyOn(original, "getChatMessageRepo").mockImplementation(() => {
+      const repo = originalGetChatMessageRepo();
+      return {
+        ...repo,
+        listChatMessages: listSpy.mockImplementation(repo.listChatMessages),
+      };
+    });
+
+    try {
+      await sendChatMessage("conv-1", "Follow up");
+      expect(listSpy).not.toHaveBeenCalled();
+    } finally {
+      errorSpy.mockRestore();
+      vi.restoreAllMocks();
     }
   });
 });
