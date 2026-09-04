@@ -372,29 +372,30 @@ describe("sendChatMessage", () => {
     // first, the probe must not run. A rejection on the probe would
     // otherwise abort an otherwise-fine send.
     seed({ withExistingMessage: true });
-    const listSpy = vi.fn();
-    const errorSpy = vi
-      .spyOn(console, "error")
-      .mockImplementation(() => undefined);
 
-    // Replace the chat message repo mock for this test only by
-    // wrapping the existing mock with a spy on listChatMessages.
-    const original = await import("../repos");
-    const originalGetChatMessageRepo = original.getChatMessageRepo;
-    vi.spyOn(original, "getChatMessageRepo").mockImplementation(() => {
-      const repo = originalGetChatMessageRepo();
-      return {
-        ...repo,
-        listChatMessages: listSpy.mockImplementation(repo.listChatMessages),
-      };
-    });
+    // Import the repos module and spy on getChatMessageRepo to wrap
+    // listChatMessages with a tracking spy.
+    const reposModule = await import("../repos");
+    const { getChatMessageRepo: originalGet } = reposModule;
+    const listSpy = vi.fn();
+    const spy = vi
+      .spyOn(reposModule, "getChatMessageRepo")
+      .mockImplementation((() => {
+        const repo = originalGet();
+        return {
+          ...repo,
+          listChatMessages: (id: string) => {
+            listSpy(id);
+            return repo.listChatMessages(id);
+          },
+        };
+      }) as typeof originalGet);
 
     try {
       await sendChatMessage("conv-1", "Follow up");
       expect(listSpy).not.toHaveBeenCalled();
     } finally {
-      errorSpy.mockRestore();
-      vi.restoreAllMocks();
+      spy.mockRestore();
     }
   });
 });

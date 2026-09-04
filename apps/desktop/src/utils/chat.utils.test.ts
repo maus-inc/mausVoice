@@ -5,11 +5,14 @@ import {
   nextConversationTitle,
 } from "./chat.utils";
 
-// Asserts the title is valid UTF-16 and fits the sidebar cap. Inspects
-// the whole string because a dangling surrogate can sit in any
-// position, not just the final code unit.
+// Asserts the title is valid UTF-16 and fits the sidebar cap.
+// A dangling surrogate can sit in any position, not just the final
+// code unit, so the check scans the whole string for an unpaired
+// high or low surrogate.
+const ORPHAN_SURROGATE =
+  /(?<![\uD800-\uDBFF])[\uDC00-\uDFFF]|[\uD800-\uDBFF](?![\uDC00-\uDFFF])/;
 const expectWellFormedTitle = (text: string) => {
-  expect(text.isWellFormed()).toBe(true);
+  expect(text).not.toMatch(ORPHAN_SURROGATE);
   expect(text.length).toBeLessThanOrEqual(32);
 };
 
