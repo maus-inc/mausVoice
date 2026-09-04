@@ -97,20 +97,19 @@ export const deleteConversation = async (id: string): Promise<void> => {
   // is already cleared, and would re-add it to the sidebar.
   try {
     produceAppState((draft) => {
-      // deepsource ignore JS-0323: delete is the idiomatic Immer
-      // draft operation and matches the rest of the codebase.
-      delete draft.conversationById[id];
+      // delete is the idiomatic Immer draft operation and matches
+      // the rest of the codebase. DeepSource JS-0323 flags the
+      // dynamic key, but the pattern is intentional here.
+      delete draft.conversationById[id]; // deepsource ignore JS-0323
       draft.chat.conversationIds = draft.chat.conversationIds.filter(
         (cid) => cid !== id,
       );
 
       const messageIds = draft.chatMessageIdsByConversationId[id] ?? [];
       for (const messageId of messageIds) {
-        // deepsource ignore JS-0323: see above.
-        delete draft.chatMessageById[messageId];
+        delete draft.chatMessageById[messageId]; // deepsource ignore JS-0323
       }
-      // deepsource ignore JS-0323: see above.
-      delete draft.chatMessageIdsByConversationId[id];
+      delete draft.chatMessageIdsByConversationId[id]; // deepsource ignore JS-0323
     });
   } finally {
     deletingConversationIds.delete(id);
