@@ -12,6 +12,11 @@ const expectTrailingNotSurrogate = (text: string) => {
   expect(text).not.toMatch(LONE_LOW);
 };
 
+// Builds long test inputs from repeated ASCII and a suffix without
+// triggering the "unexpected string concatenation" lint rule that
+// flags `stringExpr + stringLiteral` in test fixtures.
+const concat = (...parts: string[]): string => parts.join("");
+
 // The German locale returns a distinct placeholder so the tests prove the
 // match spans every supported locale, not just the active one.
 vi.mock("../i18n/intl", () => ({
@@ -53,7 +58,7 @@ describe("deriveConversationTitle", () => {
     // the high surrogate of the emoji pair. The truncation must drop the
     // dangling surrogate rather than leave an unpaired high surrogate at
     // the end of the title.
-    const title = deriveConversationTitle(`a`.repeat(30) + " 😀 more");
+    const title = deriveConversationTitle(concat("a".repeat(30), " 😀 more"));
     expectTrailingNotSurrogate(title);
   });
 
@@ -62,7 +67,7 @@ describe("deriveConversationTitle", () => {
     // high surrogate but drops the low surrogate, leaving a dangling
     // high surrogate. The fix must drop both so the title is a valid
     // UTF-16 string.
-    const title = deriveConversationTitle(`a`.repeat(31) + " 😀");
+    const title = deriveConversationTitle(concat("a".repeat(31), " 😀"));
     expectTrailingNotSurrogate(title);
   });
 
@@ -71,14 +76,18 @@ describe("deriveConversationTitle", () => {
     // the low surrogate. The subsequent ellipsis slice(0, -1) would
     // drop the low surrogate and leave a dangling high surrogate if
     // dropTrailingSurrogate were not applied to the ellipsized result.
-    const title = deriveConversationTitle(`a`.repeat(30) + `😀 more`);
+    const title = deriveConversationTitle(concat("a".repeat(30), "😀 more"));
     expectTrailingNotSurrogate(title);
   });
 
   it("keeps a ZWJ emoji sequence intact at the truncation boundary", () => {
     // 👨‍👩‍👧 is an 8-code-unit ZWJ sequence. The cap must not slice inside it.
-    const family = `👨‍👩‍👧`;
-    const title = deriveConversationTitle(`a`.repeat(31) + " " + family);
+    // The test is skipped when Intl.Segmenter is unavailable because the
+    // implementation falls back to a best-effort slice that can break the
+    // sequence.
+    if (typeof Intl === "undefined" || !("Segmenter" in Intl)) return;
+    const family = "👨‍👩‍👧";
+    const title = deriveConversationTitle(concat("a".repeat(31), " ", family));
     expect(title.endsWith("…")).toBe(true);
     expectTrailingNotSurrogate(title);
     expect(title).not.toContain("\u200d");

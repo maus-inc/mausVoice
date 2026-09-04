@@ -87,19 +87,23 @@ export const deleteConversation = async (id: string): Promise<void> => {
     // Clear the in-memory store and the flag together. A send that
     // races with produceAppState would otherwise find the
     // conversation removed from the store while deletingConversationIds
-    // is already cleared, and would re-add it to the sidebar.
+    // is already cleared, and would re-add it to the sidebar. Running
+    // the state update inside the finally also keeps the in-memory
+    // store consistent when the repo delete throws, so a retry of
+    // deleteConversation does not have to reconcile a half-deleted
+    // state.
     try {
       produceAppState((draft) => {
-        delete draft.conversationById[id];
+        Reflect.deleteProperty(draft.conversationById, id);
         draft.chat.conversationIds = draft.chat.conversationIds.filter(
           (cid) => cid !== id,
         );
 
         const messageIds = draft.chatMessageIdsByConversationId[id] ?? [];
         for (const messageId of messageIds) {
-          delete draft.chatMessageById[messageId];
+          Reflect.deleteProperty(draft.chatMessageById, messageId);
         }
-        delete draft.chatMessageIdsByConversationId[id];
+        Reflect.deleteProperty(draft.chatMessageIdsByConversationId, id);
       });
     } finally {
       deletingConversationIds.delete(id);
@@ -276,12 +280,17 @@ export const sendChatMessage = async (
   // Track whether persistSend rejected so the agent is not invoked
   // when no message was actually persisted. The previous chain is
   // swallowed so an unrelated send failure does not abort this send.
+  // The error is logged so storage failures stay visible.
   let persistFailed = false;
   const persist = previous
     .catch(() => undefined)
     .then(() =>
-      persistSend(conversationId, text).catch(() => {
+      persistSend(conversationId, text).catch((error) => {
         persistFailed = true;
+        console.error(
+          `Failed to persist chat message for conversation ${conversationId}`,
+          error,
+        );
       }),
     );
   sendQueuesByConversationId.set(conversationId, persist);

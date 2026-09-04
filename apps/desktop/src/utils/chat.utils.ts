@@ -10,24 +10,27 @@ import { getIntl } from "../i18n/intl";
 const TITLE_MAX_WORDS = 4;
 const TITLE_MAX_CHARS = 32;
 
-// True when a code unit is a high surrogate (0xD800-0xDBFF). High
+// True when a code point is a high surrogate (0xD800-0xDBFF). High
 // surrogates always lead a pair, so a trailing high surrogate means
 // the low half was dropped by a prior slice.
-const isHighSurrogate = (codeUnit: number): boolean =>
-  codeUnit >= 0xd800 && codeUnit <= 0xdbff;
+const isHighSurrogate = (codePoint: number | undefined): boolean =>
+  codePoint !== undefined && codePoint >= 0xd800 && codePoint <= 0xdbff;
 
-// True when a code unit is a low surrogate (0xDC00-0xDFFF). Low
+// True when a code point is a low surrogate (0xDC00-0xDFFF). Low
 // surrogates always follow a high surrogate, so a trailing low
 // surrogate means the slice kept a complete pair and the next code
 // unit is a lone high surrogate from the truncation.
-const isLowSurrogate = (codeUnit: number): boolean =>
-  codeUnit >= 0xdc00 && codeUnit <= 0xdfff;
+const isLowSurrogate = (codePoint: number | undefined): boolean =>
+  codePoint !== undefined && codePoint >= 0xdc00 && codePoint <= 0xdfff;
 
 // Drops trailing code units that would leave a lone surrogate in the
 // returned string. slice can land on either half of a surrogate pair,
-// so the cut is adjusted based on which half survived.
+// so the cut is adjusted based on which half survived. codePointAt is
+// safe here because we only read the value at a single position and
+// compare it against the surrogate ranges, which are disjoint from
+// the supplementary code points codePointAt would otherwise assemble.
 const dropTrailingSurrogate = (text: string): string => {
-  const last = text.charCodeAt(text.length - 1);
+  const last = text.codePointAt(text.length - 1);
   if (isHighSurrogate(last)) return text.slice(0, -1);
   if (isLowSurrogate(last)) return text.slice(0, -2);
   return text;
