@@ -11,6 +11,13 @@ import { nowIso } from "../utils/date.utils";
 
 const sendQueuesByConversationId = new Map<string, Promise<void>>();
 
+// Conversations whose delete is in progress. persistSend and
+// runAgentForConversation check this set so a send initiated between
+// deleteConversation starting and the repo delete landing is rejected
+// before it can persist a message or make an LLM call against a
+// conversation that is about to disappear.
+const deletingConversationIds = new Set<string>();
+
 export const loadConversations = async (): Promise<void> => {
   produceAppState((draft) => {
     draft.chat.status = "loading";
@@ -58,17 +65,26 @@ export const updateConversation = async (
 };
 
 export const deleteConversation = async (id: string): Promise<void> => {
-  // Wait for the in-flight send so its updateConversation cannot fire after
-  // the delete. The queue's own rejection is swallowed so an unrelated
-  // send failure does not block the user-initiated delete. The queue entry
-  // is removed before the await so a new send initiated before the repo
-  // delete lands does not chain onto this resolved promise; persistSend
-  // re-reads the store and aborts when the conversation is already gone.
-  const previous = sendQueuesByConversationId.get(id) ?? Promise.resolve();
-  sendQueuesByConversationId.delete(id);
-  await previous.catch(() => undefined);
+  // Mark the conversation as deleting before the await so a send
+  // initiated during the repo delete window is rejected by persistSend
+  // and the agent run is skipped. The flag also blocks a new send from
+  // being queued with the same id.
+  deletingConversationIds.add(id);
+  try {
+    // Wait for the in-flight send so its updateConversation cannot fire
+    // after the delete. The queue's own rejection is swallowed so an
+    // unrelated send failure does not block the user-initiated delete.
+    // The queue entry is removed before the await so a new send that
+    // arrives before persistSend checks deletingConversationIds does not
+    // chain onto this resolved promise.
+    const previous = sendQueuesByConversationId.get(id) ?? Promise.resolve();
+    sendQueuesByConversationId.delete(id);
+    await previous.catch(() => undefined);
 
-  await getConversationRepo().deleteConversation(id);
+    await getConversationRepo().deleteConversation(id);
+  } finally {
+    deletingConversationIds.delete(id);
+  }
 
   produceAppState((draft) => {
     delete draft.conversationById[id];
@@ -184,12 +200,16 @@ const persistSend = async (
   conversationId: string,
   text: string,
 ): Promise<void> => {
-  // The conversation may have been deleted between the time the user pressed
-  // send and the time this entry reached the front of the queue. A send
-  // initiated after deleteConversation started would otherwise persist a
-  // message for a conversation that no longer exists, and re-add the id to
-  // the sidebar. Bail out before createChatMessage.
-  if (!getAppState().conversationById[conversationId]) return;
+  // The conversation may have been deleted between the time the user
+  // pressed send and the time this entry reached the front of the queue.
+  // Bail out before createChatMessage so we do not persist a message or
+  // run the agent against a conversation that is about to disappear.
+  if (
+    !getAppState().conversationById[conversationId] ||
+    deletingConversationIds.has(conversationId)
+  ) {
+    return;
+  }
   const { chatMessageIdsByConversationId } = getAppState();
   const isFirstMessage =
     (chatMessageIdsByConversationId[conversationId] ?? []).length === 0;
@@ -235,6 +255,12 @@ export const sendChatMessage = async (
   // inside applySendToConversation instead.
   const previous =
     sendQueuesByConversationId.get(conversationId) ?? Promise.resolve();
+  // persistSend bails out when the conversation was deleted between the
+  // send being queued and reaching the front of the queue. detect that
+  // case here so the agent does not run against a deleted conversation.
+  const conversationGone =
+    !getAppState().conversationById[conversationId] ||
+    deletingConversationIds.has(conversationId);
   const persist = previous
     .catch(() => undefined)
     .then(() => persistSend(conversationId, text));
@@ -248,6 +274,7 @@ export const sendChatMessage = async (
     });
 
   await persist;
+  if (conversationGone) return;
   await runAgentForConversation(conversationId);
 };
 

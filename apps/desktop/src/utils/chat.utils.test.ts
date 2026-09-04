@@ -65,6 +65,16 @@ describe("deriveConversationTitle", () => {
     expect(title.length).toBeLessThanOrEqual(32);
   });
 
+  it("keeps a valid UTF-16 string when ellipsize lands on a surrogate pair", () => {
+    // 30 ASCII chars + a complete astral emoji. slice(0, 32) lands on
+    // the low surrogate. The subsequent ellipsis slice(0, -1) would
+    // drop the low surrogate and leave a dangling high surrogate if
+    // dropTrailingSurrogate were not applied to the ellipsized result.
+    const title = deriveConversationTitle("a".repeat(30) + "😀" + " more");
+    expect(title).not.toMatch(/[\uD800-\uDBFF]$/);
+    expect(title).not.toMatch(/[\uDC00-\uDFFF]$/);
+  });
+
   it("returns an empty string for blank input", () => {
     expect(deriveConversationTitle("   \n\t ")).toBe("");
   });

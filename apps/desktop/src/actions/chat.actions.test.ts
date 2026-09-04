@@ -221,9 +221,10 @@ describe("sendChatMessage", () => {
 
     await sendChatMessage("conv-1", "After delete");
 
-    // The second send must not have created a message or re-added the
-    // conversation to the sidebar.
+    // The second send must not have created a message, re-added the
+    // conversation to the sidebar, or triggered the agent.
     expect(messageStorage.size).toBe(1);
     expect(getAppState().chat.conversationIds.includes("conv-1")).toBe(false);
+    expect(runAgentMock).toHaveBeenCalledTimes(1);
   });
 });
