@@ -17,7 +17,7 @@ import type { IntlShape, MessageDescriptor } from "react-intl";
  */
 type ReactIntlModule = typeof import("react-intl");
 
-const useIntlMock = (): IntlShape => {
+const useIntlMock = (): Partial<IntlShape> => {
   const formatMessage: IntlShape["formatMessage"] = ((
     descriptor: MessageDescriptor,
   ) => descriptor.defaultMessage ?? "") as IntlShape["formatMessage"];
@@ -27,7 +27,7 @@ const useIntlMock = (): IntlShape => {
     formatMessage,
     formatDate,
     formatTime,
-  } as IntlShape;
+  } as Partial<IntlShape>;
 };
 
 const FormattedMessageMock = ((props: { defaultMessage: string }): string =>

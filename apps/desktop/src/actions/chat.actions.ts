@@ -160,7 +160,10 @@ const applySendToConversation = async (
   try {
     await updateConversation({ ...conversation, title, updatedAt: createdAt });
   } catch (error) {
-    if (process.env.NODE_ENV !== "production") {
+    if (
+      typeof process !== "undefined" &&
+      process.env.NODE_ENV !== "production"
+    ) {
       console.error(
         `Failed to update conversation ${conversationId} after a send`,
         { title, updatedAt: createdAt },
