@@ -8,9 +8,10 @@ import {
 // Asserts the title is valid UTF-16 and fits the sidebar cap.
 // A dangling surrogate can sit in any position, not just the final
 // code unit, so the check scans the whole string for an unpaired
-// high or low surrogate.
+// high or low surrogate. The lookbehind/lookahead syntax requires
+// Node >= 10 (V8 6.2+); the project's `engines` field pins >=20.
 const ORPHAN_SURROGATE =
-  /(?<![\uD800-\uDBFF])[\uDC00-\uDFFF]|[\uD800-\uDBFF](?![\uDC00-\uDFFF])/;
+  /(?<![\uD800-\uDBFF])[\uDC00-\uDFFF]|[\uD800-\uDBFF](?![\uDC00-\uDFFF])/u;
 const expectWellFormedTitle = (text: string) => {
   expect(text).not.toMatch(ORPHAN_SURROGATE);
   expect(text.length).toBeLessThanOrEqual(32);

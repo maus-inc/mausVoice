@@ -380,7 +380,7 @@ describe("sendChatMessage", () => {
     const listSpy = vi.fn();
     const spy = vi
       .spyOn(reposModule, "getChatMessageRepo")
-      .mockImplementation((() => {
+      .mockImplementation(() => {
         const repo = originalGet();
         return {
           ...repo,
@@ -388,8 +388,8 @@ describe("sendChatMessage", () => {
             listSpy(id);
             return repo.listChatMessages(id);
           },
-        };
-      }) as typeof originalGet);
+        } as ReturnType<typeof originalGet>;
+      });
 
     try {
       await sendChatMessage("conv-1", "Follow up");
