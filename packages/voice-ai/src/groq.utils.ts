@@ -5,9 +5,7 @@ import type {
 } from "@maus-inc/types";
 import { retry } from "@maus-inc/utilities";
 import Groq from "groq-sdk/index";
-import type {
-  ChatCompletionMessageParam,
-} from "groq-sdk/resources/chat/completions";
+import type { ChatCompletionMessageParam } from "groq-sdk/resources/chat/completions";
 import OpenAI, { toFile } from "openai";
 import { openaiCompatibleStreamChat } from "./openai.utils";
 import { parseOpenAICompatibleGenerateTextResponse } from "./openai-compatible-generate.utils";

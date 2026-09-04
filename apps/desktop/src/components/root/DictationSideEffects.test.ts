@@ -27,9 +27,7 @@ vi.mock("../../utils/log.utils", () => ({
   }),
 }));
 
-import {
-  handleEmptyTranscriptionResult,
-} from "./DictationSideEffects";
+import { handleEmptyTranscriptionResult } from "./DictationSideEffects";
 import type { BaseStrategy } from "../../strategies/base.strategy";
 
 type ToastCall = {
