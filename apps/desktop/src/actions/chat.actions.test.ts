@@ -8,6 +8,7 @@ const repoMocks = vi.hoisted(() => ({
   rejectNextUpdate: false,
   rejectNextCreate: false,
   rejectNextDelete: false,
+  rejectNextList: false,
 }));
 
 vi.mock("../agents", () => ({
@@ -66,6 +67,17 @@ vi.mock("../repos", () => ({
       messageStorage.set(message.id, message);
       return Promise.resolve(message);
     },
+    listChatMessages: (conversationId: string) => {
+      if (repoMocks.rejectNextList) {
+        repoMocks.rejectNextList = false;
+        return Promise.reject(new Error("list rejected"));
+      }
+      return Promise.resolve(
+        [...messageStorage.values()].filter(
+          (message) => message.conversationId === conversationId,
+        ),
+      );
+    },
   }),
 }));
 
@@ -111,6 +123,7 @@ describe("sendChatMessage", () => {
     repoMocks.rejectNextUpdate = false;
     repoMocks.rejectNextCreate = false;
     repoMocks.rejectNextDelete = false;
+    repoMocks.rejectNextList = false;
     conversationStorage.clear();
     messageStorage.clear();
     seed();
@@ -266,6 +279,70 @@ describe("sendChatMessage", () => {
 
     expect(runAgentMock).not.toHaveBeenCalled();
     expect(messageStorage.size).toBe(0);
+  });
+
+  it("treats a persisted message as not-first when the in-memory list is stale", async () => {
+    // Seed a persisted message but leave the in-memory list empty,
+    // as if a send raced a pending loadChatMessages. The persisted
+    // count means the new message is not the first, but the old
+    // title is still the placeholder so the new message re-derives
+    // the title from its content.
+    seed({ withExistingMessage: true });
+    const state = getAppState();
+    state.chatMessageIdsByConversationId["conv-1"] = [];
+    setAppState(state, true);
+
+    await sendChatMessage(
+      "conv-1",
+      "Please help me write a very long email about something",
+    );
+
+    expect(getAppState().conversationById["conv-1"]?.title).toBe(
+      "Please help me write…",
+    );
+    expect(messageStorage.size).toBe(2);
+  });
+
+  it("keeps the sidebar order when the conversation update fails", async () => {
+    // A failed updateConversation must not move the conversation to
+    // the top of the local order; otherwise a reload would show a
+    // different order than the persisted one until a later send
+    // retries.
+    seed();
+    repoMocks.rejectNextUpdate = true;
+    const errorSpy = vi
+      .spyOn(console, "error")
+      .mockImplementation(() => undefined);
+
+    try {
+      await sendChatMessage("conv-1", "Hello");
+      expect(getAppState().chat.conversationIds).toEqual([
+        "conv-other",
+        "conv-1",
+        "conv-old",
+      ]);
+    } finally {
+      errorSpy.mockRestore();
+    }
+  });
+
+  it("falls back to the in-memory count when the persisted list query fails", async () => {
+    // A transient repo failure on listChatMessages must not abort
+    // the send. The send still persists and runs the agent, falling
+    // back to the in-memory count for the isFirstMessage decision.
+    repoMocks.rejectNextList = true;
+    const errorSpy = vi
+      .spyOn(console, "error")
+      .mockImplementation(() => undefined);
+
+    try {
+      await sendChatMessage("conv-1", "Hello");
+
+      expect(messageStorage.size).toBe(1);
+      expect(runAgentMock).toHaveBeenCalledTimes(1);
+    } finally {
+      errorSpy.mockRestore();
+    }
   });
 });
 
