@@ -88,6 +88,14 @@ pub struct UserPreferences {
     /// default so existing behavior is unchanged.
     #[serde(default)]
     pub always_request_admin_on_startup: bool,
+    /// JSON object of expansion feature-name -> boolean flag. Stored as a
+    /// serialized string; defaults to an empty object so every flag is off.
+    #[serde(default = "default_expansion_flags")]
+    pub expansion_flags: String,
+}
+
+fn default_expansion_flags() -> String {
+    "{}".to_string()
 }
 
 fn default_pill_reset_monitor_strategy() -> String {
@@ -104,4 +112,31 @@ fn default_dictation_limit_minutes() -> i64 {
 
 fn default_dictation_audio_dim() -> f64 {
     1.0
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+
+    #[test]
+    fn expansion_flags_defaults_to_empty_object_when_missing() {
+        let payload = json!({
+            "userId": "user-1",
+            "transcriptionMode": "online",
+        });
+        let prefs: UserPreferences = serde_json::from_value(payload).unwrap();
+        assert_eq!(prefs.expansion_flags, "{}");
+    }
+
+    #[test]
+    fn expansion_flags_preserves_explicit_value() {
+        let payload = json!({
+            "userId": "user-1",
+            "transcriptionMode": "online",
+            "expansionFlags": "{\"meetingNotesEnabled\":true}",
+        });
+        let prefs: UserPreferences = serde_json::from_value(payload).unwrap();
+        assert_eq!(prefs.expansion_flags, "{\"meetingNotesEnabled\":true}");
+    }
 }
