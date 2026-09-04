@@ -200,21 +200,18 @@ const applySendToConversation = async (
   text: string,
   isFirstMessage: boolean,
   createdAt: string,
-): Promise<boolean> => {
+): Promise<void> => {
   // Re-read right before the update, so the spread below cannot apply a
   // stale snapshot when the conversation changed while the message was
   // being persisted.
   const conversation = getAppState().conversationById[conversationId];
-  if (!conversation) return false;
+  if (!conversation) return;
 
   const title = nextConversationTitle(text, conversation.title, isFirstMessage);
   // The message is already persisted, so a failed title or timestamp bump
   // must not abort the send or skip the agent. The next send retries both.
-  // Returns whether the conversation update succeeded so the caller can
-  // decide whether to bump the local recency order.
   try {
     await updateConversation({ ...conversation, title, updatedAt: createdAt });
-    return true;
   } catch (error) {
     const dev =
       typeof process !== "undefined" && process.env.NODE_ENV !== "production";
@@ -223,7 +220,6 @@ const applySendToConversation = async (
       dev ? { title, updatedAt: createdAt } : { updatedAt: createdAt },
       error,
     );
-    return false;
   }
 };
 
@@ -241,17 +237,9 @@ const persistSend = async (
   ) {
     return;
   }
-  // The in-memory message list can be empty even for a conversation that
-  // already has messages persisted when a send races with loadChatMessages.
-  // Ask the repo for the persisted count so a stale empty in-memory list
-  // cannot cause a non-first message to be treated as the first one and
-  // overwrite a real title.
-  const persistedCount = (
-    await getChatMessageRepo().listChatMessages(conversationId)
-  ).length;
+  const { chatMessageIdsByConversationId } = getAppState();
   const isFirstMessage =
-    (getAppState().chatMessageIdsByConversationId[conversationId] ?? [])
-      .length === 0 && persistedCount === 0;
+    (chatMessageIdsByConversationId[conversationId] ?? []).length === 0;
 
   // The timestamp comes from inside the serialized section, so queued sends
   // stay monotonic.
@@ -265,24 +253,19 @@ const persistSend = async (
     metadata: null,
   });
 
-  const updated = await applySendToConversation(
+  await applySendToConversation(
     conversationId,
     text,
     isFirstMessage,
     createdAt,
   );
 
-  // Only move the conversation to the top of the local sidebar order when
-  // the repo update succeeded. A failed update keeps the old order so a
-  // reload restores a consistent view, and the next send retries the bump.
-  if (updated) {
-    produceAppState((draft) => {
-      draft.chat.conversationIds = [
-        conversationId,
-        ...draft.chat.conversationIds.filter((cid) => cid !== conversationId),
-      ];
-    });
-  }
+  produceAppState((draft) => {
+    draft.chat.conversationIds = [
+      conversationId,
+      ...draft.chat.conversationIds.filter((cid) => cid !== conversationId),
+    ];
+  });
 };
 
 export const sendChatMessage = async (

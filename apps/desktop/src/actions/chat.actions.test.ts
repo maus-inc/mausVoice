@@ -66,12 +66,6 @@ vi.mock("../repos", () => ({
       messageStorage.set(message.id, message);
       return Promise.resolve(message);
     },
-    listChatMessages: (conversationId: string) =>
-      Promise.resolve(
-        [...messageStorage.values()].filter(
-          (message) => message.conversationId === conversationId,
-        ),
-      ),
   }),
 }));
 
@@ -272,50 +266,6 @@ describe("sendChatMessage", () => {
 
     expect(runAgentMock).not.toHaveBeenCalled();
     expect(messageStorage.size).toBe(0);
-  });
-
-  it("treats a persisted message as not-first when the in-memory list is stale", async () => {
-    // Seed a persisted message but leave the in-memory list empty, as if
-    // a send raced a pending loadChatMessages. The conversation title
-    // must stay on the placeholder and be re-derived from the new
-    // message because the title was still the placeholder, and the new
-    // message must persist.
-    seed({ withExistingMessage: true });
-    const state = getAppState();
-    state.chatMessageIdsByConversationId["conv-1"] = [];
-    setAppState(state, true);
-
-    await sendChatMessage(
-      "conv-1",
-      "Please help me write a very long email about something",
-    );
-
-    expect(getAppState().conversationById["conv-1"]?.title).toBe(
-      "Please help me write…",
-    );
-    expect(messageStorage.size).toBe(2);
-  });
-
-  it("keeps the sidebar order when the conversation update fails", async () => {
-    // A failed updateConversation must not move the conversation to the
-    // top of the local order; otherwise a reload would show a different
-    // order than the persisted one until a later send retries.
-    seed();
-    repoMocks.rejectNextUpdate = true;
-    const errorSpy = vi
-      .spyOn(console, "error")
-      .mockImplementation(() => undefined);
-
-    try {
-      await sendChatMessage("conv-1", "Hello");
-      expect(getAppState().chat.conversationIds).toEqual([
-        "conv-other",
-        "conv-1",
-        "conv-old",
-      ]);
-    } finally {
-      errorSpy.mockRestore();
-    }
   });
 });
 
