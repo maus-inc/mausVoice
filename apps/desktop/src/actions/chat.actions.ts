@@ -146,11 +146,17 @@ export const runAgentForConversation = async (
 const sendQueuesByConversationId = new Map<string, Promise<void>>();
 
 const applySendToConversation = async (
-  conversation: Conversation,
+  conversationId: string,
   text: string,
   isFirstMessage: boolean,
   createdAt: string,
 ): Promise<void> => {
+  // Re-read right before the update, so the spread below cannot apply a
+  // stale snapshot when the conversation changed while the message was
+  // being persisted.
+  const conversation = getAppState().conversationById[conversationId];
+  if (!conversation) return;
+
   // The first user message names the conversation. A conversation that still
   // carries the placeholder also adopts a title from its next message, which
   // covers chats created before auto-titling existed. Every message bumps
@@ -173,8 +179,7 @@ const persistSend = async (
   conversationId: string,
   text: string,
 ): Promise<void> => {
-  const { conversationById, chatMessageIdsByConversationId } = getAppState();
-  const conversation = conversationById[conversationId];
+  const { chatMessageIdsByConversationId } = getAppState();
   const isFirstMessage =
     (chatMessageIdsByConversationId[conversationId] ?? []).length === 0;
 
@@ -190,14 +195,12 @@ const persistSend = async (
     metadata: null,
   });
 
-  if (conversation) {
-    await applySendToConversation(
-      conversation,
-      text,
-      isFirstMessage,
-      createdAt,
-    );
-  }
+  await applySendToConversation(
+    conversationId,
+    text,
+    isFirstMessage,
+    createdAt,
+  );
 
   produceAppState((draft) => {
     draft.chat.conversationIds = [
@@ -215,9 +218,10 @@ export const sendChatMessage = async (
   // older send cannot overwrite a newer send's timestamp or title. The
   // queue holds only in-flight sends, because each entry removes itself
   // once its persist settles. The agent run stays outside the queue, so a
-  // running agent never blocks the next message. A persist failure rejects
-  // the whole send and skips the agent, since at that point nothing was
-  // sent.
+  // running agent never blocks the next message. A failed message persist
+  // rejects the whole send and skips the agent, because the message never
+  // reached storage. A failed conversation update is caught and logged
+  // inside applySendToConversation instead.
   const previous =
     sendQueuesByConversationId.get(conversationId) ?? Promise.resolve();
   const persist = previous
