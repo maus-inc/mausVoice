@@ -24,9 +24,11 @@ export const deriveConversationTitle = (text: string): string => {
     .slice(0, TITLE_MAX_WORDS)
     .join(" ")
     .slice(0, TITLE_MAX_CHARS);
-  const lastCode = capped.charCodeAt(capped.length - 1);
+  const lastCode = capped.codePointAt(capped.length - 1);
   const graphemeSafe =
-    lastCode >= 0xdc00 && lastCode <= 0xdfff ? capped.slice(0, -2) : capped;
+    lastCode !== undefined && lastCode >= 0xdc00 && lastCode <= 0xdfff
+      ? capped.slice(0, -2)
+      : capped;
   const trimmed = graphemeSafe.trimEnd();
 
   if (trimmed.length === collapsed.length) return trimmed;

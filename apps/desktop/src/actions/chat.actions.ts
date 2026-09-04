@@ -9,6 +9,8 @@ import {
 import { nextConversationTitle } from "../utils/chat.utils";
 import { nowIso } from "../utils/date.utils";
 
+const sendQueuesByConversationId = new Map<string, Promise<void>>();
+
 export const loadConversations = async (): Promise<void> => {
   produceAppState((draft) => {
     draft.chat.status = "loading";
@@ -142,8 +144,6 @@ export const runAgentForConversation = async (
     });
   }
 };
-
-const sendQueuesByConversationId = new Map<string, Promise<void>>();
 
 const applySendToConversation = async (
   conversationId: string,
