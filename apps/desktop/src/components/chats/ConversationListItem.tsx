@@ -1,4 +1,4 @@
-import { DeleteOutlineRounded, MoreVertRounded } from "@mui/icons-material";
+import { EllipsisVertical, Trash2 } from "lucide-react";
 import { Box, IconButton, ListItemButton, Typography } from "@mui/material";
 import { useMemo, useState } from "react";
 import { useIntl } from "react-intl";
@@ -40,6 +40,7 @@ export const ConversationListItem = ({
     () => [
       {
         label: intl.formatMessage({ defaultMessage: "Delete conversation" }),
+        icon: <Trash2 size={16} strokeWidth={1.9} />,
         danger: true,
         onClick: onDelete,
       },
@@ -51,7 +52,7 @@ export const ConversationListItem = ({
     {
       kind: "listItem",
       title: intl.formatMessage({ defaultMessage: "Delete" }),
-      leading: <DeleteOutlineRounded fontSize="small" />,
+      leading: <Trash2 size={16} strokeWidth={1.9} />,
       onClick: ({ close }) => {
         close();
         onDelete();
@@ -73,7 +74,12 @@ export const ConversationListItem = ({
         onClick={onSelect}
         onMouseEnter={() => setHovered(true)}
         onMouseLeave={() => setHovered(false)}
-        sx={{ borderRadius: 1, py: 0.75, px: 1, pr: hovered ? 0.5 : 1.5 }}
+        sx={{
+          borderRadius: 1,
+          py: 0.75,
+          px: 1,
+          pr: hovered || selected ? 0.5 : 1.5,
+        }}
       >
         <Box sx={{ overflow: "hidden", flexGrow: 1, minWidth: 0 }}>
           <Typography
@@ -81,6 +87,7 @@ export const ConversationListItem = ({
             noWrap
             sx={{
               lineHeight: 1.3,
+              color: "inherit",
             }}
           >
             {conversation.title}
@@ -88,14 +95,17 @@ export const ConversationListItem = ({
           <Typography
             variant="caption"
             sx={{
-              color: "text.secondary",
+              // Inherit the row's currentColor so selected light (cream on
+              // ink) and dark (chalk on onyx) both keep a readable date.
+              color: "inherit",
+              opacity: 0.62,
               lineHeight: 1.2,
             }}
           >
             {formatRelativeTime(intl, conversation.updatedAt)}
           </Typography>
         </Box>
-        {hovered && (
+        {(hovered || selected) && (
           <MenuPopoverBuilder
             items={menuItems}
             anchorOrigin={{ vertical: "bottom", horizontal: "right" }}
@@ -111,7 +121,7 @@ export const ConversationListItem = ({
                 }}
                 sx={{ ml: 0.5, flexShrink: 0 }}
               >
-                <MoreVertRounded sx={{ fontSize: 16 }} />
+                <EllipsisVertical size={16} strokeWidth={1.9} />
               </IconButton>
             )}
           </MenuPopoverBuilder>

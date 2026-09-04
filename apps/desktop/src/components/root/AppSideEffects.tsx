@@ -94,6 +94,7 @@ import {
   getMyUserPreferences,
   LOCAL_USER_ID,
 } from "../../utils/user.utils";
+import { resumePendingTranscriptionDeletes } from "../../utils/pending-transcription-delete";
 import {
   consumeSurfaceWindowFlag,
   surfaceMainWindow,
@@ -562,7 +563,10 @@ export const AppSideEffects = () => {
     produceAppState((draft) => {
       draft.initialized = true;
     });
-  }, [streamReady, initReady, initialized, elevationReady]);
+    if (isMainWindow) {
+      resumePendingTranscriptionDeletes();
+    }
+  }, [streamReady, initReady, initialized, elevationReady, isMainWindow]);
 
   const auth = useAppStore((state) => state.auth);
   const prevUserIdRef = useRef<string | null>(null);

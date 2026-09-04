@@ -1,7 +1,6 @@
 import { useMemo } from "react";
-import { BuildRounded } from "@mui/icons-material";
 import { Box, Stack, Typography } from "@mui/material";
-import { keyframes, useTheme } from "@mui/material/styles";
+import { Wrench } from "lucide-react";
 import Markdown from "react-markdown";
 import { FormattedMessage, useIntl } from "react-intl";
 import remarkGfm from "remark-gfm";
@@ -15,17 +14,11 @@ import {
 import { OverflowTypography } from "../common/OverflowTypography";
 import { AgentActivity } from "./AgentActivity";
 
-const thinkingShimmer = keyframes`
-  0% { background-position: 200% 50%; }
-  100% { background-position: -200% 50%; }
-`;
-
 type ChatMessageBubbleProps = {
   id: string;
 };
 
 export const ChatMessageBubble = ({ id }: ChatMessageBubbleProps) => {
-  const theme = useTheme();
   const message = useAppStore((s) => s.chatMessageById[id]);
   const isStreaming = useAppStore((s) => !!s.streamingMessageById[id]);
 
@@ -94,7 +87,9 @@ export const ChatMessageBubble = ({ id }: ChatMessageBubbleProps) => {
             px: 2,
             py: 1,
             borderRadius: 1,
-            bgcolor: isMe ? "primary.main" : "action.hover",
+            bgcolor: isMe ? "primary.main" : "level1",
+            border: isMe ? "none" : 1,
+            borderColor: "divider",
             color: isMe ? "primary.contrastText" : "text.primary",
             "& p": { m: 0 },
             "& p + p": { mt: 1 },
@@ -134,15 +129,19 @@ export const ChatMessageBubble = ({ id }: ChatMessageBubbleProps) => {
               sx={{
                 width: "fit-content",
                 fontWeight: 500,
-                color: "transparent",
-                backgroundImage: `linear-gradient(90deg, rgb(${theme.vars?.palette.text.primaryChannel} / 0.35) 0%, rgb(${theme.vars?.palette.text.primaryChannel} / 0.9) 50%, rgb(${theme.vars?.palette.text.primaryChannel} / 0.35) 100%)`,
-                backgroundSize: "200% 100%",
-                WebkitBackgroundClip: "text",
-                backgroundClip: "text",
-                animation: `${thinkingShimmer} 1.6s linear infinite`,
+                color: "text.secondary",
+                "@keyframes thinkingPulse": {
+                  "0%, 100%": { opacity: 0.45 },
+                  "50%": { opacity: 1 },
+                },
+                animation: "thinkingPulse 1.4s ease-in-out infinite",
+                "@media (prefers-reduced-motion: reduce)": {
+                  animation: "none",
+                  opacity: 0.8,
+                },
               }}
             >
-              <FormattedMessage defaultMessage="Thinking" />
+              <FormattedMessage defaultMessage="Thinking…" />
             </Typography>
           ) : (
             <Markdown remarkPlugins={[remarkGfm]}>{message.content}</Markdown>
@@ -174,8 +173,11 @@ const ToolResultBubble = ({
         overflow: "hidden",
       }}
     >
-      <BuildRounded
-        sx={{ fontSize: 14, color: "text.secondary", flexShrink: 0 }}
+      <Wrench
+        size={14}
+        strokeWidth={1.9}
+        style={{ flexShrink: 0 }}
+        color="var(--mui-palette-text-secondary)"
       />
       <OverflowTypography
         variant="caption"

@@ -99,6 +99,12 @@ export default defineConfig(async () => {
         },
       },
     ],
+    resolve: {
+      conditions:
+        process.env.NODE_ENV === "production"
+          ? ["import", "module", "browser", "default"]
+          : ["development", "import", "module", "browser", "default"],
+    },
     clearScreen: false,
     build: {
       rollupOptions: {

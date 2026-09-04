@@ -126,6 +126,7 @@ export type AppState = {
   snackbarMode: SnackbarMode;
   snackbarDuration: number;
   snackbarTransitionDuration?: number;
+  snackbarAction?: { label: string; onClick: () => void };
 
   /** Accumulated dictation segments while no editable target was focused.
    *  Drained on the first editable-focus event or on transcription completion.

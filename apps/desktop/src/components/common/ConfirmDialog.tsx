@@ -1,6 +1,7 @@
 import {
   Button,
   ButtonProps,
+  CircularProgress,
   Dialog,
   DialogActions,
   DialogContent,
@@ -20,6 +21,8 @@ export type ConfirmDialogProps = {
   cancelLabel?: ReactNode;
   confirmButtonProps?: ButtonProps;
   cancelButtonProps?: ButtonProps;
+  destructive?: boolean;
+  busy?: boolean;
 };
 
 export const ConfirmDialog = ({
@@ -32,19 +35,41 @@ export const ConfirmDialog = ({
   cancelLabel,
   confirmButtonProps,
   cancelButtonProps,
+  destructive,
+  busy,
 }: ConfirmDialogProps) => {
   return (
-    <Dialog open={isOpen} onClose={onCancel} maxWidth="xs" fullWidth>
+    <Dialog
+      open={isOpen}
+      onClose={busy ? undefined : onCancel}
+      maxWidth="xs"
+      fullWidth
+    >
       <DialogTitle>{title}</DialogTitle>
       <DialogContent dividers>
         <DialogContentText>{content}</DialogContentText>
       </DialogContent>
       <DialogActions sx={{ px: 3, pb: 2 }}>
-        <Button variant="text" onClick={onCancel} {...cancelButtonProps}>
+        <Button
+          variant="text"
+          onClick={onCancel}
+          {...cancelButtonProps}
+          disabled={busy || cancelButtonProps?.disabled}
+        >
           {cancelLabel ?? <FormattedMessage defaultMessage="Cancel" />}
         </Button>
-        <Button variant="contained" onClick={onConfirm} {...confirmButtonProps}>
-          {confirmLabel ?? <FormattedMessage defaultMessage="Confirm" />}
+        <Button
+          variant="contained"
+          color={destructive ? "error" : "primary"}
+          onClick={onConfirm}
+          {...confirmButtonProps}
+          disabled={busy || confirmButtonProps?.disabled}
+        >
+          {busy ? (
+            <CircularProgress size={16} color="inherit" />
+          ) : (
+            (confirmLabel ?? <FormattedMessage defaultMessage="Confirm" />)
+          )}
         </Button>
       </DialogActions>
     </Dialog>

@@ -1,4 +1,5 @@
 import "./styles/fonts.css";
+import "./styles/tokens.css";
 import { CssBaseline } from "@mui/material";
 import { ThemeProvider } from "@mui/material/styles";
 import { FirebaseOptions, initializeApp } from "firebase/app";
@@ -14,6 +15,7 @@ import { getIntlConfig } from "./i18n";
 import { THEME_PROVIDER_CONFIG, theme } from "./theme";
 import { createEffectiveAuth } from "./utils/auth.utils";
 import { applyDomMutationGuards } from "./utils/dom-guard.utils";
+import { flushPendingTranscriptionDeletes } from "./utils/pending-transcription-delete";
 import { getIsEmulators } from "./utils/env.utils";
 import {
   installGlobalErrorOverlay,
@@ -28,6 +30,12 @@ installGlobalErrorOverlay();
 // React owns; guard the DOM mutators before the root renders, or one such
 // mutation kills the whole UI on the next navigation.
 applyDomMutationGuards();
+
+if (typeof window !== "undefined") {
+  window.addEventListener("pagehide", () => {
+    flushPendingTranscriptionDeletes();
+  });
+}
 
 // NOTE: Firebase Web SDK configuration is NOT a secret — the apiKey,
 // appId, projectId, etc. are *client-side* identifiers that get shipped to

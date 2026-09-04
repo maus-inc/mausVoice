@@ -23,8 +23,9 @@ The two schemes have their own temperature rather than being inversions of each 
 ## Color (restrained, one accent)
 
 - `primary` = warm near-black charcoal in light (`inkSolid.base` `#1A1712`), `#FFFFFF` in dark (white CTA is the primary).
-- Only accent: **blue** `primary.blue #1b8af8` (light) / `#3198ff` (dark), reserved for primary actions, current selection, state indicators, switches. Not decoration.
-- `gold` is a reward/secondary class only (inactive feature); `red` (hint) for destructive only.
+- Chrome accent is **silver/ink** (`accent` in `palette.ts`: `#6B6760` / `#C4C0B8`) for focus rings, selection wash, sliders. Never hue-blue.
+- Switches/toggles: grey track + black (light) / chalk (dark) thumb — not the silver accent and not blue.
+- `gold` is a reward/secondary class only (inactive feature); `red` (`dangerHover`) for destructive only.
 - Status vocabulary must be semantic; never color-only.
 
 ## Typography
@@ -41,7 +42,7 @@ The two schemes have their own temperature rather than being inversions of each 
 
 ## Motion
 
-- Settings/deleted: 120–180ms ease‑out, exponential absorb. Never spring‑bounce on a tool. Reduced-motion honored everywhere; keyboard‑invoked actions never animate.
+- Settings/deleted: 120–180ms ease‑out, exponential absorb. No **bounce** (damping < 20); snappy springs (damping ≥ 28) sanctioned for shared-layout indicators only. Reduced-motion honored everywhere (global kill-switch in `theme.ts`); keyboard‑invoked actions never animate.
 - The pill is height/native channel; movement conveys state (recording, transcribing, done) not choreography.
 
 ## Micro-interactions / states
@@ -64,3 +65,21 @@ The two schemes have their own temperature rather than being inversions of each 
 - `decorations: false` also removes the OS resize border, so `WindowResizeHandles` supplies eight invisible edge/corner grips that hand the gesture back to the window manager.
 - Every window command used by the chrome (`start-dragging`, `start-resize-dragging`, `minimize`, `maximize`, `unmaximize`, `close`) must be listed in `src-tauri/capabilities/default.json`; `core:window:default` grants none of them and the controls fail silently without them.
 - Chrome glyphs are lucide nodes rendered through `MorphNavIcon` (`snappy` spring) so state swaps morph instead of cutting.
+
+## Toasts
+- sonner, bottom-right, themed via GlobalStyles bridge (`SonnerToaster.tsx`).
+- Destructive actions ship UNDO. Max 4 visible; group repeats.
+
+## Recording state machine (pill + composer)
+- States: idle | recording | preview. Documented here; no dedicated state module.
+- Overlay actions are buttons (keyboard + focus-visible); never mouse-down-only.
+
+## Icons
+- lucide (stroke 1.9) is the only icon family. MUI icons only inside sanctioned
+  third-party mockups (TutorialForm). Chrome glyphs morph via MorphNavIcon.
+
+## Dates
+- Display: Intl.DateTimeFormat(undefined, {dateStyle, timeStyle}). No dayjs format strings.
+
+## Radius
+- 7 chips/inputs · 14 cards/rows/dialogs (MUI radius 1) · 28 large dialogs · 999 pills only.

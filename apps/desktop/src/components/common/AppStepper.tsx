@@ -55,7 +55,7 @@ export const AppStepper = ({
             <StepLabel
               icon={icon}
               sx={{
-                borderRadius: "64px",
+                borderRadius: 999,
                 display: "flex",
                 alignItems: "center",
                 opacity: clickable ? 1 : 0.5,
