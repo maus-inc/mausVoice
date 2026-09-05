@@ -45,11 +45,13 @@ describe("safeSideEffect", () => {
   });
 
   it("collapses control characters in context values before logging", async () => {
-    await safeSideEffect("label", { snippet: "line1\nline2\tline3" }, () =>
-      Promise.reject(new Error("boom")),
+    await safeSideEffect(
+      "label",
+      { snippet: "line1\nline2\tline3\u000b\u000c" },
+      () => Promise.reject(new Error("boom")),
     );
     const message = String(loggerMock.error.mock.calls[0][0]);
-    expect(message).not.toMatch(/\n/);
+    expect(message).not.toMatch(/[\n\r\t\u000b\u000c]/);
     expect(message).toContain("snippet=line1 line2 line3");
   });
 });

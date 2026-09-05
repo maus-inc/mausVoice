@@ -37,9 +37,10 @@ const activeLoops = new Map<string, AgentLoop>();
  */
 const MAX_CONTEXT_VALUE_LENGTH = 64;
 
-/** Collapse control characters so a multi-line tool result cannot break the log line. */
+/** Collapse C0 control characters so a multi-line or binary-ish value cannot break the log line. */
 const sanitizeContextValue = (value: string): string => {
-  const singleLine = value.replace(/[\r\n\t]+/g, " ").trim();
+  // Includes \0–\x1f and DEL (\x7f): newlines, tabs, VT, FF, and other controls.
+  const singleLine = value.replace(/[\u0000-\u001f\u007f]+/g, " ").trim();
   return singleLine.length > MAX_CONTEXT_VALUE_LENGTH
     ? `${singleLine.slice(0, MAX_CONTEXT_VALUE_LENGTH)}…`
     : singleLine;

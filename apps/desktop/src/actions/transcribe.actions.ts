@@ -234,10 +234,17 @@ export const transcribeAudio = async ({
   };
 };
 
-/**
- * Post-process a raw transcript using LLM.
- * This is the second step - cleans up and formats the transcript based on tone.
- */
+/** Coerce any thrown value to a readable message without `[object Object]`. */
+const unknownToMessage = (error: unknown): string => {
+  if (typeof error === "string") return error;
+  if (error instanceof Error) return error.message;
+  try {
+    return JSON.stringify(error) ?? String(error);
+  } catch {
+    return String(error);
+  }
+};
+
 /**
  * Parse and validate the LLM's JSON post-processing response. Returns the
  * cleaned transcript on success, or the raw transcript plus a warning on
@@ -261,18 +268,7 @@ const parseProcessedTranscript = (
     }
     return { transcript: validationResult.data.result.trim(), warning: null };
   } catch (e) {
-    const message =
-      e instanceof Error
-        ? e.message
-        : typeof e === "string"
-          ? e
-          : (() => {
-              try {
-                return JSON.stringify(e) ?? String(e);
-              } catch {
-                return String(e);
-              }
-            })();
+    const message = unknownToMessage(e);
     const truncationHint = /Unterminated string/i.test(message)
       ? " The model output may have been truncated at its token limit."
       : "";
