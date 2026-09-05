@@ -3,6 +3,7 @@ import {
   applyHallucinationFiltering,
   filterKnownSilenceHallucinations,
   isKnownSilenceHallucination,
+  joinKeptSegmentTexts,
 } from "./hallucination.utils";
 
 describe("silence hallucination filtering", () => {
@@ -173,6 +174,34 @@ describe("applyHallucinationFiltering", () => {
       ).toBe(expected);
     },
   );
+
+  it("treats newline as a boundary without inserting a space after it", () => {
+    // Spoken "new line" can leave a trailing `\n` on a kept segment. Detection
+    // uses `\s` so we do not emit `\n ` after the break.
+    expect(joinKeptSegmentTexts(["Hello\n", "world"])).toBe("Hello\nworld");
+    expect(
+      applyHallucinationFiltering(
+        "Hello\nnoise\nworld",
+        [
+          { text: "Hello\n", noSpeechProb: 0.1 },
+          { text: "noise", noSpeechProb: 0.99 },
+          { text: "world", noSpeechProb: 0.1 },
+        ],
+        "en",
+        true,
+      ),
+    ).toBe("Hello\nworld");
+  });
+
+  it("treats NBSP as a boundary and does not collapse it to ASCII space", () => {
+    const nbsp = "\u00a0";
+    expect(joinKeptSegmentTexts([`Hello${nbsp}`, "world"])).toBe(
+      `Hello${nbsp}world`,
+    );
+    expect(joinKeptSegmentTexts(["Hello", `${nbsp}world`])).toBe(
+      `Hello${nbsp}world`,
+    );
+  });
 
   it("keeps a genuine standalone Best regards. sign-off under the filter", () => {
     const raw = "Please review the doc. Best regards.";
