@@ -14,9 +14,7 @@ const repoRoot = resolve(dirname(fileURLToPath(import.meta.url)), "../..");
 const read = (relativePath) =>
   readFileSync(resolve(repoRoot, relativePath), "utf8");
 
-const cargoManifest = parseToml(
-  read("apps/desktop/src-tauri/Cargo.toml"),
-);
+const cargoManifest = parseToml(read("apps/desktop/src-tauri/Cargo.toml"));
 const app = read("apps/desktop/src-tauri/src/app.rs");
 const desktopPackage = JSON.parse(read("apps/desktop/package.json"));
 
@@ -36,7 +34,7 @@ describe("desktop dev-surface build contracts", () => {
     const tauriDep = cargoManifest.dependencies?.tauri;
     assert.ok(tauriDep, "tauri dependency is missing from Cargo.toml");
     const tauriFeatures =
-      typeof tauriDep === "string" ? [] : tauriDep.features ?? [];
+      typeof tauriDep === "string" ? [] : (tauriDep.features ?? []);
     assert.ok(
       !tauriFeatures.includes("devtools"),
       `tauri dependency must not list "devtools" in its features (found: ${JSON.stringify(tauriFeatures)})`,
@@ -44,13 +42,23 @@ describe("desktop dev-surface build contracts", () => {
 
     // The Rust source must gate devtools behind BOTH the compile-time feature
     // and the runtime env-var — with the cfg attribute directly on the `if`.
+    // The env-var name lives in a named const so the literal is declared once.
+    const envConst = app.match(
+      new RegExp(
+        `const\\s+(\\w+)\\s*:\\s*&str\\s*=\\s*"${DEVTOOLS_ENV_VAR}"\\s*;`,
+      ),
+    );
+    assert.ok(
+      envConst,
+      `app.rs must declare a &str const holding "${DEVTOOLS_ENV_VAR}"`,
+    );
     const cfgGate = new RegExp(
-      `#\\[cfg\\(feature = "${CARGO_FEATURE}"\\)\\]\\s*if\\s+std::env::var\\(\\s*"${DEVTOOLS_ENV_VAR}"\\s*\\)`,
+      `#\\[cfg\\(feature = "${CARGO_FEATURE}"\\)\\]\\s*if\\s+std::env::var\\(\\s*${envConst[1]}\\s*\\)`,
     );
     assert.match(
       app,
       cfgGate,
-      `app.rs must pair #[cfg(feature = "${CARGO_FEATURE}")] directly with the if std::env::var("${DEVTOOLS_ENV_VAR}") check`,
+      `app.rs must pair #[cfg(feature = "${CARGO_FEATURE}")] directly with the if std::env::var(${envConst[1]}) check`,
     );
   });
 

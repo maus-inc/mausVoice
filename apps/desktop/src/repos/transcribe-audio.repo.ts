@@ -24,6 +24,7 @@ import { getAppState } from "../store";
 import { DEFAULT_MODEL_SIZE, TranscriptionMode } from "../types/ai.types";
 import { AudioSamples } from "../types/audio.types";
 import { buildWaveFile } from "../utils/audio.utils";
+import { analyzeSilence } from "../utils/audio-energy.utils";
 import { getLocalTranscriptionSidecarManager } from "../sidecars";
 import {
   getTranscriptionSidecarDeviceId,
@@ -148,6 +149,27 @@ export abstract class BaseTranscribeAudioRepo extends BaseRepo {
   ): Promise<TranscribeAudioOutput>;
 
   /**
+   * Energy-based silence gate. Returns true when the samples are
+   * near-silent (low RMS, low loudest-window energy, and low peak), so
+   * a cloud provider cannot echo its dictionary/glossary prompt back as
+   * a fake transcript. Logs the decision with the scope ("whole clip"
+   * or "chunk") for diagnostics.
+   */
+  protected isNearSilent(
+    samples: Float32Array,
+    sampleRate: number,
+    scope: string,
+  ): boolean {
+    const silence = analyzeSilence(samples, sampleRate);
+    if (silence.silent) {
+      getLogger().info(
+        `Skipping transcription (${scope}): audio is near-silent (rms=${silence.rms.toExponential(2)}, peak=${silence.peak.toExponential(2)}, maxWindowRms=${silence.maxWindowRms.toExponential(2)})`,
+      );
+    }
+    return silence.silent;
+  }
+
+  /**
    * Transcribes audio, automatically splitting long audio into segments
    * and merging the results.
    */
@@ -164,6 +186,20 @@ export abstract class BaseTranscribeAudioRepo extends BaseRepo {
 
     if (floatSamples.length === 0) {
       return { text: "", metadata: null };
+    }
+
+    // Energy-based silence gate. Cloud providers (Gemini, Groq, OpenAI) are
+    // biased by their prompt, which for us contains the user's dictionary:
+    // on near-silent audio they return those glossary words instead of an
+    // empty transcript. This is provider- and language-independent, unlike
+    // `no_speech_prob` (which only some Whisper endpoints return). When the
+    // filter is disabled the user wants the raw transcript, so skip it.
+    const filterEnabled = input.hallucinationFilterEnabled ?? true;
+    if (
+      filterEnabled &&
+      this.isNearSilent(floatSamples, input.sampleRate, "whole clip")
+    ) {
+      return { text: "", metadata: { transcriptionMode: "api" } };
     }
 
     const segmentDurationSec = this.getSegmentDurationSec();
@@ -189,16 +225,23 @@ export abstract class BaseTranscribeAudioRepo extends BaseRepo {
       overlapDurationSec: this.getOverlapDurationSec(),
     });
 
-    // Create promise factories for batched execution
-    const transcriptionTasks = segments.map(
-      (segmentSamples) => () =>
-        this.transcribeSegment({
-          samples: segmentSamples,
-          sampleRate: input.sampleRate,
-          prompt: input.prompt,
-          language: input.language,
-        }),
-    );
+    // Create promise factories for batched execution. Skip chunks that are
+    // near-silent so their glossary-prompt bias cannot produce a dictionary
+    // hallucination (and so we don't pay to transcribe room noise).
+    const transcriptionTasks = segments.map((segmentSamples) => () => {
+      if (
+        filterEnabled &&
+        this.isNearSilent(segmentSamples, input.sampleRate, "chunk")
+      ) {
+        return Promise.resolve({ text: "", metadata: null });
+      }
+      return this.transcribeSegment({
+        samples: segmentSamples,
+        sampleRate: input.sampleRate,
+        prompt: input.prompt,
+        language: input.language,
+      });
+    });
 
     // Execute in batches
     const results = await batchAsync(
@@ -212,7 +255,6 @@ export abstract class BaseTranscribeAudioRepo extends BaseRepo {
     // action layer. Chunks without verbose segments fall back to their raw text.
     // When the user disables the filter, merge every raw chunk text unchanged so
     // the off switch preserves the provider transcript for long audio too.
-    const filterEnabled = input.hallucinationFilterEnabled ?? true;
     const transcriptionTexts = results.map((r) => {
       const gated = filterEnabled ? gateSilentSegments(r.segments) : null;
       return gated ?? r.text;

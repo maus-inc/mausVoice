@@ -212,3 +212,31 @@ describe("pillPlacement preference", () => {
     expect(loaded.pillPlacement).toBe("bottom");
   });
 });
+
+describe("hallucination filter default and persistence", () => {
+  it("defaults hallucinationFilterEnabled to true for a fresh profile", () => {
+    const prefs = createDefaultPreferences();
+    expect(prefs.hallucinationFilterEnabled).toBe(true);
+  });
+
+  it("defaults an unset (null/missing) persisted value to true on load", () => {
+    const local = toLocalPreferences(createDefaultPreferences());
+    // Simulate a row from an older build that has no column value.
+    delete (local as Record<string, unknown>).hallucinationFilterEnabled;
+    const loaded = fromLocalPreferences(local);
+    expect(loaded.hallucinationFilterEnabled).toBe(true);
+  });
+
+  it("preserves an explicit false across save then load", () => {
+    // A user who turns the filter off must have it stay off after restart,
+    // otherwise silence gating would re-enable itself.
+    const prefs = {
+      ...createDefaultPreferences(),
+      hallucinationFilterEnabled: false,
+    };
+    const saved = toLocalPreferences(prefs);
+    expect(saved.hallucinationFilterEnabled).toBe(false);
+    const loaded = fromLocalPreferences(saved);
+    expect(loaded.hallucinationFilterEnabled).toBe(false);
+  });
+});

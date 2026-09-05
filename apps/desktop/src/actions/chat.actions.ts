@@ -9,6 +9,7 @@ import {
 import { nextConversationTitle } from "../utils/chat.utils";
 import { nowIso } from "../utils/date.utils";
 import { getIsDevMode } from "../utils/env.utils";
+import { getLogger } from "../utils/log.utils";
 
 const sendQueuesByConversationId = new Map<string, Promise<void>>();
 
@@ -32,7 +33,7 @@ export const loadConversations = async (): Promise<void> => {
       draft.chat.status = "success";
     });
   } catch (error) {
-    console.error("Failed to load conversations", error);
+    getLogger().error("Failed to load conversations", error);
     produceAppState((draft) => {
       draft.chat.status = "error";
     });
@@ -99,18 +100,18 @@ export const deleteConversation = async (id: string): Promise<void> => {
   try {
     produceAppState((draft) => {
       // delete is the idiomatic Immer draft operation and matches
-      // the rest of the codebase. DeepSource JS-0323 flags the
-      // dynamic key, but the pattern is intentional here.
-      delete draft.conversationById[id]; // deepsource ignore JS-0323
+      // the rest of the codebase. DeepSource JS-0320 flags the dynamic
+      // key, but the deletion is intentional and type-safe here.
+      delete draft.conversationById[id]; // skipcq: JS-0320
       draft.chat.conversationIds = draft.chat.conversationIds.filter(
         (cid) => cid !== id,
       );
 
       const messageIds = draft.chatMessageIdsByConversationId[id] ?? [];
       for (const messageId of messageIds) {
-        delete draft.chatMessageById[messageId]; // deepsource ignore JS-0323
+        delete draft.chatMessageById[messageId]; // skipcq: JS-0320
       }
-      delete draft.chatMessageIdsByConversationId[id]; // deepsource ignore JS-0323
+      delete draft.chatMessageIdsByConversationId[id]; // skipcq: JS-0320
     });
   } finally {
     deletingConversationIds.delete(id);
@@ -218,9 +219,11 @@ const applySendToConversation = async (
     return true;
   } catch (error) {
     const dev = getIsDevMode();
-    console.error(
+    // The title holds the user's own text, so it is only attached in dev
+    // mode; the timestamp is harmless and always useful for correlation.
+    getLogger().error(
       `Failed to update conversation ${conversationId} after a send`,
-      dev ? { title, updatedAt: createdAt } : { updatedAt: createdAt },
+      { updatedAt: createdAt, ...(dev ? { title } : {}) },
       error,
     );
     return false;
@@ -249,9 +252,9 @@ const computeIsFirstMessage = async (
     );
   } catch (error) {
     const dev = getIsDevMode();
-    console.error(
+    getLogger().error(
       `Failed to read persisted message count for conversation ${conversationId}`,
-      dev ? { contentPreview: text.slice(0, 50) } : undefined,
+      ...(dev ? [{ contentPreview: text.slice(0, 50) }] : []),
       error,
     );
     return false;
@@ -341,9 +344,9 @@ export const sendChatMessage = async (
         persistFailed = true;
         persistError = error;
         const dev = getIsDevMode();
-        console.error(
+        getLogger().error(
           `Failed to persist chat message for conversation ${conversationId}`,
-          dev ? { contentPreview: text.slice(0, 50) } : undefined,
+          ...(dev ? [{ contentPreview: text.slice(0, 50) }] : []),
           error,
         );
       }),

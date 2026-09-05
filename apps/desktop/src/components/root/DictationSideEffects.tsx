@@ -189,6 +189,13 @@ type FinalizedRecording = {
 
 const FINALIZE_TIMEOUT_MS = 90_000;
 const HANDLE_TRANSCRIPT_TIMEOUT_MS = 60_000;
+// Review-before-insert keeps the composer open for up to its own
+// 5-minute decision window (COMPOSER_TIMEOUT_MS in composer.utils).
+// Budget the wrapper above that plus slack: a wrapper smaller than the
+// review window would reject mid-review, skip storeTranscription below,
+// and silently drop the transcript from history while the window still
+// inserts on Save — with a recovery toast promising the opposite.
+const REVIEW_HANDLE_TRANSCRIPT_TIMEOUT_MS = 6 * 60_000;
 const PHASE_HEARTBEAT_INTERVAL_MS = 5_000;
 /** Dictation backlog poll interval: how often to check whether the user
  *  has focused an editable target so accumulated backlog can be drained. */
@@ -591,6 +598,13 @@ export const DictationSideEffects = () => {
       }
 
       getLogger().info("Post-processing transcript");
+      // When review-before-insert is on, the composer owns the pacing;
+      // give the wrapper a budget above the composer's own so the two
+      // timeouts can never race (see REVIEW_HANDLE_TRANSCRIPT_TIMEOUT_MS).
+      const handleTranscriptTimeoutMs = getMyUserPreferences(getAppState())
+        ?.reviewBeforeInsert
+        ? REVIEW_HANDLE_TRANSCRIPT_TIMEOUT_MS
+        : HANDLE_TRANSCRIPT_TIMEOUT_MS;
       const result = await withTimeout(
         strategy.handleTranscript({
           rawTranscript,
@@ -604,7 +618,7 @@ export const DictationSideEffects = () => {
           transcriptionMetadata: transcribeResult.metadata,
           transcriptionWarnings: transcribeResult.warnings,
         }),
-        HANDLE_TRANSCRIPT_TIMEOUT_MS,
+        handleTranscriptTimeoutMs,
         "Transcript post-processing",
       );
 
@@ -653,17 +667,19 @@ export const DictationSideEffects = () => {
       trackAppUsed(appTarget?.name ?? "Unknown");
 
       if (appTarget) {
-        saveManualStyleForApp(appTarget);
+        // Awaited so a fast next dictation cannot read the stale app tone
+        // and clobber the live selection the user just switched to.
+        await saveManualStyleForApp(appTarget);
       }
 
-      // Manual mode: the tone selected at STOP styles this utterance, so a
-      // mid-utterance switch (pill / hotkey / Left-Right) applies to the
-      // output being produced, not just the pill label. A switch that
-      // arrives after stop has snapshotted the tone loses for this
-      // utterance. Automatic mode prefers the app-target tone and falls
-      // back to the live selection when the app has none. Streamed
-      // interim text is never restyled here —
-      // DictationStrategy skips post-processing once segments are inserted.
+      // Manual mode: the tone selected at recording START styles the whole
+      // utterance, so a mid-dictation switch (pill / hotkey / Left-Right)
+      // only affects the NEXT recording, matching the label shown at start.
+      // The stop snapshot is a race-safety fallback if start was missed.
+      // Automatic mode prefers the app-target tone and falls back to the
+      // live selection when the app has none. Streamed interim text is
+      // never restyled here — DictationStrategy skips post-processing once
+      // segments are inserted.
       const utteranceTones = utteranceTonesRef.current.read();
       const toneId = getEffectiveToneIdAtFinalize({
         stylingMode: getEffectiveStylingMode(getAppState()),
@@ -753,9 +769,9 @@ export const DictationSideEffects = () => {
     getLogger().info("stopRecording entered");
     isStoppingRef.current = true;
     setIsStopping(true);
-    // Lock the utterance tone now. Switches that already wrote selectedToneId
-    // are included; switches that arrive during capture/finalize lose for
-    // this utterance (they still update the selection for the next one).
+    // Capture the live tone at stop as a race-safety fallback. The whole
+    // utterance is styled by the tone snapshotted at recording START, so a
+    // mid-dictation style switch only affects the next recording.
     utteranceTonesRef.current.snapshotAtStop(
       getToneIdToUse(getAppState(), {
         currentAppToneId: null,
@@ -922,9 +938,9 @@ export const DictationSideEffects = () => {
         await loadManualStyleForCurrentApp();
       }
 
-      // Seed both snapshots after app-based style load. Stop overwrites
-      // the stop snapshot with the live selection so a mid-utterance switch
-      // is what finalize actually applies.
+      // Seed the start snapshot after app-based style load. This is the
+      // authoritative style for the whole utterance; a mid-dictation switch
+      // styles the next recording only. Stop captures a fallback snapshot.
       utteranceTonesRef.current.seed(
         getToneIdToUse(getAppState(), {
           currentAppToneId: null,

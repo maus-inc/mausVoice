@@ -57,6 +57,15 @@ const reviewOutputText = async (
   if (skipReview || prefs?.reviewBeforeInsert !== true || !text.trim()) {
     return text;
   }
+  // NOTE: the pill intentionally keeps its processing phase while this
+  // review is open. The review await sits inside the caller's
+  // handleTranscript chain, which also gates `isStoppingRef`, so
+  // advertising an idle pill here would promise interactions the flow
+  // cannot honor yet — and the wrapper's timeout must stay larger than
+  // the composer's own decision window so a long read can never be
+  // misclassified as a hang and skip history persistence. True phase
+  // decoupling needs the review wait lifted out of stopRecording and is
+  // tracked as a follow-up.
   return reviewTextInComposer(text);
 };
 

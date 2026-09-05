@@ -173,6 +173,7 @@ export const getNativeRepo = (): BaseNativeRepo => {
 export type GenerateTextRepoOutput = {
   repo: Nullable<BaseGenerateTextRepo>;
   apiKeyId: Nullable<string>;
+  provider: Nullable<string>;
   warnings: string[];
 };
 
@@ -182,7 +183,12 @@ const getGenTextRepoInternal = ({
   prefs: GenerativePrefs;
 }): GenerateTextRepoOutput => {
   if (prefs.mode !== "api") {
-    return { repo: null, apiKeyId: null, warnings: prefs.warnings };
+    return {
+      repo: null,
+      apiKeyId: null,
+      provider: null,
+      warnings: prefs.warnings,
+    };
   }
 
   const state = getAppState();
@@ -285,6 +291,10 @@ const getGenTextRepoInternal = ({
   return {
     repo: build ? build(prefs) : null,
     apiKeyId: prefs.apiKeyId,
+    // Record the provider the builder was selected for, even when the
+    // builder fell back to Groq, so history attribution matches the user's
+    // selection rather than the silent fallback.
+    provider: prefs.provider,
     warnings: prefs.warnings,
   };
 };

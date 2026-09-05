@@ -118,3 +118,6 @@ HANDOFF.md
 #Agent 
 .mausagent/
 .kilo/
+
+# TypeScript incremental build state
+*.tsbuildinfo
