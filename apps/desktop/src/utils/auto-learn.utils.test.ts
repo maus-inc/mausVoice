@@ -90,6 +90,12 @@ describe("extractAutoLearnTerms", () => {
     expect(learn("her name is Jo", "her name is Bo")).toEqual(["Bo"]);
     expect(learn("I said A", "I said B")).toEqual([]);
   });
+
+  it("learns a corrected name that starts with a supplementary-plane letter", () => {
+    expect(learn("my friend Unicode", "my friend \u{1D518}nicode")).toEqual([
+      "\u{1D518}nicode",
+    ]);
+  });
 });
 
 describe("tokenizeForComparison", () => {
@@ -107,6 +113,19 @@ describe("tokenizeForComparison", () => {
 
   it("removes a trailing possessive", () => {
     expect(tokenizeForComparison("Sonia's car")).toEqual(["Sonia", "car"]);
+  });
+
+  it("keeps supplementary-plane letters whole at both edges", () => {
+    expect(tokenizeForComparison("\u{1D518}nicode")).toEqual([
+      "\u{1D518}nicode",
+    ]);
+    expect(tokenizeForComparison("Nicode\u{1D518}")).toEqual([
+      "Nicode\u{1D518}",
+    ]);
+    expect(tokenizeForComparison("(\u{1D518}nicode)")).toEqual([
+      "\u{1D518}nicode",
+    ]);
+    expect(tokenizeForComparison("\u{1D518}")).toEqual(["\u{1D518}"]);
   });
 
   it("trims long punctuation runs in linear time", () => {

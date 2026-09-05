@@ -17,10 +17,12 @@ const MAX_TERM_LENGTH = 40;
 const MAX_LEARNED_TERMS = 5;
 const MAX_EDIT_TOKENS = 8;
 
-// Trimming runs as a two-pointer scan over single-character tests. A quantified
+// Trimming runs as a two-pointer scan over single code-point tests. A quantified
 // character class anchored only at one end (for example /[^...]+$/u) makes the
 // engine retry from every offset, which is super-linear on all-punctuation
-// tokens. Testing one code point at a time keeps this linear.
+// tokens. Array.from splits on code points rather than UTF-16 code units, so a
+// supplementary-plane letter is never split into surrogates that each look like
+// an edge character.
 const TOKEN_EDGE_CHARACTER = /[^\p{L}\p{N}'’-]/u;
 const POSSESSIVE_SUFFIX_PATTERN = /['’]s$/iu;
 const UPPERCASE_LETTER_PATTERN = /^\p{Lu}/u;
@@ -242,17 +244,18 @@ export type AutoLearnTermsResult = {
 };
 
 const trimTokenEdges = (raw: string): string => {
+  const codePoints = Array.from(raw);
   let start = 0;
-  let end = raw.length;
+  let end = codePoints.length;
 
-  while (start < end && TOKEN_EDGE_CHARACTER.test(raw[start]!)) {
+  while (start < end && TOKEN_EDGE_CHARACTER.test(codePoints[start]!)) {
     start += 1;
   }
-  while (end > start && TOKEN_EDGE_CHARACTER.test(raw[end - 1]!)) {
+  while (end > start && TOKEN_EDGE_CHARACTER.test(codePoints[end - 1]!)) {
     end -= 1;
   }
 
-  return raw.slice(start, end);
+  return codePoints.slice(start, end).join("");
 };
 
 /**
