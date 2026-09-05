@@ -136,42 +136,43 @@ describe("applyHallucinationFiltering", () => {
     );
   });
 
-  it("preserves leading-space segment boundaries when dropping silence", () => {
-    const raw = "Hello world today";
-    const segments = [
-      { text: "Hello", noSpeechProb: 0.1 },
-      { text: " world", noSpeechProb: 0.99 },
-      { text: " today", noSpeechProb: 0.1 },
-    ];
-    expect(applyHallucinationFiltering(raw, segments, "en", true)).toBe(
-      "Hello today",
-    );
-  });
-
-  it("joins segments without boundary whitespace when dropping silence", () => {
-    const raw = "Hello world today";
-    const segments = [
-      { text: "Hello", noSpeechProb: 0.1 },
-      { text: "world", noSpeechProb: 0.99 },
-      { text: "today", noSpeechProb: 0.1 },
-    ];
-    expect(applyHallucinationFiltering(raw, segments, "en", true)).toBe(
-      "Hello today",
-    );
-  });
-
-  it("inserts a space only where mixed kept segments lack a boundary", () => {
-    const raw = "Hello world today";
-    const segments = [
-      { text: "Hello", noSpeechProb: 0.1 },
-      { text: "noise", noSpeechProb: 0.99 },
-      { text: "world", noSpeechProb: 0.1 },
-      { text: " today", noSpeechProb: 0.1 },
-    ];
-    expect(applyHallucinationFiltering(raw, segments, "en", true)).toBe(
-      "Hello world today",
-    );
-  });
+  it.each([
+    {
+      name: "leading-space boundaries",
+      segments: [
+        { text: "Hello", noSpeechProb: 0.1 },
+        { text: " world", noSpeechProb: 0.99 },
+        { text: " today", noSpeechProb: 0.1 },
+      ],
+      expected: "Hello today",
+    },
+    {
+      name: "no boundary whitespace",
+      segments: [
+        { text: "Hello", noSpeechProb: 0.1 },
+        { text: "world", noSpeechProb: 0.99 },
+        { text: "today", noSpeechProb: 0.1 },
+      ],
+      expected: "Hello today",
+    },
+    {
+      name: "mixed kept boundaries",
+      segments: [
+        { text: "Hello", noSpeechProb: 0.1 },
+        { text: "noise", noSpeechProb: 0.99 },
+        { text: "world", noSpeechProb: 0.1 },
+        { text: " today", noSpeechProb: 0.1 },
+      ],
+      expected: "Hello world today",
+    },
+  ])(
+    "rebuilds kept segments with pairwise spacing ($name)",
+    ({ segments, expected }) => {
+      expect(
+        applyHallucinationFiltering("Hello world today", segments, "en", true),
+      ).toBe(expected);
+    },
+  );
 
   it("keeps a genuine standalone Best regards. sign-off under the filter", () => {
     const raw = "Please review the doc. Best regards.";

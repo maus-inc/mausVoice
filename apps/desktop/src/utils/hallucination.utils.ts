@@ -169,6 +169,26 @@ export type TranscriptionSegment = {
 export const NO_SPEECH_PROB_THRESHOLD = 0.9;
 
 /**
+ * Rebuild kept segment text with pairwise spacing.
+ *
+ * Whisper-style verbose_json often embeds a leading space on each segment.
+ * Keep existing boundary whitespace and insert a single space only when
+ * adjacent kept segments have none (so mixed styles neither glue words nor
+ * double-space). Collapse runs of space/tab only — leave newlines from spoken
+ * structural commands intact.
+ */
+export const joinKeptSegmentTexts = (texts: string[]): string => {
+  if (texts.length === 0) return "";
+  let joined = texts[0] ?? "";
+  for (let i = 1; i < texts.length; i++) {
+    const text = texts[i] ?? "";
+    const hasBoundaryWhitespace = /^\s/.test(text) || /\s$/.test(joined);
+    joined = `${joined}${hasBoundaryWhitespace ? "" : " "}${text}`;
+  }
+  return joined.replace(/[ \t]+/g, " ").trim();
+};
+
+/**
  * Drop clearly-silent segments from a `verbose_json` response and concatenate
  * the remainder. Returns null (not "") when no segments are supplied so callers
  * can fall back to the exact provider text — providers that don't return
@@ -195,16 +215,5 @@ export const gateSilentSegments = (
   if (kept.length === segments.length) {
     return null;
   }
-  // Whisper-style verbose_json often embeds a leading space on each segment.
-  // Join pairwise: keep existing boundary whitespace, and insert a single
-  // space only when adjacent kept segments have none (so mixed styles do not
-  // glue words or double-space). Collapse runs of space/tab only — leave
-  // newlines from spoken structural commands intact.
-  const texts = kept.map((segment) => segment.text);
-  const joined = texts.reduce((result, text, index) => {
-    if (index === 0) return text;
-    const hasBoundaryWhitespace = /^\s/.test(text) || /\s$/.test(result);
-    return `${result}${hasBoundaryWhitespace ? "" : " "}${text}`;
-  }, "");
-  return joined.replace(/[ \t]+/g, " ").trim();
+  return joinKeptSegmentTexts(kept.map((segment) => segment.text));
 };
