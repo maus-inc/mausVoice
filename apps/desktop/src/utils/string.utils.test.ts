@@ -665,81 +665,69 @@ describe("escapeRegExp", () => {
 });
 
 describe("applyReplacements with regex metacharacters in sourceValue", () => {
-  it("does not treat a slash inside a word as a regex delimiter", () => {
-    expect(() =>
-      applyReplacements("use a/b notation", [
-        { sourceValue: "a/b", destinationValue: "AB" },
-      ]),
-    ).not.toThrow();
-    expect(
-      applyReplacements("use a/b notation", [
-        { sourceValue: "a/b", destinationValue: "AB" },
-      ]),
-    ).toBe("use AB notation");
-  });
+  // These cases pin down escaping: a metacharacter in sourceValue must never
+  // compile into regex syntax. The trailing "]", ")" and "++" in some expected
+  // values are not a typo. applyReplacements matches on word boundaries and
+  // leaves trailing punctuation in place, so only the word part is swapped.
+  const cases = [
+    {
+      name: "a slash inside a word as a regex delimiter",
+      text: "use a/b notation",
+      sourceValue: "a/b",
+      destinationValue: "AB",
+      expected: "use AB notation",
+    },
+    {
+      name: "a backslash inside a word as a regex escape",
+      text: "see foo\\bar here",
+      sourceValue: "foo\\bar",
+      destinationValue: "FB",
+      expected: "see FB here",
+    },
+    {
+      name: "brackets inside a word as a character class",
+      text: "see foo[bar] here",
+      sourceValue: "foo[bar]",
+      destinationValue: "FB",
+      expected: "see FB] here",
+    },
+    {
+      name: "parens inside a word as a capture group",
+      text: "see foo(bar) here",
+      sourceValue: "foo(bar)",
+      destinationValue: "FB",
+      expected: "see FB) here",
+    },
+    {
+      name: "a plus sign as a quantifier",
+      text: "write C++ daily",
+      sourceValue: "C++",
+      destinationValue: "Rust",
+      expected: "write Rust++ daily",
+    },
+    {
+      name: "an asterisk as a quantifier",
+      text: "use a*b style",
+      sourceValue: "a*b",
+      destinationValue: "AB",
+      expected: "use AB style",
+    },
+    {
+      name: "a question mark as a quantifier",
+      text: "answer is maybe? right",
+      sourceValue: "maybe",
+      destinationValue: "perhaps",
+      expected: "answer is perhaps? right",
+    },
+  ];
 
-  it("does not treat a backslash inside a word as a regex escape", () => {
-    expect(() =>
-      applyReplacements("see foo\\bar here", [
-        { sourceValue: "foo\\bar", destinationValue: "FB" },
-      ]),
-    ).not.toThrow();
-  });
+  it.each(cases)(
+    "does not treat $name",
+    ({ text, sourceValue, destinationValue, expected }) => {
+      const rules = [{ sourceValue, destinationValue }];
 
-  it("does not treat brackets inside a word as a character class", () => {
-    expect(() =>
-      applyReplacements("see foo[bar] here", [
-        { sourceValue: "foo[bar]", destinationValue: "FB" },
-      ]),
-    ).not.toThrow();
-    const out = applyReplacements("see foo[bar] here", [
-      { sourceValue: "foo[bar]", destinationValue: "FB" },
-    ]);
-    expect(out).toContain("FB");
-  });
-
-  it("does not treat parens inside a word as a capture group", () => {
-    expect(() =>
-      applyReplacements("see foo(bar) here", [
-        { sourceValue: "foo(bar)", destinationValue: "FB" },
-      ]),
-    ).not.toThrow();
-    const out = applyReplacements("see foo(bar) here", [
-      { sourceValue: "foo(bar)", destinationValue: "FB" },
-    ]);
-    expect(out).toContain("FB");
-  });
-
-  it("does not treat a plus sign as a quantifier", () => {
-    expect(() =>
-      applyReplacements("write C++ daily", [
-        { sourceValue: "C++", destinationValue: "Rust" },
-      ]),
-    ).not.toThrow();
-    const out = applyReplacements("write C++ daily", [
-      { sourceValue: "C++", destinationValue: "Rust" },
-    ]);
-    expect(out).toContain("Rust");
-  });
-
-  it("does not treat an asterisk as a quantifier", () => {
-    expect(() =>
-      applyReplacements("use a*b style", [
-        { sourceValue: "a*b", destinationValue: "AB" },
-      ]),
-    ).not.toThrow();
-    expect(
-      applyReplacements("use a*b style", [
-        { sourceValue: "a*b", destinationValue: "AB" },
-      ]),
-    ).toBe("use AB style");
-  });
-
-  it("does not treat a question mark as a quantifier", () => {
-    expect(() =>
-      applyReplacements("answer is maybe? right", [
-        { sourceValue: "maybe", destinationValue: "perhaps" },
-      ]),
-    ).not.toThrow();
-  });
+      expect(() => applyReplacements(text, rules)).not.toThrow();
+      expect(applyReplacements(text, rules)).toBe(expected);
+    },
+  );
 });
