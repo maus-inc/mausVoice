@@ -2218,6 +2218,7 @@ pub async fn api_key_create(
         base_url,
         azure_region,
         include_v1_path,
+        transcription_path,
     } = api_key;
 
     let protected = protect_api_key(&key);
@@ -2238,6 +2239,7 @@ pub async fn api_key_create(
         base_url,
         azure_region,
         include_v1_path,
+        transcription_path,
     };
 
     crate::db::api_key_queries::insert_api_key(database.pool(), &stored)
@@ -2949,6 +2951,23 @@ pub fn set_pill_visibility(app: AppHandle, visibility: String) -> Result<(), Str
 
 #[tauri::command]
 #[specta::specta]
+pub fn set_pill_placement(app: AppHandle, placement: String) -> Result<(), String> {
+    validate_pill_placement(&placement)?;
+    crate::platform::overlay::notify_pill_placement(&app, &placement);
+    Ok(())
+}
+
+/// Accept-list for [`set_pill_placement`]; kept separate so the policy is
+/// unit-testable without an `AppHandle`.
+fn validate_pill_placement(placement: &str) -> Result<(), String> {
+    match placement {
+        "top" | "bottom" => Ok(()),
+        other => Err(format!("invalid pill placement: {other:?}")),
+    }
+}
+
+#[tauri::command]
+#[specta::specta]
 pub fn notify_pill_style_info(app: AppHandle, count: u32, name: String) {
     crate::platform::overlay::notify_style_info(&app, count, &name);
 }
@@ -2989,6 +3008,16 @@ pub fn get_key_listener_health() -> String {
 #[specta::specta]
 pub fn retry_key_listener(app: AppHandle) -> Result<(), String> {
     crate::platform::keyboard::start_key_listener(&app)
+}
+
+/// Re-registers the global keyboard hook. Used by the Windows resume
+/// handler in `platform::windows::lifecycle` to recover from a
+/// sleep/wake or session-unlock transition that tore down the
+/// low-level hook installed by `rdev::grab`.
+#[tauri::command]
+#[specta::specta]
+pub fn restart_key_listener(app: AppHandle) -> Result<(), String> {
+    retry_key_listener(app)
 }
 
 #[tauri::command]
@@ -5020,6 +5049,19 @@ mod tests {
             "always_on_top",
             "hidden" | "persistent" | "while_active"
         ));
+    }
+
+    #[test]
+    fn pill_placement_accepts_top_and_bottom_only() {
+        // Exercise the validator extracted from set_pill_placement so a
+        // regression in the accept-list (typo in the literal, removal of a
+        // branch, etc.) cannot ship silently — the previous test simply
+        // re-asserted the implementation against the implementation.
+        assert!(validate_pill_placement("top").is_ok());
+        assert!(validate_pill_placement("bottom").is_ok());
+        assert!(validate_pill_placement("center").is_err());
+        assert!(validate_pill_placement("").is_err());
+        assert!(validate_pill_placement("TOP").is_err());
     }
 
     #[test]

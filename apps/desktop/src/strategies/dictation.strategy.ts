@@ -220,6 +220,7 @@ export class DictationStrategy extends BaseStrategy {
           text: textToPaste,
           mode: "dictation",
           currentAppId: this.currentAppId,
+          isInterim: true,
           skipReview: true,
         });
       } catch (error) {

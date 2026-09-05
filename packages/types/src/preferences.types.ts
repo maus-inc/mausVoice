@@ -2,6 +2,7 @@ import type {
   AgentMode,
   DictationPillVisibility,
   Nullable,
+  PillPlacement,
   PillResetMonitorStrategy,
   PostProcessingMode,
   TranscriptionMode,
@@ -30,6 +31,7 @@ export type UserPreferences = {
   ignoreUpdateDialog: boolean;
   incognitoModeEnabled: boolean;
   incognitoModeIncludeInStats: boolean;
+  preserveAudioOnFailure: boolean;
   dictationLimitMinutes: number;
   dictationPillVisibility: DictationPillVisibility;
   realtimeOutputEnabled: boolean;
@@ -43,7 +45,9 @@ export type UserPreferences = {
   insertionMethod: Nullable<string>;
   typingSpeedMs: Nullable<number>;
   pillResetMonitorStrategy: PillResetMonitorStrategy;
+  pillPlacement: PillPlacement;
   alwaysRequestAdminOnStartup: boolean;
+  handsFreeDelayMs: Nullable<number>;
   /** Optional opt-in for activation-key + arrow style cycling while dictating. */
   inDictationStyleSwitchingEnabled: boolean;
   /** Suppress common silence hallucinations before post-processing. */
@@ -58,6 +62,8 @@ export type UserPreferences = {
   agentPermissionTimeoutMs: number;
   /** Deterministic "new line" / "scratch that" commands. Default on. */
   spokenCommandsEnabled: boolean;
+  autoLearnDictionaryEnabled: boolean;
+  autoLearnFromEditsEnabled: boolean;
 
   // deprecated
 };

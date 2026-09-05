@@ -165,10 +165,27 @@ pub(crate) fn handle_click(state: &PillState, x: f64, y: f64) {
                     if let Some(ref action) = *state.flash_action.borrow() {
                         ipc::send(&OutMessage::ToastAction { action: action.clone() });
                     }
-                    state.flash_visible.set(false);
-                    state.flash_timer.set(0.0);
-                    *state.flash_action.borrow_mut() = None;
-                    *state.flash_action_label.borrow_mut() = None;
+                    rust_pill_shared::clear_flash_state(
+                        &state.flash_visible,
+                        &state.flash_timer,
+                        &state.flash_action,
+                        &state.flash_action_label,
+                        &state.flash_reject_action,
+                        &state.flash_reject_action_label,
+                    );
+                }
+                ClickAction::FlashReject => {
+                    if let Some(ref action) = *state.flash_reject_action.borrow() {
+                        ipc::send(&OutMessage::ToastAction { action: action.clone() });
+                    }
+                    rust_pill_shared::clear_flash_state(
+                        &state.flash_visible,
+                        &state.flash_timer,
+                        &state.flash_action,
+                        &state.flash_action_label,
+                        &state.flash_reject_action,
+                        &state.flash_reject_action_label,
+                    );
                 }
             }
             return;
@@ -293,7 +310,10 @@ fn union_flash_action(
     // Use the click regions registered by draw code for exact coordinates
     let regions = state.click_regions.borrow();
     for r in regions.iter() {
-        if matches!(r.action, ClickAction::FlashAction) {
+        if matches!(
+            r.action,
+            ClickAction::FlashAction | ClickAction::FlashReject
+        ) {
             let rect = cairo::RectangleInt::new(
                 (ox + r.x) as i32,
                 (oy + r.y) as i32,

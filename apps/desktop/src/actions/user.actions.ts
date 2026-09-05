@@ -2,6 +2,7 @@ import {
   type AgentMode,
   DictationPillVisibility,
   Nullable,
+  PillPlacement,
   PillResetMonitorStrategy,
   StylingMode,
   User,
@@ -21,6 +22,10 @@ import {
   DEFAULT_DICTATION_LIMIT_MINUTES,
   normalizeDictationLimitMinutes,
 } from "../utils/dictation-limit.utils";
+import {
+  DEFAULT_HANDS_FREE_DELAY_MS,
+  normalizeHandsFreeDelayMs,
+} from "../utils/hands-free-delay.utils";
 import { PRIMARY_LANGUAGE_SENTINEL } from "../utils/language.utils";
 import {
   isGpuPreferredTranscriptionDevice,
@@ -107,9 +112,11 @@ export const createDefaultPreferences = (): UserPreferences => ({
   ignoreUpdateDialog: false,
   incognitoModeEnabled: false,
   incognitoModeIncludeInStats: false,
+  preserveAudioOnFailure: true,
   dictationLimitMinutes: DEFAULT_DICTATION_LIMIT_MINUTES,
   dictationPillVisibility: "while_active",
   pillResetMonitorStrategy: "current",
+  pillPlacement: "bottom",
 
   alwaysRequestAdminOnStartup: false,
   spokenCommandsEnabled: true,
@@ -123,12 +130,15 @@ export const createDefaultPreferences = (): UserPreferences => ({
   menuBarIconHidden: false,
   insertionMethod: null,
   typingSpeedMs: null,
+  handsFreeDelayMs: DEFAULT_HANDS_FREE_DELAY_MS,
   inDictationStyleSwitchingEnabled: false,
   hallucinationFilterEnabled: true,
   reviewBeforeInsert: null,
   agentEnabledTools: null,
   agentMaxIterations: 20,
   agentPermissionTimeoutMs: 60_000,
+  autoLearnDictionaryEnabled: true,
+  autoLearnFromEditsEnabled: false,
 });
 
 // Serializes preference mutations so overlapping tool toggles or numeric edits
@@ -676,6 +686,21 @@ export const setPillResetMonitorStrategy = async (
   }, "Failed to save pill reset monitor strategy. Please try again.");
 };
 
+export const setPillPlacement = async (
+  placement: PillPlacement,
+): Promise<void> => {
+  await updateUserPreferences((preferences) => {
+    preferences.pillPlacement = placement;
+  }, "Failed to save pill placement preference. Please try again.");
+  try {
+    await invoke("set_pill_placement", { placement });
+  } catch (error) {
+    getLogger().warning(
+      `Failed to push pill placement to native pill: ${error}`,
+    );
+  }
+};
+
 export const setAlwaysRequestAdminOnStartup = async (
   enabled: boolean,
 ): Promise<void> => {
@@ -698,6 +723,31 @@ export const setDictationLimitMinutes = async (
   await updateUserPreferences((preferences) => {
     preferences.dictationLimitMinutes = normalizeDictationLimitMinutes(minutes);
   }, "Failed to save dictation limit preference. Please try again.");
+};
+
+export const setHandsFreeDelayMs = async (
+  delayMs: Nullable<number>,
+): Promise<void> => {
+  await updateUserPreferences((preferences) => {
+    preferences.handsFreeDelayMs =
+      delayMs == null ? null : normalizeHandsFreeDelayMs(delayMs);
+  }, "Failed to save hands-free delay preference. Please try again.");
+};
+
+export const setAutoLearnDictionaryEnabled = async (
+  enabled: boolean,
+): Promise<void> => {
+  await updateUserPreferences((preferences) => {
+    preferences.autoLearnDictionaryEnabled = enabled;
+  }, "Failed to save auto-learn dictionary preference. Please try again.");
+};
+
+export const setAutoLearnFromEditsEnabled = async (
+  enabled: boolean,
+): Promise<void> => {
+  await updateUserPreferences((preferences) => {
+    preferences.autoLearnFromEditsEnabled = enabled;
+  }, "Failed to save learn-from-corrections preference. Please try again.");
 };
 
 export const setRealtimeOutputEnabled = async (

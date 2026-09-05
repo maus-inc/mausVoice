@@ -31,6 +31,10 @@ pub fn notify_visibility(app: &tauri::AppHandle, visibility: &str) {
     pill_process::notify_visibility(app, visibility);
 }
 
+pub fn notify_pill_placement(app: &tauri::AppHandle, placement: &str) {
+    pill_process::notify_pill_placement(app, placement);
+}
+
 pub fn notify_style_info(app: &tauri::AppHandle, count: u32, name: &str) {
     pill_process::notify_style_info(app, count, name);
 }
@@ -43,10 +47,7 @@ pub fn notify_assistant_state(app: &tauri::AppHandle, payload: &str) {
     pill_process::notify_assistant_state(app, payload);
 }
 
-pub fn notify_reset_position(
-    app: &tauri::AppHandle,
-    strategy: &str,
-) -> Result<(), String> {
+pub fn notify_reset_position(app: &tauri::AppHandle, strategy: &str) -> Result<(), String> {
     pill_process::notify_reset_position(app, strategy)
 }
 

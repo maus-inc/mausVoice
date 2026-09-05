@@ -14,9 +14,8 @@ Open **Settings** from the bottom of the left navigation rail. The page uses sec
 - **Audio** controls the start/stop interaction chime and system-playback dim level during recording.
 - **Hotkey shortcuts** configures hold-to-dictate, cancel, open chat, add-to-dictionary, Assistant, and manual-style actions. Conditional actions appear only when their feature is active.
 - **Diagnostics** shows platform paths and exports a support bundle.
-- **Style hotkeys** assigns one optional global shortcut to each writing style.
 - **Text insertion options** chooses paste or simulated typing globally and per detected application.
-- **More settings** contains Incognito, update prompts, menu-bar visibility, dictation pill visibility, pill reset monitor, spoken commands, real-time output, review before insert, silence hallucination filter, switch style while dictating, streak celebrations, dictation limit, automatic style loading, styling mode, and multi-device output.
+- **More settings** contains Incognito, auto-learn dictionary, learn from corrections, update prompts, menu-bar visibility, pill behavior, real-time output, limits, styling mode, celebrations, and multi-device output.
 
 ## Processing
 

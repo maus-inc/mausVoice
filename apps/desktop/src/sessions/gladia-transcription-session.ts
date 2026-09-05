@@ -5,6 +5,7 @@ import {
 } from "@maus-inc/voice-ai";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 import { getAppState } from "../store";
+import { ensureFloat32Array } from "../utils/audio.utils";
 import type {
   StopRecordingResponse,
   TranscriptionSession,
@@ -122,10 +123,7 @@ export class GladiaTranscriptionSession implements TranscriptionSession {
           return;
         }
         try {
-          const input =
-            event.payload.samples instanceof Float32Array
-              ? event.payload.samples
-              : Float32Array.from(event.payload.samples);
+          const input = ensureFloat32Array(event.payload.samples);
           const output = this.resampler?.process(input) ?? input;
           if (output.length > 0) {
             this.pump?.pushSamples(output);

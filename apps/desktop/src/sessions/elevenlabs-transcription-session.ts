@@ -1,19 +1,11 @@
 import { convertFloat32ToBase64PCM16 } from "@maus-inc/voice-ai";
 import { listen, UnlistenFn } from "@tauri-apps/api/event";
-import {
-  combineStreamingTranscript,
-  createAudioChunkPump,
-} from "../utils/audio-chunking.utils";
-import {
-  createStreamingFinalize,
-  finalizeStreamingSession,
-} from "../utils/streaming-session.utils";
+import { ensureFloat32Array } from "../utils/audio.utils";
+import { getLogger } from "../utils/log.utils";
 import { secureFetch } from "../utils/secure-fetch.utils";
-import {
-  StopRecordingResponse,
-  TranscriptionSession,
-  TranscriptionSessionResult,
-} from "../types/transcription-session.types";
+import { drainSamples } from "./audio-buffer.utils";
+import { BaseApiTranscriptionSession } from "./base-api-transcription-session";
+import { createTranscriptAccumulator } from "./transcript-accumulator.utils";
 
 type ElevenLabsStreamingSession = {
   finalize: () => Promise<string>;
@@ -96,49 +88,103 @@ const startElevenLabsStreaming = async (
     );
   }
 
-  console.log("[ElevenLabs WebSocket] Starting with sample rate:", sampleRate);
+  getLogger().verbose(
+    "[ElevenLabs WebSocket] Starting with sample rate:",
+    sampleRate,
+  );
+
+  const MIN_CHUNK_DURATION_MS = 20;
+  const MAX_CHUNK_DURATION_MS = 100;
+  const minSamplesPerChunk = Math.max(
+    1,
+    Math.ceil((sampleRate * MIN_CHUNK_DURATION_MS) / 1000),
+  );
+  const maxSamplesPerChunk = Math.max(
+    minSamplesPerChunk,
+    Math.ceil((sampleRate * MAX_CHUNK_DURATION_MS) / 1000),
+  );
 
   const token = await getElevenLabsToken(apiKey);
-  console.log("[ElevenLabs WebSocket] Got single-use token");
+  getLogger().verbose("[ElevenLabs WebSocket] Got single-use token");
 
   return new Promise((resolve, reject) => {
     let ws: WebSocket | null = null;
     let unlisten: UnlistenFn | null = null;
-    let finalTranscript = "";
-    let partialTranscript = "";
     let isFinalized = false;
     let receivedChunkCount = 0;
     let sentChunkCount = 0;
+    let pendingChunks: Float32Array[] = [];
+    const pendingSampleCountRef = { value: 0 };
+    const transcriptState = createTranscriptAccumulator();
 
-    const pump = createAudioChunkPump({
-      sampleRate,
-      minChunkDurationMs: 20,
-      maxChunkDurationMs: 100,
-      canSend: () => !!ws && ws.readyState === WebSocket.OPEN,
-      sendChunk: (chunk, isLastChunk) => {
+    const getText = () => transcriptState.text();
+
+    const resetBuffers = () => {
+      pendingChunks = [];
+      pendingSampleCountRef.value = 0;
+    };
+
+    const drain = (targetCount: number) =>
+      drainSamples(pendingChunks, pendingSampleCountRef, targetCount);
+
+    const sendAudioChunk = (chunk: Float32Array, commit: boolean) => {
+      if (!ws || ws.readyState !== WebSocket.OPEN) {
+        return;
+      }
+
+      try {
         const base64Audio = convertFloat32ToBase64PCM16(chunk);
         const message = JSON.stringify({
           message_type: "input_audio_chunk",
           audio_base_64: base64Audio,
-          commit: isLastChunk,
+          commit,
           sample_rate: sampleRate,
         });
-        ws?.send(message);
+        ws.send(message);
         sentChunkCount++;
         if (sentChunkCount <= 3 || sentChunkCount % 10 === 0) {
           const durationMs = (chunk.length / sampleRate) * 1000;
-          console.log(
+          getLogger().verbose(
             `[ElevenLabs WebSocket] Sent chunk #${sentChunkCount} (${chunk.length} samples ~${durationMs.toFixed(1)} ms)`,
           );
         }
-      },
-      onError: (error) => {
-        console.error("[ElevenLabs WebSocket] Error sending chunk:", error);
-      },
-    });
+      } catch (error) {
+        getLogger().error("[ElevenLabs WebSocket] Error sending chunk:", error);
+      }
+    };
 
-    const getText = () =>
-      combineStreamingTranscript(finalTranscript, partialTranscript);
+    const flushPendingSamples = (force = false) => {
+      if (!ws || ws.readyState !== WebSocket.OPEN) {
+        return;
+      }
+
+      while (
+        pendingSampleCountRef.value >= minSamplesPerChunk ||
+        (force && pendingSampleCountRef.value > 0)
+      ) {
+        const available = pendingSampleCountRef.value;
+        let chunkSize = available;
+        if (available >= maxSamplesPerChunk) {
+          chunkSize = maxSamplesPerChunk;
+        } else if (available < minSamplesPerChunk && !force) {
+          break;
+        }
+
+        let chunk = drain(chunkSize);
+        if (force && chunk.length > 0 && chunk.length < minSamplesPerChunk) {
+          const padded = new Float32Array(minSamplesPerChunk);
+          padded.set(chunk);
+          chunk = padded;
+        }
+
+        if (chunk.length === 0) {
+          break;
+        }
+
+        const isLastChunk = force && pendingSampleCountRef.value === 0;
+        sendAudioChunk(chunk, isLastChunk);
+      }
+    };
 
     const cleanup = () => {
       if (unlisten) {
@@ -149,43 +195,86 @@ const startElevenLabsStreaming = async (
         ws.close();
         ws = null;
       }
-      pump.resetBuffers();
+      resetBuffers();
     };
 
-    const streamingFinalize = createStreamingFinalize({
-      logPrefix: "[ElevenLabs WebSocket]",
-      timeoutMs: 6000,
-      getText,
-      getIsFinalized: () => isFinalized,
-      setIsFinalized: (value) => {
-        isFinalized = value;
-      },
-      flushPendingSamples: (force) => pump.flushPendingSamples(force),
-      logTotalChunks: () =>
-        console.log(
+    let finalizeResolver: ((text: string) => void) | null = null;
+    let finalizeTimeout: ReturnType<typeof setTimeout> | null = null;
+
+    const finalize = (): Promise<string> => {
+      return new Promise((resolveFinalize) => {
+        getLogger().verbose(
+          "[ElevenLabs WebSocket] Finalize called, isFinalized:",
+          isFinalized,
+          "ws state:",
+          ws?.readyState,
+        );
+        if (isFinalized) {
+          getLogger().verbose(
+            "[ElevenLabs WebSocket] Already finalized, returning transcript",
+          );
+          resolveFinalize(getText());
+          return;
+        }
+
+        isFinalized = true;
+        finalizeResolver = resolveFinalize;
+
+        flushPendingSamples(true);
+        getLogger().verbose(
           "[ElevenLabs WebSocket] Total chunks sent:",
           sentChunkCount,
           "- waiting for final transcript...",
-        ),
-      canSend: () => !!ws && ws.readyState === WebSocket.OPEN,
-      getWsState: () => ws?.readyState,
-      cleanup,
-    });
-    const { finalize, completeFinalize } = streamingFinalize;
+        );
+
+        if (ws && ws.readyState === WebSocket.OPEN) {
+          finalizeTimeout = setTimeout(() => {
+            getLogger().verbose(
+              "[ElevenLabs WebSocket] Timeout waiting for final transcript, length:",
+              getText().length,
+            );
+            cleanup();
+            if (finalizeResolver) {
+              finalizeResolver(getText());
+              finalizeResolver = null;
+            }
+          }, 6000);
+        } else {
+          cleanup();
+          resolveFinalize(getText());
+        }
+      });
+    };
+
+    const completeFinalize = () => {
+      if (finalizeTimeout) {
+        clearTimeout(finalizeTimeout);
+        finalizeTimeout = null;
+      }
+      if (finalizeResolver) {
+        getLogger().verbose(
+          "[ElevenLabs WebSocket] Completing finalize with transcript length:",
+          getText().length,
+        );
+        cleanup();
+        finalizeResolver(getText());
+        finalizeResolver = null;
+      }
+    };
 
     const audioFormat = `pcm_${sampleRate}`;
     const wsUrl = `${ELEVENLABS_WS_URL}?token=${encodeURIComponent(token)}&model_id=scribe_v2_realtime&audio_format=${audioFormat}&commit_strategy=vad`;
-    console.log(
+    getLogger().verbose(
       "[ElevenLabs WebSocket] Connecting to:",
       wsUrl.replace(token, "***"),
     );
     ws = new WebSocket(wsUrl);
 
     ws.onopen = async () => {
-      console.log("[ElevenLabs WebSocket] Connected");
+      getLogger().verbose("[ElevenLabs WebSocket] Connected");
 
       try {
-        console.log(
+        getLogger().verbose(
           "[ElevenLabs WebSocket] Setting up audio_chunk listener...",
         );
         unlisten = await listen<{ samples: number[] }>(
@@ -193,24 +282,22 @@ const startElevenLabsStreaming = async (
           (event) => {
             receivedChunkCount++;
             if (receivedChunkCount <= 3 || receivedChunkCount % 10 === 0) {
-              console.log(
+              getLogger().verbose(
                 `[ElevenLabs WebSocket] Received chunk #${receivedChunkCount}, samples:`,
                 event.payload.samples.length,
               );
             }
             if (ws && ws.readyState === WebSocket.OPEN && !isFinalized) {
               try {
-                const rawChunk =
-                  event.payload.samples instanceof Float32Array
-                    ? event.payload.samples
-                    : Float32Array.from(event.payload.samples);
+                const rawChunk = ensureFloat32Array(event.payload.samples);
                 const typedChunk = needsResample
                   ? resampleAudio(rawChunk, inputSampleRate, sampleRate)
                   : rawChunk;
-                pump.pushSamples(typedChunk);
-                pump.flushPendingSamples();
+                pendingChunks.push(typedChunk);
+                pendingSampleCountRef.value += typedChunk.length;
+                flushPendingSamples(false);
               } catch (error) {
-                console.error(
+                getLogger().error(
                   "[ElevenLabs WebSocket] Error sending audio chunk:",
                   error,
                 );
@@ -219,10 +306,12 @@ const startElevenLabsStreaming = async (
           },
         );
 
-        console.log("[ElevenLabs WebSocket] Session ready, listener attached");
+        getLogger().verbose(
+          "[ElevenLabs WebSocket] Session ready, listener attached",
+        );
         resolve({ finalize, cleanup });
       } catch (error) {
-        console.error(
+        getLogger().error(
           "[ElevenLabs WebSocket] Error setting up listener:",
           error,
         );
@@ -235,7 +324,7 @@ const startElevenLabsStreaming = async (
       try {
         const data = JSON.parse(event.data);
         const messageType = data.message_type || data.type;
-        console.log(
+        getLogger().verbose(
           "[ElevenLabs WebSocket] Received message:",
           messageType,
           data,
@@ -243,11 +332,11 @@ const startElevenLabsStreaming = async (
 
         if (messageType === "committed_transcript") {
           const committedText = data.text || "";
-          finalTranscript += (finalTranscript ? " " : "") + committedText;
-          partialTranscript = "";
-          console.log(
-            "[ElevenLabs WebSocket] Committed transcript received, length:",
-            finalTranscript.length,
+          transcriptState.appendFinal(committedText);
+          transcriptState.setPartial("");
+          getLogger().verbose(
+            `[ElevenLabs WebSocket] Committed chunk appended, length:`,
+            committedText.length,
           );
           if (onInterimResult && committedText) {
             onInterimResult(committedText);
@@ -256,25 +345,28 @@ const startElevenLabsStreaming = async (
             completeFinalize();
           }
         } else if (messageType === "partial_transcript") {
-          partialTranscript = data.text || "";
+          transcriptState.setPartial(data.text || "");
         } else if (messageType === "session_started") {
-          console.log("[ElevenLabs WebSocket] Session started:", data);
+          getLogger().verbose("[ElevenLabs WebSocket] Session started:", data);
         } else if (messageType === "error" || messageType === "input_error") {
-          console.error("[ElevenLabs WebSocket] Error from server:", data);
+          getLogger().error("[ElevenLabs WebSocket] Error from server:", data);
         }
       } catch (error) {
-        console.error("[ElevenLabs WebSocket] Error parsing message:", error);
+        getLogger().error(
+          "[ElevenLabs WebSocket] Error parsing message:",
+          error,
+        );
       }
     };
 
     ws.onerror = (error) => {
-      console.error("[ElevenLabs WebSocket] WebSocket error:", error);
+      getLogger().error("[ElevenLabs WebSocket] WebSocket error:", error);
       cleanup();
       reject(new Error("WebSocket connection failed"));
     };
 
     ws.onclose = (event) => {
-      console.log("[ElevenLabs WebSocket] WebSocket closed:", {
+      getLogger().verbose("[ElevenLabs WebSocket] WebSocket closed:", {
         code: event.code,
         reason: event.reason,
       });
@@ -283,12 +375,14 @@ const startElevenLabsStreaming = async (
   });
 };
 
-export class ElevenLabsTranscriptionSession implements TranscriptionSession {
-  private session: ElevenLabsStreamingSession | null = null;
-  private apiKey: string;
-  private interimCallback: ((segment: string) => void) | null = null;
+export class ElevenLabsTranscriptionSession extends BaseApiTranscriptionSession {
+  private readonly apiKey: string;
 
   constructor(apiKey: string) {
+    super({
+      providerLabel: "ElevenLabs",
+      inferenceDevice: "API • ElevenLabs (Streaming)",
+    });
     this.apiKey = apiKey;
   }
 
@@ -296,38 +390,19 @@ export class ElevenLabsTranscriptionSession implements TranscriptionSession {
     return true;
   }
 
-  setInterimResultCallback(callback: (segment: string) => void): void {
-    this.interimCallback = callback;
-  }
-
   async onRecordingStart(sampleRate: number): Promise<void> {
     try {
-      console.log("[ElevenLabs] Starting streaming session...");
-      this.session = await startElevenLabsStreaming(
+      getLogger().verbose("[ElevenLabs] Starting streaming session...");
+      this.streamSession = await startElevenLabsStreaming(
         this.apiKey,
         sampleRate,
         this.interimCallback ?? undefined,
       );
-      console.log("[ElevenLabs] Streaming session started successfully");
+      getLogger().verbose(
+        "[ElevenLabs] Streaming session started successfully",
+      );
     } catch (error) {
-      console.error("[ElevenLabs] Failed to start streaming:", error);
-    }
-  }
-
-  async finalize(
-    _audio: StopRecordingResponse,
-  ): Promise<TranscriptionSessionResult> {
-    return finalizeStreamingSession({
-      session: this.session,
-      providerLabel: "ElevenLabs",
-      log: console.log,
-    });
-  }
-
-  cleanup(): void {
-    if (this.session) {
-      this.session.cleanup();
-      this.session = null;
+      getLogger().error("[ElevenLabs] Failed to start streaming:", error);
     }
   }
 }

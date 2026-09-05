@@ -8,6 +8,8 @@ import {
   DeepgramTranscribeAudioRepo,
   GladiaTranscribeAudioRepo,
   LocalTranscribeAudioRepo,
+  OpenAICompatibleTranscribeAudioRepo,
+  OpenRouterTranscribeAudioRepo,
   TranscribeAudioOutput,
   TranscribeSegmentInput,
 } from "./transcribe-audio.repo";
@@ -740,6 +742,179 @@ describe("provider capability and transcription dispatch agreement", () => {
         warning.includes("No transcription-capable API key selected"),
       ),
     ).toBe(true);
+  });
+});
+
+describe("OpenRouter transcription support", () => {
+  it("advertises OpenRouter as transcription-capable", () => {
+    expect(
+      getModelProviderRepo("openrouter").supportsTranscriptionModels(),
+    ).toBe(true);
+  });
+
+  it("dispatches an OpenRouter-selected key to OpenRouterTranscribeAudioRepo", () => {
+    const state = structuredClone(INITIAL_APP_STATE);
+    state.settings.aiTranscription.mode = "api";
+    state.settings.aiTranscription.selectedApiKeyId = "openrouter-key";
+    state.apiKeyById["openrouter-key"] = {
+      id: "openrouter-key",
+      name: "OpenRouter",
+      provider: "openrouter",
+      createdAt: "2026-06-03T00:00:00.000Z",
+      keyFull: "or-key",
+      transcriptionModel: "openai/whisper-1",
+    };
+    setAppState(state, true);
+
+    const { repo, apiKeyId, warnings } = getTranscribeAudioRepo();
+
+    expect(repo).toBeInstanceOf(OpenRouterTranscribeAudioRepo);
+    expect(apiKeyId).toBe("openrouter-key");
+    expect(warnings).toHaveLength(0);
+  });
+
+  it("warns when an OpenRouter key is selected without a transcription model", () => {
+    const state = structuredClone(INITIAL_APP_STATE);
+    state.settings.aiTranscription.mode = "api";
+    state.settings.aiTranscription.selectedApiKeyId = "openrouter-key";
+    state.apiKeyById["openrouter-key"] = {
+      id: "openrouter-key",
+      name: "OpenRouter",
+      provider: "openrouter",
+      createdAt: "2026-06-03T00:00:00.000Z",
+      keyFull: "or-key",
+      transcriptionModel: null,
+    };
+    setAppState(state, true);
+
+    const { warnings } = getTranscribeAudioRepo();
+
+    expect(
+      warnings.some((warning) => warning.includes("OpenRouter transcription")),
+    ).toBe(true);
+  });
+});
+
+describe("OpenAI-compatible transcription path override", () => {
+  it("dispatches an openai-compatible key to OpenAICompatibleTranscribeAudioRepo", () => {
+    const state = structuredClone(INITIAL_APP_STATE);
+    state.settings.aiTranscription.mode = "api";
+    state.settings.aiTranscription.selectedApiKeyId = "compat-key";
+    state.apiKeyById["compat-key"] = {
+      id: "compat-key",
+      name: "Compat",
+      provider: "openai-compatible",
+      createdAt: "2026-06-03T00:00:00.000Z",
+      keyFull: "ck",
+      baseUrl: "http://localhost:8080",
+      transcriptionModel: "whisper-1",
+    };
+    setAppState(state, true);
+
+    const { repo } = getTranscribeAudioRepo();
+
+    expect(repo).toBeInstanceOf(OpenAICompatibleTranscribeAudioRepo);
+  });
+});
+
+import {
+  filterLocalTranscriptionSegments,
+  NO_SPEECH_PROB_THRESHOLD,
+  type LocalTranscriptionSegment,
+} from "./transcribe-audio.repo";
+
+describe("filterLocalTranscriptionSegments", () => {
+  it("drops high-noSpeechProb hallucination fragments", () => {
+    expect(NO_SPEECH_PROB_THRESHOLD).toBe(0.6);
+    const segments: LocalTranscriptionSegment[] = [
+      { text: "Hello there", noSpeechProb: 0.1 },
+      { text: "you", noSpeechProb: 0.95 },
+      { text: "thank you", noSpeechProb: 0.95 },
+      { text: "", noSpeechProb: 0.95 },
+    ];
+    expect(filterLocalTranscriptionSegments(segments)).toBe("Hello there");
+  });
+
+  // Regression test for the review finding: short real words ("no", "ok",
+  // "hi", a name) can carry an elevated noSpeechProb on quiet recordings.
+  // Length alone must not decide the drop — only known hallucination
+  // fragments or pure noise should be removed.
+  it("keeps short real words even when noSpeechProb is elevated", () => {
+    const segments: LocalTranscriptionSegment[] = [
+      { text: "yes", noSpeechProb: 0.7 },
+      { text: "no", noSpeechProb: 0.75 },
+      { text: "ok", noSpeechProb: 0.65 },
+      { text: "hi", noSpeechProb: 0.7 },
+    ];
+    expect(filterLocalTranscriptionSegments(segments)).toBe("yes no ok hi");
+  });
+
+  it("keeps high-noSpeechProb segments when text is a real sentence", () => {
+    const long = "this is a real sentence that whisper is confident about";
+    const segments: LocalTranscriptionSegment[] = [
+      { text: long, noSpeechProb: 0.95 },
+    ];
+    expect(filterLocalTranscriptionSegments(segments)).toBe(long);
+  });
+
+  it("keeps all segments when noSpeechProb is below the threshold", () => {
+    const segments: LocalTranscriptionSegment[] = [
+      { text: "short", noSpeechProb: 0.5 },
+      { text: "another short one", noSpeechProb: 0.3 },
+    ];
+    expect(filterLocalTranscriptionSegments(segments)).toBe(
+      "short another short one",
+    );
+  });
+
+  it("returns an empty string for an empty input", () => {
+    expect(filterLocalTranscriptionSegments([])).toBe("");
+  });
+
+  it("strips pure-punctuation noise segments", () => {
+    const segments: LocalTranscriptionSegment[] = [
+      { text: "Hi", noSpeechProb: 0.1 },
+      { text: ".", noSpeechProb: 0.9 },
+      { text: "  ", noSpeechProb: 0.9 },
+      { text: "there", noSpeechProb: 0.1 },
+    ];
+    expect(filterLocalTranscriptionSegments(segments)).toBe("Hi there");
+  });
+
+  it("is a building block the local repo composes with a narrow output.text fallback for ONNX models", () => {
+    // The Rust ONNX branch returns `segments: Vec::new()` and populates
+    // `text` directly, so the repo layer must fall back to `output.text`
+    // in that case. But when the sidecar DID emit segments and the
+    // filter dropped them all, the empty result must win over
+    // `output.text` so the silence-hallucination filter still removes
+    // stray "thank you" / "you" fragments.
+    const resolveText = (
+      segments: LocalTranscriptionSegment[],
+      outputText: string,
+    ) =>
+      segments.length === 0
+        ? (outputText ?? "")
+        : filterLocalTranscriptionSegments(segments);
+
+    // ONNX: empty segments, text populated → use output.text
+    expect(resolveText([], "this is the onnx output")).toBe(
+      "this is the onnx output",
+    );
+
+    // Whisper with valid segments → filter wins, even if raw text contains
+    // a known hallucination fragment.
+    const segments: LocalTranscriptionSegment[] = [
+      { text: "thank you", noSpeechProb: 0.95 },
+      { text: "you", noSpeechProb: 0.95 },
+    ];
+    expect(resolveText(segments, "thank you you")).toBe("");
+
+    // Whisper with at least one good segment → keep that segment.
+    const mixed: LocalTranscriptionSegment[] = [
+      { text: "thank you", noSpeechProb: 0.95 },
+      { text: "hello world", noSpeechProb: 0.1 },
+    ];
+    expect(resolveText(mixed, "thank you hello world")).toBe("hello world");
   });
 });
 

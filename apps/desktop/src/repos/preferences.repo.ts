@@ -2,6 +2,7 @@ import {
   AgentMode,
   DictationPillVisibility,
   Nullable,
+  PillPlacement,
   PillResetMonitorStrategy,
   PostProcessingMode,
   TranscriptionMode,
@@ -60,7 +61,12 @@ type LocalUserPreferences = {
   insertionMethod: Nullable<string>;
   typingSpeedMs: Nullable<number>;
   pillResetMonitorStrategy?: Nullable<PillResetMonitorStrategy>;
+  pillPlacement?: Nullable<string>;
   alwaysRequestAdminOnStartup?: boolean;
+  preserveAudioOnFailure?: boolean;
+  handsFreeDelayMs?: Nullable<number>;
+  autoLearnDictionaryEnabled?: boolean;
+  autoLearnFromEditsEnabled?: boolean;
   inDictationStyleSwitchingEnabled?: boolean;
   hallucinationFilterEnabled?: boolean;
   reviewBeforeInsert?: Nullable<boolean>;
@@ -79,6 +85,10 @@ type LocalUserPreferences = {
 const normalizePillResetMonitorStrategy = (
   strategy: Nullable<string> | undefined,
 ): PillResetMonitorStrategy => (strategy === "cursor" ? "cursor" : "current");
+
+const normalizePillPlacement = (
+  value: Nullable<string> | undefined,
+): PillPlacement => (value === "top" || value === "bottom" ? value : "bottom");
 
 export const normalizeAgentMaxIterations = (
   value: number | null | undefined,
@@ -198,10 +208,15 @@ const fromLocalOutputPreferences = (preferences: LocalUserPreferences) => ({
   pillResetMonitorStrategy: normalizePillResetMonitorStrategy(
     preferences.pillResetMonitorStrategy,
   ),
+  pillPlacement: normalizePillPlacement(preferences.pillPlacement),
   alwaysRequestAdminOnStartup: orFalse(preferences.alwaysRequestAdminOnStartup),
+  preserveAudioOnFailure: preferences.preserveAudioOnFailure ?? true,
+  handsFreeDelayMs: preferences.handsFreeDelayMs ?? null,
 });
 
 const fromLocalFeaturePreferences = (preferences: LocalUserPreferences) => ({
+  autoLearnDictionaryEnabled: preferences.autoLearnDictionaryEnabled ?? true,
+  autoLearnFromEditsEnabled: preferences.autoLearnFromEditsEnabled ?? false,
   inDictationStyleSwitchingEnabled: orFalse(
     preferences.inDictationStyleSwitchingEnabled,
   ),
@@ -276,10 +291,15 @@ const toLocalOutputPreferences = (preferences: UserPreferences) => ({
   pillResetMonitorStrategy: normalizePillResetMonitorStrategy(
     preferences.pillResetMonitorStrategy,
   ),
+  pillPlacement: orValue(preferences.pillPlacement, "bottom"),
   alwaysRequestAdminOnStartup: orFalse(preferences.alwaysRequestAdminOnStartup),
+  preserveAudioOnFailure: preferences.preserveAudioOnFailure ?? true,
+  handsFreeDelayMs: orNull(preferences.handsFreeDelayMs),
 });
 
 const toLocalFeaturePreferences = (preferences: UserPreferences) => ({
+  autoLearnDictionaryEnabled: preferences.autoLearnDictionaryEnabled,
+  autoLearnFromEditsEnabled: preferences.autoLearnFromEditsEnabled,
   inDictationStyleSwitchingEnabled:
     preferences.inDictationStyleSwitchingEnabled,
   hallucinationFilterEnabled: preferences.hallucinationFilterEnabled,

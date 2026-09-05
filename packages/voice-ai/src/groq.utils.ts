@@ -3,17 +3,14 @@ import type {
   LlmChatInput,
   LlmStreamEvent,
 } from "@maus-inc/types";
-import { countWords, retry } from "@maus-inc/utilities";
-import Groq, { toFile } from "groq-sdk/index";
-import {
-  ChatCompletionContentPart,
-  ChatCompletionMessageParam,
-} from "groq-sdk/resources/chat/completions";
-import OpenAI from "openai";
+import { retry } from "@maus-inc/utilities";
+import Groq from "groq-sdk/index";
+import type { ChatCompletionMessageParam } from "groq-sdk/resources/chat/completions";
+import OpenAI, { toFile } from "openai";
 import { openaiCompatibleStreamChat } from "./openai.utils";
+import { parseOpenAICompatibleGenerateTextResponse } from "./openai-compatible-generate.utils";
 import type { CustomFetch, DiscoveredModelId } from "./types";
 import {
-  contentToString,
   runSdkTranscription,
   TranscriptionSegment,
   TranscribeAudioOutput,
@@ -40,9 +37,6 @@ export const TRANSCRIPTION_MODELS = [
 export type TranscriptionModel = (typeof TRANSCRIPTION_MODELS)[number];
 
 const createClient = (apiKey: string, customFetch?: CustomFetch) => {
-  // `dangerouslyAllowBrowser` is needed because this runs on a desktop tauri app.
-  // The Tauri app doesn't run in a web browser and encrypts API keys locally, so this
-  // is safe.
   return new Groq({
     apiKey: apiKey.trim(),
     dangerouslyAllowBrowser: true,
@@ -86,8 +80,6 @@ export const groqTranscribeAudio = async ({
       model,
       prompt,
       language,
-      // Groq Whisper models support `verbose_json`, so `segments[].no_speech_prob`
-      // is returned for issue #54's probability-gated silence handling.
       response_format: "verbose_json",
     },
   );
@@ -100,6 +92,7 @@ export type GroqGenerateTextArgs = {
   prompt: string;
   imageUrls?: string[];
   jsonResponse?: JsonResponse;
+  maxTokens?: number;
   signal?: AbortSignal;
   customFetch?: CustomFetch;
 };
@@ -116,6 +109,7 @@ export const groqGenerateTextResponse = async ({
   prompt,
   imageUrls = [],
   jsonResponse,
+  maxTokens,
   signal,
   customFetch,
 }: GroqGenerateTextArgs): Promise<GroqGenerateResponseOutput> => {
@@ -124,27 +118,25 @@ export const groqGenerateTextResponse = async ({
     fn: async () => {
       const client = createClient(apiKey, customFetch);
 
-      const messages: ChatCompletionMessageParam[] = [];
-      if (system) {
-        messages.push({ role: "system", content: system });
-      }
-
-      const userParts: ChatCompletionContentPart[] = [];
-      for (const url of imageUrls) {
-        userParts.push({
-          type: "image_url",
-          image_url: { url },
-        });
-      }
-
-      userParts.push({ type: "text", text: prompt });
-      messages.push({ role: "user", content: userParts });
+      const messages: ChatCompletionMessageParam[] = [
+        ...(system ? [{ role: "system" as const, content: system }] : []),
+        {
+          role: "user" as const,
+          content: [
+            ...imageUrls.map((url) => ({
+              type: "image_url" as const,
+              image_url: { url },
+            })),
+            { type: "text" as const, text: prompt },
+          ],
+        },
+      ];
 
       const response = await client.chat.completions.create(
         {
           messages,
           model,
-          max_completion_tokens: 5000,
+          max_completion_tokens: maxTokens ?? 5000,
           response_format: jsonResponse
             ? JSON_SCHEMA_SUPPORTED_MODELS.has(model)
               ? {
@@ -162,20 +154,10 @@ export const groqGenerateTextResponse = async ({
       );
 
       console.log("groq llm usage:", response.usage);
-      if (!response.choices || response.choices.length === 0) {
-        throw new Error("No response from Groq");
-      }
-
-      const result = response.choices[0].message.content;
-      if (!result) {
-        throw new Error("Content is empty");
-      }
-
-      const content = contentToString(result);
-      return {
-        text: content,
-        tokensUsed: response.usage?.total_tokens ?? countWords(content),
-      };
+      return parseOpenAICompatibleGenerateTextResponse({
+        response,
+        providerLabel: "Groq",
+      });
     },
   });
 };

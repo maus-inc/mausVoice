@@ -18,21 +18,26 @@ import type {
 } from "@maus-inc/types";
 import { ChangeEvent, useEffect, useRef, useState } from "react";
 import { FormattedMessage, useIntl } from "react-intl";
+import { logOnRejection } from "../../utils/promise.utils";
 import {
   setDictationLimitMinutes,
   setDictationPillVisibility,
   setPillResetMonitorStrategy,
-  setSpokenCommandsEnabled,
+  setHandsFreeDelayMs,
   setIgnoreUpdateDialog,
   setIncognitoModeEnabled,
-  setInDictationStyleSwitchingEnabled,
-  setHallucinationFilterEnabled,
-  setReviewBeforeInsert,
   setIncognitoModeIncludeInStats,
   setMenuBarIconHidden,
   setRealtimeOutputEnabled,
+  setReviewBeforeInsert,
+  setSpokenCommandsEnabled,
+  setHallucinationFilterEnabled,
+  setInDictationStyleSwitchingEnabled,
   setStylingMode,
+  setAutoLearnDictionaryEnabled,
+  setAutoLearnFromEditsEnabled,
 } from "../../actions/user.actions";
+import { isMacOS, isWindows } from "../../utils/env.utils";
 import { produceAppState, useAppStore } from "../../store";
 import {
   getEffectiveDictationLimitMinutes,
@@ -40,16 +45,19 @@ import {
   normalizeDictationLimitMinutes,
   shouldEnableDictationLimit,
 } from "../../utils/dictation-limit.utils";
+import {
+  getEffectiveHandsFreeDelayMs,
+  MAX_HANDS_FREE_DELAY_MS,
+} from "../../utils/hands-free-delay.utils";
 import { getEffectiveStylingMode } from "../../utils/feature.utils";
 import {
   getEffectivePillVisibility,
   getMyUserPreferences,
   getTranscriptionPrefs,
 } from "../../utils/user.utils";
+import { PillPlacementSetting } from "./PillPlacementSetting";
 import { SegmentedControl } from "../common/SegmentedControl";
-import { logOnRejection } from "../../utils/promise.utils";
 import { SettingSection } from "../common/SettingSection";
-import { UpdateSettingSection } from "./UpdateSettingSection";
 
 export const MoreSettingsDialog = () => {
   const intl = useIntl();
@@ -68,10 +76,13 @@ export const MoreSettingsDialog = () => {
     disablePillRewards,
     disableAutoStyleLoading,
     menuBarIconHidden,
+    handsFreeDelayMs,
+    autoLearnDictionaryEnabled,
+    autoLearnFromEditsEnabled,
     spokenCommandsEnabled,
-    inDictationStyleSwitchingEnabled,
-    hallucinationFilterEnabled,
     reviewBeforeInsert,
+    hallucinationFilterEnabled,
+    inDictationStyleSwitchingEnabled,
   ] = useAppStore((state) => {
     const prefs = getMyUserPreferences(state);
     const transcriptionPrefs = getTranscriptionPrefs(state);
@@ -90,16 +101,23 @@ export const MoreSettingsDialog = () => {
       state.local.disablePillRewards,
       state.local.disableAutoStyleLoading ?? false,
       prefs?.menuBarIconHidden ?? false,
+      getEffectiveHandsFreeDelayMs(prefs),
+      prefs?.autoLearnDictionaryEnabled ?? true,
+      prefs?.autoLearnFromEditsEnabled ?? false,
       prefs?.spokenCommandsEnabled ?? true,
-      prefs?.inDictationStyleSwitchingEnabled ?? false,
-      prefs?.hallucinationFilterEnabled ?? true,
       prefs?.reviewBeforeInsert ?? false,
+      prefs?.hallucinationFilterEnabled ?? true,
+      prefs?.inDictationStyleSwitchingEnabled ?? false,
     ] as const;
   });
   const [dictationLimitInput, setDictationLimitInput] = useState(
     String(dictationLimitMinutes),
   );
   const lastCommittedDictationLimitMinutesRef = useRef(dictationLimitMinutes);
+  const [handsFreeDelayInput, setHandsFreeDelayInput] = useState(
+    String(handsFreeDelayMs),
+  );
+  const lastCommittedHandsFreeDelayMsRef = useRef(handsFreeDelayMs);
 
   useEffect(() => {
     lastCommittedDictationLimitMinutesRef.current = dictationLimitMinutes;
@@ -107,6 +125,13 @@ export const MoreSettingsDialog = () => {
       setDictationLimitInput(String(dictationLimitMinutes));
     }
   }, [dictationLimitMinutes, open]);
+
+  useEffect(() => {
+    lastCommittedHandsFreeDelayMsRef.current = handsFreeDelayMs;
+    if (open) {
+      setHandsFreeDelayInput(String(handsFreeDelayMs));
+    }
+  }, [handsFreeDelayMs, open]);
 
   const commitDictationLimitInput = () => {
     if (!showDictationLimitSetting) {
@@ -139,6 +164,7 @@ export const MoreSettingsDialog = () => {
 
   const handleClose = () => {
     commitDictationLimitInput();
+    commitHandsFreeDelayInput();
     produceAppState((draft) => {
       draft.settings.moreSettingsDialogOpen = false;
     });
@@ -203,12 +229,12 @@ export const MoreSettingsDialog = () => {
     );
   };
 
-  const handleToggleInDictationStyleSwitching = (
+  const handleToggleReviewBeforeInsert = (
     event: ChangeEvent<HTMLInputElement>,
   ) => {
     logOnRejection(
-      setInDictationStyleSwitchingEnabled(event.target.checked),
-      "settings dialog: setInDictationStyleSwitchingEnabled",
+      setReviewBeforeInsert(event.target.checked),
+      "settings dialog: setReviewBeforeInsert",
     );
   };
 
@@ -221,12 +247,30 @@ export const MoreSettingsDialog = () => {
     );
   };
 
-  const handleToggleReviewBeforeInsert = (
+  const handleToggleInDictationStyleSwitching = (
     event: ChangeEvent<HTMLInputElement>,
   ) => {
     logOnRejection(
-      setReviewBeforeInsert(event.target.checked),
-      "settings dialog: setReviewBeforeInsert",
+      setInDictationStyleSwitchingEnabled(event.target.checked),
+      "settings dialog: setInDictationStyleSwitchingEnabled",
+    );
+  };
+
+  const handleToggleAutoLearnDictionary = (
+    event: ChangeEvent<HTMLInputElement>,
+  ) => {
+    logOnRejection(
+      setAutoLearnDictionaryEnabled(event.target.checked),
+      "settings dialog: setAutoLearnDictionaryEnabled",
+    );
+  };
+
+  const handleToggleAutoLearnFromEdits = (
+    event: ChangeEvent<HTMLInputElement>,
+  ) => {
+    logOnRejection(
+      setAutoLearnFromEditsEnabled(event.target.checked),
+      "settings dialog: setAutoLearnFromEditsEnabled",
     );
   };
 
@@ -251,6 +295,42 @@ export const MoreSettingsDialog = () => {
     produceAppState((draft) => {
       draft.local.disableAutoStyleLoading = !event.target.checked;
     });
+  };
+
+  const commitHandsFreeDelayInput = () => {
+    if (handsFreeDelayInput === "") {
+      setHandsFreeDelayInput(String(handsFreeDelayMs));
+      return;
+    }
+
+    const parsed = Number(handsFreeDelayInput);
+    if (!Number.isFinite(parsed) || parsed < 0) {
+      setHandsFreeDelayInput(String(handsFreeDelayMs));
+      return;
+    }
+
+    const normalized = Math.min(
+      MAX_HANDS_FREE_DELAY_MS,
+      Math.max(0, Math.floor(parsed)),
+    );
+    setHandsFreeDelayInput(String(normalized));
+    if (normalized === lastCommittedHandsFreeDelayMsRef.current) {
+      return;
+    }
+
+    lastCommittedHandsFreeDelayMsRef.current = normalized;
+    logOnRejection(
+      setHandsFreeDelayMs(normalized),
+      "settings dialog: setHandsFreeDelayMs",
+    );
+  };
+
+  const handleHandsFreeDelayChange = (event: ChangeEvent<HTMLInputElement>) => {
+    setHandsFreeDelayInput(event.target.value);
+  };
+
+  const handleHandsFreeDelayBlur = () => {
+    commitHandsFreeDelayInput();
   };
 
   const handleDictationLimitChange = (event: ChangeEvent<HTMLInputElement>) => {
@@ -318,7 +398,37 @@ export const MoreSettingsDialog = () => {
             />
           )}
 
-          <UpdateSettingSection />
+          <SettingSection
+            title={<FormattedMessage defaultMessage="Auto-learn dictionary" />}
+            description={
+              <FormattedMessage defaultMessage="When you correct a transcription, add the corrected names and words to your dictionary automatically." />
+            }
+            action={
+              <Switch
+                edge="end"
+                checked={autoLearnDictionaryEnabled}
+                onChange={handleToggleAutoLearnDictionary}
+              />
+            }
+          />
+
+          {(isMacOS() || isWindows()) && (
+            <SettingSection
+              title={
+                <FormattedMessage defaultMessage="Learn from corrections" />
+              }
+              description={
+                <FormattedMessage defaultMessage="After dictation, watch for corrections you make in the target app and offer to add the corrected names to your dictionary." />
+              }
+              action={
+                <Switch
+                  edge="end"
+                  checked={autoLearnFromEditsEnabled}
+                  onChange={handleToggleAutoLearnFromEdits}
+                />
+              }
+            />
+          )}
 
           <SettingSection
             title={
@@ -395,6 +505,8 @@ export const MoreSettingsDialog = () => {
             }
           />
 
+          <PillPlacementSetting />
+
           <SettingSection
             title={<FormattedMessage defaultMessage="Spoken commands" />}
             description={
@@ -412,7 +524,7 @@ export const MoreSettingsDialog = () => {
           <SettingSection
             title={<FormattedMessage defaultMessage="Real-time output" />}
             description={
-              <FormattedMessage defaultMessage="Stream dictation text as you speak instead of pasting all at once when you stop. Verbatim and a supported provider only. Punctuation commands apply live. Scratch-that and new-line apply to the saved transcript on release; they cannot rewrite text already streamed into the app. Real-time streaming skips Review before insert, so turning one on turns the other off." />
+              <FormattedMessage defaultMessage="Stream dictation text as you speak instead of pasting all at once when you stop. Only applies to Verbatim mode with supported providers." />
             }
             action={
               <Switch
@@ -511,6 +623,33 @@ export const MoreSettingsDialog = () => {
               }
             />
           )}
+
+          <SettingSection
+            title={
+              <FormattedMessage defaultMessage="Hands-free output delay (ms)" />
+            }
+            description={
+              <FormattedMessage defaultMessage="Wait this many milliseconds before inserting the dictated text when you stop recording. Enter 0 to disable." />
+            }
+            action={
+              <TextField
+                size="small"
+                type="number"
+                value={handsFreeDelayInput}
+                onChange={handleHandsFreeDelayChange}
+                onBlur={handleHandsFreeDelayBlur}
+                sx={{ width: 104 }}
+                slotProps={{
+                  htmlInput: {
+                    min: 0,
+                    max: MAX_HANDS_FREE_DELAY_MS,
+                    step: 50,
+                    inputMode: "numeric",
+                  },
+                }}
+              />
+            }
+          />
 
           {stylingMode === "manual" && (
             <SettingSection

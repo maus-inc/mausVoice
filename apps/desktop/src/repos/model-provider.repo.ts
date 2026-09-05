@@ -71,6 +71,23 @@ const logModelDiscoveryResponseFailure = (
   logModelDiscoveryFailure(provider, reason);
 };
 
+// Shared tail of every OpenAI-shaped /models fetch: log a non-OK response,
+// otherwise map the `data` array to sorted model ids.
+const readModelListResponse = async (
+  provider: string,
+  response: Response,
+): Promise<string[]> => {
+  if (!response.ok) {
+    logModelDiscoveryResponseFailure(provider, response);
+    return [];
+  }
+  const payload = (await response.json()) as OpenAIListResponse;
+  return (payload.data ?? [])
+    .map((m) => (m.id ?? "").trim())
+    .filter(Boolean)
+    .sort((a, b) => a.localeCompare(b));
+};
+
 async function fetchOpenAICompatibleModels(
   provider: string,
   url: string,
@@ -80,15 +97,7 @@ async function fetchOpenAICompatibleModels(
     const response = await fetch(url, {
       headers: { Authorization: `Bearer ${apiKey}` },
     });
-    if (!response.ok) {
-      logModelDiscoveryResponseFailure(provider, response);
-      return [];
-    }
-    const payload = (await response.json()) as OpenAIListResponse;
-    return (payload.data ?? [])
-      .map((m) => (m.id ?? "").trim())
-      .filter(Boolean)
-      .sort((a, b) => a.localeCompare(b));
+    return await readModelListResponse(provider, response);
   } catch {
     logModelDiscoveryFailure(provider, "request or response parsing failed");
     return [];
@@ -242,15 +251,7 @@ export class ClaudeModelProviderRepo extends BaseModelProviderRepo {
           },
         },
       );
-      if (!response.ok) {
-        logModelDiscoveryResponseFailure("Claude", response);
-        return [];
-      }
-      const payload = (await response.json()) as OpenAIListResponse;
-      return (payload.data ?? [])
-        .map((m) => (m.id ?? "").trim())
-        .filter(Boolean)
-        .sort((a, b) => a.localeCompare(b));
+      return await readModelListResponse("Claude", response);
     } catch {
       logModelDiscoveryFailure("Claude", "request or response parsing failed");
       return [];
@@ -407,15 +408,7 @@ export class AzureModelProviderRepo extends BaseModelProviderRepo {
         headers: { "api-key": options.apiKey },
       },
     );
-    if (!response.ok) {
-      logModelDiscoveryResponseFailure("Azure OpenAI", response);
-      return [];
-    }
-    const payload = (await response.json()) as OpenAIListResponse;
-    return (payload.data ?? [])
-      .map((m) => (m.id ?? "").trim())
-      .filter(Boolean)
-      .sort((a, b) => a.localeCompare(b));
+    return readModelListResponse("Azure OpenAI", response);
   }
 }
 
@@ -492,15 +485,7 @@ export class OpenAICompatibleModelProviderRepo extends BaseModelProviderRepo {
       appendOpenAICompatiblePath(apiBaseUrl, "models"),
       { headers: getOllamaHeaders(options.apiKey) },
     );
-    if (!response.ok) {
-      logModelDiscoveryResponseFailure("OpenAI-compatible", response);
-      return [];
-    }
-    const payload = (await response.json()) as OpenAIListResponse;
-    return (payload.data ?? [])
-      .map((m) => (m.id ?? "").trim())
-      .filter(Boolean)
-      .sort((a, b) => a.localeCompare(b));
+    return readModelListResponse("OpenAI-compatible", response);
   }
 }
 
@@ -520,15 +505,7 @@ export class SpeachesModelProviderRepo extends BaseModelProviderRepo {
   async getTranscriptionModels(options: FetchModelsOptions): Promise<string[]> {
     if (!options.baseUrl) return [];
     const response = await fetch(new URL("/v1/models", options.baseUrl).href);
-    if (!response.ok) {
-      logModelDiscoveryResponseFailure("Speaches", response);
-      return [];
-    }
-    const payload = (await response.json()) as OpenAIListResponse;
-    return (payload.data ?? [])
-      .map((m) => (m.id ?? "").trim())
-      .filter(Boolean)
-      .sort((a, b) => a.localeCompare(b));
+    return readModelListResponse("Speaches", response);
   }
 }
 
@@ -538,7 +515,7 @@ export class OpenRouterModelProviderRepo extends BaseModelProviderRepo {
   }
 
   supportsTranscriptionModels(): boolean {
-    return false;
+    return true;
   }
 
   async getGenerativeTextModels(

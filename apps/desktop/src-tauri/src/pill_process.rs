@@ -157,6 +157,17 @@ pub fn notify_visibility(app: &tauri::AppHandle, visibility: &str) {
     }
 }
 
+pub fn notify_pill_placement(app: &tauri::AppHandle, placement: &str) {
+    if let Some(pill) = app.try_state::<std::sync::Arc<PillProcess>>() {
+        let msg = format!(r#"{{"type":"pill_placement","placement":"{placement}"}}"#);
+        if let Err(err) = pill.send(&msg) {
+            log::error!("Failed to notify pill of placement: {err}");
+        }
+    }
+}
+
+/// Forwards the active writing-style name and total count to the native
+/// pill so it can render its style indicator.
 pub fn notify_style_info(app: &tauri::AppHandle, count: u32, name: &str) {
     if let Some(pill) = app.try_state::<std::sync::Arc<PillProcess>>() {
         if let Ok(json) = serde_json::to_string(&serde_json::json!({
@@ -248,7 +259,7 @@ fn wait_for_ready(
     let (tx, rx) = std::sync::mpsc::channel();
     std::thread::spawn(move || {
         let mut reader = std::io::BufReader::new(stdout);
-        let mut line = String::new();
+        let mut line = String::default();
         loop {
             line.clear();
             match reader.read_line(&mut line) {
@@ -291,7 +302,7 @@ fn wait_for_ready(
 fn start_stdout_reader(app: tauri::AppHandle, reader: std::io::BufReader<ChildStdout>) {
     std::thread::spawn(move || {
         let mut reader = reader;
-        let mut line = String::new();
+        let mut line = String::default();
         loop {
             line.clear();
             match reader.read_line(&mut line) {
@@ -348,9 +359,6 @@ fn start_stdout_reader(app: tauri::AppHandle, reader: std::io::BufReader<ChildSt
                             let _ = app.emit_to("main", "overlay-resolve-permission", payload);
                         }
                     } else if line.contains("\"style_switch\"") {
-                        // Cheap pre-filter so we only attempt JSON parsing (and
-                        // can only emit a parse warning) for lines that actually
-                        // claim to be a style switch, not every misc stdout line.
                         if let Some(direction) = parse_style_switch_direction(&line) {
                             emit_pill_style_switch(&app, direction);
                         }
@@ -362,7 +370,6 @@ fn start_stdout_reader(app: tauri::AppHandle, reader: std::io::BufReader<ChildSt
                             }
                         }
                     } else if line.contains("\"haptic_feedback\"") {
-                        // A23: Thock haptics - play audio feedback for pill gestures.
                         if let Ok(val) =
                             serde_json::from_str::<serde_json::Value>(&line)
                         {
@@ -378,11 +385,6 @@ fn start_stdout_reader(app: tauri::AppHandle, reader: std::io::BufReader<ChildSt
                                 .get("has_saved_position")
                                 .and_then(|v| v.as_bool())
                                 .unwrap_or(false);
-                            // Forward any real pill + monitor geometry the sidecar
-                            // emits (when present) so the composer can anchor next
-                            // to the actual pill instead of falling back to OS
-                            // placement. Absent fields serialize to null and the
-                            // TypeScript consumer treats them as "unknown".
                             let rect = val.get("rect").cloned().filter(|v| v.is_object());
                             let monitor = val
                                 .get("monitor")

@@ -1,16 +1,16 @@
 import OpenAI from "openai";
-import {
-  ChatCompletionContentPart,
-  ChatCompletionMessageParam,
-} from "openai/resources/chat/completions";
-import { retry, countWords } from "@maus-inc/utilities";
+import { retry } from "@maus-inc/utilities";
 import type {
   JsonResponse,
   LlmChatInput,
   LlmStreamEvent,
 } from "@maus-inc/types";
 import { openaiCompatibleStreamChat } from "./openai.utils";
-import { contentToString } from "./transcription.utils";
+import {
+  buildJsonObjectPrompt,
+  buildOpenAICompatibleMessages,
+  parseOpenAICompatibleGenerateTextResponse,
+} from "./openai-compatible-generate.utils";
 import type { CustomFetch, DiscoveredModelId } from "./types";
 
 // Current hosted IDs from https://api-docs.deepseek.com/quick_start/pricing/.
@@ -39,6 +39,7 @@ export type DeepseekGenerateTextArgs = {
   system?: string;
   prompt: string;
   jsonResponse?: JsonResponse;
+  maxTokens?: number;
   customFetch?: CustomFetch;
 };
 
@@ -53,6 +54,7 @@ export const deepseekGenerateTextResponse = async ({
   system,
   prompt,
   jsonResponse,
+  maxTokens,
   customFetch,
 }: DeepseekGenerateTextArgs): Promise<DeepseekGenerateResponseOutput> => {
   return retry({
@@ -60,44 +62,26 @@ export const deepseekGenerateTextResponse = async ({
     fn: async () => {
       const client = createClient(apiKey, customFetch);
 
-      const messages: ChatCompletionMessageParam[] = [];
-      if (system) {
-        messages.push({ role: "system", content: system });
-      }
-
-      let finalPrompt = prompt;
-      if (jsonResponse) {
-        finalPrompt = `${prompt}\n\nRespond with valid JSON matching this schema: ${JSON.stringify(jsonResponse.schema)}`;
-      }
-
-      const userParts: ChatCompletionContentPart[] = [];
-      userParts.push({ type: "text", text: finalPrompt });
-      messages.push({ role: "user", content: userParts });
+      const finalPrompt = buildJsonObjectPrompt({ prompt, jsonResponse });
+      const messages = buildOpenAICompatibleMessages({
+        system,
+        prompt: finalPrompt,
+      });
 
       const response = await client.chat.completions.create({
         messages,
         model,
         temperature: 1,
-        max_tokens: 1024,
+        max_tokens: maxTokens ?? 1024,
         top_p: 1,
         response_format: jsonResponse ? { type: "json_object" } : undefined,
       });
 
       console.log("deepseek llm usage:", response.usage);
-      if (!response.choices || response.choices.length === 0) {
-        throw new Error("No response from DeepSeek");
-      }
-
-      const result = response.choices[0].message.content;
-      if (!result) {
-        throw new Error("Content is empty");
-      }
-
-      const content = contentToString(result);
-      return {
-        text: content,
-        tokensUsed: response.usage?.total_tokens ?? countWords(content),
-      };
+      return parseOpenAICompatibleGenerateTextResponse({
+        response,
+        providerLabel: "DeepSeek",
+      });
     },
   });
 };

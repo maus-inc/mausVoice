@@ -73,6 +73,17 @@ pub fn notify_visibility(app: &tauri::AppHandle, visibility: &str) {
     }
 }
 
+pub fn notify_pill_placement(_app: &tauri::AppHandle, placement: &str) {
+    // The macOS pill (rust_macos_pill) is the embedded in-process pill and
+    // currently only supports a bottom-anchored layout, so the user's
+    // `pillPlacement` preference is recorded by the host but not pushed to
+    // the native pill yet. The overlay.rs surface stays consistent across
+    // platforms so the host code does not need to special-case macOS.
+    log::debug!("Pill placement preference received: {placement}");
+}
+
+/// Logs style info instead of forwarding it: the macOS pill is rendered by
+/// SwiftUI in-process and reads style state from the app store directly.
 pub fn notify_style_info(app: &tauri::AppHandle, count: u32, name: &str) {
     if let Some(pill) = app.try_state::<std::sync::Arc<MacosPill>>() {
         pill.send(InMessage::StyleInfo {
@@ -104,10 +115,7 @@ pub fn notify_assistant_state(app: &tauri::AppHandle, payload: &str) {
     }
 }
 
-pub fn notify_reset_position(
-    app: &tauri::AppHandle,
-    strategy: &str,
-) -> Result<(), String> {
+pub fn notify_reset_position(app: &tauri::AppHandle, strategy: &str) -> Result<(), String> {
     let strategy = if strategy == "cursor" {
         ResetStrategy::Cursor
     } else {

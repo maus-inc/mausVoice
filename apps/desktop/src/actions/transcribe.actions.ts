@@ -371,6 +371,10 @@ const recordPostProcessFailure = (
   warnings.push(message);
 };
 
+// Caller-owned output budget for post-processing. Kept next to the request
+// so the extracted helper cannot silently drop it again.
+const POST_PROCESS_MAX_TOKENS = 600;
+
 const beginPostProcessingRequest = ({
   metadata,
   toneName,
@@ -439,6 +443,9 @@ const runPostProcessingRequest = async ({
 
   const postprocessStart = performance.now();
   getLogger().verbose("Calling LLM for post-processing");
+  getLogger().verbose(
+    `Post-processing budget: maxTokens=${POST_PROCESS_MAX_TOKENS}`,
+  );
   try {
     const genOutput = await genRepo.generateText({
       system,
@@ -448,6 +455,7 @@ const runPostProcessingRequest = async ({
         description: "JSON response with the processed transcription",
         schema: PROCESSED_TRANSCRIPTION_JSON_SCHEMA,
       },
+      maxTokens: POST_PROCESS_MAX_TOKENS,
     });
     return applyPostProcessSuccess(
       genOutput,
@@ -682,17 +690,34 @@ export const storeTranscription = async (
     return { transcription: null, wordCount: 0 };
   }
 
+  const hasText = !!(input.rawTranscript && input.rawTranscript.length > 0);
+  const transcriptionFailed =
+    input.rawTranscript === null && input.warnings.length > 0;
+
   if (rate <= 0 || sampleCount === 0) {
-    getLogger().warning(
-      `Skipping store: rate=${rate}, sampleCount=${sampleCount}`,
-    );
-    return { transcription: null, wordCount: 0 };
+    if (hasText) {
+      getLogger().warning(
+        `Storing text record with empty audio (rate=${rate}, sampleCount=${sampleCount})`,
+      );
+    } else if (transcriptionFailed) {
+      getLogger().warning(
+        `Storing transcription-failure marker (rate=${rate}, sampleCount=${sampleCount})`,
+      );
+    } else {
+      getLogger().warning(
+        `Skipping store: rate=${rate}, sampleCount=${sampleCount}`,
+      );
+      return { transcription: null, wordCount: 0 };
+    }
   }
 
   const state = getAppState();
   const incognitoEnabled = orFalse(state.userPrefs?.incognitoModeEnabled);
   const includeInStats = orFalse(state.userPrefs?.incognitoModeIncludeInStats);
+  const preserveAudioOnFailure =
+    state.userPrefs?.preserveAudioOnFailure ?? true;
   const wordsAdded = getWordsAdded(input.transcript);
+  const transcriptionId = createId();
 
   if (incognitoEnabled) {
     getLogger().verbose(
@@ -705,22 +730,19 @@ export const storeTranscription = async (
     return { transcription: null, wordCount: wordsAdded };
   }
 
-  // Coerce the samples to an Array regardless of whether the IPC layer
-  // returned a plain Array or a typed-array-like. The rate<=0 / empty
-  // short-circuit above already guarantees this path is non-empty.
+  // Skip the audio write entirely when the user has opted out of retaining
+  // failed recordings, so we don't leak a WAV on disk with no DB pointer to
+  // ever purge it from.
+  const shouldPersistAudio =
+    rate > 0 &&
+    sampleCount > 0 &&
+    !(transcriptionFailed && !preserveAudioOnFailure);
   const payloadSamples = Array.isArray(input.audio.samples)
     ? input.audio.samples
     : Array.from(input.audio.samples ?? []);
-
-  const transcriptionId = createId();
-  const audioSnapshot = await persistAudioSnapshot(
-    transcriptionId,
-    payloadSamples,
-    rate,
-  );
-
-  const transcriptionFailed =
-    input.rawTranscript === null && input.warnings.length > 0;
+  const audioSnapshot = shouldPersistAudio
+    ? await persistAudioSnapshot(transcriptionId, payloadSamples, rate)
+    : undefined;
 
   const transcription = buildTranscriptionRecord({
     input,

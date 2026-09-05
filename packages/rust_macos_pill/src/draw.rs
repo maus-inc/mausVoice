@@ -431,7 +431,9 @@ fn draw_flash_message(ctx: &Ctx, state: &PillState, ww: f64, wh: f64) {
 
     let is_error = state.flash_is_error.get();
     let action_label = state.flash_action_label.borrow();
+    let reject_label = state.flash_reject_action_label.borrow();
     let has_action = action_label.is_some();
+    let has_reject = reject_label.is_some();
 
     ctx.select_font_face("Satoshi", false, true);
     ctx.set_font_size(13.0);
@@ -445,7 +447,23 @@ fn draw_flash_message(ctx: &Ctx, state: &PillState, ww: f64, wh: f64) {
     } else {
         0.0
     };
-    let action_section = if has_action { FLASH_ACTION_GAP + action_w } else { 0.0 };
+
+    let reject_w = if let Some(ref label) = *reject_label {
+        ctx.select_font_face("Satoshi", false, true);
+        ctx.set_font_size(11.0);
+        let ext = ctx.text_extents(label);
+        ext.width + FLASH_ACTION_PADDING_H * 2.0
+    } else {
+        0.0
+    };
+
+    let mut action_section = 0.0;
+    if has_action {
+        action_section += FLASH_ACTION_GAP + action_w;
+    }
+    if has_reject {
+        action_section += FLASH_ACTION_GAP + reject_w;
+    }
 
     let flash_w = (text_extents.width + FLASH_PADDING_H * 2.0 + action_section).max(80.0);
 
@@ -474,7 +492,7 @@ fn draw_flash_message(ctx: &Ctx, state: &PillState, ww: f64, wh: f64) {
     ctx.set_source_rgba(1.0, 1.0, 1.0, 0.9 * alpha);
     ctx.select_font_face("Satoshi", false, true);
     ctx.set_font_size(12.0);
-    let text_left = if has_action {
+    let text_left = if has_action || has_reject {
         full_x + FLASH_PADDING_H
     } else {
         full_x + (flash_w - text_extents.width) / 2.0
@@ -483,6 +501,38 @@ fn draw_flash_message(ctx: &Ctx, state: &PillState, ww: f64, wh: f64) {
     let ty = full_y + (FLASH_HEIGHT - text_extents.height) / 2.0 - text_extents.y_bearing;
     ctx.move_to(tx, ty);
     ctx.show_text(&message);
+
+    // Reject button (drawn to the left of the accept button)
+    if let Some(ref label) = *reject_label {
+        let accept_offset = if has_action {
+            action_w + FLASH_ACTION_GAP
+        } else {
+            0.0
+        };
+        let btn_x = full_x + flash_w - FLASH_PADDING_H - accept_offset - reject_w;
+        let btn_y = full_y + (FLASH_HEIGHT - FLASH_ACTION_HEIGHT) / 2.0;
+
+        gfx::rounded_rect(ctx, btn_x, btn_y, reject_w, FLASH_ACTION_HEIGHT, FLASH_ACTION_RADIUS);
+        ctx.set_source_rgba(1.0, 1.0, 1.0, 0.2 * alpha);
+        ctx.fill();
+
+        ctx.set_source_rgba(1.0, 1.0, 1.0, 0.95 * alpha);
+        ctx.select_font_face("Satoshi", false, true);
+        ctx.set_font_size(11.0);
+        let label_ext = ctx.text_extents(label);
+        let lx = btn_x + (reject_w - label_ext.width) / 2.0 - label_ext.x_bearing;
+        let ly = btn_y + (FLASH_ACTION_HEIGHT - label_ext.height) / 2.0 - label_ext.y_bearing;
+        ctx.move_to(lx, ly);
+        ctx.show_text(label);
+
+        state.click_regions.borrow_mut().push(ClickRegion {
+            x: btn_x,
+            y: btn_y,
+            w: reject_w,
+            h: FLASH_ACTION_HEIGHT,
+            action: ClickAction::FlashReject,
+        });
+    }
 
     // Action button
     if let Some(ref label) = *action_label {

@@ -7,18 +7,21 @@ import type {
   LlmTool,
   LlmToolChoice,
 } from "@maus-inc/types";
-import { countWords, retry } from "@maus-inc/utilities";
+import { retry } from "@maus-inc/utilities";
 import OpenAI, { toFile } from "openai";
+import { buildJsonSchemaResponseFormat } from "./response-format.utils";
+import {
+  buildOpenAICompatibleMessages,
+  parseOpenAICompatibleGenerateTextResponse,
+} from "./openai-compatible-generate.utils";
 import type { CustomFetch, DiscoveredModelId } from "./types";
 import {
-  contentToString,
   runSdkTranscription,
   TranscriptionSegment,
   TranscribeAudioOutput,
 } from "./transcription.utils";
 import type {
   ChatCompletionChunk,
-  ChatCompletionContentPart,
   ChatCompletionMessageParam,
   ChatCompletionTool,
 } from "openai/resources/chat/completions";
@@ -40,6 +43,39 @@ export const OPENAI_TRANSCRIPTION_MODELS = [
 ] as const;
 export type OpenAITranscriptionModel =
   (typeof OPENAI_TRANSCRIPTION_MODELS)[number] | DiscoveredModelId;
+
+// Models that support `response_format: { type: "json_schema" }`. The base
+// OpenAI endpoint does, but downstream OpenAI-compatible providers and
+// proxied open-source models often reject `json_schema` and require the
+// legacy `json_object` shape. Proxied callers pass their own `model` strings,
+// so the fallback is keyed off the model name itself.
+const JSON_SCHEMA_SUPPORTED_MODELS = new Set<string>([
+  "gpt-4o",
+  "gpt-4o-mini",
+  "gpt-4-turbo",
+  "gpt-3.5-turbo",
+  "gpt-5.2",
+  "gpt-5.3",
+  "gpt-5.4",
+  "gpt-5",
+  "gpt-5-mini",
+  "gpt-5-nano",
+  "gpt-5-pro",
+  "gpt-5.6-luna",
+  "gpt-5.6-terra",
+  "gpt-5.6-sol",
+]);
+
+export function supportsOpenAIJsonSchema(model: string): boolean {
+  return JSON_SCHEMA_SUPPORTED_MODELS.has(model);
+}
+
+const buildResponseFormat = (model: string, jsonResponse?: JsonResponse) =>
+  buildJsonSchemaResponseFormat(
+    model,
+    JSON_SCHEMA_SUPPORTED_MODELS,
+    jsonResponse,
+  );
 
 const createClient = (
   apiKey: string,
@@ -117,9 +153,6 @@ export const openaiTranscribeAudio = async ({
       model,
       prompt,
       language,
-      // `whisper-1` keeps `verbose_json` so `segments[].no_speech_prob` is
-      // returned; `gpt-4o-transcribe` / `gpt-4o-mini-transcribe` reject
-      // `verbose_json` (HTTP 400) and use `json` instead.
       response_format: getTranscriptionResponseFormat(model),
     },
   );
@@ -134,6 +167,7 @@ export type OpenAIGenerateTextArgs = {
   imageUrls?: string[];
   jsonResponse?: JsonResponse;
   customFetch?: CustomFetch;
+  maxTokens?: number;
 };
 
 export type OpenAIGenerateResponseOutput = {
@@ -150,62 +184,35 @@ export const openaiGenerateTextResponse = async ({
   imageUrls = [],
   jsonResponse,
   customFetch,
+  maxTokens,
 }: OpenAIGenerateTextArgs): Promise<OpenAIGenerateResponseOutput> => {
   return retry({
     retries: 3,
     fn: async () => {
       const client = createClient(apiKey, baseUrl, customFetch);
 
-      const messages: ChatCompletionMessageParam[] = [];
-      if (system) {
-        messages.push({ role: "system", content: system });
-      }
+      const messages = buildOpenAICompatibleMessages({
+        system,
+        prompt,
+        imageUrls,
+      });
 
-      const userParts: ChatCompletionContentPart[] = [];
-      for (const url of imageUrls) {
-        userParts.push({
-          type: "image_url",
-          image_url: { url },
-        });
-      }
-
-      userParts.push({ type: "text", text: prompt });
-      messages.push({ role: "user", content: userParts });
+      const response_format = buildResponseFormat(model, jsonResponse);
 
       const response = await client.chat.completions.create({
         messages,
         model,
         temperature: 1,
-        max_completion_tokens: 1024,
+        max_completion_tokens: maxTokens ?? 1024,
         top_p: 1,
-        response_format: jsonResponse
-          ? {
-              type: "json_schema",
-              json_schema: {
-                name: jsonResponse.name,
-                description: jsonResponse.description,
-                schema: jsonResponse.schema,
-                strict: true,
-              },
-            }
-          : undefined,
+        ...(response_format ? { response_format } : {}),
       });
 
       console.log("openai llm usage:", response.usage);
-      if (!response.choices || response.choices.length === 0) {
-        throw new Error("No response from OpenAI");
-      }
-
-      const result = response.choices[0].message.content;
-      if (!result) {
-        throw new Error("Content is empty");
-      }
-
-      const content = contentToString(result);
-      return {
-        text: content,
-        tokensUsed: response.usage?.total_tokens ?? countWords(content),
-      };
+      return parseOpenAICompatibleGenerateTextResponse({
+        response,
+        providerLabel: "OpenAI",
+      });
     },
   });
 };
@@ -319,17 +326,17 @@ function toFinishReason(raw: string | null | undefined): LlmFinishReason {
   }
 }
 
-type OpenAIStreamState = {
+type OpenAIChunkState = {
   toolCalls: Map<number, { id: string; name: string; arguments: string }>;
   finishReason: LlmFinishReason;
-  promptTokens?: number;
-  completionTokens?: number;
-  modelId?: string;
+  promptTokens: number | undefined;
+  completionTokens: number | undefined;
+  modelId: string | undefined;
 };
 
 const applyOpenAIToolCalls = (
   choice: ChatCompletionChunk.Choice,
-  toolCalls: OpenAIStreamState["toolCalls"],
+  toolCalls: OpenAIChunkState["toolCalls"],
 ): void => {
   for (const tc of choice.delta?.tool_calls ?? []) {
     const index = tc.index ?? toolCalls.size;
@@ -345,10 +352,11 @@ const applyOpenAIToolCalls = (
   }
 };
 
-const handleOpenAIChunk = (
-  chunk: ChatCompletionChunk,
-  state: OpenAIStreamState,
+const processOpenAIChunk = (
+  chunk: OpenAI.Chat.Completions.ChatCompletionChunk,
+  state: OpenAIChunkState,
 ): LlmStreamEvent[] => {
+  const events: LlmStreamEvent[] = [];
   if (chunk.model) {
     state.modelId = chunk.model;
   }
@@ -360,10 +368,9 @@ const handleOpenAIChunk = (
 
   const choice = chunk.choices[0];
   if (!choice) {
-    return [];
+    return events;
   }
 
-  const events: LlmStreamEvent[] = [];
   if (choice.delta?.content) {
     events.push({ type: "text-delta", text: choice.delta.content });
   }
@@ -400,13 +407,21 @@ export async function* openaiCompatibleStreamChat(
     ...extraBody,
   });
 
-  const state: OpenAIStreamState = {
-    toolCalls: new Map(),
+  const state: OpenAIChunkState = {
+    toolCalls: new Map<
+      number,
+      { id: string; name: string; arguments: string }
+    >(),
     finishReason: "other",
+    promptTokens: undefined,
+    completionTokens: undefined,
+    modelId: undefined,
   };
 
   for await (const chunk of stream) {
-    yield* handleOpenAIChunk(chunk, state);
+    for (const event of processOpenAIChunk(chunk, state)) {
+      yield event;
+    }
   }
 
   for (const [, tc] of [...state.toolCalls.entries()].sort(

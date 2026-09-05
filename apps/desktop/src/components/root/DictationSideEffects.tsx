@@ -121,6 +121,63 @@ type RawStopResp = {
   abortMessage?: string;
 };
 
+type HandleEmptyResultInput = {
+  audio: StopRecordingResponse;
+  transcribeResult: TranscriptionSessionResult | undefined;
+  strategy: BaseStrategy;
+  formatMessage: (descriptor: { defaultMessage: string }) => string;
+  showToast: (options: {
+    message: string;
+    toastType: "info" | "error";
+    duration?: number;
+  }) => Promise<void> | void;
+  storeTranscriptionFn: typeof storeTranscription;
+  refreshMember: () => void;
+};
+
+export const handleEmptyTranscriptionResult = async (
+  input: HandleEmptyResultInput,
+): Promise<{ handled: boolean }> => {
+  const { audio, transcribeResult, strategy, formatMessage, showToast } = input;
+  const rawTranscript = transcribeResult?.rawTranscript;
+  const transcriptionWarnings = transcribeResult?.warnings ?? [];
+  if (rawTranscript) {
+    return { handled: false };
+  }
+  if (transcriptionWarnings.length === 0) {
+    return { handled: false };
+  }
+
+  getLogger().warning(
+    `stopRecordingRaw: empty rawTranscript with ${transcriptionWarnings.length} warning(s); preserving recording`,
+  );
+  await showToast({
+    message: formatMessage({
+      defaultMessage:
+        "Transcription failed. Your recording is saved so you can retry.",
+    }),
+    toastType: "error",
+    duration: 8_000,
+  });
+
+  if (strategy.shouldStoreTranscript()) {
+    await input.storeTranscriptionFn({
+      audio,
+      rawTranscript: null,
+      sanitizedTranscript: null,
+      transcript: null,
+      transcriptionMetadata: transcribeResult?.metadata ?? {},
+      postProcessMetadata: {},
+      warnings: transcriptionWarnings,
+      remoteStatus: null,
+      remoteDeviceId: null,
+    });
+  }
+
+  input.refreshMember();
+  return { handled: true };
+};
+
 type FinalizedRecording = {
   audio: StopRecordingResponse;
   a11yInfo: TextFieldInfo | null;
@@ -575,7 +632,7 @@ export const DictationSideEffects = () => {
 
       if (strategy.shouldStoreTranscript()) {
         getLogger().verbose("Storing transcription");
-        storeTranscription({
+        await storeTranscription({
           audio,
           rawTranscript: rawTranscript ?? null,
           sanitizedTranscript,

@@ -698,6 +698,30 @@ mod tests {
         .execute(&pool)
         .await
         .unwrap();
+
+        // Migrations 81 and 83-85 ADD COLUMN on `user_preferences`, and 82
+        // does the same on `api_keys`. A v77 database has both tables, so
+        // create them here too; without them the upgrade fails on a missing
+        // table rather than exercising the path under test.
+        sqlx::query(
+            "CREATE TABLE user_preferences (
+                user_id TEXT PRIMARY KEY
+             )",
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
+        sqlx::query(
+            "CREATE TABLE api_keys (
+                id TEXT PRIMARY KEY,
+                name TEXT NOT NULL,
+                provider TEXT NOT NULL,
+                key TEXT NOT NULL
+             )",
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
         pool.close().await;
 
         // Reopen: migrations 78 and 79 run (ADD COLUMN on

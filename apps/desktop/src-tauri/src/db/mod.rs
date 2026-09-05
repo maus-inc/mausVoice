@@ -154,6 +154,24 @@ pub const POST_PROCESS_ATTRIBUTION_MIGRATION_SQL: &str =
     include_str!("migrations/078_post_process_attribution.sql");
 pub const INTERACTION_FEEDBACK_VOLUME_MIGRATION_SQL: &str =
     include_str!("migrations/079_interaction_feedback_volume.sql");
+/// Adds the `preserve_audio_on_failure` column to `user_preferences`.
+pub const PRESERVE_AUDIO_ON_FAILURE_MIGRATION_SQL: &str =
+    include_str!("migrations/081_preserve_audio_on_failure.sql");
+/// Adds the `transcription_path` column to `api_keys`.
+pub const API_KEY_TRANSCRIPTION_PATH_MIGRATION_SQL: &str =
+    include_str!("migrations/082_api_key_transcription_path.sql");
+/// Adds the `pill_placement` and `hands_free_delay_ms` columns to
+/// `user_preferences`.
+pub const PILL_PLACEMENT_AND_HANDS_FREE_DELAY_MIGRATION_SQL: &str =
+    include_str!("migrations/083_pill_placement_and_hands_free_delay.sql");
+
+/// Adds the `auto_learn_dictionary_enabled` column to
+/// `user_preferences`.
+pub const AUTO_LEARN_DICTIONARY_MIGRATION_SQL: &str =
+    include_str!("migrations/084_auto_learn_dictionary.sql");
+/// Adds the `auto_learn_from_edits_enabled` preference column (default off).
+pub const AUTO_LEARN_FROM_EDITS_MIGRATION_SQL: &str =
+    include_str!("migrations/085_auto_learn_from_edits.sql");
 
 pub fn migrations() -> Vec<tauri_plugin_sql::Migration> {
     vec![
@@ -617,6 +635,36 @@ pub fn migrations() -> Vec<tauri_plugin_sql::Migration> {
             version: 79,
             description: "add_interaction_feedback_volume",
             sql: INTERACTION_FEEDBACK_VOLUME_MIGRATION_SQL,
+            kind: tauri_plugin_sql::MigrationKind::Up,
+        },
+        tauri_plugin_sql::Migration {
+            version: 81,
+            description: "add_preserve_audio_on_failure",
+            sql: PRESERVE_AUDIO_ON_FAILURE_MIGRATION_SQL,
+            kind: tauri_plugin_sql::MigrationKind::Up,
+        },
+        tauri_plugin_sql::Migration {
+            version: 82,
+            description: "add_api_key_transcription_path",
+            sql: API_KEY_TRANSCRIPTION_PATH_MIGRATION_SQL,
+            kind: tauri_plugin_sql::MigrationKind::Up,
+        },
+        tauri_plugin_sql::Migration {
+            version: 83,
+            description: "add_pill_placement_and_hands_free_delay",
+            sql: PILL_PLACEMENT_AND_HANDS_FREE_DELAY_MIGRATION_SQL,
+            kind: tauri_plugin_sql::MigrationKind::Up,
+        },
+        tauri_plugin_sql::Migration {
+            version: 84,
+            description: "add_auto_learn_dictionary_enabled",
+            sql: AUTO_LEARN_DICTIONARY_MIGRATION_SQL,
+            kind: tauri_plugin_sql::MigrationKind::Up,
+        },
+        tauri_plugin_sql::Migration {
+            version: 85,
+            description: "add_auto_learn_from_edits",
+            sql: AUTO_LEARN_FROM_EDITS_MIGRATION_SQL,
             kind: tauri_plugin_sql::MigrationKind::Up,
         },
     ]

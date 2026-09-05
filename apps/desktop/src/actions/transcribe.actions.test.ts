@@ -1,7 +1,12 @@
+import type { UserPreferences } from "@maus-inc/types";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { INITIAL_APP_STATE } from "../state/app.state";
 import { setAppState } from "../store";
-import { transcribeAudio } from "./transcribe.actions";
+import {
+  storeTranscription,
+  transcribeAudio,
+  type StoreTranscriptionInput,
+} from "./transcribe.actions";
 
 // One second of a low-amplitude tone. The energy-based silence gate
 // short-circuits all-zero (digital silence) samples before reaching the
@@ -14,7 +19,7 @@ const makeToneSamples = (sampleRate = 16000): Float32Array => {
   return samples;
 };
 
-const { loggerMock } = vi.hoisted(() => ({
+const { loggerMock, invokeMock } = vi.hoisted(() => ({
   loggerMock: {
     info: vi.fn(),
     warning: vi.fn(),
@@ -25,12 +30,42 @@ const { loggerMock } = vi.hoisted(() => ({
       return result;
     }),
   },
+  invokeMock: vi.fn(),
 }));
 
 vi.mock("../utils/log.utils", () => ({ getLogger: () => loggerMock }));
+vi.mock("@tauri-apps/api/core", () => ({
+  invoke: (...args: unknown[]) => invokeMock(...args),
+  Resource: class {},
+  Channel: class {},
+  convertFileSrc: (path: string) => path,
+}));
+
 vi.mock("@tauri-apps/plugin-http", () => ({
   fetch: (...args: Parameters<typeof globalThis.fetch>) =>
     globalThis.fetch(...args),
+}));
+
+const { createTranscriptionMock, purgeStaleAudioMock } = vi.hoisted(() => ({
+  createTranscriptionMock: vi.fn(),
+  purgeStaleAudioMock: vi.fn(async () => [] as string[]),
+}));
+
+vi.mock("../repos", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("../repos")>();
+  return {
+    ...actual,
+    getTranscriptionRepo: () => ({
+      ...actual.getTranscriptionRepo(),
+      createTranscription: createTranscriptionMock,
+      purgeStaleAudio: purgeStaleAudioMock,
+    }),
+  };
+});
+
+vi.mock("./user.actions", () => ({
+  recordUsageWords: vi.fn(),
+  addWordsToCurrentUser: vi.fn(),
 }));
 
 const staleOllamaState = () => {
@@ -133,5 +168,200 @@ describe("transcribeAudio warning logging and failure-path cause preservation", 
     expect((error as Error).message).toMatch(
       /No API key configured for API transcription/,
     );
+  });
+});
+
+const audioSamples = new Float32Array([0.1, 0.2, 0.3]);
+
+const buildInput = (overrides: Partial<StoreTranscriptionInput> = {}) => ({
+  audio: { samples: audioSamples, sampleRate: 16000 },
+  rawTranscript: "hello world",
+  sanitizedTranscript: null,
+  transcript: "hello world",
+  transcriptionMetadata: { transcriptionMode: "local" as const },
+  postProcessMetadata: {},
+  warnings: [] as string[],
+  ...overrides,
+});
+
+const setPrefs = (overrides: Partial<UserPreferences>) => {
+  const state = structuredClone(INITIAL_APP_STATE);
+  state.userPrefs = {
+    incognitoModeEnabled: false,
+    incognitoModeIncludeInStats: false,
+    preserveAudioOnFailure: true,
+    ...overrides,
+  } as UserPreferences;
+  setAppState(state, true);
+};
+
+describe("storeTranscription audio retention", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    invokeMock.mockReset();
+    createTranscriptionMock.mockReset();
+    purgeStaleAudioMock.mockReset();
+    purgeStaleAudioMock.mockResolvedValue([]);
+    createTranscriptionMock.mockImplementation(async (t) => t);
+  });
+
+  afterEach(() => {
+    vi.clearAllMocks();
+    setAppState(structuredClone(INITIAL_APP_STATE), true);
+  });
+
+  it("never saves the audio snapshot in incognito when transcription fails (no history record)", async () => {
+    setPrefs({ incognitoModeEnabled: true });
+    invokeMock.mockResolvedValue({
+      filePath: "/tmp/audio.wav",
+      durationMs: 100,
+    });
+
+    const result = await storeTranscription(
+      buildInput({ rawTranscript: null, warnings: ["provider failed"] }),
+    );
+
+    expect(invokeMock).not.toHaveBeenCalledWith("store_transcription_audio");
+    expect(createTranscriptionMock).not.toHaveBeenCalled();
+    expect(result.transcription).toBeNull();
+  });
+
+  it("never saves the audio snapshot in incognito when transcription succeeds (no history record)", async () => {
+    setPrefs({ incognitoModeEnabled: true });
+    invokeMock.mockResolvedValue({
+      filePath: "/tmp/audio.wav",
+      durationMs: 100,
+    });
+
+    const result = await storeTranscription(buildInput());
+
+    expect(invokeMock).not.toHaveBeenCalledWith("store_transcription_audio");
+    expect(createTranscriptionMock).not.toHaveBeenCalled();
+    expect(result.transcription).toBeNull();
+  });
+
+  it("keeps the audio snapshot outside incognito on failure when preserveAudioOnFailure is true", async () => {
+    setPrefs({ incognitoModeEnabled: false, preserveAudioOnFailure: true });
+    invokeMock.mockResolvedValue({
+      filePath: "/tmp/audio.wav",
+      durationMs: 100,
+    });
+
+    const result = await storeTranscription(
+      buildInput({ rawTranscript: null, warnings: ["provider failed"] }),
+    );
+
+    expect(invokeMock).toHaveBeenCalledWith(
+      "store_transcription_audio",
+      expect.objectContaining({ sampleRate: 16000 }),
+    );
+    expect(createTranscriptionMock).toHaveBeenCalledTimes(1);
+    const stored = createTranscriptionMock.mock.calls[0][0];
+    expect(stored.audio).toEqual({
+      filePath: "/tmp/audio.wav",
+      durationMs: 100,
+    });
+    expect(stored.transcript).toBe("[Transcription Failed]");
+    expect(result.transcription).not.toBeNull();
+  });
+
+  it("does not write the audio file outside incognito on failure when preserveAudioOnFailure is false (no orphan WAV)", async () => {
+    setPrefs({ incognitoModeEnabled: false, preserveAudioOnFailure: false });
+    invokeMock.mockResolvedValue({
+      filePath: "/tmp/audio.wav",
+      durationMs: 100,
+    });
+
+    const result = await storeTranscription(
+      buildInput({ rawTranscript: null, warnings: ["provider failed"] }),
+    );
+
+    // The previous behaviour wrote the WAV and then dropped the snapshot from
+    // the DB row, leaking the file (purge only follows audio_path). Skip the
+    // write entirely now so the audio directory cannot grow unboundedly when
+    // the user opts out of failure retention.
+    expect(invokeMock).not.toHaveBeenCalledWith("store_transcription_audio");
+    expect(createTranscriptionMock).toHaveBeenCalledTimes(1);
+    const stored = createTranscriptionMock.mock.calls[0][0];
+    expect(stored.audio).toBeUndefined();
+    expect(stored.transcript).toBe("[Transcription Failed]");
+    expect(result.transcription).not.toBeNull();
+  });
+});
+
+describe("storeTranscription empty-audio retention (#418)", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    invokeMock.mockReset();
+    createTranscriptionMock.mockReset();
+    purgeStaleAudioMock.mockReset();
+    purgeStaleAudioMock.mockResolvedValue([]);
+    createTranscriptionMock.mockImplementation(async (t) => t);
+    setPrefs({});
+  });
+
+  afterEach(() => {
+    vi.clearAllMocks();
+    setAppState(structuredClone(INITIAL_APP_STATE), true);
+  });
+
+  it("saves the text record when samples are empty but rawTranscript is non-empty", async () => {
+    invokeMock.mockResolvedValue({
+      filePath: "/tmp/audio.wav",
+      durationMs: 100,
+    });
+
+    const result = await storeTranscription(
+      buildInput({
+        audio: { samples: new Float32Array(0), sampleRate: 16000 },
+        rawTranscript: "hello world",
+        transcript: "hello world",
+      }),
+    );
+
+    expect(createTranscriptionMock).toHaveBeenCalledTimes(1);
+    const stored = createTranscriptionMock.mock.calls[0][0];
+    expect(stored.transcript).toBe("hello world");
+    expect(stored.rawTranscript).toBe("hello world");
+    expect(result.transcription).not.toBeNull();
+  });
+
+  it("saves a transcription-failure marker when samples and transcript are empty but warnings exist", async () => {
+    invokeMock.mockResolvedValue({
+      filePath: "/tmp/audio.wav",
+      durationMs: 100,
+    });
+
+    const result = await storeTranscription(
+      buildInput({
+        audio: { samples: new Float32Array(0), sampleRate: 16000 },
+        rawTranscript: null,
+        sanitizedTranscript: null,
+        transcript: null,
+        warnings: ["provider failed: timeout"],
+      }),
+    );
+
+    expect(createTranscriptionMock).toHaveBeenCalledTimes(1);
+    const stored = createTranscriptionMock.mock.calls[0][0];
+    expect(stored.transcript).toBe("[Transcription Failed]");
+    expect(stored.warnings).toEqual(["provider failed: timeout"]);
+    expect(result.transcription).not.toBeNull();
+  });
+
+  it("skips storage entirely when samples, transcript, and warnings are all empty", async () => {
+    const result = await storeTranscription(
+      buildInput({
+        audio: { samples: new Float32Array(0), sampleRate: 16000 },
+        rawTranscript: null,
+        sanitizedTranscript: null,
+        transcript: null,
+        warnings: [],
+      }),
+    );
+
+    expect(createTranscriptionMock).not.toHaveBeenCalled();
+    expect(invokeMock).not.toHaveBeenCalledWith("store_transcription_audio");
+    expect(result.transcription).toBeNull();
   });
 });

@@ -1,36 +1,33 @@
-import {
-  AzureStreamingSession,
-  createAzureStreamingSession,
-} from "@maus-inc/voice-ai";
+import { createAzureStreamingSession } from "@maus-inc/voice-ai";
 import { listen, UnlistenFn } from "@tauri-apps/api/event";
 import { getAppState } from "../store";
-import {
-  StopRecordingResponse,
-  TranscriptionSession,
-  TranscriptionSessionResult,
-} from "../types/transcription-session.types";
+import { ensureFloat32Array } from "../utils/audio.utils";
+import { getLogger } from "../utils/log.utils";
 import {
   buildLocalizedTranscriptionPrompt,
   collectDictionaryEntries,
 } from "../utils/prompt.utils";
-import { finalizeStreamingSession } from "../utils/streaming-session.utils";
 import { loadMyEffectiveDictationLanguage } from "../utils/user.utils";
+import { BaseApiTranscriptionSession } from "./base-api-transcription-session";
 
-export class AzureTranscriptionSession implements TranscriptionSession {
-  private session: AzureStreamingSession | null = null;
-  private subscriptionKey: string;
-  private region: string;
+export class AzureTranscriptionSession extends BaseApiTranscriptionSession {
+  private readonly subscriptionKey: string;
+  private readonly region: string;
   private unlisten: UnlistenFn | null = null;
   private receivedChunkCount = 0;
 
   constructor(subscriptionKey: string, region: string) {
+    super({
+      providerLabel: "Azure",
+      inferenceDevice: "API • Azure (Streaming)",
+    });
     this.subscriptionKey = subscriptionKey;
     this.region = region;
   }
 
   async onRecordingStart(sampleRate: number): Promise<void> {
     try {
-      console.log("[Azure] Starting streaming session...");
+      getLogger().verbose("[Azure] Starting streaming session...");
 
       const state = getAppState();
       const language = await loadMyEffectiveDictationLanguage(state);
@@ -41,7 +38,7 @@ export class AzureTranscriptionSession implements TranscriptionSession {
         state,
       });
 
-      this.session = await createAzureStreamingSession({
+      this.streamSession = await createAzureStreamingSession({
         subscriptionKey: this.subscriptionKey,
         region: this.region,
         sampleRate,
@@ -57,41 +54,28 @@ export class AzureTranscriptionSession implements TranscriptionSession {
             this.receivedChunkCount <= 3 ||
             this.receivedChunkCount % 10 === 0
           ) {
-            console.log(
+            getLogger().verbose(
               `[Azure] Received chunk #${this.receivedChunkCount}, samples:`,
               event.payload.samples.length,
             );
           }
 
-          if (this.session) {
+          if (this.streamSession?.writeAudioChunk) {
             try {
-              const typedChunk =
-                event.payload.samples instanceof Float32Array
-                  ? event.payload.samples
-                  : Float32Array.from(event.payload.samples);
+              const typedChunk = ensureFloat32Array(event.payload.samples);
 
-              this.session.writeAudioChunk(typedChunk);
+              this.streamSession.writeAudioChunk(typedChunk);
             } catch (error) {
-              console.error("[Azure] Error writing audio chunk:", error);
+              getLogger().error("[Azure] Error writing audio chunk:", error);
             }
           }
         },
       );
 
-      console.log("[Azure] Streaming session started successfully");
+      getLogger().verbose("[Azure] Streaming session started successfully");
     } catch (error) {
-      console.error("[Azure] Failed to start streaming:", error);
+      getLogger().error("[Azure] Failed to start streaming:", error);
     }
-  }
-
-  async finalize(
-    _audio: StopRecordingResponse,
-  ): Promise<TranscriptionSessionResult> {
-    return finalizeStreamingSession({
-      session: this.session,
-      providerLabel: "Azure",
-      log: console.log,
-    });
   }
 
   cleanup(): void {
@@ -99,15 +83,10 @@ export class AzureTranscriptionSession implements TranscriptionSession {
       this.unlisten();
       this.unlisten = null;
     }
-    if (this.session) {
-      this.session.cleanup();
-      this.session = null;
-    }
+    super.cleanup();
   }
 
   supportsStreaming(): boolean {
     return false;
   }
-
-  setInterimResultCallback(): void {}
 }

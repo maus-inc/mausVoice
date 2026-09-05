@@ -11,7 +11,6 @@ import {
   deepseekTestIntegration,
   elevenlabsTestIntegration,
   geminiTestIntegration,
-  gladiaTestIntegration,
   groqTestIntegration,
   openaiCompatibleTestIntegration,
   openaiTestIntegration,
@@ -24,10 +23,7 @@ import {
   OLLAMA_DEFAULT_URL,
   ollamaTestIntegration,
 } from "../../utils/ollama.utils";
-import {
-  buildOpenAICompatibleUrl,
-  OPENAI_COMPATIBLE_DEFAULT_URL,
-} from "../../utils/openai-compatible.utils";
+import { OPENAI_COMPATIBLE_DEFAULT_URL } from "../../utils/openai-compatible.utils";
 import {
   createOpenAICompatibleFetch,
   secureFetch,
@@ -81,71 +77,36 @@ function requireApiKey(apiKey: SettingsApiKey): string {
 }
 
 function standardTestConfig(
-  testFn: (args: { apiKey: string }) => Promise<boolean>,
+  testFn: (args: {
+    apiKey: string;
+    customFetch?: typeof globalThis.fetch;
+  }) => Promise<boolean>,
 ): ProviderFormConfig["testIntegration"] {
-  return (apiKey) => testFn({ apiKey: requireApiKey(apiKey) });
+  return (apiKey) =>
+    testFn({ apiKey: requireApiKey(apiKey), customFetch: secureFetch });
 }
 
 const STANDARD_PROVIDERS: Record<
   string,
   {
     displayName: string;
-    testFn: (args: { apiKey: string }) => Promise<boolean>;
+    testFn: (args: {
+      apiKey: string;
+      customFetch?: typeof globalThis.fetch;
+    }) => Promise<boolean>;
   }
 > = {
-  groq: {
-    displayName: "Groq",
-    testFn: ({ apiKey }) =>
-      groqTestIntegration({ apiKey, customFetch: secureFetch }),
-  },
-  openai: {
-    displayName: "OpenAI",
-    testFn: ({ apiKey }) =>
-      openaiTestIntegration({ apiKey, customFetch: secureFetch }),
-  },
-  openrouter: {
-    displayName: "OpenRouter",
-    testFn: ({ apiKey }) =>
-      openrouterTestIntegration({ apiKey, customFetch: secureFetch }),
-  },
+  groq: { displayName: "Groq", testFn: groqTestIntegration },
+  openai: { displayName: "OpenAI", testFn: openaiTestIntegration },
+  openrouter: { displayName: "OpenRouter", testFn: openrouterTestIntegration },
   aldea: { displayName: "Aldea", testFn: aldeaTestIntegration },
-  assemblyai: {
-    displayName: "AssemblyAI",
-    testFn: ({ apiKey }) =>
-      assemblyaiTestIntegration({ apiKey, customFetch: secureFetch }),
-  },
   deepgram: { displayName: "Deepgram", testFn: deepgramTestIntegration },
-  gladia: { displayName: "Gladia", testFn: gladiaTestIntegration },
-  elevenlabs: {
-    displayName: "ElevenLabs",
-    testFn: ({ apiKey }) =>
-      elevenlabsTestIntegration({ apiKey, customFetch: secureFetch }),
-  },
-  deepseek: {
-    displayName: "DeepSeek",
-    testFn: ({ apiKey }) =>
-      deepseekTestIntegration({ apiKey, customFetch: secureFetch }),
-  },
-  gemini: {
-    displayName: "Gemini",
-    testFn: ({ apiKey }) =>
-      geminiTestIntegration({ apiKey, customFetch: secureFetch }),
-  },
-  claude: {
-    displayName: "Claude",
-    testFn: ({ apiKey }) =>
-      claudeTestIntegration({ apiKey, customFetch: secureFetch }),
-  },
-  cerebras: {
-    displayName: "Cerebras",
-    testFn: ({ apiKey }) =>
-      cerebrasTestIntegration({ apiKey, customFetch: secureFetch }),
-  },
-  xai: {
-    displayName: "xAI Grok",
-    testFn: ({ apiKey }) =>
-      xaiTestIntegration({ apiKey, customFetch: secureFetch }),
-  },
+  elevenlabs: { displayName: "ElevenLabs", testFn: elevenlabsTestIntegration },
+  deepseek: { displayName: "DeepSeek", testFn: deepseekTestIntegration },
+  gemini: { displayName: "Gemini", testFn: geminiTestIntegration },
+  claude: { displayName: "Claude", testFn: claudeTestIntegration },
+  cerebras: { displayName: "Cerebras", testFn: cerebrasTestIntegration },
+  xai: { displayName: "xAI Grok", testFn: xaiTestIntegration },
 };
 
 function buildStandardConfig(provider: string): ProviderFormConfig {
@@ -174,6 +135,7 @@ const ASSEMBLYAI_CONFIG: ProviderFormConfig = {
     assemblyaiTestIntegration({
       apiKey: requireApiKey(apiKey),
       model: apiKey.transcriptionModel ?? null,
+      customFetch: secureFetch,
     }),
 };
 
@@ -202,7 +164,7 @@ const OLLAMA_CONFIG: ProviderFormConfig = {
 function getOpenAICompatibleConfig(
   context: ApiKeyListContext,
 ): ProviderFormConfig {
-  const fields: ProviderFieldDescriptor[] = [
+  let fields: ProviderFieldDescriptor[] = [
     {
       key: "baseUrl",
       label: <FormattedMessage defaultMessage="Base URL" />,
@@ -215,15 +177,26 @@ function getOpenAICompatibleConfig(
     OPTIONAL_API_KEY_FIELD,
   ];
   if (context === "transcription") {
-    fields.push({
-      key: "transcriptionModel",
-      label: <FormattedMessage defaultMessage="Model" />,
-      placeholder: "whisper-1",
-      helperText: (
-        <FormattedMessage defaultMessage="Transcription model name (e.g. whisper-1, gpt-4o-transcribe)" />
-      ),
-      required: false,
-    });
+    fields = fields.concat([
+      {
+        key: "transcriptionModel",
+        label: <FormattedMessage defaultMessage="Model" />,
+        placeholder: "whisper-1",
+        helperText: (
+          <FormattedMessage defaultMessage="Transcription model name (e.g. whisper-1, gpt-4o-transcribe)" />
+        ),
+        required: false,
+      },
+      {
+        key: "transcriptionPath",
+        label: <FormattedMessage defaultMessage="Transcription path" />,
+        placeholder: "/audio/transcriptions",
+        helperText: (
+          <FormattedMessage defaultMessage="Replaces only the path after the base URL. For Open WebUI, enter /v1/audio/transcriptions and turn off Include /v1 path; otherwise leave empty." />
+        ),
+        required: false,
+      },
+    ]);
   }
   return {
     displayName: "OpenAI Compatible",
@@ -232,10 +205,7 @@ function getOpenAICompatibleConfig(
     fields,
     testIntegration: (apiKey) =>
       openaiCompatibleTestIntegration({
-        baseUrl: buildOpenAICompatibleUrl(
-          apiKey.baseUrl || OPENAI_COMPATIBLE_DEFAULT_URL,
-          apiKey.includeV1Path,
-        ),
+        baseUrl: apiKey.baseUrl || OPENAI_COMPATIBLE_DEFAULT_URL,
         apiKey: apiKey.keyFull || undefined,
         customFetch: createOpenAICompatibleFetch(apiKey.id),
       }),
@@ -338,8 +308,8 @@ export function getProviderFormConfig(
   if (provider === "azure") {
     return context === "transcription" ? AZURE_STT_CONFIG : AZURE_OPENAI_CONFIG;
   }
-  if (provider === "assemblyai") return ASSEMBLYAI_CONFIG;
   if (provider === "ollama") return OLLAMA_CONFIG;
+  if (provider === "assemblyai") return ASSEMBLYAI_CONFIG;
   if (provider === "openai-compatible")
     return getOpenAICompatibleConfig(context);
   if (provider === "speaches") return SPEACHES_CONFIG;
