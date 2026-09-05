@@ -21,7 +21,7 @@ const withControls = (...parts: Array<string | number>): string =>
 /** True when any C0 control or DEL remains (matches sanitizeContextValue's range). */
 const hasLogBreakingControl = (value: string): boolean => {
   for (const ch of value) {
-    const code = ch.charCodeAt(0);
+    const code = ch.codePointAt(0) ?? 0;
     if (code <= 0x1f || code === 0x7f) return true;
   }
   return false;
