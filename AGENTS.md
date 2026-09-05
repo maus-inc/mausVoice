@@ -121,10 +121,10 @@ Do not assume "no more reviews will come" after a green snapshot. Review bots an
 
 1. Push only after local Verification Gate + pre-push gates above.
 2. Immediately start short-interval polling (about every 20 to 30 seconds). Do not declare done after one green check list.
-3. On every poll, collect all of the following for the PR head SHA:
-   - CI: `gh pr checks <n>` (pending, fail, pass). Treat build, lint, unit, integration, i18n, and quality jobs as required unless the job is explicitly `skipping`.
-   - Unresolved review threads: GraphQL `reviewThreads` with `isResolved == false` (path, line, author, full body).
-   - Newest inline + issue comments from bots (CodeSpect, Kilo, DeepSource, Sourcery, CodeRabbit, Sonar, Kody).
+3. On every poll, collect all of the following for the PR head SHA. Require an authenticated GitHub CLI (`gh auth status`) with repo scope, or equivalent token for `gh api`.
+   - CI: `gh pr checks <pr-number>` (example: `gh pr checks 166`). Interpret each job as pending, fail, or pass. Treat build, lint, unit, integration, i18n, and quality jobs as required unless the job is explicitly `skipping`. For scripts without `gh pr checks`, use the Checks API via `gh api repos/<owner>/<repo>/commits/<sha>/check-runs`.
+   - Unresolved review threads: GraphQL `PullRequest.reviewThreads` with `isResolved == false` (path, line, author, full body). Needs an authenticated token with repo scope. If GraphQL is unavailable, use `gh api repos/<owner>/<repo>/pulls/<pr-number>/comments` and treat threads without a later resolve reply as open work.
+   - Newest inline and issue comments from bots. Detect bots generically (`user.type == "Bot"` or login ending in `[bot]`). Do not hardcode vendor names. Any new bot comment is a signal to re-evaluate the head.
    - Sonar on the current HEAD: check-run conclusion, summary "N New issues", and `check-runs/<id>/annotations` (path, line, title). Gate pass with N>0 new issues or non-empty annotations is still unfinished.
 4. Stop conditions that force an immediate fix cycle (do not keep spinning):
    - Any hard CI fail (not a soft skip).
