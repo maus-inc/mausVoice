@@ -4,16 +4,15 @@
 
 # mausVoice <a href="https://github.com/maus-inc/mausVoice/actions/workflows/test-desktop-unit.yml"><img src="https://img.shields.io/github/actions/workflow/status/maus-inc/mausVoice/test-desktop-unit.yml?branch=main&label=CI&style=flat&color=000000&labelColor=000000" alt="CI" /></a> <a href="https://github.com/maus-inc/mausVoice/releases/latest"><img src="https://img.shields.io/github/v/release/maus-inc/mausVoice?style=flat&labelColor=000000&color=000000" alt="Latest stable release" /></a>
 
+> **Tip:** Grab your free [Groq↗](https://console.groq.com/keys) and [Deepgram↗](https://console.deepgram.com/) API keys.
+>
+> Transcription accuracy varies by STT provider or model. Transcripts may not be 100 percent accurate because of differences in intonation and native accents. The client-side pipeline is continually optimized.
+
 </div>
 
-> [!TIP]
-> Grab your free [Groq↗](https://console.groq.com/keys) and [Deepgram↗](https://console.deepgram.com/) API keys.
->
-> **Transcription accuracy varies by STT provider or model; transcripts may not be 100 percent accurate due to differences in intonation and native accents. We continually optimize the client-side pipeline.**
+<br>
 
 <div align="center">
-
-<br>
 
 **Voice typing for your own machine. Dictate into any app and clean it up with AI. No account or subscription needed, and the Rust core keeps CPU and memory usage low.**
 
@@ -29,7 +28,7 @@
 **New to mausVoice, tuning a provider, or building from source? Visit the complete [mausVoice Documentation](https://maus-inc.github.io/mausVoice/docs/).** It covers platform setup, daily dictation, every configuration area, provider behavior, privacy and local data, troubleshooting, and the repository architecture.
 
 <p align="center">
-  <a href="https://maus-inc.github.io/mausVoice/docs/"> 
+  <a href="https://maus-inc.github.io/mausVoice/docs/">
   <img src="docs/assets/readthedocsbtn.png" alt="mausVoice readthedocs button" width="320" />
   </a>
 </p>
@@ -46,89 +45,70 @@
 2. Audio is captured natively and transcribed as it happens, with streaming Deepgram (`nova-3`), or with fully local Whisper if you'd rather keep every byte on-device.
 3. An LLM cleans up the transcript. It removes filler, fixes punctuation and formatting, and applies your chosen writing style.
 4. The finished text lands in whatever app you're focused on.
-<br>
 
 <br>
-<br>
+
 <p align="center">
   <img src="docs/assets/animated-pill.gif" alt="mausVoice pill in action" width="200" />
 </p>
 
 ## Features
 
-Every stage is configurable: capture globally, select the transcription path that fits the moment, then control exactly how the finished text reaches the focused app.
+Every stage is configurable. Capture globally, select the transcription path that fits the moment, then control exactly how the finished text reaches the focused app.
 
-<div style="display: grid; grid-template-columns: 1fr 1fr; gap: 1.5rem 1.5rem; margin-top: 1rem;">
-  <!-- Feature 01: Global Dictation -->
-  <div style="order: 2; background: var(--bg-subtle); border-radius: 12px; padding: 1.5rem; box-shadow: 0 2px 8px rgba(0,0,0,0.08);">
-    <a id="global-dictation"></a>
-    <p align="center">
-      <img src="docs/assets/features/dictate-anywhere.png" alt="Global dictation with live listening waveform" style="width: 100%; border-radius: 8px; margin-bottom: 1rem; object-fit: contain;" />
-    </p>
-    <p align="center" style="font-size: 0.85rem; color: var(--muted);">01 / GLOBAL DICTATION</p>
-    <h3 style="font-size: 1.1rem; margin: 0.5rem 0;">Your voice, in the field with focus</h3>
-    <p style="font-size: 0.875rem; line-height: 1.5; margin: 0;">
-      Hold a global push-to-talk shortcut and speak into the app you are already using.<br />
-      mausVoice can paste, type directly, or leave the result on your clipboard.
-    </p>
-  </div>
+### 01 / Global dictation
 
-  <!-- Feature 02: Transcription Engines -->
-  <div style="order: 1; background: var(--bg-subtle); border-radius: 12px; padding: 1.5rem; box-shadow: 0 2px 8px rgba(0,0,0,0.08);">
-    <a id="transcription-engines"></a>
-    <p align="center" style="margin-bottom: 1rem;">
-      <img src="docs/assets/features/choose-your-engine.png" alt="Local and API transcription engine choices" style="width: 100%; border-radius: 8px; margin-bottom: 1rem; object-fit: contain;" />
-    </p>
-    <p align="center" style="font-size: 0.85rem; color: var(--muted);">02 / TRANSCRIPTION ENGINES</p>
-    <h3 style="font-size: 1.1rem; margin: 0.5rem 0;">Local or hosted. Pick the transcription path.</h3>
-    <p style="font-size: 0.875rem; line-height: 1.5; margin: 0;">
-      Run Whisper, Parakeet, or Canary locally on CPU or a detected Vulkan GPU, or choose a hosted provider.<br />
-      Bring your own credentials; local recognition stays on-device once its model is downloaded.
-    </p>
-  </div>
+<a id="global-dictation"></a>
 
-  <!-- Feature 03: Writing Styles -->
-  <div style="order: 2; background: var(--bg-subtle); border-radius: 12px; padding: 1.5rem; box-shadow: 0 2px 8px rgba(0,0,0,0.08);">
-    <a id="writing-styles"></a>
-    <p align="center" style="margin-bottom: 1rem;">
-      <img src="docs/assets/features/writing-styles.png" alt="Writing styles for mail, chat, and terminal text" style="width: 100%; border-radius: 8px; margin-bottom: 1rem; object-fit: contain;" />
-    </p>
-    <p align="center" style="font-size: 0.85rem; color: var(--muted);">03 / WRITING STYLES</p>
-    <h3 style="font-size: 1.1rem; margin: 0.5rem 0;">Say it once. Shape it for the destination.</h3>
-    <p style="font-size: 0.875rem; line-height: 1.5; margin: 0;">
-      Create reusable instructions for email, chat, terminal work, or any voice you need.<br />
-      Choose the style before recording, or switch post-processing off for a literal transcript.
-    </p>
-  </div>
+<p><img src="docs/assets/features/dictate-anywhere.png" alt="mausVoice hold-to-dictate overlay with text insertion options for paste, simulated typing, and per-app overrides." width="1280" /></p>
 
-  <!-- Feature 04: Dictionary & History -->
-  <div style="order: 1; background: var(--bg-subtle); border-radius: 12px; padding: 1.5rem; box-shadow: 0 2px 8px rgba(0,0,0,0.08);">
-    <a id="dictionary-and-history"></a>
-    <p align="center" style="margin-bottom: 1rem;">
-      <img src="docs/assets/features/dictionary-history.png" alt="Dictionary replacement rule and inspectable transcription history" style="width: 100%; border-radius: 8px; margin-bottom: 1rem; object-fit: contain;" />
-    </p>
-    <p align="center" style="font-size: 0.85rem; color: var(--muted);">04 / DICTIONARY &amp; HISTORY</p>
-    <h3 style="font-size: 1.1rem; margin: 0.5rem 0;">Teach it your vocabulary. Keep the useful trail.</h3>
-    <p style="font-size: 0.875rem; line-height: 1.5; margin: 0;">
-      Add replacement rules for names, acronyms, and phrases that general models miss.<br />
-      Review raw and final text, play retained audio, or retranscribe a saved clip with current settings.
-    </p>
-  </div>
+**Your voice, in the field with focus.** Hold a global push-to-talk shortcut and speak into the app you are already using. mausVoice can paste, type directly, or leave the result on your clipboard.
 
-  <!-- Feature 05: Assistant -->
-  <div style="order: 2; background: var(--bg-subtle); border-radius: 12px; padding: 1.5rem; box-shadow: 0 2px 8px rgba(0,0,0,0.08);">
-    <a id="assistant-approval"></a>
-    <p align="center" style="margin-bottom: 1rem;">
-      <img src="docs/assets/features/assistant-approval.png" alt="mausVoice Assistant with command approval controls" style="width: 100%; border-radius: 8px; margin-bottom: 1rem; object-fit: contain;" />
-    </p>
-    <p align="center" style="font-size: 0.85rem; color: var(--muted);">05 / ASSISTANT</p>
-    <h3 style="font-size: 1.1rem; margin: 0.5rem 0;">Ask for action. Approve every command.</h3>
-    <p style="font-size: 0.875rem; line-height: 1.5; margin: 0;">
-      Use voice or text to work with the built-in Assistant and its permissioned tools.<br />
-      Requests pause for Deny, Allow, or Always allow; Power Mode keeps shell access off until enabled.
-    </p>
-  </div>
-</div>
+### 02 / Transcription engines
+
+<a id="transcription-engines"></a>
+
+<p><img src="docs/assets/features/choose-your-engine.png" alt="AI transcription settings showing local models (Parakeet, Canary, Whisper) and a Processing device selector with a detected Vulkan GPU." width="1280" /></p>
+
+**Local or hosted. Pick the transcription path.** Run Whisper, Parakeet, or Canary locally on CPU or a detected Vulkan GPU, or choose a hosted provider. Bring your own credentials. Local recognition stays on-device once its model is downloaded.
+
+### 03 / Writing styles
+
+<a id="writing-styles"></a>
+
+<p><img src="docs/assets/features/writing-styles.png" alt="Writing styles list with Professional email, Polished and professional, and Verbatim styles selectable for AI post-processing." width="1280" /></p>
+
+**Say it once. Shape it for the destination.** Create reusable instructions for email, chat, terminal work, or any voice you need. Choose the style before recording, or switch post-processing off for a literal transcript.
+
+### 04 / Dictionary and history
+
+<a id="dictionary-and-history"></a>
+
+<p><img src="docs/assets/features/dictionary-history.png" alt="Dictionary replacement rules and History of past transcriptions with model and device metadata." width="1280" /></p>
+
+**Teach it your vocabulary. Keep the useful trail.** Add replacement rules for names, acronyms, and phrases that general models miss. Review raw and final text, play retained audio, or retranscribe a saved clip with current settings.
+
+### 05 / Assistant
+
+<a id="assistant-approval"></a>
+
+<p><img src="docs/assets/features/assistant-approval.png" alt="Assistant tool approval dialog with Deny, Allow, and Always allow buttons alongside a Power mode toggle." width="1280" /></p>
+
+**Ask for action. Approve every command.** Use voice or text to work with the built-in Assistant and its permissioned tools. Requests pause for Deny, Allow, or Always allow. Power mode keeps shell access off until enabled.
+
+<br>
+
+<p align="center">
+  <a href="https://github.com/maus-inc/mausVoice/releases">
+    <img src="docs/assets/badges/windows.svg" alt="Download mausVoice for Windows" height="40" />
+  </a>
+  <a href="https://github.com/maus-inc/mausVoice/releases">
+    <img src="docs/assets/badges/macos.svg" alt="Download mausVoice for macOS" height="40" />
+  </a>
+  <a href="https://github.com/maus-inc/mausVoice/releases">
+    <img src="docs/assets/badges/linux.svg" alt="Download mausVoice for Linux" height="40" />
+  </a>
+</p>
 
 Download links open the releases page, where you'll find the latest `.exe` (Windows), `.dmg` (macOS), and `.AppImage`/`.deb` (Linux) for your platform.
 
@@ -194,12 +174,11 @@ All development documentation is [here](https://maus-inc.github.io/mausVoice/doc
 
 **Maintainer:** [Owie Emmanuel](https://github.com/Owie6789)
 
-> [!WARNING]
-> **mausVoice is currently in very early beta.** Although it is not expected during normal use, you may encounter undocumented behavior or bugs carried over from the app's pre-alpha stage.
+> **Warning:** mausVoice is currently in very early beta. Although it is not expected during normal use, you may encounter undocumented behavior or bugs carried over from the app's pre-alpha stage.
 >
 > If you find a bug, please [open an issue](https://github.com/maus-inc/mausVoice/issues/new) and be as detailed as possible. Include the steps to reproduce it, what you expected, what happened, your platform and mausVoice version, and, when possible, a screenshot and sanitized diagnostic logs.
 >
-> We welcome these reports. They help us, as a community, improve the app for one another. 😊
+> We welcome these reports. They help us, as a community, improve the app for one another. We are grateful for your patience. 😊
 
 <details>
 <summary><strong>How to find and attach mausVoice logs</strong></summary>
@@ -208,8 +187,14 @@ All development documentation is [here](https://maus-inc.github.io/mausVoice/doc
 
 1. Open **mausVoice → Settings → General → Diagnostics**.
 2. Select **Open** to reveal the log directory, or **Download** to export `mausvoice-diagnostics.zip`.
-3. Inspect the files before sharing them. Remove names, email addresses, private paths, transcript fragments, provider responses, API keys, and anything unrelated to the report.
-4. Attach the sanitized archive to your GitHub issue with a screenshot and clear reproduction steps.
+3. Inspect every file before sharing it. The export is not sanitized by default. Treat the archive as potentially sensitive and remove:
+   - names and email addresses,
+   - private file paths,
+   - transcript fragments,
+   - provider responses,
+   - API keys, tokens, and other secrets,
+   - anything unrelated to the report.
+4. Attach the cleaned archive to your GitHub issue with a screenshot and clear reproduction steps.
 
 ### macOS
 
@@ -232,9 +217,9 @@ Press **Win + R**, then enter:
 Open this directory in your file manager:
 
 ```text
-~/.local/share/com.mausinc.desktop/logs
+~/.local/state/com.mausinc.desktop/logs
 ```
 
-If `XDG_DATA_HOME` is set, use `$XDG_DATA_HOME/com.mausinc.desktop/logs` instead. Local development builds use `com.mausinc.desktop.local` as the identifier on every platform.
+If `XDG_STATE_HOME` is set, use `$XDG_STATE_HOME/com.mausinc.desktop/logs` instead. Production builds use `com.mausinc.desktop` as the identifier. The development Tauri configuration uses `com.mausinc.desktop.dev`, and the local Tauri configuration uses `com.mausinc.desktop.local`. Substitute the matching identifier in the path above.
 
 </details>

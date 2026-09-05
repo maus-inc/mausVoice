@@ -1,0 +1,135 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<title>AI transcription</title>
+<link rel="stylesheet" href="mock.css" />
+</head>
+<body>
+<main class="stage" data-feature="choose-your-engine">
+  <header class="window-chrome">
+    <div class="window-controls" aria-hidden="true">
+      <span class="dot dot-red"></span>
+      <span class="dot dot-yellow"></span>
+      <span class="dot dot-green"></span>
+    </div>
+    <div class="window-title">Settings · AI transcription</div>
+  </header>
+
+  <section class="hero compact">
+    <p class="kicker">Transcription engines</p>
+    <h1>Local or hosted. Pick the transcription path.</h1>
+    <p class="lede">
+      Decide how mausVoice should transcribe your recordings, locally on your
+      machine or through a connected provider.
+    </p>
+    <div class="meta-row">
+      <div class="segmented">
+        <span class="seg">API</span>
+        <span class="seg active">Local</span>
+      </div>
+      <span class="chip chip-success">GPU detected</span>
+      <span class="chip">Provider keys encrypted with XChaCha20-Poly1305</span>
+    </div>
+  </section>
+
+  <section class="panel engine-panel">
+    <div class="engine-models">
+      <div class="panel-head">
+        <h2>Transcription model</h2>
+        <p class="panel-sub">
+          This device: NVIDIA RTX 4070, 8&nbsp;GB VRAM. Recommended: Whisper
+          Small.
+        </p>
+      </div>
+      <div class="model-group">
+        <div class="group-title">NVIDIA NeMo / Sherpa-ONNX (Fast &amp; No Hallucinations)</div>
+        <div class="model-row">
+          <div class="model-name">
+            <span>NVIDIA Parakeet TDT 0.6B</span>
+            <span class="model-meta">670 MB · State-of-the-art English dictation speed &amp; accuracy</span>
+          </div>
+          <span class="model-badge recommended">Recommended</span>
+          <button class="btn btn-secondary">Downloaded</button>
+        </div>
+        <div class="model-row">
+          <div class="model-name">
+            <span>NVIDIA Parakeet CTC 0.6B</span>
+            <span class="model-meta">613 MB · Ultra-fast English dictation, zero hallucination loops</span>
+          </div>
+          <span class="model-badge"></span>
+          <button class="btn btn-secondary">Download</button>
+        </div>
+        <div class="model-row">
+          <div class="model-name">
+            <span>NVIDIA Canary 1B</span>
+            <span class="model-meta">1.03 GB · Multilingual STT + automatic punctuation &amp; casing</span>
+          </div>
+          <span class="model-badge caution">May be slow</span>
+          <button class="btn btn-secondary">Download</button>
+        </div>
+      </div>
+      <div class="model-group">
+        <div class="group-title">OpenAI Whisper (Multilingual GGML)</div>
+        <div class="model-row">
+          <div class="model-name">
+            <span>Whisper Small</span>
+            <span class="model-meta">488 MB · Great balance of speed and accuracy</span>
+          </div>
+          <span class="model-badge"></span>
+          <button class="btn btn-secondary">Downloaded</button>
+        </div>
+        <div class="model-row">
+          <div class="model-name">
+            <span>Whisper Large v3 Turbo</span>
+            <span class="model-meta">1.6 GB · Fast large model, great accuracy</span>
+          </div>
+          <span class="model-badge caution">May be slow</span>
+          <button class="btn btn-secondary">Download</button>
+        </div>
+      </div>
+    </div>
+    <aside class="engine-device">
+      <div class="side-head">
+        <h3>Processing device</h3>
+        <span class="chip subtle">Vulkan</span>
+      </div>
+      <div class="device-list">
+        <div class="device-row selected">
+          <span class="device-radio" aria-hidden="true"></span>
+          <div>
+            <div class="device-name">NVIDIA RTX 4070 (GPU)</div>
+            <div class="device-meta">8 GB VRAM · CUDA / Vulkan</div>
+          </div>
+        </div>
+        <div class="device-row">
+          <span class="device-radio" aria-hidden="true"></span>
+          <div>
+            <div class="device-name">Apple M-series (CPU)</div>
+            <div class="device-meta">No network</div>
+          </div>
+        </div>
+        <div class="device-row">
+          <span class="device-radio" aria-hidden="true"></span>
+          <div>
+            <div class="device-name">Generic x86_64 (CPU)</div>
+            <div class="device-meta">Fallback for unsupported GPUs</div>
+          </div>
+        </div>
+      </div>
+      <div class="side-foot">
+        Provider keys are stored encrypted with XChaCha20-Poly1305 and can be
+        rotated at any time without rebuilding.
+      </div>
+    </aside>
+  </section>
+
+  <footer class="status-bar">
+    <span class="status-dot status-dot-active"></span>
+    <span>Ready</span>
+    <span class="status-spacer"></span>
+    <span>Provider keys are stored encrypted with XChaCha20-Poly1305.</span>
+  </footer>
+</main>
+</body>
+</html>

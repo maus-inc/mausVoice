@@ -1,0 +1,145 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<title>Dictionary and History</title>
+<link rel="stylesheet" href="mock.css" />
+</head>
+<body>
+<main class="stage" data-feature="dictionary-history">
+  <header class="window-chrome">
+    <div class="window-controls" aria-hidden="true">
+      <span class="dot dot-red"></span>
+      <span class="dot dot-yellow"></span>
+      <span class="dot dot-green"></span>
+    </div>
+    <div class="window-tabs">
+      <span class="tab">Dictation</span>
+      <span class="tab">Writing styles</span>
+      <span class="tab active">Dictionary</span>
+      <span class="tab">History</span>
+      <span class="tab">Settings</span>
+    </div>
+  </header>
+
+  <section class="hero compact">
+    <p class="kicker">Dictionary &amp; History</p>
+    <h1>Teach mausVoice your vocabulary. Inspect every recording.</h1>
+    <p class="lede">
+      mausVoice may misunderstand you on occasion. Define a replacement rule to
+      fix a misspelling automatically, then review each transcript with full
+      metadata.
+    </p>
+  </section>
+
+  <div class="panel-row">
+    <section class="panel">
+      <div class="panel-head">
+        <h2>Dictionary rules</h2>
+        <p class="panel-sub">
+          Replacement rules rewrite spoken words in every transcript. Glossary
+          terms boost recognition but do not change output.
+        </p>
+      </div>
+      <ul class="dict-list">
+        <li class="dict-row replacement">
+          <div class="dict-cell">
+            <span class="dict-label">Heard</span>
+            <span class="dict-value">maus voice</span>
+          </div>
+          <span class="dict-arrow" aria-hidden="true">→</span>
+          <div class="dict-cell">
+            <span class="dict-label">Write</span>
+            <span class="dict-value">mausVoice</span>
+          </div>
+          <span class="dict-tag">Replacement</span>
+          <button class="icon-btn" aria-label="Delete dictionary item maus voice">×</button>
+        </li>
+        <li class="dict-row replacement">
+          <div class="dict-cell">
+            <span class="dict-label">Heard</span>
+            <span class="dict-value">mous voice</span>
+          </div>
+          <span class="dict-arrow" aria-hidden="true">→</span>
+          <div class="dict-cell">
+            <span class="dict-label">Write</span>
+            <span class="dict-value">mausVoice</span>
+          </div>
+          <span class="dict-tag">Replacement</span>
+          <button class="icon-btn" aria-label="Delete dictionary item mous voice">×</button>
+        </li>
+        <li class="dict-row glossary">
+          <div class="dict-cell">
+            <span class="dict-label">Glossary term</span>
+            <span class="dict-value">Deepgram nova-3</span>
+          </div>
+          <span class="dict-tag subtle">Glossary</span>
+          <button class="icon-btn" aria-label="Delete dictionary item Deepgram nova-3">×</button>
+        </li>
+        <li class="dict-row glossary">
+          <div class="dict-cell">
+            <span class="dict-label">Glossary term</span>
+            <span class="dict-value">XChaCha20-Poly1305</span>
+          </div>
+          <span class="dict-tag subtle">Glossary</span>
+          <button class="icon-btn" aria-label="Delete dictionary item XChaCha20-Poly1305">×</button>
+        </li>
+      </ul>
+      <button class="btn btn-primary align-right">Add term</button>
+    </section>
+
+    <section class="panel history">
+      <div class="panel-head">
+        <h2>History</h2>
+        <p class="panel-sub">Recent transcriptions with model and device metadata.</p>
+      </div>
+      <ul class="history-list">
+        <li class="history-row">
+          <div class="history-meta">
+            <span class="history-time">Sep 5, 2026 3:14 PM</span>
+            <span class="chip subtle">Local · Whisper Small · CPU</span>
+          </div>
+          <p class="history-text">
+            Send the deck before the 2 PM review and add the Q3 numbers to the appendix.
+          </p>
+          <div class="history-actions">
+            <span class="link-btn">Copy</span>
+            <span class="link-btn">Retranscribe</span>
+            <span class="link-btn danger">Delete</span>
+          </div>
+        </li>
+        <li class="history-row">
+          <div class="history-meta">
+            <span class="history-time">Sep 5, 2026 2:01 PM</span>
+            <span class="chip subtle">Deepgram nova-3</span>
+            <span class="chip chip-info">Remote</span>
+          </div>
+          <p class="history-text">
+            Schedule the design review for next Tuesday and loop in Priya from platform.
+          </p>
+          <div class="history-actions">
+            <span class="link-btn">Copy</span>
+            <span class="link-btn">Retranscribe</span>
+            <span class="link-btn danger">Delete</span>
+          </div>
+        </li>
+        <li class="history-row">
+          <div class="history-meta">
+            <span class="history-time">Sep 4, 2026 9:42 AM</span>
+            <span class="chip subtle">Local · Parakeet TDT 0.6B · GPU</span>
+          </div>
+          <p class="history-text">
+            Remind me to follow up with the packaging vendor about the resealable sample bags.
+          </p>
+          <div class="history-actions">
+            <span class="link-btn">Copy</span>
+            <span class="link-btn">Retranscribe</span>
+            <span class="link-btn danger">Delete</span>
+          </div>
+        </li>
+      </ul>
+    </section>
+  </div>
+</main>
+</body>
+</html>
