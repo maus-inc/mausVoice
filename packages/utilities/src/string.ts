@@ -26,6 +26,9 @@ export const codePointOf = (text: string): number => text.codePointAt(0) ?? 0;
 export const isLogBreakingControlCode = (code: number): boolean =>
   code <= 0x1f || code === 0x7f || (code >= 0x80 && code <= 0x9f);
 
-/** True when the first code point of `text` is a log-breaking control. */
+/**
+ * True when the first code point of `text` is a log-breaking control.
+ * Empty input is not a control (avoids treating codePointOf("") === 0 as U+0000).
+ */
 export const isLogBreakingControl = (text: string): boolean =>
-  isLogBreakingControlCode(codePointOf(text));
+  text.length > 0 && isLogBreakingControlCode(codePointOf(text));

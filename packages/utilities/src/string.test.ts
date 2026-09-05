@@ -72,5 +72,6 @@ describe("isLogBreakingControl", () => {
   it("inspects the first code point of a string", () => {
     expect(isLogBreakingControl(String.fromCodePoint(0x0a))).toBe(true);
     expect(isLogBreakingControl("A")).toBe(false);
+    expect(isLogBreakingControl("")).toBe(false);
   });
 });

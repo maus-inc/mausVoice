@@ -21,9 +21,12 @@ const withControls = (...parts: Array<string | number>): string =>
     .join("");
 
 /** True when any log-breaking control remains (shared production predicate). */
-const hasLogBreakingControl = (value: string): boolean =>
-  [...value].some((ch) => isLogBreakingControl(ch));
-
+const hasLogBreakingControl = (value: string): boolean => {
+  for (const ch of value) {
+    if (isLogBreakingControl(ch)) return true;
+  }
+  return false;
+};
 describe("safeSideEffect", () => {
   beforeEach(() => {
     vi.clearAllMocks();
