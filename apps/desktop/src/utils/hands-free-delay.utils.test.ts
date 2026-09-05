@@ -70,7 +70,13 @@ describe("getEffectiveHandsFreeDelayMs", () => {
     );
   });
 
-  it("preserves a null value (disabled) when explicitly set", () => {
-    expect(getEffectiveHandsFreeDelayMs({ handsFreeDelayMs: null })).toBe(0);
+  it("treats a stored null as no delay rather than a sentinel", () => {
+    // DEFAULT_HANDS_FREE_DELAY_MS is 0, so asserting the literal 0 here would
+    // pass even if the default changed and null stopped meaning "no delay".
+    // Pin the two facts the caller depends on instead.
+    expect(getEffectiveHandsFreeDelayMs({ handsFreeDelayMs: null })).toBe(
+      normalizeHandsFreeDelayMs(null),
+    );
+    expect(isHandsFreeDelayEnabled(null)).toBe(false);
   });
 });
