@@ -669,61 +669,25 @@ describe("applyReplacements with regex metacharacters in sourceValue", () => {
   // compile into regex syntax. The trailing "]", ")" and "++" in some expected
   // values are not a typo. applyReplacements matches on word boundaries and
   // leaves trailing punctuation in place, so only the word part is swapped.
-  const cases = [
-    {
-      name: "a slash inside a word as a regex delimiter",
-      text: "use a/b notation",
-      sourceValue: "a/b",
-      destinationValue: "AB",
-      expected: "use AB notation",
-    },
-    {
-      name: "a backslash inside a word as a regex escape",
-      text: "see foo\\bar here",
-      sourceValue: "foo\\bar",
-      destinationValue: "FB",
-      expected: "see FB here",
-    },
-    {
-      name: "brackets inside a word as a character class",
-      text: "see foo[bar] here",
-      sourceValue: "foo[bar]",
-      destinationValue: "FB",
-      expected: "see FB] here",
-    },
-    {
-      name: "parens inside a word as a capture group",
-      text: "see foo(bar) here",
-      sourceValue: "foo(bar)",
-      destinationValue: "FB",
-      expected: "see FB) here",
-    },
-    {
-      name: "a plus sign as a quantifier",
-      text: "write C++ daily",
-      sourceValue: "C++",
-      destinationValue: "Rust",
-      expected: "write Rust++ daily",
-    },
-    {
-      name: "an asterisk as a quantifier",
-      text: "use a*b style",
-      sourceValue: "a*b",
-      destinationValue: "AB",
-      expected: "use AB style",
-    },
-    {
-      name: "a question mark as a quantifier",
-      text: "answer is maybe? right",
-      sourceValue: "maybe",
-      destinationValue: "perhaps",
-      expected: "answer is perhaps? right",
-    },
+  const cases: [
+    name: string,
+    text: string,
+    sourceValue: string,
+    destinationValue: string,
+    expected: string,
+  ][] = [
+    ["a slash as a delimiter", "use a/b now", "a/b", "AB", "use AB now"],
+    ["a backslash as an escape", "see a\\b now", "a\\b", "AB", "see AB now"],
+    ["brackets as a class", "see f[b] now", "f[b]", "FB", "see FB] now"],
+    ["parens as a group", "see f(b) now", "f(b)", "FB", "see FB) now"],
+    ["a plus as a quantifier", "write C++ now", "C++", "Rs", "write Rs++ now"],
+    ["a star as a quantifier", "use a*b now", "a*b", "AB", "use AB now"],
+    ["a question mark", "is maybe? now", "maybe", "perhaps", "is perhaps? now"],
   ];
 
   it.each(cases)(
-    "does not treat $name",
-    ({ text, sourceValue, destinationValue, expected }) => {
+    "does not treat %s",
+    (_name, text, sourceValue, destinationValue, expected) => {
       const rules = [{ sourceValue, destinationValue }];
 
       expect(() => applyReplacements(text, rules)).not.toThrow();
