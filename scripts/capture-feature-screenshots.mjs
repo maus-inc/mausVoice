@@ -50,7 +50,20 @@ const VIEWPORT = { width: 1600, height: 760 };
 async function main() {
   if (!existsSync(outputDir)) mkdirSync(outputDir, { recursive: true });
 
-  const browser = await chromium.launch();
+  let chromium;
+  try {
+    const mod = await import("playwright");
+    chromium = mod.chromium;
+  } catch {
+    console.error("playwright is not installed. Run: npm install playwright && npx playwright install chromium");
+    process.exit(1);
+  }
+
+  const launchArgs = { headless: true };
+  if (process.env.CI) {
+    launchArgs.args = ["--no-sandbox"];
+  }
+  const browser = await chromium.launch(launchArgs);
   const context = await browser.newContext({
     viewport: VIEWPORT,
     deviceScaleFactor: 1,
