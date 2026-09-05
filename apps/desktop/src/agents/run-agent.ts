@@ -37,12 +37,15 @@ const activeLoops = new Map<string, AgentLoop>();
  */
 const MAX_CONTEXT_VALUE_LENGTH = 64;
 
-/** True for C0 controls (U+0000–U+001F) and DEL (U+007F). Built without embedding
- * control-character literals in a regex (DeepSource flags those). Uses
- * `codePointOf` so non-BMP characters are not misread as surrogate units. */
+/**
+ * True for non-printable controls that can break a single log line:
+ * C0 (U+0000–U+001F), DEL (U+007F), and C1 (U+0080–U+009F). Built without
+ * embedding control-character literals in a regex (DeepSource flags those).
+ * Uses `codePointOf` so non-BMP characters are not misread as surrogate units.
+ */
 const isLogBreakingControl = (ch: string): boolean => {
   const code = codePointOf(ch);
-  return code <= 0x1f || code === 0x7f;
+  return code <= 0x1f || code === 0x7f || (code >= 0x80 && code <= 0x9f);
 };
 
 /** Collapse C0 control characters so a multi-line or binary-ish value cannot break the log line. */

@@ -13,5 +13,8 @@ export const countWords = (text: string): number => {
  * Prefer `codePointAt` over `charCodeAt` so non-BMP characters (emoji / astral
  * planes) are not misread as a high-surrogate unit. The `?? 0` fallback covers
  * the empty-string case where `codePointAt` returns `undefined`.
+ *
+ * Requires a runtime with `String.prototype.codePointAt` (Node engines >= 20
+ * in this monorepo's root package.json).
  */
 export const codePointOf = (text: string): number => text.codePointAt(0) ?? 0;

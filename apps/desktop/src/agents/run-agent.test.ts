@@ -13,18 +13,21 @@ const { loggerMock } = vi.hoisted(() => ({
 
 vi.mock("../utils/log.utils", () => ({ getLogger: () => loggerMock }));
 
-/** Build a string with C0 controls via char codes so the source has no control literals. */
+/** Build a string with control code points via fromCodePoint so the source has
+ * no control literals and non-BMP numerics stay well-formed. */
 const withControls = (...parts: Array<string | number>): string =>
   parts
-    .map((p) => (typeof p === "number" ? String.fromCharCode(p) : p))
+    .map((p) => (typeof p === "number" ? String.fromCodePoint(p) : p))
     .join("");
 
-/** True when any C0 control or DEL remains (matches sanitizeContextValue's range). */
+/** True when any C0/C1 control or DEL remains (matches sanitizeContextValue). */
 const hasLogBreakingControl = (value: string): boolean => {
   for (const ch of value) {
     // Same codePointOf helper as production — full Unicode scalar, not a surrogate.
     const code = codePointOf(ch);
-    if (code <= 0x1f || code === 0x7f) return true;
+    if (code <= 0x1f || code === 0x7f || (code >= 0x80 && code <= 0x9f)) {
+      return true;
+    }
   }
   return false;
 };
@@ -62,7 +65,7 @@ describe("safeSideEffect", () => {
   });
 
   it("collapses control characters in context values before logging", async () => {
-    // LF, TAB, VT, FF constructed without embedding control literals in source.
+    // LF, TAB, VT, FF, and a C1 control (NEL U+0085) — no control literals in source.
     const snippet = withControls(
       "line1",
       0x0a,
@@ -71,12 +74,14 @@ describe("safeSideEffect", () => {
       "line3",
       0x0b,
       0x0c,
+      0x85,
+      "end",
     );
     await safeSideEffect("label", { snippet }, () =>
       Promise.reject(new Error("boom")),
     );
     const message = String(loggerMock.error.mock.calls[0][0]);
     expect(hasLogBreakingControl(message)).toBe(false);
-    expect(message).toContain("snippet=line1 line2 line3");
+    expect(message).toContain("snippet=line1 line2 line3 end");
   });
 });
