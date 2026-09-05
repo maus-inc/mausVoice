@@ -14,10 +14,10 @@ vi.mock("@tauri-apps/api/event", () => ({ emit: vi.fn() }));
 vi.mock("../store");
 vi.mock("../utils/log.utils", () => ({
   getLogger: () => ({
-    error: () => {},
-    info: () => {},
-    warning: () => {},
-    verbose: () => {},
+    error: vi.fn(),
+    info: vi.fn(),
+    warning: vi.fn(),
+    verbose: vi.fn(),
   }),
 }));
 
@@ -43,7 +43,9 @@ describe("ephemeral-session.actions", () => {
         fn({ local });
       },
     );
-    (emit as ReturnType<typeof vi.fn>).mockResolvedValue(undefined);
+    (emit as ReturnType<typeof vi.fn>).mockImplementation(() =>
+      Promise.resolve(),
+    );
   });
 
   it("activates the session and emits the started event", async () => {

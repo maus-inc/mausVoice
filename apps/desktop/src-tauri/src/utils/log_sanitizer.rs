@@ -212,10 +212,10 @@ mod tests {
 
     #[test]
     fn test_redacts_connector_token() {
-        let input = "[2024-01-15][14:30:45.123][DEBUG][webview] Connector token: sk_live_abcdef1234567890";
+        let input = "[2024-01-15][14:30:45.123][DEBUG][webview] Connector token: connector-token-fixture-9f3k2m";
         let result = sanitize_log_content(input);
         assert!(result.contains("Connector token: [REDACTED]"));
-        assert!(!result.contains("sk_live_abcdef"));
+        assert!(!result.contains("connector-token-fixture"));
     }
 
     #[test]

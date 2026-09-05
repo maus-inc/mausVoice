@@ -216,7 +216,7 @@ can build on:
 
 Still open for later poles:
 
-- Emitters for the fifteen expansion events that nothing fires yet. Ephemeral
+- Emitters for the fourteen expansion events that nothing fires yet. Ephemeral
   sessions already emit their two.
 - Settings UI for the expansion flag toggles, including
   `ephemeralSessionEnabled`.
