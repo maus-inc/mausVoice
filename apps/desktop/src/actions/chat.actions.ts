@@ -100,19 +100,18 @@ export const deleteConversation = async (id: string): Promise<void> => {
   try {
     produceAppState((draft) => {
       // delete is the idiomatic Immer draft operation and matches
-      // the rest of the codebase. The dynamic-key delete is type-safe
-      // here (id keys into an id-keyed map); DeepSource flags it, so it
-      // is suppressed with the skipcq keyword the analyzer honors.
-      delete draft.conversationById[id]; // skipcq: JS-0320, JS-0323
+      // the rest of the codebase. DeepSource JS-0320 flags the dynamic
+      // key, but the deletion is intentional and type-safe here.
+      delete draft.conversationById[id]; // skipcq: JS-0320
       draft.chat.conversationIds = draft.chat.conversationIds.filter(
         (cid) => cid !== id,
       );
 
       const messageIds = draft.chatMessageIdsByConversationId[id] ?? [];
       for (const messageId of messageIds) {
-        delete draft.chatMessageById[messageId]; // skipcq: JS-0320, JS-0323
+        delete draft.chatMessageById[messageId]; // skipcq: JS-0320
       }
-      delete draft.chatMessageIdsByConversationId[id]; // skipcq: JS-0320, JS-0323
+      delete draft.chatMessageIdsByConversationId[id]; // skipcq: JS-0320
     });
   } finally {
     deletingConversationIds.delete(id);
