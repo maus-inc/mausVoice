@@ -365,8 +365,7 @@ const recordPostProcessFailure = (
   const postprocessDuration = performance.now() - postprocessStart;
   metadata.postprocessDurationMs = Math.round(postprocessDuration);
   metadata.postProcessFailed = true;
-  const message =
-    error instanceof Error ? error.message : "Post-processing failed";
+  const message = unknownToMessage(error) || "Post-processing failed";
   metadata.postProcessError = message;
   getLogger().error(`Post-processing request failed: ${message}`);
   warnings.push(message);
@@ -486,7 +485,7 @@ const applyPostProcessing = async (
     metadata.postProcessMode = "none";
     return rawTranscript;
   }
-  return runPostProcessingRequest({
+  return await runPostProcessingRequest({
     state,
     rawTranscript,
     toneId,

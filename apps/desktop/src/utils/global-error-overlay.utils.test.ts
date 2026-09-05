@@ -70,7 +70,12 @@ const stubResourceElements = ({
 };
 
 const stubImageElement = () => {
-  class HTMLImageElement {}
+  // The overlay only `instanceof`-checks image targets, so the stand-in
+  // carries no DOM surface; the tag marker exists so the class is not an
+  // accidental empty namespace.
+  class HTMLImageElement {
+    readonly tag = "img";
+  }
   vi.stubGlobal("HTMLImageElement", HTMLImageElement);
   return HTMLImageElement;
 };

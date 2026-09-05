@@ -115,16 +115,22 @@ export function rulesSection(raw) {
 // The `regex` value of the tauri-minisign-updater-private-key rule, or null
 // when no rule with that id carries a regex. Shared with
 // test-secret-history-scan.mjs so both scripts test the same rule. The id is
-// matched line-anchored and the regex key is then searched forward from it,
-// so there is no cross-text lazy quantifier to backtrack.
+// matched line-anchored, and the value is read with the same string scanner
+// stripTomlComments uses, so every TOML string form works and no cross-text
+// quantifier can backtrack.
 export function updaterRulePattern(rules) {
-  const idMatch = /^id\s*=\s*"tauri-minisign-updater-private-key"\s*$/m.exec(
-    rules,
-  );
+  const idMatch =
+    /^id\s*=\s*"tauri-minisign-updater-private-key"\s*$/m.exec(rules);
   if (!idMatch) return null;
   const afterId = rules.slice(idMatch.index + idMatch[0].length);
-  const regexMatch = /regex\s*=\s*'''?([^']*)'''?/.exec(afterId);
-  return regexMatch ? regexMatch[1].trim() : null;
+  const keyMatch = /^[ \t]*regex[ \t]*=[ \t]*/m.exec(afterId);
+  if (!keyMatch) return null;
+  const valueStart = keyMatch.index + keyMatch[0].length;
+  const quote = afterId[valueStart];
+  if (quote !== '"' && quote !== "'") return null;
+  const valueEnd = stringEnd(afterId, valueStart);
+  const delimiter = quoteLengthAt(afterId, valueStart);
+  return afterId.slice(valueStart + delimiter, valueEnd - delimiter).trim();
 }
 
 function main() {
