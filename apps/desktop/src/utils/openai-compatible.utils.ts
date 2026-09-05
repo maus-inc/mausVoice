@@ -39,3 +39,9 @@ export const buildOpenAICompatibleTranscriptionUrl = (
       : OPENAI_COMPATIBLE_DEFAULT_TRANSCRIPTION_PATH;
   return `${buildOpenAICompatibleUrl(baseUrl, includeV1Path)}${path}`;
 };
+
+export const appendOpenAICompatiblePath = (
+  apiBaseUrl: string,
+  path: string,
+): string =>
+  `${normalizeOpenAICompatibleBaseUrl(apiBaseUrl)}/${path.replace(/^\/+/, "")}`;

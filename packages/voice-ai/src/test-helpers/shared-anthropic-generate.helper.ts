@@ -42,9 +42,7 @@ export function createAnthropicGenerateTests({
       }));
 
       const mod = await loadModule();
-      const fn = mod[functionName] as (
-        params: Record<string, unknown>,
-      ) => Promise<unknown>;
+      const fn = mod[functionName] as (params: Record<string, unknown>) => Promise<unknown>;
 
       await fn(params);
 

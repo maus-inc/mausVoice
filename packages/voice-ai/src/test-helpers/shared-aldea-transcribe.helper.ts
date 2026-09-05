@@ -37,9 +37,7 @@ export function createAldeaTranscribeTests({
       const fetchMock = buildFetchMock(transcript);
 
       const mod = await loadModule();
-      const fn = mod[functionName] as (
-        params: Record<string, unknown>,
-      ) => Promise<{ text: string }>;
+      const fn = mod[functionName] as (params: Record<string, unknown>) => Promise<{ text: string }>;
 
       const result = await fn(params);
 
