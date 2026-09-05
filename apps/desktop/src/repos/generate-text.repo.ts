@@ -10,12 +10,15 @@ import {
   azureOpenaiStreamChat,
   claudeGenerateTextResponse,
   claudeStreamChat,
+  CLAUDE_MODELS,
   ClaudeModel,
   cerebrasGenerateTextResponse,
   cerebrasStreamChat,
+  CEREBRAS_MODELS,
   CerebrasModel,
   deepseekGenerateTextResponse,
   deepseekStreamChat,
+  DEEPSEEK_MODELS,
   DeepseekModel,
   GeminiGenerateTextModel,
   geminiGenerateTextResponse,
@@ -342,7 +345,7 @@ export class DeepseekGenerateTextRepo extends BaseGenerateTextRepo {
   constructor(apiKey: string, model: string | null) {
     super();
     this.apiKey = apiKey;
-    this.model = (model as DeepseekModel) ?? "deepseek-chat";
+    this.model = (model as DeepseekModel) ?? DEEPSEEK_MODELS[0];
   }
 
   async generateText(input: GenerateTextInput): Promise<GenerateTextOutput> {
@@ -418,7 +421,7 @@ export class ClaudeGenerateTextRepo extends BaseGenerateTextRepo {
   constructor(apiKey: string, model: string | null) {
     super();
     this.apiKey = apiKey;
-    this.model = (model as ClaudeModel) ?? "claude-sonnet-4-20250514";
+    this.model = (model as ClaudeModel) ?? CLAUDE_MODELS[0];
   }
 
   async generateText(input: GenerateTextInput): Promise<GenerateTextOutput> {
@@ -456,7 +459,7 @@ export class CerebrasGenerateTextRepo extends BaseGenerateTextRepo {
   constructor(apiKey: string, model: string | null) {
     super();
     this.apiKey = apiKey;
-    this.model = (model as CerebrasModel) ?? "zai-glm-4.7";
+    this.model = (model as CerebrasModel) ?? CEREBRAS_MODELS[0];
   }
 
   async generateText(input: GenerateTextInput): Promise<GenerateTextOutput> {

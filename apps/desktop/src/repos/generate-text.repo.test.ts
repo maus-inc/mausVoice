@@ -1,11 +1,17 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   azureOpenAIGenerateText,
+  CEREBRAS_MODELS,
   cerebrasGenerateTextResponse,
+  CLAUDE_MODELS,
   claudeGenerateTextResponse,
+  DEEPSEEK_MODELS,
   deepseekGenerateTextResponse,
+  GEMINI_GENERATE_TEXT_MODELS,
   geminiGenerateTextResponse,
+  GENERATE_TEXT_MODELS,
   groqGenerateTextResponse,
+  OPENAI_GENERATE_TEXT_MODELS,
   openaiGenerateTextResponse,
   openrouterGenerateTextResponse,
 } from "@maus-inc/voice-ai";
@@ -165,4 +171,65 @@ describe("GenerateTextInput.maxTokens forwarding", () => {
     const call = vi.mocked(groqGenerateTextResponse).mock.calls[0][0];
     expect(call.maxTokens).toBeUndefined();
   });
+});
+
+describe("default model fallback when no model is stored", () => {
+  const cases: [
+    name: string,
+    build: () => { generateText: (i: { prompt: string }) => Promise<unknown> },
+    spy: () => { mock: { calls: unknown[][] } },
+    allowed: readonly string[],
+  ][] = [
+    [
+      "Deepseek",
+      () => new DeepseekGenerateTextRepo("k", null),
+      () => vi.mocked(deepseekGenerateTextResponse),
+      DEEPSEEK_MODELS,
+    ],
+    [
+      "Claude",
+      () => new ClaudeGenerateTextRepo("k", null),
+      () => vi.mocked(claudeGenerateTextResponse),
+      CLAUDE_MODELS,
+    ],
+    [
+      "Cerebras",
+      () => new CerebrasGenerateTextRepo("k", null),
+      () => vi.mocked(cerebrasGenerateTextResponse),
+      CEREBRAS_MODELS,
+    ],
+    [
+      "Groq",
+      () => new GroqGenerateTextRepo("k", null),
+      () => vi.mocked(groqGenerateTextResponse),
+      GENERATE_TEXT_MODELS,
+    ],
+    [
+      "OpenAI",
+      () => new OpenAIGenerateTextRepo("k", null),
+      () => vi.mocked(openaiGenerateTextResponse),
+      OPENAI_GENERATE_TEXT_MODELS,
+    ],
+    [
+      "Gemini",
+      () => new GeminiGenerateTextRepo("k", null),
+      () => vi.mocked(geminiGenerateTextResponse),
+      GEMINI_GENERATE_TEXT_MODELS,
+    ],
+  ];
+
+  it.each(cases)(
+    "%s falls back to a model the provider still supports",
+    async (_name, build, spy, allowed) => {
+      const mocked = spy() as unknown as {
+        mockResolvedValue: (v: unknown) => void;
+        mock: { calls: { model: string }[][] };
+      };
+      mocked.mockResolvedValue(mockResponse("hi"));
+
+      await build().generateText({ prompt: "p" });
+
+      expect(allowed).toContain(mocked.mock.calls[0]![0]!.model);
+    },
+  );
 });
