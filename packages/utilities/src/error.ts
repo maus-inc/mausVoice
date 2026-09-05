@@ -22,6 +22,9 @@ const CLOSER_TO_OPENER: Readonly<Record<string, string>> = {
   "]": "[",
   "}": "{",
 };
+const OPENER_TO_CLOSER: Readonly<Record<string, string>> = Object.fromEntries(
+  Object.entries(CLOSER_TO_OPENER).map(([closer, opener]) => [opener, closer]),
+);
 /**
  * Bare values that describe the field instead of carrying a credential
  * (`api_key=required`, `authorization: missing`). Left readable so validation
@@ -52,22 +55,24 @@ const SECRET_KEY_ALIASES = new Set([
 const isSecretKey = (key: string): boolean =>
   SECRET_KEY_ALIASES.has(key.replace(/[_-]/g, "").toLowerCase());
 
-const countChar = (text: string, char: string): number =>
-  text.split(char).length - 1;
-
 /**
  * Splits trailing closing brackets that have no matching opener inside the
  * value, so they are kept as surrounding punctuation instead of being
- * treated as part of the secret.
+ * treated as part of the secret. Invariant: the returned head is the longest
+ * prefix whose bracket balance is not negative for any closer type, and the
+ * tail is only ever made of `)`, `]`, `}`. One backward pass, O(n).
  */
 const splitTrailingClosers = (value: string): [string, string] => {
+  const balance: Record<string, number> = { ")": 0, "]": 0, "}": 0 };
+  for (const char of value) {
+    if (char in CLOSER_TO_OPENER) balance[char] += 1;
+    else if (char in OPENER_TO_CLOSER) balance[OPENER_TO_CLOSER[char]] -= 1;
+  }
   let end = value.length;
   while (end > 0) {
     const closer = value[end - 1];
-    const opener = CLOSER_TO_OPENER[closer];
-    if (opener === undefined) break;
-    const head = value.slice(0, end);
-    if (countChar(head, closer) <= countChar(head, opener)) break;
+    if (!(closer in CLOSER_TO_OPENER) || balance[closer] <= 0) break;
+    balance[closer] -= 1;
     end -= 1;
   }
   return [value.slice(0, end), value.slice(end)];
