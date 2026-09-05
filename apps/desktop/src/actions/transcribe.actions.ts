@@ -4,7 +4,7 @@ import {
   Transcription,
   TranscriptionAudioSnapshot,
 } from "@maus-inc/types";
-import { countWords, dedup } from "@maus-inc/utilities";
+import { countWords, dedup, unknownToMessage } from "@maus-inc/utilities";
 import dayjs from "dayjs";
 import {
   getGenerateTextRepo,
@@ -232,17 +232,6 @@ export const transcribeAudio = async ({
     metadata,
     segments: transcribeOutput.segments ?? null,
   };
-};
-
-/** Coerce any thrown value to a readable message without `[object Object]`. */
-const unknownToMessage = (error: unknown): string => {
-  if (typeof error === "string") return error;
-  if (error instanceof Error) return error.message;
-  try {
-    return JSON.stringify(error) ?? String(error);
-  } catch {
-    return String(error);
-  }
 };
 
 /**

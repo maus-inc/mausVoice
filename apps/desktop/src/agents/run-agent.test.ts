@@ -12,6 +12,21 @@ const { loggerMock } = vi.hoisted(() => ({
 
 vi.mock("../utils/log.utils", () => ({ getLogger: () => loggerMock }));
 
+/** Build a string with C0 controls via char codes so the source has no control literals. */
+const withControls = (...parts: Array<string | number>): string =>
+  parts
+    .map((p) => (typeof p === "number" ? String.fromCharCode(p) : p))
+    .join("");
+
+/** True when any C0 control or DEL remains (matches sanitizeContextValue's range). */
+const hasLogBreakingControl = (value: string): boolean => {
+  for (const ch of value) {
+    const code = ch.charCodeAt(0);
+    if (code <= 0x1f || code === 0x7f) return true;
+  }
+  return false;
+};
+
 describe("safeSideEffect", () => {
   beforeEach(() => {
     vi.clearAllMocks();
@@ -45,13 +60,21 @@ describe("safeSideEffect", () => {
   });
 
   it("collapses control characters in context values before logging", async () => {
-    await safeSideEffect(
-      "label",
-      { snippet: "line1\nline2\tline3\u000b\u000c" },
-      () => Promise.reject(new Error("boom")),
+    // LF, TAB, VT, FF constructed without embedding control literals in source.
+    const snippet = withControls(
+      "line1",
+      0x0a,
+      "line2",
+      0x09,
+      "line3",
+      0x0b,
+      0x0c,
+    );
+    await safeSideEffect("label", { snippet }, () =>
+      Promise.reject(new Error("boom")),
     );
     const message = String(loggerMock.error.mock.calls[0][0]);
-    expect(message).not.toMatch(/[\n\r\t\u000b\u000c]/);
+    expect(hasLogBreakingControl(message)).toBe(false);
     expect(message).toContain("snippet=line1 line2 line3");
   });
 });

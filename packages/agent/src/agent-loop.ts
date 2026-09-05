@@ -10,22 +10,11 @@ import type {
   AgentTool,
   AgentToolOutput,
 } from "./types";
+import { unknownToMessage } from "@maus-inc/utilities";
 
 /** Render a tool's successful result to a string. */
 const stringifyToolResult = (result: unknown): string =>
   typeof result === "string" ? result : JSON.stringify(result ?? {});
-
-/** Coerce an unknown thrown value into a readable string without producing
- * `[object Object]` for a plain object. */
-const safeStringify = (value: unknown): string => {
-  if (typeof value === "string") return value;
-  if (value instanceof Error) return value.message;
-  try {
-    return JSON.stringify(value) ?? String(value);
-  } catch {
-    return String(value);
-  }
-};
 
 export class AgentLoop {
   private config: AgentConfig;
@@ -181,7 +170,7 @@ export class AgentLoop {
       // as a tool-result message so the model can recover or end cleanly.
       return {
         success: false,
-        failureReason: err instanceof Error ? err.message : safeStringify(err),
+        failureReason: unknownToMessage(err),
       };
     }
   }

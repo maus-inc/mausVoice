@@ -1,7 +1,7 @@
 import { AgentLoop } from "@repo/agent";
 import type { AgentLlmProvider, AgentTool } from "@repo/agent";
 import type { LlmMessage, LlmToolCall, ToolInfo } from "@maus-inc/types";
-import { delayed } from "@maus-inc/utilities";
+import { delayed, unknownToMessage } from "@maus-inc/utilities";
 import { createChatMessage } from "../actions/chat.actions";
 import {
   executeTool,
@@ -37,10 +37,20 @@ const activeLoops = new Map<string, AgentLoop>();
  */
 const MAX_CONTEXT_VALUE_LENGTH = 64;
 
+/** True for C0 controls (U+0000–U+001F) and DEL (U+007F). Built without embedding
+ * control-character literals in a regex (DeepSource flags those). */
+const isLogBreakingControl = (ch: string): boolean => {
+  const code = ch.charCodeAt(0);
+  return code <= 0x1f || code === 0x7f;
+};
+
 /** Collapse C0 control characters so a multi-line or binary-ish value cannot break the log line. */
 const sanitizeContextValue = (value: string): string => {
-  // Includes \0–\x1f and DEL (\x7f): newlines, tabs, VT, FF, and other controls.
-  const singleLine = value.replace(/[\u0000-\u001f\u007f]+/g, " ").trim();
+  let singleLine = "";
+  for (const ch of value) {
+    singleLine += isLogBreakingControl(ch) ? " " : ch;
+  }
+  singleLine = singleLine.replace(/ {2,}/g, " ").trim();
   return singleLine.length > MAX_CONTEXT_VALUE_LENGTH
     ? `${singleLine.slice(0, MAX_CONTEXT_VALUE_LENGTH)}…`
     : singleLine;
@@ -59,7 +69,7 @@ export async function safeSideEffect<T>(
   try {
     return await fn();
   } catch (error) {
-    const message = error instanceof Error ? error.message : String(error);
+    const message = unknownToMessage(error);
     getLogger().error(
       `Agent non-critical side effect failed (${label}, ${summarizeContext(
         context,
