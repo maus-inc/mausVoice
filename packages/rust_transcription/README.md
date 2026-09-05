@@ -30,6 +30,11 @@ Supported models:
 - NVIDIA ONNX: `parakeet-ctc-0.6b`, `parakeet-tdt-0.6b`, `canary-1b`
 - sherpa-onnx: `sense-voice` (aliases `sensevoice`, `sense_voice`)
 
+Model families are distinguished by their runtime backend:
+- **GGML/whisper.cpp**: CPU-optimized Whisper models with varying size/accuracy tradeoffs
+- **NVIDIA ONNX**: GPU-accelerated models using NVIDIA's ONNX Runtime (Parakeet and Canary)
+- **sherpa-onnx**: sherpa-onnx-based models for efficient local inference (SenseVoice supports multilingual speech-to-text with punctuation and timestamps)
+
 ## Build
 
 From repository root:
