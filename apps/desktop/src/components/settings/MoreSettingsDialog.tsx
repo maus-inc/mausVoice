@@ -18,6 +18,7 @@ import type {
 } from "@maus-inc/types";
 import { ChangeEvent, useEffect, useRef, useState } from "react";
 import { FormattedMessage, useIntl } from "react-intl";
+import { logOnRejection } from "../../utils/promise.utils";
 import {
   setDictationLimitMinutes,
   setDictationPillVisibility,
@@ -155,7 +156,10 @@ export const MoreSettingsDialog = () => {
     }
 
     lastCommittedDictationLimitMinutesRef.current = normalized;
-    void setDictationLimitMinutes(normalized);
+    logOnRejection(
+      setDictationLimitMinutes(normalized),
+      "settings dialog: setDictationLimitMinutes",
+    );
   };
 
   const handleClose = () => {
@@ -168,70 +172,106 @@ export const MoreSettingsDialog = () => {
 
   const handleToggleShowUpdates = (event: ChangeEvent<HTMLInputElement>) => {
     const showUpdates = event.target.checked;
-    void setIgnoreUpdateDialog(!showUpdates);
+    logOnRejection(
+      setIgnoreUpdateDialog(!showUpdates),
+      "settings dialog: setIgnoreUpdateDialog",
+    );
   };
 
   const handleToggleIncognitoMode = (event: ChangeEvent<HTMLInputElement>) => {
     const enabled = event.target.checked;
-    void setIncognitoModeEnabled(enabled);
+    logOnRejection(
+      setIncognitoModeEnabled(enabled),
+      "settings dialog: setIncognitoModeEnabled",
+    );
   };
 
   const handleToggleIncognitoIncludeInStats = (
     event: ChangeEvent<HTMLInputElement>,
   ) => {
     const enabled = event.target.checked;
-    void setIncognitoModeIncludeInStats(enabled);
+    logOnRejection(
+      setIncognitoModeIncludeInStats(enabled),
+      "settings dialog: setIncognitoModeIncludeInStats",
+    );
   };
 
   const handleDictationPillVisibilityChange = (
     event: SelectChangeEvent<DictationPillVisibility>,
   ) => {
     const visibility = event.target.value as DictationPillVisibility;
-    void setDictationPillVisibility(visibility);
+    logOnRejection(
+      setDictationPillVisibility(visibility),
+      "settings dialog: setDictationPillVisibility",
+    );
   };
 
   const handlePillResetMonitorStrategyChange = (
     strategy: PillResetMonitorStrategy,
   ) => {
-    void setPillResetMonitorStrategy(strategy);
+    logOnRejection(
+      setPillResetMonitorStrategy(strategy),
+      "settings dialog: setPillResetMonitorStrategy",
+    );
   };
 
   const handleToggleRealtimeOutput = (event: ChangeEvent<HTMLInputElement>) => {
-    void setRealtimeOutputEnabled(event.target.checked);
+    logOnRejection(
+      setRealtimeOutputEnabled(event.target.checked),
+      "settings dialog: setRealtimeOutputEnabled",
+    );
   };
 
   const handleToggleSpokenCommands = (event: ChangeEvent<HTMLInputElement>) => {
-    void setSpokenCommandsEnabled(event.target.checked);
+    logOnRejection(
+      setSpokenCommandsEnabled(event.target.checked),
+      "settings dialog: setSpokenCommandsEnabled",
+    );
   };
 
   const handleToggleReviewBeforeInsert = (
     event: ChangeEvent<HTMLInputElement>,
   ) => {
-    void setReviewBeforeInsert(event.target.checked);
+    logOnRejection(
+      setReviewBeforeInsert(event.target.checked),
+      "settings dialog: setReviewBeforeInsert",
+    );
   };
 
   const handleToggleHallucinationFilter = (
     event: ChangeEvent<HTMLInputElement>,
   ) => {
-    void setHallucinationFilterEnabled(event.target.checked);
+    logOnRejection(
+      setHallucinationFilterEnabled(event.target.checked),
+      "settings dialog: setHallucinationFilterEnabled",
+    );
   };
 
   const handleToggleInDictationStyleSwitching = (
     event: ChangeEvent<HTMLInputElement>,
   ) => {
-    void setInDictationStyleSwitchingEnabled(event.target.checked);
+    logOnRejection(
+      setInDictationStyleSwitchingEnabled(event.target.checked),
+      "settings dialog: setInDictationStyleSwitchingEnabled",
+    );
   };
 
   const handleToggleAutoLearnDictionary = (
     event: ChangeEvent<HTMLInputElement>,
   ) => {
-    void setAutoLearnDictionaryEnabled(event.target.checked);
+    logOnRejection(
+      setAutoLearnDictionaryEnabled(event.target.checked),
+      "settings dialog: setAutoLearnDictionaryEnabled",
+    );
   };
 
   const handleToggleAutoLearnFromEdits = (
     event: ChangeEvent<HTMLInputElement>,
   ) => {
-    void setAutoLearnFromEditsEnabled(event.target.checked);
+    logOnRejection(
+      setAutoLearnFromEditsEnabled(event.target.checked),
+      "settings dialog: setAutoLearnFromEditsEnabled",
+    );
   };
 
   const handleToggleDisablePillRewards = (
@@ -243,7 +283,10 @@ export const MoreSettingsDialog = () => {
   };
 
   const handleToggleMenuBarIcon = (event: ChangeEvent<HTMLInputElement>) => {
-    void setMenuBarIconHidden(!event.target.checked);
+    logOnRejection(
+      setMenuBarIconHidden(!event.target.checked),
+      "settings dialog: setMenuBarIconHidden",
+    );
   };
 
   const handleToggleAutoStyleLoading = (
@@ -276,7 +319,10 @@ export const MoreSettingsDialog = () => {
     }
 
     lastCommittedHandsFreeDelayMsRef.current = normalized;
-    void setHandsFreeDelayMs(normalized);
+    logOnRejection(
+      setHandsFreeDelayMs(normalized),
+      "settings dialog: setHandsFreeDelayMs",
+    );
   };
 
   const handleHandsFreeDelayChange = (event: ChangeEvent<HTMLInputElement>) => {
@@ -300,7 +346,10 @@ export const MoreSettingsDialog = () => {
 
   const handleStylingModeChange = (event: SelectChangeEvent<string>) => {
     const value = event.target.value;
-    void setStylingMode(value === "" ? null : (value as StylingMode));
+    logOnRejection(
+      setStylingMode(value === "" ? null : (value as StylingMode)),
+      "settings dialog: setStylingMode",
+    );
   };
 
   const openMultiDeviceDialog = () => {

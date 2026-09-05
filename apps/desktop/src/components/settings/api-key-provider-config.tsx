@@ -24,6 +24,10 @@ import {
   ollamaTestIntegration,
 } from "../../utils/ollama.utils";
 import { OPENAI_COMPATIBLE_DEFAULT_URL } from "../../utils/openai-compatible.utils";
+import {
+  createOpenAICompatibleFetch,
+  secureFetch,
+} from "../../utils/secure-fetch.utils";
 import { speachesTestIntegration } from "../../utils/speaches.utils";
 import type { ApiKeyListContext } from "./ApiKeyList";
 
@@ -73,16 +77,23 @@ function requireApiKey(apiKey: SettingsApiKey): string {
 }
 
 function standardTestConfig(
-  testFn: (args: { apiKey: string }) => Promise<boolean>,
+  testFn: (args: {
+    apiKey: string;
+    customFetch?: typeof globalThis.fetch;
+  }) => Promise<boolean>,
 ): ProviderFormConfig["testIntegration"] {
-  return (apiKey) => testFn({ apiKey: requireApiKey(apiKey) });
+  return (apiKey) =>
+    testFn({ apiKey: requireApiKey(apiKey), customFetch: secureFetch });
 }
 
 const STANDARD_PROVIDERS: Record<
   string,
   {
     displayName: string;
-    testFn: (args: { apiKey: string }) => Promise<boolean>;
+    testFn: (args: {
+      apiKey: string;
+      customFetch?: typeof globalThis.fetch;
+    }) => Promise<boolean>;
   }
 > = {
   groq: { displayName: "Groq", testFn: groqTestIntegration },
@@ -124,6 +135,7 @@ const ASSEMBLYAI_CONFIG: ProviderFormConfig = {
     assemblyaiTestIntegration({
       apiKey: requireApiKey(apiKey),
       model: apiKey.transcriptionModel ?? null,
+      customFetch: secureFetch,
     }),
 };
 
@@ -195,6 +207,7 @@ function getOpenAICompatibleConfig(
       openaiCompatibleTestIntegration({
         baseUrl: apiKey.baseUrl || OPENAI_COMPATIBLE_DEFAULT_URL,
         apiKey: apiKey.keyFull || undefined,
+        customFetch: createOpenAICompatibleFetch(apiKey.id),
       }),
   };
 }
@@ -253,6 +266,7 @@ const AZURE_OPENAI_CONFIG: ProviderFormConfig = {
     return azureOpenAITestIntegration({
       apiKey: key,
       endpoint: apiKey.baseUrl,
+      customFetch: secureFetch,
     });
   },
 };
