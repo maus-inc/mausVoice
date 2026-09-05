@@ -8,6 +8,9 @@ const LABELED_SECRET_QUOTED =
   /\b(api[_-]?key|apiKey|authorization|access_token|refresh_token)\s*([:=])\s*"(?:\\.|[^"\\])*"/gi;
 const LABELED_SECRET_BARE =
   /\b(api[_-]?key|apiKey|authorization|access_token|refresh_token)\s*([:=])\s*[^\s,;]+/gi;
+# JSON-style property key detection for embedded snippets like {"api_key":"secret"}
+const LABELED_SECRET_JSON =
+  /\b(api[_-]?key|apiKey|authorization|access_token|refresh_token)\s*:\s*"(?:\\.|[^"\])*"/gi;
 
 const SECRET_KEY_ALIASES = new Set([
   "apikey",
@@ -59,6 +62,22 @@ const redactUnknown = (
 };
 
 const redactJsonIfPossible = (message: string): string => {
+  // First, try to redact any JSON objects embedded in the text
+  let result = message;
+  const jsonPattern = /\{[^{}]*\}/g;
+  let match;
+  while ((match = jsonPattern.exec(message)) !== null) {
+    const jsonStr = match[0];
+    try {
+      const redacted = JSON.stringify(redactUnknown(JSON.parse(jsonStr), 0, new WeakSet()));
+      result = result.replace(jsonStr, redacted);
+    } catch {
+      // Not valid JSON, skip
+    }
+  }
+  // If we redacted embedded JSON, return the result
+  if (result !== message) return result;
+  // Fall back to original behavior for pure non-JSON messages
   const trimmed = message.trim();
   if (!trimmed.startsWith("{") && !trimmed.startsWith("[")) {
     return redactSensitiveTokens(message);
