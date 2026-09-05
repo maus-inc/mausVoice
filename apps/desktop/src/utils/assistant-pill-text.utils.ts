@@ -159,13 +159,24 @@ const stripTagsOnce = (input: string): string => {
   return out;
 };
 
+const decodeNumericEntity = (entity: string, codePoint: number): string =>
+  codePoint >= 0 && codePoint <= 0x10ffff
+    ? String.fromCodePoint(codePoint)
+    : entity;
+
 const unescapeEntities = (input: string): string =>
   input
     .replaceAll("&amp;", "&")
     .replaceAll("&lt;", "<")
     .replaceAll("&gt;", ">")
     .replaceAll("&quot;", '"')
-    .replaceAll("&#39;", "'");
+    .replaceAll("&#39;", "'")
+    .replace(/&#(\d+);/g, (entity, decimal: string) =>
+      decodeNumericEntity(entity, Number(decimal)),
+    )
+    .replace(/&#x([0-9a-fA-F]+);/g, (entity, hex: string) =>
+      decodeNumericEntity(entity, parseInt(hex, 16)),
+    );
 
 const stripHtml = (input: string): string => {
   // Strip real tags, decode entities, then strip again so a source-encoded

@@ -11,7 +11,9 @@ import {
   getTranscribeAudioRepo,
   getTranscriptionRepo,
 } from "../repos";
+import type { GenerateTextOutput } from "../repos/generate-text.repo";
 import { TranscribeAudioOutput } from "../repos/transcribe-audio.repo";
+import type { AppState } from "../state/app.state";
 import { getAppState, produceAppState } from "../store";
 import { PostProcessingMode, TranscriptionMode } from "../types/ai.types";
 import { AudioSamples } from "../types/audio.types";
@@ -268,6 +270,173 @@ const parseProcessedTranscript = (
   }
 };
 
+type RunPostProcessingRequestArgs = {
+  state: AppState;
+  rawTranscript: string;
+  toneId: Nullable<string>;
+  toneName: Nullable<string>;
+  dictationLanguageOverride?: string;
+  genRepo: NonNullable<ReturnType<typeof getGenerateTextRepo>["repo"]>;
+  genApiKeyId: Nullable<string>;
+  genProvider: Nullable<string>;
+  metadata: PostProcessMetadata;
+  warnings: string[];
+};
+
+const buildPostProcessingRequest = (
+  state: AppState,
+  rawTranscript: string,
+  toneId: Nullable<string>,
+  dictationLanguage: string,
+): { system: string; prompt: string } => {
+  const toneConfig = getToneConfig(state, toneId);
+  const input: PostProcessingPromptInput = {
+    transcript: rawTranscript,
+    userName: getMyUserName(state),
+    dictationLanguage,
+    tone: toneConfig,
+  };
+  return {
+    system: buildSystemPostProcessingTonePrompt(input),
+    prompt: buildPostProcessingPrompt(input),
+  };
+};
+
+const applyPostProcessSuccess = (
+  genOutput: GenerateTextOutput,
+  processedTranscript: string,
+  metadata: PostProcessMetadata,
+  warnings: string[],
+  postprocessStart: number,
+): string => {
+  const postprocessDuration = performance.now() - postprocessStart;
+  metadata.postprocessDurationMs = Math.round(postprocessDuration);
+
+  getLogger().info(
+    `Post-processing complete in ${Math.round(postprocessDuration)}ms`,
+  );
+  getLogger().verbose("LLM raw output length:", genOutput.text.length);
+
+  const parseResult = parseProcessedTranscript(
+    genOutput.text,
+    processedTranscript,
+  );
+  const nextTranscript = parseResult.transcript;
+  if (parseResult.warning) {
+    getLogger().warning(parseResult.warning);
+    warnings.push(parseResult.warning);
+  } else {
+    getLogger().verbose("Processed transcript length:", nextTranscript.length);
+  }
+
+  metadata.postProcessMode =
+    genOutput.metadata?.postProcessingMode || metadata.postProcessMode;
+  metadata.postProcessDevice = genOutput.metadata?.inferenceDevice || null;
+  // Clear any prior failure flags so a successful run never leaves a
+  // stale postProcessFailed=true on an updated row.
+  metadata.postProcessFailed = false;
+  metadata.postProcessError = null;
+  getLogger().verbose(
+    "Post-process mode:",
+    metadata.postProcessMode,
+    "device:",
+    metadata.postProcessDevice,
+  );
+  return nextTranscript;
+};
+
+const recordPostProcessFailure = (
+  error: unknown,
+  metadata: PostProcessMetadata,
+  warnings: string[],
+  postprocessStart: number,
+): void => {
+  const postprocessDuration = performance.now() - postprocessStart;
+  metadata.postprocessDurationMs = Math.round(postprocessDuration);
+  metadata.postProcessFailed = true;
+  const message =
+    error instanceof Error ? error.message : "Post-processing failed";
+  metadata.postProcessError = message;
+  getLogger().error(`Post-processing request failed: ${message}`);
+  warnings.push(message);
+};
+
+const runPostProcessingRequest = async ({
+  state,
+  rawTranscript,
+  toneId,
+  toneName,
+  dictationLanguageOverride,
+  genRepo,
+  genApiKeyId,
+  genProvider,
+  metadata,
+  warnings,
+}: RunPostProcessingRequestArgs): Promise<string> => {
+  getLogger().verbose(
+    `Post-processing with tone=${toneName ?? "default"}, provider=${genProvider ?? "none"}, apiKeyId=${genApiKeyId ?? "none"}`,
+  );
+
+  // Persist attribution BEFORE the network request so a 402, timeout, or
+  // cancellation still records which provider was selected. We never reset
+  // this to "none" on failure; that would hide the user's choice.
+  metadata.postProcessApiKeyId = genApiKeyId;
+  metadata.postProcessProvider = genProvider;
+  metadata.postProcessMode = "api";
+
+  const dictationLanguage = dictationLanguageOverride
+    ? coerceToDictationLanguage(dictationLanguageOverride)
+    : await loadMyEffectiveDictationLanguage(state);
+  const { system, prompt } = buildPostProcessingRequest(
+    state,
+    rawTranscript,
+    toneId,
+    dictationLanguage,
+  );
+  metadata.postProcessPrompt = prompt;
+  getLogger().verbose(
+    "Post-process language:",
+    dictationLanguage,
+    "toneName:",
+    toneName ?? "unknown",
+  );
+  getLogger().verbose(
+    "Post-process prompt length:",
+    prompt.length,
+    "system length:",
+    system.length,
+  );
+
+  const postprocessStart = performance.now();
+  getLogger().verbose("Calling LLM for post-processing");
+  try {
+    const genOutput = await genRepo.generateText({
+      system,
+      prompt,
+      jsonResponse: {
+        name: "transcription_cleaning",
+        description: "JSON response with the processed transcription",
+        schema: PROCESSED_TRANSCRIPTION_JSON_SCHEMA,
+      },
+    });
+    return applyPostProcessSuccess(
+      genOutput,
+      rawTranscript,
+      metadata,
+      warnings,
+      postprocessStart,
+    );
+  } catch (error) {
+    // Terminal provider failure (e.g. Cerebras 402) or network error. Keep
+    // the raw transcript and the selected-provider attribution; do not
+    // throw into the dictation pipeline or wait for the unrelated 60s
+    // timeout. The sanitized message never includes the key, auth header,
+    // or transcript.
+    recordPostProcessFailure(error, metadata, warnings, postprocessStart);
+    return rawTranscript;
+  }
+};
+
 export const postProcessTranscript = async ({
   rawTranscript,
   toneId,
@@ -294,107 +463,18 @@ export const postProcessTranscript = async ({
     getLogger().info(`Post-processing disabled for tone=${toneId}`);
     metadata.postProcessMode = "none";
   } else if (genRepo) {
-    getLogger().verbose(
-      `Post-processing with tone=${toneId ?? "default"}, provider=${genProvider ?? "none"}, apiKeyId=${genApiKeyId ?? "none"}`,
-    );
-
-    // Persist attribution BEFORE the network request so a 402, timeout, or
-    // cancellation still records which provider was selected. We never reset
-    // this to "none" on failure; that would hide the user's choice.
-    metadata.postProcessApiKeyId = genApiKeyId;
-    metadata.postProcessProvider = genProvider;
-    metadata.postProcessMode = "api";
-
-    const dictationLanguage = dictationLanguageOverride
-      ? coerceToDictationLanguage(dictationLanguageOverride)
-      : await loadMyEffectiveDictationLanguage(state);
-    const toneConfig = getToneConfig(state, toneId);
-    getLogger().verbose(
-      "Post-process language:",
-      dictationLanguage,
-      "toneName:",
-      tone?.name ?? "unknown",
-    );
-
-    const promptInput: PostProcessingPromptInput = {
-      transcript: rawTranscript,
-      userName: getMyUserName(state),
-      dictationLanguage,
-      tone: toneConfig,
-    };
-    const ppSystem = buildSystemPostProcessingTonePrompt(promptInput);
-    const ppPrompt = buildPostProcessingPrompt(promptInput);
-    metadata.postProcessPrompt = ppPrompt;
-    getLogger().verbose(
-      "Post-process prompt length:",
-      ppPrompt.length,
-      "system length:",
-      ppSystem.length,
-    );
-
-    const postprocessStart = performance.now();
-    getLogger().verbose("Calling LLM for post-processing");
-    try {
-      const genOutput = await genRepo.generateText({
-        system: ppSystem,
-        prompt: ppPrompt,
-        jsonResponse: {
-          name: "transcription_cleaning",
-          description: "JSON response with the processed transcription",
-          schema: PROCESSED_TRANSCRIPTION_JSON_SCHEMA,
-        },
-      });
-      const postprocessDuration = performance.now() - postprocessStart;
-      metadata.postprocessDurationMs = Math.round(postprocessDuration);
-
-      getLogger().info(
-        `Post-processing complete in ${Math.round(postprocessDuration)}ms`,
-      );
-      getLogger().verbose("LLM raw output length:", genOutput.text.length);
-
-      const parseResult = parseProcessedTranscript(
-        genOutput.text,
-        processedTranscript,
-      );
-      processedTranscript = parseResult.transcript;
-      if (parseResult.warning) {
-        getLogger().warning(parseResult.warning);
-        warnings.push(parseResult.warning);
-      } else {
-        getLogger().verbose(
-          "Processed transcript length:",
-          processedTranscript.length,
-        );
-      }
-
-      metadata.postProcessMode =
-        genOutput.metadata?.postProcessingMode || metadata.postProcessMode;
-      metadata.postProcessDevice = genOutput.metadata?.inferenceDevice || null;
-      // Clear any prior failure flags so a successful run never leaves a
-      // stale postProcessFailed=true on an updated row.
-      metadata.postProcessFailed = false;
-      metadata.postProcessError = null;
-      getLogger().verbose(
-        "Post-process mode:",
-        metadata.postProcessMode,
-        "device:",
-        metadata.postProcessDevice,
-      );
-    } catch (error) {
-      // Terminal provider failure (e.g. Cerebras 402) or network error. Keep
-      // the raw transcript and the selected-provider attribution; do not
-      // throw into the dictation pipeline or wait for the unrelated 60s
-      // timeout. The sanitized message never includes the key, auth header,
-      // or transcript.
-      const postprocessDuration = performance.now() - postprocessStart;
-      metadata.postprocessDurationMs = Math.round(postprocessDuration);
-      metadata.postProcessFailed = true;
-      const message =
-        error instanceof Error ? error.message : "Post-processing failed";
-      metadata.postProcessError = message;
-      getLogger().error(`Post-processing request failed: ${message}`);
-      warnings.push(message);
-    }
+    processedTranscript = await runPostProcessingRequest({
+      state,
+      rawTranscript,
+      toneId,
+      toneName: tone?.name ?? null,
+      dictationLanguageOverride,
+      genRepo,
+      genApiKeyId,
+      genProvider,
+      metadata,
+      warnings,
+    });
   } else {
     getLogger().info("No post-processing repo configured, skipping");
     metadata.postProcessMode = "none";

@@ -147,6 +147,19 @@ describe("unsafe HTML is neutralized", () => {
     expect(result).toContain("Safe");
   });
 
+  it("decodes numeric decimal and hex entities so encoded text does not leak", () => {
+    // Numeric entities are common in model output (e.g. en/em dashes) and
+    // numeric tag forms must be neutralized too, not re-emitted after the
+    // entity pass.
+    const input =
+      "Em dash &#8212; and hex &#x2014; plus &#60;script&#62;alert(1)&#60;/script&#62;";
+    const result = markdownToPillText(input);
+    expect(result).toContain("Em dash —");
+    expect(result).toContain("hex —");
+    expect(result).not.toContain("<script>");
+    expect(result).toContain("alert(1)");
+  });
+
   it("handles a long run of opening-angle brackets without backtracking", () => {
     // The tag scanner is single-pass; this would be a worst case for a
     // backtracking regex but must complete immediately.

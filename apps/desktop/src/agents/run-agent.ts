@@ -72,9 +72,7 @@ export const safeSideEffect = async <T>(
   try {
     return await fn();
   } catch (error) {
-    const message = JSON.stringify(
-      collapseLogBreakingControls(unknownToMessage(error)),
-    );
+    const message = collapseLogBreakingControls(unknownToMessage(error));
     getLogger().error(
       `Agent non-critical side effect failed (${label}, ${summarizeContext(
         context,

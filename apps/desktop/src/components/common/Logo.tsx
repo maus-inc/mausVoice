@@ -20,7 +20,7 @@ export const Logo = ({
   // descriptors are correct for a fixed-density candidate (the element is
   // sized in CSS px); `sizes` tells the browser that density is what matters.
   const srcSet = `${appLogo32} 1x, ${appLogo64} 2x, ${appLogo192} 3x`;
-  const sizes = `${typeof width === "number" ? width : 22}px`;
+  const sizes = typeof width === "number" ? `${width}px` : width;
 
   return (
     <Box

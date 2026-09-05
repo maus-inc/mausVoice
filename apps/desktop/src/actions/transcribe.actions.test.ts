@@ -20,9 +20,10 @@ const { loggerMock } = vi.hoisted(() => ({
     warning: vi.fn(),
     error: vi.fn(),
     verbose: vi.fn(),
-    stopwatch: vi.fn(async (_label: string, fn: () => Promise<unknown>) =>
-      fn(),
-    ),
+    stopwatch: vi.fn(async (_label: string, fn: () => Promise<unknown>) => {
+      const result = await fn();
+      return result;
+    }),
   },
 }));
 

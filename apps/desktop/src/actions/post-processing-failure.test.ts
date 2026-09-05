@@ -14,9 +14,10 @@ const { genRepo, loggerMock } = vi.hoisted(() => {
       warning: vi.fn(),
       error: vi.fn(),
       verbose: vi.fn(),
-      stopwatch: vi.fn(async (_label: string, fn: () => Promise<unknown>) =>
-        fn(),
-      ),
+      stopwatch: vi.fn(async (_label: string, fn: () => Promise<unknown>) => {
+        const result = await fn();
+        return result;
+      }),
     },
   };
 });
@@ -43,7 +44,7 @@ vi.mock("../utils/user.utils", async () => {
   return {
     ...actual,
     getMyUserName: () => "Tester",
-    loadMyEffectiveDictationLanguage: async () => "en",
+    loadMyEffectiveDictationLanguage: () => Promise.resolve("en"),
   };
 });
 
