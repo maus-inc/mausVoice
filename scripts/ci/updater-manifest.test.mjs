@@ -107,6 +107,15 @@ const buildManifest = (artifacts, env = {}, scriptPath) => {
   return JSON.parse(readFileSync(result.outputPath, "utf8"));
 };
 
+// Runs a successful build against `files` and asserts the exact platform key
+// set before returning the manifest, so every per-OS test states its key
+// contract the same way.
+const buildManifestWithPlatforms = (files, expectedKeys) => {
+  const manifest = buildManifest(makeArtifacts(files));
+  assert.deepEqual(Object.keys(manifest.platforms).sort(), expectedKeys);
+  return manifest;
+};
+
 describe("updater manifest builder", () => {
   it("emits a Tauri v2 manifest covering every supported target", () => {
     const artifacts = fullySignedArtifacts();
@@ -192,19 +201,15 @@ describe("updater manifest builder", () => {
     // The original builder only ever emitted a bare `windows-x86_64` from a
     // `.nsis.zip`, so the NSIS installer was unreachable — this would have
     // caught that 🔴 regression.
-    const artifacts = makeArtifacts({
-      "win/mausVoice_0.1.7_x64_en-US.msi": "msi-bundle",
-      "win/mausVoice_0.1.7_x64_en-US.msi.sig": "msi-signature\n",
-      "win/mausVoice_0.1.7_x64-setup.exe": "nsis-bundle",
-      "win/mausVoice_0.1.7_x64-setup.exe.sig": "nsis-signature\n",
-    });
-    const manifest = buildManifest(artifacts);
-
-    assert.deepEqual(Object.keys(manifest.platforms).sort(), [
-      "windows-x86_64",
-      "windows-x86_64-msi",
-      "windows-x86_64-nsis",
-    ]);
+    const manifest = buildManifestWithPlatforms(
+      {
+        "win/mausVoice_0.1.7_x64_en-US.msi": "msi-bundle",
+        "win/mausVoice_0.1.7_x64_en-US.msi.sig": "msi-signature\n",
+        "win/mausVoice_0.1.7_x64-setup.exe": "nsis-bundle",
+        "win/mausVoice_0.1.7_x64-setup.exe.sig": "nsis-signature\n",
+      },
+      ["windows-x86_64", "windows-x86_64-msi", "windows-x86_64-nsis"],
+    );
     // The bare fallback must point at the MSI (higher precedence).
     assert.equal(
       manifest.platforms["windows-x86_64"].signature,
@@ -226,18 +231,15 @@ describe("updater manifest builder", () => {
     // placed in the updater manifest (which would otherwise reject the release
     // for a missing `.deb.sig`). The manifest must succeed and only contain
     // the AppImage-derived keys.
-    const artifacts = makeArtifacts({
-      "linux/mausVoice_0.1.7_amd64.AppImage": "appimage-bundle",
-      "linux/mausVoice_0.1.7_amd64.AppImage.sig": "appimage-signature\n",
-      "linux/mausVoice_0.1.7_amd64.deb": "deb-bundle",
-      "linux/mausVoice_0.1.7_amd64.rpm": "rpm-bundle",
-    });
-    const manifest = buildManifest(artifacts);
-
-    assert.deepEqual(Object.keys(manifest.platforms).sort(), [
-      "linux-x86_64",
-      "linux-x86_64-appimage",
-    ]);
+    const manifest = buildManifestWithPlatforms(
+      {
+        "linux/mausVoice_0.1.7_amd64.AppImage": "appimage-bundle",
+        "linux/mausVoice_0.1.7_amd64.AppImage.sig": "appimage-signature\n",
+        "linux/mausVoice_0.1.7_amd64.deb": "deb-bundle",
+        "linux/mausVoice_0.1.7_amd64.rpm": "rpm-bundle",
+      },
+      ["linux-x86_64", "linux-x86_64-appimage"],
+    );
     assert.equal(
       manifest.platforms["linux-x86_64-appimage"].signature,
       "appimage-signature",
@@ -253,20 +255,20 @@ describe("updater manifest builder", () => {
   });
 
   it("emits .app.tar.gz and .dmg keys for macOS", () => {
-    const artifacts = makeArtifacts({
-      "mac/mausVoice.app.tar.gz": "mac-app-bundle",
-      "mac/mausVoice.app.tar.gz.sig": "mac-app-signature\n",
-      "mac/mausVoice_0.1.7_universal.dmg": "mac-dmg-bundle",
-      "mac/mausVoice_0.1.7_universal.dmg.sig": "mac-dmg-signature\n",
-    });
-    const manifest = buildManifest(artifacts);
-
-    assert.deepEqual(Object.keys(manifest.platforms).sort(), [
-      "darwin-aarch64",
-      "darwin-aarch64-dmg",
-      "darwin-x86_64",
-      "darwin-x86_64-dmg",
-    ]);
+    const manifest = buildManifestWithPlatforms(
+      {
+        "mac/mausVoice.app.tar.gz": "mac-app-bundle",
+        "mac/mausVoice.app.tar.gz.sig": "mac-app-signature\n",
+        "mac/mausVoice_0.1.7_universal.dmg": "mac-dmg-bundle",
+        "mac/mausVoice_0.1.7_universal.dmg.sig": "mac-dmg-signature\n",
+      },
+      [
+        "darwin-aarch64",
+        "darwin-aarch64-dmg",
+        "darwin-x86_64",
+        "darwin-x86_64-dmg",
+      ],
+    );
     // The universal .app.tar.gz is the bare darwin key; the .dmg is separate.
     assert.equal(
       manifest.platforms["darwin-aarch64"].signature,
