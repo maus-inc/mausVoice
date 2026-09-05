@@ -32,11 +32,11 @@ const capLength = (message: string): string =>
     ? `${message.slice(0, MAX_ERROR_MESSAGE_LENGTH)}…`
     : message;
 
-function redactUnknown(
+const redactUnknown = (
   value: unknown,
   depth: number,
   seen: WeakSet<object>,
-): unknown {
+): unknown => {
   const walkCollection = (collection: object): unknown => {
     if (seen.has(collection)) return "[Circular]";
     seen.add(collection);
@@ -53,15 +53,10 @@ function redactUnknown(
   };
 
   if (typeof value === "string") return redactSensitiveTokens(value);
-  if (
-    value === null ||
-    typeof value !== "object" ||
-    depth >= MAX_REDACT_DEPTH
-  ) {
-    return value;
-  }
+  if (value === null || typeof value !== "object") return value;
+  if (depth >= MAX_REDACT_DEPTH) return REDACTED;
   return walkCollection(value);
-}
+};
 
 const redactJsonIfPossible = (message: string): string => {
   const trimmed = message.trim();

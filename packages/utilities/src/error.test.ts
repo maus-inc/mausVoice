@@ -44,6 +44,9 @@ describe("unknownToMessage", () => {
     expect(
       unknownToMessage({ nested: { authorization: "secret, value" } }),
     ).toBe('{"nested":{"authorization":"[redacted]"}}');
+    let deep: unknown = { apiKey: "supersecretvalue" };
+    for (let i = 0; i < 8; i += 1) deep = { nested: deep };
+    expect(unknownToMessage(deep)).not.toContain("supersecretvalue");
     expect(unknownToMessage('{"apiKey":"secret value","code":"E_BOOM"}')).toBe(
       '{"apiKey":"[redacted]","code":"E_BOOM"}',
     );
