@@ -5,7 +5,9 @@ use tauri_plugin_log::{Target, TargetKind, TimezoneStrategy};
 use tauri_plugin_window_state::{AppHandleExt, StateFlags};
 
 const AUTOSTART_HIDDEN_ARG: &str = "--mausvoice-autostart-hidden";
-/// Opt-in env var that opens the webview devtools on startup (debug-assist builds).
+/// Opt-in env var that opens the webview devtools on startup. Only read by
+/// debug-assist builds, so it is gated the same way to keep release clippy clean.
+#[cfg(feature = "debug-assist")]
 const DEVTOOLS_ENV_VAR: &str = "MAUSVOICE_ENABLE_DEVTOOLS";
 
 /// Minimum gap between two window-move log lines.
