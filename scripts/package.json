@@ -1,9 +1,9 @@
 {
   "name": "scripts",
   "version": "1.0.0",
+  "private": true,
   "description": "Documentation and automation scripts for mausVoice.",
   "scripts": {
-    "test": "echo \"Error: no test specified\" && exit 1"
   },
   "keywords": [],
   "author": "",
