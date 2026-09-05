@@ -14,7 +14,7 @@
 </div>
 
 > [!TIP]
-> Grab your[Groq↗](https://console.groq.com/keys) and [Deepgram↗](https://console.deepgram.com/) API keys, for quick, free transcription inference.
+> Grab your [Groq↗](https://console.groq.com/keys) and [Deepgram↗](https://console.deepgram.com/) API keys, for quick, free transcription inference.
 >
 > Transcription accuracy **varies** by STT provider or model; transcripts **may not** be 100 percent accurate due to differences in intonation, accent, and input device. We **continually** optimize the client-side pipeline to improve transcription speed and accuracy.
 
