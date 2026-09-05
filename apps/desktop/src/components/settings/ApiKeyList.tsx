@@ -116,17 +116,19 @@ const ApiKeyFormActions = ({
   );
 };
 
+type AddApiKeyPayload = {
+  name: string;
+  provider: SettingsApiKeyProvider;
+  key: string;
+  baseUrl?: string;
+  azureRegion?: string;
+  transcriptionModel?: string;
+  includeV1Path?: boolean;
+  transcriptionPath?: string;
+};
+
 type AddApiKeyCardProps = {
-  onSave: (payload: {
-    name: string;
-    provider: SettingsApiKeyProvider;
-    key: string;
-    baseUrl?: string;
-    azureRegion?: string;
-    transcriptionModel?: string;
-    includeV1Path?: boolean;
-    transcriptionPath?: string;
-  }) => Promise<void>;
+  onSave: (payload: AddApiKeyPayload) => Promise<void>;
   onCancel: () => void;
   context: ApiKeyListContext;
 };
@@ -844,16 +846,7 @@ export const ApiKeyList = ({
       transcriptionModel,
       includeV1Path,
       transcriptionPath,
-    }: {
-      name: string;
-      provider: SettingsApiKeyProvider;
-      key: string;
-      baseUrl?: string;
-      azureRegion?: string;
-      transcriptionModel?: string;
-      includeV1Path?: boolean;
-      transcriptionPath?: string;
-    }) => {
+    }: AddApiKeyPayload) => {
       const created = await createApiKey({
         id: generateApiKeyId(),
         name,

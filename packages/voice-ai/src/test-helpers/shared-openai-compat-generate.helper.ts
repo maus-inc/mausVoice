@@ -1,6 +1,6 @@
 import { afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 
-const DEFAULT_USAGE = { total_tokens: 5 };
+const DEFAULT_USAGE = Object.freeze({ total_tokens: 5 });
 
 const buildCreateCompletion = (
   content: string,
