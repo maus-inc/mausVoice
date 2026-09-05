@@ -189,8 +189,10 @@ const needsSegmentSeparator = (left: string, right: string): boolean =>
 export const joinKeptSegmentTexts = (texts: string[]): string => {
   if (texts.length === 0) return "";
   let joined = texts[0] ?? "";
+  let previous = joined;
   for (const text of texts.slice(1)) {
-    joined += needsSegmentSeparator(joined, text) ? ` ${text}` : text;
+    joined += needsSegmentSeparator(previous, text) ? ` ${text}` : text;
+    previous = text;
   }
   // Space/tab only — do not collapse `\n` or NBSP here.
   return joined.replace(/[ \t]+/g, " ").trim();

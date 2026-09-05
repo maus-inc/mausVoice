@@ -35,6 +35,17 @@ describe("unknownToMessage", () => {
     expect(unknownToMessage('api_key="secret \\"inner\\" value"')).toBe(
       "api_key=[redacted]",
     );
+    expect(unknownToMessage("api_key=some(value)")).toBe("api_key=[redacted]");
+    expect(unknownToMessage("{api_key=supersecretvalue}")).toBe(
+      "{api_key=[redacted]}",
+    );
+    expect(unknownToMessage("(api_key=required)")).toBe("(api_key=required)");
+    expect(unknownToMessage("api_key=foo)}")).toBe("api_key=[redacted])}");
+    expect(unknownToMessage("api_key=((x))}")).toBe("api_key=[redacted]}");
+    expect(unknownToMessage("api_key=a(b]c)]")).toBe("api_key=[redacted]]");
+    expect(unknownToMessage(`api_key=${"(".repeat(2000)}x`)).toBe(
+      "api_key=[redacted]",
+    );
     expect(unknownToMessage({ apiKey: "supersecretvalue" })).toBe(
       '{"apiKey":"[redacted]"}',
     );
@@ -57,5 +68,28 @@ describe("unknownToMessage", () => {
     expect(message).toHaveLength(513);
     expect(message.endsWith("…")).toBe(true);
     expect(message.startsWith("x".repeat(512))).toBe(true);
+  });
+});
+
+describe("unknownToMessage labeled-secret edge cases", () => {
+  it("redacts JSON-style quoted property names embedded in free text", () => {
+    expect(
+      unknownToMessage('upstream said {"apiKey":"secret value"} and gave up'),
+    ).toBe("upstream said {apiKey:[redacted]} and gave up");
+    expect(unknownToMessage('header "authorization"=abc123def')).toBe(
+      "header authorization=[redacted]",
+    );
+  });
+
+  it("keeps placeholder values that describe the field instead of a credential", () => {
+    expect(unknownToMessage("api_key=required")).toBe("api_key=required");
+    expect(unknownToMessage("authorization: missing")).toBe(
+      "authorization: missing",
+    );
+    expect(unknownToMessage("access_token=null")).toBe("access_token=null");
+  });
+
+  it("does not treat a longer identifier as a secret label", () => {
+    expect(unknownToMessage("api_key_length=32")).toBe("api_key_length=32");
   });
 });
