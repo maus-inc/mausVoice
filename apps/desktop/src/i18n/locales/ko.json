@@ -344,7 +344,6 @@
   "invalid_email_address": "잘못된 이메일 주소",
   "it_works": "작동합니다",
   "john_doe": "홍길동",
-  "just_now": "방금",
   "key_name": "키 이름",
   "keyboard_hotkeys_stopped_working_retrying_automatically_rest": "키보드 단축키가 작동을 멈췄습니다. 자동으로 다시 시도합니다. 문제가 지속되면 mausVoice를 다시 시작하세요.",
   "keyboard_layout": "키보드 레이아웃",
