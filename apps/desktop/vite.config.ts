@@ -6,10 +6,17 @@ import { vendorManualChunk } from "./scripts/vendor-manual-chunk.mjs";
 const host = process.env.TAURI_DEV_HOST;
 const GLADIA_BROWSER_PEERS = ["fs", "path", "undici", "ws"] as const;
 
-export const getGladiaBrowserPeer = (source: string) =>
-  GLADIA_BROWSER_PEERS.find(
-    (peer) => source === peer || source.startsWith(`${peer}/`),
+// `node:`-prefixed builtins from the SDK resolve to the same stubs as their
+// bare specifiers, so a bumped SDK switching import style cannot smuggle the
+// Node transport into the CSP-governed webview bundle.
+export const getGladiaBrowserPeer = (source: string) => {
+  const specifier = source.startsWith("node:")
+    ? source.slice("node:".length)
+    : source;
+  return GLADIA_BROWSER_PEERS.find(
+    (peer) => specifier === peer || specifier.startsWith(`${peer}/`),
   );
+};
 
 // Matches the SDK package directory itself (`/@gladiaio/sdk/` or the
 // package as a whole), not a sibling like `@gladiaio/sdk-extras`.

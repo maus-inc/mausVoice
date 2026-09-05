@@ -87,6 +87,32 @@ describe("unknownToMessage labeled-secret edge cases", () => {
       "authorization: missing",
     );
     expect(unknownToMessage("access_token=null")).toBe("access_token=null");
+    expect(unknownToMessage("refresh_token=none")).toBe("refresh_token=none");
+  });
+
+  it("redacts boolean and other non-descriptive values after a secret label", () => {
+    expect(unknownToMessage("api_key=true")).toBe("api_key=[redacted]");
+    expect(unknownToMessage("authorization=false")).toBe(
+      "authorization=[redacted]",
+    );
+  });
+
+  it("redacts single-quoted secret values in full", () => {
+    expect(unknownToMessage("api_key='secret value'")).toBe(
+      "api_key=[redacted]",
+    );
+    expect(unknownToMessage("api_key: 'even \\'escaped\\' value'")).toBe(
+      "api_key:[redacted]",
+    );
+    expect(unknownToMessage("refresh_token='short'")).toBe(
+      "refresh_token=[redacted]",
+    );
+    // A value with its own inner quote pair must not leak the tail past the
+    // first quoted segment.
+    expect(unknownToMessage("api_key='ab'cd'")).toBe("api_key=[redacted]");
+    expect(unknownToMessage("authorization='abc'de'")).toBe(
+      "authorization=[redacted]",
+    );
   });
 
   it("does not treat a longer identifier as a secret label", () => {

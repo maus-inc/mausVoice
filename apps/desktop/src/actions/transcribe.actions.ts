@@ -365,8 +365,7 @@ const recordPostProcessFailure = (
   const postprocessDuration = performance.now() - postprocessStart;
   metadata.postprocessDurationMs = Math.round(postprocessDuration);
   metadata.postProcessFailed = true;
-  const message =
-    error instanceof Error ? error.message : "Post-processing failed";
+  const message = unknownToMessage(error) || "Post-processing failed";
   metadata.postProcessError = message;
   getLogger().error(`Post-processing request failed: ${message}`);
   warnings.push(message);
@@ -375,6 +374,29 @@ const recordPostProcessFailure = (
 // Caller-owned output budget for post-processing. Kept next to the request
 // so the extracted helper cannot silently drop it again.
 const POST_PROCESS_MAX_TOKENS = 600;
+
+const beginPostProcessingRequest = ({
+  metadata,
+  toneName,
+  genApiKeyId,
+  genProvider,
+}: {
+  metadata: PostProcessMetadata;
+  toneName: Nullable<string>;
+  genApiKeyId: Nullable<string>;
+  genProvider: Nullable<string>;
+}): void => {
+  getLogger().verbose(
+    `Post-processing with tone=${fallbackValue(toneName, "default")}, provider=${fallbackValue(genProvider, "none")}, apiKeyId=${fallbackValue(genApiKeyId, "none")}`,
+  );
+
+  // Persist attribution BEFORE the network request so a 402, timeout, or
+  // cancellation still records which provider was selected. We never reset
+  // this to "none" on failure; that would hide the user's choice.
+  metadata.postProcessApiKeyId = genApiKeyId;
+  metadata.postProcessProvider = genProvider;
+  metadata.postProcessMode = "api";
+};
 
 const runPostProcessingRequest = async ({
   state,
@@ -388,22 +410,12 @@ const runPostProcessingRequest = async ({
   metadata,
   warnings,
 }: RunPostProcessingRequestArgs): Promise<string> => {
-  getLogger().verbose(
-    `Post-processing with tone=${fallbackValue(
-      toneName,
-      "default",
-    )}, provider=${fallbackValue(genProvider, "none")}, apiKeyId=${fallbackValue(
-      genApiKeyId,
-      "none",
-    )}`,
-  );
-
-  // Persist attribution BEFORE the network request so a 402, timeout, or
-  // cancellation still records which provider was selected. We never reset
-  // this to "none" on failure; that would hide the user's choice.
-  metadata.postProcessApiKeyId = genApiKeyId;
-  metadata.postProcessProvider = genProvider;
-  metadata.postProcessMode = "api";
+  beginPostProcessingRequest({
+    metadata,
+    toneName,
+    genApiKeyId,
+    genProvider,
+  });
 
   const dictationLanguage = await resolvePostProcessingLanguage(
     state,
@@ -463,51 +475,59 @@ const runPostProcessingRequest = async ({
   }
 };
 
-export const postProcessTranscript = async ({
-  rawTranscript,
-  toneId,
-  dictationLanguage: dictationLanguageOverride,
-}: PostProcessInput): Promise<PostProcessResult> => {
+const applyPostProcessing = async (
+  { rawTranscript, toneId, dictationLanguage }: PostProcessInput,
+  state: AppState,
+  gen: ReturnType<typeof getGenerateTextRepo>,
+  metadata: PostProcessMetadata,
+  warnings: string[],
+): Promise<string> => {
+  const tone = getToneById(state, toneId);
+  if (tone?.shouldDisablePostProcessing) {
+    getLogger().info(`Post-processing disabled for tone=${toneId}`);
+    metadata.postProcessMode = "none";
+    return rawTranscript;
+  }
+  if (!gen.repo) {
+    getLogger().info("No post-processing repo configured, skipping");
+    metadata.postProcessMode = "none";
+    return rawTranscript;
+  }
+  return await runPostProcessingRequest({
+    state,
+    rawTranscript,
+    toneId,
+    toneName: tone?.name ?? null,
+    dictationLanguageOverride: dictationLanguage,
+    genRepo: gen.repo,
+    genApiKeyId: gen.apiKeyId,
+    genProvider: gen.provider,
+    metadata,
+    warnings,
+  });
+};
+
+export const postProcessTranscript = async (
+  input: PostProcessInput,
+): Promise<PostProcessResult> => {
   const state = getAppState();
 
   const metadata: PostProcessMetadata = {};
   const warnings: string[] = [];
 
-  const {
-    repo: genRepo,
-    apiKeyId: genApiKeyId,
-    provider: genProvider,
-    warnings: genWarnings,
-  } = getGenerateTextRepo();
-  warnings.push(...genWarnings);
+  const gen = getGenerateTextRepo();
+  warnings.push(...gen.warnings);
 
-  const tone = getToneById(state, toneId);
-  const toneProcessingDisabled = tone?.shouldDisablePostProcessing ?? false;
-
-  let processedTranscript = rawTranscript;
-  if (toneProcessingDisabled) {
-    getLogger().info(`Post-processing disabled for tone=${toneId}`);
-    metadata.postProcessMode = "none";
-  } else if (genRepo) {
-    processedTranscript = await runPostProcessingRequest({
-      state,
-      rawTranscript,
-      toneId,
-      toneName: tone?.name ?? null,
-      dictationLanguageOverride,
-      genRepo,
-      genApiKeyId,
-      genProvider,
-      metadata,
-      warnings,
-    });
-  } else {
-    getLogger().info("No post-processing repo configured, skipping");
-    metadata.postProcessMode = "none";
-  }
+  const transcript = await applyPostProcessing(
+    input,
+    state,
+    gen,
+    metadata,
+    warnings,
+  );
 
   return {
-    transcript: processedTranscript,
+    transcript,
     warnings: dedup(warnings),
     metadata,
   };

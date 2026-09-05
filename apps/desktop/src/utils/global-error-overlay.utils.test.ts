@@ -47,6 +47,39 @@ const installOverlayWithMockWindow = (rootChildren: unknown[] = []) => {
   return { doc, listeners };
 };
 
+// The overlay classifies error targets with `instanceof` against the DOM
+// element globals, so each test stubs them with stand-in classes carrying
+// just the fields the classifier reads.
+const stubResourceElements = ({
+  scriptUrl = "asset://localhost/assets/index.js",
+  linkUrl = "asset://localhost/assets/styles.css",
+} = {}) => {
+  class HTMLScriptElement {
+    src = scriptUrl;
+  }
+  class HTMLLinkElement {
+    href = linkUrl;
+    rel = "StyleSheet";
+    relList = {
+      contains: (_token: string): boolean => false,
+    };
+  }
+  vi.stubGlobal("HTMLScriptElement", HTMLScriptElement);
+  vi.stubGlobal("HTMLLinkElement", HTMLLinkElement);
+  return { HTMLScriptElement, HTMLLinkElement };
+};
+
+const stubImageElement = () => {
+  // The overlay only `instanceof`-checks image targets, so the stand-in
+  // carries no DOM surface; the tag marker exists so the class is not an
+  // accidental empty namespace.
+  class HTMLImageElement {
+    readonly tag = "img";
+  }
+  vi.stubGlobal("HTMLImageElement", HTMLImageElement);
+  return HTMLImageElement;
+};
+
 describe("global error overlay", () => {
   afterEach(() => {
     vi.unstubAllGlobals();
@@ -77,18 +110,7 @@ describe("global error overlay", () => {
 
   it("treats failed script and stylesheet loads as fatal before mount", async () => {
     vi.stubGlobal("document", makeDocument([]));
-    class HTMLScriptElement {
-      src = "asset://localhost/assets/index.js";
-    }
-    class HTMLLinkElement {
-      href = "asset://localhost/assets/styles.css";
-      rel = "StyleSheet";
-      relList = {
-        contains: (_token: string): boolean => false,
-      };
-    }
-    vi.stubGlobal("HTMLScriptElement", HTMLScriptElement);
-    vi.stubGlobal("HTMLLinkElement", HTMLLinkElement);
+    const { HTMLScriptElement, HTMLLinkElement } = stubResourceElements();
     const { shouldPaintFatalWindowError } =
       await import("./global-error-overlay.utils.ts");
     expect(
@@ -118,18 +140,7 @@ describe("global error overlay", () => {
     // Once React has mounted, an async chunk's stylesheet/script can still fail
     // to load; that must log, not cover a working UI with the fatal overlay.
     vi.stubGlobal("document", makeDocument([{}]));
-    class HTMLScriptElement {
-      src = "asset://localhost/assets/index.js";
-    }
-    class HTMLLinkElement {
-      href = "asset://localhost/assets/styles.css";
-      rel = "StyleSheet";
-      relList = {
-        contains: (_token: string): boolean => false,
-      };
-    }
-    vi.stubGlobal("HTMLScriptElement", HTMLScriptElement);
-    vi.stubGlobal("HTMLLinkElement", HTMLLinkElement);
+    const { HTMLScriptElement, HTMLLinkElement } = stubResourceElements();
     const { shouldPaintFatalWindowError } =
       await import("./global-error-overlay.utils.ts");
     expect(
@@ -146,8 +157,7 @@ describe("global error overlay", () => {
 
   it("ignores image load failures and post-mount runtime errors", async () => {
     vi.stubGlobal("document", makeDocument([{}]));
-    class HTMLImageElement {}
-    vi.stubGlobal("HTMLImageElement", HTMLImageElement);
+    const HTMLImageElement = stubImageElement();
     const { shouldPaintFatalWindowError } =
       await import("./global-error-overlay.utils.ts");
     expect(
@@ -181,18 +191,10 @@ describe("global error overlay", () => {
 
   it("logs a post-mount resource load failure instead of dropping it", async () => {
     const { doc, listeners } = installOverlayWithMockWindow([{}]);
-    class HTMLScriptElement {
-      src = "asset://localhost/assets/async-chunk.js";
-    }
-    class HTMLLinkElement {
-      href = "asset://localhost/assets/async-chunk.css";
-      rel = "StyleSheet";
-      relList = {
-        contains: (_token: string): boolean => false,
-      };
-    }
-    vi.stubGlobal("HTMLScriptElement", HTMLScriptElement);
-    vi.stubGlobal("HTMLLinkElement", HTMLLinkElement);
+    const { HTMLScriptElement } = stubResourceElements({
+      scriptUrl: "asset://localhost/assets/async-chunk.js",
+      linkUrl: "asset://localhost/assets/async-chunk.css",
+    });
     const consoleWarn = vi.spyOn(console, "warn").mockImplementation(() => {});
     const { installGlobalErrorOverlay } =
       await import("./global-error-overlay.utils.ts");
@@ -208,8 +210,7 @@ describe("global error overlay", () => {
 
   it("does not log ignored image load failures", async () => {
     const { doc, listeners } = installOverlayWithMockWindow([{}]);
-    class HTMLImageElement {}
-    vi.stubGlobal("HTMLImageElement", HTMLImageElement);
+    const HTMLImageElement = stubImageElement();
     const consoleError = vi
       .spyOn(console, "error")
       .mockImplementation(() => {});
