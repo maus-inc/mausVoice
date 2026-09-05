@@ -29,36 +29,51 @@ function fail(msg) {
   process.exit(1);
 }
 
-// Drops `#` comments while honouring every TOML string form: basic (`"`),
-// literal (`'`), and their multi-line triple-quoted variants. Inside a string
-// a `#` is content; outside one it always starts a comment that runs to the
-// end of the line. Basic strings honour backslash escapes, literal strings
-// do not (TOML v1.0 §strings).
+// Length of the string delimiter starting at `pos`: 3 for triple quotes,
+// otherwise 1.
+function quoteLengthAt(text, pos) {
+  return text.startsWith(text[pos].repeat(3), pos) ? 3 : 1;
+}
+
+// Index just past the closing delimiter of the string that opens at `pos`,
+// or `text.length` when it never closes. Basic (`"`) strings honour
+// backslash escapes; literal (`'`) strings do not (TOML v1.0 §strings).
+function stringEnd(text, pos) {
+  const quote = text.slice(pos, pos + quoteLengthAt(text, pos));
+  const escapable = quote[0] === '"';
+  let cursor = pos + quote.length;
+  while (cursor < text.length) {
+    if (escapable && text[cursor] === "\\") cursor += 2;
+    else if (text.startsWith(quote, cursor)) return cursor + quote.length;
+    else cursor += 1;
+  }
+  return text.length;
+}
+
+// Index of the newline that ends the comment starting at `pos`, or
+// `text.length` when the comment runs to EOF. The newline itself is kept.
+function commentEnd(text, pos) {
+  const eol = text.indexOf("\n", pos);
+  return eol === -1 ? text.length : eol;
+}
+
+// Drops `#` comments while honouring every TOML string form: basic, literal
+// and their multi-line triple-quoted variants. Inside a string a `#` is
+// content; outside one it always starts a comment that runs to end of line.
 export function stripTomlComments(text) {
   let out = "";
-  let quote = null;
-  for (let i = 0; i < text.length; i += 1) {
-    const ch = text[i];
-    if (quote) {
-      if (ch === "\\" && quote[0] === '"') {
-        out += ch + (text[i + 1] ?? "");
-        i += 1;
-      } else if (text.startsWith(quote, i)) {
-        out += quote;
-        i += quote.length - 1;
-        quote = null;
-      } else {
-        out += ch;
-      }
-    } else if (ch === '"' || ch === "'") {
-      quote = text.startsWith(ch.repeat(3), i) ? ch.repeat(3) : ch;
-      out += quote;
-      i += quote.length - 1;
+  let cursor = 0;
+  while (cursor < text.length) {
+    const ch = text[cursor];
+    if (ch === '"' || ch === "'") {
+      const end = stringEnd(text, cursor);
+      out += text.slice(cursor, end);
+      cursor = end;
     } else if (ch === "#") {
-      const eol = text.indexOf("\n", i);
-      i = eol === -1 ? text.length : eol - 1;
+      cursor = commentEnd(text, cursor);
     } else {
       out += ch;
+      cursor += 1;
     }
   }
   return out;
