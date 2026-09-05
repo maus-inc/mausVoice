@@ -24,10 +24,6 @@
  *     The first run will download chromium into the local playwright cache.
  */
 
-// DeepSource: ignore — this file is an ES module (.mjs); the analyzer's
-// default parser does not recognize `sourceType: module`, so the import
-// statement is flagged as a parse error. Node 22 executes it correctly.
-import { chromium } from "playwright";
 import path from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { existsSync, mkdirSync } from "node:fs";
@@ -99,7 +95,9 @@ async function main() {
   await browser.close();
 }
 
-main().catch((err) => {
+try {
+  await main();
+} catch (err) {
   console.error(err);
   process.exit(1);
-});
+}
