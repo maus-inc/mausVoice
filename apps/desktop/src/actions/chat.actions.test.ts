@@ -12,7 +12,7 @@ const getLoggerMock = vi.hoisted(() => ({
   // The real logger also exposes stopwatch(label, fn); mirror the
   // call-through behavior so the mock is faithful if a tested path
   // ever instruments with it.
-  stopwatch: vi.fn(async (_label: string, fn: () => Promise<unknown>) => fn()),
+  stopwatch: vi.fn((_label: string, fn: () => Promise<unknown>) => fn()),
 }));
 const repoMocks = vi.hoisted(() => ({
   rejectNextUpdate: false,
