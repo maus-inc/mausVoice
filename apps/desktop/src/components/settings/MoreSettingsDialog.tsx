@@ -28,6 +28,10 @@ import {
   setIncognitoModeIncludeInStats,
   setMenuBarIconHidden,
   setRealtimeOutputEnabled,
+  setReviewBeforeInsert,
+  setSpokenCommandsEnabled,
+  setHallucinationFilterEnabled,
+  setInDictationStyleSwitchingEnabled,
   setStylingMode,
   setAutoLearnDictionaryEnabled,
   setAutoLearnFromEditsEnabled,
@@ -74,6 +78,10 @@ export const MoreSettingsDialog = () => {
     handsFreeDelayMs,
     autoLearnDictionaryEnabled,
     autoLearnFromEditsEnabled,
+    spokenCommandsEnabled,
+    reviewBeforeInsert,
+    hallucinationFilterEnabled,
+    inDictationStyleSwitchingEnabled,
   ] = useAppStore((state) => {
     const prefs = getMyUserPreferences(state);
     const transcriptionPrefs = getTranscriptionPrefs(state);
@@ -95,6 +103,10 @@ export const MoreSettingsDialog = () => {
       getEffectiveHandsFreeDelayMs(prefs),
       prefs?.autoLearnDictionaryEnabled ?? true,
       prefs?.autoLearnFromEditsEnabled ?? false,
+      prefs?.spokenCommandsEnabled ?? true,
+      prefs?.reviewBeforeInsert ?? false,
+      prefs?.hallucinationFilterEnabled ?? true,
+      prefs?.inDictationStyleSwitchingEnabled ?? false,
     ] as const;
   });
   const [dictationLimitInput, setDictationLimitInput] = useState(
@@ -186,6 +198,28 @@ export const MoreSettingsDialog = () => {
 
   const handleToggleRealtimeOutput = (event: ChangeEvent<HTMLInputElement>) => {
     void setRealtimeOutputEnabled(event.target.checked);
+  };
+
+  const handleToggleSpokenCommands = (event: ChangeEvent<HTMLInputElement>) => {
+    void setSpokenCommandsEnabled(event.target.checked);
+  };
+
+  const handleToggleReviewBeforeInsert = (
+    event: ChangeEvent<HTMLInputElement>,
+  ) => {
+    void setReviewBeforeInsert(event.target.checked);
+  };
+
+  const handleToggleHallucinationFilter = (
+    event: ChangeEvent<HTMLInputElement>,
+  ) => {
+    void setHallucinationFilterEnabled(event.target.checked);
+  };
+
+  const handleToggleInDictationStyleSwitching = (
+    event: ChangeEvent<HTMLInputElement>,
+  ) => {
+    void setInDictationStyleSwitchingEnabled(event.target.checked);
   };
 
   const handleToggleAutoLearnDictionary = (
@@ -425,6 +459,20 @@ export const MoreSettingsDialog = () => {
           <PillPlacementSetting />
 
           <SettingSection
+            title={<FormattedMessage defaultMessage="Spoken commands" />}
+            description={
+              <FormattedMessage defaultMessage='Turn phrases like "new line", "comma", and "scratch that" into formatting, even in Verbatim. Requires an English dictation language; Auto does not apply these commands.' />
+            }
+            action={
+              <Switch
+                edge="end"
+                checked={spokenCommandsEnabled}
+                onChange={handleToggleSpokenCommands}
+              />
+            }
+          />
+
+          <SettingSection
             title={<FormattedMessage defaultMessage="Real-time output" />}
             description={
               <FormattedMessage defaultMessage="Stream dictation text as you speak instead of pasting all at once when you stop. Only applies to Verbatim mode with supported providers." />
@@ -434,6 +482,52 @@ export const MoreSettingsDialog = () => {
                 edge="end"
                 checked={realtimeOutputEnabled}
                 onChange={handleToggleRealtimeOutput}
+              />
+            }
+          />
+
+          <SettingSection
+            title={<FormattedMessage defaultMessage="Review before insert" />}
+            description={
+              <FormattedMessage defaultMessage="Open an editable composer so you can review or change dictated text before it is inserted. Review pauses streaming, so turning this on turns Real-time output off." />
+            }
+            action={
+              <Switch
+                edge="end"
+                checked={reviewBeforeInsert}
+                onChange={handleToggleReviewBeforeInsert}
+              />
+            }
+          />
+
+          <SettingSection
+            title={
+              <FormattedMessage defaultMessage="Silence hallucination filter" />
+            }
+            description={
+              <FormattedMessage defaultMessage="Discard common fabricated phrases produced when the microphone hears silence or noise." />
+            }
+            action={
+              <Switch
+                edge="end"
+                checked={hallucinationFilterEnabled}
+                onChange={handleToggleHallucinationFilter}
+              />
+            }
+          />
+
+          <SettingSection
+            title={
+              <FormattedMessage defaultMessage="Switch style while dictating" />
+            }
+            description={
+              <FormattedMessage defaultMessage="Hold the dictate activation key and press Left or Right Arrow to cycle active styles." />
+            }
+            action={
+              <Switch
+                edge="end"
+                checked={inDictationStyleSwitchingEnabled}
+                onChange={handleToggleInDictationStyleSwitching}
               />
             }
           />

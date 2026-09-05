@@ -1,7 +1,13 @@
 name: Format and i18n Hygiene
 
 on:
+  # Scope push to main only. Every other branch reaches this workflow through
+  # pull_request, so listing both unscoped ran the whole suite twice per PR:
+  # the two events land in different concurrency groups (the group key falls
+  # back to github.ref for push), so neither run cancels the other.
   push:
+    branches:
+      - main
     paths:
       - "apps/**"
       - "packages/**"
@@ -20,6 +26,8 @@ on:
       - ".prettierrc*"
       - "*.md"
       - ".github/**"
+  # No branches filter: this repo stacks PRs onto feature branches, so a
+  # main-targeted filter would skip exactly the changes that need checking.
   pull_request:
     paths:
       - "apps/**"

@@ -2,6 +2,7 @@ import { convertFloat32ToBase64PCM16 } from "@maus-inc/voice-ai";
 import { listen, UnlistenFn } from "@tauri-apps/api/event";
 import { ensureFloat32Array } from "../utils/audio.utils";
 import { getLogger } from "../utils/log.utils";
+import { secureFetch } from "../utils/secure-fetch.utils";
 import { drainSamples } from "./audio-buffer.utils";
 import { BaseApiTranscriptionSession } from "./base-api-transcription-session";
 import { createTranscriptAccumulator } from "./transcript-accumulator.utils";
@@ -53,7 +54,7 @@ const resampleAudio = (
 };
 
 const getElevenLabsToken = async (apiKey: string): Promise<string> => {
-  const response = await fetch(ELEVENLABS_TOKEN_URL, {
+  const response = await secureFetch(ELEVENLABS_TOKEN_URL, {
     method: "POST",
     headers: {
       "xi-api-key": apiKey,
