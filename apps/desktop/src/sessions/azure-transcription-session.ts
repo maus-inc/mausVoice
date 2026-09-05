@@ -1,6 +1,7 @@
 import { createAzureStreamingSession } from "@maus-inc/voice-ai";
 import { listen, UnlistenFn } from "@tauri-apps/api/event";
 import { getAppState } from "../store";
+import { ensureFloat32Array } from "../utils/audio.utils";
 import { getLogger } from "../utils/log.utils";
 import {
   buildLocalizedTranscriptionPrompt,
@@ -61,10 +62,7 @@ export class AzureTranscriptionSession extends BaseApiTranscriptionSession {
 
           if (this.streamSession?.writeAudioChunk) {
             try {
-              const typedChunk =
-                event.payload.samples instanceof Float32Array
-                  ? event.payload.samples
-                  : Float32Array.from(event.payload.samples);
+              const typedChunk = ensureFloat32Array(event.payload.samples);
 
               this.streamSession.writeAudioChunk(typedChunk);
             } catch (error) {

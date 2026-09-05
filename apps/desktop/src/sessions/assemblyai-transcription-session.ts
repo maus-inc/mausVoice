@@ -1,3 +1,4 @@
+import { ensureFloat32Array } from "../utils/audio.utils";
 import { getLogger } from "../utils/log.utils";
 import { listen, UnlistenFn } from "@tauri-apps/api/event";
 import { BaseApiTranscriptionSession } from "./base-api-transcription-session";
@@ -129,10 +130,7 @@ const startAssemblyAIStreaming = async (
             receivedLogger.record(event.payload.samples.length);
             if (ws && ws.readyState === WebSocket.OPEN && !isFinalized) {
               try {
-                const typedChunk =
-                  event.payload.samples instanceof Float32Array
-                    ? event.payload.samples
-                    : Float32Array.from(event.payload.samples);
+                const typedChunk = ensureFloat32Array(event.payload.samples);
                 buffer.push(typedChunk);
                 buffer.flush(false);
               } catch (error) {

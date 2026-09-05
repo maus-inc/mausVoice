@@ -1,5 +1,6 @@
 import { convertFloat32ToBase64PCM16 } from "@maus-inc/voice-ai";
 import { listen, UnlistenFn } from "@tauri-apps/api/event";
+import { ensureFloat32Array } from "../utils/audio.utils";
 import { getLogger } from "../utils/log.utils";
 import { drainSamples } from "./audio-buffer.utils";
 import { BaseApiTranscriptionSession } from "./base-api-transcription-session";
@@ -287,10 +288,7 @@ const startElevenLabsStreaming = async (
             }
             if (ws && ws.readyState === WebSocket.OPEN && !isFinalized) {
               try {
-                const rawChunk =
-                  event.payload.samples instanceof Float32Array
-                    ? event.payload.samples
-                    : Float32Array.from(event.payload.samples);
+                const rawChunk = ensureFloat32Array(event.payload.samples);
                 const typedChunk = needsResample
                   ? resampleAudio(rawChunk, inputSampleRate, sampleRate)
                   : rawChunk;
