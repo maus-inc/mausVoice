@@ -14,7 +14,7 @@
 </div>
 
 > [!TIP]
-> Grab your free [Groq↗](https://console.groq.com/keys) and [Deepgram↗](https://console.deepgram.com/) API keys.
+> Grab your[Groq↗](https://console.groq.com/keys) and [Deepgram↗](https://console.deepgram.com/) API keys, for quick, free transcription inference.
 >
 > Transcription accuracy **varies** by STT provider or model; transcripts **may not** be 100 percent accurate due to differences in intonation, accent, and input device. We **continually** optimize the client-side pipeline to improve transcription speed and accuracy.
 
@@ -27,7 +27,7 @@
 [![Windows builds available](docs/assets/badges/windows.svg)](https://github.com/maus-inc/mausVoice/releases)
 [![Linux builds available](docs/assets/badges/linux.svg)](https://github.com/maus-inc/mausVoice/releases)
 
-<sub>**Voice typing for your own machine. Dictate into any app and clean it up with AI. No account or subscription needed, and the Rust core keeps CPU and memory usage low.**</sub>
+<sub>**Voice typing for your own machine, dictate into any app and clean it up with AI, no account or subscription needed, and the Rust core keeps CPU and memory usage low.**</sub>
 
 <br>
 
@@ -35,7 +35,7 @@
 
 ## Documentation
 
-**New to mausVoice, tuning a provider, or building from source? Visit the complete [mausVoice Documentation](https://maus-inc.github.io/mausVoice/docs/).** It covers platform setup, daily dictation, every configuration area, provider behavior, privacy and local data, troubleshooting, and the repository architecture.
+**New to mausVoice, looking for a feature, trying to find guidance, tuning a provider, or building from source? Visit the complete [mausVoice Documentation](https://maus-inc.github.io/mausVoice/docs/).** It covers platform setup, daily dictation, every configuration area, provider behavior, privacy and local data, troubleshooting, and the repository architecture.
 
 <p align="center">
   <a href="https://maus-inc.github.io/mausVoice/docs/"> 
@@ -47,13 +47,13 @@
   <img src="docs/assets/home-page.png" alt="mausVoice home" width="750" />
 </p>
 
-**mausVoice** is a desktop app that turns your voice into text anywhere you can type. Hold a global shortcut, speak, and release. mausVoice transcribes locally or through your chosen provider, optionally applies an **LLM** writing style, and sends the result to the field in focus.
+**mausVoice** is a voice transcription desktop app turning your voice into text anywhere you can type. Hold your shortcut hotkeys, speak, and release. mausVoice transcribes locally or through your chosen cloud provider, with the option to apply an additional **LLM** cleanup and your selected writing style, and sends the result to the field in focus.
 
 ## How it works
 
 1. Press your hotkey and speak. A small overlay shows you're recording.
-2. Audio is captured natively and transcribed as it happens, with streaming Deepgram (`nova-3`), or with fully local Whisper if you'd rather keep every byte on-device.
-3. An LLM cleans up the transcript. It removes filler, fixes punctuation and formatting, and applies your chosen writing style.
+2. Audio is captured natively and transcribed as it happens, with streaming-capable Deepgram ([`nova-3`](https://deepgram.com/learn/introducing-nova-3-speech-to-text-api)), or with fully local Whisper, ONYX or SenseVoice models if you'd rather keep every byte on-device.
+3. Optionally, An LLM cleans up the transcript. It removes filler, fixes punctuation and formatting, and applies your chosen writing style.
 4. The finished text lands in whatever app you're focused on.
 <br>
 
