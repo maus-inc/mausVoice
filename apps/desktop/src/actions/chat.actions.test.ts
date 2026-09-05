@@ -11,8 +11,13 @@ const getLoggerMock = vi.hoisted(() => ({
   error: vi.fn(),
   // The real logger also exposes stopwatch(label, fn); mirror the
   // call-through behavior so the mock is faithful if a tested path
-  // ever instruments with it.
-  stopwatch: vi.fn((_label: string, fn: () => Promise<unknown>) => fn()),
+  // ever instruments with it. async + await keeps the returned value a
+  // Promise and converts a synchronous throw inside fn into a
+  // rejection, exactly like the production helper.
+  stopwatch: vi.fn(async (_label: string, fn: () => Promise<unknown>) => {
+    const result = await fn();
+    return result;
+  }),
 }));
 const repoMocks = vi.hoisted(() => ({
   rejectNextUpdate: false,
