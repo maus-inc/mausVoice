@@ -207,24 +207,26 @@ export class AgentLoop {
         args: params,
       };
 
-      if (this.aborted) return;
-
+      // Once tool-call-start is emitted, always pair it with a tool-call-result
+      // (and history entry) even if abort wins mid-flight. Skipping the result
+      // leaves the assistant tool-call without a matching tool message.
       const { reason, ...toolParams } = params;
       const tool = this.config.tools.find((t) => t.name === tc.name);
 
       if (!tool) {
         yield this.toolResult(tc, `Unknown tool: ${tc.name}`, history, true);
+        if (this.aborted) return;
         continue;
       }
 
       const output = await this.executeTool(tool, toolParams, reason);
-      if (this.aborted) return;
-
       const resultStr = output.success
         ? stringifyToolResult(output.result)
         : (output.failureReason ?? "Tool execution failed");
 
       yield this.toolResult(tc, resultStr, history, !output.success);
+
+      if (this.aborted) return;
     }
   }
 

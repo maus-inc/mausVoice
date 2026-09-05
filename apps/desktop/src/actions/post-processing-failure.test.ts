@@ -99,6 +99,9 @@ describe("postProcessTranscript provider attribution on failure", () => {
     expect(result.transcript).toBe("Hello, world.");
     expect(result.metadata.postProcessProvider).toBe("cerebras");
     expect(result.metadata.postProcessApiKeyId).toBe("cerebras-key");
-    expect(result.metadata.postProcessFailed).toBeFalsy();
+    // Success must clear failure flags so a reprocess of a previously-failed
+    // row never leaves stale postProcessFailed=true on the updated record.
+    expect(result.metadata.postProcessFailed).toBe(false);
+    expect(result.metadata.postProcessError).toBeNull();
   });
 });

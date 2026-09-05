@@ -136,6 +136,30 @@ describe("applyHallucinationFiltering", () => {
     );
   });
 
+  it("preserves leading-space segment boundaries when dropping silence", () => {
+    const raw = "Hello world today";
+    const segments = [
+      { text: "Hello", noSpeechProb: 0.1 },
+      { text: " world", noSpeechProb: 0.99 },
+      { text: " today", noSpeechProb: 0.1 },
+    ];
+    expect(applyHallucinationFiltering(raw, segments, "en", true)).toBe(
+      "Hello today",
+    );
+  });
+
+  it("joins segments without boundary whitespace when dropping silence", () => {
+    const raw = "Hello world today";
+    const segments = [
+      { text: "Hello", noSpeechProb: 0.1 },
+      { text: "world", noSpeechProb: 0.99 },
+      { text: "today", noSpeechProb: 0.1 },
+    ];
+    expect(applyHallucinationFiltering(raw, segments, "en", true)).toBe(
+      "Hello today",
+    );
+  });
+
   it("keeps a genuine standalone Best regards. sign-off under the filter", () => {
     const raw = "Please review the doc. Best regards.";
     expect(applyHallucinationFiltering(raw, undefined, "en", true)).toBe(

@@ -264,10 +264,13 @@ export class DictationStrategy extends BaseStrategy {
   }
 
   async onBeforeStart(): Promise<void> {
-    // Initialize session backlog state and load app target
+    // Initialize session backlog state and resolve the focused app before any
+    // interim paste uses currentAppId. Style seeding happens in
+    // DictationSideEffects after loadManualStyleForCurrentApp; this await only
+    // owns app-id routing for the paste path.
     clearDictationBacklog();
     incrementDictationBacklogNonce();
-    this.loadAppTarget();
+    await this.loadAppTarget();
   }
 
   async setPhase(phase: OverlayPhase): Promise<void> {

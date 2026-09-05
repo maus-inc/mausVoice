@@ -374,6 +374,10 @@ export const postProcessTranscript = async ({
       metadata.postProcessMode =
         genOutput.metadata?.postProcessingMode || metadata.postProcessMode;
       metadata.postProcessDevice = genOutput.metadata?.inferenceDevice || null;
+      // Clear any prior failure flags so a successful run never leaves a
+      // stale postProcessFailed=true on an updated row.
+      metadata.postProcessFailed = false;
+      metadata.postProcessError = null;
       getLogger().verbose(
         "Post-process mode:",
         metadata.postProcessMode,

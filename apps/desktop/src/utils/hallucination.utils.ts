@@ -191,13 +191,20 @@ export const gateSilentSegments = (
       segment.noSpeechProb < NO_SPEECH_PROB_THRESHOLD,
   );
   // Nothing gated — keep the provider transcript (and its spacing) instead
-  // of rebuilding with a single-space join.
+  // of rebuilding from segments.
   if (kept.length === segments.length) {
     return null;
   }
-  return kept
-    .map((segment) => segment.text)
-    .join(" ")
-    .replace(/\s+/g, " ")
-    .trim();
+  // Whisper-style verbose_json often embeds a leading space on each segment.
+  // Concatenate when boundary whitespace is already present so dropping a
+  // silent middle segment does not insert an extra space; otherwise join with
+  // a single space so providers that omit boundary whitespace stay readable.
+  const texts = kept.map((segment) => segment.text);
+  const hasBoundaryWhitespace = texts.some(
+    (text, index) =>
+      (index > 0 && /^\s/.test(text)) ||
+      (index < texts.length - 1 && /\s$/.test(text)),
+  );
+  const joined = hasBoundaryWhitespace ? texts.join("") : texts.join(" ");
+  return joined.replace(/[ \t]+/g, " ").trim();
 };
