@@ -493,8 +493,17 @@ mod tests {
 
     #[test]
     fn whisper_cpp_downloads_are_revision_pinned_and_digest_checked() {
-        for slug in ["tiny", "base", "small", "medium", "large", "turbo"] {
-            let model = WhisperModel::from_slug(slug).expect("supported whisper slug must parse");
+        // Iterates every supported ggml variant so a newly added slug is
+        // pinned from day one; ONNX artifacts are checked in
+        // `onnx_primary_is_first_in_artifact_set`.
+        let ggml_models: Vec<(&str, WhisperModel)> = WhisperModel::supported()
+            .iter()
+            .filter_map(|slug| WhisperModel::from_slug(slug).map(|model| (*slug, model)))
+            .filter(|(_, model)| !model.is_onnx())
+            .collect();
+        assert!(ggml_models.len() >= 6, "expected the six whisper.cpp variants");
+
+        for (slug, model) in ggml_models {
             let url = model.download_url();
             assert!(
                 url.contains(&format!("/resolve/{}/", WhisperModel::WHISPER_CPP_REVISION)),

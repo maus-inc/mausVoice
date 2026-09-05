@@ -9,10 +9,19 @@ const LABELED_SECRET_QUOTED = new RegExp(
   String.raw`${SECRET_LABEL}\s*([:=])\s*"(?:\\.|[^"\\])*"`,
   "gi",
 );
+// The bare value runs to the next whitespace/`,`/`;`. Closing brackets
+// that belong to the surrounding text (`{api_key=abc}`) are split off
+// afterwards by `splitTrailingClosers`, so a value that contains its own
+// balanced pair (`api_key=some(value)`) is still redacted in full.
 const LABELED_SECRET_BARE = new RegExp(
-  String.raw`${SECRET_LABEL}\s*([:=])\s*([^\s,;})]+)`,
+  String.raw`${SECRET_LABEL}\s*([:=])\s*([^\s,;]+)`,
   "gi",
 );
+const CLOSER_TO_OPENER: Readonly<Record<string, string>> = {
+  ")": "(",
+  "]": "[",
+  "}": "{",
+};
 /**
  * Bare values that describe the field instead of carrying a credential
  * (`api_key=required`, `authorization: missing`). Left readable so validation
@@ -43,6 +52,27 @@ const SECRET_KEY_ALIASES = new Set([
 const isSecretKey = (key: string): boolean =>
   SECRET_KEY_ALIASES.has(key.replace(/[_-]/g, "").toLowerCase());
 
+const countChar = (text: string, char: string): number =>
+  text.split(char).length - 1;
+
+/**
+ * Splits trailing closing brackets that have no matching opener inside the
+ * value, so they are kept as surrounding punctuation instead of being
+ * treated as part of the secret.
+ */
+const splitTrailingClosers = (value: string): [string, string] => {
+  let end = value.length;
+  while (end > 0) {
+    const closer = value[end - 1];
+    const opener = CLOSER_TO_OPENER[closer];
+    if (opener === undefined) break;
+    const head = value.slice(0, end);
+    if (countChar(head, closer) <= countChar(head, opener)) break;
+    end -= 1;
+  }
+  return [value.slice(0, end), value.slice(end)];
+};
+
 const redactSensitiveTokens = (message: string): string =>
   message
     .replace(BEARER_TOKEN, "Bearer [redacted]")
@@ -50,10 +80,12 @@ const redactSensitiveTokens = (message: string): string =>
     .replace(LABELED_SECRET_QUOTED, "$1$2[redacted]")
     .replace(
       LABELED_SECRET_BARE,
-      (match, label: string, sep: string, value: string) =>
-        PLACEHOLDER_VALUES.has(value.toLowerCase())
+      (match, label: string, sep: string, rawValue: string) => {
+        const [value, tail] = splitTrailingClosers(rawValue);
+        return PLACEHOLDER_VALUES.has(value.toLowerCase())
           ? match
-          : `${label}${sep}${REDACTED}`,
+          : `${label}${sep}${REDACTED}${tail}`;
+      },
     );
 
 const capLength = (message: string): string =>

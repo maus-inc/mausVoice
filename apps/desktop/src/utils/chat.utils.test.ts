@@ -1,4 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
+import deMessages from "../i18n/locales/de.json";
 import {
   deriveConversationTitle,
   hasPlaceholderTitle,
@@ -155,10 +156,6 @@ describe("hasPlaceholderTitle", () => {
     // mock is the one under test above; this test guards the real
     // catalog against silent renames that would leave legacy
     // conversations without a detected placeholder.
-    const deMessages = require("../i18n/locales/de.json") as Record<
-      string,
-      string
-    >;
     expect(typeof deMessages.new_conversation).toBe("string");
     expect(deMessages.new_conversation.length).toBeGreaterThan(0);
   });

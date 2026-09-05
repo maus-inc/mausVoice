@@ -19,7 +19,9 @@ import { dirname, resolve } from "node:path";
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const repoRoot = resolve(__dirname, "..", "..");
 const configPath = resolve(repoRoot, "gitleaks.toml");
-const raw = readFileSync(configPath, "utf8");
+// Comments are stripped up front so a `useDefault = false` or `[allowlist]`
+// mention inside a `#` remark can neither trip nor mask a check.
+const raw = stripTomlComments(readFileSync(configPath, "utf8"));
 
 // Base64 of "untrusted comment: rsign" — the first line of every Tauri/Minisign
 // private key file. This is the exact string the detection rule must match.
@@ -28,6 +30,29 @@ const PREAMBLE_B64 = "dW50cnVzdGVkIGNvbW1lbnQ6IHJzaWdu";
 function fail(msg) {
   console.error(`::error::${msg}`);
   process.exit(1);
+}
+
+// Drops `#` comments line by line. Only quoted strings can legally contain
+// `#` in TOML; a `#` outside quotes always starts a comment.
+function stripTomlComments(text) {
+  return text
+    .split("\n")
+    .map((line) => {
+      let quote = null;
+      for (let i = 0; i < line.length; i += 1) {
+        const ch = line[i];
+        if (quote) {
+          if (ch === "\\" && quote === '"') i += 1;
+          else if (ch === quote) quote = null;
+        } else if (ch === '"' || ch === "'") {
+          quote = ch;
+        } else if (ch === "#") {
+          return line.slice(0, i);
+        }
+      }
+      return line;
+    })
+    .join("\n");
 }
 
 function section(text, startMarker, endMarker) {
@@ -57,9 +82,10 @@ if (allowlist.includes("useDefault")) {
 
 // (e) A top-level `useDefault = false` disables every built-in Gitleaks rule
 // and silently weakens the whole-repo scan to the single updater-key rule.
-const firstTable = raw.search(/^\s*\[/m);
-const topLevel = firstTable === -1 ? raw : raw.slice(0, firstTable);
-if (/^\s*useDefault\s*=\s*false\b/m.test(topLevel)) {
+const lines = raw.split("\n");
+const firstTable = lines.findIndex((line) => line.trimStart().startsWith("["));
+const topLevel = firstTable === -1 ? lines : lines.slice(0, firstTable);
+if (topLevel.some((line) => /^useDefault\s*=\s*false\b/.test(line.trim()))) {
   fail(
     "gitleaks.toml: top-level `useDefault = false` disables the default " +
       "rule set. Remove it so the whole-repo scan keeps the built-in detectors.",

@@ -11,8 +11,12 @@ export const getGladiaBrowserPeer = (source: string) =>
     (peer) => source === peer || source.startsWith(`${peer}/`),
   );
 
+// Matches the SDK package directory itself (`/@gladiaio/sdk/` or the
+// package as a whole), not a sibling like `@gladiaio/sdk-extras`.
+const GLADIA_SDK_PATH = /(?:^|[\\/])@gladiaio[\\/]sdk(?:$|[\\/])/;
+
 export const isGladiaSdkModule = (importer: string | undefined): boolean =>
-  importer?.includes("@gladiaio/sdk") ?? false;
+  importer !== undefined && GLADIA_SDK_PATH.test(importer);
 
 // Gladia's isomorphic SDK contains guarded dynamic imports for Node-only
 // file uploads and network fallbacks. Tauri always provides browser

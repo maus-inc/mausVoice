@@ -26,6 +26,7 @@ describe("Gladia browser peer stubs", () => {
       "/repo/node_modules/.pnpm/@gladiaio+sdk@1.1.0/node_modules/@gladiaio/sdk/dist/network/wsClient.js",
       true,
     ],
+    ["/repo/node_modules/@gladiaio/sdk-extras/dist/index.js", false],
     ["/repo/apps/desktop/src/main.tsx", false],
     [undefined, false],
   ])("recognizes %s as an SDK importer: %s", (importer, expected) => {

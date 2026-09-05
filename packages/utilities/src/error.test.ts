@@ -35,6 +35,11 @@ describe("unknownToMessage", () => {
     expect(unknownToMessage('api_key="secret \\"inner\\" value"')).toBe(
       "api_key=[redacted]",
     );
+    expect(unknownToMessage("api_key=some(value)")).toBe("api_key=[redacted]");
+    expect(unknownToMessage("{api_key=supersecretvalue}")).toBe(
+      "{api_key=[redacted]}",
+    );
+    expect(unknownToMessage("(api_key=required)")).toBe("(api_key=required)");
     expect(unknownToMessage({ apiKey: "supersecretvalue" })).toBe(
       '{"apiKey":"[redacted]"}',
     );
