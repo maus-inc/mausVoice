@@ -214,7 +214,7 @@ html, body {
   background: var(--panel);
   border: 1px solid var(--border);
   border-radius: var(--radius);
-  margin: 18px 56px 18px;
+  margin: 18px 56px;
   padding: 22px 26px;
   box-shadow: var(--shadow);
 }
@@ -467,13 +467,13 @@ html, body {
 /* side card -------------------------------------------------------------- */
 
 .side-card {
-  margin: 0 56px 0;
+  margin: 0 56px;
   background: var(--panel);
   border: 1px solid var(--border);
   border-radius: var(--radius);
   padding: 18px 22px;
 }
-.side-card.wide { margin: 18px 56px 18px; }
+.side-card.wide { margin: 18px 56px; }
 
 .side-head {
   display: flex;
@@ -694,7 +694,7 @@ kbd {
   padding: 0 56px;
 }
 .panel-row .panel {
-  margin: 18px 0 18px;
+  margin: 18px 0;
 }
 
 .assistant-grid {
@@ -704,7 +704,7 @@ kbd {
   padding: 0 56px;
 }
 .assistant-grid .panel {
-  margin: 18px 0 18px;
+  margin: 18px 0;
 }
 .side-panel .kv-row.big {
   font-size: 15px;
